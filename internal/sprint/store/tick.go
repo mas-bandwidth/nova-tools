@@ -1180,6 +1180,13 @@ func (t *tickRun) parts(table string, parts []sprint.TickPartDef) tickOutcome {
 			v.ReaderStates = t.readers
 			view = &v
 		}
+		if view != nil && view.Friends == nil && t.req.Friends != nil {
+			// the friends are the tick's, read once: the ask asks a frontier read of
+			// them, and the check asks what the ask does (sprint.enoughReadersUp)
+			v := *view
+			v.Friends = t.req.Friends
+			view = &v
+		}
 		if view != nil && view.Routes == nil && routesPart(part.Name) {
 			// a part that plans with the routes asks what it would do with them: the
 			// deal's judgment of reads whose tier no route serves (route.go,
@@ -1226,6 +1233,9 @@ func (t *tickRun) parts(table string, parts []sprint.TickPartDef) tickOutcome {
 				return planned, 0
 			}
 			wakes = nil
+			if s.Friends == nil {
+				s.Friends = r.Friends
+			}
 			if r.WakeFriend != nil {
 				r.WakeFriend = func(friend string, rung int, d time.Duration) error {
 					wakes = append(wakes, stallWake{friend, rung, d})
