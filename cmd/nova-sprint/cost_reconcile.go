@@ -20,7 +20,8 @@ import (
 // through the seat's key in this environment (internal/provbalance.ReadUsage), the reads are
 // set beside the sprint's records of the same day in one step (sprint.CostReconcile: each
 // provider's record on the fleet table, and its one gap judgment opened past the bound or
-// closed within it), and each provider's gap is printed. The release's spend check calls it.
+// closed within it), and each provider's gap is printed. The release's spend check sets the
+// same records beside each provider's own over the release's window (internal/release/spendcheck.go).
 func (a *app) cmdCostReconcile(args []string, stdout, stderr io.Writer) int {
 	const verb = "cost reconcile"
 	fs, c := a.verbSetup(verb)
