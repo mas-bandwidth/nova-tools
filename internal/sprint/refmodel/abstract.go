@@ -165,7 +165,9 @@ func headAttempt(h string) int {
 // subject.
 func judgment(o sprint.Open) (Judgment, bool) {
 	t := strings.TrimSuffix(o.Note.Type, sprint.NRepeatSuffix)
-	if t == sprint.NOverdue {
+	if t == sprint.NOverdue || t == sprint.NStatus {
+		// a status transition's judgment is the members' status, which the model compares
+		// itself (sprint.StatusTransitions): no judgment of the model's own
 		return Judgment{}, false
 	}
 	j := Judgment{Type: JudgmentType(t), Subject: o.Subject()}

@@ -354,6 +354,9 @@ func (a *app) cmdFriendBeat(args []string, stdout, stderr io.Writer) int {
 func (a *app) friendBeat(ctx context.Context, args []string, open func(common) (*store.Store, error), stdout, stderr io.Writer) int {
 	const name = "friend beat"
 	fs, c := a.verbSetup(name)
+	build := fs.String("build", "", "the build her daemon runs (its version line's build): a friend come up is told to update when it is not the server's")
+	started := fs.String("started", "", "when her daemon started, RFC3339: its generation; a start not seen before raises a status judgment")
+	present := fs.String("present", "", "when her daemon sent her the present on its start, RFC3339: the snap-to-present step of a friend come up")
 	running := fs.String("running", "", "the cards she is running now, comma separated (work card ids, her job names or primaries): friend take and friend down leave them with her")
 	working := fs.String("working", "", "how many jobs she is working now, as her daemon counts them")
 	queue := fs.String("queue", "", "how many jobs she holds queued, as her daemon counts them")
@@ -370,6 +373,22 @@ func (a *app) friendBeat(ctx context.Context, args []string, open func(common) (
 		return code
 	}
 	rep := sprint.FriendReport{Running: sprint.Split(*running)}
+	if b := strings.TrimSpace(*build); b != "" {
+		rep.Build = oneline.Field(b)
+	}
+	for _, t := range []struct {
+		flag, text string
+		to         *time.Time
+	}{{"--started", *started, &rep.Started}, {"--present", *present, &rep.Present}} {
+		if t.text == "" {
+			continue
+		}
+		at, err := time.Parse(time.RFC3339, t.text)
+		if err != nil {
+			return refuse(stderr, name, t.flag+" wants an RFC3339 time, found "+oneline.Escape(t.text))
+		}
+		*t.to = at.UTC().Truncate(time.Second)
+	}
 	switch {
 	case *until != "":
 		at, err := time.Parse(time.RFC3339, *until)
@@ -483,6 +502,19 @@ func (a *app) friendBeat(ctx context.Context, args []string, open func(common) (
 	if !rep.Active.IsZero() {
 		line += " active=" + rep.Active.Format(time.RFC3339)
 		facts["active"] = rep.Active
+	}
+	for _, d := range []struct {
+		key string
+		at  time.Time
+	}{{"started", rep.Started}, {"present", rep.Present}} {
+		if !d.at.IsZero() {
+			line += " " + d.key + "=" + d.at.Format(time.RFC3339)
+			facts[d.key] = d.at
+		}
+	}
+	if rep.Build != "" {
+		line += " build=" + rep.Build
+		facts["build"] = rep.Build
 	}
 	if len(rep.Running) > 0 {
 		line += " running=" + strings.Join(rep.Running, ",")

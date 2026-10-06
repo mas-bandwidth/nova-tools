@@ -4225,6 +4225,85 @@ the judgment and the pass keep that one note (the reversed witness writes a seco
 `TestTheMachineRemindsTheCoordinatorOfADeafOrIdleFriendEveryTenMinutes` and
 `TestAnIdleUpFriendWhileCardsWaitElsewhereIsToldOnce` on the twin store with a fake clock.
 
+### Status transitions
+
+The owner, 2026-10-06 2:55 PM ET, after a friend was brought up on a stale daemon binary
+and flooded with the day before's notes: "When you bring a friend up, you must remember to
+update them and make sure everything is ready, and they skip old messages and work and snap
+to present." "Please make this process mechanical. You cannot remember to do this reliably
+on your own in my experience, so if it is mechanical, make the machine prompt you when a
+friend changes their status." The tick's presence part (`TickPresence`, internal/sprint
+judgments_status.go `StatusTransitions`) reads each row's status as the server computes it
+in that tick: a fleet member's by the presence rule (`MemberStatus`: `held`, `up`, `down`),
+a friend's by the friends' rule (`FriendStatus`: `held`, `up`, `down`; a friend whose
+daemon answers and whose session does not is `down`, and her judgment says so). Every change of it raises one judgment of type `status` on the row (the
+member, or `friend.<name>`), aliased `j<n>` and pushed to the seat inbox as every judgment
+is: anything to `up`, `up` to `down`, to `held` and from `held` (unheld),
+and, for a friend, a new generation of her daemon: a start her beat names (`friend beat
+--started <RFC3339>`) that the transitions have not seen, whatever her status.
+
+The fleet table keeps one property, `status_seen`, the status each row was last seen at:
+`<row>=<word>,<transition>,<daemon start|->` for each row, a blank between, in row order. A row with no
+entry is seen for the first time: its status is recorded and nothing is raised, so a
+machine that starts with the fleet up raises nothing. A row whose status and daemon start
+equal the record raises nothing, at every tick: one judgment a transition, never one a
+tick. A restart of the server reads the property back and replays no transition. The
+next transition of a row closes the judgment of the one before, answered or not. A fleet
+table already at its properties' cap with no `status_seen` keeps no record and raises
+nothing.
+
+The judgment names the transition, the server's clock time (RFC3339), the transition's
+number on the row, and the exact verbs; its decisions are `ack` and `wait`. Its text:
+
+- a friend come up: `friend <f> is up (was <word>) at <time>, transition <n>, on
+  <evidence>; bring her up in four steps: ` and the four steps in order, each ending
+  `(done)` when the machine already did it or `(to do)` with the verb to run:
+  `1 update: her daemon runs <build>, the current build is <build>` (done when her
+  daemon's build, `friend beat --build`, is the server's own, by the twelve hex of the
+  revision; else `run: nova-update, then launchctl kickstart -k
+  gui/$(id -u)/com.nova.friend-<f>`); `2 check: daemon <beating (age)|silent since
+  <time>|never beat>, harness <checked by her daemon's start at <time>|...>, presence
+  <evidence>` (done when her beat is fresh and her daemon's start note was sent after its
+  start; else `run: nova-friend check <f> and read its CHECK DAEMON, CHECK HARNESS and
+  presence lines`); `3 snap to present: her daemon sent the present on its start at
+  <time>` (done when `friend beat --present` is at or after `--started`; else the
+  `nova-bus send --to <f> --subject present --body "PRESENT <time>: ..."` line to send it
+  by hand); `4 into the sprint: <held|not held>, evidence <evidence>, <a take at
+  <time>|no take within 10m0s; run: nova-sprint where, and nova-friend ping --as
+  <coordinator> --to <f> --wake>` (done when she is not held and a card on her row was
+  taken within `TakeWithin`, 10 minutes). A new generation of her daemon while she is up
+  is the same four steps under `friend <f>'s daemon started again at <time> (its start
+  before: <time>), she is up, at <time>, transition <n>`.
+- a friend to `down`: `friend <f> is down (was <word>) at <time>, transition <n>: <the
+  evidence she lacks>`, when her daemon's pong is all the coordinator observed `; her
+  daemon answers and her session does not`, then her last beat and its age (or `it has never beaten`), and the
+  wake line: `wake her: nova-friend ping --as <coordinator> --to <f> --wake; if her daemon
+  is gone, on her machine: launchctl kickstart -k gui/$(id -u)/com.nova.friend-<f>; or hold
+  her: nova-sprint hold <f> --reason <text>`.
+- a friend to `held`: `friend <f> is held (was <word>) at <time>, transition <n>: the
+  coordinator's hold (<why>); her started cards finish, the rest went back to ready;
+  release: nova-sprint unhold <f>`.
+- a fleet member: `fleet member <m> is <word> (was <word>) at <time>, transition <n>: its
+  last beat <time> (<age> ago[, <k> beat windows of 15s missed]), width <w>`, then for up
+  `; the tick deals it cards from now; its width: nova-sprint fleet up <m> --width <n>`,
+  for held `; the coordinator's hold (hold <m>); release: nova-sprint unhold <m>`, and for
+  down `; its unfinished cards were dealt round the members up; bring it back: its beat on
+  <m> (nova-sprint fleet beat <m>) has stopped, start its member loop again; or hold it:
+  nova-sprint hold <m> --reason <text>`.
+
+The coordinator answers it with `ack <j> --reason <text>` once the steps are run, or
+`wait <j> --for <duration>`. With the machine's own answers (`run --answer-rules`), the rule `status`
+answers one whose every step is already done: a hold and a fleet member come up, as they
+are raised (an acknowledgement, `answered by rule status: every step is done; ` and the
+text); a friend come up, at the first tick that finds all four steps done (closed, with a
+decided note naming them). A friend's down is never answered by rule. Her
+daemon's facts come on her beat: `friend beat <f> --build <build> --started <RFC3339>
+--present <RFC3339>`, carried on her report (`build`, `started`, `present`). Pinned by
+`TestAFriendComingUpPushesTheFourStepsToTheSeat`,
+`TestATransitionRaisesExactlyOneJudgment`, `TestAFleetMemberGoingDownNamesItsLastBeat`,
+`TestARestartDoesNotReplayTransitions` and
+`TestAStatusJudgmentWhoseStepsAreDoneIsAnsweredByRule` on the twin store with a fake clock.
+
 ### Answered by nova-decide
 
 `answer` answers the routine judgments by the judgment decision
