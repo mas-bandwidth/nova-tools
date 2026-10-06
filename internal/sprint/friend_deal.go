@@ -128,6 +128,10 @@ type FriendSeat struct {
 	// start bound is at work, and the tick moves none of her cards for want of a start
 	// (friendUnstartedLevel).
 	Active time.Time
+	// Billing is how her work is paid (config.FriendBilling): config.BillingAPI at API
+	// rates; empty or config.BillingSubscription, a subscription, and dealt heavy and pro
+	// cards first (subscriptionFirst).
+	Billing string
 	// Proof is her session's last proof as her beat carries it (Beat.Proof: a SESSION CHECK
 	// it answered, or a bus message of its own), and Finished the store's record of her
 	// last finish, working to done; each zero when there is none. The stall ladder reads
@@ -269,6 +273,27 @@ func friendRoom(f FriendSeat) (room, width int) {
 	return DealAhead * f.Width, f.Width
 }
 
+// subscriptionFirst is the friends of names a card of the tier is offered first
+// (docs/SPEC-SPRINT.md section 1, deal-subscription-first-r-t-b.w2): for a heavy or pro
+// card, the ones billed by subscription (any billing but config.BillingAPI) when one is
+// among them, else names; for any other tier, names. The api friends, and the fleet's
+// routes after the friends' deal, take only what the subscription friends have no room for.
+func subscriptionFirst(names []string, seat map[string]FriendSeat, tier string) []string {
+	if tier != cardhdr.RouteHeavy && tier != cardhdr.RoutePro {
+		return names
+	}
+	var sub []string
+	for _, f := range names {
+		if seat[f].Billing != config.BillingAPI {
+			sub = append(sub, f)
+		}
+	}
+	if len(sub) == 0 {
+		return names
+	}
+	return sub
+}
+
 // preferredFriend is the friend of names a card goes to (docs/SPEC-SPRINT.md section 1,
 // friend-deal-idle-lanes-first.w1): a friend with an idle lane (lanes > 0) before every
 // friend with none, the most idle lanes first, then the most room free, then the first by
@@ -340,8 +365,11 @@ func friendLoad(s *Snapshot, name string) int {
 // no tier is the dealer's default, flash: cardTierOf), below her room, and never one it has
 // left (friendsLeft), chosen by preferredFriend: an idle lane first, the most idle lanes,
 // then the most room, then by name (docs/SPEC-SPRINT.md section 1,
-// friend-deal-idle-lanes-first.w1). A card no friend takes stays for the fleet's deal,
-// unless it says WHO: only friend <name> (OnlyFriend), the one hard pin: it waits ready for
+// friend-deal-idle-lanes-first.w1). A heavy or pro card goes to a friend billed by
+// subscription before an api friend (subscriptionFirst; docs/SPEC-SPRINT.md section 1,
+// deal-subscription-first-r-t-b.w2); a card naming a friend keeps her as above. A card no
+// friend takes stays for the fleet's deal, unless it says WHO: only friend <name>
+// (OnlyFriend), the one hard pin: it waits ready for
 // her, and so does one whose friend's tiers do not hold its tier. A card a friend's beat
 // names running (laneRunsIt) is placed on no row while it does. A withdrawn attempt at its
 // redeal bound at its ceiling or its attempt cap (AtRedealBound), or refused at staging by
@@ -446,7 +474,7 @@ func friendDeal(s *Snapshot, cards []*Card, seats []FriendSeat) (p Plan, dealt, 
 				}
 				left = slices.DeleteFunc(slices.Clone(left), func(f string) bool { return !slices.Contains(gone, f) })
 			}
-			name = preferredFriend(may, lanes, free)
+			name = preferredFriend(subscriptionFirst(may, seat, tier), lanes, free)
 		}
 		if name == "" || slices.Contains(left, name) || free[name] <= 0 {
 			continue // no friend it may go to is up with room: the fleet's, or (only) it waits ready
