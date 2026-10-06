@@ -113,7 +113,7 @@ func (h *harnessExec) run(_ context.Context, _, _ string, args []string, _ strin
 }
 
 // A harness at its usage limit is down until the reset (docs/SPEC-FRIEND.md,
-// limits-mean-down-w-r.w1~15): the daemon delivers nothing while limited,
+// limits-mean-down-w-r3.w2~15): the daemon delivers nothing while limited,
 // every message stays pending, a ping is answered by the daemon, the status
 // says session=limited with the kind and the reset, the coordinator is told
 // once; after the reset one wake turn is tried, and when it answers the

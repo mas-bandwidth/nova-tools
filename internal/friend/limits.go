@@ -8,7 +8,7 @@ import (
 )
 
 // What a harness says when it is at its usage limit or out of credits, one
-// parser per harness (docs/SPEC-FRIEND.md, limits-mean-down-w-r.w1~15: a
+// parser per harness (docs/SPEC-FRIEND.md, limits-mean-down-w-r3.w2~15: a
 // usage limit or an empty balance marks the friend down until the reset).
 // The texts are in testdata/limits.tsv, one line each; a text not recognised
 // is an ordinary failed turn.

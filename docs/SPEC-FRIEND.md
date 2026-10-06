@@ -356,7 +356,7 @@ usage is on the beat as `--five-hour <pct> --seven-day <pct>`
 `TestALimitedHarnessIsDownUntilItsResetThenWoken`. Owed outside this layer
 (What is weak).
 
-### limits-mean-down-w-r.w1~15: each harness's limit and credits texts, down until the reset
+### limits-mean-down-w-r3.w2~15: each harness's limit and credits texts, down until the reset
 
 The decision of 2026-10-04: "out of credits = down". `internal/friend/limits.go` has one
 parser per harness (claude, codex, opencode, grok, antigravity, dsh, gemini):

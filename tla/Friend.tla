@@ -20,7 +20,7 @@
 \* connection went silent).
 \*
 \* A harness at its usage limit or out of credits is down until the reset
-\* (limits-mean-down-w-r.w1~15; internal/friend/limits.go, limit.go Limits.Gate):
+\* (limits-mean-down-w-r3.w2~15; internal/friend/limits.go, limit.go Limits.Gate):
 \* lim is "up" or "limited", limUntil the reset the text named (or the rest). A
 \* turn that hits the limit ends at once and the friend is limited (HitLimit);
 \* while limited no turn starts, message or wake check, so every message stays
@@ -221,7 +221,7 @@ OnlySessionPongEnds ==
 \* pays it, so a wake turn never carries an answered nonce.
 OwedOnlyWhileAsked == owed => chal # "quiet"
 
-\* No turn starts while the harness is limited (limits-mean-down-w-r.w1~15):
+\* No turn starts while the harness is limited (limits-mean-down-w-r3.w2~15):
 \* a message or a wake check never goes into a session that cannot answer, so
 \* every message stays pending, counted toward nothing. Pings are no turn.
 NoTurnWhileLimited == [][(~busy /\ busy') => lim = "up"]_vars

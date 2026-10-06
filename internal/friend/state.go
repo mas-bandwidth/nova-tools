@@ -66,7 +66,7 @@ type Status struct {
 	BrokenAt      time.Time `json:"broken_at,omitempty"`
 	// While the harness is at its usage limit or out of credits Session is
 	// SessionLimited, LimitKind says which (KindLimit or KindCredits) and
-	// LimitUntil is the reset (docs/SPEC-FRIEND.md, limits-mean-down-w-r.w1~15).
+	// LimitUntil is the reset (docs/SPEC-FRIEND.md, limits-mean-down-w-r3.w2~15).
 	LimitKind  string    `json:"limit_kind,omitempty"`
 	LimitUntil time.Time `json:"limit_until,omitzero"`
 	// Mode is how the daemon delivers now (batch or one-shot), and Lanes the
