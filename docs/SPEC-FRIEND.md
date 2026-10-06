@@ -329,8 +329,9 @@ harness exposes the session's own turn events, they would be a second source; no
 yet, so a session that works without writing a file (a long read, a long think) looks idle
 after the setting, and the alarm says "written nothing", not "stuck".
 
-No clock bounds a turn: a turn that prints keeps running however long it
-takes. A turn that has printed nothing, on stdout or stderr, for `--silent-stop`
+No clock bounds a batch turn: a turn that prints keeps running however long it
+takes (a one-shot lane's card is bounded by its tier's wall cap, below:
+a-lane-is-capped-by-its-tier.w1). A turn that has printed nothing, on stdout or stderr, for `--silent-stop`
 (twenty minutes by default) is stopped, its process group signalled, and the
 record says so with the reason (`stopping: no output for 20m0s`, then
 `stopped=` on the turn's line); its messages count one failed delivery each.
@@ -1338,6 +1339,58 @@ repository, and `take back`'s refusal of a card with a push is in
 internal/sprint; both are outside this card. A gone run is known by the
 daemon's restart alone: no process id is kept, so a harness that outlived its
 daemon is not checked.
+
+### a-lane-is-capped-by-its-tier.w1 — a lane's wall time is capped by its card's tier (internal/friend/lane_cap.go)
+
+On 2026-10-05 night seven one-shot Mercury lanes ran 24 to 73 minutes each and
+produced nothing, and several Sonnet lanes ran past an hour on cards whose fix
+was one line: a lane ran until its model stopped. Wall time is the fleet's
+budget (speed through width), so each card a lane takes is capped by its tier:
+
+- **The cap.** The card's tier is the one her row says for its job (`Held`:
+  the packet's `tier`), read when the lane takes the card. Its cap is the row's
+  `lane_caps` for that tier, read off the beat's answer
+  (`row_lane_caps=flash:15m,pro:45m,...`, `ParseLaneCaps`, `Daemon.LaneCaps`),
+  else `DefaultLaneCaps`: flash 15 min, pro 45, heavy 90, frontier 150. A card
+  whose tier was not read is capped at the longest, frontier's.
+- **At the cap.** The card's wall runs from when the lane began it (its
+  `started` mark) across its turns. Each step the daemon checks every running
+  lane turn (`capWatch`); at the cap it ends the turn as a silent stop is
+  ended (its process group signalled) and says so on the record (`lane <n>: card
+  <id> capped at <cap> (tier <t>): its wall since <t0> reached the cap`). A
+  turn that ends with no `RESULT.md` after the card's wall passed its cap is
+  ended the same way.
+- **The HOLD.** The card's end is a finish (a lane's end, above): her own
+  `REPORT.md` stands when she wrote one; else the lane writes `Verdict: HOLD`
+  (with `Head:` when she pushed, without when not), the paragraph naming
+  `capped at <cap> (tier <t>, overrun <d>)` (`CappedWords`; the overrun is the
+  card's wall past the cap when the lane ended it), and under it the last 40
+  lines of the lane's output, each indented four spaces. The output is the turn's
+  own (`WithOutputTail`: every write the harness prints, its last 64 KiB kept; a
+  harness that runs no command through `RealExec` says its writes with
+  `Printed`). The failed finish to the sprint server carries the paragraph, so
+  the cap words reach the sprint (`card=capped turn=<n>/2` on the record), and
+  the job is set aside, never handed again in the lane.
+- **The re-deal.** The sprint reads the cap off the failed finish and deals the
+  card once more one tier up before the cap counts as a failure
+  (docs/SPEC-SPRINT.md, a capped lane); the cap and the overrun are on the
+  take's cost record.
+
+The model is `internal/friend/tla/LaneEnd.tla`, extended: `CapEnds` ends a run
+at the cap with the lane's report, and `Redeal` is the sprint taking a capped
+finish back once. TLC on a Linux bench, two cards: 1568 distinct
+states, `TypeOK`, `NoOrphan`, `RedealOnce`, `HersStands` and `Finished` (every
+card begun ends finished with no re-deal left) hold; the reversed witness
+`MCLaneEndBrokenCapAlways.cfg`, a sprint that re-deals every capped finish,
+breaks `RedealOnce`, and `MCLaneEndBrokenNoWrite.cfg` still breaks `NoOrphan`.
+`TestALaneIsCappedByItsTier` runs a lane past a flash cap over a fake harness
+and feeds its finish to the sprint's `Finish`;
+`TestALanesCapIsItsTiersFromTheRowOrTheDefaults`.
+
+Not here, outside the card's paths: the `lane_caps` field on nova-config's
+friend row and `friend beat` printing it as `row_lane_caps=` (cmd/nova-sprint);
+until they are, every lane runs on `DefaultLaneCaps`. The batch turn is not
+capped (it carries messages, not a card).
 
 ### the-daemon-reads-every-outbox-job.w1 — the daemon finishes every report on her row (internal/friend/outbox.go)
 

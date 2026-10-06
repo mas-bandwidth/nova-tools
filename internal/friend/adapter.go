@@ -59,15 +59,44 @@ func WithOutputSeen(ctx context.Context, seen func()) context.Context {
 	return context.WithValue(ctx, outputKey{}, seen)
 }
 
-// seenWriter is a Builder that says each write to the context's watch.
+// tailKey carries, in a delivery's context, what to hand each write the command prints:
+// the daemon's tail of a lane's output, the lines a capped lane's report quotes
+// (WithOutputTail, lane_cap.go).
+type tailKey struct{}
+
+// WithOutputTail is ctx carrying tail, handed each write the command a delivery runs
+// prints to stdout or stderr.
+func WithOutputTail(ctx context.Context, tail func([]byte)) context.Context {
+	return context.WithValue(ctx, tailKey{}, tail)
+}
+
+// Printed is p, printed by the command a delivery runs, said to ctx's watch and tail: what
+// RealExec does with each write, for a harness that runs no command through it.
+func Printed(ctx context.Context, p []byte) {
+	if len(p) == 0 {
+		return
+	}
+	if seen, _ := ctx.Value(outputKey{}).(func()); seen != nil {
+		seen()
+	}
+	if tail, _ := ctx.Value(tailKey{}).(func([]byte)); tail != nil {
+		tail(p)
+	}
+}
+
+// seenWriter is a Builder that says each write to the context's watch and tail.
 type seenWriter struct {
 	b    strings.Builder
 	seen func()
+	tail func([]byte)
 }
 
 func (w *seenWriter) Write(p []byte) (int, error) {
 	if len(p) > 0 && w.seen != nil {
 		w.seen()
+	}
+	if len(p) > 0 && w.tail != nil {
+		w.tail(p)
 	}
 	return w.b.Write(p)
 }
@@ -89,12 +118,13 @@ func RealExec(ctx context.Context, dir, name string, args []string, stdin string
 
 func realExec(ctx context.Context, killDelay time.Duration, dir, name string, args []string, stdin string) (string, int, error) {
 	seen, _ := ctx.Value(outputKey{}).(func())
+	tail, _ := ctx.Value(tailKey{}).(func([]byte))
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
 	if stdin != "" {
 		cmd.Stdin = strings.NewReader(stdin)
 	} // else /dev/null: a headless opencode run with stdin left open hangs at init (measured 2026-10-04)
-	out, stderr := &seenWriter{seen: seen}, &seenWriter{seen: seen}
+	out, stderr := &seenWriter{seen: seen, tail: tail}, &seenWriter{seen: seen, tail: tail}
 	cmd.Stdout = out
 	cmd.Stderr = stderr
 	ownGroup(cmd)

@@ -928,6 +928,8 @@ func (w world) run(c *tool.Call) *tool.Out {
 	rowMode, rowWidth := "", 0
 	var rowReadSlots atomic.Int64 // her row's read slots as her beat last answered; friend.DefaultReadSlots until it says
 	rowReadSlots.Store(friend.DefaultReadSlots)
+	// her row's lane caps by tier as her beat last answered; friend.DefaultLaneCaps until it says
+	var rowLaneCaps atomic.Pointer[map[string]time.Duration]
 	if cl, ok := deliver.(*friend.Claude); ok {
 		cl.Friend, cl.Now = name, w.now // every run's cost and limit on the record, its reset read on her clock
 		cl.ConfigDir = func() string {
@@ -1085,6 +1087,9 @@ func (w world) run(c *tool.Call) *tool.Out {
 				if p, ok := friend.ParseProfile(answer); err == nil && ok {
 					rowProfile.Store(&p)
 				}
+				if caps, ok := friend.ParseLaneCaps(answer); err == nil && ok {
+					rowLaneCaps.Store(&caps)
+				}
 				return err
 			}
 			if w.beatDown == nil {
@@ -1111,6 +1116,12 @@ func (w world) run(c *tool.Call) *tool.Out {
 		LoadLanes: func() (friend.LaneState, error) { return friend.ReadLanes(state) },
 		Sprint:    w.sprintAsk(server),
 		ReadSlots: func() int { return int(rowReadSlots.Load()) },
+		LaneCaps: func() map[string]time.Duration {
+			if caps := rowLaneCaps.Load(); caps != nil {
+				return *caps
+			}
+			return nil
+		},
 		ReadModel: func(tier string) string {
 			if c.Str("harness") == "claude" {
 				return friend.ReadModels[tier] // a tier with none is the account's own model

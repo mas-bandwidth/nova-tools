@@ -1330,6 +1330,16 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 		if r.Failed {
 			kind, class, used = finishKind(c, r)
 		}
+		// a lane ended at its tier's cap: the first cap re-deals the card one tier up before
+		// it counts as a failure (lane_cap.go)
+		lc, capped := LaneCap{}, false
+		if r.Failed && kind == "" {
+			lc, capped = ParseLaneCap(r.Report)
+		}
+		if next := capNextTier(pr); capped && next != "" {
+			p.Units = append(p.Units, capRedeal(s, c, pr, r, lc, next, p.Units))
+			continue
+		}
 		switch kind {
 		case cardhdr.EndProvider, cardhdr.EndNoResult:
 			p.Units = append(p.Units, takeEnded(s, c, pr, r, kind, used))
@@ -1378,6 +1388,9 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 		if r.Usage != "" {
 			cardSet[FieldUsage] = rec
 		}
+		if capped {
+			capSets(lc, cardSet)
+		}
 		set := map[string]string{"head": head, "result": result}
 		maps.Copy(set, finishStamps(pr, c, s.Now))
 		decidedSets(r, used, pr, cardSet, set)
@@ -1388,7 +1401,11 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 			// a decided class is the class when the decision routed the finish
 			identical = failureSet(pr, pr.Int("attempt"), r.Report, class, cardTierOf(pr), set)
 		}
-		addConsumer(pr, set, workConsumer(s, c, 0, result, rec))
+		cons := workConsumer(s, c, 0, result, rec)
+		if capped {
+			cons.End, cons.Cap, cons.Overrun = laneCapEnd, lc.Cap.String(), lc.Overrun.String()
+		}
+		addConsumer(pr, set, cons)
 		u := Unit{Key: c.ID, Stream: pr.Row, Changes: []Change{change(Fleet, moveEntry(c, c.Row, into, cardSet))},
 			Moved: fmt.Sprintf("%s working -> done %s; %s working -> review", c.ID, result, pr.ID)}
 		attempt := pr.Int("attempt")
