@@ -2912,6 +2912,23 @@ of 2026-10-03 rewrote `go.mod` and every resolution was refused for it), and a
 module that needs them changed fails the run, which is the card's finding.
 `--check` is the caller's own command on top, once a batch, as before.
 
+**Always inside PATHS.** Files a change must touch to keep the tree green are always inside
+PATHS, whatever the brief names: every `*_test.go`, every file under a `testdata/` directory,
+`tla/RUNS.tsv` and `tla/CASES.tsv`, `internal/docs/catalog.go`, and every `AGENTS.md` map; any
+other file outside PATHS is still out of scope (`cardgen.AlwaysInPathsRule`, one sentence held
+by the lander, the brief generator and the readers; `cardgen.AlwaysInPaths` is its list). The
+lander's E12 never refuses them: E12 with the rule is `sprint.LandScope`, `diffcheck.Outside` less
+`sprint.OutsideByRule`, then the scope amendment below; a rename is inside by rule only when
+both its sides are, so a source file moved to a test's name is still refused, and a file inside
+by rule is not recorded as an amendment. A generated brief's task and its AS A READ section
+carry the sentence (`cardgen.Render`), so a reader holds a test or a ledger outside the brief's
+PATHS line inside its scope. The owner, 2026-10-06: "Can we stop this whole 'test outside of
+paths' thing. It's wasteful.", after a dozen heads were refused or read broken over a test, a
+ledger, the catalog or a map (`TestE12NeverRefusesATestOrALedger`). Owed, outside the card that
+wrote this rule: the lander's `checkCard` calling `sprint.LandScope` in place of its inline
+`ScopeAmended(diffcheck.Outside(...))`, `sprint.FilesOutsidePaths` leaving these files out, and
+`sprint.FriendReadBrief` carrying the sentence under a friend read's AS A READ.
+
 **The scope amendment.** A file outside the brief's `PATHS` that is the test, the fixture or
 the doc of the same change is allowed by rule, never by a message to the coordinator
 (`sprint.ScopeAmended`): the change also changes a file of its own (in `PATHS`), and the
