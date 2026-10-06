@@ -86,11 +86,12 @@ func TestTheProducerCardCarriesWhatEachConsumerCostAndTheTotal(t *testing.T) {
 		"COST kind=work card=s1-1.w1 attempt=1 who=m1 route=flash-a model=opencode/deepseek-v4-flash tier=flash end=failed input=1000 cache_read=2000 cache_write=- output=300 reasoning=200 requests=3 wait=2s run=10s predicted_usd=0.000336 actual_usd=0.0005 actual_by=harness cost=both",
 		// 4000*0.14 + 6000*0.028 + 500*0.28
 		"COST kind=work card=s1-1.w2 attempt=2 who=m1 route=flash-a model=opencode/deepseek-v4-flash tier=flash end=ok input=4000 cache_read=6000 cache_write=- output=500 reasoning=0 requests=5 wait=4s run=30s predicted_usd=0.000868 actual_usd=0.0009 actual_by=harness cost=both",
-		// a read is priced by the enabled route of the model its harness reported: 2000*0.5 + 1000*0.1 + (100+50)*2
-		"COST kind=read card=s1-1.r2.reader-a attempt=2 who=reader-a route=pro-a model=opencode/deepseek-v4-pro tier=flash end=ok input=2000 cache_read=1000 cache_write=- output=100 reasoning=50 requests=2 wait=3s run=20s predicted_usd=0.0014 actual_usd=0.0015 actual_by=harness cost=both",
-		// no route runs its model: no prediction, never a zero; the harness's cost stands
-		"COST kind=read card=s1-1.r2.reader-b attempt=2 who=reader-b route=- model=other/unrouted tier=flash end=ok input=100 cache_read=- cache_write=- output=10 reasoning=- requests=- wait=30s run=0s predicted_usd=- actual_usd=0.002 actual_by=harness cost=actual",
-		"COST TOTAL consumers=4 input=7100 cache_read=9000 cache_write=- output=910 reasoning=250 requests=10 wait=39s run=60s predicted_usd=0.002604 predicted_of=3/4 actual_usd=0.0049 actual_by=harness actual_of=4/4 charged_usd=0.0049",
+		// a read is priced as a take is, by the route its card was drawn (flash-a), whatever
+		// model its harness reported: 2000*0.14 + 1000*0.028 + (100+50)*0.28
+		"COST kind=read card=s1-1.r2.reader-a attempt=2 who=reader-a route=flash-a model=opencode/deepseek-v4-pro tier=flash end=ok input=2000 cache_read=1000 cache_write=- output=100 reasoning=50 requests=2 wait=3s run=20s predicted_usd=0.00035 actual_usd=0.0015 actual_by=harness cost=both",
+		// a model no route runs is priced by the card's route all the same: 100*0.14 + 10*0.28
+		"COST kind=read card=s1-1.r2.reader-b attempt=2 who=reader-b route=flash-a model=other/unrouted tier=flash end=ok input=100 cache_read=- cache_write=- output=10 reasoning=- requests=- wait=30s run=0s predicted_usd=0.0000168 actual_usd=0.002 actual_by=harness cost=both",
+		"COST TOTAL consumers=4 input=7100 cache_read=9000 cache_write=- output=910 reasoning=250 requests=10 wait=39s run=60s predicted_usd=0.0015708 predicted_of=4/4 actual_usd=0.0049 actual_by=harness actual_of=4/4 charged_usd=0.0049",
 	}
 	assert.Equal(t, want, lines, out)
 
@@ -110,10 +111,11 @@ func TestTheProducerCardCarriesWhatEachConsumerCostAndTheTotal(t *testing.T) {
 	assert.Equal(t, cardcost.Unreported, v.Cost.Consumers[0].Usage.Tokens.CacheWrite, "a class not reported is an absence, never 0")
 	assert.Equal(t, "0.000336", v.Cost.Consumers[0].Usage.Predicted)
 	assert.Equal(t, "read", v.Cost.Consumers[3].Kind)
-	assert.Equal(t, "", v.Cost.Consumers[3].Usage.Predicted)
-	assert.Equal(t, cardcost.WhyNoRoute, v.Cost.Consumers[3].Usage.Unpriced)
-	assert.Equal(t, "0.002604", v.Cost.Total.Predicted)
-	assert.Equal(t, 3, v.Cost.Total.PredOf)
+	assert.Equal(t, "0.0000168", v.Cost.Consumers[3].Usage.Predicted)
+	assert.Equal(t, "flash-a", v.Cost.Consumers[3].Usage.Route, "a read is priced by its card's route")
+	assert.Equal(t, "", v.Cost.Consumers[3].Usage.Unpriced)
+	assert.Equal(t, "0.0015708", v.Cost.Total.Predicted)
+	assert.Equal(t, 4, v.Cost.Total.PredOf)
 	assert.Equal(t, "0.0049", v.Cost.Total.Actual)
 	assert.Equal(t, cardcost.ActualByHarness, v.Cost.Total.ActualBy, "the actual is the harness's figure, never an invoice")
 	assert.Equal(t, int64(7100), v.Cost.Total.Tokens.Input)

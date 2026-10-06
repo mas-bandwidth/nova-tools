@@ -132,7 +132,7 @@ func TestTheLevelMovesAReadAtMostOnce(t *testing.T) {
 				}
 			case 1:
 				for _, rc := range s.Readers.Cell(rd, sprint.Reading) {
-					h.must(ReadStep(sprint.ReadReq{As: rd, Verdict: "ok", Sel: sprint.Sel{IDs: []string{rc.ID}}}))
+					h.must(ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: rd, Verdict: "ok", Sel: sprint.Sel{IDs: []string{rc.ID}}}))
 				}
 			}
 		}

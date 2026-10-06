@@ -30,10 +30,10 @@ func (h *harness) finishAttempt(id string, failed bool, head string) {
 func (h *harness) reworkBroken(id string) {
 	h.t.Helper()
 	rc := h.pairAsked(id)
-	h.must(ReadStep(sprint.ReadReq{As: rc[0].Row, Verdict: "ok", Sel: sprint.Sel{IDs: []string{rc[0].ID}}}))
+	h.must(ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: rc[0].Row, Verdict: "ok", Sel: sprint.Sel{IDs: []string{rc[0].ID}}}))
 	// a finding per attempt: the same finding twice is the brief's bound (sprint.AtBriefBound)
 	finding := "f:" + h.snap().Work.Card(id).F("attempt")
-	h.must(ReadStep(sprint.ReadReq{As: rc[1].Row, Verdict: "broken", Finding: finding, Sel: sprint.Sel{IDs: []string{rc[1].ID}}}))
+	h.must(ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: rc[1].Row, Verdict: "broken", Finding: finding, Sel: sprint.Sel{IDs: []string{rc[1].ID}}}))
 	h.must(ReworkStep(sprint.ReworkReq{Sel: sprint.Sel{IDs: []string{id}}, Fix: "fix"}))
 }
 

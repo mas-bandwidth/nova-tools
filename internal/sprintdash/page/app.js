@@ -253,7 +253,7 @@ function renderStreams(d) {
   });
   var rank = function (k) { return RANK[statusOf[k]] == null ? 3.5 : RANK[statusOf[k]]; };
   var keys = streamOrder(d).sort(function (a, b) { return rank(a) - rank(b) || (a < b ? -1 : a > b ? 1 : 0); });
-  var sum = { cost: 0, totalCost: 0, unreconciled: 0, unpriced: 0 }, held = 0, landedStreams = 0, prevRank = null;
+  var sum = { cost: 0, totalCost: 0, workCost: 0, readCost: 0, unreconciled: 0, unpriced: 0 }, held = 0, landedStreams = 0, prevRank = null;
   var digits = digitsOf(keys.reduce(function (a, k) { return a + FLOW.reduce(function (b, st) { return b + int(work[k][st]); }, 0); }, 0));
   FLOW.forEach(function (st) { sum[st] = 0; });
   syncRows(box, box._head, keys, function () {
@@ -271,6 +271,9 @@ function renderStreams(d) {
     var ct = cents(w.cost); if (ct) sum.cost += ct;
     var sc = (d.stream_costs || {})[k] || {};
     var tc = cents(sc.total_cost); if (tc) sum.totalCost += tc;
+    // the reads beside the work: the same total split by kind (sprint.TierCosts)
+    var wc = cents(sc.work_cost); if (wc) sum.workCost += wc;
+    var rc = cents(sc.read_cost); if (rc) sum.readCost += rc;
     // the sprint's unreconciled spend rides on every stream's record: read once, never summed
     var uc = cents(sc.unreconciled); if (uc) sum.unreconciled = Math.max(sum.unreconciled, uc);
     sum.unpriced += int(sc.unpriced_runs);
@@ -525,7 +528,10 @@ function renderHero(d, s) {
   // cost per card is every recorded take and read over the cards that landed
   var recorded = s.sum.totalCost, unreconciled = s.sum.unreconciled;
   setText($("cost"), money(recorded + unreconciled));
-  setHTML($("cost-per"), landed ? money(Math.ceil(recorded / landed)) + " per card" : " ");
+  // the reads are their own number beside the work: "$0.42 per card · $310 work · $96 reads"
+  var split = (s.sum.workCost || s.sum.readCost) ? money(s.sum.workCost) + " work \u00b7 " + money(s.sum.readCost) + " reads" : "";
+  var per = landed ? money(Math.ceil(recorded / landed)) + " per card" : "";
+  setHTML($("cost-per"), [per, split].filter(Boolean).join(" \u00b7 ") || " ");
   setText($("cost-unreconciled"), money(unreconciled) + " unreconciled" + (s.sum.unpriced ? " · " + s.sum.unpriced + " runs unpriced" : ""));
   setText($("inflight"), s.sum.working + s.sum.review + s.sum.merging);
   inflightLast = s.sum; renderInflight(s.sum);

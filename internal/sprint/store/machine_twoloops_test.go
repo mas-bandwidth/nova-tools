@@ -62,7 +62,7 @@ func TestCRTwoRunLoopsAtOnce(t *testing.T) {
 				}
 			}
 			for _, rd := range crReaders {
-				run(ReadStep(sprint.ReadReq{As: rd, Verdict: "ok", Sel: sprint.Sel{Limit: 100}, Who: rd}))
+				run(ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: rd, Verdict: "ok", Sel: sprint.Sel{Limit: 100}, Who: rd}))
 			}
 			w.coordinate(r)
 			for _, st := range []string{"s1", "s2", "s3"} {

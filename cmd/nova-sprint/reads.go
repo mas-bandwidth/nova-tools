@@ -484,7 +484,10 @@ type whereView struct {
 	// spend by the tier each attempt and read ran on (`cost_by_tier`, money strings), from
 	// the tick's where record (sprint.TierCosts); absent before the first tick of an epoch.
 	StreamCosts map[string]sprint.TierCosts `json:"stream_costs,omitempty"`
-	Streams     []sprint.StreamClock        `json:"streams"`
+	// ReadSpend is the day's read spend per route, one line under the summary
+	// (sprint.ReadSpendLine), from the tick's where record; absent when no read ended today.
+	ReadSpend string               `json:"read_spend,omitempty"`
+	Streams   []sprint.StreamClock `json:"streams"`
 	// StageTimes is where a card's wall time goes: the median and p90 in seconds of each
 	// stage (needs, deal, take, work, rework, read_wait, read, accept, merge) over the
 	// cards landed in the last 24 h, overall and per stream, from the tick's where record
@@ -904,6 +907,10 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration, a
 	// record carries them (weight.go; store.WhereRecord)
 	if v.Critical = facts.Critical; len(v.Critical) > 0 {
 		b.WriteString(sprint.CriticalLine(v.Critical) + "\n")
+	}
+	// the day's read spend per route, from the same record (cost_view.go)
+	if v.ReadSpend = sprint.ReadSpendLine(facts.Streams); v.ReadSpend != "" {
+		b.WriteString(v.ReadSpend + "\n")
 	}
 	b.WriteString("\n")
 	parts := map[string]string{}
