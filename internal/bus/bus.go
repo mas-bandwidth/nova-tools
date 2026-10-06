@@ -219,6 +219,11 @@ type Store interface {
 	// Get is the named entries of the stream, in one trip (a pipeline of XRANGE
 	// id id); an id that is not there is left out.
 	Get(ctx context.Context, stream string, entries []string) ([]Entry, error)
+	// PutHash sets fields of the hash at key (HSET, merged: a field left out
+	// stays as it was) and, when ttl is above zero, expires the key after ttl
+	// (PEXPIRE) in the same pipeline. A zero ttl leaves any expiry as it is.
+	// Expiry is not a delete of an entry, a group or a key by this bus.
+	PutHash(ctx context.Context, key string, fields map[string]string, ttl time.Duration) error
 }
 
 // Bus is the rules over a Store.

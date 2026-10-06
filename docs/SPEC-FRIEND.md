@@ -126,15 +126,54 @@ never heard `silent`) is dropped. The challenge: `quiet`; `challenged` from a
 ping until the session's pong with that nonce; `deaf` after a window challenged
 with no pong, until a pong. Only the current nonce answers: a stale or replayed
 pong changes nothing. Up is `quiet` with at least one pong; the daemon's beat
-never makes a friend up. The friend's presence, the daemon's own check of its
-session, is beside this machine (Presence, below), not part of it.
+never makes a friend up. The friend's session check, the daemon's own check of its
+session, is beside this machine (Presence (internal/friend/presence.go), below), not part of it.
 
 The invariants, each with a reversed witness that TLC catches: a friend is up
 only after a session pong; a challenge is open for less than a window; the
 outage is said exactly once; only the current nonce ends a challenge; and a
 challenge ends.
 
+## Presence
+
+One record per friend on the bus store: the hash `bus2:presence:<name>`
+(`PresenceKey` in `internal/friend/presence_bus.go`). The daemon writes its
+own fields every second the store answers, one pipelined HSET plus a PEXPIRE
+of 60 seconds (`PresenceTTL`). A reader tells a stale record (down) from no
+record (gone: the daemon never ran, or a minute has passed since it wrote).
+The coordinator's keepalive writes only `proved`, and that write does not
+refresh the expiry, so a daemon that has stopped still disappears.
+
+The daemon's fields are `name`, `seen` (UTC, milliseconds, layout
+`PresenceSeen`), `instance` (this daemon's id), `harness`, `route` (`push`,
+`defer`, or `passive`), `asleep` (`0` or `1`), `queue`, `working`, `width`
+(numbers the daemon knows, `0` when it knows none), and `version`. `broken`
+and `reason` are written empty when the session is not broken; when it is,
+`broken` is the time the daemon marked it. `proved` is left out of the
+daemon's write, so the merge keeps the coordinator's value. `proved` is the
+time of the coordinator's last proved keepalive frame in the same layout,
+empty when there has been none.
+
+`PresenceState` is a pure function of that record and a clock. The model is
+`tla/Presence.tla` (`StateIsUp`, `ServerChangesNothing`): the state is `up`
+exactly when the record is present, `seen` is within `DownAfter` (10s) and
+`asleep` is `0`, and no action of a server the beat talks to changes the
+record. Within 10s with `asleep` `1`, the state is `asleep`. At exactly 10s,
+older than that, or when the record is gone, the state is `down`. A session
+the daemon has marked broken (the provider refuses every turn; `broken` is
+non-empty) is `down` whatever `seen` says.
+
+`--server` has no default. With none, the daemon sends no beat and the
+presence record is still written. With one, the beat runs beside the loop on
+its own goroutine, under its own deadline of less than a second (`BeatAside`),
+so a beat that does not answer cannot hold a delivery, a pong, or a presence
+write. That failure is one record line a minute, and it is never a change of
+this state. `install` with no beat address writes an agent that names none.
+
 ## Presence (internal/friend/presence.go)
+
+This section is the daemon's session check, a different record from the bus
+presence above.
 
 The finding of 2026-10-04: three friends read up with eight cards each while
 their harness apps were not running at all. The daemon answered every ping

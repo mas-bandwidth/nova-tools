@@ -80,6 +80,7 @@ func (w world) serve(c *tool.Call) *tool.Out {
 	}
 	b := &bus.Bus{Store: st}
 	k := friend.NewKeepalive()
+	k.SetAuthority(friend.Authority{Name: me})
 	start := w.now()
 	k.Friends(start, names)
 	rowsAt := start
@@ -140,6 +141,11 @@ func (w world) serve(c *tool.Call) *tool.Out {
 				continue
 			}
 			k.Sent(n, nonce, now)
+		}
+		if ok {
+			if err := k.HealthBatch(ctx, st, now); err != nil {
+				fail("the presence record could not be written: " + err.Error())
+			}
 		}
 		if !bad && failing != "" {
 			say("NOTE " + now.UTC().Format(time.RFC3339) + " the rows and the store answer again")

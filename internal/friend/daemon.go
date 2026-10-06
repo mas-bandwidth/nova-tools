@@ -19,6 +19,12 @@ import (
 // loop's read block: one read of the stream per beat.
 const BeatEvery = time.Second
 
+// BeatAside is how long the loop waits for one beat before it goes on.
+// Under a second, so a beat that does not answer cannot hold a delivery,
+// a pong or a presence write for longer than that. The record says so once
+// a minute (StatusErrorEvery) and presence does not change.
+const BeatAside = 900 * time.Millisecond
+
 // MaxDeliveries is how many times a message is handed into the session
 // before the daemon gives up on it: a turn that fails leaves the message
 // pending and the bus hands it in again once its claim opens (bus.ClaimAfter);
@@ -83,7 +89,17 @@ type Daemon struct {
 	Width                int
 	Store                bus.Store
 	Deliver              Deliverer
-	Beat                 func(ctx context.Context, active time.Time) error // one beat to the sprint server, carrying the session's last activity (zero: none known)
+	Beat                 func(ctx context.Context, active time.Time) error // one beat, carrying the session's last activity (zero: none known)
+	// BeatWait, when set, is called once a beat has been started, before the
+	// loop decides it has not answered. A test sets it so that wait is the
+	// beat blocking, not a timer. Nil waits BeatAside.
+	BeatWait func()
+	// Asleep, when it answers true, writes asleep=1 on the presence record.
+	// Nil writes 0.
+	Asleep func() bool
+	// Instance is this daemon's id on the presence record. Empty is filled
+	// once, from the clock, and kept for the run.
+	Instance string
 	// Activity is the newest write of the session's files and Cards the ids of
 	// the cards she holds, oldest first (nil: the queue file's queued and working
 	// tasks under Dir), both read at most once an IdleWalkEvery; IdleAfter is her
@@ -307,6 +323,13 @@ type loop struct {
 	dealt        []string // the inbox briefs the daemon wrote that the session has not been told of (batch mode)
 	wake         bool     // a wake check is owed: the pong line goes in as its own turn when the session is free (startWake)
 	saidRefusal  string   // the card runner's refusal last recorded, "" when it runs
+	instance     string   // this run's presence id, filled once
+	beatDone     chan error
+	beatCancel   context.CancelFunc
+	beatStart    time.Time
+	beatSaid     time.Time // when a beat that has not answered was last recorded
+	beatErrAt    time.Time // when a beat that returned an error was last recorded
+	presenceAt   time.Time // when a presence write that failed was last recorded
 }
 
 // Run is the loop until ctx ends. Each step: the clock; the friend's row
@@ -403,11 +426,10 @@ func (d *Daemon) Run(ctx context.Context) error {
 			if d.Activity != nil && (d.walked.IsZero() || now.Sub(d.walked) >= ActivityEvery) {
 				d.active, d.cards, d.walked = d.Activity(), d.held(), now // one walk serves the beat and the idle watch (they share walked)
 			}
-			if err := d.Beat(ctx, d.active); err != nil {
-				d.status.BeatError = err.Error()
-			} else {
-				d.status.BeatError, d.status.Beats, d.status.LastBeat = "", d.status.Beats+1, now
-			}
+			// Presence is written before the beat, so a beat that does not
+			// answer cannot hold it (docs/SPEC-FRIEND.md, Presence; tla/Presence.tla).
+			l.writePresence(now)
+			l.beatAside(now)
 		}
 		if d.Activity != nil && l.mode == ModeBatch && !l.broken && l.busy == nil {
 			if d.walked.IsZero() || now.Sub(d.walked) >= IdleWalkEvery {

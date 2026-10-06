@@ -139,7 +139,7 @@ INSTALL OK label=com.nova.friend-bob plist=./home/Library/LaunchAgents/com.nova.
 INSTALL PLAN command="write ./home/Library/LaunchAgents/com.nova.friend-bob.plist"
 INSTALL PLAN command="launchctl bootout gui/501/com.nova.friend-bob"
 INSTALL PLAN command="launchctl bootstrap gui/501 ./home/Library/LaunchAgents/com.nova.friend-bob.plist"
-INSTALL NOTE the agent runs: nova-friend run --as bob --harness opencode --dir ./bob --width 0, with --redis and --server as given here
+INSTALL NOTE the agent runs: nova-friend run --as bob --harness opencode --dir ./bob --width 0, with --redis as given here
 
 $ nova-friend uninstall --as bob --dry-run
 UNINSTALL OK label=com.nova.friend-bob plist=./home/Library/LaunchAgents/com.nova.friend-bob.plist dry_run=true

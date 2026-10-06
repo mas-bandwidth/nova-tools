@@ -1,9 +1,12 @@
 package friend
 
 import (
+	"context"
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/bus"
 )
 
 // The coordinator's side of the connection (docs/SPEC-FRIEND.md, "The
@@ -30,6 +33,13 @@ type Change struct {
 	Reason   string    // why down: no pong, or the ping could not be sent
 }
 
+// Authority is the coordinator's name, and an optional seat generation a
+// caller may pass through. The generation is not a presence field.
+type Authority struct {
+	Name string
+	Gen  int
+}
+
 // Keepalive is the coordinator's state: per friend, the nonces it sent and
 // when, and the last pong to one of them. It is stepped with the clock the
 // loop reads; the loop owns the transport (cmd/nova-friend serve), so every
@@ -37,6 +47,24 @@ type Change struct {
 type Keepalive struct {
 	DownAfter time.Duration // DownAfter unless a test shortens it
 	peers     map[string]*peer
+	auth      Authority
+}
+
+// SetAuthority records the coordinator HealthBatch writes for. Gen is kept
+// for the caller and is not written onto a presence record.
+func (k *Keepalive) SetAuthority(a Authority) { k.auth = a }
+
+// Authority is what SetAuthority recorded.
+func (k *Keepalive) Authority() Authority { return k.auth }
+
+// AuthorityFrom is the coordinator's name when one was given, else the saved
+// seat, with the seat generation passed through.
+func AuthorityFrom(coordinator, savedSeat string, gen int) Authority {
+	name := coordinator
+	if name == "" {
+		name = savedSeat
+	}
+	return Authority{Name: name, Gen: gen}
 }
 
 type peer struct {
@@ -146,6 +174,31 @@ func (k *Keepalive) Step(now time.Time) []Change {
 		out = append(out, c)
 	}
 	return out
+}
+
+// HealthBatch writes proved, and only proved, on each friend's presence
+// record whose last pong is non-zero. The value is that pong's time
+// (PresenceSeen). ttl is zero, so the daemon's expiry is left as it is: a
+// daemon that has stopped still disappears. A friend with no pong is left
+// untouched. The authority's generation is not a field.
+func (k *Keepalive) HealthBatch(ctx context.Context, st bus.Store, _ time.Time) error {
+	if st == nil {
+		return nil
+	}
+	var err error
+	for _, n := range k.Names() {
+		p := k.peers[n]
+		if p == nil || p.last.IsZero() {
+			continue
+		}
+		e := st.PutHash(ctx, PresenceKey(n), map[string]string{
+			"proved": p.last.UTC().Format(PresenceSeen),
+		}, 0)
+		if e != nil && err == nil {
+			err = e
+		}
+	}
+	return err
 }
 
 // PongNonce is the nonce a pong body answers: a daemon-pong's or a session

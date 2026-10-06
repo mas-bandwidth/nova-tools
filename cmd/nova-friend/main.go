@@ -336,7 +336,7 @@ func friendTool(w world) *tool.Tool {
 		f.Required("harness", "the harness the session runs in: "+strings.Join(friend.Harnesses, ", "))
 		f.Required("dir", "the friend's working directory: the session's, and where the state files live")
 		f.String("session", "", "the session to deliver into (default: the harness's newest session in --dir; harness tmux: the tmux session, default: the one host saved, else friend-<me>)")
-		f.String("server", w.server(), "the sprint server, host:port (default: "+ServerEnv+", else "+DefaultServer+")")
+		f.String("server", "", "where a beat is sent, host:port; with none, no beat is sent and presence is still written")
 		f.Int("width", 0, "the friend's width, from the nova-config friend row; 0 is unknown")
 		f.Duration("silent-stop", friend.DefaultSilentStop, "stop a turn that has printed nothing for this long; a turn that prints runs on")
 		f.Int("broken-after", friend.DefaultBrokenAfter, "turns in a row the provider refuses the same way before the session is broken")
@@ -1068,6 +1068,9 @@ func (w world) run(c *tool.Call) *tool.Out {
 				held = func(beat func(context.Context) error) func(context.Context) error { return beat }
 			}
 			up := func(ctx context.Context) error {
+				if server == "" || w.beat == nil {
+					return nil
+				}
 				var pong time.Time
 				if at := proved.Load(); at != nil {
 					pong = *at
@@ -1100,6 +1103,9 @@ func (w world) run(c *tool.Call) *tool.Out {
 			// ahead of the look; the inner check is the last before the up beat, so a limit
 			// seen during the step is never beaten up
 			down := func(ctx context.Context, until time.Time, reason string) error {
+				if server == "" || w.beatDown == nil {
+					return nil
+				}
 				return w.beatDown(ctx, server, name, active, until, reason)
 			}
 			if _, _, limited := fl.Limited(); limited && !perCard {
@@ -1114,7 +1120,12 @@ func (w world) run(c *tool.Call) *tool.Out {
 			return rowMode, rowWidth
 		},
 		LoadLanes: func() (friend.LaneState, error) { return friend.ReadLanes(state) },
-		Sprint:    w.sprintAsk(server),
+		Sprint: func() func(context.Context, []string) (string, error) {
+			if server == "" {
+				return nil
+			}
+			return w.sprintAsk(server)
+		}(),
 		ReadSlots: func() int { return int(rowReadSlots.Load()) },
 		LaneCaps: func() map[string]time.Duration {
 			if caps := rowLaneCaps.Load(); caps != nil {
@@ -1129,8 +1140,8 @@ func (w world) run(c *tool.Call) *tool.Out {
 			return ""
 		},
 		Progress: func(ctx context.Context, cards []friend.Card) error {
-			if w.progress == nil {
-				return nil // a world that sends none (a test's)
+			if server == "" || w.progress == nil {
+				return nil // no beat address, or a world that sends none (a test's)
 			}
 			for _, argv := range friend.ProgressArgv(name, cards) {
 				if err := w.progress(ctx, server, argv); err != nil {
@@ -1140,12 +1151,17 @@ func (w world) run(c *tool.Call) *tool.Out {
 			return nil
 		},
 		SaveLanes: func(s friend.LaneState) error { return friend.WriteLanes(state, s) },
-		Held:      w.held(name, server),
-		Stage:     w.stager(dir),
-		Tip:       w.tip,
+		Held: func() func(context.Context) (friend.Row, error) {
+			if server == "" {
+				return nil
+			}
+			return w.held(name, server)
+		}(),
+		Stage: w.stager(dir),
+		Tip:   w.tip,
 		Finish: func(ctx context.Context, argv []string) error {
-			if w.finish == nil {
-				return errors.New("this world sends no finish") // a test's: friend sync reads the lane's REPORT.md
+			if server == "" || w.finish == nil {
+				return nil // no beat address, or a test's: friend sync reads the lane's REPORT.md
 			}
 			return w.finish(ctx, server, argv)
 		},

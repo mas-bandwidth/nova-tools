@@ -165,6 +165,19 @@ func (r Redis) Range(ctx context.Context, stream, from, to string, count int) ([
 	return entries(stream, msgs), nil
 }
 
+func (r Redis) PutHash(ctx context.Context, key string, fields map[string]string, ttl time.Duration) error {
+	pipe := r.C.Pipeline()
+	vals := make([]any, 0, len(fields)*2)
+	for k, v := range fields {
+		vals = append(vals, k, v)
+	}
+	pipe.HSet(ctx, key, vals...)
+	if ttl > 0 {
+		pipe.PExpire(ctx, key, ttl)
+	}
+	return redisconn.Exec(ctx, pipe)
+}
+
 func (r Redis) Get(ctx context.Context, stream string, ids []string) ([]Entry, error) {
 	pipe := r.C.Pipeline()
 	cmds := make([]*redis.XMessageSliceCmd, len(ids))

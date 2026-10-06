@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -73,13 +74,36 @@ func TestEveryWrittenJobIsStagedWithItsCheckoutAndJobFile(t *testing.T) {
 		defer func() { ended <- struct{}{} }()
 		return stager.Stage(ctx, p)
 	}
-	// the rig stops its Run after the steps it is asked for, and a stop ends a stage: the
-	// first step's beat waits for the four stages it started (the loop beats on meanwhile in
-	// a daemon that runs)
+	// the rig stops its Run after the steps it is asked for, and a stop ends a stage.
+	// the beat is aside, so without BeatWait the loop would keep the injected clock
+	// running and the stop would cancel a checkout still being cloned. BeatWait
+	// holds the loop until that beat returns: the first one only after these four
+	// stages have finished, and every later one before the clock moves on.
 	r.at[1] = func() {
 		for range 4 {
 			<-ended
 		}
+	}
+	var mu sync.Mutex
+	finished := 0
+	wake := sync.NewCond(&mu)
+	orig := r.d.Beat
+	r.d.Beat = func(ctx context.Context, active time.Time) error {
+		err := orig(ctx, active)
+		mu.Lock()
+		finished++
+		wake.Broadcast()
+		mu.Unlock()
+		return err
+	}
+	waiting := 0
+	r.d.BeatWait = func() {
+		mu.Lock()
+		waiting++
+		for finished < waiting {
+			wake.Wait()
+		}
+		mu.Unlock()
 	}
 	row := &twinRow{}
 	r.d.Held = row.held

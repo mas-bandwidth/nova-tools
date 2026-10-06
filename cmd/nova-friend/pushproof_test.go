@@ -101,7 +101,7 @@ func TestRunRefusesAHarnessThatCannotDeliver(t *testing.T) {
 			return "FRIEND-BEAT OK bob at=2026-10-04T03:00:00Z row_mode=batch row_width=1", nil
 		}
 		var out, errb strings.Builder
-		code := run([]string{"run", "--as", "bob", "--harness", "opencode", "--dir", t.TempDir(), "--coordinator", "ada"}, strings.NewReader(""), &out, &errb, w)
+		code := run([]string{"run", "--as", "bob", "--harness", "opencode", "--dir", t.TempDir(), "--coordinator", "ada", "--server", "beat.test:9"}, strings.NewReader(""), &out, &errb, w)
 		require.Equal(t, 0, code, errb.String())
 		assert.Contains(t, out.String(), "push proof: CHECK OK harness=opencode took=")
 		require.Len(t, pongs, 3)

@@ -67,7 +67,11 @@ func (a Agent) Args() []string {
 		}
 		args = append(args, "--")
 	}
-	args = append(args, a.Binary, "run", "--as", a.Friend, "--harness", a.Harness, "--dir", a.Dir, "--redis", a.Redis, "--server", a.Server, "--width", fmt.Sprint(a.Width))
+	args = append(args, a.Binary, "run", "--as", a.Friend, "--harness", a.Harness, "--dir", a.Dir, "--redis", a.Redis)
+	if a.Server != "" {
+		args = append(args, "--server", a.Server)
+	}
+	args = append(args, "--width", fmt.Sprint(a.Width))
 	if a.Session != "" {
 		args = append(args, "--session", a.Session)
 	}
@@ -365,9 +369,13 @@ func daemonPart(args []string) []string {
 
 // Said is the command line as a plan says it, with no path in it: the
 // secrets wrap by its names and seat, then the daemon's own flags, --redis
-// and --server left to the install line that gave them.
+// and, when a beat address was given, --server left to the install line.
 func (a Agent) Said() string {
-	said := fmt.Sprintf("nova-friend run --as %s --harness %s --dir %s --width %d, with --redis and --server as given here", a.Friend, a.Harness, a.Dir, a.Width)
+	with := "with --redis as given here"
+	if a.Server != "" {
+		with = "with --redis and --server as given here"
+	}
+	said := fmt.Sprintf("nova-friend run --as %s --harness %s --dir %s --width %d, %s", a.Friend, a.Harness, a.Dir, a.Width, with)
 	if len(a.Secrets) == 0 {
 		return said
 	}

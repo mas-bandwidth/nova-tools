@@ -27,6 +27,7 @@ type Fake struct {
 	groups  map[string]*fakeGroup // stream + "/" + group
 	seq     int64
 	hashes  map[string]map[string]string
+	expire  map[string]time.Time // when a hash is gone; absent means it does not expire
 	// Friends is which names of the roster are friends (the set `friends`);
 	// the rest are machines. A test sets it before the first send.
 	Friends []string
@@ -146,12 +147,47 @@ func (f *Fake) Marks(_ context.Context, keys ...string) ([]map[string]string, er
 	}
 	out := make([]map[string]string, len(keys))
 	for i, k := range keys {
+		if !f.live(k) {
+			out[i] = map[string]string{}
+			continue
+		}
 		out[i] = maps.Clone(f.hashes[k])
 		if out[i] == nil {
 			out[i] = map[string]string{}
 		}
 	}
 	return out, nil
+}
+
+// live reports whether key has no expiry or its expiry is still ahead.
+// At the expiry instant the hash is gone. The caller holds f.mu.
+func (f *Fake) live(key string) bool {
+	exp, ok := f.expire[key]
+	return !ok || f.now.Before(exp)
+}
+
+func (f *Fake) PutHash(_ context.Context, key string, fields map[string]string, ttl time.Duration) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.trip(); err != nil {
+		return err
+	}
+	if f.hashes == nil {
+		f.hashes = map[string]map[string]string{}
+	}
+	if f.hashes[key] == nil {
+		f.hashes[key] = map[string]string{}
+	}
+	for k, v := range fields {
+		f.hashes[key][k] = v
+	}
+	if ttl > 0 {
+		if f.expire == nil {
+			f.expire = map[string]time.Time{}
+		}
+		f.expire[key] = f.now.Add(ttl)
+	}
+	return nil
 }
 
 func (f *Fake) EnsureGroup(_ context.Context, stream, group string) error {
