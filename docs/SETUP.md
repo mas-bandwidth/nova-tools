@@ -90,3 +90,30 @@ The `gosdk` check reads the role from the machine's seat. On the coordinator's m
 no `go` there it is ok. On a bench it fails when `go` is absent, when its version is not
 `go.mod`'s toolchain version, or when `GOCACHE` is not writable, and warns when `GOFLAGS`
 does not carry `-mod=readonly`. Each fix line names the step above.
+
+### dep-postgres-b.w3: Postgres for nova-config
+
+nova-config keeps the fleet's rows — machines, friends, routes, loops — in a PostgreSQL
+database, in schema `config`. `nova-config migrate` makes the schema and records each
+migration in `config.schema_migrations`; `nova-config apply` copies the rows into Redis for
+the runtime tools to read. A fleet needs it. One machine set up by `nova-up --local` does
+not, because the sprint's twin store (`mem:<root>/stores/sprint.twin`) stands in for the
+fleet's store.
+
+`nova-up` installs and runs no Postgres; a person provides it once, by exporting the
+address and migrating:
+
+```sh
+export NOVA_PG_DSN=postgres://user@host:5432/nova
+nova-config migrate
+```
+
+The password is never on the line: `NOVA_PG_PASSWORD_ENV` names the variable that holds it,
+`NOVA_PG_PASSWORD` when that is unset.
+
+The `pg` check in `nova-doctor` runs `nova-config migrate --dry-run --json` and reads what
+the store answered: it is `ok` when the store answers at the configured address as the
+configured user and its schema is at the newest migration this binary carries. It fails,
+naming every migration not applied, when the schema is behind, with the fix `nova-config
+migrate`; it fails when the store does not answer, with the fix `nova-config status`; and
+with no `NOVA_PG_DSN` set it is `ok` and names the local equivalent.
