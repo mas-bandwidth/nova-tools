@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 	"time"
 
@@ -51,6 +53,68 @@ func (r Redis) AddAll(ctx context.Context, streams []string, fields map[string]s
 		}
 	}
 	return redisconn.Exec(ctx, pipe)
+}
+
+// addOnce is AddOnce's one atomic step: Redis runs a script alone, so no
+// other send under the key comes between its GET and its writes. KEYS are the
+// record's key, the streams, then each mark's hash; ARGV are the record, its
+// expiry in ms, the count of streams, the count of field pairs, the pairs,
+// then each mark as "set" field value or "del" field.
+var addOnce = redis.NewScript(`
+local prior = redis.call('GET', KEYS[1])
+if prior then return {1, prior} end
+redis.call('SET', KEYS[1], ARGV[1], 'PX', ARGV[2])
+local ns, nf = tonumber(ARGV[3]), tonumber(ARGV[4])
+local fields = {}
+for i = 1, nf * 2 do fields[i] = ARGV[4 + i] end
+for i = 1, ns do redis.call('XADD', KEYS[1 + i], '*', unpack(fields)) end
+local j, k = 5 + nf * 2, 2 + ns
+while j <= #ARGV do
+  if ARGV[j] == 'del' then
+    redis.call('HDEL', KEYS[k], ARGV[j + 1])
+    j = j + 2
+  else
+    redis.call('HSET', KEYS[k], ARGV[j + 1], ARGV[j + 2])
+    j = j + 3
+  end
+  k = k + 1
+end
+return {0, ''}
+`)
+
+func (r Redis) AddOnce(ctx context.Context, key, record string, keep time.Duration, streams []string, fields map[string]string, marks ...Mark) (string, bool, error) {
+	keys := append([]string{key}, streams...)
+	names := slices.Sorted(maps.Keys(fields))
+	args := []any{record, keep.Milliseconds(), len(streams), len(names)}
+	for _, n := range names {
+		args = append(args, n, fields[n])
+	}
+	for _, m := range marks {
+		keys = append(keys, m.Key)
+		if m.Clear {
+			args = append(args, "del", m.Field)
+		} else {
+			args = append(args, "set", m.Field, m.Value)
+		}
+	}
+	res, err := addOnce.Run(ctx, r.C, keys, args...).Slice()
+	if err != nil {
+		return "", false, err
+	}
+	if len(res) != 2 {
+		return "", false, fmt.Errorf("the send-once script answered %d values, not 2", len(res))
+	}
+	found, _ := res[0].(int64)  // ignored: anything but 1 is a write the script made
+	prior, _ := res[1].(string) // ignored: as above, empty when it wrote
+	return prior, found == 1, nil
+}
+
+func (r Redis) Sent(ctx context.Context, key string) (string, bool, error) {
+	v, err := r.C.Get(ctx, key).Result()
+	if errors.Is(err, redis.Nil) {
+		return "", false, nil
+	}
+	return v, err == nil, err
 }
 
 func (r Redis) Unmark(ctx context.Context, key string, fields ...string) (int64, error) {
