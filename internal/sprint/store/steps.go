@@ -320,6 +320,14 @@ func UnpinStep(r sprint.UnpinReq) Step {
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Unpin(s, r) }}
 }
 
+// RebaseStep moves every unlanded card whose BASE is --from to --to
+// (sprint.Rebase, docs/SPEC-SPRINT.md, the rebase verb): it reads the work
+// table, and its request carries the git merge-base --is-ancestor check.
+func RebaseStep(r sprint.RebaseReq) Step {
+	return Step{Args: ArgsOf(r), Verb: "rebase", Load: tables(sprint.Work), Mirrors: true,
+		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Rebase(s, r) }}
+}
+
 // RelinkStep re-points the needs of an old card to its twin (sprint.Relink): it reads the
 // work table and the old cards' records, placed or not.
 func RelinkStep(r sprint.RelinkReq) Step {

@@ -488,6 +488,19 @@ func commands(g Group, first Note, prefix string) []Command {
 			case "wait":
 				add(d, cmd+"wait "+first.ID+" --for 30m")
 			}
+		case g.Type == NMissingBase:
+			from := first.Other
+			if from == "" {
+				from = "<the gone base>"
+			}
+			switch d {
+			case "rebase":
+				add(d, cmd+"rebase --from "+from+" --to '<the branch that replaces it>'")
+			case "wait":
+				add(d, cmd+"wait "+first.ID+" --for 30m")
+			case "drop":
+				add(d, cmd+"drop"+grp+" --reason "+whyText+ans)
+			}
 		case g.Type == NRejected:
 			switch d {
 			case "resume":
