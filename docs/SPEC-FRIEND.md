@@ -376,9 +376,11 @@ latest word about the coordinator, the count, then each message oldest first as
 
 where `age` is how long it has waited when the turn starts. The text is capped
 at the adapter's text limit (`TextLimit`: its own when it names one, else 256
-KiB, `BatchBytes`; the first message always goes in); the messages that do not
-fit are named under `and <n> more: nova-bus recv --as <me> --all`, one line
-each, stay pending, and are the next turn. A single message with nothing else
+KiB, `BatchBytes`; the first message always goes in), the rest block included:
+a message goes in only while the `and <n> more` line for those after it still
+fits. The messages that do not fit are named under
+`and <n> more: nova-bus recv --as <me> --all`, one line each while the limit
+allows (the count line alone when it does not), stay pending, and are the next turn. A single message with nothing else
 is its `recv` text alone. The envelope's size is on the status:
 `envelope` (status.json, and `envelope=` on `nova-friend status`) is how many
 messages the last envelope carried and `envelope_bytes` its text's size, at
