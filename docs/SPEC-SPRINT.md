@@ -3163,8 +3163,13 @@ woken again. `ack` (deaf, idle, an empty row and an ignored pin list it; behind 
 judged neither deaf, nor idle, nor empty. The model is tla/CoordinatorPass.tla: one judgment an
 episode (`OneJudgmentAnEpisode`), never a whole window unraised (`PushedEveryWindow`),
 closed when it stops holding (`ClosedWhenCleared`), each with a reversed witness TLC
-catches. Pinned by `TestTheMachineRemindsTheCoordinatorOfADeafOrIdleFriendEveryTenMinutes`
-on the twin store with a fake clock.
+catches; an empty row told only after ten unbroken minutes (`EmptyToldOnlyAfterWindow`)
+and by then (`EmptyToldByWindow`), and a pin off its friend's row never silent at a
+tick's end (`PinNeverSilent`), with theirs. Pinned by
+`TestTheMachineRemindsTheCoordinatorOfADeafOrIdleFriendEveryTenMinutes`,
+`TestAnIdleUpFriendWhileCardsWaitElsewhereIsToldOnce`,
+`TestAPinnedCardRotatedOffItsFriendIsJudgedOnce` and
+`TestAPinnedCardTheFleetTookIsJudgedOnce` on the twin store with a fake clock.
 
 ### Answered by nova-decide
 

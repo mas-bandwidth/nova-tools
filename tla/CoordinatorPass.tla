@@ -34,6 +34,24 @@
 \* The condition holds once Every of running time has run since the overdue line
 \* (behindConds): the line at the deadline, then the pass Every on, then every Every.
 \*
+\* With Kind = "empty" (emptyConds) holds is an up friend's row empty while cards she
+\* could do wait elsewhere, and the condition is that conjunction held for After of
+\* running time:
+\*   watchAt the running clock of the empty-row clock (the acknowledgement
+\*           NFriendRowEmpty), written the first tick that sees holds and closed the
+\*           first tick that does not; -1 while none. The pass reads the clock an
+\*           earlier tick wrote.
+\*   since   (ghost) the running clock of the first tick of the current run of ticks
+\*           that saw holds; -1 while none. Time down, held or busy is not in it.
+\*
+\* With Kind = "pin" (pinConds, friendDeal) holds is a named pin's card sitting ready or
+\* working off its friend's row. Only the tick's deal puts it there; Flip only takes it
+\* away (finished, or taken back to her row). The deal is a part of the tick before the
+\* overdue part, so the pass reads the world after the deal:
+\*   path    how the card came off her row: "friend" (the friends' deal, whose unit
+\*           carries the judgment, pinIgnoredNote) or "fleet" (a machine's deal, which
+\*           writes none: the pass raises it); "none" while it is on her row.
+\*
 \* The design, Broken = "none":
 \*   Tick  the clock steps; when the condition holds, a judgment is written if none is
 \*         open or acknowledged, else the open one is raised again in place (again counts
@@ -49,14 +67,23 @@
 \*   "doublepush" (Kind = "behind") the pass counts a late judgment from its deadline, not
 \*                from its overdue line: the line and the pass push in one tick:
 \*                OnePushATick.
+\*   "noclock"    (Kind = "empty") the friend is told the first tick her row is seen
+\*                empty, not After later: EmptyToldOnlyAfterWindow.
+\*   "keepclock"  (Kind = "empty") the clock is not closed when the conjunction breaks,
+\*                so time down or busy counts toward the ten minutes:
+\*                EmptyToldOnlyAfterWindow.
+\*   "passbefore" (Kind = "pin") the pass reads the world before the tick's deal, so a
+\*                pin placed off her row is silent until the next tick: PinNeverSilent.
+\*   "nopass"     (Kind = "pin") only the friends' deal tells it, the pass does not: a
+\*                pin a machine took is never told: PinNeverSilent.
 EXTENDS Integers
 
-CONSTANTS Every, MaxClock, Broken, Kind
+CONSTANTS Every, MaxClock, Broken, Kind, After
 
 VARIABLES holds, seen, open, acked, first, again, clk, written, pushes,
-          late, markAt, lastPush, tickPushes
+          late, markAt, lastPush, tickPushes, watchAt, since, path
 vars == <<holds, seen, open, acked, first, again, clk, written, pushes,
-          late, markAt, lastPush, tickPushes>>
+          late, markAt, lastPush, tickPushes, watchAt, since, path>>
 
 TypeOK ==
   /\ holds \in BOOLEAN
@@ -72,33 +99,50 @@ TypeOK ==
   /\ markAt \in (0..MaxClock) \cup {-1}
   /\ lastPush \in (0..MaxClock) \cup {-1}
   /\ tickPushes \in 0..2
+  /\ watchAt \in (0..MaxClock) \cup {-1}
+  /\ since \in (0..MaxClock) \cup {-1}
+  /\ path \in {"none", "friend", "fleet"}
 
 Init ==
   /\ holds = FALSE /\ seen = FALSE /\ open = FALSE /\ acked = FALSE
   /\ first = -1 /\ again = 0 /\ clk = 0 /\ written = 0 /\ pushes = 0
   /\ late = FALSE /\ markAt = -1 /\ lastPush = -1 /\ tickPushes = 0
+  /\ watchAt = -1 /\ since = -1 /\ path = "none"
 
 \* The world: the friend's session answers or not, her cards finish or not, the
-\* coordinator answers the late judgments or not.
+\* coordinator answers the late judgments or not; her row fills or empties, she goes
+\* down or up, the cards she could do come and go; a pinned card off her row is
+\* finished or taken back to her (only the deal puts one off her row).
 Flip ==
   /\ IF Kind = "behind"
        THEN late' = ~late /\ UNCHANGED holds
-       ELSE holds' = ~holds /\ UNCHANGED late
-  /\ UNCHANGED <<seen, open, acked, first, again, clk, written, pushes, markAt, lastPush, tickPushes>>
+       ELSE /\ Kind = "pin" => holds
+            /\ holds' = ~holds /\ UNCHANGED late
+  /\ path' = IF Kind = "pin" THEN "none" ELSE path
+  /\ UNCHANGED <<seen, open, acked, first, again, clk, written, pushes, markAt, lastPush, tickPushes,
+                 watchAt, since>>
 
 \* The coordinator acknowledges the open judgment.
 Ack ==
   /\ open /\ ~acked
   /\ open' = FALSE /\ acked' = TRUE
-  /\ UNCHANGED <<holds, seen, first, again, clk, written, pushes, late, markAt, lastPush, tickPushes>>
+  /\ UNCHANGED <<holds, seen, first, again, clk, written, pushes, late, markAt, lastPush, tickPushes,
+                 watchAt, since, path>>
 
 \* The condition the tick's pass reads. Behind: the late judgment's overdue line,
 \* written by an earlier tick (the pass reads the holds before this tick's), is Every
-\* old.
+\* old. Empty: the empty-row clock, written by an earlier tick, is After old. Pin: the
+\* card is off her row after this tick's deal.
 Cond ==
-  IF Kind = "behind"
-    THEN late /\ IF Broken = "doublepush" THEN TRUE ELSE markAt # -1 /\ clk + 1 - markAt >= Every
-    ELSE holds
+  CASE Kind = "behind" ->
+         late /\ IF Broken = "doublepush" THEN TRUE ELSE markAt # -1 /\ clk + 1 - markAt >= Every
+    [] Kind = "empty" ->
+         holds /\ (Broken = "noclock" \/ (watchAt # -1 /\ clk + 1 - watchAt >= After))
+    [] Kind = "pin" ->
+         CASE Broken = "passbefore" -> holds
+           [] Broken = "nopass"     -> holds' /\ path' = "friend"
+           [] OTHER                 -> holds'
+    [] OTHER -> holds
 
 \* This tick's overdue line about the late judgment: the first tick that finds it late.
 Line == Kind = "behind" /\ late /\ markAt = -1
@@ -109,13 +153,27 @@ PassPush ==
   /\ \/ ~open /\ ~acked
      \/ open /\ (clk + 1 - first) \div Every > again /\ Broken # "noreraise"
 
-\* One tick: the overdue part's line, then the pass (TickCoordinatorPass: notify, then
-\* reraise).
+\* The tick's deal (Kind = "pin"): it may place the pinned card off her row, by the
+\* friends' deal or a machine's.
+Deal ==
+  IF Kind = "pin"
+    THEN \E d \in BOOLEAN, how \in {"friend", "fleet"}:
+           /\ holds' = (holds \/ d)
+           /\ path' = IF ~holds /\ d THEN how ELSE path
+    ELSE UNCHANGED <<holds, path>>
+
+\* One tick: the deal, the overdue part's line, then the pass (TickCoordinatorPass:
+\* notify, then reraise).
 Tick ==
   /\ clk < MaxClock
   /\ clk' = clk + 1
+  /\ Deal
   /\ seen' = Cond
-  /\ UNCHANGED <<holds, late>>
+  /\ UNCHANGED late
+  /\ watchAt' = IF Kind # "empty" THEN -1
+                ELSE IF holds THEN (IF watchAt = -1 THEN clk + 1 ELSE watchAt)
+                ELSE IF Broken = "keepclock" THEN watchAt ELSE -1
+  /\ since' = IF Kind = "empty" /\ holds THEN (IF since = -1 THEN clk + 1 ELSE since) ELSE -1
   /\ markAt' = IF Kind = "behind" /\ late THEN (IF markAt = -1 THEN clk + 1 ELSE markAt) ELSE -1
   /\ tickPushes' = (IF Line THEN 1 ELSE 0) + (IF PassPush THEN 1 ELSE 0)
   /\ lastPush' = IF ~(Kind = "behind" /\ late) THEN -1
@@ -166,5 +224,18 @@ OnePushATick == tickPushes <= 1
 \* without a push once its overdue line is written: the line, then the pass every Every.
 LateRemindedEveryWindow ==
   (Kind = "behind" /\ late /\ markAt # -1 /\ ~acked) => clk - lastPush <= Every
+
+\* Empty: a friend is told only once her row has been empty, while cards she could do
+\* wait, for After of running time without a break.
+EmptyToldOnlyAfterWindow ==
+  (Kind = "empty" /\ (open \/ acked)) => (since # -1 /\ first - since >= After)
+
+\* Empty: once that has held for After, she is told (or the coordinator acknowledged it).
+EmptyToldByWindow ==
+  (Kind = "empty" /\ since # -1 /\ clk - since >= After) => (open \/ acked)
+
+\* Pin: a pinned card off her row is never silent: the tick that puts it there tells it,
+\* by the friends' deal's note or the pass.
+PinNeverSilent == (Kind = "pin" /\ holds) => (open \/ acked)
 
 =============================================================================
