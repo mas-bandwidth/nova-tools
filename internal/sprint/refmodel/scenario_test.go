@@ -25,7 +25,7 @@ const (
 func scenarios() []sample {
 	var out []sample
 	for seed := uint64(0); seed < scenarioSeeds; seed++ {
-		for _, run := range []func(*walk) []sample{stoppedOnALandedCard, unevenQueues, unevenReads, aLateCardRedealt, lanesFreedBesideABacklog, aFriendStalls, aCardPastItsCap} {
+		for _, run := range []func(*walk) []sample{stoppedOnALandedCard, unevenQueues, unevenReads, aLateCardRedealt, aNeedLandedBesideItsWaiter, lanesFreedBesideABacklog, aMemberWithFreeLanes, aReaderWithFreeLanes, aFriendStalls, aCardPastItsCap} {
 			out = append(out, run(newWalk(scenarioBase+seed))...)
 		}
 	}
@@ -172,6 +172,66 @@ func aLateCardRedealt(k *walk) []sample {
 		}
 	}
 	return out
+}
+
+// aNeedLandedBesideItsWaiter lands a merging primary by an outside hand while
+// another primary still waits on it, so the tick's resolve has the waiter to
+// move. The step that lands a card also moves what waited on it, and a drop of
+// a card a waiting card needs takes that waiter too (docs/SPEC-SPRINT.md
+// section 11), so a walk reaches a waiter beside a landed need only rarely.
+func aNeedLandedBesideItsWaiter(k *walk) []sample {
+	stream := k.streams[0]
+	need := k.addTo(stream)
+	waiter := ""
+	if need != "" {
+		waiter = k.addTo(stream, need)
+	}
+	if need == "" || waiter == "" || !k.advance(need, sprint.Merging) {
+		return nil
+	}
+	c := k.s.Work.Card(need)
+	c.Col = sprint.Landed
+	c.Rev++
+	k.s.Work.Put(c)
+	if k.s.StateOf(waiter) != sprint.Waiting {
+		return nil
+	}
+	return []sample{k.sample()}
+}
+
+// aMemberWithFreeLanes has one member take all of its ready cards and finish
+// them, while the others hold ready backlogs: its lanes are free beside them, the
+// case the tick's level evens.
+func aMemberWithFreeLanes(k *walk) []sample {
+	for range 4 * len(k.members) {
+		k.addTo(k.streams[0])
+	}
+	k.wholeTick()
+	if !k.unlevel() || !k.emptyLanes() {
+		return nil
+	}
+	return []sample{k.sample()}
+}
+
+// aReaderWithFreeLanes has primaries finished and asked of the readers, and one
+// reader report on all of its reads while the others hold asked reads it could
+// take: the case the tick's read level evens.
+func aReaderWithFreeLanes(k *walk) []sample {
+	var ids []string
+	for range 4 * len(k.members) {
+		if id := k.addTo(k.streams[0]); id != "" {
+			ids = append(ids, id)
+		}
+	}
+	k.wholeTick()
+	for _, id := range ids {
+		k.advance(id, sprint.Review)
+	}
+	k.wholeTick()
+	if !k.readAll() {
+		return nil
+	}
+	return []sample{k.sample()}
 }
 
 // lanesFreedBesideABacklog fills the members' ready queues past their lanes and has

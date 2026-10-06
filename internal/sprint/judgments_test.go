@@ -35,31 +35,21 @@ func TestReadyToAcceptIsClosedByReworkAndDrop(t *testing.T) {
 	w.clean("closed")
 }
 
-// H3: add with a need that names a dropped primary writes the blocked
-// judgment itself, in the same step; its decisions are drop and ack.
+// H3: add with a need that names a dropped primary is refused, naming the id
+// and its outcome; nothing is written, and no blocked judgment is opened
+// (docs/SPEC-SPRINT.md section 11).
 func TestAddOnADroppedNeedIsBlockedAtOnce(t *testing.T) {
 	t.Parallel()
 	w := setup(t, 1)
 	w.must(Drop(w.s, DropReq{Sel: Sel{IDs: []string{"s1-1"}}, Reason: "obsolete"}))
-	p := w.must(Add(w.s, AddReq{Stream: "s2", IDs: []string{"later"}, Needs: []string{"s1-1"}}))
-	var notes []Note
-	for _, u := range p.Units {
-		notes = append(notes, u.Notes...)
-	}
-	require.Len(t, notes, 1, "add did not write the blocked judgment: %+v", notes)
-	require.Equal(t, NBlocked, notes[0].Type, "add did not write the blocked judgment: %+v", notes)
-	require.Len(t, w.openOn("later"), 1, "add did not write the blocked judgment: %+v", notes)
-	got := notes[0].Decisions
-	require.Equal(t, []string{"drop", "ack"}, got, "decisions: %v", got)
-	g := Inbox(InboxReq{Now: w.s.Now, Open: w.s.Open})
-	var ds []string
-	for _, c := range g[0].Commands {
-		ds = append(ds, c.Decision+": "+c.Lines[0])
-	}
-	require.Len(t, ds, 2, "commands: %v", ds)
-	require.Equal(t, "ack: nova-sprint ack "+g[0].ID+" --reason "+noneText, ds[1], "commands: %v", ds)
-	w.must(Resolve(w.s, ResolveReq{}))
-	require.Len(t, w.notesOf(NBlocked), 1, "blocked written again")
+	p := Add(w.s, AddReq{Stream: "s2", IDs: []string{"later"}, Needs: []string{"s1-1"}})
+	require.Len(t, p.Refused, 1, "add of a dropped need is not refused: %+v", p)
+	require.Equal(t, "later", p.Refused[0].Key, "add of a dropped need is not refused: %+v", p)
+	require.Contains(t, p.Refused[0].Why, "s1-1", "the refusal names the need: %+v", p)
+	require.Contains(t, p.Refused[0].Why, "dropped", "the refusal names the outcome: %+v", p)
+	require.Empty(t, p.Units, "the refusal wrote a card: %+v", p)
+	require.Nil(t, w.s.Work.Card("later"), "the refusal wrote a card: %+v", p)
+	require.Empty(t, w.notesOf(NBlocked), "the refusal wrote a blocked note")
 	w.clean("blocked")
 }
 
