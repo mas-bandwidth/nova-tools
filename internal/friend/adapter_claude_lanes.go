@@ -58,10 +58,14 @@ type Claude struct {
 	Program   string           // "claude" when empty
 	Out       io.Writer        // where the run's output goes, when set: the daemon's record
 	Now       func() time.Time // time.Now when nil: the clock a limit's reset is read against
+	// TokenCap is the friend row's per-card token cap as the daemon last read
+	// it (ParseTokenCap; 0 none); nil is DefaultTokenCap (tokencap.go).
+	TokenCap func() int64
 
 	mu    sync.Mutex
-	cost  float64 // every run's cost so far, in US dollars
-	usage Usage   // the last usage a run measured
+	cost  float64  // every run's cost so far, in US dollars
+	usage Usage    // the last usage a run measured
+	runs  cardRuns // each card's tokens over its finished runs
 }
 
 func (c *Claude) program() string {
@@ -96,9 +100,23 @@ func (c *Claude) RunCard(ctx context.Context, card Card) (LaneTurn, error) {
 		return LaneTurn{}, fmt.Errorf("the card's brief: %w", err)
 	}
 	args := append([]string{"CLAUDE_CONFIG_DIR=" + c.configDir(), c.program(), "-p", string(brief), "--output-format", "stream-json", "--verbose"}, ClaudeTrim...)
-	out, exit, err := c.Run(ctx, c.Dir, "env", args, "")
+	// the run's stream-json usage counted as it prints, and the run stopped at the card's cap (tokencap.go)
+	limit := tokenCap(c.TokenCap)
+	run, watch, stop := watchClaude(ctx, limit, c.runs.prior(card.Outbox))
+	defer stop()
+	out, exit, err := c.Run(run, c.Dir, "env", args, "")
 	if c.Out != nil && out != "" {
 		fmt.Fprintln(c.Out, strings.TrimRight(Head(out, OutputKept), "\n"))
+	}
+	capped, at := watch.done()
+	c.runs.set(card.Outbox, at)
+	if capped {
+		_ = c.account(card.ID, out) // ignored: a limit in a run the cap stopped is the cap's end, not the provider's; the cost is on the record
+		e, werr := writeCapReport(c.Friend, card.Outbox, TokenCapped{Cap: limit, At: at, Card: card.ID})
+		if c.Out != nil {
+			fmt.Fprintf(c.Out, "claude: run=%s %s; its run is stopped, usage %s%s\n", card.ID, e.Error(), at, reportWords(e, werr))
+		}
+		return LaneTurn{Exit: exit}, e
 	}
 	if err == nil {
 		if limited := c.account(card.ID, out); limited != nil {

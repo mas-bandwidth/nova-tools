@@ -1516,6 +1516,52 @@ friend row and `friend beat` printing it as `row_lane_caps=` (cmd/nova-sprint);
 until they are, every lane runs on `DefaultLaneCaps`. The batch turn is not
 capped (it carries messages, not a card).
 
+### friend-token-cap-b.w4 — a card's tokens are capped per friend row (internal/friend/tokencap.go)
+
+A harness that re-sends its whole context on each call makes a long card
+snowball: its tokens grow with the square of its turns. Every one-shot lane
+counts a card's tokens as it runs, and stops the card at the friend row's cap:
+
+- **The count.** The sum of input, cache read, cache write, output and
+  reasoning tokens, from the harness's own usage record behind `CardUsage`: a
+  Claude run's stream-json `assistant` lines (`message.usage`, the last line
+  of each message id standing for that message, read from every write the run
+  prints, `WithOutputTail` still handed each one), and an OpenCode turn's
+  session export (`SessionTokens`: each assistant message's `tokens`, the
+  growth since the read before the turn), read every `TokenPoll` (15 s) on the
+  lane's clock (`OpenCodePriced.Tick`). A card's count runs across every run
+  the lane gives it. An export whose messages carry no tokens is no count: the
+  turn runs uncapped, said on the record, and its price (`SessionCost`) is as
+  it was.
+- **The cap.** The friend row's per-card token cap as her daemon last read it
+  (`Claude.TokenCap`, `OpenCodePriced.TokenCap`, from her beat's answer as
+  `row_token_cap=<n>`, `ParseTokenCap`); `DefaultTokenCap`, 6000000, where the
+  row names none; 0 is no cap.
+- **At the cap.** When the sum reaches the cap the lane cancels the run's own
+  context, which signals the run's own process group (`RealExec`) and no
+  other, and writes the card's `REPORT.md` as `Verdict: HOLD` with the reason
+  `token cap <cap> reached at <n> tokens` and the usage so far
+  (`TokenCapReport`); her own `REPORT.md` stands when she wrote one. The
+  record says `token cap <cap> reached at <n> tokens; its run is stopped,
+  usage <counts>`. A `REPORT.md` is a done card (a lane's end, above), so the
+  sync finishes it HOLD from that report and the lane takes her next card.
+  Under the cap the lane runs as it does without one.
+
+`TestOneShotLaneStopsAtTheTokenCapAndHoldsWithTheReason` runs both lanes over
+a fake harness (this package's test binary started again, reporting growing
+usage, and for OpenCode an injected clock): over the default cap and over a
+row's cap the run is stopped and the card held with the reason and the usage;
+under the cap, and with a cap of 0, the card finishes as the harness wrote it.
+`TestTheTokenCapIsReadOffTheRow`, `TestAnExportWithNoTokenShapeLeavesThePriceAlone`.
+
+Not here, outside the card's paths: the `token_cap` field on nova-config's
+friend row, `friend beat` printing it as `row_token_cap=` (cmd/nova-sprint),
+and the daemon setting `TokenCap` from `ParseTokenCap` (cmd/nova-friend);
+until they are, every one-shot lane runs at `DefaultTokenCap`. An OpenCode
+turn's child sessions are not in its export and are not counted. The model
+(`internal/friend/tla/LaneEnd.tla`, a token stop beside `CapEnds`) is owed
+with them.
+
 ### the-daemon-reads-every-outbox-job.w1 — the daemon finishes every report on her row (internal/friend/outbox.go)
 
 The night of 2026-10-05, a friend held eight working cards whose

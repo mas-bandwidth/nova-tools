@@ -103,6 +103,25 @@ nova-config apply --kind friend
 A claude row in one-shot mode without `config_dir` runs no lane: her daemon
 says so on its record with the `nova-config friend set` that fixes it.
 
+### friend-token-cap-b.w4 — a card's token cap
+
+Each one-shot row's cards are capped by their tokens: input, cache read and
+write, output and reasoning, summed from her harness's own usage record. At
+the cap her lane stops its own run and writes the card's `REPORT.md` as
+`Verdict: HOLD` naming `token cap <cap> reached at <n> tokens` and the usage
+so far, and she takes her next card (docs/SPEC-FRIEND.md, friend-token-cap-b.w4).
+The cap is a row setting, `token_cap`, 6000000 tokens where the row names
+none and 0 for none; her daemon reads it off her beat as `row_token_cap=`.
+The example, a row capped at three million:
+
+```
+nova-config friend set amy-a --token_cap 3000000
+nova-config apply --kind friend
+```
+
+The row field and the beat's `row_token_cap=` are not on nova-config and
+`friend beat` yet; until they are, every one-shot lane runs at 6000000.
+
 ## A sprint card
 
 A card of the sprint whose brief says `WHO: friend`, `WHO: friend <name>`, or
