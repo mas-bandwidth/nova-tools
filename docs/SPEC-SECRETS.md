@@ -753,6 +753,21 @@ seal`); none is ever an empty password. `nova-sprint seat login` records one (do
 "The seat's store login"), so the sprint's verbs need no `exec` wrapper; nova-config can read its
 store login through the same helper.
 
+**The keys.** A login names more than the store's password: `secrets.ReadKeys(login, names)` reads
+each of a list of names (`KeyNames`: secret names, none twice) from the same seat, through
+`ReadLogin`, in the process that uses them, and holds them as `Keys`, which print their names and no
+value. A binary reads a key through `Keys.Getenv`, the getenv it read the key's variable through
+before, so no environment holds it and no child inherits it; a child on a route is handed
+`Keys.ChildEnv(provider)`, the one entry `<PROVIDER>_API_KEY=<value>` of its route's provider
+(`ProviderKey`), never the set. A name the seat does not hold, holds empty, or a seat that does not
+open is a refusal naming the key and `nova-secrets names`, and the binary refuses at its start. Two
+units read keys this way: the sprint's server (`nova-sprint run --keys JEV_API_KEY,...`, through the
+recorded seat login: the decide lane's key, land's gate and score, the providers' balances) and a
+member (`nova-swarm --seat <seat> member --keys OPENROUTER_API_KEY,JEV_API_KEY,...`, from the seat's
+file in the fleet layout: each launch is handed its route's provider key, and `JEV_API_KEY` for
+native's own decide read and gate decision, which native never hands the harness). Neither runs
+under `exec`. The test: `TestEveryUnitKeyIsReadInProcessNeverFromTheEnvironment`.
+
 ### Refused, by name, with where it lives
 
 One line, on stderr, naming the door — exit 2, or 125 from `exec`:

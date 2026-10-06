@@ -276,6 +276,11 @@ var swarmAudit = audit.Config{
 		// this tool prints about it goes through oneline.Escape; it never carries
 		// a password.
 		`"github.com/mas-bandwidth/nova-tools/internal/seatcred"`,
+		// internal/secrets is member --keys (keys.go, seat-secrets-for-every-key): it reads
+		// the named keys from the seat's file in memory and holds them as secrets.Keys, which
+		// print their names alone. It writes nothing to any writer; the one line this tool
+		// prints about it, a refusal, names keys and paths and never a value.
+		`"github.com/mas-bandwidth/nova-tools/internal/secrets"`,
 		// native.go (issue #296) needs these and none of them writes a stream, so
 		// none can write past the escape. context only gave CommandContext its deadline
 		// and holds no writer; crypto/sha256 and encoding/hex compute and hex-encode the

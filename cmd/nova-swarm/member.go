@@ -33,6 +33,8 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/member"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
+	"github.com/mas-bandwidth/nova-tools/internal/seatcred"
+	"github.com/mas-bandwidth/nova-tools/internal/secrets"
 	"github.com/mas-bandwidth/nova-tools/internal/sprintwire"
 	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
@@ -71,6 +73,7 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	workerFile := fs.String("worker", "", "the worker description `file` (JSON), handed to each child's native --worker; the secret it names is handed through too")
 	noWall := fs.Bool("no-wall", false, "run each child with no nova-sandbox wall (native --no-wall): the caller owns every read and write it makes")
 	ghBin := fs.String("gh", "gh", "the gh `path` the member opens a work card's pull request with, outside the wall (default gh)")
+	keysFlag := fs.String("keys", "", "the `NAME,...` of secrets the member reads in this process from its seat's store (--seat or NOVA_SEAT): each launch is handed its route's one provider key (<PROVIDER>_API_KEY) and, when named, JEV_API_KEY for native's own decide read; none is read from or put in this process's environment, and a key that does not resolve refuses the member at its start (keys.go)")
 	passFlag := fs.String("pass", "", "the `NAME,...` of secrets in this environment a child is handed (the loop record's nova-secrets keys); a harness that reads its provider key from the environment needs it")
 	stageWall := newSecondsFlag(fs, "stage-wall", swarm.DefaultStageTimeout, "the bound on staging each card's checkout, a `duration` or whole seconds, handed to native as --stage-timeout: a slow machine under load names a longer one in its loop row's argv (default 120s)")
 	diskFloor := fs.Int("disk-floor", 10, "the free `GiB` the slots' volume keeps: below it no card starts (default 10; 0 checks nothing)")
@@ -169,6 +172,11 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	if f.refused(stderr) {
 		return 2
 	}
+	// every key the member's launches need, read in process before anything starts (keys.go)
+	keys, err := memberKeys(*keysFlag, seatcred.Process().Selected(), os.Getenv, secrets.ReadKeys)
+	if err != nil {
+		return refuse(stderr, " member", err.Error())
+	}
 	// the beat writes from its own goroutine (memberLoop), so what this verb writes to stderr
 	// is one line at a time
 	stderr = &lockedWriter{w: stderr}
@@ -206,7 +214,7 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 		self: self, harness: *harness, model: *model, root: *root, slots: *slots,
 		resultsRoot: *resultsRoot, deadline: deadline.d, stageWall: stageWall.d, tokens: *tokensWord, auth: *auth, config: *config,
 		worker: *workerFile, noWall: *noWall, stderr: stderr, pass: nativePass, identity: *identity,
-		load: hostload.Local(), maxLoad: *maxLoad, warnLoad: *warnLoad,
+		keys: keys, load: hostload.Local(), maxLoad: *maxLoad, warnLoad: *warnLoad,
 		cacheLimit: int64(*gocacheGiB) * gib,
 	}
 	// a work card's commit is pushed by the member, outside the wall, at its
@@ -235,6 +243,9 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	}
 	cfg := memberConfig(*as, *width, *reader, meter, room, *root, *noWall)
 	cfg.Sleep = time.Sleep // harness starts StartGap apart
+	if !*reader {
+		cfg.Attempt = workAttempt(false, keys.Getenv(os.Getenv)) // the decide key from --keys, else the environment
+	}
 	m := member.New(cfg, sp, rn, pu, stdout)
 	kind := "member"
 	if *reader {
@@ -251,7 +262,7 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	fmt.Fprintf(stdout, "MEMBER %s as=%s width=%s every=%s server=%s harness=%s model=%s stage-wall=%s\n", oneline.Field(kind), oneline.Field(*as), oneline.Field(widthWord), oneline.Field(every.d.String()), oneline.Field(*server), oneline.Field(*harness), oneline.Field(modelWord), oneline.Field(stageWall.d.String()))
 	// the machine's one model catalog, refreshed once here and never per launch (catalog.go)
 	fmt.Fprintf(stdout, "CATALOG %s\n", oneline.Escape(refreshCatalog(*harness, *root)))
-	if note := passNote(*model, pass, *auth); note != "" {
+	if note := passNote(*model, append(append([]string{}, pass...), keys.Names()...), *auth); note != "" {
 		fmt.Fprintln(stdout, note)
 	}
 	if removed, kept := rn.prune(time.Now()); removed > 0 {
@@ -465,6 +476,7 @@ type nativeRunner struct {
 	env                                            []string                     // added to this process's environment: none in production, a test's
 	lookPath                                       func(string) (string, error) // resolves a headless harness on PATH (harnessFor); nil is exec.LookPath, a test's its own
 	pass                                           []string                     // the secret names handed to native (--pass, the worker's secret)
+	keys                                           secrets.Keys                 // the keys read in process (--keys): a launch is handed its route's alone (launchKeys)
 	benchHome                                      string                       // the home whose nova-bench/mirror a card's clone step borrows (mirrorKeeping); "": the card keeps $HOME
 	load                                           hostload.Source
 	maxLoad, warnLoad                              float64
@@ -609,7 +621,7 @@ func (r *nativeRunner) Start(p member.Packet) (child member.Child, err error) {
 	// ends it), released when the wait returns.
 	ctx, release := context.WithCancel(context.Background())
 	cmd := subproc.Long(ctx, r.self, args...)
-	cmd.Env = childEnviron(append(os.Environ(), r.env...), r.pass)
+	cmd.Env = append(childEnviron(append(os.Environ(), r.env...), r.pass), launchKeys(r.keys, model)...)
 	logf, err := os.Create(logPath)
 	if err != nil {
 		release()
