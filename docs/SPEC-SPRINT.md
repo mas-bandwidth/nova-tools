@@ -3452,6 +3452,29 @@ a need) is held by what it waits on, which the table shows, and is never stale.
 control card (`stale_review`), and the stream is not shown stale before it.
 This is pull visibility; nothing claims to detect a dead process.
 
+### A judgment retires with its card
+
+On 2026-10-05 the inbox held `no route serves the tier` for a card seven hours after it
+landed, and `returned to review` for a card already dropped; the coordinator read each,
+found the card gone, and could not even ack the tick-kept one. A judgment about cards is
+answered by the cards: one whose every card has left the table (landed, dropped, or dropped
+`replaced by <twin>`) retires on the tick that sees it gone (the check part, at the tick's
+end: `TickCheck`, `RetireJudgments` in `internal/sprint/judgments_retire.go`). The tick
+closes it with one decided note answered by the machine, `retired with its card: <id>
+landed` (or `<id> dropped (<reason>)`, `<id> replaced by <twin>`), one event a card, so
+the log says why it closed and the inbox never shows a judgment about a card no longer on
+the table.
+
+- A judgment on primaries retires on each primary that has left; its other subjects stay.
+- A stream-level judgment the tick keeps on the cards it names (`no route serves the tier`,
+  `the fleet is starving`) retires once every card it names has left; while the condition
+  holds for cards still waiting, the tick raises it again on those.
+- A stream's own judgment (a stop, a red base, a sync conflict), a judgment of the sprint,
+  and one whose cause is the landing itself (`landed work scored low`) never retire this
+  way; nor does a broken rule (`NInvariant`), which closes when its rule holds again.
+
+The test is `TestAJudgmentRetiresWhenItsCardLeavesTheTable`.
+
 ### Backlog alarms
 
 Four conditions of the whole sprint the tick keeps (its deadlines part plans them
