@@ -96,7 +96,7 @@ func parseRun(args []string) (runConfig, error) {
 			return c, fmt.Errorf("flag %q after the packages; flags come first", p)
 		}
 		if !packageRE.MatchString(p) || slices.Contains(strings.Split(p, "/"), "..") {
-			return c, fmt.Errorf("package %q is not a package directory of the source tree: ./ then path segments of letters, digits, _ . and -, an optional trailing /..., and no ..", p)
+			return c, fmt.Errorf("package %q is not a package directory of the source tree (use . followed by path segments of letters, digits, underscore, period and hyphen, an optional trailing /..., and no ..)", p)
 		}
 	}
 	if c.deadline < minDeadline {
