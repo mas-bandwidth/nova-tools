@@ -64,6 +64,11 @@ type Status struct {
 	SessionID     string    `json:"session_id,omitempty"`
 	SessionReason string    `json:"session_reason,omitempty"`
 	BrokenAt      time.Time `json:"broken_at,omitempty"`
+	// While the harness is at its usage limit or out of credits Session is
+	// SessionLimited, LimitKind says which (KindLimit or KindCredits) and
+	// LimitUntil is the reset (docs/SPEC-FRIEND.md, limits-mean-down-w-r.w1~15).
+	LimitKind  string    `json:"limit_kind,omitempty"`
+	LimitUntil time.Time `json:"limit_until,omitzero"`
 	// Mode is how the daemon delivers now (batch or one-shot), and Lanes the
 	// one-shot lanes as n:session:card/turn, empty in batch.
 	Mode  string `json:"mode,omitempty"`
