@@ -184,8 +184,8 @@ func (st *Store) Teardown(ctx context.Context) (int, error) {
 	}
 	epochs.Beating = slices.Sorted(maps.Keys(beating))
 	epochs.Readers = slices.Sorted(maps.Keys(reading))
-	epochs.Friends = st.friendNames(ctx)
 	_ = st.getJSON(ctx, KeySeatPushers, &epochs.Pushers) // ignored: an unreadable list leaves its records, as a missing one does
+	epochs.Friends = st.friendNames(ctx)
 	_ = st.B.ViewDelete(ctx, st.Names.View())
 	for _, t := range All {
 		if err := st.B.AtEpoch(es.N, false).DropTable(ctx, st.Names.Table(t)); err != nil && refusalCode(err) != "NOTABLE" {
