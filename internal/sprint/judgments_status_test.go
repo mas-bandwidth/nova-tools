@@ -72,6 +72,13 @@ func (r *transitionRig) beat() {
 	require.NoError(r.t, err)
 }
 
+// advance moves the clock d and runs nothing.
+func (r *transitionRig) advance(d time.Duration) {
+	r.mu.Lock()
+	r.now = r.now.Add(d)
+	r.mu.Unlock()
+}
+
 // tick moves the clock d, beats m1 (while it beats) and runs one tick.
 func (r *transitionRig) tick(d time.Duration) {
 	r.t.Helper()
@@ -97,7 +104,7 @@ func (r *transitionRig) answered() {
 	require.NoError(r.t, err)
 }
 
-// statusNotes is every status note open (a judgment, or one answered by rule and kept).
+// statusNotes is every status note open (a judgment, or one answered and kept).
 func (r *transitionRig) statusNotes(row string) []sprint.Note {
 	r.t.Helper()
 	open, err := r.m.OpenNotes(r.ctx)
@@ -113,6 +120,40 @@ func (r *transitionRig) statusNotes(row string) []sprint.Note {
 	return out
 }
 
+// pushes is what the push loop delivered for the row: every status judgment written, and
+// every note to the coordinator that one changed.
+func (r *transitionRig) pushes(row string) (judgments, changes int) {
+	r.t.Helper()
+	notes, _, err := r.m.NotesSince(r.ctx, "", 100000)
+	require.NoError(r.t, err)
+	for _, n := range notes {
+		if len(n.Primaries) != 1 || n.Primaries[0] != row {
+			continue
+		}
+		switch {
+		case n.Kind == sprint.Judgment && n.Type == sprint.NStatus:
+			judgments++
+		case n.Kind == sprint.Happened && n.Type == sprint.NStatusChanged && n.To != "":
+			changes++
+		}
+	}
+	return judgments, changes
+}
+
+// up brings amy up past the dwell: her daemon beats, her session answers, and the change
+// holds for the dwell. The clock ends at the tick that counts it.
+func (r *transitionRig) up(build string, start time.Time) {
+	r.t.Helper()
+	r.daemon(build, start, start)
+	r.answered()
+	r.tick(time.Second)
+	assert.Empty(r.t, r.statusNotes(sprint.FriendRow("amy")), "inside the dwell: nothing raised")
+	r.advance(sprint.StatusDwell)
+	r.daemon(build, start, start)
+	r.answered()
+	r.tick(0)
+}
+
 func TestAFriendComingUpPushesTheFourStepsToTheSeat(t *testing.T) {
 	t.Parallel()
 	r := newTransitionRig(t)
@@ -120,37 +161,54 @@ func TestAFriendComingUpPushesTheFourStepsToTheSeat(t *testing.T) {
 	r.tick(time.Second)
 	assert.Empty(t, r.statusNotes(row), "the first sight of her records her status and raises nothing")
 
-	// her daemon starts on the current build, sends her the present, and her session answers
+	// her daemon starts, sends her the present, and her session answers; it holds the dwell
 	current := buildinfo.Version("")
 	start := r.st.Now()
-	r.daemon(current, start, start)
-	r.answered()
-	r.tick(time.Second)
+	r.up(current, start)
 	notes := r.statusNotes(row)
 	require.Len(t, notes, 1, "her coming up raises one judgment")
 	n := notes[0]
 	assert.Equal(t, sprint.Judgment, n.Kind, "a judgment, pushed to the seat inbox as every judgment is")
 	at := r.st.Now().UTC().Format(time.RFC3339)
-	assert.Equal(t, "friend amy is up (was down) at "+at+", transition 1, on session pong 1s ago; bring her up in four steps: "+
-		"1 update: her daemon runs "+current+", the current build is "+current+" (done); "+
-		"2 check: daemon beating (1s ago), harness checked by her daemon's start at "+start.Format(time.RFC3339)+", presence session pong 1s ago (done); "+
+	assert.Equal(t, "friend amy is up (was down) at "+at+", transition 1, on session pong 0s ago; bring her up in four steps: "+
+		"1 update: her daemon runs "+current+", the current build is "+current+": an unstamped build cannot be compared; run: nova-update, then launchctl kickstart -k gui/$(id -u)/com.nova.friend-amy (to do); "+
+		"2 check: daemon beating (0s ago), her daemon started at "+start.Format(time.RFC3339)+" and has beat since; no harness check reported, presence session pong 0s ago; run: nova-friend check amy and read its CHECK DAEMON, CHECK HARNESS and presence lines (to do); "+
 		"3 snap to present: her daemon sent the present on its start at "+start.Format(time.RFC3339)+" (done); "+
-		"4 into the sprint: not held, evidence session pong 1s ago, no take within 10m0s; run: nova-sprint where, and nova-friend ping --as coordinator --to amy --wake (to do)",
+		"4 into the sprint: not held, evidence session pong 0s ago, no take within 10m0s; run: nova-sprint where, and nova-friend ping --as coordinator --to amy --wake (to do)",
 		n.What)
 	assert.Equal(t, []string{"ack", "wait"}, n.Decisions, "the verbs are in the text; ack or wait answers it")
 	assert.Equal(t, []string{row}, n.Primaries)
 	assert.NotEmpty(t, n.Alias, "aliased j<n> as every judgment")
 
-	// a daemon on an old build that sent no present: the steps say so, and what to run
+	// a daemon on another build that sent no present: the steps say so, and what to run
 	r2 := newTransitionRig(t)
 	r2.tick(time.Second)
 	r2.daemon("2030-01-01T00:00:00Z-0123456789ab", r2.st.Now().Add(-time.Hour), time.Time{})
 	r2.answered()
 	r2.tick(time.Second)
+	r2.advance(sprint.StatusDwell)
+	r2.answered()
+	r2.tick(0)
 	notes = r2.statusNotes(row)
 	require.Len(t, notes, 1)
-	assert.Contains(t, notes[0].What, "1 update: her daemon runs 2030-01-01T00:00:00Z-0123456789ab, the current build is "+current+"; run: nova-update, then launchctl kickstart -k gui/$(id -u)/com.nova.friend-amy (to do)")
+	assert.Contains(t, notes[0].What, "1 update: her daemon runs 2030-01-01T00:00:00Z-0123456789ab, the current build is "+current)
 	assert.Contains(t, notes[0].What, "3 snap to present: her daemon sent no present since its start; run: nova-bus send --to amy")
+}
+
+// Two builds compare by their revision; an unstamped devel build is never the same as any.
+func TestTwoDevelBuildsAreNeverTheSame(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct{ a, b, want string }{
+		{"devel", "devel", sprint.BuildUnknown},
+		{"", "", sprint.BuildUnknown},
+		{"devel", "2030-01-01T00:00:00Z-0123456789ab", sprint.BuildUnknown},
+		{"2030-01-01T00:00:00Z-0123456789ab", "v1.2.0 2030-01-01T00:00:00Z-0123456789ab", sprint.BuildSame},
+		{"2030-01-01T00:00:00Z-0123456789ab", "2030-01-02T00:00:00Z-ba9876543210", sprint.BuildDifferent},
+		{"v1.2.0", "v1.2.0", sprint.BuildSame},
+		{"v1.2.0", "v1.3.0", sprint.BuildDifferent},
+	} {
+		assert.Equal(t, c.want, sprint.BuildMatch(c.a, c.b), "%q %q", c.a, c.b)
+	}
 }
 
 func TestATransitionRaisesExactlyOneJudgment(t *testing.T) {
@@ -160,24 +218,78 @@ func TestATransitionRaisesExactlyOneJudgment(t *testing.T) {
 	r.tick(time.Second)
 	r.answered()
 	for range 10 {
-		r.tick(time.Second)
+		r.tick(15 * time.Second)
+		r.answered()
 	}
 	notes := r.statusNotes(row)
 	require.Len(t, notes, 1, "ten ticks over one transition, one judgment")
-	assert.Contains(t, notes[0].What, "transition 1")
+	first := notes[0]
+	assert.Contains(t, first.What, "transition 1")
 	assert.Empty(t, r.statusNotes("m1"), "m1 beat every tick: no transition, no judgment")
 
-	// held by the coordinator: the next transition closes the first and raises one more,
-	// answered by rule only when the tick answers by rule; ten ticks, still one
+	// held by the coordinator: the next transition replaces the open judgment's text, the
+	// same id and alias; ten ticks, still one
 	_, err := r.st.Hold(r.ctx, sprint.HoldReq{Names: []string{"amy"}, Who: "coordinator", Reason: "test"})
 	require.NoError(t, err)
 	for range 10 {
-		r.tick(time.Second)
+		r.tick(15 * time.Second)
 	}
 	notes = r.statusNotes(row)
-	require.Len(t, notes, 1, "the hold's judgment alone: the one before is closed")
+	require.Len(t, notes, 1, "one open status judgment on the row")
+	assert.Equal(t, first.ID, notes[0].ID, "replaced in place")
+	assert.Equal(t, first.Alias, notes[0].Alias, "the same alias")
 	assert.True(t, strings.HasPrefix(notes[0].What, "friend amy is held (was up) at "), notes[0].What)
 	assert.Contains(t, notes[0].What, "transition 2")
+	judgments, changes := r.pushes(row)
+	assert.Equal(t, 1, judgments, "one judgment written")
+	assert.Equal(t, 1, changes, "the replace told the seat once")
+}
+
+// A friend flipping every minute for an hour floods nothing: her coming up is one push, the
+// flips inside the dwell raise nothing and are counted on the judgment, and the one change
+// that outlasts the dwell is one more push, the same judgment replaced.
+func TestAFriendFlappingForAnHourIsTwoPushes(t *testing.T) {
+	t.Parallel()
+	r := newTransitionRig(t)
+	row := sprint.FriendRow("amy")
+	r.tick(time.Second)
+	r.up("", r.st.Now())
+	notes := r.statusNotes(row)
+	require.Len(t, notes, 1)
+	first := notes[0]
+	flapsFrom := ""
+	for k := range 60 {
+		r.advance(time.Minute)
+		r.answered()
+		_, err := r.st.Hold(r.ctx, sprint.HoldReq{Names: []string{"amy"}, Who: "coordinator", Reason: "flap", Release: k%2 == 1})
+		require.NoError(t, err)
+		r.tick(0)
+		if k == 0 {
+			flapsFrom = r.st.Now().UTC().Format(time.RFC3339)
+		}
+	}
+	judgments, changes := r.pushes(row)
+	assert.Equal(t, 1, judgments+changes, "an hour of one-minute flips: her coming up alone was pushed")
+	require.Len(t, r.statusNotes(row), 1)
+	assert.Contains(t, r.statusNotes(row)[0].What, "; flapped 30 times since "+flapsFrom+" (each back inside 2m0s)")
+
+	// held for good: the change outlasts the dwell, one more push, the same judgment
+	r.advance(time.Minute)
+	r.answered()
+	_, err := r.st.Hold(r.ctx, sprint.HoldReq{Names: []string{"amy"}, Who: "coordinator", Reason: "for good"})
+	require.NoError(t, err)
+	for range 3 {
+		r.tick(time.Minute)
+	}
+	judgments, changes = r.pushes(row)
+	assert.Equal(t, 1, judgments, "one judgment in all")
+	assert.Equal(t, 1, changes, "one change past the dwell, one push")
+	notes = r.statusNotes(row)
+	require.Len(t, notes, 1)
+	assert.Equal(t, first.ID, notes[0].ID)
+	assert.True(t, strings.HasPrefix(notes[0].What, "friend amy is held (was up) at "), notes[0].What)
+	assert.Contains(t, notes[0].What, "transition 2")
+	assert.Contains(t, notes[0].What, "; flapped 30 times since "+flapsFrom+" (each back inside 2m0s)")
 }
 
 func TestAFleetMemberGoingDownNamesItsLastBeat(t *testing.T) {
@@ -188,10 +300,12 @@ func TestAFleetMemberGoingDownNamesItsLastBeat(t *testing.T) {
 	last := r.st.Now().UTC().Format(time.RFC3339)
 	r.member = false // its beat stops
 	r.tick(sprint.MissedBeatsDown*sprint.BeatDeadline + time.Second)
+	assert.Empty(t, r.statusNotes("m1"), "down, inside the dwell")
+	r.tick(sprint.StatusDwell)
 	notes := r.statusNotes("m1")
 	require.Len(t, notes, 1)
 	at := r.st.Now().UTC().Format(time.RFC3339)
-	assert.Equal(t, "fleet member m1 is down (was up) at "+at+", transition 1: its last beat "+last+" (46s ago, 3 beat windows of 15s missed), width 2; "+
+	assert.Equal(t, "fleet member m1 is down (was up) at "+at+", transition 1: its last beat "+last+" (2m46s ago, 11 beat windows of 15s missed), width 2; "+
 		"its unfinished cards were dealt round the members up; bring it back: its beat on m1 (nova-sprint fleet beat m1) has stopped, start its member loop again; "+
 		"or hold it: nova-sprint hold m1 --reason <text>", notes[0].What)
 	assert.Equal(t, sprint.Judgment, notes[0].Kind)
@@ -200,13 +314,15 @@ func TestAFleetMemberGoingDownNamesItsLastBeat(t *testing.T) {
 	}
 	assert.Len(t, r.statusNotes("m1"), 1, "down for ten more ticks: still the one judgment")
 
-	// it beats again: up, the down's judgment closed, the up's raised with its beat and width
+	// it beats again past the dwell: the same judgment replaced with its beat and width
 	r.member = true
 	r.tick(time.Second)
-	notes = r.statusNotes("m1")
-	require.Len(t, notes, 1)
-	assert.True(t, strings.HasPrefix(notes[0].What, "fleet member m1 is up (was down) at "+r.st.Now().UTC().Format(time.RFC3339)+", transition 2: its last beat "), notes[0].What)
-	assert.Contains(t, notes[0].What, "width 2")
+	r.tick(sprint.StatusDwell)
+	notes2 := r.statusNotes("m1")
+	require.Len(t, notes2, 1)
+	assert.Equal(t, notes[0].ID, notes2[0].ID)
+	assert.True(t, strings.HasPrefix(notes2[0].What, "fleet member m1 is up (was down) at "+r.st.Now().UTC().Format(time.RFC3339)+", transition 2: its last beat "), notes2[0].What)
+	assert.Contains(t, notes2[0].What, "width 2; the tick deals it cards from now")
 }
 
 func TestARestartDoesNotReplayTransitions(t *testing.T) {
@@ -214,9 +330,8 @@ func TestARestartDoesNotReplayTransitions(t *testing.T) {
 	r := newTransitionRig(t)
 	row := sprint.FriendRow("amy")
 	r.tick(time.Second)
-	r.daemon("", r.st.Now(), time.Time{})
-	r.answered()
-	r.tick(time.Second)
+	start := r.st.Now()
+	r.up("", start)
 	require.Len(t, r.statusNotes(row), 1)
 	first := r.statusNotes(row)[0].ID
 
@@ -228,62 +343,59 @@ func TestARestartDoesNotReplayTransitions(t *testing.T) {
 	notes := r.statusNotes(row)
 	require.Len(t, notes, 1, "a restart replays no transition")
 	assert.Equal(t, first, notes[0].ID)
+	judgments, changes := r.pushes(row)
+	assert.Equal(t, 1, judgments+changes)
 
-	// her daemon restarts: a new generation, one judgment, the one before closed
-	r.daemon("", r.st.Now(), time.Time{})
+	// her daemon restarts, and the server restarts inside the dwell: one change, counted once
+	again := r.st.Now()
+	r.daemon("", again, again)
 	r.answered()
 	r.tick(time.Second)
+	r.st = r.open()
+	r.advance(sprint.StatusDwell)
+	r.daemon("", again, again)
+	r.answered()
+	r.tick(0)
 	r.st = r.open()
 	r.tick(time.Second)
 	notes = r.statusNotes(row)
 	require.Len(t, notes, 1)
-	assert.NotEqual(t, first, notes[0].ID)
-	assert.Contains(t, notes[0].What, "friend amy's daemon started again at ")
+	assert.Equal(t, first, notes[0].ID, "the open judgment replaced")
+	assert.Contains(t, notes[0].What, "friend amy's daemon started again at "+again.UTC().Format(time.RFC3339))
 	assert.Contains(t, notes[0].What, "transition 2")
+	judgments, changes = r.pushes(row)
+	assert.Equal(t, 1, judgments)
+	assert.Equal(t, 1, changes)
 }
 
-// With the machine's own answers (run --answer-rules), a friend come up whose four steps
-// are all done is answered by rule at the first tick that finds them done, and a hold, the
-// coordinator's own act, is answered by rule when it is raised.
+// With the machine's own answers (run --answer-rules) a status judgment is pushed first and
+// answered by rule no sooner than StatusRuleAfter after its push: a hold, the coordinator's
+// own act, is closed then; a friend come up is never, her check being the coordinator's.
 func TestAStatusJudgmentWhoseStepsAreDoneIsAnsweredByRule(t *testing.T) {
 	t.Parallel()
 	r := newTransitionRig(t)
 	r.st.AnswerRules = true
 	row := sprint.FriendRow("amy")
-	res, err := r.st.Run(r.ctx, store.AddStep(sprint.AddReq{Stream: "f1", Cards: []sprint.CardAdd{{ID: "f1-1", Brief: friendsBrief("only friend amy")}}}))
+	r.tick(time.Second)
+	_, err := r.st.Hold(r.ctx, sprint.HoldReq{Names: []string{"amy"}, Who: "coordinator", Reason: "test"})
 	require.NoError(t, err)
-	require.Empty(t, res.Refused)
 	r.tick(time.Second)
-	start := r.st.Now()
-	r.daemon(buildinfo.Version(""), start, start)
-	r.answered()
-	r.tick(time.Second)
+	r.tick(sprint.StatusDwell)
 	notes := r.statusNotes(row)
 	require.Len(t, notes, 1)
-	assert.Equal(t, sprint.Judgment, notes[0].Kind, "no take yet: the fourth step is to do")
-	assert.Contains(t, notes[0].What, "(to do)")
-
-	// her card is on her row: she takes it, and the next tick answers the judgment by rule
-	s, err := r.st.Load(r.ctx, store.All, nil)
-	require.NoError(t, err)
-	ready := s.Fleet.Cell(row, sprint.Ready)
-	require.NotEmpty(t, ready, "the deal gave her the card")
-	wc := ready[0]
-	res, err = r.st.Run(r.ctx, store.TakeStep(sprint.TakeReq{Sel: sprint.Sel{IDs: []string{wc.ID}}, As: row, Gens: map[string]int{wc.ID: wc.Int("gen")}, Who: row}))
-	require.NoError(t, err)
-	require.Empty(t, res.Refused)
-	// her daemon's beat names the card running, as it does for a card she started
-	_, err = r.st.FriendBeatReport(r.ctx, "amy", sprint.FriendReport{Running: []string{wc.ID}, Build: buildinfo.Version(""), Started: start, Present: start}, nil)
-	require.NoError(t, err)
+	assert.Equal(t, sprint.Judgment, notes[0].Kind, "pushed as a judgment, never written answered")
+	r.tick(sprint.StatusRuleAfter - time.Second)
+	assert.Len(t, r.statusNotes(row), 1, "inside a minute of its push: still open")
 	r.tick(time.Second)
-	assert.Empty(t, r.statusNotes(row), "every step done: answered by rule and closed")
+	assert.Empty(t, r.statusNotes(row), "a minute after its push: answered by rule and closed")
 
-	// held: the coordinator's own act, answered by rule as it is raised
-	_, err = r.st.Hold(r.ctx, sprint.HoldReq{Names: []string{"amy"}, Who: "coordinator", Reason: "test"})
-	require.NoError(t, err)
-	r.tick(time.Second)
-	notes = r.statusNotes(row)
-	require.Len(t, notes, 1)
-	assert.Equal(t, sprint.Acknowledged, notes[0].Kind)
-	assert.True(t, strings.HasPrefix(notes[0].What, "answered by rule status: every step is done; friend amy is held (was up) at "), notes[0].What)
+	r2 := newTransitionRig(t)
+	r2.st.AnswerRules = true
+	r2.tick(time.Second)
+	r2.up(buildinfo.Version(""), r2.st.Now())
+	for range 3 {
+		r2.answered()
+		r2.tick(time.Minute)
+	}
+	assert.Len(t, r2.statusNotes(row), 1, "a friend come up waits on the coordinator's check")
 }

@@ -17,19 +17,26 @@ import (
 // with yesterday's notes: "Please make this process mechanical. You cannot remember to do
 // this reliably on your own in my experience, so if it is mechanical, make the machine
 // prompt you when a friend changes their status"). Every change of a friend's or a fleet
-// member's status, as the server computes it at the tick, raises one judgment of type
-// NStatus on the row, pushed to the seat inbox as every judgment is: anything to up, up to
-// down (a friend whose daemon answers and whose session does not is down, and her judgment
-// says so: docs/TERMINOLOGY.md, anything but up is down), held and unheld, and, for a friend, a new generation of her daemon (a start her beat names that
-// the transitions have not seen). The text names the transition, the clock time and the
-// exact verbs; for a friend come up, the four steps in order with what the machine already
-// did. The status the transitions last saw is kept on the fleet table (PropStatusSeen: the
-// word, the transition's number, her daemon's start), so a judgment is raised once a
-// transition, never once a tick, and a restart of the server reads the record back and
-// replays none; the first sight of a row records its status and raises nothing. The next
-// transition of a row closes the judgment of the one before, answered or not. A judgment
-// whose every step is already done is answered by rule (RuleStatus, run --answer-rules): at
-// once when it is raised, or at the first tick that finds its steps done.
+// member's status, as the server computes it at the tick, is told to the seat as a judgment
+// of type NStatus on the row, pushed as every judgment is: anything to up, up to down (a
+// friend whose daemon answers and whose session does not is down, and her judgment says so:
+// docs/TERMINOLOGY.md, anything but up is down), held and unheld, and, for a friend, a new
+// generation of her daemon (a start her beat names that the transitions have not seen). The
+// text names the transition, the clock time and the exact verbs; for a friend come up, the
+// four steps in order with what the machine already did.
+//
+// A change counts only once it has held for StatusDwell of running time: a row that leaves
+// its recorded status and comes back inside the dwell raises nothing, and the flap is counted
+// on the record and shown on the judgment ("flapped n times since <t>"). A row has at most
+// one open status judgment: a further transition replaces its text in place (the same id and
+// alias) and tells the seat it changed (NStatusChanged, a happened note to the coordinator,
+// which the push loop delivers); an answered one is closed and a new one raised. So a friend
+// flipping every minute is one push, and one more for each change that outlasts the dwell.
+// The record is the fleet table's one property PropStatusSeen, written in the same
+// operation as the judgment: a restart reads it back and replays none, and the first sight of
+// a row records it and raises nothing. With run --answer-rules a judgment whose every step is
+// already done is answered by rule (RuleStatus), never as it is raised: StatusRuleAfter of
+// running time after its last push at the soonest, so the seat has it first.
 
 const (
 	// NStatus is the status transition's judgment type.
@@ -41,12 +48,23 @@ const (
 	// TakeWithin is how recent a take of hers must be for a friend come up to be in the
 	// sprint (the fourth step).
 	TakeWithin = 10 * time.Minute
+	// StatusDwell is how long a row must hold a status other than its recorded one, in running
+	// time, before the change counts as a transition.
+	StatusDwell = 2 * time.Minute
+	// StatusRuleAfter is how long after a status judgment's last push the rule may answer it.
+	StatusRuleAfter = 60 * time.Second
+	// NStatusChanged is the push of a status judgment whose text a further transition
+	// replaced: a happened note to the coordinator naming it.
+	NStatusChanged = "a status judgment changed"
 )
 
 // PropStatusSeen is the fleet property that keeps every row's status as the transitions
 // last saw it, one property for the whole fleet (a table holds at most
-// ntable.LimitTableProps): "<row>=<word>,<transition>,<daemon start RFC3339 or ->" for each
-// row, one after another with a blank between, in row order.
+// ntable.LimitTableProps): for each row "<row>=<word>,<transition>,<daemon start>,<away
+// since>,<flaps>,<flapping since>", times RFC3339 or "-", one after another with a blank
+// between, in row order. Away since is when the row first left the recorded status (zero
+// while it holds it); the flaps are the departures that came back inside the dwell since the
+// last transition counted.
 const PropStatusSeen = "status_seen"
 
 func init() {
@@ -55,40 +73,62 @@ func init() {
 
 // statusSeen is a row's PropStatusSeen record.
 type statusSeen struct {
-	Word    string
-	N       int
-	Started time.Time
+	Word      string
+	N         int
+	Started   time.Time
+	Away      time.Time
+	Flaps     int
+	FlapSince time.Time
+}
+
+func stampOrDash(t time.Time) string {
+	if t.IsZero() {
+		return "-"
+	}
+	return stamp(t)
 }
 
 func (r statusSeen) String() string {
-	started := "-"
-	if !r.Started.IsZero() {
-		started = stamp(r.Started)
-	}
-	return fmt.Sprintf("%s,%d,%s", r.Word, r.N, started)
+	return fmt.Sprintf("%s,%d,%s,%s,%d,%s", r.Word, r.N, stampOrDash(r.Started), stampOrDash(r.Away), r.Flaps, stampOrDash(r.FlapSince))
 }
 
 // parseStatusSeen is the record by row; an entry that cannot be read is no record, and its
-// row is seen again for the first time.
+// row is seen again for the first time. An entry of three fields (word, transition, start) is
+// read with no departure and no flaps.
 func parseStatusSeen(v string) map[string]statusSeen {
 	out := map[string]statusSeen{}
+	at := func(x string) (time.Time, bool) {
+		if x == "-" {
+			return time.Time{}, true
+		}
+		t, err := time.Parse(time.RFC3339, x)
+		return t, err == nil
+	}
 	for _, e := range strings.Fields(v) {
 		row, rest, ok := strings.Cut(e, "=")
 		f := strings.Split(rest, ",")
-		if !ok || row == "" || len(f) != 3 {
+		if !ok || row == "" || (len(f) != 3 && len(f) != 6) || f[0] == "" {
 			continue
 		}
-		n, err := strconv.Atoi(f[1])
-		if err != nil || n < 0 || f[0] == "" {
+		r := statusSeen{Word: f[0]}
+		var err error
+		var good bool
+		if r.N, err = strconv.Atoi(f[1]); err != nil || r.N < 0 {
 			continue
 		}
-		r := statusSeen{Word: f[0], N: n}
-		if f[2] != "-" {
-			t, err := time.Parse(time.RFC3339, f[2])
-			if err != nil {
+		if r.Started, good = at(f[2]); !good {
+			continue
+		}
+		if len(f) == 6 {
+			if r.Away, good = at(f[3]); !good {
 				continue
 			}
-			r.Started = t
+			if r.Flaps, err = strconv.Atoi(f[4]); err != nil || r.Flaps < 0 {
+				continue
+			}
+			if r.FlapSince, good = at(f[5]); !good {
+				continue
+			}
 		}
 		out[row] = r
 	}
@@ -145,11 +185,11 @@ func statusRows(s *Snapshot, r TickReq) []statusRow {
 }
 
 // StatusTransitions is the plan of the status transitions at this tick (the comment above):
-// for each row whose status, or whose daemon's start, differs from the record, the record
-// moved on, the judgments of the row's last transition closed, and one judgment raised; a
-// row with no record recorded silently; an open judgment of a friend come up whose steps
-// are all done now answered by rule. With no beats read it does nothing, as the presence
-// part does.
+// for each row, its departure from the record started, counted as a flap when it came back
+// inside the dwell, or counted as a transition once it outlasted it, raising the row's one
+// judgment or replacing its text; a row with no record recorded silently; an open judgment
+// whose steps are all done answered by rule once its push is StatusRuleAfter old. With no
+// beats read it does nothing, as the presence part does.
 func StatusTransitions(s *Snapshot, r TickReq) Plan {
 	var p Plan
 	if s == nil || s.Fleet == nil || r.Beats == nil {
@@ -167,6 +207,10 @@ func StatusTransitions(s *Snapshot, r TickReq) Plan {
 		}
 	}
 	rule := r.AnswerRules && !s.RuleOff(RuleStatus)
+	to := coordinatorName(s)
+	if s.Coordinator == "" {
+		to = "coordinator"
+	}
 	next := map[string]statusSeen{}
 	var moved []string
 	for _, row := range statusRows(s, r) {
@@ -177,27 +221,68 @@ func StatusTransitions(s *Snapshot, r TickReq) Plan {
 			moved = append(moved, row.row+" "+row.word)
 			continue
 		}
+		if rec.Started.IsZero() && !started.IsZero() && rec.Word == row.word && rec.Away.IsZero() {
+			rec.Started = started // her daemon's first report of its start: its generation, recorded
+		}
 		changed := rec.Word != row.word
 		generation := !started.IsZero() && !rec.Started.IsZero() && !started.Equal(rec.Started)
+		judgment := openJudgment(onRow[row.row])
 		if !changed && !generation {
-			if rec.Started.IsZero() && !started.IsZero() {
-				rec.Started = started // her daemon's first report of its start: its generation, recorded
+			if !rec.Away.IsZero() {
+				// back inside the dwell: a flap, counted, nothing raised
+				if rec.FlapSince.IsZero() {
+					rec.FlapSince = rec.Away
+				}
+				rec.Flaps++
+				rec.Away = time.Time{}
+				if judgment != nil {
+					n := judgment.Note
+					n.What = withFlaps(n.What, rec)
+					p.Updates = append(p.Updates, n) // the count shown, no push
+				}
 			}
 			next[row.row] = rec
-			ruleAnswer(&p, s, r, row, onRow[row.row], rule)
+			ruleAnswer(&p, s, r, row, judgment, rule)
+			continue
+		}
+		if rec.Away.IsZero() {
+			rec.Away = s.Now // left its status: counted once it holds for the dwell
+			next[row.row] = rec
+			continue
+		}
+		if d, ok := r.running(s.Now, stamp(rec.Away)); ok && d < StatusDwell {
+			next[row.row] = rec
 			continue
 		}
 		now := statusSeen{Word: row.word, N: rec.N + 1, Started: started}
 		next[row.row] = now
 		moved = append(moved, fmt.Sprintf("%s %s -> %s (transition %d)", row.row, rec.Word, row.word, now.N))
-		p.Closes = append(p.Closes, onRow[row.row]...)
-		what, done := statusText(s, r, row, rec, now, generation && !changed)
-		n := Note{Kind: Judgment, Type: NStatus, Primaries: []string{row.row}, Count: 1, What: what, Who: r.who(), At: s.Now,
-			Marked: true, Decisions: append([]string(nil), TickDecisions[NStatus]...)}
-		if done && rule {
-			n.Kind, n.Who, n.What = Acknowledged, ruleWho(RuleStatus), RuleSaid(RuleStatus, "every step is done")+"; "+what
+		what, _ := statusText(s, r, row, rec, now, generation && !changed)
+		if rec.Flaps > 0 {
+			what = withFlaps(what, rec)
 		}
-		p.Notes = append(p.Notes, n)
+		if judgment != nil {
+			// the row's one open judgment: its text replaced, its id and alias kept, and the
+			// seat told it changed
+			n := judgment.Note
+			n.What, n.At, n.Who = what, s.Now, r.who()
+			p.Updates = append(p.Updates, n)
+			for _, o := range onRow[row.row] {
+				if o.Note.ID != n.ID {
+					p.Closes = append(p.Closes, o)
+				}
+			}
+			ref := n.ID
+			if n.Alias != "" {
+				ref = n.Alias + " (" + n.ID + ")"
+			}
+			p.Notes = append(p.Notes, Note{Kind: Happened, Type: NStatusChanged, Primaries: []string{row.row}, Count: 1, Who: r.who(), To: to, At: s.Now,
+				What: ref + " changed: " + what, Hint: "run: nova-sprint inbox; ack it once its steps are run"})
+			continue
+		}
+		p.Closes = append(p.Closes, onRow[row.row]...) // an answered one: closed, a new one raised
+		p.Notes = append(p.Notes, Note{Kind: Judgment, Type: NStatus, Primaries: []string{row.row}, Count: 1, What: what, Who: r.who(), At: s.Now,
+			Marked: true, Decisions: append([]string(nil), TickDecisions[NStatus]...)})
 	}
 	if value := formatStatusSeen(next); value != was {
 		p.Props = append(p.Props, PropWrite{Table: Fleet, Name: PropStatusSeen, Value: value, Was: was, WasAbsent: !had})
@@ -212,27 +297,59 @@ func StatusTransitions(s *Snapshot, r TickReq) Plan {
 	return p
 }
 
-// ruleAnswer answers by rule the open judgment of a friend's coming up once every one of
-// its four steps is done: closed, with the decided note naming the steps.
-func ruleAnswer(p *Plan, s *Snapshot, r TickReq, row statusRow, open []Open, rule bool) {
-	if !rule || row.friend == nil || row.word != Up {
-		return
-	}
-	var judged []Open
-	for _, o := range open {
-		if o.Note.Kind == Judgment {
-			judged = append(judged, o)
+// openJudgment is the row's open status judgment (not one answered and kept), nil for none.
+func openJudgment(open []Open) *Open {
+	for i := range open {
+		if open[i].Note.Kind == Judgment {
+			return &open[i]
 		}
 	}
-	if len(judged) == 0 {
+	return nil
+}
+
+var flapsSuffix = regexp.MustCompile(`; flapped \d+ times since \S+ \(each back inside \S+\)$`)
+
+// withFlaps is the text with the record's flaps said at its end, in place of any said before.
+func withFlaps(what string, rec statusSeen) string {
+	what = flapsSuffix.ReplaceAllString(what, "")
+	if rec.Flaps == 0 {
+		return what
+	}
+	return fmt.Sprintf("%s; flapped %d times since %s (each back inside %s)", what, rec.Flaps, stamp(rec.FlapSince), StatusDwell)
+}
+
+// ruleAnswer answers by rule the row's open judgment once every step it names is done and its
+// last push is StatusRuleAfter of running time old: closed, with the decided note. A status
+// judgment is never answered as it is raised: the seat has it first.
+func ruleAnswer(p *Plan, s *Snapshot, r TickReq, row statusRow, judgment *Open, rule bool) {
+	if !rule || judgment == nil {
 		return
 	}
-	steps, done := friendSteps(s, r, row)
+	if d, ok := r.running(s.Now, stamp(judgment.Note.At)); !ok || d < StatusRuleAfter {
+		return
+	}
+	done, steps := statusDone(s, r, row)
 	if !done {
 		return
 	}
-	p.Closes = append(p.Closes, judged...)
-	p.Notes = append(p.Notes, decided(judged[0], RuleSaid(RuleStatus, "every step is done: "+steps), ruleWho(RuleStatus), s.Now, row.row))
+	p.Closes = append(p.Closes, *judgment)
+	p.Notes = append(p.Notes, decided(*judgment, RuleSaid(RuleStatus, "every step is done: "+steps), ruleWho(RuleStatus), s.Now, row.row))
+}
+
+// statusDone says every step of the row's status now is done, and names them: a hold (the
+// coordinator's own act), a fleet member the presence part has brought up, and a friend come
+// up whose four steps are done.
+func statusDone(s *Snapshot, r TickReq, row statusRow) (bool, string) {
+	switch {
+	case row.word == Held:
+		return true, "the coordinator's hold"
+	case row.friend == nil && row.word == Up:
+		return s.MemberCtl(row.name).F("status") == Up, "the member is up and dealt to"
+	case row.friend != nil && row.word == Up:
+		steps, done := friendSteps(s, r, row)
+		return done, steps
+	}
+	return false, ""
 }
 
 // statusText is the judgment's text, with the exact verbs, and whether every step it names
@@ -290,20 +407,21 @@ func friendSteps(s *Snapshot, r TickReq, row statusRow) (string, bool) {
 	if installed == "" {
 		installed = "a build it did not report"
 	}
-	same := SameBuild(rep.Build, seat.Current)
+	match := BuildMatch(rep.Build, seat.Current)
 	text := fmt.Sprintf("update: her daemon runs %s, the current build is %s", installed, orDash(seat.Current))
-	if !same {
+	if match == BuildUnknown && rep.Build != "" && seat.Current != "" {
+		text += ": an unstamped build cannot be compared"
+	}
+	if match != BuildSame {
 		text += "; run: nova-update, then launchctl kickstart -k gui/$(id -u)/com.nova.friend-" + f
 	}
-	step(text, same)
-	// 2. check: her daemon beats, her session's evidence, and her daemon's start check
-	fresh := seat.Beat.Fresh(s.Now)
+	step(text, match == BuildSame)
+	// 2. check: what her daemon reported of itself, and her session's evidence. No beat word
+	// reports a harness check yet, so the step is the coordinator's: nova-friend check.
 	present := !rep.Present.IsZero() && !rep.Started.IsZero() && !rep.Present.Before(rep.Started)
-	text = fmt.Sprintf("check: daemon %s, harness %s, presence %s", beatWord(seat.Beat, s.Now), harnessWord(present, rep), orDash(seat.Evidence))
-	if !fresh || !present {
-		text += "; run: nova-friend check " + f + " and read its CHECK DAEMON, CHECK HARNESS and presence lines"
-	}
-	step(text, fresh && present)
+	text = fmt.Sprintf("check: daemon %s, %s, presence %s; run: nova-friend check %s and read its CHECK DAEMON, CHECK HARNESS and presence lines",
+		beatWord(seat.Beat, s.Now), daemonWord(rep), orDash(seat.Evidence), f)
+	step(text, false)
 	// 3. snap to present: the note her daemon sent on its start
 	if present {
 		text = "snap to present: her daemon sent the present on its start at " + stamp(rep.Present)
@@ -337,6 +455,10 @@ func memberText(s *Snapshot, row statusRow, prev, next statusSeen, at string) (s
 	head := fmt.Sprintf("fleet member %s is %s (was %s) at %s, transition %d: %s, width %d", m, row.word, prev.Word, at, next.N, lastBeat(row.beat, s.Now), s.Width(m))
 	switch row.word {
 	case Up:
+		if s.MemberCtl(m).F("status") != Up {
+			// past TickMaxMoves ups at once: the presence part brings it up at a coming tick
+			return head + "; the presence part has not brought it up yet (more than " + strconv.Itoa(TickMaxMoves) + " members came up at once): it is dealt cards once it has; its width: nova-sprint fleet up " + m + " --width <n>", false
+		}
 		return head + "; the tick deals it cards from now; its width: nova-sprint fleet up " + m + " --width <n>", true
 	case Held:
 		return head + "; the coordinator's hold (hold " + m + "); release: nova-sprint unhold " + m, true
@@ -366,14 +488,13 @@ func beatWord(b Beat, now time.Time) string {
 	return "silent since " + stamp(b.At)
 }
 
-func harnessWord(present bool, rep FriendReport) string {
-	switch {
-	case rep.Started.IsZero():
-		return "unreported (her daemon names no start)"
-	case present:
-		return "checked by her daemon's start at " + stamp(rep.Started)
+// daemonWord is what her daemon reported of its own start: when, and that it has beat since,
+// and that no harness check is reported (no beat word carries one yet).
+func daemonWord(rep FriendReport) string {
+	if rep.Started.IsZero() {
+		return "her daemon reported no start; no harness check reported"
 	}
-	return "not checked since her daemon's start at " + stamp(rep.Started)
+	return "her daemon started at " + stamp(rep.Started) + " and has beat since; no harness check reported"
 }
 
 // presentSend is the nova-bus line that sends her the present by hand.
@@ -404,16 +525,36 @@ func coordinatorName(s *Snapshot) string {
 
 var buildRevision = regexp.MustCompile(`[0-9a-f]{12}`)
 
-// SameBuild says two builds' version lines name the same build: the same twelve hex of a
-// revision when both carry one (buildinfo's vcs stamp, whatever else each says), else the
-// same text. An empty build is never the same as any.
-func SameBuild(a, b string) bool {
-	if a == "" || b == "" {
-		return false
-	}
+// The answers of BuildMatch.
+const (
+	BuildSame      = "same"
+	BuildDifferent = "different"
+	BuildUnknown   = "unknown"
+)
+
+// BuildMatch compares two builds' version lines: the same twelve hex of a revision when both
+// carry one (buildinfo's vcs stamp, whatever else each says) is the same build, and two
+// revisions that differ are different; a build with no revision that is unstamped ("devel",
+// buildinfo's word for a build with no origin recorded) or empty is unknown, never the same,
+// whatever the other is; else two release tags compare as text.
+func BuildMatch(a, b string) string {
 	ra, rb := buildRevision.FindAllString(a, -1), buildRevision.FindAllString(b, -1)
-	if len(ra) > 0 && len(rb) > 0 {
-		return slices.ContainsFunc(ra, func(x string) bool { return slices.Contains(rb, x) })
+	switch {
+	case len(ra) > 0 && len(rb) > 0:
+		if slices.ContainsFunc(ra, func(x string) bool { return slices.Contains(rb, x) }) {
+			return BuildSame
+		}
+		return BuildDifferent
+	case unstamped(a, ra) || unstamped(b, rb):
+		return BuildUnknown
+	case a == b:
+		return BuildSame
 	}
-	return a == b
+	return BuildDifferent
+}
+
+// unstamped says a build line with these revisions names no build that can be compared:
+// empty, or devel with no revision.
+func unstamped(build string, revs []string) bool {
+	return strings.TrimSpace(build) == "" || len(revs) == 0 && strings.Contains(build, "devel")
 }

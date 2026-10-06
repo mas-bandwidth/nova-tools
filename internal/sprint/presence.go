@@ -317,6 +317,7 @@ func TickPresence(s *Snapshot, r TickReq) (Plan, int) {
 	p.Units = append(p.Units, t.Units...)
 	p.Notes = append(p.Notes, t.Notes...)
 	p.Closes = append(p.Closes, t.Closes...)
+	p.Updates = append(p.Updates, t.Updates...)
 	p.Props = append(p.Props, t.Props...)
 	return p, due
 }
