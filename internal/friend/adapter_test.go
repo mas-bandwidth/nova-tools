@@ -66,5 +66,5 @@ func TestTheOtherHarnessesRefuseHonestlyAndAnUnknownOneIsNamed(t *testing.T) {
 		})
 	}
 	_, err := NewDeliverer("vim", "/w/bob", "", nil, nil)
-	assert.EqualError(t, err, `"vim" is no harness; the harnesses are opencode, codex, claude, antigravity, dsh, gemini, grok, copilot, cursor, amp, goose, kiro, cline, aider, roo, windsurf, zed, warp`)
+	assert.EqualError(t, err, `"vim" is no harness; the harnesses are opencode, codex, claude, antigravity, dsh, gemini, grok, tmux, copilot, cursor, amp, goose, kiro, cline, aider, roo, windsurf, zed, warp`)
 }
