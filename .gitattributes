@@ -17,3 +17,8 @@
 # `# ceiling:` line and rows an update removes, which a union merge would
 # resurrect or duplicate.
 internal/ci/testdata/deleted-tests.txt merge=union
+
+# tla/CASES.tsv and tla/RUNS.tsv are keyed tables, one row per config, never merge=union:
+# a line union keeps a rewritten row in both forms, which internal/tlc refuses. The lander
+# merges them by config (cmd/nova-sprint/landappend.go, mergeKeyed; docs/STANDARD.md
+# section 10).

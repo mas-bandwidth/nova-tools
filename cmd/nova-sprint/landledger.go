@@ -43,6 +43,10 @@ type landLedger struct {
 	roots []string            // the directories and files the family lives in: what the update rewrites
 	tests string              // the owning tests, as the commit and the card's note name them
 	run   []string            // the update run, in the clone, with NOVA_CI_UPDATE=1
+	// seed, when set, is what a conflicted file of the family holds before the update run,
+	// from its three stages, in place of the tip's side: a file part generated and part
+	// written (the tables lock's comment) keeps both sides' written part
+	seed func(base, ours, theirs []byte) ([]byte, error)
 }
 
 // landLedgers are the generated ledgers land regenerates at a merge. The generality
@@ -61,7 +65,22 @@ var landLedgers = []landLedger{{
 	roots: diffcheck.AgentsMapRoots,
 	tests: "TestCommittedMapMatchesTree",
 	run:   []string{"go", "run", "./tools/agentsmap"},
-}}
+}, tablesLockLedger}
+
+// tablesLock is the sprint tables lock (internal/ci TestSprintTablesAreLocked): its body
+// is a function of internal/sprint/schema.go, its comment the history of each change.
+const tablesLock = "internal/sprint/TABLES.lock"
+
+// tablesLockLedger is the tables lock's family: a conflict is seeded with both sides'
+// comment lines (seedTablesLock) and the body regenerated from the merged schema by
+// TestTheTablesLockIsRegenerated (land_tables_lock_test.go) in update mode.
+var tablesLockLedger = landLedger{
+	owns:  func(p string) bool { return p == tablesLock },
+	roots: []string{tablesLock},
+	tests: "TestTheTablesLockIsRegenerated",
+	run:   []string{"go", "test", "-count=1", "-timeout", "600s", "-run", "^TestTheTablesLockIsRegenerated$", "./cmd/nova-sprint"},
+	seed:  seedTablesLock,
+}
 
 // landRegenPasses bounds the update runs of one resolution: an update that writes
 // fails once with "updated, rerun", and a ledger that reads another (the text scan
@@ -250,7 +269,14 @@ func (l *lander) restore(ctx context.Context, dir string, known []string, env st
 // resolve is resolveLedgers before the restore.
 func (l *lander) resolve(ctx context.Context, dir, stream string, c landCard, paths []string, ours map[string]bool, owners []landLedger) (note, card, env string) {
 	tests := testsOf(owners)
+	var seeded []string
 	for _, p := range paths {
+		if done, card, env := l.seed(ctx, dir, p, owners); card != "" || env != "" {
+			return "", card, env
+		} else if done {
+			seeded = append(seeded, p)
+			continue
+		}
 		args := []string{"rm", "-q", "--", p} // the tip deleted it: it stays deleted
 		if ours[p] {
 			args = []string{"checkout", "--ours", "--", p}
@@ -306,10 +332,45 @@ func (l *lander) resolve(ctx context.Context, dir, stream string, c landCard, pa
 		}
 	}
 	msg := ledgerMessage(c.id, stream, paths, tests)
+	if len(seeded) > 0 {
+		msg[1] += " Of " + strings.Join(seeded, ", ") + " both sides' comment lines were kept over the tip's body."
+	}
 	if _, err := l.git(ctx, dir, "commit", "-q", "-m", msg[0], "-m", msg[1]); err != nil {
 		return "", "", "the resolved merge of " + c.id + " could not be committed: " + firstLine("", err)
 	}
 	return ledgerNote(paths, tests), "", ""
+}
+
+// seed writes and stages a conflicted path's seed when its family has one and git holds
+// all three stages (a side that deleted it takes the plain way); done says it did. card
+// is why the seed refused the sides, env a failure that is not the card's.
+func (l *lander) seed(ctx context.Context, dir, p string, owners []landLedger) (done bool, card, env string) {
+	i := slices.IndexFunc(owners, func(o landLedger) bool { return o.owns(p) })
+	if i < 0 || owners[i].seed == nil {
+		return false, "", ""
+	}
+	if q := onDiskLink(dir, []string{p}); q != "" {
+		return false, "its generated ledgers conflict and " + q + " is a symlink, which the resolution would write through", ""
+	}
+	var sides [3][]byte
+	for k := range sides {
+		res, err := gitrun.Run(ctx, gitrun.Options{C: dir, Env: l.a.gitEnv, OwnRepo: true}, "show", ":"+strconv.Itoa(k+1)+":"+p)
+		if err != nil {
+			return false, "", ""
+		}
+		sides[k] = res.Stdout
+	}
+	out, err := owners[i].seed(sides[0], sides[1], sides[2])
+	if err != nil {
+		return false, "its generated ledgers conflict and " + p + "'s comment is not the base's with lines added (" + err.Error() + ")", ""
+	}
+	if err := os.WriteFile(filepath.Join(dir, filepath.FromSlash(p)), out, 0o644); err != nil {
+		return false, "", "the seeded " + p + " could not be written: " + err.Error()
+	}
+	if _, err := l.git(ctx, dir, "add", "--", p); err != nil {
+		return false, "", "the seeded " + p + " could not be staged: " + firstLine("", err)
+	}
+	return true, "", ""
 }
 
 // onDiskLink is a path, or a directory on the way to it, that is a symlink on disk
@@ -401,11 +462,11 @@ func unionCatalogRows(base, ours, theirs []byte) ([]byte, [2]int, error) {
 	bLines, _ := unionLines(base)
 	oLines, oTrail := unionLines(ours)
 	tLines, tTrail := unionLines(theirs)
-	oAt, ok := catalogInserts(bLines, oLines)
+	oAt, ok := sideInserts(bLines, oLines, addedCatalogRow)
 	if !ok {
 		return nil, [2]int{}, errNotAnAddedRow
 	}
-	tAt, ok := catalogInserts(bLines, tLines)
+	tAt, ok := sideInserts(bLines, tLines, addedCatalogRow)
 	if !ok {
 		return nil, [2]int{}, errNotAnAddedRow
 	}
@@ -439,15 +500,16 @@ func unionCatalogRows(base, ours, theirs []byte) ([]byte, [2]int, error) {
 	return []byte(s), added, nil
 }
 
-// catalogInserts is the rows side adds before each base line (the index len(base) is
-// after the last), when side is the base plus added catalog rows and nothing else.
-func catalogInserts(base, side []string) (map[int][]string, bool) {
+// sideInserts is the lines side adds before each base line (the index len(base) is
+// after the last), when side is the base plus added lines that are rows (a catalog row
+// for the catalog, any line for the tables lock's comment) and nothing else.
+func sideInserts(base, side []string, row func(string) bool) (map[int][]string, bool) {
 	at := map[int][]string{}
 	j := 0
 	for i, b := range base {
 		var ins []string
 		for j < len(side) && side[j] != b {
-			if !addedCatalogRow(side[j]) {
+			if !row(side[j]) {
 				return nil, false
 			}
 			ins = append(ins, side[j])
@@ -463,7 +525,7 @@ func catalogInserts(base, side []string) (map[int][]string, bool) {
 	}
 	var tail []string
 	for ; j < len(side); j++ {
-		if !addedCatalogRow(side[j]) {
+		if !row(side[j]) {
 			return nil, false
 		}
 		tail = append(tail, side[j])
