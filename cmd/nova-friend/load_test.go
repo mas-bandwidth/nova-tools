@@ -12,3 +12,10 @@ func TestFirstLoadReadsTheOneMinuteFigure(t *testing.T) {
 		assert.Equal(t, want, firstLoad(in), in)
 	}
 }
+
+// A lane's go shim runs refuse-go: it refuses and names where go runs.
+func TestRefuseGoRefusesAndNamesTheBench(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, "bob")
+	r.cli().Do(t, "refuse-go").Exit(2).Err("no go build, test, vet or gofmt on this machine", "Linux bench")
+}

@@ -26,7 +26,7 @@ import (
 // (ParseLaneRow). Its zero value is the runner with nothing configured: every card runs,
 // no cap, no load bound, no price.
 type LaneRow struct {
-	Set       bool     // the row names any lane setting: the parity is on (a row naming none leaves the lanes as they were)
+	Set            bool     // the row names any lane setting: the parity is on (a row naming none leaves the lanes as they were)
 	Tiers          []string // row_tiers=flash,pro: the tiers she works; a card of another tier not started is taken back
 	Streams        []string // row_streams=security*,sec-*: stream or id globs she works; a card matching none is skipped
 	StopOnProvider bool     // row_provider_stop=true: any provider failure (402, 429, rate limit) holds every lane and the friend down, as out of funds does
@@ -404,7 +404,7 @@ func DownArgv(friend, model, message string) []string {
 var ShimNames = []string{"go", "gofmt"}
 
 // ShimRefusal is what a shim prints to stderr; the exit is ShimExit.
-const ShimRefusal = "REFUSED: no go build, test, vet or gofmt on this machine; run it on the Linux bench over ssh (the bench host the card names)"
+const ShimRefusal = "no go build, test, vet or gofmt on this machine; run it on the Linux bench over ssh (the bench host the card names)"
 
 // ShimExit is a shim's exit.
 const ShimExit = 126

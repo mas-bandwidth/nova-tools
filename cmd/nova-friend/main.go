@@ -222,12 +222,11 @@ func realWorld() world {
 }
 
 func main() {
-	if refusal, code, is := friend.ShimMain(os.Args[0]); is {
-		// run through a lane's go or gofmt shim (a symlink to this binary): refused, never run
-		fmt.Fprintln(os.Stderr, refusal)
-		os.Exit(code)
+	args := os.Args[1:]
+	if _, _, is := friend.ShimMain(os.Args[0]); is {
+		args = []string{"refuse-go"} // run through a lane's go or gofmt shim (a symlink to this binary): refused, never run
 	}
-	os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr, realWorld()))
+	os.Exit(run(args, os.Stdin, os.Stdout, os.Stderr, realWorld()))
 }
 
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer, w world) int {
@@ -578,6 +577,18 @@ the line it would send; nothing is sent and no pong file is written.`,
 				Run: w.pong,
 			},
 			{
+				Name:   "refuse-go",
+				Usage:  "refuse-go",
+				Effect: tool.Inspection,
+				Detail: `What a lane's go and gofmt shims run (symlinks to this binary, made under the state directory's
+shims/ by run for a harness opencode): refuses, naming where go runs, so no go build, test or vet runs on the lane's machine.`,
+				Run: func(*tool.Call) *tool.Out {
+					o := tool.Refuse(friend.ShimRefusal)
+					o.Remedy = "run: ssh <bench host> '<the go command>' on the Linux bench the card names"
+					return o
+				},
+			},
+			{
 				Name:    "wait-pong",
 				Usage:   "wait-pong --from <friend> --nonce <n> [--timeout <d>] [--redis <addr>]",
 				Example: "wait-pong --from bob --nonce abc123 --timeout 2s",
@@ -740,22 +751,6 @@ func (w world) run(c *tool.Call) *tool.Out {
 		fmt.Fprintf(c.Stdout, "RUN DRY-RUN as=%s harness=%s dir=%s state=%s redis=%s; nothing was started\n", name, c.Str("harness"), dir, state, addr)
 		return tool.Exit(0)
 	}
-	if _, ok := deliver.(*friend.OpenCode); ok {
-		// no go on this machine: the lane's PATH holds shims that refuse, GOROOT no toolchain
-		shims := filepath.Join(state, "shims")
-		if bin, err := w.binary(); err == nil {
-			if _, err := friend.WriteShims(shims, bin); err != nil {
-				fmt.Fprintln(c.Stderr, "RUN the go refusal shims cannot be made: "+err.Error())
-			} else {
-				for _, kv := range friend.LaneEnv(os.Environ(), shims) {
-					k, v, _ := strings.Cut(kv, "=")
-					if k == "PATH" || k == "GOROOT" {
-						os.Setenv(k, v) // ignored: a failed set leaves the lane as it was
-					}
-				}
-			}
-		}
-	}
 	if oc, ok := deliver.(*friend.OpenCode); ok {
 		// the friend's directory as her tools name it: the symlink in the home directory too
 		oc.Allow = []string{}
@@ -769,6 +764,22 @@ func (w world) run(c *tool.Call) *tool.Out {
 	record := func(line string) {
 		fmt.Fprintln(c.Stdout, "RUN "+line)
 		_ = friend.Record(state, line) // ignored: the line is on stdout (launchd's log) whatever the volume does
+	}
+	if _, ok := deliver.(*friend.OpenCode); ok {
+		// no go on this machine: the lane's PATH holds shims that refuse, GOROOT no toolchain
+		shims := filepath.Join(state, "shims")
+		if bin, err := w.binary(); err == nil {
+			if _, err := friend.WriteShims(shims, bin); err != nil {
+				record("the go refusal shims cannot be made: " + err.Error() + "; the lanes run with the go on their PATH")
+			} else {
+				for _, kv := range friend.LaneEnv(os.Environ(), shims) {
+					k, v, _ := strings.Cut(kv, "=")
+					if k == "PATH" || k == "GOROOT" {
+						os.Setenv(k, v) // ignored: a failed set leaves the lane as it was
+					}
+				}
+			}
+		}
 	}
 	var watch *friend.HarnessWatch
 	// the presence file says a limit while there is one, whatever the session check saw
