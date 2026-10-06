@@ -50,14 +50,14 @@ The operands and results, field by field, are today's card lines:
 Today a card waits for one of several unrelated reasons, each its own mechanism:
 admitted held (`add --held`, `internal/sprint/held.go`), a sentinel (`add
 --sentinel`, `internal/sprint/steps_sentinel.go`), a wave loading behind a held
-sentinel, `DEPENDS-ON` between cards, and a proposed external wait. The spec
+sentinel, `DEPENDS-ON` between cards, and an external wait polled by hand. The spec
 defines one `wait` kind whose operand says what it waits for. The operand is the
 `DEPENDS-ON` line the brief already carries, read in four forms:
 
 - `DEPENDS-ON: <card id>` waits for that card to land. Today's `needs`.
 - `DEPENDS-ON: release` waits for the coordinator's release. Today's held.
 - `DEPENDS-ON: line` waits for every primary of its stream that sorts before it. Today's sentinel.
-- `DEPENDS-ON: external:<condition>` waits for an external condition. The proposed external wait.
+- `DEPENDS-ON: pr <repo>#<n> merged`, `DEPENDS-ON: <branch> contains <sha>` or `DEPENDS-ON: after <RFC3339>` waits for an external condition (layer 3, below). Today's hand-polled hold.
 
 | today | the one `wait` kind |
 |---|---|
@@ -65,12 +65,27 @@ defines one `wait` kind whose operand says what it waits for. The operand is the
 | sentinel (`add --sentinel`, `kind=sentinel`, `release`) | `wait`, operand `line` |
 | wave (`heldWave`, a wave behind a held sentinel) | `wait`, operand `release`, many cards at once |
 | `DEPENDS-ON` / `needs` | `wait`, operand `<card id>` |
-| external wait (proposed) | `wait`, operand `external:<condition>` |
+| external wait (a card held and released by hand when a PR merges) | `wait`, operand `pr <repo>#<n> merged`, `<branch> contains <sha>` or `after <RFC3339>` |
 
 A wave is not a fourth mechanism: it is many `wait` cards behind one `release`
 operand, which `heldWave` already reads as the first held sentinel. `release`
 lands every wait whose operand is met, so one verb serves the hold, the sentinel
 and the wave.
+
+## External operands (layer 3)
+
+The external form of the operand is three shapes, each one fact of the outside that only
+comes to hold: `pr <repo>#<n> merged`, `<branch> contains <sha>`, `after <RFC3339>`
+(`swarm.ParseDependsOperand`; refused at add and at lint with the forms when malformed).
+The tick is the interrupt controller: it asks each distinct operand once a tick and keeps
+the answer for that tick (`sprint.ExternalAnswers`, resolve's ask), and a card is
+released the first tick its operands hold. In `tla/CardISA.tla` the operand is one more
+value of `WaitFor` (a member of `Ext`), read by the same one guard `OperandHolds` through
+the tick's `answer`; `IsaTick` is the ask, `AnswerIsTheOutside` says the answer never
+claims what the outside does not, and `MCCardISABrokenOneKey` (an answer read under
+another operand's key) and `MCCardISABrokenExtFirst` are its reversed witnesses of
+`WaitDispatchesOnlyWhenOperandHolds`. The full behaviour is in docs/SPEC-SPRINT.md,
+section 16, external operands.
 
 ## Folded and reserved
 
@@ -91,7 +106,7 @@ it adds:
 | 2 | sentinel (`add --sentinel`, `kind=sentinel`) | `wait`, operand `line` |
 | 3 | wave (`heldWave`) | `wait`, operand `release`, many cards |
 | 4 | `DEPENDS-ON` / `needs` | `wait`, operand `<card id>` |
-| 5 | external wait (proposed) | `wait`, operand `external:<condition>` |
+| 5 | external wait (held, released by hand) | `wait`, an external operand |
 
 | line | change |
 |---|---|
@@ -107,6 +122,7 @@ concepts after: 1
 ## Sources
 
 - `internal/sprint/held.go`: `FieldHeld`, `IsHeld`, `heldWave`, `HeldBack`, and the no-stall rule's hold.
+- `internal/sprint/external.go` and `internal/sprint/tick_external.go`: the external operands and the tick's one ask of each.
 - `internal/sprint/steps_sentinel.go`: `IsSentinel`, `WaitsFor`, `Reachable`, `Release`.
 - `internal/hygiene/kinds.txt`: the one list of work kinds.
 - `internal/cardtree/tree.go`: the script step, which runs with no model.

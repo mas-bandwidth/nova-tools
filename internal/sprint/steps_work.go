@@ -234,17 +234,20 @@ func Add(s *Snapshot, r AddReq) Plan {
 		score  float64
 		needs  []string
 		brief  string
-		rules  string // FieldRules
-		bench  string // FieldBench: the members its brief's BENCH line names (bench_deal.go)
-		behind string // the sentinel it waits behind by position
-		gate   bool   // a stop of --sentinel-every
-		sent   bool   // a stop: --sentinel or a many-brief card marked one
+		rules  string   // FieldRules
+		ext    []string // FieldExternal: the external operands it waits for (external.go)
+		bench  string   // FieldBench: the members its brief's BENCH line names (bench_deal.go)
+		behind string   // the sentinel it waits behind by position
+		gate   bool     // a stop of --sentinel-every
+		sent   bool     // a stop: --sentinel or a many-brief card marked one
 	}
 	var in []admit
 	lastGate := ""
 	seen := map[string]bool{}
 	for i, id := range ids {
-		needs := append([]string(nil), needsOf(i)...)
+		// an external operand is no card: the tick asks it (external.go)
+		ext, extWhy := ExternalOf(needsOf(i), briefOf(i))
+		needs := slices.DeleteFunc(append([]string(nil), needsOf(i)...), IsExternalEntry)
 		// missing is the needs that name no primary they may name: one on the
 		// table or one of this add (a cycle is refused below).
 		var missing []string
@@ -274,6 +277,9 @@ func Add(s *Snapshot, r AddReq) Plan {
 		case devWhy != "": // a card cut on dev, outside the promotion stream (docs/SPEC-SPRINT.md section 7)
 			p.refuse(id, devWhy)
 			continue
+		case extWhy != "":
+			p.refuse(id, extWhy)
+			continue
 		case len(missing) > 0:
 			if len(r.Cards) > 0 {
 				p.refuse(id, fmt.Sprintf("%s: needs %s, which is no primary on the table or in this add", r.Cards[i].File, strings.Join(missing, ",")))
@@ -286,7 +292,7 @@ func Add(s *Snapshot, r AddReq) Plan {
 			continue
 		}
 		seen[id] = true
-		a := admit{id: id, score: scores[i], needs: needs, brief: briefOf(i), rules: rulesOf(i), bench: strings.Join(bench, ","), gate: r.IsGate(id), sent: isSent(i)}
+		a := admit{id: id, score: scores[i], needs: needs, brief: briefOf(i), rules: rulesOf(i), ext: ext, bench: strings.Join(bench, ","), gate: r.IsGate(id), sent: isSent(i)}
 		if st := sentinelBefore(s, r.Stream, a.score); st != nil && !a.sent {
 			a.behind = st.ID // it waits behind the stop by its place; nothing is written of it
 		}
@@ -342,7 +348,7 @@ func Add(s *Snapshot, r AddReq) Plan {
 	for _, a := range in {
 		edges[a.id] = a.needs
 		col := Ready
-		if a.behind != "" || a.gate || a.sent {
+		if a.behind != "" || a.gate || a.sent || len(a.ext) > 0 {
 			col = Waiting
 		}
 		for _, n := range a.needs {
@@ -393,7 +399,7 @@ func Add(s *Snapshot, r AddReq) Plan {
 				col = Waiting
 			}
 		}
-		if a.behind != "" {
+		if a.behind != "" || len(a.ext) > 0 {
 			col = Waiting
 		}
 		kind := "primary"
@@ -436,6 +442,9 @@ func Add(s *Snapshot, r AddReq) Plan {
 		}
 		if len(a.needs) > 0 {
 			fields["needs"] = strings.Join(a.needs, ",")
+		}
+		if len(a.ext) > 0 {
+			fields[FieldExternal] = strings.Join(a.ext, ",")
 		}
 		if n := weights[a.id]; n > 0 && !a.sent && !a.gate {
 			fields[FieldBehind] = itoa(n)
@@ -676,6 +685,9 @@ func fmtScore(f float64) string { return strconv.FormatFloat(f, 'g', -1, 64) }
 type ResolveReq struct {
 	Sel
 	Who string
+	// External is the tick's answers to the external operands (tick_external.go); nil,
+	// as the verb gives it, asks nothing.
+	External *ExternalAnswers
 }
 
 // ResolveExtras is the needs a resolve must read as records: the ones not on
@@ -755,6 +767,20 @@ func resolvePlan(s *Snapshot, r ResolveReq) Plan {
 			}
 			continue
 		}
+		var met map[string]string
+		if ext := ExternalWaits(c); len(ext) > 0 { // released the first tick they hold (tick_external.go)
+			ok, set, u := externalAsk(s, c, r.External)
+			if u != nil {
+				p.Units = append(p.Units, *u)
+			}
+			if !ok {
+				if len(r.IDs) > 0 {
+					p.refuse(c.ID, "waits for "+strings.Join(ext, ", "))
+				}
+				continue
+			}
+			met = set
+		}
 		if IsHeld(c) { // held, never reached or ready: the coordinator releases it
 			if len(r.IDs) > 0 {
 				p.refuse(c.ID, "held (add --held): the coordinator releases it: nova-sprint release "+c.ID+" --reason <text>")
@@ -769,8 +795,15 @@ func resolvePlan(s *Snapshot, r ResolveReq) Plan {
 			}
 			continue
 		}
-		p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.Row, Changes: []Change{change(Work, moveEntry(c, c.Row, Ready, readyStamp(c, s.Now)))},
-			Moved: c.ID + " waiting -> ready"})
+		set := readyStamp(c, s.Now)
+		moved := c.ID + " waiting -> ready"
+		if met != nil {
+			set = maps.Clone(met)
+			maps.Copy(set, readyStamp(c, s.Now))
+			moved += " (its external operands hold: " + c.F(FieldExternal) + ")"
+		}
+		p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.Row, Changes: []Change{change(Work, moveEntry(c, c.Row, Ready, set))},
+			Moved: moved})
 	}
 	return p
 }
@@ -782,7 +815,7 @@ func resolvePlan(s *Snapshot, r ResolveReq) Plan {
 func resolveAfter(s *Snapshot, landing map[string]bool, who string) []Unit {
 	var out []Unit
 	for _, c := range s.Work.Column(Waiting) {
-		if landing[c.ID] || IsHeld(c) || len(WaitsFor(s, c, landing)) > 0 {
+		if landing[c.ID] || IsHeld(c) || len(WaitsFor(s, c, landing)) > 0 || len(ExternalWaits(c)) > 0 {
 			continue
 		}
 		if IsSentinel(c) {
