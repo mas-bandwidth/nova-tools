@@ -239,8 +239,15 @@ type Waiter interface {
 }
 
 // Waiter is the Store's wait reads, or the refusal of a Store that has none.
+// A wait takes nothing and sends nothing, so the hearing wrapper's checks do
+// not apply to it and its reads go to the store under it (SPEC-BUS.md, the
+// verbs: wait).
 func (b *Bus) Waiter() (Waiter, error) {
-	w, ok := b.Store.(Waiter)
+	st := b.Store
+	if h, ok := st.(*hearing); ok {
+		st = h.Store
+	}
+	w, ok := st.(Waiter)
 	if !ok {
 		return nil, errors.New("this store cannot wait")
 	}
