@@ -129,8 +129,9 @@ func TestABriefNamesNoFriendAsAuthor(t *testing.T) {
 	c := cardgen.PlanHelp("nova-x", "x\n", "TestExamples", "", "")
 	c.Paths = Paths(header, c)
 	brief := cardgen.Render(header, c)
-	assert.Contains(t, brief, "\nATTRIBUTION: By: your own name, the friend doing this work")
-	assert.Contains(t, brief, "\nAS A READ\nA By: trailer is judged only for being present and true: it names the friend who pushed")
+	read, _ := cardgen.AsRead(brief) // the brief by reference, as its lane reads it with the contract
+	assert.Contains(t, read, "\nATTRIBUTION: By: your own name, the friend doing this work")
+	assert.Contains(t, read, "\nAS A READ\nA By: trailer is judged only for being present and true: it names the friend who pushed")
 	assert.Empty(t, Lint(c.ID, brief, opts))
 	assert.Empty(t, Lint(c.ID, brief+"WHO: friend ada\n", opts), "WHO stays a preference line")
 
