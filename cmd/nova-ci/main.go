@@ -150,6 +150,8 @@ example:
   nova-ci help
   nova-ci slowtests --example --budget 60 --load 4 --cpus 16
   nova-ci slowtests --example --budget 120 --load 4 --cpus 16
+
+slowtests judges timing, not test success; with set -o pipefail the pipeline's exit carries go test -timeout 600s's.
 `
 
 // verbs is every verb in the order the banner lists them: what a refusal for a
