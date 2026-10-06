@@ -90,3 +90,25 @@ The `gosdk` check reads the role from the machine's seat. On the coordinator's m
 no `go` there it is ok. On a bench it fails when `go` is absent, when its version is not
 `go.mod`'s toolchain version, or when `GOCACHE` is not writable, and warns when `GOFLAGS`
 does not carry `-mod=readonly`. Each fix line names the step above.
+
+### dep-redis-stores-b.w4: the Redis stores and their ACLs
+
+The sprint store and the bus store are Redis, and each holds one ACL user per role:
+coordinator, member, friend and reader, with the key families, command categories and
+function calls `internal/redisacl` renders. A coordinator or a fleet needs both stores; a
+first sprint on one machine runs a local twin and needs no Redis.
+
+`nova-up --local` provides the store on one machine: the `redis` step runs one loopback
+Redis under the service manager, draws a password per user, seals each into the secrets
+store and applies the ACL through `nova-redis acl`, never printing a password. On a fleet,
+`fleet/redis.yml` converges the fleet store's users the same way. A person without
+`nova-up` runs the store and then `nova-redis acl apply --addr <host:port>` with
+`--password-env-for <user>=<VARIABLE>` for a user it creates.
+
+The `redis` check reads the stores the environment names (`NOVA_REDIS_ADDR` for the sprint
+store and the local bus store, `NOVA_BUS_REDIS` for a separate bus store), dials each, and
+runs `nova-redis acl check` under the seat's own login, which compares the live ACL with
+what `internal/redisacl` renders. It fails when a store is not reachable, when the server
+is older than Redis 7, or when an expected user is missing or different, naming the user;
+the fix is the `nova-redis acl apply` line that sets it, with the password variable named
+and never its value. A machine that names no store is ok: a local twin needs none.
