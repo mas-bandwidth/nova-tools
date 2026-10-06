@@ -169,9 +169,9 @@ Presence is therefore the session's, never the daemon's:
   running (the finding of 2026-10-05).
 - A daemon that starts is down, `no session answer yet`, with a check owed at
   once: coming up proves nothing about the session.
-- While down, no beat goes to the sprint server: a friend the coordinator has
-  never observed is up there on her beat alone, so the beat is held back (the
-  status says `not beating: the session is down (<reason>)`). The friend row's
+- While down, no beat goes to the sprint server: her beat is never evidence
+  there (her session's is), and holding it back keeps her row from showing a
+  fresh beat while her session is silent (the status says `not beating: the session is down (<reason>)`). The friend row's
   mode and width arrive with the beat's answer, so while down the daemon
   delivers by the row it last read (batch at `--width` before any).
 - The state is in `presence.json` in the state directory, one writer, the
@@ -431,11 +431,12 @@ daemon's existing beat client in `cmd/nova-friend/main.go`, and the plain beat
 again once the wake after the reset is answered. `friend beat` keeps the pair on her
 report (`sprint.FriendReport.Until`, `Reason`; `--reason` without `--until` is
 refused, and a down beat reports working 0), and `sprint.FriendStatus` reads her down
-while her last beat says so (`Beat.SaysDown`), after a hold and before an
-observation, however fresh the beat; `FriendDownWhy` says `her beat says down until
-<t>: <reason>`. A beat without `--until` has her up again by the ordinary rule.
-`TestUsageLimitMarksDownUntilReset` asserts the beats go up, down with the reset and
-the reason, then up; `TestFriendBeatDownUntilCarriesTheReasonAndTheUntil`
+while her last beat says so (`Beat.SaysDown`), after a hold and before her session's
+evidence, however fresh the beat or the evidence; `FriendDownWhy` says `her beat says down until
+<t>: <reason>`. A beat without `--until` ends that word, and she reads up again only
+on her session's evidence (a wake ping it answered, a card it finished).
+`TestUsageLimitMarksDownUntilReset` asserts the beats are plain, then say down with the
+reset and the reason, then plain again; `TestFriendBeatDownUntilCarriesTheReasonAndTheUntil`
 (cmd/nova-sprint) the row.
 
 The sprint server's beat lane takes the down beat: `friendBeatFlags`
@@ -490,7 +491,7 @@ line, answered every session check with a pong for three hours, and read
 down, because the check looked for the DeepSeek Harness app and "harness not
 running" held her beat back; the coordinator started the app hidden to get
 her up. Tested on a twin store, `TestAFriendWhoseSessionPongsIsUpWithNoHarnessProcess`
-(no app, the session pongs: up, every beat out, for three hours; the app
+(no app, the session pongs: the daemon reads her up, for three hours, and sends every beat; the app
 open, the session silent: down) and over a fake process table,
 `TestAClosedHarnessIsSaidAndNeverHoldsTheBeat`.
 
@@ -678,7 +679,7 @@ still a refusal and nothing is written.
 The finding of 2026-10-04: the sprint server's notes to friends failed on
 `WRONGPASS` for its bus user for two hours (54 failures in 30 minutes) and
 only a log line said so; earlier a friend's harness got no note for 80
-minutes while her beat said up. A beat proves the daemon, and the daemon's
+minutes while her row read up (in those days, on the daemon's beat alone). A beat proves the daemon, and the daemon's
 ack proves the turn ran; neither proves the session read the message. So
 every message to a friend is owed her session's receipt (SPEC-BUS.md,
 fr-delivery-receipts.w1): her session runs `nova-bus ack --as <f> --id
@@ -712,10 +713,58 @@ A friend's beat is the daemon's alone: the loop above beats once a second
 while it runs, and nothing else beats for her (the owner, 2026-10-04: "Golang
 nova-tools and nova-sprint verbs only"; "Make the ping loop mechanical!!!!").
 The per-friend shell loops that beat for a friend every second whether or not
-her session was there, part of why a closed app read up, are retired
-(docs/FRIENDS.md, "A friend's beat comes only from her daemon"). The beat
-proves the daemon; whether her session answers is the coordinator's
-observation (`friend health`). The roster and her cards are moved by the
+her session was there are retired with no replacement (docs/FRIENDS.md, "The
+beat loops are retired, with no replacement"). The beat proves the daemon and
+nothing more: it is recorded and shown, and it never makes her up (below).
+
+## Presence is her session's evidence (internal/sprint/presence.go)
+
+The owner, 2026-10-05 ~9:30 AM ET, on the daemon: "there is no value in things
+that are answered just by the daemon"; "The daemon stays up even while the
+harness is closed."; "remove the proof of life bits that don't work, and keep
+the good bits that do work". On 2026-10-04 friends' rows read up for hours
+while their sessions took no turn, on beats that loops sent for them: one for
+four hours under a refusing harness, another working 8 for an hour while
+running nothing.
+
+A friend's row in the sprint (`sprint.FriendStatus`, `sprint.FriendEvidence`)
+is `held` while the coordinator holds her; else `down` while her last beat
+says so (`Beat.SaysDown`: her harness at its usage limit, until when and why;
+a beat may say down, never up); else `up` only on evidence from her own
+session, within its window:
+
+- a wake ping her session answered under `FriendPongWindow` (ten minutes) old:
+  the coordinator's ping loop sends `nova-friend ping --wake`, her daemon
+  pushes the pong line into her free session as its own turn
+  (session-pong.w1), her session runs it, and the coordinator writes what it
+  saw as `friend health <friend> --state up --seen <t>`, fenced by the seat's
+  generation; or
+- a card of hers finished (working to done, ok or failed) under
+  `FriendFinishWindow` (thirty minutes) old: friend sync's collect of the
+  `REPORT.md` her session wrote records it (`friend-finish:<friend>`,
+  `store.FriendFinished`).
+
+Else she is `down`. Nothing else is evidence: not her beat, whoever sends it
+(her daemon, or any loop that beats for her), not `daemon-pong` (her daemon's own
+answer, shown as down), not a hold released (`friend up`), not a
+coordinator's down. Her row names the evidence and its age (`where --json`,
+`friends[].evidence`: `session pong 3m0s ago`, `finish 12m0s ago`) or, down,
+what is missing and the age of the last of each, with her beat's age said to be
+no evidence. A friend down keeps the cards dealt to her row (the deadline judges
+them, docs/SPEC-SPRINT.md section 1): going down takes nothing back. Her
+unstarted cards return to ready only when the coordinator takes them
+(`friend take --all-unstarted`, or `friend down`); nothing returns them on her
+going down by itself.
+
+What stays: the daemon as the mailman (bus messages and dealt cards pushed
+into her session as turns), the session-answered wake ping, `HarnessWatch`
+(`WatchHarness`, below), and finishes as evidence. Tested on the twin store
+with an injected clock: `TestFriendIsUpOnlyOnEvidenceFromHerSession` (a friend
+beaten every second with no pong and no card reads down past the window,
+naming the missing evidence; one answered pong makes her up, then down again
+after the window without another; a finish the same for its window),
+`TestFriendEvidenceRule`, and through the command
+`TestAFinishFromHerReportIsHerSessionsEvidence`. The roster and her cards are moved by the
 friend sync loop, `nova-sprint friend sync --every <d>`, a nova-config loop
 row kept alive with no shell in its argv (docs/FRIENDS.md, "The friend sync
 loop"; cmd/nova-sprint/friend_loop.go).
@@ -1679,12 +1728,12 @@ bubble, so the long bounds are fake time.
 | harness closed (every delivery Deferred) | down within 1 minute | new cards to the other friend; none left on him | nothing: his daemon beats, so the table says up | fr-harness-alive |
 | session silent (turns taken, nothing said) | down within 15 minutes of his last bus message, pinged once a window | as above | his daemon calls the session `deaf` within the bound; the table says up | fr-session-proof-of-life, fr-status-from-evidence |
 | usage limit (every turn fails with the reset time) | down within 1 minute, until the reset, then up once the session answers a nonce | as above | nothing: the table says up throughout | fr-limits-and-credits |
-| bus credential revoked (every command WRONGPASS) | one alarm to the coordinator on the first failed send | as above | the status names WRONGPASS at the first failed command; the beat stops, so the table says down within 15 seconds and new cards go to the other friend | fr-delivery-receipts (the alarm) |
+| bus credential revoked (every command WRONGPASS) | one alarm to the coordinator on the first failed send | as above | the status names WRONGPASS at the first failed command; the beat stops; the table says down once his session's last pong or finish is out of its window (ten and thirty minutes), and new cards go to the other friend | fr-delivery-receipts (the alarm) |
 | hold (`hold --return`) | held at once | none left on him; his cards dealt to the other friend at the next tick; no new card | all of it | none |
 
 "None left on him" for the down cases is the presence model's invariant (a
 held or down friend holds no card, fr-presence-model); today a down friend
-keeps the cards dealt to him and the deadline judges them (`FriendDownAfter`,
+keeps the cards dealt to him and the deadline judges them (`FriendStatus`,
 internal/sprint/presence.go), and no card yet names that withdrawal.
 
 A part the landed code cannot meet is owed: it is checked like the rest, and

@@ -32,7 +32,7 @@ func reconcileApp(t *testing.T, n int) (*testApp, string) {
 	ta.a.tip = tipIs(t, landHead)
 	root := t.TempDir()
 	ta.ok("friend sync --root " + root)
-	ta.ok("friend beat amy")
+	ta.beatUp("amy")
 	dir := t.TempDir()
 	for i := 1; i <= n; i++ {
 		id := "s1-" + strconv.Itoa(i)
@@ -85,6 +85,7 @@ func TestFriendReconcileSettlesEachCardOnTheTwin(t *testing.T) {
 	for _, id := range []string{"s1-3", "s1-4"} {
 		assert.Equal(t, 1, strings.Count(ta.ok("log --card "+id), "returned by friend reconcile"), id)
 	}
+	ta.a.sleep(sprint.FriendFinishWindow + time.Second) // her session's evidence lapses: she is down, so nothing is dealt to her
 	ta.ok("tick")
 	card := func(id string) cardView {
 		var c cardView
@@ -94,7 +95,7 @@ func TestFriendReconcileSettlesEachCardOnTheTwin(t *testing.T) {
 	assert.Equal(t, sprint.Review, card("s1-1").Primary.Col, "the collected card goes to review")
 	assert.Equal(t, sprint.Working, card("s1-2").Primary.Col, "the kept card is hers still")
 	assert.Equal(t, sprint.Ready, card("s1-3").Primary.Col, "the returned card is ready")
-	ta.ok("friend beat amy") // a minute passed: she beats to be up for the deal
+	ta.beatUp("amy") // her session answers again, to be up for the deal
 	ta.ok("tick")
 	c := card("s1-3")
 	assert.Equal(t, sprint.Working, c.Primary.Col, "the returned card is dealt again by the tick")
@@ -149,4 +150,28 @@ func TestFriendReconcileRunsEachStepUnderTheOp(t *testing.T) {
 			assert.GreaterOrEqual(t, asked, tc.asked, "the collect and the return each run under an operation id")
 		}
 	}
+}
+
+// A card of hers finished from the report her session wrote is her session's evidence: past
+// her pong's window, the collect makes her up on the finish for sprint.FriendFinishWindow,
+// her row naming it and its age, and down again after it (docs/SPEC-FRIEND.md, "Presence
+// is her session's evidence").
+func TestAFinishFromHerReportIsHerSessionsEvidence(t *testing.T) {
+	t.Parallel()
+	ta, root := reconcileApp(t, 1)
+	ta.a.sleep(sprint.FriendPongWindow)
+	ta.ok("friend beat amy")
+	f := whereFriends(ta)["amy"]
+	assert.Equal(t, sprint.Down, f.Status, "her pong out of its window, and a beat is none")
+	assert.Contains(t, f.Evidence, "no card finished within 30m0s")
+	outboxReport(t, root, "amy", "s1-1.w1", "Verdict: LAND\nHead: "+landHead+"\n\nPushed and green.\n")
+	assert.Contains(t, ta.ok("friend sync --root "+root), "FRIEND-CARD FINISHED friend=amy card=s1-1.w1 result=ok")
+	f = whereFriends(ta)["amy"]
+	assert.Equal(t, sprint.Up, f.Status)
+	assert.Equal(t, "finish 0s ago", f.Evidence)
+	assert.Equal(t, ta.now.UTC(), f.Finished.UTC())
+	ta.a.sleep(sprint.FriendFinishWindow)
+	f = whereFriends(ta)["amy"]
+	assert.Equal(t, sprint.Down, f.Status, "the finish out of its window")
+	assert.Contains(t, f.Evidence, "no card finished within 30m0s (last 30m0s ago)")
 }

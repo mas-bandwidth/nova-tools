@@ -13,8 +13,9 @@ import (
 // 2026-10-05, a take --as friend.<f> for two friends was refused "member
 // friend.<f> is -" while where showed both up: a friend's row has no control card status
 // (only a machine's does). Her take is admitted by FriendStatus, as the snapshot's friend
-// seats carry it, and refused only when she is held, observed down or silent, the refusal
-// naming which; a machine's take keeps its control card's rule.
+// seats carry it, and refused when she is held or has no evidence from her session in its
+// window (a beat alone is none: card presence-from-session-only), the refusal naming
+// which; a machine's take keeps its control card's rule.
 
 // readyForAmy is a world with amy dealt three cards at width 2: two working and s1-3.w1
 // ready on her row, which a take at her raised width 3 can take.
@@ -34,14 +35,14 @@ func takeForAmy(w *world, seat FriendSeat) Plan {
 	return Take(w.s, TakeReq{Sel: Sel{IDs: []string{wc.ID}}, As: FriendRow("amy"), Gens: map[string]int{wc.ID: wc.Int("gen")}, Who: FriendRow("amy")})
 }
 
-func TestATakeForABeatingFriendIsAdmittedWithoutAControlStatus(t *testing.T) {
+func TestATakeForAFriendUpOnHerSessionIsAdmittedWithoutAControlStatus(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 10, 5, 23, 0, 0, 0, time.UTC)
 
-	t.Run("beating: admitted by FriendStatus, within her width", func(t *testing.T) {
+	t.Run("a card finished by her session: admitted by FriendStatus, within her width", func(t *testing.T) {
 		t.Parallel()
 		w := readyForAmy(t)
-		up := FriendStatus(FriendPresence{Beat: Beat{At: now.Add(-time.Second)}}, now)
+		up := FriendStatus(FriendPresence{Beat: Beat{At: now.Add(-time.Second)}, Finished: now.Add(-time.Minute)}, now)
 		require.Equal(t, Up, up)
 		w.must(takeForAmy(w, FriendSeat{Name: "amy", Width: 3, Status: up, Class: "flash,pro"}))
 		assert.Equal(t, Working, w.s.Fleet.Card("s1-3.w1").Col)
@@ -49,7 +50,7 @@ func TestATakeForABeatingFriendIsAdmittedWithoutAControlStatus(t *testing.T) {
 		assert.Empty(t, Check(w.s, nil))
 	})
 
-	t.Run("observed up by the coordinator: admitted", func(t *testing.T) {
+	t.Run("a wake ping her session answered: admitted", func(t *testing.T) {
 		t.Parallel()
 		w := readyForAmy(t)
 		h := FriendHealth{State: Up, Seen: now.Add(-time.Second), Generation: 1}
@@ -74,9 +75,9 @@ func TestATakeForABeatingFriendIsAdmittedWithoutAControlStatus(t *testing.T) {
 		want string
 	}{
 		{"held", FriendPresence{Held: true, Beat: Beat{At: now.Add(-time.Second)}}, "friend amy is held: held by the coordinator (friend down)"},
-		{"silent past FriendDownAfter", FriendPresence{Beat: Beat{At: now.Add(-FriendDownAfter - time.Second)}}, "friend amy is down: silent: no beat for 16s, past 15s"},
-		{"observed down", FriendPresence{Beat: Beat{At: now.Add(-time.Second)}, Health: FriendHealth{State: Down, Seen: now.Add(-time.Second), Generation: 1}, Generation: 1}, "friend amy is down: observed down by the coordinator (friend health)"},
-		{"never beaten", FriendPresence{}, "friend amy is down: she has never beaten"},
+		{"beating, no session evidence", FriendPresence{Beat: Beat{At: now.Add(-time.Second)}}, "friend amy is down: no session evidence: no wake ping answered by her session within 10m0s, no card finished within 30m0s; her beat 1s ago is not evidence"},
+		{"observed down", FriendPresence{Beat: Beat{At: now.Add(-time.Second)}, Health: FriendHealth{State: Down, Seen: now.Add(-time.Second), Generation: 1}, Generation: 1}, "friend amy is down: no session evidence: no wake ping answered by her session within 10m0s, no card finished within 30m0s; her beat 1s ago is not evidence"},
+		{"never beaten", FriendPresence{}, "friend amy is down: no session evidence: no wake ping answered by her session within 10m0s, no card finished within 30m0s"},
 	} {
 		t.Run(tc.name+": refused, naming it", func(t *testing.T) {
 			t.Parallel()
