@@ -158,7 +158,7 @@ func (t *Tool) RunContext(ctx context.Context, args []string, stdin io.Reader, s
 
 // dispatch is RunContext without the interrupt wrap: help's rewrite keeps ctx.
 func (t *Tool) dispatch(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) (code int) {
-	defer t.help(stdout, stderr, &code)
+	defer t.help(args, stdout, stderr, &code)
 	if len(args) == 0 {
 		given := "no verb given"
 		if t.Default != "" {
@@ -307,13 +307,16 @@ func didYouMean(got string, names []string) string {
 	return ""
 }
 
-// help is deferred by Run: a verb's -h (verbflag's Help) prints that verb's
+// help is deferred by dispatch: a verb's -h (verbflag's Help) prints that verb's
 // help, quoted from the banner with its flags and the exit codes (the verb's
 // own, Verb.ExitTable, where it states them), then the verb's effect, on
 // stdout at exit 0. A tool that refuses help (HelpRefused) answers -h with a
-// refusal on stderr at exit 2 instead: `-h` is not an answer the tool gives,
-// and its exit 0 means CLEAR, so answering it could read as CLEAR.
-func (t *Tool) help(stdout, stderr io.Writer, code *int) {
+// refusal instead: `-h` is not an answer the tool gives, and its exit 0 means
+// CLEAR, so answering it could read as CLEAR. The refusal is a refusal like any
+// other, so it renders as the one JSON object on stdout when args hold --json
+// (skeleton contract 1.4 and 1.6: --json is always stdout), and as the plain
+// line on stderr when they do not.
+func (t *Tool) help(args []string, stdout, stderr io.Writer, code *int) {
 	r := recover()
 	if r == nil {
 		return
@@ -333,7 +336,7 @@ func (t *Tool) help(stdout, stderr io.Writer, code *int) {
 		}
 		o := Refuse("-h is not an answer this tool gives, its exit 0 means CLEAR")
 		o.Remedy = t.Name + " help"
-		*code = t.emit(v, o, false, stdout, stderr)
+		*code = t.emit(v, o, verbflag.BoolAsked(args, "json"), stdout, stderr)
 		return
 	}
 	t.writeHelp(h.FS.Name(), h.FS, stdout)

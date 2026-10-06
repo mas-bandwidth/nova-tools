@@ -632,6 +632,62 @@ func TestEveryBadFlagValueIsNamedAtOnce(t *testing.T) {
 	}
 }
 
+// TestARefusalUnderJSONIsOneObjectOnStdout pins skeleton contract 1.4 and 1.6
+// (STANDARD §2, one output structure with two renderings; --json is always
+// stdout): under --json every refusal the skeleton raises is one JSON object on
+// stdout with nothing on stderr, including the refusals raised before the verb
+// and its flags are known. The result's why holds each reason alone, never the
+// whole line: the envelope is not repeated inside it.
+func TestARefusalUnderJSONIsOneObjectOnStdout(t *testing.T) {
+	t.Parallel()
+	clearTool := func() *Tool { // a tool whose exit 0 means CLEAR refuses `<verb> -h` (Tool.HelpRefused)
+		return &Tool{Name: "nova-clear", What: "clears one gate", ExitTable: "0 clear, 1 not clear, 2 could not run.",
+			HelpRefused: true,
+			Verbs: []Verb{{Name: "check", Usage: "check [--gate <g>]", Effect: Inspection,
+				Flags: func(f *Flags) { f.String("gate", "", "the gate to clear") },
+				Run:   func(*Call) *Out { return Done() }}}}
+	}
+	for _, tc := range []struct {
+		name string
+		tool func() *Tool
+		args []string
+		verb string // the result's verb: "" while the verb is unknown
+	}{
+		{"an unknown verb names the verbs it does not know", demo, []string{"seal", "--json"}, ""},
+		{"an unknown flag names the flags of its verb", demo, []string{"put", "--bogus", "--json"}, "put"},
+		{"a bare group names its verbs", demo, []string{"fn", "--json"}, ""},
+		{"a verb's own problems are the reasons", demo, []string{"put", "--json"}, "put"},
+		{"every bad flag value is a reason", demo, []string{"put", "--n", "x", "--max", "many", "--json"}, "put"},
+		{"a refused -h is a refusal like any other", clearTool, []string{"check", "-h", "--json"}, "check"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r := testkit.Main(tc.tool().Run).Run(tc.args...)
+			assert.Equal(t, 2, r.Code, "stdout %q stderr %q", r.Stdout, r.Stderr)
+			assert.Empty(t, r.Stderr, "a refusal under --json leaves nothing on stderr")
+			require.Equal(t, 1, strings.Count(r.Stdout, "\n"), "stdout is the one object:\n%s", r.Stdout)
+			var j struct {
+				Result struct {
+					Verb, Status string
+					Exit         int
+					Remedy       string
+					Why          []string
+				} `json:"result"`
+			}
+			require.NoError(t, json.Unmarshal([]byte(r.Stdout), &j))
+			assert.Equal(t, "refused", j.Result.Status)
+			assert.Equal(t, 2, j.Result.Exit)
+			assert.Equal(t, tc.verb, j.Result.Verb)
+			assert.NotEmpty(t, j.Result.Remedy, "a refusal names the command to run next")
+			require.NotEmpty(t, j.Result.Why)
+			for _, w := range j.Result.Why {
+				assert.NotContains(t, w, "REFUSED:", "the envelope is not repeated inside why")
+				assert.NotContains(t, w, "; run: ", "the remedy stands in its own field, not inside a reason")
+			}
+		})
+	}
+}
+
 // TestBannerMeetsTheOnboardingStandard reads the banner the way the onboarding
 // class test does: the example block's lines are the tool's commands, with no
 // placeholder, and every usage verb answers -h at exit 0.
