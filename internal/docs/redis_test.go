@@ -14,8 +14,8 @@ import (
 // TestNovaRedisSpecFirstSlice pins the nova-redis specification's contract
 // terms: the `nova-redis` binary owning the instance (serve, and spill/recall
 // scratch with TTL and owner prefixes) bound to localhost and the tailnet with
-// auth from nova-secrets and the AOF on. Git stays the record; a missing file or
-// a section missing one of the named contract terms is a bug.
+// auth from nova-secrets and the AOF on, and Redis the source of truth for the
+// classes DATA.md gives it; a missing file or a section missing one of the named contract terms is a bug.
 func TestNovaRedisSpecFirstSlice(t *testing.T) {
 	t.Parallel()
 
@@ -35,7 +35,7 @@ func TestNovaRedisSpecFirstSlice(t *testing.T) {
 		"tailnet",
 		"nova-secrets",
 		"Persistence",
-		"Git stays the record",
+		"the source of truth for the classes [DATA.md](DATA.md) gives it",
 	} {
 		assert.Contains(t, content, want, "docs/SPEC-REDIS.md missing %q", want)
 	}
