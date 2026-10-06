@@ -2793,6 +2793,7 @@ What each of the lander's checks does with a head:
 | a rename outside PATHS (E12) | refuses |
 | a stranded sentence fragment (E4) | refuses |
 | an unmatched backquote in a Markdown or text file (E4) | repairs; refuses only when ambiguous, naming the line; not read on a prose path |
+| a code span wrapped across two lines the change adds (E4) | joins them and notes it; refuses only when the join leaves the span open, naming the line; not read on a prose path |
 | an unmatched backquote in a Go comment (E4) | refuses; not read on a prose path |
 | a line the change ends in CRLF, trailing whitespace, a missing final newline | repairs |
 | a code fence the change leaves open | repairs; refuses when ambiguous, naming the line |
@@ -2825,7 +2826,25 @@ unmatched and the repair is ambiguous: ... (E4)`, and nothing is written; a dele
 no run beside it to drop is refused at the line beside it, `<file>:<line> leaves a code
 span unmatched: the lines it deletes take an odd count of backquotes and no line beside
 them holds one to drop: ... (E4)`. A deletion that balances a span, or takes an even
-count from a paragraph the base left odd, is no fault of the change's. A repaired file is written and the
+count from a paragraph the base left odd, is no fault of the change's.
+
+A code span wrapped across a line break is joined before any other repair (`joinSpans`;
+the night of 2026-10-05, four heads, the tmux adapter's twice and the RakNet study's
+twice, at 1535 and 1639 backquotes, were refused because workers wrapped inline code
+spans in Markdown they wrote, three lanes could not fix it when told, and the
+coordinator joined the spans by hand with a script). A prose line the change writes,
+outside a fenced block, that leaves its paragraph's span open (an odd count of backquotes
+from the paragraph's start to its end) is joined to the next line, its trailing and the
+next line's leading blanks made a single blank, when that line is the change's too, in the
+same paragraph, starts no block of its own (a heading, a quote, a table row, a list
+item) and holds a backquote to close the span; it is joined again while the joined line
+leaves the span open. Only lines the change adds are joined: a base line's span is never
+rewritten, since that reads as a deletion, and a fence's lines are never read. A join
+that still leaves the span open is refused at the line it began on, and nothing is
+written:
+`<file>:<line> leaves a code span unmatched: joining the span wrapped at this line leaves an odd count of backquotes: ... (E4)`.
+Each join is noted on the landing's NOTE line as `E4 repaired: <N> spans joined in <file>`,
+before the other repairs. A repaired file is written and the
 merge commit amended, its parents and subject kept and the repair in its body. Each repair
 is named in the landing note: the card's record (the merge's `resolved` note, beside a
 ledger's) and a `NOTE <card>: the documents were repaired at the merge: <file>:<line>
@@ -2838,8 +2857,8 @@ A stream's prose globs (`stream set <s> --prose <glob,...>`, the control card's 
 are their own: on them the code-span check does not run at all, neither the repair's nor
 E4's (`sprint.DocProse`). The private record's `security/**` and `ratings/**` are prose,
 set on its stream by the coordinator. The tests are internal/sprint/land_repair_test.go,
-internal/sprint/land_repair_merge_test.go (`TestTheLanderRepairsAStrayBackquoteAndSaysSo`
-and `TestE4CatchesADeletionThatUnbalancesASpan`, on a real merge commit) and cmd/nova-sprint/land_repair_test.go (through `land`).
+internal/sprint/land_repair_merge_test.go (`TestTheLanderRepairsAStrayBackquoteAndSaysSo`,
+`TestE4CatchesADeletionThatUnbalancesASpan` and `TestTheLanderJoinsAWrappedCodeSpanInAddedLines`, on a real merge commit) and cmd/nova-sprint/land_repair_test.go (through `land`).
 
 **The tree gate.** Every tip of the batch branch passes the tree gate before the
 next head is merged onto it, in a clone that holds a `go.mod`: the module builds

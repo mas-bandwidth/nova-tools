@@ -18,7 +18,8 @@ import (
 // so it is fixed the way the ledgers are regenerated, not refused. The faults: a line
 // the change ends in CRLF, trailing whitespace on a line the change writes, a missing
 // final newline, a code fence the change leaves open, and a backquote the change leaves
-// unmatched in a paragraph. A fault is repaired only when there is one repair; when
+// unmatched in a paragraph, and a code span wrapped across two lines the change writes
+// (joined onto one, noted "E4 repaired: N spans joined in <file>"). A fault is repaired only when there is one repair; when
 // there are two ways to put it right that read differently, it is refused with the
 // line. A fault of the base's (no line of the change in it) is left alone. A code span
 // is judged on the file the change leaves, so a change that only deletes (the line that
@@ -102,17 +103,37 @@ func DocChanged(diff string) map[string]DocLines {
 	return out
 }
 
-// RepairNote is the landing note's words for fixes: "the documents were repaired at the
-// merge: <file>:<line> <what>; ...", "" for none.
+// SpanJoined is a DocFix's words for a code span wrapped across two lines the change
+// writes and joined onto one.
+const SpanJoined = "a wrapped code span joined"
+
+// RepairNote is the landing note's words for fixes: "E4 repaired: <N> spans joined in
+// <file>" for each file whose wrapped spans were joined, then "the documents were
+// repaired at the merge: <file>:<line> <what>; ..." for the rest, "" for none.
 func RepairNote(fixes []DocFix) string {
-	if len(fixes) == 0 {
-		return ""
+	var parts, rest, files []string
+	joined := map[string]int{}
+	for _, f := range fixes {
+		if f.What != SpanJoined {
+			rest = append(rest, f.String())
+			continue
+		}
+		if joined[f.File] == 0 {
+			files = append(files, f.File)
+		}
+		joined[f.File]++
 	}
-	s := make([]string, len(fixes))
-	for i, f := range fixes {
-		s[i] = f.String()
+	for _, f := range files {
+		spans := "spans"
+		if joined[f] == 1 {
+			spans = "span"
+		}
+		parts = append(parts, fmt.Sprintf("E4 repaired: %d %s joined in %s", joined[f], spans, f))
 	}
-	return "the documents were repaired at the merge: " + strings.Join(s, "; ")
+	if len(rest) > 0 {
+		parts = append(parts, "the documents were repaired at the merge: "+strings.Join(rest, "; "))
+	}
+	return strings.Join(parts, "; ")
 }
 
 // StreamProse is a stream's prose globs (FieldProse, written by `stream set --prose`):
@@ -215,6 +236,31 @@ func RepairDoc(file, text string, changed DocLines, prose bool) (fixed string, f
 	finalNL := strings.HasSuffix(text, "\n")
 	lines := strings.Split(strings.TrimSuffix(text, "\n"), "\n")
 	fix := func(n int, what string) { fixes = append(fixes, DocFix{file, n, what}) }
+
+	// a code span wrapped across two lines the change writes is joined onto one, first,
+	// so every later repair names its line in the file as joined
+	if !prose {
+		var at []int
+		var joins, rf []DocFix
+		lines, at, joins, rf = joinSpans(file, lines, ch)
+		fixes, refused = append(fixes, joins...), append(refused, rf...)
+		if len(joins) > 0 {
+			moved := map[int]bool{}
+			for n := range ch {
+				moved[at[n-1]+1] = true
+			}
+			ch = moved
+			cuts := make([]DocCut, len(changed.Deleted))
+			for k, c := range changed.Deleted {
+				c.At = len(lines) + 1
+				if n := changed.Deleted[k].At; n-1 < len(at) {
+					c.At = at[n-1] + 1
+				}
+				cuts[k] = c
+			}
+			changed.Deleted = cuts
+		}
+	}
 
 	// CRLF: a line the change writes loses its CR, unless the file's own lines are CRLF.
 	crlf := false
@@ -375,6 +421,63 @@ func paragraphs(lines []string, fence []int) [][]int {
 		out = append(out, p)
 	}
 	return out
+}
+
+// joinSpans joins each code span wrapped across lines the change writes (ch, 1-based):
+// a prose line the change writes that leaves its paragraph's span open (an odd count of
+// backquotes from the paragraph's start to its end) is joined to the next line when that
+// line is the change's too, in the same paragraph, starts no block, and holds a
+// backquote to close it, and again while the joined line leaves the span open. A join
+// that still leaves the span open is refused at the line it began on (in lines); a fence
+// line, a block's and a base line are never joined. out is lines joined, at each line's
+// index in out, joins one SpanJoined fix per join (its line in out).
+func joinSpans(file string, lines []string, ch map[int]bool) (out []string, at []int, joins, refused []DocFix) {
+	fence := fences(lines)
+	at = make([]int, len(lines))
+	wraps := func(j int) bool {
+		return j < len(lines) && ch[j+1] && fence[j] == inProse && strings.TrimSpace(lines[j]) != "" &&
+			strings.Contains(lines[j], "`") && !blockStart(lines[j])
+	}
+	open := false // the paragraph so far leaves a span open
+	for i := 0; i < len(lines); i++ {
+		at[i] = len(out)
+		l := lines[i]
+		if fence[i] != inProse || strings.TrimSpace(l) == "" {
+			open = false
+			out = append(out, l)
+			continue
+		}
+		open = open != (strings.Count(l, "`")%2 == 1)
+		from, n := i, 0
+		for open && ch[i+1] && !strings.HasPrefix(strings.TrimSpace(l), "|") && wraps(i+1) {
+			i++
+			l = strings.TrimRight(l, " \t\r") + " " + strings.TrimLeft(lines[i], " \t")
+			at[i] = len(out)
+			open = open != (strings.Count(lines[i], "`")%2 == 1)
+			n++
+		}
+		for range n {
+			joins = append(joins, DocFix{file, len(out) + 1, SpanJoined})
+		}
+		if n > 0 && open {
+			refused = append(refused, DocFix{file, from + 1, "leaves a code span unmatched: joining the span wrapped at this line leaves an odd count of backquotes: " + strings.TrimSpace(l)})
+		}
+		out = append(out, l)
+	}
+	return out, at, joins, refused
+}
+
+// blockStart says a line starts a Markdown block of its own (a heading, a quote, a
+// table row or a list item) and so continues no span from the line before it.
+func blockStart(l string) bool {
+	t := strings.TrimLeft(l, " \t")
+	for _, p := range []string{"#", ">", "|", "- ", "* ", "+ "} {
+		if strings.HasPrefix(t, p) {
+			return true
+		}
+	}
+	d := len(t) - len(strings.TrimLeft(t, "0123456789"))
+	return d > 0 && (strings.HasPrefix(t[d:], ". ") || strings.HasPrefix(t[d:], ") "))
 }
 
 // tick is one run of backquotes in a paragraph: its line, its column (byte), its length,

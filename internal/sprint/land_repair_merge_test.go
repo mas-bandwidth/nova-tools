@@ -209,3 +209,71 @@ func TestE4CatchesADeletionThatUnbalancesASpan(t *testing.T) {
 		assert.Equal(t, merged, r.must("rev-parse", "HEAD"), "nothing to repair, nothing written")
 	})
 }
+
+// The night of 2026-10-05: four heads (1535 and 1639 backquotes) were refused because
+// workers wrapped inline code spans across a line break in Markdown they wrote, and the
+// coordinator joined the spans by hand. A span wrapped on lines the change adds (a line
+// that leaves a span open, the next added line closing it) is joined on the merge commit
+// and noted; a fence's lines and a base line's span are left as they are; a join that
+// still leaves the span open is refused naming the line.
+func TestTheLanderJoinsAWrappedCodeSpanInAddedLines(t *testing.T) {
+	t.Parallel()
+	t.Run("three wrapped spans are joined and noted", func(t *testing.T) {
+		t.Parallel()
+		head := "# Study\n\nThe adapter runs `tmux\nsend-keys` on the pane.\n\n" +
+			"A packet is `RakNet\nconnected` once `the\nhandshake` is done.\n"
+		r := newMergeRig(t, map[string]string{"docs/STUDY.md": "# Study\n"}, map[string]string{"docs/STUDY.md": head})
+		note, refused, err := sprint.RepairMerge(r.dir, r.git, r.before, nil)
+		require.NoError(t, err)
+		assert.Empty(t, refused)
+		assert.Equal(t, "E4 repaired: 3 spans joined in docs/STUDY.md", note)
+		assert.Equal(t, "# Study\n\nThe adapter runs `tmux send-keys` on the pane.\n\n"+
+			"A packet is `RakNet connected` once `the handshake` is done.\n", r.read("docs/STUDY.md"))
+		assert.Empty(t, r.must("status", "--porcelain"), "the join is committed")
+		assert.Contains(t, r.must("log", "-1", "--format=%b"), "E4 repaired: 3 spans joined in docs/STUDY.md.")
+		assert.Equal(t, "land c1 (sprint stream s1)", r.must("log", "-1", "--format=%s"))
+	})
+	t.Run("a fence is untouched", func(t *testing.T) {
+		t.Parallel()
+		head := "# T\n\n```sh\necho `date\nuname` done\n```\n\nThe `x\ny` joined.\n"
+		r := newMergeRig(t, map[string]string{"a.md": "# T\n"}, map[string]string{"a.md": head})
+		note, refused, err := sprint.RepairMerge(r.dir, r.git, r.before, nil)
+		require.NoError(t, err)
+		assert.Empty(t, refused)
+		assert.Equal(t, "E4 repaired: 1 span joined in a.md", note)
+		assert.Equal(t, "# T\n\n```sh\necho `date\nuname` done\n```\n\nThe `x y` joined.\n", r.read("a.md"))
+	})
+	t.Run("a base line's span is never rewritten", func(t *testing.T) {
+		t.Parallel()
+		base := "# T\n\nThe `old\nspan` stays.\n"
+		r := newMergeRig(t, map[string]string{"a.md": base}, map[string]string{"a.md": base + "\nNew `a` line.\n"})
+		merged := r.must("rev-parse", "HEAD")
+		note, refused, err := sprint.RepairMerge(r.dir, r.git, r.before, nil)
+		require.NoError(t, err)
+		assert.Empty(t, note)
+		assert.Empty(t, refused)
+		assert.Equal(t, merged, r.must("rev-parse", "HEAD"))
+
+		// an added line closing a base line's span is not joined to it either
+		r = newMergeRig(t, map[string]string{"a.md": "The `old\n"}, map[string]string{"a.md": "The `old\nspan` closed.\n"})
+		merged = r.must("rev-parse", "HEAD")
+		note, refused, err = sprint.RepairMerge(r.dir, r.git, r.before, nil)
+		require.NoError(t, err)
+		assert.Empty(t, note)
+		assert.Empty(t, refused)
+		assert.Equal(t, merged, r.must("rev-parse", "HEAD"))
+	})
+	t.Run("a truly unmatched backquote is refused naming the line", func(t *testing.T) {
+		t.Parallel()
+		head := "# T\n\nThis `is open\nand `this` too.\n"
+		r := newMergeRig(t, map[string]string{"a.md": "# T\n"}, map[string]string{"a.md": head})
+		merged := r.must("rev-parse", "HEAD")
+		note, refused, err := sprint.RepairMerge(r.dir, r.git, r.before, nil)
+		require.NoError(t, err)
+		assert.Empty(t, note)
+		require.NotEmpty(t, refused)
+		assert.Equal(t, "a.md:3 leaves a code span unmatched: joining the span wrapped at this line leaves an odd count of backquotes: This `is open and `this` too.", refused[0].String())
+		assert.Equal(t, merged, r.must("rev-parse", "HEAD"), "a refusal writes nothing")
+		assert.Equal(t, head, r.read("a.md"))
+	})
+}
