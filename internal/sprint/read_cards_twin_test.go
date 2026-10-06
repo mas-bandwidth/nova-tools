@@ -162,3 +162,106 @@ func TestAReviewOpensNReadCardsAtOnceOnTheTwin(t *testing.T) {
 	require.Len(t, info.Reads, 2, "card shows the read cards")
 	require.Equal(t, 2, sprint.ReadsWaiting(s), "the two reads dealt and not started are the reads waiting")
 }
+
+// rec is a fleet record by id, placed or kept.
+func (r *readCardsRig) rec(id string) *sprint.Card {
+	r.t.Helper()
+	cs, err := r.st.Records(r.ctx, sprint.Fleet, []string{id})
+	require.NoError(r.t, err)
+	require.Len(r.t, cs, 1, id)
+	return cs[0]
+}
+
+// read reports a read card as its row, as the member's loop does.
+func (r *readCardsRig) read(c *sprint.Card, req sprint.ReadReq) store.Result {
+	r.t.Helper()
+	req.As, req.Sel = c.Row, sprint.Sel{IDs: []string{c.ID}}
+	return r.must(store.ReadStep(req))
+}
+
+// TestAReadCardsVerdictClosesTheRead pins layer 3: a read card's verdict closes the read on
+// its primary exactly as read --ok|--broken does. Two oks (LAND) of a pro card make it
+// acceptable and the tick accepts it; a broken verdict (HOLD) with its finding raises the
+// read-broken judgment, no other read is dealt at the attempt, and the rework takes the
+// finding as its fix and retires the attempt's read cards.
+func TestAReadCardsVerdictClosesTheRead(t *testing.T) {
+	t.Parallel()
+	t.Run("LAND", func(t *testing.T) {
+		t.Parallel()
+		r := newReadCardsRig(t)
+		r.toReview("s1-1", proBrief)
+		reads := r.readCards("s1-1")
+		require.Len(t, reads, 2)
+		for _, c := range reads {
+			r.read(c, sprint.ReadReq{Verdict: "ok", Finding: "clean", Usage: "input=10 output=1", Who: c.Row})
+		}
+		for _, c := range reads {
+			rc := r.rec(c.ID)
+			require.False(t, rc.Placed(), "closed")
+			require.Equal(t, "ok", rc.F("verdict"))
+			require.Equal(t, "input=10 output=1", rc.F("usage"))
+		}
+		r.tick()
+		require.Equal(t, sprint.Merging, r.snap().Work.Card("s1-1").Col, "two oks: accepted")
+	})
+	t.Run("HOLD", func(t *testing.T) {
+		t.Parallel()
+		r := newReadCardsRig(t)
+		r.toReview("s1-1", proBrief)
+		reads := r.readCards("s1-1")
+		require.Len(t, reads, 2)
+		r.read(reads[0], sprint.ReadReq{Verdict: "broken", Finding: "main.go:12: the flag is never read", Who: reads[0].Row})
+		s := r.snap()
+		var open []string
+		for _, o := range s.Open {
+			if o.Subject() == "s1-1" {
+				open = append(open, o.Note.Type)
+			}
+		}
+		require.Contains(t, open, sprint.NReadBroken)
+		r.tick()
+		require.Len(t, r.readCards("s1-1"), 1, "the other read stands; no read is dealt in place of the broken one")
+		require.Equal(t, sprint.Review, r.snap().Work.Card("s1-1").Col)
+		r.must(store.ReworkStep(sprint.ReworkReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Who: "coordinator"}))
+		require.Equal(t, "main.go:12: the flag is never read", r.rec(sprint.WorkCardID("s1-1", 2)).F("fix"), "the finding is the fix")
+		require.Empty(t, r.readCards("s1-1"), "the rework retired the attempt's read cards")
+		require.Equal(t, "rework", r.rec(reads[1].ID).F("retired_by"))
+	})
+}
+
+// TestAReturnedReadCardIsReplacedWithAnotherReader pins the replacement: a read card its
+// reader hands back with no verdict (read --return) is retired, spends that reader's read of
+// the attempt, and the next deal deals the read to another reader; a read the machine takes
+// back (its member held) spends nothing, and its reader is dealt it again once back, under
+// the next generation of the card's id.
+func TestAReturnedReadCardIsReplacedWithAnotherReader(t *testing.T) {
+	t.Parallel()
+	r := newReadCardsRig(t)
+	worker := r.toReview("s1-1", "c: the work (s1)\nREPO: mas-bandwidth/nova-tools\n\nThe task.\n")
+	reads := r.readCards("s1-1")
+	require.Len(t, reads, 1)
+	first := reads[0]
+	r.read(first, sprint.ReadReq{Return: true, Reason: "no verdict: the child wrote no RESULT.md", Who: first.Row})
+	require.Equal(t, sprint.RetiredByReturned, r.rec(first.ID).F("retired_by"))
+	r.tick()
+	reads = r.readCards("s1-1")
+	require.Len(t, reads, 1, "dealt again")
+	second := reads[0]
+	require.NotEqual(t, first.Row, second.Row, "to another reader")
+	require.NotEqual(t, worker, second.Row, "never the worker")
+
+	// the machine takes it back: its member held; the only reader left is it
+	res, err := r.st.Hold(r.ctx, sprint.HoldReq{Names: []string{second.Row}, Reason: "a test", Return: true, Who: "coordinator"})
+	require.NoError(t, err)
+	require.Empty(t, res.Refused)
+	require.Equal(t, sprint.RetiredByAway, r.rec(second.ID).F("retired_by"))
+	r.tick()
+	require.Empty(t, r.readCards("s1-1"), "no reader left: it waits")
+	_, err = r.st.Hold(r.ctx, sprint.HoldReq{Names: []string{second.Row}, Release: true, Who: "coordinator"})
+	require.NoError(t, err)
+	r.tick()
+	reads = r.readCards("s1-1")
+	require.Len(t, reads, 1, "dealt to it again once back: the take-back spent nothing")
+	require.Equal(t, second.Row, reads[0].Row)
+	require.Equal(t, second.ID+".g1", reads[0].ID)
+}

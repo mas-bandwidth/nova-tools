@@ -1211,6 +1211,17 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 			}
 			retire = append(retire, change(Readers, removeEntry(rc, map[string]string{"retired": stamp(s.Now), "retired_by": "rework"})))
 		}
+		// its read cards on the fleet table (read_cards.go): the broken ones counted, the
+		// open ones retired with the attempt they read
+		if s.Fleet != nil {
+			_, _, fbr := friendReadLive(s, c)
+			broken += len(fbr)
+			for _, rc := range s.Fleet.Of(c.ID) {
+				if isRead(rc) {
+					retire = append(retire, change(Fleet, removeEntry(rc, map[string]string{"retired": stamp(s.Now), "retired_by": "rework"})))
+				}
+			}
+		}
 		// the finding and why ride on the primary too: a rework with no member up deals later
 		// (start), from the primary, and its child is told all the same
 		given := reworkGiven(s, c)
@@ -1403,6 +1414,15 @@ func brokenFindings(s *Snapshot, c *Card) string {
 	for _, rc := range s.Readers.Of(c.ID) {
 		if rc.Col == Broken && rc.Int("attempt") == c.Int("attempt") && rc.F("finding") != "" && !contains(found, rc.F("finding")) {
 			found = append(found, rc.F("finding"))
+		}
+	}
+	// a read card's broken verdict on the fleet table (read_cards.go)
+	if s.Fleet != nil {
+		_, _, fbr := friendReadLive(s, c)
+		for _, rc := range fbr {
+			if rc.F("finding") != "" && !contains(found, rc.F("finding")) {
+				found = append(found, rc.F("finding"))
+			}
 		}
 	}
 	return strings.Join(found, "; ")
