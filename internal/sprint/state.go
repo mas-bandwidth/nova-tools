@@ -79,6 +79,10 @@ type Table struct {
 
 	// rows are the table's rows in order, read by Rows and set by SetRows.
 	rows []string
+	// hidden are the rows the table layer keeps in the folds and does not draw
+	// (row hide), read by Hidden and set by SetHidden: on the work and merge
+	// tables, the archived streams (stream archive).
+	hidden map[string]bool
 
 	cells     map[[2]string][]*Card // built on first use; Put resets it
 	byPrimary map[string][]*Card
@@ -201,6 +205,20 @@ func (t *Table) Prop(name string) (string, bool) {
 // HasRow says the table declares the row.
 func (t *Table) HasRow(row string) bool {
 	return slices.Contains(t.rows, row)
+}
+
+// Hidden says the row is kept in the table and its folds and not drawn (the
+// table layer's row hide): on the work and merge tables, an archived stream.
+func (t *Table) Hidden(row string) bool {
+	return t != nil && t.hidden[row]
+}
+
+// SetHidden marks the row hidden, as read.
+func (t *Table) SetHidden(row string) {
+	if t.hidden == nil {
+		t.hidden = map[string]bool{}
+	}
+	t.hidden[row] = true
 }
 
 // Card is the card with the id, nil when the table has none.

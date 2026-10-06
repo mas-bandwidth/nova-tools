@@ -230,8 +230,25 @@ function streamStatus(state, c, total) {
   return [state || "idle", "neutral"];
 }
 
+// The archived streams (stream archive; the owner, 2026-10-05: "I would like you to remove all
+// the already landed work streams"): off the table by default, one line saying how many, the
+// cards landed in them and their cost, which shows them or hides them again when clicked. The
+// total row, the progress bar and the hero count them either way.
+var showArchived = false, lastStreams = null;
+function archivedSet(d) { var a = {}; ((d.archived || {}).streams || []).forEach(function (s) { a[s] = 1; }); return a; }
+function renderArchived(d) {
+  var b = $("streams-archived"), a = d.archived;
+  if (!b._on) { b._on = 1; b.addEventListener("click", function () { showArchived = !showArchived; if (lastStreams) render(lastStreams); }); }
+  b.hidden = !a;
+  if (!a) return;
+  var n = a.streams.length;
+  setText(b, n + " archived stream" + (n === 1 ? "" : "s") + ", " + a.landed + " card" + (a.landed === 1 ? "" : "s") + " landed, " + a.cost + " · " + (showArchived ? "hide" : "show"));
+}
+
 function renderStreams(d) {
-  var box = $("streams"), work = d.tables.work || {}, merge = d.tables.merge || {};
+  lastStreams = d;
+  renderArchived(d);
+  var box = $("streams"), work = d.tables.work || {}, merge = d.tables.merge || {}, arch = archivedSet(d);
   var states = {}; (d.streams || []).forEach(function (s) { states[s.Stream] = s; });
   // children: 1 stream, 2 status, 3 waiting, 4 ready, 5 working, 6 review, 7 merging, 8 landed, 9 cost
   if (!box._head) {
@@ -252,9 +269,9 @@ function renderStreams(d) {
     statusOf[k] = streamStatus((states[k] || {}).State, c, total)[0];
   });
   var rank = function (k) { return RANK[statusOf[k]] == null ? 3.5 : RANK[statusOf[k]]; };
-  var keys = streamOrder(d).sort(function (a, b) { return rank(a) - rank(b) || (a < b ? -1 : a > b ? 1 : 0); });
+  var keys = streamOrder(d).filter(function (k) { return showArchived || !arch[k]; }).sort(function (a, b) { return rank(a) - rank(b) || (a < b ? -1 : a > b ? 1 : 0); });
   var sum = { cost: 0, totalCost: 0, unreconciled: 0, unpriced: 0 }, held = 0, landedStreams = 0, prevRank = null;
-  var digits = digitsOf(keys.reduce(function (a, k) { return a + FLOW.reduce(function (b, st) { return b + int(work[k][st]); }, 0); }, 0));
+  var digits = digitsOf(streamOrder(d).reduce(function (a, k) { return a + FLOW.reduce(function (b, st) { return b + int(work[k][st]); }, 0); }, 0));
   FLOW.forEach(function (st) { sum[st] = 0; });
   syncRows(box, box._head, keys, function () {
     var r = { node: el("div", "row"), n: {} };
@@ -289,6 +306,14 @@ function renderStreams(d) {
     setHTML(r.n.landed, frac(c.landed, total, digits));
     setText(r.cost, ct === null ? "-" : money(ct)); setClass(r.cost, "num" + (ct === null ? " zero" : ""));
   }, box._total);
+  // an archived stream off the table still counts in the total row
+  streamOrder(d).forEach(function (k) {
+    if (showArchived || !arch[k]) return;
+    FLOW.forEach(function (st) { sum[st] += int(work[k][st]); });
+    var ct = cents(work[k].cost); if (ct) sum.cost += ct;
+    var tc = cents(((d.stream_costs || {})[k] || {}).total_cost); if (tc) sum.totalCost += tc;
+    sum.unpriced += int(((d.stream_costs || {})[k] || {}).unpriced_runs);
+  });
   var tc = box._total._c, all = 0;
   FLOW.forEach(function (st, i) { all += sum[st]; if (st !== "landed") setNum(tc[2 + i], sum[st]); });
   setHTML(tc[7], frac(sum.landed, all, digits));
