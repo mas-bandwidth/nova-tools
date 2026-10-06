@@ -182,6 +182,42 @@ type Quiet struct {
 	Why     string `json:"why"`
 }
 
+// Suppressed is the count of the judgments the lane check kept from rising in one epoch of
+// the sprint, the coordinator's count: N, and beside it its three causes, a friend's lane
+// live inside its cap (a lateness, a stall, finishes none), readers busy (readers behind), a
+// read tier question the rule answered.
+type Suppressed struct {
+	Epoch   uint64 `json:"epoch"`
+	N       int    `json:"n"`
+	Lane    int    `json:"lane"`
+	Readers int    `json:"readers"`
+	Tier    int    `json:"tier"`
+}
+
+// Counted is the count with a tick's quiets added: each quiet now that the tick before kept
+// quiet too (prev, the same type and subject) is the same judgment still kept from rising and
+// is not counted again. A tick of another epoch (a clear) starts the count from none.
+func (c Suppressed) Counted(epoch uint64, prev, now []Quiet) Suppressed {
+	if c.Epoch != epoch {
+		c, prev = Suppressed{Epoch: epoch}, nil
+	}
+	for _, q := range now {
+		if slices.ContainsFunc(prev, func(x Quiet) bool { return x.Type == q.Type && x.Subject == q.Subject }) {
+			continue
+		}
+		c.N++
+		switch q.Type {
+		case NReadersBehind:
+			c.Readers++
+		case NRaiseReadTier:
+			c.Tier++
+		default:
+			c.Lane++
+		}
+	}
+	return c
+}
+
 // LaneChecked is the part's plan with the judgments the lane check keeps from rising taken
 // out, and those quiets: a lateness (NWorkLate) of a friend's card on a live lane
 // (LiveLane), a friend's stall (NStalled on her) or "finishes none" (NFriendIdle) while a

@@ -151,6 +151,10 @@ type Heartbeat struct {
 	// a read tier question the rule answered. Its length is the count the
 	// coordinator reads beside the judgments that rose.
 	Quiet []sprint.Quiet `json:"quiet,omitempty"`
+	// Suppressed is the count of the judgments the lane check kept from
+	// rising since the epoch began, by cause (sprint.Suppressed.Counted):
+	// what view coordinator prints as suppressed.
+	Suppressed sprint.Suppressed `json:"suppressed,omitzero"`
 }
 
 // Alive is the last clock reading a tick was seen at, ticking or looking.
@@ -835,6 +839,7 @@ func (st *Store) Tick(ctx context.Context) (res TickResult, err error) {
 	} else {
 		hb.Error, hb.Failures = "", 0
 		hb.Revisions, hb.Landed, hb.All, hb.Full, hb.Fresh = seen.Revisions, seen.Landed, seen.All, seen.Full, seen.Fresh
+		hb.Suppressed = hb.Suppressed.Counted(st.epoch, hb.Quiet, res.Quiet)
 		hb.Due, hb.Quiet = res.Due, res.Quiet
 	}
 	if werr := st.putJSON(ctx, keyHeartbeat, hb); werr != nil && err == nil {

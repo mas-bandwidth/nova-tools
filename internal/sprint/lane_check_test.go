@@ -50,6 +50,14 @@ func (r *passRig) quiet() []sprint.Quiet {
 	return hb.Quiet
 }
 
+// suppressed is the heartbeat's count of the judgments kept quiet since the epoch began.
+func (r *passRig) suppressed() sprint.Suppressed {
+	r.t.Helper()
+	_, hb, err := r.st.Machine(r.ctx)
+	require.NoError(r.t, err)
+	return hb.Suppressed
+}
+
 func TestNoStallRisesOverALiveLane(t *testing.T) {
 	t.Parallel()
 	r := newPassRig(t)
@@ -74,6 +82,8 @@ func TestNoStallRisesOverALiveLane(t *testing.T) {
 	assert.Equal(t, sprint.NFriendIdle, quiet[0].Type)
 	assert.Equal(t, fc.Row, quiet[0].Subject)
 	assert.Equal(t, "friend "+holder+": "+fc.ID+" running 31m of 120m (her beat names it running)", quiet[0].Why)
+	sup := r.suppressed()
+	assert.Equal(t, sprint.Suppressed{Epoch: r.snap().Epoch, N: 1, Lane: 1}, sup, "counted once, however many ticks kept it quiet")
 
 	// her beat names it by its job too (the stored id): still her lane
 	r.pongs[holder] = r.clock()
@@ -87,6 +97,29 @@ func TestNoStallRisesOverALiveLane(t *testing.T) {
 	require.NotNil(t, idle, "no live lane: finishes none rises")
 	assert.Contains(t, idle.What, fc.ID)
 	assert.Empty(t, r.quiet(), "nothing kept quiet")
+	assert.Equal(t, sup, r.suppressed(), "what was kept quiet stays counted")
+}
+
+// The count of the judgments suppressed (Suppressed.Counted): each quiet once while the
+// ticks keep it quiet, again when it is kept quiet anew, each by its cause, and from none in
+// another epoch.
+func TestTheSuppressedCountCountsEachJudgmentOnceByItsCause(t *testing.T) {
+	t.Parallel()
+	lane := sprint.Quiet{Type: sprint.NFriendIdle, Subject: "friend.amy"}
+	late := sprint.Quiet{Type: sprint.NWorkLate, Subject: "s1-1.w1"}
+	readers := sprint.Quiet{Type: sprint.NReadersBehind, Subject: sprint.SprintSubject}
+	tier := sprint.Quiet{Type: sprint.NRaiseReadTier, Subject: sprint.StreamSubject("s1")}
+
+	var c sprint.Suppressed
+	c = c.Counted(3, nil, []sprint.Quiet{lane, readers})
+	assert.Equal(t, sprint.Suppressed{Epoch: 3, N: 2, Lane: 1, Readers: 1}, c)
+	c = c.Counted(3, []sprint.Quiet{lane, readers}, []sprint.Quiet{lane, readers, late, tier})
+	assert.Equal(t, sprint.Suppressed{Epoch: 3, N: 4, Lane: 2, Readers: 1, Tier: 1}, c, "the two kept quiet still are not counted again")
+	c = c.Counted(3, []sprint.Quiet{lane, readers, late, tier}, nil)
+	c = c.Counted(3, nil, []sprint.Quiet{lane})
+	assert.Equal(t, sprint.Suppressed{Epoch: 3, N: 5, Lane: 3, Readers: 1, Tier: 1}, c, "kept quiet anew after it rose: a judgment again")
+	c = c.Counted(4, []sprint.Quiet{lane}, []sprint.Quiet{lane})
+	assert.Equal(t, sprint.Suppressed{Epoch: 4, N: 1, Lane: 1}, c, "a clear starts the count from none")
 }
 
 // The lane is live only inside its cap: a card running past it is late however the beat

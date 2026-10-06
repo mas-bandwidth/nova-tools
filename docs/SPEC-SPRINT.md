@@ -3946,9 +3946,21 @@ the store's tick on every part, its probe included; a-judgment-checks-the-lane-b
 Only a judgment being raised is checked. One already open stays the coordinator's, and the
 deadlines and the pass close it when their own condition ends. Each judgment the check
 kept quiet is on the tick's result and on its heartbeat (`TickResult.Quiet`,
-`Heartbeat.Quiet`: type, subject and why, each once a tick). The heartbeat's count is the
-coordinator's count of judgments suppressed, beside the judgments that rose
-(`TestNoStallRisesOverALiveLane`, `TestALiveLaneIsLiveInsideItsCapAndOnAFreshBeat`,
+`Heartbeat.Quiet`: type, subject and why, each once a tick). The heartbeat also keeps the
+count of the judgments suppressed since the epoch began (`Heartbeat.Suppressed`,
+`sprint.Suppressed.Counted`; a-judgment-checks-the-lane-before-it-rises.w2): each quiet once,
+when a tick keeps it quiet and the tick before did not (the same type and subject still quiet
+on the next tick is the same judgment and is not counted again; one kept quiet anew after it
+rose is counted again), with its three causes beside the number: `lane` (a lateness, a stall
+or finishes none over a live lane), `readers` (readers behind while every reader is busy) and
+`tier` (a read tier question the rule answered). A successful tick adds to it; a failed tick
+leaves it. The first tick of another epoch (after a clear) starts it from none, and the
+coordinator view reads it only when it is the view's epoch's. `view coordinator` prints it,
+beside the judgments that rose: its summary line ends `| suppressed <n> (lane <a> readers <b>
+tier <c>)`, and its counts carry `suppressed` and `by` (`lane`, `readers`, `tier`) (Role views,
+section 11; `TestNoStallRisesOverALiveLane`, `TestTheSuppressedCountCountsEachJudgmentOnceByItsCause`,
+`TestTheCoordinatorViewCountsTheJudgmentsTheLaneCheckSuppressed`,
+`TestALiveLaneIsLiveInsideItsCapAndOnAFreshBeat`,
 `TestTheTickRaisesReadersBehindWhenReadsWaitTheWindow`).
 
 ### Answered by nova-decide
@@ -4540,10 +4552,13 @@ the seat, from one read of the work, merge and fleet tables, the inbox, the frie
 machines' beats and the machine's record, at one epoch. Its fields: `sum` (one line: the seat,
 the machine, the open judgments and the heaviest's cards behind, the count of each item type,
 landed of all and landed in the last 30 minutes, the work table's counts, the up machines'
-cards working of their width), `at`, `epoch`, `seat`, `cursor`, `n` (the counts: `landed`,
+cards working of their width, the cards a rule answered in the last hour, and the judgments
+suppressed since the epoch began with their causes), `at`, `epoch`, `seat`, `cursor`, `n` (the counts: `landed`,
 `l30`, `all`, `wait`, `ready`, `work`, `review`, `merge` of the primaries, sentinels aside;
 `held`; `width` and `busy`, the up machines' width and their cards working; `j`, the open
-judgments) and `items`, ranked by the cards behind each (`b`), then by type in the order
+judgments; `rules`, section 8; `suppressed`, the judgments the tick's lane check kept from
+rising since the epoch began, and `by`, its causes `lane`, `readers` and `tier`, section 8, a
+judgment checks the lane before it rises) and `items`, ranked by the cards behind each (`b`), then by type in the order
 below, then oldest first. An item is `k` (its key, stable while it stands), `t` (its type, one
 letter), `w` (what kind), `b`, `n` (the cards a judgment names), `age`, `od` (overdue), `d` (a
 judgment's decisions, `|` separated), `s` (one line, at most 160 bytes) and `next`, the exact
