@@ -29,6 +29,13 @@ EXTENDS Naturals, FiniteSets
 
 CONSTANTS Callers, KindOf, MaxTicks, Broken
 
+\* Pipeline observers over the counts sampled by a settled tick. They add no
+\* state, action, invariant or fairness obligation to the lane machine. The
+\* implementation remembers each side, raises one judgment on a strict
+\* crossing, and preserves the side at equality (tick_backups.go).
+ReadsBackedUp(working, review, merging) == review > working
+MergesBackedUp(working, review, merging) == merging > review + working
+
 Kinds  == {"beat", "read", "write"}
 Faults == {"beatonline", "readonline", "rungone"}
 ASSUME Broken \subseteq Faults /\ "tick" \notin Callers /\ "none" \notin Callers

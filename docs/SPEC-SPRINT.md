@@ -46,6 +46,30 @@ stream's control card; `SyncMirrors` shows it in the cell. The sum is set
 from the cards, never added to: a replayed merge writes the same, and `clear`
 empties it with the tables.
 
+The settled tick observes the pipeline's working, review and merging counts over
+streams on the table. Review above working raises “reads are backed up”; review
+below working raises “reads are clear”. Merging above review plus working raises
+“merges are backed up”; merging below that sum raises “merges are clear”. Equality
+keeps the previous side. Each strict crossing raises exactly one sprint judgment,
+including a backup present at the first observation; an initial clear pipeline
+raises none. The guarded table properties and judgment commit together, so a retry,
+acknowledgment or loop restart does not repeat the edge. A new edge closes its
+previous open judgment. The judgments reach the seat through the regular tick-end
+push and offer `ack`.
+
+Each edge judgment carries all three counts, the oldest card in its column and
+its age (since work finished for review, since acceptance for merging; an absent
+stamp says unknown). Reads carry each reader's reading count and width; merges
+carry the last landing time and stopped streams. The next verbs are
+`nova-sprint reader set <reader> --tiers <tiers>`,
+`nova-sprint fleet up <member> --width <n>`, route enable through
+`nova-config route set <route> --enabled true --as <actor>` followed by
+`nova-config apply --kind route --as <actor>`, and
+`nova-sprint resume --stream <stream> --did <what was done>`.
+The tick's where record keeps the three counts. `where --json` carries
+`backup=reads|merges|none`; merges takes precedence when both are backed up.
+The two predicates in `tla/ServerLanes.tla` are invariant-free observers.
+
 After `cost` the text table draws `per landed` (the owner, 2026-10-04: cost
 visibility, after a night of $437 for 844 landings whose pro streams landed at
 $4.50 to $8.88 a card and flash streams at $0.10 to $0.27): the stream's

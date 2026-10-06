@@ -32,6 +32,8 @@ const keyWhere = "where" // STRING, the where record (JSON)
 // LandingRate may count from then on (sprint.RecentLandings), in Unix seconds,
 // oldest first.
 type WhereRecord struct {
+	Pipeline sprint.PipelineCounts `json:"pipeline"` // the tick's three active column counts
+
 	Epoch    uint64                `json:"epoch"`
 	Rev      uint64                `json:"rev"`
 	Held     int                   `json:"held"`
@@ -56,7 +58,7 @@ func whereOf(s *sprint.Snapshot, m Machine, now time.Time) WhereRecord {
 			landed = append(landed, at)
 		}
 	}
-	r := WhereRecord{Epoch: s.Epoch, Rev: s.Work.Revision, Held: sprint.HeldBack(s), Critical: sprint.Critical(s, 5),
+	r := WhereRecord{Pipeline: sprint.Pipeline(s), Epoch: s.Epoch, Rev: s.Work.Revision, Held: sprint.HeldBack(s), Critical: sprint.Critical(s, 5),
 		Tiers: sprint.TierCounts(s), Streams: sprint.StreamTierCosts(s), StageTimes: sprint.CycleTimes(s, now)}
 	for _, at := range sprint.RecentLandings(landed, m.Spans, m.FirstStart(s.Cleared), now) {
 		r.Landings = append(r.Landings, at.Unix())
