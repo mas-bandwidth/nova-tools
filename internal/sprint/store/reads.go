@@ -141,7 +141,11 @@ func (st *Store) Packets(ctx context.Context, cards []*sprint.Card) ([]sprint.Pa
 		if w != "" {
 			wc = ft[w]
 		}
-		out = append(out, sprint.PacketOf(st.Names.Prefix, st.epoch, c, pt[p], ec, wc))
+		pk := sprint.PacketOf(st.Names.Prefix, st.epoch, c, pt[p], ec, wc)
+		if pk.Tier == "" {
+			pk.Tier = sprint.DealtTier(c, pt[p]) // every packet names its tier, a route or none
+		}
+		out = append(out, pk)
 	}
 	return out, nil
 }
