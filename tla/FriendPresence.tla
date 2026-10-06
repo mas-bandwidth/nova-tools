@@ -60,6 +60,19 @@
 \*   "appholds"      the app not seen holds the beat back, so no check goes
 \*                   in (the finding of 2026-10-05): SessionShownUp
 \*   "appup"         the app seen makes the friend up: BeatAloneNeverUp
+\*   "ctlstatus"     a take for a friend reads a control card status, which
+\*                   her row never carries (only a machine's does): her
+\*                   ready card is never taken while she is up,
+\*                   ReadyTakenWhileUp
+\*
+\* The take (internal/sprint/steps_work.go takeSeat; the card
+\* take-by-id-reads-the-friends-presence.w1): a card on a friend's row is
+\* ready until it is taken into working (taken), by her own take or the
+\* daemon's through the server. The take is admitted by the table's word,
+\* Status (FriendStatus), and by nothing else: up takes, held and down are
+\* refused (TakeOnlyWhenUp). The night of 2026-10-05 the take read the row's
+\* control card status, which a friend's row has none of, and refused every
+\* friend up ("member friend.<f> is -"): the witness "ctlstatus".
 
 EXTENDS Naturals, FiniteSets
 
@@ -68,9 +81,9 @@ CONSTANTS Friends, Cards, Bound, MaxEvents, Broken, Watched
 ASSUME Bound >= 1 /\ MaxEvents \in Nat /\ Watched \subseteq Friends
 
 VARIABLES harness, closedAge, session, limit, daemon, app,
-          held, answered, answerAge, pending, holder, takenFrom, events
+          held, answered, answerAge, pending, holder, takenFrom, taken, events
 vars == <<harness, closedAge, session, limit, daemon, app,
-          held, answered, answerAge, pending, holder, takenFrom, events>>
+          held, answered, answerAge, pending, holder, takenFrom, taken, events>>
 world == <<harness, closedAge, session, limit, daemon, app>>
 
 Pool == "pool"
@@ -89,6 +102,7 @@ TypeOK ==
   /\ pending \in [Friends -> BOOLEAN]
   /\ holder \in [Cards -> Friends \cup {Pool}]
   /\ takenFrom \in [Cards -> Friends \cup {NoOne}]
+  /\ taken \in [Cards -> BOOLEAN]
   /\ events \in 0..MaxEvents
 
 \* The table's word over any held/answered/answerAge, so a step can read the
@@ -116,6 +130,9 @@ TakeBack(hd, ans, age) ==
   /\ takenFrom' = [c \in Cards |->
                      IF ~Lazy /\ holder[c] \in Friends /\ StatusIn(holder[c], hd, ans, age) # "up"
                        THEN holder[c] ELSE takenFrom[c]]
+  /\ taken' = [c \in Cards |->
+                 IF ~Lazy /\ holder[c] \in Friends /\ StatusIn(holder[c], hd, ans, age) # "up"
+                   THEN FALSE ELSE taken[c]]
 
 Init ==
   /\ harness = [f \in Friends |-> "running"]
@@ -130,6 +147,7 @@ Init ==
   /\ pending = [f \in Friends |-> FALSE]
   /\ holder = [c \in Cards |-> Pool]
   /\ takenFrom = [c \in Cards |-> NoOne]
+  /\ taken = [c \in Cards |-> FALSE]
   /\ events = 0
 
 Up1(n) == IF n < Bound THEN n + 1 ELSE Bound
@@ -143,23 +161,23 @@ Close(f) ==
   /\ harness' = [harness EXCEPT ![f] = "closed"]
   /\ closedAge' = [closedAge EXCEPT ![f] = 0]
   /\ events' = events + 1
-  /\ UNCHANGED <<session, limit, daemon, app, held, answered, answerAge, pending, holder, takenFrom>>
+  /\ UNCHANGED <<session, limit, daemon, app, held, answered, answerAge, pending, holder, takenFrom, taken>>
 Open(f) ==
   /\ harness[f] = "closed"
   /\ harness' = [harness EXCEPT ![f] = "running"]
   /\ closedAge' = [closedAge EXCEPT ![f] = 0]
-  /\ UNCHANGED <<session, limit, daemon, app, held, answered, answerAge, pending, holder, takenFrom, events>>
+  /\ UNCHANGED <<session, limit, daemon, app, held, answered, answerAge, pending, holder, takenFrom, taken, events>>
 
 \* The session goes silent, or takes turns again.
 Silence(f) ==
   /\ session[f] = "answering" /\ events < MaxEvents
   /\ session' = [session EXCEPT ![f] = "silent"]
   /\ events' = events + 1
-  /\ UNCHANGED <<harness, closedAge, limit, daemon, app, held, answered, answerAge, pending, holder, takenFrom>>
+  /\ UNCHANGED <<harness, closedAge, limit, daemon, app, held, answered, answerAge, pending, holder, takenFrom, taken>>
 Resume(f) ==
   /\ session[f] = "silent"
   /\ session' = [session EXCEPT ![f] = "answering"]
-  /\ UNCHANGED <<harness, closedAge, limit, daemon, app, held, answered, answerAge, pending, holder, takenFrom, events>>
+  /\ UNCHANGED <<harness, closedAge, limit, daemon, app, held, answered, answerAge, pending, holder, takenFrom, taken, events>>
 
 \* The process-table look moves on its own: an app opens or closes with no
 \* tie to the session (a headless run, an app left open). Neither a
@@ -167,18 +185,18 @@ Resume(f) ==
 AppMoves(f) ==
   /\ f \in Watched
   /\ app' = [app EXCEPT ![f] = IF app[f] = "seen" THEN "notseen" ELSE "seen"]
-  /\ UNCHANGED <<harness, closedAge, session, limit, daemon, held, answered, answerAge, pending, holder, takenFrom, events>>
+  /\ UNCHANGED <<harness, closedAge, session, limit, daemon, held, answered, answerAge, pending, holder, takenFrom, taken, events>>
 
 \* The provider's limit hits, and later resets.
 LimitHit(f) ==
   /\ limit[f] = "none" /\ events < MaxEvents
   /\ limit' = [limit EXCEPT ![f] = "limited"]
   /\ events' = events + 1
-  /\ UNCHANGED <<harness, closedAge, session, daemon, app, held, answered, answerAge, pending, holder, takenFrom>>
+  /\ UNCHANGED <<harness, closedAge, session, daemon, app, held, answered, answerAge, pending, holder, takenFrom, taken>>
 LimitReset(f) ==
   /\ limit[f] = "limited"
   /\ limit' = [limit EXCEPT ![f] = "none"]
-  /\ UNCHANGED <<harness, closedAge, session, daemon, app, held, answered, answerAge, pending, holder, takenFrom, events>>
+  /\ UNCHANGED <<harness, closedAge, session, daemon, app, held, answered, answerAge, pending, holder, takenFrom, taken, events>>
 
 \* ------------------------------------------------------------- the table
 
@@ -190,7 +208,7 @@ Ping(f) ==
   /\ ~pending[f]
   /\ Broken # "appholds" \/ app[f] = "seen"
   /\ pending' = [pending EXCEPT ![f] = TRUE]
-  /\ UNCHANGED <<harness, closedAge, session, limit, daemon, app, held, answered, answerAge, holder, takenFrom, events>>
+  /\ UNCHANGED <<harness, closedAge, session, limit, daemon, app, held, answered, answerAge, holder, takenFrom, taken, events>>
 
 \* The session answers the open nonce: only a running harness, a session
 \* that takes turns and a provider not limiting it can (the witness
@@ -205,7 +223,7 @@ Answer(f) ==
   /\ pending' = [pending EXCEPT ![f] = FALSE]
   /\ answered' = [answered EXCEPT ![f] = TRUE]
   /\ answerAge' = [answerAge EXCEPT ![f] = 0]
-  /\ UNCHANGED <<harness, closedAge, session, limit, daemon, app, held, holder, takenFrom, events>>
+  /\ UNCHANGED <<harness, closedAge, session, limit, daemon, app, held, holder, takenFrom, taken, events>>
 
 \* The coordinator holds a friend, and the hold takes back the friend's cards
 \* in the same step; or releases the friend.
@@ -218,7 +236,7 @@ Hold(f) ==
 Release(f) ==
   /\ held[f]
   /\ held' = [held EXCEPT ![f] = FALSE]
-  /\ UNCHANGED <<harness, closedAge, session, limit, daemon, app, answered, answerAge, pending, holder, takenFrom, events>>
+  /\ UNCHANGED <<harness, closedAge, session, limit, daemon, app, answered, answerAge, pending, holder, takenFrom, taken, events>>
 
 \* Time passes: every age one older, and the tick's rebalance takes back the
 \* cards of every friend no longer up, in the same step.
@@ -238,7 +256,17 @@ Dealable(c, g) ==
 Deal(c, g) ==
   /\ Dealable(c, g)
   /\ holder' = [holder EXCEPT ![c] = g]
-  /\ UNCHANGED <<harness, closedAge, session, limit, daemon, app, held, answered, answerAge, pending, takenFrom, events>>
+  /\ UNCHANGED <<harness, closedAge, session, limit, daemon, app, held, answered, answerAge, pending, takenFrom, taken, events>>
+
+\* A card ready on a friend's row is taken into working: her take, or the
+\* daemon's through the server. Admitted by Status alone; the witness reads a
+\* control card status her row never carries, so admits nothing.
+TakeAdmits(f) == IF Broken = "ctlstatus" THEN FALSE ELSE Status(f) = "up"
+Take(c) ==
+  /\ holder[c] \in Friends /\ ~taken[c]
+  /\ TakeAdmits(holder[c])
+  /\ taken' = [taken EXCEPT ![c] = TRUE]
+  /\ UNCHANGED <<harness, closedAge, session, limit, daemon, app, held, answered, answerAge, pending, holder, takenFrom, events>>
 
 \* Only under "lazywithdraw": the take-back as a step of its own, after the
 \* hold or the tick that made the friend not up.
@@ -247,6 +275,7 @@ Withdraw(f) ==
   /\ Status(f) # "up" /\ CardsOf(f) # {}
   /\ holder' = [c \in Cards |-> IF holder[c] = f THEN Pool ELSE holder[c]]
   /\ takenFrom' = [c \in Cards |-> IF holder[c] = f THEN f ELSE takenFrom[c]]
+  /\ taken' = [c \in Cards |-> IF holder[c] = f THEN FALSE ELSE taken[c]]
   /\ UNCHANGED <<harness, closedAge, session, limit, daemon, app, held, answered, answerAge, pending, events>>
 
 Next ==
@@ -255,6 +284,7 @@ Next ==
        \/ Close(f) \/ Open(f) \/ AppMoves(f) \/ Silence(f) \/ Resume(f) \/ LimitHit(f) \/ LimitReset(f)
        \/ Ping(f) \/ Answer(f) \/ Hold(f) \/ Release(f) \/ Withdraw(f)
   \/ \E c \in Cards, g \in Friends : Deal(c, g)
+  \/ \E c \in Cards : Take(c)
 
 \* The safety specification: no fairness.
 Spec == Init /\ [][Next]_vars
@@ -274,7 +304,7 @@ SpecLive ==
   /\ \A f \in Friends :
        /\ WF_vars(Open(f)) /\ WF_vars(Resume(f)) /\ WF_vars(LimitReset(f)) /\ WF_vars(Release(f))
        /\ WF_vars(Ping(f)) /\ WF_vars(Answer(f))
-  /\ \A c \in Cards : SF_vars(\E g \in Friends : Deal(c, g))
+  /\ \A c \in Cards : SF_vars(\E g \in Friends : Deal(c, g)) /\ WF_vars(Take(c))
 
 \* ---------------------------------------------------------------- the rules
 
@@ -307,6 +337,16 @@ ClosedShownDown == \A f \in Friends : harness[f] = "closed" ~> (Status(f) # "up"
 \* table says: the app may stay unseen for ever (AppMoves has no fairness; a friend outside Watched never has it)
 \* and the friend still comes up on her session's answers (SpecLive).
 SessionShownUp == \A f \in Friends : []<>(Status(f) = "up")
+
+\* A card is taken into working only for a friend up: never held, never
+\* down (the take's admission is Status, the friends' rule).
+TakeOnlyWhenUp ==
+  [][\A c \in Cards : (~taken[c] /\ taken'[c]) => Status(holder[c]) = "up"]_vars
+
+\* A card ready on a friend's row is taken while she is up, or leaves her
+\* row (SpecLive): never left ready on a friend up for ever.
+ReadyTakenWhileUp ==
+  \A c \in Cards : (holder[c] \in Friends /\ ~taken[c]) ~> (taken[c] \/ holder[c] = Pool)
 
 \* A card taken back from a friend (held, or down at a tick) is dealt to
 \* another friend (SpecLive).
