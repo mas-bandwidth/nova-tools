@@ -41,6 +41,16 @@ func (w *world) do(p Plan) Plan {
 			tb.SetRows(append(tb.Rows(), ra.Row))
 		}
 	}
+	// a record put back on a cell, as the table layer's cell add does
+	for _, pl := range p.Places {
+		c := w.s.T(pl.Table).Card(pl.ID)
+		require.NotNil(w.t, c, "%s: place %s: no record", pl.Table, pl.ID)
+		require.False(w.t, c.Placed(), "%s: place %s: placed at %s:%s", pl.Table, pl.ID, c.Row, c.Col)
+		require.True(w.t, w.s.T(pl.Table).HasRow(pl.Row), "%s: place %s: no row %s", pl.Table, pl.ID, pl.Row)
+		c.Row, c.Col, c.Score = pl.Row, pl.Col, pl.Score
+		c.Rev++
+		w.s.T(pl.Table).cells, w.s.T(pl.Table).byPrimary = nil, nil
+	}
 	for _, u := range p.Units {
 		for _, c := range u.Changes {
 			w.entry(c)

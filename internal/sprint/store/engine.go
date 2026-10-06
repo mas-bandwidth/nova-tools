@@ -425,6 +425,10 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 		family = strings.ReplaceAll(step.Verb, " ", "-") + "-" + st.newID()
 	}
 	rowsAdded := false
+	// placed says the step's places (sprint.Plan.Places) were made, and came is
+	// their NOTE lines: the plan after them places nothing, and says them still
+	placed, placeErr := false, error(nil)
+	var came []string
 	drains := 0
 	plans := st.retry(ctx)
 	// a twin the step does not leave as the state it committed is dropped:
@@ -611,6 +615,9 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 		res.Refused = plan.Refused
 		res.Moved = nil
 		res.Said = plan.Said
+		if len(came) > 0 {
+			res.Said = append(slices.Clone(came), plan.Said...)
+		}
 		for _, u := range plan.Units {
 			if u.Moved != "" {
 				res.Moved = append(res.Moved, u.Moved)
@@ -643,6 +650,33 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 				return res, err
 			}
 			rowsAdded = true
+			res.Attempts--
+			continue
+		}
+		// A record on no cell is put back by the table layer's cell add, after
+		// the rows and before the manifests (a batch never places a removed
+		// member), and the step is planned again on the table it left. A place
+		// still owed after that is refused whole: the record is on no cell.
+		if len(plan.Places) > 0 && len(plan.Units) > 0 {
+			if placed {
+				why := "placing " + plan.Places[0].ID + " on its cell again did not hold"
+				if placeErr != nil {
+					why += ": " + placeErr.Error()
+				}
+				// the rows (and any place that held) are on the table by now; the
+				// step's own record is not written
+				return refuseWhole(res, plan, why+"; the stream's rows are on the table and its control card is not; no card was added; run it again")
+			}
+			placed = true
+			for _, pl := range plan.Places {
+				// a place another writer made first is refused here and found
+				// made by the plan after it
+				if err := st.B.Place(ctx, st.Names.Table(pl.Table), pl.Row, pl.Col, st.sid(pl.ID), pl.Score); err != nil {
+					placeErr = err
+					continue
+				}
+				came = append(came, pl.Said)
+			}
 			res.Attempts--
 			continue
 		}

@@ -121,22 +121,63 @@ func TestStreamRemoveRefusesAnUnknownStreamByName(t *testing.T) {
 	assert.Equal(t, "a", got[1].Key)
 }
 
-// A stream removed in this epoch keeps its control card's record unplaced,
-// and the table layer never places a removed member again: add refuses the
-// name, naming the clear, until the next epoch.
-func TestAStreamRemovedInThisEpochIsRefusedByAddUntilTheNextClear(t *testing.T) {
+// A removal is not a tombstone (2026-10-06: the roadmap re-add of 844 cards
+// was refused for 384 of them, each under a removed stream's name): adding a
+// card under a stream removed in this epoch places its control card again,
+// the record the removal kept, with the rows, and says the stream came back.
+func TestARemovedStreamComesBackWhenACardIsAdded(t *testing.T) {
 	t.Parallel()
 	w := streamsWorld(t, "a", "b")
 	require.Empty(t, StreamRemove(w.s, false, []string{"a"}))
 	removeStream(w, "a")
-	assert.False(t, w.s.Work.HasRow("a"))
-	assert.False(t, w.s.Merge.HasRow("a"))
-	assert.Nil(t, w.s.StreamCtl("a"))
+	require.False(t, w.s.Work.HasRow("a"))
+	require.False(t, w.s.Merge.HasRow("a"))
+	require.Nil(t, w.s.StreamCtl("a"))
 	assert.True(t, RemovedStream(w.s, "a"))
 	assert.False(t, RemovedStream(w.s, "b"))
-	p := Add(w.s, AddReq{Stream: "a", Count: 1, Who: "coordinator"})
-	require.Len(t, p.Refused, 1)
-	assert.Empty(t, p.Units)
-	assert.Contains(t, p.Refused[0].Why, "stream a was removed in this epoch")
-	assert.Contains(t, p.Refused[0].Why, "nova-sprint clear --confirm sprint")
+	rev := w.s.Merge.Card(CtlID("a")).Rev
+
+	p := w.must(Add(w.s, AddReq{Stream: "a", Count: 1, Who: "coordinator"}))
+	require.Len(t, p.Places, 1)
+	assert.Equal(t, PlaceAgain{Table: Merge, Row: "a", Col: Ctl, ID: CtlID("a"), Said: "stream a was removed in this epoch and comes back: its control card is placed again"}, p.Places[0])
+	assert.True(t, w.s.Work.HasRow("a"), "the work row is back")
+	assert.True(t, w.s.Merge.HasRow("a"), "the merge row is back")
+	ctl := w.s.StreamCtl("a")
+	require.NotNil(t, ctl, "the stream's control card is on the table again")
+	assert.Equal(t, CtlID("a"), ctl.ID, "the record the removal kept, not a new one")
+	assert.Greater(t, ctl.Rev, rev)
+	assert.Equal(t, StreamWaiting, ctl.F("state"))
+	assert.Equal(t, Ready, w.state("a-1"), "the card is on the table")
+	assert.False(t, RemovedStream(w.s, "a"))
+	w.clean("a stream back")
+
+	// once back, the stream is as any other: a second add places nothing again
+	p = w.must(Add(w.s, AddReq{Stream: "a", Count: 1, Who: "coordinator"}))
+	assert.Empty(t, p.Places)
+	assert.Equal(t, Ready, w.state("a-2"))
+}
+
+// A removed stream whose control card had landed comes back waiting.
+func TestARemovedLandedStreamComesBackWaiting(t *testing.T) {
+	t.Parallel()
+	w := streamsWorld(t, "a")
+	ctl := w.s.Merge.Card(CtlID("a"))
+	ctl.Fields["state"] = StreamLanded
+	removeStream(w, "a")
+	w.must(Add(w.s, AddReq{Stream: "a", IDs: []string{"a-1"}, Who: "coordinator"}))
+	require.NotNil(t, w.s.StreamCtl("a"))
+	assert.Equal(t, StreamWaiting, w.s.StreamCtl("a").F("state"))
+	assert.Equal(t, Ready, w.state("a-1"))
+}
+
+// A stream removed and added again in one many-stream add comes back once.
+func TestAddEachPlacesARemovedStreamAgainOnce(t *testing.T) {
+	t.Parallel()
+	w := streamsWorld(t, "a", "b")
+	removeStream(w, "a")
+	p := w.must(AddEach(w.s, []AddReq{{Stream: "a", IDs: []string{"a-1"}, Who: "coordinator"}, {Stream: "b", IDs: []string{"b-1"}, Who: "coordinator"}}))
+	require.Len(t, p.Places, 1)
+	assert.Equal(t, CtlID("a"), p.Places[0].ID)
+	assert.Equal(t, Ready, w.state("a-1"))
+	assert.Equal(t, Ready, w.state("b-1"))
 }

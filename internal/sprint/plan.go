@@ -47,9 +47,23 @@ type Refusal struct {
 // the table layer's row verb, not by a batch.
 type RowAdd struct{ Table, Row string }
 
+// PlaceAgain is a record on no cell the step puts back into a cell before its
+// manifests, as the table layer's cell add does: a batch never places a
+// removed member (a stream's control card a stream remove took off comes
+// back when a card is added under its name). It bumps the record's revision.
+// Said is the NOTE line the step prints for it.
+type PlaceAgain struct {
+	Table, Row, Col, ID string
+	Score               float64
+	Said                string
+}
+
 // Plan is what a step does: its units, in order, and the cards it refused.
 type Plan struct {
-	Rows    []RowAdd
+	Rows []RowAdd
+	// Places are the records the step puts back on a cell, after its rows and
+	// before its manifests (PlaceAgain).
+	Places  []PlaceAgain
 	Units   []Unit
 	Refused []Refusal
 	// Notes the step writes with no unit (a fleet member going down with no
@@ -471,6 +485,9 @@ func PlanRows(p Plan) map[string][]string {
 	}
 	for _, r := range p.Rows {
 		add(r.Table, r.Row)
+	}
+	for _, pl := range p.Places {
+		add(pl.Table, pl.Row)
 	}
 	for _, u := range p.Units {
 		for _, c := range u.Changes {

@@ -33,8 +33,8 @@ func (ta *testApp) streamRows() map[string][]string {
 // streams a/b/c" / "they should only succeed on a STOPPED sprint machine"):
 // refused on a RUNNING machine and for a stream holding a card, all or none,
 // nothing changed; on a STOPPED machine the rows leave the work and merge
-// tables, a clear does not bring them back, and the name is added fresh in
-// the next epoch.
+// tables, a clear does not bring them back, and a card added under a removed
+// name brings the stream back, in this epoch or the next.
 func TestStreamRemoveTakesStreamsOffAStoppedSprint(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
@@ -72,17 +72,38 @@ func TestStreamRemoveTakesStreamsOffAStoppedSprint(t *testing.T) {
 	assert.Equal(t, map[string][]string{sprint.Work: {"c"}, sprint.Merge: {"c"}}, ta.streamRows())
 	ta.clean()
 
-	// the control card the merge row took with it is never placed again in
-	// this epoch: add refuses the name until the next clear, nothing changed
-	code, _, errs = ta.do("add --stream a --count 1 --one")
-	assert.Equal(t, 1, code)
-	assert.Contains(t, errs, "stream a was removed in this epoch")
-	assert.Equal(t, map[string][]string{sprint.Work: {"c"}, sprint.Merge: {"c"}}, ta.streamRows())
-
 	ta.ok("clear --confirm sprint")
 	assert.Equal(t, map[string][]string{sprint.Work: {"c"}, sprint.Merge: {"c"}}, ta.streamRows(), "a clear does not bring a removed stream back")
 	assert.Contains(t, ta.ok("add --stream a --count 1 --one"), "MOVED a-1 -> ready stream=a")
 	assert.Equal(t, map[string][]string{sprint.Work: {"a", "c"}, sprint.Merge: {"a", "c"}}, ta.streamRows())
+	ta.clean()
+}
+
+// A removal is not a tombstone (2026-10-06: the roadmap re-add of 844 cards was
+// refused for 384 of them, each under a removed stream's name): in the epoch of
+// the remove, an add under the name places the stream's control card again, the
+// record the removal kept, says so, and the card is on the table.
+func TestARemovedStreamComesBackWhenACardIsAddedInItsEpoch(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.ok("init --readers reader-a,reader-b --members m1")
+	for _, st := range []string{"a", "b"} {
+		ta.ok("add --stream " + st + " --count 1 --one")
+	}
+	ta.ok("clear --confirm sprint")
+	ta.ok("stream remove a")
+	require.Equal(t, map[string][]string{sprint.Work: {"b"}, sprint.Merge: {"b"}}, ta.streamRows())
+
+	out := ta.ok("add --stream a --count 1 --one")
+	assert.Contains(t, out, "NOTE stream a was removed in this epoch and comes back: its control card is placed again")
+	assert.Contains(t, out, "MOVED a-1 -> ready stream=a")
+	assert.Equal(t, map[string][]string{sprint.Work: {"a", "b"}, sprint.Merge: {"a", "b"}}, ta.streamRows())
+	ta.clean()
+
+	// back, it is a stream as any other: the next add says nothing of it
+	out = ta.ok("add --stream a --count 1 --one")
+	assert.NotContains(t, out, "comes back")
+	assert.Contains(t, out, "MOVED a-2 -> ready stream=a")
 	ta.clean()
 }
 
