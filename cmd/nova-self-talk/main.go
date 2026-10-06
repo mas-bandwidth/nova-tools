@@ -19,6 +19,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
@@ -335,6 +336,11 @@ func scan(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			continue
 		}
 		contents[i] = string(b)
+		if !utf8.Valid(b) {
+			unread++
+			problems = append(problems, cannotRead(f, fmt.Errorf("file is not valid UTF-8")))
+			continue
+		}
 	}
 	if len(problems) > 0 {
 		hint := ""
