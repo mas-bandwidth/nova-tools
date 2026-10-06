@@ -101,6 +101,25 @@ func TestABriefIsFiveLinesAndAContractReference(t *testing.T) {
 		assert.True(t, strings.HasPrefix(compact, strings.SplitN(full, "\n", 2)[0]+"\n"), "line 1 stays")
 		assert.Equal(t, compact, Compact(compact, ContractVersion), "a brief by reference cuts to itself")
 	}
+	// A Contract: line that names no contract file is the brief's own prose (a hand-written
+	// brief's heading): no reference, no finding, left in place by the hand and the cut.
+	c := cardgen.PlanHelp("nova-x", "x\n", "TestExamples", "", "")
+	c.Paths = Paths(header, c)
+	for _, prose := range []string{"Contract:", "Contract: the lane keeps its tests green"} {
+		full := cardgen.Render(header, c) + "\n" + prose + "\n"
+		_, _, ok := ContractRef(full)
+		assert.False(t, ok, "%q is no reference", prose)
+		assert.Empty(t, Lint(c.ID, full, Options{}), "%q is no finding", prose)
+		assert.Equal(t, full, WithContract(full, contract))
+		assert.Contains(t, Compact(full, ContractVersion), "\n"+prose+"\n")
+	}
+	for _, bad := range []string{ContractKey + ": " + ContractPath, ContractKey + ": " + ContractPath + " v1 v2"} {
+		var got []string
+		for _, f := range Lint(c.ID, strings.Replace(Brief(header, c), ContractLine(), bad, 1), Options{Contract: read}) {
+			got = append(got, f.Check)
+		}
+		assert.Contains(t, got, "contract-unread", "%q is a malformed reference", bad)
+	}
 	assert.Equal(t, 0, Tokens(""))
 	assert.Equal(t, 2, Tokens("12345"))
 }

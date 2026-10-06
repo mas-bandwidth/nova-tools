@@ -30,20 +30,26 @@ func ContractLine() string {
 }
 
 // ContractRef is the contract a brief names, its file and version, and whether its
-// Contract: line is there and well formed (two fields).
+// reference line (refLine) is there and well formed: the file and a version, no more.
 func ContractRef(brief string) (file, version string, ok bool) {
 	for _, line := range strings.Split(brief, "\n") {
-		v, found := strings.CutPrefix(line, ContractKey+":")
-		if !found {
-			continue
+		if f, ref := refLine(line); ref {
+			if len(f) != 2 {
+				return "", "", false
+			}
+			return f[0], f[1], true
 		}
-		f := strings.Fields(v)
-		if len(f) != 2 {
-			return "", "", false
-		}
-		return f[0], f[1], true
 	}
 	return "", "", false
+}
+
+// refLine says line is a brief's contract reference, a Contract: line whose first word
+// is ContractPath, and gives its words. A Contract: line naming anything else is the
+// brief's own prose (a hand-written brief's heading), never a reference.
+func refLine(line string) ([]string, bool) {
+	v, found := strings.CutPrefix(line, ContractKey+":")
+	f := strings.Fields(v)
+	return f, found && len(f) > 0 && f[0] == ContractPath
 }
 
 // ContractText is the contract of version in the contract file doc: the text between
@@ -79,7 +85,7 @@ func ReadContract(root, version string) (string, error) {
 func WithContract(brief, contract string) string {
 	lines := strings.Split(brief, "\n")
 	for i, line := range lines {
-		if strings.HasPrefix(line, ContractKey+":") {
+		if _, ref := refLine(line); ref {
 			lines[i] = "\n" + strings.TrimSpace(contract)
 			return strings.Join(lines, "\n")
 		}
@@ -120,7 +126,7 @@ func Compact(brief, version string) string {
 			continue
 		}
 		inRead = line == "AS A READ"
-		if inRead || frameLine(line) || strings.HasPrefix(line, ContractKey+":") {
+		if _, ref := refLine(line); inRead || ref || frameLine(line) {
 			continue
 		}
 		if strings.TrimSpace(line) == "" {
@@ -168,19 +174,29 @@ func Tokens(text string) int {
 // contract of the version it names in place of the line, and the finding when that text
 // cannot be had (section 7). A brief with no reference is read as it is.
 func lintContract(id, brief string, o Options) (string, []cardgen.LintFinding) {
-	file, version, ok := ContractRef(brief)
-	if !ok {
-		if strings.Contains(brief, "\n"+ContractKey+":") || strings.HasPrefix(brief, ContractKey+":") {
-			return brief, []cardgen.LintFinding{{ID: id, Check: "contract-unread", Line: headerLine(brief, ContractKey), Excerpt: "the Contract: line is not `" + ContractKey + ": <file> <version>`"}}
+	at := 0
+	for i, line := range strings.Split(brief, "\n") {
+		if _, ref := refLine(line); ref {
+			at = i + 1
+			break
 		}
+	}
+	if at == 0 {
 		return brief, nil
 	}
-	if file != ContractPath || o.Contract == nil {
-		return brief, []cardgen.LintFinding{{ID: id, Check: "contract-unread", Line: headerLine(brief, ContractKey), Excerpt: "no contract text to read for " + file + " " + version + "; the lint reads a brief by reference as the lane does, with " + ContractPath}}
+	finding := func(check, excerpt string) []cardgen.LintFinding {
+		return []cardgen.LintFinding{{ID: id, Check: check, Line: at, Excerpt: excerpt}}
+	}
+	_, version, ok := ContractRef(brief)
+	if !ok {
+		return brief, finding("contract-unread", "the Contract: line is not `"+ContractKey+": "+ContractPath+" <version>`")
+	}
+	if o.Contract == nil {
+		return brief, finding("contract-unread", "no contract text to read for "+ContractPath+" "+version+"; the lint reads a brief by reference as the lane does, with "+ContractPath)
 	}
 	text, err := o.Contract(version)
 	if err != nil {
-		return brief, []cardgen.LintFinding{{ID: id, Check: "contract-version", Line: headerLine(brief, ContractKey), Excerpt: err.Error()}}
+		return brief, finding("contract-version", err.Error())
 	}
 	return WithContract(brief, text), nil
 }
