@@ -52,6 +52,9 @@ type Tool struct {
 	// The default verb accepts positional arguments, also when named explicitly.
 	// "" makes every first word a verb and leaves every verb flags-only.
 	Default string
+	// Exists reports whether a word names a file or directory that is there.
+	// Default is os.Stat; tests may pass a map[string]bool.
+	Exists func(string) bool
 	// Words are the tool's own status words (STALE, MISSING, UNCHANGED), the
 	// only ones Out.As may put in place of OK or FAILED: at most MaxWords,
 	// upper case, none of OK, FAILED, REFUSED, MORE or NOTE (Problems).
@@ -152,7 +155,7 @@ func (t *Tool) Run(args []string, stdin io.Reader, stdout, stderr io.Writer) (co
 	if members := t.group(args[0]); len(members) > 0 {
 		return t.inGroup(args, members, asJSON, stdout, stderr)
 	}
-	if t.Default != "" && (strings.HasPrefix(args[0], "-") || strings.ContainsRune(args[0], os.PathSeparator) || exists(args[0])) {
+	if t.Default != "" && (strings.HasPrefix(args[0], "-") || strings.ContainsRune(args[0], os.PathSeparator) || t.exists(args[0])) {
 		for _, v := range t.verbs() { // a flag, a path, or a file: the default verb's
 			if v.Name == t.Default {
 				return t.call(v, args, stdin, stdout, stderr)
@@ -168,7 +171,8 @@ func (t *Tool) Run(args []string, stdin io.Reader, stdout, stderr io.Writer) (co
 }
 
 // exists reports whether a word names a file or directory that is there.
-func exists(path string) bool {
+func (t *Tool) exists(path string) bool {
+	if t.Exists != nil { return t.Exists(path) }
 	_, err := os.Stat(path)
 	return err == nil
 }

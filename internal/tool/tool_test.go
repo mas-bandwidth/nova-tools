@@ -843,3 +843,26 @@ func TestHelpRefusedAnswersDashH(t *testing.T) {
 		})
 	}
 }
+
+// TestToolExistsSeam pins the filesystem seam: when Tool.Exists is set, it is used
+// instead of os.Stat, allowing tests to pass a map.
+func TestToolExistsSeam(t *testing.T) {
+	t.Parallel()
+	// Test that custom Exists is used
+	mapExists := map[string]bool{"known-file": true}
+	tool := &Tool{
+		Name: "nova-customexists", What: "a tool with custom exists",
+		How: "It tests custom exists.", ExitTable: "0 done, 2 could not run.",
+		Exists: func(s string) bool { return mapExists[s] },
+		Verbs: []Verb{{
+			Name: "test", Usage: "test", Effect: Inspection,
+			Run: func(*Call) *Out { return Done() },
+		}},
+	}
+	var out, errs bytes.Buffer
+	// Should work with custom Exists
+	code := tool.Run([]string{"test"}, strings.NewReader(""), &out, &errs)
+	assert.Equal(t, 0, code, "stderr %q", errs.String())
+	assert.Contains(t, out.String(), "OK")
+}
+
