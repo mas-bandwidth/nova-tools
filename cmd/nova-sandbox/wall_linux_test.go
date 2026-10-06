@@ -313,3 +313,50 @@ func TestLandlockReadNoExecReadsAndRefusesToExecute(t *testing.T) {
 	code, _, errOut = j.wall(t, script, "--read", cache)
 	require.Equal(t, 0, code, "the control failed: the same script under --read did not run: exit %d, %s", code, errOut)
 }
+
+// The 2026-10-05 fleet outage, end to end through the tool (docs/SPEC-SANDBOX.md,
+// "wall-deletes-in-every-write-root.w1"). The member's wall: --read the slot, --write its
+// job dir, its data home, its tmp and the shared cache, --cwd the job dir, HOME the data
+// home. A SQLite database in $HOME/opencode commits a transaction in rollback-journal mode,
+// which creates the -journal file beside it and unlinks it at the commit. Under a wall that
+// withheld the remove rights from the data home, the commit failed with "disk I/O error"
+// and opencode died at its first write in every child. The create-and-delete probe of the
+// reproduction runs too.
+func TestTheWallLetsSQLiteCommitInTheDataHome(t *testing.T) {
+	t.Parallel()
+
+	needLandlock(t)
+	sqlite, err := exec.LookPath("sqlite3")
+	if err != nil {
+		t.Skip("skipped: no sqlite3 on this machine, so there is no database to commit")
+	}
+	sqlite, err = filepath.EvalSymlinks(sqlite)
+	require.NoError(t, err)
+
+	j := newJob(t)
+	slot := j.write
+	cache := j.outside
+	jobDir := filepath.Join(slot, "jobs", "card")
+	data := filepath.Join(slot, "data")
+	tmp := filepath.Join(slot, "tmp", "card")
+	for _, d := range []string{jobDir, filepath.Join(data, "opencode"), tmp} {
+		require.NoError(t, os.MkdirAll(d, 0o755))
+	}
+	db := filepath.Join(data, "opencode", "opencode.db")
+	script := strings.Join([]string{
+		`touch "$HOME/opencode/probe" && rm "$HOME/opencode/probe"; echo probe=$?`,
+		`"$1" "$HOME/opencode/opencode.db" 'PRAGMA journal_mode=DELETE; CREATE TABLE t(x); BEGIN; INSERT INTO t VALUES (1); COMMIT; BEGIN; INSERT INTO t VALUES (2); COMMIT; SELECT count(*) FROM t;'; echo sqlite=$?`,
+	}, "\n")
+	code, out, errOut := j.runTool(t, []string{"HOME=" + data, "PATH=/usr/bin:/bin"},
+		"--read", slot, "--read", filepath.Dir(sqlite),
+		"--write", jobDir, "--write", data, "--write", tmp, "--write", cache,
+		"--cwd", jobDir, "--", "/bin/sh", "-c", script, "sh", sqlite)
+	t.Logf("stdout:\n%s\nstderr:\n%s", out, errOut)
+	require.Equal(t, 0, code, "the walled run failed: %s", errOut)
+	assert.Contains(t, out, "probe=0", "a file created in the data home could not be deleted there")
+	assert.Contains(t, out, "\n2\nsqlite=0", "the database in the data home did not commit both transactions")
+	assert.NotContains(t, out+errOut, "disk I/O error")
+	assert.FileExists(t, db)
+	assert.NoFileExists(t, db+"-journal", "the rollback journal was not unlinked at the commit")
+	assert.Contains(t, errOut, "SANDBOX OK backend=landlock")
+}
