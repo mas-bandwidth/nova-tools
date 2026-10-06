@@ -20,7 +20,7 @@ import (
 func init() {
 	verbEffect["install"] = "local write: writes the kind's unit (the verb itself, never a wrapper) into --dir and loads it with launchctl (macOS) or systemctl --user (Linux); --dry-run writes nothing"
 	verbEffect["uninstall"] = "local write: unloads the kind's unit and removes its file from --dir; --dry-run names the unit and unloads and removes nothing"
-	verbExit["install"] = "exit codes: 0 done (the unit written or kept, and loaded); 1 the unit did not write or load; 2 usage, or mirror-refresh (no mirror verb yet)"
+	verbExit["install"] = "exit codes: 0 done (the unit written or kept, and loaded); 1 the unit did not write or load; 2 usage"
 	verbExit["uninstall"] = "exit codes: 0 done (removed, or no unit there); 1 the unit did not unload or remove; 2 usage"
 }
 
@@ -63,31 +63,31 @@ func unitLoad(goos, op, path string) error {
 }
 
 // install and uninstall of the units nova-swarm owns (card every-unit-installed-by-a-verb).
-// disk-guard is written and loaded here. mirror-refresh stays owed: nova-swarm has no
-// mirror verb for that unit to run. The unit runs this binary directly. A test gives
-// --dir and its own loader, so nothing is loaded on the machine the test runs on.
+// disk-guard and mirror-refresh are written and loaded here. The unit runs this binary
+// directly. A test gives --dir and its own loader, so nothing is loaded on the machine
+// the test runs on.
 //
 // The shared unit text lives in internal/units. This binary does not import that
 // package: its oneline import list is cmd/nova-swarm/audit_test.go, which this card
 // cannot change. The text written here is the same plist and unit internal/units
-// writes, and TestSwarmInstallWritesTheDiskGuardAndRefusesMirrorRefresh reads both.
+// writes, and TestSwarmInstallWritesTheDiskGuardAndMirrorRefresh reads both.
 
 const (
 	diskGuardWhat = "the machine's disk upkeep, one pass every --every (nova-swarm disk-guard)"
 	mirrorWhat    = "the bench's repository mirrors kept fresh (nova-swarm mirror)"
-	mirrorOwed    = "nova-swarm has no mirror verb for the unit to run"
 )
 
 type swarmKind struct {
-	kind, label, service, what, owed string
+	kind, label, service, what string
+	verb                       []string
 }
 
 func swarmKindOf(kind string) (swarmKind, bool) {
 	switch kind {
 	case "disk-guard":
-		return swarmKind{kind: "disk-guard", label: "nova-swarm.disk-guard", service: "nova-swarm-disk-guard.service", what: diskGuardWhat}, true
+		return swarmKind{kind: "disk-guard", label: "nova-swarm.disk-guard", service: "nova-swarm-disk-guard.service", what: diskGuardWhat, verb: []string{"disk-guard"}}, true
 	case "mirror-refresh":
-		return swarmKind{kind: "mirror-refresh", label: "nova-swarm.mirror-refresh", service: "nova-swarm-mirror-refresh.service", what: mirrorWhat, owed: mirrorOwed}, true
+		return swarmKind{kind: "mirror-refresh", label: "nova-swarm.mirror-refresh", service: "nova-swarm-mirror-refresh.service", what: mirrorWhat, verb: []string{"mirror"}}, true
 	default:
 		return swarmKind{}, false
 	}
@@ -171,12 +171,11 @@ func installKind(kind string, args []string, stdout, stderr io.Writer) int {
 	land := f.fs.String("land", "", "the `dir` nova-sprint land keeps its clones in, when set")
 	cloneAge := f.fs.Duration("clone-age", 0, "how long a land clone must be unused before it is removed, when set")
 	mirrors := f.fs.String("mirrors", "", "the `dir` of the bench's mirrors, when set")
+	repos := f.fs.String("repos", "", "the repository names the mirror-refresh unit refreshes, a comma-separated `list` (mirror-refresh)")
+	base := f.fs.String("base", "", "the `url` the mirror-refresh unit fetches every repository from, <url>/<name>.git (mirror-refresh)")
 	floor := f.fs.Int("disk-floor", -1, "the free `GiB` under which the run warns, when set")
 	if !f.parse(args, stderr) {
 		return 2
-	}
-	if k.owed != "" {
-		return refuse(stderr, " "+name, k.owed+"; nothing was written")
 	}
 	if *every <= 0 {
 		return refuse(stderr, " "+name, "--every is the least time between two starts, above zero; nothing was written")
@@ -186,44 +185,55 @@ func installKind(kind string, args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return refuse(stderr, " "+name, "the path of this nova-swarm cannot be read: "+err.Error()+"; nothing was written")
 	}
-	uargs := []string{bin, "disk-guard"}
+	uargs := append([]string{bin}, k.verb...)
 	add := func(flag, v string) {
 		if v != "" {
 			uargs = append(uargs, flag, v)
 		}
 	}
-	for _, r := range roots {
-		add("--root", r)
-	}
-	for _, r := range scans {
-		add("--scan", r)
-	}
-	for _, r := range caches {
-		add("--cache", r)
-	}
-	if *cacheGB > 0 {
-		add("--cache-max-gb", strconv.Itoa(*cacheGB))
-	}
-	if *modGB > 0 {
-		add("--modcache-max-gb", strconv.Itoa(*modGB))
-	}
-	add("--logs", *logs)
-	if *logMB > 0 {
-		add("--log-max-mb", strconv.Itoa(*logMB))
-	}
-	if *logKeep > 0 {
-		add("--log-keep", strconv.Itoa(*logKeep))
-	}
-	if *poolIdle > 0 {
-		add("--pool-idle", poolIdle.String())
-	}
-	add("--land", *land)
-	if *cloneAge > 0 {
-		add("--clone-age", cloneAge.String())
-	}
-	add("--mirrors", *mirrors)
-	if *floor >= 0 {
-		add("--disk-floor", strconv.Itoa(*floor))
+	switch k.kind {
+	case "mirror-refresh":
+		if *repos == "" || *base == "" {
+			return refuse(stderr, " "+name, "--repos and --base are required: they name the repositories to mirror and the URL they are under (nova-swarm mirror); nothing was written")
+		}
+		uargs = append(uargs, "--repos", *repos, "--base", *base)
+		if *mirrors != "" {
+			uargs = append(uargs, "--dir", *mirrors)
+		}
+	default: // disk-guard
+		for _, r := range roots {
+			add("--root", r)
+		}
+		for _, r := range scans {
+			add("--scan", r)
+		}
+		for _, r := range caches {
+			add("--cache", r)
+		}
+		if *cacheGB > 0 {
+			add("--cache-max-gb", strconv.Itoa(*cacheGB))
+		}
+		if *modGB > 0 {
+			add("--modcache-max-gb", strconv.Itoa(*modGB))
+		}
+		add("--logs", *logs)
+		if *logMB > 0 {
+			add("--log-max-mb", strconv.Itoa(*logMB))
+		}
+		if *logKeep > 0 {
+			add("--log-keep", strconv.Itoa(*logKeep))
+		}
+		if *poolIdle > 0 {
+			add("--pool-idle", poolIdle.String())
+		}
+		add("--land", *land)
+		if *cloneAge > 0 {
+			add("--clone-age", cloneAge.String())
+		}
+		add("--mirrors", *mirrors)
+		if *floor >= 0 {
+			add("--disk-floor", strconv.Itoa(*floor))
+		}
 	}
 	logPath := *logf
 	if *dir == "" {
@@ -240,7 +250,7 @@ func installKind(kind string, args []string, stdout, stderr io.Writer) int {
 		}
 		logPath = filepath.Join(home, "Library", "Logs", "nova-swarm-"+kind+".log")
 	}
-	text, err := diskGuardText(k, goos, uargs, logPath, *every)
+	text, err := unitText(k, goos, uargs, logPath, *every)
 	if err != nil {
 		return refuse(stderr, " "+name, err.Error()+"; nothing was written")
 	}
@@ -319,9 +329,12 @@ func cmdUninstall(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-func diskGuardText(k swarmKind, goos string, args []string, log string, every time.Duration) (string, error) {
+// unitText is the kind's unit file, the same text internal/units writes: its command
+// line, the binary first by its absolute path and then the kind's verb, the file its
+// lines go to on macOS, and the least time between two starts.
+func unitText(k swarmKind, goos string, args []string, log string, every time.Duration) (string, error) {
 	if k.file(goos) == "" {
-		return "", errors.New("nova-swarm install disk-guard installs a launchd agent (macOS) or a systemd user unit (Linux), not a service on " + orDash(goos) + "; run the verb by hand: nova-swarm disk-guard")
+		return "", errors.New(k.kind + " installs a launchd agent (macOS) or a systemd user unit (Linux), not a service on " + orDash(goos) + "; run the verb by hand: nova-swarm " + strings.Join(k.verb, " "))
 	}
 	first := ""
 	if len(args) > 0 {
@@ -333,8 +346,8 @@ func diskGuardText(k swarmKind, goos string, args []string, log string, every ti
 	if base := filepath.Base(args[0]); base != "nova-swarm" {
 		return "", errors.New("the unit runs nova-swarm itself, never a wrapper around it, and " + base + " is not nova-swarm")
 	}
-	if len(args) < 2 || args[1] != "disk-guard" {
-		return "", errors.New("a disk-guard unit runs nova-swarm disk-guard, not " + strings.Join(args, " "))
+	if len(args) < 1+len(k.verb) || strings.Join(args[1:1+len(k.verb)], " ") != strings.Join(k.verb, " ") {
+		return "", errors.New("a " + k.kind + " unit runs nova-swarm " + strings.Join(k.verb, " ") + ", not " + strings.Join(args, " "))
 	}
 	if every < 0 {
 		return "", errors.New("--every is the least time between two starts, zero or more, not " + every.String())

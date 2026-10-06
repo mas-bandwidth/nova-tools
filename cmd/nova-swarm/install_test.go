@@ -11,11 +11,11 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/units"
 )
 
-// nova-swarm install disk-guard writes the unit for macOS and Linux into a directory
-// the test names, running nova-swarm disk-guard itself, and loads it with the test's
-// loader. mirror-refresh is refused: there is no mirror verb. Nothing is loaded on
-// the machine running the test.
-func TestSwarmInstallWritesTheDiskGuardAndRefusesMirrorRefresh(t *testing.T) {
+// nova-swarm install disk-guard and mirror-refresh write the unit for macOS and Linux
+// into a directory the test names, running nova-swarm disk-guard and nova-swarm mirror
+// themselves, and load it with the test's loader. Nothing is loaded on the machine
+// running the test.
+func TestSwarmInstallWritesTheDiskGuardAndMirrorRefresh(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
 	swarmUnits.goos = "linux"
@@ -71,11 +71,27 @@ func TestSwarmInstallWritesTheDiskGuardAndRefusesMirrorRefresh(t *testing.T) {
 
 		code, out, errb = runSwarm(t, "install", "mirror-refresh", "--dir", dir)
 		assert.Equal(t, 2, code, out)
-		assert.Contains(t, errb, "no mirror verb")
+		assert.Contains(t, errb, "--repos and --base are required")
 		mk, mirrorOK := units.UnitKindOf("mirror-refresh")
 		require.True(t, mirrorOK)
 		assert.NoFileExists(t, filepath.Join(dir, mk.File(goos)))
 		assert.Len(t, calls, 1, "a refused install loads nothing")
+
+		code, out, errb = runSwarm(t, "install", "mirror-refresh", "--dir", dir, "--repos", "nova,nova-tools", "--base", "https://example.test/org", "--every", "15m")
+		require.Equal(t, 0, code, errb)
+		assert.Contains(t, out, "INSTALL MIRROR-REFRESH OK unit="+filepath.Join(dir, mk.File(goos))+" written=true loaded=true")
+		b, err = os.ReadFile(filepath.Join(dir, mk.File(goos)))
+		require.NoError(t, err)
+		margs, err := units.UnitArgs(goos, b)
+		require.NoError(t, err)
+		assert.Equal(t, []string{"/opt/nova/bin/nova-swarm", "mirror", "--repos", "nova,nova-tools", "--base", "https://example.test/org"}, margs)
+		if goos == "darwin" {
+			log := filepath.Join(home, "Library", "Logs", "nova-swarm-mirror-refresh.log")
+			assert.Equal(t, units.LaunchdPlist(mk.Label, margs, nil, log, 900), string(b), "the swarm binary writes the same plist internal/units does")
+		} else {
+			assert.Equal(t, units.SystemdUnit("nova "+mk.Kind+": "+mk.What, margs, nil, 900), string(b), "the swarm binary writes the same unit internal/units does")
+		}
+		assert.Equal(t, []string{goos + " load " + mk.File(goos)}, calls[1:])
 
 		code, out, errb = runSwarm(t, "uninstall", "disk-guard", "--dry-run", "--dir", dir)
 		require.Equal(t, 0, code, errb)

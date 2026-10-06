@@ -381,6 +381,11 @@ need no `nova-secrets exec` wrapper for `JEV_API_KEY` or a provider key.
   (`templates/nova-loop.timer.j2`, `OnUnitActiveSec` the record's `every`). A
   record with `enabled: false` is written, stopped and disabled.
 
+A unit's command can be wrapped in `nova-config loop run <name> -- <command>`, the
+single-instance lock a bash `nova-loop` wrapper once gave (docs/SPEC-CONFIG.md, "loop run"): a
+second copy exits 3, and `--metrics <dir>` writes the restart count node_exporter reads. The plays
+do not wrap the units in it yet.
+
 Every unit the play writes carries its mark (`written by fleet/loops.yml from
 the loop record <name>`). A marked unit that no record on the machine names,
 and every marked unit in the other place (the system place when the machine's

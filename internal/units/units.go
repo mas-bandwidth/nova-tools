@@ -92,8 +92,7 @@ var UnitKinds = []UnitKind{
 	{Kind: "disk-guard", Label: "nova-swarm.disk-guard", Service: "nova-swarm-disk-guard.service", Tool: "nova-swarm", Verb: []string{"disk-guard"},
 		Install: "nova-swarm install disk-guard", What: "the machine's disk upkeep, one pass every --every (nova-swarm disk-guard)"},
 	{Kind: "mirror-refresh", Label: "nova-swarm.mirror-refresh", Service: "nova-swarm-mirror-refresh.service", Tool: "nova-swarm", Verb: []string{"mirror"},
-		Install: "nova-swarm install mirror-refresh", What: "the bench's repository mirrors kept fresh (nova-swarm mirror)",
-		Owed: "nova-swarm has no mirror verb for the unit to run"},
+		Install: "nova-swarm install mirror-refresh", What: "the bench's repository mirrors kept fresh (nova-swarm mirror)"},
 }
 
 // UnitKindOf is the kind named k.
