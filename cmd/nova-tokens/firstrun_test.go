@@ -19,11 +19,13 @@ import (
 // fixture, every refusal says what the input WANTS and one run names every independent
 // problem, and the TESTS.md transcript is compared against what the tool actually prints.
 
-// fixtureIn copies cmd/nova-tokens/testdata/example-bench into t.TempDir(), makes the
-// output directory the examples write to, and moves the test into it. Nothing here
-// reaches outside t.TempDir(): a first run WRITES, so the fixture is copied rather than
-// run in place.
-func fixtureIn(t *testing.T) string {
+// fixtureAt copies cmd/nova-tokens/testdata/example-bench into t.TempDir() and returns
+// that directory, without changing the process directory: a test that runs the tool in a
+// child gives the child cmd.Dir = this directory, so the documented ./paths resolve as
+// written and the process directory stays shared (docs/STANDARD.md section 8). Nothing
+// here reaches outside t.TempDir(): a first run WRITES, so the fixture is copied rather
+// than run in place.
+func fixtureAt(t *testing.T) string {
 	t.Helper()
 	dst := t.TempDir()
 	src := filepath.Join("testdata", "example-bench")
@@ -54,6 +56,14 @@ func fixtureIn(t *testing.T) string {
 		err := os.MkdirAll(filepath.Join(dst, "out"), 0o755)
 		require.NoError(t, err, err)
 	}
+	return dst
+}
+
+// fixtureIn copies the fixture and moves this process into it, for the first-run tests
+// that run the tool in process and read the documented ./paths relative to it.
+func fixtureIn(t *testing.T) string {
+	t.Helper()
+	dst := fixtureAt(t)
 	t.Chdir(dst)
 	return dst
 }

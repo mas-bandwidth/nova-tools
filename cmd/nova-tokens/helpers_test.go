@@ -9,6 +9,7 @@ import (
 	"golang.org/x/text/language"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -41,6 +42,65 @@ func invokeAt(t *testing.T, now time.Time, args ...string) result {
 	t.Helper()
 	var out, errb bytes.Buffer
 	exit := run(args, &out, &errb, now)
+	return result{exit: exit, stdout: out.String(), stderr: errb.String()}
+}
+
+// childTestEnv marks a test re-entered as a child of this binary. A test that needs a
+// process-wide resource t.Parallel forbids in a shared process -- the environment, or the
+// package's own opened-file counter -- runs its body in a child with only itself selected,
+// so the resource is that process's alone (docs/STANDARD.md section 8). The parent execs;
+// the child asserts.
+const childTestEnv = "NOVA_TOKENS_CHILD_TEST"
+
+// childEnv is this process's environment with testbin's re-exec depth counter dropped, so
+// a child test binary starts a fresh chain. Without it the child starts one deep and the
+// fake sqlite3 it starts is the third test binary, which testbin.MaxDepth refuses.
+func childEnv(extra ...string) []string {
+	depth := testbin.DepthEnv("nova-tokens")
+	out := make([]string, 0, len(os.Environ())+len(extra))
+	for _, kv := range os.Environ() {
+		if strings.HasPrefix(kv, depth+"=") {
+			continue
+		}
+		out = append(out, kv)
+	}
+	return append(out, extra...)
+}
+
+// reenterTest runs this test function again in a child of this binary, with only it
+// selected (`-test.run`), so its body may read the process-wide counter without racing a
+// parallel neighbour. The child's failure fails this test.
+func reenterTest(t *testing.T, name string) {
+	t.Helper()
+	self, err := os.Executable()
+	require.NoError(t, err)
+	cmd := exec.Command(self, "-test.run=^"+name+"$", "-test.count=1")
+	cmd.Env = childEnv(childTestEnv + "=1")
+	cmd.WaitDelay = 2 * time.Second
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, "the re-entered %s failed:\n%s", name, out)
+}
+
+// runToolChild runs this test binary as nova-tokens itself in a child process, so a test
+// can give the tool its own working directory (cmd.Dir) and environment (cmd.Env) without
+// changing either for the process its parallel neighbours share. The child's clock is
+// foldStamp, the one invoke injects, so the two render the same at= stamps.
+func runToolChild(t *testing.T, dir string, env []string, args ...string) result {
+	t.Helper()
+	self, err := os.Executable()
+	require.NoError(t, err)
+	cmd := exec.Command(self, args...)
+	cmd.Dir = dir
+	cmd.Env = childEnv(append([]string{asToolEnv + "=1"}, env...)...)
+	var out, errb bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &errb
+	err = cmd.Run()
+	exit := 0
+	if ee, ok := err.(*exec.ExitError); ok {
+		exit = ee.ExitCode()
+	} else if err != nil {
+		require.FailNow(t, "running nova-tokens in a child: %v", err)
+	}
 	return result{exit: exit, stdout: out.String(), stderr: errb.String()}
 }
 
@@ -189,10 +249,9 @@ const (
 // wait on the wall clock.
 var fakeModes = map[string]func() int{}
 
-// fakeSqlite3OnPath places the test binary (by link, a copy only where a link is not
-// possible) at <tmp>/bin/sqlite3[.exe], puts that directory
-// first on PATH, and hands the placed program its mode through the environment.
-func fakeSqlite3OnPath(t *testing.T, mode string) {
+// placeFakeSqlite3 places the test binary (by link, a copy only where a link is not
+// possible) at <tmp>/bin/sqlite3[.exe] and returns that directory.
+func placeFakeSqlite3(t *testing.T) string {
 	t.Helper()
 	self, err := os.Executable()
 	require.NoError(t, err)
@@ -205,8 +264,29 @@ func fakeSqlite3OnPath(t *testing.T, mode string) {
 		err := testbin.Place(self, filepath.Join(bin, name))
 		require.NoError(t, err)
 	}
+	return bin
+}
+
+// fakeSqlite3OnPath places the stub and puts that directory first on THIS process's PATH,
+// for the tests whose tool runs in process. A test that runs the tool in a child takes
+// fakeSqlite3ChildEnv instead, so its PATH stays this process's.
+func fakeSqlite3OnPath(t *testing.T, mode string) {
+	t.Helper()
+	bin := placeFakeSqlite3(t)
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv(fakeSqlite3Env, mode)
+}
+
+// fakeSqlite3ChildEnv places the stub and returns the environment that puts that directory
+// first on a CHILD's PATH and hands the stub its mode, so a parallel test injects the fake
+// through the tool child instead of changing this process's environment.
+func fakeSqlite3ChildEnv(t *testing.T, mode string) []string {
+	t.Helper()
+	bin := placeFakeSqlite3(t)
+	return []string{
+		"PATH=" + bin + string(os.PathListSeparator) + os.Getenv("PATH"),
+		fakeSqlite3Env + "=" + mode,
+	}
 }
 
 // TestMain is the fake's other half: with the mode set in the environment this binary is
@@ -214,12 +294,16 @@ func fakeSqlite3OnPath(t *testing.T, mode string) {
 //
 // With asToolEnv set it is nova-tokens itself, on the process's real stdout and stderr, so
 // a test can see what a library writes to os.Stderr behind run's injected streams (#3463).
+// That check comes first: a tool run hands its own environment to the sqlite3 it spawns, so
+// its environment names the fake too; clearing the tool marker before run() leaves the fake
+// for the sqlite3 child, and one dispatch serves both.
 func TestMain(m *testing.M) {
+	if os.Getenv(asToolEnv) != "" {
+		_ = os.Unsetenv(asToolEnv)
+		os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, foldStamp))
+	}
 	if mode := os.Getenv(fakeSqlite3Env); mode != "" {
 		os.Exit(fakeSqlite3Main(mode, os.Args[1:], os.Stdout))
-	}
-	if os.Getenv(asToolEnv) != "" {
-		os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, foldStamp))
 	}
 	os.Exit(m.Run())
 }
