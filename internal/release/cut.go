@@ -568,7 +568,7 @@ func cut(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 	if err := forge.Tag(ctx, o.repo, o.version, sha, Annotation(o.version, sha, sumsDigest)); err != nil {
 		// The changelog is already written; say so, because the remedy is to
 		// tag by hand or to cut again, not to wonder which half happened.
-		fmt.Fprintf(errs, "CUT FAIL version=%s sha=%s: %s (the changelog section is written at %s; create the tag by hand or delete the section and cut again)\n",
+		fmt.Fprintf(errs, "CUT FAILED version=%s sha=%s: %s (the changelog section is written at %s; create the tag by hand or delete the section and cut again)\n",
 			field(o.version), field(sha), oneline.Err(err), field(o.changelog))
 		return 1
 	}
