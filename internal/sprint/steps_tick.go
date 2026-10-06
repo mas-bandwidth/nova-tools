@@ -1117,6 +1117,9 @@ func TickDeadlines(s *Snapshot, r TickReq) (Plan, int) {
 	// lapses again and again cannot reset them, and the time a card spends
 	// withdrawn counts.
 	for _, c := range s.Fleet.Column(Ready, Working, Withdrawn) {
+		if c.Col == Withdrawn && c.F("kind") == "read" {
+			continue // a read withdrawn is history: its primary is asked again (friendReadLive)
+		}
 		field, limit, word, own := WorkDeadline(s, c)
 		friend, idle := friendLaneIdle(s, r.Friends, c)
 		if idle {
