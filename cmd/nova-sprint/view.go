@@ -105,6 +105,8 @@ type viewRow struct {
 	R   int    `json:"r"`             // ready on the row
 	W   int    `json:"w"`             // working on the row
 	Wd  int    `json:"wd"`            // the row's width
+	Fr  int    `json:"fr"`            // its free lanes, up (sprint.CapacityRow)
+	El  int    `json:"el"`            // its free lanes a card can fill now
 	F30 int    `json:"f30"`           // finished in the last 30m
 	Rep string `json:"rep,omitempty"` // how long since its last beat; "never"
 }
@@ -124,6 +126,12 @@ type coordCounts struct {
 	Width   int `json:"width"` // the up machines' width
 	Busy    int `json:"busy"`  // the cards working on up machines
 	J       int `json:"j"`     // the open judgments
+	// the headline's capacity (sprint.HeadlineCapacity): the lanes up holding no working
+	// card, those a card can fill now, and the unused split into held and starved
+	Free     int `json:"free"`
+	Eligible int `json:"elig"`
+	HeldLane int `json:"hlanes"`
+	Starved  int `json:"starved"`
 }
 
 // coordinatorView is view coordinator's document, schema 1.
@@ -138,8 +146,11 @@ type coordinatorView struct {
 	N      coordCounts `json:"n"`
 	Items  []viewItem  `json:"items"`
 	Rows   []viewRow   `json:"rows,omitempty"`
-	Same   int         `json:"same,omitempty"` // with --since: items left out, unchanged
-	Gone   int         `json:"gone,omitempty"` // with --since: items the cursor's read showed that stand no more
+	// Cap is the headline's capacity whole: each row's lanes, each unused lane's reason
+	// with its owner and next action, and the refill advice.
+	Cap  sprint.Capacity `json:"cap"`
+	Same int             `json:"same,omitempty"` // with --since: items left out, unchanged
+	Gone int             `json:"gone,omitempty"` // with --since: items the cursor's read showed that stand no more
 }
 
 // workerCard is one of a worker's cards.
@@ -278,7 +289,7 @@ func (a *app) coordinatorView(ctx context.Context, st *store.Store, all bool) (c
 		return v, err
 	}
 	v.Epoch = st.PinnedEpoch()
-	s, err := st.Load(ctx, []string{sprint.Work, sprint.Merge, sprint.Fleet}, nil)
+	s, err := st.Load(ctx, []string{sprint.Work, sprint.Readers, sprint.Merge, sprint.Fleet}, nil)
 	if err != nil {
 		return v, err
 	}
@@ -289,6 +300,28 @@ func (a *app) coordinatorView(ctx context.Context, st *store.Store, all bool) (c
 	friends, err := st.FriendRows(ctx, now)
 	if err != nil {
 		return v, err
+	}
+	// what the deal reads, so the headline's capacity is the deal's own: the routes, the
+	// readers' states, the friends as seats, and the build lanes
+	s.Open = in.Open
+	if s.Routes, s.Tiers, err = st.Routes(ctx); err != nil {
+		return v, err
+	}
+	if s.ReaderStates, err = st.ReaderStates(ctx, s.Readers.Rows(), s.Now); err != nil {
+		return v, err
+	}
+	seats, err := st.FriendSeats(ctx, now)
+	if err != nil {
+		return v, err
+	}
+	lanes, err := st.LaneRows(ctx)
+	if err != nil {
+		return v, err
+	}
+	v.Cap = sprint.HeadlineCapacity(s, sprint.CapacityReq{Friends: seats, Lanes: lanes})
+	capRow := map[string]sprint.CapacityRow{}
+	for _, r := range v.Cap.Rows {
+		capRow[r.Row] = r
 	}
 	members := s.Members()
 	beats, err := st.Beats(ctx, members)
@@ -334,6 +367,7 @@ func (a *app) coordinatorView(ctx context.Context, st *store.Store, all bool) (c
 		}
 	}
 	n.Held = sprint.HeldBack(s)
+	n.Free, n.Eligible, n.HeldLane, n.Starved = v.Cap.Free, v.Cap.Eligible, v.Cap.Held, v.Cap.Starved
 	finished := func(row string) int {
 		f := 0
 		for _, c := range append(s.Fleet.Cell(row, sprint.DoneOK), s.Fleet.Cell(row, sprint.DoneFailed)...) {
@@ -405,7 +439,7 @@ func (a *app) coordinatorView(ctx context.Context, st *store.Store, all bool) (c
 			since = now.Sub(b.At)
 			rep = ageWord(since)
 		}
-		rows = append(rows, viewRow{K: "m:" + m, St: cmp.Or(status, sprint.Down), R: r, W: w, Wd: width, F30: finished(m), Rep: rep})
+		rows = append(rows, viewRow{K: "m:" + m, St: cmp.Or(status, sprint.Down), R: r, W: w, Wd: width, Fr: capRow[m].Free, El: capRow[m].Eligible, F30: finished(m), Rep: rep})
 		if status != sprint.Up && status != sprint.Held && width > 0 {
 			v.Items = append(v.Items, viewItem{K: "m:" + m, T: itemMachine, W: "machine down", B: r + w, S: m + " is down and not held (width " + strconv.Itoa(width) + "); last beat " + rep,
 				Next: "nova-sprint log --member " + m + " --since 1h", age: since})
@@ -421,7 +455,7 @@ func (a *app) coordinatorView(ctx context.Context, st *store.Store, all bool) (c
 			since = now.Sub(f.Beat)
 			rep = ageWord(since)
 		}
-		rows = append(rows, viewRow{K: "f:" + f.Name, St: f.Status, R: r, W: w, Wd: f.Width, F30: finished(row), Rep: rep})
+		rows = append(rows, viewRow{K: "f:" + f.Name, St: f.Status, R: r, W: w, Wd: f.Width, Fr: capRow[row].Free, El: capRow[row].Eligible, F30: finished(row), Rep: rep})
 		if r+w == 0 {
 			continue
 		}
@@ -481,14 +515,31 @@ func (a *app) coordinatorView(ctx context.Context, st *store.Store, all bool) (c
 		v.Items = append(v.Items, viewItem{K: "a:stopped", T: itemAlarm, W: "machine stopped", B: n.All - n.Landed, S: what + ") with " + strconv.Itoa(n.All-n.Landed) + " cards not landed",
 			Next: "nova-sprint start", age: now.Sub(machine.Since)})
 	}
-	if running && n.Width > 0 && 2*n.Busy < n.Width {
-		next := "nova-sprint where --all"
-		if n.Ready < n.Width {
-			next = release("nova-sprint needs --roots")
+	// idle is eligible execution, never raw counts (sprint.HeadlineCapacity): the lanes up
+	// working or fillable now under half of them, the starved lanes and the held lanes each
+	// their own item, each with its heaviest reason, its owner and its next action
+	headline := v.Cap
+	lanesUp := 0
+	for _, r := range headline.Rows {
+		lanesUp += r.Width
+	}
+	if running && lanesUp > 0 && 2*(lanesUp-headline.Unused) < lanesUp {
+		if headline.Starved > 0 {
+			x := firstReason(headline, false)
+			next, say := x.Next, fmt.Sprintf("%d of %d lanes up can run nothing: %s [%s]", headline.Starved, lanesUp, x.Say, x.Owner)
+			if r := headline.Refill; r != nil {
+				next = r.Next
+				if !r.Advise {
+					say += "; " + r.Say
+				}
+			}
+			v.Items = append(v.Items, viewItem{K: "a:idle", T: itemAlarm, W: "fleet idle", B: headline.Starved, S: viewClip(say), Next: next})
 		}
-		v.Items = append(v.Items, viewItem{K: "a:idle", T: itemAlarm, W: "fleet idle", B: n.Width - n.Busy,
-			S:    fmt.Sprintf("the machines work %d of their width %d; ready %d, waiting %d", n.Busy, n.Width, n.Ready, n.Waiting),
-			Next: next})
+		if headline.Held > 0 {
+			x := firstReason(headline, true)
+			v.Items = append(v.Items, viewItem{K: "a:held", T: itemAlarm, W: "lanes held", B: headline.Held,
+				S: viewClip(fmt.Sprintf("%d lanes up wait on a deliberate hold: %s [%s]", headline.Held, x.Say, x.Owner)), Next: x.Next})
+		}
 	}
 	if n.Ready == 0 && n.Waiting > 0 {
 		v.Items = append(v.Items, viewItem{K: "a:dry", T: itemAlarm, W: "ready empty", B: n.Waiting,
@@ -547,6 +598,16 @@ func (a *app) coordinatorView(ctx context.Context, st *store.Store, all bool) (c
 	v.Cursor = cursorOf(itemDigests(v.Items), rowDigests(v.Rows))
 	v.Sum = coordinatorSum(v, merr == nil, machine)
 	return v, nil
+}
+
+// firstReason is the capacity's heaviest reason that is a hold, or that is not.
+func firstReason(c sprint.Capacity, hold bool) sprint.CapacityReason {
+	for _, x := range c.Reasons {
+		if x.Hold == hold {
+			return x
+		}
+	}
+	return sprint.CapacityReason{Say: "-", Owner: sprint.OwnerMachine, Next: "nova-sprint where --all"}
 }
 
 // coordNeedsView is view coordinator --needs' document, schema 1: sprint.NeedsRank over one read of
@@ -650,9 +711,9 @@ func coordinatorSum(v coordinatorView, known bool, m store.Machine) string {
 	default:
 		state = "STOPPED"
 	}
-	return fmt.Sprintf("seat=%s machine=%s j=%d(max %d behind) alarms=%d asks=%d sentinels=%d friends=%d machines=%d | landed %d/%d +%d/30m | ready %d wait %d work %d review %d merge %d | busy %d/%d",
+	return fmt.Sprintf("seat=%s machine=%s j=%d(max %d behind) alarms=%d asks=%d sentinels=%d friends=%d machines=%d | landed %d/%d +%d/30m | ready %d wait %d work %d review %d merge %d | busy %d/%d | %s",
 		cmp.Or(v.Seat, "-"), state, n.J, behind, types[itemAlarm], types[itemRequest], types[itemSentinel], types[itemFriend], types[itemMachine],
-		n.Landed, n.All, n.L30, n.Ready, n.Waiting, n.Working, n.Review, n.Merging, n.Busy, n.Width)
+		n.Landed, n.All, n.L30, n.Ready, n.Waiting, n.Working, n.Review, n.Merging, n.Busy, n.Width, v.Cap.Line())
 }
 
 // coordinatorText is the view in at most viewTextLines lines: the summary, then an item a

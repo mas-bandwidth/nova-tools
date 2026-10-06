@@ -566,20 +566,9 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 	var conds []cond
 	unserved, whyOf := map[string][]string{}, map[string]string{}
 	up := s.UpMembers()
-	// Friends first: every ready card a friend may take, except a held stream
-	// (dealt nowhere) and a bench card (bench_deal.go keeps it for its bench).
-	// A hard pin that no friend takes stays out of the fleet below.
-	var offer []*Card
-	for _, c := range s.Work.Column(Ready) {
-		if StreamHeld(s, c.Row) || IsSentinel(c) {
-			continue
-		}
-		if b := Bench(c); len(b) > 0 {
-			continue
-		}
-		offer = append(offer, c)
-	}
-	fp, dealt, dealtWorking := friendDeal(s, streamTurns(offer, streamRound(s, PropStreamIndex)), r.Friends)
+	// Friends first (friendOffer). A hard pin that no friend takes stays out of the
+	// fleet below.
+	fp, dealt, dealtWorking := friendDeal(s, friendOffer(s), r.Friends)
 	friendPlaced := map[string]bool{}
 	for _, u := range fp.Units {
 		friendPlaced[u.Key] = true
@@ -737,6 +726,24 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 	// every provider out of credit: the binding stops the machine as the plan commits
 	p.Stop = stop
 	return p, due
+}
+
+// friendOffer is the ready cards the friends' deal is offered, in the stream turns:
+// every ready card but a held stream's (dealt nowhere), a sentinel, and a bench card
+// (bench_deal.go keeps it for its bench). TickDeal deals them; HeadlineCapacity
+// (readiness.go) reads the same offer, so the headline and the deal agree.
+func friendOffer(s *Snapshot) []*Card {
+	var offer []*Card
+	for _, c := range s.Work.Column(Ready) {
+		if StreamHeld(s, c.Row) || IsSentinel(c) {
+			continue
+		}
+		if b := Bench(c); len(b) > 0 {
+			continue
+		}
+		offer = append(offer, c)
+	}
+	return streamTurns(offer, streamRound(s, PropStreamIndex))
 }
 
 // readsWithoutRoute says a primary in review waits for reads, or holds a read

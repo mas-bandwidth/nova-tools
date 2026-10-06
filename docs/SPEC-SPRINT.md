@@ -3946,14 +3946,16 @@ items that need action (every row with `--all`), counts where a count is enough,
 first, and `--since <cursor>`.
 
 `nova-sprint view coordinator [--all] [--since <cursor>] [--json]` is everything that needs
-the seat, from one read of the work, merge and fleet tables, the inbox, the friends' rows, the
-machines' beats and the machine's record, at one epoch. Its fields: `sum` (one line: the seat,
-the machine, the open judgments and the heaviest's cards behind, the count of each item type,
-landed of all and landed in the last 30 minutes, the work table's counts, the up machines'
-cards working of their width), `at`, `epoch`, `seat`, `cursor`, `n` (the counts: `landed`,
-`l30`, `all`, `wait`, `ready`, `work`, `review`, `merge` of the primaries, sentinels aside;
-`held`; `width` and `busy`, the up machines' width and their cards working; `j`, the open
-judgments) and `items`, ranked by the cards behind each (`b`), then by type in the order
+the seat, from one read of the work, readers, merge and fleet tables, the inbox, the friends'
+rows and seats, the routes, the readers' states, the build lanes, the machines' beats and the
+machine's record, at one epoch. Its fields: `sum` (one line: the seat, the machine, the open
+judgments and the heaviest's cards behind, the count of each item type, landed of all and
+landed in the last 30 minutes, the work table's counts, the up machines' cards working of their
+width, then the capacity's line, below), `at`, `epoch`, `seat`, `cursor`, `n` (the counts:
+`landed`, `l30`, `all`, `wait`, `ready`, `work`, `review`, `merge` of the primaries, sentinels
+aside; `held`; `width` and `busy`, the up machines' width and their cards working; `j`, the open
+judgments; `free`, `elig`, `hlanes` and `starved`, the capacity's), `cap` (the capacity whole,
+below) and `items`, ranked by the cards behind each (`b`), then by type in the order
 below, then oldest first. An item is `k` (its key, stable while it stands), `t` (its type, one
 letter), `w` (what kind), `b`, `n` (the cards a judgment names), `age`, `od` (overdue), `d` (a
 judgment's decisions, `|` separated), `s` (one line, at most 160 bytes) and `next`, the exact
@@ -3963,7 +3965,7 @@ command that acts on it:
 |---|---|---|
 | j | an open judgment of the inbox, `k` `j:<group id>`, `b` its cards behind (weight.go) | its first decision's command lines joined by ` && `; longer than 300 bytes (a group's `--answers`), `nova-sprint inbox --open <id>` |
 | r | the notes addressed to the coordinator (`Note.To`), one item a type, `k` `r:<type>`, `n` how many, `s` the newest's words, `age` the oldest's | the newest's hint when it is a command, else `nova-sprint inbox --read` (which moves the cursor past them) |
-| a | an alarm, an effect on the cards: `a:stopped`, the machine STOPPED with cards not landed (by whom, why); `a:idle`, the up machines working under half their width while the machine runs; `a:dry`, nothing ready while cards wait; `a:review` and `a:merging`, a result waiting there 30 minutes or more (the count, the oldest's age and stream); `a:stopped:<stream>`, a stream stopped with no judgment open on it (its cause) | `nova-sprint start`; the release of the first sentinel reached, else of the first sentinel, else `nova-sprint needs --roots` (or `where --all` with ready at width); `nova-sprint ask --stream <s>`, `nova-sprint land --stream <s>`; `nova-sprint resume --stream <s>` (`--did` for a red branch) |
+| a | an alarm, an effect on the cards: `a:stopped`, the machine STOPPED with cards not landed (by whom, why); `a:idle`, the lanes up working or fillable now under half of them while the machine runs, `b` the starved lanes (below), `s` the heaviest reason with its owner and, when refilling would only move the queue, the downstream stage; `a:held`, the same, `b` the lanes a deliberate hold leaves, `s` the heaviest hold; `a:dry`, nothing ready while cards wait; `a:review` and `a:merging`, a result waiting there 30 minutes or more (the count, the oldest's age and stream); `a:stopped:<stream>`, a stream stopped with no judgment open on it (its cause) | `nova-sprint start`; `a:idle`: the refill advice's next (below); `a:held`: the heaviest hold's next, which the coordinator runs (the view lifts nothing); `a:dry`: the release of the first sentinel reached, else of the first sentinel, else `nova-sprint needs --roots`; `nova-sprint ask --stream <s>`, `nova-sprint land --stream <s>`; `nova-sprint resume --stream <s>` (`--did` for a red branch) |
 | s | a sentinel reached (its needs have landed) with no judgment open on it, `b` the cards behind it | `nova-sprint release <id> --reason '...'` |
 | f | a friend holding cards who is down, has never reported, or has not reported for 15 minutes | `nova-sprint friend take <name> --all-unstarted --reason '...'` |
 | m | a machine with a width that is down and not held | `nova-sprint log --member <m> --since 1h` |
@@ -3971,7 +3973,8 @@ command that acts on it:
 A silent run loop, failing ticks and a stalled stream are the inbox's judgments already and
 come as `j` items. With `--all`, `rows` carries every machine's and friend's row: `k`
 (`m:<machine>`, `f:<friend>`), `st`, `r` and `w` (ready and working on the row), `wd` (its
-width), `f30` (finished in the last 30 minutes) and `rep` (since its last beat, or `never`).
+width), `fr` and `el` (its free lanes and those a card can fill now, the capacity's row: zero
+for a row not up, and their sums are `n.free` and `n.elig` whatever the fleet's shape), `f30` (finished in the last 30 minutes) and `rep` (since its last beat, or `never`).
 The text form prints `VIEW coordinator <sum>`, then an item a line (`<T> <b> <age> <k>: <s> ->
 <next>`), at most 20 lines with a `+<n> more` line when there are more, then `cursor=`.
 
@@ -4003,6 +4006,45 @@ between reads. A cursor of another shape is refused, exit 2.
 The sprint's server serves both read-only (section 14, the server): `GET
 /api/view/coordinator[?all=1][&since=<cursor>]` and `GET
 /api/view/worker?as=<name>[&since=<cursor>]`, the verb's JSON as it prints it.
+
+#### readiness-headline-is-eligible-capacity.w1
+
+The headline's capacity is eligible execution, never raw counts (the nova-sprint review of 2026-10-06,
+item 1: ready cards, friends up and machines up read a fleet whose free slots cannot take the
+ready cards as idle waste, and a deliberate hold the same as accidental starvation). It is
+`sprint.HeadlineCapacity` (internal/sprint/readiness.go), a read of the snapshot, the friends'
+seats and the build lanes that writes nothing and lifts no hold.
+
+A lane is one of a row's up: a machine's width, a friend's lanes (the friend's width, 1 in one-shot
+mode). A lane holding no working card is free; a free lane is eligible when a card can fill it
+now: a work card dealt to the row and not taken, or a ready primary the deal would place there.
+The deal is the tick's own, planned and not applied: the friends' deal over the same offer
+(`friendOffer`), then the machines' `Deal` over the ready cards the tick offers it, so route
+and tier, rests, bench, room and the bounds are the deal's rules, read once. A machine whose Go
+lanes (section 18) are all held with a taker waiting has no eligible lane: its cards wait for
+the gate. `free` less `elig` is `unused`, and every unused lane carries one reason, given in
+this order, each up to the cards it accounts for: the build lanes full; the ready cards the deal
+will not place, grouped by why, the most first (`stream held`, `pinned` to a friend who cannot
+take them, at a `bound` waiting on its judgment, `no route` serving their tier, a `bench` with no
+member up, or the deal's own refusal); the decisions waiting on the coordinator, as
+`NeedsRank` ranks them, and a sentinel not yet reached with cards behind it; the cards waiting
+on work in flight, named by the critical path's heaviest card (`Critical`) and the command that
+moves it from its state; and `no work`, nothing left that could fill the lane. A reason carries
+`kind`, `lanes`, `cards`, `say`, `owner` (`coordinator`, `machine` for what the tick moves with
+no one acting, or `friend <name>`) and `next`, the owner's command. A held stream, a card
+admitted held and a sentinel are holds (`hold`): their lanes are `held`, every other unused lane
+is `starved`, and the headline counts the two apart. Nothing lifts a hold: the next action is
+the owner's to run.
+
+With lanes unused, `refill` says whether more ready work would run: not while results wait in
+review and the readers up have no free room (or no reader is up), nor while results wait to
+merge on a stopped stream; then `advise` is false and `next` is the downstream action (`ask
+--stream`, `resume --stream`), so a refill does not merely move the queue. Else `advise` is
+true and `next` is the first reason a person owns. The headline's line is `slots <elig>/<free>
+free`, and with lanes unused `(unused <u>: held <h>, starved <s>)` and the heaviest reason with
+its owner. `view coordinator` carries the capacity as `cap`, its counts in `n`, its line at the
+end of `sum`, each row's `fr` and `el` with `--all`, and the `a:idle` and `a:held` alarms from
+it. The dashboard reads `where --json`, which does not carry the capacity yet.
 
 #### view-cards-by-r2.w1
 
