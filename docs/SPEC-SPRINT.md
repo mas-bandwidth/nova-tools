@@ -3485,6 +3485,23 @@ marked, naming the stream, the mark and the flag, `nova-sprint stream set <s> --
 (the protected branches, above). `TestAddAndLandRefuseDevAndMainOutsideAPromotionStream`
 covers add, the mark and land.
 
+#### land-verify-landed-ancestry-rb-b.w1
+
+`verify-landed [--stream <s>...] [--repo-dir <clone>] [--base <branch>]` is a read: for
+each landed primary (a sentinel has no head and is not checked) it fetches the card's base
+(the brief's `BASE:` line, else `--base`) from origin in land's clone (`--repo-dir`, else the
+clone per repository) and asks git alone whether the card's recorded head is an ancestor of
+`origin/<base>` at its tip; the store records no merge commit of a landing, and a landing
+merges the head, so the head is what is checked. Each card that is not prints one line,
+`LANDED-MISSING <id> stream=<s> head=<h> base=<b> tip=<t>[ repo=<r>]`; a card it cannot
+check (no head, no base, no repository, a fetch that failed) prints `LANDED-UNCHECKED <id>
+stream=<s> reason=<why>`; the last line is `VERIFY-LANDED checked=<n> missing=<m>
+unchecked=<u>`. Exit 0 when every landed record is on its branch, 1 when one is missing, 2
+when one could not be checked. It writes nothing: landed stays final (section 3), and a
+record found missing is the coordinator's to raise; the verb that puts it back (`reopen`)
+waits on a lifecycle move landed -> merging that section 3 does not have (tests
+TestVerifyLandedListsALandedRecordMissingFromTheBase).
+
 ## 8. Notifications
 
 One stream of notifications, written by the same step as the move that caused
