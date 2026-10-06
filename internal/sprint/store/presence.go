@@ -298,6 +298,11 @@ func (st *Store) SyncFleet(ctx context.Context) (bool, error) {
 			return false, err
 		}
 	}
+	policy, err := st.Policy(ctx)
+	if err != nil {
+		return false, err
+	}
+	view := &sprint.Snapshot{Policy: policy}
 	now := st.now()
 	status := map[string]string{}
 	diffs := map[string]map[string]string{}
@@ -307,7 +312,7 @@ func (st *Store) SyncFleet(ctx context.Context) (bool, error) {
 		want := map[string]string{sprint.Status: dash(ctl.F("status")), sprint.Load: "", sprint.FieldWidth: sprint.WidthText(ctl)}
 		if beats != nil {
 			b := beats[row.Key]
-			want[sprint.Status], want[sprint.Load] = sprint.MemberStatus(ctl, b, now), sprint.LoadText(b, now)
+			want[sprint.Status], want[sprint.Load] = view.PolicyMemberStatus(ctl, b, now), sprint.LoadText(b, now)
 		}
 		status[row.Key] = want[sprint.Status]
 		if d := rowDiff(row, want); len(d) > 0 {

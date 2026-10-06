@@ -191,12 +191,12 @@ func preferFirst(arr []string, served map[string]Route, skip []string, hold bool
 // the array was set) is skipped as an excluded one is.
 func (s *Snapshot) routeOf(c, wc *Card, ri routeIndexes) (set map[string]string, tier, why string) {
 	m, bad := cardhdr.ReadModel(c.F("brief"))
-	tier = drawTier(c, m)
+	tier = drawTier(s, c, m)
 	if tier == "" {
 		tier = s.startTier(c, m) // its first deal on a route: flash first, or its grade's pro (decide.go)
 	}
 	if bad != "" {
-		tier = ceilingTier(c, m)
+		tier = ceilingTier(s, c, m)
 		// a card admitted before the lint read its lines: judged under the tier it
 		// names (an unknown word too), else flash's
 		return nil, tier, "its brief's model lines: " + bad
@@ -278,20 +278,20 @@ var tierLadder = []string{cardhdr.RouteFlash, cardhdr.RoutePro, cardhdr.RouteHea
 // any (a card not dealt yet, or a store with no route, where its member runs its own
 // model and no deal draws a tier) and for a pinned tier or model or a frontier card,
 // its ceiling.
-func cardTier(c *Card, m cardhdr.Model) string {
+func cardTier(s *Snapshot, c *Card, m cardhdr.Model) string {
 	if t := c.F(FieldTierNow); t != "" && !pinnedTier(c, m) {
 		return t
 	}
-	return ceilingTier(c, m)
+	return ceilingTier(s, c, m)
 }
 
 // drawTier is the tier the deal draws the primary c's route from: its ceiling when its
 // tier is pinned (pinnedTier), else the tier the machine escalated it to, else "": its first
 // deal on a route, whose tier is the snapshot's to say (startTier: flash first, or pro by
 // its grade).
-func drawTier(c *Card, m cardhdr.Model) string {
+func drawTier(s *Snapshot, c *Card, m cardhdr.Model) string {
 	if pinnedTier(c, m) {
-		return ceilingTier(c, m)
+		return ceilingTier(s, c, m)
 	}
 	return c.F(FieldTierNow)
 }
@@ -304,11 +304,11 @@ func pinnedTier(c *Card, m cardhdr.Model) bool {
 
 // ceilingTier is the highest tier the machine escalates the primary c to: the tier the
 // coordinator pinned, else the tier its brief's line 1 names, flash when it names none.
-func ceilingTier(c *Card, m cardhdr.Model) string {
+func ceilingTier(s *Snapshot, c *Card, m cardhdr.Model) string {
 	if t := c.F(FieldTier); t != "" {
 		return t
 	}
-	if t, ok := criticalTier(c, m); ok {
+	if t, ok := criticalTier(s, c, m); ok {
 		return t // a critical card runs on pro from its first deal (weight.go)
 	}
 	if m.Tier == "" {
@@ -319,14 +319,14 @@ func ceilingTier(c *Card, m cardhdr.Model) string {
 
 // CardTiers is the tier the primary is on (cardTier) and its ceiling, as `card` prints
 // them.
-func CardTiers(c *Card) (now, ceiling string) {
+func CardTiers(s *Snapshot, c *Card) (now, ceiling string) {
 	m, _ := cardhdr.ReadModel(c.F("brief"))
-	return cardTier(c, m), ceilingTier(c, m)
+	return cardTier(s, c, m), ceilingTier(s, c, m)
 }
 
 // cardTierOf is the tier the primary c is on (cardTier).
-func cardTierOf(c *Card) string {
-	now, _ := CardTiers(c)
+func cardTierOf(s *Snapshot, c *Card) string {
+	now, _ := CardTiers(s, c)
 	return now
 }
 
@@ -341,7 +341,7 @@ func (s *Snapshot) NextTier(c *Card) string {
 	if bad != "" || len(s.Routes) == 0 {
 		return ""
 	}
-	i, top := slices.Index(tierLadder, cardTier(c, m)), slices.Index(tierLadder, ceilingTier(c, m))
+	i, top := slices.Index(tierLadder, cardTier(s, c, m)), slices.Index(tierLadder, ceilingTier(s, c, m))
 	if i < 0 || i >= top {
 		return ""
 	}
@@ -362,7 +362,7 @@ func (s *Snapshot) NextTier(c *Card) string {
 // (docs/SPEC-SPRINT.md, a read asked of any unit with room at or above the read tier).
 func (s *Snapshot) readTierOf(pr *Card) string {
 	m, _ := cardhdr.ReadModel(pr.F("brief"))
-	t := cardTier(pr, m)
+	t := cardTier(s, pr, m)
 	if t == cardhdr.RouteFrontier {
 		t = cardhdr.RouteHeavy
 	}
@@ -526,7 +526,7 @@ func (t ProviderTake) String() string {
 // ProviderTakes is the takes of the work card the provider failed, in the order they ended,
 // each with its number.
 func ProviderTakes(wc *Card) (takes []ProviderTake, numbers []int) {
-	for n := 1; n <= MaxRedeals+1; n++ {
+	for n := 1; n <= policyCap(PolicyMaxRedeals)+1; n++ {
 		v := wc.F(FieldProviderTake + itoa(n))
 		if v == "" {
 			continue

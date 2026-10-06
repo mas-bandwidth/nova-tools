@@ -242,7 +242,7 @@ func left(a *RuleAnswer, why string) { a.Act, a.Why = ActLeft, why }
 // escalation is the tier a primary goes up to by rule: the first tier of the ladder above
 // the one it is on that a deal draws and a route serves; past heavy, a friend's card.
 func escalation(s *Snapshot, pr *Card) (tier string, friend bool) {
-	for _, t := range dealtAbove(cardTierOf(pr)) {
+	for _, t := range dealtAbove(cardTierOf(s, pr)) {
 		if _, why := s.noRoute(withField(withField(pr, FieldTier, t), FieldTierNow, t)); why == "" {
 			return t, false
 		}
@@ -255,7 +255,7 @@ func up(s *Snapshot, a *RuleAnswer, pr *Card, why string) {
 	tier, friend := escalation(s, pr)
 	a.set = map[string]string{FieldRuleTier: tier, FieldRuleFails: "0"}
 	if friend {
-		a.Act, a.Friend, a.Why = ActFriend, true, why+": no tier of the ladder above "+cardTierOf(pr)+" is dealt, so a friend's card"
+		a.Act, a.Friend, a.Why = ActFriend, true, why+": no tier of the ladder above "+cardTierOf(s, pr)+" is dealt, so a friend's card"
 		a.set[FieldRuleTier] = WhoFriend
 		return
 	}
@@ -306,7 +306,7 @@ func ruleFailed(s *Snapshot, a *RuleAnswer) {
 		return
 	}
 	a.Card = pr.ID
-	tier := cardTierOf(pr)
+	tier := cardTierOf(s, pr)
 	fails := 1
 	if pr.F(FieldRuleTier) == tier {
 		fails = pr.Int(FieldRuleFails) + 1
@@ -360,7 +360,7 @@ func ruleBound(s *Snapshot, a *RuleAnswer) {
 	}
 	a.Card = pr.ID
 	a.fix = ownFix(s, pr)
-	why := fmt.Sprintf("attempt %s reached its bound on %s (%s)", pr.F("attempt"), cardTierOf(pr), orDash(BoundClass(wc)))
+	why := fmt.Sprintf("attempt %s reached its bound on %s (%s)", pr.F("attempt"), cardTierOf(s, pr), orDash(BoundClass(wc)))
 	if a.fix == "" {
 		a.fix = cutText(why+"; do the brief again, from the start", MaxCardTextBytes)
 	}

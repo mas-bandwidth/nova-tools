@@ -260,13 +260,13 @@ func laneRunsIt(s *Snapshot, seats []FriendSeat, c, wc *Card) string {
 	return ""
 }
 
-// friendRoom is the friend's room and her lanes: DealAhead times her width and her width
+// friendRoom is the friend's room and her lanes: deal_ahead (policy.go) times her width and her width
 // in batch mode, 1 and 1 in one-shot mode (docs/SPEC-SPRINT.md section 1, "A friend's card").
-func friendRoom(f FriendSeat) (room, width int) {
+func friendRoom(s *Snapshot, f FriendSeat) (room, width int) {
 	if f.Mode == config.FriendModeOneShot {
 		return 1, 1
 	}
-	return DealAhead * f.Width, f.Width
+	return s.PolicyCount(PolicyDealAhead) * f.Width, f.Width
 }
 
 // preferredFriend is the friend of names a card goes to (docs/SPEC-SPRINT.md section 1,
@@ -372,7 +372,7 @@ func friendDeal(s *Snapshot, cards []*Card, seats []FriendSeat) (p Plan, dealt, 
 	var up []string
 	for _, f := range seats {
 		if friendDealable(s, f) {
-			room, width := friendRoom(f)
+			room, width := friendRoom(s, f)
 			free[f.Name] = room - friendLoad(s, f.Name)
 			// a lane is idle while no card on her row holds it, started or not
 			lanes[f.Name] = width - friendLoad(s, f.Name)
@@ -413,8 +413,8 @@ func friendDeal(s *Snapshot, cards []*Card, seats []FriendSeat) (p Plan, dealt, 
 		if laneRunsIt(s, seats, c, wc) != "" {
 			continue // one live lane per card: no second row while her lane runs it
 		}
-		escalated := wc != nil && redealBound(wc)
-		tier := cardTierOf(escalating(s, c))
+		escalated := wc != nil && redealBound(s, wc)
+		tier := cardTierOf(s, escalating(s, c))
 		left := friendsLeft(wc)
 		pinned, pinnedCard := FriendCard(c)
 		leftAtPin := slices.Clone(left)
@@ -490,7 +490,7 @@ func friendDeal(s *Snapshot, cards []*Card, seats []FriendSeat) (p Plan, dealt, 
 // row (friendDealUnit), its primary on the tier it escalates to (FieldTierNow), and the
 // bound attempt's work card retired, its record kept.
 func friendEscalateUnit(s *Snapshot, c, prev *Card, card, row, tier string) Unit {
-	from, _ := CardTiers(c)
+	from, _ := CardTiers(s, c)
 	u := friendDealUnit(s, c, card, row, Ready, map[string]string{FieldTierNow: tier})
 	u.Changes = append([]Change{change(Fleet, removeEntry(prev, map[string]string{"retired": stamp(s.Now), "retired_by": "escalation"}))}, u.Changes...)
 	u.Moved += fmt.Sprintf("; escalated %s -> %s: %s at its redeal bound", from, tier, prev.ID)

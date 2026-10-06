@@ -58,7 +58,7 @@ func (r *conflictRig) toSplitReads(id string) (ok, broken *sprint.Card) {
 	r.must(store.TakeStep(sprint.TakeReq{As: wc.Row, Sel: sprint.Sel{IDs: []string{wc.ID}}, Gens: map[string]int{wc.ID: wc.Int("gen")}}))
 	wc = r.snap().Fleet.Card(wc.ID)
 	r.must(store.FinishStep(sprint.FinishReq{Sel: sprint.Sel{IDs: []string{wc.ID}}, Gens: map[string]int{wc.ID: wc.Int("gen")}}))
-	require.Equal(r.t, 2, sprint.ReadsNeeded(r.snap().Work.Card(id)), "a pro card needs two reads")
+	require.Equal(r.t, 2, sprint.ReadsNeeded(r.snap(), r.snap().Work.Card(id)), "a pro card needs two reads")
 	for _, verdict := range []string{"ok", "broken"} {
 		r.must(store.AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{id}}}))
 		for _, rc := range r.snap().Readers.Of(id) {

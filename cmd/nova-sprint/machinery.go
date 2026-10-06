@@ -180,6 +180,8 @@ func (a *app) seatCheck(ctx context.Context, st *store.Store, redisAddr string) 
 
 	// 2. the store, 3. the loop: the records the run loop writes
 	m.Store = sprint.StoreM{Addr: redisAddr, DBSize: -1}
+	// loop_silence and member_down_after, nova-config's (an unread policy is the defaults)
+	m.Policy, _ = st.Policy(ctx)
 	mach, hb, err := st.Machine(ctx)
 	if err != nil {
 		m.Store.Err = err.Error()

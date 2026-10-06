@@ -441,7 +441,7 @@ func cardsWaitingFor(s *Snapshot, f FriendSeat, seats map[string]FriendSeat) []i
 			if pr == nil || IsSentinel(pr) || StreamHeld(s, pr.Row) || len(Bench(pr)) > 0 {
 				continue
 			}
-			if !friendCouldTake(f, pr, nil) {
+			if !friendCouldTake(s, f, pr, nil) {
 				continue
 			}
 			out = append(out, idleWait{phrase: pr.ID + " ready in the pool"})
@@ -469,7 +469,7 @@ func cardsWaitingFor(s *Snapshot, f FriendSeat, seats map[string]FriendSeat) []i
 				if pr == nil || IsSentinel(pr) || StreamHeld(s, pr.Row) {
 					continue
 				}
-				if friendStarted(s, seats[holder], wc) || !friendCouldTake(f, pr, wc) {
+				if friendStarted(s, seats[holder], wc) || !friendCouldTake(s, f, pr, wc) {
 					continue
 				}
 				out = append(out, idleWait{holder: holder, phrase: fmt.Sprintf("%s on %s:%s unstarted", wc.ID, row, col)})
@@ -482,8 +482,8 @@ func cardsWaitingFor(s *Snapshot, f FriendSeat, seats map[string]FriendSeat) []i
 
 // friendCouldTake says f may be given the primary: her tiers hold its tier, it
 // is not a hard pin to someone else, and the work card has not left her.
-func friendCouldTake(f FriendSeat, pr, wc *Card) bool {
-	if pr == nil || !friendTakes(f, cardTierOf(pr)) {
+func friendCouldTake(s *Snapshot, f FriendSeat, pr, wc *Card) bool {
+	if pr == nil || !friendTakes(f, cardTierOf(s, pr)) {
 		return false
 	}
 	if name, ok := FriendCard(pr); ok && name != "" && name != f.Name && OnlyFriend(pr) {
@@ -543,7 +543,7 @@ func pinConds(s *Snapshot, r TickReq) []cond {
 		if f.Status != Up {
 			continue
 		}
-		room, _ := friendRoom(f)
+		room, _ := friendRoom(s, f)
 		free[f.Name] = room - friendLoad(s, f.Name)
 	}
 	var out []cond
@@ -569,7 +569,7 @@ func pinConds(s *Snapshot, r TickReq) []cond {
 				seen[prID] = true
 				what := openWhat[prID]
 				if what == "" {
-					what = pinIgnoredWhat(wc.ID, pinned, pinSkipWhy(r.Friends, pinned, friendsLeft(wc), cardTierOf(pr), free), row, col)
+					what = pinIgnoredWhat(wc.ID, pinned, pinSkipWhy(r.Friends, pinned, friendsLeft(wc), cardTierOf(s, pr), free), row, col)
 				}
 				holder, _ := FriendOfRow(row)
 				out = append(out, cond{typ: NPinIgnored, stream: pr.Row, card: wc.ID, primaries: []string{prID},
