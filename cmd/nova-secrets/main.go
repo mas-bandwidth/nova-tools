@@ -40,7 +40,7 @@ usage:
   nova-secrets keygen --as <name> --key <path> --age-keygen <path> [--store <dir>]
   nova-secrets place  --store <dir> --as <name> --key <path> --sops <path>
                       --machine <name> --secret <name> [--path <remote path>]
-                      [--machines <file>] [--receipts <dir>] [--ssh <path>] [--dry-run]
+                      [--fleet <file>] [--receipts <dir>] [--ssh <path>] [--dry-run]
   nova-secrets placed --machine <name> [--receipts <dir>]
   nova-secrets seal   --store <dir> --as <seat> --key <path> --sops <path>
                       --name NAME [--stdin] [--no-pr] [--dry-run] [--gh <path>] [--git <path>]
@@ -62,11 +62,11 @@ flags:
   --require <name>     assert key must be present in the file (repeatable)
   --max <n>            maximum items shown before MORE line (default 20, 0=unlimited)
   --json               names only: the result as one JSON object on stdout, a refusal included
-  --machine <name>     fleet machine to place a secret on (its target comes from --machines)
+  --machine <name>     fleet machine to place a secret on (its target comes from --fleet)
   --secret <name>      the key in <store>/<as>.yaml to copy to the machine
   --path <remote path> remote path to write; default <home>/.config/nova-secrets/<secret>.env
-  --machines <file>    place: fleet registry file: name, ssh target, home, tab separated
-                       gate: the fleet machines registry whose seat column vouches for a
+  --fleet <file>       place: fleet registry file: name, ssh target, home, tab separated
+  --machines <file>    gate: the fleet machines registry whose seat column vouches for a
                        new recipient; without it that rule does not run and the APPROVE
                        line says machines=-
   --receipts <dir>     where placed receipts live; default ~/.config/nova-secrets/placed
@@ -121,8 +121,8 @@ example:
   nova-secrets names  --store ./secrets --as ada
   nova-secrets check  --store ./secrets --as ada --key ~/.config/nova-secrets/ada.key --sops /opt/homebrew/bin/sops
   nova-secrets exec   --store ./secrets --as ada --key ~/.config/nova-secrets/ada.key --sops /opt/homebrew/bin/sops --only GH_TOKEN --require GH_TOKEN -- gh api user
-  nova-secrets place  --store ./secrets --as ada --key ~/.config/nova-secrets/ada.key --sops /opt/homebrew/bin/sops --machine bench-a --secret DEEPSEEK_API_KEY --machines ./fleet.tsv
-  nova-secrets place  --store ./secrets --as worker --key ~/.config/nova-secrets/worker.key --sops /opt/homebrew/bin/sops --machine bench --secret API_KEY --machines ./fleet.tsv --dry-run
+  nova-secrets place  --store ./secrets --as ada --key ~/.config/nova-secrets/ada.key --sops /opt/homebrew/bin/sops --machine bench-a --secret DEEPSEEK_API_KEY --fleet ./fleet.tsv
+  nova-secrets place  --store ./secrets --as worker --key ~/.config/nova-secrets/worker.key --sops /opt/homebrew/bin/sops --machine bench --secret API_KEY --fleet ./fleet.tsv --dry-run
   nova-secrets placed --machine bench-a
   nova-secrets seal   --store ./secrets --as worker --key ~/.config/nova-secrets/worker.key --sops /opt/homebrew/bin/sops --name API_KEY --dry-run
   nova-secrets seat add --store ./secrets --as bo --pub $BO_PUB --from ada --only GH_TOKEN,DEEPSEEK_API_KEY --key ~/.config/nova-secrets/ada.key --sops /opt/homebrew/bin/sops

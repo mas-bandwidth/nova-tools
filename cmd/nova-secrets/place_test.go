@@ -88,7 +88,7 @@ func (f placeFixture) placeArgs(machine, secret, remotePath string) []string {
 		"place",
 		"--store", f.store, "--as", "rowan", "--key", f.key, "--sops", f.sops,
 		"--machine", machine, "--secret", secret, "--path", remotePath,
-		"--machines", f.machines, "--receipts", f.receipts, "--ssh", f.ssh,
+		"--fleet", f.machines, "--receipts", f.receipts, "--ssh", f.ssh,
 	}
 }
 

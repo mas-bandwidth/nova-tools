@@ -18,10 +18,10 @@ func runPlaceCLI(args []string, s streams) int {
 	asFlag := fs.String("as", "", asUse)
 	keyFlag := fs.String("key", "", keyUse)
 	sopsFlag := fs.String("sops", "", sopsUse)
-	machineFlag := fs.String("machine", "", "the fleet machine's `name`, a row of --machines (required)")
+	machineFlag := fs.String("machine", "", "the fleet machine's `name`, a row of --fleet (required)")
 	secretFlag := fs.String("secret", "", "the key `NAME` in <store>/<as>.yaml whose value is copied (required)")
 	pathFlag := fs.String("path", "", "the remote `path` written (default <home>/.config/nova-secrets/<NAME>.env, home from the machine's row)")
-	machinesFlag := fs.String("machines", "", "the fleet registry `file`: one machine per line, name, ssh target, home, tab separated (default ~/.config/nova-tools/fleet.tsv)")
+	fleetFlag := fs.String("fleet", "", "the fleet registry `file`: one machine per line, name, ssh target, home, tab separated (default ~/.config/nova-tools/fleet.tsv)")
 	receiptsFlag := fs.String("receipts", "", receipts)
 	sshFlag := fs.String("ssh", "ssh", "`path` of the ssh program (default ssh)")
 	dryRunFlag := fs.Bool("dry-run", false, dryRunHelp)
@@ -37,7 +37,7 @@ func runPlaceCLI(args []string, s streams) int {
 		Machine:    *machineFlag,
 		Secret:     *secretFlag,
 		RemotePath: *pathFlag,
-		Machines:   *machinesFlag,
+		Machines:   *fleetFlag,
 		Receipts:   *receiptsFlag,
 		SSH:        *sshFlag,
 		DryRun:     *dryRunFlag,
