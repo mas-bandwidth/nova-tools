@@ -355,7 +355,7 @@ func TestInstallLockExactlySixHundredSecondsOldIsStillHeld(t *testing.T) {
 
 func TestInstallVerbsTakeNoArguments(t *testing.T) {
 	t.Parallel()
-	for _, name := range []string{"install-redis-server", "install-postgres", "ensure-sbcl"} {
+	for _, name := range []string{"install-redis-server", "install-postgres", "ensure-sbcl", "ensure-node"} {
 		e, _, errb := testEnv()
 		if code := run([]string{name, "extra"}, e); code != 2 {
 			t.Errorf("%s extra: exit %d, want 2", name, code)

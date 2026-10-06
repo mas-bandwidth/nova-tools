@@ -24,11 +24,13 @@ import (
 
 // NovaTools are the programs of this repository (cmd/): the only words of an
 // argv the check runs. A wrapper (nova-loop, a shell) is never run to ask it.
+// TestNovaToolsIsEveryCommand holds the list to the directories of cmd/: a new
+// command is added here, or that test is red.
 var NovaTools = []string{
 	"nova-bus", "nova-cairn", "nova-card", "nova-check", "nova-ci", "nova-config", "nova-decide",
-	"nova-friend", "nova-fuse", "nova-local", "nova-memory", "nova-redis", "nova-sandbox",
-	"nova-secrets", "nova-self-talk", "nova-sprint", "nova-swarm", "nova-table", "nova-tokens",
-	"nova-update", "nova-version", "nova-work",
+	"nova-doctor", "nova-friend", "nova-fuse", "nova-local", "nova-memory", "nova-redis",
+	"nova-sandbox", "nova-secrets", "nova-self-talk", "nova-sprint", "nova-swarm", "nova-table",
+	"nova-tokens", "nova-up", "nova-update", "nova-version", "nova-work",
 }
 
 // verbWord is a word that can be a verb: lower-case, a letter first. A path, a
