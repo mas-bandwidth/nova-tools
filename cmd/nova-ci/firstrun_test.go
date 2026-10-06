@@ -47,6 +47,26 @@ func TestUsageBannerExamplesRun(t *testing.T) {
 	}
 }
 
+// TestUsageBannerSaysSlowtestsJudgesTimingNotSuccess pins the banner note that
+// slowtests judges timing, not test success, and that set -o pipefail is what
+// carries go test -timeout 600s's own exit. The note follows the example
+// block: a blank line ends it, so the line is not a pasted command
+// (BannerExampleLines). The example commands stay the ones a first run runs.
+func TestUsageBannerSaysSlowtestsJudgesTimingNotSuccess(t *testing.T) {
+	t.Parallel()
+
+	exit, stdout, stderr := runCIIn(t, "", "help")
+	require.Equal(t, 0, exit, stderr)
+	assert.Contains(t, stdout, "slowtests judges timing, not test success; with set -o pipefail the pipeline's exit carries go test -timeout 600s's.")
+	examples, err := onboarding.ExampleLines(stdout, "nova-ci")
+	require.NoError(t, err)
+	assert.Equal(t, []string{
+		"nova-ci help",
+		"nova-ci slowtests --example --budget 60 --load 4 --cpus 16",
+		"nova-ci slowtests --example --budget 120 --load 4 --cpus 16",
+	}, examples)
+}
+
 // (b) The two refusals a first run hits name what the input wants: the whole
 // seconds a budget must be, and the line of stdin that was not a TestEvent.
 func TestARefusalSaysWhatTheInputWants(t *testing.T) {
