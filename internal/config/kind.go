@@ -199,6 +199,38 @@ func FriendWidth(r Row) int {
 	return r.Int("width")
 }
 
+// DefaultFriendReadSlots is a friend's reader room when her row names none:
+// how many reads reader-<friend> runs at once, apart from her width.
+// Migration 0035 fills every row there before it with this.
+const DefaultFriendReadSlots = 2
+
+// FriendReadSlots is a friend row's read slots: its read_slots field,
+// DefaultFriendReadSlots when the row has none. 0 is a real room (she is
+// asked no read). A negative is refused by checkFriend.
+func FriendReadSlots(r Row) int {
+	if r.Fields["read_slots"] == "" {
+		return DefaultFriendReadSlots
+	}
+	return r.Int("read_slots")
+}
+
+// DefaultFriendReadWait is a friend's read wait when her row names none: the
+// seconds a read asked of her reader may wait not begun before the tick raises
+// the readers-behind judgment on her reader, 600, the sprint's readers-behind
+// window (sprint.ReadersWindow, ten minutes). Migration 0035 fills every row
+// there before it with this.
+const DefaultFriendReadWait = 600
+
+// FriendReadWait is a friend row's read wait in seconds: its read_wait field,
+// DefaultFriendReadWait when the row has none. Below 1 is refused by
+// checkFriend.
+func FriendReadWait(r Row) int {
+	if r.Fields["read_wait"] == "" {
+		return DefaultFriendReadWait
+	}
+	return r.Int("read_wait")
+}
+
 // FriendModes are how a friend's daemon (nova-friend run) hands her work:
 // batch, every waiting message as one turn of her one session; one-shot,
 // width lanes, each its own session of her, handed one card per turn and
@@ -225,7 +257,8 @@ func FriendMode(r Row) string {
 
 // checkFriend is the friend kind's Check: her width is at least 1, a friend
 // working no job at once being no friend of the sprint's (remove the row
-// instead), and her config_dir, when set, is an absolute path. A width that
+// instead), her config_dir, when set, is an absolute path, her read_slots is 0
+// or more and her read_wait at least 1. A width that
 // failed its own validation is absent and skipped.
 func checkFriend(r Row) error {
 	if w, ok := r.Fields["width"]; ok && w != "" && r.Int("width") < 1 {
@@ -233,6 +266,12 @@ func checkFriend(r Row) error {
 	}
 	if d := r.Fields["config_dir"]; d != "" && !filepath.IsAbs(d) {
 		return fmt.Errorf("friend %s has config_dir %q; CLAUDE_CONFIG_DIR is read as given, never expanded: want --config_dir <an absolute path>", r.Name, d)
+	}
+	if v, ok := r.Fields["read_slots"]; ok && v != "" && r.Int("read_slots") < 0 {
+		return fmt.Errorf("friend %s has read_slots %s; a friend's read slots are the reads her reader runs at once, 0 or more: want --read-slots <n>", r.Name, v)
+	}
+	if v, ok := r.Fields["read_wait"]; ok && v != "" && r.Int("read_wait") < 1 {
+		return fmt.Errorf("friend %s has read_wait %s; a friend's read wait is the seconds a read asked of her waits not begun before it is a judgment, at least 1: want --read-wait <seconds>", r.Name, v)
 	}
 	return nil
 }
@@ -407,7 +446,7 @@ var Kinds = []*Kind{
 		// rather than stored in configuration.
 		Name:  KindFriend,
 		Table: "friends",
-		Doc:   "an AI friend: her slots, which tiers she can do, her roles, and her width, the jobs she works at once, her delivery mode, and the config directory her claude lanes run with",
+		Doc:   "an AI friend: her slots, which tiers she can do, her roles, and her width, the jobs she works at once, her delivery mode, the config directory her claude lanes run with, her read slots, the reads her reader runs at once, and her read wait, how long a read asked of her waits before it is a judgment",
 		Fields: []Field{
 			{Name: "slots", Type: TypeInt, Required: true, Help: "her desired slots, under the ceiling of the machine her beat reports; no machine's width"},
 			{Name: "tiers", Type: TypeList, Enum: Tiers, Required: true, Help: "which tiers she can do: comma list of " + strings.Join(Tiers, ", ")},
@@ -415,6 +454,8 @@ var Kinds = []*Kind{
 			{Name: "width", Type: TypeInt, Default: strconv.Itoa(DefaultFriendWidth), Help: "the jobs she works at once, the width nova-sprint friend sync sets on her friends row; at least 1, " + strconv.Itoa(DefaultFriendWidth) + " by default"},
 			{Name: "mode", Type: TypeEnum, Enum: FriendModes, Default: DefaultFriendMode, Help: "how her daemon hands her work: batch (the default: every waiting message in one turn) or one-shot (width lanes, each its own session, handed one card per turn)"},
 			{Name: "config_dir", Type: TypeText, Nullable: true, Help: "the absolute directory a claude one-shot lane runs with as CLAUDE_CONFIG_DIR, her account's login and settings; unset (the default, or --config_dir '') for any other harness; nova-friend run refuses a claude friend in one-shot mode without it"},
+			{Name: "read_slots", Type: TypeInt, Default: strconv.Itoa(DefaultFriendReadSlots), Help: "her reader room, the reads reader-<name> runs at once, apart from her width; " + strconv.Itoa(DefaultFriendReadSlots) + " by default, 0 asks her none; nova-config friend set <name> --read-slots <n> (the same field as --read_slots)"},
+			{Name: "read_wait", Type: TypeInt, Default: strconv.Itoa(DefaultFriendReadWait), Help: "the seconds a read asked of her reader may wait not begun before the tick raises the readers-behind judgment on her reader, naming the reader and the read; at least 1, " + strconv.Itoa(DefaultFriendReadWait) + " (ten minutes) by default; nova-config friend set <name> --read-wait <seconds> (the same field as --read_wait)"},
 		},
 		Check: checkFriend,
 		ApplyOrder: func(r Row) int {

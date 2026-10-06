@@ -154,6 +154,34 @@ reported.
 `curl -s http://<tailnet address>:<port>/team` is every friend at once, each with the
 cards she holds, so friends see what each other are on (`/api/team` as JSON).
 
+## A read asked of her
+
+Reading runs beside her cards, never in bursts (the owner, 2026-10-05: "Reads
+are in extra slots per-friend! Read slots are different from worker cards.").
+Her reader is `reader-<name>`, and its room is her nova-config row's
+`read_slots` (`nova-config friend set <name> --read-slots <n>`, 2 by default, 0
+asks her none), apart from `width`, the jobs she works. `nova-sprint friend
+sync` delivers each read asked of `reader-<name>` into
+`inbox/reads/<read-card>/`, as it delivers a card:
+
+- `READ.md`: the steps, every command whole: begin it (`nova-sprint read --as
+  reader-<name> --begin <read-card> --epoch <e>`), clone the brief's REPO at
+  the head, judge the merge-base diff against the brief, run the touched
+  packages' vet and tests on a Linux bench, and finish with `--ok`, `--broken
+  ... --finding '<file:line, and what to change>'`, or `--return ... --reason
+  '<why>'`
+- `BRIEF.md`: the primary's brief
+- `WORKER-REPORT.txt`: the worker's report
+
+and sends her a bus note whose subject is `read asked: <read-card>`. Once the
+read is recorded (no longer asked or reading of her reader), the next sync
+removes that directory. A symlink at `inbox/reads` or at a read's directory is
+refused and left in place. A read asked of her and not begun past her
+`read_wait` (`nova-config friend set <name> --read-wait <seconds>`, 600 by
+default) raises the readers are behind on `reader-<name>`, one judgment naming
+the reader and the oldest waiting read, pushed to the coordinator; beginning
+the read first is what keeps it from waiting (docs/SPEC-SPRINT.md section 6).
+
 ## The friend sync loop
 
 `nova-sprint friend sync --every <d>` is the loop: it syncs, waits `d`, and
