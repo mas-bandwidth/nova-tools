@@ -21,18 +21,18 @@ import (
 // change takes 2, and so on. Nothing resets it but teardown.
 const FirstSeatGeneration uint64 = 1
 
-// Asleep is an observation word: her daemon answered and her session did
-// not. It is the daemon's, kept on the row for it, and shown as down: the
-// table's words are up, held and down (the owner, 2026-10-04 11:42 AM ET:
-// "anything but up is down"; "sleeping = down").
-const Asleep = "asleep"
+// DaemonPong is the observation word for a pong her daemon answered and her
+// session did not. It is the daemon's, kept on the row for it, and shown as
+// down: the table's words are up, held and down (the owner, 2026-10-04
+// 11:42 AM ET: "anything but up is down"; "sleeping = down").
+const DaemonPong = "asleep"
 
 // HealthStates are the words an observation carries; up alone shows as up.
-var HealthStates = []string{Up, Asleep, Down}
+var HealthStates = []string{Up, DaemonPong, Down}
 
 // FriendHealth is the coordinator's last accepted observation of a friend,
 // as the friend-health record keeps it: the state word, the time of the proof
-// it rests on (a session pong for up, a daemon pong for asleep, the judgment
+// it rests on (a session pong for up, a daemon pong for DaemonPong, the judgment
 // for down; the daemon's clock), the seat generation it was observed under,
 // and what the pong said of her queue, working and width.
 type FriendHealth struct {
@@ -141,7 +141,7 @@ type FriendHealthWrite struct {
 // session answered), under the current seat generation (an old seat's proof
 // never looks up under a new seat), with its proof under FriendPongWindow old
 // and not dated after now (a negative age is no proof); down otherwise,
-// whatever finer word the row keeps (asleep, her daemon's pong, is down).
+// whatever finer word the row keeps (DaemonPong, her daemon's own pong, is down).
 func ObservedStatus(h FriendHealth, generation uint64, now time.Time) string {
 	status, _ := FriendEvidence(FriendPresence{Health: h, Generation: generation}, now)
 	return status
