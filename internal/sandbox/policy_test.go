@@ -709,6 +709,7 @@ func TestMachLookupIsNarrowed(t *testing.T) {
 	}
 	for _, name := range []string{
 		"com.apple.system.opendirectoryd.libinfo",
+		"com.apple.system.opendirectoryd.membership", // sqlite3/git Open Directory membership stalls (profiles/darwin.sb.tmpl, measured 2026-10-05)
 		"com.apple.SecurityServer",
 		"com.apple.system.logger",
 		"com.apple.trustd.agent", // Go's TLS verification on darwin (profiles/darwin.sb.tmpl, measured 2026-10-04)
