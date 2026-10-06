@@ -2056,6 +2056,15 @@ func takeShort(ctx context.Context, st *store.Store, res store.Result, members [
 			continue
 		}
 		head := fmt.Sprintf("%s took %d of the %d asked: ", m, n, asked)
+		if sprint.IsFriendRow(m) {
+			// a friend's row has no control card: her status and her lanes are her friends row's
+			if len(s.Fleet.Cell(m, sprint.Ready)) == 0 {
+				out = append(out, head+"its ready queue is empty")
+			} else {
+				out = append(out, fmt.Sprintf("%sher lanes are full (%d working) or she is not up; she takes another as she finishes one", head, len(working)))
+			}
+			continue
+		}
 		if !s.Fleet.HasRow(m) {
 			// a name the fleet table lacks takes nothing, and says so rather than an OK alone
 			out = append(out, head+"it is no member of the fleet table (members: "+orDashStr(strings.Join(s.Members(), ","), "none")+"); run: nova-sprint fleet up "+m+" --width <n>")
