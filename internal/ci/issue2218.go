@@ -516,9 +516,18 @@ func ListAtCommit(root, commit, rel string) (string, bool, error) {
 }
 
 func gitOut(root string, args ...string) (string, error) {
+	return gitOutIn(root, "", args...)
+}
+
+// gitOutIn is gitOut with stdin: a `git cat-file --batch` reads the object
+// names it prints from it, so one process answers a whole list of files.
+func gitOutIn(root, stdin string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	cmd := subproc.Context(ctx, "git", append([]string{"-C", root}, args...)...)
+	if stdin != "" {
+		cmd.Stdin = strings.NewReader(stdin)
+	}
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()

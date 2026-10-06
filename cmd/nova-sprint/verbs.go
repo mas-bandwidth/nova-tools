@@ -2267,7 +2267,7 @@ func (a *app) cmdRead(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return refuse(stderr, "read", err.Error())
 	}
-	if len(ids) == 0 {
+	if len(ids) == 0 && !sprint.IsFriendRow(*as) {
 		col := sprint.Reading
 		if *begin {
 			col = sprint.Asked

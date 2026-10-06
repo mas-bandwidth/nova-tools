@@ -600,7 +600,7 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 		}
 		offer = append(offer, c)
 	}
-	fp, dealt, dealtWorking := friendDeal(s, streamTurns(offer, streamRound(s, PropStreamIndex)), r.Friends)
+	fp, dealt, dealtWorking := friendDeal(s, dealOrder(s, offer), r.Friends)
 	friendPlaced := map[string]bool{}
 	for _, u := range fp.Units {
 		friendPlaced[u.Key] = true
@@ -706,7 +706,7 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 	conds = append(conds, adoptConds(s)...)
 	// landings on the sprint branch not promoted into dev (promotion.go)
 	conds = append(conds, devBehindCond(s)...)
-	ready = streamTurns(ready, streamRound(s, PropStreamIndex))
+	ready = dealOrder(s, ready) // the friends' order: one deal order for friends and machines
 	if len(up) == 0 && len(ready) > 0 {
 		c := cond{typ: NNoMember, streamLevel: true,
 			what: fmt.Sprintf("%d primaries wait to be dealt and no member is up: start nova-sprint fleet beat <member> on a machine, or release a hold with nova-sprint fleet up <member>", len(ready))}
@@ -784,6 +784,17 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 	// every provider out of credit: the binding stops the machine as the plan commits
 	p.Stop = stop
 	return p, due
+}
+
+// dealOrder is the one order the tick's deal offers ready cards in, to the friends
+// (friendDeal, friendReclaim) and to the machines alike (docs/SPEC-SPRINT.md section 1, a
+// friend's card): the stream turns from the deal's stream index (streamTurns), each
+// stream's cards in work order, the order tla/SprintTables.tla and the reference model
+// (refmodel) check. Each card then goes to the friend with the most idle lanes
+// (preferredFriend), or round the fleet. The critical path first (weight.go) waits for
+// the model to order by weight too.
+func dealOrder(s *Snapshot, cards []*Card) []*Card {
+	return streamTurns(cards, streamRound(s, PropStreamIndex))
 }
 
 // readsWithoutRoute says a primary in review waits for reads, or holds a read

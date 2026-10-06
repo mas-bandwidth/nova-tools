@@ -66,6 +66,14 @@ A test binary that runs itself (`os.Executable()` or `os.Args[0]`) with words it
 
 `TestEveryReexecOfTheTestBinaryHasTheGuard` (`internal/ci/reexec_guard_class_test.go`, docs/SPEC-CI.md) refuses a `_test.go` under `cmd/` that runs its own binary in a package with no such call, naming the file and the line. The guard itself is proved by `TestDecideRunsTheSuiteHandlesItsOwnWordsOrRefuses` and `TestEnterRefusesARecursionAndAChainTooDeepInAChild` (`internal/testbin`).
 
+### The CL shards fit two minutes
+
+A CI shard of the CL tier is cancelled at two minutes (`timeout-minutes: 2` in `.github/workflows/ci.yml`), and the Makefile's `test` target stops a package at 110 s (`GOTEST_TIMEOUT`). The cap stays; the tests fit it. A unit test takes under a minute, ideally far under, and a CL package takes at most 60 s.
+
+`internal/ci/testdata/shard-walls.tsv` records each CL package's wall: the package-level `Elapsed` of `go test -json` on the last green run that ran it uncached, with where it was measured (`@run<id>` for the GitHub Actions run whose log holds it, `@local` for a local run on a bench machine, one package at a time). `TestEveryCLPackageFitsItsShardWall` (`internal/ci/shard_walls_test.go`) refuses a row over 60 s, a live package with tests and no row, and a row for a package the tree no longer holds; `TestTheShardWallRuleRefusesGrowthAndGaps` holds the rule's reversed witnesses. A package that grows past 60 s is made to fit, or its slow tests move behind the `slow` build tag, which `.github/workflows/nightly-slow.yml` runs; then its row records the wall it has. A row is never raised past the cap.
+
+The ledger ratchet (`TestClassRuleLedgersOnlyShrinkAgainstMergeBase`, `internal/ci/ledger_ratchet_test.go`) reads the merge base once: one `git ls-tree -r -z` over `internal/ci/testdata` and the two slowtests ledgers, and one `git cat-file --batch` over the `.txt` files it names (`readMergeBase`). It used to start two git processes per file, some 1,200 a run; on a self-hosted runner's reused workspace that was 1m37s to 1m42s and a cancelled shard on every pull request. `TestTheLedgerTestReadsTheBaseOnce` counts the git processes through a fake runner and allows two; `TestTheSinglePassReadsWhatTheTwoCallPathRead` holds the single pass to `ListAtCommit`'s answer, path by path, on a fixture repository, and to the same shard list and findings.
+
 ## nova-bus
 
 Run by `cmd/nova-bus/firstrun_test.go` on a throwaway redis-server whose
