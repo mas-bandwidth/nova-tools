@@ -5,8 +5,8 @@ harness is a fake written in Go, and see the report come back. Run by rowan-spac
 model Claude Sonnet 5.5, harness Claude Code) on 2026-10-06.
 
 Provenance: this record is carried, with the stumble count corrected, from branch
-`sprint/stranger-friend-fake-harness-r-r3.w1.g1.e15` (head 6cc350d4d). The attempt that carried it
-(r-r3.w2, epoch 15) did not repeat the container run; the transcript is the earlier run's.
+`sprint/stranger-friend-fake-harness-r-r3.w1.g1.e15` (head 6cc350d4d). The attempts that carried it
+(r-r3.w2 and r-r3.w3, epoch 15) did not repeat the container run; the transcript is the earlier run's.
 
 ## Setup
 
