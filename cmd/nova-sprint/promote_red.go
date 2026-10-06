@@ -62,7 +62,7 @@ func (p *promoter) redJudgment(ctx context.Context, runs []ghRunRow, what, where
 	var reds []sprint.RedTest
 	for _, r := range runs {
 		run := strconv.Itoa(r.DatabaseID)
-		text, _ := p.gh(ctx, "run", "view", run, "--log-failed")
+		text, _ := p.forger().RunLog(ctx, r.DatabaseID)
 		logs = append(logs, text)
 		for _, t := range sprint.RedTests(text) {
 			if !slices.ContainsFunc(reds, func(x sprint.RedTest) bool { return x.Test == t.Test }) {
@@ -91,7 +91,7 @@ func (p *promoter) redJudgment(ctx context.Context, runs []ghRunRow, what, where
 // for the clone, the live sprint branch they start from, the module of its
 // go.mod, and the day's promote-red stream.
 func (p *promoter) redSpec(ctx context.Context, where string) sprint.FixSpec {
-	repo, _ := p.gh(ctx, "repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner")
+	repo, _ := p.forger().Repo(ctx)
 	repo = strings.TrimSpace(repo)
 	module := ""
 	if mod, err := p.git(ctx, "show", "--end-of-options", p.live+":go.mod"); err == nil {
