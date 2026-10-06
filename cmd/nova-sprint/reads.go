@@ -996,6 +996,8 @@ func (a *app) whereOf(ctx context.Context, st *store.Store, stale time.Duration,
 		if logical == sprint.Readers {
 			// each reader's width beside reading, derived from its fleet row
 			t = readersWidths(t, shapes[slices.Index(sprint.ViewOrder, sprint.Fleet)])
+			// and each reader's spend, from the tick's where record (readers_spend.go)
+			t = readersSpend(t, sprint.ReaderSpendsOf(facts.Streams))
 		}
 		rows := map[string]map[string]any{}
 		for _, r := range t.Rows {
@@ -1032,7 +1034,7 @@ func (a *app) whereOf(ctx context.Context, st *store.Store, stale time.Duration,
 		}
 		switch logical { // the text only: v.Tables keeps every reader's and stream's row
 		case sprint.Readers:
-			t = readersAll(t)
+			t = readersAll(t, sprint.ReaderSpendTotal(sprint.ReaderSpendsOf(facts.Streams)))
 		case sprint.Merge:
 			t = mergeAll(t)
 		}
@@ -1230,7 +1232,7 @@ const allRow = ""
 // reader progress overall. A cell some reader's
 // set did not come back for prints "?", as the footer's sum did. Display only:
 // the stored table, its rows and where --json are as they were.
-func readersAll(t ntable.Table) ntable.Table {
+func readersAll(t ntable.Table, spend sprint.ReaderSpend) ntable.Table {
 	// the width cell sums the readers that have one (readersWidths), as the
 	// fleet's footer sums its members'; "-" when none has
 	total, any := 0, false
@@ -1244,6 +1246,9 @@ func readersAll(t ntable.Table) ntable.Table {
 		width = strconv.Itoa(total)
 	}
 	texts := map[string]string{sprint.FieldWidth: width}
+	// the spend cells are every reader's sum (sprint.ReaderSpendTotal): per read is the
+	// sum over the priced reads, never a sum of averages
+	maps.Copy(texts, spend.Cells())
 	if slices.Contains(columnNames(t.Columns), sprint.ReaderTiers) {
 		word := readerTiersSummary(t)
 		if word == "" {
@@ -1299,6 +1304,31 @@ func readersWidths(t ntable.Table, fleet ntable.Table) ntable.Table {
 		if slices.Contains(columnNames(cols), sprint.ReaderTiers) {
 			row.Texts[sprint.ReaderTiers] = sprint.ReaderTiersShown(row.Texts[sprint.ReaderTiers])
 		}
+		rows[i] = row
+	}
+	t.Columns, t.Rows = cols, rows
+	return t
+}
+
+// readersSpend is the readers table with each reader's spend after its counts
+// (sprint.ReaderSpendCols: spend all time and in the last hour, per priced read, and how
+// many reads were priced), summed from the tick's where record over the streams
+// (sprint.ReaderSpendsOf); a reader with no read recorded shows "-" and 0. Display only, as
+// the width is: where --json carries the same cells on each reader's row.
+func readersSpend(t ntable.Table, spends map[string]sprint.ReaderSpend) ntable.Table {
+	cols := slices.Clone(t.Columns)
+	for _, c := range sprint.ReaderSpendCols {
+		cols = append(cols, ntable.Column{Name: c, Projection: ntable.Text, Fold: ntable.None})
+	}
+	rows := make([]ntable.Row, len(t.Rows))
+	for i, r := range t.Rows {
+		row := r
+		row.Cells = append(slices.Clone(r.Cells), make([]ntable.Cell, len(sprint.ReaderSpendCols))...)
+		row.Texts = maps.Clone(r.Texts)
+		if row.Texts == nil {
+			row.Texts = map[string]string{}
+		}
+		maps.Copy(row.Texts, spends[r.Key].Cells())
 		rows[i] = row
 	}
 	t.Columns, t.Rows = cols, rows

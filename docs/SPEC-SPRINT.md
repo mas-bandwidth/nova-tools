@@ -15,7 +15,7 @@ SPRINT TABLE
 3011/33011 9.1% -> ETA
 
 work  | waiting | ready | working | review | merging | landed | cost | per landed
-readers | asked | reading | width | ok | broken
+readers | asked | reading | width | ok | broken | tiers | spend | spend_1h | per_read | reads_priced
 merge | queued | merged | stuck | ci | state
 friends | ready | working | width | done | ok% | status
 fleet | ready | working | width | done | ok% | status | load
@@ -66,6 +66,20 @@ by the tick from the sprint it reads anyway and kept in the where record
 of an epoch `tiers` and `cost_by_tier` are absent and `per_landed` is from the
 cells (`TestTheWhereRecordCountsTiersAndCostsByTier`,
 `TestWhereCarriesTiersAndPerLandedCost`).
+
+After its counts the readers table draws each reader's spend (the owner, 2026-10-05, before
+funding a provider for reads: "I would ask that you need to track spend on readers, can you do
+this before we start?"; the coordinator had answered with awk over `nova-sprint log`):
+`spend`, the sum of the reader's priced read records all time; `spend_1h`, the same over the
+last hour; `per_read`, that sum over its priced reads; and `reads_priced`, how many. Dollars
+and cents rounded up, `-` when none of its reads was priced (a read with no token, or a
+subscription reader's, whose cost is its tokens), never `$0.00`. Each stream's where record
+carries its readers' sums (`stream_costs[<stream>].readers[<reader>]`: `reads`, `priced`,
+`usd` and `hour_usd` exact, `hour_priced`, `tokens`; `sprint.ReaderSpend`), and the view sums
+them over the streams (`sprint.ReaderSpendsOf`); `where --json` carries the four cells on each
+reader's row of `tables.readers`, and the text's one row sums every reader, its `per_read` the
+sum over every priced read, never an average of averages (section 2, What each reader spent;
+`TestTheReadersTableCarriesEachReadersSpend`, `TestWhereReadersCarryEachReadersSpend`).
 
 The friends table (the owner, 2026-10-02: "add a friends table, above fleet and
 below merge. friends | status for now. up/down/held"; "friends should be
@@ -1475,8 +1489,28 @@ kind (`work_cost`, `read_cost`, beside `total_cost`), carries its subscription r
 where view prints the day's read spend per route on one line under the summary
 (`reads today: pro-a $1.24 12 reads 3456789 tokens · subscription tokens 3 reads 120000
 tokens`, `read_spend` in its JSON; `sprint.ReadSpendLine`), and the dashboard's cost tile
-shows the reads as their own number beside the work (`$310.00 work · $96.00 reads`)
+shows the reads as their own number beside the work, with their share of the two
+(`$310.00 work · $96.00 reads (24%)`), its tooltip each reader's spend all time and in the
+last hour, most first (`TestTheCostTileShowsReadsBesideWork`)
 (`TestAReadWithoutUsageIsRefusedAndAPricedReadSumsIntoTheCard`).
+
+**What each reader spent** (`internal/sprint/readers_spend.go`). A reader's spend is the sum
+of the read records it ran, each on its primary (`readConsumer`: `who` is the reader), at its
+charged figure: all time (the work table's cards), the last hour (`ReaderSpendWindow`), per
+priced read, and how many were priced; a subscription reader's tokens are kept apart. The tick
+sums it per stream into the where record (`TierCosts.Readers`), so neither `where` nor the
+coordinator reads a card or the log to know what reads cost; the readers table, `where --json`
+and the dashboard read it there (section 1).
+
+**The price rows** (found the hour the readers' spend was asked for, 2026-10-05). The
+`deepseek-v4.1-flash` route rows carried input $0.03 a million tokens against the provider's
+list of $0.30 (ten times under) and output $0.50 against $1.20; every read and take those
+routes priced was priced under what the provider charged, which is a large part of why the
+dashboard showed under half the provider's own figure. A route row's prices are the
+provider's list, read from it, never set once by hand: re-reading each route's prices from
+its provider's list on a schedule is a card of its own (`route-prices-refresh`), owed. Until
+it lands, a gap the reconciliation finds may be a price row under its list as well as a call
+unrecorded, and its judgment says so.
 
 **The reconciliation** (`internal/sprint/cost_reconcile.go`, `sprint.CostReconcile`). Its
 step takes each provider's own count of the dollars its key used on a UTC day (openrouter:
@@ -1487,7 +1521,12 @@ charged figure. A day is compared with the same day, never with all time. The re
 to the fleet table's property `cost_reconcile_<provider>`, the last read of each day kept for
 62 days. A gap over 5% of the provider's figure, and of at least $1.00, opens ONE judgment on
 the provider (`a provider's usage and the sprint's cost records disagree`, filed under
-`provider:<p>`, decisions ack and wait), never a second while it is open; a read back within
+`provider:<p>`, decisions ack and wait), never a second while it is open. The judgment names
+the read share of the gap: the reads among the day's records and their share, and the gap
+spread as the records are, `reads are $4.00 of the records (40.0%, work $6.00), so spread as
+the records are, about $4.00 of the gap is reads` (an estimate, said as one: the gap is what no
+record holds); the record keeps `internal_reads` beside `internal`, and the step's line says
+`reads=<$>` (`TestTheReconcileJudgmentNamesTheReadShareOfTheGap`); a read back within
 the bound closes it. A provider with no usage endpoint (opencode) or no key is recorded
 unknown with why, and changes nothing. **`nova-sprint cost reconcile [--dry-run] [--json]`** runs it
 once: each provider the routes name is read through the seat's key in its own environment
