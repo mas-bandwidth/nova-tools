@@ -274,6 +274,10 @@ refused until it runs one. The ACL cannot stop a friend writing another's
 field of `bus2:push`, as it cannot stop her reading another's stream; the tool
 is the boundary (the ACL per friend, below).
 
+### The coordinator's bus-push proof
+
+`proveCoordinatorBus` (cmd/nova-bus/recv_seatpush.go) writes `bus_at` on `sprint:seat-push:<name>` when `--as` equals the name stored at `sprint:coordinator`, and adds that name to `sprint:seat-pushers` so teardown still deletes the record. It is the seat's bus proof (SPEC-SPRINT.md, the push proof), distinct from the inbox proof on `bus2:push` (`bus.PushFresh`), which `send` and `recv` still require of a name. The period is one minute (`sprint.BusPushEvery`). `ForeverBlock` is 30 seconds, so one stamp a pass of `recv --forever` sits inside that period. The forever loop (cmd/nova-bus/main.go, the `for` that waits `ForeverBlock`) leaves `proveCoordinatorBus` uncalled. A running `recv --forever` therefore keeps no `bus_at` by itself.
+
 ### fr-delivery-receipts.w1: receipts, and the send alarm
 
 A message to a friend is owed her session's receipt; the stream's ack is not

@@ -10,7 +10,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -165,36 +164,19 @@ func readPush(ctx context.Context, st *store.Store, name string) (sprint.PushRec
 	return rec, true, nil
 }
 
-// writePush writes rec as its name's push record.
+// writePush writes rec as its name's push record, keeping the watch proofs
+// on the same document (bus_at, friends_at, transitions_at).
 func writePush(ctx context.Context, st *store.Store, rec sprint.PushRecord) error {
 	kv, ok := st.B.(store.KV)
 	if !ok {
 		return errors.New("this store keeps no keys, and the push record is one")
 	}
-	b, err := json.Marshal(rec)
+	file, _, err := readSeatPushes(ctx, st, rec.Name)
 	if err != nil {
 		return err
 	}
-	if err := kv.SetKey(ctx, keySeatPush(rec.Name), string(b)); err != nil {
-		return err
-	}
-	// the name joins the list teardown deletes the records by
-	var names []string
-	raw, ok, err := kv.GetKey(ctx, store.KeySeatPushers)
-	if err != nil {
-		return err
-	}
-	if ok {
-		_ = json.Unmarshal([]byte(raw), &names) // ignored: an unreadable list is written again whole
-	}
-	if slices.Contains(names, rec.Name) {
-		return nil
-	}
-	l, err := json.Marshal(append(names, rec.Name))
-	if err != nil {
-		return err
-	}
-	return kv.SetKey(ctx, store.KeySeatPushers, string(l))
+	file.PushRecord = rec
+	return putSeatPushes(ctx, kv, file)
 }
 
 // pushGate is the line name's coordinator verbs are refused with while its seat

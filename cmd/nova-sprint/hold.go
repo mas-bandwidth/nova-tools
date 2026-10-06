@@ -66,13 +66,22 @@ func (a *app) cmdHold(release bool, args []string, stdout, stderr io.Writer) int
 	if len(probs) > 0 {
 		return refuse(stderr, name, strings.Join(probs, "; "))
 	}
-	if *dry {
+	// an unarmed dry run never opens the store. An armed seat is gated even
+	// on a dry run: a stale push refuses, and nothing is written.
+	if *dry && !pushArmed(c.actor) {
 		fmt.Fprintf(stdout, "%s DRY-RUN names=%s return=%t; nothing was written\n", strings.ToUpper(name), strings.Join(pos, ","), ret)
 		return 0
 	}
 	st, err := a.store(*c)
 	if err != nil {
 		return refuse(stderr, name, err.Error())
+	}
+	if code := a.pushesBeforeWrite(st, name, c.json, stdout, stderr); code != 0 {
+		return code
+	}
+	if *dry {
+		fmt.Fprintf(stdout, "%s DRY-RUN names=%s return=%t; nothing was written\n", strings.ToUpper(name), strings.Join(pos, ","), ret)
+		return 0
 	}
 	return a.runHold(name, "", *c, st, sprint.HoldReq{Names: pos, Release: release, Return: ret, Reason: *reason, Who: c.actor}, nil, stdout, stderr)
 }

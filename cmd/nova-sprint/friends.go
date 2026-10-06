@@ -574,6 +574,9 @@ func (a *app) friendHealthClear(c common, friend string, dry bool, stdout, stder
 	if err != nil {
 		return refuse(stderr, name, err.Error())
 	}
+	if code := a.pushesBeforeWrite(st, name, c.json, stdout, stderr); code != 0 {
+		return code
+	}
 	prev, had, status, err := st.FriendHealthClear(context.Background(), friend, c.actor, dry, c.op)
 	if err != nil {
 		fmt.Fprintf(stderr, "%s %s: %s; nothing was changed\n", prog, name, oneline.Escape(err.Error()))
@@ -667,6 +670,9 @@ func (a *app) cmdFriendHealth(args []string, stdout, stderr io.Writer) int {
 	st, err := a.store(*c)
 	if err != nil {
 		return refuse(stderr, name, err.Error())
+	}
+	if code := a.pushesBeforeWrite(st, name, c.json, stdout, stderr); code != 0 {
+		return code
 	}
 	obs := sprint.FriendHealth{State: *state, Seen: at.UTC(), Generation: *generation, Queue: *queue, Working: *working, Width: *width, Reason: strings.TrimSpace(*reason)}
 	if *until != "" {
