@@ -826,8 +826,10 @@ func cmdQuarantine(rest []string, stdout, stderr io.Writer, now time.Time, inv i
 		// Refuse: this is the asymmetry with lockdown, not an inconsistency with it. An
 		// unreadable box blocks every surface; replacing it with a fresh box holding only
 		// this one quarantine would unblock everything else, so the safety-shaped action
-		// would fail open. Under doubt, no.
-		fmt.Fprintf(stderr, "nova-fuse quarantine REFUSED: %s -- refusing to narrow an unreadable box: while unreadable it already blocks EVERY surface, and a fresh box holding only this one quarantine would UNBLOCK the rest; blow lockdown instead (`lockdown --box %s \"<reason>\"`), or repair the box by hand with the person you work with; run: nova-fuse help\n", oneline.Err(readErr), oneline.Escape(box))
+		// would fail open. Under doubt, no. The remedy quotes the box through boxRemedy,
+		// the same single-quoting seam as the init refusal above, so a path holding shell
+		// metacharacters stays data in the pasted command (security#74 finding 9).
+		fmt.Fprintf(stderr, "nova-fuse quarantine REFUSED: %s -- refusing to narrow an unreadable box: while unreadable it already blocks EVERY surface, and a fresh box holding only this one quarantine would UNBLOCK the rest; blow lockdown instead (`%s`), or repair the box by hand with the person you work with; run: nova-fuse help\n", oneline.Err(readErr), oneline.Escape(boxRemedy("lockdown", box)+` "<reason>"`))
 		return 2
 	}
 	if standingKey != "" {
