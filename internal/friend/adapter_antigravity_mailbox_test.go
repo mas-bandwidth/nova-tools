@@ -301,7 +301,7 @@ func TestTheLiveConversationFollowsWhoReads(t *testing.T) {
 			ReadPong:     func(string) (Pong, bool, error) { return Pong{}, false, nil },
 			HarnessDir:   func(string) (string, string, error) { return "antigravity", "/w/emma", nil },
 		}, time.Hour, nil)
-		assert.True(t, strings.HasSuffix(fc.Harness.Line(), " session_live=B"), fc.Harness.Line())
+		assert.Contains(t, fc.Harness.Line(), " session_live=B queued=-")
 
 		// B stops at once: delivery never bounces back within the hold
 		now = at

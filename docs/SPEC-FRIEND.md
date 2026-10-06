@@ -799,7 +799,7 @@ queued request of the same kind:
 - A queued message that carries anything else (a bus message, a card dealt)
   is never withdrawn.
 
-`CodexCheckRequeue` is the session check's re-ask age (an hour) less one
+`CodexCheckRequeue` is the session check's re-ask age (`ReaskAfter`, an hour) less one
 recheck (`RecheckEvery`). The re-ask at the hour therefore always finds the
 old request past its age and queues it afresh, so the check is never held two
 hours: unread at 59 minutes the check stands, at 61 the re-ask queues it

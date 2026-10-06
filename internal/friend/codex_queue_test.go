@@ -275,7 +275,7 @@ func TestOneSessionCheckInFlightForCodex(t *testing.T) {
 	f.now = t0.Add(70 * time.Minute)
 	codexDeliver(t, c, check)
 	assert.Equal(t, 3, f.queuedN, "taken, then asked again: queued again")
-	assert.Equal(t, time.Hour-RecheckEvery, CodexCheckRequeue)
+	assert.Equal(t, ReaskAfter-RecheckEvery, CodexCheckRequeue)
 }
 
 func TestPongRequestReadsWhatADeliveryAsksFor(t *testing.T) {

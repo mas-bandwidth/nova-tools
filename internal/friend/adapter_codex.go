@@ -54,15 +54,11 @@ type Codex struct {
 	queueSaid string
 }
 
-// CodexReaskAfter is how long the session check waits for an answer before it is asked again
-// (the presence's re-ask, ReaskAfter in the session check), and CodexCheckRequeue how long a
-// request for a pong stands unread in the queue before the same request is queued again in
-// its place: one recheck under the re-ask, so the re-ask at the hour always finds the old one
-// past its age and the session check is never held two hours.
-const (
-	CodexReaskAfter   = time.Hour
-	CodexCheckRequeue = CodexReaskAfter - RecheckEvery
-)
+// CodexCheckRequeue is how long a request for a pong stands unread in the queue before the
+// same request is queued again in its place: the session check's re-ask (ReaskAfter) less one
+// recheck, so the re-ask at the hour always finds the old one past its age and the session
+// check is never held two hours.
+const CodexCheckRequeue = ReaskAfter - RecheckEvery
 
 // The kinds of pong request (PongRequest): each its own series of nonces.
 const (
