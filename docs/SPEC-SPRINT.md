@@ -1317,6 +1317,97 @@ time goes, from the medians of `all`. A card whose path skips a stamping step
 go through the steps above) has no sample for the stages that need it.
 (`TestStageTimesGiveMedianAndP90PerStage`).
 
+### Priority: reads are a card priority (reads-are-a-card-priority-b)
+
+The owner, 2026-10-06, with 270 cards in review, 76 working and every reader near idle: "I
+am now convinced that reads need to become a type of card priority." "This will help balance
+reads vs. work from now on." Every card carries one level of the ladder, highest first:
+`blocker` ("this is the most important thing to do right now, stop everything, do this
+instead"), `critical` ("I need to do this right now"), `high` (the seat's usual urgent
+level), `reader` (every read card, or its primary's level when higher), `normal` (the
+default) and `low` (it fills only an idle lane).
+
+- **Where a level comes from.** A read card is `reader` or its primary's higher level
+  (below), never set by hand. A primary is
+  `normal` unless a level is set on it: its brief's header line `PRIORITY: <level>` seeds it
+  at admission (`add`), else its stream's default seeds it (a card's own line wins over its
+  stream's), and the verb `priority` sets it afterwards. `critical` is also computed: a card
+  with CriticalBehind (10) or more cards behind it (weight.go) is `critical` unless a level is
+  set by hand; the computed `critical` is shown as `critical (by weight, not yet ordered)`
+  (on `where`, in `--json`'s `priorities` under that key, and on the dashboard's dark red
+  mark with those words in its title) and orders nothing yet: placing it on the ladder made
+  the slow differential tier (`make test-slow`) disagree with the reference model on the
+  ask's stream round, so it is owed with the model (below). A recut's twin keeps its card's
+  level as it keeps its tier, the paths rule's and the widen rule's twins included; a new
+  brief that names its own `PRIORITY:` line gives the twin that (`TestARecutKeepsTheCardsPriority`).
+- **The verb.** `nova-sprint priority <id>... (--blocker|--critical|--high|--normal|--low)
+  --reason <text>` sets each primary named (the reason is required, as drop's is);
+  `priority --stream <s> --<level> --reason <text>` sets, in one call, every card now in the
+  stream, whatever its column and whatever level it had, its own included (the owner: "set
+  priority on stream just means one verb call sets priority for all cards in the stream"),
+  and the stream's default, which seeds the cards added to the stream later (a later card's
+  own PRIORITY line wins); a held stream is set all the same and the output says it is held
+  and that none of its cards is dealt until `unhold`; `priority <id>...` prints each card's
+  level and its source (`set`, `computed`, `default`, `read`). Every change is a `priority
+  set` note on the card's timeline (`log --card`) with the actor and the reason, and the
+  default's change a `stream priority set` note on the stream's (`log --stream`). A
+  set is refused on a read card, "a read card's priority is its primary's, or reader when that is lower; set its primary:
+  nova-sprint priority <primary> --<level>", and on a work card the same way. A card's level
+  shows on `card` (`priority=` on the CARD OK line; `priority` and `priority_source` in
+  `--json`), on `queue` (`priority=` beside each card: a read card's `reader`, a work card's
+  as its deal wrote it), and on `where`, beside the critical list (`priority: blocker s1-4;
+  low s2-1, s2-2 (+3); stream defaults s2 low`; in `--json` `priorities` by level,
+  `stream_priorities`, and each work row's `priority`, the stream's default)
+  (`TestPrioritySetsACardAndItsStream`, `TestAStreamsDefaultSeedsNewCards`,
+  `TestPriorityRefusesAReadCard`).
+- **A read inherits its primary's level.** A read's level is the higher of `reader` and its
+  primary's own level (`sprint.ReadPriority`): the reads of a blocker, critical or high
+  primary go to the front of the read queue (the owner, 2026-10-06: "that work stream jumps to
+  the front of the reader and merge queue"; "work in review queues should be distributed
+  according to priority too when you create consumer reader cards for it"); a normal or low
+  primary's read is `reader`. The read card the ask creates carries the inherited level when it
+  is above reader (`priority` on the card, shown by `queue`); `priority <read card>` prints it
+  with the source `read:inherited-from-<primary>` and still refuses a set, pointing at the
+  primary (`TestAHighPrimarysReadIsAskedAndDealtFirst`).
+- **The deal.** Every deal goes down the ladder level by level, in one plan: at each level a
+  friend is asked the reads of that level she may take first, then dealt the work cards of
+  that level in the room the reads leave; at one level a read goes before work, so a high
+  primary's read comes before high work, and the `reader` reads come between high and normal
+  work. A friend is dealt no work card of a level while a read she may take of that level or
+  above waits. Her reads and her work count against one width: her room is DealAhead times
+  her width, less every card on her row, ready or working, reads included
+  (`friendDealByLadder`, `friendReadsFirst`; the deal's reclaim of the fleet's cards runs once,
+  in the normal pass). The machines' deal offers its ready cards in the ladder's order, so a
+  low card fills only a lane no other ready card can. A fleet reader's room is its own, never
+  a work lane: a fleet read waits behind no work card, and the readers' ask places it in the
+  same tick. The ask, the friends' and the machines', asks the reads in the order of their
+  inherited levels (`TestReadsOutrankNormalWork`, `TestAFriendsRoomGoesToReadsFirst`,
+  `TestLowFillsOnlyAnIdleLane`, `TestTheLadderOrdersTheDealAndTheAsk`).
+- **The landing order.** `land` takes the streams by priority: a stream's level is the highest
+  level of any card in its merging set (never its default, never its oldest card), the higher
+  stream first, then the one with the most cards behind any merging card, then stream order;
+  inside a stream the batch stays as it is, oldest first (the owner, 2026-10-06: "a normal
+  stream with one critical card merging goes ahead of a high stream whose merging cards are
+  all high"; `sprint.LandOrder`, `TestLandTakesTheHighestPriorityStreamFirst`). `promote`
+  moves the landed history as one, so it has no order to take.
+- **Order within a level** is the modelled one: stream turns for the deal and the ask, work
+  order for the friends' ask (tla/SprintTables.tla; `TestEngineAgreesWithTheReferenceModel`).
+  Owed with the reference model: the weight (the cards behind) within a level for the deal and
+  the ask, the computed `critical` in their order, and preemption by a blocker (its own card).
+- **The backup state.** The work table's three counts over the streams on the table name the
+  pipeline's backup: `reads` while review exceeds working, `merges` while merging exceeds
+  review and working together (it names the further bottleneck when both hold), `none` else
+  (`sprint.BackupOf`). `where --json` carries `backup`, from the count cells, and
+  `reads_waiting`, the reads wanted now and not asked over the primaries in review, from the
+  tick's where record; `where` prints `backup: reads (review 279 > working 77, merging 44),
+  250 reads waiting` under the summary while the state is not none
+  (`TestWhereShowsTheBackupState`). The one judgment at each edge is card
+  a-backup-transition-pushes-one-judgment-b's; the state alone is exposed here.
+- **The fleet readers read their row's tiers.** A fleet reader row whose tiers are `flash`,
+  or that names none while the store holds routes, is never asked a pro read (the owner,
+  2026-10-06, "I'm ok with flash readers on fleet but not pro"); a row naming pro is; a
+  friend's reader naming none reads every tier (section 6; `TestFleetReadersReadOnlyTheirTiers`).
+
 ## 2. The cards
 
 Layer 1 of the processor, the instruction set, is [SPEC-ISA.md](SPEC-ISA.md): a
@@ -1959,6 +2050,10 @@ and it is the coordinator's decision, receipted.
 
 ## 5. The fleet
 
+- The deal's order is the priority ladder (section 1, "Priority"): a friend's cards above
+  reader, then her reads, then normal and low work in the room the reads leave, against her one
+  width; the machines' ready cards in the ladder's order, stream turns within a level, so a
+  low card fills only a lane no other ready card can.
 - A member is a fleet machine with a width: the most work cards it runs at
   once (its child cap; `init --members m1:64` or `fleet up m1 --width 64`;
   default 64; `fleet up m1 --width 0` drains it: its width cell is `0`, so no
@@ -2743,16 +2838,23 @@ the adoption `release.OneMachine` (internal/release/adopt_one.go). Test:
   count. The reads per machine are unchanged: a reader still runs at its
   machine's width.
 - A reader row carries the tiers it reads (`readers.tiers`, text, no fold;
-  an empty cell means every tier). `reader add <reader>... [--tiers
-  flash[,pro,heavy,frontier]]` and `reader set <reader>... --tiers ...` write
-  them; omitted, `all` and `default` store empty, which is today's behaviour.
+  an empty cell is the default: a fleet reader reads flash alone while the store
+  holds routes, and a friend's or a bud's reader, which brings its own model,
+  every tier; the owner, 2026-10-06, "I'm ok with flash readers on fleet but not
+  pro"; `sprint.fleetReadsFlashOnly`; a store with no route has every reader run
+  its own model, and an empty cell there reads every tier). `reader add <reader>...
+  [--tiers flash[,pro,heavy,frontier]|all|default]` and `reader set <reader>... --tiers
+  ...` write them; omitted and `default` store empty, and `all` stores every tier
+  by name (`flash,pro,heavy,frontier`), so a fleet row reads pro only when its row
+  names it.
   The ask (`freeReaders`, `enoughReadersUp`, the level, and a returned read
   asked again in place) counts a reader only for a primary whose read tier
   (`readTierOf`) the cell names, and never asks a reader a read outside that
   tier. A card with fewer readers of its tier up than `ReadsNeeded` raises the
   one existing judgment `fewer than two readers up` and asks nothing of a
   reader outside the tier. `where` and the reader verbs print the tiers
-  (`all` when the cell is empty). A table created before the column gains it
+  (`default` when the cell is empty). The readers' level plans with the routes,
+  as the ask does, so it moves no read above flash to a fleet row that names none. A table created before the column gains it
   at `init` or at the next `reader set` (and at `reader add` when `--tiers`
   is given). The model is `tla/ReaderTiers.tla`: no read is asked of a reader
   outside the primary's tier. `tla/ReadsByRoom.tla` and `tla/DirtyTick.tla`

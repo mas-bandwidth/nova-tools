@@ -14,7 +14,10 @@ func TestParseReaderTiersStoresTheLadderAndRefusesARepeat(t *testing.T) {
 	assert.Equal(t, "flash,pro", got)
 	got, err = ParseReaderTiers("all")
 	require.NoError(t, err)
-	assert.Equal(t, "", got)
+	assert.Equal(t, "flash,pro,heavy,frontier", got, "all names every tier")
+	got, err = ParseReaderTiers("default")
+	require.NoError(t, err)
+	assert.Equal(t, "", got, "default is the empty cell: flash on a fleet reader, every tier on a friend's")
 	_, err = ParseReaderTiers("flash,flash")
 	assert.Error(t, err)
 	_, err = ParseReaderTiers("nope")
@@ -22,7 +25,7 @@ func TestParseReaderTiersStoresTheLadderAndRefusesARepeat(t *testing.T) {
 }
 
 // The ask never asks a reader a read outside the tiers its row names. An empty
-// tiers cell is every tier. A pro card with one reader of its tier up raises
+// tiers cell is every tier with no route in the store (a fleet reader's is flash with one). A pro card with one reader of its tier up raises
 // the existing few-readers judgment and nothing is asked of a flash reader.
 func TestTheAskNeverAsksAReaderOutsideItsTiers(t *testing.T) {
 	t.Parallel()

@@ -24,7 +24,7 @@ func TestReaderSetPrintsTiersAndRefusesABadTier(t *testing.T) {
 	readers := v.Tables[sprint.Readers]
 	require.Equal(t, "flash", readers["reader-flash"][sprint.ReaderTiers])
 	require.Equal(t, "flash,pro", readers["reader-a"][sprint.ReaderTiers], "stored in ladder order")
-	require.Equal(t, "all", readers["reader-b"][sprint.ReaderTiers], "an empty cell prints all")
+	require.Equal(t, "default", readers["reader-b"][sprint.ReaderTiers], "an empty cell prints default: flash on a fleet reader while the store holds routes")
 
 	code, _, errs := ta.do("reader set reader-a --tiers no-such")
 	assert.NotEqual(t, 0, code, errs)
@@ -33,7 +33,10 @@ func TestReaderSetPrintsTiersAndRefusesABadTier(t *testing.T) {
 
 	ta.ok("reader set reader-a --tiers all")
 	ta.json("where", &v)
-	assert.Equal(t, "all", v.Tables[sprint.Readers]["reader-a"][sprint.ReaderTiers])
+	assert.Equal(t, "flash,pro,heavy,frontier", v.Tables[sprint.Readers]["reader-a"][sprint.ReaderTiers], "all names every tier")
+	ta.ok("reader set reader-a --tiers default")
+	ta.json("where", &v)
+	assert.Equal(t, "default", v.Tables[sprint.Readers]["reader-a"][sprint.ReaderTiers])
 
 	code, _, errs = ta.do("reader set reader-nope --tiers flash")
 	assert.NotEqual(t, 0, code, errs)

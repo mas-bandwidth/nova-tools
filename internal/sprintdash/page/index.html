@@ -26,6 +26,12 @@
   --s-waiting: #4a4f58;
   --s-ready: #7d8490;
   --s-working: #3987e5;
+  /* a card's priority by colour: a blocker bright red, a critical dark red, a read (reader) the
+     orange of the robot logo's shoes (logo-robot-384.png's modal shoe pixel), work blue */
+  --p-blocker: #ff1a1a;
+  --p-critical: #9b1c1c;
+  --p-reader: #fb8321;
+  --p-work: var(--s-working);
   --s-review: #d55181;
   --s-merging: #c98500;
   --s-landed: #199e70;
@@ -150,6 +156,10 @@ img#logo.logo-tile { width: 6rem; height: 6rem; flex: none; }
 .waiting { background: var(--s-waiting); } .ready { background: var(--s-ready); }
 .working { background: var(--s-working); } .review { background: var(--s-review); }
 .merging { background: var(--s-merging); } .landed { background: var(--s-landed); }
+.p-blocker { background: var(--p-blocker); } .p-critical { background: var(--p-critical); }
+.p-reader { background: var(--p-reader); } .p-work { background: var(--p-work); }
+.marks { display: flex; flex-wrap: wrap; gap: 0.25rem; margin-top: 0.75rem; }
+.mark { width: 1rem; height: 1rem; border-radius: 2px; }
 
 /* panels */
 .panel { background: var(--surface); border: 1px solid var(--border); border-radius: 1.5rem; min-width: 0; overflow: hidden; }
@@ -363,6 +373,7 @@ footer a:hover { color: var(--text); }
     <div class="legend" id="legend"></div>
   </div>
   <div class="cells thick" id="overall"></div>
+  <div class="marks" id="priority-marks" hidden></div>
 </section>
 
 <section class="panel merge" id="merge-row">

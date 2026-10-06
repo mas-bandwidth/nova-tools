@@ -71,6 +71,7 @@ func init() {
 		{"return", "(<id>... | --group <id> [--expect <n>]) [--reason <text>] [--answers <note>]", "return s1-7 --reason 'suspect of the red batch'", (*app).cmdReturn},
 		{"redo", "<card>... [--stream <s>] [--answers <note>]", "redo s1-2", (*app).cmdRedo},
 		{"drop", "(<id>... | --stream <s> --col <state> | --group <id> [--expect <n>]) --reason <text> [--answers <note>] [--one]", "drop s1-9 --reason obsolete", (*app).cmdDrop},
+		{"priority", "<id>... | (<id>... | --stream <s>) (--blocker | --critical | --high | --normal | --low) --reason <text>", "priority s1-4 --high --reason 'the release waits on it'", (*app).cmdPriority},
 		{"unpin", "(<id>... | --stream <s>) --reason <text> [--dry-run]", "unpin s1-1 --reason available", (*app).cmdUnpin},
 		{"rank", "<id>... (--score <n> | --first | --before <id>) [--answers <note>]", "rank s2-3 --first", (*app).cmdRank},
 		{"relink", "<old-id>[,<old-id>...] <new-id> [--reason <text>]", "relink lint-pkg-cairn-t lint-pkg-cairn-tb --reason 're-cut as its twin'", (*app).cmdRelink},
@@ -2751,7 +2752,7 @@ func (a *app) cmdFleet(op string, args []string, stdout, stderr io.Writer) int {
 
 func (a *app) cmdReaderAdd(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("reader add")
-	tiersFlag := fs.String("tiers", "", "the tiers this reader reads, comma separated ("+cardhdr.RouteList+"); all or default, or omitted, is every tier")
+	tiersFlag := fs.String("tiers", "", "the tiers this reader reads, comma separated ("+cardhdr.RouteList+"); all names every tier; default, or omitted, is flash on a fleet reader while the store holds routes and every tier on a friend's reader")
 	names, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, "reader add", err.Error())
@@ -2805,7 +2806,7 @@ func (a *app) cmdReaderAdd(args []string, stdout, stderr io.Writer) int {
 // nothing.
 func (a *app) cmdReaderSet(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("reader set")
-	tiersFlag := fs.String("tiers", "", "the tiers these readers read, comma separated ("+cardhdr.RouteList+"); all or default is every tier")
+	tiersFlag := fs.String("tiers", "", "the tiers these readers read, comma separated ("+cardhdr.RouteList+"); all names every tier; default is flash on a fleet reader while the store holds routes and every tier on a friend's reader")
 	names, code := readerNames("reader set", args, stderr, fs)
 	if code != 0 {
 		return code
@@ -2840,7 +2841,8 @@ func (a *app) cmdReaderSet(args []string, stdout, stderr io.Writer) int {
 }
 
 // readerTiersArg parses --tiers. required refuses a call that omitted it.
-// The stored value is "" for every tier. Nothing is written here.
+// The stored value is "" for the default (flash on a fleet reader, every tier on a friend's).
+// Nothing is written here.
 func readerTiersArg(verbName string, fs *flag.FlagSet, raw string, required bool, stderr io.Writer) (string, bool, int) {
 	set := false
 	fs.Visit(func(f *flag.Flag) {

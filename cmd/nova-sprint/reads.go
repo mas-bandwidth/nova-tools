@@ -246,6 +246,9 @@ type queueCard struct {
 	Gen     int     `json:"gen,omitempty"`
 	Head    string  `json:"head,omitempty"`
 	Score   float64 `json:"score"`
+	// Priority is the card's level (sprint.QueuePriority: a read card's reader, a work card's
+	// as its deal wrote it, a primary's own), printed beside it.
+	Priority string `json:"priority"`
 	// The stamps: a work card's dealt and taken, a read card's asked and begun.
 	Dealt string `json:"dealt,omitempty"`
 	Taken string `json:"taken,omitempty"`
@@ -306,7 +309,7 @@ func (a *app) cmdQueue(args []string, stdout, stderr io.Writer) int {
 	add := func(table string, cs []*sprint.Card) {
 		for _, x := range cs {
 			cards = append(cards, queueCard{ID: x.ID, Table: table, Row: x.Row, Col: x.Col, Primary: x.F("primary"), Stream: x.F("stream"),
-				Attempt: x.Int("attempt"), Gen: x.Int("gen"), Head: x.F("head"), Score: x.Score,
+				Attempt: x.Int("attempt"), Gen: x.Int("gen"), Head: x.F("head"), Score: x.Score, Priority: queuePriority(x),
 				Dealt: x.F("dealt"), Taken: x.F("taken"), Asked: x.F("asked"), Begun: x.F("begun"), kind: x.F("kind")})
 		}
 	}
@@ -337,6 +340,7 @@ func (a *app) cmdQueue(args []string, stdout, stderr io.Writer) int {
 			for i := range cards {
 				if cards[i].ID == m.ID {
 					cards[i].Head, cards[i].Attempt = m.F("head"), m.Int("attempt")
+					cards[i].Priority, _ = sprint.CardPriority(m)
 				}
 			}
 		}
@@ -429,6 +433,9 @@ func (a *app) cmdQueue(args []string, stdout, stderr io.Writer) int {
 			if st[1] != "" {
 				l += " " + st[0] + "=" + st[1]
 			}
+		}
+		if x.Priority != "" {
+			l += " priority=" + x.Priority // its level, last (priority.go)
 		}
 		lines = append(lines, l)
 	}
@@ -625,10 +632,20 @@ type whereView struct {
 	// the view (docs/SPEC-SPRINT-DASHBOARD.md): the ready primaries across the
 	// work table's streams, the total width of the fleet members that are up,
 	// the string "<ready>/<2*width>" and whether ready is under width.
-	Ready  int64  `json:"ready"`
-	Width  int    `json:"width"`
-	Buffer string `json:"buffer"`
-	Low    bool   `json:"low"`
+	Ready int64 `json:"ready"`
+	// Backup is the pipeline's backup state (sprint.BackupOf over the work table's count
+	// cells): reads, merges or none; ReadsWaiting the reads wanted now and not asked, from the
+	// tick's where record (sprint.ReadsWaiting).
+	Backup       string `json:"backup"`
+	ReadsWaiting int    `json:"reads_waiting"`
+	// Priorities is every open primary whose level is not normal, by level, and
+	// StreamPriorities each stream's default level that is not normal, from the tick's where
+	// record (sprint.PriorityCounts, sprint.StreamPriorities); absent when every card is normal.
+	Priorities       map[string][]string `json:"priorities,omitempty"`
+	StreamPriorities map[string]string   `json:"stream_priorities,omitempty"`
+	Width            int                 `json:"width"`
+	Buffer           string              `json:"buffer"`
+	Low              bool                `json:"low"`
 	// MergeRow is the merge state, the dashboard's Merge row (docs/SPEC-SPRINT-DASHBOARD.md,
 	// "Merge"): the cards in merging and review, landed per 30 minutes, the oldest merging
 	// card's age (with --cards or --rows), the base's gate and its failing test, the drift
@@ -1135,6 +1152,9 @@ func (a *app) whereOf(ctx context.Context, st *store.Store, stale time.Duration,
 	}
 	v.Held = int64(facts.Held)
 	v.Ready = readyPrimaries(shapes[0])
+	working, review, merging := pipelineCounts(shapes[0])
+	v.Backup = sprint.BackupOf(int(working), int(review), int(merging))
+	v.ReadsWaiting, v.Priorities, v.StreamPriorities = facts.ReadsWaiting, facts.Priorities, facts.StreamPriorities
 	v.Width = upWidth(shapes[3])
 	v.Buffer = fmt.Sprintf("%d/%d", v.Ready, 2*v.Width)
 	v.Low = v.Ready < int64(v.Width)
@@ -1167,6 +1187,14 @@ func (a *app) whereOf(ctx context.Context, st *store.Store, stale time.Duration,
 	// record carries them (weight.go; store.WhereRecord)
 	if v.Critical = facts.Critical; len(v.Critical) > 0 {
 		b.WriteString(sprint.CriticalLine(v.Critical) + "\n")
+	}
+	// beside it, the cards whose level is not normal and the streams' defaults (priority.go),
+	// and the backup state while there is one
+	if line := sprint.PriorityLine(v.Priorities, v.StreamPriorities); line != "" {
+		b.WriteString(line + "\n")
+	}
+	if line := backupLine(v.Backup, working, review, merging, v.ReadsWaiting); line != "" {
+		b.WriteString(line + "\n")
 	}
 	// the day's read spend per route, from the same record (cost_view.go)
 	if v.ReadSpend = sprint.ReadSpendLine(facts.Streams); v.ReadSpend != "" {
@@ -1212,6 +1240,11 @@ func (a *app) whereOf(ctx context.Context, st *store.Store, stale time.Duration,
 				}
 				if rows[r.Key] != nil {
 					rows[r.Key][perLandedField] = r.Texts[perLandedColumnName]
+					// the stream's default level for cards added later, beside it (priority.go)
+					rows[r.Key][streamPriorityField] = sprint.PriorityNormal
+					if d := v.StreamPriorities[r.Key]; d != "" {
+						rows[r.Key][streamPriorityField] = d
+					}
 				}
 			}
 		}
@@ -1465,7 +1498,7 @@ func readersAll(t ntable.Table) ntable.Table {
 	if slices.Contains(columnNames(t.Columns), sprint.ReaderTiers) {
 		word := readerTiersSummary(t)
 		if word == "" {
-			word = sprint.ReaderTiersAll
+			word = sprint.ReaderTiersDefault
 		}
 		texts[sprint.ReaderTiers] = word
 	}
@@ -1473,7 +1506,7 @@ func readersAll(t ntable.Table) ntable.Table {
 }
 
 // readerTiersSummary is the tiers word of the one readers row: the word the
-// rows share, or the distinct words in row order. An empty cell prints all.
+// rows share, or the distinct words in row order. An empty cell prints default.
 func readerTiersSummary(t ntable.Table) string {
 	var words []string
 	seen := map[string]bool{}
@@ -2000,14 +2033,19 @@ type cardView struct {
 	Grade   string       `json:"grade,omitempty"` // nova-decide's grade, as the card holds it (sprint.FieldGrade)
 	// Who is the worker its brief's WHO line names (sprint.FieldWho): friend for any
 	// friend, friend.<name> for one; absent on a machine's card.
-	Who      string             `json:"who,omitempty"`
-	Work     []*sprint.Card     `json:"work_cards"`
-	Reads    []*sprint.Card     `json:"read_cards"`
-	Merge    *sprint.Card       `json:"merge,omitempty"`
-	Open     []sprint.Open      `json:"open,omitempty"`
-	Needs    []sprint.NeedState `json:"needs,omitempty"`
-	NeededBy []string           `json:"needed_by,omitempty"`
-	Held     *sprint.Hold       `json:"held,omitempty"` // what holds it now
+	Who string `json:"who,omitempty"`
+	// Priority is its level on the ladder (sprint.CardPriority: blocker, critical, normal,
+	// low; a read card's is reader) and PrioritySource where it comes from (set, computed,
+	// default).
+	Priority       string             `json:"priority"`
+	PrioritySource string             `json:"priority_source"`
+	Work           []*sprint.Card     `json:"work_cards"`
+	Reads          []*sprint.Card     `json:"read_cards"`
+	Merge          *sprint.Card       `json:"merge,omitempty"`
+	Open           []sprint.Open      `json:"open,omitempty"`
+	Needs          []sprint.NeedState `json:"needs,omitempty"`
+	NeededBy       []string           `json:"needed_by,omitempty"`
+	Held           *sprint.Hold       `json:"held,omitempty"` // what holds it now
 	// What it cost: each consumer (a work card's take, a read) with its record, and
 	// the totals, computed from the consumers' records (sprint.CardCost).
 	Cost sprint.CardCostView `json:"cost"`
@@ -2068,7 +2106,8 @@ func (a *app) cmdCard(args []string, stdout, stderr io.Writer) int {
 			texts = []storyText{}
 		}
 		tier, ceiling := sprint.CardTiers(v.Primary)
-		b, _ := json.Marshal(cardView{Primary: v.Primary, Tier: tier, Ceiling: ceiling, Grade: v.Primary.F(sprint.FieldGrade), Who: v.Primary.F(sprint.FieldWho), Work: v.Work, Reads: v.Reads, Merge: v.Merge, Open: v.Open, Needs: v.Needs, NeededBy: v.NeededBy, Held: held,
+		level, source := sprint.CardPriority(v.Primary)
+		b, _ := json.Marshal(cardView{Primary: v.Primary, Tier: tier, Ceiling: ceiling, Grade: v.Primary.F(sprint.FieldGrade), Who: v.Primary.F(sprint.FieldWho), Priority: level, PrioritySource: source, Work: v.Work, Reads: v.Reads, Merge: v.Merge, Open: v.Open, Needs: v.Needs, NeededBy: v.NeededBy, Held: held,
 			Cost: sprint.CardCostOf(v.Primary), Timeline: events, Texts: texts})
 		fmt.Fprintln(stdout, string(b))
 		return 0
@@ -2102,7 +2141,7 @@ func (a *app) cmdCard(args []string, stdout, stderr io.Writer) int {
 		if g, ok := decide.ParseDecided(v.Primary.F(sprint.FieldGrade)); ok {
 			grade = " grade=" + g.Value + ":" + strconv.FormatFloat(g.P, 'f', 2, 64)
 		}
-		fmt.Fprintf(stdout, "CARD OK id=%s epoch=%d work_cards=%d read_cards=%d open=%d tier=%s ceiling=%s%s%s\n", oneline.Escape(id), epoch, len(v.Work), len(v.Reads), len(v.Open), tier, ceiling, grade, whoWord(v.Primary))
+		fmt.Fprintf(stdout, "CARD OK id=%s epoch=%d work_cards=%d read_cards=%d open=%d%s tier=%s ceiling=%s%s%s\n", oneline.Escape(id), epoch, len(v.Work), len(v.Reads), len(v.Open), priorityWord(v.Primary), tier, ceiling, grade, whoWord(v.Primary))
 		return 0
 	}
 	printCard(stdout, "PRIMARY", v.Primary)
@@ -2141,7 +2180,7 @@ func (a *app) cmdCard(args []string, stdout, stderr io.Writer) int {
 	if pinned, err := st.Pinned(ctx); err == nil {
 		epoch = pinned.PinnedEpoch()
 	}
-	fmt.Fprintf(stdout, "CARD OK id=%s epoch=%d work_cards=%d read_cards=%d open=%d%s\n", oneline.Escape(id), epoch, len(v.Work), len(v.Reads), len(v.Open), whoWord(v.Primary))
+	fmt.Fprintf(stdout, "CARD OK id=%s epoch=%d work_cards=%d read_cards=%d open=%d%s%s\n", oneline.Escape(id), epoch, len(v.Work), len(v.Reads), len(v.Open), whoWord(v.Primary), priorityWord(v.Primary))
 	return 0
 }
 
@@ -2152,6 +2191,22 @@ func whoWord(pr *sprint.Card) string {
 		return " who=" + oneline.Field(w)
 	}
 	return ""
+}
+
+// priorityWord is the CARD OK line's priority (sprint.CardPriority), always printed.
+func priorityWord(pr *sprint.Card) string {
+	l, _ := sprint.CardPriority(pr)
+	return " priority=" + l
+}
+
+// queuePriority is a queue card's level: a primary's own (sprint.CardPriority), a work or a
+// read card's as sprint.QueuePriority says it.
+func queuePriority(c *sprint.Card) string {
+	if c.F("kind") == "primary" {
+		l, _ := sprint.CardPriority(c)
+		return l
+	}
+	return sprint.QueuePriority(c)
 }
 
 func printCard(w io.Writer, kind string, c *sprint.Card) {

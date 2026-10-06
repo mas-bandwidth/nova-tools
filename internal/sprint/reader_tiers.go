@@ -9,34 +9,42 @@ import (
 )
 
 // ReaderTiers is the readers table's text column: the tiers that reader reads.
-// An empty cell means every tier, which is how a reader added with no --tiers
-// behaves. The ask counts a reader only for a primary whose read tier
-// (readTierOf) the cell names.
+// An empty cell is the default: a fleet reader reads flash alone while the store holds
+// routes (fleetReadsFlashOnly; the owner, 2026-10-06, "I'm ok with flash readers on fleet
+// but not pro"), and a friend's or a bud's reader, which brings its own model, every tier.
+// The ask counts a reader only for a primary whose read tier (readTierOf) it serves.
 const ReaderTiers = "tiers"
 
-// ReaderTiersAll is the word a view prints for an empty tiers cell.
+// ReaderTiersAll is the --tiers word for every tier, stored as the list of them.
 const ReaderTiersAll = "all"
+
+// ReaderTiersDefault is the word for an empty cell, as --tiers takes it and a view prints it.
+const ReaderTiersDefault = "default"
 
 // readerTierOrder is the order a tiers cell is stored in: the brief's
 // flash[,pro,...], which is the ladder and then frontier.
 var readerTierOrder = []string{cardhdr.RouteFlash, cardhdr.RoutePro, cardhdr.RouteHeavy, cardhdr.RouteFrontier}
 
-// ReaderTiersShown is the word a view prints for a stored tiers cell.
+// ReaderTiersShown is the word a view prints for a stored tiers cell: default for an
+// empty one (flash on a fleet reader, every tier on a friend's), the list else.
 func ReaderTiersShown(stored string) string {
 	if strings.TrimSpace(stored) == "" {
-		return ReaderTiersAll
+		return ReaderTiersDefault
 	}
 	return stored
 }
 
-// ParseReaderTiers reads --tiers. Empty, all and default store "" (every
-// tier). Anything else is a comma list of routes, each once, stored in
-// readerTierOrder with no spaces. A tier that is not a route, or a repeat,
-// refuses the whole value.
+// ParseReaderTiers reads --tiers. Empty and default store "" (the default: flash on a
+// fleet reader, every tier on a friend's); all stores every tier, named. Anything else is a
+// comma list of routes, each once, stored in readerTierOrder with no spaces. A tier that is
+// not a route, or a repeat, refuses the whole value.
 func ParseReaderTiers(raw string) (string, error) {
 	raw = strings.TrimSpace(raw)
-	if raw == "" || raw == ReaderTiersAll || raw == "default" {
+	if raw == "" || raw == ReaderTiersDefault {
 		return "", nil
+	}
+	if raw == ReaderTiersAll {
+		return strings.Join(readerTierOrder, ","), nil
 	}
 	seen := map[string]bool{}
 	var bad []string
@@ -48,7 +56,7 @@ func ParseReaderTiers(raw string) (string, error) {
 		seen[p] = true
 	}
 	if len(bad) > 0 {
-		return "", fmt.Errorf("--tiers wants %s, comma separated, each once (or all, or default for every tier); refused %s", cardhdr.RouteList, strings.Join(bad, ","))
+		return "", fmt.Errorf("--tiers wants %s, comma separated, each once (or all for every tier, or default: flash on a fleet reader, every tier on a friend's); refused %s", cardhdr.RouteList, strings.Join(bad, ","))
 	}
 	var kept []string
 	for _, t := range readerTierOrder {

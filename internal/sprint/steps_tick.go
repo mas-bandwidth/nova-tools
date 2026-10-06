@@ -600,7 +600,9 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 		}
 		offer = append(offer, c)
 	}
-	fp, dealt, dealtWorking := friendDeal(s, dealOrder(s, offer), r.Friends)
+	// the ladder (priority.go, reads_priority.go): the cards above reader, then the friends'
+	// reads, asked and placed in this plan, then normal and low work in the room they leave
+	fp, seats, dealt, dealtWorking := friendDealByLadder(s, dealOrder(s, offer), r.Friends)
 	friendPlaced := map[string]bool{}
 	for _, u := range fp.Units {
 		friendPlaced[u.Key] = true
@@ -706,7 +708,9 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 	conds = append(conds, adoptConds(s)...)
 	// landings on the sprint branch not promoted into dev (promotion.go)
 	conds = append(conds, devBehindCond(s)...)
-	ready = dealOrder(s, ready) // the friends' order: one deal order for friends and machines
+	// one deal order for friends and machines, by the ladder: a low card fills only a lane no
+	// other card ready can (ladderOrder, priority.go)
+	ready = ladderOrder(dealOrder(s, ready))
 	if len(up) == 0 && len(ready) > 0 {
 		c := cond{typ: NNoMember, streamLevel: true,
 			what: fmt.Sprintf("%d primaries wait to be dealt and no member is up: start nova-sprint fleet beat <member> on a machine, or release a hold with nova-sprint fleet up <member>", len(ready))}
@@ -758,7 +762,7 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 		// her (friendUnstartedLevel; docs/SPEC-SPRINT.md section 1, a friend's card is
 		// working once she starts it); the level then neither moves it again nor counts it
 		// on her row
-		up := friendUnstartedLevel(s, r.Friends, func(at string) (time.Duration, bool) { return r.running(s.Now, at) }, nil, dealt, FriendLevelPerTick)
+		up := friendUnstartedLevel(s, seats, func(at string) (time.Duration, bool) { return r.running(s.Now, at) }, nil, dealt, FriendLevelPerTick)
 		moved := map[string]bool{}
 		for _, u := range up.Units {
 			c := s.Fleet.Card(u.Key)
@@ -768,7 +772,7 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 			dealt[from]--
 			dealt[to]++
 		}
-		lp := friendLevel(s, FriendLevelReq{Seats: r.Friends, Who: r.who(), Max: FriendLevelPerTick, Taken: fp.Units, Moved: moved}, dealt, dealtWorking)
+		lp := friendLevel(s, FriendLevelReq{Seats: seats, Who: r.who(), Max: FriendLevelPerTick, Taken: fp.Units, Moved: moved}, dealt, dealtWorking)
 		lp.Rows, lp.Units = append(up.Rows, lp.Rows...), append(up.Units, lp.Units...)
 		for _, row := range lp.Rows {
 			if !slices.Contains(p.Rows, row) {
@@ -969,7 +973,9 @@ func TickAsk(s *Snapshot, r TickReq) (Plan, int) {
 	// holds it already
 	room := s.readerRooms(s.Readers.Rows())
 	rr := askRound(s)
-	cards := eligibleTurns(s.Work.Column(Review), askable, askStreamRound(s))
+	// by the read's level (the higher of reader and its primary's: readOrder, priority.go),
+	// then stream turns
+	cards := readOrder(eligibleTurns(s.Work.Column(Review), askable, askStreamRound(s)))
 	// the finders first, as the ask places them (askFinders), over the
 	// primaries the tick may ask
 	var askNow []*Card

@@ -29,6 +29,7 @@ func routedReads(t *testing.T) (w *world, reads []*Card) {
 	t.Helper()
 	w = setup(t, 1)
 	w.s.Routes = []Route{pricedRoute}
+	readersReadEveryTier(w) // a fleet row reads flash unless it says more (fleetReadsFlashOnly)
 	w.must(Deal(w.s, DealReq{Sel: Sel{IDs: []string{"s1-1"}}}))
 	c := w.s.Fleet.Card(w.s.Work.Card("s1-1").F("work"))
 	require.Equal(t, "pro-a", c.F(FieldRoute), "the take is dealt on the route")

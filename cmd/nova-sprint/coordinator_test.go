@@ -80,6 +80,7 @@ func TestEveryCoordinatorVerbIsTheCoordinators(t *testing.T) {
 		"redo":              "redo s1-2",
 		"drop":              "drop s1-1 --reason r",
 		"unpin":             "unpin s1-1 --reason shared",
+		"priority":          "priority s1-1 --high --reason urgent",
 		"rank":              "rank s1-1 --first",
 		"relink":            "relink s1-1 s1-2",
 		"sentinel set":      "sentinel set s1-stop --needs s1-2",

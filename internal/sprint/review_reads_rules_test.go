@@ -60,6 +60,7 @@ func TestARefusedReturnedReadMovesNoRouteTheNextPrimaryDraws(t *testing.T) {
 		r.Deadline = 600 // seconds, as the route row holds it
 		w.s.Routes = append(w.s.Routes, r)
 	}
+	readersReadEveryTier(w) // a fleet row reads flash unless it says more (fleetReadsFlashOnly)
 	for _, id := range []string{"s1-1", "s1-2"} {
 		w.s.Work.Card(id).Fields[FieldTierNow] = "pro" // pro cards on pro (flash first: escalated)
 	}

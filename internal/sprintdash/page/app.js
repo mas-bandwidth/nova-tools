@@ -836,9 +836,42 @@ function renderMerge(d) {
     gate === "-" ? "the base's gate is not known" : "the base's gate is " + gate + (m.failing_test ? ": " + m.failing_test : ""));
 }
 
+// ---------- priority marks ----------
+// A card's priority by colour (docs/SPEC-SPRINT-DASHBOARD.md, "Priority"): one mark a card
+// whose level is not normal (where --json's priorities) and one a read waiting (reads_waiting),
+// in the ladder's order; a blocker bright red, a critical dark red, a read the orange of the
+// robot's shoes, and every work card blue whatever its level (high, low). At most MARKS_MAX a
+// level; the last says how many more.
+var MARK_LEVELS = ["blocker", "critical", "critical (by weight, not yet ordered)", "high", "reader", "low"];
+var MARKS_MAX = 40;
+function priorityClass(level) {
+  if (level.indexOf("critical") === 0) return "p-critical"; // a computed critical too, its title says so
+  return level === "blocker" || level === "reader" ? "p-" + level : "p-work";
+}
+function renderPriorityMarks(d) {
+  var box = $("priority-marks"); if (!box) return;
+  var marks = [];
+  MARK_LEVELS.forEach(function (l) {
+    var ids = l === "reader" ? [] : ((d.priorities || {})[l] || []).slice();
+    if (l === "reader") for (var i = 0; i < int(d.reads_waiting); i++) ids.push("a read waiting");
+    ids.slice(0, MARKS_MAX).forEach(function (id, i) {
+      var more = i === MARKS_MAX - 1 && ids.length > MARKS_MAX ? " (+" + (ids.length - MARKS_MAX) + " more)" : "";
+      marks.push([l, id + more]);
+    });
+  });
+  box.hidden = marks.length === 0;
+  setCount(box, marks.length, function () { return el("span", "mark"); });
+  marks.forEach(function (m, i) {
+    var k = box.children[i];
+    setClass(k, "mark " + priorityClass(m[0]));
+    setTitle(k, m[0] + ": " + m[1]);
+  });
+}
+
 function render(d) {
   var s = renderStreams(d);
   renderOverall(s.sum, s.all);
+  renderPriorityMarks(d);
   renderPie(d);
   renderTopStreams(d);
   renderMerge(d);
