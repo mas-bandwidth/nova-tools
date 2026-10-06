@@ -320,8 +320,8 @@ func LaneSeed(friend string, n, width int, agents, memory string) string {
 
 // CardText is one lane turn: the card and its three steps, then what else
 // rides along (the pong line first, the word about the coordinator, the bus
-// messages waiting).
-func CardText(c Card, n, width int, sendLine, pong, notice string, msgs []bus.Message) string {
+// messages waiting, each labelled by its sender's authority against seat).
+func CardText(c Card, n, width int, sendLine, pong, notice string, seat string, msgs []bus.Message) string {
 	var b strings.Builder
 	if pong != "" {
 		b.WriteString("Run this now, first, exactly as written: " + pong + "\nThen read on.\n\n")
@@ -334,7 +334,7 @@ func CardText(c Card, n, width int, sendLine, pong, notice string, msgs []bus.Me
 		b.WriteString("\nnova-friend: " + notice + "\n")
 	}
 	if len(msgs) > 0 {
-		b.WriteString("\nAlso for you, after the card:\n\n" + Batch(msgs, "", ""))
+		b.WriteString("\nAlso for you, after the card:\n\n" + BatchFor(seat, msgs, "", ""))
 	}
 	return b.String()
 }
@@ -479,7 +479,7 @@ func (l *loop) laneStep(now time.Time, width int) {
 		if d.CardDone != nil {
 			send = d.CardDone(ln.card.ID, l.coordinator())
 		}
-		t.text = CardText(*ln.card, ln.n, width, send, pong, notice, t.msgs)
+		t.text = CardText(*ln.card, ln.n, width, send, pong, notice, l.seat(now), t.msgs)
 		ln.t = t
 		l.startTurn(t, now, func(ctx context.Context) laneResult {
 			lt, err := lh.DeliverTo(LaneContext(ctx), ln.session, t.text)
