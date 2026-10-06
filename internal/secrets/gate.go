@@ -27,41 +27,18 @@ type GateInput struct {
 // RunGate is the seat-rule gate as a verb: the store's shell gate, called by the
 // workflow. It diffs --base..--head with git (no GitHub) and either prints
 // "GATE APPROVE files=<n> machines=<registry|->" at exit 0 or
-// "GATE REFUSE rule=<n> check=<k> file=<f>: <why>" at exit 2.
+// "GATE REFUSE rule=<n> check=<k> file=<f>: <why>" at exit 2. Independent inputs and
+// findings are reported together in the check order (SPEC-SECRETS "gate").
 func RunGate(in GateInput) (string, int) {
 	storeDir, base, head := in.StoreDir, in.Base, in.Head
-	// The flags only: the gate judges any working copy, a store with no seat yet included.
-	if err := preflight("", need{storeDir, "--store <dir>", false}, need{base, "--base <git ref>", false}, need{head, "--head <git ref>", false}); err != nil {
-		return "SECRETS GATE REFUSED: " + oneline.WithRemedy(err.Error(), "nova-secrets gate -h"), 2
-	}
-	// The two refs become commits before anything reads them. A ref is handed to git as an
-	// argument, and one beginning with "-" is read by git as an OPTION: --head=--diff-filter=U
-	// made the diff empty and the gate APPROVE files=0 at exit 0, and --base=--output=<f> made
-	// git write a file. So a ref of that shape is refused, each is resolved to one commit
-	// with rev-parse --verify behind --end-of-options, and every later git call is given the
-	// resolved SHA, again behind --end-of-options.
-	for _, r := range []struct{ flag, ref string }{{"--base", base}, {"--head", head}} {
-		if strings.HasPrefix(r.ref, "-") {
-			return fmt.Sprintf("SECRETS GATE REFUSED: %s %s begins with \"-\", the shape of an option, not a git ref; pass a branch, tag or commit; run: nova-secrets gate -h", r.flag, oneline.Field(r.ref)), 2
+	base, head, fleetSeats, findings, legacy := gateInputFindings(in)
+	if len(findings) > 0 {
+		if len(findings) == 1 {
+			return legacy, 2
 		}
+		return gateRefuseFindings(findings), 2
 	}
-	base, err := gateResolveCommit(storeDir, "--base", base)
-	if err != nil {
-		return gateRefuse(0, 0, "", err.Error()), 2
-	}
-	head, err = gateResolveCommit(storeDir, "--head", head)
-	if err != nil {
-		return gateRefuse(0, 0, "", err.Error()), 2
-	}
-
-	// The registry is read FIRST and read WHOLE, before any judgement leans on it: half a
-	// registry is the half that lets a recipient through, so unreadable or malformed is a
-	// refusal here and never a rule that quietly did not run.
-	fleetSeats, err := gateFleetSeats(in.MachinesPath)
-	if err != nil {
-		return gateRefuse(0, 0, in.MachinesPath, err.Error()), 2
-	}
-
+	// The two refs are resolved to commits before any diff or tree read (SPEC-SECRETS "gate").
 	changed, err := gitChangedFiles(storeDir, base, head)
 	if err != nil {
 		return gateRefuse(0, 0, "", err.Error()), 2
@@ -69,38 +46,60 @@ func RunGate(in GateInput) (string, int) {
 	if len(changed) == 0 {
 		return gateApprove(0, in.MachinesPath), 0
 	}
+	sort.Strings(changed)
+	var gateFindings []gateFinding
 
 	// Check 3: No other file changes except README.md.
 	for _, f := range changed {
 		if f == ".sops.yaml" || f == "README.md" || isSeatYAML(f) {
 			continue
 		}
-		return gateRefuse(0, 3, f, "only .sops.yaml, README.md and seat .yaml files may change"), 2
+		gateFindings = append(gateFindings, gateFinding{check: 3, file: f, why: "only .sops.yaml, README.md and seat .yaml files may change"})
 	}
 
 	// The declared recovery key, read from the head tree.
 	recoveryData, err := gitShowFile(storeDir, head, "recovery.pub")
+	recoveryValid := err == nil
 	if err != nil {
-		return gateRefuse(0, 0, "recovery.pub", "unreadable at "+oneline.Field(head)), 2
+		gateFindings = append(gateFindings, gateFinding{file: "recovery.pub", why: "unreadable at " + oneline.Field(head)})
+	} else if !IsValidAgePublicKey(strings.TrimSpace(string(recoveryData))) {
+		recoveryValid = false
+		gateFindings = append(gateFindings, gateFinding{file: "recovery.pub", why: "does not declare a single valid age public key"})
 	}
 	recoveryKey := strings.TrimSpace(string(recoveryData))
-	if !IsValidAgePublicKey(recoveryKey) {
-		return gateRefuse(0, 0, "recovery.pub", "does not declare a single valid age public key"), 2
-	}
 
 	// The head .sops.yaml, the rule set the gate measures against.
 	sopsData, err := gitShowFile(storeDir, head, ".sops.yaml")
+	sopsValid := err == nil
 	if err != nil {
-		return gateRefuse(0, 0, ".sops.yaml", "unreadable at "+oneline.Field(head)), 2
+		gateFindings = append(gateFindings, gateFinding{file: ".sops.yaml", why: "unreadable at " + oneline.Field(head)})
 	}
-	cfg, err := parseSopsConfig(bytes.NewReader(sopsData))
-	if err != nil {
-		return gateRefuse(0, 0, ".sops.yaml", err.Error()), 2
+	var cfg *SopsConfig
+	if sopsValid {
+		cfg, err = parseSopsConfig(bytes.NewReader(sopsData))
+		if err != nil {
+			sopsValid = false
+			gateFindings = append(gateFindings, gateFinding{file: ".sops.yaml", why: err.Error()})
+		}
 	}
 
 	headFiles, err := gitTreeFiles(storeDir, head)
+	headFilesValid := err == nil
 	if err != nil {
-		return gateRefuse(0, 0, "", "unable to list the head tree: "+oneline.Escape(err.Error())), 2
+		gateFindings = append(gateFindings, gateFinding{why: "unable to list the head tree: " + oneline.Escape(err.Error())})
+	}
+	if !recoveryValid || !sopsValid || !headFilesValid {
+		baseFiles, baseErr := gitTreeFiles(storeDir, base)
+		if baseErr != nil {
+			gateFindings = append(gateFindings, gateFinding{why: "unable to list the base tree: " + oneline.Escape(baseErr.Error())})
+		} else if headFilesValid {
+			for _, bf := range baseFiles {
+				if isSeatYAML(bf) && !slices.Contains(headFiles, bf) {
+					gateFindings = append(gateFindings, gateFinding{check: 5, file: bf, why: "the seat file is in the store at the base and gone at the head; a seat is never removed here"})
+				}
+			}
+		}
+		return gateRefuseFindings(gateFindings), 2
 	}
 
 	// Check 1: Every changed .sops.yaml rule: exactly two age recipients, one the
@@ -109,18 +108,22 @@ func RunGate(in GateInput) (string, int) {
 		// The recipients the store already had. A key here is not a grant this pull request
 		// makes, so resealing a seat or editing its rule asks the registry nothing.
 		baseKeys, err := gateRecipientsAt(storeDir, base)
+		baseKeysKnown := err == nil
 		if err != nil {
-			return gateRefuse(0, 0, ".sops.yaml", err.Error()), 2
+			gateFindings = append(gateFindings, gateFinding{file: ".sops.yaml", why: err.Error()})
+			baseKeys = map[string]bool{}
 		}
 		for i := range cfg.CreationRules {
 			rule := cfg.CreationRules[i]
 			ruleNum := i + 1
-			if problem := ruleRecipientsProblem(rule.Recipients, recoveryKey); problem != "" {
-				return gateRefuse(ruleNum, 1, ".sops.yaml", "rule "+problem), 2
+			recipientProblem := ruleRecipientsProblem(rule.Recipients, recoveryKey)
+			if recipientProblem != "" {
+				gateFindings = append(gateFindings, gateFinding{rule: ruleNum, check: 1, file: ".sops.yaml", why: "rule " + recipientProblem})
 			}
 			re, err := regexp.Compile(rule.PathRegex)
 			if err != nil {
-				return gateRefuse(ruleNum, 1, ".sops.yaml", fmt.Sprintf("path_regex %q is not a valid regular expression", rule.PathRegex)), 2
+				gateFindings = append(gateFindings, gateFinding{rule: ruleNum, check: 1, file: ".sops.yaml", why: fmt.Sprintf("path_regex %q is not a valid regular expression", rule.PathRegex)})
+				continue
 			}
 			named, seatFile := 0, ""
 			for _, hf := range headFiles {
@@ -130,7 +133,8 @@ func RunGate(in GateInput) (string, int) {
 				}
 			}
 			if named != 1 {
-				return gateRefuse(ruleNum, 1, ".sops.yaml", fmt.Sprintf("path_regex names %d seat files; expected exactly one", named)), 2
+				gateFindings = append(gateFindings, gateFinding{rule: ruleNum, check: 1, file: ".sops.yaml", why: fmt.Sprintf("path_regex names %d seat files; expected exactly one", named)})
+				continue
 			}
 
 			// Check 4: A recipient key this pull request introduces is a GRANT, and a seat can
@@ -140,16 +144,17 @@ func RunGate(in GateInput) (string, int) {
 			// file's seat, so the question "whose key is this, and does that machine
 			// exist?" has a mechanical answer. With no --machines the rule is dormant
 			// and the APPROVE line says so.
-			if fleetSeats != nil {
+			if fleetSeats != nil && baseKeysKnown && recipientProblem == "" {
 				seat := strings.TrimSuffix(seatFile, ".yaml")
 				for _, key := range rule.Recipients {
 					if key == recoveryKey || baseKeys[key] {
 						continue
 					}
 					if !fleetSeats[seat] {
-						return gateRefuse(ruleNum, 4, seatFile, fmt.Sprintf(
+						gateFindings = append(gateFindings, gateFinding{rule: ruleNum, check: 4, file: seatFile, why: fmt.Sprintf(
 							"rule adds a recipient no seat file rule named before, and no machine in %s carries the seat %s; add the machine's row (its seat column must read %s) or drop the rule",
-							oneline.Field(in.MachinesPath), oneline.Field(seat), oneline.Field(seat))), 2
+							oneline.Field(in.MachinesPath), oneline.Field(seat), oneline.Field(seat))})
+						break
 					}
 				}
 			}
@@ -161,11 +166,12 @@ func RunGate(in GateInput) (string, int) {
 	// subject says it is adding one, and it is never part of adding a seat.
 	baseFiles, err := gitTreeFiles(storeDir, base)
 	if err != nil {
-		return gateRefuse(0, 0, "", "unable to list the base tree: "+oneline.Escape(err.Error())), 2
-	}
-	for _, bf := range baseFiles {
-		if isSeatYAML(bf) && !slices.Contains(headFiles, bf) {
-			return gateRefuse(0, 5, bf, "the seat file is in the store at the base and gone at the head; a seat is never removed here"), 2
+		gateFindings = append(gateFindings, gateFinding{why: "unable to list the base tree: " + oneline.Escape(err.Error())})
+	} else {
+		for _, bf := range baseFiles {
+			if isSeatYAML(bf) && !slices.Contains(headFiles, bf) {
+				gateFindings = append(gateFindings, gateFinding{check: 5, file: bf, why: "the seat file is in the store at the base and gone at the head; a seat is never removed here"})
+			}
 		}
 	}
 
@@ -174,39 +180,55 @@ func RunGate(in GateInput) (string, int) {
 		if !isSeatYAML(f) {
 			continue
 		}
+		if !slices.Contains(headFiles, f) {
+			continue
+		}
 		ruleIdx := matchingRuleIndex(cfg, f)
 		if ruleIdx < 0 {
-			return gateRefuse(0, 2, f, "no creation rule in .sops.yaml matches this file"), 2
+			gateFindings = append(gateFindings, gateFinding{check: 2, file: f, why: "no creation rule in .sops.yaml matches this file"})
+			continue
 		}
 		ruleNum := ruleIdx + 1
 		data, err := gitShowFile(storeDir, head, f)
 		if err != nil {
-			return gateRefuse(ruleNum, 2, f, "unreadable at "+oneline.Field(head)), 2
+			gateFindings = append(gateFindings, gateFinding{rule: ruleNum, check: 2, file: f, why: "unreadable at " + oneline.Field(head)})
+			continue
 		}
-		if !bytes.Contains(data, []byte("sops:")) {
-			return gateRefuse(ruleNum, 2, f, "file is not encrypted (missing sops metadata)"), 2
+		hasSops := bytes.Contains(data, []byte("sops:"))
+		if !hasSops {
+			gateFindings = append(gateFindings, gateFinding{rule: ruleNum, check: 2, file: f, why: "file is not encrypted (missing sops metadata)"})
 		}
 		_, recipients, _, err := parseStoreFile(bytes.NewReader(data))
 		if err != nil {
-			return gateRefuse(ruleNum, 2, f, "unreadable sops metadata: "+oneline.Escape(err.Error())), 2
+			gateFindings = append(gateFindings, gateFinding{rule: ruleNum, check: 2, file: f, why: "unreadable sops metadata: " + oneline.Escape(err.Error())})
+		} else if hasSops {
+			if problem := seatFileRecipientsProblem(recipients, cfg.CreationRules[ruleIdx].Recipients, recoveryKey); problem != "" {
+				gateFindings = append(gateFindings, gateFinding{rule: ruleNum, check: 2, file: f, why: problem})
+			}
 		}
-		if problem := seatFileRecipientsProblem(recipients, cfg.CreationRules[ruleIdx].Recipients, recoveryKey); problem != "" {
-			return gateRefuse(ruleNum, 2, f, problem), 2
-		}
-		key, plain, err := firstPlainValue(data, cfg.CreationRules[ruleIdx].UnencryptedRegex)
+		keys, err := plainValues(data, cfg.CreationRules[ruleIdx].UnencryptedRegex)
 		if err != nil {
-			return gateRefuse(ruleNum, 2, f, fmt.Sprintf("unencrypted_regex %q is not a valid regular expression", cfg.CreationRules[ruleIdx].UnencryptedRegex)), 2
-		}
-		if plain {
-			return gateRefuse(ruleNum, 2, f, fmt.Sprintf("key %s is a plain value, not encrypted", oneline.Field(key))), 2
+			unencryptedRegex := cfg.CreationRules[ruleIdx].UnencryptedRegex
+			if _, regexErr := regexp.Compile(unencryptedRegex); regexErr != nil {
+				gateFindings = append(gateFindings, gateFinding{rule: ruleNum, check: 2, file: f, why: fmt.Sprintf("unencrypted_regex %q is not a valid regular expression", unencryptedRegex)})
+			} else {
+				gateFindings = append(gateFindings, gateFinding{rule: ruleNum, check: 2, file: f, why: "unreadable seat file: " + oneline.Escape(err.Error())})
+			}
+		} else {
+			for _, key := range keys {
+				gateFindings = append(gateFindings, gateFinding{rule: ruleNum, check: 2, file: f, why: fmt.Sprintf("key %s is a plain value, not encrypted", oneline.Field(key))})
+			}
 		}
 		// Check 2b: A seat file is written by a verb, never by hand: the mark every verb leaves
 		// in the clear is what tells a verb-made file from a hand seal, whose bytes are
 		// otherwise the same (SPEC-SECRETS "gate"; tla/SecretsSeat.tla on
 		// sprint/md-secrets-h.w1.g1.e15, the MCSecretsSeatReachHandSeal config).
-		if !gateHasMark(data) {
-			return gateRefuse(ruleNum, 2, f, "the seat file was not written by a nova-secrets verb; seal it with nova-secrets seal or seat add, never by hand"), 2
+		if hasSops && !gateHasMark(data) {
+			gateFindings = append(gateFindings, gateFinding{rule: ruleNum, check: 2, file: f, why: "the seat file was not written by a nova-secrets verb; seal it with nova-secrets seal or seat add, never by hand"})
 		}
+	}
+	if len(gateFindings) > 0 {
+		return gateRefuseFindings(gateFindings), 2
 	}
 
 	return gateApprove(len(changed), in.MachinesPath), 0
@@ -290,6 +312,75 @@ func gateRefuse(ruleNum, checkNum int, file, why string) string {
 	return fmt.Sprintf("GATE REFUSE rule=%d check=%d file=%s: %s", ruleNum, checkNum, oneline.Field(file), oneline.Escape(why))
 }
 
+type gateFinding struct {
+	rule, check int
+	file, why   string
+}
+
+// gateInputFindings validates independent gate inputs once and returns the resolved refs
+// and parsed registry used by the checks. Ref and registry reads are single snapshots
+// (SPEC-SECRETS "gate").
+func gateInputFindings(in GateInput) (base, head string, fleetSeats map[string]bool, findings []gateFinding, legacy string) {
+	storeDir, base, head := in.StoreDir, in.Base, in.Head
+	missing := preflight("", need{storeDir, "--store <dir>", false}, need{base, "--base <git ref>", false}, need{head, "--head <git ref>", false})
+	if missing != nil {
+		findings = append(findings, gateFinding{why: missing.Error()})
+		legacy = "SECRETS GATE REFUSED: " + oneline.WithRemedy(missing.Error(), "nova-secrets gate -h")
+	}
+	optionShapedRef := false
+	for _, r := range []struct{ flag, ref string }{{"--base", base}, {"--head", head}} {
+		if r.ref == "" || !strings.HasPrefix(r.ref, "-") {
+			continue
+		}
+		optionShapedRef = true
+		message := fmt.Sprintf("%s %s begins with \"-\", the shape of an option, not a git ref; pass a branch, tag or commit; run: nova-secrets gate -h", r.flag, oneline.Field(r.ref))
+		findings = append(findings, gateFinding{why: message})
+		legacy = "SECRETS GATE REFUSED: " + message
+	}
+	resolve := func(flagName, ref string) string {
+		if ref == "" || optionShapedRef {
+			return ""
+		}
+		if storeDir == "" {
+			return ""
+		}
+		resolved, err := gateResolveCommit(storeDir, flagName, ref)
+		if err != nil {
+			findings = append(findings, gateFinding{why: err.Error()})
+			legacy = gateRefuse(0, 0, "", err.Error())
+			return ""
+		}
+		return resolved
+	}
+	base = resolve("--base", base)
+	head = resolve("--head", head)
+	if in.MachinesPath != "" {
+		var err error
+		fleetSeats, err = gateFleetSeats(in.MachinesPath)
+		if err != nil {
+			findings = append(findings, gateFinding{file: in.MachinesPath, why: err.Error()})
+			legacy = gateRefuse(0, 0, in.MachinesPath, err.Error())
+		}
+	}
+	return base, head, fleetSeats, findings, legacy
+}
+
+// gateRefuseFindings keeps the established line for one finding and lists every additional
+// independent finding in order for one combined verdict (SPEC-SECRETS "gate").
+func gateRefuseFindings(findings []gateFinding) string {
+	if len(findings) == 1 {
+		f := findings[0]
+		return gateRefuse(f.rule, f.check, f.file, f.why)
+	}
+	first := findings[0]
+	items := make([]string, 0, len(findings)-1)
+	for _, f := range findings[1:] {
+		items = append(items, fmt.Sprintf("rule=%d check=%d file=%s: %s", f.rule, f.check, oneline.Field(f.file), f.why))
+	}
+	why := fmt.Sprintf("%s; additional findings=%d: %s", first.why, len(items), strings.Join(items, "; "))
+	return gateRefuse(first.rule, first.check, first.file, why)
+}
+
 // isSeatYAML reports whether path is a seat file: a *.yaml that is not .sops.yaml.
 func isSeatYAML(path string) bool {
 	return strings.HasSuffix(path, ".yaml") && path != ".sops.yaml"
@@ -323,14 +414,28 @@ func filepathSlash(p string) string { return strings.ReplaceAll(p, "\\", "/") }
 // judged against a regex that does not compile, so the gate refuses on the real cause
 // instead of reporting a permitted key as a plain value.
 func firstPlainValue(data []byte, unencryptedRegex string) (string, bool, error) {
+	keys, err := plainValues(data, unencryptedRegex)
+	if err != nil {
+		return "", false, err
+	}
+	if len(keys) == 0 {
+		return "", false, nil
+	}
+	return keys[0], true, nil
+}
+
+// plainValues returns every root-level key whose value is not encrypted and is not
+// permitted in the clear by unencryptedRegex (SPEC-SECRETS "gate").
+func plainValues(data []byte, unencryptedRegex string) ([]string, error) {
 	var unencRe *regexp.Regexp
 	if unencryptedRegex != "" {
 		var err error
 		unencRe, err = regexp.Compile(unencryptedRegex)
 		if err != nil {
-			return "", false, err
+			return nil, err
 		}
 	}
+	var keys []string
 	scanner := bufio.NewScanner(bytes.NewReader(data))
 	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
 	for scanner.Scan() {
@@ -352,9 +457,12 @@ func firstPlainValue(data []byte, unencryptedRegex string) (string, bool, error)
 		if unencRe != nil && unencRe.MatchString(key) {
 			continue
 		}
-		return key, true, nil
+		keys = append(keys, key)
 	}
-	return "", false, nil
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+	return keys, nil
 }
 
 // gateResolveCommit turns one ref into the SHA of the commit it names in the store, or
