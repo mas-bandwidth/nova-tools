@@ -109,7 +109,7 @@ func TraceIdle(s *Snapshot, r TickReq) string {
 			}
 		}
 		if c.Col == Ready {
-			if OnlyFriend(c) {
+			if PinnedFriend(c) != "" {
 				return idleRoot{kind: rootFlight, subject: "friends", say: "a friend's card ready"}
 			}
 			if tier, why := s.noRoute(escalating(s, c)); why != "" {

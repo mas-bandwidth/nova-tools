@@ -7,6 +7,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// WHO: friend (any) is a preference among friends; WHO: friend <name> and WHO: only friend
+// <name> name her, and the card waits for her alone (the-dealer-honors-who.w1).
 func TestWhoIsAPreference(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -15,8 +17,8 @@ func TestWhoIsAPreference(t *testing.T) {
 	}{
 		{"unpinned", "", "friend.bob", []FriendSeat{{Name: "bob", Width: 1, Status: Up, Class: "pro,heavy"}}},
 		{"preferred first", "friend amy", "friend.amy", []FriendSeat{{Name: "amy", Width: 1, Status: Up, Class: "pro"}, {Name: "bob", Width: 8, Status: Up, Class: "pro"}}},
-		{"preferred full", "friend amy", "friend.bob", []FriendSeat{{Name: "amy", Width: 0, Status: Up, Class: "pro"}, {Name: "bob", Width: 1, Status: Up, Class: "pro"}}},
-		{"fleet fallback", "friend amy", "fleet", []FriendSeat{{Name: "amy", Width: 0, Status: Up, Class: "pro"}, {Name: "bob", Width: 1, Status: Up, Class: "flash"}}},
+		{"named full waits", "friend amy", "", []FriendSeat{{Name: "amy", Width: 0, Status: Up, Class: "pro"}, {Name: "bob", Width: 1, Status: Up, Class: "pro"}}},
+		{"named never to the fleet", "friend amy", "", []FriendSeat{{Name: "amy", Width: 0, Status: Up, Class: "pro"}, {Name: "bob", Width: 1, Status: Up, Class: "flash"}}},
 		{"only waits", "only friend amy", "", []FriendSeat{{Name: "amy", Width: 0, Status: Up, Class: "pro"}, {Name: "bob", Width: 1, Status: Up, Class: "pro"}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -30,7 +32,7 @@ func TestWhoIsAPreference(t *testing.T) {
 			if tc.want == "" {
 				assert.Nil(t, wc)
 				assert.Equal(t, Ready, w.s.StateOf("s1-1"))
-				assert.Contains(t, Holder(running(w), w.s.Now, "s1-1").Why, "waits for only friend amy")
+				assert.Contains(t, Holder(running(w), w.s.Now, "s1-1").Why, "waits for "+tc.who)
 				return
 			}
 			require.NotNil(t, wc)
