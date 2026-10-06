@@ -2773,7 +2773,11 @@ id (`--op`) returns the original result, with no second counter or notification.
   cards it cannot run): a friend's or a bud's reader, `reader-<name>` for a
   friend whose seat the tick reads or whose friend row the fleet table has
   (beaten by her daemon, `internal/friend` ReaderOf), brings its own model and
-  serves every tier its tiers cell names, route or none; any other reader is the
+  serves every tier her class covers, route or none: her class is her friend
+  row's tiers (`nova-config friend`, the seat's class), one of them at or above
+  the read tier, never her readers-table tiers cell and never a route
+  (`sprint.readerReadsTier`, friendReaderSeat; the cell decides only for a
+  friend whose row names no tier); any other reader is the
   fleet's, runs the route its read draws, so it serves a tier only while an
   enabled route of the tier is in the tier's array, and is asked no read of a
   tier it cannot draw (`sprint.readerServesTier`,
@@ -2786,6 +2790,19 @@ id (`--op`) returns the original result, with no second counter or notification.
   AND no reader up that brings its own model reads it (`route.go`,
   readRouteMissing), closed when either serves it
   (`TestAHeavyCardIsReadByAFriendReaderWithNoHeavyRoute`).
+  **The order of a read** (2026-10-06, seven heavy primaries held by
+  `no route serves the tier` while the rowans' friend rows carried
+  flash,frontier,heavy,pro and their readers were up; the owner: "All rowans
+  can take the set of Fable/Opus/Sonnet/Haiku"): the ask asks a read of the
+  friend readers of the class first, and only then of the readers that draw a
+  route of the tier, by room within each (`sprint.askPicks`). Two readers, two
+  minds: the friend reader of the login that worked the attempt is left out of
+  the readers free for it while a friend reader of the class on another login is
+  free and the rest are as many as the primary needs, unless it is the finder
+  (`sprint.freeReaders`, workersReader); when the pair needs it, the room orders
+  it with the others. The level never moves a read to a reader later in that
+  order (readerRank: another login, the worker's own, a route;
+  `TestAHeavyReadIsAskedOfAFriendReaderOfTheClassBeforeARoute`).
   Work that came back failed is not read: it waits for the coordinator.
   `ask --another` deals a primary already asked to one more reader, for that
   attempt only (the primary's `asked` field still names the readers the

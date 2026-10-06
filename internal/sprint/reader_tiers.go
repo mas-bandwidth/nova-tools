@@ -72,8 +72,13 @@ func (s *Snapshot) readerTiersStored(reader string) string {
 	return row[ReaderTiers]
 }
 
-// readerReadsTier says the reader reads tier. An empty cell reads every tier.
+// readerReadsTier says the reader reads tier. A friend's reader is read from her friend
+// row (friendReaderSeat): one of its tiers at or above tier (friendAtOrAbove), whatever
+// her cell says. Any other reader by its cell; an empty cell reads every tier.
 func (s *Snapshot) readerReadsTier(reader, tier string) bool {
+	if f, ok := s.friendReaderSeat(reader); ok {
+		return friendAtOrAbove(f, tier)
+	}
 	stored := strings.TrimSpace(s.readerTiersStored(reader))
 	if stored == "" {
 		return true

@@ -350,15 +350,32 @@ func ReadCardForAsk(s *Snapshot, primary string, attempt int, reader string) (id
 // the plain identity and no second card exists yet, the reader is eligible to
 // be re-asked under second identity .g1. The next attempt is read on new
 // cards, by every reader of the tier.
+//
+// Two readers, two minds (docs/SPEC-SPRINT.md section 6, the order of a read):
+// the friend reader of the login that worked the attempt (workersReader) is left
+// out while a friend reader of the class on another login is free and the rest
+// are as many as the primary needs (ReadsNeeded), unless it is the primary's
+// finder (finderFirst); so another login is asked first, and no count of the
+// readers free falls short for it.
 func (s *Snapshot) freeReaders(pr *Card, attempt int) []string {
 	tier := s.readTierOf(pr)
 	var out []string
+	own, other := "", false
 	for _, rd := range s.Readers.Rows() {
 		if s.ReaderIsUp(rd) && s.readerServesTier(rd, tier) {
 			if _, ok := ReadCardForAsk(s, pr.ID, attempt, rd); ok {
 				out = append(out, rd)
+				switch s.readerRank(rd, pr) {
+				case rankFriendSame:
+					own = rd
+				case rankFriendOther:
+					other = true
+				}
 			}
 		}
+	}
+	if own != "" && other && len(out)-1 >= ReadsNeeded(pr) && pr.F(FieldFindingReader) != own {
+		out = without(out, []string{own})
 	}
 	return out
 }
@@ -465,6 +482,13 @@ func (s *Snapshot) askFinders(cards []*Card, another bool, room map[string]reade
 // room, so the room, not a turn count, keeps the readers' loads even. It
 // moves no index: the ask moves it past the readers it picked in turn, never
 // the finder (an out-of-turn read leaves the round where it was).
+//
+// The rest are picked in the order a read is asked in (docs/SPEC-SPRINT.md
+// section 6, the order of a read): the friend readers first (room's own: every
+// free reader reads the primary's tier, freeReaders, so a friend reader in free
+// is one of the class), then the readers that draw a route; by room within
+// each. The worker's own friend reader is left out of free while others can
+// read it (freeReaders), so another login is asked first.
 func askPicks(rr *round, finder string, want int, free []string, room map[string]readerRoom) []string {
 	if want <= 0 {
 		return nil
@@ -474,7 +498,16 @@ func askPicks(rr *round, finder string, want int, free []string, room map[string
 		picked = append(picked, finder)
 		free = without(free, []string{finder})
 	}
-	return append(picked, rr.pickByRoom(want-len(picked), free, room)...)
+	var friends, routed []string
+	for _, rd := range free {
+		if room[rd].own {
+			friends = append(friends, rd)
+		} else {
+			routed = append(routed, rd)
+		}
+	}
+	picked = append(picked, rr.pickByRoom(want-len(picked), friends, room)...)
+	return append(picked, rr.pickByRoom(want-len(picked), routed, room)...)
 }
 
 // sweepReads is the readers' rebalance safety: every read asked or reading of a
@@ -571,7 +604,10 @@ func (s *Snapshot) readerLoad(reader string) int {
 // width. The ask and the level compare rooms by share, free room as a part of
 // width, so a machine of 4 and one of 24 are each filled to the same fraction
 // (ten reads: the 24 takes eight), never by count alone.
-type readerRoom struct{ width, free int }
+type readerRoom struct {
+	width, free int
+	own         bool // the reader brings its own model (ownModelReader): asked before a route (askPicks)
+}
 
 // roomParts is the parts a share is counted in.
 const roomParts = 1 << 20
@@ -588,7 +624,9 @@ func (r readerRoom) share() int {
 }
 
 // after is the room with n more reads placed on it.
-func (r readerRoom) after(n int) readerRoom { return readerRoom{width: r.width, free: r.free - n} }
+func (r readerRoom) after(n int) readerRoom {
+	return readerRoom{width: r.width, free: r.free - n, own: r.own}
+}
 
 // readerRooms is each reader's room (readerRoom). The ask gives a read to the
 // reader with the greatest share (round.pickByRoom, taking the reads it places
@@ -598,7 +636,7 @@ func (s *Snapshot) readerRooms(readers []string) map[string]readerRoom {
 	room := make(map[string]readerRoom, len(readers))
 	for _, rd := range readers {
 		w := s.ReaderWidth(rd)
-		room[rd] = readerRoom{width: w, free: w - s.readerLoad(rd)}
+		room[rd] = readerRoom{width: w, free: w - s.readerLoad(rd), own: s.ownModelReader(rd)}
 	}
 	return room
 }
@@ -666,7 +704,10 @@ func levelReads(s *Snapshot, p *Plan) {
 			}
 			for _, rd := range up {
 				targetID, ok := ReadCardForAsk(s, q[i].F("primary"), q[i].Int("attempt"), rd)
-				if !ok || planned[targetID] || (tier != "" && !s.readerServesTier(rd, tier)) {
+				// nor to a reader later in the order a read is asked in (readerRank): a
+				// friend's read is not levelled onto a route, nor onto the worker's own
+				later := pr != nil && s.readerRank(rd, pr) > s.readerRank(long, pr)
+				if !ok || planned[targetID] || later || (tier != "" && !s.readerServesTier(rd, tier)) {
 					avoid = append(avoid, rd)
 				}
 			}
