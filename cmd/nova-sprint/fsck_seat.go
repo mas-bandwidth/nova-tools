@@ -27,14 +27,14 @@ func (a *app) cmdFsckSeat(args []string, stdout, stderr io.Writer) int {
 
 // fsckSeat is cmdFsckSeat with the config row read by row, given --pg.
 func (a *app) fsckSeat(args []string, stdout, stderr io.Writer, row func(pg string) sprint.ConfigCoordinator) int {
-	fs, c := a.verbSetup("fsck")
+	fs, c := a.verbSetup("fsck seat")
 	pg := fs.String("pg", "", "the address of nova-config's store, whose sprint row's coordinator is checked: host:port, or a postgres:// URI; else NOVA_PG_DSN")
 	if pos, err := parse(fs, args); err != nil || len(pos) > 0 {
-		return refuse(stderr, "fsck", argErr("takes no words ", err, pos...))
+		return refuse(stderr, "fsck seat", argErr("takes no words ", err, pos...))
 	}
 	st, err := a.store(*c)
 	if err != nil {
-		return refuse(stderr, "fsck", err.Error())
+		return refuse(stderr, "fsck seat", err.Error())
 	}
 	ctx := context.Background()
 	s, err := st.SeatCheck(ctx)
@@ -43,11 +43,11 @@ func (a *app) fsckSeat(args []string, stdout, stderr io.Writer, row func(pg stri
 	}
 	f, err := sprint.FsckSeat(ctx, s.Holder, s.Record, s.Server, row(*pg))
 	if err != nil {
-		fmt.Fprintf(stderr, "%s fsck FAILED: %s\n", prog, oneline.WithRemedy(err.Error(), prog+" fsck --pg <host:port or postgres:// URI>"))
+		fmt.Fprintf(stderr, "%s fsck seat FAILED: %s\n", prog, oneline.WithRemedy(err.Error(), prog+" fsck seat --pg <host:port or postgres:// URI>"))
 		return 2
 	}
 	if f.Drift == "" {
-		sayOK(stdout, c.json, "fsck", f.Line(), map[string]any{"checks": []sprint.SeatAgreement{f}})
+		sayOK(stdout, c.json, "fsck seat", f.Line(), map[string]any{"checks": []sprint.SeatAgreement{f}})
 		return 0
 	}
 	if c.json {

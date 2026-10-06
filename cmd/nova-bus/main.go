@@ -173,7 +173,7 @@ func busTool(w world) *tool.Tool {
 		Stamp: version,
 		How: `the loop: send --as <me> --to <friend> --subject <s> --body <text> sends;
 recv --as <me> --forever --exec '<deliver-into-session>' takes each message in, acked on exit 0;
-ack --as <me> --id <id> acks by hand after a plain recv; names: nova-config friend and machine rows.
+ack --as <me> --id <id> acks by hand; send and recv refuse a deaf name (no push proven in 10m).
 one stream per recipient (bus2:to:<name>) under a consumer group, one log (bus2:log); all or none.
 first run: a Redis naming ada and bob at --redis (else ` + RedisEnv + `); loopback or tailnet only.`,
 		ExitTable: "0 done, 1 the verb ran and said no (recv: nothing waiting; recv --exec: the command failed; wait: nothing came), 2 could not run (a flag, an input, a store that did not answer).",
@@ -232,8 +232,11 @@ message's for ever, and the byte count and digest are the body's as the store ho
 can check a --stdin or shell-built body arrived whole (a shell's $(cat f) drops the trailing newline).
 You are the user the connection logged in as (NOVA_SPRINT_REDIS_USER): --as may name it or be left
 out, and another name is refused. With no login (a store with no users) --as is your word for who you
-are, and the line says login=none. --dry-run checks the message as send does (every problem named) and prints the
-line with no id, writing nothing.`,
+are, and the line says login=none. The sender and every recipient must be heard: a name whose friend
+daemon proved its inbox push (a SESSION CHECK carried in by its harness's deliver adapter and answered
+by the session) under ten minutes ago; any other is refused with deaf: <name> has no proven push since
+<age> and the remedy, and nothing is written (nova-bus names shows each name's push). --dry-run checks
+the message as send does (every problem named) and prints the line with no id, writing nothing.`,
 				Flags: func(f *tool.Flags) {
 					f.String("as", "", "your name, the sender: the login user when there is one (then it may be left out)")
 					f.Required("to", "the recipients, comma-separated names")
@@ -275,7 +278,8 @@ line with no id, writing nothing.`,
 				DryRun:  true,
 				Detail: `Prints one message: a line RECV OK id=<id> from=<name> to=<names> cc=<names> re=<id> [kind=<k>] at=<RFC3339>
 subject=<s> (login=none when the connection has no login user), a blank line, the body; or RECV
-NONE at exit 1 when nothing waits. You are the login user, as in send. The oldest message a
+NONE at exit 1 when nothing waits. You are the login user, as in send, and must be heard as there: a
+recv for a name with no proven push is refused (deaf: <name> ...). The oldest message a
 reader lost (delivered, not acked, idle fifteen minutes) comes first, else the oldest new one; the
 reader keeps it for fifteen minutes. --exec '<command>' runs the command with that same text on its stdin and
 acks the message when it exits 0 (the line adds acked=true exec_exit=0); a non-zero exit leaves
@@ -354,7 +358,11 @@ user, as in send. --dry-run acks nothing: acked= says which ids are pending for 
 				Usage:   "names [--redis <addr>]",
 				Example: "names",
 				Effect:  tool.Inspection,
-				Detail:  "Prints NAMES OK count=<n>, then one NAMES NAME name=<name> line per known name: nova-config's friend and machine rows.",
+				Detail: `Prints NAMES OK count=<n> proven=<n>, then one NAMES NAME name=<name> push=<state> age=<age>
+harness=<h> line per known name (nova-config's friend and machine rows). push is proven (its friend
+daemon proved and renewed its inbox push under ten minutes ago: send and recv take it), stale (the
+daemon stopped renewing), down (its session did not answer the daemon's SESSION CHECK) or none (no
+daemon ever recorded one); age is how long ago the daemon wrote it, never when there is none.`,
 				Flags: func(f *tool.Flags) {
 					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else the fleet row's bus from the sprint store)")
 				},
@@ -382,7 +390,7 @@ func (w world) bus(c *tool.Call) (*bus.Bus, string, func(), *tool.Out) {
 	if err != nil {
 		return nil, "", nil, tool.Refuse(err.Error())
 	}
-	return &bus.Bus{Store: st}, login, closeStore, nil
+	return &bus.Bus{Store: bus.Hearing(st)}, login, closeStore, nil
 }
 
 // identity is who the verb acts as: the user the connection logged in as,
@@ -458,7 +466,15 @@ func (w world) send(c *tool.Call) *tool.Out {
 	}
 	send := b.Send
 	if c.DryRun() {
-		send = b.Check // the message as it would be sent, with no id: nothing is written
+		// the message as it would be sent, with no id: nothing is written, and the
+		// push gate the write would meet is asked for by name
+		send = func(ctx context.Context, m bus.Message) (bus.Message, error) {
+			m, err := b.Check(ctx, m)
+			if err != nil {
+				return m, err
+			}
+			return m, b.Heard(ctx, slices.Concat([]string{m.From}, m.To, m.CC)...)
+		}
 	}
 	m, err := send(context.Background(), draft)
 	if err != nil {
@@ -528,7 +544,11 @@ func (w world) recv(c *tool.Call) *tool.Out {
 	}
 	if c.DryRun() {
 		// what waits, read only: the next delivered is a pending one held past fifteen
-		// minutes when there is one, else the oldest new one
+		// minutes when there is one, else the oldest new one; a deaf name is refused
+		// as the recv itself would be
+		if err := b.Heard(context.Background(), as); err != nil {
+			return answer(err)
+		}
 		pending, fresh, err := b.Peek(context.Background(), as)
 		if err != nil {
 			return answer(err)
@@ -724,9 +744,23 @@ func (w world) names(c *tool.Call) *tool.Out {
 	if err != nil {
 		return answer(err)
 	}
-	o := tool.Done().Fact("count", len(got))
-	for _, n := range got {
-		o.Item("name", "name", n)
+	proofs, now, err := b.PushProofs(context.Background(), got...)
+	if err != nil {
+		return answer(err)
+	}
+	proven := 0
+	for _, p := range proofs {
+		if p.State(now) == bus.PushProven {
+			proven++
+		}
+	}
+	o := tool.Done().Fact("count", len(got)).Fact("proven", proven)
+	for _, p := range proofs {
+		harness := p.Harness
+		if harness == "" {
+			harness = "-"
+		}
+		o.Item("name", "name", p.Name, "push", p.State(now), "age", p.AgeWord(now), "harness", harness)
 	}
 	return o
 }

@@ -247,7 +247,7 @@ func TestABareVerbConnectsWithTheRecordedLogin(t *testing.T) {
 	assert.Equal(t, 0, code, errs)
 	assert.Contains(t, out, "was=none")
 	nDial = len(dsns)
-	code, _, errs = do("friend", "list")
+	code, _, _ = do("friend", "list")
 	assert.Equal(t, 2, code)
 	assert.Len(t, dsns, nDial)
 

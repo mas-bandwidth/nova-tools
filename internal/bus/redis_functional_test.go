@@ -136,3 +136,41 @@ func TestRedisStoreRefusesWhatTheFakeRefuses(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, map[string]bool{"X": false}, acked)
 }
+
+// The push gate against the real commands: a proof is one HSET in a
+// transaction with no stream, read back by HGETALL, and Hearing refuses a
+// deaf send (nothing written) and a deaf recv (no group made), then lets
+// both through once every name is proven.
+func TestRedisStoreKeepsThePushProof(t *testing.T) {
+	t.Parallel()
+	b, c, ctx := live(t)
+	gated := &Bus{Store: Hearing(b.Store)}
+	m := Message{From: "ada", To: []string{"bob"}, Subject: "s", Body: "x"}
+
+	_, err := gated.Send(ctx, m)
+	assert.ErrorContains(t, err, "deaf: ada has no proven push since never")
+	_, _, err = gated.Recv(ctx, "bob", 0)
+	assert.ErrorContains(t, err, "deaf: bob")
+	n, err := c.Exists(ctx, LogKey, StreamOf("bob")).Result()
+	require.NoError(t, err)
+	assert.Zero(t, n, "a deaf send writes nothing and a deaf recv makes no stream")
+
+	for _, name := range []string{"ada", "bob"} {
+		p, err := b.ProvePush(ctx, PushProof{Name: name, Harness: "claude", Nonce: "n-" + name, Up: true})
+		require.NoError(t, err)
+		assert.WithinDuration(t, time.Now(), p.At, time.Minute, "at is the server's time")
+	}
+	got, now, err := b.PushProofs(ctx, "ada", "bob", "m1")
+	require.NoError(t, err)
+	assert.Equal(t, []string{PushProven, PushProven, PushNone}, []string{got[0].State(now), got[1].State(now), got[2].State(now)})
+	assert.Equal(t, "n-bob", got[1].Nonce)
+
+	sent, err := gated.Send(ctx, m)
+	require.NoError(t, err)
+	e, ok, err := gated.Recv(ctx, "bob", 0)
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Equal(t, sent.ID, e.Message().ID)
+	_, err = gated.Send(ctx, Message{From: "ada", To: []string{"m1"}, Subject: "s", Body: "x"})
+	assert.ErrorContains(t, err, "deaf: m1")
+}

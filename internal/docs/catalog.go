@@ -32,6 +32,7 @@ var DefaultCatalog = []Entry{
 	E("cmd/nova-check", "checks over markdown records and repositories: links, kernel budget, no-code, floors, corpus, hygiene, dogfood, spelling", "go test ./cmd/nova-check", "go test ./cmd/nova-check"),
 	E("cmd/nova-card", "writes a directory of pre-linted briefs from a ledger, a findings file or a tool's help, for nova-sprint add --brief-dir", "go test ./cmd/nova-card", "go test ./cmd/nova-card"),
 	E("cmd/nova-ci", "CI slowtests budget and check CLI, and ci-ok's run receipt", "go test ./cmd/nova-ci", "go test ./cmd/nova-ci"),
+	E("cmd/nova-local", "run local models: what an engine has, one model served at a chosen context, and a worker description nova-swarm accepts", "go test ./cmd/nova-local", "go test ./cmd/nova-local"),
 	E("cmd/nova-fuse", "the ingestion fuse: a recorded decision to stop reading an untrusted source, checked before each read", "go test ./cmd/nova-fuse", "go test ./cmd/nova-fuse"),
 	E("cmd/nova-memory", "memory indexing and search CLI", "go test ./cmd/nova-memory", "go test ./cmd/nova-memory"),
 	E("cmd/nova-redis", "Redis instance owner: serve, scratch spill/recall, and fn load/check of the function library", "go test ./cmd/nova-redis", "go test ./cmd/nova-redis"),
@@ -49,9 +50,11 @@ var DefaultCatalog = []Entry{
 	// internal/
 	E("internal/atomicfile", "atomic file write: standard-library rename beside the target", "go test ./internal/atomicfile", "go test ./internal/atomicfile"),
 	E("internal/bounded", "bounded readers and byte buffers", "go test ./internal/bounded", "go test ./internal/bounded"),
+	E("internal/bench", "the one bench runner: copy a tree to a per-run directory on the Linux bench, run one command there under nice with the bench cache, remove the directory it made, fall back when the host does not answer", "go test ./internal/bench", "go test ./internal/bench"),
 	E("internal/binstamp", "a binary file's stamp: a loop stops when its own binary was replaced", "go test ./internal/binstamp", "go test ./internal/binstamp"),
 	E("internal/buildinfo", "binary identity and version info", "go test ./internal/buildinfo", "go test ./internal/buildinfo"),
 	E("internal/bus", "the message bus over Redis streams: the rules (send, recv, ack, peek, log) over a Store of the few commands used, the Redis store and the in-memory fake", "go test ./internal/bus", "go test -tags functional ./internal/bus"),
+	E("internal/card", "what a brief's writers hold every brief to before it leaves: PATHS computed from its START files, and the card checks", "go test ./internal/card", "go test ./internal/card"),
 	E("internal/cardgen", "nova-card's planner: ledger rows, findings and help to cards with PATHS, waves and the brief, pure over text", "go test ./internal/cardgen", "go test ./internal/cardgen"),
 	E("internal/cairn", "the cairn store: session records, entries, the index and receipts, nested and flat", "go test ./internal/cairn", "go test ./internal/cairn"),
 	E("internal/cardcontract", "the frame around a card's task: the frame file, JOB.md, the result shape, and the shims of each model family's profile", "go test ./internal/cardcontract", "go test -tags functional ./internal/cardcontract"),
@@ -129,6 +132,7 @@ var DefaultCatalog = []Entry{
 	E("internal/yield", "CI over work: a copy, a local test run or a sprint card's native launch steps itself to nice 15 before it execs (nova-tools#4293)", "go test ./internal/yield", "go test ./internal/yield"),
 
 	// docs/
+	E("docs/acceptance", "release acceptance records: one measured requirement per file, with the raw numbers", "go test ./internal/ci", "go test ./internal/ci -run TestAcceptanceRecordsAreWellFormed"),
 	E("docs/fixtures", "doc examples and test fixtures", "go test ./internal/docs", "go test ./internal/docs"),
 	E("docs/nova-config", "nova-config guide: the permanent configuration and its apply into Redis", "go test ./internal/docs", "go test ./internal/docs"),
 	E("docs/nova-table", "nova-table guide: the design statement, the keys, the verbs, the render rules", "go test ./internal/docs", "go test ./internal/docs"),
@@ -144,6 +148,7 @@ var DefaultCatalog = []Entry{
 	E("tools/ghrelease", "the GitHub release verbs: the stamped ldflags, the build of every shipped tool per platform, the checksums over the shipped set, the stamp assertion, the certified gate and the draft-only upload", "go test ./tools/ghrelease", "go run ./tools/ghrelease help"),
 	E("tools/newrule", "class rule scaffolding CLI", "go test ./tools/newrule", "go test ./tools/newrule"),
 	E("tools/newverb", "CLI verb scaffolding CLI", "go test ./tools/newverb", "go test ./tools/newverb"),
+	E("tools/notes20261002", "the 2026-10-02 notes written into nova-config: the seed, as a Go program with the arguments and refusals of the script it replaced", "go test ./tools/notes20261002", "go run ./tools/notes20261002 <args>"),
 	E("tools/preflight", "the standard check before a card or a pull request: gofmt, go vet and the unit tests through make test-full", "go test ./tools/preflight", "make preflight"),
 	E("tools/sandboxcheck", "the darwin profile check of nova-sandbox: fills the profile template for a scratch write set and runs the first second of a job inside the wall, each denial beside a control outside it", "go test ./tools/sandboxcheck", "go run ./tools/sandboxcheck"),
 	E("tools/sessiontrace", "bounded shell trace replay against TableSession", "go test ./tools/sessiontrace", "go test ./tools/sessiontrace"),

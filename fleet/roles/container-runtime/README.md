@@ -19,7 +19,7 @@ facts as root) names the runner with `container_runtime_user` instead.
 
 | step | how |
 |---|---|
-| podman | the distribution's `podman` with its rootless helpers (`uidmap`, `passt`, `crun`, `conmon`, `netavark`, `aardvark-dns`, `catatonit`, `dbus-user-session`), through apt |
+| podman | the distribution's `podman` with its rootless helpers (`uidmap`, `slirp4netns`, `passt`, `crun`, `conmon`, `netavark`, `aardvark-dns`, `catatonit`, `dbus-user-session`), through apt, or through dnf on a Red Hat-family bench (`container_runtime_packages_redhat`; `shadow-utils` carries `newuidmap`) |
 | subordinate ids | a `/etc/subuid` and `/etc/subgid` row for the user when it has none, read by name or numeric uid. The range starts at `container_runtime_subid_start` or, when another user's range reaches that far, right after the highest range in the file, so it never overlaps another user's (overlapping ranges make two users' container ids the same host ids). An existing row is never rewritten; one that overlaps another user's row, or is smaller than `container_runtime_subid_count` ids, stops the play |
 | linger | `loginctl enable-linger`, so the user's runtime directory and systemd manager exist with no login session |
 | user namespaces | `user.max_user_namespaces` is read and must be above zero; the role does not change kernel settings |
@@ -62,5 +62,9 @@ The probe image is the base of the functional image; a class test
 | `container_runtime_probe_pids`, `_memory_bytes`, `_cpus`, `_timeout` | `128`, `268435456`, `2`, `60` | the probe's limits; `_cpus` may be fractional (`1.5`) |
 | `container_runtime_probe_kill_after`, `_grace` | `3`, `20` | the bound the timeout probe uses, and the seconds it may take to take effect |
 
-Debian-family Linux with cgroups v2 only (apt, and the unified hierarchy the
-limits rely on).
+Debian-family (apt) and Red Hat-family (dnf) Linux with cgroups v2 (the unified
+hierarchy the limits rely on). A macOS bench takes `tasks/darwin.yml` instead:
+`brew install podman` and `podman machine init --now` sized from the row's
+`slots` (`container_runtime_machine_*`), stopping with the reason when brew is
+absent. Every bench records `podman --version` in `container_runtime_record_file`
+(`~/.config/nova/podman`).

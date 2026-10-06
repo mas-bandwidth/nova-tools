@@ -67,6 +67,12 @@ func (a *app) cmdCoordinator(args []string, stdout, stderr io.Writer) int {
 	if why := sprint.NotSeat(holder, req); why != "" {
 		return refuse(stderr, "coordinator", why)
 	}
+	// the seat goes only to a session the push loop has reached (pushproof.go)
+	if why, err := pushGate(ctx, st, req.To, a.now()); err != nil {
+		return a.readFailed("coordinator", err, stderr)
+	} else if why != "" {
+		return refuse(stderr, "coordinator", why)
+	}
 	how := "given"
 	if req.Take {
 		how = "taken approved_by=" + oneline.Field(req.ApprovedBy)
@@ -560,13 +566,18 @@ func (p *pushTarget) follow(holder string, first bool, stdout, stderr io.Writer)
 // (seat-key-follows-record.w2).
 func (a *app) cmdSeat(args []string, stdout, stderr io.Writer) int {
 	// seat login and seat logout are the seat's store login, kept on this machine and
-	// never in the store (storelogin.go)
+	// never in the store (storelogin.go); seat push and seat pong are the seat's push
+	// proof (pushproof.go)
 	if len(args) > 0 {
 		switch args[0] {
 		case "login":
 			return a.cmdSeatLogin(args[1:], stdout, stderr)
 		case "logout":
 			return a.cmdSeatLogout(args[1:], stdout, stderr)
+		case "push":
+			return a.cmdSeatPush(args[1:], stdout, stderr)
+		case "pong":
+			return a.cmdSeatPong(args[1:], stdout, stderr)
 		}
 	}
 	fs, c := a.verbSetup("seat")

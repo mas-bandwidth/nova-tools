@@ -90,6 +90,9 @@ func (st *Store) pipelinedLoadOnceWithFence(ctx context.Context, tables []string
 		t.SetProps(shape.Props)
 		for _, row := range shape.Rows {
 			t.SetRows(append(t.Rows(), row.Key))
+			if row.Hidden {
+				t.SetHidden(row.Key)
+			}
 			if len(row.Texts) > 0 {
 				t.Texts[row.Key] = row.Texts
 			}

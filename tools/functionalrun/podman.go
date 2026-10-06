@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/subproc"
@@ -114,4 +115,35 @@ func (s *started) Kill() error { return s.cmd.Process.Kill() }
 func firstWords(args []string, n int) string {
 	n = min(n, len(args))
 	return strings.Join(args[:n], " ")
+}
+
+// runtimeNames are the container runtimes in the order this tool prefers them:
+// the fleet's runtime is podman (docs/FLEET.md); docker is the fallback for a
+// machine that has only it.
+var runtimeNames = []string{"podman", "docker"}
+
+// chooseRuntime is the binary to run and the name to say it by. An explicit
+// --podman path is used as given, not looked up.
+func chooseRuntime(explicit string, lookPath func(string) (string, error)) (bin, name string, err error) {
+	if explicit != "" {
+		return explicit, filepath.Base(explicit), nil
+	}
+	for _, n := range runtimeNames {
+		if p, lerr := lookPath(n); lerr == nil {
+			return p, n, nil
+		}
+	}
+	return "", "", fmt.Errorf("no container runtime on PATH: install podman (docs/FLEET.md; the fleet's container-runtime play does it) or docker, or name one with --podman")
+}
+
+// useRuntime picks the runtime and names it on stderr, so a run's log says
+// which one ran the container; false when there is none.
+func useRuntime(explicit string, lookPath func(string) (string, error), stderr io.Writer) (string, bool) {
+	bin, name, err := chooseRuntime(explicit, lookPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "functionalrun: %v\n", err)
+		return "", false
+	}
+	fmt.Fprintf(stderr, "functionalrun: container runtime: %s (%s)\n", name, bin)
+	return bin, true
 }

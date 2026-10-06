@@ -118,7 +118,7 @@ func runInventory(ctx context.Context, args []string, stdout, stderr io.Writer, 
 		if err != nil {
 			return fail(err)
 		}
-		defer rs.Close()
+		defer func() { _ = rs.Close() }() // ignored: every reply the verb needs is already read, so a close error changes nothing
 		stage = "reading the applied state"
 		if snap, err = rs.Snapshot(ctx); err != nil {
 			return fail(err)

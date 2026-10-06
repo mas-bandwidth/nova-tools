@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/netip"
 	"strings"
@@ -33,10 +34,48 @@ type rig struct {
 	fleetAt []string
 	now     time.Time // the wait verbs' clock; the fake store's block moves it, never real time
 	wake    []string  // the wake-file reader's answers, one per look: "" is nothing new
+	names   []string  // the names newRig keeps heard
+	clock   time.Time // the store's clock as advance moved it (each trip adds a second more)
 }
 
+// newRig is the rig with every name heard: each has a proven inbox push,
+// as its friend daemon writes it (bus.PushKey). deafRig is the rig before
+// any daemon has proven one.
 func newRig(names ...string) *rig {
-	return &rig{store: &waitFake{Fake: bustest.NewFake(start, names...)}, env: map[string]string{RedisEnv: "store.test:6379"}, now: start}
+	r := deafRig(names...)
+	r.names = names
+	r.prove(start, true, names...)
+	return r
+}
+
+func deafRig(names ...string) *rig {
+	return &rig{store: &waitFake{Fake: bustest.NewFake(start, names...)}, env: map[string]string{RedisEnv: "store.test:6379"}, clock: start, now: start}
+}
+
+// prove writes each name's push proof at the instant at, up or down, as the
+// friend daemon does, without a trip that moves the fake's clock.
+func (r *rig) prove(at time.Time, up bool, names ...string) {
+	for _, n := range names {
+		p := bus.PushProof{Name: n, Harness: "claude", Nonce: "n-" + n, Proven: at, Up: up, At: at}
+		if !up {
+			p.Reason = "no session answer"
+		}
+		raw, err := json.Marshal(p)
+		if err != nil {
+			panic(err)
+		}
+		if err := r.store.AddAll(context.Background(), nil, nil, bus.Mark{Key: bus.PushKey, Field: n, Value: string(raw)}); err != nil {
+			panic(err)
+		}
+	}
+}
+
+// advance moves the store's clock by d while every daemon of newRig keeps
+// renewing its proof, so only the idle time of the messages grows.
+func (r *rig) advance(d time.Duration) {
+	r.store.Advance(d)
+	r.clock = r.clock.Add(d)
+	r.prove(r.clock, true, r.names...)
 }
 
 // waitFake is the fake store with the wait's two reads, answered from its
@@ -69,10 +108,10 @@ func (f *waitFake) BlockRead(ctx context.Context, stream, after string, block ti
 	return nil, nil
 }
 
-// clock wires the fake store's block to the rig's clock: a block that finds
-// nothing past its cursor waits its duration out on r.now, so a test's
-// timeout runs on no real time.
-func (r *rig) clock() {
+// waitClock wires the fake store's block to the rig's wait clock: a block
+// that finds nothing past its cursor waits its duration out on r.now, so a
+// test's timeout runs on no real time.
+func (r *rig) waitClock() {
 	r.store.Sleep = func(d time.Duration) { r.now = r.now.Add(d) }
 }
 
@@ -237,7 +276,7 @@ func TestRecvExecAcksOnZeroAndKeepsThePendingMessageOnFailure(t *testing.T) {
 
 	r.exec = func(string) int { return 0 }
 	cli.Do(t, "recv", "--as", "bob", "--exec", "deliver").Exit(1).Err("RECV NONE", "nothing for bob")
-	r.store.Advance(bus.ClaimAfter)
+	r.advance(bus.ClaimAfter)
 	cli.Do(t, "recv", "--as", "bob", "--exec", "deliver").Exit(0).Out("RECV OK id="+mid, "acked=true exec_exit=0")
 	cli.Do(t, "peek", "--as", "bob").Exit(0).Out("PEEK OK pending=0 new=0")
 }
@@ -262,7 +301,7 @@ func TestRecvForeverWantsExecAndStopsOnASignal(t *testing.T) {
 
 	r.cancel = nil
 	r.exec = func(string) int { return 1 }
-	r.store.Advance(bus.ClaimAfter)
+	r.advance(bus.ClaimAfter)
 	cli.Do(t, "recv", "--as", "bob", "--forever", "--exec", "deliver").Exit(1).Err("RECV FAILED id=", "exec_exit=1: --exec exited 1")
 	cli.Do(t, "peek", "--as", "bob").Exit(0).Out("PEEK OK pending=1 new=1")
 }
@@ -444,12 +483,12 @@ func TestRecvTakesABacklogInOrderWithMaxAllAndAck(t *testing.T) {
 		}
 		return 0
 	}
-	r.store.Advance(bus.ClaimAfter) // one and two are claimable again
+	r.advance(bus.ClaimAfter) // one and two are claimable again
 	cli.Do(t, "recv", "--as", "bob", "--all", "--exec", "deliver").Exit(1).Out("RECV OK id="+ids[0], "RECV OK id="+ids[1], "acked=true exec_exit=0").Err("RECV FAILED id=" + ids[4] + " exec_exit=7")
 	cli.Do(t, "peek", "--as", "bob").Exit(0).Out("PEEK OK pending=1 new=0", "id="+ids[4])
 	r.exec = nil
 	cli.Do(t, "recv", "--as", "bob", "--all", "--exec", "deliver").Exit(1).Err("RECV NONE", "nothing for bob")
-	r.store.Advance(bus.ClaimAfter)
+	r.advance(bus.ClaimAfter)
 	cli.Do(t, "recv", "--as", "bob", "--all", "--json", "--ack").Exit(0).Out(`"subject":"five"`, `"acked":true`)
 	cli.Do(t, "recv", "--as", "bob", "--all").Exit(1).Err("RECV NONE: nothing for bob")
 

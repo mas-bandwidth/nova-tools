@@ -298,10 +298,10 @@ func runInWinPlace(f runFlags, dir string, job winJob, deadline time.Duration, s
 
 	childEnv := withHome(sandbox.ChildEnv(env, p.Tmp), home)
 
-	fmt.Fprintf(stderr, "SANDBOX OK backend=%s abi=%s read=%d write=%d net=%s cwd=%s cwdb64=%s ancestors=%d cmd=%s gpu=%s\n",
+	fmt.Fprintf(stderr, "SANDBOX OK backend=%s abi=%s read=%d write=%d net=%s cwd=%s cwdb64=%s ancestors=%d cmd=%s gpu=%s deletes=%s\n",
 		oneline.Field(sandbox.Backend), oneline.Field(sandbox.ABI()), len(p.Reads), len(p.Writes),
 		oneline.Field(p.Net()), oneline.Field(p.Cwd), base64Cwd(p.Cwd), p.AncestorCount(),
-		oneline.Field(p.CmdName()), oneline.Field(string(p.GPUMode)))
+		oneline.Field(p.CmdName()), oneline.Field(string(p.GPUMode)), deletesField(p))
 
 	started, err := runWinPlace.Start(job, winStartSpec{Policy: p, Env: childEnv, Stdin: stdin, Stdout: stdout, Stderr: stderr})
 	if err != nil {

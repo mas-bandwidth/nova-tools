@@ -71,7 +71,8 @@ func TestMaxLeavesNoNeedOnACutCard(t *testing.T) {
 	ledger := cardgen.Ledgers["serial-tests"]
 	for rel, text := range map[string]string{
 		"cmd/a/a_test.go": "package main\n", "cmd/b/b_test.go": "package main\n", "cmd/c/c_test.go": "package main\n",
-		ledger.File: "cmd/a/a_test.go:TestA serial: t.Setenv\ncmd/b/b_test.go:TestB serial: t.Chdir\ncmd/c/c_test.go:TestC serial: os.Setenv\n",
+		"internal/ci/ci_test.go": "package ci\n", // the class test's package, a START package of every ledger card
+		ledger.File:              "cmd/a/a_test.go:TestA serial: t.Setenv\ncmd/b/b_test.go:TestB serial: t.Chdir\ncmd/c/c_test.go:TestC serial: os.Setenv\n",
 	} {
 		p := filepath.Join(repo, filepath.FromSlash(rel))
 		require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o755))
@@ -146,7 +147,7 @@ func TestAPackageWithNoTestFileIsGeneratedWithItsNEWLine(t *testing.T) {
 	require.Equal(t, 0, exit, "stdout: %s\nstderr: %s", stdout, stderr)
 	brief, err := os.ReadFile(filepath.Join(out, "finding-internal-none-x.md"))
 	require.NoError(t, err)
-	assert.Contains(t, string(brief), "\nPATHS: internal/none/x.go, internal/none/*_test.go\nNEW: internal/none/x_test.go\n")
+	assert.Contains(t, string(brief), "\nPATHS: internal/none/*.go, internal/none/*_test.go\nNEW: internal/none/x_test.go\n")
 }
 
 // The banner names every verb on a usage line, and every generate line names the
@@ -172,4 +173,32 @@ func TestTheBannerNamesEveryVerbAndTheGenerateFlags(t *testing.T) {
 		}
 	}
 	assert.Equal(t, 3, lines, "one usage line per source")
+}
+
+// generate holds every brief to the card checks nova-sprint add runs before it leaves:
+// a name --name gives, carried in from a source row, is a red line and nothing is
+// written; lint holds a brief that names a --dropped card the same.
+func TestGenerateRefusesABriefWithTheCardChecksFinding(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	findings := filepath.Join(dir, "f.tsv")
+	require.NoError(t, os.WriteFile(findings, []byte("internal/bus/send.go:1\tthe receipt ada filed is lost\tkeep it\tinternal/bus TestX\n"), 0o644))
+	out := filepath.Join(dir, "cards")
+	args := []string{"generate", "--from", "findings", "--file", findings, "--repo", "o/r", "--base", "dev", "--sha", strings.Repeat("ab", 20), "--out", out}
+	exit, stdout, stderr := runCard(append(args, "--name", "bench7,ada")...)
+	assert.Equal(t, 1, exit, stderr)
+	assert.Contains(t, stdout, "LINT DRIFT card=finding-internal-bus-send check=personal-name")
+	assert.NoDirExists(t, out)
+	exit, stdout, stderr = runCard(args...)
+	require.Equal(t, 0, exit, "stdout: %s\nstderr: %s", stdout, stderr)
+	brief := filepath.Join(out, "finding-internal-bus-send.md")
+	assert.FileExists(t, brief)
+	exit, stdout, _ = runCard("lint", "--card", brief, "--dropped", "old-card.w1")
+	assert.Equal(t, 0, exit, stdout)
+	raw, err := os.ReadFile(brief)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(brief, append(raw, []byte("Carry old-card.w1 over.\n")...), 0o644))
+	exit, stdout, _ = runCard("lint", "--card", brief, "--dropped", "old-card.w1")
+	assert.Equal(t, 1, exit)
+	assert.Contains(t, stdout, "check=dropped-card")
 }

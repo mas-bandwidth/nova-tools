@@ -75,6 +75,7 @@ type driveTick struct {
 	cost   store.PartTime   // the tick's cost summed: its trips, whole-table reads, records, mismatches
 	load   string           // the machine's load averages as the tick ended
 	said   []string         // what the tick said once (a NOTE): why a table was read whole
+	tries  map[string]int   // the attempts of each part that moved something: over one, a writer between its read and its write
 	routes int64            // the round trips of the tick's one read of the routes
 }
 
@@ -280,7 +281,7 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 			began := time.Now()
 			res, err := st.Tick(lctx)
 			q, _ := st.B.QueueRead(lctx)
-			tk := driveTick{n: i, why: why, idle: res.Idle, parts: len(res.Parts), order: len(res.Order), end: res.TickEnd, queued: len(q), wall: time.Since(began), took: res.Took, times: res.Times, cost: res.Cost(), load: machineLoad(), said: res.Said, routes: res.RouteTrips}
+			tk := driveTick{n: i, why: why, idle: res.Idle, parts: len(res.Parts), order: len(res.Order), end: res.TickEnd, queued: len(q), wall: time.Since(began), took: res.Took, times: res.Times, cost: res.Cost(), load: machineLoad(), said: res.Said, routes: res.RouteTrips, tries: partAttempts(res.Parts)}
 			if err != nil && lctx.Err() == nil {
 				tk.err = err.Error()
 			}
@@ -567,7 +568,11 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 			var parts []string
 			for _, pt := range tk.times {
 				if pt.Took >= 50*time.Millisecond {
-					parts = append(parts, fmt.Sprintf("%s/%s %s %dt", pt.Table, pt.Name, pt.Took.Round(time.Millisecond), pt.Trips))
+					part := fmt.Sprintf("%s/%s %s %dt", pt.Table, pt.Name, pt.Took.Round(time.Millisecond), pt.Trips)
+					if n := tk.tries[pt.Name]; n > 1 {
+						part += fmt.Sprintf(" %d attempts", n)
+					}
+					parts = append(parts, part)
 				}
 			}
 			over = append(over, fmt.Sprintf("tick %d took %s (load %s): %s", tk.n, tk.took.Round(time.Millisecond), tk.load, strings.Join(parts, ", ")))
@@ -616,6 +621,15 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 	}
 	fmt.Fprintln(os.Stderr, report)
 	t.Log("\n" + report + "\n  " + gate)
+}
+
+// partAttempts is the most attempts each part of a tick took, by its name.
+func partAttempts(parts []store.PartResult) map[string]int {
+	out := map[string]int{}
+	for _, p := range parts {
+		out[p.Name] = max(out[p.Name], p.Result.Attempts)
+	}
+	return out
 }
 
 // machineLoad is the machine's load averages, as the kernel says them in

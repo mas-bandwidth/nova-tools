@@ -299,7 +299,7 @@ as no_log; a card never dealt to the fleet is left out. See docs/SPEC-NOVA-DECID
 			},
 			{
 				Name:    "findings",
-				Usage:   "findings --record <file> [--since <time>] [--bar <p>] [--shadow <file> --real <file>]",
+				Usage:   "findings --record <file> [--since <time>] [--bar <p>] [--shadow <file> --real <file>] [--read-shadow <file> [--heavy <file>]]",
 				Example: "findings --record " + fixture + "record.jsonl --since 2026-10-01",
 				Effect:  tool.Inspection,
 				Detail: `Clusters the score decisions made since --since by every class each gives a p at or above
@@ -307,16 +307,24 @@ as no_log; a card never dealt to the fleet is left out. See docs/SPEC-NOVA-DECID
 above the bar with no class there. A class that keeps coming back is a finder rule or class test owed. With --shadow (the
 judgment-shadow record) and --real (the judgment-answer record) it also joins each shadow answer
 to the real one by note and card and prints one SHADOW line per judgment kind: pairs, agreement
-percent, and agreement at p 0.95 and above.`,
+percent, and agreement at p 0.95 and above. With --read-shadow (the read-shadow record) it prints
+one SHADOW_READ line per gold, the readers' outcome and, with --heavy (a record import --verdicts
+made), the heavy-read verdicts: cards joined, tp, fp, fn, tn, and the precision and recall of the
+shadow read's BOUNCE (a shadow read is never a read).`,
 				Flags: func(f *tool.Flags) {
 					f.Required("record", "the record file")
 					f.String("since", "", "the window's start, RFC 3339 or a date (2006-01-02, UTC); default: seven days before now")
 					f.String("bar", "0.5", "the p at or above which a class counts, a probability")
 					f.String("shadow", "", "the judgment-shadow record, to score Jev's shadow answers per judgment kind")
 					f.String("real", "", "the judgment-answer record the shadow answers are joined to")
+					f.String("read-shadow", "", "the read-shadow record, to score Jev's shadow reads against the readers' outcome")
+					f.String("heavy", "", "a record imported from heavy-read verdicts (import --verdicts), to score the shadow reads against them too")
 					f.Check(func(c *tool.Call) {
 						if (c.Str("shadow") == "") != (c.Str("real") == "") {
 							c.Problem("--shadow and --real go together: a shadow answer is scored against the real one")
+						}
+						if c.Given("heavy") && !c.Given("read-shadow") {
+							c.Problem("--heavy goes with --read-shadow: the heavy verdicts score the shadow reads")
 						}
 						if _, err := since(c.Str("since"), time.Time{}); err != nil {
 							c.Problem(err.Error())
@@ -518,6 +526,21 @@ func (w world) findings(c *tool.Call) *tool.Out {
 			named[i] = oneline.Field(id)
 		}
 		o.Note(fmt.Sprintf("%d score decisions skipped: at is not RFC 3339: %s", len(skipped), strings.Join(named, " ")))
+	}
+	if c.Str("read-shadow") != "" {
+		reads, err := decide.Load(c.Str("read-shadow"))
+		if err != nil {
+			return tool.Refuse(err.Error())
+		}
+		var heavy []decide.Decision
+		if c.Str("heavy") != "" {
+			if heavy, err = decide.Load(c.Str("heavy")); err != nil {
+				return tool.Refuse(err.Error())
+			}
+		}
+		for _, s := range decide.ShadowReadScores(reads, heavy) {
+			o.Item("shadow_read", "against", s.Against, "count", s.Count, "tp", s.TP, "fp", s.FP, "fn", s.FN, "tn", s.TN, "precision_pct", s.Precision, "recall_pct", s.Recall)
+		}
 	}
 	if c.Str("shadow") == "" {
 		return o

@@ -70,7 +70,10 @@ A test binary that runs itself (`os.Executable()` or `os.Args[0]`) with words it
 
 Run by `cmd/nova-bus/firstrun_test.go` on a throwaway redis-server whose
 `friends` set names ada and bob (what `nova-config apply` writes for two friend
-rows), its address in `NOVA_BUS_REDIS`, so the lines read as a reader types them.
+rows), each with a proven inbox push on `bus2:push` (what each one's friend
+daemon writes when its session answers the SESSION CHECK; without it every send
+and recv is refused as deaf), its address in `NOVA_BUS_REDIS`, so the lines
+read as a reader types them.
 The sitting is the loop: bob first waits on his own empty stream and, nothing
 coming within the second he gave it, is told `WAIT NONE` at exit 1 (the wait
 took nothing; the arm on an empty stream is the cursor `0-0`); ada sends bob one
@@ -108,9 +111,9 @@ LOG OK total=1
 LOG MESSAGE id=01M42BA18Y1K3SE57HE26SY8T0 from=ada to=bob cc=- re=- at=2026-10-04T02:18:54Z subject="hello"
 
 $ nova-bus names
-NAMES OK count=2
-NAMES NAME name=ada
-NAMES NAME name=bob
+NAMES OK count=2 proven=2
+NAMES NAME name=ada push=proven age=0s harness=claude
+NAMES NAME name=bob push=proven age=0s harness=claude
 ```
 
 ## nova-friend
@@ -193,7 +196,7 @@ PROBE OK backend=sandbox-exec abi=- steps=5 passed=5 net=nopromise gpu=none
 
 $ HOME=/path/to/pool/jobs/j1/home nova-sandbox --read /path/to/pool/ref --write /path/to/pool/jobs/j1 -- /bin/sh -c 'echo hello > report.md; cat /path/to/.config/anthropic/env'
 SANDBOX NOTE dropped from the child's environment: GPG_AGENT_INFO SSH_AGENT_PID SSH_AUTH_SOCK; an agent socket speaks for a key the wall denies
-SANDBOX OK backend=sandbox-exec abi=- read=1 read-noexec=0 write=1 net=nopromise cwd=/path/to/pool/jobs/j1 cwdb64=L3BhdGgvdG8vcG9vbC9qb2JzL2ox ancestors=11 cmd=sh gpu=none
+SANDBOX OK backend=sandbox-exec abi=- read=1 read-noexec=0 write=1 net=nopromise cwd=/path/to/pool/jobs/j1 cwdb64=L3BhdGgvdG8vcG9vbC9qb2JzL2ox ancestors=11 cmd=sh gpu=none deletes=/path/to/pool/jobs/j1
 cat: /path/to/.config/anthropic/env: Operation not permitted
 SANDBOX DONE exit=1 cmd=sh
 ```
@@ -861,6 +864,31 @@ of a gate on its own. The gate decision's calibration records (base run, and
 base not run) are `internal/decide/testdata/gate-calibration-*.jsonl`. The
 brief's op id ends in the hex of the schema and the card, so a reworded schema
 or card changes it and this transcript names the change.
+
+## nova-local
+
+Fixture: `cmd/nova-local/testdata/`: the worker directory (`home/`) and the
+placeholder key file (`local.key`). `cmd/nova-local/firstrun_test.go` runs each
+`$` line from a checkout root in one sitting against a fake ollama daemon that
+has `gemma4:12b` in the shared store of the AI root `/ai`, a box at load 14.2
+with 61 GiB free of 128, and a clock the warm-up advances by three seconds; no
+engine, network or real time is used. `./gemma.json` is a file in the test's
+own directory.
+
+### First run
+
+```text
+$ nova-local status
+STATUS OK engines=1 answering=1 loaded=0 models=1 mem_used=71940702208 mem_free=65498251264 mem_total=137438953472 wired_cap=unset load1=14.20
+STATUS ENGINE name=ollama state=up base=http://127.0.0.1:11434/v1 loaded=0 advertised=1 store=/ai/shared/models/ollama shared=yes
+
+$ nova-local serve --engine ollama --model gemma4:12b --num-ctx 32768 --seed 7
+SERVE OK engine=ollama model=gemma4:12b serve_as=gemma4-32k digest=sha256:c0e0c3e5b4a1 num_ctx=32768 keep_alive=30m temperature=0 seed=7 created=yes load=3s mem_used=71940702208 mem_free=65498251264 mem_total=137438953472 wired_cap=unset load1=14.20 engines=1 store=/ai/shared/models/ollama shared=yes
+
+$ nova-local worker --engine ollama --model gemma4-32k --out ./gemma.json --name gemma --harness opencode --harness-args run,--model,ollama/{model},--,{prompt} --worker-dir $PWD/cmd/nova-local/testdata/home --key-file $PWD/cmd/nova-local/testdata/local.key --env-var OLLAMA_API_KEY --usage opencode --deadline 20m
+WORKER OK engine=ollama model=gemma4-32k out=./gemma.json workers=1 provider=ollama harness=opencode deadline=20m base=http://127.0.0.1:11434/v1
+WORKER NOTE run it one worker at a time (--workers 1): an engine is a queue, and two workers interleave it
+```
 
 ## nova-redis
 

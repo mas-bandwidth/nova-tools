@@ -59,10 +59,12 @@ func (w *readyWriter) String() string {
 func TestAclUsersSurviveARestart(t *testing.T) {
 	t.Parallel()
 
-	const pw = "pw-from-nova-secrets-acl"
-	const seatPW = "seat-pw-from-nova-secrets"
+	const pw = "pw!acl#7Qx%v2@Lr^m"
+	const seatPW = "seat!pw#4Kd%w9@Tz^n"
 	program := testredis.Program(t)
 	h := newServeHarness(t, pw)
+	fixtureSecret(t, pw, h.dir, program)
+	fixtureSecret(t, seatPW, h.dir, program)
 	h.d.lookPath = func(string) (string, error) { return program, nil }
 	port := testredis.FreePort(t)
 	addr := "127.0.0.1:" + port

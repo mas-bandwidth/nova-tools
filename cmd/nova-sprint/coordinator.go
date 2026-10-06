@@ -50,7 +50,7 @@ var verbClasses = map[string]string{
 	"tick": classMachine, "run": classMachine, "friend clean": classMachine, "seat install": classMachine, "seat uninstall": classMachine, "selftest land": classMachine, "server switch": classMachine,
 
 	"queue": classRead, "inbox": classRead, "card": classRead, "log": classRead, "check": classRead, "where": classRead, "watch": classRead, "dashboard": classRead, "routes": classRead, "rules": classRead, "stats": classRead, "bases": classRead,
-	"goal show": classRead, "handover": classRead, "seat": classRead, "lane list": classRead,
+	"goal show": classRead, "handover": classRead, "seat": classRead, "lane list": classRead, "fsck seat": classRead,
 
 	"coordinator": classSeat,
 }
@@ -82,7 +82,24 @@ func coordinatorOnly(ctx context.Context, st *store.Store, c common) (string, er
 	if verbClasses[c.verb] != classCoordinator {
 		return "", nil
 	}
-	return coordinatorsAlone(ctx, st, c)
+	why, err := coordinatorsAlone(ctx, st, c)
+	if err != nil || why != "" {
+		return why, err
+	}
+	return seatPushed(ctx, st)
+}
+
+// seatPushed is why the coordinator's verb may not run while the seat has no
+// live push proof (docs/SPEC-SPRINT.md, "The push proof"; pushproof.go): ""
+// is may. The first init, on a store with no coordinator, only names the
+// seat, and the push loop follows a seat that has a holder: every verb after
+// it, init again included, waits for the holder's proof.
+func seatPushed(ctx context.Context, st *store.Store) (string, error) {
+	seat, err := st.B.Coordinator(ctx)
+	if err != nil || seat == "" {
+		return "", err
+	}
+	return pushGate(ctx, st, seat, st.Now())
 }
 
 // coordinatorsAlone is why the actor may not do what is the coordinator's

@@ -175,3 +175,10 @@ This specification is locked. No line changes without his words, quoted here wit
 - 2026-10-03 11:30 AM, the owner, a quoted change after the lock: "nova sprint website is not updating once
   per-second. something is chug." The page's refresh is the event stream, the timer's poll its fallback (the
   Refresh line above); nothing else moves.
+- 2026-10-05 ~11:45 PM ET, the owner, a quoted change after the lock: "I would like you to remove all the
+  already landed work streams." The Work panel shows only the live streams by default; the archived
+  ones (`stream archive`, read from `where --json --archived`'s `archived`) are behind one line in the
+  panel head after the subtitle, "<N> archived streams, <M> cards landed, $<X> · show", which shows
+  them in the table (and reads "· hide") when clicked and hides them again on the next click. The
+  subtitle counts the streams shown; the total row, the progress bar and the hero count every stream,
+  archived ones included. Nothing else moves.

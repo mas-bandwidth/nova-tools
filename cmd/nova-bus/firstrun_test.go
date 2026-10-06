@@ -4,11 +4,14 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/bus"
 	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
 	"github.com/mas-bandwidth/nova-tools/internal/testredis"
 	"github.com/redis/go-redis/v9"
@@ -27,13 +30,24 @@ import (
 // nothing it prints. The run-owned values are the message's id (a ULID from
 // the store's time) and its at, named from the one shared table.
 
-// firstRunStore is a throwaway redis-server whose roster names ada and bob.
+// firstRunStore is a throwaway redis-server whose roster names ada and bob,
+// each with a proven inbox push as its friend daemon writes it (bus.PushKey).
+// The proofs are stamped a minute past the store's time, so names reads
+// age=0s for the whole sitting however long the steps take.
 func firstRunStore(t *testing.T) string {
 	t.Helper()
+	ctx := context.Background()
 	addr := testredis.Start(t)
 	c := redis.NewClient(&redis.Options{Addr: addr})
 	defer c.Close()
-	require.NoError(t, c.SAdd(context.Background(), "friends", "ada", "bob").Err())
+	require.NoError(t, c.SAdd(ctx, "friends", "ada", "bob").Err())
+	now, err := c.Time(ctx).Result()
+	require.NoError(t, err)
+	for _, n := range []string{"ada", "bob"} {
+		raw, err := json.Marshal(bus.PushProof{Name: n, Harness: "claude", Nonce: "first-run", Proven: now, Up: true, At: now.Add(time.Minute).UTC()})
+		require.NoError(t, err)
+		require.NoError(t, c.HSet(ctx, bus.PushKey, n, string(raw)).Err())
+	}
 	return addr
 }
 
