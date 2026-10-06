@@ -1013,9 +1013,9 @@ same code path (`friend.Delivery.One`):
   `remote.origin.promisor` is set is refused naming its remedy (remove it, and the next stage
   clones a full one). The mirrors' directory is a setting, `--mirrors`, with a working default:
   `mirrors` under the daemon's state dir, cloned the first time and fetched before each stage.
-- **A friend whose runner stages its own jobs is not staged twice.** `nova-friend run|install
-  --stages runner` (default `daemon`) sets no stage: her briefs are written alone and no job
-  directory is made. Any stage claims its job first: it takes `jobs/.<job>.lock` (an flock;
+- **A friend whose runner stages its own jobs is not staged twice.**
+  `nova-friend run|install --stages runner` (default `daemon`) sets no stage: her briefs are
+  written alone and no job directory is made. Any stage claims its job first: it takes `jobs/.<job>.lock` (an flock;
   held by another stage, a second daemon beside it, the job is `StartedElsewhere`), then makes
   `jobs/<job>` with its mark `.nova-friend-stage` in it, or finds that mark left by a stage that
   ended part way and resumes it. A job directory with no `JOB.md` and no mark was made by
