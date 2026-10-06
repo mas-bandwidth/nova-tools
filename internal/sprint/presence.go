@@ -114,6 +114,14 @@ type FriendReport struct {
 	// docs/SPEC-FRIEND.md, limits-mean-down-w-r5.w1~15); zero and empty while she is up.
 	Until  time.Time `json:"until,omitzero"`
 	Reason string    `json:"reason,omitempty"`
+	// Build, Started and Present are her daemon's own facts (friend beat --build --started
+	// --present): the build it runs (its version line's build), when it started, which is its
+	// generation, and when it sent her the present on its start (the note that snaps her to
+	// now and skips what is old); each absent when it reported none. A start the status
+	// transitions have not seen is a new generation of her daemon (StatusTransitions).
+	Build   string    `json:"build,omitempty"`
+	Started time.Time `json:"started,omitzero"`
+	Present time.Time `json:"present,omitzero"`
 }
 
 // SaysDown says the beat is her daemon's word that she is down (FriendReport.Until):
@@ -282,9 +290,17 @@ func LoadText(b Beat, now time.Time) string {
 // downs, the level part of the same tick evens the queues after the deal. So
 // a fleet that beats before start is up, whole, at the first tick, and a
 // fleet that loses several machines at once redeals all their cards in that
-// tick. The binding gives it the beats; with none given it does nothing.
+// tick. The binding gives it the beats; with none given it does nothing. Each
+// status that changed, a member's or a friend's, raises its one judgment in the
+// same plan (StatusTransitions, judgments_status.go).
 func TickPresence(s *Snapshot, r TickReq) (Plan, int) {
-	return presence(s, r) // the rest are due: the next ticks apply them
+	p, due := presence(s, r) // the rest are due: the next ticks apply them
+	t := StatusTransitions(s, r)
+	p.Units = append(p.Units, t.Units...)
+	p.Notes = append(p.Notes, t.Notes...)
+	p.Closes = append(p.Closes, t.Closes...)
+	p.Props = append(p.Props, t.Props...)
+	return p, due
 }
 
 func presence(s *Snapshot, r TickReq) (Plan, int) {

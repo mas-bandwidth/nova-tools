@@ -137,6 +137,16 @@ type FriendSeat struct {
 	// Answered is when her session last answered the coordinator's wake ping (her
 	// FriendHealth observation, up), zero when it has not.
 	Answered time.Time
+	// Beat, Evidence, DaemonOnly and Current are what the status transitions read
+	// (StatusTransitions, judgments_status.go): her last beat (zero when she never beat),
+	// what her status rests on (FriendEvidence), whether she is down while the coordinator's
+	// last observation is her daemon's pong alone (DaemonPong: her daemon answers, her
+	// session does not), and the build the server runs, which her daemon's
+	// (Beat.Friend.Build) is compared with.
+	Beat       Beat
+	Evidence   string
+	DaemonOnly bool
+	Current    string
 }
 
 // FieldFriendsLeft is the friends a friend's work card has left, comma joined: each the
