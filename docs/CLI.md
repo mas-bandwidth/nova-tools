@@ -514,8 +514,8 @@ deliver command (one envelope, oldest first, each message under a line
 `[i/n] <id> from=<f> at=<RFC3339> age=<m>m subject=<s>`, capped at the
 harness's text limit with the rest named under `and <n> more: nova-bus recv
 --as <me> --all`; exit 0 acks every message it carried, a failure none; of the
-daemon's own coordinator notices pending, only the newest goes in, the older
-acked with `superseded=<newer id>` on the daemon's record), beats to the sprint server while the loop runs, answers the
+daemon's own coordinator notices not yet in a turn, only the newest goes in,
+each older one dropped with `superseded=<newer id>` on the daemon's record), beats to the sprint server while the loop runs, answers the
 coordinator's `PING` at once (`daemon-pong`) and never makes a turn of it; the
 session's own `pong --nonce`, its line at the head of the next turn, or any
 other bus line the session sends after the ping, makes the friend up. No ping for a window and the session is told the
@@ -749,7 +749,7 @@ once the row's unit runs. What it gets wrong first: no `--redis` and no
 | `ping --as <coordinator> --wake --to-friends [--every <d>] [--within <d>] [--never-wake <f,...>] [--server <addr>]` | The wake loop: a wake `PING` to every friend the friends table holds up (never held, down, or never-wake), each session's pong waited for, one blocker note to the coordinator per change of who is deaf |
 | `ping-install --as <coordinator> --every <d> [...]` / `ping-uninstall --as <coordinator>` | Installs the wake loop as the launchd agent `com.nova.friend-wake-ping-<as>`; removes it |
 | `wait-pong --from <friend> --nonce <n> [--timeout <d>]` | Waits for the pong on the log, from the friend's own stream |
-| `status --as <me> --dir <d> [--state-dir <d>]` | The daemon's state, the last pong, the queue file's counts |
+| `status --as <me> --dir <d> [--state-dir <d>]` | The daemon's state, the last pong, the queue file's counts, and the envelope size: `envelope=<n>` messages the last turn's envelope carried and `envelope_bytes=<b>` its size (at most the harness's text limit, 262144 bytes unless it names its own; the first message always goes in; 0 before the first) |
 | `serve --as <coordinator> [--redis <addr>] [--dry-run]` | The coordinator's ping loop: a `PING` to every friend row each second, one line per friend up or down (ten seconds without a pong); until a signal |
 | `version`, `help [<verb>]` | The version line; the banner, or a verb's help |
 

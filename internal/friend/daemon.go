@@ -197,7 +197,7 @@ const IdleWalkEvery = time.Minute
 type turn struct {
 	entries  []string // the stream entries to ack
 	msgs     []bus.Message
-	notice   *Push
+	notice   *Notice
 	text     string
 	started  time.Time
 	running  bool // a Deliver is under way (false while a deferral waits)
@@ -253,11 +253,6 @@ func Batch(msgs []bus.Message, notice, pongCommand string) string {
 // RestLine is the envelope's line for the messages that did not fit in it:
 // how many, and the command that prints every pending message whole.
 const RestLine = "and %d more: nova-bus recv --as %s --all"
-
-// NoticeSubjects are the subjects of the daemon's notices about the
-// coordinator; of these on the friend's own stream, only the newest is
-// delivered (SupersededNotices).
-var NoticeSubjects = []string{"coordinator silent", "coordinator back"}
 
 // Envelope is the one turn that carries every pending message when the
 // session is free (docs/SPEC-FRIEND.md, the loop): the pong line first while a
@@ -315,37 +310,31 @@ func ageMinutes(now, at time.Time) int {
 	return 0
 }
 
-// SupersededNotices is the supersede rule over the pending list, oldest first
-// (docs/SPEC-FRIEND.md, the loop): each of self's own notices about the
-// coordinator (from self, a subject of NoticeSubjects) of which a newer one is
-// pending maps to the newest's id. Those are dropped, never delivered, and
-// acked with superseded=<that id>; every other message is untouched.
-func SupersededNotices(msgs []bus.Message, self string) map[string]string {
-	newest := ""
-	for _, m := range msgs {
-		if isNotice(m, self) {
-			newest = m.ID
-		}
-	}
-	out := map[string]string{}
-	for _, m := range msgs {
-		if isNotice(m, self) && m.ID != newest {
-			out[m.ID] = newest
-		}
-	}
-	return out
+// Notice is one of the daemon's own words about the coordinator (a Push of
+// Machine's), with the id the daemon gives it when it is said: the record
+// names a dropped notice and its successor by these ids.
+type Notice struct {
+	Push
+	ID  string
+	seq int // the order the daemon said it in
 }
 
-func isNotice(m bus.Message, self string) bool {
-	if m.From != self {
-		return false
+// SupersededNotices is the supersede rule (docs/SPEC-FRIEND.md, the loop): of
+// the daemon's own notices not yet in a turn, oldest first, each of which a
+// newer one exists maps to the newest's id. Those are dropped, never
+// delivered, and each is recorded with superseded=<that id>. It reads only
+// the notices the daemon itself raised, never a message on the bus. A function
+// of its argument.
+func SupersededNotices(owed []Notice) map[string]string {
+	out := map[string]string{}
+	if len(owed) < 2 {
+		return out
 	}
-	for _, s := range NoticeSubjects {
-		if m.Subject == s {
-			return true
-		}
+	newest := owed[len(owed)-1].ID
+	for _, n := range owed[:len(owed)-1] {
+		out[n.ID] = newest
 	}
-	return false
+	return out
 }
 
 func dash(s string) string {
@@ -379,8 +368,9 @@ type loop struct {
 	pingAt       time.Time       // the store's time on the newest ping read: a session line after it is its proof of life
 	proofFrom    string          // where the next read of the log for that proof starts
 	inHand       map[string]bool // entries read and not yet acked or failed: in hand or in a turn
-	notice       *Push           // the latest word about the coordinator the session is owed
-	noticeTaken  *Push           // the word the last head() put in a turn
+	notice       *Notice         // the latest word about the coordinator the session is owed
+	noticeTaken  *Notice         // the word the last head() put in a turn
+	notices      int             // how many notices the daemon has said: each one's id (say)
 	saidSilent   bool            // what the session last heard: the coordinator silent
 	busy         *turn           // the batch turn under way, or deferred in hand
 	retry        time.Time       // when the deferred turn in hand is tried again; zero while none is
@@ -436,7 +426,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 	for ctx.Err() == nil {
 		now := d.Now()
 		for _, p := range d.m.Tick(now) {
-			l.say(p)
+			l.say(p, now)
 		}
 		if l.passive && l.notice != nil {
 			// nothing can be pushed in: the session hears of it from its own read
@@ -632,12 +622,46 @@ func (l *loop) turns() []*turn {
 	return out
 }
 
-func (l *loop) say(p Push) {
+// say takes the daemon's newest word about the coordinator: it supersedes
+// the one still owed (SupersededNotices, the drop on the record), and a
+// "coordinator back" the session would not need, never having heard it was
+// silent, is itself nothing to say.
+func (l *loop) say(p Push, now time.Time) {
+	l.notices++
+	n := &Notice{Push: p, ID: fmt.Sprintf("notice-%d-%d", now.UnixMilli(), l.notices), seq: l.notices}
+	l.owe(n, now)
 	if p.Subject == "coordinator back" && !l.saidSilent {
 		l.notice = nil // the session never heard otherwise: nothing to say
-		return
 	}
-	l.notice = &p
+}
+
+// owedAgain hands back the notice a failed turn carried: owed again unless a
+// newer one is owed, which supersedes it (owe).
+func (l *loop) owedAgain(n *Notice, now time.Time) {
+	if l.notice == nil {
+		l.saidSilent = n.Subject != "coordinator silent"
+	}
+	l.owe(n, now)
+}
+
+// owe makes n the notice the session is owed, dropping the one owed before
+// it, of which n is newer, on the record with superseded=<n's id>
+// (docs/SPEC-FRIEND.md, the loop). A notice a failed turn hands back while a
+// newer one is owed is itself the dropped one.
+func (l *loop) owe(n *Notice, now time.Time) {
+	owed := []Notice{*n}
+	if l.notice != nil {
+		owed = []Notice{*l.notice, *n}
+		if l.notice.seq > n.seq {
+			owed = []Notice{*n, *l.notice}
+		}
+	}
+	for id, newer := range SupersededNotices(owed) {
+		subject := owed[0].Subject
+		l.d.Record(fmt.Sprintf("%s notice=%s subject=%q superseded=%s dropped=true", now.UTC().Format(time.RFC3339), id, subject, newer))
+	}
+	newest := owed[len(owed)-1]
+	l.notice = &newest
 }
 
 // head is what heads the next turn: the word about the coordinator, taken
@@ -718,7 +742,7 @@ func (l *loop) ping(e bus.Entry, msg bus.Message, nonce, seat string, since, now
 		l.pingAt, l.proofFrom = msg.At, bus.IDAt(msg.At)
 	}
 	for _, p := range l.d.m.Ping(now, seatOf(seat, msg), since, nonce) {
-		l.say(p)
+		l.say(p, now)
 	}
 	if IsWake(msg.Body) && !l.passive {
 		l.wake = true
@@ -804,38 +828,6 @@ func (l *loop) take() (entries []string, msgs []bus.Message) {
 	return entries, msgs
 }
 
-// dropSuperseded takes out of the hand the daemon's own notices of which a
-// newer one is in hand (SupersededNotices) and acks each, the record naming
-// its successor; one whose ack fails stays in hand and goes in
-// (docs/SPEC-FRIEND.md, the loop).
-func (l *loop) dropSuperseded(now time.Time) {
-	msgs := make([]bus.Message, len(l.hand))
-	for i, e := range l.hand {
-		msgs[i] = e.Message()
-	}
-	gone := SupersededNotices(msgs, l.d.Friend)
-	if len(gone) == 0 {
-		return
-	}
-	var kept []bus.Entry
-	for i, e := range l.hand {
-		newer, drop := gone[msgs[i].ID]
-		if drop {
-			line := fmt.Sprintf("%s subject=%q id=%s superseded=%s", now.UTC().Format(time.RFC3339), msgs[i].Subject, msgs[i].ID, newer)
-			if _, err := l.d.Store.Ack(l.ctx, bus.StreamOf(l.d.Friend), l.d.Friend, e.Entry); err != nil {
-				l.d.status.StoreError = err.Error()
-				l.d.Record(line + " ack=failed")
-			} else {
-				l.d.Record(line + " acked=true")
-				delete(l.inHand, e.Entry)
-				continue
-			}
-		}
-		kept = append(kept, e)
-	}
-	l.hand = kept
-}
-
 // proof is the session's proof of life by any bus line it sends
 // (docs/SPEC-FRIEND.md, the loop): while a challenge is open, a message on the
 // log from the friend written after the newest ping, that the daemon did not
@@ -907,15 +899,12 @@ func (l *loop) deliverBatch(t *turn) func(context.Context) result {
 }
 
 // startBatch is the one turn for every message in hand (docs/SPEC-FRIEND.md,
-// the loop): superseded notices dropped first (dropSuperseded), the rest in
-// one Envelope cut at the deliverer's TextLimit; the messages that did not fit
-// go back to the head of the hand, pending, and are the next turn. The model
-// is internal/friend/tla/Delivery.tla: EnvelopeTakesAll and NoYoungerFirst.
+// the loop): one Envelope, with the daemon's newest word about the
+// coordinator (say), cut at the deliverer's TextLimit; the messages that did
+// not fit go back to the head of the hand, pending, and are the next turn.
+// The model is internal/friend/tla/Delivery.tla: EnvelopeTakesAll and
+// NoYoungerFirst.
 func (l *loop) startBatch(now time.Time) {
-	l.dropSuperseded(now)
-	if len(l.hand) == 0 {
-		return
-	}
 	t := &turn{}
 	var msgs []bus.Message
 	for _, e := range l.hand {
@@ -928,6 +917,7 @@ func (l *loop) startBatch(now time.Time) {
 		t.entries = append(t.entries, e.Entry)
 	}
 	t.msgs, t.text = msgs[:shown], text
+	l.d.status.Envelope, l.d.status.EnvelopeBytes = shown, len(text)
 	l.hand = l.hand[shown:]
 	var subjects []string
 	for _, m := range t.msgs {
@@ -1050,9 +1040,8 @@ func (l *loop) settle(t *turn, ok bool, err error, now time.Time) string {
 			}
 		}
 	}
-	if !ok && t.notice != nil && l.notice == nil { // the word was not heard: it is owed again
-		l.notice = t.notice
-		l.saidSilent = t.notice.Subject != "coordinator silent"
+	if !ok && t.notice != nil { // the word was not heard: it is owed again
+		l.owedAgain(t.notice, now)
 	}
 	if l.broken && !l.told {
 		line += fmt.Sprintf("\n%s session %s broken: %s (%d turns in a row); delivering nothing into it until the daemon restarts, every message stays pending",
