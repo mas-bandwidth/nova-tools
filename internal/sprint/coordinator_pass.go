@@ -23,7 +23,12 @@ import (
 //     card work);
 //   - the coordinator is behind: judgments wait on the coordinator past their due time,
 //     by kind and count, each counted once PassEvery of running time has run since the
-//     overdue part named it (its overdue line is the first reminder, this the next).
+//     overdue part named it (its overdue line is the first reminder, this the next);
+//   - an up friend has had an empty row for EmptyRowAfter while cards she could do sit
+//     ready in the pool or unstarted on another friend's row (emptyConds);
+//   - a named pin sits ready or working off its friend's row (pinConds). The deal writes
+//     that judgment on the unit that places the card on someone else (friendDeal); the
+//     pass keeps it, and writes it when the card is there without that note.
 //
 // Raising again is a push: the judgment is rewritten in place with the latest facts and
 // the count of its raises after the first (its Before), and a happened note NRaisedAgain
@@ -39,17 +44,41 @@ const (
 	NFriendDeaf        = "a friend's session is deaf"
 	NFriendIdle        = "a friend holds working cards and finishes none"
 	NCoordinatorBehind = "judgments wait on the coordinator past their deadline"
+	// NFriendEmpty is an up friend whose row has been empty for EmptyRowAfter while
+	// cards she could do sit ready in the pool or unstarted on another friend's row.
+	NFriendEmpty = "an up friend has an empty row while cards wait"
+	// NPinIgnored is a named pin (WHO: friend <name>, not a hard pin) sitting ready
+	// or working off that friend's row.
+	NPinIgnored = "a pinned card was dealt away from its friend"
+	// NFriendRowEmpty is the clock for NFriendEmpty: an acknowledgement, not a
+	// judgment, written when an up friend's empty row and the cards she could do
+	// first hold together, and closed when they do not. It is not one of PassTypes,
+	// so a pass does not raise it and does not close it by the judgment rule.
+	NFriendRowEmpty = "an up friend's empty row"
 	// NRaisedAgain is the push of a pass judgment that still holds: a happened note to
 	// the coordinator, once every PassEvery of running time.
 	NRaisedAgain = "a judgment still holds: raised again"
 )
 
-// PassTypes are the pass's judgment types.
-var PassTypes = []string{NFriendDeaf, NFriendIdle, NCoordinatorBehind}
+// PassTypes are the pass's judgment types. NFriendRowEmpty is the empty-row clock,
+// not a judgment, and stays off this list.
+var PassTypes = []string{NFriendDeaf, NFriendIdle, NCoordinatorBehind, NFriendEmpty, NPinIgnored}
+
+// The two judgments list ack and wait on TickDecisions, same as deaf and idle, so an
+// acknowledgement is kept on the condition (steps_ack.go) and the next pass does not
+// write a second note. steps_tick.go is not this card's file; the map is the tick's
+// and init is how this file joins it.
+func init() {
+	TickDecisions[NFriendEmpty] = []string{"ack", "wait"}
+	TickDecisions[NPinIgnored] = []string{"ack", "wait"}
+}
 
 const (
 	// PassEvery is the running time between two raises of one pass judgment.
 	PassEvery = 10 * time.Minute
+	// EmptyRowAfter is how long an up friend's row stays empty, while cards she
+	// could do wait elsewhere, before the pass tells the coordinator once.
+	EmptyRowAfter = 10 * time.Minute
 	// FriendDeafAfter is how old a friend's last session pong may be before her
 	// session is deaf: FriendProofLive, since her daemon asks a quiet session after ten
 	// minutes and waits five for the answer (docs/SPEC-FRIEND.md, The push proof), so a
@@ -122,11 +151,13 @@ func WithFriendFinish(p Plan, s *Snapshot, v string) Plan {
 	return p
 }
 
-// TickCoordinatorPass is the pass, run by the overdue part (TickOverdue): the three
+// TickCoordinatorPass is the pass, run by the overdue part (TickOverdue): the
 // conditions raised, raised again and closed (the comment above).
 func TickCoordinatorPass(s *Snapshot, r TickReq) (Plan, int) {
 	var p Plan
 	conds := append(append(deafConds(s, r), idleConds(s, r)...), behindConds(s, r)...)
+	conds = append(conds, emptyConds(&p, s, r)...)
+	conds = append(conds, pinConds(s, r)...)
 	due := notify(&p, s, conds, PassTypes, r)
 	reraise(&p, s, conds, r)
 	return p, due
@@ -315,4 +346,292 @@ func reraise(p *Plan, s *Snapshot, conds []cond, r TickReq) {
 			Hint: "run: nova-sprint inbox; ack it, or wait it, to quiet it"}
 		p.Notes = append(p.Notes, push)
 	}
+}
+
+// idleWait is one card an empty friend could do, and the other friend whose row
+// holds it when it is not sitting ready in the pool.
+type idleWait struct {
+	phrase string
+	holder string
+}
+
+// emptyConds is one condition for each friend who is up, not held, and has had
+// an empty row for EmptyRowAfter of running time while cards she could do sit
+// ready in the pool or unstarted on another friend's row. The ten minutes start
+// when that conjunction first holds: an acknowledgement NFriendRowEmpty on her
+// row, closed when she is not up, her row is not empty, or nothing she could do
+// is waiting, so time down or held does not count. The judgment's text names her,
+// those cards and where they sit, and offers to deal them to her, to have a friend
+// take the other row, or to keep. While the cards sit where the text says, the
+// text does not change, so the episode stays one (the condition key includes the
+// text; steps_tick.go is not this card's file).
+func emptyConds(p *Plan, s *Snapshot, r TickReq) []cond {
+	watches := map[string]Open{}
+	for _, o := range s.Acked {
+		if o.Note.Kind == Acknowledged && o.Note.Type == NFriendRowEmpty {
+			watches[o.Subject()] = o
+		}
+	}
+	openWhat := map[string]string{}
+	for _, o := range s.Open {
+		if o.Note.Kind == Judgment && o.Note.Type == NFriendEmpty {
+			openWhat[o.Subject()] = o.Note.What
+		}
+	}
+	if s.Fleet == nil {
+		for _, w := range watches {
+			p.Closes = append(p.Closes, w)
+		}
+		return nil
+	}
+	seats := map[string]FriendSeat{}
+	for _, f := range r.Friends {
+		seats[f.Name] = f
+	}
+	names := slices.Sorted(maps.Keys(seats))
+	want := map[string]bool{}
+	var out []cond
+	for _, name := range names {
+		f := seats[name]
+		row := FriendRow(name)
+		up := f.Status == Up && !r.Sessions[name].Held && s.MemberCtl(row).F("status") != Held
+		var cards []idleWait
+		if up && friendLoad(s, name) == 0 {
+			cards = cardsWaitingFor(s, f, seats)
+		}
+		if !up || friendLoad(s, name) != 0 || len(cards) == 0 {
+			continue
+		}
+		want[row] = true
+		_, judged := openWhat[row]
+		w, watching := watches[row]
+		if !watching && !judged {
+			p.Notes = append(p.Notes, Note{Kind: Acknowledged, Type: NFriendRowEmpty, Primaries: []string{row}, Count: 1,
+				What: row, Who: r.who(), At: s.Now})
+			continue
+		}
+		if !judged {
+			d, ok := r.running(s.Now, stamp(w.Note.At))
+			if !ok || d < EmptyRowAfter {
+				continue
+			}
+		}
+		what := emptyRowWhat(name, cards)
+		if prev := openWhat[row]; prev != "" {
+			what = prev // one episode while it holds; the key includes the text
+		}
+		out = append(out, cond{typ: NFriendEmpty, primaries: []string{row}, what: what, decisions: emptyRowDecisions(name, cards)})
+	}
+	for row, w := range watches {
+		if !want[row] {
+			p.Closes = append(p.Closes, w)
+		}
+	}
+	return out
+}
+
+// cardsWaitingFor are the cards f could do that are not on her row: a ready
+// primary in the pool, or an unstarted work card on another friend's row.
+func cardsWaitingFor(s *Snapshot, f FriendSeat, seats map[string]FriendSeat) []idleWait {
+	var out []idleWait
+	if s.Work != nil {
+		for _, pr := range s.Work.Column(Ready) {
+			if pr == nil || IsSentinel(pr) || StreamHeld(s, pr.Row) || len(Bench(pr)) > 0 {
+				continue
+			}
+			if !friendCouldTake(f, pr, nil) {
+				continue
+			}
+			out = append(out, idleWait{phrase: pr.ID + " ready in the pool"})
+		}
+	}
+	if s.Fleet == nil {
+		sort.Slice(out, func(i, j int) bool { return out[i].phrase < out[j].phrase })
+		return out
+	}
+	her := FriendRow(f.Name)
+	for _, row := range s.Fleet.Rows() {
+		if row == her {
+			continue
+		}
+		holder, friendRow := FriendOfRow(row)
+		if !friendRow {
+			continue
+		}
+		for _, col := range []string{Ready, Working} {
+			for _, wc := range s.Fleet.Cell(row, col) {
+				if wc.F("kind") != "work" {
+					continue
+				}
+				pr := s.Work.Placed(wc.F("primary"))
+				if pr == nil || IsSentinel(pr) || StreamHeld(s, pr.Row) {
+					continue
+				}
+				if friendStarted(s, seats[holder], wc) || !friendCouldTake(f, pr, wc) {
+					continue
+				}
+				out = append(out, idleWait{holder: holder, phrase: fmt.Sprintf("%s on %s:%s unstarted", wc.ID, row, col)})
+			}
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].phrase < out[j].phrase })
+	return out
+}
+
+// friendCouldTake says f may be given the primary: her tiers hold its tier, it
+// is not a hard pin to someone else, and the work card has not left her.
+func friendCouldTake(f FriendSeat, pr, wc *Card) bool {
+	if pr == nil || !friendTakes(f, cardTierOf(pr)) {
+		return false
+	}
+	if name, ok := FriendCard(pr); ok && name != "" && name != f.Name && OnlyFriend(pr) {
+		return false
+	}
+	return wc == nil || !slices.Contains(friendsLeft(wc), f.Name)
+}
+
+// emptyRowWhat names the friend, the cards and where they sit. EmptyRowAfter is
+// the constant, not a live age, so the text stays put while the cards do.
+func emptyRowWhat(name string, cards []idleWait) string {
+	phrases := make([]string, len(cards))
+	for i, c := range cards {
+		phrases[i] = c.phrase
+	}
+	return fmt.Sprintf("friend %s has had an empty row for %s while %d cards she could do sit elsewhere: %s; deal them to her, friend take the other row, or keep",
+		name, EmptyRowAfter, len(phrases), strings.Join(phrases, ", "))
+}
+
+// emptyRowDecisions are the offers: deal them to her, friend take each other
+// row that holds an unstarted card, or keep. ack and wait are how the pass
+// quiets any of its judgments.
+func emptyRowDecisions(name string, cards []idleWait) []string {
+	ds := []string{"deal them to " + name}
+	seen := map[string]bool{}
+	var holders []string
+	for _, c := range cards {
+		if c.holder != "" && !seen[c.holder] {
+			seen[c.holder] = true
+			holders = append(holders, c.holder)
+		}
+	}
+	sort.Strings(holders)
+	for _, h := range holders {
+		ds = append(ds, "friend take "+h+" --all-unstarted")
+	}
+	return append(ds, "keep", "ack", "wait")
+}
+
+// pinConds is one condition for each named pin whose work card is ready or
+// working on a row that is not its friend's. A hard pin (OnlyFriend) waits for
+// her and is not one of these. The text is the one the deal wrote when it
+// rotated the card, when that judgment is already open, so a later pass does
+// not close it and open another.
+func pinConds(s *Snapshot, r TickReq) []cond {
+	if s.Fleet == nil || s.Work == nil {
+		return nil
+	}
+	openWhat := map[string]string{}
+	for _, o := range s.Open {
+		if o.Note.Kind == Judgment && o.Note.Type == NPinIgnored {
+			openWhat[o.Subject()] = o.Note.What
+		}
+	}
+	free := map[string]int{}
+	for _, f := range r.Friends {
+		if f.Status != Up {
+			continue
+		}
+		room, _ := friendRoom(f)
+		free[f.Name] = room - friendLoad(s, f.Name)
+	}
+	var out []cond
+	seen := map[string]bool{}
+	for _, row := range s.Fleet.Rows() {
+		for _, col := range []string{Ready, Working} {
+			for _, wc := range s.Fleet.Cell(row, col) {
+				if wc.F("kind") != "work" {
+					continue
+				}
+				prID := wc.F("primary")
+				if prID == "" || seen[prID] {
+					continue
+				}
+				pr := s.Work.Placed(prID)
+				if pr == nil {
+					continue
+				}
+				pinned, ok := FriendCard(pr)
+				if !ok || pinned == "" || OnlyFriend(pr) || row == FriendRow(pinned) {
+					continue
+				}
+				seen[prID] = true
+				what := openWhat[prID]
+				if what == "" {
+					what = pinIgnoredWhat(wc.ID, pinned, pinSkipWhy(r.Friends, pinned, friendsLeft(wc), cardTierOf(pr), free), row, col)
+				}
+				holder, _ := FriendOfRow(row)
+				out = append(out, cond{typ: NPinIgnored, stream: pr.Row, card: wc.ID, primaries: []string{prID},
+					what: what, decisions: pinIgnoredDecisions(pinned, holder, wc.ID)})
+			}
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].primaries[0] < out[j].primaries[0] })
+	return out
+}
+
+// pinSkipWhy is why a named pin was not placed on her row, checked in the
+// deal's order: not up (held is its own reason), the card has left her, her
+// tiers do not hold the tier, she has no room.
+func pinSkipWhy(seats []FriendSeat, pinned string, left []string, tier string, free map[string]int) string {
+	var seat FriendSeat
+	found := false
+	for _, f := range seats {
+		if f.Name == pinned {
+			seat = f
+			found = true
+			break
+		}
+	}
+	switch {
+	case !found || seat.Status == Down || seat.Status == "":
+		return "she is not up"
+	case seat.Status == Held:
+		return "she is held"
+	case seat.Status != Up:
+		return "she is not up"
+	case slices.Contains(left, pinned):
+		return "it has left her"
+	case !friendTakes(seat, tier):
+		return "her tiers do not hold " + tier
+	case free[pinned] <= 0:
+		return "she has no room"
+	default:
+		return "she did not take it"
+	}
+}
+
+// pinIgnoredWhat names the card, the friend it was pinned to, why she did not
+// take it, and the row and column that hold it now.
+func pinIgnoredWhat(cardID, pinned, why, row, col string) string {
+	return fmt.Sprintf("%s pinned to %s went to %s:%s: %s did not take it because %s", cardID, pinned, row, col, pinned, why)
+}
+
+// pinIgnoredDecisions offers friend take of the row that holds the card, when
+// that row is a friend's, or keep. ack and wait quiet it like the other pass
+// judgments.
+func pinIgnoredDecisions(pinned, holder, cardID string) []string {
+	ds := []string{"keep", "ack", "wait"}
+	if holder != "" {
+		ds = append([]string{"friend take " + holder + " " + cardID + " --reason pinned to " + pinned}, ds...)
+	}
+	return ds
+}
+
+// pinIgnoredNote is the judgment the deal writes on the unit that places a
+// named pin on someone else's row. The pass's pinConds keeps that same text.
+func pinIgnoredNote(s *Snapshot, primary *Card, cardID, pinned, why, row, col string) Note {
+	holder, _ := FriendOfRow(row)
+	return Note{Kind: Judgment, Type: NPinIgnored, Stream: primary.Row, Primaries: []string{primary.ID}, Count: 1,
+		Card: cardID, What: pinIgnoredWhat(cardID, pinned, why, row, col), Who: MachineActor, At: s.Now, Marked: true,
+		Decisions: pinIgnoredDecisions(pinned, holder, cardID)}
 }
