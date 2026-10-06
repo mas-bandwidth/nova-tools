@@ -35,9 +35,20 @@ func (r result) all() string { return r.stdout + r.stderr }
 // same way, whatever the machine's environment holds (docs/STANDARD.md section 8).
 func noEnv(string) string { return "" }
 
+var fakeSqlite3BinDir string
+
 // testEnv is the environment invoke runs under: no variables, and an empty working
 // directory, which resolves a relative path against the process cwd like every os call.
-func testEnv() toolenv { return toolenv{getenv: noEnv} }
+func testEnv() toolenv {
+	return toolenv{
+		getenv: func(k string) string {
+			if k == "PATH" && fakeSqlite3BinDir != "" {
+				return fakeSqlite3BinDir + string(os.PathListSeparator) + os.Getenv("PATH")
+			}
+			return noEnv(k)
+		},
+	}
+}
 
 // processEnv is the environment the tool re-entered through TestMain runs under: the
 // process's own, exactly what main() passes.
@@ -70,7 +81,20 @@ func invokeAt(t *testing.T, now time.Time, args ...string) result {
 // counter can do so without interference from concurrent folds.
 var opensGate sync.RWMutex
 
+var pathMu sync.Mutex
+
 func invokeEnvDirect(args []string, now time.Time, env toolenv) result {
+	if env.getenv != nil {
+		if p := env.getenv("PATH"); p != "" {
+			pathMu.Lock()
+			old := os.Getenv("PATH")
+			os.Setenv("PATH", p)
+			defer func() {
+				os.Setenv("PATH", old)
+				pathMu.Unlock()
+			}()
+		}
+	}
 	var out, errb bytes.Buffer
 	exit := run(args, &out, &errb, now, env)
 	return result{exit: exit, stdout: out.String(), stderr: errb.String()}
@@ -253,8 +277,8 @@ func TestMain(m *testing.M) {
 	if mode := os.Getenv(fakeSqlite3Env); mode != "" {
 		os.Exit(fakeSqlite3Main(mode, os.Args[1:], os.Stdout))
 	}
-	if self, err := os.Executable(); err == nil {
-		base := filepath.Base(self)
+	if len(os.Args) > 0 {
+		base := filepath.Base(os.Args[0])
 		if base == "sqlite3" || base == "sqlite3.exe" {
 			os.Exit(fakeSqlite3Main("", os.Args[1:], os.Stdout))
 		}
@@ -271,7 +295,7 @@ func TestMain(m *testing.M) {
 				name += ".exe"
 			}
 			if err := testbin.Place(self, filepath.Join(binDir, name)); err == nil {
-				os.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+				fakeSqlite3BinDir = binDir
 			}
 		}
 	}

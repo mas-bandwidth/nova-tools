@@ -1,6 +1,11 @@
 package main
 
-import "github.com/mas-bandwidth/nova-tools/internal/testbin"
+import (
+	"os"
+	"path/filepath"
+
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
+)
 
 // init runs before every test and before TestMain: a start of this test binary is
 // decided by testbin.Enter (docs/TESTS.md, "tests-reexec-guard-everywhere"). A
@@ -9,6 +14,12 @@ import "github.com/mas-bandwidth/nova-tools/internal/testbin"
 // the fake sqlite3 and the tool-as-a-child are the starts it answers.
 func init() {
 	testbin.Enter("nova-tokens", func(_ []string, getenv func(string) string) bool {
+		if len(os.Args) > 0 {
+			base := filepath.Base(os.Args[0])
+			if base == "sqlite3" || base == "sqlite3.exe" {
+				return true
+			}
+		}
 		return getenv(fakeSqlite3Env) != "" || getenv(asToolEnv) != ""
 	})
 }
