@@ -7,8 +7,8 @@ import (
 )
 
 // TestCardStateIsTheTableColumnInEveryReader: a card's live column is one
-// field, read from its table row, that `card --json` and `needs` both print
-// under "column" — and `needs` labels the waiting card's column apart from
+// field, read from its table row, that `card --json`, `needs` and the bulk
+// listing (`where --json --rows`) all print under "column" — and `needs` labels the waiting card's column apart from
 // each need's column, so the 2026-10-04 misreading (a need's state read as
 // the card's) cannot happen again. The twin store stands in for the sprint.
 func TestCardStateIsTheTableColumnInEveryReader(t *testing.T) {
@@ -54,5 +54,27 @@ func TestCardStateIsTheTableColumnInEveryReader(t *testing.T) {
 	out := ta.ok("needs --stream s1")
 	require.Contains(t, out, "card a column waiting", "needs text names the card's column")
 	require.Contains(t, out, "need b column ready", "needs text names the need's column apart")
+
+	// the bulk listing: where --json --rows names the same field "column", and
+	// it agrees with card --json for every card; "state" is its deprecated alias.
+	var where struct {
+		Rows []struct {
+			ID     string `json:"id"`
+			Column string `json:"column"`
+			State  string `json:"state"`
+		} `json:"rows"`
+	}
+	ta.json("where --rows", &where)
+	cols := map[string]string{}
+	for _, r := range where.Rows {
+		require.Equal(t, r.Column, r.State, "the deprecated state alias carries the column")
+		cols[r.ID] = r.Column
+	}
+	require.Equal(t, map[string]string{"a": "waiting", "b": "ready"}, cols, "where --json --rows prints each card's column under \"column\"")
+	for id, col := range cols {
+		var c map[string]any
+		ta.json("card "+id, &c)
+		require.Equal(t, col, c["column"], "where --json --rows and card --json agree on %s", id)
+	}
 	ta.clean()
 }

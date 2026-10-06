@@ -2186,11 +2186,14 @@ func printBrief(stdout, stderr io.Writer, id, brief string, asJSON bool) int {
 // primaryRow is one primary's row of the work table as where --json --rows carries
 // it: its place and score, and every field but the brief (card <id> --brief prints
 // that; the comfort list of 2026-10-03, item 8: a child's loop of card calls timed
-// out against the store).
+// out against the store). Column is the card's live column, the one field card
+// --json and needs print under "column" (docs/SPEC-SPRINT.md, the needs row);
+// State carries the same value as the deprecated "state" for one release.
 type primaryRow struct {
 	ID     string            `json:"id"`
 	Stream string            `json:"stream"`
-	State  string            `json:"state"`
+	Column string            `json:"column"`
+	State  string            `json:"state"` // deprecated: column; removed after one release
 	Score  float64           `json:"score"`
 	Fields map[string]string `json:"fields"`
 }
@@ -2210,7 +2213,7 @@ func rowsView(s *sprint.Snapshot, archived bool) []primaryRow {
 				fields[k] = v
 			}
 		}
-		rows = append(rows, primaryRow{ID: c.ID, Stream: c.Row, State: c.Col, Score: c.Score, Fields: fields})
+		rows = append(rows, primaryRow{ID: c.ID, Stream: c.Row, Column: c.Col, State: c.Col, Score: c.Score, Fields: fields})
 	}
 	slices.SortStableFunc(rows, func(a, b primaryRow) int {
 		return cmp.Or(cmp.Compare(a.Stream, b.Stream), cmp.Compare(a.Score, b.Score), cmp.Compare(a.ID, b.ID))
