@@ -1153,6 +1153,11 @@ one pass. A pass cut by a signal calls no one deaf.
 `com.nova.friend-wake-ping-<as>` (RunAtLoad, KeepAlive, the way `install` runs
 the daemon), and `ping-uninstall` boots it out and removes the plist.
 
+The two shell while-loops this replaces (a routine `ping --to <f>` every 600 s over a typed
+list, and a `ping --wake` loop over a typed list) live on the coordinator's machine, not in this
+repository: the wake loop is this verb; the routine loop has no verb, because nothing it
+proves is wanted, and it is stopped there, not here.
+
 Not done, and why: `serve` (above) is a different loop, the connection's own,
 each second and answered by the daemon; the daemon's "coordinator silent" window
 (`Window`) counts its pings, so deleting it is the owner's decision and is not
