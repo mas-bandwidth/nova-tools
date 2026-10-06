@@ -1416,7 +1416,7 @@ seat: the new build's checks first (its shadow tick on the store, its `nova-frie
 --dry-run` against every friend daemon's flags), then the install, the library, every stale
 nova agent booted out and bootstrapped, the dashboard links pointed at the installed
 nova-sprint and each stale friend daemon reinstalled after its lanes put their cards down, each
-step checked by `live` before the next, and the configuration store's migration last. It prints
+step checked by `live` before the next; the configuration store is migrated before anything restarts. It prints
 one `ADOPT step=<store|server|dashboard|friends> host= before= after=` line per step and `ADOPT
 ADOPTED version= hosts= steps=`; with `--dry-run` (the play's `--check`) `ADOPT WOULD-ADOPT`, and
 a machine with neither the candidate staged nor built prints `ADOPT step=seat host=<h>

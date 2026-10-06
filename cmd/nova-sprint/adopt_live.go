@@ -38,7 +38,10 @@ func init() {
 
 // liveManifest is what live prints with --json.
 type liveManifest struct {
-	BinDir    string          `json:"bin_dir"`
+	BinDir string `json:"bin_dir"`
+	// Now is this host's clock when the manifest was read, in Unix seconds:
+	// the cutoff a beat after a reinstall must be newer than.
+	Now       int64           `json:"now_unix"`
 	Server    liveBinary      `json:"server"`
 	Library   liveLibrary     `json:"library"`
 	Dashboard []liveDashboard `json:"dashboard"`
@@ -114,10 +117,12 @@ type liveAgent struct {
 	// Friend daemons only: the friend, its last beat and its age in seconds
 	// (-1: none read), and the nova-friend install arguments that reinstall it
 	// with the flags its plist records.
-	Friend  string   `json:"friend,omitempty"`
-	Beat    string   `json:"beat"`
-	BeatAge int      `json:"beat_age_s"`
-	Install []string `json:"install,omitempty"`
+	Friend  string `json:"friend,omitempty"`
+	Beat    string `json:"beat"`
+	BeatAge int    `json:"beat_age_s"`
+	// BeatUnix is the last beat in Unix seconds, 0 for none.
+	BeatUnix int64    `json:"beat_unix"`
+	Install  []string `json:"install,omitempty"`
 	// Lanes is a friend daemon's lanes with a card in hand (nova-friend
 	// status's lanes, n:session:card), the work a reinstall would cut.
 	Lanes int `json:"lanes"`
@@ -158,7 +163,7 @@ func inodeOf(path string) uint64 {
 // read is the whole manifest. An error is only the agents directory or the
 // installed nova-sprint unreadable; every other gap is said in its field.
 func (p liveProbe) read(ctx context.Context) (liveManifest, error) {
-	m := liveManifest{BinDir: p.binDir, Dashboard: []liveDashboard{}, Agents: []liveAgent{}}
+	m := liveManifest{BinDir: p.binDir, Now: p.now().Unix(), Dashboard: []liveDashboard{}, Agents: []liveAgent{}}
 	server := filepath.Join(p.binDir, "nova-sprint")
 	m.Server = liveBinary{Path: server, Inode: inodeOf(server)}
 	out, err := p.run(ctx, server, "version")
@@ -180,6 +185,10 @@ func (p liveProbe) read(ctx context.Context) (liveManifest, error) {
 			target = "not a link: " + oneline.Err(err)
 		}
 		m.Dashboard = append(m.Dashboard, liveDashboard{Link: link, Target: target, Current: target == server})
+	}
+	// a missing agents directory is no answer, never an empty host
+	if fi, err := os.Stat(p.agentsDir); err != nil || !fi.IsDir() {
+		return m, fmt.Errorf("the agents directory %s is not a directory that reads", p.agentsDir)
 	}
 	plists, err := filepath.Glob(filepath.Join(p.agentsDir, "com.nova.*.plist"))
 	if err != nil {
@@ -463,6 +472,7 @@ func (p liveProbe) friendOf(ctx context.Context, a *liveAgent, at int) {
 		a.Beat = m[1]
 		if t, err := time.Parse(time.RFC3339, m[1]); err == nil {
 			a.BeatAge = int(p.now().Sub(t).Seconds())
+			a.BeatUnix = t.Unix()
 		}
 	}
 }

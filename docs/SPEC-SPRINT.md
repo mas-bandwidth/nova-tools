@@ -5230,14 +5230,27 @@ addresses. `--json` prints the manifest as one object.
 
 The order is the rule: the candidate's checks come first, and nothing on disk or in the store
 changes until every one passes. On the coordinator machine, in the install play before the
-install, the new build itself reads the host (its own `nova-sprint live`, which records the old
-library's digest and every agent), plans a tick on the store read-only (its own `nova-sprint
-server switch --dry-run`) and plans each friend daemon's reinstall (its own `nova-friend install
---dry-run` with the flags that daemon's plist records). A refusal there leaves the host as it
-was. Then the tools are installed on fresh inodes (`nova-update release install` renames, never
-writes over a running binary), the store play loads the library (`nova-redis fn load`), and the
-seat play adopts the build, each step checked by the manifest after before the next begins, a
-step that does not hold stopping the play with `ADOPT REFUSED step=<step>`:
+install, the new build itself reads the host (its own `nova-sprint live`), plans a tick on the
+store read-only (its own `nova-sprint server switch --dry-run`) and plans each friend daemon's
+reinstall (its own `nova-friend install --dry-run` with the flags that daemon's plist records). A
+refusal there leaves the host as it was. Once they pass, the library on the store is recorded and
+the nova-redis whose library it is is kept (`nova_seat_rollback_dir`). Then the tools are
+installed on fresh inodes (`nova-update release install` renames, never writes over a running
+binary), the configuration store is migrated (`nova-config migrate`), the store play loads the
+library (`nova-redis fn load`), and the seat play adopts the build.
+
+The migration runs before the seat play restarts anything, as the barrier the server's restart
+waits on, because the migrations are not all additions the old build tolerates: some drop a
+column or delete rows (0008, 0011, 0017, 0019, 0028), and a server of the new build needs the
+schema it reads. It is the one forward-only step: a later refusal never undoes it, and the old
+server runs on the migrated schema from the migration to its restart.
+
+The seat play reads what to restart after the install, with the installed `nova-sprint live`:
+an agent that was fresh before the install runs a replaced binary now, so its stale set is never
+the candidate's reading (that reading is kept only as the evidence a refusal restores from, and
+an agent it saw that is gone after the install is a refusal). Each step is checked by the
+manifest after before the next begins, a step that does not hold stopping the play with `ADOPT
+REFUSED step=<step>`:
 
 - store: the library on the store is the build's;
 - server: every stale nova agent (one launchd does not hold, one whose process runs a replaced
@@ -5245,23 +5258,27 @@ step that does not hold stopping the play with `ADOPT REFUSED step=<step>`:
   the bin directory's tool first) is booted out, waited for (a member drains, up to
   `nova_member_stop_timeout` and 30 s more) and bootstrapped from its plist, never kickstarted;
   on any failure each is bootstrapped again from its plist and the step is refused naming it.
-  Then each runs the installed binary with its plist's arguments, and the server answers on
-  each `--listen` address (and `nova_seat_server_ports`);
+  Then every one of them is in the manifest exactly once and not stale (a missing plist or an
+  agents directory that does not read is a refusal, never an empty pass), and the server answers
+  on each `--listen` address (and `nova_seat_server_ports`);
 - dashboard: each link of `nova_seat_dashboard_links` names the installed nova-sprint, and
   `nova_seat_dashboard_url` returns a summary;
-- friends: each stale friend daemon, once its lanes have no card in hand (up to its plist's
-  `ExitTimeOut`, else `nova_seat_friend_drain` seconds; a daemon still busy then is reinstalled
-  and its lanes finish each card on restart), is reinstalled with the installed `nova-friend
-  install` and the flags its plist records, and beats after its reinstall within
-  `nova_seat_beat_within` seconds.
+- friends, one at a time (`fleet/seat-friend.yml`): once the stale daemon's lanes have no card in
+  hand (up to its plist's `ExitTimeOut`, else `nova_seat_friend_drain` seconds; a daemon still
+  busy then is reinstalled and its lanes finish each card on restart), it is reinstalled with the
+  installed `nova-friend install` and the flags its plist records. The host's clock read after
+  that reinstall is its cutoff, and it must be in the manifest exactly once, not stale, with a
+  beat strictly newer than its cutoff within `nova_seat_beat_within` seconds: a beat of the old
+  daemon, during the drain or before its bootout, is never proof.
 
-A refusal in the seat play reloads the store's library of the build installed before (its
-release directory's `nova-redis fn load`), so the store is as it was; the installed binaries stay
-the new build's, and running the play again finishes the adoption. The configuration store's
-migration (`nova-config migrate`) is the one forward-only step: it runs last, in its own play,
-only on a run where every other play passed, and it is never undone. One `ADOPT step=<step>
-host=<host> before=<revision> after=<revision> ...` line per step says what changed. A second run
-finds nothing stale and changes nothing. The server's own launchd agent is its loop record's
+A refusal in the seat play reads the store's library again and, when it is not the one recorded
+before the install, loads that one again with the kept nova-redis, so the store's library is as
+it was; the installed binaries stay the new build's and the schema stays migrated, and running
+the play again finishes the adoption. A play that passes keeps the installed nova-redis for the
+next one. One `ADOPT step=<step> host=<host> before=<revision> after=<revision> ...` line per step
+says what changed. A second run of the whole sequence finds nothing stale and changes nothing.
+`--tags seat` runs exactly the seat's part (the candidate checks, the install, the migration, the
+library and the seat play). The server's own launchd agent is its loop record's
 (`fleet/loops.yml`): every flag, `--tick-deadline` among them, is the record's argv in
 nova-config, applied by loops.yml with bootout and bootstrap.
 
@@ -5276,9 +5293,9 @@ every step, is refused at exit 1 naming the step, the refusal said verbatim: a h
 never reported as an adoption. No flag runs a step alone; `nova-sprint server switch` and
 `nova-redis fn load` stay the steps the play calls. Tested with fakes
 (`TestLiveShowsWhatIsInstalled`, `TestAdoptRunsThePlayAndRefusesAHalfMove`), the play with
-`--syntax-check` and `--check` on the fixtures, and the seat play run for real on a coordinator
-fixture with its own home and launchctl
-(`TestSeatPlayRestartsWhatIsStaleAndRefusesAFailedRestart`).
+`--syntax-check` and `--check` on the fixtures, and the seat's part of the play run for real, in
+the order an adoption meets it, on a coordinator fixture with its own home, launchctl, store and
+friend (`TestSeatPlayAdoptsInOrderAndRefusesEachHalfMove`).
 
 #### store-latency-row-r.w2: where shows the store round trip the server measures
 

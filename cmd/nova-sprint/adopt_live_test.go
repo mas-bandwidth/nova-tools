@@ -139,6 +139,8 @@ func TestLiveShowsWhatIsInstalled(t *testing.T) {
 	assert.False(t, fa.Installed, "but they are a copy, not the bin directory's tool")
 	assert.True(t, fa.Stale)
 	assert.Equal(t, 30, fa.BeatAge)
+	assert.Equal(t, now.Add(-30*time.Second).Unix(), fa.BeatUnix, "the beat a cutoff is compared with")
+	assert.Equal(t, now.Unix(), m.Now, "the host's clock, a reinstall's cutoff")
 	assert.Equal(t, []string{"install", "--as", "friend-a", "--harness", "opencode", "--dir", "/d", "--width", "2"}, fa.Install)
 
 	assert.True(t, srv.Loaded)
@@ -168,6 +170,15 @@ func TestLiveShowsWhatIsInstalled(t *testing.T) {
 	assert.False(t, redis.Stale)
 
 	out.Reset()
+	// a missing agents directory is no answer, never an empty host
+	out.Reset()
+	errs.Reset()
+	assert.Equal(t, 1, a.run([]string{"live", "--agents-dir", filepath.Join(home, "no-such-dir")}, &out, &errs))
+	assert.Contains(t, errs.String(), "the agents directory "+filepath.Join(home, "no-such-dir")+" is not a directory that reads")
+	assert.Empty(t, out.String())
+
+	out.Reset()
+	errs.Reset()
 	env["NOVA_LAUNCH_AGENTS"] = agents // the environment names the directory too
 	require.Equal(t, 0, a.run([]string{"live", "--dashboard", link}, &out, &errs), errs.String())
 	text := out.String()
