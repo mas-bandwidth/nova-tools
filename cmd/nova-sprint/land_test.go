@@ -657,7 +657,7 @@ func TestLandChecksNewFilesAgainstTheTypedHeader(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			r := newLandRig(t)
-			brief := writeNeedsBrief(t, t.TempDir(), "a", "RESULT: a\nPATHS: a.txt\n"+tc.scope, "")
+			brief := writeNeedsBrief(t, t.TempDir(), "a", "RESULT: a tier: flash\nPATHS: a.txt\n"+tc.scope, "")
 			r.ok("add --stream s1 a --one --brief-file " + brief)
 			head := r.head("a", "main", tc.file, "added\n")
 			r.queued(map[string]string{"a": head}, "a")
@@ -705,7 +705,7 @@ func TestLandEndsTheBatchAtACardThatFailsTheMechanicalChecks(t *testing.T) {
 				if id == "c2" {
 					paths += ", doc.md"
 				}
-				briefs += " --brief-file " + writeNeedsBrief(t, dir, id, "Fix "+id+".\nPATHS: "+paths, "")
+				briefs += " --brief-file " + writeNeedsBrief(t, dir, id, "Fix "+id+". tier: flash\nPATHS: "+paths, "")
 			}
 			r.ok("add --stream s1" + briefs)
 			heads := map[string]string{"c1": r.head("c1", "main", "c1.txt", "one\n"), "c2": r.head("c2", "main", tc.file, tc.text), "c3": r.head("c3", "main", "c3.txt", "three\n")}

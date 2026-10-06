@@ -25,7 +25,7 @@ func TestLandAllowsAScopeAmendmentOfTheSameChangeAndRecordsIt(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			r := newLandRig(t)
-			brief := writeNeedsBrief(t, t.TempDir(), "a", "RESULT: a\nPATHS: a.txt", "")
+			brief := writeNeedsBrief(t, t.TempDir(), "a", "RESULT: a tier: flash\nPATHS: a.txt", "")
 			r.ok("add --stream s1 a --one --brief-file " + brief)
 			r.head("a", "main", "a.txt", "a\n")
 			require.NoError(t, os.MkdirAll(filepath.Join(r.worker, filepath.Dir(tc.file)), 0o755))
