@@ -201,6 +201,7 @@ func TestRealFileLineWaitsForANewlineAndAdvancesPastIt(t *testing.T) {
 	line, end, err = realFileLine(path, end)
 	require.NoError(t, err)
 	assert.Equal(t, "real", line)
+	assert.Equal(t, int64(6), end, "the offset is just past the second newline")
 }
 
 // A wrong flag, a wrong timeout, a name off the roster and a store that does
