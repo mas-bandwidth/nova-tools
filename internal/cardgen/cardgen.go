@@ -260,7 +260,7 @@ func PlanLedger(l Ledger, rows []Row, prefix, tier string, max int) Plan {
 		for i := range p.Cards {
 			p.Cards[i].Wave = 1
 		}
-		p.Shared = len(cards) > 1
+		p.Shared = SharedPaths(p.Cards)
 		return p
 	}
 	p.Waves = 2
@@ -275,26 +275,21 @@ func PlanLedger(l Ledger, rows []Row, prefix, tier string, max int) Plan {
 			p.Cards[i].Deps = append(p.Cards[i].Deps, p.Cards[i+1].ID)
 		}
 	}
-	// two wave-1 cards share the ledger and neither needs the other: the add says so
-	p.Shared = len(cards) > 2
+	// two wave-1 cards share the ledger (or a package) and neither needs the other: the
+	// add says so
+	p.Shared = SharedPaths(p.Cards)
 	return p
 }
 
 // ledgerPaths is the PATHS of a card on file (a Go file, a package directory or a
-// bare name) that also edits ledger: the file, its package's test files, the ledger.
-// A name with no slash (a transcripts tool, a namedpaths word) adds no package glob.
+// bare name) that also edits ledger: PackagePaths of the file, and the ledger. A name
+// with no slash (a transcripts tool, a namedpaths word) adds no package glob.
 func ledgerPaths(file, ledger string) []string {
-	var paths []string
-	switch {
-	case strings.HasSuffix(file, ".go"):
-		paths = append(paths, file, path.Dir(file)+"/*_test.go")
-	case strings.Contains(file, "/"):
-		paths = append(paths, file+"/*.go")
-	}
+	var docs []string
 	if file != ledger {
-		paths = append(paths, ledger)
+		docs = append(docs, ledger)
 	}
-	return MergePaths(paths)
+	return PackagePaths([]string{file}, docs)
 }
 
 // NewTestFile marks the test file a card creates: when its package's *_test.go glob
@@ -310,9 +305,14 @@ func NewTestFile(c *Card, exists func(glob string) bool) {
 }
 
 // Creates says a PATHS glob is answered by a file of the card's NEW: line: the entry
-// names nothing at the base because the card creates it.
+// names nothing at the base because the card creates it. A package's Go files are not
+// answered by a test file the card creates: a package with no Go file at the base is
+// not there.
 func (c Card) Creates(glob string) bool {
 	for _, n := range c.New {
+		if strings.HasSuffix(glob, "/*.go") && strings.HasSuffix(n, "_test.go") {
+			continue
+		}
 		if ok, _ := path.Match(glob, n); ok {
 			return true
 		}
@@ -522,14 +522,11 @@ func PlanFindings(findings []Finding, prefix, tier string, max int) Plan {
 	cards = first(cards, max)
 	for i := range cards {
 		c := &cards[i]
-		paths := []string{c.File}
-		if strings.HasSuffix(c.File, ".go") {
-			paths = append(paths, path.Dir(c.File)+"/*_test.go")
-		}
+		start := []string{c.File}
 		if pkg := testPackage(c.Test); pkg != "" {
-			paths = append(paths, pkg+"/*_test.go")
+			start = append(start, pkg)
 		}
-		c.Paths = MergePaths(paths)
+		c.Paths = PackagePaths(start, nil)
 		head := fmt.Sprintf("A reader's findings on %s, %d of them, each with its remedy.", c.File, count[c.File])
 		if c.Test == "" {
 			// no test named: the card names the one it must write, in the file's package
@@ -539,7 +536,7 @@ func PlanFindings(findings []Finding, prefix, tier string, max int) Plan {
 			c.Task = head + c.Task + " The test named on the TEST line is red before and green after." + draftRule
 		}
 	}
-	return Plan{Cards: cards, Tier: tier, Waves: 1}
+	return Plan{Cards: cards, Tier: tier, Waves: 1, Shared: SharedPaths(cards)}
 }
 
 // HelpLineLimit is the width a help line keeps under (docs/STANDARD.md).
@@ -616,7 +613,7 @@ func PlanHelp(tool, help, test, prefix, tier string) Card {
 	return Card{
 		ID:    prefix + "-" + Slug(tool),
 		File:  "cmd/" + tool + "/main.go",
-		Paths: MergePaths([]string{"cmd/" + tool + "/main.go", "cmd/" + tool + "/*_test.go", "docs/CLI.md"}),
+		Paths: PackagePaths([]string{"cmd/" + tool + "/main.go"}, []string{"docs/CLI.md"}),
 		Test:  "cmd/" + tool + " " + test,
 		Tier:  tier,
 		Wave:  1,

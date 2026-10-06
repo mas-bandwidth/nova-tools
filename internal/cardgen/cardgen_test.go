@@ -40,18 +40,19 @@ func TestLedgerRowsGroupByFileInLedgerOrder(t *testing.T) {
 	assert.Equal(t, "fix-red", p.Cards[0].Kind)
 }
 
-// PATHS: the file, its package's test files, the ledger; never more than MaxPaths.
+// PATHS: the file's package, its Go files and its tests, and the ledger; never more
+// than MaxPaths.
 func TestLedgerPathsAreTheFileItsPackageTestsAndTheLedger(t *testing.T) {
 	t.Parallel()
 	l := Ledgers["serial-tests"]
 	rows, _ := ParseLedger(l, serialFixture)
 	p := PlanLedger(l, rows, "", "", 0)
-	assert.Equal(t, []string{"cmd/nova-bus/a_test.go", "cmd/nova-bus/*_test.go", l.File}, p.Cards[0].Paths)
+	assert.Equal(t, []string{"cmd/nova-bus/*.go", "cmd/nova-bus/*_test.go", l.File}, p.Cards[0].Paths)
 	assert.Equal(t, "internal/ci TestEveryTestOpensWithTParallel", p.Cards[0].Test)
-	// a package row (sleeps-skips) takes the package's go files
+	// a package row (sleeps-skips) takes the package the same
 	pkg, _ := ParseLedger(Ledgers["sleeps-skips"], "internal/bus\tTestX\t#1 calls time.Sleep\n")
 	pp := PlanLedger(Ledgers["sleeps-skips"], pkg, "", "", 0)
-	assert.Equal(t, []string{"internal/bus/*.go", Ledgers["sleeps-skips"].File}, pp.Cards[0].Paths)
+	assert.Equal(t, []string{"internal/bus/*.go", "internal/bus/*_test.go", Ledgers["sleeps-skips"].File}, pp.Cards[0].Paths)
 	// a bare name (transcripts) adds no package glob
 	tr, _ := ParseLedger(Ledgers["transcripts"], "nova-bus      # #1654 -- collects\n")
 	tp := PlanLedger(Ledgers["transcripts"], tr, "", "", 0)
@@ -171,7 +172,7 @@ func TestFindingsAreOneCardPerFile(t *testing.T) {
 	require.Len(t, p.Cards, 2)
 	assert.Equal(t, "finding-internal-bus-send", p.Cards[0].ID)
 	assert.Equal(t, "internal/bus TestReceiptIsFsynced", p.Cards[0].Test)
-	assert.Equal(t, []string{"internal/bus/send.go", "internal/bus/*_test.go"}, p.Cards[0].Paths)
+	assert.Equal(t, []string{"internal/bus/*.go", "internal/bus/*_test.go"}, p.Cards[0].Paths)
 	assert.Contains(t, p.Cards[0].Task, "2 of them")
 	assert.Contains(t, p.Cards[0].Task, "At internal/bus/send.go:40: the error is swallowed. Remedy: return it.")
 	assert.Equal(t, "cmd/nova-bus TestFindingMain", p.Cards[1].Test, "a finding with no test is given the one it must write")
@@ -267,13 +268,13 @@ func TestAPackageWithNoTestFileGetsItsTestOnTheNEWLine(t *testing.T) {
 	t.Parallel()
 	fs, _ := ParseFindings("internal/none/x.go:1\twrong\tfix\t\n")
 	c := PlanFindings(fs, "", "", 0).Cards[0]
-	NewTestFile(&c, func(glob string) bool { return glob == "internal/none/x.go" })
-	assert.Equal(t, []string{"internal/none/x.go", "internal/none/*_test.go"}, c.Paths, "the glob stays")
+	NewTestFile(&c, func(glob string) bool { return glob == "internal/none/*.go" })
+	assert.Equal(t, []string{"internal/none/*.go", "internal/none/*_test.go"}, c.Paths, "the glob stays")
 	assert.Equal(t, []string{"internal/none/x_test.go"}, c.New)
 	assert.True(t, c.Creates("internal/none/*_test.go"))
 	assert.False(t, c.Creates("internal/none/x.go"))
 	brief := Render(header, c)
-	assert.Contains(t, brief, "\nPATHS: internal/none/x.go, internal/none/*_test.go\nNEW: internal/none/x_test.go\nTEST: internal/none TestFindingX\n")
+	assert.Contains(t, brief, "\nPATHS: internal/none/*.go, internal/none/*_test.go\nNEW: internal/none/x_test.go\nTEST: internal/none TestFindingX\n")
 	assert.Empty(t, Lint(c.ID, brief))
 	has := c
 	has.New = nil

@@ -18,7 +18,7 @@ import (
 // its path.
 func writeBaseBrief(t *testing.T, dir, id, base string) string {
 	t.Helper()
-	lead := "RESULT: " + id + " sha=000000000000\nKIND: fix\nREPO: mas-bandwidth/nova-tools\n"
+	lead := "RESULT: " + id + " sha=000000000000 tier: flash\nKIND: fix\nREPO: mas-bandwidth/nova-tools\n"
 	if base != "" {
 		lead += "BASE: " + base + "\n"
 	}

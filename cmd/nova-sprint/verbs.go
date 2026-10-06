@@ -1249,6 +1249,18 @@ func (a *app) cmdAdd(args []string, stdout, stderr io.Writer) int {
 	if code := a.holdBase("add", st, *allowPersonal, stderr, *brief); code != 0 {
 		return code
 	}
+	if *sentinel == "" {
+		checks := make([]briefCheck, 0, len(ids))
+		for _, id := range ids {
+			checks = append(checks, briefCheck{id: id, brief: *brief})
+		}
+		if len(ids) == 0 { // --count: the ids are made at the write
+			checks = append(checks, briefCheck{brief: *brief})
+		}
+		if code := a.holdCardChecks("add", st, stderr, checks...); code != 0 {
+			return code
+		}
+	}
 	c.addStream = *stream
 	c.addBefore = *before
 	step := store.AddEachStep(rs)
@@ -1346,6 +1358,13 @@ func (a *app) cmdAddMany(stream, needs, briefDir string, briefFiles []string, se
 		return code
 	}
 	if code := a.holdBase("add", st, allowPersonal, stderr, texts...); code != 0 {
+		return code
+	}
+	checks := make([]briefCheck, len(cards))
+	for i, cd := range cards {
+		checks[i] = briefCheck{id: cd.ID, brief: cd.Brief}
+	}
+	if code := a.holdCardChecks("add", st, stderr, checks...); code != 0 {
 		return code
 	}
 	r := sprint.AddReq{Stream: stream, Cards: cards, Who: c.actor, Before: before, After: after, Held: held, Score: at, BriefOps: asked.ops, BriefRecord: asked.record, Replaces: replaces}

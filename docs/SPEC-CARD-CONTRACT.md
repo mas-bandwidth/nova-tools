@@ -460,8 +460,17 @@ with no clock and no store). What it holds:
   child rules (`swarm.ChildRulesParagraph`, the paragraph the card template
   carries); the task from the source's template with the rows substituted; and
   the template's steps.
-- The PATHS of a ledger card are the row's file, its package's test files and
-  the ledger. With a checkout, every entry is checked to exist in it.
+- A card's PATHS are computed from what it starts from, never typed
+  (`cardgen.PackagePaths`): every directory a START file lives in, as its Go
+  files and its tests (`<dir>/*.go`, `<dir>/*_test.go`), and the docs the card
+  names, as themselves. A ledger card starts from the row's file and names the
+  ledger; a findings card starts from the file and the package of its test; a
+  help card starts from `cmd/<tool>/main.go` and names `docs/CLI.md`. A
+  package is the unit a change lives in: a typed file list one file short holds
+  the card at land (E12). Two cards that share an entry and neither needs the
+  other set `shared-paths=yes`. With a checkout, every entry is checked to
+  exist in it; a package's `*.go` is not answered by a test file the card
+  creates.
 - Waves: cards of one ordinary ledger alternate (odd wave 1, even wave 2
   depending on their wave 1 neighbours), because adjacent deletions of one file
   conflict at land; a generated ledger (SPEC-SPRINT.md section 7) gets one wave
@@ -471,6 +480,15 @@ with no clock and no store). What it holds:
   to the typed header and the template's placeholders, which the add does not
   read, before the directory is written; one red brief and nothing is written.
   A sprint initialised with `--rules` holds a brief to that file at the add.
+  Every brief is held as well to the card checks (`cardgen.CardChecks`), which
+  `nova-sprint add` runs too: a card brief names its tier on line 1
+  (`tier-line`) and a TEST whose package is a directory its PATHS names
+  (`test-outside-paths`); no brief carries a name `--name` gives outside
+  double-quoted words (the owner's, quoted), its own id or its `WHO:` line
+  (`personal-name`), nor the id of a card `--dropped` gives (`dropped-card`).
+  The tree holds no name of the deployment (internal/ci TestGeneralityText),
+  so the names come from the caller: `--name` to nova-card, the store's
+  coordinator, owner and friends table to the add.
   The output is the directory, its `manifest.tsv` (id, file, test, wave, deps)
   and one `CARDS OK dir= cards= waves= tier=` line.
 
