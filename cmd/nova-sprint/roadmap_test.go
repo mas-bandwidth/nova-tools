@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
@@ -152,4 +153,56 @@ func TestRoadmapFormReadsBack(t *testing.T) {
 		_, err := sprint.ParseRoadmap([]byte(bad))
 		assert.Error(t, err, bad)
 	}
+}
+
+// A restore refused whole leaves the roadmap file's bytes alone: the after-hook
+// rewrites the sexp only when the step moved the card (Refused empty, Moved not),
+// so a refusal can never silently drop the card from the file (the defect the
+// reader found in attempts 2 and 3).
+func TestRestoreRefusedLeavesTheRoadmapFileUnchanged(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.ok("init --members m1,m2 --readers reader-a,reader-b,reader-c")
+	dir := t.TempDir()
+	record := filepath.Join(dir, "record")
+	brief := func(id string) string {
+		path := filepath.Join(dir, id+".md")
+		require.NoError(t, os.WriteFile(path, []byte(passingBrief("REPO: example/nova-tools\n\nDo "+id+" later.")), 0o600))
+		return path
+	}
+	ta.ok("add --stream later now-1 --one --brief-file " + brief("now-1"))
+	ta.deal(1)
+	for _, id := range []string{"later-1", "later-2", "later-3"} {
+		ta.ok("add --stream later " + id + " --needs now-1 --one --brief-file " + brief(id))
+	}
+	ta.ok("defer --release v2 --stream later --expect 3 --record " + record)
+	roadmap := filepath.Join(record, "roadmaps", "nova-tools-v2.sexp")
+	before, err := os.ReadFile(roadmap)
+	require.NoError(t, err)
+	rm, err := sprint.ParseRoadmap(before)
+	require.NoError(t, err)
+	require.Equal(t, 3, rm.Count())
+	card, _ := rm.Find("later-2")
+	require.NotNil(t, card, "later-2 is in the roadmap before the refused restore")
+
+	// every twin id of later-2 is taken, so Restore refuses the whole step
+	var twins []string
+	for l := byte('b'); l <= 'z'; l++ {
+		twins = append(twins, "later-2"+string(rune(l)))
+	}
+	ta.ok("add --stream later " + strings.Join(twins, " ") + " --brief-file " + brief("twins"))
+
+	code, _, errs := ta.do("roadmap restore later-2 --record " + record)
+	assert.Equal(t, 1, code, errs)
+	assert.Contains(t, errs, "every twin id of later-2 is taken")
+
+	after, err := os.ReadFile(roadmap)
+	require.NoError(t, err)
+	assert.Equal(t, string(before), string(after), "a refused restore leaves the roadmap file byte for byte")
+	rm, err = sprint.ParseRoadmap(after)
+	require.NoError(t, err)
+	got, _ := rm.Find("later-2")
+	require.NotNil(t, got, "the card is still in the roadmap after the refusal")
+	assert.Equal(t, card.Brief, got.Brief, "its brief is untouched")
+	ta.clean()
 }

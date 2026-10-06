@@ -408,7 +408,14 @@ func (a *app) cmdRoadmapRestore(args []string, stdout, stderr io.Writer) int {
 			return map[string][]string{sprint.Work: ids, sprint.Merge: {sprint.CtlID(card.Stream)}}
 		},
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Restore(s, r) }}
-	c.after = func(context.Context, *store.Store, store.Result) []string {
+	c.after = func(_ context.Context, _ *store.Store, res store.Result) []string {
+		// The file is rewritten only when the restore moved the card: a step
+		// refused whole (Store.Run returns nil error with Refused set) or one
+		// that moved nothing leaves the roadmap exactly as it was, so a
+		// refused restore can never silently drop the card from the file.
+		if len(res.Refused) > 0 || len(res.Moved) == 0 {
+			return nil
+		}
 		rm := rms[path]
 		rm.Remove(card.ID)
 		var err error
