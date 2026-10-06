@@ -270,15 +270,26 @@ func laneLimit(session, out string) error {
 // the run's cost is what the session's assistant messages gained since the
 // last read (each message's cost is opencode's own figure), said on the
 // record as one line per run. The daemon wraps the friend's OpenCode in it;
-// a bare OpenCode runs no export.
+// a bare OpenCode runs no export. A card's turn is capped by its tokens, read
+// from the same record (tokencap.go).
 type OpenCodePriced struct {
 	*OpenCode
+
+	// Friend is the friend's name, as a capped card's report says it.
+	Friend string
+	// TokenCap is the friend row's per-card token cap as the daemon last read
+	// it (TokenCapOf; 0 none); nil is DefaultTokenCap.
+	TokenCap func() int64
+	// Tick is the clock a running turn's usage is polled on (every TokenPoll);
+	// a real ticker when nil.
+	Tick func(time.Duration) (<-chan time.Time, func())
 
 	mu    sync.Mutex
 	seen  map[string]float64 // each session's cost when last read
 	cost  float64
 	runs  int       // the runs priced so far
 	until time.Time // the reset of the last run's usage limit; zero when it ran unlimited
+	cards cardRuns  // each card's tokens over its finished turns
 }
 
 // Spent is the cost of every run priced so far, in US dollars.
@@ -314,9 +325,10 @@ func (p *OpenCodePriced) OpenSession(ctx context.Context, seed string) (string, 
 	return id, err
 }
 
-// DeliverTo is OpenCode's, then the run priced, whatever it answered.
+// DeliverTo is OpenCode's under the card's token cap (deliverCapped), then the
+// run priced, whatever it answered.
 func (p *OpenCodePriced) DeliverTo(ctx context.Context, id, text string) (LaneTurn, error) {
-	lt, err := p.OpenCode.DeliverTo(ctx, id, text)
+	lt, err := p.deliverCapped(ctx, id, text)
 	var limited UsageLimited
 	p.mu.Lock()
 	p.until = time.Time{}
