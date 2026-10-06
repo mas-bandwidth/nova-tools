@@ -788,6 +788,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 	// every lane child runs inside the wall of the profile her row names, else --profile
 	// (docs/SPEC-FRIEND.md, buds-in-the-wall-r.w5); a batch turn runs as it did
 	var rowProfile atomic.Pointer[string]
+	var rowRules atomic.Pointer[friend.LaneRules]
 	var rowConfigDir atomic.Pointer[string] // her row's config_dir as her beat last answered; read by the lanes' runs and the wall
 	wall := friend.Wall{Dir: dir, Jobs: commaList(c.Str("wall-jobs")), Reads: commaList(c.Str("wall-reads")), Deny: commaList(c.Str("deny-self"))}
 	if bin, err := w.binary(); err == nil {
@@ -993,6 +994,10 @@ func (w world) run(c *tool.Call) *tool.Out {
 					dir := friend.RowConfigDir(answer)
 					rowConfigDir.Store(&dir)
 				}
+				if err == nil {
+					r := friend.ParseLaneRules(answer)
+					rowRules.Store(&r)
+				}
 				if n, ok := friend.ParseReadSlots(answer); err == nil && ok {
 					rowReadSlots.Store(int64(n))
 				}
@@ -1009,6 +1014,23 @@ func (w world) run(c *tool.Call) *tool.Out {
 			return rowMode, rowWidth
 		},
 		LoadLanes: func() (friend.LaneState, error) { return friend.ReadLanes(state) },
+		Rules: func() friend.LaneRules {
+			if r := rowRules.Load(); r != nil {
+				return *r
+			}
+			return friend.LaneRules{}
+		},
+		Load: func() float64 {
+			for _, argv := range [][]string{{"cat", "/proc/loadavg"}, {"sysctl", "-n", "vm.loadavg"}} {
+				if out, exit, err := friend.RealExec(context.Background(), "", argv[0], argv[1:], ""); err == nil && exit == 0 {
+					if l, ok := friend.ParseLoad1(out); ok {
+						return l
+					}
+				}
+			}
+			return 0
+		},
+		Paused:    func() string { return friend.ReadPause(state) },
 		Sprint:    w.sprintAsk(server),
 		ReadSlots: func() int { return int(rowReadSlots.Load()) },
 		ReadModel: func(tier string) string {

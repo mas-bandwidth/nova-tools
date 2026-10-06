@@ -879,6 +879,22 @@ OpenCode's documented permission map; it is not yet measured on a live lane.
 A refusal the turn's output still shows is the lane's `rejected=` on the
 record and the card's reason.
 
+### opencode-lanes-parity-r2.w4 — the lanes do what the runner stopgaps did
+
+The owner, 2026-10-05: "We need to get away from these one shot shell scripts." Two friends ran cards through two zsh copies of one runner because the one-shot lanes lacked what it did. Each behaviour is a small function in `internal/friend/lane_parity.go` with its own table test (`lane_parity_test.go`; `TestOpencodeLanesDoWhatTheRunnerStopgapsDid` names them all), configured on the friend row as `LaneRules`, which the beat answers as `row_lane_rules=<compact JSON>`:
+
+- **Card filter** (`LaneRules.Filter`): `tiers` (a tier outside it is taken back), `streams` and `ids` (globs; a card matching neither is skipped). A card outside the filter is never handed to a lane.
+- **Take back** (`TakeBack`, `TakeArgv`): a dealt card outside by tier, with no `jobs/<job>` directory yet, is taken back once with `friend take <friend> <card> --reason <why>` through the daemon's sprint verb.
+- **Job name** (`JobName`): `<card>~<epoch>`, with `.g<gen>` from the second generation, as friend sync names the inbox directory.
+- **Width under load** (`LaneRules.LoadWidth`): while the 1-minute load is above `load_max` the lanes are held to `load_width` (3 when unset), never above the row's width.
+- **Token cap** (`LaneRules.OverCap`, `CapHoldReport`): a card's tokens over `token_cap` get a `Verdict: HOLD` report naming the cap.
+- **Provider pause** (`ProviderFailure`, `WritePause`, `ReadPause`, `DownArgv`): a 402, 429, out of funds or rate limit records the exact message in `PAUSED` in the state directory; while it is there no lane starts, restarts included, until a person removes it and runs `friend up`.
+- **Cost** (`ReadTokens`, `ParseRoutes`, `Price`, `PublishCost`): tokens are read from opencode's database with the `sqlite3` CLI (the tree has no sqlite driver), the run's session and its children, priced by the store's route row for the provider and model, rounded up to the cent, `unpriced (<why>)` when there is no row; published as a `Cost:` line under `Head:` of `REPORT.md` (from `REPORT.draft.md`) and as `tokens:` and `cost:` lines of `RESULT.md`.
+- **Shims** (`WriteShims`, `ShimEnv`): refusing `go` and `gofmt` first on the lane's PATH, GOROOT pointed nowhere.
+- **Bus note** (`FinishNote`): the subject and body sent to the coordinator at each finish.
+
+Wired into the daemon so far: the filter and take back, the width under load, and the pause file (`Daemon.Rules`, `Load`, `Paused`). The cost publish, token cap watch, shims, the pause's writing on a provider failure and the finish note are functions with tests that the lane's turn does not yet call; see the card's report.
+
 ### rate-limit-backs-off-not-down.w1 — a rate limit backs off; out of funds holds
 
 A rate limit passes in a minute; out of funds does not (the finding of

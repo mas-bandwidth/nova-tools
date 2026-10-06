@@ -235,11 +235,12 @@ type laneSet struct {
 	state   LaneState
 	loaded  bool
 	results chan laneResult
-	gov     LaneGovernor // the live cap under rate limits, the hold when out of funds (ratelimit.go)
-	pace    Pacer        // the effective width under the subscription windows (pacing.go)
-	paced   int          // the paced width at the last step
-	width   int          // the row's width at the last step
-	now     time.Time    // the last step's clock
+	gov     LaneGovernor    // the live cap under rate limits, the hold when out of funds (ratelimit.go)
+	pace    Pacer           // the effective width under the subscription windows (pacing.go)
+	paced   int             // the paced width at the last step
+	width   int             // the row's width at the last step
+	taken   map[string]bool // jobs taken back for the dealer by the card filter
+	now     time.Time       // the last step's clock
 }
 
 func (s *laneSet) running() bool {
@@ -348,6 +349,16 @@ func (l *loop) laneStep(now time.Time, width int) {
 	}
 	l.paceStep(now, width)
 	limit, paused := min(s.gov.Cap(width), s.paced), s.gov.Paused(now)
+	var rules LaneRules
+	if d.Rules != nil {
+		rules = d.Rules()
+	}
+	if d.Load != nil {
+		limit = min(limit, rules.LoadWidth(width, d.Load()))
+	}
+	if d.Paused != nil && d.Paused() != "" {
+		paused = true
+	}
 	if !s.loaded {
 		s.loaded = true
 		s.given = map[string]bool{}
@@ -381,6 +392,9 @@ func (l *loop) laneStep(now time.Time, width int) {
 		id := filepath.Base(c.Outbox)
 		legacy := id == c.ID || id == c.ID+"~"+c.Epoch()
 		if s.given[id] || (legacy && s.given[c.ID]) {
+			return true
+		}
+		if l.outsideRules(rules, id, c, now) {
 			return true
 		}
 		return slices.ContainsFunc(s.lanes, func(ln *lane) bool { return ln.card != nil && ln.card.Outbox == c.Outbox })
@@ -454,6 +468,35 @@ func (l *loop) laneStep(now time.Time, width int) {
 			return laneResult{ln: ln, turn: lt, err: err, t: t}
 		})
 	}
+}
+
+// outsideRules is the row's card filter over a dealt card: a card outside it is not handed,
+// and one outside by tier that no job directory of hers holds is taken back for the dealer, once.
+func (l *loop) outsideRules(rules LaneRules, job string, c Card, now time.Time) bool {
+	d, s := l.d, l.lanes
+	facts := CardFacts{ID: c.ID, Tier: "-"}
+	for _, h := range d.heldCards {
+		if h.Job == job {
+			facts.Stream, facts.Tier = h.Stream, h.Tier
+			if facts.Tier == "" {
+				facts.Tier = "-"
+			}
+		}
+	}
+	action, why := rules.Filter(facts)
+	if action == FilterRun {
+		return false
+	}
+	if s.taken == nil {
+		s.taken = map[string]bool{}
+	}
+	if TakeBack(action, exists(filepath.Join(d.Dir, "jobs", job))) && !s.taken[job] && d.Sprint != nil {
+		s.taken[job] = true
+		d.Record(fmt.Sprintf("%s lanes: card %s taken back: %s", now.UTC().Format(time.RFC3339), c.ID, why))
+		// ignored: a take that fails leaves the card handed to no lane and is recorded by the sprint; it is not asked again this run
+		go func() { _, _ = d.Sprint(LaneContext(l.ctx), TakeArgv(d.Friend, c.ID, why)) }()
+	}
+	return true
 }
 
 // laneDone is a lane's open or turn ending: a session kept, or a card done,

@@ -150,7 +150,13 @@ type Daemon struct {
 	// queue, begin, verdict and return (read_lanes.go). Nil runs no reads. ReadSlots is the
 	// row's read slots, read each step (nil: DefaultReadSlots), and ReadModel the model of a
 	// read's tier ("": the harness's own).
-	Sprint    func(ctx context.Context, argv []string) (string, error)
+	Sprint func(ctx context.Context, argv []string) (string, error)
+	// Rules is the lane policy on her row (LaneRules, lane_parity.go), read each step; Load the
+	// machine's 1-minute load; Paused the provider pause on record (ReadPause), "" when none: a
+	// paused friend's lanes start nothing until a person clears it. Nil: no rules, no load, no pause.
+	Rules     func() LaneRules
+	Load      func() float64
+	Paused    func() string
 	ReadSlots func() int
 	ReadModel func(tier string) string
 

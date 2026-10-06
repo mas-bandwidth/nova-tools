@@ -42,6 +42,7 @@ type HeldCard struct {
 	Kind    string `json:"kind,omitempty"`
 	Branch  string `json:"branch,omitempty"`
 	Tier    string `json:"tier,omitempty"`
+	Stream  string `json:"stream,omitempty"`
 	Attempt int    `json:"attempt,omitempty"`
 	Gen     int    `json:"gen,omitempty"`
 	Epoch   uint64 `json:"epoch"`
