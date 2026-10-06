@@ -220,6 +220,27 @@ func TestEmptyStdinIsFailedUnlessAllowEmpty(t *testing.T) {
 	assert.Contains(t, stdout, "--allow-empty")
 }
 
+// TestNewVerbRefusesAVerbHelpAlreadyLists pins that new-verb refuses a verb
+// nova-ci help already lists, naming it, and still plans a name help does not
+// list (docs/STANDARD.md section 3).
+func TestNewVerbRefusesAVerbHelpAlreadyLists(t *testing.T) {
+	t.Parallel()
+	root := repoRoot(t)
+	for _, verb := range []string{"slowtests", "help"} {
+		t.Run(verb, func(t *testing.T) {
+			t.Parallel()
+			code, stdout, stderr := runCI(t, []string{"new-verb", "--dry-run", "--root", root, "nova-ci", verb}, "")
+			assert.Equal(t, 2, code, "exit %d stdout %q stderr %q", code, stdout, stderr)
+			assert.NotContains(t, stdout, "would write")
+			assert.Contains(t, stderr, "nova-ci new-verb REFUSED:")
+			assert.Contains(t, stderr, `"`+verb+`" is already a verb nova-ci help lists`)
+		})
+	}
+	code, stdout, stderr := runCI(t, []string{"new-verb", "--dry-run", "--root", root, "nova-ci", "probe"}, "")
+	assert.Equal(t, 0, code, "probe: exit %d stderr %q, want 0", code, stderr)
+	assert.Contains(t, stdout, "would write cmd/nova-ci/probe.go")
+}
+
 // TestSlowtestsNamesAPackageThatStartedAndNeverEnded pins that a stream cut
 // after a package start is the finding `truncated: <pkg> started and never ended`
 // and not an empty stream, on the lines and under --json. A complete stream
