@@ -921,6 +921,54 @@ internal/sprint; both are outside this card. A gone run is known by the
 daemon's restart alone: no process id is kept, so a harness that outlived its
 daemon is not checked.
 
+### friend-lanes-read-c-r2.w1 — the friend's reader row is served by her lane daemon (internal/friend/read_lanes.go)
+
+The owner, 2026-10-05: "We need to get away from these one shot shell scripts", "Reading should
+be happening continually, not in bursts", and "Reads are in extra slots per-friend! Read slots
+are different from worker cards." A one-shot daemon with a sprint server also serves the
+friend's reader row, `reader-<friend>`, the work the hand-written `reader.zsh` loops did:
+
+- **Beat and queue.** Once a `ReadAskEvery` (10 s) it asks `queue --as reader-<friend> --json`;
+  that ask is the reader's beat. Its asked cards (`col` asked, each with a packet: tier, head,
+  work_branch, attempt, brief, report) are the reads.
+- **Read slots.** `row_read_slots=<n>` on her beat's answer (`nova-config friend set <f>
+  --read-slots <n>`, default `DefaultReadSlots` = 2) is how many reads run at once. Read slots
+  are their own number beside `width`: width card lanes AND read-slots reads run at once, a read
+  never takes a card lane and a card never takes a read slot, so a dealt card never waits for a
+  read and an asked read never waits for a card. A read begins the step it is asked while a slot
+  is free, and the next as soon as one records.
+- **A read.** `read --as reader-<f> --begin <card> --epoch <n>` (refused: said in the record, not
+  begun); then READ.md, BRIEF.md and WORKER-REPORT.txt are written under `<dir>/reads/<card>/`
+  (the clone at the head, the merge-base diff alone, the touched packages' vet and tests on a
+  Linux bench, the bench rule, RESULT.md in the shape `head/branch/verdict/gate/report/## Body`),
+  and the read runs as a one-shot of her harness inside the lane wall (`ReadHarness.RunRead`: a
+  new session whose only turn is the read prompt, on the model of the read's tier; opencode's is
+  `opencode run --dir <d> [--model <m>] <prompt>` with no session listing, so reads never queue
+  behind lane opens; a harness without it opens the prompt as a lane session). A claude
+  account's model per tier is `ReadModels` (frontier claude-fable-5-1, heavy claude-opus-5-5,
+  pro claude-sonnet-5-5, flash claude-haiku-4-5-20251001).
+- **The record.** RESULT.md saying `verdict: ok|broken` is `read --ok|--broken <card> --epoch <n>
+  --finding <report line and body, 3500 bytes> --usage "model=<m> wall=<s>s harness=<h>
+  account=<friend>"`; any other end (no RESULT.md, another verdict) is `read --return <card>
+  --reason <why> --epoch <n> --usage ...`.
+- **Limits.** A rate limit or out of funds met by a read goes to the lanes' governor as a card
+  turn's does (`providerLimit`): the read is returned with `usage limit on <friend>: <reason>`,
+  the lanes back off or are held, and no read begins while they are. A daemon stopping leaves
+  its reads begun.
+
+Tests: TestALaneDaemonReadsAnAskedReadAndRecordsTheVerdict (begun, run with its tier's model,
+recorded ok with usage; a run with no RESULT.md is returned), TestAReadSlotIsNeverACardLane
+AndNeverWaitsForOne (a dealt card is worked by its lane while a read holds the read slot),
+TestAReadThatMeetsAUsageLimitIsReturnedAndTheLanesBackOff.
+
+Not done here: the judgment when an asked read waits past a bound (the sprint tick's, in
+internal/sprint, outside this card's paths); `nova-config friend set --read-slots` and the
+beat's `row_read_slots=` (card read-slots-delivered-like-cards-w, on its own branch, not in this
+base: until it lands the daemon runs `DefaultReadSlots`); a claude one-shot harness's `RunRead`
+(card claude-oneshot-lanes-cb, likewise unlanded: a claude daemon cannot run a read until it
+lands); a read begun by a daemon that then died is not returned by the next one; the loops are
+retired by simp-retire-bud-runners-r and simp-retire-opencode-runners-r.
+
 ### buds-in-the-wall-r.w5 — every lane child runs inside a wall profile
 
 A lane's child (the harness run that opens its session and each card's turn)

@@ -141,6 +141,13 @@ type Daemon struct {
 	// <friend>, else the worker view), asked once an InboxEvery; her inbox is reconciled with
 	// the answer (SyncInbox, inbox.go). Nil leaves her inbox to friend sync alone.
 	Held func(ctx context.Context) (Row, error)
+	// Sprint sends one verb to the sprint server and answers what it printed: the reader row's
+	// queue, begin, verdict and return (read_lanes.go). Nil runs no reads. ReadSlots is the
+	// row's read slots, read each step (nil: DefaultReadSlots), and ReadModel the model of a
+	// read's tier ("": the harness's own).
+	Sprint    func(ctx context.Context, argv []string) (string, error)
+	ReadSlots func() int
+	ReadModel func(tier string) string
 
 	m           *Machine
 	status      Status
@@ -259,6 +266,7 @@ type loop struct {
 	broken, told bool
 	results      chan result
 	lanes        *laneSet
+	reads        *readSet
 	mode         string // the mode the daemon delivers in now
 	saidNoLanes  bool
 	dealt        []string // the inbox briefs the daemon wrote that the session has not been told of (batch mode)
@@ -282,7 +290,7 @@ type loop struct {
 func (d *Daemon) Run(ctx context.Context) error {
 	l := &loop{d: d, ctx: ctx, b: &bus.Bus{Store: d.Store}, silentStop: d.SilentStop, brokenAfter: d.BrokenAfter,
 		answered: map[string]bool{}, failed: map[string]int{}, inHand: map[string]bool{}, results: make(chan result, 1),
-		lanes: &laneSet{results: make(chan laneResult, 64)}, mode: ModeBatch}
+		lanes: &laneSet{results: make(chan laneResult, 64)}, reads: newReadSet(), mode: ModeBatch}
 	_, l.passive = d.Deliver.(interface{ Passive() })
 	if l.silentStop <= 0 {
 		l.silentStop = DefaultSilentStop
@@ -320,10 +328,12 @@ func (d *Daemon) Run(ctx context.Context) error {
 			l.batchDone(r, now)
 		case r := <-l.lanes.results:
 			l.laneDone(r, now)
+		case r := <-l.reads.results:
+			l.readDone(r, now)
 		default:
 		}
 		// a change of mode waits for the other mode's turns to end
-		if mode != l.mode && l.busy == nil && !l.lanes.running() {
+		if mode != l.mode && l.busy == nil && !l.lanes.running() && len(l.reads.running) == 0 {
 			d.Record(fmt.Sprintf("%s mode: %s, from %s (the friend row)", now.UTC().Format(time.RFC3339), mode, l.mode))
 			l.mode = mode
 		}
@@ -333,6 +343,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 		case l.broken:
 		case l.mode == ModeOneShot:
 			l.laneStep(now, width)
+			l.readStep(now)
 			d.status.Lanes = l.lanes.said(width)
 		case l.busy == nil && len(l.hand) > 0:
 			l.startBatch(now)
