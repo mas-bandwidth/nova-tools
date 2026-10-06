@@ -37,12 +37,12 @@ import (
 func TestAclUsersSurviveARestart(t *testing.T) {
 	t.Parallel()
 
-	const pw = "pw-from-nova-secrets-acl"
-	secret := secrets.NewSecret(pw)
+	const pw = "pw!acl#7Qx%v2@Lr^m"
 	sum := sha256.Sum256([]byte(pw))
 	hash := "#" + hex.EncodeToString(sum[:])
 	h := newServeHarness(t, pw)
 	acl := filepath.Join(h.dir, "users.acl")
+	secret := fixtureSecret(t, pw, h.dir, acl, fakeRedisServer)
 	saved := []string{
 		"user coordinator on sanitize-payload #" + strings.Repeat("a", 64) + " ~sprint:* resetchannels -@all +fcall",
 		"user bench on sanitize-payload #" + strings.Repeat("b", 64) + " ~table:* resetchannels -@all +fcall",
