@@ -410,7 +410,11 @@ reset when it names one (a clock time in the zone it names, "resets Oct 10 at 5a
 row's mode and width come with each beat's answer (row_mode=, row_width=, row_config_dir=). In one-shot mode width lanes run, each its own session seeded from the friend's AGENTS.md and
 memory/, kept in lanes.json; each lane hands one card a turn from <dir>/inbox/QUEUE.json (its BRIEF.md, the
 REPORT.md and RESULT.md to write, one bus line to send), the waiting messages riding along, and hands the
-next only when the turn ends; a card with no RESULT.md after two turns is set aside and reported. A claude
+next only when the turn ends; a card with no RESULT.md after two turns is set aside and reported. The daemon,
+never the session's turn, finishes every outbox/<job>/REPORT.md whose card is working on her row at its epoch
+and generation, a lane running it or not: a watch each step, a 10s poll as the bound, the head of a LAND
+verified on origin first; each finish is one record line, marked in <state-dir>/outbox.json so it is never sent
+twice, a report for a card no longer hers is said superseded and not retried, and status says finished_today. A claude
 lane is a process per card instead (env CLAUDE_CONFIG_DIR=<config_dir> claude -p <the brief>, stdin
 /dev/null, inside the lane wall with the row's config_dir as its --config-dir), its result read from the
 card's outbox; a claude row in one-shot mode with no config_dir (nor --config-dir) is refused on the
@@ -1287,12 +1291,14 @@ func (w world) run(c *tool.Call) *tool.Out {
 			}
 			return nil
 		},
-		SaveLanes: func(s friend.LaneState) error { return friend.WriteLanes(state, s) },
-		Held:      w.held(name, server),
-		Seat:      w.seat(server),
-		Stage:     stager.stage(),
-		Prune:     stager.prune(),
-		Tip:       w.tip,
+		SaveLanes:  func(s friend.LaneState) error { return friend.WriteLanes(state, s) },
+		LoadOutbox: func() (friend.OutboxMarks, error) { return friend.ReadOutbox(state) },
+		SaveOutbox: func(m friend.OutboxMarks) error { return friend.WriteOutbox(state, m) },
+		Held:       w.held(name, server),
+		Seat:       w.seat(server),
+		Stage:      stager.stage(),
+		Prune:      stager.prune(),
+		Tip:        w.tip,
 		Finish: func(ctx context.Context, argv []string) error {
 			if w.finish == nil {
 				return errors.New("this world sends no finish") // a test's: friend sync reads the lane's REPORT.md

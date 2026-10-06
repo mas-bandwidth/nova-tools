@@ -28,6 +28,21 @@ import (
 // and a job whose card is not working on her row, are noted once and left. The model is
 // internal/friend/tla/OutboxFinish.tla (docs/SPEC-FRIEND.md, the daemon reads every outbox
 // job).
+//
+// The outbox is finished by the daemon, never by the session's turn (2026-10-06: a friend wrote
+// 12 REPORT.md files in two hours and the sprint log shows one finish by her; her lanes'
+// turns ran on through long tool sequences after each report, and the pass left every job a
+// lane was running until its turn ended). The pass is the daemon's own, every loop step,
+// whatever the session or a lane is doing: a watch on the outbox (each step stats its
+// REPORT.md files; a change passes at once) with OutboxPoll as the bound when nothing is
+// seen to change. A report is finished when it appears, a lane running its card or not;
+// only a LAND with no full sha Head waits for a running lane's end, for the run may still be
+// writing it. A finished job is marked in the state directory (OutboxFile), so a daemon
+// that starts again never finishes it twice; a report whose card is not hers (off her row,
+// or there at another epoch or generation) is superseded: said once, marked, never read
+// again. Each finish is one line, and the finishes of the day are the status's
+// finished_today. The model is tla/Delivery.tla (WrittenIsFinished: a report written is
+// finished within the poll bound, the session busy or not).
 
 // OutboxRetry is how long a finish the server did not answer, or refused, waits before it
 // is sent again; the report stays where it is, and friend sync may finish it first.
@@ -40,6 +55,47 @@ const ReportCap = 64 * 1024
 // ReportChars is how much of a failed report rides on its finish.
 const ReportChars = 600
 
+// OutboxPoll bounds how long a written report waits for the daemon's pass when the watch
+// sees no change: the poll under the watch.
+const OutboxPoll = 10 * time.Second
+
+// OutboxFile is the outbox marks in the state directory: the jobs finished and superseded.
+const OutboxFile = "outbox.json"
+
+// OutboxKept is how long a mark is kept once its job has left her outbox.
+const OutboxKept = 7 * 24 * time.Hour
+
+// OutboxMarks is what the daemon keeps of her outbox across its restarts: each job it
+// finished and each it found superseded, with when.
+type OutboxMarks struct {
+	Finished   map[string]time.Time `json:"finished,omitempty"`
+	Superseded map[string]time.Time `json:"superseded,omitempty"`
+}
+
+// ReadOutbox is the outbox marks in stateDir; none when the file is not there.
+func ReadOutbox(stateDir string) (OutboxMarks, error) {
+	var m OutboxMarks
+	_, err := read(filepath.Join(stateDir, OutboxFile), &m)
+	return m, err
+}
+
+// WriteOutbox is the outbox marks written whole to stateDir.
+func WriteOutbox(stateDir string, m OutboxMarks) error {
+	return write(filepath.Join(stateDir, OutboxFile), m)
+}
+
+// FinishedOn is how many jobs the marks say were finished on now's UTC day.
+func (m OutboxMarks) FinishedOn(now time.Time) int {
+	y, mo, d := now.UTC().Date()
+	n := 0
+	for _, at := range m.Finished {
+		if ay, amo, ad := at.UTC().Date(); ay == y && amo == mo && ad == d {
+			n++
+		}
+	}
+	return n
+}
+
 // outboxState is what the daemon keeps between its outbox passes: the jobs it finished
 // (never sent again, and never noted after their card leaves her row), the finishes the
 // server did not take and when, and the notes said while they stand.
@@ -47,6 +103,10 @@ type outboxState struct {
 	finished map[string]bool
 	tried    map[string]time.Time
 	said     map[string]bool
+	marks    OutboxMarks // finished and superseded, as the state directory keeps them
+	loaded   bool
+	sign     string    // the outbox's reports as the last watch saw them
+	passed   time.Time // the last pass
 }
 
 // reportVerdict is a report's verdict (the first word of its first Verdict: line, upper
@@ -150,12 +210,98 @@ func readReport(outbox, job string) (string, bool, error) {
 	return string(raw), true, err
 }
 
-// outboxStep is the daemon's outbox pass, after each reconcile the server answered: every
-// job in her outbox named <work>~<epoch>[.g<gen>] with a REPORT.md is finished when its card
-// is working on her row (a work card, never a read), the job no lane is running; the finish
-// is sent once, and one the server did not take is sent again after OutboxRetry. A report
-// with no Verdict line, one that cannot be read, and a job whose card is not working on her
-// row are said once while they stand, and left.
+// outboxSign is the watch's reading of her outbox: each job's REPORT.md, its size and its
+// time, so a report written or rewritten changes it ("" when the outbox cannot be read).
+func outboxSign(outbox string) string {
+	entries, err := os.ReadDir(outbox)
+	if err != nil {
+		return ""
+	}
+	var b strings.Builder
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		if fi, err := os.Lstat(filepath.Join(outbox, e.Name(), "REPORT.md")); err == nil {
+			fmt.Fprintf(&b, "%s %d %d\n", e.Name(), fi.Size(), fi.ModTime().UnixNano())
+		}
+	}
+	return b.String()
+}
+
+// outboxWatch is the daemon's outbox watch, every loop step whatever the session or a lane
+// is doing: once the server has said what is on her row, a pass runs when her row was just
+// read, when a report was written or changed since the last look, and at least once an
+// OutboxPoll.
+func (l *loop) outboxWatch(now time.Time, reconciled bool) {
+	d := l.d
+	if d.Finish == nil || !d.status.HeldKnown {
+		return
+	}
+	o := &d.outbox
+	sign := outboxSign(filepath.Join(d.Dir, "outbox"))
+	if !reconciled && sign == o.sign && !o.passed.IsZero() && now.Sub(o.passed) < OutboxPoll {
+		return
+	}
+	o.sign, o.passed = sign, now
+	l.outboxStep(now)
+}
+
+// loadOutbox reads the marks the state directory keeps, once a run.
+func (l *loop) loadOutbox(now time.Time) {
+	d := l.d
+	o := &d.outbox
+	if o.loaded {
+		return
+	}
+	o.loaded = true
+	if d.LoadOutbox != nil {
+		m, err := d.LoadOutbox()
+		if err != nil {
+			d.Record(now.UTC().Format(time.RFC3339) + " outbox: the outbox marks cannot be read: " + oneLine(err.Error(), 300) + "; a report finished before is finished again only if its card is still working")
+		}
+		o.marks = m
+	}
+	if o.marks.Finished == nil {
+		o.marks.Finished = map[string]time.Time{}
+	}
+	if o.marks.Superseded == nil {
+		o.marks.Superseded = map[string]time.Time{}
+	}
+	for job := range o.marks.Finished {
+		o.finished[job] = true
+	}
+}
+
+// saveOutbox writes the marks, those of jobs gone from her outbox past OutboxKept dropped.
+func (l *loop) saveOutbox(now time.Time, present map[string]bool) {
+	d := l.d
+	o := &d.outbox
+	for _, m := range []map[string]time.Time{o.marks.Finished, o.marks.Superseded} {
+		for job, at := range m {
+			if !present[job] && now.Sub(at) > OutboxKept {
+				delete(m, job)
+			}
+		}
+	}
+	d.status.FinishedToday = o.marks.FinishedOn(now)
+	if d.SaveOutbox == nil {
+		return
+	}
+	if err := d.SaveOutbox(o.marks); err != nil {
+		d.Record(now.UTC().Format(time.RFC3339) + " outbox: the outbox marks cannot be written: " + oneLine(err.Error(), 300))
+	}
+}
+
+// outboxStep is the daemon's outbox pass (outboxWatch): every job in her outbox named
+// <work>~<epoch>[.g<gen>] with a REPORT.md is finished when its card is working on her row at
+// that epoch and generation (a work card, never a read), a lane running it or not; the finish
+// is sent once, marked in the state directory, and one the server did not take is sent again
+// after OutboxRetry. A LAND with no full sha Head whose lane still runs waits for the lane's
+// end. A report whose card is not on her row at its epoch and generation is superseded:
+// said once and never read again. A report with no Verdict line, one that cannot be read,
+// and a job whose card is on her row and not working are said once while they stand, and
+// left.
 func (l *loop) outboxStep(now time.Time) {
 	d := l.d
 	if d.Finish == nil {
@@ -165,6 +311,7 @@ func (l *loop) outboxStep(now time.Time) {
 	if o.finished == nil {
 		o.finished, o.tried, o.said = map[string]bool{}, map[string]time.Time{}, map[string]bool{}
 	}
+	l.loadOutbox(now)
 	at := now.UTC().Format(time.RFC3339)
 	said := map[string]bool{}
 	note := func(job, why string) {
@@ -195,10 +342,20 @@ func (l *loop) outboxStep(now time.Time) {
 			return
 		}
 	}
+	present, changed := map[string]bool{}, false
+	defer func() {
+		if changed || d.status.FinishedToday != o.marks.FinishedOn(now) {
+			l.saveOutbox(now, present)
+		}
+	}()
 	for _, e := range entries {
 		job := e.Name()
+		present[job] = true
 		id, epoch, gen, ok := ParseJob(job)
-		if !e.IsDir() || !ok || !validJob(job) || o.finished[job] || running[job] {
+		if !e.IsDir() || !ok || !validJob(job) || o.finished[job] {
+			continue
+		}
+		if _, gone := o.marks.Superseded[job]; gone {
 			continue
 		}
 		report, there, err := readReport(outbox, job)
@@ -210,15 +367,24 @@ func (l *loop) outboxStep(now time.Time) {
 			continue
 		}
 		var h *HeldCard
+		other := ""
 		for i, c := range d.heldCards {
 			if c.Job == job || (c.Card == id && c.Epoch == uint64(epoch) && max(c.Gen, 1) == gen) {
 				h = &d.heldCards[i]
 				break
 			}
+			if c.Card == id {
+				other = c.Job
+			}
 		}
 		switch {
 		case h == nil:
-			note(job, "card "+id+" is not on her row")
+			why := "card " + id + " is not on her row"
+			if other != "" {
+				why = "card " + id + " is on her row as " + other + ", not at epoch " + strconv.Itoa(epoch) + " generation " + strconv.Itoa(gen)
+			}
+			o.marks.Superseded[job], changed = now, true
+			d.Record(fmt.Sprintf("%s outbox: superseded outbox/%s/REPORT.md: %s; not retried", at, job, why))
 			continue
 		case h.Col != "working":
 			note(job, "card "+id+" is "+dash(h.Col)+" on her row, not working")
@@ -230,6 +396,10 @@ func (l *loop) outboxStep(now time.Time) {
 		verdict, head := reportVerdict(report)
 		if verdict == "" {
 			note(job, "it has no Verdict line")
+			continue
+		}
+		if running[job] && verdict == "LAND" && !fullSha.MatchString(head) {
+			note(job, "a LAND with no full sha Head while lane runs it; read again at its end")
 			continue
 		}
 		if t, ok := o.tried[job]; ok && now.Sub(t) < OutboxRetry {
@@ -256,12 +426,16 @@ func (l *loop) outboxStep(now time.Time) {
 		}
 		delete(o.tried, job)
 		o.finished[job] = true
+		o.marks.Finished[job], changed = now, true
 		words := "finish=ok head=" + head
 		if slices.Contains(argv, "--failed") {
 			words = "finish=failed"
 			if fullSha.MatchString(head) {
 				words += " head=" + head
 			}
+		}
+		if running[job] {
+			words += " lane=running"
 		}
 		d.Record(fmt.Sprintf("%s outbox: finished card %s from outbox/%s/REPORT.md (Verdict %s, %s on her row): %s sent=server", at, id, job, verdict, h.Col, words))
 	}

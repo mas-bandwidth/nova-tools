@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/synctest"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -77,7 +78,7 @@ func TestTheDaemonFinishesAReportItDidNotStage(t *testing.T) {
 	}
 	assert.Equal(t, 1, count("outbox: left outbox/silent.w1~15/REPORT.md: it has no Verdict line"), "a report with no verdict is noted once: %v", r.records)
 	assert.Equal(t, 1, count("outbox: left outbox/ready.w1~15/REPORT.md: card ready.w1 is ready on her row, not working"), "%v", r.records)
-	assert.Equal(t, 1, count("outbox: left outbox/gone.w1~15/REPORT.md: card gone.w1 is not on her row"), "%v", r.records)
+	assert.Equal(t, 1, count("outbox: superseded outbox/gone.w1~15/REPORT.md: card gone.w1 is not on her row; not retried"), "%v", r.records)
 	assert.Equal(t, 0, count("not-a-job"), "a directory no card names is not hers to finish")
 	assert.Equal(t, 4, count("outbox: finished card "), "one line per finish: %v", r.records)
 
@@ -179,4 +180,102 @@ func TestRunnerEndedReadsTheJobsLastEventAsCollectDoes(t *testing.T) {
 		_, dead := RunnerEnded(log, "j~1")
 		assert.Equal(t, want, dead, "%q", log)
 	}
+}
+
+// A written report is finished while the session is busy (2026-10-06: a friend wrote 12
+// REPORT.md files in two hours and the sprint log shows one finish by her; her harness
+// reported busy through her long tool sequences, and the outbox waited on her turn). Here
+// the turn that runs the card (the batch session's, then a one-shot lane's) never ends; the
+// report is written during it, and the finish goes within the poll bound all the same, once.
+func TestAWrittenReportIsFinishedWhileTheSessionIsBusy(t *testing.T) {
+	t.Parallel()
+	const head = "0123456789abcdef0123456789abcdef01234567"
+	write, bound := 4, 4+int(OutboxPoll/BeatEvery)
+	t.Run("a batch turn", func(t *testing.T) {
+		t.Parallel()
+		r := newRig(t)
+		dir := r.d.Dir
+		row := &twinRow{}
+		r.d.Held = row.held
+		f := &finishes{}
+		r.d.Finish = f.finish
+		c := workCard("busy.w1", "working")
+		c.Job, c.Gen = "busy.w1~15.g2", 2
+		inboxJob(t, dir, c.Job, c.Brief)
+		row.set(c)
+		r.hold = make(chan struct{}) // the turn never ends: the session is busy throughout
+		r.send(t, "ada", "work", "a long tool sequence")
+		at := -1
+		r.at[write] = func() { outboxReport(t, dir, c.Job, "Verdict: LAND\nHead: "+head+"\n\nDone while busy.\n") }
+		r.at[bound] = func() { at = len(f.got()) }
+		r.run(t, bound+3)
+		require.Len(t, r.delivered, 1, "one turn, still running")
+		assert.Equal(t, 1, at, "finished within the poll bound while the turn runs: %v", r.records)
+		require.Len(t, f.got(), 1, "finished once: %v", f.got())
+		assert.Equal(t, "busy.w1@2", f.got()[0][3])
+	})
+	t.Run("a lane's turn", func(t *testing.T) {
+		t.Parallel()
+		synctest.Test(t, func(t *testing.T) {
+			dir := cardDirFixture(t, [][2]string{{"c1", "queued"}}, []string{"c1"}, nil)
+			h := &lanesHarness{dir: dir, active: map[string]int{}, block: make(chan struct{})} // the lane's turn never ends
+			r, _ := laneRig(t, h, 1)
+			f := &finishes{}
+			r.d.Finish = f.finish
+			r.d.Held = func(context.Context) (Row, error) {
+				return Row{From: FromCards, Cards: []HeldCard{{Card: "c1", Job: "c1~15", Col: "working", Brief: "RESULT: c1\n"}}}, nil
+			}
+			at := -1
+			r.at[write] = func() { outboxReport(t, dir, "c1~15", "Verdict: FAIL\n\nstuck on the bench.\n") }
+			r.at[bound] = func() { at = len(f.got()) }
+			r.run(t, bound+3)
+			turns, _, _ := h.got()
+			assert.Equal(t, []string{"ses_1: c1"}, turns, "one turn, running when the report was written")
+			assert.Equal(t, 1, at, "finished within the poll bound while the lane's turn runs: %v", r.records)
+			require.Len(t, f.got(), 1, "finished once: %v", f.got())
+			assert.Equal(t, []string{"finish", "--as", "friend.bob", "c1@1", "--epoch", "15", "--failed", "--report", "friend bob FAIL: Verdict: FAIL stuck on the bench."}, f.got()[0])
+		})
+	})
+	t.Run("marked in the state directory, never finished twice, a card no longer hers superseded", func(t *testing.T) {
+		t.Parallel()
+		state := t.TempDir()
+		daemon := func(dir string, row *twinRow, f *finishes) *rig {
+			r := newRig(t)
+			r.d.Dir, r.d.Held, r.d.Finish = dir, row.held, f.finish
+			r.d.LoadOutbox = func() (OutboxMarks, error) { return ReadOutbox(state) }
+			r.d.SaveOutbox = func(m OutboxMarks) error { return WriteOutbox(state, m) }
+			return r
+		}
+		dir, row, f := t.TempDir(), &twinRow{}, &finishes{}
+		mine, old := workCard("mine.w1", "working"), workCard("moved.w1", "working")
+		old.Job, old.Gen = "moved.w1~15.g3", 3
+		for _, c := range []HeldCard{mine, old} {
+			inboxJob(t, dir, c.Job, c.Brief)
+		}
+		outboxReport(t, dir, mine.Job, "Verdict: LAND\nHead: "+head+"\n\nDone.\n")
+		outboxReport(t, dir, "moved.w1~15.g2", "Verdict: LAND\nHead: "+head+"\n") // its card is on her row a generation on
+		outboxReport(t, dir, "taken.w1~15", "Verdict: FAIL\n\ntaken back.\n")     // its card left her row
+		row.set(mine, old)
+		r := daemon(dir, row, f)
+		r.run(t, 3)
+		require.Len(t, f.got(), 1, "%v", f.got())
+		assert.Equal(t, "mine.w1@1", f.got()[0][3])
+		assert.Equal(t, 1, r.last().FinishedToday, "status says the finishes of the day")
+		records := strings.Join(r.records, "\n")
+		assert.Contains(t, records, "outbox: superseded outbox/moved.w1~15.g2/REPORT.md: card moved.w1 is on her row as moved.w1~15.g3, not at epoch 15 generation 2; not retried")
+		assert.Contains(t, records, "outbox: superseded outbox/taken.w1~15/REPORT.md: card taken.w1 is not on her row; not retried")
+		marks, err := ReadOutbox(state)
+		require.NoError(t, err)
+		assert.Contains(t, marks.Finished, mine.Job)
+		assert.Contains(t, marks.Superseded, "moved.w1~15.g2")
+		assert.Contains(t, marks.Superseded, "taken.w1~15")
+
+		// a daemon started again over the same state: the card still reads working (the
+		// server's word lags), and nothing is finished or said twice
+		again := daemon(dir, row, f)
+		again.run(t, int(OutboxPoll/BeatEvery)+3)
+		assert.Len(t, f.got(), 1, "never finished twice: %v", f.got())
+		assert.NotContains(t, strings.Join(again.records, "\n"), "superseded", "a superseded report is never read again")
+		assert.Equal(t, 1, again.last().FinishedToday)
+	})
 }

@@ -1594,8 +1594,8 @@ whoever wrote the brief:
 - Every job in `outbox/` named `<work>~<epoch>[.g<gen>]` (`ParseJob`) with a
   `REPORT.md` (a regular file, never followed through a symlink, at most
   `ReportCap`, 64 KiB, friend sync's cap) is matched to her row by its job, or
-  by its card, epoch and generation. A job a lane is running is left to the
-  lane's end.
+  by its card, epoch and generation. A job a lane is running is finished as
+  any other (the outbox is the daemon's, below).
 - Its card working on her row, a work card: the report's verdict and head are
   read as friend sync reads them (the first `Verdict:` and `Head:` lines,
   markdown trimmed, the verdict upper case, the head lower case). `LAND` with a
@@ -1611,8 +1611,8 @@ whoever wrote the brief:
   card leaves her row. One the server did not answer or refused is said once
   and sent again after `OutboxRetry` (a minute); friend sync may finish it
   first, and the server refuses the second.
-- A report with no `Verdict:` line, a report that cannot be read, a card not
-  on her row, ready and not working, or a read, is said once while it stands
+- A report with no `Verdict:` line, a report that cannot be read, a card on
+  her row ready and not working, or a read, is said once while it stands
   (`outbox: left outbox/<job>/REPORT.md: <why>`) and left; the next pass reads
   it again, so a verdict she writes later is finished then.
 
@@ -1654,6 +1654,50 @@ alone (friend sync before collect), breaks `Collected` (a report written in anot
 friend's tree is never finished); `MCCollectBrokenNoTip.cfg`, a LAND finished at its
 Head unread, breaks `LandOnTip` in 6 states. The test is
 `TestTheDaemonFinishesADeadLaneAndALandOnlyAtOriginsTip`.
+
+### daemon-finishes-every-outbox-report-b.w1 — the outbox is the daemon's, never the session's turn (internal/friend/outbox.go)
+
+On 2026-10-06 a friend wrote 12 `REPORT.md` files to her outbox in two hours and
+the sprint log showed one finish by her: her lanes' turns ran on
+through long tool sequences after each report, the pass left every job a lane
+was running to the lane's end, her cards stayed working, the alarm "a friend
+holds working cards and finishes none" fired on her, and the coordinator ran a
+finisher by hand (00:35 and 12:42). The outbox is finished by the daemon, never
+by the session's turn:
+
+- The watch runs every loop step whatever the session or a lane is doing, once
+  the server has said what is on her row: it stats each job's `REPORT.md` under
+  `outbox/` (size and time), and a pass runs when one was written or changed,
+  when her row was just read, and at least once an `OutboxPoll` (10 s) when
+  nothing is seen to change. The watch is that stat each step, not fsnotify: the
+  module carries no file-event dependency, and the poll is the bound either way.
+- A report is finished when it appears, a lane running its card or not, by the
+  rules above. Only a `LAND` with no full sha `Head:` whose lane still runs waits
+  for the lane's end (said once), for the run may still be writing it. The
+  lane's own end then finds the report and sends nothing (`finish=report`); the
+  finish line says `lane=running` when a lane was running the card.
+- A finished job is marked in the state directory (`outbox.json`, `OutboxFile`:
+  the job and when), read when the daemon starts, so a daemon that starts again
+  never finishes it twice; marks of jobs gone from her outbox are dropped after
+  `OutboxKept` (7 days).
+- A report whose card is not on her row, or is there at another epoch or
+  generation, is superseded: one line (`outbox: superseded
+  outbox/<job>/REPORT.md: <why>; not retried`), marked in `outbox.json`, and
+  never read again.
+- The status file carries `finished_today`, the finishes of the UTC day by the
+  marks. The sprint server's `friend beat` takes no such flag yet, so the beat
+  does not carry it.
+
+The model is `tla/Delivery.tla` (TLC on a Linux bench, `MCDelivery.cfg`: two
+cards, the poll two daemon steps, the session or a lane on each card busy or
+free, the watch missing a change or not, restarts and take-backs; 464 distinct
+states; `WrittenIsFinished`, a report written to a working card is finished
+within `OutboxPoll` steps of the daemon's clock, `FinishedOnce` and
+`FinishOnlyWritten` hold). Its reversed witness `MCDeliveryBrokenTurnOnly.cfg`,
+the pass that left a job to its lane's end, breaks `WrittenIsFinished` in 6
+states: a lane goes busy on the card, she writes the report, and three daemon
+steps pass it by. The test
+is `TestAWrittenReportIsFinishedWhileTheSessionIsBusy`.
 
 ### one-lane-per-card.w1 — one live lane per card (internal/friend/one_lane.go)
 

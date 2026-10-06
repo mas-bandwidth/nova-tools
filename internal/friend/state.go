@@ -53,9 +53,11 @@ type Status struct {
 	// never the session (docs/SPEC-FRIEND.md, session-pong.w1).
 	LastDaemonPong time.Time `json:"last_daemon_pong"`
 	Delivered      int       `json:"delivered"` // messages acked this run
-	Beats          int       `json:"beats"`
-	LastBeat       time.Time `json:"last_beat"`
-	BeatError      string    `json:"beat_error,omitempty"`
+	// FinishedToday is how many outbox reports the daemon finished on this UTC day (outbox.go).
+	FinishedToday int       `json:"finished_today"`
+	Beats         int       `json:"beats"`
+	LastBeat      time.Time `json:"last_beat"`
+	BeatError     string    `json:"beat_error,omitempty"`
 	// HarnessSeen is what the harness check last read (HarnessRunning,
 	// HarnessNotSeen, or empty: cannot tell). Advisory: it
 	// never makes the friend down (alive.go, HarnessWatch).

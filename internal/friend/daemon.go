@@ -156,6 +156,11 @@ type Daemon struct {
 	// REPORT.md says a verdict, whoever wrote its brief (OutboxFinishArgv, outbox.go). Nil,
 	// or a finish not answered, leaves it to friend sync, which reads the same REPORT.md.
 	Finish func(ctx context.Context, argv []string) error
+	// LoadOutbox and SaveOutbox keep the outbox marks (ReadOutbox, WriteOutbox over the state
+	// directory): the jobs finished, never finished twice across a restart, and the ones
+	// superseded. Nil keeps them in memory only.
+	LoadOutbox func() (OutboxMarks, error)
+	SaveOutbox func(OutboxMarks) error
 	// The lanes' parity with the runner scripts they replace (lane_parity.go); Rules nil
 	// turns every one off. Rules is her row's lane rules as her beat last answered them,
 	// Load the machine's one-minute load (nil: no load rule), Tokens a session's tokens
@@ -447,7 +452,8 @@ func (d *Daemon) Run(ctx context.Context) error {
 			l.mode = mode
 		}
 		d.status.Mode = l.mode
-		l.inboxStep(now) // before the lanes: a card written this step is handed this step
+		l.inboxStep(now)          // before the lanes: a card written this step is handed this step
+		l.outboxWatch(now, false) // the outbox is the daemon's, whatever the session or a lane is doing (outbox.go)
 		switch {
 		case l.broken:
 		case l.mode == ModeOneShot:
