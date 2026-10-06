@@ -2245,6 +2245,24 @@ id (`--op`) returns the original result, with no second counter or notification.
   in `listen` (`run --listen`), both through `serverStart`, so in-flight reads with live
   leases survive a server restart while lapsed reads are retired and re-asked.
 
+### accept-heavy-verdict-b.w1
+
+- The coordinator records its own heavy read with the accept:
+  `accept <id>... --heavy --evidence <path> --reason <text>`. The read counts as one ok
+  read toward the card's read rule (`ReadsNeeded`), so a pro card with one reader's ok and
+  one reader's broken read is accepted on the reader's ok and the coordinator's read. It is
+  kept on the primary, never as a read card: `heavy_reader` (`coordinator:<actor>`),
+  `heavy_kind` (`heavy`), `heavy_verdict` (`ok`), `heavy_evidence` (the path) and
+  `heavy_evidence_sha256` (the file's sha256, read by the verb), `heavy_reason`,
+  `heavy_attempt`, `heavy_head` and `heavy_at`; `card --fields` and `card --json` show it,
+  and the accept's line names it with its evidence. No read card is written for it, no
+  reader row names it, and the primary's `readers` field names the readers' oks alone. A
+  reader's broken read at the attempt stays as the reader left it, and the primary names it
+  in `heavy_overrules`: overruled by the coordinator heavy read. It is refused, nothing
+  written, without a readable evidence file or a reason, for a selection (`--stream`,
+  `--read-ok`, `--group`), and for a card not in review (`sprint.Accept`, `heavyRead`;
+  `TestAcceptHeavyRecordsTheCoordinatorsReadNotAReaders`).
+
 ## 7. Merging
 
 1. In work order, never random: the head of the stream's queued cell first.

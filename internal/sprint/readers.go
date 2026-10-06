@@ -669,3 +669,69 @@ func RenewReaderLeases(s *Snapshot, reader string) Plan {
 	}
 	return p
 }
+
+// The coordinator's heavy read (docs/SPEC-SPRINT.md section 6,
+// accept-heavy-verdict-b.w1): accept --heavy records the coordinator's own read
+// of the primary's attempt and head on the primary, under coordinator:<actor>,
+// with the evidence file it read and that file's sha256, and it counts as one ok
+// read toward the card's read rule (ReadsNeeded). It is never a reader's read: no
+// read card is written for it, no reader row names it, and the readers field
+// names the readers' oks alone. A reader's broken read at the same attempt stays
+// as the reader left it, named on the primary as overruled.
+const (
+	CoordinatorReaderPrefix = "coordinator:"
+	HeavyKind               = "heavy"
+
+	FieldHeavyReader    = "heavy_reader"
+	FieldHeavyKind      = "heavy_kind"
+	FieldHeavyVerdict   = "heavy_verdict"
+	FieldHeavyEvidence  = "heavy_evidence"
+	FieldHeavySHA       = "heavy_evidence_sha256"
+	FieldHeavyReason    = "heavy_reason"
+	FieldHeavyAttempt   = "heavy_attempt"
+	FieldHeavyHead      = "heavy_head"
+	FieldHeavyAt        = "heavy_at"
+	FieldHeavyOverrules = "heavy_overrules"
+)
+
+// heavyWhy is the refusal of an accept --heavy that does not carry its evidence:
+// the path of the file the coordinator read, its sha256 and the reason.
+func heavyWhy(r AcceptReq) string {
+	var why []string
+	if r.Evidence == "" {
+		why = append(why, "--evidence <path>, a readable file the coordinator's heavy read rests on")
+	}
+	if r.Evidence != "" && r.EvidenceSHA == "" {
+		why = append(why, "the evidence file's sha256 (the file read)")
+	}
+	if r.Reason == "" {
+		why = append(why, "--reason <text>, why the coordinator's read stands")
+	}
+	if len(why) == 0 {
+		return ""
+	}
+	return "the coordinator heavy read wants " + strings.Join(why, ", ")
+}
+
+// heavyRead is the coordinator's heavy read of the primary at its attempt and
+// head, as fields of the primary: who read it (coordinator:<actor>), its kind
+// and verdict, its evidence and the broken reads at the attempt it overrules.
+func heavyRead(s *Snapshot, pr *Card, r AcceptReq) (fields map[string]string, overruled []*Card) {
+	var ids []string
+	for _, rc := range readsAt(s, pr, pr.Int("attempt")) {
+		if rc.Col == Broken {
+			overruled = append(overruled, rc)
+			ids = append(ids, rc.ID)
+		}
+	}
+	who := r.Who
+	if who == "" {
+		who = "coordinator"
+	}
+	return map[string]string{
+		FieldHeavyReader: CoordinatorReaderPrefix + who, FieldHeavyKind: HeavyKind, FieldHeavyVerdict: "ok",
+		FieldHeavyEvidence: r.Evidence, FieldHeavySHA: r.EvidenceSHA, FieldHeavyReason: r.Reason,
+		FieldHeavyAttempt: pr.F("attempt"), FieldHeavyHead: pr.F("head"), FieldHeavyAt: stamp(s.Now),
+		FieldHeavyOverrules: strings.Join(ids, ","),
+	}, overruled
+}
