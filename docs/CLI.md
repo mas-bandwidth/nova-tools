@@ -629,7 +629,9 @@ nova-friend run --as <me> --harness <h> --dir <d> [--session <id>] [--server <ad
 nova-friend install --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--config-dir <d>] [--model <provider/model>] [--secrets NAME[,NAME] --seat <seat>] [--launchd-log <file>] [--dry-run]
 nova-friend uninstall --as <me> [--dry-run]
 nova-friend check [--as <coordinator>] [<friend>...] [--since <duration>] [--shown <file|->] [--json]
-nova-friend ping --as <coordinator> --to <friend> [--nonce <n>] [--since <RFC3339>] [--wake] [--redis <addr>] [--dry-run]
+nova-friend ping --as <coordinator> (--to <friend> | --wake --to-friends [--every <d>] [--within <d>] [--never-wake <f,...>] [--server <addr>]) [--nonce <n>] [--since <RFC3339>] [--redis <addr>] [--dry-run]
+nova-friend ping-install --as <coordinator> --every <d> [--within <d>] [--never-wake <f,...>] [--server <addr>] [--redis <addr>] [--launchd-log <file>] [--dry-run]
+nova-friend ping-uninstall --as <coordinator> [--dry-run]
 nova-friend pong --as <me> --nonce <n> [--to <coordinator>] [--queue <n>] [--working <n>] [--width <n>] [--state-dir <d>] [--redis <addr>] [--dry-run]
 nova-friend wait-pong --from <friend> --nonce <n> [--timeout <d>] [--redis <addr>]
 nova-friend status --as <me> --dir <d> [--state-dir <d>]
@@ -2796,6 +2798,17 @@ Run local models: what an engine has, one model served at a chosen context,
 and a worker description nova-swarm accepts. It runs no inference, fetches no
 weights and judges no model.
 See [SPEC-LOCAL.md](SPEC-LOCAL.md).
+
+<!-- clidoc:begin nova-local -->
+```
+nova-local status [--engine <name>] [--base <url>] [--list] [--max <n>] [--timeout <d>]
+nova-local serve --engine <name> --model <ref> --num-ctx <n> [--base <url>] [--keep-alive <d>] [--seed <n>] [--expect-digest <sha256:...>] [--max-load <f>] [--min-free <size>] [--require-shared-store] [--dry-run]
+nova-local serve --stop --engine <name> --model <tag> [--base <url>]
+nova-local worker --engine <name> --model <tag> --out <file> --name <text> --harness <cmd> --harness-args <a,b,{model},...> --worker-dir <abs dir> --key-file <file> --env-var <NAME> --usage <opencode|none> --deadline <d> [--base <url>] [--board <owner/repo#n>] [--dry-run]
+nova-local version
+nova-local help [<verb>]
+```
+<!-- clidoc:end nova-local -->
 
 ### First run
 
