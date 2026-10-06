@@ -85,10 +85,13 @@ const (
 // bus's Fake, a fake harness and its own clock.
 type Daemon struct {
 	Friend, Harness, Dir string
-	Width                int
-	Store                bus.Store
-	Deliver              Deliverer
-	Beat                 func(ctx context.Context, active time.Time) error // one beat to the sprint server, carrying the session's last activity (zero: none known)
+	// Session is the session the daemon is pinned to (--session; empty: the
+	// harness's newest in Dir), said in the status file so renew reads it.
+	Session string
+	Width   int
+	Store   bus.Store
+	Deliver Deliverer
+	Beat    func(ctx context.Context, active time.Time) error // one beat to the sprint server, carrying the session's last activity (zero: none known)
 	// Activity is the newest write of the session's files and Cards the ids of
 	// the cards she holds, oldest first (nil: the queue file's queued and working
 	// tasks under Dir), both read at most once an IdleWalkEvery; IdleAfter is her
@@ -407,7 +410,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 		d.staging, d.stageRetry, d.stageSaid, d.stageDealt = map[string]bool{}, map[string]time.Time{}, map[string]bool{}, map[string]string{}
 	}
 	defer d.stageWG.Wait() // a stage under way ends with ctx (its git is killed) and its result is kept for the next Run
-	d.status = Status{Friend: d.Friend, Harness: d.Harness, Started: d.m.LastPing, Width: d.Width}
+	d.status = Status{Friend: d.Friend, Harness: d.Harness, Dir: d.Dir, Pinned: d.Session, Started: d.m.LastPing, Width: d.Width}
 	if !l.passive {
 		d.status.Session = SessionOK
 	}
