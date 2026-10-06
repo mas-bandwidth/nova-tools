@@ -2,7 +2,7 @@
 
 ## Checking the setup
 
-### setup-nova-doctor-r-r2.w2: nova-doctor
+### setup-nova-doctor-r-r4.w1: nova-doctor
 
 When anything is wrong, run `nova-doctor` first. It runs every check, prints one
 `DOCTOR <check> ok|warn|fail <evidence> [fix: <line>]` line each, and gives the one fix
