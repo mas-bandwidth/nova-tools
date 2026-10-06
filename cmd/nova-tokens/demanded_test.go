@@ -1779,9 +1779,8 @@ func TestReportCountsAndPrintsEverythingItDropped(t *testing.T) {
 	wantExit(t, r, 1)
 	wantContains(t, r.stderr, "TOKENS UNPARSED label=claude:g")
 	wantContains(t, r.stderr, "yesterday")
-	// The OK line is the grammar's, so what says the day is short is the line above it,
-	// the note, and the exit code -- and the body still printed.
-	wantContains(t, r.stderr, "REPORT OK who=emma day=2026-09-11 rows=1")
+	// The word follows the exit: an unparsed line is FAILED, and the body still printed.
+	wantContains(t, r.stderr, "REPORT FAILED who=emma day=2026-09-11 rows=1")
 	{
 		n := strings.Count(r.stderr, "TOKENS UNPARSED")
 		assert.Equal(t, 1, n, "%d TOKENS UNPARSED lines, want 1:\n%s", n, r.stderr)
