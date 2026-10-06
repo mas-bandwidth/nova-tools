@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/friend"
+	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
 // A job is one thing a machine is set up to do (keep local notes, message, be a friend,
@@ -601,16 +602,37 @@ func stepMessageDelivered(ctx context.Context, r *jobRun) Result {
 	return Result{Status: OK, Evidence: fmt.Sprintf("%d messages delivered, %d failed, last %s", h.Delivered, h.Failed, h.Last)}
 }
 
+// stepSessionReceipt is nova-friend status's evidence rule (docs/SPEC-FRIEND.md, "Presence
+// is her session's evidence"): a session pong under sprint.FriendPongWindow old, or a card
+// of hers finished under sprint.FriendFinishWindow old, at the Env's clock. nova-friend
+// check's pong_age is the age of the last pong ever recorded, so a pong on record is no
+// receipt by itself; past both windows the session is deaf. Messages back are shown, and
+// her daemon's beat is never read.
 func stepSessionReceipt(ctx context.Context, r *jobRun) Result {
 	f, bad := r.theFriend(ctx)
 	if bad != nil {
 		return *bad
 	}
-	if (f.Daemon.PongAge == "" || f.Daemon.PongAge == "-") && f.Bus.RealSince == 0 {
-		return Result{Status: Fail, Evidence: "the session answered nothing in the window: no session pong and no message back (verdict " + f.Verdict.Verdict + ")",
-			Fix: fmt.Sprintf("nova-friend check --as %s --harness %s --dir %s", r.in.As, r.harnessOf(f), r.dirOf())}
+	shown := fmt.Sprintf("messages_back=%d last_back=%s", f.Bus.RealSince, f.Bus.LastReal)
+	pongAge, pongErr := time.ParseDuration(f.Daemon.PongAge)
+	if pongErr == nil && pongAge >= 0 && pongAge < sprint.FriendPongWindow {
+		return Result{Status: OK, Evidence: fmt.Sprintf("the session answered: session pong %s ago; %s", f.Daemon.PongAge, shown)}
 	}
-	return Result{Status: OK, Evidence: fmt.Sprintf("the session answered: pong_age=%s messages_back=%d last_back=%s", f.Daemon.PongAge, f.Bus.RealSince, f.Bus.LastReal)}
+	finished, finErr := time.Parse(time.RFC3339, f.Work.NewestAt)
+	finishAge := r.env.Now().Sub(finished)
+	if finErr == nil && finishAge >= 0 && finishAge < sprint.FriendFinishWindow {
+		return Result{Status: OK, Evidence: fmt.Sprintf("the session answered: finished %s %s ago; %s", f.Work.NewestOutbox, friend.AgeString(finishAge), shown)}
+	}
+	ev := "deaf: no session pong within " + sprint.FriendPongWindow.String()
+	if pongErr == nil {
+		ev += " (last " + f.Daemon.PongAge + " ago)"
+	}
+	ev += ", no card finished within " + sprint.FriendFinishWindow.String()
+	if finErr == nil {
+		ev += " (last " + friend.AgeString(finishAge) + " ago)"
+	}
+	return Result{Status: Fail, Evidence: ev + "; " + shown + " (nova-friend verdict " + f.Verdict.Verdict + ")",
+		Fix: fmt.Sprintf("nova-friend check --as %s --harness %s --dir %s", r.in.As, r.harnessOf(f), r.dirOf())}
 }
 
 func (r *jobRun) harnessOf(f friend.FriendCheck) string {
