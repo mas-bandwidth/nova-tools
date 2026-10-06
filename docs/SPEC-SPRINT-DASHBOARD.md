@@ -132,7 +132,11 @@ from the owner edits one line here and nothing else moves.
   `dev_lacks` (the drift between the base and the development branch the last dev sync measured: commits dev has
   that the base lacks, and the base has that dev lacks); `sync_minutes` and `promotion_minutes` (since the last dev
   sync and the last promotion into dev; null when none is recorded).
-- Drawn: merging | review | landed / 30m | oldest merging | base gate | drift | since sync | since promotion. The
+- Beside it, the deal group: `where --json`'s `priority` (docs/SPEC-SPRINT.md, the deal: priority), the level the
+  deal takes from now and its streams with a ready card, "level 2 · rel"; its title names every stream's level; "-"
+  while no stream has a level.
+- Drawn: merging | review | landed / 30m | oldest merging | base gate | drift | since sync | since promotion | deal
+  group. The
   gate is a pill, red (critical), green (good) or "-" (neutral), with the failing test after it; the drift reads
   "base lacks X · dev lacks Y"; a minute not known is "-". Nothing in the row flashes.
 - The base-red judgments are read only when a stream is stopped, so a plain where makes no exchange more on a

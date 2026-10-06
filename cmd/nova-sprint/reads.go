@@ -562,6 +562,9 @@ type whereView struct {
 	Friends []store.FriendRow `json:"friends,omitempty"`
 	// Releases is the count of cards left per release across the streams (docs/SPEC-SPRINT.md section 11, where --release).
 	Releases map[string]int64 `json:"releases,omitempty"`
+	// Priority is the deal's groups (sprint.PriorityOf): each stream's level above 0, and
+	// the level the deal takes from now; absent while no stream has a level.
+	Priority *sprint.PriorityView `json:"priority,omitempty"`
 	// StoreRTTP50MS and StoreRTTP99MS are the store round trip's p50 and p99 over the
 	// last minute, as the server measured it (store.StoreRTTRecord, store-latency-row-r.w2).
 	StoreRTTP50MS *float64 `json:"store_rtt_p50_ms,omitempty"`
@@ -1166,6 +1169,19 @@ func (a *app) whereOf(ctx context.Context, st *store.Store, stale time.Duration,
 		b.WriteString("\n" + line + "\n")
 	}
 	if line := promotionLine(clocks); line != "" {
+		b.WriteString("\n" + line + "\n")
+	}
+	// the deal's groups: each stream's level and the group dealt now (priority.go)
+	ready := map[string]int64{}
+	if j := shapes[0].Column(sprint.Ready); j >= 0 {
+		for _, r := range shapes[0].Rows {
+			if j < len(r.Cells) {
+				ready[r.Key] = r.Cells[j].Count
+			}
+		}
+	}
+	v.Priority = sprint.PriorityOf(clocks, ready)
+	if line := sprint.PriorityLine(v.Priority); line != "" {
 		b.WriteString("\n" + line + "\n")
 	}
 	a.goalsView(ctx, st, &v)

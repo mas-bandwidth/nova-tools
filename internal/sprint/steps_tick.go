@@ -564,7 +564,8 @@ func TickResume(s *Snapshot, r TickReq) (Plan, int) {
 	return p, due
 }
 
-// T3. TickDeal deals ready primaries in stream turns (streamTurns: one from
+// T3. TickDeal deals ready primaries by level, the higher level's streams first
+// (dealOrder, priority.go), and inside a level in stream turns (streamTurns: one from
 // each stream in turn from the deal's stream index on the work table, a stream with no
 // ready card skipped, each stream's oldest first by score; Deal moves the
 // index past the stream of the last card dealt), each
@@ -599,7 +600,7 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 		}
 		offer = append(offer, c)
 	}
-	fp, dealt, dealtWorking := friendDeal(s, streamTurns(offer, streamRound(s, PropStreamIndex)), r.Friends)
+	fp, dealt, dealtWorking := friendDeal(s, dealOrder(s, offer), r.Friends)
 	friendPlaced := map[string]bool{}
 	for _, u := range fp.Units {
 		friendPlaced[u.Key] = true
@@ -703,7 +704,7 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 	conds = append(conds, overloadConds(s)...)
 	// landings on the sprint branch not promoted into dev (promotion.go)
 	conds = append(conds, devBehindCond(s)...)
-	ready = streamTurns(ready, streamRound(s, PropStreamIndex))
+	ready = dealOrder(s, ready)
 	if len(up) == 0 && len(ready) > 0 {
 		c := cond{typ: NNoMember, streamLevel: true,
 			what: fmt.Sprintf("%d primaries wait to be dealt and no member is up: start nova-sprint fleet beat <member> on a machine, or release a hold with nova-sprint fleet up <member>", len(ready))}

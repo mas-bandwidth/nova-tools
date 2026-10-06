@@ -853,7 +853,7 @@ func dealPlan(s *Snapshot, r DealReq, rr *round, ri routeIndexes) (Plan, roundMo
 		}
 		return inState(c, Ready)
 	}
-	chosen := pick(&p, r.Sel, eligibleTurns(s.Work.Column(Ready), ready, streamRound(s, PropStreamIndex)), rowOf, ready, s.primaryCard)
+	chosen := pick(&p, r.Sel, byLevel(s, eligibleTurns(s.Work.Column(Ready), ready, streamRound(s, PropStreamIndex))), rowOf, ready, s.primaryCard)
 	up := s.UpMembers()
 	if len(up) == 0 {
 		for _, c := range chosen {
