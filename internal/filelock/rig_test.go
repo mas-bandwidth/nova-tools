@@ -2,62 +2,47 @@ package filelock
 
 import (
 	"path/filepath"
-	"sync"
 	"testing"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/testkit"
 	"github.com/stretchr/testify/require"
 )
 
-// The test's clock: production takes its time through options.clock (realClock
-// by default), so a test passes this one and a bounded wait costs no wall time.
-
-// lockStepClock is an in-memory virtual clock for testing bounded waits without sleeping.
-type lockStepClock struct {
-	mu    sync.Mutex
+// clockAdapter wraps testkit.Clock to provide the clock interface expected by filelock tests.
+type clockAdapter struct {
+	c     *testkit.Clock
 	start time.Time
-	now   time.Time
 }
 
-// newLockStepClock returns a lockStepClock initialized to start (or a default fixed time if zero).
-func newLockStepClock(start time.Time) *lockStepClock {
+func newClockAdapter() *clockAdapter {
+	start := time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC)
+	return &clockAdapter{c: testkit.NewClock(start), start: start}
+}
+
+func newClockForTest(start time.Time) *clockAdapter {
 	if start.IsZero() {
 		start = time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC)
 	}
-	return &lockStepClock{start: start, now: start}
+	return &clockAdapter{c: testkit.NewClock(start), start: start}
 }
 
-func (c *lockStepClock) Now() time.Time {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.now
-}
-
-func (c *lockStepClock) Sleep(d time.Duration) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.now = c.now.Add(d)
-}
-
-// Waited returns the elapsed virtual duration since clock creation.
-func (c *lockStepClock) Waited() time.Duration {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.now.Sub(c.start)
-}
+func (a *clockAdapter) Now() time.Time       { return a.c.Now() }
+func (a *clockAdapter) Sleep(d time.Duration) { a.c.Advance(d) }
+func (a *clockAdapter) Waited() time.Duration { return a.c.Now().Sub(a.start) }
 
 // rig is one filelock test's fixture: a temp dir whose lock paths are named
 // from it, and a virtual clock a bounded wait advances without sleeping.
 type rig struct {
 	t     *testing.T
 	dir   string
-	clock *lockStepClock
+	clock *clockAdapter
 }
 
 // newRig makes a rig over a fresh temp dir and a virtual clock at its origin.
 func newRig(t *testing.T) *rig {
 	t.Helper()
-	return &rig{t: t, dir: t.TempDir(), clock: newLockStepClock(time.Time{})}
+	return &rig{t: t, dir: t.TempDir(), clock: newClockAdapter()}
 }
 
 // path is the lock file named base under the rig's temp dir.

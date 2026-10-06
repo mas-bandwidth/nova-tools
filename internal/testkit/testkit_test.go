@@ -5,6 +5,7 @@ import (
 	"io"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/testkit"
 	"github.com/stretchr/testify/assert"
@@ -117,3 +118,28 @@ func runs(r *recorder, f func()) {
 type capture []byte
 
 func (c *capture) Write(p []byte) (int, error) { *c = append(*c, p...); return len(p), nil }
+
+func TestClockBasics(t *testing.T) {
+	t.Parallel()
+	start := time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC)
+	c := testkit.NewClock(start)
+	assert.Equal(t, start, c.Now())
+	c.Advance(5 * time.Minute)
+	assert.Equal(t, start.Add(5*time.Minute), c.Now())
+}
+
+func TestClockConcurrent(t *testing.T) {
+	t.Parallel()
+	c := testkit.NewClock(time.Time{})
+	done := make(chan struct{})
+	go func() {
+		for i := 0; i < 100; i++ {
+			_ = c.Now()
+		}
+		close(done)
+	}()
+	for i := 0; i < 100; i++ {
+		c.Advance(time.Second)
+	}
+	<-done
+}
