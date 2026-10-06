@@ -49,8 +49,10 @@ func costRecord(s *Snapshot, usage, route, model string, onlyEnabled bool, from,
 // properly calculated yet in nova sprint?"): by the route its ask drew, the read card's
 // own route row, never by a route found again from the model its harness reported. A
 // read card with a route is a routed read: its verdict (read --ok or --broken) carries
-// the run's usage with its tokens or is refused (ReadUsageMissing), so no routed read is
-// left unpriced. A subscription reader (a bud's claude -p on its own plan, which bills
+// the run's usage or is refused (ReadUsageMissing), so no routed reader can leave its
+// read unpriced by saying nothing. A usage with no token count (a fleet harness that
+// reported none) is permissive in what we read: the verdict is kept, its record says
+// unpriced=no-tokens and the stream counts it (TierCosts.ReadsNoTokens). A subscription reader (a bud's claude -p on its own plan, which bills
 // no dollar per token) says so in its usage, billing=subscription: its tokens are kept,
 // with no dollar figure, and its cost is shown as tokens (CostTokens).
 const (
@@ -93,20 +95,16 @@ func readCostRecord(s *Snapshot, c *Card, usage, from, began string) string {
 }
 
 // ReadUsageMissing is why a read's verdict on the read card c is refused for its usage:
-// a routed read whose usage reports neither a token nor the harness's own cost, which
-// leaves nothing to price it by; "" otherwise. Its remedy is the verdict again with the
-// harness's own token report.
+// a routed read with no --usage at all, which leaves nothing to price it by; "" otherwise.
+// A usage with no token count is taken, never refused: a verdict is never lost for its
+// harness's accounting (readCostRecord records it unpriced=no-tokens). Its remedy is the
+// verdict again with the harness's own token report.
 func ReadUsageMissing(c *Card, usage string, verdict string) string {
-	u := cardcost.ParseUsage(usage)
-	if !routedRead(c) || u.Tokens.Reported() || u.Actual != "" {
+	if !routedRead(c) || strings.TrimSpace(usage) != "" {
 		return ""
 	}
-	said := "no --usage"
-	if usage != "" {
-		said = "--usage with no token count"
-	}
-	return fmt.Sprintf("a read on route %s is priced as work is, from the run's tokens, and this verdict has %s: run nova-sprint read --as %s --%s %s ... --usage '<the harness's own token report: input=<n> cache_read=<n> cache_write=<n> output=<n> model=<provider/model>>'; a subscription reader adds %s to its usage",
-		c.F(FieldRoute), said, c.F("reader"), cmp.Or(verdict, "ok"), c.ID, UsageSubscription)
+	return fmt.Sprintf("a read on route %s is priced as work is, from the run's tokens, and this verdict has no --usage: run nova-sprint read --as %s --%s %s ... --usage '<the harness's own token report: input=<n> cache_read=<n> cache_write=<n> output=<n> model=<provider/model>>'; a subscription reader adds %s to its usage",
+		c.F(FieldRoute), c.F("reader"), cmp.Or(verdict, "ok"), c.ID, UsageSubscription)
 }
 
 // CostWord is the cost a COST line shows for a record: which of the dollar figures it

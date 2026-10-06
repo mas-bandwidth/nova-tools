@@ -740,6 +740,15 @@ type nativeChild struct {
 	result                      member.Result
 }
 
+// noUsageReported is the usage of a launch whose harness reported no token and left no
+// receipt: a record with nothing in it, its source named, so the member's --usage is
+// never absent (docs/SPEC-SWARM.md, the member's read verdict).
+var noUsageReported = func() string {
+	u := cardcost.NoUsage()
+	u.Extra = []string{"usage_source=none"}
+	return u.String()
+}()
+
 // receiptSpend is this launch's durable per-attempt usage rows read back
 // (member.ReceiptUsage; docs/SPEC-SPRINT.md, "What a card cost"). The job directory is
 // unique to one card generation or read attempt, so rows from another attempt cannot enter
@@ -1028,6 +1037,13 @@ func (c *nativeChild) Result() member.Result {
 			u.Extra = append(u.Extra, "usage_source_error=receipt-unreadable")
 			usage = u.String()
 			report = oneline.Cap(report+"; usage receipt unreadable: "+oneline.Escape(usageError), 300)
+		}
+		if usage == "" {
+			// the harness reported nothing and left no receipt: the finish or the read
+			// still carries --usage, saying so (noUsageReported), so a routed read's
+			// verdict is kept and recorded unpriced=no-tokens, never refused for a
+			// missing --usage (docs/SPEC-SPRINT.md, "Reads are priced like work")
+			usage = noUsageReported
 		}
 		if verdict == "not-done" && gate == member.GateGreen {
 			// the child's gate was red only on failures the gate decision classed flaky, and
