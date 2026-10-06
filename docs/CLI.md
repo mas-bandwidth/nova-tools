@@ -1143,7 +1143,9 @@ nova-sprint reader up <reader>...
 nova-sprint reader remove <reader>...
 nova-sprint reader retire <reader>...
 nova-sprint stream remove <stream>...
-nova-sprint stream set <stream>... [--read-tier <flash|pro|heavy|default>] [--land-protected <owner/name,...|any|default>] [--release <name>] [--attempts <n|default>] [--reason <text>] [--answers <notes>]
+nova-sprint stream archive <stream>...
+nova-sprint stream unarchive <stream>...
+nova-sprint stream set <stream>... [--read-tier <flash|pro|heavy|default>] [--land-protected <owner/name,...|any|default>] [--release <name>] [--prose <glob,...|default>] [--attempts <n|default>] [--reason <text>] [--answers <notes>]
 nova-sprint set [--read-tier <flash|pro|default>] [--dealt-max <duration|default>] [--go-lanes <n|default>] [--alarm-review <n|off>] [--alarm-merging <n|off>] [--alarm-fleet <percent|off>] [--alarm-ready <on|off>] [--attempts <n|default>] [--friend-idle <duration|default>] [--friend-finish <duration|default>]
 nova-sprint promoted --sha <merge sha> [--answers <note>]
 nova-sprint merge-window open --for <duration> --reason <text>
@@ -1169,6 +1171,7 @@ nova-sprint where [--watch] [--every <duration>] [--all] [--json [--cards] [--ro
 nova-sprint dashboard [--listen <address:port>[,<address:port>...] | none] [--pull <address:port>[,<address:port>...] | none] [--logo <file>] [--every <duration>]
 nova-sprint handover
 nova-sprint view coordinator [--all] [--since <cursor>] [--json]
+nova-sprint view cards [--col <c>] [--stream <s>] [--holder <member>] [--by tier|stream|col|holder] [--json]
 nova-sprint view worker --as <member|friend> [--since <cursor>] [--json]
 nova-sprint seat install --harness <name> --target <dir> [--session <id>] [--dir <dir>] [--log <file>] [--dry-run]
 nova-sprint seat uninstall [--dir <dir>]
@@ -2324,17 +2327,14 @@ nova-ci new-verb [--root <checkout>] [--dry-run] <tool> <verb>
                     (local write; needs a nova-tools checkout) scaffold a new
                     verb of an existing tool: command, test, fixture and make
                     target; --dry-run lists the files and writes nothing
-nova-ci github receipt --from-runner --redis <addr> --repo owner/name
-                  --sha <40hex> --run-id <n> --workflow <name>
-                  --conclusion success|failure|cancelled [--pr <n>] [--at <rfc3339>]
-                  [--dry-run]
-                    (store write) the ci-ok job's run receipt: one ev:github
-                    row of the workflow_run shape, sender runner; dialled as
-                    the environment's seat (NOVA_SPRINT_REDIS_USER),
-                    with the password in the variable NOVA_SPRINT_REDIS_PASSWORD_ENV names, never on the line.
-                    A refused write is tried once, not retried. One CI
-                    RECEIPT line. --dry-run checks the fields and prints the
-                    line with ev=-, dialling nothing.
+nova-ci bench run --host <h> [--fallback <h>] --dir <tree> [--root <dir>] [--cache <dir>] [--with-git] -- <go command>
+                    (delivery: writes only its own run directory on the bench)
+                    copy the tree, .git left out unless --with-git, to a fresh
+                    run directory on the Linux bench --host (--fallback when it
+                    does not answer), run the command in it under nice -n 19
+                    with GOCACHE, GOFLAGS=-mod=readonly and NOVA_TEST_NO_HOST=1,
+                    stream its output, then remove that directory and nothing
+                    else. One CI BENCH line on stderr ends the run.
 ```
 <!-- clidoc:end nova-ci -->
 
@@ -3234,10 +3234,10 @@ nova-card is pre-alpha: not ready for production use.
 
 <!-- clidoc:begin nova-card -->
 ```
-nova-card generate --from ledger --ledger <name> --repo-dir <dir> --out <dir> [--tier flash|pro] [--prefix <p>] [--minutes <n>] [--max <n>] [--base <branch>] [--repo <owner/name>] [--dry-run]
-nova-card generate --from findings --file <tsv> --out <dir> (--repo-dir <dir> | --repo <owner/name> --base <branch> --sha <40hex>) [--tier flash|pro] [--prefix <p>] [--minutes <n>] [--max <n>] [--dry-run]
-nova-card generate --from help --tool <name> [--tool <name>...] --out <dir> [--bin-dir <dir>] (--repo-dir <dir> | --repo --base --sha) [--tier flash|pro] [--prefix <p>] [--minutes <n>] [--max <n>] [--dry-run]
-nova-card lint --card <file> [--card <file>...]
+nova-card generate --from ledger --ledger <name> --repo-dir <dir> --out <dir> [--tier flash|pro] [--prefix <p>] [--minutes <n>] [--max <n>] [--base <branch>] [--repo <owner/name>] [--name <n>...] [--dropped <id>...] [--dry-run]
+nova-card generate --from findings --file <tsv> --out <dir> (--repo-dir <dir> | --repo <owner/name> --base <branch> --sha <40hex>) [--tier flash|pro] [--prefix <p>] [--minutes <n>] [--max <n>] [--name <n>...] [--dropped <id>...] [--dry-run]
+nova-card generate --from help --tool <name> [--tool <name>...] --out <dir> [--bin-dir <dir>] (--repo-dir <dir> | --repo --base --sha) [--tier flash|pro] [--prefix <p>] [--minutes <n>] [--max <n>] [--name <n>...] [--dropped <id>...] [--dry-run]
+nova-card lint --card <file> [--card <file>...] [--name <n>...] [--dropped <id>...]
 nova-card lint --card ./cards/finding-cmd-nova-bus-main.md
 nova-card template
 nova-card version
