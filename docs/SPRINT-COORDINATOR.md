@@ -2,8 +2,8 @@
 
 The runbook for whoever holds the coordinator seat of a sprint: the one actor that answers the inbox, loads
 work, holds and releases waves, sets the fleet, lands, and installs. It assumes this file, the `help` of each
-tool it names (`nova-sprint`, `nova-config`, `nova-secrets`, `nova-swarm`, `nova-bus`, `nova-update`,
-`nova-ci`, `tlacheck`) and [SPEC-SPRINT.md](SPEC-SPRINT.md), with `git`, `gh`, `go`, `make`, `jq`, `sops` and
+tool it names (`nova-sprint`, `nova-config`, `nova-secrets`, `nova-swarm`, `nova-bus`, `nova-friend`,
+`nova-update`, `nova-ci`, `tlacheck`) and [SPEC-SPRINT.md](SPEC-SPRINT.md), with `git`, `gh`, `go`, `make`, `jq`, `sops` and
 `ansible-playbook` on the PATH; where this file and a help differ, the help is right and this file is the
 defect. A change not yet in `dev` is marked "after PR N" and listed under "Open items". Notation: `<m>` a
 machine, `<s>` a stream, `<id>` an inbox group id, `<card>` a primary's id. Each judgment answer below is the
@@ -405,9 +405,510 @@ directory, and a bus note pointing to it. It holds, each item with its id and ev
 - The stall count: what was tried for each problem that came back, how many times, how it failed; and
   anything refused or left to the owner on the bus, so another route is not tried.
 
+`nova-sprint handover` prints most of that file from the store (the seat, streams, sentinels, open judgments,
+held members, disabled routes, the last decisions, the first commands); the file adds what the store does not
+hold. The next holder reads section 10, the rules, before the first decision.
+
 The seat: the next holder runs under the actor the store names; the first `init` sets it and no later `init`
 changes it ([SPEC-SPRINT.md section 11](SPEC-SPRINT.md#11-verbs)). `nova-config sprint set --coordinator
 <friend>` is the deal's and routing's handover, a separate fact. The previous holder stops when the note is sent.
+
+## 10. The rules
+
+The coordinator's operating rules, numbered. Each is the rule in bold, why (the failure it prevents), what
+does it (the verb or setting; "judgment" where the seat decides and no verb acts), and the card that makes it
+mechanical where one is named. They were learned running sprints from 2026-10-02 to 2026-10-05; a rule the
+machine already keeps is still listed when the coordinator must know it to read what the machine did.
+`TestEveryCoordinatorRuleNamesVerbsThatExist` fails when a rule names a verb, flag or setting the tools do not
+carry. `nova-sprint handover` prints each rule's number and sentence (after the card in "Open items").
+
+### Friends
+
+R1. **A friend is working only when its cards go from working to done; awake is not working.**
+    Why: friends answered every ping and held cards for hours with no card finished.
+    Done by: `nova-sprint friend cards <friend>`; `nova-sprint set --friend-finish <duration>` (past it the
+    pass asks the friend what blocks it, and the blocker is removed).
+
+R2. **A friend whose session does not answer a wake ping is woken and fixed on the pass that sees it, never
+left overnight.**
+    Why: a friend slept deaf all night with work assigned to it.
+    Done by: `nova-friend ping --as <coordinator> --to <friend>`; `nova-friend wait-pong --from <friend> --nonce
+    <n>`; `nova-friend ping-install --as <coordinator> --every <duration>`. A cause on the owner's side (credit,
+    keys, an account) is `nova-sprint friend down <friend> --reason <text>`, so its cards move, and a note to the
+    owner.
+
+R3. **Every 10 minutes the friend chain is walked, each friend to its lowest failing link: up, hears,
+delivered, started, progressing, finished, returned, balanced.**
+    Why: a broken link was found by the owner, late, because nobody looked.
+    Done by: `nova-friend check --as <coordinator>`; `nova-sprint view coordinator --json`; `nova-sprint watch
+    --wake --check 10m`. A problem found by hand becomes a push the same day.
+
+R4. **A returning friend or machine is brought up by evidence: its own beat, a pong, a card finished, never
+an expectation.**
+    Why: reports said friends were up that were not, and returning ones stayed down.
+    Done by: `nova-friend check --as <coordinator> <friend>`; `nova-sprint friend up <friend>`; `nova-sprint
+    fleet up <machine>`.
+
+R5. **Friends work only in their own real working directory: jobs arrive in its inbox, results leave in its
+outbox, and a brief names no path outside it.**
+    Why: friends trampled each other's files, and symlinked directories broke on every move.
+    Done by: `nova-sprint friend sync --root <dir>`; `nova-sprint friend reconcile <friend> --root <dir>`.
+
+R6. **An order to the coordinator (stop, conserve, sleep) is the coordinator's alone; friends change only on an
+order to all friends or to them by name.**
+    Why: one order meant for the coordinator stopped the whole team.
+    Done by: judgment.
+
+R7. **A silent friend is debugged by the coordinator in order: the bus, the daemon's push, then the friend's own
+window; the owner is never handed text to paste.**
+    Why: the owner was left relaying messages by hand.
+    Done by: `nova-bus peek --as <coordinator>`; `nova-friend check --as <coordinator> <friend>`; `nova-friend
+    status --as <friend> --dir <dir>`.
+
+R8. **Shared resources (machines, branches, ports, accounts) are claimed through coordinator verbs with a lease,
+never friend to friend; no friend is told to wait on another.**
+    Why: a hand-shaken hold starved a friend when its holder went down.
+    Done by: `nova-sprint lane take <kind> --machine <m> --as <worker>`; `nova-sprint lane give <kind> --machine
+    <m> --as <worker>`; `nova-sprint hold <member> --reason <text>`.
+
+R9. **Before the coordinator goes dark, each friend gets a note naming its work; a friend that is out has its
+critical work continued on its own branch.**
+    Why: friends drifted without a coordinator.
+    Done by: `nova-bus send --to <friend> --subject <s> --body <text>`; `nova-sprint friend take <friend>
+    --all-unstarted --reason <text>`.
+
+### Dealing and the fleet
+
+R10. **Idle lanes are levelled before full queues are topped up.**
+    Why: work was added to members with full queues while other lanes sat empty.
+    Done by: `nova-sprint fleet level`; `nova-sprint friend level`; `nova-sprint set --alarm-fleet <percent>`.
+
+R11. **A wave is never one chain: width comes from independent work.**
+    Why: work queued behind one fix that only one card of the wave needed.
+    Done by: `nova-sprint needs --roots`; `nova-sprint add --stream <s> --brief-dir <dir>`.
+
+R12. **Every sprint feature is an operation on table rows or a queue between tables, or it is left out.**
+    Why: added mechanisms made the design opaque.
+    Done by: judgment.
+
+R13. **Most work goes through the sprint, friend work included, as cards in streams.**
+    Why: hand briefs made cost and progress invisible.
+    Done by: `nova-sprint add --stream <s> --brief-dir <dir>`; `nova-sprint friend cards <friend>`.
+
+R14. **Friends get the judgment work (design, ratings, audits); the fleet gets the mechanical work.**
+    Why: judgment work failed on mechanical routes.
+    Done by: `nova-config friend set <friend> --tiers <tiers> --as <coordinator>`; `nova-sprint brief <id> --tier
+    frontier`.
+
+R15. **A new sprint opens with its simplest mechanical class on flash, with judgment cards held behind a
+sentinel.**
+    Why: complex first cards failed expensively.
+    Done by: `nova-sprint add --stream <s> --sentinel <id>`; `nova-sprint release <sentinel> --reason <text>`.
+
+R16. **Before a load test, shares, guards, probes and one and a half times the supply are lined up, with
+capacity in config, never in arguments or constants.**
+    Why: changing settings under load went badly.
+    Done by: `nova-config machine set <m> --width <n> --as <coordinator>`; `nova-sprint fleet sync --check`.
+
+R17. **Speed comes from width (more machines, fewer attempts per card), not from per-card latency.**
+    Why: chasing card latency did not raise throughput.
+    Done by: `nova-sprint stats`.
+
+R18. **A CI leg runs only on a machine that runs its packages in under 2 minutes; slower machines run cards.**
+    Why: old machines could not hold the CI bar.
+    Done by: `nova-config machine set <m> --runners 0 --as <coordinator>`.
+
+R19. **A setting is changed at its source, the config row, never only in the store, where the next sync
+overwrites it.**
+    Why: store-only edits were silently reverted.
+    Done by: `nova-config machine set <m> --width <n> --as <coordinator>`; `nova-config apply --kind machine --as
+    <coordinator>`.
+
+### Branches, landing and adoption
+
+R20. **Every fix lands on the one sprint base first; the live server is built only from that base; any other
+branch a card names is folded into the base every pass.**
+    Why: the live server ran from a side branch a thousand commits apart from the base.
+    Done by: `nova-sprint bases`; `nova-sprint server switch <binary>` (only a binary whose commit is on the
+    base).
+
+R21. **The base is promoted to dev continually, every 20 to 30 minutes or every 25 landings.**
+    Why: stream branches and dev drifted apart.
+    Done by: `nova-sprint promote --every 30m --landings 25`; `nova-sprint promoted --sha <merge sha>`.
+
+R22. **Every adoption reaches every fleet machine in the same step, funded or not, and a machine back from
+down adopts the latest release before it is dealt.**
+    Why: idle machines fell behind and came back running old builds.
+    Done by: the tools play of section 7 with no `--limit`; `nova-sprint fleet sync --check`; `nova-sprint fleet
+    up <machine>` only after its install.
+
+R23. **Before cutting a repo, a long-lived branch or an integration branch, say what stops landing on the old
+line and when; a branch that keeps receiving its source's changes is a fork.**
+    Why: branches knotted together.
+    Done by: judgment.
+
+R24. **Adoption is the last step of every build: merge, update every machine, restart what runs it, announce
+it, use it that day, and turn each friction into a card.**
+    Why: built tools went unused.
+    Done by: `nova-bus send --to <all> --subject <s> --body <text>`; `nova-sprint add --stream <s> --brief-dir
+    <dir>`.
+
+R25. **Every adoption is followed the same day by a dogfood receipt: real use, each gap filed with its command
+and output.**
+    Why: adoption without use hid gaps.
+    Done by: judgment.
+
+R26. **A tool or loop is called used only when a dated log shows deliveries; a loop with no delivery in a day is
+stopped.**
+    Why: loops refused silently for days while they showed as running.
+    Done by: `nova-sprint log --since <10m|RFC3339>`; `nova-bus log --max <n>`.
+
+R27. **A replacement tool takes over only after every user has sent and received on it and its friction list is
+empty; the old one stays read-only for the record.**
+    Why: switchovers stranded users.
+    Done by: judgment.
+
+R28. **A thing is not built with itself until it is built and reliable: fix it by hand or by child agents,
+install it, then resume.**
+    Why: a broken sprint was used to fix itself.
+    Done by: judgment.
+
+R29. **A settled layer is landed, split to its own boundary (repo, module or release line), and the moving work
+is built above it; the settled layer changes only by deliberate release.**
+    Why: settled and moving work tangled.
+    Done by: judgment.
+
+R30. **Everything in nova-tools is useful without nova-sprint, in general terms; nova-sprint depends on
+nova-tools, never the reverse.**
+    Why: sprint opinions leaked into the general kit.
+    Done by: judgment.
+
+R31. **Layers are built from the bottom, one at a time, each through its gate before anything above starts;
+later layers' cards are held until the layer below locks.**
+    Why: earlier rebuilds failed without checked foundations.
+    Done by: `nova-sprint add --stream <s> --sentinel <id>`; `nova-sprint release <sentinel> --reason <text>`.
+
+R32. **When an upper layer needs something new below, pause, extend the lower layer under its own gate, then
+resume.**
+    Why: workarounds piled up above broken layers.
+    Done by: `nova-sprint hold <stream> --reason <text>`; `nova-sprint unhold <stream> --reason <text>`.
+
+R33. **What the owner states in words is locked as checked invariants; a lock changes only on the owner's own
+words.**
+    Why: the core machine's design drifted.
+    Done by: judgment.
+
+R34. **A release is a fast-forward promotion of a green revision on main, after a cold audit at that sha and
+dogfooding on real work other than the tool itself; green CI alone never releases.**
+    Why: releases went out on branch verdicts.
+    Done by: judgment.
+
+R35. **Release notes are written by an author and read cold before the cut, never generated.**
+    Why: generated notes said nothing useful.
+    Done by: judgment.
+
+R36. **Docs, help and README work gets a final prose pass by the strongest prose author before rating and
+landing.**
+    Why: uneven prose lowered read ratings.
+    Done by: judgment.
+
+R37. **The next sprint opens only when every pull request of the last is landed, closed with a reason, or owned
+with a named next step.**
+    Why: unprocessed piles grew from sprint to sprint.
+    Done by: `nova-sprint where --all`; `nova-sprint clear --confirm sprint`.
+
+R38. **A branch switch never happens in a clone that live loops run from; edits go in a separate clone.**
+    Why: a branch switch deleted live scripts.
+    Done by: judgment.
+
+R39. **Force-push happens only with a lease, on the agents' own branches; rewriting release-line history needs
+the owner.**
+    Why: commits were lost.
+    Done by: judgment.
+
+R40. **Only the coordinator merges on the forge, on named reads; while agents share one identity, an unexplained
+action is traced among the agents before it is reported.**
+    Why: merges and tags could not be traced.
+    Done by: `nova-sprint land --dry-run`; `nova-sprint log --card <id>`.
+
+R41. **Anything that matters is committed to git; working directories are not backed up.**
+    Why: work was lost on disk.
+    Done by: judgment.
+
+R42. **When streams stick, look across streams for the common failure class and fix the class.**
+    Why: per-card fixes repeated.
+    Done by: `nova-sprint where`; `nova-sprint inbox`.
+
+R43. **A pull request held up by repeated rounds stops: the reviewed head lands as it is and a follow-up card is
+cut for the rest.**
+    Why: fix rounds never ended on a moving base.
+    Done by: `nova-sprint accept <id>`; `nova-sprint add --stream <s> --brief-file <path>`.
+
+R44. **Landed sprint work is reviewed stream by stream before the sprint branch merges into the release line; a
+bad hunk becomes a repair card.**
+    Why: mechanical work risks bad code.
+    Done by: `nova-sprint add --stream <s> --before <id> --brief-file <path>`.
+
+### Cards and briefs
+
+R45. **The same finding twice is a brief defect: fix the brief or drop the card, never rework it a third time.**
+    Why: one card was reworked 262 times on one finding.
+    Done by: `nova-sprint brief <id> --brief-file <path>`; `nova-sprint recut <id> --brief-file <path>`;
+    `nova-sprint set --attempts <n>`.
+
+R46. **Work a card needs outside its PATHS means a twin card with PATHS widened, never a diff outside them.**
+    Why: the lander refuses files outside PATHS, and the attempt was spent.
+    Done by: `nova-sprint recut <id> --brief-file <path> --new <id>`; `nova-sprint relink <old-id> <new-id>
+    --reason <text>`.
+
+R47. **A uniform failure shape across one model's cards is our contract failing (prompt or wrapper), fixed per
+model family; a model is dropped only on a measured quality floor with varied failures.**
+    Why: capable models were dropped for our own format bugs.
+    Done by: `nova-sprint routes`; `nova-config route set <route> --enabled false --note <why> --as
+    <coordinator>`.
+
+R48. **Every cold read runs at least one temporal probe (land then reopen, claim during resolve), and each
+reproduction is kept as a test.**
+    Why: defects in sequences escaped happy-path reads.
+    Done by: `nova-swarm template --name read`.
+
+R49. **A score under 10 names its reasons and the work that would reach 10.**
+    Why: low scores gave no path to a fix.
+    Done by: judgment.
+
+R50. **The read gate is judged only by periodic cold audits of landed work by a stronger reader, repeated when
+the card mix changes, never by pass rates.**
+    Why: pass rates misjudged reader quality.
+    Done by: `nova-sprint stream set <s> --read-tier pro`.
+
+R51. **A brief states its cost bound as a number the gate prints and asserts, with the model, the tests and the
+size target.**
+    Why: requirements were met only after rework.
+    Done by: `nova-swarm lint --card <file>`.
+
+R52. **Cards are sized by tier: one mechanical change with an existing test for flash, whole things for pro and
+above, refined by measurement.**
+    Why: tiny cards paid a fixed toll each; big cards failed on weak models.
+    Done by: `nova-sprint brief <id> --tier pro`.
+
+R53. **The card fits the executor's model class: small, fully specified work with the probes written in for
+weaker models.**
+    Why: loose tasks produced overclaiming reports.
+    Done by: `nova-swarm lint --card <file>`.
+
+R54. **Every card extends a class test as its executable spec.**
+    Why: fixes were not pinned.
+    Done by: `nova-swarm lint --card <file>`.
+
+R55. **One card runs through before many are cut.**
+    Why: a bad frame multiplied across a wave.
+    Done by: `nova-sprint preflight --brief-dir <dir>`; `nova-sprint quack --streams <s> --count 1 --repo <url>`.
+
+### Cost and providers
+
+R56. **A rate limit is backed off and resumed; out of funds is held for the owner.**
+    Why: a night of work landed nothing under a provider with no balance.
+    Done by: `nova-sprint routes` (a rested route resumes by itself); `nova-sprint funded <provider> --reason
+    <text>` after the owner pays; `nova-sprint friend down <friend> --reason <text> --until <RFC3339>` for a
+    friend's limit.
+
+R57. **Priced cost is optimised, not token counts.**
+    Why: token counts misranked the levers.
+    Done by: `nova-sprint cost reconcile`.
+
+R58. **Cost per landed card (work, reads, landing) is measured every cadence, and launching stops when it beats
+no alternative or the merge queue backs up.**
+    Why: cost grew unmeasured.
+    Done by: `nova-sprint where`; `nova-sprint stop --reason <text> --until <time>`.
+
+R59. **A free route is trialled on one mechanical stream against flash, priced at zero in config, before it is
+used.**
+    Why: free routes were adopted unmeasured.
+    Done by: `nova-config route add <route> --tier flash --provider <p> --model <m> --deadline <s> --as
+    <coordinator>`.
+
+R60. **When a budget is exhausted, work in flight lands and nothing new starts.**
+    Why: spend continued past the budget.
+    Done by: `nova-sprint stop --reason <text> --until <time>`.
+
+R61. **Tooling work is ranked by tokens and waste removed first, then reliability, then wall clock.**
+    Why: effort went to low-value fixes.
+    Done by: judgment.
+
+R62. **New rules are run on a bounded test of about 50 cards, and its cost per landed card is read before a
+broad wave.**
+    Why: broad releases on untested rules wasted money.
+    Done by: `nova-sprint add --stream <s> --brief-dir <dir>`; `nova-sprint stats`.
+
+### Building the tools
+
+R63. **Test code shrinks through harnesses, constructors with defaults and table-driven cases, never copy and
+paste.**
+    Why: test rigs were duplicated.
+    Done by: judgment.
+
+R64. **Every layer is gated with a run at 10 to 100 times its largest real size, with a time limit per
+operation, and with a slow trickle run.**
+    Why: scale and ordering bugs hid at normal size.
+    Done by: `nova-sprint play --simulation --seed <n>`.
+
+R65. **Docs are written in the present tense: no parked names, dates or history.**
+    Why: docs read as archaeology.
+    Done by: judgment.
+
+R66. **Every tool is built to the standard (docs/STANDARD.md), each rule naming its class test.**
+    Why: tools were built inconsistently.
+    Done by: judgment.
+
+R67. **Every tool is rated cold two ways, by use (binary and help) and by reading (README then code), by several
+models; it is done at 9 or better from every rater, and findings become cards.**
+    Why: tools that worked were still hard for another AI to pick up.
+    Done by: `nova-sprint add --stream <s> --brief-dir <dir>`.
+
+R68. **Every setting ships a working default; a fresh install with no settings works.**
+    Why: adopters had to configure before anything ran.
+    Done by: judgment.
+
+R69. **Tools are written in Go unless the host demands otherwise, as a library first with a thin command over
+it; tools import each other in process and never exec each other.**
+    Why: mixed languages and exec chains.
+    Done by: judgment.
+
+R70. **The simplest code wins: delete a duplicate path rather than patch it, and run a removal-only pass after
+every expansion.**
+    Why: code grew with each fix.
+    Done by: judgment.
+
+R71. **A proven off-the-shelf tool is adopted only against a measured need, and what dogfood shows is unused is
+retired fully.**
+    Why: the stack sprawled.
+    Done by: judgment.
+
+R72. **Every state machine is modelled in TLA+ beside the code, TLC runs on a bench and never the working
+machine, every counterexample is checked against the code by hand, and the change cites the model.**
+    Why: state machines shipped broken.
+    Done by: `nova-sprint brief <id> --tier frontier` for a card that writes a model.
+
+R73. **A new layer is mocked and driven with the owner on a disposable store before it is specified and built.**
+    Why: work built ahead of the drive was thrown away.
+    Done by: `nova-sprint selftest`.
+
+R74. **Specs are settled in conversation with the owner, each decision written into the spec as it is made,
+with no numeric score gate before building.**
+    Why: scored spec gates did not produce good software.
+    Done by: judgment.
+
+R75. **Visual work runs from a spec file: each request edits one line, and the builder checks against it before
+every restart.**
+    Why: dashboard changes regressed earlier decisions.
+    Done by: judgment.
+
+### The seat's habits
+
+R76. **The coordinator coordinates: no card work in its own session or account; work goes out as cards.**
+    Why: the coordinator's account ran out and every child stopped.
+    Done by: `nova-sprint add --stream <s> --brief-dir <dir>`.
+
+R77. **A lookup or procedure done twice by hand is a missing verb, and it is filed.**
+    Why: rote work was most of the coordinator's tokens.
+    Done by: `nova-sprint add --stream <s> --brief-file <path>`.
+
+R78. **No scripts: every coordinator need is a product verb, and a stopgap is named with the card that deletes
+it.**
+    Why: private scripts made the seat impossible to hand over.
+    Done by: docs/COORDINATOR-TOOLS.md maps each stopgap; `nova-sprint seat check`.
+
+R79. **Every rule a coordinator needs is a receipt, refusal or doc the tools print, and the handbook is
+accepted only after another agent coordinates from it alone.**
+    Why: the seat depended on one agent's private memory.
+    Done by: `nova-sprint handover`; this section.
+
+R80. **The main session never blocks: anything over about 15 seconds runs in the background and notifies, and
+the coordinator never waits on children or CI without a watcher armed.**
+    Why: the owner found the coordinator blocked.
+    Done by: `nova-sprint inbox --wait --push seat`; `nova-sprint watch --wake --check 10m`.
+
+R81. **The owner's phrases map to verbs: a new sprint is clear, adding work is add, start and stop, and pause and
+unpause are stop and start.**
+    Why: commands were ambiguous.
+    Done by: `nova-sprint clear --confirm sprint`; `nova-sprint add --stream <s> --brief-dir <dir>`; `nova-sprint
+    start`; `nova-sprint stop --reason <text> --until <time>`.
+
+R82. **Decide inside a layer, record each decision with its reason, and bring the owner only the shape and what
+touches the owner's world (credentials, machines, money).**
+    Why: the owner was asked about internals.
+    Done by: `nova-sprint ack <note> --reason <text>`.
+
+R83. **Each design rule the owner states becomes a checked invariant the same day or is labelled unchecked, and
+results are reviewed against the owner's sentence, not a paraphrase.**
+    Why: implementations drifted from the stated design.
+    Done by: `nova-sprint check`.
+
+R84. **Every number is checked against its source before it is quoted, and the primary datum is measured rather
+than a derived view.**
+    Why: wrong numbers were reported.
+    Done by: `nova-sprint where --json`; `nova-sprint card <id>`.
+
+R85. **Every cap, budget and threshold is set from a measured distribution, with the numbers shown beside it.**
+    Why: round guesses set limits.
+    Done by: `nova-config machine set <m> --note <why> --as <coordinator>`.
+
+R86. **A defect found in passing is fixed the same hour, failing test first, rather than parked on a ledger.**
+    Why: parked defects accumulated.
+    Done by: judgment.
+
+R87. **Every machinery fix is followed within the hour by a probe of 1 to 5 cards through the changed path.**
+    Why: unproven fixes went to bulk runs.
+    Done by: `nova-sprint quack --streams <s> --count 1 --repo <url>`.
+
+R88. **At the signs of a limit (fixes that do not hold, special cases multiplying), building upward stops: the
+layers are named, the list goes to the owner, and they are secured from the bottom, with an attempts record per
+approach.**
+    Why: rebuilds repeated on a broken foundation.
+    Done by: judgment.
+
+R89. **When open pull requests climb or landings stall, nothing new starts until the wave lands.**
+    Why: manual sprints ended badly.
+    Done by: `nova-sprint watch --wake --check 10m --merging-over <n>`; `nova-sprint stop --reason <text>
+    --until <time>`.
+
+R90. **During a stress run, every break is recorded with a receipt and the run does not stop for fixes that are
+not breakage; study at the end, then fix.**
+    Why: runs stopped midway and lessons were lost.
+    Done by: `nova-sprint log --since <10m|RFC3339>`.
+
+R91. **Before a wave is released, every route is probed, the judgment-answer record is in place, and a watcher
+is armed on the landed count.**
+    Why: a night of zero landings went unseen.
+    Done by: `nova-sprint quack --streams <s> --count 1 --repo <url>`; `nova-sprint answer --dry-run`;
+    `nova-sprint watch --wake --land-after <duration>`.
+
+R92. **The workers are asked what would have stopped the card reaching them, and the answer is adopted within the
+hour.**
+    Why: the same failures recurred.
+    Done by: `nova-bus send --to <friend> --subject <s> --body <text>`.
+
+R93. **A reader's findings go back as the next task with exact lines and the probe file, saying first what was
+good: help, never grade.**
+    Why: grading discouraged and did not fix.
+    Done by: `nova-sprint rework <id> --fix <text>`.
+
+R94. **A permission or classifier denial is final: it is logged for the owner, never reworded to get past it.**
+    Why: guards were routed around.
+    Done by: `nova-bus send --to <owner> --subject <s> --body <text>`.
+
+R95. **Outcomes are reported first, in plain words, with numbers only where they change a decision.**
+    Why: reports were long and full of jargon.
+    Done by: judgment.
+
+R96. **A friend's or machine's state is reported only from its own beat or output, never from expectation.**
+    Why: reports were wrong about presence.
+    Done by: `nova-sprint where`; `nova-friend check --as <coordinator>`.
+
+R97. **No text, caveat or column the owner did not ask for goes on the owner's dashboard; the coordinator reads
+its own role view.**
+    Why: clutter and unasked notes made the page untrustworthy.
+    Done by: `nova-sprint view coordinator --json`; `nova-sprint dashboard`.
 
 ## Open items
 
@@ -436,6 +937,9 @@ Each is a place this runbook describes a workaround; the change that removes it 
   server has no tick deadline; PR 5127 fixes the rebalance loop that wedged it, and until it is installed the
   verbs that compute holds (`card`, `inbox`, `ack`, `tick`, `fleet level`, `fleet up`) can spin on a fleet
   whose emptiest member refused the card at staging.
+- `nova-sprint handover` prints one `RULE` line, the waves rule; printing each rule of section 10 by number
+  needs a card whose PATHS take in `cmd/nova-sprint/seat.go`, where the handover's rules are set
+  (`cmd/nova-sprint/handover_rules.go` holds the numbered sentences, kept equal to section 10 by its test).
 - Where the sources disagree, the help is followed here:
   - the handover notes answer `cannot ask` with a drop and `stalled` with `ask --another`; the help offers
     `reader add`, `rework`, `drop` and `wait` for the first, `card <primary>` then the printed decision for
