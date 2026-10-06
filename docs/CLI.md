@@ -540,17 +540,23 @@ the plan (`INSTALL PLAN command=`): write the plist, boot out whatever runs
 under that label, bootstrap the new one; without `--dry-run` it does them
 (`INSTALL RAN`) and running it again replaces the agent. `ping` prints `PING OK
 nonce= id= to= at=` and the `wait-pong` line to run next. `pong` prints `PONG
-OK nonce= to= id= at=` and writes the pong file under `~/.nova-friend/<me>`
-(the state directory, `--state-dir` to move it; the daemon and the queue file
-keep `--dir`, the friend's working directory). `wait-pong` prints `WAIT-PONG
+OK nonce= to= id= at=` and writes the pong file in the state directory
+(`--state-dir`, as the session check's line names the daemon's, else
+`~/.nova-friend/<me>`). The daemon keeps its state under `<dir>/.nova-friend`,
+inside the directory a sandboxed session may write, unless `--state-dir` names
+another or `<dir>` refuses it (then `~/.nova-friend/<me>`, said on its
+record); the queue file is under `--dir`, the friend's working directory. `wait-pong` prints `WAIT-PONG
 OK nonce= from= at= took= queue= working= width= daemon=` (whether the daemon
 pong came too), or `WAIT-PONG NONE` at exit 1. `status` prints `STATUS OK
 daemon=<up|down> ... connection= seat= challenge=<quiet|challenged|deaf>
 last_pong= queue= working= width= session=<ok|broken> held= inbox= missing=` (broken:
 `session_id= broken_at= reason=`; held, inbox and missing are the daemon's last reconcile of
 her inbox with her row, `-` until the sprint server has answered: SPEC-FRIEND.md, "The
-daemon writes every card she holds"), or `STATUS NONE` at exit 1 where no
-daemon ever ran. What a first run gets wrong: a `--harness` that is not one
+daemon writes every card she holds"), then `status= why= evidence= harness_seen=`, or
+`STATUS NONE` at exit 1 where no daemon ever ran. A friend is up on her session's
+answer, never on a process: `harness_seen=running|not-seen` is the daemon's look at
+the process table, advisory, so a session run from its command line (`dsh` headless,
+`codex exec`, `claude -p`) is as up as one in an app. What a first run gets wrong: a `--harness` that is not one
 of opencode, codex, claude, antigravity, dsh, gemini, grok, copilot, cursor,
 amp, goose, kiro, cline, aider, roo, windsurf, zed, warp (the surveyed harnesses
 without a delivery route are known but passive, with their refusal reasons);
@@ -561,7 +567,10 @@ with no `--to` before any ping has named a seat; a daemon whose record says
 "operation not permitted" running the harness on a removable volume, which is
 the system's privacy permission for background processes, granted to the
 binary by the person in the privacy settings and lost when the binary is
-rebuilt (the state files are under the home directory, out of its way).
+rebuilt (a daemon refused its state directory under `--dir` says so and keeps
+it under the home directory); a `RUN ... plist drift:` line on start, which is
+a daemon running other arguments than its installed plist (a `launchctl
+kickstart` keeps what launchd loaded): run `install` again.
 
 ### The daemon
 

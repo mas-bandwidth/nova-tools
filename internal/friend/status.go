@@ -27,9 +27,10 @@ const AnswerBound = 2 * Window
 // no file is no limit.
 const LimitFile = "limit.json"
 
-// The harness evidence: whether the harness the session runs in is running.
-// Unknown is no evidence either way, and never down on its own.
-// HarnessNotRunning is defined in alive.go ("harness not running").
+// The harness evidence: whether the harness's process was seen in the
+// process table. Advisory, shown and never deciding: a session run from its
+// command line has no app to see, and an app that runs answers nothing.
+// HarnessNotSeen is defined in alive.go ("not-seen").
 const (
 	HarnessUnknown = ""
 	HarnessRunning = "running"
@@ -37,7 +38,7 @@ const (
 
 // Evidence is what a friend's status is decided from.
 type Evidence struct {
-	Harness     string    // HarnessRunning, HarnessNotRunning or HarnessUnknown
+	Harness     string    // HarnessRunning, HarnessNotSeen or HarnessUnknown; shown, never deciding
 	DaemonUp    bool      // the daemon's status file is fresh; shown, never deciding up
 	LastAnswer  time.Time // the session's last pong; zero is never
 	Limit       string    // the limit's name, when the provider said one
@@ -56,10 +57,10 @@ type Verdict struct {
 	Evidence []string `json:"evidence"`
 }
 
-// FriendStatus decides a friend's status from evidence, in order: harness not
-// running is down; at a limit is down until the reset; no session answer
-// within bound is down; a bus that cannot deliver to her is down; otherwise
-// up. Times are shown in loc.
+// FriendStatus decides a friend's status from evidence, in order: at a limit
+// is down until the reset; no session answer within bound is down; a bus that
+// cannot deliver to her is down; otherwise up. The harness's process is shown
+// and decides nothing (the finding of 2026-10-05). Times are shown in loc.
 func FriendStatus(e Evidence, now time.Time, bound time.Duration, loc *time.Location) Verdict {
 	answer := "no session answer ever"
 	answered := !e.LastAnswer.IsZero() && now.Sub(e.LastAnswer) < bound
@@ -78,8 +79,8 @@ func FriendStatus(e Evidence, now time.Time, bound time.Duration, loc *time.Loca
 	switch e.Harness {
 	case HarnessRunning:
 		harness = "harness running"
-	case HarnessNotRunning, "not running":
-		harness = HarnessNotRunning
+	case HarnessNotSeen, "not running":
+		harness = "harness not seen"
 	case HarnessUnknown:
 		harness = "harness unknown"
 	default:
@@ -95,8 +96,6 @@ func FriendStatus(e Evidence, now time.Time, bound time.Duration, loc *time.Loca
 	}
 	v := Verdict{Status: "down", Evidence: []string{harness, answer, limit, undelivered, result}}
 	switch {
-	case e.Harness == HarnessNotRunning || e.Harness == "not running":
-		v.Reason = HarnessNotRunning
 	case limited:
 		v.Reason = limit
 	case !answered:

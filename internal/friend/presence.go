@@ -20,8 +20,8 @@ import (
 // delivers a session check carrying a fresh nonce through the adapter, the
 // way a card goes in; only the session's own reply carrying that nonce
 // counts; SessionBound with none and the friend is down, NoSessionAnswer; the
-// next answer brings it back up. The daemon's pong stays the daemon's and
-// never counts.
+// next answer, or any bus message the session writes, brings it back up. The
+// daemon's pong stays the daemon's and never counts.
 const (
 	SessionQuiet = 10 * time.Minute
 	SessionBound = 5 * time.Minute
@@ -65,13 +65,14 @@ func StartPresence() *Presence {
 	return &Presence{Quiet: SessionQuiet, Bound: SessionBound, Reason: NotYetAnswered, Owed: true}
 }
 
-// Heard is a bus message the session wrote, at now: while up, the quiet
-// clock starts again. While down it proves nothing: only the nonce says the
-// check reached the session.
-func (p *Presence) Heard(now time.Time) {
-	if p.Up {
-		p.LastHeard = now
-	}
+// Heard is a bus message the session wrote, at now: the session is alive, so
+// the friend is up and the quiet clock starts again (rose: it was down). A
+// check still open is settled by it: the session spoke. The daemon's own
+// messages never reach here (SessionCheck.read).
+func (p *Presence) Heard(now time.Time) (rose bool) {
+	rose = !p.Up
+	p.Up, p.Reason, p.LastHeard, p.Nonce, p.Open, p.Owed = true, "", now, "", false, false
+	return rose
 }
 
 // Ask is the check with nonce going into the session at now: the bound runs
@@ -266,7 +267,7 @@ func (s *SessionCheck) Step(ctx context.Context) {
 	if s.m == nil {
 		s.m = StartPresence()
 	}
-	answered, err := s.read(ctx, now)
+	answered, rose, err := s.read(ctx, now)
 	was := s.m.Reason
 	s.m.Tick(now)
 	fell := was != NoSessionAnswer && s.m.Reason == NoSessionAnswer
@@ -280,6 +281,8 @@ func (s *SessionCheck) Step(ctx context.Context) {
 	}
 	if answered != "" {
 		s.record(now, "presence: up: the session answered "+answered)
+	} else if rose {
+		s.record(now, "presence: up: the session wrote on the bus")
 	}
 	if fell {
 		s.record(now, "presence: down: "+NoSessionAnswer+" within "+SessionBound.String())
@@ -292,18 +295,19 @@ func (s *SessionCheck) Step(ctx context.Context) {
 
 // read takes the log since the cursor: a message from the friend that the
 // daemon did not send is the session's; its pong carrying the nonce is the
-// answer, whose nonce it answers. Called with mu held.
-func (s *SessionCheck) read(ctx context.Context, now time.Time) (answered string, err error) {
+// answer, whose nonce it answers; any other is heard (rose: it brought the
+// friend up). Called with mu held.
+func (s *SessionCheck) read(ctx context.Context, now time.Time) (answered string, rose bool, err error) {
 	if s.cursor == "" {
 		_, storeNow, err := s.Store.Roster(ctx)
 		if err != nil {
-			return "", err
+			return "", false, err
 		}
 		s.cursor = bus.IDAt(storeNow)
 	}
 	es, err := s.Store.Range(ctx, bus.LogKey, "("+s.cursor, "+", LogBatch)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	for _, e := range es {
 		s.cursor = e.Entry
@@ -318,13 +322,17 @@ func (s *SessionCheck) read(ctx context.Context, now time.Time) (answered string
 		if m.Subject == DaemonPongSubject || strings.HasPrefix(m.Subject, SessionCheckPrefix) {
 			continue // the daemon's by name, from a run before this one
 		}
-		if nonce, _, _, _, ok := ParsePong(strings.TrimSpace(m.Body)); ok && s.m.Answer(now, nonce) {
-			answered = nonce
-			continue
+		if nonce, _, _, _, ok := ParsePong(strings.TrimSpace(m.Body)); ok {
+			if s.m.Answer(now, nonce) {
+				answered = nonce
+			}
+			continue // a pong answers by its nonce alone: a stale or wrong one proves nothing
 		}
-		s.m.Heard(now)
+		if s.m.Heard(now) {
+			rose = true
+		}
 	}
-	return answered, nil
+	return answered, rose, nil
 }
 
 // ask puts the owed check into the session: on the friend's stream for a

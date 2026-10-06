@@ -34,11 +34,12 @@ func (p *processTable) run(_ context.Context, _, name string, _ []string, _ stri
 	return p.listing, 0, nil
 }
 
-// sprintDownAfter is the sprint server's rule the friend's presence rests on
-// (internal/sprint: a friend is down after fifteen seconds without a beat).
-const sprintDownAfter = 15 * time.Second
-
-func TestAClosedHarnessMakesItsFriendDownWithinAMinute(t *testing.T) {
+// TestAClosedHarnessIsSaidAndNeverHoldsTheBeat: the harness check is
+// advisory (the finding of 2026-10-05). A grok window that closes and opens
+// again is said on the record each time and kept on the status
+// (HarnessSeen); every beat goes out the whole time, since presence is the
+// session's, decided in front of the beat (SessionCheck), never here.
+func TestAClosedHarnessIsSaidAndNeverHoldsTheBeat(t *testing.T) {
 	t.Parallel()
 	r := newRig(t)
 	home := t.TempDir()
@@ -50,81 +51,25 @@ func TestAClosedHarnessMakesItsFriendDownWithinAMinute(t *testing.T) {
 	w := WatchHarness(r.d, grok) // the rig delivers itself; the check is the real Grok adapter over the fake table
 	w.Now = func() time.Time { r.mu.Lock(); defer r.mu.Unlock(); return r.now }
 
-	const closeAt, reopenAt, pingAt, pongAt, steps = 32, 80, 100, 110, 130
-	var mu sync.Mutex
-	step, lastBeat, lastUp, downAt, upAt := 0, 0, 0, 0, 0
-	stamp := map[int]time.Time{}
-	ctx, cancel := context.WithCancel(context.Background())
-	r.cancel = cancel
-	watched := r.d.Beat
-	r.d.Beat = func(ctx context.Context, active time.Time) error {
-		mu.Lock()
-		step++
-		s := step
-		mu.Unlock()
-		switch s {
-		case 5:
-			r.send(t, "ada", "PING n1", PingText("ada", t0, "n1"))
-		case 8:
-			r.mu.Lock()
-			r.pong, r.pongSet = Pong{Nonce: "n1", At: t0}, true
-			r.mu.Unlock()
-		case closeAt:
-			ps.set("") // the window closes, just after a check: the worst case
-		case reopenAt:
-			ps.set(open)
-		case pingAt:
-			r.send(t, "ada", "PING n2", PingText("ada", t0, "n2"))
-		case pongAt:
-			r.mu.Lock()
-			r.pong = Pong{Nonce: "n2", At: t0}
-			r.mu.Unlock()
-		}
-		before := r.beats
-		err := watched(ctx, active)
-		mu.Lock()
-		stamp[s] = w.Now()
-		switch {
-		case r.beats > before:
-			lastBeat = s
-			if downAt == 0 {
-				lastUp = s
-			}
-			if downAt != 0 && upAt == 0 {
-				upAt = s
-			}
-		case err != nil && err.Error() == HarnessNotRunning && downAt == 0:
-			downAt = s
-		}
-		mu.Unlock()
-		if s >= steps {
-			cancel()
-		}
-		return err
-	}
-	r.stopAfter = 1 << 20
-	require.NoError(t, r.d.Run(ctx))
+	const closeAt, reopenAt, steps = 32, 80, 130
+	r.at[closeAt] = func() { ps.set("") }
+	r.at[reopenAt] = func() { ps.set(open) }
+	r.run(t, steps)
 
-	require.NotZero(t, downAt, "a closed harness makes the friend down")
-	assert.Greater(t, downAt, closeAt)
-	gone := stamp[downAt].Sub(stamp[closeAt])
-	assert.LessOrEqual(t, gone, AliveEvery, "the check runs every %s", AliveEvery)
-	assert.Less(t, stamp[lastUp].Sub(stamp[closeAt])+sprintDownAfter, time.Minute, "the last beat plus the sprint's fifteen seconds lands inside a minute of the close")
-
-	require.NotZero(t, upAt, "the friend comes back")
-	assert.GreaterOrEqual(t, upAt, pongAt, "a running harness alone never makes the friend up: only the session's answer to its next nonce does")
-	assert.Equal(t, steps, lastBeat, "beating again once up")
-
-	var sawReason bool
+	assert.Equal(t, steps, r.beats, "every beat goes out, the window open or closed")
 	r.mu.Lock()
+	var sawNotSeen, sawRunning bool
 	for _, s := range r.status {
-		sawReason = sawReason || s.BeatError == HarnessNotRunning
+		sawNotSeen = sawNotSeen || s.HarnessSeen == HarnessNotSeen
+		sawRunning = sawRunning || s.HarnessSeen == HarnessRunning
+		assert.Empty(t, s.BeatError, "the check never fails a beat")
 	}
 	records := strings.Join(r.records, "\n")
 	r.mu.Unlock()
-	assert.True(t, sawReason, "the status says why: %q", HarnessNotRunning)
-	assert.Contains(t, records, "down: "+HarnessNotRunning+": no grok window is open in "+r.d.Dir)
-	assert.Contains(t, records, "up: the harness runs and the session answered nonce n2")
+	assert.True(t, sawNotSeen && sawRunning, "the status carries what the check read")
+	assert.Equal(t, 2, strings.Count(records, "harness: running: a grok window is open in "+r.d.Dir), "said at the start and when it opens again")
+	assert.Equal(t, 1, strings.Count(records, "harness: not seen: no grok window is open in "+r.d.Dir), "said once when it closes")
+	assert.Contains(t, records, "advisory: presence is the session's answer")
 	assert.LessOrEqual(t, ps.calls, steps/int(AliveEvery/BeatEvery)+1, "one ps per check, not one per beat")
 }
 
@@ -137,8 +82,7 @@ func TestAnAdapterThatCannotTellLeavesTheSessionCheckAlone(t *testing.T) {
 	require.NotNil(t, w.Alive, "every adapter answers the check, a stub with cannot tell")
 	r.run(t, 40)
 	assert.Equal(t, 40, r.beats, "every beat goes out")
-	down, _ := w.Down()
-	assert.False(t, down)
+	assert.Equal(t, HarnessUnknown, w.Seen())
 	assert.Contains(t, strings.Join(r.records, "\n"), "harness check: cannot tell: claude has no adapter")
 }
 
