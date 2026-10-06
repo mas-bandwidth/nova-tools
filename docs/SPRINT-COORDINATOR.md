@@ -13,7 +13,7 @@ line the inbox prints for it, filled in; `nova-sprint inbox --open <id>` shows t
 
 - The coordinator is the actor the sprint's `init` named: `nova-sprint where --json | jq -r .coordinator`.
   Its verbs are the coordinator's alone ([SPEC-SPRINT.md section 11](SPEC-SPRINT.md#11-verbs)); another actor is
-  refused with nothing written. A holder taking over reads the handover file and bus note first (section 9).
+  refused with nothing written. A holder taking over runs `nova-sprint handover` first (section 9).
 - One server writes the sprint: `nova-sprint run --listen <address>:<port> --land`, beside the sprint's Redis,
   on the coordinator machine, as a kept-alive loop row (`nova-config loop list`; here `sprint-server-<m>`). It
   ticks, serves the workers' verbs on the fleet's private address and the coordinator's on
@@ -446,28 +446,38 @@ new tip, and the old judgment is never acted on. `adopt --show` prints the recor
 
 ## 9. Handing the seat over
 
-The next holder reads one file, written the hour before the handover and dated from `date`, in its inbox
-directory, and a bus note pointing to it. It holds, each item with its id and evidence:
+The seat moves by a verb, and what the next holder needs is generated, never written by hand: no file, ledger
+or note is kept beside the store ([SPEC-SPRINT.md, "Handing over the seat"](SPEC-SPRINT.md#handing-over-the-seat)).
 
-- The open judgments: group id, kind, the cards, what each waits for and from whom; those held for the owner
-  are marked.
-- The held waves: each sentinel, the gate its wave waits behind, what has passed and what has not, and the
-  release order agreed with the owner, in the owner's words. The pull requests in flight: number, head sha,
-  reads given and owed, gates run with their last lines.
-- The numbers and why: each machine's width and the load it ran at; each route resting, with the measurement,
-  the config revision and the condition that brings it back; the owner's rulings, with date and words.
-- The re-add list and the install state: the sha installed on each machine, the plays pending, the migrations
-  applied, the server's loop row and log path; the friends' jobs out (friend, job, delivered, due).
-- The stall count: what was tried for each problem that came back, how many times, how it failed; and
-  anything refused or left to the owner on the bus, so another route is not tried.
-
-`nova-sprint handover` prints most of that file from the store (the seat, streams, sentinels, open judgments,
-held members, disabled routes, the last decisions, the first commands); the file adds what the store does not
-hold. The next holder reads section 10, the rules, before the first decision.
-
-The seat: the next holder runs under the actor the store names; the first `init` sets it and no later `init`
-changes it ([SPEC-SPRINT.md section 11](SPEC-SPRINT.md#11-verbs)). `nova-config sprint set --coordinator
-<friend>` is the deal's and routing's handover, a separate fact. The previous holder stops when the note is sent.
+- Give the seat: `nova-sprint coordinator <name> --generation <g> --reason <text>` (the holder or the owner);
+  with the holder away, `nova-sprint coordinator <name> --take --approved-by <owner> --generation <g> --reason
+  <text>`, typed by `<name>`. `<g>` is the generation the handover printed: once the seat has moved past it the
+  move is refused (`the seat is at generation <n>, not <g>`), so a retry or an old line never undoes a later
+  move. The leaving seat's receipt is the handover the verb prints after the change.
+- Take over: `nova-sprint handover --pg <host:port>` (or with NOVA_PG_DSN set) is the restart checkpoint. Read
+  it top to bottom; every line is from the store, nova-config or this machine's units:
+  - `SEAT` the holder, the seat's generation and the sprint's epoch; `REVISION` the binary's source revision and
+    nova-config's revision of each kind against the one applied to the store (`pending=` names the kinds not
+    applied);
+  - `OWNER` each place that names the holder, `reconciled`, `pending` with its line, or `unread` with why: the
+    seat's record (the accepted handover; it is the seat), the coordinator key, the server's actor,
+    nova-config's sprint row, and the wake path (the push proof). A key or a config row naming the old holder
+    never moves the seat: nova-config's apply holds the row (`APPLY HELD`), and the old holder's verbs are
+    refused once the key is repaired;
+  - `JUDGMENT` every open judgment with its answer lines; `SENTINEL` each held wave with what waits behind it;
+  - `CARD` each open card with its branch, head, reads (verdict and the head read), gate (result, head and run)
+    and merge row, and `TRIED` each attempt given a fix or failed, with the fix and how it ended: a remedy
+    already tried is not given again;
+  - `MEMBER`, `ROUTES`, `INSTALL` and `INSTALLS` (each unit of this machine not installed, with its install
+    line), and `DECISION` the last ten decisions with their reasons;
+  - `NEXT` the next safe lines, in order: each pending place's fix, `nova-config apply --kind <k>` for each kind
+    not applied, and the seat's own move at its generation; then `FIRST`.
+- Run the `NEXT` lines, then the `FIRST` lines, then read section 10 before the first decision. What the
+  handover does not show is not carried: a fact the next seat needs and cannot regenerate is a defect in
+  `nova-sprint handover`, raised as a card, never a note.
+- `nova-config sprint set --coordinator <holder>` makes nova-config's row follow the seat (the deal's
+  coordinator role is derived from it); the handover's `OWNER config` line says when it is owed. The previous
+  holder stops when the seat has moved.
 
 ## 10. The rules
 
@@ -1002,13 +1012,11 @@ Each is a place this runbook describes a workaround; the change that removes it 
   `nova-swarm mirror` verb stay owed: there is no mirror verb for the unit to run. The coordinator
   switches the hand-written units over after this lands; this card does not load them.
 - Where the sources disagree, the help is followed here:
-  - the handover notes answer `cannot ask` with a drop and `stalled` with `ask --another`; the help offers
+  - older seat notes answer `cannot ask` with a drop and `stalled` with `ask --another`; the help offers
     `reader add`, `rework`, `drop` and `wait` for the first, `card <primary>` then the printed decision for
     the second;
   - `fleet/land/ruleset-dev.json` names SQUASH as the merge queue's method, while a batch keeps every head's
     history as a merge commit: the live ruleset is read before the first landing;
   - [STANDARD.md](STANDARD.md) says landings go one at a time, the owner's rule is batches;
   - [FLEET.md](FLEET.md) sets a reader's width on its loop row, the rule is one number per machine (after PR
-    5124, whose migration number collides with PR 5097's: the second to land renumbers);
-  - no verb changes the sprint store's coordinator after `init`, so a seat handover moves who uses the
-    actor, not the actor.
+    5124, whose migration number collides with PR 5097's: the second to land renumbers).

@@ -1,9 +1,12 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -11,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
 )
 
 // The coordinator's seat moves by a verb (Glenn, 2026-10-02 5:15 PM: "We need to
@@ -286,4 +290,114 @@ func TestThePushFollowsTheSeat(t *testing.T) {
 	code, _, errs := ta.do("inbox --wait --push seat --timeout 200ms")
 	assert.Equal(t, 2, code, errs)
 	assert.Contains(t, errs, filepath.Join(home, "nobody-working", "inbox"), errs)
+}
+
+// The handover is a restart checkpoint (handover-is-a-restart-checkpoint.w4;
+// Stella's nova-sprint review, item 5): a cold coordinator recovers the next
+// safe actions from the generated handover alone, with no hand-written ledger
+// beside it. It carries the source and config revisions, the epoch and the
+// seat's generation, each open card's reads, gate, branch and head and the
+// remedies already tried, the install receipts, and every place that names the
+// holder, pending or reconciled. A configuration refresh that writes the old
+// name into the key does not undo the accepted handover, and an old holder's
+// move or a stale retry of the owner's is refused.
+func TestHandoverCarriesRevisionsEvidenceAndLineage(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	home := t.TempDir()
+	ta.a.home = func() (string, error) { return home, nil }
+	ta.ok("init --readers reader-a,reader-b --members m1 --owner glenn")
+	ta.ok("add --stream s1 --count 2")
+	ta.deal(2)
+	ta.failOnce("m1", "s1-1.w1@1", "tests red: TestNilMap")
+	ta.ok("rework s1-1 --fix 'handle the nil map'")
+	ta.deal(2)
+	ta.ok("take --as m1 --limit 10")
+	var q struct{ Cards []queueCard }
+	ta.json("queue --as m1", &q)
+	for _, c := range q.Cards {
+		ta.ok("finish --as m1 " + c.ID + "@" + strconv.Itoa(c.Gen) + " --head abc1234 --branch sprint/" + c.ID)
+	}
+	ta.ok("ask --limit 10")
+	ta.ok("read --as reader-a --ok --limit 10")
+
+	// the holder gives the seat: generation 2
+	ta.ok("coordinator rowan --reason 'rowan takes the night'")
+	// a configuration refresh writes the old name into the key
+	require.NoError(t, ta.m.SetCoordinator(context.Background(), "coordinator"))
+	code, _, errs := ta.do("coordinator stella --reason 'mine again'")
+	assert.Equal(t, 2, code, "the old holder moved the seat: %s", errs)
+	assert.Contains(t, errs, "the seat is the holder's to give: rowan, not coordinator", errs)
+	code, _, errs = ta.do("coordinator stella --generation 1 --reason 'retry of the morning' --actor glenn")
+	assert.Equal(t, 2, code, "a stale retry moved the seat: %s", errs)
+	assert.Contains(t, errs, "the seat is at generation 2, not 1: it moved after this was decided", errs)
+	assert.NotContains(t, ta.ok("log"), "stella", "a refused move wrote to the log")
+
+	st, err := ta.a.store(common{redis: "mem:0", actor: "rowan"})
+	require.NoError(t, err)
+	src := handoverSources{
+		Source: "20261006120000-abc123def456",
+		Config: func(context.Context) (configSide, error) {
+			return configSide{Coordinator: "coordinator", Revs: map[string]int64{"route": 12, "sprint": 7}}, nil
+		},
+		Applied: func(context.Context, *store.Store) (map[string]int64, error) {
+			return map[string]int64{"route": 11, "sprint": 7}, nil
+		},
+		Units: func() (string, []sprint.UnitState, error) {
+			states, err := sprint.CheckUnits(home, "linux", sprint.UnitKinds)
+			return home, states, err
+		},
+	}
+	h, out, err := ta.a.handoverFrom(context.Background(), st, src)
+	require.NoError(t, err)
+	for _, want := range []string{
+		"SEAT holder=rowan generation=2 epoch=",
+		"REVISION source=20261006120000-abc123def456 config=route:12,sprint:7 applied=route:11,sprint:7 pending=route\n",
+		"OWNER record names=rowan reconciled: the accepted handover, generation 2\n",
+		"OWNER key names=coordinator pending: the key names coordinator and the record rowan",
+		"; run: nova-sprint seat --repair --reason <text>\n",
+		"OWNER config names=coordinator pending: nova-config's sprint row names coordinator: an apply of it is held (APPLY HELD) and does not move the seat",
+		"; run: nova-config sprint set --coordinator rowan\n",
+		"OWNER wake names=- pending: rowan has no push target recorded",
+		"CARD s1-1 stream=s1 state=",
+		" attempt=2 branch=sprint/s1-1.w2 head=abc1234 reads=reader-a:ok",
+		"TRIED s1-1 attempt=1 failed: tests red: TestNilMap\n",
+		"TRIED s1-1 attempt=2 fix: handle the nil map; ok\n",
+		"INSTALL server missing; run: nova-sprint install server\n",
+		"INSTALLS installed=0 of 9 dir=" + home + "\n",
+		"NEXT nova-sprint seat --repair --reason <text>\n",
+		"NEXT nova-config sprint set --coordinator rowan\n",
+		"NEXT nova-config apply --kind route (revision 12 is not applied; the store has 11)\n",
+		"NEXT nova-sprint coordinator <name> --generation 2 --reason <text> (the seat moves only from generation 2)\n",
+	} {
+		assert.Contains(t, out, want, out)
+	}
+	assert.Equal(t, "rowan", h.Seat.Holder, "the record is the seat, not the key a refresh wrote")
+	assert.Equal(t, uint64(2), h.Seat.Generation)
+	assert.Equal(t, []string{"route"}, h.Revisions.Pending)
+	var lineage []string
+	for _, c := range h.Cards {
+		if c.ID == "s1-1" {
+			for _, a := range c.Lineage {
+				lineage = append(lineage, fmt.Sprintf("%d %s %s", a.Attempt, a.Result, a.Fix))
+			}
+		}
+	}
+	assert.Equal(t, []string{"1 failed ", "2 ok handle the nil map"}, lineage, "the remedies already tried")
+
+	// a cold coordinator with the store alone: the config side is unread and
+	// says how to read it; the next lines are there
+	var cold handoverView
+	ta.json("handover --actor rowan", &cold)
+	assert.Equal(t, "rowan", cold.Seat.Holder)
+	assert.Contains(t, cold.Revisions.ConfigUnread, "--pg", "%+v", cold.Revisions)
+	assert.Contains(t, cold.Next, "nova-sprint seat --repair --reason <text>")
+	assert.Contains(t, cold.Next, "nova-sprint coordinator <name> --generation 2 --reason <text> (the seat moves only from generation 2)")
+
+	// the line the handover printed moves the seat; read again after, it is stale
+	ta.ok("seat --repair --reason 'the refresh wrote the old name' --actor rowan")
+	ta.ok("coordinator stella --generation 2 --reason 'stella woke' --actor rowan")
+	code, _, errs = ta.do("coordinator rowan --generation 2 --reason 'the same line again' --actor glenn")
+	assert.Equal(t, 2, code, "the printed line moved the seat twice: %s", errs)
+	assert.Contains(t, errs, "the seat is at generation 3, not 2", errs)
 }
