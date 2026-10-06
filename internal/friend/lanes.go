@@ -424,6 +424,7 @@ func (l *loop) laneStep(now time.Time, width int) {
 			}
 			ln.card, ln.attempts = &c, 0
 			s.state.Started[filepath.Base(c.Outbox)] = Started{Lane: ln.n, Card: c, At: now}
+			d.hand(c, fmt.Sprintf("lane %d", ln.n), now)
 			l.saveLanes(now)
 		}
 		if perCard { // the brief alone: no message, pong or notice rides with it

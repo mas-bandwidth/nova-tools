@@ -533,3 +533,70 @@ scanned as before:
 
 `nova-sprint add` runs the same lint, so the exemption holds there. Pinned by
 `TestPatternsToRefuseBlockIsExemptForAClassTestCard` (`internal/swarm`).
+
+## 7. The lane's contract, by reference
+
+Every generated brief used to repeat the same frame after its own lines: the paragraph that
+makes the child a child of the coordinator, the Libraries considered line, the RULES, the
+ATTRIBUTION line, the six STEPs and the AS A READ section. A lane read them on every attempt and every reader read them again, and tokens per
+landed card are the sprint's cost. The frame lives here instead, once, versioned, and a brief
+names it in one line.
+
+- A brief by reference is its header lines and one line `Contract: docs/SPEC-CARD-CONTRACT.md
+  <version>`: the tier line (`RESULT: <id> sha=<sha12> tier: <tier>`), `REPO:`, `BASE:`,
+  `KIND:`, `DEPENDS-ON:`, `PATHS:`, `NEW:` when the card creates a file, `TEST:`, `START:`
+  (the card's file and its test's package), `STOP:` (the task and its done line), `Deadline:`,
+  then the `Contract:` line last. No prose paragraph, no RULES, no STEP rides in it
+  (`card.Brief`; `TestABriefIsFiveLinesAndAContractReference`). `card.Compact` cuts a brief
+  already on file to what it would carry by reference: every line of the frame out (the child
+  paragraph, Libraries considered, RULES and its sentences, ATTRIBUTION, each `STEP <n>.`
+  line, AS A READ and its paragraph), everything else kept, the `Contract:` line last; the
+  before-and-after measure of a set of briefs is `card.Tokens` of each.
+- The contract text is the block below between `<!-- contract v1 -->` and
+  `<!-- end contract v1 -->`, and nothing else. A change to it is a new version, a new block
+  beside the old, never an edit of a published one: a brief names the version it was written
+  against, and a version once read means one text (`card.ContractText`).
+- The lane reads the contract once from the repository: the staged checkout's
+  `docs/SPEC-CARD-CONTRACT.md`, at the version the brief names. Where the harness cannot read
+  the repository first (the checkout is not staged, or its file holds no block of that
+  version: another repository, an older base), the daemon puts the contract text in the
+  brief in place of its `Contract:` line before the lane is handed it, from the text it holds
+  (`friend.HandBrief`); the header lines stay first, so line 1 still says what it said. With
+  no text in hand either, the daemon records `contract=unread` and hands the brief as it is.
+  A lane is handed its brief when it takes the card; a batch session, which reads its briefs
+  straight from the inbox, has each brief dealt to it handed the same way before the turn
+  that names them (`TestABatchSessionIsHandedTheContractAsALaneIs`).
+- The lint reads a brief by reference as the lane reads it: the contract in place of the
+  line (`card.Lint` with `Options.Contract`); a reference with no text to read is the finding
+  `contract-unread`, and a version the repository does not hold, `contract-version`.
+- The brief's token count (`card.Tokens`, four bytes to a token, rounded up: the measure
+  every harness's count is close to for this prose) rides on the daemon's record of the card
+  it hands, `brief_tokens=<n>`, beside how its contract reached the lane
+  (`contract=checkout|prepended|unread`, and `none` for a brief that carries its own frame).
+
+<!-- contract v1 -->
+You are a child of the coordinator: one task, one staged checkout, one branch, unattended. The card is the whole task: its header lines and this contract, read once. Read $JOB/JOB.md first. Start at the current BASE tip. Verify the defect still exists before editing; if already fixed report not-done with exact evidence rather than duplicate work. One change, one test that is red before and green after.
+Libraries considered: the Go standard library and testify, already in the tree; the package's own seams and helpers; no new dependency, and no helper over thirty lines without first searching the package for one.
+
+RULES.
+Work only in the job directory this card names.
+Never force-push or rebase a shared branch.
+Never kill a process you did not start.
+Never start a server on this machine.
+No `rm -rf` outside the job directory.
+Report what was not done.
+
+ATTRIBUTION: By: your own name, the friend doing this work, on the line above the Co-Authored-By trailer of every commit; this brief names no author, and its WHO line, if any, is a preference for who is dealt the card, never the name to sign.
+
+THE TASK. The STOP line says what done is; the work lives in the START files; the files this card may touch are its PATHS line and no other, in the staged checkout JOB.md names, on the card's own branch, from its BASE.
+
+STEP 1. Enter the staged checkout JOB.md names with cd $JOB/repo && git log --oneline -1, no clone; work only on its own branch. Export GOFLAGS=-mod=readonly NOVA_TEST_NO_HOST=1 before any go command; GOCACHE is already set to the machine's shared build cache (JOB.md names it): keep it. Scratch belongs under $JOB/scratch.
+STEP 2. Make it red first, with the test the TEST line names: run the gate of STEP 4 with -run and that test's name, and keep the failing line as evidence.
+STEP 3. Make it pass in the files this card names, and only those. Commit the draft on your own branch as soon as the test is green, before any further probe; a later commit may refine it. A change any other file needs goes in the report as a proposed diff, never a commit.
+STEP 4. Run the gate: go test -count=1 -timeout 600s on the TEST line's package and ./internal/ci/, and read the last line of each. Run gofmt -l on every changed Go file; it must print nothing. When a test fails, name its file and say whether that file was changed by your work (yours) or is unchanged (already red at BASE: run the same test on the unchanged base to say so), and report that line first.
+STEP 5. Commit on your own branch with the trailer. Nothing reaches the forge from inside the wall: in the job the git shim records a push, the pull request is the finish JOB.md names (STEP 6), and the member makes both, against the card's BASE, from outside the wall when the card finishes. The pull request body states the diff stat, what was deleted, the tests with what each pins, and what was not done.
+STEP 6. End as JOB.md says (docs/SPEC-CARD-CONTRACT.md): where JOB.md ends the card with its pull request, that is the end and there is nothing else to write, the gate's lines in the pull request body; where it asks for RESULT.md, write it in JOB.md's shape (head, branch, verdict, gate, output, report).
+
+AS A READ
+A By: trailer is judged only for being present and true: it names the friend who pushed the branch under read, whoever was preferred for the card. A trailer naming another friend than a WHO line or an earlier brief expected is no finding, and attribution alone never decides a verdict; read the change against the task, its test and its PATHS.
+<!-- end contract v1 -->

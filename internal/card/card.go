@@ -122,12 +122,21 @@ func needs(c cardgen.Card, id string) bool {
 type Options struct {
 	Names   []string
 	Dropped []string
+	// Contract is the contract text of a version, read from the repository's
+	// ContractPath (ReadContract); nil reads none, and a brief by reference is then the
+	// finding contract-unread (docs/SPEC-CARD-CONTRACT.md section 7).
+	Contract func(version string) (string, error)
 }
 
 // Lint is cardgen.Lint and Checks under o: everything a brief is held to before it
-// leaves its writer.
+// leaves its writer. A brief by reference is linted as the lane reads it, the contract
+// in place of its Contract: line (section 7).
 func Lint(id, brief string, o Options) []cardgen.LintFinding {
-	return append(cardgen.Lint(id, brief), Checks(id, brief, o)...)
+	read, out := lintContract(id, brief, o)
+	if len(out) > 0 {
+		return append(out, Checks(id, brief, o)...)
+	}
+	return append(cardgen.Lint(id, read), Checks(id, brief, o)...)
 }
 
 // Checks are the card checks, past the add's own lint:
