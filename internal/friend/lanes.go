@@ -102,9 +102,10 @@ func ParseJob(job string) (id string, epoch, gen int, ok bool) {
 const ProgressEvery = 3 * time.Minute
 
 // ProgressArgv is the sprint server's verbs that stamp progress on the cards, one for the
-// cards of each epoch, in the order of the epochs: `progress --as <friend> <card>... --epoch
-// <n>`. Only the holder's stamp is taken: the server refuses one for a card she does not
-// work.
+// cards of each epoch, in the order of the epochs: `progress --as friend.<friend> <card>...
+// --epoch <n>`, her row as the holder, as FinishArgv names it. Only the holder's stamp is
+// taken: the server refuses one for a card she does not work, and one sent as her bare name
+// (held by friend.<name>, not <name>).
 func ProgressArgv(friend string, cards []Card) [][]string {
 	byEpoch := map[string][]string{}
 	for _, c := range cards {
@@ -112,7 +113,7 @@ func ProgressArgv(friend string, cards []Card) [][]string {
 	}
 	var out [][]string
 	for _, epoch := range slices.Sorted(maps.Keys(byEpoch)) {
-		argv := append([]string{"progress", "--as", friend}, slices.Sorted(slices.Values(byEpoch[epoch]))...)
+		argv := append([]string{"progress", "--as", "friend." + friend}, slices.Sorted(slices.Values(byEpoch[epoch]))...)
 		out = append(out, append(argv, "--epoch", epoch))
 	}
 	return out

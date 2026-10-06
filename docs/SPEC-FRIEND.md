@@ -729,6 +729,16 @@ second), both ways:
   pins it on a twin store end to end: the daemon's write from the answer alone is byte for
   byte friend sync's file, and a card taken from her and dealt to another friend is
   retired from her inbox and written to the other's as its `.g3` job).
+- A card ready on her row is hers to take: her session (or her daemon) takes it as
+  `take --as friend.<name> <card>@<gen>` through the server, within her lanes and
+  while she is up, then stamps `progress` and `finish`es it as `friend.<name>`, as a
+  member does (docs/SPEC-SPRINT.md section 1, a friend takes her own ready cards).
+  In batch mode the tick's deal takes her ready cards into her free lanes first, so
+  a ready card she is told of is one behind her lanes, taken by her next finish;
+  a card ready in front of a free lane for ten minutes is the coordinator's
+  judgment. The daemon's own `progress` names her row (`--as friend.<friend>`,
+  internal/friend/lanes.go `ProgressArgv`, as `FinishArgv` does): sent bare, the
+  server refused it for a card on `friend.<name>` (held by friend.<name>, not <name>).
 - A held card with no `inbox/<job>/BRIEF.md` is written, whole, never over a file there
   (`atomicfile` NoReplace: friend sync writes the same file the same way, and whichever is
   first writes it). The daemon logs one line per write (`inbox: wrote inbox/<job>/BRIEF.md

@@ -3,6 +3,7 @@ package sprint
 import (
 	"fmt"
 	"slices"
+	"time"
 )
 
 // A friend's card taken back (docs/SPEC-SPRINT.md section 1, a friend's card taken back;
@@ -135,4 +136,29 @@ func FriendTake(s *Snapshot, r FriendTakeReq) Plan {
 		p.Units = append(p.Units, u)
 	}
 	return p
+}
+
+// FriendReadyMax is how long a work card may sit ready on a friend's row while she has a
+// lane free before it is a judgment (a work card past its deadline, dealt and never
+// taken): in batch mode the deal takes it into the lane, in one-shot mode her daemon or
+// her session takes it (take --as friend.<name>), and a card neither took is no one's
+// (tla/FriendReadyTake.tla, NeverStrandedSilently).
+const FriendReadyMax = 10 * time.Minute
+
+// friendLaneIdle says the card is ready on a friend's row while she has a lane free (her
+// working cards fewer than her lanes, friendRoom; seats is the tick's read of the friends),
+// and names her. A card ready behind her lanes, all of them working, is her queue, held to
+// the dealt bound as a member's is.
+func friendLaneIdle(s *Snapshot, seats []FriendSeat, c *Card) (friend string, idle bool) {
+	friend, ok := FriendOfRow(c.Row)
+	if !ok || c.Col != Ready {
+		return friend, false
+	}
+	for _, f := range seats {
+		if f.Name == friend {
+			_, lanes := friendRoom(f)
+			return friend, s.Fleet.Count(c.Row, Working) < lanes
+		}
+	}
+	return friend, false
 }

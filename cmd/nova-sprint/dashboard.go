@@ -230,9 +230,13 @@ type listener struct {
 // serveDashboard starts one listener per address and says each address it listens on; a
 // listener that cannot start closes the others.
 func (a *app) serveDashboard(ls []listener, stdout io.Writer) ([]*http.Server, error) {
+	listen := net.Listen
+	if a.dashListen != nil {
+		listen = a.dashListen
+	}
 	var lns []net.Listener
 	for _, l := range ls {
-		ln, err := net.Listen("tcp", l.addr)
+		ln, err := listen("tcp", l.addr)
 		if err != nil {
 			for _, l := range lns {
 				// ignored: closing the listeners already open on the failure path; err is the one returned

@@ -81,7 +81,7 @@ func TestProgressArgvIsOneVerbAnEpoch(t *testing.T) {
 	card := func(id, epoch string) Card { return Card{ID: id, Outbox: filepath.Join("x", "outbox", id+"~"+epoch)} }
 	got := ProgressArgv("bob", []Card{card("c2", "15"), card("c1", "15"), card("c3", "16")})
 	assert.Equal(t, [][]string{
-		{"progress", "--as", "bob", "c1", "c2", "--epoch", "15"},
-		{"progress", "--as", "bob", "c3", "--epoch", "16"},
+		{"progress", "--as", "friend.bob", "c1", "c2", "--epoch", "15"},
+		{"progress", "--as", "friend.bob", "c3", "--epoch", "16"},
 	}, got)
 }
