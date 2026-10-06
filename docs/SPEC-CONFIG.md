@@ -326,6 +326,17 @@ is not empty and has no blank, and `deadline` is above 0; `long_context`
 above 0 comes with both long prices, and a long price with a threshold;
 `price_as_of` is a date; `usd`, when set, is above 0; a route that is disabled has a note. A route names no row of another kind.
 
+### spend-circuit-breakerb-b.w1
+
+The hourly dollar cap (docs/SPEC-SPRINT.md, spend-circuit-breakerb-b.w1; migration 0035):
+
+| field | kind | type | default | what it decides |
+|---|---|---|---|---|
+| `cap_usd_hour` | `route` | decimal | empty: the tier's (flash 5, pro 20, heavy 0) | the dollars cards on the route may cost in one clock hour (UTC); past it the route rests to the next hour with the reason `cap reached: $x of $y this hour`; `0` is no cap. Migration 0035 sets the rows that exist to their tier's. Redis: `route:<r>` field `cap_usd_hour` |
+| `cap_usd_hour` | `friend` | decimal | 10 | the dollars a friend's takes may cost in one clock hour; past it she is dealt no card until the next hour; `0` is no cap. A friend on a subscription reports no dollars and never reaches it |
+
+A decimal is kept as text in its one spelling, never a float. The roster read (`FriendCaps`) carries a friend's cap to the tick; the friend row's apply into the roster is owed (the card's report names the files).
+
 ### The note
 
 The owner, 2026-10-02, on the route and width choices the first real sprint made

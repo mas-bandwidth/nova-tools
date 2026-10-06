@@ -2476,6 +2476,16 @@ by selection without `--as` is refused. A finish that arrives first moves the ca
 the member's `ok` or `failed` cell (counted in done), which no redistribution touches. A retried finish with the same operation
 id (`--op`) returns the original result, with no second counter or notification.
 
+### spend-circuit-breakerb-b.w1
+
+Spend is watched by the machine, not by eye (the owner, 2026-10-04, the safety lens for v1.0.0: nothing runs away by accident). The tick sums, over the current clock hour (UTC, `[hh:00, hh+1:00)`), each route's and each friend's cost from the consumer records the primaries carry: each record's actual cost where reported, else its predicted one, exact (`hourSpendOf`, cost.go), by the route it ran on and, for a friend's take, by her. The clock is the snapshot's `Now`, so a test injects it.
+
+- A route whose sum has reached its cap (`cap_usd_hour`: the route's, else its tier's: flash 5, pro 20, heavy 0 meaning uncapped) rests as a provider out of funds rests: one line in the provider's `rule3_rest_<provider>` property (cause `cap`), ending at the next clock hour, with the reason `cap reached: $x of $y this hour`. The deal draws no card on it and withdraws a ready card dealt there (`restWithdrawals`); at the next hour the sum starts again, the rest has ended by itself, and the route is drawn again. A cap rest never counts toward stopping the sprint (`RouteRest.Out` is false).
+- One judgment per episode goes to the coordinator, `a route is past its hourly cap`, filed under `route:<name>`; it is written once while the rest holds, never once a tick, and closes when the route re-opens. Its decisions are `ack` and `wait`; the remedy it names is `nova-config route set <name> --cap_usd_hour <usd>`.
+- A friend (`cap_usd_hour`, 10 by default, `TickReq.FriendCaps` by name) whose sum has reached her cap is dealt no card and levelled none until the next hour; her started cards finish. `a friend is past her hourly cap`, filed under `friend-cap:<name>`, is one per episode the same way.
+- Money is shown to the cent, rounded up (`cardcost.Cents`): a sum of `6.001` against a cap of `5` reads `cap reached: $6.01 of $5.00 this hour`. What is kept and compared is exact.
+- Pinned by `TestARoutePastItsHourlyCapRestsWithOneJudgment` (internal/sprint/spend_cap_test.go).
+
 ## 6. The readers
 
 - A reader row has a state, as a fleet member has: up, away or down. The rows

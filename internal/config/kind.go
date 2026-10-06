@@ -183,6 +183,10 @@ const (
 // still sees exactly one coordinator.
 var FriendRoles = []string{"builder", "may-hold", "reader"}
 
+// DefaultFriendCapUSDHour is a friend's dollar cap per clock hour when her row names none
+// (sprint.DefaultFriendCapUSDHour holds the same number).
+const DefaultFriendCapUSDHour = "10"
+
 // DefaultFriendWidth is a friend's width when her row names none: the jobs
 // she works at once (the owner, 2026-10-02: "6/1 seems a bit wrong -- need to
 // setup width for friends? Start at 8 for each?"). Migration 0018 fills every
@@ -416,6 +420,7 @@ var Kinds = []*Kind{
 			{Name: "roles", Type: TypeList, Enum: FriendRoles, Help: "comma list of " + strings.Join(FriendRoles, ", ") + " (who coordinates is the sprint row's)"},
 			{Name: "width", Type: TypeInt, Default: strconv.Itoa(DefaultFriendWidth), Help: "the jobs she works at once, the width nova-sprint friend sync sets on her friends row; at least 1, " + strconv.Itoa(DefaultFriendWidth) + " by default"},
 			{Name: "mode", Type: TypeEnum, Enum: FriendModes, Default: DefaultFriendMode, Help: "how her daemon hands her work: batch (the default: every waiting message in one turn) or one-shot (width lanes, each its own session, handed one card per turn)"},
+			{Name: "cap_usd_hour", Type: TypeDecimal, Default: DefaultFriendCapUSDHour, Help: "the dollars her takes may cost in one clock hour, a decimal like 10: past it she is dealt no card until the next hour and the coordinator is told once; 0 is no cap; " + DefaultFriendCapUSDHour + " by default; a friend on a subscription reports no dollars and never reaches it"},
 			{Name: "config_dir", Type: TypeText, Nullable: true, Help: "the absolute directory a claude one-shot lane runs with as CLAUDE_CONFIG_DIR, her account's login and settings; unset (the default, or --config_dir '') for any other harness; nova-friend run refuses a claude friend in one-shot mode without it"},
 		},
 		Check: checkFriend,
@@ -488,6 +493,7 @@ var Kinds = []*Kind{
 			{Name: "usd", Type: TypeDecimal, Help: "the dollar budget per card, a decimal like 0.50: the harness's reported cost at which the card is stopped, beside the token budget; empty (the default) is none"},
 			{Name: "deadline", Type: TypeInt, Required: true, Help: "the seconds a card on this route may run, above 0"},
 			{Name: "enabled", Type: TypeBool, Default: "true", Help: "false takes it out of the deal and needs --note, the measured reason (a disabled route carries its reason); true (the default) keeps it in and needs none"},
+			{Name: "cap_usd_hour", Type: TypeDecimal, Help: "the dollars cards on this route may cost in one clock hour, a decimal like 5: past it the route rests to the next hour with the reason `cap reached: $x of $y this hour` and the coordinator is told once; 0 is no cap; empty (the default) is the tier's: flash 5, pro 20, heavy 0 (a migration sets the rows that exist)"},
 			{Name: "first", Type: TypeBool, Default: "false", Help: "true deals this route before the others of its tier (the walk from the tier's index prefers it); false (the default) leaves the walk as it is"},
 			// The price sheet: optional, so a card's predicted cost can be worked
 			// out from its tokens using the pricing configuration saved per route tuple.

@@ -235,7 +235,7 @@ func RouteOf(name string, h map[string]string) sprint.Route {
 	n := func(k string) int { v, _ := strconv.Atoi(h[k]); return v }
 	enabled, _ := strconv.ParseBool(h["enabled"])
 	first, _ := strconv.ParseBool(h["first"])
-	return sprint.Route{Name: name, Tier: h["tier"], Provider: h["provider"], Model: h["model"], Harness: h["harness"], Tokens: n("tokens"), USD: h["usd"],
+	return sprint.Route{Name: name, Tier: h["tier"], Provider: h["provider"], Model: h["model"], Harness: h["harness"], Tokens: n("tokens"), USD: h["usd"], CapUSDHour: h["cap_usd_hour"],
 		Deadline: n("deadline"), Enabled: enabled, First: first, Prices: cardcost.PricesOf(h)}
 }
 

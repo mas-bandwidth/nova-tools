@@ -179,6 +179,10 @@ type TickReq struct {
 	// levels them after its deal (FriendLevel). nil is none: every card is the fleet's
 	// but a hard pin, which waits ready, and no friend is levelled.
 	Friends []FriendSeat
+	// FriendCaps is each friend's dollar cap per clock hour as her row says it (a decimal;
+	// "0" is none), by name; a friend it names none gets DefaultFriendCapUSDHour
+	// (friendCaps, route_rest.go). nil is none read.
+	FriendCaps map[string]string
 	// AnswerRules says the tick answers the mechanical judgments by rule (rules.go; run
 	// --answer-rules); false leaves every judgment to the coordinator.
 	AnswerRules bool
@@ -580,6 +584,18 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 	// route_rest.go): no card of this tick is drawn on one, and the new rests are written
 	// in its plan
 	s, rests := s.withRests()
+	// a friend past her hourly cap is dealt no card this hour (friendCaps): her seat is not up
+	// for the deal and the level, and her cap judgment is the tick's
+	overCap := friendCaps(s, r.Friends, r.FriendCaps)
+	if len(overCap) > 0 {
+		seats := slices.Clone(r.Friends)
+		for i, f := range seats {
+			if _, ok := overCap[f.Name]; ok && f.Status == Up {
+				seats[i].Status = FriendCapped
+			}
+		}
+		r.Friends = seats
+	}
 	var p Plan
 	due := 0
 	var ready []*Card
@@ -691,6 +707,8 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 	pc, stop := providerConds(s)
 	pc, stop = friendsKeepRunning(pc, stop, r.Friends)
 	conds = append(conds, pc...)
+	// one judgment per route or friend past its hourly cap, never one per tick (route_rest.go)
+	conds = append(conds, capConds(s, overCap)...)
 	// a member whose cards are timing out, three within the window (overload.go)
 	conds = append(conds, overloadConds(s)...)
 	// landings on the sprint branch not promoted into dev (promotion.go)
@@ -769,7 +787,7 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 	// a ready card dealt on a route that rests now is withdrawn, never taken there
 	p.Units = append(p.Units, restWithdrawals(s, r.who())...)
 	restWrites(&p, s, rests, r.who())
-	due += notify(&p, s, conds, []string{NNoMember, NStarving, NOverloaded, NDevBehind, NBound, NNoRoute, NProviderFunds, NProviderLow, NProviderKey, NAllOutOfCredit}, r)
+	due += notify(&p, s, conds, []string{NNoMember, NStarving, NOverloaded, NDevBehind, NBound, NNoRoute, NProviderFunds, NProviderLow, NProviderKey, NAllOutOfCredit, NRouteCap, NFriendCap}, r)
 	// every provider out of credit: the binding stops the machine as the plan commits
 	p.Stop = stop
 	return p, due
@@ -1301,7 +1319,7 @@ type cond struct {
 // stays one condition, so they are keyed by their type and subject only.
 func condKey(typ, subject, card, what string) string {
 	switch typ {
-	case NNoMember, NCannotAsk, NNoRoute, NFewReaders, NProviderFunds, NProviderLow, NProviderKey, NAllOutOfCredit, NStarving, NOverloaded, NReadersBehind, NDevBehind, NRaiseReadTier,
+	case NNoMember, NCannotAsk, NNoRoute, NFewReaders, NRouteCap, NFriendCap, NProviderFunds, NProviderLow, NProviderKey, NAllOutOfCredit, NStarving, NOverloaded, NReadersBehind, NDevBehind, NRaiseReadTier,
 		NAlarmReview, NAlarmMerging, NAlarmReady, NAlarmFleet, NFilesAlarm, NFriendDeaf, NFriendIdle, NCoordinatorBehind,
 		NDriftAhead, NDriftCardBase, NDriftServer, NDriftBaseRed:
 		what = ""
