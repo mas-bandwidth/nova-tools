@@ -116,3 +116,52 @@ func TestTestPackage(t *testing.T) {
 		assert.Equal(t, want, TestPackage(brief), brief)
 	}
 }
+
+// No generated brief names a friend as the author: it carries the ATTRIBUTION line
+// (By: your own name, the friend doing this work) and an AS A READ section that judges
+// a By: trailer only for being present and true, and passes the checks with friends
+// configured. A brief that writes By: and a configured friend name, in any of the
+// shapes a generator stamped it, is refused with author-name; a Co-Authored-By trailer,
+// a name that is no friend and the WHO: preference line are no author.
+func TestABriefNamesNoFriendAsAuthor(t *testing.T) {
+	t.Parallel()
+	opts := Options{Names: []string{"Ada", "bench7"}}
+	c := cardgen.PlanHelp("nova-x", "x\n", "TestExamples", "", "")
+	c.Paths = Paths(header, c)
+	brief := cardgen.Render(header, c)
+	assert.Contains(t, brief, "\nATTRIBUTION: By: your own name, the friend doing this work")
+	assert.Contains(t, brief, "\nAS A READ\nA By: trailer is judged only for being present and true: it names the friend who pushed")
+	assert.Empty(t, Lint(c.ID, brief, opts))
+	assert.Empty(t, Lint(c.ID, brief+"WHO: friend ada\n", opts), "WHO stays a preference line")
+
+	authors := func(b string) []string {
+		var out []string
+		for _, f := range Checks(c.ID, b, opts) {
+			if f.Check == "author-name" {
+				out = append(out, f.String())
+			}
+		}
+		return out
+	}
+	for _, line := range []string{
+		"By: Ada",
+		"ATTRIBUTION: By: ada",
+		"STEP 5. Commit on your own branch; the trailer is By: ada.",
+		"Every commit body carries `By: ada` above the trailer.",
+		"The owner said \"sign it By: <ada>\".",
+		"By: friend.ada",
+	} {
+		got := authors(brief + line + "\n")
+		require.Len(t, got, 1, line)
+		assert.Contains(t, got[0], "check=author-name", line)
+		assert.Contains(t, got[0], "names ada as the author", line)
+	}
+	for _, line := range []string{
+		"Co-Authored-By: Ada <ada@example.com>",
+		"By: your own name",
+		"By: bob",
+		"Standby: ada",
+	} {
+		assert.Empty(t, authors(brief+line+"\n"), line)
+	}
+}
