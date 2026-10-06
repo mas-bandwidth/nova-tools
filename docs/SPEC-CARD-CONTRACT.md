@@ -465,8 +465,17 @@ with no clock and no store). What it holds:
   past that), `NEW:` for a test file the card creates in a package that has
   none, `TEST:` and the `Deadline:` line; the RULES paragraph of the general
   child rules (`swarm.ChildRulesParagraph`, the paragraph the card template
-  carries); the task from the source's template with the rows substituted; and
-  the template's steps.
+  carries); the `ATTRIBUTION:` line (`cardgen.Attribution`); the task from the
+  source's template with the rows substituted; the template's steps; and the
+  `AS A READ` section (`cardgen.AsARead`), the text a reader of the work is given.
+- No brief names its author. A commit names the friend who did the work, and the
+  brief cannot know who that is, so its `ATTRIBUTION:` line reads `By: your own
+  name, the friend doing this work`; a `WHO:` line stays a preference for who is
+  dealt the card, never the name to sign. Its `AS A READ` section says a `By:`
+  trailer is judged only for being present and true (the friend who pushed the
+  branch under read), and attribution alone never decides a verdict. Briefs
+  stamped `By: <friend>` from a WHO pin sent readers to fail landed-quality heads
+  for that line alone, because another friend had done the work.
 - A card's PATHS are computed from the START line its brief carries, never
   typed (`card.Paths`, over `card.PackagePaths`): every directory a START file
   lives in, as its Go files and its tests (`<dir>/*.go`, `<dir>/*_test.go`),
@@ -494,7 +503,10 @@ with no clock and no store). What it holds:
   (`tier-line`) and a TEST whose package is a directory its PATHS names
   (`test-outside-paths`); no brief carries a name `--name` gives outside
   double-quoted words (the owner's, quoted), its own id or its `WHO:` line
-  (`personal-name`), nor the id of a card `--dropped` gives (`dropped-card`).
+  (`personal-name`), nor the id of a card `--dropped` gives (`dropped-card`),
+  nor `By:` followed by such a name, quoted or not, `friend.<name>` included
+  (`author-name`; `Co-Authored-By:` is no `By:`;
+  `TestABriefNamesNoFriendAsAuthor`).
   The tree holds no name of the deployment (internal/ci TestGeneralityText),
   so the names come from the caller: `--name` to nova-card, the store's
   coordinator, owner and friends table to the add.

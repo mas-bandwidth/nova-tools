@@ -138,7 +138,10 @@ func Lint(id, brief string, o Options) []cardgen.LintFinding {
 //   - personal-name: no name of o.Names outside a double-quoted span (the owner's
 //     words, quoted, keep theirs), the card's own id, or the WHO: line that pins a
 //     friend;
-//   - dropped-card: no id of o.Dropped but the card's own.
+//   - dropped-card: no id of o.Dropped but the card's own;
+//   - author-name: no `By:` followed by a name of o.Names, quoted or not: a brief
+//     never names its author, the friend who does the work signs with their own name
+//     (cardgen.Attribution), and the WHO: line stays a preference.
 //
 // The tier and TEST checks hold a card brief, one with a PATHS: line; a brief with
 // none is a free task.
@@ -168,6 +171,9 @@ func Checks(id, brief string, o Options) []cardgen.LintFinding {
 				add("personal-name", i+1, "names "+n+" outside the owner's quoted words; write the role (the owner, a friend, a bench), never the name")
 			}
 		}
+		if n := authorName(line, o.Names); n != "" {
+			add("author-name", i+1, "names "+n+" as the author on a By: line; a commit names the friend who did the work, so write By: your own name, the friend doing this work")
+		}
 		for _, d := range o.Dropped {
 			if d != "" && d != id && hasWord(line, d) {
 				add("dropped-card", i+1, "names "+d+", a card dropped off the table; a brief stands alone and owes nothing to a dropped card")
@@ -175,6 +181,24 @@ func Checks(id, brief string, o Options) []cardgen.LintFinding {
 		}
 	}
 	return out
+}
+
+// byRE is a By: trailer named in a line and the word after it, past any <, backquote,
+// quote or asterisk; a By: inside a longer key (Co-Authored-By:) is no By:.
+var byRE = regexp.MustCompile("(?i)(?:^|[^A-Za-z0-9_-])by:[\\s<`'\"*]*([A-Za-z0-9_.-]+)")
+
+// authorName is the name of names a By: in line gives as the author ("" for none). A
+// friend's row name may be written friend.<name>.
+func authorName(line string, names []string) string {
+	for _, m := range byRE.FindAllStringSubmatch(line, -1) {
+		w := strings.TrimSuffix(strings.TrimPrefix(strings.ToLower(m[1]), "friend."), ".")
+		for _, n := range names {
+			if n = strings.ToLower(strings.TrimSpace(n)); n != "" && w == n {
+				return n
+			}
+		}
+	}
+	return ""
 }
 
 // TestPackage is the package a brief's TEST line names, repository-relative with no
