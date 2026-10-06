@@ -18,7 +18,7 @@ import (
 func cmdBoot(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("boot", flag.ContinueOnError)
 	root := fs.String("root", "", "memory root directory (required)")
-	pin := fs.String("pin", "", "pin file naming the memories to load (required)")
+	pin := fs.String("pin", "", "pin file (checks the pin: every file present and readable, and their size) (required)")
 	asJSON := fs.Bool("json", false, "print the result as one JSON object instead of lines")
 	given, pos, ok := parse(fs, args, stderr, "root", "pin")
 	if given == nil {

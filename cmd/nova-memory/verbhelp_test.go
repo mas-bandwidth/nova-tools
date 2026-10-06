@@ -28,7 +28,7 @@ func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 		{Verb: "boot", Flags: root},
 		{Verb: "version"},
 	})
-	testverbhelp.HelpVerb(t, memoryRun, "nova-memory", "search", "version", "eval")
+	testverbhelp.HelpVerb(t, memoryRun, "nova-memory", "search", "version", "eval", "boot")
 
 	// The exit codes line names each verb's answer, and every claim in it is
 	// checked against the behaviour by running it: the help is changed to the
@@ -214,4 +214,19 @@ func TestEvalHelpShowsGoldFileFormatAndTwoLineExample(t *testing.T) {
 	exit, stdoutHelp, stderr := runCLI(t, "", "help", "eval")
 	require.Equalf(t, 0, exit, "help eval must exit 0: stderr = %q", stderr)
 	assert.Equal(t, stdout, stdoutHelp, "`help eval` and `eval -h` must match")
+}
+
+// TestBootHelpStatesItChecksThePin pins that boot's help text describes what
+// the verb actually does: checking the pin (every file present and readable,
+// and their size), not loading the contents into memory.
+func TestBootHelpStatesItChecksThePin(t *testing.T) {
+	t.Parallel()
+
+	exit, stdout, stderr := runCLI(t, "", "boot", "-h")
+	require.Equalf(t, 0, exit, "boot -h must exit 0: stderr = %q", stderr)
+	assert.Contains(t, stdout, "checks the pin: every file present and readable, and their size")
+
+	exit, stdoutHelp, stderr := runCLI(t, "", "help", "boot")
+	require.Equalf(t, 0, exit, "help boot must exit 0: stderr = %q", stderr)
+	assert.Equal(t, stdout, stdoutHelp, "`help boot` and `boot -h` must match")
 }

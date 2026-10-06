@@ -129,10 +129,11 @@ flags:
                         reads. Default: this corpus's own first paragraph, fed
                         on stdin, which shows you what "you already know this"
                         looks like when it is certainly true.
-  --pin <file>          boot only: the pin file naming the memories a session
-                        loads, one slash path per line relative to --root
-                        (# comments and blank lines ignored). Required — boot
-                        names the load, never walks the directory.
+  --pin <file>          boot only: the pin file naming the memories to check
+                        (checks the pin: every file present and readable, and
+                        their size), one slash path per line relative to
+                        --root (# comments and blank lines ignored). Required —
+                        boot never walks the directory.
 
 A refusal reports every flag it can see at once — two missing flags are two
 sentences and one run, not two runs. Flags may stand before or after the
@@ -252,6 +253,8 @@ func verbHelp(verb string) string {
 		extra = "gold file format: query<TAB>expected[,expected]\n" +
 			"  how often should the lantern glazing be washed\tnotes/lantern.md\n" +
 			"  washing the glazing before an onshore gale\tnotes/lantern.md,log/1974-03-11.md\n"
+	case "boot":
+		extra = "checks the pin: every file present and readable, and their size\n"
 	}
 	return extra + "effect: " + string(tool.Inspection) + " (the index lives in memory for the run)\n"
 }
