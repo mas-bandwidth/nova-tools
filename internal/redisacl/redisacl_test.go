@@ -16,7 +16,6 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/record"
 	"github.com/mas-bandwidth/nova-tools/internal/redisfn"
-	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
 // lib is a small library: a ping file, a table file with one writer and one
@@ -140,7 +139,6 @@ func TestFamiliesAreTheOwnersKeys(t *testing.T) {
 		}
 		return false
 	}
-	names := sprint.Names{}
 	family := map[string][]string{}
 	for _, f := range Families {
 		family[f.Name] = f.Patterns
@@ -148,7 +146,7 @@ func TestFamiliesAreTheOwnersKeys(t *testing.T) {
 	for name, ks := range map[string][]string{
 		"tables":   {ntable.DefKey("work"), ntable.ChangesKey("work"), ntable.RowsKeyAt("work", 3), ntable.Registry},
 		"views":    {"view:sprint", "views"},
-		"sprint":   {names.EpochKey(), names.Key("beat:bench-a"), names.KeyAt("tick", 2)},
+		"sprint":   {"sprint:epoch", "sprint:beat:bench-a", "sprint:tick@2"},
 		"machines": {config.MachineKey("m"), config.MachineCeilingKey("m"), config.MachinesKey},
 		"beats":    {config.BeatKey("m")},
 		"friends":  {config.FriendBeatKey("f"), config.FriendsKey, "friend:f:roles", "friend:f:desired"},

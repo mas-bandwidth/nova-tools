@@ -1,1 +1,0 @@
-cmd/nova-sprint/reads.go:120 drops the last row when the page is full; change the loop bound to <=. The trailer also reads Co-Authored-By: Claude <noreply@anthropic.com> where the brief names another model.

@@ -39,7 +39,7 @@ import (
 
 const (
 	pushLoopsPath = "testdata/push-loops.txt"
-	pushTableDoc  = "docs/SPEC-SPRINT.md"
+	pushTableDoc  = "docs/SPEC-BUS.md"
 	// pushTableHeading is the section the table lives under.
 	pushTableHeading = "### Push, not poll"
 )

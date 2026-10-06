@@ -5,9 +5,9 @@ specs, each linked to the page that defines it so you can jump straight to the
 source.
 
 The rules of naming: one word for one thing, in every document, help text and
-comment; the glossaries define the words, one per release —
-[GLOSSARY.md](GLOSSARY.md) for nova-tools 1.2.0 and
-[sprint/GLOSSARY.md](sprint/GLOSSARY.md) for nova-sprint 1.0.0. A word that is
+comment; the glossary defines the words, one per release —
+[GLOSSARY.md](GLOSSARY.md) for nova-tools 1.2.0; nova-sprint 1.0.0 keeps its own in its
+repository. A word that is
 replaced is retired: `internal/docs/testdata/retired-words.txt` lists each with
 what replaced it, and `TestRetiredWordsAppearOnlyInRecords` fails when a tracked
 file uses one outside the dated records (the changelog, the resolutions, the

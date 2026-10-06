@@ -23,6 +23,3 @@ internal/ci/testdata/generality/internal/tokens.txt the Go scan's ledger: each r
 internal/ci/testdata/generality/tools/ghrelease.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
 internal/tlc/testdata/temporal-new.log captured TLC model checker output
 internal/tlc/testdata/temporal-old.log captured TLC model checker output
-internal/workgh/testdata/reliable/call-01.json recorded GitHub GraphQL reply for a public repository
-internal/workgh/testdata/reliable/call-02.json recorded GitHub GraphQL reply for a public repository
-internal/workgh/testdata/reliable/call-03.json recorded GitHub GraphQL reply for a public repository

@@ -20,7 +20,6 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/internal/bus/bustest"
 	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
-	"github.com/mas-bandwidth/nova-tools/internal/cardgen"
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 	"github.com/mas-bandwidth/nova-tools/internal/cardtree"
 	"github.com/mas-bandwidth/nova-tools/internal/check"
@@ -43,9 +42,6 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/record"
 	"github.com/mas-bandwidth/nova-tools/internal/sandbox"
 	"github.com/mas-bandwidth/nova-tools/internal/secrets"
-	"github.com/mas-bandwidth/nova-tools/internal/sprint"
-	"github.com/mas-bandwidth/nova-tools/internal/sprint/refmodel"
-	sprintstore "github.com/mas-bandwidth/nova-tools/internal/sprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 	"github.com/mas-bandwidth/nova-tools/internal/tlc"
 	"github.com/mas-bandwidth/nova-tools/internal/tokens"
@@ -255,8 +251,6 @@ var secretOpeners = map[string]any{
 	"internal/cardcost.ParseSpend":                     cardcost.ParseSpend,
 	"internal/cardcost.ParseTotal":                     cardcost.ParseTotal,
 	"internal/cardcost.ParseUsage":                     cardcost.ParseUsage,
-	"internal/cardgen.ParseFindings":                   cardgen.ParseFindings,
-	"internal/cardgen.ParseLedger":                     cardgen.ParseLedger,
 	"internal/cardhdr.ParseBase":                       cardhdr.ParseBase,
 	"internal/cardhdr.ParseTest":                       cardhdr.ParseTest,
 	"internal/cardtree.Parse":                          cardtree.Parse,
@@ -325,20 +319,6 @@ var secretOpeners = map[string]any{
 	"internal/secrets.OpenSeatFile":                    secrets.OpenSeatFile,
 	"internal/secrets.ParseSopsConfig":                 secrets.ParseSopsConfig,
 	"internal/secrets.ParseStoreFileWithoutDecrypting": secrets.ParseStoreFileWithoutDecrypting,
-	"internal/sprint.NewTable":                         sprint.NewTable,
-	"internal/sprint.OpenKey":                          sprint.OpenKey,
-	"internal/sprint.ParseAttempts":                    sprint.ParseAttempts,
-	"internal/sprint.ParseDeadline":                    sprint.ParseDeadline,
-	"internal/sprint.ParseFriendReadReport":            sprint.ParseFriendReadReport,
-	"internal/sprint.ParseLaneCap":                     sprint.ParseLaneCap,
-	"internal/sprint.ParseMembers":                     sprint.ParseMembers,
-	"internal/sprint.ParseReadCard":                    sprint.ParseReadCard,
-	"internal/sprint.ParseReaderTiers":                 sprint.ParseReaderTiers,
-	"internal/sprint.ParseRoute":                       sprint.ParseRoute,
-	"internal/sprint.ParseWidth":                       sprint.ParseWidth,
-	"internal/sprint.ParseWorkCard":                    sprint.ParseWorkCard,
-	"internal/sprint/refmodel.New":                     refmodel.New,
-	"internal/sprint/store.NewDeliverer":               sprintstore.NewDeliverer,
 	"internal/swarm.NewWallReader":                     swarm.NewWallReader,
 	"internal/swarm.OpenCodeStoreLocations":            swarm.OpenCodeStoreLocations,
 	"internal/swarm.ParseChildRules":                   swarm.ParseChildRules,
@@ -391,13 +371,6 @@ internal/sandbox.ParseGPUMode echoes the rejected mode in a Refusal (internal/sa
 internal/secrets.OpenSeatFile echoes the seat name and the store path in its preflight refusal (internal/secrets/seatfile.go:126, internal/secrets/seatfile.go:149)
 internal/secrets.ParseSopsConfig wraps the read error, which names the store path (internal/secrets/store.go:82)
 internal/secrets.ParseStoreFileWithoutDecrypting returns the os.Open error, which names the path argument (internal/secrets/store.go:250)
-internal/sprint.ParseAttempts echoes the rejected value with %q (internal/sprint/brief_bound.go:83)
-internal/sprint.ParseDeadline echoes the rejected value with %q (internal/sprint/deadline.go:165)
-internal/sprint.ParseMembers echoes the rejected width with %q (internal/sprint/width.go:42)
-internal/sprint.ParseReaderTiers echoes the rejected tier names (internal/sprint/reader_tiers.go:51)
-internal/sprint.ParseRoute echoes the rejected route with %q (internal/sprint/remind.go:108)
-internal/sprint.ParseWidth echoes the rejected width with %q (internal/sprint/width.go:42)
-internal/sprint/store.NewDeliverer echoes the rejected route with %q (internal/sprint/store/remind.go:147 returns the error of internal/sprint/remind.go:108; the bus refusal at remind.go:155 echoes it too)
 internal/swarm.ParseIdentity echoes the rejected identity with %q (internal/swarm/staging.go:89)
 internal/tokens.ParseWeights echoes the rejected weights (internal/tokens/claude_session.go:53)
 `
