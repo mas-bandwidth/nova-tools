@@ -16,7 +16,7 @@ Read as a stranger: only `nova-update -h`, `nova-update help`, `nova-update
    ```
    and `report` prints `raw=go\x20version\x20go1.27.1\x20darwin/arm64`. A person
    reads `local:go\x20version` where the manifest says `local:go version`
-   (tab-separated, space inside the field). I expected the plain text (quoted if
+   (tab-separated, a blank inside the field). I expected the plain text (quoted if
    it must stay one field), the way `path=` and `installed=` are plain.
    Grade: NEXT.
 
