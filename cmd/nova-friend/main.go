@@ -886,7 +886,7 @@ A friend a person held with nova-sprint friend down stays held until nova-sprint
 			{
 				Name:      "screen",
 				Usage:     "screen <friend> [--lines <n>] [--state-dir <d>] [--json]",
-				Example:   "screen bob --lines 40",
+				Example:   "", // session capture: the example block runs nothing that reads a fleet's state; -h carries the example
 				Effect:    tool.Inspection,
 				ExitTable: "0 printed, 1 refused, 2 could not run.",
 				Detail: `The last n lines (default 40) of the friend's open session as text. A tmux-hosted friend (fg-tmux-host-and-adapter): tmux capture-pane -p -t friend-<name>. A GUI harness (Antigravity): the text of the harness app's window through the macOS accessibility API (the window found by the harness's bundle and the friend's directory or session title), refused with the remedy when the binary lacks the accessibility permission (a person grants it; the tool never asks). A harness with neither: refused naming why.
