@@ -66,15 +66,18 @@ func TestKindsApplyInDependencyOrder(t *testing.T) {
 // sprint member's width, set directly (the owner, 2026-10-01: "we should just
 // be able to set width specifically in nova-config and it just works"). tla
 // marks a TLC record machine, read by the tools play and tlacheck run --bench.
+// harnesses is the harnesses the sprint's member on it can launch, read by the
+// deal (member-draws-only-routes-it-can-launch-b.w1, 2026-10-06: machines with no
+// claude login drew a subscription-claude route).
 func TestTheMachineRowIsTheDeclaredFactsSomethingReads(t *testing.T) {
 	t.Parallel()
 
 	machine, _ := Lookup(KindMachine)
 	scopedGot70 := strings.Join(machine.FieldNames(), ",")
-	require.Equal(t, "user,seat,slots,runners,width,tla,note", scopedGot70, "machine fields %s, want user,seat,slots,runners,width,tla,note", scopedGot70)
+	require.Equal(t, "user,seat,slots,runners,width,tla,harnesses,note", scopedGot70, "machine fields %s, want user,seat,slots,runners,width,tla,harnesses,note", scopedGot70)
 	for _, f := range machine.Fields {
-		scopedWant75 := f.Name != "runners" && f.Name != "width" && f.Name != "tla" && f.Name != "note"
-		assert.Equal(t, scopedWant75, f.Required, "--%s required=%v, want %v (runners and width default to 0, tla to false and the note to empty; the rest are typed on add)", f.Name, f.Required, scopedWant75)
+		scopedWant75 := f.Name != "runners" && f.Name != "width" && f.Name != "tla" && f.Name != "harnesses" && f.Name != "note"
+		assert.Equal(t, scopedWant75, f.Required, "--%s required=%v, want %v (runners and width default to 0, tla to false, harnesses to opencode and the note to empty; the rest are typed on add)", f.Name, f.Required, scopedWant75)
 	}
 	for _, invented := range []string{"ssh", "address", "os_arch", "os", "arch", "cores", "memory_gb", "roles", "store", "coordinator", "machine", "harness", "logins", "wake"} {
 		_, scopedOk81 := machine.Field(invented)
