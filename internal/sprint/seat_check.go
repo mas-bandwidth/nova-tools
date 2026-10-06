@@ -14,7 +14,9 @@ import (
 // measures the machinery under the sprint and prints one line per check, up or
 // DOWN with the remedy, a command, on the DOWN line.
 // Checks: server, store, loop, beats (fleet and friends), readers, dashboard,
-// installed versions, merge queue; exits 0 when all are OK, 1 on any red/DOWN check.
+// installed versions, merge queue, push proof, and a STOPGAP line for each of
+// the coordinator's stopgaps still running on the seat's machine
+// (docs/STOPGAPS.md); exits 0 when all are OK, 1 on any red/DOWN check.
 
 // The check names in order of output.
 const (
@@ -149,6 +151,19 @@ type PushM struct {
 	Recorded bool       `json:"recorded,omitempty"`
 }
 
+// ProcM is one process on the seat's machine: its pid and its command line.
+type ProcM struct {
+	PID  int    `json:"pid"`
+	Args string `json:"args"`
+}
+
+// ProcsM is the seat's machine's process table as read (Measured false: not
+// read, which says no stopgap line).
+type ProcsM struct {
+	Measured bool    `json:"measured,omitempty"`
+	Procs    []ProcM `json:"procs,omitempty"`
+}
+
 // SeatCheckMeasures is everything the probes measured, in one struct so a
 // test or command can evaluate any state of the machinery.
 type SeatCheckMeasures struct {
@@ -163,6 +178,7 @@ type SeatCheckMeasures struct {
 	Queue     QueueM            `json:"queue,omitempty"`
 	Versions  VersionsM         `json:"versions,omitempty"`
 	Push      PushM             `json:"push,omitzero"`
+	Procs     ProcsM            `json:"procs,omitzero"`
 	Host      string            `json:"host"`
 	Errs      map[string]string `json:"errs,omitempty"`
 }
@@ -193,11 +209,13 @@ func (l SeatCheckLine) String() string {
 	return s
 }
 
-// SeatCheckReport is the check report: the lines in order, how many are DOWN,
-// and the process exit code (0 all up, 1 on any DOWN line).
+// SeatCheckReport is the check report: the lines in order, the stopgaps found
+// running, how many are DOWN, and the process exit code (0 all up, 1 on any
+// DOWN line).
 type SeatCheckReport struct {
 	At       time.Time         `json:"at"`
 	Lines    []SeatCheckLine   `json:"lines"`
+	Stopgaps []StopgapLine     `json:"stopgaps,omitempty"`
 	Down     int               `json:"down"`
 	ExitCode int               `json:"exit_code"`
 	Measures SeatCheckMeasures `json:"measures"`
@@ -210,17 +228,23 @@ func (r SeatCheckReport) Text() string {
 		b.WriteString(l.String())
 		b.WriteByte('\n')
 	}
+	for _, l := range r.Stopgaps {
+		b.WriteString(l.String())
+		b.WriteByte('\n')
+	}
 	b.WriteString(r.Summary())
 	b.WriteByte('\n')
 	return b.String()
 }
 
-// Summary is the last line: MACHINERY OK n=<lines> or MACHINERY DOWN n=<down> of=<lines>.
+// Summary is the last line: MACHINERY OK n=<lines> or MACHINERY DOWN n=<down> of=<lines>;
+// a STOPGAP line is a line.
 func (r SeatCheckReport) Summary() string {
+	n := len(r.Lines) + len(r.Stopgaps)
 	if r.Down == 0 {
-		return fmt.Sprintf("%s OK n=%d", SeatCheckToken, len(r.Lines))
+		return fmt.Sprintf("%s OK n=%d", SeatCheckToken, n)
 	}
-	return fmt.Sprintf("%s DOWN n=%d of=%d", SeatCheckToken, r.Down, len(r.Lines))
+	return fmt.Sprintf("%s DOWN n=%d of=%d", SeatCheckToken, r.Down, n)
 }
 
 // JSON is the report as --json prints it.
@@ -259,6 +283,11 @@ func MemberLoopRecord(member string) string { return "member-" + member }
 
 // JudgeSeatCheck turns the measures into a SeatCheckReport according to docs/SPEC-SPRINT.md.
 func JudgeSeatCheck(m SeatCheckMeasures, now time.Time) SeatCheckReport {
+	return judgeSeatCheck(m, now, Stopgaps)
+}
+
+// judgeSeatCheck is JudgeSeatCheck against a table of stopgaps.
+func judgeSeatCheck(m SeatCheckMeasures, now time.Time, stopgaps []Stopgap) SeatCheckReport {
 	r := SeatCheckReport{At: now, Measures: m}
 	add := func(l SeatCheckLine) {
 		if !l.Up {
@@ -554,10 +583,142 @@ func JudgeSeatCheck(m SeatCheckMeasures, now time.Time) SeatCheckReport {
 		}
 	}
 
+	// 13. the stopgaps (docs/STOPGAPS.md): one STOPGAP line for each found
+	// running on the seat's machine; one whose verb is proven is DOWN
+	if p := m.Procs; p.Measured && !m.Server.Self {
+		for _, l := range stopgapsRunning(stopgaps, p.Procs) {
+			if l.Retired {
+				r.Down++
+			}
+			r.Stopgaps = append(r.Stopgaps, l)
+		}
+	}
+
 	if r.Down > 0 {
 		r.ExitCode = 1
 	}
 	return r
+}
+
+// StopgapToken is the first word of a stopgap's line.
+const StopgapToken = "STOPGAP"
+
+// Stopgap is one of the coordinator's stopgaps: a script that ran outside the
+// tree until a verb replaced it (docs/STOPGAPS.md, whose table names the same
+// rows in the same order; TestEveryStopgapNamesItsVerbAndProof holds the two
+// together). Name is the file as it runs, the word the seat check looks for;
+// Card is the card that replaces it and Verb the command; Retired is true once
+// the table carries the verb's proof (its test and one real run), and a
+// retired stopgap still running is DOWN.
+type Stopgap struct {
+	Name    string
+	Card    string
+	Verb    string
+	Retired bool
+}
+
+// Stopgaps is every stopgap of 2026-10-04 and 2026-10-05, in the table's order.
+var Stopgaps = []Stopgap{
+	{Name: "runner.zsh", Card: "claude-oneshot-lanes", Verb: "nova-friend run --harness claude (one-shot lanes)"},
+	{Name: "deliver.py", Card: "deliver-is-the-daemons-duty-in-order", Verb: "nova-friend run; nova-sprint deliver <friend> [--once]"},
+	{Name: "deliver-loop.sh", Card: "deliver-is-the-daemons-duty-in-order", Verb: "nova-friend run; nova-sprint deliver <friend> [--once]"},
+	{Name: "finish-loop.py", Card: "collect-is-a-verb-and-the-daemons-duty", Verb: "nova-sprint collect"},
+	{Name: "zhi-beat.sh", Card: "liveness-is-the-session-pong-not-an-app", Verb: "nova-friend run (a friend is up on her session's pong)"},
+	{Name: "note-when-delivered.sh", Card: "deliver-is-the-daemons-duty-in-order", Verb: "nova-friend run; nova-sprint deliver <friend> [--once]"},
+	{Name: "twin-widen.py", Card: "twin-is-a-verb", Verb: "nova-sprint twin <card> --paths <extra,...>"},
+	{Name: "twin-behind.py", Card: "twin-is-a-verb", Verb: "nova-sprint twin <card> --before <card>"},
+	{Name: "graft-audit.py", Card: "twin-is-a-verb", Verb: "nova-sprint twin <card> --carry"},
+	{Name: "seat-model.py", Card: "view-seat-is-the-coordinators-model", Verb: "nova-sprint view seat --json"},
+}
+
+// StopgapLine is one stopgap found running: STOPGAP <name> still running
+// pid=<pids> card=<card> verb="<verb>" [remedy="<command>"].
+type StopgapLine struct {
+	Name    string `json:"name"`
+	PIDs    []int  `json:"pids"`
+	Card    string `json:"card"`
+	Verb    string `json:"verb"`
+	Retired bool   `json:"retired,omitempty"`
+}
+
+// String is the line as printed; a retired stopgap's carries the remedy,
+// stopping it, and one still owed its verb says so.
+func (l StopgapLine) String() string {
+	pids := make([]string, len(l.PIDs))
+	for i, p := range l.PIDs {
+		pids[i] = fmt.Sprint(p)
+	}
+	s := StopgapToken + " " + l.Name + " still running pid=" + strings.Join(pids, ",") + " card=" + l.Card + " verb=" + quoteSeatCheck(l.Verb)
+	if l.Retired {
+		return s + " remedy=" + quoteSeatCheck("kill "+strings.Join(pids, " ")+"; remove "+l.Name+" and what starts it")
+	}
+	return s + " note=" + quoteSeatCheck("its verb is owed: keep it until "+l.Card+" lands with its proof in docs/STOPGAPS.md")
+}
+
+// stopgapInterpreters are the programs a stopgap is run under: the script is
+// then the first word after the interpreter's flags.
+var stopgapInterpreters = map[string]bool{"sh": true, "bash": true, "zsh": true, "python": true, "python3": true, "env": true}
+
+// stopgapOf is the stopgap of the table a command line runs, "" none: the
+// program itself, or the script an interpreter runs, by its file name.
+func stopgapOf(stopgaps []Stopgap, args string) string {
+	words := strings.Fields(args)
+	if len(words) == 0 {
+		return ""
+	}
+	if n := baseOf(words[0]); isStopgap(stopgaps, n) {
+		return n
+	} else if !stopgapInterpreters[n] {
+		return ""
+	}
+	for _, w := range words[1:] {
+		if strings.HasPrefix(w, "-") {
+			continue
+		}
+		if n := baseOf(w); stopgapInterpreters[n] {
+			continue // env python3 deliver.py
+		} else if isStopgap(stopgaps, n) {
+			return n
+		}
+		return ""
+	}
+	return ""
+}
+
+func baseOf(path string) string {
+	if i := strings.LastIndex(path, "/"); i >= 0 {
+		return path[i+1:]
+	}
+	return path
+}
+
+func isStopgap(stopgaps []Stopgap, name string) bool {
+	for _, s := range stopgaps {
+		if s.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// StopgapsRunning is every stopgap the process table shows running, one line
+// each in the table's order, with every pid that runs it.
+func StopgapsRunning(procs []ProcM) []StopgapLine { return stopgapsRunning(Stopgaps, procs) }
+
+func stopgapsRunning(stopgaps []Stopgap, procs []ProcM) []StopgapLine {
+	pids := map[string][]int{}
+	for _, p := range procs {
+		if n := stopgapOf(stopgaps, p.Args); n != "" {
+			pids[n] = append(pids[n], p.PID)
+		}
+	}
+	var out []StopgapLine
+	for _, s := range stopgaps {
+		if ps, ok := pids[s.Name]; ok {
+			out = append(out, StopgapLine{Name: s.Name, PIDs: ps, Card: s.Card, Verb: s.Verb, Retired: s.Retired})
+		}
+	}
+	return out
 }
 
 func quoteSeatCheck(s string) string {

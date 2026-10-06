@@ -61,6 +61,9 @@ type outside struct {
 	devMergeQueue func(ctx context.Context) (sprint.QueueM, error)
 	// machineVersions is each machine's installed version against dev (fp-mach-01).
 	machineVersions func(ctx context.Context, machines []string) (sprint.VersionsM, error)
+	// processes is this machine's process table, read for the stopgaps
+	// (docs/STOPGAPS.md); nil is not measured.
+	processes func(ctx context.Context) ([]sprint.ProcM, error)
 }
 
 // realOutside is the check as it runs on a machine.
@@ -125,6 +128,22 @@ func (a *app) realOutside() outside {
 				return err
 			}
 			return conn.Close()
+		},
+		processes: func(ctx context.Context) ([]sprint.ProcM, error) {
+			cmd, cancel := subproc.Command(ctx, subproc.Tool, "ps", "-axww", "-o", "pid=,command=")
+			defer cancel()
+			out, err := cmd.Output()
+			if err != nil {
+				return nil, err
+			}
+			var procs []sprint.ProcM
+			for _, line := range strings.Split(string(out), "\n") {
+				pid, args, ok := strings.Cut(strings.TrimSpace(line), " ")
+				if n, err := strconv.Atoi(pid); ok && err == nil {
+					procs = append(procs, sprint.ProcM{PID: n, Args: strings.TrimSpace(args)})
+				}
+			}
+			return procs, nil
 		},
 		hostname: func() string {
 			h, _ := os.Hostname()
@@ -317,6 +336,14 @@ func (a *app) seatCheck(ctx context.Context, st *store.Store, redisAddr string) 
 			m.Errs[sprint.SeatCheckPush] = err.Error()
 		}
 		m.Push = sprint.PushM{Measured: true, Holder: holder, Record: rec, Recorded: ok}
+	}
+
+	// 13. the stopgaps: the process table of this machine, the seat's own
+	// (never read by the served check)
+	if o.processes != nil && !self {
+		if procs, err := o.processes(ctx); err == nil {
+			m.Procs = sprint.ProcsM{Measured: true, Procs: procs}
+		}
 	}
 
 	return sprint.JudgeSeatCheck(m, now)

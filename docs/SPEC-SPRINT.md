@@ -4047,8 +4047,17 @@ read of the store and a write of the state file, never run by the sprint's serve
 server, store, loop, beats (fleet and friends), readers, dashboard, installed versions, merge queue.
 It prints one line per check and an exit code: 0 if all OK, 1 if any check is DOWN.
 Each line has the format `MACHINERY <thing> OK|DOWN <facts> [remedy="<command>"]`.
-A summary line `MACHINERY OK n=<total>` or `MACHINERY DOWN n=<down> of=<total>` concludes the output.
-`--json` prints one JSON object with `at`, `lines`, `down`, `exit_code`, and `measures`.
+After the MACHINERY lines comes one line for each of the coordinator's stopgaps found running on
+the machine the check runs on, the seat's (docs/STOPGAPS.md; `sprint.Stopgaps`, read from
+`ps -axww -o pid=,command=`, never by the served check):
+`STOPGAP <name> still running pid=<pid,...> card=<card> verb="<verb>"`, then `note="its verb is owed: ..."`
+while the verb that replaces it is owed its proof, or `remedy="kill <pid ...>; remove <name> and what starts it"`
+once docs/STOPGAPS.md marks it retired; a retired stopgap still running is DOWN, so the check exits 1
+until it is removed (`TestTheSeatCheckPrintsAStopgapStillRunning`). Every row of docs/STOPGAPS.md names
+its card and verb, and a retired row its test and one real run (`TestEveryStopgapNamesItsVerbAndProof`).
+A summary line `MACHINERY OK n=<total>` or `MACHINERY DOWN n=<down> of=<total>` concludes the output;
+a STOPGAP line counts in the total.
+`--json` prints one JSON object with `at`, `lines`, `stopgaps` (when any is running), `down`, `exit_code`, and `measures`.
 
 ### The seat's store login
 
