@@ -789,9 +789,10 @@ func TestRunInOneShotModeOpensALaneAndHandsItTheCard(t *testing.T) {
 }
 
 // A closed app is a friend down, however well its daemon runs: the verb wires
-// the session check, holds the beat back while no session answers, and
-// status says so (docs/SPEC-FRIEND.md, presence).
-func TestRunWithNoSessionAnsweringNeverBeats(t *testing.T) {
+// the session check, beats all the same carrying no session evidence (the
+// sprint reads her session deaf beside a daemon up), and status says so
+// (docs/SPEC-FRIEND.md, presence; the beat).
+func TestRunWithNoSessionAnsweringStillBeats(t *testing.T) {
 	t.Parallel()
 	r := newRig(t, "ada", "bob")
 	w := r.world()
@@ -826,14 +827,21 @@ func TestRunWithNoSessionAnsweringNeverBeats(t *testing.T) {
 		}
 		return "", 0, nil
 	}
-	beats := 0
-	w.beat = func(context.Context, string, string, time.Time, time.Time) (string, error) { beats++; return "", nil }
+	beats, carried := 0, 0
+	w.beat = func(_ context.Context, _, _ string, _, pong time.Time) (string, error) {
+		beats++
+		if !pong.IsZero() {
+			carried++
+		}
+		return "", nil
+	}
 	stopAfter(&w, &cancel, 8*time.Minute) // the session's own blocking read never pauses the loop; the clock ends it
 	dir := t.TempDir()
 	var out, errb strings.Builder
 	code := run([]string{"run", "--as", "bob", "--harness", "opencode", "--dir", dir, "--coordinator", "ada"}, strings.NewReader(""), &out, &errb, w)
 	require.Equal(t, 0, code, errb.String())
-	assert.Zero(t, beats, "no beat reaches the sprint server while no session answers")
+	assert.Greater(t, beats, 1, "the daemon beats every step while no session answers")
+	assert.Zero(t, carried, "and no beat carries session evidence: the session check went unanswered")
 	assert.Contains(t, out.String(), "push proof: CHECK OK harness=opencode")
 	assert.Contains(t, out.String(), "presence: down: no session answer within 5m0s")
 	mu.Lock()
@@ -1004,8 +1012,14 @@ func TestRunKeepsTheHarnessWatchAdvisory(t *testing.T) {
 		ctx, cancel = context.WithCancel(ctx)
 		return ctx, cancel
 	}
-	beats := 0
-	w.beat = func(context.Context, string, string, time.Time, time.Time) (string, error) { beats++; return "", nil }
+	beats, carried := 0, 0
+	w.beat = func(_ context.Context, _, _ string, _, pong time.Time) (string, error) {
+		beats++
+		if !pong.IsZero() {
+			carried++
+		}
+		return "", nil
+	}
 	stopAfter(&w, &cancel, 5*time.Minute)
 	dir := t.TempDir()
 	var out, errb strings.Builder
