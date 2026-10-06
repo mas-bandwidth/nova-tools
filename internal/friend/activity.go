@@ -33,6 +33,10 @@ var DefaultActivityLimits = ActivityLimits{Files: 2000, Time: 50 * time.Millisec
 // own state (StateDirIn), rewritten every few seconds.
 var activitySkip = map[string]bool{".git": true, ".cache": true, "node_modules": true, ".nova-friend": true}
 
+// activitySkipFile are the files her daemon writes, never her session: a job's lane mark,
+// refreshed every LaneMarkEvery while a lane runs (one_lane.go).
+var activitySkipFile = map[string]bool{LaneMarkFile: true}
+
 // ActivityRoots are the places the walk reads, in this order, under her working directory:
 // the outbox (her results), the inbox (the cards she was dealt), then the jobs and the
 // rest of the directory, so a large clone cannot use the bound up before the outbox is read.
@@ -62,6 +66,9 @@ func NewestWrite(fsys fs.FS, roots []string, now func() time.Time, lim ActivityL
 			}
 			if files >= lim.Files {
 				return fs.SkipAll
+			}
+			if activitySkipFile[d.Name()] {
+				return nil
 			}
 			files++
 			if info, err := d.Info(); err == nil && info.ModTime().After(newest) {

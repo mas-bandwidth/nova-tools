@@ -1039,6 +1039,27 @@ not level the friends":
 `TestAFriendWithAnIdleLaneIsDealtAndLevelledBeforeAFullOne`,
 `TestTwinStoreDealsIdleFriendsFirstAndLevelsEveryTick`.
 
+### one-lane-per-card.w1: one lane per card
+
+**The friends' deal never places a card on a second row while a lane runs it.**
+On the night of 2026-10-05 the same card ran in two lanes at once more than once:
+a WHO-pinned audit dealt to one friend while another worked the same slot from
+her outbox, reruns of dead lanes beside a twin's lane, and duplicate runners
+starting four jobs twice. When one finished, the other kept running for nothing.
+A ready card that any friend's last beat names running (`FriendSeat.Running`,
+whether she is up, held or down: by the primary's id, its current attempt's work
+card, or the withdrawn work card and its job, `<id>~<epoch>[.g<gen>]`;
+`sprint.laneRunsIt`) is placed on no friend's row. It waits ready until her beat
+stops naming it, and then it is dealt as any card is
+(`TestTheDealPlacesNoCardOnASecondRowWhileALaneRunsIt`). The friend's daemon
+holds the same rule for her lanes (docs/SPEC-FRIEND.md, one lane per card).
+
+Not done here: the machines' deal (`TickDeal` in steps_tick.go, outside this
+card's paths) still offers a card the friends' deal passed over to the fleet, so
+a card whose WHO line is a preference can still reach a machine while a friend's
+lane runs it. A card whose WHO line is a hard pin (`only friend`) never reaches a
+machine.
+
 ### cycle-time-breakdownb.w1: where a card's wall time goes
 
 **Each card records its stage times on itself** (the owner, 2026-10-04: the
