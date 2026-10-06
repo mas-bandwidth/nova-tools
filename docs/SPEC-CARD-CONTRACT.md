@@ -555,7 +555,7 @@ names it in one line.
 - The brief's token count (`card.Tokens`, four bytes to a token, rounded up: the measure
   every harness's count is close to for this prose) rides on the daemon's record of the card
   it hands, `brief_tokens=<n>`, beside how its contract reached the lane
-  (`contract=checkout|prepended|unread`).
+  (`contract=checkout|prepended|unread`, and `none` for a brief that carries its own frame).
 
 <!-- contract v1 -->
 You are a child of the coordinator: one task, one staged checkout, one branch, unattended. The card is the whole task: its header lines and this contract, read once. Read $JOB/JOB.md first. Start at the current BASE tip. Verify the defect still exists before editing; if already fixed report not-done with exact evidence rather than duplicate work. One change, one test that is red before and green after.
