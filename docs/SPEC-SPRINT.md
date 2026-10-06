@@ -2995,10 +2995,15 @@ by rule is not recorded as an amendment. A generated brief's task and its AS A R
 carry the sentence (`cardgen.Render`), so a reader holds a test or a ledger outside the brief's
 PATHS line inside its scope. The owner, 2026-10-06: "Can we stop this whole 'test outside of
 paths' thing. It's wasteful.", after a dozen heads were refused or read broken over a test, a
-ledger, the catalog or a map (`TestE12NeverRefusesATestOrALedger`). Owed, outside the card that
-wrote this rule: the lander's `checkCard` calling `sprint.LandScope` in place of its inline
-`ScopeAmended(diffcheck.Outside(...))`, `sprint.FilesOutsidePaths` leaving these files out, and
-`sprint.FriendReadBrief` carrying the sentence under a friend read's AS A READ.
+ledger, the catalog or a map (`TestE12NeverRefusesATestOrALedger`). The lander's `checkCard` reads
+E12 through `sprint.LandScope`, so a head over a test, a testdata file, a ledger, the catalog or a
+map outside PATHS lands and one over non-test source outside PATHS is still refused
+(`TestLandNeverRefusesATestOrALedgerOutsidePaths`); the read-broken rule's
+`sprint.FilesOutsidePaths` leaves these files out, so a finding naming only them is a rework,
+never a twin with PATHS widened (`TestAFindingNamesFilesOutsidePaths`); and
+`sprint.FriendReadBrief` copies the primary's AS A READ section, so a friend read of a generated
+brief carries the sentence. Owed: a hand-written brief with no AS A READ section hands a friend
+read no sentence.
 
 **The scope amendment.** A file outside the brief's `PATHS` that is the test, the fixture or
 the doc of the same change is allowed by rule, never by a message to the coordinator

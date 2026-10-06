@@ -1220,9 +1220,10 @@ func (l *lander) ledgers() []landLedger {
 
 // checkCard is the lander's mechanical checks of one card merged onto the batch branch
 // at before (internal/diffcheck; docs/SPEC-SPRINT.md section 7, the lander's checks): the
-// merge's own diff touches no file outside the card's PATHS (E12) and leaves no stranded
-// sentence fragment or unmatched backquote (E4). A card that adds a directory owns its
-// catalog row and the AGENTS.md maps (diffcheck.Outside). First the documents the merge
+// merge's own diff touches no file outside the card's PATHS (E12, sprint.LandScope: a
+// test, a testdata file, a TLA+ ledger, the docs catalog and an AGENTS.md map are inside
+// every card's PATHS by cardgen.AlwaysInPathsRule) and leaves no stranded sentence
+// fragment or unmatched backquote (E4). First the documents the merge
 // writes are repaired on the merge commit (sprint.RepairMerge: a stray backquote, an
 // open fence, trailing whitespace, a final newline, CRLF), as the ledgers are
 // regenerated, and repaired is the landing note that names each repair; a fault with no
@@ -1264,13 +1265,11 @@ func (l *lander) checkCard(ctx context.Context, dir, stream string, c landCard, 
 	if tracked != "" {
 		beforePaths = strings.Split(tracked, "\n")
 	}
-	// a test, fixture or doc of the same change outside PATHS is a scope amendment, allowed
-	// by rule and recorded on the batch's line (sprint.ScopeAmended; section 7)
-	var changed []string
-	for _, f := range diffcheck.Parse(diff) {
-		changed = append(changed, f.New)
-	}
-	amended, out := sprint.ScopeAmended(changed, diffcheck.Outside(c.paths, diff, beforePaths))
+	// a file a change must touch to keep the tree green is inside every card's PATHS
+	// (cardgen.AlwaysInPathsRule), and a test, fixture or doc of the same change outside
+	// PATHS is a scope amendment, allowed by rule and recorded on the batch's line
+	// (sprint.LandScope; section 7)
+	amended, out := sprint.LandScope(c.paths, diff, beforePaths)
 	if len(out) > 0 {
 		why = append(why, "it changes files outside its PATHS (E12): "+strings.Join(out, ", "))
 	}
