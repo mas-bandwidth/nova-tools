@@ -264,6 +264,7 @@ func Add(s *Snapshot, r AddReq) Plan {
 		devWhy := SprintBranchWhy(s, r.Stream, baseOf(i), id)
 		// a card whose PATHS name TLA+ model work is tiered frontier (tier_model.go)
 		brief, modelSaid, modelWhy := ModelTier(briefOf(i))
+		_, priorityWhy := PriorityOfBrief(briefOf(i)) // a PRIORITY line naming no level (priority.go)
 		switch {
 		case seen[id]:
 			p.refuse(id, "named twice")
@@ -289,6 +290,9 @@ func Add(s *Snapshot, r AddReq) Plan {
 			continue
 		case modelWhy != "":
 			p.refuse(id, modelWhy)
+			continue
+		case priorityWhy != "":
+			p.refuse(id, priorityWhy)
 			continue
 		}
 		seen[id] = true

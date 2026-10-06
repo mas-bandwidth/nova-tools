@@ -2369,8 +2369,10 @@ Go stack before the job cap kills it without one.
 
 **The walls under the cap.** `internal/ci/testdata/shard-walls.tsv` records each
 CL package's wall (the package-level `Elapsed` of `go test -json` on the last
-green run that ran it uncached) and where it was measured, `@run<id>` or
-`@<bench>`. `TestEveryCLPackageFitsItsShardWall` (`internal/ci/shard_walls_test.go`)
+green run that ran it uncached), where it was measured, `@run<id>` or
+`@<bench>`, and the runner class that measured it, from the run's job that logged
+the package (`self-hosted`, or the hosted label such as `macos-latest`; `-` where it
+is not known). `TestEveryCLPackageFitsItsShardWall` (`internal/ci/shard_walls_test.go`)
 walks the module for its live packages the way `go list ./...` does and refuses a
 live package with tests and no row, a row for a package the tree does not hold,
 and a row over 60 s; `TestTheShardWallRuleRefusesGrowthAndGaps` is its reversed

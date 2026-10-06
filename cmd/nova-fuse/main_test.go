@@ -309,6 +309,24 @@ func TestQuarantineRefusesToNarrowAnUnreadableBox(t *testing.T) {
 	assert.Equal(t, before, readRaw(t, box), "the corrupt bytes are evidence; they stay put")
 }
 
+// TestQuarantineRefusalQuotesAHostileBoxPathInItsLockdownRemedy pins security#74
+// finding 9: the unreadable-box refusal's lockdown remedy must single-quote the box
+// (through boxRemedy, the same seam its sibling uses), so a path holding shell
+// metacharacters stays data in the pasted command and never becomes commands.
+func TestQuarantineRefusalQuotesAHostileBoxPathInItsLockdownRemedy(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	box := filepath.Join(dir, "box; touch x")
+	writeRaw(t, box, "{corrupt")
+
+	code, _, errOut := capture(t, []string{"quarantine", "--box", box, "s", "r"}, nowish())
+	assert.Equal(t, 2, code, "exit = %d, want 2", code)
+	assert.Contains(t, errOut, `lockdown --box '`+box+`'`, "the remedy must single-quote the hostile path: %q", errOut)
+	assert.NotContains(t, errOut, `lockdown --box `+box, "the bare unquoted span runs the path's metacharacters when pasted: %q", errOut)
+	assert.NoFileExists(t, filepath.Join(dir, "x"), "nothing the refusal suggests may touch the filesystem beside the box")
+}
+
 // TestLiftQuarantineRefusesOnAnUnreadableBox: nothing provable can be lifted from a box
 // that cannot be read.
 func TestLiftQuarantineRefusesOnAnUnreadableBox(t *testing.T) {

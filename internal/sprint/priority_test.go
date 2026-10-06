@@ -87,3 +87,31 @@ func TestAHighPrimarysReadIsAskedAndDealtFirst(t *testing.T) {
 		assert.Equal(t, PriorityHigh, QueuePriority(w.s.Readers.Card(ReadCardID("s1-2", 1, "reader-m1"))))
 	})
 }
+
+// A PRIORITY line that names no level is refused at admission and at a recut, naming the
+// level found and the six of the ladder, never admitted silently at normal or the stream's
+// default (nova-tools#5377's cold read: "PRIORITY: urgent" was taken as no line at all).
+func TestAMisspelledPriorityIsRefused(t *testing.T) {
+	t.Parallel()
+	bad := "c: a card\nPRIORITY: urgent\n\nThe task."
+	t.Run("add", func(t *testing.T) {
+		t.Parallel()
+		w := setup(t, 0)
+		p := Add(w.s, AddReq{Stream: "s9", Cards: []CardAdd{{ID: "s9-1", Brief: bad}}})
+		require.Len(t, p.Refused, 1, "%+v", p)
+		assert.Contains(t, p.Refused[0].Why, "found urgent")
+		for _, l := range PriorityLadder {
+			assert.Contains(t, p.Refused[0].Why, l)
+		}
+		assert.Nil(t, w.s.Work.Card("s9-1"))
+	})
+	t.Run("recut", func(t *testing.T) {
+		t.Parallel()
+		w := recutWorld(t)
+		p := Recut(w.s, RecutReq{ID: "old", Brief: "tier: flash\nPRIORITY: urgent\nlater", Who: "coordinator"})
+		require.Len(t, p.Refused, 1, "%+v", p)
+		assert.Contains(t, p.Refused[0].Why, "found urgent")
+		assert.Empty(t, p.Units)
+		assert.Nil(t, w.s.Work.Card("oldb"))
+	})
+}

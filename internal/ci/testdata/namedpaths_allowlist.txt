@@ -12,8 +12,6 @@
 
 # --- 1. A specification's plan: a file the spec says will exist, not yet written. ---
 
-internal/tokens/message.go SPEC-TOKENS' plan: the message record
-
 # --- 2. An invented example: a name chosen to show the SHAPE of a path. ---
 
 internal/decide/entry.go internal/swarm/lintbase.go's class-9 story: the PATHS entry card-nx-f19 named that did not exist at its base

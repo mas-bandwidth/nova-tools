@@ -85,6 +85,7 @@ func TestPresenceTakesAMemberDownAndDealsItsCards(t *testing.T) {
 		"prop fleet deal_index=4", // every placement moves the deal's counter, by two past the member down (errata 3 amendment 5)
 		"move fleet s1-1.w1 m1:working>m2:ready",
 		"move fleet s1-3.w1 m1:ready>m2:ready",
+		"prop fleet status_seen=m1=down,0,-,-,0,- m2=up,0,-,-,0,-", // the first sight of each member, recorded as the presence part leaves it: no judgment
 		"notice fleet member down []")
 	byCard := map[string]refmodel.Move{}
 	for _, m := range got {
@@ -110,6 +111,7 @@ func TestPresenceBringsAMemberUpWhenItBeatsAndLevelsTheQueues(t *testing.T) {
 		"set fleet ctl-m2 since=2030-01-02T03:04:05Z,status=up",
 		"prop fleet deal_index=2", // the levelling moves the deal's counter too
 		"move fleet s1-3.w1 m1:ready>m2:ready",
+		"prop fleet status_seen=m1=up,0,-,-,0,- m2=up,0,-,-,0,-", // the first sight of each member, recorded as the presence part leaves it: no judgment
 		"notice fleet member up []")
 }
 
@@ -117,7 +119,13 @@ func TestPresenceLeavesAMemberThatBeatsAlone(t *testing.T) {
 	t.Parallel()
 	w := sprintOf(t, "m1", "m2")
 	w.add(t, "s1", 2)
-	expect(t, refmodel.PresenceMoves(w.snapshot(w.fresh()), later(0)))
+	// the first sight of the members is their status recorded, and nothing else
+	seen := "m1=up,0,-,-,0,- m2=up,0,-,-,0,-"
+	expect(t, refmodel.PresenceMoves(w.snapshot(w.fresh()), later(0)), "prop fleet status_seen="+seen)
+	// once recorded, a member that beats and holds its status is left alone
+	recorded := w.snapshot(w.fresh())
+	recorded.Tables.Fleet.SetProps(map[string]string{sprint.PropStatusSeen: seen})
+	expect(t, refmodel.PresenceMoves(recorded, later(0)))
 	// nothing read of the beats at all: the duty does nothing
 	snap := w.snapshot(nil)
 	snap.Beats = nil

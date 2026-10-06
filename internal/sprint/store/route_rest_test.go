@@ -168,9 +168,10 @@ func TestAHundredRoutesRestedByRule3StayUnderThePropertyCap(t *testing.T) {
 		}
 	}
 	assert.Equal(t, 2, rule3, "one property per provider: %v", names)
-	// Four: the deal's index, the tier's route index, and one rule-3 property per
-	// provider. 4 under the cap of 64 is the headroom.
-	assert.Equal(t, 4, len(props), "100 routes rested use %d properties, headroom under %d: %v", len(props), ntable.LimitTableProps, names)
+	// Five: the deal's index, the tier's route index, one rule-3 property per provider,
+	// and the status transitions' one record (sprint.PropStatusSeen). 5 under the cap of
+	// 64 is the headroom.
+	assert.Equal(t, 5, len(props), "100 routes rested use %d properties, headroom under %d: %v", len(props), ntable.LimitTableProps, names)
 	assert.Less(t, len(props), ntable.LimitTableProps)
 	now := s.Now
 	rests := sprint.RouteRests(routes, s.Fleet)

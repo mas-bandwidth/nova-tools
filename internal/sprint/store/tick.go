@@ -533,6 +533,9 @@ type PartTime struct {
 	// and the primaries it refused in this tick.
 	Asked   int `json:"asked,omitempty"`
 	Refused int `json:"refused,omitempty"`
+	// Lost is the ask part's primaries of a batch that lost its tries and
+	// was not tried again before the ask stopped: due for the next tick.
+	Lost int `json:"lost,omitempty"`
 }
 
 // TableRows is one table of a tick and the rows its parts changed in it.
@@ -1366,7 +1369,7 @@ func (t *tickRun) parts(table string, parts []sprint.TickPartDef) tickOutcome {
 		}
 		pt := began.part(table, part.Name)
 		if asked != nil {
-			pt.Asked, pt.Refused = asked.asked, asked.refused
+			pt.Asked, pt.Refused, pt.Lost = asked.asked, asked.refused, asked.lost
 		}
 		t.res.Times = append(t.res.Times, pt)
 		t.ran = true
@@ -1392,7 +1395,7 @@ func (t *tickRun) parts(table string, parts []sprint.TickPartDef) tickOutcome {
 			t.res.addRows(asked.rows)
 			if asked.unfinished {
 				t.lost = true
-				due += asked.left
+				due += asked.left + asked.lost
 			}
 		case !r.Lost && len(r.Moved) > 0:
 			t.res.addRows(sprint.PlanRows(planned))

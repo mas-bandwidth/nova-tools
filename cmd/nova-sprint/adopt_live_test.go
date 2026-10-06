@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -25,13 +26,6 @@ func livePlist(args ...string) string {
 	}
 	b.WriteString(`</array><key>KeepAlive</key><true/></dict></plist>`)
 	return b.String()
-}
-
-func liveInode(t *testing.T, path string) uint64 {
-	t.Helper()
-	_, err := os.Stat(path)
-	require.NoError(t, err)
-	return inodeOf(path)
 }
 
 // TestLiveShowsWhatIsInstalled: live reads a fake host (a home with three
@@ -117,7 +111,9 @@ func TestLiveShowsWhatIsInstalled(t *testing.T) {
 	assert.Contains(t, ran, bin+"/nova-redis fn check --addr s:1 --user coordinator --password-env PW", "the library is read by the installed nova-redis, as the seat logs in")
 
 	assert.Equal(t, filepath.Join(bin, "nova-sprint"), m.Server.Path)
-	assert.Equal(t, liveInode(t, filepath.Join(bin, "nova-sprint")), m.Server.Inode)
+	if runtime.GOOS != "windows" { // no inode to read there
+		assert.Equal(t, liveInode(t, filepath.Join(bin, "nova-sprint")), m.Server.Inode)
+	}
 	assert.Equal(t, "v1.2.0-dev.abcdef1", m.Server.Version)
 	assert.Equal(t, "abcdef1", m.Server.Revision)
 	assert.Equal(t, liveLibrary{State: "STALE", Loaded: "aaa", Want: "bbb"}, m.Library)

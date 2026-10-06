@@ -260,7 +260,16 @@ func TestTheMachineRemindsTheCoordinatorOfADeafOrIdleFriendEveryTenMinutes(t *te
 	assert.Nil(t, r.open(sprint.NFriendDeaf, amy), "amy answers")
 	assert.Nil(t, r.open(sprint.NFriendIdle, sprint.FriendRow(holder)), "a finish closes idle")
 
-	// closed episodes stay closed: no push for a judgment that no longer holds
+	// closed episodes stay closed: no push for a judgment that no longer holds. The status
+	// judgments of the friends' comings and goings are answered first, as the coordinator
+	// answers them once their steps are run: one left waiting is the behind judgment's
+	acked := map[string]bool{}
+	for _, o := range r.snap().Open {
+		if o.Note.Type == sprint.NStatus && o.Note.Kind == sprint.Judgment && !acked[o.Note.ID] {
+			acked[o.Note.ID] = true
+			r.must(store.AckStep(sprint.AckReq{Notes: []string{o.Note.ID}, Reason: "her steps are run", Who: "coordinator"}))
+		}
+	}
 	pushes := r.count(sprint.Happened, sprint.NRaisedAgain, "")
 	r.pongs["amy"] = r.clock()
 	fresh()

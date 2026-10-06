@@ -141,6 +141,16 @@ type FriendSeat struct {
 	// card priority, reads_priority.go friendReadsFirst): set by the tick's deal on the
 	// seats it deals work to, never read from her row; zero leaves her room as it is.
 	ReadsFirst int
+	// Beat, Evidence, DaemonOnly and Current are what the status transitions read
+	// (StatusTransitions, judgments_status.go): her last beat (zero when she never beat),
+	// what her status rests on (FriendEvidence), whether she is down while the coordinator's
+	// last observation is her daemon's pong alone (DaemonPong: her daemon answers, her
+	// session does not), and the build the server runs, which her daemon's
+	// (Beat.Friend.Build) is compared with.
+	Beat       Beat
+	Evidence   string
+	DaemonOnly bool
+	Current    string
 }
 
 // FieldFriendsLeft is the friends a friend's work card has left, comma joined: each the
@@ -205,6 +215,25 @@ func friendsLeft(wc *Card) []string {
 		left = append(left, from)
 	}
 	return left
+}
+
+// friendsFor is the friends up (friendDealable) whose tiers hold the tier who may still be
+// dealt the primary c: never one its withdrawn attempt was withdrawn or taken back from
+// (withdrawnFrom), as the friends' deal places it (friendDealPass). None, while friends
+// alone serve the tier (tierServed), is a card no worker is left for: the tick's judgment
+// of the tier names it (TickDeal).
+func (s *Snapshot) friendsFor(c *Card, tier string) []FriendSeat {
+	var gone []string
+	if wc := s.Fleet.Placed(WorkCardID(c.ID, c.Int("attempt"))); wc != nil && wc.Col == Withdrawn {
+		gone = withdrawnFrom(wc)
+	}
+	var out []FriendSeat
+	for _, f := range s.Friends {
+		if friendDealable(s, f) && friendTakes(f, tier) && !slices.Contains(gone, f.Name) {
+			out = append(out, f)
+		}
+	}
+	return out
 }
 
 // withdrawnFrom is the friends a withdrawn work card must never go back to: the friend

@@ -1,7 +1,9 @@
 package sprint
 
 import (
+	"cmp"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -207,8 +209,9 @@ func friendReadAgrees(c *Card) bool {
 // read tier). A placed read stands as itself. A retired read whose verdict is
 // ok stands as OK when its head matches (readHeadMatches), and one whose
 // verdict is broken stands as broken, each a copy so the fleet card is left
-// as it is. A read taken back with no verdict does not stand: the attempt may
-// be asked of another friend. The ok and broken copies are not placed on a table.
+// as it is. A read taken back with no verdict, retired or withdrawn on her row,
+// does not stand: the attempt is asked of another reader, and the withdrawn
+// record stays as history. The ok and broken copies are not placed on a table.
 func friendReadLive(s *Snapshot, pr *Card) (placed, okCards, broken []*Card) {
 	if s == nil || s.Fleet == nil || pr == nil {
 		return nil, nil, nil
@@ -219,7 +222,7 @@ func friendReadLive(s *Snapshot, pr *Card) (placed, okCards, broken []*Card) {
 	}
 	prefix := pr.ID + ".r" + itoa(attempt) + "."
 	for _, c := range s.Fleet.Cards() {
-		if c == nil || c.F("kind") != "read" || !strings.HasPrefix(c.ID, prefix) {
+		if c == nil || c.F("kind") != "read" || !strings.HasPrefix(c.ID, prefix) || c.Col == Withdrawn {
 			continue
 		}
 		if c.Placed() {
@@ -470,15 +473,18 @@ func FriendReadClose(s *Snapshot, name, primary, report string) Plan {
 		p.refuse(primary, why)
 		return p
 	}
-	p.Units = append(p.Units, friendReadCloseUnit(s, name, pr, rc, verdict, finding))
+	p.Units = append(p.Units, friendReadCloseUnit(s, name, pr, rc, verdict, finding, ""))
 	return p
 }
 
 // friendReadCloseUnit is the one close of a friend's read card on her fleet row,
 // whether her outbox report (FriendReadClose) or the read verb (friendReadVerb)
 // carried the verdict: the card retired with its verdict, a broken verdict's
-// judgment, and the primary's review judgment after it.
-func friendReadCloseUnit(s *Snapshot, name string, pr, rc *Card, verdict, finding string) Unit {
+// judgment, and the primary's review judgment after it. usage is what the read spent, as
+// the read verb's --usage carried it ("" from her outbox report): kept on the card, timed
+// and priced as a reader's read is (readCostRecord), and recorded on the primary in the
+// same unit (the owner's rule: the complete cost is tracked).
+func friendReadCloseUnit(s *Snapshot, name string, pr, rc *Card, verdict, finding, usage string) Unit {
 	attempt := rc.Int("attempt")
 	if attempt == 0 {
 		attempt = 1
@@ -499,9 +505,18 @@ func friendReadCloseUnit(s *Snapshot, name string, pr, rc *Card, verdict, findin
 	if j, ok := reviewJudgment(s, pr, reviewStep{moved: map[string]string{rc.ID: stood}, writes: notes, who: name}); ok {
 		notes = append(notes, j)
 	}
-	return Unit{Key: pr.ID, Stream: pr.Row, Changes: []Change{
-		change(Fleet, removeEntry(rc, set)),
-	}, Moved: rc.ID + " retired " + verdict, Notes: notes}
+	changes := []Change{change(Fleet, removeEntry(rc, set))}
+	if strings.TrimSpace(usage) != "" {
+		rec := readCostRecord(s, rc, usage, rc.F("asked"), cmp.Or(rc.F("begun"), stamp(s.Now)))
+		set[FieldUsage] = rec
+		maps.Copy(set, readUsageFields(rc, usage))
+		if pr.Placed() {
+			costs := map[string]string{}
+			addConsumer(pr, costs, readConsumer(s, rc, 0, verdict, rec))
+			changes = append(changes, change(Work, setEntry(pr, costs)))
+		}
+	}
+	return Unit{Key: pr.ID, Stream: pr.Row, Changes: changes, Moved: rc.ID + " retired " + verdict, Notes: notes}
 }
 
 // FriendReadOutboxLine is how a read on a friend's row is returned: her
@@ -558,7 +573,7 @@ func friendReadVerb(s *Snapshot, r ReadReq, name string) Plan {
 	namePrimarysReads(&p, all)
 	for _, c := range chosen {
 		pr := s.Work.Card(c.F("primary"))
-		u := friendReadCloseUnit(s, name, pr, c, r.Verdict, r.Finding)
+		u := friendReadCloseUnit(s, name, pr, c, r.Verdict, r.Finding, r.Usage)
 		u.Moved = c.ID + " " + c.Col + " -> " + r.Verdict + " (retired: read by " + name + ")"
 		p.Units = append(p.Units, u)
 	}
