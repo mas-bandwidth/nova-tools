@@ -2,6 +2,7 @@ package sprint
 
 import (
 	"fmt"
+	"maps"
 	"strings"
 	"time"
 
@@ -54,6 +55,12 @@ type MergeReq struct {
 	// section 7: the generated ledgers regenerated at the merge); written on its merge card
 	// as it lands, its note on the card's timeline.
 	Resolved map[string]string
+	// Commit is the landing commit (the base's tip the lander pushed) and Closes, by card, the
+	// issues its landed commits close (owner/name#N, github.Refs): each card is written them
+	// as it lands, with the issues its brief references (LandingIssues, land_issues.go),
+	// which the closer then closes on GitHub.
+	Commit string              `json:",omitempty"`
+	Closes map[string][]string `json:",omitempty"`
 }
 
 // LandedPin is one card of a record by name: its id, the head the caller pushed, and the
@@ -437,6 +444,7 @@ func mergeStep(s *Snapshot, r MergeReq) Plan {
 			}
 			u.Changes = append(u.Changes, change(Merge, moveEntry(c, r.Stream, Merged, merged)))
 			set := map[string]string{"ci": "green", "landed": now}
+			maps.Copy(set, LandingIssues(s.Work.Placed(c.ID), r.Commit, r.Closes[c.ID]))
 			if v := costs[c.ID]; v != "" {
 				set[FieldCost] = v
 			}

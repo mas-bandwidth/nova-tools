@@ -507,6 +507,9 @@ type whereView struct {
 	// Seat is the seat's last change (coordinator <name>): who gave or took
 	// it, when and why; absent while the seat has not moved since init.
 	Seat *sprint.SeatChange `json:"seat,omitempty"`
+	// IssuesPending is the issues landings have not closed on GitHub yet, as the closer's
+	// last pass left them (where_issues.go), "" when none is.
+	IssuesPending string `json:"issues_pending,omitempty"`
 	// Holds is every hold in force (hold <name>... --reason), with --cards (the dashboard's
 	// read): what is held, its kind, the reason, by whom and since when; the tables' status
 	// cells read held beside it.
@@ -982,6 +985,9 @@ func (a *app) whereOf(ctx context.Context, st *store.Store, stale time.Duration,
 	// the day's read spend per route, from the same record (cost_view.go)
 	if v.ReadSpend = sprint.ReadSpendLine(facts.Streams); v.ReadSpend != "" {
 		b.WriteString(v.ReadSpend + "\n")
+	}
+	if v.IssuesPending = issuesPending(shapes); v.IssuesPending != "" {
+		b.WriteString(issuesLine(v.IssuesPending) + "\n")
 	}
 	b.WriteString("\n")
 	parts := map[string]string{}
