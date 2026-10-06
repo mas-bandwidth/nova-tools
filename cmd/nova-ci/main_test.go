@@ -407,6 +407,22 @@ func TestSlowtestsAllowlistReportsAllBadRowsInOneRefusal(t *testing.T) {
 	assert.Contains(t, helpOut, "bound")
 }
 
+// TestHelpSlowtestsQuotesTheSleepsMarker pins the marker the code matches
+// (internal/ci/slowtests.SleepsMarker, "SLEEPS:") in help slowtests and in the
+// verb's line of nova-ci help. A cold reader otherwise guesses the skip text
+// (docs/STANDARD.md section 3, help says what the input wants).
+func TestHelpSlowtestsQuotesTheSleepsMarker(t *testing.T) {
+	t.Parallel()
+
+	code, helpVerb, stderr := runCI(t, []string{"help", "slowtests"}, "")
+	require.Equal(t, 0, code, "help slowtests: %s", stderr)
+	assert.Contains(t, helpVerb, `"SLEEPS:"`, "help slowtests = %q, want the marker the code matches quoted", helpVerb)
+
+	code, banner, stderr := runCI(t, []string{"help"}, "")
+	require.Equal(t, 0, code, "help: %s", stderr)
+	assert.Contains(t, banner, `A test skipped with the marker "SLEEPS:"`, "the verb's line = %q, want the marker quoted", banner)
+}
+
 // PROBES 1, 5 and 6 of the #4413 ruling at the verb, with the load and CPUs
 // given by hand. The same go test -json -- a 1.4 s test with a row measured at
 // 0.4 s (budget 1.2 s, three times it), and cmd/nova-bus at 58.8 s with no row

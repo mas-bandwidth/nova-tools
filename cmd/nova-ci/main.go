@@ -59,8 +59,8 @@ usage, in any Go module (no state, no store):
                       --load and --cpus give them by hand) is printed and never
                       read by the verdict. The times are a measurement: a
                       CI-SLOW line fails the run only with --enforce (the
-                      nightly reference leg). A test skipped with the SLEEPS
-                      marker and not on --sleeps (internal/pkg<TAB>test<TAB>where) is a
+                      nightly reference leg). A test skipped with the marker "SLEEPS:"
+                      and not on --sleeps (internal/pkg<TAB>test<TAB>where) is a
                       CI-SLEEPS line and fails the run on every leg. A package
                       go test served from its test cache reports a package
                       elapsed near zero, so a cached run never trips a package
