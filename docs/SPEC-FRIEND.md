@@ -794,6 +794,18 @@ gained, and `opencode run --session <id>` takes each card), or a harness
 that runs each card as a process of its own (`CardRunner`; Claude). On any
 other harness a one-shot row is delivered in batch, said once in the record.
 
+Claude, in batch mode, is reached through the open session's own blocking
+read. Claude Code has no command that puts a turn into a running session from
+outside; a background task whose exit re-invokes the session is what it has.
+The session runs `nova-bus wait --as <me> --after <cursor> --wake-file <file>`
+as a background task and re-runs it with the cursor it printed each time it
+returns. `nova-friend install --harness claude` prints that line as a NOTE;
+it is run once inside the session, never a flag, an environment variable or a
+wrapper at app start. The daemon is passive for claude: it takes nothing off
+the stream, answers the coordinator's ping with a daemon-pong, reports
+route=passive in status, and the wake file named on the line is the file it
+appends one line per message to, so a wait that missed nothing still returns.
+
 A claude lane opens no session: each card is one headless run in the
 friend's directory, `env CLAUDE_CONFIG_DIR=<config_dir> claude -p <the
 brief> --output-format stream-json --verbose`, stdin from `/dev/null`, the

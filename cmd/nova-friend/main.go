@@ -408,7 +408,9 @@ cannot be made is refused and the agent is not loaded. --secrets NAME[,NAME] wra
 exec as the machine's --seat (its store under ~/nova-bench/secrets, its key under ~/.config/nova-secrets),
 opening exactly those names to the harness and refusing to start without every one; nova-secrets
 and sops are found on PATH at install and written by absolute path. --dry-run prints the plan and
-writes nothing. For harness grok, a NOTE prints the one line the open session runs, ` + friend.GrokMonitorLine("") + `
+writes nothing. For harness claude, a NOTE prints the one line the open session runs as a background task, ` + friend.ClaudeWaitLine("<me>", "<file>.wake") + `
+(the session's own blocking read, re-run with the cursor it printed each time it returns; the daemon is passive for claude, answers
+the coordinator's ping, and appends one line per message to that wake file). For harness grok, a NOTE prints the one line the open session runs, ` + friend.GrokMonitorLine("") + `
 (--session names the wake file in place of <file>.wake): one command in the session, not a flag, an
 environment variable or a wrapper at app start. While no such monitor runs, a delivery is deferred
 (the message stays pending and is tried again), never failed and never dropped. Once the agent is
@@ -1143,7 +1145,7 @@ func (w world) install(c *tool.Call) *tool.Out {
 			Item("plan", "command", tool.Text(fmt.Sprintf("launchctl bootout gui/%d/%s", w.uid, a.Label()))).
 			Item("plan", "command", tool.Text(fmt.Sprintf("launchctl bootstrap gui/%d %s", w.uid, a.PlistPath()))).
 			Note("the agent runs: " + a.Said())
-		return noteGrokMonitor(o, a.Harness, a.Session)
+		return noteClaudeWait(noteGrokMonitor(o, a.Harness, a.Session), a.Harness, a.Friend, h.WakePath())
 	}
 	wrote, err := h.Write()
 	if err != nil {
@@ -1166,7 +1168,7 @@ func (w world) install(c *tool.Call) *tool.Out {
 		o.Item("ran", "command", tool.Text(r))
 	}
 	if err != nil {
-		return noteGrokMonitor(tool.Fail(err.Error()).Fact("plist", path), a.Harness, a.Session)
+		return noteClaudeWait(noteGrokMonitor(tool.Fail(err.Error()).Fact("plist", path), a.Harness, a.Session), a.Harness, a.Friend, h.WakePath())
 	}
 	// the delivery check, once, against the session the agent now serves; a fail is said, never undone
 	res, remedy, cannot, refusal := w.deliveryCheck(c, a.Friend, a.Harness, a.Dir, a.Session, w.stateDir(c), "", c.Dur("within"))
@@ -1186,7 +1188,7 @@ func (w world) install(c *tool.Call) *tool.Out {
 	} else {
 		o.Note("check: " + res.Line())
 	}
-	return noteGrokMonitor(o.Note("check it: nova-friend status --as "+a.Friend+" --dir "+a.Dir), a.Harness, a.Session)
+	return noteClaudeWait(noteGrokMonitor(o.Note("check it: nova-friend status --as "+a.Friend+" --dir "+a.Dir), a.Harness, a.Session), a.Harness, a.Friend, h.WakePath())
 }
 
 // undriven is the refusal of a harness whose adapter has no deliver command
@@ -1278,6 +1280,14 @@ func (w world) conformance(c *tool.Call, name, harness, state, to string, within
 // noteGrokMonitor appends the one line a grok session runs, when harness is grok.
 func noteGrokMonitor(o *tool.Out, harness, session string) *tool.Out {
 	if line := friend.GrokInstallLine(harness, session); line != "" {
+		o.Note(line)
+	}
+	return o
+}
+
+// noteClaudeWait appends the one line a claude session runs, when harness is claude.
+func noteClaudeWait(o *tool.Out, harness, friendName, wake string) *tool.Out {
+	if line := friend.ClaudeInstallLine(harness, friendName, wake); line != "" {
 		o.Note(line)
 	}
 	return o

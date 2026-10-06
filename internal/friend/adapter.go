@@ -292,5 +292,26 @@ func (s Stub) Deliver(context.Context, string) (int, error) {
 // for it.
 func (Stub) Passive() {}
 
+// ClaudeWaitLine is the one line a claude session runs as a background task
+// (docs/SPEC-FRIEND.md, the Claude paragraph): the session's own blocking
+// read of the bus, re-armed with the cursor it printed each time it returns.
+// Claude Code has no command that puts a turn into a running session from
+// outside; a background task's exit re-invokes the session. It is a command
+// run once inside the session, not a flag, an environment variable or a
+// wrapper at app start. wake is the file the daemon appends one line to per
+// message, so a wait that missed nothing still returns.
+func ClaudeWaitLine(friend, wake string) string {
+	return "run as a background task, and re-run it with the cursor it printed each time it returns: nova-bus wait --as " + friend + " --after <cursor> --wake-file " + wake
+}
+
+// ClaudeInstallLine is the NOTE install prints for harness claude; every
+// other harness gets none.
+func ClaudeInstallLine(harness, friend, wake string) string {
+	if harness != "claude" {
+		return ""
+	}
+	return ClaudeWaitLine(friend, wake)
+}
+
 // Known says whether harness is one of Harnesses.
 func Known(harness string) bool { return slices.Contains(Harnesses, harness) }
