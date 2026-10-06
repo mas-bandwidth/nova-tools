@@ -138,12 +138,11 @@ func TestTheSeatRefusesEveryVerbUntilThePushIsProven(t *testing.T) {
 	assert.Contains(t, errs, "coordinator REFUSED: PUSH DOWN: "+other+" has no push target recorded", errs)
 	assert.Equal(t, name, ta.holder())
 
-	// a harness whose adapter is the Stub cannot hold the seat: the refusal names its card
+	// a harness whose adapter is the Stub cannot hold the seat
 	target := t.TempDir()
-	code, _, errs = ta.do("seat install --redis 127.0.0.1:6381 --harness claude --target " + target)
+	code, _, errs = ta.do("seat install --redis 127.0.0.1:6381 --harness copilot --target " + target)
 	require.Equal(t, 2, code, errs)
-	assert.Contains(t, errs, "claude's adapter is the Stub", errs)
-	assert.Contains(t, errs, "until fg-claude-open-chatb-r lands", errs)
+	assert.Contains(t, errs, "copilot's adapter is the Stub", errs)
 	_, ok, err := readPush(ctx, st, name)
 	require.NoError(t, err)
 	require.False(t, ok, "a Stub's install wrote a push record")

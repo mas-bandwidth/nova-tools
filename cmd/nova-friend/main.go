@@ -1398,6 +1398,12 @@ func (w world) pongCommand(name, nonce, state, redis string) string {
 // could not run (no harness, no store), and remedy, with undriven, when the
 // adapter cannot drive the session at all.
 func (w world) deliveryCheck(c *tool.Call, name, harness, dir, session, state, to string, within time.Duration) (res friend.CheckResult, remedy string, undriven bool, refusal string) {
+	if harness == "claude" { // the claude adapter's target is the state directory, where the wake file is
+		dir = state
+		if session == "" {
+			session = name
+		}
+	}
 	deliver, err := friend.NewDeliverer(harness, dir, session, w.exec, nil)
 	if err == nil {
 		err = friend.TmuxFor(deliver, name, state) // harness tmux: the session and prompt host saved

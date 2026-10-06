@@ -1088,9 +1088,18 @@ a flag, an environment variable or a wrapper at app start. The daemon is
 passive for claude: it takes nothing off the stream, answers the
 coordinator's ping with a daemon-pong, and status reports route=passive with
 the same line as a NOTE. The wake file is `<state>/<me>.wake` in the daemon's
-state directory; the daemon is to append one line to it per message, so a
-wait that missed nothing still returns (owed: the daemon does not write it
-yet, and `nova-bus wait` is a separate verb).
+state directory. The claude adapter (`ClaudeWake`, what `NewDeliverer`
+answers for claude, its target the state directory) is the deliver command:
+it puts nothing into the session, it appends one line per push to the wake
+file, the clock then the pushed text on one line (which carries the nonce or
+message id and the path of what was pushed), making the file when absent,
+syncing it, never truncating it. The session's wait returns when the file
+grows and the session takes the turn. A missing state directory is a
+refusal naming it, and nothing is made; with no session named, the file is
+named for the friend of the directory's status file. `nova-friend check
+--harness claude` delivers its check there. Owed: the daemon's own append
+per message it peeks (it stays passive and appends nothing yet), and
+`nova-bus wait` is a separate verb.
 
 OpenCode's headless run auto-rejects any tool call that would prompt (measured
 2026-10-04, twice on one friend: `external_directory` for a path through the
@@ -1523,11 +1532,11 @@ nonzero exit from the adapter; a `Stub` says its surveyed reason), `act` (the
 pong file never held the nonce: the session did not run the line) or `reply`
 (the pong file holds it and no pong reached the bus). The unit tier
 (`TestEveryAdapterPassesDeliveryConformance`) runs the same function for every
-name in `Harnesses`: the six with a deliver command (opencode, codex, gemini,
-dsh, grok, antigravity) over a fake `Exec` (and a temporary home or an
-in-memory mailbox where the harness reads files) with bus's Fake for the
-store and a clock moved by the check's own waits, and every Stub, claude
-among them, failing at `deliver` with its reason; an adapter with a deliver
+name in `Harnesses`: the eight with a deliver command (opencode, codex, gemini,
+dsh, grok, antigravity, tmux, claude) over a fake `Exec` (and a temporary home,
+a wake file or an in-memory mailbox where the harness reads files) with bus's
+Fake for the store and a clock moved by the check's own waits, and every
+Stub failing at `deliver` with its reason; an adapter with a deliver
 command and no rig fails the test. `nova-friend check` runs it against the live
 session (docs/CLI.md), `install` runs it once after loading the agent and
 says the line in a NOTE (a session the adapter cannot drive is refused: The
