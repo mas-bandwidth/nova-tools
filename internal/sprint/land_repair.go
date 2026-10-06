@@ -73,6 +73,57 @@ func DocChanged(diff string) map[string][]int {
 	return out
 }
 
+// docIntroducedSpans marks changed lines in a block whose new prose has
+// different backquote parity from the old prose. Its line map is a guard for
+// repairSpans: an inherited odd paragraph is never a reason to edit a new,
+// balanced span. Escaped backquotes and indented code are not delimiters.
+func docIntroducedSpans(diff string) map[string]map[int]bool {
+	out := map[string]map[int]bool{}
+	for _, f := range diffcheck.Parse(diff) {
+		for _, h := range f.Hunks {
+			line := h.NewStart
+			for i := 0; i < len(h.Lines); {
+				if h.Lines[i][0] == ' ' {
+					i, line = i+1, line+1
+					continue
+				}
+				var old, added []string
+				var newLines []int
+				for ; i < len(h.Lines) && h.Lines[i][0] != ' '; i++ {
+					switch h.Lines[i][0] {
+					case '-':
+						old = append(old, h.Lines[i][1:])
+					case '+':
+						added = append(added, h.Lines[i][1:])
+						newLines = append(newLines, line)
+						line++
+					}
+				}
+				if spanParity(old) == spanParity(added) {
+					continue
+				}
+				if out[f.New] == nil {
+					out[f.New] = map[int]bool{}
+				}
+				for _, n := range newLines {
+					out[f.New][n] = true
+				}
+			}
+		}
+	}
+	return out
+}
+
+func spanParity(lines []string) int {
+	count := 0
+	for _, p := range paragraphs(lines, fences(lines)) {
+		for _, t := range ticksOf(lines, p) {
+			count += t.n
+		}
+	}
+	return count % 2
+}
+
 // RepairNote is the landing note's words for fixes: "the documents were repaired at the
 // merge: <file>:<line> <what>; ...", "" for none.
 func RepairNote(fixes []DocFix) string {
@@ -116,6 +167,10 @@ func RepairMerge(dir string, git func(args ...string) (string, error), before st
 		return "", nil, err
 	}
 	changed := DocChanged(diff)
+	// Only changed blocks that add odd span parity can authorize a repair.
+	// This leaves a base paragraph's odd count alone when the change adds a
+	// balanced span, including cases the older E4 heuristic does not read.
+	spanFault := docIntroducedSpans(diff)
 	files := make([]string, 0, len(changed))
 	for f := range changed {
 		if DocFile(f) {
@@ -139,7 +194,11 @@ func RepairMerge(dir string, git func(args ...string) (string, error), before st
 		if err != nil {
 			return "", nil, err
 		}
-		text, fx, rf := RepairDoc(f, string(b), changed[f], DocProse(prose, f))
+		faults := spanFault[f]
+		if faults == nil {
+			faults = map[int]bool{}
+		}
+		text, fx, rf := repairDoc(f, string(b), changed[f], DocProse(prose, f), faults)
 		fixes, refused = append(fixes, fx...), append(refused, rf...)
 		if text != string(b) {
 			writes = append(writes, write{f, text, fi.Mode().Perm()})
@@ -174,6 +233,12 @@ func RepairMerge(dir string, git func(args ...string) (string, error), before st
 // which the lander refuses with its line. A file that is not a document is returned as
 // it is.
 func RepairDoc(file, text string, changed []int, prose bool) (fixed string, fixes, refused []DocFix) {
+	return repairDoc(file, text, changed, prose, nil)
+}
+
+// spanFault is nil for standalone formatting; at a merge it names changed
+// lines that introduced odd parity. An empty map leaves an inherited fault.
+func repairDoc(file, text string, changed []int, prose bool, spanFault map[int]bool) (fixed string, fixes, refused []DocFix) {
 	if !DocFile(file) || text == "" {
 		return text, nil, nil
 	}
@@ -220,6 +285,15 @@ func RepairDoc(file, text string, changed []int, prose bool) (fixed string, fixe
 
 	if !prose {
 		for _, p := range paragraphs(lines, fence) {
+			if spanFault != nil {
+				introduced := false
+				for _, i := range p {
+					introduced = introduced || spanFault[i+1]
+				}
+				if !introduced {
+					continue
+				}
+			}
 			f, r := repairSpans(file, lines, p, ch)
 			fixes, refused = append(fixes, f...), append(refused, r...)
 		}
@@ -330,7 +404,7 @@ func paragraphs(lines []string, fence []int) [][]int {
 	var out [][]int
 	var p []int
 	for i, l := range lines {
-		if fence[i] != inProse || strings.TrimSpace(l) == "" {
+		if fence[i] != inProse || strings.TrimSpace(l) == "" || len(l)-len(strings.TrimLeft(l, " ")) >= 4 || strings.HasPrefix(l, "\t") {
 			if len(p) > 0 {
 				out = append(out, p)
 			}
@@ -355,6 +429,7 @@ type tick struct {
 // ticksOf is every run of backquotes in the lines of a paragraph.
 func ticksOf(lines []string, p []int) []tick {
 	var out []tick
+	open := 0
 	for _, i := range p {
 		l := lines[i]
 		for c := 0; c < len(l); {
@@ -365,6 +440,19 @@ func ticksOf(lines []string, p []int) []tick {
 			e := c
 			for e < len(l) && l[e] == '`' {
 				e++
+			}
+			if open == 0 {
+				slashes := 0
+				for j := c - 1; j >= 0 && l[j] == '\\'; j-- {
+					slashes++
+				}
+				if slashes%2 == 1 {
+					c = e
+					continue
+				}
+				open = e - c
+			} else if e-c == open {
+				open = 0
 			}
 			t := tick{line: i, col: c, n: e - c, prev: ' ', next: ' '}
 			if c > 0 {

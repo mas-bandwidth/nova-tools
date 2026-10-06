@@ -83,6 +83,41 @@ func (r *mergeRig) read(file string) string {
 // file under a prose glob is not read for backquotes at all.
 func TestTheLanderRepairsAStrayBackquoteAndSaysSo(t *testing.T) {
 	t.Parallel()
+	t.Run("a base fault leaves a new balanced span unchanged", func(t *testing.T) {
+		t.Parallel()
+		base := "# T\n\nOld `stray line.\nNew x here.\n"
+		head := "# T\n\nOld `stray line.\nNew `x` here.\n"
+		r := newMergeRig(t, map[string]string{"a.md": base}, map[string]string{"a.md": head})
+		merged := r.must("rev-parse", "HEAD")
+		note, refused, err := sprint.RepairMerge(r.dir, r.git, r.before, nil)
+		require.NoError(t, err)
+		assert.Empty(t, refused)
+		assert.Empty(t, note)
+		assert.Equal(t, head, r.read("a.md"))
+		assert.Equal(t, merged, r.must("rev-parse", "HEAD"))
+	})
+	t.Run("an escaped backquote remains literal", func(t *testing.T) {
+		t.Parallel()
+		head := "Use \\` to quote.\n"
+		r := newMergeRig(t, map[string]string{"a.md": "Use quotes.\n"}, map[string]string{"a.md": head})
+		merged := r.must("rev-parse", "HEAD")
+		note, refused, err := sprint.RepairMerge(r.dir, r.git, r.before, nil)
+		require.NoError(t, err)
+		assert.Empty(t, refused)
+		assert.Empty(t, note)
+		assert.Equal(t, head, r.read("a.md"))
+		assert.Equal(t, merged, r.must("rev-parse", "HEAD"))
+	})
+	t.Run("indented code keeps its backquote", func(t *testing.T) {
+		t.Parallel()
+		head := "# T\n\n    echo `date\n"
+		r := newMergeRig(t, map[string]string{"a.md": "# T\n"}, map[string]string{"a.md": head})
+		note, refused, err := sprint.RepairMerge(r.dir, r.git, r.before, nil)
+		require.NoError(t, err)
+		assert.Empty(t, refused)
+		assert.Empty(t, note)
+		assert.Equal(t, head, r.read("a.md"))
+	})
 	t.Run("a stray backquote is dropped on the merge commit and named", func(t *testing.T) {
 		t.Parallel()
 		r := newMergeRig(t, map[string]string{"docs/SPEC-BUS.md": "# Bus\n\nThe `push` verb.\n"},
