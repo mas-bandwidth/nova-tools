@@ -217,6 +217,11 @@ type Limits struct {
 	Nonce func() string // six random characters when nil
 	Down  func(until time.Time, reason string)
 	Up    func(nonce string)
+	// Harness is the harness whose own wording a failed turn is read in
+	// (ParseLimit), and Rest how long it is down when the text names no
+	// reset (DefaultLimitWait when zero): --limit-rest.
+	Harness string
+	Rest    time.Duration
 	// AllowOverage is the owner's word that this friend may spend paid
 	// overage; without it a harness on overage reads down.
 	AllowOverage bool
@@ -225,7 +230,8 @@ type Limits struct {
 	limited  bool
 	until    time.Time
 	reason   string
-	episodes int // limits seen, so a turn knows it hit one
+	kind     string // KindLimit or KindCredits while limited; empty when the text gave none
+	episodes int    // limits seen, so a turn knows it hit one
 	waking   string
 	answered bool
 }
@@ -237,19 +243,47 @@ func (l *Limits) Limited() (until time.Time, reason string, limited bool) {
 	return l.until, l.reason, l.limited
 }
 
+// Kind is what the limit is, KindLimit or KindCredits, while there is one.
+func (l *Limits) Kind() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.kind
+}
+
+// limitKindOf is a limit line's kind: credits when it says so, else a limit.
+func limitKindOf(line string) string {
+	if limitCredits.MatchString(line) {
+		return KindCredits
+	}
+	return KindLimit
+}
+
+var limitCredits = regexp.MustCompile(`(?i)credits?|balance|billing|payment`)
+
 // Watch is run reading every command's output for a limit and, while a wake
 // is open, for its nonce.
 func (l *Limits) Watch(run Exec) Exec {
 	return func(ctx context.Context, dir, name string, args []string, stdin string) (string, int, error) {
 		out, exit, err := run(ctx, dir, name, args, stdin)
-		l.see(out)
+		l.see(out, exit != 0 || err != nil)
 		return out, exit, err
 	}
 }
 
-func (l *Limits) see(out string) {
+func (l *Limits) see(out string, failed bool) {
 	now := l.Now()
 	lim, found := ReadLimit(out, now)
+	kind := ""
+	if !strings.Contains(out, `"rate_limit_event"`) && failed {
+		// the harness's own wording of a failed turn, with its kind and a default reset
+		// when it names none; a successful turn that only talks of limits is no limit
+		if hit, ok := ParseLimit(l.Harness, out, now, l.Rest); ok {
+			lim, found, kind = Limit{Limited: true, Until: hit.Until, Reason: hit.Reason}, true, hit.Kind
+		}
+	}
+	if found && lim.Limited && kind == "" {
+		kind = limitKindOf(lim.Reason)
+	}
 	l.mu.Lock()
 	if l.waking != "" && strings.Contains(out, l.waking) {
 		l.answered = true
@@ -262,7 +296,7 @@ func (l *Limits) see(out string) {
 		l.mu.Unlock()
 		return
 	}
-	l.limited, l.until, l.reason, l.waking, l.answered = true, lim.Until, lim.Reason, "", false
+	l.limited, l.until, l.reason, l.kind, l.waking, l.answered = true, lim.Until, lim.Reason, kind, "", false
 	l.episodes++
 	l.mu.Unlock()
 	if l.Down != nil {
