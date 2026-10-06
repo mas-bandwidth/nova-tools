@@ -74,6 +74,7 @@ func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 	// (SPEC-TOOLWORK.md documents rule 6) reads the command text in this test;
 	// the transcript runs the same lines.
 	documentedExamples := []string{
+		"nova-bus wait --as bob --timeout 1s",
 		`nova-bus send --as ada --to bob --subject hello --body "are you there?"`,
 		"nova-bus peek --as bob",
 		"nova-bus recv --as bob --exec true",
@@ -88,7 +89,7 @@ func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 	steps, err := onboarding.Steps("nova-bus", lines)
 	require.NoError(t, err)
 	require.NotEmpty(t, steps, "the `### First run` block of docs/TESTS.md holds no nova-bus command")
-	for _, verb := range []string{"send", "peek", "recv", "ack", "log", "names"} {
+	for _, verb := range []string{"wait", "send", "peek", "recv", "ack", "log", "names"} {
 		found := false
 		for _, s := range steps {
 			found = found || (len(s.Args) > 0 && s.Args[0] == verb)
