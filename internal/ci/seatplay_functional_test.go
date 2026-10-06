@@ -198,7 +198,9 @@ echo "RELEASE INSTALLED version=$v tools=$n skipped=$k"
 //     the new library;
 //  2. a second run changes nothing;
 //  3. a new build refused at the dashboard step loads the library of before
-//     again with the nova-redis saved before the install;
+//     again with the nova-redis saved before the install, and puts back only
+//     the tools this adoption kept: a file an older adoption left in the
+//     rollback directory stays out of the bin directory;
 //  4. a new friend daemon that never beats is refused although the old one
 //     beat during the drain;
 //  5. a reinstall that leaves no plist is refused naming it;
@@ -396,12 +398,20 @@ func TestSeatPlayAdoptsInOrderAndRefusesEachHalfMove(t *testing.T) {
 	dash := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusInternalServerError) }))
 	defer dash.Close()
 	tool("new3", stage)
+	// what an older adoption left in the rollback directory: a nova-config this
+	// one does not replace, and a tool the bin directory no longer has
+	kept := filepath.Join(home, "nova-bench", "release", "adopt-rollback", "bin")
+	require.NoError(t, os.MkdirAll(kept, 0o755))
+	write(filepath.Join(kept, "nova-config"), "#!/bin/sh\necho an older adoption's nova-config\n", 0o755)
+	write(filepath.Join(kept, "nova-ancient"), "#!/bin/sh\n", 0o755)
 	third, err := r.playResult(t, "tools.yml", append(vars, "-e", "nova_seat_dashboard_url="+dash.URL)...)
 	require.Error(t, err, third)
 	assert.Contains(t, third, "ADOPT REFUSED step=dashboard host=localhost: "+dash.URL+" answered 500 with no summary;")
 	assert.Contains(t, third, "library lib-new read back, the one of before")
 	assert.Contains(t, third, "started again: com.nova.loop.mem,com.nova.loop.srv")
 	assert.Equal(t, "lib-new", strings.TrimSpace(string(must(os.ReadFile(redisState)))), "the restore loaded the old library")
+	assert.Equal(t, config, string(must(os.ReadFile(filepath.Join(bin, "nova-config")))), "an older adoption's nova-config is not put back")
+	assert.NoFileExists(t, filepath.Join(bin, "nova-ancient"), "a tool an older adoption kept is not put back")
 	ran = logs()
 	assert.Less(t, strings.Index(ran, "migrate holds=0"), strings.Index(ran, "server up new3\n"), ran)
 	assert.True(t, strings.HasPrefix(ran[strings.LastIndex(ran, "server up"):], "server up new\n"), "the server last started is the old one:\n%s", ran)

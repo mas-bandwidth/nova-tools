@@ -103,6 +103,30 @@ fatal: [seat-a]: FAILED! => {"assertion": "x", "changed": false, "evaluated_to":
 	assert.NotContains(t, out, "ADOPTED")
 	assert.Contains(t, errs, "adopt REFUSED step=dashboard host=seat-a: the dashboard answered 500 with no summary; the steps before it are done")
 
+	// the window had opened: the failing check's refusal and the rescue's line saying what the
+	// rollback did are both said, and the steps the window took are said rolled back, not done
+	rolled := &fakePlay{out: `TASK [store: the receipt] ***
+ok: [seat-a] => {
+    "msg": "ADOPT step=store host=seat-a before=aaa after=bbb CHANGED"
+}
+TASK [server: the receipt] ***
+ok: [seat-a] => {
+    "msg": "ADOPT step=server host=seat-a before=v1 after=v2 restarted=com.nova.loop.s CHANGED"
+}
+TASK [dashboard: a summary] ***
+fatal: [seat-a]: FAILED! => {"assertion": "x", "changed": false, "evaluated_to": false, "msg": "ADOPT REFUSED step=dashboard host=seat-a: the dashboard answered 500 with no summary"}
+TASK [seat: the refusal, as the failed step said it, and what the rollback did] ***
+fatal: [seat-a]: FAILED! => {"changed": false, "msg": "ADOPT REFUSED step=dashboard host=seat-a: the dashboard answered 500 with no summary; rollback: 3 tools of before put back; library aaa read back, the one of before; started again: com.nova.loop.s; the schema stays migrated"}
+`, err: errors.New("exit status 2")}
+	code, out, errs = run(rolled, append([]string{"v1.2.0-dev.abc1234"}, base...)...)
+	assert.Equal(t, 1, code)
+	assert.Contains(t, out, "ADOPT step=server host=seat-a")
+	assert.Contains(t, errs, "adopt REFUSED step=dashboard host=seat-a: the dashboard answered 500 with no summary; "+
+		"rollback: 3 tools of before put back; library aaa read back, the one of before; started again: com.nova.loop.s; the schema stays migrated; "+
+		"rolled back: store,server; the ones after it did not run")
+	assert.NotContains(t, errs, "the steps before it are done")
+	assert.Equal(t, 1, strings.Count(errs, "the dashboard answered 500"), "the refusal is said once")
+
 	// a task fails with no refusal of its own: the step is the task's
 	failed := &fakePlay{out: "TASK [server: bootstrap each from its plist] ***\nfatal: [seat-a]: FAILED! => {\"rc\": 5}\n", err: errors.New("exit status 2")}
 	code, _, errs = run(failed, append([]string{"v1.2.0-dev.abc1234"}, base...)...)

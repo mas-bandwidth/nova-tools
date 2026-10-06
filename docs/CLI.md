@@ -1452,8 +1452,9 @@ ADOPTED version= hosts= steps=`; with `--dry-run` (the play's `--check`) `ADOPT 
 a machine with neither the candidate staged nor built prints `ADOPT step=seat host=<h>
 after=<version> WOULD-ADOPT` in place of the steps. Exit 0 adopted (or, with `--dry-run`, said
 what it would change); 1 refused, `ADOPT REFUSED step=<step>` said verbatim, when the play stops
-or ends without a step's line (the steps before it are done, a refusal in the seat play reloads
-the old library, and the same command again finishes it), or when `--source` holds no
+or ends without a step's line (the steps before it are done; a refusal once the seat play's
+window opened is said with what the rollback did and names those steps rolled back; the same
+command again finishes it), or when `--source` holds no
 `fleet/tools.yml`; 2 usage. The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md) section 14,
 "Adopting a build".
 
