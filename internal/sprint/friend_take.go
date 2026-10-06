@@ -3,7 +3,11 @@ package sprint
 import (
 	"fmt"
 	"slices"
+	"strconv"
+	"strings"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 )
 
 // A friend's card taken back (docs/SPEC-SPRINT.md section 1, a friend's card taken back;
@@ -14,12 +18,15 @@ import (
 // cards are withdrawn: the work card is withdrawn on her row (never a failure: no redeal of
 // its bound is spent, FieldTakeEnded is not set), its primary goes back to ready, and the
 // friends' deal (friendDeal) places the same card again at its next generation, on its own
-// branch and job. A card she has started stays with her and finishes: one she pushed to, one
-// her beat names running (the caller reads both: Started), and one she finished (in review
-// or later, so no longer ready or working on her row). With cards named, each one she may
-// give up is taken and each one she keeps is refused, one line each (section 1, the card
-// friend-take-partial.w1); AllOrNothing takes none when any is refused, as the take did
-// before.
+// branch and job. A card she has started stays with her and finishes under the coordinator's
+// take: one she pushed to, one her beat names running (the caller reads both: Started), and
+// one she finished (in review or later, so no longer ready or working on her row). With cards
+// named, each one she may give up is taken and each one she keeps is refused, one line each
+// (section 1, the card friend-take-partial.w1); AllOrNothing takes none when any is refused,
+// as the take did before. A hold keeps no card (the owner, 2026-10-04, on a held friend still
+// showing two working cards: "nonono"): it takes her started cards too, and a started card
+// with a push carries its pushed head and the generation whose branch holds it
+// (FieldCarryHead, FieldCarryGen), so the next taker starts from that work and none is lost.
 
 const (
 	// FieldTakenBack is why a friend's work card was taken back, on the withdrawn card until
@@ -30,18 +37,45 @@ const (
 	FieldTakenFrom = "taken_from"
 	// NTakenBack is the happened note of a friend's card taken back to ready.
 	NTakenBack = "a friend's card taken back to ready"
+	// FieldCarryHead is the head a started card had pushed when a hold took it back, and
+	// FieldCarryGen the generation whose branch holds it (BranchOf at that generation): the
+	// next generation starts from it. Both stay on the card through its next deal.
+	FieldCarryHead = "carry_head"
+	FieldCarryGen  = "carry_gen"
 )
+
+// pushPrefix opens the words friend take and friend down give a started card with a push
+// (cmd/nova-sprint friendStarted): "a push on its branch <branch> at <tip>".
+const pushPrefix = "a push on its branch "
+
+// PushedTip is the tip a started card's words name ("a push on its branch <branch> at
+// <tip>"), "" when they name no push at a full sha (her beat names it running, or the tip
+// could not be read): only a push read at its sha is carried.
+func PushedTip(why string) string {
+	if !strings.HasPrefix(why, pushPrefix) {
+		return ""
+	}
+	_, tip, ok := strings.Cut(strings.TrimPrefix(why, pushPrefix), " at ")
+	if !ok || !typedrec.IsFullSha(tip) {
+		return ""
+	}
+	return tip
+}
 
 // FriendTakeReq is friend take (IDs or All) or the hold's withdrawal (Hold, All): the
 // friend, the cards named (each a primary or its work card), every card of hers she has
 // not started (All), why, and Started, the work cards she has started as the caller read
 // them (a push on the card's branch, her beat naming it running), each with its why.
-// AllOrNothing takes none of the cards named when any one is refused.
+// AllOrNothing takes none of the cards named when any one is refused. Begun, with Hold and
+// All, is a friend's hold with no --return: only the cards she has begun (working, or read
+// as started) are taken, and her ready cards not begun wait on her row, none taken into a
+// lane the take frees.
 type FriendTakeReq struct {
 	Friend       string
 	IDs          []string
 	All          bool
 	Hold         bool
+	Begun        bool
 	AllOrNothing bool
 	Reason       string
 	Started      map[string]string
@@ -51,7 +85,7 @@ type FriendTakeReq struct {
 // takenBackWhy is the words a taken card carries (FieldTakenBack).
 func (r FriendTakeReq) takenBackWhy() string {
 	if r.Hold {
-		return "taken back by the hold of friend " + r.Friend + " (friend down)"
+		return "taken back by the hold of friend " + r.Friend
 	}
 	if r.Reason == "" {
 		return "taken back by the coordinator"
@@ -76,7 +110,12 @@ func FriendTake(s *Snapshot, r FriendTakeReq) Plan {
 			// a hold takes started cards too: a card sitting on a held friend blocks every card
 			// that needs it (the owner, 2026-10-04: "Held friends cards need to be
 			// redistributed automatically"); the coordinator's own take keeps a started one
-			if r.Started[c.ID] == "" || r.Hold {
+			switch {
+			case r.Hold && r.Begun:
+				if c.Col == Working || r.Started[c.ID] != "" {
+					take = append(take, c)
+				}
+			case r.Started[c.ID] == "" || r.Hold:
 				take = append(take, c)
 			}
 		}
@@ -111,7 +150,8 @@ func FriendTake(s *Snapshot, r FriendTakeReq) Plan {
 	// her ready cards not taken, oldest first: each working card taken frees a lane one fills
 	var next []*Card
 	for _, c := range mine {
-		if c.Col == Ready && !slices.Contains(take, c) {
+		// a held friend takes nothing into a lane her hold frees
+		if c.Col == Ready && !slices.Contains(take, c) && !(r.Hold && r.Begun) {
 			next = append(next, c)
 		}
 	}
@@ -125,7 +165,18 @@ func FriendTake(s *Snapshot, r FriendTakeReq) Plan {
 		} else {
 			set[FieldTakenFrom] = row
 		}
-		u := withdrawUnit(s, c, set, unset, NTakenBack, r.Who, why+" from friend "+r.Friend)
+		what := why + " from friend " + r.Friend
+		if started := r.Started[c.ID]; started != "" {
+			// only a hold takes a started card: its pushed head is carried to the next taker
+			what += "; started (" + started + ")"
+			if tip := PushedTip(started); tip != "" {
+				set[FieldCarryHead], set[FieldCarryGen] = tip, strconv.Itoa(c.Int("gen"))
+				what += fmt.Sprintf(": the next generation starts from its pushed head %s (gen %d)", tip, c.Int("gen"))
+			} else {
+				what += ": no push to carry"
+			}
+		}
+		u := withdrawUnit(s, c, set, unset, NTakenBack, r.Who, what)
 		if c.Col == Working && len(next) > 0 {
 			n := next[0]
 			next = next[1:]
