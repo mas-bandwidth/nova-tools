@@ -2833,13 +2833,31 @@ ledger's) and a `NOTE <card>: the documents were repaired at the merge: <file>:<
 through. With the repair run, a Markdown or text file's backquotes are the repair's to
 judge and E4's count no longer refuses them; E4 still reads a Go comment's.
 
+A code span the change wraps across a line break is joined before the span check
+(`joinSpans`): the night of 2026-10-05 four heads (the tmux adapter twice, the RakNet
+study twice, 1535 and 1639 backquotes) were refused because their workers wrapped inline
+code spans in Markdown they wrote, three lanes told to fix it could not, and the
+coordinator joined the spans by hand with a script. A line of prose the change writes,
+outside a fenced block, that ends inside a span it opens (the paragraph's count odd at its
+end and the line holding a backquote) is joined, a blank where each line broke, to the
+lines of the paragraph the change writes after it up to the first that brings the count
+even. Only the change's lines are joined: a span the base wrapped, or one opened on a
+line of the base's, is never rewritten, since that reads as a deletion. A line that starts
+a block (a heading, a quote, a list item, a table row) is not joined to the one above it.
+Inside a paragraph a line break reads as a blank, so the join changes the lines and not
+the text. The note names it once a file, `E4 repaired: N spans joined in <file>`, before
+the other repairs on the card's `NOTE` line and in the merge commit's body. A wrap that no
+line of the change's closes is left to the span check above, which drops the one stray
+backquote or refuses with the line; joining never makes a count even that was odd.
+
 A stream's prose globs (`stream set <s> --prose <glob,...>`, the control card's field
 `prose`, `sprint.StreamProse`; `default` takes them off) name the files whose backquotes
 are their own: on them the code-span check does not run at all, neither the repair's nor
 E4's (`sprint.DocProse`). The private record's `security/**` and `ratings/**` are prose,
 set on its stream by the coordinator. The tests are internal/sprint/land_repair_test.go,
-internal/sprint/land_repair_merge_test.go (`TestTheLanderRepairsAStrayBackquoteAndSaysSo`
-and `TestE4CatchesADeletionThatUnbalancesASpan`, on a real merge commit) and cmd/nova-sprint/land_repair_test.go (through `land`).
+internal/sprint/land_repair_merge_test.go (`TestTheLanderRepairsAStrayBackquoteAndSaysSo`,
+`TestE4CatchesADeletionThatUnbalancesASpan` and
+`TestTheLanderJoinsAWrappedCodeSpanInAddedLines`, on a real merge commit) and cmd/nova-sprint/land_repair_test.go (through `land`).
 
 **The tree gate.** Every tip of the batch branch passes the tree gate before the
 next head is merged onto it, in a clone that holds a `go.mod`: the module builds

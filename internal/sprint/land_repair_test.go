@@ -45,11 +45,11 @@ func TestADocumentFaultIsRepairedOnceOrRefusedWithItsLine(t *testing.T) {
 	require.Len(t, refused, 1)
 	assert.Equal(t, "a.md:3 leaves a code span unmatched and the repair is ambiguous: 2 backquotes could be the stray one: See `a` b `c` ` here.", refused[0].String())
 
-	// a span across two lines of a paragraph is no fault
+	// a span the change wraps across two lines of a paragraph is joined onto one
 	span := "The `stream\nset` verb.\n"
 	fixed, fixes, refused = sprint.RepairDoc("a.md", span, sprint.DocLines{Added: []int{1, 2}}, false)
-	assert.Equal(t, span, fixed)
-	assert.Empty(t, fixes)
+	assert.Equal(t, "The `stream set` verb.\n", fixed)
+	assert.Equal(t, "E4 repaired: 1 spans joined in a.md", sprint.RepairNote(fixes))
 	assert.Empty(t, refused)
 
 	// the base's own fault, on a line the change does not write, is left
