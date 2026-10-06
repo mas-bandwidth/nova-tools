@@ -61,6 +61,10 @@ type Tool struct {
 	// The default verb accepts positional arguments, also when named explicitly.
 	// "" makes every first word a verb and leaves every verb flags-only.
 	Default string
+	// Exists reports whether path is a file or directory that is there: the
+	// one seam the skeleton reads the filesystem through (skeleton contract
+	// 2.1). Nil defaults to checking with os.Stat. Tests pass a map.
+	Exists func(path string) bool
 	// Words are the tool's own status words (STALE, MISSING, UNCHANGED), the
 	// only ones Out.As may put in place of OK or FAILED: at most MaxWords,
 	// upper case, none of OK, FAILED, REFUSED, MORE or NOTE (Problems).
@@ -212,7 +216,7 @@ func (t *Tool) dispatch(ctx context.Context, args []string, stdin io.Reader, std
 	if members := t.group(args[0]); len(members) > 0 {
 		return t.inGroup(args, members, asJSON, stdout, stderr)
 	}
-	if t.Default != "" && (strings.HasPrefix(args[0], "-") || strings.ContainsRune(args[0], os.PathSeparator) || exists(args[0])) {
+	if t.Default != "" && (strings.HasPrefix(args[0], "-") || strings.ContainsRune(args[0], os.PathSeparator) || t.exists(args[0])) {
 		for _, v := range t.verbs() { // a flag, a path, or a file: the default verb's
 			if v.Name == t.Default {
 				return t.call(ctx, v, args, stdin, stdout, stderr)
@@ -253,7 +257,10 @@ func (t *Tool) topicNames() []string {
 }
 
 // exists reports whether a word names a file or directory that is there.
-func exists(path string) bool {
+func (t *Tool) exists(path string) bool {
+	if t.Exists != nil {
+		return t.Exists(path)
+	}
 	_, err := os.Stat(path)
 	return err == nil
 }
@@ -578,7 +585,7 @@ func (t *Tool) call(ctx context.Context, v Verb, args []string, stdin io.Reader,
 		switch {
 		case !c.dryRead: // a tool bug its own tests meet: the verb ran as if for real
 			o = Fail("--dry-run was given and the verb never read it (Call.DryRun); it may have written")
-		case o.Status == OK:
+		case o.Status == OK && !hasFact(o, "dry_run"):
 			o.Fact("dry_run", true)
 		}
 	}
@@ -693,7 +700,7 @@ type Call struct {
 // DryRun reports whether --dry-run was given (only a Verb with DryRun takes
 // it). A verb reads it before it writes and, when it is set, returns the plan
 // the real run would carry out, from the same code path, and writes nothing;
-// the skeleton adds dry_run=true to the OK line.
+// the skeleton adds dry_run=true to the OK line unless the verb set it.
 func (c *Call) DryRun() bool {
 	c.dryRead = true
 	return c.given["dry-run"] && c.Bool("dry-run")
@@ -750,4 +757,17 @@ func (c *Call) Refused() *Out {
 		}
 	}
 	return o
+}
+
+// hasFact reports whether o carries a fact of that name.
+func hasFact(o *Out, k string) bool {
+	if o == nil {
+		return false
+	}
+	for _, f := range o.Facts {
+		if f.K == k {
+			return true
+		}
+	}
+	return false
 }
