@@ -16,38 +16,24 @@ import (
 func TestAReadTakenBackByTheAwaySweepCanBeAskedAgainAtTheSameAttempt(t *testing.T) {
 	t.Parallel()
 	w := setup(t, 1)
-	// Add extra reader rows so we have reader-a, reader-b, reader-c, reader-d.
-	w.s.Readers.SetRows([]string{"reader-a", "reader-b", "reader-c", "reader-d"})
-	w.s.ReaderStates = map[string]string{
-		"reader-a": ReaderUp,
-		"reader-b": ReaderUp,
-		"reader-c": ReaderUp,
-		"reader-d": ReaderUp,
+	rows := []string{"reader-a", "reader-b", "reader-c", "reader-d"}
+	w.s.Readers.SetRows(rows)
+	w.s.ReaderStates = map[string]string{}
+	for _, rd := range rows {
+		w.s.ReaderStates[rd] = ReaderUp
 	}
 	toReview(w, "s1-1")
-	// s1-1 is a pro card (tier 2): needs 2 readers.
+	// reads are asked one at a time (ReadsWanted): the first alone
 	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-1"}}}))
 	firstReads := readsAt(w.s, w.s.Work.Card("s1-1"), 1)
-	require.Len(t, firstReads, 2)
+	require.Len(t, firstReads, 1)
 	r1 := firstReads[0].F("reader")
-	r2 := firstReads[1].F("reader")
 
-	// Set r1 away so sweepReads takes its read back.
-	w.s.ReaderStates[r1] = ReaderAway
-	var sweepPlan Plan
-	sweepReads(w.s, &sweepPlan)
-	require.NotEmpty(t, sweepPlan.Units, "sweepReads takes back r1's read")
-	w.must(sweepPlan)
-
-	oldCard := w.s.Readers.Card(ReadCardID("s1-1", 1, r1))
-	require.NotNil(t, oldCard)
-	assert.False(t, oldCard.Placed())
-	assert.Equal(t, "away", oldCard.F("retired_by"))
-
-	// Also simulate another reader's card retired for a different reason (e.g. RetiredByLevel).
-	otherReader := "reader-d"
-	for _, rd := range []string{"reader-a", "reader-b", "reader-c", "reader-d"} {
-		if rd != r1 && rd != r2 {
+	// another reader holds a read of the attempt retired by the level, not by
+	// the away sweep: it is not asked again.
+	otherReader := ""
+	for _, rd := range rows {
+		if rd != r1 {
 			otherReader = rd
 			break
 		}
@@ -60,15 +46,41 @@ func TestAReadTakenBackByTheAwaySweepCanBeAskedAgainAtTheSameAttempt(t *testing.
 		Col:    "",
 		Fields: map[string]string{"kind": "read", "primary": "s1-1", "attempt": "1", "reader": otherReader, "stream": "s1", "retired": stamp(w.s.Now), "retired_by": RetiredByLevel},
 	})
+	// Set r1 away so sweepReads takes its read back; another reader is up to
+	// take it, so it is retired by away.
+	w.s.ReaderStates[r1] = ReaderAway
+	var sweepPlan Plan
+	sweepReads(w.s, &sweepPlan)
+	require.NotEmpty(t, sweepPlan.Units, "sweepReads takes back r1's read")
+	w.must(sweepPlan)
 
-	// Make sure only r1, r2, and otherReader are up; leave any 4th reader away so r1 must be chosen.
-	for _, rd := range []string{"reader-a", "reader-b", "reader-c", "reader-d"} {
-		if rd != r1 && rd != r2 && rd != otherReader {
+	oldCard := w.s.Readers.Card(ReadCardID("s1-1", 1, r1))
+	require.NotNil(t, oldCard)
+	assert.False(t, oldCard.Placed())
+	assert.Equal(t, "away", oldCard.F("retired_by"))
+
+	// A pro card needs two different readers: reader-c has read it ok, so the
+	// next read is wanted (ReadsWanted). The rest go away, so r1 is the one
+	// reader the re-ask can go to; bring r1 back up.
+	okReader := ""
+	for _, rd := range rows {
+		if rd != r1 && rd != otherReader {
+			okReader = rd
+			break
+		}
+	}
+	w.s.Readers.Put(&Card{
+		ID:     ReadCardID("s1-1", 1, okReader),
+		Rev:    1,
+		Row:    okReader,
+		Col:    OK,
+		Fields: map[string]string{"kind": "read", "primary": "s1-1", "attempt": "1", "reader": okReader, "stream": "s1", "head": w.s.Work.Card("s1-1").F("head"), "asked": stamp(w.s.Now)},
+	})
+	for _, rd := range rows {
+		if rd != r1 && rd != otherReader {
 			w.s.ReaderStates[rd] = ReaderAway
 		}
 	}
-
-	// Bring r1 back up.
 	w.s.ReaderStates[r1] = ReaderUp
 
 	// Drive the tick's ask path!
@@ -105,20 +117,16 @@ func TestAReadTakenBackByTheAwaySweepCanBeAskedAgainAtTheSameAttempt(t *testing.
 	assert.False(t, otherOK, "otherReader retired by level must not be re-asked at the same attempt")
 	assert.Equal(t, ReadCardID("s1-1", 1, otherReader), otherID)
 
-	// r2 already has a live read card and cannot be asked again.
-	r2ID, r2OK := ReadCardForAsk(w.s, "s1-1", 1, r2)
-	assert.False(t, r2OK, "r2 already has a live read card")
-	assert.Equal(t, ReadCardID("s1-1", 1, r2), r2ID)
-
-	// liveReadsAt sees both live reads (r2 and r1 with .g1).
+	// the primary now has the ok read and the re-asked read, the second identity.
 	live := liveReadsAt(w.s, w.s.Work.Card("s1-1"), 1)
-	assert.Len(t, live, 2, "primary now has both live reads")
+	require.Len(t, live, 2, "primary has both reads live")
+	assert.Contains(t, []string{live[0].ID, live[1].ID}, reaskID)
 
 	// Once the second identity card exists, ticking again does not ask r1 a third time.
 	repeatPlan := Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-1"}}})
 	for _, u := range repeatPlan.Units {
 		for _, ch := range u.Changes {
-			if ch.Table == Readers {
+			if ch.Table == Readers && ch.Entry.Create != nil {
 				assert.NotEqual(t, r1, ch.Entry.Create.Row, "r1 must not be asked a third time at same attempt")
 			}
 		}
@@ -145,7 +153,7 @@ func TestAskDoesNotOveraskBesideALiveG1Read(t *testing.T) {
 	}
 	toReview(w, "s1-1") // pro card needing 2 readers
 
-	// reader-a has plain read retired by away, and live .g1 read in Asked
+	// reader-a has plain read retired by away, and live .g1 read, ok
 	w.s.Readers.Put(&Card{
 		ID:     ReadCardID("s1-1", 1, "reader-a"),
 		Rev:    1,
@@ -157,7 +165,7 @@ func TestAskDoesNotOveraskBesideALiveG1Read(t *testing.T) {
 		ID:     ReadCardSecondID("s1-1", 1, "reader-a"),
 		Rev:    1,
 		Row:    "reader-a",
-		Col:    Asked,
+		Col:    OK, // reads are asked one at a time: the next is wanted once this one is ok
 		Fields: map[string]string{"kind": "read", "primary": "s1-1", "attempt": "1", "reader": "reader-a", "stream": "s1", "head": "h1", "asked": stamp(w.s.Now)},
 	})
 
@@ -462,7 +470,7 @@ func TestAskInsteadCanTakeBackLiveG1Read(t *testing.T) {
 	}
 	toReview(w, "s1-1") // pro card needing 2 readers
 
-	// reader-a has plain read retired by away, and live .g1 read in Asked
+	// reader-a has plain read retired by away, and live .g1 read, ok
 	w.s.Readers.Put(&Card{
 		ID:     ReadCardID("s1-1", 1, "reader-a"),
 		Rev:    1,
