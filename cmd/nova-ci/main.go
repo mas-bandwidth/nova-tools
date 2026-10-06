@@ -39,7 +39,7 @@ usage, in any Go module (no state, no store):
   nova-ci version     which build this is: <version> <goos>/<goarch> <go version>
   nova-ci slowtests [--budget <seconds> | --package-budget <s>] [--test-budget <s>]
                     [--allowlist <file>] [--sleeps <file>] [--enforce]
-                    [--load <n> --cpus <n>] [--example] [--json] [--max <n>]
+                    [--load <n> --cpus <n>] [--example] [--allow-empty] [--json] [--max <n>]
                       (inspection) read newline-delimited ` + "`go test -json`" + `
                       TestEvents on stdin (or the built-in example stream with
                       --example) and print one CI-SLOW line per package whose
@@ -59,8 +59,8 @@ usage, in any Go module (no state, no store):
                       --load and --cpus give them by hand) is printed and never
                       read by the verdict. The times are a measurement: a
                       CI-SLOW line fails the run only with --enforce (the
-                      nightly reference leg). A test skipped with the SLEEPS
-                      marker and not on --sleeps (internal/pkg<TAB>test<TAB>where) is a
+                      nightly reference leg). A test skipped with the marker "SLEEPS:"
+                      and not on --sleeps (internal/pkg<TAB>test<TAB>where) is a
                       CI-SLEEPS line and fails the run on every leg. A package
                       go test served from its test cache reports a package
                       elapsed near zero, so a cached run never trips a package
@@ -127,9 +127,10 @@ usage, in a nova-tools checkout (this repository's own CI steps):
 
 exit codes: 0 done, 1 the verb said no (slowtests, local, github receipt), 2 usage or could not run; by verb:
   slowtests: 0 inside budget, or CI-SLOW lines without --enforce (a
-    measurement); 1 a CI-SLEEPS line, or a CI-SLOW line under --enforce
-    (the check said no); 2 the invocation could not run (bad flag,
-    unreadable stdin)
+    measurement), or an empty stream with --allow-empty; 1 a CI-SLEEPS
+    line, a CI-SLOW line under --enforce, or an empty stream without
+    --allow-empty (the check said no); 2 the invocation could not run
+    (bad flag, unreadable stdin)
   local: 0 green; 1 a red test, a package that did not build, or a
     CI-SLEEPS line; 2 a step that could not run, or usage
   functional: 0 the selection printed (packages=0 included); 2 a flag, or
