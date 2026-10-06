@@ -3309,6 +3309,23 @@ clone, the gate's and the update runs below, is under `GOFLAGS=-mod=readonly`:
 no run writes `go.mod` or `go.sum` (under a caller's `-mod=mod` the update runs
 of 2026-10-03 rewrote `go.mod` and every resolution was refused for it), and a
 module that needs them changed fails the run, which is the card's finding.
+When the server's land loop (`run --land`) has a landing in flight and a fleet
+member other than this machine is up, that landing's gate does not run on the
+server: the lander asks every such member's Go lane, takes the first granted
+(giving its place back on the others; a lane not yet granted is asked again
+on the next cycle of the land loop, on that loop's clock, not on a timer of
+its own, so the beat keeps printing), and runs the gate's go commands there
+as one bench run (a copy of the clone, its `.git` too when the tree tests run,
+since `internal/ci` reads the history; `nice -n 19`, `GOFLAGS=-mod=readonly`,
+`NOVA_TEST_NO_HOST=1`; each run named on its own line, the first red ending
+it and named in the finding), then gives the lane back. A bench that does not
+answer, or a copy that fails, is nobody's finding: that gate runs in the clone
+instead. The batch's `LAND` line carries `bench=<member>` (`here` for a gate
+the loop ran in the clone; `+` between them when a batch's gates ran in more
+than one place) and `wall=<seconds>`, the gates' total. With no such bench,
+the loop's gate runs in the clone; a `land` command on its own (a hand land,
+the install walkthrough) runs it there as before and its line carries no
+bench. The ledgers' update runs stay in the clone.
 `--check` is the caller's own command on top, once a batch, as before.
 
 **The scope amendment.** A file outside the brief's `PATHS` that is the test, the fixture or
@@ -5325,6 +5342,12 @@ what landed and everything land said was wrong (a refused or failed batch, a ref
 batch, its remedy); a round that could not read the merge queue prints `LAND FAILED` with why,
 since an unreadable queue is not an empty one, and the next round tries again. A failure is
 printed once, when it begins: the same failure again prints nothing until it changes or clears.
+Every cycle prints one line: `LAND OK` or `LAND REFUSED` when a landing finished
+on that cycle, or `LAND IDLE queued=<n> step=<stage> since=<age>` while one is
+still running (`step=-` and `since=0s` when nothing is in flight). A cycle with
+cards queued whose landing has not finished within 10 minutes (`LandDeadline`)
+raises one judgment, `an operation was stuck`, naming the stage and the process
+it waits on. The landing is not stopped.
 
 With `server switch <binary> [--rollback]` the coordinator or an install switches the server's
 binary file on disk, keeping the previous binary (`<target>.prev`). With `--rollback`, if a
