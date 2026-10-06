@@ -159,6 +159,10 @@ var swarmAudit = audit.Config{
 		// this verb hands it, and every argument it prints is a card id, a count or a
 		// verb name from the sprint's own JSON.
 		`"bufio"`, `"github.com/mas-bandwidth/nova-tools/internal/member"`,
+		// keys.go and member.go read a unit's keys in this process. A Secret's
+		// formatters yield only the redacted word, and the value is handed to one
+		// child as an environment entry, never printed by this binary.
+		`"github.com/mas-bandwidth/nova-tools/internal/secrets"`,
 		// member.go calls only log.Redact, a pure string transformer, on what a failed
 		// sprint verb printed, as the server answered it, before it reaches the member's
 		// writer. It holds no writer here; the transformed value is escaped and bounded by

@@ -20,10 +20,10 @@ func TestEveryUnitKeyIsReadInProcessNeverFromTheEnvironment(t *testing.T) {
 		route     = "ANTHROPIC_API_KEY"
 		other     = "XAI_API_KEY"
 		missing   = "OPENAI_API_KEY"
-		seatDec   = "seat-decision-key-value"
-		seatRoute = "seat-route-key-value"
-		seatOther = "seat-other-key-value"
-		poison    = "env-poison-not-the-seat"
+		seatDec   = "qd7m3n8p1w4k6r9x"
+		seatRoute = "vx2b9h5t0y8c3j6l"
+		seatOther = "zf6g1l4s7u2e9a0w"
+		poison    = "mw0o5i8d3f7q2n4b"
 	)
 	l := Login{Store: "/s", As: "studio", Key: "/k/studio.key", Sops: "/bin/sops", Name: "NOVA_REDIS_COORDINATOR_PASSWORD",
 		Names: []string{decision, route, other}}
@@ -65,11 +65,11 @@ func TestEveryUnitKeyIsReadInProcessNeverFromTheEnvironment(t *testing.T) {
 		n, v, _ := strings.Cut(kv, "=")
 		names = append(names, n)
 		if n == route {
-			if v != seatRoute {
-				t.Fatal("the child was not handed the seat's route key")
-			}
-		} else if strings.Contains(v, poison) || strings.Contains(v, seatDec) || strings.Contains(v, seatOther) {
-			t.Fatalf("the child environment carries another unit key under %s", n)
+			assert.True(t, v == seatRoute, "the child was not handed the seat's route key")
+		} else {
+			assert.False(t, strings.Contains(v, poison), "the child environment carries the environment's value under "+n)
+			assert.False(t, strings.Contains(v, seatDec), "the child environment carries the decision key under "+n)
+			assert.False(t, strings.Contains(v, seatOther), "the child environment carries the other route key under "+n)
 		}
 	}
 	assert.Equal(t, []string{"PATH", "HOME", route}, names)
@@ -121,10 +121,6 @@ func assertNotEnv(t *testing.T, s Secret, seat, env string) {
 	t.Helper()
 	got := ""
 	require.NoError(t, s.Use(func(v string) error { got = v; return nil }))
-	if got == env {
-		t.Fatal("the secret was read from the environment")
-	}
-	if got != seat {
-		t.Fatal("the secret read in process is not the seat's value")
-	}
+	assert.False(t, got == env, "the secret was read from the environment")
+	assert.True(t, got == seat, "the secret read in process is not the seat's value")
 }

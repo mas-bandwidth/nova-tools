@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/internal/decide"
@@ -34,12 +35,8 @@ func TestDecisionKeyIsReadFromTheSeatNotTheEnvironment(t *testing.T) {
 	}
 	got, err := la.a.decisionKey()
 	require.NoError(t, err)
-	if got == envKey {
-		t.Fatal("the decision key was taken from the environment")
-	}
-	if got != seatKey {
-		t.Fatal("the decision key was not the seat's value")
-	}
+	assert.False(t, got == envKey, "the decision key was taken from the environment")
+	assert.True(t, got == seatKey, "the decision key was not the seat's value")
 
 	la.a.loginSecret = func(l secrets.Login) (secrets.Secret, error) {
 		return secrets.Secret{}, errors.New("seat " + l.As + " of store " + l.Store + " holds no " + l.Name)
@@ -55,7 +52,5 @@ func TestDecisionKeyIsReadFromTheSeatNotTheEnvironment(t *testing.T) {
 	bare.env[decide.JevSecret] = envKey
 	got, err = bare.a.decisionKey()
 	require.NoError(t, err)
-	if got != envKey {
-		t.Fatal("with no seat login recorded, the decision key is the environment's")
-	}
+	assert.True(t, got == envKey, "with no seat login recorded, the decision key is the environment's")
 }

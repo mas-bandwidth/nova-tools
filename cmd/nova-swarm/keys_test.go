@@ -66,17 +66,12 @@ func TestMemberRouteKeyIsReadInProcessAndTheChildGetsOnlyThatOne(t *testing.T) {
 		names = append(names, n)
 		switch n {
 		case "ANTHROPIC_API_KEY":
-			if v != route {
-				t.Fatal("the child was not handed the seat's route key")
-			}
+			assert.True(t, v == route, "the child was not handed the seat's route key")
 		case decide.JevSecret:
-			if v != jev {
-				t.Fatal("native was not handed the seat's decision key")
-			}
+			assert.True(t, v == jev, "native was not handed the seat's decision key")
 		default:
-			if strings.Contains(v, poison) || strings.Contains(v, other) {
-				t.Fatalf("the child environment carries a key it must not, under %s", n)
-			}
+			assert.False(t, strings.Contains(v, poison), "the child environment carries the environment's value under "+n)
+			assert.False(t, strings.Contains(v, other), "the child environment carries the other route key under "+n)
 		}
 	}
 	assert.NotContains(t, names, "XAI_API_KEY")
