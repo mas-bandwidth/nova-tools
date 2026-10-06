@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -54,6 +55,7 @@ func reachWorld(t *testing.T, r *rig) (world, *reachClock) {
 	w.reachStart = func(ctx context.Context, deliver func(context.Context) error) <-chan error {
 		done := make(chan error, 1)
 		done <- deliver(ctx)
+		close(done)
 		return done
 	}
 	w.now = clock.now
@@ -393,6 +395,19 @@ func TestReachProofCancelsRunningDeliveryWithoutEscalation(t *testing.T) {
 	writeReachDaemon(t, dir, clock.at)
 	proofSent := make(chan struct{})
 	stopped := make(chan struct{})
+	cleanupEntered := make(chan struct{})
+	releaseCleanup := make(chan struct{})
+	var release sync.Once
+	releaseWorker := func() { release.Do(func() { close(releaseCleanup) }) }
+	t.Cleanup(func() { releaseWorker(); <-stopped })
+	baseTimeout := w.reachTimeout
+	w.reachTimeout = func(ctx context.Context, d time.Duration) (context.Context, context.CancelFunc) {
+		if d == reachCleanupWithin {
+			close(cleanupEntered)
+			releaseWorker()
+		}
+		return baseTimeout(ctx, d)
+	}
 	w.reachStart = func(ctx context.Context, deliver func(context.Context) error) <-chan error {
 		done := startReachDelivery(ctx, deliver)
 		<-proofSent // controlled schedule: the effect remains active after its proof
@@ -408,13 +423,18 @@ func TestReachProofCancelsRunningDeliveryWithoutEscalation(t *testing.T) {
 			reachSend(t, r.store, friend.PongSubject, friend.PongLine(nonceOf(text), 0, 0, 0)+"\n")
 			close(proofSent)
 			<-ctx.Done()
+			<-releaseCleanup // cancellation noticed; adapter cleanup is still pending
 			close(stopped)
 			return "", 0, ctx.Err()
 		}
 		return "", 0, nil
 	}
 	reachRun(w).Do(t, append(reachCmd(dir), "--from", "push")...).Exit(0).Out("REACH PROOF step=push", "REACH OK").NotOut("step=window")
-	<-stopped // the canceled worker exits; no wall-clock sleeps or leaked goroutine
+	select {
+	case <-stopped:
+	default:
+		assert.Fail(t, "run returned before delivery cleanup completed")
+	}
 	assert.Zero(t, clock.slept)
 	es, err := (&bus.Bus{Store: r.store}).Log(context.Background(), "-")
 	require.NoError(t, err)
@@ -458,4 +478,46 @@ func TestReachProofWinsCoincidentDeliveryError(t *testing.T) {
 	reachRun(w).Do(t, append(reachCmd(dir), "--from", "push")...).Exit(0).Out("REACH PROOF step=push").NotOut("step=window")
 	assert.False(t, got.has("step=window"))
 	assert.Zero(t, clock.slept)
+}
+
+func TestReachRefusesWhenDeliveryCleanupCannotFinish(t *testing.T) {
+	t.Parallel()
+	fx := reachFX{Timeout: func(ctx context.Context, d time.Duration) (context.Context, context.CancelFunc) {
+		assert.Equal(t, reachCleanupWithin, d)
+		bounded, cancel := context.WithCancel(ctx)
+		cancel() // deterministic expiry; no worker or wall-clock timer
+		return bounded, cancel
+	}}
+	err := finishReachDelivery(context.Background(), fx, make(chan error))
+	assert.ErrorContains(t, err, "delivery cleanup did not finish")
+}
+
+func TestReachCleanupFailurePreservesProofAndRefusesEscalation(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, "ada", "bob")
+	w, _ := reachWorld(t, r)
+	dir := t.TempDir()
+	writeReachDaemon(t, dir, start)
+	exec, got := reachTmux(t, r.store, "step=push")
+	w.exec = exec
+	w.reachStart = func(ctx context.Context, deliver func(context.Context) error) <-chan error {
+		require.NoError(t, deliver(ctx))
+		return make(chan error) // unsafe starter never acknowledges cleanup; no actual worker
+	}
+	baseTimeout := w.reachTimeout
+	w.reachTimeout = func(ctx context.Context, d time.Duration) (context.Context, context.CancelFunc) {
+		if d == reachCleanupWithin {
+			bounded, cancel := context.WithCancel(ctx)
+			cancel()
+			return bounded, cancel
+		}
+		return baseTimeout(ctx, d)
+	}
+	reachRun(w).Do(t, append(reachCmd(dir), "--from", "push")...).Exit(2).Err("delivery cleanup did not finish", "REACH PROOF step=push").NotOut("step=window")
+	assert.False(t, got.has("step=window"))
+	es, err := (&bus.Bus{Store: r.store}).Log(context.Background(), "-")
+	require.NoError(t, err)
+	for _, e := range es {
+		assert.NotContains(t, e.Message().Body, "REACH FAILED")
+	}
 }

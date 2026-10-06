@@ -714,6 +714,8 @@ Exit 0 a proof. Exit 1 no proof. Exit 2 could not run (a flag, a store that did 
 example: nova-friend reach --as ada --to bob --dry-run
 ```
 
+Cancellation is followed by a separate cleanup barrier of at most 10s for the owned delivery to finish, including process-group cleanup. This never extends proof observation. Cleanup failure refuses the command and prevents escalation; any observed proof remains in its output.
+
 The result line is first, then one line per step in the order it happened. `--json` carries facts `friend`, `step` (on OK), `tried` (on FAILED), `from` and `step_timeout` (on a dry run), `dry_run`, and items `STEP`, `PROOF` and `NONE`.
 
 ### The friend health check

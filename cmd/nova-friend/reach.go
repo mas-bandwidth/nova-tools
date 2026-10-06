@@ -16,10 +16,11 @@ import (
 // The ladder (docs/SPEC-FRIEND.md, Reach; tla/Reach.tla). A proof is a choice
 // at the bound, so the model has no fairness that would force one.
 const (
-	reachBus    = "bus"
-	reachPush   = "push"
-	reachWindow = "window"
-	reachPoll   = time.Second
+	reachBus           = "bus"
+	reachPush          = "push"
+	reachWindow        = "window"
+	reachPoll          = time.Second
+	reachCleanupWithin = 2 * friend.KillDelay // cancellation plus owned process-group cleanup
 )
 
 func reachSteps(from string) []string {
@@ -72,7 +73,7 @@ func (w world) reachVerb() tool.Verb {
 1. bus: a bus message to the friend carrying the nonce and the exact pong line (REACH STEP step=bus sent=<id> nonce=<n>).
 2. push: the daemon pushes a real message into the session as a turn, never a PING. The daemon must be up (its status file read at the push decision and newer than the stale bound), else the step is skipped (REACH NONE step=push waited=0s: daemon down: <reason>).
 3. window: a tmux-hosted session is typed with send-keys only while the pane is idle. A GUI harness requires both accessibility permission and a verified target composer. The adapter has no exact session/composer targeting contract, so even a trusted GUI is refused without typing: ` + friend.ComposerRemedy + `. When accessibility permission is absent the step is refused and the tool does not ask: ` + friend.AccessibilityRemedy + `.
-Proof polling continues while delivery runs; an observed proof cancels the delivery and ends the ladder: REACH PROOF step=<s> after=<duration> by=<pong|message> and REACH OK friend=<f> step=<s>. Exit 0 on that proof. No proof: REACH NONE step=<s> waited=<d> and the ladder climbs. No proof after the steps from --from: REACH FAILED friend=<f> tried=<steps>, Exit 1, and one note of that line on the coordinator's own stream. Exit 2 when it could not run (a flag, a store that did not answer, or the window step without accessibility permission or a verified composer). --from bus|push|window starts partway up. --dry-run prints REACH DRY-RUN and one REACH STEP per planned step, and sends, pushes and types nothing. --json: facts friend, step (on OK), tried (on FAILED), from and step_timeout (on a dry run), dry_run; items STEP (step, sent, nonce), PROOF (step, after, by), NONE (step, waited, text when skipped). The result line is first, then one line per step in the order it happened.
+Proof polling continues while delivery runs; an observed proof cancels the delivery and ends the ladder: REACH PROOF step=<s> after=<duration> by=<pong|message> and REACH OK friend=<f> step=<s>. Exit 0 on that proof. No proof: REACH NONE step=<s> waited=<d> and the ladder climbs. No proof after the steps from --from: REACH FAILED friend=<f> tried=<steps>, Exit 1, and one note of that line on the coordinator's own stream. Exit 2 when it could not run (a flag, a store that did not answer, or the window step without accessibility permission or a verified composer). --from bus|push|window starts partway up. Cancellation is followed by a separate cleanup barrier of at most 10s for the owned delivery to finish, including process-group cleanup. This never extends proof observation. Cleanup failure refuses the command and prevents escalation; any observed proof remains in its output. --dry-run prints REACH DRY-RUN and one REACH STEP per planned step, and sends, pushes and types nothing. --json: facts friend, step (on OK), tried (on FAILED), from and step_timeout (on a dry run), dry_run; items STEP (step, sent, nonce), PROOF (step, after, by), NONE (step, waited, text when skipped). The result line is first, then one line per step in the order it happened.
 example: nova-friend reach --as ada --to bob --dry-run`,
 		Flags: func(f *tool.Flags) {
 			f.Required("as", "your name, the coordinator")
@@ -321,6 +322,9 @@ func climb(ctx context.Context, fx reachFX, friendName string, timeout time.Dura
 		}
 		ok, err := waitReach(stepCtx, fx, acc, step, nonce, start, timeout, done)
 		cancel()
+		if cleanupErr := finishReachDelivery(ctx, fx, done); cleanupErr != nil {
+			return reachWith(tool.Refuse(cleanupErr.Error()), acc)
+		}
 		if err != nil {
 			var delivery reachDeliveryError
 			if !errors.As(err, &delivery) {
@@ -423,13 +427,38 @@ func reachProof(ctx context.Context, b *bus.Bus, cursor *string, friendName, non
 
 // startReachDelivery keeps proof polling live while an adapter awaits its turn.
 // The worker must honor ctx, as the existing command adapters do. The buffered
-// result lets it finish after cancellation without waiting on its caller.
+// result lets cancellation finish; finishReachDelivery owns the cleanup barrier.
 func startReachDelivery(ctx context.Context, deliver func(context.Context) error) <-chan error {
 	done := make(chan error, 1)
-	go func() { done <- deliver(ctx) }()
+	go func() {
+		done <- deliver(ctx)
+		close(done)
+	}()
 	return done
 }
 
 type reachDeliveryError struct{ err error }
 
 func (e reachDeliveryError) Error() string { return e.err.Error() }
+
+// finishReachDelivery keeps main alive for the adapter's cancellation watcher,
+// WaitDelay and post-Run group cleanup. This separate bounded shutdown budget
+// never extends proof observation or permits another ladder step on failure.
+func finishReachDelivery(ctx context.Context, fx reachFX, done <-chan error) error {
+	if done == nil {
+		return nil
+	}
+	cleanup, cancel := fx.Timeout(context.WithoutCancel(ctx), reachCleanupWithin)
+	defer cancel()
+	select {
+	case <-done:
+		return nil
+	default:
+	}
+	select {
+	case <-done:
+		return nil
+	case <-cleanup.Done():
+		return fmt.Errorf("delivery cleanup did not finish within %s; inspect the owned delivery before retrying", reachCleanupWithin)
+	}
+}
