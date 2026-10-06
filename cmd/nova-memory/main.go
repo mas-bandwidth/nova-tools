@@ -129,10 +129,11 @@ flags:
                         reads. Default: this corpus's own first paragraph, fed
                         on stdin, which shows you what "you already know this"
                         looks like when it is certainly true.
-  --pin <file>          boot only: the pin file naming the memories a session
-                        loads, one slash path per line relative to --root
-                        (# comments and blank lines ignored). Required — boot
-                        names the load, never walks the directory.
+  --pin <file>          boot only: the pin file naming the memories to check
+                        (checks the pin: every file present and readable, and
+                        their size), one slash path per line relative to
+                        --root (# comments and blank lines ignored). Required —
+                        boot never walks the directory.
 
 A refusal reports every flag it can see at once — two missing flags are two
 sentences and one run, not two runs. Flags may stand before or after the
@@ -243,14 +244,28 @@ func refuseWith(stderr io.Writer, where, what, remedy string) int {
 	return 2
 }
 
+// verbHelp is the lines run adds to a verb's -h: its effect, and for verbs that
+// need extra context (eval's gold file format, boot's pin check), that context.
+func verbHelp(verb string) string {
+	var b strings.Builder
+	switch verb {
+	case "eval":
+		b.WriteString("gold file format: query<TAB>expected[,expected]\n")
+		b.WriteString("  how often should the lantern glazing be washed\tnotes/lantern.md\n")
+		b.WriteString("  washing the glazing before an onshore gale\tnotes/lantern.md,log/1974-03-11.md\n")
+	case "boot":
+		b.WriteString("checks the pin: every file present and readable, and their size\n")
+	}
+	b.WriteString("effect: " + string(tool.Inspection) + " (the index lives in memory for the run)\n")
+	return b.String()
+}
+
 func main() { os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr)) }
 
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer) (code int) {
 	// `<verb> -h` and `help <verb>` print that verb's help, its effect included, on stdout
 	// at exit 0, before anything is read or written (the CLI style's rule (b)).
-	defer verbflag.RecoverWith(stdout, "nova-memory", usage, &code, func(string) string {
-		return "effect: " + string(tool.Inspection) + " (the index lives in memory for the run)\n"
-	})
+	defer verbflag.RecoverWith(stdout, "nova-memory", usage, &code, verbHelp)
 	if len(args) == 0 {
 		return refuse(stderr, "", "no verb given; the verbs are "+verbflag.List(verbs)+", and quickstart is the first run")
 	}
@@ -573,7 +588,7 @@ func cmdStats(args []string, stdout, stderr io.Writer) int {
 }
 
 // ---------------------------------------------------------------------------
-// boot — the session loads a pin, never walks the directory
+// boot — checks the pin: every file present and readable, and their size
 
 // ---------------------------------------------------------------------------
 // search — one query, k receipts

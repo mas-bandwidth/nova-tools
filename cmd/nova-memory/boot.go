@@ -18,7 +18,7 @@ import (
 func cmdBoot(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("boot", flag.ContinueOnError)
 	root := fs.String("root", "", "memory root directory (required)")
-	pin := fs.String("pin", "", "pin file naming the memories to load (required)")
+	pin := fs.String("pin", "", "pin file (checks the pin: every file present and readable, and their size) (required)")
 	asJSON := fs.Bool("json", false, "print the result as one JSON object instead of lines")
 	given, pos, ok := parse(fs, args, stderr, "root", "pin")
 	if given == nil {
@@ -30,7 +30,7 @@ func cmdBoot(args []string, stdout, stderr io.Writer) int {
 		bad = true
 	}
 	if given["pin"] && strings.TrimSpace(*pin) == "" {
-		refuse(stderr, " boot", "--pin names the file listing the memories to load; name it")
+		refuse(stderr, " boot", "--pin names the file listing the memories to check; name it")
 		bad = true
 	}
 	if given["root"] && strings.TrimSpace(*root) == "" {
@@ -51,12 +51,12 @@ func cmdBoot(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-// loadPin reads the pin file and loads exactly the files it names, relative to
-// root and never by walking the directory. It returns the count and the byte
-// total of the loaded memories, and the total is what the reads returned, not
-// what the directory entries promised (docs/SPEC.md, boot: "Boot reads exactly
-// those files ... The load is the named files' byte total"; the defect it
-// closes is docs/ratings/snapshots/0c5803c2de40/memory-read.md finding 4,
+// loadPin reads the pin file and checks the pin: every file present and
+// readable, and their size, relative to root and never by walking the
+// directory. It returns the count and the byte total of the loaded memories,
+// and the total is what the reads returned, not what the directory entries
+// promised (docs/SPEC.md, boot: "Boot reads exactly those files ... The load is
+// the named files' byte total"; the defect it closes is docs/ratings/snapshots/0c5803c2de40/memory-read.md finding 4,
 // where an os.Lstat sum counted bytes nothing had read). Every misshapen
 // entry is a refusal, because a boot that silently skipped a named memory is
 // a self that loaded less than it thinks it did.

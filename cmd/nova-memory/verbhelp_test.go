@@ -28,7 +28,7 @@ func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 		{Verb: "boot", Flags: root},
 		{Verb: "version"},
 	})
-	testverbhelp.HelpVerb(t, memoryRun, "nova-memory", "search", "version")
+	testverbhelp.HelpVerb(t, memoryRun, "nova-memory", "search", "version", "eval", "boot")
 
 	// The exit codes line names each verb's answer, and every claim in it is
 	// checked against the behaviour by running it: the help is changed to the
@@ -197,4 +197,36 @@ func theLine(t *testing.T, stream, prefix string) string {
 func flat(t *testing.T, text string) string {
 	t.Helper()
 	return strings.Join(strings.Fields(text), " ")
+}
+
+// TestEvalHelpShowsGoldFileFormatAndTwoLineExample pins that eval's help text
+// describes the gold file format and shows a two-line example so a user
+// does not have to discover the format through a parse refusal.
+func TestEvalHelpShowsGoldFileFormatAndTwoLineExample(t *testing.T) {
+	t.Parallel()
+
+	exit, stdout, stderr := runCLI(t, "", "eval", "-h")
+	require.Equalf(t, 0, exit, "eval -h must exit 0: stderr = %q", stderr)
+	assert.Contains(t, stdout, "gold file format: query<TAB>expected[,expected]")
+	assert.Contains(t, stdout, "how often should the lantern glazing be washed\tnotes/lantern.md")
+	assert.Contains(t, stdout, "washing the glazing before an onshore gale\tnotes/lantern.md,log/1974-03-11.md")
+
+	exit, stdoutHelp, stderr := runCLI(t, "", "help", "eval")
+	require.Equalf(t, 0, exit, "help eval must exit 0: stderr = %q", stderr)
+	assert.Equal(t, stdout, stdoutHelp, "`help eval` and `eval -h` must match")
+}
+
+// TestBootHelpStatesItChecksThePin pins that boot's help text describes what
+// the verb actually does: checking the pin (every file present and readable,
+// and their size), not loading the contents into memory.
+func TestBootHelpStatesItChecksThePin(t *testing.T) {
+	t.Parallel()
+
+	exit, stdout, stderr := runCLI(t, "", "boot", "-h")
+	require.Equalf(t, 0, exit, "boot -h must exit 0: stderr = %q", stderr)
+	assert.Contains(t, stdout, "checks the pin: every file present and readable, and their size")
+
+	exit, stdoutHelp, stderr := runCLI(t, "", "help", "boot")
+	require.Equalf(t, 0, exit, "help boot must exit 0: stderr = %q", stderr)
+	assert.Equal(t, stdout, stdoutHelp, "`help boot` and `boot -h` must match")
 }
