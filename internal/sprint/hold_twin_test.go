@@ -278,7 +278,7 @@ func TestHoldTakesNoNewCardsAndUnholdResumesForMembersFriendsAndStreams(t *testi
 		r.must(store.AddStep(sprint.AddReq{Stream: "f1", Cards: []sprint.CardAdd{{ID: "f1-9", Brief: friendsBrief("only friend amy")}}}))
 		r.tick()
 		s = r.snap()
-		assert.Equal(t, amy, onRow(s, sprint.FriendRow("amy"), "f1", sprint.Working), "a held friend keeps her cards to finish and is dealt no new one")
+		assert.Empty(t, onRow(s, sprint.FriendRow("amy"), "f1", sprint.Ready, sprint.Working), "a held friend keeps no begun card and is dealt no new one")
 		assert.Equal(t, sprint.Ready, s.StateOf("f1-9"), "her card waits ready while she is held")
 
 		r.hold(sprint.HoldReq{Names: []string{"amy"}, Release: true, Reason: "credits back"})
