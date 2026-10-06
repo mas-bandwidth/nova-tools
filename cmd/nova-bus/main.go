@@ -175,7 +175,7 @@ func busTool(w world) *tool.Tool {
 recv --as <me> --forever --exec '<deliver-into-session>' takes each message in, acked on exit 0;
 ack --as <me> --id <id> acks by hand; send and recv refuse a deaf name (no push proven in 10m).
 one stream per recipient (bus2:to:<name>) under a consumer group, one log (bus2:log); all or none.
-first run: a Redis naming ada and bob at --redis (else ` + RedisEnv + `); loopback or tailnet only.`,
+first run: a Redis naming ada and bob at --redis (else ` + RedisEnv + ` / ` + SprintRedisEnv + `.)`,
 		ExitTable: "0 done, 1 the verb ran and said no (recv: nothing waiting; recv --exec: the command failed; wait: nothing came), 2 could not run (a flag, an input, a store that did not answer).",
 		Words:     []string{"NONE", "WAKE", "ARMED", "MESSAGE"},
 		Verbs: []tool.Verb{

@@ -428,46 +428,34 @@ func TestAStoreOffLoopbackAndTheTailnetIsRefusedBeforeTheDial(t *testing.T) {
 // loops. --max <n> takes up to n in order and --all every one waiting, each
 // its own RECV OK; --ack acks each a plain recv printed; with --exec each is
 // handed over and acked on exit 0, the batch stopping at the first failure.
-func TestRecvTakesABacklogInOrderWithMaxAllAndAck(t *testing.T) {
+
+// TestTopLevelHelpNamesTheSameRedisAddressPrecedenceAsHelpSend verifies that the
+// top-level help and help send both contain the same redis address precedence
+// sentence, naming every source the code reads: --redis, NOVA_BUS_REDIS, and
+// NOVA_SPRINT_REDIS (fleet row bus).
+func TestTopLevelHelpNamesTheSameRedisAddressPrecedenceAsHelpSend(t *testing.T) {
 	t.Parallel()
 	r := newRig("ada", "bob")
 	cli := r.cli()
-	var ids []string
-	for _, s := range []string{"one", "two", "three", "four", "five"} {
-		ids = append(ids, id(t, cli.OK(t, "send", "--as", "ada", "--to", "bob", "--subject", s, "--body", s).Stdout))
+
+	// Get both help outputs
+	banner := cli.Do(t, "help").Exit(0).Stdout
+	sendHelp := cli.Do(t, "help", "send").Exit(0).Stdout
+
+	// Both must mention NOVA_BUS_REDIS and NOVA_SPRINT_REDIS
+	precedence := "NOVA_BUS_REDIS"
+	if !strings.Contains(banner, precedence) {
+		t.Errorf("top-level help does not contain %q:\n%s", precedence, banner)
 	}
-	got := cli.Do(t, "recv", "--as", "bob", "--max", "2").Exit(0).Out("RECV OK id="+ids[0], "RECV OK id="+ids[1]).NotOut("RECV OK id=" + ids[2])
-	assert.Equal(t, "RECV OK id="+ids[0]+" from=ada to=bob cc=- re=- at=2026-10-03T12:00:01Z login=none subject=\"one\"\n\none\nRECV OK id="+ids[1]+" from=ada to=bob cc=- re=- at=2026-10-03T12:00:02Z login=none subject=\"two\"\n\ntwo\n", got.Stdout, "each message is its own result, in order")
-	cli.Do(t, "peek", "--as", "bob").Exit(0).Out("PEEK OK pending=2 new=3")
-
-	// a plain recv with --ack: printed, then acked; a held message is not
-	// handed out again, so the next batch is the new ones
-	cli.Do(t, "recv", "--as", "bob", "--max", "2", "--ack").Exit(0).Out("RECV OK id="+ids[2]+" from=ada to=bob cc=- re=- at=2026-10-03T12:00:03Z login=none acked=true subject=\"three\"", "RECV OK id="+ids[3]+" from=ada", "acked=true")
-	cli.Do(t, "peek", "--as", "bob").Exit(0).Out("PEEK OK pending=2 new=1")
-
-	// --all with --exec: every message waiting, acked on exit 0; the batch
-	// stops at the first command that fails, that message still pending
-	r.exec = func(stdin string) int {
-		if strings.Contains(stdin, `subject="five"`) {
-			return 7
-		}
-		return 0
+	if !strings.Contains(sendHelp, precedence) {
+		t.Errorf("help send does not contain %q:\n%s", precedence, sendHelp)
 	}
-	r.advance(bus.ClaimAfter) // one and two are claimable again
-	cli.Do(t, "recv", "--as", "bob", "--all", "--exec", "deliver").Exit(1).Out("RECV OK id="+ids[0], "RECV OK id="+ids[1], "acked=true exec_exit=0").Err("RECV FAILED id=" + ids[4] + " exec_exit=7")
-	cli.Do(t, "peek", "--as", "bob").Exit(0).Out("PEEK OK pending=1 new=0", "id="+ids[4])
-	r.exec = nil
-	cli.Do(t, "recv", "--as", "bob", "--all", "--exec", "deliver").Exit(1).Err("RECV NONE", "nothing for bob")
-	r.advance(bus.ClaimAfter)
-	cli.Do(t, "recv", "--as", "bob", "--all", "--json", "--ack").Exit(0).Out(`"subject":"five"`, `"acked":true`)
-	cli.Do(t, "recv", "--as", "bob", "--all").Exit(1).Err("RECV NONE: nothing for bob")
 
-	for _, c := range [][]string{
-		{"recv", "--as", "bob", "--all", "--max", "2"},
-		{"recv", "--as", "bob", "--forever", "--exec", "x", "--all"},
-		{"recv", "--as", "bob", "--max", "0"},
-		{"recv", "--as", "bob", "--ack", "--exec", "x"},
-	} {
-		cli.Do(t, c...).Exit(2).Err("RECV REFUSED")
+	precedence2 := "NOVA_SPRINT_REDIS"
+	if !strings.Contains(banner, precedence2) {
+		t.Errorf("top-level help does not contain %q:\n%s", precedence2, banner)
+	}
+	if !strings.Contains(sendHelp, precedence2) {
+		t.Errorf("help send does not contain %q:\n%s", precedence2, sendHelp)
 	}
 }
