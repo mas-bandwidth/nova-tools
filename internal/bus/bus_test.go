@@ -244,6 +244,162 @@ func TestAStoreThatIsDownIsAnError(t *testing.T) {
 	assert.ErrorIs(t, err, f.Fail)
 	_, err = b.Names(ctx)
 	assert.ErrorIs(t, err, f.Fail)
+	_, _, err = b.Store.(Waiter).Tail(ctx, StreamOf("bob"))
+	assert.ErrorIs(t, err, f.Fail)
+	_, err = b.Store.(Waiter).BlockRead(ctx, StreamOf("bob"), "0-0", 0, 1)
+	assert.ErrorIs(t, err, f.Fail)
+}
+
+// WaitPick is the wait's decision over one batch of entries, a pure function
+// (SPEC-BUS.md, the verbs: wait): the first WaitMax entries not from the
+// waiter whose subject starts with none of the skip prefixes, and the cursor
+// past every entry the walk saw, so a skipped entry moves it.
+func TestWaitPickCountsTheFirstEntriesThatAreNotMineNorSkipped(t *testing.T) {
+	t.Parallel()
+	e := func(id, from, subject string) Entry {
+		return Entry{Stream: "s", Entry: id, Fields: map[string]string{"id": "M" + id, "from": from, "subject": subject, "body": "x"}}
+	}
+	ping := []string{"ping", "pong"}
+	cases := []struct {
+		name  string
+		me    string
+		skips []string
+		in    []Entry
+		kept  []string
+		after string
+	}{
+		{"the entries that count, in order", "bob", ping,
+			[]Entry{e("1-1", "ada", "one"), e("1-2", "ada", "two")}, []string{"1-1", "1-2"}, "1-2"},
+		{"mine and the skipped do not count", "bob", ping,
+			[]Entry{e("1-1", "bob", "mine"), e("1-2", "ada", "PING n"), e("1-3", "ada", "pong reply"), e("1-4", "ada", "real")},
+			[]string{"1-4"}, "1-4"},
+		{"the match is without case", "bob", ping,
+			[]Entry{e("1-1", "ada", "ping 1"), e("1-2", "ada", "PONG")}, nil, "1-2"},
+		{"a given list of prefixes", "bob", []string{"card "},
+			[]Entry{e("1-1", "ada", "card fg-x done"), e("1-2", "ada", "ping")}, []string{"1-2"}, "1-2"},
+		{"nothing counts, the cursor still moves", "bob", ping,
+			[]Entry{e("1-1", "bob", "a"), e("1-2", "ada", "PING")}, nil, "1-2"},
+		{"at most WaitMax, the rest for the next run", "bob", nil,
+			[]Entry{e("1-1", "ada", "a"), e("1-2", "ada", "b"), e("1-3", "ada", "c"), e("1-4", "ada", "d"), e("1-5", "ada", "e"), e("1-6", "ada", "f")},
+			[]string{"1-1", "1-2", "1-3", "1-4", "1-5"}, "1-5"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			kept, after := WaitPick(c.in, c.me, c.skips)
+			var ids []string
+			for _, k := range kept {
+				ids = append(ids, k.Entry)
+			}
+			assert.Equal(t, c.kept, ids)
+			assert.Equal(t, c.after, after)
+		})
+	}
+}
+
+// WaitArm is the cursor a wait starts from: --after when given (the tail is
+// not read), else the stream's last entry id read once, and a name the
+// roster does not hold is never given a stream to wait on (SPEC-BUS.md, the
+// semantics; the verbs: wait).
+func TestWaitArmIsTheAfterGivenElseTheStreamsLastIdOnce(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	b, f := rig(t, "ada", "bob")
+	_, err := b.Send(ctx, msg("ada", "bob"))
+	require.NoError(t, err)
+	stream := f.streams[StreamOf("bob")]
+	last := stream[len(stream)-1].Entry
+	f.Trips = 0
+	got, err := b.WaitArm(ctx, "bob", "")
+	require.NoError(t, err)
+	assert.Equal(t, last, got, "the arm is the stream's last entry id")
+	assert.Equal(t, 2, f.Trips, "the arm reads the roster and the stream's tail, once each")
+	f.Trips = 0
+	got, err = b.WaitArm(ctx, "bob", "9-9")
+	require.NoError(t, err)
+	assert.Equal(t, "9-9", got, "--after is the arm; the tail is not read")
+	assert.Equal(t, 1, f.Trips, "the roster alone: --after is the arm")
+	_, err = b.WaitArm(ctx, "zed", "")
+	var r *Refusal
+	require.ErrorAs(t, err, &r)
+	assert.Contains(t, err.Error(), "zed is no known name")
+}
+
+// Tail is the stream's last entry id, as the wait arms at it; a stream with no
+// entries is "0-0", as the store answers (SPEC-BUS.md, the verbs: wait).
+func (f *Fake) Tail(_ context.Context, stream string) (string, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.trip(); err != nil {
+		return "", false, err
+	}
+	es, ok := f.streams[stream]
+	if !ok {
+		return "", false, nil
+	}
+	if len(es) == 0 {
+		return "0-0", true, nil
+	}
+	return es[len(es)-1].Entry, true, nil
+}
+
+// BlockRead is the entries past the cursor, up to count, answering at once
+// and touching no group, so what it hands out stays a later recv's
+// (SPEC-BUS.md, the verbs: wait). The block is the store's; the fake never
+// waits it.
+func (f *Fake) BlockRead(_ context.Context, stream, from string, _ time.Duration, count int) ([]Entry, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.trip(); err != nil {
+		return nil, err
+	}
+	var out []Entry
+	for _, e := range f.streams[stream] { // stream order is id order
+		if after(e.Entry, from) && (count <= 0 || len(out) < count) {
+			out = append(out, e)
+		}
+	}
+	return out, nil
+}
+
+// The fake's Tail and BlockRead are the wait's store: entries past the
+// cursor answer at once, up to the count.
+func TestTheFakesTailAndBlockReadAnswerPastTheCursor(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f := NewFake(start, "ada", "bob")
+	last, exists, err := f.Tail(ctx, StreamOf("bob"))
+	require.NoError(t, err)
+	assert.False(t, exists, "no stream is there before anything is sent")
+	assert.Empty(t, last)
+	for _, s := range []string{"one", "two"} {
+		require.NoError(t, f.AddAll(ctx, []string{StreamOf("bob")}, map[string]string{"id": "M" + s, "from": "ada", "subject": s}))
+	}
+	last, exists, err = f.Tail(ctx, StreamOf("bob"))
+	require.NoError(t, err)
+	assert.True(t, exists)
+	assert.NotEmpty(t, last)
+	got, err := f.BlockRead(ctx, StreamOf("bob"), "0-0", 0, 100)
+	require.NoError(t, err)
+	require.Len(t, got, 2)
+	assert.Equal(t, "one", got[0].Fields["subject"])
+	got, err = f.BlockRead(ctx, StreamOf("bob"), "0-0", 0, 1)
+	require.NoError(t, err)
+	assert.Len(t, got, 1, "the count bounds the batch")
+	got, err = f.BlockRead(ctx, StreamOf("bob"), last, 30*time.Second, 100)
+	require.NoError(t, err)
+	assert.Empty(t, got, "nothing past the cursor")
+}
+
+// blockArg is the BLOCK a wait's read sends: 0 is for ever (the store holds
+// the read until an entry is there), a positive duration is that long, and
+// -1 is never sent -- that is recv's "do not block", not the wait's
+// (SPEC-BUS.md, the verbs: wait).
+func TestBlockArgIsForeverForZeroAndTheDurationForPositive(t *testing.T) {
+	t.Parallel()
+	assert.Equal(t, time.Duration(0), blockArg(0), "a wait with no timeout parks for ever: BLOCK 0, never -1")
+	assert.Equal(t, 5*time.Second, blockArg(5*time.Second), "a positive duration is the block")
+	assert.Equal(t, time.Millisecond, blockArg(500*time.Microsecond), "a block under a millisecond rounds up: the client sends whole milliseconds, and 0 would be for ever")
 }
 
 func TestNamesAreSortedAndUnique(t *testing.T) {

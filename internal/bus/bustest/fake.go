@@ -34,6 +34,9 @@ type Fake struct {
 	Fail error
 	// Trips counts the commands sent.
 	Trips int
+	// Sleep, when set, is what a BlockRead that finds nothing waits its block
+	// out on: the test's clock, never real time.
+	Sleep func(d time.Duration)
 }
 
 var _ bus.Store = (*Fake)(nil)
@@ -51,6 +54,30 @@ func NewFake(start time.Time, names ...string) *Fake {
 func (f *Fake) trip() error {
 	f.Trips++
 	return f.Fail
+}
+
+// Tail is the stream's last entry id, as the wait arms at it; a stream with
+// no entries answers "0-0" and not there (SPEC-BUS.md, the verbs: wait).
+func (f *Fake) Tail(ctx context.Context, stream string) (string, bool, error) {
+	es, err := f.Range(ctx, stream, "-", "+", 0)
+	if err != nil || len(es) == 0 {
+		return "0-0", false, err
+	}
+	return es[len(es)-1].Entry, true, nil
+}
+
+// BlockRead is the entries past the cursor, up to count, touching no group,
+// so what it hands out stays a later recv's; a block that finds none waits
+// its duration out on Sleep (SPEC-BUS.md, the verbs: wait).
+func (f *Fake) BlockRead(ctx context.Context, stream, after string, block time.Duration, count int) ([]bus.Entry, error) {
+	es, err := f.Range(ctx, stream, "("+after, "+", count)
+	if err != nil || len(es) > 0 {
+		return es, err
+	}
+	if f.Sleep != nil {
+		f.Sleep(block)
+	}
+	return nil, nil
 }
 
 // Advance moves the clock by d: what a reader's idle time grows by.

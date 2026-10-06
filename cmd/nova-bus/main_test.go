@@ -34,6 +34,8 @@ type rig struct {
 	fleetAt []string
 	names   []string  // the names newRig keeps heard
 	clock   time.Time // the store's clock as advance moved it (each trip adds a second more)
+	now     time.Time // the wait verbs' clock; the fake store's block moves it, never real time
+	wake    []string  // the wake-file reader's answers, one per look: "" is nothing new
 }
 
 // newRig is the rig with every name heard: each has a proven inbox push,
@@ -47,7 +49,7 @@ func newRig(names ...string) *rig {
 }
 
 func deafRig(names ...string) *rig {
-	return &rig{store: bustest.NewFake(start, names...), env: map[string]string{RedisEnv: "store.test:6379"}, clock: start}
+	return &rig{store: bustest.NewFake(start, names...), env: map[string]string{RedisEnv: "store.test:6379"}, clock: start, now: start}
 }
 
 // prove writes each name's push proof at the instant at, up or down, as the
@@ -74,6 +76,13 @@ func (r *rig) advance(d time.Duration) {
 	r.store.Advance(d)
 	r.clock = r.clock.Add(d)
 	r.prove(r.clock, true, r.names...)
+}
+
+// wireClock wires the fake store's block to the rig's wait clock: a block
+// that finds nothing past its cursor waits its duration out on r.now, so a
+// test's timeout runs on no real time.
+func (r *rig) wireClock() {
+	r.store.Sleep = func(d time.Duration) { r.now = r.now.Add(d) }
 }
 
 func (r *rig) world() world {
@@ -111,6 +120,16 @@ func (r *rig) world() world {
 				"far.test":   {netip.AddrFrom4([4]byte{203, 0, 113, 9})}, // the internet
 				"lan.test":   {netip.AddrFrom4([4]byte{10, 0, 0, 5})},    // a private network that is not the tailnet
 			}[host], nil
+		},
+		now:      func() time.Time { return r.now },
+		fileSize: func(string) (int64, error) { return 0, nil },
+		fileLine: func(_ string, from int64) (string, int64, error) {
+			if len(r.wake) == 0 {
+				return "", from, nil
+			}
+			line := r.wake[0]
+			r.wake = r.wake[1:]
+			return line, from + int64(len(line)) + 1, nil
 		},
 	}
 }
