@@ -195,7 +195,9 @@ func TestTheGateKeepsALaneHarnessAndHoldsOnlyItsBatchTurn(t *testing.T) {
 	require.True(t, ok, "the gate keeps the harness's lanes")
 
 	_, err := lh.DeliverTo(context.Background(), "ses_lane1", "card c1")
-	require.NoError(t, err, "a lane turn's own end is its answer, never a deferral")
+	var usage UsageLimited
+	require.ErrorAs(t, err, &usage, "a lane turn's own end is its answer: the lanes pause until the reset")
+	assert.NotErrorAs(t, err, new(Deferred), "never the gate's deferral")
 	assert.Equal(t, []string{"2026-10-04T19:40:00-04:00"}, downs, "a lane turn that hits the limit sends the friend down")
 
 	_, err = d.Deliver(context.Background(), "hello")
