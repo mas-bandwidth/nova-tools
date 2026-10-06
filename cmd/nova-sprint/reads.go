@@ -1817,7 +1817,14 @@ func (a *app) cmdCard(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, "card", err.Error())
 	}
 	ctx := context.Background()
-	v, err := st.CardOf(ctx, id)
+	// one whole read of the tables gives the story its primary, what holds it and the work
+	// table; a --brief or --at-epoch read is the primary's own (nothing holds it now)
+	var v store.CardInfo
+	if *atEpoch < 0 && !*brief {
+		v, err = st.CardOfHeld(ctx, id)
+	} else {
+		v, err = st.CardOf(ctx, id)
+	}
 	if err != nil {
 		return a.readFailed("card", err, stderr)
 	}
@@ -1830,12 +1837,7 @@ func (a *app) cmdCard(args []string, stdout, stderr io.Writer) int {
 	}
 	// What holds it, so nothing stalls without a named reason: an outside actor, the
 	// next tick, an open judgment, what it waits on, or the machine STOPPED.
-	var held *sprint.Hold
-	if *atEpoch < 0 {
-		if hd, err := st.Held(ctx, id); err == nil {
-			held = &hd
-		}
-	}
+	held := v.Held
 	lines, err := st.Log(ctx)
 	if err != nil {
 		return a.readFailed("card", err, stderr)
@@ -1856,8 +1858,8 @@ func (a *app) cmdCard(args []string, stdout, stderr io.Writer) int {
 	}
 	if !*fields {
 		place := ""
-		if ws, err := st.Load(ctx, []string{sprint.Work}, nil); err == nil && v.Primary.Placed() {
-			place = linePlace(v.Primary, ws.Work.Column(sprint.States...))
+		if v.Table != nil && v.Primary.Placed() {
+			place = linePlace(v.Primary, v.Table.Column(sprint.States...))
 		}
 		a.printStory(stdout, v, events, texts, held, place)
 		for _, w := range v.Work {

@@ -162,10 +162,24 @@ type CardInfo struct {
 	// Needs is each need with its state; NeededBy the primaries that need it.
 	Needs    []sprint.NeedState
 	NeededBy []string
+	// Held and Table are set by CardOfHeld alone: what holds the primary now (nil when
+	// that could not be worked out) and the work table as the same read gave it.
+	Held  *sprint.Hold
+	Table *sprint.Table
 }
 
 // CardOf reads a primary and every card of it by identity.
 func (st *Store) CardOf(ctx context.Context, id string) (CardInfo, error) {
+	return st.cardOf(ctx, id, false)
+}
+
+// CardOfHeld is CardOf with what holds the primary and the work table, from one whole read of
+// the tables where CardOf, Held and a Load of the work table would read them three times.
+func (st *Store) CardOfHeld(ctx context.Context, id string) (CardInfo, error) {
+	return st.cardOf(ctx, id, true)
+}
+
+func (st *Store) cardOf(ctx context.Context, id string, held bool) (CardInfo, error) {
 	var v CardInfo
 	st, err := st.pin(ctx)
 	if err != nil {
@@ -180,13 +194,40 @@ func (st *Store) CardOf(ctx context.Context, id string) (CardInfo, error) {
 		return v, nil
 	}
 	v.Primary = card(m)
-	s, err := st.Load(ctx, []string{sprint.Work}, func(*sprint.Snapshot) map[string][]string {
-		return map[string][]string{sprint.Work: append([]string{id}, sprint.Split(v.Primary.F("needs"))...)}
+	var pending *sprint.Hold
+	tables := []string{sprint.Work}
+	if held {
+		f, err := st.B.ReadFence(ctx)
+		if err != nil {
+			return v, err
+		}
+		if f.Pending != nil {
+			pending = &sprint.Hold{ID: id, Place: id, Why: "operation " + f.Pending.ID + " (" + f.Pending.Verb + ") is pending: the tables are a partial state of it; run: nova-sprint repair"}
+		} else {
+			tables = All
+		}
+	}
+	s, err := st.Load(ctx, tables, func(s *sprint.Snapshot) map[string][]string {
+		extra := append([]string{id}, sprint.Split(v.Primary.F("needs"))...)
+		if len(tables) > 1 {
+			extra = append(extra, sprint.ResolveExtras(s)...)
+		}
+		return map[string][]string{sprint.Work: extra}
 	})
 	if err != nil {
 		return v, err
 	}
 	v.Needs, v.NeededBy = sprint.NeedsOf(s, id)
+	if held {
+		v.Table = s.Work
+		v.Held = pending
+		if pending == nil {
+			if hs, err := st.heldState(ctx, s, nil); err == nil {
+				hd := sprint.Holder(hs, s.Now, id)
+				v.Held = &hd
+			}
+		}
+	}
 	attempts := v.Primary.Int("attempt")
 	if attempts > 0 {
 		var ids []string
