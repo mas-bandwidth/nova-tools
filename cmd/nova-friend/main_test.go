@@ -447,10 +447,11 @@ func TestRunRefusesAClaudeOneShotRowWithoutAConfigDir(t *testing.T) {
 		}
 		return "FRIEND-BEAT OK bob at=2026-10-04T03:00:00Z row_mode=one-shot row_width=2", nil
 	}
+	dir := t.TempDir()
 	var out, errb strings.Builder
-	code := run([]string{"run", "--as", "bob", "--harness", "claude", "--dir", t.TempDir()}, strings.NewReader(""), &out, &errb, w)
+	code := run([]string{"run", "--as", "bob", "--harness", "claude", "--dir", dir}, strings.NewReader(""), &out, &errb, w)
 	assert.Equal(t, 0, code, errb.String())
-	s, _, err := friend.ReadStatus(friend.DefaultStateDir(r.home, "bob"))
+	s, _, err := friend.ReadStatus(friend.StateDirIn(dir))
 	require.NoError(t, err)
 	assert.Equal(t, "batch", s.Mode, "the row says one-shot and names no config_dir: claude is refused")
 	assert.Contains(t, out.String(), "mode: one-shot REFUSED: friend bob is a claude friend in one-shot mode with no config_dir")
