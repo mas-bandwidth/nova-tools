@@ -1029,7 +1029,7 @@ value is genuinely multi-line.
 **Its narrowings.** Three false negatives accepted to keep false positives at
 zero: `go list` counts only with a `...` pattern (the gate's own
 `p=$(go list "./${d#./}")` asks about one package); a repository script
-(`x=$(bash .github/scripts/foo.sh)`) is not a producer, because its output shape
+(`x=$(bash <script>)`) is not a producer, because its output shape
 is the script's business; and the `key<<EOF` heredoc and a redirect attached to a
 `{ … }` block are not followed into. The one place it over-reports is a variable
 made plural, consumed, then reused — and the remedy there is the same guard.
@@ -1552,7 +1552,7 @@ which holds the other half against this package's own directory.
 **Its allowlist.** `internal/ci/testdata/namedpaths_allowlist.txt`, one
 `<name> <reason>` per line, in three groups: the files a specification has
 PLANNED and nobody has written yet, the invented names a document uses to show the SHAPE of a path
-(`.github/scripts/foo.sh`, `docs/history`), and the paths that live in another
+(`internal/decide/entry.go`), and the paths that live in another
 tree — another repository, another branch, or a retired file. Checked in BOTH
 directions, and the second direction has two spellings: a listed name nothing
 writes any more is a stale row, and a listed name that is IN the tree now is the

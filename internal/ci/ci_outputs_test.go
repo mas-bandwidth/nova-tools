@@ -52,7 +52,7 @@ import (
 //   - `go list` counts only with a `...` pattern in its arguments. The merge
 //     gate's own `p=$(go list "./${d#./}")` asks about ONE package and prints one
 //     line, and flagging it would flag a correct step.
-//   - A repository script — `x=$(bash .github/scripts/foo.sh)` — is not a
+//   - A repository script — `x=$(bash <script>)` — is not a
 //     producer. Its output shape is the script's business, not this file's, and
 //     guessing would flag plan-merge's one-number slots script.
 //   - The `key<<EOF` heredoc form, which is the RIGHT way to write a genuinely

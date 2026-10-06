@@ -192,8 +192,8 @@ func TestNoCode(t *testing.T) {
 		},
 		{
 			name:        "a multi-segment --allow prefix covers everything beneath it",
-			files:       map[string]os.FileMode{"docs/history/old.py": 0o644, "live.py": 0o644},
-			opts:        NoCodeOptions{Allow: []string{"docs/history"}},
+			files:       map[string]os.FileMode{"vendor-old/sub/old.py": 0o644, "live.py": 0o644},
+			opts:        NoCodeOptions{Allow: []string{"vendor-old/sub"}},
 			wantScanned: 1,
 			wantFind:    []string{"live.py"},
 			wantExactly: []string{"live.py"},
