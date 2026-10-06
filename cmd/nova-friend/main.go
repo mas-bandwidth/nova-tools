@@ -17,6 +17,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -31,6 +33,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
 	"github.com/mas-bandwidth/nova-tools/internal/friend"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/redisauth"
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
 	"github.com/mas-bandwidth/nova-tools/internal/sandbox"
 	"github.com/mas-bandwidth/nova-tools/internal/sprintwire"
@@ -66,6 +69,8 @@ type world struct {
 	beat      func(ctx context.Context, server, friend string, active time.Time) (answer string, err error) // the FRIEND-BEAT line, which carries the friend's row
 	progress  func(ctx context.Context, server string, argv []string) error                                 // one progress verb to the sprint server (friend.ProgressArgv)
 	finish    func(ctx context.Context, server string, argv []string) error                                 // one finish verb to the sprint server (friend.FinishArgv: a lane's card whose run ended with no report)
+	cards     func(ctx context.Context, server string, argv []string) (string, error)                       // the cards on her row, asked of the sprint server (friend.FriendCardsArgv); nil asks none
+	view      func(ctx context.Context, server, friend string) (string, error)                              // the sprint server's worker view of her (GET /api/view/worker), while friend cards is refused; nil reads none
 	launchctl friend.Launchctl
 	now       func() time.Time
 	sleep     func(ctx context.Context, d time.Duration)
@@ -96,6 +101,53 @@ func sprintVerb(ctx context.Context, server string, argv []string) error {
 		return fmt.Errorf("%s refused: %s", argv[0], strings.TrimSpace(res[0].Stderr))
 	}
 	return nil
+}
+
+// sprintAsk sends one worker verb to the sprint server and answers what it printed, or its
+// refusal as an error.
+func sprintAsk(ctx context.Context, server string, argv []string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	res, err := sprintwire.Client{Addr: server}.Do(ctx, argv)
+	if err != nil {
+		return "", err
+	}
+	if len(res) != 1 {
+		return "", fmt.Errorf("%s: the server answered %d results, want 1", strings.Join(argv[:min(2, len(argv))], " "), len(res))
+	}
+	if res[0].Code != 0 {
+		return "", &friend.Refused{Why: fmt.Sprintf("%s refused: %s", strings.Join(argv[:min(2, len(argv))], " "), strings.TrimSpace(res[0].Stderr))}
+	}
+	return res[0].Stdout, nil
+}
+
+// maxView bounds the worker view the daemon reads: her cards and her results not landed.
+const maxView = 4 << 20
+
+// sprintView reads the sprint server's worker view of a friend (nova-sprint serve, GET
+// /api/view/worker?as=<friend>), the JSON document whole.
+func sprintView(ctx context.Context, server, name string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+server+"/api/view/worker?as="+url.QueryEscape(name), nil)
+	if err != nil {
+		return "", err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("the sprint server at %s did not answer: %w", server, err)
+	}
+	defer resp.Body.Close() // ignored: a read-only body
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxView+1))
+	switch {
+	case err != nil:
+		return "", fmt.Errorf("the sprint server at %s: its view was cut: %w", server, err)
+	case len(raw) > maxView:
+		return "", fmt.Errorf("the sprint server at %s: its view is over %d bytes", server, maxView)
+	case resp.StatusCode != http.StatusOK:
+		return "", fmt.Errorf("the sprint server at %s refused the view (%s): %s", server, resp.Status, oneline.Cap(strings.TrimSpace(string(raw)), 300))
+	}
+	return string(raw), nil
 }
 
 func realWorld() world {
@@ -136,6 +188,8 @@ func realWorld() world {
 		},
 		progress: sprintVerb,
 		finish:   sprintVerb,
+		cards:    sprintAsk,
+		view:     sprintView,
 		lookPath: exec.LookPath,
 		copy:     friend.CopyExecutable,
 		settings: friend.OSFS{},
@@ -783,6 +837,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 			return nil
 		},
 		SaveLanes: func(s friend.LaneState) error { return friend.WriteLanes(state, s) },
+		Held:      w.held(name, server),
 		Finish: func(ctx context.Context, argv []string) error {
 			if w.finish == nil {
 				return errors.New("this world sends no finish") // a test's: friend sync reads the lane's REPORT.md
@@ -824,6 +879,24 @@ func (w world) run(c *tool.Call) *tool.Out {
 		return tool.Exit(1)
 	}
 	return tool.Exit(0)
+}
+
+// held is the daemon's Held: the cards on her row, asked of the sprint server each loop, its
+// worker view while it refuses friend cards (friend.HeldVia); nil in a world that asks none (a
+// test's), which leaves her inbox to friend sync.
+func (w world) held(name, server string) func(context.Context) (friend.Row, error) {
+	if w.cards == nil {
+		return nil
+	}
+	var view func(ctx context.Context) (string, error)
+	if w.view != nil {
+		view = func(ctx context.Context) (string, error) { return w.view(ctx, server, name) }
+	}
+	now := w.now
+	if now == nil {
+		now = time.Now
+	}
+	return friend.HeldVia(name, func(ctx context.Context, argv []string) (string, error) { return w.cards(ctx, server, argv) }, view, now)
 }
 
 func (w world) agent(c *tool.Call) (friend.Agent, error) {
@@ -1058,6 +1131,18 @@ func (w world) status(c *tool.Call) *tool.Out {
 		Fact("queue", queue).Fact("working", working).Fact("width", width).Fact("beats", s.Beats).Fact("last_beat", stamp(s.LastBeat)).Fact("delivered", s.Delivered).Fact("session", dash(s.Session)).Fact("mode", dash(s.Mode))
 	if s.Lanes != "" {
 		o.Fact("lanes", tool.Text(s.Lanes))
+	}
+	// her row against her inbox, as the daemon's last reconcile found them (friend.SyncInbox)
+	if s.HeldKnown {
+		o.Fact("held", s.Held).Fact("inbox", s.InboxJobs).Fact("missing", s.Missing)
+	} else {
+		o.Fact("held", "-").Fact("inbox", "-").Fact("missing", "-")
+	}
+	if s.InboxError != "" {
+		o.Note("the inbox: " + s.InboxError)
+	}
+	if s.HeldKnown && s.HeldFrom == friend.FromView {
+		o.Note("the inbox: her row is read from " + friend.FromView + ": " + friend.ViewWhy + "; a missing card's BRIEF.md is friend sync's to write")
 	}
 	var route, routeLine string
 	var routeErr error

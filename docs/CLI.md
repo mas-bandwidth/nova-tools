@@ -540,8 +540,10 @@ keep `--dir`, the friend's working directory). `wait-pong` prints `WAIT-PONG
 OK nonce= from= at= took= queue= working= width= daemon=` (whether the daemon
 pong came too), or `WAIT-PONG NONE` at exit 1. `status` prints `STATUS OK
 daemon=<up|down> ... connection= seat= challenge=<quiet|challenged|deaf>
-last_pong= queue= working= width= session=<ok|broken>` (broken: `session_id=
-broken_at= reason=`), or `STATUS NONE` at exit 1 where no
+last_pong= queue= working= width= session=<ok|broken> held= inbox= missing=` (broken:
+`session_id= broken_at= reason=`; held, inbox and missing are the daemon's last reconcile of
+her inbox with her row, `-` until the sprint server has answered: SPEC-FRIEND.md, "The
+daemon writes every card she holds"), or `STATUS NONE` at exit 1 where no
 daemon ever ran. What a first run gets wrong: a `--harness` that is not one
 of opencode, codex, claude, antigravity, dsh, gemini, grok, copilot, cursor,
 amp, goose, kiro, cline, aider, roo, windsurf, zed, warp (the surveyed harnesses
