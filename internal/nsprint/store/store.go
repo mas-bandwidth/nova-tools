@@ -158,6 +158,17 @@ func (s *Store) Close() error {
 	return s.client.Close()
 }
 
+// Ping returns the round-trip time for a PING command.
+func (s *Store) Ping(ctx context.Context) (time.Duration, error) {
+	start := time.Now()
+	err := s.client.Ping(ctx).Err()
+	if err != nil {
+		return 0, err
+	}
+	return time.Since(start), nil
+}
+
+
 // HashRead names one HMGET without issuing it yet.
 type HashRead struct {
 	Key    string
@@ -191,4 +202,42 @@ func (s *Store) PipelineHMGet(ctx context.Context, reads []HashRead) ([][]any, e
 		out[i] = values
 	}
 	return out, nil
+}
+
+// Pinger measures RTT (round-trip time) of store connections.
+// It can be replaced with a fake pinger in tests.
+type Pinger interface {
+	Ping(ctx context.Context) (time.Duration, error)
+}
+
+// MeasureRTT measures the median of n PING round-trip times.
+func MeasureRTT(ctx context.Context, p Pinger, n int) (time.Duration, error) {
+	rtts := make([]time.Duration, 0, n)
+	for i := 0; i < n; i++ {
+		rtt, err := p.Ping(ctx)
+		if err != nil {
+			return 0, err
+		}
+		rtts = append(rtts, rtt)
+	}
+	return medianRTT(rtts), nil
+}
+
+// medianRTT computes the median of RTT measurements.
+func medianRTT(rtts []time.Duration) time.Duration {
+	if len(rtts) == 0 {
+		return 0
+	}
+	// Sort to find median
+	for i := 0; i < len(rtts); i++ {
+		for j := i + 1; j < len(rtts); j++ {
+			if rtts[j] < rtts[i] {
+				rtts[i], rtts[j] = rtts[j], rtts[i]
+			}
+		}
+	}
+	if len(rtts)%2 == 0 {
+		return (rtts[len(rtts)/2-1] + rtts[len(rtts)/2]) / 2
+	}
+	return rtts[len(rtts)/2]
 }
