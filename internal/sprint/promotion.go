@@ -159,6 +159,20 @@ func PromotedSha(given string) (string, string) {
 	return sha, ""
 }
 
+// PromotedOnce is Promoted for a merge the promote verb watched land: when the store
+// already holds a promotion of the same sha, written or queued for the pump (the
+// snapshot a step plans on carries the queue), it changes nothing. A pass that dies
+// after the store write and before the clone's record of it records the merge once
+// on the next pass (tla/PromoteRecord.tla).
+func PromotedOnce(s *Snapshot, r PromotedReq) Plan {
+	if sha, why := PromotedSha(r.Sha); why == "" {
+		if _, had, ok := Promotion(s); ok && had == sha {
+			return Plan{Said: []string{"promoted " + sha + " is recorded already; nothing was changed"}}
+		}
+	}
+	return Promoted(s, r)
+}
+
 // Promoted records the promotion (nova-sprint promoted --sha <merge sha>): the coordinator's
 // alone; the sha is 7 to 40 hex digits. It writes the work table's PropPromotedAt and
 // PropPromotedSha and closes the judgment "dev is behind"; the next tick counts landings
