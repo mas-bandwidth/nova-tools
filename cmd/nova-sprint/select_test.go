@@ -73,3 +73,58 @@ func TestOneCallRecutsEveryCardTheSelectorNames(t *testing.T) {
 	assert.Contains(t, errs, "the selector names no card")
 	ta.clean()
 }
+
+// The other verbs take the same selector (docs/SPEC-SPRINT.md, "One selector, one step"):
+// brief by a transform, drop, rank and release each change every selected card in one
+// step, print one line per card and the total, and an --ids-file id that is no card
+// refuses the whole call with nothing written.
+func TestEveryBatchVerbTakesTheSelector(t *testing.T) {
+	t.Parallel()
+	ta := selectorApp(t)
+
+	out := ta.ok("brief --stream s1 --set-base release-1")
+	assert.Equal(t, 1, strings.Count(out, "BRIEF OK"), out)
+	assert.Contains(t, out, "selected=3")
+	for _, id := range []string{"x1", "x2", "y1"} {
+		assert.Contains(t, ta.primary(id).F("brief"), "\nBASE: release-1\n", "the brief of %s names the base", id)
+	}
+	assert.NotContains(t, ta.primary("d1").F("brief"), "BASE:", "d1 is in another stream")
+
+	out = ta.ok("brief --who friend.amy --drop-who --dry-run")
+	assert.Contains(t, out, "BRIEF OK DRY-RUN selected=2")
+	assert.Equal(t, "friend.amy", ta.primary("x1").F(sprint.FieldWho), "a dry run changed x1")
+
+	assert.Contains(t, ta.ok("rank --stream s1 --state waiting --first"), "selected=")
+
+	ids := filepath.Join(t.TempDir(), "ids")
+	require.NoError(t, os.WriteFile(ids, []byte("# the cards\ny1\nnope\n"), 0o644))
+	applies := ta.applies()
+	code, _, errs := ta.do("drop --ids-file " + ids + " --reason gone")
+	assert.Equal(t, 1, code)
+	assert.Contains(t, errs, "nope: "+"no such card on the table")
+	assert.Equal(t, applies, ta.applies(), "a refused selection wrote")
+
+	out = ta.ok("drop --who friend.bob --reason 'bob is away'")
+	assert.Equal(t, 1, strings.Count(out, "DROP OK"), out)
+	assert.Contains(t, out, "selected=1")
+	assert.Contains(t, ta.ok("card y1"), "bob is away")
+
+	ta.ok("add --stream h h1 h2 --held")
+	out = ta.ok("release --stream h --state held --reason 'the wave is read'")
+	assert.Equal(t, 1, strings.Count(out, "RELEASE OK"), out)
+	assert.Contains(t, out, "selected=2")
+	for _, id := range []string{"h1", "h2"} {
+		assert.False(t, sprint.IsHeld(ta.primary(id)), "%s is released", id)
+	}
+
+	code, _, errs = ta.do("recut --who friend.amy")
+	assert.Equal(t, 2, code)
+	assert.Contains(t, errs, "what every twin changes")
+	code, _, errs = ta.do("recut x1 --who friend.amy --drop-who")
+	assert.Equal(t, 2, code)
+	assert.Contains(t, errs, "give no id")
+	code, _, errs = ta.do("rework --state sleeping")
+	assert.Equal(t, 2, code)
+	assert.Contains(t, errs, "--state wants ready, waiting, held, merging")
+	ta.clean()
+}
