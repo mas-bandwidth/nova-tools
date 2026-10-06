@@ -87,7 +87,7 @@ type guard struct {
 	roots, caches, modCaches   []string
 	logDir, landDir, mirrorDir string
 	cacheMax, modMax, logMax   int64
-	floor                      int64
+	floor, stopFloor           int64
 	logKeep                    int
 	poolIdle, cloneAge         time.Duration
 	now                        time.Time
@@ -244,6 +244,10 @@ func (g *guard) run() int {
 		if g.floor > 0 && n < uint64(g.floor) {
 			g.say(fmt.Sprintf("DISK-GUARD WARN free=%d floor=%d on the volume of %s: members there start no card; run: df -h %s, and read what this log removed and kept", n, g.floor, oneline.Field(p), oneline.Field(p)))
 		}
+	}
+	if g.stopFloor > 0 && free < uint64(g.stopFloor) {
+		fmt.Fprintf(g.out, "DISK-GUARD STOP freed=%d free=%d floor=%d: the volume is under the stop floor; run: stop the loops on this machine, then free disk\n", g.freed, free, g.stopFloor)
+		return 3
 	}
 	// the closing line is written here, beside the exit it explains (law #2573): numbers
 	// only, so it needs neither say's escape nor its dry-run wording
@@ -788,6 +792,7 @@ func cmdDiskGuard(args []string, stdout, stderr io.Writer) int {
 	mirror := f.fs.String("mirrors", "~/nova-bench/mirror", "the `dir` of the bench's mirrors, whose temporary packs older than an hour are removed (default ~/nova-bench/mirror)")
 	dry := f.fs.Bool("dry-run", false, "judge every rule and print each line with WOULD-REMOVE, WOULD-TRIM, WOULD-CLEAN or WOULD-ROTATE, removing and rotating nothing")
 	floor := f.fs.Int("disk-floor", guardFloorGiB, "the free `GiB` under which the run warns, the members' own floor (default 10; 0 warns never)")
+	stopFloor := f.fs.Int("stop-floor", 0, "the free `GiB` under which the run ends DISK-GUARD STOP with exit 3, for the loop row to stop the loops (default 0: never)")
 	if !f.parse(args, stderr) {
 		return 2
 	}
@@ -798,6 +803,9 @@ func cmdDiskGuard(args []string, stdout, stderr io.Writer) int {
 		if c.v < 1 {
 			f.add(fmt.Sprintf("--%s is at least 1, got %d: a limit of nothing would remove everything every run", oneline.Field(c.name), c.v))
 		}
+	}
+	if *stopFloor < 0 {
+		f.add(fmt.Sprintf("--stop-floor is 0 or more GiB, got %d", *stopFloor))
 	}
 	if *floor < 0 {
 		f.add(fmt.Sprintf("--disk-floor is 0 or more GiB, got %d", *floor))
@@ -826,7 +834,7 @@ func cmdDiskGuard(args []string, stdout, stderr io.Writer) int {
 	}
 	g := &guard{
 		cacheMax: int64(*cacheGB) * gib, modMax: int64(*modGB) * gib, logMax: int64(*logMB) << 20, logKeep: *logKeep,
-		floor: int64(*floor) * gib, poolIdle: *poolIdle, cloneAge: *cloneAge, now: time.Now(), home: home,
+		floor: int64(*floor) * gib, stopFloor: int64(*stopFloor) * gib, poolIdle: *poolIdle, cloneAge: *cloneAge, now: time.Now(), home: home,
 		logDir: tilde(*logs), mirrorDir: tilde(*mirror), roots: guardRoots(roots, scans, tilde),
 		dry: *dry, procs: processList, held: heldPaths, free: diskFree, cleanMod: cleanModCache, dirty: landDirty, out: stdout,
 	}
