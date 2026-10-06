@@ -62,10 +62,10 @@ type world struct {
 	getenv    func(string) string
 	open      func(ctx context.Context, addr string) (bus.Store, func(), error)
 	exec      friend.Exec
-	wall      func(wl friend.Wall, run friend.Exec) friend.Exec                                             // a lane's child inside its wall; the real world's is Wall.Exec, nil walls nothing (a test's fake harness)
-	beat      func(ctx context.Context, server, friend string, active time.Time) (answer string, err error) // the FRIEND-BEAT line, which carries the friend's row
-	progress  func(ctx context.Context, server string, argv []string) error                                 // one progress verb to the sprint server (friend.ProgressArgv)
-	finish    func(ctx context.Context, server string, argv []string) error                                 // one finish verb to the sprint server (friend.FinishArgv: a lane's card whose run ended with no report)
+	wall      func(wl friend.Wall, run friend.Exec) friend.Exec                                                   // a lane's child inside its wall; the real world's is Wall.Exec, nil walls nothing (a test's fake harness)
+	beat      func(ctx context.Context, server, friend string, active, pong time.Time) (answer string, err error) // the FRIEND-BEAT line, which carries the friend's row
+	progress  func(ctx context.Context, server string, argv []string) error                                       // one progress verb to the sprint server (friend.ProgressArgv)
+	finish    func(ctx context.Context, server string, argv []string) error                                       // one finish verb to the sprint server (friend.FinishArgv: a lane's card whose run ended with no report)
 	launchctl friend.Launchctl
 	now       func() time.Time
 	sleep     func(ctx context.Context, d time.Duration)
@@ -115,12 +115,15 @@ func realWorld() world {
 			out, err := cmd.CombinedOutput()
 			return string(out), err
 		},
-		beat: func(ctx context.Context, server, name string, active time.Time) (string, error) {
+		beat: func(ctx context.Context, server, name string, active, pong time.Time) (string, error) {
 			ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 			defer cancel()
 			args := []string{"friend", "beat", name}
 			if !active.IsZero() {
 				args = append(args, "--active", active.UTC().Format(time.RFC3339))
+			}
+			if !pong.IsZero() {
+				args = append(args, "--pong", pong.UTC().Format(time.RFC3339))
 			}
 			res, err := sprintwire.Client{Addr: server}.Do(ctx, args)
 			if err != nil {
@@ -254,7 +257,12 @@ state: ~/.nova-friend/<me>/ (or --state-dir), the queue: <dir>/inbox/QUEUE.json.
 				Example: "", // a daemon: the example block has no line that runs for ever
 				Effect:  tool.Delivery + ": the daemon; messages go into the session, beats and pongs go out, until a signal",
 				DryRun:  true,
-				Detail: `The loop launchd runs (install writes it). Each second, when the session is free: every waiting
+				Detail: `The loop launchd runs (install writes it). It starts only on a push proof: a harness with no deliver
+command (claude, the surveyed ones) is refused at once, exit 2, the adapter card its remedy; then one SESSION
+CHECK goes in through the harness and its pong must reach the bus within ` + friend.ProofWithin.String() + `, else exit 2 with the remedy
+(a dsh session under an agent preset: start a session in <dir> with no agent preset and name it with
+--session <id>). Every beat carries the session's last proof (--pong), and the sprint deals nothing to a
+friend whose proof has lapsed. Each second, when the session is free: every waiting
 message read off the stream and pushed in as ONE turn, oldest first (at most ` + fmt.Sprint(friend.MaxBatch) + `; the rest is the next
 turn), acked together when the turn ends at exit 0; a turn that fails leaves them pending, handed in
 again when their claims open, and the third failure acks a message, given_up=true on the record. A
@@ -340,7 +348,9 @@ writes nothing. For harness grok, a NOTE prints the one line the open session ru
 environment variable or a wrapper at app start. While no such monitor runs, a delivery is deferred
 (the message stays pending and is tried again), never failed and never dropped. Once the agent is
 loaded, install runs the delivery check once (nova-friend check, --within) and says its line in a
-NOTE: a CHECK FAIL is a NOTE, never an undone install.`,
+NOTE: a CHECK FAIL is a NOTE, except a session the harness cannot drive (dsh under an agent preset), which
+is refused at exit 2 with its remedy and the agent booted out again. A harness with no deliver command
+(claude, the surveyed ones) is refused before anything is written, the adapter card its remedy.`,
 				DryRun: true,
 				Flags: func(f *tool.Flags) {
 					daemonFlags(f)
@@ -655,11 +665,14 @@ func (w world) run(c *tool.Call) *tool.Out {
 	fl := &friend.Limits{Now: w.now, Nonce: w.random}
 	deliver, err := friend.NewDeliverer(c.Str("harness"), dir, c.Str("session"), fl.Watch(walled), c.Stdout)
 	if err != nil {
-		o := tool.Refuse(err.Error())
-		o.Render(c.Stderr, c.Bool("json"))
-		return tool.Exit(2)
+		return tool.Refuse(err.Error()) // the skeleton renders a refusal with the verb's token, on stderr
 	}
-	if c.DryRun() {
+	// a harness nothing pushes into is refused at the start (friend.PushProof), a dry run alike
+	dry := c.DryRun()
+	if o := undriven(c.Str("harness"), dir, "the daemon did not start"); o != nil {
+		return o
+	}
+	if dry {
 		// the daemon it would run, its flags checked: no store opened, no beat, no record
 		fmt.Fprintf(c.Stdout, "RUN DRY-RUN as=%s harness=%s dir=%s state=%s redis=%s; nothing was started\n", name, c.Str("harness"), dir, state, addr)
 		return tool.Exit(0)
@@ -679,7 +692,15 @@ func (w world) run(c *tool.Call) *tool.Out {
 	}
 	var watch *friend.HarnessWatch
 	// the presence file says a limit while there is one, whatever the session check saw
+	// the session's last proof (its answer or its own bus message), as the presence file
+	// last said it: every beat carries it (--pong), so the sprint deals only to a friend
+	// whose proof is live and tells the coordinator when it lapses
+	var proved atomic.Pointer[time.Time]
 	writePresence := func(p friend.PresenceStatus) error {
+		if !p.LastHeard.IsZero() {
+			at := p.LastHeard
+			proved.Store(&at)
+		}
 		if until, reason, limited := fl.Limited(); limited {
 			p.Presence, p.Reason = friend.PresenceDown, "harness limit until "+until.UTC().Format(time.RFC3339)+": "+reason
 		} else if watch != nil {
@@ -709,6 +730,21 @@ func (w world) run(c *tool.Call) *tool.Out {
 		return tool.Exit(0) // a signal while the store was down
 	}
 	defer closeStore()
+	// the push proof: the first SESSION CHECK round trip, before the loop; no pong within
+	// friend.ProofWithin and the daemon does not start (docs/SPEC-FRIEND.md, The push proof)
+	proof, remedy, _ := friend.PushProof(ctx, w.conformance(c, name, c.Str("harness"), state, c.Str("coordinator"), friend.ProofWithin, deliver, st))
+	if proof.Stage != "" {
+		if ctx.Err() != nil {
+			return tool.Exit(0) // a signal during the proof
+		}
+		if remedy == "" {
+			remedy = fmt.Sprintf("open the friend's %s session in %s, then prove it answers: nova-friend check --as %s --harness %s --dir %s", c.Str("harness"), dir, name, c.Str("harness"), dir)
+		}
+		o := tool.Refuse("no push proof: " + proof.Line() + "; the daemon did not start")
+		o.Remedy = remedy
+		return o
+	}
+	record(w.now().UTC().Format(time.RFC3339) + " push proof: " + proof.Line())
 	// the seat the last ping named, from the daemon's status: whom the session check's answer goes to
 	var seatMu sync.Mutex
 	seat := ""
@@ -754,7 +790,11 @@ func (w world) run(c *tool.Call) *tool.Out {
 		// beat carries the session's last activity, closed over here (fold of 2026-10-05)
 		Beat: func(ctx context.Context, active time.Time) error {
 			return sc.Beat(fl.Beat(func(ctx context.Context) error {
-				answer, err := w.beat(ctx, server, name, active)
+				var pong time.Time
+				if at := proved.Load(); at != nil {
+					pong = *at
+				}
+				answer, err := w.beat(ctx, server, name, active, pong)
 				if m, wd, ok := friend.ParseRow(answer); err == nil && ok {
 					rowMode, rowWidth = m, wd
 				}
@@ -866,6 +906,10 @@ func (w world) install(c *tool.Call) *tool.Out {
 	if o := c.Refused(); o != nil {
 		return o
 	}
+	// a harness nothing pushes into is refused before anything is written (friend.PushProof)
+	if o := undriven(c.Str("harness"), c.Str("dir"), "nothing was written or loaded"); o != nil {
+		return o
+	}
 	a, err := w.agent(c)
 	if err != nil {
 		return tool.Refuse(err.Error())
@@ -922,13 +966,42 @@ func (w world) install(c *tool.Call) *tool.Out {
 		return noteGrokMonitor(tool.Fail(err.Error()).Fact("plist", path), a.Harness, a.Session)
 	}
 	// the delivery check, once, against the session the agent now serves; a fail is said, never undone
-	res, refusal := w.deliveryCheck(c, a.Friend, a.Harness, a.Dir, a.Session, w.stateDir(c), "", c.Dur("within"))
+	res, remedy, cannot, refusal := w.deliveryCheck(c, a.Friend, a.Harness, a.Dir, a.Session, w.stateDir(c), "", c.Dur("within"))
+	if cannot {
+		// a session the adapter cannot drive: the agent would refuse at every start, so it goes again
+		undone, uerr := friend.Uninstall(context.Background(), a, w.uid, w.launchctl, os.Remove)
+		why := res.Why + "; the agent was booted out and its plist removed (" + strings.Join(undone, "; ") + ")"
+		if uerr != nil {
+			why = res.Why + "; booting the agent out failed: " + uerr.Error()
+		}
+		r := tool.Refuse(why)
+		r.Remedy = remedy
+		return r
+	}
 	if refusal != "" {
 		o.Note("check: not run: " + refusal)
 	} else {
 		o.Note("check: " + res.Line())
 	}
 	return noteGrokMonitor(o.Note("check it: nova-friend status --as "+a.Friend+" --dir "+a.Dir), a.Harness, a.Session)
+}
+
+// undriven is the refusal of a harness whose adapter has no deliver command
+// (friend.Undriven), with the adapter card as its remedy and what was left
+// undone; nil for a harness that has one, or an unknown one (the flag check
+// names it).
+func undriven(harness, dir, undone string) *tool.Out {
+	d, err := friend.NewDeliverer(harness, dir, "", nil, nil)
+	if err != nil {
+		return nil
+	}
+	why, remedy, ok := friend.Undriven(d, harness)
+	if !ok {
+		return nil
+	}
+	o := tool.Refuse(why + "; " + undone)
+	o.Remedy = remedy
+	return o
 }
 
 // harnessSettings is what install writes into the friend's harness and
@@ -965,22 +1038,31 @@ func (w world) pongCommand(name, nonce, state, redis string) string {
 	return fmt.Sprintf("%s pong --as %s --nonce %s --state-dir %s --redis %s", bin, name, nonce, state, redis)
 }
 
-// deliveryCheck runs friend.Conformance once against the live session; the
-// refusal is set when it could not run (no harness, no store).
-func (w world) deliveryCheck(c *tool.Call, name, harness, dir, session, state, to string, within time.Duration) (friend.CheckResult, string) {
+// deliveryCheck runs the push proof once against the live session
+// (friend.PushProof over friend.Conformance); the refusal is set when it
+// could not run (no harness, no store), and remedy, with undriven, when the
+// adapter cannot drive the session at all.
+func (w world) deliveryCheck(c *tool.Call, name, harness, dir, session, state, to string, within time.Duration) (res friend.CheckResult, remedy string, undriven bool, refusal string) {
 	deliver, err := friend.NewDeliverer(harness, dir, session, w.exec, nil)
 	if err != nil {
-		return friend.CheckResult{}, err.Error()
+		return friend.CheckResult{}, "", false, err.Error()
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), redisconn.OpenTimeout)
 	st, closeStore, err := w.open(ctx, c.Str("redis"))
 	cancel()
 	if err != nil {
-		return friend.CheckResult{}, "the store did not answer: " + err.Error()
+		return friend.CheckResult{}, "", false, "the store did not answer: " + err.Error()
 	}
 	defer closeStore()
+	res, remedy, undriven = friend.PushProof(context.Background(), w.conformance(c, name, harness, state, to, within, deliver, st))
+	return res, remedy, undriven, ""
+}
+
+// conformance is the delivery check through deliver over st: the session
+// check carries this binary's pong line, sent to to (checkTo).
+func (w world) conformance(c *tool.Call, name, harness, state, to string, within time.Duration, deliver friend.Deliverer, st bus.Store) friend.Conformance {
 	to = w.checkTo(to, name, state)
-	check := &friend.Conformance{
+	return friend.Conformance{
 		Friend: name, Harness: harness, Deliver: deliver, Store: st, Within: within, Now: w.now, Nonce: w.random,
 		Wait: func(ctx context.Context) bool { w.sleep(ctx, friend.CheckPoll); return ctx.Err() == nil },
 		Text: func(nonce string) string {
@@ -988,7 +1070,6 @@ func (w world) deliveryCheck(c *tool.Call, name, harness, dir, session, state, t
 		},
 		Pong: func() (friend.Pong, bool, error) { return friend.ReadPong(state) },
 	}
-	return check.Run(context.Background()), ""
 }
 
 // noteGrokMonitor appends the one line a grok session runs, when harness is grok.

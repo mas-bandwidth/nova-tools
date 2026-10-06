@@ -46,12 +46,16 @@ func (w world) deliveryCheckVerb(c *tool.Call) *tool.Out {
 	if o := c.Refused(); o != nil {
 		return o
 	}
-	res, refusal := w.deliveryCheck(c, name, harness, dir, c.Str("session"), state, c.Str("to"), c.Dur("within"))
+	res, remedy, _, refusal := w.deliveryCheck(c, name, harness, dir, c.Str("session"), state, c.Str("to"), c.Dur("within"))
 	if refusal != "" {
 		return tool.Refuse(refusal)
 	}
 	if res.Stage != "" {
-		return tool.Fail().As("FAIL").Fact("harness", harness).Fact("stage", res.Stage).Fact("why", tool.Text(res.Why))
+		o := tool.Fail().As("FAIL").Fact("harness", harness).Fact("stage", res.Stage).Fact("why", tool.Text(res.Why))
+		if remedy != "" {
+			o.Note("remedy: " + remedy)
+		}
+		return o
 	}
 	return tool.Done().Fact("harness", harness).Fact("took", res.Took.String())
 }
