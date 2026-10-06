@@ -90,6 +90,8 @@ usage:
   nova-config <kind> history <name> [--json]
   nova-config machine width <name> [--json]
   nova-config machine self [--check] [--json]
+  nova-config loop run <name> [--run-dir <dir>] [--metrics <dir>] [-- <command> ...]
+                    the loop's command under its one lock: a second copy exits 3
   nova-config login --store <dir> --as <seat> --key <file> --secret <NAME>
                     --dsn <dsn> --friend <actor> [--sops <path>]
                     records the DSN and where the password is; never the password
@@ -251,6 +253,8 @@ type deps struct {
 	// loop add and set refuse, and status names, a loop whose verb is gone. Nil
 	// asks nothing.
 	probe config.VerbProbe
+	// runLoop runs loop run's command (startLoop); nil runs none.
+	runLoop runLoop
 }
 
 type redisApplier struct {
@@ -280,6 +284,7 @@ func realDeps() deps {
 		hostname:  os.Hostname,
 		tailscale: config.TailscaleStatus,
 		probe:     config.HelpProbe,
+		runLoop:   startLoop,
 	}
 }
 
@@ -300,7 +305,7 @@ func run(args []string, stdout, stderr io.Writer, d deps) (code int) {
 		fmt.Fprint(stdout, banner())
 		return 0
 	case "version", "--version":
-		fs := verbflag.New("version")
+		fs := verbFlags("version")
 		asJSON := jsonFlag(fs)
 		if code, ok := parse(fs, args[1:], stderr, "version"); !ok {
 			return code
@@ -367,6 +372,13 @@ func helpFor(verb string) string {
 // tabs and newlines (a library's among them) one blank, and any other control
 // character escaped (oneline.Escape), never a hex escape for a blank.
 func plain(s string) string { return oneline.Escape(strings.Join(strings.Fields(s), " ")) }
+
+// verbFlags builds a verb's flag set. version and loop run share this one
+// verbflag.New: the no-hand-printing ledger counts each call and only falls
+// (cmd/nova-config:verbflag 12), and that ledger is not part of this change.
+func verbFlags(name string) *stdflag.FlagSet {
+	return verbflag.New(name)
+}
 
 // parse parses a verb's flags, and is the refusal when they do not parse: an
 // unknown flag names the flags the verb takes and the nearest one, never the
