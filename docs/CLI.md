@@ -542,10 +542,15 @@ What a friend runs to be part of the team: the wake loop, the beat and the
 proof of life, as one daemon. One launchd agent per friend parks on the
 friend's nova-bus stream and, whenever the session is free, pushes every
 waiting message into the running session as one turn through the harness's
-deliver command, beats to the sprint server while the loop runs, answers the
+deliver command (one envelope, oldest first, each message under a line
+`[i/n] <id> from=<f> at=<RFC3339> age=<m>m subject=<s>`, capped at the
+harness's text limit with the rest named under `and <n> more: nova-bus recv
+--as <me> --all`; exit 0 acks every message it carried, a failure none; of the
+daemon's own coordinator notices pending, only the newest goes in, the older
+acked with `superseded=<newer id>` on the daemon's record), beats to the sprint server while the loop runs, answers the
 coordinator's `PING` at once (`daemon-pong`) and never makes a turn of it; the
-session's own `pong --nonce`, its line at the head of the next turn, alone
-makes the friend up. No ping for a window and the session is told the
+session's own `pong --nonce`, its line at the head of the next turn, or any
+other bus line the session sends after the ping, makes the friend up. No ping for a window and the session is told the
 coordinator is silent, once, inside a turn that carries messages. A turn runs as
 long as it prints (`--silent-stop`, twenty minutes of silence, stops it); the
 same provider refusal three turns in a row (`--broken-after`) marks the session
