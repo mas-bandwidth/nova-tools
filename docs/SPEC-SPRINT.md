@@ -1818,6 +1818,35 @@ providers=<n> notes=<n>` (with `--json`, the providers' records and the notes wr
 no provider named by a route, `providers=0` and nothing written; with `--dry-run`, the same
 lines from the step's plan, `COST RECONCILE DRY-RUN ...: nothing was written`); the
 release's spend check calls it (`TestCostReconcileSetsEachProvidersDayBesideTheRecords`).
+
+**The reprice** (`internal/sprint/cost_reprice.go`, `sprint.Reprice`; the owner, 2026-10-05: "Is
+it possible to fix historical prices for this sprint ... More accurate prices allow us to
+optimize better."). A record keeps its tokens by class with the route that priced it, so a route
+row's prices corrected after the fact are carried back: **`nova-sprint cost reprice [--route
+<r>]... [--since <RFC3339>] [--dry-run] [--json]`** runs one step in which every priced consumer
+record on every primary (narrowed to the routes named, and to the records that ended at or after
+`--since`) is computed again from its tokens at its route row's current prices
+(`Usage.Priced`): the record's `predicted_usd` and its copy of the sheet are rewritten on the
+primary, the primary's total moved by the difference (`cardcost.Total.Repriced`, so the records
+past the list's bound keep their place in it), a landed primary's `cost` set to its new charged
+figure, and each stream's sum on its control card set again from its landed cards; the
+dashboard's cost panel and `where --json` read those, so they show the repriced totals. The
+harness's own cost, where a record holds one, stays its charged figure (it is no price of ours):
+its prediction moves and it is counted `held_by_actual`. A record with no token
+(`unpriced=no-tokens`), a subscription read's, one no route priced, and one whose route is gone
+from the store are left as they are and counted; so are the records past a card's list bound
+(`cut`), whose tokens are not kept. A record already at its route's prices is not written. It
+prints per route `REPRICE route=<r> price_as_of=<d> records=<n> changed=<n> old=<$> new=<$>
+old_usd=<exact> new_usd=<exact> old_predicted_usd=<exact> new_predicted_usd=<exact>`
+(the charged sums, then the predicted), then `REPRICE LEFT no_tokens=<n> subscription=<n>
+no_route=<n> cut=<n>[ route_gone=<r>:<n>]...` and `COST REPRICE OK routes=<n> cards=<n>
+streams=<n>`; the step logs one line per route (`reprice route=<r> price_as_of=<d> ...`). With
+`--dry-run` it plans on a read of the tables and writes nothing (`COST REPRICE DRY-RUN ...:
+nothing was written`). The consumer cards' own usage fields (the ATTEMPT lines of `card <id>`)
+keep what was recorded at their end; the primary's records are the cost
+(`TestRepriceRecomputesEveryPricedRecordFromItsTokens`,
+`TestCostRepriceRewritesTheRecordsFromTheirTokens`).
+
 **Not yet run by the loop:** the read when `nova-sprint run` begins and every hour after
 (outside every tick, as the balance poll does), with the judgment's entry in `Decisions` and
 its line in the help, is owed; until it lands a read is written only when the verb runs.
