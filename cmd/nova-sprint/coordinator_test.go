@@ -114,6 +114,7 @@ func TestEveryCoordinatorVerbIsTheCoordinators(t *testing.T) {
 		"promoted":          "promoted --sha 0123abc",
 		"funded":            "funded openrouter --reason paid",
 		"cost reconcile":    "cost reconcile",
+		"cost reprice":      "cost reprice",
 		"wait":              "wait x --for 1m",
 		"ack":               "ack x --reason r",
 		"answer":            "answer --dry-run --record /dev/null",

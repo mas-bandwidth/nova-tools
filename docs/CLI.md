@@ -1175,6 +1175,7 @@ nova-sprint routes
 nova-sprint rules
 nova-sprint funded <provider> --reason <text>
 nova-sprint cost reconcile [--dry-run] [--json]
+nova-sprint cost reprice [--route <r>]... [--since <RFC3339>] [--dry-run] [--json]
 nova-sprint stats
 nova-sprint play [--simulation] [--seed <n>] [--every <duration>] [--broken <p>] [--fail <p>] [--stuck <p>] [--cross <p>] [--down <p>] [--up <p>] [--red <p>] [--flap <p>] [--batch <n>] [--hold] [--silent <member>@<from>+<for>]... [--ticks <n>]
 nova-sprint clear --confirm sprint
