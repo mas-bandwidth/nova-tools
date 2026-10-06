@@ -93,7 +93,7 @@ func TestTheFriendRowIsWhatSomeoneDecidesForHer(t *testing.T) {
 
 	friend, _ := Lookup(KindFriend)
 	scopedGot97 := strings.Join(friend.FieldNames(), ",")
-	require.Equal(t, "slots,tiers,roles,width,mode", scopedGot97, "friend fields %s, want slots,tiers,roles,width,mode", scopedGot97)
+	require.Equal(t, "slots,tiers,roles,width,mode,config_dir", scopedGot97, "friend fields %s, want slots,tiers,roles,width,mode,config_dir", scopedGot97)
 	for _, f := range friend.Fields {
 		scopedWant102 := f.Name == "slots" || f.Name == "tiers"
 		assert.Equal(t, scopedWant102, f.Required, "--%s required=%v, want %v", f.Name, f.Required, scopedWant102)
@@ -701,4 +701,26 @@ func TestLoopApplyAloneTakesTheStoresDirectory(t *testing.T) {
 	require.ErrorIs(t, err, ErrInvalid)
 	assert.ErrorContains(t, err, "run: nova-config fleet set --loops_dir <path>")
 	assert.Zero(t, c.Exists(ctx, LoopKey("member-m1")).Val(), "a refused apply writes no hash")
+}
+
+// A friend row's config_dir is optional, and absolute when set: CLAUDE_CONFIG_DIR
+// is read as given, never expanded.
+func TestAFriendRowsConfigDirIsAbsoluteWhenSet(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ dir, want string }{
+		{"", ""},
+		{"/accounts/heavy-a", ""},
+		{"~/accounts/heavy-a", "want --config_dir <an absolute path>"},
+		{"accounts", "want --config_dir <an absolute path>"},
+	} {
+		t.Run(tc.dir, func(t *testing.T) {
+			t.Parallel()
+			err := checkFriend(Row{Name: "amy", Fields: map[string]string{"config_dir": tc.dir}})
+			if tc.want == "" {
+				assert.NoError(t, err)
+			} else {
+				assert.ErrorContains(t, err, tc.want)
+			}
+		})
+	}
 }
