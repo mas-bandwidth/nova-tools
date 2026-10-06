@@ -573,7 +573,7 @@ version read back, and a rollback from kept copies on missed ticks. The runbook 
 
 | check | the bar |
 |---|---|
-| `no-stuck-friend` | no friend was stuck at any moment of the last 4 hours: stuck is a working card held past its deadline (her `friend_deadline`, else 2 hours, from its first take), or a card dealt to her and not taken past the dealt bound; read from the store's log, a spell that has ended counting while it overlaps the window; a fail names the friend, the card and the moment |
+| `no-stuck-friend` | no friend was stuck at any moment of the last 4 hours: stuck is a working card held past its deadline (her `friend_deadline`, else 2 hours, from its first take), or a card dealt to her and not taken past the dealt bound (a dealt card is ready on her row until she starts it, then working, so a card she never started is held to the dealt bound, not the two hours); read from the store's log with the verb's clock, a spell that has ended counting while it overlaps the window; a fail names the friend, the card, the moment and the bound (`limit`) |
 
 Each later card of stream sprint-v1-release adds its row here with its check.
 

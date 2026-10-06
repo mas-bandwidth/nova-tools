@@ -38,13 +38,14 @@ func TestReleaseCheckOnAQuietSprintIsOK(t *testing.T) {
 func TestReleaseCheckNamesAFriendStuckInTheLastFourHours(t *testing.T) {
 	t.Parallel()
 	ta, _ := friendCardApp(t, "friend amy", "amy")
-	ta.ok("tick")
+	ta.ok("tick") // dealt ready on her row: not hers to finish until she starts it
+	ta.startFriend("amy", 1)
 	before := ta.applies()
-	ta.a.sleep(3 * time.Hour) // her card, taken at the deal, is past its two hours since the second
+	ta.a.sleep(3 * time.Hour) // her card, started at the deal, is past its two hours since the second
 	code, out, errs := ta.do("release check")
 	require.Equal(t, 1, code, "%s %s", out, errs)
-	assert.Contains(t, out, "RELEASE CHECK no-stuck-friend fail friend amy stuck from ")
-	assert.Contains(t, out, "s1-1.w1 not finished")
+	assert.Contains(t, out, "RELEASE CHECK no-stuck-friend fail friend amy stuck from "+t0.Add(2*time.Hour).Format(time.RFC3339))
+	assert.Contains(t, out, "s1-1.w1 not finished (limit 2h0m0s)")
 	assert.Contains(t, out, "nova-sprint card s1-1")
 	assert.True(t, strings.HasSuffix(strings.TrimSpace(out), "RELEASE NOT READY failed=1"), out)
 	assert.Equal(t, before, ta.applies(), "release check writes nothing")
@@ -59,6 +60,25 @@ func TestReleaseCheckNamesAFriendStuckInTheLastFourHours(t *testing.T) {
 	// a stream the glob does not name has no friend stuck in it
 	code, out, errs = ta.do("release check --streams other*")
 	assert.Equal(t, 0, code, "%s %s", out, errs)
+}
+
+// A card dealt ready and never started is stuck only past the dealt bound, not the
+// two hours of a started card.
+func TestReleaseCheckNamesAFriendWhoNeverStartedADealtCard(t *testing.T) {
+	t.Parallel()
+	ta, _ := friendCardApp(t, "friend amy", "amy")
+	ta.ok("tick")
+	ta.a.sleep(3 * time.Hour) // ready three hours: inside the six-hour dealt bound
+	code, out, errs := ta.do("release check")
+	require.Equal(t, 0, code, "%s %s", out, errs)
+	assert.Contains(t, out, "RELEASE CHECK no-stuck-friend ok no friend was stuck since ")
+	assert.Contains(t, out, "(1 friend cards read from the log)")
+
+	ta.a.sleep(4 * time.Hour) // ready seven hours: past the dealt bound since the sixth
+	code, out, errs = ta.do("release check")
+	require.Equal(t, 1, code, "%s %s", out, errs)
+	assert.Contains(t, out, "RELEASE CHECK no-stuck-friend fail friend amy stuck from "+t0.Add(6*time.Hour).Format(time.RFC3339))
+	assert.Contains(t, out, "s1-1.w1 "+sprint.WordNeverTaken+" (limit "+sprint.DealtMaxDefault.String()+")")
 }
 
 func TestReleaseCheckFailsWhenSprintClearedInsideWindow(t *testing.T) {
@@ -90,6 +110,7 @@ func TestReleaseCheckPassesWhenCardTakenBackInsideDeadline(t *testing.T) {
 	ta, _ := friendCardApp(t, "friend", "amy")
 	ta.a.tip = func(_ context.Context, _, _ string) (string, error) { return "", nil }
 	ta.ok("tick")
+	ta.startFriend("amy", 1)
 	ta.a.sleep(1 * time.Hour) // 1 hour into 2h deadline
 	ta.ok("friend take amy s1-1 --reason 'rebalance'")
 	ta.a.sleep(2 * time.Hour) // hour 3 since deal, hour 2 since withdrawal (untaken deadline is 6h = hour 7)
