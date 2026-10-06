@@ -284,7 +284,9 @@
         # kept: the store's library digest, and the bin directory's copy of
         # every tool the stage replaces (nova_seat_rollback_dir/bin), the
         # nova-redis only when its library is the one on the store (after a
-        # refused run it is not, and the one kept before stays).
+        # refused run it is not, and the one kept before stays, to load that
+        # library and never to be put back). The directory is emptied first:
+        # a refusal puts back only what this adoption kept.
         - name: "seat: the library on the store before the window (what a refusal restores)"
           ansible.builtin.set_fact:
             seat_old_library: "{{ seat_was.library.loaded if seat_cand != '' else '' }}"
@@ -314,6 +316,22 @@
           ansible.builtin.set_fact:
             seat_window: "{{ seat_cand != '' and ((seat_replaces | default([])) | length > 0 or not seat_was.library.match) }}"
 
+        - name: "seat: this adoption keeps the nova-redis of before (its library is the one on the store)"
+          ansible.builtin.set_fact:
+            seat_keeps_redis: "{{ seat_old_library != '' and (seat_was.library.match | default(false)) and 'nova-redis' in (seat_kept | default([])) }}"
+
+        - name: "seat: what older adoptions left in the rollback directory"
+          ansible.builtin.find: { paths: "{{ nova_seat_rollback_dir }}/bin", file_type: any, hidden: true }
+          register: seat_left
+          when: seat_window and not ansible_check_mode
+
+        - name: "seat: the rollback directory emptied, so a refusal restores only this adoption's before-state"
+          ansible.builtin.file: { path: "{{ item.path }}", state: absent }
+          loop: >-
+            {{ seat_left.files | default([]) | rejectattr('path', 'equalto', nova_seat_rollback_dir ~ '/bin/nova-redis' if not seat_keeps_redis else '')
+               | list if seat_window and not ansible_check_mode else [] }}
+          loop_control: { label: "{{ item.path | basename }}" }
+
         - name: "seat: the directory the tools of before are kept in"
           ansible.builtin.file: { path: "{{ nova_seat_rollback_dir }}/bin", state: directory, mode: "0755" }
           when: seat_window and not ansible_check_mode
@@ -333,7 +351,7 @@
             dest: "{{ nova_seat_rollback_dir }}/bin/nova-redis"
             remote_src: true
             mode: "0755"
-          when: seat_window and not ansible_check_mode and seat_old_library != '' and seat_was.library.match and 'nova-redis' in seat_kept
+          when: seat_window and not ansible_check_mode and seat_keeps_redis
 
     - name: install them into the bin directory (verified whole, a tool at the version skipped)
       ansible.builtin.command:
@@ -919,7 +937,11 @@
             dest: "{{ nova_bin_dir }}/{{ item.path | basename }}"
             remote_src: true
             mode: "0755"
-          loop: "{{ seat_kept_tools.files | default([]) if seat_opened | default(false) else [] }}"
+          # a nova-redis this adoption did not keep only loads the library below
+          loop: >-
+            {{ seat_kept_tools.files | default([])
+               | rejectattr('path', 'equalto', nova_seat_rollback_dir ~ '/bin/nova-redis' if not seat_keeps_redis | default(false) else '')
+               | list if seat_opened | default(false) else [] }}
           loop_control: { label: "{{ item.path | basename }}" }
           register: seat_put_back
           # ignored: a tool that could not be put back is named by the refusal

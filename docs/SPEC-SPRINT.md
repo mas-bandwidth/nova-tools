@@ -5627,8 +5627,9 @@ the new library. In order:
    daemon's reinstall (its own `nova-friend install --dry-run` with the flags that daemon's
    plist records). A refusal here leaves the host as it was. Then what a refusal restores is
    kept: the store's library digest, and the bin directory's copy of every tool the stage
-   replaces (`nova_seat_rollback_dir/bin`; the nova-redis only when its library is the one on
-   the store).
+   replaces (`nova_seat_rollback_dir/bin`, emptied first, so a refusal puts back only what this
+   adoption kept; the nova-redis only when its library is the one on the store, else an older
+   adoption's nova-redis stays there to load the library of before and is never put back).
 2. The window opens only when the install replaces a tool (a stage file whose bytes the bin
    directory lacks) or the library on the store is not the installed build's. Every loaded nova
    agent but the friend daemons, and every agent whose process is this bin directory's
@@ -5684,8 +5685,12 @@ nova-config, applied by loops.yml with bootout and bootstrap.
 WOULD-ADOPT` under `--dry-run`, the play's `--check`, where a machine with no candidate staged or
 built says `ADOPT step=seat ... WOULD-ADOPT`); a play that stops, or ends without the line of
 every step, is refused at exit 1 naming the step, the refusal said verbatim: a half move is
-never reported as an adoption. No flag runs a step alone; `nova-sprint server switch` and
-`nova-redis fn load` stay the steps the play calls. Tested with fakes
+never reported as an adoption. A refusal once the window opened is said with what the rollback
+did (the tools put back, the library read back, the agents started again) and names the steps
+before it rolled back, not done. No flag runs a step alone: the play calls `nova-sprint server
+switch` only with `--dry-run` (the candidate's shadow tick), loads the library with `nova-redis
+fn load`, and moves the server with `nova-update release install` and launchctl bootout and
+bootstrap. Tested with fakes
 (`TestLiveShowsWhatIsInstalled`, `TestAdoptRunsThePlayAndRefusesAHalfMove`), the play with
 `--syntax-check` and `--check` on the fixtures, and the seat's part of the play run for real, in
 the order an adoption meets it, on a coordinator fixture with its own home, launchctl, store,

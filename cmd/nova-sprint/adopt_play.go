@@ -36,7 +36,7 @@ import (
 // the verb table.
 func init() {
 	verbClasses["adopt"] = classMachine
-	verbExit["adopt"] = "exit codes: 0 every step of the seat adopted the build (or, with --dry-run, said what it would change), 1 the play stopped or left a step without its line (ADOPT REFUSED step=<step>: the steps before it are done and the play runs again to finish), 2 usage"
+	verbExit["adopt"] = "exit codes: 0 every step of the seat adopted the build (or, with --dry-run, said what it would change), 1 the play stopped or left a step without its line (ADOPT REFUSED step=<step>, with what the rollback did when the window had opened: the steps before it are done, or rolled back, and the play runs again to finish), 2 usage"
 	verbEffect["adopt"] = "local and remote writes through ansible-playbook: the tools play builds the version if missing and runs the new build's checks on the seat (shadow tick, nova-friend install --dry-run) before anything changes; then, in a window, it stops the seat's old server and member (bootout, seen gone in ps), migrates the configuration store, loads the function library, installs the tools and bootstraps every stopped or stale nova launchd agent, points the dashboard links at the installed nova-sprint and reinstalls each stale friend daemon with nova-friend install; a refusal in the window puts the tools and library of before back and restarts the old agents (the migration is never undone); --dry-run runs the play with --check and writes nothing"
 }
 
@@ -56,15 +56,24 @@ var (
 var adoptPlayOf sync.Map
 
 // adoptReport is what the play's output says: the ADOPT lines in order, the
-// steps each host printed, and the first refusal.
+// steps each host printed, the first refusal (the failing check's), the steps
+// its host printed before it, and what the seat play's rescue said the
+// rollback did (its later refusal line, from "rollback: " or "the window never
+// opened").
 type adoptReport struct {
-	lines   []string
-	steps   map[string]map[string]bool
-	refused string
+	lines    []string
+	steps    map[string]map[string]bool
+	refused  string
+	before   []string
+	rollback string
 }
+
+// adoptRollbackRe finds what the rescue's refusal says the rollback did.
+var adoptRollbackRe = regexp.MustCompile(`(?:^|; )((?:rollback: |the window never opened).*)$`)
 
 func readAdopt(output string) adoptReport {
 	r := adoptReport{steps: map[string]map[string]bool{}}
+	var order [][2]string // host, step: each step line before the first refusal
 	for _, q := range adoptLine.FindAllString(output, -1) {
 		var text string
 		if json.Unmarshal([]byte(q), &text) != nil {
@@ -76,14 +85,27 @@ func readAdopt(output string) adoptReport {
 		}
 		r.lines = append(r.lines, l)
 		if strings.HasPrefix(l, "ADOPT REFUSED ") {
+			if m := adoptRollbackRe.FindStringSubmatch(l); m != nil {
+				r.rollback = m[1]
+			}
 			if r.refused == "" {
-				r.refused = strings.TrimPrefix(l, "ADOPT REFUSED ")
+				r.refused = strings.TrimSuffix(strings.TrimPrefix(l, "ADOPT REFUSED "), "; "+r.rollback)
+				if host := adoptHostRe.FindStringSubmatch(l); host != nil {
+					for _, o := range order {
+						if o[0] == strings.TrimSuffix(host[1], ":") && !slices.Contains(r.before, o[1]) {
+							r.before = append(r.before, o[1])
+						}
+					}
+				}
 			}
 			continue
 		}
 		step, host := adoptStepRe.FindStringSubmatch(l), adoptHostRe.FindStringSubmatch(l)
 		if step == nil || host == nil {
 			continue
+		}
+		if r.refused == "" {
+			order = append(order, [2]string{host[1], step[1]})
 		}
 		if r.steps[host[1]] == nil {
 			r.steps[host[1]] = map[string]bool{}
@@ -179,10 +201,23 @@ func (a *app) cmdAdoptPlay(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stdout, oneline.Escape(l))
 		}
 	}
-	finish := "the steps before it are done and the ones after it did not run; fix the cause and run the same adopt again (the play is idempotent: it changes only what is still stale)"
+	again := "fix the cause and run the same adopt again (the play is idempotent: it changes only what is still stale)"
+	finish := "the steps before it are done and the ones after it did not run; " + again
 	switch {
 	case r.refused != "":
-		fmt.Fprintf(stderr, "%s adopt REFUSED %s; %s; run: nova-sprint live\n", prog, oneline.Escape(r.refused), finish)
+		said := r.refused
+		if r.rollback != "" {
+			said += "; " + r.rollback
+		}
+		if strings.HasPrefix(r.rollback, "rollback: ") {
+			// the rollback undid what the window did: no step before it stands
+			undone := strings.Join(r.before, ",")
+			if undone == "" {
+				undone = "the window"
+			}
+			finish = "rolled back: " + undone + "; the ones after it did not run; " + again
+		}
+		fmt.Fprintf(stderr, "%s adopt REFUSED %s; %s; run: nova-sprint live\n", prog, oneline.Escape(said), finish)
 		return 1
 	case playErr != nil:
 		task := failedTask(output)
