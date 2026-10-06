@@ -285,6 +285,12 @@ type lander struct {
 	// rules turned off (nil: the app's clock, nova-config's sprint row).
 	baseGateFails map[string]*baseGateFail
 	baseStop      bool
+	// cureTried is the heads tried as a red base's fix and found none, by base commit and
+	// head (cureBase): not gated again on that base
+	cureTried map[string]bool
+	// baseFix is the land log's line for the last build's base fix, reported with the batch
+	// (NOTE) and then cleared
+	baseFix string
 	// baseCount says the last build ran the base's gate under the rule and it was red, baseWhy
 	// its finding: the refusal is counted in the store (baseRefused), never only in this
 	// process, which a hand land starts empty every run and the server every start
@@ -594,6 +600,12 @@ func (l *lander) batch(ctx context.Context, s *sprint.Snapshot, stream string, c
 	b.Times = &landTimes{}
 	merged, failed, why := l.build(ctx, dir, stream, cards, b.Times)
 	b.Also, l.ledgerLog = append(b.Also, l.ledgerLog...), nil
+	if l.baseFix != "" {
+		b.Also, l.baseFix = append(b.Also, l.baseFix), ""
+	}
+	for i, c := range cards {
+		ids[i] = c.id // a base fix lands first (cureBase)
+	}
 	if why != "" && l.baseCount {
 		// the base-gate rule: the refusal counted per stream and base in the store, its third
 		// (or this process's third failure) stopping the stream with the coordinator's judgment
@@ -1024,14 +1036,27 @@ func (l *lander) build(ctx context.Context, dir, stream string, cards []landCard
 	if f := l.baseGateFails[baseSha]; f != nil {
 		was = f.n
 	}
+	first := 0
 	if why, stop := l.treeGateBase(ctx, dir, baseSha); why != "" {
-		// counted when the gate ran red here (or this process's record stops the stream); a
-		// refusal inside a retry's wait, or with the rule off, is not
-		f := l.baseGateFails[baseSha]
-		l.baseStop, l.baseCount, l.baseWhy = stop, stop || f != nil && f.n != was, why
-		return nil, failed, "the base " + base + " fails the tree gate at its tip, so no head is merged onto it; fix the base, then run land again: " + why
+		// a queued head whose tree passes the gate the base fails is the base's fix, not a
+		// casualty of it: it lands first and the batch goes on after it (sprint.FindBaseCure)
+		cured, env := l.cureBase(ctx, dir, stream, cards, baseSha, why)
+		if env != "" {
+			return nil, failed, env + "; no card is blamed and nothing was pushed or reported"
+		}
+		if cured < 0 {
+			// counted when the gate ran red here (or this process's record stops the stream); a
+			// refusal inside a retry's wait, or with the rule off, is not
+			f := l.baseGateFails[baseSha]
+			l.baseStop, l.baseCount, l.baseWhy = stop, stop || f != nil && f.n != was, why
+			return nil, failed, "the base " + base + " fails the tree gate at its tip, so no head is merged onto it; fix the base, then run land again: " + why
+		}
+		cure := cards[cured]
+		copy(cards[1:cured+1], cards[:cured])
+		cards[0] = cure
+		merged, first = append(merged, cure.id), 1
 	}
-	for i := range cards {
+	for i := first; i < len(cards); i++ {
 		c := &cards[i]
 		before, err := l.git(ctx, dir, "rev-parse", "--verify", "HEAD^{commit}")
 		if err != nil {

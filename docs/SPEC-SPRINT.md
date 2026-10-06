@@ -2657,8 +2657,11 @@ and vets (`go build ./...`, `go vet ./...`), and when the head's merge changes a
 document or a test file (a `.md`, a `_test.go`) the packages that test the tree
 itself pass (`go test ./internal/docs/ ./internal/ci/`, those the clone has). The
 base's tip is gated once a batch, the tree tests included, before any head is
-merged: a base that is red refuses the batch, nothing pushed or reported and no
-card blamed, the reason naming the base and the run, and the remedy is to fix
+merged. A base that is red is first offered its cure (section 8, the base cure):
+each head of the batch, merged onto the base alone, through the same gate; the
+first whose tree passes lands first as the base fix and the batch goes on after
+it. With no such head the base refuses the batch, nothing pushed or reported and
+no card blamed, the reason naming the base and the run, and the remedy is to fix
 the base. A head whose merged tree is red is taken off the batch branch and ends
 the batch as a head that does not merge does, the conflict fact's note the run,
 how it ended and its output on one line (the finding; the heads before it land).
@@ -3266,7 +3269,7 @@ rules` prints the same answers, read-only: one `RULE` line per judgment and subj
 | `late` | a work card is past its deadline | with progress in the last 10 minutes (the work card's `progress` stamp: the server's time of its holder's last `progress` verb, which the member sends every 3 minutes while its child prints and the friend daemon while a lane's turn on the card prints; a stamp from before the card's take is another holder's and counts as none) a wait of 30 minutes, once a generation (`rule_waited`). The default is wait only: a working card whose holder has stamped no progress since its take is held 30 minutes at a time and never returned by this rule, so a member that does not stamp never loses an honest long child to it (`tla/SprintRules.tla`, `NeverStampedNeverReturned`). A card whose holder stamped and then went silent past the 10 minutes, or whose one wait is spent, is returned and dealt again once its holder has had its own whole deadline (withdrawn, the take ended: it spends a redeal, so a card late again and again reaches its bound and climbs); a card just dealt again is held until its holder's own deadline. Each answer keeps a hold on the condition until the time it names, and the tick raises it again then if it still holds. A friend's card is left: a friend keeps her cards |
 | `conflict` | stream stopped: conflict on a card, where the lander refused a head one of three ways (`sprint.RefusalWay`): its paths that did not merge are files no generated ledger owns (`conflict_kind=file`, `conflict_paths` on the stream's control card, from `merge --conflict-kind --conflict-path`, which land reports), it fails the lander's checks (files outside its PATHS, E12, or another check), or its merged tree fails the tree gate | in one tick: the card returned to review (`rule_redo` its attempt, `rule_refused` the way, `rule_refusal` the lander's words, `tier_now=flash`), the stream resumed, so the rest of its batch lands on the next landing, and the card reworked at flash, staged on the base's tip, with the fix `redo the same change on the current tip` (a PATHS, checks or gate refusal adds `; the lander refused attempt <n>: <its words>`). The same card refused the same way as the refusal it was last returned on is a brief defect: the card marked (`brief_defect`), the judgment's text prefixed `brief defect: `, the stream left stopped for a mind. A conflict in a ledger the lander could not resolve, one whose files the lander did not say, and a head that is no commit or that origin does not hold are left |
 | `brief-defect` | a card has reached its bound: the brief is wrong, not the worker (the same finding twice, section 2) | the card marked (`brief_defect`), the judgment's text prefixed `brief defect: `, once; the judgment stays open (brief or drop) and no rule moves the card |
-| `base-gate` | (no judgment: the lander's) the base fails its tree gate at its tip | land gates that base commit again after 2 minutes and again after 5 (`sprint.BaseGateRetries`), each landing in between refused with the finding and when it is gated again; the third failure stops every stream that lands on it, `stream stopped: the base fails its tree gate` (`merge --base-red`), the judgment carrying the error; a green base is cached for its commit. With the rule off, a red base is cached for its commit as before (every landing refused until the base moves) |
+| `base-gate` | (no judgment: the lander's) the base fails its tree gate at its tip | a queued head whose tree, merged onto that base alone, passes the same gate lands first as the base fix and the stream goes on (the base cure, below); with none, land gates that base commit again after 2 minutes and again after 5 (`sprint.BaseGateRetries`), each landing in between refused with the finding and when it is gated again; the third failure stops every stream that lands on it, `stream stopped: the base fails its tree gate` (`merge --base-red`), the judgment carrying the error; a green base is cached for its commit. With the rule off, a red base is cached for its commit as before (every landing refused until the base moves) |
 
 A failure many cards share is the fleet's, not the card's: when `RuleSameFailureCards` (3) or
 more cards hold the same failure class now (in review with their work failed that way, or
@@ -3316,6 +3319,24 @@ the stream with one judgment, `stream stopped: the base fails its tree gate`, it
 the base, the gate, the refusals and the first refusal's time, every card where it is; `resume`
 then moves the stream and clears the count, as do a pass that merges and every other stop
 (`TestBaseGateRefusedThreeTimesStopsTheStreamWithAJudgment`, cmd/nova-sprint/land_basegate_count_test.go).
+
+**The base cure.** A fix for a red base is itself a queued head, and refusing every head
+on a red base refuses the fix with the rest (found 2026-10-05, 7:30 PM: the base red on
+one test, the fix card merging, the lander refusing it because the base was red, and the
+coordinator fast-forwarding the base by hand). So before the lander refuses a batch on a
+red base it gates the candidates' trees, not only the base's: each head of the batch, in
+queue order, is merged onto the base alone, through the lander's own checks and the base's
+tree gate with the tree tests (`sprint.FindBaseCure`, internal/sprint/land_cure.go). The
+first whose merged tree passes is the cure: it lands first as the base fix, ahead of the
+heads queued before it, its landing note on its merge card naming the base, the head and
+the finding it cured (`landed first as the base fix: ...`, and the land log's NOTE line),
+and the batch goes on after it on the green tree, each head gated as usual. A pass that
+merges clears the base-gate count, so the stream resumes. A head that does not merge onto
+the base, or whose tree is red too, is a casualty and no cure; it is not tried again on
+that base commit. Only when no queued head cures the base is the landing refused, counted
+and in the end stopped as above (`TestALanderLandsTheHeadThatCuresARedBase`,
+`TestARedBaseWithNoCuringHeadIsLeftAsItWas`, internal/sprint/land_cure_test.go;
+`TestTheLanderLandsTheBaseFixFirst`, cmd/nova-sprint/land_go_test.go).
 
 ## 9. What is always true
 
