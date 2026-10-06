@@ -1168,7 +1168,30 @@ ids, a stream, a column, `--max n` (`--limit` is an alias), or an inbox group:
 `--group <id>`, the id `inbox` prints, with `--expect <n>` the size it printed,
 which refuses a group that has changed. `nova-sprint help <verb>` (or
 `<verb> -h`) prints one verb's usage, flags and exit codes; `nova-sprint help
-<group>` (fleet, friend, reader, goal, stream) prints one group's.
+<group>` (fleet, friend, reader, goal, stream, lane, resource) prints one group's.
+
+### Shared resources: claimed through the coordinator, never by agreement
+
+A bench machine or directory, a branch, a port or a provider account is a row of
+the coordinator's resources table. Nothing else gives a member a hold of one: no
+friend holds a resource by a message to another, and a brief never tells a friend
+to wait for one; it claims through the verb.
+
+    nova-sprint resource add bench-1 --kind bench --capacity 1      # the coordinator's
+    nova-sprint resource claim bench-1 --as m1 --for 2h             # GRANTED, or WAITING place=<n>
+    nova-sprint resource renew bench-1 --as m1 --for 2h             # a live lease only
+    nova-sprint resource release bench-1 --as m1                    # the line's head granted at once
+    nova-sprint resource list [--json]                              # holders, expiries, the line
+
+A claim is granted while the resource has room and nobody waits ahead, else the
+member is put in line, first in, first out, and does not poll: the release or the
+tick that frees the room grants the line's head in the same write and tells it by
+a `resource granted` note. Every lease has an expiry (at most 24h; renew moves a
+live one). The tick releases, at once, a lease past its expiry and every lease and
+place in line of a member that is down, held or out of credit. A line that has
+waited with no room for 30 minutes is one judgment for the coordinator. A refused
+claim, renew or release exits 1 and names the next command. The contract is
+[SPEC-SPRINT.md](SPEC-SPRINT.md#resources), and the model is `tla/Resources.tla`.
 
 ### The seat's store login
 

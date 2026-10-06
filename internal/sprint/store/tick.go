@@ -692,6 +692,13 @@ func (st *Store) Tick(ctx context.Context) (res TickResult, err error) {
 		return res, fmt.Errorf("back: %w", err)
 	}
 	res.State = m.StateWord()
+	// the resources part, RUNNING or STOPPED: no lease outlives its expiry or its
+	// holder (resource.go, tla/Resources.tla); a failure is said, never the tick's
+	if rr, rerr := st.ResourceTick(ctx); rerr != nil {
+		st.stats().note("the resources part failed: " + rerr.Error())
+	} else if rr.Notes > 0 {
+		res.Parts = append(res.Parts, PartResult{Name: "resources", Result: rr})
+	}
 	if !m.Running() {
 		// A STOPPED machine moves nothing; the tick shows the fleet as its
 		// beats say and says it looked, so start can tell a run loop is

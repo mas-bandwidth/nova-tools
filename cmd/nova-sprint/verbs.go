@@ -100,6 +100,11 @@ func init() {
 		{"lane take", "<kind> --machine <m> --as <worker> [--wait <duration>] [--dry-run]", "lane take go --machine m1 --as m1", (*app).cmdLaneTake},
 		{"lane give", "<kind> --machine <m> --as <worker> [--dry-run]", "lane give go --machine m1 --as m1", (*app).cmdLaneGive},
 		{"lane list", "", "lane list", (*app).cmdLaneList},
+		{"resource add", "<name> --kind bench|branch|port|account [--capacity <n>]", "resource add bench-1 --kind bench --capacity 1", (*app).cmdResourceAdd},
+		{"resource claim", "<name> --as <member> --for <duration>", "resource claim bench-1 --as m1 --for 2h", (*app).cmdResourceClaim},
+		{"resource renew", "<name> --as <member> --for <duration>", "resource renew bench-1 --as m1 --for 2h", (*app).cmdResourceRenew},
+		{"resource release", "<name> --as <member>", "resource release bench-1 --as m1", (*app).cmdResourceRelease},
+		{"resource list", "[--json]", "resource list", (*app).cmdResourceList},
 		{"reader add", "<reader>... [--tiers <flash[,pro,heavy,frontier]|all|default>]", "reader add reader-d", (*app).cmdReaderAdd},
 		{"reader set", "<reader>... --tiers <flash[,pro,heavy,frontier]|all|default>", "reader set reader-a --tiers flash", (*app).cmdReaderSet},
 		{"reader away", "<reader>...", "reader away reader-d", func(a *app, args []string, o, e io.Writer) int { return a.cmdReaderHold(true, args, o, e) }},
@@ -433,6 +438,9 @@ func helpCommand(path []string, stdout, stderr io.Writer) int {
 		}
 		if name == "lane" {
 			fmt.Fprint(stdout, "\n"+laneWords())
+		}
+		if name == "resource" {
+			fmt.Fprint(stdout, "\n"+resourceWords())
 		}
 		fmt.Fprintf(stdout, "\nnova-sprint help %s <verb> (or nova-sprint %s <verb> -h) prints a verb's flags, examples and exit codes.\n", name, name)
 		return 0
