@@ -234,7 +234,9 @@ function streamStatus(state, c, total) {
 // The archived streams (stream archive; the owner, 2026-10-05: "I would like you to remove all
 // the already landed work streams"): off the table by default, one line saying how many, the
 // cards landed in them and their cost, which shows them or hides them again when clicked. The
-// total row, the progress bar and the hero count them either way.
+// total row, the progress bar and the hero count only the streams on the table, shown or not
+// (the owner, 2026-10-06: "I really don't think we have 2.8k cards post-archive..."); the
+// archived line carries theirs.
 var showArchived = false, lastStreams = null;
 function archivedSet(d) { var a = {}; ((d.archived || {}).streams || []).forEach(function (s) { a[s] = 1; }); return a; }
 function renderArchived(d) {
@@ -272,6 +274,17 @@ function renderStreams(d) {
   var rank = function (k) { return RANK[statusOf[k]] == null ? 3.5 : RANK[statusOf[k]]; };
   var keys = streamOrder(d).filter(function (k) { return showArchived || !arch[k]; }).sort(function (a, b) { return rank(a) - rank(b) || (a < b ? -1 : a > b ? 1 : 0); });
   var sum = { cost: 0, totalCost: 0, workCost: 0, readCost: 0, unreconciled: 0, unpriced: 0 }, held = 0, landedStreams = 0, prevRank = null;
+  // the epoch's spend, every stream's, the archived ones' too: the cost tile's scope once the
+  // sprint is done (where --json's done), when the table's streams are all archived
+  var epoch = { totalCost: 0, workCost: 0, readCost: 0, unpriced: 0 };
+  streamOrder(d).forEach(function (k) {
+    var sc = (d.stream_costs || {})[k] || {};
+    var tc = cents(sc.total_cost); if (tc) epoch.totalCost += tc;
+    var wc = cents(sc.work_cost); if (wc) epoch.workCost += wc;
+    var rc = cents(sc.read_cost); if (rc) epoch.readCost += rc;
+    epoch.unpriced += int(sc.unpriced_runs);
+  });
+  sum.epoch = epoch;
   var digits = digitsOf(streamOrder(d).reduce(function (a, k) { return a + FLOW.reduce(function (b, st) { return b + int(work[k][st]); }, 0); }, 0));
   FLOW.forEach(function (st) { sum[st] = 0; });
   syncRows(box, box._head, keys, function () {
@@ -285,16 +298,19 @@ function renderStreams(d) {
     return r;
   }, function (r, k) {
     var w = work[k], m = merge[k] || {}, s = states[k] || {}, c = {}, total = 0;
-    FLOW.forEach(function (st) { c[st] = int(w[st]); total += c[st]; sum[st] += c[st]; });
-    var ct = cents(w.cost); if (ct) sum.cost += ct;
-    var sc = (d.stream_costs || {})[k] || {};
-    var tc = cents(sc.total_cost); if (tc) sum.totalCost += tc;
-    // the reads beside the work: the same total split by kind (sprint.TierCosts)
-    var wc = cents(sc.work_cost); if (wc) sum.workCost += wc;
-    var rc = cents(sc.read_cost); if (rc) sum.readCost += rc;
-    // the sprint's unreconciled spend rides on every stream's record: read once, never summed
-    var uc = cents(sc.unreconciled); if (uc) sum.unreconciled = Math.max(sum.unreconciled, uc);
-    sum.unpriced += int(sc.unpriced_runs);
+    FLOW.forEach(function (st) { c[st] = int(w[st]); total += c[st]; });
+    var ct = cents(w.cost);
+    // an archived stream shown is drawn, and counted only on its archived line
+    if (!arch[k]) {
+      FLOW.forEach(function (st) { sum[st] += c[st]; });
+      if (ct) sum.cost += ct;
+      var sc = (d.stream_costs || {})[k] || {};
+      var tc = cents(sc.total_cost); if (tc) sum.totalCost += tc;
+      // the reads beside the work: the same total split by kind (sprint.TierCosts)
+      var wc = cents(sc.work_cost); if (wc) sum.workCost += wc;
+      var rc = cents(sc.read_cost); if (rc) sum.readCost += rc;
+      sum.unpriced += int(sc.unpriced_runs);
+    }
     var status = statusOf[k];
     if (status === "held") held++;
     if (status === "landed") landedStreams++;
@@ -304,22 +320,17 @@ function renderStreams(d) {
     setText(r.nameT, k);
     var tone = { landed: "done", working: "active", held: "warning", stopped: "critical" }[status] || "neutral";
     setPill(r.pill, status, tone, status + (s.State ? " · stream " + s.State + (s.Since ? " since " + clockShort(new Date(s.Since)) : "") : ""));
-    var tags = []; if (int(m.stuck) > 0) tags.push(m.stuck + " stuck"); if (m.ci === "red") tags.push("ci red");
+    // an archived stream shown is marked: the total row leaves it out
+    var tags = arch[k] ? ["archived"] : []; if (int(m.stuck) > 0) tags.push(m.stuck + " stuck"); if (m.ci === "red") tags.push("ci red");
     setText(r.tag, tags.join(" · "));
     FLOW.forEach(function (st) { if (st !== "landed") setNum(r.n[st], c[st]); });
     setHTML(r.n.landed, frac(c.landed, total, digits));
     setText(r.cost, ct === null ? "-" : money(ct)); setClass(r.cost, "num" + (ct === null ? " zero" : ""));
   }, box._total);
-  // an archived stream off the table still counts in the total row
-  streamOrder(d).forEach(function (k) {
-    if (showArchived || !arch[k]) return;
-    FLOW.forEach(function (st) { sum[st] += int(work[k][st]); });
-    var ct = cents(work[k].cost); if (ct) sum.cost += ct;
-    var sc = (d.stream_costs || {})[k] || {};
-    var tc = cents(sc.total_cost); if (tc) sum.totalCost += tc;
-    var wc = cents(sc.work_cost); if (wc) sum.workCost += wc;
-    var rc = cents(sc.read_cost); if (rc) sum.readCost += rc;
-    sum.unpriced += int(sc.unpriced_runs);
+  // the sprint's unreconciled spend rides on every stream's record, an archived one's too:
+  // read once, never summed
+  Object.keys(d.stream_costs || {}).forEach(function (k) {
+    var uc = cents(d.stream_costs[k].unreconciled); if (uc) sum.unreconciled = Math.max(sum.unreconciled, uc);
   });
   var tc = box._total._c, all = 0;
   FLOW.forEach(function (st, i) { all += sum[st]; if (st !== "landed") setNum(tc[2 + i], sum[st]); });
@@ -551,21 +562,25 @@ function renderHero(d, s) {
     var ms = etaMs(m[1]);
     var etaAt = new Date(at.getTime() + ms);
     if (ms != null && !isNaN(at)) { etaAtLast = [etaAt, ms]; fitEtaAt(); } else { etaAtLast = null; setText($("eta-at"), "\u00a0"); }
-  } else if (all && landed >= all) { setText($("eta"), "done"); setText($("eta-at"), " "); }
+  } else if ((all && landed >= all) || / done$/.test(String(d.summary || ""))) { setText($("eta"), "done"); setText($("eta-at"), " "); }
   else { setText($("eta"), "-"); setText($("eta-at"), "not in the summary"); }
-  // the complete cost (docs/SPEC-SPRINT.md, "What a card cost"): every take and read of
-  // every card in any column, plus what the providers counted beyond those records; the
-  // cost per card is every recorded take and read over the cards that landed
-  var recorded = s.sum.totalCost, unreconciled = s.sum.unreconciled;
-  setText($("cost"), money(recorded + unreconciled));
+  // the cost tile and its tooltip cover one scope (docs/SPEC-SPRINT.md, the summary line): the
+  // streams on the table, or, the sprint done, the epoch's every stream, as the hero's count
+  // is. The cost is every recorded take and read of their cards in any column; the cost per
+  // card is that over the cards that landed
+  var c = d.done ? s.sum.epoch : s.sum, recorded = c.totalCost;
+  setText($("cost"), money(recorded));
   // the reads are their own number beside the work, with their share of the two:
   // "$0.42 per card · $310 work · $96 reads (24%)"
-  var both = s.sum.workCost + s.sum.readCost;
-  var split = both ? money(s.sum.workCost) + " work \u00b7 " + money(s.sum.readCost) + " reads (" + Math.round(100 * s.sum.readCost / both) + "%)" : "";
+  var both = c.workCost + c.readCost;
+  var split = both ? money(c.workCost) + " work \u00b7 " + money(c.readCost) + " reads (" + Math.round(100 * c.readCost / both) + "%)" : "";
   var per = landed ? money(Math.ceil(recorded / landed)) + " per card" : "";
-  setHTML($("cost-per"), [per, split].filter(Boolean).join(" \u00b7 ") || " ");
-  setTitle($("cost-per"), readerSpendTitle(d));
-  setText($("cost-unreconciled"), money(unreconciled) + " unreconciled" + (s.sum.unpriced ? " · " + s.sum.unpriced + " runs unpriced" : ""));
+  var unpriced = c.unpriced ? c.unpriced + " runs unpriced" : "";
+  setHTML($("cost-per"), [per, split, unpriced].filter(Boolean).join(" \u00b7 ") || " ");
+  setTitle($("cost-per"), readerSpendTitle(d, d.done ? null : archivedSet(d)));
+  // what the providers counted beyond the records is the epoch's (sprint.UnreconciledSpend,
+  // every day since the epoch began), never added into the tile: its own line, its scope named
+  setText($("cost-unreconciled"), money(s.sum.unreconciled) + " unreconciled since " + epochStart(d));
   setText($("inflight"), s.sum.working + s.sum.review + s.sum.merging);
   inflightLast = s.sum; renderInflight(s.sum);
   // throughput: cards landed per hour over the last hour, from the server's samples
@@ -578,9 +593,18 @@ function renderHero(d, s) {
 // readerSpendTitle is the cost tile's tooltip: each reader's spend, all time and the last hour,
 // summed over every stream's where record (stream_costs[s].readers, sprint.ReaderSpend: exact
 // dollars), most first; "" with no reader priced
-function readerSpendTitle(d) {
+// epochStart is the day the epoch began, UTC as the providers' days are, from where --json's
+// cleared; "the epoch began" when it is not known.
+function epochStart(d) {
+  var t = new Date(d.cleared || "");
+  return isNaN(t) || t.getUTCFullYear() < 2000 ? "the epoch began" : t.toISOString().slice(0, 10);
+}
+
+// readerSpendTitle is each reader's spend over the streams but those in skip (null skips none).
+function readerSpendTitle(d, skip) {
   var by = {}, sc = d.stream_costs || {};
   Object.keys(sc).forEach(function (k) {
+    if (skip && skip[k]) return;
     var rs = sc[k].readers || {};
     Object.keys(rs).forEach(function (r) {
       var b = by[r] || (by[r] = { usd: 0, hour: 0 });

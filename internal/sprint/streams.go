@@ -122,7 +122,9 @@ const NStreamArchived = "streams archived"
 // be archived, none when every one may. Archiving hides a stream's rows of the
 // work and merge tables (the table layer's row hide) and moves no card: its
 // landed cards stay placed in its landed cell, with their costs and landings,
-// and every fold, footer and summary counts them as before. A stream is
+// and every fold counts them as before; the headline (where's summary line and
+// drawn footers) counts only the streams on the table, and where --json carries
+// the archived ones' cards beside it (archived_cards, archived_landed). A stream is
 // archived only when it is a row of the work or merge table and every card it
 // holds has landed: no primary or sentinel in any column of its work row but
 // landed, no merge card queued or stuck in its merge row. The machine may be
