@@ -1804,20 +1804,37 @@ func (a *app) cmdCard(args []string, stdout, stderr io.Writer) int {
 	atEpoch := fs.Int64("at-epoch", -1, "the primary as it was at an earlier epoch (before a clear)")
 	fields := fs.Bool("fields", false, "every field of the primary and its cards, one record a line, instead of its story")
 	brief := fs.Bool("brief", false, "the brief alone, as the card holds it, and nothing else (a card with no brief is refused, exit 1); not with --fields")
+	all := fs.Bool("all", false, "every placed card, one JSON object a line (with --json); not with an id, --brief or --fields")
+	stream := fs.String("stream", "", "one stream's placed cards, one JSON object a line (with --json); not with an id, --brief or --fields")
 	pos, err := parse(fs, args)
-	if err != nil || len(pos) != 1 {
+	if err != nil {
 		return refuse(stderr, "card", argErr("wants one primary id ", err, pos...))
 	}
 	if *brief && *fields {
 		return refuse(stderr, "card", "--brief prints the brief alone and --fields every field: give one of them")
 	}
-	id := pos[0]
 	st, err := a.storeAt(*c, *atEpoch)
 	if err != nil {
 		return refuse(stderr, "card", err.Error())
 	}
+	if *all || *stream != "" {
+		if len(pos) != 0 {
+			return refuse(stderr, "card", "wants one primary id, or --all / --stream, not both")
+		}
+		if *brief || *fields {
+			return refuse(stderr, "card", "--all and --stream print one JSON object a line, not with --brief or --fields")
+		}
+		if !c.json {
+			return refuse(stderr, "card", "--all and --stream print one JSON object a line: add --json")
+		}
+		return a.cardBulk(st, *stream, stdout, stderr)
+	}
+	if len(pos) != 1 {
+		return refuse(stderr, "card", argErr("wants one primary id ", nil, pos...))
+	}
+	id := pos[0]
 	ctx := context.Background()
-	v, err := st.CardOf(ctx, id)
+	v, held, lines, err := st.ReadCard(ctx, id)
 	if err != nil {
 		return a.readFailed("card", err, stderr)
 	}
@@ -1827,18 +1844,6 @@ func (a *app) cmdCard(args []string, stdout, stderr io.Writer) int {
 	}
 	if *brief {
 		return printBrief(stdout, stderr, id, v.Primary.F("brief"), c.json)
-	}
-	// What holds it, so nothing stalls without a named reason: an outside actor, the
-	// next tick, an open judgment, what it waits on, or the machine STOPPED.
-	var held *sprint.Hold
-	if *atEpoch < 0 {
-		if hd, err := st.Held(ctx, id); err == nil {
-			held = &hd
-		}
-	}
-	lines, err := st.Log(ctx)
-	if err != nil {
-		return a.readFailed("card", err, stderr)
 	}
 	events, texts := a.story(v, lines)
 	if c.json {
@@ -1856,8 +1861,10 @@ func (a *app) cmdCard(args []string, stdout, stderr io.Writer) int {
 	}
 	if !*fields {
 		place := ""
-		if ws, err := st.Load(ctx, []string{sprint.Work}, nil); err == nil && v.Primary.Placed() {
-			place = linePlace(v.Primary, ws.Work.Column(sprint.States...))
+		if v.Primary.Placed() {
+			if cells, err := st.ReadCells(ctx, sprint.Work, v.Primary.Row, sprint.States...); err == nil {
+				place = linePlace(v.Primary, cells)
+			}
 		}
 		a.printStory(stdout, v, events, texts, held, place)
 		for _, w := range v.Work {
@@ -1923,6 +1930,51 @@ func (a *app) cmdCard(args []string, stdout, stderr io.Writer) int {
 		epoch = pinned.PinnedEpoch()
 	}
 	fmt.Fprintf(stdout, "CARD OK id=%s epoch=%d work_cards=%d read_cards=%d open=%d%s\n", oneline.Escape(id), epoch, len(v.Work), len(v.Reads), len(v.Open), whoWord(v.Primary))
+	return 0
+}
+
+// cardBulkLine is one placed card as card --all --json and card --stream --json
+// print it: one object a line, the fields but not the brief.
+type cardBulkLine struct {
+	ID       string            `json:"id"`
+	Column   string            `json:"column"`
+	Stream   string            `json:"stream"`
+	Needs    []string          `json:"needs"`
+	BriefLen int               `json:"brief_len"`
+	Fields   map[string]string `json:"fields"`
+}
+
+// cardBulk prints every placed card, or one stream's, as one JSON object a line.
+// One read of the work table; no per-card log and no per-card hold.
+func (a *app) cardBulk(st *store.Store, stream string, stdout, stderr io.Writer) int {
+	s, err := st.Load(context.Background(), []string{sprint.Work}, nil)
+	if err != nil {
+		return a.readFailed("card", err, stderr)
+	}
+	cards := s.Work.Column(sprint.States...)
+	slices.SortStableFunc(cards, func(a, b *sprint.Card) int {
+		return cmp.Or(cmp.Compare(a.Row, b.Row), cmp.Compare(a.Score, b.Score), cmp.Compare(a.ID, b.ID))
+	})
+	for _, c := range cards {
+		if stream != "" && c.Row != stream {
+			continue
+		}
+		needs := sprint.Split(c.F("needs"))
+		if needs == nil {
+			needs = []string{}
+		}
+		fields := map[string]string{}
+		for k, v := range c.Fields {
+			if k != "brief" {
+				fields[k] = v
+			}
+		}
+		b, err := json.Marshal(cardBulkLine{ID: c.ID, Column: c.Col, Stream: c.Row, Needs: needs, BriefLen: len(c.F("brief")), Fields: fields})
+		if err != nil {
+			return a.readFailed("card", err, stderr)
+		}
+		fmt.Fprintln(stdout, string(b))
+	}
 	return 0
 }
 

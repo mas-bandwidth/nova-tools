@@ -117,6 +117,35 @@ func BenchmarkReadCost(b *testing.B) {
 	})
 }
 
+// BenchmarkCardRead is one card read after a tick has indexed the log and
+// cached holds, on a sprint the size of the 2026-10-04 card count (about
+// 2,000). The read's wall time and store round trips are the numbers. The
+// 2026-10-04 text dump is not loaded: that restore is not this process's twin.
+func BenchmarkCardRead(b *testing.B) {
+	streams, _ := strconv.Atoi(os.Getenv("BENCH_STREAMS"))
+	if streams <= 0 {
+		streams = 10
+	}
+	st, _ := benchSprint(b, streams, 2000/streams)
+	ctx := context.Background()
+	_, err := st.Tick(ctx)
+	require.NoError(b, err)
+	rb := st.B.(*Redis)
+	rb.CountTrips()
+	b.ResetTimer()
+	t0 := time.Now()
+	for i := 0; i < b.N; i++ {
+		info, _, _, err := st.ReadCard(ctx, "s1-1")
+		if err != nil || info.Primary == nil {
+			b.Fatalf("card s1-1: %v primary %v", err, info.Primary)
+		}
+	}
+	wall := time.Since(t0)
+	b.StopTimer()
+	b.ReportMetric(float64(rb.Trips())/float64(b.N), "roundtrips/op")
+	b.ReportMetric(float64(wall.Microseconds())/float64(b.N)/1000, "wall-ms/op")
+}
+
 // benchBrief is a pro brief of BENCH_BRIEF_KB kilobytes (a real brief is
 // kilobytes of prose; the read set returns every field of every member).
 func benchBrief() string {

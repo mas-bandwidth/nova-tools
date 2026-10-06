@@ -1124,7 +1124,8 @@ nova-sprint wait <note> (--for <duration> | --until <RFC3339>)
 nova-sprint ack <note>... --reason <text>
 nova-sprint answer [--dry-run] [--bar <p>] [--every <duration>] [--timeout <duration>] [--backend jev|fixed] [--answers <file>] [--record <file>]
 nova-sprint inbox [--open <group>] [--read] [--wait [--timeout <duration>]] [--deadline <duration>] [--stale <duration>]
-nova-sprint card <id>
+nova-sprint card <id> [--brief | --fields] [--json] [--at-epoch <n>]
+nova-sprint card (--all | --stream <s>) --json [--at-epoch <n>]
 nova-sprint log [--card <id>] [--stream <s>] [--member <m>] [--since <10m|RFC3339>] [--at-epoch <n>]
 nova-sprint check
 nova-sprint repair
@@ -1148,6 +1149,8 @@ nova-sprint play [--simulation] [--seed <n>] [--every <duration>] [--broken <p>]
 nova-sprint clear --confirm sprint
 nova-sprint teardown --confirm sprint
 ```
+
+`card <id> --json` reads that card's own log lines, its rows and its hold, not the whole log and not the whole hold set. `card --all --json` and `card --stream <s> --json` print every placed card, or one stream's, as one JSON object a line: `id`, `column`, `stream`, `needs`, `brief_len`, and the fields but not the brief.
 
 `friend sync` wakes a friend through the bus store at `NOVA_BUS_REDIS` after
 delivering her card. Its bus login reads `NOVA_BUS_REDIS_USER` and the password

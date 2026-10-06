@@ -79,6 +79,11 @@ func readWhere(raw string, ok bool) (WhereRecord, bool) {
 // shape and the record, two exchanges); else the sprint from the twin, brought
 // up to date, and the record written. A twin held by another step of this
 // process, or a clear under the read, leaves it to the next tick.
+//
+// Either way the card-log index is brought up to the log's tail (indexLog).
+// A moved table also stores each card's hold, needs and needed-by
+// (keepCardFast). Both use uncounted records, so the two exchanges and
+// whereMovedTrips stay what they were.
 func (st *Store) keepWhere(ctx context.Context, m Machine) error {
 	kv, err := st.kv()
 	if err != nil {
@@ -93,7 +98,7 @@ func (st *Store) keepWhere(ctx context.Context, m Machine) error {
 		return err
 	}
 	if r, ok := readWhere(raw, ok); ok && r.Epoch == st.epoch && r.Rev == shapes[0].Revision {
-		return nil
+		return st.indexLog(ctx)
 	}
 	tw := st.twin()
 	if !tw.mu.TryLock() {
@@ -111,7 +116,13 @@ func (st *Store) keepWhere(ctx context.Context, m Machine) error {
 	if err != nil {
 		return err
 	}
-	return kv.SetKey(ctx, keyWhere, string(b))
+	if err := st.keepCardFast(ctx, snap, m); err != nil {
+		return err
+	}
+	if err := kv.SetKey(ctx, keyWhere, string(b)); err != nil {
+		return err
+	}
+	return st.indexLog(ctx)
 }
 
 // The store round trip (store-latency-row-r.w2, docs/SPEC-SPRINT.md section
