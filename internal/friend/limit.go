@@ -233,6 +233,7 @@ type Limits struct {
 	Pacing func() float64
 
 	mu       sync.Mutex
+	beatMu   sync.Mutex // a down beat's look and its send, against a wake ending the limit (BeatOrDown, gated.Deliver)
 	pace     Pacer
 	limited  bool
 	until    time.Time
@@ -359,13 +360,19 @@ func (l *Limits) BeatOrDown(beat func(ctx context.Context) error, down func(ctx 
 		return l.Beat(beat)
 	}
 	return func(ctx context.Context) error {
-		if until, reason, limited := l.Limited(); limited {
-			if err := down(ctx, until, "harness limit: "+reason); err != nil {
-				return fmt.Errorf("beating down until %s: %w", until.UTC().Format(time.RFC3339), err)
-			}
-			return nil
+		// the look and the down beat are one step against the wake's answer ending the
+		// limit, so no down beat is sent after she is up again
+		l.beatMu.Lock()
+		until, reason, limited := l.Limited()
+		if !limited {
+			l.beatMu.Unlock()
+			return beat(ctx)
 		}
-		return beat(ctx)
+		defer l.beatMu.Unlock()
+		if err := down(ctx, until, "harness limit: "+reason); err != nil {
+			return fmt.Errorf("beating down until %s: %w", until.UTC().Format(time.RFC3339), err)
+		}
+		return nil
 	}
 }
 
@@ -458,6 +465,7 @@ func (g *gated) Deliver(ctx context.Context, text string) (int, error) {
 		episodes := l.episodes
 		l.mu.Unlock()
 		exit, err := g.d.Deliver(ctx, WakeText(nonce))
+		l.beatMu.Lock() // a down beat in flight lands before the limit ends (BeatOrDown)
 		l.mu.Lock()
 		again, answered := l.episodes != episodes, l.answered && exit == 0 && err == nil
 		if answered && !again {
@@ -465,6 +473,7 @@ func (g *gated) Deliver(ctx context.Context, text string) (int, error) {
 		}
 		until, reason = l.until, l.reason
 		l.mu.Unlock()
+		l.beatMu.Unlock()
 		if again {
 			return 0, Deferred{Reason: fmt.Sprintf("the wake hit the limit again; down until %s: %s", until.Format(time.RFC3339), reason)}
 		}
