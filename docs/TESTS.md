@@ -70,7 +70,10 @@ A test binary that runs itself (`os.Executable()` or `os.Args[0]`) with words it
 
 Run by `cmd/nova-bus/firstrun_test.go` on a throwaway redis-server whose
 `friends` set names ada and bob (what `nova-config apply` writes for two friend
-rows), its address in `NOVA_BUS_REDIS`, so the lines read as a reader types them.
+rows), each with a proven inbox push on `bus2:push` (what each one's friend
+daemon writes when its session answers the SESSION CHECK; without it every send
+and recv is refused as deaf), its address in `NOVA_BUS_REDIS`, so the lines
+read as a reader types them.
 The sitting is the loop: ada sends bob one message; bob peeks (new, not yet
 delivered), receives it through `--exec` (the header line and the body go to the
 command, acked when it exits 0), acks an id that is not pending (false, exit 0: ack is idempotent), reads the
@@ -101,9 +104,9 @@ LOG OK total=1
 LOG MESSAGE id=01M42BA18Y1K3SE57HE26SY8T0 from=ada to=bob cc=- re=- at=2026-10-04T02:18:54Z subject="hello"
 
 $ nova-bus names
-NAMES OK count=2
-NAMES NAME name=ada
-NAMES NAME name=bob
+NAMES OK count=2 proven=2
+NAMES NAME name=ada push=proven age=0s harness=claude
+NAMES NAME name=bob push=proven age=0s harness=claude
 ```
 
 ## nova-friend
