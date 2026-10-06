@@ -750,6 +750,8 @@ func TestATurnEndDeliversEveryPendingMessageAsOneTurnOldestFirst(t *testing.T) {
 	assert.Empty(t, pending, "all three acked on exit 0")
 	assert.Empty(t, fresh)
 	assert.Equal(t, 4, r.last().Delivered)
+	assert.Equal(t, 3, r.last().Envelope, "the status names the envelope's size")
+	assert.Equal(t, len(text), r.last().EnvelopeBytes)
 }
 
 // A turn that fails acks none of the messages its envelope carried.
@@ -772,43 +774,60 @@ func TestAFailedEnvelopeAcksNothing(t *testing.T) {
 	assert.NotContains(t, r.records[0], "acked=true")
 }
 
-// Of the daemon's own notices pending, only the newest goes in: a stale one
-// is dropped and acked, its successor named on the record.
+// Of the daemon's own notices about the coordinator not yet in a turn, only
+// the newest goes in: an older one is dropped, its successor named on the
+// record by id (docs/SPEC-FRIEND.md, the loop).
 func TestASupersededNoticeIsDroppedAndAckedWithItsSuccessor(t *testing.T) {
 	t.Parallel()
 	r := newRig(t)
-	silent1 := r.send(t, "bob", "coordinator silent", "coordinator silent since 12:37")
-	silent2 := r.send(t, "bob", "coordinator silent", "coordinator silent since 12:52")
-	back := r.send(t, "bob", "coordinator back", "coordinator back: ada has the seat")
+	window := int(Window / BeatEvery)
+	r.at[window+5] = func() { r.send(t, "ada", "PING n1", PingText("ada", t0, "n1")) } // back before the silent was said
+	r.at[2*window+20] = func() { r.send(t, "ada", "news", "during the second outage") }
+	r.run(t, 2*window+25)
+	require.Len(t, r.delivered, 1, "the notices are never a turn alone: %v", r.delivered)
+	text := r.delivered[0]
+	assert.Equal(t, 1, strings.Count(text, "coordinator silent since "), "only the newest notice: %q", text)
+	assert.NotContains(t, text, "coordinator back")
+	all := strings.Join(r.records, "\n")
+	drop := regexp.MustCompile(`notice=(notice-\d+-1) subject="coordinator silent" superseded=(notice-\d+-2) dropped=true`)
+	assert.Regexp(t, drop, all, "the first silent is dropped for the back that followed it")
+	assert.Equal(t, 1, strings.Count(all, "superseded="), "the back, never said, supersedes nothing more; the second silent goes in: %s", all)
+	assert.Contains(t, all, `notice="coordinator silent"`, "the turn's line names the notice it carried")
+}
+
+// SupersededNotices is a function of the daemon's own notices, oldest first:
+// every one but the newest maps to the newest.
+func TestSupersededNoticesKeepsTheNewestOfTheDaemonsOwn(t *testing.T) {
+	t.Parallel()
+	owed := []Notice{
+		{Push: Push{Subject: "coordinator silent"}, ID: "n1"},
+		{Push: Push{Subject: "coordinator back"}, ID: "n2"},
+		{Push: Push{Subject: "coordinator silent"}, ID: "n3"},
+	}
+	assert.Equal(t, map[string]string{"n1": "n3", "n2": "n3"}, SupersededNotices(owed))
+	assert.Empty(t, SupersededNotices(owed[2:]))
+	assert.Empty(t, SupersededNotices(nil))
+}
+
+// The supersede rule reads only the daemon's own notices: a message on the
+// stream with a notice's subject, even from the friend's own name, is a
+// message like any other, delivered and acked, never dropped.
+func TestTheSupersedeRuleNeverDropsAMessageOnTheStream(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	s1 := r.send(t, "bob", "coordinator silent", "the session's own note")
+	s2 := r.send(t, "bob", "coordinator silent", "and another")
 	work := r.send(t, "ada", "work", "do the thing")
 	r.run(t, 4)
 	require.Len(t, r.delivered, 1)
-	text := r.delivered[0]
-	assert.NotContains(t, text, silent1.ID)
-	assert.NotContains(t, text, silent2.ID)
-	assert.Contains(t, text, "[1/2] "+back.ID+" from=bob")
-	assert.Contains(t, text, "[2/2] "+work.ID+" from=ada")
+	for i, m := range []bus.Message{s1, s2, work} {
+		assert.Contains(t, r.delivered[0], head(i+1, 3, m, 0)+m.Body+"\n")
+	}
+	assert.NotContains(t, strings.Join(r.records, "\n"), "superseded=")
 	pending, fresh, err := r.bus.Peek(context.Background(), "bob")
 	require.NoError(t, err)
 	assert.Empty(t, pending)
 	assert.Empty(t, fresh)
-	all := strings.Join(r.records, "\n")
-	assert.Contains(t, all, `subject="coordinator silent" id=`+silent1.ID+` superseded=`+back.ID+` acked=true`)
-	assert.Contains(t, all, `subject="coordinator silent" id=`+silent2.ID+` superseded=`+back.ID+` acked=true`)
-}
-
-// SupersededNotices is a function of the pending list: only the daemon's own
-// notices are touched, each mapped to the newest.
-func TestSupersededNoticesKeepsTheNewestOfTheDaemonsOwn(t *testing.T) {
-	t.Parallel()
-	msgs := []bus.Message{
-		{ID: "a", From: "bob", Subject: "coordinator silent"},
-		{ID: "b", From: "ada", Subject: "coordinator silent"},
-		{ID: "c", From: "bob", Subject: "coordinator silent"},
-		{ID: "d", From: "bob", Subject: "work"},
-	}
-	assert.Equal(t, map[string]string{"a": "c"}, SupersededNotices(msgs, "bob"))
-	assert.Empty(t, SupersededNotices(msgs[:2], "bob"))
 }
 
 // A ping the daemon answers is acked and is never a turn: the session's

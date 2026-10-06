@@ -113,3 +113,16 @@ func TestWatchHelpAndCommandReferenceNameEveryFlagLineFieldAndExit(t *testing.T)
 		require.NotContains(t, strings.ToLower(help), word, "the help says no sprint word")
 	}
 }
+
+// The status verb's help names the envelope size, its two fields and the
+// cap, and docs/CLI.md carries the same (docs/SPEC-FRIEND.md, the loop).
+func TestStatusHelpAndCommandReferenceNameTheEnvelopeSize(t *testing.T) {
+	t.Parallel()
+	help := newRig(t).cli().Do(t, "status", "-h").Exit(0).Stdout
+	raw, err := os.ReadFile("../../docs/CLI.md")
+	require.NoError(t, err)
+	for _, text := range []string{"envelope=", "envelope_bytes=", "262144 bytes unless it names its own", "the first message always goes in"} {
+		require.Contains(t, help, text)
+		require.Contains(t, string(raw), text, "docs/CLI.md carries the help's text")
+	}
+}

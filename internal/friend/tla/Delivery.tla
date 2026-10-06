@@ -8,13 +8,24 @@
    stay pending and are the next turn. Exit 0 acks exactly what the turn
    carried; a failure acks none of it, and the messages are held until their
    claim opens (bus.Recv, ClaimAfter) and then taken again.
-   Take is the rule under test: "oldest" is the daemon; "newest" (a turn that
-   takes the youngest first) and "one" (a message per turn, the daemon before
-   this change) are reversed witnesses. The supersede rule and the answered
-   ping drop messages before the envelope is cut and are below this grain. *)
+   The base this models as it is: before the envelope, Batch already took
+   every message in hand, oldest first, up to MaxBatch messages and
+   BatchBytes, the rest the next turn, acked together at exit 0; at this
+   grain that is Take = "oldest" with Cap = MaxBatch. The change keeps that
+   set rule and moves the cap to the deliverer's text limit (TextLimit), the
+   first message always taken (Cap >= 1), the rest named in the envelope; its
+   line format (id, from, time, age, subject) is below this grain.
+   Take is the rule under test: "oldest" is the daemon, before and after;
+   "newest" (a turn that takes the youngest first) and "one" (a message per
+   turn, the form the 2026-10-04 measurement saw, never the base's rule) are
+   reversed witnesses. The answered ping is acked before it is in hand, and the
+   supersede rule acts on the daemon's own notices, never on a message on the
+   stream: neither is in this model. *)
 EXTENDS FiniteSets, Naturals
 
 CONSTANTS N, Cap, MaxFail, Take
+
+ASSUME Cap >= 1 \* the first message always goes in
 
 Msgs == 1..N
 
