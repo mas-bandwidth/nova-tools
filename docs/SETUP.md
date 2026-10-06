@@ -90,3 +90,22 @@ The `gosdk` check reads the role from the machine's seat. On the coordinator's m
 no `go` there it is ok. On a bench it fails when `go` is absent, when its version is not
 `go.mod`'s toolchain version, or when `GOCACHE` is not writable, and warns when `GOFLAGS`
 does not carry `-mod=readonly`. Each fix line names the step above.
+
+### dep-tailnet-b.w4: the tailnet
+
+A fleet's machines reach each other and the stores only over its tailnet (tailscale): the
+tools refuse an address that is neither loopback nor a tailnet address, so a machine with no
+tailnet cannot be named or reached by the others. A single-machine `nova-up --local` setup
+does not need one: it uses a twin store and a loopback Redis on the one machine.
+
+`nova-up` does not join a tailnet, because joining needs an account and a login prompt a
+person answers; a person installs tailscale and runs `tailscale up` once on each fleet
+machine, so it is logged in and named on the tailnet. On the coordinator's machine the
+inventory is then read with the seat loaded (`set -a; . ~/nova/seat.env; set +a`).
+
+The `tailnet` check is fleet only, so `nova-doctor --local` skips it and lists it among the
+skipped checks. Without `--local` it fails when tailscale is not installed or did not answer,
+when its backend state is not `Running`, when this machine has no name on the tailnet, or when
+a machine of `nova-config machine list` is not named on the tailnet; the evidence names each
+missing machine and the fix line runs `tailscale up` on it. The check passes when tailscale is
+up, this machine is named, and every inventory machine answers on the tailnet.
