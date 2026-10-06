@@ -157,6 +157,33 @@ func TestLandGatesEveryTipOfTheBatchBranch(t *testing.T) {
 	}
 }
 
+// A red base and a queued head whose tree passes the gate the base fails: the lander gates
+// the candidate's tree, not only the base's, lands that head first as the base fix, naming
+// it in the landing note, and the batch goes on after it (sprint.FindBaseCure; 2026-10-05
+// 7:30 PM, the fix card refused because the base it fixed was red).
+func TestTheLanderLandsTheBaseFixFirst(t *testing.T) {
+	t.Parallel()
+	r := newLandRig(t)
+	r.git(r.worker, "switch", "-q", "--detach", "origin/main")
+	r.files("the module", goModule)
+	r.files("the base's change", map[string]string{"bad.go": vetRed})
+	r.git(r.worker, "push", "-q", "origin", "HEAD:refs/heads/main")
+	r.git(r.worker, "fetch", "-q", "origin")
+	r.ok("add --stream s1 --count 2")
+	heads := map[string]string{"s1-1": r.card("s1-1", map[string]string{"ok.go": "package main\n\nfunc ok() {}\n"}),
+		"s1-2": r.card("s1-2", map[string]string{"bad.go": "package main\n\nfunc bad() {}\n"})}
+	r.queued(heads, "s1-1", "s1-2")
+	code, out, errs := r.do("land --repo-dir " + r.clone + " --base main")
+	require.Equal(t, 0, code, out+errs)
+	assert.Contains(t, out, "LAND OK stream=s1 cards=2 base=main")
+	assert.Contains(t, out+errs, "s1-2 landed first as the base fix")
+	log := r.mainLog()
+	require.GreaterOrEqual(t, len(log), 2)
+	assert.Equal(t, []string{"land s1-1 (sprint stream s1)", "land s1-2 (sprint stream s1)"}, log[:2], "the fix lands first, then the casualty on the green base")
+	assert.Equal(t, map[string]string{"s1-1": "landed/merged", "s1-2": "landed/merged"}, r.places("s1-1", "s1-2"))
+	r.clean()
+}
+
 // The base gate's green result is cached by base commit SHA: once gated, the same commit
 // is not re-gated on subsequent calls even if the tree on disk changes. A red one is the
 // base-gate rule's: reported with when it is gated again, and not re-gated before then
