@@ -78,6 +78,7 @@ var DefaultCatalog = []Entry{
 	E("internal/fuse", "the fuse box: read and write the lockdown and quarantine state", "go test ./internal/fuse", "go test ./internal/fuse"),
 	Page("internal/ghevent", "the GitHub event Redis stream: append and read", "go test ./internal/ghevent", "go test ./internal/ghevent"),
 	E("internal/ghevent/wire", "shared GitHub event stream identity without ingestion dependencies", "go test ./internal/ci", "go test ./internal/ci"),
+	E("internal/github", "GitHub as the sprint's lander speaks to it: the issues a card references, read from its brief and its landed commits, and their close through gh", "go test ./internal/github", "go test ./internal/github"),
 	E("internal/gitrun", "the one runner for a one-shot git child: a deadline, WaitDelay and the caller's environment choice", "go test ./internal/gitrun", "go test ./internal/gitrun"),
 	E("internal/harness", "the harness words: opencode and the headless subscription harnesses of the heavy tier", "go test ./internal/harness", "go test ./internal/harness"),
 	E("internal/gocache", "Go build cache held under a size, least recently used first", "go test ./internal/gocache", "go test ./internal/gocache"),

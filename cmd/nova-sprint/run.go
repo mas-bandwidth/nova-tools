@@ -497,6 +497,7 @@ func (a *app) runLoop(ctx context.Context, st *store.Store, max, n int, stdout, 
 	cursor, _ := st.LogTail(ctx)
 	why := tickStart
 	friends := newFriendTick()
+	var issuesAt time.Time
 	// the server's record, the actor this loop runs as, which seat and handover
 	// show beside the seat's holder: written before the first tick and every
 	// store.ServerEvery (seat-key-follows-record.w2)
@@ -548,6 +549,12 @@ func (a *app) runLoop(ctx context.Context, st *store.Store, max, n int, stdout, 
 			// (friendreconcile_tick.go; docs/SPEC-SPRINT.md section 1,
 			// friend-reconcile-every-tick-r.w1)
 			a.reconcileFriendsTick(ctx, st, friends, stdout)
+		}
+		if err == nil && a.now().Sub(issuesAt) >= issuesEvery {
+			// a landed card's issues closed on GitHub, and what a landing left pending
+			// tried again (land_issues.go; docs/SPEC-SPRINT.md section 7)
+			issuesAt = a.now()
+			a.closeIssuesTick(ctx, st, func(l string) { fmt.Fprintln(stdout, l) })
 		}
 		if n != 0 && i == n-1 {
 			return false
