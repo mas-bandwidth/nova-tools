@@ -3,8 +3,11 @@ package sprint
 import (
 	"cmp"
 	"errors"
+	"fmt"
 	"math/big"
 	"sort"
+	"strings"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
@@ -34,9 +37,25 @@ type TierCosts struct {
 	// cost, else its tokens at the route's prices), dollars and cents rounded up; "" when
 	// nothing of it was priced.
 	TotalCost string `json:"total_cost,omitempty"`
+	// WorkCost and ReadCost split TotalCost by kind: every take's charged figure and every
+	// read's, dollars and cents rounded up; "" when nothing of that kind was priced. The
+	// dashboard shows the reads as their own number beside the work.
+	WorkCost string `json:"work_cost,omitempty"`
+	ReadCost string `json:"read_cost,omitempty"`
+	// ReadTokens is the tokens of the stream's subscription reads (WhySubscription), the
+	// reads whose cost is their tokens; 0 when none.
+	ReadTokens int64 `json:"read_tokens,omitempty"`
+	// ReadsToday is the stream's reads that ended on the tick's UTC day, by the route that
+	// priced them (WhySubscription for a subscription reader's, "-" for none): the exact
+	// dollars, the tokens and the count, which ReadSpendLine sums over the streams.
+	ReadsToday map[string]ReadDay `json:"reads_today,omitempty"`
 	// UnpricedRuns counts the stream's records that carry no cost at all: runs whose usage
 	// never reached the sprint (cardcost.WhyNoTokens), which the total cannot hold.
 	UnpricedRuns int `json:"unpriced_runs,omitempty"`
+	// ReadsNoTokens counts the stream's reads whose verdict was kept with a usage that
+	// reported no token (cardcost.WhyNoTokens): one of UnpricedRuns each, counted apart
+	// so a reader whose harness stops reporting is seen.
+	ReadsNoTokens int `json:"reads_no_tokens,omitempty"`
 	// Unreconciled is the SPRINT's, the same on every stream's record: what the providers
 	// counted beyond the sprint's records since the epoch began (UnreconciledSpend,
 	// cost_reconcile.go), dollars and cents rounded up; "" when nothing is.
@@ -72,8 +91,11 @@ func StreamTierCosts(s *Snapshot) map[string]TierCosts {
 }
 
 func streamTierCosts(s *Snapshot, stream string) TierCosts {
-	t := TierCosts{Tiers: map[string]int{}, PerLanded: "-", CostByTier: map[string]string{}}
+	t := TierCosts{Tiers: map[string]int{}, PerLanded: "-", CostByTier: map[string]string{}, ReadsToday: map[string]ReadDay{}}
 	byTier := map[string]*big.Rat{}
+	workCost, readCost := new(big.Rat), new(big.Rat)
+	pricedWork, pricedRead := false, false
+	day := s.Now.UTC().Format(time.DateOnly)
 	var landedCost []string
 	var allCost []string
 	landed := 0
@@ -97,9 +119,30 @@ func streamTierCosts(s *Snapshot, stream string) TierCosts {
 			}
 			t.UnpricedRuns += tot.Records - tot.ChargedOf
 			for _, con := range CardCostOf(c).Consumers {
+				if con.Kind == "read" && con.Usage.Unpriced == WhySubscription {
+					// a subscription read's cost is its tokens: priced, never a run unpriced
+					t.UnpricedRuns--
+					t.ReadTokens += con.Usage.Tokens.Total()
+				}
+				if con.Kind == "read" && con.Usage.Unpriced == cardcost.WhyNoTokens {
+					t.ReadsNoTokens++
+				}
+				if con.Kind == "read" && strings.HasPrefix(con.At, day) {
+					addReadDay(t.ReadsToday, con)
+				}
 				usd, err := amountOf(cmp.Or(con.Usage.Actual, con.Usage.Predicted))
 				if err != nil || usd == nil {
 					continue
+				}
+				byKind := workCost
+				if con.Kind == "read" {
+					byKind = readCost
+				}
+				byKind.Add(byKind, usd)
+				if con.Kind == "read" {
+					pricedRead = true
+				} else {
+					pricedWork = true
 				}
 				tier := cmp.Or(con.Tier, "untiered")
 				if byTier[tier] == nil {
@@ -118,6 +161,15 @@ func streamTierCosts(s *Snapshot, stream string) TierCosts {
 		if total, err := amountOf(sum); err == nil && total != nil {
 			t.TotalCost = cardcost.Cents(total)
 		}
+	}
+	if pricedWork {
+		t.WorkCost = cardcost.Cents(workCost)
+	}
+	if pricedRead {
+		t.ReadCost = cardcost.Cents(readCost)
+	}
+	if len(t.ReadsToday) == 0 {
+		t.ReadsToday = nil
 	}
 	tiers := make([]string, 0, len(byTier))
 	for tier := range byTier {
@@ -160,4 +212,79 @@ func PerLandedOf(costCell string, landed int) string {
 		return "-"
 	}
 	return cardcost.Cents(r.Quo(r, big.NewRat(int64(landed), 1)))
+}
+
+// ReadDay is one route's reads of a UTC day: the exact dollars charged (each read's
+// actual cost where reported, else its predicted one; "" when none was priced), the
+// tokens, and how many reads.
+type ReadDay struct {
+	USD    string `json:"usd,omitempty"`
+	Tokens int64  `json:"tokens,omitempty"`
+	Reads  int    `json:"reads"`
+}
+
+// addReadDay counts the read con into its route's day: the route that priced it, a
+// subscription reader's under WhySubscription, "-" for a read no route priced; a read
+// that reported nothing is not counted here (it is one of UnpricedRuns, and of
+// ReadsNoTokens).
+func addReadDay(days map[string]ReadDay, con Consumer) {
+	u := con.Usage
+	if !u.Tokens.Reported() && u.Actual == "" && u.Predicted == "" {
+		return
+	}
+	route := cmp.Or(u.Route, "-")
+	if u.Unpriced == WhySubscription {
+		route = WhySubscription
+	}
+	d := days[route]
+	d.Reads++
+	d.Tokens += max(u.Tokens.Total(), 0)
+	if usd := cmp.Or(u.Actual, u.Predicted); usd != "" {
+		if sum, ok := cardcost.Sum(d.USD, usd); ok {
+			d.USD = sum
+		}
+	}
+	days[route] = d
+}
+
+// ReadSpendLine is the day's read spend per route over the streams' records, one line
+// under the where view's summary: "reads today: pro-a $1.24 12 reads 3456789 tokens ·
+// subscription tokens 3 reads 120000 tokens", routes in name order, a priced route's
+// dollars rounded up to the cent, a route with nothing priced "unpriced"; "" when no
+// read ended today.
+func ReadSpendLine(streams map[string]TierCosts) string {
+	days := map[string]ReadDay{}
+	for _, tc := range streams {
+		for route, d := range tc.ReadsToday {
+			all := days[route]
+			all.Reads += d.Reads
+			all.Tokens += d.Tokens
+			// a route with nothing priced keeps no dollars: the day's are the priced reads' alone
+			if sum, ok := cardcost.Sum(all.USD, d.USD); ok && d.USD != "" {
+				all.USD = sum
+			}
+			days[route] = all
+		}
+	}
+	if len(days) == 0 {
+		return ""
+	}
+	routes := make([]string, 0, len(days))
+	for r := range days {
+		routes = append(routes, r)
+	}
+	sort.Strings(routes)
+	parts := make([]string, 0, len(routes))
+	for _, r := range routes {
+		d := days[r]
+		cost := MoneyText(d.USD)
+		if r == WhySubscription || d.USD == "" {
+			cost = "unpriced"
+			if r == WhySubscription {
+				cost = "tokens"
+			}
+		}
+		parts = append(parts, fmt.Sprintf("%s %s %d reads %d tokens", r, cost, d.Reads, d.Tokens))
+	}
+	return "reads today: " + strings.Join(parts, " · ")
 }

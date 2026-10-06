@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"slices"
 	"strconv"
 	"strings"
@@ -8,6 +9,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
 // The work table's cost column (the owner, 2026-10-01: "can you please add a final
@@ -42,10 +45,10 @@ func (ta *testApp) landStream(stream string, work []string, readA, readB []strin
 				if !slices.Contains(ta.askedOf(who), id+".r1."+who) {
 					continue
 				}
-				line := "read --as " + who + " --ok " + id + ".r1." + who
-				if usages[i] != "" {
-					line += " --usage '" + usages[i] + "'"
-				}
+				// a read with no cost is a subscription reader's: its tokens, no dollar (a
+				// routed read with no usage is refused, sprint.ReadUsageMissing)
+				usage := cmp.Or(usages[i], "input=1 "+sprint.UsageSubscription)
+				line := "read --as " + who + " --ok " + id + ".r1." + who + " --usage '" + usage + "'"
 				ta.ok(line)
 			}
 		}
@@ -62,9 +65,15 @@ func (ta *testApp) landStream(stream string, work []string, readA, readB []strin
 	ta.ok("tick")
 }
 
-// costCells are the work table's cost cells by row, and the footer's under "".
+// costCells are the work table's cost cells by row, and the footer's under "". A stream
+// the tick archived as its last card landed is brought back first, so its row is drawn.
 func (ta *testApp) costCells() map[string]string {
 	ta.t.Helper()
+	var v whereView
+	ta.json("where", &v)
+	if v.Archived != nil {
+		ta.ok("stream unarchive " + strings.Join(v.Archived.Streams, " "))
+	}
 	out := map[string]string{}
 	lines := strings.Split(ta.ok("where"), "\n")
 	in, at := false, -1

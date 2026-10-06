@@ -11,6 +11,7 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `nova-ci/` | CI slowtests budget and check CLI, and ci-ok's run receipt | `go test ./cmd/nova-ci` | `go test ./cmd/nova-ci` |
 | `nova-config/` | permanent configuration store (Postgres), friends and machines, applied into Redis | `go test ./cmd/nova-config` | `go test ./cmd/nova-config` |
 | `nova-decide/` | typed decisions with probabilities through a backend, recorded and calibrated against their outcomes | `go test ./cmd/nova-decide` | `go test ./cmd/nova-decide` |
+| `nova-doctor/` | one command that says what is missing and how to fix it: every registered dependency check, exit by the worst | `go test ./cmd/nova-doctor` | `go test ./cmd/nova-doctor` |
 | `nova-friend/` | what a friend runs to be part of the team: the wake loop over nova-bus, the beat to the sprint server, and the proof of life, as one launchd daemon | `go test ./cmd/nova-friend` | `go test -tags functional ./cmd/nova-friend` |
 | `nova-fuse/` | the ingestion fuse: a recorded decision to stop reading an untrusted source, checked before each read | `go test ./cmd/nova-fuse` | `go test ./cmd/nova-fuse` |
 | `nova-local/` | run local models: what an engine has, one model served at a chosen context, and a worker description nova-swarm accepts | `go test ./cmd/nova-local` | `go test ./cmd/nova-local` |
@@ -23,6 +24,7 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `nova-swarm/` | native card runner, bench slot leases and card lint CLI | `go test ./cmd/nova-swarm` | `go test ./cmd/nova-swarm` |
 | `nova-table/` | tables of ordered sets, text and percentages over Redis | `go test ./cmd/nova-table` | `go test ./cmd/nova-table` |
 | `nova-tokens/` | token consumption metering and budgeting CLI | `go test ./cmd/nova-tokens` | `go test ./cmd/nova-tokens` |
+| `nova-up/` | set nova up on one machine: plan every step, then apply, from nothing to a first sprint | `go test ./cmd/nova-up` | `go test ./cmd/nova-up` |
 | `nova-update/` | binary release update CLI | `go test ./cmd/nova-update` | `go test ./cmd/nova-update` |
 | `nova-version/` | build identity and version CLI | `go test ./cmd/nova-version` | `go test ./cmd/nova-version` |
 | `nova-work/` | every issue of every repository of an organization in one tree file, imported read-only and verified field for field | `go test ./cmd/nova-work` | `go test ./cmd/nova-work` |

@@ -108,6 +108,11 @@ type FriendReport struct {
 	// her session moves, which a daemon pong does not say (docs/SPEC-FRIEND.md, last
 	// session activity).
 	Active time.Time `json:"active,omitzero"`
+	// Paced and Window are her lanes' effective width under her subscription windows' pacing
+	// and those windows' use as her harness last reported it ("5h 62% 7d 31%"), as her daemon
+	// last read them (docs/SPEC-FRIEND.md, subscription pacing); absent when it reported none.
+	Paced  *int   `json:"paced,omitempty"`
+	Window string `json:"window,omitempty"`
 }
 
 // Beaten says the member has beaten at least once.
@@ -315,4 +320,33 @@ func StrangerNotes(s *Snapshot, names []string) Plan {
 			What: "an unknown machine is beating: " + m + "; add it with nova-sprint fleet up " + m})
 	}
 	return p
+}
+
+// FriendDownWhy is why FriendStatus does not say up at now, in the words a take refused
+// for her names (takeOne): held by the coordinator; observed not up by the coordinator
+// (her word, an older seat's observation, or one too old); never beaten; silent past
+// FriendDownAfter; or her session's proof lapsed. "" while she is up.
+func FriendDownWhy(f FriendPresence, now time.Time) string {
+	switch {
+	case f.Held:
+		return "held by the coordinator (friend down)"
+	case f.Health.Observed():
+		h := f.Health
+		switch {
+		case ObservedStatus(h, f.Generation, now) == Up:
+			return ""
+		case h.State != Up:
+			return "observed " + h.State + " by the coordinator (friend health)"
+		case h.Generation != f.Generation:
+			return fmt.Sprintf("observed up under seat generation %d, not the current %d (friend health)", h.Generation, f.Generation)
+		}
+		return fmt.Sprintf("the coordinator's observation is %s old, past %s (friend health)", now.Sub(h.Seen).Truncate(time.Second), FriendObservedDownAfter)
+	case !f.Beat.Beaten():
+		return "she has never beaten"
+	case !FriendBeating(f.Beat, now):
+		return fmt.Sprintf("silent: no beat for %s, past %s", now.Sub(f.Beat.At).Truncate(time.Second), FriendDownAfter)
+	case !ProofLive(f.Beat, now):
+		return fmt.Sprintf("her session's proof is %s old, past %s", now.Sub(f.Beat.Proof).Truncate(time.Second), FriendProofLive)
+	}
+	return ""
 }

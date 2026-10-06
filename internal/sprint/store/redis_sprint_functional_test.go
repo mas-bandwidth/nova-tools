@@ -521,7 +521,7 @@ func TestRedisALateWriterAfterAClearIsRefused(t *testing.T) {
 	steps := map[string]Step{
 		"take":   TakeStep(sprint.TakeReq{As: "m1", Sel: sprint.Sel{IDs: []string{"s1-3.w1"}}, Gens: map[string]int{"s1-3.w1": 1}}),
 		"finish": FinishStep(sprint.FinishReq{Sel: sprint.Sel{IDs: []string{"s1-3.w1"}}, Gens: map[string]int{"s1-3.w1": 1}}),
-		"report": ReadStep(sprint.ReadReq{As: rc[0].F("reader"), Verdict: "ok", Sel: sprint.Sel{IDs: []string{rc[0].ID}}}),
+		"report": ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: rc[0].F("reader"), Verdict: "ok", Sel: sprint.Sel{IDs: []string{rc[0].ID}}}),
 		"merge":  MergeStep(sprint.MergeReq{Stream: "s1", Batch: 1}),
 		"accept": AcceptStep(sprint.AcceptReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}),
 		"drop":   DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{"s1-4"}}, Reason: "x"}),

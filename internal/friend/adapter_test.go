@@ -56,9 +56,15 @@ func TestOpenCodeDeliversIntoTheNewestSessionOfTheDirectory(t *testing.T) {
 
 func TestTheOtherHarnessesRefuseHonestlyAndAnUnknownOneIsNamed(t *testing.T) {
 	t.Parallel()
-	d, err := NewDeliverer("claude", "/w/bob", "", nil, nil)
-	require.NoError(t, err)
-	assert.IsType(t, &Claude{}, d, "claude delivers now: its lanes are adapter_claude.go")
-	_, err = NewDeliverer("vim", "/w/bob", "", nil, nil)
+	for _, h := range []string{"claude"} {
+		t.Run(h, func(t *testing.T) {
+			t.Parallel()
+			d, err := NewDeliverer(h, "/w/bob", "", nil, nil)
+			require.NoError(t, err)
+			_, err = d.Deliver(context.Background(), "x")
+			assert.EqualError(t, err, "no deliver command for "+h+" yet; run the session's blocking read: nova-bus recv --as <friend>")
+		})
+	}
+	_, err := NewDeliverer("vim", "/w/bob", "", nil, nil)
 	assert.EqualError(t, err, `"vim" is no harness; the harnesses are opencode, codex, claude, antigravity, dsh, gemini, grok, copilot, cursor, amp, goose, kiro, cline, aider, roo, windsurf, zed, warp`)
 }

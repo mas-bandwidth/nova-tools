@@ -56,8 +56,12 @@ type Status struct {
 	Beats          int       `json:"beats"`
 	LastBeat       time.Time `json:"last_beat"`
 	BeatError      string    `json:"beat_error,omitempty"`
-	StoreError     string    `json:"store_error,omitempty"`
-	Width          int       `json:"width"`
+	// HarnessSeen is what the harness check last read of the process table
+	// (HarnessRunning, HarnessNotSeen, or empty: cannot tell). Advisory: it
+	// never makes the friend down (alive.go, HarnessWatch).
+	HarnessSeen string `json:"harness_seen,omitempty"`
+	StoreError  string `json:"store_error,omitempty"`
+	Width       int    `json:"width"`
 	// Session is SessionOK, or SessionBroken once the provider refused BrokenAfter
 	// turns in a row the same way; empty for a passive harness.
 	Session       string    `json:"session,omitempty"`
@@ -68,6 +72,13 @@ type Status struct {
 	// one-shot lanes as n:session:card/turn, empty in batch.
 	Mode  string `json:"mode,omitempty"`
 	Lanes string `json:"lanes,omitempty"`
+	// Paced is the lanes' effective width under the subscription windows' pacing
+	// (pacing.go), nil before the lanes have stepped; Window is the windows' use
+	// as the harness last reported it ("5h 62% 7d 31%", empty when none is live),
+	// and Pacing the row's pacing as a percent.
+	Paced  *int   `json:"paced,omitempty"`
+	Window string `json:"window,omitempty"`
+	Pacing string `json:"pacing,omitempty"`
 	// Held, InboxJobs and Missing are the last inbox reconcile's counts (SyncInbox): the
 	// cards on her row, the sprint jobs in her inbox, and the held cards with no BRIEF.md
 	// after it; HeldKnown is false until the server has answered once, and InboxError is
@@ -122,9 +133,45 @@ func (q Queue) Counts() (queue, working int) {
 	return queue, working
 }
 
-// DefaultStateDir is where a friend's state files live unless --state-dir
-// names another directory: ~/.nova-friend/<friend>.
+// DefaultStateDir is the home directory's state directory for friend,
+// ~/.nova-friend/<friend>: where a daemon from before the state moved under
+// --dir kept its files, and where one goes when its directory refuses them
+// (DaemonStateDir).
 func DefaultStateDir(home, friend string) string { return filepath.Join(home, ".nova-friend", friend) }
+
+// StateDirIn is the daemon's state directory under the friend's working
+// directory, <dir>/.nova-friend: inside the directory her session may write,
+// so a sandboxed session's pong lands where the daemon reads it (the finding
+// of 2026-10-05).
+func StateDirIn(dir string) string { return filepath.Join(dir, ".nova-friend") }
+
+// DaemonStateDir is where a daemon run with no --state-dir keeps its files:
+// StateDirIn(dir), made by mkdir; when that is refused (a background process
+// on macOS may not touch a removable volume without the person's permission),
+// DefaultStateDir, and why names the refusal for the record.
+func DaemonStateDir(home, dir, friend string, mkdir func(string) error) (state, why string) {
+	if dir == "" {
+		return DefaultStateDir(home, friend), "no --dir"
+	}
+	in := StateDirIn(dir)
+	if err := mkdir(in); err != nil {
+		return DefaultStateDir(home, friend), err.Error()
+	}
+	return in, ""
+}
+
+// FindStateDir is where a reader looks for friend's state when no
+// --state-dir names it: StateDirIn(dir) when a daemon has written its status
+// there, else the home directory's (a daemon from before the move, or one
+// whose directory refused it).
+func FindStateDir(home, dir, friend string) string {
+	if dir != "" {
+		if _, err := os.Stat(statusPath(StateDirIn(dir))); err == nil {
+			return StateDirIn(dir)
+		}
+	}
+	return DefaultStateDir(home, friend)
+}
 
 func statusPath(stateDir string) string { return filepath.Join(stateDir, StatusFile) }
 func pongPath(stateDir string) string   { return filepath.Join(stateDir, PongFile) }

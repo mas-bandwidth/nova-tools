@@ -40,7 +40,7 @@ func TestTwoReadersOksInOneReadMakeOneJudgment(t *testing.T) {
 	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-1"}}, Who: "coordinator"}))
 	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-1"}}, Another: true, Who: "coordinator"})) // reads are asked one at a time: the second by --another
 	ids := []string{ReadCardID("s1-1", 1, "reader-a"), ReadCardID("s1-1", 1, "reader-b")}
-	p := w.must(Read(w.s, ReadReq{As: "reader-a,reader-b", Verdict: "ok", Sel: Sel{IDs: ids}}))
+	p := w.must(Read(w.s, ReadReq{Usage: "input=1000 output=100", As: "reader-a,reader-b", Verdict: "ok", Sel: Sel{IDs: ids}}))
 	n := 0
 	for _, u := range p.Units {
 		for _, x := range u.Notes {
@@ -51,6 +51,6 @@ func TestTwoReadersOksInOneReadMakeOneJudgment(t *testing.T) {
 	}
 	require.Len(t, p.Units, 2, "two oks in one read: %d units, %d ready-to-accept judgments, want 2 and 1", len(p.Units), n)
 	require.Equal(t, 1, n, "two oks in one read: %d units, %d ready-to-accept judgments, want 2 and 1", len(p.Units), n)
-	q := Read(w.s, ReadReq{As: "reader-a,reader-b", Verdict: "ok"})
+	q := Read(w.s, ReadReq{Usage: "input=1000 output=100", As: "reader-a,reader-b", Verdict: "ok"})
 	require.Len(t, q.Refused, 1, "a read by selection of several readers: %+v", q)
 }

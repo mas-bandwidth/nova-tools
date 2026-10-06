@@ -376,8 +376,7 @@ func TestRunStopsOnASignalAndRefusesAStoreThatDoesNotAnswer(t *testing.T) {
 	var out, errb strings.Builder
 	code := run([]string{"run", "--as", "bob", "--harness", "opencode", "--dir", dir, "--width", "4"}, strings.NewReader(""), &out, &errb, w)
 	assert.Equal(t, 0, code, errb.String())
-	assert.NoDirExists(t, filepath.Join(dir, ".nova-friend"), "nothing of the daemon's on the friend's volume")
-	s, found, err := friend.ReadStatus(friend.DefaultStateDir(r.home, "bob"))
+	s, found, err := friend.ReadStatus(friend.StateDirIn(dir))
 	require.NoError(t, err)
 	assert.True(t, found)
 	assert.Equal(t, "bob", s.Friend)
@@ -385,6 +384,151 @@ func TestRunStopsOnASignalAndRefusesAStoreThatDoesNotAnswer(t *testing.T) {
 	assert.GreaterOrEqual(t, s.Beats, 1, "the count in the file lags up to StatusEvery")
 	assert.Equal(t, 2, s.Width, "the row's width, read from the beat's answer, over --width")
 	assert.Equal(t, "batch", s.Mode, "the row's mode, read from the beat's answer")
+}
+
+// The beat's row_config_dir= (or --config-dir over it) is the directory a
+// claude lane runs with: the row one-shot with one, the daemon runs lanes.
+func TestRunReadsTheConfigDirOffTheBeat(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, answer string
+		flags        []string
+	}{
+		{"from the beat", " row_config_dir=/accounts/heavy-a", nil},
+		{"the override", "", []string{"--config-dir", "/accounts/heavy-a"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r := newRig(t, "ada", "bob")
+			w := r.world()
+			var cancel context.CancelFunc
+			w.signals = func(ctx context.Context) (context.Context, context.CancelFunc) {
+				ctx, cancel = context.WithCancel(ctx)
+				return ctx, cancel
+			}
+			beats := 0
+			w.beat = func(context.Context, string, string, time.Time, time.Time) (string, error) {
+				beats++
+				if beats == 3 {
+					cancel()
+				}
+				return "FRIEND-BEAT OK bob at=2026-10-04T03:00:00Z row_mode=one-shot row_width=2" + tc.answer, nil
+			}
+			var out, errb strings.Builder
+			code := run(append([]string{"run", "--as", "bob", "--harness", "claude", "--dir", t.TempDir()}, tc.flags...), strings.NewReader(""), &out, &errb, w)
+			assert.Equal(t, 0, code, errb.String())
+			assert.NotContains(t, out.String(), "REFUSED")
+			assert.Contains(t, out.String(), "push proof: none owed: claude runs each card as a process of its own")
+			assert.Contains(t, out.String(), "mode: one-shot, from batch (the friend row)")
+		})
+	}
+	var out, errb strings.Builder
+	code := run([]string{"run", "--as", "bob", "--harness", "claude", "--dir", t.TempDir(), "--config-dir", "~/accounts"}, strings.NewReader(""), &out, &errb, newRig(t, "ada", "bob").world())
+	assert.Equal(t, 2, code)
+	assert.Contains(t, errb.String(), `--config-dir "~/accounts" wants an absolute path`)
+}
+
+// A claude row in one-shot mode with no config_dir (and no --config-dir) is
+// refused on the daemon's record with the remedy, and no lane runs.
+func TestRunRefusesAClaudeOneShotRowWithoutAConfigDir(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, "ada", "bob")
+	w := r.world()
+	var cancel context.CancelFunc
+	w.signals = func(ctx context.Context) (context.Context, context.CancelFunc) {
+		ctx, cancel = context.WithCancel(ctx)
+		return ctx, cancel
+	}
+	beats := 0
+	w.beat = func(context.Context, string, string, time.Time, time.Time) (string, error) {
+		beats++
+		if beats == 3 {
+			cancel()
+		}
+		return "FRIEND-BEAT OK bob at=2026-10-04T03:00:00Z row_mode=one-shot row_width=2", nil
+	}
+	dir := t.TempDir()
+	var out, errb strings.Builder
+	code := run([]string{"run", "--as", "bob", "--harness", "claude", "--dir", dir}, strings.NewReader(""), &out, &errb, w)
+	assert.Equal(t, 0, code, errb.String())
+	s, _, err := friend.ReadStatus(friend.StateDirIn(dir))
+	require.NoError(t, err)
+	assert.Equal(t, "batch", s.Mode, "the row says one-shot and names no config_dir: claude is refused")
+	assert.Contains(t, out.String(), "mode: one-shot REFUSED: friend bob is a claude friend in one-shot mode with no config_dir")
+	assert.Contains(t, out.String(), "run: nova-config friend set bob --config_dir <her account's absolute config directory>, or nova-friend run --config-dir <dir>")
+}
+
+// A claude one-shot lane runs its card inside the lane wall, and the wall's
+// --config-dir is the row's config_dir when no --config-dir is given (the
+// flag over it when it is): the card's process is a lane's, never the plain
+// daemon's, so it cannot write outside the friend's directories.
+func TestAClaudeOneShotLaneRunsWalledWithTheRowsConfigDir(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, want string
+		flags      []string
+	}{
+		{"the row's", "/accounts/heavy-a", nil},
+		{"the flag over it", "/accounts/other", []string{"--config-dir", "/accounts/other"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) { // not parallel: a bubble at a time
+			synctest.Test(t, func(t *testing.T) {
+				r := newRig(t, "ada", "bob")
+				w := r.world()
+				var cancel context.CancelFunc
+				w.signals = func(ctx context.Context) (context.Context, context.CancelFunc) {
+					ctx, cancel = context.WithCancel(ctx)
+					return ctx, cancel
+				}
+				w.sleep = func(context.Context, time.Duration) { synctest.Wait() }
+				dir := t.TempDir()
+				require.NoError(t, os.MkdirAll(filepath.Join(dir, "inbox", "c1~15"), 0o755))
+				require.NoError(t, os.WriteFile(filepath.Join(dir, "inbox", "QUEUE.json"), []byte(`{"tasks":[{"id":"c1","state":"queued"}]}`), 0o644))
+				require.NoError(t, os.WriteFile(filepath.Join(dir, "inbox", "c1~15", "BRIEF.md"), []byte("RESULT: c1\n"), 0o644))
+				var mu sync.Mutex
+				var walls []string // the config dir of each wall a lane's child ran in
+				var plain int      // children run outside any lane's wall
+				w.wall = func(wl friend.Wall, _ friend.Exec) friend.Exec {
+					return func(ctx context.Context, _, _ string, _ []string, _ string) (string, int, error) {
+						mu.Lock()
+						defer mu.Unlock()
+						if !friend.InLane(ctx) {
+							plain++
+							return "", 0, nil
+						}
+						walls = append(walls, wl.ConfigDir)
+						out := filepath.Join(dir, "outbox", "c1~15")
+						if err := os.MkdirAll(out, 0o755); err != nil {
+							return "", 0, err
+						}
+						for _, f := range []string{"REPORT.md", "RESULT.md"} {
+							if err := os.WriteFile(filepath.Join(out, f), []byte("done\n"), 0o644); err != nil {
+								return "", 0, err
+							}
+						}
+						return "ok\n", 0, nil
+					}
+				}
+				beats := 0
+				w.beat = func(context.Context, string, string, time.Time, time.Time) (string, error) {
+					beats++
+					if beats == 12 {
+						cancel()
+					}
+					return "FRIEND-BEAT OK bob at=2026-10-04T03:00:00Z row_mode=one-shot row_width=1 row_config_dir=/accounts/heavy-a", nil
+				}
+				var out, errb strings.Builder
+				code := run(append([]string{"run", "--as", "bob", "--harness", "claude", "--dir", dir, "--coordinator", "ada"}, tc.flags...), strings.NewReader(""), &out, &errb, w)
+				require.Equal(t, 0, code, errb.String())
+				mu.Lock()
+				defer mu.Unlock()
+				require.NotEmpty(t, walls, "the card ran inside a lane's wall\n%s", out.String())
+				assert.Equal(t, tc.want, walls[0], "the wall's --config-dir")
+				assert.Zero(t, plain, "no child of the lane ran outside the wall")
+				assert.Contains(t, out.String(), "card=done")
+			})
+		})
+	}
 }
 
 // A store that is down when the daemon starts is no reason to exit: under launchd's
@@ -597,13 +741,13 @@ func TestRunInOneShotModeOpensALaneAndHandsItTheCard(t *testing.T) {
 		assert.Contains(t, runs[0], "Read "+filepath.Join(dir, "AGENTS.md")+" first")
 		assert.True(t, strings.HasPrefix(runs[1], "run --session ses_lane1 --dir "+dir+" nova-friend: lane 1 of 1: one card this turn, c1."), runs[1])
 		assert.Contains(t, runs[1], `3. Send one bus line: /opt/nova/bin/nova-bus send --as bob --to ada --subject "card c1 done" --body "<the first line of your REPORT.md>" --redis store.test:6379`)
-		lanes, err := friend.ReadLanes(friend.DefaultStateDir(r.home, "bob"))
+		lanes, err := friend.ReadLanes(friend.StateDirIn(dir))
 		require.NoError(t, err)
 		assert.Equal(t, map[int]string{1: "ses_lane1"}, lanes.Sessions)
 		raw, err := os.ReadFile(filepath.Join(dir, "opencode.json"))
 		require.NoError(t, err)
 		assert.Contains(t, string(raw), `"`+filepath.Join(r.home, "bob-working")+`/**": "allow"`)
-		s, _, err := friend.ReadStatus(friend.DefaultStateDir(r.home, "bob"))
+		s, _, err := friend.ReadStatus(friend.StateDirIn(dir))
 		require.NoError(t, err)
 		assert.Equal(t, "one-shot", s.Mode)
 		assert.Contains(t, out.String(), "lane=1 session=ses_lane1")
@@ -664,7 +808,7 @@ func TestRunWithNoSessionAnsweringNeverBeats(t *testing.T) {
 	assert.Contains(t, checks[1], "nova-friend pong --as bob --nonce r4nd0m", "the check carries the one line to run")
 	assert.Contains(t, checks[1], "--to ada")
 	mu.Unlock()
-	st, _, err := friend.ReadStatus(friend.DefaultStateDir(r.home, "bob"))
+	st, _, err := friend.ReadStatus(friend.StateDirIn(dir))
 	require.NoError(t, err)
 	r.now = st.At // read as the daemon last wrote it: up
 	r.cli().Do(t, "status", "--as", "bob", "--dir", dir).Exit(0).
@@ -681,7 +825,8 @@ func TestRunHoldsAHarnessAtItsLimitUntilItsResetThenWakesIt(t *testing.T) {
 	r := newRig(t, "ada", "bob")
 	_, err := (&bus.Bus{Store: r.store}).Send(context.Background(), bus.Message{From: "ada", To: []string{"bob"}, Subject: "card c9", Body: "go\n"})
 	require.NoError(t, err)
-	state := friend.DefaultStateDir(r.home, "bob")
+	dir := t.TempDir()
+	state := friend.StateDirIn(dir)
 	w := r.world()
 	var mu sync.Mutex
 	clock := start
@@ -742,7 +887,7 @@ func TestRunHoldsAHarnessAtItsLimitUntilItsResetThenWakesIt(t *testing.T) {
 		return "", 0, nil
 	}
 	out, errb := &lockedBuilder{mu: &mu}, &strings.Builder{}
-	code := run([]string{"run", "--as", "bob", "--harness", "opencode", "--session", "ses_main", "--dir", t.TempDir(), "--coordinator", "ada"}, strings.NewReader(""), out, errb, w)
+	code := run([]string{"run", "--as", "bob", "--harness", "opencode", "--session", "ses_main", "--dir", dir, "--coordinator", "ada"}, strings.NewReader(""), out, errb, w)
 	require.Equal(t, 0, code, errb.String())
 	mu.Lock()
 	defer mu.Unlock()
@@ -793,11 +938,12 @@ func (l *lockedBuilder) Write(p []byte) (int, error) {
 // String is read with the lock held by the caller.
 func (l *lockedBuilder) String() string { return l.b.String() }
 
-// A friend whose harness is not running is down at once: run wires
-// HarnessWatch in front of the daemon's beat, beats fail with harness not
-// running, status says so on the beat's error, and no beat reaches the
-// sprint server while the harness is down (docs/SPEC-FRIEND.md, the harness check).
-func TestRunPutsTheHarnessWatchInFrontOfTheBeat(t *testing.T) {
+// A friend whose harness app is not running and whose session answers is up
+// (the finding of 2026-10-05): run wires HarnessWatch beside the daemon's
+// beat, advisory; the beats reach the sprint server once the session answers
+// its check, the record says the app was not seen, and status says
+// harness_seen=not-seen (docs/SPEC-FRIEND.md, the harness check).
+func TestRunKeepsTheHarnessWatchAdvisory(t *testing.T) {
 	t.Parallel()
 	r := newRig(t, "ada", "bob")
 	r.alive = fakeAlive{running: false, why: "the harness app is closed"}
@@ -814,16 +960,119 @@ func TestRunPutsTheHarnessWatchInFrontOfTheBeat(t *testing.T) {
 	var out, errb strings.Builder
 	code := run([]string{"run", "--as", "bob", "--harness", "opencode", "--dir", dir, "--coordinator", "ada"}, strings.NewReader(""), &out, &errb, w)
 	require.Equal(t, 0, code, errb.String())
-	assert.Zero(t, beats, "no beat reaches the sprint server while harness is not running")
-	assert.Contains(t, out.String(), "down: harness not running: the harness app is closed")
+	assert.Positive(t, beats, "the session answered: beats reach the sprint server with no app running")
+	assert.Contains(t, out.String(), "harness: not seen: the harness app is closed; advisory")
+	assert.NotContains(t, out.String(), "harness not running")
 
-	st, _, err := friend.ReadStatus(friend.DefaultStateDir(r.home, "bob"))
+	st, _, err := friend.ReadStatus(friend.StateDirIn(dir))
 	require.NoError(t, err)
-	assert.Equal(t, friend.HarnessNotRunning, st.BeatError)
+	assert.Empty(t, st.BeatError)
+	assert.Equal(t, friend.HarnessNotSeen, st.HarnessSeen)
 
 	r.now = st.At
 	r.cli().Do(t, "status", "--as", "bob", "--dir", dir).Exit(0).
-		Out("NOTE the last beat failed: harness not running")
+		Out("status=up", "harness not seen", `harness_seen="not-seen"`).NotOut("the last beat failed")
+}
+
+// The daemon's state directory is under --dir by default, where a sandboxed
+// session may write its pong (the finding of 2026-10-05: zhi's pong.json was
+// refused at ~/.nova-friend/zhi, outside her --dir); --state-dir is still
+// honoured; a directory that refuses it falls back to the home directory's,
+// said on the record.
+func TestTheDaemonsStateDirIsUnderItsDir(t *testing.T) {
+	t.Parallel()
+	runOnce := func(t *testing.T, r *rig, args ...string) string {
+		t.Helper()
+		w := r.world()
+		var cancel context.CancelFunc
+		w.signals = func(ctx context.Context) (context.Context, context.CancelFunc) {
+			ctx, cancel = context.WithCancel(ctx)
+			return ctx, cancel
+		}
+		w.beat = func(context.Context, string, string, time.Time, time.Time) (string, error) { return "", nil }
+		stopAfter(&w, &cancel, 3*time.Minute)
+		var out, errb strings.Builder
+		code := run(append([]string{"run", "--as", "bob", "--harness", "opencode", "--coordinator", "ada"}, args...), strings.NewReader(""), &out, &errb, w)
+		require.Equal(t, 0, code, errb.String())
+		return out.String()
+	}
+
+	t.Run("default: <dir>/.nova-friend", func(t *testing.T) {
+		t.Parallel()
+		r := newRig(t, "ada", "bob")
+		dir := t.TempDir()
+		runOnce(t, r, "--dir", dir)
+		_, found, err := friend.ReadStatus(friend.StateDirIn(dir))
+		require.NoError(t, err)
+		assert.True(t, found, "the status file is under --dir")
+		assert.NoDirExists(t, friend.DefaultStateDir(r.home, "bob"), "nothing under the home directory")
+		r.cli().Do(t, "status", "--as", "bob", "--dir", dir).Exit(0).Out("STATUS OK daemon=", "harness=opencode") // status finds it there with no --state-dir
+		// the session's pong line names the same directory, so its pong lands where the daemon reads
+		r.cli().Do(t, "pong", "--as", "bob", "--nonce", "n1", "--to", "ada", "--state-dir", friend.StateDirIn(dir)).Exit(0)
+		p, found, err := friend.ReadPong(friend.StateDirIn(dir))
+		require.NoError(t, err)
+		assert.True(t, found)
+		assert.Equal(t, "n1", p.Nonce)
+	})
+
+	t.Run("--state-dir is honoured", func(t *testing.T) {
+		t.Parallel()
+		r := newRig(t, "ada", "bob")
+		dir, state := t.TempDir(), t.TempDir()
+		runOnce(t, r, "--dir", dir, "--state-dir", state)
+		_, found, err := friend.ReadStatus(state)
+		require.NoError(t, err)
+		assert.True(t, found)
+		assert.NoDirExists(t, friend.StateDirIn(dir))
+	})
+
+	t.Run("a directory that refuses it: the home directory's, said", func(t *testing.T) {
+		t.Parallel()
+		r := newRig(t, "ada", "bob")
+		file := filepath.Join(t.TempDir(), "not-a-dir")
+		require.NoError(t, os.WriteFile(file, nil, 0o644))
+		out := runOnce(t, r, "--dir", file)
+		_, found, err := friend.ReadStatus(friend.DefaultStateDir(r.home, "bob"))
+		require.NoError(t, err)
+		assert.True(t, found)
+		assert.Contains(t, out, "state: "+friend.StateDirIn(file)+" refused (")
+		assert.Contains(t, out, "give --state-dir")
+	})
+}
+
+// A daemon whose installed plist names other arguments says so on start: a
+// launchctl kickstart restarts what launchd loaded, so a plist edited in place
+// keeps running its old arguments (the finding of 2026-10-05).
+func TestADaemonWhosePlistChangedSaysSoOnStart(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, "ada", "bob")
+	dir := t.TempDir()
+	plist := friend.Agent{Friend: "bob", Harness: "opencode", Dir: dir, Width: 2, Binary: "/opt/nova/bin/nova-friend", Redis: "store.test:6379", Server: "127.0.0.1:6390", Home: r.home, Coordinator: "ada"}
+	require.NoError(t, os.MkdirAll(filepath.Dir(plist.PlistPath()), 0o755))
+	require.NoError(t, os.WriteFile(plist.PlistPath(), []byte(plist.Plist()), 0o644))
+	start := func(args ...string) string {
+		w := r.world()
+		var cancel context.CancelFunc
+		w.signals = func(ctx context.Context) (context.Context, context.CancelFunc) {
+			ctx, cancel = context.WithCancel(ctx)
+			return ctx, cancel
+		}
+		w.beat = func(context.Context, string, string, time.Time, time.Time) (string, error) { return "", nil }
+		stopAfter(&w, &cancel, time.Minute)
+		var out, errb strings.Builder
+		require.Equal(t, 0, run(args, strings.NewReader(""), &out, &errb, w), errb.String())
+		return out.String()
+	}
+	same := plist.Args()[1:] // what launchd runs, after the binary
+	assert.NotContains(t, start(same...), "plist drift", "the plist's own arguments: no drift")
+
+	old := append([]string(nil), same...)
+	old[slices.Index(old, "--width")+1] = "4" // the arguments loaded before the plist was edited to --width 2
+	out := start(old...)
+	assert.Contains(t, out, "plist drift: this daemon's arguments differ from the installed plist")
+	assert.Contains(t, out, "--width 4")
+	assert.Contains(t, out, "plist: run --as bob --harness opencode --dir "+dir+" --redis store.test:6379 --server 127.0.0.1:6390 --width 2")
+	assert.Contains(t, out, "nova-friend install again")
 }
 
 // check runs the delivery check against the live session: one line, OK with
@@ -843,6 +1092,8 @@ func TestCheckSaysOKOrTheStageThatFailed(t *testing.T) {
 	r.deaf = true
 	cli.Do(t, "check", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--state-dir", state, "--within", "10s").Exit(1).
 		Err(`CHECK FAIL harness=opencode stage=act why="no pong r4nd0m from bob within 10s: the session did not run the line the check carried"`)
+	cli.Do(t, "check", "--as", "bob", "--harness", "claude", "--dir", "/w/bob", "--state-dir", state).Exit(1).
+		Err(`CHECK FAIL harness=claude stage=deliver why="no deliver command for claude: nothing the bus holds`, "CHECK NOTE remedy: the adapter card: give internal/friend a deliver command for claude")
 	cli.Do(t, "check", "--as", "bob", "--harness", "cursor", "--dir", "/w/bob", "--state-dir", state).Exit(1).
 		Err(`CHECK FAIL harness=cursor stage=deliver why="no deliver command for cursor (not installed here`)
 

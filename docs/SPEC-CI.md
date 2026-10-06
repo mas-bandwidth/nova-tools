@@ -426,6 +426,67 @@ unit as red, failing CI legs on a tool that is working.
 5. A row holds one offender of its kind in its file wherever it now stands.
 6. The rule holds over this repository with an empty allowlist.
 
+## The bench run verb
+
+`nova-ci bench run` (cmd/nova-ci/bench.go, internal/bench) is the one way a
+card, a read or the coordinator runs Go on a Linux bench against a local tree:
+the recipe `ssh <bench> 'mkdir -p <d>' && rsync -a --delete <repo>/
+<bench>:<d>/repo/ && ssh <bench> 'cd <d>/repo && export GOCACHE=...
+GOFLAGS=-mod=readonly NOVA_TEST_NO_HOST=1 && nice -n 19 go ...'`, a second
+bench by hand, then `ssh <bench> 'rm -rf <d>'`, typed into every brief, is the
+verb's job (the owner, 2026-10-05: "We need to get away from these one shot
+shell scripts.").
+
+The run, per host, in order, each step behind internal/bench's `Transport` (the
+system ssh alone, through internal/subproc in one function, `sshLine`, guarded
+by `testguard.RefuseHosts`; a fake in the tests):
+
+1. **make**: one ssh, `mkdir -p <root> && mktemp -d <root>/run.XXXXXXXX`. ssh's
+   own exit 255 (or ssh not starting) is a host that did not answer: the run
+   moves to `--fallback` and asks nothing more of it. Any other non-zero status
+   is a host that answered and refused, the end of the run. A directory mktemp
+   prints that is not `<root>/run.<x>` is refused and nothing is removed.
+2. **copy**: the tree into `<run>/repo`, `.git` left out unless `--with-git`:
+   `mkdir -p <run>/repo && tar -C <run>/repo -xf -` with a tar stream written in
+   Go (`bench.WriteTree`: directories, regular files and symlinks with their
+   modes; anything else refused) on ssh's stdin, so no rsync and no local tar.
+3. **exec**: `cd <run>/repo && GOCACHE=<cache> GOFLAGS=-mod=readonly
+   NOVA_TEST_NO_HOST=1 nice -n 19 <command>`, every word shell-quoted, its
+   output streamed; its exit status is the verb's.
+4. **remove**: `rm -rf -- <run>`, the directory step 1 printed and nothing else,
+   after step 2 or 3 whatever their outcome, under a context the caller's
+   cancellation (an interrupt) does not end.
+
+Held by `TestBenchRunCopiesRunsAndCleansUp` (the four calls in order with the
+environment and nice; a red command's status is the verb's and still cleans
+up; an unanswering host falls back and is asked nothing more; no host
+answering is a refusal that removes nothing; a mktemp answer that is not a run
+directory is never removed), `TestBenchRunRefusesUsage` (a host ssh could read
+as an option, a `~`, `..`, home or root path, and a missing tree are refused
+before any bench is reached), `TestBenchToolHasNoProblems`, and in
+internal/bench `TestRunRemovesTheRunDirectoryWhenTheCopyFails` and
+`TestWriteTreeLeavesGitOutUnlessAsked`.
+
+The run is modelled in `tla/BenchRun.tla`. TLC on a Linux bench
+holds five invariants on two hosts and two exit codes (`MCBenchRun.cfg`):
+`OnlyTheMadeDirIsRemoved`, `AtMostOneHostAnswers`, `FallbackOnlyOnNoAnswer`,
+`ExitIsTheCommands` and `NothingLeftBehind`. Its reversed witness
+(`MCBenchRunBrokenNoRemove.cfg`, a failed copy that returns without the
+deferred remove) must break `NothingLeftBehind`. `CASES.tsv` and `RUNS.tsv` carry its two rows. It does not model an
+interrupt that lands between mktemp and its answer: that directory exists on
+the bench but the run never learnt its name, so it is never removed.
+
+Not yet: the bench, the cache and the fallback default from nova-config's
+machine rows. A machine row today carries no bench cache or fallback field, so
+`--host` is required and the paths have fixed defaults until the rows do.
+
+internal/bench is the one bench runner (the coordinator's decision of 2026-10-05, as
+the deleted benchsh package was): `internal/ci/ci_benchrunner.go` skips
+`internal/bench/` in `benchRunnerSkipDirs`, so its `sshLine` is not a row of
+`testdata/bench-runners.allow`, which still only shrinks. The verb itself is
+on internal/tool, so it adds no `flag.FlagSet` to nova-ci, and it runs nothing
+but ssh, so the functional image needs no new row.
+
 ## The class tests
 
 The sections above are the class tests written out in full. This section is
@@ -2914,6 +2975,8 @@ the original failed measurement.
 **`reexec-guard` — every re-execution of the test binary has the guard.** *The rule.* A `_test.go` under `cmd/` that runs its own test binary (`os.Executable()` or `os.Args[0]`) lives in a package that calls `testbin.Enter(tool, handled)` from an `init` or a `TestMain`, so a child started with words the package does not answer is refused at exit 3 and a chain of test binaries is bounded (`testbin.MaxDepth`). *The mistake it prevents.* A test binary that runs itself with CLI words runs the whole suite again in the child, which runs the binary again: 289 processes on one machine on 2026-10-04. *The test.* `TestEveryReexecOfTheTestBinaryHasTheGuard` (`internal/ci/reexec_guard_class_test.go`), with its witnesses `TestReexecGuardRefusesAnUnguardedFixture` (a fixture that runs `os.Executable()` or `os.Args[0]` with no guard is refused naming the file and line, and a guard called from an ordinary function does not count) and `TestReexecGuardPassesAGuardedPackage`; the guard's own decisions are `TestDecideRunsTheSuiteHandlesItsOwnWordsOrRefuses` and `TestEnterRefusesARecursionAndAChainTooDeepInAChild` in `internal/testbin`. *Its allowlist.* None: every package that re-executes is guarded. *Its remedy line.* `remedy="call testbin.Enter(tool, handled) from an init or TestMain in cmd/<tool>/reexec_test.go (docs/TESTS.md, tests-reexec-guard-everywhere)"`. *Its narrowings.* It reads `cmd/` only (a re-execution in `internal/` or `tools/` is not seen); it reads text, so a binary path reached through a helper in another package is not seen; and `os.Executable()` is also read where the path is only placed or compared, never run, which the guard costs nothing to hold.
 
 **`makefile-pkgs-quoted-script` — no recipe pastes `$(PKGS)` inside its single-quoted bash script.** *The rule.* No Makefile line holding `bash -o pipefail -c '` carries the text `$(PKGS)` between that opening quote and its matching closing quote, and the `test` target's script reads the list as `$$PKGS`, which bash expands from the environment. *The mistake it prevents.* make pastes `$(PKGS)` into the script text, so a package name holding a single quote ends the quoted script and the rest of the name runs in the recipe shell (security#70 finding 3, the recipe half; the selection check in sec70-f3a closes the instance, this closes the class). *The test.* `TestMakefileTestRecipeDoesNotPasteThePackageListIntoItsQuotedScript` (`internal/ci/makefile_pkgs_class_test.go`); the pin in `TestMakefileIsTheOneEntry` (`internal/ci/makefile_test.go`) reads the same contract from the other side: the `test` recipe holds `go test -count=1 $PKGS` and the Makefile carries `test: export PKGS = $(CL_PKGS)`. *Its allowlist.* None. *Its remedy line.* export the list (`test: export PKGS = $(CL_PKGS)`, target-specific, so a command-line `PKGS=` still wins) and write `$$PKGS` in the script; a recipe that passes `$(PKGS)` as plain make words outside a quoted script needs only the selection check. *Its narrowings.* It reads Makefile text only, one line at a time: a script continued over a backslash line is read to its last quote on the line that opens it, a quote character inside the script's own text would move the closing quote it finds, and a quoted script opened by anything but `bash -o pipefail -c '` is not seen.
+
+**`no-shell-ships` — no tracked file is a bash or zsh script.** *The rule.* `git ls-files` lists no `*.sh`, `*.zsh` or `*.bash` file and no file whose first line is a shell shebang (`sh`, `bash`, `zsh`, `dash`, `ksh` or `ash`, named directly or through `env`), unless its path is a line of `internal/ci/testdata/shell-ledger.txt`. *The mistake it prevents.* The owner's rule of 2026-10-04: no shell in anything that ships, every loop or helper is a Go verb. The tree still tracked a bash script that wrote the 2026-10-02 notes into nova-config and three bash children that stood in for the claude, openai and plain commands of the card contract; a script has no type, no unit test on the Go side and a different answer on every shell. *The test.* `TestNoShellScriptsShip` (`internal/ci/no_shell_class_test.go`) walks the tracked files and reads their first lines, with its witness `TestShellFindingsNamesEveryWayAShellScriptShips` (a fixture holding each extension, each shebang spelling, a ledgered file, a stale ledger line and a file that is no longer shell is refused naming each, and a Go file and a PowerShell file are not). *Its allowlist.* `internal/ci/testdata/shell-ledger.txt`, one path per line, shrink-only: a line whose file is gone, or is no longer shell, fails the test. The ledger is empty. *Its remedy line.* `<path> is a shell script; write it as a Go verb (or a Go test binary for a test's stand-in); the ledger testdata/shell-ledger.txt does not grow`. *Its narrowings.* It reads tracked files only, so an untracked script is not seen; a shell script with no shell extension and no shebang is not seen; PowerShell (`tools/bench-wsl2.ps1`) is not bash, zsh or POSIX sh and is out of the rule; a workflow `run:` line is not a file and is out of scope (card tdocs-docs-ci keeps its steps to one command).
 
 ## How the class tests read the tree: one walk, one parse, in parallel
 

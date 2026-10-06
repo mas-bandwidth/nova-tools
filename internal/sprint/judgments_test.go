@@ -105,7 +105,7 @@ func TestAReportOnAnAskedCardBeginsIt(t *testing.T) {
 			w.must(Ask(w.s, AskReq{})) // the second read, once the first came back ok
 		}
 		rc := readsAt(w.s, w.s.Work.Card("s1-1"), 1)[i]
-		w.must(Read(w.s, ReadReq{As: rc.F("reader"), Verdict: verdict, Finding: "f:1", Sel: Sel{IDs: []string{rc.ID}}}))
+		w.must(Read(w.s, ReadReq{Usage: "input=1000 output=100", As: rc.F("reader"), Verdict: verdict, Finding: "f:1", Sel: Sel{IDs: []string{rc.ID}}}))
 		require.Equal(t, verdict, rc.Col, "%s on an asked card: %s %v", verdict, rc.Col, rc.Fields)
 		require.Equal(t, stamp(w.s.Now), rc.F("begun"), "%s on an asked card: %s %v", verdict, rc.Col, rc.Fields)
 		require.Equal(t, rc.F("begun"), rc.F("read"), "%s on an asked card: %s %v", verdict, rc.Col, rc.Fields)

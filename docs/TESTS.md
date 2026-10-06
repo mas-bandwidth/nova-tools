@@ -703,7 +703,7 @@ Postgres and a throwaway Redis.
 
 ```text
 $ nova-config migrate --file try.json
-CONFIG MIGRATE file=try.json from=0 to=33 applied=33
+CONFIG MIGRATE file=try.json from=0 to=34 applied=34
 
 $ nova-config machine add m1 --user nova --seat s1 --slots 8 --width 4 --as a1 --file try.json
 CONFIG ADD kind=machine name=m1 rev=1
@@ -1045,6 +1045,7 @@ TICK OK state=RUNNING idle=no moved=1 notes=1
 $ nova-sprint take --as m1 --epoch 0
 MOVED s1-1.w1 fleet ready -> working member=m1 gen=1
 PACKET s1-1.w1 attempt=1 gen=1 epoch=0
+  tier: flash
   branch: sprint/s1-1.w1.g1.e0
   base: the stream's base
   notes: none
@@ -1144,11 +1145,13 @@ $ nova-sprint take --as m1 --max 2 --epoch 0
 MOVED s1-1.w1 fleet ready -> working member=m1 gen=1
 MOVED s1-2.w1 fleet ready -> working member=m1 gen=1
 PACKET s1-1.w1 attempt=1 gen=1 epoch=0
+  tier: flash
   branch: sprint/s1-1.w1.g1.e0
   base: the stream's base
   notes: none
   report it: nova-sprint finish --as m1 s1-1.w1@1 --epoch 0 --branch sprint/s1-1.w1.g1.e0 --head <commit> --report '<what you did>' [--failed]
 PACKET s1-2.w1 attempt=1 gen=1 epoch=0
+  tier: flash
   branch: sprint/s1-2.w1.g1.e0
   base: the stream's base
   notes: none

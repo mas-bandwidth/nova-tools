@@ -127,7 +127,7 @@ func (r *conflictRig) toMerging(id string) {
 		r.must(store.AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{id}}}))
 		for _, rc := range r.snap().Readers.Of(id) {
 			if rc.Col == sprint.Asked || rc.Col == sprint.Reading {
-				r.must(store.ReadStep(sprint.ReadReq{As: rc.Row, Verdict: "ok", Finding: "f:1", Sel: sprint.Sel{IDs: []string{rc.ID}}}))
+				r.must(store.ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: rc.Row, Verdict: "ok", Finding: "f:1", Sel: sprint.Sel{IDs: []string{rc.ID}}}))
 			}
 		}
 	}

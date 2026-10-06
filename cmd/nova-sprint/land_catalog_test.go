@@ -81,7 +81,7 @@ func TestLandExemptsTheCatalogRowAndMapOfANewPackage(t *testing.T) {
 	t.Run("a card adding a package with its catalog row and map lands", func(t *testing.T) {
 		t.Parallel()
 		r := catalogRig(t, filepath.Join(t.TempDir(), "runs"))
-		brief := writeNeedsBrief(t, t.TempDir(), "s1-1", "Fix s1-1.\nPATHS: internal/newpkg/newpkg.go", "")
+		brief := writeNeedsBrief(t, t.TempDir(), "s1-1", "Fix s1-1. tier: flash\nPATHS: internal/newpkg/newpkg.go", "")
 		r.ok("add --stream s1 s1-1 --one --brief-file " + brief)
 		head := packageCard(r, "s1-1", "newpkg", withCatalogRow("internal/newpkg"), mapOf("internal/docs", "internal/newpkg"))
 		r.queued(map[string]string{"s1-1": head}, "s1-1")
@@ -99,8 +99,8 @@ func TestLandExemptsTheCatalogRowAndMapOfANewPackage(t *testing.T) {
 		count := filepath.Join(t.TempDir(), "runs")
 		r := catalogRig(t, count)
 		dir := t.TempDir()
-		b1 := writeNeedsBrief(t, dir, "s1-1", "Fix s1-1.\nPATHS: internal/newpkg/newpkg.go", "")
-		b2 := writeNeedsBrief(t, dir, "s1-2", "Fix s1-2.\nPATHS: internal/otherpkg/otherpkg.go", "")
+		b1 := writeNeedsBrief(t, dir, "s1-1", "Fix s1-1. tier: flash\nPATHS: internal/newpkg/newpkg.go", "")
+		b2 := writeNeedsBrief(t, dir, "s1-2", "Fix s1-2. tier: flash\nPATHS: internal/otherpkg/otherpkg.go", "")
 		r.ok("add --stream s1 --brief-file " + b1 + " --brief-file " + b2)
 		heads := map[string]string{
 			"s1-1": packageCard(r, "s1-1", "newpkg", withCatalogRow("internal/newpkg"), mapOf("internal/docs", "internal/newpkg")),
@@ -128,7 +128,7 @@ func TestLandExemptsTheCatalogRowAndMapOfANewPackage(t *testing.T) {
 	t.Run("an edit of an existing catalog row is still E12", func(t *testing.T) {
 		t.Parallel()
 		r := catalogRig(t, filepath.Join(t.TempDir(), "runs"))
-		brief := writeNeedsBrief(t, t.TempDir(), "s1-1", "Fix s1-1.\nPATHS: internal/newpkg/newpkg.go", "")
+		brief := writeNeedsBrief(t, t.TempDir(), "s1-1", "Fix s1-1. tier: flash\nPATHS: internal/newpkg/newpkg.go", "")
 		r.ok("add --stream s1 s1-1 --one --brief-file " + brief)
 		edited := strings.Replace(withCatalogRow("internal/newpkg"), `"docs"`, `"edited"`, 1)
 		head := packageCard(r, "s1-1", "newpkg", edited, mapOf("internal/docs", "internal/newpkg"))
@@ -145,7 +145,7 @@ func TestLandExemptsTheCatalogRowAndMapOfANewPackage(t *testing.T) {
 	t.Run("a map change without a new directory is still E12", func(t *testing.T) {
 		t.Parallel()
 		r := catalogRig(t, filepath.Join(t.TempDir(), "runs"))
-		brief := writeNeedsBrief(t, t.TempDir(), "s1-1", "Fix s1-1.\nPATHS: internal/docs/docs.go", "")
+		brief := writeNeedsBrief(t, t.TempDir(), "s1-1", "Fix s1-1. tier: flash\nPATHS: internal/docs/docs.go", "")
 		r.ok("add --stream s1 s1-1 --one --brief-file " + brief)
 		head := r.card("s1-1", map[string]string{
 			"internal/docs/docs.go": "package docs // touched\n",

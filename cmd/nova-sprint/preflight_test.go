@@ -50,7 +50,7 @@ func TestPreflightReportsCollisionsAndDroppedNeeds(t *testing.T) {
 	ta.ok("init --readers reader-a,reader-b --members m1")
 	const test = "./cmd/nova-sprint TestTheCommandDrivesAStreamToLanded"
 	// one working card already on the table, its brief naming a path
-	live := writePreflightBrief(t, t.TempDir(), "live", "the live card (s1)", "src/live.go", "", test)
+	live := writePreflightBrief(t, t.TempDir(), "live", "the live card (s1) tier: flash", "src/live.go, cmd/nova-sprint/*_test.go", "", test)
 	ta.ok("add --one --stream s1 live --brief-file " + live)
 	// a need that is dropped before the batch is checked
 	ta.ok("add --one --stream s1 gone")

@@ -60,8 +60,11 @@ func TestInstallNamesTheGrokWakeFileAndTheClaudeConfigDirInTheAgent(t *testing.T
 	_, err := r.fs.ReadFile(wake)
 	require.ErrorIs(t, err, os.ErrNotExist, "a dry run writes nothing")
 
-	// a harness with no deliver command (cursor) is refused before anything is written (the push proof)
-	cli.Do(t, "install", "--as", "bob", "--harness", "cursor", "--dir", "/w/bob").Exit(2).
+	// cursor has no deliver command: install refuses it before anything is written (the push proof)
+	cli.Do(t, "install", "--as", "bob", "--harness", "cursor", "--dir", "/w/bob", "--config-dir", "/w/bob-claude").Exit(2).
 		Err("INSTALL REFUSED: no deliver command for cursor")
 	assert.NoFileExists(t, plist)
+	// claude runs each card as a process of its own: no session to push into, so install goes on
+	cli.Do(t, "install", "--as", "bob", "--harness", "claude", "--dir", "/w/bob", "--config-dir", "/w/bob-claude", "--dry-run").Exit(0).
+		Out("INSTALL PLAN")
 }

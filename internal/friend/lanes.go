@@ -236,6 +236,8 @@ type laneSet struct {
 	loaded  bool
 	results chan laneResult
 	gov     LaneGovernor // the live cap under rate limits, the hold when out of funds (ratelimit.go)
+	pace    Pacer        // the effective width under the subscription windows (pacing.go)
+	paced   int          // the paced width at the last step
 	width   int          // the row's width at the last step
 	now     time.Time    // the last step's clock
 }
@@ -251,11 +253,13 @@ func (s *laneSet) running() bool {
 
 // said is the lanes as the status says them: n:session:card/attempts, the
 // lanes beyond the width the row now gives marked retired, those beyond the
-// live cap a rate limit lowered marked capped, and every lane marked paused
-// in a backoff, held when out of funds.
+// live cap a rate limit lowered marked capped, those beyond the width the
+// subscription windows allow marked paced, and every lane marked paused in a
+// backoff, held when out of funds.
 func (s *laneSet) said(width int) string {
 	var out []string
 	limit := s.gov.Cap(width)
+	paced := min(s.paced, width)
 	for _, ln := range s.lanes {
 		card := "-"
 		if ln.card != nil {
@@ -267,6 +271,8 @@ func (s *laneSet) said(width int) string {
 			w += ":retired"
 		case ln.n > limit:
 			w += ":capped"
+		case ln.n > paced:
+			w += ":paced"
 		case s.gov.Held() != "":
 			w += ":held"
 		case s.gov.Paused(s.now):
@@ -340,7 +346,8 @@ func (l *loop) laneStep(now time.Time, width int) {
 	for _, line := range s.gov.Step(now, width) {
 		d.Record(now.UTC().Format(time.RFC3339) + " " + line)
 	}
-	limit, paused := s.gov.Cap(width), s.gov.Paused(now)
+	l.paceStep(now, width)
+	limit, paused := min(s.gov.Cap(width), s.paced), s.gov.Paused(now)
 	if !s.loaded {
 		s.loaded = true
 		s.given = map[string]bool{}
@@ -368,7 +375,8 @@ func (l *loop) laneStep(now time.Time, width int) {
 		n := len(s.lanes) + 1
 		s.lanes = append(s.lanes, &lane{n: n, session: s.state.Sessions[n]})
 	}
-	lh := d.Deliver.(LaneHarness)
+	lh, _ := d.Deliver.(LaneHarness)
+	runner, perCard := d.Deliver.(CardRunner)
 	held := func(c Card) bool {
 		id := filepath.Base(c.Outbox)
 		legacy := id == c.ID || id == c.ID+"~"+c.Epoch()
@@ -391,7 +399,7 @@ func (l *loop) laneStep(now time.Time, width int) {
 		if paused {
 			continue
 		}
-		if ln.session == "" {
+		if ln.session == "" && !perCard {
 			if now.Before(ln.openAt) {
 				continue
 			}
@@ -416,6 +424,15 @@ func (l *loop) laneStep(now time.Time, width int) {
 			ln.card, ln.attempts = &c, 0
 			s.state.Started[filepath.Base(c.Outbox)] = Started{Lane: ln.n, Card: c, At: now}
 			l.saveLanes(now)
+		}
+		if perCard { // the brief alone: no message, pong or notice rides with it
+			t, c := &turn{subjects: fmt.Sprintf("%q", "card "+ln.card.ID)}, *ln.card
+			ln.t = t
+			l.startTurn(t, now, func(ctx context.Context) laneResult {
+				lt, err := runner.RunCard(LaneContext(ctx), c)
+				return laneResult{ln: ln, turn: lt, err: err, t: t}
+			})
+			continue
 		}
 		t := &turn{}
 		t.entries, t.msgs = l.take()
@@ -465,6 +482,7 @@ func (l *loop) laneDone(r laneResult, now time.Time) {
 	t := r.t
 	t.running = false
 	ln.t = nil
+	s.pace.Observe(r.turn.Windows)
 	var rate RateLimited
 	var funds OutOfFunds
 	var usage UsageLimited
@@ -564,6 +582,28 @@ func (l *loop) limitedTurn(r laneResult, now time.Time) {
 	}
 	d.Record(line + fmt.Sprintf(" card=kept turn=%d/%d", ln.attempts, CardTurns))
 	l.providerLimit(r.err, t.started, now)
+}
+
+// paceStep is the pacer at now and the row's width: the paced width kept
+// for the step and the status, a change of it on the record, and the
+// judgment to the coordinator once when the lanes are paced below half the
+// row (pacing.go).
+func (l *loop) paceStep(now time.Time, width int) {
+	d, s := l.d, l.lanes
+	pacing := DefaultPacing
+	if d.Pacing != nil {
+		pacing = PacingOf(d.Pacing())
+	}
+	paced, line, judge := s.pace.Step(now, width, pacing)
+	s.paced = paced
+	d.status.Paced, d.status.Window, d.status.Pacing = &paced, s.pace.Use(now), PacingText(pacing)
+	if line != "" {
+		d.Record(now.UTC().Format(time.RFC3339) + " " + line)
+	}
+	if judge {
+		subject, body := PacingJudgmentText(d.Friend, paced, width, pacing, s.pace.Use(now))
+		l.tellKind(bus.KindBlocker, subject, body, now)
+	}
 }
 
 // providerLimit is the governor's answer to a rate limit or out of funds met
@@ -795,4 +835,16 @@ func ParseProfile(answer string) (profile string, ok bool) {
 		}
 	}
 	return profile, ok
+}
+
+// RowConfigDir reads the friend row's config_dir off her beat's answer
+// (row_config_dir=<dir>, the directory her claude lanes run with as
+// CLAUDE_CONFIG_DIR); empty when the answer carries none.
+func RowConfigDir(answer string) string {
+	for _, w := range strings.Fields(answer) {
+		if v, found := strings.CutPrefix(w, "row_config_dir="); found {
+			return v
+		}
+	}
+	return ""
 }

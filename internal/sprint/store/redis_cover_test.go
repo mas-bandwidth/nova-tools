@@ -1831,6 +1831,7 @@ func TestRedisCoverTableLayerNeedsLiveStore(t *testing.T) {
 		{name: "Create", do: func(ctx context.Context, r *Redis) error { return r.Create(ctx, ntable.Table{Name: "t-work"}) }},
 		{name: "RowsAdd", do: func(ctx context.Context, r *Redis) error { return r.RowsAdd(ctx, "t-work", []string{"a"}) }},
 		{name: "RowsHide", do: func(ctx context.Context, r *Redis) error { return r.RowsHide(ctx, "t-work", []string{"a"}) }},
+		{name: "RowsShow", do: func(ctx context.Context, r *Redis) error { return r.RowsShow(ctx, "t-work", []string{"a"}) }},
 		{name: "RowsDel", do: func(ctx context.Context, r *Redis) error { return r.RowsDel(ctx, "t-work", []string{"a"}) }},
 		{name: "RowsDelIf", do: func(ctx context.Context, r *Redis) error {
 			_, err := r.RowsDelIf(ctx, "t-work", []RowGuard{{Row: "a", ID: "a", Key: "k", Rev: 1}})

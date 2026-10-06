@@ -208,6 +208,7 @@ function setTrack(box, value, slots, scale) {
 function frac(a, b, digits) {
   return "<span class=\"fa\" style=\"width:" + digits + "ch\">" + a + "</span><span class=\"fs\"> / </span><span class=\"fb\" style=\"width:" + digits + "ch\">" + b + "</span>";
 }
+function escHTML(s) { return String(s).replace(/[&<>"']/g, function (c) { return "&#" + c.charCodeAt(0) + ";"; }); }
 function digitsOf(n) { return String(Math.max(0, n)).length; }
 function makePill() { var p = el("span", "pill neutral"); p.appendChild(el("span", "dot")); p._t = quiet(el("span")); p.appendChild(p._t); return p; }
 function setPill(p, text, tone, title) { setText(p._t, text); setClass(p, "pill " + tone); setTitle(p, title || text); }
@@ -230,8 +231,25 @@ function streamStatus(state, c, total) {
   return [state || "idle", "neutral"];
 }
 
+// The archived streams (stream archive; the owner, 2026-10-05: "I would like you to remove all
+// the already landed work streams"): off the table by default, one line saying how many, the
+// cards landed in them and their cost, which shows them or hides them again when clicked. The
+// total row, the progress bar and the hero count them either way.
+var showArchived = false, lastStreams = null;
+function archivedSet(d) { var a = {}; ((d.archived || {}).streams || []).forEach(function (s) { a[s] = 1; }); return a; }
+function renderArchived(d) {
+  var b = $("streams-archived"), a = d.archived;
+  if (!b._on) { b._on = 1; b.addEventListener("click", function () { showArchived = !showArchived; if (lastStreams) render(lastStreams); }); }
+  b.hidden = !a;
+  if (!a) return;
+  var n = a.streams.length;
+  setText(b, n + " archived stream" + (n === 1 ? "" : "s") + ", " + a.landed + " card" + (a.landed === 1 ? "" : "s") + " landed, " + a.cost + " · " + (showArchived ? "hide" : "show"));
+}
+
 function renderStreams(d) {
-  var box = $("streams"), work = d.tables.work || {}, merge = d.tables.merge || {};
+  lastStreams = d;
+  renderArchived(d);
+  var box = $("streams"), work = d.tables.work || {}, merge = d.tables.merge || {}, arch = archivedSet(d);
   var states = {}; (d.streams || []).forEach(function (s) { states[s.Stream] = s; });
   // children: 1 stream, 2 status, 3 waiting, 4 ready, 5 working, 6 review, 7 merging, 8 landed, 9 cost
   if (!box._head) {
@@ -252,9 +270,9 @@ function renderStreams(d) {
     statusOf[k] = streamStatus((states[k] || {}).State, c, total)[0];
   });
   var rank = function (k) { return RANK[statusOf[k]] == null ? 3.5 : RANK[statusOf[k]]; };
-  var keys = streamOrder(d).sort(function (a, b) { return rank(a) - rank(b) || (a < b ? -1 : a > b ? 1 : 0); });
-  var sum = { cost: 0, totalCost: 0, unreconciled: 0, unpriced: 0 }, held = 0, landedStreams = 0, prevRank = null;
-  var digits = digitsOf(keys.reduce(function (a, k) { return a + FLOW.reduce(function (b, st) { return b + int(work[k][st]); }, 0); }, 0));
+  var keys = streamOrder(d).filter(function (k) { return showArchived || !arch[k]; }).sort(function (a, b) { return rank(a) - rank(b) || (a < b ? -1 : a > b ? 1 : 0); });
+  var sum = { cost: 0, totalCost: 0, workCost: 0, readCost: 0, unreconciled: 0, unpriced: 0 }, held = 0, landedStreams = 0, prevRank = null;
+  var digits = digitsOf(streamOrder(d).reduce(function (a, k) { return a + FLOW.reduce(function (b, st) { return b + int(work[k][st]); }, 0); }, 0));
   FLOW.forEach(function (st) { sum[st] = 0; });
   syncRows(box, box._head, keys, function () {
     var r = { node: el("div", "row"), n: {} };
@@ -271,6 +289,9 @@ function renderStreams(d) {
     var ct = cents(w.cost); if (ct) sum.cost += ct;
     var sc = (d.stream_costs || {})[k] || {};
     var tc = cents(sc.total_cost); if (tc) sum.totalCost += tc;
+    // the reads beside the work: the same total split by kind (sprint.TierCosts)
+    var wc = cents(sc.work_cost); if (wc) sum.workCost += wc;
+    var rc = cents(sc.read_cost); if (rc) sum.readCost += rc;
     // the sprint's unreconciled spend rides on every stream's record: read once, never summed
     var uc = cents(sc.unreconciled); if (uc) sum.unreconciled = Math.max(sum.unreconciled, uc);
     sum.unpriced += int(sc.unpriced_runs);
@@ -289,6 +310,17 @@ function renderStreams(d) {
     setHTML(r.n.landed, frac(c.landed, total, digits));
     setText(r.cost, ct === null ? "-" : money(ct)); setClass(r.cost, "num" + (ct === null ? " zero" : ""));
   }, box._total);
+  // an archived stream off the table still counts in the total row
+  streamOrder(d).forEach(function (k) {
+    if (showArchived || !arch[k]) return;
+    FLOW.forEach(function (st) { sum[st] += int(work[k][st]); });
+    var ct = cents(work[k].cost); if (ct) sum.cost += ct;
+    var sc = (d.stream_costs || {})[k] || {};
+    var tc = cents(sc.total_cost); if (tc) sum.totalCost += tc;
+    var wc = cents(sc.work_cost); if (wc) sum.workCost += wc;
+    var rc = cents(sc.read_cost); if (rc) sum.readCost += rc;
+    sum.unpriced += int(sc.unpriced_runs);
+  });
   var tc = box._total._c, all = 0;
   FLOW.forEach(function (st, i) { all += sum[st]; if (st !== "landed") setNum(tc[2 + i], sum[st]); });
   setHTML(tc[7], frac(sum.landed, all, digits));
@@ -383,7 +415,8 @@ function fleetLike(box, table, withLoad) {
     setText(r.name, k);
     setPill(r.pill, m.status || "-", STATUS_TONE[m.status] || "neutral");
     setTrack(r.track, working, width, scale);
-    setHTML(r.wf, frac(working, width, digits));
+    // a subscription friend's window use beside her width (docs/SPEC-SPRINT.md, the friends table)
+    setHTML(r.wf, frac(working, width, digits) + (m.window ? "<span class=\"win\"> · " + escHTML(m.window) + "</span>" : ""));
     setNum(r.ready, int(m.ready)); setNum(r.done, done);
     setOk(r.ok, pct(okv), done);
     if (r.load) { var lp = pct(m.load); setText(r.load, lp === null ? "-" : lp.toFixed(1) + "%"); setClass(r.load, "num" + (lp === null ? " zero" : "")); }
@@ -525,7 +558,10 @@ function renderHero(d, s) {
   // cost per card is every recorded take and read over the cards that landed
   var recorded = s.sum.totalCost, unreconciled = s.sum.unreconciled;
   setText($("cost"), money(recorded + unreconciled));
-  setHTML($("cost-per"), landed ? money(Math.ceil(recorded / landed)) + " per card" : " ");
+  // the reads are their own number beside the work: "$0.42 per card · $310 work · $96 reads"
+  var split = (s.sum.workCost || s.sum.readCost) ? money(s.sum.workCost) + " work \u00b7 " + money(s.sum.readCost) + " reads" : "";
+  var per = landed ? money(Math.ceil(recorded / landed)) + " per card" : "";
+  setHTML($("cost-per"), [per, split].filter(Boolean).join(" \u00b7 ") || " ");
   setText($("cost-unreconciled"), money(unreconciled) + " unreconciled" + (s.sum.unpriced ? " · " + s.sum.unpriced + " runs unpriced" : ""));
   setText($("inflight"), s.sum.working + s.sum.review + s.sum.merging);
   inflightLast = s.sum; renderInflight(s.sum);

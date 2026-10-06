@@ -1,3 +1,5 @@
+//go:build slow || functional
+
 package main
 
 // A CARD WHOSE LAST TURN IS A QUESTION ENDS AS ASKED (nova-tools #2548).

@@ -101,6 +101,10 @@ type FriendSeat struct {
 	Tiers   []string
 	Dir     string
 	Running []string
+	// Why is why her Status is not up, as FriendDownWhy says it (held, observed down,
+	// silent past FriendDownAfter, or her session's proof lapsed), "" while she is up:
+	// the words a take refused for her names.
+	Why string
 }
 
 // FieldFriendsLeft is the friends a friend's work card has left, comma joined: each the
@@ -272,7 +276,11 @@ func friendLoad(s *Snapshot, name string) int {
 // Finish), carrying the primary's fix, finding and why as a machine's deal does; its primary
 // moves ready -> working. The friend's row is declared by the plan the first time she is dealt to.
 // It answers the cards it places on each friend's row and how many of them go into
-// working: the tick levels the friends after it.
+// working: the tick levels the friends after it. A named pin (WHO: friend <name>,
+// not a hard pin) placed on a different friend's row carries a judgment on that
+// unit (pinIgnoredNote): why she did not take it, and whose row holds the card.
+// The pass keeps that judgment (pinConds) until the card is back on her row or
+// leaves ready and working.
 func friendDeal(s *Snapshot, cards []*Card, seats []FriendSeat) (p Plan, dealt, dealtWorking map[string]int) {
 	free, lanes, seat := map[string]int{}, map[string]int{}, map[string]FriendSeat{}
 	dealt, dealtWorking = map[string]int{}, map[string]int{}
@@ -310,7 +318,12 @@ func friendDeal(s *Snapshot, cards []*Card, seats []FriendSeat) (p Plan, dealt, 
 		escalated := wc != nil && redealBound(wc)
 		tier := cardTierOf(escalating(s, c))
 		left := friendsLeft(wc)
-		name, _ := FriendCard(c)
+		pinned, pinnedCard := FriendCard(c)
+		leftAtPin := slices.Clone(left)
+		name := pinned
+		if !pinnedCard {
+			name = ""
+		}
 		if name != "" && (free[name] <= 0 || slices.Contains(left, name) || !friendTakes(seat[name], tier)) {
 			name = "" // the friend it names is not up with room, it has left her, or not her tier
 		}
@@ -358,14 +371,23 @@ func friendDeal(s *Snapshot, cards []*Card, seats []FriendSeat) (p Plan, dealt, 
 			p.Rows = append(p.Rows, RowAdd{Fleet, row})
 			declared[row] = true
 		}
+		var u Unit
 		switch {
 		case escalated:
-			p.Units = append(p.Units, friendEscalateUnit(s, c, wc, card, row, col, tier))
+			u = friendEscalateUnit(s, c, wc, card, row, col, tier)
 		case wc != nil:
-			p.Units = append(p.Units, friendRedealUnit(s, c, wc, row, col))
+			u = friendRedealUnit(s, c, wc, row, col)
 		default:
-			p.Units = append(p.Units, friendDealUnit(s, c, card, row, col, nil))
+			u = friendDealUnit(s, c, card, row, col, nil)
 		}
+		if pinnedCard && pinned != "" && !OnlyFriend(c) && name != pinned {
+			placedID := card
+			if wc != nil && !escalated {
+				placedID = wc.ID
+			}
+			u.Notes = append(u.Notes, pinIgnoredNote(s, c, placedID, pinned, pinSkipWhy(seats, pinned, leftAtPin, tier, free), row, col))
+		}
+		p.Units = append(p.Units, u)
 	}
 	return Lawful(p), dealt, dealtWorking
 }

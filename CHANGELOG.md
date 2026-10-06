@@ -1,5 +1,31 @@
 # nova-tools changelog
 
+## v1.1.0 — 2026-10-06
+
+Cut from the head of sprint/mechanical-2026-10-02, promoted to dev and main. The sprint's landings carry no pull request numbers: each lands as `land <card> (sprint stream <stream>)`, so the entries below name the card.
+
+- land bus-requires-inbox-push-proof-p3: `nova-bus` send and recv refuse a deaf name, `names` shows each name's push
+  - members: bus-requires-inbox-push-proof-p2
+- land friend-requires-push-proof-p4: `nova-friend` install and run refuse a harness nothing pushes into; run proves the push before its loop
+  - members: friend-requires-push-proof-p2, friend-requires-push-proof-p3
+- land seat-requires-push-proof-p3: holding the seat requires a push proof; `seat check` says PUSH DOWN
+  - members: seat-requires-push-proof-p2
+- land daemon-writes-every-taken-card3: the friend daemon writes every card on her row and finishes every report
+  - members: daemon-writes-every-taken-card, daemon-writes-every-taken-card2
+- land liveness-is-the-session-pong-not-an-app3: a friend is up on her session's word, never on a process
+  - members: liveness-is-the-session-pong-not-an-app, liveness-is-the-session-pong-not-an-app2
+- land pr-friend-stall-completeb: a stall wake goes once, after the part's step commits
+- land pr-wire-server-restart: the server runs its restart step before its first tick
+- land pr-tick-gate-five-slow-ticks3: the tick gate counts the deal's history reads, not its wall
+- land pr-fix-sandbox-fork-bomb-timeout2: the cap counts a tree once more when its leader exits
+- land wall-deletes-in-every-write-root2: deletes are allowed in every `--write` root and SANDBOX OK names them
+- land pr-fix-links-symlink-darwin: the links check resolves the tree root first
+- land pr-fix-secrets-output-integrity-go-list: packages load with `go list -json`
+- land pr-fix-redis-serve-prints-the-secret: `redis serve` is pinned to print no secret
+- land pr-fix-snapshot-symlink-note-linux-c: exec stubs are written under ForkLock
+- land pr-fix-friend-unchecked-errors, pr-fix-staticcheck-findings-2026-10-05b, pr-fix-nova-tools-is-every-command: the promotion's lint and class reds
+- upgrade: `nova-redis fn load` against every store (the `nova_sprint` library changed); re-install each friend daemon with `nova-friend install` and the seat with `nova-sprint seat install`
+
 ## v1.0.0 — 2026-09-28
 
 Cut from 52046bd9a0ebf726b40617a81e678d2855047a60. 663 pull requests since v0.16.0-dev.c839379e.

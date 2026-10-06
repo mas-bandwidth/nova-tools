@@ -43,6 +43,7 @@ come back to the table below for the problem you want it to solve.
 <tr><td>Check test runs and their cost.</td><td nowrap><a href="docs/CLI.md#nova-ci">nova-ci</a></td><td>test-time budgets over go test -json output, and this repository's own CI steps</td><td>Reads Go test events (a built-in stream with --example) and reports their timings. local, new-rule and new-verb need a Nova Tools checkout; github receipt writes to a Redis store.<br><code>nova-ci slowtests --example --budget 60</code></td></tr>
 <tr><td>See what is installed and at which version.</td><td nowrap><a href="docs/CLI.md#nova-version">nova-version</a></td><td>which version of each tool is installed, recorded and compared</td><td>Runs go version using the included local manifest; needs Go on PATH. No bus or remote lookup.<br><code>nova-version report --file ./cmd/nova-version/testdata/example.tsv</code></td></tr>
 <tr><td>Inspect versions and apply one chosen update.</td><td nowrap><a href="docs/CLI.md#nova-update">nova-update</a></td><td>compare installed tools with their latest releases, and update one when asked</td><td>Compares Go with itself using a local manifest; applies nothing. An update needs a target, version source and installation path.<br><code>nova-update report --file ./cmd/nova-update/testdata/example.tsv</code></td></tr>
+<tr><td>Set nova up on one machine.</td><td nowrap><a href="docs/SETUP.md">nova-up</a></td><td>set nova up on one machine: plan every step, then apply, from nothing to a first sprint</td><td>Prints the plan and writes nothing with --dry-run; a missing dependency is a plain line with its install command.<br><code>nova-up --local --dry-run</code></td></tr>
 </tbody>
 </table>
 
@@ -82,6 +83,12 @@ Judge the trial by what it gives back: a useful source, an actionable finding,
 a message you can read again, or a stored edit you can inspect. You can stop at
 one tool, keep a different method, or add another when it solves a problem you
 actually have.
+
+### setup-nova-up-local
+
+To set up the whole thing on one machine instead, from nothing to a first
+sprint with no config, follow the [setup guide](docs/SETUP.md): it plans first,
+shows you every step, and then applies it.
 
 ## Where to go next
 

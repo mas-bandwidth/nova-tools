@@ -1,3 +1,5 @@
+//go:build slow || functional
+
 package main
 
 // `NATIVE OK` was printed for a run that produced nothing (nova-tools #1844).

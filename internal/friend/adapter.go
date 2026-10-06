@@ -181,7 +181,7 @@ func NewDeliverer(harness, dir, session string, run Exec, out io.Writer) (Delive
 	case "antigravity":
 		return &Antigravity{Dir: dir, Session: session, Run: run, Out: out}, nil
 	case "claude":
-		return &Claude{Dir: dir, Session: session, Run: run, Out: out}, nil
+		return Stub{Harness: harness}, nil
 	case "dsh":
 		return &DSH{Dir: dir, Session: session, Run: run, Out: out}, nil
 	case "gemini":

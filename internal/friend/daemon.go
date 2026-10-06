@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -123,6 +124,10 @@ type Daemon struct {
 	// read every step so a change takes effect without a restart; nil, or
 	// empty answers, deliver in batch at Width.
 	Row func() (mode string, width int)
+	// Pacing is the row's pacing as the daemon last read it (ParsePacing off its
+	// beat): the fraction of each subscription window the lanes may spend, read
+	// every step; nil, or out of (0, 1], is DefaultPacing (pacing.go).
+	Pacing func() float64
 	// LoadLanes and SaveLanes keep the one-shot lanes' state (ReadLanes,
 	// WriteLanes over the state files); nil keeps it in memory only.
 	LoadLanes func() (LaneState, error)
@@ -133,9 +138,10 @@ type Daemon struct {
 	// Progress stamps progress on the cards whose lane turn printed (ProgressArgv to the
 	// sprint server); nil stamps none.
 	Progress func(ctx context.Context, cards []Card) error
-	// Finish sends one finish verb to the sprint server (FinishArgv): a lane's card whose
-	// run ended with no REPORT.md (lane_end.go). Nil, or a finish not answered, leaves it to
-	// friend sync, which reads the REPORT.md the lane wrote.
+	// Finish sends one finish verb to the sprint server: a lane's card whose run ended with
+	// no REPORT.md (FinishArgv, lane_end.go), and every working card on her row whose job's
+	// REPORT.md says a verdict, whoever wrote its brief (OutboxFinishArgv, outbox.go). Nil,
+	// or a finish not answered, leaves it to friend sync, which reads the same REPORT.md.
 	Finish func(ctx context.Context, argv []string) error
 	// Held is every card on her row as the sprint server says it (HeldVia: friend cards
 	// <friend>, else the worker view), asked once an InboxEvery; her inbox is reconciled with
@@ -148,6 +154,10 @@ type Daemon struct {
 	Sprint    func(ctx context.Context, argv []string) (string, error)
 	ReadSlots func() int
 	ReadModel func(tier string) string
+	// Stage stages a held work card's job (Stager.Stage: jobs/<job>/repo and its JOB.md) and
+	// answers the commit staged (stage.go); nil stages none, and a lane is handed a card with
+	// its brief alone.
+	Stage func(ctx context.Context, p Packet) (string, error)
 
 	m           *Machine
 	status      Status
@@ -160,7 +170,16 @@ type Daemon struct {
 	inboxAt     time.Time // when the inbox was last reconciled
 	heldIDs     []string  // the cards on her row at it
 	heldCards   []HeldCard
-	inboxSaid   map[string]bool // the inbox lines the last reconcile said that are said once while they stand
+	inboxSaid   map[string]bool      // the inbox lines the last reconcile said that are said once while they stand
+	turnEnded   func()               // a test's hook: a turn's result is on its channel (nil: none)
+	outbox      outboxState          // the outbox jobs finished, tried and noted (outbox.go)
+	staging     map[string]bool      // the jobs a stage is under way for
+	stageRetry  map[string]time.Time // when a job whose stage failed is staged again
+	stageSaid   map[string]bool      // the stage failures said, once while they stand
+	stageDealt  map[string]string    // a written brief's line for the batch session, held until its job is staged
+	stageMu     sync.Mutex
+	stageDone   []stageResult // the stages that ended, for the loop
+	stageWG     sync.WaitGroup
 }
 
 // IdleWalkEvery is how often the idle watch reads the session's newest write
@@ -271,6 +290,7 @@ type loop struct {
 	saidNoLanes  bool
 	dealt        []string // the inbox briefs the daemon wrote that the session has not been told of (batch mode)
 	wake         bool     // a wake check is owed: the pong line goes in as its own turn when the session is free (startWake)
+	saidRefusal  string   // the card runner's refusal last recorded, "" when it runs
 }
 
 // Run is the loop until ctx ends. Each step: the clock; the friend's row
@@ -299,6 +319,10 @@ func (d *Daemon) Run(ctx context.Context) error {
 		l.brokenAfter = DefaultBrokenAfter
 	}
 	d.m = Start(d.Now())
+	if d.staging == nil {
+		d.staging, d.stageRetry, d.stageSaid, d.stageDealt = map[string]bool{}, map[string]time.Time{}, map[string]bool{}, map[string]string{}
+	}
+	defer d.stageWG.Wait() // a stage under way ends with ctx (its git is killed) and its result is kept for the next Run
 	d.status = Status{Friend: d.Friend, Harness: d.Harness, Started: d.m.LastPing, Width: d.Width}
 	if !l.passive {
 		d.status.Session = SessionOK
@@ -443,7 +467,9 @@ func (l *loop) idle(now time.Time) {
 
 // row is the mode and width the daemon delivers by: the friend's row when
 // Row says it (one-shot needs a harness that opens sessions, LaneHarness,
-// else the daemon delivers in batch and says why once), else batch at Width.
+// else the daemon delivers in batch and says why once; or a CardRunner that
+// can run a card, else its refusal is recorded once and nothing runs), else
+// batch at Width.
 func (l *loop) row(now time.Time) (mode string, width int) {
 	d := l.d
 	mode, width = ModeBatch, d.Width
@@ -460,6 +486,17 @@ func (l *loop) row(now time.Time) (mode string, width int) {
 		width = 1
 	}
 	d.status.Width = width
+	if runner, ok := d.Deliver.(CardRunner); ok && mode == ModeOneShot {
+		// a lane per card process: refused, with its remedy, until it can run one
+		why := runner.Refusal()
+		if why != "" && why != l.saidRefusal {
+			d.Record(now.UTC().Format(time.RFC3339) + " mode: one-shot REFUSED: " + why + "; no lane runs")
+		}
+		if l.saidRefusal = why; why != "" {
+			mode = ModeBatch
+		}
+		return mode, width
+	}
 	if mode == ModeOneShot {
 		if _, ok := d.Deliver.(LaneHarness); !ok || l.passive {
 			if !l.saidNoLanes {
@@ -664,9 +701,16 @@ func (l *loop) startTurn(t *turn, now time.Time, deliver any) {
 	t.started, t.running, t.cancel, t.seen, t.seenN, t.lastOut, t.stopped = now, true, cancel, seen, 0, now, false
 	switch f := deliver.(type) {
 	case func(context.Context) result:
-		go func() { r := f(tctx); cancel(); l.results <- r }()
+		go func() { r := f(tctx); cancel(); l.results <- r; l.turnEnded() }()
 	case func(context.Context) laneResult:
-		go func() { r := f(tctx); cancel(); l.lanes.results <- r }()
+		go func() { r := f(tctx); cancel(); l.lanes.results <- r; l.turnEnded() }()
+	}
+}
+
+// turnEnded calls the daemon's test hook, if any, once a turn's result is queued.
+func (l *loop) turnEnded() {
+	if l.d.turnEnded != nil {
+		l.d.turnEnded()
 	}
 }
 

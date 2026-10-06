@@ -48,6 +48,9 @@ type friendEntry struct {
 	// Mode is her delivery mode, her nova-config row's (batch or one-shot),
 	// which her daemon reads back from her beat; empty is batch.
 	Mode string `json:"mode,omitempty"`
+	// ConfigDir is her row's config_dir, the directory a claude one-shot lane
+	// runs with as CLAUDE_CONFIG_DIR, which her beat answers (row_config_dir=).
+	ConfigDir string `json:"config_dir,omitempty"`
 	// Reason and Until are the hold's (friend down --reason --until, hold <friend>
 	// --reason): why, and when the coordinator expects her back. Return is whether
 	// the hold took her cards back (hold.go).
@@ -63,6 +66,8 @@ type FriendSpec struct {
 	Width int
 	Class string
 	Mode  string // her delivery mode, config.FriendMode of her row
+	// ConfigDir is her row's config_dir ("" when it names none).
+	ConfigDir string
 }
 
 // FriendRow is one row of the friends table as where draws it: the counts of
@@ -152,11 +157,11 @@ func (st *Store) SyncFriends(ctx context.Context, specs []FriendSpec) (added, re
 		case !had:
 			added = append(added, s.Name)
 			rosterChanged = true
-		case e.Width != s.Width || e.Class != s.Class || e.Mode != s.Mode:
+		case e.Width != s.Width || e.Class != s.Class || e.Mode != s.Mode || e.ConfigDir != s.ConfigDir:
 			updated = append(updated, s.Name)
 			rosterChanged = true
 		}
-		e.Width, e.Class, e.Mode = s.Width, s.Class, s.Mode
+		e.Width, e.Class, e.Mode, e.ConfigDir = s.Width, s.Class, s.Mode, s.ConfigDir
 		r[s.Name] = e
 	}
 	for n := range r {
@@ -273,16 +278,24 @@ func (st *Store) SetFriendHeld(ctx context.Context, friend string, held bool, wh
 // friend's beat and health in one exchange. A store that keeps no records has
 // no friends.
 func (st *Store) FriendRows(ctx context.Context, now time.Time) ([]FriendRow, error) {
+	rows, _, err := st.friendRows(ctx, now)
+	return rows, err
+}
+
+// friendRows is FriendRows and, by name, why each friend is not up
+// (sprint.FriendDownWhy; absent while she is up): the words a take refused for her names
+// (FriendSeats).
+func (st *Store) friendRows(ctx context.Context, now time.Time) ([]FriendRow, map[string]string, error) {
 	r, kv, err := st.roster(ctx)
 	if kv == nil {
-		return nil, nil // a store that keeps no records: no friend
+		return nil, nil, nil // a store that keeps no records: no friend
 	}
 	if err != nil || len(r) == 0 {
-		return nil, err
+		return nil, nil, err
 	}
 	generation, err := st.seatGeneration(ctx)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	names := slices.Sorted(maps.Keys(r))
 	keys := make([]string, 0, 2*len(names))
@@ -291,10 +304,11 @@ func (st *Store) FriendRows(ctx context.Context, now time.Time) ([]FriendRow, er
 	}
 	vals, oks, err := getKeys(ctx, kv, keys)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	rows := map[string]FriendRow{}
 	status := map[string]string{}
+	whys := map[string]string{}
 	for i, n := range names {
 		var b sprint.Beat
 		var h sprint.FriendHealth
@@ -308,7 +322,11 @@ func (st *Store) FriendRows(ctx context.Context, now time.Time) ([]FriendRow, er
 				_ = json.Unmarshal([]byte(vals[2*i+1]), &h)
 			}
 		}
-		row := FriendRow{Name: n, Width: r[n].Width, Status: sprint.FriendStatus(sprint.FriendPresence{Held: r[n].Held, Beat: b, Health: h, Generation: generation}, now), Class: r[n].Class, Mode: r[n].Mode, Load: b.Load, Report: b.Friend, Beat: b.At}
+		presence := sprint.FriendPresence{Held: r[n].Held, Beat: b, Health: h, Generation: generation}
+		row := FriendRow{Name: n, Width: r[n].Width, Status: sprint.FriendStatus(presence, now), Class: r[n].Class, Mode: r[n].Mode, Load: b.Load, Report: b.Friend, Beat: b.At}
+		if why := sprint.FriendDownWhy(presence, now); why != "" {
+			whys[n] = why
+		}
 		if b.Friend != nil {
 			row.Active = b.Friend.Active
 		}
@@ -330,7 +348,7 @@ func (st *Store) FriendRows(ctx context.Context, now time.Time) ([]FriendRow, er
 	for _, n := range FleetOrder(names, status) {
 		out = append(out, rows[n])
 	}
-	return out, nil
+	return out, whys, nil
 }
 
 // friendNames is every friend of the roster, for teardown; none when the
@@ -346,13 +364,16 @@ func (st *Store) friendNames(ctx context.Context) []string {
 // FriendSeats returns every friend of the roster as a FriendSeat (with Name, Width, Status,
 // Class, Mode, and Running: the cards her last beat names running).
 func (st *Store) FriendSeats(ctx context.Context, now time.Time) ([]sprint.FriendSeat, error) {
-	rows, err := st.FriendRows(ctx, now)
+	rows, whys, err := st.friendRows(ctx, now)
 	if err != nil {
 		return nil, err
 	}
 	seats := make([]sprint.FriendSeat, len(rows))
 	for i, r := range rows {
-		seats[i] = sprint.FriendSeat{Name: r.Name, Width: r.Width, Status: r.Status, Class: r.Class, Mode: r.Mode}
+		seats[i] = sprint.FriendSeat{Name: r.Name, Width: r.Width, Status: r.Status, Class: r.Class, Mode: r.Mode, Why: whys[r.Name]}
+		if r.Reason != "" && seats[i].Why != "" {
+			seats[i].Why += ": " + r.Reason
+		}
 		if r.Report != nil {
 			seats[i].Running = r.Report.Running
 		}
@@ -521,7 +542,7 @@ func (st *Store) FriendSpecOf(ctx context.Context, friend string) (FriendSpec, e
 	if !ok {
 		return FriendSpec{}, noFriend(r, friend)
 	}
-	return FriendSpec{Name: friend, Width: e.Width, Class: e.Class, Mode: e.Mode}, nil
+	return FriendSpec{Name: friend, Width: e.Width, Class: e.Class, Mode: e.Mode, ConfigDir: e.ConfigDir}, nil
 }
 
 // FriendSessions is every friend of the roster with her session's last pong as her last

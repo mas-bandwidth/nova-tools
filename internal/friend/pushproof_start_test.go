@@ -41,6 +41,8 @@ func TestThePushProofRefusesWhatCannotBeDriven(t *testing.T) {
 		undriven                               bool
 		delivered                              int
 	}{
+		{name: "the claude stub", harness: "claude", stage: StageDeliver, why: "no deliver command for claude: nothing the bus holds for the friend reaches her session",
+			remedy: "the adapter card: give internal/friend a deliver command for claude (NewDeliverer), or run the friend under a harness that has one: opencode, codex, antigravity, dsh, gemini, grok", undriven: true},
 		{name: "a surveyed harness", harness: "cursor", stage: StageDeliver, why: "no deliver command for cursor (", remedy: "the adapter card: give internal/friend a deliver command for cursor", undriven: true},
 		{name: "dsh under an agent preset", harness: "dsh", out: `dsh: session "session-z" runs under agent preset "minimal", which the one-shot runner does not compose`, exit: 1,
 			stage: StageDeliver, why: `runs under agent preset "minimal"`, remedy: "start a session in /w/bob with no agent preset and name it with --session <id>", undriven: true, delivered: 1},
@@ -60,5 +62,5 @@ func TestThePushProofRefusesWhatCannotBeDriven(t *testing.T) {
 			assert.Equal(t, c.delivered, ran, "a stub is refused before anything is delivered")
 		})
 	}
-	assert.Equal(t, []string{"opencode", "codex", "claude", "antigravity", "dsh", "gemini", "grok"}, Pushing())
+	assert.Equal(t, []string{"opencode", "codex", "antigravity", "dsh", "gemini", "grok"}, Pushing())
 }

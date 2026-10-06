@@ -228,7 +228,7 @@ func (a *app) friendSyncPass(c common, pg, root string, stdout, stderr io.Writer
 			fmt.Fprintf(stderr, "%s %s: friend %s has width %d, and a friend's width is at least 1; run: nova-config friend set %s --width <n>; nothing was changed\n", prog, name, n, width, n)
 			return 1, false
 		}
-		specs = append(specs, store.FriendSpec{Name: n, Width: width, Class: friendClass(r), Mode: config.FriendMode(r)})
+		specs = append(specs, store.FriendSpec{Name: n, Width: width, Class: friendClass(r), Mode: config.FriendMode(r), ConfigDir: r.Fields["config_dir"]})
 	}
 	added, removed, updated, err := st.SyncFriends(ctx, specs)
 	if err != nil {
@@ -346,6 +346,10 @@ func (a *app) friendBeat(ctx context.Context, args []string, open func(common) (
 		}
 		line += fmt.Sprintf(" row_mode=%s row_width=%d", mode, spec.Width)
 		facts["row_mode"], facts["row_width"] = mode, spec.Width
+		if spec.ConfigDir != "" {
+			line += " row_config_dir=" + spec.ConfigDir
+			facts["row_config_dir"] = spec.ConfigDir
+		}
 	}
 	for _, n := range []struct {
 		key string

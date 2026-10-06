@@ -75,7 +75,7 @@ func TestTheTickClosingALateReadWritesWhatThePrimaryNeeds(t *testing.T) {
 	var cards []*sprint.Card
 	cards = append(cards, h.snap().Readers.Of("p2")...)
 	require.Len(t, cards, 2, "asked: %d read cards", len(cards))
-	h.must(ReadStep(sprint.ReadReq{As: cards[0].Row, Verdict: "broken", Finding: "f:1", Sel: sprint.Sel{IDs: []string{cards[0].ID}}}))
+	h.must(ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: cards[0].Row, Verdict: "broken", Finding: "f:1", Sel: sprint.Sel{IDs: []string{cards[0].ID}}}))
 	h.tick(sprint.DeadlineUnbegun + time.Minute)
 	h.machine() // the second read is late
 	require.Len(t, h.openOf(sprint.NReadLate), 1, "no late read: %v", h.openOf(sprint.NReadLate))
@@ -87,7 +87,7 @@ func TestTheTickClosingALateReadWritesWhatThePrimaryNeeds(t *testing.T) {
 	}
 	res := h.run(AckStep(sprint.AckReq{Notes: broken, Reason: "none"}))
 	require.NotEmpty(t, res.Refused, "ack of a broken read: %+v", res)
-	h.must(ReadStep(sprint.ReadReq{As: cards[1].Row, Verdict: "ok", Finding: "f", Sel: sprint.Sel{IDs: []string{cards[1].ID}}}))
+	h.must(ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: cards[1].Row, Verdict: "ok", Finding: "f", Sel: sprint.Sel{IDs: []string{cards[1].ID}}}))
 	h.tick(time.Second)
 	h.machine() // closes the late read
 	if got := h.judgmentsOn("p2"); len(got) == 0 || len(h.openOf(sprint.NReadLate)) != 0 {
@@ -116,7 +116,7 @@ func TestTheTickClosingTheOnlyLateReadWritesWhatThePrimaryNeeds(t *testing.T) {
 	h.must(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"p2"}}, Another: true})) // and one more: two reads outstanding
 	cards := h.snap().Readers.Of("p2")
 	require.Len(t, cards, 2, "asked: %d read cards", len(cards))
-	h.must(ReadStep(sprint.ReadReq{As: cards[0].Row, Verdict: "broken", Finding: "f:1", Sel: sprint.Sel{IDs: []string{cards[0].ID}}}))
+	h.must(ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: cards[0].Row, Verdict: "broken", Finding: "f:1", Sel: sprint.Sel{IDs: []string{cards[0].ID}}}))
 	broken := h.openOf(sprint.NReadBroken)
 	h.must(Step{Verb: "persisted", Plan: func(*sprint.Snapshot) sprint.Plan { return sprint.Plan{Closes: broken} }})
 	h.tick(sprint.DeadlineUnbegun + time.Minute)
@@ -124,7 +124,7 @@ func TestTheTickClosingTheOnlyLateReadWritesWhatThePrimaryNeeds(t *testing.T) {
 	got := h.judgmentsOn("p2")
 	require.Len(t, got, 1, "the late read is not the one judgment open on p2: %v", got)
 	require.Len(t, h.openOf(sprint.NReadLate), 1, "the late read is not the one judgment open on p2: %v", got)
-	h.must(ReadStep(sprint.ReadReq{As: cards[1].Row, Verdict: "ok", Finding: "f", Sel: sprint.Sel{IDs: []string{cards[1].ID}}}))
+	h.must(ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: cards[1].Row, Verdict: "ok", Finding: "f", Sel: sprint.Sel{IDs: []string{cards[1].ID}}}))
 	h.tick(time.Second)
 	h.machine() // closes the late read
 	if got := h.openOf(sprint.NReadsExhausted); len(got) != 1 || len(h.openOf(sprint.NReadLate)) != 0 {

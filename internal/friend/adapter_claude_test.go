@@ -1,3 +1,5 @@
+//go:build unix
+
 package friend
 
 import (
@@ -12,10 +14,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// fakeClaude writes a claude binary that records its argv and its
-// CLAUDE_CONFIG_DIR beside itself and prints a stream-json run: an init, an
-// assistant line, the rate_limit_event and the result with its cost.
-func fakeClaude(t *testing.T, event string, cost string) (program, record string) {
+// fakeClaudeStream writes a claude binary that records its CLAUDE_CONFIG_DIR
+// and argv beside itself, one line a run, prints a stream-json run (an init,
+// an assistant line, the rate_limit_event and the result with its cost) and
+// writes outbox's REPORT.md and RESULT.md when outbox is set.
+func fakeClaudeStream(t *testing.T, event, cost, outbox string) (program, record string) {
 	t.Helper()
 	dir := t.TempDir()
 	record = filepath.Join(dir, "calls")
@@ -26,64 +29,75 @@ func fakeClaude(t *testing.T, event string, cost string) (program, record string
 		"echo '{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"ready\"}]}}'\n" +
 		"echo '" + event + "'\n" +
 		"echo '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"total_cost_usd\":" + cost + ",\"session_id\":\"s1\",\"result\":\"ready\"}'\n"
+	if outbox != "" {
+		script += "mkdir -p '" + outbox + "' && echo 'Verdict: LAND' > '" + outbox + "/REPORT.md' && echo 'RESULT: c1' > '" + outbox + "/RESULT.md'\n"
+	}
 	require.NoError(t, os.WriteFile(program, []byte(script), 0o755))
 	return program, record
 }
 
-// A headless Claude Code account is a lane harness (docs/SPEC-FRIEND.md,
-// one-shot lanes, the Claude lanes): a session is opened by a trimmed
-// `claude -p` run (the measured 50k to 12.7k tokens a call), each card is a
-// --resume turn in it with CLAUDE_CONFIG_DIR set to the friend's own, every
-// run's cost is summed from its stream-json result, and the rate_limit_event
-// is read for the five-hour and weekly utilization; a rejected one stops the
-// lanes until its resetsAt (UsageLimited) with no shell script.
+func calls(t *testing.T, record string) []string {
+	t.Helper()
+	raw, err := os.ReadFile(record)
+	require.NoError(t, err)
+	return strings.Split(strings.TrimSpace(string(raw)), "\n")
+}
+
+// A headless Claude Code account's one-shot lane (docs/SPEC-FRIEND.md,
+// one-shot lanes, the Claude lanes) runs each card as a trimmed `claude -p`
+// (the measured 50k to 12.7k tokens a call) with CLAUDE_CONFIG_DIR set to the
+// friend's own, prices every run from its stream-json result, and reads the
+// rate_limit_event for the five-hour and weekly utilization; a rejected one
+// stops the lanes until its resetsAt (UsageLimited) with no shell script.
 func TestAHeadlessClaudeLaneRunsACardPricesItAndReadsItsLimit(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 10, 4, 18, 30, 0, 0, time.UTC)
 	fiveReset, sevenReset := now.Add(90*time.Minute), now.Add(50*time.Hour)
-	program, record := fakeClaude(t, claudeEvent("allowed", false, 0.42, 0.10, fiveReset, sevenReset), "0.0125")
+	dir := cardDirFixture(t, [][2]string{{"c1", "queued"}, {"c2", "queued"}}, []string{"c1", "c2"}, nil)
+	card := func(id string) Card {
+		c := Card{ID: id, Brief: filepath.Join(dir, "inbox", id+"~15", "BRIEF.md"), Outbox: filepath.Join(dir, "outbox", id+"~15")}
+		require.NoError(t, os.WriteFile(c.Brief, []byte("STATUS: nova-sprint card "+id+", epoch 15"), 0o644)) // one line: the fake records each run on one
+		return c
+	}
+	c1 := card("c1")
+	program, record := fakeClaudeStream(t, claudeEvent("allowed", false, 0.42, 0.10, fiveReset, sevenReset), "0.0125", c1.Outbox)
 	cfg := t.TempDir()
-	wantCfg := cfg + "|"
 	var out strings.Builder
-	c := &Claude{Dir: t.TempDir(), ConfigDir: cfg, Run: RealExec, Program: program, Out: &out, Now: func() time.Time { return now }}
+	cl := NewClaude("bob", dir, RealExec, &out)
+	cl.Program, cl.Now, cl.ConfigDir = program, func() time.Time { return now }, func() string { return cfg }
+	var _ CardRunner = cl
 
-	id, err := c.OpenSession(t.Context(), "You are bob.")
-	require.NoError(t, err)
-	require.NotEmpty(t, id)
-	lt, err := c.DeliverTo(t.Context(), id, "card c1")
+	lt, err := cl.RunCard(t.Context(), c1)
 	require.NoError(t, err)
 	assert.Zero(t, lt.Exit)
-
-	raw, err := os.ReadFile(record)
+	_, err = cl.RunCard(t.Context(), c1)
 	require.NoError(t, err)
-	calls := strings.Split(strings.TrimSpace(string(raw)), "\n")
-	require.Len(t, calls, 2)
-	trimmed := "--strict-mcp-config --disable-slash-commands --no-chrome --tools Bash Read Write Edit Grep Glob"
-	for _, call := range calls {
-		assert.True(t, strings.HasPrefix(call, wantCfg), "the friend's own config directory: %s", call)
-		assert.Contains(t, call, "-p ")
-		assert.Contains(t, call, "--output-format stream-json --verbose")
-		assert.Contains(t, call, trimmed)
-	}
-	assert.Contains(t, calls[0], "--session-id "+id, "a new session is named by its first run")
-	assert.Contains(t, calls[1], "--resume "+id, "a card is a turn in the lane's session")
-	assert.True(t, strings.HasSuffix(calls[1], "card c1"))
 
-	cost, usage := c.Spent()
+	got := calls(t, record)
+	require.Len(t, got, 2)
+	for _, call := range got {
+		assert.True(t, strings.HasPrefix(call, cfg+"|-p STATUS: nova-sprint card c1"), "the friend's own config directory, the brief the prompt: %s", call)
+		assert.True(t, strings.HasSuffix(call, "--output-format stream-json --verbose --strict-mcp-config --disable-slash-commands --no-chrome --tools Bash Read Write Edit Grep Glob"), "the trimmed call, --tools last: %s", call)
+	}
+
+	cost, usage := cl.Spent()
 	assert.InDelta(t, 0.025, cost, 1e-9, "both runs priced from their results")
 	assert.InDelta(t, 0.42, usage.FiveHour, 1e-9)
 	assert.InDelta(t, 0.10, usage.SevenDay, 1e-9)
 	assert.True(t, usage.FiveHourResets.Equal(fiveReset))
-	assert.Contains(t, out.String(), "claude: cost=$0.0125 total=$0.0250 five_hour=0.42 seven_day=0.10")
+	assert.True(t, usage.SevenDayResets.Equal(sevenReset))
+	assert.Contains(t, out.String(), "claude: run=c1 cost=$0.0125 total=$0.0250 five_hour=0.42 seven_day=0.10 five_hour_resets=2026-10-04T20:00:00Z")
 
-	// a rejected event is a usage limit until its reset, never a backoff
-	program, _ = fakeClaude(t, claudeEvent("rejected", false, 1.0, 0.10, fiveReset, sevenReset), "0.0010")
-	c = &Claude{Dir: t.TempDir(), ConfigDir: cfg, Run: RealExec, Program: program, Now: func() time.Time { return now }}
-	_, err = c.DeliverTo(t.Context(), "s1", "card c2")
+	// a rejected event is a usage limit until its reset, never a backoff, and the card stays in hand
+	program, _ = fakeClaudeStream(t, claudeEvent("rejected", false, 1.0, 0.10, fiveReset, sevenReset), "0.0010", "")
+	cl.Program = program
+	_, err = cl.RunCard(t.Context(), card("c2"))
 	var limited UsageLimited
 	require.ErrorAs(t, err, &limited)
 	assert.True(t, limited.Until.Equal(fiveReset), "until resetsAt: %s", limited.Until)
-	assert.Equal(t, "s1", limited.Session)
+	assert.Equal(t, "c2", limited.Session)
+	cost, _ = cl.Spent()
+	assert.InDelta(t, 0.026, cost, 1e-9, "a limited run is priced too")
 }
 
 // A usage limit pauses the lanes until its reset and lowers no cap: the
@@ -101,19 +115,20 @@ func TestAUsageLimitPausesTheLanesUntilItsResetAndLowersNoCap(t *testing.T) {
 }
 
 // A bud's reader runs on the same account the same way (docs/SPEC-FRIEND.md,
-// the Claude lanes, the reader row): a read is one trimmed `claude -p` in a
-// session of its own (--session-id), on the model of the read's tier placed
-// before --tools (which takes every argument after it), priced from its
-// result and its limit read, so a claude daemon's reader row needs no script.
+// the Claude lanes, the reader row): a read is one trimmed `claude -p` with
+// the prompt, on the model of the read's tier placed before --tools (which
+// takes every argument after it), priced from its result and its limit read,
+// so a claude daemon's reader row needs no script.
 func TestAHeadlessClaudeRunsAReadAsOneShotOnItsTiersModelPricedLikeACard(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 10, 4, 18, 30, 0, 0, time.UTC)
 	fiveReset, sevenReset := now.Add(90*time.Minute), now.Add(50*time.Hour)
-	program, record := fakeClaude(t, claudeEvent("allowed", false, 0.42, 0.10, fiveReset, sevenReset), "0.0300")
+	program, record := fakeClaudeStream(t, claudeEvent("allowed", false, 0.42, 0.10, fiveReset, sevenReset), "0.0300", "")
 	cfg := t.TempDir()
 	var out strings.Builder
-	c := &Claude{Dir: t.TempDir(), ConfigDir: cfg, Run: RealExec, Program: program, Out: &out, Now: func() time.Time { return now }}
-	var reads ReadHarness = c
+	cl := NewClaude("bob", t.TempDir(), RealExec, &out)
+	cl.Program, cl.Now, cl.ConfigDir = program, func() time.Time { return now }, func() string { return cfg }
+	var reads ReadHarness = cl
 
 	lt, err := reads.RunRead(t.Context(), ReadModels["heavy"], "read the card")
 	require.NoError(t, err)
@@ -121,27 +136,22 @@ func TestAHeadlessClaudeRunsAReadAsOneShotOnItsTiersModelPricedLikeACard(t *test
 	_, err = reads.RunRead(t.Context(), "", "read again")
 	require.NoError(t, err)
 
-	raw, err := os.ReadFile(record)
-	require.NoError(t, err)
-	calls := strings.Split(strings.TrimSpace(string(raw)), "\n")
-	require.Len(t, calls, 2)
-	for _, call := range calls {
-		assert.True(t, strings.HasPrefix(call, cfg+"|"), "the friend's own config directory: %s", call)
-		assert.Contains(t, call, "-p --output-format stream-json --verbose")
-		assert.Contains(t, call, "--session-id ", "a read is a session of its own")
-		assert.NotContains(t, call, "--resume")
-	}
-	assert.Contains(t, calls[0], "--verbose --model claude-opus-5-5 --strict-mcp-config", "the tier's model, before --tools")
-	assert.True(t, strings.HasSuffix(calls[0], " read the card"))
-	assert.NotContains(t, calls[1], "--model", "no model is the account's own")
-	cost, _ := c.Spent()
+	got := calls(t, record)
+	require.Len(t, got, 2)
+	assert.Equal(t, cfg+"|-p read the card --output-format stream-json --verbose --model claude-opus-5-5 --strict-mcp-config --disable-slash-commands --no-chrome --tools Bash Read Write Edit Grep Glob", got[0], "the tier's model, before --tools")
+	assert.Equal(t, cfg+"|-p read again --output-format stream-json --verbose --strict-mcp-config --disable-slash-commands --no-chrome --tools Bash Read Write Edit Grep Glob", got[1], "no model is the account's own")
+	cost, _ := cl.Spent()
 	assert.InDelta(t, 0.06, cost, 1e-9, "every read priced from its result")
-	assert.Contains(t, out.String(), "claude: cost=$0.0300 total=$0.0600 five_hour=0.42")
+	assert.Contains(t, out.String(), "claude: run=(read) cost=$0.0300 total=$0.0600 five_hour=0.42")
 
-	program, _ = fakeClaude(t, claudeEvent("rejected", false, 1.0, 0.10, fiveReset, sevenReset), "0.0010")
-	c = &Claude{Dir: t.TempDir(), ConfigDir: cfg, Run: RealExec, Program: program, Now: func() time.Time { return now }}
-	_, err = c.RunRead(t.Context(), "", "read at the limit")
+	program, _ = fakeClaudeStream(t, claudeEvent("rejected", false, 1.0, 0.10, fiveReset, sevenReset), "0.0010", "")
+	cl.Program = program
+	_, err = cl.RunRead(t.Context(), "", "read at the limit")
 	var limited UsageLimited
 	require.ErrorAs(t, err, &limited, "a read at the limit is the lanes' pause until the reset")
 	assert.True(t, limited.Until.Equal(fiveReset))
+
+	cl.ConfigDir = func() string { return "" }
+	_, err = cl.RunRead(t.Context(), "", "no account")
+	assert.ErrorContains(t, err, "with no config_dir", "a read runs only as her own account")
 }
