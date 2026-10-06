@@ -849,6 +849,7 @@ func (l *loop) proof() {
 	}
 	es, err := l.b.Log(l.ctx, l.proofFrom)
 	if err != nil {
+		l.d.status.StoreError = "reading the log for the session's proof of life: " + err.Error() // read again the next step
 		return
 	}
 	for _, e := range es {
@@ -908,7 +909,8 @@ func (l *loop) deliverBatch(t *turn) func(context.Context) result {
 // startBatch is the one turn for every message in hand (docs/SPEC-FRIEND.md,
 // the loop): superseded notices dropped first (dropSuperseded), the rest in
 // one Envelope cut at the deliverer's TextLimit; the messages that did not fit
-// go back to the head of the hand, pending, and are the next turn.
+// go back to the head of the hand, pending, and are the next turn. The model
+// is internal/friend/tla/Delivery.tla: EnvelopeTakesAll and NoYoungerFirst.
 func (l *loop) startBatch(now time.Time) {
 	l.dropSuperseded(now)
 	if len(l.hand) == 0 {
