@@ -172,7 +172,7 @@ func TestTheHelpExampleIsWhatPlaceDryRunPrints(t *testing.T) {
 	h := newExampleHome(t, "API_KEY: the-value")
 	remote := "/home/bench/.config/nova-secrets/API_KEY.env"
 	runExample(t, h, []string{
-		"$ nova-secrets place --store ./secrets --as worker --key ~/.config/nova-secrets/worker.key --sops /opt/homebrew/bin/sops --machine bench --secret API_KEY --machines ./fleet.tsv --dry-run",
+		"$ nova-secrets place --store ./secrets --as worker --key ~/.config/nova-secrets/worker.key --sops /opt/homebrew/bin/sops --machine bench --secret API_KEY --fleet ./fleet.tsv --dry-run",
 		"SECRETS PLACE PLAN machine=bench secret=API_KEY path=" + remote + " mode=0600 file=worker.yaml head=- blob=" + blobOf(t, filepath.Join(h.home, "secrets", "worker.yaml")),
 		"SECRETS PLACE PLAN ssh=ssh target=bench.example writes=" + remote + " the value travels on stdin, never in an argument",
 		"SECRETS PLACE PLAN receipt=/home/you/.config/nova-secrets/placed/bench.receipt action=add",

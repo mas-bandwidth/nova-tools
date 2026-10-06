@@ -30,7 +30,7 @@ func TestTheHelpExamplesAreWhatTheSeatsVerbsPrint(t *testing.T) {
 			"gh api user token=set",
 			"! SECRETS EXEC OK as=ada keys=1 only=1 required=1 file=secrets/ada.yaml head=- cmd=gh",
 		}},
-		{Line: "$ nova-secrets place --store ./secrets --as ada --key ~/.config/nova-secrets/ada.key --sops /opt/homebrew/bin/sops --machine bench-a --secret DEEPSEEK_API_KEY --machines ./fleet.tsv", Want: []string{
+		{Line: "$ nova-secrets place --store ./secrets --as ada --key ~/.config/nova-secrets/ada.key --sops /opt/homebrew/bin/sops --machine bench-a --secret DEEPSEEK_API_KEY --fleet ./fleet.tsv", Want: []string{
 			"SECRETS PLACE OK " + placed,
 		}},
 		{Line: "$ nova-secrets placed --machine bench-a", Want: []string{
