@@ -3,6 +3,8 @@ MCBenchRun.cfg	MCBenchRun.tla	pass	-	ignore-terminal	benchrun	required	-
 MCBenchRunBrokenNoRemove.cfg	MCBenchRun.tla	invariant	NothingLeftBehind	ignore-terminal	benchrun	required	-
 MCBenchStage.cfg	MCBenchStage.tla	pass	-	ignore-terminal	benchstage	required	-
 MCBenchStageBrokenLines.cfg	MCBenchStage.tla	invariant	ReusedByteIdentical	ignore-terminal	benchstage	required	-
+MCCairn.cfg	MCCairn.tla	pass	-	ignore-terminal	cairn	required	-
+MCCairnBrokenFlatAppend.cfg	MCCairn.tla	invariant	OneSectionPerID	ignore-terminal	cairn	required	-
 MCCairnStore.cfg	MCCairnStore.tla	pass	-	ignore-terminal	cairnstore	required	-
 MCCairnStoreBrokenOverwrite.cfg	MCCairnStore.tla	invariant	NoOverwrite	ignore-terminal	cairnstore	required	-
 MCCairnStoreBrokenPublishedWithoutPersisted.cfg	MCCairnStore.tla	invariant	PublishedImpliesPersisted	ignore-terminal	cairnstore	required	-
