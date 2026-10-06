@@ -273,8 +273,9 @@ func (l *Limits) see(out string) {
 // Beat is beat held back while the harness is at its limit: no beat goes
 // to the sprint server, so her row reads down, from the turn that hit the
 // limit until a wake after the reset answers its nonce (Gate). A reset that
-// passes with no answer (the harness not running, say) keeps her down: only
-// the session's answer brings her up.
+// passes with no answer (the wake never reached a session, say) keeps her
+// down: only the session's answer brings her up, never a process seen or not
+// seen in the process table (HarnessWatch is advisory).
 func (l *Limits) Beat(beat func(ctx context.Context) error) func(ctx context.Context) error {
 	return func(ctx context.Context) error {
 		if until, reason, limited := l.Limited(); limited {

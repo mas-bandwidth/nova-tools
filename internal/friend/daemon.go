@@ -146,6 +146,7 @@ type Daemon struct {
 	active      time.Time // the last walk's answer
 	cards       []string  // the cards she held at it
 	walked      time.Time // when it was
+	turnEnded   func()    // a test's hook: a turn's result is on its channel (nil: none)
 }
 
 // IdleWalkEvery is how often the idle watch reads the session's newest write
@@ -638,9 +639,16 @@ func (l *loop) startTurn(t *turn, now time.Time, deliver any) {
 	t.started, t.running, t.cancel, t.seen, t.seenN, t.lastOut, t.stopped = now, true, cancel, seen, 0, now, false
 	switch f := deliver.(type) {
 	case func(context.Context) result:
-		go func() { r := f(tctx); cancel(); l.results <- r }()
+		go func() { r := f(tctx); cancel(); l.results <- r; l.turnEnded() }()
 	case func(context.Context) laneResult:
-		go func() { r := f(tctx); cancel(); l.lanes.results <- r }()
+		go func() { r := f(tctx); cancel(); l.lanes.results <- r; l.turnEnded() }()
+	}
+}
+
+// turnEnded calls the daemon's test hook, if any, once a turn's result is queued.
+func (l *loop) turnEnded() {
+	if l.d.turnEnded != nil {
+		l.d.turnEnded()
 	}
 }
 

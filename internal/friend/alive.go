@@ -13,15 +13,16 @@ import (
 	"time"
 )
 
-// AliveEvery is how often the daemon asks the adapter whether its harness is
-// running (SPEC-FRIEND.md, the harness check). With the sprint's fifteen
-// seconds without a beat, a harness that closes makes its friend down within
-// three quarters of a minute.
+// AliveEvery is how often the daemon asks the adapter whether its harness's
+// process is in the process table (SPEC-FRIEND.md, the harness check): an
+// advisory fact for the status, never presence.
 const AliveEvery = 30 * time.Second
 
-// HarnessNotRunning is the reason a friend is down while its harness is not
-// running: the beat's error, so status says it.
-const HarnessNotRunning = "harness not running"
+// What the status says of the harness's process (Status.HarnessSeen): seen
+// running, or not seen; HarnessUnknown when the adapter cannot tell. A
+// harness run from its command line (dsh headless, codex exec, claude -p) is
+// a session like any other and is not seen as an app: not seen is never down.
+const HarnessNotSeen = "not-seen"
 
 // Liveness is an adapter's answer about its harness: Known false when the
 // adapter cannot tell (its friend relies on the session check alone), else
@@ -184,31 +185,29 @@ func (s Stub) Alive(context.Context) Liveness {
 	return cannotTell(s.Harness + " has no adapter that reads its process; the session check alone")
 }
 
-// HarnessWatch is the harness check in front of the daemon's beat
-// (SPEC-FRIEND.md, the harness check). Every Every (AliveEvery when zero)
-// it asks Alive; a harness not running makes the friend down at once: no
-// beat goes to the sprint server, whose friend is down after fifteen seconds
-// without one, and the beat's error, so the status, says HarnessNotRunning.
-// This is independent of the session check. The friend is up again only
-// once the harness runs (or cannot be told) and the session has answered
-// the daemon's current nonce, one it had not answered when the harness
-// closed. An adapter that cannot tell changes nothing.
+// HarnessWatch is the harness check beside the daemon's beat (SPEC-FRIEND.md,
+// the harness check). Every Every (AliveEvery when zero) it asks Alive and
+// keeps the answer on the daemon's status (Status.HarnessSeen), saying each
+// change on the record. It is advisory: it never holds the beat back and never
+// makes the friend down. Presence is the session's (SessionCheck): the finding
+// of 2026-10-05 was a friend run from the dsh command line, answering every
+// session check for three hours, held down because no app was in the process
+// table. An adapter that cannot tell changes nothing.
 type HarnessWatch struct {
 	Alive Aliver
 	Every time.Duration
 	Now   func() time.Time
 
-	d        *Daemon
-	beat     func(ctx context.Context, active time.Time) error
-	checked  time.Time
-	live     Liveness
-	down     bool
-	before   string // the nonce the pong file held when the harness closed
-	saidOnce bool
+	d       *Daemon
+	beat    func(ctx context.Context, active time.Time) error
+	checked time.Time
+	live    Liveness
+	said    string // the seen state the record last said: each change is said once
+	told    bool
 }
 
-// WatchHarness puts a HarnessWatch over adapter in front of d's beat; call
-// it once d is built and before Run. Pass the bare adapter, the one
+// WatchHarness puts a HarnessWatch over adapter beside d's beat; call it
+// once d is built and before Run. Pass the bare adapter, the one
 // NewDeliverer returned: the gates in front of it (SessionCheck.Gate,
 // Limits.Gate) are Deliverers that answer no Alive. A nil adapter is d's
 // Deliver. Alive is optional by assertion: an adapter that is no Aliver
@@ -225,10 +224,22 @@ func WatchHarness(d *Daemon, adapter Deliverer) *HarnessWatch {
 	return w
 }
 
-// Down says whether the watch holds the friend down, and why.
-func (w *HarnessWatch) Down() (bool, string) { return w.down, w.live.Why }
+// Seen is what the last check read: HarnessRunning, HarnessNotSeen, or
+// HarnessUnknown when the adapter cannot tell or nothing was asked yet.
+func (w *HarnessWatch) Seen() string { return seen(w.live) }
 
-// Beat is the daemon's beat behind the check.
+func seen(l Liveness) string {
+	switch {
+	case !l.Known:
+		return HarnessUnknown
+	case l.Running:
+		return HarnessRunning
+	}
+	return HarnessNotSeen
+}
+
+// Beat is the daemon's beat, with the harness check beside it: it runs the
+// check when one is due, then beats, whatever the check read.
 func (w *HarnessWatch) Beat(ctx context.Context, active time.Time) error {
 	now := w.Now()
 	every := w.Every
@@ -238,37 +249,24 @@ func (w *HarnessWatch) Beat(ctx context.Context, active time.Time) error {
 	if w.Alive != nil && (w.checked.IsZero() || now.Sub(w.checked) >= every) {
 		w.checked = now
 		w.live = w.Alive.Alive(ctx)
-		switch {
-		case w.live.Known && !w.live.Running && !w.down:
-			w.down, w.before = true, w.pongNonce()
-			w.record(now, "down: "+HarnessNotRunning+": "+w.live.Why+"; up again when the session answers its next nonce")
-		case !w.live.Known && !w.saidOnce:
-			w.saidOnce = true
-			w.record(now, "harness check: cannot tell: "+w.live.Why)
+		w.d.status.HarnessSeen = w.Seen()
+		if !w.told || w.Seen() != w.said {
+			w.told, w.said = true, w.Seen()
+			w.record(now, seenLine(w.live))
 		}
-	}
-	if w.down && !(w.live.Known && !w.live.Running) {
-		if n := w.pongNonce(); n != "" && n != w.before && w.d.m != nil && n == w.d.m.Nonce {
-			w.down = false
-			w.record(now, "up: the harness runs and the session answered nonce "+n)
-		}
-	}
-	if w.down {
-		return errors.New(HarnessNotRunning)
 	}
 	return w.beat(ctx, active)
 }
 
-// pongNonce is the nonce the session last answered, from the pong file.
-func (w *HarnessWatch) pongNonce() string {
-	if w.d.Pong == nil {
-		return ""
+// seenLine is the record's line for what the check read.
+func seenLine(l Liveness) string {
+	switch seen(l) {
+	case HarnessRunning:
+		return "harness: running: " + l.Why
+	case HarnessNotSeen:
+		return "harness: not seen: " + l.Why + "; advisory: presence is the session's answer"
 	}
-	p, found, err := w.d.Pong()
-	if err != nil || !found {
-		return ""
-	}
-	return p.Nonce
+	return "harness check: cannot tell: " + l.Why
 }
 
 func (w *HarnessWatch) record(now time.Time, line string) {

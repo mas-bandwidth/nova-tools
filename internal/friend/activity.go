@@ -29,8 +29,9 @@ type ActivityLimits struct {
 var DefaultActivityLimits = ActivityLimits{Files: 2000, Time: 50 * time.Millisecond}
 
 // activitySkip are the directories no session writes its work in: a clone's index and
-// the build caches change under a tool, not under her.
-var activitySkip = map[string]bool{".git": true, ".cache": true, "node_modules": true}
+// the build caches change under a tool, not under her, and .nova-friend is her daemon's
+// own state (StateDirIn), rewritten every few seconds.
+var activitySkip = map[string]bool{".git": true, ".cache": true, "node_modules": true, ".nova-friend": true}
 
 // ActivityRoots are the places the walk reads, in this order, under her working directory:
 // the outbox (her results), the inbox (the cards she was dealt), then the jobs and the
