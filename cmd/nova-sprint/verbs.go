@@ -2289,7 +2289,7 @@ func (a *app) cmdAccept(args []string, stdout, stderr io.Writer) int {
 func (a *app) cmdRework(args []string, stdout, stderr io.Writer) int {
 	var fix, ans, tier *string
 	return a.setVerb("rework", args, stdout, stderr, false, func(fs flagSet) {
-		fix = fs.String("fix", "", "the fix for every primary; without it each takes its own: the finding of its broken read, or the report of its failed work; the next attempt is staged at the tip of the card's base branch, the last pushed attempt's work carried on top where it applies cleanly, and where it does not the child is told that work must be redone")
+		fix = fs.String("fix", "", "the fix for every primary, as written, each keeping its own finding beside it; without it each takes its own: the finding of its broken read, or the report of its failed work; a --fix quoting one card's finding, given to a group whose findings differ, is refused whole; the next attempt is staged at the tip of the card's base branch, the last pushed attempt's work carried on top where it applies cleanly, and where it does not the child is told that work must be redone")
 		ans = fs.String("answers", "", answersWords)
 		tier = fs.String("tier", "", "the tier ("+cardhdr.RouteList+") this attempt and every later deal of the card draws its route from, over its brief's line 1, kept on the card: it pins the card, never escalated past it (flash first); a card whose brief pins a model is refused; at a redeal bound it never names a lower tier, and when the attempt before also ended at its bound on the card's tier the rework is refused unless it names a tier above (flash, pro, heavy, frontier) or the provider its takes failed on is back, which lifts it once per tier per card")
 	}, func(ids []string, s *sel) string {

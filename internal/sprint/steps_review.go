@@ -1013,6 +1013,14 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 		}
 		return reworkWhy(c)
 	}, s.primaryCard)
+	// one card's finding is never another's fix: a --fix that quotes the finding of one
+	// card of a group whose findings differ refuses the group whole (crosswiredFix)
+	if why := crosswiredFix(s, chosen, r.Fix); why != "" {
+		for _, c := range chosen {
+			p.refuse(c.ID, why)
+		}
+		return p
+	}
 	up := s.UpMembers()
 	// the room of each member is its width (width.go)
 	q, room := memberLoads(s, up), memberWidths(s, up)
