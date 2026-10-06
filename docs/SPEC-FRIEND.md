@@ -2032,6 +2032,34 @@ each second and answered by the daemon; the daemon's "coordinator silent" window
 made here. The friends table has no never-wake column yet, so `--never-wake`
 names the friends; a row field is the sprint store's and nova-config's change.
 
+## Watch (cmd/nova-friend watch; internal/friend/state.go)
+
+The coordinator wake hand-script (`tmp/buswatch/watch.sh`, retired by
+`fg-adopt-friend-daemons`) is formalized as a first-class verb:
+
+```sh
+nova-friend watch --as <coordinator> [--timeout <duration>] [--state-dir <d>] [--redis <addr>] [--json]
+```
+
+`watch` waits on three sources of wakes for the coordinator:
+1. The coordinator's stream (`bus2:to:<coordinator>`), read past the saved cursor.
+2. The coordinator's wake file (`<stateDir>/<coordinator>.wake`), checked once a second.
+3. Event messages on the bus whose subject begins with `event:` (case-insensitive).
+
+Messages sent by the coordinator itself (`--as`) and routine messages with subject `ping`, `pong`, `daemon-pong`, or `keepalive` are skipped, advancing the cursor past them.
+
+The cursor is saved atomically in `<stateDir>/watch.cursor` after each run, so the next run misses nothing and requires no flag.
+
+On the first wake, `watch` prints up to 5 lines of:
+- `WATCH MESSAGE id= from= subject=` for real incoming messages
+- `WATCH EVENT id= from= subject=` for event messages
+- `WATCH WAKE line="<escaped-line>"` for lines from the wake file
+followed by `WATCH OK after=<cursor>` at exit 0.
+
+If `--timeout` expires with no wake, it prints `WATCH NONE waited=<duration>` on stderr and exits 1.
+`--json` renders the same facts as one JSON object (`status`, `word`, `after`, `waited`, `messages[]`, `events[]`, `wake`).
+Exit codes: 0 wake occurred; 1 timeout expired; 2 could not run.
+
 ## Identity
 
 The friend's name comes from one place, `install --as`, written into the

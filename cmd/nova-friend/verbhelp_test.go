@@ -26,9 +26,10 @@ func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 		{Verb: "pong", Flags: store},
 		{Verb: "wait-pong", Flags: store},
 		{Verb: "status"},
+		{Verb: "watch", Flags: store},
 		{Verb: "version"},
 	})
-	testverbhelp.HelpVerb(t, cli, "nova-friend", "run", "install", "uninstall", "check", "ping", "pong", "wait-pong", "status", "version")
+	testverbhelp.HelpVerb(t, cli, "nova-friend", "run", "install", "uninstall", "check", "ping", "pong", "wait-pong", "status", "watch", "version")
 }
 
 func TestCommandReferenceNamesEveryKnownHarness(t *testing.T) {
@@ -75,6 +76,37 @@ func TestCheckHelpAndCommandReferenceNameEveryLineFieldAndExit(t *testing.T) {
 		"summary{friends, ok, broken, deaf, silent, down, untrue}",
 		"Exit 0 when every verdict is ok, 1 when any is not", "2 when it could not run",
 		"--since", "--shown", "--json", "example: nova-friend check --as ada bob",
+	} {
+		require.Contains(t, help, text)
+		require.Contains(t, doc, strings.TrimPrefix(text, "example: nova-friend "))
+	}
+}
+
+// The watch verb's help names every output line, every JSON field, the wake
+// conditions and the exit codes, and docs/CLI.md carries the same lines.
+func TestWatchHelpAndCommandReferenceNameEveryLineFieldAndExit(t *testing.T) {
+	t.Parallel()
+	help := newRig(t).cli().Do(t, "watch", "-h").Exit(0).Stdout
+	raw, err := os.ReadFile("../../docs/CLI.md")
+	require.NoError(t, err)
+	doc := string(raw)
+
+	for _, text := range []string{
+		"WATCH MESSAGE",
+		"WATCH EVENT",
+		"WATCH WAKE",
+		"WATCH OK after=",
+		"WATCH NONE waited=",
+		"--timeout",
+		"--state-dir",
+		"--json",
+		"messages",
+		"events",
+		"wake",
+		"after",
+		"waited",
+		"Exit 0 wake occurred, 1 timeout expired, 2 could not run",
+		"example: nova-friend watch --as ada --timeout 1s",
 	} {
 		require.Contains(t, help, text)
 		require.Contains(t, doc, strings.TrimPrefix(text, "example: nova-friend "))

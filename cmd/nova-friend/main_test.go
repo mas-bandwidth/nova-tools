@@ -53,6 +53,9 @@ type rig struct {
 	alive        friend.Aliver
 	deaf         bool          // bob's opencode session takes a turn and never runs the pong line
 	fs           *friend.MemFS // the harness settings' filesystem: bob's directory /w/bob
+	fileSize     func(string) (int64, error)
+	fileLine     func(string, int64) (string, int64, error)
+	clock        func() time.Time
 }
 
 type fakeAlive struct {
@@ -90,7 +93,14 @@ func (r *rig) world() world {
 			}
 			return "", nil
 		},
-		now:     func() time.Time { r.answerChecks(); r.now = r.now.Add(time.Second); return r.now },
+		now: func() time.Time {
+			if r.clock != nil {
+				return r.clock()
+			}
+			r.answerChecks()
+			r.now = r.now.Add(time.Second)
+			return r.now
+		},
 		sleep:   func(context.Context, time.Duration) { r.now = r.now.Add(time.Second) },
 		signals: func(ctx context.Context) (context.Context, context.CancelFunc) { return context.WithCancel(ctx) },
 		uid:     501,
@@ -107,6 +117,18 @@ func (r *rig) world() world {
 		alive:    r.alive,
 		exec:     r.opencode,
 		settings: r.fs,
+		fileSize: func(path string) (int64, error) {
+			if r.fileSize != nil {
+				return r.fileSize(path)
+			}
+			return realFileSize(path)
+		},
+		fileLine: func(path string, from int64) (string, int64, error) {
+			if r.fileLine != nil {
+				return r.fileLine(path, from)
+			}
+			return realFileLine(path, from)
+		},
 	}
 }
 
@@ -161,6 +183,11 @@ func stopAfter(w *world, cancel *context.CancelFunc, d time.Duration) {
 		}
 		return t
 	}
+}
+
+func (r *rig) wireClock() {
+	r.clock = func() time.Time { return r.now }
+	r.store.Sleep = func(d time.Duration) { r.now = r.now.Add(d) }
 }
 
 func (r *rig) cli() testkit.Main {

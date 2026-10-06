@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
@@ -25,6 +26,7 @@ const (
 	PongFile   = "pong.json"
 	LogFile    = "deliver.log"
 	QueueFile  = "inbox/QUEUE.json"
+	CursorFile = "watch.cursor"
 )
 
 // DaemonStale is how old the status file may be while the daemon counts
@@ -232,6 +234,30 @@ func WritePong(stateDir string, p Pong) error { return write(pongPath(stateDir),
 func ReadPong(stateDir string) (p Pong, found bool, err error) {
 	found, err = read(pongPath(stateDir), &p)
 	return p, found, err
+}
+
+// WatchCursorPath is the cursor file in the state directory.
+func WatchCursorPath(stateDir string) string { return filepath.Join(stateDir, CursorFile) }
+
+// WriteWatchCursor saves the cursor in the state directory atomically (write and rename).
+func WriteWatchCursor(stateDir, cursor string) error {
+	path := WatchCursorPath(stateDir)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	return atomicfile.WriteFile(path, []byte(cursor+"\n"), 0o644)
+}
+
+// ReadWatchCursor reads the saved cursor from the state directory; missing is a nil error with found false.
+func ReadWatchCursor(stateDir string) (cursor string, found bool, err error) {
+	raw, err := os.ReadFile(WatchCursorPath(stateDir))
+	if errors.Is(err, fs.ErrNotExist) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return strings.TrimSpace(string(raw)), true, nil
 }
 
 // ReadQueue is the queue file's counts; a file that is not there counts

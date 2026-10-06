@@ -764,6 +764,29 @@ once the row's unit runs. What it gets wrong first: no `--redis` and no
 `NOVA_BUS_REDIS` (refused); no friend row but its own (refused, with
 `nova-config friend add`).
 
+### The coordinator watch
+
+The help of `nova-friend watch -h` says, and this is the same text:
+
+```
+Waits on the coordinator's stream (bus2:to:<coordinator>), the coordinator wake file
+(<stateDir>/<coordinator>.wake) and events (bus messages whose subject starts with event:), skipping own
+messages, ping, pong, daemon-pong and keepalive. The cursor is saved in the state directory after each run
+(watch.cursor) so the next run misses nothing and needs no flag.
+Prints up to 5 lines of WATCH MESSAGE id= from= subject=, WATCH EVENT id= from= subject=,
+WATCH WAKE line=, followed by WATCH OK after=<cursor> at exit 0.
+Prints WATCH NONE waited=<duration> on stderr at exit 1 when timeout expires.
+--json prints one object instead of lines: status, word, after, waited, messages[] (id, from, subject),
+events[] (id, from, subject), wake (line).
+Exit 0 wake occurred, 1 timeout expired, 2 could not run.
+```
+
+Example, as written:
+
+```
+nova-friend watch --as ada --timeout 1s
+```
+
 ### Commands
 
 | Command | What it does |
@@ -778,6 +801,7 @@ once the row's unit runs. What it gets wrong first: no `--redis` and no
 | `wait-pong --from <friend> --nonce <n> [--timeout <d>]` | Waits for the pong on the log, from the friend's own stream |
 | `status --as <me> --dir <d> [--state-dir <d>]` | The daemon's state, the last pong, the queue file's counts |
 | `serve --as <coordinator> [--redis <addr>] [--dry-run]` | The coordinator's ping loop: a `PING` to every friend row each second, one line per friend up or down (ten seconds without a pong); until a signal |
+| `watch --as <coordinator> [--timeout <duration>] [--state-dir <d>] [--redis <addr>] [--json]` | Waits on coordinator stream, wake file, and events, skipping own messages, ping, pong, daemon-pong, keepalive; saves cursor |
 | `version`, `help [<verb>]` | The version line; the banner, or a verb's help |
 
 Every store verb takes `--redis <host:port>` (else `NOVA_BUS_REDIS`), the

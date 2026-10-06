@@ -6,7 +6,7 @@
 // its own turn, and tells the session when the coordinator goes silent; and,
 // on the coordinator's side, the ping loop that pings every friend each
 // second. The verbs are run, install, uninstall, check, status, pong, ping,
-// wait-pong, host and serve; the
+// wait-pong, host, serve and watch; the
 // dispatch, the banner, the help, the refusals and the output envelope are
 // internal/tool's, and the rules are internal/friend's.
 package main
@@ -90,6 +90,8 @@ type world struct {
 	launch    []string          // host: the launch command after "--"
 	settings  friend.SettingsFS // where a harness's own settings are read and written (install, check --settings)
 	argv      []string          // this run's arguments after the program's name: what the plist drift is read against
+	fileSize  func(path string) (int64, error)
+	fileLine  func(path string, from int64) (line string, end int64, err error)
 }
 
 // readPlist is the installed plist at path, empty when there is none or it
@@ -248,6 +250,8 @@ func realWorld() world {
 			}
 			return string(raw[:])
 		},
+		fileSize: realFileSize,
+		fileLine: realFileLine,
 	}
 	w.open = w.openRedis
 	return w
@@ -358,7 +362,7 @@ nova-bus stream and, when the session is free, pushes every waiting message in a
 harness's deliver command), beats to the sprint server while the session answers, answers the
 coordinator PING at once (daemon-pong); presence is the session's word on the bus, never a process.
 state: <dir>/.nova-friend/ (--state-dir moves it), the queue: <dir>/inbox/QUEUE.json.`,
-		ExitTable: "0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no daemon; check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).",
+		ExitTable: "0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no daemon; check: the session did not answer; watch: timeout expired), 2 could not run (a flag, an input, a store or a server that did not answer).",
 		Words:     []string{"NONE", "FAIL", "DRIFT", "DRY-RUN"},
 		Verbs: []tool.Verb{
 			{
@@ -810,6 +814,36 @@ read that fails is one SERVE NOTE until it changes or clears. Stops on SIGINT or
 					f.Prints()
 				},
 				Run: w.serve,
+			},
+			{
+				Name:      "watch",
+				Usage:     "watch --as <coordinator> [--timeout <duration>] [--state-dir <d>] [--redis <addr>] [--json]",
+				Example:   "", // a wait: the example block has no line that waits; -h carries the example
+				Effect:    tool.Inspection,
+				ExitTable: "0 wake occurred, 1 timeout expired, 2 could not run.",
+				Detail: `Waits on the coordinator's stream (bus2:to:<coordinator>), the coordinator wake file
+(<stateDir>/<coordinator>.wake) and events (bus messages whose subject starts with event:), skipping own
+messages, ping, pong, daemon-pong and keepalive. The cursor is saved in the state directory after each run
+(watch.cursor) so the next run misses nothing and needs no flag.
+Prints up to 5 lines of WATCH MESSAGE id= from= subject=, WATCH EVENT id= from= subject=,
+WATCH WAKE line=, followed by WATCH OK after=<cursor> at exit 0.
+Prints WATCH NONE waited=<duration> on stderr at exit 1 when timeout expires.
+--json prints one object instead of lines: status, word, after, waited, messages[] (id, from, subject),
+events[] (id, from, subject), wake (line).
+Exit 0 wake occurred, 1 timeout expired, 2 could not run.
+example: nova-friend watch --as ada --timeout 1s`,
+				Flags: func(f *tool.Flags) {
+					f.Required("as", "your name, the coordinator")
+					f.Duration("timeout", 0, "how long to wait before timing out (default: wait forever)")
+					stateDir(f)
+					redis(f)
+					f.Check(func(c *tool.Call) {
+						if c.Dur("timeout") < 0 {
+							c.Problem("--timeout wants a positive duration or zero to wait forever")
+						}
+					})
+				},
+				Run: w.watch,
 			},
 		},
 	}
