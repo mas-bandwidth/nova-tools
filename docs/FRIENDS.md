@@ -297,7 +297,11 @@ nova-friend install --as ada --harness opencode --dir ~/ada-working --server 127
 ```
 
    It parks on her bus stream, pushes incoming messages into the session, and
-   beats to the sprint server. It replaces `com.nova.loop.wake-serve-<seat>` and
+   beats to the sprint server. Her name has to be a name on the bus store's
+   roster (`nova-bus names`). When the bus store is a Redis apart from the
+   sprint store, `nova-config apply` does not write it there; friend sync
+   writes it at her first deal (`FRIEND-CARD BUS-NAMES added=<name>`;
+   docs/SPEC-FRIEND.md, bud-delivery-knows-the-bud-b.w1). It replaces `com.nova.loop.wake-serve-<seat>` and
    `nova-wake`.
 
 3. **Session proof of life**: The 10-minute ping loop

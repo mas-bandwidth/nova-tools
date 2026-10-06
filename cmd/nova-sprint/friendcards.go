@@ -505,14 +505,45 @@ func (a *app) sendBus(ctx context.Context, m bus.Message, say func(string)) erro
 	return err
 }
 
+// enrollBus makes the friend a known name of the bus store before a message is
+// sent her: her name is read from her friend row (friend sync deals only to
+// rows), and the bus store, which nova-config's apply never writes when it is
+// a Redis apart from the sprint store (NOVA_BUS_REDIS beside
+// NOVA_SPRINT_REDIS), is told it (bus.Enroll; SPEC-BUS.md, the config). A
+// name added is said as one FRIEND-CARD BUS-NAMES line; one that could not be
+// is said as a FRIEND-CARD NOTE, and the send after it says the rest. With no
+// bus store set it does nothing: the send names that.
+func (a *app) enrollBus(ctx context.Context, name string, say func(string)) {
+	addr := a.getenv(busRedisEnv)
+	if addr == "" {
+		return
+	}
+	b, closeBus, err := a.busOpen(ctx, addr, a.getenv(busUserEnv))
+	if err == nil {
+		var added []string
+		added, err = b.Enroll(ctx, name)
+		if closeBus != nil {
+			closeBus()
+		}
+		if len(added) > 0 {
+			say(fmt.Sprintf("FRIEND-CARD BUS-NAMES added=%s: the bus store now knows the friend row", strings.Join(added, ",")))
+		}
+	}
+	if err != nil {
+		say(fmt.Sprintf("FRIEND-CARD NOTE friend=%s: her name could not be put on the bus store's roster (%s)", name, oneline.Escape(err.Error())))
+	}
+}
+
 // wakeFriend tells the friend of the card just delivered, one bus message from
 // the coordinator (the store's actor) to her: her daemon pushes it into her
-// session, which the inbox file alone never does. The message is a
+// session, which the inbox file alone never does. Her name is made a known
+// bus name first (enrollBus), so a bud whose row exists is told. The message is a
 // courtesy and the inbox file is the record: a send that fails never fails
 // the delivery; it is said on sync's line and written on the card's story as
 // one happened note (NFriendNotWoken), so the coordinator sees she was not
 // told.
 func (a *app) wakeFriend(ctx context.Context, st *store.Store, name string, p sprint.Packet, brief, line string, say func(string)) error {
+	a.enrollBus(ctx, name, say)
 	m := bus.Message{From: st.Actor, To: []string{name}, Subject: "card " + p.Card + " dealt: " + line,
 		Body: "Your sprint card " + p.Card + " (attempt " + strconv.Itoa(p.Attempt) + " of " + p.Primary + ") is in your inbox: " + brief + "\nRead it and start; its STATUS line says where to push and where to report."}
 	err := a.bus(ctx, m, say)

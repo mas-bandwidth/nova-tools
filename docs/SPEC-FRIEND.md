@@ -1637,6 +1637,35 @@ each friend's machine (docs/TESTING.md). Not covered: a lane's
 turn is under way goes in beside it, not after it (the check runs in its own
 process and does not hold the daemon's turn).
 
+### bud-delivery-knows-the-bud-b.w1 — a deal to a bud is delivered on the bus
+
+`nova-config apply` writes the friend rows to the set `friends` in the sprint
+store (`NOVA_SPRINT_REDIS`); the bus checks every name against the set
+`friends` in the bus store (`NOVA_BUS_REDIS`). On the fleet these are two
+Redis (two ports on the coordinator machine, read 2026-10-06), and nothing
+wrote the bus store's set: it held the friends typed there by hand and no
+bud. So every deal to a bud logged `a friend was not told of her card: ...
+<bud> is no known name`, and the bud's
+daemon, whose `Recv` as herself is refused the same way, never parked on her
+stream.
+
+friend sync's deal now names her on the bus before it tells her
+(`enrollBus`, cmd/nova-sprint/friendcards.go): her name is the friend row
+friend sync already holds, and `bus.Enroll` (internal/bus/names.go) adds it to
+the bus store's `friends` (SADD, one trip after the roster's, only when it is
+missing), said once as `FRIEND-CARD BUS-NAMES added=<name>`. The note then
+reaches her stream, her daemon's `Recv` (daemon.go, the loop's read) parks on
+it and wakes on the note, and no `NFriendNotWoken` is written for a friend
+whose row exists. A name enrolled is never taken off (the bus never deletes),
+so a friend row removed stays a bus name until it is taken off by hand. A store
+that is no `bus.Enroller` (a test's fake) is told nothing. A failed enrollment
+is one `FRIEND-CARD NOTE friend=<f>: her name could not be put on the bus
+store's roster (<why>)`, and the send after it says the rest. Test:
+`TestADealToABudIsDeliveredOnTheBus` (cmd/nova-sprint), and on a real
+redis-server `TestRedisEnrollMakesAFriendRowAKnownName` (internal/bus,
+functional). A bud is enrolled at her first deal, so her daemon's read is
+refused until then.
+
 ### Check
 
 `nova-friend check [--as <coordinator>] [<friend>...] [--since <duration>] [--shown <file|->] [--json]`
@@ -1754,8 +1783,9 @@ message's `from`, never its body, and a stale, replayed or other friend's
 nonce changes nothing. Then each friend whose state changed is said, and every
 friend row but the coordinator's own is sent a `PING` with a fresh nonce and
 the seat line (`since` the loop's start). The friends are nova-config's friend
-rows as the bus store holds them (the set `friends`, written by `nova-config
-apply`, the roster a send is checked against), read at the start in the trip
+rows as the bus store holds them (the set `friends`, the roster a send is
+checked against: written by `nova-config apply` when the bus store is the
+sprint store, and by friend sync's deal when it is a Redis apart, below), read at the start in the trip
 that fixes where the stream is read from, and again each minute
 (`RowsEvery`), so a friend or a bud added as a row is pinged with no list kept
 anywhere else, and a row removed is forgotten. A friend is up on a counted pong and down once ten

@@ -174,3 +174,21 @@ func TestRedisStoreKeepsThePushProof(t *testing.T) {
 	_, err = gated.Send(ctx, Message{From: "ada", To: []string{"m1"}, Subject: "s", Body: "x"})
 	assert.ErrorContains(t, err, "deaf: m1")
 }
+
+// Enroll on the real commands: a friend row the roster misses is added to the
+// set `friends`, a name already there (a friend or a machine) is not, and a
+// send to the name added then goes through (names.go).
+func TestRedisEnrollMakesAFriendRowAKnownName(t *testing.T) {
+	t.Parallel()
+	b, c, ctx := live(t)
+	_, err := b.Send(ctx, Message{From: "ada", To: []string{"bud-a"}, Subject: "s", Body: "x"})
+	require.ErrorContains(t, err, "bud-a is no known name")
+	added, err := b.Enroll(ctx, "bud-a", "ada", "m1")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"bud-a"}, added)
+	friends, err := c.SMembers(ctx, friendsKey).Result()
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"ada", "bob", "bud-a"}, friends)
+	_, err = b.Send(ctx, Message{From: "ada", To: []string{"bud-a"}, Subject: "s", Body: "x"})
+	require.NoError(t, err)
+}
