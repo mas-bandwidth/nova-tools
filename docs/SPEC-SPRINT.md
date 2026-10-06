@@ -1567,9 +1567,12 @@ and it is the coordinator's decision, receipted.
   card's route was drawn from, else the tier its primary is on (`tier_now`, or the
   tier pinned, or its brief's line 1), else the stream's default, flash; never
   empty (`sprint.DealtTier`, filled by `store.Packets`;
-  `TestADealtPacketAlwaysNamesItsTier`). It is the tier every friend deal gates on,
-  so a friend's packet names a tier her class covers, unless the card is pinned to
-  her (the attempt cap's friend card). **The deadline is by machine** (the owner, 2026-10-04: the route's
+  `TestADealtPacketAlwaysNamesItsTier`); the text form prints it as the packet's
+  `tier:` line, as `--json` names it (.w2, `TestEveryPacketAVerbHandsNamesItsTier`).
+  It is the tier every friend deal gates on, so a friend row with a class holds only
+  cards whose tier her class covers, unless the card is pinned to her by its WHO
+  line (the attempt cap's friend card; `TestAFriendRowHoldsItsTiersUnlessTheCardIsPinnedToHer`):
+  a runner that hands back a tier it does not do accepts a card whose WHO names it. **The deadline is by machine** (the owner, 2026-10-04: the route's
   deadline was one number for the fleet, and a machine whose median run wall
   was twice the others' timed out twice as often, every timeout a whole
   attempt's spend lost): the deadline a dealt card gets is the larger of the

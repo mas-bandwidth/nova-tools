@@ -253,10 +253,16 @@ func TestAServerRefusesAQueueFlagItDoesNotKnowInTheWordsAMemberReads(t *testing.
 
 // TestEveryPacketAVerbHandsNamesItsTier: the packets take and queue hand a member name the
 // tier the card is on, on a store with no route where no deal draws one onto the work card
-// (dealt-packet-carries-the-tier.w1; sprint.DealtTier): its brief's line 1 here, pro.
+// (dealt-packet-carries-the-tier.w1; sprint.DealtTier): its brief's line 1 here, pro. Every
+// verb that prints a packet prints it, in its text form as in --json (.w2: a runner reading
+// the text found no tier line).
 func TestEveryPacketAVerbHandsNamesItsTier(t *testing.T) {
 	t.Parallel()
-	r, _ := workedRig(t, 2, 2)
+	r, working := workedRig(t, 2, 2)
+	text := r.one("queue", "--as", "m")
+	require.Equal(t, 0, text.Code, text.Stderr)
+	assert.Equal(t, 4, strings.Count(text.Stdout, "PACKET "), text.Stdout)
+	assert.Equal(t, 4, strings.Count(text.Stdout, "\n  tier: pro\n"), "every packet the text queue prints names its tier: %s", text.Stdout)
 	q := r.queueWith("--as", "m", "--json")
 	require.Len(t, q.packeted(), 4)
 	for _, c := range q.Cards {
@@ -264,10 +270,22 @@ func TestEveryPacketAVerbHandsNamesItsTier(t *testing.T) {
 		require.NoError(t, json.Unmarshal(c.Packet, &p))
 		assert.Equal(t, "pro", p.Tier, "the queue's packet of %s", c.ID)
 	}
-	res := r.one("take", "--as", "m", "--limit", "2", "--epoch", "0", "--json")
+	// m is at its width: each finish makes room for one take of a ready card
+	finish := func(card string) {
+		res := r.one("finish", "--as", "m", card, "--epoch", "0", "--report", "done", "--head", "0123456789abcdef0123456789abcdef01234567")
+		require.Equal(t, 0, res.Code, res.Stderr)
+	}
+	finish(working[0])
+	text = r.one("take", "--as", "m", "--limit", "1", "--epoch", "0")
+	require.Equal(t, 0, text.Code, text.Stderr)
+	assert.Equal(t, 1, strings.Count(text.Stdout, "PACKET "), text.Stdout)
+	assert.Contains(t, text.Stdout, "\n  tier: pro\n", "the packet the text take prints names its tier")
+	finish(working[1])
+	res := r.one("take", "--as", "m", "--limit", "1", "--epoch", "0", "--json")
 	require.Equal(t, 0, res.Code, res.Stderr)
 	var out struct{ Packets []struct{ Card, Tier string } }
 	require.NoError(t, json.Unmarshal([]byte(res.Stdout), &out), res.Stdout)
+	require.Len(t, out.Packets, 1)
 	for _, p := range out.Packets {
 		assert.Equal(t, "pro", p.Tier, "the take's packet of %s", p.Card)
 	}
