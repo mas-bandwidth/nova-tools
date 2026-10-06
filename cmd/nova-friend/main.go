@@ -6,7 +6,7 @@
 // its own turn, and tells the session when the coordinator goes silent; and,
 // on the coordinator's side, the ping loop that pings every friend each
 // second. The verbs are run, install, uninstall, check, status, pong, ping,
-// wait-pong, host and serve; the
+// wait-pong, host, screen and serve; the
 // dispatch, the banner, the help, the refusals and the output envelope are
 // internal/tool's, and the rules are internal/friend's.
 package main
@@ -63,34 +63,35 @@ const OpenRetryMax = 30 * time.Second
 // a test its own over internal/bus's Fake, a fake harness and its own
 // clock, so no test opens a socket or reads the real time.
 type world struct {
-	getenv    func(string) string
-	open      func(ctx context.Context, addr string) (bus.Store, func(), error)
-	exec      friend.Exec
-	wall      func(wl friend.Wall, run friend.Exec) friend.Exec                                                   // a lane's child inside its wall; the real world's is Wall.Exec, nil walls nothing (a test's fake harness)
-	beat      func(ctx context.Context, server, friend string, active, pong time.Time) (answer string, err error) // the FRIEND-BEAT line, which carries the friend's row
-	beatDown  func(ctx context.Context, server, friend string, active, until time.Time, reason string) error      // her beat while her harness is at its limit (friend beat --until --reason); nil holds the beat back
-	progress  func(ctx context.Context, server string, argv []string) error                                       // one progress verb to the sprint server (friend.ProgressArgv)
-	finish    func(ctx context.Context, server string, argv []string) error                                       // one finish verb to the sprint server (friend.FinishArgv: a lane's card whose run ended with no report)
-	sqlite    friend.Exec                                                                                         // reads opencode's database (the sqlite3 CLI); nil reads none: no card cost, no token cap
-	cards     func(ctx context.Context, server string, argv []string) (string, error)                             // the cards on her row, asked of the sprint server (friend.FriendCardsArgv); nil asks none
-	friends   func(ctx context.Context, server string) (rows []friend.WakeRow, seat string, err error)            // the friends table and the seat's holder, from the sprint server's coordinator view (GET /api/view/coordinator?all=1)
-	view      func(ctx context.Context, server, friend string) (string, error)                                    // the sprint server's worker view of her (GET /api/view/worker), while friend cards is refused; nil reads none
-	stage     func(dir string) *friend.Stager                                                                     // stages a held card's job under her working directory and prunes the finished ones (friend.Stager, with the daemon's git credentials); nil stages none (a test's)
-	tip       func(ctx context.Context, repo, branch string) (string, error)                                      // origin's tip of a card's branch (friend.Stager.Tip, one git ls-remote): a report's LAND finishes only there; nil reads none (a test's)
-	launchctl friend.Launchctl
-	now       func() time.Time
-	sleep     func(ctx context.Context, d time.Duration)
-	signals   func(ctx context.Context) (context.Context, context.CancelFunc)
-	uid       int
-	home      string
-	binary    func() (string, error)
-	copy      friend.CopyFile              // places a removable-volume binary under home; nil refuses it
-	lookPath  func(string) (string, error) // a program on PATH by absolute path, for the agent's secrets wrap
-	random    func() string
-	alive     friend.Aliver     // the harness check, when set (a test's fake harness); nil watches the adapter
-	launch    []string          // host: the launch command after "--"
-	settings  friend.SettingsFS // where a harness's own settings are read and written (install, check --settings)
-	argv      []string          // this run's arguments after the program's name: what the plist drift is read against
+	getenv       func(string) string
+	open         func(ctx context.Context, addr string) (bus.Store, func(), error)
+	exec         friend.Exec
+	wall         func(wl friend.Wall, run friend.Exec) friend.Exec                                                   // a lane's child inside its wall; the real world's is Wall.Exec, nil walls nothing (a test's fake harness)
+	beat         func(ctx context.Context, server, friend string, active, pong time.Time) (answer string, err error) // the FRIEND-BEAT line, which carries the friend's row
+	beatDown     func(ctx context.Context, server, friend string, active, until time.Time, reason string) error      // her beat while her harness is at its limit (friend beat --until --reason); nil holds the beat back
+	progress     func(ctx context.Context, server string, argv []string) error                                       // one progress verb to the sprint server (friend.ProgressArgv)
+	finish       func(ctx context.Context, server string, argv []string) error                                       // one finish verb to the sprint server (friend.FinishArgv: a lane's card whose run ended with no report)
+	sqlite       friend.Exec                                                                                         // reads opencode's database (the sqlite3 CLI); nil reads none: no card cost, no token cap
+	cards        func(ctx context.Context, server string, argv []string) (string, error)                             // the cards on her row, asked of the sprint server (friend.FriendCardsArgv); nil asks none
+	friends      func(ctx context.Context, server string) (rows []friend.WakeRow, seat string, err error)            // the friends table and the seat's holder, from the sprint server's coordinator view (GET /api/view/coordinator?all=1)
+	view         func(ctx context.Context, server, friend string) (string, error)                                    // the sprint server's worker view of her (GET /api/view/worker), while friend cards is refused; nil reads none
+	stage        func(dir string) *friend.Stager                                                                     // stages a held card's job under her working directory and prunes the finished ones (friend.Stager, with the daemon's git credentials); nil stages none (a test's)
+	tip          func(ctx context.Context, repo, branch string) (string, error)                                      // origin's tip of a card's branch (friend.Stager.Tip, one git ls-remote): a report's LAND finishes only there; nil reads none (a test's)
+	launchctl    friend.Launchctl
+	now          func() time.Time
+	sleep        func(ctx context.Context, d time.Duration)
+	signals      func(ctx context.Context) (context.Context, context.CancelFunc)
+	uid          int
+	home         string
+	binary       func() (string, error)
+	copy         friend.CopyFile              // places a removable-volume binary under home; nil refuses it
+	lookPath     func(string) (string, error) // a program on PATH by absolute path, for the agent's secrets wrap
+	random       func() string
+	alive        friend.Aliver       // the harness check, when set (a test's fake harness); nil watches the adapter
+	launch       []string            // host: the launch command after "--"
+	settings     friend.SettingsFS   // where a harness's own settings are read and written (install, check --settings)
+	windowReader friend.WindowReader // reads a GUI harness window through accessibility; nil uses DefaultWindowReader
+	argv         []string            // this run's arguments after the program's name: what the plist drift is read against
 }
 
 // readPlist is the installed plist at path, empty when there is none or it
@@ -851,6 +852,32 @@ A friend a person held with nova-sprint friend down stays held until nova-sprint
 					stateDir(f)
 				},
 				Run: w.resume,
+			},
+			{
+				Name:      "screen",
+				Usage:     "screen <friend> [--lines <n>] [--state-dir <d>] [--json]",
+				Example:   "screen bob --lines 40",
+				Effect:    tool.Inspection,
+				ExitTable: "0 printed, 1 refused, 2 could not run.",
+				Detail: `The last n lines (default 40) of the friend's open session as text. A tmux-hosted friend (fg-tmux-host-and-adapter): tmux capture-pane -p -t friend-<name>. A GUI harness (Antigravity): the text of the harness app's window through the macOS accessibility API (the window found by the harness's bundle and the friend's directory or session title), refused with the remedy when the binary lacks the accessibility permission (a person grants it; the tool never asks). A harness with neither: refused naming why.
+Output: SCREEN friend=<f> source=<tmux|window> lines=<n> at=<RFC3339>, a blank line, the text; --json {"friend":..,"source":..,"at":..,"lines":[..]}. Exit 0 printed, 1 refused, 2 could not run.
+example: nova-friend screen bob --lines 40`,
+				Flags: func(f *tool.Flags) {
+					f.Prints()
+					f.Int("lines", friend.DefaultScreenLines, "how many lines from the end of the session to print (default: 40)")
+					f.Bool("json", false, "print the result as one JSON object instead of lines")
+					stateDir(f)
+					f.Check(func(c *tool.Call) {
+						callArgs.Store(c, f.Args())
+						if len(f.Args()) == 0 {
+							c.Problem("friend is required: nova-friend screen <friend>")
+						}
+						if c.Int("lines") <= 0 {
+							c.Problem("--lines wants a positive integer")
+						}
+					})
+				},
+				Run: w.screen,
 			},
 			{
 				Name:    "serve",
