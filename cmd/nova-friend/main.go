@@ -596,7 +596,7 @@ with "untrue: shown <state>/<working>, ", and when the facts are ok but the frie
 is not loaded the verdict is untrue. --json prints one object instead of the lines: friends[] each with
 friend and daemon{friend, agent, pid, status, connection, challenge, pong_age, presence, seen_age, proof, proof_age},
 harness{friend, harness, route, last, last_exit, failed_of_last20, deferred, delivered, failed, broken,
-reason}, bus{friend, real_since, last_real}, work{friend, inbox, outbox, newest_outbox, newest_at},
+reason, session_live}, bus{friend, real_since, last_real}, work{friend, inbox, outbox, newest_outbox, newest_at},
 verdict{friend, verdict, shown, why}, and summary{friends, ok, broken, deaf, silent, down, untrue}.
 Exit 0 when every verdict is ok, 1 when any is not (the check found something), 2 when it could not run
 (a refused flag, an unreadable --shown).
@@ -1032,7 +1032,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 	// goes in at once, and the daemon follows the conversation that reads it (friend.Mailbox)
 	var mailbox friend.Mailbox
 	if ag, ok := deliver.(*friend.Antigravity); ok {
-		ag.Now = w.now
+		ag.Now, ag.State = w.now, state // the ledger of every delivery lives in her state directory
 		mailbox = ag
 	}
 	// a harness nothing pushes into is refused at the start (friend.PushProof), a dry run alike

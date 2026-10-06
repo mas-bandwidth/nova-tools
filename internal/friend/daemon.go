@@ -209,9 +209,8 @@ type Daemon struct {
 	// Mailbox is the adapter under Deliver when her harness's session queues what is
 	// delivered (Antigravity: a mailbox): a delivery goes in at once, whatever turn runs, so
 	// nothing is ever deferred for a turn under way; each step the daemon hands it the
-	// clock and the session's last pong, and it follows the conversation that reads
-	// (Antigravity.Follow), which the status says (session_live). Nil for every other
-	// harness.
+	// clock, off the loop, and it follows the conversation that reads (Antigravity.Follow),
+	// which the status says (session_live). Nil for every other harness.
 	Mailbox Mailbox
 	// Seat is the coordinator seat holder as the sprint server says it. An
 	// error, an empty name or a nil Seat is the seat unknown, and while it is
@@ -255,10 +254,10 @@ type Daemon struct {
 }
 
 // Mailbox is a harness whose session queues what is delivered: Follow reads who read
-// the deliveries and moves delivery to the conversation that reads, given the clock and
-// the session's last pong; Live is the conversation deliveries go to.
+// the deliveries and moves delivery to the conversation that reads, sending again what the
+// old one left unread; Live is the conversation deliveries go to.
 type Mailbox interface {
-	Follow(ctx context.Context, now, answered time.Time)
+	Follow(ctx context.Context, now time.Time)
 	Live() string
 }
 
@@ -405,12 +404,14 @@ type loop struct {
 	reads        *readSet
 	mode         string // the mode the daemon delivers in now
 	saidNoLanes  bool
-	dealt        []string  // the inbox briefs the daemon wrote that the session has not been told of (batch mode)
-	wake         bool      // a wake check is owed: the pong line goes in as its own turn when the session is free (startWake)
-	saidRefusal  string    // the card runner's refusal last recorded, "" when it runs
-	tag          string    // this daemon's tag in its lanes' names on a lane mark (laneTag, one_lane.go)
-	seatHolder   string    // the seat holder as last read; empty while unknown
-	seatRead     time.Time // when it was read; zero before the first read
+	dealt        []string       // the inbox briefs the daemon wrote that the session has not been told of (batch mode)
+	wake         bool           // a wake check is owed: the pong line goes in as its own turn when the session is free (startWake)
+	saidRefusal  string         // the card runner's refusal last recorded, "" when it runs
+	tag          string         // this daemon's tag in its lanes' names on a lane mark (laneTag, one_lane.go)
+	following    atomic.Bool    // a Mailbox.Follow runs
+	followWG     sync.WaitGroup // it, waited for when Run ends
+	seatHolder   string         // the seat holder as last read; empty while unknown
+	seatRead     time.Time      // when it was read; zero before the first read
 }
 
 // Run is the loop until ctx ends. Each step: the clock; the friend's row
@@ -445,6 +446,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 		d.staging, d.stageRetry, d.stageSaid, d.stageDealt = map[string]bool{}, map[string]time.Time{}, map[string]bool{}, map[string]string{}
 	}
 	defer d.stageWG.Wait() // a stage under way ends with ctx (its git is killed) and its result is kept for the next Run
+	defer l.followWG.Wait()
 	d.status = Status{Friend: d.Friend, Harness: d.Harness, Started: d.m.LastPing, Width: d.Width}
 	if !l.passive {
 		d.status.Session = SessionOK
@@ -482,7 +484,16 @@ func (d *Daemon) Run(ctx context.Context) error {
 		default:
 		}
 		if d.Mailbox != nil {
-			d.Mailbox.Follow(ctx, now, d.m.LastPong)
+			// off the loop: a move sends the old conversation's unread deliveries again, and the
+			// beat never waits for it
+			if l.following.CompareAndSwap(false, true) {
+				l.followWG.Add(1)
+				go func() {
+					defer l.followWG.Done()
+					defer l.following.Store(false)
+					d.Mailbox.Follow(ctx, now)
+				}()
+			}
 			d.status.SessionLive = d.Mailbox.Live()
 		}
 		// a change of mode waits for the other mode's turns to end

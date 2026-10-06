@@ -111,7 +111,7 @@ func TestAntigravityDeliversIntoTheNewestRootConversationAndAcksOnceInTheMailbox
 	a = &Antigravity{User: "emma", Dir: "/w/emma", Session: "named", Run: e.run, Home: "/home", FS: e.fsys, Wait: e.wait}
 	e.fsys[".gemini/antigravity/brain/named/.system_generated/messages/read.json"] = &fstest.MapFile{Data: []byte(`{}`)}
 	_, err = a.Deliver(context.Background(), "x")
-	require.Error(t, err)
+	require.NoError(t, err, "agentapi took it: delivered to the named conversation, its file read when it lands")
 	for _, c := range e.calls {
 		assert.NotEqual(t, "sqlite3", c[1], "a named session is not looked up")
 	}
@@ -160,12 +160,15 @@ func TestAntigravityRefusesWhatItCannotProve(t *testing.T) {
 		require.NoError(t, err)
 		assert.Zero(t, exit, "the mailbox holds it for the session's next look")
 	})
-	t.Run("no message appears", func(t *testing.T) {
+	t.Run("no message appears in the budget", func(t *testing.T) {
 		t.Parallel()
 		e := newAgExec()
 		e.sendOut = `{"response": {"sendMessage": {}}}`
 		e.maxWaits = 0
-		assert.EqualError(t, deliver(e), "agentapi accepted the message for conversation root-new but none appeared in its mailbox within 30s")
+		a := &Antigravity{User: "emma", Dir: "/w/emma", Run: e.run, Home: "/home", FS: e.fsys, Wait: e.wait}
+		exit, err := a.Deliver(context.Background(), "x")
+		require.NoError(t, err, "agentapi took it: delivered, never sent a second time (TestAMessageThatLandsLateIsDeliveredOnce)")
+		assert.Zero(t, exit)
 	})
 	t.Run("no mailbox", func(t *testing.T) {
 		t.Parallel()

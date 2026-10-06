@@ -38,17 +38,20 @@ import (
 //
 // The mailbox queues: a turn the message starts runs on, and a second
 // message waits in the mailbox for it, the harness's own order for its
-// agents. So Deliver answers 0 once the message is in the mailbox, and never
-// waits for the session to read it (the finding of 2026-10-05 and 06: a
-// delivery that waited two minutes for the read held every other message and
-// the session check behind it while the friend worked through a long turn, and
-// three such waits gave a message up that was already in her mailbox). Who
-// reads it is Follow's, after the delivery. agentapi exits 0 on an error too
-// (a wrong conversation, a missing token): the JSON it prints is the truth,
-// never its exit code. What the harness refuses (no language server, no
-// token, no conversation, no port that answers for it, no mailbox) is a
-// SessionRefused naming why, never a Deferred: the daemon marks the session
-// broken with the reason, said once, and keeps every message pending.
+// agents. So Deliver answers 0 once agentapi has taken the message into the
+// mailbox, and never waits for the session to read it (the finding of
+// 2026-10-05 and 06: a delivery that waited two minutes for the read held
+// every other message and the session check behind it while the friend worked
+// through a long turn, and three such waits gave a message up that was
+// already in her mailbox). Every delivery is kept in the ledger
+// (antigravity_ledger.go): who read it, and what to send again if its
+// conversation stops reading. agentapi exits 0 on an error too (a wrong
+// conversation, a missing token): the JSON it prints is the truth, never its
+// exit code. What the harness refuses (no language server, no token, no
+// conversation, no port that answers for it, no mailbox), and a session that
+// has read nothing delivered for the check period, is a SessionRefused naming
+// why, never a Deferred: the daemon marks the session broken with the reason,
+// said once, and keeps every message pending on the bus.
 type Antigravity struct {
 	Dir, Session string
 	Run          Exec
@@ -57,20 +60,14 @@ type Antigravity struct {
 	User         string                     // daemon's username (current process user when empty)
 	FS           fs.FS                      // rooted at Home (os.DirFS(Home) when nil): the mailbox is read through it
 	Wait         func(context.Context) bool // one poll interval; false once ctx has ended (real time when nil)
-	Now          func() time.Time           // the clock a delivery is stamped by (time.Now when nil)
+	Now          func() time.Time           // the daemon's clock, every time in the ledger (time.Now when nil)
+	State        string                     // the daemon's state directory: the ledger's file (AntigravityLedgerFile); "" keeps it in memory
 
-	mu       sync.Mutex
-	live     string            // the conversation the last delivery went to: the one that reads
-	followed string            // the conversation Follow moved delivery to, "" while none
-	sent     []antigravitySent // deliveries not yet seen read, oldest first, at most AntigravityTracked
-	lookedAt time.Time         // when Follow last looked
-}
-
-// antigravitySent is one delivery: the message's id in the mailbox of its conversation, and
-// when it went in.
-type antigravitySent struct {
-	id, conversation string
-	at               time.Time
+	sendMu sync.Mutex // one send at a time: each knows its own message by what is new in the mailbox
+	mu     sync.Mutex // the ledger
+	ledger *AntigravityLedger
+	live   string    // the conversation the last delivery went to
+	looked time.Time // when Follow last looked
 }
 
 // AntigravityData is the harness's app data directory, under the home.
@@ -80,24 +77,12 @@ const AntigravityData = ".gemini/antigravity"
 const AntigravityTitle = "nova-friend"
 
 // AntigravityPoll is how often the mailbox is read while waiting for the sent
-// message to appear in it, and AntigravityLandBudget how long: past it
-// agentapi said yes and no message came, and the delivery fails.
+// message to appear in it, and AntigravityLandBudget how long: past it the
+// message agentapi took is in the ledger as delivered, its id read off the
+// mailbox when it lands (Follow).
 const (
 	AntigravityPoll       = 500 * time.Millisecond
 	AntigravityLandBudget = 30 * time.Second
-)
-
-// Following the live conversation (Follow): every AntigravityFollowEvery the
-// deliveries are read for who read them; a conversation that has left
-// AntigravityStopped deliveries unread past AntigravityReadBound (the session
-// check's bound), and has written nothing since the oldest of them, stopped
-// reading, and delivery moves to the newest root conversation of the workspace
-// that has. AntigravityTracked bounds the deliveries kept.
-const (
-	AntigravityFollowEvery = 10 * time.Second
-	AntigravityReadBound   = SessionBound
-	AntigravityStopped     = 3
-	AntigravityTracked     = 64
 )
 
 // antigravitySummaries is the query for root conversations, newest first;
@@ -192,9 +177,7 @@ func (a *Antigravity) refuse(session, reason string) (int, error) {
 // delivery to, else the one named by Session, else the newest root
 // conversation of the workspace. refused is set when the harness names none.
 func (a *Antigravity) conversation(ctx context.Context) (session string, refused bool, err error) {
-	a.mu.Lock()
-	session = a.followed
-	a.mu.Unlock()
+	session = a.following()
 	if session == "" {
 		session = a.Session
 	}
@@ -230,35 +213,14 @@ func (a *Antigravity) summaries(ctx context.Context) (string, error) {
 	return rows, nil
 }
 
-// Deliver: find the server, the conversation and the port; send; then wait
-// for the message to appear in the conversation's mailbox, and answer 0: the
-// mailbox holds it for the session's next look, whatever turn runs now. What
-// the harness refuses is a SessionRefused; a message agentapi took that never
-// appeared is exit 1.
+// Deliver: find the server and the conversation; refuse while the
+// conversation has read nothing delivered for the check period (the session
+// is down: the message stays pending on the bus); send; and answer 0 once
+// agentapi has taken the message into the mailbox, kept in the ledger.
 func (a *Antigravity) Deliver(ctx context.Context, text string) (int, error) {
-	username := a.User
-	if username == "" {
-		current, err := user.Current()
-		if err != nil {
-			return 1, fmt.Errorf("current user: %w", err)
-		}
-		username = current.Username
-	}
-	ps, _, err := a.Run(ctx, a.Dir, "ps", []string{"-axo", "user=,pid=,args="}, "")
+	srv, exit, err := a.server(ctx)
 	if err != nil {
-		return 1, fmt.Errorf("ps: %w", err)
-	}
-	pid, token, err := LanguageServer(ps, username)
-	if err != nil {
-		return a.refuse(a.Live(), err.Error())
-	}
-	listing, _, err := a.Run(ctx, a.Dir, "lsof", []string{"-nP", "-a", "-p", pid, "-iTCP", "-sTCP:LISTEN", "-Fn"}, "")
-	if err != nil {
-		return 1, fmt.Errorf("lsof: %w", err)
-	}
-	ports := ListenPorts(listing)
-	if len(ports) == 0 {
-		return a.refuse(a.Live(), fmt.Sprintf("the antigravity language server (pid %s) listens on no TCP port", pid))
+		return exit, err
 	}
 	session, refused, err := a.conversation(ctx)
 	switch {
@@ -267,157 +229,102 @@ func (a *Antigravity) Deliver(ctx context.Context, text string) (int, error) {
 	case err != nil:
 		return 1, err
 	}
+	now := a.now()
+	a.observe(now)
+	if why := a.down(session, now); why != "" {
+		return a.refuse(session, why)
+	}
+	return a.send(ctx, srv, session, text)
+}
+
+// antigravityServer is the language server a send goes to: its token and ports.
+type antigravityServer struct {
+	pid, token string
+	ports      []string
+}
+
+// server finds the running language server of the daemon's user: refused when there is
+// none, it has no token or listens on no port.
+func (a *Antigravity) server(ctx context.Context) (antigravityServer, int, error) {
+	username := a.User
+	if username == "" {
+		current, err := user.Current()
+		if err != nil {
+			return antigravityServer{}, 1, fmt.Errorf("current user: %w", err)
+		}
+		username = current.Username
+	}
+	ps, _, err := a.Run(ctx, a.Dir, "ps", []string{"-axo", "user=,pid=,args="}, "")
+	if err != nil {
+		return antigravityServer{}, 1, fmt.Errorf("ps: %w", err)
+	}
+	pid, token, err := LanguageServer(ps, username)
+	if err != nil {
+		exit, err := a.refuse(a.Live(), err.Error())
+		return antigravityServer{}, exit, err
+	}
+	listing, _, err := a.Run(ctx, a.Dir, "lsof", []string{"-nP", "-a", "-p", pid, "-iTCP", "-sTCP:LISTEN", "-Fn"}, "")
+	if err != nil {
+		return antigravityServer{}, 1, fmt.Errorf("lsof: %w", err)
+	}
+	ports := ListenPorts(listing)
+	if len(ports) == 0 {
+		exit, err := a.refuse(a.Live(), fmt.Sprintf("the antigravity language server (pid %s) listens on no TCP port", pid))
+		return antigravityServer{}, exit, err
+	}
+	return antigravityServer{pid: pid, token: token, ports: ports}, 0, nil
+}
+
+// send puts text into conversation session's mailbox through srv and keeps it in the
+// ledger: 0 once agentapi took it, its id once it is there (within AntigravityLandBudget,
+// else read off the mailbox later by Follow). One send at a time.
+func (a *Antigravity) send(ctx context.Context, srv antigravityServer, session, text string) (int, error) {
+	a.sendMu.Lock()
+	defer a.sendMu.Unlock()
 	port := ""
-	for _, p := range ports {
-		if _, err = a.agentapi(ctx, p, token, "get-conversation-metadata", session); err == nil {
+	var err error
+	for _, p := range srv.ports {
+		if _, err = a.agentapi(ctx, p, srv.token, "get-conversation-metadata", session); err == nil {
 			port = p
 			break
 		}
 	}
 	if port == "" {
-		return a.refuse(session, fmt.Sprintf("no port of the antigravity language server (%s) answers for conversation %s: %v", strings.Join(ports, ", "), session, err))
+		return a.refuse(session, fmt.Sprintf("no port of the antigravity language server (%s) answers for conversation %s: %v", strings.Join(srv.ports, ", "), session, err))
 	}
 	mailbox := antigravityMailbox(session)
 	before, err := a.mailbox(mailbox)
 	if err != nil {
 		return a.refuse(session, fmt.Sprintf("conversation %s has no mailbox: %v", session, err))
 	}
-	if _, err = a.agentapi(ctx, port, token, "send-message", "--title="+AntigravityTitle, session, text); err != nil {
+	if _, err = a.agentapi(ctx, port, srv.token, "send-message", "--title="+AntigravityTitle, session, text); err != nil {
 		var no AgentAPIRefusal
 		if errors.As(err, &no) {
 			return a.refuse(session, fmt.Sprintf("conversation %s: %s", session, err))
 		}
 		return 1, err
 	}
-	ctx, cancel := context.WithTimeout(ctx, AntigravityLandBudget)
+	// agentapi took it: it is delivered to session from here on, whenever its file lands
+	at := a.now()
+	lctx, cancel := context.WithTimeout(ctx, AntigravityLandBudget)
 	defer cancel()
 	id := ""
 	for id == "" {
 		after, err := a.mailbox(mailbox)
-		if err != nil {
-			return 1, err
+		if err == nil {
+			id, err = a.newMessage(mailbox, before, after)
 		}
-		id, err = a.newMessage(mailbox, before, after)
-		if err != nil {
-			return 1, err
-		}
-		if id == "" && !a.wait(ctx) {
-			return 1, fmt.Errorf("agentapi accepted the message for conversation %s but none appeared in its mailbox within %s", session, AntigravityLandBudget)
+		if err != nil || (id == "" && !a.wait(lctx)) {
+			break
 		}
 	}
-	a.mu.Lock()
-	a.live = session
-	a.sent = append(a.sent, antigravitySent{id: id, conversation: session, at: a.now()})
-	if n := len(a.sent); n > AntigravityTracked {
-		a.sent = slices.Clone(a.sent[n-AntigravityTracked:])
+	a.keep(AntigravityDelivery{ID: id, Conversation: session, DeliveredAt: at, Text: text})
+	if id == "" {
+		a.say("antigravity: agentapi took a message for conversation %s and it is not in the mailbox after %s; kept as delivered, its id read when it lands", session, AntigravityLandBudget)
+		return 0, nil
 	}
-	a.mu.Unlock()
 	a.say("antigravity: message %s in the mailbox of conversation %s", id, session)
 	return 0, nil
-}
-
-// Live is the conversation deliveries go to: the one the last delivery went
-// to, else the one Follow moved them to, else the one named by Session; ""
-// before the first delivery when none is named.
-func (a *Antigravity) Live() string {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	switch {
-	case a.followed != "":
-		return a.followed
-	case a.live != "":
-		return a.live
-	}
-	return a.Session
-}
-
-// Follow reads, at most every AntigravityFollowEvery, who has read the
-// deliveries (each read said once, "antigravity: message <id> read by
-// conversation <id>"), and moves delivery to the conversation that reads:
-// when the live conversation has left AntigravityStopped deliveries unread
-// past AntigravityReadBound, or the session answered (answered: its last pong)
-// after a delivery the live conversation has not read, and the live
-// conversation has written nothing since the oldest of them (a conversation
-// in a long turn writes its transcript, and reads its mailbox when the turn
-// ends), the newest root conversation of the workspace that has written since
-// is the live one, said once ("antigravity: live conversation is now <id> (the
-// named one stopped reading)").
-func (a *Antigravity) Follow(ctx context.Context, now, answered time.Time) {
-	a.mu.Lock()
-	if !a.lookedAt.IsZero() && now.Sub(a.lookedAt) < AntigravityFollowEvery {
-		a.mu.Unlock()
-		return
-	}
-	a.lookedAt = now
-	sent := slices.Clone(a.sent)
-	live := a.followed
-	if live == "" {
-		live = a.live
-	}
-	a.mu.Unlock()
-	reads := map[string][]byte{}
-	read := map[string]bool{}
-	var lag []antigravitySent
-	for _, s := range sent {
-		raw, ok := reads[s.conversation]
-		if !ok {
-			raw, _ = fs.ReadFile(a.fsys(), path.Join(antigravityMailbox(s.conversation), "read.json")) // ignored: a read.json not there marks nothing read
-			reads[s.conversation] = raw
-		}
-		if Read(raw, s.id) {
-			read[s.id] = true
-			a.say("antigravity: message %s read by conversation %s", s.id, s.conversation)
-			continue
-		}
-		if s.conversation == live && now.Sub(s.at) >= AntigravityReadBound {
-			lag = append(lag, s)
-		}
-	}
-	a.mu.Lock()
-	a.sent = slices.DeleteFunc(a.sent, func(s antigravitySent) bool { return read[s.id] })
-	a.mu.Unlock()
-	if len(lag) == 0 || (len(lag) < AntigravityStopped && !answered.After(lag[0].at)) {
-		return
-	}
-	since := lag[0].at
-	if a.wrote(live, since) {
-		return // in a turn: it reads its mailbox when the turn ends
-	}
-	rows, err := a.summaries(ctx)
-	// ignored: a listing that cannot be read moves nothing; it is asked again at the next look
-	if err != nil {
-		return
-	}
-	ids, err := WorkspaceConversations(rows, a.dirs()...)
-	// ignored: a listing that cannot be read moves nothing; it is asked again at the next look
-	if err != nil {
-		return
-	}
-	for _, id := range ids {
-		if id != live && a.wrote(id, since) {
-			a.mu.Lock()
-			a.followed, a.live = id, id
-			a.mu.Unlock()
-			a.say("antigravity: live conversation is now %s (the named one stopped reading)", id)
-			return
-		}
-	}
-}
-
-// wrote says whether conversation c has written since t: its transcript, or
-// the read.json of its mailbox.
-func (a *Antigravity) wrote(c string, t time.Time) bool {
-	for _, p := range []string{path.Join(AntigravityData, "brain", c, ".system_generated", "logs", "transcript.jsonl"), path.Join(antigravityMailbox(c), "read.json")} {
-		if fi, err := fs.Stat(a.fsys(), p); err == nil && fi.ModTime().After(t) {
-			return true
-		}
-	}
-	return false
-}
-
-// antigravityMailbox is conversation c's mailbox, under the home.
-func antigravityMailbox(c string) string {
-	return path.Join(AntigravityData, "brain", c, ".system_generated", "messages")
 }
 
 // mailbox lists the message ids in dir: the .json files but read.json.
@@ -537,26 +444,37 @@ func workspaceIs(workspace string, dirs []string) bool {
 	return false
 }
 
-// newMessage selects a new mailbox entry carrying our exact title. An unrelated
-// message appearing during send must not supply the read acknowledgement.
+// newMessage selects a new mailbox entry carrying our exact title, never one the ledger
+// already holds (a message that landed late). An unrelated message appearing during send
+// must not stand for ours.
 func (a *Antigravity) newMessage(mailbox string, before, after []string) (string, error) {
 	for _, id := range after {
-		if !slices.Contains(before, id) {
-			raw, err := fs.ReadFile(a.fsys(), path.Join(mailbox, id+".json"))
-			if err != nil {
-				return "", err
-			}
-			var message struct {
-				RenderDetails struct {
-					MessageTitle string `json:"messageTitle"`
-				} `json:"renderDetails"`
-			}
-			if json.Unmarshal(raw, &message) == nil && message.RenderDetails.MessageTitle == AntigravityTitle {
-				return id, nil
-			}
+		if slices.Contains(before, id) || a.known(id) {
+			continue
+		}
+		mine, err := a.titled(mailbox, id)
+		if err != nil {
+			return "", err
+		}
+		if mine {
+			return id, nil
 		}
 	}
 	return "", nil
+}
+
+// titled says whether message id in mailbox carries our exact title.
+func (a *Antigravity) titled(mailbox, id string) (bool, error) {
+	raw, err := fs.ReadFile(a.fsys(), path.Join(mailbox, id+".json"))
+	if err != nil {
+		return false, err
+	}
+	var message struct {
+		RenderDetails struct {
+			MessageTitle string `json:"messageTitle"`
+		} `json:"renderDetails"`
+	}
+	return json.Unmarshal(raw, &message) == nil && message.RenderDetails.MessageTitle == AntigravityTitle, nil
 }
 
 // Read says whether read.json (a map of message id to true) marks id read.

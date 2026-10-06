@@ -830,55 +830,75 @@ readable by every process of the login, so the delivery exposes nothing the
 harness does not. The app needs no special launch (no wrapper, no custom
 flags).
 
-The Antigravity row: **mailbox delivery, no deferral, the live conversation
-follows the reader, the outbox finished by the daemon.**
+The Antigravity row: **mailbox delivery, no deferral, no delivery lost,
+delivery waits while the session reads nothing, the live conversation follows
+the reader, the outbox finished by the daemon.**
 
 - **Mailbox delivery, no deferral.** The mailbox queues: a turn the message
   starts runs on, and a second message waits in the mailbox for it, the
-  harness's own order for its agents. So the delivery is exit 0 once a new
-  message titled exactly `nova-friend` has appeared in the conversation's
-  mailbox (polled every half second for thirty seconds,
-  `AntigravityLandBudget`; past that agentapi said yes and no message came,
-  exit 1), and the read is never waited for: the daemon delivers at once,
-  every time, whatever turn is under way, and never defers for one (the
-  finding of 2026-10-05 and 06: a delivery that waited two minutes for the
-  read held every other message and the session check behind it while the friend
-  worked through long tool sequences, and three such waits gave up a message
-  already in her mailbox). `agentapi` exits 0 on an error too (a wrong
-  conversation, a missing token print `"error"` in its JSON), so the JSON is
-  read and its exit code is not. What the harness refuses (no language
-  server for the daemon's user, `no antigravity language server is running:
-  is Antigravity open?`; a server without a token; no conversation with the
-  directory open; no port that answers for the conversation; no mailbox; an
-  `"error"` from `send-message`) is a `SessionRefused` naming why, and never a
-  `Deferred`: the daemon marks the session broken with the reason, said once
-  on the record and once to the seat, every message pending and tried again
-  every ten seconds (`RecheckEvery`), and the first delivery taken clears it
-  ("A turn the session cannot take"). So `nova-friend check` reads
-  `route=mailbox` for her and counts no deferral for her harness: the
-  `deferred=` it counts is only the limit gate's (`Limits.Gate`).
+  harness's own order for its agents. So the delivery is exit 0 once
+  `agentapi send-message` has taken the message, and the read is never
+  waited for: the daemon delivers at once, every time, whatever turn is under
+  way, and never defers for one (the finding of 2026-10-05 and 06: a delivery
+  that waited two minutes for the read held every other message and the
+  session check behind it while the friend worked through long tool
+  sequences, and three such waits gave up a message already in her mailbox).
+  The message's id is the new message titled exactly `nova-friend` in the
+  conversation's mailbox (polled every half second for thirty seconds,
+  `AntigravityLandBudget`); one that lands later is still delivered to that
+  conversation, kept in the ledger with no id until the daemon reads it off
+  the mailbox, and never sent a second time
+  (`TestAMessageThatLandsLateIsDeliveredOnce`). `agentapi` exits 0 on an
+  error too (a wrong conversation, a missing token print `"error"` in its
+  JSON), so the JSON is read and its exit code is not. What the harness
+  refuses (no language server for the daemon's user, `no antigravity
+  language server is running: is Antigravity open?`; a server without a
+  token; no conversation with the directory open; no port that answers for
+  the conversation; no mailbox; an `"error"` from `send-message`) is a
+  `SessionRefused` naming why, and never a `Deferred`: the daemon marks the
+  session broken with the reason, said once on the record and once to the
+  seat, every message pending on the bus and tried again every ten seconds
+  (`RecheckEvery`), and the first delivery taken clears it ("A turn the
+  session cannot take"). So `nova-friend check` reads `route=mailbox` for
+  her and counts no deferral for her harness: the `deferred=` it counts is
+  only the limit gate's (`Limits.Gate`).
   `TestAntigravityDeliversIntoTheMailboxWithoutDeferring`.
-- **The live conversation follows the reader.** The adapter keeps each
-  delivery (the message id, its conversation, when) and the daemon hands it
-  the clock and the session's last pong each step (`Daemon.Mailbox`,
-  `Antigravity.Follow`, at most every ten seconds): each read is said once
-  (`antigravity: message <id> read by conversation <id>`, from the
-  conversation's `read.json`). A conversation in a long turn writes its
-  transcript (`brain/<conversation>/.system_generated/logs/transcript.jsonl`)
-  and keeps delivery however many messages wait in its mailbox. One that has
-  left three deliveries unread past the session check's bound
-  (`AntigravityStopped`, `AntigravityReadBound`) and written nothing since
-  the oldest of them has stopped reading: delivery moves to the newest root
-  conversation of the workspace that has written since, said once
+- **A delivered message is never lost: the ledger.** Every delivery is kept
+  in the daemon's state directory (`antigravity-ledger.json`): its message
+  id, its conversation, when it went in, when the daemon saw it read (from
+  the conversation's `read.json`, each read said once, `antigravity: message
+  <id> read by conversation <id>`), and its text until it is read or sent
+  again. A delivery not read is never dropped; the newest 64 read or sent
+  again are kept (`AntigravityKeptRead`).
+- **While the session reads nothing, delivery waits.** A delivery unread past
+  the check period (`AntigravityReadBound`, the session check's five
+  minutes) with nothing delivered read since is a session down: the next
+  delivery is refused, `the session is down: conversation <id> has read
+  nothing delivered since <t> (<n> unread, the check period is 5m0s)`, so
+  the daemon says `session=broken` with that reason and every message stays
+  pending on the bus until a delivery is read (the finding of 2026-10-06:
+  after the first proof, a closed window took every message sent while it was
+  down). `TestASessionThatReadsNothingKeepsMessagesPending`.
+- **The live conversation follows the reader.** The daemon hands the adapter
+  its clock each step, off the loop (`Daemon.Mailbox`, `Antigravity.Follow`,
+  at most every ten seconds). A conversation that has left three deliveries
+  unread past the check period (`AntigravityStopped`) and read nothing since
+  the oldest of them has stopped reading; delivery moves to a conversation
+  the daemon delivered to that has read one of its deliveries since then (the
+  one that read last), never to a conversation nothing was delivered to (so
+  never to another person's conversation in the same workspace), and never
+  again within ten minutes of the last move (`AntigravitySwitchHold`), so two
+  conversations idle in turn do not bounce it. The move is said once
   (`antigravity: live conversation is now <id> (the named one stopped
-  reading)`), on the status (`session_live`) and on the check's harness line
-  (`session_live=<id>`). A session answer (a pong) after a delivery the live
-  conversation has not read came from another conversation: it is still an
-  answer, the session is alive, and delivery moves to that conversation at
-  once by the same rule. The finding of 2026-10-06: deliveries went to the
-  conversation `--session` named while a second conversation had taken 161
-  of them earlier in the day, and nothing said which one was live. The
-  messages left unread in the old mailbox stay there.
+  reading)`), kept in the ledger for the session it was made from (a restart
+  keeps it; a daemon named to another session is not moved), and shown on the
+  status (`session_live`) and on the check's harness line
+  (`session_live=<id>`). Every delivery the old conversation left unread is
+  sent again into the new one, once, its first line `re-sent: <id> was
+  delivered to <old conversation> at <t> and not read`; one whose send fails
+  is sent again at the next look. The finding of 2026-10-06: deliveries went
+  to the conversation `--session` named while a second conversation had
+  taken 161 of them earlier in the day, and nothing said which one was live.
   `TestTheLiveConversationFollowsWhoReads`.
 - **The outbox finished by the daemon.** Her `outbox/<job>/REPORT.md` is
   finished by the daemon's outbox pass ("the daemon reads every outbox job"),
