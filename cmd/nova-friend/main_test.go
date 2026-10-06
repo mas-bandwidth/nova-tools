@@ -637,6 +637,7 @@ func TestAClaudeOneShotLaneRunsWalledWithTheRowsConfigDir(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				r := newRig(t, "ada", "bob")
 				w := r.world()
+				w.openKeepalive = nil // the lane's loop paces itself on the same pause, which would wait on itself in the bubble
 				var cancel context.CancelFunc
 				w.signals = func(ctx context.Context) (context.Context, context.CancelFunc) {
 					ctx, cancel = context.WithCancel(ctx)
@@ -980,6 +981,7 @@ func TestRunWithNoSessionAnsweringNeverBeats(t *testing.T) {
 		beats++
 		return "", nil
 	}
+	w.openKeepalive = nil                 // the lane's store is the sprint's; this test drives the daemon's own loop alone
 	stopAfter(&w, &cancel, 8*time.Minute) // the session's own blocking read never pauses the loop; the clock ends it
 	dir := t.TempDir()
 	var out, errb strings.Builder
@@ -1151,6 +1153,7 @@ func TestRunKeepsTheHarnessWatchAdvisory(t *testing.T) {
 	r := newRig(t, "ada", "bob")
 	r.alive = fakeAlive{running: false, why: "the harness app is closed"}
 	w := r.world()
+	w.openKeepalive = nil // the lane's store is the sprint's; this test drives the daemon's own loop alone
 	var cancel context.CancelFunc
 	w.signals = func(ctx context.Context) (context.Context, context.CancelFunc) {
 		ctx, cancel = context.WithCancel(ctx)
