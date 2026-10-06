@@ -319,6 +319,13 @@ first, before the machines' deal) offers every ready card to its named friend
 whose tiers hold its tier first, then to the friends up whose tiers hold its
 tier, an idle lane first,
 then the most room free, the first by name among equals, then to the fleet. A
+named pin (`WHO: friend <name>`, not `only`) placed on another row is a judgment
+in that step (`a pinned card was dealt away from its friend`): why she did not
+take it (held, not up, the card has left her, her tiers do not hold the tier, or
+she has no room), and whose row and column hold the card now. The pass keeps
+that one judgment, and raises it when the card is already sitting off her row,
+until it is back on her row or leaves ready and working. A hard pin is not
+rotated and is not this judgment. A
 hard pin (`WHO: only friend <name>`) with no room waits ready, held by the
 no-stall rule as waiting for her (`sprint.TickDeal`, `sprint.FriendDeal`,
 `sprint.OnlyFriend`); a card a friend takes is never held for want of a machine
@@ -3093,7 +3100,7 @@ Otherwise, you will eventually drift and forget." The night before, one friend's
 session was deaf from about midnight to 8:41 AM and finished no card while his row read
 8/8 working, and reader findings and failed attempts waited on the coordinator for four
 hours. The tick's overdue part runs the pass (internal/sprint coordinator_pass.go,
-`TickCoordinatorPass`), three conditions the tick keeps, each a judgment:
+`TickCoordinatorPass`). The conditions the tick keeps, each a judgment:
 
 - **a friend's session is deaf** (`a friend's session is deaf`), one on each friend not
   held whose beat carries a session pong (`friend beat --pong <RFC3339>`, her daemon's
@@ -3123,6 +3130,23 @@ hours. The tick's overdue part runs the pass (internal/sprint coordinator_pass.g
   coordinator is never pushed twice in one tick for one late judgment. The pass's own
   judgments are not counted: each is raised again on its own (and, like every judgment,
   gets its one overdue line).
+- **an up friend has an empty row while cards wait** (`an up friend has an empty row
+  while cards wait`), one on each friend who is up and not held, whose row has been
+  empty (no ready card and no working card) for 10 minutes of running time
+  (`EmptyRowAfter`) while cards she could do — her tiers hold the tier, not a hard
+  pin to someone else, not a card that has left her — sit ready in the pool or
+  unstarted on another friend's row. It names her, those cards and where they sit,
+  and offers: deal them to her, `friend take <friend> --all-unstarted` for each other
+  row that holds one, or keep. The ten minutes start when that conjunction first
+  holds (an acknowledgement on her row, `an up friend's empty row`, not a judgment
+  and not shown); they start again if she is not up, her row is not empty, or
+  nothing she could do is waiting, so time down or held does not count.
+- **a pinned card was dealt away from its friend** (`a pinned card was dealt away
+  from its friend`), one on each named pin whose work card is ready or working off
+  her row, including on a machine. The deal writes it on the unit that places the
+  card on another friend; the pass writes it when the card is already there, keeps
+  the one note, and closes it when the card is back on her row or leaves ready and
+  working. A hard pin is not one of these.
 
 Each is an episode, keyed by its type and subject: written once when its condition
 starts, raised again in place every 10 minutes of running time while it holds
@@ -3131,9 +3155,9 @@ judgment's `before` counts them), and closed when it stops holding. A raise agai
 rewrites the judgment with the latest facts and writes one happened note to the
 coordinator, `a judgment still holds: raised again`, so each tick that raises one ends
 with a tick-end note and `inbox --wait` wakes on it: a coordinator who missed one is
-woken again. `ack` (deaf and idle list it) keeps one quiet until its episode ends, and
+woken again. `ack` (deaf, idle, an empty row and an ignored pin list it; behind lists act) keeps one quiet until its episode ends, and
 `wait` until its review time; a friend the coordinator holds (`friend down`, `hold`) is
-judged neither deaf nor idle. The model is tla/CoordinatorPass.tla: one judgment an
+judged neither deaf, nor idle, nor empty. The model is tla/CoordinatorPass.tla: one judgment an
 episode (`OneJudgmentAnEpisode`), never a whole window unraised (`PushedEveryWindow`),
 closed when it stops holding (`ClosedWhenCleared`), each with a reversed witness TLC
 catches. Pinned by `TestTheMachineRemindsTheCoordinatorOfADeafOrIdleFriendEveryTenMinutes`
