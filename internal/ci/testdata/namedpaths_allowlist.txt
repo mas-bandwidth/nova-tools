@@ -16,8 +16,6 @@ internal/tokens/message.go SPEC-TOKENS' plan: the message record
 
 # --- 2. An invented example: a name chosen to show the SHAPE of a path. ---
 
-.github/scripts/foo.sh SPEC-CI.md's invented script in `x=$(bash ...)`, shown as something that is not a producer
-docs/history SPEC.md's `--allow docs/history` example for subdirectory enumeration
 internal/decide/entry.go internal/swarm/lintbase.go's class-9 story: the PATHS entry card-nx-f19 named that did not exist at its base
 
 # --- 3. A path in another tree: another repository, another branch, or a retired file. ---

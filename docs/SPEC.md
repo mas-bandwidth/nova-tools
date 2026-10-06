@@ -728,7 +728,7 @@ silently obeyed.
 
 **`--allow <prefix>` is the one scope narrowing, and it starts EMPTY.**
 Repeatable; a prefix covers everything beneath it at any depth, so `--allow
-history` needs no subdirectory enumeration and `--allow docs/history` works
+history` needs no subdirectory enumeration and `--allow <dir>/<sub>` works
 the same way. A leading `./` and surrounding slashes are trimmed. **A prefix
 matches whole path SEGMENTS**: it must equal the path or be followed by `/`,
 so `--allow doc` does not cover `docs/`. **And it is the one matcher that is
