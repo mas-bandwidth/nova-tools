@@ -950,27 +950,39 @@ write or friend sync's) and whose `jobs/<job>/JOB.md` is not, the daemon stages 
   stage nothing here. A packet git could misread (a repository that is no `owner/name`, a base
   or branch that is no ref name, a job that is no single path element) is refused before any
   git runs.
-- One bare mirror per repository, `mirrors/<owner>/<name>.git`, cloned the first time with her
-  account's git credentials (the daemon's environment, `GIT_TERMINAL_PROMPT=0`), fetched before
-  a stage unless fetched within `MirrorFreshFor` (10 s), so a stage is a fetch and a local
-  clone: seconds. The base is its pin when it has one (a pin the mirror does not hold is the
-  card's judgment, never a checkout of the ref's tip), else a branch, else a tag, else a full
-  sha, in the mirror.
-- The checkout is cloned from the mirror beside the job (`jobs/<job>/.repo.staging`), its
-  origin set to the repository itself (never the mirror, so the child's push goes out), checked
-  out at the base on the card's branch, and moved in whole as `jobs/<job>/repo`; `JOB.md` is
+- One full bare mirror per repository, `mirrors/<owner>/<name>.git`, made the first time
+  (`git init --bare` and a whole fetch with her account's git credentials: the daemon's
+  environment, `GIT_TERMINAL_PROMPT=0`; never shallow and never blob-less, which broke clones
+  with "pack has unresolved deltas"), fetched before a stage unless fetched within
+  `MirrorFreshFor` (10 s). Its refspecs are `+refs/heads/*:refs/remotes/origin/*` and the
+  tags, so origin's branches are its remote-tracking refs and its own branches are the jobs'
+  alone; a mirror of the layout before worktrees (origin's branches as its own) is converted in
+  place at its next fetch, every branch no worktree holds deleted and fetched back as
+  remote-tracking refs. Its origin is the repository's url. The base is its pin when it has
+  one (a pin the mirror does not hold is the card's judgment, never a checkout of the ref's
+  tip), else origin's branch, else a tag, else a full sha, in the mirror.
+- The checkout is a git worktree of the mirror (seconds and megabytes, where a clone per job
+  had her disk at 99% on 2026-10-05 with 42 staged clones, 12 GB, and 765 finished job dirs):
+  added beside the job (`jobs/<job>/.staging/<job>`, so the worktree's name in the mirror is
+  the job's) on the card's branch, created at the base (`worktree add -b`) or, when the mirror
+  already holds it (a pruned job staged again), taken as it stands and never reset; then moved
+  in whole as `jobs/<job>/repo` (`worktree move`). A stage that fails part way removes its
+  scratch worktree and the branch it created. Its origin is the mirror's, the repository
+  itself, so the child's push goes out and writes `refs/remotes/origin/<branch>` in the
+  mirror, where `PushedHead` reads it through the worktree's `.git` file. `JOB.md` is
   written last (`JobText`, the card-contract shape of docs/SPEC-CARD-CONTRACT.md: `# JOB: work
   <card>, attempt <n>`, the checkout, the repository, base and commit, the branch and its push,
   the outbox `REPORT.md` and `RESULT.md`, and the `no push` HOLD). A job with a `JOB.md` is
   never staged again, and is never written over.
-- Each stage runs on a goroutine of its own, so the loop beats on while a mirror is cloned
-  (`MirrorCloneBudget`, 30 minutes, bounds the first clone); a repository's fetch and its
-  clones run one at a time. A stage the daemon's stop ends is said nowhere and runs again on
+- Each stage runs on a goroutine of its own, so the loop beats on while a mirror is fetched
+  (`MirrorCloneBudget`, 30 minutes, bounds a fetch; the first is the slow one); a repository's
+  fetch, its worktrees added and its worktrees pruned run one at a time. A stage the daemon's stop ends is said nowhere and runs again on
   the next start.
 - No lane is handed a card whose job the daemon stages until its `JOB.md` is there, and in
   batch mode the session is told of such a brief once its job is staged.
-- A repository her account cannot reach (its clone or fetch fails), or a base it does not
-  hold, is one judgment to the coordinator (a blocker message, `judgment: <friend> cannot reach
+- A repository her account cannot reach (its first or any later fetch fails, named on the job
+  it was staging: `her account cannot reach <repo> (staging jobs/<job>): ...`), or a base it
+  does not hold, is one judgment to the coordinator (a blocker message, `judgment: <friend> cannot reach
   <repo>` or `judgment: card <c> cannot be staged on <friend>`) with its remedy, said once
   until a stage of that repository or card succeeds, never one per card and never once a loop;
   the job is tried again once a `StageRetryEvery` (a minute). Any other failure is said once in
@@ -987,6 +999,32 @@ The machine is modelled in `tla/FriendStage.tla` (`MCFriendStage*`): a lane is h
 only once its `JOB.md` is there, one judgment per repository or card while it stands, a stop
 says nothing, and a failed job is staged again once its remedy lands; three reversed witnesses
 (nextCard without the guard, a judgment per failed stage, no retry).
+Finished jobs are pruned by the cleanup the daemon already owns: after each inbox reconcile
+(which retires the briefs of cards that left her row), in the loop itself, `pruneStep` hands
+`Stager.Prune` the live jobs (held on her row, run by a lane, being staged). A job is finished
+when it is not live and its brief is not in her inbox; only a job whose checkout is a worktree
+of one of her mirrors is ever pruned, never a clone or anything another hand staged. The newest
+`FinishedJobsKept` (8, by their `JOB.md`) are kept and the rest removed oldest first, at most
+`PrunePerPass` (4) a cleanup and never waiting on a mirror a stage holds (its lock is tried,
+not taken): the worktree is removed from the mirror (`worktree remove --force`, then `worktree
+prune`) and `jobs/<job>` with it, and the branch stays in the mirror, so a commit on it is never
+lost. Each job removed is one line (`prune: removed jobs/<job> and its worktree: its card is
+finished (8 finished kept)`); a failure is said once while it stands (`prune: not pruned: ...`).
+The prune runs in the loop, never on a goroutine handed a snapshot: a job dealt to her again
+meanwhile would have its brief written, be handed to a lane on its old `JOB.md`, and lose its
+checkout under it. `TestJobsAreWorktreesOfOneMirror` stages two jobs of one repository and sees
+one full bare mirror and two worktrees on their branches at the base, origin the repository; a
+push from one is read by `PushedHead`; a fetch that fails is a judgment named on the job and
+leaves nothing of it; a finished job is pruned past the cap and its branch and commit stay; a
+job in her inbox or live is never pruned; a pruned job staged again takes its branch back.
+`TestAMirrorOfTheCloneLayoutIsConverted` and `TestTheInboxCleanupPrunesFinishedJobs` pin the
+rest. The worktrees and their pruning are modelled in `internal/friend/tla/JobWorktrees.tla`
+(TLC on a Linux bench, three jobs, cap 1, one a pass, `MCJobWorktrees`: 33,344 distinct states,
+no error; `NoLaneLosesItsCheckout`, `WorkKept`, `CapKept`, `HeldKept`), with three reversed
+witnesses: `MCJobWorktreesBrokenAsync` (the prune on a goroutine, the first cut of this change)
+breaks `NoLaneLosesItsCheckout` in 16 states as above, `MCJobWorktreesBrokenDropBranch` breaks
+`WorkKept`, and `MCJobWorktreesBrokenNoLimit` breaks `CapKept`. Jobs staged as clones before
+this change are never pruned (they are no worktree of a mirror) and are left to a hand.
 Not yet: the server's `friend cards` answer does not send `repo` and `base` (cmd/nova-sprint is
 outside this card's paths), so the brief's lines are read; a read's checkout at the head under
 read is not staged here.
