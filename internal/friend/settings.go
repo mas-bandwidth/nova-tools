@@ -164,11 +164,6 @@ type Setting struct {
 // Drifted says whether what is there is not what install would write.
 func (s Setting) Drifted() bool { return s.Want != s.Have }
 
-// Line is the setting as check and install say it.
-func (s Setting) Line() string {
-	return fmt.Sprintf("harness=%s file=%s name=%s want=%q have=%q", s.Harness, s.File, s.Name, s.Want, s.Have)
-}
-
 // ErrNotRealDir is the refusal when a path a harness setting names is a
 // symlink or not a directory: a harness that resolves it works elsewhere or
 // refuses (Codex took no writes into a symlinked writable root, 2026-10-05).
@@ -208,16 +203,6 @@ var writers = map[string]func(h HarnessSettings) ([]setting, error){
 	"grok":     grokSettings,
 	"claude":   claudeSettings,
 	"opencode": openCodeSettings,
-}
-
-// SettingsHarnesses are the harnesses install writes settings for.
-func SettingsHarnesses() []string {
-	var hs []string
-	for h := range writers {
-		hs = append(hs, h)
-	}
-	slices.Sort(hs)
-	return hs
 }
 
 func (h HarnessSettings) fs() SettingsFS {
