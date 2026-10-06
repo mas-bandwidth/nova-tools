@@ -118,6 +118,28 @@ func (f *Fake) AddAll(_ context.Context, streams []string, fields map[string]str
 	return nil
 }
 
+func (f *Fake) Stamp(_ context.Context, key, state string, fields ...string) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.trip(); err != nil {
+		return 0, err
+	}
+	if f.hashes == nil {
+		f.hashes = map[string]map[string]string{}
+	}
+	if f.hashes[key] == nil {
+		f.hashes[key] = map[string]string{}
+	}
+	var n int64
+	for _, id := range fields {
+		if Advances(f.hashes[key][id], state) {
+			f.hashes[key][id] = StampValue(state, f.now)
+			n++
+		}
+	}
+	return n, nil
+}
+
 func (f *Fake) Unmark(_ context.Context, key string, fields ...string) (int64, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

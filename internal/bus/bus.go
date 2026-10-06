@@ -187,6 +187,11 @@ type Store interface {
 	AddAll(ctx context.Context, streams []string, fields map[string]string, marks ...Mark) error
 	// Unmark clears fields of the hash at key (HDEL) and says how many were there.
 	Unmark(ctx context.Context, key string, fields ...string) (int64, error)
+	// Stamp moves each field of the hash at key to state, only forward along
+	// States, written as StampValue(state, the store's TIME). A field already
+	// at the state or beyond it is left, its time too. It says how many moved.
+	// A field that is not there is made.
+	Stamp(ctx context.Context, key, state string, fields ...string) (int64, error)
 	// Marks is the whole hash at each key, in one trip (a pipeline of HGETALL);
 	// a key that is not there is an empty map.
 	Marks(ctx context.Context, keys ...string) ([]map[string]string, error)
@@ -226,6 +231,9 @@ type Bus struct {
 	Store Store
 	// Rand fills a ULID's random half; crypto/rand when nil.
 	Rand func([]byte) (int, error)
+	// OnReceiptError, when set, is handed the error of a receipt a recv or a
+	// send could not write. The verb itself goes on (stamp.go, stamped).
+	OnReceiptError func(error)
 }
 
 // Refusal is a reason a verb could not run as asked: the input, not the store.
@@ -243,7 +251,10 @@ func (r *Refusal) Error() string { return strings.Join(r.Problems, "; ") }
 // A message to a friend is owed her session's receipt (receipt.go): the
 // transaction marks it on bus2:owed:<friend> for each friend it names but the
 // sender, and a message from a friend naming another (re) is her receipt of
-// that one, cleared in the same transaction.
+// that one, cleared in the same transaction. Beside those marks the
+// transaction writes the message sent on bus2:receipt:<recipient> for every
+// recipient, and an answer from a friend (re) moves her receipt of that
+// message to acted (stamp.go; SPEC-BUS.md, message-receipts-r2.w1).
 func (b *Bus) Send(ctx context.Context, m Message) (Message, error) {
 	m, now, friends, err := b.check(ctx, m)
 	if err != nil {
@@ -257,8 +268,11 @@ func (b *Bus) Send(ctx context.Context, m Message) (Message, error) {
 		streams = append(streams, StreamOf(n))
 	}
 	streams = append(streams, LogKey)
-	if err := b.Store.AddAll(ctx, streams, m.Fields(), owe(m, friends)...); err != nil {
+	if err := b.Store.AddAll(ctx, streams, m.Fields(), slices.Concat(owe(m, friends), sent(m, now))...); err != nil {
 		return Message{}, err
+	}
+	if m.Re != "" && slices.Contains(friends, m.From) {
+		b.stamped(ctx, m.From, StateActed, m.Re) // her answer is her act on it
 	}
 	return m, nil
 }
@@ -334,7 +348,20 @@ func (b *Bus) Recv(ctx context.Context, as string, block time.Duration) (e Entry
 // neither acked nor held, so a reader that asks for all gets it next; the skip
 // costs one round trip per message skipped, and one more to release a run of
 // them. (tla/Bus2.tla: Recv; a skipped message is back as a lost one)
+// A message it hands out is delivered: the receipt moves to delivered, only
+// forward, so a claim that hands an acted message in again leaves it acted
+// (tla/Bus2.tla, Stamp, ReceiptNeverMovesBack).
 func (b *Bus) RecvKinds(ctx context.Context, as string, block time.Duration, kinds []string) (e Entry, ok bool, err error) {
+	e, ok, err = b.recvKinds(ctx, as, block, kinds)
+	if ok {
+		if id := e.Fields["id"]; id != "" {
+			b.stamped(ctx, as, StateDelivered, id) // taken off the stream, at the store's time
+		}
+	}
+	return e, ok, err
+}
+
+func (b *Bus) recvKinds(ctx context.Context, as string, block time.Duration, kinds []string) (e Entry, ok bool, err error) {
 	if p := CheckName(as); p != "" {
 		return Entry{}, false, &Refusal{[]string{p}}
 	}

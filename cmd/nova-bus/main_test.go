@@ -452,3 +452,23 @@ func TestRecvTakesABacklogInOrderWithMaxAllAndAck(t *testing.T) {
 		cli.Do(t, c...).Exit(2).Err("RECV REFUSED")
 	}
 }
+
+func TestReceiptsSaysEachMessagesStateAndOverdueExitsOneUntilItIsDelivered(t *testing.T) {
+	t.Parallel()
+	r := newRig("ada", "bob")
+	cli := r.cli()
+	mid := id(t, cli.OK(t, "send", "--as", "ada", "--to", "bob", "--subject", "hi", "--body", "x").Stdout)
+
+	cli.Do(t, "receipts", "--as", "bob").Exit(0).Out("RECEIPTS OK count=1 login=none", "RECEIPTS MESSAGE id="+mid+" state=sent age=")
+	cli.Do(t, "overdue").Exit(0).Out("OVERDUE OK count=0 older=10m0s")
+
+	r.advance(11 * time.Minute)
+	cli.Do(t, "overdue").Exit(1).Err("OVERDUE OVERDUE count=1 older=10m0s", "OVERDUE MESSAGE name=bob id="+mid+" age=11m")
+	cli.Do(t, "overdue", "--older", "20m").Exit(0).Out("count=0 older=20m0s")
+	cli.Do(t, "overdue", "--older", "0s").Exit(2).Err("--older")
+
+	cli.Do(t, "recv", "--as", "bob").Exit(0)
+	cli.Do(t, "overdue").Exit(0).Out("OVERDUE OK count=0")
+	cli.Do(t, "receipts", "--as", "bob", "--id", mid).Exit(0).Out("RECEIPTS MESSAGE id=" + mid + " state=delivered")
+	cli.Do(t, "receipts", "--as", "bob", "--id", "NOPE").Exit(0).Out("RECEIPTS OK count=0")
+}

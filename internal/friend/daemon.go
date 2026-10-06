@@ -163,6 +163,12 @@ type Daemon struct {
 	inboxSaid   map[string]bool // the inbox lines the last reconcile said that are said once while they stand
 }
 
+// ActedMemory is how many acted message ids the daemon remembers, so a second
+// delivery of one is dropped (SPEC-BUS.md, message-receipts-r2.w1). The oldest
+// is forgotten first. A claim hands a message in again after bus.ClaimAfter,
+// so the ids that matter are the recent ones.
+const ActedMemory = 4096
+
 // IdleWalkEvery is how often the idle watch reads the session's newest write
 // and the cards she holds.
 const IdleWalkEvery = time.Minute
@@ -269,8 +275,11 @@ type loop struct {
 	reads        *readSet
 	mode         string // the mode the daemon delivers in now
 	saidNoLanes  bool
-	dealt        []string // the inbox briefs the daemon wrote that the session has not been told of (batch mode)
-	wake         bool     // a wake check is owed: the pong line goes in as its own turn when the session is free (startWake)
+	dealt        []string        // the inbox briefs the daemon wrote that the session has not been told of (batch mode)
+	stepAt       time.Time       // the step's clock, for a record line said from a callback
+	acted        map[string]bool // message ids pushed into a turn that ended at exit 0: a second delivery is dropped
+	actedOrder   []string        // the same ids, oldest first, bounded by ActedMemory
+	wake         bool            // a wake check is owed: the pong line goes in as its own turn when the session is free (startWake)
 }
 
 // Run is the loop until ctx ends. Each step: the clock; the friend's row
@@ -289,7 +298,7 @@ type loop struct {
 // a turn that carries messages or a card, never alone.
 func (d *Daemon) Run(ctx context.Context) error {
 	l := &loop{d: d, ctx: ctx, b: &bus.Bus{Store: d.Store}, silentStop: d.SilentStop, brokenAfter: d.BrokenAfter,
-		answered: map[string]bool{}, failed: map[string]int{}, inHand: map[string]bool{}, results: make(chan result, 1),
+		answered: map[string]bool{}, acted: map[string]bool{}, failed: map[string]int{}, inHand: map[string]bool{}, results: make(chan result, 1),
 		lanes: &laneSet{results: make(chan laneResult, 64)}, reads: newReadSet(), mode: ModeBatch}
 	_, l.passive = d.Deliver.(interface{ Passive() })
 	if l.silentStop <= 0 {
@@ -298,6 +307,9 @@ func (d *Daemon) Run(ctx context.Context) error {
 	if l.brokenAfter <= 0 {
 		l.brokenAfter = DefaultBrokenAfter
 	}
+	l.b.OnReceiptError = func(err error) {
+		d.Record(l.stepAt.UTC().Format(time.RFC3339) + " receipt not written: " + oneLine(err.Error(), 300) + " (the delivery goes on)")
+	}
 	d.m = Start(d.Now())
 	d.status = Status{Friend: d.Friend, Harness: d.Harness, Started: d.m.LastPing, Width: d.Width}
 	if !l.passive {
@@ -305,6 +317,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 	}
 	for ctx.Err() == nil {
 		now := d.Now()
+		l.stepAt = now
 		for _, p := range d.m.Tick(now) {
 			l.say(p)
 		}
@@ -601,6 +614,14 @@ func (l *loop) read(now time.Time) bool {
 					break
 				}
 				delete(l.answered, e.Entry)
+			} else if l.acted[msg.ID] {
+				// at-least-once: a claim handed in a message a turn already acted on.
+				// Ack it and never push it in twice (tla/Bus2.tla, Take, NeverActedTwice).
+				d.Record(fmt.Sprintf("%s duplicate dropped id=%s", now.UTC().Format(time.RFC3339), msg.ID))
+				if _, aerr := b.AckEntry(l.ctx, d.Friend, e.Entry); aerr != nil {
+					err = aerr
+					break
+				}
 			} else if !l.inHand[e.Entry] {
 				l.hand = append(l.hand, e)
 				l.inHand[e.Entry] = true
@@ -662,6 +683,7 @@ func (l *loop) startTurn(t *turn, now time.Time, deliver any) {
 	seen := &atomic.Int64{}
 	tctx = WithOutputSeen(tctx, func() { seen.Add(1) })
 	t.started, t.running, t.cancel, t.seen, t.seenN, t.lastOut, t.stopped = now, true, cancel, seen, 0, now, false
+	l.stamp(bus.StateRead, t.msgs, now) // the adapter is handed the turn: the session's read of these messages starts now
 	switch f := deliver.(type) {
 	case func(context.Context) result:
 		go func() { r := f(tctx); cancel(); l.results <- r }()
@@ -751,6 +773,7 @@ func (l *loop) settle(t *turn, ok bool, err error, now time.Time) string {
 	switch {
 	case ok:
 		l.streak, l.refusal = 0, ""
+		l.actOn(t.msgs, now)
 		if len(t.entries) > 0 {
 			if _, err := d.Store.Ack(l.ctx, bus.StreamOf(d.Friend), d.Friend, t.entries...); err != nil {
 				d.status.StoreError = err.Error()
@@ -813,6 +836,45 @@ func (l *loop) settle(t *turn, ok bool, err error, now time.Time) string {
 			now.UTC().Format(time.RFC3339), d.status.SessionID, d.status.SessionReason, l.brokenAfter)
 	}
 	return line
+}
+
+// messageIDs is the ids of messages, dropping an empty one.
+func messageIDs(msgs []bus.Message) []string {
+	var out []string
+	for _, m := range msgs {
+		if m.ID != "" {
+			out = append(out, m.ID)
+		}
+	}
+	return out
+}
+
+// actOn is a turn's exit 0 for its messages: each is remembered, so a second
+// delivery of it is dropped, and stamped acted in the store.
+func (l *loop) actOn(msgs []bus.Message, now time.Time) {
+	for _, id := range messageIDs(msgs) {
+		if !l.acted[id] {
+			l.acted[id] = true
+			l.actedOrder = append(l.actedOrder, id)
+		}
+	}
+	for len(l.actedOrder) > ActedMemory {
+		delete(l.acted, l.actedOrder[0])
+		l.actedOrder = l.actedOrder[1:]
+	}
+	l.stamp(bus.StateActed, msgs, now)
+}
+
+// stamp moves the receipts of msgs to state. One the store will not take is
+// said on the record and the delivery goes on.
+func (l *loop) stamp(state string, msgs []bus.Message, now time.Time) {
+	got := messageIDs(msgs)
+	if len(got) == 0 {
+		return
+	}
+	if _, err := l.b.Stamp(l.ctx, l.d.Friend, state, got...); err != nil && l.ctx.Err() == nil {
+		l.d.Record(fmt.Sprintf("%s receipt not written: %s for %d messages: %s (the delivery goes on)", now.UTC().Format(time.RFC3339), state, len(got), oneLine(err.Error(), 300)))
+	}
 }
 
 // batchDone is the batch turn's end: a deferral keeps it in hand, tried

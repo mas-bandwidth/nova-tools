@@ -511,3 +511,51 @@ func TestStatusSaysTheChallengeIsAnsweredTheSecondAfterAPongIsWritten(t *testing
 	assert.Equal(t, Quiet, s.Challenge, "the pong for the current nonce should end the challenge")
 	assert.Equal(t, 1, s.Pongs, "the pongs count should be incremented")
 }
+
+// failAckOnce is a store whose first ack fails: a turn that ended at exit 0
+// whose ack did not land, so the message stays pending and a claim hands it in again.
+type failAckOnce struct {
+	*bustest.Fake
+	failed bool
+}
+
+func (s *failAckOnce) Ack(ctx context.Context, stream, group string, entries ...string) (int64, error) {
+	if !s.failed {
+		s.failed = true
+		return 0, errors.New("ack lost")
+	}
+	return s.Fake.Ack(ctx, stream, group, entries...)
+}
+
+// A message moves delivered, read, acted as its turn runs; and a second
+// delivery of an id a turn already acted on (an ack that never landed, then
+// the claim) is dropped with one record line and acked, never pushed in twice
+// (SPEC-BUS.md, message-receipts-r2.w1; tla/Bus2.tla: Take, NeverActedTwice).
+func TestAMessageActedOnIsNeverPushedInTwiceWhenTheClaimHandsItInAgain(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	r.d.Store = &failAckOnce{Fake: r.store}
+	m := r.send(t, "ada", "hello", "are you there?")
+	r.at[3] = func() { r.store.Advance(bus.ClaimAfter + time.Minute) } // the claim opens after the lost ack
+	r.run(t, 8)
+
+	require.Len(t, r.delivered, 1, "pushed into the session once")
+	assert.Equal(t, Text(m), r.delivered[0])
+	var dup []string
+	for _, line := range r.records {
+		if strings.Contains(line, "duplicate dropped") {
+			dup = append(dup, line)
+		}
+	}
+	require.Len(t, dup, 1, "one record line for the one duplicate: %q", r.records)
+	assert.Contains(t, dup[0], "duplicate dropped id="+m.ID)
+	pending, fresh, err := r.bus.Peek(context.Background(), "bob")
+	require.NoError(t, err)
+	assert.Empty(t, pending, "the duplicate was acked")
+	assert.Empty(t, fresh)
+
+	got, _, err := r.bus.Stages(context.Background(), "bob", m.ID)
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, bus.StateActed, got[0].State, "delivered, read and acted: and the redelivery moved nothing back")
+}
