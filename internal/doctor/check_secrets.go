@@ -21,9 +21,9 @@ func checkSecrets(ctx context.Context, env Env) Result {
 	sopsPath := sopsOnPath(env)
 	if sopsPath == "" {
 		return Result{
-			Status:  Fail,
+			Status:   Fail,
 			Evidence: "sops not found on PATH",
-			Fix:     "install sops (https://github.com/getsops/sops) and ensure it is on PATH (" + doc + ")",
+			Fix:      "install sops (https://github.com/getsops/sops) and ensure it is on PATH (" + doc + ")",
 		}
 	}
 
@@ -31,18 +31,18 @@ func checkSecrets(ctx context.Context, env Env) Result {
 	keyPath := keyPath(env)
 	if keyPath == "" {
 		return Result{
-			Status:    Fail,
-			Evidence:  "no age key file path configured",
-			Fix:       "set NOVA_SECRETS_KEY to the path of the age private key (" + doc + ")",
+			Status:   Fail,
+			Evidence: "no age key file path configured",
+			Fix:      "set NOVA_SECRETS_KEY to the path of the age private key (" + doc + ")",
 		}
 	}
 
 	keyInfo, err := env.ReadFile(keyPath)
 	if err != nil {
 		return Result{
-			Status:    Fail,
-			Evidence:  fmt.Sprintf("key file %s is not readable", keyPath),
-			Fix:       fmt.Sprintf("ensure the key file exists and is readable: chmod 600 %s (" + doc + ")", keyPath),
+			Status:   Fail,
+			Evidence: fmt.Sprintf("key file %s is not readable", keyPath),
+			Fix:      fmt.Sprintf("ensure the key file exists and is readable: chmod 600 %s ("+doc+")", keyPath),
 		}
 	}
 
@@ -56,9 +56,9 @@ func checkSecrets(ctx context.Context, env Env) Result {
 	}
 	if !hasPubKey {
 		return Result{
-			Status:    Fail,
-			Evidence:  fmt.Sprintf("key file %s lacks the public key comment line", keyPath),
-			Fix:       fmt.Sprintf("restore the public key comment at the top of %s (run: age-keygen -y %s) (" + doc + ")", keyPath, keyPath),
+			Status:   Fail,
+			Evidence: fmt.Sprintf("key file %s lacks the public key comment line", keyPath),
+			Fix:      fmt.Sprintf("restore the public key comment at the top of %s (run: age-keygen -y %s) ("+doc+")", keyPath, keyPath),
 		}
 	}
 
@@ -66,18 +66,18 @@ func checkSecrets(ctx context.Context, env Env) Result {
 	storePath := storePath(env)
 	if storePath == "" {
 		return Result{
-			Status:    Fail,
-			Evidence:  "no secrets store path configured",
-			Fix:       "set NOVA_SECRETS_STORE to the git working copy of the secrets store (" + doc + ")",
+			Status:   Fail,
+			Evidence: "no secrets store path configured",
+			Fix:      "set NOVA_SECRETS_STORE to the git working copy of the secrets store (" + doc + ")",
 		}
 	}
 
 	_, err = env.ReadFile(filepath.Join(storePath, ".git", "HEAD"))
 	if err != nil {
 		return Result{
-			Status:    Fail,
-			Evidence:  fmt.Sprintf("%s is not a git working copy", storePath),
-			Fix:       fmt.Sprintf("clone the secrets store into %s (" + doc + ")", storePath),
+			Status:   Fail,
+			Evidence: fmt.Sprintf("%s is not a git working copy", storePath),
+			Fix:      fmt.Sprintf("clone the secrets store into %s ("+doc+")", storePath),
 		}
 	}
 
@@ -85,18 +85,18 @@ func checkSecrets(ctx context.Context, env Env) Result {
 	seat := seatName(env)
 	if seat == "" {
 		return Result{
-			Status:    Fail,
-			Evidence:  "no seat name configured",
-			Fix:       "set NOVA_SECRETS_SEAT to the seat name (" + doc + ")",
+			Status:   Fail,
+			Evidence: "no seat name configured",
+			Fix:      "set NOVA_SECRETS_SEAT to the seat name (" + doc + ")",
 		}
 	}
 
 	seatFile := filepath.Join(storePath, seat+".yaml")
 	if _, err := env.ReadFile(seatFile); err != nil {
 		return Result{
-			Status:    Fail,
-			Evidence:  fmt.Sprintf("seat file %s not found", seatFile),
-			Fix:       fmt.Sprintf("run nova-secrets keygen and add the seat with nova-secrets seat add (" + doc + ")"),
+			Status:   Fail,
+			Evidence: fmt.Sprintf("seat file %s not found", seatFile),
+			Fix:      fmt.Sprintf("run nova-secrets keygen and add the seat with nova-secrets seat add (" + doc + ")"),
 		}
 	}
 

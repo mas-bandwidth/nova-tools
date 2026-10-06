@@ -263,7 +263,7 @@ func TestDoctorSecretsCheckFindsAKeyTheSeatNeeds(t *testing.T) {
 			env: map[string]string{
 				"NOVA_SECRETS_KEY":  keyPath,
 				"NOVA_SECRETS_SEAT": "testseat",
-				"PATH":               tmpDir,
+				"PATH":              tmpDir,
 			},
 			root: tmpDir,
 		}
