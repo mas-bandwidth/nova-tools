@@ -707,7 +707,7 @@ func reviewJudgment(s *Snapshot, pr *Card, st reviewStep) (Note, bool) {
 				outstanding = true
 			case col == Broken:
 				broken = true
-			case col == OK && c.F("head") == pr.F("head") && ReadCardAgrees(c):
+			case col == OK && c != nil && c.F("head") == pr.F("head") && ReadCardAgrees(c):
 				oks[r] = true
 			}
 			break

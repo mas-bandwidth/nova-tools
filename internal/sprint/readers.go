@@ -281,7 +281,8 @@ func returnedReadsAt(s *Snapshot, pr *Card, attempt int) []*Card {
 // ReadCardForAsk returns the read card ID to use when asking a reader of a primary
 // at an attempt: plain identity if no card exists yet, or second identity if an
 // away-retired card exists with the plain identity and no second card exists yet.
-// ok is true if the reader is eligible to be asked.
+// ok is true if the reader is eligible to be asked (docs/SPEC-SPRINT.md,
+// Read machine: an away-retired read can be asked again at the same attempt).
 func ReadCardForAsk(s *Snapshot, primary string, attempt int, reader string) (id string, ok bool) {
 	plain := ReadCardID(primary, attempt, reader)
 	existing := s.Readers.Card(plain)
@@ -428,8 +429,8 @@ func askPicks(rr *round, finder string, want int, free []string, room map[string
 // sweepReads is the readers' rebalance safety: every read asked or reading of a
 // reader that is not up is taken back, retired as the ask takes back a read
 // asked of a reader away
-// (retired_by away: that reader keeps its card at the attempt, so it is not
-// asked that attempt again), and the tick's ask asks it of the readers up. A
+// (retired_by away: that reader keeps its first identity and can be asked
+// again under its second identity), and the tick's ask asks readers up. A
 // read stays where it is when the ask could not place it (fewer readers up
 // than its primary needs, ReadsNeeded, or none up without a card at its
 // attempt): it is judged while its reader is away and read when the reader is

@@ -84,7 +84,7 @@ func TestAReadTakenBackByTheAwaySweepCanBeAskedAgainAtTheSameAttempt(t *testing.
 	w.s.ReaderStates[r1] = ReaderUp
 
 	// Drive the tick's ask path!
-	askPlan := Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-1"}}})
+	askPlan, _ := TickAsk(w.s, TickReq{})
 	require.NotEmpty(t, askPlan.Units, "ask plan must produce units to re-ask r1")
 	reaskID := ReadCardSecondID("s1-1", 1, r1)
 	foundReask := false
@@ -523,4 +523,28 @@ func TestAskInsteadCanTakeBackLiveG1Read(t *testing.T) {
 	// Verify placed state
 	assert.Nil(t, w.s.Readers.Placed(ReadCardSecondID("s1-1", 1, "reader-a")))
 	assert.NotNil(t, w.s.Readers.Placed(ReadCardID("s1-1", 1, "reader-c")))
+}
+
+// TestOnlyAwayRetirementAllowsASecondRead pins the exception to one read per
+// reader and attempt in docs/SPEC-SPRINT.md, the read machine.
+func TestOnlyAwayRetirementAllowsASecondRead(t *testing.T) {
+	t.Parallel()
+	for _, reason := range []string{"away", RetiredByLevel, "returned", "instead", "unknown", ""} {
+		t.Run("retired by "+reason, func(t *testing.T) {
+			t.Parallel()
+			w := setup(t, 1)
+			plain := ReadCardID("s1-1", 1, "reader-a")
+			w.s.Readers.Put(&Card{ID: plain, Fields: map[string]string{"retired_by": reason, "retired": stamp(w.s.Now)}})
+			id, ok := ReadCardForAsk(w.s, "s1-1", 1, "reader-a")
+			assert.Equal(t, reason == "away", ok)
+			if reason == "away" {
+				assert.Equal(t, ReadCardSecondID("s1-1", 1, "reader-a"), id)
+				w.s.Readers.Put(&Card{ID: id, Fields: map[string]string{"retired_by": "away", "retired": stamp(w.s.Now)}})
+				_, ok = ReadCardForAsk(w.s, "s1-1", 1, "reader-a")
+				assert.False(t, ok, "retired second identity prevents a third ask")
+			} else {
+				assert.Equal(t, plain, id)
+			}
+		})
+	}
 }

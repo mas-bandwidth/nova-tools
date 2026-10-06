@@ -145,3 +145,31 @@ func askAndRead(w *world, pr string, attempt int, verdict, finding string) *Card
 	require.Fail(w.t, "no read asked of "+pr)
 	return nil
 }
+
+// TestAwayRetiredReadersAreEligibleAgainUnderSecondIdentity pins that readers
+// whose cards were retired by the away sweep are eligible to be asked again
+// at the same attempt under second identity .g1, so TickAsk asks them and
+// does not judge them cannot-ask.
+func TestAwayRetiredReadersAreEligibleAgainUnderSecondIdentity(t *testing.T) {
+	t.Parallel()
+	readers := []string{"reader-a", "reader-b", "reader-c", "reader-d", "reader-e"}
+	w := newWorld(t, readers...)
+	w.s.Work.SetRows(append(w.s.Work.Rows(), "s1"))
+	w.s.ReaderStates = map[string]string{}
+	for _, rd := range readers {
+		w.s.ReaderStates[rd] = ReaderUp
+	}
+	p := "p1"
+	w.s.Work.Put(&Card{ID: p, Row: "s1", Col: Review, Score: 1, Rev: 1,
+		Fields: map[string]string{"kind": "primary", "attempt": "1", "stream": "s1", "head": "h1"}})
+	for _, rd := range readers {
+		w.s.Readers.Put(&Card{ID: ReadCardID(p, 1, rd), Rev: 1, Fields: map[string]string{"kind": "read", "primary": p, "stream": "s1",
+			"reader": rd, "attempt": "1", "head": "h1", "asked": stamp(t0), "retired": stamp(t0), "retired_by": "away"}})
+	}
+	plan, _ := TickAsk(w.s, TickReq{})
+	w.must(plan)
+	assert.Empty(t, w.notesOf(NCannotAsk), "away-retired readers are eligible to be re-asked at same attempt")
+	reads := readsAt(w.s, w.s.Work.Card(p), 1)
+	require.NotEmpty(t, reads, "re-ask produces a read")
+	assert.True(t, strings.HasSuffix(reads[0].ID, ".g1"), "re-asked card carries .g1 generation suffix: %s", reads[0].ID)
+}
