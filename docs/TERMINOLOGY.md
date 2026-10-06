@@ -4,6 +4,18 @@ Welcome — this guide is a plain-language map of the words you will meet in the
 specs, each linked to the page that defines it so you can jump straight to the
 source.
 
+The rules of naming: one word for one thing, in every document, help text and
+comment; the glossaries define the words, one per release —
+[GLOSSARY.md](GLOSSARY.md) for nova-tools 1.2.0 and
+[sprint/GLOSSARY.md](sprint/GLOSSARY.md) for nova-sprint 1.0.0. A word that is
+replaced is retired: `internal/docs/testdata/retired-words.txt` lists each with
+what replaced it, and `TestRetiredWordsAppearOnlyInRecords` fails when a tracked
+file uses one outside the dated records (the changelog, the resolutions, the
+release notes, the ratings and the ledgers under `testdata/`). A glossary entry
+names what a word replaced after `Replaces:`, the one place the retired word may
+stand. A place that still uses a retired word is a row of the ledger in that
+file, and the ledger only shrinks.
+
 - **adoption** — choosing to take a tool into your workflow; nothing in this repo
   asks you to adopt everything at once. `nova-update adoption` prints each
   friend's own choice, and a tool with no row is absent, never adopted.
@@ -34,7 +46,7 @@ source.
   ([SPEC.md, Conventions](SPEC.md#conventions))
 - **receipt** — one line appended to `from-<me>/RECEIPTS` recording that a note
   arrived. It is not an approval, a reply, or proof anybody read the body.
-  ([SPEC.md, The receipt rule](SPEC.md#the-receipt-rule))
+  ([SPEC.md, Conventions](SPEC.md#conventions))
 - **REFUSED** — the verdict a tool prints when it could not run or says NO:
   `<TOKEN> REFUSED: <reason> (<remedy>)`, on stderr, exit 2 (exit 1 where the
   state is a NO). ([SPEC.md, Conventions](SPEC.md#conventions))
