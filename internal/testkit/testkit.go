@@ -3,9 +3,11 @@
 // checked (verb.go), writing and reading the files a test sets up (here and
 // tree.go), a recording wait for code a synctest bubble cannot hold
 // (waits.go) and a skip by platform (skip.go). Each helper fails the test
-// through testify's require, so a caller's setup is one line. Time in a test
-// is testing/synctest's first, a clockwork.FakeClock where code does real
-// I/O, and never a clock of the kit's own.
+// through testify's require, so a caller's setup is one line.
+//
+// Time: pass time as an argument (now func() time.Time) wherever possible.
+// Where a clock is needed, use Clock below. For code that sleeps, prefer
+// testing/synctest. A real clock is only used in functional tests.
 //
 // A tool's tests keep one adapter of their own, the entry point as a Main, and
 // call its methods. A tool whose entry point takes a clock, an environment or
@@ -25,10 +27,42 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
+
+// Clock is a virtual clock for tests. It provides Now() and Advance().
+// It is safe for concurrent use. Pass time as an argument (now func() time.Time)
+// wherever possible; where a clock is needed, use Clock.
+type Clock struct {
+	mu  sync.Mutex
+	now time.Time
+}
+
+// NewClock returns a clock set to the given time, or a fixed test time if zero.
+func NewClock(start time.Time) *Clock {
+	if start.IsZero() {
+		start = time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC)
+	}
+	return &Clock{now: start}
+}
+
+// Now returns the current virtual time.
+func (c *Clock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.now
+}
+
+// Advance advances the clock by the given duration.
+func (c *Clock) Advance(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.now = c.now.Add(d)
+}
 
 // Main is a tool's entry point in process: the arguments after the tool's
 // name, stdin, the two output streams, and the exit code it returns.
