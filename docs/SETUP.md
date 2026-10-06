@@ -70,3 +70,16 @@ nova-doctor --check self --json
 Exit 0 is all ok, 1 a warn under `--strict`, 2 a fail. The first check, `self`, finds the
 nova tools on PATH and fails when they are not one release, naming the odd one. The
 contract is [SPEC-DOCTOR.md](SPEC-DOCTOR.md).
+
+### dep-tailnet-b.w3: the tailnet
+
+The nova tools reach machines and the stores only over the fleet's tailnet (tailscale);
+a machine with no tailnet cannot be named or reached by the others. `nova-up --local` is
+single-machine and uses a twin store with a loopback Redis, so it needs no tailnet and the
+`tailnet` check is fleet only. A person joins each fleet machine once, with `tailscale up`
+(and `tailscale join` when the tailnet asks), so it is logged in and named on it. `nova-doctor`
+(without `--local`) runs the `tailnet` check: tailscale is installed and the backend is
+`Running`, this machine is named on it, and every machine of `nova-config machine list` is
+named on the tailnet and so reachable by its tailnet name. A machine that is missing is named
+in the evidence, with `tailscale up` as the fix; `nova-doctor --local` skips the check and
+lists it among the skipped fleet checks.
