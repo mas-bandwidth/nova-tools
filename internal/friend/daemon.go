@@ -178,6 +178,7 @@ type Daemon struct {
 	inboxSaid   map[string]bool      // the inbox lines the last reconcile said that are said once while they stand
 	turnEnded   func()               // a test's hook: a turn's result is on its channel (nil: none)
 	outbox      outboxState          // the outbox jobs finished, tried and noted (outbox.go)
+	own         map[string]bool      // the ids of the messages the daemon itself sent: none is the session's proof of life
 	staging     map[string]bool      // the jobs a stage is under way for
 	stageRetry  map[string]time.Time // when a job whose stage failed is staged again
 	stageSaid   map[string]bool      // the stage failures said, once while they stand
@@ -226,27 +227,17 @@ func Text(m bus.Message) string {
 		m.ID, m.From, dash(strings.Join(m.To, ",")), dash(strings.Join(m.CC, ",")), dash(m.Re), m.At.Format(time.RFC3339), m.Subject, body)
 }
 
-// Batch is one turn's text: the pong line to run first while a challenge
-// is open, the daemon's word about the coordinator, then every message,
-// oldest first, each as nova-bus recv prints it under a numbered rule. A
-// single message with nothing else is its Text alone.
+// Batch is Envelope with no limit, its ages measured to the newest message: the
+// messages that ride along with a card (lanes.go).
 func Batch(msgs []bus.Message, notice, pongCommand string) string {
-	if len(msgs) == 1 && notice == "" && pongCommand == "" {
-		return Text(msgs[0])
+	var newest time.Time
+	for _, m := range msgs {
+		if m.At.After(newest) {
+			newest = m.At
+		}
 	}
-	var b strings.Builder
-	if pongCommand != "" {
-		b.WriteString("Run this now, first, exactly as written: " + pongCommand + "\nThen read on.\n\n")
-	}
-	if notice != "" {
-		b.WriteString("nova-friend: " + notice + "\n\n")
-	}
-	fmt.Fprintf(&b, "nova-friend: %d message(s) for you, oldest first, in one turn; take each in order.\n", len(msgs))
-	for i, m := range msgs {
-		fmt.Fprintf(&b, "\n=== message %d of %d: id=%s from=%s subject=%q ===\n", i+1, len(msgs), m.ID, m.From, m.Subject)
-		b.WriteString(Text(m))
-	}
-	return b.String()
+	text, _ := Envelope(msgs, newest, "", 0, notice, pongCommand)
+	return text
 }
 
 func dash(s string) string {
@@ -277,6 +268,8 @@ type loop struct {
 	answered     map[string]bool // entries whose ping the daemon has ponged
 	failed       map[string]int  // entries whose turn failed, and how often
 	hand         []bus.Entry     // messages read and not yet in a turn, oldest first
+	pingAt       time.Time       // the store's time on the newest ping read: a session line after it is proof of life
+	proofFrom    string          // the log entry the proof reads from: past it, nothing has been read
 	inHand       map[string]bool // entries read and not yet acked or failed: in hand or in a turn
 	notice       *Push           // the latest word about the coordinator the session is owed
 	noticeTaken  *Push           // the word the last head() put in a turn
@@ -324,6 +317,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 		l.brokenAfter = DefaultBrokenAfter
 	}
 	d.m = Start(d.Now())
+	d.own = map[string]bool{}
 	if d.staging == nil {
 		d.staging, d.stageRetry, d.stageSaid, d.stageDealt = map[string]bool{}, map[string]time.Time{}, map[string]bool{}, map[string]string{}
 	}
@@ -347,6 +341,9 @@ func (d *Daemon) Run(ctx context.Context) error {
 		storeOK := l.read(now)
 		if ctx.Err() != nil {
 			return nil
+		}
+		if storeOK {
+			l.proof()
 		}
 		for _, t := range l.turns() {
 			l.watch(t, now)
@@ -596,7 +593,7 @@ func (l *loop) tellKind(kind, subject, body string, now time.Time) {
 		l.d.Record(now.UTC().Format(time.RFC3339) + " no coordinator to tell: " + subject)
 		return
 	}
-	if _, err := l.b.Send(l.ctx, bus.Message{From: l.d.Friend, To: []string{to}, Kind: kind, Subject: subject, Body: subject + "\n" + body}); err != nil {
+	if _, err := l.d.send(l.ctx, l.b, bus.Message{From: l.d.Friend, To: []string{to}, Kind: kind, Subject: subject, Body: subject + "\n" + body}); err != nil {
 		l.d.Record(now.UTC().Format(time.RFC3339) + " telling " + to + " failed: " + err.Error() + ": " + subject)
 	}
 }
@@ -610,6 +607,9 @@ func (l *loop) ping(e bus.Entry, msg bus.Message, nonce, seat string, since, now
 	}
 	l.d.daemonPong(l.ctx, l.b, msg, nonce, now)
 	l.answered[e.Entry] = true
+	if msg.At.After(l.pingAt) {
+		l.pingAt, l.proofFrom = msg.At, ""
+	}
 	for _, p := range l.d.m.Ping(now, seatOf(seat, msg), since, nonce) {
 		l.say(p)
 	}
@@ -684,17 +684,97 @@ func (l *loop) read(now time.Time) bool {
 	return ok
 }
 
-// take is the messages of the hand that go in the next turn: oldest first,
+// takeEntries is the messages of the hand that go in the next turn: oldest first,
 // at most MaxBatch and BatchBytes, at least one when any waits.
-func (l *loop) take() (entries []string, msgs []bus.Message) {
+func (l *loop) takeEntries() (taken []bus.Entry, msgs []bus.Message) {
 	size := 0
 	for len(l.hand) > 0 && (len(msgs) == 0 || (len(msgs) < MaxBatch && size+len(l.hand[0].Fields["body"]) <= BatchBytes)) {
 		e := l.hand[0]
 		l.hand = l.hand[1:]
-		entries, msgs = append(entries, e.Entry), append(msgs, e.Message())
+		taken, msgs = append(taken, e), append(msgs, e.Message())
 		size += len(e.Fields["body"])
 	}
+	return taken, msgs
+}
+
+// take is takeEntries as the stream entries' ids and their messages.
+func (l *loop) take() (entries []string, msgs []bus.Message) {
+	taken, msgs := l.takeEntries()
+	for _, e := range taken {
+		entries = append(entries, e.Entry)
+	}
 	return entries, msgs
+}
+
+// dropSuperseded removes from the hand the daemon's own notices of which a newer one
+// is in hand and acks them with the newer's id on the record: a stale notice is never
+// a turn (docs/SPEC-FRIEND.md, the loop).
+func (l *loop) dropSuperseded(now time.Time) {
+	msgs := make([]bus.Message, len(l.hand))
+	for i, e := range l.hand {
+		msgs[i] = e.Message()
+	}
+	gone := SupersededNotices(msgs, l.d.Friend)
+	if len(gone) == 0 {
+		return
+	}
+	kept := l.hand[:0:0]
+	for _, e := range l.hand {
+		newer, dropped := gone[e.Message().ID]
+		if !dropped {
+			kept = append(kept, e)
+			continue
+		}
+		delete(l.inHand, e.Entry)
+		line := fmt.Sprintf("%s subject=%q superseded=%s", now.UTC().Format(time.RFC3339), e.Message().Subject, newer)
+		if _, err := l.d.Store.Ack(l.ctx, bus.StreamOf(l.d.Friend), l.d.Friend, e.Entry); err != nil {
+			l.d.status.StoreError = err.Error()
+			line += " ack=failed"
+			l.inHand[e.Entry] = true
+			kept = append(kept, e)
+		} else {
+			line += " acked=true"
+		}
+		l.d.Record(line)
+	}
+	l.hand = kept
+}
+
+// proof is the session's proof of life by any line it sends: while a challenge is
+// open, a bus line from the friend that the daemon did not send itself, written after
+// the newest ping, answers it as a pong would (docs/SPEC-FRIEND.md, the loop;
+// tla/Friend.tla, Pong).
+func (l *loop) proof() {
+	m := l.d.m
+	if m.Challenge == Quiet || l.pingAt.IsZero() {
+		return
+	}
+	from := l.proofFrom
+	if from == "" {
+		from = bus.IDAt(l.pingAt)
+	}
+	es, err := l.b.Log(l.ctx, from)
+	if err != nil {
+		return // ignored: the next step reads again, and the store's error is on the status from the read
+	}
+	for _, e := range es {
+		msg := e.Message()
+		l.proofFrom = "(" + e.Entry
+		if msg.From == l.d.Friend && !l.d.own[msg.ID] && msg.At.After(l.pingAt) {
+			m.Pong(l.d.Now(), m.Nonce)
+			return
+		}
+	}
+}
+
+// send is a message the daemon itself sends, its id kept so the session's own lines
+// are told from it (proof).
+func (d *Daemon) send(ctx context.Context, b *bus.Bus, m bus.Message) (bus.Message, error) {
+	sent, err := b.Send(ctx, m)
+	if err == nil {
+		d.own[sent.ID] = true
+	}
+	return sent, err
 }
 
 // startTurn runs deliver for t in its own goroutine, its context carrying the
@@ -726,17 +806,29 @@ func (l *loop) deliverBatch(t *turn) func(context.Context) result {
 	}
 }
 
+// startBatch is the one turn that carries every message in hand: the daemon's own
+// notices of which a newer one is in hand are dropped and acked first
+// (dropSuperseded), then the rest go in as one Envelope capped at the adapter's text
+// limit (TextLimit); a message that did not fit goes back to the head of the hand,
+// named by id in the text, and is not acked with this turn (docs/SPEC-FRIEND.md, the
+// loop; tla/Friend.tla, Deliver).
 func (l *loop) startBatch(now time.Time) {
+	l.dropSuperseded(now)
 	t := &turn{}
-	t.entries, t.msgs = l.take()
+	taken, msgs := l.takeEntries()
+	notice, pong := l.head()
+	t.notice = l.noticeTaken
+	text, shown := Envelope(msgs, now, l.d.Friend, TextLimit(l.d.Deliver), notice, pong)
+	l.hand = append(taken[shown:], l.hand...)
+	for _, e := range taken[:shown] {
+		t.entries = append(t.entries, e.Entry)
+	}
+	t.msgs, t.text = msgs[:shown], text
 	var subjects []string
 	for _, m := range t.msgs {
 		subjects = append(subjects, m.Subject)
 	}
 	t.subjects = fmt.Sprintf("%q", strings.Join(subjects, " | "))
-	notice, pong := l.head()
-	t.notice = l.noticeTaken
-	t.text = Batch(t.msgs, notice, pong)
 	l.busy = t
 	l.startTurn(t, now, l.deliverBatch(t))
 }
@@ -914,7 +1006,7 @@ func (d *Daemon) tellBroken(ctx context.Context, b *bus.Bus, brokenAfter int) bo
 	}
 	subject := fmt.Sprintf("friend %s: session %s broken: %s", d.Friend, s.SessionID, s.SessionReason)
 	body := subject + fmt.Sprintf("\nThe provider refused %d turns in a row the same way. The daemon delivers nothing into the session until it restarts; every message stays pending, none given up. Renew the session, then restart the daemon (nova-friend install again, or launchctl kickstart -k gui/<uid>/com.nova.friend-%s).\n", brokenAfter, d.Friend)
-	if _, err := b.Send(ctx, bus.Message{From: d.Friend, To: []string{to}, Subject: subject, Body: body}); err != nil {
+	if _, err := d.send(ctx, b, bus.Message{From: d.Friend, To: []string{to}, Subject: subject, Body: body}); err != nil {
 		d.status.StoreError = "telling " + to + " the session is broken: " + err.Error()
 		return false
 	}
@@ -937,7 +1029,7 @@ func seatOf(seat string, m bus.Message) string {
 // "Presence is her session's evidence"). A send that fails is the store's
 // error on the status.
 func (d *Daemon) daemonPong(ctx context.Context, b *bus.Bus, ping bus.Message, nonce string, now time.Time) {
-	_, err := b.Send(ctx, bus.Message{From: d.Friend, To: []string{ping.From}, Subject: DaemonPongSubject, Re: ping.ID, Body: "daemon-pong " + nonce + "\n"})
+	_, err := d.send(ctx, b, bus.Message{From: d.Friend, To: []string{ping.From}, Subject: DaemonPongSubject, Re: ping.ID, Body: "daemon-pong " + nonce + "\n"})
 	if err != nil {
 		d.status.StoreError = "daemon pong: " + err.Error()
 		return

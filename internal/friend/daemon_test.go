@@ -491,7 +491,7 @@ func TestWakeCheckIsAnsweredOnlyByTheSession(t *testing.T) {
 		require.Len(t, r.delivered, 2, "no wake turn of its own while the next turn carries the line: %v", r.delivered)
 		assert.NotContains(t, r.delivered[0], "nova-friend pong", "the running turn began before the ping")
 		assert.True(t, strings.HasPrefix(r.delivered[1], "Run this now, first, exactly as written: "+pongCommand("w1")+"\n"), r.delivered[1])
-		assert.Contains(t, r.delivered[1], Text(second))
+		assert.Contains(t, r.delivered[1], "[1/1] "+second.ID+" from=ada at="+second.At.Format(time.RFC3339)+" age=0m subject=more\n"+second.Body)
 		assert.Equal(t, Challenged, r.last().Challenge)
 	})
 
