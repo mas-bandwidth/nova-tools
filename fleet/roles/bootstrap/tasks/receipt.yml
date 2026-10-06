@@ -1,0 +1,23 @@
+# One line per host: what the phase left there. The versions are measured on
+# the host, never echoed from the inputs.
+- name: the versions on the host
+  ansible.builtin.command: { argv: "{{ item.argv }}" }
+  loop:
+    - { name: sops, argv: ["{{ nova_bin_dir }}/sops", --version, --disable-version-check] }
+    - { name: age, argv: ["{{ nova_bin_dir }}/age", --version] }
+    - { name: tailscale, argv: [tailscale, version] }
+    - { name: nova, argv: ["{{ nova_bin_dir }}/nova-update", version] }
+  loop_control: { label: "{{ item.name }}" }
+  register: bootstrap_versions
+  changed_when: false
+  check_mode: false
+  # ignored: under --check on a fresh host none is installed yet; the receipt says none
+  failed_when: false
+
+- name: the receipt
+  ansible.builtin.debug:
+    msg: >-
+      BOOTSTRAP host={{ inventory_hostname }} store={{ 'yes' if inventory_hostname in groups['fleet_store'] else 'no' }}
+      tailnet={{ nova_bootstrap_tailnet_ip | default('', true) or 'none' }}
+      {% for r in bootstrap_versions.results %}{{ r.item.name }}={{ ((r.stdout | default('')) | regex_search('v?[0-9]+[.][0-9]+[.][0-9]+[^ \n]*') or 'none') if r.rc | default(1) == 0 else 'none' }} {% endfor %}
+      {{- '(check: nothing changed)' if ansible_check_mode else '' }}

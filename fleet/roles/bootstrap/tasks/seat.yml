@@ -1,0 +1,28 @@
+# The seat on every host: the key of the host's seat (nova_seat) from the
+# owner's key directory (nova_bootstrap_seat_keys), mode 0600, and the sealed
+# secrets store (nova_bootstrap_secrets_store) at nova_secrets_store. Both are
+# copied from the machine running the play; the store is sops-sealed and
+# opens only with the seat's key. Neither is ever printed.
+- name: the seat key directory
+  ansible.builtin.file: { path: "{{ nova_secrets_key_dir }}", state: directory, mode: "0700" }
+
+- name: the directories the seat goes in, made by an earlier run (--check on a fresh host copies nothing)
+  ansible.builtin.stat: { path: "{{ item }}", get_checksum: false }
+  loop: ["{{ nova_secrets_key_dir }}", "{{ nova_secrets_store | dirname }}"]
+  register: bootstrap_seat_dirs
+
+- name: the seat's key
+  when: not ansible_check_mode or bootstrap_seat_dirs.results[0].stat.exists
+  ansible.builtin.copy:
+    src: "{{ nova_bootstrap_seat_keys }}/{{ nova_seat }}.key"
+    dest: "{{ nova_secrets_key_dir }}/{{ nova_seat }}.key"
+    mode: "0600"
+  no_log: true
+
+- name: the sealed secrets store
+  when: not ansible_check_mode or bootstrap_seat_dirs.results[1].stat.exists
+  ansible.builtin.copy:
+    src: "{{ nova_bootstrap_secrets_store }}/"
+    dest: "{{ nova_secrets_store }}/"
+    mode: "u=rwX,go="
+    directory_mode: "0700"
