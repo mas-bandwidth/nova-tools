@@ -348,6 +348,9 @@ MCSprintRulesLate.cfg	MCSprintRules.tla	pass	-	ignore-terminal	sprintrules	requi
 MCSprintRulesLateBrokenWaitAlways.cfg	MCSprintRules.tla	invariant	WaitOnce	ignore-terminal	sprintrules	required	-
 MCSprintRulesLateBrokenReturnUnstamped.cfg	MCSprintRules.tla	invariant	NeverStampedNeverReturned	ignore-terminal	sprintrules	required	-
 MCSprintRulesLateReachReturn.cfg	MCSprintRules.tla	invariant	NeverReturned	ignore-terminal	sprintrules	required	-
+MCSprintRulesReads.cfg	MCSprintRules.tla	pass	-	ignore-terminal	sprintrules	required	-
+MCSprintRulesReadsBrokenNoBound.cfg	MCSprintRules.tla	invariant	ReadAnswersBounded	ignore-terminal	sprintrules	required	-
+MCSprintRulesReadsBrokenTwinAll.cfg	MCSprintRules.tla	invariant	TwinsWiden	ignore-terminal	sprintrules	required	-
 MCSprintRulesGate.cfg	MCSprintRules.tla	pass	-	ignore-terminal	sprintrules	required	-
 MCSprintRulesGateBrokenStopFirst.cfg	MCSprintRules.tla	invariant	BaseStopsOnThird	ignore-terminal	sprintrules	required	-
 MCSprintRulesIdle.cfg	MCSprintRules.tla	pass	-	ignore-terminal	sprintrules	required	-

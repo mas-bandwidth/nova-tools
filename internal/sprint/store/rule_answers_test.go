@@ -236,15 +236,18 @@ func TestRuleBriefDefectMarksTheCardAndRaisesOnce(t *testing.T) {
 	assert.Len(t, h.answeredBy(sprint.RuleBriefDefect), 0, "marked, not answered")
 }
 
+// A broken read is answered by the read-broken rule (internal/sprint rules_read.go); with that
+// rule turned off in nova-config's sprint row it stays the coordinator's judgment.
 func TestABrokenReadStaysAJudgment(t *testing.T) {
 	t.Parallel()
 	h := ruled(t)
+	h.m.SetRulesOff(sprint.RuleReadBroken)
 	h.addReady("s1", 1, briefOf("flash", ""))
 	h.must(DealStep(sprint.DealReq{}))
 	h.attemptFoundBroken("s1-1", "internal/x.go:3 drops the error; return it")
 	h.startMachine()
 	h.machine()
-	assert.Len(t, h.nOpenOf(sprint.NReadBroken, "s1-1"), 1, "a reader's finding needs a mind")
+	assert.Len(t, h.nOpenOf(sprint.NReadBroken, "s1-1"), 1, "the rule is off: the finding is the coordinator's")
 	assert.Equal(t, 1, h.snap().Work.Card("s1-1").Int("attempt"))
 }
 
