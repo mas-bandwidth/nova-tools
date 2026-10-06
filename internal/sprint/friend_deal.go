@@ -370,6 +370,13 @@ func friendLoad(s *Snapshot, name string) int {
 // The pass keeps that judgment (pinConds) until the card is back on her row or
 // leaves ready and working.
 func friendDeal(s *Snapshot, cards []*Card, seats []FriendSeat) (p Plan, dealt, dealtWorking map[string]int) {
+	return friendDealPass(s, cards, seats, true)
+}
+
+// friendDealPass is friendDeal, with the reclaim of the fleet's dealt-ahead cards
+// (friendReclaim) when reclaim is set: a deal in passes (a pass of the cards above reads,
+// then the reads, then the rest) reclaims once, in its last pass, after the reads.
+func friendDealPass(s *Snapshot, cards []*Card, seats []FriendSeat, reclaim bool) (p Plan, dealt, dealtWorking map[string]int) {
 	free, lanes, seat := map[string]int{}, map[string]int{}, map[string]FriendSeat{}
 	dealt, dealtWorking = map[string]int{}, map[string]int{}
 	var up []string
@@ -486,7 +493,9 @@ func friendDeal(s *Snapshot, cards []*Card, seats []FriendSeat) (p Plan, dealt, 
 		p.Units = append(p.Units, u)
 	}
 	// then her idle lanes take what the fleet dealt ahead and no lane has taken yet
-	p.Units = append(p.Units, friendReclaim(s, seats, up, seat, free, lanes, dealt, declared, &p)...)
+	if reclaim {
+		p.Units = append(p.Units, friendReclaim(s, seats, up, seat, free, lanes, dealt, declared, &p)...)
+	}
 	return Lawful(p), dealt, dealtWorking
 }
 
