@@ -502,6 +502,9 @@ type whereView struct {
 	// Seat is the seat's last change (coordinator <name>): who gave or took
 	// it, when and why; absent while the seat has not moved since init.
 	Seat *sprint.SeatChange `json:"seat,omitempty"`
+	// IssuesPending is the issues landings have not closed on the forge yet, as the closer's
+	// last pass left them (where_issues.go), "" when none is.
+	IssuesPending string `json:"issues_pending,omitempty"`
 	// Holds is every hold in force (hold <name>... --reason), with --cards (the dashboard's
 	// read): what is held, its kind, the reason, by whom and since when; the tables' status
 	// cells read held beside it.
@@ -904,6 +907,9 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration, a
 	// record carries them (weight.go; store.WhereRecord)
 	if v.Critical = facts.Critical; len(v.Critical) > 0 {
 		b.WriteString(sprint.CriticalLine(v.Critical) + "\n")
+	}
+	if v.IssuesPending = issuesPending(shapes); v.IssuesPending != "" {
+		b.WriteString(issuesLine(v.IssuesPending) + "\n")
 	}
 	b.WriteString("\n")
 	parts := map[string]string{}
