@@ -1248,6 +1248,33 @@ bound" on a card past the count says the same and offers the same. `answer` appl
 only a verb the judgment prints, so it cannot rework such a card
 (`TestTheAnswerPathCannotReworkACardAtTheBriefBound`), and the verb refuses it besides.
 
+**The bound is two identical findings** (the card the-bound-is-two-identical-findings,
+after the night of 2026-10-05, when cards with the fix first in their brief still ran three
+and four lanes on one finding, reworded by its reader each time, before the attempt cap
+stopped them). Two findings are identical when the same class of reader names the same
+file and line: `sprint.FindingKey` is `<reader> at <file>:<line>`, the reader's row of the
+readers table case folded (one reader is one class of reader; failed work's report is the
+class `work`) and the first `path/file.ext:<line>` the finding names, a leading `./` not
+part of it; a finding that names no file and line keeps its whole-text class
+(`sprint.FindingClass`). `rework` keeps each attempt's key on the primary, `finding_keys`
+(`attempt <n>: <key>`, one line an attempt, beside `findings`); a card admitted before it
+reads the attempt its `finding` carries by that finding and `finding_reader`. At the read
+that finds an attempt broken, and at `rework`, the card is at its brief's bound first by
+`sprint.AtIdenticalFindings` (steps_review.go): its finding at this attempt has the key of
+the attempts before it, as many in a row as the bound, all since the brief last changed.
+Then the brief defect is raised at once, in place of "a reader found it broken", carrying
+every finding: `<id> has failed the same way twice (attempts <n> to <m>, the same finding:
+<key>); the brief is wrong, not the worker; findings: attempt <n>: <first sentence>; attempt
+<m>: <first sentence>` (a whole-text key at the bound of two keeps the line above), and
+`rework` refuses it with that line and the same `run:`. The attempt cap stays only for
+findings that differ. The bound is a setting, `sprint.IdenticalBound`: the stream's control
+card's `identical`, else the work table's property `identical`, else 2; a value under 2 is
+no setting, since one finding is never a repeat; a setting above 2 holds for whole-text
+findings too (`TestTwoIdenticalFindingsStopACard`). Not yet: a verb that writes the setting
+(`set` and `stream set` take no `--identical`), and the rule's answer paths and the failed
+finish (rules.go, rules_read.go, steps_work.go, friend reads), which still ask
+`sprint.AtBriefBound` alone; the read and `rework` hold the bound for them.
+
 **A card replaced by its twin** (the coordinator, 2026-10-04, measured at 1:30 PM: the fleet ran 4
 of 68 slots while 311 cards sat behind 21 judgments "a primary is blocked on something
 dropped", up to 1h50m old; each was raised because a card had been re-cut as a twin, its
