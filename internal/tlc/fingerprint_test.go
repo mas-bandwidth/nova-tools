@@ -113,11 +113,24 @@ func TestCheckRunnerComparesTheEmbeddedCheckedFilesWithTheRoot(t *testing.T) {
 func TestTheFileThatReadsAPlanRowIsAResultFile(t *testing.T) {
 	t.Parallel()
 	fset := token.NewFileSet()
-	pkgs, err := parser.ParseDir(fset, ".", func(fi os.FileInfo) bool { return !strings.HasSuffix(fi.Name(), "_test.go") }, 0)
+	entries, err := os.ReadDir(".")
 	require.NoError(t, err)
+	pkgs := map[string]map[string]*ast.File{}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") || strings.HasSuffix(e.Name(), "_test.go") {
+			continue
+		}
+		file, err := parser.ParseFile(fset, e.Name(), nil, 0)
+		require.NoError(t, err)
+		name := file.Name.Name
+		if pkgs[name] == nil {
+			pkgs[name] = map[string]*ast.File{}
+		}
+		pkgs[name][e.Name()] = file
+	}
 	where := map[string]string{}
 	for _, pkg := range pkgs {
-		for name, file := range pkg.Files {
+		for name, file := range pkg {
 			ast.Inspect(file, func(n ast.Node) bool {
 				switch d := n.(type) {
 				case *ast.FuncDecl:
