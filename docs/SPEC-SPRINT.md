@@ -3278,6 +3278,56 @@ it quiet until the episode ends (the next is raised again); `wait --for` until t
 much running time has passed, when one that still stands is raised again; `off` takes
 an alarm off, and an open one clears.
 
+### Drift alarms
+
+On 2026-10-04 and 2026-10-05 the branches drifted for hours before anyone looked: the live
+server on a side branch, cards on temporary and dead branches, and the base red three times
+through the lander's narrow gate (cards landing unwired code), each blocking the promotion to
+dev. The owner, 2026-10-05: "How can we ensure that you ALWAYS do the merging properly from
+now on, vs. drifting and forgetting?" and "Prevention is better than cure". So every drift is
+a fact the machine raises (internal/sprint drift.go, `TickDrift`, in the deadlines part with
+the backlog alarms). Four judgments, judged on the facts the binding reads for the tick
+(`TickReq.Drift`, `sprint.DriftFacts`: `ReadDrift` over a clone with dev and the base
+fetched, through the tree's git runner, and the last gate run at the base):
+
+- **the base is ahead of dev past its drift** (`the base is ahead of dev past its drift`),
+  one for the sprint: origin's base holds more than `drift_commits` commits dev does not
+  (`set --drift-commits <n>`, default 25), or the oldest of them is older than `drift_hours`
+  hours of running time (`set --drift-hours <n>`, default 2); it names the count, the age
+  and the promotion to run;
+- **an open card is cut on another base** (`an open card is cut on another base`), one on
+  each placed primary not landed, not a sentinel and not of the promotion stream, whose
+  brief's `BASE:` names a branch other than the base (a card whose `REPO:` names another
+  repository is not judged); it names the card and the branch;
+- **the live server runs off the base** (`the live server runs off the base`), one for the
+  sprint: the running server's build commit is not an ancestor of the base's tip (`git
+  merge-base --is-ancestor`, the check server-from-base-only makes at a switch), or is in
+  no branch fetched;
+- **the base is red at its tip** (`the base is red at its tip`), one for the sprint: the
+  last gate run at the base's tip was red, and it was the whole-tree gate with the
+  functional class tests included. The lander's narrow gate alone never judges it, green
+  or red, and a gate run at an earlier tip says nothing of the tip now.
+
+Each is one judgment while its drift holds (keyed by its type and subject, never by its
+line, so a count that moves is the same episode): written once when it starts, raised
+again every 10 minutes of running time while it holds, as the coordinator's pass raises
+its own (the judgment rewritten with the latest facts and its raises counted in its
+Before, and a happened note `a judgment still holds: raised again` to the coordinator),
+never one a tick, and closed when the drift stops. Between raises a judgment whose facts
+moved is rewritten in place with no push. A fact the binding could not read this tick (no
+facts, no server commit, no whole-tree gate at the tip) neither raises nor closes: the
+open judgment stands as it was last judged, and is raised again on time. The decisions are
+`act` and `wait`: `wait --for` quiets one until its review time; there is no ack, a drift
+is cured, not seen. The episode machine is the pass's, tla/CoordinatorPass.tla. The test is
+`TestEveryDriftIsRaisedAgainEveryTenMinutesWhileItHolds` (a twin store, a twin repository
+and a fake clock).
+
+**Not yet live:** the store's tick (internal/sprint/store tick.go) does not yet set
+`TickReq.Drift`, and no `set` flag reaches `drift_commits` or `drift_hours` from the command
+line (cmd/nova-sprint), so on the running machine no drift judgment is raised until a
+follow-up card has the binding read `ReadDrift` beside the ticks (never in one: a fetch never
+holds a tick) and record the whole-tree gate's last run at the base.
+
 ### The coordinator's pass
 
 The owner, 2026-10-05: "everything I described above needs to be mechanical, so you
