@@ -506,6 +506,34 @@ func TestFunctionalRefusesWhatItCannotRun(t *testing.T) {
 	}
 }
 
+// TestFunctionalPrintsPathsAcceptedByGoTest pins that `nova-ci functional ./...`
+// prints package paths in the form `go test -timeout 600s` accepts (./internal/x/),
+// and a test runs the printed line's paths through `go list` in a temp module.
+func TestFunctionalPrintsPathsAcceptedByGoTest(t *testing.T) {
+	t.Parallel()
+
+	bin := buildCLI(t)
+	dir := t.TempDir()
+
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/testmod\n\ngo 1.24\n"), 0o644))
+
+	pkgDir := filepath.Join(dir, "internal", "x")
+	require.NoError(t, os.MkdirAll(pkgDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(pkgDir, "x.go"), []byte("package x\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(pkgDir, "x_test.go"), []byte("//go:build functional\n\npackage x\n\nimport \"testing\"\n\nfunc TestX(t *testing.T) {}\n"), 0o644))
+
+	out := runIn(t, dir, bin, "functional", "./...")
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	require.Len(t, lines, 2, "output = %q, want paths on line 1 and run pattern on line 2", out)
+
+	paths := strings.Fields(lines[0])
+	require.Equal(t, []string{"./internal/x/"}, paths)
+	assert.Equal(t, "^(TestX)$", lines[1])
+
+	listOut := runIn(t, dir, "go", append([]string{"list"}, paths...)...)
+	assert.Contains(t, listOut, "example.com/testmod/internal/x")
+}
+
 // --max bounds the finding lines slowtests prints: at most --max CI-SLOW lines,
 // then one CI-SLOW MORE shown=<n> total=<n> line naming the flag that prints
 // the rest. --max 0 prints every finding with no MORE line, and a negative
