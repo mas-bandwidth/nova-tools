@@ -70,6 +70,53 @@ func (s *Snapshot) ownModelReaderUp(tier string) bool {
 	return false
 }
 
+// friendReaderSeat is the seat of the friend whose reader this is (reader-<name>), when
+// the snapshot seats her and her friend row names a class (friendTiers). Her class is
+// read from that row (nova-config friend), never from her readers-table cell and never
+// from a route (readerReadsTier).
+func (s *Snapshot) friendReaderSeat(reader string) (FriendSeat, bool) {
+	name, ok := strings.CutPrefix(reader, ReaderPrefix)
+	if s == nil || !ok || name == "" {
+		return FriendSeat{}, false
+	}
+	i := slices.IndexFunc(s.Friends, func(f FriendSeat) bool { return f.Name == name })
+	if i < 0 || len(friendTiers(s.Friends[i])) == 0 {
+		return FriendSeat{}, false
+	}
+	return s.Friends[i], true
+}
+
+// The order a read is asked in (docs/SPEC-SPRINT.md section 6, the order of a read):
+// the friend readers of the class first, those on another login than the attempt's
+// worker before the worker's own (two readers, two minds), then the readers that draw
+// a route of the tier. A friend reader's read draws no route (readFieldsOf).
+const (
+	rankFriendOther = iota // a friend reader of the class on another login than the worker
+	rankFriendSame         // the worker's own friend reader
+	rankRoute              // a fleet reader: it draws a route of the tier
+)
+
+// readerRank is where the reader stands in the order a read of pr is asked in.
+func (s *Snapshot) readerRank(reader string, pr *Card) int {
+	if !s.ownModelReader(reader) || !s.readerReadsTier(reader, s.readTierOf(pr)) {
+		return rankRoute
+	}
+	if w := attemptWorker(s, pr.ID, pr.Int("attempt")); w != "" && reader == ReaderPrefix+w {
+		return rankFriendSame
+	}
+	return rankFriendOther
+}
+
+// readFieldsOf is the route fields of a read of pr asked of the reader: the tier alone
+// when the reader brings its own model, for no route is looked for, else the route
+// drawn as a work card's is (readRouteOf).
+func (s *Snapshot) readFieldsOf(ri routeIndexes, reader string, pr *Card, avoid []string) map[string]string {
+	if s.ownModelReader(reader) {
+		return map[string]string{FieldTier: s.readTierOf(pr)}
+	}
+	return s.readRouteOf(ri, pr, avoid)
+}
+
 // readUsageFields is what a verdict on the read card c records of the run beside its
 // usage when the read drew no route: the model (provider/model) and the harness its
 // reader's usage line names (model=, harness=), each only where the card names none.

@@ -215,7 +215,7 @@ func Ask(s *Snapshot, r AskReq) Plan {
 		}
 		// each read to a free reader with room, the finder's first (askPicks)
 		finder := finders[c.ID]
-		chosenReaders := askPicks(rr, finder, want, free, room)
+		chosenReaders := s.askPicks(c, rr, finder, want, free, room)
 		// A return is not a read (tla/DirtyTick.tla, PlaceReads and
 		// JudgedOnlyAfterTheBound): a read handed back goes to a free
 		// reader when there is one, its card retired; when none is free its
@@ -262,7 +262,7 @@ func Ask(s *Snapshot, r AskReq) Plan {
 		}
 		for _, rc := range inPlace {
 			set := map[string]string{"asked": stamp(s.Now)}
-			maps.Copy(set, s.readRouteOf(ri, c, failed))
+			maps.Copy(set, s.readFieldsOf(ri, rc.F("reader"), c, failed))
 			takenBack = append(takenBack, change(Readers, setEntry(rc, set, FieldReturned)))
 		}
 		u := Unit{Key: c.ID, Stream: c.Row, Changes: takenBack}
@@ -278,7 +278,7 @@ func Ask(s *Snapshot, r AskReq) Plan {
 			if rd == finder {
 				fields[FieldFinderRead] = "1" // placed on purpose: the level leaves it where it is
 			}
-			maps.Copy(fields, s.readRouteOf(ri, c, failed))
+			maps.Copy(fields, s.readFieldsOf(ri, rd, c, failed))
 			maps.Copy(fields, s.decideFields(c, !another && !decided && i == 0))
 			cardID, _ := ReadCardForAsk(s, c.ID, attempt, rd)
 			u.Changes = append(u.Changes, change(Readers, createEntry(cardID, rd, Asked, c.Score, fields)))

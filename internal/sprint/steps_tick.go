@@ -979,7 +979,7 @@ func TickAsk(s *Snapshot, r TickReq) (Plan, int) {
 			ids = append(ids, c.ID)
 		default:
 			finder := finders[c.ID]
-			picked := askPicks(rr, finder, want, free, room)
+			picked := s.askPicks(c, rr, finder, want, free, room)
 			if len(picked)+returned < want {
 				for _, rd := range picked {
 					room[rd] = room[rd].after(-1)

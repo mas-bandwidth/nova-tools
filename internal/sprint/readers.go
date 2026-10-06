@@ -412,7 +412,11 @@ func (s *Snapshot) askFinders(cards []*Card, another bool, room map[string]reade
 // room, so the room, not a turn count, keeps the readers' loads even. It
 // moves no index: the ask moves it past the readers it picked in turn, never
 // the finder (an out-of-turn read leaves the round where it was).
-func askPicks(rr *round, finder string, want int, free []string, room map[string]readerRoom) []string {
+//
+// The rest are picked in the order a read is asked in (readerRank): the friend
+// readers of the class on another login than the attempt's worker, then the
+// worker's own, then the readers that draw a route; by room within each.
+func (s *Snapshot) askPicks(pr *Card, rr *round, finder string, want int, free []string, room map[string]readerRoom) []string {
 	if want <= 0 {
 		return nil
 	}
@@ -421,7 +425,16 @@ func askPicks(rr *round, finder string, want int, free []string, room map[string
 		picked = append(picked, finder)
 		free = without(free, []string{finder})
 	}
-	return append(picked, rr.pickByRoom(want-len(picked), free, room)...)
+	for rank := rankFriendOther; rank <= rankRoute && len(picked) < want; rank++ {
+		var group []string
+		for _, rd := range free {
+			if s.readerRank(rd, pr) == rank {
+				group = append(group, rd)
+			}
+		}
+		picked = append(picked, rr.pickByRoom(want-len(picked), group, room)...)
+	}
+	return picked
 }
 
 // sweepReads is the readers' rebalance safety: every read asked or reading of a
@@ -613,7 +626,10 @@ func levelReads(s *Snapshot, p *Plan) {
 			}
 			for _, rd := range up {
 				targetID, ok := ReadCardForAsk(s, q[i].F("primary"), q[i].Int("attempt"), rd)
-				if !ok || planned[targetID] || (tier != "" && !s.readerServesTier(rd, tier)) {
+				// nor to a reader later in the order a read is asked in (readerRank): a
+				// friend's read is not levelled onto a route
+				later := pr != nil && s.readerRank(rd, pr) > s.readerRank(long, pr)
+				if !ok || planned[targetID] || later || (tier != "" && !s.readerServesTier(rd, tier)) {
 					avoid = append(avoid, rd)
 				}
 			}

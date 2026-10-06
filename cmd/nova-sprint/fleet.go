@@ -82,7 +82,10 @@ reader that is not up is asked of another at the next tick, and a card that
 needs more readers than are up is not asked: the tick raises one judgment
 (fewer than two readers up). A reader row carries the tiers it reads: reader add --tiers
 flash[,pro,heavy,frontier] and reader set --tiers. Omitted, all and default
-store an empty cell, which means every tier (today's behaviour). The ask
+store an empty cell, which means every tier (today's behaviour). A friend's
+reader (reader-<friend>) reads the tiers her friend row's class covers, not its
+cell, and is asked a read before any reader that draws a route; on another
+login than the card's worker first. The ask
 counts a reader only for a primary whose read tier it reads, and never asks
 it a read outside those tiers. A card with fewer readers of its tier up than
 it needs raises that same judgment, and a returned read is never asked again
