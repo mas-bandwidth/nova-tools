@@ -126,7 +126,7 @@ func Stats(s *Snapshot) PassStats {
 				blame := w.F(FieldBlame)
 				class := w.F(FieldDefectClass)
 				if blame == "" && (w.F("ok") == "no" || w.Col == DoneFailed) {
-					blame, class, _, _ = ClassifyAttempt(w.F("report"), true, "")
+					blame, class, _, _ = ClassifyAttempt(w.F("report"), true)
 				}
 				switch {
 				case w.F("ok") == "yes" || w.Col == DoneOK:

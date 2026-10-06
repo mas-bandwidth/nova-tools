@@ -21,38 +21,41 @@ func TestOkPercentCountsOnlyAttemptsAWorkerRan(t *testing.T) {
 
 	// 2. ClassifyAttempt and finding extraction:
 	t.Run("ClassifyAttempt", func(t *testing.T) {
-		blame, class, finding, fix := ClassifyAttempt("status: ok\nall tests pass\nfix: card-123", false, "")
+		blame, class, finding, fix := ClassifyAttempt("status: ok\nall tests pass\nfix: card-123", false)
 		assert.Equal(t, BlameNone, blame)
 		assert.Equal(t, "card-123", fix)
 
 		// Brief defect: PATHS do not hold
-		blame, class, finding, _ = ClassifyAttempt("PATHS: paths does not hold the named file\nstatus: failed", true, "")
+		blame, class, finding, _ = ClassifyAttempt("PATHS: paths does not hold the named file\nstatus: failed", true)
 		assert.Equal(t, BlameCoordinator, blame)
 		assert.Equal(t, DefectPaths, class)
 		assert.Contains(t, finding, "paths does not hold")
 
 		// Brief defect: TEST name does not exist
-		blame, class, _, _ = ClassifyAttempt("finding: test name does not exist in module", true, "")
+		blame, class, _, _ = ClassifyAttempt("finding: test name does not exist in module", true)
 		assert.Equal(t, BlameCoordinator, blame)
 		assert.Equal(t, DefectTestName, class)
 
 		// Brief defect: STOP contradicts
-		blame, class, _, _ = ClassifyAttempt("finding: stop contradicts the tree", true, "")
+		blame, class, _, _ = ClassifyAttempt("finding: stop contradicts the tree", true)
 		assert.Equal(t, BlameCoordinator, blame)
 		assert.Equal(t, DefectBrief, class)
 
 		// Provider failure:
-		blame, class, _, _ = ClassifyAttempt("provider failure: 429 rate limit exceeded", true, "")
+		blame, class, _, _ = ClassifyAttempt(cardhdr.EndProvider+": 429 rate limit exceeded", true)
 		assert.Equal(t, BlameProvider, blame)
 		assert.Equal(t, DefectProvider, class)
+		blame, class, _, _ = ClassifyAttempt("worker found a 429 in an API test", true)
+		assert.Equal(t, BlameWorker, blame, "untyped report text cannot fabricate provider blame")
+		assert.Equal(t, DefectWork, class)
 
 		// Launch refused:
-		blame, class, _, _ = ClassifyAttempt("staging refused: docker daemon down", true, "")
+		blame, class, _, _ = ClassifyAttempt(cardhdr.EndStaging+": docker daemon down", true)
 		assert.Equal(t, BlameCoordinator, blame)
 		assert.Equal(t, DefectLaunchRefused, class)
 
 		// Worker failure:
-		blame, class, _, _ = ClassifyAttempt("compiler error: unexpected token", true, "")
+		blame, class, _, _ = ClassifyAttempt("compiler error: unexpected token", true)
 		assert.Equal(t, BlameWorker, blame)
 		assert.Equal(t, DefectWork, class)
 	})
@@ -119,7 +122,7 @@ func TestOkPercentCountsOnlyAttemptsAWorkerRan(t *testing.T) {
 		assert.Equal(t, 1, w.s.Fleet.Count("m1", DoneOK))
 		assert.Equal(t, 1, w.s.Fleet.Count("m1", DoneFailed), "worker failure charged to m1")
 
-		// Card 3: Launch refusal (staging refused)
+		// Card 3: launch refusal before a lane starts
 		w.must(Add(w.s, AddReq{Stream: "s1", Cards: []CardAdd{{ID: "s1-3", Brief: "brief 3"}}}))
 		p, _ = TickDeal(w.s, TickReq{})
 		w.must(p)
@@ -131,17 +134,17 @@ func TestOkPercentCountsOnlyAttemptsAWorkerRan(t *testing.T) {
 			Sel:    Sel{IDs: []string{"s1-3.w1"}},
 			Gens:   gensOf(w.s, "s1-3.w1"),
 			Failed: true,
-			Report: cardhdr.EndStaging + ": staging sandbox could not start",
+			Report: cardhdr.EndLaunch + ": worker process could not start",
 		}))
 		// Refusal is NOT counted in DoneFailed of m1:
 		assert.Equal(t, 1, w.s.Fleet.Count("m1", DoneOK))
-		assert.Equal(t, 1, w.s.Fleet.Count("m1", DoneFailed), "staging refusal not charged to m1 failed")
+		assert.Equal(t, 1, w.s.Fleet.Count("m1", DoneFailed), "launch refusal not charged to m1 failed")
 		wc3 := w.s.Fleet.Card("s1-3.w1")
 		require.NotNil(t, wc3)
 		assert.Equal(t, Withdrawn, wc3.Col)
 		assert.Equal(t, BlameCoordinator, wc3.F(FieldBlame))
 		assert.Equal(t, DefectLaunchRefused, wc3.F(FieldDefectClass))
-		assert.Equal(t, 0, wc3.Int(FieldAttemptsRan), "refusal does not consume attempt bound")
+		assert.Equal(t, 0, w.s.Work.Card("s1-3").Int(FieldAttemptsRan), "refusal does not consume attempt bound")
 
 		// Card 4: Provider failure (take ended)
 		w.must(Add(w.s, AddReq{Stream: "s1", Cards: []CardAdd{{ID: "s1-4", Brief: "brief 4"}}}))
@@ -165,7 +168,7 @@ func TestOkPercentCountsOnlyAttemptsAWorkerRan(t *testing.T) {
 		assert.Equal(t, Withdrawn, wc4.Col)
 		assert.Equal(t, BlameProvider, wc4.F(FieldBlame))
 		assert.Equal(t, DefectProvider, wc4.F(FieldDefectClass))
-		assert.Equal(t, 0, wc4.Int(FieldAttemptsRan), "provider failure does not consume attempt bound")
+		assert.Equal(t, 0, w.s.Work.Card("s1-4").Int(FieldAttemptsRan), "provider failure does not consume attempt bound")
 
 		// Card 5: Brief defect (PATHS do not hold)
 		w.must(Add(w.s, AddReq{Stream: "s1", Cards: []CardAdd{{ID: "s1-5", Brief: "brief 5"}}}))
@@ -191,7 +194,7 @@ func TestOkPercentCountsOnlyAttemptsAWorkerRan(t *testing.T) {
 
 		// Recount plan re-derives the counts consistently:
 		plan, rows := RecountPlan(w.s)
-		assert.False(t, plan.Empty())
+		assert.True(t, plan.Empty(), "online accounting already matches a recount")
 		var m1Row RowRecount
 		for _, r := range rows {
 			if r.Row == "m1" {
@@ -201,6 +204,10 @@ func TestOkPercentCountsOnlyAttemptsAWorkerRan(t *testing.T) {
 		}
 		assert.Equal(t, 1, m1Row.AfterOK)
 		assert.Equal(t, 1, m1Row.AfterFail)
+		w.must(plan)
+		again, againRows := RecountPlan(w.s)
+		assert.True(t, again.Empty(), "a second recount writes nothing")
+		assert.Equal(t, rows, againRows, "a second recount reports the same before and after counts")
 
 		// FindDefects finds the coordinator and provider defects:
 		defects := FindDefects(w.s, time.Time{}, "")
