@@ -50,6 +50,7 @@ var DefaultCatalog = []Entry{
 	// internal/
 	E("internal/atomicfile", "atomic file write: standard-library rename beside the target", "go test ./internal/atomicfile", "go test ./internal/atomicfile"),
 	E("internal/bounded", "bounded readers and byte buffers", "go test ./internal/bounded", "go test ./internal/bounded"),
+	E("internal/bench", "the one bench runner: copy a tree to a per-run directory on the Linux bench, run one command there under nice with the bench cache, remove the directory it made, fall back when the host does not answer", "go test ./internal/bench", "go test ./internal/bench"),
 	E("internal/binstamp", "a binary file's stamp: a loop stops when its own binary was replaced", "go test ./internal/binstamp", "go test ./internal/binstamp"),
 	E("internal/buildinfo", "binary identity and version info", "go test ./internal/buildinfo", "go test ./internal/buildinfo"),
 	E("internal/bus", "the message bus over Redis streams: the rules (send, recv, ack, peek, log) over a Store of the few commands used, the Redis store and the in-memory fake", "go test ./internal/bus", "go test -tags functional ./internal/bus"),
