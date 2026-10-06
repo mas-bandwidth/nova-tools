@@ -11,7 +11,8 @@ func TestUnpinVerb(t *testing.T) {
 	t.Parallel()
 	w := friendWorld(t, friendBrief("only friend amy"), friendBrief("friend bob"), friendBrief("friend amy"))
 	original := w.s.Primary("s1-1").F("brief")
-	w.must(FriendDeal(w.s, []*Card{w.s.Primary("s1-3")}, []FriendSeat{{Name: "amy", Width: 1, Status: Up, Class: "flash,pro"}}))
+	dealt, _, _ := friendDeal(w.s, []*Card{w.s.Primary("s1-3")}, []FriendSeat{{Name: "amy", Width: 1, Status: Up, Class: "flash,pro"}}) // the tick's friend deal (TickDeal)
+	w.must(dealt)
 	w.s.Running = true
 	p := Unpin(w.s, UnpinReq{Stream: "s1", Reason: "share work", Who: "tester"})
 	require.Len(t, p.Units, 2)
