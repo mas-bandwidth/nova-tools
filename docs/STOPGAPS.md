@@ -1,7 +1,7 @@
 # The stopgaps
 
-The coordinator's hand scripts of 2026-10-04 and 2026-10-05, run on the seat's machine (the
-Studio) while the verbs that do their jobs were owed. Each row names the script as it runs, the
+The coordinator's hand scripts of 2026-10-04 and 2026-10-05, run on the seat's machine while
+the verbs that do their jobs were owed. Each row names the script as it runs, the
 card that replaces it, the verb that card makes, and the proof that the verb does the job: the
 test (the card's `TEST:`) and one real run of the verb doing the script's work on the sprint.
 
