@@ -3250,6 +3250,35 @@ one line per resolved ledger, `ledger <path>: resolved as the union of removals
 (-n left, -m right)` (the batch's `NOTE`), and the card's merge card and timeline
 say the ledgers were resolved as the union of both sides' removals.
 
+**Append-only records, keyed run records and the tables lock.** More file classes never
+fail a landing (docs/STANDARD.md, the file classes). The append-only record is
+`tla/CASES.tsv` (`appendOnlyRecords`, `cmd/nova-sprint/landappend.go`): rows are only
+appended and their order means nothing, so `.gitattributes` marks it `merge=union` and git
+keeps both sides' rows without stopping. After every merge that made a commit `land`
+checks each append-only record the merge changed against the merge base and refuses a base
+row that is missing or removed (`dedupeMerge`), then drops a row that came twice
+(`dedupeRows`, the first of each kept), amending the merge commit, and logs
+`record <path>: <n> repeated rows dropped after the merge`. A merge that does stop in
+one (a tree whose `.gitattributes` lacks the line) is resolved by `land` as the tip's
+rows then the card's added rows, each once (`unionAppended`), logged as `record <path>:
+resolved as the union of appended rows (+n tip, +m card)`. A side that removes a row of
+the base is no append: the conflict stands, the merge is aborted and the card is stuck,
+its reason naming the row, so a row is never lost by a resolution. The run table
+`tla/RUNS.tsv` is keyed by case config: a conflict in it is resolved by config
+(`resolveRunsByConfig`), keeping each side's row for a case it changed (refused if both
+sides changed the same case), logged as `record <path>: resolved by config (+n tip, +m card)`.
+The tables lock `internal/sprint/TABLES.lock` is generated from `schema.go`: a conflict
+in it is not merged but regenerated (`regenTablesLock`): the tip's comment lines, the comment
+lines the card added, and a body rendered from the schema as built (the text
+`TestSprintTablesAreLocked` renders), logged as `generated <path>: regenerated from the
+schema at the merge`. These resolutions run first; a merge left with no other unmerged
+path is committed as `land <id> (sprint stream <s>)`, and any other unmerged path goes on
+to the shrink-only ledgers and the generated families above. The ledgers that may only
+shrink merge by intersection: a row survives only if both sides keep it
+(`unionRemovals`, above). Held by `TestAnAppendOnlyRecordConflictMergesByUnion`,
+`TestATablesLockConflictIsRegeneratedFromTheSchema` and
+`TestTheTablesLockRegeneratesToItself` (`cmd/nova-sprint`).
+
 **The landed score.** Once every stream of the run has landed what it could,
 `land` scores each landed card's merge diff (the diff its checks read) against
 the card's brief with nova-decide's score decision (docs/SPEC-NOVA-DECIDE.md

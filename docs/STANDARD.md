@@ -120,6 +120,18 @@ Each rule names the class test that enforces it. A class test reads this reposit
 9. **No `os.RemoveAll` of a computed path** — deletion is a verb over a validated path below a root (`removeall`: `TestRemoveAllOnlyOnTempOrThroughSafepath`).
 10. **A test writes and lists only inside its own `t.TempDir()`** — never `os.TempDir()`, and every path a tool writes is named there (`testoutpath`: `TestToolRunsInTestsWriteIntoATempDir`; `sharedtemp`: `TestNoTestGlobsTheSharedTempDir`).
 
+## 9a. The file classes a merge treats differently
+
+A merge never costs a landing or a model's hand-resolution for a file whose right answer is a function of its sides. Each class has one resolution, held by the lander (`cmd/nova-sprint/landappend.go`, `landledger.go`, `ledgerunion.go`; docs/SPEC-SPRINT.md section 7):
+
+- **Append-only records** (`tla/CASES.tsv`): rows are only added and their order means nothing. Marked `merge=union` in `.gitattributes`; after the merge the lander checks against the merge base and refuses a base row that is missing, then drops a repeated row. A side that removes a row is refused, never resolved.
+- **Keyed records** (`tla/RUNS.tsv`): rows are keyed by case config; resolved by config (each side's row for a case it changed, refused if both sides changed the same case).
+- **Ledgers that may only shrink** (`shrinkonly.ShrinkOnly`): merged by intersection, a row kept only if both sides keep it, counts lowered by both.
+- **Generated files** (the generality ledgers, the AGENTS.md maps, `internal/sprint/TABLES.lock`): never merged by hand; the lander takes the tip's side and regenerates them from their generator at the merged tree.
+- **Everything else** is a conflict as before: the card is stuck with the line named.
+
+A new file of the first four classes is added to the lander's list and to this section in the same change.
+
 ## 10. Landing
 
 Every change is small, is read cold by a reader with no memory of the author's reasoning, with mutation probes where a rule is claimed, and lands only on that read. The reader's checklist holds library first (section 7): hand-rolled code a library already does is named, with the lines it would remove. A class test that goes red is fixed at its cause, never weakened, never exempted without a written reason, and a text is never reworded so a check reads it differently. A release ships the very best code of the moment, everything known fixed first, its docs written once from the finished binaries, its notes for humans and AIs.
