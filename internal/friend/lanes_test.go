@@ -308,7 +308,7 @@ func TestLanesRunACardDealtAgainAtItsGeneration(t *testing.T) {
 			assert.Equal(t, filepath.Join(dir, "inbox", tc.want, "BRIEF.md"), c.Brief)
 			assert.Equal(t, filepath.Join(dir, "outbox", tc.want), c.Outbox)
 			assert.Equal(t, "15", c.Epoch())
-			assert.Equal(t, [][]string{{"progress", "--as", "friend-a", "c", "--epoch", "15"}}, ProgressArgv("friend-a", []Card{c}))
+			assert.Equal(t, [][]string{{"progress", "--as", "friend.friend-a", "c", "--epoch", "15"}}, ProgressArgv("friend-a", []Card{c}))
 		})
 	}
 }
@@ -326,7 +326,7 @@ func TestLanesUseGenerationJobsBeforeTheFirstClear(t *testing.T) {
 	require.True(t, found)
 	assert.Equal(t, filepath.Join(job, "BRIEF.md"), c.Brief)
 	assert.Equal(t, "0", c.Epoch())
-	assert.Equal(t, [][]string{{"progress", "--as", "friend-a", "c.w1", "--epoch", "0"}}, ProgressArgv("friend-a", []Card{c}))
+	assert.Equal(t, [][]string{{"progress", "--as", "friend.friend-a", "c.w1", "--epoch", "0"}}, ProgressArgv("friend-a", []Card{c}))
 }
 
 // The queue's recorded job wins over newer-looking stale directories. A missing
@@ -346,7 +346,7 @@ func TestNextCardReadsCardAtHerGeneration(t *testing.T) {
 	require.True(t, found)
 	assert.Equal(t, Card{ID: "c", Brief: filepath.Join(dir, "inbox", "c~15.g2", "BRIEF.md"), Outbox: filepath.Join(dir, "outbox", "c~15.g2")}, c)
 	assert.Equal(t, "15", c.Epoch())
-	assert.Equal(t, [][]string{{"progress", "--as", "friend-a", "c", "--epoch", "15"}}, ProgressArgv("friend-a", []Card{c}))
+	assert.Equal(t, [][]string{{"progress", "--as", "friend.friend-a", "c", "--epoch", "15"}}, ProgressArgv("friend-a", []Card{c}))
 	require.NoError(t, os.Remove(c.Brief))
 	_, found, err = NextCard(dir, func(Card) bool { return false })
 	require.NoError(t, err)
