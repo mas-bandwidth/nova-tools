@@ -1,9 +1,11 @@
 package main
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
+	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -29,6 +31,37 @@ func TestReaderUpRefusesAReaderNobodyServes(t *testing.T) {
 	// the reader's loop beats, and the same verb releases it
 	ta.ok("queue --as reader-b")
 	ta.ok("reader up reader-a reader-b")
+	assert.Equal(t, "up", ta.readerState("reader-a"))
+	assert.Equal(t, "up", ta.readerState("reader-b"))
+}
+
+// unhold is the canonical release, and reader up -h points to it: it refuses a reader no
+// process serves with the same check and remedy, all or none across every kind it names
+// (a member released beside the reader stays held), and writes nothing.
+func TestUnholdRefusesAReaderNobodyServes(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.quiet = map[string]bool{"reader-b": true}
+	ta.ok("init --readers reader-a,reader-b,reader-c --members m1,m2")
+	ta.ok("hold m1 reader-a reader-b --reason 'the cache trim'")
+	before := ta.ok("log")
+	for _, call := range []string{"unhold reader-b", "unhold m1 reader-a reader-b", "reader up reader-b"} {
+		code, out, errs := ta.do(call)
+		assert.Equal(t, 1, code, "%s: %s%s", call, out, errs)
+		assert.Contains(t, errs, "no process serves reader-b", call)
+		assert.NotContains(t, errs, "reader-a,", call)
+		assert.Contains(t, errs, "nova-sprint queue --as reader-b", call)
+		assert.Contains(t, errs, "nothing was changed", call)
+	}
+	assert.Equal(t, before, ta.ok("log"), "nothing written")
+	var v whereView
+	require.NoError(t, json.Unmarshal([]byte(ta.ok("where --json --cards")), &v))
+	assert.Equal(t, sprint.Held, v.Tables["fleet"]["m1"]["status"], "all or none: m1's hold stands")
+	assert.Equal(t, "held", ta.readerState("reader-a"))
+	assert.Equal(t, "held", ta.readerState("reader-b"))
+	// the reader's loop beats, and unhold releases every name
+	ta.ok("queue --as reader-b")
+	assert.Contains(t, ta.ok("unhold m1 reader-a reader-b"), "UNHOLD OK")
 	assert.Equal(t, "up", ta.readerState("reader-a"))
 	assert.Equal(t, "up", ta.readerState("reader-b"))
 }

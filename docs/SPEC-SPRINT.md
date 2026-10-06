@@ -2477,13 +2477,16 @@ id (`--op`) returns the original result, with no second counter or notification.
   asked and not begun are asked of another, and its reads begun finish (with
   `--return` they are taken back at the hold, where a reader up is free to read
   them); a reader away or down has every read, begun or not, taken back.
-  `reader up` releases a hold and adds no capacity: reads are served by a bud's
-  reader loop or a friend's harness asking for the reader's queue, never by the
-  row, so a reader no process serves (no beat within `ReaderBeatBound`, held or
-  not) is away or down again on the next tick. `reader up` on such a reader is
-  refused, exit 1, all or none, nothing written, and names the beat that would
-  serve it (`nova-sprint queue --as <reader>`); once the loop beats, the verb
-  releases it. Each reader's row in `where` carries `served` or `unserved`,
+  A release (`unhold <reader>`, and `reader up`, its old words) lifts a hold
+  and adds no capacity: reads are served by a bud's reader loop or a friend's
+  harness asking for the reader's queue, never by the row, so a reader no
+  process serves (no beat within `ReaderBeatBound`, held or not) is away or down
+  again on the next tick. A release naming such a reader is refused by both
+  verbs alike, through one check on the release path they share: exit 1, all or
+  none across every name and kind it names (a member named beside it stays
+  held), nothing written, and the refusal names the beat that would serve it
+  (`nova-sprint queue --as <reader>`); once the loop beats, the release goes
+  through. Each reader's row in `where` carries `served` or `unserved`,
   from the beat alone (the held and retired states do not change it), and the
   one text row counts them (`2/3`). The readers table has no `status`
   column and `where` shows no reader's state; the state is never stored in the
@@ -2667,8 +2670,8 @@ id (`--op`) returns the original result, with no second counter or notification.
   is not asked (with one reader up the tick asks the flash cards and the pro
   cards wait): the tick raises one judgment, `fewer than two readers up:
   <readers and their states>`, for the sprint (not one for each primary),
-  closed when enough are up or no such primary waits; `reader up` (of a
-  reader a process serves) and `reader add` answer it. It is one open
+  closed when enough are up or no such primary waits; a release (`unhold`, or
+  `reader up`) of a reader a process serves, and `reader add`, answer it. It is one open
   judgment, its text updated in place as the readers change (a `judgment
   updated:` line), never written again while it is open: the log carries one
   line for it however many ticks run.
@@ -4235,7 +4238,7 @@ land's place; a head that is not a commit id stops the dry run where land stops,
 | resume | a stopped stream moves again, with what was done; refused while a cause is unresolved |
 | fleet | `up|down <member>`, `level` (down is `hold <member> --return` in the old words, for one release); `up <member> --deadline <duration|default>` pins the deadline every card dealt to the member gets, or takes the pin off (section 5, the deadline by machine); down and up say on the member's MOVED line where its cards went (nova-tools#5096 item 21): down `moved=N to m2(n),m3(n); stayed=K withdrawn: <primaries>` (a card no member up has room for, or at its redeal bound, is withdrawn), up `moved=N to <member>(n) from m2(n),...` when the level moves cards onto it; a member going down in the tick's presence part says the same |
 | hold | `hold <name>... --reason <text> [--return]`: the coordinator's hold of fleet members, readers, friends and streams, one verb for the four (the owner, 2026-10-04 1:50 PM: "there should be a hold verb in nova-sprint"; 1:51 PM: the same for friends, hold and unhold). Each name is a fleet member, a reader, a friend (nova-config's friend rows) or a stream, resolved first: a name of none, or of more than one, refuses the whole call, exit 1, nothing written; a hold wants `--reason` (exit 2 without one). One step (`sprint.HoldNames`). A name held takes no new cards: a member is dealt none and its takes are refused, a reader is asked nothing, a friend is dealt none (her cards wait ready), a stream's ready primaries are dealt to no machine and no friend. What is dealt and not begun is handed back now: a member's ready cards are dealt round the fleet as a member going down sends them, a reader's reads asked and not begun are asked of another at the next tick, a stream's work cards ready on members are withdrawn (no redeal spent). What is begun finishes (the default): a member's working cards stay on it (the sweep leaves them, section 5; the deadline judges them), a reader's reads begun stay with it, a friend keeps her cards, a stream's working cards finish. `--return` hands the work begun back now too: a member's working cards dealt round the fleet (a redeal counted, as fleet down always did), a reader's reads asked or begun taken back where a reader up is free to read them, a friend's cards and a stream's working cards withdrawn to ready. Its status reads `held`: the fleet and friends tables' status, the readers' state, the merge table's state cell (and the stream clocks' state; a stopped stream reads `stopped`); the reason is on the member's and the stream's control card (`held_reason`) and in the reader's and friend's hold records, and `where --json --cards` (the dashboard's read) carries every hold as `holds` (kind, name, reason, by, at, return). Each name held writes a happened note (`held by the coordinator`), the reason in it, so the log holds every hold; handover shows it among the decisions. `fleet down <member>` is `hold <member> --return`, `reader away <reader>...` is `hold <reader>... --return`, and `friend down <friend>` holds her as `hold <friend>` does and takes back the cards she has not started (`--until` and her started cards' NOTE lines are its own), each with its old words' output, kept for one release with their help naming the pair; a member down because it stopped beating is the machine's `down`, never a hold |
-| unhold | `unhold <name>... [--reason <text>]`: releases the holds of the names (resolved as hold resolves them, all or none), the reason in its note (`released from a hold`): a member that beats is up at once and is dealt again, otherwise down until it beats; a reader's state is then its beat's and a friend's her session's evidence (a wake ping her session answered, or a card of hers finished, within its window); a stream's primaries are dealt again. `reader up` and `friend up` are its old words, for one release; `fleet up` still releases a member's hold and adds a member or sets a width |
+| unhold | `unhold <name>... [--reason <text>]`: releases the holds of the names (resolved as hold resolves them, all or none), the reason in its note (`released from a hold`): a member that beats is up at once and is dealt again, otherwise down until it beats; a reader's state is then its beat's (a reader no process serves, no beat within `ReaderBeatBound`, refuses the whole call, exit 1, nothing written, naming `nova-sprint queue --as <reader>`: section 6) and a friend's her session's evidence (a wake ping her session answered, or a card of hers finished, within its window); a stream's primaries are dealt again. `reader up` and `friend up` are its old words, for one release; `fleet up` still releases a member's hold and adds a member or sets a width |
 | merge-window open | `merge-window open --for <duration> --reason <text>`: landing pauses from now for the duration, the reason on every batch it pauses (section 7, the lander's pause); a store write of the merge table's properties `merge_window_until` and `merge_window_reason`, replacing a window open before; the coordinator's; refused whole, nothing written, for a duration that is none or not above zero, no reason, a reason over 8 KiB, or another actor |
 | friend sync | the friends table's rows made nova-config's friend rows (section 1); `--every <d>` loops as the seat each pass, and `friend sync install --every <d>` / `friend sync uninstall` put that loop in place as this machine's service ("Handing over the seat") |
 | collect | every friend's outbox report of a card working on a friend's row finished as her row, a LAND only at origin's tip, and with `--dead-lanes` a lane her runner ENDed with no report finished failed (section 1, collect): `collect [<friend>...] [--dead-lanes] [--root <dir>] [--dry-run]`; never run by the server |

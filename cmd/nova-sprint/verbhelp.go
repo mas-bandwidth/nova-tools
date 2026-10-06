@@ -11,9 +11,9 @@ import (
 // releaseHoldWords tells release apart from the holds on a member, a reader,
 // and a friend (docs/SPEC-SPRINT.md: release is the sentinel and held-card step).
 const releaseHoldWords = `release acts on a sentinel or a held card. It does not release a held member, reader, friend or stream:
-  unhold <name>... releases any of them (one verb for the four)
+  unhold <name>... releases any of them (one verb for the four); a reader no process serves (none beats it: queue --as <reader>) is refused
   fleet up <member> releases a held member
-  reader up <reader> releases a held reader a process serves (one that beats: queue --as <reader>); an unserved one is refused
+  reader up <reader> releases a held reader, refused the same way
   friend up <friend> releases a held friend
 `
 
