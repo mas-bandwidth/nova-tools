@@ -1011,6 +1011,10 @@ refusals with reasons (`REFUSED`, on stderr), and the sprint's summary
 [TESTS.md](TESTS.md#nova-sprint) carries the exact transcript through `merge`;
 `cmd/nova-sprint/firstrun_test.go` runs it line by line.
 
+### Landed series
+
+`where --json` carries `landedSeries`: cards landed per 10 minutes over the last 24 hours, 144 buckets, split `friends` and `fleet`. A landing is a work-table move to `<stream>:landed` from any state but waiting. A sentinel's release is not work. Each card counts once, the first landing. The worker is the last `<who>:ok` of the card's work attempt (`<card>.wN`): `friend.<name>` is a friend and anything else is a fleet machine. The lander is not the worker. `where -h` states it. The text frame does not carry the series. `dashboard` reads one `where --json` and the series is on that object, so the page does not loop the log. The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md), the `where` frame.
+
 ### Verbs
 
 ```
