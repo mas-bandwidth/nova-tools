@@ -38,6 +38,10 @@ type LaneHarness interface {
 type LaneTurn struct {
 	Exit     int
 	Rejected string // the line of the output where the harness refused a permission, if any
+	// Windows is the subscription windows' use the harness reported in the turn
+	// (a Claude Code run's rate_limit_event lines, ReadRateLimitEvents); nil when
+	// it reported none. The lanes are paced by it (pacing.go).
+	Windows []WindowUse
 }
 
 // permissionRejected is a line of a turn's output where a tool call was
