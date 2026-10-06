@@ -44,6 +44,7 @@ var DefaultCatalog = []Entry{
 	E("cmd/nova-table", "tables of ordered sets, text and percentages over Redis", "go test ./cmd/nova-table", "go test ./cmd/nova-table"),
 	E("cmd/nova-tokens", "token consumption metering and budgeting CLI", "go test ./cmd/nova-tokens", "go test ./cmd/nova-tokens"),
 	E("cmd/nova-update", "binary release update CLI", "go test ./cmd/nova-update", "go test ./cmd/nova-update"),
+	E("cmd/nova-up", "set nova up on one machine: plan every step, then apply, from nothing to a first sprint", "go test ./cmd/nova-up", "go test ./cmd/nova-up"),
 	E("cmd/nova-version", "build identity and version CLI", "go test ./cmd/nova-version", "go test ./cmd/nova-version"),
 	E("cmd/nova-work", "every issue of every repository of an organization in one tree file, imported read-only and verified field for field", "go test ./cmd/nova-work", "go test ./cmd/nova-work"),
 
@@ -126,6 +127,7 @@ var DefaultCatalog = []Entry{
 	E("internal/tty", "whether a file is a terminal and how large its screen is", "go test ./internal/tty", "go test ./internal/tty"),
 	E("internal/typedrec", "typed RESULT record contract, its format and the disposition line", "go test ./internal/typedrec", "go test ./internal/typedrec"),
 	E("internal/update", "binary updater and checksum verifier", "go test ./internal/update", "go test ./internal/update"),
+	E("internal/up", "nova-up's steps: the registry, the plan and apply of each step over a fake-able machine", "go test ./internal/up", "go test ./internal/up"),
 	E("internal/workfile", "nova-work tree file: the model, its canonical writer, strict reader and field-for-field diff", "go test ./internal/workfile", "go test ./internal/workfile"),
 	E("internal/workgh", "nova-work read-only GitHub issue capture over GraphQL, every call counted", "go test ./internal/workgh", "go test ./internal/workgh"),
 	E("internal/worklang", "bounded reader for nova-work's restricted s-expression tree file", "go test ./internal/worklang", "go test ./internal/worklang"),
