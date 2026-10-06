@@ -230,14 +230,17 @@ type laneResult struct {
 
 // laneSet is the daemon's lanes in one-shot mode.
 type laneSet struct {
-	lanes   []*lane
-	given   map[string]bool
-	state   LaneState
-	loaded  bool
-	results chan laneResult
-	gov     LaneGovernor // the live cap under rate limits, the hold when out of funds (ratelimit.go)
-	width   int          // the row's width at the last step
-	now     time.Time    // the last step's clock
+	lanes    []*lane
+	given    map[string]bool
+	state    LaneState
+	loaded   bool
+	results  chan laneResult
+	gov      LaneGovernor    // the live cap under rate limits, the hold when out of funds (ratelimit.go)
+	width    int             // the row's width at the last step
+	now      time.Time       // the last step's clock
+	took     map[string]bool // the jobs taken back for the dealer (takeBack)
+	capAt    time.Time       // when the token cap was last read
+	loadHeld bool            // the width is held under load
 }
 
 func (s *laneSet) running() bool {
@@ -336,7 +339,11 @@ func CardText(c Card, n, width int, sendLine, pong, notice string, msgs []bus.Me
 func (l *loop) laneStep(now time.Time, width int) {
 	s := l.lanes
 	d := l.d
+	row := l.laneRow()
+	width = l.loadWidth(row, now, width)
 	s.width, s.now = width, now
+	l.takeBack(row, now)
+	l.capCheck(row, now)
 	for _, line := range s.gov.Step(now, width) {
 		d.Record(now.UTC().Format(time.RFC3339) + " " + line)
 	}
@@ -370,6 +377,9 @@ func (l *loop) laneStep(now time.Time, width int) {
 	}
 	lh := d.Deliver.(LaneHarness)
 	held := func(c Card) bool {
+		if l.filtered(row, c) {
+			return true
+		}
 		id := filepath.Base(c.Outbox)
 		legacy := id == c.ID || id == c.ID+"~"+c.Epoch()
 		if s.given[id] || (legacy && s.given[c.ID]) {
@@ -414,7 +424,11 @@ func (l *loop) laneStep(now time.Time, width int) {
 				continue // messages wait: they ride only with a card
 			}
 			ln.card, ln.attempts = &c, 0
-			s.state.Started[filepath.Base(c.Outbox)] = Started{Lane: ln.n, Card: c, At: now}
+			st := Started{Lane: ln.n, Card: c, At: now, Session: ln.session}
+			if u, ok := l.usage(ln.session); ok {
+				st.Base = u
+			}
+			s.state.Started[filepath.Base(c.Outbox)] = st
 			l.saveLanes(now)
 		}
 		t := &turn{}
@@ -467,6 +481,9 @@ func (l *loop) laneDone(r laneResult, now time.Time) {
 	ln.t = nil
 	var rate RateLimited
 	var funds OutOfFunds
+	if t.held && !exists(ln.card.Result()) && !exists(ln.card.Report()) && !errors.As(r.err, &funds) && !errors.As(r.err, &rate) {
+		r.err = OutOfFunds{Session: ln.session, Reason: s.gov.Held()} // stopped by the hold: the card stays in hand
+	}
 	limited := (errors.As(r.err, &rate) || errors.As(r.err, &funds)) && !t.stopped
 	if limited && exists(ln.card.Result()) {
 		r.err, limited = nil, false // the card is done: the words were the card's, not the provider's answer
@@ -491,6 +508,7 @@ func (l *loop) laneDone(r laneResult, now time.Time) {
 	}
 	line += l.settle(t, ok, r.err, now)
 	card := *ln.card
+	began := s.state.Started[filepath.Base(card.Outbox)]
 	end := LaneEnd{Exit: r.turn.Exit, Wall: now.Sub(t.started), Rejected: r.turn.Rejected, Turns: ln.attempts + 1, Started: s.state.Started[filepath.Base(card.Outbox)].At}
 	if r.err != nil {
 		end.Err = oneLine(r.err.Error(), 300)
@@ -507,6 +525,7 @@ func (l *loop) laneDone(r laneResult, now time.Time) {
 	if exists(card.Result()) || exists(card.Report()) {
 		end.NoReport = true
 		line += " card=done " + l.endCard(ln.n, card, end, now)
+		line += l.finishParity(card, began, now)
 		ln.card, ln.attempts = nil, 0
 		d.Record(line)
 		return
@@ -527,7 +546,7 @@ func (l *loop) laneDone(r laneResult, now time.Time) {
 		d.Record(line + fmt.Sprintf(" card=again turn=%d/%d reason=%q", ln.attempts, CardTurns, why))
 		return
 	}
-	d.Record(line + fmt.Sprintf(" card=set_aside turn=%d/%d reason=%q ", ln.attempts, CardTurns, why) + l.endCard(ln.n, card, end, now))
+	d.Record(line + fmt.Sprintf(" card=set_aside turn=%d/%d reason=%q ", ln.attempts, CardTurns, why) + l.endCard(ln.n, card, end, now) + l.finishParity(card, began, now))
 	job := filepath.Base(card.Outbox)
 	s.given[job] = true
 	s.state.GivenUp = append(s.state.GivenUp, job)
@@ -572,12 +591,16 @@ func (l *loop) providerLimit(err error, started, now time.Time) bool {
 	at := now.UTC().Format(time.RFC3339)
 	var rate RateLimited
 	var funds OutOfFunds
+	if errors.As(err, &rate) && l.laneRow().StopOnProvider {
+		err = OutOfFunds{Session: rate.Session, Reason: rate.Reason} // the row stops at any provider failure
+	}
 	switch {
 	case errors.As(err, &funds):
 		if s.gov.Hold(funds.Reason) {
 			d.Record(fmt.Sprintf("%s out of funds: lanes held until the daemon restarts, every card kept in hand: %s", at, oneLine(funds.Reason, 200)))
 			subject, body := FundsJudgmentText(d.Friend, funds.Reason)
 			l.tellKind(bus.KindBlocker, subject, body, now)
+			l.holdDown(funds.Reason, now)
 		}
 		return true
 	case errors.As(err, &rate):

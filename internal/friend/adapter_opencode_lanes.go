@@ -214,6 +214,11 @@ func (o *OpenCode) DeliverTo(ctx context.Context, id, text string) (LaneTurn, er
 			return LaneTurn{Exit: exit, Rejected: PermissionRejection(out)}, limit
 		}
 	}
+	if err == nil && exit != 0 {
+		if line := ProviderFailureLine(out); line != "" {
+			return LaneTurn{Exit: exit, Rejected: PermissionRejection(out)}, RateLimited{Session: id, Reason: line}
+		}
+	}
 	exit, err = refused(id, out, exit, err)
 	return LaneTurn{Exit: exit, Rejected: PermissionRejection(out)}, err
 }
