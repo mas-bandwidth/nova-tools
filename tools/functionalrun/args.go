@@ -234,7 +234,7 @@ func modHash(src string) (string, error) {
 	h := sha256.New()
 	for _, name := range []string{"go.mod", "go.sum"} {
 		b, err := os.ReadFile(filepath.Join(src, name))
-		if err != nil && !(name == "go.sum" && os.IsNotExist(err)) {
+		if err != nil && (name != "go.sum" || !os.IsNotExist(err)) {
 			return "", err
 		}
 		fmt.Fprintf(h, "%s\x00%d\x00", name, len(b))

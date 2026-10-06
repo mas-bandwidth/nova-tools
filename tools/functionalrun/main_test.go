@@ -518,9 +518,9 @@ func (p hangingProcess) Kill() error {
 }
 
 func (h *hangingEngine) Start(args []string, _, _ io.Writer) (process, error) {
-	h.fakeEngine.mu.Lock()
-	h.fakeEngine.calls = append(h.fakeEngine.calls, args)
-	h.fakeEngine.mu.Unlock()
+	h.mu.Lock()
+	h.calls = append(h.calls, args)
+	h.mu.Unlock()
 	return hangingProcess{killed: h.killed}, nil
 }
 
@@ -906,9 +906,9 @@ type stuckEngine struct {
 }
 
 func (s *stuckEngine) Output(ctx context.Context, args ...string) (string, error) {
-	s.fakeEngine.mu.Lock()
-	s.fakeEngine.calls = append(s.fakeEngine.calls, args)
-	s.fakeEngine.mu.Unlock()
+	s.mu.Lock()
+	s.calls = append(s.calls, args)
+	s.mu.Unlock()
 	<-ctx.Done()
 	return "", ctx.Err()
 }
