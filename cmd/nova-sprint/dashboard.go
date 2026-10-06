@@ -149,11 +149,13 @@ func dashboardUpstream(pull string) (string, error) {
 	return u.String(), nil
 }
 
-// whereJSON reads the sprint as `nova-sprint where --json --cards` does, in this process:
-// through the sprint's server when NOVA_SPRINT_SERVER names one, else on the store; --redis
-// is handed on when the dashboard was given it, as where would have been.
+// whereJSON reads the sprint as `nova-sprint where --json --cards --rows` does, in this
+// process: through the sprint's server when NOVA_SPRINT_SERVER names one, else on the
+// store; --redis is handed on when the dashboard was given it, as where would have been.
+// The rows give each critical card its stream, so the critical path follows the page's
+// release (sprintdash.placed); the server drops them.
 func (a *app) whereJSON(addr string, given bool) ([]byte, error) {
-	argv := []string{"where", "--json", "--cards"}
+	argv := []string{"where", "--json", "--cards", "--rows"}
 	if given {
 		argv = append(argv, "--redis", addr)
 	}

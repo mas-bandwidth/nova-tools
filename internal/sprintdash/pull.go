@@ -287,7 +287,8 @@ func (s *Server) servePull(w http.ResponseWriter, r *http.Request) {
 		s.healthz(w)
 		return
 	case "/events":
-		s.events(w, r, func(*sprintCopy) ([]byte, bool) { return s.Snapshot(), true })
+		rel := r.URL.Query().Get("release")
+		s.events(w, r, func(*sprintCopy) ([]byte, bool) { return s.SnapshotOf(rel), true })
 		return
 	}
 	s.Refresh()
@@ -301,7 +302,7 @@ func (s *Server) servePull(w http.ResponseWriter, r *http.Request) {
 	h.Set("Sprint-At", c.At.Format(time.RFC3339))
 	path := r.URL.Path
 	if path == "/api/sprint" {
-		s.send(w, "application/json", s.Snapshot())
+		s.send(w, "application/json", s.SnapshotOf(r.URL.Query().Get("release")))
 		return
 	}
 	rest, api := strings.CutPrefix(path, "/api/")
