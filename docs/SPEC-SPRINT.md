@@ -59,8 +59,10 @@ the briefs carry), on each `tables.work[<stream>]` row `per_landed` (every table
 cell stays a string, the shape the dashboard's pull decodes), and `stream_costs`
 beside the tables, each stream's `tiers` (its cards by tier) and `cost_by_tier`, its spend by the
 tier each attempt and read ran on (the cost records' tier, not the card's
-ceiling: a flash card escalated to pro shows both; a record with no tier is
-`untiered`), money strings as the cost column shows them. All of it is counted
+ceiling: a flash card escalated to pro shows both; a record with no tier takes
+its route's tier, the route row's else the route name's prefix (`pro-*`, `flash-*`,
+`heavy-*`, `frontier-*`), else the card's brief tier, and is `untiered` only when none
+exists, so the tiers sum to the stream's total: `TestCostByTierTakesTheRouteTierWhenTheRunRecordsNone`), money strings as the cost column shows them. All of it is counted
 by the tick from the sprint it reads anyway and kept in the where record
 (store.WhereRecord), never read card by card at `where`; before the first tick
 of an epoch `tiers` and `cost_by_tier` are absent and `per_landed` is from the

@@ -144,7 +144,7 @@ func streamTierCosts(s *Snapshot, stream string) TierCosts {
 				} else {
 					pricedWork = true
 				}
-				tier := cmp.Or(con.Tier, "untiered")
+				tier := cmp.Or(con.Tier, runRouteTier(s, con), cardBriefTier(c), "untiered")
 				if byTier[tier] == nil {
 					byTier[tier] = new(big.Rat)
 				}
@@ -183,6 +183,30 @@ func streamTierCosts(s *Snapshot, stream string) TierCosts {
 		t.Unreconciled = cardcost.Cents(new(big.Rat).SetFloat64(unrec))
 	}
 	return t
+}
+
+// runRouteTier is the tier a run with none recorded ran on: its route row's, else its route
+// name's prefix (pro-*, flash-*, heavy-*, frontier-*), "" when the route says none.
+func runRouteTier(s *Snapshot, con Consumer) string {
+	name := cmp.Or(con.Route, con.Usage.Route)
+	if name == "" {
+		return ""
+	}
+	for _, r := range s.Routes {
+		if r.Name == name && r.Tier != "" {
+			return r.Tier
+		}
+	}
+	if prefix, _, ok := strings.Cut(name, "-"); ok && cardhdr.IsRoute(prefix) {
+		return prefix
+	}
+	return ""
+}
+
+// cardBriefTier is the tier the card's brief names on its line 1, "" when it names none.
+func cardBriefTier(c *Card) string {
+	m, _ := cardhdr.ReadModel(c.F("brief"))
+	return m.Tier
 }
 
 // errBadAmount is a dollar amount that is no decimal.

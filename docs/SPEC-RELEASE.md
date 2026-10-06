@@ -555,6 +555,37 @@ for an unkept promise, not for evidence about something else: evidence that does
 *Tests: `TestTheGateRefusesAPromisedJourneyWithoutEvidence`, `TestThePromisedJourneysAreTheChaosSuitesSubtests`,
 `TestTheJourneyGateIsInTheReleaseSpec`.*
 
+## 15. The recorded spend matches each provider's own, or the cut refuses
+
+The owner, 2026-10-05: "We should not make a release without verifying that we capture actual spend, not < 1/2 of it."
+On 2026-10-04 OpenRouter's account showed about $2,250 and the sprint's cost panel $836. `cut` therefore reads, once
+the tags are read, over the release's window (`--spend-since <2006-01-02|RFC 3339>` to now, else from the previous
+release tag when the readouts can find its time), for each provider:
+
+- the **provider's own** figure, through a `ProviderUsage` (one per provider; the key comes from nova-secrets in
+  production, a fake in tests): dollars for a paid provider, tokens for a subscription friend against its harness receipts;
+- the **store's** figure for the same provider, unit and window (`SpendStore`).
+
+A gap over five percent of the provider's figure (`SpendGapOver`) refuses, one line per provider, every provider read:
+
+```
+SPEND GATE REFUSED provider=<p> unit=usd|tokens store=<n> provider-reported=<n> gap=<n> share=<pct> window=<from>..<to>
+RELEASE CUT REFUSED reason=spend-gate providers=<n> refused=<n> over=5% remedy="<SpendRemedy>"
+```
+
+A readout that cannot be read refuses and is named (`provider=<p> unit=<u> unreadable=<why>`): silence is never a pass.
+Nothing is tagged on a refusal. Both figures nothing agree; a figure recorded against a provider reporting nothing is a
+gap of 100%. A run with no readouts wired prints `RELEASE CUT NOTE spend-gate=skipped` and the receipt says `spend=skipped`:
+not run is not passed. The way past is `--no-spend-gate --reason <why>` (reason shared with the other gates):
+`RELEASE CUT SPEND WAIVED reason=<why>`, `spend=waived`, and the CHANGELOG section carries `Spend gate waived: <why>`.
+
+Not yet done: production `ProviderUsage` readouts (OpenRouter's account activity, OpenCode's, Inception's, the opencode
+database, the harness receipts), the production `SpendStore` over the sprint's cost records, and the same gate on
+`nova-sprint`'s release and on `build`.
+
+*Tests: `TestAReleaseIsRefusedWhenRecordedSpendMissesTheProvidersOwn`, `TestAThreePercentGapPasses`,
+`TestAnUnreadableProviderRefusesAndIsNamed`, `TestSubscriptionTokensAreComparedTheSameWay`.*
+
 ## What this file does not cover
 
 The verbs themselves, the machines file, the retire rule, where `adopt` runs from and the security rules
@@ -631,6 +662,7 @@ One numbered line per test; where one test holds several behaviours, they share 
 62. `TestToolsPlaySendsEveryStagedFileWhoseBytesDiffer` (functional) — a seeded file corrupt on the machine whose `SHA256SUMS` line matches the release's (the binary the play runs, or any other) is sent again in the same run and the install succeeds; an intact reused file is not sent (`tla/BenchStage.tla` `ReusedByteIdentical`).
 63. `TestTheGateRefusesAPromisedJourneyWithoutEvidence` — a cut whose checkout promises recovery journeys refuses without `--journeys`, on evidence for another revision or installed build, without a function or schema version, on a broken line, and on any owed, skipped, failed or not-run journey (a green parent proves nothing); an optional platform's `PLATFORM UNAVAILABLE` skip is named and passes; a proven cut binds the revision, versions and installed builds into the section; `--no-journey-gate --reason` enumerates every incomplete journey there.
 64. `TestThePromisedJourneysAreTheChaosSuitesSubtests` — every promised journey names a subtest the chaos suite runs.
+65. `TestAReleaseIsRefusedWhenRecordedSpendMissesTheProvidersOwn` — a recorded $836 against a provider's own $2,250 refuses the cut, naming the provider, both figures and the gap, and tags nothing; a 3% gap passes; an unreadable provider refuses and is named; subscription tokens are compared the same way; no window or no reason refuses; no readouts wired is `skipped`, never `ok`.
 
 Demanded, and proven by no test yet (8):
 

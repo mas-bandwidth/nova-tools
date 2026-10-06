@@ -529,6 +529,14 @@ func cut(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 			return refusal(errs, "CUT", fmt.Errorf("cannot compare %s...%s: %w (ask again when the forge answers)", previous, sha, err))
 		}
 	}
+	// THE SPEND, once the previous release is known: the window is since it.
+	spend, err := spendCheck(o, deps, previous, out, errs)
+	if err != nil {
+		if errors.Is(err, errSpend) {
+			return 2
+		}
+		return refusal(errs, "CUT", err)
+	}
 	prs := PullRequests(commits)
 	// WHICH PATHS THE RANGE TOUCHED, and whether that needs a read before a
 	// tag exists (the repository owner's decision 1, #1337). Asked BEFORE --dry-run branches
@@ -554,10 +562,10 @@ func cut(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 			return refusal(errs, "CUT", fmt.Errorf("cannot read %s: %w (name the SHA256SUMS that `release build` wrote, or leave --sums out)", o.sums, err))
 		}
 	}
-	section := sectionWith(o.version, sha, previous, sumsDigest, dogfoodWaiver(gate, o.reason), journeys.section(), deps.Now(), prs)
+	section := sectionWith(o.version, sha, previous, sumsDigest, dogfoodWaiver(gate, o.reason), journeys.section()+spendWaiver(spend, o.reason), deps.Now(), prs)
 	if o.dryRun {
-		fmt.Fprintf(out, "RELEASE CUT version=%s sha=%s prs=%d previous=%s changelog=%s sums=%s dogfood=%s journeys=%s dry-run=yes\n",
-			field(o.version), field(sha), len(prs), field(previous), field(o.changelog), field(sumsDigest), gate, journeys.State)
+		fmt.Fprintf(out, "RELEASE CUT version=%s sha=%s prs=%d previous=%s changelog=%s sums=%s dogfood=%s journeys=%s spend=%s dry-run=yes\n",
+			field(o.version), field(sha), len(prs), field(previous), field(o.changelog), field(sumsDigest), gate, journeys.State, spend)
 		fmt.Fprint(errs, section)
 		return 0
 	}
@@ -572,7 +580,7 @@ func cut(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 			field(o.version), field(sha), oneline.Err(err), field(o.changelog))
 		return 1
 	}
-	fmt.Fprintf(out, "RELEASE CUT version=%s sha=%s prs=%d previous=%s changelog=%s sums=%s dogfood=%s journeys=%s dry-run=no\n",
-		field(o.version), field(sha), len(prs), field(previous), field(o.changelog), field(sumsDigest), gate, journeys.State)
+	fmt.Fprintf(out, "RELEASE CUT version=%s sha=%s prs=%d previous=%s changelog=%s sums=%s dogfood=%s journeys=%s spend=%s dry-run=no\n",
+		field(o.version), field(sha), len(prs), field(previous), field(o.changelog), field(sumsDigest), gate, journeys.State, spend)
 	return 0
 }
