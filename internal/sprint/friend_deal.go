@@ -112,16 +112,16 @@ const friendCardWhy = "a friend's card (its brief says WHO: only friend, or a WH
 // running (FriendReport.Running: work card ids, job names or primaries), which the tick's
 // level never moves (friendStarted).
 type FriendSeat struct {
-	Name    string
-	Width   int
-	Status  string
-	Class   string
-	Mode    string
-	Tiers   []string
+	Name   string
+	Width  int
+	Status string
+	Class  string
+	Mode   string
+	Tiers  []string
 	// Roles is her nova-config row's roles: a read card is dealt only to a friend whose
 	// roles name reader (RoleReader, read_cards.go).
-	Roles []string
-	Dir   string
+	Roles   []string
+	Dir     string
 	Running []string
 	// Why is why her Status is not up, as FriendDownWhy says it (held, or the session
 	// evidence she lacks), "" while she is up: the words a take refused for her names.
