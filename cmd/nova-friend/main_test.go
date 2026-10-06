@@ -732,9 +732,12 @@ func TestRunInOneShotModeOpensALaneAndHandsItTheCard(t *testing.T) {
 		var runs []string
 		lists := 0
 		checks := 0
-		w.exec = func(_ context.Context, _, _ string, args []string, _ string) (string, int, error) {
+		w.exec = func(_ context.Context, _, name string, args []string, _ string) (string, int, error) {
 			mu.Lock()
 			defer mu.Unlock()
+			if name == "sysctl" {
+				return "{ 0.00 0.00 0.00 }\n", 0, nil // the daemon's load read where there is no /proc/loadavg (world.load1): not a harness run
+			}
 			if args[0] == "--version" || len(args) > 1 && args[1] == "--help" {
 				return "", 0, nil // the daemon's read of the installed opencode (OpenCode.CheckRun): it cannot tell
 			}

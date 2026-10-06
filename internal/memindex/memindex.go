@@ -88,7 +88,7 @@ func readCapped(fsys fs.FS, name string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer f.Close() // ignored: a read-only file
 	if info, err := f.Stat(); err == nil && info.Size() > MaxFileBytes {
 		return nil, fmt.Errorf("%s is %d bytes, over the %d-byte file cap; exclude it with --exclude", name, info.Size(), MaxFileBytes)
 	}
