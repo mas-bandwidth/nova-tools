@@ -26,7 +26,9 @@ var tokensAudit = audit.Config{
 	// pairs, every key and value through oneline.Field and a tail through oneline.Escape;
 	// fields is the loop they share, and its one Sprint site is exempt below for that
 	// reason.
-	Escapers: []string{"sourceLine", "unreadableLine", "unparsedLine", "dayLine", "s.line", "s.factFields", "s.dryRunFields"},
+	// oneline.Quote is the free-text form for a subject that holds spaces
+	// (docs/STANDARD.md section 2). Field would hide the blanks a reader pastes.
+	Escapers: []string{"sourceLine", "unreadableLine", "unparsedLine", "dayLine", "s.line", "s.factFields", "s.dryRunFields", "oneline.Quote"},
 	// One entry per site, keyed by file, function and source text; each is a claim a
 	// reader can check.
 	Exempt: map[string]string{

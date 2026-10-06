@@ -349,12 +349,12 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 		s.fact("source", name)
 		fmt.Fprintf(s.err(), "REPORT FAILED who=%s day=%s rows=%d at=%s build=%s%s source=%s subject=%s\n",
 			oneline.Field(*who), oneline.Field(*day), lines, oneline.Field(stamp(now)),
-			oneline.Field(buildVersion()), s.dryRunFields(*dryRun, "note", *notePath), oneline.Field(name), oneline.Escape(subject))
+			oneline.Field(buildVersion()), s.dryRunFields(*dryRun, "note", *notePath), oneline.Field(name), oneline.Quote(subject))
 		return s.done(1, *max)
 	}
 	fmt.Fprintf(s.err(), "REPORT OK who=%s day=%s rows=%d at=%s build=%s%s subject=%s\n",
 		oneline.Field(*who), oneline.Field(*day), lines, oneline.Field(stamp(now)),
-		oneline.Field(buildVersion()), s.dryRunFields(*dryRun, "note", *notePath), oneline.Escape(subject))
+		oneline.Field(buildVersion()), s.dryRunFields(*dryRun, "note", *notePath), oneline.Quote(subject))
 	return s.done(0, *max)
 }
 

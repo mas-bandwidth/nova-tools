@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -1484,15 +1485,13 @@ func TestRule20ReportPrintsTheBodyAndNothingElse(t *testing.T) {
 	wantContains(t, r.stdout, "2026-09-11\temma\tgemini\tschema\tinput\t100")
 	wantContains(t, r.stdout, "2026-09-11\temma\tgemini\tschema\tcache_write\t0")
 	wantContains(t, r.stderr, "REPORT OK who=emma day=2026-09-11")
-	wantContains(t, r.stderr, "subject=tokens 2026-09-11 at=2026-09-11T23:55:02Z build=")
+	wantContains(t, r.stderr, "subject=\"tokens 2026-09-11 at=2026-09-11T23:55:02Z build=")
 	assert.Equal(t, r.stdout, read(t, note), "--note is not exactly the stdout bytes")
 
 	// The note folds back as the same rows, through the bus, with one hand-added comment.
 	out := mkdir(t, filepath.Join(dir, "out"))
 	bus := busDir(t, mkdir(t, filepath.Join(dir, "bus")), "emma")
-	subject := strings.TrimPrefix(lineWith(r.stderr, "REPORT OK"), "")
-	subject = subject[strings.Index(subject, "subject=")+len("subject="):]
-	busNote(t, bus, "emma", "n.md", "emma-000000000001", subject, busDate, r.stdout+"# repos: schema\n")
+	busNote(t, bus, "emma", "n.md", "emma-000000000001", subjectOf(t, r), busDate, r.stdout+"# repos: schema\n")
 	f := invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", repos, "--bus", bus)
 	wantExit(t, f, 0)
 	wantContains(t, f.stdout, "unparsed=0")
@@ -1584,7 +1583,9 @@ func subjectOf(t *testing.T, r result) string {
 	line := lineWith(r.stderr, "REPORT OK")
 	i := strings.Index(line, "subject=")
 	require.GreaterOrEqual(t, i, 0, "no subject= on %q", line)
-	return line[i+len("subject="):]
+	got, err := strconv.Unquote(line[i+len("subject="):])
+	require.NoError(t, err, "subject is not one quoted value: %q", line)
+	return got
 }
 
 // ---------------------------------------------------------------- rule 21: the provider export
