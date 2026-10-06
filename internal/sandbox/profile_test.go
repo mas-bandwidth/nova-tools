@@ -5,6 +5,8 @@ package sandbox
 import (
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // TestDarwinProfileAllowsOpenDirectoryMembershipLookup verifies that the darwin
@@ -12,21 +14,16 @@ import (
 // in the mach-lookup allow list. This prevents sqlite3 and git launches from
 // stalling on Open Directory lookups when running inside the sandbox.
 func TestDarwinProfileAllowsOpenDirectoryMembershipLookup(t *testing.T) {
+	t.Parallel()
+
 	write := t.TempDir()
 	home := t.TempDir()
 	tmp := t.TempDir()
 
 	p, bad := Build(in(t, write, tmp, home, "/bin/echo"))
-	if len(bad) > 0 {
-		t.Fatalf("refused at build: %v", bad)
-	}
+	require.Empty(t, bad, "refused at build")
 
 	text, _, err := DarwinProfile(p)
-	if err != nil {
-		t.Fatalf("DarwinProfile: %v", err)
-	}
-
-	if !strings.Contains(text, `com.apple.system.opendirectoryd.membership`) {
-		t.Error("profile does not include com.apple.system.opendirectoryd.membership in mach-lookup allow list")
-	}
+	require.NoError(t, err, "DarwinProfile")
+	require.Contains(t, text, `com.apple.system.opendirectoryd.membership`, "profile includes membership service in mach-lookup allow list")
 }
