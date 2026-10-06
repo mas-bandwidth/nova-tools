@@ -467,14 +467,12 @@ before any bench is reached), `TestBenchToolHasNoProblems`, and in
 internal/bench `TestRunRemovesTheRunDirectoryWhenTheCopyFails` and
 `TestWriteTreeLeavesGitOutUnlessAsked`.
 
-The run is modelled in `internal/bench/tla/BenchRun.tla`. TLC on a Linux bench
+The run is modelled in `tla/BenchRun.tla`. TLC on a Linux bench
 holds five invariants on two hosts and two exit codes (`MCBenchRun.cfg`):
 `OnlyTheMadeDirIsRemoved`, `AtMostOneHostAnswers`, `FallbackOnlyOnNoAnswer`,
 `ExitIsTheCommands` and `NothingLeftBehind`. Its reversed witness
 (`MCBenchRunBrokenNoRemove.cfg`, a failed copy that returns without the
-deferred remove) must break `NothingLeftBehind`. The model lives beside the
-package because `tla/` and its `CASES.tsv` and `RUNS.tsv` rows were outside the
-card that wrote it; moving it there is part of landing. It does not model an
+deferred remove) must break `NothingLeftBehind`. `CASES.tsv` and `RUNS.tsv` carry its two rows. It does not model an
 interrupt that lands between mktemp and its answer: that directory exists on
 the bench but the run never learnt its name, so it is never removed.
 
@@ -482,14 +480,10 @@ Not yet: the bench, the cache and the fallback default from nova-config's
 machine rows. A machine row today carries no bench cache or fallback field, so
 `--host` is required and the paths have fixed defaults until the rows do.
 
-Held, not landed: internal/bench's `sshLine` is a new ssh exec site, which
-`TestCIOneBenchRunner` refuses (the fleet plays are the one way this tree runs
-a script on a bench, and `testdata/bench-runners.allow` only shrinks). The
-allow file's own remedy, "a new site uses" the benchsh package, names a
-package #4327 deleted, so no sanctioned runner remains for a new site to use. Whether a
-bench run is a sanctioned runner (one row, `internal/bench/exec.go sshLine`,
-with `benchRunnerAtBase` raised, or internal/bench read as the one runner the
-way the deleted benchsh package was) is the owner's decision. The verb itself is
+internal/bench is the one bench runner (the coordinator's decision of 2026-10-05, as
+the deleted benchsh package was): `internal/ci/ci_benchrunner.go` skips
+`internal/bench/` in `benchRunnerSkipDirs`, so its `sshLine` is not a row of
+`testdata/bench-runners.allow`, which still only shrinks. The verb itself is
 on internal/tool, so it adds no `flag.FlagSet` to nova-ci, and it runs nothing
 but ssh, so the functional image needs no new row.
 
