@@ -1466,3 +1466,4 @@ tools/citiming/main_test.go the one-base merge of 2026-10-04 took dev's tree for
 internal/nsprint/fn/rig_test.go the one-base merge of 2026-10-04 took dev's tree for this package (both lines had built in it); the sprint card that added this test is listed in tmp/onebase-dropped for re-landing on the one base
 tools/tlacheck/rig_test.go the one-base merge of 2026-10-04 took dev's tree for this package (both lines had built in it); the sprint card is listed in tmp/onebase-dropped for re-landing
 internal/tool/usage_test.go internal/tool returns to the green one-base gate (37e9e9fa2e): the toolkit changes landed after it broke cmd/nova-bus and cmd/nova-cairn (a nil help panic, the value quoting); they are redone as cards gated on every command's tests
+internal/nsprint/store/acl_cover_test.go its tests drove only DeployACLs and aclArgs, which no command calls; both functions go, and ACLRules stays for the tests that apply the rules themselves
