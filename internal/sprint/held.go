@@ -543,7 +543,12 @@ func (c *held) waits(pr *Card) (why, root string, ok bool) {
 			}
 			return "waits for only friend " + name, "", true
 		}
-		up := s.UpMembers()
+		// a quiet member has no free place for it until its quiet ends (fleet_quiet.go)
+		all := s.UpMembers()
+		up := notQuiet(s, all)
+		if quiet := quietWhy(s, all); quiet != "" && len(up) == 0 {
+			return "waits for a member up that is not quiet (" + quiet + "): the deal resumes by itself at that time", "", true
+		}
 		if b := Bench(pr); len(b) > 0 && len(onlyBench(up, b)) == 0 {
 			// a bench card waits for a member of its bench up (bench_deal.go): no placement
 			// deals it to another member, so what holds it is its bench's beat and hold

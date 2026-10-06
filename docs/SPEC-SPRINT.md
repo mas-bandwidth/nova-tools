@@ -2501,6 +2501,25 @@ by selection without `--as` is refused. A finish that arrives first moves the ca
 the member's `ok` or `failed` cell (counted in done), which no redistribution touches. A retried finish with the same operation
 id (`--op`) returns the original result, with no second counter or notification.
 
+### fleet-quiet-machine-b.w3: a quiet machine
+
+`fleet quiet <member> --for <duration> --reason <text>` (or `--until <RFC3339>`), the
+coordinator's, holds a fleet member out of the deal until that time: the deal, the level,
+the sweep and `fleet down` give it no card, and the work already dealt to it finishes where
+it is. A rework's deal and `hold`'s redeal of another member's cards do not yet read the
+quiet.
+Every worker's view (`view worker`, for each member and friend) carries one line per quiet
+machine, `QUIET <member> until <time>: <reason>; run no go build or test there`. The quiet
+is a property of the fleet table (`quiet_<member>`), written at once by its step and read
+by the deal against the clock, so it ends by itself at its time whether or not anything
+runs; the tick's level then writes the end to the log once ("quiet ended at its time").
+`fleet quiet <member> --end` ends it early, and the log says who ended it. A ready card
+that waits only because every member up is quiet is held (d), not stalled: the deal
+resumes by itself at the time. A quiet with no reason, a time not after now, a name that is
+no fleet member, and an `--end` with no quiet in force are refused, nothing written. The
+rule is `internal/sprint/fleet_quiet.go`; the twin test is
+`TestFleetQuietDealsNothingAndTellsWorkersUntilItEnds`.
+
 ## 6. The readers
 
 - A reader row has a state, as a fleet member has: up, away or down. The rows
