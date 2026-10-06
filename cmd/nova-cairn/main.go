@@ -259,6 +259,9 @@ func open(c *tool.Call) *tool.Out {
 	store, session, publish, stamp := c.Str("store"), c.Str("session"), c.Str("publish"), clock(c)
 	var rec cairn.OpenRecord
 	var err error
+	// Check if the session was already open before attempting to open it.
+	priorOpen, _ := cairn.ReadOpen(store, session)
+	reopened := priorOpen.Found
 	if c.DryRun() {
 		rec, err = cairn.PlanOpen(store, session, c.Str("source"), stamp, publish)
 	} else if err = cairn.Open(store, session, c.Str("source"), stamp, publish); err == nil {
@@ -267,8 +270,14 @@ func open(c *tool.Call) *tool.Out {
 	if err != nil {
 		return refusal(err)
 	}
-	return tool.Done().Fact("session", session).Fact("store", store).Fact("source", sourceOf(rec.Source)).
-		Fact("publish", publish).Fact("stamp", stampOf(stamp))
+	o := tool.Done().Fact("session", session).Fact("store", store).Fact("source", sourceOf(rec.Source)).
+		Fact("publish", publish)
+	if reopened {
+		o.Fact("reopened", true).Fact("stamp", stampOf(rec.Stamp))
+	} else {
+		o.Fact("stamp", stampOf(stamp))
+	}
+	return o
 }
 
 func appendEntry(c *tool.Call) *tool.Out {
