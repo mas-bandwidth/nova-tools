@@ -592,7 +592,7 @@ func TickPartStep(name string, fn sprint.TickPartFn, r sprint.TickReq, epoch *ui
 
 // mirrors says the part's step brings the display cells up to date after it.
 func mirrors(name string) bool {
-	return name == "presence" || name == "deal" || name == "level" || name == "resume" || name == sprint.PartCapDeal || name == sprint.PartFriendStall
+	return name == "presence" || name == "deal" || name == "level" || name == "resume" || name == sprint.PartCapDeal || name == sprint.PartFriendStall || name == sprint.PartFriendStart
 }
 
 // unchangedNotWritten is the plan of a part with the writes that change no
@@ -1012,6 +1012,10 @@ func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickR
 	if req.Friends, err = pinned.friendSeats(ctx, &first, now); err != nil {
 		return last, err
 	}
+	// each friend's started lanes on her seat, read on the tick's one read: the deal and
+	// the level fill her row to what she starts, never to her width alone
+	// (sprint.StartedSeats, the start window)
+	req.Friends = sprint.StartedSeats(&first, req.Friends)
 	// each friend's session for the coordinator's pass (sprint.TickCoordinatorPass): every
 	// friend of the roster, whether or not she holds a card; a sprint with no friend reads
 	// the roster alone
@@ -1039,6 +1043,12 @@ func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickR
 	// the first pass updates next.
 	t.res.Order = append(t.res.Order, "start")
 	if out := t.parts("", sprint.TickStart); out != tickOn {
+		return t.end(out, last, unfinished, seen)
+	}
+	// The start window, once, before the pump: a card in a friend's lane her beat has not
+	// named running within it goes back to the pool, and her started lanes are written
+	// (sprint.TickFriendStart), so the pump's deal places it again this tick.
+	if out := t.parts("", sprint.TickFriendStartParts); out != tickOn {
 		return t.end(out, last, unfinished, seen)
 	}
 	// 1-2. The first pass: every table's update once, in the owner's order
@@ -1908,6 +1918,7 @@ func (st *Store) ShadowTick(ctx context.Context) (ShadowPlan, error) {
 	if req.Friends, err = ro.friendSeats(ctx, &first, now); err != nil {
 		return out, err
 	}
+	req.Friends = sprint.StartedSeats(&first, req.Friends)
 	if req.Sessions, err = ro.FriendSessions(ctx); err != nil {
 		return out, err
 	}
@@ -1952,6 +1963,9 @@ func (st *Store) ShadowTick(ctx context.Context) (ShadowPlan, error) {
 		updates = sprint.TickTables
 	}
 	if err := plan("", sprint.TickStart); err != nil {
+		return out, err
+	}
+	if err := plan("", sprint.TickFriendStartParts); err != nil {
 		return out, err
 	}
 	for _, u := range updates {

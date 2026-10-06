@@ -34,6 +34,11 @@ const passPongBefore = 5 * time.Minute
 func newPassRig(t *testing.T) *passRig {
 	t.Helper()
 	r := &passRig{holdRig: newHoldRig(t, 1, 1), pongs: map[string]time.Time{"amy": holdT0.Add(-passPongBefore), "bob": holdT0.Add(-passPongBefore)}, answered: map[string]time.Time{}}
+	// the pass alone judges a friend holding a card her beat never names running: the
+	// start window (sprint.TickFriendStart) is set past the rig's hour, so it takes none
+	r.must(store.Step{Verb: "set", Plan: func(*sprint.Snapshot) sprint.Plan {
+		return sprint.Plan{Props: []sprint.PropWrite{{Table: sprint.Work, Name: sprint.PropFriendStartWindow, Value: "24h", WasAbsent: true}}}
+	}})
 	rows, err := r.st.FriendRows(r.ctx, r.clock())
 	require.NoError(t, err)
 	for _, row := range rows {

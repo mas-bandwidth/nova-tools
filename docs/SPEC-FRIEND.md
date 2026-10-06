@@ -744,6 +744,14 @@ her session was there are retired with no replacement (docs/FRIENDS.md, "The
 beat loops are retired, with no replacement"). The beat proves the daemon and
 nothing more: it is recorded and shown, and it never makes her up (below).
 
+What the beat names running (`friend beat --running`) is what the tick deals
+her by in batch mode. A card in a lane of hers that her beat has not named
+running within the start window (`friend_start_window`, default 20m) goes back
+to the pool, and her row is then filled only to the cards she has started,
+rising as she starts more, never above her width (docs/SPEC-SPRINT.md,
+deal-by-started-lanes-not-width.w1). A daemon that reports no running list
+leaves every card of hers unstarted to the tick.
+
 ## Presence is her session's evidence (internal/sprint/presence.go)
 
 The owner, 2026-10-05 ~9:30 AM ET, on the daemon: "there is no value in things

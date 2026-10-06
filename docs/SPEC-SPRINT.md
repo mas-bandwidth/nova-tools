@@ -989,6 +989,55 @@ not level the friends":
 `TestAFriendWithAnIdleLaneIsDealtAndLevelledBeforeAFullOne`,
 `TestTwinStoreDealsIdleFriendsFirstAndLevelsEveryTick`.
 
+### deal-by-started-lanes-not-width.w1
+
+**A friend is dealt what her session starts, not her width alone**
+(`sprint.TickFriendStart`, `sprint.StartedSeats`, `friendRoom`). On the night of
+2026-10-05 a friend at width 8 in batch mode held seven heavy cards for six hours
+and started none, while she did every audit, carry and read she was handed at
+once; another friend at width 4 worked likewise only by explicit assignment.
+Her row had been filled to DealAhead x her width, and her width was not what her
+session starts. In batch mode:
+
+- **The start window.** A work card in a lane of hers (working on her row) that
+  her beat does not name running (`friend beat --running`: its work card id,
+  its job or its primary), and that has no progress stamp, within the start
+  window of its take goes back to the pool. Its work card is withdrawn on her
+  row at its next generation with `taken_back` and `taken_from` her row, its
+  primary goes back to ready, and a happened note says "not started by
+  <friend> in <window>; back to the pool". The pump's deal of the same tick
+  places it again, never on her (`taken_from`): on another friend up with
+  room, else on the fleet. The window is the work table's property
+  `friend_start_window`, a duration, default 20m (`FriendStartWindowDefault`).
+  A card ready behind her lanes is her queue, held to the dealt bound, and is
+  not held to the window. A hard pin to her (`WHO: only friend <name>`) stays,
+  because the pool for it is her alone.
+- **Her started lanes.** When a card goes back, her row's effective width for
+  the next deals and levels becomes the number of cards on her row (ready and
+  working) she has started. It is kept on the fleet property
+  `friend_lanes.<friend>` and read with the friends at the start of each tick
+  (`StartedSeats`). The deal fills her to DealAhead x that, and the level evens
+  against it. It rises again as she starts more: a tick that sees her started
+  cards above it raises it to that count. When it reaches her width the
+  property is cleared and she is dealt by her width again. Her width is the
+  ceiling, never the target. A friend whose started lanes are 0 is dealt
+  nothing by the tick until she starts a card placed by hand. Her reads
+  (`friendReadAsk`) are not capped.
+- **Reads before work.** A friend whose roles are reader-first (her
+  nova-config roles name `reader`, and name no `builder` or name `reader`
+  before it: `FriendSeat.Roles`) is dealt reads before work. The deal keeps
+  room and a lane on her row for each frontier read in review that waits and
+  that she may be asked. The readers' ask, which runs after the pump in the
+  tick, places those reads.
+
+One-shot mode is one card at a time already and is not capped. The part runs
+once a tick, after the start and before the tables' updates.
+`TestAFriendIsDealtOnlyWhatHerSessionStarts`: four cards are dealt to a friend
+at width 4, and her beat starts one. Past the window three go back with the
+note, and her started lanes are 1. Once her started card finishes, the next
+deal gives her two (one in her lane, one ready), and after she starts both her
+started lanes are 2.
+
 ### cycle-time-breakdownb.w1: where a card's wall time goes
 
 **Each card records its stage times on itself** (the owner, 2026-10-04: the
