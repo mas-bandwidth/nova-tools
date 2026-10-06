@@ -88,6 +88,8 @@ usage:
   nova-config <kind> list [--json]
   nova-config <kind> show <name> [--json]
   nova-config <kind> history <name> [--json]
+  nova-config loop run <name> [--file <path> | --pg <dsn>] [--run-dir <dir>]
+                              [--stop-file <file>] [--metrics <file>] [--dry-run]
   nova-config machine width <name> [--json]
   nova-config machine self [--check] [--json]
   nova-config login --store <dir> --as <seat> --key <file> --secret <NAME>
@@ -251,6 +253,10 @@ type deps struct {
 	// loop add and set refuse, and status names, a loop whose verb is gone. Nil
 	// asks nothing.
 	probe config.VerbProbe
+	// exec replaces this process with the loop row's command. Nil refuses.
+	exec func(argv []string) error
+	// lock takes the loop's single-instance lock. Nil uses the platform lock.
+	lock func(path string) (loopHold, bool, error)
 }
 
 type redisApplier struct {
@@ -280,6 +286,7 @@ func realDeps() deps {
 		hostname:  os.Hostname,
 		tailscale: config.TailscaleStatus,
 		probe:     config.HelpProbe,
+		exec:      platformExec,
 	}
 }
 

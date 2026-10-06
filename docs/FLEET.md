@@ -87,7 +87,9 @@ the packet hands the reader its model, budget and deadline; a reader started
 with `--model`, `--tokens` and `--deadline` runs its reads on those instead.
 A loop record runs a verb its program must still have: a release that retires
 the verb leaves the unit exiting at every start (`sprint-table-live` ran
-`nova-sprint table` that way until 2026-10-04). The loop kind asks each nova
+`nova-sprint table` that way until 2026-10-04). The page that unit was meant to
+write is `nova-sprint dashboard serve`. The installed live-table unit
+(`nova-sprint install table`, `where --watch`) is a different unit. The loop kind asks each nova
 program in a record's argv `help <verb>` (`internal/config/loop.go`: exit 2
 naming verbs is a verb gone; a program not installed where nova-config runs
 judges nothing): `CheckLoopVerb` is the refusal of an enabled record whose
@@ -126,7 +128,7 @@ nova-config loop add sprint-dashboard --machine bench-a --argv '["env","NOVA_SPR
 ```
 
 It exits 3 when a new build is installed under it, and its unit starts the new one;
-`curl -s 127.0.0.1:7390/healthz` prints `ok`.
+`curl -s 127.0.0.1:7390/healthz` prints `ok`. The word `serve` may follow `dashboard` in that argv. An argv without `serve` still serves the page.
 
 The public page is served from files on one fleet machine: Caddy's `file_server`
 serves `/var/www/sprint/site` with no reverse proxy, and one puller refreshes those files
@@ -190,7 +192,7 @@ and started again at login, that runs the verb itself by the tool's absolute pat
 | the friend sync loop | `nova-sprint install friend-sync --every 15s` | `nova-sprint friend sync --every` |
 | the live table | `nova-sprint install table --out <file>` | `nova-sprint where --watch` |
 | the disk guard | `nova-swarm install disk-guard` | `nova-swarm disk-guard`, one pass every 15 minutes |
-| the mirrors' refresh | `nova-swarm install mirror-refresh` (owed) | `nova-swarm mirror` (owed: no mirror verb) |
+| the mirrors' refresh | `nova-swarm install mirror-refresh` (owed) | `nova-swarm mirror`, one pass; the unit install stays owed |
 
 serve writes redis-server's configuration from its flags (binding, port, store directory under the
 bench root, persistence) and reads its password in its own process from the secret its unit names;
@@ -201,9 +203,7 @@ the service's environment has to give them. `nova-sprint units --check` names ea
 machine a stranger set up is checked against what a sprint needs; a unit written by hand around a
 wrapper reads as different. `nova-swarm install disk-guard` writes that unit in the swarm
 binary, and the unit runs `nova-swarm disk-guard` itself. The unit text the sprint and redis
-verbs share lives in `internal/units`, which a worker's binary may import. `nova-swarm install mirror-refresh` stays owed: nova-swarm has no mirror verb for the unit
-to run, and `units --check` says so rather than telling a stranger to run it. Until that verb
-exists, a mirror refresh is not installed from here. The play's disk-guard row above is the fleet's
+verbs share lives in `internal/units`, which a worker's binary may import. `nova-swarm mirror` is the one pass. `nova-swarm install mirror-refresh` stays owed: the unit table still has no install for it, and `units --check` says so rather than telling a stranger to run the install. A mirror refresh is not installed from here until that unit lands. The play's disk-guard row above is the fleet's
 copy of the same pass.
 
 ## A fixture inventory
@@ -340,6 +340,8 @@ ansible-playbook -i ./nova-inventory fleet/container-runtime.yml </dev/null 2>&1
 The inventory's group is `functional_runners` (`fleet/inventory.container-runtime.example.ini`).
 
 ## loops.yml
+
+`nova-config loop run <name>` replaces the bash single-instance wrapper: one lock, the restart count, then the loop row's command in this process. The units this play writes still run the record's argv. A supervisor that wants the lock runs `nova-config loop run <name>`.
 
 One unit per record of `nova_loops`, from the record's fields and the host's
 layout: the command is the record's `argv`, word for word (a bare program is the installed

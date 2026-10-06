@@ -353,7 +353,7 @@ func TestDiskGuardRefusesLimitsThatAreNoLimits(t *testing.T) {
 	t.Parallel()
 	for _, args := range [][]string{
 		{"--cache-max-gb", "0"}, {"--modcache-max-gb", "-1"}, {"--log-max-mb", "0"}, {"--log-keep", "0"},
-		{"--disk-floor", "-1"}, {"--clone-age", "0s"}, {"--pool-idle", "1m"},
+		{"--disk-floor", "-1"}, {"--stop-floor", "-1"}, {"--clone-age", "0s"}, {"--pool-idle", "1m"},
 	} {
 		var stdout, stderr bytes.Buffer
 		assert.Equal(t, 2, swarmRun(append([]string{"disk-guard"}, args...), &stdout, &stderr), "%v", args)
@@ -366,7 +366,8 @@ func TestDiskGuardRefusesLimitsThatAreNoLimits(t *testing.T) {
 func TestDiskGuardHelp(t *testing.T) {
 	t.Parallel()
 	help := swarmHelp(t, "disk-guard", "-h")
-	for _, flag := range []string{"--root", "--scan", "--cache", "--cache-max-gb", "--modcache-max-gb", "--logs", "--log-max-mb", "--log-keep", "--pool-idle", "--land", "--clone-age", "--mirrors", "--disk-floor", "--dry-run"} {
+	for _, flag := range []string{"--root", "--scan", "--cache", "--cache-max-gb", "--modcache-max-gb", "--logs", "--log-max-mb", "--log-keep", "--pool-idle", "--land", "--clone-age", "--mirrors", "--disk-floor", "--stop-floor", "--marker", "--run-dir", "--dry-run"} {
+
 		assert.Contains(t, help, "\n  "+flag+" ", "disk-guard -h does not list %s", flag)
 	}
 	assert.Contains(t, help, "DISK-GUARD OK")

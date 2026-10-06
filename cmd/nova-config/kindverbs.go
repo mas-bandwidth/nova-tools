@@ -30,6 +30,8 @@ func runKind(ctx context.Context, k *config.Kind, args []string, stdout, stderr 
 		want = "set, show or history"
 	case k.Name == config.KindMachine:
 		want = "add, set, remove, list, show, history, width or self"
+	case k.Name == config.KindLoop:
+		want = "add, set, remove, list, show, history or run"
 	}
 	if len(args) == 0 {
 		return refuse(stderr, k.Name, "want "+want)
@@ -57,6 +59,10 @@ func runKind(ctx context.Context, k *config.Kind, args []string, stdout, stderr 
 		return runKindList(ctx, k, args[1:], stdout, stderr, d)
 	case "show", "history":
 		return runKindRead(ctx, k, args[0], args[1:], stdout, stderr, d)
+	case "run":
+		if k.Name == config.KindLoop {
+			return runKindRead(ctx, k, "run", args[1:], stdout, stderr, d)
+		}
 	}
 	return refuse(stderr, k.Name, fmt.Sprintf("unknown verb %s; want %s", oneline.Quote(args[0]), want))
 }
@@ -485,6 +491,11 @@ func runKindList(ctx context.Context, k *config.Kind, args []string, stdout, std
 func runKindRead(ctx context.Context, k *config.Kind, which string, args []string, stdout, stderr io.Writer, d deps) int {
 	verb := k.Name + " " + which
 	fs := verbflag.New(verb)
+	// loop run parses on this flag set. Another verbflag.New would raise the
+	// hand-printing count, and that count only falls.
+	if which == "run" {
+		return runLoop(ctx, fs, args, stdout, stderr, d)
+	}
 	c := storeFlags(fs)
 	var redisFlag *string
 	if which == "show" {

@@ -176,8 +176,10 @@ func usageTool(t *testing.T, tool string) novaTool {
 			for _, spec := range gen.Specs {
 				val := spec.(*ast.ValueSpec)
 				for i, name := range val.Names {
-					if name.Name == "usage" && i < len(val.Values) {
-						usage, _ = stringLit(val.Values[i])
+					if (name.Name == "usage" || name.Name == "usageTop") && i < len(val.Values) {
+						if s, ok := stringLit(val.Values[i]); ok && s != "" {
+							usage = s
+						}
 					}
 				}
 			}
@@ -265,6 +267,7 @@ func readNovaTools(t *testing.T) map[string]novaTool {
 		"nova-swarm":   usageTool(t, "nova-swarm"),
 		"nova-friend":  verbTableTool(t, "nova-friend"),
 		"nova-bus":     verbTableTool(t, "nova-bus"),
+		"nova-config":  usageTool(t, "nova-config"),
 	}
 }
 

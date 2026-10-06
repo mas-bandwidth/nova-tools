@@ -280,6 +280,8 @@ A machine a loop names cannot be removed
 (`machine m1 is the --machine of loop member-m1`); `machine show <m>` names
 the machine's loops (`loops=<a,b>`, `-` for none).
 
+`nova-config loop run <name>` replaces this process with the loop row's command. It reads the row (a disabled row is refused), and when `--stop-file` contains `stop=1` it exits 3 and does not exec. `--dry-run` prints the command and writes nothing. Otherwise it takes one lock at `<run-dir>/<name>.lock` (empty `--run-dir` is `~/nova-bench/run`, which must already exist), writes the next restart count and the textfile `nova_loop_restarts_total{loop="<name>"} <n>`, and execs the argv. A lock another live process holds exits 3. It adds no field to the loop row.
+
 **`route`** (`config.routes`): one way to run a model tier, the provider
 and model a card of that tier runs on, its token and dollar budgets and deadline. A
 tier has several routes so the deal spreads its cards across providers and

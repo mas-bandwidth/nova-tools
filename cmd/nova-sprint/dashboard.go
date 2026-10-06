@@ -47,8 +47,11 @@ func (a *app) cmdDashboard(args []string, stdout, stderr io.Writer) int {
 	logo := fs.String("logo", "", "an image `file` served as the page's logo and favicon; none: the logo slot renders nothing")
 	every := fs.Duration("every", time.Second, "read the sprint at most once per this `duration`, above 0")
 	pos, err := parse(fs, args)
+	if err == nil && len(pos) == 1 && pos[0] == "serve" {
+		pos = nil // serve is the page; the listeners and the line they print stay the same
+	}
 	if err != nil || len(pos) > 0 {
-		return refuse(stderr, "dashboard", argErr("takes no words ", err, pos...))
+		return refuse(stderr, "dashboard", argErr("takes no words but serve", err, pos...))
 	}
 	if *every <= 0 {
 		return refuse(stderr, "dashboard", "--every wants a duration above 0, got "+every.String())

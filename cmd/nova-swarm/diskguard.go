@@ -95,17 +95,25 @@ type guard struct {
 	procs                      func() ([]string, error)
 	held                       func() ([]string, error)
 	free                       func(string) (uint64, error)
-	cleanMod                   func(dir string) error
-	dirty                      func(dir string) (bool, error)
-	out                        io.Writer
-	start                      []string // said once before any rule: what the run lacks or found off PATH
-	freed                      int64
-	failed                     int
-	list                       []string // the process list, read once a run
-	open                       []string // the paths live processes hold, read once a run
-	dry                        bool     // --dry-run: every rule judged, nothing removed or rotated
-	listRead, listFailed       bool
-	openRead, openFailed       bool
+	// stopFloor is the free bytes of the home volume under which the pass writes
+	// the marker and signals loop pids. 0 does neither.
+	stopFloor            int64
+	marker               string
+	runDir               string
+	self                 int
+	signal               func(pid int) error
+	alive                func(pid int) bool
+	cleanMod             func(dir string) error
+	dirty                func(dir string) (bool, error)
+	out                  io.Writer
+	start                []string // said once before any rule: what the run lacks or found off PATH
+	freed                int64
+	failed               int
+	list                 []string // the process list, read once a run
+	open                 []string // the paths live processes hold, read once a run
+	dry                  bool     // --dry-run: every rule judged, nothing removed or rotated
+	listRead, listFailed bool
+	openRead, openFailed bool
 }
 
 // say is one line of the run's output.
@@ -230,6 +238,7 @@ func (g *guard) run() int {
 	g.landClones()
 	g.mirrors()
 	free := uint64(0)
+	homeOK := false
 	for i, p := range append([]string{g.home}, g.roots...) {
 		n, err := g.free(p)
 		if err != nil {
@@ -240,19 +249,128 @@ func (g *guard) run() int {
 		}
 		if i == 0 {
 			free = n
+			homeOK = true
 		}
 		if g.floor > 0 && n < uint64(g.floor) {
 			g.say(fmt.Sprintf("DISK-GUARD WARN free=%d floor=%d on the volume of %s: members there start no card; run: df -h %s, and read what this log removed and kept", n, g.floor, oneline.Field(p), oneline.Field(p)))
 		}
 	}
+	stopped := g.stopForFloor(free, homeOK)
 	// the closing line is written here, beside the exit it explains (law #2573): numbers
 	// only, so it needs neither say's escape nor its dry-run wording
+	if stopped {
+		fmt.Fprintf(g.out, "DISK-GUARD STOP freed=%d free=%d\n", g.freed, free)
+		return 3
+	}
 	if g.failed > 0 {
 		fmt.Fprintf(g.out, "DISK-GUARD INCOMPLETE freed=%d free=%d failed=%d\n", g.freed, free, g.failed)
 		return 1
 	}
 	fmt.Fprintf(g.out, "DISK-GUARD OK freed=%d free=%d\n", g.freed, free)
 	return 0
+}
+
+// stopForFloor writes the marker and, under the stop floor, signals each live
+// pid in a lock file. A home volume that could not be read does not stop.
+// --dry-run prints WOULD-STOP and writes nothing. The bool is true when a
+// stop fired and the run should exit 3.
+func (g *guard) stopForFloor(homeFree uint64, homeOK bool) bool {
+	if g.stopFloor <= 0 || !homeOK {
+		return false
+	}
+	under := homeFree < uint64(g.stopFloor)
+	if g.marker != "" && !g.dry {
+		if err := writeDiskMarker(g.marker, homeFree, under); err != nil {
+			g.fail(fmt.Sprintf("the marker %s was not written (%s)", oneline.Field(g.marker), oneline.Err(err)))
+		}
+	}
+	if !under {
+		return false
+	}
+	n := g.signalLocks()
+	if g.dry {
+		g.say(fmt.Sprintf("WOULD-STOP free=%d stop_floor=%d pids=%d", homeFree, g.stopFloor, n))
+		return false
+	}
+	g.say(fmt.Sprintf("DISK-GUARD STOP free=%d stop_floor=%d signaled=%d", homeFree, g.stopFloor, n))
+	return true
+}
+
+// signalLocks signals each live pid above 1 that is not this process. A
+// missing run directory signals nobody. The count is how many were signaled,
+// or how many WOULD-STOP lines were printed under --dry-run.
+func (g *guard) signalLocks() int {
+	if g.runDir == "" {
+		return 0
+	}
+	entries, err := os.ReadDir(g.runDir)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			g.fail(fmt.Sprintf("the run directory %s could not be listed (%s)", oneline.Field(g.runDir), oneline.Err(err)))
+		}
+		return 0
+	}
+	n := 0
+	for _, e := range entries {
+		if !e.Type().IsRegular() || !strings.HasSuffix(e.Name(), ".lock") {
+			continue
+		}
+		path := filepath.Join(g.runDir, e.Name())
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			g.fail(fmt.Sprintf("the lock %s could not be read (%s)", oneline.Field(path), oneline.Err(err)))
+			continue
+		}
+		fields := strings.Fields(string(raw))
+		if len(fields) == 0 {
+			continue
+		}
+		pid, err := strconv.Atoi(fields[0])
+		if err != nil || pid <= 1 || pid == g.self {
+			continue
+		}
+		if g.alive == nil || !g.alive(pid) {
+			continue
+		}
+		if g.dry {
+			g.say(fmt.Sprintf("WOULD-STOP pid=%d", pid))
+			n++
+			continue
+		}
+		if g.signal == nil {
+			g.fail(fmt.Sprintf("pid %d was not signaled (no signal)", pid))
+			continue
+		}
+		if err := g.signal(pid); err != nil {
+			g.fail(fmt.Sprintf("pid %d was not signaled (%s)", pid, oneline.Err(err)))
+			continue
+		}
+		g.say(fmt.Sprintf("DISK-GUARD STOP pid=%d", pid))
+		n++
+	}
+	return n
+}
+
+// writeDiskMarker writes free_gib and stop. The parent must already exist.
+// A symlink is refused rather than followed.
+func writeDiskMarker(path string, free uint64, stop bool) error {
+	parent := filepath.Dir(path)
+	st, err := os.Lstat(parent)
+	if err != nil {
+		return err
+	}
+	if !st.IsDir() {
+		return fmt.Errorf("%s is not a directory", oneline.Field(parent))
+	}
+	if cur, err := os.Lstat(path); err == nil && cur.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("%s is a symlink", oneline.Field(path))
+	}
+	bit := 0
+	if stop {
+		bit = 1
+	}
+	text := fmt.Sprintf("free_gib=%d\nstop=%d\n", free/uint64(gib), bit)
+	return os.WriteFile(path, []byte(text), 0o644)
 }
 
 // ------------------------------------------------------------------------------- logs
@@ -788,6 +906,9 @@ func cmdDiskGuard(args []string, stdout, stderr io.Writer) int {
 	mirror := f.fs.String("mirrors", "~/nova-bench/mirror", "the `dir` of the bench's mirrors, whose temporary packs older than an hour are removed (default ~/nova-bench/mirror)")
 	dry := f.fs.Bool("dry-run", false, "judge every rule and print each line with WOULD-REMOVE, WOULD-TRIM, WOULD-CLEAN or WOULD-ROTATE, removing and rotating nothing")
 	floor := f.fs.Int("disk-floor", guardFloorGiB, "the free `GiB` under which the run warns, the members' own floor (default 10; 0 warns never)")
+	stopFloor := f.fs.Int("stop-floor", 0, "the free `GiB` of the home volume under which the pass writes --marker with stop=1 and signals each live pid in a --run-dir lock (default 0: never)")
+	marker := f.fs.String("marker", "", "the `file` written as free_gib and stop; its directory must already exist; empty writes none")
+	runDir := f.fs.String("run-dir", "", "the `dir` of loop lock files, each a pid; empty scans none")
 	if !f.parse(args, stderr) {
 		return 2
 	}
@@ -802,6 +923,9 @@ func cmdDiskGuard(args []string, stdout, stderr io.Writer) int {
 	if *floor < 0 {
 		f.add(fmt.Sprintf("--disk-floor is 0 or more GiB, got %d", *floor))
 	}
+	if *stopFloor < 0 {
+		f.add(fmt.Sprintf("--stop-floor is 0 or more GiB, got %d", *stopFloor))
+	}
 	if *cloneAge <= 0 {
 		f.add("--clone-age is a positive duration, got " + oneline.Field(cloneAge.String()))
 	}
@@ -815,6 +939,7 @@ func cmdDiskGuard(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	home, err := os.UserHomeDir()
+
 	if err != nil {
 		return refuse(stderr, " disk-guard", "the user's home could not be read: "+err.Error())
 	}
@@ -829,7 +954,20 @@ func cmdDiskGuard(args []string, stdout, stderr io.Writer) int {
 		floor: int64(*floor) * gib, poolIdle: *poolIdle, cloneAge: *cloneAge, now: time.Now(), home: home,
 		logDir: tilde(*logs), mirrorDir: tilde(*mirror), roots: guardRoots(roots, scans, tilde),
 		dry: *dry, procs: processList, held: heldPaths, free: diskFree, cleanMod: cleanModCache, dirty: landDirty, out: stdout,
+		stopFloor: int64(*stopFloor) * gib, self: os.Getpid(), signal: signalPid, alive: pidAlive,
 	}
+	if *marker != "" {
+		g.marker = tilde(*marker)
+		parent := filepath.Dir(g.marker)
+		st, stErr := os.Lstat(parent)
+		if stErr != nil || !st.IsDir() {
+			return refuse(stderr, " disk-guard", "--marker "+oneline.Field(*marker)+" has no directory to write in")
+		}
+	}
+	if *runDir != "" {
+		g.runDir = tilde(*runDir)
+	}
+
 	if runtime.GOOS != "linux" {
 		lsof, note := findLsof(exec.LookPath, lsofAt, isExecutable)
 		g.held = func() ([]string, error) { return lsofHeld(lsof) }

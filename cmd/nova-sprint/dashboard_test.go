@@ -96,8 +96,10 @@ func TestDashboardRefusesBadUse(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
 	for line, why := range map[string]string{
-		"dashboard now":                       "takes no words",
-		"dashboard --every 0s":                "--every wants a duration above 0",
+		"dashboard now":              "takes no words",
+		"dashboard serve --every 0s": "--every wants a duration above 0",
+		"dashboard --every 0s":       "--every wants a duration above 0",
+
 		"dashboard --listen 0.0.0.0:7390":     "does not listen on every network",
 		"dashboard --listen 1.1.1.1:7390":     "a public address",
 		"dashboard --pull 0.0.0.0:7395":       "--pull 0.0.0.0:7395: the page shows the sprint",

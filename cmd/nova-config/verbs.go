@@ -49,6 +49,7 @@ var kindExamples = []struct{ kind, verb, line string }{
 	{"sprint", "show", "nova-config sprint show --file try.json"},
 	{"sprint", "history", "nova-config sprint history --file try.json"},
 	{"loop", "add", `nova-config loop add reader-m1 --machine m1 --argv '["nova-swarm","member","--as","reader-m1","--reader"]' --keepalive true --as a1 --file try.json`},
+	{"loop", "run", "nova-config loop run reader-m1 --dry-run --file try.json"},
 	{"loop", "set", "nova-config loop set reader-m1 --enabled false --as a1 --file try.json"},
 	{"loop", "list", "nova-config loop list --file try.json"},
 	{"loop", "show", "nova-config loop show reader-m1 --file try.json"},
@@ -125,6 +126,10 @@ func verbExtra(verb string) string {
 		if words[0] == config.KindTier && words[1] == "remove" {
 			more = "a tier row is made by migrate and never removed: set its --routes instead\n"
 		}
+		if words[0] == config.KindLoop && words[1] == "run" {
+			effect = "delivery: replaces this process with the loop row's command after one lock; --dry-run prints the command and writes nothing"
+		}
+
 		for _, e := range kindExamples {
 			if e.kind == words[0] && e.verb == words[1] {
 				example = e.line

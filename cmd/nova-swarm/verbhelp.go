@@ -48,7 +48,10 @@ var verbExit = map[string]string{
   the other, or one cannot be read (the DOCTOR line says which)`,
 	"disk-guard": `exit codes: 0 DISK-GUARD OK, everything it looked at done (a KEPT line is a refusal
   it means); 1 DISK-GUARD INCOMPLETE, something could not be read or removed (each on its NOTE
-  line); 2 could not run: a bad flag`,
+  line); 2 could not run: a bad flag
+  3 DISK-GUARD STOP, free disk is under --stop-floor`,
+	"mirror": `exit codes: 0 MIRROR OK; 1 MIRROR INCOMPLETE, a repository was not fetched or cloned;
+  2 could not run: a bad flag, an http or https remote, a repository name with a slash`,
 	"slots release": `exit codes: 0 the leases named are freed; 2 a lease's holder still runs (SLOTS
   KEPT; --force frees it), a missing flag or a store that cannot be read`,
 }
@@ -90,7 +93,8 @@ A staging refusal reports why so the sprint can deal the card to another member.
 --decide asks the brief decision nova-sprint add asks (nova-decide's brief: p(converges), the minutes, the questions the card leaves open) through Jev with JEV_API_KEY, or from --decide-answers, and prints one LINT DECIDE line after the lint's own; it never changes the verdict, and a failing backend prints the verdict, then why, exit 2
 --base-check adds the four checks of a coding card: its PATHS exist at the base sha in --repo (default the working directory), no STEP pushes or calls gh, its LEG is a line of --legs, its deadline is at least --p95's figure for its kind; evidence not given is reported missing, never passed
 nova-sprint add holds a brief to the --child-rules tokens only, and to its model lines: rule-<name> for each rule of its set (the six general rules, or the file add --rules or init --rules names), the step-<what> scans (step-go-clean and step-go-test-timeout only when the file carries those rules), and rule-libraries-considered when the file carries [libraries-considered]; every other token --rules lists is this lint's alone`,
-	"disk-guard": `one pass over this machine, run every few minutes by the disk-guard loop row fleet/loops.yml adds to every machine: every Go build cache (the login's, each root's cache/go-build, each --cache) held under --cache-max-gb, default 20, by the member's trim, oldest entries first and never one used in the last two hours; a module cache over --modcache-max-gb, default 50, emptied while no go command runs; every loop log over --log-max-mb, default 50, copied to <log>.1 and emptied in place, --log-keep copies, default 3; the pool of a loop that stopped (no process names its root, nothing moved for --pool-idle, default 30m) swept as the member sweeps its own, a work launch whose checkout holds commits past its staged one kept; land clones unused for --clone-age, default 24h, removed; a mirror's temporary packs older than an hour removed while nothing fetches into it, never git prune; never anything with uncommitted work or a live process; one REMOVED, TRIMMED, CLEANED, ROTATED or KEPT line per action with freed=<bytes>, a DISK-GUARD WARN line under --disk-floor, default 10, and DISK-GUARD OK freed=<bytes> free=<bytes> at the end; --dry-run judges the same and removes nothing, each action said WOULD-REMOVE, WOULD-TRIM, WOULD-CLEAN or WOULD-ROTATE`,
+	"disk-guard": `one pass over this machine, run every few minutes by the disk-guard loop row fleet/loops.yml adds to every machine: every Go build cache (the login's, each root's cache/go-build, each --cache) held under --cache-max-gb, default 20, by the member's trim, oldest entries first and never one used in the last two hours; a module cache over --modcache-max-gb, default 50, emptied while no go command runs; every loop log over --log-max-mb, default 50, copied to <log>.1 and emptied in place, --log-keep copies, default 3; the pool of a loop that stopped (no process names its root, nothing moved for --pool-idle, default 30m) swept as the member sweeps its own, a work launch whose checkout holds commits past its staged one kept; land clones unused for --clone-age, default 24h, removed; a mirror's temporary packs older than an hour removed while nothing fetches into it, never git prune; never anything with uncommitted work or a live process; one REMOVED, TRIMMED, CLEANED, ROTATED or KEPT line per action with freed=<bytes>, a DISK-GUARD WARN line under --disk-floor, default 10, and DISK-GUARD OK freed=<bytes> free=<bytes> at the end; --dry-run judges the same and removes nothing, each action said WOULD-REMOVE, WOULD-TRIM, WOULD-CLEAN or WOULD-ROTATE. Under --stop-floor GiB free on the home volume the pass writes --marker as free_gib and stop=1 and signals each live pid in a --run-dir lock; --dry-run prints WOULD-STOP and writes nothing`,
+	"mirror":     `one pass over the named repositories: each <dir>/<repo>.git is fetched, or cloned with --mirror when it is missing and --remote contains {repo}. An http or https remote is refused. --every is a duration above 0, printed on the MIRROR line; the pass does not sleep and the supervisor repeats it. --dry-run prints WOULD-FETCH or WOULD-CLONE and runs no git`,
 }
 
 // verbEffect is what running a verb does beyond printing, the last line of its -h, in the
@@ -106,6 +110,7 @@ var verbEffect = map[string]string{
 	"slots list":   "inspection: reads, writes nothing",
 	"native":       "delivery: runs the card's harness, which calls the model's provider, and writes the job directory under --root",
 	"member":       "delivery: joins a sprint's fleet through --server, runs its cards as native children, pushes their commits and opens their pull requests",
+	"mirror":       "local write: fetches or clones each named mirror under --dir; --dry-run writes nothing",
 }
 
 // verbExample is one worked invocation per verb, printed on the verb's -h as an `example:`
