@@ -3295,3 +3295,27 @@ Reads the tree and GitHub again and writes nothing: zero differences is
 `VERIFY OK ... differences=0`, the receipt that the tree holds what GitHub
 holds. `--against <tree>` puts a second tree file where GitHub stands and reads
 no network at all.
+
+### nova-friend gc
+
+`nova-friend gc --as <me> [--dir <working-directory>] [--jobs-cap <bytes>] [--dry-run]`
+collects published job scratch, with the same safety checks as the daemon. The
+directory defaults to the current working directory. The cap defaults to
+21474836480 bytes (20 GiB) and is also a `run`/`install --jobs-cap` setting.
+A dry run still inspects local jobs and asks origin, and removes nothing.
+The output reports each job class and `GC OK freed=<bytes> jobs=<bytes>
+cap=<bytes>`; dry runs add planned bytes/jobs and report zero freed/removed.
+Active, unreported, dirty, unpushed and unowned jobs are retained. A removal
+refusal is deferred. See SPEC-FRIEND, Jobs capacity, for ownership and admission.
+
+With no staged jobs, the dry run is:
+
+```text
+$ nova-friend gc --as bob --dir ./bob --dry-run
+GC OK freed=0 jobs=0 cap=21474836480 planned=0 planned_jobs=0 dry_run=true
+GC CLASS name=active jobs=0
+GC CLASS name=unowned jobs=0
+GC CLASS name=unpublished jobs=0
+GC CLASS name=removed jobs=0
+GC CLASS name=deferred jobs=0
+```

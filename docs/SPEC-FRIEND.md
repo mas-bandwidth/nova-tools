@@ -1348,32 +1348,58 @@ The machine is modelled in `tla/FriendStage.tla` (`MCFriendStage*`): a lane is h
 only once its `JOB.md` is there, one judgment per repository or card while it stands, a stop
 says nothing, and a failed job is staged again once its remedy lands; three reversed witnesses
 (nextCard without the guard, a judgment per failed stage, no retry).
-Finished jobs are pruned by the cleanup the daemon already owns: after each inbox reconcile
-(which retires the briefs of cards that left her row), in the loop itself, `pruneStep` hands
-`Stager.Prune` the live jobs (held on her row, run by a lane, being staged). A job is finished
-when it is not live and its brief is not in her inbox; only a job whose checkout is a worktree
-of one of her mirrors is ever pruned, never a clone or anything another hand staged. The newest
-`FinishedJobsKept` (8, by their `JOB.md`) are kept and the rest removed oldest first, at most
-`PrunePerPass` (4) a cleanup and never waiting on a mirror a stage holds (its lock is tried,
-not taken): the worktree is removed from the mirror (`worktree remove --force`, then `worktree
-prune`) and `jobs/<job>` with it, and the branch stays in the mirror, so a commit on it is never
-lost. Each job removed is one line (`prune: removed jobs/<job> and its worktree: its card is
-finished (8 finished kept)`); a failure is said once while it stands (`prune: not pruned: ...`).
-The prune runs in the loop, never on a goroutine handed a snapshot: a job dealt to her again
-meanwhile would have its brief written, be handed to a lane on its old `JOB.md`, and lose its
-checkout under it. `TestJobsAreWorktreesOfOneMirror` stages two jobs of one repository and sees
-one full bare mirror and two worktrees on their branches at the base, origin the repository; a
-push from one is read by `PushedHead`; a fetch that fails is a judgment named on the job and
-leaves nothing of it; a finished job is pruned past the cap and its branch and commit stay; a
-job in her inbox or live is never pruned; a pruned job staged again takes its branch back.
-`TestAMirrorOfTheCloneLayoutIsConverted` and `TestTheInboxCleanupPrunesFinishedJobs` pin the
-rest. The worktrees and their pruning are modelled in `internal/friend/tla/JobWorktrees.tla`
-(TLC on a Linux bench, three jobs, cap 1, one a pass, `MCJobWorktrees`: 33,344 distinct states,
-no error; `NoLaneLosesItsCheckout`, `WorkKept`, `CapKept`, `HeldKept`), with three reversed
-witnesses: `MCJobWorktreesBrokenAsync` (the prune on a goroutine, the first cut of this change)
-breaks `NoLaneLosesItsCheckout` in 16 states as above, `MCJobWorktreesBrokenDropBranch` breaks
-`WorkKept`, and `MCJobWorktreesBrokenNoLimit` breaks `CapKept`. Jobs staged as clones before
-this change are never pruned (they are no worktree of a mirror) and are left to a hand.
+### Jobs capacity (a-friend-keeps-its-working-dir-under-a-cap3.w1)
+
+`jobs/` is scratch. Reports and results in `outbox/`, inbox briefs, the friend's
+identity files and the shared bare mirrors are evidence and are retained. The
+collector removes a job only when its lane is absent, its inbox has retired, a
+bounded regular `REPORT.md` names LAND, HOLD or FAIL and a full head, the checkout
+is clean (including untracked files), and a fresh origin lookup confirms that
+head at the checkout's branch. A report without a head, dirty work, unreported
+work and unpushed commits stay, even if the card leaves working. A worktree must
+belong to the friend's mirror and have its JOB.md. A legacy clone is eligible
+only when its canonical JOB.md explicitly names this checkout and repository and
+its origin agrees. Symlink jobs and checkouts are never removed.
+
+The daemon starts one background collector on each beat and inbox reconcile,
+without waiting for filesystem walks or origin. It protects the row's held
+jobs, its lanes and stages, every inbox directory and fresh running lane mark.
+A stale running mark is eligible only with the same report and publication
+proof. Staging and collection share admission: a collector never races a stage.
+Retained reports prevent a lane from claiming a collected job. Each pass scans
+at most 32 candidate jobs in oldest-first windows and checks at most four
+publication proofs, including failed proofs; subsequent passes rotate the
+window. It removes at most four jobs. A locked worktree, inaccessible origin or
+harness that cannot remove its directory is deferred and recorded, never a
+reason to stop the daemon. Worktree removal is not forced; the mirror branch
+stays. The next beat retries deferred work.
+
+`run` and `install` accept `--jobs-cap <bytes>` (positive, default 21474836480,
+20 GiB). Staging reserves the next worktree's blob sizes plus metadata before
+creating it, serialized across repositories. A new one-shot card is refused
+when the latest measured jobs bytes reach the cap or are unknown; the refusal
+names the cap. The same admission applies to Claude process-per-card lanes.
+Running work is never killed to enforce the cap. The cap is an admission
+budget, not a filesystem quota: a running card can grow its own scratch.
+
+Every beat carries the latest completed `--jobs-bytes`, `--free-bytes` and,
+where the volume supplies them, `--free-inodes`. Available bytes use the user's
+available blocks. Walks count links themselves and never traverse their
+targets. A first sample is pending; a failed sample reports `--capacity-error` and
+unknown counts. This note reaches the sprint row and dashboard while the beat
+continues; unknown inode headroom is omitted rather than reported as zero.
+
+`nova-friend gc --as <me> [--dir <working-directory>] [--jobs-cap <bytes>]
+[--dry-run]` invokes the same collector; the directory defaults to the current
+working directory. It prints one class line each for active, unowned,
+unpublished, removed and deferred, then `GC OK freed=<bytes> jobs=<bytes>
+cap=<bytes>` (the standard renderer places the summary first). A dry run reads
+jobs, git state and origin but removes nothing: freed and removed are zero;
+`planned` and `planned_jobs` name what would be removed. Reports remain after
+collection. The named cap regression pins publication,
+active/dirty/unreported/unpushed protection, admission, measured fields and dry
+runs; `TestBlockedJobCollectorDoesNotHoldBackBeats` pins collector liveness.
+
 Not yet: the server's `friend cards` answer does not send `repo` and `base` (cmd/nova-sprint is
 outside this card's paths), so the brief's lines are read; a read's checkout at the head under
 read is not staged here.

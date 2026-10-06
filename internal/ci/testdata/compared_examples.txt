@@ -127,3 +127,6 @@ cmd/nova-check/cli_examples_test.go:TestCLIExamplesMatchWhatTheToolPrints $ nova
 cmd/nova-local/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-local status
 cmd/nova-local/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-local serve --engine ollama --model gemma4:12b --num-ctx 32768 --seed 7
 cmd/nova-local/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-local worker --engine ollama --model gemma4-32k --out ./gemma.json --name gemma --harness opencode --harness-args run,--model,ollama/{model},--,{prompt} --worker-dir $PWD/cmd/nova-local/testdata/home --key-file $PWD/cmd/nova-local/testdata/local.key --env-var OLLAMA_API_KEY --usage opencode --deadline 20m
+
+cmd/nova-friend/gc_test.go:TestGCDryRunMatchesTheDocumentedEmptyJobs example: nova-friend gc --as bob --dir ./bob --dry-run
+cmd/nova-friend/gc_test.go:TestGCDryRunMatchesTheDocumentedEmptyJobs $ nova-friend gc --as bob --dir ./bob --dry-run

@@ -47,7 +47,7 @@ func TestFriendsRowShowsTheWindowUseBesideTheWidth(t *testing.T) {
 		}
 		return m
 	}
-	snap["tables"].(map[string]any)["friends"] = map[string]any{"sub": row("5h 62% 7d 31%"), "metered": row(""), "odd": row("<b>")}
+	snap["tables"].(map[string]any)["friends"] = map[string]any{"sub": row("5h 62% 7d 31%"), "metered": row(""), "odd": row("<b>"), "capacity": map[string]any{"status": "up", "width": "4", "working": "1", "jobs_bytes": "200", "free_bytes": "0", "free_inodes": "50", "capacity_error": "<blocked>"}}
 
 	in, err := json.Marshal(map[string]any{"appJS": string(file("app.js")), "snap": snap})
 	require.NoError(t, err)
@@ -59,6 +59,9 @@ func TestFriendsRowShowsTheWindowUseBesideTheWidth(t *testing.T) {
 	var cells map[string]string
 	require.NoError(t, json.Unmarshal(outBuf.Bytes(), &cells), outBuf.String())
 
+	require.Contains(t, cells, "capacity")
+	assert.Contains(t, cells["capacity"], "jobs 200 B · free 0 B · inodes 50")
+	assert.Contains(t, cells["capacity"], "&#60;blocked&#62;")
 	require.Contains(t, cells, "sub")
 	assert.Contains(t, cells["sub"], `<span class="win"> · 5h 62% 7d 31%</span>`, "the window use beside the width")
 	assert.Contains(t, cells["sub"], `class="fb"`, "the width is still there")

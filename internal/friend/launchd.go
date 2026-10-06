@@ -18,6 +18,7 @@ import (
 type Agent struct {
 	Friend, Harness, Dir, Session string
 	StateDir                      string // the daemon's state files, when not the default under Home
+	JobsCap                       int64  // SPEC-FRIEND, jobs capacity
 	Width                         int
 	Binary                        string   // this tool, by absolute path
 	Copy                          CopyFile // places a removable-volume binary under Home; nil refuses it
@@ -68,6 +69,9 @@ func (a Agent) Args() []string {
 		args = append(args, "--")
 	}
 	args = append(args, a.Binary, "run", "--as", a.Friend, "--harness", a.Harness, "--dir", a.Dir, "--redis", a.Redis, "--server", a.Server, "--width", fmt.Sprint(a.Width))
+	if a.JobsCap > 0 && a.JobsCap != DefaultJobsCap {
+		args = append(args, "--jobs-cap", fmt.Sprint(a.JobsCap))
+	}
 	if a.Session != "" {
 		args = append(args, "--session", a.Session)
 	}

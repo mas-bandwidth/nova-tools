@@ -285,7 +285,7 @@ func (st *Store) FriendBeatProof(ctx context.Context, friend string, rep sprint.
 		_ = json.Unmarshal([]byte(vals[0]), &prev) // ignored: an unreadable record holds no check and no proof
 	}
 	b := sprint.Beat{At: now}
-	if len(rep.Running) > 0 || rep.Working != nil || rep.Queue != nil || rep.Width != nil || !rep.Active.IsZero() {
+	if rep.CapacityError != "" || rep.JobsBytes != nil || rep.FreeBytes != nil || rep.FreeInodes != nil || len(rep.Running) > 0 || rep.Working != nil || rep.Queue != nil || rep.Width != nil || !rep.Active.IsZero() {
 		b.Friend = &rep // a beat that reports nothing carries no report
 	}
 	if rep.Build != "" || !rep.Started.IsZero() || !rep.Present.IsZero() {

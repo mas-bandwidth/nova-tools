@@ -228,3 +228,11 @@ This specification is locked. No line changes without his words, quoted here wit
 - 2026-10-04, the owner, a quoted change after the lock, asking after the merge backlog:
   "Is this progress visible in the sprint dashboard yet?" The page shows one Merge row under the progress bar (the Merge section
   above), read from `where --json`'s `merge_row`. Nothing else moves.
+
+### Friend capacity (a-friend-keeps-its-working-dir-under-a-cap3.w1)
+
+A friend row with capacity fields shows a subline beside working/width:
+`jobs <jobs_bytes> B · free <free_bytes> B · inodes <free_inodes>`, followed by
+`capacity_error` when supplied. Missing metrics show `-`; zero remains zero.
+Every value is escaped. The existing Fleet and Friends column layout stays
+aligned; capacity does not add a column to the dashboard.

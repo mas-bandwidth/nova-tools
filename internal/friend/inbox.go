@@ -359,6 +359,7 @@ func (l *loop) inboxStep(now time.Time) {
 	if d.Stage != nil {
 		l.stageStep(row.Cards, now)
 	}
+	d.inboxHeld = row.Cards
 	l.pruneStep(row.Cards, keep, now)
 	ids := make([]string, 0, len(row.Cards))
 	for _, h := range row.Cards {
@@ -403,6 +404,12 @@ func (d *Daemon) nextCard(skip func(Card) bool) (Card, bool, error) {
 func (l *loop) startDealt(now time.Time) {
 	d := l.d
 	lines := l.dealt
+	if d.Admit != nil {
+		if err := d.Admit(l.ctx, Card{}); err != nil {
+			d.Record(fmt.Sprintf("%s not delivered: %v", now.UTC().Format(time.RFC3339), err))
+			return
+		}
+	}
 	l.dealt = nil
 	if l.passive {
 		d.Record(fmt.Sprintf("%s not delivered: %s has no deliver command: %d card(s) dealt into her inbox", now.UTC().Format(time.RFC3339), d.Harness, len(lines)))

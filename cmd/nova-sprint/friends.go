@@ -125,7 +125,7 @@ func friendVerbWords(name string) string {
 	sync := "The name is one friend row of the friends table. friend sync copies those rows from nova-config; a name the table lacks is refused and the line names friend sync. friend sync exits 3 when the config cannot be read or holds no friend row. nova-sprint help friend says how the friends table is kept."
 	switch name {
 	case "friend beat":
-		return "friend beat records that this friend is present, and --running the cards she is running now, which friend take and friend down leave with her. --working, --queue and --width are her own counts as her daemon keeps them, and --load her load as a percent, as fleet beat --load gives a machine's: her word, carried on where --json's friends beside the table's counts, which stay the sprint's. Her nova-friend daemon runs it every " + every + " while it runs, and nothing else beats for her: no loop beside the daemon. The beat is recorded, and its age shown on her row, and it never makes her up, whoever sends it: she is up only on evidence from her own session, a wake ping her session answered (friend health --state up) under " + pong + " old, her session's answer to a check her daemon asked under " + sprint.FriendProofLive.String() + " old while her beats go on (--check <nonce> when her daemon asks, --pong <nonce> when her session answers, each with --run, the daemon's run: an answer proves only to the run that asked it, once, within " + sprint.CheckAnswerWithin.String() + " of the ask; a time, a nonce never asked or one answered already is a beat with no proof, said on the line as no_proof=, but for the old --pong <time>, which counts for " + sprint.LegacyPongGrace.String() + " after the server starts; the verb trusts its caller as her, so a caller who asks and answers in one beat proves her), or a card of hers finished under " + finish + " old, and down otherwise, her row naming the evidence missing. --until <RFC3339> and --reason <text> are her daemon's word that she is down until then and why (her harness at its usage limit or out of credits): while her last beat says so she is down, whatever her session's evidence, with the pair shown in why she is down and on her report; a beat can say down, never up, and a beat without --until withdraws the word. " + sync + "\n"
+		return "friend beat accepts --jobs-bytes, --free-bytes and --free-inodes as nonnegative whole numbers from the daemon; omitted inode headroom is unknown. It records that this friend is present, and --running the cards she is running now, which friend take and friend down leave with her. --working, --queue and --width are her own counts as her daemon keeps them, and --load her load as a percent, as fleet beat --load gives a machine's: her word, carried on where --json's friends beside the table's counts, which stay the sprint's. Her nova-friend daemon runs it every " + every + " while it runs, and nothing else beats for her: no loop beside the daemon. The beat is recorded, and its age shown on her row, and it never makes her up, whoever sends it: she is up only on evidence from her own session, a wake ping her session answered (friend health --state up) under " + pong + " old, her session's answer to a check her daemon asked under " + sprint.FriendProofLive.String() + " old while her beats go on (--check <nonce> when her daemon asks, --pong <nonce> when her session answers, each with --run, the daemon's run: an answer proves only to the run that asked it, once, within " + sprint.CheckAnswerWithin.String() + " of the ask; a time, a nonce never asked or one answered already is a beat with no proof, said on the line as no_proof=, but for the old --pong <time>, which counts for " + sprint.LegacyPongGrace.String() + " after the server starts; the verb trusts its caller as her, so a caller who asks and answers in one beat proves her), or a card of hers finished under " + finish + " old, and down otherwise, her row naming the evidence missing. --until <RFC3339> and --reason <text> are her daemon's word that she is down until then and why (her harness at its usage limit or out of credits): while her last beat says so she is down, whatever her session's evidence, with the pair shown in why she is down and on her report; a beat can say down, never up, and a beat without --until withdraws the word. " + sync + "\n"
 	case "friend down":
 		return "friend down holds the named friend, as fleet down holds a machine: held is the coordinator's decision alone, whatever she beats or the coordinator's daemon observes; the tick deals her nothing, and where counts working as 0 while the friend is held. Every card dealt to her that she has not started goes back to ready, as friend take --all-unstarted takes it, and the next tick deals it to a friend up with room (a card whose WHO line names her waits for her); a card she has started (a push on its branch, her beat naming it running) stays with her and finishes, each named on a NOTE line. --reason <text> and --until <RFC3339> say why and when you expect her back, shown in her status cell. friend up releases the hold. friend down is hold <friend> in the old words, kept for one release: run nova-sprint hold <friend> --reason <text> (her cards finish; --return withdraws them), and unhold <friend>. " + sync + "\n"
 	case "friend up":
@@ -361,6 +361,10 @@ func (a *app) friendBeat(ctx context.Context, args []string, open func(common) (
 	build := fs.String("build", "", "the build her daemon runs (its version line's build): a friend come up is told to update when it is not the server's")
 	started := fs.String("started", "", "when her daemon started, RFC3339: its generation; a start not seen before raises a status judgment")
 	present := fs.String("present", "", "when her daemon sent her the present on its start, RFC3339: the snap-to-present step of a friend come up")
+	capacityError := fs.String("capacity-error", "", "why capacity measurement is pending or failed; omitted metrics are unknown")
+	jobsBytes := fs.String("jobs-bytes", "", "jobs scratch bytes, a nonnegative whole number")
+	freeBytes := fs.String("free-bytes", "", "available volume bytes, a nonnegative whole number")
+	freeInodes := fs.String("free-inodes", "", "available volume inodes, a nonnegative whole number; omit when the volume reports none")
 	running := fs.String("running", "", "the cards she is running now, comma separated (work card ids, her job names or primaries): friend take and friend down leave them with her")
 	working := fs.String("working", "", "how many jobs she is working now, as her daemon counts them")
 	queue := fs.String("queue", "", "how many jobs she holds queued, as her daemon counts them")
@@ -376,7 +380,7 @@ func (a *app) friendBeat(ctx context.Context, args []string, open func(common) (
 	if code != 0 {
 		return code
 	}
-	rep := sprint.FriendReport{Running: sprint.Split(*running)}
+	rep := sprint.FriendReport{Running: sprint.Split(*running), CapacityError: oneline.Escape(*capacityError)}
 	if b := strings.TrimSpace(*build); b != "" {
 		rep.Build = oneline.Field(b)
 	}
@@ -409,6 +413,19 @@ func (a *app) friendBeat(ctx context.Context, args []string, open func(common) (
 			return refuse(stderr, name, "--active wants an RFC3339 time, found "+oneline.Escape(*active))
 		}
 		rep.Active = at.UTC().Truncate(time.Second)
+	}
+	for _, n := range []struct {
+		flag, text string
+		to         **int64
+	}{{"--jobs-bytes", *jobsBytes, &rep.JobsBytes}, {"--free-bytes", *freeBytes, &rep.FreeBytes}, {"--free-inodes", *freeInodes, &rep.FreeInodes}} {
+		if n.text == "" {
+			continue
+		}
+		value, err := strconv.ParseInt(n.text, 10, 64)
+		if err != nil || value < 0 {
+			return refuse(stderr, name, n.flag+" wants a nonnegative whole number, found "+oneline.Escape(n.text))
+		}
+		*n.to = &value
 	}
 	if *check != "" && !sprint.ValidID(*check) {
 		return refuse(stderr, name, "--check wants a nonce (letters, digits, _ and -), found "+oneline.Escape(*check))
@@ -505,6 +522,19 @@ func (a *app) friendBeat(ctx context.Context, args []string, open func(common) (
 			line += fmt.Sprintf(" %s=%d", n.key, *n.v)
 			facts[n.key] = *n.v
 		}
+	}
+	for _, n := range []struct {
+		key   string
+		value *int64
+	}{{"jobs_bytes", rep.JobsBytes}, {"free_bytes", rep.FreeBytes}, {"free_inodes", rep.FreeInodes}} {
+		if n.value != nil {
+			line += fmt.Sprintf(" %s=%d", n.key, *n.value)
+			facts[n.key] = *n.value
+		}
+	}
+	if rep.CapacityError != "" {
+		line += " capacity_error=" + oneline.Field(rep.CapacityError)
+		facts["capacity_error"] = rep.CapacityError
 	}
 	if given != nil {
 		line += fmt.Sprintf(" load=%.1f%%", *given)

@@ -428,6 +428,11 @@ function fleetLike(box, table, withLoad) {
     setTrack(r.track, working, width, scale);
     // a subscription friend's window use beside her width (docs/SPEC-SPRINT.md, the friends table)
     setHTML(r.wf, frac(working, width, digits) + (m.window ? "<span class=\"win\"> · " + escHTML(m.window) + "</span>" : ""));
+    if (!withLoad && (m.jobs_bytes != null || m.free_bytes != null || m.free_inodes != null || m.capacity_error)) {
+      var capacity = "jobs " + (m.jobs_bytes == null ? "-" : m.jobs_bytes) + " B · free " + (m.free_bytes == null ? "-" : m.free_bytes) + " B · inodes " + (m.free_inodes == null ? "-" : m.free_inodes);
+      if (m.capacity_error && m.capacity_error !== "-") capacity += " · " + m.capacity_error;
+      setHTML(r.wf, r.wf.innerHTML + "<span class=\"win\"> · " + escHTML(capacity) + "</span>");
+    }
     setNum(r.ready, int(m.ready)); setNum(r.done, done);
     setOk(r.ok, pct(okv), done);
     if (r.load) { var lp = pct(m.load); setText(r.load, lp === null ? "-" : lp.toFixed(1) + "%"); setClass(r.load, "num" + (lp === null ? " zero" : "")); }

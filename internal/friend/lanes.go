@@ -459,6 +459,12 @@ func (l *loop) laneStep(now time.Time, width int) {
 			if !found {
 				continue // messages wait: they ride only with a card
 			}
+			if d.Admit != nil {
+				if err := d.Admit(l.ctx, c); err != nil {
+					d.Record(fmt.Sprintf("%s lane %d: card %s not started: %s", now.UTC().Format(time.RFC3339), ln.n, c.ID, oneLine(err.Error(), 300)))
+					continue
+				}
+			}
 			// the card's job claimed before its first turn: a lane that claimed it first runs it alone
 			holder, err := ClaimLane(d.Dir, filepath.Base(c.Outbox), l.laneWho(ln.n), now)
 			if err != nil {

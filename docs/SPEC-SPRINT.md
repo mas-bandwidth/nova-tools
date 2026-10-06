@@ -6766,3 +6766,14 @@ friend reaches that friend's inbox by the route her judgments already take: the
 push loop writes a group addressed to someone to that actor's own inbox
 directory (`pushTarget.dirOf`, `~/<actor>-working/inbox/sprint-judgments`), the
 group carrying the note's addressee (`sprint.Group.To`).
+
+### Friend capacity reports (a-friend-keeps-its-working-dir-under-a-cap3.w1)
+
+`friend beat` accepts `--jobs-bytes`, `--free-bytes` and `--free-inodes` as
+nonnegative whole numbers, and `--capacity-error` as the reason a sample is
+pending or unavailable. They are optional fields in the friend's beat report,
+retained even when no work count is supplied. Zero is a measured value;
+omitted values are unknown. The friends row and `where --json` expose
+`jobs_bytes`, `free_bytes`, `free_inodes` and `capacity_error` when any friend
+reports capacity. The daemon sends its last completed background sample; an
+unavailable sample does not suppress its presence beat.
