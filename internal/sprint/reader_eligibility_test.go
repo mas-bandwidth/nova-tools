@@ -55,7 +55,8 @@ func TestTheReadersOfAnEarlierAttemptAreAskedTheNext(t *testing.T) {
 
 // burnedWorld is n flash primaries in review at attempt 1 and five readers
 // up, each holding a read card at that attempt taken back from it (retired
-// by away): no reader may be asked any of them.
+// by the level, not by the away sweep, which a returning reader may be asked
+// again under a second identity): no reader may be asked any of them.
 func burnedWorld(t *testing.T, n int) *world {
 	t.Helper()
 	readers := []string{"reader-a", "reader-b", "reader-c", "reader-d", "reader-e"}
@@ -72,13 +73,13 @@ func burnedWorld(t *testing.T, n int) *world {
 }
 
 // burn adds the flash primary p in review at attempt 1 with a read card of
-// every reader at that attempt taken back from it.
+// every reader at that attempt taken back from it by the level.
 func burn(w *world, p string, readers []string) {
 	w.s.Work.Put(&Card{ID: p, Row: "s1", Col: Review, Score: float64(len(w.s.Work.Cards())), Rev: 1,
 		Fields: map[string]string{"kind": "primary", "attempt": "1", "stream": "s1", "head": "h1"}})
 	for _, rd := range readers {
 		w.s.Readers.Put(&Card{ID: ReadCardID(p, 1, rd), Rev: 1, Fields: map[string]string{"kind": "read", "primary": p, "stream": "s1",
-			"reader": rd, "attempt": "1", "head": "h1", "asked": stamp(t0), "retired": stamp(t0), "retired_by": "away"}})
+			"reader": rd, "attempt": "1", "head": "h1", "asked": stamp(t0), "retired": stamp(t0), "retired_by": RetiredByLevel}})
 	}
 }
 
