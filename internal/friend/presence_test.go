@@ -43,8 +43,10 @@ type presenceRig struct {
 	daemon, direct *bus.Bus // what the daemon sends, and what anyone else (the session, a friend) sends
 	now            time.Time
 	nonces         int
-	beats          int
+	beats, downs   int // the beats that said up, and the beats that said down
 	beat           func(context.Context) error
+	server         *fakeSprint // the sprint server the beat's proof goes to; nil: none
+	saved          PresenceStatus
 }
 
 func newPresenceRig(t *testing.T) *presenceRig {
@@ -60,14 +62,26 @@ func newPresenceRig(t *testing.T) *presenceRig {
 	}
 	r.sc.Deliver = r.sc.Gate(r.app)
 	r.daemon, r.direct = &bus.Bus{Store: r.sc.DaemonStore()}, &bus.Bus{Store: r.store}
-	r.beat = r.sc.Beat(func(context.Context) error { r.beats++; return nil })
+	r.sc.Save = func(p PresenceStatus) error { r.saved = p; return nil }
+	r.beat = r.sc.Beat(func(_ context.Context, p Proof) error {
+		if p.State == PresenceUp {
+			r.beats++
+		} else {
+			r.downs++
+		}
+		if r.server != nil {
+			recorded, status := r.server.beat(r.now, p)
+			r.sc.Proved(Proof{State: recorded.State, Seen: recorded.Seen}, status, r.now)
+		}
+		return nil
+	})
 	return r
 }
 
 func (r *presenceRig) step(t *testing.T, d time.Duration) {
 	t.Helper()
 	r.now = r.now.Add(d)
-	_ = r.beat(context.Background()) // ignored: the refusal is what Present says, asserted by the caller
+	_ = r.beat(context.Background()) // ignored: the beat's error is never read here; what Present says is asserted by the caller
 }
 
 func (r *presenceRig) send(t *testing.T, b *bus.Bus, from, subject, body string) {
@@ -101,7 +115,8 @@ func TestOnlyTheSessionCanAnswerTheNonce(t *testing.T) {
 	up, reason := r.present(t)
 	assert.False(t, up, "a daemon that started proves nothing about the session")
 	assert.Equal(t, NotYetAnswered, reason)
-	assert.Equal(t, 0, r.beats, "no beat to the sprint server before the session answers")
+	assert.Equal(t, 0, r.beats, "no up beat to the sprint server before the session answers")
+	assert.Equal(t, 1, r.downs, "the beat says down, with the reason, before the session answers")
 
 	r.send(t, r.daemon, "bob", DaemonPongSubject, "daemon-pong n1\n")
 	r.send(t, r.daemon, "bob", PongSubject, PongLine("n1", 0, 0, 4)+"\n")
@@ -115,8 +130,9 @@ func TestOnlyTheSessionCanAnswerTheNonce(t *testing.T) {
 	up, reason = r.present(t)
 	assert.False(t, up)
 	assert.Equal(t, NoSessionAnswer, reason, "five minutes with no session answer")
-	assert.Error(t, r.beat(ctx), "the beat is held back while the session is down")
+	require.NoError(t, r.beat(ctx), "the beat goes out while the session is down, saying down")
 	assert.Equal(t, 0, r.beats)
+	assert.Equal(t, 4, r.downs, "every beat so far said down")
 	assert.Len(t, r.app.got(), 1, "one check per nonce")
 
 	r.send(t, r.direct, "bob", PongSubject, PongLine("n1", 0, 0, 4)+"\n")

@@ -136,9 +136,9 @@ func TestLineFormatting(t *testing.T) {
 	df := DaemonFacts{
 		Friend: "bob", Agent: "loaded", PID: "123", Status: "ok",
 		Connection: "connected", Challenge: "quiet", PongAge: "5s",
-		Presence: "up", SeenAge: "2s",
+		Presence: "up", SeenAge: "2s", Proof: "up@2026-10-05T10:00:00Z", Server: "up",
 	}
-	assert.Equal(t, "CHECK DAEMON friend=bob agent=loaded pid=123 status=ok connection=connected challenge=quiet pong_age=5s presence=up seen_age=2s", df.Line())
+	assert.Equal(t, "CHECK DAEMON friend=bob agent=loaded pid=123 status=ok connection=connected challenge=quiet pong_age=5s presence=up seen_age=2s proof=up@2026-10-05T10:00:00Z server=up", df.Line())
 
 	hf := HarnessFacts{
 		Friend: "bob", Harness: "opencode", Route: "push",

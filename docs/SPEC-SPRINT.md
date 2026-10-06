@@ -137,13 +137,21 @@ refused, exit 1; `TestFriendBeatTakesHerCountsAndLoadAsFleetBeatTakesALoad`). He
 `held` while the coordinator holds her (`hold <friend> --reason <text>`,
 section 11, and `friend down`; `unhold <friend>` and `friend up` release the
 hold), whatever she beats or the coordinator observes; else `up` only on
-evidence from her own session (docs/SPEC-FRIEND.md, "Presence is her
-session's evidence"): a wake ping her session answered (`friend health --state
-up`, below) under `FriendPongWindow` (10 minutes) old, or a card of hers
+evidence from her own session, one definition shared with docs/SPEC-FRIEND.md
+("Presence is her session's evidence"): a proof of her session recorded as
+`friend health --state up --seen <t>` (below) under the seat's generation now
+and under `FriendPongWindow` (10 minutes) old, whether her own daemon recorded
+it (her beat carries it, `friend beat --pong <t>`, her session's last word:
+its answer to a SESSION CHECK or a bus message of its own, and the server
+records it through the health path as hers, `store.FriendProof`) or the
+coordinator did (a wake ping her session answered); or a card of hers
 finished under `FriendFinishWindow` (30 minutes) old; else `down` (`friend
-down` holds her and shows `held`, never `down`). Her beat is recorded and
-never evidence, whoever sends it; `where --json` names the evidence and its
-age (`friends[].evidence`). `friend up` is no evidence: a friend released with
+down` holds her and shows `held`, never `down`). Her beat by itself is
+recorded and never evidence, whoever sends it: the proof it carries is, once
+recorded; a beat that says down (`--until --reason`: her session not
+answering, her harness at its limit) puts her down at once and is recorded as
+her own observation, state down with the reason. `where --json` names the
+evidence and its age (`friends[].evidence`). `friend up` is no evidence: a friend released with
 none in its window is `down` until her session gives some. `friend up
 <friend> --width <n>` sets her width (1 to `MaxWidth`), as `fleet up --width`
 sets a machine's, until `friend sync` sets her nova-config row's again (a
@@ -254,11 +262,15 @@ generation}`, three keys and no table (`store.SeatState`); `handover --json`'s
 
 The fence (`sprint.NotHealth`, applied by the health step `ObserveFriend` on
 its own read of the seat, so a seat that moved between the daemon's read and
-the write refuses it): the sender (`--actor`) is the seat's holder, the
+the write refuses it): the sender (`--actor`) is the seat's holder or the
+friend herself (her own daemon's proof, which her beat carries and the server
+records through this path under the generation of its own read,
+`store.FriendProof`; daemon-beat-carries-the-session-proof-b.w1), the
 observation names the seat's generation now, the friend is on the table, and
 the proof is dated no later than the server's clock and newer than the row's.
 Each refusal is one line, exit 1, nothing
-written: `friend health is the seat's: <holder>, not <actor>`; `the seat is
+written: `friend health is the seat's: <holder>, not <actor>` (the friend
+herself passes, as her own daemon); `the seat is
 <holder>'s at generation <g>, and this observation names generation <g'>: read
 the seat again (nova-sprint seat)`; `the proof is dated <t>, after the server's clock,
 <now>: a proof from the future renews nothing` (a review of PR 5305: a

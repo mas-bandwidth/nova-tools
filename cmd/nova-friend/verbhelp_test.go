@@ -69,7 +69,7 @@ func TestCheckHelpAndCommandReferenceNameEveryLineFieldAndExit(t *testing.T) {
 	for _, text := range []string{
 		"CHECK OK friends=<n> ok=<n> broken=<n> deaf=<n> silent=<n> down=<n> untrue=<n>",
 		"broken when the session is marked", "deaf when a delivery in", "silent when", "down by presence", "untrue: shown",
-		"friends[] each with", "daemon{friend, agent, pid, status, connection, challenge, pong_age, presence, seen_age}",
+		"friends[] each with", "daemon{friend, agent, pid, status, connection, challenge, pong_age, presence, seen_age, proof,\nserver}",
 		"failed_of_last20, deferred, delivered, failed, broken,", "bus{friend, real_since, last_real}",
 		"work{friend, inbox, outbox, newest_outbox, newest_at}", "verdict{friend, verdict, shown, why}",
 		"summary{friends, ok, broken, deaf, silent, down, untrue}",

@@ -503,6 +503,45 @@ func (st *Store) FriendHealth(ctx context.Context, friend, who string, obs sprin
 	return obs, status, false, err
 }
 
+// FriendProof records the proof a friend's beat carries of her own session
+// (sprint.ProofOfBeat), through the health path as her own observation (FriendHealth,
+// who the friend), under the seat's generation of this read: her daemon is the one that
+// proves her session (docs/SPEC-FRIEND.md, presence). A proof the row already holds
+// (sprint.ProofOwed: up with one as new or newer, down with the same reason, under this
+// generation) writes nothing and answers the row as it stands, so a beat every second
+// writes once per change. The result is the record as it stands after, her status by the
+// friends' rule, and whether the proof was written.
+func (st *Store) FriendProof(ctx context.Context, friend string, obs sprint.FriendHealth) (sprint.FriendHealth, string, bool, error) {
+	r, kv, err := st.roster(ctx)
+	if err != nil {
+		return sprint.FriendHealth{}, "", false, err
+	}
+	e, known := r[friend]
+	if !known {
+		return sprint.FriendHealth{}, "", false, noFriend(r, friend)
+	}
+	generation, err := st.seatGeneration(ctx)
+	if err != nil {
+		return sprint.FriendHealth{}, "", false, err
+	}
+	obs.Generation = generation
+	var prev sprint.FriendHealth
+	raw, ok, err := kv.GetKey(ctx, friendHealthKey(friend))
+	if err != nil {
+		return sprint.FriendHealth{}, "", false, err
+	}
+	if ok {
+		// ignored: an unreadable record is no observation, which this one replaces
+		_ = json.Unmarshal([]byte(raw), &prev)
+	}
+	if !sprint.ProofOwed(prev, obs) {
+		status, err := st.friendStatusAfter(ctx, friend, sprint.FriendPresence{Held: e.Held, Health: prev, Generation: generation})
+		return prev, status, false, err
+	}
+	h, status, replayed, err := st.FriendHealth(ctx, friend, friend, obs, "")
+	return h, status, !replayed, err
+}
+
 // friendStatusAfter is a friend's status by the friends' rule at the store's clock,
 // the presence p given (her hold and the observation a reply stands on) with the
 // rest of her evidence read as the friends table reads it: her last beat (a beat

@@ -69,17 +69,18 @@ func (r HealthReq) Replays() bool {
 }
 
 // NotHealth is why the observation is refused, "" is accepted: the sender is
-// the seat's holder, at the seat's generation, of a friend on the table, with
-// a proof dated no later than now, the server's clock, and newer than the row's.
-// It reads nothing but its arguments, so the step refuses on its own read of
-// the seat and its own clock.
+// the seat's holder or the friend herself (her own daemon, whose beat carries her
+// session's proof: ProofOfBeat), at the seat's generation, of a friend on the
+// table, with a proof dated no later than now, the server's clock, and newer than
+// the row's. It reads nothing but its arguments, so the step refuses on its own
+// read of the seat and its own clock.
 func NotHealth(holder string, generation uint64, now time.Time, r HealthReq) string {
 	switch {
 	case !r.Known:
 		return "no friend " + r.Friend + " on the friends table; run: nova-sprint friend sync"
 	case holder == "":
 		return "the sprint has no coordinator; run: nova-sprint init --coordinator <name>"
-	case r.Who != holder:
+	case r.Who != holder && r.Who != r.Friend:
 		return "friend health is the seat's: " + holder + ", not " + orDash(r.Who)
 	case r.Obs.Generation != generation:
 		return fmt.Sprintf("the seat is %s's at generation %d, and this observation names generation %d: read the seat again (nova-sprint seat)", holder, generation, r.Obs.Generation)
@@ -89,6 +90,40 @@ func NotHealth(holder string, generation uint64, now time.Time, r HealthReq) str
 		return fmt.Sprintf("the row holds a proof seen at %s, and this one's is not newer, %s: an older or repeated proof renews nothing", r.Prev.Seen.UTC().Format(time.RFC3339), r.Obs.Seen.UTC().Format(time.RFC3339))
 	}
 	return ""
+}
+
+// ProofOfBeat is the observation a friend's beat carries of her own session, which
+// the server records through the health path as hers (friend beat; the daemon is
+// the one that proves its session, docs/SPEC-FRIEND.md, presence): --pong <t>, her
+// session's last word, is up seen at t; --until <t> --reason <why>, her daemon's
+// word that she is down, is down seen at the beat's own time (the server's clock,
+// so it is never from the future) with the reason and the until; a beat that says
+// down carries no up. ok is false for a beat that carries neither. The generation
+// is the caller's: the seat's, as the server read it.
+func ProofOfBeat(rep FriendReport, pong, at time.Time, generation uint64) (obs FriendHealth, ok bool) {
+	switch {
+	case !rep.Until.IsZero():
+		return FriendHealth{State: Down, Seen: at.UTC().Truncate(time.Second), Generation: generation, Reason: rep.Reason, Until: rep.Until}, true
+	case !pong.IsZero():
+		return FriendHealth{State: Up, Seen: pong.UTC().Truncate(time.Second), Generation: generation}, true
+	}
+	return FriendHealth{}, false
+}
+
+// ProofOwed says the beat's observation obs is to be recorded over the row's prev:
+// nothing is owed while the row already holds it under obs's generation, up with a
+// proof as new or newer, or down with the same reason, so a beat every second
+// writes the row once per change of her session's word and never once a beat.
+func ProofOwed(prev, obs FriendHealth) bool {
+	if !prev.Observed() || prev.Generation != obs.Generation {
+		return true
+	}
+	switch obs.State {
+	case Up:
+		return obs.Seen.After(prev.Seen)
+	default:
+		return prev.State != obs.State || prev.Reason != obs.Reason
+	}
 }
 
 // ObserveFriend is the observation written: the plan's Health, which the

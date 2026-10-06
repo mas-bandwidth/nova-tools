@@ -897,11 +897,11 @@ func TestRunHoldsAHarnessAtItsLimitUntilItsResetThenWakesIt(t *testing.T) {
 		reason    string
 	}
 	var downBeats []downBeat
-	w.beatDown = func(_ context.Context, _, _ string, _, until time.Time, reason string) error {
+	w.beatDown = func(_ context.Context, _, _ string, _, until time.Time, reason string) (string, error) {
 		mu.Lock()
 		downBeats = append(downBeats, downBeat{clock, until, reason})
 		mu.Unlock()
-		return nil
+		return "", nil
 	}
 	type turn struct {
 		at       time.Time
@@ -962,6 +962,9 @@ func TestRunHoldsAHarnessAtItsLimitUntilItsResetThenWakesIt(t *testing.T) {
 	assert.False(t, slices.ContainsFunc(beats, func(b time.Time) bool { return b.After(downAt) && b.Before(turns[1].at) }),
 		"no up beat while she is down (%s to %s): %v", downAt, turns[1].at, beats)
 	// her beat says down instead, with the until and the reason (limits-mean-down-w-r5.w1~15)
+	// the beats that say down for the limit: a beat before the first check is answered says
+	// down for the session instead (no session answer yet), the daemon's own word
+	downBeats = slices.DeleteFunc(downBeats, func(b downBeat) bool { return !strings.HasPrefix(b.reason, "harness limit") })
 	require.NotEmpty(t, downBeats, "she beats down while limited")
 	for _, b := range downBeats {
 		assert.False(t, b.at.Before(turns[0].at) || b.at.After(turns[2].at), "a down beat only while limited, the wake turn's answer ending it: %s", b.at)

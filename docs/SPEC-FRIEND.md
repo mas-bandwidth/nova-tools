@@ -173,12 +173,40 @@ Presence is therefore the session's, never the daemon's:
   check, below).
 - A daemon that starts is down, `no session answer yet`, with a check owed at
   once: coming up proves nothing about the session.
-- While down, no beat goes to the sprint server: her beat never makes her up
-  there (only her session's evidence does, "Presence is her session's
-  evidence" below), and a daemon whose session is down holds it back (the
-  status says `not beating: the session is down (<reason>)`). The friend row's
-  mode and width arrive with the beat's answer, so while down the daemon
-  delivers by the row it last read (batch at `--width` before any).
+- **The daemon is the one that proves its session** (daemon-beat-carries-the-
+  session-proof-b.w1; the finding of 2026-10-06: three friends read down on the
+  sprint server for twenty minutes with their sessions answering, because the
+  beat carried no proof the server read and the daemon never recorded one; a
+  hand `friend health` put them up at once, and a relay loop re-proved them
+  from `presence.json` until this landed). Every beat carries the session's
+  proof as it stands (`friend.Proof`, `SessionCheck.Beat`): up with the
+  session's last word, `presence.json`'s `last_heard` (`friend beat --pong
+  <t>`), or down with the reason and when the next answer is expected
+  (`friend beat --until <t> --reason <why>`: `no session answer`, `no session
+  answer yet`). The beat is never held back for the session. The sprint server
+  records the proof through the health verb's path as her own observation
+  (`sprint.ProofOfBeat`, `store.FriendProof`, the health fence `NotHealth`
+  taking the friend herself as a sender): state up, seen `last_heard`, under
+  the seat's generation of the server's own read; or state down with the
+  reason, seen the beat's time. A proof the row already holds writes nothing
+  (`sprint.ProofOwed`): the row moves once per change of the session's word,
+  never once a beat. So every time `last_heard` moves (a SESSION CHECK
+  answered, a bus message from the session), her row on the server is up on it
+  within one beat, and when the session stops answering past the bound her row
+  reads down with the reason within one beat; the server needs no second
+  source, and no loop re-proves her. The beat's answer carries what the row
+  holds (`proof=<up|down> proof_seen=<t> status=<up|held|down>`, or
+  `proof_refused=<why>`), and the daemon keeps it in `presence.json`
+  (`proof_state`, `proof_seen`, `proof_at`, `server_status`;
+  `SessionCheck.Proved`); `nova-friend check` prints it on the daemon line as
+  `proof=<state>@<seen> server=<status>`, the last proof the daemon sent and
+  the server's view of it. `TestAnAnsweredCheckIsProvedToTheServerByTheDaemon`
+  (the pure module over a fake server that applies the real fence and the real
+  friends' rule) is the test; the model is below.
+- The friend row's mode and width arrive with the beat's answer; while her
+  harness is at its limit the beat says down with the reset and the reason
+  (limits-mean-down-w-r5.w1~15, below), and the session's word is stepped all
+  the same.
 - The state is in `presence.json` in the state directory, one writer, the
   daemon; `status` prints `presence=up|down`, `last_session=`, and, when down,
   `presence_reason=` (`no session answer`, `no session answer yet`, or
@@ -205,6 +233,20 @@ session's pong with that nonce, and its bound the longest a friend stays up
 with no proof from the session: in the code that is `SessionQuiet` plus
 `SessionBound`, fifteen minutes, since any bus message from the session
 restarts the quiet and the check goes in only after it.
+
+The daemon's answer and the server's proof are two things in the model
+(daemon-beat-carries-the-session-proof-b.w1): `answered` and `answerAge` are
+the daemon's, the session's last answer as `presence.json` holds it;
+`proved` and `proofAge` are the server's, the proof her row rests on. The
+proof action is the tick: every tick is a beat, and the beat carries the
+daemon's answer to the server (`Tick`, `Carry`), so after one tick the
+server's proof is the daemon's answer. The table's word (`Status`) is derived
+from the server's proof alone. The invariant `AnsweringNeverDownPastAPeriod`:
+a friend not held whose session answered one tick ago or more, within the
+bound, is up on the server; its reversed witness `noproof` is the defect, a
+beat that carries nothing (`MCFriendPresenceBrokenNoProof`), under which the
+server never learns of an answer. `UpHasFreshAnswer` holds as before because
+the server's proof is never newer than the daemon's answer.
 
 A friend leaves up in two steps only, the coordinator's hold and the tick
 (the last answer reaching the bound), and each takes back every card the
@@ -871,23 +913,34 @@ a refusing harness, another working 8 for an hour while running nothing.
 
 A friend's row in the sprint (`sprint.FriendStatus`, `sprint.FriendEvidence`)
 is `held` while the coordinator holds her; else `up` only on evidence from her
-own session, within its window:
+own session, within its window. **One definition of evidence**, this section's
+and docs/SPEC-SPRINT.md's friend row section's: her session's evidence is the
+proof her health record holds, `friend health <friend> --state up --seen <t>`
+under the seat's generation now and under `FriendPongWindow` old, whoever
+recorded it, or a card of hers finished under `FriendFinishWindow` old:
 
-- a wake ping her session answered under `FriendPongWindow` (ten minutes) old:
-  the coordinator's ping loop sends `nova-friend ping --wake`, her daemon
-  pushes the pong line into her free session as its own turn
-  (session-pong.w1), her session runs it, and the coordinator writes what it
-  saw as `friend health <friend> --state up --seen <t>`, fenced by the seat's
-  generation; or
+- a proof of her session under `FriendPongWindow` (ten minutes) old, recorded
+  through `friend health --state up --seen <t>` and fenced by the seat's
+  generation: her own daemon's, carried on her beat (`friend beat --pong
+  <t>`), which is her session's last word, its answer to a SESSION CHECK or a
+  bus message of its own (Presence, above: the daemon is the one that proves
+  its session); or the coordinator's, a wake ping her session answered
+  (`nova-friend ping --wake`, her daemon pushes the pong line into her free
+  session as its own turn, session-pong.w1, her session runs it, and the
+  coordinator writes what it saw); or
 - a card of hers finished (working to done, ok or failed) under
   `FriendFinishWindow` (thirty minutes) old: friend sync's collect of the
   `REPORT.md` her session wrote records it (`friend-finish:<friend>`,
   `store.FriendFinished`).
 
-Else she is `down`. Nothing else is evidence: not her beat, whoever sends it
-(her daemon, or any loop that beats for her), not `daemon-pong` (her daemon's own
-answer, shown as down), not a hold released (`friend up`), not a
-coordinator's down. Her row names the evidence and its age (`where --json`,
+Else she is `down`. Nothing else is evidence: not her beat by itself, whoever
+sends it (her daemon, or any loop that beats for her; a beat with `--pong`
+carries her session's proof, and the proof is the evidence, recorded through
+the health path, never the beat), not `daemon-pong` (her daemon's own answer,
+shown as down), not a hold released (`friend up`), not a coordinator's down.
+Her daemon's word that she is down (`friend beat --until --reason`: her session
+not answering its check, her harness at its limit) puts her down at once and
+is recorded the same way, state down with the reason. Her row names the evidence and its age (`where --json`,
 `friends[].evidence`: `session pong 3m0s ago`, `finish 12m0s ago`) or, down,
 what is missing and the age of the last of each, with her beat's age said to be
 no evidence. A friend down keeps the cards dealt to her row (the deadline judges
@@ -1916,7 +1969,9 @@ the log file, the bus store, the directory listing) so the verdict is a function
 
 1. Daemon: the launchd agent (`loaded`, `not-loaded`, `none`) and its pid, the status file's freshness
    (`ok` within `DaemonStale`, `stale`, `none`), connection, challenge, the session pong's age, presence
-   and its seen age.
+   and its seen age, and the last proof the daemon's beat carried to the sprint server as the server
+   recorded it (`proof=up@<seen>|down@<seen>|-`, from `presence.json`) with the server's view of her row
+   after it (`server=up|held|down|-`): the daemon is the one that proves its session (Presence, above).
 2. Harness: the route (`push`, `defer`, `passive`) and, from the daemon's log, the deliveries (`exit=`
    lines) and deferrals stamped at or after the window start; a line with no stamp is outside every
    window. `last` and `last_exit` are the newest delivery in the window, `failed_of_last20` the failures

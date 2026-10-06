@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -83,11 +84,11 @@ func TestRunBeatsDownWhileTheLanesArePausedUntilAPersonResumes(t *testing.T) {
 		reason    string
 	}
 	var downs []downBeat
-	w.beatDown = func(_ context.Context, _, _ string, _, until time.Time, reason string) error {
+	w.beatDown = func(_ context.Context, _, _ string, _, until time.Time, reason string) (string, error) {
 		mu.Lock()
 		downs = append(downs, downBeat{clock, until, reason})
 		mu.Unlock()
-		return nil
+		return "", nil
 	}
 	w.exec = func(_ context.Context, _, _ string, args []string, _ string) (string, int, error) {
 		if text := args[len(args)-1]; strings.HasPrefix(text, friend.SessionCheckPrefix) {
@@ -103,6 +104,9 @@ func TestRunBeatsDownWhileTheLanesArePausedUntilAPersonResumes(t *testing.T) {
 	mu.Lock()
 	defer mu.Unlock()
 	require.False(t, cleared.IsZero())
+	// the beats that say down for the pause: a beat before the first check is answered says
+	// down for the session instead (no session answer yet), the daemon's own word
+	downs = slices.DeleteFunc(downs, func(b downBeat) bool { return !strings.HasPrefix(b.reason, "provider failure") })
 	require.NotEmpty(t, downs, "she beats down while paused\n%s", out.String())
 	for _, b := range downs {
 		assert.False(t, b.at.After(cleared), "a down beat only while the marker stands: %s after %s", b.at, cleared)

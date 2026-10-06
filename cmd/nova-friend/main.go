@@ -67,8 +67,8 @@ type world struct {
 	open      func(ctx context.Context, addr string) (bus.Store, func(), error)
 	exec      friend.Exec
 	wall      func(wl friend.Wall, run friend.Exec) friend.Exec                                                   // a lane's child inside its wall; the real world's is Wall.Exec, nil walls nothing (a test's fake harness)
-	beat      func(ctx context.Context, server, friend string, active, pong time.Time) (answer string, err error) // the FRIEND-BEAT line, which carries the friend's row
-	beatDown  func(ctx context.Context, server, friend string, active, until time.Time, reason string) error      // her beat while her harness is at its limit (friend beat --until --reason); nil holds the beat back
+	beat      func(ctx context.Context, server, friend string, active, pong time.Time) (answer string, err error)                // the FRIEND-BEAT line, which carries the friend's row and the server's word on the proof (--pong)
+	beatDown  func(ctx context.Context, server, friend string, active, until time.Time, reason string) (answer string, err error) // her beat saying down with the reason (friend beat --until --reason): her session not answering, or her harness at its limit; nil holds the beat back
 	progress  func(ctx context.Context, server string, argv []string) error                                       // one progress verb to the sprint server (friend.ProgressArgv)
 	finish    func(ctx context.Context, server string, argv []string) error                                       // one finish verb to the sprint server (friend.FinishArgv: a lane's card whose run ended with no report)
 	sqlite    friend.Exec                                                                                         // reads opencode's database (the sqlite3 CLI); nil reads none: no card cost, no token cap
@@ -213,13 +213,12 @@ func realWorld() world {
 			}
 			return sprintBeat(ctx, server, args)
 		},
-		beatDown: func(ctx context.Context, server, name string, active, until time.Time, reason string) error {
+		beatDown: func(ctx context.Context, server, name string, active, until time.Time, reason string) (string, error) {
 			args := []string{"friend", "beat", name, "--until", until.UTC().Format(time.RFC3339), "--reason", reason}
 			if !active.IsZero() {
 				args = append(args, "--active", active.UTC().Format(time.RFC3339))
 			}
-			_, err := sprintBeat(ctx, server, args)
-			return err
+			return sprintBeat(ctx, server, args)
 		},
 		progress: sprintVerb,
 		finish:   sprintVerb,
@@ -555,7 +554,7 @@ is refused at exit 2 with its remedy and the agent booted out again. A harness w
 state directory under ~/.nova-friend (or --state-dir) or on the bus. Everything is judged over the --since
 window (default 24h): deliveries, deferrals, real messages and the session pong. Per friend, five lines in
 this order:
-CHECK DAEMON friend=<f> agent=<loaded|not-loaded|none> pid=<n|-> status=<ok|stale|none> connection=<..> challenge=<..> pong_age=<age|-> presence=<up|asleep|down> seen_age=<age|->
+CHECK DAEMON friend=<f> agent=<loaded|not-loaded|none> pid=<n|-> status=<ok|stale|none> connection=<..> challenge=<..> pong_age=<age|-> presence=<up|asleep|down> seen_age=<age|-> proof=<up|down>@<RFC3339>|- server=<up|held|down|->
 CHECK HARNESS friend=<f> harness=<h> route=<push|defer|passive> last=<RFC3339|-> last_exit=<n|-> failed_of_last20=<n> deferred=<n> broken=<RFC3339|-> reason=<line|->
 CHECK BUS friend=<f> real_since=<n> last_real=<RFC3339|->   (real: not ping, pong, daemon-pong or keepalive)
 CHECK WORK friend=<f> inbox=<n> outbox=<n> newest_outbox=<name|-> newest_at=<RFC3339|->   (under the friend's directory)
@@ -569,7 +568,8 @@ consumer shows of each friend, JSON {"<friend>":{"state":"up|asleep|down","worki
 - for stdin; when it says up or working and the verdict is not ok, the verdict stays and the why leads
 with "untrue: shown <state>/<working>, ", and when the facts are ok but the friend is asleep or its agent
 is not loaded the verdict is untrue. --json prints one object instead of the lines: friends[] each with
-friend and daemon{friend, agent, pid, status, connection, challenge, pong_age, presence, seen_age},
+friend and daemon{friend, agent, pid, status, connection, challenge, pong_age, presence, seen_age, proof,
+server},
 harness{friend, harness, route, last, last_exit, failed_of_last20, deferred, delivered, failed, broken,
 reason}, bus{friend, real_since, last_real}, work{friend, inbox, outbox, newest_outbox, newest_at},
 verdict{friend, verdict, shown, why}, and summary{friends, ok, broken, deaf, silent, down, untrue}.
@@ -1055,17 +1055,9 @@ func (w world) run(c *tool.Call) *tool.Out {
 		fmt.Fprintln(c.Stdout, "RUN "+line)
 		_ = friend.Record(state, line) // ignored: the line is on stdout (launchd's log) whatever the volume does
 	}
-	// the session's last proof (its answer or its own bus message), as the presence file
-	// last said it: every beat carries it (--pong), so the sprint deals only to a friend
-	// whose proof is live and tells the coordinator when it lapses
-	var proved atomic.Pointer[time.Time]
 	// the presence file says a limit while there is one, whatever the session check saw; the
 	// harness's process never decides it (friend.HarnessWatch is advisory)
 	writePresence := func(p friend.PresenceStatus) error {
-		if !p.LastHeard.IsZero() {
-			at := p.LastHeard
-			proved.Store(&at)
-		}
 		if until, reason, limited := fl.Limited(); limited {
 			p.Presence, p.Reason = friend.PresenceDown, "harness limit until "+until.UTC().Format(time.RFC3339)+": "+reason
 		}
@@ -1192,21 +1184,20 @@ func (w world) run(c *tool.Call) *tool.Out {
 		// the session check's and the limits' wrappers take a beat of ctx alone; the daemon's
 		// beat carries the session's last activity, closed over here (fold of 2026-10-05)
 		Beat: func(ctx context.Context, active time.Time) error {
-			// up or down, held back or not: the beat's record says what the lanes cost
+			// up or down: the beat's record says what the lanes cost
 			saySpend()
-			held := sc.Beat // the session's answer holds the beat back; a per-card harness has no session, its process is the daemon
-			if perCard {
-				held = func(beat func(context.Context) error) func(context.Context) error { return beat }
-			}
-			up := func(ctx context.Context) error {
-				var pong time.Time
-				if at := proved.Load(); at != nil {
-					pong = *at
-				}
+			// the up beat carries the session's proof (--pong: its last word, the presence
+			// file's last_heard), which the server records through the health path as hers;
+			// the answer carries her row and the server's word on the proof (friend.Proof;
+			// docs/SPEC-FRIEND.md, presence)
+			up := func(ctx context.Context, pong time.Time) error {
 				if perCard {
 					pong = w.now() // the daemon beating is the proof: nothing else can be asked of a process per card
 				}
 				answer, err := w.beat(ctx, server, name, active, pong)
+				if p, status, ok := friend.ProofFromAnswer(answer); err == nil && ok {
+					sc.Proved(p, status, w.now())
+				}
 				if m, wd, ok := friend.ParseRow(answer); err == nil && ok {
 					rowMode, rowWidth = m, wd
 					dir := friend.RowConfigDir(answer)
@@ -1228,14 +1219,31 @@ func (w world) run(c *tool.Call) *tool.Out {
 				return err
 			}
 			if w.beatDown == nil {
-				return held(fl.Beat(up))(ctx) // no down beat: held back while she is at her limit
+				// no down beat (a world without one): held back while she is at her limit or her
+				// session is down, as before the beat carried the proof
+				beat := func(ctx context.Context) error { return up(ctx, time.Time{}) }
+				if !perCard {
+					beat = sc.Beat(func(ctx context.Context, p friend.Proof) error {
+						if p.State != friend.PresenceUp {
+							return fmt.Errorf("not beating: the session is down (%s); the daemon answering is not the session", p.Reason)
+						}
+						return up(ctx, p.Seen)
+					})
+				}
+				return fl.Beat(beat)(ctx)
 			}
-			// while her harness is at its limit her beat says down with the until and the
-			// reason (limits-mean-down-w-r5.w1~15), the session's check stepped as before,
-			// ahead of the look; the inner check is the last before the up beat, so a limit
-			// seen during the step is never beaten up
+			// her beat says down with the until and the reason (friend beat --until --reason)
+			// while her harness is at its limit (limits-mean-down-w-r5.w1~15) and while her
+			// session is not answering (the daemon's own word, recorded on the server with the
+			// reason); the session's check is stepped ahead of the look, and the limit's inner
+			// look is the last before the up beat, so a limit seen during the step is never
+			// beaten up
 			down := func(ctx context.Context, until time.Time, reason string) error {
-				return w.beatDown(ctx, server, name, active, until, reason)
+				answer, err := w.beatDown(ctx, server, name, active, until, reason)
+				if p, status, ok := friend.ProofFromAnswer(answer); err == nil && ok {
+					sc.Proved(p, status, w.now())
+				}
+				return err
 			}
 			// a provider failure paused her lanes: her beat says her down with its exact
 			// message until a person clears the marker (nova-friend resume; friend.PauseBeat)
@@ -1243,10 +1251,18 @@ func (w world) run(c *tool.Call) *tool.Out {
 				until, reason := friend.PauseBeat(marker, c.Str("model"), w.now())
 				return down(ctx, until, reason)
 			}
-			if _, _, limited := fl.Limited(); limited && !perCard {
+			if perCard {
+				return fl.BeatOrDown(func(ctx context.Context) error { return up(ctx, time.Time{}) }, down)(ctx)
+			}
+			if _, _, limited := fl.Limited(); limited {
 				sc.Step(ctx)
 			}
-			return fl.BeatOrDown(held(fl.BeatOrDown(up, down)), down)(ctx)
+			return fl.BeatOrDown(sc.Beat(func(ctx context.Context, p friend.Proof) error {
+				if p.State != friend.PresenceUp {
+					return down(ctx, p.Until, p.Reason)
+				}
+				return fl.BeatOrDown(func(ctx context.Context) error { return up(ctx, p.Seen) }, down)(ctx)
+			}), down)(ctx)
 		},
 		Row: func() (string, int) {
 			if m := c.Str("mode"); m != "" {
@@ -1818,7 +1834,7 @@ func (w world) status(c *tool.Call) *tool.Out {
 		o.Fact("presence", pr.Presence).Fact("last_session", stamp(pr.LastHeard))
 		if pr.Presence != friend.PresenceUp {
 			o.Fact("presence_reason", tool.Text(pr.Reason))
-			o.Note("the daemon is up and the session is not (" + pr.Reason + "): the friend is down, and no beat goes to the sprint server until the session answers a session check")
+			o.Note("the daemon is up and the session is not (" + pr.Reason + "): the friend is down, and her beat says so on the sprint server with that reason until the session answers a session check")
 		}
 	}
 	if prErr != nil {

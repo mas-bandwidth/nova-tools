@@ -36,6 +36,7 @@ func TestNotHealthFencesSenderGenerationAndOrder(t *testing.T) {
 		{"unknown friend", "rowan", 2, HealthReq{Friend: "zed", Who: "rowan", Obs: obs(Up, h0, 2)}, "no friend zed on the friends table"},
 		{"no seat", "", 1, HealthReq{Friend: "amy", Who: "rowan", Known: true, Obs: obs(Up, h0, 1)}, "the sprint has no coordinator"},
 		{"not the holder", "rowan", 2, HealthReq{Friend: "amy", Who: "stella", Known: true, Obs: obs(Up, h0, 2)}, "friend health is the seat's: rowan, not stella"},
+		{"the friend herself", "rowan", 2, HealthReq{Friend: "amy", Who: "amy", Known: true, Obs: obs(Up, h0, 2)}, ""},
 		{"stale generation", "rowan", 3, HealthReq{Friend: "amy", Who: "rowan", Known: true, Obs: obs(Up, h0, 2)}, "the seat is rowan's at generation 3, and this observation names generation 2"},
 		{"older proof", "rowan", 2, HealthReq{Friend: "amy", Who: "rowan", Known: true, Prev: prev, Obs: obs(Up, h0.Add(-time.Second), 2)}, "the row holds a proof seen at 2026-10-04T15:00:00Z, and this one's is not newer"},
 		{"the same proof", "rowan", 2, HealthReq{Friend: "amy", Who: "rowan", Known: true, Prev: prev, Obs: obs(Down, h0, 2)}, "is not newer"},

@@ -72,7 +72,15 @@ func newLivenessRig(t *testing.T, listing string) *livenessRig {
 	r.direct = &bus.Bus{Store: r.store}
 	r.d = &Daemon{Friend: "zhi", Harness: "dsh", Dir: "/w/zhi", Now: clock, Record: record,
 		Beat: func(ctx context.Context, _ time.Time) error {
-			return r.sc.Beat(func(context.Context) error { r.mu.Lock(); r.sprint++; r.mu.Unlock(); return nil })(ctx)
+			return r.sc.Beat(func(_ context.Context, p Proof) error {
+				if p.State != PresenceUp {
+					return nil // the beat says down: no up beat reaches the sprint
+				}
+				r.mu.Lock()
+				r.sprint++
+				r.mu.Unlock()
+				return nil
+			})(ctx)
 		},
 	}
 	r.w = WatchHarness(r.d, nil)
@@ -119,7 +127,8 @@ func TestAFriendWhoseSessionPongsIsUpWithNoHarnessProcess(t *testing.T) {
 	t.Run("headless dsh, no app, the session pongs: up for three hours", func(t *testing.T) {
 		t.Parallel()
 		r := newLivenessRig(t, headlessDSH)
-		require.Error(t, r.step(BeatEvery), "a daemon that started proves nothing: down until the session answers")
+		require.NoError(t, r.step(BeatEvery), "the beat goes out saying down")
+		require.Zero(t, r.beats(), "a daemon that started proves nothing: no up beat until the session answers")
 		require.True(t, r.answerLatest(t), "the first beat put a session check into the session")
 		answered := 1
 		before := r.beats()
@@ -149,9 +158,9 @@ func TestAFriendWhoseSessionPongsIsUpWithNoHarnessProcess(t *testing.T) {
 		t.Parallel()
 		r := newLivenessRig(t, dshAppOpen)
 		for elapsed := time.Duration(0); elapsed < SessionBound+2*time.Minute; elapsed += 10 * time.Second {
-			assert.Error(t, r.step(10*time.Second), "at %s nothing has answered: no beat", elapsed)
+			assert.NoError(t, r.step(10*time.Second), "at %s nothing has answered: the beat says down", elapsed)
 		}
-		assert.Zero(t, r.beats(), "a running app is no answer: no beat reached the sprint server")
+		assert.Zero(t, r.beats(), "a running app is no answer: no up beat reached the sprint server")
 		up, reason := r.sc.Present()
 		assert.False(t, up)
 		assert.Equal(t, NoSessionAnswer, reason)
@@ -165,11 +174,13 @@ func TestAFriendWhoseSessionPongsIsUpWithNoHarnessProcess(t *testing.T) {
 func TestASessionsOwnBusMessageBringsItUp(t *testing.T) {
 	t.Parallel()
 	r := newLivenessRig(t, headlessDSH)
-	require.Error(t, r.step(BeatEvery))
+	require.NoError(t, r.step(BeatEvery))
+	require.Zero(t, r.beats(), "the beat says down until the session answers")
 	daemon := &bus.Bus{Store: r.sc.DaemonStore()}
 	_, err := daemon.Send(context.Background(), bus.Message{From: "zhi", To: []string{"ada"}, Subject: "card x done", Body: "the daemon's\n"})
 	require.NoError(t, err)
-	require.Error(t, r.step(BeatEvery), "the daemon's own message proves nothing")
+	require.NoError(t, r.step(BeatEvery))
+	require.Zero(t, r.beats(), "the daemon's own message proves nothing")
 	_, err = r.direct.Send(context.Background(), bus.Message{From: "zhi", To: []string{"ada"}, Subject: "card x done", Body: "Verdict: LAND\n"})
 	require.NoError(t, err)
 	require.NoError(t, r.step(BeatEvery), "the session wrote on the bus: up, and the beat goes out")

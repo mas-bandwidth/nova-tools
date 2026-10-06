@@ -121,7 +121,7 @@ func SessionCheckText(nonce, pong, to string) string {
 	return fmt.Sprintf("%s%s\nThe daemon has had no bus message from this session for a while and asks whether the session is alive; only an answer from inside this session counts, and none within %s puts you down. Answer now, before anything else, with one command, then end this turn: %s\n", SessionCheckPrefix, nonce, SessionBound, pong)
 }
 
-// PresenceStatus is the presence file: what status reads.
+// PresenceStatus is the presence file: what status and check read.
 type PresenceStatus struct {
 	Friend    string    `json:"friend"`
 	At        time.Time `json:"at"`
@@ -132,6 +132,50 @@ type PresenceStatus struct {
 	Asked     time.Time `json:"asked"`
 	Checks    int       `json:"checks"`
 	Answers   int       `json:"answers"`
+	// The last proof the daemon's beat carried to the sprint server, as the server
+	// recorded it (its state and seen), when, and her row's status as the server answered
+	// (SessionCheck.Proved; nova-friend check prints them as proof= and server=).
+	ProofState   string    `json:"proof_state,omitempty"`
+	ProofSeen    time.Time `json:"proof_seen,omitzero"`
+	ProofAt      time.Time `json:"proof_at,omitzero"`
+	ServerStatus string    `json:"server_status,omitempty"`
+}
+
+// Proof is the session's proof as the daemon's beat carries it to the sprint server
+// (nova-sprint friend beat --pong, or --until --reason): up with the session's last
+// word (the presence file's last_heard), or down with the reason and when the daemon
+// next expects an answer. The server records it through the health path (friend
+// health: the state, the seen, the seat's generation of its own read), so her row
+// rests on her own daemon's proof and nothing else need re-prove her
+// (docs/SPEC-FRIEND.md, presence; the finding of 2026-10-06: three friends read down
+// for twenty minutes with their sessions answering, because the beat carried no proof
+// the server read and the daemon never recorded one).
+type Proof struct {
+	State  string    // PresenceUp or PresenceDown
+	Seen   time.Time // up: the session's last word; down: when the daemon judged it
+	Reason string    // down: why
+	Until  time.Time // down: when the daemon next expects the session's answer (the next check's bound)
+}
+
+// ProofFromAnswer reads the sprint server's word on the proof a beat carried from the
+// beat's answer (FRIEND-BEAT OK ... proof=<state> proof_seen=<RFC3339> status=<word>):
+// ok is false for an answer with no proof line (an older server, or a beat that
+// carried none).
+func ProofFromAnswer(answer string) (p Proof, status string, ok bool) {
+	for _, w := range strings.Fields(answer) {
+		if v, found := strings.CutPrefix(w, "proof="); found {
+			p.State, ok = v, true
+		}
+		if v, found := strings.CutPrefix(w, "proof_seen="); found {
+			if at, err := time.Parse(time.RFC3339, v); err == nil {
+				p.Seen = at
+			}
+		}
+		if v, found := strings.CutPrefix(w, "status="); found {
+			status = v
+		}
+	}
+	return p, status, ok
 }
 
 func presencePath(stateDir string) string { return filepath.Join(stateDir, PresenceFile) }
@@ -148,8 +192,8 @@ func ReadPresence(stateDir string) (s PresenceStatus, found bool, err error) {
 // SessionCheck is the daemon's side of presence: it reads the bus log for the
 // session's messages, steps the Presence, puts the check into the session
 // through the adapter (Gate) or, for a harness with no deliver command, on
-// the friend's own stream, and holds the beat back while the session is down
-// (Beat). The daemon's own sends go through DaemonStore, so a message the
+// the friend's own stream, and gives every beat the session's proof to carry
+// (Beat, Proof). The daemon's own sends go through DaemonStore, so a message the
 // daemon wrote never passes for the session's.
 type SessionCheck struct {
 	Friend string
@@ -171,7 +215,13 @@ type SessionCheck struct {
 	cancel  context.CancelFunc
 	saved   PresenceStatus
 	savedAt time.Time
-	waiting bool // a check is owed and a turn is under way, said once
+	waiting bool      // a check is owed and a turn is under way, said once
+	judged  time.Time // when the session was last judged down: the start, or the bound passing
+	// the proof the beat last carried as the server recorded it, when, and the server's
+	// word on her row after it (Proved)
+	carried   Proof
+	carriedAt time.Time
+	server    string
 }
 
 // DaemonStore is the store the daemon sends through: each message it adds is
@@ -246,17 +296,57 @@ func (s *SessionCheck) Present() (bool, string) {
 	return s.m.Up, s.m.Reason
 }
 
-// Beat is beat held back while the session is down: the sprint server's
-// friend is up only while her session answers. Each call steps the check
-// first.
-func (s *SessionCheck) Beat(beat func(ctx context.Context) error) func(ctx context.Context) error {
+// Proof is the session's proof as it stands: what the next beat carries. Up
+// with the session's last word; down with the reason, dated when the daemon
+// judged it, and the next check's bound as when an answer is next expected.
+func (s *SessionCheck) Proof() Proof {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.proof()
+}
+
+// proof is Proof with mu held.
+func (s *SessionCheck) proof() Proof {
+	if s.m == nil {
+		return Proof{State: PresenceDown, Reason: NotYetAnswered, Seen: s.judged}
+	}
+	if s.m.Up {
+		return Proof{State: PresenceUp, Seen: s.m.LastHeard}
+	}
+	p := Proof{State: PresenceDown, Reason: s.m.Reason, Seen: s.judged}
+	switch {
+	case s.m.Open:
+		p.Until = s.m.Asked.Add(s.m.Bound) // the check in flight: its bound
+	case !s.m.Asked.IsZero():
+		p.Until = s.m.Asked.Add(s.m.Quiet + s.m.Bound) // the next check, Quiet after the last, and its bound
+	default:
+		p.Until = s.judged.Add(s.m.Bound) // a check owed at once
+	}
+	return p
+}
+
+// Beat is beat carrying the session's proof: each call steps the check first,
+// then beats with the proof as it stands (Proof). The beat is never held back
+// for the session: her row on the sprint server reads down on the daemon's own
+// word, naming the reason, and up again within one beat of the session's next
+// answer (docs/SPEC-FRIEND.md, presence; tla/FriendPresence.tla, the proof
+// carried by the tick, AnsweringNeverDownPastAPeriod).
+func (s *SessionCheck) Beat(beat func(ctx context.Context, p Proof) error) func(ctx context.Context) error {
 	return func(ctx context.Context) error {
 		s.Step(ctx)
-		if up, reason := s.Present(); !up {
-			return fmt.Errorf("not beating: the session is down (%s); the daemon answering is not the session", reason)
-		}
-		return beat(ctx)
+		return beat(ctx, s.Proof())
 	}
+}
+
+// Proved records the sprint server's answer to the proof the beat carried: the
+// proof as the server recorded it, when, and her row's status after it, kept in
+// the presence file (nova-friend check prints them). It is the daemon's record
+// of the server's view, never the server's own.
+func (s *SessionCheck) Proved(p Proof, status string, at time.Time) {
+	s.mu.Lock()
+	s.carried, s.carriedAt, s.server = p, at, status
+	s.mu.Unlock()
+	s.save(at)
 }
 
 // Step is one look: the session's messages since the last, the clock, and
@@ -265,12 +355,15 @@ func (s *SessionCheck) Step(ctx context.Context) {
 	now := s.Now()
 	s.mu.Lock()
 	if s.m == nil {
-		s.m = StartPresence()
+		s.m, s.judged = StartPresence(), now
 	}
 	answered, rose, err := s.read(ctx, now)
 	was := s.m.Reason
 	s.m.Tick(now)
 	fell := was != NoSessionAnswer && s.m.Reason == NoSessionAnswer
+	if fell {
+		s.judged = now
+	}
 	if !s.m.Up && !s.m.Open && s.cancel != nil {
 		s.cancel() // never answered: the check's turn ends with its bound
 	}
@@ -407,7 +500,11 @@ func (s *SessionCheck) save(now time.Time) {
 	}
 	s.mu.Lock()
 	m := s.m
-	p := PresenceStatus{Friend: s.Friend, Presence: PresenceDown, Reason: m.Reason, LastHeard: m.LastHeard, Nonce: m.Nonce, Asked: m.Asked, Checks: m.Checks, Answers: m.Answers}
+	if m == nil {
+		m = &Presence{Reason: NotYetAnswered} // Proved before the first step: nothing stepped yet
+	}
+	p := PresenceStatus{Friend: s.Friend, Presence: PresenceDown, Reason: m.Reason, LastHeard: m.LastHeard, Nonce: m.Nonce, Asked: m.Asked, Checks: m.Checks, Answers: m.Answers,
+		ProofState: s.carried.State, ProofSeen: s.carried.Seen, ProofAt: s.carriedAt, ServerStatus: s.server}
 	if m.Up {
 		p.Presence = PresenceUp
 	}

@@ -36,6 +36,12 @@ type DaemonFacts struct {
 	PongAge    string `json:"pong_age"`   // e.g. "4s" or "-"
 	Presence   string `json:"presence"`   // up, asleep, down
 	SeenAge    string `json:"seen_age"`   // e.g. "4s" or "-"
+	// Proof is the last proof the daemon's beat carried to the sprint server as the
+	// server recorded it, "up@<RFC3339 seen>" or "down@<RFC3339>", and Server the
+	// server's word on her row after it (up, held, down); "-" for none yet
+	// (docs/SPEC-FRIEND.md, presence: the daemon is the one that proves its session).
+	Proof  string `json:"proof"`
+	Server string `json:"server"`
 }
 
 // HarnessFacts carries facts about the harness, deliveries and breaks: every
@@ -325,6 +331,8 @@ func CheckFriend(ctx context.Context, friendName string, seams CheckSeams, since
 		PongAge:    "-",
 		Presence:   "down",
 		SeenAge:    "-",
+		Proof:      "-",
+		Server:     "-",
 	}
 
 	if seams.Launchctl != nil {
@@ -376,6 +384,13 @@ func CheckFriend(ctx context.Context, friendName string, seams CheckSeams, since
 	}
 
 	pr, prFound, _ := seams.ReadPresence(friendName)
+	if prFound && pr.ProofState != "" {
+		df.Proof = pr.ProofState
+		if !pr.ProofSeen.IsZero() {
+			df.Proof += "@" + pr.ProofSeen.UTC().Format(time.RFC3339)
+		}
+		df.Server = dash(pr.ServerStatus)
+	}
 	if prFound {
 		if pr.Presence == PresenceUp {
 			df.Presence = PresenceUp
@@ -564,8 +579,8 @@ func BusLogEntries(ctx context.Context, st bus.Store, friend string, since time.
 
 // Line renders the CHECK DAEMON line.
 func (df DaemonFacts) Line() string {
-	return fmt.Sprintf("CHECK DAEMON friend=%s agent=%s pid=%s status=%s connection=%s challenge=%s pong_age=%s presence=%s seen_age=%s",
-		df.Friend, df.Agent, df.PID, df.Status, df.Connection, df.Challenge, df.PongAge, df.Presence, df.SeenAge)
+	return fmt.Sprintf("CHECK DAEMON friend=%s agent=%s pid=%s status=%s connection=%s challenge=%s pong_age=%s presence=%s seen_age=%s proof=%s server=%s",
+		df.Friend, df.Agent, df.PID, df.Status, df.Connection, df.Challenge, df.PongAge, df.Presence, df.SeenAge, df.Proof, df.Server)
 }
 
 // Line renders the CHECK HARNESS line.
