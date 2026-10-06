@@ -359,3 +359,42 @@ func TestASeatOnAFolderAdapterIsProvenByItsNonceAndRefusedWithout(t *testing.T) 
 	out = ta.ok("coordinator " + other + " --reason 'its folder is proven'")
 	assert.Contains(t, out, "COORDINATOR OK holder="+other+" from="+name+" by="+name+" given adapter=folder proven="+now.UTC().Format(time.RFC3339), out)
 }
+
+// The seat's pushes are one proven set (the owner, 2026-10-06: "When you
+// start/stop a sprint, bring up a friend, you must be automatically reminded
+// that you need to hook up the push notifications for your bus, and for nova
+// sprint."): the judgments push is not the only one. The bus push is the
+// nova-bus recv --forever loop run as the coordinator; while no such loop has
+// registered a proof on the seat, start refuses with the one PUSH DOWN line
+// naming the bus push and the exact command that arms it, and writes nothing.
+// This is test-first: at the tip it fails because no bus push exists, and it
+// is the fail the change must answer.
+func TestAStartWithAStaleBusPushIsRefusedNamingTheCommand(t *testing.T) {
+	t.Parallel()
+	const name = "pushproof-bus"
+	ta, session := pushProofSprint(t, name)
+	ctx := context.Background()
+	ta.ok("init --readers reader-a,reader-b --members m1,m2 --owner glenn")
+
+	// the judgments push is proven: install the seat, deliver the check, pong
+	target := t.TempDir()
+	ta.ok("seat install --redis 127.0.0.1:6381 --harness opencode --target " + target)
+	st, err := ta.a.store(common{redis: "mem:0", actor: name})
+	require.NoError(t, err)
+	src := &storeSource{st: st}
+	var said bytes.Buffer
+	ta.a.prove(ctx, src, name, false, &said)
+	nonce := nonceOf(t, session.last())
+	ta.ok("seat pong " + nonce)
+	ta.ok("add --stream s1 --count 2")
+
+	// the bus push has no proof: start is refused, names the bus push, and
+	// gives the command that arms it
+	before := ta.applies()
+	code, _, errs := ta.do("start")
+	require.Equal(t, 2, code, "start with a stale bus push: exit %d\n%s", code, errs)
+	require.Contains(t, errs, "REFUSED: PUSH DOWN: ", errs)
+	require.Contains(t, errs, "bus", errs)
+	require.Contains(t, errs, "nova-bus recv --forever", errs)
+	require.Equal(t, before, ta.applies(), "a refused start wrote")
+}
