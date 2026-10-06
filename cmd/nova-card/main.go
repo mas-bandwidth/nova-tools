@@ -9,6 +9,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -17,6 +18,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/card"
 	"github.com/mas-bandwidth/nova-tools/internal/cardgen"
 	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
@@ -42,10 +44,10 @@ the flow, three lines:
   nova-sprint where
 
 usage:
-  nova-card generate --from ledger --ledger <name> --repo-dir <dir> --out <dir> [--tier flash|pro] [--prefix <p>] [--minutes <n>] [--max <n>] [--base <branch>] [--repo <owner/name>] [--dry-run]
-  nova-card generate --from findings --file <tsv> --out <dir> (--repo-dir <dir> | --repo <owner/name> --base <branch> --sha <40hex>) [--tier flash|pro] [--prefix <p>] [--minutes <n>] [--max <n>] [--dry-run]
-  nova-card generate --from help --tool <name> [--tool <name>...] --out <dir> [--bin-dir <dir>] (--repo-dir <dir> | --repo --base --sha) [--tier flash|pro] [--prefix <p>] [--minutes <n>] [--max <n>] [--dry-run]
-  nova-card lint --card <file> [--card <file>...]
+  nova-card generate --from ledger --ledger <name> --repo-dir <dir> --out <dir> [--tier flash|pro] [--prefix <p>] [--minutes <n>] [--max <n>] [--base <branch>] [--repo <owner/name>] [--name <n>...] [--dropped <id>...] [--dry-run]
+  nova-card generate --from findings --file <tsv> --out <dir> (--repo-dir <dir> | --repo <owner/name> --base <branch> --sha <40hex>) [--tier flash|pro] [--prefix <p>] [--minutes <n>] [--max <n>] [--name <n>...] [--dropped <id>...] [--dry-run]
+  nova-card generate --from help --tool <name> [--tool <name>...] --out <dir> [--bin-dir <dir>] (--repo-dir <dir> | --repo --base --sha) [--tier flash|pro] [--prefix <p>] [--minutes <n>] [--max <n>] [--name <n>...] [--dropped <id>...] [--dry-run]
+  nova-card lint --card <file> [--card <file>...] [--name <n>...] [--dropped <id>...]
   nova-card lint --card ./cards/finding-cmd-nova-bus-main.md
   nova-card template
   nova-card version
@@ -53,7 +55,9 @@ usage:
 
 generate reads the repository, the branch and the base sha from --repo-dir (its origin URL,
 its branch, its HEAD); --repo, --base and --sha each override one, and all three together
-need no checkout. With a checkout every PATHS entry is checked to exist at it, so a card never
+need no checkout. A card's PATHS are computed from its START line, never typed: every directory
+a START file lives in, as its Go files and its tests (<dir>/*.go, <dir>/*_test.go), and the docs
+the card names. With a checkout every PATHS entry is checked to exist at it, so a card never
 names a path the add would reject. The ledgers: ` + "`nova-card generate -h`" + ` lists them.
 A ledger card is flash and a findings or help card is pro unless --tier says otherwise.
 Cards of one ordinary ledger alternate waves (odd rows wave 1, even rows wave 2 depending on
@@ -62,8 +66,10 @@ their neighbours) because adjacent deletions conflict at land; a generated ledge
 share its path, so the add wants --allow-shared-paths; the CARDS line says so.
 lint holds a brief to the lint nova-sprint add runs (the model lines, the child rules under the
 default rule set, a tree card's steps), and past the add to the typed header and the template's
-unfilled <...> lines, which the add does not read, one LINT DRIFT line each; generate holds every
-brief the same before it writes. A sprint initialised with --rules holds a brief to that file at
+unfilled <...> lines, which the add does not read, one LINT DRIFT line each; and to the card
+checks: a tier on line 1, a TEST whose package PATHS names, no name --name gives outside
+double-quoted words, no card --dropped gives. generate holds every brief the same before it
+writes. A sprint initialised with --rules holds a brief to that file at
 the add. template prints nova-swarm's card template, the shape every generated brief has.
 
 what it prints:
@@ -141,6 +147,30 @@ func run(args []string, stdout, stderr io.Writer) (code int) {
 	return refuse(stderr, "", fmt.Sprintf("unknown verb %q; one of %s", args[0], strings.Join(verbs, ", ")))
 }
 
+// lintFlags adds --name and --dropped to fs, the card checks' inputs from outside the
+// brief (card.Options; the tree holds no deployment name), and returns their reader.
+func lintFlags(fs *flag.FlagSet) func() card.Options {
+	var names, dropped multi
+	fs.Var(&names, "name", "a person, friend or machine `name` no brief may carry outside double-quoted words; repeat or comma separate for more")
+	fs.Var(&dropped, "dropped", "the `id` of a card dropped off the table, which no brief may name; repeat or comma separate for more")
+	return func() card.Options {
+		return card.Options{Names: splitList(names), Dropped: splitList(dropped)}
+	}
+}
+
+// splitList is a repeatable flag's values, each split on commas, blanks dropped.
+func splitList(m multi) []string {
+	var out []string
+	for _, v := range m {
+		for _, f := range strings.Split(v, ",") {
+			if f = strings.TrimSpace(f); f != "" {
+				out = append(out, f)
+			}
+		}
+	}
+	return out
+}
+
 // multi is a repeatable string flag.
 type multi []string
 
@@ -151,6 +181,7 @@ func cmdLint(args []string, stdout, stderr io.Writer) int {
 	fs := verbflag.New("lint")
 	var cards multi
 	fs.Var(&cards, "card", "a brief `file` to hold to the add's lint; repeat for more")
+	opts := lintFlags(fs)
 	if err := verbflag.Parse(fs, args); err != nil {
 		return refuse(stderr, "lint", verbflag.Explain(fs, err))
 	}
@@ -164,7 +195,7 @@ func cmdLint(args []string, stdout, stderr io.Writer) int {
 			return refuse(stderr, "lint", "cannot read "+file+": "+err.Error())
 		}
 		id := strings.TrimSuffix(filepath.Base(file), ".md")
-		findings := cardgen.Lint(id, string(raw))
+		findings := card.Lint(id, string(raw), opts())
 		for _, f := range findings {
 			fmt.Fprintln(stdout, oneline.Escape(f.String()))
 		}
@@ -198,6 +229,7 @@ func cmdGenerate(args []string, stdout, stderr io.Writer) int {
 	minutes := fs.Int("minutes", 0, "the Deadline line's `minutes` (default: 45 flash, 60 pro)")
 	maxCards := fs.Int("max", 0, "write at most this many cards, in source order; 0 is all")
 	dryRun := fs.Bool("dry-run", false, "plan and lint, print the manifest and the CARDS line, and write nothing")
+	opts := lintFlags(fs)
 	if err := verbflag.Parse(fs, args); err != nil {
 		return refuse(stderr, "generate", verbflag.Explain(fs, err))
 	}
@@ -290,23 +322,25 @@ func cmdGenerate(args []string, stdout, stderr io.Writer) int {
 	red := 0
 	for i := range plan.Cards {
 		c := &plan.Cards[i]
+		c.Paths = card.Paths(h, *c) // computed from the START line, never typed (docs/SPEC-CARD-CONTRACT.md section 6)
 		if *repoDir != "" {
 			cardgen.NewTestFile(c, func(glob string) bool { return existsAt(*repoDir, glob) })
 		}
 		briefs[i] = cardgen.Render(h, *c)
-		for _, f := range cardgen.Lint(c.ID, briefs[i]) {
+		for _, f := range card.Lint(c.ID, briefs[i], opts()) {
 			fmt.Fprintln(stdout, oneline.Escape(f.String()))
 			red++
 		}
 		if *repoDir != "" {
 			for _, p := range c.Paths {
-				if !existsAt(*repoDir, p) && !c.Creates(p) {
+				if !existsAt(*repoDir, p) && !card.Answered(*c, p) {
 					fmt.Fprintln(stdout, oneline.Escape(cardgen.LintFinding{ID: c.ID, Check: "paths-at-base", Line: 6, Excerpt: "PATHS entry " + p + " names nothing in " + *repoDir}.String()))
 					red++
 				}
 			}
 		}
 	}
+	plan.Shared = card.Shared(plan.Cards)
 	if red > 0 {
 		fmt.Fprintf(stderr, "nova-card generate FAILED: %d red line(s) above; nothing written to %s\n", red, oneline.Field(*out))
 		return 1
