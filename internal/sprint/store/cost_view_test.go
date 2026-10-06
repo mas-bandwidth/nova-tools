@@ -51,7 +51,12 @@ func TestTheWhereRecordCountsTiersAndCostsByTier(t *testing.T) {
 	costs := sprint.StreamTierCosts(h.snap())
 	s1 := costs["s1"]
 	assert.Equal(t, map[string]int{"flash": 1, "pro": 1}, s1.Tiers)
-	assert.Equal(t, "$4.00", s1.PerLanded, "one landed card that cost four dollars")
+	// the card's takes cost four dollars, and its reads ran on no route that prices them: it
+	// is not priced whole, so its cost per landed card is unknown, never the takes' alone
+	assert.Equal(t, sprint.CostUnknown, s1.PerLanded, "one landed card, its reads unpriced")
+	assert.Equal(t, 1, s1.Landed)
+	assert.Zero(t, s1.LandedPriced)
+	assert.Equal(t, "$4.00", s1.TotalCost, "the priced spend, a floor")
 	assert.Equal(t, map[string]string{"flash": "$2.00", "pro": "$2.00"}, s1.CostByTier, "the spend split by the tier each attempt ran on, not the card's ceiling")
 	s2 := costs["s2"]
 	assert.Equal(t, map[string]int{"heavy": 1}, s2.Tiers)

@@ -25,9 +25,34 @@ import (
 type TierCosts struct {
 	// Tiers counts the stream's cards by the tier their briefs name (TierWord).
 	Tiers map[string]int `json:"tiers,omitempty"`
-	// PerLanded is the stream's landed cards' cost per landed card, dollars and cents
-	// rounded up (MoneyText); "-" with nothing landed or nothing priced.
+	// PerLanded is the stream's cost per landed card priced whole: the landed cards that
+	// have records and every record priced (LandedPriced), their costs summed, over their
+	// count, dollars and cents rounded up (MoneyText). A landed card with any record
+	// unpriced is in neither the sum nor the count, so an unpriced completion cannot make
+	// the stream look cheaper. "-" with nothing landed, "unknown" (CostUnknown) when cards
+	// landed and none of them was priced whole.
 	PerLanded string `json:"per_landed"`
+	// Landed and LandedPriced are PerLanded's denominators: every landed card of the
+	// stream, and those of them priced whole. LandedCoverage is how the landed cards'
+	// records were priced.
+	Landed         int      `json:"landed"`
+	LandedPriced   int      `json:"landed_priced"`
+	LandedCoverage Coverage `json:"landed_coverage"`
+	// SpendPerLanded is the stream's spend per verified dev outcome, in the scope
+	// SpendPerLandedScope names: every recorded take and read of every card of the stream
+	// on the table, in any column, the failed and returned ones included, over the cards
+	// that landed. Its stage is the landing and its accounting is TotalCost's, so it is
+	// compared only with another stream's SpendPerLanded. "unknown" while any of those
+	// records is unpriced (Coverage.Unpriced), for an unpriced run would read as free;
+	// "-" with nothing landed. A landed card with no record at all makes it "unknown" too.
+	SpendPerLanded string `json:"spend_per_landed"`
+	// SpendScope is SpendPerLandedScope, carried on the record so the figure is never
+	// read without its scope.
+	SpendScope string `json:"spend_scope"`
+	// Coverage is how every record behind TotalCost was priced: what TotalCost holds
+	// (actual, estimated) and what it cannot (unpriced, the unknown spend; subscription
+	// tokens, which bill no dollar).
+	Coverage Coverage `json:"coverage"`
 	// CostByTier is the stream's spend by the tier each attempt and read ran on, dollars
 	// and cents rounded up, over every card of the stream; a record with no tier is
 	// "untiered".
@@ -35,7 +60,8 @@ type TierCosts struct {
 	// TotalCost is the stream's complete recorded spend: every take and read of every card
 	// of it in any column, landed or not, at each record's charged figure (the harness's
 	// cost, else its tokens at the route's prices), dollars and cents rounded up; "" when
-	// nothing of it was priced.
+	// nothing of it was priced. It holds no unpriced record (Coverage.Unpriced): with any,
+	// the spend is at least TotalCost and the rest is unknown.
 	TotalCost string `json:"total_cost,omitempty"`
 	// WorkCost and ReadCost split TotalCost by kind: every take's charged figure and every
 	// read's, dollars and cents rounded up; "" when nothing of that kind was priced. The
@@ -50,7 +76,8 @@ type TierCosts struct {
 	// dollars, the tokens and the count, which ReadSpendLine sums over the streams.
 	ReadsToday map[string]ReadDay `json:"reads_today,omitempty"`
 	// UnpricedRuns counts the stream's records that carry no cost at all: runs whose usage
-	// never reached the sprint (cardcost.WhyNoTokens), which the total cannot hold.
+	// never reached the sprint (cardcost.WhyNoTokens), which the total cannot hold
+	// (Coverage.Unpriced).
 	UnpricedRuns int `json:"unpriced_runs,omitempty"`
 	// ReadsNoTokens counts the stream's reads whose verdict was kept with a usage that
 	// reported no token (cardcost.WhyNoTokens): one of UnpricedRuns each, counted apart
@@ -90,72 +117,153 @@ func StreamTierCosts(s *Snapshot) map[string]TierCosts {
 	return out
 }
 
-func streamTierCosts(s *Snapshot, stream string) TierCosts {
-	t := TierCosts{Tiers: map[string]int{}, PerLanded: "-", CostByTier: map[string]string{}, ReadsToday: map[string]ReadDay{}}
+// CostUnknown is a cost headline whose records are not all priced: unknown spend shown
+// as unknown, never as a figure an unpriced run made smaller.
+const CostUnknown = "unknown"
+
+// SpendPerLandedScope is TierCosts.SpendPerLanded's scope, carried with it.
+const SpendPerLandedScope = "every recorded take and read of the stream's cards on the table, any column, over its landed cards"
+
+// Coverage is how a cost headline's records were priced (docs/SPEC-SPRINT.md section 1,
+// cost visibility): every record behind it (Records), those charged at a reported cost
+// (Actual), at their tokens times the route's price sheet (Estimated), subscription runs
+// that bill tokens and no dollar (Tokens), and those with no cost at all (Unpriced), the
+// spend the headline cannot hold. The four parts sum to Records.
+type Coverage struct {
+	Records   int `json:"records"`
+	Actual    int `json:"actual"`
+	Estimated int `json:"estimated"`
+	Tokens    int `json:"tokens,omitempty"`
+	Unpriced  int `json:"unpriced"`
+}
+
+// Add is the two coverages counted together.
+func (c Coverage) Add(o Coverage) Coverage {
+	return Coverage{Records: c.Records + o.Records, Actual: c.Actual + o.Actual, Estimated: c.Estimated + o.Estimated,
+		Tokens: c.Tokens + o.Tokens, Unpriced: c.Unpriced + o.Unpriced}
+}
+
+// Text is the coverage as a headline's sub-line prints it: "12 actual · 3 estimated ·
+// 0 tokens · 2 unpriced of 17 records".
+func (c Coverage) Text() string {
+	return fmt.Sprintf("%d actual · %d estimated · %d tokens · %d unpriced of %d records", c.Actual, c.Estimated, c.Tokens, c.Unpriced, c.Records)
+}
+
+// coverageOf is the card's records' coverage, from the primary's total (every record, the
+// ones past the list's bound included) and its list (the subscription reads).
+func coverageOf(v CardCostView) Coverage {
+	t := v.Total
+	c := Coverage{Records: t.Records, Actual: t.ActualOf, Estimated: t.ChargedOf - t.ActualOf}
+	for _, con := range v.Consumers {
+		if con.Kind == "read" && con.Usage.Unpriced == WhySubscription {
+			c.Tokens++
+		}
+	}
+	c.Unpriced = max(c.Records-t.ChargedOf-c.Tokens, 0)
+	return c
+}
+
+// perCard is usd over n cards, dollars and cents rounded up; "-" for no card.
+func perCard(usd []string, n int) string {
+	if n <= 0 {
+		return "-"
+	}
+	total := new(big.Rat)
+	if sum, ok := cardcost.Sum(usd...); ok && len(usd) > 0 {
+		if r, err := amountOf(sum); err == nil && r != nil {
+			total = r
+		}
+	}
+	return cardcost.Cents(total.Quo(total, big.NewRat(int64(n), 1)))
+}
+
+// SprintTierCosts is the sprint's TierCosts: every stream of the work table counted as
+// one, so its sums and its denominators are exact, never added up from rounded cells.
+func SprintTierCosts(s *Snapshot) TierCosts { return streamTierCosts(s, s.Work.Rows()...) }
+
+func streamTierCosts(s *Snapshot, streams ...string) TierCosts {
+	t := TierCosts{Tiers: map[string]int{}, PerLanded: "-", SpendPerLanded: "-", SpendScope: SpendPerLandedScope,
+		CostByTier: map[string]string{}, ReadsToday: map[string]ReadDay{}}
 	byTier := map[string]*big.Rat{}
 	workCost, readCost := new(big.Rat), new(big.Rat)
 	pricedWork, pricedRead := false, false
 	day := s.Now.UTC().Format(time.DateOnly)
 	var landedCost []string
 	var allCost []string
-	landed := 0
-	for _, col := range States {
-		for _, c := range s.Work.Cell(stream, col) {
-			if IsSentinel(c) {
-				continue
-			}
-			t.Tiers[TierWord(c)]++
-			if col == Landed {
-				landed++
-				if v := c.F(FieldCost); v != "" {
-					landedCost = append(landedCost, v)
-				}
-			}
-			// the card's whole record, whatever its column: every take and read behind it,
-			// the records past the list's bound included (FieldCostTotal)
-			tot := CardCostOf(c).Total
-			if tot.Charged != "" {
-				allCost = append(allCost, tot.Charged)
-			}
-			t.UnpricedRuns += tot.Records - tot.ChargedOf
-			for _, con := range CardCostOf(c).Consumers {
-				if con.Kind == "read" && con.Usage.Unpriced == WhySubscription {
-					// a subscription read's cost is its tokens: priced, never a run unpriced
-					t.UnpricedRuns--
-					t.ReadTokens += con.Usage.Tokens.Total()
-				}
-				if con.Kind == "read" && con.Usage.Unpriced == cardcost.WhyNoTokens {
-					t.ReadsNoTokens++
-				}
-				if con.Kind == "read" && strings.HasPrefix(con.At, day) {
-					addReadDay(t.ReadsToday, con)
-				}
-				usd, err := amountOf(cmp.Or(con.Usage.Actual, con.Usage.Predicted))
-				if err != nil || usd == nil {
+	for _, stream := range streams {
+		for _, col := range States {
+			for _, c := range s.Work.Cell(stream, col) {
+				if IsSentinel(c) {
 					continue
 				}
-				byKind := workCost
-				if con.Kind == "read" {
-					byKind = readCost
+				t.Tiers[TierWord(c)]++
+				// the card's whole record, whatever its column: every take and read behind it,
+				// the records past the list's bound included (FieldCostTotal)
+				view := CardCostOf(c)
+				tot, cover := view.Total, coverageOf(view)
+				t.Coverage = t.Coverage.Add(cover)
+				if col == Landed {
+					t.Landed++
+					t.LandedCoverage = t.LandedCoverage.Add(cover)
+					// a landed card counts toward the per-landed figure only priced whole: one
+					// with any record unpriced, or with no record at all, is in neither its sum
+					// nor its count
+					if cover.Records > 0 && cover.Unpriced == 0 {
+						t.LandedPriced++
+						if v := c.F(FieldCost); v != "" {
+							landedCost = append(landedCost, v)
+						}
+					}
 				}
-				byKind.Add(byKind, usd)
-				if con.Kind == "read" {
-					pricedRead = true
-				} else {
-					pricedWork = true
+				if tot.Charged != "" {
+					allCost = append(allCost, tot.Charged)
 				}
-				tier := cmp.Or(con.Tier, "untiered")
-				if byTier[tier] == nil {
-					byTier[tier] = new(big.Rat)
+				for _, con := range view.Consumers {
+					if con.Kind == "read" && con.Usage.Unpriced == WhySubscription {
+						// a subscription read's cost is its tokens: priced, never a run unpriced
+						t.ReadTokens += con.Usage.Tokens.Total()
+					}
+					if con.Kind == "read" && con.Usage.Unpriced == cardcost.WhyNoTokens {
+						t.ReadsNoTokens++
+					}
+					if con.Kind == "read" && strings.HasPrefix(con.At, day) {
+						addReadDay(t.ReadsToday, con)
+					}
+					usd, err := amountOf(cmp.Or(con.Usage.Actual, con.Usage.Predicted))
+					if err != nil || usd == nil {
+						continue
+					}
+					byKind := workCost
+					if con.Kind == "read" {
+						byKind = readCost
+					}
+					byKind.Add(byKind, usd)
+					if con.Kind == "read" {
+						pricedRead = true
+					} else {
+						pricedWork = true
+					}
+					tier := cmp.Or(con.Tier, "untiered")
+					if byTier[tier] == nil {
+						byTier[tier] = new(big.Rat)
+					}
+					byTier[tier].Add(byTier[tier], usd)
 				}
-				byTier[tier].Add(byTier[tier], usd)
 			}
 		}
 	}
-	if sum, ok := cardcost.Sum(landedCost...); ok && landed > 0 && len(landedCost) > 0 {
-		if total, err := amountOf(sum); err == nil && total != nil {
-			t.PerLanded = cardcost.Cents(total.Quo(total, big.NewRat(int64(landed), 1)))
-		}
+	t.UnpricedRuns = t.Coverage.Unpriced
+	switch {
+	case t.Landed > 0 && t.LandedPriced == 0:
+		t.PerLanded = CostUnknown
+	case t.LandedPriced > 0:
+		t.PerLanded = perCard(landedCost, t.LandedPriced)
+	}
+	switch {
+	case t.Landed > 0 && (t.Coverage.Unpriced > 0 || t.LandedPriced < t.Landed):
+		t.SpendPerLanded = CostUnknown
+	case t.Landed > 0:
+		t.SpendPerLanded = perCard(allCost, t.Landed)
 	}
 	if sum, ok := cardcost.Sum(allCost...); ok && len(allCost) > 0 {
 		if total, err := amountOf(sum); err == nil && total != nil {

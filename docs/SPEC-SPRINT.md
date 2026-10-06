@@ -49,11 +49,33 @@ empties it with the tables.
 After `cost` the text table draws `per landed` (the owner, 2026-10-04: cost
 visibility, after a night of $437 for 844 landings whose pro streams landed at
 $4.50 to $8.88 a card and flash streams at $0.10 to $0.27): the stream's
-dollars per landed card, rounded up to the cent, `-` with nothing landed or
-nothing priced, the tick's count when its where record holds one
-(`sprint.TierCosts`, cost_view.go) and else the row's cost cell over its landed
-count (`sprint.PerLandedOf`); its footer is blank (the sprint's figure is the
-dashboard's). `where --json` carries, additively: `tiers` at the top, every
+dollars per landed card priced whole, rounded up to the cent, the tick's count
+when its where record holds one (`sprint.TierCosts`, cost_view.go) and else the
+row's cost cell over its landed count (`sprint.PerLandedOf`); its footer is
+blank (the sprint's figure is the dashboard's). A landed card is priced whole
+when it has records and every one of them carries a cost; one that is not is in
+neither the sum nor the count, so an unpriced completion cannot make a stream
+look cheaper. `-` with nothing landed, `unknown` when cards landed and none was
+priced whole.
+
+Every cost headline carries its denominators and its coverage
+(`TestAnUnpricedLandingCannotLowerPerLanded`,
+`TestSpendPerLandedCountsEveryRecordOfTheStream`). Each stream's record has
+`landed` and `landed_priced`, the per-landed figure's two denominators, and
+`landed_coverage` and `coverage`, how the records behind the per-landed figure
+and behind `total_cost` were priced: `records`, `actual` (a reported cost),
+`estimated` (tokens at the route's price sheet), `tokens` (a subscription run,
+which bills no dollar) and `unpriced` (no cost at all), the four summing to
+`records`. `total_cost` holds no unpriced record: with any, the spend is at
+least it and the rest is unknown. `spend_per_landed` is the spend per verified
+dev outcome in the scope `spend_scope` states: every recorded take and read of
+the stream's cards on the table, in any column, over its landed cards. It is
+`unknown` while any of those records is unpriced or a landed card is not priced
+whole, and `-` with nothing landed. Its stage is the landing and its accounting
+is `total_cost`'s, so it is compared only with another stream's
+`spend_per_landed`, never with `per_landed`. `view coordinator` carries the
+sprint's headlines, every stream counted as one (`sprint.SprintTierCosts`), as
+`cost` (section 11). `where --json` carries, additively: `tiers` at the top, every
 card counted by the tier its brief names (flash when it names none; any word
 the briefs carry), on each `tables.work[<stream>]` row `per_landed` (every table
 cell stays a string, the shape the dashboard's pull decodes), and `stream_costs`
@@ -667,6 +689,17 @@ made dirty and recalculated."; nova-tools#5171), so the first read of `where`,
 the estimate recomputed over the new count at the rate measured. The verbs' sprint
 line, printed after every step, reads no cards, so it has no stamps: its ETA is
 over every card left at the whole sprint's average.
+
+An ETA states what it stands on (`sprint.ETABasis`, `sprint.ETAWork`, eta.go;
+`TestTheETAStatesItsWindowSampleAndHeldWork`). The rate carries its window
+(`last 1h of running time`, or `since the first start` when fewer than five
+landed in the hour, or `none` with no rate), its sample (the landings counted
+in the window) and the window's running hours, by `sprint.LandingRate`'s rule,
+whose rate it carries. The cards left are split by what moves them: `held` (no
+tick moves them on its own, `sprint.HeldBack`), `executing` (working, review,
+merging) and `queued` (waiting or ready and not held). `view coordinator`
+carries both as `eta` and prints them in its summary line (section 11); the
+dashboard's ETA tile shows the held, executing and queued cards on a sub-line.
 
 `where` reads the tables' cells and one record, never every card: under 1 s
 at 3,000 cards is the requirement (2026-10-02 10:13 PM ET, at 2,843 cards with
@@ -3950,10 +3983,18 @@ the seat, from one read of the work, merge and fleet tables, the inbox, the frie
 machines' beats and the machine's record, at one epoch. Its fields: `sum` (one line: the seat,
 the machine, the open judgments and the heaviest's cards behind, the count of each item type,
 landed of all and landed in the last 30 minutes, the work table's counts, the up machines'
-cards working of their width), `at`, `epoch`, `seat`, `cursor`, `n` (the counts: `landed`,
-`l30`, `all`, `wait`, `ready`, `work`, `review`, `merge` of the primaries, sentinels aside;
-`held`; `width` and `busy`, the up machines' width and their cards working; `j`, the open
-judgments) and `items`, ranked by the cards behind each (`b`), then by type in the order
+cards working of their width, then what the ETA stands on and the cost headlines, as
+`eta rate 7.0/h over last 1h of running time (7 landings) | left 1182: held 770 executing 12
+queued 400 | cost $7.18 (2 actual · 0 estimated · 0 tokens · 19 unpriced of 21 records) | per
+landed $4.00 over 1 priced of 6 landed | spend per landed unknown`), `at`, `epoch`, `seat`,
+`cursor`, `n` (the counts: `landed`, `l30`, `all`, `wait`, `ready`, `work`, `review`, `merge`
+of the primaries, sentinels aside; `held`; `width` and `busy`, the up machines' width and
+their cards working; `j`, the open judgments), `eta` (`rate`, the landing rate's `window`,
+`landings`, `hours` and `per_hour`, `none` when the machine's record is not read; `cards`,
+the cards not landed as `left`, `held`, `executing` and `queued`; section 1, the ETA), `cost`
+(the sprint's headlines, every stream as one: `total`, the priced spend, `-` with none;
+`coverage`; `per_landed` over `landed_priced` of `landed`; `spend_per_landed` with
+`spend_scope`; section 1, cost visibility) and `items`, ranked by the cards behind each (`b`), then by type in the order
 below, then oldest first. An item is `k` (its key, stable while it stands), `t` (its type, one
 letter), `w` (what kind), `b`, `n` (the cards a judgment names), `age`, `od` (overdue), `d` (a
 judgment's decisions, `|` separated), `s` (one line, at most 160 bytes) and `next`, the exact

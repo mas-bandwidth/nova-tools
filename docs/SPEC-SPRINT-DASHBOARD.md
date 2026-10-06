@@ -109,8 +109,13 @@ from the owner edits one line here and nothing else moves.
 
 ## Hero row: five tiles, one row at 2000 px, three and two below, two per row below 1100 px, large figure (72 px)
 1. LANDED: n of all; sub-line "<pct>% complete". Narrow: the number alone, sub-line "of <all> · <pct>%".
-2. ETA: "2h 9m"; sub-line "around 9:06 PM".
-3. COST: total to the cent; sub-line "$0.24 per card" (never "per landed card").
+2. ETA: "2h 9m"; sub-line "around 9:06 PM"; a second sub-line, the cards it is over by what moves them,
+   "770 held · 12 executing · 400 queued" (docs/SPEC-SPRINT.md section 1, the ETA).
+3. COST: total to the cent, "≥ $7.18" while a run is unpriced (the rest is unknown); sub-line "$0.24 per card of
+   27 landed" (never "per landed card"): every recorded take and read over the cards that landed, the scope of
+   `spend_per_landed`, and "per card unknown" while a run is unpriced or a landed card is not priced whole, so an
+   unpriced run never reads as free; then the work and the reads. A second sub-line: the unreconciled spend and the
+   coverage, "$0.00 unreconciled · 12 actual · 3 estimated · 19 unpriced".
 4. IN FLIGHT: n; sub-line "14 working · 9 review" on one line.
 5. THROUGHPUT: cards landed per hour over the last 60 min; "—" until ten minutes of samples; sub-line "cards / hour".
    A lone tile on its row spans the width with its figure centered.

@@ -126,6 +126,28 @@ type coordCounts struct {
 	J       int `json:"j"`     // the open judgments
 }
 
+// coordETA is what the ETA stands on (docs/SPEC-SPRINT.md section 1, the ETA; sprint.ETABasis,
+// sprint.ETAWork): the rate's window, its landings and running hours, and the cards left by
+// what moves them. Rate has no window ("none") when the machine record is not read.
+type coordETA struct {
+	Rate  sprint.ETABasis `json:"rate"`
+	Cards sprint.ETAWork  `json:"cards"`
+}
+
+// coordCost is the sprint's cost headlines (docs/SPEC-SPRINT.md section 1, cost visibility;
+// sprint.SprintTierCosts over every stream as one): the recorded spend with its coverage,
+// the cost per landed card priced whole over its two denominators, and the spend per landed
+// card with its scope. A figure an unpriced record would lower reads "unknown".
+type coordCost struct {
+	Total          string          `json:"total"` // the priced spend, money; "-" when nothing is priced
+	Coverage       sprint.Coverage `json:"coverage"`
+	PerLanded      string          `json:"per_landed"`
+	Landed         int             `json:"landed"`
+	LandedPriced   int             `json:"landed_priced"`
+	SpendPerLanded string          `json:"spend_per_landed"`
+	SpendScope     string          `json:"spend_scope"`
+}
+
 // coordinatorView is view coordinator's document, schema 1.
 type coordinatorView struct {
 	View   string      `json:"view"`
@@ -136,10 +158,15 @@ type coordinatorView struct {
 	Seat   string      `json:"seat,omitempty"`
 	Cursor string      `json:"cursor"`
 	N      coordCounts `json:"n"`
-	Items  []viewItem  `json:"items"`
-	Rows   []viewRow   `json:"rows,omitempty"`
-	Same   int         `json:"same,omitempty"` // with --since: items left out, unchanged
-	Gone   int         `json:"gone,omitempty"` // with --since: items the cursor's read showed that stand no more
+	// ETA is what the sprint's ETA stands on: the landing rate with its window and sample,
+	// and the cards left split held, executing and queued (coordETA).
+	ETA coordETA `json:"eta"`
+	// Cost is the sprint's cost headlines, each with its denominators and coverage (coordCost).
+	Cost  coordCost  `json:"cost"`
+	Items []viewItem `json:"items"`
+	Rows  []viewRow  `json:"rows,omitempty"`
+	Same  int        `json:"same,omitempty"` // with --since: items left out, unchanged
+	Gone  int        `json:"gone,omitempty"` // with --since: items the cursor's read showed that stand no more
 }
 
 // workerCard is one of a worker's cards.
@@ -306,6 +333,7 @@ func (a *app) coordinatorView(ctx context.Context, st *store.Store, all bool) (c
 
 	// the counts: the work table's primaries by state (sentinels aside), and the recent landings
 	n := &v.N
+	var landedAt []time.Time // the landings' stamps, for the ETA's rate (sprint.LandingRateBasis)
 	for _, stream := range s.Streams() {
 		for _, col := range sprint.States {
 			for _, c := range s.Work.Cell(stream, col) {
@@ -326,6 +354,9 @@ func (a *app) coordinatorView(ctx context.Context, st *store.Store, all bool) (c
 					n.Merging++
 				case sprint.Landed:
 					n.Landed++
+					if at, err := time.Parse(time.RFC3339, c.F("landed")); err == nil {
+						landedAt = append(landedAt, at)
+					}
 					if within(c.F("landed")) {
 						n.L30++
 					}
@@ -334,6 +365,13 @@ func (a *app) coordinatorView(ctx context.Context, st *store.Store, all bool) (c
 		}
 	}
 	n.Held = sprint.HeldBack(s)
+	v.ETA = coordETA{Rate: sprint.ETABasis{Window: sprint.RateWindowNone}, Cards: sprint.ETAWorkOf(s)}
+	if merr == nil {
+		v.ETA.Rate = sprint.LandingRateBasis(landedAt, int64(n.Landed), machine.Spans, machine.FirstStart(s.Cleared), now)
+	}
+	tc := sprint.SprintTierCosts(s)
+	v.Cost = coordCost{Total: cmp.Or(tc.TotalCost, "-"), Coverage: tc.Coverage, PerLanded: tc.PerLanded, Landed: tc.Landed,
+		LandedPriced: tc.LandedPriced, SpendPerLanded: tc.SpendPerLanded, SpendScope: tc.SpendScope}
 	finished := func(row string) int {
 		f := 0
 		for _, c := range append(s.Fleet.Cell(row, sprint.DoneOK), s.Fleet.Cell(row, sprint.DoneFailed)...) {
@@ -652,7 +690,26 @@ func coordinatorSum(v coordinatorView, known bool, m store.Machine) string {
 	}
 	return fmt.Sprintf("seat=%s machine=%s j=%d(max %d behind) alarms=%d asks=%d sentinels=%d friends=%d machines=%d | landed %d/%d +%d/30m | ready %d wait %d work %d review %d merge %d | busy %d/%d",
 		cmp.Or(v.Seat, "-"), state, n.J, behind, types[itemAlarm], types[itemRequest], types[itemSentinel], types[itemFriend], types[itemMachine],
-		n.Landed, n.All, n.L30, n.Ready, n.Waiting, n.Working, n.Review, n.Merging, n.Busy, n.Width)
+		n.Landed, n.All, n.L30, n.Ready, n.Waiting, n.Working, n.Review, n.Merging, n.Busy, n.Width) + " | " + etaText(v.ETA) + " | " + costText(v.Cost)
+}
+
+// etaText is what the ETA stands on, in the summary: "eta rate 7.0/h over last 1h of
+// running time (7 landings) | left 1182: held 770 executing 12 queued 400".
+func etaText(e coordETA) string {
+	r, w := e.Rate, e.Cards
+	rate := "eta rate none"
+	if r.Window != sprint.RateWindowNone {
+		rate = fmt.Sprintf("eta rate %.1f/h over %s (%d landings)", r.PerHour, r.Window, r.Landings)
+	}
+	return fmt.Sprintf("%s | left %d: held %d executing %d queued %d", rate, w.Left, w.Held, w.Executing, w.Queued)
+}
+
+// costText is the cost headlines, in the summary, each with its denominators and coverage:
+// "cost $7.18 (2 actual · 0 estimated · 0 tokens · 19 unpriced of 21 records) | per landed
+// $4.00 over 1 priced of 6 landed | spend per landed unknown".
+func costText(c coordCost) string {
+	return fmt.Sprintf("cost %s (%s) | per landed %s over %d priced of %d landed | spend per landed %s",
+		c.Total, c.Coverage.Text(), c.PerLanded, c.LandedPriced, c.Landed, c.SpendPerLanded)
 }
 
 // coordinatorText is the view in at most viewTextLines lines: the summary, then an item a
