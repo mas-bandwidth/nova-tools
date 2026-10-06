@@ -53,6 +53,13 @@ type friendEntry struct {
 	// ConfigDir is her row's config_dir, the directory a claude one-shot lane
 	// runs with as CLAUDE_CONFIG_DIR, which her beat answers (row_config_dir=).
 	ConfigDir string `json:"config_dir,omitempty"`
+	// ReadSlots is her reader room, apart from Width. 0 is stored as absent
+	// and reads back as 0: she is asked no read. A friend sync'd before this
+	// field existed also reads 0 until the next sync writes her row's number.
+	ReadSlots int `json:"read_slots,omitempty"`
+	// ReadWait is the seconds a read asked of her reader waits not begun before
+	// it is a judgment (config.FriendReadWait of her row); 0 until a sync writes it.
+	ReadWait int `json:"read_wait,omitempty"`
 	// Reason and Until are the hold's (friend down --reason --until, hold <friend>
 	// --reason): why, and when the coordinator expects her back. Return is whether
 	// the hold took her cards back (hold.go).
@@ -70,6 +77,8 @@ type FriendSpec struct {
 	Mode  string // her delivery mode, config.FriendMode of her row
 	// ConfigDir is her row's config_dir ("" when it names none).
 	ConfigDir string
+	ReadSlots int // her reader room, config.FriendReadSlots of her row; 0 asks her none
+	ReadWait  int // the seconds a read asked of her waits not begun, config.FriendReadWait of her row
 }
 
 // FriendRow is one row of the friends table as where draws it: the counts of
@@ -85,6 +94,9 @@ type FriendRow struct {
 	Status  string `json:"status"`
 	Class   string `json:"class,omitempty"`
 	Mode    string `json:"mode,omitempty"`
+	// ReadSlots is her reader room beside Width, her card width: the reads
+	// reader-<name> runs at once (friend sync copies her nova-config row's).
+	ReadSlots int `json:"read_slots,omitempty"`
 	// Load and Report are what her last beat reported (friend beat --load, and
 	// sprint.FriendReport), absent when it reported none.
 	Load   float64              `json:"load,omitempty"`
@@ -165,11 +177,11 @@ func (st *Store) SyncFriends(ctx context.Context, specs []FriendSpec) (added, re
 		case !had:
 			added = append(added, s.Name)
 			rosterChanged = true
-		case e.Width != s.Width || e.Class != s.Class || e.Mode != s.Mode || e.ConfigDir != s.ConfigDir:
+		case e.Width != s.Width || e.Class != s.Class || e.Mode != s.Mode || e.ConfigDir != s.ConfigDir || e.ReadSlots != s.ReadSlots || e.ReadWait != s.ReadWait:
 			updated = append(updated, s.Name)
 			rosterChanged = true
 		}
-		e.Width, e.Class, e.Mode, e.ConfigDir = s.Width, s.Class, s.Mode, s.ConfigDir
+		e.Width, e.Class, e.Mode, e.ConfigDir, e.ReadSlots, e.ReadWait = s.Width, s.Class, s.Mode, s.ConfigDir, s.ReadSlots, s.ReadWait
 		r[s.Name] = e
 	}
 	for n := range r {
@@ -198,6 +210,59 @@ func (st *Store) SyncFriends(ctx context.Context, specs []FriendSpec) (added, re
 		}
 	}
 	return added, removed, updated, nil
+}
+
+// WriteFriendReadSlots writes the fleet properties the ask and the tick read
+// a friend's reader by: sprint.PropFriendReadSlots, a JSON object of each
+// friend's name to her read slots, and sprint.PropFriendReadWait, of each
+// friend's name to her read wait in seconds; each only when its JSON differs
+// from the property the fleet holds, so a second friend sync stays idle. Every
+// friend is in both maps, including one at 0 slots: a name absent from the map
+// is not a friend. It says whether it wrote either.
+func (st *Store) WriteFriendReadSlots(ctx context.Context, specs []FriendSpec) (bool, error) {
+	slots, waits := make(map[string]int, len(specs)), make(map[string]int, len(specs))
+	for _, s := range specs {
+		slots[s.Name], waits[s.Name] = s.ReadSlots, s.ReadWait
+	}
+	want := map[string]string{}
+	for prop, m := range map[string]map[string]int{sprint.PropFriendReadSlots: slots, sprint.PropFriendReadWait: waits} {
+		b, err := json.Marshal(m)
+		if err != nil {
+			return false, err
+		}
+		want[prop] = string(b)
+	}
+	res, err := st.Run(ctx, Step{
+		Verb: "friend sync",
+		Load: []string{sprint.Fleet},
+		Plan: func(s *sprint.Snapshot) sprint.Plan {
+			var p sprint.Plan
+			if s.Fleet == nil {
+				return p
+			}
+			for _, prop := range []string{sprint.PropFriendReadSlots, sprint.PropFriendReadWait} {
+				cur, ok := s.Fleet.Prop(prop)
+				if ok && cur == want[prop] {
+					continue
+				}
+				p.Props = append(p.Props, sprint.PropWrite{Table: sprint.Fleet, Name: prop, Value: want[prop], Was: cur, WasAbsent: !ok})
+			}
+			if len(p.Props) > 0 {
+				p.Units = []sprint.Unit{{Key: "read-slots", Moved: "friend read slots and read waits"}}
+			}
+			return p
+		},
+	})
+	if err != nil {
+		return false, err
+	}
+	if res.Lost {
+		return false, fmt.Errorf("the fleet's read slots were not written; run: nova-sprint friend sync")
+	}
+	if len(res.Refused) > 0 {
+		return false, errors.New(res.Refused[0].Why)
+	}
+	return len(res.Moved) > 0, nil
 }
 
 // FriendBeat writes one beat of the friend at the store's clock, to the
@@ -337,7 +402,7 @@ func (st *Store) friendRows(ctx context.Context, now time.Time) ([]FriendRow, ma
 		}
 		presence := sprint.FriendPresence{Held: r[n].Held, Beat: b, Health: h, Generation: generation, Finished: fin}
 		word, evidence := sprint.FriendEvidence(presence, now)
-		row := FriendRow{Name: n, Width: r[n].Width, Status: word, Evidence: evidence, Finished: fin, Class: r[n].Class, Mode: r[n].Mode, Load: b.Load, Report: b.Friend, Beat: b.At}
+		row := FriendRow{Name: n, Width: r[n].Width, Status: word, Evidence: evidence, Finished: fin, Class: r[n].Class, Mode: r[n].Mode, ReadSlots: r[n].ReadSlots, Load: b.Load, Report: b.Friend, Beat: b.At}
 		if why := sprint.FriendDownWhy(presence, now); why != "" {
 			whys[n] = why
 		}
@@ -581,7 +646,7 @@ func (st *Store) FriendSpecOf(ctx context.Context, friend string) (FriendSpec, e
 	if !ok {
 		return FriendSpec{}, noFriend(r, friend)
 	}
-	return FriendSpec{Name: friend, Width: e.Width, Class: e.Class, Mode: e.Mode, ConfigDir: e.ConfigDir}, nil
+	return FriendSpec{Name: friend, Width: e.Width, Class: e.Class, Mode: e.Mode, ConfigDir: e.ConfigDir, ReadSlots: e.ReadSlots, ReadWait: e.ReadWait}, nil
 }
 
 // FriendSessions is every friend of the roster with her session's last pong as her last
