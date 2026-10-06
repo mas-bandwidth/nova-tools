@@ -137,7 +137,7 @@ func runDocumented(t *testing.T, root string) onboarding.Runner {
 			if err != nil {
 				return onboarding.Result{}, err
 			}
-			defer f.Close()
+			defer func() { _ = f.Close() }() // ignored: the file was opened read-only, so a close error loses no data
 			stdin = f
 		}
 		var out, errb bytes.Buffer
