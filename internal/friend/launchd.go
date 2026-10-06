@@ -265,8 +265,16 @@ func Install(ctx context.Context, a Agent, uid int, run Launchctl, write func(pa
 	if err := write(path, []byte(a.Plist())); err != nil {
 		return path, nil, err
 	}
+	ran, err = Load(ctx, a.Label(), path, uid, run, wait)
+	return path, ran, err
+}
+
+// Load boots out whatever label runs now (nothing loaded is fine) and
+// bootstraps the plist at path into the user's domain, sent again after
+// wait() while launchd answers EIO. It answers the commands it ran.
+func Load(ctx context.Context, label, path string, uid int, run Launchctl, wait func()) (ran []string, err error) {
 	domain := fmt.Sprintf("gui/%d", uid)
-	bootout := []string{"bootout", domain + "/" + a.Label()}
+	bootout := []string{"bootout", domain + "/" + label}
 	ran = append(ran, "launchctl "+strings.Join(bootout, " "))
 	_, _ = run(ctx, bootout...) // ignored: a label that is not loaded answers an error, and that is the state wanted
 	bootstrap := []string{"bootstrap", domain, path}
@@ -274,10 +282,10 @@ func Install(ctx context.Context, a Agent, uid int, run Launchctl, write func(pa
 		ran = append(ran, "launchctl "+strings.Join(bootstrap, " "))
 		out, err := run(ctx, bootstrap...)
 		if err == nil {
-			return path, ran, nil
+			return ran, nil
 		}
 		if try == BootstrapTries || !strings.Contains(out, "Input/output error") {
-			return path, ran, fmt.Errorf("launchctl bootstrap: %v: %s", err, strings.TrimSpace(out))
+			return ran, fmt.Errorf("launchctl bootstrap: %v: %s", err, strings.TrimSpace(out))
 		}
 		wait()
 	}
