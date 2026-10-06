@@ -25,6 +25,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
 	"github.com/mas-bandwidth/nova-tools/internal/decide"
+	"github.com/mas-bandwidth/nova-tools/internal/forge"
 	"github.com/mas-bandwidth/nova-tools/internal/hostload"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
@@ -137,6 +138,9 @@ type app struct {
 	// (mergewindow.go): gh's for a GitHub repository, each answer kept a while; a test gives
 	// a fake and asks no forge.
 	mergeQueue sprint.MergeQueue
+	// issueForge is the forge the closer closes a landed card's issues on (land_issues.go):
+	// nil is gh, and on a twin no forge; a test gives a fake.
+	issueForge forge.Closer
 	// serial is the server's one line of control (serve.go): a worker's batch
 	// and a tick of the run loop each hold it, so neither runs during the other;
 	// the tick takes it at its turn, not behind every batch waiting (sprint.ControlLine).
