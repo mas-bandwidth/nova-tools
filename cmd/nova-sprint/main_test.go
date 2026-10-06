@@ -63,6 +63,9 @@ func newTestApp(t *testing.T) *testApp {
 	// land asks no forge: every branch's merge queue is clear unless a test holds one
 	ta.queue = &heldQueue{held: map[string]bool{}}
 	ta.a.mergeQueue = ta.queue
+	// nor is a forge asked to close an issue: a landed card's issues go to a forge that
+	// closes each and keeps nothing (land_issues.go)
+	ta.a.issueForge = noForge{}
 	// every part a tick plans on its twin is checked against a fresh read
 	ta.a.checkTwin = func(twin, fresh *sprint.Snapshot) error {
 		if d := storetest.TwinDiff(twin, fresh); d != "" {
