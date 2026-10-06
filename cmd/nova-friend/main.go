@@ -1281,12 +1281,15 @@ func (w world) run(c *tool.Call) *tool.Out {
 		},
 		// the session check's and the limits' wrappers take a beat of ctx alone; the daemon's
 		// beat carries the session's last activity, closed over here (fold of 2026-10-05)
+		// the beat goes every step whatever the session says: it is the daemon's liveness, and
+		// the session's last evidence rides on it (--pong) as a fact of its own
+		// (docs/SPEC-FRIEND.md, the beat)
 		Beat: func(ctx context.Context, active time.Time) error {
-			// up or down, held back or not: the beat's record says what the lanes cost
+			// up or down: the beat's record says what the lanes cost
 			saySpend()
-			held := sc.Beat // the session's answer holds the beat back; a per-card harness has no session, its process is the daemon
+			stepped := sc.Beat // the session check stepped first; a per-card harness has no session, its process is the daemon
 			if perCard {
-				held = func(beat func(context.Context) error) func(context.Context) error { return beat }
+				stepped = func(beat func(context.Context) error) func(context.Context) error { return beat }
 			}
 			// the owner, 2026-10-05 ~9:30 AM ET: "there is no value in things that are answered
 			// just by the daemon". A per-card harness has no session to check, so its beat says
@@ -1331,12 +1334,12 @@ func (w world) run(c *tool.Call) *tool.Out {
 				return err
 			}
 			if w.beatDown == nil {
-				return held(fl.Beat(up))(ctx) // no down beat: held back while she is at her limit
+				return stepped(fl.Beat(up))(ctx) // a world with no down beat (a test's): held back while she is at her limit
 			}
 			// while her harness is at its limit her beat says down with the until and the
-			// reason (limits-mean-down-w-r5.w1~15), the session's check stepped as before,
-			// ahead of the look; the inner check is the last before the up beat, so a limit
-			// seen during the step is never beaten up
+			// reason (limits-mean-down-w-r5.w1~15), the session's check stepped first; the
+			// look is the last thing before the up beat, so a limit seen during the step is
+			// never beaten up
 			down := func(ctx context.Context, until time.Time, reason string) error {
 				said := words()
 				err := w.beatDown(ctx, server, name, active, until, reason, said)
@@ -1345,29 +1348,13 @@ func (w world) run(c *tool.Call) *tool.Out {
 				}
 				return err
 			}
-			if !perCard {
-				// while her session is down her beat says so, with the check's nonce and why; a
-				// limit seen during the step is the reason first, with its reset
-				sessionDown := func(ctx context.Context, until time.Time, reason string) error {
-					if u, r, limited := fl.Limited(); limited {
-						until, reason = u, "harness limit: "+r
-					}
-					return down(ctx, until, reason)
-				}
-				held = func(beat func(context.Context) error) func(context.Context) error {
-					return sc.BeatOr(beat, sessionDown)
-				}
-			}
 			// a provider failure paused her lanes: her beat says her down with its exact
 			// message until a person clears the marker (nova-friend resume; friend.PauseBeat)
 			if marker := friend.ReadPause(state); marker != "" {
 				until, reason := friend.PauseBeat(marker, c.Str("model"), w.now())
 				return down(ctx, until, reason)
 			}
-			if _, _, limited := fl.Limited(); limited && !perCard {
-				sc.Step(ctx)
-			}
-			return fl.BeatOrDown(held(fl.BeatOrDown(up, down)), down)(ctx)
+			return stepped(fl.BeatOrDown(up, down))(ctx)
 		},
 		Row: func() (string, int) {
 			if m := c.Str("mode"); m != "" {
@@ -1956,7 +1943,7 @@ func (w world) status(c *tool.Call) *tool.Out {
 		o.Fact("presence", pr.Presence).Fact("last_session", stamp(pr.LastHeard))
 		if pr.Presence != friend.PresenceUp {
 			o.Fact("presence_reason", tool.Text(pr.Reason))
-			o.Note("the daemon is up and the session is not (" + pr.Reason + "): the friend is down, and no beat goes to the sprint server until the session answers a session check")
+			o.Note("the daemon is up and the session is not (" + pr.Reason + "): the friend is down; the daemon still beats, and the sprint reads her session deaf until it answers a session check")
 		}
 	}
 	if prErr != nil {

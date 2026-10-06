@@ -332,8 +332,10 @@ minutes) old (docs/SPEC-FRIEND.md, "Presence is her session's evidence"),
 under any other generation (an old seat's proof never looks up under
 a new seat, and no fallback to her beat once observed), and for every finer
 word the row keeps (`asleep` is the daemon's, shown as `down`). The first
-valid observation makes her `up` at once. Her own `friend beat` stays what it
-is, the friend's own beat, and it decides nothing, observed or not. No observation holds a friend: `held` is `friend
+valid observation gives her the session's half of up at once (she is `up` when her
+daemon beats too, "Friend presence: the up rule" above). Her own `friend beat` stays
+what it is, her daemon's liveness: it decides the daemon's half and never the
+session's, observed or not. No observation holds a friend: `held` is `friend
 down` by the seat alone, lifted by `friend up`. The model is
 `tla/SeatHealth.tla` (six reversed witnesses); the tests
 `TestAProofDatedAfterTheServersClockIsRefused`,
@@ -4525,7 +4527,7 @@ The mechanisms: a **blocking read** waits in the store until the thing arrives (
 | friend delivery | the friend's daemon into her session | delivery into a session | each batch as one turn; the tmux adapter looks at the pane every TmuxPoll (500 ms) until its prompt is free | the pane has no idle event; the wait is for the pane, never for a message |
 | friend card reconcile | sprint to the friend's daemon (the cards she holds) | timer poll | Held asked once an InboxEvery (1 s), on the daemon's step | card friend-cards-pushed-on-the-bus |
 | friend reader ask | sprint to the friend's reader row (reader-<friend>; a bud's reader is this row) | timer poll | queue --as reader-<friend> once a ReadAskEvery (10 s) | card friend-reads-pushed-on-the-bus |
-| friend beat | the friend's daemon to the sprint | beat | BeatEvery (1 s) | liveness is the beat's absence (FriendBeatEvery; down after fifteen without one) |
+| friend beat | the friend's daemon to the sprint | beat | BeatEvery (1 s), unconditionally while the daemon runs | the daemon's liveness is the beat's absence (FriendBeatEvery; not beating after FriendBeatLive, 10 s, without one); her session's is its evidence, a separate fact ("Friend presence: the up rule") |
 | member pass | sprint server to a fleet member and a reader (queue, take, report) | timer poll | --every 3 s (at most 5 s); woken at once by its own push's end, a child's exit or SIGTERM | card member-waits-on-the-servers-bus-message |
 | member beat | the member to the sprint | beat | --every 3 s, apart from the pass | liveness is the beat's absence; BeatStall stops it when the pass stalls |
 | coordinator inbox push, through the server | sprint to the coordinator's inbox (inbox --wait --push) | timer poll | log --json every tickEndPoll (1 s), the inbox read on each new tick-end, at most waitLook (15 s) between reads | card inbox-wait-blocks-on-the-server |

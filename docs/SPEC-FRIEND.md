@@ -372,7 +372,8 @@ message, and the record says so at the first deferral and once a minute after.
 While a turn runs: one peek, so a ping that lands during a long turn is still
 answered at once by the daemon; never a second turn. Then the worker's result;
 one beat to the sprint server (`friend beat <friend>`, a plain beat: the queue,
-working and width flags are owed on the server's side); the pong file, while a
+working and width flags are owed on the server's side), every step whatever the
+bus store and the session say ("The beat", below); the pong file, while a
 challenge is open; the status file.
 
 **Last session activity** (2026-10-04: the table said up with 8 working while a friend's
@@ -1060,9 +1061,11 @@ the good bits that do work". On 2026-10-04 friends' rows read up for hours on
 beats sent for them while their sessions took no turn: one for four hours under
 a refusing harness, another working 8 for an hour while running nothing.
 
-A friend's row in the sprint (`sprint.FriendStatus`, `sprint.FriendEvidence`)
-is `held` while the coordinator holds her; else `up` only on evidence from her
-own session, within its window:
+A friend's row in the sprint (`sprint.FriendStatus`, `sprint.FriendEvidence`;
+the rule is written once, docs/SPEC-SPRINT.md, "Friend presence: the up rule")
+is `held` while the coordinator holds her; else `up` only on two facts at once:
+her daemon beats (her last beat at most `FriendBeatLive`, ten seconds, old: "The
+beat" below), and her own session has given evidence within its window:
 
 - a wake ping her session answered under `FriendPongWindow` (ten minutes) old:
   the coordinator's ping loop sends `nova-friend ping --wake`, her daemon
@@ -1108,6 +1111,41 @@ them, docs/SPEC-SPRINT.md section 1): going down takes nothing back. Her
 unstarted cards return to ready only when the coordinator takes them
 (`friend take --all-unstarted`, or `friend down`); nothing returns them on her
 going down by itself.
+
+### The beat (every-friend-daemon-beats-every-second, 2026-10-06)
+
+The owner, 2026-10-04: "both sides ping each second"; 2026-10-06: "All friends
+should have beats!!!". The finding of 2026-10-06: a friend with her daemon at
+width 8 and her session answering on the bus every minute read `down (stalled),
+active 2d ago`, and was dealt nothing, because her daemon held its beat back
+under "no beat until a session check answers" while the sprint read beats; the
+coordinator beat for her, and for another friend, from shell loops.
+
+The daemon beats every second (`BeatEvery`, the sprint's `FriendBeatEvery`),
+unconditionally, from its loop's first step until it stops: before the session
+has answered anything, while the session check is past its bound, while the bus
+store refuses, and while her harness is at its limit (then the beat says down,
+`--until --reason`, above). The beat is the daemon's liveness and nothing else.
+It carries what the daemon knows: her session's last activity (`--active`) and
+her session's last evidence (`--pong`, the session's last answer to a check or
+its own bus message, `SessionCheck.Evidence`; zero while it has given none, so
+its age is the sprint's to read), and her row's mode and width come back on its
+answer. The sprint server takes a beat from any friend on its roster and never
+refuses one for want of a session proof (cmd/nova-sprint `friend beat`; a name
+the roster lacks is refused). Whether she is up is the sprint's rule over the
+two facts (above). A daemon that cannot get a session answer still beats, and
+her row reads `daemon up, session deaf 14m0s` rather than `down (stalled)`.
+`TestTheDaemonBeatsEverySecondWhateverTheSessionSays` (internal/friend, a fake
+clock and no socket: thirty minutes of steps, a beat each step a second apart
+with the session deaf for twenty and the store refusing for one, the evidence
+zero until the session answers and its time after). The model is
+`tla/Presence.tla` (`MCPresence.cfg`): a running daemon's last beat is never
+older than two ticks (`BeatFresh`), whatever the session and the store do, and
+the sprint's up is the daemon's beat and the session's evidence together
+(`UpIsBothFacts`); its reversed witnesses are the hold this replaced
+(`MCPresenceBrokenHeldBeat.cfg`) and an up rule that reads the beat alone
+(`MCPresenceBrokenBeatUp.cfg`). Not yet: the disk figures (jobs bytes, free
+disk) a later card adds to the beat.
 
 What stays: the daemon as the mailman (bus messages and dealt cards pushed
 into her session as turns), the session-answered wake ping, `HarnessWatch`

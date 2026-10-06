@@ -59,6 +59,7 @@ func TestFriendHealthIsTheSeatsAndFencedByItsGeneration(t *testing.T) {
 	t.Parallel()
 	ta, _ := friendApp(t, "amy")
 	ta.ok("friend sync --root " + t.TempDir())
+	ta.ok("friend beat amy") // her daemon beats: the half of up this test does not vary
 	seen := ta.now.UTC().Format(time.RFC3339)
 	assert.Contains(t, ta.dry("friend health amy --state up --seen "+seen+" --generation 1 --dry-run"), "FRIEND-HEALTH DRY-RUN amy state=up seen="+seen+" generation=1; nothing was changed")
 	out := ta.ok("friend health amy --state up --seen " + seen + " --generation 1")
@@ -136,7 +137,9 @@ func TestTheFriendsTableShowsUpHeldOrDownWithTheReason(t *testing.T) {
 	assert.Contains(t, tableOf(ta.frame(), sprint.Friends), "| down", "the hold lifted, the observation (down) stands")
 	ta.a.sleep(time.Second)
 	ta.ok("friend health amy --state up --seen " + ta.now.UTC().Format(time.RFC3339) + " --generation 1")
-	assert.Contains(t, tableOf(ta.frame(), sprint.Friends), "| up")
+	assert.Contains(t, tableOf(ta.frame(), sprint.Friends), "| down", "her session answered and her daemon is not beating: down")
+	ta.ok("friend beat amy")
+	assert.Contains(t, tableOf(ta.frame(), sprint.Friends), "| up", "her daemon beats and her session answered: up")
 }
 
 // A friend-card delivery wakes the friend: one bus message from the coordinator to her
