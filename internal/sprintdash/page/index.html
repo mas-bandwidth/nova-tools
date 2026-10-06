@@ -93,6 +93,12 @@ img#logo.logo-tile { width: 6rem; height: 6rem; flex: none; }
 .wordmark { font-family: ui-rounded, "SF Pro Rounded", "Nunito", system-ui, sans-serif; font-weight: 800; font-size: 5.5rem; line-height: 6rem; letter-spacing: -.02em; color: var(--text); text-transform: lowercase; }
 .chip { display: inline-flex; align-items: center; gap: 0.75rem; height: 3rem; padding: 0 1rem; border: 1px solid var(--border); border-radius: 0.75rem; color: var(--text-2); font-size: 1.5rem; }
 .chip b { color: var(--text); font-weight: 550; }
+/* the release switch: one line, the release shown lit */
+.release { display: inline-flex; align-items: center; gap: 0.25rem; height: 3rem; padding: 0 0.25rem; border: 1px solid var(--border); border-radius: 0.75rem; font-size: 1.5rem; }
+.release[hidden] { display: none; }
+.release a { padding: 0 0.75rem; border-radius: 0.5rem; line-height: 2.25rem; color: var(--text-3); text-decoration: none; font-family: var(--mono); }
+.release a:hover { color: var(--text-2); }
+.release a.on { color: var(--text); background: var(--neutral-tint); }
 .live { display: inline-flex; align-items: center; gap: 1rem; font-size: 1.625rem; color: var(--text-2); }
 .dot { width: 1rem; height: 1rem; border-radius: 50%; background: var(--text-3); flex: none; }
 .live.ok .dot { background: var(--good); }
@@ -150,6 +156,7 @@ img#logo.logo-tile { width: 6rem; height: 6rem; flex: none; }
 .panel-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 0.5rem 2rem; padding: 2rem 3rem 1rem; }
 .panel-head h2 { margin: 0; font-size: 2rem; line-height: 3rem; font-weight: 600; }
 .panel-head .muted { font-size: 1.625rem; }
+.panel-head .archived { background: none; border: 0; padding: 0; font: inherit; font-size: 1.625rem; cursor: pointer; text-decoration: underline dotted; }
 .empty { padding: 1rem 3rem 3rem; color: var(--text-2); font-size: 1.625rem; }
 .empty code { font: 1.5rem ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--text); }
 
@@ -241,13 +248,13 @@ footer a:hover { color: var(--text); }
 
 /* Fleet and Friends, full: Machine capped; Status and the numeric columns share the spare
    width (contents right-aligned); 56 px gutters; ~64 px from Ready to the track and from the
-   track to the figure; cells a fixed 27 x 11 px with 4 px gaps */
+   track to the figure; cells a fixed 27 x 11 px with 4 px gaps; the bar column is the widest bar
+   plus 8 px each side (the cells' padding), so the bar reads centred in its own column */
 .fleet .row, .friends .row { --pad: 2rem; --gap: 3.5rem; --S: 9.5rem; column-gap: var(--gap); padding: 0 var(--pad); }
-.fleet .row { grid-template-columns: var(--name-w) var(--status-w) minmax(4.5rem, 1fr) calc(var(--track-w, 61.75rem) + .5rem) 8rem minmax(3.75rem, 1fr) minmax(5.375rem, 1fr) minmax(5.375rem, 1fr); }
-.friends .row { grid-template-columns: var(--name-w) var(--status-w) minmax(4.5rem, 1fr) calc(var(--track-w, 61.75rem) + .5rem) 8rem minmax(3.75rem, 1fr) minmax(5.375rem, 1fr); }
-.fleet .row > :nth-child(4), .friends .row > :nth-child(4) { margin-left: .5rem; }
-.fleet .row > :nth-child(5), .friends .row > :nth-child(5) { padding-left: .5rem; }
-.fleet .cells, .friends .cells { gap: .25rem; grid-auto-rows: .6875rem; }
+.fleet .row { grid-template-columns: var(--name-w) var(--status-w) minmax(4.5rem, 1fr) calc(var(--track-w, 61.75rem) + 1rem) 7.5rem minmax(3.75rem, 1fr) minmax(5.375rem, 1fr) minmax(5.375rem, 1fr); }
+.friends .row { grid-template-columns: var(--name-w) var(--status-w) minmax(4.5rem, 1fr) calc(var(--track-w, 61.75rem) + 1rem) 7.5rem minmax(3.75rem, 1fr) minmax(5.375rem, 1fr); }
+.fleet .cells, .friends .cells { gap: .25rem; grid-auto-rows: .6875rem; padding: 0 .5rem; }
+.fleet .row.head > :nth-child(4), .friends .row.head > :nth-child(4) { margin-left: .5rem; }
 
 /* compact forms: Work is stream | status (dot) | landed; Fleet and Friends are
    Machine | Status (dot only) | Working "n / width" | OK% */
@@ -303,6 +310,7 @@ footer a:hover { color: var(--text); }
     </div>
   </div>
   <div class="right">
+    <nav class="release" id="release" aria-label="release" hidden></nav>
     <span class="live" id="live"><span class="dot"></span><span id="live-text">Connecting</span></span>
   </div>
 </header>
@@ -353,7 +361,7 @@ footer a:hover { color: var(--text); }
 </section>
 
 <section class="panel streams">
-  <div class="panel-head"><h2>Work</h2><span class="muted" id="streams-sub"></span></div>
+  <div class="panel-head"><h2>Work</h2><span class="muted" id="streams-sub"></span><button type="button" class="muted archived" id="streams-archived" hidden></button></div>
   <div class="scroll"><div class="rows" id="streams"><div class="row head"><div>stream</div><div>status</div><div class="num">waiting</div><div class="num">ready</div><div class="num">working</div><div class="num">review</div><div class="num">merging</div><div class="frac">landed</div><div class="num">cost</div></div></div></div>
 </section>
 

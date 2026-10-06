@@ -27,6 +27,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"os/signal"
 	"strconv"
 	"syscall"
@@ -69,7 +70,8 @@ usage:
                               Use it for code you do not trust: a run can
                               change what the next run of the same user reads
                               from the shared build cache
-      --podman <path>         the podman binary (default: podman on PATH)
+      --podman <path>         the container runtime binary (default: podman on
+                              PATH, else docker; the one used is named on stderr)
 
   functionalrun reap [--grace <duration>] [--dry-run] [--podman <path>]
       Remove every container of this tool and this user whose deadline label
@@ -117,7 +119,11 @@ func dispatch(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 			fmt.Fprintf(stderr, "functionalrun run: %v; run: functionalrun help\n", err)
 			return exitCannotRun
 		}
-		eng := newPodman(cfg.podman, stderr)
+		bin, ok := useRuntime(cfg.podman, exec.LookPath, stderr)
+		if !ok {
+			return exitCannotRun
+		}
+		eng := newPodman(bin, stderr)
 		return runTier(ctx, eng, cfg, stdout, stderr)
 	case "reap":
 		cfg, err := parseReap(args[1:])
@@ -125,7 +131,11 @@ func dispatch(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 			fmt.Fprintf(stderr, "functionalrun reap: %v; run: functionalrun help\n", err)
 			return 2
 		}
-		eng := newPodman(cfg.podman, stderr)
+		bin, ok := useRuntime(cfg.podman, exec.LookPath, stderr)
+		if !ok {
+			return 2
+		}
+		eng := newPodman(bin, stderr)
 		n, unreadable, err := reap(ctx, eng, time.Now(), cfg.grace, strconv.Itoa(os.Getuid()), cfg.dryRun, stderr)
 		if err != nil {
 			fmt.Fprintf(stderr, "functionalrun reap: %v\n", err)

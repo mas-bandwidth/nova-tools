@@ -682,3 +682,29 @@ func TestMachLookupIsNarrowed(t *testing.T) {
 		assert.Contains(t, text, name, "the measured mach-lookup set is missing %s", name)
 	}
 }
+
+// DeletesIn is every --write root, the data home included: what a command may
+// create there it may remove. A path outside every --write is not
+// (docs/SPEC-SANDBOX.md, "deletes-in-every-write-root").
+func TestDeletesInEveryWriteRoot(t *testing.T) {
+	t.Parallel()
+	dir := func() string {
+		t.Helper()
+		got, err := filepath.EvalSymlinks(t.TempDir())
+		require.NoError(t, err)
+		return got
+	}
+	job, data, cache, outside := dir(), dir(), dir(), dir()
+	tmp := filepath.Join(job, ".nova-sandbox-tmp")
+	p := &Policy{Writes: []string{job, data, cache}, Cwd: job, Tmp: tmp, Home: data}
+	assert.True(t, p.DeletesIn(job), "the job dir")
+	assert.True(t, p.DeletesIn(data), "the data home is a --write")
+	assert.True(t, p.DeletesIn(cache), "a cache passed as --write")
+	assert.True(t, p.DeletesIn(filepath.Join(data, "app", "state.db")), "a file beneath the data home")
+	assert.True(t, p.DeletesIn(tmp), "the tmp is under a --write")
+	assert.False(t, p.DeletesIn(outside), "a path outside every --write")
+	assert.False(t, p.DeletesIn(""), "an empty path")
+	assert.False(t, (&Policy{}).DeletesIn(job), "a policy with no --write")
+	assert.Equal(t, []string{job, data, cache}, p.DeleteRoots(), "the roots SANDBOX OK names on deletes=")
+	assert.Empty(t, (&Policy{}).DeleteRoots())
+}

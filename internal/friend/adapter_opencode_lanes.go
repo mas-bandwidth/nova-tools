@@ -217,3 +217,25 @@ func (o *OpenCode) DeliverTo(ctx context.Context, id, text string) (LaneTurn, er
 	exit, err = refused(id, out, exit, err)
 	return LaneTurn{Exit: exit, Rejected: PermissionRejection(out)}, err
 }
+
+// RunRead is one read as a one-shot of the friend's opencode: `opencode run --dir <dir>
+// [--model <model>] <prompt>`, a session of its own that no listing is read for, so reads
+// never queue behind the lanes' session opens. Its output is read as a lane turn's is.
+func (o *OpenCode) RunRead(ctx context.Context, model, prompt string) (LaneTurn, error) {
+	o.allow()
+	args := []string{"run", "--dir", o.Dir}
+	if model != "" {
+		args = append(args, "--model", model)
+	}
+	out, exit, err := o.Run(ctx, o.Dir, o.program(), append(args, prompt), "")
+	if o.Out != nil && out != "" {
+		fmt.Fprintln(o.Out, strings.TrimRight(Head(out, OutputKept), "\n"))
+	}
+	if err == nil {
+		if limit := ProviderLimit("(read)", out); limit != nil {
+			return LaneTurn{Exit: exit, Rejected: PermissionRejection(out)}, limit
+		}
+	}
+	exit, err = refused("(read)", out, exit, err)
+	return LaneTurn{Exit: exit, Rejected: PermissionRejection(out)}, err
+}

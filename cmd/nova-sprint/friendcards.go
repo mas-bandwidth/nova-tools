@@ -447,15 +447,24 @@ func (a *app) busWatch(addr, user string) *bus.Watch {
 	return w
 }
 
-// openBus is the real busOpen: the bus store dialed as nova-bus dials it
-// (internal/redisconn, the fleet's login from the environment).
-func (a *app) openBus(ctx context.Context, addr, user string) (*bus.Bus, func(), error) {
-	// the bus has its own login (NOVA_BUS_REDIS_USER, NOVA_BUS_REDIS_PASSWORD_ENV), never the
-	// sprint store's: a coordinator's store login sent to a bus with no users is refused
-	// (WRONGPASS), and every note to a friend failed that way on 2026-10-04
+// busOptions selects the login for the bus connection used by friend sync
+// (SPEC-SPRINT section 1). It holds variable names, never a password value.
+func busOptions(getenv func(string) string) redisconn.Options {
+	addr := getenv(busRedisEnv)
+	user := getenv(busUserEnv)
 	o := redisconn.Options{Addr: addr, Env: redisconn.Env{User: busUserEnv}}
 	if user != "" {
 		o.Env.PasswordEnv = busPasswordEnvEnv
+	}
+	return o
+}
+
+// openBus is the real busOpen: the bus store dialed as nova-bus dials it
+// (internal/redisconn, the fleet's login from the environment).
+func (a *app) openBus(ctx context.Context, addr, user string) (*bus.Bus, func(), error) {
+	o := busOptions(a.getenv)
+	if addr != "" {
+		o.Addr = addr
 	}
 	conn, err := redisconn.Open(ctx, o, a.getenv)
 	if err != nil {
@@ -550,6 +559,22 @@ func (a *app) wakeFriendStall(ctx context.Context, st *store.Store, name string,
 	return err
 }
 
+// friendReadText is the BRIEF.md of a friend's frontier read, as friend sync and friend cards
+// both write it: the read's brief, the attempt's branch, start commit and head (the packet's,
+// else the card's), and a deadline two hours on the sprint clock.
+func friendReadText(st *store.Store, name string, p sprint.Packet, c *sprint.Card) string {
+	branch, head, start := p.WorkBranch, p.Head, ""
+	if c != nil {
+		branch, head = cmp.Or(branch, c.F("branch")), cmp.Or(head, c.F("head"))
+		start = c.F("start")
+	}
+	var deadline time.Time
+	if st.Now != nil {
+		deadline = st.Now().Add(sprint.FriendReadDeadline)
+	}
+	return sprint.FriendReadBrief(name, p.Primary, p.Brief, branch, start, head, p.Attempt, deadline)
+}
+
 // friendReadOf delivers one frontier read and closes it from the friend's
 // report. The brief is the read's (sprint.FriendReadBrief: the AS A READ
 // section, the attempt's branch, start commit and head, deadline two hours
@@ -572,16 +597,7 @@ func (a *app) friendReadOf(ctx context.Context, st *store.Store, name, dir strin
 		if err := os.MkdirAll(in, 0o755); err != nil {
 			return 0, 0, err
 		}
-		branch, head, start := p.WorkBranch, p.Head, ""
-		if c != nil {
-			branch, head = cmp.Or(branch, c.F("branch")), cmp.Or(head, c.F("head"))
-			start = c.F("start")
-		}
-		var deadline time.Time
-		if st.Now != nil {
-			deadline = st.Now().Add(sprint.FriendReadDeadline)
-		}
-		text := sprint.FriendReadBrief(name, p.Primary, p.Brief, branch, start, head, p.Attempt, deadline)
+		text := friendReadText(st, name, p, c)
 		switch err := atomicfile.WriteFile(brief, []byte(text), 0o644, atomicfile.NoReplace()); {
 		case err == nil:
 			delivered++

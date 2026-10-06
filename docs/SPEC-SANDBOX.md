@@ -405,40 +405,47 @@ The test requirements are listed under **Tests this spec demands**.
     cache environment variables; `nova-sandbox` derives no cache path from task
     text, creates no default cache, and supplies no cache environment variable.
 
-### deletes-only-in-the-job-dir-p.w1 — deletes only in the job's own write roots
+### deletes-in-every-write-root — deletes in every --write root
 
-Two children ran `rm -rf` on a variable path, and the wall let it through: every
-`--write` carried the remove rights. The wall refuses unlink, rmdir and rename-away
-of any path outside the job's own write roots, even where writing is allowed: the
-**job dir** (the first `--write`), its **tmp** (`--tmp`, or the default under the job
-dir) and the **working directory** (`--cwd`, which is always inside the write set: the
-checkout a step was given to write, where `git commit` renames a new index over
-`.git/index`). A shared cache (rule 17) or a config dir may be written, never deleted
-from, unless it is under one of those three. `Policy.DeletesIn` is the one test of
-"the job's own".
+A program inside the wall may delete any file under any `--write` root, the data
+home included: what it may create there it may remove. A database that keeps its
+file in the data home commits a transaction by unlinking its rollback journal, and
+a wall that withholds the remove rights there fails that commit and leaves the
+journal behind. The job directory, its tmp and the working directory are already
+inside the write set (the tmp and the cwd are required to be), and so is every
+other `--write` the caller named: a data home, a cache, a config directory.
+`Policy.DeletesIn` is true for a path inside any `--write` and false outside them.
+A directory that is not a `--write` still cannot be written or deleted.
+The `SANDBOX OK` line names the roots deletes are allowed in on `deletes=`, read
+off `Policy.DeleteRoots` (the `--write` roots for which `DeletesIn` is true, in the
+order given), so a log says where an unlink was allowed and not only how many roots
+were written.
 
-- **Linux.** A write-set directory outside all three gets the write mask minus
-  `REMOVE_FILE` and `REMOVE_DIR` (`writeRuleMask`). Landlock checks a remove right
-  on the parent of the entry removed or renamed away, so this refuses all three,
-  and replacing an existing file by rename is refused there for the same reason.
-  Rules are a union, and the cwd is always its own rule, so a job dir or a cwd nested
-  under such a write keeps its rights. The `policy` verb prints such a directory as
-  `write-nodelete=` instead of `write=`.
-- **macOS.** After every write grant in the profile (HOME's included) comes one
-  `(deny file-write-unlink (subpath (param "WRITEn")))` for each such `--write`,
-  then `(allow file-write-unlink ...)` for `WRITE0`, for `JOBTMP` when the tmp is
-  outside it, and for `JOBCWD` when the cwd is outside both, because the last
-  matching rule wins. Whether macOS's `file-write-unlink` also covers rename-away has
-  not been measured.
-- **Checked by.** `TestTheWallRefusesDeletesOutsideTheJob`, linux: under the wall,
-  with an outside directory as a second `--write`, `rm -rf` of it, `rm` of a file in
-  it and `mv` of a file out of it are each refused and the files are still there; a
-  write there and a delete in the job dir succeed. `TestAStepsGitCommitInsideItsWallSucceeds`,
-  linux: a step's wall (its tmp the first `--write`, its checkout the second and the
-  cwd, a shared directory a third) lets `git commit` in the checkout succeed and still
-  refuses an `rm` in the shared directory. `TestWritesOutsideTheJobCarryNoRemoveRights`
-  checks the masks, the printed ruleset and the profile's order
-  (`internal/sandbox/delete_outside_test.go`).
+- **Linux.** Every `--write` gets the whole write mask, including `REMOVE_FILE`
+  and `REMOVE_DIR` (`writeRuleMask`). Landlock checks a remove right on the parent
+  of the entry removed or renamed away. The `policy` verb prints each such
+  directory as `write=`.
+- **macOS.** The profile's `file-write*` grant on each `--write` includes unlink.
+  No later rule takes it back. Whether `file-write*` covers rename-away has not
+  been measured.
+- **Checked by.** `TestTheWallAllowsDeletesInEveryWriteRoot`, linux: under the
+  wall, a second `--write` (the data home) and a third (a cache), neither of them
+  the cwd or the tmp, each let the command create a file and unlink it.
+  `TestASqliteCommitInTheDataHomeUnlinksItsJournal`, linux: a database opened in
+  the data home commits a transaction and the rollback journal is gone.
+  `TestDeletesInEveryWriteRoot` is the same answer with no wall.
+  `TestTheWallsLineNamesTheRootsDeletesAreAllowedIn`, linux: the fleet's
+  member wall (job dir as cwd, data home as HOME, tmp, cache) through the real
+  tool removes a file created in `$HOME/opencode`, and `deletes=` names all four
+  roots in order; `TestTheDeletesFieldNamesEveryWriteRoot` pins the field's
+  rendering.
+  `TestTheWallRefusesDeletesOutsideTheJob`, linux: a directory that is not a
+  `--write` still refuses `rm -rf`, `rm` and `mv`, and the files stay.
+  `TestAStepsGitCommitInsideItsWallSucceeds`, linux: a step's wall lets `git
+  commit` in the checkout succeed, and an `rm` in a further `--write` succeeds
+  too. `TestEveryWriteRootCarriesRemoveRights` checks the masks, the printed
+  ruleset and the profile (`internal/sandbox/delete_outside_test.go`,
+  `internal/sandbox/wall_deletes_test.go`).
 
 ## The verbs
 
@@ -508,7 +515,10 @@ runaway command cannot take the machine (289 test processes ran unbounded under 
   Landlock and seatbelt walls still bound what it can touch.
 - **The count.** Every second the tool counts the live processes of the group (zombies
   are dead and not counted) and sums their resident bytes: `/proc` on linux, no fork;
-  one `ps -A -o pgid=,rss=,stat=` on macOS. A count that fails is skipped.
+  one `ps -A -o pgid=,rss=,stat=` on macOS. A count that fails is skipped. The group is
+  counted once more when the command exits: a leader that exits between two counts (a
+  fork bomb refused by `RLIMIT_NPROC` ends its own shell) leaves its children in the
+  group, and past a cap they are killed like a tree seen on a tick.
 - **Past a cap.** More processes than the cap, or more resident bytes than the cap: the
   tool sends SIGKILL to the group, waits (bounded) until no live process of it remains,
   prints `SANDBOX RUNAWAY runaway: <n> processes (cap <c>); the process group was killed`
@@ -1186,7 +1196,7 @@ which go to stdout; under `--json` the one object is all a verb prints, on
 stdout. A wrapped command's stdout is its own and the tool writes nothing there.
 
 ```
-SANDBOX OK backend=<sandbox-exec|landlock> abi=<n|-> [used=<n>] read=<n> read-noexec=<n> write=<n> net=<denied|nopromise> cwd=<dir> cwdb64=<base64url> ancestors=<n> cmd=<name> gpu=<none|metal>
+SANDBOX OK backend=<sandbox-exec|landlock> abi=<n|-> [used=<n>] read=<n> read-noexec=<n> write=<n> net=<denied|nopromise> cwd=<dir> cwdb64=<base64url> ancestors=<n> cmd=<name> gpu=<none|metal> deletes=<dir[,dir...]|->
 SANDBOX NOTE <the one remedy or gap line>   (always before the command starts)
 SANDBOX REFUSED reason=<no_sandbox|sandbox_failed|net_unenforceable|landlock_abi_unknown|bad_read|bad_write|bad_cwd|bad_net|bad_gpu|bad_size|bad_timeout|home_outside|no_name|no_container|no_command|bad_flag|not_found|not_executable|volume_exists|volume_failed|unknown_verb>: <text>
 SANDBOX STEP name=<container|look|create|delete|denials|list> state=<start|done> [ms=<n>]
@@ -1235,6 +1245,12 @@ task text carries quoted rules. The `cwd=<dir>` slot is a one-line field
 rendered through `internal/oneline` like every other path, so a directory whose
 path holds a blank reaches a reader escaped; a consumer that compares it with a
 path it holds decodes that field first.
+
+**`deletes=` names the roots a delete is allowed in**: every `--write` root the
+wall carries the remove rights on (`Policy.DeleteRoots`), in the order given, each
+rendered through `oneline.Field` and joined by `,`, with a `,` inside a path
+escaped as `\x2c` so the list splits back into its roots; `-` when there are none
+("deletes-in-every-write-root").
 
 **`SANDBOX OK` names the cwd twice.** `cwd=<dir>` is the readable rendering of
 the working directory through `oneline.Field`, for the operator;

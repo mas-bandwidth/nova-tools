@@ -100,7 +100,8 @@ func (d *DSH) Deliver(ctx context.Context, text string) (int, error) {
 	}
 	out, exit, err := d.Run(ctx, d.Dir, program, DSHArgs(id), text)
 	if m := dshPresetRefusal.FindStringSubmatch(out); exit != 0 && err == nil && m != nil {
-		return 0, Deferred{Reason: fmt.Sprintf("session %s runs under agent preset %q, which dsh's headless runner does not compose (it adopts only a session with no agent preset); the message stays pending: start a session in %s without an agent preset and name it with --session, or read the bus with nova-bus recv", id, m[1], d.Dir)}
+		return 0, Deferred{Reason: fmt.Sprintf("session %s runs under agent preset %q, which dsh's headless runner does not compose (it adopts only a session with no agent preset); the message stays pending: start a session in %s without an agent preset and name it with --session, or read the bus with nova-bus recv", id, m[1], d.Dir),
+			Remedy: DSHNoPresetRemedy(d.Dir)}
 	}
 	if d.Out != nil && out != "" {
 		fmt.Fprintln(d.Out, strings.TrimRight(Head(out, OutputKept), "\n"))
@@ -114,6 +115,13 @@ func (d *DSH) Deliver(ctx context.Context, text string) (int, error) {
 // what the session runs itself: a blocking read of the bus.
 func (d *DSH) Route(ctx context.Context) (route, line string, err error) {
 	return "defer", "nova-bus wait --as <friend>", nil
+}
+
+// DSHNoPresetRemedy is what a friend whose dsh session runs under an agent
+// preset does: nova-friend install and run refuse that session with it
+// (PushProof), since no delivery into it can succeed.
+func DSHNoPresetRemedy(dir string) string {
+	return "start a session in " + dir + " with no agent preset and name it with --session <id>"
 }
 
 // dshPresetRefusal is the one-shot runner's refusal of a session under an

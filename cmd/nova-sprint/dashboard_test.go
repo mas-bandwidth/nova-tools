@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -24,7 +25,7 @@ func TestDashboardReadsTheSprintAsWhereJSONDoes(t *testing.T) {
 	want := ta.ok("where --json --cards")
 	got, err := ta.a.whereJSON("", false)
 	require.NoError(t, err)
-	assert.JSONEq(t, want, string(got))
+	assert.JSONEq(t, ta.ok("where --json --cards --rows"), string(got), "the rows place the critical cards (sprintdash.placed)")
 
 	srv := &sprintdash.Server{Read: func() ([]byte, error) { return ta.a.whereJSON("", false) }, Now: ta.a.now, Every: time.Second}
 	w := httptest.NewRecorder()
@@ -152,4 +153,83 @@ func TestWhereCardsIsWhatThePullRoutesRead(t *testing.T) {
 	require.Len(t, lines, 3, w.Body.String())
 	assert.True(t, strings.HasPrefix(lines[1], "friend amy up "), lines[1])
 	assert.Equal(t, "s1-1.w1 s1 working 0s due 2h0m sprint/s1-1.w1.g1.e0", lines[2])
+}
+
+// The dashboard over a store of two releases (stream set --release) shows the current one's
+// streams by default, and another's or every stream when the page asks.
+func TestTheDashboardOverAStoreOfTwoReleasesShowsOneRelease(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.ok("init --readers reader-a --members m1:16 --coordinator lead")
+	ta.ok("add --stream sprint-v1-release --count 3 --actor lead")
+	ta.ok("add --stream promote-red-2026-10-05 --count 2 --actor lead")
+	ta.ok("add --stream jev --count 5 --actor lead")
+	ta.ok("stream set sprint-v1-release promote-red-2026-10-05 --release v1.0.0 --actor lead")
+	ta.ok("stream set jev --release v1.1.0 --actor lead")
+	// a critical card of each release, waiting and dealt to no one: where's critical names
+	// no stream, so the page's release places it by its row
+	ta.ok("add --stream jev jev-after --one --needs sprint-v1-release-1 --actor lead")
+	ta.ok("add --stream sprint-v1-release v1-after --one --needs jev-1 --actor lead")
+	ta.ok("hold m1 --reason 'nothing dealt: the critical cards stay off the fleet' --actor lead")
+	ta.ok("start --actor lead")
+	ta.ok("tick") // the tick counts the critical path into the where record
+
+	srv := &sprintdash.Server{Read: func() ([]byte, error) { return ta.a.whereJSON("", false) }, Now: ta.a.now, Every: time.Second}
+	critical := func(path string) []string {
+		w := httptest.NewRecorder()
+		srv.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
+		var v struct {
+			Data struct {
+				Critical []struct {
+					ID     string `json:"id"`
+					Stream string `json:"stream"`
+				} `json:"critical"`
+				Rows json.RawMessage `json:"rows"`
+			} `json:"data"`
+		}
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &v), path)
+		assert.Nil(t, v.Data.Rows, "the rows are not served")
+		var ids []string
+		for _, c := range v.Data.Critical {
+			assert.NotEmpty(t, c.Stream, "%s: %s is placed by its row, never by the cards dealt or merging", path, c.ID)
+			ids = append(ids, c.ID)
+		}
+		slices.Sort(ids)
+		return ids
+	}
+	assert.Equal(t, []string{"sprint-v1-release-1"}, critical("/api/sprint"), "the critical path is the release's")
+	assert.Equal(t, []string{"jev-1"}, critical("/api/sprint?release=v1.1.0"))
+	assert.Equal(t, []string{"jev-1", "sprint-v1-release-1"}, critical("/api/sprint?release=all"))
+	read := func(path string) (string, []string, int64) {
+		w := httptest.NewRecorder()
+		srv.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
+		var v struct {
+			Release string `json:"release"`
+			Data    struct {
+				All    int64                      `json:"all"`
+				Tables map[string]json.RawMessage `json:"tables"`
+			} `json:"data"`
+		}
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &v), path)
+		var work map[string]json.RawMessage
+		require.NoError(t, json.Unmarshal(v.Data.Tables["work"], &work), path)
+		var names []string
+		for k := range work {
+			names = append(names, k)
+		}
+		slices.Sort(names)
+		return v.Release, names, v.Data.All
+	}
+	rel, streams, all := read("/api/sprint")
+	assert.Equal(t, "v1.0.0", rel)
+	assert.Equal(t, []string{"promote-red-2026-10-05", "sprint-v1-release"}, streams)
+	assert.Equal(t, int64(6), all, "the summary counts the release's cards alone")
+	rel, streams, all = read("/api/sprint?release=v1.1.0")
+	assert.Equal(t, "v1.1.0", rel)
+	assert.Equal(t, []string{"jev"}, streams)
+	assert.Equal(t, int64(6), all)
+	rel, streams, all = read("/api/sprint?release=all")
+	assert.Equal(t, "all", rel)
+	assert.Len(t, streams, 3)
+	assert.Equal(t, int64(12), all)
 }

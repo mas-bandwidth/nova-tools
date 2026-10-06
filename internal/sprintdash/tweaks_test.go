@@ -240,9 +240,24 @@ function createDOMStub() {
         c.parentNode = this;
         return c;
       },
+      insertBefore(c, ref) {
+        if (c.parentNode) c.parentNode.removeChild(c);
+        const idx = ref ? this.children.indexOf(ref) : -1;
+        if (idx >= 0) this.children.splice(idx, 0, c); else this.children.push(c);
+        c.parentNode = this;
+        return c;
+      },
+      get nextSibling() {
+        if (!this.parentNode) return null;
+        const s = this.parentNode.children;
+        return s[s.indexOf(this) + 1] || null;
+      },
+      get lastChild() { return this.children[this.children.length - 1] || null; },
+      dataset: {},
       removeChild(c) {
         const idx = this.children.indexOf(c);
         if (idx >= 0) this.children.splice(idx, 1);
+        c.parentNode = null;
         return c;
       },
       get firstChild() { return this.children[0] || null; },

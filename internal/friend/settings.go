@@ -92,7 +92,8 @@ func NewMemFS() *MemFS { return &MemFS{nodes: map[string]memNode{"/": {kind: Kin
 func (m *MemFS) Symlink(target, p string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.mkdirAll(path.Dir(path.Clean(p)))
+	// ignored: a test fixture; mkdirAll fails only on a non-directory parent the test itself planted
+	_ = m.mkdirAll(path.Dir(path.Clean(p)))
 	m.nodes[path.Clean(p)] = memNode{kind: KindSymlink, target: target}
 }
 

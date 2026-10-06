@@ -94,3 +94,114 @@ func WhereReleasesCountCardsLeft(clocks []StreamClock, streamCardsLeft map[strin
 	}
 	return out
 }
+
+// NStreamArchived is the tick's word that it archived streams whose every card
+// has landed (stream archive): information, each stream named once.
+const NStreamArchived = "streams archived"
+
+// StreamArchive is the rule of stream archive: why each named stream may not
+// be archived, none when every one may. Archiving hides a stream's rows of the
+// work and merge tables (the table layer's row hide) and moves no card: its
+// landed cards stay placed in its landed cell, with their costs and landings,
+// and every fold, footer and summary counts them as before. A stream is
+// archived only when it is a row of the work or merge table and every card it
+// holds has landed: no primary or sentinel in any column of its work row but
+// landed, no merge card queued or stuck in its merge row. The machine may be
+// RUNNING. Archiving an archived stream changes nothing. The verb names
+// several and applies all or none.
+func StreamArchive(s *Snapshot, streams []string) []Refusal {
+	return allOrNone(streams, "archived", func(st string) string { return streamArchiveWhy(s, st) })
+}
+
+// StreamUnarchive is the rule of stream unarchive: a stream comes back only
+// when it is a row of the work or merge table and is archived.
+func StreamUnarchive(s *Snapshot, streams []string) []Refusal {
+	return allOrNone(streams, "unarchived", func(st string) string {
+		if why := noStream(s, st); why != "" {
+			return why
+		}
+		if !s.Work.Hidden(st) && !s.Merge.Hidden(st) {
+			return fmt.Sprintf("stream %s is not archived; nothing was changed", st)
+		}
+		return ""
+	})
+}
+
+// ArchivedStreams is the streams whose work row is archived, in row order.
+func ArchivedStreams(s *Snapshot) []string {
+	var out []string
+	for _, st := range s.Work.Rows() {
+		if s.Work.Hidden(st) {
+			out = append(out, st)
+		}
+	}
+	return out
+}
+
+// Unlanded is the cards of the stream that have not landed, in work order:
+// its primaries and sentinels in any column of its work row but landed, and
+// its merge cards queued or stuck.
+func Unlanded(s *Snapshot, stream string) []*Card {
+	var out []*Card
+	for _, c := range s.Work.Cards() {
+		if c.Placed() && c.Row == stream && c.Col != Landed {
+			out = append(out, c)
+		}
+	}
+	SortCards(out)
+	for _, col := range []string{Queued, Stuck} {
+		out = append(out, s.Merge.Cell(stream, col)...)
+	}
+	return out
+}
+
+func streamArchiveWhy(s *Snapshot, st string) string {
+	if why := noStream(s, st); why != "" {
+		return why
+	}
+	open := Unlanded(s, st)
+	if len(open) == 0 {
+		return ""
+	}
+	var named []string
+	for i, c := range open {
+		if i == 5 {
+			named = append(named, fmt.Sprintf("and %d more", len(open)-i))
+			break
+		}
+		named = append(named, c.ID+" "+c.Col)
+	}
+	return fmt.Sprintf("stream %s holds %d %s not landed (%s); nothing was changed; a stream is archived when every card of it has landed", st, len(open),
+		map[bool]string{true: "card", false: "cards"}[len(open) == 1], strings.Join(named, ", "))
+}
+
+func noStream(s *Snapshot, st string) string {
+	if !s.Work.HasRow(st) && !s.Merge.HasRow(st) {
+		return fmt.Sprintf("no stream %s on the work or merge table (streams: %s); nothing was changed", st, strings.Join(s.Streams(), ","))
+	}
+	return ""
+}
+
+// allOrNone is each stream's refusal by why, and when any is refused every
+// other with it, as a verb that names several and applies all or none.
+func allOrNone(streams []string, done string, why func(string) string) []Refusal {
+	var out []Refusal
+	refused := map[string]bool{}
+	for _, st := range streams {
+		if w := why(st); w != "" {
+			out = append(out, Refusal{Key: st, Why: w})
+			refused[st] = true
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	whole := fmt.Sprintf("not %s: the verb names several and applies to all or none, and %d of them %s refused", done, len(out), map[bool]string{true: "was", false: "were"}[len(out) == 1])
+	for _, st := range streams {
+		if !refused[st] {
+			refused[st] = true
+			out = append(out, Refusal{Key: st, Why: whole})
+		}
+	}
+	return out
+}

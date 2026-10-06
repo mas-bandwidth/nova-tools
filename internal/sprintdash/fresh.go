@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -118,7 +119,15 @@ func (u *Upstream) read() ([]byte, *snapshot, error) {
 	if c == nil {
 		c = &http.Client{Timeout: UpstreamTimeout}
 	}
-	resp, err := c.Get(u.URL)
+	// every stream: the puller shows each release from the whole copy, as a reader does
+	at, err := url.Parse(u.URL)
+	if err != nil {
+		return nil, nil, err
+	}
+	q := at.Query()
+	q.Set("release", AllReleases)
+	at.RawQuery = q.Encode()
+	resp, err := c.Get(at.String())
 	if err != nil {
 		return nil, nil, err
 	}

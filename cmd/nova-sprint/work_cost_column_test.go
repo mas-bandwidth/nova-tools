@@ -62,9 +62,15 @@ func (ta *testApp) landStream(stream string, work []string, readA, readB []strin
 	ta.ok("tick")
 }
 
-// costCells are the work table's cost cells by row, and the footer's under "".
+// costCells are the work table's cost cells by row, and the footer's under "". A stream
+// the tick archived as its last card landed is brought back first, so its row is drawn.
 func (ta *testApp) costCells() map[string]string {
 	ta.t.Helper()
+	var v whereView
+	ta.json("where", &v)
+	if v.Archived != nil {
+		ta.ok("stream unarchive " + strings.Join(v.Archived.Streams, " "))
+	}
 	out := map[string]string{}
 	lines := strings.Split(ta.ok("where"), "\n")
 	in, at := false, -1

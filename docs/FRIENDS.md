@@ -44,6 +44,18 @@ directory, not a symlink to one: install refuses a symlink and writes nothing
 (on 2026-10-05 a Codex writable root that was a symlink took no writes for ten
 hours). Name the real path with `--dir`.
 
+## Her inbox pushes to her: the push proof
+
+`nova-friend install` and `run` refuse a harness nothing pushes into: one
+with no deliver command (claude, and every surveyed harness) is refused
+before anything is written, with the adapter card as the remedy; a dsh
+session under an agent preset is refused with `start a session in <dir> with
+no agent preset and name it with --session <id>`. `run` delivers one SESSION
+CHECK before its loop and exits 2 when no pong comes back within five
+minutes. Her beat carries her session's last proof, and the sprint deals
+nothing to a friend whose proof is older than fifteen minutes
+(docs/SPEC-FRIEND.md, "The push proof").
+
 ## Generation-specific jobs
 
 The queue file, `inbox/QUEUE.json`, records each task's `id`, `state`, `gen`
@@ -257,4 +269,7 @@ nova-friend install --as ada --harness opencode --dir ~/ada-working --server 127
    (`com.nova.loop.friend-ping-<seat>`) is retired in favour of the friends'
    session proof of life (card fr-session-proof-of-life): `nova-friend` tracks
    presence via nonces answered by each friend's session, so no background ping
-   script is run.
+   script is run. The wake ping to the sessions is the verb `nova-friend ping
+   --wake --to-friends --every <d>` (installed with `ping-install`), which
+   pings every friend the friends table holds up and tells the coordinator
+   which sessions were deaf (docs/SPEC-FRIEND.md, "The wake ping loop").

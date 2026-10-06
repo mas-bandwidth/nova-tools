@@ -23,7 +23,15 @@ var sprintKeys = []string{keyFence, keyGen, keyInbox, keyLog, keyNotes, keyOpen,
 
 // machineKeys are the machine's records and the people's goals: one for the
 // whole sprint, under its prefix, never per epoch, so a clear keeps them.
-var machineKeys = []string{keyMachine, keyHeartbeat, keyStuck, keyCoordinator, keyGoals, keyStrangers, keyTickEnd, keyRules, keyFriends, keyDropDebt, keySeat, keyOwner, keyWhere}
+var machineKeys = []string{keyMachine, keyHeartbeat, keyStuck, keyCoordinator, keyGoals, keyStrangers, keyTickEnd, keyRules, keyFriends, keyDropDebt, keySeat, keyOwner, keyWhere, KeySeatPushers}
+
+// KeySeatPushers is the names whose seat has a push record (SeatPushKey), a
+// JSON list the writer of a record adds its name to (cmd/nova-sprint
+// pushproof.go), so teardown deletes each record by name.
+const KeySeatPushers = "seat-pushers"
+
+// SeatPushKey is name's push record (sprint.PushRecord), a key of the sprint's.
+func SeatPushKey(name string) string { return "seat-push:" + name }
 
 // residueSuffixes are the keys of a table the table layer's drop keeps: its
 // revision, definition record and change log; and its operation records,
@@ -46,6 +54,8 @@ type Epochs struct {
 	// Friends is every friend of the roster: each may have a beat record and a health record
 	// (friends.go).
 	Friends []string
+	// Pushers is every name with a seat push record (KeySeatPushers).
+	Pushers []string
 }
 
 // TeardownKeys is every key a deployment leaves after its tables are dropped
@@ -101,6 +111,9 @@ func TeardownKeys(names sprint.Names, ids map[string][]string, epochs Epochs) []
 	}
 	for _, f := range epochs.Friends {
 		keys = append(keys, names.Key(friendBeatKey(f)), names.Key(friendHealthKey(f)))
+	}
+	for _, p := range epochs.Pushers {
+		keys = append(keys, names.Key(SeatPushKey(p)))
 	}
 	return append(keys, names.EpochKey())
 }
@@ -171,6 +184,7 @@ func (st *Store) Teardown(ctx context.Context) (int, error) {
 	}
 	epochs.Beating = slices.Sorted(maps.Keys(beating))
 	epochs.Readers = slices.Sorted(maps.Keys(reading))
+	_ = st.getJSON(ctx, KeySeatPushers, &epochs.Pushers) // ignored: an unreadable list leaves its records, as a missing one does
 	epochs.Friends = st.friendNames(ctx)
 	_ = st.B.ViewDelete(ctx, st.Names.View())
 	for _, t := range All {

@@ -17,15 +17,20 @@ import (
 // friend and a judgment late on the coordinator, each raised once, raised again with a
 // push every ten minutes of running time while it holds, and closed when it stops.
 
-// passRig is the hold rig with each friend's session pong kept on her beat.
+// passRig is the hold rig with each friend's session pong kept on her beat. Each
+// friend's session last answered five minutes before the rig starts, so it is deaf
+// (FriendDeafAfter, fifteen minutes) ten minutes and more into the rig.
 type passRig struct {
 	*holdRig
 	pongs map[string]time.Time
 }
 
+// passPongBefore is how long before the rig starts each friend's session last answered.
+const passPongBefore = 5 * time.Minute
+
 func newPassRig(t *testing.T) *passRig {
 	t.Helper()
-	r := &passRig{holdRig: newHoldRig(t, 1, 1), pongs: map[string]time.Time{"amy": holdT0, "bob": holdT0}}
+	r := &passRig{holdRig: newHoldRig(t, 1, 1), pongs: map[string]time.Time{"amy": holdT0.Add(-passPongBefore), "bob": holdT0.Add(-passPongBefore)}}
 	r.tick(0)
 	return r
 }
@@ -109,13 +114,13 @@ func TestTheMachineRemindsTheCoordinatorOfADeafOrIdleFriendEveryTenMinutes(t *te
 	r.must(store.FinishStep(sprint.FinishReq{As: "m1", Sel: sprint.Sel{IDs: []string{wc}}, Gens: map[string]int{wc: r.snap().Fleet.Card(wc).Int("gen")}, Failed: true, Who: "m1"}))
 	require.NotNil(t, r.open(sprint.NWorkFailed, "s1-1"), "failed work is a judgment")
 
-	// bob's session answers every ping from here on; amy's last answered at t0
+	// bob's session answers every ping from here on; amy's last answered 5 minutes before t0
 	fresh := func() { r.pongs["bob"] = r.clock() }
 
 	// 9 minutes: nothing yet
 	fresh()
 	r.tick(9 * time.Minute)
-	assert.Nil(t, r.open(sprint.NFriendDeaf, amy), "a pong 9 minutes old is not deaf")
+	assert.Nil(t, r.open(sprint.NFriendDeaf, amy), "a pong 14 minutes old is not deaf")
 	assert.Nil(t, r.open(sprint.NCoordinatorBehind, behind), "a judgment 9 minutes old is not late")
 
 	// 10m30s: amy deaf, raised once; the failed judgment late, named by its overdue line
@@ -123,9 +128,9 @@ func TestTheMachineRemindsTheCoordinatorOfADeafOrIdleFriendEveryTenMinutes(t *te
 	fresh()
 	r.tick(90 * time.Second)
 	deaf := r.open(sprint.NFriendDeaf, amy)
-	require.NotNil(t, deaf, "amy's session has not answered for over 10 minutes: deaf")
+	require.NotNil(t, deaf, "amy's session has not answered for over 15 minutes: deaf")
 	assert.Contains(t, deaf.What, "friend amy")
-	assert.Contains(t, deaf.What, "10m3", "her pong age")
+	assert.Contains(t, deaf.What, "15m3", "her pong age")
 	assert.Contains(t, deaf.What, "--wake", "the remedy, a wake note")
 	assert.Contains(t, deaf.What, "SPEC-FRIEND.md", "then the debug steps")
 	assert.Nil(t, r.open(sprint.NFriendDeaf, bob), "bob's session answers")
@@ -166,7 +171,7 @@ func TestTheMachineRemindsTheCoordinatorOfADeafOrIdleFriendEveryTenMinutes(t *te
 	deaf = r.open(sprint.NFriendDeaf, amy)
 	require.NotNil(t, deaf)
 	assert.Equal(t, 1, deaf.Before, "the judgment counts its raises again")
-	assert.Contains(t, deaf.What, "20m3", "with her latest pong age")
+	assert.Contains(t, deaf.What, "25m3", "with her latest pong age")
 
 	// 31m: the friend holding her card has finished none in 30 minutes: idle, naming the card
 	fresh()
@@ -211,7 +216,7 @@ func TestTheMachineRemindsTheCoordinatorOfADeafOrIdleFriendEveryTenMinutes(t *te
 
 	// a second episode is raised again from the start: amy goes quiet once more
 	fresh()
-	r.tick(10*time.Minute + time.Second)
+	r.tick(5*time.Minute + time.Second)
 	assert.Equal(t, 2, r.count(sprint.Judgment, sprint.NFriendDeaf, "friend amy"), "a new episode, a new judgment")
 }
 
@@ -246,4 +251,35 @@ func TestThePassSparesAHeldFriendAnAcknowledgedJudgmentAndKeepsTheFinishSetting(
 
 	r.tick(15 * time.Minute)
 	assert.NotNil(t, r.open(sprint.NFriendIdle, fc.Row), "45m30s with no finish is idle")
+}
+
+// A quiet friend whose session answers is never judged deaf: her daemon asks the session
+// after ten minutes with no word and waits five for the answer, so her proof is at most
+// FriendProofLive old. Past that it has lapsed, and the coordinator is told once, as a
+// judgment naming her and the remedy, never only in her daemon's log.
+func TestAQuietFriendWhoseSessionAnswersIsNotDeafAndALapsedProofIsToldOnce(t *testing.T) {
+	t.Parallel()
+	require.Equal(t, sprint.FriendProofLive, sprint.FriendDeafAfter, "deaf is a lapsed proof")
+	r := newPassRig(t)
+	amy := sprint.FriendRow("amy")
+	r.pongs["amy"], r.pongs["bob"] = r.clock(), r.clock()
+
+	// asked after ten quiet minutes, answered at the five-minute bound: not deaf
+	r.tick(10 * time.Minute)
+	r.pongs["bob"] = r.clock()
+	r.tick(5 * time.Minute)
+	assert.Nil(t, r.open(sprint.NFriendDeaf, amy), "a proof FriendProofLive old is live: not deaf")
+	assert.Equal(t, 0, r.count(sprint.Judgment, sprint.NFriendDeaf, ""), "a quiet friend whose session answers is never told")
+
+	// one second past the bound: her proof has lapsed, told once as a judgment
+	r.pongs["bob"] = r.clock()
+	r.tick(time.Second)
+	deaf := r.open(sprint.NFriendDeaf, amy)
+	require.NotNil(t, deaf, "a proof past FriendProofLive has lapsed: deaf")
+	assert.Equal(t, sprint.Judgment, deaf.Kind, "the coordinator is told as a judgment")
+	assert.Contains(t, deaf.What, "--wake", "with the remedy")
+	assert.Nil(t, r.open(sprint.NFriendDeaf, sprint.FriendRow("bob")), "bob's session answers")
+	r.pongs["bob"] = r.clock()
+	r.tick(time.Minute)
+	assert.Equal(t, 1, r.count(sprint.Judgment, sprint.NFriendDeaf, "friend amy"), "told once an episode")
 }

@@ -210,7 +210,7 @@ func remoteRef(gd, ref string) string {
 	if err != nil {
 		return ""
 	}
-	defer f.Close()
+	defer f.Close() // ignored: packed-refs is only read; its close can lose nothing the scan returned
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {
 		if sha, name, ok := strings.Cut(sc.Text(), " "); ok && name == ref && fullSha.MatchString(sha) {

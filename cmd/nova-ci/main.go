@@ -10,12 +10,14 @@
 package main
 
 import (
+	"context"
 	_ "embed"
 	"fmt"
 	"io"
 	"os"
 	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/bench"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/tool"
@@ -99,6 +101,15 @@ usage, in a nova-tools checkout (this repository's own CI steps):
                       (local write; needs a nova-tools checkout) scaffold a new
                       verb of an existing tool: command, test, fixture and make
                       target; --dry-run lists the files and writes nothing
+  nova-ci bench run --host <h> [--fallback <h>] --dir <tree> [--root <dir>] [--cache <dir>] [--with-git] -- <go command>
+                      (delivery: writes only its own run directory on the bench)
+                      copy the tree, .git left out unless --with-git, to a fresh
+                      run directory on the Linux bench --host (--fallback when it
+                      does not answer), run the command in it under nice -n 19
+                      with GOCACHE, GOFLAGS=-mod=readonly and NOVA_TEST_NO_HOST=1,
+                      stream its output, then remove that directory and nothing
+                      else. One CI BENCH line on stderr ends the run.
+                      example: nova-ci bench run --host <bench> --dir . -- go vet ./cmd/nova-ci/
   nova-ci github receipt --from-runner --redis <addr> --repo owner/name
                     --sha <40hex> --run-id <n> --workflow <name>
                     --conclusion success|failure|cancelled [--pr <n>] [--at <rfc3339>]
@@ -124,6 +135,9 @@ exit codes: 0 done, 1 the verb said no (slowtests, local, github receipt), 2 usa
     checkout, a bad name, or a file already there
   new-verb: 0 the files written (or listed, with --dry-run); 2 usage, not a
     checkout, a bad name, a tool with no func main, or a file already there
+  bench run: the command's own exit status; 2 also usage, or a run
+    that never reached the command (no bench answered, the copy failed),
+    told apart by its REFUSED line and the missing CI BENCH exit=<n>
   github receipt: 0 written (or checked, with --dry-run); 1 the store
     refused the write or could not confirm it; 2 usage or a refused field
   version: 0 printed; 2 an argument given
@@ -136,7 +150,7 @@ example:
 
 // verbs is every verb in the order the banner lists them: what a refusal for a
 // missing or unknown verb names.
-const verbs = "slowtests, functional, local, new-rule, new-verb, github receipt, version, help"
+const verbs = "slowtests, functional, local, new-rule, new-verb, bench run, github receipt, version, help"
 
 // verbEffect is what running a verb does beyond printing, the last line of its -h, in
 // internal/tool's words (inspection, local write or delivery; docs/STANDARD.md section 2).
@@ -147,6 +161,7 @@ var verbEffect = map[string]tool.Effect{
 	"local":          "local write: runs this checkout's unit tests, writing only a temp dir",
 	"new-rule":       tool.LocalWrite,
 	"new-verb":       tool.LocalWrite,
+	"bench run":      benchEffect,
 	"github receipt": "delivery: writes one row of a CI run to a Redis store",
 }
 
@@ -235,6 +250,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) (code int) {
 		return cmdNewRule(args[1:], stdout, stderr)
 	case "new-verb":
 		return cmdNewVerb(args[1:], stdout, stderr)
+	case "bench":
+		return cmdBench(context.Background(), args[1:], stdin, stdout, stderr, bench.Exec{})
 	case "github":
 		return cmdGitHub(args[1:], stdout, stderr, os.Getenv)
 	case "help", "-h", "--help":

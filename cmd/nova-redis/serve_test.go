@@ -77,6 +77,22 @@ func (h *serveHarness) run(args ...string) (int, string, string) {
 	return code, out.String(), errb.String()
 }
 
+// fixtureSecret is pw as a Secret for a test that asserts serve never prints
+// it, refused unless no path the output may honestly carry already holds a
+// fragment of it. secrets.Leaks counts any MinLeakFragment consecutive bytes,
+// so a fixture like "pw-from-nova-secrets" matched a runner's temp directory
+// (/home/nova/runner-nova-tools-3/...) and read as a leak serve never made.
+// A fixture password holds one of !#%@^ in every MinLeakFragment bytes, which
+// no temp directory, program path or address does.
+func fixtureSecret(t *testing.T, pw string, paths ...string) secrets.Secret {
+	t.Helper()
+	s := secrets.NewSecret(pw)
+	for _, p := range paths {
+		require.False(t, secrets.Leaks(p, s), "the fixture password %q shares a fragment with %q; pick one no path can carry", pw, p)
+	}
+	return s
+}
+
 // config reads a redis.conf the way redis-server does for the directives this
 // slice cares about: one directive per line, arguments split on blanks, a
 // double-quoted argument unescaped (\\, \" and \xHH).
@@ -411,4 +427,72 @@ func TestServeFailuresHaveRemedies(t *testing.T) {
 			!strings.Contains(out, "fixture-secret-only"),
 			"failed launch must report only START, without a success STOP or password: %q", out)
 	})
+}
+
+// TestServePrintsNoSecretOnAnyPath drives serve down every path that prints (the
+// dry-run plan, START and STOP with and without ACL users, each refusal, a
+// missing redis-server and a failed launch) and holds every line it prints on
+// stdout and stderr free of the password it was given. The START receipt names
+// the addresses, the store directory, the ACL file and how many users it
+// holds, and nothing more.
+func TestServePrintsNoSecretOnAnyPath(t *testing.T) {
+	t.Parallel()
+
+	const pw = `Q!7x#K%v2@L^m9!R "q" \b`
+	h := newServeHarness(t, pw)
+	acl := filepath.Join(h.dir, "users.acl")
+	secret := fixtureSecret(t, pw, h.dir, acl, fakeRedisServer, "127.0.0.1", "100.100.1.2")
+	var lines []string
+	printed := func(what string, code, want int, out, errb string) {
+		t.Helper()
+		assert.Equal(t, want, code, "%s: stdout %q stderr %q", what, out, errb)
+		got := strings.Split(strings.TrimSuffix(out+errb, "\n"), "\n")
+		require.NotEmpty(t, strings.Join(got, ""), "%s printed nothing; the path is not exercised", what)
+		lines = append(lines, got...)
+	}
+	serve := func(args ...string) (int, string, string) {
+		return h.run(append([]string{"serve", "--bind", "127.0.0.1,100.100.1.2", "--port", "6380", "--dir", h.dir}, args...)...)
+	}
+
+	code, out, errb := serve("--dry-run")
+	printed("dry run, no ACL file", code, 0, out, errb)
+	h.onLaunch = func(launchSpec) error {
+		h.onLaunch = nil
+		text := "user default on sanitize-payload #" + strings.Repeat("0", 64) + " ~* &* +@all\n" +
+			"user coordinator on sanitize-payload #" + strings.Repeat("a", 64) + " ~sprint:* resetchannels -@all +fcall\n" +
+			"user bench on sanitize-payload #" + strings.Repeat("b", 64) + " ~table:* resetchannels -@all +fcall\n"
+		return os.WriteFile(acl, []byte(text), 0o644)
+	}
+	code, out, errb = serve()
+	printed("first run, the store saves two users", code, 0, out, errb)
+	code, out, errb = serve("--dry-run", "--users", "coordinator,bench")
+	printed("dry run with users", code, 0, out, errb)
+	code, out, errb = serve("--users", "coordinator,bench")
+	printed("restart with users", code, 0, out, errb)
+	assert.Equal(t, "SERVE START bind=127.0.0.1,100.100.1.2 port=6380 auth=on persistence=aof eviction=none dir="+h.dir+" aclfile="+acl+" users=2 program="+fakeRedisServer+"\n"+
+		"SERVE STOP bind=127.0.0.1,100.100.1.2 port=6380\n", out, "the receipt names the store, the ACL file and its user count, and nothing more")
+	code, out, errb = serve("--users", "coordinator,bench,ns-friend")
+	printed("restart missing a user", code, 2, out, errb)
+	code, out, errb = serve("--dry-run", "--users", "coordinator,bench,ns-friend")
+	printed("dry run missing a user", code, 2, out, errb)
+	code, out, errb = h.run("serve", "--bind", "0.0.0.0", "--port", "6380", "--dir", h.dir)
+	printed("a public bind", code, 2, out, errb)
+
+	lookPath := h.d.lookPath
+	h.d.lookPath = func(string) (string, error) { return "", errors.New("not found") }
+	code, out, errb = serve("--users", "coordinator,bench")
+	printed("no redis-server", code, 1, out, errb)
+	h.d.lookPath = lookPath
+	h.onLaunch = func(launchSpec) error { return errors.New("exit status 1") }
+	code, out, errb = serve("--users", "coordinator,bench")
+	printed("a failed launch", code, 1, out, errb)
+
+	require.NoError(t, os.Remove(acl))
+	require.NoError(t, os.Mkdir(acl, 0o700))
+	code, out, errb = serve()
+	printed("an ACL file that is a directory", code, 2, out, errb)
+
+	for _, l := range lines {
+		assert.False(t, secrets.Leaks(l, secret), "serve printed the secret: %q", l)
+	}
 }

@@ -435,7 +435,8 @@ name of the git bus it replaced.
 
 ### First run
 
-A Redis whose nova-config rows name ada and bob, its address in `--redis` or
+A Redis whose nova-config rows name ada and bob, each with a proven inbox push
+(their friend daemons' proofs on `bus2:push`), its address in `--redis` or
 `NOVA_BUS_REDIS` (the transcript is in [TESTS.md](TESTS.md#nova-bus)):
 
 ```sh
@@ -478,9 +479,14 @@ line, the body; `RECV NONE` at exit 1 when nothing waits; the reader keeps the
 message for fifteen minutes. With `--exec '<command>'` the command reads that same text on its
 stdin and the message is acked when it exits 0 (`acked=true exec_exit=0`); a
 non-zero exit leaves it pending (`RECV FAILED ... exec_exit=<n>`, exit 1). `ack`
-answers `acked=false` for an id that is not pending, at exit 0. What a first run
+answers `acked=false` for an id that is not pending, at exit 0. `names` prints
+each name's push (`push=proven|stale|down|none age= harness=`). What a first run
 gets wrong: a name that is not a nova-config friend or machine row (`send` and
-`recv` refuse it with the `nova-config friend add` line that adds one);
+`recv` refuse it with the `nova-config friend add` line that adds one); a deaf
+name, the sender, a recipient or the reader, with no inbox push its friend daemon
+proved in the last ten minutes (`deaf: <name> has no proven push since <age>` and
+the remedy: run the friend daemon, `nova-friend install`, and answer its SESSION
+CHECK; [SPEC-BUS.md](SPEC-BUS.md), bus-requires-inbox-push-proof);
 `--forever` without `--exec` (a loop that acks nothing would hand out the same
 message for ever); no store named (`--redis`, else `NOVA_BUS_REDIS`, else the fleet row's `bus` field read
 from the sprint store at `NOVA_SPRINT_REDIS`: `nova-config fleet set --bus <host:port>`, then `apply`); a store
@@ -514,12 +520,12 @@ file, so the next turn of the session is the message that arrived.
 | Command | What it does |
 | --- | --- |
 | `wait [--as <me>] [--after <id>] [--timeout <d>] [--skip-subject <p,...>] [--wake-file <path>]` | Watches your stream without taking anything, past a cursor; up to 5 `WAIT MESSAGE id= from= subject= bytes=` lines, then `WAIT OK after=<last id seen>`, or `WAIT WAKE` on a line appended to the wake file, or `WAIT NONE after= waited=` at exit 1 when `--timeout` runs out |
-| `send --as <me> --to <a,b> [--cc <c>] --subject <s> (--body <text> \| --stdin) [--re <id>]` | One entry on every recipient's stream and the log, in one transaction |
+| `send --as <me> --to <a,b> [--cc <c>] --subject <s> (--body <text> \| --stdin) [--re <id>]` | One entry on every recipient's stream and the log, in one transaction; refused while the sender or a recipient is deaf (no proven inbox push) |
 | `peek [--as <me>]` | What waits: pending and new, moving nothing |
-| `recv [--as <me>] [--max <n> \| --all] [--ack] [--exec <cmd>] [--forever --exec <cmd>]` | The oldest message a reader lost, else the oldest new one; `--max`/`--all` take several in order, each its own line; `--ack` acks each after printing; with `--exec`, delivered and acked on exit 0 |
+| `recv [--as <me>] [--max <n> \| --all] [--ack] [--exec <cmd>] [--forever --exec <cmd>]` | The oldest message a reader lost, else the oldest new one; `--max`/`--all` take several in order, each its own line; `--ack` acks each after printing; with `--exec`, delivered and acked on exit 0; refused while the reader is deaf |
 | `ack [--as <me>] --id <id,...>` | Acks by message id; idempotent |
 | `log [--bodies] [--max <n>]` | The log, oldest first |
-| `names` | The known names: nova-config's friend and machine rows |
+| `names` | The known names (nova-config's friend and machine rows), each with its inbox push: proven, stale, down or none, and its age |
 | `version`, `help [<verb>]` | The version line; the banner, or a verb's help |
 
 Every store verb takes `--redis <host:port>` (else `NOVA_BUS_REDIS`) and logs
@@ -569,8 +575,10 @@ keep `--dir`, the friend's working directory). `wait-pong` prints `WAIT-PONG
 OK nonce= from= at= took= queue= working= width= daemon=` (whether the daemon
 pong came too), or `WAIT-PONG NONE` at exit 1. `status` prints `STATUS OK
 daemon=<up|down> ... connection= seat= challenge=<quiet|challenged|deaf>
-last_pong= queue= working= width= session=<ok|broken>` (broken: `session_id=
-broken_at= reason=`), or `STATUS NONE` at exit 1 where no
+last_pong= queue= working= width= session=<ok|broken> held= inbox= missing=` (broken:
+`session_id= broken_at= reason=`; held, inbox and missing are the daemon's last reconcile of
+her inbox with her row, `-` until the sprint server has answered: SPEC-FRIEND.md, "The
+daemon writes every card she holds"), or `STATUS NONE` at exit 1 where no
 daemon ever ran. What a first run gets wrong: a `--harness` that is not one
 of opencode, codex, claude, antigravity, dsh, gemini, grok, copilot, cursor,
 amp, goose, kiro, cline, aider, roo, windsurf, zed, warp (the surveyed harnesses
@@ -716,6 +724,8 @@ once the row's unit runs. What it gets wrong first: no `--redis` and no
 | `uninstall --as <me> [--dry-run]` | Boots the agent out and removes its plist |
 | `ping --as <coordinator> --to <friend> [--nonce <n>] [--since <RFC3339>]` | One `PING <nonce>` on the friend's stream, with the seat line |
 | `pong --as <me> --nonce <n> [--to <coordinator>] [--queue <n>] [--working <n>] [--width <n>] [--state-dir <d>]` | The session's answer: one note to the coordinator, and the pong file |
+| `ping --as <coordinator> --wake --to-friends [--every <d>] [--within <d>] [--never-wake <f,...>] [--server <addr>]` | The wake loop: a wake `PING` to every friend the friends table holds up (never held, down, or never-wake), each session's pong waited for, one blocker note to the coordinator per change of who is deaf |
+| `ping-install --as <coordinator> --every <d> [...]` / `ping-uninstall --as <coordinator>` | Installs the wake loop as the launchd agent `com.nova.friend-wake-ping-<as>`; removes it |
 | `wait-pong --from <friend> --nonce <n> [--timeout <d>]` | Waits for the pong on the log, from the friend's own stream |
 | `status --as <me> --dir <d> [--state-dir <d>]` | The daemon's state, the last pong, the queue file's counts |
 | `serve --as <coordinator> [--redis <addr>] [--dry-run]` | The coordinator's ping loop: a `PING` to every friend row each second, one line per friend up or down (ten seconds without a pong); until a signal |
@@ -1075,6 +1085,7 @@ nova-sprint friend sync uninstall [--dir <dir>] [--dry-run]
 nova-sprint friend beat <friend> [--working <n>] [--queue <n>] [--width <n>] [--running <id>,...] [--load <percent>]
 nova-sprint friend down <friend> [--reason <text>] [--until <RFC3339>]
 nova-sprint friend up <friend> [--width <n>]
+nova-sprint friend cards <friend> [--json]
 nova-sprint friend take <friend> (<id>... | --all-unstarted) [--reason <text>]
 nova-sprint friend level
 nova-sprint friend health <friend> (--state up|asleep|down --seen <RFC3339> --generation <n> [--queue <n>] [--working <n>] [--width <n>] [--reason <text>] [--until <RFC3339>] | --clear)
@@ -1084,6 +1095,8 @@ nova-sprint reader away <reader>...
 nova-sprint reader up <reader>...
 nova-sprint reader remove <reader>...
 nova-sprint stream remove <stream>...
+nova-sprint stream archive <stream>...
+nova-sprint stream unarchive <stream>...
 nova-sprint ci <id>... (--red | --green) --epoch <n> [--head <h>] [--run <id>] [--source <s>] [--note <text>]
 nova-sprint wait <note> (--for <duration> | --until <RFC3339>)
 nova-sprint ack <note>... --reason <text>
@@ -1093,14 +1106,17 @@ nova-sprint card <id>
 nova-sprint log [--card <id>] [--stream <s>] [--member <m>] [--since <10m|RFC3339>] [--at-epoch <n>]
 nova-sprint check
 nova-sprint repair
-nova-sprint where [--watch] [--every <duration>] [--all] [--json [--cards]]
+nova-sprint where [--watch] [--every <duration>] [--all] [--json [--cards] [--rows] [--archived]]
 nova-sprint view coordinator [--all] [--since <cursor>] [--json]
+nova-sprint view cards [--col <c>] [--stream <s>] [--holder <member>] [--by tier|stream|col|holder] [--json]
 nova-sprint view worker --as <member|friend> [--since <cursor>] [--json]
 nova-sprint dashboard [--listen <address:port>[,...] | none] [--pull <address:port>[,...] | none] [--logo <file>] [--every <duration>]
 nova-sprint seat
 nova-sprint seat login --store <secrets dir> --as <seat> --key <keyfile> --secret <NAME> --user <redis user> --redis <addr> [--sops <path>]
 nova-sprint seat login --check
 nova-sprint seat logout
+nova-sprint seat push [--harness <name> --target <dir> [--session <id>]] [--json]
+nova-sprint seat pong <nonce>
 nova-sprint routes
 nova-sprint rules
 nova-sprint funded <provider> --reason <text>
@@ -1110,6 +1126,12 @@ nova-sprint play [--simulation] [--seed <n>] [--every <duration>] [--broken <p>]
 nova-sprint clear --confirm sprint
 nova-sprint teardown --confirm sprint
 ```
+
+`friend sync` wakes a friend through the bus store at `NOVA_BUS_REDIS` after
+delivering her card. Its bus login reads `NOVA_BUS_REDIS_USER` and the password
+variable named by `NOVA_BUS_REDIS_PASSWORD_ENV`, separately from the sprint
+store's login. With no bus user it uses the default user; a failed bus send
+leaves the delivered card in her inbox and records that she was not woken.
 
 Every store verb takes `--redis <addr>` (else `NOVA_SPRINT_REDIS`, then
 `NOVA_REDIS_ADDR`, then the address `seat login` recorded), `--actor <name>` (else `NOVA_SPRINT_ACTOR`; no default — a
@@ -1129,6 +1151,8 @@ which refuses a group that has changed. `nova-sprint help <verb>` (or
 ### The seat's store login
 
 `nova-sprint seat login --store <secrets dir> --as <seat> --key <keyfile> --secret <NAME> --user <redis user> --redis <addr>` records the store login in `~/.config/nova-sprint/login.json` (or under `$XDG_CONFIG_HOME`), mode 0600: the address, the user and where the password is in nova-secrets, never the password, and only once the secret resolves. After it, `nova-sprint <verb>` typed bare reaches that store as that user, the password read in the verb's own process through nova-secrets' checks, with no `nova-secrets exec` wrapper; `--redis`, `NOVA_SPRINT_REDIS`/`NOVA_REDIS_ADDR` and `NOVA_SPRINT_REDIS_USER` still win. `seat login --check` prints `SEAT LOGIN file=… redis=… user=… … resolves=yes|no` (exit 1 on no), the password never shown; `seat logout` removes the record. A recorded secret that does not resolve is refused naming the file and the remedy, never dialed without a password. The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md#the-seats-store-login).
+
+The seat is held only by a session the push loop reaches ([SPEC-SPRINT.md](SPEC-SPRINT.md#the-push-proof)). `nova-sprint seat install --actor <seat> --harness <harness> --target <session dir>` records the seat's push target and installs the push loop; the loop delivers `NOVA SPRINT PUSH CHECK <nonce>` into the session through the harness's nova-friend adapter, and the session answers with `nova-sprint seat pong <nonce> --actor <seat>`. Until that pong is in, and again whenever it is older than 15 minutes (the loop asks every 10), every coordinator verb is refused with one line, `PUSH DOWN: <why>; ... run: nova-sprint seat install ...`, and `coordinator <name>` refuses a name with no live proof. `seat push` prints `PUSH OK` or `PUSH DOWN` with why and the remedy (exit 1). A harness whose adapter is still the Stub (Claude Code, until fg-claude-open-chatb-r lands) is refused at install.
 
 ### The sprint backup
 
@@ -1167,7 +1191,10 @@ curl -s --compressed 'http://<tailnet address>:<port>/api/view/worker?as=<name>'
 ```
 
 The sprint's server (`run --listen`) serves them read-only at `/api/view/coordinator` and
-`/api/view/worker?as=<name>`. The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md), section 11,
+`/api/view/worker?as=<name>`. `nova-sprint view cards --col review --by tier --json` counts the primaries by column, tier, stream or holder (also `/api/view/cards?col=review&by=tier`). `nova-sprint friend cards <friend> --json` is every card held on
+a friend's row (working, then ready) with its packet and its `BRIEF.md` as friend sync writes
+it; her nova-friend daemon reads it every loop to write her inbox, and the server serves it to
+her as a worker's verb and at `GET /api/friend/<friend>/cards`. The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md), section 11,
 "Role views".
 
 ### A worker's own view: the dashboard's pull routes
@@ -1386,7 +1413,7 @@ branch `main` at `/path/to/pool/jobs/j1/repo`; `! ` marks standard error:
 $ HOME=/path/to/pool/jobs/j1/home \
   nova-sandbox --read /opt/homebrew --write /path/to/pool/jobs/j1 \
                -- /opt/homebrew/bin/git -C /path/to/pool/jobs/j1/repo status
-! SANDBOX OK backend=sandbox-exec abi=- read=1 read-noexec=0 write=1 net=nopromise cwd=/path/to/pool/jobs/j1 cwdb64=L3BhdGgvdG8vcG9vbC9qb2JzL2ox ancestors=11 cmd=git gpu=none
+! SANDBOX OK backend=sandbox-exec abi=- read=1 read-noexec=0 write=1 net=nopromise cwd=/path/to/pool/jobs/j1 cwdb64=L3BhdGgvdG8vcG9vbC9qb2JzL2ox ancestors=11 cmd=git gpu=none deletes=/path/to/pool/jobs/j1
 On branch main
 
 No commits yet
@@ -2143,6 +2170,32 @@ exit 2 and nothing is written.
 
 See [SPEC-CI.md](SPEC-CI.md).
 
+### bench run
+
+`nova-ci bench run --host <h> [--fallback <h>] --dir <tree> [--root <dir>]
+[--cache <dir>] [--with-git] -- <go command>` runs one command on a Linux bench
+against a copy of a local tree, in place of the ssh, rsync and ssh recipe a
+brief used to carry. It makes a fresh run directory under `--root` on the bench
+(`mktemp -d`, default `nova-bench/runs` under the login's home), copies the tree
+into `<run>/repo` (a tar stream this process writes onto ssh's stdin, unpacked
+by the bench's tar; nothing but ssh runs here) with `.git` left out unless
+`--with-git`, runs the command
+there under `nice -n 19` with `GOCACHE` (`--cache`, default
+`nova-bench/cache/go-build`), `GOFLAGS=-mod=readonly` and `NOVA_TEST_NO_HOST=1`,
+streams its output to stdout and stderr as it arrives, and removes the run
+directory it made and nothing else, whether the command passed, failed or was
+interrupted. A `--host` that does not answer (ssh's own exit 255) is passed over
+for `--fallback` with one `CI BENCH PASSED host=<h> reason=<why> next=<h>` line;
+a host that answers is never passed over. The run ends with one line on stderr,
+`CI BENCH host=<h> run=<dir> exit=<n> removed=yes|no`, so stdout is exactly the
+command's. The exit status is the command's own; a run that never reached the
+command (usage, no bench answered, the copy failed) is one `BENCH-RUN REFUSED:`
+line at exit 2. The verb is on internal/tool, so its flags come before `--` and
+every word after the first `--` is the command. Neither bench is guessed: `--host` is required, and
+`--root` and `--cache` are plain paths, relative to the login's home or
+absolute, never `~`, `..`, the home or `/`. For example, `nova-ci bench run
+--host <bench> --fallback <other-bench> --dir . -- go test -count=1 ./cmd/nova-ci/`.
+
 ### github receipt
 
 `nova-ci github receipt --from-runner --redis <addr> --repo owner/name --sha <40hex>
@@ -2472,6 +2525,53 @@ wrong:
   starting point.
 - The same `--op` over another card, diff or schema refuses; over the same inputs it
   returns the recorded decision and asks nothing, so a long run resumes.
+
+
+## nova-local
+
+Run local models: what an engine has, one model served at a chosen context,
+and a worker description nova-swarm accepts. It runs no inference, fetches no
+weights and judges no model.
+See [SPEC-LOCAL.md](SPEC-LOCAL.md).
+
+### First run
+
+From a checkout root, with the ollama daemon running and `gemma4:12b` pulled
+(`ollama pull gemma4:12b`); the transcript, run against a fake engine whose
+weights are in the shared store, is in [TESTS.md](TESTS.md#nova-local):
+
+```sh
+nova-local status
+nova-local serve --engine ollama --model gemma4:12b --num-ctx 32768 --seed 7
+nova-local worker --engine ollama --model gemma4-32k --out ./gemma.json --name gemma --harness opencode --harness-args run,--model,ollama/{model},--,{prompt} --worker-dir $PWD/cmd/nova-local/testdata/home --key-file $PWD/cmd/nova-local/testdata/local.key --env-var OLLAMA_API_KEY --usage opencode --deadline 20m
+```
+
+`status` prints `STATUS OK engines= answering= loaded= models=` and the box
+(`mem_used= mem_free= mem_total=` in bytes, `wired_cap=`, `load1=`), then one
+`STATUS ENGINE name= state=up|down|timeout base=` line per engine with
+`loaded= advertised=`, `num_ctx=` of a loaded model, and `store=` (where its
+weights are read, symlinks resolved) and `shared=yes|no|unknown`: yes when the
+store is under the AI root's `shared/models` (`$NOVA_AI_ROOT`, else `~/ai`).
+`--list` adds one `STATUS MODEL engine= model= digest= weights= loaded=` line
+per model. `serve` makes `<name>-<ctx>k` (here `gemma4-32k`) with the context,
+temperature 0 and the seed baked in, sends one warm-up, and prints `serve_as=`,
+the name a harness calls, and `load=`, the warm-up it timed. `worker` writes the
+one JSON file `nova-swarm` reads as a worker description. What a first run gets
+wrong:
+
+- No daemon: `status` exits 1 with `run: ollama serve`, the one command that
+  starts it; `serve` names `ollama pull <ref>` for a model the engine lacks.
+- No `--num-ctx`: refused, because ollama's own default silently truncates a
+  long prompt; it is a multiple of 1024, since the tag's name carries it.
+- A tag that exists with another parent, context, temperature or seed: exit 1
+  naming both values and `ollama rm <tag>`.
+- `--base` naming any host but loopback or a tailnet address (100.64.0.0/10),
+  or a name that resolves elsewhere: refused, because a local tier pointed at a
+  remote endpoint is not a local tier.
+- `worker` with a relative `--worker-dir`, an empty `--key-file`, harness
+  arguments without `{model}`: every problem named at once. The local engine
+  wants no key; nova-swarm wants a non-empty file, so `printf 'local\n'` is the
+  whole of it.
 
 
 ## nova-table
@@ -2821,10 +2921,10 @@ the last good frame and one `store unreachable since <time>` line until recovery
 nova-card is pre-alpha: not ready for production use.
 
 ```
-nova-card generate --from ledger --ledger <name> --repo-dir <dir> --out <dir> [--tier flash|pro] [--prefix <p>] [--minutes <n>] [--max <n>] [--base <branch>] [--repo <owner/name>] [--dry-run]
-nova-card generate --from findings --file <tsv> --out <dir> (--repo-dir <dir> | --repo <owner/name> --base <branch> --sha <40hex>) [--tier flash|pro] [--prefix <p>] [--minutes <n>] [--max <n>] [--dry-run]
-nova-card generate --from help --tool <name> [--tool <name>...] --out <dir> [--bin-dir <dir>] (--repo-dir <dir> | --repo --base --sha) [--tier flash|pro] [--prefix <p>] [--minutes <n>] [--max <n>] [--dry-run]
-nova-card lint --card <file> [--card <file>...]
+nova-card generate --from ledger --ledger <name> --repo-dir <dir> --out <dir> [--tier flash|pro] [--prefix <p>] [--minutes <n>] [--max <n>] [--base <branch>] [--repo <owner/name>] [--name <n>...] [--dropped <id>...] [--dry-run]
+nova-card generate --from findings --file <tsv> --out <dir> (--repo-dir <dir> | --repo <owner/name> --base <branch> --sha <40hex>) [--tier flash|pro] [--prefix <p>] [--minutes <n>] [--max <n>] [--name <n>...] [--dropped <id>...] [--dry-run]
+nova-card generate --from help --tool <name> [--tool <name>...] --out <dir> [--bin-dir <dir>] (--repo-dir <dir> | --repo --base --sha) [--tier flash|pro] [--prefix <p>] [--minutes <n>] [--max <n>] [--name <n>...] [--dropped <id>...] [--dry-run]
+nova-card lint --card <file> [--card <file>...] [--name <n>...] [--dropped <id>...]
 nova-card template
 nova-card version
 nova-card help [<verb>]
@@ -2866,8 +2966,12 @@ carries the transcript; `cmd/nova-card/firstrun_test.go` runs it.
 `--from ledger --ledger <name>` reads one of internal/ci's ratchet ledgers from
 the checkout: `serial-tests`, `slowwaits`, `sleeps-skips`, `fixed-waits`
 (flash), `dead-code`, `namedpaths`, `transcripts`, `generality-fixtures` (pro).
-One card per file the rows name; the card's PATHS are the file, its package's
-test files and the ledger; its TEST is the class test that holds the ledger;
+One card per file the rows name; the card's PATHS are computed from its START
+line, never typed: every directory a START file lives in, as its Go files and its
+tests (`<dir>/*.go`, `<dir>/*_test.go`), and the docs the card names (a ledger
+card: the row's file's package, its test's package and the ledger; a findings
+card: the file's package and its test's package; a help card: `cmd/<tool>` and
+`docs/CLI.md`); its TEST is the class test that holds the ledger;
 its task is the ledger's template with the rows substituted, and it says to
 write the draft early and commit before any probe. `--from findings --file
 <tsv>` reads `file:line`, finding, remedy, test columns (a header row is
@@ -2892,7 +2996,9 @@ Every brief is held to the lint `nova-sprint add` runs (the model lines, the
 child rules under the default rule set, a tree card's steps), and past the add
 to the typed header and the template's unfilled `<...>` lines, which the add
 does not read, before anything is written (a sprint initialised with `--rules`
-holds a brief to that file at the add); one red brief prints its
+holds a brief to that file at the add), and to the card checks the add runs
+too: a tier on line 1, a TEST whose package PATHS names, no name `--name` gives
+outside double-quoted words, no card `--dropped` gives; one red brief prints its
 `LINT DRIFT card=<id> check=<check> line=<n>: <excerpt>` line and nothing is
 written, exit 1. A PATHS entry that names nothing in `--repo-dir` is the same
 refusal. An `--out` that already holds a brief is refused, exit 2. `--dry-run`
