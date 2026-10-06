@@ -222,6 +222,8 @@ func verbProse(name string) string {
 		return cardHelpWords
 	case "hold", "unhold":
 		return holdWords()
+	case "defer", "roadmap restore", "roadmap render":
+		return roadmapWords
 	case "fleet down", "reader away", "reader up":
 		return oldHoldWords(name)
 	default:
