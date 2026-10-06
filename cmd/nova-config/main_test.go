@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
+	"net/http"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -163,10 +165,34 @@ type harness struct {
 	dir string
 	// verbs, when set, is the probe loop add, set and status ask; nil asks nothing.
 	verbs config.VerbProbe
+	// transport, when set, is httpTransport handed to deps.
+	transport http.RoundTripper
+}
+
+type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripperFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
+func fakeOpenRouterResponse(body string) http.RoundTripper {
+	return roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(bytes.NewBufferString(body)),
+			Header:     make(http.Header),
+		}, nil
+	})
 }
 
 func newHarness() *harness {
-	return &harness{hostname: "elsewhere.example", store: &memStore{Mem: config.NewMem(), version: currentSchema()}, redis: newFakeRedis(), env: map[string]string{}}
+	return &harness{
+		hostname:  "elsewhere.example",
+		store:     &memStore{Mem: config.NewMem(), version: currentSchema()},
+		redis:     newFakeRedis(),
+		env:       map[string]string{},
+		transport: fakeOpenRouterResponse(`{"data":[]}`),
+	}
 }
 
 // currentSchema is the version this binary's migrations reach: a fresh Mem
@@ -213,7 +239,8 @@ func (h *harness) deps() deps {
 			}
 			return []byte(h.tailnet), nil
 		},
-		probe: h.verbs,
+		probe:         h.verbs,
+		httpTransport: h.transport,
 	}
 }
 

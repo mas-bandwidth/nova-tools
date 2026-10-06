@@ -326,6 +326,30 @@ is not empty and has no blank, and `deadline` is above 0; `long_context`
 above 0 comes with both long prices, and a long price with a threshold;
 `price_as_of` is a date; `usd`, when set, is above 0; a route that is disabled has a note. A route names no row of another kind.
 
+### Refreshing prices
+
+`nova-config route prices --refresh [--provider <p>] [--dry-run]` reads the
+provider's published pricing API (OpenRouter, `GET https://openrouter.ai/api/v1/models`, no key)
+and updates each enabled route row for that provider: `price_input`,
+`price_output`, and `price_cache_read` are converted from per-token USD to USD per
+million tokens (`Canonical`), `price_as_of` is set to today (UTC), and
+`price_source` is set to the endpoint URL. OpenCode routes have no published
+price list and are matched against OpenRouter's corresponding model, setting or
+keeping the note `assumed from OpenRouter`.
+
+If a price change on any field is strictly more than 2x (`new > 2 * old` or
+`old > 2 * new`), the command refuses the update with a judgment-shaped line:
+`JUDGMENT route-prices route=<name> price changed over 2x: <field> changed from <old> to <new>`
+and exits with code 1 without writing changes.
+
+The refresh runs daily as a supervised loop row on the coordinator machine:
+
+```sh
+nova-config loop add route-prices-refresh --machine <coordinator> --argv '["nova-config","route","prices","--refresh","--as","<coordinator>"]' --every 86400 --as <coordinator>
+```
+
+and before `nova-sprint funded <provider>`.
+
 ### The note
 
 The owner, 2026-10-02, on the route and width choices the first real sprint made

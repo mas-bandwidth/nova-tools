@@ -58,6 +58,7 @@ var kindExamples = []struct{ kind, verb, line string }{
 	{"route", "list", "nova-config route list --file try.json"},
 	{"route", "show", "nova-config route show flash-a --file try.json"},
 	{"route", "history", "nova-config route history flash-a --file try.json"},
+	{"route", "prices", "nova-config route prices --refresh --as a1 --file try.json"},
 	{"tier", "set", "nova-config tier set flash --routes flash-a --as a1 --file try.json"},
 	{"tier", "list", "nova-config tier list --file try.json"},
 	{"tier", "show", "nova-config tier show flash --file try.json"},
@@ -101,6 +102,8 @@ func verbExtra(verb string) string {
 		more = inventoryMore
 	case verb == "machine self":
 		effect = "inspection: prints this machine's name and opens no store; --check reads the machine rows"
+	case verb == "route prices":
+		effect = "store write: reads the provider's published prices and sets each enabled route's price fields; --dry-run writes nothing"
 	case len(words) == 1:
 		if k, ok := config.Lookup(verb); ok {
 			// a kind alone is the group of its verbs: its help, and nothing run

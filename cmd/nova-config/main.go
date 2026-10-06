@@ -29,6 +29,7 @@ import (
 	stdflag "flag"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"sort"
 	"strings"
@@ -251,6 +252,9 @@ type deps struct {
 	// loop add and set refuse, and status names, a loop whose verb is gone. Nil
 	// asks nothing.
 	probe config.VerbProbe
+	// httpTransport is the transport for external HTTP calls (route prices refresh),
+	// nil in production (DefaultTransport).
+	httpTransport http.RoundTripper
 }
 
 type redisApplier struct {
@@ -276,10 +280,11 @@ func realDeps() deps {
 			}
 			return redisApplier{RedisApplier: &config.RedisApplier{Client: st.Client()}, st: st}, nil
 		},
-		now:       time.Now,
-		hostname:  os.Hostname,
-		tailscale: config.TailscaleStatus,
-		probe:     config.HelpProbe,
+		now:           time.Now,
+		hostname:      os.Hostname,
+		tailscale:     config.TailscaleStatus,
+		probe:         config.HelpProbe,
+		httpTransport: http.DefaultTransport,
 	}
 }
 

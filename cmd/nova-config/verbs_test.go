@@ -77,7 +77,7 @@ func TestEveryKindsExamplesRunInOrder(t *testing.T) {
 func TestEveryVerbsHelpStatesItsEffect(t *testing.T) {
 	t.Parallel()
 	h := newHarness()
-	verbs := [][]string{{"version"}, {"kinds"}, {"migrate"}, {"status"}, {"apply"}, {"inventory"}, {"machine", "width"}, {"machine", "self"}}
+	verbs := [][]string{{"version"}, {"kinds"}, {"migrate"}, {"status"}, {"apply"}, {"inventory"}, {"machine", "width"}, {"machine", "self"}, {"route", "prices"}}
 	for _, k := range config.Kinds {
 		for _, v := range []string{"add", "set", "remove", "list", "show", "history"} {
 			if k.Singleton && (v == "add" || v == "remove" || v == "list") {
