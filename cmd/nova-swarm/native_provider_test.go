@@ -1,12 +1,10 @@
 package main
 
 import (
-	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -18,35 +16,6 @@ import (
 // ProviderFailure): a run that ended with no result, and whose harness's own record says
 // the provider failed it, is reported on a PROVIDER-FAIL line the member reads, with a
 // reason; every other end stays as it was.
-
-// providerRun is one card run through `native` with the fake harness: before, when set,
-// is called with the slot's data home before the run begins (what an earlier run left).
-func providerRun(t *testing.T, label, card string, before func(data string)) (stdout, stderr string) {
-	t.Helper()
-	windowsIsNotABench(t)
-	bin := nativeHarness(t)
-	root, slot := aSlot(t)
-	if before != nil {
-		before(filepath.Join(slot, "data"))
-	}
-	cardPath := filepath.Join(root, label+".md")
-	require.NoError(t, os.WriteFile(cardPath, []byte(card), 0o644))
-	var out, errb bytes.Buffer
-	run([]string{"native", "--slots-store", nativeStore(t), "--owner", "fake-1",
-		"--harness", bin, "--model", "fake/fake-model", "--label", label,
-		"--card", cardPath, "--slot", slot, "--root", root,
-		"--tokens", "unmetered", "--deadline", "30s", "--no-wall"},
-		strings.NewReader(""), &out, &errb, time.Now())
-	return out.String(), errb.String()
-}
-
-// olderRunsError is what a slot's log holds from a run before this one: it names an
-// error the run under test never had, and is never the reason.
-func olderRunsError(data string) {
-	path := filepath.Join(data, "opencode", "log", "opencode.log")
-	_ = os.MkdirAll(filepath.Dir(path), 0o755)
-	_ = os.WriteFile(path, []byte("timestamp=2030-01-01T00:00:00.000Z level=ERROR run=00000000 message=\"stream error\" error.error=\"an older run's rate limit\"\n"), 0o644)
-}
 
 // The log is read from the tail, at most providerLogTailBytes of what the run appended: an
 // error older than the cap is not seen, one inside it is, and what an earlier run left

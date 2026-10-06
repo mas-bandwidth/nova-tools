@@ -1,13 +1,10 @@
 package main
 
 import (
-	"bytes"
-	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 // the harness's own output when its catalog refused the model (opencode v1.18.20, verbatim
@@ -60,20 +57,4 @@ func TestTheStartScheduleIsTheOwners(t *testing.T) {
 	}
 	assert.Equal(t, []int{1, 1, 1, 2, 2, 4, 4, 8, 8}, secs)
 	assert.Equal(t, 31*time.Second, total)
-}
-
-// startRun runs one card through nativeRun with the start waits recorded, not slept.
-func startRun(t *testing.T, label, card string) (nativeRunResult, string, []time.Duration, string) {
-	t.Helper()
-	bin := nativeHarness(t)
-	root, slot := aSlot(t)
-	var errOut bytes.Buffer
-	var waits []time.Duration
-	res, code := nativeRun(nativeRunConfig{
-		binary: bin, model: "fake/fake-model", label: label, card: []byte(card),
-		slotDir: slot, root: root, deadline: 30 * time.Second, noWall: true,
-		startSleep: func(d time.Duration) { waits = append(waits, d) },
-	}, &errOut)
-	require.Equal(t, 0, code, "%s", errOut.String())
-	return res, errOut.String(), waits, filepath.Join(slot, "jobs", label)
 }

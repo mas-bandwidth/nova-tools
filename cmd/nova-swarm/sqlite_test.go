@@ -6,22 +6,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 	"github.com/stretchr/testify/require"
 )
 
 // The native budget helpers a functional file and a slow file both call, kept
 // here without a build tag so `-tags slow`, `-tags functional` and their join
 // all see the one definition each (SPEC-SWARM rule 13d, issue #1545).
-
-// needsSQLite skips a case on a bench with no reader, naming it. On such a bench a numeric
-// budget is a NATIVE REFUSED (rule 13d, slice 2), which is the rule working.
-func needsSQLite(t *testing.T) {
-	t.Helper()
-	if !swarm.SQLiteOnPath() {
-		t.Skipf("%s is not on PATH, and a numeric budget is refused without it (rule 13d)", swarm.SQLiteBinary)
-	}
-}
 
 // usageRows reads a card's usage.tsv into a header and its rows, split on tabs.
 //
