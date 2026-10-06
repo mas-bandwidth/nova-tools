@@ -3887,6 +3887,34 @@ alarm:" and says the count now. Over the warn bound only, no judgment is written
 fleet table's load cell says it instead, the load followed by `fds <count> warn` (or
 `alarm` above the alarm bound), while the beat and its reading are fresh.
 
+### fleet-test-process-alarm-b.w4
+
+Runaway test processes are a fleet beat, not a hand count. `fleet beat <member>`
+counts the live processes whose name ends in `.test` (Linux reads `/proc`;
+elsewhere `ps`) and stores the count and the oldest parent pid on the beat;
+`fleet beat <member> --tests <n>` gives the count instead of counting, which is
+how a test says it. `friend beat` carries the same fields (`--tests` the same
+way). A beat sent through the server is still `fleet beat <member> --load
+<percent>` and nothing more: the server cannot count the worker's machine, and
+the server's allowed friend-beat flags are its own list, so a count reaches the
+store from a beat run on the machine. Under `NOVA_TEST_NO_HOST` the beat does
+not list processes and carries no reading unless `--tests` gives one.
+
+The tick, in its deadlines part with the other alarms, raises one judgment per
+episode when a fresh beat's count is over the threshold. The threshold is the
+sprint's `tests_alarm` (`nova-sprint set --tests-alarm <n>`, a whole number from
+1, or `default`), and when that is unset it is 4 times the member's width. The
+judgment is `runaway test processes`, filed under `member:<m>`, and its line is
+`runaway test processes on <m>: <n>, oldest parent pid <pid>, over <threshold>`
+(the pid only when the beat named one). A second beat while the count stays
+over updates that line and writes no second judgment. The episode stays open
+while the count is at least half the threshold, and ends when a fresh reading
+falls under half, or the beat goes stale, or the beat carries no reading: one
+happened note to the coordinator, `an alarm cleared`, whose text opens with
+`runaway test processes:`. Its decisions are `fleet up <m> --width <half>`,
+`fleet down <m>`, `ack` and `wait 15m`. The found case was the Studio on
+2026-10-04, 289 `nova-sprint.test` processes, killed by hand.
+
 ### The coordinator's pass
 
 The owner, 2026-10-05: "everything I described above needs to be mechanical, so you

@@ -1188,7 +1188,10 @@ func TickDeadlines(s *Snapshot, r TickReq) (Plan, int) {
 	// the drift alarms, on a plan of their own the same way (drift.go)
 	d, driftDue := TickDrift(s, r, r.Drift)
 	p.Notes, p.Closes, p.Updates = append(p.Notes, d.Notes...), append(p.Closes, d.Closes...), append(p.Updates, d.Updates...)
-	return p, due + alarmsDue + driftDue
+	// runaway test processes, on a plan of their own the same way (fleet-test-process-alarm-b.w4)
+	rt, testsDue := tickRunawayTests(s, r)
+	p.Notes, p.Closes, p.Updates = append(p.Notes, rt.Notes...), append(p.Closes, rt.Closes...), append(p.Updates, rt.Updates...)
+	return p, due + alarmsDue + driftDue + testsDue
 }
 
 // TickOverdue marks each open judgment overdue once, when it passes its due
@@ -1314,7 +1317,7 @@ func condKey(typ, subject, card, what string) string {
 	switch typ {
 	case NNoMember, NCannotAsk, NNoRoute, NFewReaders, NProviderFunds, NProviderLow, NProviderKey, NAllOutOfCredit, NStarving, NOverloaded, NReadersBehind, NDevBehind, NRaiseReadTier,
 		NAlarmReview, NAlarmMerging, NAlarmReady, NAlarmFleet, NFilesAlarm, NFriendDeaf, NFriendIdle, NCoordinatorBehind,
-		NDriftAhead, NDriftCardBase, NDriftServer, NDriftBaseRed:
+		NDriftAhead, NDriftCardBase, NDriftServer, NDriftBaseRed, NRunawayTests:
 		what = ""
 	case NWorkLate, NReadLate:
 		// a lateness is one per attempt's card and kind (not taken, not
@@ -1445,7 +1448,7 @@ func notify(p *Plan, s *Snapshot, conds []cond, types []string, r TickReq) int {
 			if !open[k] {
 				fresh = append(fresh, sub)
 			}
-			if n, ok := judged[k]; ok && (c.typ == NWorkLate || c.typ == NReadLate || c.typ == NFewReaders || c.typ == NStarving || c.typ == NOverloaded || c.typ == NFilesAlarm || c.typ == NReadersBehind || c.typ == NDevBehind) {
+			if n, ok := judged[k]; ok && (c.typ == NWorkLate || c.typ == NReadLate || c.typ == NFewReaders || c.typ == NStarving || c.typ == NOverloaded || c.typ == NFilesAlarm || c.typ == NReadersBehind || c.typ == NDevBehind || c.typ == NRunawayTests) {
 				update(n, c.what, c.decisions) // the latest facts, in place
 			}
 		}
@@ -1639,4 +1642,131 @@ func TickDone(s *Snapshot, r TickReq) (Plan, int) {
 	n.Who, n.To, n.Hint = r.who(), s.Coordinator, DoneHint
 	n.What = DoneWhat(landed, dropped, s.Now, r.Started)
 	return Plan{Notes: []Note{n}}, 0
+}
+
+// NRunawayTests is the judgment of a member whose live processes named *.test
+// are over its threshold (Snapshot.TestsAlarm). One episode per member: written
+// when the count goes over, kept while it stays at or above half the threshold,
+// closed when it falls under half. docs/SPEC-SPRINT.md, fleet-test-process-alarm-b.w4.
+const NRunawayTests = "runaway test processes"
+
+// testReading is the beat's test-process count while the beat is fresh and it
+// carried a reading. A stale beat is no reading.
+func testReading(b Beat, now time.Time) (n, parent int, ok bool) {
+	if !b.Fresh(now) {
+		return 0, 0, false
+	}
+	return b.TestCount()
+}
+
+// runawayNames is every fleet member, every friend whose beat the tick was
+// given, and every member an open runaway judgment still names, in one stable
+// order. A map's range is collected and sorted so the plan does not depend on
+// iteration order.
+func runawayNames(s *Snapshot, r TickReq) []string {
+	names := append([]string{}, s.Members()...)
+	for name, b := range r.Beats {
+		if b.Friend != nil {
+			names = append(names, name)
+		}
+	}
+	for _, o := range s.Open {
+		if o.Note.Type == NRunawayTests && strings.HasPrefix(o.Note.Stream, MemberSubject("")) {
+			names = append(names, strings.TrimPrefix(o.Note.Stream, MemberSubject("")))
+		}
+	}
+	slices.Sort(names)
+	return slices.Compact(names)
+}
+
+// runawayHeld says a runaway-test episode is open for member, or held by an
+// acknowledgement or a wait.
+func runawayHeld(s *Snapshot, member string) bool {
+	sub := StreamSubject(MemberSubject(member))
+	for _, list := range [][]Open{s.Open, s.Acked} {
+		for _, o := range list {
+			if o.Note.Type == NRunawayTests && o.Subject() == sub {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// runawayWhat is the judgment's line: the member, the count, the oldest parent
+// pid when the beat named one, and the threshold the count is over.
+func runawayWhat(m string, n, parent, threshold int) string {
+	what := fmt.Sprintf("runaway test processes on %s: %d", m, n)
+	if parent > 0 {
+		what += fmt.Sprintf(", oldest parent pid %d", parent)
+	}
+	return what + fmt.Sprintf(", over %d", threshold)
+}
+
+// runawayDecisions are the judgment's: halve the member's width, hold it down,
+// acknowledge the episode, or wait 15m.
+func runawayDecisions(s *Snapshot, m string) []string {
+	half := 1
+	if s.MemberCtl(m) != nil {
+		if w := s.Width(m); w > 1 {
+			half = w / 2
+		}
+	}
+	return []string{
+		fmt.Sprintf("fleet up %s --width %d", m, half),
+		"fleet down " + m,
+		"ack",
+		"wait 15m",
+	}
+}
+
+// runawayConds is the tick's runaway-test condition. Over the threshold it
+// holds. Between half and the threshold it holds only while the episode is
+// already open, so a count that dips and stays over half does not end it and
+// a count that never crossed does not start one. Under half it does not hold.
+func runawayConds(s *Snapshot, r TickReq) []cond {
+	var out []cond
+	for _, m := range runawayNames(s, r) {
+		n, parent, ok := testReading(r.Beats[m], s.Now)
+		if !ok {
+			continue
+		}
+		threshold := s.TestsAlarm(m)
+		over := n > threshold
+		under := n*2 < threshold
+		if !over && (under || !runawayHeld(s, m)) {
+			continue
+		}
+		out = append(out, cond{
+			typ: NRunawayTests, stream: MemberSubject(m), streamLevel: true,
+			what: runawayWhat(m, n, parent, threshold), decisions: runawayDecisions(s, m),
+		})
+	}
+	return out
+}
+
+// tickRunawayTests is the tick's runaway-test alarm, planned with the deadlines
+// the way the open-files alarm is: one judgment per episode, its line updated
+// in place while the count stays up, and one cleared note when the episode ends.
+func tickRunawayTests(s *Snapshot, r TickReq) (Plan, int) {
+	var p Plan
+	conds := runawayConds(s, r)
+	stands := map[string]bool{}
+	for _, c := range conds {
+		stands[c.stream] = true
+	}
+	due := notify(&p, s, conds, []string{NRunawayTests}, r)
+	for _, o := range p.Closes {
+		if stands[o.Note.Stream] {
+			continue
+		}
+		m := strings.TrimPrefix(o.Note.Stream, MemberSubject(""))
+		now := m + " gives no fresh count of its test processes"
+		if n, _, ok := testReading(r.Beats[m], s.Now); ok {
+			now = fmt.Sprintf("%s has %d test processes, under half its threshold of %d", m, n, s.TestsAlarm(m))
+		}
+		p.Notes = append(p.Notes, Note{Kind: Happened, Type: NAlarmCleared, Who: r.who(), To: s.Coordinator, At: s.Now,
+			What: NRunawayTests + ": " + now})
+	}
+	return p, due
 }

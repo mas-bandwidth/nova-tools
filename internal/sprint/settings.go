@@ -28,6 +28,12 @@ const (
 	// PropFriendStallStep is the work table's property: the duration of each rung of
 	// the friend stall ladder.
 	PropFriendStallStep = "friend_stall_step"
+	// PropTestsAlarm is the work table's property: how many live processes whose
+	// name ends in ".test" one member may beat before the tick raises one judgment
+	// (fleet-test-process-alarm-b.w4). Empty or default is TestsAlarmFactor times
+	// the member's width. The nova-config sprint row is not read here: that field
+	// is the config package's, outside this card.
+	PropTestsAlarm = "tests_alarm"
 	// PropReadTier is the work table's property: the sprint's read tier.
 	PropReadTier = "read_tier"
 	// FieldReadTier is a stream's control card's field: the stream's read tier,
@@ -99,6 +105,10 @@ func (s *Snapshot) FriendStallAfter() time.Duration {
 // FriendStallStepDefault is the duration between rungs of the friend stall ladder.
 const FriendStallStepDefault = 5 * time.Minute
 
+// TestsAlarmFactor is the runaway-test threshold as a multiple of the member's
+// width when the sprint set no tests_alarm: four times the width.
+const TestsAlarmFactor = 4
+
 // FriendStallStep is that step: the sprint's setting, else FriendStallStepDefault.
 func (s *Snapshot) FriendStallStep() time.Duration {
 	if s.Work != nil {
@@ -109,6 +119,24 @@ func (s *Snapshot) FriendStallStep() time.Duration {
 		}
 	}
 	return FriendStallStepDefault
+}
+
+// TestsAlarm is the runaway-test threshold for member: the sprint's tests_alarm
+// when it is a whole number from 1, else TestsAlarmFactor times the member's
+// width (a drain, width 0, is 0; a name with no fleet row takes the default width).
+func (s *Snapshot) TestsAlarm(member string) int {
+	if s.Work != nil {
+		if v, ok := s.Work.Prop(PropTestsAlarm); ok && v != "" && v != ReadTierDefault {
+			if n, err := strconv.Atoi(v); err == nil && n >= 1 {
+				return n
+			}
+		}
+	}
+	w := DefaultWidth
+	if ctl := s.MemberCtl(member); ctl != nil {
+		w = s.Width(member)
+	}
+	return TestsAlarmFactor * w
 }
 
 // readTierSetting is the read tier set for the stream's reads: the stream's own,
@@ -173,7 +201,10 @@ type SetReq struct {
 	// whole numbers from 1, or default.
 	DriftCommits string `json:",omitempty"`
 	DriftHours   string `json:",omitempty"`
-	Who          string
+	// TestsAlarm is the runaway-test threshold, a whole number from 1, or default
+	// (TestsAlarmFactor times each member's width).
+	TestsAlarm string `json:",omitempty"`
+	Who        string
 }
 
 // Set writes the settings: refused whole, writing nothing, for an actor who is not
@@ -258,8 +289,13 @@ func Set(s *Snapshot, r SetReq) Plan {
 			why = append(why, "--friend-stall-step wants a duration above zero (5m, 10m), or "+ReadTierDefault+" for "+FriendStallStepDefault.String()+"; found "+r.FriendStallStep)
 		}
 	}
-	if r.ReadTier == "" && r.DealtMax == "" && r.LandProtected == "" && r.Release == "" && r.Prose == "" && len(alarms) == 0 && r.GoLanes == "" && r.Attempts == "" && r.FriendIdle == "" && r.FriendStallAfter == "" && r.FriendStallStep == "" && r.DriftCommits == "" && r.DriftHours == "" {
-		why = append(why, "nothing to set: --read-tier, --prose, --dealt-max, --go-lanes, --attempts, --friend-idle, --friend-stall-after, --friend-stall-step, --drift-commits, --drift-hours or an --alarm-... threshold")
+	if r.TestsAlarm != "" && r.TestsAlarm != ReadTierDefault {
+		if n, err := strconv.Atoi(r.TestsAlarm); err != nil || n < 1 {
+			why = append(why, "--tests-alarm wants a whole number from 1, or "+ReadTierDefault+" for "+strconv.Itoa(TestsAlarmFactor)+" times the member's width; found "+r.TestsAlarm)
+		}
+	}
+	if r.ReadTier == "" && r.DealtMax == "" && r.LandProtected == "" && r.Release == "" && r.Prose == "" && len(alarms) == 0 && r.GoLanes == "" && r.Attempts == "" && r.FriendIdle == "" && r.FriendStallAfter == "" && r.FriendStallStep == "" && r.DriftCommits == "" && r.DriftHours == "" && r.TestsAlarm == "" {
+		why = append(why, "nothing to set: --read-tier, --prose, --dealt-max, --go-lanes, --attempts, --friend-idle, --friend-stall-after, --friend-stall-step, --drift-commits, --drift-hours, --tests-alarm or an --alarm-... threshold")
 	}
 	if len(r.Streams) > 0 && r.GoLanes != "" {
 		why = append(why, "--go-lanes is the sprint's, not a stream's: nova-sprint set --go-lanes "+r.GoLanes)
@@ -278,6 +314,9 @@ func Set(s *Snapshot, r SetReq) Plan {
 	}
 	if len(r.Streams) > 0 && r.FriendStallStep != "" {
 		why = append(why, "--friend-stall-step is the sprint's, not a stream's: nova-sprint set --friend-stall-step "+r.FriendStallStep)
+	}
+	if len(r.Streams) > 0 && r.TestsAlarm != "" {
+		why = append(why, "--tests-alarm is the sprint's, not a stream's: nova-sprint set --tests-alarm "+r.TestsAlarm)
 	}
 	for _, st := range r.Streams {
 		if s.StreamCtl(st) == nil {
@@ -357,6 +396,7 @@ func Set(s *Snapshot, r SetReq) Plan {
 		{PropFriendStallStep, r.FriendStallStep},
 		{PropDriftCommits, r.DriftCommits},
 		{PropDriftHours, r.DriftHours},
+		{PropTestsAlarm, r.TestsAlarm},
 	}
 	for _, a := range alarmProps {
 		kvs = append(kvs, [2]string{a.prop, alarms[a.prop]})
@@ -394,6 +434,8 @@ func orDefault(v, name string) string {
 		return fmt.Sprintf("default (%d commits)", DriftCommitsDefault)
 	case name == PropDriftHours:
 		return fmt.Sprintf("default (%d hours)", DriftHoursDefault)
+	case name == PropTestsAlarm:
+		return fmt.Sprintf("default (%d times the member's width)", TestsAlarmFactor)
 	}
 	return "default (each card's own tier)"
 }

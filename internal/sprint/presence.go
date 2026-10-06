@@ -86,6 +86,13 @@ type Beat struct {
 	// --pong: her session's answer to a SESSION CHECK, or its own bus message), zero
 	// when her beat carried none; the friend beat record keeps it under "pong".
 	Proof time.Time `json:"pong,omitzero"`
+	// Tests is how many live processes whose name ends in ".test" the beat
+	// counted (fleet beat --tests, or the beat's own count of this machine),
+	// and TestParent the oldest parent pid among them (0 when none). Nil is
+	// no reading: a beat that did not count carries none, and zero is a
+	// reading of none. docs/SPEC-SPRINT.md, fleet-test-process-alarm-b.w4.
+	Tests      *int `json:"tests,omitempty"`
+	TestParent int  `json:"test_parent,omitempty"`
 }
 
 // FriendReport is what a friend's machinery reports with her beat, as a machine's beat
@@ -114,11 +121,29 @@ type FriendReport struct {
 	// docs/SPEC-FRIEND.md, limits-mean-down-w-r5.w1~15); zero and empty while she is up.
 	Until  time.Time `json:"until,omitzero"`
 	Reason string    `json:"reason,omitempty"`
+	// Tests is how many live processes whose name ends in ".test" her beat
+	// counted, and TestParent the oldest parent pid among them: the same
+	// fields a machine's beat carries (Beat.Tests). Nil is no reading.
+	Tests      *int `json:"tests,omitempty"`
+	TestParent int  `json:"test_parent,omitempty"`
 }
 
 // SaysDown says the beat is her daemon's word that she is down (FriendReport.Until):
 // however fresh, it never makes her up.
 func (b Beat) SaysDown() bool { return b.Friend != nil && !b.Friend.Until.IsZero() }
+
+// TestCount is the beat's reading of live processes whose name ends in ".test":
+// the beat's own, else its friend report's. ok is false when the beat carried
+// no reading. A count of zero is a reading.
+func (b Beat) TestCount() (n, parent int, ok bool) {
+	if b.Tests != nil {
+		return *b.Tests, b.TestParent, true
+	}
+	if b.Friend != nil && b.Friend.Tests != nil {
+		return *b.Friend.Tests, b.Friend.TestParent, true
+	}
+	return 0, 0, false
+}
 
 // Beaten says the member has beaten at least once.
 func (b Beat) Beaten() bool { return !b.At.IsZero() }

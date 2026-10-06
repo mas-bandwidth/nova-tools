@@ -363,9 +363,14 @@ func (a *app) friendBeat(ctx context.Context, args []string, open func(common) (
 	pong := fs.String("pong", "", "her session's last pong, as her daemon has it (status last_pong), RFC3339: the coordinator's pass judges her session deaf when it is older than "+sprint.FriendDeafAfter.String())
 	until := fs.String("until", "", "her daemon's word that she is down until then, RFC3339: her harness at its usage limit or out of credits")
 	reason := fs.String("reason", "", "why she is down until --until, as her daemon read it")
+	tests := fs.String("tests", "", "how many live processes whose name ends in .test she reports, instead of counting them on this machine (a test's, or her daemon's); the same count fleet beat --tests reports")
 	friend, code := oneFriend(name, fs, args, stderr)
 	if code != 0 {
 		return code
+	}
+	testsN, testsParent, testsOK, whyTests := beatTestCount(a.serving, *tests)
+	if whyTests != "" {
+		return refuse(stderr, name, whyTests)
 	}
 	rep := sprint.FriendReport{Running: sprint.Split(*running)}
 	switch {
@@ -429,6 +434,12 @@ func (a *app) friendBeat(ctx context.Context, args []string, open func(common) (
 		fmt.Fprintf(stderr, "%s %s: %s\n", prog, name, oneline.Escape(err.Error()))
 		return 1
 	}
+	if testsOK {
+		if err := recordFriendTests(ctx, st, friend, testsN, testsParent); err != nil {
+			fmt.Fprintf(stderr, "%s %s: %s\n", prog, name, oneline.Escape(err.Error()))
+			return 1
+		}
+	}
 	line, facts := "FRIEND-BEAT OK "+friend+" at="+b.At.Format(time.RFC3339), map[string]any{"friend": friend, "at": b.At}
 	if !ponged.IsZero() {
 		line += " pong=" + ponged.Format(time.RFC3339)
@@ -459,6 +470,14 @@ func (a *app) friendBeat(ctx context.Context, args []string, open func(common) (
 	if given != nil {
 		line += fmt.Sprintf(" load=%.1f%%", *given)
 		facts["load"] = *given
+	}
+	if testsOK {
+		line += fmt.Sprintf(" tests=%d", testsN)
+		facts["tests"] = testsN
+		if testsParent > 0 {
+			line += fmt.Sprintf(" test_parent=%d", testsParent)
+			facts["test_parent"] = testsParent
+		}
 	}
 	if !rep.Active.IsZero() {
 		line += " active=" + rep.Active.Format(time.RFC3339)

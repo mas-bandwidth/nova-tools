@@ -1,11 +1,15 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -48,7 +52,12 @@ holders, read at most once every `+hostload.HoldersEvery.String()+`; over --fd-a
 NOVA_FD_ALARM, else `+fmt.Sprint(hostload.FilesAlarmDefault)+`) it says alarm, and the tick writes
 one judgment of the member ("`+sprint.NFilesAlarm+`") naming the count, the top
 holders and its cards that ended on a timeout, closed with one cleared note when
-the count falls under the alarm.
+the count falls under the alarm. A beat counts the live processes whose name
+ends in .test (fleet beat --tests gives the count instead of counting this
+machine): the tick writes one judgment ("`+sprint.NRunawayTests+`") when the
+count is over the sprint's tests_alarm (nova-sprint set --tests-alarm, else
+4 times the member's width), naming the oldest parent pid, and closes it when
+the count falls under half that threshold.
 
 fleet sync makes the fleet match nova-config's machine rows in one step (--pg,
 else NOVA_PG_DSN, as nova-config takes it): a member the table lacks is added
@@ -121,13 +130,15 @@ func (a *app) fleetStep(st *store.Store, op, member, who string, width int, drai
 
 // beatReport is what fleet beat prints with --json.
 type beatReport struct {
-	Member string          `json:"member"`
-	At     time.Time       `json:"at"`
-	Load   float64         `json:"load"`
-	Last   float64         `json:"last"`
-	How    string          `json:"how"`
-	Cores  int             `json:"cores"`
-	Files  *hostload.Files `json:"files,omitempty"`
+	Member     string          `json:"member"`
+	At         time.Time       `json:"at"`
+	Load       float64         `json:"load"`
+	Last       float64         `json:"last"`
+	How        string          `json:"how"`
+	Cores      int             `json:"cores"`
+	Files      *hostload.Files `json:"files,omitempty"`
+	Tests      *int            `json:"tests,omitempty"`
+	TestParent int             `json:"test_parent,omitempty"`
 }
 
 // fdBound is one of fleet beat's open-files bounds: the flag's count when given, else the
@@ -156,6 +167,7 @@ func (a *app) cmdFleetBeat(args []string, stdout, stderr io.Writer) int {
 	cores := fs.Int("cores", 0, "the machine's logical cores the beat reports, instead of this machine's own (a test's, or another meter's); a member with the default width takes half")
 	fdWarn := fs.Int("fd-warn", 0, fmt.Sprintf("the machine's open file descriptors above which the beat says warn and lists the top holders (else NOVA_FD_WARN, else %d)", hostload.FilesWarnDefault))
 	fdAlarm := fs.Int("fd-alarm", 0, fmt.Sprintf("the machine's open file descriptors above which the beat says alarm and the tick writes one judgment of the member (else NOVA_FD_ALARM, else %d)", hostload.FilesAlarmDefault))
+	tests := fs.String("tests", "", "how many live processes whose name ends in .test the beat reports, instead of counting them on this machine (a test's, or the beat agent's)")
 	pos, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, "fleet beat", err.Error())
@@ -194,6 +206,10 @@ func (a *app) cmdFleetBeat(args []string, stdout, stderr io.Writer) int {
 	if warn, alarm := hostload.FilesBounds(src); alarm < warn {
 		return refuse(stderr, "fleet beat", fmt.Sprintf("--fd-alarm wants a count at or above the warn bound %d, found %d", warn, alarm))
 	}
+	testsN, testsParent, testsOK, whyTests := beatTestCount(a.serving, *tests)
+	if whyTests != "" {
+		return refuse(stderr, "fleet beat", whyTests)
+	}
 	if given != nil {
 		// a load given is the beat's; the machine's open files are measured beside it
 		// (hostload.Source.Given), so a member that gives its one-second samples still
@@ -215,19 +231,33 @@ func (a *app) cmdFleetBeat(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s fleet beat: %s\n", prog, oneline.Escape(err.Error()))
 		return 1
 	}
+	if testsOK {
+		b.Tests = &testsN
+		b.TestParent = testsParent
+		if err := recordMachineTests(context.Background(), st, pos[0], b); err != nil {
+			fmt.Fprintf(stderr, "%s fleet beat: %s\n", prog, oneline.Escape(err.Error()))
+			return 1
+		}
+	}
 	last := 0.0
 	if n := len(b.Samples); n > 0 {
 		last = b.Samples[n-1].Pct
 	}
 	files := b.Meter.Files
 	if c.json {
-		out, _ := json.Marshal(beatReport{Member: pos[0], At: b.At, Load: b.Load, Last: last, How: b.How, Cores: b.Cores, Files: files})
+		out, _ := json.Marshal(beatReport{Member: pos[0], At: b.At, Load: b.Load, Last: last, How: b.How, Cores: b.Cores, Files: files, Tests: b.Tests, TestParent: b.TestParent})
 		fmt.Fprintln(stdout, string(out))
 		return 0
 	}
 	fmt.Fprintf(stdout, "FLEET-BEAT OK %s at=%s load=%.1f%% last=%.1f%% how=%s cores=%d", pos[0], b.At.Format(time.RFC3339), b.Load, last, b.How, b.Cores)
 	if files != nil {
 		fmt.Fprintf(stdout, " fds=%d fds-max=%d fds-level=%s", files.Open, files.Max, files.Level())
+	}
+	if b.Tests != nil {
+		fmt.Fprintf(stdout, " tests=%d", *b.Tests)
+		if b.TestParent > 0 {
+			fmt.Fprintf(stdout, " test_parent=%d", b.TestParent)
+		}
 	}
 	fmt.Fprintln(stdout)
 	if files != nil && files.Level() != hostload.LevelOK {
@@ -239,4 +269,259 @@ func (a *app) cmdFleetBeat(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	return 0
+}
+
+// countTestProcesses is the live processes whose name ends in ".test" and the
+// oldest parent pid among them. ok is false when this process must not look
+// (NOVA_TEST_NO_HOST, a test) or this machine cannot be listed, and the beat
+// then carries no reading. Linux reads /proc. Anywhere else asks ps, which
+// takes no wall-clock sleep of ours.
+func countTestProcesses() (n, parent int, ok bool) {
+	if os.Getenv("NOVA_TEST_NO_HOST") != "" {
+		return 0, 0, false
+	}
+	if st, err := os.Stat("/proc"); err == nil && st.IsDir() {
+		return countTestProcessesProc("/proc")
+	}
+	return countTestProcessesPS()
+}
+
+type testProc struct {
+	pid, ppid int
+	name      string
+	age       uint64 // smaller is younger on Linux (start ticks); the ps path stores elapsed seconds in the same field, larger meaning older, and compares inside its own table
+	old       bool   // how age sorts: false means smaller age is older (Linux starttime)
+}
+
+func countTestProcessesProc(root string) (n, parent int, ok bool) {
+	ents, err := os.ReadDir(root)
+	if err != nil {
+		return 0, 0, false
+	}
+	byPID := map[int]testProc{}
+	var tests []testProc
+	for _, e := range ents {
+		pid, err := strconv.Atoi(e.Name())
+		if err != nil || pid <= 0 {
+			continue
+		}
+		p, good := readProc(root, pid)
+		if !good {
+			continue
+		}
+		byPID[pid] = p
+		if strings.HasSuffix(p.name, ".test") {
+			tests = append(tests, p)
+		}
+	}
+	return len(tests), oldestParent(tests, byPID, false), true
+}
+
+func readProc(root string, pid int) (testProc, bool) {
+	dir := filepath.Join(root, strconv.Itoa(pid))
+	ppid, start, ok := readProcStat(filepath.Join(dir, "stat"))
+	if !ok {
+		return testProc{}, false
+	}
+	return testProc{pid: pid, ppid: ppid, name: procName(dir), age: start}, true
+}
+
+func procName(dir string) string {
+	if b, err := os.ReadFile(filepath.Join(dir, "cmdline")); err == nil {
+		if i := bytes.IndexByte(b, 0); i >= 0 {
+			b = b[:i]
+		}
+		if len(bytes.TrimSpace(b)) > 0 {
+			return filepath.Base(string(b))
+		}
+	}
+	if b, err := os.ReadFile(filepath.Join(dir, "comm")); err == nil {
+		return strings.TrimSpace(string(b))
+	}
+	return ""
+}
+
+// readProcStat is /proc/<pid>/stat: the comm is in parentheses and may contain
+// spaces, so the fields after the last ")" are state, ppid, ... starttime.
+// starttime is field 22 of the whole stat, the 20th field after the comm.
+func readProcStat(path string) (ppid int, start uint64, ok bool) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return 0, 0, false
+	}
+	s := string(raw)
+	i := strings.LastIndex(s, ")")
+	if i < 0 || i+2 >= len(s) {
+		return 0, 0, false
+	}
+	fields := strings.Fields(s[i+2:])
+	if len(fields) < 20 {
+		return 0, 0, false
+	}
+	ppid, err = strconv.Atoi(fields[1])
+	if err != nil {
+		return 0, 0, false
+	}
+	start, err = strconv.ParseUint(fields[19], 10, 64)
+	if err != nil {
+		return 0, 0, false
+	}
+	return ppid, start, true
+}
+
+func countTestProcessesPS() (n, parent int, ok bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "ps", "-ax", "-o", "pid=,ppid=,etime=,command=").Output()
+	if err != nil {
+		return 0, 0, false
+	}
+	byPID := map[int]testProc{}
+	var tests []testProc
+	for _, line := range strings.Split(string(out), "\n") {
+		f := strings.Fields(line)
+		if len(f) < 4 {
+			continue
+		}
+		pid, err1 := strconv.Atoi(f[0])
+		ppid, err2 := strconv.Atoi(f[1])
+		elapsed, good := parseEtime(f[2])
+		if err1 != nil || err2 != nil || !good || pid <= 0 {
+			continue
+		}
+		name := filepath.Base(f[3])
+		p := testProc{pid: pid, ppid: ppid, name: name, age: uint64(elapsed)}
+		byPID[pid] = p
+		if strings.HasSuffix(name, ".test") {
+			tests = append(tests, p)
+		}
+	}
+	return len(tests), oldestParent(tests, byPID, true), true
+}
+
+// parseEtime is ps etime: [[dd-]hh:]mm:ss, as seconds.
+func parseEtime(s string) (int, bool) {
+	s = strings.TrimSpace(s)
+	days := 0
+	if i := strings.IndexByte(s, '-'); i >= 0 {
+		d, err := strconv.Atoi(s[:i])
+		if err != nil {
+			return 0, false
+		}
+		days = d
+		s = s[i+1:]
+	}
+	parts := strings.Split(s, ":")
+	if len(parts) < 2 || len(parts) > 3 {
+		return 0, false
+	}
+	nums := make([]int, len(parts))
+	for i, p := range parts {
+		n, err := strconv.Atoi(p)
+		if err != nil {
+			return 0, false
+		}
+		nums[i] = n
+	}
+	sec := nums[len(nums)-1] + nums[len(nums)-2]*60
+	if len(nums) == 3 {
+		sec += nums[0] * 3600
+	}
+	return days*86400 + sec, true
+}
+
+// oldestParent is the parent that has been alive longest among the test
+// processes. largerOlder is the ps table (elapsed seconds); otherwise age is
+// Linux starttime and the smaller value is older.
+func oldestParent(tests []testProc, byPID map[int]testProc, largerOlder bool) int {
+	best, found := 0, false
+	var bestAge uint64
+	seen := map[int]bool{}
+	for _, t := range tests {
+		if t.ppid <= 0 || seen[t.ppid] {
+			continue
+		}
+		seen[t.ppid] = true
+		p, ok := byPID[t.ppid]
+		if !ok {
+			continue
+		}
+		if !found || (largerOlder && p.age > bestAge) || (!largerOlder && p.age < bestAge) || (p.age == bestAge && p.pid < best) {
+			found, best, bestAge = true, p.pid, p.age
+		}
+	}
+	if !found {
+		return 0
+	}
+	return best
+}
+
+// beatTestCount is fleet beat and friend beat's --tests: the flag's count when
+// given, else this machine's own count when the beat is not running on the
+// server for someone else. why refuses a count that is not a whole number.
+func beatTestCount(serving bool, text string) (n, parent int, ok bool, why string) {
+	if text != "" {
+		v, err := strconv.Atoi(text)
+		if err != nil || v < 0 {
+			return 0, 0, false, "--tests wants a whole number of at least 0, found " + text
+		}
+		return v, 0, true, ""
+	}
+	if serving {
+		return 0, 0, false, ""
+	}
+	n, parent, ok = countTestProcesses()
+	return n, parent, ok, ""
+}
+
+// recordMachineTests writes the test-process reading onto the beat the store
+// just stored. store.Beat has no field for it, and the beat key is the one
+// store writes (beat:<member>).
+func recordMachineTests(ctx context.Context, st *store.Store, member string, b sprint.Beat) error {
+	kv, ok := st.B.(store.KV)
+	if !ok {
+		return fmt.Errorf("this store keeps no beats")
+	}
+	raw, err := json.Marshal(b)
+	if err != nil {
+		return err
+	}
+	return kv.SetKey(ctx, "beat:"+member, string(raw))
+}
+
+// recordFriendTests writes the same reading onto a friend's beat, keeping the
+// pong the store stored beside it. A beat that reported nothing else still
+// carries a friend report, so the tick's read of friend beats sees the count.
+func recordFriendTests(ctx context.Context, st *store.Store, friend string, n, parent int) error {
+	kv, ok := st.B.(store.KV)
+	if !ok {
+		return fmt.Errorf("this store keeps no beats")
+	}
+	key := "friend-beat:" + friend
+	raw, found, err := kv.GetKey(ctx, key)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return fmt.Errorf("no beat was written")
+	}
+	var rec struct {
+		sprint.Beat
+		Pong time.Time `json:"pong,omitzero"`
+	}
+	if err := json.Unmarshal([]byte(raw), &rec); err != nil {
+		return err
+	}
+	rec.Tests = &n
+	rec.TestParent = parent
+	if rec.Friend == nil {
+		rec.Friend = &sprint.FriendReport{}
+	}
+	rec.Friend.Tests = &n
+	rec.Friend.TestParent = parent
+	out, err := json.Marshal(&rec)
+	if err != nil {
+		return err
+	}
+	return kv.SetKey(ctx, key, string(out))
 }
