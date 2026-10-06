@@ -79,12 +79,15 @@ type FriendRow struct {
 	Name    string `json:"name"`
 	Ready   int    `json:"ready"`
 	Working int    `json:"working"`
-	Width   int    `json:"width"`
-	OK      int    `json:"ok"`
-	Failed  int    `json:"failed"`
-	Status  string `json:"status"`
-	Class   string `json:"class,omitempty"`
-	Mode    string `json:"mode,omitempty"`
+	// DealtFleet is the fleet's cards among them: work cards whose primary carries no
+	// WHO line (sprint.FriendsDealtFleet, from the tick's where record, up to a tick behind).
+	DealtFleet int    `json:"dealt_fleet"`
+	Width      int    `json:"width"`
+	OK         int    `json:"ok"`
+	Failed     int    `json:"failed"`
+	Status     string `json:"status"`
+	Class      string `json:"class,omitempty"`
+	Mode       string `json:"mode,omitempty"`
 	// Load and Report are what her last beat reported (friend beat --load, and
 	// sprint.FriendReport), absent when it reported none.
 	Load   float64              `json:"load,omitempty"`

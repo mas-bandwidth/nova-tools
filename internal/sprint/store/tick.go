@@ -599,7 +599,23 @@ func tickExtras(s *sprint.Snapshot) map[string][]string {
 			}
 		}
 	}
-	return map[string][]string{sprint.Work: sprint.ResolveExtras(s), sprint.Readers: reads}
+	// and a friend's read of each primary in review at its attempt, on the fleet table
+	// (sprint.FriendReadAsk): retired with her verdict it still stands (friendReadLive),
+	// so her ok counts toward the read rule and the ask does not ask her the attempt again
+	var friendReads []string
+	if s.Fleet != nil {
+		for _, c := range s.Work.Column(sprint.Review) {
+			attempt := max(c.Int("attempt"), 1)
+			for _, row := range s.Fleet.Rows() {
+				if name, ok := sprint.FriendOfRow(row); ok {
+					if id := sprint.ReadCardID(c.ID, attempt, name); s.Fleet.Placed(id) == nil {
+						friendReads = append(friendReads, id)
+					}
+				}
+			}
+		}
+	}
+	return map[string][]string{sprint.Work: sprint.ResolveExtras(s), sprint.Readers: reads, sprint.Fleet: friendReads}
 }
 
 // TickPartStep is one part of the tick as a step of the engine: fenced,
