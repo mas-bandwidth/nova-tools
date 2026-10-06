@@ -144,8 +144,15 @@ func TestResolveRaisesABlockedJudgmentOnceForADroppedNeed(t *testing.T) {
 	w := sprintOf(t, "m1")
 	w.add(t, "s1", 1)
 	w.addOne(t, "s1", "s1-2", "s1-1")
-	w.must(t, sprint.Drop(w.s, sprint.DropReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Reason: "not wanted", Who: coordinator}))
-	// dropping told the coordinator already; the judgment is open, so the tick writes none again
+	// seed s1-1 dropped off the table, the state the drop verb now refuses to
+	// make while s1-2 needs it (docs/SPEC-SPRINT.md section 11)
+	c := w.s.Work.Card("s1-1")
+	c.Row, c.Col = "", ""
+	c.Fields["outcome"] = "dropped"
+	c.Rev++
+	w.s.Work.Put(c)
+	// the resolve opens the blocked judgment; the tick writes none again
+	w.must(t, sprint.Resolve(w.s, sprint.ResolveReq{Who: sprint.MachineActor}))
 	expect(t, refmodel.ResolveMoves(w.snapshot(w.fresh()), later(0)))
 	// with the judgment closed, the tick raises it
 	snap := w.snapshot(w.fresh())
