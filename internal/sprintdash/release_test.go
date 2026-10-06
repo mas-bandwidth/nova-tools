@@ -38,10 +38,15 @@ func twoReleases(v1Left int) []byte {
 "releases":{"v1.0.0":` + itoa(v1Left) + `,"v1.1.0":251},
 "stream_costs":{"sprint-v1-release":{"total_cost":"$5.00"},"jev":{"total_cost":"$20.00"},"ci":{"total_cost":"$3.00"}},
 "stalled":["promote-red-2026-10-05","jev"],
-"critical":[{"id":"v1-a","behind":9,"state":"working"},{"id":"jev-a","behind":7,"state":"ready"},{"id":"v1-b","behind":3,"state":"merging","stream":"promote-red-2026-10-05"},{"id":"lost","behind":1,"state":"waiting"}],
+"critical":[{"id":"v1-a","behind":9,"state":"working"},{"id":"jev-a","behind":7,"state":"ready"},{"id":"v1-c","behind":5,"state":"waiting"},{"id":"v1-b","behind":3,"state":"review"},{"id":"lost","behind":1,"state":"waiting"}],
 "cards":[{"id":"v1-a.w1","primary":"v1-a","stream":"sprint-v1-release","member":"m1","state":"working","branch":"b1"},{"id":"jev-a.w1","primary":"jev-a","stream":"jev","member":"m1","state":"ready","branch":"b2"}],
-"merging":[{"id":"x","stream":"jev","head":"abc"}]}`)
+"merging":[{"id":"x","stream":"jev","head":"abc"}],` + twoReleasesRows + `}`)
 }
+
+// twoReleasesRows is where --json --rows's rows of twoReleases' critical cards: where's
+// critical names no stream, and v1-c (waiting) and v1-b (in review) are dealt to no one,
+// so their rows alone place them. lost has no row.
+const twoReleasesRows = `"rows":[{"id":"v1-a","stream":"sprint-v1-release","state":"working","score":1,"fields":{}},{"id":"v1-c","stream":"sprint-v1-release","state":"waiting","score":2,"fields":{}},{"id":"v1-b","stream":"promote-red-2026-10-05","state":"review","score":1,"fields":{}},{"id":"jev-a","stream":"jev","state":"ready","score":1,"fields":{}}]`
 
 func itoa(n int) string { b, _ := json.Marshal(n); return string(b) }
 
@@ -97,7 +102,9 @@ func TestTheDashboardShowsOnlyTheCurrentReleasesStreams(t *testing.T) {
 	assert.Equal(t, []string{"sprint-v1-release", "promote-red-2026-10-05"}, fieldOf(d["streams"], "Stream"))
 	assert.Equal(t, []string{"sprint-v1-release"}, keysOf(d["stream_costs"]), "the cost panel reads the release's costs")
 	assert.Equal(t, []any{"promote-red-2026-10-05"}, d["stalled"])
-	assert.Equal(t, []string{"v1-a", "v1-b"}, fieldOf(d["critical"], "id"), "the critical path is the release's cards")
+	assert.Equal(t, []string{"v1-a", "v1-c", "v1-b"}, fieldOf(d["critical"], "id"), "the critical path is the release's cards, dealt or not")
+	assert.Equal(t, []string{"sprint-v1-release", "sprint-v1-release", "promote-red-2026-10-05"}, fieldOf(d["critical"], "stream"))
+	assert.NotContains(t, d, "rows", "the rows place the critical cards and are not served")
 	assert.Equal(t, []string{"v1-a.w1"}, fieldOf(d["cards"], "id"))
 	assert.Empty(t, d["merging"])
 	// v1.0.0: 12 landed of 20 (8 left); the sprint's 263 left take 2d7h (55 h), so 8 take 1h41m
@@ -118,7 +125,15 @@ func TestTheDashboardShowsOnlyTheCurrentReleasesStreams(t *testing.T) {
 	assert.Equal(t, "all", snap.Release)
 	assert.Nil(t, snap.ReleaseStreams)
 	assert.Len(t, keysOf(d["tables"].(map[string]any)["work"]), 5, "all is every stream, labelled or not")
-	assert.JSONEq(t, string(twoReleases(8)), string(snap.Data), "all is the copy as where printed it")
+	_, d = apiOf(t, r.s, "/api/sprint?release=all")
+	assert.Equal(t, []string{"v1-a", "jev-a", "v1-c", "v1-b", "lost"}, fieldOf(d["critical"], "id"), "all is the whole critical path")
+	assert.NotContains(t, d, "rows")
+	var want map[string]any
+	require.NoError(t, json.Unmarshal(twoReleases(8), &want))
+	delete(want, "rows")
+	delete(want, "critical")
+	delete(d, "critical")
+	assert.Equal(t, want, d, "all is the copy as where printed it, its critical cards placed")
 
 	snap, _ = apiOf(t, r.s, "/api/sprint?release=v9.9.9")
 	assert.Equal(t, "v1.0.0", snap.Release, "a release no stream carries shows the current one")
@@ -149,6 +164,7 @@ func TestTheDashboardShowsAnUnlabelledSprintWhole(t *testing.T) {
 	t.Parallel()
 	r := newRig(t)
 	body := strings.Replace(strings.Replace(string(twoReleases(8)), `"Release":"v1.0.0",`, "", -1), `"Release":"v1.1.0",`, "", -1)
+	body = strings.Replace(body, `,`+twoReleasesRows, "", 1)
 	r.next = func() ([]byte, error) { return []byte(body), nil }
 	snap, _ := apiOf(t, r.s, "/api/sprint")
 	assert.Equal(t, "all", snap.Release)

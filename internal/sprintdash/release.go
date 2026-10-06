@@ -206,8 +206,8 @@ func keepList(out map[string]json.RawMessage, field, key string, in func(string)
 }
 
 // keepCritical keeps the critical path's cards of the streams that pass in: a card's
-// stream is its own field when where gives one, else the stream of the dealt card or the
-// merging card it is; a card whose stream the copy does not say is left out.
+// stream is its own field (placed gives it from where's rows), else the stream of the
+// dealt card or the merging card it is; a card whose stream the copy does not say is left out.
 func keepCritical(out map[string]json.RawMessage, in func(string) bool) {
 	var items []json.RawMessage
 	if json.Unmarshal(out["critical"], &items) != nil || items == nil {
@@ -238,6 +238,39 @@ func keepCritical(out map[string]json.RawMessage, in func(string) bool) {
 		}
 	}
 	out["critical"] = mustJSON(kept)
+}
+
+// placed is the copy as the server keeps it: where's critical cards name no stream
+// (sprint.CriticalCard), so each is given the stream of its row in where --json --rows,
+// and the rows are dropped, the page reading none of them. A copy with no rows (a
+// puller's, already placed) is kept as it came.
+func placed(body []byte) json.RawMessage {
+	var top map[string]json.RawMessage
+	if json.Unmarshal(body, &top) != nil || top["rows"] == nil {
+		return append(json.RawMessage(nil), body...)
+	}
+	var rows []struct {
+		ID     string `json:"id"`
+		Stream string `json:"stream"`
+	}
+	_ = json.Unmarshal(top["rows"], &rows) // ignored: rows of another shape place nothing
+	streamOf := make(map[string]string, len(rows))
+	for _, r := range rows {
+		streamOf[r.ID] = r.Stream
+	}
+	delete(top, "rows")
+	var critical []map[string]json.RawMessage
+	if json.Unmarshal(top["critical"], &critical) == nil && critical != nil {
+		for _, c := range critical {
+			var id string
+			_ = json.Unmarshal(c["id"], &id) // ignored: a card with no id has no row
+			if _, has := c["stream"]; !has && streamOf[id] != "" {
+				c["stream"] = mustJSON(streamOf[id])
+			}
+		}
+		top["critical"] = mustJSON(critical)
+	}
+	return mustJSON(top)
 }
 
 // etaWord reads the summary's ETA: "2d7h", "1h12m", "47m".

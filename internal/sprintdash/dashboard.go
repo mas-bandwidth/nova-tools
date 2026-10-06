@@ -251,7 +251,7 @@ func (s *Server) record(start, end time.Time, body []byte, up *snapshot, err err
 		}
 		s.changed = make(chan struct{})
 		s.snap.OK, s.snap.Error = true, nil
-		s.snap.Data = append(json.RawMessage(nil), bytes.TrimSpace(body)...)
+		s.snap.Data = placed(bytes.TrimSpace(body))
 		s.snap.FetchedAt, s.snap.Throughput, s.snap.ThroughputMinutes = &at, rate, minutes
 	}
 	s.summarize(end, took, err != nil)

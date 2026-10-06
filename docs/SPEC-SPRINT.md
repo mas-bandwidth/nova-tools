@@ -692,13 +692,17 @@ they show the current release: the earliest, in version order, with cards left (
 --json`'s `releases`), else the last. Their answer names `release` (shown), `current`,
 `releases` (every label, in version order) and `releaseStreams`, and its data is the copy
 with those streams alone: the work and merge rows, the stream clocks, costs and stalls, the
-critical path (a card whose stream the copy does not say is left out), the cards dealt and
+critical path, the cards dealt and
 merging, and `landed`, `all` and the summary line counted over those rows, the ETA the
 sprint's scaled to the release's cards left at the same rate, with no `held=` (held is the
 sprint's count). The fleet, friends and lanes stay the sprint's. A sprint with no label is
 shown whole, as `where` printed it. The header carries a one-line switch: each release,
 then all, the one shown lit (`TestTheDashboardShowsOnlyTheCurrentReleasesStreams`). A
-puller reads its upstream's `?release=all` and switches on its own.
+puller reads its upstream's `?release=all` and switches on its own. `where`'s critical
+cards name no stream and are as often waiting or ready as dealt, so the dashboard reads
+`where --json --cards --rows` and gives each critical card the stream of its row; the rows
+are dropped from the copy it serves, and a critical card with no row is left out of every
+release but all (`TestTheDashboardOverAStoreOfTwoReleasesShowsOneRelease`).
 
 The dashboard also serves each worker its own view, pulled when the worker wants it (the
 owner, 2026-10-03 11:18 AM: "Think from the point of view of the worker. How to get the
@@ -709,7 +713,7 @@ tailnet that gives them the json or xml or whatever you choose."). `dashboard --
 `--listen` takes, so loopback or the tailnet and never a public one) serves the pull routes
 on listeners of their own, so a proxy that publishes the page never fronts them, and
 `--listen none` serves no page. Every route answers from the one cached copy the page
-reads: `where --json --cards`, read at most once a second however many workers pull (the
+reads: `where --json --cards` (with `--rows`, which place the critical path and are not served), read at most once a second however many workers pull (the
 owner, 2026-10-03 11:21 AM: "updated once per-second."). `--cards` adds to `where --json`
 the work cards dealt to a fleet row and not finished (each card's row, state, since,
 deadline and branch, read from the fleet's ready and working cells alone, so the read is
