@@ -108,6 +108,18 @@ function setClass(e, c) {
 }
 function setTitle(e, t) { if (e.title !== t) e.title = t; }
 function numCell(cls) { return el("div", cls === "frac" ? "frac" : "num " + (cls || "")); }
+// A list of children patched in place: grown or shrunk at the end, each child reused by position
+// and written only when its text or class changed (a redraw never replaces a node it can keep).
+function setCount(box, n, make) {
+  while (box.children.length < n) box.appendChild(make());
+  while (box.children.length > n) box.lastChild.remove();
+}
+function putKid(box, i, cls, text) {
+  var c = box.children[i];
+  if (!c._quiet) quiet(c);
+  setText(c, text); setClass(c, cls);
+  return c;
+}
 function setNum(e, v, extra) { setText(e, v); setClass(e, "num " + (extra || "") + (String(v) === "0" ? " zero" : "")); }
 
 // Keyed rows between a fixed header and an optional total row; nodes are
@@ -322,16 +334,19 @@ function renderWall(d) {
   if (!names.length) return;
   var box = $("wall"), lg = $("wall-legend");
   var total = names.reduce(function (a, x) { return a + st[x[0]].median_s; }, 0);
-  box.textContent = ""; lg.textContent = "";
-  names.forEach(function (x) {
+  setCount(box, names.length, function () { return el("i"); });
+  setCount(lg, names.length, function () { var it = el("span"); it.appendChild(el("i", "sw")); it.appendChild(quiet(el("span"))); return it; });
+  names.forEach(function (x, i) {
     var k = x[0], m = st[k], hue = WALL_HUES[WALL_STAGES.findIndex(function (y) { return y[0] === k; })];
-    var seg = el("i"); seg.style.flexGrow = String(Math.max(m.median_s, total / 400)); seg.style.background = "hsl(" + hue + " 60% 55%)";
-    seg.title = x[1] + ": median " + wallSpan(m.median_s) + ", p90 " + wallSpan(m.p90_s) + " over " + m.n + " cards";
-    box.appendChild(seg);
-    var it = el("span"), sw = el("i", "sw"); sw.style.background = seg.style.background;
-    it.appendChild(sw); it.appendChild(el("span", "", x[1] + " " + wallSpan(m.median_s) + " (p90 " + wallSpan(m.p90_s) + ")")); lg.appendChild(it);
+    var seg = box.children[i], grow = String(Math.max(m.median_s, total / 400)), bg = "hsl(" + hue + " 60% 55%)";
+    if (seg.style.flexGrow !== grow) seg.style.flexGrow = grow;
+    if (seg.style.background !== bg) seg.style.background = bg;
+    setTitle(seg, x[1] + ": median " + wallSpan(m.median_s) + ", p90 " + wallSpan(m.p90_s) + " over " + m.n + " cards");
+    var it = lg.children[i];
+    if (it.children[0].style.background !== bg) it.children[0].style.background = bg;
+    setText(it.children[1], x[1] + " " + wallSpan(m.median_s) + " (p90 " + wallSpan(m.p90_s) + ")");
   });
-  $("wall-sub").textContent = ("median per stage, cards landed in the last 24 h · " + wallSpan(total) + " in all");
+  setText(quiet($("wall-sub")), "median per stage, cards landed in the last 24 h · " + wallSpan(total) + " in all");
 }
 
 function fleetLike(box, table, withLoad) {
@@ -531,12 +546,14 @@ function renderInflight(sum) {
   var forms = [["working", "review + merge"], ["work", "review + merge"], ["work", "rev + merge"], ["work", "rev+mrg"], ["wk", "r+m"]];
   var draw = function (w) {
     var parts = [[sum.working, w[0]], [sum.review + sum.merging, w[1]]].filter(function (p) { return p[0] > 0; });
-    box.textContent = "";
-    if (!parts.length) box.textContent = "nothing in flight";
+    var kids = [];
+    if (!parts.length) kids.push(["pw", "nothing in flight"]);
     parts.forEach(function (p, i) {
-      if (i) box.appendChild(el("span", "pw", " \u00b7 "));
-      box.appendChild(el("span", "pn", String(p[0]))); box.appendChild(el("span", "pw", " " + p[1]));
+      if (i) kids.push(["pw", " \u00b7 "]);
+      kids.push(["pn", String(p[0])], ["pw", " " + p[1]]);
     });
+    setCount(box, kids.length, function () { return el("span"); });
+    kids.forEach(function (k, i) { putKid(box, i, k[0], k[1]); });
   };
   for (var i = 0; i < forms.length; i++) { draw(forms[i]); if (fits(box)) break; }
   setTitle(box, sum.working + " working, " + sum.review + " review, " + sum.merging + " merging");
@@ -544,7 +561,7 @@ function renderInflight(sum) {
 window.addEventListener("resize", function () { if (inflightLast) renderInflight(inflightLast); fitEtaAt(); });
 
 // ---------- poll loop ----------
-var lastGood = null, inFlight = false, build = null, throughput = null, throughputMinutes = 0;
+var lastSnap = null, lastGood = null, inFlight = false, build = null, throughput = null, throughputMinutes = 0;
 // Readers and merge are hidden by default; ?all=1 shows them.
 var SHOW_ALL = /(?:^|[?&])all=1(?:&|$)/.test(location.search);
 if (SHOW_ALL) $("readers-panel").hidden = false;
@@ -633,6 +650,9 @@ function renderPie(d) {
   var svg = $("pie"); if (!svg) return; // no legend below the chart: its legend is the panel's header line
   var sp = tierSpend(d), vals = sp.order.map(function (t) { return [t, sp.shown(sp.byTier[t])]; });
   var total = vals.reduce(function (a, v) { return a + v[1]; }, 0);
+  var key = JSON.stringify(vals) + "|" + sp.fmt(total);
+  if (svg._key === key) return; // the same pie is not drawn again
+  svg._key = key;
   while (svg.firstChild) svg.removeChild(svg.firstChild);
   svg.setAttribute("aria-label", "spend by tier");
   var ns = "http://www.w3.org/2000/svg";
@@ -667,37 +687,54 @@ function renderTopStreams(d) {
     rows.push({ name: k, cost: ct, n: n, per: n.landed ? Math.ceil(ct / n.landed) : null, tiers: tierCounts(w.tiers), byTier: w.cost_by_tier || null });
   });
   rows.sort(function (a, b) { return b.cost - a.cost; });
-  box.innerHTML = "";
-  box.style.setProperty("--tier-cols", String(order.length + 1)); // the tiers with spend, then total
+  var cols = String(order.length + 1); // the tiers with spend, then total
+  if (box.style.getPropertyValue("--tier-cols") !== cols) box.style.setProperty("--tier-cols", cols);
   var pie = $("pie"), rem = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
   var n = 10;
   if (pie && pie.clientWidth) n = Math.max(3, Math.min(rows.length, Math.round((pie.clientWidth + 4 * rem - 4 * rem - 1 * rem) / (5 * rem))));
   topN = n;
-  var h = el("div", "row head"); h.appendChild(el("div", "", "stream"));
-  order.forEach(function (t) { h.appendChild(el("div", "num", t)); }); // plain headers, as every table's: the color keys are the legend's alone
-  h.appendChild(el("div", "num", "total")); box.appendChild(h);
-  rows.slice(0, n).forEach(function (r) {
-    var row = el("div", "row");
-    row.appendChild(el("div", "name", r.name));
-    order.forEach(function (t) { // the stream's spend on the tier, in the panel's format
-      var c = r.byTier && cents(r.byTier[t]);
-      row.appendChild(el("div", "num" + (c ? "" : " faint"), c ? fmt(c) : "-"));
+  // the rows are keyed by stream and patched in place like every other table's; the header and
+  // each row grow or lose cells at the end when the tiers with spend change
+  if (!box._head) box._head = el("div", "row head");
+  var head = box._head, cellCount = order.length + 2;
+  setCount(head, cellCount, function () { return quiet(el("div")); });
+  putKid(head, 0, "", "stream");
+  order.forEach(function (t, i) { putKid(head, 1 + i, "num", t); }); // plain headers, as every table's: the color keys are the legend's alone
+  putKid(head, cellCount - 1, "num", "total");
+  var shown = rows.slice(0, n);
+  var byName = {}; shown.forEach(function (r) { byName[r.name] = r; });
+  syncRows(box, head, shown.map(function (r) { return r.name; }), function () {
+    return { node: el("div", "row") };
+  }, function (r, k) {
+    var row = byName[k];
+    setCount(r.node, cellCount, function () { return quiet(el("div")); });
+    putKid(r.node, 0, "name", k);
+    order.forEach(function (t, i) { // the stream's spend on the tier, in the panel's format
+      var c = row.byTier && cents(row.byTier[t]);
+      putKid(r.node, 1 + i, "num" + (c ? "" : " faint"), c ? fmt(c) : "-");
     });
-    row.appendChild(el("div", "num", fmt(r.cost)));
-    box.appendChild(row);
+    putKid(r.node, cellCount - 1, "num", fmt(row.cost));
   });
+  if (!box._none) box._none = el("div", "row faint", "no stream has spent anything yet");
+  if (!rows.length && box._none.parentNode !== box) box.appendChild(box._none);
+  if (rows.length && box._none.parentNode === box) box._none.remove();
   // the pie's legend in the header: each tier as the state legend draws an item, its square in
   // the tier's color, the name grey and the amount white, in the pie's order, no separators
   var ts = $("tier-sub");
   if (ts) {
-    ts.textContent = "";
-    order.forEach(function (t) {
-      var p = el("span"), sw = el("i", "sw"); sw.style.background = tierColor(t);
-      p.appendChild(sw); p.appendChild(el("span", "tn", t)); p.appendChild(el("span", "ta", fmt(sp.shown(byTier[t])))); ts.appendChild(p);
-    });
-    if (!order.length) ts.textContent = "-";
+    if (!order.length) setText(quiet(ts), "-");
+    else {
+      if (ts._val != null) { ts.textContent = ""; ts._val = null; }
+      setCount(ts, order.length, function () {
+        var p = el("span"); p.appendChild(el("i", "sw")); p.appendChild(quiet(el("span", "tn"))); p.appendChild(quiet(el("span", "ta"))); return p;
+      });
+      order.forEach(function (t, i) {
+        var p = ts.children[i], bg = tierColor(t);
+        if (p.children[0].style.background !== bg) p.children[0].style.background = bg;
+        setText(p.children[1], t); setText(p.children[2], fmt(sp.shown(byTier[t])));
+      });
+    }
   }
-  if (!rows.length) box.appendChild(el("div", "row faint", "no stream has spent anything yet"));
 }
 
 function render(d) {
@@ -727,7 +764,9 @@ function poll() {
 function apply(j) {
   if (j.data) {
     throughput = j.throughput == null ? null : j.throughput; throughputMinutes = j.throughputMinutes || 0;
-    if (!lastGood || lastGood.at !== j.data.at) { try { render(j.data); } catch (e) { console.error(e); } }
+    // a snapshot byte-identical to the one on screen draws nothing
+    var snap = JSON.stringify(j.data);
+    if (snap !== lastSnap) { lastSnap = snap; try { render(j.data); } catch (e) { console.error(e); } }
     lastGood = j.data;
     renderRelease(j);
     setLive(new Date(j.data.at));
