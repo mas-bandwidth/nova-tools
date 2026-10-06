@@ -704,6 +704,18 @@ func TestTheEnvelopeNamesWhatDidNotFit(t *testing.T) {
 	assert.Contains(t, text, head(1, 3, msgs[0], 10)+strings.Repeat("x", 200)+"\n")
 	assert.Contains(t, text, "\nand 2 more: nova-bus recv --as bob --all\n"+head(2, 3, msgs[1], 9)+head(3, 3, msgs[2], 8))
 	assert.NotContains(t, text, "\ny\n")
+	assert.LessOrEqual(t, len(text), 300)
+
+	many := make([]bus.Message, 20)
+	for i := range many {
+		many[i] = bus.Message{ID: fmt.Sprintf("n%02d", i), From: "ada", At: t0.Add(time.Duration(i) * time.Second), Subject: "s", Body: "b"}
+	}
+	for _, limit := range []int{400, 500, 700, 1000} {
+		text, shown = Envelope(many, now, "bob", limit, "", "")
+		assert.LessOrEqual(t, len(text), limit, "limit %d, shown %d", limit, shown)
+		assert.Less(t, shown, len(many))
+		assert.Contains(t, text, fmt.Sprintf("and %d more: nova-bus recv --as bob --all\n", len(many)-shown))
+	}
 
 	text, shown = Envelope(msgs, now, "bob", 0, "", "")
 	assert.Equal(t, 3, shown, "no limit: every message")

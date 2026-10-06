@@ -264,8 +264,10 @@ const RestLine = "and %d more: nova-bus recv --as %s --all"
 // challenge is open, the daemon's word about the coordinator, a count, then
 // each message oldest first as `[i/n] <id> from=<f> at=<RFC3339> age=<m>m
 // subject=<s>` and its body, the age taken at now. With limit above zero the
-// text stops before the message that would pass it (the first always goes
-// in), and the rest are named by their lines under RestLine for me. It answers
+// text, rest block included, stays within it: a message goes in only while
+// the RestLine for those after it still fits (the first always goes in, even
+// when it alone passes the limit), and the rest are named under RestLine for
+// me by as many of their lines as fit after the count. It answers
 // the text and how many messages it carries, a prefix of msgs: exactly those
 // are acked when the turn is accepted. A single message with nothing else is
 // its Text alone. A function of its arguments.
@@ -285,22 +287,33 @@ func Envelope(msgs []bus.Message, now time.Time, me string, limit int, notice, p
 		m := msgs[i]
 		return fmt.Sprintf("[%d/%d] %s from=%s at=%s age=%dm subject=%s\n", i+1, len(msgs), m.ID, m.From, m.At.Format(time.RFC3339), ageMinutes(now, m.At), oneLine(m.Subject, len(m.Subject)))
 	}
+	rest := func(n int) string { return "\n" + fmt.Sprintf(RestLine, n, me) + "\n" }
 	for i, m := range msgs {
 		body := m.Body
 		if !strings.HasSuffix(body, "\n") {
 			body += "\n"
 		}
 		part := "\n" + line(i) + body
-		if limit > 0 && shown > 0 && b.Len()+len(part) > limit {
-			break
+		if limit > 0 && shown > 0 {
+			after := 0
+			if i+1 < len(msgs) {
+				after = len(rest(len(msgs) - i - 1))
+			}
+			if b.Len()+len(part)+after > limit {
+				break
+			}
 		}
 		b.WriteString(part)
 		shown++
 	}
 	if shown < len(msgs) {
-		fmt.Fprintf(&b, "\n"+RestLine+"\n", len(msgs)-shown, me)
+		b.WriteString(rest(len(msgs) - shown))
 		for i := shown; i < len(msgs); i++ {
-			b.WriteString(line(i))
+			l := line(i)
+			if limit > 0 && b.Len()+len(l) > limit {
+				break
+			}
+			b.WriteString(l)
 		}
 	}
 	return b.String(), shown
