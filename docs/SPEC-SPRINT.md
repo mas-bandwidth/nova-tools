@@ -197,6 +197,18 @@ reported activity raises none of this kind: her silence is the report rule's (15
 without a beat). The column is a field of a table locked on 2026-10-01 and is added by the card
 friend-session-liveness.w1 (internal/sprint/TABLES.lock, the 2026-10-04 entry).
 
+**A subscription friend's window use** (subscription-pacing-is-a-setting.w1; the owner,
+2026-10-05 ~10:45 PM, "Please try to go easy on <friend> (<machine>) and this session until
+11PM, or you will run out of credits"). A friend on a subscription is paced by her daemon against
+her 5-hour and 7-day windows (docs/SPEC-FRIEND.md, subscription pacing). Her beat's report
+carries what her daemon last read (`sprint.FriendReport`: `paced`, the lanes' effective width,
+and `window`, the windows' use as text, `5h 62% 7d 31%`), and the dashboard shows the
+`window` cell of her row beside her working / width, muted, escaped (`.win`;
+`TestFriendsRowShowsTheWindowUseBesideTheWidth`); a row with none shows the width alone. Not
+built yet, outside this card's paths: `friend beat` taking `--paced` and `--window`, the beat
+record and `where --json` carrying them onto her row, and the row's `pacing` setting in
+nova-config printed on the beat's answer as `row_pacing=<percent>`.
+
 **A friend's health** (2026-10-04, with the author of the coordinator's
 daemon, nova-friend: "the coordinate daemon is the keepalive SERVER. The
 existing sprint server is the authority/table service"). The coordinator's

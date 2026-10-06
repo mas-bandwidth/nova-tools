@@ -864,6 +864,64 @@ small table of known models (a flash model is a one-shot by nature), giving
 smart defaults the row's `mode` and `width` override, and the deal giving a
 friend no card above her tier.
 
+### subscription-pacing-is-a-setting.w1 — a subscription friend is paced by measurement (internal/friend/pacing.go)
+
+The owner, 2026-10-05 ~10:45 PM: "Please try to go easy on <friend> (<machine>)
+and this session until 11PM, or you will run out of credits. Reserve for
+essential work only." The coordinator cut a width by hand, paused a reader,
+parked jobs and restored them at eleven. Pacing by measurement is a setting
+on the row, not a hand on the wheel.
+
+A subscription has a 5-hour and a 7-day window, and a Claude Code headless
+run (`--output-format stream-json --verbose`) prints a `rate_limit_event`
+with each window's utilization (0 to 1) and reset: the older shape names one
+window (`rateLimitType`, `utilization`, `resetsAt`), the newer every window
+(`unifiedWindows`). `ReadRateLimitEvents` reads a turn's output for them, the
+last word of each window; a line with no utilization is under the harness's
+warning threshold, and keeps the use last read for the same reset (use does
+not fall within a window); a `rejected` event marks the window it spent (at
+1), or every window it names when none is. A lane harness returns them on the
+turn (`LaneTurn.Windows`), and the daemon takes them after every lane turn,
+whatever its end (`Pacer.Observe`).
+
+The pacing is the row's setting: the fraction of each window the sprint may
+spend, `DefaultPacing` (80 percent) when the row names none or one outside
+(0, 100] percent. The daemon reads it every step (`Daemon.Pacing`; off the
+beat's answer, `row_pacing=<percent>`, `ParsePacing`). The lanes' effective
+width is the row's width scaled by the share of the paced budget left in the
+tightest live window, rounded up (`Pacer.Width`): at 80 percent and a row of
+4, a 5-hour window at 20 percent gives 3, at 40 percent 2, at 60 percent 1,
+and at 80 percent none. A window at or past the pacing, or rejected by the
+harness, allows no new turn or open until it resets, so no run meets the hard
+limit: only the turns already in flight spend past the pacing. A window is
+live until its reset, or, with none said, for one span (5 hours, 7 days)
+after the report; when it resets the width is the row's again with no word
+from anyone. The paced width sits under the rate-limit governor's cap (the
+lower of the two holds), never above the row; a lane beyond it takes nothing
+new and hands back a card it holds between turns, as beyond the cap.
+
+Each change of the paced width is one line on the record (`pacing: width
+<a> -> <b> of <w>, five_hour at <u>% of 80%, resets <t>`, and back up, `no
+window over the pacing (80%)`). The status says `paced`, `window` (`5h 62%
+7d 31%`) and `pacing` (`80%`), and its lanes `:paced` beyond the paced width.
+When the paced width falls below half the row, the coordinator is told once,
+as a judgment (a blocker), `friend <name>: paced to <p> of <w> lanes by the
+subscription windows (<use>; pacing <pct>)`; it is told again only after the
+width has been back at half or more. A friend whose harness reports no
+window (a metered provider) is never paced.
+`TestPacingLowersWidthAsTheWindowFills` (a fake harness printing the
+`rate_limit_event`), `TestPacerWidthFollowsTheTightestWindow`,
+`TestReadRateLimitEventsTakesEachWindowsLastWord`,
+`TestReadRateLimitEventsReadsTheUnifiedWindows`, `TestPacingIsTheRowsSetting`.
+
+Not here, outside the card's paths: the `pacing` field on nova-config's
+friend row and `friend beat` printing it as `row_pacing=`; `nova-friend`
+setting `Daemon.Pacing` from the beat and sending `paced` and `window` on the
+beat (`sprint.FriendReport` carries them); a Claude lane harness (the
+`claude` deliverer is still a stub; the OpenCode lanes report no window), so
+in a live daemon no lane is paced yet; the batch turn is not paced; and no
+TLA+ module models the pacer.
+
 ### lane-end-finishes-the-card.w1 — a lane's end is a finish
 
 The owner, 2026-10-05: "Now let's look at friends. Are they actually doing
