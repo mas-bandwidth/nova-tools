@@ -583,7 +583,7 @@ tmux new-session -d -s friend-<me> -c <dir> -- <launch command...>; refuses when
 --harness names the harness whose idle prompt pattern is used (` + strings.Join(hostHarnesses(), ", ") + `);
 --prompt <regexp> overrides it and is wanted for any other harness: the pattern the last non-empty line
 of the pane matches while the harness waits for input. The session name and the pattern are saved in
-<state-dir>/` + friend.HostFile + ` (--state-dir, else ~/.nova-friend/<me>), so run and install need no flag beyond
+<state-dir>/` + friend.HostFile + ` (--state-dir, else <dir>/.nova-friend, as run), so run and install need no flag beyond
 --harness tmux: with that harness a delivery captures the pane (tmux capture-pane -p -t friend-<me>);
 when its last non-empty line matches the idle prompt it types the text on one line, each newline shown
 as " ⏎ " (tmux send-keys -l), then Enter as a second call, and is accepted once the prompt line has gone,
@@ -1767,7 +1767,8 @@ func (w world) host(c *tool.Call) *tool.Out {
 	case c.DryRun():
 		return tool.Done().As("DRY-RUN").Fact("session", res.Session).Fact("dir", dir).Fact("command", tool.Text(res.Line))
 	}
-	if err := friend.WriteHost(w.stateDir(c), friend.Hosted{Session: res.Session, Harness: c.Str("harness"), Prompt: prompt}); err != nil {
+	state, _ := w.daemonStateDir(c) // where run keeps its state and TmuxFor reads it; a refused <dir> falls back as run's does
+	if err := friend.WriteHost(state, friend.Hosted{Session: res.Session, Harness: c.Str("harness"), Prompt: prompt}); err != nil {
 		return tool.Refuse("the session " + res.Session + " runs, and its state could not be saved: " + err.Error())
 	}
 	return tool.Done().Fact("session", res.Session).Fact("dir", dir).Fact("attach", tool.Text(res.Attach))

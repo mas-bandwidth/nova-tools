@@ -635,7 +635,7 @@ runs `tmux new-session -d -s friend-<me> -c <d> -- <launch command...>` and refu
 exists. `--harness` names the harness whose idle prompt pattern is used (opencode, grok, aider);
 `--prompt <regexp>` overrides it and is wanted for any other harness: the pattern the last non-empty
 line of the pane matches while the harness waits for input. The session name and the pattern are saved
-in `<state-dir>/host.json` (`--state-dir`, else `~/.nova-friend/<me>`), so `run` and `install` need
+in `<state-dir>/host.json` (`--state-dir`, else `<dir>/.nova-friend`, as `run`), so `run` and `install` need
 no flag beyond `--harness tmux` (one of the harnesses, chosen over a `--host` flag: the adapter registry
 takes a harness name). With that harness a delivery captures the pane (`tmux capture-pane -p -t friend-<me>`);
 when its last non-empty line matches the idle prompt it types the text on one line, each newline
