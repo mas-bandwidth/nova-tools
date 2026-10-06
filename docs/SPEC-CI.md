@@ -2423,7 +2423,11 @@ which pins the bare, flagged, piped and table-cell spellings and the
 local`, a named package, one tool's own subtree, `go vet ./...` and prose as
 green.
 **Its allowlist.** None; the `cmd/`, `internal/` and `tools/` guard cells of
-`AGENTS.md` are `nova-ci local`, from `internal/docs/catalog.go`.
+`AGENTS.md` are `nova-ci local`, from `internal/docs/catalog.go`. The reports
+are not read: `docs/acceptance/`, `docs/dogfood/`, `docs/ratings/` and
+`docs/stranger/` hold records of runs that quote the commands their authors
+ran, as they were run, and a record is not an instruction
+(`TestReportsMayQuoteWholeTreeCommands`).
 **Its remedy line.** `run nova-ci local (the unit tier CI runs for this diff)
 or name the packages you touched: nice -n 15 go test -p 2 -count=1 ./cmd/<tool>`.
 **Its narrowings.** One line at a time: a command split across a backslash
