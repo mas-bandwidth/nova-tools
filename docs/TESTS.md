@@ -1047,8 +1047,9 @@ nothing is ticking between commands in a twin: tick by hand: nova-sprint tick
 
 $ nova-sprint tick
 MOVED presence: m1 up
+MOVED presence: status seen: m1 up
 TABLES rows changed: work=0 readers=0 merge=0 fleet=1
-TICK OK state=RUNNING idle=no moved=1 notes=2
+TICK OK state=RUNNING idle=no moved=2 notes=2
 0/1 0.0% -> ETA -  machine: running
 
 $ nova-sprint tick
@@ -1145,8 +1146,9 @@ nothing is ticking between commands in a twin: tick by hand: nova-sprint tick
 
 $ nova-sprint tick
 MOVED presence: m1 up
+MOVED presence: status seen: m1 up
 TABLES rows changed: work=0 readers=0 merge=0 fleet=1
-TICK OK state=RUNNING idle=no moved=1 notes=2
+TICK OK state=RUNNING idle=no moved=2 notes=2
 0/2 0.0% -> ETA -  machine: running
 
 $ nova-sprint tick

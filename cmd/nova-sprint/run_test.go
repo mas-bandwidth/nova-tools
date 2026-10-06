@@ -33,7 +33,7 @@ func TestStartAndStopSayTheStateBeforeAndAfter(t *testing.T) {
 	require.Contains(t, ta.ok("start"), "unchanged: the machine is RUNNING already", "start when running")
 	out = ta.ok("tick")
 	require.Contains(t, out, "MOVED deal: s1-1 work ready -> working", "tick")
-	require.Contains(t, out, "TICK OK state=RUNNING idle=no moved=3", "tick")
+	require.Contains(t, out, "TICK OK state=RUNNING idle=no moved=4", "tick") // three deals and the status record's first sight of m1
 	ta.a.sleep(store.MachineSilence + time.Second)
 	out = ta.ok("inbox")
 	require.Contains(t, out, "machine: running (tick late 16s)\n", "inbox with a late tick: running, never STOPPED")
