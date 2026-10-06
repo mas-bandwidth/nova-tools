@@ -697,6 +697,11 @@ row. Her ready and working on the friends table count the read with her work
 cards: the readers table and the friends table are two views of the one pool.
 A friend is asked an attempt once: a read taken back from her with no
 verdict is not a read, and the attempt is asked of another friend.
+A read withdrawn on her row (her hold, `friend down`, `friend take`) is not
+outstanding: the next tick's ask asks the attempt of another reader, friend or
+paid, and the withdrawn card stays on her row as history, raising neither rule 2
+nor a lateness (`TestAWithdrawnFriendReadIsAskedAgain`,
+`TestRuleTwoIsQuietForAWithdrawnRead`).
 
 `friend sync`, run by the coordinator's own loop where the directories are
 (each run once, at the loop's period: 15 s in the coordinator's loop), carries

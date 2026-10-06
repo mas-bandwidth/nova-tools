@@ -207,8 +207,9 @@ func friendReadAgrees(c *Card) bool {
 // read tier). A placed read stands as itself. A retired read whose verdict is
 // ok stands as OK when its head matches (readHeadMatches), and one whose
 // verdict is broken stands as broken, each a copy so the fleet card is left
-// as it is. A read taken back with no verdict does not stand: the attempt may
-// be asked of another friend. The ok and broken copies are not placed on a table.
+// as it is. A read taken back with no verdict, retired or withdrawn on her row,
+// does not stand: the attempt is asked of another reader, and the withdrawn
+// record stays as history. The ok and broken copies are not placed on a table.
 func friendReadLive(s *Snapshot, pr *Card) (placed, okCards, broken []*Card) {
 	if s == nil || s.Fleet == nil || pr == nil {
 		return nil, nil, nil
@@ -219,7 +220,7 @@ func friendReadLive(s *Snapshot, pr *Card) (placed, okCards, broken []*Card) {
 	}
 	prefix := pr.ID + ".r" + itoa(attempt) + "."
 	for _, c := range s.Fleet.Cards() {
-		if c == nil || c.F("kind") != "read" || !strings.HasPrefix(c.ID, prefix) {
+		if c == nil || c.F("kind") != "read" || !strings.HasPrefix(c.ID, prefix) || c.Col == Withdrawn {
 			continue
 		}
 		if c.Placed() {
