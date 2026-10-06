@@ -90,7 +90,7 @@ func TestAReadReturnedIsAskedOfAnotherReaderAtTheSameAttempt(t *testing.T) {
 	assert.Zero(t, h.written(sprint.NReadBroken))
 	h.clean("returned and asked again")
 	// a report against the returned card is refused, naming the return
-	res := h.run(ReadStep(sprint.ReadReq{As: from, Verdict: "ok", Sel: sprint.Sel{IDs: []string{rc.ID}}, Who: from}))
+	res := h.run(ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: from, Verdict: "ok", Sel: sprint.Sel{IDs: []string{rc.ID}}, Who: from}))
 	require.NotEmpty(t, res.Refused)
 	assert.Contains(t, strings.Join(refusedText(res), " "), "returned")
 }
@@ -199,7 +199,7 @@ func TestAReturnOfAReadAlreadyReportedIsRefused(t *testing.T) {
 			h := newHarness(t)
 			h.asked1(1)
 			rc := h.snap().Readers.Of("s1-1")[0]
-			h.must(ReadStep(sprint.ReadReq{As: rc.Row, Verdict: verdict, Finding: "f:1", Sel: sprint.Sel{IDs: []string{rc.ID}}, Who: rc.Row}))
+			h.must(ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: rc.Row, Verdict: verdict, Finding: "f:1", Sel: sprint.Sel{IDs: []string{rc.ID}}, Who: rc.Row}))
 			res := h.run(ReadStep(sprint.ReadReq{As: rc.Row, Return: true, Reason: "late", Sel: sprint.Sel{IDs: []string{rc.ID}}, Who: rc.Row}))
 			require.NotEmpty(t, res.Refused)
 			c := h.snap().Readers.Placed(rc.ID)
@@ -279,7 +279,7 @@ func TestReadsEveryReaderReturnsAreNeverStranded(t *testing.T) {
 	// the fault fixed: both readers read it, and the tick accepts
 	for _, r := range []string{pair[1], third} {
 		id := sprint.ReadCardID("s1-1", 1, r)
-		h.must(ReadStep(sprint.ReadReq{As: r, Verdict: "ok", Finding: "clean", Sel: sprint.Sel{IDs: []string{id}}, Who: r}))
+		h.must(ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: r, Verdict: "ok", Finding: "clean", Sel: sprint.Sel{IDs: []string{id}}, Who: r}))
 	}
 	h.machine()
 	assert.Equal(t, sprint.Merging, h.snap().Work.Card("s1-1").Col)
@@ -320,7 +320,7 @@ func TestAReadReturnedPastItsReasksIsJudgedNotAskedAgain(t *testing.T) {
 	assert.Nil(t, h.snap().Readers.Placed(id), "the return past the bound is counted: the card is retired")
 	// reads are asked one at a time: reader-b's, outstanding, is read ok, and the
 	// second read is wanted of a reader who has not read the attempt: none
-	h.must(ReadStep(sprint.ReadReq{As: "reader-b", Verdict: "ok", Sel: sprint.Sel{IDs: []string{sprint.ReadCardID("s1-1", 1, "reader-b")}}, Who: "reader-b"}))
+	h.must(ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: "reader-b", Verdict: "ok", Sel: sprint.Sel{IDs: []string{sprint.ReadCardID("s1-1", 1, "reader-b")}}, Who: "reader-b"}))
 	h.machine()
 	open := h.openOf(sprint.NCannotAsk)
 	require.Len(t, open, 1, "the coordinator is told: cannot ask")
@@ -418,7 +418,7 @@ func TestAReturnCountsItselfWhileFewerThanTwoReadersAreUp(t *testing.T) {
 	assert.NotEmpty(t, h.openOf(sprint.NFewReaders), "the coordinator is told while fewer than two are up")
 	require.NoError(t, h.st.SetReaderAway(h.ctx, "reader-b", false, "coordinator"))
 	// reader-b's read, outstanding, comes back ok: the second read is wanted and no reader is free
-	h.must(ReadStep(sprint.ReadReq{As: "reader-b", Verdict: "ok", Sel: sprint.Sel{IDs: []string{sprint.ReadCardID("s1-1", 1, "reader-b")}}, Who: "reader-b"}))
+	h.must(ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: "reader-b", Verdict: "ok", Sel: sprint.Sel{IDs: []string{sprint.ReadCardID("s1-1", 1, "reader-b")}}, Who: "reader-b"}))
 	h.machine()
 	assert.NotEmpty(t, h.openOf(sprint.NCannotAsk), "two up, none free: cannot ask")
 	h.clean("bounded with one reader up")

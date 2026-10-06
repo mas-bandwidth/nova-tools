@@ -440,6 +440,10 @@ func Read(s *Snapshot, r ReadReq) Plan {
 			// a return is counted once: the card is back in asked since it, not begun
 			return "returned already at " + c.F(FieldReturned) + " and not begun since: a return is counted once"
 		}
+		if !r.Begin && !r.Return {
+			// a routed read's verdict is priced as work is, or it is no verdict (cost.go)
+			return ReadUsageMissing(c, r.Usage, r.Verdict)
+		}
 		return ""
 	}, s.Readers.Card)
 	namePrimarysReads(&p, all)
@@ -498,7 +502,7 @@ func Read(s *Snapshot, r ReadReq) Plan {
 			// one included (cost.go)
 			returns := c.Int(FieldReasked) + 1
 			run := nextTake(c, FieldReadTake)
-			rec := costRecord(s, r.Usage, "", "", true, c.F("asked"), cmp.Or(c.F("begun"), stamp(s.Now)))
+			rec := readCostRecord(s, c, r.Usage, c.F("asked"), cmp.Or(c.F("begun"), stamp(s.Now)))
 			set := map[string]string{FieldReadTake + itoa(run): rec, FieldReasked: itoa(returns)}
 			record(pr, readConsumer(s, c, run, "returned", rec))
 			if returns > MaxReadReasks {
@@ -524,7 +528,7 @@ func Read(s *Snapshot, r ReadReq) Plan {
 		}
 		// what the read cost, timed and priced (cost.go): kept on the read card when the
 		// reader reported it, and recorded on the primary in this step
-		rec := costRecord(s, r.Usage, "", "", true, c.F("asked"), cmp.Or(c.F("begun"), stamp(s.Now)))
+		rec := readCostRecord(s, c, r.Usage, c.F("asked"), cmp.Or(c.F("begun"), stamp(s.Now)))
 		if r.Usage != "" {
 			set[FieldUsage] = rec
 		}
