@@ -228,8 +228,12 @@ func (l *loop) endCard(lane int, card Card, end LaneEnd, now time.Time) string {
 	d, s := l.d, l.lanes
 	delete(s.state.Started, filepath.Base(card.Outbox))
 	defer l.saveLanes(now)
+	mark := ""
+	if err := endLaneMark(d.Dir, filepath.Base(card.Outbox), l.laneWho(lane)); err != nil {
+		mark = fmt.Sprintf(" mark_error=%q", oneLine(err.Error(), 300)) // its other lanes end by her row alone
+	}
 	if exists(card.Report()) {
-		return "finish=report"
+		return "finish=report" + mark
 	}
 	head, branch := PushedHead(d.Dir, card)
 	report := EndReport(d.Friend, lane, card, end, head, branch)
@@ -237,6 +241,7 @@ func (l *loop) endCard(lane int, card Card, end LaneEnd, now time.Time) string {
 	if head != "" {
 		words += " head=" + head
 	}
+	words += mark
 	if err := os.MkdirAll(card.Outbox, 0o755); err != nil {
 		return words + fmt.Sprintf(" report_error=%q", err.Error())
 	}

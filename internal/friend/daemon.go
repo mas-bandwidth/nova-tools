@@ -167,6 +167,11 @@ type Daemon struct {
 	// as nova-sprint collect's does (outbox.go). Nil reads none, and a LAND finishes at its
 	// Head.
 	Tip func(ctx context.Context, repo, branch string) (string, error)
+	// Running is the beat's running list as the sprint server last said it, every friend's:
+	// a card id or job to the friend whose lane runs it. A lane is never started for a card
+	// it names another friend running, and a lane whose card left her row names its friend
+	// on the job's lane mark (one_lane.go). Nil says none; the lane marks still hold.
+	Running func() map[string]string
 
 	m           *Machine
 	status      Status
@@ -301,6 +306,7 @@ type loop struct {
 	dealt        []string // the inbox briefs the daemon wrote that the session has not been told of (batch mode)
 	wake         bool     // a wake check is owed: the pong line goes in as its own turn when the session is free (startWake)
 	saidRefusal  string   // the card runner's refusal last recorded, "" when it runs
+	tag          string   // this daemon's tag in its lanes' names on a lane mark (laneTag, one_lane.go)
 }
 
 // Run is the loop until ctx ends. Each step: the clock; the friend's row
@@ -320,7 +326,7 @@ type loop struct {
 func (d *Daemon) Run(ctx context.Context) error {
 	l := &loop{d: d, ctx: ctx, b: &bus.Bus{Store: d.Store}, silentStop: d.SilentStop, brokenAfter: d.BrokenAfter,
 		answered: map[string]bool{}, failed: map[string]int{}, inHand: map[string]bool{}, results: make(chan result, 1),
-		lanes: &laneSet{results: make(chan laneResult, 64)}, reads: newReadSet(), mode: ModeBatch}
+		lanes: &laneSet{results: make(chan laneResult, 64), refused: map[string]string{}}, reads: newReadSet(), mode: ModeBatch, tag: laneTag()}
 	_, l.passive = d.Deliver.(interface{ Passive() })
 	if l.silentStop <= 0 {
 		l.silentStop = DefaultSilentStop
