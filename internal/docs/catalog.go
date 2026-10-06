@@ -53,6 +53,7 @@ var DefaultCatalog = []Entry{
 	E("internal/binstamp", "a binary file's stamp: a loop stops when its own binary was replaced", "go test ./internal/binstamp", "go test ./internal/binstamp"),
 	E("internal/buildinfo", "binary identity and version info", "go test ./internal/buildinfo", "go test ./internal/buildinfo"),
 	E("internal/bus", "the message bus over Redis streams: the rules (send, recv, ack, peek, log) over a Store of the few commands used, the Redis store and the in-memory fake", "go test ./internal/bus", "go test -tags functional ./internal/bus"),
+	E("internal/card", "what a brief's writers hold every brief to before it leaves: PATHS computed from its START files, and the card checks", "go test ./internal/card", "go test ./internal/card"),
 	E("internal/cardgen", "nova-card's planner: ledger rows, findings and help to cards with PATHS, waves and the brief, pure over text", "go test ./internal/cardgen", "go test ./internal/cardgen"),
 	E("internal/cairn", "the cairn store: session records, entries, the index and receipts, nested and flat", "go test ./internal/cairn", "go test ./internal/cairn"),
 	E("internal/cardcontract", "the frame around a card's task: the frame file, JOB.md, the result shape, and the shims of each model family's profile", "go test ./internal/cardcontract", "go test -tags functional ./internal/cardcontract"),

@@ -2863,10 +2863,10 @@ the last good frame and one `store unreachable since <time>` line until recovery
 nova-card is pre-alpha: not ready for production use.
 
 ```
-nova-card generate --from ledger --ledger <name> --repo-dir <dir> --out <dir> [--tier flash|pro] [--prefix <p>] [--minutes <n>] [--max <n>] [--base <branch>] [--repo <owner/name>] [--dry-run]
-nova-card generate --from findings --file <tsv> --out <dir> (--repo-dir <dir> | --repo <owner/name> --base <branch> --sha <40hex>) [--tier flash|pro] [--prefix <p>] [--minutes <n>] [--max <n>] [--dry-run]
-nova-card generate --from help --tool <name> [--tool <name>...] --out <dir> [--bin-dir <dir>] (--repo-dir <dir> | --repo --base --sha) [--tier flash|pro] [--prefix <p>] [--minutes <n>] [--max <n>] [--dry-run]
-nova-card lint --card <file> [--card <file>...]
+nova-card generate --from ledger --ledger <name> --repo-dir <dir> --out <dir> [--tier flash|pro] [--prefix <p>] [--minutes <n>] [--max <n>] [--base <branch>] [--repo <owner/name>] [--name <n>...] [--dropped <id>...] [--dry-run]
+nova-card generate --from findings --file <tsv> --out <dir> (--repo-dir <dir> | --repo <owner/name> --base <branch> --sha <40hex>) [--tier flash|pro] [--prefix <p>] [--minutes <n>] [--max <n>] [--name <n>...] [--dropped <id>...] [--dry-run]
+nova-card generate --from help --tool <name> [--tool <name>...] --out <dir> [--bin-dir <dir>] (--repo-dir <dir> | --repo --base --sha) [--tier flash|pro] [--prefix <p>] [--minutes <n>] [--max <n>] [--name <n>...] [--dropped <id>...] [--dry-run]
+nova-card lint --card <file> [--card <file>...] [--name <n>...] [--dropped <id>...]
 nova-card template
 nova-card version
 nova-card help [<verb>]
@@ -2908,8 +2908,12 @@ carries the transcript; `cmd/nova-card/firstrun_test.go` runs it.
 `--from ledger --ledger <name>` reads one of internal/ci's ratchet ledgers from
 the checkout: `serial-tests`, `slowwaits`, `sleeps-skips`, `fixed-waits`
 (flash), `dead-code`, `namedpaths`, `transcripts`, `generality-fixtures` (pro).
-One card per file the rows name; the card's PATHS are the file, its package's
-test files and the ledger; its TEST is the class test that holds the ledger;
+One card per file the rows name; the card's PATHS are computed from its START
+line, never typed: every directory a START file lives in, as its Go files and its
+tests (`<dir>/*.go`, `<dir>/*_test.go`), and the docs the card names (a ledger
+card: the row's file's package, its test's package and the ledger; a findings
+card: the file's package and its test's package; a help card: `cmd/<tool>` and
+`docs/CLI.md`); its TEST is the class test that holds the ledger;
 its task is the ledger's template with the rows substituted, and it says to
 write the draft early and commit before any probe. `--from findings --file
 <tsv>` reads `file:line`, finding, remedy, test columns (a header row is
@@ -2934,7 +2938,9 @@ Every brief is held to the lint `nova-sprint add` runs (the model lines, the
 child rules under the default rule set, a tree card's steps), and past the add
 to the typed header and the template's unfilled `<...>` lines, which the add
 does not read, before anything is written (a sprint initialised with `--rules`
-holds a brief to that file at the add); one red brief prints its
+holds a brief to that file at the add), and to the card checks the add runs
+too: a tier on line 1, a TEST whose package PATHS names, no name `--name` gives
+outside double-quoted words, no card `--dropped` gives; one red brief prints its
 `LINT DRIFT card=<id> check=<check> line=<n>: <excerpt>` line and nothing is
 written, exit 1. A PATHS entry that names nothing in `--repo-dir` is the same
 refusal. An `--out` that already holds a brief is refused, exit 2. `--dry-run`
