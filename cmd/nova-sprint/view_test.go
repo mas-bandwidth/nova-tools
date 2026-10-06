@@ -68,7 +68,14 @@ func TestTheCoordinatorViewNamesAnIdleFleetAndItsRelease(t *testing.T) {
 	require.True(t, ok, "an idle fleet is an alarm: %+v", v.Items)
 	assert.Equal(t, itemAlarm, idle.T)
 	assert.Equal(t, "nova-sprint release s1-stop --reason '<why the wave goes now>'", idle.Next)
-	assert.Equal(t, v.N.Width-v.N.Busy, idle.B, "its weight is the width standing idle")
+	assert.Equal(t, v.Cap.Starved, idle.B, "its weight is the lanes no card can fill and no hold keeps")
+	assert.Equal(t, v.N.Width-v.N.Busy, v.Cap.Free, "a machine-only fleet: the free lanes are the width less the work")
+	assert.Equal(t, v.Cap.Free, v.Cap.Eligible+v.Cap.Held+v.Cap.Starved, "every free lane is eligible, held or starved")
+	held, ok := item(v, "a:held")
+	require.True(t, ok, "the lanes the sentinel's wave would fill are a hold, apart from the starved: %+v", v.Items)
+	assert.Equal(t, 2, held.B, "the two cards behind the sentinel")
+	assert.Equal(t, "nova-sprint release s1-stop --reason '<why the wave goes now>'", held.Next)
+	assert.Contains(t, v.Sum, "slots ", "the headline carries the eligible lanes: %s", v.Sum)
 	dry, ok := item(v, "a:dry")
 	require.True(t, ok, "nothing ready with cards waiting is an alarm: %+v", v.Items)
 	assert.Equal(t, 2, dry.B)
@@ -165,7 +172,12 @@ func TestTheCoordinatorViewNamesAFriendWithStaleReports(t *testing.T) {
 			row = r
 		}
 	}
-	assert.Equal(t, viewRow{K: "f:amy", St: sprint.Up, W: 1, Wd: row.Wd, Rep: row.Rep}, row, "her row: one card working")
+	assert.Equal(t, viewRow{K: "f:amy", St: sprint.Up, W: 1, Wd: row.Wd, Fr: row.Wd - 1, Rep: row.Rep}, row, "her row: one card working, the rest of her lanes free")
+	free := 0
+	for _, r := range v.Rows {
+		free += r.Fr
+	}
+	assert.Equal(t, v.Cap.Free, free, "the headline's free lanes are the rows'")
 
 	ta.a.sleep(viewStaleReport + time.Minute)
 	v = ta.coordView("")
