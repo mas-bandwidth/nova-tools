@@ -194,6 +194,11 @@ func TestEveryStateMachineHasACurrentModel(t *testing.T) {
 	}
 }
 
+func TestTLAModelIsCurrentCardLifecycle(t *testing.T) {
+	t.Parallel()
+	requireModelCurrent(t, "card-lifecycle")
+}
+
 func TestTLACoverageRefusesAnOwedRowWithNoCard(t *testing.T) {
 	t.Parallel()
 	root := repoRoot(t)
