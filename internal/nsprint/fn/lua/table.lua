@@ -466,15 +466,24 @@ do
       if table.concat(hidden, ',') ~= (h.hidden or '') or (h.visible and h.visible ~= '0' and h.visible ~= '1') then return nil, T.refuse('DEFINITION') end
     end
     local cfg = T.config(h)
+    -- The view family is reserved like the table family: a member prefix or
+    -- an epoch key inside it would interleave with the hashes and the SET that
+    -- ns_view_set/state/del own (security#78 finding 5).
     if not T.word(cfg.member_prefix) or string.sub(cfg.member_prefix, -1) ~= ':' or
         (string.sub(cfg.member_prefix, 1, 6) == 'table:' and cfg.member_prefix ~= 'table::member:') or
+        T.viewfamily(cfg.member_prefix) or
         not T.word(cfg.epoch_field) or
         (cfg.epoch_key ~= '' and (not T.word(cfg.epoch_key) or cfg.epoch_key == 'tables' or
-        string.sub(cfg.epoch_key, 1, 6) == 'table:' or
+        string.sub(cfg.epoch_key, 1, 6) == 'table:' or T.viewfamily(cfg.epoch_key) or
         string.sub(cfg.epoch_key, 1, #cfg.member_prefix) == cfg.member_prefix)) then
       return nil, T.refuse('CONFIG')
     end
     return cols
+  end
+  -- T.viewfamily(key): whether key is the 'views' SET or a 'view:<name>'
+  -- hash, the keys the view functions own (security#78 finding 5).
+  function T.viewfamily(key)
+    return key == 'views' or string.sub(key, 1, 5) == 'view:'
   end
   function T.prefix(name, epoch)
     return 'table:' .. name .. (epoch == '0' and '' or ':' .. epoch)
@@ -877,8 +886,9 @@ do
       if not c then return nil, T.refuse('NOCOL', row, col) end
       if c.noset then return nil, T.refuse('TEXT', row, col) end
       if not T.word(key) then return nil, T.refuse('BINDKEY', row, col) end
-      -- Reserve the entire table namespace, including future epochs/metadata.
-      if key == 'tables' or string.sub(key, 1, 6) == 'table:' then return nil, T.refuse('OWNEDALIAS', row, col, key) end
+      -- Reserve the entire table namespace, including future epochs/metadata,
+      -- and the view family (security#78 finding 5).
+      if key == 'tables' or string.sub(key, 1, 6) == 'table:' or T.viewfamily(key) then return nil, T.refuse('OWNEDALIAS', row, col, key) end
       h['key:' .. col] = key
     end
     return h

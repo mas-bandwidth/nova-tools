@@ -273,3 +273,50 @@ func TestRawAndGoRowKeysAgreeOnBytes(t *testing.T) {
 		}
 	}
 }
+
+// The view family (the 'views' SET and every 'view:<name>' hash that
+// ns_view_set/state/del own) is reserved like the table family: a member
+// prefix or an epoch key inside it is a CONFIG refusal at create, and no
+// definition is written (security#78 finding 5).
+func TestCreateRefusesAMemberPrefixOrEpochKeyInTheViewFamily(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ name, prefix, epochKey string }{
+		{"member-prefix view:", "view:", ""},
+		{"member-prefix view:x:", "view:x:", ""},
+		{"epoch-key views", "", "views"},
+		{"epoch-key view:today", "", "view:today"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, c := live(t)
+			ctx := context.Background()
+			cols, _ := ntable.ParseColumns("done")
+			err := ntable.Create(ctx, c, ntable.Table{Name: "t", Columns: cols, MemberPrefix: tc.prefix, EpochKey: tc.epochKey}, now)
+			var r *ntable.Refusal
+			require.ErrorAs(t, err, &r)
+			assert.Equal(t, "CONFIG", r.Code)
+			n, err := c.Exists(ctx, ntable.DefKey("t")).Result()
+			require.NoError(t, err)
+			assert.Zero(t, n, "a refused create wrote a definition")
+		})
+	}
+	t.Run("a binding into the view family", func(t *testing.T) {
+		t.Parallel()
+		_, c := live(t)
+		ctx := context.Background()
+		cols, _ := ntable.ParseColumns("a")
+		require.NoError(t, ntable.Create(ctx, c, ntable.Table{Name: "t", Columns: cols}, now))
+		for _, key := range []string{"views", "view:today"} {
+			_, err := ntable.RowAdd(ctx, c, "t", "r", ntable.RowSpec{Binds: map[string]string{"a": key}})
+			var r *ntable.Refusal
+			require.ErrorAs(t, err, &r, "a binding to %s", key)
+			assert.Equal(t, "OWNEDALIAS", r.Code, "a binding to %s", key)
+		}
+	})
+	t.Run("a plain member prefix still creates", func(t *testing.T) {
+		t.Parallel()
+		_, c := live(t)
+		cols, _ := ntable.ParseColumns("done")
+		require.NoError(t, ntable.Create(context.Background(), c, ntable.Table{Name: "t", Columns: cols, MemberPrefix: "job:member:"}, now))
+	})
+}
