@@ -498,6 +498,14 @@ with no clock and no store). What it holds:
   The tree holds no name of the deployment (internal/ci TestGeneralityText),
   so the names come from the caller: `--name` to nova-card, the store's
   coordinator, owner and friends table to the add.
+- A card whose PATHS reach a model or a configuration under `tla/` runs the
+  model in its own gate: its STEP 4 adds, on a Linux TLC bench, `make tlc` for
+  each group `tlacheck groups --stale` lists (the groups of the cases the edit
+  touched) and `tlacheck merge --keep tla/RUNS.tsv` of what they wrote, and its
+  PATHS line carries `tla/RUNS.tsv` so the record is committed with the change
+  (`cardgen.modelGate`). The lander refuses a head that edits `tla/*.tla` or
+  `tla/*.cfg` without a current record for each case it touches, naming the case
+  (SPEC-SPRINT.md section 7, the run records).
   The output is the directory, its `manifest.tsv` (id, file, test, wave, deps)
   and one `CARDS OK dir= cards= waves= tier=` line.
 
