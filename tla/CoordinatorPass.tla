@@ -34,6 +34,17 @@
 \* The condition holds once Every of running time has run since the overdue line
 \* (behindConds): the line at the deadline, then the pass Every on, then every Every.
 \*
+\* With Kind = "starved" the condition is a friend up whose row has been empty for Window
+\* of running time while cards she could do wait elsewhere (starvedConds; the owner,
+\* 2026-10-05: "How is it that you missed Zhi having zero cards? Seems bad.").
+\*   holds      her row is empty while she is up (an outside event).
+\*   waits      cards she could do wait in the pool or unstarted on another friend's row
+\*              (an outside event).
+\*   emptyAt    the fleet property PropFriendEmptySince: the running clock of the tick that
+\*              first saw her row empty, -1 while it is not; that tick only writes it.
+\*   emptyFrom  the same as the world has it (a ghost): the empty row's true start.
+\* The condition holds once Window has run since emptyAt, while cards wait.
+\*
 \* The design, Broken = "none":
 \*   Tick  the clock steps; when the condition holds, a judgment is written if none is
 \*         open or acknowledged, else the open one is raised again in place (again counts
@@ -49,14 +60,19 @@
 \*   "doublepush" (Kind = "behind") the pass counts a late judgment from its deadline, not
 \*                from its overdue line: the line and the pass push in one tick:
 \*                OnePushATick.
+\*   "nowindow"   (Kind = "starved") she is told the tick her row is first seen empty:
+\*                TellsOnlyAfterWindow.
+\*   "noreset"    (Kind = "starved") the empty row's start is not cleared when her row
+\*                holds cards again, so a later empty row is told at once:
+\*                TellsOnlyAfterWindow.
 EXTENDS Integers
 
-CONSTANTS Every, MaxClock, Broken, Kind
+CONSTANTS Every, MaxClock, Broken, Kind, Window
 
 VARIABLES holds, seen, open, acked, first, again, clk, written, pushes,
-          late, markAt, lastPush, tickPushes
+          late, markAt, lastPush, tickPushes, waits, emptyAt, emptyFrom
 vars == <<holds, seen, open, acked, first, again, clk, written, pushes,
-          late, markAt, lastPush, tickPushes>>
+          late, markAt, lastPush, tickPushes, waits, emptyAt, emptyFrom>>
 
 TypeOK ==
   /\ holds \in BOOLEAN
@@ -72,33 +88,41 @@ TypeOK ==
   /\ markAt \in (0..MaxClock) \cup {-1}
   /\ lastPush \in (0..MaxClock) \cup {-1}
   /\ tickPushes \in 0..2
+  /\ waits \in BOOLEAN
+  /\ emptyAt \in (0..MaxClock) \cup {-1}
+  /\ emptyFrom \in (0..MaxClock) \cup {-1}
 
 Init ==
   /\ holds = FALSE /\ seen = FALSE /\ open = FALSE /\ acked = FALSE
   /\ first = -1 /\ again = 0 /\ clk = 0 /\ written = 0 /\ pushes = 0
   /\ late = FALSE /\ markAt = -1 /\ lastPush = -1 /\ tickPushes = 0
+  /\ waits = FALSE /\ emptyAt = -1 /\ emptyFrom = -1
 
 \* The world: the friend's session answers or not, her cards finish or not, the
-\* coordinator answers the late judgments or not.
+\* coordinator answers the late judgments or not, her row empties or fills, cards she
+\* could do come to wait elsewhere or stop waiting.
 Flip ==
-  /\ IF Kind = "behind"
-       THEN late' = ~late /\ UNCHANGED holds
-       ELSE holds' = ~holds /\ UNCHANGED late
-  /\ UNCHANGED <<seen, open, acked, first, again, clk, written, pushes, markAt, lastPush, tickPushes>>
+  /\ CASE Kind = "behind" -> late' = ~late /\ UNCHANGED <<holds, waits>>
+       [] Kind = "starved" -> \/ holds' = ~holds /\ UNCHANGED <<late, waits>>
+                              \/ waits' = ~waits /\ UNCHANGED <<late, holds>>
+       [] OTHER -> holds' = ~holds /\ UNCHANGED <<late, waits>>
+  /\ UNCHANGED <<seen, open, acked, first, again, clk, written, pushes, markAt, lastPush, tickPushes, emptyAt, emptyFrom>>
 
 \* The coordinator acknowledges the open judgment.
 Ack ==
   /\ open /\ ~acked
   /\ open' = FALSE /\ acked' = TRUE
-  /\ UNCHANGED <<holds, seen, first, again, clk, written, pushes, late, markAt, lastPush, tickPushes>>
+  /\ UNCHANGED <<holds, seen, first, again, clk, written, pushes, late, markAt, lastPush, tickPushes, waits, emptyAt, emptyFrom>>
 
 \* The condition the tick's pass reads. Behind: the late judgment's overdue line,
 \* written by an earlier tick (the pass reads the holds before this tick's), is Every
 \* old.
 Cond ==
-  IF Kind = "behind"
-    THEN late /\ IF Broken = "doublepush" THEN TRUE ELSE markAt # -1 /\ clk + 1 - markAt >= Every
-    ELSE holds
+  CASE Kind = "behind" ->
+         late /\ IF Broken = "doublepush" THEN TRUE ELSE markAt # -1 /\ clk + 1 - markAt >= Every
+    [] Kind = "starved" ->
+         holds /\ waits /\ IF Broken = "nowindow" THEN TRUE ELSE emptyAt # -1 /\ clk + 1 - emptyAt >= Window
+    [] OTHER -> holds
 
 \* This tick's overdue line about the late judgment: the first tick that finds it late.
 Line == Kind = "behind" /\ late /\ markAt = -1
@@ -115,7 +139,12 @@ Tick ==
   /\ clk < MaxClock
   /\ clk' = clk + 1
   /\ seen' = Cond
-  /\ UNCHANGED <<holds, late>>
+  /\ UNCHANGED <<holds, late, waits>>
+  \* the empty row's start: written the tick that first sees it, cleared when it fills
+  /\ emptyAt' = IF Kind # "starved" THEN -1
+                ELSE IF holds THEN (IF emptyAt = -1 THEN clk + 1 ELSE emptyAt)
+                ELSE IF Broken = "noreset" THEN emptyAt ELSE -1
+  /\ emptyFrom' = IF Kind = "starved" /\ holds THEN (IF emptyFrom = -1 THEN clk + 1 ELSE emptyFrom) ELSE -1
   /\ markAt' = IF Kind = "behind" /\ late THEN (IF markAt = -1 THEN clk + 1 ELSE markAt) ELSE -1
   /\ tickPushes' = (IF Line THEN 1 ELSE 0) + (IF PassPush THEN 1 ELSE 0)
   /\ lastPush' = IF ~(Kind = "behind" /\ late) THEN -1
@@ -166,5 +195,10 @@ OnePushATick == tickPushes <= 1
 \* without a push once its overdue line is written: the line, then the pass every Every.
 LateRemindedEveryWindow ==
   (Kind = "behind" /\ late /\ markAt # -1 /\ ~acked) => clk - lastPush <= Every
+
+\* Starved: a friend is told only once her row has truly been empty for Window, never on
+\* a row that just emptied, nor on an earlier empty row's start.
+TellsOnlyAfterWindow ==
+  (Kind = "starved" /\ (open \/ acked)) => (emptyFrom # -1 /\ first - emptyFrom >= Window)
 
 =============================================================================

@@ -311,7 +311,9 @@ func friendDeal(s *Snapshot, cards []*Card, seats []FriendSeat) (p Plan, dealt, 
 		tier := cardTierOf(escalating(s, c))
 		left := friendsLeft(wc)
 		name, _ := FriendCard(c)
+		pinned, why := name, ""
 		if name != "" && (free[name] <= 0 || slices.Contains(left, name) || !friendTakes(seat[name], tier)) {
+			why = pinWhy(pinned, seats, free, left, tier)
 			name = "" // the friend it names is not up with room, it has left her, or not her tier
 		}
 		if name == "" && !OnlyFriend(c) {
@@ -358,16 +360,107 @@ func friendDeal(s *Snapshot, cards []*Card, seats []FriendSeat) (p Plan, dealt, 
 			p.Rows = append(p.Rows, RowAdd{Fleet, row})
 			declared[row] = true
 		}
+		var u Unit
 		switch {
 		case escalated:
-			p.Units = append(p.Units, friendEscalateUnit(s, c, wc, card, row, col, tier))
+			u = friendEscalateUnit(s, c, wc, card, row, col, tier)
 		case wc != nil:
-			p.Units = append(p.Units, friendRedealUnit(s, c, wc, row, col))
+			u = friendRedealUnit(s, c, wc, row, col)
+			card = wc.ID
 		default:
-			p.Units = append(p.Units, friendDealUnit(s, c, card, row, col, nil))
+			u = friendDealUnit(s, c, card, row, col, nil)
 		}
+		if pinned != "" && name != pinned {
+			u.Notes = append(u.Notes, pinRotated(s, c, card, pinned, why, row))
+		}
+		p.Units = append(p.Units, u)
 	}
 	return Lawful(p), dealt, dealtWorking
+}
+
+// NPinRotated is the judgment that a card whose WHO line prefers a friend was dealt to
+// another row (docs/SPEC-SPRINT.md, WHO preference; the owner, 2026-10-05: "How is it
+// that you missed Zhi having zero cards? Seems bad."): a pin is a preference, and a pin
+// being ignored is never silent. It is the coordinator's, about the friend the card
+// prefers (her row is its subject, the work card its Card), saying why she did not take
+// it and whose row it is on now; answered by keep (an ack), or by friend take of the card
+// from the friend it went to. One is written each time the dealer or the friends' level
+// moves a pinned card away from her.
+const NPinRotated = "a card pinned to a friend was dealt to another row"
+
+// pinWhy is why the friend a card's WHO line prefers did not take it: she is not on the
+// roster, not up, it has left her, her tiers do not hold its tier, or her row is full.
+func pinWhy(pinned string, seats []FriendSeat, free map[string]int, left []string, tier string) string {
+	i := slices.IndexFunc(seats, func(f FriendSeat) bool { return f.Name == pinned })
+	if i < 0 {
+		return "she is not on the friends roster"
+	}
+	f := seats[i]
+	room, _ := friendRoom(f)
+	switch {
+	case f.Status != Up:
+		return "she is " + orDash(f.Status)
+	case slices.Contains(left, pinned):
+		return "it has left her (taken back from her, or levelled off her row)"
+	case !friendTakes(f, tier):
+		return fmt.Sprintf("her tiers (%s) do not hold its tier %s", orDash(strings.Join(friendTiers(f), ",")), tier)
+	case free[pinned] <= 0:
+		return fmt.Sprintf("her row is full (%d of her room %d)", room-free[pinned], room)
+	}
+	return "another friend was preferred"
+}
+
+// pinRotated is the judgment (NPinRotated) that the primary c, preferring the friend
+// pinned, went as its work card to row for why.
+func pinRotated(s *Snapshot, c *Card, card, pinned, why, row string) Note {
+	n := judgment(NPinRotated, "", s.Now, 0, FriendRow(pinned))
+	n.Card, n.Who = card, MachineActor
+	n.What = fmt.Sprintf("%s (WHO: friend %s) went to %s, not to her: %s; its work card %s is on %s's row; keep it there: ack it",
+		c.ID, pinned, row, why, card, row)
+	if g, ok := FriendOfRow(row); ok {
+		n.What += fmt.Sprintf(", or take it back for the friends' deal: nova-sprint friend take %s %s", g, c.ID)
+		n.Decisions = append(n.Decisions, "friend take "+g+" "+c.ID)
+	}
+	return n
+}
+
+// pinRotations is the rotation judgments (NPinRotated) of the machines' deal: each unit
+// that dealt a primary whose WHO line prefers a friend to a machine's row, with why she
+// did not take it (pinWhy; free is the friends' room left after their deal).
+func pinRotations(s *Snapshot, p *Plan, seats []FriendSeat, free map[string]int) {
+	for i := range p.Units {
+		u := &p.Units[i]
+		pr := s.Work.Card(u.Key)
+		if pr == nil || OnlyFriend(pr) {
+			continue
+		}
+		pinned, _ := FriendCard(pr)
+		if pinned == "" {
+			continue
+		}
+		for _, ch := range u.Changes {
+			if ch.Table != Fleet {
+				continue
+			}
+			row := ""
+			switch {
+			case ch.Entry.Create != nil:
+				row = ch.Entry.Create.Row
+			case ch.Entry.Move != nil:
+				row = ch.Entry.Move.Row
+			}
+			if row == "" || row == FriendRow(pinned) {
+				continue
+			}
+			wc := s.Fleet.Placed(WorkCardID(pr.ID, pr.Int("attempt")))
+			if wc != nil && wc.Col != Withdrawn {
+				wc = nil
+			}
+			why := pinWhy(pinned, seats, free, friendsLeft(wc), cardTierOf(escalating(s, pr)))
+			u.Notes = append(u.Notes, pinRotated(s, pr, ch.Entry.ID, pinned, why, row))
+			break
+		}
+	}
 }
 
 // friendEscalateUnit is a withdrawn attempt at its redeal bound below its ceiling dealt to
@@ -476,4 +569,17 @@ func friendRedealUnit(s *Snapshot, c, wc *Card, row, col string) Unit {
 		change(Fleet, moveEntry(wc, row, col, set, unset...)),
 		change(Work, moveEntry(c, c.Row, Working, map[string]string{"work": wc.ID}, "result")),
 	}, Moved: fmt.Sprintf("%s work %s -> working card=%s member=%s gen=%d %s (taken back, dealt again: friend sync delivers it to her inbox)", c.ID, c.Col, wc.ID, row, wc.Int("gen")+1, col)}
+}
+
+// friendFree is each friend's room left after the friends' deal placed dealt cards on her
+// row (friendRoom less her load); a friend not up has none.
+func friendFree(s *Snapshot, seats []FriendSeat, dealt map[string]int) map[string]int {
+	free := map[string]int{}
+	for _, f := range seats {
+		if f.Status == Up {
+			room, _ := friendRoom(f)
+			free[f.Name] = room - friendLoad(s, f.Name) - dealt[f.Name]
+		}
+	}
+	return free
 }

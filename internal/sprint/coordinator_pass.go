@@ -23,7 +23,12 @@ import (
 //     card work);
 //   - the coordinator is behind: judgments wait on the coordinator past their due time,
 //     by kind and count, each counted once PassEvery of running time has run since the
-//     overdue part named it (its overdue line is the first reminder, this the next).
+//     overdue part named it (its overdue line is the first reminder, this the next);
+//   - a friend is starved: she is up and her row has been empty for FriendEmptyAfter
+//     while cards she could do wait, ready in the pool or dealt and unstarted on another
+//     friend's row (the owner, 2026-10-05: "How is it that you missed Zhi having zero
+//     cards? Seems bad."). Her empty row's start is kept on the fleet table
+//     (PropFriendEmptySince), so it lives across ticks.
 //
 // Raising again is a push: the judgment is rewritten in place with the latest facts and
 // the count of its raises after the first (its Before), and a happened note NRaisedAgain
@@ -39,13 +44,14 @@ const (
 	NFriendDeaf        = "a friend's session is deaf"
 	NFriendIdle        = "a friend holds working cards and finishes none"
 	NCoordinatorBehind = "judgments wait on the coordinator past their deadline"
+	NFriendStarved     = "an up friend's row is empty while cards she could do wait"
 	// NRaisedAgain is the push of a pass judgment that still holds: a happened note to
 	// the coordinator, once every PassEvery of running time.
 	NRaisedAgain = "a judgment still holds: raised again"
 )
 
 // PassTypes are the pass's judgment types.
-var PassTypes = []string{NFriendDeaf, NFriendIdle, NCoordinatorBehind}
+var PassTypes = []string{NFriendDeaf, NFriendIdle, NCoordinatorBehind, NFriendStarved}
 
 const (
 	// PassEvery is the running time between two raises of one pass judgment.
@@ -58,10 +64,19 @@ const (
 	FriendDeafAfter = FriendProofLive
 	// FriendFinishDefault is the friend-finish window when the coordinator set none.
 	FriendFinishDefault = 30 * time.Minute
+	// FriendEmptyAfter is how long, in running time, an up friend's row is empty while
+	// cards she could do wait before she is starved.
+	FriendEmptyAfter = 10 * time.Minute
+	// PartPass is the key of the pass's unit that writes the friends' empty rows.
+	PartPass = "pass"
 	// PropFriendFinish is the work table's property: the friend-finish window, a
 	// duration (nova-sprint set --friend-finish).
 	PropFriendFinish = "friend_finish"
 )
+
+// PropFriendEmptySince is the fleet property recording when the friend, up, was first
+// seen with an empty row (no ready or working card on it); absent or "" while she is not.
+func PropFriendEmptySince(friend string) string { return "friend_empty_since." + friend }
 
 // FriendSession is what the tick knows of a friend's session beside the tables: her
 // session's last pong as her last beat carries it (zero: her beat carries none), and
@@ -122,11 +137,20 @@ func WithFriendFinish(p Plan, s *Snapshot, v string) Plan {
 	return p
 }
 
-// TickCoordinatorPass is the pass, run by the overdue part (TickOverdue): the three
-// conditions raised, raised again and closed (the comment above).
+// TickCoordinatorPass is the pass, run by the overdue part (TickOverdue): the four
+// conditions raised, raised again and closed (the comment above), and the starved
+// friends' empty rows written (PropFriendEmptySince).
 func TickCoordinatorPass(s *Snapshot, r TickReq) (Plan, int) {
 	var p Plan
-	conds := append(append(deafConds(s, r), idleConds(s, r)...), behindConds(s, r)...)
+	starved, props := starvedConds(s, r)
+	if len(props) > 0 {
+		// a unit carries the writes, as the idle alarm's does: a plan of properties alone is
+		// empty (Plan.Empty) and the tick writes nothing of it; the unit changes no card, so
+		// it says no move, as the reference model (refmodel) says none for it
+		p.Props = props
+		p.Units = append(p.Units, Unit{Key: PartPass})
+	}
+	conds := append(append(append(deafConds(s, r), idleConds(s, r)...), behindConds(s, r)...), starved...)
 	due := notify(&p, s, conds, PassTypes, r)
 	reraise(&p, s, conds, r)
 	return p, due
@@ -214,6 +238,147 @@ func idleConds(s *Snapshot, r TickReq) []cond {
 			decisions: []string{"nova-friend ping --as <coordinator> --to " + f + " --wake", "friend take " + f + " --all-unstarted", "friend down " + f + " --reason idle", "ack", "wait"}})
 	}
 	return out
+}
+
+// starvedConds is one condition for each friend up, not held, whose row has been empty
+// (no ready or working card) for FriendEmptyAfter of running time while cards she could do
+// wait (starvedCards), with the fleet properties that keep each empty row's start: written
+// the first tick she is seen up with an empty row, cleared when she is not. The judgment
+// names her, the cards and where they sit, and offers: deal them to her (friend take of
+// those cards from the friend holding them: the friends' deal gives them to the friend
+// with an idle lane), take the other row whole (friend take --all-unstarted), or keep.
+func starvedConds(s *Snapshot, r TickReq) ([]cond, []PropWrite) {
+	if s.Fleet == nil || s.Work == nil {
+		return nil, nil
+	}
+	var props []PropWrite
+	write := func(name, value string) {
+		was, had := s.Fleet.Prop(name)
+		if (!had && value == "") || (had && was == value) {
+			return
+		}
+		props = append(props, PropWrite{Table: Fleet, Name: name, Value: value, Was: was, WasAbsent: !had})
+	}
+	seats := slices.SortedFunc(slices.Values(r.Friends), func(a, b FriendSeat) int { return strings.Compare(a.Name, b.Name) })
+	known := map[string]bool{}
+	var out []cond
+	for _, f := range seats {
+		known[f.Name] = true
+		prop := PropFriendEmptySince(f.Name)
+		if f.Status != Up || r.Sessions[f.Name].Held || friendLoad(s, f.Name) > 0 {
+			write(prop, "")
+			continue
+		}
+		since, _ := s.Fleet.Prop(prop)
+		if since == "" {
+			write(prop, stamp(s.Now))
+			continue
+		}
+		d, ok := r.running(s.Now, since)
+		if !ok || d < FriendEmptyAfter {
+			continue
+		}
+		pool, rows := starvedCards(s, f, seats)
+		if len(pool) == 0 && len(rows) == 0 {
+			continue
+		}
+		var where, decisions []string
+		if len(pool) > 0 {
+			where = append(where, fmt.Sprintf("%d ready in the pool (%s)", len(pool), Preview(pool, ", ")))
+		}
+		others := slices.Sorted(maps.Keys(rows))
+		for _, g := range others {
+			where = append(where, fmt.Sprintf("%d dealt and unstarted on %s (%s)", len(rows[g]), FriendRow(g), Preview(rows[g], ", ")))
+		}
+		for _, g := range others {
+			decisions = append(decisions, "friend take "+g+" "+strings.Join(rows[g], " "))
+		}
+		for _, g := range others {
+			decisions = append(decisions, "friend take "+g+" --all-unstarted")
+		}
+		decisions = append(decisions, "keep", "wait")
+		n := len(pool)
+		for _, ids := range rows {
+			n += len(ids)
+		}
+		var deal, whole []string
+		for _, g := range others {
+			deal = append(deal, "nova-sprint friend take "+g+" "+strings.Join(rows[g], " "))
+			whole = append(whole, "nova-sprint friend take "+g+" --all-unstarted")
+		}
+		remedy := "deal them to her: " + strings.Join(deal, ", ") + " (the friends' deal gives them to the friend with an idle lane), take the other row: " + strings.Join(whole, ", ") + ", or keep them where they are: ack it"
+		if len(others) == 0 {
+			remedy = "the friends' deal did not give them to her: look at the cards (nova-sprint card <id>), or keep them where they are: ack it"
+		}
+		out = append(out, cond{typ: NFriendStarved, primaries: []string{FriendRow(f.Name)},
+			what: fmt.Sprintf("friend %s is up and her row has been empty for %s (since %s) while %d cards she could do wait: %s; %s",
+				f.Name, d.Round(time.Second), since, n, strings.Join(where, "; "), remedy),
+			decisions: decisions})
+	}
+	// a friend gone from the roster leaves no empty row behind
+	for _, name := range slices.Sorted(maps.Keys(s.Fleet.Props())) {
+		if f, ok := strings.CutPrefix(name, PropFriendEmptySince("")); ok && !known[f] {
+			write(name, "")
+		}
+	}
+	return out, props
+}
+
+// starvedCards is the cards the friend could do that wait elsewhere: the primaries ready
+// in the pool, and the primaries whose work cards are dealt to another friend's row and
+// unstarted there (ready, or working and not started: friendStarted), by that friend. A
+// card she could do is one of her tiers (friendTakes), not one that has left her
+// (friendsLeft), and not a hard pin to another friend (OnlyFriend); a pool card is also
+// not of a held stream, a sentinel, a bench card, or at its redeal bound (the
+// coordinator's already).
+func starvedCards(s *Snapshot, f FriendSeat, seats []FriendSeat) (pool []string, rows map[string][]string) {
+	could := func(pr, wc *Card) bool {
+		if pr == nil {
+			return false
+		}
+		if name, _ := FriendCard(pr); OnlyFriend(pr) && name != f.Name {
+			return false
+		}
+		return friendTakes(f, cardTierOf(escalating(s, pr))) && !slices.Contains(friendsLeft(wc), f.Name)
+	}
+	for _, c := range s.Work.Column(Ready) {
+		if StreamHeld(s, c.Row) || IsSentinel(c) || len(Bench(c)) > 0 || AtRedealBound(s, c) != nil {
+			continue
+		}
+		wc := s.Fleet.Placed(WorkCardID(c.ID, c.Int("attempt")))
+		if wc != nil && wc.Col != Withdrawn {
+			wc = nil
+		}
+		if could(c, wc) {
+			pool = append(pool, c.ID)
+		}
+	}
+	seatOf := map[string]FriendSeat{}
+	for _, g := range seats {
+		seatOf[g.Name] = g
+	}
+	rows = map[string][]string{}
+	for _, row := range s.Fleet.Rows() {
+		g, ok := FriendOfRow(row)
+		if !ok || g == f.Name {
+			continue
+		}
+		seat, ok := seatOf[g]
+		if !ok {
+			seat = FriendSeat{Name: g}
+		}
+		for _, c := range append(append([]*Card(nil), s.Fleet.Cell(row, Ready)...), s.Fleet.Cell(row, Working)...) {
+			if c.Col == Working && friendStarted(s, seat, c) {
+				continue
+			}
+			if pr := s.Work.Placed(c.F("primary")); could(pr, c) {
+				rows[g] = append(rows[g], pr.ID)
+			}
+		}
+		sort.Strings(rows[g])
+	}
+	sort.Strings(pool)
+	return pool, rows
 }
 
 // behindConds is the one condition, about the sprint, that judgments wait on the

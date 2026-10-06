@@ -122,6 +122,10 @@ func friendLevel(s *Snapshot, r FriendLevelReq, dealt, dealtWorking map[string]i
 		}
 		c := queues[long][at]
 		queues[long] = slices.Delete(queues[long], at, at+1)
+		why := fmt.Sprintf("her backlog %d is larger than friend %s's %d by more than one", backlog(long), short, backlog(short))
+		if lanes(long) <= 0 && lanes(short) > 0 {
+			why = fmt.Sprintf("she has no idle lane and friend %s has one (the friends' level)", short)
+		}
 		held[long]--
 		held[short]++
 		got[short]++
@@ -141,8 +145,19 @@ func friendLevel(s *Snapshot, r FriendLevelReq, dealt, dealtWorking map[string]i
 		if row := FriendRow(short); !s.Fleet.HasRow(row) && !slices.Contains(p.Rows, RowAdd{Fleet, row}) {
 			p.Rows = append(p.Rows, RowAdd{Fleet, row}) // her row, the first time a card is placed on it
 		}
-		p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{change(Fleet, moveEntry(c, FriendRow(short), col, set, unset...))},
-			Moved: fmt.Sprintf("%s %s:ready -> %s:%s gen=%d", c.ID, c.Row, FriendRow(short), col, c.Int("gen")+1)})
+		u := Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{change(Fleet, moveEntry(c, FriendRow(short), col, set, unset...))},
+			Moved: fmt.Sprintf("%s %s:ready -> %s:%s gen=%d", c.ID, c.Row, FriendRow(short), col, c.Int("gen")+1)}
+		if pr := s.Work.Placed(c.F("primary")); pr != nil {
+			if pinned, _ := FriendCard(pr); pinned == long {
+				// the card prefers the friend it leaves: never silent (NPinRotated)
+				n := pinRotated(s, pr, c.ID, long, why, FriendRow(short))
+				if r.Who != "" {
+					n.Who = r.Who
+				}
+				u.Notes = append(u.Notes, n)
+			}
+		}
+		p.Units = append(p.Units, u)
 	}
 	if len(p.Units) > 0 {
 		p.Units[0].Moved += fmt.Sprintf("; moved=%d to %s from %s", moved, countsByMember(got), countsByMember(gives))

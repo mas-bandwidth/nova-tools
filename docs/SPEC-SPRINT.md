@@ -281,6 +281,15 @@ left for nova-tools-1.1.0 into cards, and doing it via the sprint, but doing
 parts on friends where we would normally do friend work."). WHO is a preference (docs/SPEC-CARD-CONTRACT.md, the WHO line; `cardhdr.ReadWho`
 is the one parser). A card with no WHO line, or `WHO: -`, is unpinned. `WHO: friend`
 is any friend. `WHO: friend <name>` prefers that friend while she is up with room.
+A pin being ignored is never silent (the owner, 2026-10-05: "How is it that you missed
+Zhi having zero cards? Seems bad."): each time the friends' deal, the friends' level or
+the machines' deal places a card preferring a friend on another row, it writes the
+judgment `a card pinned to a friend was dealt to another row`, about her (her row is its
+subject, the work card its card), naming the card, why she did not take it (not on the
+roster; down or held; it has left her; her tiers do not hold its tier; her row is full;
+the level moved it to a friend with an idle lane) and whose row it is on now; `keep`
+(an ack) answers it, or `friend take <friend> <id>` when it went to a friend
+(internal/sprint friend_deal.go, `NPinRotated`).
 `WHO: only friend <name>` is the one hard pin and waits for her alone. `add` and
 `brief` refuse any other WHO value, a name that is no row of the friends table, and
 `WHO: friend` while the table has no row (exit 2, nothing written). The primary's
@@ -3093,7 +3102,7 @@ Otherwise, you will eventually drift and forget." The night before, one friend's
 session was deaf from about midnight to 8:41 AM and finished no card while his row read
 8/8 working, and reader findings and failed attempts waited on the coordinator for four
 hours. The tick's overdue part runs the pass (internal/sprint coordinator_pass.go,
-`TickCoordinatorPass`), three conditions the tick keeps, each a judgment:
+`TickCoordinatorPass`), four conditions the tick keeps, each a judgment:
 
 - **a friend's session is deaf** (`a friend's session is deaf`), one on each friend not
   held whose beat carries a session pong (`friend beat --pong <RFC3339>`, her daemon's
@@ -3123,6 +3132,22 @@ hours. The tick's overdue part runs the pass (internal/sprint coordinator_pass.g
   coordinator is never pushed twice in one tick for one late judgment. The pass's own
   judgments are not counted: each is raised again on its own (and, like every judgment,
   gets its one overdue line).
+- **an up friend's row is empty while cards she could do wait** (`an up friend's row is
+  empty while cards she could do wait`), one on each friend up and not held whose row
+  (ready and working) has been empty for 10 minutes of running time (`FriendEmptyAfter`)
+  while cards she could do wait: primaries ready in the pool, or work cards dealt to
+  another friend's row and unstarted there (ready, or working with no progress stamp and
+  not named running by her beat). A card she could do is of one of her tiers, has not
+  left her, and is no hard pin to another friend; a pool card is also not of a held
+  stream, a sentinel, a bench card or at its redeal bound. The owner, 2026-10-05 ~11:05
+  PM ET: "How is it that you missed Zhi having zero cards? Seems bad." (her pinned cards
+  had gone to other rows while she was down, and she sat at 0 for an hour after she came
+  up). It names her, the cards and where they sit, and offers: deal them to her
+  (`friend take <friend> <cards>`: back to ready, and the friends' deal gives them to the
+  friend with an idle lane), take the other row whole (`friend take <friend>
+  --all-unstarted`), or `keep` (an ack). Her empty row's start is the fleet property
+  `friend_empty_since.<friend>`, written the first tick she is seen up with an empty row
+  and cleared when she is not, so the ten minutes live across ticks.
 
 Each is an episode, keyed by its type and subject: written once when its condition
 starts, raised again in place every 10 minutes of running time while it holds
@@ -3133,11 +3158,14 @@ coordinator, `a judgment still holds: raised again`, so each tick that raises on
 with a tick-end note and `inbox --wait` wakes on it: a coordinator who missed one is
 woken again. `ack` (deaf and idle list it) keeps one quiet until its episode ends, and
 `wait` until its review time; a friend the coordinator holds (`friend down`, `hold`) is
-judged neither deaf nor idle. The model is tla/CoordinatorPass.tla: one judgment an
+judged neither deaf, idle nor starved. The model is tla/CoordinatorPass.tla: one judgment an
 episode (`OneJudgmentAnEpisode`), never a whole window unraised (`PushedEveryWindow`),
 closed when it stops holding (`ClosedWhenCleared`), each with a reversed witness TLC
-catches. Pinned by `TestTheMachineRemindsTheCoordinatorOfADeafOrIdleFriendEveryTenMinutes`
-on the twin store with a fake clock.
+catches; with `Kind = "starved"` (`MCCoordinatorPassStarved`) a friend is told only once
+her row has truly been empty for the window (`TellsOnlyAfterWindow`), its two reversed
+witnesses telling her the tick her row empties and keeping an earlier empty row's start.
+Pinned by `TestTheMachineRemindsTheCoordinatorOfADeafOrIdleFriendEveryTenMinutes` and
+`TestAnIdleUpFriendWhileCardsWaitElsewhereIsToldOnce` on the twin store with a fake clock.
 
 ### Answered by nova-decide
 

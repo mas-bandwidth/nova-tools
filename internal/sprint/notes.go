@@ -101,6 +101,7 @@ const (
 
 // Decisions open to each judgment type.
 var Decisions = map[string][]string{
+	NPinRotated:      {"keep"}, // and "friend take <friend> <card>" when it went to a friend (friend_deal.go)
 	NReadyToAccept:   {"accept", "rework", "drop"},
 	NReturned:        {"rework", "accept", "drop"}, // accept only while its reads stand at its head
 	NWorkFailed:      {"rework with a fix", "drop"},

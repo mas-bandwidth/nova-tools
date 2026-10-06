@@ -150,6 +150,7 @@ var TickDecisions = map[string][]string{
 	NFriendDeaf:        {"ack", "wait"},
 	NFriendIdle:        {"ack", "wait"},
 	NCoordinatorBehind: {"act", "wait"},
+	NFriendStarved:     {"friend take", "keep", "wait"},
 }
 
 // TickReq is what a tick is given beside the snapshot.
@@ -716,6 +717,9 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 			p = Deal(s, DealReq{Sel: Sel{Only: ids}, Who: r.who()})
 		}
 	}
+	// a card preferring a friend that the machines' deal placed is a rotation of its pin:
+	// the coordinator's judgment, never silent (NPinRotated)
+	pinRotations(s, &p, r.Friends, friendFree(s, r.Friends, dealt))
 	p.Rows, p.Units, p.Refused = append(p.Rows, fp.Rows...), append(p.Units, fp.Units...), append(p.Refused, fp.Refused...)
 	if len(r.Friends) > 0 {
 		// the friends level after the deal, every tick and on the tick a friend comes up, so
@@ -729,6 +733,13 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 			}
 		}
 		p.Units = append(p.Units, lp.Units...)
+	}
+	for i := range p.Units {
+		for j := range p.Units[i].Notes {
+			if p.Units[i].Notes[j].Type == NPinRotated {
+				p.Units[i].Notes[j].Who = r.who()
+			}
+		}
 	}
 	// a ready card dealt on a route that rests now is withdrawn, never taken there
 	p.Units = append(p.Units, restWithdrawals(s, r.who())...)
@@ -1141,6 +1152,7 @@ func TickOverdue(s *Snapshot, r TickReq) (Plan, int) {
 	p, due := tickOverdue(s, r)
 	pass, passDue := TickCoordinatorPass(s, r)
 	p.Notes, p.Closes, p.Updates = append(p.Notes, pass.Notes...), append(p.Closes, pass.Closes...), append(p.Updates, pass.Updates...)
+	p.Props, p.Units = append(p.Props, pass.Props...), append(p.Units, pass.Units...) // the starved friends' empty rows
 	return p, due + passDue
 }
 
@@ -1247,7 +1259,7 @@ type cond struct {
 func condKey(typ, subject, card, what string) string {
 	switch typ {
 	case NNoMember, NCannotAsk, NNoRoute, NFewReaders, NProviderFunds, NProviderLow, NProviderKey, NAllOutOfCredit, NStarving, NOverloaded, NReadersBehind, NDevBehind, NRaiseReadTier,
-		NAlarmReview, NAlarmMerging, NAlarmReady, NAlarmFleet, NFriendDeaf, NFriendIdle, NCoordinatorBehind:
+		NAlarmReview, NAlarmMerging, NAlarmReady, NAlarmFleet, NFriendDeaf, NFriendIdle, NCoordinatorBehind, NFriendStarved:
 		what = ""
 	case NWorkLate, NReadLate:
 		// a lateness is one per attempt's card and kind (not taken, not

@@ -1,6 +1,8 @@
 package sprint_test
 
 import (
+	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -282,4 +284,165 @@ func TestAQuietFriendWhoseSessionAnswersIsNotDeafAndALapsedProofIsToldOnce(t *te
 	r.pongs["bob"] = r.clock()
 	r.tick(time.Minute)
 	assert.Equal(t, 1, r.count(sprint.Judgment, sprint.NFriendDeaf, "friend amy"), "told once an episode")
+}
+
+// starveRig is the night of 2026-10-05 on the twin store: friends amy and zhi (width 2,
+// pro), m1 and m2 up with no card of theirs, and two cards whose WHO line prefers zhi
+// while she is down. Only the friends in up beat.
+type starveRig struct {
+	*holdRig
+	up map[string]bool
+}
+
+func newStarveRig(t *testing.T) *starveRig {
+	t.Helper()
+	m := store.NewMem()
+	h := &holdRig{t: t, ctx: context.Background(), now: holdT0}
+	n := 0
+	h.st = &store.Store{B: m, Names: sprint.Names{Prefix: "t-"}, Actor: "coordinator",
+		Now:   func() time.Time { h.mu.Lock(); defer h.mu.Unlock(); return h.now },
+		NewID: func() string { h.mu.Lock(); defer h.mu.Unlock(); n++; return fmt.Sprint(n) },
+		Sleep: func(time.Duration) {}}
+	require.NoError(t, h.st.Init(h.ctx))
+	require.NoError(t, m.RowsAdd(h.ctx, "t-readers", []string{"reader-a", "reader-b", "reader-c"}))
+	require.NoError(t, m.SetCoordinator(h.ctx, "coordinator"))
+	_, _, _, err := h.st.SyncFriends(h.ctx, []store.FriendSpec{{Name: "amy", Width: 2, Class: "pro"}, {Name: "zhi", Width: 2, Class: "pro"}})
+	require.NoError(t, err)
+	r := &starveRig{holdRig: h, up: map[string]bool{"amy": true}}
+	r.beat()
+	h.must(store.FleetStep(sprint.FleetReq{Op: "up", Member: "m1", Width: 2}))
+	h.must(store.FleetStep(sprint.FleetReq{Op: "up", Member: "m2", Width: 2}))
+	h.must(store.AddStep(sprint.AddReq{Stream: "z", Cards: []sprint.CardAdd{
+		{ID: "z-1", Brief: friendsBrief("friend zhi")}, {ID: "z-2", Brief: friendsBrief("friend zhi")}}}))
+	_, _, _, err = h.st.SetMachine(h.ctx, true)
+	require.NoError(t, err)
+	return r
+}
+
+// tick moves the clock by d, beats the members, the readers and the friends up, and runs
+// one tick.
+func (r *starveRig) tick(d time.Duration) {
+	r.t.Helper()
+	r.mu.Lock()
+	r.now = r.now.Add(d)
+	r.mu.Unlock()
+	r.beat()
+	_, err := r.st.Tick(r.ctx)
+	require.NoError(r.t, err)
+}
+
+// beat is one beat of the members, the readers and the friends up.
+func (r *starveRig) beat() {
+	r.t.Helper()
+	require.NoError(r.t, r.st.BeatReaders(r.ctx))
+	zero := 0.0
+	for _, m := range []string{"m1", "m2"} {
+		_, err := r.st.Beat(r.ctx, m, &zero, hostload.Source{})
+		require.NoError(r.t, err)
+	}
+	for f := range r.up {
+		_, err := r.st.FriendBeat(r.ctx, f)
+		require.NoError(r.t, err)
+	}
+}
+
+// judgments is the notes of the kind and type written, whatever they say.
+func (r *starveRig) judgments(typ string) []sprint.Note {
+	var out []sprint.Note
+	for _, n := range (&passRig{holdRig: r.holdRig}).notes() {
+		if n.Kind == sprint.Judgment && n.Type == typ {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// Zhi's night (the owner, 2026-10-05 ~11:05 PM ET: "How is it that you missed Zhi having
+// zero cards? Seems bad."): her pinned cards went to amy while she was down, each a
+// judgment saying why and where; she came up to an empty row while they sat dealt and
+// unstarted on amy's row, and ten minutes on the pass told the coordinator once, naming
+// her, the cards and where they sit, with the remedies; raised again ten minutes later;
+// closed once her row holds cards.
+func TestAnIdleUpFriendWhileCardsWaitElsewhereIsToldOnce(t *testing.T) {
+	t.Parallel()
+	r := newStarveRig(t)
+	zhi, amy := sprint.FriendRow("zhi"), sprint.FriendRow("amy")
+	pass := &passRig{holdRig: r.holdRig}
+
+	// zhi is down: her cards go to amy, working at once, and each rotation is a judgment
+	r.tick(time.Second)
+	s := r.snap()
+	require.ElementsMatch(t, []string{"z-1.w1", "z-2.w1"}, onRow(s, amy, "z", sprint.Working), "zhi is down: her preferred cards go to amy")
+	rot := r.judgments(sprint.NPinRotated)
+	require.Len(t, rot, 2, "each rotation of a pin is a judgment, never silent")
+	for _, n := range rot {
+		assert.Equal(t, []string{zhi}, n.Primaries, "about the friend the card prefers")
+		assert.Contains(t, n.What, "WHO: friend zhi")
+		assert.Contains(t, n.What, "she is down", "why she did not take it")
+		assert.Contains(t, n.What, "is on "+amy+"'s row", "whose row it is on now")
+		assert.Contains(t, n.Decisions, "keep")
+	}
+	assert.Contains(t, rot[0].Decisions[len(rot[0].Decisions)-1], "friend take amy z-")
+
+	// zhi comes up: her row is empty and amy's cards are working, unstarted; the level
+	// moves no working card, so she sits at zero
+	r.up["zhi"] = true
+	r.tick(time.Second)
+	s = r.snap()
+	assert.Empty(t, onRow(s, zhi, "z", sprint.Ready, sprint.Working), "nothing moves the working cards to her")
+	r.tick(9*time.Minute + 58*time.Second)
+	assert.Nil(t, pass.open(sprint.NFriendStarved, zhi), "an empty row under ten minutes is not told")
+
+	// ten minutes: told once, naming her, the cards and where they sit, with the remedies
+	r.tick(2 * time.Second)
+	j := pass.open(sprint.NFriendStarved, zhi)
+	require.NotNil(t, j, "an up friend with an empty row for ten minutes while cards she could do wait is a judgment")
+	assert.Contains(t, j.What, "friend zhi is up")
+	assert.Contains(t, j.What, "2 dealt and unstarted on "+amy+" (z-1, z-2)")
+	assert.Contains(t, j.Decisions, "friend take amy z-1 z-2", "deal them to her")
+	assert.Contains(t, j.Decisions, "friend take amy --all-unstarted", "take the other row")
+	assert.Contains(t, j.Decisions, "keep")
+	assert.Nil(t, pass.open(sprint.NFriendStarved, amy), "amy holds cards: not starved")
+	r.tick(5 * time.Minute)
+	assert.Len(t, r.judgments(sprint.NFriendStarved), 1, "told once an episode")
+	assert.Equal(t, 0, pass.count(sprint.Happened, sprint.NRaisedAgain, sprint.NFriendStarved), "not again within ten minutes")
+
+	// ten minutes on: raised again in place, a push to the coordinator
+	r.tick(5 * time.Minute)
+	assert.Len(t, r.judgments(sprint.NFriendStarved), 1, "raised again in place, never a second judgment")
+	assert.Equal(t, 1, pass.count(sprint.Happened, sprint.NRaisedAgain, sprint.NFriendStarved))
+	j = pass.open(sprint.NFriendStarved, zhi)
+	require.NotNil(t, j)
+	assert.Equal(t, 1, j.Before)
+
+	// the coordinator takes amy's row back: the deal gives the cards to zhi, and the
+	// judgment closes; her own cards coming home are no rotation
+	r.must(store.FriendTakeStep(sprint.FriendTakeReq{Friend: "amy", All: true, Who: "coordinator"}))
+	r.tick(time.Second)
+	s = r.snap()
+	assert.ElementsMatch(t, []string{"z-1.w1", "z-2.w1"}, onRow(s, zhi, "z", sprint.Ready, sprint.Working), "the deal gives her preferred cards to her")
+	assert.Nil(t, pass.open(sprint.NFriendStarved, zhi), "her row holds cards: closed")
+	assert.Len(t, r.judgments(sprint.NPinRotated), 2, "a card dealt to its friend is no rotation")
+	_, had := s.Fleet.Prop(sprint.PropFriendEmptySince("zhi"))
+	v, _ := s.Fleet.Prop(sprint.PropFriendEmptySince("zhi"))
+	assert.True(t, !had || v == "", "her empty row ended")
+}
+
+// A friend up with an empty row and nothing she could do waiting elsewhere is not starved.
+func TestAnEmptyFriendWithNothingWaitingIsNotStarved(t *testing.T) {
+	t.Parallel()
+	r := newStarveRig(t)
+	zhi := sprint.FriendRow("zhi")
+	pass := &passRig{holdRig: r.holdRig}
+	r.tick(time.Second)
+	// amy finishes both cards: nothing waits anywhere
+	s := r.snap()
+	for _, c := range s.Fleet.Cell(sprint.FriendRow("amy"), sprint.Working) {
+		r.must(store.FinishStep(sprint.FinishReq{As: c.Row, Sel: sprint.Sel{IDs: []string{c.ID}}, Gens: map[string]int{c.ID: c.Int("gen")}, Head: "abc", Who: c.Row}))
+	}
+	r.up["zhi"] = true
+	r.tick(time.Second)
+	r.tick(11 * time.Minute)
+	assert.Nil(t, pass.open(sprint.NFriendStarved, zhi), "nothing she could do waits: not starved")
+	assert.Empty(t, r.judgments(sprint.NFriendStarved))
 }

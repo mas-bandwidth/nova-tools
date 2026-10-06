@@ -559,6 +559,12 @@ func commands(g Group, first Note, prefix string) []Command {
 			// the stream's read tier rises to the tier the judgment proposes, the cause recorded (readtier.go)
 			_, why, _ := strings.Cut(first.What, "? ")
 			add(d, cmd+"stream set "+g.Stream+" --read-tier "+first.Tier+" --reason '"+strings.ReplaceAll(why, "'", "")+"'"+ans)
+		case d == "keep" && (g.Type == NFriendStarved || g.Type == NPinRotated):
+			add(d, cmd+"ack "+strings.Join(g.Notes, ",")+" --reason 'keep: the cards stay where they are'")
+		case d == "friend take":
+			add(d, cmd+"friend take '<friend>' --all-unstarted")
+		case strings.HasPrefix(d, "friend take "):
+			add(d, cmd+d)
 		case d == "keep":
 			add(d, cmd+"ack "+strings.Join(g.Notes, ",")+" --reason 'keep the read tier'")
 		case d == "resume" && s != "":
