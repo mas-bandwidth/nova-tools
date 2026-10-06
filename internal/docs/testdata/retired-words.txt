@@ -1,0 +1,49 @@
+# Retired words: one row per word, then the allowlist of places that still carry it.
+#
+# word <retired word> => <what replaced it>
+#   text file except the dated records: CHANGELOG.md, RESOLUTIONS.md, docs/RELEASE-NOTES-*,
+#   docs/ratings/, anything under a testdata/ directory, and the three terminology pages
+#   (docs/TERMINOLOGY.md, docs/GLOSSARY.md, docs/sprint/GLOSSARY.md), which name retired words
+#   on purpose to say what replaced them.
+#
+# allow <word> <path> <count>
+#   A shrink-only ledger: the file still carries <count> uses of the word. A path with more is
+#   a new use and fails; a path with fewer fails until its row is lowered or deleted. A row is
+#   a place still to be fixed, never a parking place; a new row is a refusal.
+word asleep => down (the friend health table's word since 2026-10-03; Glenn: "Please change 'asleep' to 'down' so we have consistency across all tables")
+word untiered => no tier (a cost record that names no tier)
+word git bus => nova-bus (the git bus was removed on 2026-10-04; nova-bus is the Redis one)
+allow git bus .github/workflows/ci.yml 1
+allow git bus docs/CLI.md 1
+allow git bus docs/SPEC-BUS.md 2
+allow git bus docs/SPEC-UPDATE.md 2
+allow git bus internal/ci/hosted_shards_class_test.go 1
+allow asleep cmd/nova-friend/check_test.go 3
+allow asleep cmd/nova-friend/main.go 3
+allow asleep cmd/nova-sprint/friend_health_test.go 4
+allow asleep cmd/nova-sprint/friends.go 7
+allow asleep cmd/nova-sprint/seat.go 1
+allow asleep cmd/nova-sprint/seat_loop_test.go 1
+allow asleep cmd/nova-sprint/seat_test.go 2
+allow asleep cmd/nova-sprint/verbs.go 1
+allow asleep docs/CLI.md 5
+allow asleep docs/SPEC-FRIEND.md 2
+allow asleep docs/SPEC-SPRINT.md 8
+allow untiered docs/SPEC-SPRINT.md 1
+allow asleep internal/friend/check.go 6
+allow asleep internal/friend/check_test.go 7
+allow asleep internal/sprint/TABLES.lock 3
+allow untiered internal/sprint/cost_view.go 2
+allow asleep internal/sprint/friend_health.go 5
+allow asleep internal/sprint/friend_health_test.go 3
+allow asleep internal/sprint/presence.go 4
+allow asleep internal/sprint/seat.go 1
+allow asleep internal/sprint/store/defaults.go 3
+allow asleep internal/sprint/store/friend_health_test.go 4
+allow asleep internal/sprint/store/friends.go 1
+allow asleep internal/sprint/store/load.go 1
+allow asleep internal/sprint/store/retry_test.go 3
+allow asleep internal/sprint/store/seat_functional_test.go 3
+allow untiered internal/sprintdash/page/app.js 1
+allow untiered internal/sprintdash/tweaks_test.go 3
+allow asleep tla/SeatHealth.tla 3
