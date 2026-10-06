@@ -22,7 +22,11 @@ import (
 func TestRecutWidenAppliesPathsProposed(t *testing.T) {
 	t.Parallel()
 	r := newLandRig(t)
-	brief := writeBrief(t, "fix the empty case, tier: pro\nREPO: "+r.remote+"\nBASE: main\nPATHS: a.go")
+	// add reads the brief at its base (the brief checks): the file PATHS names is there
+	r.commit("a.go", "package a\n", "a.go at the base")
+	r.git(r.worker, "push", "-q", "origin", "HEAD:refs/heads/main")
+	r.git(r.worker, "fetch", "-q", "origin")
+	brief := writeBrief(t, "fix the empty case, tier: pro\nREPO: "+r.remote+"\nBASE: main\nPATHS: a.go\nTEST: none a fixture of recut --widen")
 	// held runs one card of stream s to a held finish: its attempt pushed b.go, a file the
 	// base has not, and the report says report
 	held := func(s, report string) (id, head string) {

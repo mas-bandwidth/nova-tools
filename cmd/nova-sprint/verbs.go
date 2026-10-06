@@ -1265,6 +1265,9 @@ func (a *app) cmdAdd(args []string, stdout, stderr io.Writer) int {
 		if code := a.holdCardChecks("add", st, stderr, checks...); code != 0 {
 			return code
 		}
+		if code := a.holdBriefBase("add", st, *allowPersonal, stderr, checks...); code != 0 {
+			return code
+		}
 	}
 	c.addStream = *stream
 	c.addBefore = *before
@@ -1370,6 +1373,9 @@ func (a *app) cmdAddMany(stream, needs, briefDir string, briefFiles []string, se
 		checks[i] = briefCheck{id: cd.ID, brief: cd.Brief}
 	}
 	if code := a.holdCardChecks("add", st, stderr, checks...); code != 0 {
+		return code
+	}
+	if code := a.holdBriefBase("add", st, allowPersonal, stderr, checks...); code != 0 {
 		return code
 	}
 	r := sprint.AddReq{Stream: stream, Cards: cards, Who: c.actor, Before: before, After: after, Held: held, Score: at, BriefOps: asked.ops, BriefRecord: asked.record, Replaces: replaces}

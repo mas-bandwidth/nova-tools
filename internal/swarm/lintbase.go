@@ -15,7 +15,6 @@ import (
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
-	"github.com/mas-bandwidth/nova-tools/internal/hygiene"
 )
 
 // THE BASE CHECKS: FIVE RULES A CODING CARD IS HELD TO BEFORE IT IS DEALT (#2636, #3083).
@@ -62,7 +61,9 @@ type FleetLegs map[string]bool
 type KindP95 map[string]int
 
 // CardBaseRemedies is what each base token wants, in the table shape of
-// CardHeaderRemedies, so `nova-swarm lint --rules` prints them beside the rest.
+// CardHeaderRemedies, so `nova-swarm lint --rules` prints them beside the rest. The brief
+// tokens nova-sprint add holds a card brief to at its BASE tip (lintpaths.go) are beside
+// them in BriefBaseRemedies; add runs paths-at-base and donewhen-test-name there too.
 var CardBaseRemedies = map[string]string{
 	"paths-at-base":      "every PATHS entry names a file, directory or glob that exists at the card's base-sha (or is a new `_test` file); cut the card from the tree at that sha, not from the issue's words, and hand the lint a repository holding the sha with `--repo <dir>`",
 	"no-push-steps":      "a card ends at a local commit: no STEP runs `git push` or `gh`, because the wall holds no credential and the member pushes the card's commit at its finish; say `no gh, no push` in RULES, never as a STEP command",
@@ -586,24 +587,7 @@ func pathsMissingAt(repo, sha string, entries []string) ([]string, error) {
 			files = append(files, f)
 		}
 	}
-	var miss []string
-	for _, e := range entries {
-		e = strings.TrimPrefix(strings.TrimSuffix(e, "/"), "./")
-		if newTestFile(e) {
-			continue
-		}
-		found := false
-		for _, f := range files {
-			if f == e || strings.HasPrefix(f, e+"/") || hygiene.MatchGlob(e, f) {
-				found = true
-				break
-			}
-		}
-		if !found {
-			miss = append(miss, e)
-		}
-	}
-	return miss, nil
+	return entriesMissing(files, entries), nil
 }
 
 // newTestFile is a literal path whose base name is a test file: `x_test.go`,
