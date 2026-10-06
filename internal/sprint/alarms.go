@@ -16,6 +16,7 @@ const (
 	NAlarmMerging = "merging above its alarm"
 	NAlarmReady   = "nothing ready while cards wait"
 	NAlarmFleet   = "the fleet works below its alarm"
+	NAlarmSlowStore = "the store is slow"
 	// NAlarmCleared is the happened note, to the coordinator, that an alarm's episode
 	// ended: its what opens with the alarm's type and a colon.
 	NAlarmCleared = "an alarm cleared"
@@ -29,7 +30,7 @@ const (
 )
 
 // AlarmTypes is the backlog alarms' judgment types, in the order the tick checks them.
-var AlarmTypes = []string{NAlarmReview, NAlarmMerging, NAlarmReady, NAlarmFleet}
+var AlarmTypes = []string{NAlarmReview, NAlarmMerging, NAlarmReady, NAlarmFleet, NAlarmSlowStore}
 
 // alarmProps is each alarm's property, the flag that sets it and what its value wants.
 var alarmProps = []struct{ typ, prop, flag, wants string }{

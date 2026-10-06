@@ -5412,6 +5412,14 @@ With no record, or one whose last sample is older than the window (a server that
 measuring), both fields and the line are left out. Tested on the twin store with the harness's
 clock, never the wall clock (`TestWhereReportsTheStoreRoundTrip`).
 
+#### store-latency-alarm-bb.w3: the store round trip is shown and alarms above 5 ms
+
+The seat and view verbs measure the live store round trip as the median of 20 PINGs on the
+live connection when they run. Above 5 ms (the sprint setting `StoreRTTAlarmBar`, default 5 ms)
+the tick raises one judgment per episode that the store is slow: `<median> ms`, which ends
+when the median falls under half the bar (2.5 ms). The measurement uses an injected pinger in
+tests (docs/SPEC-SPRINT.md, store-latency-row-r.w2).
+
 ## 15. Reminders
 
 The people who work on a sprint each have a goal: a text of what to keep doing,
