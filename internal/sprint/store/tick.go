@@ -136,6 +136,10 @@ type Heartbeat struct {
 	// Looked is when a tick last read the machine's state, RUNNING or
 	// STOPPED: a run loop is alive while it is recent, whatever the state.
 	Looked time.Time `json:"looked,omitempty"`
+	// Archived is the landed and all primaries the tick's archive last ran at
+	// (stream_archive.go): it runs again when either has changed or the tick
+	// moved something, and on the first tick of a record without it.
+	Archived *[2]int64 `json:"archived,omitempty"`
 }
 
 // Alive is the last clock reading a tick was seen at, ticking or looking.
@@ -449,6 +453,10 @@ type TickResult struct {
 	Stale    string         `json:"stale,omitempty"`
 	Halted   string         `json:"halted,omitempty"`
 	Due      int            `json:"due,omitempty"`
+	// Archived and Shown are the streams the tick's archive took off the drawn
+	// tables and showed again (stream_archive.go).
+	Archived []string `json:"archived,omitempty"`
+	Shown    []string `json:"shown,omitempty"`
 	// Tables is each of the four tables, in the store's order, with the rows
 	// the tick's parts changed in it: every tick reads and plans every table,
 	// each table updated at least once per tick, and a table with nothing to
@@ -723,6 +731,20 @@ func (st *Store) Tick(ctx context.Context) (res TickResult, err error) {
 		}
 		res.Times = append(res.Times, mt.part("", "remind"))
 	}
+	archivedAt := hb.Archived
+	if counts := [2]int64{seen.Landed, seen.All}; err == nil && res.Stale == "" && res.Halted == "" && res.Done == "" && (archivedAt == nil || *archivedAt != counts || len(res.Parts) > 0) {
+		// the archive: a stream whose last card landed leaves the drawn tables
+		// (stream_archive.go), on a tick that moved something or saw the counts
+		// change since the archive last ran, never on an idle tick, nor on the
+		// tick that finds the sprint done: the next start's first tick does it
+		mt := st.meter()
+		if res.Archived, res.Shown, err = st.archiveLanded(ctx); err != nil {
+			err = fmt.Errorf("archive: %w", err)
+		} else {
+			archivedAt = &counts
+		}
+		res.Times = append(res.Times, mt.part("", "archive"))
+	}
 	if err == nil && res.Stale == "" && hb.Failures > 0 {
 		// the tick works again after failing: one note, with the count
 		if nerr := st.tellTick(ctx, "tick recovered", sprint.NTickRecovered, fmt.Sprintf("failed=%d; the last error: %s", hb.Failures, hb.Error), ""); nerr != nil {
@@ -746,7 +768,7 @@ func (st *Store) Tick(ctx context.Context) (res TickResult, err error) {
 	}
 	defer func(mt meter) { res.Times = append(res.Times, mt.part("", "heartbeat")) }(st.meter())
 	now := st.now()
-	if err == nil && res.Idle && res.Halted == "" && len(res.Parts) == 0 && hb.Error == "" && now.Sub(hb.At) < HeartbeatIdleEvery && !hb.At.Before(m.Since) &&
+	if err == nil && res.Idle && res.Halted == "" && len(res.Parts) == 0 && hb.Error == "" && now.Sub(hb.At) < HeartbeatIdleEvery && !hb.At.Before(m.Since) && archivedAt == hb.Archived &&
 		seen.Revisions == hb.Revisions && slices.Equal(seen.Fresh, hb.Fresh) {
 		return res, nil
 	}
@@ -769,6 +791,7 @@ func (st *Store) Tick(ctx context.Context) (res TickResult, err error) {
 		hb.Error, hb.Failures = "", 0
 		hb.Revisions, hb.Landed, hb.All, hb.Full, hb.Fresh = seen.Revisions, seen.Landed, seen.All, seen.Full, seen.Fresh
 		hb.Due = res.Due
+		hb.Archived = archivedAt
 	}
 	if werr := st.putJSON(ctx, keyHeartbeat, hb); werr != nil && err == nil {
 		err = werr

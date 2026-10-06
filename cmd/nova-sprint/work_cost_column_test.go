@@ -66,7 +66,8 @@ func (ta *testApp) landStream(stream string, work []string, readA, readB []strin
 func (ta *testApp) costCells() map[string]string {
 	ta.t.Helper()
 	out := map[string]string{}
-	lines := strings.Split(ta.ok("where"), "\n")
+	// a stream landed whole is archived by the tick: --archived draws its row
+	lines := strings.Split(ta.ok("where --archived"), "\n")
 	in, at := false, -1
 	for _, l := range lines {
 		f := strings.Split(l, "|")

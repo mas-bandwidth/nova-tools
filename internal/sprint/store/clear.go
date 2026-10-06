@@ -146,6 +146,16 @@ func (st *Store) restore(ctx context.Context, from uint64) (*sprint.Snapshot, er
 			return nil, fmt.Errorf("the rows of %s: %w", st.Names.Table(t), err)
 		}
 	}
+	// an archived stream stays archived (stream_archive.go): its rows hidden again
+	archived, err := old.ArchivedStreams(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("the archived streams of epoch %d: %w", from, err)
+	}
+	if len(archived) > 0 {
+		if err := st.hide(ctx, archived); err != nil {
+			return nil, err
+		}
+	}
 	at := st.epoch
 	res, err := st.Run(ctx, Step{Verb: "clear", Load: All, Mirrors: true, Epoch: &at,
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.RestoreShape(s, sh) }})

@@ -526,6 +526,10 @@ type whereView struct {
 	// Rows is where --json --rows's: every primary's row of the work table, in work
 	// order, its fields but the brief; absent without --rows.
 	Rows []primaryRow `json:"rows,omitempty"`
+	// Archived is the archived streams (stream archive): their names, their landed cards
+	// and their cost, always; their rows are in the tables, rows, streams and stream_costs
+	// only with --archived, and the summary counts them either way.
+	Archived *store.ArchivedTotals `json:"archived,omitempty"`
 	// Ready, Width, Buffer and Low are the ready buffer a program reads off
 	// the view (docs/SPEC-SPRINT-DASHBOARD.md): the ready primaries across the
 	// work table's streams, the total width of the fleet members that are up,
@@ -628,15 +632,16 @@ func dealtView(d store.Dealt, prefix string, epoch uint64) ([]dealtCard, []judgm
 
 // whereRun is what one where was asked, its flags read.
 type whereRun struct {
-	c       common
-	watch   bool
-	all     bool
-	cards   bool
-	rows    bool
-	release releaseFlag
-	every   time.Duration
-	stale   time.Duration
-	atEpoch int64
+	c        common
+	watch    bool
+	all      bool
+	archived bool // where --archived: the archived streams drawn too
+	cards    bool
+	rows     bool
+	release  releaseFlag
+	every    time.Duration
+	stale    time.Duration
+	atEpoch  int64
 }
 
 type releaseFlag struct {
@@ -681,6 +686,7 @@ func (a *app) cmdWhere(args []string, stdout, stderr io.Writer) int {
 	every := fs.Duration("every", time.Second, "the redraw interval with --watch, above 0")
 	all := fs.Bool("all", false, "draw the readers and merge tables too, hidden from the default frame (--json always carries them)")
 	cards := fs.Bool("cards", false, "with --json: also every work card dealt to a fleet row and not finished (its row, state, since, deadline and branch) and the open judgments on them, as the dashboard's pull routes serve them, and every machine's lanes (lane list)")
+	archived := fs.Bool("archived", false, "draw the archived streams too (stream archive): their rows of the work and merge tables, in the text and in --json's tables, rows, streams and stream_costs")
 	rows := fs.Bool("rows", false, "with --json: also every primary's row of the work table (id, stream, state, score, and its fields but the brief: card <id> --brief), in work order, so a child reads every card in one call and never loops card calls")
 	stale := fs.Duration("stale", defaultStale, "a stream with no progress for longer is shown stalled (--json)")
 	atEpoch := fs.Int64("at-epoch", -1, "the sprint as it was at an earlier epoch (before a clear)")
@@ -716,7 +722,7 @@ func (a *app) cmdWhere(args []string, stdout, stderr io.Writer) int {
 	if *rows && !c.json {
 		return refuse(stderr, "where", "--rows is a field of the JSON view: give --json with it")
 	}
-	r := whereRun{c: *c, watch: *watch, all: *all, cards: *cards, rows: *rows, release: rel, every: *every, stale: *stale, atEpoch: *atEpoch}
+	r := whereRun{c: *c, watch: *watch, all: *all, archived: *archived, cards: *cards, rows: *rows, release: rel, every: *every, stale: *stale, atEpoch: *atEpoch}
 	if addr := a.server(fs); addr != "" {
 		// the sprint's server draws each frame: one plain where a frame, so the watch
 		// never holds the server between frames
@@ -753,7 +759,7 @@ func (a *app) whereLoop(ctx context.Context, r whereRun, stdout, stderr io.Write
 			}
 			return "", refuse(stderr, "where", err.Error()), false
 		}
-		v, frame, err := a.where(ctx, st, r.stale, r.all)
+		v, frame, err := a.whereWith(ctx, st, r.stale, r.all, r.archived)
 		if err != nil {
 			if ctx.Err() != nil {
 				return "", 0, false // an interrupt cut the read short: the watch is over, not failed
@@ -782,7 +788,7 @@ func (a *app) whereLoop(ctx context.Context, r whereRun, stdout, stderr io.Write
 			if err != nil {
 				return "", a.readFailed("where", err, stderr), false
 			}
-			v.Rows = rowsView(s)
+			v.Rows = liveRows(rowsView(s), v.Archived, r.archived)
 		}
 		if r.c.json {
 			b, _ := json.Marshal(v)
@@ -829,6 +835,14 @@ func (a *app) drawLoop(ctx context.Context, r whereRun, stdout, stderr io.Writer
 // hidden from the default frame (the owner, 2026-10-02: "please hide the reader
 // and merge tables"); the view for a program carries every table whichever is drawn.
 func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration, all bool) (whereView, string, error) {
+	return a.whereWith(ctx, st, stale, all, false)
+}
+
+// whereWith is where, the archived streams drawn too with archived (where --archived):
+// else their rows are left out of the frame and of the view's tables, streams and
+// stream costs, and one line stands for them (archivedView); the summary counts them
+// either way.
+func (a *app) whereWith(ctx context.Context, st *store.Store, stale time.Duration, all, archived bool) (whereView, string, error) {
 	st, err := st.Pinned(ctx)
 	if err != nil {
 		return whereView{}, "", err
@@ -857,12 +871,14 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration, a
 	if err != nil {
 		return whereView{}, "", err
 	}
+	arch := archivedView(shapes, archived)
+	clocks = liveClocks(clocks, arch, archived)
 	seat, moved, err := st.Seat(ctx)
 	if err != nil {
 		return whereView{}, "", err
 	}
 	now := a.now()
-	v := whereView{At: now, Tables: map[string]map[string]map[string]any{}, Streams: clocks, Epoch: st.PinnedEpoch(), Coordinator: coordinator}
+	v := whereView{At: now, Tables: map[string]map[string]map[string]any{}, Streams: clocks, Epoch: st.PinnedEpoch(), Coordinator: coordinator, Archived: &arch}
 	if moved {
 		v.Seat = &seat
 	}
@@ -921,6 +937,9 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration, a
 		}
 		rows := map[string]map[string]any{}
 		for _, r := range t.Rows {
+			if r.Hidden && (logical == sprint.Work || logical == sprint.Merge) {
+				continue // an archived stream (archivedView)
+			}
 			cells := map[string]any{}
 			for j, col := range t.Columns {
 				cells[col.Name] = ntable.CellText(t.Columns, r, j)
@@ -933,6 +952,9 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration, a
 			// the tiers and the spend by tier go to StreamCosts, from the tick's record (cost_view.go)
 			t = perLandedColumn(t, facts.Streams)
 			for _, r := range t.Rows {
+				if r.Hidden {
+					continue
+				}
 				rows[r.Key][perLandedField] = r.Texts[perLandedColumnName]
 				if tc, ok := facts.Streams[r.Key]; ok {
 					if v.StreamCosts == nil {
@@ -956,8 +978,11 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration, a
 			parts[logical] = fleetText(t)
 			continue
 		}
-		// every table shows, every stream row in it, empty or not
+		// every table shows, every stream row in it, empty or not, but an archived one
 		parts[logical] = ntable.Render(t, ntable.RenderOpts{Title: logical})
+		if logical == sprint.Work && !archived {
+			parts[logical] = withArchivedLine(parts[logical], arch)
+		}
 	}
 	friends, err := st.FriendRows(ctx, now)
 	if err != nil {

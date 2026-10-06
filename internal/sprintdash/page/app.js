@@ -215,8 +215,17 @@ function setOk(o, p, done) { setText(o, p === null ? "-" : p.toFixed(1) + "%"); 
 var STATUS_TONE = { up: "good", held: "warning", down: "critical" };
 
 // ---------- sections ----------
+// The archived streams (nova-sprint stream archive): every card landed, off the table by
+// default, one line under it standing for them; the line shows and hides them.
+var showArchived = false, lastData = null;
+function archivedOf(d) {
+  var a = d.archived || {}, set = {};
+  (a.streams || []).forEach(function (k) { set[k] = 1; });
+  return { set: set, n: (a.streams || []).length, landed: int(a.landed), cost: cents(a.cost) };
+}
 function streamOrder(d) {
-  var work = d.tables.work || {}, keys = [], seen = {};
+  var work = d.tables.work || {}, keys = [], seen = archivedOf(d).set;
+  if (showArchived) seen = {};
   (d.streams || []).forEach(function (s) { if (work[s.Stream] && !seen[s.Stream]) { keys.push(s.Stream); seen[s.Stream] = 1; } });
   Object.keys(work).sort().forEach(function (k) { if (!seen[k]) keys.push(k); });
   return keys;
@@ -291,8 +300,18 @@ function renderStreams(d) {
   }, box._total);
   var tc = box._total._c, all = 0;
   FLOW.forEach(function (st, i) { all += sum[st]; if (st !== "landed") setNum(tc[2 + i], sum[st]); });
+  // the archived streams off the table still count in the total row
+  var ar = archivedOf(d);
+  if (!showArchived) { sum.landed += ar.landed; all += ar.landed; if (ar.cost) sum.cost += ar.cost; }
   setHTML(tc[7], frac(sum.landed, all, digits));
   setText(tc[8], money(sum.cost));
+  var line = $("archived-line");
+  if (line) {
+    line.hidden = ar.n === 0;
+    setText(line, ar.n + " archived stream" + (ar.n === 1 ? "" : "s") + ", " + ar.landed.toLocaleString("en-US") + " card" + (ar.landed === 1 ? "" : "s") + " landed, " +
+      (ar.cost === null ? "-" : money(ar.cost)) + (showArchived ? " · hide" : " · show"));
+    if (!line._wired) { line._wired = true; line.addEventListener("click", function () { showArchived = !showArchived; if (lastData) render(lastData); }); }
+  }
   setText($("streams-sub"), keys.length + " streams · " + landedStreams + " landed · " + held + " held");
   // the "landed" header is centred over its n / total cell: same width as the cell, text centred
   var lw = tc[7].offsetWidth ? tc[7].offsetWidth + "px" : "";
@@ -738,6 +757,7 @@ function renderTopStreams(d) {
 }
 
 function render(d) {
+  lastData = d;
   var s = renderStreams(d);
   renderOverall(s.sum, s.all);
   renderPie(d);

@@ -156,6 +156,7 @@ img#logo.logo-tile { width: 6rem; height: 6rem; flex: none; }
 .panel-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 0.5rem 2rem; padding: 2rem 3rem 1rem; }
 .panel-head h2 { margin: 0; font-size: 2rem; line-height: 3rem; font-weight: 600; }
 .panel-head .muted { font-size: 1.625rem; }
+.archived-line { display: block; margin: 0 3rem 1.5rem; padding: 0; border: 0; background: none; color: inherit; font: inherit; font-size: 1.625rem; cursor: pointer; text-align: left; }
 .empty { padding: 1rem 3rem 3rem; color: var(--text-2); font-size: 1.625rem; }
 .empty code { font: 1.5rem ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--text); }
 
@@ -362,6 +363,7 @@ footer a:hover { color: var(--text); }
 <section class="panel streams">
   <div class="panel-head"><h2>Work</h2><span class="muted" id="streams-sub"></span></div>
   <div class="scroll"><div class="rows" id="streams"><div class="row head"><div>stream</div><div>status</div><div class="num">waiting</div><div class="num">ready</div><div class="num">working</div><div class="num">review</div><div class="num">merging</div><div class="frac">landed</div><div class="num">cost</div></div></div></div>
+  <button class="archived-line muted" id="archived-line" type="button" hidden></button>
 </section>
 
 <section class="panel wall" id="wall-panel" hidden>

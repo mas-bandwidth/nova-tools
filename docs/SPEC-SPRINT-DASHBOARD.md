@@ -129,6 +129,7 @@ from the owner edits one line here and nothing else moves.
 - Landed as "n / total" with the slash on one vertical line (left number right-aligned to it, total left of it), the
   gap before Landed (after merging) equal to every other column gutter in the row, never tighter. No per-stream bar. Total row: numbers only.
 - Flash: the count columns and Landed flash when their value differs from the previous second; Cost never.
+- Archived streams (`nova-sprint stream archive`): off the table by default; one line under the table, "N archived streams, M cards landed, $X · show", toggles them on (" · hide" turns them off), and the Total row counts them either way. The page reads them from `where --json --archived`.
 
 ## Fleet (title "Fleet"; subtitle "<u> up · <h> held · <d> down")
 - Columns: machine | status | ready | working | done | ok% | load (headers exactly so, all lowercase).
@@ -175,3 +176,6 @@ This specification is locked. No line changes without his words, quoted here wit
 - 2026-10-03 11:30 AM, the owner, a quoted change after the lock: "nova sprint website is not updating once
   per-second. something is chug." The page's refresh is the event stream, the timer's poll its fallback (the
   Refresh line above); nothing else moves.
+- 2026-10-05 ~11:45 PM ET, the owner, a quoted change after the lock: "I would like you to remove all the
+  already landed work streams." The Work table shows only live streams by default, with the archived line under
+  it as its toggle (the Work section above); nothing else moves.
