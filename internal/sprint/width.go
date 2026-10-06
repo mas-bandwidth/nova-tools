@@ -100,10 +100,13 @@ func ParseMembers(list string) ([]MemberSpec, error) {
 
 // memberLoads is each up member's work cards held: its ready and its working
 // cells, the count its width bounds.
+//
+// A read card on the row holds half a slot (read_cards.go, halfLoad): a row of width w
+// holds w work cards or 2w reads or any mix.
 func memberLoads(s *Snapshot, up []string) map[string]int {
 	q := map[string]int{}
 	for _, m := range up {
-		q[m] = s.Fleet.Count(m, Ready) + s.Fleet.Count(m, Working)
+		q[m] = halfLoad(rowLoad(s, m))
 	}
 	return q
 }
@@ -130,7 +133,7 @@ func memberWidths(s *Snapshot, up []string) map[string]int {
 func widthRoom(s *Snapshot, up []string) int {
 	room := 0
 	for _, m := range up {
-		room += max(0, DealAhead*s.Width(m)-s.Fleet.Count(m, Ready)-s.Fleet.Count(m, Working))
+		room += max(0, DealAhead*s.Width(m)-halfLoad(rowLoad(s, m)))
 	}
 	return room
 }

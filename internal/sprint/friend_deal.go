@@ -118,7 +118,10 @@ type FriendSeat struct {
 	Class   string
 	Mode    string
 	Tiers   []string
-	Dir     string
+	// Roles is her nova-config row's roles: a read card is dealt only to a friend whose
+	// roles name reader (RoleReader, read_cards.go).
+	Roles []string
+	Dir   string
 	Running []string
 	// Why is why her Status is not up, as FriendDownWhy says it (held, or the session
 	// evidence she lacks), "" while she is up: the words a take refused for her names.
@@ -341,8 +344,14 @@ func (s *Snapshot) Members() []string {
 // her reads together. One width bounds her row (docs/SPEC-SPRINT.md section 1, a friend's
 // card; the owner's rule): her reads hold her lanes and her room as her work does, and a
 // one-shot friend holds one card at a time, read or work.
+//
+// While read cards are on (read_cards.go) a read holds half a slot of her width, as a
+// member's does (halfLoad): her row holds her width of work or twice it of reads.
 func friendLoad(s *Snapshot, name string) int {
 	row := FriendRow(name)
+	if s.ReadCardsOn() {
+		return halfLoad(rowLoad(s, row))
+	}
 	return s.Fleet.Count(row, Ready) + s.Fleet.Count(row, Working)
 }
 

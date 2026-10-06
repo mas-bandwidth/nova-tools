@@ -58,6 +58,10 @@ const (
 	RetiredByLate     = "late"
 	RetiredByPrimary  = "primary"
 	RetiredByReturned = "returned"
+	// RetiredByAway is a read card the machine took back off a reader down, away or held,
+	// or off a resting route (RetiredByRest): it spends nothing of the reader's.
+	RetiredByAway = "away"
+	RetiredByRest = "rest"
 )
 
 // isRead says the card is a read card.
@@ -103,13 +107,18 @@ type readUnit struct {
 	idle   int // idle lanes, in half slots: twice its width less what works
 }
 
+// RoleReader is the role a friend's nova-config row names to be dealt read cards; a machine
+// reads when its reader row (reader-<m>) is on the readers table, the machine's reader
+// identity, whose tiers cell names the tiers it reads (reader set --tiers).
+const RoleReader = "reader"
+
 // readUnitsOf is every unit up that may be dealt a read: the friends dealable (friendDealable)
-// first, as the friends are asked a read before a paid reader is drawn, then the members up
-// whose reader row is neither held nor retired, in row order.
+// whose roles name reader first, as a friend is dealt a card before a paid route is drawn,
+// then the members up whose reader row is neither held nor retired, in row order.
 func readUnitsOf(s *Snapshot, seats []FriendSeat) []readUnit {
 	var out []readUnit
 	for _, f := range seats {
-		if !friendDealable(s, f) {
+		if !friendDealable(s, f) || !slices.Contains(f.Roles, RoleReader) {
 			continue
 		}
 		g := f
@@ -119,9 +128,6 @@ func readUnitsOf(s *Snapshot, seats []FriendSeat) []readUnit {
 		work, reads := rowLoad(s, row)
 		ww, wr := rowWorking(s, row)
 		out = append(out, readUnit{name: f.Name, row: row, friend: true, seat: f, half: 2*(room-work) - reads, idle: 2*width - 2*ww - wr})
-	}
-	if s.Readers == nil {
-		return out
 	}
 	for _, m := range s.UpMembers() {
 		if !memberReads(s, m) {
@@ -165,23 +171,66 @@ func attemptUnit(s *Snapshot, primary string, attempt int) string {
 	return ""
 }
 
-// mayReadCard says the unit may be dealt a read of the primary at the attempt: its tier
-// reaches the read's tier, it did not work the attempt, and it holds no read card of the
-// attempt, placed or retired, on the fleet table or (a member) on the readers table.
-func mayReadCard(s *Snapshot, u readUnit, pr *Card, attempt int, worker string) bool {
-	if u.name == worker || s.Fleet.Card(ReadCardID(pr.ID, attempt, u.name)) != nil {
+// spentBy is the retired_by of a read card its reader itself ended: it closed it (read) or
+// handed it back (returned), or let it pass its deadline (late). A card the machine took
+// back (a reader down, away or held, a restart, the coordinator's hold --return, its
+// primary moved) spends nothing: its reader may be dealt the read again at the attempt.
+var spentBy = []string{"read", RetiredByReturned, RetiredByLate}
+
+// readerCardsAt is the reader's read cards of the primary's attempt, placed or kept, every
+// generation (cards: the primary's read cards, fleetReadIndex).
+func readerCardsAt(cards []*Card, primary string, attempt int, reader string) []*Card {
+	var out []*Card
+	for _, c := range cards {
+		p, a, rd, ok := ParseReadCard(c.ID)
+		if ok && p == primary && a == attempt && rd == reader {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// readSpent says the reader holds or closed a read card of the attempt: one placed, or one
+// retired with a verdict or by itself (spentBy). It is never dealt that read again.
+func readSpent(cards []*Card) bool {
+	for _, c := range cards {
+		if c.Placed() || c.F("verdict") != "" || slices.Contains(spentBy, c.F("retired_by")) {
+			return true
+		}
+	}
+	return false
+}
+
+// readCardIDFor is the id of the reader's next read card of the attempt: the plain identity
+// (ReadCardID) when it has none, else the first generation .g<n> it has not used.
+func readCardIDFor(cards []*Card, primary string, attempt int, reader string) string {
+	id := ReadCardID(primary, attempt, reader)
+	used := map[string]bool{}
+	for _, c := range cards {
+		used[c.ID] = true
+	}
+	if !used[id] {
+		return id
+	}
+	for n := 1; ; n++ {
+		if g := id + ".g" + itoa(n); !used[g] {
+			return g
+		}
+	}
+}
+
+// mayReadCard says the unit may be dealt a read of the primary at the attempt, by the rules
+// a work card is dealt by (its tier: a friend's tiers hold it, friendTakes; a member's reader
+// row serves it, readerServesTier) and the two of a read: it did not work the attempt, and
+// it holds no read card of the attempt and closed none (readSpent).
+func mayReadCard(s *Snapshot, u readUnit, pr *Card, attempt int, worker string, cards []*Card) bool {
+	if u.name == worker || readSpent(readerCardsAt(cards, pr.ID, attempt, u.name)) {
 		return false
 	}
 	if u.friend {
-		return friendAtOrAbove(u.seat, friendReadTier(s, pr))
+		return friendTakes(u.seat, friendReadTier(s, pr))
 	}
-	rd := ReaderPrefix + u.name
-	for _, id := range ReadCardIDs(pr.ID, attempt, rd) {
-		if s.Readers.Card(id) != nil {
-			return false
-		}
-	}
-	return s.readerServesTier(rd, s.readTierOf(pr))
+	return s.readerServesTier(ReaderPrefix+u.name, s.readTierOf(pr))
 }
 
 // readCardsStanding is the primary's reads that stand at its attempt, both tables: the
@@ -252,6 +301,8 @@ func readCardsTakeBack(s *Snapshot) map[string][]Change {
 			by = RetiredByPrimary
 		case c.F(FieldReadDeadline) != "" && !s.Now.Before(stampAt(c, FieldReadDeadline)):
 			by = RetiredByLate
+		case c.Col == Ready && func() bool { _, ok := cardRest(s, c); return ok }():
+			by = RetiredByRest
 		default:
 			continue
 		}
@@ -299,9 +350,10 @@ func readCardsAsk(s *Snapshot, seats []FriendSeat, ri routeIndexes) (p Plan, wai
 		want := readCardsWanted(view, pr, idx)
 		attempt := readAttempt(pr)
 		worker := attemptUnit(view, pr.ID, attempt)
+		cards := idx[pr.ID]
 		var may []int
 		for i, u := range units {
-			if mayReadCard(view, u, pr, attempt, worker) {
+			if mayReadCard(view, u, pr, attempt, worker, cards) {
 				may = append(may, i)
 			}
 		}
@@ -352,7 +404,7 @@ func readCardsAsk(s *Snapshot, seats []FriendSeat, ri routeIndexes) (p Plan, wai
 			un := &units[i]
 			un.half--
 			un.idle--
-			id := ReadCardID(pr.ID, attempt, un.name)
+			id := readCardIDFor(cards, pr.ID, attempt, un.name)
 			fields := map[string]string{
 				"kind": "read", "primary": pr.ID, "stream": pr.Row, "reader": un.name,
 				"attempt": itoa(attempt), "head": head, "asked": stamp(s.Now), "gen": "1",
@@ -415,30 +467,22 @@ func fieldOf(c *Card, name string) string {
 	return c.F(name)
 }
 
-// readCardsAskPart is the tick's ask while read cards are on (friendAskPart): the read-card
-// ask, its route draws written as the readers' ask writes them (a read card's route is drawn
-// as a work card's is, from its tier's rolling index: route.go, readRouteOf), the waiting
-// mark on each primary that wants more reads than it was dealt (markWaiting), counted due so
-// the no-stall rule holds it, and the readers' standing judgments as the readers' ask keeps
-// them: the readers behind and the read tier to raise; cannot ask and fewer than two readers
-// up close, the readers table asks nothing new (docs/SPEC-SPRINT.md section 6, the readers
-// table retires next release).
+// readCardsAskPart is the tick's ask while read cards are on (friendAskPart): the deal
+// deals the read cards (TickDeal, withReadCards), and the ask asks nothing; it writes the
+// waiting mark on each primary that wants more reads than it holds (markWaiting), counted
+// due so the no-stall rule holds it, clears the mark of one that waits no more, and keeps
+// the readers' standing judgments: the readers behind and the read tier to raise; cannot
+// ask and fewer than two readers up close.
 func readCardsAskPart(s *Snapshot, r TickReq, seats []FriendSeat) (Plan, int) {
-	var ri routeIndexes
-	if s.Fleet != nil && len(s.Routes) > 0 {
-		ri = routeIndexesOf(s)
-	}
-	p, waits := readCardsAsk(s, seats, ri)
-	if ri != nil {
-		ri.write(&p)
-	}
-	asked := map[string]int{}
-	for i, u := range p.Units {
-		if strings.Contains(u.Moved, " asked of ") {
-			asked[u.Key] = i
+	var p Plan
+	_, waits := readCardsAsk(s, seats, nil)
+	for _, c := range s.Work.Column(Review) {
+		if _, wait := waits[c.ID]; !wait && c.F(FieldWaitingReader) != "" {
+			p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.Row, Changes: []Change{change(Work, setEntry(c, nil, FieldWaitingReader))},
+				Moved: c.ID + " waits for a reader no more"})
 		}
 	}
-	markWaiting(&p, s, asked, waits)
+	markWaiting(&p, s, map[string]int{}, waits)
 	var conds []cond
 	if s.Readers != nil {
 		conds = append(conds, readersBehindCond(s)...)
@@ -466,4 +510,53 @@ func readCardsWaitingCount(s *Snapshot) int {
 		}
 	}
 	return n
+}
+
+// withReadCards is the read-card deal (TickDeal; the owner, 2026-10-06: "Just remove the
+// complexity. just deal it."): the plan that deals every read the primaries in review want
+// (readCardsAsk), each drawn on its tier's routes from the tier's index as it stands (a
+// read moves no index: the work cards of the deal move it), and the snapshot with those
+// cards placed and the cards it takes back off their rows, which the work of the same deal
+// is dealt on: every room the deal counts (memberLoads, widthRoom, friendLoad) holds the
+// reads first, at half a slot each (reads are a card priority: a read waits behind no
+// work card). With read cards off, nothing and the snapshot as it is.
+func (s *Snapshot) withReadCards(seats []FriendSeat) (*Snapshot, Plan) {
+	if !s.ReadCardsOn() || s.Fleet == nil {
+		return s, Plan{}
+	}
+	if seats == nil {
+		seats = s.Friends
+	}
+	var ri routeIndexes
+	if len(s.Routes) > 0 {
+		ri = routeIndexesOf(s)
+	}
+	p, _ := readCardsAsk(s, seats, ri)
+	if len(p.Units) == 0 {
+		return s, p
+	}
+	v := *s
+	v.Fleet = s.Fleet.Frozen()
+	for _, ra := range p.Rows {
+		if ra.Table == Fleet && !v.Fleet.HasRow(ra.Row) {
+			v.Fleet.SetRows(append(slices.Clone(v.Fleet.Rows()), ra.Row))
+		}
+	}
+	for _, u := range p.Units {
+		for _, ch := range u.Changes {
+			e := ch.Entry
+			switch {
+			case ch.Table != Fleet:
+			case e.Create != nil:
+				v.Fleet.Put(&Card{ID: e.ID, Row: e.Create.Row, Col: e.Create.Col, Score: e.Create.Score, Fields: maps.Clone(e.Set)})
+			case e.Remove:
+				if c := v.Fleet.Card(e.ID); c != nil {
+					off := *c
+					off.Row, off.Col = "", ""
+					v.Fleet.Put(&off)
+				}
+			}
+		}
+	}
+	return &v, p
 }

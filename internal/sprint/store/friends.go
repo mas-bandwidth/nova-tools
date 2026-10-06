@@ -58,6 +58,9 @@ type friendEntry struct {
 	// ConfigDir is her row's config_dir, the directory a claude one-shot lane
 	// runs with as CLAUDE_CONFIG_DIR, which her beat answers (row_config_dir=).
 	ConfigDir string `json:"config_dir,omitempty"`
+	// Roles is her row's roles, comma joined (builder, may-hold, reader): a read card is
+	// dealt only to a friend whose roles name reader (sprint read_cards.go).
+	Roles string `json:"roles,omitempty"`
 	// Reason and Until are the hold's (friend down --reason --until, hold <friend>
 	// --reason): why, and when the coordinator expects her back. Return is whether
 	// the hold took her cards back (hold.go).
@@ -75,6 +78,8 @@ type FriendSpec struct {
 	Mode  string // her delivery mode, config.FriendMode of her row
 	// ConfigDir is her row's config_dir ("" when it names none).
 	ConfigDir string
+	// Roles is her row's roles, comma joined: reader is the read cards'.
+	Roles string
 }
 
 // FriendRow is one row of the friends table as where draws it: the counts of
@@ -93,6 +98,8 @@ type FriendRow struct {
 	Status     string `json:"status"`
 	Class      string `json:"class,omitempty"`
 	Mode       string `json:"mode,omitempty"`
+	// Roles is her row's roles, comma joined (reader: she is dealt read cards).
+	Roles string `json:"roles,omitempty"`
 	// Load and Report are what her last beat reported (friend beat --load, and
 	// sprint.FriendReport), absent when it reported none.
 	Load   float64              `json:"load,omitempty"`
@@ -176,11 +183,11 @@ func (st *Store) SyncFriends(ctx context.Context, specs []FriendSpec) (added, re
 		case !had:
 			added = append(added, s.Name)
 			rosterChanged = true
-		case e.Width != s.Width || e.Class != s.Class || e.Mode != s.Mode || e.ConfigDir != s.ConfigDir:
+		case e.Width != s.Width || e.Class != s.Class || e.Mode != s.Mode || e.ConfigDir != s.ConfigDir || e.Roles != s.Roles:
 			updated = append(updated, s.Name)
 			rosterChanged = true
 		}
-		e.Width, e.Class, e.Mode, e.ConfigDir = s.Width, s.Class, s.Mode, s.ConfigDir
+		e.Width, e.Class, e.Mode, e.ConfigDir, e.Roles = s.Width, s.Class, s.Mode, s.ConfigDir, s.Roles
 		r[s.Name] = e
 	}
 	for n := range r {
@@ -383,7 +390,7 @@ func (st *Store) friendRows(ctx context.Context, now time.Time) ([]FriendRow, ma
 		}
 		presence := sprint.FriendPresence{Held: r[n].Held, Beat: b, Health: h, Generation: generation, Finished: fin}
 		word, evidence := sprint.FriendEvidence(presence, now)
-		row := FriendRow{Name: n, Width: r[n].Width, Status: word, Evidence: evidence, Finished: fin, Class: r[n].Class, Mode: r[n].Mode, Load: b.Load, Report: b.Friend, Beat: b.At, Proof: b.Proof}
+		row := FriendRow{Name: n, Width: r[n].Width, Status: word, Evidence: evidence, Finished: fin, Class: r[n].Class, Mode: r[n].Mode, Roles: r[n].Roles, Load: b.Load, Report: b.Friend, Beat: b.At, Proof: b.Proof}
 		if why := sprint.FriendDownWhy(presence, now); why != "" {
 			whys[n] = why
 		}
@@ -430,7 +437,7 @@ func (st *Store) FriendSeats(ctx context.Context, now time.Time) ([]sprint.Frien
 	}
 	seats := make([]sprint.FriendSeat, len(rows))
 	for i, r := range rows {
-		seats[i] = sprint.FriendSeat{Name: r.Name, Width: r.Width, Status: r.Status, Class: r.Class, Mode: r.Mode, Why: whys[r.Name], Proof: r.Proof, Finished: r.Finished}
+		seats[i] = sprint.FriendSeat{Name: r.Name, Width: r.Width, Status: r.Status, Class: r.Class, Mode: r.Mode, Roles: sprint.Split(r.Roles), Why: whys[r.Name], Proof: r.Proof, Finished: r.Finished}
 		if r.Reason != "" && seats[i].Why != "" {
 			seats[i].Why += ": " + r.Reason
 		}
@@ -635,7 +642,7 @@ func (st *Store) FriendSpecOf(ctx context.Context, friend string) (FriendSpec, e
 	if !ok {
 		return FriendSpec{}, noFriend(r, friend)
 	}
-	return FriendSpec{Name: friend, Width: e.Width, Class: e.Class, Mode: e.Mode, ConfigDir: e.ConfigDir}, nil
+	return FriendSpec{Name: friend, Width: e.Width, Class: e.Class, Mode: e.Mode, ConfigDir: e.ConfigDir, Roles: e.Roles}, nil
 }
 
 // FriendSessions is every friend of the roster with her session's last pong as her last

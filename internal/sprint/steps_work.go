@@ -1192,8 +1192,22 @@ func takeOne(s *Snapshot, r TakeReq) Plan {
 	byID := named(sel)
 	// THE WIDTH IS HARD: a member's working cards never pass its width, held here, at the
 	// sprint's one writer, whatever the member asks. A take by
-	// count is cut to the room; a take by id past it is refused.
+	// count is cut to the room; a take by id past it is refused. While read cards are on a
+	// read working holds half a slot (read_cards.go): the room is counted in half slots,
+	// twice the width less twice the work and the reads working, a read taking one and a
+	// work card two.
+	halves := s.ReadCardsOn()
 	room := max(width-len(s.Fleet.Cell(r.As, Working)), 0)
+	if halves {
+		ww, wr := rowWorking(s, r.As)
+		room = max(2*width-2*ww-wr, 0)
+	}
+	cost := func(c *Card) int {
+		if halves && !isRead(c) {
+			return 2
+		}
+		return 1
+	}
 	if !byID {
 		if room == 0 {
 			return p
@@ -1205,8 +1219,34 @@ func takeOne(s *Snapshot, r TakeReq) Plan {
 	}
 	// the member's ready cards in stream turns (takeTurns), as the deal dealt
 	// them: a member holding DealAhead times its width takes its width of them
-	// from every stream alike, never one stream's lowest scores first.
-	chosen := pick(&p, sel, takeTurns(s.Fleet.Cell(r.As, Ready), slices.Index(s.Members(), r.As)), fieldStream, func(c *Card) string {
+	// from every stream alike, never one stream's lowest scores first. Its reads are taken
+	// before its work, a read being at reader priority (priority.go).
+	ready := takeTurns(s.Fleet.Cell(r.As, Ready), slices.Index(s.Members(), r.As))
+	if halves {
+		slices.SortStableFunc(ready, func(a, b *Card) int {
+			if isRead(a) == isRead(b) {
+				return 0
+			}
+			if isRead(a) {
+				return -1
+			}
+			return 1
+		})
+		if !byID {
+			// a take by count takes the cards that fit, in order: a work card that does not
+			// fit is passed over for the reads after it
+			var fit []*Card
+			left := room
+			for _, c := range ready {
+				if cost(c) <= left {
+					fit = append(fit, c)
+					left -= cost(c)
+				}
+			}
+			ready = fit
+		}
+	}
+	chosen := pick(&p, sel, ready, fieldStream, func(c *Card) string {
 		if byID {
 			if why := liveGen("take", c, r.Gens); why != "" {
 				return why
@@ -1221,10 +1261,10 @@ func takeOne(s *Snapshot, r TakeReq) Plan {
 			return "its route " + c.F(FieldRoute) + " rests until " + rest.UntilSaid() + " (" + rest.Said() + "): the tick withdraws it and deals it again on a route that serves"
 		}
 		if byID {
-			if room == 0 {
+			if room < cost(c) {
 				return fmt.Sprintf("%s %s is at its width (%d working of %d): a card is taken when one is reported", worker, r.As, len(s.Fleet.Cell(r.As, Working)), width)
 			}
-			room--
+			room -= cost(c)
 		}
 		return ""
 	}, s.Fleet.Card)
@@ -2013,6 +2053,18 @@ func downPlan(s *Snapshot, r FleetReq, up []string, rr *round, moves roundMoves,
 	}
 	cards = slices.DeleteFunc(cards, func(c *Card) bool { return r.keep[c.F("stream")] })
 	SortCards(cards)
+	// a read card is its reader's: taken back off a member going down or held, by the
+	// machine, which spends nothing of the reader's (read_cards.go, spentBy), and the
+	// read-card deal deals it again
+	cards = slices.DeleteFunc(cards, func(c *Card) bool {
+		if !isRead(c) {
+			return false
+		}
+		p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.F("stream"),
+			Changes: []Change{change(Fleet, removeEntry(c, map[string]string{"retired": stamp(s.Now), "retired_by": RetiredByAway}))},
+			Moved:   c.ID + " taken back: " + r.Member + " is " + r.Op})
+		return true
+	})
 	withdrew := 0
 	for _, c := range cards {
 		taken := c.Col == Working
@@ -2149,7 +2201,8 @@ func levelWith(s *Snapshot, p *Plan, up []string, rr *round, moves roundMoves, h
 	}
 	widths := memberWidths(s, up)
 	for _, m := range up {
-		queues[m] = append([]*Card{}, s.Fleet.Cell(m, Ready)...)
+		// a read card is its reader's: the level moves work cards alone (read_cards.go)
+		queues[m] = slices.DeleteFunc(append([]*Card{}, s.Fleet.Cell(m, Ready)...), isRead)
 	}
 	for {
 		long, short := "", ""

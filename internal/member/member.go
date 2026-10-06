@@ -569,6 +569,40 @@ func (m *Member) Running() int {
 	return n
 }
 
+// halves is the half slots the member's launches hold: a work card two, a read card one
+// (a read costs half a slot of the one width, docs/SPEC-SPRINT.md section 6, "A read is a
+// consumer card"). A reader's launches are all reads, each a whole lane of its own loop.
+func (m *Member) halves() int {
+	n := 0
+	for _, l := range m.running {
+		switch {
+		case l.spent:
+		case l.packet.Kind == "read" && !m.cfg.Reader:
+			n++
+		default:
+			n += 2
+		}
+	}
+	return n
+}
+
+// full says the packet would pass the member's width: a reader's lanes are whole, a
+// member's are counted in half slots (halves), a read card taking one and a work card two.
+func (m *Member) full(p Packet) bool {
+	if m.cfg.Reader {
+		return m.Running() >= m.width
+	}
+	cost := 2
+	if p.Kind == "read" {
+		cost = 1
+	}
+	return m.halves()+cost > 2*m.width
+}
+
+// reads says the launch is a read: a reader's every launch, and a read card a member was
+// dealt on its fleet row. A read pushes nothing and is reported with the read verb.
+func (m *Member) reads(l launch) bool { return m.cfg.Reader || l.packet.Kind == "read" }
+
 // Wake is the word that the next pass is due before the loop's interval: a push ended, or
 // a child exited (a Background member). It holds at most one word.
 func (m *Member) Wake() <-chan struct{} { return m.wake }
@@ -948,7 +982,7 @@ func (m *Member) reportOne(id string, l launch, now time.Time, qPacket *Packet, 
 	launched := []string{"--epoch", strconv.FormatUint(l.epoch, 10)}
 	var args []string
 	ok := r.OK // as reported: a work card whose push was refused is reported failed
-	if m.cfg.Reader {
+	if m.reads(l) {
 		if r.End == EndStaging && !l.retried && !m.drain {
 			// (a draining reader starts nothing: its stage failure is handed back below)
 			// RULE (docs/SPEC-SPRINT.md, the readers): a read's stage failure is never a
@@ -1069,7 +1103,7 @@ func (m *Member) reportOne(id string, l launch, now time.Time, qPacket *Packet, 
 		noAnswer(args[0]+" "+id, out)
 		return false
 	}
-	m.forget(id, !m.cfg.Reader && !ok) // refused (1) too: the card is no longer ours to report
+	m.forget(id, !m.reads(l) && !ok) // refused (1) too: the card is no longer ours to report
 	return true
 }
 
@@ -1090,6 +1124,19 @@ func (m *Member) takeVerb() string {
 // taken, and the pass goes on.
 func (m *Member) take(q queueOut, held []string, now time.Time, launch func(Packet) bool) (acted int, unanswered []byte) {
 	room := m.width - m.Running()
+	if !m.cfg.Reader {
+		// in half slots: a read card holds one, a work card two; the sprint's take cuts the
+		// cards it hands to the room they hold (internal/sprint, takeOne), and a server from
+		// before read cards cuts them to its width, never past it
+		room = 2*m.width - m.halves()
+		reads := slices.ContainsFunc(q.Cards, func(c queueCard) bool {
+			_, ours := m.running[c.ID]
+			return !ours && c.Col == "ready" && IsReadCardID(c.ID)
+		})
+		if !reads {
+			room /= 2 // work cards alone: whole slots
+		}
+	}
 	if room <= 0 {
 		return 0, nil
 	}
@@ -1200,7 +1247,7 @@ func (m *Member) recoverWorking(ids []string, byID map[string]queueCard, wasOurs
 		if c.Packet == nil {
 			continue
 		}
-		if m.Running() >= m.width {
+		if m.full(*c.Packet) {
 			fmt.Fprintf(m.out, "recover %s deferred: width %d full\n", id, m.width)
 			continue
 		}
@@ -1218,7 +1265,7 @@ func (m *Member) start(p Packet) bool {
 		fmt.Fprintf(m.out, "start %s: already running\n", p.Card)
 		return false
 	}
-	if m.Running() >= m.width {
+	if m.full(p) {
 		fmt.Fprintf(m.out, "start %s: width %d full\n", p.Card, m.width)
 		return false
 	}
@@ -1589,7 +1636,7 @@ func (m *Member) endEnded(ids []string, byID map[string]queueCard) {
 			defer m.longs.Done()
 			defer ends.Done()
 			r := child.Result()
-			if m.cfg.Reader {
+			if m.cfg.Reader || p.Kind == "read" {
 				m.post(id, post{res: &r})
 				return
 			}
@@ -1638,7 +1685,7 @@ func (m *Member) endEndedLocal() {
 			defer m.longs.Done()
 			defer ends.Done()
 			r := child.Result()
-			if m.cfg.Reader {
+			if m.cfg.Reader || p.Kind == "read" {
 				m.post(id, post{res: &r})
 				return
 			}
@@ -2112,4 +2159,15 @@ func short(sha string) string {
 		return sha[:12]
 	}
 	return sha
+}
+
+// IsReadCardID says the card id is a read card's, <primary>.r<attempt>.<reader>[.g<n>]
+// (internal/sprint ParseReadCard, which this package may not import).
+func IsReadCardID(id string) bool {
+	parts := strings.Split(id, ".")
+	if len(parts) != 3 && len(parts) != 4 {
+		return false
+	}
+	n, err := strconv.Atoi(strings.TrimPrefix(parts[1], "r"))
+	return strings.HasPrefix(parts[1], "r") && err == nil && n >= 1
 }
