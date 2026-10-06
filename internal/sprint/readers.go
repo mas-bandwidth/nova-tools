@@ -49,12 +49,51 @@ func ReaderState(away bool, b Beat, now time.Time) string {
 	switch {
 	case away:
 		return ReaderAway
-	case b.Beaten() && now.Sub(b.At) <= ReaderBeatBound:
+	case ReaderServed(b, now):
 		return ReaderUp
 	case b.Beaten():
 		return ReaderAway
 	}
 	return ReaderDown
+}
+
+// ReaderServed says a process serves the reader at now: its last beat is
+// within ReaderBeatBound. A read is served by a process that beats for the
+// reader (a machine's reader loop, a bud's, a friend's harness, each asking
+// queue --as <reader>), never by its row: the coordinator's hold and its
+// release (reader up) change whether it is asked, not whether anything reads
+// (the owner, 2026-10-05: reader up printed OK for two readers no process
+// served, and both were away on the next tick).
+func ReaderServed(b Beat, now time.Time) bool {
+	return b.Beaten() && now.Sub(b.At) <= ReaderBeatBound
+}
+
+// ReaderServedWord is a reader row's served cell: served or unserved, from
+// its beat (ReaderServed).
+func ReaderServedWord(b Beat, now time.Time) string {
+	if ReaderServed(b, now) {
+		return "served"
+	}
+	return "unserved"
+}
+
+// UnservedWhy says why no process serves the reader: it never beat, or its
+// last beat is past the bound.
+func UnservedWhy(reader string, b Beat, now time.Time) string {
+	if !b.Beaten() {
+		return "no process has ever beaten for " + reader
+	}
+	return fmt.Sprintf("%s's last beat was %s ago, past the bound of %s", reader, now.Sub(b.At).Truncate(time.Second), ReaderBeatBound)
+}
+
+// ReaderServeRemedy is the beat that would serve the reader, by name: a
+// process asking its own queue every tick, which is what makes it up.
+func ReaderServeRemedy(reader string) string {
+	loop := "a bud's reader loop or a friend's harness asking nova-sprint queue --as " + reader + " every tick"
+	if m, ok := ReaderMachine(reader); ok {
+		loop = "nova-swarm member --reader --as " + reader + " on " + m + ", or " + loop
+	}
+	return "start the reader beat that serves it (" + loop + ")"
 }
 
 // ReaderIsUp says a reader may be asked: it is up, or the snapshot carries no

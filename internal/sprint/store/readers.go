@@ -190,6 +190,38 @@ func (st *Store) ReaderStates(ctx context.Context, readers []string, now time.Ti
 	return out, nil
 }
 
+// ReaderBeats is each of readers' last beat (the zero Beat when it never beat):
+// whether a process serves it (sprint.ReaderServed), read apart from the
+// coordinator's hold. A store that keeps no beats says none (nil), and every
+// reader is served.
+func (st *Store) ReaderBeats(ctx context.Context, readers []string) (map[string]sprint.Beat, error) {
+	kv, err := st.rootKV()
+	if err != nil {
+		return nil, nil
+	}
+	out := map[string]sprint.Beat{}
+	if len(readers) == 0 {
+		return out, nil
+	}
+	names := make([]string, len(readers))
+	for i, r := range readers {
+		names[i] = readerBeatKey(r)
+	}
+	vals, oks, err := getKeys(ctx, kv, names)
+	if err != nil {
+		return nil, err
+	}
+	for i, r := range readers {
+		var b sprint.Beat
+		if oks[i] {
+			// ignored: an unreadable record is no beat, which the next beat replaces
+			_ = json.Unmarshal([]byte(vals[i]), &b)
+		}
+		out[r] = b
+	}
+	return out, nil
+}
+
 // readerStatesInto gives a snapshot its readers' states: the readers table's
 // rows as the snapshot holds them.
 func (st *Store) readerStatesInto(ctx context.Context, s *sprint.Snapshot) error {

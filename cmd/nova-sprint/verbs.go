@@ -2842,10 +2842,15 @@ func unknownReaders(rows, names []string) []string {
 // cmdReaderHold is reader away (away) and reader up: the coordinator holds the
 // named readers away, whatever they beat, or releases the hold (the state is
 // then the beat's). A named reader with no row refuses the whole call, and
-// nothing is written (docs/SPEC-SPRINT.md section 6).
+// nothing is written; so does reader up of a reader no process serves
+// (refuseUnserved, reader.go), unless --unserved (docs/SPEC-SPRINT.md section 6).
 func (a *app) cmdReaderHold(away bool, args []string, stdout, stderr io.Writer) int {
 	verbName := map[bool]string{true: "reader away", false: "reader up"}[away]
 	fs, c := a.verbSetup(verbName)
+	var unserved *bool
+	if !away {
+		unserved = fs.Bool("unserved", false, "release the hold of a reader no process serves (a retired reader's loop beats again only once it is up); it stays away or down until a process beats for it")
+	}
 	names, code := readerNames(verbName, args, stderr, fs)
 	if code != 0 {
 		return code
@@ -2862,6 +2867,13 @@ func (a *app) cmdReaderHold(away bool, args []string, stdout, stderr io.Writer) 
 	if bad := unknownReaders(rows, names); len(bad) > 0 {
 		fmt.Fprintf(stderr, "%s %s: no reader %s on the readers table (readers: %s); nothing was changed; run: nova-sprint reader add <name>\n", prog, verbName, strings.Join(bad, ","), strings.Join(rows, ","))
 		return 1
+	}
+	if !away && !*unserved {
+		if code, err := refuseUnserved(ctx, st, verbName, names, a.now(), stderr); err != nil {
+			return a.readFailed(verbName, err, stderr)
+		} else if code != 0 {
+			return code
+		}
 	}
 	// the old words of hold <reader>... --return and unhold <reader>... (one release): the
 	// reads it holds are asked of another, as a reader away's always were
