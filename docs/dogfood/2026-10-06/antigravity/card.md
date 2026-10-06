@@ -1,6 +1,6 @@
 # nova-card dogfood, 2026-10-06
 
-Friend alex (opencode harness, abliteration-ai/abliterated-model-large-v2), using `nova-card`
+One friend (opencode harness, abliteration-ai/abliterated-model-large-v2), using `nova-card`
 cold from `nova-card -h`, `nova-card help`, `nova-card <verb> -h` and the tool's page under
 `docs/` (docs/CLI.md `## nova-card`, docs/TESTS.md `## nova-card`) only, at nova-tools
 `sprint/mechanical-2026-10-02` tip 0760eac79, built on the Linux bench
@@ -56,7 +56,7 @@ says. Roughly thirty minutes of use.
      `cmd/nova-sandbox`, `internal` in `internal/bus`), and the remedy — "write the role
      (the owner, a friend, a bench), never the name" — cannot be applied to a PATHS line,
      so the tool's own generated content can never pass its own `--name` check for such
-     words. This fleet has machines named like tools (`space`, `studio`), so the collision
+     words. This fleet runs machines named like tools, so the collision
      is a real one.
    - Grade: NEXT.
 
@@ -67,6 +67,18 @@ says. Roughly thirty minutes of use.
      and the CARDS line last, so a caller reading the first line (or a script grepping the
      summary) gets manifest rows instead. Verified the dry-run really writes nothing (the
      out dir was absent afterwards).
+   - Grade: NEXT.
+
+7. `go test -count=1 -timeout 600s ./internal/ci/` (the docs-tree gate, on the Linux
+   bench; a report quoting nova-card's example output must pass it)
+   - `--- FAIL: TestEveryNamedRepoPathExists (2.01s)` / `Error: docs/dogfood/2026-10-06/antigravity/card.md:64: internal/bus/send.go names no file or directory in this tree; a friend following it finds nothing -- correct the path, or add it to testdata/namedpaths_allowlist.txt with the reason it is not a real path` (exit 1)
+   - Expected: recording the documented first run's manifest (this card's own form) should
+     not red the docs tree. The findings fixture the example reads names
+     `internal/bus/send.go`, a file that does not exist in this repository, so a report
+     quoting the example's output needs a `testdata/namedpaths_allowlist.txt` row (added,
+     section 2, with the reason) before the gate goes green; a stranger recording the
+     example hits the red and has to find the list. A fixture naming only real paths
+     would keep the example self-contained.
    - Grade: NEXT.
 
 READ 8/10 — honest effect lines per verb, an exit table that matched every code I hit,
@@ -86,4 +98,4 @@ path for "a row the ledger did not read" was not triggered (every ledger I read 
 cards); `--bin-dir`'s PATH default was not exercised (`--bin-dir` was passed explicitly
 throughout).
 
-urgent=0 next=6
+urgent=0 next=7
