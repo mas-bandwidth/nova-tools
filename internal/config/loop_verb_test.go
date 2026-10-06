@@ -97,5 +97,5 @@ func TestNovaToolsIsEveryCommand(t *testing.T) {
 			cmds = append(cmds, e.Name())
 		}
 	}
-	assert.ElementsMatch(t, cmds, NovaTools)
+	assert.ElementsMatch(t, cmds, NovaTools, "internal/config/loop.go's NovaTools is not the set of cmd/ directories; add the new command there")
 }
