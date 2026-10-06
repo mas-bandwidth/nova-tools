@@ -3693,7 +3693,7 @@ The mechanisms: a **blocking read** waits in the store until the thing arrives (
 | dashboard pull | sprint to the Television and the dashboard page | timer poll | one read per --every (1 s) whoever is looking, pushed on to each page as server-sent events; a keepalive every 15 s | a display pull: one read serves every viewer, and the page itself is pushed to |
 | table and where displays | sprint to a terminal (nova-table watch, where --watch) | timer poll | --every (1 s) | a display pull: a person's terminal, no party waits on it |
 | samplers and watchdogs | one machine to itself (host load, a card's live sample, the slot cleaner, the wall's process count, a job lease's heartbeat, the idle watch, the store round trip) | not a channel | 1 s to 30 s each | a measurement or a lease of one machine; no message or card moves |
-| waits and retries | one machine to itself (a process gone, a lock, a file steady, a server up, a push or open retried) | not a channel | bounded by its caller | a wait on the machine's own state, or a backoff; no message or card moves |
+| waits and retries | one machine to itself (a process gone, a lock, a file steady, a server up, a push or open retried, a tick given up stopping) | not a channel | bounded by its caller | a wait on the machine's own state, or a backoff; no message or card moves |
 | nova-wake | bus to the coordinator (nova-wake serve) | removed | - | retired with the tool (fleet/retired-tools.txt); its binary is gone, so a unit that still names it restarts for ever: the loops play retires the unit (nova_retire_units) |
 
 The cards this audit cut, each one row of the table turned from a timer poll into a push; each one's DONE-WHEN is its row's mechanism changed here and its ledger line gone:
@@ -5052,6 +5052,37 @@ TickEvery for the line prints `LINE the tick waited <d>`. A tick queued behind e
 waiting is the stall this prevents: the ticks run in a second or two and begin tens of seconds
 apart, and a RUNNING machine reads STOPPED with no stop given. `TestNoTickStepExceedsItsBound`
 holds the bound.
+
+The tick's deadline. A tick past its deadline gives up its plan, never the process. The
+deadline is three times the median wall of the last 20 ticks (the upper of the two middle
+walls when they are even), never less than `run --tick-deadline` (`TickDeadline`, 10 s) and
+never more than a minute (`TickDeadlineCap`) unless `--tick-deadline` asks for more; a tick
+given up counts its deadline as its wall. So a slow store stretches the deadline (ticks of 8 s
+have 24 s) instead of killing the server, and every `TIMES` line ends `deadline=<d>`, the
+deadline its tick had. Past it the loop prints `TICK DEADLINE the tick begun at <t> did not end
+within <d>`, writes every goroutine's stack to stderr, and cancels the tick's context: its store
+calls end and its plan is never written (a write already in flight is the fence's to finish or
+repair). The loop holds the line until the tick given up has stopped, for it shares the loop's
+store and twin; then it adds one to `tick_overrun` on the heartbeat (`store.CountTickOverrun`;
+the ticks after keep the count), prints `TICK OVERRUN ... tick_overrun=<n>, <k> in a row; the
+loop goes on`, gives the line back and begins the next tick. Each further deadline a tick given
+up has not stopped in counts one more in a row. At three in a row (`TickOverrunsToExit`) the
+process is wedged: `TICK WEDGED 3 ticks in a row ran past their deadline`, the stacks again, and
+run exits 4 so its supervisor starts it again; a tick that ends in time starts the count again.
+Run exits otherwise only on a signal (a failed tick, a store that does not answer included, is
+printed and tried again with the backoff). On 2026-10-06, under load (load 30 on 32 cores,
+store round trips of 50 to 80 ms), ticks took 7 to 8 s, a fixed 10 s deadline exited the
+process 21 times that day, and each restart left every worker's verb refused for 15 to 30 s
+and the landings, which run in the process, stopped. While a tick runs, the workers' writes
+(`take`, `finish`, `progress`, `read`, `queue`, `fleet beat`) wait for the line the tick holds
+(serve.go, `serveCtx`, `a.serial.LockCtx`), not for the store's fence; a friend's beat and a
+read run on their lanes and wait for neither. A tick whose fenced read lost the fence to other
+operations (`the sprint is busy: other operations kept the fence moving`, `store.FenceBusyError`)
+runs its parts again within the same tick, up to three times (`store.TickBusyRetries`), before
+it counts as failed on the heartbeat; the loop prints `TICK BUSY ... its parts ran again <n>
+times within it`. `TestATickPastItsDeadlineIsAbandonedNotTheProcess`,
+`TestThreeOverrunsInARowExitFour`, `TestTheTickDeadlineStretchesWithTheMedianWall`,
+`TestAFenceBusyTickRetriesBeforeFailing`.
 
 The server runs the workers' verbs only: `take`, `finish`, `progress`, `read` and `queue`, each beginning
 `<verb> --as <worker>` with one worker's name, `fleet beat <member> --load <percent>` and
