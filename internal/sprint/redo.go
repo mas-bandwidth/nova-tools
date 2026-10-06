@@ -111,7 +111,9 @@ func Redo(s *Snapshot, r RedoReq) Plan {
 		}
 		m := ""
 		_, friend := FriendCard(c)
-		if len(up) > 0 && !friend {
+		// no route serves its tier and a friend up does: the friends' deal's, never a machine's
+		_, _, toFriend, byFriend := s.routeOf(c, nil, nil)
+		if len(up) > 0 && !friend && !byFriend {
 			m = rr.next(up, q, room, reworkAvoid(s, c))
 		}
 		var u Unit
@@ -131,6 +133,8 @@ func Redo(s *Snapshot, r RedoReq) Plan {
 			switch {
 			case friend:
 				later = "a friend's card: the tick deals it to a friend up with room"
+			case byFriend:
+				later = toFriend
 			case len(up) > 0:
 				later = "no fleet member has room: the tick deals it when one has"
 			}
