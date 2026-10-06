@@ -22,6 +22,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/sprintdash"
 )
 
 // The read verbs: queue, where, inbox, card, check. Each has --json, one
@@ -545,6 +546,12 @@ type whereView struct {
 	Width  int    `json:"width"`
 	Buffer string `json:"buffer"`
 	Low    bool   `json:"low"`
+	// MergeRow is the merge state, the dashboard's Merge row (docs/SPEC-SPRINT-DASHBOARD.md,
+	// "Merge"): the cards in merging and review, landed per 30 minutes, the oldest merging
+	// card's age (with --cards or --rows), the base's gate and its failing test, the drift
+	// between the base and the development branch, and the minutes since the last sync and
+	// the last promotion (mergeFactsOf).
+	MergeRow sprintdash.MergeRow `json:"merge_row"`
 	// Friends is the friends table's rows with what each friend's last beat reported (her
 	// load and her own counts, friend beat), beside the table's counts, which are the sprint's.
 	Friends []store.FriendRow `json:"friends,omitempty"`
@@ -636,6 +643,61 @@ func mergingView(cs []*sprint.Card) []mergingCard {
 	}
 	slices.SortFunc(out, func(a, b mergingCard) int { return cmp.Or(cmp.Compare(a.Stream, b.Stream), cmp.Compare(a.ID, b.ID)) })
 	return out
+}
+
+// mergeFactsOf is the Merge row's facts (docs/SPEC-SPRINT-DASHBOARD.md, "Merge") from what
+// where has read, and no card: the work table's merging and review counts, the where
+// record's landings, the drift and the last sync the merge table's properties record
+// (sprint.DevDriftOf), the last promotion the work table's (sprint.Promotion), and the
+// lander's gate at its last landing (a live stream's ci). The open base-red judgments, the
+// gate's red, are read only when a stream is stopped: the base-gate rule's stop stops it,
+// and a sprint that runs keeps where's exchanges as they were (where_cost_test.go).
+func mergeFactsOf(ctx context.Context, st *store.Store, work, merge ntable.Table, clocks []sprint.StreamClock, landed []time.Time, now time.Time) (sprintdash.MergeFacts, error) {
+	f := sprintdash.MergeFacts{Now: now, Merging: cellCount(work, string(sprint.Merging)), Review: cellCount(work, string(sprint.Review)), Landed: landed}
+	w, m := sprint.NewTable(sprint.Work), sprint.NewTable(sprint.Merge)
+	w.SetProps(work.Props)
+	m.SetProps(merge.Props)
+	snap := &sprint.Snapshot{Now: now, Work: w, Merge: m}
+	drift := sprint.DevDriftOf(snap)
+	f.BaseLacks, f.DevLacks, f.LastSync = drift.BaseLacks, drift.DevLacks, drift.LastSync
+	f.LastPromotion, _, _ = sprint.Promotion(snap)
+	f.LanderGreen = slices.ContainsFunc(merge.Rows, func(r ntable.Row) bool { return !r.Hidden && r.Texts[sprint.CI] == "green" })
+	if !slices.ContainsFunc(clocks, func(c sprint.StreamClock) bool { return c.State == sprint.StreamStopped }) {
+		return f, nil
+	}
+	open, err := st.B.OpenNotes(ctx)
+	if err != nil {
+		return f, err
+	}
+	for _, o := range open {
+		if o.Note.Type == sprint.NBaseRed || o.Note.Type == sprint.NDriftBaseRed {
+			f.BaseRed = append(f.BaseRed, o.Note.What)
+		}
+	}
+	return f, nil
+}
+
+// cellCount is the primaries in a column of the work table, every row's cell summed.
+func cellCount(t ntable.Table, col string) int64 {
+	j := t.Column(col)
+	var n int64
+	for _, r := range t.Rows {
+		if j >= 0 && j < len(r.Cells) {
+			n += r.Cells[j].Count
+		}
+	}
+	return n
+}
+
+// oldestMerging is the oldest merging card's age in minutes by its accepted stamp, nil
+// when none is merging or none carries one (sprintdash.MergeRowOf).
+func oldestMerging(now time.Time, merging []*sprint.Card) *int {
+	f := sprintdash.MergeFacts{Now: now, MergingRead: true}
+	for _, c := range merging {
+		at, _ := time.Parse(time.RFC3339, c.F("accepted")) // unreadable: zero, skipped
+		f.MergingSince = append(f.MergingSince, at)
+	}
+	return sprintdash.MergeRowOf(f).OldestMergingMin
 }
 
 // judgmentRef is an open judgment naming a dealt card's primary: its note and its kind.
@@ -832,6 +894,7 @@ func (a *app) whereLoop(ctx context.Context, r whereRun, stdout, stderr io.Write
 			}
 			v.Cards, v.Judgments = dealtView(d, st.Names.Prefix, v.Epoch)
 			v.Merging = mergingView(d.Merging)
+			v.MergeRow.OldestMergingMin = oldestMerging(v.At, d.Merging)
 			// every hold in force, with its reason (hold, docs/SPEC-SPRINT.md section 11): the
 			// status cells read held, and this says why; read for the dashboard's form only, so
 			// where --json keeps its one read of records
@@ -848,6 +911,7 @@ func (a *app) whereLoop(ctx context.Context, r whereRun, stdout, stderr io.Write
 				return "", a.readFailed("where", err, stderr), false
 			}
 			v.Rows = rowsView(s, r.archived)
+			v.MergeRow.OldestMergingMin = oldestMerging(v.At, s.Work.Column(string(sprint.Merging)))
 		}
 		if r.c.json {
 			b, _ := json.Marshal(v)
@@ -965,6 +1029,11 @@ func (a *app) whereOf(ctx context.Context, st *store.Store, stale time.Duration,
 	}
 	rate := sprint.LandingRate(facts.Landed, v.Landed, facts.Machine.Spans, facts.Machine.FirstStart(es.Cleared), now)
 	v.Summary = summary(shapes[0], v.Held, a.heldETA(now, etaKey{v.All, v.Held}, etaMinutes(shapes[0], rate)))
+	mf, err := mergeFactsOf(ctx, st, shapes[0], shapes[2], clocks, facts.Landed, now)
+	if err != nil {
+		return whereView{}, "", err
+	}
+	v.MergeRow = sprintdash.MergeRowOf(mf)
 
 	if f.Pending != nil {
 		v.Pending = f.Pending.ID

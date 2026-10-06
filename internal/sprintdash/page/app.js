@@ -793,11 +793,31 @@ function renderTopStreams(d) {
   }
 }
 
+// Merge (docs/SPEC-SPRINT-DASHBOARD.md, "Merge"): where --json's merge_row, one row under the
+// progress bar; a minute or a gate not known is "-". Nothing in it flashes.
+function renderMerge(d) {
+  var m = d.merge_row || {};
+  var mins = function (n, suffix) { return n == null ? "-" : n + "m" + (suffix || ""); };
+  var count = function (n) { return n == null ? "-" : String(n); };
+  [["mr-merging", count(m.merging)], ["mr-review", count(m.review)], ["mr-landed", count(m.landed_per_30m)],
+   ["mr-oldest", mins(m.oldest_merging_min)],
+   ["mr-drift", m.base_lacks == null ? "-" : "base lacks " + m.base_lacks + " · dev lacks " + m.dev_lacks],
+   ["mr-sync", mins(m.sync_minutes, " ago")], ["mr-promoted", mins(m.promotion_minutes, " ago")]].forEach(function (f) {
+    var e = $(f[0]); e._quiet = true; setText(e, f[1]);
+  });
+  var g = $("mr-gate");
+  if (!g._pill) { g._pill = makePill(); g.appendChild(g._pill); }
+  var gate = m.base_gate || "-", tone = gate === "red" ? "critical" : gate === "green" ? "good" : "neutral";
+  setPill(g._pill, gate + (m.failing_test ? " · " + m.failing_test : ""), tone,
+    gate === "-" ? "the base's gate is not known" : "the base's gate is " + gate + (m.failing_test ? ": " + m.failing_test : ""));
+}
+
 function render(d) {
   var s = renderStreams(d);
   renderOverall(s.sum, s.all);
   renderPie(d);
   renderTopStreams(d);
+  renderMerge(d);
   renderFleet(d);
   renderFriends(d);
   renderWall(d);
