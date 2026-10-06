@@ -74,6 +74,9 @@ func (st *Store) loadOnce(ctx context.Context, tables []string, extras func(*spr
 		t.SetProps(shape.Props)
 		for _, r := range shape.Rows {
 			t.SetRows(append(t.Rows(), r.Key))
+			if r.Hidden {
+				t.SetHidden(r.Key)
+			}
 			if len(r.Texts) > 0 {
 				t.Texts[r.Key] = r.Texts
 			}

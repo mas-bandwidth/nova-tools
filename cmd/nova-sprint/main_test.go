@@ -230,10 +230,11 @@ func TestTheCommandDrivesAStreamToLanded(t *testing.T) {
 		assert.Contains(t, out, want, "where lacks %q", want)
 	}
 	var w whereView
-	ta.json("where", &w)
+	ta.json("where --archived", &w) // the tick archived s1 as its last card landed
 	require.Equal(t, int64(4), w.Landed, "where --json: %+v", w)
 	require.Equal(t, int64(4), w.All, "where --json: %+v", w)
 	require.Equal(t, "landed", w.Tables["merge"]["s1"]["state"], "where --json: %+v", w)
+	require.Equal(t, []string{"s1"}, w.Archived.Streams, "where --json: %+v", w)
 	ta.clean()
 	out = ta.ok("inbox")
 	require.Contains(t, out, "HAPPENED", "inbox")

@@ -675,6 +675,29 @@ func (m *Mem) RowsHide(_ context.Context, table string, rows []string) error {
 	return nil
 }
 
+// RowsShow draws hidden rows of the table again, as the table layer's row show
+// does, under RowsAdd's epoch check; a row the table does not have is skipped.
+func (m *Mem) RowsShow(_ context.Context, table string, rows []string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.Calls["rowsshow"]++
+	t, err := m.table(table)
+	if err != nil {
+		return err
+	}
+	if err := m.writeEpoch(t); err != nil {
+		return err
+	}
+	ep := t.at(m.active(t))
+	for _, r := range rows {
+		delete(ep.hidden, r)
+	}
+	t.rev++
+	t.wrote[m.active(t)] = true
+	t.changes = append(t.changes, memChange{epoch: m.active(t), before: t.rev - 1, after: t.rev, verb: "rows_show"})
+	return nil
+}
+
 // RowsDel removes rows and unplaces the cards in them, as the table layer's row
 // delete does, under RowsAdd's epoch check.
 func (m *Mem) RowsDel(_ context.Context, table string, rows []string) error {

@@ -245,6 +245,11 @@ func (r *Redis) RowsHide(ctx context.Context, table string, rows []string) error
 	return err
 }
 
+func (r *Redis) RowsShow(ctx context.Context, table string, rows []string) error {
+	_, err := ntable.RowsHide(ctx, r.C, table, false, rows, r.writeOpts())
+	return err
+}
+
 // RowsDel removes each row through the table layer's row delete, one write
 // each; the caller checked that none holds a card but a stream's control
 // card.
