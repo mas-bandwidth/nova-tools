@@ -413,6 +413,10 @@ func TestAnAntigravityReportIsFinishedWhileTheSessionIsBusy(t *testing.T) {
 	r.send(t, "ada", "a long task", "work on it")
 	r.at[3] = func() { outboxReport(t, r.d.Dir, land.Job, "Verdict: LAND\nHead: "+head+"\n\nDone while busy.\n") }
 	r.run(t, 6)
+	// Run does not join a turn: the held one ends with the run's context, and its token on the
+	// gate says its delivery was made and its result queued (without it, Run can return before
+	// the turn's goroutine has delivered at all)
+	<-r.gate
 
 	r.mu.Lock()
 	delivered := len(r.delivered)
