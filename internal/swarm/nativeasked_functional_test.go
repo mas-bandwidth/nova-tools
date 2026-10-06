@@ -67,8 +67,6 @@ func writeCapture(t *testing.T, job, body string) {
 func aRepoWithACommitPastItsBase(t *testing.T, dir string) {
 	t.Helper()
 	git(t, dir, "init", "-q", "-b", "work")
-	git(t, dir, "config", "user.email", "card@example.invalid")
-	git(t, dir, "config", "user.name", "card")
 	base := commit(t, dir, "base")
 	git(t, dir, "update-ref", "refs/remotes/origin/main", base)
 	commit(t, dir, "the-work-the-card-did-after-it-asked")

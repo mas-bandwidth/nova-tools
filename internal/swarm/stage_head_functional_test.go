@@ -37,8 +37,6 @@ func newHeadRig(t *testing.T) *headRig {
 	require.NoError(t, os.MkdirAll(src, 0o755))
 	require.NoError(t, os.MkdirAll(filepath.Dir(g.mirror), 0o755))
 	execCmd(t, src, "git", "init", "-q", "-b", "main")
-	execCmd(t, src, "git", "config", "user.name", "test")
-	execCmd(t, src, "git", "config", "user.email", "test@example.com")
 	require.NoError(t, os.WriteFile(filepath.Join(src, "f"), []byte("one"), 0o644))
 	execCmd(t, src, "git", "add", "f")
 	execCmd(t, src, "git", "commit", "-q", "-m", "one")

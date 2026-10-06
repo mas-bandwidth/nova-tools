@@ -9,6 +9,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/mas-bandwidth/nova-tools/internal/testgit"
 )
 
 // Unit coverage for wall.go's capture and commit-count seam, untagged and store-free: each
@@ -19,7 +21,15 @@ import (
 // coverGit runs one git command in dir and requires success.
 func coverGit(t *testing.T, dir string, args ...string) string {
 	t.Helper()
+	return coverGitIn(t, os.Environ(), dir, args...)
+}
+
+// coverGitIn is coverGit over the environment base, with the test's own git identity
+// (internal/testgit) in place of whatever identity the machine has or lacks.
+func coverGitIn(t *testing.T, base []string, dir string, args ...string) string {
+	t.Helper()
 	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	cmd.Env = testgit.EnvFrom(base)
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, "git %s: %s", strings.Join(args, " "), out)
 	return strings.TrimSpace(string(out))
@@ -28,13 +38,17 @@ func coverGit(t *testing.T, dir string, args ...string) string {
 // coverInitRepo makes one git repository at dir with one commit on branch.
 func coverInitRepo(t *testing.T, dir, branch string) {
 	t.Helper()
+	coverInitRepoIn(t, os.Environ(), dir, branch)
+}
+
+// coverInitRepoIn is coverInitRepo over the environment base.
+func coverInitRepoIn(t *testing.T, base []string, dir, branch string) {
+	t.Helper()
 	require.NoError(t, os.MkdirAll(dir, 0o755))
-	coverGit(t, dir, "init", "-b", branch, ".")
-	coverGit(t, dir, "config", "user.email", "test@example.invalid")
-	coverGit(t, dir, "config", "user.name", "test")
+	coverGitIn(t, base, dir, "init", "-b", branch, ".")
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "f.txt"), []byte(branch+"\n"), 0o644))
-	coverGit(t, dir, "add", "-A")
-	coverGit(t, dir, "commit", "-q", "-m", "init")
+	coverGitIn(t, base, dir, "add", "-A")
+	coverGitIn(t, base, dir, "commit", "-q", "-m", "init")
 }
 
 // TestWallCoverFenceCaptureReadsBothCaptures: fenceCapture reads harness-output.log first and
@@ -186,6 +200,28 @@ func TestWallCoverWallCommitsCountsPastBaseRef(t *testing.T) {
 		_, _, ok := WallCommits(repo)
 		assert.False(t, ok)
 	})
+}
+
+// TestWallCoverWallCommitsOnARunnerWithNoGitIdentity: the commits-past-origin/dev case
+// holds on a machine with no global git identity, the hosted ubuntu-latest runner where
+// the clone's `git commit` was refused with `Author identity unknown` (dev CI run
+// 37344601638, shard 6): the test's git carries its own identity, never the machine's.
+func TestWallCoverWallCommitsOnARunnerWithNoGitIdentity(t *testing.T) {
+	t.Parallel()
+
+	runner := testgit.HostedRunnerEnv(os.Environ())
+	dir := t.TempDir()
+	origin := filepath.Join(dir, "origin")
+	coverInitRepoIn(t, runner, origin, "dev")
+	repo := filepath.Join(dir, "repo")
+	coverGitIn(t, runner, dir, "clone", "-q", origin, repo)
+	require.NoError(t, os.WriteFile(filepath.Join(repo, "h.txt"), []byte("h\n"), 0o644))
+	coverGitIn(t, runner, repo, "add", "-A")
+	coverGitIn(t, runner, repo, "commit", "-q", "-m", "work")
+	branch, n, ok := WallCommits(repo)
+	require.True(t, ok)
+	assert.Equal(t, "dev", branch)
+	assert.Equal(t, 1, n)
 }
 
 // TestWallCoverWallBaseRefPrefersDefaultBranches: wallBaseRef returns origin/dev, main or

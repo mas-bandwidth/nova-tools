@@ -83,8 +83,6 @@ func stageMirror(t *testing.T, root string) (benchHome, first, second string) {
 	require.NoError(t, os.MkdirAll(filepath.Dir(mirror), 0o755))
 	execCmd(t, src, "git", "init", "-q")
 	execCmd(t, src, "git", "checkout", "-q", "-b", "dev")
-	execCmd(t, src, "git", "config", "user.name", "test")
-	execCmd(t, src, "git", "config", "user.email", "test@example.com")
 	for i, body := range []string{"one\n", "two\n"} {
 		require.NoError(t, os.WriteFile(filepath.Join(src, "file.txt"), []byte(body), 0o644))
 		execCmd(t, src, "git", "add", "file.txt")

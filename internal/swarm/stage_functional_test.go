@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/testbin"
+	"github.com/mas-bandwidth/nova-tools/internal/testgit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -39,8 +40,6 @@ func TestStageCardBorrowsTheMirror(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Dir(mirror), 0o755))
 
 	execCmd(t, src, "git", "init", "-q")
-	execCmd(t, src, "git", "config", "user.name", "test")
-	execCmd(t, src, "git", "config", "user.email", "test@example.com")
 	require.NoError(t, os.WriteFile(filepath.Join(src, "file.txt"), []byte("hello"), 0o644))
 	execCmd(t, src, "git", "add", "file.txt")
 	execCmd(t, src, "git", "commit", "-q", "-m", "commit 1")
@@ -108,8 +107,6 @@ func TestStageCardTimesOutAndWritesResult(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Dir(mirror), 0o755))
 
 	execCmd(t, src, "git", "init", "-q")
-	execCmd(t, src, "git", "config", "user.name", "test")
-	execCmd(t, src, "git", "config", "user.email", "test@example.com")
 	require.NoError(t, os.WriteFile(filepath.Join(src, "file.txt"), []byte("hello"), 0o644))
 	execCmd(t, src, "git", "add", "file.txt")
 	execCmd(t, src, "git", "commit", "-q", "-m", "commit 1")
@@ -205,7 +202,7 @@ func execCmd(t *testing.T, dir, name string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command(name, args...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	cmd.Env = append(testgit.Env(), "GIT_TERMINAL_PROMPT=0")
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, "%s %s in %s: %v\n%s", name, strings.Join(args, " "), dir, err, string(out))
 	return string(out)
@@ -229,8 +226,6 @@ func TestStageCardRefusesWhenOriginCannotBeRepointed(t *testing.T) {
 		require.NoError(t, os.MkdirAll(d, 0o755))
 	}
 	execCmd(t, src, "git", "init", "-q")
-	execCmd(t, src, "git", "config", "user.name", "test")
-	execCmd(t, src, "git", "config", "user.email", "test@example.com")
 	require.NoError(t, os.WriteFile(filepath.Join(src, "file.txt"), []byte("hello"), 0o644))
 	execCmd(t, src, "git", "add", "file.txt")
 	execCmd(t, src, "git", "commit", "-q", "-m", "commit 1")
@@ -286,8 +281,6 @@ func TestStageCardStagesTheFramesCommitOnItsBranch(t *testing.T) {
 	src := filepath.Join(root, "src")
 	require.NoError(t, os.MkdirAll(src, 0o755))
 	execCmd(t, src, "git", "init", "-q", "-b", "main")
-	execCmd(t, src, "git", "config", "user.name", "test")
-	execCmd(t, src, "git", "config", "user.email", "test@example.com")
 	require.NoError(t, os.WriteFile(filepath.Join(src, "f"), []byte("base"), 0o644))
 	execCmd(t, src, "git", "add", "f")
 	execCmd(t, src, "git", "commit", "-q", "-m", "base")

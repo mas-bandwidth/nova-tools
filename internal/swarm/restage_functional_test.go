@@ -29,8 +29,6 @@ func newReworkOrigin(t *testing.T) *reworkOrigin {
 	o.src, o.origin = filepath.Join(o.root, "src"), filepath.Join(o.root, "origin.git")
 	require.NoError(t, os.MkdirAll(o.src, 0o755))
 	execCmd(t, o.src, "git", "init", "-q", "-b", "main")
-	execCmd(t, o.src, "git", "config", "user.name", "test")
-	execCmd(t, o.src, "git", "config", "user.email", "test@example.com")
 	o.write(t, "a", "a at base\n")
 	o.write(t, "b", "b at base\n")
 	execCmd(t, o.src, "git", "add", "a", "b")
