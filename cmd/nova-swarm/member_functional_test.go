@@ -67,6 +67,11 @@ type sprintWhere struct {
 	Tables map[string]map[string]map[string]string `json:"tables"`
 }
 
+// driveBase is the branch every drive's twin origin starts on and its cards are
+// cut on: a sprint branch, as every stream but the promotion stream lands on one
+// (dev and main are protected, sprint.PromotionBaseWhy).
+const driveBase = "sprint/drive"
+
 // memberDrive is a sprint on a twin store, driven through the nova-sprint binary
 // as the coordinator.
 type memberDrive struct {
@@ -117,6 +122,29 @@ func (d *memberDrive) must(args ...string) string {
 	code, out, errb := d.sprint("coordinator", args...)
 	require.Equal(d.t, 0, code, "nova-sprint %s: exit %d\n%s%s", strings.Join(args, " "), code, out, errb)
 	return out
+}
+
+// init makes the sprint for a drive: it proves the coordinator's seat, as a
+// seat must before any coordinator verb runs (docs/SPEC-SPRINT.md, "The push
+// proof"; the built binary arms every name), by recording a folder push target,
+// reporting a check delivered and answering it, the round trip the push loop
+// and the session make; the proof lives sprint.PushProofLive, past every
+// drive's bound.
+func (d *memberDrive) init(args ...string) {
+	d.t.Helper()
+	d.must(append([]string{"init"}, args...)...)
+	folder := d.t.TempDir()
+	const nonce = "0123456789abcdef"
+	for _, step := range [][]string{
+		{"seat", "push", "--harness", "claude", "--target", folder},
+		{"seat", "push", "--sent", nonce},
+	} {
+		// exit 1 is PUSH DOWN, the record saying it is not proven yet
+		code, out, errb := d.sprint("coordinator", step...)
+		require.Contains(d.t, []int{0, 1}, code, "nova-sprint %s: exit %d\n%s%s", strings.Join(step, " "), code, out, errb)
+	}
+	d.must("seat", "pong", nonce)
+	require.Contains(d.t, d.must("seat", "push"), "PUSH OK name=coordinator")
 }
 
 func (d *memberDrive) where() sprintWhere {
@@ -223,15 +251,15 @@ func testMemberFunctionalDrive(t *testing.T) {
 
 	origin := filepath.Join(t.TempDir(), "origin.git")
 	seed := filepath.Join(t.TempDir(), "seed")
-	runGit(t, "", "init", "-q", "-b", "main", "--", seed)
+	runGit(t, "", "init", "-q", "-b", driveBase, "--", seed)
 	write(t, filepath.Join(seed, "f"), "base\n")
 	gitAs(t, seed, "add", "f")
 	gitAs(t, seed, "commit", "-q", "-m", "base")
 	runGit(t, "", "clone", "-q", "--bare", "--", seed, origin)
 	first, rest, _ := strings.Cut(memberCard, "\n")
-	d.must("init", "--members", "m1:2", "--readers", "reader-a,reader-b")
+	d.init("--members", "m1:2", "--readers", "reader-a,reader-b")
 	// pro cards (line 1's tier): each is read by both readers (cost rule 4: a flash card is read once)
-	d.must("add", "--stream", "a", "--count", "3", "--brief", first+" tier: pro\nbase-repo: "+origin+"\nBASE: main\n"+rest)
+	d.must("add", "--stream", "a", "--count", "3", "--brief", first+" tier: pro\nbase-repo: "+origin+"\nBASE: "+driveBase+"\n"+rest)
 	d.must("start")
 	m1, mOut := d.member("m1", harness, false)
 	ra, aOut := d.member("reader-a", harness, true)
