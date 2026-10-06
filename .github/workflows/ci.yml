@@ -744,6 +744,18 @@ jobs:
         if: matrix.entry.packages != '' && steps.proved.outputs.proved != 'true'
         run: make vet PKGS="${{ matrix.entry.packages }}"
 
+      - name: ensure node for the dashboard tests
+        if: matrix.entry.packages != '' && steps.proved.outputs.proved != 'true'
+        # internal/sprintdash's page tests render the dashboard with node and fail
+        # closed under NOVA_CI=1 when it is missing. A runner user keeps node in its
+        # own ~/sdk/bin, which a listener started before it existed does not have on
+        # PATH; ensure-node finds it there, or installs the pinned release under
+        # RUNNER_TEMP, and publishes only a directory that holds no redis-server, so
+        # the shim above stays first on PATH. internal/ci: TestUnitLegsEnsureNodeBeforeTheTests.
+        shell: bash
+        run: |
+          "$RUNNER_TEMP/ci" ensure-node
+
       - name: test
         if: matrix.entry.packages != '' && steps.proved.outputs.proved != 'true'
         # The default bash flags on a `run:` step are `-eo pipefail`, so a
@@ -1102,6 +1114,14 @@ jobs:
         # and the controls spawn their own server.
         run: |
           "$RUNNER_TEMP/ci" install-redis-server
+
+      - name: ensure node for the dashboard tests
+        # The hosted images carry node on PATH; ensure-node reads it and prints its
+        # version, and would install the pinned release if an image dropped it.
+        # internal/ci: TestUnitLegsEnsureNodeBeforeTheTests.
+        shell: bash
+        run: |
+          "$RUNNER_TEMP/ci" ensure-node
 
       - name: test (shard ${{ matrix.shard }} of ${{ matrix.shards }})
         # Six shards on ubuntu-latest and eight on macos-latest (above), dealt by

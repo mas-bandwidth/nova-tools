@@ -1157,7 +1157,12 @@ tests of the selected packages, on `merge_group`, `schedule` and
 two-minute cap; `ci-ok` requires it when it ran. The unit budgets are 2 s a
 package and 1 s a test, with an allowlist whose every row names its
 measurement, printed on every leg and enforced only on the nightly Linux legs;
-what is enforced on every leg is static (`unitwaits`).
+what is enforced on every leg is static (`unitwaits`). The unit legs (`test`
+and `test-hosted`) run `ci ensure-node` after tools/ci is built and before
+their test step: internal/sprintdash's page tests render the dashboard with
+node and fail closed under `NOVA_CI=1` when it is missing, and a runner user's
+own `~/sdk/bin/node` is off a listener's PATH; the verb publishes only a
+directory that holds no redis-server, after the shim, so the shim stays first.
 **The mistake it prevents.** CI is the bottleneck of the working process and the
 real blocker for merging: when every PR's shards each take the whole of a box,
 every test file starts its own redis-server, and tests run over a second, the
@@ -1178,7 +1183,12 @@ schedule, the fan-out deals it onto the Linux legs only and
 spells SLOWTESTS_ENFORCE=0; the Makefile reads it only to
 pass --enforce and carries slowtests' exit through) and
 `TestMeasuredBenchesAreCIRunners` (every bench a row may name is one ci.yml
-names) (`internal/ci/unit_tier_class_test.go`); through make itself,
+names) (`internal/ci/unit_tier_class_test.go`);
+`TestUnitLegsEnsureNodeBeforeTheTests` (the `test` and `test-hosted` jobs run
+`ci ensure-node` between the tools/ci build and their test step, after the
+shim in `test`, and the verb looks on PATH, then `$HOME/sdk/bin`, then installs
+under `RUNNER_TEMP`, never publishing `~/.local/bin`;
+`internal/ci/ensure_node_class_test.go`); through make itself,
 `TestMakeTestExitIsCISleepsOnEveryLegAndCISlowOnlyNightly`
 (functional-tagged, `cmd/nova-ci/make_functional_test.go`).
 **Its allowlist.** `internal/ci/slow-tests_allowlist.txt`, every row naming its
