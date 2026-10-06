@@ -1,6 +1,7 @@
 package sprint
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
 	"slices"
@@ -708,4 +709,193 @@ func RenewReaderLeases(s *Snapshot, reader string) Plan {
 		})
 	}
 	return p
+}
+
+// A read verdict is kept by the head it was read at (docs/SPEC-SPRINT.md section
+// 6, a read is kept by its head; the model is tla/ReadMemo.tla). Read writes each
+// verdict onto its primary (FieldReadMemo): the head, the base the attempt's work
+// reported (FieldReadBase, stamped on the read card by the ask), the read tier and
+// the reader. A primary entering review at a head that already holds a verdict
+// at the same base, read at its read tier or a stronger one, inherits it instead
+// of asking again (inheritedReads, Ask): an ok verdict of a reader counts as that
+// reader's ok at the new attempt, and a broken verdict is the finding, judged as
+// a broken read is. So a twin made by add --replaces, which carries its old
+// card's head, and a rework whose branch did not change are not read twice (the
+// night of 2026-10-05: 79 twins read again at the carried head, a heavy or
+// frontier read each). A twin reads the memos of the cards it replaces
+// (FieldReplaces) and keeps what it inherits in its own, so a twin of a twin
+// carries it too.
+const (
+	// FieldReadMemo is the primary's kept verdicts, a JSON list of readVerdict,
+	// the newest last, at most MaxReadMemo of them.
+	FieldReadMemo = "read_memo"
+	// FieldReadBase is a read card's base: the base its attempt's work card
+	// reports (FinishReq.Base), "" when it reports none.
+	FieldReadBase = "base"
+	// FieldInherited is the read card a verdict was inherited on: the card and
+	// attempt it was read at, "<card>@<attempt>".
+	FieldInherited = "inherited"
+	// MaxReadMemo is the most verdicts a primary keeps; MaxMemoFinding the
+	// longest finding a kept broken verdict holds.
+	MaxReadMemo    = 8
+	MaxMemoFinding = 2 << 10
+)
+
+// readVerdict is one kept verdict: what was read (head, base, tier), by whom,
+// on which card and attempt, and the verdict with its finding.
+type readVerdict struct {
+	Verdict string `json:"verdict"`
+	Head    string `json:"head"`
+	Base    string `json:"base,omitempty"`
+	Tier    string `json:"tier,omitempty"`
+	Reader  string `json:"reader"`
+	Card    string `json:"card"`
+	Attempt int    `json:"attempt"`
+	Finding string `json:"finding,omitempty"`
+}
+
+// from is where the verdict was read: "<card>@<attempt>".
+func (v readVerdict) from() string { return v.Card + "@" + itoa(v.Attempt) }
+
+// readMemo is the primary's kept verdicts (FieldReadMemo); none when it keeps none
+// or the field does not parse.
+func readMemo(c *Card) []readVerdict {
+	var out []readVerdict
+	if c == nil || c.F(FieldReadMemo) == "" {
+		return nil
+	}
+	if json.Unmarshal([]byte(c.F(FieldReadMemo)), &out) != nil {
+		return nil
+	}
+	return out
+}
+
+// keepVerdicts is memo with vs kept: a verdict replaces the one kept for the
+// same head, base, tier and reader, and only the newest MaxReadMemo stay.
+func keepVerdicts(memo []readVerdict, vs ...readVerdict) string {
+	for _, v := range vs {
+		v.Finding = cutText(v.Finding, MaxMemoFinding)
+		memo = slices.DeleteFunc(memo, func(o readVerdict) bool {
+			return o.Head == v.Head && o.Base == v.Base && o.Tier == v.Tier && o.Reader == v.Reader
+		})
+		memo = append(memo, v)
+	}
+	if len(memo) > MaxReadMemo {
+		memo = memo[len(memo)-MaxReadMemo:]
+	}
+	b, _ := json.Marshal(memo)
+	return string(b)
+}
+
+// verdictOf is the verdict a read card reports, as it is kept: nil for a card
+// with no head or not where its identity says (ReadCardAgrees).
+func verdictOf(rc *Card, verdict, finding string) *readVerdict {
+	if rc.F("head") == "" || !ReadCardAgrees(rc) {
+		return nil
+	}
+	return &readVerdict{Verdict: verdict, Head: rc.F("head"), Base: rc.F(FieldReadBase), Tier: rc.F(FieldTier),
+		Reader: rc.F("reader"), Card: rc.F("primary"), Attempt: rc.Int("attempt"), Finding: finding}
+}
+
+// readBase is the base of the primary's attempt: its work card's (FinishReq.Base),
+// "" when the step read no fleet table or the work card reports none.
+func (s *Snapshot) readBase(pr *Card, attempt int) string {
+	if s.Fleet == nil {
+		return ""
+	}
+	return s.Fleet.Card(WorkCardID(pr.ID, attempt)).F("base")
+}
+
+// tierCovers says a verdict read at tier have stands for a read at tier want:
+// the same tier, or a stronger one.
+func tierCovers(have, want string) bool {
+	h, w := slices.Index(readTiers, have), slices.Index(readTiers, want)
+	return have == want || h >= 0 && w >= 0 && h >= w
+}
+
+// ReplacedExtras is the cards a step must read as records for the kept verdicts
+// of the primaries in review: the cards each replaced (FieldReplaces) that are off
+// the table.
+func ReplacedExtras(s *Snapshot) []string {
+	var out []string
+	for _, c := range s.Work.Column(Review) {
+		for _, old := range Split(c.F(FieldReplaces)) {
+			if s.Work.Placed(old) == nil {
+				out = append(out, old)
+			}
+		}
+	}
+	return out
+}
+
+// inheritedReads is the kept verdicts the primary inherits at attempt instead of
+// asking, while every read placed at the attempt stands ok (none outstanding, none
+// broken, none taken back or handed back) and it needs more: those kept on it or on
+// a card it replaced, at its head (never ""), at the base its attempt's work
+// reports, read at its read tier or a stronger one, the newest of each reader. A
+// key where readers disagreed (an ok and a broken, its own reads included) leaves
+// nothing inherited: the attempt is read afresh. Else a broken verdict is the
+// finding, inherited alone and only before any read stands; else the ok verdicts
+// of readers holding no card at the attempt, as many as it still needs
+// (ReadsNeeded), so the ask is never put to a reader whose ok is kept at the key.
+func (s *Snapshot) inheritedReads(pr *Card, attempt int) []readVerdict {
+	head := pr.F("head")
+	if head == "" || s.Readers == nil {
+		return nil
+	}
+	live := liveReadsAt(s, pr, attempt)
+	if len(live) != len(readsAt(s, pr, attempt)) {
+		return nil
+	}
+	for _, rc := range live {
+		if rc.Col != OK {
+			return nil
+		}
+	}
+	need := ReadsNeeded(pr) - len(live)
+	if need <= 0 {
+		return nil
+	}
+	// the replaced cards' first, its own last: its own are the newest
+	var memo []readVerdict
+	for _, old := range Split(pr.F(FieldReplaces)) {
+		memo = append(memo, readMemo(s.Work.Card(old))...)
+	}
+	memo = append(memo, readMemo(pr)...)
+	base, tier := s.readBase(pr, attempt), s.readTierOf(pr)
+	var oks, broken []readVerdict
+	seen := map[string]bool{}
+	for i := len(memo) - 1; i >= 0; i-- { // the newest of each reader
+		v := memo[i]
+		if v.Head != head || v.Base != base || !tierCovers(v.Tier, tier) || seen[v.Reader] {
+			continue
+		}
+		seen[v.Reader] = true
+		switch v.Verdict {
+		case "ok":
+			oks = append(oks, v)
+		case "broken":
+			broken = append(broken, v)
+		}
+	}
+	free := func(vs []readVerdict) []readVerdict {
+		var out []readVerdict
+		for _, v := range vs {
+			if s.Readers.HasRow(v.Reader) && s.Readers.Card(ReadCardID(pr.ID, attempt, v.Reader)) == nil {
+				out = append(out, v)
+			}
+		}
+		return out
+	}
+	switch {
+	case len(broken) > 0 && len(oks) > 0:
+		return nil
+	case len(broken) > 0:
+		if b := free(broken); len(b) > 0 && len(live) == 0 {
+			return b[:1]
+		}
+		return nil
+	}
+	o := free(oks)
+	return o[:min(len(o), need)]
 }

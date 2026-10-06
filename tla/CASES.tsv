@@ -398,6 +398,9 @@ MCReadsByRoomBrokenPairCost.cfg	MCReadsByRoom.tla	invariant	ReadsPerLanding	igno
 MCReadsByRoomBrokenCount.cfg	MCReadsByRoom.tla	invariant	WidthRespected	ignore-terminal	readsbyroom	required	-
 MCReadsByRoomBrokenNoFinder.cfg	MCReadsByRoom.tla	invariant	FinderFirst	ignore-terminal	readsbyroom	required	-
 MCReadsByRoomBrokenTwoFinders.cfg	MCReadsByRoom.tla	invariant	OneBroken	ignore-terminal	readsbyroom	required	-
+MCReadMemo.cfg	MCReadMemo.tla	pass	-	ignore-terminal	readmemo	required	-
+MCReadMemoBrokenNoMemo.cfg	MCReadMemo.tla	invariant	NoReadTwiceAtAKeptHead	ignore-terminal	readmemo	required	-
+MCReadMemoBrokenAnyBase.cfg	MCReadMemo.tla	invariant	InheritedAtItsKey	ignore-terminal	readmemo	required	-
 MCFriendBrokenDaemonPongEnds.cfg	MCFriend.tla	action	OnlySessionPongEnds	ignore-terminal	friend	required	-
 MCStallLadder.cfg	MCStallLadder.tla	pass	-	ignore-terminal	stallladder	required	-
 MCStallLadderBrokenBound.cfg	MCStallLadder.tla	invariant	NoCardHeldPastBound	ignore-terminal	stallladder	required	-

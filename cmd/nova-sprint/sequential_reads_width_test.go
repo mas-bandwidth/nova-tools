@@ -68,14 +68,16 @@ func (r *readsRig) readAll(asked map[string][]string, verdict ...string) {
 	}
 }
 
-// work takes and finishes every card dealt, ticking between, until n are finished.
-func (r *readsRig) work(n int) {
+// work takes and finishes every card dealt, ticking between, until n are finished,
+// each at head: an attempt pushes its own head (a rework at an unchanged head
+// inherits the broken read kept by it, docs/SPEC-SPRINT.md section 6).
+func (r *readsRig) work(n int, head string) {
 	r.t.Helper()
 	done := 0
 	for i := 0; i < 8 && done < n; i++ {
 		for _, m := range []string{"m1", "m2"} {
 			for _, c := range taken(r.t, r.one("take", "--as", m, "--limit", "4", "--epoch", "0", "--json")) {
-				res := r.one("finish", "--as", m, c, "--epoch", "0", "--report", "done", "--head", "0123456789abcdef0123456789abcdef01234567")
+				res := r.one("finish", "--as", m, c, "--epoch", "0", "--report", "done", "--head", head)
 				require.Equal(r.t, 0, res.Code, res.Stderr)
 				done++
 			}
@@ -103,7 +105,7 @@ func TestSequentialReadsAtReaderWidthKeepThreeReadsPerLanding(t *testing.T) {
 
 	// attempt 1: each card's first read alone, by room (the three fill both readers to
 	// their widths); each reader finds its reads broken, and no second read is asked
-	r.work(3)
+	r.work(3, "0123456789abcdef0123456789abcdef01234567")
 	first := r.look()
 	require.Len(t, first["reader-m1"], 2, "reader-m1, width 2, takes two first reads")
 	require.Len(t, first["reader-m2"], 1, "reader-m2, width 1, takes one")
@@ -128,7 +130,7 @@ func TestSequentialReadsAtReaderWidthKeepThreeReadsPerLanding(t *testing.T) {
 	// attempt 2: the first read of each card goes to the reader who found it broken
 	// (each has room: its reads of attempt 1 are done), then the second to the
 	// other reader once the first came back ok, while that reader has room
-	r.work(3)
+	r.work(3, "1123456789abcdef0123456789abcdef01234567")
 	checks := r.look()
 	for rd, ids := range checks {
 		for _, id := range ids {

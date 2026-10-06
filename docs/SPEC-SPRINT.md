@@ -2418,6 +2418,32 @@ id (`--op`) returns the original result, with no second counter or notification.
   reader with room under its machine's width, three reads for a pro card
   found broken once) and the reference model (internal/sprint/refmodel,
   AskChoice: the finder first, then the least loaded reader).
+  **A read is kept by its head** (the night of 2026-10-05: 79 twins made by
+  `add --replaces` were read again at the head their old cards carried, a
+  heavy or frontier read each, five to fifteen minutes, and reworks whose
+  branch did not change were read again; the ask asked by attempt, never by
+  head). Every verdict a reader reports is kept on its primary (`read_memo`,
+  `sprint.keepVerdicts`: the newest eight, one per head, base, read tier and
+  reader) by the head it read, the base the attempt's work card reports (the
+  ask stamps it on the read card as `base`) and the read tier. Before it asks
+  a primary whose reads that stand all came back ok and that needs more, the
+  ask looks up the verdicts kept on it and on the cards it replaced (their
+  records read with the step, `sprint.ReplacedExtras`) at its head and base,
+  read at its read tier or a stronger one, the newest of each reader
+  (`sprint.inheritedReads`): an ok verdict of a reader with no read card at the
+  attempt is inherited as that reader's ok read, as many as the card still
+  needs, and only the rest are asked; a broken verdict, where no reader said
+  ok at the key, is inherited before any read stands as the finding, judged
+  as a broken read is (`read broken`, or `brief wrong` when the finding repeats
+  the attempt before's); readers that disagreed at the key (an ok and a
+  broken) leave the attempt read afresh. An inherited verdict is a read card
+  placed at its verdict, `inherited` naming `<card>@<attempt>` it was read at,
+  its unit's line `read inherited from <card>@<attempt> (<reader> <verdict> at
+  <head>)`, and kept on the primary too, so a twin of a twin carries it. The
+  model is `tla/ReadMemo.tla` (no reader asked again at a key its verdict is
+  kept by, the key not split; an inherited verdict is the one kept at its own
+  head and base); `TestAReadVerdictIsInheritedAtTheSameHead`. A frontier read
+  asked of a friend (friend_read.go) is not kept by its head yet.
   A reader away or down is never asked. A read asked, and not begun, of a
   reader that is not up is taken back by the next ask (the tick's, in the same
   step that asks the primary again): its read card is retired (by `away`), the

@@ -183,7 +183,29 @@ func Ask(s *Snapshot, r AskReq) Plan {
 			all = append(all, rc.F("reader"))
 			kept = append(kept, rc)
 		}
-		free := s.freeReaders(c, attempt)
+		// a primary in review at a head that holds kept verdicts inherits them
+		// instead of asking (readers.go, inheritedReads): reads of the attempt that stand
+		var inherited []readVerdict
+		var inheritedFrom []string
+		if !another {
+			inherited = s.inheritedReads(c, attempt)
+		}
+		for _, v := range inherited {
+			col := OK
+			if v.Verdict == "broken" {
+				col = Broken
+			}
+			kept = append(kept, &Card{ID: ReadCardID(c.ID, attempt, v.Reader), Row: v.Reader, Col: col})
+			all = append(all, v.Reader)
+			inheritedFrom = append(inheritedFrom, v.Reader)
+		}
+		free := without(s.freeReaders(c, attempt), inheritedFrom)
+		base := s.readBase(c, attempt)
+		if f := finders[c.ID]; f != "" && len(inherited) > 0 && (contains(inheritedFrom, f) || readsWantedOf(c, kept) == 0) {
+			// the finder's verdict stands inherited, or no read is asked: its room is its own again
+			room[f] = room[f].after(-1)
+			delete(finders, c.ID)
+		}
 		// the reads that stand, kept, say how many are asked now (readsWantedOf): the
 		// first alone, then the rest once it came back ok; a read handed back, or taken
 		// back from a reader away, is not a read and is asked again whatever stands: it
@@ -192,7 +214,7 @@ func Ask(s *Snapshot, r AskReq) Plan {
 		if another {
 			want = 1
 		}
-		if !another && len(all)+len(free)+len(returned) < ReadsNeeded(c) {
+		if !another && len(inherited) == 0 && len(all)+len(free)+len(returned) < ReadsNeeded(c) {
 			// not even its first read is asked when no reader could ever read the rest
 			want = ReadsNeeded(c) - len(all)
 		}
@@ -224,7 +246,13 @@ func Ask(s *Snapshot, r AskReq) Plan {
 			takenBack = append(takenBack, change(Readers, removeEntry(rc, map[string]string{"retired": stamp(s.Now), "retired_by": "returned"})))
 			retiredFrom = append(retiredFrom, rc.F("reader"))
 		}
-		if len(chosenReaders)+len(again) < want {
+		if len(chosenReaders)+len(again) < want && len(inherited) > 0 {
+			// its inherited verdicts stand; the read it still wants is the next ask's
+			for _, rd := range chosenReaders {
+				room[rd] = room[rd].after(-1)
+			}
+			chosenReaders, finder = nil, ""
+		} else if len(chosenReaders)+len(again) < want {
 			for _, rd := range chosenReaders {
 				room[rd] = room[rd].after(-1) // a primary refused takes no room from the next
 			}
@@ -261,15 +289,53 @@ func Ask(s *Snapshot, r AskReq) Plan {
 			if rd == finder {
 				fields[FieldFinderRead] = "1" // placed on purpose: the level leaves it where it is
 			}
+			if base != "" {
+				fields[FieldReadBase] = base // what its verdict is kept by (readers.go, FieldReadMemo)
+			}
 			maps.Copy(fields, s.readRouteOf(ri, c, failed))
 			maps.Copy(fields, s.decideFields(c, !another && !decided && i == 0))
 			u.Changes = append(u.Changes, change(Readers, createEntry(ReadCardID(c.ID, attempt, rd), rd, Asked, c.Score, fields)))
 		}
+		// each inherited verdict is the reader's read of this attempt, read already: its
+		// card placed at its verdict, naming where it was read, and kept on the primary
+		moved := map[string]string{}
+		var inheritedWhat []string
+		for _, v := range inherited {
+			id, col := ReadCardID(c.ID, attempt, v.Reader), OK
+			fields := map[string]string{"kind": "read", "primary": c.ID, "stream": c.Row, "reader": v.Reader, "attempt": itoa(attempt), "head": c.F("head"),
+				"asked": stamp(s.Now), "begun": stamp(s.Now), "read": stamp(s.Now), "verdict": v.Verdict, FieldTier: v.Tier, FieldInherited: v.from()}
+			if base != "" {
+				fields[FieldReadBase] = base
+			}
+			if v.Verdict == "broken" {
+				col = Broken
+				fields["finding"] = v.Finding
+				before := c.Int("broken_reads")
+				for _, o := range s.Readers.Of(c.ID) {
+					if o.Col == Broken {
+						before++
+					}
+				}
+				n := brokenReadNote(s, c, v.Reader, attempt, v.Finding, before)
+				n.What += " (inherited from " + v.from() + ", read by " + v.Reader + " at head " + v.Head + ")"
+				u.Notes = append(u.Notes, n)
+			}
+			moved[id] = col
+			u.Changes = append(u.Changes, change(Readers, createEntry(id, v.Reader, col, c.Score, fields)))
+			inheritedWhat = append(inheritedWhat, "read inherited from "+v.from()+" ("+v.Reader+" "+v.Verdict+" at "+v.Head+")")
+		}
 		all = append(append(all, chosenReaders...), again...)
+		primarySet := map[string]string{}
 		if pair := strings.Join(all, ","); !another && pair != c.F("asked") {
 			// the primary's asked field names the readers of its attempt;
 			// --another's reader is one more, not one of the two
-			u.Changes = append(u.Changes, change(Work, setEntry(c, map[string]string{"asked": pair})))
+			primarySet["asked"] = pair
+		}
+		if len(inherited) > 0 {
+			primarySet[FieldReadMemo] = keepVerdicts(readMemo(c), inherited...)
+		}
+		if len(primarySet) > 0 {
+			u.Changes = append(u.Changes, change(Work, setEntry(c, primarySet)))
 		}
 		named := append([]string{}, chosenReaders...)
 		if finder != "" {
@@ -278,7 +344,14 @@ func Ask(s *Snapshot, r AskReq) Plan {
 		for _, rd := range again {
 			named = append(named, rd+" (again, its read returned)")
 		}
-		u.Moved = c.ID + " asked of " + strings.Join(named, ", ")
+		switch {
+		case len(inherited) > 0 && len(named) > 0:
+			u.Moved = c.ID + " " + strings.Join(inheritedWhat, "; ") + "; asked of " + strings.Join(named, ", ")
+		case len(inherited) > 0:
+			u.Moved = c.ID + " " + strings.Join(inheritedWhat, "; ")
+		default:
+			u.Moved = c.ID + " asked of " + strings.Join(named, ", ")
+		}
 		if len(away) > 0 {
 			u.Moved += "; its read taken back from " + strings.Join(away, ", ") + " (not up)"
 		}
@@ -293,11 +366,10 @@ func Ask(s *Snapshot, r AskReq) Plan {
 		} else {
 			u.Closes = closesFor(s.Open, []string{NStranded, NStalled}, c.ID)
 		}
-		asked := map[string]string{}
 		for _, rd := range append(append([]string{}, chosenReaders...), again...) {
-			asked[ReadCardID(c.ID, attempt, rd)] = Asked
+			moved[ReadCardID(c.ID, attempt, rd)] = Asked
 		}
-		if j, ok := reviewJudgment(s, c, reviewStep{moved: asked, closing: noteIDs(u.Closes), who: r.Who}); ok {
+		if j, ok := reviewJudgment(s, c, reviewStep{moved: moved, closing: noteIDs(u.Closes), writes: u.Notes, who: r.Who}); ok {
 			u.Notes = append(u.Notes, j)
 		}
 		p.Units = append(p.Units, u)
@@ -463,6 +535,8 @@ func Read(s *Snapshot, r ReadReq) Plan {
 	// primary in the plan
 	costs := map[string]map[string]string{}
 	costUnit := map[string]int{}
+	// the verdicts of the plan, kept on each primary with its records
+	memos := map[string][]readVerdict{}
 	record := func(pr *Card, con Consumer) {
 		if !pr.Placed() {
 			return
@@ -534,6 +608,10 @@ func Read(s *Snapshot, r ReadReq) Plan {
 		}
 		if pr != nil {
 			record(pr, readConsumer(s, c, 0, r.Verdict, rec))
+			// the verdict is kept on the primary by its head (readers.go, FieldReadMemo)
+			if v := verdictOf(c, r.Verdict, r.Finding); v != nil && costs[pr.ID] != nil {
+				memos[pr.ID] = append(memos[pr.ID], *v)
+			}
 		}
 		u := Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{change(Readers, moveEntry(c, c.Row, col, set, FieldReturned))},
 			Moved: fmt.Sprintf("%s %s -> %s", c.ID, c.Col, col)}
@@ -546,21 +624,12 @@ func Read(s *Snapshot, r ReadReq) Plan {
 					}
 				}
 				broken[pr.ID]++
-				n := judgment(NReadBroken, pr.Row, s.Now, before, pr.ID)
-				n.Who, n.Attempt, n.What = c.Row, c.Int("attempt"), r.Finding
 				// the card as this read leaves it: its spend counts this read's record
 				at := pr
 				if v := costs[pr.ID][FieldCostTotal]; v != "" {
 					at = withField(pr, FieldCostTotal, v)
 				}
-				if bb, ok := AtBriefBound(at, r.Finding, s.AttemptsCap(pr.Row)); ok {
-					// the same finding as the attempt before, or too many attempts on one brief:
-					// the brief is wrong, not the worker, and the judgment offers brief and drop
-					// (brief_bound.go)
-					n = judgment(NBriefWrong, pr.Row, s.Now, 0, pr.ID) // its decisions alone: it is the repeat
-					n.Who, n.Attempt, n.What = c.Row, c.Int("attempt"), bb.String()+"; attempt "+c.F("attempt")+" found: "+firstSentence(r.Finding)
-				}
-				u.Notes = append(u.Notes, n)
+				u.Notes = append(u.Notes, brokenReadNote(s, at, c.Row, c.Int("attempt"), r.Finding, before))
 			}
 			if moved[pr.ID] == nil {
 				moved[pr.ID] = map[string]string{}
@@ -580,12 +649,32 @@ func Read(s *Snapshot, r ReadReq) Plan {
 	// each primary's records ride on the unit of its last read in the plan: a running
 	// machine queues the work-table change for the pump, under that read's words
 	for _, id := range slices.Sorted(maps.Keys(costs)) {
+		if vs := memos[id]; len(vs) > 0 {
+			costs[id][FieldReadMemo] = keepVerdicts(readMemo(s.Work.Card(id)), vs...)
+		}
 		if set := costs[id]; len(set) > 0 {
 			i := costUnit[id]
 			p.Units[i].Changes = append(p.Units[i].Changes, change(Work, setEntry(s.Work.Card(id), set)))
 		}
 	}
 	return p
+}
+
+// brokenReadNote is the judgment a broken read at attempt raises on its primary
+// (at, as the step leaves it): read broken, with the reader and its finding, or
+// brief wrong when the finding repeats the attempt before's or the brief is out
+// of attempts (AtBriefBound). before is how many broken reads came before it.
+func brokenReadNote(s *Snapshot, at *Card, reader string, attempt int, finding string, before int) Note {
+	n := judgment(NReadBroken, at.Row, s.Now, before, at.ID)
+	n.Who, n.Attempt, n.What = reader, attempt, finding
+	if bb, ok := AtBriefBound(at, finding, s.AttemptsCap(at.Row)); ok {
+		// the same finding as the attempt before, or too many attempts on one brief:
+		// the brief is wrong, not the worker, and the judgment offers brief and drop
+		// (brief_bound.go)
+		n = judgment(NBriefWrong, at.Row, s.Now, 0, at.ID) // its decisions alone: it is the repeat
+		n.Who, n.Attempt, n.What = reader, attempt, bb.String()+"; attempt "+itoa(attempt)+" found: "+firstSentence(finding)
+	}
+	return n
 }
 
 // namePrimarysReads makes a read's refusal of a primary named where its read
@@ -612,7 +701,7 @@ func namePrimarysReads(p *Plan, held []*Card) {
 // reviewStep is what a step does around a primary it leaves in review, for
 // the judgment the primary needs after it.
 type reviewStep struct {
-	moved   map[string]string // read card id -> its column after the step; a card the step creates is asked
+	moved   map[string]string // read card id -> its column after the step; a card the step creates is asked, or at an inherited verdict
 	closing map[string]bool   // note ids the step closes
 	writes  []Note            // the notes the step writes
 	acked   []string          // judgment types the step acknowledges on it: not written again by the same step
@@ -672,8 +761,6 @@ func reviewJudgment(s *Snapshot, pr *Card, st reviewStep) (Note, bool) {
 		switch {
 		case c == nil && !moved:
 			continue
-		case c == nil:
-			col = Asked
 		case !moved:
 			col = c.Col
 		}
@@ -683,6 +770,8 @@ func reviewJudgment(s *Snapshot, pr *Card, st reviewStep) (Note, bool) {
 			outstanding = true
 		case col == Broken:
 			broken = true
+		case col == OK && c == nil:
+			oks[r] = true // created at its head by the step (an inherited verdict, Ask)
 		case col == OK && c.F("head") == pr.F("head") && ReadCardAgrees(c):
 			oks[r] = true
 		}

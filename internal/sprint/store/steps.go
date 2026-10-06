@@ -100,7 +100,9 @@ func AskStep(r sprint.AskReq) Step {
 					ids = append(ids, sprint.ReadCardID(c.ID, c.Int("attempt"), rd))
 				}
 			}
-			return map[string][]string{sprint.Readers: ids}
+			// and the cards the primaries replaced, off the table: their kept
+			// verdicts are inherited at the same head (sprint.ReplacedExtras)
+			return map[string][]string{sprint.Readers: ids, sprint.Work: sprint.ReplacedExtras(s)}
 		},
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Ask(s, r) }}
 }

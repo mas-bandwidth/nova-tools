@@ -564,7 +564,15 @@ func tickExtras(s *sprint.Snapshot) map[string][]string {
 			}
 		}
 	}
-	return map[string][]string{sprint.Work: sprint.ResolveExtras(s), sprint.Readers: reads}
+	// and the cards the primaries in review replaced, off the table, whose kept
+	// verdicts the ask inherits at the same head (sprint.ReplacedExtras)
+	work := sprint.ResolveExtras(s)
+	for _, id := range sprint.ReplacedExtras(s) {
+		if !slices.Contains(work, id) {
+			work = append(work, id)
+		}
+	}
+	return map[string][]string{sprint.Work: work, sprint.Readers: reads}
 }
 
 // TickPartStep is one part of the tick as a step of the engine: fenced,

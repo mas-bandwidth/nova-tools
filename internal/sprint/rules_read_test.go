@@ -53,6 +53,17 @@ func (r *conflictRig) brokenRead(id, finding string) {
 		r.must(store.AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{id}}}))
 		rc = asked()
 	}
+	if rc == nil {
+		// an attempt pushed at a head already read broken inherits that read (readers.go,
+		// inheritedReads): its finding is the same, and no reader is asked it again
+		s := r.snap()
+		for _, c := range s.Readers.Of(id) {
+			if c.Int("attempt") == s.Work.Card(id).Int("attempt") && c.Col == sprint.Broken && c.F(sprint.FieldInherited) != "" {
+				require.Equal(r.t, finding, c.F("finding"), "the inherited finding is the one read at the head")
+				return
+			}
+		}
+	}
 	require.NotNil(r.t, rc, "a read of %s is asked", id)
 	r.must(store.ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: rc.Row, Verdict: "broken", Finding: finding, Sel: sprint.Sel{IDs: []string{rc.ID}}}))
 }
