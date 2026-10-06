@@ -698,7 +698,7 @@ nova-friend reach --as ada --to bob --dry-run
 
 wake is the sleep pair (`nova-friend wake --as <me>` ends that friend's own recorded sleep); this verb is reach. see also: nova-friend wake --as <me> ends that friend's own recorded sleep; reach is this ladder, because wake is that verb.
 
-Each step shares `--step-timeout` (default 60s) between delivery and waiting for a proof. A proof is a pong for the nonce the step carries, or any other message from the friend. A daemon-pong is not a proof. The bus step's line is `REACH STEP step=bus sent=<id> nonce=<n>`. The push is skipped when the daemon is down: `REACH NONE step=push waited=0s: daemon down: <reason>`. The window of a GUI harness needs the accessibility permission a person grants to this binary. When it is absent the step is refused and the tool does not ask: grant Accessibility to this binary in System Settings, Privacy and Security, Accessibility; nova-friend does not ask.
+Each step shares `--step-timeout` (default 60s) between delivery and waiting for a proof. A proof is a pong for the nonce the step carries, or any other message from the friend. A daemon-pong is not a proof. The bus step's line is `REACH STEP step=bus sent=<id> nonce=<n>`. The push is skipped when the daemon is down: `REACH NONE step=push waited=0s: daemon down: <reason>`. Proof polling continues during delivery and an observed proof cancels that delivery. The push checks the current status file after the bus wait. A GUI window requires accessibility permission and a verified target composer. This adapter has no exact session/composer targeting contract, so a trusted GUI is refused without typing: use a verified session delivery route or --harness tmux; this GUI adapter cannot verify the friend's composer. When it is absent the step is refused and the tool does not ask: grant Accessibility to this binary in System Settings, Privacy and Security, Accessibility; nova-friend does not ask.
 
 The help of `nova-friend reach -h` says, and this is the same text:
 
@@ -709,7 +709,7 @@ REACH PROOF step=<s> after=<duration> by=<pong|message>
 REACH OK friend=<f> step=<s>
 REACH FAILED friend=<f> tried=<steps>
 REACH DRY-RUN
-Exit 0 a proof. Exit 1 no proof. Exit 2 could not run (a flag, a store that did not answer, or the window step without the accessibility permission).
+Exit 0 a proof. Exit 1 no proof. Exit 2 could not run (a flag, a store that did not answer, or the window step without accessibility permission or a verified composer).
 --as --to --step-timeout --from --harness --dir --session --state-dir --redis --dry-run --json
 example: nova-friend reach --as ada --to bob --dry-run
 ```

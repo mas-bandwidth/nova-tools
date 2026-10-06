@@ -51,6 +51,11 @@ func reachWorld(t *testing.T, r *rig) (world, *reachClock) {
 	t.Helper()
 	w := r.world()
 	clock := &reachClock{at: start}
+	w.reachStart = func(ctx context.Context, deliver func(context.Context) error) <-chan error {
+		done := make(chan error, 1)
+		done <- deliver(ctx)
+		return done
+	}
 	w.now = clock.now
 	w.sleep = clock.sleep
 	w.reachTimeout = func(ctx context.Context, d time.Duration) (context.Context, context.CancelFunc) {
@@ -275,6 +280,7 @@ func TestReachHelp(t *testing.T) {
 		"REACH DRY-RUN",
 		"Exit 0", "Exit 1", "Exit 2",
 		friend.AccessibilityRemedy,
+		friend.ComposerRemedy,
 		"nova-friend reach --as ada --to bob --dry-run",
 		"see also: nova-friend wake --as <me> ends that friend's own recorded sleep; reach is this ladder, because wake is that verb",
 	} {
@@ -337,4 +343,119 @@ func TestReachFindsProofBeyondOldLogPage(t *testing.T) {
 	}
 	reachRun(w).Do(t, reachCmd(dir)...).Exit(0).Out("REACH PROOF step=bus", "by=message").NotOut("step=push", "step=window")
 	assert.Equal(t, time.Second, clock.slept)
+}
+
+func TestReachChecksCurrentDaemonStatusBeforePush(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name    string
+		initial bool
+		refresh bool
+	}{
+		{"keeps beating", true, true},
+		{"starts during bus wait", false, true},
+		{"stops beating", true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r := newRig(t, "ada", "bob")
+			w, clock := reachWorld(t, r)
+			dir := t.TempDir()
+			if tc.initial {
+				writeReachDaemon(t, dir, clock.at)
+			}
+			base := w.sleep
+			w.sleep = func(ctx context.Context, d time.Duration) {
+				base(ctx, d)
+				if tc.refresh {
+					writeReachDaemon(t, dir, clock.at)
+				}
+			}
+			exec, got := reachTmux(t, r.store, "step=push")
+			w.exec = exec
+			args := []string{"reach", "--as", "ada", "--to", "bob", "--dir", dir, "--session", "friend-bob", "--state-dir", dir} // default 60s, beyond DaemonStale
+			if tc.refresh {
+				reachRun(w).Do(t, args...).Exit(0).Out("REACH PROOF step=push").NotOut("step=window")
+				assert.Equal(t, time.Minute, clock.slept)
+			} else {
+				reachRun(w).Do(t, args...).Exit(1).Err("daemon down", "step=window")
+			}
+			assert.Equal(t, tc.refresh, got.has("step=push"))
+		})
+	}
+}
+
+func TestReachProofCancelsRunningDeliveryWithoutEscalation(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, "ada", "bob")
+	w, clock := reachWorld(t, r)
+	dir := t.TempDir()
+	writeReachDaemon(t, dir, clock.at)
+	proofSent := make(chan struct{})
+	stopped := make(chan struct{})
+	w.reachStart = func(ctx context.Context, deliver func(context.Context) error) <-chan error {
+		done := startReachDelivery(ctx, deliver)
+		<-proofSent // controlled schedule: the effect remains active after its proof
+		return done
+	}
+	w.exec = func(ctx context.Context, _ string, _ string, args []string, _ string) (string, int, error) {
+		if args[0] == "capture-pane" {
+			return "> \n", 0, nil
+		}
+		text := strings.Join(args, " ")
+		assert.NotContains(t, text, "step=window", "window typed after proof")
+		if strings.Contains(text, "step=push") {
+			reachSend(t, r.store, friend.PongSubject, friend.PongLine(nonceOf(text), 0, 0, 0)+"\n")
+			close(proofSent)
+			<-ctx.Done()
+			close(stopped)
+			return "", 0, ctx.Err()
+		}
+		return "", 0, nil
+	}
+	reachRun(w).Do(t, append(reachCmd(dir), "--from", "push")...).Exit(0).Out("REACH PROOF step=push", "REACH OK").NotOut("step=window")
+	<-stopped // the canceled worker exits; no wall-clock sleeps or leaked goroutine
+	assert.Zero(t, clock.slept)
+	es, err := (&bus.Bus{Store: r.store}).Log(context.Background(), "-")
+	require.NoError(t, err)
+	for _, e := range es {
+		assert.NotContains(t, e.Message().Body, "REACH FAILED")
+	}
+}
+
+func TestReachGUIRefusesWithoutVerifiedComposer(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, "ada", "bob")
+	w, clock := reachWorld(t, r)
+	w.reachPermitted = func(context.Context) (bool, error) { return true, nil }
+	w.exec = func(context.Context, string, string, []string, string) (string, int, error) {
+		t.Error("an unverified GUI target received a command")
+		return "", 0, nil
+	}
+	reachRun(w).Do(t, "reach", "--as", "ada", "--to", "bob", "--from", "window", "--harness", "codex", "--session", "chat-id").Exit(2).Err("GUI composer is not verified", friend.ComposerRemedy)
+	assert.Zero(t, clock.slept)
+	es, err := (&bus.Bus{Store: r.store}).Log(context.Background(), "-")
+	require.NoError(t, err)
+	for _, e := range es {
+		assert.NotContains(t, e.Message().Body, "REACH FAILED")
+	}
+}
+
+func TestReachProofWinsCoincidentDeliveryError(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, "ada", "bob")
+	w, clock := reachWorld(t, r)
+	dir := t.TempDir()
+	writeReachDaemon(t, dir, clock.at)
+	base, got := reachTmux(t, r.store, "step=push")
+	w.exec = func(ctx context.Context, dir, name string, args []string, stdin string) (string, int, error) {
+		out, code, err := base(ctx, dir, name, args, stdin)
+		if strings.Contains(strings.Join(args, " "), "step=push") {
+			return "", 0, context.Canceled
+		}
+		return out, code, err
+	}
+	reachRun(w).Do(t, append(reachCmd(dir), "--from", "push")...).Exit(0).Out("REACH PROOF step=push").NotOut("step=window")
+	assert.False(t, got.has("step=window"))
+	assert.Zero(t, clock.slept)
 }

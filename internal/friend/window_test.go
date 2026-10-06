@@ -28,25 +28,28 @@ func TestWindowRefusesWithoutPermission(t *testing.T) {
 	assert.False(t, called)
 }
 
+// Trust alone must never type into an unverified field or ambiguous chat.
 func TestWindowTypesWhenTrusted(t *testing.T) {
 	t.Parallel()
-	var got []string
-	g := GUIWindow{
-		Bundle:    AppBundles["codex"],
-		Permitted: func(context.Context) (bool, error) { return true, nil },
-		Run: func(_ context.Context, _, name string, args []string, _ string) (string, int, error) {
-			got = append(got, name)
-			got = append(got, args...)
-			return "", 0, nil
-		},
+	for _, focus := range []string{"search field focused", "multiple possible chats", "unverified composer"} {
+		t.Run(focus, func(t *testing.T) {
+			t.Parallel()
+			called := false
+			g := GUIWindow{
+				Bundle:    AppBundles["codex"],
+				Permitted: func(context.Context) (bool, error) { return true, nil },
+				Run: func(context.Context, string, string, []string, string) (string, int, error) {
+					called = true
+					return focus, 0, nil
+				},
+			}
+			err := g.Deliver(context.Background(), "hello")
+			var refused WindowRefused
+			require.ErrorAs(t, err, &refused)
+			assert.Equal(t, ComposerRemedy, refused.Remedy)
+			assert.False(t, called, "without a target contract no focus query or typing command runs")
+		})
 	}
-	require.NoError(t, g.Deliver(context.Background(), "hello"))
-	script := strings.Join(got, "\n")
-	assert.Contains(t, script, AppBundles["codex"])
-	assert.NotContains(t, script, "AXIsProcessTrusted")
-	assert.NotContains(t, script, "WithOptions")
-	assert.NotContains(t, strings.ToLower(script), "with prompt")
-	assert.False(t, accessibilityAsks(script))
 }
 
 func TestAccessibilityCheckDoesNotAsk(t *testing.T) {

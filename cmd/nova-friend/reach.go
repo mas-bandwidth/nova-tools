@@ -54,6 +54,7 @@ type reachFX struct {
 	Now         func() time.Time
 	Sleep       func(ctx context.Context, d time.Duration)
 	Nonce       func() string
+	Start       func(context.Context, func(context.Context) error) <-chan error
 	Timeout     func(context.Context, time.Duration) (context.Context, context.CancelFunc)
 }
 
@@ -69,9 +70,9 @@ func (w world) reachVerb() tool.Verb {
 		ExitTable: "0 a proof, 1 no proof, 2 could not run.",
 		Detail: `The ladder that gets a silent friend's attention, stopping at the first proof. The friend is --to, the same shape as ping: a verb other than the default takes no bare word. wake is the sleep pair (nova-friend wake --as <me> ends that friend's own recorded sleep); this verb is reach. see also: nova-friend wake --as <me> ends that friend's own recorded sleep; reach is this ladder, because wake is that verb. Each step shares --step-timeout (default 60s) between delivery and waiting for a proof: a pong for the nonce the step carries, or any other message from the friend. A daemon-pong is the daemon's own and is not a proof. A pong for another nonce is not a message.
 1. bus: a bus message to the friend carrying the nonce and the exact pong line (REACH STEP step=bus sent=<id> nonce=<n>).
-2. push: the daemon pushes a real message into the session as a turn, never a PING. The daemon must be up (its status file newer than the stale bound), else the step is skipped (REACH NONE step=push waited=0s: daemon down: <reason>).
-3. window: a tmux-hosted session is typed with send-keys only while the pane is idle. A GUI harness is the app's window, found by its bundle, the message typed into the composer and submitted. That needs the accessibility permission a person grants to this binary. When it is absent the step is refused and the tool does not ask: ` + friend.AccessibilityRemedy + `.
-A proof ends the ladder: REACH PROOF step=<s> after=<duration> by=<pong|message> and REACH OK friend=<f> step=<s>. Exit 0 on that proof. No proof: REACH NONE step=<s> waited=<d> and the ladder climbs. No proof after the steps from --from: REACH FAILED friend=<f> tried=<steps>, Exit 1, and one note of that line on the coordinator's own stream. Exit 2 when it could not run (a flag, a store that did not answer, or the window step without the accessibility permission). --from bus|push|window starts partway up. --dry-run prints REACH DRY-RUN and one REACH STEP per planned step, and sends, pushes and types nothing. --json: facts friend, step (on OK), tried (on FAILED), from and step_timeout (on a dry run), dry_run; items STEP (step, sent, nonce), PROOF (step, after, by), NONE (step, waited, text when skipped). The result line is first, then one line per step in the order it happened.
+2. push: the daemon pushes a real message into the session as a turn, never a PING. The daemon must be up (its status file read at the push decision and newer than the stale bound), else the step is skipped (REACH NONE step=push waited=0s: daemon down: <reason>).
+3. window: a tmux-hosted session is typed with send-keys only while the pane is idle. A GUI harness requires both accessibility permission and a verified target composer. The adapter has no exact session/composer targeting contract, so even a trusted GUI is refused without typing: ` + friend.ComposerRemedy + `. When accessibility permission is absent the step is refused and the tool does not ask: ` + friend.AccessibilityRemedy + `.
+Proof polling continues while delivery runs; an observed proof cancels the delivery and ends the ladder: REACH PROOF step=<s> after=<duration> by=<pong|message> and REACH OK friend=<f> step=<s>. Exit 0 on that proof. No proof: REACH NONE step=<s> waited=<d> and the ladder climbs. No proof after the steps from --from: REACH FAILED friend=<f> tried=<steps>, Exit 1, and one note of that line on the coordinator's own stream. Exit 2 when it could not run (a flag, a store that did not answer, or the window step without accessibility permission or a verified composer). --from bus|push|window starts partway up. --dry-run prints REACH DRY-RUN and one REACH STEP per planned step, and sends, pushes and types nothing. --json: facts friend, step (on OK), tried (on FAILED), from and step_timeout (on a dry run), dry_run; items STEP (step, sent, nonce), PROOF (step, after, by), NONE (step, waited, text when skipped). The result line is first, then one line per step in the order it happened.
 example: nova-friend reach --as ada --to bob --dry-run`,
 		Flags: func(f *tool.Flags) {
 			f.Required("as", "your name, the coordinator")
@@ -124,13 +125,17 @@ func (w world) reach(c *tool.Call) *tool.Out {
 	state := w.reachState(c, to)
 	status, found, statusErr := friend.ReadStatus(state)
 	harness := c.Str("harness")
-	if harness == "" && found {
+	if harness == "" && statusErr == nil && found {
 		harness = status.Harness
 	}
 	var cursor string
 	bound := w.reachTimeout
 	if bound == nil {
 		bound = context.WithTimeout
+	}
+	launch := w.reachStart
+	if launch == nil {
+		launch = startReachDelivery
 	}
 	fx := reachFX{
 		coordinator: me,
@@ -142,6 +147,7 @@ func (w world) reach(c *tool.Call) *tool.Out {
 			return m.ID, nil
 		},
 		DaemonUp: func() (bool, string) {
+			status, found, statusErr := friend.ReadStatus(state)
 			if statusErr != nil {
 				return false, statusErr.Error()
 			}
@@ -150,6 +156,9 @@ func (w world) reach(c *tool.Call) *tool.Out {
 			}
 			if w.now().Sub(status.At) >= friend.DaemonStale {
 				return false, "the status file is older than " + friend.DaemonStale.String()
+			}
+			if c.Str("harness") == "" {
+				harness = status.Harness
 			}
 			return true, ""
 		},
@@ -184,6 +193,7 @@ func (w world) reach(c *tool.Call) *tool.Out {
 		Sleep:   w.sleep,
 		Nonce:   w.random,
 		Timeout: bound,
+		Start:   launch,
 	}
 	return climb(ctx, fx, to, timeout, reachSteps(from))
 }
@@ -283,6 +293,7 @@ func climb(ctx context.Context, fx reachFX, friendName string, timeout time.Dura
 		}
 		nonce := fx.Nonce()
 		body := ReachText(step, nonce, friendName, fx.coordinator)
+		var deliver func(context.Context) error
 		switch step {
 		case reachBus:
 			id, err := fx.Send(stepCtx, nonce, body)
@@ -299,31 +310,29 @@ func climb(ctx context.Context, fx reachFX, friendName string, timeout time.Dura
 				continue
 			}
 			acc.Item("STEP", "step", step, "nonce", nonce)
-			if err := fx.Push(stepCtx, body); err != nil {
-				tried = append(tried, step)
-				acc.ItemText("NONE", err.Error(), "step", step, "waited", fx.Now().Sub(start).String())
-				cancel()
-				continue
-			}
+			deliver = func(ctx context.Context) error { return fx.Push(ctx, body) }
 		case reachWindow:
 			acc.Item("STEP", "step", step, "nonce", nonce)
-			if err := fx.Window(stepCtx, body); err != nil {
-				var refused friend.WindowRefused
-				if errors.As(err, &refused) {
-					o := tool.Refuse("accessibility permission absent")
-					o.Remedy = refused.Remedy
-					return reachWith(o, acc)
-				}
-				tried = append(tried, step)
-				acc.ItemText("NONE", err.Error(), "step", step, "waited", fx.Now().Sub(start).String())
-				cancel()
-				continue
-			}
+			deliver = func(ctx context.Context) error { return fx.Window(ctx, body) }
 		}
-		ok, err := waitReach(stepCtx, fx, acc, step, nonce, start, timeout)
+		var done <-chan error
+		if deliver != nil {
+			done = fx.Start(stepCtx, deliver)
+		}
+		ok, err := waitReach(stepCtx, fx, acc, step, nonce, start, timeout, done)
 		cancel()
 		if err != nil {
-			return reachWith(tool.Refuse(err.Error()), acc)
+			var delivery reachDeliveryError
+			if !errors.As(err, &delivery) {
+				return reachWith(tool.Refuse(err.Error()), acc)
+			}
+			var refused friend.WindowRefused
+			if errors.As(delivery.err, &refused) {
+				o := tool.Refuse(refused.Error())
+				o.Remedy = refused.Remedy
+				return reachWith(o, acc)
+			}
+			acc.ItemText("NONE", delivery.Error(), "step", step, "waited", fx.Now().Sub(start).String())
 		}
 		if ok {
 			return reachWith(tool.Done().Fact("friend", friendName).Fact("step", step), acc)
@@ -337,7 +346,7 @@ func climb(ctx context.Context, fx reachFX, friendName string, timeout time.Dura
 	return reachWith(tool.Fail().Fact("friend", friendName).Fact("tried", strings.Join(tried, ",")), acc)
 }
 
-func waitReach(ctx context.Context, fx reachFX, acc *tool.Out, step, nonce string, start time.Time, timeout time.Duration) (bool, error) {
+func waitReach(ctx context.Context, fx reachFX, acc *tool.Out, step, nonce string, start time.Time, timeout time.Duration, done <-chan error) (bool, error) {
 	for {
 		if errors.Is(context.Cause(ctx), context.DeadlineExceeded) {
 			acc.Item("NONE", "step", step, "waited", fx.Now().Sub(start).String())
@@ -354,6 +363,14 @@ func waitReach(ctx context.Context, fx reachFX, acc *tool.Out, step, nonce strin
 		if ok {
 			acc.Item("PROOF", "step", step, "after", fx.Now().Sub(start).String(), "by", by)
 			return true, nil
+		}
+		select {
+		case err := <-done:
+			done = nil
+			if err != nil {
+				return false, reachDeliveryError{err: err}
+			}
+		default:
 		}
 		elapsed := fx.Now().Sub(start)
 		if elapsed >= timeout {
@@ -403,3 +420,16 @@ func reachProof(ctx context.Context, b *bus.Bus, cursor *string, friendName, non
 	}
 	return "", false, nil
 }
+
+// startReachDelivery keeps proof polling live while an adapter awaits its turn.
+// The worker must honor ctx, as the existing command adapters do. The buffered
+// result lets it finish after cancellation without waiting on its caller.
+func startReachDelivery(ctx context.Context, deliver func(context.Context) error) <-chan error {
+	done := make(chan error, 1)
+	go func() { done <- deliver(ctx) }()
+	return done
+}
+
+type reachDeliveryError struct{ err error }
+
+func (e reachDeliveryError) Error() string { return e.err.Error() }

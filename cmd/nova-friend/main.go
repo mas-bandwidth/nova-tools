@@ -91,6 +91,7 @@ type world struct {
 	launch         []string                                                                   // host: the launch command after "--"
 	settings       friend.SettingsFS                                                          // where a harness's own settings are read and written (install, check --settings)
 	argv           []string                                                                   // this run's arguments after the program's name: what the plist drift is read against
+	reachStart     func(context.Context, func(context.Context) error) <-chan error            // nil starts the delivery worker; tests control scheduling
 	reachTimeout   func(context.Context, time.Duration) (context.Context, context.CancelFunc) // nil uses the real deadline; tests advance their own clock
 	reachPermitted func(ctx context.Context) (bool, error)                                    // reach's window: nil asks the platform; a test answers without asking
 }
