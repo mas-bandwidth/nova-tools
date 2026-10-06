@@ -10,8 +10,8 @@ A row's state is **owed** while its card has not landed on the base, **landed** 
 scripts live outside it (the coordinator's scratchpad, and `runner.zsh` in each bud's directory),
 and a retired one is removed by stopping it and deleting it there.
 
-`nova-sprint seat check` reads the seat's machine's process table and prints, after its
-`MACHINERY` lines, one line per stopgap found alive:
+The seat check's report (`sprint.JudgeSeatCheck`), given the seat's machine's process table,
+prints after its `MACHINERY` lines one line per stopgap found alive:
 
 ```
 STOPGAP <name> still running pids=<pid,...> state=<owed|landed|retired> card=<card> verb="<verb>" [remedy="kill <pid> ..."]
@@ -22,6 +22,12 @@ the job); a retired one still running is DOWN, its remedy the `kill`, and the ch
 it is gone. A process is the script when the script is its program, or the first word after an
 interpreter's flags (`sh`, `bash`, `zsh`, `dash`, `python*`); a shell whose `-c` text names a
 script, or a `find` or `tail` naming one, is not it (`sprint.StopgapScript`).
+
+Owed: `nova-sprint seat check` does not yet read the process table. The judging, the parse of
+`ps -axww -o pid=,args=` (`sprint.ProcsFromPS`) and the line are in `internal/sprint`; the
+command's outside that runs `ps` and fills the measure (`cmd/nova-sprint/machinery.go`) is outside
+the PATHS of card the-stopgaps-retire and is a twin's work. Until it lands a real seat check prints
+no `STOPGAP` line.
 
 The rows are `sprint.Stopgaps` (internal/sprint/seat_check.go). `TestEveryStopgapNamesItsVerbAndProof`
 reads this table, holds it to `sprint.Stopgaps` row for row, and refuses a row with no card, no
