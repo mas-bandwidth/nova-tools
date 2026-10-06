@@ -366,8 +366,8 @@ func TestHelpers_NilAndErrors(t *testing.T) {
 	_, err := ReadStamp(filepath.Join(t.TempDir(), "nonexistent"))
 	assert.Error(t, err, "ReadStamp nonexistent should error")
 
-	clk := newLockStepClock(time.Time{})
-	assert.False(t, clk.Now().IsZero(), "newLockStepClock(zero) returned zero time")
+	clk := newClockForTest(time.Time{})
+	assert.False(t, clk.Now().IsZero(), "newClockForTest(zero) returned zero time")
 }
 
 func TestRealClock(t *testing.T) {
@@ -429,7 +429,7 @@ func TestLock_RunOutNamesTheHolder(t *testing.T) {
 	r.holder(path, "holder")
 
 	for _, bound := range []time.Duration{0, 1, time.Millisecond, 10 * time.Millisecond, 200 * time.Millisecond, time.Second} {
-		clk := newLockStepClock(time.Time{})
+		clk := newClockForTest(time.Time{})
 		lock, err := lockWithOptions(path, "waiter", bound, options{clock: clk})
 		release(t, lock) // nil-safe: releases a mutant lock, no-ops on nil
 		require.Nil(t, lock, "bound %s: acquired a held lock", bound)
