@@ -14,7 +14,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
 )
 
-// What the two runner.zsh stopgaps (freddy's and alex's, 2026-10-04/05) did around
+// What the two runner.zsh stopgaps (two friends' copies of one script, 2026-10-04/05) did around
 // `opencode run`, as small functions the one-shot lanes call, each configured on the
 // friend row and not in code (docs/SPEC-FRIEND.md, opencode lane parity): the card
 // filter and the take back, the job name, the width under load, the token cap, the
@@ -341,7 +341,7 @@ func ResultLines(t Tokens, cost, model string) string {
 const ShimDir = "bin"
 
 // GoRefusal is why no go command runs on this machine.
-const GoRefusal = "go is refused on this machine (the Studio runs no go build, test or vet): sync the clone to the bench and run it there over ssh"
+const GoRefusal = "go is refused on this machine (this machine runs no go build, test or vet): sync the clone to the bench and run it there over ssh"
 
 // WriteShims writes the refusal shims `go` and `gofmt` into stateDir/bin: each prints
 // GoRefusal and exits 126. They are put first on a lane's PATH (LaneEnv); they are the

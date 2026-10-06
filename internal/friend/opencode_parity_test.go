@@ -15,14 +15,14 @@ import (
 
 func rat(s string) *big.Rat { r, _ := new(big.Rat).SetString(s); return r }
 
-// TestOpencodeLanesDoWhatTheRunnerStopgapsDid holds each behaviour of freddy's and
-// alex's runner.zsh as one table, so the stopgaps can be retired.
+// TestOpencodeLanesDoWhatTheRunnerStopgapsDid holds each behaviour of two friends'
+// runner.zsh as one table, so the stopgaps can be retired.
 func TestOpencodeLanesDoWhatTheRunnerStopgapsDid(t *testing.T) {
 	t.Parallel()
 
 	t.Run("the row's settings are read off the beat", func(t *testing.T) {
 		t.Parallel()
-		r := ParseLaneRules("FRIEND-BEAT OK freddy row_mode=one-shot row_width=12 row_tiers=Flash row_streams=security*,fp-sec* row_token_cap=6000000 row_load_bound=90 row_load_width=3")
+		r := ParseLaneRules("FRIEND-BEAT OK bob row_mode=one-shot row_width=12 row_tiers=Flash row_streams=security*,fp-sec* row_token_cap=6000000 row_load_bound=90 row_load_width=3")
 		assert.Equal(t, LaneRules{Tiers: []string{"flash"}, Patterns: []string{"security*", "fp-sec*"}, TokenCap: 6000000, LoadBound: 90, LoadWidth: 3}, r)
 		assert.Equal(t, LaneRules{}, ParseLaneRules("row_mode=one-shot row_token_cap=-5 row_load_bound=x"))
 	})
@@ -71,7 +71,7 @@ func TestOpencodeLanesDoWhatTheRunnerStopgapsDid(t *testing.T) {
 		} {
 			assert.Equal(t, c.wantTake, TakeBack(c.passes, c.started, c.jobDir, c.took), c.name)
 		}
-		assert.Equal(t, []string{"friend", "take", "freddy", "c1", "--reason", "tier pro"}, TakeArgv("freddy", "c1", "tier pro"))
+		assert.Equal(t, []string{"friend", "take", "bob", "c1", "--reason", "tier pro"}, TakeArgv("bob", "c1", "tier pro"))
 	})
 
 	t.Run("the job name carries the generation", func(t *testing.T) {
@@ -123,7 +123,7 @@ func TestOpencodeLanesDoWhatTheRunnerStopgapsDid(t *testing.T) {
 		assert.True(t, OverCap(tk, 6_000_000))
 		assert.False(t, OverCap(tk, 6_000_001))
 		assert.False(t, OverCap(tk, 0), "no cap is never over")
-		rep := CapHoldReport("Freddy", 6_000_000, tk, 41, "$ git push")
+		rep := CapHoldReport("Bob", 6_000_000, tk, 41, "$ git push")
 		lines := strings.Split(rep, "\n")
 		assert.Equal(t, "Verdict: HOLD", lines[0])
 		assert.Equal(t, "Head: none", lines[1])
@@ -159,7 +159,7 @@ func TestOpencodeLanesDoWhatTheRunnerStopgapsDid(t *testing.T) {
 		assert.False(t, wrote, "the first message stands")
 		raw2, _ := os.ReadFile(filepath.Join(dir, PauseFile))
 		assert.Equal(t, raw, raw2)
-		assert.Equal(t, []string{"friend", "down", "freddy", "--reason", "provider failure (inception/mercury-2.5): Error: 429"}, p.DownArgv("freddy", "inception/mercury-2.5"))
+		assert.Equal(t, []string{"friend", "down", "bob", "--reason", "provider failure (inception/mercury-2.5): Error: 429"}, p.DownArgv("bob", "inception/mercury-2.5"))
 	})
 
 	t.Run("the cost line", func(t *testing.T) {
@@ -202,8 +202,8 @@ func TestOpencodeLanesDoWhatTheRunnerStopgapsDid(t *testing.T) {
 
 	t.Run("the tokens are read from opencode's database", func(t *testing.T) {
 		t.Parallel()
-		q := TokensSQL("Freddy one-shot c'1 99")
-		assert.Contains(t, q, "title='Freddy one-shot c''1 99'")
+		q := TokensSQL("Bob one-shot c'1 99")
+		assert.Contains(t, q, "title='Bob one-shot c''1 99'")
 		assert.Contains(t, q, "parent_id in (select id from s)")
 		tk, err := ParseTokens("10|20|30|40|50|0.5|2\n")
 		require.NoError(t, err)
@@ -234,10 +234,10 @@ func TestOpencodeLanesDoWhatTheRunnerStopgapsDid(t *testing.T) {
 
 	t.Run("a bus note at each finish", func(t *testing.T) {
 		t.Parallel()
-		s, b := FinishNote("Freddy", "c1~15", "Verdict: LAND", "$0.60", 95*time.Second+400*time.Millisecond)
-		assert.Equal(t, "Freddy card c1~15: Verdict: LAND", s)
-		assert.Equal(t, "Freddy one-shot lane finished c1~15: Verdict: LAND; cost $0.60; wall 1m35s", b)
-		s, _ = FinishNote("Freddy", "c1", "", "$0.00", 0)
-		assert.Equal(t, "Freddy card c1: no report", s)
+		s, b := FinishNote("Bob", "c1~15", "Verdict: LAND", "$0.60", 95*time.Second+400*time.Millisecond)
+		assert.Equal(t, "Bob card c1~15: Verdict: LAND", s)
+		assert.Equal(t, "Bob one-shot lane finished c1~15: Verdict: LAND; cost $0.60; wall 1m35s", b)
+		s, _ = FinishNote("Bob", "c1", "", "$0.00", 0)
+		assert.Equal(t, "Bob card c1: no report", s)
 	})
 }

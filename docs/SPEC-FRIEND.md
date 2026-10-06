@@ -967,7 +967,7 @@ until it does); and no TLA+ module models the pacer.
 
 ### opencode-lanes-parity-r2.w3 — the opencode lanes do what the runner stopgaps did (internal/friend/opencode_parity.go)
 
-Freddy and Alex ran cards through two zsh copies of one runner (the owner, 2026-10-05:
+Two friends ran cards through two zsh copies of one runner (the owner, 2026-10-05:
 "We need to get away from these one shot shell scripts"). Each behaviour of those scripts
 is a small function with a table in `TestOpencodeLanesDoWhatTheRunnerStopgapsDid`, set on the
 friend row (the beat's answer carries them as `row_tiers=`, `row_streams=`, `row_token_cap=`,
