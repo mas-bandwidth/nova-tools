@@ -156,6 +156,38 @@ func TestMalformedIsUnreadable(t *testing.T) {
 	}
 }
 
+// TestReadBoxRefusesAMisspelledKeyADuplicateKeyAndAWholeBoxNull pins strict top-level
+// decoding: unknown members, duplicate fields (including case aliases), non-object
+// boxes, and trailing bytes cannot turn an ambiguous fuse file into VERIFIED CLEAR.
+func TestReadBoxRefusesAMisspelledKeyADuplicateKeyAndAWholeBoxNull(t *testing.T) {
+	t.Parallel()
+
+	for name, content := range map[string]string{
+		"misspelled lockdown":  `{"lockdwn":{"at":"t","reason":"r"},"quarantine":{}}`,
+		"duplicate lockdown":   `{"lockdown":{"at":"t","reason":"r"},"quarantine":{},"lockdown":null}`,
+		"case alias duplicate": `{"lockdown":{"at":"t","reason":"r"},"quarantine":{},"LOCKDOWN":null}`,
+		"whole box null":       `null`,
+		"trailing data":        `{"lockdown":null,"quarantine":{}} garbage`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			path := boxIn(t)
+			write(t, path, content)
+			_, err := ReadBox(path)
+			assert.Error(t, err, "%s must be unreadable, but it parsed", name)
+		})
+	}
+
+	t.Run("single correct lockdown blows", func(t *testing.T) {
+		t.Parallel()
+		path := boxIn(t)
+		write(t, path, `{"lockdown":{"at":"t","reason":"r"},"quarantine":{}}`)
+		b, err := ReadBox(path)
+		require.NoError(t, err, "one correct lockdown field is valid: %v", err)
+		require.NotNil(t, b.Lockdown, "one correct lockdown field must remain readable as blown")
+	})
+}
+
 // TestNullQuarantineStillYieldsAUsableMap: `{"lockdown":null,"quarantine":null}` is a box
 // your person could plausibly hand-edit into existence, and it is READABLE -- so it must
 // not hand back a nil map that panics the first caller to write to it.
