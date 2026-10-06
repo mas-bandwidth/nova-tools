@@ -189,7 +189,9 @@ func cmdSlowtests(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 	// applies the same rule): an empty stream is FAILED, and --allow-empty is
 	// the way out. The built-in --example stream is not this check
 	// (docs/STANDARD.md section 2, exit codes tell the truth).
-	empty := report.Packages == 0 && !*example && !*allowEmpty
+	// A package that started and never ended is a truncated finding, not an
+	// empty stream (docs/SPEC-CI.md, "The per-package test time budget").
+	empty := report.Packages == 0 && len(report.Truncated) == 0 && !*example && !*allowEmpty
 	if empty {
 		code = 1
 		for i, line := range lines {
@@ -371,6 +373,9 @@ func verdictJSON(r slowtests.Report, load slowtests.Load, enforce bool, code int
 		if enforce && len(r.Over)+len(r.OverTests) > 0 {
 			o.Why = append(o.Why, fmt.Sprintf("%d CI-SLOW finding(s) under --enforce", len(r.Over)+len(r.OverTests)))
 		}
+		if len(r.Truncated) > 0 {
+			o.Why = append(o.Why, fmt.Sprintf("%d package(s) started and never ended", len(r.Truncated)))
+		}
 	}
 	slowest := "none"
 	if r.Slowest.Name != "" {
@@ -395,6 +400,9 @@ func verdictJSON(r slowtests.Report, load slowtests.Load, enforce bool, code int
 	}
 	for _, s := range r.Sleepers {
 		o.Item("sleeps", "test", s.Name, "package", s.Package)
+	}
+	for _, pkg := range r.Truncated {
+		o.ItemText("truncated", "truncated: "+oneline.Field(pkg)+" started and never ended")
 	}
 	if max > 0 {
 		tally := bounded.NewTally(max)
