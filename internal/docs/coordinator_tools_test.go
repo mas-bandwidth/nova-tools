@@ -24,7 +24,8 @@ import (
 // verbs and flags are read from each tool's own source, never copied here:
 // nova-sprint's verb table (cmd/nova-sprint/verbs.go) and the flags its
 // common.register adds, the usage banner of nova-secrets and nova-swarm, and
-// the tool.Verb table of nova-friend and nova-bus. A flag counts when the
+// the tool.Verb table of nova-friend and nova-bus, and the usage banner of
+// nova-loop. A flag counts when the
 // verb's synopsis names it and the tool's source registers it.
 
 // coordinatorToolsPath is the page, relative to this package.
@@ -265,6 +266,7 @@ func readNovaTools(t *testing.T) map[string]novaTool {
 		"nova-swarm":   usageTool(t, "nova-swarm"),
 		"nova-friend":  verbTableTool(t, "nova-friend"),
 		"nova-bus":     verbTableTool(t, "nova-bus"),
+		"nova-loop":    usageTool(t, "nova-loop"),
 	}
 }
 
@@ -292,7 +294,7 @@ func checkCommand(tools map[string]novaTool, words []string) (checked bool, prob
 	}
 	tool, ok := tools[name]
 	if !ok {
-		return true, []string{name + " is a nova tool this test reads no verb table of: map to a verb of nova-sprint, nova-secrets, nova-swarm, nova-friend or nova-bus, or teach the test the tool"}
+		return true, []string{name + " is a nova tool this test reads no verb table of: map to a verb of nova-sprint, nova-secrets, nova-swarm, nova-friend, nova-bus or nova-loop, or teach the test the tool"}
 	}
 	words = words[1:]
 	var verbName string

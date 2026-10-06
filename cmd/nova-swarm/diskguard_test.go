@@ -348,12 +348,42 @@ func TestDiskGuardWithoutTheProcessListRemovesNothingThatNeedsIt(t *testing.T) {
 	assert.Contains(t, out.String(), "DISK-GUARD INCOMPLETE freed=0 free=107374182400 failed=1\n")
 }
 
+// Under --stop-floor the run exits 3 after cleanup. It does not stop units.
+// A volume that could not be read is not treated as empty.
+func TestDiskGuardStopsUnderItsStopFloor(t *testing.T) {
+	t.Parallel()
+	g, out := dgGuard(t)
+	g.stopFloor = 200 * gib
+	g.free = func(string) (uint64, error) { return 150 * gib, nil }
+	assert.Equal(t, 3, g.run())
+	assert.Contains(t, out.String(), "DISK-GUARD STOP ")
+	assert.NotContains(t, out.String(), "DISK-GUARD OK")
+
+	g, out = dgGuard(t)
+	g.stopFloor = 50 * gib
+	assert.Equal(t, 0, g.run())
+	assert.Contains(t, out.String(), "DISK-GUARD OK")
+
+	g, out = dgGuard(t)
+	g.dry = true
+	g.stopFloor = 200 * gib
+	g.free = func(string) (uint64, error) { return 150 * gib, nil }
+	assert.Equal(t, 3, g.run())
+	assert.Contains(t, out.String(), "DISK-GUARD STOP ")
+
+	g, out = dgGuard(t)
+	g.stopFloor = 1
+	g.free = func(string) (uint64, error) { return 0, errors.New("statfs") }
+	assert.Equal(t, 1, g.run())
+	assert.NotContains(t, out.String(), "DISK-GUARD STOP")
+}
+
 // A limit that is no limit is refused before anything is read, naming the flag.
 func TestDiskGuardRefusesLimitsThatAreNoLimits(t *testing.T) {
 	t.Parallel()
 	for _, args := range [][]string{
 		{"--cache-max-gb", "0"}, {"--modcache-max-gb", "-1"}, {"--log-max-mb", "0"}, {"--log-keep", "0"},
-		{"--disk-floor", "-1"}, {"--clone-age", "0s"}, {"--pool-idle", "1m"},
+		{"--disk-floor", "-1"}, {"--stop-floor", "-1"}, {"--clone-age", "0s"}, {"--pool-idle", "1m"},
 	} {
 		var stdout, stderr bytes.Buffer
 		assert.Equal(t, 2, swarmRun(append([]string{"disk-guard"}, args...), &stdout, &stderr), "%v", args)
@@ -366,7 +396,7 @@ func TestDiskGuardRefusesLimitsThatAreNoLimits(t *testing.T) {
 func TestDiskGuardHelp(t *testing.T) {
 	t.Parallel()
 	help := swarmHelp(t, "disk-guard", "-h")
-	for _, flag := range []string{"--root", "--scan", "--cache", "--cache-max-gb", "--modcache-max-gb", "--logs", "--log-max-mb", "--log-keep", "--pool-idle", "--land", "--clone-age", "--mirrors", "--disk-floor", "--dry-run"} {
+	for _, flag := range []string{"--root", "--scan", "--cache", "--cache-max-gb", "--modcache-max-gb", "--logs", "--log-max-mb", "--log-keep", "--pool-idle", "--land", "--clone-age", "--mirrors", "--disk-floor", "--stop-floor", "--dry-run"} {
 		assert.Contains(t, help, "\n  "+flag+" ", "disk-guard -h does not list %s", flag)
 	}
 	assert.Contains(t, help, "DISK-GUARD OK")
