@@ -330,6 +330,26 @@ func cardTierOf(c *Card) string {
 	return now
 }
 
+// dealTierOf is the tier a deal of the primary c draws, as the machines' deal draws it
+// (routeOf): the tier it is on once a deal drew one (drawTier), its ceiling when its tier
+// is pinned, and before its first deal its start tier (startTier: flash first, pro for a
+// brief that says pro), never its ceiling; a brief whose model lines cannot be read is
+// judged under its ceiling. A card with no tier line is flash. The friends' deal and
+// level gate on it (friendTakes), so a card a machine would be dealt on flash is a
+// flash friend's too (docs/SPEC-SPRINT.md section 1, a friend's card; 2026-10-06: a
+// friend of tier flash sat empty for an hour while every brief whose line 1 said
+// tier: heavy was read as heavy for her and dealt on flash to the machines).
+func (s *Snapshot) dealTierOf(c *Card) string {
+	m, bad := cardhdr.ReadModel(c.F("brief"))
+	if bad != "" {
+		return ceilingTier(c, m)
+	}
+	if t := drawTier(c, m); t != "" {
+		return t
+	}
+	return s.startTier(c, m)
+}
+
 // NextTier is the tier the primary c escalates to when it reaches its bound: the next tier
 // of the ladder above the one it is on, up to its ceiling; "" at its ceiling (a pinned
 // model or tier is on its ceiling, cardTier), for brief lines that cannot be read, and in

@@ -542,6 +542,152 @@ func TestRun(t *testing.T) {
 	}
 }
 
+// TestEveryBadFlagValueIsNamedAtOnce pins skeleton contract 1.8 (STANDARD §2,
+// a tool refuses to guess and names every problem of one invocation at once;
+// §3 point 2) for flag values: the flag package stops at the first word a flag
+// cannot take, so the skeleton reads the rest of the words itself, collects each
+// failure as a Problem, and refuses once naming all of them. No message holds
+// the flag package's own words, and a bad value is never repeated (it may be a
+// secret), so every problem says what its flag wants and names it with two
+// dashes.
+func TestEveryBadFlagValueIsNamedAtOnce(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name        string
+		tool        func() *Tool
+		args        []string
+		lines       int      // the refusal's lines on stderr
+		stderr      []string // substrings, in order
+		why         []string // under --json: the result's why, in order
+		notRepeated []string // values given, absent from both streams
+	}{
+		{name: "two bad values and an unknown flag are three problems in one refusal",
+			tool: demo, args: []string{"put", "--n", "x", "--max", "many", "--bogus"}, lines: 3,
+			stderr: []string{"PUT REFUSED: invalid value for --n: it wants a whole number (how many rows)",
+				"PUT REFUSED: invalid value for --max: it wants a whole number (items listed before one MORE line stands for the rest; 0 lists all)",
+				"PUT REFUSED: unknown flag --bogus; the flags of put are", "run: nova-demo put -h"},
+			notRepeated: []string{`"x"`, `"many"`}},
+		{name: "under --json the problems are the entries of why",
+			tool: demo, args: []string{"put", "--json", "--n", "x", "--max", "many", "--bogus"}, lines: 0,
+			why: []string{`invalid value for --n: it wants a whole number (how many rows)`,
+				`invalid value for --max: it wants a whole number (items listed before one MORE line stands for the rest; 0 lists all)`,
+				`unknown flag --bogus; the flags of put are`},
+			notRepeated: []string{`"many"`}},
+		{name: "a bad duration and an unknown flag name the flag that wants it",
+			tool: durationTool, args: []string{"wait", "--for", "soon", "--zz"}, lines: 2,
+			stderr: []string{"WAIT REFUSED: invalid value for --for: it wants a duration such as 30s or 5m",
+				"WAIT REFUSED: unknown flag --zz; the flags of wait are --for, --json", "run: nova-cover wait -h"}},
+		{name: "a flag with no value and a bad value are two problems",
+			tool: demo, args: []string{"put", "--n", "x", "--store"}, lines: 2,
+			stderr: []string{"PUT REFUSED: invalid value for --n: it wants a whole number (how many rows)",
+				"PUT REFUSED: --store needs a value: it wants a directory (required)", "run: nova-demo put -h"}},
+		{name: "the same bad flag twice is named once", tool: demo,
+			args: []string{"put", "--n", "x", "--n", "y", "--max", "many"}, lines: 2,
+			stderr: []string{"PUT REFUSED: invalid value for --n: it wants a whole number (how many rows)",
+				"PUT REFUSED: invalid value for --max: it wants a whole number"}},
+		{name: "one bad value stays one line", tool: demo, args: []string{"put", "--n", "x"}, lines: 1,
+			stderr: []string{"PUT REFUSED: invalid value for --n: it wants a whole number (how many rows); run: nova-demo put -h"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r := testkit.Main(tc.tool().Run).Run(tc.args...)
+			assert.Equal(t, 2, r.Code, "stdout %q stderr %q", r.Stdout, r.Stderr)
+			assert.NotContains(t, r.Stdout+r.Stderr, "parse error")
+			assert.NotContains(t, r.Stdout+r.Stderr, "provided but not defined")
+			for _, v := range tc.notRepeated {
+				assert.NotContains(t, r.Stdout+r.Stderr, v, "the value given may be a secret")
+			}
+			if tc.lines > 0 {
+				assert.Empty(t, r.Stdout)
+				assert.Equal(t, tc.lines, strings.Count(r.Stderr, "\n"), "stderr:\n%s", r.Stderr)
+				rest := r.Stderr
+				for _, s := range tc.stderr {
+					i := strings.Index(rest, s)
+					if !assert.GreaterOrEqual(t, i, 0, "stderr lacks %q (in order):\n%s", s, r.Stderr) {
+						break
+					}
+					rest = rest[i+len(s):]
+				}
+				return
+			}
+			assert.Empty(t, r.Stderr, "a refusal under --json leaves nothing on stderr")
+			var j struct {
+				Result struct {
+					Verb, Status string
+					Exit         int
+					Remedy       string
+					Why          []string
+				} `json:"result"`
+			}
+			require.NoError(t, json.Unmarshal([]byte(r.Stdout), &j))
+			assert.Equal(t, "refused", j.Result.Status)
+			assert.Equal(t, 2, j.Result.Exit)
+			assert.Equal(t, "put", j.Result.Verb)
+			assert.NotEmpty(t, j.Result.Remedy)
+			require.Len(t, j.Result.Why, len(tc.why))
+			for i, w := range tc.why {
+				assert.Contains(t, j.Result.Why[i], w)
+			}
+		})
+	}
+}
+
+// TestARefusalUnderJSONIsOneObjectOnStdout pins skeleton contract 1.4 and 1.6
+// (STANDARD §2, one output structure with two renderings; --json is always
+// stdout): under --json every refusal the skeleton raises is one JSON object on
+// stdout with nothing on stderr, including the refusals raised before the verb
+// and its flags are known. The result's why holds each reason alone, never the
+// whole line: the envelope is not repeated inside it.
+func TestARefusalUnderJSONIsOneObjectOnStdout(t *testing.T) {
+	t.Parallel()
+	clearTool := func() *Tool { // a tool whose exit 0 means CLEAR refuses `<verb> -h` (Tool.HelpRefused)
+		return &Tool{Name: "nova-clear", What: "clears one gate", ExitTable: "0 clear, 1 not clear, 2 could not run.",
+			HelpRefused: true,
+			Verbs: []Verb{{Name: "check", Usage: "check [--gate <g>]", Effect: Inspection,
+				Flags: func(f *Flags) { f.String("gate", "", "the gate to clear") },
+				Run:   func(*Call) *Out { return Done() }}}}
+	}
+	for _, tc := range []struct {
+		name string
+		tool func() *Tool
+		args []string
+		verb string // the result's verb: "" while the verb is unknown
+	}{
+		{"an unknown verb names the verbs it does not know", demo, []string{"seal", "--json"}, ""},
+		{"an unknown flag names the flags of its verb", demo, []string{"put", "--bogus", "--json"}, "put"},
+		{"a bare group names its verbs", demo, []string{"fn", "--json"}, ""},
+		{"a verb's own problems are the reasons", demo, []string{"put", "--json"}, "put"},
+		{"every bad flag value is a reason", demo, []string{"put", "--n", "x", "--max", "many", "--json"}, "put"},
+		{"a refused -h is a refusal like any other", clearTool, []string{"check", "-h", "--json"}, "check"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r := testkit.Main(tc.tool().Run).Run(tc.args...)
+			assert.Equal(t, 2, r.Code, "stdout %q stderr %q", r.Stdout, r.Stderr)
+			assert.Empty(t, r.Stderr, "a refusal under --json leaves nothing on stderr")
+			require.Equal(t, 1, strings.Count(r.Stdout, "\n"), "stdout is the one object:\n%s", r.Stdout)
+			var j struct {
+				Result struct {
+					Verb, Status string
+					Exit         int
+					Remedy       string
+					Why          []string
+				} `json:"result"`
+			}
+			require.NoError(t, json.Unmarshal([]byte(r.Stdout), &j))
+			assert.Equal(t, "refused", j.Result.Status)
+			assert.Equal(t, 2, j.Result.Exit)
+			assert.Equal(t, tc.verb, j.Result.Verb)
+			assert.NotEmpty(t, j.Result.Remedy, "a refusal names the command to run next")
+			require.NotEmpty(t, j.Result.Why)
+			for _, w := range j.Result.Why {
+				assert.NotContains(t, w, "REFUSED:", "the envelope is not repeated inside why")
+				assert.NotContains(t, w, "; run: ", "the remedy stands in its own field, not inside a reason")
+			}
+		})
+	}
+}
+
 // TestBannerMeetsTheOnboardingStandard reads the banner the way the onboarding
 // class test does: the example block's lines are the tool's commands, with no
 // placeholder, and every usage verb answers -h at exit 0.

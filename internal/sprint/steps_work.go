@@ -1296,6 +1296,10 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 	}
 	byID := named(r.Sel)
 	picked := pick(&p, r.Sel, all, fieldStream, func(c *Card) string {
+		if c.F("kind") == "read" {
+			// a read on a friend's row is no work: it is returned, never finished
+			return "a read, not work: finish does not return it; " + FriendReadOutboxLine(c.Row, c.ID, s.Epoch)
+		}
 		if byID {
 			if why := liveGen("finish", c, r.Gens); why != "" {
 				return why

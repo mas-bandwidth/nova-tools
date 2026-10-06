@@ -79,12 +79,15 @@ type FriendRow struct {
 	Name    string `json:"name"`
 	Ready   int    `json:"ready"`
 	Working int    `json:"working"`
-	Width   int    `json:"width"`
-	OK      int    `json:"ok"`
-	Failed  int    `json:"failed"`
-	Status  string `json:"status"`
-	Class   string `json:"class,omitempty"`
-	Mode    string `json:"mode,omitempty"`
+	// DealtFleet is the fleet's cards among them: work cards whose primary carries no
+	// WHO line (sprint.FriendsDealtFleet, from the tick's where record, up to a tick behind).
+	DealtFleet int    `json:"dealt_fleet"`
+	Width      int    `json:"width"`
+	OK         int    `json:"ok"`
+	Failed     int    `json:"failed"`
+	Status     string `json:"status"`
+	Class      string `json:"class,omitempty"`
+	Mode       string `json:"mode,omitempty"`
 	// Load and Report are what her last beat reported (friend beat --load, and
 	// sprint.FriendReport), absent when it reported none.
 	Load   float64              `json:"load,omitempty"`
@@ -215,44 +218,76 @@ func (st *Store) FriendBeat(ctx context.Context, friend string) (sprint.Beat, er
 // down keep with her, and her own counts) and her load (nil: none), kept on the
 // beat until the next replaces it.
 func (st *Store) FriendBeatReport(ctx context.Context, friend string, rep sprint.FriendReport, load *float64) (sprint.Beat, error) {
-	return st.FriendBeatPong(ctx, friend, rep, load, time.Time{})
+	b, _, err := st.FriendBeatProof(ctx, friend, rep, load, sprint.BeatWords{})
+	return b, err
 }
 
-// friendBeatRecord is a friend's beat as kept: the beat, and her session's last pong as
-// her daemon reports it (friend beat --pong; zero: none reported), which the coordinator's
-// pass reads (sprint.TickCoordinatorPass). A reader of the beat alone reads the record as
-// a sprint.Beat and never sees the pong.
+// friendBeatRecord is a friend's beat as kept: the beat; her session's last proof, the
+// server's time of the last answer that named a check her daemon asked (sprint.ProveBeat;
+// zero: none), which the friends' rule and the coordinator's pass read; the checks still
+// answerable; and the last beat with no proof, and why. A reader of the beat alone reads
+// the record as a sprint.Beat, its Proof the record's pong.
 type friendBeatRecord struct {
 	sprint.Beat
-	Pong time.Time `json:"pong,omitzero"`
+	Pong    time.Time           `json:"pong,omitzero"`
+	Asked   []sprint.AskedCheck `json:"asked,omitempty"`
+	NoProof string              `json:"no_proof,omitempty"`
 }
 
-// FriendBeatPong is FriendBeatReport with her session's last pong kept on the beat (zero:
-// none), until the next beat replaces it.
-func (st *Store) FriendBeatPong(ctx context.Context, friend string, rep sprint.FriendReport, load *float64, pong time.Time) (sprint.Beat, error) {
+// BeatProof is what one beat's proof words came to: proved (her session answered a check
+// her daemon asked) or why it proved nothing, and the proof the record keeps after it.
+type BeatProof struct {
+	Proved  bool
+	NoProof string
+	Proof   time.Time
+}
+
+// FriendBeatProof is FriendBeatReport with the beat's proof words (sprint.BeatWords: the
+// check her daemon asked, the check her session answered, the daemon's run): the record's
+// checks and proof are carried from the last beat and stepped by sprint.ProveBeat at the
+// store's clock, so only an answer to a check asked proves, once.
+func (st *Store) FriendBeatProof(ctx context.Context, friend string, rep sprint.FriendReport, load *float64, w sprint.BeatWords) (sprint.Beat, BeatProof, error) {
 	r, kv, err := st.roster(ctx)
 	if err != nil {
-		return sprint.Beat{}, err
+		return sprint.Beat{}, BeatProof{}, err
 	}
 	if _, ok := r[friend]; !ok {
-		return sprint.Beat{}, noFriend(r, friend)
+		return sprint.Beat{}, BeatProof{}, noFriend(r, friend)
 	}
-	b := sprint.Beat{At: st.now().UTC().Truncate(time.Second)}
+	now := st.now().UTC().Truncate(time.Second)
+	var prev friendBeatRecord
+	if vals, oks, err := getKeys(ctx, kv, []string{friendBeatKey(friend)}); err != nil {
+		return sprint.Beat{}, BeatProof{}, err
+	} else if len(oks) == 1 && oks[0] {
+		_ = json.Unmarshal([]byte(vals[0]), &prev) // ignored: an unreadable record holds no check and no proof
+	}
+	b := sprint.Beat{At: now}
 	if len(rep.Running) > 0 || rep.Working != nil || rep.Queue != nil || rep.Width != nil || !rep.Active.IsZero() {
 		b.Friend = &rep // a beat that reports nothing carries no report
 	}
 	if load != nil {
 		b.Load, b.How = *load, sprint.HowGiven
 	}
-	rec := friendBeatRecord{Beat: b}
-	if !pong.IsZero() {
-		rec.Pong = pong.UTC().Truncate(time.Second)
+	rec := friendBeatRecord{Beat: b, Pong: prev.Pong, NoProof: prev.NoProof}
+	asked, proved, why := sprint.ProveBeat(prev.Asked, w, now)
+	rec.Asked = asked
+	if proved {
+		rec.Pong, rec.NoProof = now, ""
 	}
+	if why != "" {
+		rec.NoProof = why
+	}
+	if legacy := w.Legacy.UTC().Truncate(time.Second); !legacy.IsZero() && !legacy.After(now) && legacy.After(rec.Pong) {
+		// a daemon from before the nonces, within the server's grace (sprint.LegacyPongGrace)
+		rec.Pong, rec.NoProof, proved = legacy, "", true
+	}
+	rec.Beat.Proof = rec.Pong
 	out, err := json.Marshal(rec)
 	if err != nil {
-		return b, err
+		return b, BeatProof{}, err
 	}
-	return b, kv.SetKey(ctx, friendBeatKey(friend), string(out))
+	b.Proof = rec.Pong
+	return b, BeatProof{Proved: proved, NoProof: why, Proof: rec.Pong}, kv.SetKey(ctx, friendBeatKey(friend), string(out))
 }
 
 // SetFriendHeld holds the friend (friend down, with why and until when the

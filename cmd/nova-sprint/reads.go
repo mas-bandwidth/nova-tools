@@ -28,8 +28,12 @@ import (
 // The read verbs: queue, where, inbox, card, check. Each has --json, one
 // object for a program; the driver reads the sprint through them.
 
-// summary is the sprint's line: landed / all primaries on the table, percent,
-// ETA. The ETA is the time until every card on the table has landed (the owner,
+// summary is the sprint's line, the headline: landed / all primaries on the
+// table, percent, ETA. On the table is the streams drawn: an archived stream's
+// cards (stream archive) leave the headline when it is archived (the owner,
+// 2026-10-06, after 69 landed streams were archived and the headline still read
+// 1859/2874: "I really don't think we have 2.8k cards post-archive..."), and
+// where --json carries them beside it (archived_cards, archived_landed). The ETA is the time until every card on the table has landed (the owner,
 // 2026-10-02: "it's the ETA to all cards being done, not the cards that are in
 // flight or not blocked"): every primary neither landed nor dropped, held ones
 // too, at the landing rate (sprint.LandingRate), in whole minutes rounded up,
@@ -42,14 +46,13 @@ import (
 // behind a sentinel not released, or admitted held), shown apart as held=N
 // when there are any, and counted in the ETA.
 func summary(t ntable.Table, held, eta int64) string {
-	landed, all := counts(t)
 	line := progress(t)
 	if held > 0 {
 		line += fmt.Sprintf(" held=%d", held)
 	}
 	switch {
-	case all > 0 && landed == all:
-		return progress(t) + " done"
+	case sprintDone(t):
+		return doneLine(t)
 	case eta >= 24*60:
 		h := (eta + 59) / 60
 		return fmt.Sprintf("%s -> ETA %dd%dh", line, h/24, h%24)
@@ -62,12 +65,14 @@ func summary(t ntable.Table, held, eta int64) string {
 }
 
 // etaMinutes is the estimate of the minutes left, rounded up: every card not
-// landed, held ones too, at rate cards an hour; 0 when there is none (fewer
-// than five landed, nothing left, or no rate).
+// landed on the table, held ones too, at rate cards an hour; 0 when there is
+// none (fewer than five landed in the epoch, an archived stream's counted, as
+// the rate counts them; nothing left; or no rate).
 func etaMinutes(t ntable.Table, rate float64) int64 {
 	landed, all := counts(t)
+	gone, _ := archivedCounts(t)
 	left := all - landed
-	if rate <= 0 || landed < 5 || left <= 0 {
+	if rate <= 0 || landed+gone < 5 || left <= 0 {
 		return 0
 	}
 	return int64(math.Ceil(float64(left) * 60 / rate))
@@ -84,7 +89,9 @@ type etaSample struct {
 }
 
 // etaKey is what the cards still to land are made of apart from the landings:
-// every primary on the table and the held ones. A landing changes neither; add,
+// every primary of the epoch (the table's and the archived streams') and the
+// held ones. An archive moves landed cards off the table and changes neither,
+// so it keeps the held estimate. A landing changes neither; add,
 // drop and release change one (a brief, a rework and a stream remove change
 // neither: none adds, takes off or frees a card), and their change reaches the
 // table at the next tick's drain.
@@ -115,9 +122,31 @@ func (a *app) heldETA(now time.Time, k etaKey, m int64) int64 {
 	return m
 }
 
-// progress is landed / all primaries and the percent: "3/10 30.0%".
-func progress(t ntable.Table) string {
+// sprintDone is whether every primary has landed: every one on the table, or,
+// with none on the table, every stream archived (an archived stream holds only
+// landed cards; the tick archives every stream of a sprint done).
+func sprintDone(t ntable.Table) bool {
 	landed, all := counts(t)
+	_, gone := archivedCounts(t)
+	return landed == all && (all > 0 || gone > 0)
+}
+
+// doneLine is the headline of a sprint done, "N/N 100.0% done", over the
+// epoch's cards, the archived streams' too: with nothing left on the table
+// there is no progress to count, and the tick archives each stream of a sprint
+// done, so the table's alone would read 0/0.
+func doneLine(t ntable.Table) string {
+	landed, all := counts(t)
+	gl, ga := archivedCounts(t)
+	return progressOf(landed+gl, all+ga) + " done"
+}
+
+// progress is landed / all primaries on the table and the percent: "3/10 30.0%".
+func progress(t ntable.Table) string {
+	return progressOf(counts(t))
+}
+
+func progressOf(landed, all int64) string {
 	pct := "0.0%"
 	if all > 0 {
 		pct = strconv.FormatFloat(100*float64(landed)/float64(all), 'f', 1, 64) + "%"
@@ -125,9 +154,41 @@ func progress(t ntable.Table) string {
 	return fmt.Sprintf("%d/%d %s", landed, all, pct)
 }
 
+// counts is the landed and all primaries of the work table's streams on the
+// table: an archived stream's row (archivedRow) is not counted (archivedCounts
+// counts those).
 func counts(t ntable.Table) (landed, all int64) {
+	return countRows(t, false)
+}
+
+// archivedCounts is the landed and all primaries of the archived streams.
+func archivedCounts(t ntable.Table) (landed, all int64) {
+	return countRows(t, true)
+}
+
+// archivedRow is whether a work row is an archived stream's: hidden (stream
+// archive) and holding only landed cards. A hidden row that holds a card not
+// landed again (an add to it) is back on the table, counted in the headline,
+// before the next tick draws it again.
+func archivedRow(t ntable.Table, r ntable.Row) bool {
+	if !r.Hidden {
+		return false
+	}
+	j := t.Column(sprint.Landed)
+	for k, c := range t.Columns {
+		if c.Projection == ntable.Count && k != j && k < len(r.Cells) && r.Cells[k].Count > 0 {
+			return false
+		}
+	}
+	return true
+}
+
+func countRows(t ntable.Table, archived bool) (landed, all int64) {
 	j := t.Column(sprint.Landed)
 	for _, r := range t.Rows {
+		if archivedRow(t, r) != archived {
+			continue
+		}
 		for k, c := range t.Columns {
 			if c.Projection != ntable.Count || k >= len(r.Cells) {
 				continue
@@ -194,6 +255,8 @@ type queueCard struct {
 	WaitsFor []string `json:"waits_for,omitempty"`
 	// Packet is what the member or reader is handed with the card.
 	Packet *sprint.Packet `json:"packet,omitempty"`
+	// kind is the card's kind: a read on a friend's fleet row is returned, not finished.
+	kind string
 }
 
 func (a *app) cmdQueue(args []string, stdout, stderr io.Writer) int {
@@ -244,7 +307,7 @@ func (a *app) cmdQueue(args []string, stdout, stderr io.Writer) int {
 		for _, x := range cs {
 			cards = append(cards, queueCard{ID: x.ID, Table: table, Row: x.Row, Col: x.Col, Primary: x.F("primary"), Stream: x.F("stream"),
 				Attempt: x.Int("attempt"), Gen: x.Int("gen"), Head: x.F("head"), Score: x.Score,
-				Dealt: x.F("dealt"), Taken: x.F("taken"), Asked: x.F("asked"), Begun: x.F("begun")})
+				Dealt: x.F("dealt"), Taken: x.F("taken"), Asked: x.F("asked"), Begun: x.F("begun"), kind: x.F("kind")})
 		}
 	}
 	if *col == sprint.Waiting {
@@ -346,7 +409,13 @@ func (a *app) cmdQueue(args []string, stdout, stderr io.Writer) int {
 	var lines []string
 	for _, x := range cards {
 		l := fmt.Sprintf("%s %s:%s:%s", x.ID, x.Table, x.Row, x.Col)
-		if x.Gen > 0 {
+		if x.Table == sprint.Fleet && x.kind == "read" {
+			// a read on a friend's row: her outbox or the read verb returns it, never finish
+			if x.Gen > 0 {
+				l += " gen=" + strconv.Itoa(x.Gen)
+			}
+			l += " read: --ok|--broken " + x.ID + " --epoch " + strconv.FormatUint(epoch, 10)
+		} else if x.Gen > 0 {
 			next := "take"
 			if x.Col == sprint.Working {
 				next = "finish"
@@ -480,6 +549,15 @@ type whereView struct {
 	All     int64     `json:"all"`
 	Held    int64     `json:"held,omitempty"` // behind a sentinel not released, or admitted held: in the ETA
 	Summary string    `json:"summary"`
+	// ArchivedCards and ArchivedLanded are the cards of the archived streams (stream
+	// archive) and those landed, beside the headline, which counts only the streams on the
+	// table: All+ArchivedCards and Landed+ArchivedLanded are the whole epoch's.
+	ArchivedCards  int64 `json:"archived_cards"`
+	ArchivedLanded int64 `json:"archived_landed"`
+	// Done is a sprint done (sprintDone): every card of the epoch landed. Then the headline,
+	// Landed, All and the summary's "N/N 100.0% done", is the epoch's, the archived streams'
+	// cards included, as the CLI's done line is; the dashboard's hero and cost read it.
+	Done bool `json:"done,omitempty"`
 	// Tables is table -> row -> column -> cell as printed (a string, every cell of every
 	// row, the shape the dashboard's pull reads); a work row carries besides its cells
 	// `per_landed` (dollars per landed card, as the cost column shows money).
@@ -540,8 +618,8 @@ type whereView struct {
 	// Archived is the archived streams (stream archive): their names, the cards landed
 	// in them and what those cost, the work table's cost cells summed to the cent; absent
 	// with none. Their rows of the work and merge tables, and their primaries in rows, are
-	// in tables and rows only with --archived; the footers, the summary and every other
-	// count include them either way.
+	// in tables and rows only with --archived; the summary and the drawn footers leave
+	// them out either way (ArchivedCards, ArchivedLanded carry their counts).
 	Archived *archivedView `json:"archived,omitempty"`
 	// Ready, Width, Buffer and Low are the ready buffer a program reads off
 	// the view (docs/SPEC-SPRINT-DASHBOARD.md): the ready primaries across the
@@ -571,6 +649,7 @@ type whereView struct {
 // archivedView is where --json's archived streams (stream archive).
 type archivedView struct {
 	Streams []string `json:"streams"`
+	Cards   int64    `json:"cards"`
 	Landed  int64    `json:"landed"`
 	Cost    string   `json:"cost"`
 }
@@ -580,15 +659,12 @@ type archivedView struct {
 func archivedOf(t ntable.Table) *archivedView {
 	var a archivedView
 	var costs []string
-	j := t.Column(sprint.Landed)
+	a.Landed, a.Cards = archivedCounts(t)
 	for _, r := range t.Rows {
-		if !r.Hidden {
+		if !archivedRow(t, r) {
 			continue
 		}
 		a.Streams = append(a.Streams, r.Key)
-		if j >= 0 && j < len(r.Cells) {
-			a.Landed += r.Cells[j].Count
-		}
 		if v, ok := strings.CutPrefix(r.Texts[sprint.Cost], "$"); ok {
 			costs = append(costs, v)
 		}
@@ -603,6 +679,29 @@ func archivedOf(t ntable.Table) *archivedView {
 		}
 	}
 	return &a
+}
+
+// drawnRows is the table without the archived streams' rows (stream archive),
+// so its footer folds only the rows drawn. A hidden row of a stream back on the
+// table (an add put a card not landed in it, archivedRow) is drawn at once,
+// before the next tick shows it again, so the headline's count of its cards is
+// backed by its row.
+func drawnRows(t ntable.Table, gone *archivedView) ntable.Table {
+	rows := make([]ntable.Row, 0, len(t.Rows))
+	for _, r := range t.Rows {
+		if gone.has(r.Key) {
+			continue
+		}
+		r.Hidden = false
+		rows = append(rows, r)
+	}
+	t.Rows = rows
+	return t
+}
+
+// has is whether the stream is archived; a nil view has none.
+func (a *archivedView) has(stream string) bool {
+	return a != nil && slices.Contains(a.Streams, stream)
 }
 
 // archivedLine is the line under the work table of where's frame with streams
@@ -812,7 +911,7 @@ func (a *app) cmdWhere(args []string, stdout, stderr io.Writer) int {
 	every := fs.Duration("every", time.Second, "the redraw interval with --watch, above 0")
 	all := fs.Bool("all", false, "draw the readers and merge tables too, hidden from the default frame (--json always carries them)")
 	cards := fs.Bool("cards", false, "with --json: also every work card dealt to a fleet row and not finished (its row, state, since, deadline and branch) and the open judgments on them, as the dashboard's pull routes serve them, and every machine's lanes (lane list)")
-	archived := fs.Bool("archived", false, "with --json: the archived streams' rows of the work and merge tables in tables, and their primaries in --rows, beside the live ones (stream archive); their counts are in the footers and the summary either way")
+	archived := fs.Bool("archived", false, "with --json: the archived streams' rows of the work and merge tables in tables, and their primaries in --rows, beside the live ones (stream archive); the summary and the drawn footers count only the streams on the table either way, and archived_cards and archived_landed carry theirs")
 	rows := fs.Bool("rows", false, "with --json: also every primary's row of the work table (id, stream, state, score, and its fields but the brief: card <id> --brief), in work order, so a child reads every card in one call and never loops card calls")
 	stale := fs.Duration("stale", defaultStale, "a stream with no progress for longer is shown stalled (--json)")
 	atEpoch := fs.Int64("at-epoch", -1, "the sprint as it was at an earlier epoch (before a clear)")
@@ -918,7 +1017,11 @@ func (a *app) whereLoop(ctx context.Context, r whereRun, stdout, stderr io.Write
 			if err != nil {
 				return "", a.readFailed("where", err, stderr), false
 			}
-			v.Rows = rowsView(s, r.archived)
+			var gone *archivedView
+			if !r.archived {
+				gone = v.Archived
+			}
+			v.Rows = rowsView(s, gone)
 			v.MergeRow.OldestMergingMin = oldestMerging(v.At, s.Work.Column(string(sprint.Merging)))
 		}
 		if r.c.json {
@@ -969,7 +1072,8 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration, a
 
 // whereOf is the view and its frame. With archived false, the view's tables carry no
 // archived stream's row (stream archive), and the frame never draws one either way;
-// the footers and the summary count them always. The frame draws the tables of sprint.ShownOrder,
+// the summary and the drawn footers never count one (archived_cards and
+// archived_landed carry their counts). The frame draws the tables of sprint.ShownOrder,
 // or with all every table in sprint.AllOrder: the readers and merge tables are
 // hidden from the default frame (the owner, 2026-10-02: "please hide the reader
 // and merge tables"); the view for a program carries every table whichever is drawn.
@@ -1016,6 +1120,9 @@ func (a *app) whereOf(ctx context.Context, st *store.Store, stale time.Duration,
 	}
 	v.Landed, v.All = counts(shapes[0])
 	v.Archived = archivedOf(shapes[0])
+	if v.Archived != nil {
+		v.ArchivedCards, v.ArchivedLanded = v.Archived.Cards, v.Archived.Landed
+	}
 	// the held cards and the landings of the hour from the tick's where
 	// record: no card is read (store.WhereFacts)
 	facts, err := st.WhereFacts(ctx, shapes[0].Revision)
@@ -1035,8 +1142,13 @@ func (a *app) whereOf(ctx context.Context, st *store.Store, stale time.Duration,
 	if len(facts.StageTimes.All) > 0 {
 		v.StageTimes = &facts.StageTimes
 	}
-	rate := sprint.LandingRate(facts.Landed, v.Landed, facts.Machine.Spans, facts.Machine.FirstStart(es.Cleared), now)
-	v.Summary = summary(shapes[0], v.Held, a.heldETA(now, etaKey{v.All, v.Held}, etaMinutes(shapes[0], rate)))
+	// the rate is the epoch's landings, an archived stream's too: archiving lands nothing
+	rate := sprint.LandingRate(facts.Landed, v.Landed+v.ArchivedLanded, facts.Machine.Spans, facts.Machine.FirstStart(es.Cleared), now)
+	v.Summary = summary(shapes[0], v.Held, a.heldETA(now, etaKey{v.All + v.ArchivedCards, v.Held}, etaMinutes(shapes[0], rate)))
+	if v.Done = sprintDone(shapes[0]); v.Done {
+		// a sprint done: the headline is the epoch's, as the done line counts it
+		v.Landed, v.All = v.Landed+v.ArchivedLanded, v.All+v.ArchivedCards
+	}
 	mf, err := mergeFactsOf(ctx, st, shapes[0], shapes[2], clocks, facts.Landed, now)
 	if err != nil {
 		return whereView{}, "", err
@@ -1076,7 +1188,7 @@ func (a *app) whereOf(ctx context.Context, st *store.Store, stale time.Duration,
 		}
 		rows := map[string]map[string]any{}
 		for _, r := range t.Rows {
-			if r.Hidden && !archived && (logical == sprint.Work || logical == sprint.Merge) {
+			if !archived && (logical == sprint.Work || logical == sprint.Merge) && v.Archived.has(r.Key) {
 				continue // an archived stream's row: where --json --archived
 			}
 			cells := map[string]any{}
@@ -1117,7 +1229,11 @@ func (a *app) whereOf(ctx context.Context, st *store.Store, stale time.Duration,
 			parts[logical] = fleetText(t)
 			continue
 		}
-		// every table shows, every stream row in it, empty or not, but an archived one
+		// every table shows, every stream row in it, empty or not, but an archived one,
+		// which its footer does not count either: the footer sums what is drawn
+		if logical == sprint.Work || logical == sprint.Merge {
+			t = drawnRows(t, v.Archived)
+		}
 		parts[logical] = ntable.Render(t, ntable.RenderOpts{Title: logical})
 		if line := archivedLine(v.Archived); logical == sprint.Work && line != "" {
 			parts[logical] = strings.TrimRight(parts[logical], "\n") + "\n" + line + "\n"
@@ -1134,6 +1250,7 @@ func (a *app) whereOf(ctx context.Context, st *store.Store, stale time.Duration,
 		c := friendCards[f.Name]
 		friends[i].Ready = c.Ready
 		friends[i].Working = c.Working
+		friends[i].DealtFleet = facts.DealtFleet[f.Name]
 		friends[i].OK = c.OK
 		friends[i].Failed = c.Failed
 		if f.Status == sprint.Down {
@@ -2201,12 +2318,13 @@ type primaryRow struct {
 }
 
 // rowsView is every placed primary of the work table, in work order (stream, then
-// score and id), with its fields but the brief.
-func rowsView(s *sprint.Snapshot, archived bool) []primaryRow {
+// score and id), with its fields but the brief, but an archived stream's that gone
+// names (nil names none: where --json --rows --archived).
+func rowsView(s *sprint.Snapshot, gone *archivedView) []primaryRow {
 	cards := s.Work.Column(sprint.States...)
 	rows := make([]primaryRow, 0, len(cards))
 	for _, c := range cards {
-		if !archived && s.Work.Hidden(c.Row) {
+		if gone.has(c.Row) {
 			continue // an archived stream's: where --json --rows --archived
 		}
 		fields := make(map[string]string, len(c.Fields))

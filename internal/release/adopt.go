@@ -668,7 +668,7 @@ func adopt(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 	}
 	w, result, code := out, "OK", 0
 	if refused > 0 {
-		w, result, code = errs, "FAIL", 1
+		w, result, code = errs, "FAILED", 1
 	}
 	certified := "yes"
 	if o.noCertify {

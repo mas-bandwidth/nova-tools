@@ -88,6 +88,8 @@ func NewestDSHSession(sessions, dir string) (string, error) {
 }
 
 func (d *DSH) Deliver(ctx context.Context, text string) (int, error) {
+	d.turns.begin()
+	defer d.turns.end()
 	id := d.Session
 	if id == "" {
 		root := d.Sessions
@@ -118,12 +120,16 @@ func (d *DSH) Deliver(ctx context.Context, text string) (int, error) {
 	return exit, err
 }
 
-// Route is what status says: always defer. No live push into the open
-// desktop session was found (docs/SPEC-FRIEND.md, the dsh row), and a
-// headless turn is a separate process, not the friend's open chat. line is
-// what the session runs itself: a blocking read of the bus.
+// Route is what status and check say: push. Every delivery goes into the
+// friend's session as a headless turn (dsh headless --session-id), the session
+// check included; none waits on the open desktop app, which no route reaches
+// (docs/SPEC-FRIEND.md, the dsh row). line is that turn's command.
 func (d *DSH) Route(ctx context.Context) (route, line string, err error) {
-	return "defer", "nova-bus wait --as <friend>", nil
+	session := d.Session
+	if session == "" {
+		session = "<her newest session>"
+	}
+	return "push", "dsh " + strings.Join(DSHArgs(session), " "), nil
 }
 
 // DSHNoPresetRemedy is what a friend whose dsh session runs under an agent

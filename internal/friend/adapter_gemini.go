@@ -36,6 +36,8 @@ func GeminiArgs(session, text string) []string {
 }
 
 func (g *Gemini) Deliver(ctx context.Context, text string) (int, error) {
+	g.turns.begin()
+	defer g.turns.end()
 	program := g.Program
 	if program == "" {
 		program = "gemini"

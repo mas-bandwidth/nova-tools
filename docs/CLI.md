@@ -695,8 +695,8 @@ The health check: is each friend's row true. The friends are the arguments, else
 state directory under ~/.nova-friend (or --state-dir) or on the bus. Everything is judged over the --since
 window (default 24h): deliveries, deferrals, real messages and the session pong. Per friend, five lines in
 this order:
-CHECK DAEMON friend=<f> agent=<loaded|not-loaded|none> pid=<n|-> status=<ok|stale|none> connection=<..> challenge=<..> pong_age=<age|-> presence=<up|asleep|down> seen_age=<age|->
-CHECK HARNESS friend=<f> harness=<h> route=<push|defer|passive> last=<RFC3339|-> last_exit=<n|-> failed_of_last20=<n> deferred=<n> broken=<RFC3339|-> reason=<line|->
+CHECK DAEMON friend=<f> agent=<loaded|not-loaded|none> pid=<n|-> status=<ok|stale|none> connection=<..> challenge=<..> pong_age=<age|-> presence=<up|asleep|down> seen_age=<age|-> proof=<pending|sent|none> proof_age=<age|->
+CHECK HARNESS friend=<f> harness=<h> route=<push|passive> last=<RFC3339|-> last_exit=<n|-> failed_of_last20=<n> deferred=<n> broken=<RFC3339|-> reason=<line|->
 CHECK BUS friend=<f> real_since=<n> last_real=<RFC3339|->   (real: not ping, pong, daemon-pong or keepalive)
 CHECK WORK friend=<f> inbox=<n> outbox=<n> newest_outbox=<name|-> newest_at=<RFC3339|->   (under the friend's directory)
 CHECK VERDICT friend=<f> verdict=<ok|broken|silent|deaf|down|untrue> shown=<state/working|-> why=<one line>
@@ -709,7 +709,7 @@ consumer shows of each friend, JSON {"<friend>":{"state":"up|asleep|down","worki
 - for stdin; when it says up or working and the verdict is not ok, the verdict stays and the why leads
 with "untrue: shown <state>/<working>, ", and when the facts are ok but the friend is asleep or its agent
 is not loaded the verdict is untrue. --json prints one object instead of the lines: friends[] each with
-friend and daemon{friend, agent, pid, status, connection, challenge, pong_age, presence, seen_age},
+friend and daemon{friend, agent, pid, status, connection, challenge, pong_age, presence, seen_age, proof, proof_age},
 harness{friend, harness, route, last, last_exit, failed_of_last20, deferred, delivered, failed, broken,
 reason}, bus{friend, real_since, last_real}, work{friend, inbox, outbox, newest_outbox, newest_at},
 verdict{friend, verdict, shown, why}, and summary{friends, ok, broken, deaf, silent, down, untrue}.
@@ -1171,7 +1171,7 @@ nova-sprint card <id>
 nova-sprint log [--card <id>] [--stream <s>] [--member <m>] [--since <10m|RFC3339>] [--at-epoch <n>]
 nova-sprint check
 nova-sprint repair
-nova-sprint where [--watch] [--every <duration>] [--all] [--json [--cards] [--rows] [--archived]]
+nova-sprint where [--watch] [--every <duration>] [--all] [--json [--cards] [--rows] [--archived] [--stale <duration>] [--at-epoch <n>]: includes landedSeries] [--release [<name>]]
 nova-sprint view coordinator [--all] [--since <cursor>] [--json]
 nova-sprint view cards [--col <c>] [--stream <s>] [--holder <member>] [--by tier|stream|col|holder] [--json]
 nova-sprint view worker --as <member|friend> [--since <cursor>] [--json]
@@ -1186,7 +1186,8 @@ nova-sprint routes
 nova-sprint rules
 nova-sprint funded <provider> --reason <text>
 nova-sprint cost reconcile [--dry-run] [--json]
-nova-sprint stats
+nova-sprint stats [--routes [--since <10m|RFC3339>]]
+nova-sprint stats tidy (--friends | --fleet | --routes | --streams | --all)... --reason <text> [--dry-run]
 nova-sprint play [--simulation] [--seed <n>] [--every <duration>] [--broken <p>] [--fail <p>] [--stuck <p>] [--cross <p>] [--down <p>] [--up <p>] [--red <p>] [--flap <p>] [--batch <n>] [--hold] [--silent <member>@<from>+<for>]... [--ticks <n>]
 nova-sprint clear --confirm sprint
 nova-sprint teardown --confirm sprint
@@ -1218,6 +1219,16 @@ which refuses a group that has changed. `nova-sprint help <verb>` (or
 `nova-sprint seat login --store <secrets dir> --as <seat> --key <keyfile> --secret <NAME> --user <redis user> --redis <addr>` records the store login in `~/.config/nova-sprint/login.json` (or under `$XDG_CONFIG_HOME`), mode 0600: the address, the user and where the password is in nova-secrets, never the password, and only once the secret resolves. After it, `nova-sprint <verb>` typed bare reaches that store as that user, the password read in the verb's own process through nova-secrets' checks, with no `nova-secrets exec` wrapper; `--redis`, `NOVA_SPRINT_REDIS`/`NOVA_REDIS_ADDR` and `NOVA_SPRINT_REDIS_USER` still win. `seat login --check` prints `SEAT LOGIN file=… redis=… user=… … resolves=yes|no` (exit 1 on no), the password never shown; `seat logout` removes the record. A recorded secret that does not resolve is refused naming the file and the remedy, never dialed without a password. The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md#the-seats-store-login).
 
 The seat is held only by a session the push loop reaches ([SPEC-SPRINT.md](SPEC-SPRINT.md#the-push-proof)). `nova-sprint seat install --actor <seat> --harness <harness> --target <session dir>` records the seat's push target and installs the push loop; the loop delivers `NOVA SPRINT PUSH CHECK <nonce>` into the session through the harness's nova-friend adapter, and the session answers with `nova-sprint seat pong <nonce> --actor <seat>`. Until that pong is in, and again whenever it is older than 15 minutes (the loop asks every 10), every coordinator verb is refused with one line, `PUSH DOWN: <why>; ... run: nova-sprint seat install ...`, and `coordinator <name>` refuses a name with no live proof. `seat push` prints `PUSH OK` or `PUSH DOWN` with why and the remedy (exit 1). A harness whose adapter is still the Stub (Claude Code, until fg-claude-open-chatb-r lands) is refused at install.
+
+A fleet member back from down adopts the latest before it is dealt when the
+coordinator's machine sets `NOVA_SPRINT_ADOPT_FLAGS` to `nova-update release adopt`'s
+flags less `--machines`, `--version` and `--dry-run` (blank-separated: `--ssh`, `--from`,
+`--bin`, `--dest`, the stage's digest, `--no-certify` or the certification's three) and
+`nova-sprint` was built with a release stamp: the tick holds a member whose beat
+returns after it was down (the fleet table's status `adopting`, reason `adopting <release>: back from down`), adopts the release this `nova-sprint` runs onto that machine alone, reads its
+installed version back, and brings it up at its width with one note `<m> is back: <old> -> <new>`; a failed adoption keeps it held with the failure as its reason and
+one judgment (`fleet up <m>` brings it up as it is). Unset, a member back is up at
+once (docs/SPEC-SPRINT.md section 5, "Back from down: adopt the latest").
 
 ### Every unit a sprint needs, installed by a verb
 
@@ -1295,7 +1306,7 @@ the cards she holds; `/api/team`, `/api/friend/<name>`,
 `/events/machine/<name>` push each new copy as server-sent events. All of it is read-only,
 no-store, carries the copy's time in `Sprint-At`, and comes from one copy of `where --json
 --cards` read at most once a second however many pull. An unknown name is a 404 of one
-line. The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md), the dashboard.
+line; `where --json` also carries `landedSeries` (cards landed per 10-minute bucket over 24 hours, split between friends and fleet). The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md), the dashboard.
 
 ### A provider out of funds
 

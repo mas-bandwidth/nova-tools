@@ -239,7 +239,7 @@ func TestAHeadlessFriendIsAliveWithNoAppProcess(t *testing.T) {
 	step(AliveWithin - AliveEvery)
 	assert.Equal(t, HarnessRunning, w.Seen(), "still within the window")
 	step(AliveEvery)
-	assert.Equal(t, HarnessNotSeen, w.Seen(), "no turn ended exit 0 within the window")
+	assert.Equal(t, HarnessUnknown, w.Seen(), "quiet past the window: a one-shot harness is seen by its next turn, never not seen")
 
 	_, err = dsh.Deliver(ctx, "a card")
 	require.NoError(t, err)

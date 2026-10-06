@@ -217,7 +217,7 @@ func build(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 			progress(errs, "building %s for %s/%s (%d/%d)", tool, goos, goarch, i+1, len(p.rebuild))
 			output, err := tc.Build(ctx, o.source, "./cmd/"+tool, filepath.Join(dir, ToolFile(tool, goos)), goos, goarch, args)
 			if err != nil {
-				fmt.Fprintf(errs, "BUILD FAIL tool=%s platform=%s version=%s: %s (fix the compile error and build again; no %s was written)\n",
+				fmt.Fprintf(errs, "BUILD FAILED tool=%s platform=%s version=%s: %s (fix the compile error and build again; no %s was written)\n",
 					field(tool), field(goos+"-"+goarch), field(o.version), oneLine(output, err), SumsFile)
 				return 1
 			}

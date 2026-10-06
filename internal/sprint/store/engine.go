@@ -376,7 +376,25 @@ func (st *Store) fencedRead(ctx context.Context, tables []string, extras func(*s
 		}
 		return snap, f.Gen, f2, nil
 	}
-	return nil, 0, Fence{}, fmt.Errorf("the sprint is busy: other operations kept the fence moving, %d reads in %s; nothing was changed; run the verb again", r.tries, r.slept().Round(time.Millisecond))
+	return nil, 0, Fence{}, &FenceBusyError{Reads: r.tries, Slept: r.slept()}
+}
+
+// FenceBusyError is a fenced read given up because other operations kept the
+// fence moving through every one of its tries: nothing was changed, and the
+// same read again may pass. A tick tries itself again on it (TickBusyRetries).
+type FenceBusyError struct {
+	Reads int           // the fence's reads
+	Slept time.Duration // the time slept between them
+}
+
+func (e *FenceBusyError) Error() string {
+	return fmt.Sprintf("the sprint is busy: other operations kept the fence moving, %d reads in %s; nothing was changed; run the verb again", e.Reads, e.Slept.Round(time.Millisecond))
+}
+
+// IsFenceBusy says err is, or wraps, a FenceBusyError.
+func IsFenceBusy(err error) bool {
+	var b *FenceBusyError
+	return errors.As(err, &b)
 }
 
 // callerOpWord holds a caller's --op to one word: letters, digits, '_' and

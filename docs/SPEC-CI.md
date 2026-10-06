@@ -472,7 +472,8 @@ holds five invariants on two hosts and two exit codes (`MCBenchRun.cfg`):
 `OnlyTheMadeDirIsRemoved`, `AtMostOneHostAnswers`, `FallbackOnlyOnNoAnswer`,
 `ExitIsTheCommands` and `NothingLeftBehind`. Its reversed witness
 (`MCBenchRunBrokenNoRemove.cfg`, a failed copy that returns without the
-deferred remove) must break `NothingLeftBehind`. `CASES.tsv` and `RUNS.tsv` carry its two rows. It does not model an
+deferred remove) must break `NothingLeftBehind`. `COVERAGE.tsv` carries its
+machine row, and `CASES.tsv` and `RUNS.tsv` its two cases. It does not model an
 interrupt that lands between mktemp and its answer: that directory exists on
 the bench but the run never learnt its name, so it is never removed.
 
@@ -2366,6 +2367,26 @@ Makefile recipe, expanded, and refuses one at or over the cap (test-short, the
 hosted legs' target, carried a literal `12m` no check read), so a run ends with a
 Go stack before the job cap kills it without one.
 
+**The walls under the cap.** `internal/ci/testdata/shard-walls.tsv` records each
+CL package's wall (the package-level `Elapsed` of `go test -json` on the last
+green run that ran it uncached) and where it was measured, `@run<id>` or
+`@<bench>`. `TestEveryCLPackageFitsItsShardWall` (`internal/ci/shard_walls_test.go`)
+walks the module for its live packages the way `go list ./...` does and refuses a
+live package with tests and no row, a row for a package the tree does not hold,
+and a row over 60 s; `TestTheShardWallRuleRefusesGrowthAndGaps` is its reversed
+witnesses. A package that grows past 60 s is made to fit or has its slow tests
+moved behind the `slow` tag before its row changes. The ledger is read, not
+measured: `nova-ci slowtests` reports each run's walls against its own budgets.
+The hurt: on 2026-10-06 every pull request against the sprint base lost a Linux
+shard to the cap, because `TestClassRuleLedgersOnlyShrinkAgainstMergeBase`
+started two git processes per ledger file, some 1,200 a run, and took 1m37s to
+1m42s on the self-hosted runners. It reads the merge base with one
+`git ls-tree -r -z` and one `git cat-file --batch` now (`readMergeBase`,
+`internal/ci/ledger_ratchet_test.go`), held by `TestTheLedgerTestReadsTheBaseOnce`
+(two git processes through a counting fake) and
+`TestTheSinglePassReadsWhatTheTwoCallPathRead` (the same texts, shard list and
+findings as `ListAtCommit` on a fixture repository).
+
 **The reach.** These tests police the tree they run in. A scheduled run executes
 the default branch's copy of the workflow: the ci nightly of 2026-09-27 (run
 36292578789) ran `main`'s ci.yml of 2026-09-18, whose test-hosted still carried
@@ -2996,6 +3017,7 @@ the original failed measurement.
 **`secrets-never-in-errors` — no secret-shaped string reaches an error, a panic or a log line through an opener.** *The rule.* Every exported top-level function in the non-test Go of `cmd/` and `internal/` named `Open*`, `Parse*`, `Dial*` or `New*` that takes a string is handed secret-shaped strings (a Postgres DSN with a password, well formed and malformed in both of its spellings, a URL with userinfo, and strings shaped like an OpenRouter, a GitHub and an Anthropic token, each with a marker of its own) in every string parameter, and is refused when any 8-byte substring of the secret, after a token's public prefix, appears in an error it returns, in a returned refusal value, in a panic, or in the std log and `slog` output captured during the call. The functions are found by go/ast and driven from a reviewed table that the test holds complete in both directions. *The mistake it prevents.* A Postgres DSN parse error printed the password (`internal/config/pg.go`, fix-pg-dsn-parse-error-leak): a parser's message carried the DSN it was given, and a refusal travels to a terminal, a log and a report. *The test.* `TestNoSecretReachesAnError` (`internal/ci/secrets_in_errors_class_test.go`), with its witness `TestSecretCheckReadsItsFixtures` below. *Its allowlist.* `secretLeakAllowlist` in the test file, one `<package directory>.<Name> <reason with file:line>` per row, shrink-only: a listed function that no longer leaks is red, an unlisted leak is red, and `internal/config.OpenPG` is never a row. The rows are the openers whose refusal echoes the value it was given; each is a thing to fix, not a place to park. *Its remedy line.* `<function> carries a secret into its output (...); refuse with the error's type or a fixed sentence and never the input (internal/config/pg.go openPGWithin), the allowlist does not grow`. *Its narrowings.* A function the rule cannot drive safely is a row of `secretExempt` with its reason (`cairn.Open` writes under its first argument; a function built on one platform only cannot be named on another; one that takes a `*testing.T`), and is held to the same two-way comparison. Only string parameters carry the secret, every other parameter is a zero value, so a secret that arrives in a struct, a byte slice or the environment is not driven; a function that is not top-level or not exported is not read; only an error, a returned type named `...Refusal`, a panic and the std logger and `slog` default are read, so a write to `os.Stderr` or `os.Stdout` or to a logger the function owns is not seen; and a function that reaches a service the input names is driven against an address that cannot connect.
 
 **`secrets-check-reads-fixtures` — the secrets-in-errors check is held against openers whose answer is known.** *The rule.* The check that reads an opener's output for a secret finds an opener that echoes its DSN, one that wraps the secret with `%w`, one that logs it and one that panics with it; it passes an opener that names only a type; it puts the boundary at exactly eight bytes; it does not count a token's public prefix as the secret; each shape's marker is its own; and the comparison of the table with the tree refuses a function the table lacks and a row the tree lacks. *The mistake it prevents.* A check that passes everything reads like cover: a scan that looked in the wrong text, or at the wrong length, would be green over a tree that leaks. *The test.* `TestSecretCheckReadsItsFixtures` (`internal/ci/secrets_in_errors_class_test.go`). *Its allowlist.* None. *Its remedy line.* None of its own; it fails with the assertion that names the case. *Its narrowings.* It holds the check's decisions, not the openers: which functions leak is `TestNoSecretReachesAnError`'s answer.
+
 
 ## How the class tests read the tree: one walk, one parse, in parallel
 

@@ -379,7 +379,7 @@ func TestRunStopsOnASignalAndRefusesAStoreThatDoesNotAnswer(t *testing.T) {
 		return ctx, cancel
 	}
 	beats := 0
-	w.beat = func(context.Context, string, string, time.Time, time.Time) (string, error) {
+	w.beat = func(context.Context, string, string, time.Time, friend.BeatWords) (string, error) {
 		beats++
 		if beats == 3 {
 			cancel()
@@ -421,7 +421,7 @@ func TestRunReadsTheConfigDirOffTheBeat(t *testing.T) {
 				return ctx, cancel
 			}
 			beats := 0
-			w.beat = func(context.Context, string, string, time.Time, time.Time) (string, error) {
+			w.beat = func(context.Context, string, string, time.Time, friend.BeatWords) (string, error) {
 				beats++
 				if beats == 3 {
 					cancel()
@@ -454,7 +454,7 @@ func TestRunRefusesAClaudeOneShotRowWithoutAConfigDir(t *testing.T) {
 		return ctx, cancel
 	}
 	beats := 0
-	w.beat = func(context.Context, string, string, time.Time, time.Time) (string, error) {
+	w.beat = func(context.Context, string, string, time.Time, friend.BeatWords) (string, error) {
 		beats++
 		if beats == 3 {
 			cancel()
@@ -524,7 +524,7 @@ func TestAClaudeOneShotLaneRunsWalledWithTheRowsConfigDir(t *testing.T) {
 					}
 				}
 				beats := 0
-				w.beat = func(context.Context, string, string, time.Time, time.Time) (string, error) {
+				w.beat = func(context.Context, string, string, time.Time, friend.BeatWords) (string, error) {
 					beats++
 					if beats == 12 {
 						cancel()
@@ -570,7 +570,7 @@ func TestRunWaitsForAStoreThatIsDownAtTheStart(t *testing.T) {
 	}
 	var slept []time.Duration
 	w.sleep = func(_ context.Context, d time.Duration) { slept = append(slept, d) }
-	w.beat = func(context.Context, string, string, time.Time, time.Time) (string, error) {
+	w.beat = func(context.Context, string, string, time.Time, friend.BeatWords) (string, error) {
 		beats++
 		if beats == 2 {
 			cancel()
@@ -741,7 +741,7 @@ func TestRunInOneShotModeOpensALaneAndHandsItTheCard(t *testing.T) {
 			if args[0] == "--version" || len(args) > 1 && args[1] == "--help" {
 				return "", 0, nil // the daemon's read of the installed opencode (OpenCode.CheckRun): it cannot tell
 			}
-			if checks < 2 { // the push proof, then the daemon's check, go into her newest session first; her answers bring her up, and the beat with the row
+			if checks < 1 { // the daemon's first check, the push proof, goes into her newest session first; her answer brings her up, and the beat with the row
 				if args[0] == "session" {
 					return `[{"id":"ses_main","directory":"` + dir + `","updated":1}]`, 0, nil
 				}
@@ -766,7 +766,7 @@ func TestRunInOneShotModeOpensALaneAndHandsItTheCard(t *testing.T) {
 			return "ok\n", 0, nil
 		}
 		beats := 0
-		w.beat = func(context.Context, string, string, time.Time, time.Time) (string, error) {
+		w.beat = func(context.Context, string, string, time.Time, friend.BeatWords) (string, error) {
 			beats++
 			if beats == 12 {
 				cancel()
@@ -796,9 +796,10 @@ func TestRunInOneShotModeOpensALaneAndHandsItTheCard(t *testing.T) {
 }
 
 // A closed app is a friend down, however well its daemon runs: the verb wires
-// the session check, holds the beat back while no session answers, and
+// the session check, beats up only while the session answers, each beat
+// carrying its proof, says down with the check's nonce once it stops, and
 // status says so (docs/SPEC-FRIEND.md, presence).
-func TestRunWithNoSessionAnsweringNeverBeats(t *testing.T) {
+func TestRunWithNoSessionAnsweringBeatsDown(t *testing.T) {
 	t.Parallel()
 	r := newRig(t, "ada", "bob")
 	w := r.world()
@@ -807,7 +808,7 @@ func TestRunWithNoSessionAnsweringNeverBeats(t *testing.T) {
 		ctx, cancel = context.WithCancel(ctx)
 		return ctx, cancel
 	}
-	nonces := []string{"pr00f1"} // the push proof's nonce; every later check's is r4nd0m
+	nonces := []string{"pr00f1"} // the first check's nonce, the push proof; every later check's is r4nd0m
 	w.random = func() string {
 		if len(nonces) == 0 {
 			return "r4nd0m"
@@ -828,23 +829,40 @@ func TestRunWithNoSessionAnsweringNeverBeats(t *testing.T) {
 			checks = append(checks, text)
 			mu.Unlock()
 			if nonce == "pr00f1" {
-				r.answer(nonce) // the session answers the push proof, and never again
+				r.answer(nonce) // the session answers the first check, and never again
 			}
 		}
 		return "", 0, nil
 	}
-	beats := 0
-	w.beat = func(context.Context, string, string, time.Time, time.Time) (string, error) { beats++; return "", nil }
-	stopAfter(&w, &cancel, 8*time.Minute) // the session's own blocking read never pauses the loop; the clock ends it
+	var proofs []string
+	w.beat = func(_ context.Context, _, _ string, _ time.Time, words friend.BeatWords) (string, error) {
+		mu.Lock()
+		if words.Pong != "" {
+			proofs = append(proofs, words.Pong)
+		}
+		mu.Unlock()
+		return "", nil
+	}
+	var downs []string
+	w.beatDown = func(_ context.Context, _, _ string, _, _ time.Time, reason string, _ friend.BeatWords) error {
+		mu.Lock()
+		downs = append(downs, reason)
+		mu.Unlock()
+		return nil
+	}
+	stopAfter(&w, &cancel, 17*time.Minute) // the session's own blocking read never pauses the loop; the clock ends it
 	dir := t.TempDir()
 	var out, errb strings.Builder
 	code := run([]string{"run", "--as", "bob", "--harness", "opencode", "--dir", dir, "--coordinator", "ada"}, strings.NewReader(""), &out, &errb, w)
 	require.Equal(t, 0, code, errb.String())
-	assert.Zero(t, beats, "no beat reaches the sprint server while no session answers")
-	assert.Contains(t, out.String(), "push proof: CHECK OK harness=opencode")
+	assert.Contains(t, out.String(), "push proof: proved: the session answered")
 	assert.Contains(t, out.String(), "presence: down: no session answer within 5m0s")
 	mu.Lock()
-	require.Len(t, checks, 2, "the push proof, then the daemon's own check")
+	assert.Equal(t, []string{"pr00f1"}, proofs, "her up beat names the check her session answered, once; the unanswered one never")
+	require.NotEmpty(t, downs)
+	assert.Contains(t, downs[0], "push unproven: session check pr00f1", "down until the first answer")
+	assert.Contains(t, downs[len(downs)-1], "no session answer to session check r4nd0m within 5m0s", "down with the check's nonce once it stops answering")
+	require.Len(t, checks, 2, "the first check, the push proof, then the next after the quiet")
 	assert.Contains(t, checks[1], "nova-friend pong --as bob --nonce r4nd0m", "the check carries the one line to run")
 	assert.Contains(t, checks[1], "--to ada")
 	mu.Unlock()
@@ -886,7 +904,7 @@ func TestRunHoldsAHarnessAtItsLimitUntilItsResetThenWakesIt(t *testing.T) {
 		}
 	}
 	var beats []time.Time
-	w.beat = func(context.Context, string, string, time.Time, time.Time) (string, error) {
+	w.beat = func(context.Context, string, string, time.Time, friend.BeatWords) (string, error) {
 		mu.Lock()
 		beats = append(beats, clock)
 		mu.Unlock()
@@ -897,7 +915,7 @@ func TestRunHoldsAHarnessAtItsLimitUntilItsResetThenWakesIt(t *testing.T) {
 		reason    string
 	}
 	var downBeats []downBeat
-	w.beatDown = func(_ context.Context, _, _ string, _, until time.Time, reason string) error {
+	w.beatDown = func(_ context.Context, _, _ string, _, until time.Time, reason string, _ friend.BeatWords) error {
 		mu.Lock()
 		downBeats = append(downBeats, downBeat{clock, until, reason})
 		mu.Unlock()
@@ -964,6 +982,11 @@ func TestRunHoldsAHarnessAtItsLimitUntilItsResetThenWakesIt(t *testing.T) {
 	// her beat says down instead, with the until and the reason (limits-mean-down-w-r5.w1~15)
 	require.NotEmpty(t, downBeats, "she beats down while limited")
 	for _, b := range downBeats {
+		if strings.HasPrefix(b.reason, "push unproven: ") {
+			// the daemon's start, before its first check is answered: its own word, down
+			assert.True(t, b.at.Before(turns[0].at), "a push-unproven down beat only at the start: %s", b.at)
+			continue
+		}
 		assert.False(t, b.at.Before(turns[0].at) || b.at.After(turns[2].at), "a down beat only while limited, the wake turn's answer ending it: %s", b.at)
 		assert.False(t, b.until.Before(turns[0].at.Add(10*time.Minute)), "until the reset the text named: %s", b.until)
 		assert.Equal(t, "harness limit: Insufficient AI Credits. Your credits will refresh in 10 minutes.", b.reason)
@@ -1012,7 +1035,10 @@ func TestRunKeepsTheHarnessWatchAdvisory(t *testing.T) {
 		return ctx, cancel
 	}
 	beats := 0
-	w.beat = func(context.Context, string, string, time.Time, time.Time) (string, error) { beats++; return "", nil }
+	w.beat = func(context.Context, string, string, time.Time, friend.BeatWords) (string, error) {
+		beats++
+		return "", nil
+	}
 	stopAfter(&w, &cancel, 5*time.Minute)
 	dir := t.TempDir()
 	var out, errb strings.Builder
@@ -1047,7 +1073,7 @@ func TestTheDaemonsStateDirIsUnderItsDir(t *testing.T) {
 			ctx, cancel = context.WithCancel(ctx)
 			return ctx, cancel
 		}
-		w.beat = func(context.Context, string, string, time.Time, time.Time) (string, error) { return "", nil }
+		w.beat = func(context.Context, string, string, time.Time, friend.BeatWords) (string, error) { return "", nil }
 		stopAfter(&w, &cancel, 3*time.Minute)
 		var out, errb strings.Builder
 		code := run(append([]string{"run", "--as", "bob", "--harness", "opencode", "--coordinator", "ada"}, args...), strings.NewReader(""), &out, &errb, w)
@@ -1115,7 +1141,7 @@ func TestADaemonWhosePlistChangedSaysSoOnStart(t *testing.T) {
 			ctx, cancel = context.WithCancel(ctx)
 			return ctx, cancel
 		}
-		w.beat = func(context.Context, string, string, time.Time, time.Time) (string, error) { return "", nil }
+		w.beat = func(context.Context, string, string, time.Time, friend.BeatWords) (string, error) { return "", nil }
 		stopAfter(&w, &cancel, time.Minute)
 		var out, errb strings.Builder
 		require.Equal(t, 0, run(args, strings.NewReader(""), &out, &errb, w), errb.String())

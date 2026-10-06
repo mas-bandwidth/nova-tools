@@ -44,15 +44,17 @@ const (
 // tick (the part's probe, then each attempt), so it is measured once a member for the
 // done-ok cell the fleet table holds (medianWalls), never once a card: a deal costs the
 // cards it deals, not those times the member's history (TestTheTickGateHoldsUnderLoad).
+//
+// A stats tidy carries the member's median through it (PropCarriedMedian): the carried
+// median and count stand while the live sample is smaller than the carried count.
 func MemberMedianWall(s *Snapshot, member string) (median float64, n int) {
 	if s.Fleet == nil {
 		return 0, 0
 	}
-	cell := s.Fleet.Cell(member, DoneOK)
-	if len(cell) == 0 {
-		return 0, 0
+	if cell := s.Fleet.Cell(member, DoneOK); len(cell) > 0 {
+		median, n = medianWalls.of(member, cell)
 	}
-	return medianWalls.of(member, cell)
+	return withCarried(s, member, median, n)
 }
 
 // medianWalls is each member's median run wall as last measured, with the done-ok cell

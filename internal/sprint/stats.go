@@ -72,9 +72,11 @@ type RouteTakes struct {
 	RunWall  Measure `json:"run_wall"`
 }
 
-// PassStats is the epoch's numbers, members, readers and routes in name order.
+// PassStats is the epoch's numbers, members, readers and routes in name order. Since,
+// when set, is the last stats tidy (StatsSince): every sample ended at or after it.
 type PassStats struct {
 	Epoch     uint64       `json:"epoch"`
+	Since     time.Time    `json:"since,omitzero"`
 	Primaries int          `json:"primaries"`
 	Stages    Stages       `json:"stages"`
 	Work      []MemberStat `json:"work"`
@@ -111,16 +113,32 @@ func statsPrimaries(s *Snapshot) []*Card {
 
 // Stats is the pass's numbers over the snapshot's work, fleet and readers tables
 // (loaded with StatsRecords).
-func Stats(s *Snapshot) PassStats {
+func Stats(s *Snapshot) PassStats { return StatsSince(s, time.Time{}) }
+
+// StatsSince is Stats from since on (the last stats tidy; zero is the whole epoch): a
+// stage counts when it ended at or after since, a work card when its last stamp
+// (finished, else taken, else dealt) is, a read card likewise (read, begun, asked), a
+// route's take when its record's end is, and a primary when any of its samples counts.
+func StatsSince(s *Snapshot, since time.Time) PassStats {
 	var deal, toReads, toLand, total []float64
 	work, reads, routes := map[string]*samples{}, map[string]*samples{}, map[string]*samples{}
-	ps := PassStats{Epoch: s.Epoch}
+	ps := PassStats{Epoch: s.Epoch, Since: since}
+	// span is appendSpan of a stage that ended at or after since
+	span := func(xs []float64, a, b time.Time) []float64 {
+		if !since.IsZero() && b.Before(since) {
+			return xs
+		}
+		return appendSpan(xs, a, b)
+	}
 	for _, p := range statsPrimaries(s) {
+		if !since.IsZero() && lastStamp(p, "landed", "accepted", "admitted").Before(since) && !anyCardSince(s, p, since) {
+			continue
+		}
 		ps.Primaries++
 		admitted, accepted, landed := stampAt(p, "admitted"), stampAt(p, "accepted"), stampAt(p, "landed")
 		var lastFinished time.Time
 		for k := 1; k <= p.Int("attempt"); k++ {
-			if w := s.Fleet.Card(WorkCardID(p.ID, k)); w != nil {
+			if w := s.Fleet.Card(WorkCardID(p.ID, k)); w != nil && !before(w, since, "finished", "taken", "dealt") {
 				x := sampleOf(work, cmp.Or(w.F("member"), w.Row, "-"))
 				dealt, taken, finished := stampAt(w, "dealt"), stampAt(w, "taken"), stampAt(w, "finished")
 				switch w.F("ok") {
@@ -131,22 +149,25 @@ func Stats(s *Snapshot) PassStats {
 				}
 				x.timed(dealt, taken, finished, RunWall(w))
 				if k == 1 {
-					deal = appendSpan(deal, admitted, stampAt(w, "first_dealt"))
+					deal = span(deal, admitted, stampAt(w, "first_dealt"))
 				}
 			}
 			for _, r := range s.Readers.Rows() {
-				if rc := s.Readers.Card(ReadCardID(p.ID, k, r)); rc != nil {
+				if rc := s.Readers.Card(ReadCardID(p.ID, k, r)); rc != nil && !before(rc, since, "read", "begun", "asked") {
 					y := sampleOf(reads, cmp.Or(rc.F("reader"), rc.Row, r))
 					y.timed(stampAt(rc, "asked"), stampAt(rc, "begun"), stampAt(rc, "read"), cardcost.ParseUsage(rc.F(FieldUsage)).Wall)
 				}
 			}
 		}
-		toReads = appendSpan(toReads, lastFinished, accepted)
-		toLand = appendSpan(toLand, accepted, landed)
-		total = appendSpan(total, admitted, landed)
+		toReads = span(toReads, lastFinished, accepted)
+		toLand = span(toLand, accepted, landed)
+		total = span(total, admitted, landed)
 		for _, c := range CardCostOf(p).Consumers {
 			if c.Kind == "work" && strings.HasPrefix(c.End, cardhdr.EndStaging) {
 				continue // refused before any child ran: no take of the route
+			}
+			if at, err := time.Parse(time.RFC3339, c.At); !since.IsZero() && err == nil && at.Before(since) {
+				continue // a take that ended before the tidy
 			}
 			// a read's record names the route that priced it, and a read returned
 			// unpriced names none: then the route its card was dealt on
@@ -187,6 +208,33 @@ func Stats(s *Snapshot) PassStats {
 		ps.Routes = append(ps.Routes, RouteTakes{Route: name, Takes: z.n, OK: z.ok, Failed: z.failed, Provider: z.provider, RunWall: measure(z.wall)})
 	}
 	return ps
+}
+
+// lastStamp is the first of the card's stamps that is set, zero when none is.
+func lastStamp(c *Card, fields ...string) time.Time {
+	for _, f := range fields {
+		if t := stampAt(c, f); !t.IsZero() {
+			return t
+		}
+	}
+	return time.Time{}
+}
+
+// before says the card's last stamp (the first of fields set) is before since; never
+// with since zero or no stamp.
+func before(c *Card, since time.Time, fields ...string) bool {
+	t := lastStamp(c, fields...)
+	return !since.IsZero() && !t.IsZero() && t.Before(since)
+}
+
+// anyCardSince says a work or read card of the primary p ended, or is open, at or after since.
+func anyCardSince(s *Snapshot, p *Card, since time.Time) bool {
+	for k := 1; k <= p.Int("attempt"); k++ {
+		if w := s.Fleet.Card(WorkCardID(p.ID, k)); w != nil && !before(w, since, "finished", "taken", "dealt") {
+			return true
+		}
+	}
+	return false
 }
 
 // samples are one member's, reader's or route's cards and their samples, in seconds.

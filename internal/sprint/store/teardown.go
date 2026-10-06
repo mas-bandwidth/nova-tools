@@ -23,7 +23,7 @@ var sprintKeys = []string{keyFence, keyGen, keyInbox, keyLog, keyNotes, keyOpen,
 
 // machineKeys are the machine's records and the people's goals: one for the
 // whole sprint, under its prefix, never per epoch, so a clear keeps them.
-var machineKeys = []string{keyMachine, keyHeartbeat, keyStuck, keyCoordinator, keyGoals, keyStrangers, keyTickEnd, keyRules, keyFriends, keyDropDebt, keySeat, keyOwner, keyWhere, KeySeatPushers}
+var machineKeys = []string{keyMachine, keyHeartbeat, keyStuck, keyCoordinator, keyGoals, keyStrangers, keyTickEnd, keyRules, keyFriends, keyDropDebt, keySeat, keyOwner, keyWhere, KeySeatPushers, keyStats}
 
 // KeySeatPushers is the names whose seat has a push record (SeatPushKey), a
 // JSON list the writer of a record adds its name to (cmd/nova-sprint
@@ -56,6 +56,8 @@ type Epochs struct {
 	Friends []string
 	// Pushers is every name with a seat push record (KeySeatPushers).
 	Pushers []string
+	// StatsArchives is every stats tidy's archive record (StatsRecord.Archives).
+	StatsArchives []string
 }
 
 // TeardownKeys is every key a deployment leaves after its tables are dropped
@@ -114,6 +116,9 @@ func TeardownKeys(names sprint.Names, ids map[string][]string, epochs Epochs) []
 	}
 	for _, p := range epochs.Pushers {
 		keys = append(keys, names.Key(SeatPushKey(p)))
+	}
+	for _, a := range epochs.StatsArchives {
+		keys = append(keys, names.Key(a))
 	}
 	return append(keys, names.EpochKey())
 }
@@ -185,6 +190,9 @@ func (st *Store) Teardown(ctx context.Context) (int, error) {
 	epochs.Beating = slices.Sorted(maps.Keys(beating))
 	epochs.Readers = slices.Sorted(maps.Keys(reading))
 	_ = st.getJSON(ctx, KeySeatPushers, &epochs.Pushers) // ignored: an unreadable list leaves its records, as a missing one does
+	var stats StatsRecord
+	_ = st.getJSON(ctx, keyStats, &stats) // ignored: an unreadable record leaves its archives, as a missing one does
+	epochs.StatsArchives = stats.Archives
 	epochs.Friends = st.friendNames(ctx)
 	_ = st.B.ViewDelete(ctx, st.Names.View())
 	for _, t := range All {

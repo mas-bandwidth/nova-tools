@@ -21,16 +21,20 @@ func TestGateRefusesEachShapeForItsOwnReason(t *testing.T) {
 		before, after map[string]string
 		removed       []string
 		want          string
+		wantExtra     string
 	}{
 		{name: "a rule without the recovery key",
-			after: map[string]string{".sops.yaml": gateSops(gateRule("rowan.yaml", gateSeatKey, gateThirdKey)), "rowan.yaml": gateSealedFile()},
-			want:  "GATE REFUSE rule=1 check=1 file=.sops.yaml: rule does not contain declared recovery key " + gateRecoveryKey + " (recovery.pub)"},
+			after:     map[string]string{".sops.yaml": gateSops(gateRule("rowan.yaml", gateSeatKey, gateThirdKey)), "rowan.yaml": gateSealedFile()},
+			want:      "GATE REFUSE rule=1 check=1 file=.sops.yaml: rule does not contain declared recovery key " + gateRecoveryKey + " (recovery.pub)",
+			wantExtra: "is under a rule that does not contain declared recovery key " + gateRecoveryKey + " (recovery.pub)"},
 		{name: "a rule naming the recovery key twice, so the seat holds no key",
-			after: map[string]string{".sops.yaml": gateSops(gateRule("rowan.yaml", gateRecoveryKey, gateRecoveryKey)), "rowan.yaml": gateSealedFile()},
-			want:  "GATE REFUSE rule=1 check=1 file=.sops.yaml: rule has duplicate recipient " + gateRecoveryKey + "; a seat is one seat key and the declared recovery key, distinct"},
+			after:     map[string]string{".sops.yaml": gateSops(gateRule("rowan.yaml", gateRecoveryKey, gateRecoveryKey)), "rowan.yaml": gateSealedFile()},
+			want:      "GATE REFUSE rule=1 check=1 file=.sops.yaml: rule has duplicate recipient " + gateRecoveryKey + "; a seat is one seat key and the declared recovery key, distinct",
+			wantExtra: "is under a rule that has duplicate recipient " + gateRecoveryKey + "; a seat is one seat key and the declared recovery key, distinct"},
 		{name: "a rule naming the seat key twice, so the recovery key is gone",
-			after: map[string]string{".sops.yaml": gateSops(gateRule("rowan.yaml", gateSeatKey, gateSeatKey)), "rowan.yaml": gateSealedFile()},
-			want:  "GATE REFUSE rule=1 check=1 file=.sops.yaml: rule has duplicate recipient " + gateSeatKey + "; a seat is one seat key and the declared recovery key, distinct"},
+			after:     map[string]string{".sops.yaml": gateSops(gateRule("rowan.yaml", gateSeatKey, gateSeatKey)), "rowan.yaml": gateSealedFile()},
+			want:      "GATE REFUSE rule=1 check=1 file=.sops.yaml: rule has duplicate recipient " + gateSeatKey + "; a seat is one seat key and the declared recovery key, distinct",
+			wantExtra: "is under a rule that has duplicate recipient " + gateSeatKey + "; a seat is one seat key and the declared recovery key, distinct"},
 		{name: "the seat key then the recovery key is approved",
 			after: map[string]string{".sops.yaml": gateSops(gateRule("rowan.yaml", gateSeatKey, gateRecoveryKey)), "rowan.yaml": gateSealedFile()},
 			want:  "GATE APPROVE files=2 machines=-"},
@@ -42,8 +46,9 @@ func TestGateRefusesEachShapeForItsOwnReason(t *testing.T) {
 			after:  map[string]string{".sops.yaml": gateSops(good), "rowan.yaml": gateSealedFile()},
 			want:   "GATE REFUSE rule=0 check=0 file=recovery.pub: does not declare a single valid age public key"},
 		{name: "a path_regex naming no seat file",
-			after: map[string]string{".sops.yaml": gateSops(gateRule("nobody.yaml", gateSeatKey, gateRecoveryKey)), "rowan.yaml": gateSealedFile()},
-			want:  "GATE REFUSE rule=1 check=1 file=.sops.yaml: path_regex names 0 seat files; expected exactly one"},
+			after:     map[string]string{".sops.yaml": gateSops(gateRule("nobody.yaml", gateSeatKey, gateRecoveryKey)), "rowan.yaml": gateSealedFile()},
+			want:      "GATE REFUSE rule=1 check=1 file=.sops.yaml: path_regex names 0 seat files; expected exactly one",
+			wantExtra: "no creation rule in .sops.yaml matches this file"},
 		{name: "a path_regex naming two seat files",
 			after: map[string]string{".sops.yaml": gateSops("  - path_regex: ^.*\\.yaml$\n    age: " + gateSeatKey + "," + gateRecoveryKey + "\n"), "rowan.yaml": gateSealedFile(), "air.yaml": gateSealedFile()},
 			want:  "GATE REFUSE rule=1 check=1 file=.sops.yaml: path_regex names 2 seat files; expected exactly one"},
@@ -76,7 +81,12 @@ func TestGateRefusesEachShapeForItsOwnReason(t *testing.T) {
 				wantCode = 0
 			}
 			assert.Equal(t, wantCode, code, line)
-			assert.Equal(t, c.want, line)
+			if c.wantExtra == "" {
+				assert.Equal(t, c.want, line)
+			} else {
+				assert.True(t, strings.HasPrefix(line, c.want), "gate verdict = %q, want primary finding %q", line, c.want)
+				assert.Contains(t, line, c.wantExtra, "gate verdict = %q, want all findings", line)
+			}
 		})
 	}
 }

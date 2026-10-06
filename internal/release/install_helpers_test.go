@@ -16,7 +16,7 @@ import (
 // sharing violation, and the file it fails on is very often nova-update.exe
 // replacing ITSELF -- `adopt` runs the release's own nova-update.exe on the
 // bench, and that process is holding its own image open while it installs. A
-// perfectly good release would report INSTALL FAIL on the one tool that matters
+// perfectly good release would report INSTALL FAILED on the one tool that matters
 // most, on the one platform nobody here can reproduce it on.
 //
 // Windows DOES allow a running file to be renamed ASIDE: the open handle

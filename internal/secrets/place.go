@@ -176,9 +176,11 @@ func decryptSnapshotWithRemoval(run execCommand, sopsPath, keyPath, file string,
 	return out, nil
 }
 
-// ReadFleetMachines parses the tab-separated fleet registry: name, ssh target, home, and
-// the optional fourth column the pulse fleet file carries. Blank lines and `#` comments are
-// skipped; a line with fewer than two fields, or an empty name or target, is refused.
+// ReadFleetMachines parses the place machine table: name, ssh target, home, and the
+// optional fourth column the pulse fleet file carries. It refuses the gate registry's
+// seven-column format rather than treating os/arch as a home path (SPEC-SECRETS "place").
+// Blank lines and `#` comments are skipped; a line with fewer than two fields, more than
+// four fields, or an empty name or target is refused.
 func ReadFleetMachines(path string) (map[string]FleetMachine, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -193,6 +195,9 @@ func ReadFleetMachines(path string) (map[string]FleetMachine, error) {
 		fields := strings.Split(line, "\t")
 		if len(fields) < 2 {
 			return nil, fmt.Errorf("line %d wants at least 2 tab-separated fields name, ssh target, got %d", n+1, len(fields))
+		}
+		if len(fields) > 4 {
+			return nil, fmt.Errorf("place machines file line %d wants 2 to 4 tab-separated fields name, ssh target, home, optional note; got %d (the gate registry has 7 fields)", n+1, len(fields))
 		}
 		m := FleetMachine{Name: strings.TrimSpace(fields[0]), Target: strings.TrimSpace(fields[1])}
 		if len(fields) >= 3 {

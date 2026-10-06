@@ -414,7 +414,7 @@ func TestAWindowsBuildDoesNotClaimToHaveRunItsOwnArtifacts(t *testing.T) {
 // being replaced is frequently nova-update.exe replacing itself: `adopt` runs
 // the release's own nova-update.exe on the bench and that process is holding
 // its own image open. A plain rename over it fails there with a sharing
-// violation, which on this side reads as INSTALL FAIL for a release that is
+// violation, which on this side reads as INSTALL FAILED for a release that is
 // perfectly good.
 //
 // Windows DOES allow the running file to be renamed ASIDE -- the handle

@@ -264,7 +264,7 @@ func install(ctx context.Context, o options, deps Deps, out, errs io.Writer) int
 		tmp, err := stageArtifact(o.bin, a.Name, filepath.Join(dir, a.Name), a.Sum)
 		if err != nil {
 			removeStaged()
-			fmt.Fprintf(errs, "INSTALL FAIL tool=%s bin=%s: %s (fix the permission or the disk and install again; %d of %d were in place)\n",
+			fmt.Fprintf(errs, "INSTALL FAILED tool=%s bin=%s: %s (fix the permission or the disk and install again; %d of %d were in place)\n",
 				field(a.Name), field(o.bin), oneLine("", err), 0, len(arts))
 			return 1
 		}
@@ -300,7 +300,7 @@ func install(ctx context.Context, o options, deps Deps, out, errs io.Writer) int
 		} else if len(names) > 0 {
 			err = fmt.Errorf("%w; restored %s", err, strings.Join(names, ","))
 		}
-		fmt.Fprintf(errs, "INSTALL FAIL tool=%s bin=%s: %s (fix the permission or the disk and install again; %d of %d left replaced)\n",
+		fmt.Fprintf(errs, "INSTALL FAILED tool=%s bin=%s: %s (fix the permission or the disk and install again; %d of %d left replaced)\n",
 			field(tool), field(o.bin), oneLine("", err), left, len(arts))
 		return 1
 	}

@@ -20,7 +20,9 @@ func init() {
 // cmdStreamArchive takes the named streams off the work and merge tables, or
 // with archive false draws them again (store.ArchiveStreams,
 // store.UnarchiveStreams): their rows are hidden, and every landed card stays
-// placed, counted in the folds and the summary. Refused, exit 1 and nothing
+// placed, counted in the folds and in where --json's archived,
+// archived_cards and archived_landed, and no more in the summary, which counts
+// the streams on the table. Refused, exit 1 and nothing
 // written, for a stream that is no row, for one holding a card not landed
 // (sprint.StreamArchive), or, unarchived, for one not archived, all or none.
 // Archived, every open judgment and held condition that names one of the

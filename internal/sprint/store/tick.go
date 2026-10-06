@@ -42,6 +42,12 @@ const (
 	HeartbeatIdleEvery = 5 * time.Second
 	// TickBackoffCap bounds the wait after consecutive failed ticks.
 	TickBackoffCap = 5 * time.Second
+	// TickBusyRetries is how many times a tick runs its parts again, within
+	// the same tick, when other operations kept the fence moving under it
+	// (FenceBusyError) before the tick counts as failed: on 2026-10-06, under
+	// load, a tick's read lost the fence 12 times in 3 s while the verbs it
+	// raced finished, and the next try of the parts would have passed.
+	TickBusyRetries = 3
 	// MachineSilence is how long a RUNNING machine goes without a heartbeat
 	// before the sprint line says it is STOPPED. It stays above the longest
 	// gap a live run loop leaves between two heartbeats:
@@ -120,6 +126,10 @@ type Heartbeat struct {
 	Ticks    int64     `json:"ticks"`
 	Error    string    `json:"error,omitempty"`
 	Failures int       `json:"failures,omitempty"`
+	// TickOverrun is how many ticks of a run loop ran past their deadline and
+	// were given up, the loop going on (CountTickOverrun; docs/SPEC-SPRINT.md
+	// section 14, The server, "The tick's deadline").
+	TickOverrun int64 `json:"tick_overrun,omitempty"`
 	// Due is how many moves and judgments the last tick left past its
 	// bounds: the next ticks catch up on them.
 	Due int `json:"due,omitempty"`
@@ -272,6 +282,23 @@ func (st *Store) putJSON(ctx context.Context, key string, v any) error {
 		return err
 	}
 	return kv.SetKey(ctx, key, string(b))
+}
+
+// CountTickOverrun adds one to the heartbeat's count of ticks given up past
+// their deadline (Heartbeat.TickOverrun), moves its clock (At, Ticks) as a tick
+// would, and returns the count. A tick given up writes no heartbeat, and the
+// server is alive: without the move, a deadline past MachineSilence would read
+// as a silent machine (machine:silent, where's record not kept). The run loop
+// calls it once the tick it gave up has ended, so no tick writes the heartbeat
+// beside it; a tick after reads the count with the heartbeat and keeps it.
+func (st *Store) CountTickOverrun(ctx context.Context) (int64, error) {
+	var hb Heartbeat
+	if err := st.getJSON(ctx, keyHeartbeat, &hb); err != nil {
+		return 0, err
+	}
+	hb.TickOverrun++
+	hb.At, hb.Ticks = st.now(), hb.Ticks+1
+	return hb.TickOverrun, st.putJSON(ctx, keyHeartbeat, hb)
 }
 
 // Machine reads the state record and the heartbeat.
@@ -475,6 +502,9 @@ type TickResult struct {
 	// Took is the tick's wall time, from its first read of the machine's
 	// state to its heartbeat.
 	Took time.Duration `json:"took_ns"`
+	// BusyRetries is how many times the tick ran its parts again because
+	// other operations kept the fence moving under it (TickBusyRetries).
+	BusyRetries int `json:"busy_retries,omitempty"`
 	// RouteTrips is the round trips of the tick's one read of the routes
 	// (routes.go): 1 with none, 2 with routes, 0 when no part dealt or checked.
 	RouteTrips int64 `json:"route_trips,omitempty"`
@@ -569,7 +599,23 @@ func tickExtras(s *sprint.Snapshot) map[string][]string {
 			}
 		}
 	}
-	return map[string][]string{sprint.Work: sprint.ResolveExtras(s), sprint.Readers: reads}
+	// and a friend's read of each primary in review at its attempt, on the fleet table
+	// (sprint.FriendReadAsk): retired with her verdict it still stands (friendReadLive),
+	// so her ok counts toward the read rule and the ask does not ask her the attempt again
+	var friendReads []string
+	if s.Fleet != nil {
+		for _, c := range s.Work.Column(sprint.Review) {
+			attempt := max(c.Int("attempt"), 1)
+			for _, row := range s.Fleet.Rows() {
+				if name, ok := sprint.FriendOfRow(row); ok {
+					if id := sprint.ReadCardID(c.ID, attempt, name); s.Fleet.Placed(id) == nil {
+						friendReads = append(friendReads, id)
+					}
+				}
+			}
+		}
+	}
+	return map[string][]string{sprint.Work: sprint.ResolveExtras(s), sprint.Readers: reads, sprint.Fleet: friendReads}
 }
 
 // TickPartStep is one part of the tick as a step of the engine: fenced,
@@ -725,6 +771,13 @@ func (st *Store) Tick(ctx context.Context) (res TickResult, err error) {
 		return res, st.putJSON(ctx, keyHeartbeat, hb)
 	}
 	seen, err := st.tick(ctx, m, hb, &res)
+	// other operations kept the fence moving under a part: its read changed
+	// nothing, and the parts run again within this tick, up to TickBusyRetries
+	// times, before the tick counts as failed
+	for res.BusyRetries < TickBusyRetries && IsFenceBusy(err) && ctx.Err() == nil && res.Stale == "" && res.Halted == "" {
+		res.BusyRetries++
+		seen, err = st.tick(ctx, m, hb, &res)
+	}
 	if err == nil && res.Halted == "" && res.Done == "" {
 		// The reminder duty is a part too: it begins only while RUNNING.
 		mt := st.meter()

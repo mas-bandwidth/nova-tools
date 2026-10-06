@@ -195,6 +195,13 @@ func (a *app) reconcileFriend(ctx context.Context, st *store.Store, r reconcileR
 			say(fmt.Sprintf("FRIEND-RECONCILE KEPT friend=%s card=%s job=%s: %s; left working", friend, p.Card, oneline.Field(job), oneline.Escape(bad)))
 			continue
 		}
+		if p.Kind == "read" && report != "" {
+			// a read is closed by friend sync from its report (sprint.FriendReadClose), never
+			// collected as work
+			kept++
+			say(fmt.Sprintf("FRIEND-RECONCILE KEPT friend=%s card=%s job=%s: a read with its report: friend sync closes it; left working", friend, p.Card, oneline.Field(job)))
+			continue
+		}
 		wc := byID[p.Card]
 		if wc == nil {
 			kept++
