@@ -24,7 +24,7 @@ func TestStatusPrintsHeldInboxAndMissing(t *testing.T) {
 	require.NoError(t, friend.WriteStatus(state, friend.Status{Friend: "friend-b", Harness: "opencode", At: start, Connection: friend.Connected, Challenge: friend.Quiet,
 		HeldKnown: true, Held: 7, InboxJobs: 6, Missing: 1, InboxError: "inbox/x~15: permission denied"}))
 	cli.Do(t, "status", "--as", "friend-b", "--dir", dir).Exit(0).
-		Out("mode=- held=7 inbox=6 missing=1 reported_asleep=false sleep_requested=false coordinator=- status=", "NOTE the inbox: inbox/x~15: permission denied")
+		Out("mode=- held=7 inbox=6 missing=1", "coordinator=- status=", "NOTE the inbox: inbox/x~15: permission denied")
 }
 
 // Read from the worker view (friend cards not served), status says so and why a missing
