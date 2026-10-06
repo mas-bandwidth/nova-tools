@@ -202,3 +202,21 @@ func TestGenerateRefusesABriefWithTheCardChecksFinding(t *testing.T) {
 	assert.Equal(t, 1, exit)
 	assert.Contains(t, stdout, "check=dropped-card")
 }
+
+// The usage banner and verb help print each example once, with no duplicate line.
+func TestTheUsageBannerPrintsEachExampleOnce(t *testing.T) {
+	t.Parallel()
+	for _, args := range [][]string{{"help"}, {"generate", "-h"}, {"help", "generate"}} {
+		exit, stdout, stderr := runCard(args...)
+		require.Equal(t, 0, exit, "args %v: %s", args, stderr)
+		seen := make(map[string]int)
+		for _, line := range strings.Split(stdout, "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+			seen[line]++
+			assert.Equalf(t, 1, seen[line], "banner %v duplicates line: %s", args, line)
+		}
+	}
+}
