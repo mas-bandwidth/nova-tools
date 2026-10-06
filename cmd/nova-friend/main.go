@@ -91,6 +91,7 @@ type world struct {
 	launch       []string            // host: the launch command after "--"
 	settings     friend.SettingsFS   // where a harness's own settings are read and written (install, check --settings)
 	windowReader friend.WindowReader // reads a GUI harness window through accessibility; nil uses DefaultWindowReader
+	screenFriend string              // screen: the friend whose session to read
 	argv         []string            // this run's arguments after the program's name: what the plist drift is read against
 }
 
@@ -277,6 +278,35 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, w world) int 
 		if i := slices.Index(args, "--"); i >= 0 {
 			w.launch, args = args[i+1:], args[:i]
 		}
+	}
+	if len(args) > 0 && args[0] == "screen" {
+		// screen takes <friend> as a positional argument, which the verb table does not carry
+		// (only the default verb takes operands): the operand is split off here and the verb
+		// reads it from the world.
+		var flagsOnly []string
+		flagsOnly = append(flagsOnly, args[0])
+		skipNext := false
+		for i := 1; i < len(args); i++ {
+			if skipNext {
+				flagsOnly = append(flagsOnly, args[i])
+				skipNext = false
+				continue
+			}
+			a := args[i]
+			if strings.HasPrefix(a, "-") {
+				flagsOnly = append(flagsOnly, a)
+				if (a == "--lines" || a == "-lines" || a == "--state-dir" || a == "-state-dir") && !strings.Contains(a, "=") {
+					skipNext = true
+				}
+				continue
+			}
+			if w.screenFriend == "" {
+				w.screenFriend = a
+			} else {
+				flagsOnly = append(flagsOnly, a)
+			}
+		}
+		args = flagsOnly
 	}
 	return friendTool(w).Run(args, stdin, stdout, stderr)
 }
@@ -868,8 +898,7 @@ example: nova-friend screen bob --lines 40`,
 					f.Bool("json", false, "print the result as one JSON object instead of lines")
 					stateDir(f)
 					f.Check(func(c *tool.Call) {
-						callArgs.Store(c, f.Args())
-						if len(f.Args()) == 0 {
+						if w.screenFriend == "" {
 							c.Problem("friend is required: nova-friend screen <friend>")
 						}
 						if c.Int("lines") <= 0 {

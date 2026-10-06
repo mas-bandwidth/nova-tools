@@ -12,14 +12,10 @@ import (
 )
 
 func (w world) screen(c *tool.Call) *tool.Out {
-	var friends []string
-	if v, ok := callArgs.LoadAndDelete(c); ok {
-		friends = v.([]string)
-	}
-	if len(friends) == 0 {
+	name := w.screenFriend
+	if name == "" {
 		return tool.Refuse("friend is required: nova-friend screen <friend>")
 	}
-	name := friends[0]
 
 	state := c.Str("state-dir")
 	if state != "" {
