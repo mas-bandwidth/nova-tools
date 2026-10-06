@@ -538,7 +538,8 @@ func TestAReaderCountsOnceWhereItsCardIs(t *testing.T) {
 }
 
 // Every decision of every judgment type, the tick's included, prints the
-// commands that make it.
+// commands that make it, and a condition the tick keeps prints wait, never ack
+// (printedDecisions).
 func TestEveryDecisionPrintsItsCommands(t *testing.T) {
 	t.Parallel()
 	all := map[string][]string{}
@@ -558,8 +559,11 @@ func TestEveryDecisionPrintsItsCommands(t *testing.T) {
 					got[c.Decision] = true
 				}
 			}
-			for _, d := range ds {
+			for _, d := range printedDecisions(typ, ds) {
 				assert.True(t, got[d], "%s: the decision %q prints no command", typ, d)
+			}
+			if TickKept(typ) {
+				assert.False(t, got["ack"], "%s: a condition the tick keeps is not offered ack", typ)
 			}
 		}
 	}

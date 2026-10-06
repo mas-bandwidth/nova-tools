@@ -1354,6 +1354,30 @@ uncalibrated: nova-config's `sprint` row `decide_brief_bar` stays empty, which r
 only, until the brief record's own outcomes support a bar
 ([SPEC-NOVA-DECIDE.md](SPEC-NOVA-DECIDE.md) section 14).
 
+### brief-at-the-bound-cuts-the-twin-b.w1: every printed command runs as printed
+
+Every command a judgment prints (the inbox's, `card`'s, `answer`'s) runs as printed, its
+placeholders filled in: a coordinator of any model follows it, and a printed command the
+verb refuses is the machine lying to it.
+
+- `brief <id> --brief-file <path>` on a card at its brief's bound (a judgment offering
+  brief is open on it, or its attempts since the brief last changed reached the attempt
+  cap) replaces the card by its twin with the new brief in one step, as `recut <id>
+  --brief-file <path>` does: the twin `<id>b` in front of it, every card that needed it
+  needing the twin, the old card dropped `replaced by <twin>`, no blocked judgment, and
+  the judgment answered `brief: replaced by its twin <twin>`. The bound's line is `BRIEF
+  OK` with the twin's `MOVED` lines. Named with other cards (`--dir`) it is refused: one
+  card at its bound is briefed alone. A group's brief decision prints one `brief <id>
+  --brief-file` line a card.
+- A condition the tick keeps (the tick's judgments: alarms, drift, provider funds, a
+  friend deaf or idle, a card stalled) is never offered `ack`: its decisions print `wait
+  <note> --for <d>` and the remedy.
+- `card <id>` prints one card of a group's rework and drop with `--one`, as `answer` does.
+
+Pinned by `TestEveryPrintedDecisionCommandRuns`, which runs every decision command of
+every judgment kind, open on one card and on a group of two, against the store the
+judgment is open in, and `TestBriefAtTheBoundCutsTheTwin`.
+
 ### install-canary-shadow-tick-r.w1: the shadow tick before a server swap
 
 `nova-sprint tick --shadow` plans one tick on the store and applies nothing: the store is
