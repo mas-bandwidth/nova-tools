@@ -5,8 +5,9 @@
 // coordinator's pings at once and pushes them in so the session answers as
 // its own turn, and tells the session when the coordinator goes silent; and,
 // on the coordinator's side, the ping loop that pings every friend each
-// second. The verbs are run, install, uninstall, check, status, pong, ping,
-// wait-pong, host and serve; the
+// second; and renew, a fresh session for a broken one. The verbs are run,
+// install, uninstall, check, status, pong, ping, wait-pong, host, serve and
+// renew; the
 // dispatch, the banner, the help, the refusals and the output envelope are
 // internal/tool's, and the rules are internal/friend's.
 package main
@@ -269,7 +270,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, w world) int 
 			w.launch, args = args[i+1:], args[:i]
 		}
 	}
-	return friendTool(w).Run(args, stdin, stdout, stderr)
+	return friendTool(w).Run(renewArgs(args), stdin, stdout, stderr)
 }
 
 // openRedis dials the bus store the way nova-bus does (internal/redisconn,
@@ -807,6 +808,7 @@ read that fails is one SERVE NOTE until it changes or clears. Stops on SIGINT or
 				},
 				Run: w.serve,
 			},
+			renewVerb(w, redis),
 		},
 	}
 }
@@ -1052,7 +1054,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 	}
 	stager := w.stager(dir)
 	d := &friend.Daemon{
-		Friend: name, Harness: c.Str("harness"), Dir: dir, Width: c.Int("width"),
+		Friend: name, Harness: c.Str("harness"), Dir: dir, Session: c.Str("session"), Width: c.Int("width"),
 		Store: sc.DaemonStore(), Deliver: sc.Deliver, Now: w.now, Pause: w.sleep,
 		Limited: func() (string, time.Time, bool) {
 			until, _, limited := fl.Limited()
@@ -1579,7 +1581,7 @@ func (w world) status(c *tool.Call) *tool.Out {
 	v := friend.FriendStatus(w.evidence(c, s, p, now, daemon == "up", route, o), now, friend.AnswerBound, time.Local)
 	if s.Session == friend.SessionBroken {
 		o.Fact("session_id", dash(s.SessionID)).Fact("reason", tool.Text(s.SessionReason)).Fact("broken_at", stamp(s.BrokenAt))
-		o.Note("the session is broken: the provider refused the same way turn after turn; the daemon delivers nothing into it, every message stays pending; renew the session, then restart the daemon (install again)")
+		o.Note("the session is broken: the provider refused the same way turn after turn; the daemon delivers nothing into it, every message stays pending; run: nova-friend renew --as <coordinator> " + name)
 	}
 	pr, prFound, prErr := friend.ReadPresence(state)
 	switch {
