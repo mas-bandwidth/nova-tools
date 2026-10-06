@@ -629,6 +629,7 @@ nova-friend run --as <me> --harness <h> --dir <d> [--session <id>] [--server <ad
 nova-friend install --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--config-dir <d>] [--model <provider/model>] [--secrets NAME[,NAME] --seat <seat>] [--launchd-log <file>] [--dry-run]
 nova-friend uninstall --as <me> [--dry-run]
 nova-friend check [--as <coordinator>] [<friend>...] [--since <duration>] [--shown <file|->] [--json]
+nova-friend host --as <me> --harness <h> --dir <d> [--prompt <regexp>] [--state-dir <d>] [--dry-run] [--json] -- <launch command...>
 nova-friend ping --as <coordinator> (--to <friend> | --wake --to-friends [--every <d>] [--within <d>] [--never-wake <f,...>] [--server <addr>]) [--nonce <n>] [--since <RFC3339>] [--redis <addr>] [--dry-run]
 nova-friend ping-install --as <coordinator> --every <d> [--within <d>] [--never-wake <f,...>] [--server <addr>] [--redis <addr>] [--launchd-log <file>] [--dry-run]
 nova-friend ping-uninstall --as <coordinator> [--dry-run]
@@ -2906,6 +2907,22 @@ nova-up version
 nova-up help [<verb>]
 ```
 <!-- clidoc:end nova-up -->
+
+
+## nova-doctor
+
+Says what is missing for the nova tools to work on this machine and, for each
+thing, the one line that fixes it. It changes nothing and runs no fix. One line
+per check (`DOCTOR <check> ok|warn|fail <evidence> [fix: <line>]`); `--local`
+skips the checks only a fleet needs. The contract is docs/SPEC-DOCTOR.md.
+
+<!-- clidoc:begin nova-doctor -->
+```
+nova-doctor [run] [--check <name>]... [--local] [--strict] [--json]
+nova-doctor version
+nova-doctor help [<verb>]
+```
+<!-- clidoc:end nova-doctor -->
 
 
 ## nova-table
