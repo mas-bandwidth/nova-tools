@@ -141,3 +141,71 @@ func TestTheLanderRepairsAStrayBackquoteAndSaysSo(t *testing.T) {
 		assert.Empty(t, r.must("status", "--porcelain"))
 	})
 }
+
+// A cold read of 2026-10-06: a change that only deletes can leave a code span
+// unmatched (the line that closed it taken out, or its closing backquote), and the
+// repair read only the lines a change adds, so it passed. E4 judges the resulting
+// paragraph: a deletion that takes an odd count of backquotes from a paragraph left odd
+// is repaired or refused as an addition is; one that balances a span passes.
+func TestE4CatchesADeletionThatUnbalancesASpan(t *testing.T) {
+	t.Parallel()
+	diff := "diff --git a/a.md b/a.md\n--- a/a.md\n+++ b/a.md\n" +
+		"@@ -1,4 +1,3 @@\n # T\n \n The `stream\n-set` verb is one.\n"
+	changed := sprint.DocChanged(diff)
+	require.Equal(t, map[string]sprint.DocLines{"a.md": {Deleted: []sprint.DocCut{{At: 4, Lines: []string{"set` verb is one."}}}}}, changed,
+		"a deletion-only diff carries its deletion")
+	fixed, fixes, refused := sprint.RepairDoc("a.md", "# T\n\nThe `stream\n", changed["a.md"], false)
+	assert.Empty(t, refused)
+	assert.Equal(t, "# T\n\nThe stream\n", fixed)
+	assert.Len(t, fixes, 1)
+
+	// the base's own odd count, a deletion taking an even count from it, is left
+	base := "Old `fault.\nnew `x` line\n"
+	fixed, fixes, refused = sprint.RepairDoc("a.md", base, sprint.DocLines{Deleted: []sprint.DocCut{{At: 2, Lines: []string{"gone `y`"}}}}, false)
+	assert.Equal(t, base, fixed)
+	assert.Empty(t, fixes)
+	assert.Empty(t, refused)
+
+	t.Run("a deleted line that closed a span is caught", func(t *testing.T) {
+		t.Parallel()
+		r := newMergeRig(t, map[string]string{"a.md": "# T\n\nThe `stream\nset` verb is one.\n"},
+			map[string]string{"a.md": "# T\n\nThe `stream\n"})
+		note, refused, err := sprint.RepairMerge(r.dir, r.git, r.before, nil)
+		require.NoError(t, err)
+		assert.Empty(t, refused)
+		assert.Equal(t, "the documents were repaired at the merge: a.md:3 a stray backquote dropped at column 5", note)
+		assert.Equal(t, "# T\n\nThe stream\n", r.read("a.md"))
+	})
+	t.Run("a closing backquote deleted from a line is caught", func(t *testing.T) {
+		t.Parallel()
+		r := newMergeRig(t, map[string]string{"a.md": "a `b` c `d\ne` f\n"}, map[string]string{"a.md": "a `b` c `d\ne f\n"})
+		note, refused, err := sprint.RepairMerge(r.dir, r.git, r.before, nil)
+		require.NoError(t, err)
+		assert.Empty(t, refused)
+		assert.Equal(t, "the documents were repaired at the merge: a.md:1 a stray backquote dropped at column 9", note)
+		assert.Equal(t, "a `b` c d\ne f\n", r.read("a.md"))
+	})
+	t.Run("a deletion with no backquote beside it to drop is refused naming the line", func(t *testing.T) {
+		t.Parallel()
+		r := newMergeRig(t, map[string]string{"a.md": "See `x\nmid\ny` here\nend\n"}, map[string]string{"a.md": "See `x\nmid\nend\n"})
+		merged := r.must("rev-parse", "HEAD")
+		note, refused, err := sprint.RepairMerge(r.dir, r.git, r.before, nil)
+		require.NoError(t, err)
+		assert.Empty(t, note)
+		require.Len(t, refused, 1)
+		assert.Equal(t, "a.md:2 leaves a code span unmatched: the lines it deletes take an odd count of backquotes and no line beside them holds one to drop: mid", refused[0].String())
+		assert.Equal(t, merged, r.must("rev-parse", "HEAD"), "a refusal writes nothing")
+	})
+	t.Run("a deletion that balances a span passes", func(t *testing.T) {
+		t.Parallel()
+		base := "# T\n\nOne `a` here.\nA stray ` tick.\nTwo `b` there.\n\nThe `c`\nand `d` go.\n"
+		r := newMergeRig(t, map[string]string{"a.md": base},
+			map[string]string{"a.md": "# T\n\nOne `a` here.\nTwo `b` there.\n\nThe `c`\n"})
+		merged := r.must("rev-parse", "HEAD")
+		note, refused, err := sprint.RepairMerge(r.dir, r.git, r.before, nil)
+		require.NoError(t, err)
+		assert.Empty(t, note)
+		assert.Empty(t, refused)
+		assert.Equal(t, merged, r.must("rev-parse", "HEAD"), "nothing to repair, nothing written")
+	})
+}
