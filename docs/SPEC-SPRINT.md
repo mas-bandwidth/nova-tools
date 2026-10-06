@@ -1561,7 +1561,12 @@ and it is the coordinator's decision, receipted.
   to it gets that, whatever the card's; `--deadline default` takes the pin off
   (`TestADealtCardsDeadlineIsThreeTimesItsMembersMedianWall`,
   `TestARedealtCardsDeadlineIsItsNewMembersToo`,
-  `TestTheMedianWallIsOverTheLastFiftyOkAttempts`). A card no route serves stays ready: the deal refuses it naming the
+  `TestTheMedianWallIsOverTheLastFiftyOkAttempts`). The median is measured
+  once a member for the done-ok cell the fleet table holds, and again only when
+  a card put on the table makes a new cell, never once a card dealt: the deal
+  costs the cards it deals, not those times the member's history
+  (`TestTheMedianWallIsMeasuredOnceACellAndAgainAfterAPut`; the tick gate under
+  load, `TestTheTickGateHoldsUnderLoad`). A card no route serves stays ready: the deal refuses it naming the
   tier, and the tick writes one judgment, `no route serves the tier`, per tier
   (its subject `stream:tier:<tier>`, the primaries listed), never one per
   card, closed when the tier is served (tla/DirtyTick.tla, RouteGuard; witness

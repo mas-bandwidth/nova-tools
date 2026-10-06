@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
@@ -38,11 +39,72 @@ const (
 // MemberMedianWall is the member's median run wall in seconds over its last
 // DeadlineSamples ok attempts (the usage walls of its ok work cards, newest finished
 // first), and how many samples it is over; 0 and 0 with none.
+//
+// The deal asks it for every card it deals or moves, and a plan is run more than once a
+// tick (the part's probe, then each attempt), so it is measured once a member for the
+// done-ok cell the fleet table holds (medianWalls), never once a card: a deal costs the
+// cards it deals, not those times the member's history (TestTheTickGateHoldsUnderLoad).
 func MemberMedianWall(s *Snapshot, member string) (median float64, n int) {
 	if s.Fleet == nil {
 		return 0, 0
 	}
-	cards := append([]*Card(nil), s.Fleet.Cell(member, DoneOK)...)
+	cell := s.Fleet.Cell(member, DoneOK)
+	if len(cell) == 0 {
+		return 0, 0
+	}
+	return medianWalls.of(member, cell)
+}
+
+// medianWalls is each member's median run wall as last measured, with the done-ok cell
+// it was measured over.
+var medianWalls = medianMemo{byMember: map[string]medianWall{}, measured: map[string]int{}}
+
+// MedianWallMeasures is how many times the member's median run wall has been measured
+// over a done-ok cell in this process: once a cell, so a deal over a snapshot measures
+// each member it deals to once however many cards it deals (TestTheTickGateHoldsUnderLoad).
+func MedianWallMeasures(member string) int {
+	medianWalls.mu.Lock()
+	defer medianWalls.mu.Unlock()
+	return medianWalls.measured[member]
+}
+
+// medianMemo is the members' median run walls, each held with the done-ok cell it was
+// measured over: the table builds a new cell when a card is put (Table.Put resets the
+// index), so the same cell, its first card's slot and its length, is the same cards,
+// and another is measured again. One entry a member, the latest cell's; safe for the
+// store's parts on their own goroutines.
+type medianMemo struct {
+	mu       sync.Mutex
+	byMember map[string]medianWall
+	measured map[string]int // the cells measured, a member
+}
+
+// medianWall is a member's median run wall over a done-ok cell, and how many samples it
+// is over.
+type medianWall struct {
+	first  **Card
+	len    int
+	median float64
+	n      int
+}
+
+// of is the member's median run wall over the cell (not empty), measured when the
+// memo holds another cell's.
+func (m *medianMemo) of(member string, cell []*Card) (float64, int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if w, ok := m.byMember[member]; ok && w.first == &cell[0] && w.len == len(cell) {
+		return w.median, w.n
+	}
+	median, n := cellMedianWall(cell)
+	m.measured[member]++
+	m.byMember[member] = medianWall{first: &cell[0], len: len(cell), median: median, n: n}
+	return median, n
+}
+
+// cellMedianWall is MemberMedianWall measured over the member's done-ok cell.
+func cellMedianWall(cell []*Card) (median float64, n int) {
+	cards := append([]*Card(nil), cell...)
 	sort.SliceStable(cards, func(i, j int) bool { return cards[i].F("finished") > cards[j].F("finished") })
 	var walls []float64
 	for _, c := range cards {
