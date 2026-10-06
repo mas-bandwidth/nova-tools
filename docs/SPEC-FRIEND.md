@@ -613,6 +613,62 @@ friend sync loop, `nova-sprint friend sync --every <d>`, a nova-config loop
 row kept alive with no shell in its argv (docs/FRIENDS.md, "The friend sync
 loop"; cmd/nova-sprint/friend_loop.go).
 
+## The daemon writes every card she holds (internal/friend/inbox.go)
+
+On 2026-10-05 from about 18:59 the friend daemons (rowan-space, johnny) held cards on
+their rows, taken by the deal in batch mode or by the coordinator's `friend take`, and no
+`inbox/<job>/BRIEF.md` was written for them, so no lane ran them; the coordinator wrote the
+briefs by hand at 19:40. The cause: the daemon wrote no brief at all. The one writer was
+the coordinator's `friend sync` loop, and its pass is all or nothing: it skips every pass
+while no seat holds the coordinator, and it stops for every friend at the first refusal. That evening it last wrote the friends' `QUEUE.json` at 18:50 (johnny) and
+18:59 (rowan-space), local time, and its log says it failed every pass from 19:08: "schema
+config is at version 32 and this binary carries 33". Nothing
+on the daemon's side noticed, because nothing on it knew what was on her row: its idle watch
+counted her `QUEUE.json`, which nothing prunes (292 tasks, none of them the held cards).
+
+The daemon now reconciles her inbox with her row on every loop (`InboxEvery`, the beat's
+second), both ways:
+
+- It asks the sprint server which cards are on her row (`Held`: the worker verb `friend
+  cards <friend> --json`, answered `{"friend":..,"cards":[{"card","job","col","brief"}]}`,
+  each card ready or working on her row with its job, `sprint.StoredID` and `.g<gen>`, and
+  its brief as friend sync renders it).
+- A held card with no `inbox/<job>/BRIEF.md` is written, whole, never over a file there
+  (`atomicfile` NoReplace: friend sync writes the same file the same way, and whichever is
+  first writes it). The daemon logs one line per write (`inbox: wrote inbox/<job>/BRIEF.md
+  (card <c>, <col> on her row)`); in batch mode the session is told of the briefs in a turn
+  of their own, as friend sync's bus message would; in one-shot mode a free lane is handed
+  the held cards in the server's order, whether or not her `QUEUE.json` names them.
+- A sprint job in her inbox (a `BRIEF.md` headed `STATUS: nova-sprint card` or `WHO:
+  friend`) whose card is no longer on her row (dropped, returned, landed), that no lane is
+  running, and whose brief was written before the ask began is moved to
+  `inbox/retired/<job>` (`<job>.<unix>` when that is taken). A brief written since the ask
+  began is friend sync's for a card dealt after the server answered; the next pass decides
+  it. A job any other hand put there is never moved.
+- The model is the TLA+ module InboxReconcile (a card dealt and taken off her row with no
+  event, friend sync writing at any time, the daemon's ask as a snapshot or no answer, then
+  its reconcile): `HeldNeverRetired` (a card on her row never has its brief retired),
+  `HeldIsWritten` (held leads to written, unless it leaves first) and `LeftIsRetired` hold
+  on three cards (TLC, 4949 distinct states, the server answering often enough: strong
+  fairness on its answer); with `AskGuard = FALSE`, the retire that ignores when the brief
+  was written, TLC finds `HeldNeverRetired` broken in five states: ask, deal, friend sync
+  writes, reconcile retires it. The module sits in this card's report until its path is
+  given (internal/friend/tla is outside the card's paths).
+- A job that is no single path element, a symlinked job and a card sent with no brief are
+  refused, a line each, and counted missing.
+- An answer that does not come writes nothing and retires nothing; it is said once until it
+  changes, and the status file carries it (`inbox_error`).
+
+`status.json` carries the last reconcile's counts and `nova-friend status` prints them:
+`held=N inbox=N missing=N` (the cards on her row, the sprint jobs in her inbox, the held
+cards still without a brief), `-` for each until the server has answered once. While the
+server has answered, the idle watch counts her row, never her `QUEUE.json`.
+
+Owed, outside this card's paths: the server's side, `friend cards <friend>` as a worker verb
+(cmd/nova-sprint serve.go `workerVerb` and the brief renderer `friendBrief`). Until it is
+served the daemon's ask is refused, said once, and her inbox is friend sync's alone, as
+before.
+
 ## One-shot lanes (internal/friend/lanes.go)
 
 A friend's delivery mode is a column of her nova-config friend row, `mode`,
