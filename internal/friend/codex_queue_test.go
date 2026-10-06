@@ -303,8 +303,10 @@ func TestPongRequestReadsWhatADeliveryAsksFor(t *testing.T) {
 func TestTheCodexAppServerClientSpeaksJSONRPCOverAWebSocket(t *testing.T) {
 	t.Parallel()
 	client, server := net.Pipe()
-	defer client.Close()
-	defer server.Close()
+	t.Cleanup(func() {
+		assert.NoError(t, client.Close())
+		assert.NoError(t, server.Close())
+	})
 	go func() {
 		r := bufio.NewReader(server)
 		req, err := http.ReadRequest(r)
