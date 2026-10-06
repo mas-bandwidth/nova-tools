@@ -218,7 +218,7 @@ func (l *loop) outboxStep(now time.Time) {
 		}
 		switch {
 		case h == nil:
-			note(job, "card "+id+" is not on her row")
+			note(job, NotHers(id, job, d.Friend, d.Running))
 			continue
 		case h.Col != "working":
 			note(job, "card "+id+" is "+dash(h.Col)+" on her row, not working")
@@ -406,4 +406,21 @@ func (l *loop) deadLanes(outbox string, running map[string]bool, at string) bool
 		d.Record(fmt.Sprintf("%s outbox: dead lane %s: the runner ended it with no report (%s); wrote outbox/%s/REPORT.md Verdict FAIL", at, job, oneLine(end, 300), job))
 	}
 	return wrote
+}
+
+// NotHers is the refusal of a report on a card that is no longer hers: never finished, with
+// the line naming who holds it now, as the beat's running list says (a card id or job to the
+// friend whose lane runs it), else that no row the daemon reads names one.
+func NotHers(card, job, friend string, running func() map[string]string) string {
+	holder := ""
+	if running != nil {
+		r := running()
+		holder = cmp.Or(r[card], r[job])
+	}
+	switch {
+	case holder != "" && holder != friend:
+		return "refused: card " + card + " is not on her row, no longer hers; " + holder + " holds it now"
+	default:
+		return "refused: card " + card + " is not on her row, no longer hers; no row the daemon reads says who holds it now (nova-sprint view coordinator does)"
+	}
 }

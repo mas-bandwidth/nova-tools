@@ -210,8 +210,13 @@ type Daemon struct {
 	// error, an empty name or a nil Seat is the seat unknown, and while it is
 	// unknown no message is delivered as an instruction (BatchFor).
 	Seat func(ctx context.Context) (string, error)
+	// Session is the id of the session the daemon delivers into, read each step; a change of
+	// it is a new session, owed the present (present.go). Nil reads none: the daemon's start
+	// and the stale bound still bring the present.
+	Session func() string
 
 	m           *Machine
+	noPresent   bool // a test's: no present, so a rig delivers its messages as they come
 	status      Status
 	written     time.Time
 	limitSaid   time.Time // the reset of the limit last said on the record
@@ -259,6 +264,7 @@ type turn struct {
 	tail     *outputTail
 	stamped  time.Time // when the daemon last stamped progress on the turn's card (stampProgress)
 	subjects string
+	present  bool // the present turn (present.go)
 }
 
 type result struct {
@@ -379,12 +385,19 @@ type loop struct {
 	reads        *readSet
 	mode         string // the mode the daemon delivers in now
 	saidNoLanes  bool
-	dealt        []string  // the inbox briefs the daemon wrote that the session has not been told of (batch mode)
-	wake         bool      // a wake check is owed: the pong line goes in as its own turn when the session is free (startWake)
-	saidRefusal  string    // the card runner's refusal last recorded, "" when it runs
-	tag          string    // this daemon's tag in its lanes' names on a lane mark (laneTag, one_lane.go)
-	seatHolder   string    // the seat holder as last read; empty while unknown
-	seatRead     time.Time // when it was read; zero before the first read
+	dealt        []string        // the inbox briefs the daemon wrote that the session has not been told of (batch mode)
+	wake         bool            // a wake check is owed: the pong line goes in as its own turn when the session is free (startWake)
+	saidRefusal  string          // the card runner's refusal last recorded, "" when it runs
+	tag          string          // this daemon's tag in its lanes' names on a lane mark (laneTag, one_lane.go)
+	seatHolder   string          // the seat holder as last read; empty while unknown
+	seatRead     time.Time       // when it was read; zero before the first read
+	presentDue   bool            // the present is owed: the session started, its id changed, or she asked (present.go)
+	presentAt    time.Time       // the store's time of the last present, named in the reason
+	lost         map[string]bool // entries the present superseded whose ack failed: superseded again when the claim hands them in
+	presentCarry *bus.Entry      // the note a present turn that failed carried, carried again by the next
+	presentRetry time.Time       // when a present whose turn failed is tried again
+	delivered    time.Time       // when the session last took a turn: the stale bound runs from it
+	session      string          // the session id as last read (Session)
 }
 
 // Run is the loop until ctx ends. Each step: the clock; the friend's row
@@ -415,6 +428,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 		l.brokenAfter = DefaultBrokenAfter
 	}
 	d.m = Start(d.Now())
+	l.presentDue, l.delivered = true, d.m.LastPing // a session start: the present comes first
 	if d.staging == nil {
 		d.staging, d.stageRetry, d.stageSaid, d.stageDealt = map[string]bool{}, map[string]time.Time{}, map[string]bool{}, map[string]string{}
 	}
@@ -435,6 +449,15 @@ func (d *Daemon) Run(ctx context.Context) error {
 			l.notice = nil
 		}
 		mode, width := l.row(now)
+		if d.Session != nil {
+			if s := d.Session(); s != l.session {
+				if l.session != "" {
+					d.Record(fmt.Sprintf("%s session: %s, was %s: the present is owed", now.UTC().Format(time.RFC3339), s, l.session))
+					l.presentDue = true
+				}
+				l.session = s
+			}
+		}
 		drained := l.busy == nil // this step's read takes what is pending: a wake turn never jumps a message
 		storeOK := l.read(now)
 		if ctx.Err() != nil {
@@ -464,9 +487,14 @@ func (d *Daemon) Run(ctx context.Context) error {
 		switch {
 		case l.broken:
 		case l.mode == ModeOneShot:
+			if l.presentOwed(now) {
+				l.startPresent(now, false)
+			}
 			l.laneStep(now, width)
 			l.readStep(now)
 			d.status.Lanes = l.lanes.said(width)
+		case (l.busy == nil || !l.busy.running) && l.presentOwed(now):
+			l.startPresent(now, true)
 		case l.busy == nil && len(l.hand) > 0:
 			l.startBatch(now)
 		case l.busy == nil && len(l.dealt) > 0:
@@ -730,7 +758,28 @@ func (l *loop) read(now time.Time) bool {
 		e, ok, err := b.Recv(l.ctx, d.Friend, block)
 		for err == nil && ok {
 			msg := e.Message()
-			if nonce, seat, since, isPing := ParsePing(msg.Body); isPing {
+			if l.lost[e.Entry] && !l.inHand[e.Entry] {
+				// superseded by the present, its ack lost, handed in again by the claim: superseded again, never delivered
+				d.Record(fmt.Sprintf("%s superseded id=%s subject=%q: %s", now.UTC().Format(time.RFC3339), msg.ID, msg.Subject, SupersededReason(l.presentAt)))
+				if _, aerr := b.AckEntry(l.ctx, d.Friend, e.Entry); aerr != nil {
+					err = aerr
+					break
+				}
+				delete(l.lost, e.Entry)
+			} else if nonce, seat, since, isPing := ParsePing(msg.Body); isPing && l.staleNonce(msg) {
+				if l.presentDue {
+					// the present is owed: it supersedes the expired nonce, and counts it
+					l.hand = append(l.hand, e)
+					l.inHand[e.Entry] = true
+				} else {
+					// a nonce past the challenge window: dropped, never answered
+					d.Record(fmt.Sprintf("%s ping %s dropped: sent %s, past the %s challenge window; not answered", now.UTC().Format(time.RFC3339), nonce, msg.At.UTC().Format(time.RFC3339), d.m.Window))
+					if _, aerr := b.AckEntry(l.ctx, d.Friend, e.Entry); aerr != nil {
+						err = aerr
+						break
+					}
+				}
+			} else if isPing {
 				// answered by the daemon, never pushed in: the transport is proved, and a ping is no turn
 				l.ping(e, msg, nonce, seat, since, now)
 				if _, aerr := b.AckEntry(l.ctx, d.Friend, e.Entry); aerr != nil {
@@ -746,6 +795,9 @@ func (l *loop) read(now time.Time) bool {
 					break
 				}
 			} else if !l.inHand[e.Entry] {
+				if IsPresentRequest(d.Friend, msg) && !d.noPresent {
+					l.presentDue = true // acked with the backlog by the present
+				}
 				l.hand = append(l.hand, e)
 				l.inHand[e.Entry] = true
 			}
@@ -776,7 +828,7 @@ func (l *loop) read(now time.Time) bool {
 		d.status.StoreError = ""
 		for _, e := range fresh {
 			msg := e.Message()
-			if nonce, seat, since, isPing := ParsePing(msg.Body); isPing {
+			if nonce, seat, since, isPing := ParsePing(msg.Body); isPing && !l.staleNonce(msg) {
 				// the machine sees the ping when the daemon does: a turn longer than a window is no silence
 				l.ping(e, msg, nonce, seat, since, now)
 			}
@@ -1062,6 +1114,8 @@ func (l *loop) batchDone(r result, now time.Time) {
 	}
 	ok := r.err == nil && r.exit == 0 && !r.t.stopped
 	line += l.settle(r.t, ok, r.err, now)
+	l.delivered = now // the session took a turn: the stale bound runs from here
+	l.presentEnded(r.t, ok, now)
 	if ok && l.unable != "" {
 		line += fmt.Sprintf("\n%s session=ok: a turn succeeded after %d refused; no longer %s", now.UTC().Format(time.RFC3339), l.unableTries, l.unable)
 		l.unable, l.unableTries, l.told = "", 0, false

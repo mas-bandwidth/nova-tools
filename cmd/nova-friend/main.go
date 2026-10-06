@@ -380,7 +380,14 @@ command (claude, the surveyed ones) is refused at once, exit 2, the adapter card
 CHECK goes in through the harness and its pong must reach the bus within ` + friend.ProofWithin.String() + `, else exit 2 with the remedy
 (a dsh session under an agent preset: start a session in <dir> with no agent preset and name it with
 --session <id>). Every beat carries the session's last proof (--pong), and the sprint deals nothing to a
-friend whose proof has lapsed. Each second, when the session is free: every waiting
+friend whose proof has lapsed. The present comes first, the backlog never does: on the
+daemon's start (once the first beat says her row's mode), after ` + friend.StaleAfter.String() + ` with no turn taken, and when she
+sends herself a message with the subject present, the next turn is one PRESENT turn (her live queue from her
+row or inbox/QUEUE.json, each card's column and BRIEF.md, the seat, the newest coordinator note, and one line
+Skipped: n deals, n pings, n notes); every older message is acked "superseded by the present at <time>", said
+on the record and to the seat on the bus, and a PING past the ` + friend.Window.String() + ` challenge window is dropped, never
+answered. A report on a card no longer on her row is never finished; the record names who holds it now.
+Each second, when the session is free: every waiting
 message read off the stream and pushed in as ONE turn, oldest first (at most ` + fmt.Sprint(friend.MaxBatch) + `; the rest is the next
 turn), acked together when the turn ends at exit 0; a turn that fails leaves them pending, handed in
 again when their claims open, and the third failure acks a message, given_up=true on the record. A
