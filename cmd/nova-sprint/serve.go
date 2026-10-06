@@ -104,8 +104,9 @@ func workerVerb(argv []string) (as string, words int, why string) {
 		return "", 0, "it does not begin `" + verb + " --as <worker>`: a worker's verb names its worker first"
 	}
 	as, rest = rest[1], rest[2:]
-	if !sprint.ValidID(as) {
-		return "", 0, "a worker's verb names one worker (letters, digits, _ and -), found " + as
+	// a friend's row is a worker (friend.<name>: her session's take, progress and finish)
+	if name, ok := sprint.FriendOfRow(as); !sprint.ValidID(as) && (!ok || !sprint.ValidID(name)) {
+		return "", 0, "a worker's verb names one worker (letters, digits, _ and -, or friend.<name>), found " + as
 	}
 	for _, w := range rest {
 		if !strings.HasPrefix(w, "-") {

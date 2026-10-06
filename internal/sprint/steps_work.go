@@ -1121,13 +1121,26 @@ func takeOne(s *Snapshot, r TakeReq) Plan {
 	if !named(sel) && sel.Limit == 0 {
 		sel.Limit = 1
 	}
-	if !s.Fleet.HasRow(r.As) {
+	// a friend's row is a worker as a member is (docs/SPEC-SPRINT.md section 1, a friend
+	// takes her own ready cards): her status and her lanes are her friends row's
+	// (friendTakeSeat), never a member's control card, which her row has none of
+	width, worker := s.Width(r.As), "member"
+	if friend, ok := FriendOfRow(r.As); ok {
+		seat, why := friendTakeSeat(s, friend)
+		if why != "" {
+			for _, id := range sel.IDs {
+				p.refuse(id, why)
+			}
+			return p
+		}
+		_, width = friendRoom(seat)
+		worker = "friend"
+	} else if !s.Fleet.HasRow(r.As) {
 		for _, id := range sel.IDs {
 			p.refuse(id, "no fleet member "+r.As)
 		}
 		return p
-	}
-	if st := s.MemberCtl(r.As).F("status"); st != Up {
+	} else if st := s.MemberCtl(r.As).F("status"); st != Up {
 		for _, id := range sel.IDs {
 			p.refuse(id, "member "+r.As+" is "+orDash(st))
 		}
@@ -1137,7 +1150,7 @@ func takeOne(s *Snapshot, r TakeReq) Plan {
 	// THE WIDTH IS HARD: a member's working cards never pass its width, held here, at the
 	// sprint's one writer, whatever the member asks. A take by
 	// count is cut to the room; a take by id past it is refused.
-	room := max(s.Width(r.As)-len(s.Fleet.Cell(r.As, Working)), 0)
+	room := max(width-len(s.Fleet.Cell(r.As, Working)), 0)
 	if !byID {
 		if room == 0 {
 			return p
@@ -1166,14 +1179,18 @@ func takeOne(s *Snapshot, r TakeReq) Plan {
 		}
 		if byID {
 			if room == 0 {
-				return fmt.Sprintf("member %s is at its width (%d working of %d): a card is taken when one is reported", r.As, len(s.Fleet.Cell(r.As, Working)), s.Width(r.As))
+				return fmt.Sprintf("%s %s is at its width (%d working of %d): a card is taken when one is reported", worker, r.As, len(s.Fleet.Cell(r.As, Working)), width)
 			}
 			room--
 		}
 		return ""
 	}, s.Fleet.Card)
 	for _, c := range chosen {
-		p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{change(Fleet, moveEntry(c, c.Row, Working, takenStamps(c, s.Now), "untaken_since"))},
+		set, unset := takenStamps(c, s.Now), []string{"untaken_since"}
+		if friend, ok := FriendOfRow(r.As); ok {
+			set, unset = friendTaken(s, c, friend) // her deadline, as her deal and her next set it
+		}
+		p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{change(Fleet, moveEntry(c, c.Row, Working, set, unset...))},
 			Moved: fmt.Sprintf("%s fleet ready -> working member=%s gen=%s", c.ID, r.As, c.F("gen"))})
 	}
 	return p

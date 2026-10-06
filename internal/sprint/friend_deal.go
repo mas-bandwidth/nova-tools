@@ -291,6 +291,27 @@ func friendDeal(s *Snapshot, cards []*Card, seats []FriendSeat) (p Plan, dealt, 
 		}
 	}
 	slices.Sort(up)
+	// in batch mode the deal takes her ready cards first: a lane free on her row (a width
+	// raised, a level or a take-back that left her working fewer than her width) is filled
+	// from her oldest ready card before any new card is dealt to it, so a card on her row
+	// never sits ready while she has a lane free (docs/SPEC-SPRINT.md section 1, a friend
+	// takes her own ready cards; tla/FriendReadyTake.tla, FilledAfterTick); in one-shot
+	// mode her daemon or her session takes it
+	for _, name := range up {
+		if seat[name].Mode == config.FriendModeOneShot || lanes[name] <= 0 {
+			continue
+		}
+		row := FriendRow(name)
+		ready := append([]*Card(nil), s.Fleet.Cell(row, Ready)...)
+		SortCards(ready)
+		for _, c := range ready[:min(lanes[name], len(ready))] {
+			set, unset := friendTaken(s, c, name)
+			p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{change(Fleet, moveEntry(c, row, Working, set, unset...))},
+				Moved: fmt.Sprintf("%s %s:ready -> working (taken by the deal: a lane of hers was free)", c.ID, row)})
+			lanes[name]--
+			dealtWorking[name]++
+		}
+	}
 	members := s.UpMembers()
 	declared := map[string]bool{}
 	for _, c := range cards {

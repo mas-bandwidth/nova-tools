@@ -722,7 +722,7 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 		// an idle lane is filled and a backlog evens itself without the coordinator, at most
 		// FriendLevelPerTick cards a tick (docs/SPEC-SPRINT.md section 1,
 		// friend-deal-idle-lanes-first.w1)
-		lp := friendLevel(s, FriendLevelReq{Seats: r.Friends, Who: r.who(), Max: FriendLevelPerTick}, dealt, dealtWorking)
+		lp := friendLevel(s, FriendLevelReq{Seats: r.Friends, Who: r.who(), Max: FriendLevelPerTick, Taken: fp.Units}, dealt, dealtWorking)
 		for _, row := range lp.Rows {
 			if !slices.Contains(p.Rows, row) {
 				p.Rows = append(p.Rows, row)
@@ -1065,6 +1065,10 @@ func TickDeadlines(s *Snapshot, r TickReq) (Plan, int) {
 	// withdrawn counts.
 	for _, c := range s.Fleet.Column(Ready, Working, Withdrawn) {
 		field, limit, word, own := WorkDeadline(s, c)
+		friend, idle := friendLaneIdle(s, r.Friends, c)
+		if idle {
+			limit = FriendReadyMax // ready on her row while she has a lane free: no one is taking it
+		}
 		at, ok := late(field, c, limit)
 		if !ok {
 			continue
@@ -1077,6 +1081,12 @@ func TickDeadlines(s *Snapshot, r TickReq) (Plan, int) {
 		what := fmt.Sprintf("%s %s at %s, %s; at %s", c.ID, strings.TrimPrefix(field, "first_"), at, word, placeOf(c))
 		decisions := []string{"wait", "drop"}
 		switch {
+		case idle && word == WordNeverTaken:
+			// a friend's card ready with a lane of hers free: neither the deal (batch mode)
+			// nor her daemon or session (one-shot) took it (docs/SPEC-SPRINT.md section 1, a
+			// friend takes her own ready cards)
+			what = fmt.Sprintf("%s %s, at %s (dealt %s, ready over %s while friend %s has a lane free)", c.ID, word, placeOf(c), at, limit, friend)
+			decisions = []string{"friend take " + friend + " " + c.ID, "wait"}
 		case word == WordNeverTaken && c.Col == Ready:
 			// dealt and waiting in a member's queue past the dealt bound: the
 			// queue's, so the answers are the fleet's (nova-tools#5096 item 22)
