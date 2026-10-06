@@ -86,9 +86,10 @@ func runCost(out string) float64 {
 }
 
 // argv is the run: the program (through env when the friend has her own
-// config directory, so no shell and no inherited account), -p and the trim,
-// the session flag, and the text.
-func (c *Claude) argv(session flagPair, text string) (name string, args []string) {
+// config directory, so no shell and no inherited account), -p, the model
+// when one is named (before the trim: --tools takes every argument after
+// it), the trim, the session flag, and the text.
+func (c *Claude) argv(session flagPair, model, text string) (name string, args []string) {
 	var run []string
 	if c.ConfigDir != "" {
 		name, run = "env", []string{"CLAUDE_CONFIG_DIR=" + c.ConfigDir, c.program()}
@@ -96,6 +97,9 @@ func (c *Claude) argv(session flagPair, text string) (name string, args []string
 		name = c.program()
 	}
 	run = append(run, "-p", "--output-format", "stream-json", "--verbose")
+	if model != "" {
+		run = append(run, "--model", model)
+	}
 	run = append(run, ClaudeTrim...)
 	if session.flag != "" {
 		run = append(run, session.flag, session.id)
@@ -109,8 +113,8 @@ type flagPair struct{ flag, id string }
 
 // turn runs one `claude -p`, prices it, reads its limit and says both on the
 // record. A limit that stops the lanes is UsageLimited, whatever the exit.
-func (c *Claude) turn(ctx context.Context, id string, session flagPair, text string) (LaneTurn, error) {
-	name, args := c.argv(session, text)
+func (c *Claude) turn(ctx context.Context, id string, session flagPair, model, text string) (LaneTurn, error) {
+	name, args := c.argv(session, model, text)
 	out, exit, err := c.Run(ctx, c.Dir, name, args, "")
 	if err != nil {
 		return LaneTurn{Exit: exit}, err
@@ -154,7 +158,7 @@ func (c *Claude) OpenSession(ctx context.Context, seed string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	lt, err := c.turn(ctx, id, flagPair{"--session-id", id}, seed)
+	lt, err := c.turn(ctx, id, flagPair{"--session-id", id}, "", seed)
 	if err != nil {
 		return "", err
 	}
@@ -166,7 +170,19 @@ func (c *Claude) OpenSession(ctx context.Context, seed string) (string, error) {
 
 // DeliverTo is one card's turn in a lane's session: `claude -p --resume <id>`.
 func (c *Claude) DeliverTo(ctx context.Context, id, text string) (LaneTurn, error) {
-	return c.turn(ctx, id, flagPair{"--resume", id}, text)
+	return c.turn(ctx, id, flagPair{"--resume", id}, "", text)
+}
+
+// RunRead is one read of the friend's reader row (ReadHarness;
+// docs/SPEC-FRIEND.md, the reader row): a session of its own named by a
+// fresh uuid, the prompt its only turn, on model ("" is the account's own),
+// priced and its limit read as a card's turn is.
+func (c *Claude) RunRead(ctx context.Context, model, prompt string) (LaneTurn, error) {
+	id, err := newUUID()
+	if err != nil {
+		return LaneTurn{}, err
+	}
+	return c.turn(ctx, id, flagPair{"--session-id", id}, model, prompt)
 }
 
 // Deliver is the batch turn: into the named session, else the newest of the
@@ -176,7 +192,7 @@ func (c *Claude) Deliver(ctx context.Context, text string) (int, error) {
 	if c.Session != "" {
 		pair = flagPair{"--resume", c.Session}
 	}
-	lt, err := c.turn(ctx, c.Session, pair, text)
+	lt, err := c.turn(ctx, c.Session, pair, "", text)
 	return lt.Exit, err
 }
 

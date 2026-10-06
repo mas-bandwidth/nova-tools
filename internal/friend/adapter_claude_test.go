@@ -99,3 +99,49 @@ func TestAUsageLimitPausesTheLanesUntilItsResetAndLowersNoCap(t *testing.T) {
 	assert.Equal(t, 8, g.Cap(8), "no cap is lowered")
 	assert.Empty(t, g.PauseUntil(now.Add(time.Hour), "an earlier reset"), "a pause already past it changes nothing")
 }
+
+// A bud's reader runs on the same account the same way (docs/SPEC-FRIEND.md,
+// the Claude lanes, the reader row): a read is one trimmed `claude -p` in a
+// session of its own (--session-id), on the model of the read's tier placed
+// before --tools (which takes every argument after it), priced from its
+// result and its limit read, so a claude daemon's reader row needs no script.
+func TestAHeadlessClaudeRunsAReadAsOneShotOnItsTiersModelPricedLikeACard(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 10, 4, 18, 30, 0, 0, time.UTC)
+	fiveReset, sevenReset := now.Add(90*time.Minute), now.Add(50*time.Hour)
+	program, record := fakeClaude(t, claudeEvent("allowed", false, 0.42, 0.10, fiveReset, sevenReset), "0.0300")
+	cfg := t.TempDir()
+	var out strings.Builder
+	c := &Claude{Dir: t.TempDir(), ConfigDir: cfg, Run: RealExec, Program: program, Out: &out, Now: func() time.Time { return now }}
+	var reads ReadHarness = c
+
+	lt, err := reads.RunRead(t.Context(), ReadModels["heavy"], "read the card")
+	require.NoError(t, err)
+	assert.Zero(t, lt.Exit)
+	_, err = reads.RunRead(t.Context(), "", "read again")
+	require.NoError(t, err)
+
+	raw, err := os.ReadFile(record)
+	require.NoError(t, err)
+	calls := strings.Split(strings.TrimSpace(string(raw)), "\n")
+	require.Len(t, calls, 2)
+	for _, call := range calls {
+		assert.True(t, strings.HasPrefix(call, cfg+"|"), "the friend's own config directory: %s", call)
+		assert.Contains(t, call, "-p --output-format stream-json --verbose")
+		assert.Contains(t, call, "--session-id ", "a read is a session of its own")
+		assert.NotContains(t, call, "--resume")
+	}
+	assert.Contains(t, calls[0], "--verbose --model claude-opus-5-5 --strict-mcp-config", "the tier's model, before --tools")
+	assert.True(t, strings.HasSuffix(calls[0], " read the card"))
+	assert.NotContains(t, calls[1], "--model", "no model is the account's own")
+	cost, _ := c.Spent()
+	assert.InDelta(t, 0.06, cost, 1e-9, "every read priced from its result")
+	assert.Contains(t, out.String(), "claude: cost=$0.0300 total=$0.0600 five_hour=0.42")
+
+	program, _ = fakeClaude(t, claudeEvent("rejected", false, 1.0, 0.10, fiveReset, sevenReset), "0.0010")
+	c = &Claude{Dir: t.TempDir(), ConfigDir: cfg, Run: RealExec, Program: program, Now: func() time.Time { return now }}
+	_, err = c.RunRead(t.Context(), "", "read at the limit")
+	var limited UsageLimited
+	require.ErrorAs(t, err, &limited, "a read at the limit is the lanes' pause until the reset")
+	assert.True(t, limited.Until.Equal(fiveReset))
+}

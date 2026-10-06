@@ -855,13 +855,20 @@ server's `friend beat` accepts only `--running --working --queue --width
 --load --active --pong` (`friendBeatFlags`, `cmd/nova-sprint/serve.go`) and
 refuses any other flag, so a cost or a utilization flag sent from here would
 fail every beat; until the server takes them they are on the daemon's record
-only. (2) A bud's reader (`reader.zsh`: it beats `queue --as reader-<bud>`,
-begins asked reads up to a width, runs each as a trimmed `claude -p` with a
-model by the read's tier, and records `read --ok`, `--broken --finding` or
-`--return`) is not a nova-friend verb yet: its loop drives the sprint's read
-verbs, not cards, and no lane here takes reads. The one call a reader makes
-can be `Claude`'s, so it would be priced and limited the same way; the
-reader's loop is its own card.
+only. (2) No live `claude` or `opencode` run checks these shapes: the tests use
+fakes, and the `opencode export` fields read (`messages[].info.role`, `cost`)
+are unchecked against a live opencode.
+
+A bud's reader is the same account read the same way: the loop `reader.zsh`
+ran is the daemon's reader row (friend-lanes-read-c-r2.w1, below), and its one
+call on a claude account is `Claude.RunRead` (a `ReadHarness`): `claude -p`
+with `--model <the tier's model>` (`ReadModels`; none is the account's own)
+placed before the trim, since `--tools` takes every argument after it, in a
+session of its own (`--session-id <uuid>`), priced and its limit read as a
+card's turn is, one `claude:` line per read. A rejected event is
+`UsageLimited`: the reader row hands the error to the governor
+(`providerLimit`), so a read at the limit pauses the lanes until its reset.
+`TestAHeadlessClaudeRunsAReadAsOneShotOnItsTiersModelPricedLikeACard`.
 
 ### rate-limit-backs-off-not-down.w1 — a rate limit backs off; out of funds holds
 
@@ -1022,9 +1029,7 @@ TestAReadThatMeetsAUsageLimitIsReturnedAndTheLanesBackOff.
 Not done here: the judgment when an asked read waits past a bound (the sprint tick's, in
 internal/sprint, outside this card's paths); `nova-config friend set --read-slots` and the
 beat's `row_read_slots=` (card read-slots-delivered-like-cards-w, on its own branch, not in this
-base: until it lands the daemon runs `DefaultReadSlots`); a claude one-shot harness's `RunRead`
-(card claude-oneshot-lanes-cb, likewise unlanded: a claude daemon cannot run a read until it
-lands); a read begun by a daemon that then died is not returned by the next one; the loops are
+base: until it lands the daemon runs `DefaultReadSlots`); a read begun by a daemon that then died is not returned by the next one; the loops are
 retired by simp-retire-bud-runners-r and simp-retire-opencode-runners-r.
 
 ### buds-in-the-wall-r.w5 — every lane child runs inside a wall profile
