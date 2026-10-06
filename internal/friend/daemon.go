@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -25,7 +26,9 @@ const BeatEvery = time.Second
 // the last failure acks it, with the failure on the record, so a message the
 // session cannot take never comes back for ever. A turn the provider refused
 // (ProviderRefused) counts toward nothing here: the session is at fault, not
-// the message, and BrokenAfter says what happens instead.
+// the message, and BrokenAfter says what happens instead. A deferral (a rate
+// limit) counts toward nothing either (docs/SPEC-FRIEND.md, the loop: a broken
+// session; tla/Delivery.tla, Fail).
 const MaxDeliveries = 3
 
 // RecheckEvery is how long the daemon waits before trying a deferred
@@ -128,6 +131,13 @@ type Daemon struct {
 	SilentStop  time.Duration
 	BrokenAfter int
 	Coordinator string
+	// LoadDelivery and SaveDelivery are the delivery record in the state file
+	// (ReadDelivery, WriteDelivery): the daemon loads it as it starts, so a
+	// restart keeps the failed counts and the broken mark, saves it whenever it
+	// changes, and while broken reads it each step, so a reset that cleared the
+	// mark lifts it. Both nil: the record lives in memory only.
+	LoadDelivery func() (Delivery, bool, error)
+	SaveDelivery func(Delivery) error
 	// Row is the friend's nova-config row as the daemon last read it (from
 	// its beat): her delivery mode (ModeBatch or ModeOneShot) and width,
 	// read every step so a change takes effect without a restart; nil, or
@@ -359,11 +369,12 @@ type loop struct {
 	retry        time.Time       // when the deferred turn in hand is tried again; zero while none is
 	deferrals    int
 	deferSaid    time.Time
-	refusal      string // the last provider refusal, and how many turns in a row said it
-	streak       int
+	streak       int       // provider refusals in a row, no success between (Delivery.Streak)
+	streakFirst  time.Time // the first of them
 	broken, told bool
-	unable       string // the reason the session cannot take a turn (SessionRefused), "" when it can; cleared by a turn that succeeds
-	unableTries  int    // the turns refused for it since
+	mark         BrokenMark // the broken mark, while broken
+	unable       string     // the reason the session cannot take a turn (SessionRefused), "" when it can; cleared by a turn that succeeds
+	unableTries  int        // the turns refused for it since
 	results      chan result
 	lanes        *laneSet
 	reads        *readSet
@@ -375,6 +386,7 @@ type loop struct {
 	tag          string    // this daemon's tag in its lanes' names on a lane mark (laneTag, one_lane.go)
 	seatHolder   string    // the seat holder as last read; empty while unknown
 	seatRead     time.Time // when it was read; zero before the first read
+	saved        *Delivery // the delivery record as last written
 }
 
 // Run is the loop until ctx ends. Each step: the clock; the friend's row
@@ -403,6 +415,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 		l.brokenAfter = DefaultBrokenAfter
 	}
 	d.m = Start(d.Now())
+	l.loadDelivery()
 	if d.staging == nil {
 		d.staging, d.stageRetry, d.stageSaid, d.stageDealt = map[string]bool{}, map[string]time.Time{}, map[string]bool{}, map[string]string{}
 	}
@@ -410,6 +423,9 @@ func (d *Daemon) Run(ctx context.Context) error {
 	d.status = Status{Friend: d.Friend, Harness: d.Harness, Started: d.m.LastPing, Width: d.Width}
 	if !l.passive {
 		d.status.Session = SessionOK
+	}
+	if l.broken {
+		d.status.Session, d.status.SessionID, d.status.SessionReason, d.status.BrokenAt = SessionBroken, l.mark.SessionID, l.mark.Reason, l.mark.At
 	}
 	for ctx.Err() == nil {
 		now := d.Now()
@@ -447,6 +463,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 			l.mode = mode
 		}
 		d.status.Mode = l.mode
+		l.watchReset(now)
 		l.inboxStep(now) // before the lanes: a card written this step is handed this step
 		switch {
 		case l.broken:
@@ -465,9 +482,12 @@ func (d *Daemon) Run(ctx context.Context) error {
 			l.startTurn(l.busy, now, l.deliverBatch(l.busy))
 		}
 		if l.broken && !l.told {
-			l.told = d.tellBroken(ctx, l.b, fmt.Sprintf("The provider refused %d turns in a row the same way. The daemon delivers nothing into the session until it restarts; every message stays pending, none given up. Renew the session, then restart the daemon (nova-friend install again, or launchctl kickstart -k gui/<uid>/com.nova.friend-%s).", l.brokenAfter, d.Friend))
+			if l.told = d.tellBroken(ctx, l.b, l.mark); l.told {
+				l.mark.Told = true
+				l.saveDelivery()
+			}
 		} else if l.unable != "" && !l.told {
-			l.told = d.tellBroken(ctx, l.b, fmt.Sprintf("The session cannot take a turn: %s. The friend reads down; every message stays pending, none given up, and the daemon tries again every %s until a turn succeeds.", l.unable, RecheckEvery))
+			l.told = d.tellUnable(ctx, l.b, l.unable)
 		}
 		if storeOK {
 			if d.Activity != nil && (d.walked.IsZero() || now.Sub(d.walked) >= ActivityEvery) {
@@ -487,7 +507,9 @@ func (d *Daemon) Run(ctx context.Context) error {
 		}
 		if d.m.Challenge != Quiet { // the nonce says which challenge a pong answers; its at is the store's clock, never compared with ours
 			if p, found, err := d.Pong(); err == nil && found {
-				d.m.Pong(p.At, p.Nonce)
+				if d.m.Pong(p.At, p.Nonce) && l.broken {
+					l.clearBroken(now, "the session answered a pong")
+				}
 			}
 		}
 		d.flush(now)
@@ -899,9 +921,10 @@ func (l *loop) settle(t *turn, ok bool, err error, now time.Time) string {
 		delete(l.inHand, e) // acked below, or pending for the claim to hand in again
 	}
 	var refused ProviderRefused
+	defer l.saveDelivery()
 	switch {
 	case ok:
-		l.streak, l.refusal = 0, ""
+		l.streak, l.streakFirst = 0, time.Time{}
 		if len(t.entries) > 0 {
 			if _, err := d.Store.Ack(l.ctx, bus.StreamOf(d.Friend), d.Friend, t.entries...); err != nil {
 				d.status.StoreError = err.Error()
@@ -916,19 +939,18 @@ func (l *loop) settle(t *turn, ok bool, err error, now time.Time) string {
 		}
 	case errors.As(err, &refused) && !t.stopped:
 		// the session is at fault, not the messages: they stay pending, counted toward nothing
-		if refused.Reason == l.refusal {
-			l.streak++
-		} else {
-			l.refusal, l.streak = refused.Reason, 1
+		if l.streak == 0 {
+			l.streakFirst = now
 		}
+		l.streak++
 		line += fmt.Sprintf(" refused=%d/%d", l.streak, l.brokenAfter)
 		if l.streak >= l.brokenAfter && !l.broken {
-			l.broken = true
-			d.status.Session, d.status.SessionID, d.status.SessionReason, d.status.BrokenAt = SessionBroken, refused.Session, oneLine(refused.Reason, 200), now
+			l.broken, l.told = true, false
+			l.mark = BrokenMark{At: now, Reason: oneLine(refused.Reason, 200), SessionID: refused.Session, FirstSeen: l.streakFirst, Count: l.streak}
+			d.status.Session, d.status.SessionID, d.status.SessionReason, d.status.BrokenAt = SessionBroken, refused.Session, l.mark.Reason, now
 			line += " session=broken"
 		}
 	default:
-		l.streak, l.refusal = 0, ""
 		var given []string
 		for _, e := range t.entries {
 			l.failed[e]++
@@ -960,8 +982,8 @@ func (l *loop) settle(t *turn, ok bool, err error, now time.Time) string {
 		l.saidSilent = t.notice.Subject != "coordinator silent"
 	}
 	if l.broken && !l.told {
-		line += fmt.Sprintf("\n%s session %s broken: %s (%d turns in a row); delivering nothing into it until the daemon restarts, every message stays pending",
-			now.UTC().Format(time.RFC3339), d.status.SessionID, d.status.SessionReason, l.brokenAfter)
+		line += fmt.Sprintf("\n%s session %s broken: %s (%d turns in a row); delivering nothing into it until %s, every message stays pending",
+			now.UTC().Format(time.RFC3339), d.status.SessionID, d.status.SessionReason, l.brokenAfter, ResetRemedy(d.Friend, d.Dir))
 	}
 	return line
 }
@@ -1032,27 +1054,125 @@ func (l *loop) refusedTurn(t *turn, u SessionRefused, now time.Time) {
 		now.UTC().Format(time.RFC3339), t.subjects, len(t.entries), now.Sub(t.started).Round(time.Millisecond), reason, oneLine(u.Detail, 400), RecheckEvery))
 }
 
+// ResetRemedy is what clears a broken session once the session is fixed
+// (docs/SPEC-FRIEND.md, the loop: a broken session).
+func ResetRemedy(friend, dir string) string {
+	return fmt.Sprintf("fix the session, then: nova-friend reset --as %s --dir %s", friend, dir)
+}
+
+// BrokenSubject is the subject of the one message a broken session sends its coordinator.
+func BrokenSubject(friend string) string { return "session broken: " + friend }
+
 // tellBroken sends the coordinator one message that the session is broken:
-// to the seat the last ping named, else Coordinator. It answers whether
-// the word went out, or there was no one to tell (said on the record); a
-// send that fails is tried again the next step.
-func (d *Daemon) tellBroken(ctx context.Context, b *bus.Bus, why string) bool {
+// to the seat the last ping named, else Coordinator. The body is the refusal
+// line, when it was first seen, how many refusals there were and the remedy
+// (docs/SPEC-FRIEND.md, the loop: a broken session; tla/Delivery.tla, Tell).
+// It answers whether the word went out, or there was no one to tell (said on
+// the record); a send that fails is tried again the next step.
+func (d *Daemon) tellBroken(ctx context.Context, b *bus.Bus, m BrokenMark) bool {
+	body := fmt.Sprintf("refusal: %s\nfirst seen: %s\ncount: %d (the provider refused %d turns in a row; every message stays pending, none given up)\nremedy: %s\n",
+		m.Reason, m.FirstSeen.UTC().Format(time.RFC3339), m.Count, m.Count, ResetRemedy(d.Friend, d.Dir))
+	return d.tellSeat(ctx, b, BrokenSubject(d.Friend), body)
+}
+
+// tellUnable is tellBroken for a session that cannot take a turn at all
+// (SessionRefused): the daemon tries again until a turn succeeds.
+func (d *Daemon) tellUnable(ctx context.Context, b *bus.Bus, reason string) bool {
+	body := fmt.Sprintf("refusal: %s\nfirst seen: %s\ncount: %d\nremedy: the daemon tries again every %s until a turn succeeds; every message stays pending, none given up\n",
+		reason, d.status.BrokenAt.UTC().Format(time.RFC3339), 1, RecheckEvery)
+	return d.tellSeat(ctx, b, BrokenSubject(d.Friend), body)
+}
+
+func (d *Daemon) tellSeat(ctx context.Context, b *bus.Bus, subject, body string) bool {
 	to := d.m.Seat
 	if to == "" {
 		to = d.Coordinator
 	}
-	s := d.status
 	if to == "" {
 		d.Record("session broken, and no coordinator to tell: no ping has named the seat and --coordinator is not set")
 		return true
 	}
-	subject := fmt.Sprintf("friend %s: session %s broken: %s", d.Friend, s.SessionID, s.SessionReason)
-	body := subject + "\n" + why + "\n"
-	if _, err := b.Send(ctx, bus.Message{From: d.Friend, To: []string{to}, Subject: subject, Body: body}); err != nil {
+	if _, err := b.Send(ctx, bus.Message{From: d.Friend, To: []string{to}, Subject: subject, Body: subject + "\n" + body}); err != nil {
 		d.status.StoreError = "telling " + to + " the session is broken: " + err.Error()
 		return false
 	}
 	return true
+}
+
+// loadDelivery reads the delivery record as the daemon starts: the failed
+// counts, the refusal streak and the broken mark all survive a restart
+// (tla/Delivery.tla, Restart). A record that cannot be read is said and
+// the daemon starts with none.
+func (l *loop) loadDelivery() {
+	d := l.d
+	if d.LoadDelivery == nil {
+		return
+	}
+	rec, found, err := d.LoadDelivery()
+	if err != nil {
+		d.Record(d.Now().UTC().Format(time.RFC3339) + " delivery record: " + err.Error() + "; starting with none")
+		return
+	}
+	if !found {
+		return
+	}
+	for e, n := range rec.Failed {
+		l.failed[e] = n
+	}
+	l.streak, l.streakFirst = rec.Streak, rec.StreakFirst
+	if rec.Broken != nil {
+		l.broken, l.mark, l.told = true, *rec.Broken, rec.Broken.Told
+	}
+}
+
+// saveDelivery writes the delivery record when it differs from the last write.
+func (l *loop) saveDelivery() {
+	d := l.d
+	if d.SaveDelivery == nil {
+		return
+	}
+	rec := Delivery{Streak: l.streak, StreakFirst: l.streakFirst}
+	if len(l.failed) > 0 {
+		rec.Failed = map[string]int{}
+		for e, n := range l.failed {
+			rec.Failed[e] = n
+		}
+	}
+	if l.broken {
+		m := l.mark
+		rec.Broken = &m
+	}
+	if l.saved != nil && reflect.DeepEqual(*l.saved, rec) {
+		return
+	}
+	l.saved = &rec
+	if err := d.SaveDelivery(rec); err != nil {
+		d.status.StoreError = "delivery record: " + err.Error()
+	}
+}
+
+// watchReset lifts the broken mark when the state file no longer holds it: a
+// reset ran (nova-friend reset).
+func (l *loop) watchReset(now time.Time) {
+	if !l.broken || l.d.LoadDelivery == nil {
+		return
+	}
+	rec, found, err := l.d.LoadDelivery()
+	if err != nil || !found || rec.Broken != nil {
+		return // no record, or the mark still stands
+	}
+	l.clearBroken(now, "reset")
+}
+
+// clearBroken lifts the broken mark (a reset, or the session's own pong): the
+// next delivery goes (tla/Delivery.tla, Clear).
+func (l *loop) clearBroken(now time.Time, why string) {
+	d := l.d
+	l.broken, l.told, l.mark = false, false, BrokenMark{}
+	l.streak, l.streakFirst = 0, time.Time{}
+	d.status.Session, d.status.SessionID, d.status.SessionReason, d.status.BrokenAt = SessionOK, "", "", time.Time{}
+	d.Record(fmt.Sprintf("%s session=ok: broken cleared by %s; deliveries go again", now.UTC().Format(time.RFC3339), why))
+	l.saveDelivery()
 }
 
 // seatOf is the seat a ping names, else its sender.

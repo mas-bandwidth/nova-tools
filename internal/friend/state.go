@@ -24,7 +24,10 @@ const (
 	StatusFile = "status.json"
 	PongFile   = "pong.json"
 	LogFile    = "deliver.log"
-	QueueFile  = "inbox/QUEUE.json"
+	// DeliveryFile is the daemon's delivery record: the failed-delivery counts and
+	// the broken mark, the part of the loop a restart keeps.
+	DeliveryFile = "delivery.json"
+	QueueFile    = "inbox/QUEUE.json"
 )
 
 // DaemonStale is how old the status file may be while the daemon counts
@@ -264,4 +267,70 @@ func Record(stateDir, line string) error {
 	defer f.Close() // ignored: a read-only file, nothing was written through it
 	_, err = f.WriteString(line + "\n")
 	return err
+}
+
+// Delivery is what the daemon keeps of its deliveries across a restart
+// (docs/SPEC-FRIEND.md, the loop: a broken session; tla/Delivery.tla, Restart):
+// how often each message's turn failed (a failure that is neither a deferral nor
+// a provider's refusal), the provider refusals in a row with the first one's
+// time, and the broken mark. One file, rewritten whole, written by the daemon
+// and cleared of its mark by reset.
+type Delivery struct {
+	Failed      map[string]int `json:"failed,omitempty"`
+	Streak      int            `json:"streak,omitempty"`
+	StreakFirst time.Time      `json:"streak_first,omitzero"`
+	Broken      *BrokenMark    `json:"broken,omitempty"`
+}
+
+// BrokenMark is a session marked broken: the provider refused BrokenAfter turns
+// in a row. FirstSeen is the first of those refusals, Count how many there were,
+// Told whether the coordinator has been sent its one message.
+type BrokenMark struct {
+	At        time.Time `json:"at"`
+	Reason    string    `json:"reason"`
+	SessionID string    `json:"session_id,omitempty"`
+	FirstSeen time.Time `json:"first_seen"`
+	Count     int       `json:"count"`
+	Told      bool      `json:"told,omitempty"`
+}
+
+func deliveryPath(stateDir string) string { return filepath.Join(stateDir, DeliveryFile) }
+
+// WriteDelivery is the daemon's write of its delivery record.
+func WriteDelivery(stateDir string, d Delivery) error { return write(deliveryPath(stateDir), d) }
+
+// ReadDelivery is the delivery record; found is false when there is none.
+func ReadDelivery(stateDir string) (d Delivery, found bool, err error) {
+	found, err = read(deliveryPath(stateDir), &d)
+	return d, found, err
+}
+
+// ClearBroken removes the broken mark from the delivery record and answers the
+// mark it removed; had is false when there was none (reset, docs/SPEC-FRIEND.md,
+// the loop: a broken session). The streak goes with it: the next refusal is the first.
+func ClearBroken(stateDir string) (mark BrokenMark, had bool, err error) {
+	d, found, err := ReadDelivery(stateDir)
+	if err != nil || !found || d.Broken == nil {
+		return BrokenMark{}, false, err
+	}
+	mark = *d.Broken
+	d.Broken, d.Streak, d.StreakFirst = nil, 0, time.Time{}
+	return mark, true, WriteDelivery(stateDir, d)
+}
+
+// brokenPresence is the presence file of a friend whose session is marked
+// broken: the presence as the session check saw it, down with the refusal as its
+// reason, and when the mark was made (docs/SPEC-FRIEND.md, the loop: a broken
+// session). A reader of PresenceStatus reads it as it does any other; the extra
+// field is the mark's time.
+type brokenPresence struct {
+	PresenceStatus
+	Broken time.Time `json:"broken"`
+}
+
+// WritePresenceBroken is WritePresence with the broken mark: Presence is down,
+// Reason the refusal line, and the file carries broken, the mark's time.
+func WritePresenceBroken(stateDir string, p PresenceStatus, m BrokenMark) error {
+	p.Presence, p.Reason = PresenceDown, m.Reason
+	return write(presencePath(stateDir), brokenPresence{PresenceStatus: p, Broken: m.At})
 }

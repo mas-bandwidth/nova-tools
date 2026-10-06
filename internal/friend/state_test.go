@@ -51,3 +51,43 @@ func TestTheStateFilesRoundTripAndTheQueueFileCounts(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "one\ntwo\n", string(raw))
 }
+
+// The delivery record round-trips, ClearBroken removes the mark and keeps the
+// counts, and a broken friend's presence file carries broken and the refusal as
+// its reason while a reader of PresenceStatus still reads it.
+func TestTheDeliveryRecordRoundTripsAndABrokenPresenceCarriesTheReason(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	_, found, err := ReadDelivery(dir)
+	require.NoError(t, err)
+	assert.False(t, found)
+	_, had, err := ClearBroken(dir)
+	require.NoError(t, err)
+	assert.False(t, had, "no record, nothing marked")
+	mark := BrokenMark{At: t0, Reason: "invalid_request_error: bad", SessionID: "ses_x", FirstSeen: t0.Add(-time.Minute), Count: 3, Told: true}
+	rec := Delivery{Failed: map[string]int{"1-1": 2}, Streak: 3, StreakFirst: t0.Add(-time.Minute), Broken: &mark}
+	require.NoError(t, WriteDelivery(dir, rec))
+	got, found, err := ReadDelivery(dir)
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.Equal(t, rec, got)
+	cleared, had, err := ClearBroken(dir)
+	require.NoError(t, err)
+	assert.True(t, had)
+	assert.Equal(t, mark, cleared)
+	got, _, err = ReadDelivery(dir)
+	require.NoError(t, err)
+	assert.Nil(t, got.Broken)
+	assert.Equal(t, map[string]int{"1-1": 2}, got.Failed)
+	assert.Zero(t, got.Streak)
+
+	require.NoError(t, WritePresenceBroken(dir, PresenceStatus{Friend: "bob", Presence: PresenceUp, At: t0}, mark))
+	p, found, err := ReadPresence(dir)
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.Equal(t, PresenceDown, p.Presence)
+	assert.Equal(t, mark.Reason, p.Reason)
+	raw, err := os.ReadFile(filepath.Join(dir, PresenceFile))
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), `"broken": "`+t0.Format(time.RFC3339))
+}

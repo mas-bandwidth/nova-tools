@@ -8,6 +8,10 @@ MCCairnStoreBrokenOverwrite.cfg	MCCairnStore.tla	invariant	NoOverwrite	ignore-te
 MCCairnStoreBrokenPublishedWithoutPersisted.cfg	MCCairnStore.tla	invariant	PublishedImpliesPersisted	ignore-terminal	cairnstore	required	-
 MCCairnStoreBrokenReportBeforeFsync.cfg	MCCairnStore.tla	invariant	DurableBeforeReported	ignore-terminal	cairnstore	required	-
 MCCardMachine.cfg	MCCardMachine.tla	pass	-	ignore-terminal	cardmachine	bench	layer-2-original-instance-over-budget
+MCDelivery.cfg	MCDelivery.tla	pass	-	ignore-terminal	delivery	required	-
+MCDeliveryBrokenTwoTurns.cfg	MCDelivery.tla	invariant	AtMostOneDelivering	ignore-terminal	delivery	required	-
+MCDeliveryBrokenDeliverWhileBroken.cfg	MCDelivery.tla	invariant	NothingDeliveringWhileBroken	ignore-terminal	delivery	required	-
+MCDeliveryBrokenDeferralCounts.cfg	MCDelivery.tla	invariant	FailsCountPlainOnly	ignore-terminal	delivery	required	-
 MCEpochMemberBroken.cfg	MCEpochMemberTable.tla	invariant	NoEpochLeak	ignore-terminal	epochmembertable	required	-
 MCEpochMemberBrokenStale.cfg	MCEpochMemberTable.tla	action	StaleWritesRefuse	ignore-terminal	epochmembertable	required	-
 MCEpochMemberFixedPoint.cfg	MCEpochMemberTable.tla	pass	-	ignore-terminal	epoch-fixed-point	required	-
