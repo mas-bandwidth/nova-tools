@@ -845,13 +845,14 @@ func (w world) run(c *tool.Call) *tool.Out {
 		if alias := filepath.Join(w.home, name+"-working"); fileThere(alias) {
 			oc.Allow = append(oc.Allow, alias)
 		}
+		deliver = &friend.OpenCodePriced{OpenCode: oc} // every lane run priced from her own session record
 	}
 	// her row, as her beat last answered it (nova-sprint friend beat: row_mode, row_width, row_config_dir)
 	rowMode, rowWidth := "", 0
 	var rowReadSlots atomic.Int64 // her row's read slots as her beat last answered; friend.DefaultReadSlots until it says
 	rowReadSlots.Store(friend.DefaultReadSlots)
 	if cl, ok := deliver.(*friend.Claude); ok {
-		cl.Friend = name
+		cl.Friend, cl.Now = name, w.now // every run's cost and limit on the record, its reset read on her clock
 		cl.ConfigDir = func() string {
 			if d := c.Str("config-dir"); d != "" {
 				return d // the override

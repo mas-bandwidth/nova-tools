@@ -379,8 +379,8 @@ toward nothing; a turn that hits a limit is `Deferred` the same way; the
 first delivery after the reset is a wake turn (`WakeText`) whose output must
 carry its nonce, six fresh characters each try, so only the session that ran
 this turn answers it; then `Up` with the nonce, and the message goes in. The
-usage is on the beat as `--five-hour <pct> --seven-day <pct>`
-(`Usage.BeatFlags`) for pacing to read.
+usage on the beat for pacing to read is owed: the sprint server's beat takes
+no usage flag yet (the Claude lanes, below).
 `TestALimitedHarnessIsDownUntilItsResetThenWoken`. Owed outside this layer
 (What is weak).
 
@@ -900,7 +900,8 @@ other harness a one-shot row is delivered in batch, said once in the record.
 
 A claude lane opens no session: each card is one headless run in the
 friend's directory, `env CLAUDE_CONFIG_DIR=<config_dir> claude -p <the
-brief> --output-format stream-json --verbose`, stdin from `/dev/null`, the
+brief> --output-format stream-json --verbose` and the trim (`ClaudeTrim`,
+the Claude lanes, below), stdin from `/dev/null`, the
 card's `BRIEF.md` the whole prompt (no bus message, pong line or notice rides
 with it; messages stay pending, the daemon reading nothing for a claude
 session, and pings are answered by the daemon as ever). `config_dir` is the
@@ -939,6 +940,70 @@ be written is said in the record and the turn goes ahead). The schema is
 OpenCode's documented permission map; it is not yet measured on a live lane.
 A refusal the turn's output still shows is the lane's `rejected=` on the
 record and the card's reason.
+
+### Claude lanes: a headless account runs one-shot lanes (internal/friend/adapter_claude.go)
+
+On 2026-10-04 four Claude Code accounts ran sprint cards through hand-written
+zsh runners and readers (`runner.zsh`, `reader.zsh`) that wrote PAUSED files
+on a limit and guessed reset times; the owner: "Golang nova-tools and
+nova-sprint verbs only". They are retired: `nova-friend run --harness claude
+--config-dir <dir> --width <n>` on a one-shot row is the lane (`Claude`, a
+`CardRunner`, each card a process of its own as above), and no script is
+needed. Every call is the trimmed one, `--strict-mcp-config
+--disable-slash-commands --no-chrome --tools Bash Read Write Edit Grep Glob`
+after the prompt and `--output-format stream-json --verbose` (`--tools`
+takes every argument after it, so it is last), which cut the context of each
+call from about 50k tokens to 12.7k (measured 2026-10-04). Each run's
+stream-json is read for its cost (the result line's `total_cost_usd`, summed
+per daemon, `Claude.Spent`) and its `rate_limit_event` (the five-hour and
+weekly utilization and each `resetsAt`, `ReadLimit`); both are one line on
+the daemon's record per run: `claude: run=<card> cost=$<run> total=$<sum>
+five_hour=<f> seven_day=<f> five_hour_resets=<t> seven_day_resets=<t>`. A
+rejected event is `UsageLimited`, whatever the run's exit: the card stays in
+the lane's hand counted toward nothing (a card whose RESULT.md is written is
+done all the same), and the governor pauses every new turn and open until
+the reset itself (`PauseUntil`, one record line `usage limit: lanes paused
+until <t> (its reset): <why>`), with no cap lowered and no backoff guessed.
+The same output is read by `Limits` under the run, so her row reads down
+until the reset. `TestAHeadlessClaudeLaneRunsACardPricesItAndReadsItsLimit`,
+`TestAUsageLimitPausesTheLanesUntilItsResetAndLowersNoCap`.
+
+The OpenCode lane is priced and stopped the same way
+(`internal/friend/adapter_opencode_lanes.go`). The daemon wraps an OpenCode
+friend in `OpenCodePriced`: after every lane run it reads opencode's own
+session record, `opencode export <session>` (the JSON from the first `{`, any
+line before it skipped), and the run's cost is what the session's assistant
+messages' `cost` gained since the last read, one line on the record per run:
+`opencode: session=<id> cost=$<run> total=$<sum>` (or `cost=- (its record was
+not read: <why>)`, and the turn stands). A limited run is priced too. An API
+friend has no five-hour or weekly window to read; her limit is what the run
+says: a rate limit backs off and out of funds holds (`ProviderLimit`, below),
+and a limit line with its reset beside it ("Insufficient AI Credits ... will
+refresh in 3 hours") is `UsageLimited` until that reset, the governor's
+`PauseUntil` as for a Claude lane, while `Limits` sends her down for the
+same reset. `TestAnOpenCodeLanePricesEveryRunFromItsSessionRecordAndPausesAtItsLimit`,
+and the daemon's wiring in
+`TestRunInOneShotModeOpensALaneAndHandsItTheCard`.
+
+Not here, owed: (1) cost and utilization on her beat and row: the sprint
+server's `friend beat` accepts only `--running --working --queue --width
+--load --active --pong` (`friendBeatFlags`, `cmd/nova-sprint/serve.go`) and
+refuses any other flag, so a cost or a utilization flag sent from here would
+fail every beat; until the server takes them they are on the daemon's record
+only. (2) No live `claude` or `opencode` run checks these shapes: the tests use
+fakes, and the `opencode export` fields read (`messages[].info.role`, `cost`)
+are unchecked against a live opencode.
+
+A bud's reader is the same account read the same way: the loop `reader.zsh`
+ran is the daemon's reader row (friend-lanes-read-c-r2.w1, below), and its one
+call on a claude account is `Claude.RunRead` (a `ReadHarness`): a card run's
+call with the read's prompt for the brief and `--model <the tier's model>`
+(`ReadModels`; none is the account's own) placed before the trim, refused
+like a card's with no `config_dir`, priced and its limit read as a card's
+run is, one `claude: run=(read)` line per read. A rejected event is
+`UsageLimited`: the reader row hands the error to the governor
+(`providerLimit`), so a read at the limit pauses the lanes until its reset.
+`TestAHeadlessClaudeRunsAReadAsOneShotOnItsTiersModelPricedLikeACard`.
 
 ### rate-limit-backs-off-not-down.w1 — a rate limit backs off; out of funds holds
 
@@ -1212,9 +1277,7 @@ TestAReadThatMeetsAUsageLimitIsReturnedAndTheLanesBackOff.
 Not done here: the judgment when an asked read waits past a bound (the sprint tick's, in
 internal/sprint, outside this card's paths); `nova-config friend set --read-slots` and the
 beat's `row_read_slots=` (card read-slots-delivered-like-cards-w, on its own branch, not in this
-base: until it lands the daemon runs `DefaultReadSlots`); a claude one-shot harness's `RunRead`
-(card claude-oneshot-lanes-cb, likewise unlanded: a claude daemon cannot run a read until it
-lands); a read begun by a daemon that then died is not returned by the next one; the loops are
+base: until it lands the daemon runs `DefaultReadSlots`); a read begun by a daemon that then died is not returned by the next one; the loops are
 retired by simp-retire-bud-runners-r and simp-retire-opencode-runners-r.
 
 ### buds-in-the-wall-r.w5 — every lane child runs inside a wall profile

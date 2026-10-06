@@ -719,6 +719,9 @@ func TestRunInOneShotModeOpensALaneAndHandsItTheCard(t *testing.T) {
 				}
 				return `[{"id":"ses_lane1","directory":"` + dir + `","updated":1}]`, 0, nil
 			}
+			if args[0] == "export" { // the run's price, from her session record
+				return `{"messages":[{"info":{"role":"assistant","cost":0.002}}]}`, 0, nil
+			}
 			runs = append(runs, strings.Join(args, " "))
 			return "ok\n", 0, nil
 		}
@@ -748,6 +751,7 @@ func TestRunInOneShotModeOpensALaneAndHandsItTheCard(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, "one-shot", s.Mode)
 		assert.Contains(t, out.String(), "lane=1 session=ses_lane1")
+		assert.Contains(t, out.String(), "opencode: session=ses_lane1 cost=$0.0020 total=$0.0020", "the daemon prices the lane's open from her session record")
 	})
 }
 

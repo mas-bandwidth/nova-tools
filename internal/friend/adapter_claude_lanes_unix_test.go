@@ -86,7 +86,7 @@ func TestClaudeOneShotLanePassesConfigDir(t *testing.T) {
 			assert.Empty(t, got, "stdin is /dev/null")
 			got, err = os.ReadFile(filepath.Join(rec, "args"))
 			require.NoError(t, err)
-			assert.Equal(t, []string{"-p", brief, "--output-format", "stream-json", "--verbose"}, strings.Split(strings.TrimSuffix(string(got), "\x00"), "\x00"), "the prompt is the brief")
+			assert.Equal(t, append([]string{"-p", brief, "--output-format", "stream-json", "--verbose"}, ClaudeTrim...), strings.Split(strings.TrimSuffix(string(got), "\x00"), "\x00"), "the prompt is the brief")
 			assert.Contains(t, out.String(), "nothing here is read", "the output goes to the record, and only there")
 		})
 	}
