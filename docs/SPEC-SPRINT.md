@@ -3720,8 +3720,8 @@ these kinds were open, some 3h39m old). One pure function decides
 (`sprint.RuleAnswers`, internal/sprint/rules.go): for every open judgment and subject, the
 rule that answers it and its act, or `left` (it needs a mind) or `off` (its rule is turned
 off), with why. The tick applies it in its end, after the checks and the deadlines and
-before the overdue part, as nine parts, each a step on a fresh read (`rule return`, `rule
-resume`, `rule twin`, `rule rework`, `rule late`, `rule take`, `rule ask`, `rule need`, `rule
+before the overdue part, as ten parts, each a step on a fresh read (`rule paths`, `rule
+return`, `rule resume`, `rule twin`, `rule rework`, `rule late`, `rule take`, `rule ask`, `rule need`, `rule
 brief`), so a judgment the end raises is
 answered in its own tick, and a conflict's three moves are made in one. Each answer is a
 verb the judgment's decisions name, applied as the machine; it closes the judgment with
@@ -3744,6 +3744,7 @@ rules` prints the same answers, read-only: one `RULE` line per judgment and subj
 | `read-broken` | a reader found it broken, on a card in review below its brief's bound | the next attempt (rework) on the same tier, the findings of the attempt's broken reads its fix (as `rework <card> --answers <id>` with no `--fix`); when the findings name a file outside the brief's PATHS (`sprint.FilesOutsidePaths`: a relative path with a directory and an extension of letters, read through quotes and a line number, that no PATHS name, glob or directory covers), the card is twinned instead (`rule twin`, as `recut --widen`: `add --replaces`), its brief's `PATHS:` lines widened by exactly those files and a `CARRY: <id> attempt <n> head=<sha>` line at the broken attempt's head, the findings the twin's `fix`, one card a tick. A card at its brief's bound (the same finding twice, or its attempts cap: the read raises `the brief is wrong` instead), a friend's card, a brief defect and a card whose twin ids are all taken are left; the coordinator sees only those and refusals (`TestABrokenReadIsReworkedByRuleWithItsFinding`; tla/SprintRules.tla Part `reads`: `ReadAnswersBounded`, `TwinsWiden`, `ReadAnswered`) |
 | `brief-defect` | a card has reached its bound: the brief is wrong, not the worker (the same finding twice, section 2) | the card marked (`brief_defect`), the judgment's text prefixed `brief defect: `, once; the judgment stays open (brief or drop) and no rule moves the card |
 | `base-gate` | (no judgment: the lander's) the base fails its tree gate at its tip | a queued head whose tree, merged onto that base alone, passes the same gate lands first as the base fix and the stream goes on (the base cure, below); with none, land gates that base commit again after 2 minutes and again after 5 (`sprint.BaseGateRetries`), each landing in between refused with the finding and when it is gated again; the third failure stops every stream that lands on it, `stream stopped: the base fails its tree gate` (`merge --base-red`), the judgment carrying the error; a green base is cached for its commit. With the rule off, a red base is cached for its commit as before (every landing refused until the base moves) |
+| `paths` | work came back failed (or at its bound or its attempt cap) and its report proposes PATHS: a `PATHS-PROPOSED:` line (docs/SPEC-CARD-CONTRACT.md section 4), read off its work card's report; checked before the judgment's own rule, so the same brief is never dealt again on the same proposal | no proposed glob SHARED (named on the `PATHS:` or `SHARED:` line of another open card, or on the card's own `SHARED:` line): the card replaced by its twin (`recut`, so dependents need the twin), its id the old one with `-t` (`-t2` to `-t9` after it), its brief every `PATHS:` line widened by the proposed globs it lacked and a `CARRY:` line naming the held attempt's pushed head; the judgment closed with `answered by rule paths: <id> attempt <n> held with PATHS-PROPOSED: <globs>: replaced by <twin>, ...`. A proposed glob SHARED: the judgment stays the one judgment, its text prefixed `paths proposed, shared: a mind's; ...` with the shared globs and the cards that name them and the complete command `nova-sprint add --stream <s> --replaces <id> --before <id> --brief-file <file> [--needs ...] [--held]`, the twin's brief written by the machine at `<jobs>/<id>/<twin>.md` (`NOVA_SPRINT_JOBS`, else `~/nova-sprint/jobs`), once (`paths_proposed` on the primary); the card is dealt nothing more. A proposal that climbs out of the repository, is no glob, or is inside its PATHS already is left, and not dealt again either |
 
 A failure many cards share is the fleet's, not the card's: when `RuleSameFailureCards` (3) or
 more cards hold the same failure class now (in review with their work failed that way, or
@@ -3763,6 +3764,20 @@ hour counts once). The tests are internal/sprint/store/rule_answers_test.go, int
 internal/sprint/judgment_rules_test.go,
 internal/sprint/rules_conflict_test.go and cmd/nova-sprint/base_gate_rule_test.go; the model is tla/SprintRules.tla (`RuleAnswersBounded`,
 `LadderClimbs`, `WaitOnce`, `BaseStopsOnThird`, `ReadAnswersBounded`, `TwinsWiden`).
+
+#### paths-proposed-answered-by-rule
+
+A HOLD that proposes PATHS is the tick's (the owner, 2026-10-05: "every step the coordinator
+did by hand today is a missing instruction"). That day five cards held three to five times
+each on the same PATHS blocker: the worker wrote `PATHS-PROPOSED:` in her report every time,
+the failed rule dealt the same brief again until the attempt bound, and the coordinator
+widened PATHS by hand through drop and `add --replaces`. The rule `paths` (internal/sprint,
+paths_proposed.go) answers the first such HOLD, before `failed`, `bound` or `brief-defect`
+can deal the brief again: its widened twin when no proposed file is SHARED, else one judgment
+carrying the twin's complete command and the brief file the machine wrote (the table's row).
+It is not yet in nova-config's `answer_rules_off` enum (`config.AnswerRules`, held equal to
+`sprint.RuleNames`): only `--answer-rules=false` turns it off. One twin is cut a tick.
+`TestAHoldWithPathsProposedCutsTheWidenedTwinByRule` drives the three cases on the twin store.
 
 #### v11-conflict-rule-in-tick-now.w1
 
