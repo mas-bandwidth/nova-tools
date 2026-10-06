@@ -2076,8 +2076,11 @@ the daemon), and `ping-uninstall` boots it out and removes the plist.
 
 The two shell while-loops this replaces (a routine `ping --to <f>` every 600 s over a typed
 list, and a `ping --wake` loop over a typed list) live on the coordinator's machine, not in this
-repository: the wake loop is this verb; the routine loop has no verb, because nothing it
-proves is wanted, and it is stopped there, not here.
+repository: the wake loop is this verb, and the routine loop is retired with no replacement,
+nothing it proves is wanted (docs/FRIENDS.md, "The coordinator's loops"), so no nova-tools
+verb runs it and none is to be added for it. Its last records — the stopgap register's
+friend-ping row and the coordinator's tools page's row — retire with the cards that own
+those files (docs/STOPGAPS.md, docs/COORDINATOR-TOOLS.md).
 
 Not done, and why: `serve` (above) is a different loop, the connection's own,
 each second and answered by the daemon; the daemon's "coordinator silent" window
