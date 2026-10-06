@@ -664,16 +664,7 @@ own session leader, its stdin `/dev/null` when there is no text for it (a
 headless `opencode run` with stdin left open hangs at init, measured
 2026-10-04); a stopped turn's whole process group is signalled, SIGTERM then
 SIGKILL, so a harness that forks leaves no orphan.
-Six adapters are real: OpenCode, `opencode run --session <id> <text>` with
-the friend's directory as the process's working directory, the newest session
-of the directory when none is named (the directory is never a flag: opencode
-v2.0.20's run has no `--dir`, and from 2026-10-06 02:02Z every delivery that
-passed one exited 1, "Unrecognized flag: --dir"; the daemon reads `opencode
---version` and `opencode run --help` once at start and refuses, one line naming
-the version, when the run verb lacks a flag the adapter passes, `--session` or
-`--model`, `OpenCode.CheckRun`; a help that lists no flag cannot tell and
-refuses nothing; `TestOpenCodeDeliverRunsInTheDirWithoutADirFlag`,
-`TestOpenCodeCheckRunRefusesARunLackingAFlagItPasses`); Codex,
+Six adapters are real: OpenCode, below; Codex,
 Antigravity and Grok, each below; and DSH and Gemini, from the harness survey
 at the end. A turn while a challenge is open carries, at its head, the exact `pong` line for
 this friend (the binary by path, the name, the directory, the store, the
@@ -683,6 +674,51 @@ stream (the session's own blocking read does), peeking so a ping is still
 answered by the daemon at once, beating, and recording a push it cannot
 deliver; so the tool is honest, and the beat and the daemon pong are real
 for it.
+
+### OpenCode
+
+A normal OpenCode TUI has no server a delivery can post into. Measured
+opencode 1.18.30: `packages/opencode/src/cli/cmd/tui.ts:234` runs the server
+in-process. The client URL is `http://opencode.internal` and the fetch never
+leaves the process, so nothing listens, and `opencode run --attach` has no
+peer. The server listens only when that TUI was started with `--port` or
+`--hostname`, or with mDNS on. Requiring any of those is a special launch,
+which this route does not. There is no control socket.
+
+While a TUI holds the friend's directory, `Deliver` returns Deferred and
+starts no `opencode run`. The message stays pending, tried again, counted
+toward nothing and never acked, for the session's own next turn. The reason
+names the proof and the line that turn runs, once, inside the session:
+`nova-bus wait --as <friend>` (`OpenCodeBusLine`). `OpenCode.Route` answers
+`defer` with that line. A look that cannot be read is `defer` too, never a
+run that might miss the open chat.
+
+The look is `OpenCode.TUI`, one value (`OpenCodeTUI`) a caller supplies.
+`openCodeTUIHeld` reads a listing and nothing else: each line is the process
+command, a tab, and its working directory; an `opencode` process with no
+subcommand, or `attach` or a flag, whose directory is the friend's, holds
+it. A subcommand (`run`, `serve`, `session`) does not. Nil `TUI` does not
+guess: delivery is the headless run below, which is what `NewDeliverer`
+leaves in place. No TUI is `opencode run --session <id> <text>` in the
+friend's directory, the newest session of that directory when none is named.
+The directory is never a flag: opencode v2.0.20's run has no `--dir`, and
+from 2026-10-06 02:02Z every delivery that passed one exited 1, "Unrecognized
+flag: --dir". The daemon reads `opencode --version` and `opencode run --help`
+once at start and refuses, one line naming the version, when the run verb
+lacks a flag the adapter passes, `--session` or `--model` (`OpenCode.CheckRun`);
+a help that lists no flag cannot tell and refuses nothing
+(`TestOpenCodeDeliverRunsInTheDirWithoutADirFlag`,
+`TestOpenCodeCheckRunRefusesARunLackingAFlagItPasses`). When a look was set
+and it found no TUI, the record says `answered by run, not by the open chat`,
+and `Route` answers `run`.
+
+When `TUI` is set, the daemon writes `presence route=defer` or
+`presence route=run`, with the bus line on a deferral, on its own record,
+once until the answer changes, so a deferral is not a silent loss. That line
+is not a field of the presence file. The ten live turns into an open chat
+are not met: a normal TUI has no server to post into. Pinned over a fake
+session by `TestOpenCodeDeliversIntoTheOpenTUISession` and
+`TestTheDaemonSaysDeferWhileAnOpenCodeTUIHoldsTheSession`.
 
 ### friend-idle-wake-r.w2: idle wake
 

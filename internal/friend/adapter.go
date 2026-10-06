@@ -253,19 +253,39 @@ func NewDeliverer(harness, dir, session string, run Exec, out io.Writer) (Delive
 	return nil, fmt.Errorf("%q is no harness; the harnesses are %s", harness, strings.Join(Harnesses, ", "))
 }
 
+// OpenCodeBusLine is the blocking read the open session runs on its next
+// turn while a TUI holds the directory. It is a command run once inside
+// the session, not a flag, an environment variable, or a wrapper at app start.
+const OpenCodeBusLine = "nova-bus wait --as <friend>"
+
+// OpenCodeTUI is one look at the friend's open session. A test fakes it.
+// Holds: a TUI process has the friend's directory. A normal TUI listens on
+// nothing, so this value carries no URL and nothing is posted into it.
+type OpenCodeTUI struct {
+	Holds bool
+}
+
 // OpenCode delivers through `opencode run --session <id> <text>` run with Dir
 // as its working directory (the process's, never a flag: opencode v2.0.20's
 // run has no --dir, and every delivery that passed one exited 1, "Unrecognized
 // flag: --dir", 2026-10-06), which blocks for the whole turn; without a
 // session named, the newest session whose directory is Dir, from `opencode
 // session list --format json`, so a friend who starts a fresh session is still
-// reached. CheckRun, at the daemon's start, refuses an opencode whose run
-// lacks a flag the adapter passes.
+// reached. While TUI says a TUI holds Dir, Deliver does not run: a normal
+// TUI (opencode 1.18.30, packages/opencode/src/cli/cmd/tui.ts:234) serves
+// http://opencode.internal in-process and listens only with --port,
+// --hostname or mDNS, so `opencode run --attach` has no peer, and the
+// message stays pending for the session's own next turn (OpenCodeBusLine).
+// Nil TUI skips that look, and delivery is the headless run. CheckRun, at
+// the daemon's start, refuses an opencode whose run lacks a flag the adapter
+// passes.
 type OpenCode struct {
 	Dir, Session string
 	Run          Exec
 	Program      string    // "opencode" when empty
 	Out          io.Writer // where the turn's output goes, when set: the daemon's record
+	// TUI reports the open session. Nil: no look, and delivery is the headless run.
+	TUI func(ctx context.Context) (OpenCodeTUI, error)
 	// Allow is every other path the friend's directory is reached by (a
 	// symlink in the home directory): with Dir and its real path, allowed in
 	// the project config before a turn (AllowDirs), so a headless run never
@@ -309,6 +329,13 @@ func NewestSession(listing, dir string) (string, error) {
 }
 
 func (o *OpenCode) Deliver(ctx context.Context, text string) (int, error) {
+	held, err := o.held(ctx)
+	if err != nil {
+		return 0, Deferred{Reason: o.deferReason("the open session could not be read: " + err.Error())}
+	}
+	if held {
+		return 0, Deferred{Reason: o.deferReason("")}
+	}
 	if o.Allow != nil {
 		o.allow()
 	}
@@ -326,12 +353,78 @@ func (o *OpenCode) Deliver(ctx context.Context, text string) (int, error) {
 		}
 	}
 	out, exit, err := o.Run(ctx, o.Dir, o.program(), []string{"run", "--session", id, text}, "")
+	if o.Out != nil && o.TUI != nil {
+		fmt.Fprintln(o.Out, "answered by run, not by the open chat")
+	}
 	if o.Out != nil && out != "" {
 		fmt.Fprintln(o.Out, strings.TrimRight(Head(out, OutputKept), "\n"))
 	}
 	exit, err = refused(id, out, exit, err)
 	o.turns.saw(id, exit, err)
 	return exit, err
+}
+
+// Route is what the daemon records. defer: a TUI holds Dir, or the look
+// could not be read; line is the bus read the session runs on its next
+// turn. run: no TUI holds Dir, so delivery is the headless run. Nil TUI
+// is run, never a guessed server.
+func (o *OpenCode) Route(ctx context.Context) (route, line string, err error) {
+	held, err := o.held(ctx)
+	if err != nil || held {
+		return "defer", OpenCodeBusLine, err
+	}
+	return "run", "opencode run --session <id> <text>", nil
+}
+
+func (o *OpenCode) held(ctx context.Context) (bool, error) {
+	if o.TUI == nil {
+		return false, nil
+	}
+	s, err := o.TUI(ctx)
+	if err != nil {
+		return false, err
+	}
+	return s.Holds, nil
+}
+
+func (o *OpenCode) deferReason(extra string) string {
+	s := "the opencode TUI in " + o.Dir + " listens on nothing (opencode 1.18.30, packages/opencode/src/cli/cmd/tui.ts:234: a normal TUI serves http://opencode.internal in-process and listens only with --port, --hostname or mDNS, which this route does not require), so opencode run --attach has no peer; the message stays pending for the session's next turn; in that session run: " + OpenCodeBusLine
+	if extra != "" {
+		return extra + "; " + s
+	}
+	return s
+}
+
+// openCodeTUIHeld reports whether listing shows an OpenCode TUI whose
+// working directory is dir. Each line is the process command, a tab, and
+// its working directory. The TUI is an opencode process with no subcommand
+// (the default command is the TUI), including one started with --port,
+// --hostname or --mdns: those are still the TUI, and this adapter does not
+// post into them. A subcommand (run, serve, session) is not the TUI.
+// The listing is the whole input; this function starts nothing.
+func openCodeTUIHeld(listing, dir string) bool {
+	if dir == "" {
+		return false
+	}
+	for _, line := range strings.Split(listing, "\n") {
+		cmd, cwd, ok := strings.Cut(strings.TrimSpace(line), "\t")
+		if !ok || cwd != dir || !openCodeTUICommand(cmd) {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+func openCodeTUICommand(command string) bool {
+	f := strings.Fields(command)
+	if len(f) == 0 || filepath.Base(f[0]) != "opencode" {
+		return false
+	}
+	if len(f) == 1 || strings.HasPrefix(f[1], "-") || f[1] == "attach" {
+		return true
+	}
+	return false
 }
 
 // OpenCodeRunFlags are the flags of `opencode run` the adapter passes: the

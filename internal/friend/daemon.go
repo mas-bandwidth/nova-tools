@@ -245,6 +245,7 @@ type Daemon struct {
 	stageDone   []stageResult // the stages that ended, for the loop
 	stageWG     sync.WaitGroup
 	pruneSaid   string // the prune failure last said, said once while it stands
+	routeSaid   string // the last OpenCode presence route line, said again only when it changes
 }
 
 // IdleWalkEvery is how often the idle watch reads the session's newest write
@@ -437,6 +438,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 	for ctx.Err() == nil {
 		now := d.Now()
 		l.now = now
+		d.noteRoute(now)
 		for _, p := range d.m.Tick(now) {
 			l.say(p)
 		}
@@ -1179,6 +1181,39 @@ func (d *Daemon) daemonPong(ctx context.Context, b *bus.Bus, ping bus.Message, n
 		return
 	}
 	d.status.LastDaemonPong = now
+}
+
+// noteRoute writes the OpenCode delivery route onto the daemon record when
+// it changes. A TUI look that is unset is unsaid: the headless run is the
+// route the record already shows by delivering. The line is the daemon's
+// own (docs/SPEC-FRIEND.md, OpenCode), not a field of the presence file.
+func (d *Daemon) noteRoute(now time.Time) {
+	if d.Record == nil {
+		return
+	}
+	var o *OpenCode
+	if !under(d.Deliver, func(a Deliverer) bool {
+		oc, ok := a.(*OpenCode)
+		if ok {
+			o = oc
+		}
+		return ok
+	}) || o == nil || o.TUI == nil {
+		return
+	}
+	route, line, err := o.Route(context.Background())
+	said := "presence route=" + route
+	if line != "" {
+		said += " " + line
+	}
+	if err != nil {
+		said += " error=" + oneLine(err.Error(), 200)
+	}
+	if said == d.routeSaid {
+		return
+	}
+	d.routeSaid = said
+	d.Record(now.UTC().Format(time.RFC3339) + " " + said)
 }
 
 // flush writes the status when it changed, and every StatusEvery anyway,

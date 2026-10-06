@@ -2,6 +2,7 @@ package friend
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -55,6 +56,90 @@ func TestOpenCodeDeliversIntoTheNewestSessionOfTheDirectory(t *testing.T) {
 	assert.ErrorContains(t, err, "no opencode session for /w/bob")
 	_, err = NewestSession(`nope`, "/w/bob")
 	assert.ErrorContains(t, err, "not a JSON list")
+}
+
+// A normal OpenCode TUI has no server to post into (opencode 1.18.30,
+// packages/opencode/src/cli/cmd/tui.ts:234). The session here is a fake:
+// a process listing, command, tab, cwd. Nothing is started.
+func TestOpenCodeDeliversIntoTheOpenTUISession(t *testing.T) {
+	t.Parallel()
+	const dir = "/w/bob"
+	for _, tc := range []struct {
+		name, listing string
+		holds         bool
+	}{
+		{name: "a normal tui holds the directory", listing: "opencode\t" + dir, holds: true},
+		{name: "a port flag is still the tui and not a post", listing: "opencode --port 4096\t" + dir, holds: true},
+		{name: "attach is still the tui and not a post", listing: "opencode attach http://127.0.0.1:4096\t" + dir, holds: true},
+		{name: "a headless run is not the tui", listing: "opencode run --session ses hello\t" + dir, holds: false},
+		{name: "a tui in another directory does not hold this one", listing: "opencode\t/w/ada", holds: false},
+		{name: "serve is not the open tui", listing: "opencode serve --port 4096\t" + dir, holds: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.holds, openCodeTUIHeld(tc.listing, dir))
+		})
+	}
+
+	t.Run("a tui that holds defers and the session reads the bus on its next turn", func(t *testing.T) {
+		t.Parallel()
+		fe := &fakeExec{}
+		fake := OpenCodeTUI{Holds: openCodeTUIHeld("opencode\t"+dir, dir)}
+		require.True(t, fake.Holds)
+		o := &OpenCode{Dir: dir, Session: "ses", Run: fe.run, TUI: func(context.Context) (OpenCodeTUI, error) {
+			return fake, nil
+		}}
+		exit, err := o.Deliver(context.Background(), "hello")
+		assert.Equal(t, 0, exit)
+		var deferred Deferred
+		require.ErrorAs(t, err, &deferred)
+		assert.Contains(t, deferred.Reason, "1.18.30")
+		assert.Contains(t, deferred.Reason, "packages/opencode/src/cli/cmd/tui.ts:234")
+		assert.Contains(t, deferred.Reason, "in-process")
+		assert.Contains(t, deferred.Reason, OpenCodeBusLine)
+		assert.NotContains(t, deferred.Reason, "\n")
+		assert.Empty(t, fe.calls, "a defer writes nothing and starts no run")
+		route, line, err := o.Route(context.Background())
+		require.NoError(t, err)
+		assert.Equal(t, "defer", route)
+		assert.Equal(t, OpenCodeBusLine, line)
+	})
+
+	t.Run("no tui resumes by run and says it is not the open chat", func(t *testing.T) {
+		t.Parallel()
+		var turn strings.Builder
+		fe := &fakeExec{exit: 0, out: "done\n"}
+		o := &OpenCode{Dir: dir, Session: "ses", Run: fe.run, Out: &turn, TUI: func(context.Context) (OpenCodeTUI, error) {
+			return OpenCodeTUI{}, nil
+		}}
+		exit, err := o.Deliver(context.Background(), "hello")
+		require.NoError(t, err)
+		assert.Equal(t, 0, exit)
+		require.Len(t, fe.calls, 1)
+		assert.Equal(t, []string{dir, "opencode", "run", "--session", "ses", "hello"}, fe.calls[0], "no --dir, and no --attach")
+		assert.Contains(t, turn.String(), "answered by run, not by the open chat")
+		route, _, err := o.Route(context.Background())
+		require.NoError(t, err)
+		assert.Equal(t, "run", route)
+	})
+
+	t.Run("a session that cannot be read defers and starts no run", func(t *testing.T) {
+		t.Parallel()
+		fe := &fakeExec{}
+		o := &OpenCode{Dir: dir, Run: fe.run, TUI: func(context.Context) (OpenCodeTUI, error) {
+			return OpenCodeTUI{}, errors.New("listing failed")
+		}}
+		_, err := o.Deliver(context.Background(), "hello")
+		var deferred Deferred
+		require.ErrorAs(t, err, &deferred)
+		assert.Contains(t, deferred.Reason, "could not be read")
+		assert.Contains(t, deferred.Reason, OpenCodeBusLine)
+		assert.Empty(t, fe.calls)
+		route, line, rerr := o.Route(context.Background())
+		assert.Equal(t, "defer", route)
+		assert.Equal(t, OpenCodeBusLine, line)
+		assert.Error(t, rerr)
+	})
 }
 
 func TestAnUnknownHarnessIsNamed(t *testing.T) {

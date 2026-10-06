@@ -709,3 +709,52 @@ func TestATurnStampsItsMessagesReadAndActed(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, bus.Acted, got[0].State)
 }
+
+// While a fake OpenCode TUI holds the directory, the daemon defers, starts
+// no run, keeps the message, and says the route once. The look is the
+// listing, not a live process.
+func TestTheDaemonSaysDeferWhileAnOpenCodeTUIHoldsTheSession(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		r := newRig(t)
+		var mu sync.Mutex
+		calls := 0
+		const dir = "/w/bob"
+		o := &OpenCode{
+			Dir:     dir,
+			Session: "ses",
+			Run: func(context.Context, string, string, []string, string) (string, int, error) {
+				mu.Lock()
+				calls++
+				mu.Unlock()
+				return "", 0, nil
+			},
+			TUI: func(context.Context) (OpenCodeTUI, error) {
+				return OpenCodeTUI{Holds: openCodeTUIHeld("opencode\t"+dir, dir)}, nil
+			},
+		}
+		r.d.Deliver = (&Limits{Now: func() time.Time { return t0 }}).Gate(o)
+		r.d.Harness = "opencode"
+		r.passive = true
+		r.d.Pause = func(context.Context, time.Duration) { synctest.Wait() }
+		r.send(t, "ada", "hello", "x")
+		r.run(t, 6)
+		mu.Lock()
+		n := calls
+		mu.Unlock()
+		assert.Equal(t, 0, n, "a defer starts no opencode run")
+		got := strings.Join(r.records, "\n")
+		assert.Contains(t, got, "presence route=defer "+OpenCodeBusLine)
+		assert.Equal(t, 1, strings.Count(got, "presence route="), "a route that does not change is said once")
+		assert.Contains(t, got, "deferred=")
+		assert.Contains(t, got, "1.18.30")
+		pending, fresh, err := r.bus.Peek(context.Background(), "bob")
+		require.NoError(t, err)
+		assert.Len(t, pending, 1, "the message stays pending for the session's next turn")
+		assert.Empty(t, fresh)
+		for _, line := range r.records {
+			assert.NotContains(t, line, "acked")
+			assert.NotContains(t, line, "given_up")
+		}
+	})
+}
