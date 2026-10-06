@@ -424,3 +424,6 @@ MCFriendReadyTakeBrokenStranger.cfg	MCFriendReadyTake.tla	invariant	OnlyHerTake	
 MCFriendReadyTakeBrokenNoJudge.cfg	MCFriendReadyTake.tla	invariant	NeverStrandedSilently	ignore-terminal	friendreadytake	required	-
 MCFriendBrokenDeliverLimited.cfg	MCFriend.tla	action	NoTurnWhileLimited	ignore-terminal	friend	required	-
 MCFriendBrokenNeverWake.cfg	MCFriend.tla	temporal	LimitedEnds	ignore-terminal	friend	required	-
+MCLifecycle.cfg	MCLifecycle.tla	pass	-	ignore-terminal	lifecycle	required	-
+MCLifecycleBrokenProtected.cfg	MCLifecycle.tla	invariant	OnlyInRepoByRule	ignore-terminal	lifecycle	required	-
+MCLifecycleBrokenTwiceByRule.cfg	MCLifecycle.tla	invariant	TwinnedOnceByRule	ignore-terminal	lifecycle	required	-

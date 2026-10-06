@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
+	"github.com/mas-bandwidth/nova-tools/internal/member"
 )
 
 // The daemon reads every outbox job (the night of 2026-10-05: a friend held eight
@@ -119,7 +120,9 @@ func OutboxFinishArgv(friend string, c Card, verdict, head, branch, report strin
 		words = "friend " + friend + " LAND with no Head: <full sha>; " + firstChars(report, ReportChars)
 	default:
 		argv = append(argv, "--failed")
-		words = "friend " + friend + " " + verdict + ": " + firstChars(report, ReportChars)
+		// a HOLD's PATHS-PROPOSED line past the cut rides at its end: the tick's paths rule
+		// reads it off the card (docs/SPEC-CARD-CONTRACT.md section 4)
+		words = member.CarryProposed("friend "+friend+" "+verdict+": "+firstChars(report, ReportChars), member.Result{Report: report})
 	}
 	if full {
 		argv = append(argv, "--head", head)
