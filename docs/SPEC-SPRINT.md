@@ -5164,6 +5164,33 @@ gives one at a time beside the store, so no two steps of the record interleave.
   copy of the sprint holds (it reads the sprint that way); the page does not draw
   them.
 
+### Bench lanes
+
+A lane the machinery starts on a Linux bench (a worker, a reader, a lander, a bench
+gate) cleans up after itself (`internal/sprint/bench_lane.go`; the owner, 2026-10-02: the
+machinery removes what it creates, a scan is a check and not the mechanism). On
+2026-10-06 a bench's shared /tmp (tmpfs, 61 GB) filled to 100% with every lane's temp
+files, a gocache and days-old job directories, and lanes failed with "no space left on
+device".
+
+- **Its own directory.** `RunBenchLane` makes `nova-bench/lanes/<kind>/<job>/tmp` under
+  the login's home and runs the command in `<dir>/repo` under `nice -n 19` with `TMPDIR`
+  and `GOTMPDIR` that `tmp`, so neither the go command's work directories nor a test's
+  `t.TempDir()` touch the bench's /tmp. A brief or a read prompt never asks a worker to
+  set them by hand.
+- **Removed at its end.** The lane's directory, and nothing else, is removed by a
+  deferred `rm -rf` whatever the verdict (a pass, a fail, a bench that drops the
+  command, a cancelled context), under a context the caller's cancellation does not
+  end. A lane killed before its remove is the next tick's: `SweepBenchLanes` removes
+  each `<kind>/<job>` directory under `nova-bench/lanes` whose lane is not live.
+- **One shared, capped cache.** `GOCACHE` is the bench's one
+  `nova-bench/cache/go-build`. Before its command a lane measures it and runs
+  `go clean -cache` when it is over its cap: the sprint's `bench_cache_gib` (a whole
+  number of GiB from 1), 20 when none is set.
+- **The check.** A bench whose /tmp is over 80% full (`df -Pk /tmp`) raises one
+  judgment (`a bench's /tmp is nearly full`) naming the bench and its five largest
+  directories; none again for that bench while it is open.
+
 
 ## friend-stall-ladder-r.w1
 
