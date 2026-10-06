@@ -346,10 +346,10 @@ func ReadCardForAsk(s *Snapshot, primary string, attempt int, reader string) (id
 // serving the primary's tier (readerServesTier; an empty tiers cell reads every
 // tier, and a fleet reader serves only a tier it can draw a route of), with no
 // read card of it at the attempt, placed or retired (a reader with one, even
-// retired, has read it). When an away-retired card exists with
-// the plain identity and no second card exists yet, the reader is eligible to
-// be re-asked under second identity .g1. The next attempt is read on new
-// cards, by every reader of the tier.
+// retired, has read it). When an away-retired or refused card
+// (RetiredByRefused) exists with the plain identity and no second card exists
+// yet, the reader is eligible to be re-asked under second identity .g1. The
+// next attempt is read on new cards, by every reader of the tier.
 func (s *Snapshot) freeReaders(pr *Card, attempt int) []string {
 	tier := s.readTierOf(pr)
 	var out []string

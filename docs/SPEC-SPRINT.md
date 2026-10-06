@@ -5461,3 +5461,13 @@ The TLA+ specification `tla/StallLadder.tla` verifies five invariants:
 - `NoWakeWithoutRung`: a wake is sent only at a rung the ladder climbed, and once
   (`PlanUncommitted`, a plan the tick makes and does not commit; reversed witness
   `wakeinplan`: the planner sends the wake as it plans).
+
+### stall-and-refusal-rules-follow-up-b.w1
+
+**A friend up whose control card is held or down is not dealt; a refused read is one re-ask then the tier's judgment; future evidence counts as now.**
+
+The deal fills a friend's row only when her status is up, her fleet control card says neither down nor held (`status` down or held, or `held` set), and the stall ladder has not marked her down (`sprint.friendDealable`). A friend whose status is up and whose control card is held or down is dealt nothing (`TestAFriendUpWhoseControlCardIsHeldOrDownIsNotDealt`).
+
+`freeReaders` names a refused card (`retired_by` refused, `RetiredByRefused`) the way it names an away-retired card: the reader may be asked once more at the attempt under the second identity `.g1`. A read its reader refused to launch is retired as refused, not a read and not a spend of the re-ask bound. It is asked once more. When that re-ask is refused, the per-tier judgment is `no route serves the tier` and the card stays in review. The model is `tla/DirtyTick.tla` (the refused transition, `nrt`) and `ReasksBounded` holds on the small config `MCDirtyTickRefused.cfg`.
+
+`FriendWorked` clamps every evidence time to the server's now. A stamp after that now counts as now and is logged once (`TestFutureDatedEvidenceCountsAsNow`).
