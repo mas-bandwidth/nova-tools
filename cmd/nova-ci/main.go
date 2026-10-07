@@ -128,9 +128,9 @@ usage, in a nova-tools checkout (this repository's own CI steps):
 exit codes: 0 done, 1 the verb said no (slowtests, local, github receipt), 2 usage or could not run; by verb:
   slowtests: 0 inside budget, or CI-SLOW lines without --enforce (a
     measurement), or an empty stream with --allow-empty; 1 a CI-SLEEPS
-    line, a CI-SLOW line under --enforce, or an empty stream without
-    --allow-empty (the check said no); 2 the invocation could not run
-    (bad flag, unreadable stdin)
+    line, a truncated package (started and never ended), a CI-SLOW line
+    under --enforce, or an empty stream without --allow-empty (the check
+    said no); 2 the invocation could not run (bad flag, unreadable stdin)
   local: 0 green; 1 a red test, a package that did not build, or a
     CI-SLEEPS line; 2 a step that could not run, or usage
   functional: 0 the selection printed (packages=0 included); 2 a flag, or

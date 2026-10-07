@@ -220,6 +220,50 @@ func TestEmptyStdinIsFailedUnlessAllowEmpty(t *testing.T) {
 	assert.Contains(t, stdout, "--allow-empty")
 }
 
+// TestSlowtestsNamesAPackageThatStartedAndNeverEnded pins that a stream cut
+// after a package start is the finding `truncated: <pkg> started and never ended`
+// and not an empty stream, on the lines and under --json. A complete stream
+// stays a clean run (docs/SPEC-CI.md, "The per-package test time budget").
+func TestSlowtestsNamesAPackageThatStartedAndNeverEnded(t *testing.T) {
+	t.Parallel()
+
+	cut := `{"Action":"start","Package":"example.com/p"}` + "\n"
+	code, stdout, stderr := runCI(t, []string{"slowtests", "--budget", "60", "--load", "1", "--cpus", "2"}, cut)
+	assert.Equal(t, 1, code, "cut: exit %d stderr %q, want 1", code, stderr)
+	assert.Empty(t, stderr)
+	assert.Contains(t, stdout, "truncated: example.com/p started and never ended")
+	assert.NotContains(t, stdout, "CI-SLOW OK")
+	assert.NotContains(t, stdout, "looked at nothing")
+
+	code, stdout, stderr = runCI(t, []string{"slowtests", "--budget", "60", "--load", "1", "--cpus", "2", "--json"}, cut)
+	assert.Equal(t, 1, code, "--json cut: exit %d stderr %q, want 1", code, stderr)
+	assert.Contains(t, stdout, "started and never ended")
+	assert.NotContains(t, stdout, "looked at nothing")
+
+	complete := `{"Action":"start","Package":"example.com/p"}
+{"Action":"pass","Package":"example.com/p","Elapsed":0.1}
+`
+	code, stdout, stderr = runCI(t, []string{"slowtests", "--budget", "60", "--load", "1", "--cpus", "2"}, complete)
+	assert.Equal(t, 0, code, "complete: exit %d stderr %q, want 0", code, stderr)
+	assert.NotContains(t, stdout, "truncated:")
+	assert.Contains(t, stdout, "CI-SLOW OK")
+}
+
+// The banner's slowtests exit row names the truncated package among the
+// causes of exit 1, so the code's exit 1 and the banner agree (a cold reader
+// found the row listing only CI-SLEEPS, CI-SLOW under --enforce and an empty
+// stream while the code also returned 1 for a package that started and never
+// ended). `slowtests -h` quotes the same row through exitTable.
+func TestUsageBannerNamesATruncatedPackage(t *testing.T) {
+	t.Parallel()
+
+	for _, args := range [][]string{{"help"}, {"slowtests", "-h"}} {
+		code, stdout, stderr := runCI(t, args, "")
+		require.Equal(t, 0, code, "%v: exit %d stderr %q, want 0", args, code, stderr)
+		assert.Contains(t, stdout, "a truncated package (started and never ended)", "%v: the exit row does not name the truncated package:\n%s", args, stdout)
+	}
+}
+
 // A float flag that is not a finite number (NaN, +Inf, -Inf) is refused
 // before anything is judged or rendered, naming what the flag wants, as a
 // line without --json and as the JSON refusal with it.
@@ -337,9 +381,9 @@ func TestSlowtestsOverBudgetExitsOneOnlyUnderEnforce(t *testing.T) {
 // A line that is not a TestEvent is a refusal on stderr at exit 2 with no OK
 // line, naming its line: text, and JSON
 // that is not a TestEvent (null, a number, an array, an object with no Action),
-// so neither a truncated pipe nor some other JSON reads as a clean run. The
+// so JSON that is not a TestEvent does not read as a clean run. The
 // bookkeeping events (start, run, output, build-output) carry an Action and
-// pass.
+// pass. A package with a start and no terminal event is a truncated finding.
 func TestSlowtestsMalformedLineRefuses(t *testing.T) {
 	t.Parallel()
 
