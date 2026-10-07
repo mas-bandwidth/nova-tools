@@ -43,6 +43,22 @@ func TestDsnCoverResolveDSNRefusesFlagCarryingPassword(t *testing.T) {
 	assert.Contains(t, err.Error(), EnvPGPassEnv)
 }
 
+// TestDsnCoverResolveDSNKeywordFlagWithPasswordStands: a keyword DSN on the
+// flag line carrying a password is refused; the refusal stands, because the
+// password is on the command line where a ps reads it whatever spelling the
+// pgconn parser reads it in (docs/nova-config/README.md, "Connecting";
+// internal/config/dsn.go, ResolveDSN). This test's earlier form asserted the
+// opposite, that the keyword spelling may carry its password; the resolver
+// was right and the test was wrong.
+func TestDsnCoverResolveDSNKeywordFlagWithPasswordStands(t *testing.T) {
+	t.Parallel()
+	_, err := ResolveDSN("host=nova password=sekrit", envSeam(nil))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "carries a password")
+	assert.Contains(t, err.Error(), EnvPGPassEnv)
+	assert.NotContains(t, err.Error(), "sekrit")
+}
+
 // TestDsnCoverResolveDSNRefusesEmptyNamedPasswordVariable: a named password
 // variable that is empty is refused with its name.
 func TestDsnCoverResolveDSNRefusesEmptyNamedPasswordVariable(t *testing.T) {
