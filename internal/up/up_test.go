@@ -181,7 +181,7 @@ func tree(t *testing.T, dir string) map[string]string {
 	return got
 }
 
-var stepNames = []string{"platform", "dirs", "binaries", "sprint", "secrets", "redis", "seat", "smoke"}
+var stepNames = []string{"platform", "dirs", "binaries", "sprint", "secrets", "ssh", "redis", "seat", "smoke"}
 
 // upLines is the UP <step> lines of an output, the step and state of each.
 func upLines(out string) [][2]string {
@@ -216,7 +216,7 @@ func TestUpLocalPlansAWorkingSingleMachineWithNoConfig(t *testing.T) {
 			require.Equal(t, 0, code, "first run: %s%s", out, errs)
 			assert.True(t, strings.HasPrefix(out, "UP OK root="+root+" steps=8 changes=6 applied=6"), out)
 			assert.Equal(t, [][2]string{{"platform", "ok"}, {"dirs", "create"}, {"binaries", "ok"}, {"sprint", "create"},
-				{"secrets", "create"}, {"redis", "create"}, {"seat", "create"}, {"smoke", "create"}}, upLines(out))
+				{"secrets", "create"}, {"ssh", "create"}, {"redis", "create"}, {"seat", "create"}, {"smoke", "create"}}, upLines(out))
 
 			for _, p := range []string{"stores/sprint.twin", "keys/coordinator.key", "secrets/.git", "secrets/.sops.yaml", "secrets.git",
 				"stores/redis/acl.applied", "seat.env", "smoke/repo/.git", "smoke/landed"} {
@@ -275,7 +275,7 @@ func TestUpLocalDryRunWritesNothing(t *testing.T) {
 	require.Equal(t, 0, code, out+errs)
 	assert.Contains(t, out, "dry_run=true")
 	assert.Equal(t, [][2]string{{"platform", "ok"}, {"dirs", "create"}, {"binaries", "ok"}, {"sprint", "create"},
-		{"secrets", "create"}, {"redis", "create"}, {"seat", "create"}, {"smoke", "create"}}, upLines(out))
+		{"secrets", "create"}, {"ssh", "create"}, {"redis", "create"}, {"seat", "create"}, {"smoke", "create"}}, upLines(out))
 	assert.Empty(t, tree(t, f.home), "a dry run writes no file")
 	assert.NoDirExists(t, filepath.Join(f.home, "nova"))
 	assert.Empty(t, f.writes(), "a dry run runs nothing but inspections")
