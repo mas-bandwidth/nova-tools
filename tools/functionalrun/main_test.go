@@ -22,12 +22,12 @@ import (
 // fakeEngine records every argv and answers from a table keyed by the argv's
 // first words. Nothing here starts a container or a process.
 type fakeEngine struct {
-	mu      sync.Mutex
-	calls   [][]string
-	answers map[string]fakeAnswer
+	mu         sync.Mutex
+	calls      [][]string
+	answers    map[string]fakeAnswer
 	startCode  int
 	startCodes []int
-	respond func(args []string) (a fakeAnswer, ok bool)
+	respond    func(args []string) (a fakeAnswer, ok bool)
 }
 
 type fakeAnswer struct {
@@ -547,9 +547,8 @@ func TestRunContainerRemovesAtDeadlineOrInterrupt(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			eng := &hangingEngine{killed: make(chan struct{})}
 			ctx, cancel := context.WithCancel(t.Context())
-			if tc.cancel {
-				cancel()
-			}
+			// Always cancel to avoid context leak
+			defer cancel()
 			_, ended := runContainer(ctx, eng, []string{"run", "x"}, "nova-functional-r", time.Now().Add(tc.deadline), io.Discard, io.Discard)
 			if ended != tc.want {
 				t.Errorf("ended %q, want %s", ended, tc.want)
@@ -655,7 +654,7 @@ func TestSetupExit(t *testing.T) {
 		t.Errorf("setupExit = %d", got)
 	}
 	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
+	defer cancel()
 	if got := setupExit(ctx); got != exitInterrupted {
 		t.Errorf("setupExit after an interrupt = %d", got)
 	}
@@ -821,13 +820,13 @@ func TestRunContainerRemovesBeforeItLogs(t *testing.T) {
 				ctx, cancel := context.WithCancel(t.Context())
 				deadline := time.Now().Add(time.Hour)
 				if interrupt {
-					cancel()
+					defer cancel()
 				} else {
 					deadline = time.Now().Add(20 * time.Millisecond)
 				}
 				w := orderWriter{t: t, eng: eng}
 				runContainer(ctx, eng, []string{"run", "x"}, "nova-functional-r", deadline, w, w)
-				cancel()
+				defer cancel()
 			})
 		})
 	}
