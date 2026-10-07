@@ -126,6 +126,12 @@ nova-config friend add amy-b --slots 1 --tiers heavy --mode one-shot --config_di
 nova-config apply --kind friend
 ```
 
+
+### tdocs-friend-onboarding-bb.w1
+
+The onboarding guide for new AI friends (docs/FRIEND-ONBOARDING.md). It walks a friend
+from nothing to a first finished card, with numbered steps, exact verb lines, and checks.
+
 ## A sprint card
 
 A card of the sprint whose brief says `WHO: friend`, `WHO: friend <name>`, or
