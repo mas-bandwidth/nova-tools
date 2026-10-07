@@ -6819,3 +6819,10 @@ friend reaches that friend's inbox by the route her judgments already take: the
 push loop writes a group addressed to someone to that actor's own inbox
 directory (`pushTarget.dirOf`, `~/<actor>-working/inbox/sprint-judgments`), the
 group carrying the note's addressee (`sprint.Group.To`).
+
+The coordinator's `nova-sprint deliver <friend> [--once]` reads the held row
+and uses `friend.Delivery.One`, the daemon's ordered writer: stage the job from
+a full local mirror, write `JOB.md`, then expose `BRIEF.md`. It prints one
+`DELIVER <job> staged|brief|skipped [<why>]` line. `--stages runner` writes
+briefs alone; an existing unmarked job belongs to that runner and is left intact.
+The row's current tier is carried on the brief's `RESULT:` contract.

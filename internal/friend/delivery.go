@@ -8,6 +8,9 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
+
+	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 
 	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
 )
@@ -73,6 +76,7 @@ func (dl Delivery) Owed(h HeldCard) bool {
 // whole, never over a file there. A stage that fails writes no brief, so no runner meets a
 // brief with no checkout.
 func (dl Delivery) One(ctx context.Context, h HeldCard) Delivered {
+	h.Brief = deliveryBrief(h)
 	o := Delivered{Card: h.Card, Job: h.Job, What: DeliverSkipped}
 	in, why := inboxDir(dl.Dir, h.Job)
 	if why != "" {
@@ -164,4 +168,36 @@ func (dl Delivery) DeliverRow(ctx context.Context, cards []HeldCard) []Delivered
 		out = append(out, dl.One(ctx, h))
 	}
 	return out
+}
+
+// deliveryBrief carries the row's current tier on the RESULT contract. A historical
+// embedded tier cannot override the packet; briefs with no known packet tier stay intact.
+func deliveryBrief(h HeldCard) string {
+	if !cardhdr.IsRoute(h.Tier) || strings.TrimSpace(h.Brief) == "" {
+		return h.Brief
+	}
+	lines := strings.Split(h.Brief, "\n")
+	for i, line := range lines {
+		key, value, ok := cardhdr.KeyValue(line)
+		if !ok || key != "RESULT" {
+			continue
+		}
+		words := strings.Fields(value)
+		for j, word := range words {
+			if word != "tier:" {
+				continue
+			}
+			words = append(words[:j], words[min(j+2, len(words)):]...)
+			break
+		}
+		lines[i] = "RESULT: " + strings.Join(words, " ") + " tier: " + h.Tier
+		return strings.Join(lines, "\n")
+	}
+	result := "RESULT: " + h.Card + " sha= tier: " + h.Tier + "\n"
+	if strings.HasPrefix(h.Brief, "STATUS:") {
+		if i := strings.Index(h.Brief, "\n\n"); i >= 0 {
+			return h.Brief[:i+1] + result + h.Brief[i+1:]
+		}
+	}
+	return result + h.Brief
 }

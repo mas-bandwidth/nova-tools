@@ -253,7 +253,7 @@ func (e *StartedElsewhere) Error() string {
 // worktree is added beside, under jobs/<job>/.staging, and moved in whole), and JOB.md is
 // written last, so a lane never meets a checkout not ready. A branch the mirror already holds
 // (a pruned job's, staged again) is checked out as it stands, never reset to the base.
-// The stage claims its job before fetching; an unmarked existing directory belongs to another hand.
+// The stage checks ownership before fetching and claims the directory before adding a worktree.
 func (s *Stager) Stage(ctx context.Context, p Packet) (string, error) {
 	if err := p.check(); err != nil {
 		return "", &NotStageable{Repo: p.Repo, Card: p.Card, Job: p.Job, Why: err.Error(), Remedy: "rework the card with a packet that names its repository (owner/name), its base and its branch"}
@@ -678,7 +678,7 @@ func (s *Stager) worktreeOf(checkout string) (repo, mirror string, ok bool) {
 	if !found || !filepath.IsAbs(gitdir) {
 		return "", "", false
 	}
-	mirrors, err := filepath.EvalSymlinks(filepath.Join(s.Dir, MirrorsDir))
+	mirrors, err := filepath.EvalSymlinks(s.mirrors())
 	if err != nil {
 		return "", "", false
 	}

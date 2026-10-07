@@ -201,7 +201,7 @@ func SyncInboxOwed(dir string, row Row, keep map[string]bool, asked, now time.Ti
 			c.Missing++
 			continue
 		}
-		switch wrote, err := writeBrief(job, h.Brief); {
+		switch wrote, err := writeBrief(job, deliveryBrief(h)); {
 		case err != nil:
 			c.Missing++
 			firstErr = cmpErr(firstErr, err)

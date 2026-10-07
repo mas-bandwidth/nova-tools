@@ -2597,3 +2597,7 @@ the message stays pending, never given up, the session reads broken with the
 reason until a turn succeeds, and the detail tells the friend to start a session
 without a preset or read the bus with `nova-bus recv` ("A turn the session
 cannot take").
+
+The delivery writer carries the current packet tier on the brief's `RESULT:` line,
+adding the line when missing and replacing an old embedded tier. A packet with
+no recognized tier keeps its brief unchanged (`TestDeliveryCarriesTheCurrentTierOnTheResultLine`).
