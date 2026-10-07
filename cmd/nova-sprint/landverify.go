@@ -219,24 +219,14 @@ func (l *lander) verify(ctx context.Context, checks []landedCheck) {
 			ch.Why = why
 			continue
 		}
-		base := ch.Base
-		if base == "HEAD" {
-			ref, err := l.git(ctx, dir, "symbolic-ref", "--short", "refs/remotes/origin/HEAD")
-			if err != nil || !strings.HasPrefix(ref, "origin/") {
-				ch.Why = "origin/HEAD does not name the repository's default branch in " + dir + "; run: nova-sprint land --base <branch>"
-				continue
-			}
-			base = strings.TrimPrefix(ref, "origin/")
-			ch.Base = base
-		}
-		key := dir + "\x00" + base
+		key := dir + "\x00" + ch.Base
 		f, done := bases[key]
 		if !done {
-			ref := "refs/remotes/origin/" + base
-			if _, err := l.git(ctx, dir, "fetch", "--no-tags", "origin", "+refs/heads/"+base+":"+ref); err != nil {
-				f.why = "the fetch of " + base + " in " + dir + " failed: " + firstLine("", err)
+			ref := "refs/remotes/origin/" + ch.Base
+			if _, err := l.git(ctx, dir, "fetch", "--no-tags", "origin", "+refs/heads/"+ch.Base+":"+ref); err != nil {
+				f.why = "the fetch of " + ch.Base + " in " + dir + " failed: " + firstLine("", err)
 			} else if f.tip, err = l.git(ctx, dir, "rev-parse", "--verify", ref+"^{commit}"); err != nil {
-				f.why = "the base " + base + " could not be read in " + dir + ": " + firstLine("", err)
+				f.why = "the base " + ch.Base + " could not be read in " + dir + ": " + firstLine("", err)
 			}
 			bases[key] = f
 		}
@@ -252,37 +242,6 @@ func (l *lander) verify(ctx context.Context, checks []landedCheck) {
 		in, why := l.ancestor(ctx, dir, ch.Head, ch.Tip)
 		ch.Missing, ch.Why = !in && why == "", why
 	}
-}
-
-// reconcileLanded checks existing landing records before a pass can report more work. The
-// lifecycle keeps landed final, so a false record stops the pass with the exact reason it
-// cannot be returned to merging (docs/SPEC-SPRINT.md sections 3 and 7).
-func (l *lander) reconcileLanded(ctx context.Context, s *sprint.Snapshot) bool {
-	if l.dry || l.twin {
-		return false
-	}
-	checks := landedChecks(s, nil, l.base)
-	for i := range checks {
-		if checks[i].Base == "" && strings.Contains(checks[i].Why, "brief names no BASE: line") {
-			checks[i].Base, checks[i].Why = "HEAD", ""
-		}
-	}
-	l.verify(ctx, checks)
-	blocked := false
-	for _, ch := range checks {
-		if ch.Why == "" && !ch.Missing {
-			continue
-		}
-		blocked = true
-		reason := ""
-		if ch.Why != "" {
-			reason = "cannot verify the existing landing: " + ch.Why
-		} else {
-			reason = ch.line() + "; the lifecycle has no landed -> merging move, so this record cannot be returned automatically"
-		}
-		l.out = append(l.out, landBatch{Stream: ch.Stream, Status: "refused", Cards: 1, IDs: []string{ch.ID}, Repo: ch.Repo, Base: ch.Base, Tip: ch.Tip, Reason: reason})
-	}
-	return blocked
 }
 
 // ancestor is git's word, and no model's, that a is an ancestor of b in dir: exit 1 is "not

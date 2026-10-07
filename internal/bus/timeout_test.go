@@ -51,7 +51,7 @@ func newStalled(t *testing.T, words ...string) (*stalled, *redis.Client) {
 			s.dials.Add(1)
 			client, server := net.Pipe()
 			go func() {
-				defer server.Close()
+				defer func() { _ = server.Close() }() // ignored: a test server closing at the end of the test
 				// The handshake is answered (go-redis falls back to RESP2 on
 				// the refusal); every command after it is read and never
 				// answered. ignored: the stall discards what it reads.

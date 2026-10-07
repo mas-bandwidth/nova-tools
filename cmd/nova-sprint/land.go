@@ -422,9 +422,6 @@ func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return a.readFailed("land", err, stderr)
 	}
-	if l.reconcileLanded(ctx, s) {
-		return l.report(false, nil, stdout, stderr)
-	}
 	// the streams in stream order: the named ones (a name that is no stream
 	// last, to be refused), else every one with cards queued and not stopped
 	var order []string
@@ -1054,15 +1051,13 @@ func againRemedy(stream string) string {
 // FAILED, with land again as the remedy) when the store did not take it.
 func (l *lander) landed(b landBatch, stream string, pins []landCard) bool {
 	ids := make([]string, len(pins))
-	landed := make([]sprint.LandedPin, len(pins))
 	for i, c := range pins {
 		ids[i] = c.id
-		landed[i] = sprint.LandedPin{ID: c.id, Head: c.head, InBase: true}
 	}
 	b.Cards, b.IDs = len(ids), ids
 	l.stage("report", "merge report")
 	start := time.Now()
-	res, err := l.step(sprint.MergeReq{Stream: stream, Batch: len(ids), Landed: landed, Who: l.c.actor}, pins)
+	res, err := l.step(sprint.MergeReq{Stream: stream, Batch: len(ids), Who: l.c.actor}, pins)
 	if b.Times != nil {
 		since(&b.Times.Report, start)
 	}
@@ -1367,7 +1362,9 @@ func (l *lander) mergeHead(ctx context.Context, dir, stream string, c landCard) 
 		return "", derr, ""
 	}
 	if dcard != "" {
-		l.git(ctx, dir, "reset", "--hard", before)
+		if _, err := l.git(ctx, dir, "reset", "--hard", before); err != nil {
+			return "", "the reset to " + before + " after the dedupe refusal of " + c.id + " failed: " + firstLine("", err), ""
+		}
 		return dcard, "", ""
 	}
 	l.ledgerLog = append(l.ledgerLog, append(l.recLog, lines...)...)
