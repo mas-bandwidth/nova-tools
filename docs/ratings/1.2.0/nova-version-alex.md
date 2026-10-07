@@ -2,7 +2,8 @@
 
 Rater: openrouter/google/gemini-3.1-flash-lite
 Build: c76fcb249cc1
-Score: 10/10
+READ: 10/10
+USE: 10/10
 
 ## Reasons
 The tool `nova-version` is clean, simple, and follows the project's onboarding standard perfectly. Its banner, help messages, and refusal grammar are all consistent and helpful. The ability to read a manifest, snapshot a directory, and diff two snapshots provides a complete and intuitive workflow for version management of tools. The tool worked flawlessly on a throwaway directory during my cold run.
