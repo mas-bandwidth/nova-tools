@@ -156,11 +156,6 @@ var dependsReferenceRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z
 // - `after <RFC3339>`
 var externalOperandRE = regexp.MustCompile(`^(pr [A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*#[0-9]+ merged|[A-Za-z0-9_/-]+ contains [A-Za-z0-9]+|after [A-Za-z0-9:+-]+)$`)
 
-// externalOperandRE matches one of the three external operand forms:
-// - `pr <repo>#<n> merged`
-// - `<branch> contains <sha>`
-// - `after <RFC3339>`
-var externalOperandRE = regexp.MustCompile(`^(pr [A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*#[0-9]+ merged|[A-Za-z0-9_/-]+ contains [A-Za-z0-9]+|after [A-Za-z0-9:+-]+)$`)
 
 // oneCardID is one dependency token. `-` is the whole-line declaration, never an
 // entry in the list. An entry with whitespace is two words, not an id.
