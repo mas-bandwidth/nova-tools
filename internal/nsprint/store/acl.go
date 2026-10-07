@@ -1,11 +1,5 @@
 package store
 
-import (
-	"context"
-
-	"github.com/redis/go-redis/v9"
-)
-
 // ACLRules are the baseline permissions for each actor in the fleet Redis.
 // The bench and friend seats run consumer copies through the table moves
 // (card work --fill, card beat, card end, and the session's give-back,
@@ -40,49 +34,4 @@ var ACLRules = []string{
 	"ns-coordinator resetkeys resetchannels -@all +ping +client|setname +client|id ~s:* ~bench:* ~friend:* ~machine:* ~lease:* ~proc:* ~cap:* ~ci:* ~sprints ~sprint:order ~sprint:epoch ~ws:* ~benches ~friends ~friends:* ~table:* ~tables ~task:* ~view:* ~views +hdel +type +xinfo|stream +del +exists +hget +hgetall +hmget +hlen +hstrlen +hexists +hset +pexpire +pttl +sadd +scard +sismember +smembers +smove +srem +time +xack +xadd +zadd +zcard +zcount +zrange +zrem +zscore +zmscore +xrevrange +fcall_ro|ns_snapshot +fcall_ro|ns_task_live +fcall_ro|ns_ws_zrange +fcall|ns_ping +fcall|ns_health +fcall|ns_task_push +fcall|ns_task_cancel +fcall|ns_capacity_desired +fcall|ns_capacity_machine +fcall|ns_oset_move +fcall|ns_table_clear +rename +fcall|ns_table_set +fcall|ns_table_rows_add +fcall|ns_table_rows_hide +fcall|ns_view_set +fcall|ns_view_state +fcall|ns_view_del +fcall|ns_table_row_set +fcall|ns_table_create +fcall|ns_table_drop +fcall|ns_table_drop_definition +fcall|ns_table_member_create +fcall|ns_table_row_add +fcall|ns_table_row_del +fcall|ns_table_cell_add +fcall|ns_table_cell_remove +fcall|ns_table_cell_move +fcall|ns_table_bind +fcall|ns_table_apply +fcall_ro|ns_table_read +fcall_ro|ns_table_read_set +fcall_ro|ns_table_check +scan +fcall_ro|ns_table_list +fcall_ro|ns_view_get +fcall_ro|ns_view_list +fcall_ro|ns_table_member_find +fcall_ro|ns_table_members",
 	"ns-table resetkeys resetchannels -@all +ping +client|setname +client|id %R~s:* %R~bench:* %R~friend:* %R~machine:* %R~lease:* %R~proc:* %R~cap:* %R~ci:* %R~sprints %R~sprint:order %R~sprint:epoch %R~benches %R~friends %R~table:* %R~tables %R~view:* %R~views +exists +hget +hgetall +hmget +pttl +scard +sismember +smembers +time +zcard +zcount +zrange +zscore +zmscore +xrevrange +fcall_ro|ns_snapshot +fcall_ro|ns_table_read +fcall_ro|ns_table_read_set +fcall_ro|ns_table_list +fcall_ro|ns_view_get +fcall_ro|ns_view_list +fcall_ro|ns_table_member_find +fcall_ro|ns_table_members",
 	"ns-deploy resetkeys resetchannels -@all +ping +client|setname +client|id +function|load +function|list",
-}
-
-// DeployACLs installs the per-actor ACL users on the store. It leaves their
-// passwords unchanged.
-func DeployACLs(ctx context.Context, client *redis.Client) error {
-	for _, rule := range ACLRules {
-		parts := aclArgs(rule)
-		name := parts[0]
-		args := []any{"ACL", "SETUSER", name, "on"}
-		for _, p := range parts[1:] {
-			args = append(args, p)
-		}
-		if err := client.Do(ctx, args...).Err(); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// aclArgs splits a rule on spaces, keeping a parenthesised selector
-// ("(+get +set ~bench:*:owner)") as ONE argument: ACL SETUSER takes a
-// selector whole, and a seat's direct-write scope is what a selector is for.
-func aclArgs(rule string) []string {
-	var out []string
-	depth := 0
-	start := 0
-	for i, r := range rule {
-		switch r {
-		case '(':
-			depth++
-		case ')':
-			depth--
-		case ' ':
-			if depth == 0 {
-				if i > start {
-					out = append(out, rule[start:i])
-				}
-				start = i + 1
-			}
-		}
-	}
-	if start < len(rule) {
-		out = append(out, rule[start:])
-	}
-	return out
 }
