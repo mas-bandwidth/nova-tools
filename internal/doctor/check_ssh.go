@@ -62,6 +62,11 @@ func checkSSH(ctx context.Context, env Env) Result {
 		}
 	}
 
+	// DEBUG: print benches found
+	if len(benches) > 0 {
+		fmt.Println("DEBUG: benches =", benches)
+	}
+
 	if len(benches) == 0 {
 		return Result{Status: OK, Evidence: "no benches in inventory"}
 	}
