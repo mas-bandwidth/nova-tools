@@ -1,47 +1,115 @@
-# Setup
+# Setting up nova
 
-This document describes how to set up the nova tools on a bench machine.
+This guide takes a machine from nothing to a first sprint using only these docs and the tools.
+Each section is one way to set up; the first is one machine with no config.
 
-## Dependencies
+## One machine: nova-up --local
 
-### dep-secrets-b.w3
+`nova-up --local` sets up everything a first sprint needs on the machine it runs on, under one
+root (`~/nova`, or `--root <dir>`). The design is [SPEC-UP.md](SPEC-UP.md).
 
-**What it is:** The nova-secrets store and keys for the seat.
+1. Install the programs it runs. On darwin:
 
-**Who needs it:** The coordinator seat and any bench that runs nova-secrets verbs.
+   ```sh
+   brew install git redis sops age
+   go install ./cmd/...   # in a checkout of this repository: nova-up and the nova tools
+   ```
 
-**How nova-up provides it:** The `secrets` step of nova-up (order 50) creates:
-- An age key pair at `NOVA_SECRETS_KEY`
-- A git bare upstream beside the store
-- A git working copy at `NOVA_SECRETS_STORE`
-- The `.sops.yaml` rules file for the seat
+   On linux, `sudo apt-get install -y git redis-server age`, sops from its release page or
+   `go install github.com/getsops/sops/v3/cmd/sops@latest`, and the nova tools as above.
 
-**How a person sets it up manually:**
-1. Generate an age key: `nova-secrets keygen --as <seat> --key <path> --age-keygen /path/to/age-keygen`
-2. Clone the secrets store: `git clone <store-url> $NOVA_SECRETS_STORE`
-3. Add the seat via `nova-secrets seat add`
+2. See the plan. A dry run prints one line per step and writes nothing:
 
-**What the doctor checks:** The `secrets` check in nova-doctor verifies:
-- sops is on PATH
-- The seat's age key file exists and is readable
-- The key file has the public key comment line
-- The store is a git working copy
-- The seat's yaml file exists in the store
+   ```sh
+   nova-up --local --dry-run
+   ```
 
----
+   Each line is `UP <step> <ok|create|change|missing> <detail>`. A `missing` line names the
+   command that provides what is missing; run it, then run the dry run again.
 
-### dep-go-sdk-b.w2
+3. Apply it:
 
-**What it is:** The Go toolchain needed to build and test the repository.
+   ```sh
+   nova-up --local
+   ```
 
-**Who needs it:** Every bench that builds or tests nova-tools.
+   It makes the root, the sprint's twin store, a secrets store for the coordinator's seat, a
+   loopback Redis run by the service manager with its passwords sealed in that store, the
+   seat file, and a smoke: one card taken from added to landed on a twin of its own. The last
+   line names the seat file.
 
-**How nova-up provides it:** Not automatic; install Go manually or via a package manager.
+4. Run it again. A second run prints `ok` on every line and `UP UNCHANGED`; it changes nothing.
 
-**How a person sets it up manually:** Install Go matching the version in go.mod's toolchain line.
+5. Start the first sprint as the coordinator:
 
-**What the doctor checks:** The `gosdk` check in nova-doctor verifies:
-- go is on PATH
-- go version matches go.mod's toolchain line
-- GOCACHE is set and writable
-- GOFLAGS carries -mod=readonly
+   ```sh
+   set -a; . ~/nova/seat.env; set +a
+   nova-sprint where
+   ```
+
+   The coordinator's day is [SPRINT-COORDINATOR.md](SPRINT-COORDINATOR.md); its seat is
+   [SPRINT-COORDINATOR-SEAT.md](SPRINT-COORDINATOR-SEAT.md).
+
+What `--local` never touches, and how each step decides it has nothing to do, is in
+[SPEC-UP.md](SPEC-UP.md).
+
+## Checking the setup
+
+### setup-nova-doctor-r-r5.w1: nova-doctor
+
+When anything is wrong, run `nova-doctor` first. It runs every check, prints one
+`DOCTOR <check> ok|warn|fail <evidence> [fix: <line>]` line each, and gives the one fix
+line for each thing that is not ok. It changes nothing.
+
+```
+nova-doctor            every check
+nova-doctor --local    skip the checks only a fleet needs, and say which
+nova-doctor --check self --json
+```
+
+Exit 0 is all ok, 1 a warn under `--strict`, 2 a fail. The first check, `self`, finds the
+nova tools on PATH and fails when they are not one release, naming the odd one. The
+contract is [SPEC-DOCTOR.md](SPEC-DOCTOR.md).
+
+### dep-go-sdk-b.w2: the Go toolchain
+
+The Go SDK is a dependency of a bench, and never of the coordinator's machine. A bench
+builds and tests this repository (`go build ./...`, `go test`), which needs the Go version
+`go.mod`'s `toolchain` line names, a writable `GOCACHE`, and `GOFLAGS=-mod=readonly`. The
+coordinator's machine builds and tests nothing, so no `go` runs there: the bench rule.
+
+`nova-up --local` sets up the coordinator's machine and installs no Go on it. Its
+`binaries` step checks the programs the tools run and names the install command for a
+missing one; the Go toolchain is not among them, because the coordinator installs the
+released tools instead of building them. On a bench, a person installs the toolchain
+`go.mod` names (the archive from <https://go.dev/dl/> or the distribution package at that
+version) and exports `GOFLAGS=-mod=readonly` with a private `GOCACHE`, as every card does.
+
+The `gosdk` check reads the role from the machine's seat. On the coordinator's machine,
+`go` on PATH is a warn naming the bench rule, with the released install as its fix; with
+no `go` there it is ok. On a bench it fails when `go` is absent, when its version is not
+`go.mod`'s toolchain version, or when `GOCACHE` is not writable, and warns when `GOFLAGS`
+does not carry `-mod=readonly`. Each fix line names the step above.
+
+### dep-secrets-bb.w3: the secrets store and keys
+
+The secrets are nova-secrets with sops and one age key per machine: the store is a git
+working copy of sealed `<seat>.yaml` files, and the key file at `NOVA_SECRETS_KEY` is the
+only thing that opens this machine's file (the model is [SPEC-SECRETS.md](SPEC-SECRETS.md)).
+
+Every machine that runs a seat needs it: the coordinator's machine holds the
+coordinator seat, and each loop record's passwords are sealed into that same file.
+
+`nova-up --local` provides it on one machine: its `secrets` step (order 50) runs
+`nova-secrets keygen` for the coordinator seat, lays the store out as a git working copy
+on `main` tracking the bare upstream beside it, and writes `.sops.yaml` for the seat; its
+`redis` step (order 60) then seals each loop password with `nova-secrets seal`. A person
+does the same by hand: `nova-secrets keygen --as <seat> --key <path> --age-keygen <path>`,
+clone the store to `NOVA_SECRETS_STORE`, add the seat with `nova-secrets seat add`, and
+seal each missing name with `nova-secrets seal --store <dir> --as <seat> --name <NAME>`.
+
+The `secrets` check in nova-doctor verifies sops is on PATH, the key file at
+`NOVA_SECRETS_KEY` is readable in mode `0600` inside a directory in mode `0700`, and every
+secret name the seat and the loop records require is present in the store by nova-secrets'
+own listing (`nova-secrets names`, names only, never a value). Each fix line names the
+verb or step above.
