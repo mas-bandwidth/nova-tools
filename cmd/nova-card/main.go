@@ -36,8 +36,8 @@ const usage = `nova-card: writes a directory of pre-linted briefs from a ledger,
 
 how it works: a source is read from a checkout of the target repository (a ratchet ledger of
 internal/ci, a findings TSV, a tool's rendered help); the planner cuts one card per file with
-its PATHS, TEST and tier computed from the row, puts cards that edit one ledger in alternating
-waves, and holds every brief to the lint nova-sprint add runs before the directory is written.
+its PATHS, TEST and tier computed from the row, plans every ledger in one wave with no
+dependency, and holds every brief to the lint nova-sprint add runs before the directory is written.
 State: none; the directory, its manifest.tsv and the one CARDS OK line are the whole result.
 
 the flow, three lines:
@@ -64,10 +64,10 @@ A ledger card is flash and a findings or help card is pro unless --tier says oth
 whose PATHS name TLA+ model work (a .tla module, an MC config under tla/) is frontier, as
 nova-sprint add tiers it, and --tier flash or pro on such a card is a red line
 (check=model-tier). The TLC run records tla/RUNS.tsv and tla/CASES.tsv alone are no model.
-Cards of one ordinary ledger alternate waves (odd rows wave 1, even rows wave 2 depending on
-their neighbours) because adjacent deletions conflict at land; a generated ledger
-(docs/SPEC-SPRINT.md section 7) gets one wave and no dependency. Wave 1 cards of one ledger
-share its path, so the add wants --allow-shared-paths; the CARDS line says so.
+A ledger plan is one wave with no dependency chain: the lander resolves a ledger conflict as
+the union of removals, so adjacent deletions of one file no longer conflict at land
+(docs/SPEC-SPRINT.md section 7). Every card is wave 1 and shares the ledger's path with no
+need between them, so the add wants --allow-shared-paths; the CARDS line says so.
 lint holds a brief to the lint nova-sprint add runs (the model lines, the child rules under the
 default rule set, a tree card's steps), and past the add to the typed header and the template's
 unfilled <...> lines, which the add does not read, one LINT DRIFT line each; and to the card
