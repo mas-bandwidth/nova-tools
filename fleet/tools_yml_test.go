@@ -83,8 +83,12 @@ func TestToolsYmlBuildsNovaSprintFromItsOwnRepo(t *testing.T) {
 		{"the build play builds ./cmd/nova-sprint in that checkout, after it", compile > checkout && checkout >= 0},
 		{"the install play copies nova-sprint into the bin directory by name", copied >= 0},
 		{"after the release's own install", copied > release && release >= 0},
+		{"the install play's release install sends coordinators to the seat window", excludesCoordinators(install[release])},
+		{"the install play's copy sends coordinators to the seat window", excludesCoordinators(install[copied])},
+		{"the install play's copy still waits out check mode", strings.Contains(strings.Join(whenLines(install[copied]), " "), "not ansible_check_mode")},
 		{"the seat play installs through the release's own install", seatRelease >= 0},
 		{"the seat play places nova-sprint after that install", seatCopied > seatRelease && seatRelease >= 0},
+		{"the seat window's copy is the one that installs on the coordinator", !excludesCoordinators(seat[seatCopied])},
 		{"fleet/retired-tools.txt never names nova-sprint", !slices.Contains(strings.Fields(string(readFleetFile(t, "retired-tools.txt"))), "nova-sprint")},
 	}
 	for _, tc := range cases {
@@ -129,6 +133,35 @@ func playTasks(t *testing.T, play map[string]any) []map[string]any {
 // taskIndex is the index of the first task match accepts, or -1.
 func taskIndex(tasks []map[string]any, match func(map[string]any) bool) int {
 	return slices.IndexFunc(tasks, match)
+}
+
+// whenLines is a task's when as written: the scalar form as one line, the list
+// form as its lines, and no condition as none.
+func whenLines(task map[string]any) []string {
+	switch w := task["when"].(type) {
+	case string:
+		return []string{w}
+	case []any:
+		var out []string
+		for _, e := range w {
+			out = append(out, str(e))
+		}
+		return out
+	case nil:
+		return nil
+	default:
+		return []string{str(w)}
+	}
+}
+
+// excludesCoordinators is true when a task's when keeps the coordinator out of
+// it: the coordinator installs inside the seat play's window, not the install
+// play (docs/FLEET.md, "tools.yml", step 3), so the install play's copy leaves
+// the coordinator's nova-sprint to the guarded copy in that window.
+func excludesCoordinators(task map[string]any) bool {
+	return slices.ContainsFunc(whenLines(task), func(line string) bool {
+		return strings.Contains(line, "inventory_hostname not in") && strings.Contains(line, "coordinator")
+	})
 }
 
 // flattenTasks splices every task's nested block in at the task's place, so
