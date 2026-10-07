@@ -205,3 +205,14 @@ func TestPromoteCutsAFrozenBranchAndNeverTheLiveTip(t *testing.T) {
 	require.Equal(t, 1, code)
 	require.Nil(t, again.Judgment, "the judgment was already raised")
 }
+
+// TestPromoteMergesFromAThrowawayBranchAndKeepsTheBase pins the default gate
+// used by the twin-repository promotion test: no promotion can reach the
+// forge without the whole-tree checks, including functional checks.
+func TestPromoteMergesFromAThrowawayBranchAndKeepsTheBase(t *testing.T) {
+	t.Parallel()
+	require.Contains(t, promoteCheckDefault, "go build ./...", "the gate builds the tree")
+	require.Contains(t, promoteCheckDefault, "go vet ./...", "the gate vets the tree")
+	require.Contains(t, promoteCheckDefault, "go test ./...", "the gate tests every package")
+	require.Contains(t, promoteCheckDefault, "make test-functional-container PKGS=./...", "the gate runs functional checks")
+}

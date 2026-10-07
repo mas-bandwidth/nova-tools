@@ -2785,6 +2785,11 @@ everywhere, red for all dev deleted since the last promotion, so the
 promotion lands as a merge commit. A push to dev by a bypass actor is never
 gated by a required check, so what it deletes enters dev's history without
 this rule having run on it, and a main run excuses it all the same.
+For a promotion merge, declarations are read as the union of rows added by
+every commit on the throwaway branch since the last gated promotion, not only
+the promotion merge tip. This prevents the promotion merge itself from being
+refused for a deletion declared by a commit below it.
+
 `origin/dev` is trusted to be dev's; the workflow's own fetch
 (`+dev:refs/remotes/origin/dev`) makes it so.
 
