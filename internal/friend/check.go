@@ -39,8 +39,12 @@ type DaemonFacts struct {
 	// Proof is the session's proof as the server has it from her daemon: pending
 	// while the push is unproven (ProofAge since the daemon started waiting), sent
 	// once the server took one on her beat (ProofAge the proof's age), none before.
-	Proof    string `json:"proof"`     // pending, sent, none
-	ProofAge string `json:"proof_age"` // e.g. "4s" or "-"
+	Proof           string `json:"proof"` // pending, sent, none
+	ProofAge        string `json:"proof_age"`
+	SessionID       string `json:"session_id,omitempty"`
+	SessionProof    string `json:"session_proof,omitempty"`
+	SessionObserved string `json:"session_observed,omitempty"`
+	SessionTarget   string `json:"session_target,omitempty"` // e.g. "4s" or "-"
 }
 
 // HarnessFacts carries facts about the harness, deliveries and breaks: every
@@ -295,6 +299,8 @@ func factsVerdict(df DaemonFacts, hf HarnessFacts, bf BusFacts, wf WorkFacts, wi
 		return VerdictBroken, "session broken since " + hf.Broken
 	case hf.Delivered > 0 && hf.Failed == hf.Delivered:
 		return VerdictBroken, fmt.Sprintf("every delivery in the window failed (%d of %d)", hf.Failed, hf.Delivered)
+	case (df.SessionProof != "proven" || df.SessionID == "") && hf.Harness != "claude":
+		return VerdictDown, "session unproven: target=" + dash(df.SessionTarget) + " active=" + dash(df.SessionID) + " proof=" + dash(df.SessionProof) + " observed=" + dash(df.SessionObserved)
 	case hf.Delivered > hf.Failed && !cameBack:
 		return VerdictDeaf, "deliveries succeed but no session pong or real message came back in the window"
 	case hf.Delivered == 0 && hf.Deferred == 0 && wf.Inbox == 0 && !cameBack && df.Presence != PresenceDown:
@@ -370,6 +376,7 @@ func CheckFriend(ctx context.Context, friendName string, seams CheckSeams, since
 		} else {
 			df.Status = "stale"
 		}
+		df.SessionID, df.SessionProof, df.SessionObserved, df.SessionTarget = st.SessionID, st.SessionProof, st.SessionObserved, st.SessionTarget
 		df.Connection = dash(st.Connection)
 		df.Challenge = dash(st.Challenge)
 		if (harness == "" || harness == "unknown") && st.Harness != "" {
@@ -593,8 +600,8 @@ func (df DaemonFacts) Line() string {
 	if proof == "" {
 		proof, age = "none", "-"
 	}
-	return fmt.Sprintf("CHECK DAEMON friend=%s agent=%s pid=%s status=%s connection=%s challenge=%s pong_age=%s presence=%s seen_age=%s proof=%s proof_age=%s",
-		df.Friend, df.Agent, df.PID, df.Status, df.Connection, df.Challenge, df.PongAge, df.Presence, df.SeenAge, proof, dash(age))
+	return fmt.Sprintf("CHECK DAEMON friend=%s agent=%s pid=%s status=%s connection=%s challenge=%s pong_age=%s presence=%s seen_age=%s proof=%s proof_age=%s session_id=%s session_proof=%s session_observed=%s session_target=%s",
+		df.Friend, df.Agent, df.PID, df.Status, df.Connection, df.Challenge, df.PongAge, df.Presence, df.SeenAge, proof, dash(age), dash(df.SessionID), dash(df.SessionProof), dash(df.SessionObserved), dash(df.SessionTarget))
 }
 
 // Line renders the CHECK HARNESS line.

@@ -263,6 +263,7 @@ func NewDeliverer(harness, dir, session string, run Exec, out io.Writer) (Delive
 // lacks a flag the adapter passes.
 type OpenCode struct {
 	Dir, Session string
+	target       sessionTarget
 	Run          Exec
 	Program      string    // "opencode" when empty
 	Out          io.Writer // where the turn's output goes, when set: the daemon's record
@@ -312,7 +313,7 @@ func (o *OpenCode) Deliver(ctx context.Context, text string) (int, error) {
 	if o.Allow != nil {
 		o.allow()
 	}
-	id := o.Session
+	id := o.target.get(o.Session)
 	if id == "" {
 		listing, exit, err := o.Run(ctx, o.Dir, o.program(), []string{"session", "list", "--format", "json"}, "")
 		if err != nil {
@@ -325,6 +326,7 @@ func (o *OpenCode) Deliver(ctx context.Context, text string) (int, error) {
 			return 0, err
 		}
 	}
+	o.target.saw(id)
 	out, exit, err := o.Run(ctx, o.Dir, o.program(), []string{"run", "--session", id, text}, "")
 	if o.Out != nil && out != "" {
 		fmt.Fprintln(o.Out, strings.TrimRight(Head(out, OutputKept), "\n"))

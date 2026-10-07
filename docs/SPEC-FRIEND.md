@@ -2546,3 +2546,49 @@ the message stays pending, never given up, the session reads broken with the
 reason until a turn succeeds, and the detail tells the friend to start a session
 without a preset or read the bus with `nova-bus recv` ("A turn the session
 cannot take").
+
+
+## Session binding and joining
+
+A nonce proves one delivery target, not every conversation running as a friend.
+The delivery adapter records its session identifier independently of the pong.
+`nova-friend pong --session <id>` reports the conversation answering; when omitted,
+the harness runtime session variable supplies it, including `CODEX_THREAD_ID`.
+The pong carries `session_id=<id>` separately from its nonce. The daemon compares
+both the current nonce and the adapter's pinned target. An answer from another
+conversation keeps ordinary delivery blocked and records `session=mismatch`, the
+target and the observed identifier. A generic bus message cannot prove this binding.
+A pong without an identifier leaves the target unproven; supply the live identifier
+from inside the conversation, never copy the daemon's configured identifier blindly.
+
+Status records `session_id`, `session_target`, `session_observed` and `session_proof`
+(`unproven`, `mismatch` or `proven`). The friend check prints them. An unproven
+binding beats down with `session unproven`, so the sprint roster shows the reason
+instead of treating a running daemon as an up friend. A process-per-card harness
+has no single resident conversation to bind; its individual lanes retain their checks.
+
+Only a `request` from the friend herself, addressed to her own bus stream, with
+subject `session <id>` changes the target. The requested conversation receives a
+fresh SESSION CHECK. Every ordinary delivery waits; a stale nonce or a pong from
+the previous conversation proves nothing. Once that conversation answers, its
+identifier is persisted and the daemon replies `session <id> proven` on the bus.
+The installed launchd plist preserves all its existing arguments and settings while
+replacing only `--session`; no daemon reinstall or live launchctl action is needed.
+The daemon's status records the identifier, and an unqualified restart uses it.
+A request while a turn is active waits for that turn to end; ordinary delivery is
+blocked meanwhile, and the proof round trip starts once the turn lock is free.
+
+When an unproven friend first writes to the coordinator, or receives a `join` note,
+the daemon sends one mechanical line asking for her live session id. It asks once
+for that target. The line is the self-addressed bus request above, with the checked
+Redis address; another sender cannot redirect the daemon. Identifiers retain the
+harness's existing `--session` form (conversation id, tmux session name, or the
+monitor's wake file for a mailbox harness). They are explicit before proof; a
+harness that cannot report a target remains unproven.
+
+`tla/Delivery.tla` models self-request, fresh nonce, answering conversation,
+persistent target and ordinary delivery. `DeliveryOnlyToProvenSession` pins every
+delivery to the conversation that supplied its receipt; `SwitchAfterRoundTrip`
+pins target changes to the new conversation's answer. The wrong-session mutation
+must violate `DeliveryOnlyToProvenSession`. The pure acceptance test is
+`TestDeliveryGoesOnlyToAProvenSessionAndAFriendCanSwitchIt`.

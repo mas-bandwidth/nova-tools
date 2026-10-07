@@ -92,7 +92,7 @@ func TestRunBeatsDownWhileTheLanesArePausedUntilAPersonResumes(t *testing.T) {
 	w.exec = func(_ context.Context, _, _ string, args []string, _ string) (string, int, error) {
 		if text := args[len(args)-1]; strings.HasPrefix(text, friend.SessionCheckPrefix) {
 			nonce, _, _ := strings.Cut(strings.TrimPrefix(text, friend.SessionCheckPrefix), "\n")
-			r.answer(nonce)
+			r.answer(nonce, args[2])
 			return "answered\n", 0, nil
 		}
 		return "", 0, nil
@@ -105,7 +105,7 @@ func TestRunBeatsDownWhileTheLanesArePausedUntilAPersonResumes(t *testing.T) {
 	require.False(t, cleared.IsZero())
 	require.NotEmpty(t, downs, "she beats down while paused\n%s", out.String())
 	for _, b := range downs {
-		if strings.HasPrefix(b.reason, "push unproven: ") {
+		if strings.HasPrefix(b.reason, "session unproven: ") {
 			// resumed, her session is asked again before it is beaten up: its own word, down
 			assert.False(t, b.at.Before(cleared), "the session check's down beat follows the resume: %s before %s", b.at, cleared)
 			continue

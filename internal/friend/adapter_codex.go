@@ -34,6 +34,7 @@ import (
 // chat has it treated as one.
 type Codex struct {
 	Dir, Session string
+	target       sessionTarget
 	Run          Exec
 	Program      string                 // "codex" when empty
 	Home         string                 // CODEX_HOME; $CODEX_HOME or ~/.codex when empty
@@ -284,7 +285,7 @@ func LockPath(home, thread string) string {
 const ResumeLabel = "answered by resume, not by the open chat"
 
 func (c *Codex) Deliver(ctx context.Context, text string) (int, error) {
-	session := c.Session
+	session := c.target.get(c.Session)
 	if session == "" {
 		var err error
 		session, err = NewestCodexSession(c.home(), c.Dir)
@@ -292,6 +293,7 @@ func (c *Codex) Deliver(ctx context.Context, text string) (int, error) {
 			return 1, err
 		}
 	}
+	c.target.saw(session)
 	queue := []string{"queue", "--thread", session, "--message", text}
 	resume := ResumeArgs(session, text)
 	if c.held()(LockPath(c.home(), session)) {
