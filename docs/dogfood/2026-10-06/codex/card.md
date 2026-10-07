@@ -1,26 +1,10 @@
 # nova-card dogfood
 
-Run: 2026-10-07. Tool: `nova-card v1.2.0-dev.7a1152a darwin/arm64 go1.26.6`. The build commit is an ancestor of `sprint/mechanical-2026-10-02` at `6ff31d5b3`; every generated directory and input made for this run stayed under the job's `scratch/` directory. I read the tool's help and its `docs/CLI.md` and `docs/SPEC-CARD-CONTRACT.md` page before trying the verbs.
+On the source-matched build, the documented `--name` and `--dropped` flags are present and accepted; my first-pass unknown-flag result came from an older installed binary and is deployment-version skew, not a current source finding. The source-matched run completed all five verbs, exercised ledger, findings, and help generation plus lint against job-local scratch outputs, and found one remaining edge case: `--max -1` silently generates all 13 cards in a dry run.
 
-1. Command: `nova-card generate --from findings --file ./cmd/nova-card/testdata/findings.tsv --repo example/repo --base dev --sha 0123456789abcdef0123456789abcdef01234567 --out scratch/cards-name-dry --name DogfoodReviewer --dry-run`
+Run metadata: source `0bc5f275dcee8fc0b5f4b62f42047b7d4b501588`, branch `sprint/dogfood-codex-card-b.w2.g1.e15`; built on Vision as `nova-card v1.0.1-0.20261007162517-0bc5f275dcee linux/amd64 go1.26.6`. The first pass used the installed `nova-card v1.2.0-dev.7a1152a darwin/arm64 go1.26.6`; it refused a generation call with `unknown flag --name` and another with `unknown flag --dropped`. Rebuilding current source showed both flags in `generate -h` and `lint -h`, and a successful generation and lint run with both flags. I do not count the earlier version-skew refusals as findings.
 
-   Output (first 3 lines):
-
-   ```text
-   nova-card generate REFUSED: unknown flag --name; the flags of generate are --base, --bin-dir, --dry-run, --file, --from, --ledger, --max, --minutes, --out, --prefix, --repo, --repo-dir, --sha, --tier, --tool; did you mean --base?; run: nova-card help generate
-   ```
-
-   Additional command: `nova-card generate --from findings --file ./cmd/nova-card/testdata/findings.tsv --repo example/repo --base dev --sha 0123456789abcdef0123456789abcdef01234567 --out scratch/cards-dropped-dry --dropped abandoned-card --dry-run`
-
-   Additional output (first 3 lines): `nova-card generate REFUSED: unknown flag --dropped; the flags of generate are --base, --bin-dir, --dry-run, --file, --from, --ledger, --max, --minutes, --out, --prefix, --repo, --repo-dir, --sha, --tier, --tool; run: nova-card help generate`
-
-   `nova-card lint --card scratch/cards-help/dogfood-help-nova-card.md --name DogfoodReviewer` also refuses `--name`. `docs/CLI.md` lists both `--name` and `--dropped` for generation and lint, and the spec says they exclude named people and dropped card ids from generated briefs.
-
-   Expected: accept the documented flags and apply them, or remove the claims from the docs.
-
-   Grade: URGENT
-
-2. Command: `nova-card generate --from ledger --ledger serial-tests --repo-dir . --out scratch/cards-max-negative --max -1 --dry-run`
+1. Command: `/home/glenn/nova-bench/runs/stella-dogfood-codex-card-b-w2-20261007/scratch/bin/nova-card generate --from ledger --ledger serial-tests --repo-dir . --repo mas-bandwidth/nova-tools --base sprint/mechanical-2026-10-02 --sha 0bc5f275dcee8fc0b5f4b62f42047b7d4b501588 --out /home/glenn/nova-bench/runs/stella-dogfood-codex-card-b-w2-20261007/scratch/cards-negative-max-current --max -1 --dry-run`
 
    Output (first 3 lines):
 
@@ -30,14 +14,14 @@ Run: 2026-10-07. Tool: `nova-card v1.2.0-dev.7a1152a darwin/arm64 go1.26.6`. The
    serial-tests-internal-secrets-place	internal/secrets/place_test.go	internal/ci TestEveryTestOpensWithTParallel	2	serial-tests-internal-nsprint-store-store,serial-tests-internal-nsprint-store-open-sends-no-command
    ```
 
-   The dry run produced all 13 cards. The help says `--max` is an integer and only documents `0` as “all”.
+   The dry run listed all 13 cards. The help says `--max` is an integer and documents `0` as “all”; it does not define negative values.
 
-   Expected: refuse a negative limit with a remedy, rather than silently treating it as no limit; with a real output directory this could write far more cards than the caller intended.
+   Expected: refuse a negative limit with a remedy, or document the behavior. As implemented, a typo or generated negative limit silently becomes unbounded; with a real output directory it would create all 13 cards.
 
    Grade: NEXT
 
-READ 8/10 — The help and CLI page explain the three input sources, output shape, and the basic flow, but the docs advertise flags this build refuses.
+READ 9/10 — The help and CLI page agree on the source modes, flags, output shape, and basic flow; the negative-limit behavior is unspecified.
 
-USE 7/10 — Ledger, findings, and help generation plus repeated lint worked on scratch outputs, while the negative limit was accepted as an unbounded run.
+USE 8/10 — All source modes and all verbs worked on scratch data, and the documented name and dropped-card checks passed; the negative limit was accepted as unbounded.
 
-urgent=1 next=1
+urgent=0 next=1
