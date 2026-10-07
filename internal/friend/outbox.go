@@ -218,7 +218,11 @@ func (l *loop) outboxStep(now time.Time) {
 		}
 		switch {
 		case h == nil:
-			note(job, "card "+id+" is not on her row")
+			if who := d.holderOf(id, job); who != "" {
+				note(job, "card "+id+" is no longer hers; "+who+" holds it now")
+			} else {
+				note(job, "card "+id+" is not on her row")
+			}
 			continue
 		case h.Col != "working":
 			note(job, "card "+id+" is "+dash(h.Col)+" on her row, not working")

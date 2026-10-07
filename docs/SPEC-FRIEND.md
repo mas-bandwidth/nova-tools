@@ -53,8 +53,9 @@ below): the daemon answering is never the session.
   writes are not the session's. `status.json`
   (the daemon: its state, rewritten whole every five seconds and when it
   changes; a reader calls the daemon up while the file is under thirty seconds
-  old), `pong.json` (the `pong` verb: the session's last answer), `deliver.log`
-  (the daemon: one line per delivery). The queue file is under the friend's
+  old), `pong.json` (the `pong` verb: the session's last answer), `present.json`
+  (the daemon: the session id, the run id, and when a delivery last went in),
+  `deliver.log` (the daemon: one line per delivery). The queue file is under the friend's
   working directory: `inbox/QUEUE.json` (the coordinator and the session: one
   record per task with `id`, `state` of queued, working or done, and
   `deliverable`).
@@ -374,6 +375,8 @@ answered at once by the daemon; never a second turn. Then the worker's result;
 one beat to the sprint server (`friend beat <friend>`, a plain beat: the queue,
 working and width flags are owed on the server's side); the pong file, while a
 challenge is open; the status file.
+
+**The present** (tla/Delivery.tla, DeliveryAfterGap). The present comes first and the backlog never does. On a session start and after any gap longer than `PresentStale` (30 minutes) the daemon delivers one present turn and nothing older. The starts are a new `--session` id, a harness relaunch (this process's run id changes), the first delivery after 30 minutes of none, and the friend's own bus message whose subject or a body line is `present`. The first time a session id or a run id is seen it is remembered and is not itself a start. A step that delivers nothing moves the gap's mark forward once a delivery has set it, so the thirty minutes are a stretch in which the daemon did not step, or a step whose clock jumped by that much; a session that stays up is not a start. Nothing is delivered until the push is proved. The memory of the session, the run and the last delivery is `present.json` in the state directory. The turn carries the live queue (`inbox/QUEUE.json`: every card, its column, and its `BRIEF.md` path), the newest coordinator note to her, the seat's name, and one line of what was skipped (`n deals, n pings, n notes, all superseded`). Every older message on her stream is acked with the reason `superseded by the present at <time>`, so it never comes back, and that reason is on the bus log. A nonce older than the challenge window (`Window`) is dropped, not answered. A card she reports on that is no longer on her row is refused at finish, and when another friend holds it the line names who.
 
 **Last session activity** (2026-10-04: the table said up with 8 working while a friend's
 session sat idle from 2:40 to 4:34 PM, and another read working=0 while she was busy; a pong

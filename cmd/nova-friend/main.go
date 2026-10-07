@@ -377,9 +377,9 @@ func friendTool(w world) *tool.Tool {
 		What:    "what a friend runs to be part of the team: the wake loop, the beat, and the proof of life, as one daemon",
 		Stamp:   version,
 		How: `one launchd agent per friend (install) runs the daemon (run): it parks on the friend's
-nova-bus stream and, when the session is free, pushes every waiting message in as one turn (the
-harness's deliver command), beats to the sprint server while the session answers, answers the
-coordinator PING at once (daemon-pong); presence is the session's word on the bus, never a process.
+nova-bus stream and, when the session is free, one present after a start or a gap, else
+every waiting message as one turn (the harness's deliver), beats while the session answers,
+answers the coordinator PING at once (daemon-pong); presence is the session's word, never a process.
 state: <dir>/.nova-friend/ (--state-dir moves it), the queue: <dir>/inbox/QUEUE.json.`,
 		ExitTable: "0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no daemon; check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).",
 		Words:     []string{"NONE", "FAIL", "DRIFT", "DRY-RUN"},
@@ -406,7 +406,10 @@ evidence while her beats go on, so a check goes in every ` + friend.ProveEvery.S
 or no session answer, with the check's nonce). Each second, when the session is free: every waiting
 message read off the stream and pushed in as ONE turn, oldest first (at most ` + fmt.Sprint(friend.MaxBatch) + `; the rest is the next
 turn), acked together when the turn ends at exit 0; a turn that fails leaves them pending, handed in
-again when their claims open, and the third failure acks a message, given_up=true on the record. A
+again when their claims open, and the third failure acks a message, given_up=true on the record. On a new
+session, a new run, a gap of ` + friend.PresentStale.String() + ` with no delivery, or her own present request, that turn is one
+present (the live queue, the newest note, the seat, and the superseded counts) and every older message is
+acked with the reason, never delivered. A ping older than ` + friend.Window.String() + ` is dropped, not answered. A
 PING is answered at once with a daemon-pong and acked, never a turn; while a challenge is open the
 pong line rides at the head of the next turn. No ping for ` + friend.Window.String() + `: "coordinator silent", and
 "coordinator back" when pings resume, collapsed to the latest and said only inside a turn that
@@ -1262,6 +1265,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 	stager := w.stager(dir)
 	d := &friend.Daemon{
 		Friend: name, Harness: c.Str("harness"), Dir: dir, Width: c.Int("width"),
+		Session: c.Str("session"), Launch: sc.Run, StateDir: state,
 		Store: sc.DaemonStore(), Deliver: sc.Deliver, Now: w.now, Pause: w.sleep,
 		Sent: func() time.Time {
 			if at := sent.Load(); at != nil {

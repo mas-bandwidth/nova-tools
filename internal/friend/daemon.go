@@ -230,6 +230,16 @@ type Daemon struct {
 	// Sent is the session's proof the sprint server last took on her beat (friend
 	// beat --pong answered with it), zero before any; the status carries it.
 	Sent func() time.Time
+	// Session is this run's --session id and Launch is this process's run id
+	// (the session check's Run). A change from a saved non-empty value, a gap
+	// of PresentStale since the last delivery, or the friend's own present
+	// request delivers one present and acks the backlog (docs/SPEC-FRIEND.md,
+	// The present; tla/Delivery.tla, DeliveryAfterGap).
+	Session string
+	Launch  string
+	// StateDir is where this run keeps present.json, the same directory as
+	// status and pong. Empty is StateDirIn(Dir).
+	StateDir string
 
 	m           *Machine
 	status      Status
@@ -277,6 +287,7 @@ type turn struct {
 	text     string
 	started  time.Time
 	running  bool // a Deliver is under way (false while a deferral waits)
+	present  bool // this turn is the present: a failure is owed again (present.go)
 	cancel   context.CancelFunc
 	seen     *atomic.Int64 // outputs the command printed
 	seenN    int64
@@ -415,6 +426,7 @@ type loop struct {
 	followWG     sync.WaitGroup // it, waited for when Run ends
 	seatHolder   string         // the seat holder as last read; empty while unknown
 	seatRead     time.Time      // when it was read; zero before the first read
+	redo         string         // a present turn that failed, delivered again (present.go)
 }
 
 // Run is the loop until ctx ends. Each step: the clock; the friend's row
@@ -467,6 +479,9 @@ func (d *Daemon) Run(ctx context.Context) error {
 		}
 		mode, width := l.row(now)
 		proven := l.proof(now)
+		if proven {
+			l.maybePresent(now) // one present after a gap, before any older message is a turn
+		}
 		drained := l.busy == nil // this step's read takes what is pending: a wake turn never jumps a message
 		storeOK := l.read(now)
 		if ctx.Err() != nil {
@@ -805,13 +820,22 @@ func (l *loop) read(now time.Time) bool {
 		for err == nil && ok {
 			msg := e.Message()
 			if nonce, seat, since, isPing := ParsePing(msg.Body); isPing {
-				// answered by the daemon, never pushed in: the transport is proved, and a ping is no turn
-				l.ping(e, msg, nonce, seat, since, now)
-				if _, aerr := b.AckEntry(l.ctx, d.Friend, e.Entry); aerr != nil {
-					err = aerr
-					break
+				if nonceStale(now, msg) {
+					// a nonce older than the challenge window is dropped, not answered
+					// (docs/SPEC-FRIEND.md, The present; tla/Delivery.tla, DeliveryAfterGap)
+					if aerr := l.dropNonce(e, msg, now); aerr != nil {
+						err = aerr
+						break
+					}
+				} else {
+					// answered by the daemon, never pushed in: the transport is proved, and a ping is no turn
+					l.ping(e, msg, nonce, seat, since, now)
+					if _, aerr := b.AckEntry(l.ctx, d.Friend, e.Entry); aerr != nil {
+						err = aerr
+						break
+					}
+					delete(l.answered, e.Entry)
 				}
-				delete(l.answered, e.Entry)
 			} else if l.acted[msg.ID] || e.Stage == bus.Acted {
 				// a second delivery of a message a turn acted on: dropped and acked, never pushed in twice
 				d.Record(fmt.Sprintf("%s duplicate dropped id=%s", now.UTC().Format(time.RFC3339), msg.ID))
@@ -851,6 +875,9 @@ func (l *loop) read(now time.Time) bool {
 		for _, e := range fresh {
 			msg := e.Message()
 			if nonce, seat, since, isPing := ParsePing(msg.Body); isPing {
+				if nonceStale(now, msg) {
+					continue // dropped when the read takes it; a stale nonce is not answered
+				}
 				// the machine sees the ping when the daemon does: a turn longer than a window is no silence
 				l.ping(e, msg, nonce, seat, since, now)
 			}
@@ -894,6 +921,7 @@ func (l *loop) seat(now time.Time) string {
 // startTurn runs deliver for t in its own goroutine, its context carrying the
 // watch on its output; the result goes to the batch's or the lanes' channel.
 func (l *loop) startTurn(t *turn, now time.Time, deliver any) {
+	l.d.noteDelivery(now) // a delivery resets the present's gap (docs/SPEC-FRIEND.md, The present)
 	tctx, cancel := context.WithCancel(l.ctx)
 	seen := &atomic.Int64{}
 	tctx = WithOutputSeen(tctx, func() { seen.Add(1) })
@@ -1136,6 +1164,9 @@ func (l *loop) batchDone(r result, now time.Time) {
 	}
 	ok := r.err == nil && r.exit == 0 && !r.t.stopped
 	line += l.settle(r.t, ok, r.err, now)
+	if r.t.present && !ok {
+		l.redo = r.t.text // the backlog is already acked; the present is owed again
+	}
 	if ok && l.unable != "" {
 		line += fmt.Sprintf("\n%s session=ok: a turn succeeded after %d refused; no longer %s", now.UTC().Format(time.RFC3339), l.unableTries, l.unable)
 		l.unable, l.unableTries, l.told = "", 0, false
@@ -1144,6 +1175,9 @@ func (l *loop) batchDone(r result, now time.Time) {
 	for _, part := range strings.Split(line, "\n") {
 		d.Record(part)
 	}
+	// the gap is quiet after the turn ends, not after it starts: a turn that
+	// runs longer than PresentStale is still one delivery (docs/SPEC-FRIEND.md, The present)
+	d.noteDelivery(now)
 	l.busy, l.retry, l.deferrals, l.deferSaid = nil, time.Time{}, 0, time.Time{}
 }
 
