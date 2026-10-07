@@ -294,6 +294,22 @@ the hold takes back only the cards not yet started
 a card the hold took back may be dealt to the same friend again (only
 `friend take` keeps it off them, `taken_from`). The provider's limit only
 stops answers in the model; limit.go's `Down` until the reset is not in it.
+
+### Combined daemon and card lifecycle (`tla/FriendCard.tla`)
+
+`FriendCard.tla` composes the session challenge and table-card lifecycle. It is separate from `Friend.tla` (the daemon/coordinator protocol) and `FriendPresence.tla` (the table's session proof and placement); the full transition/evidence/bound table is in [SPEC-SPRINT.md, Friend-card lifecycle model](SPEC-SPRINT.md#friend-card-lifecycle-model). `FriendCard.cfg` checks two friends and three cards with saturated evidence ages, and its liveness assumes finitely many disruptions plus fair recoveries and card actions. It does not infer session hearing from a daemon beat.
+
+| transition | daemon-side evidence | bound in code |
+|---|---|---|
+| `Ping`, `Answer` | current wake nonce and a reply written by the session; stale or daemon-written pongs prove nothing | `SessionBound` is five minutes; a failed unread check is not re-asked before `ReaskAfter` (one hour); the sprint accepts session proof for 15 minutes (`FriendProofLive`) |
+| `Deliver`, `FailDelivery` | job in `inbox/<job>/BRIEF.md`, delivery adapter result, and a bus note for the coordinator; a deferred turn remains pending, not delivered | friend sync's configured pass interval controls when it next tries; `Deferred` retries after 10 seconds, and a failure is visible on the sync line |
+| `Start` | friend sync's generation-matched `FieldStarted`, derived from the running beat, a post-staging job write or an outbox report | unstarted work is bounded by `friend_start_max`, 20 minutes by default, plus the 10-minute `FriendReadyMax` judgment window |
+| `Progress` | newest session file write found by `Daemon.Activity`, not the process heartbeat | the activity walk runs every 10 seconds; the sprint's `friend_idle` default is 20 minutes |
+| `Finish`, `Die` | parsed outbox verdict/head or a lane's `END` record; a dead lane writes a failed report and sends the finish | a lane ending writes the finish at that end; an unacknowledged finish is retried after `OutboxRetry` (one minute) |
+| `Reboot`, `BringBackUp` | daemon process restart and then a fresh session answer; restart alone proves no hearing | launchd KeepAlive is five seconds; session presence is still bounded by `SessionBound` and the server's 15-minute proof window |
+
+The model deliberately requires an active card to leave a held or down friend in the same transition that makes her down. The current implementation handles an explicit hold and confirmed credit-out with `friend take`, but `friend_deal.go` says passive session loss leaves a card in place, and `friend_take.go` does not make every health-expiry/take-back one atomic step. `NoCardOffUp` is therefore a target invariant, not a claim that this code path already refines the model. The model is bounded and is not a substitute for a Linux TLC record. The current recorder accepts only `MC*.cfg`/`MC*.tla` names, outside this card's `FriendCard.cfg`/`FriendCard.tla` path allowlist.
+
 ## A friend's status, from evidence (internal/friend/status.go)
 
 The owner, 2026-10-04: "Once again I look at friends and I wonder, are
