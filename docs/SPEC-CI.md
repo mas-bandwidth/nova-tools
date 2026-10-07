@@ -3066,6 +3066,22 @@ the original failed measurement.
 
 **`secrets-check-reads-fixtures` — the secrets-in-errors check is held against openers whose answer is known.** *The rule.* The check that reads an opener's output for a secret finds an opener that echoes its DSN, one that wraps the secret with `%w`, one that logs it and one that panics with it; it passes an opener that names only a type; it puts the boundary at exactly eight bytes; it does not count a token's public prefix as the secret; each shape's marker is its own; and the comparison of the table with the tree refuses a function the table lacks and a row the tree lacks. *The mistake it prevents.* A check that passes everything reads like cover: a scan that looked in the wrong text, or at the wrong length, would be green over a tree that leaks. *The test.* `TestSecretCheckReadsItsFixtures` (`internal/ci/secrets_in_errors_class_test.go`). *Its allowlist.* None. *Its remedy line.* None of its own; it fails with the assertion that names the case. *Its narrowings.* It holds the check's decisions, not the openers: which functions leak is `TestNoSecretReachesAnError`'s answer.
 
+### `sprint-brand` — the Nova Sprint brand sheet is complete and its art has provenance
+
+**The rule.** `docs/sprint/BRAND.md` names the project name treatment, mark,
+colours, type and voice. Every file below `assets/sprint/` has a matching path
+in `docs/ASSET-PROVENANCE.md`.
+**The mistake it prevents.** A project mark without written rules drifts from
+its Nova family, and an image with no origin is easy to mistake for a third-party
+work.
+**The test.** `TestSprintBrandSheetIsCompleteAndEveryAssetHasProvenance`
+(`internal/ci/sprint_brand_class_test.go`).
+**Its remedy.** Write the missing brand section or add the asset's provenance
+row in the same change.
+**Its narrowings.** The test checks required section headings and exact relative
+asset paths; it does not judge visual quality or interpret the content of a
+provenance statement.
+
 
 ## How the class tests read the tree: one walk, one parse, in parallel
 

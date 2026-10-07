@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 360" role="img" aria-labelledby="title desc">
+  <title id="title">Nova Sprint friends on the track</title>
+  <desc id="desc">Two small robot friends run at different paces around a blue track, following a golden Nova star toward a finish flag.</desc>
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#17314f"/>
+      <stop offset="1" stop-color="#101820"/>
+    </linearGradient>
+    <linearGradient id="track" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#293847"/>
+      <stop offset="1" stop-color="#1b2733"/>
+    </linearGradient>
+  </defs>
+  <rect width="960" height="360" rx="28" fill="url(#sky)"/>
+  <circle cx="480" cy="152" r="95" fill="#f2be4c" opacity=".08"/>
+  <path d="M-20 322c150-92 314-134 500-126 175 7 338 57 500 147v40H-20z" fill="url(#track)"/>
+  <path d="M-22 325c169-80 335-114 499-107 174 7 341 58 505 148" fill="none" stroke="#3987e5" stroke-width="5" opacity=".8"/>
+  <path d="M-18 347c170-78 336-111 492-104 173 7 346 60 507 145" fill="none" stroke="#f2be4c" stroke-width="3" stroke-dasharray="13 15" opacity=".85"/>
+  <path d="M-9 294c155-76 319-114 491-108 170 6 335 53 492 137" fill="none" stroke="#8da0b1" stroke-width="2" opacity=".38"/>
+
+  <!-- Nova's four-point star leads the lap. -->
+  <path d="M480 60c7 28 17 38 45 45-28 7-38 17-45 45-7-28-17-38-45-45 28-7 38-17 45-45z" fill="#f2be4c"/>
+  <circle cx="480" cy="105" r="3" fill="#fff4cf"/>
+  <path d="M435 101h-24m162 0h-24M480 55V39m0 132v-16" stroke="#f2be4c" stroke-width="3" stroke-linecap="round" opacity=".7"/>
+
+  <!-- The fast friend is leaning into the curve. -->
+  <g transform="translate(294 192) rotate(-12)">
+    <path d="M-25 71l-29 29m37-19 19 31m-56-31-22-13m73-35 28-12" fill="none" stroke="#76b8ff" stroke-width="12" stroke-linecap="round"/>
+    <rect x="-39" y="-11" width="76" height="70" rx="24" fill="#3987e5" stroke="#b8dcff" stroke-width="4"/>
+    <rect x="-27" y="-31" width="52" height="24" rx="11" fill="#7cb4ff"/>
+    <path d="M-15 18v7m28-7v7" stroke="#0d243b" stroke-width="8" stroke-linecap="round"/>
+    <path d="M-5 39q10 9 20 0" fill="none" stroke="#0d243b" stroke-width="4" stroke-linecap="round"/>
+    <path d="M-31 54h59" stroke="#f2be4c" stroke-width="5" stroke-linecap="round"/>
+    <path d="M-75 3h20m-31 15h26m-17 15h21" stroke="#f2be4c" stroke-width="4" stroke-linecap="round" opacity=".8"/>
+  </g>
+
+  <!-- The careful friend checks the lap card while jogging. -->
+  <g transform="translate(612 215)">
+    <path d="M-25 64l-27 23m42-13 22 25m-53-34-27-8m69-33 25-6" fill="none" stroke="#f08ab0" stroke-width="11" stroke-linecap="round"/>
+    <rect x="-39" y="-13" width="76" height="70" rx="24" fill="#d55181" stroke="#ffc0d6" stroke-width="4"/>
+    <rect x="-27" y="-33" width="52" height="24" rx="11" fill="#f08ab0"/>
+    <path d="M-14 16v7m28-7v7" stroke="#451d30" stroke-width="8" stroke-linecap="round"/>
+    <path d="M-4 38q9 7 18-1" fill="none" stroke="#451d30" stroke-width="4" stroke-linecap="round"/>
+    <path d="M-31 52h59" stroke="#f2be4c" stroke-width="5" stroke-linecap="round"/>
+    <g transform="translate(65 2) rotate(8)">
+      <rect x="-1" y="-16" width="29" height="36" rx="4" fill="#fff4cf" stroke="#f2be4c" stroke-width="3"/>
+      <path d="M6-5h14M6 2h14M6 9h9" stroke="#597080" stroke-width="2" stroke-linecap="round"/>
+      <path d="M13-24l3 6 6 1-5 4 1 6-5-3-5 3 1-6-5-4 6-1z" fill="#f2be4c"/>
+    </g>
+    <path d="M-5-43c6-13 20-13 26-3" fill="none" stroke="#fff4cf" stroke-width="3" stroke-linecap="round" stroke-dasharray="2 7"/>
+  </g>
+
+  <!-- The finish flag is a welcoming marker, not a winner's podium. -->
+  <g transform="translate(825 146)">
+    <path d="M0 0v117" stroke="#dce6ef" stroke-width="6" stroke-linecap="round"/>
+    <path d="M4 4h78l-14 15 14 15H4z" fill="#f2be4c"/>
+    <path d="M4 4h31v15H4zm47 15h31v15H51z" fill="#17314f"/>
+    <path d="M-9 119h25" stroke="#dce6ef" stroke-width="6" stroke-linecap="round"/>
+  </g>
+  <path d="M218 279c18-9 38-14 58-15m438 52c15-5 27-8 42-10" fill="none" stroke="#f2be4c" stroke-width="3" stroke-linecap="round" opacity=".7"/>
+</svg>
