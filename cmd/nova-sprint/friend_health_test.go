@@ -61,6 +61,7 @@ func TestFriendHealthIsTheSeatsAndFencedByItsGeneration(t *testing.T) {
 	ta.ok("friend sync --root " + t.TempDir())
 	seen := ta.now.UTC().Format(time.RFC3339)
 	assert.Contains(t, ta.dry("friend health amy --state up --seen "+seen+" --generation 1 --dry-run"), "FRIEND-HEALTH DRY-RUN amy state=up seen="+seen+" generation=1; nothing was changed")
+	ta.ok("friend beat amy") // the row is up on the session's proof only while her daemon beats
 	out := ta.ok("friend health amy --state up --seen " + seen + " --generation 1")
 	assert.Equal(t, "FRIEND-HEALTH OK amy state=up seen="+seen+" generation=1 status=up\n", out)
 	assert.Contains(t, tableOf(ta.frame(), sprint.Friends), "amy     |     0 |       0 |     8 |    0 | 0.0% | up")
@@ -135,6 +136,7 @@ func TestTheFriendsTableShowsUpHeldOrDownWithTheReason(t *testing.T) {
 	ta.ok("friend up amy")
 	assert.Contains(t, tableOf(ta.frame(), sprint.Friends), "| down", "the hold lifted, the observation (down) stands")
 	ta.a.sleep(time.Second)
+	ta.ok("friend beat amy")
 	ta.ok("friend health amy --state up --seen " + ta.now.UTC().Format(time.RFC3339) + " --generation 1")
 	assert.Contains(t, tableOf(ta.frame(), sprint.Friends), "| up")
 }

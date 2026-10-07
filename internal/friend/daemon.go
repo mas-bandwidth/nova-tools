@@ -15,8 +15,9 @@ import (
 
 // BeatEvery is how often the daemon beats to the sprint server while its
 // loop runs: the sprint's own number (internal/sprint FriendBeatEvery, one
-// second; a friend is down after fifteen without one). It is also the
-// loop's read block: one read of the stream per beat.
+// second), from the moment the loop starts until it stops, whatever the
+// store and the session say. It is also the loop's read block: one read
+// of the stream per beat.
 const BeatEvery = time.Second
 
 // MaxDeliveries is how many times a message is handed into the session
@@ -428,7 +429,8 @@ type loop struct {
 // in as its own turn holding only the pong line (startWake), and in one-shot
 // mode, each free lane handed its next card with the waiting messages riding
 // along (lanes.go);
-// a beat when the store answered; the session's pong; the status. The
+// a beat, every step, whatever the store and the session say; the session's
+// pong; the status. The
 // daemon's own words about the coordinator collapse to the latest and ride in
 // a turn that carries messages or a card, never alone.
 func (d *Daemon) Run(ctx context.Context) error {
@@ -468,7 +470,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 		mode, width := l.row(now)
 		proven := l.proof(now)
 		drained := l.busy == nil // this step's read takes what is pending: a wake turn never jumps a message
-		storeOK := l.read(now)
+		_ = l.read(now)          // ignored: a store that does not answer pauses inside the read; the beat does not wait on it
 		if ctx.Err() != nil {
 			return nil
 		}
@@ -528,15 +530,13 @@ func (d *Daemon) Run(ctx context.Context) error {
 		} else if l.unable != "" && !l.told {
 			l.told = d.tellBroken(ctx, l.b, fmt.Sprintf("The session cannot take a turn: %s. The friend reads down; every message stays pending, none given up, and the daemon tries again every %s until a turn succeeds.", l.unable, RecheckEvery))
 		}
-		if storeOK {
-			if d.Activity != nil && (d.walked.IsZero() || now.Sub(d.walked) >= ActivityEvery) {
-				d.active, d.cards, d.walked = d.Activity(), d.held(), now // one walk serves the beat and the idle watch (they share walked)
-			}
-			if err := d.Beat(ctx, d.active); err != nil {
-				d.status.BeatError = err.Error()
-			} else {
-				d.status.BeatError, d.status.Beats, d.status.LastBeat = "", d.status.Beats+1, now
-			}
+		if d.Activity != nil && (d.walked.IsZero() || now.Sub(d.walked) >= ActivityEvery) {
+			d.active, d.cards, d.walked = d.Activity(), d.held(), now // one walk serves the beat and the idle watch (they share walked)
+		}
+		if err := d.Beat(ctx, d.active); err != nil {
+			d.status.BeatError = err.Error()
+		} else {
+			d.status.BeatError, d.status.Beats, d.status.LastBeat = "", d.status.Beats+1, now
 		}
 		if d.Activity != nil && l.mode == ModeBatch && !l.broken && l.busy == nil && proven {
 			if d.walked.IsZero() || now.Sub(d.walked) >= IdleWalkEvery {

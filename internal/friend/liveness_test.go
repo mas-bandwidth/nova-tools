@@ -119,7 +119,11 @@ func TestAFriendWhoseSessionPongsIsUpWithNoHarnessProcess(t *testing.T) {
 	t.Run("headless dsh, no app, the session pongs: up for three hours", func(t *testing.T) {
 		t.Parallel()
 		r := newLivenessRig(t, headlessDSH)
-		require.Error(t, r.step(BeatEvery), "a daemon that started proves nothing: down until the session answers")
+		require.NoError(t, r.step(BeatEvery), "a daemon that started beats; the session has not answered, and that is a separate fact")
+		up, reason := r.sc.Present()
+		require.False(t, up)
+		require.Equal(t, NotYetAnswered, reason)
+		require.True(t, r.sc.Evidence().IsZero())
 		require.True(t, r.answerLatest(t), "the first beat put a session check into the session")
 		answered := 1
 		before := r.beats()
@@ -135,6 +139,7 @@ func TestAFriendWhoseSessionPongsIsUpWithNoHarnessProcess(t *testing.T) {
 			require.True(t, up, "at %s: %s", elapsed, reason)
 		}
 		assert.Equal(t, steps, r.beats()-before, "every beat reached the sprint server")
+		assert.False(t, r.sc.Evidence().IsZero(), "the session's answer rides on the beat")
 		assert.GreaterOrEqual(t, answered, 15, "a check every quiet spell, each answered")
 		assert.Equal(t, HarnessNotSeen, r.d.status.HarnessSeen, "the status says the app was not seen, and nothing more")
 		r.mu.Lock()
@@ -148,10 +153,13 @@ func TestAFriendWhoseSessionPongsIsUpWithNoHarnessProcess(t *testing.T) {
 	t.Run("the app open, the session silent: down", func(t *testing.T) {
 		t.Parallel()
 		r := newLivenessRig(t, dshAppOpen)
+		steps := 0
 		for elapsed := time.Duration(0); elapsed < SessionBound+2*time.Minute; elapsed += 10 * time.Second {
-			assert.Error(t, r.step(10*time.Second), "at %s nothing has answered: no beat", elapsed)
+			steps++
+			assert.NoError(t, r.step(10*time.Second), "at %s nothing has answered: the beat still goes", elapsed)
 		}
-		assert.Zero(t, r.beats(), "a running app is no answer: no beat reached the sprint server")
+		assert.Equal(t, steps, r.beats(), "a running app is no session evidence, and the daemon beats anyway")
+		assert.True(t, r.sc.Evidence().IsZero())
 		up, reason := r.sc.Present()
 		assert.False(t, up)
 		assert.Equal(t, NoSessionAnswer, reason)
@@ -165,14 +173,16 @@ func TestAFriendWhoseSessionPongsIsUpWithNoHarnessProcess(t *testing.T) {
 func TestASessionsOwnBusMessageBringsItUp(t *testing.T) {
 	t.Parallel()
 	r := newLivenessRig(t, headlessDSH)
-	require.Error(t, r.step(BeatEvery))
+	require.NoError(t, r.step(BeatEvery))
 	daemon := &bus.Bus{Store: r.sc.DaemonStore()}
 	_, err := daemon.Send(context.Background(), bus.Message{From: "zhi", To: []string{"ada"}, Subject: "card x done", Body: "the daemon's\n"})
 	require.NoError(t, err)
-	require.Error(t, r.step(BeatEvery), "the daemon's own message proves nothing")
+	require.NoError(t, r.step(BeatEvery), "the daemon's own message proves nothing, and the beat still goes")
+	assert.True(t, r.sc.Evidence().IsZero())
 	_, err = r.direct.Send(context.Background(), bus.Message{From: "zhi", To: []string{"ada"}, Subject: "card x done", Body: "Verdict: LAND\n"})
 	require.NoError(t, err)
 	require.NoError(t, r.step(BeatEvery), "the session wrote on the bus: up, and the beat goes out")
+	assert.Equal(t, t0.Add(3*BeatEvery), r.sc.Evidence())
 	up, _ := r.sc.Present()
 	assert.True(t, up)
 	r.mu.Lock()

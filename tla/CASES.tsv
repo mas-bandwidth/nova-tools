@@ -442,3 +442,6 @@ MCBusCursorBrokenAdvanceWithoutAck.cfg	MCBusCursor.tla	invariant	AdvanceOnlyPast
 MCBusCursorBrokenNearerCursorWins.cfg	MCBusCursor.tla	invariant	FurtherReadWins	ignore-terminal	buscursor	required	-
 MCBusCursorBrokenWriteWithoutAdvance.cfg	MCBusCursor.tla	invariant	NoWriteWithoutAdvance	ignore-terminal	buscursor	required	-
 MCDirtyTickRefused.cfg	MCDirtyTick.tla	pass	-	ignore-terminal	dirtytick-small	required	-
+MCPresence.cfg	MCPresence.tla	pass	-	ignore-terminal	presence	required	-
+MCPresenceBrokenBeatUp.cfg	MCPresence.tla	invariant	UpHasSessionEvidence	ignore-terminal	presence	required	-
+MCPresenceBrokenHeldBeat.cfg	MCPresence.tla	invariant	BeatFresh	ignore-terminal	presence	required	-

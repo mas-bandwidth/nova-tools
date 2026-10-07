@@ -595,7 +595,8 @@ func HealthClearStep(r sprint.HealthClearReq) Step {
 }
 
 // FriendHealthClear removes the coordinator's observation of a friend (friend health
-// --clear), so her status is her session's evidence alone (sprint.FriendStatus): her roster
+// --clear), so her status is FriendStatus (a daemon beat within FriendBeatLive and
+// session evidence within its window): her roster
 // entry and her record are read, and with dry the removal is checked against the roster
 // and the seat and nothing is written. The result is the record that stood (had says
 // there was one) and her status by the friends' rule at the store's clock after it.

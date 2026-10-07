@@ -112,8 +112,9 @@ type HealthClearReq struct {
 }
 
 // ClearFriendHealth is the observation removed: the plan's HealthClear, which the step's
-// commit applies by removing her record, so her status is her session's evidence alone
-// (FriendStatus), or its refusal: the sender is the seat's holder, of a friend on the
+// commit applies by removing her record, so her status is FriendStatus (a daemon
+// beat within FriendBeatLive and session evidence within its window), or its
+// refusal: the sender is the seat's holder, of a friend on the
 // table. A friend with no observation is cleared all the same (nothing to remove).
 func ClearFriendHealth(s *Snapshot, r HealthClearReq) Plan {
 	var p Plan
@@ -136,21 +137,25 @@ type FriendHealthWrite struct {
 	Health FriendHealth `json:"health"`
 }
 
-// ObservedStatus is the friends' rule over the coordinator's observation
-// alone at now: up only when the observation's word is up (a wake ping her
+// ObservedStatus is the session fact alone at now (FriendSessionHeard), not the
+// friend's up: up only when the observation's word is up (a wake ping her
 // session answered), under the current seat generation (an old seat's proof
 // never looks up under a new seat), with its proof under FriendPongWindow old
 // and not dated after now (a negative age is no proof); down otherwise,
 // whatever finer word the row keeps (DaemonPong, her daemon's own pong, is down).
+// The row's up is FriendStatus, which also wants her daemon beating.
 func ObservedStatus(h FriendHealth, generation uint64, now time.Time) string {
-	status, _ := FriendEvidence(FriendPresence{Health: h, Generation: generation}, now)
-	return status
+	if heard, _ := FriendSessionHeard(FriendPresence{Health: h, Generation: generation}, now); heard {
+		return Up
+	}
+	return Down
 }
 
 // FriendPresence is everything the friends' rule reads of one friend: the
-// coordinator's hold, her own beat (shown, never evidence), the coordinator's
-// observation of her, the seat's generation now, and when a card of hers last
-// finished (working to done), zero for never.
+// coordinator's hold, her own beat (her daemon's liveness, and the session
+// proof it carries), the coordinator's observation of her, the seat's
+// generation now, and when a card of hers last finished (working to done),
+// zero for never.
 type FriendPresence struct {
 	Held       bool
 	Beat       Beat

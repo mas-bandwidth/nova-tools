@@ -86,7 +86,7 @@ func (r *presenceRig) present(t *testing.T) (bool, string) {
 // with a fresh nonce through the adapter; the daemon's own pong, a pong the
 // daemon writes, another friend's pong and a wrong nonce all leave it down;
 // five minutes without the session's answer is down "no session answer", and
-// no beat goes to the sprint server; the session's answer brings it up; a check
+// the beat goes to the sprint server anyway, carrying no session evidence; the session's answer brings it up; a check
 // goes in ProveEvery after it whatever the session says, the old nonce no
 // answer to it; silence with it unanswered is down; a check the session has not
 // read is not asked again before ReaskAfter; a message the session writes
@@ -102,7 +102,8 @@ func TestOnlyTheSessionCanAnswerTheNonce(t *testing.T) {
 	up, reason := r.present(t)
 	assert.False(t, up, "a daemon that started proves nothing about the session")
 	assert.Equal(t, NotYetAnswered, reason)
-	assert.Equal(t, 0, r.beats, "no beat to the sprint server before the session answers")
+	assert.Equal(t, 1, r.beats, "the first step beats: the daemon's liveness does not wait on the session")
+	assert.True(t, r.sc.Evidence().IsZero(), "and the beat carries no session evidence")
 
 	r.send(t, r.daemon, "bob", DaemonPongSubject, "daemon-pong n1\n")
 	r.send(t, r.daemon, "bob", PongSubject, PongLine("n1", 0, 0, 4)+"\n")
@@ -116,8 +117,9 @@ func TestOnlyTheSessionCanAnswerTheNonce(t *testing.T) {
 	up, reason = r.present(t)
 	assert.False(t, up)
 	assert.Equal(t, NoSessionAnswer, reason, "five minutes with no session answer")
-	assert.Error(t, r.beat(ctx), "the beat is held back while the session is down")
-	assert.Equal(t, 0, r.beats)
+	assert.NoError(t, r.beat(ctx), "a deaf session still beats")
+	assert.Equal(t, 4, r.beats, "every step beat, and this one")
+	assert.True(t, r.sc.Evidence().IsZero())
 	assert.Len(t, r.app.got(), 1, "one check per nonce")
 
 	r.send(t, r.direct, "bob", PongSubject, PongLine("n1", 0, 0, 4)+"\n")
@@ -125,7 +127,8 @@ func TestOnlyTheSessionCanAnswerTheNonce(t *testing.T) {
 	up, reason = r.present(t)
 	assert.True(t, up, "the session's answer to the nonce brings it back up")
 	assert.Empty(t, reason)
-	assert.Equal(t, 1, r.beats, "and the beat flows again")
+	assert.Equal(t, 5, r.beats, "and the beat carries the answer")
+	assert.Equal(t, r.now, r.sc.Evidence())
 
 	for range 5 { // a session that talks on the bus is still checked every ProveEvery: only an answer proves it to the server
 		r.send(t, r.direct, "bob", "status", "working on it\n")

@@ -32,6 +32,9 @@ type transitionRig struct {
 	now time.Time
 	// member says m1 beats with every tick
 	member bool
+	// report is amy's last daemon report, kept across the beats a tick sends so
+	// her build and start stay while the beat itself stays inside FriendBeatLive.
+	report sprint.FriendReport
 }
 
 var transitionT0 = time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
@@ -79,21 +82,27 @@ func (r *transitionRig) advance(d time.Duration) {
 	r.mu.Unlock()
 }
 
-// tick moves the clock d, beats m1 (while it beats) and runs one tick.
+// tick moves the clock d, beats m1 (while it beats), beats amy so her daemon
+// stays inside FriendBeatLive, and runs one tick. A beat older than ten
+// seconds is the daemon fact missing, so a tick that only moved the clock
+// would read her down however fresh her session is.
 func (r *transitionRig) tick(d time.Duration) {
 	r.t.Helper()
 	r.mu.Lock()
 	r.now = r.now.Add(d)
 	r.mu.Unlock()
 	r.beat()
-	_, err := r.st.Tick(r.ctx)
+	_, err := r.st.FriendBeatReport(r.ctx, "amy", r.report, nil)
+	require.NoError(r.t, err)
+	_, err = r.st.Tick(r.ctx)
 	require.NoError(r.t, err)
 }
 
 // daemon is amy's daemon's beat: the build it runs, its start, and the present it sent.
 func (r *transitionRig) daemon(build string, started, present time.Time) {
 	r.t.Helper()
-	_, err := r.st.FriendBeatReport(r.ctx, "amy", sprint.FriendReport{Build: build, Started: started, Present: present}, nil)
+	r.report = sprint.FriendReport{Build: build, Started: started, Present: present}
+	_, err := r.st.FriendBeatReport(r.ctx, "amy", r.report, nil)
 	require.NoError(r.t, err)
 }
 

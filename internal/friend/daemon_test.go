@@ -203,7 +203,7 @@ func TestATurnThatExitsNonZeroLeavesTheMessagePending(t *testing.T) {
 	assert.Contains(t, r.records[0], "exit=3")
 }
 
-func TestAStoreThatDoesNotAnswerStopsTheBeat(t *testing.T) {
+func TestAStoreThatDoesNotAnswerNeverStopsTheBeat(t *testing.T) {
 	t.Parallel()
 	r := newRig(t)
 	r.store.Fail = errors.New("connection refused")
@@ -211,13 +211,13 @@ func TestAStoreThatDoesNotAnswerStopsTheBeat(t *testing.T) {
 	r.d.Pause = func(context.Context, time.Duration) {
 		paused++
 		if paused == 3 {
-			r.cancel()
+			r.cancel() // the third pause ends the step inside the read, before that step's beat
 		}
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	r.cancel = cancel
 	require.NoError(t, r.d.Run(ctx))
-	assert.Equal(t, 0, r.beats, "no beat while the store is down: presence is the loop")
+	assert.Equal(t, 2, r.beats, "the steps before the cancel still beat: a store that does not answer is not a held beat")
 	assert.Contains(t, r.last().StoreError, "connection refused")
 }
 

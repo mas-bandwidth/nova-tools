@@ -88,8 +88,8 @@ func TestFriendIsUpOnlyOnEvidenceFromHerSession(t *testing.T) {
 	r.second()
 	row := r.row()
 	assert.Equal(t, sprint.Down, row.Status, "a beat alone is no evidence")
-	assert.Contains(t, row.Evidence, "no session evidence")
-	assert.Contains(t, row.Evidence, "her beat 0s ago is not evidence", "the row names the beat and its age")
+	assert.Contains(t, row.Evidence, "daemon up", "her daemon is beating")
+	assert.Contains(t, row.Evidence, "session deaf", "and her session has not been heard")
 	r.beatFor(sprint.FriendPongWindow + time.Minute)
 	row = r.row()
 	assert.Equal(t, sprint.Down, row.Status, "beaten every second for eleven minutes, still down")
@@ -148,17 +148,20 @@ func TestFriendEvidenceRule(t *testing.T) {
 		{"never anything", sprint.FriendPresence{Generation: 2}, t0, sprint.Down},
 		{"a fresh beat", sprint.FriendPresence{Beat: sprint.Beat{At: t0}, Generation: 2}, t0, sprint.Down},
 		{"held with a fresh pong", sprint.FriendPresence{Held: true, Health: pong, Generation: 2}, t0, sprint.Held},
-		{"a fresh pong", sprint.FriendPresence{Health: pong, Generation: 2}, t0.Add(sprint.FriendPongWindow - time.Second), sprint.Up},
+		{"a fresh pong and no beat", sprint.FriendPresence{Health: pong, Generation: 2}, t0.Add(sprint.FriendPongWindow - time.Second), sprint.Down},
+		{"a fresh pong and a fresh beat", sprint.FriendPresence{Beat: sprint.Beat{At: t0.Add(sprint.FriendPongWindow - time.Second)}, Health: pong, Generation: 2}, t0.Add(sprint.FriendPongWindow - time.Second), sprint.Up},
 		{"a pong the window old", sprint.FriendPresence{Health: pong, Generation: 2}, t0.Add(sprint.FriendPongWindow), sprint.Down},
 		{"a pong under an old seat", sprint.FriendPresence{Health: pong, Generation: 3}, t0, sprint.Down},
 		{"a pong from the future", sprint.FriendPresence{Health: pong, Generation: 2}, t0.Add(-time.Second), sprint.Down},
 		{"a daemon pong", sprint.FriendPresence{Health: sprint.FriendHealth{State: sprint.DaemonPong, Seen: t0, Generation: 2}, Generation: 2}, t0, sprint.Down},
-		{"a fresh finish", sprint.FriendPresence{Finished: t0, Generation: 2}, t0.Add(sprint.FriendFinishWindow - time.Second), sprint.Up},
+		{"a fresh finish and no beat", sprint.FriendPresence{Finished: t0, Generation: 2}, t0.Add(sprint.FriendFinishWindow - time.Second), sprint.Down},
+		{"a fresh finish and a fresh beat", sprint.FriendPresence{Beat: sprint.Beat{At: t0.Add(sprint.FriendFinishWindow - time.Second)}, Finished: t0, Generation: 2}, t0.Add(sprint.FriendFinishWindow - time.Second), sprint.Up},
 		{"a finish the window old", sprint.FriendPresence{Finished: t0, Generation: 2}, t0.Add(sprint.FriendFinishWindow), sprint.Down},
 	}
 	for _, c := range cases {
 		assert.Equal(t, c.want, sprint.FriendStatus(c.f, c.at), c.name)
 	}
+	assert.Equal(t, 10*time.Second, sprint.FriendBeatLive, "the owner, 2026-10-04: both sides ping each second")
 	assert.Equal(t, 10*time.Minute, sprint.FriendPongWindow, "the owner, 2026-10-05: within 10 minutes")
 	assert.Equal(t, 30*time.Minute, sprint.FriendFinishWindow, "the owner, 2026-10-05: within 30 minutes")
 }

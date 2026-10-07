@@ -378,28 +378,39 @@ func (s *SessionCheck) Present() (bool, string) {
 	return s.m.Up, s.m.Reason
 }
 
-// Beat is beat held back while the session is down: the sprint server's
-// friend is up only while her session answers. Each call steps the check
-// first.
+// Evidence is when the session last wrote or answered, zero when it has not.
+// The beat carries it as its own fact (sprint.FriendSessionHeard); a zero
+// evidence is a deaf session, not a reason to hold the beat.
+func (s *SessionCheck) Evidence() time.Time {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.m == nil {
+		return time.Time{}
+	}
+	return s.m.LastHeard
+}
+
+// Beat is the daemon's liveness beat: each call steps the check, then beats,
+// whatever the session says. A deaf session still beats; the sprint row reads
+// the daemon up and the session deaf (docs/SPEC-FRIEND.md, the beat). A caller
+// that wants a down beat while the session is down passes that beat to BeatOr.
 func (s *SessionCheck) Beat(beat func(ctx context.Context) error) func(ctx context.Context) error {
 	return s.BeatOr(beat, nil)
 }
 
-// BeatOr is beat while the session is up, and while it is down the beat that
-// says so (down: until when the daemon next expects an answer, and why: the
-// push unproven with the check's nonce, or no session answer to it), so the
-// sprint server reads her down with the daemon's reason the second it knows
-// (docs/SPEC-FRIEND.md, presence). A nil down holds the beat back instead.
-// Each call steps the check first.
+// BeatOr steps the check, then beats. While the session is up, or when down is
+// nil, it calls beat: a nil down is the liveness beat, never a hold and never
+// a beat that says the session is down. A non-nil down, and the session down,
+// sends that down beat (until when the daemon next expects an answer, and why:
+// the push unproven with the check's nonce, or no session answer to it). The
+// daemon's own run passes nil; a harness limit and a pause marker send their
+// own down beats outside this (docs/SPEC-FRIEND.md, presence).
 func (s *SessionCheck) BeatOr(beat func(ctx context.Context) error, down func(ctx context.Context, until time.Time, reason string) error) func(ctx context.Context) error {
 	return func(ctx context.Context) error {
 		s.Step(ctx)
-		up, reason := s.Present()
-		if up {
+		up, _ := s.Present()
+		if up || down == nil {
 			return beat(ctx)
-		}
-		if down == nil {
-			return fmt.Errorf("not beating: the session is down (%s); the daemon answering is not the session", reason)
 		}
 		until, why := s.downBeat(s.Now())
 		if err := down(ctx, until, why); err != nil {

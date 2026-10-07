@@ -263,8 +263,8 @@ func TestABareTimeOrAnUnaskedNonceNeverProves(t *testing.T) {
 
 	ta.step(sprint.BeatDeadline + time.Second)
 	f := whereFriends(ta)["amy"]
-	assert.Equal(t, sprint.Down, f.Status, "her beats stopped, so her proof stopped with them")
-	assert.Contains(t, f.Evidence, "her beat stopped")
+	assert.Equal(t, sprint.Down, f.Status, "her daemon stopped beating, so she is down even though the proof is still in its window")
+	assert.Contains(t, f.Evidence, "daemon not beating")
 	ta.ok("friend beat amy")
 	assert.Equal(t, sprint.Up, whereFriends(ta)["amy"].Status, "beating again, within fifteen minutes of the answer")
 	ta.step(sprint.FriendProofLive)

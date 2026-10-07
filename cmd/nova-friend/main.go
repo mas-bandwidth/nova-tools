@@ -378,7 +378,7 @@ func friendTool(w world) *tool.Tool {
 		Stamp:   version,
 		How: `one launchd agent per friend (install) runs the daemon (run): it parks on the friend's
 nova-bus stream and, when the session is free, pushes every waiting message in as one turn (the
-harness's deliver command), beats to the sprint server while the session answers, answers the
+harness's deliver command), and beats every second whatever the session says. It answers the
 coordinator PING at once (daemon-pong); presence is the session's word on the bus, never a process.
 state: <dir>/.nova-friend/ (--state-dir moves it), the queue: <dir>/inbox/QUEUE.json.`,
 		ExitTable: "0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no daemon; check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).",
@@ -401,9 +401,8 @@ cannot drive is one "presence: REFUSED" line with the remedy (a dsh session unde
 session in <dir> with no agent preset and name it with --session <id>). The beat after a check goes in
 says it (--check <nonce> --run <run>), and the beat after the session answers names it (--pong <nonce>
 --run <run>): the sprint server counts only an answer to a check this run asked, once, as her session's
-evidence while her beats go on, so a check goes in every ` + friend.ProveEvery.String() + ` while she is up; a per-card harness
-(claude) says neither. While the session is down the beat says so (--until, --reason: the push unproven,
-or no session answer, with the check's nonce). Each second, when the session is free: every waiting
+evidence for the proof window, a separate fact from the beat, so a check goes in every ` + friend.ProveEvery.String() + ` while she is up; a per-card harness
+(claude) says neither. The beat goes every second whatever the session says, carrying those proof words; a session that has not answered is not a down beat (the sprint row reads the daemon up and the session deaf). A harness at its limit still beats down (--until, --reason). Each second, when the session is free: every waiting
 message read off the stream and pushed in as ONE turn, oldest first (at most ` + fmt.Sprint(friend.MaxBatch) + `; the rest is the next
 turn), acked together when the turn ends at exit 0; a turn that fails leaves them pending, handed in
 again when their claims open, and the third failure acks a message, given_up=true on the record. A
@@ -414,7 +413,7 @@ carries messages. Presence is the session's, never the daemon's: ` + friend.Prov
 (the session's own bus messages keep her up meanwhile; the daemon's never count), a SESSION CHECK <nonce> goes in through the harness
 as a turn of its own, once no turn is under way (on the friend's own stream for a harness with no
 deliver command), and only the session's pong carrying that nonce answers it; none within ` + friend.SessionBound.String() + `
-and the friend is down, "no session answer", her beat saying down until the next answer brings it up; it
+and the session is down, "no session answer", while the beat keeps going; it
 starts down until the first answer. The check waits while a turn is at the gate (from before the limit
 gate's wait to its end) or, on a headless harness (dsh, gemini: a one-shot process per turn), while the
 adapter's own record says a turn runs, and a check owed ` + friend.SessionQuiet.String() + ` that has not
@@ -1284,13 +1283,11 @@ func (w world) run(c *tool.Call) *tool.Out {
 		Beat: func(ctx context.Context, active time.Time) error {
 			// up or down, held back or not: the beat's record says what the lanes cost
 			saySpend()
-			held := sc.Beat // the session's answer holds the beat back; a per-card harness has no session, its process is the daemon
-			if perCard {
-				held = func(beat func(context.Context) error) func(context.Context) error { return beat }
-			}
 			// the owner, 2026-10-05 ~9:30 AM ET: "there is no value in things that are answered
 			// just by the daemon". A per-card harness has no session to check, so its beat says
-			// no proof at all: her evidence is a card of hers finished, which the server counts
+			// no proof at all: her evidence is a card of hers finished, which the server counts.
+			// The beat itself goes every second whatever the session says: a session that has
+			// not answered is not a down beat. A harness at its limit, and a pause marker, still are.
 			words := func() friend.BeatWords {
 				if perCard {
 					return friend.BeatWords{}
@@ -1331,12 +1328,16 @@ func (w world) run(c *tool.Call) *tool.Out {
 				return err
 			}
 			if w.beatDown == nil {
-				return held(fl.Beat(up))(ctx) // no down beat: held back while she is at her limit
+				beat := fl.Beat(up) // no down beat: held back while she is at her limit
+				if perCard {
+					return beat(ctx)
+				}
+				return sc.Beat(beat)(ctx) // the check steps, then the beat, whatever the session says
 			}
 			// while her harness is at its limit her beat says down with the until and the
-			// reason (limits-mean-down-w-r5.w1~15), the session's check stepped as before,
-			// ahead of the look; the inner check is the last before the up beat, so a limit
-			// seen during the step is never beaten up
+			// reason (limits-mean-down-w-r5.w1~15). The session check steps ahead of the look,
+			// so a limit seen during the step is the one the beat says, and the beat lock is
+			// held across the send (Limits.BeatOrDown).
 			down := func(ctx context.Context, until time.Time, reason string) error {
 				said := words()
 				err := w.beatDown(ctx, server, name, active, until, reason, said)
@@ -1345,29 +1346,19 @@ func (w world) run(c *tool.Call) *tool.Out {
 				}
 				return err
 			}
-			if !perCard {
-				// while her session is down her beat says so, with the check's nonce and why; a
-				// limit seen during the step is the reason first, with its reset
-				sessionDown := func(ctx context.Context, until time.Time, reason string) error {
-					if u, r, limited := fl.Limited(); limited {
-						until, reason = u, "harness limit: "+r
-					}
-					return down(ctx, until, reason)
-				}
-				held = func(beat func(context.Context) error) func(context.Context) error {
-					return sc.BeatOr(beat, sessionDown)
-				}
-			}
 			// a provider failure paused her lanes: her beat says her down with its exact
 			// message until a person clears the marker (nova-friend resume; friend.PauseBeat)
 			if marker := friend.ReadPause(state); marker != "" {
+				if !perCard {
+					sc.Step(ctx) // the check still runs; the pause is the beat's reason
+				}
 				until, reason := friend.PauseBeat(marker, c.Str("model"), w.now())
 				return down(ctx, until, reason)
 			}
-			if _, _, limited := fl.Limited(); limited && !perCard {
+			if !perCard {
 				sc.Step(ctx)
 			}
-			return fl.BeatOrDown(held(fl.BeatOrDown(up, down)), down)(ctx)
+			return fl.BeatOrDown(up, down)(ctx)
 		},
 		Row: func() (string, int) {
 			if m := c.Str("mode"); m != "" {
@@ -1956,7 +1947,7 @@ func (w world) status(c *tool.Call) *tool.Out {
 		o.Fact("presence", pr.Presence).Fact("last_session", stamp(pr.LastHeard))
 		if pr.Presence != friend.PresenceUp {
 			o.Fact("presence_reason", tool.Text(pr.Reason))
-			o.Note("the daemon is up and the session is not (" + pr.Reason + "): the friend is down, and no beat goes to the sprint server until the session answers a session check")
+			o.Note("the daemon is up and the session is not (" + pr.Reason + "): the daemon still beats every second; the sprint reads her daemon up and her session deaf until the session answers a session check")
 		}
 	}
 	if prErr != nil {
