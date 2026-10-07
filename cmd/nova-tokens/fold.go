@@ -34,7 +34,7 @@ var foldLists = []struct {
 // a row mixed two day bases, a lane-day had competing reports, or a day would have shrunk
 // -- and it still writes the rest, because the exit code is about the claim. Under
 // --dry-run it reads and decides exactly the same and writes nothing, the lock included.
-func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
+func cmdFold(args []string, stdout, stderr io.Writer, now time.Time, w world) int {
 	fs := newFlagSet("fold")
 	out := fs.String("out", "", "directory for daily token files")
 	day := fs.String("day", "", "one UTC day to fold as YYYY-MM-DD")
@@ -72,7 +72,7 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 		r.add("--repos " + sf.repos + ": " + err.Error() + "; it wants " + wantsRepos)
 		return r.print(stderr)
 	}
-	sources, copyNotes := sf.read(rules, now, *dryRun)
+	sources, copyNotes := sf.read(w, rules, now, *dryRun)
 	folder := tokens.NewFolder()
 	for _, src := range sources {
 		for _, m := range src.Stream {

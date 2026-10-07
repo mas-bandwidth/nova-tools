@@ -20,12 +20,13 @@ func TestSourcesRefusesNonexistentRoots(t *testing.T) {
 	wantContains(t, r.stderr, "SOURCES REFUSED:")
 	wantContains(t, r.stderr, "--claude bench="+noClaude+" does not exist")
 
-	// Missing bus root
+	// A bus nothing answers at is not a refused flag but a source that could not be read:
+	// named unreadable and counted, never a short log.
 	noBus := filepath.Join(dir, "no-bus")
 	r = invoke(t, "sources", "--all", "--repos", repos, "--bus", noBus)
-	wantExit(t, r, 2)
-	wantContains(t, r.stderr, "SOURCES REFUSED:")
-	wantContains(t, r.stderr, "--bus does not exist: "+noBus)
+	wantExit(t, r, 0) // sources only looks: an unreadable source is named and counted, and the exit is fold's to say NO
+	wantContains(t, r.stdout+r.stderr, "UNREADABLE")
+	wantContains(t, r.stdout+r.stderr, "connection refused")
 
 	// Missing swarm root
 	noSwarm := filepath.Join(dir, "no-swarm")

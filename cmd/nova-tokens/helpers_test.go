@@ -2,11 +2,11 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"encoding/json"
 	"fmt"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"golang.org/x/text/cases"
-	"golang.org/x/text/language"
 	"io"
 	"os"
 	"os/exec"
@@ -14,9 +14,12 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/bus"
+	"github.com/mas-bandwidth/nova-tools/internal/bus/bustest"
 	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
@@ -41,7 +44,7 @@ func invoke(t *testing.T, args ...string) result {
 func invokeAt(t *testing.T, now time.Time, args ...string) result {
 	t.Helper()
 	var out, errb bytes.Buffer
-	exit := run(args, &out, &errb, now)
+	exit := runWith(args, &out, &errb, now, testWorld)
 	return result{exit: exit, stdout: out.String(), stderr: errb.String()}
 }
 
@@ -285,12 +288,37 @@ func runToolChild(t *testing.T, dir string, env []string, args ...string) result
 func TestMain(m *testing.M) {
 	if os.Getenv(asToolEnv) != "" {
 		_ = os.Unsetenv(asToolEnv)
-		os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, foldStamp))
+		os.Exit(runWith(os.Args[1:], os.Stdout, os.Stderr, foldStamp, childWorld()))
 	}
 	if mode := os.Getenv(fakeSqlite3Env); mode != "" {
 		os.Exit(fakeSqlite3Main(mode, os.Args[1:], os.Stdout))
 	}
 	os.Exit(m.Run())
+}
+
+// childWorld is the world a re-executed tool runs with: the fake bus a parent test wrote
+// into the working directory where there is one, else the real one. It is the child half of
+// testWorld, and it opens no socket.
+func childWorld() world {
+	raw, err := os.ReadFile(testBusSnapshotFile)
+	if err != nil {
+		return realWorld()
+	}
+	var s testBusSnapshot
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return realWorld()
+	}
+	fake := bustest.NewFake(time.Date(2026, 9, 11, 21, 0, 0, 0, time.UTC), s.Names...)
+	for _, e := range s.Log {
+		// ignored: the fake's AddAll fails only when its Fail is set, which a snapshot never is
+		_ = fake.AddAll(context.Background(), e.Streams, e.Fields)
+	}
+	return world{openBus: func(_ context.Context, addr string) (bus.Store, func(), error) {
+		if addr != s.Addr {
+			return nil, nil, fmt.Errorf("dial tcp %s: connect: connection refused", addr)
+		}
+		return fake, func() {}, nil
+	}}
 }
 
 // fakeSqlite3Main records the invocation and answers the last argument, which is the SQL.
@@ -416,23 +444,106 @@ func swarmUsage(t *testing.T, pool, job string, row string) {
 	write(t, filepath.Join(pool, "usage", job+".tsv"), strings.Join(swarmHeader, "\t")+"\n"+row+"\n")
 }
 
-// busLane writes a roster and returns the bus directory.
+// testBuses are the fake Redis buses of the running tests, by the address a test passes
+// to --bus: busDir makes one under the directory the test owns, which is unique to it.
+var testBuses sync.Map // string -> *bustest.Fake
+
+// testBusLogs records what each fake bus was sent, so a child process can be handed the
+// same log through a file: runToolChild runs the tool with its own working directory, and a
+// child cannot read this process's map. The mutex guards the appends, which sync.Map does not.
+var (
+	testBusLogsMu sync.Mutex
+	testBusLogs   = map[string][]testBusLog{}
+)
+
+// testBusLog is one message a fake bus took: the streams and the fields AddAll was given.
+type testBusLog struct {
+	Streams []string          `json:"streams"`
+	Fields  map[string]string `json:"fields"`
+}
+
+// testBusSnapshotFile is where a child looks for one fake bus, in its working directory.
+const testBusSnapshotFile = ".nova-tokens-test-bus.json"
+
+// testBusSnapshot is that file: the address the documented command names, the roster the
+// fake was made with, and the messages it took, in order.
+type testBusSnapshot struct {
+	Addr  string       `json:"addr"`
+	Names []string     `json:"names"`
+	Log   []testBusLog `json:"log"`
+}
+
+// testWorld is the tool's world in a test: a --bus address names a fake in testBuses and
+// nothing opens a socket.
+var testWorld = world{openBus: func(_ context.Context, addr string) (bus.Store, func(), error) {
+	f, ok := testBuses.Load(addr)
+	if !ok {
+		return nil, nil, fmt.Errorf("dial tcp %s: connect: connection refused", addr)
+	}
+	return f.(*bustest.Fake), func() {}, nil
+}}
+
+// busDir makes a fake Redis bus whose roster is names and returns its address (the dir).
 func busDir(t *testing.T, dir string, names ...string) string {
 	t.Helper()
-	var ps []string
-	for _, n := range names {
-		ps = append(ps, fmt.Sprintf(`{"name":%q,"lane":"from-%s","git_email":"%s@example.com"}`, cases.Title(language.Und, cases.NoLower).String(n), n, n))
-	}
-	write(t, filepath.Join(dir, "participants.json"), "{\"participants\":["+strings.Join(ps, ",")+"]}\n")
+	testBuses.Store(dir, bustest.NewFake(time.Date(2026, 9, 11, 21, 0, 0, 0, time.UTC), names...))
+	testBusNames.Store(dir, names)
+	testBusLogsMu.Lock()
+	delete(testBusLogs, dir)
+	testBusLogsMu.Unlock()
 	return dir
 }
 
-// busNote writes one note into a lane and returns its id.
-func busNote(t *testing.T, bus, lane, file, id, subject, date, body string) string {
+// busDateLayout is how busNote's date argument is written.
+const busDateLayout = "Mon Jan  2 15:04:05 UTC 2006"
+
+// busNote puts one message from lane on the bus's log and returns its id. A date that is
+// no instant is stored as it is, which the reader reads as no stamp at all.
+func busNote(t *testing.T, addr, lane, file, id, subject, date, body string) string {
 	t.Helper()
-	header := fmt.Sprintf("From: %s\nTo: Rowan\nDate: %s\nId: %s\nSubject: %s\n\n", cases.Title(language.Und, cases.NoLower).String(lane), date, id, subject)
-	write(t, filepath.Join(bus, "from-"+lane, file), header+body)
+	f, ok := testBuses.Load(addr)
+	require.True(t, ok, "no fake bus at %s", addr)
+	at := date
+	if tm, err := time.Parse(busDateLayout, date); err == nil {
+		at = tm.UTC().Format(time.RFC3339)
+	}
+	fields := map[string]string{"id": id, "from": lane, "to": "rowan", "cc": "", "subject": subject, "re": "", "at": at, "body": body}
+	streams := []string{bus.StreamOf("rowan"), bus.LogKey}
+	require.NoError(t, f.(*bustest.Fake).AddAll(context.Background(), streams, fields))
+	testBusLogsMu.Lock()
+	testBusLogs[addr] = append(testBusLogs[addr], testBusLog{Streams: streams, Fields: fields})
+	testBusLogsMu.Unlock()
 	return id
 }
 
+// writeChildBus writes the fake bus at addr to dir as the file childWorld reads, under the
+// address docAddr the documented command passes to --bus, so a transcript step can run in a
+// child (for its own working directory) against the same log, without a socket.
+func writeChildBus(t *testing.T, dir, docAddr, addr string) {
+	t.Helper()
+	names, ok := testBusNames.Load(addr)
+	require.True(t, ok, "no fake bus at %s", addr)
+	testBusLogsMu.Lock()
+	log := append([]testBusLog(nil), testBusLogs[addr]...)
+	testBusLogsMu.Unlock()
+	raw, err := json.Marshal(testBusSnapshot{Addr: docAddr, Names: names.([]string), Log: log})
+	require.NoError(t, err, err)
+	write(t, filepath.Join(dir, testBusSnapshotFile), string(raw))
+}
+
 const busDate = "Fri Sep 11 20:00:00 UTC 2026"
+
+// testBusNames are the roster each fake bus was made with, so busClear can start it over.
+var testBusNames sync.Map // string -> []string
+
+// busClear empties the bus's log: the next busNote starts a log of its own, which is what a
+// test that rewrites a note between two folds means.
+func busClear(t *testing.T, addr string) {
+	t.Helper()
+	names, ok := testBusNames.Load(addr)
+	require.True(t, ok, "no fake bus at %s", addr)
+	testBuses.Store(addr, bustest.NewFake(time.Date(2026, 9, 11, 21, 0, 0, 0, time.UTC), names.([]string)...))
+	testBusLogsMu.Lock()
+	delete(testBusLogs, addr)
+	testBusLogsMu.Unlock()
+}
