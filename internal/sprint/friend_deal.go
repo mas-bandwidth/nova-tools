@@ -135,8 +135,7 @@ type FriendSeat struct {
 	// rates; empty or config.BillingSubscription, a subscription, and dealt heavy and pro
 	// cards first (subscriptionFirst).
 	Billing string
-	// Proof is her session's last proof as
-parameter> as her beat carries it (Beat.Proof: a SESSION CHECK
+	// Proof is her session's last proof as her beat carries it (Beat.Proof: a SESSION CHECK
 	// it answered, or a bus message of its own), and Finished the store's record of her
 	// last finish, working to done; each zero when there is none. The stall ladder reads
 	// them as evidence of her work (FriendWorked).
