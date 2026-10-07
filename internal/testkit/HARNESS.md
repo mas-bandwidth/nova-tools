@@ -93,3 +93,8 @@ module is absent from go.mod and go.sum, so `-mod=readonly` refuses it. The two
 behaviors the transport design names are kept: every call is declared, and the
 expectations are asserted at cleanup.
 
+Use `Contract` in a tool's skeleton-contract test to hold the whole shape in one
+call: `testkit.Contract(t, main, verbs)` runs the probes the skeleton contract's
+"How a port is proved" names; the paragraph above `Contract` in contract.go
+lists them.
+
