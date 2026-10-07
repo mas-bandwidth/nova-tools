@@ -175,7 +175,7 @@ func busTool(w world) *tool.Tool {
 recv --as <me> --forever --exec '<deliver-into-session>' takes each message in, acked on exit 0;
 ack --as <me> --id <id> acks by hand; send and recv refuse a deaf name (no push proven in 10m).
 one stream per recipient (bus2:to:<name>) under a consumer group, one log (bus2:log); all or none.
-first run: a Redis naming ada and bob at --redis (else ` + RedisEnv + `); loopback or tailnet only.`,
+first run: a Redis naming ada and bob at ` + "--redis, else NOVA_BUS_REDIS, else NOVA_SPRINT_REDIS, else fleet:bus" + `; loopback or tailnet only.`,
 		ExitTable: "0 done, 1 the verb ran and said no (recv: nothing waiting; recv --exec: the command failed; wait: nothing came), 2 could not run (a flag, an input, a store that did not answer).",
 		Words:     []string{"NONE", "WAKE", "ARMED", "MESSAGE", "OVERDUE"},
 		Verbs: []tool.Verb{
@@ -209,7 +209,7 @@ example: nova-bus wait --as bob --timeout 1s`,
 					f.Duration("timeout", 0, "how long to wait before WAIT NONE, a Go duration (1s, 2m); 0 is for ever")
 					f.String("skip-subject", "PING,PONG", "subjects starting with one of these prefixes, comma-separated, are skipped; matched without case")
 					f.String("wake-file", "", "a file whose lines, appended after the start, also end the wait (one line per message)")
-					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else the fleet row's bus)")
+					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (`--redis, else NOVA_BUS_REDIS, else NOVA_SPRINT_REDIS, else fleet:bus`)")
 					f.Check(func(c *tool.Call) {
 						if v := c.Str("after"); v != "" && !streamID(v) {
 							c.Problem(fmt.Sprintf("--after wants a stream entry id, <ms>-<seq> as WAIT ARMED and WAIT OK print it; %q is not one", v))
@@ -255,7 +255,7 @@ Delivery to a reader is still at least once: a reader may be handed one message 
 					f.String("token", "", "your word for this one send, the same on every retry of it (letters, digits, . _ : -; at most 128 bytes)")
 					f.Duration("token-life", bus.DefaultTokenLife, "how long a retry under --token answers the first send")
 					f.Duration("token-cleanup", bus.DefaultTokenCleanup, "when the store drops the token (never before its life ends)")
-					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else the fleet row's bus from the sprint store)")
+					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (`--redis, else NOVA_BUS_REDIS, else NOVA_SPRINT_REDIS, else fleet:bus`)")
 					callTimeoutFlag(f)
 					f.Check(func(c *tool.Call) {
 						refuseNonPositiveTimeout(c)
@@ -280,7 +280,7 @@ Delivery to a reader is still at least once: a reader may be handed one message 
 				Flags: func(f *tool.Flags) {
 					f.String("as", "", "your name, the recipient: the login user when there is one (then it may be left out)")
 					f.String("kind", "", "only these kinds, comma-separated, of "+strings.Join(bus.Kinds, ", ")+" (default: every kind)")
-					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else the fleet row's bus from the sprint store)")
+					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (`--redis, else NOVA_BUS_REDIS, else NOVA_SPRINT_REDIS, else fleet:bus`)")
 					callTimeoutFlag(f)
 					f.Check(refuseNonPositiveTimeout)
 				},
@@ -317,7 +317,7 @@ before kinds existed.`,
 					f.Bool("ack", false, "ack each message after printing it (a plain recv leaves it pending)")
 					f.Bool("forever", false, "loop over every message, delivering each with --exec, until a signal")
 					f.String("exec", "", "a shell command run with each message on its stdin; exit 0 acks the message")
-					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else the fleet row's bus from the sprint store)")
+					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (`--redis, else NOVA_BUS_REDIS, else NOVA_SPRINT_REDIS, else fleet:bus`)")
 					callTimeoutFlag(f)
 					f.Check(func(c *tool.Call) {
 						refuseNonPositiveTimeout(c)
@@ -353,7 +353,7 @@ user, as in send. --dry-run acks nothing: acked= says which ids are pending for 
 				Flags: func(f *tool.Flags) {
 					f.String("as", "", "your name, the recipient: the login user when there is one (then it may be left out)")
 					f.Required("id", "the message ids, comma-separated, as recv printed them")
-					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else the fleet row's bus from the sprint store)")
+					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (`--redis, else NOVA_BUS_REDIS, else NOVA_SPRINT_REDIS, else fleet:bus`)")
 					callTimeoutFlag(f)
 					f.Check(refuseNonPositiveTimeout)
 				},
@@ -375,7 +375,7 @@ example: nova-bus receipts --as bob`,
 					f.String("as", "", "your name, the recipient: the login user when there is one (then it may be left out)")
 					f.String("id", "", "the message ids, comma-separated, as recv printed them (default: every receipt you hold)")
 					f.Max()
-					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else the fleet row's bus from the sprint store)")
+					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (`--redis, else NOVA_BUS_REDIS, else NOVA_SPRINT_REDIS, else fleet:bus`)")
 					callTimeoutFlag(f)
 					f.Check(refuseNonPositiveTimeout)
 				},
@@ -396,7 +396,7 @@ example: nova-bus overdue --older 10m`,
 				Flags: func(f *tool.Flags) {
 					f.Duration("older", 10*time.Minute, "how long a message may wait short of delivered before it is overdue, a Go duration (10m, 1h)")
 					f.Max()
-					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else the fleet row's bus from the sprint store)")
+					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (`--redis, else NOVA_BUS_REDIS, else NOVA_SPRINT_REDIS, else fleet:bus`)")
 					callTimeoutFlag(f)
 					f.Check(func(c *tool.Call) {
 						refuseNonPositiveTimeout(c)
@@ -417,7 +417,7 @@ example: nova-bus overdue --older 10m`,
 				Flags: func(f *tool.Flags) {
 					f.Bool("bodies", false, "print each message's body as well")
 					f.Max()
-					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else the fleet row's bus from the sprint store)")
+					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (`--redis, else NOVA_BUS_REDIS, else NOVA_SPRINT_REDIS, else fleet:bus`)")
 					callTimeoutFlag(f)
 					f.Check(refuseNonPositiveTimeout)
 				},
@@ -434,7 +434,7 @@ daemon proved and renewed its inbox push under ten minutes ago: send and recv ta
 daemon stopped renewing), down (its session did not answer the daemon's SESSION CHECK) or none (no
 daemon ever recorded one); age is how long ago the daemon wrote it, never when there is none.`,
 				Flags: func(f *tool.Flags) {
-					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else the fleet row's bus from the sprint store)")
+					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (`--redis, else NOVA_BUS_REDIS, else NOVA_SPRINT_REDIS, else fleet:bus`)")
 					callTimeoutFlag(f)
 					f.Check(refuseNonPositiveTimeout)
 				},
