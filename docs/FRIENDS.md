@@ -346,3 +346,7 @@ nova-friend install --as ada --harness opencode --dir ~/ada-working --server 127
    --wake --to-friends --every <d>` (installed with `ping-install`), which
    pings every friend the friends table holds up and tells the coordinator
    which sessions were deaf (docs/SPEC-FRIEND.md, "The wake ping loop").
+
+## tdocs-friend-onboarding-b.w2
+
+See [docs/FRIEND-ONBOARDING.md](FRIEND-ONBOARDING.md) for the complete onboarding guide.
