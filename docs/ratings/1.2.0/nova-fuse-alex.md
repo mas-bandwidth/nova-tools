@@ -1,6 +1,6 @@
 # nova-fuse READ and USE rating, nova-tools 1.2.0
 
-Rater: alex (cold reader)
+Rater: cold reader (independent review)
 Build: 7acb90e18a764f0e728cd5ed701196a34405a824
 READ: 8/10
 USE: 9/10
