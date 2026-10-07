@@ -85,7 +85,7 @@ func Abstract(o Observed) State {
 			continue
 		}
 		c := s.Fleet.Card(WC(id, p.Attempt))
-		if c != nil && c.Placed() && (c.Col == sprint.DoneOK || c.Col == sprint.DoneFailed) {
+		if c != nil && c.Placed() && (c.Col == sprint.DoneOK || c.Col == sprint.DoneFailed || c.Col == sprint.DoneDefect) {
 			p.Attempt++
 			a.Primaries[id] = p
 		}
@@ -99,8 +99,8 @@ func Abstract(o Observed) State {
 			Redeals: c.Int("redeals"), TakeEnded: c.F(sprint.FieldTakeEnded) != "", Refusers: sprint.StagingRefusers(c)}
 		if c.Placed() {
 			w.Place, w.Member = c.Col, c.Row
-			if c.Col == sprint.DoneOK || c.Col == sprint.DoneFailed {
-				w.Place = sprint.Done // the member's ok and failed cells are the done column's parts
+			if c.Col == sprint.DoneOK || c.Col == sprint.DoneFailed || c.Col == sprint.DoneDefect {
+				w.Place = sprint.Done // the member's ok, failed and defect cells are the done column's parts
 			}
 		}
 		switch c.F("ok") {
@@ -179,6 +179,7 @@ func judgment(o sprint.Open) (Judgment, bool) {
 
 var types = map[string]string{
 	sprint.NWorkFailed:      JFailed,
+	sprint.NBriefDefect:     JFailed, // the brief's failed work: the model names no brief defect
 	sprint.NReadBroken:      JBroken,
 	sprint.NReadsExhausted:  JReads,
 	sprint.NStranded:        JStranded,

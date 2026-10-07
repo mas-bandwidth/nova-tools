@@ -1443,6 +1443,17 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 		if passed {
 			head, result, okWord, into = pr.F(FieldPassedHead), "ok", "yes", DoneOK
 		}
+		// A HOLD naming a brief defect is the brief's, never the worker's (brief_defect.go;
+		// docs/SPEC-SPRINT.md section 1, a brief defect): its work card ends in the member's
+		// defect cell, in neither done nor ok%, and the primary waits in review for the brief
+		// to be cut again, its failure counted on the stream and never toward a tier.
+		defect := ""
+		if r.Failed && kind == "" && !passed {
+			defect = BriefDefectOf(r.Report)
+		}
+		if defect != "" {
+			into = DoneDefect
+		}
 		cardSet := map[string]string{"ok": okWord, "head": head, "finished": stamp(s.Now)}
 		if !r.Reported.IsZero() {
 			at := r.Reported
@@ -1470,11 +1481,14 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 		if capped {
 			capSets(lc, cardSet)
 		}
+		if defect != "" {
+			cardSet[FieldBriefDefect] = defect
+		}
 		set := map[string]string{"head": head, "result": result}
 		maps.Copy(set, finishStamps(pr, c, s.Now))
 		decidedSets(r, used, pr, cardSet, set)
 		identical := false
-		if r.Failed && !passed {
+		if r.Failed && !passed && defect == "" {
 			set["failed"] = itoa(pr.Int("failed") + 1)
 			// rule 2: the attempt before failed the same way, so this is the bound's (failure.go);
 			// a decided class is the class when the decision routed the finish
@@ -1487,6 +1501,13 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 		addConsumer(pr, set, cons)
 		u := Unit{Key: c.ID, Stream: pr.Row, Changes: []Change{change(Fleet, moveEntry(c, c.Row, into, cardSet))},
 			Moved: fmt.Sprintf("%s working -> done %s; %s working -> review", c.ID, result, pr.ID)}
+		if defect != "" {
+			set[FieldBriefDefect] = defect
+			u.Moved = fmt.Sprintf("%s working -> done defect (a brief defect: %s); %s working -> review", c.ID, defect, pr.ID)
+			if s.StreamCtl(pr.Row) != nil {
+				u.Bumps = append(u.Bumps, Bump{Table: Merge, ID: CtlID(pr.Row), Field: FieldBriefDefects, Delta: 1})
+			}
+		}
 		attempt := pr.Int("attempt")
 		// the brief's bound as this finish leaves the card (brief_bound.go): the same failure
 		// escalates below the ceiling only under the attempt cap
@@ -1529,6 +1550,12 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 				// a card is a tree of steps)
 				n.What = r.Report
 			}
+			u.Notes = append(u.Notes, n)
+		} else if defect != "" {
+			// the brief's judgment: re-cut it, never a redeal of the brief as cut
+			n := judgment(NBriefDefect, pr.Row, s.Now, 0, pr.ID)
+			n.Who, n.Attempt, n.Card = who, attempt, c.ID
+			n.What = "a brief defect, " + defect + ": re-cut the brief; " + r.Report
 			u.Notes = append(u.Notes, n)
 		} else if atBound {
 			// the attempt cap on one brief, whatever this attempt's failure: the brief is

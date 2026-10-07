@@ -528,6 +528,11 @@ func commands(g Group, first Note, prefix string) []Command {
 			} else {
 				add(d, cmd+"brief"+subj+" --brief-file '<the corrected brief>'"+subjAns)
 			}
+		case d == DecisionRecut:
+			// a brief defect (brief_defect.go): the card as cut is dropped and its brief cut again,
+			// as a new card, from what the worker found; never a redeal of the same brief
+			add(d, append(look(), cmd+"drop"+subj+" --reason 'a brief defect: re-cut'"+subjAns,
+				cmd+"add --stream "+s+" '<new id>' --brief-file '<the re-cut brief>'")...)
 		case d == "drop":
 			add(d, cmd+"drop"+subj+" --reason "+whyText+subjAns)
 		case d == "return":

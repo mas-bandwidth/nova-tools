@@ -808,6 +808,10 @@ func reviewJudgment(s *Snapshot, pr *Card, st reviewStep) (Note, bool) {
 		typ = NReadyToAccept
 	case len(open) > 0 || outstanding:
 		return Note{}, false
+	case pr.F(FieldBriefDefect) != "":
+		// a brief defect asks again to re-cut the brief, never a stranded rework (docs/SPEC-SPRINT.md
+		// section 1, a brief defect)
+		typ, why = NBriefDefect, "a brief defect, "+pr.F(FieldBriefDefect)+": re-cut the brief; nothing is open on it"
 	case pr.F("result") == "failed":
 		typ, why = NStranded, "its work came back failed and nothing is open on it"
 	case reads == 0 && len(before) == 0:
