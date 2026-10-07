@@ -2813,7 +2813,7 @@ the adoption `release.OneMachine` (internal/release/adopt_one.go). Test:
 ## 6. The readers
 
 - **The interim rules of 2026-10-06, until read cards** (the owner, 7:25 PM ET: "fix it
-  now, to work around it"; the branch `rowan/reads-are-consumer-cards-2026-10-06` replaces
+  now, to work around it"; the read-cards change (PR 5392) replaces
   the ask, and these rules with it):
   - A card's reads are asked together: the ask asks every read it still needs at once, a read
     outstanding (a friend's too) counts among those that stand, and once a read finds it

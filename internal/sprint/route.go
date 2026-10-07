@@ -430,14 +430,14 @@ func (s *Snapshot) readTierOf(pr *Card) string {
 	if set := s.readTierSetting(pr.Row); set != "" {
 		t = stronger(t, set)
 	}
-	// Workaround (Rowan, 2026-10-06 7:30 PM ET; Glenn 7:11 PM: "let flash read pro"): a pro
+	// Workaround (the coordinator, 2026-10-06 7:30 PM ET; the owner: 7:11 PM: "let flash read pro"): a pro
 	// read is drawn on flash while no enabled route serves pro and one serves flash, so the
 	// fleet's flash readers read pro cards while the pro routes are off. Read cards replace
 	// this.
 	if t == cardhdr.RoutePro && len(s.Routes) > 0 && !s.tierRouted(t) && s.tierRouted(cardhdr.RouteFlash) {
 		t = cardhdr.RouteFlash
 	}
-	// Workaround (Glenn, 2026-10-06 7:41 PM ET: "let pro do it"): a heavy card is read on pro,
+	// Workaround (the owner, 2026-10-06 7:41 PM ET: "let pro do it"): a heavy card is read on pro,
 	// so the fleet's pro readers are its second reader beside the heavy friend, who is asked
 	// before this collapse (friendReadTier). Read cards replace this.
 	if t == cardhdr.RouteHeavy {
