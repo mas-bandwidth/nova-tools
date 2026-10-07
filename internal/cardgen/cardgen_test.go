@@ -208,7 +208,7 @@ func TestTheOKLineAndTheDeadline(t *testing.T) {
 	assert.Equal(t, 45, Deadline("flash"))
 	assert.Equal(t, 60, Deadline("pro"))
 	c := Card{ID: "a", File: "x/y.go", Paths: []string{"x/y.go"}, Test: "x TestA", Tier: "pro", Kind: "fix-red", Task: "Do it."}
-	assert.Contains(t, Render(Header{Repo: "o/r", Base: "dev", Sha: "abc", Minutes: 7}, c), "Deadline: finish within 7 minutes.")
+	assert.Contains(t, Render(Header{Repo: "o/r", Base: "dev", Sha: "abc", Minutes: 7}, c), "Deadline: finish within 7 minutes; the judgment of a card that runs past it is the coordinator's, so report what you have with the verdict not-done rather than push past it.")
 	c.New = []string{"x/z_test.go"}
 	assert.Contains(t, Render(Header{Repo: "o/r", Base: "dev", Sha: "abc"}, c), "\nNEW: x/z_test.go\n")
 }
@@ -440,4 +440,43 @@ func TestGeneratedBriefPinsTheFriendReportFirstTwoLines(t *testing.T) {
 	brief := Render(header, Card{ID: "shape", File: "internal/x/x.go", Paths: []string{"internal/x/x.go"}, Test: "internal/x TestX", Tier: "pro", Kind: "fix-red", Task: "Fix x."})
 	assert.Contains(t, brief, "first line exactly Verdict: LAND|HOLD|FAIL, second line exactly Head: <40-hex>")
 	assert.Contains(t, brief, "for HOLD and FAIL omit Head: and leave line 2 blank")
+}
+
+func TestTheDeadlineLineSaysTheJudgmentIsTheCoordinators(t *testing.T) {
+	t.Parallel()
+	const deadlineTail = "; the judgment of a card that runs past it is the coordinator's, so report what you have with the verdict not-done rather than push past it."
+
+	// 1. Template card
+	tmpl, err := swarm.Template("card")
+	require.NoError(t, err)
+	assert.Contains(t, tmpl, "Deadline: finish within <n> minutes"+deadlineTail)
+	assert.Empty(t, swarm.LintCardChildWith([]byte(tmpl), swarm.DefaultChildRules))
+
+	// 2. Ledger generator
+	l := Ledgers["serial-tests"]
+	rows, _ := ParseLedger(l, serialFixture)
+	lp := PlanLedger(l, rows, "", "", 1)
+	require.NotEmpty(t, lp.Cards)
+	ledgerBrief := Render(header, lp.Cards[0])
+	assert.Contains(t, ledgerBrief, "Deadline: finish within 45 minutes"+deadlineTail)
+	assert.Empty(t, Lint(lp.Cards[0].ID, ledgerBrief))
+
+	// 3. Findings generator
+	findings, _ := ParseFindings("internal/bus/send.go:12\tthe receipt is not fsynced\tcall f.Sync before close\tinternal/bus TestReceiptIsFsynced\n")
+	fp := PlanFindings(findings, "", "", 1)
+	require.NotEmpty(t, fp.Cards)
+	findingsBrief := Render(header, fp.Cards[0])
+	assert.Contains(t, findingsBrief, "Deadline: finish within 60 minutes"+deadlineTail)
+	assert.Empty(t, Lint(fp.Cards[0].ID, findingsBrief))
+
+	// 4. Help generator
+	hc := PlanHelp("nova-x", "help text\n", "", "", "")
+	helpBrief := Render(header, hc)
+	assert.Contains(t, helpBrief, "Deadline: finish within 60 minutes"+deadlineTail)
+	assert.Empty(t, Lint(hc.ID, helpBrief))
+
+	// Custom deadline minutes
+	customBrief := Render(Header{Repo: "example/repo", Base: "dev", Sha: "0123456789abcdef0123456789abcdef01234567", Minutes: 20}, hc)
+	assert.Contains(t, customBrief, "Deadline: finish within 20 minutes"+deadlineTail)
+	assert.Empty(t, Lint(hc.ID, customBrief))
 }
