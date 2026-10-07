@@ -1086,6 +1086,16 @@ queued until the next tick prints `MOVED drain`; the tick after `merge`
 completes its move to landed. The flow's output shows results, moves (`MOVED`),
 refusals with reasons (`REFUSED`, on stderr), and the sprint's summary
 (`landed/all percent -> ETA ...`).
+Outside a twin, `merge` is a report and never the act: `land --stream <s>`
+merges, pushes and records. A `merge --stream <s>` with no fact records the
+head of the queue landed only when every queued card with a head has that
+head on its base (`git merge-base --is-ancestor`, against `--repo <clone>
+--base-ref origin/<base>`, else each card's brief `REPO:` and `BASE:` fetched
+in land's clone); one card off the base, or not checked, and the record is
+refused whole, naming the card, its head and `land --stream <s>`, and nothing
+is written. Every land pass also checks the landed records of its streams
+against the base with the `verify-landed` check and prints each false one as a
+`LANDED-MISSING` line.
 [TESTS.md](TESTS.md#nova-sprint) carries the exact transcript through `merge`;
 `cmd/nova-sprint/firstrun_test.go` runs it line by line.
 

@@ -18,7 +18,7 @@ func TestVerifyLandedListsALandedRecordMissingFromTheBase(t *testing.T) {
 	r.ok("add --stream s1 --count 2")
 	heads := map[string]string{"s1-1": r.head("s1-1", "main", "s1-1.txt", "s1-1\n"), "s1-2": r.head("s1-2", "main", "s1-2.txt", "s1-2\n")}
 	r.queued(heads, "s1-1", "s1-2")
-	r.ok("merge --stream s1 --batch 1")
+	r.recordLanded("s1", 1) // merge would refuse this record now: the head is not on the base
 	assert.Contains(t, r.ok("land --repo-dir "+r.clone+" --base main"), "LAND OK stream=s1 cards=1")
 	require.Equal(t, map[string]string{"s1-1": "landed/merged", "s1-2": "landed/merged"}, r.places("s1-1", "s1-2"))
 	tip := r.git(r.remote, "rev-parse", "main")
