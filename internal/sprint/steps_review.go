@@ -1205,6 +1205,11 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 			}
 			retire = append(retire, change(Readers, removeEntry(rc, map[string]string{"retired": stamp(s.Now), "retired_by": "rework"})))
 		}
+		// a friend's open read on her fleet row too: left, it keeps her room and closes
+		// against the attempt this rework replaced (FriendReadClose)
+		for _, rc := range openFriendReads(s, c.ID) {
+			retire = append(retire, change(Fleet, removeEntry(rc, map[string]string{"retired": stamp(s.Now), "retired_by": "rework"})))
+		}
 		// the finding and why ride on the primary too: a rework with no member up deals later
 		// (start), from the primary, and its child is told all the same
 		given := reworkGiven(s, c)

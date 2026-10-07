@@ -18,7 +18,7 @@ import (
 // ReadAnswered). The night of 2026-10-05 the coordinator answered this judgment about forty
 // times, every time with `rework <card> --answers <id>`: the finding became the fix. The tick
 // answers it the same way: the finding is the fix of a rework on the same tier; a finding
-// that names a file outside the card's PATHS twins it (as recut --widen does) with PATHS
+// that names a file outside the card's PATHS twins it (add --replaces) with PATHS
 // widened by exactly those files, starting from the broken attempt's head; a card at its
 // brief's bound (the same finding twice, or its attempts cap) is left to the coordinator,
 // as is a friend's card and a brief defect. Every answer is a note on the card naming the

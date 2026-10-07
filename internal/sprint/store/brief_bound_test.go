@@ -46,7 +46,7 @@ func TestReworkRefusesACardWhoseLastTwoFindingsMatch(t *testing.T) {
 		return h.run(ReworkStep(sprint.ReworkReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Fix: fix, Who: "tester"})).Refused
 	}
 	const line = "s1-1 has failed the same way twice (attempts 1 and 2: files outside PATHS: internal/x.go); the brief is wrong, not the worker; " +
-		"run: nova-sprint brief s1-1 --brief-file <path> (a waiting card) or drop s1-1 and add it again with the brief corrected"
+		"run: nova-sprint brief s1-1 --brief-file <path> (the brief corrected in place, its next attempt from its last pushed head), or nova-sprint drop s1-1 --reason '<why>'"
 	t.Run("the same finding twice", func(t *testing.T) {
 		t.Parallel()
 		h := routeHarness(t, route("flash-a", "flash"))
@@ -87,7 +87,7 @@ func TestReworkRefusesACardWhoseLastTwoFindingsMatch(t *testing.T) {
 		require.Len(t, refused, 1)
 		assert.Equal(t, "s1-1: brief defect after 4 attempts, nothing priced; the brief is wrong, not the worker; "+
 			"findings: attempt 1: internal/f1.go:1: wrong; attempt 2: internal/f2.go:2: wrong; attempt 3: internal/f3.go:3: wrong; attempt 4: internal/g.go:6: wrong; "+
-			"run: nova-sprint brief s1-1 --brief-file <path> (a waiting card) or drop s1-1 and add it again with the brief corrected", refused[0].Why)
+			"run: nova-sprint brief s1-1 --brief-file <path> (the brief corrected in place, its next attempt from its last pushed head), or nova-sprint drop s1-1 --reason '<why>'", refused[0].Why)
 	})
 	t.Run("a card never dealt, and one whose findings differ, are at no bound", func(t *testing.T) {
 		t.Parallel()

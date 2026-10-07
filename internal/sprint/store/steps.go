@@ -152,10 +152,11 @@ func DropStep(r sprint.DropReq) Step {
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Drop(s, r) }}
 }
 
-// BriefStep is the coordinator replacing the briefs of primaries that have not
-// started, on a running machine as on a stopped one (sprint.Brief); all or none.
+// BriefStep is the coordinator replacing the briefs of primaries in place, on a
+// running machine as on a stopped one (sprint.Brief); all or none. It reads what a
+// rework reads: a card in review edited in place opens its next attempt.
 func BriefStep(r sprint.BriefReq) Step {
-	return Step{Named: true, Args: ArgsOf(r), Verb: "brief", Load: tables(sprint.Work),
+	return Step{Answers: r.Answers, Named: true, Args: ArgsOf(r), Verb: "brief", Load: tables(sprint.Work, sprint.Readers, sprint.Fleet, sprint.Merge), Mirrors: true,
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Brief(s, r) }}
 }
 

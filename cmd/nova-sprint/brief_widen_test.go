@@ -13,20 +13,23 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
-// recut <id> --widen (docs/SPEC-SPRINT.md section 2, "recut-widen-r.w1: a HOLD's
-// PATHS-PROPOSED line widens the twin"): a card whose attempt came back held for PATHS too
-// narrow, its report carrying PATHS-PROPOSED, is re-cut as its twin with the union of the
-// old PATHS and the proposed ones, and the twin's first attempt starts from the held
-// attempt's pushed head; a report with no line, a glob that climbs out with .., and a glob
-// that names no file at the base or the head are refused, nothing written.
-func TestRecutWidenAppliesPathsProposed(t *testing.T) {
+// brief <id> --widen (docs/SPEC-SPRINT.md section 2, "recut-widen-r.w1: a HOLD's
+// PATHS-PROPOSED line widens the card in place"): a card whose attempt came back held for
+// PATHS too narrow, its report carrying PATHS-PROPOSED, has its brief edited in place, the
+// same id and no twin (the owner, 2026-10-06: "We gotta stop doing this twin shit. it's
+// waste."), with the union of the old PATHS and the proposed ones (the paths before any
+// prose on the line), and its next attempt starts from the held attempt's pushed head; a
+// report with no line, a glob that climbs out with .., and a glob that names no file at the
+// base or the head are refused, nothing written; recut --widen is retired and says what to
+// run instead.
+func TestBriefWidenKeepsTheId(t *testing.T) {
 	t.Parallel()
 	r := newLandRig(t)
 	// add reads the brief at its base (the brief checks): the file PATHS names is there
 	r.commit("a.go", "package a\n", "a.go at the base")
 	r.git(r.worker, "push", "-q", "origin", "HEAD:refs/heads/main")
 	r.git(r.worker, "fetch", "-q", "origin")
-	brief := writeBrief(t, "fix the empty case, tier: pro\nREPO: "+r.remote+"\nBASE: main\nPATHS: a.go\nTEST: none a fixture of recut --widen")
+	brief := writeBrief(t, "fix the empty case, tier: pro\nREPO: "+r.remote+"\nBASE: main\nPATHS: a.go\nTEST: none a fixture of brief --widen")
 	// held runs one card of stream s to a held finish: its attempt pushed b.go, a file the
 	// base has not, and the report says report
 	held := func(s, report string) (id, head string) {
@@ -41,30 +44,39 @@ func TestRecutWidenAppliesPathsProposed(t *testing.T) {
 		return id, head
 	}
 
-	// the union, and the next attempt starts from the held head
+	// the union, in place, and the next attempt starts from the held head
 	{
 		id, head := held("s1", "HOLD: the fix needs b.go; PATHS-PROPOSED: b.go, README,b.go")
-		out := r.ok("recut " + id + " --widen --repo-dir " + r.clone)
-		assert.Contains(t, out, id+"b")
-		assert.Contains(t, out, "NEXT "+id+"b starts from "+id+" attempt 1 head="+head)
-		got := r.ok("card " + id + "b --brief")
+
+		// recut --widen is retired: it names the verb to run, and writes nothing
+		applies := r.applies()
+		code, _, errs := r.do("recut " + id + " --widen --repo-dir " + r.clone)
+		assert.Equal(t, 2, code, errs)
+		assert.Contains(t, errs, "--widen is retired: a PATHS widening edits the card in place, the same id and no twin; nothing was changed; run: nova-sprint brief "+id+" --widen")
+		assert.Equal(t, applies, r.applies())
+
+		out := r.ok("brief " + id + " --widen --repo-dir " + r.clone)
+		assert.Contains(t, out, id+" brief edited in place by coordinator at attempt 1: - PATHS: a.go | + CARRY: "+id+" attempt 1 head="+head+" | + PATHS: a.go,b.go,README; review -> ready, attempt 2 next")
+		assert.Contains(t, out, "NEXT "+id+" attempt 2 starts from attempt 1 head="+head)
+		got := r.ok("card " + id + " --brief")
 		assert.Contains(t, got, "\nPATHS: a.go,b.go,README\n", "the old PATHS first, then each proposed glob once")
 		assert.Contains(t, got, "\nCARRY: "+id+" attempt 1 head="+head+"\n")
 		assert.NotContains(t, got, "PATHS: a.go\n")
-		assert.Contains(t, r.ok("card "+id), "replaced by "+id+"b")
+		assert.NotContains(t, r.ok("card "+id), "replaced by", "no twin")
+		assert.Equal(t, sprint.Ready, r.primary(id).Col, "the same card, its next attempt")
 
-		// the member stages the twin's first attempt at the held head, as a rework's
+		// the member stages the next attempt at the held head, as a rework's
 		r.deal(1)
 		var take struct {
 			Packets []member.Packet `json:"packets"`
 		}
-		require.NoError(t, json.Unmarshal([]byte(r.ok("take --as m1 "+id+"b.w1@1 --json")), &take))
+		require.NoError(t, json.Unmarshal([]byte(r.ok("take --as m1 "+id+".w2@1 --json")), &take))
 		require.Len(t, take.Packets, 1)
 		p := member.Carried(take.Packets[0])
 		assert.Equal(t, head, p.BaseHead)
 		assert.Equal(t, 1, p.BaseFrom)
 		// and a friend dealt it is told to carry that head
-		assert.Contains(t, friendBrief("f", sprint.Packet{Card: id + "b.w1", Attempt: 1, Brief: p.Brief, Branch: "sprint/x"}), "its head, "+head)
+		assert.Contains(t, friendBrief("f", sprint.Packet{Card: id + ".w2", Attempt: 2, Brief: p.Brief, Branch: "sprint/x"}), "its head, "+head)
 	}
 
 	// refused, nothing written
@@ -79,7 +91,7 @@ func TestRecutWidenAppliesPathsProposed(t *testing.T) {
 		} {
 			id, _ := held(c.stream, c.report)
 			before := r.applies()
-			code, out, errs := r.do("recut " + id + " --widen --repo-dir " + r.clone)
+			code, out, errs := r.do("brief " + id + " --widen --repo-dir " + r.clone)
 			assert.Equal(t, 1, code, "%s: %s%s", c.name, out, errs)
 			for _, w := range c.want {
 				assert.Contains(t, errs, w, c.name)
@@ -97,6 +109,14 @@ func TestRecutWidenAppliesPathsProposed(t *testing.T) {
 		globs, ok := member.PathsProposed("pushed=x: HOLD; PATHS-PROPOSED: b.go, c/*.go")
 		assert.True(t, ok)
 		assert.Equal(t, []string{"b.go", "c/*.go"}, globs)
+		// the paths alone, read before any prose on the line
+		globs, ok = member.PathsProposed("HOLD\nPATHS-PROPOSED: `b.go`, c/d.go because the test needs both, and e.go\n")
+		assert.True(t, ok)
+		assert.Equal(t, []string{"b.go", "c/d.go"}, globs)
+		globs, _ = member.PathsProposed("PATHS-PROPOSED: b.go (the fixture).")
+		assert.Equal(t, []string{"b.go"}, globs)
+		globs, _ = member.PathsProposed("PATHS-PROPOSED: b.go.")
+		assert.Equal(t, []string{"b.go"}, globs)
 	})
 
 	t.Run("a friend's HOLD keeps the line and origin's head", func(t *testing.T) {

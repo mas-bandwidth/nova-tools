@@ -19,18 +19,19 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 )
 
-// widened is what recut --widen re-cuts a held card with: the twin's brief, its id, and
-// where its first attempt starts.
+// widened is what brief --widen edits a held card's brief to, in place: the brief, and
+// where its next attempt starts.
 type widened struct {
-	brief, twin string
-	carry       member.Carry
+	brief string
+	carry member.Carry
 }
 
-// widen is the twin's brief of a card held for PATHS too narrow (docs/SPEC-SPRINT.md section
-// 2, "recut-widen-r.w1: a HOLD's PATHS-PROPOSED line widens the twin"): its latest attempt's
-// report's PATHS-PROPOSED globs, each one that stays in the repository and names a file at
-// the brief's base or at the attempt's pushed head, joined to the old PATHS on every PATHS:
-// line, and a CARRY: line naming that head, so the twin's first attempt starts from it
+// widen is the widened brief of a card held for PATHS too narrow (docs/SPEC-SPRINT.md section
+// 2, "recut-widen-r.w1: a HOLD's PATHS-PROPOSED line widens the card in place"): its latest
+// attempt's report's PATHS-PROPOSED globs (the paths before any prose on that line,
+// member.PathsProposed), each one that stays in the repository and names a file at the
+// brief's base or at the attempt's pushed head, joined to the old PATHS on every PATHS:
+// line, and a CARRY: line naming that head, so the card's next attempt starts from it
 // (member.Carried). why refuses it, naming every problem: no attempt, no line, no pushed
 // head, no clone to read the trees in, a glob that climbs out with .. or names no file.
 func (a *app) widen(ctx context.Context, st *store.Store, id, repoDir string) (w widened, why string, err error) {
@@ -53,11 +54,11 @@ func (a *app) widen(ctx context.Context, st *store.Store, id, repoDir string) (w
 	n := last.Int("attempt")
 	globs, ok := member.PathsProposed(last.F("report"))
 	if !ok || len(globs) == 0 {
-		return w, "the report of " + id + " attempt " + strconv.Itoa(n) + " has no PATHS-PROPOSED line (docs/SPEC-CARD-CONTRACT.md section 4): widen it by hand with --brief-file", nil
+		return w, "the report of " + id + " attempt " + strconv.Itoa(n) + " has no PATHS-PROPOSED line (docs/SPEC-CARD-CONTRACT.md section 4): widen it by hand with brief " + id + " --brief-file <path>", nil
 	}
 	head := last.F("head")
 	if !typedrec.IsFullSha(head) {
-		return w, id + " attempt " + strconv.Itoa(n) + " pushed no head to start the twin from", nil
+		return w, id + " attempt " + strconv.Itoa(n) + " pushed no head to start its next attempt from", nil
 	}
 	brief := v.Primary.F("brief")
 	base := swarm.ReadCardBase([]byte(brief))
@@ -88,12 +89,8 @@ func (a *app) widen(ctx context.Context, st *store.Store, id, repoDir string) (w
 	if len(bad) > 0 {
 		return w, strings.Join(bad, "; "), nil
 	}
-	ws, err := st.Load(ctx, []string{sprint.Work}, nil)
-	if err != nil {
-		return w, "", err
-	}
 	w.carry = member.Carry{Card: id, Attempt: n, Head: head}
-	w.brief, w.twin = widenBrief(brief, globs, member.CarryLine(w.carry)), sprint.TwinID(ws, v.Primary)
+	w.brief = widenBrief(brief, globs, member.CarryLine(w.carry))
 	return w, "", nil
 }
 
@@ -193,6 +190,6 @@ func baseName(b swarm.CardBase) string {
 
 // widenRefused is a widen the verb ran and said no to: the refusal's line, exit 1.
 func widenRefused(stderr io.Writer, why string) int {
-	refuse(stderr, "recut", why+"; nothing was changed")
+	refuse(stderr, "brief", why+"; nothing was changed")
 	return 1
 }
