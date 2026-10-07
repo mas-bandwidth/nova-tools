@@ -245,7 +245,7 @@ func AttemptCapDeal(s *Snapshot, r TickReq) Plan {
 		if _, ok := AtBriefBound(c, "", s.AttemptsCap(c.Row)); !ok {
 			continue
 		}
-		name := friendWithFree(r.Friends, free, classes...)
+		name := friendWithFree(r.Friends, free, c, classes...)
 		if name == "" {
 			continue // no frontier or heavy friend up with room: the deal's, and its judgment
 		}

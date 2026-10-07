@@ -28,7 +28,7 @@ func TestApplyFriendRowWithNoMachineAgreesWithFriendSync(t *testing.T) {
 	require.NoError(t, setupErr)
 
 	friend, _ := Lookup(KindFriend)
-	row, err := friend.NewRow("nova", map[string]string{"slots": "8", "tiers": "flash,heavy,pro", "roles": "builder"})
+	row, err := friend.NewRow("nova", map[string]string{"slots": "8", "tiers": "flash,heavy,pro", "roles": "builder", "streams": "security* , infra", "kinds": "fix-red,review"})
 	require.NoError(t, err)
 	_, err = st.Insert(ctx, KindFriend, row, "rowan")
 	require.NoError(t, err)
@@ -41,6 +41,13 @@ func TestApplyFriendRowWithNoMachineAgreesWithFriendSync(t *testing.T) {
 	require.Equal(t, "8", got["slots"], "friend:nova:desired %v", got)
 	require.Equal(t, "studio", got["machine"], "friend:nova:desired %v (no beat: charged to the coordinator machine)", got)
 	require.Equal(t, "flash,heavy,pro", got["tiers"], "friend:nova:desired %v: friend sync carries the row's tiers", got)
+	require.Equal(t, "security* , infra", got["streams"], "friend:nova:desired %v: apply carries the row's stream restriction", got)
+	require.Equal(t, "fix-red,review", got["kinds"], "friend:nova:desired %v: apply carries the row's kind restriction", got)
+	stored, found, err := st.Get(ctx, KindFriend, "nova")
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, "security* , infra", stored.Fields["streams"], "migration and Postgres round-trip keep the configured value")
+	require.Equal(t, "fix-red,review", stored.Fields["kinds"], "migration and Postgres round-trip keep the configured value")
 
 	// A row the config layer would never store still names the check that
 	// refused it, never a bare "INVALID <machine> 0 0".

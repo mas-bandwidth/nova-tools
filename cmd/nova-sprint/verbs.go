@@ -1267,7 +1267,7 @@ func (a *app) cmdAdd(args []string, stdout, stderr io.Writer) int {
 	if *brief == "" && *sentinel == "" {
 		c.says = append(c.says, "the cards have no brief, so a worker is handed no task with them; give each one before it is dealt, on a STOPPED machine: nova-sprint brief <id> --brief-file <path>")
 	}
-	if code := a.holdWho("add", st, stderr, *brief); code != 0 {
+	if code := a.holdWho("add", st, stderr, []string{*stream}, *brief); code != 0 {
 		return code
 	}
 	if code := a.holdBase("add", st, *allowPersonal, stderr, *brief); code != 0 {
@@ -1396,10 +1396,12 @@ func (a *app) cmdAddMany(stream, needs, briefDir string, briefFiles []string, se
 		st = s
 	}
 	texts := make([]string, len(cards))
+	streams := make([]string, len(cards))
 	for i, cd := range cards {
 		texts[i] = cd.Brief
+		streams[i] = stream
 	}
-	if code := a.holdWho("add", st, stderr, texts...); code != 0 {
+	if code := a.holdWho("add", st, stderr, streams, texts...); code != 0 {
 		return code
 	}
 	if code := a.holdBase("add", st, allowPersonal, stderr, texts...); code != 0 {
@@ -1563,13 +1565,18 @@ func uniquify(ids []string) []string {
 // holdWho holds each brief's WHO line (cardhdr.ReadWho; the owner, 2026-10-03: "doing
 // parts on friends where we would normally do friend work"): `WHO: friend` or
 // `WHO: friend <name>`, the name a row of the friends table (nova-config's friend rows,
-// copied by friend sync), and `WHO: friend` only while the table has a friend. A brief
-// whose line does not read, or names no friend of the table, refuses the whole call, exit
-// 2, nothing written. A brief with no WHO line is a machine's, as before.
-func (a *app) holdWho(verbName string, st *store.Store, stderr io.Writer, briefs ...string) int {
-	var names []string
+// copied by friend sync), and `WHO: friend` only while the table has a friend. A named
+// friend's configured work restriction is held too: the card's stream (streams, one per
+// brief, "" when the caller cannot say: no restriction is judged) and its KIND must be
+// within her streams and kinds, or the whole call refuses with the restriction named
+// (docs/SPEC-SPRINT.md section 1, a friend's card). A brief whose line does not read, or
+// names no friend of the table, refuses the whole call, exit 2, nothing written. A brief
+// with no WHO line is a machine's, as before.
+func (a *app) holdWho(verbName string, st *store.Store, stderr io.Writer, streams []string, briefs ...string) int {
+	var specs []store.FriendSpec
+	byName := map[string]store.FriendSpec{}
 	read := false
-	for _, b := range briefs {
+	for i, b := range briefs {
 		w, why := cardhdr.ReadWho(b)
 		if why != "" {
 			return refuse(stderr, verbName, "the brief's "+why)
@@ -1579,16 +1586,32 @@ func (a *app) holdWho(verbName string, st *store.Store, stderr io.Writer, briefs
 		}
 		if !read {
 			var err error
-			if names, err = st.FriendNames(context.Background()); err != nil {
+			if specs, err = st.FriendSpecs(context.Background()); err != nil {
 				return a.readFailed(verbName, err, stderr)
+			}
+			byName = make(map[string]store.FriendSpec, len(specs))
+			for _, spec := range specs {
+				byName[spec.Name] = spec
 			}
 			read = true
 		}
+		stream := ""
+		if i < len(streams) {
+			stream = streams[i]
+		}
 		switch {
-		case len(names) == 0:
+		case len(specs) == 0:
 			return refuse(stderr, verbName, "the brief says WHO: friend, and the friends table has no friend: its rows are nova-config's friend rows; run: nova-sprint friend sync")
-		case w.Name != "" && !slices.Contains(names, w.Name):
+		case w.Name != "" && byName[w.Name].Name == "":
+			names := make([]string, 0, len(specs))
+			for _, spec := range specs {
+				names = append(names, spec.Name)
+			}
 			return refuse(stderr, verbName, fmt.Sprintf("the brief says WHO: friend %s, and %s is no row of the friends table (friends: %s): name one, or write WHO: friend for any; run: nova-sprint friend sync", w.Name, w.Name, strings.Join(names, ",")))
+		case w.Name != "" && stream != "":
+			if why := byName[w.Name].RestrictionWhy(stream, sprint.BriefKind(b)); why != "" {
+				return refuse(stderr, verbName, "the named friend cannot receive this card: "+why)
+			}
 		}
 	}
 	return 0
@@ -2531,12 +2554,18 @@ func (a *app) replaceBriefs(cards []sprint.CardAdd, rs ruleSet, c *common, st *s
 	}
 	req := sprint.BriefReq{Who: c.actor}
 	texts := make([]string, len(cards))
+	streams := make([]string, len(cards))
 	for i, cd := range cards {
 		texts[i] = cd.Brief
+		// the card's own stream, for its named friend's restriction; a card the store does
+		// not know yet is left to the write step's refusal
+		if info, err := st.CardOf(context.Background(), cd.ID); err == nil && info.Primary != nil {
+			streams[i] = info.Primary.F("stream")
+		}
 		req.Cards = append(req.Cards, sprint.BriefCard{ID: cd.ID, Brief: cd.Brief, Rules: cardRules(cd.Brief, rs).held, Needs: uniquify(briefNeeds(cd.Brief))})
 		c.says = append(c.says, unfilledSays("the brief of "+cd.ID, cd.Brief)...)
 	}
-	if code := a.holdWho("brief", st, stderr, texts...); code != 0 {
+	if code := a.holdWho("brief", st, stderr, streams, texts...); code != 0 {
 		return code
 	}
 	return a.runStep("brief", *c, st, store.BriefStep(req), stdout, stderr)

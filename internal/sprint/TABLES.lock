@@ -197,3 +197,10 @@ friends.ok count sum hidden
 friends.failed count sum hidden
 view work friends fleet
 view-all work readers merge friends fleet
+# Note, 2026-10-04, the friend row's work restriction, not a display column: her
+# nova-config row's `streams` and `kinds` (docs/SPEC-CONFIG.md, friend) are carried into
+# her friends record by friend sync and applied by the dealer, which hands her no card
+# outside them; nothing the where view draws changes, so no column, fold or row below is
+# added and the friends table's shape stands. Held by
+# TestDealerNeverDealsAFriendOutsideHerStreams and
+# TestAddAndBriefRefuseNamedFriendOutsideRestrictions.
