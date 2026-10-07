@@ -406,3 +406,19 @@ func TestASemanticRestoreKeepsThePendingOperationAndTableShape(t *testing.T) {
 		})
 	}
 }
+
+// Restore errors name logical parts without exposing their values before a backup's
+// secret scan (docs/SPEC-SPRINT.md, sprint-backup-verb).
+func TestASemanticRestoreFailureNamesPartsWithoutValues(t *testing.T) {
+	t.Parallel()
+	h := restoreSprint(t)
+	doc, err := h.m.Snapshot()
+	require.NoError(t, err)
+	want, err := ReadState(h.ctx, h.m, h.st.Names)
+	require.NoError(t, err)
+	const value = "nsv_FAKE_FROM_RESTORE_STATE"
+	want.Parts["coordinator"] = value
+	err = SemanticRestore(h.ctx, want, MemTwin{Names: h.st.Names}, doc)
+	require.ErrorContains(t, err, "coordinator")
+	require.NotContains(t, err.Error(), value, "restore diagnostics precede the secret scan")
+}

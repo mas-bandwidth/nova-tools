@@ -258,32 +258,13 @@ func (s SprintState) Diff(restored SprintState) []string {
 	return out
 }
 
-// held is what a state holds for a part, as a refusal names it (at most 80
-// bytes of it).
-func (s SprintState) held(part string) string {
-	v, ok := s.Parts[part]
-	switch {
-	case !ok:
-		return "nothing"
-	case len(v) > 80:
-		return fmt.Sprintf("%q...", v[:77])
+// diffText names the parts that differ (the first 24, and how many more).
+// Values remain private: restore comparison runs before a backup's secret scan.
+func diffText(parts []string) string {
+	if len(parts) > 24 {
+		return fmt.Sprintf("%s and %d more", strings.Join(parts[:24], ", "), len(parts)-24)
 	}
-	return fmt.Sprintf("%q", v)
-}
-
-// diffText names the parts that differ (the first 24, and how many more) and,
-// for the first three, what each side holds.
-func diffText(want, got SprintState, parts []string) string {
-	names := parts
-	more := ""
-	if len(names) > 24 {
-		names, more = names[:24], fmt.Sprintf(" and %d more", len(parts)-24)
-	}
-	var detail []string
-	for _, p := range parts[:min(3, len(parts))] {
-		detail = append(detail, p+": the source holds "+want.held(p)+", the restore holds "+got.held(p))
-	}
-	return strings.Join(names, ", ") + more + "; " + strings.Join(detail, "; ")
+	return strings.Join(parts, ", ")
 }
 
 // StateSource is a snapshot source that can say what the store's sprint state was
@@ -323,7 +304,7 @@ func SemanticRestore(ctx context.Context, want SprintState, twin StateTwin, dump
 		return fmt.Errorf("the dump does not load into an isolated store whose sprint can be read: %w", err)
 	}
 	if d := want.Diff(got); len(d) > 0 {
-		return fmt.Errorf("the restored sprint is not the store's in %d part(s): %s", len(d), diffText(want, got, d))
+		return fmt.Errorf("the restored sprint is not the store's in %d part(s): %s", len(d), diffText(d))
 	}
 	return nil
 }
