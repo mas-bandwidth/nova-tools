@@ -4523,6 +4523,7 @@ The mechanisms: a **blocking read** waits in the store until the thing arrives (
 |---|---|---|---|---|
 | friend bus read | bus to the friend's daemon | timer poll | XREADGROUP BLOCK BeatEvery (1 s) while the session is free; while a turn runs, in one-shot mode or for a passive harness a 0-block read or a peek, then a 1 s Pause | card friend-bus-read-blocks |
 | friend delivery | the friend's daemon into her session | delivery into a session | each batch as one turn; the tmux adapter looks at the pane every TmuxPoll (500 ms) until its prompt is free | the pane has no idle event; the wait is for the pane, never for a message |
+| coordinator hand delivery | sprint to the coordinator's local friend checkout | timer poll | `deliver` reads the held row every `--every` (default 15 s); `--once` is one read | card friend-cards-pushed-on-the-bus |
 | friend card reconcile | sprint to the friend's daemon (the cards she holds) | timer poll | Held asked once an InboxEvery (1 s), on the daemon's step | card friend-cards-pushed-on-the-bus |
 | friend reader ask | sprint to the friend's reader row (reader-<friend>; a bud's reader is this row) | timer poll | queue --as reader-<friend> once a ReadAskEvery (10 s) | card friend-reads-pushed-on-the-bus |
 | friend beat | the friend's daemon to the sprint | beat | BeatEvery (1 s) | liveness is the beat's absence (FriendBeatEvery; down after fifteen without one) |
