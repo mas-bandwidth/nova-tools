@@ -26,9 +26,10 @@ func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 		{Verb: "pong", Flags: store},
 		{Verb: "wait-pong", Flags: store},
 		{Verb: "status"},
+		{Verb: "screen"},
 		{Verb: "version"},
 	})
-	testverbhelp.HelpVerb(t, cli, "nova-friend", "run", "install", "uninstall", "check", "ping", "pong", "wait-pong", "status", "version")
+	testverbhelp.HelpVerb(t, cli, "nova-friend", "run", "install", "uninstall", "check", "ping", "pong", "wait-pong", "status", "screen", "version")
 }
 
 func TestCommandReferenceNamesEveryKnownHarness(t *testing.T) {
@@ -78,5 +79,27 @@ func TestCheckHelpAndCommandReferenceNameEveryLineFieldAndExit(t *testing.T) {
 	} {
 		require.Contains(t, help, text)
 		require.Contains(t, doc, strings.TrimPrefix(text, "example: nova-friend "))
+	}
+}
+
+// The screen verb's help names every flag, every output line and JSON field,
+// every exit code, and one example that runs as written; docs/CLI.md carries
+// the same text.
+func TestScreenHelpAndCommandReferenceNameEveryFlagLineFieldAndExit(t *testing.T) {
+	t.Parallel()
+	help := newRig(t).cli().Do(t, "screen", "-h").Exit(0).Stdout
+	raw, err := os.ReadFile("../../docs/CLI.md")
+	require.NoError(t, err)
+	doc := string(raw)
+
+	for _, text := range []string{
+		"--lines", "--state-dir", "--json",
+		"SCREEN friend=<f> source=<tmux|window> lines=<n> at=<RFC3339>",
+		`{"friend":..,"source":..,"at":..,"lines":[..]}`,
+		"Exit 0 printed, 1 refused, 2 could not run",
+		"example: nova-friend screen bob --lines 40",
+	} {
+		require.Contains(t, help, text)
+		require.Contains(t, doc, text, "docs/CLI.md carries the help's text")
 	}
 }
