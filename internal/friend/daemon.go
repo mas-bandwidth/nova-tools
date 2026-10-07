@@ -1136,7 +1136,7 @@ func (l *loop) deliverBatch(t *turn) func(context.Context) result {
 // the loop): one Envelope, with the daemon's newest word about the
 // coordinator (say), cut at the deliverer's TextLimit; the messages that did
 // not fit go back to the head of the hand, pending, and are the next turn.
-// The model is internal/friend/tla/Delivery.tla: EnvelopeTakesAll and
+// The model is tla/Delivery.tla: EnvelopeTakesAll and
 // NoYoungerFirst.
 func (l *loop) startBatch(now time.Time) {
 	t := &turn{}
