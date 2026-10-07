@@ -44,7 +44,7 @@ func (w *Worker) Run(args ...string) (int, []byte) {
 			return 1, []byte("beat not sent: this machine's load has no sample yet, and the server cannot measure it; the next beat names one")
 		}
 	}
-	if len(args) > 0 && (args[0] == "take" || args[0] == "finish" || args[0] == "read") {
+	if len(args) > 0 && (args[0] == "take" || args[0] == "finish" || args[0] == "read" || args[0] == "progress" || args[0] == "queue") {
 		args = append(joinText(args), "--op", newOp())
 	}
 	budget := w.Budget
@@ -59,13 +59,19 @@ func (w *Worker) Run(args ...string) (int, []byte) {
 		if res, err = w.Send(ctx, args); err != nil {
 			continue
 		}
+		if len(res) == 0 {
+			continue
+		}
 		r := res[0]
 		if r.Code != 0 {
 			return r.Code, w.failed([]byte(r.Stdout), []byte(r.Stderr))
 		}
 		return 0, []byte(r.Stdout)
 	}
-	return 2, w.failed(nil, []byte(err.Error()))
+	if err != nil {
+		return 2, w.failed(nil, []byte(err.Error()))
+	}
+	return 2, w.failed(nil, []byte("server did not answer"))
 }
 
 func (w *Worker) failed(stdout, stderr []byte) []byte {

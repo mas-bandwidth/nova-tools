@@ -137,3 +137,25 @@ func TestNoReaderStatesHoldsEveryReaderUp(t *testing.T) {
 	assert.Len(t, plan.Units, 1)
 	assert.Empty(t, plan.Notes)
 }
+
+// A reader on a drained machine has width=0; its share must not panic with division by zero.
+func TestDrainedReaderDoesNotDivideByZero(t *testing.T) {
+	t.Parallel()
+	w := setup(t, 2)
+	toReview(w, "s1-1", "s1-2")
+	// Set up readers with normal widths
+	w.s.ReaderStates = map[string]string{"reader-a": ReaderUp, "reader-b": ReaderUp}
+	// Drain a member that is a reader
+	w.s.Fleet.Set("member-m1", map[string]any{"row": "m1", "drain": true, "width": 0})
+	w.s.ReaderStates["reader-a"] = ReaderUp
+	// This should not panic
+	w.s.ReaderWidth = func(r string) int {
+		if r == "reader-a" {
+			return 0 // drained reader
+		}
+		return 4
+	}
+	// tick share with width=0 returns -1 (unavailable), not panic
+	room := readerRoom{width: 0, free: 0}
+	assert.Equal(t, -1, room.share())
+}

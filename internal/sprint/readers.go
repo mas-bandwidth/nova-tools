@@ -659,6 +659,9 @@ func (r readerRoom) share() int {
 	if r.width == math.MaxInt {
 		return roomParts - (r.width - r.free)
 	}
+	if r.width <= 0 {
+		return -1
+	}
 	return r.free * roomParts / r.width
 }
 
