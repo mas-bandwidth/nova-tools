@@ -22,7 +22,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -249,10 +248,10 @@ const (
 	GapMissingPrefix = "flag-missing:"
 )
 
-// LedgerPath is the shrink-only ledger, found from this source file.
+// LedgerPath is the shrink-only ledger, found relative to the repo root.
 func LedgerPath() string {
-	_, file, _, _ := runtime.Caller(0)
-	return filepath.Join(filepath.Dir(file), "..", "ci", "testdata", "help-complete-ledger.txt")
+	wd, _ := os.Getwd()
+	return filepath.Join(wd, "testdata", "ci", "help-complete-ledger.txt")
 }
 
 var (
@@ -384,7 +383,9 @@ func judged(help, refusal string) (string, []string) {
 // shipped reports whether tool is one of the repository's (a directory under
 // cmd/): the ledger governs those, and a fake tool a test hands the seam is not one.
 func shipped(tool string) bool {
-	st, err := os.Stat(filepath.Join(filepath.Dir(LedgerPath()), "..", "..", "..", "cmd", tool))
+	wd, _ := os.Getwd()
+	p := filepath.Join(wd, "..", "..", "cmd", tool)
+	st, err := os.Stat(p)
 	return err == nil && st.IsDir()
 }
 
