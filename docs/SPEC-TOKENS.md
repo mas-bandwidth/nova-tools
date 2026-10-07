@@ -533,7 +533,7 @@ TOKENS SUPERSEDED label=bus:<name> note=<id> by=<id> day=<d>
 TOKENS CONFLICT label=bus:<name> day=<d> notes=<id,id,…>: competing reports; send a correction whose subject carries supersedes=<id>
 TOKENS TOUCHED label=bus:<name> day=<d> repos=<list>
 TOKENS MIXED date=<d> model=<model> repo=<repo> bases=<utc,zone>: two day bases on one row; declare one export for that day
-TOKENS DAY date=<d> rows=<n> models=<n> repos=<n> turns=<n|-> unknown=<pct>% other=<pct>% rough=<n> dashes=<n> nonutc=<n> sources=<labels> written=<true|false>
+TOKENS DAY day=<d> rows=<n> models=<n> repos=<n> turns=<n|-> unknown=<pct>% other=<pct>% rough=<n> dashes=<n> nonutc=<n> sources=<labels> written=<true|false>
 TOKENS SHRANK date=<d> type=<type> file=<n> now=<n|-> written=<true|false>: a source went quiet; --allow-shrink writes it anyway
 TOKENS QUIET label=<label> day=<d>: a declared source has zero samples for an explicitly selected existing day
 TOKENS PARTIAL date=<d> model=<model> repo=<repo> sources=<labels> folded=<labels> written=<true|false>: this fold declared only some of the sources that wrote the row; declare every source in the file's sources= line, or fold this day into its own --out
