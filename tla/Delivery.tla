@@ -23,9 +23,11 @@ Init == /\ gap = FALSE
         /\ last = "none"
         /\ closed = FALSE
 
+\* a message that arrives after the present is new, not a superseded one
 Arrive == /\ pending < MaxPending
           /\ pending' = pending + 1
-          /\ UNCHANGED <<gap, last, closed>>
+          /\ closed' = FALSE
+          /\ UNCHANGED <<gap, last>>
 
 Open == /\ gap' = TRUE
         /\ UNCHANGED <<pending, last, closed>>
