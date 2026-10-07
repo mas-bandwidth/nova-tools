@@ -130,7 +130,6 @@ func TestPipelineThousandReadsOneRoundTrip(t *testing.T) {
 // never from a flag. Open sends nothing (#3277), so a refused login is the
 // first command's error.
 func TestOpenAuthenticatesFromEnv(t *testing.T) {
-	t.Parallel()
 	addr := startRedis(t, "--user", "default", "off", "--user", "bench", "on", ">bench-secret", "~*", "&*", "+@all")
 	ctx := context.Background()
 
