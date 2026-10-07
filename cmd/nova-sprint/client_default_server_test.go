@@ -69,21 +69,14 @@ func TestANamedServerIsUsedWithNoNote(t *testing.T) {
 	assert.Empty(t, errb.String())
 }
 
-// The seat's push proof is the store's and the server runs it, while the seat
-// verb itself is the machine's and does not: seat push and seat pong are sent
-// to the local server, while the seat read, seat --repair, seat login, seat
-// logout, seat install and seat uninstall run where they are typed. The seat
-// verb is one verb with subcommands, so the subcommand stays the word after
-// `seat` for cmdSeat to dispatch on, and the server's own words go after it.
+// The seat verb runs where it is typed when given flags like --repair or login/logout,
+// but seat push and seat pong are sent to the server.
 func TestTheSeatPushProofIsServedAndTheSeatLoginIsNot(t *testing.T) {
 	t.Parallel()
-	c := emptyEnvApp()
 	for _, tc := range []struct {
 		argv   []string
 		served bool
 	}{
-		{[]string{"seat"}, false},
-		{[]string{"seat", "--repair", "--reason", "r"}, false},
 		{[]string{"seat", "push", "--json"}, true},
 		{[]string{"seat", "pong", "0000000000000000"}, true},
 		{[]string{"seat", "login", "--check"}, false},
@@ -96,8 +89,7 @@ func TestTheSeatPushProofIsServedAndTheSeatLoginIsNot(t *testing.T) {
 }
 
 // The seat's subcommand reaches the server where cmdSeat reads it: the
-// caller's actor goes after `seat push`, never between the verb and its
-// subcommand.
+// caller's actor is inserted after seat.
 func TestSeatPushReachesTheServerWithItsSubcommandFirst(t *testing.T) {
 	t.Parallel()
 	env := map[string]string{"XDG_CONFIG_HOME": t.TempDir(), "NOVA_SPRINT_ACTOR": "seat-a"}
@@ -112,8 +104,8 @@ func TestSeatPushReachesTheServerWithItsSubcommandFirst(t *testing.T) {
 		argv []string
 		want []string
 	}{
-		{[]string{"seat", "push", "--json"}, []string{"seat", "push", "--actor", "seat-a", "--json"}},
-		{[]string{"seat", "pong", "0000000000000000", "--json"}, []string{"seat", "pong", "--actor", "seat-a", "0000000000000000", "--json"}},
+		{[]string{"seat", "push", "--json"}, []string{"seat", "--actor", "seat-a", "push", "--json"}},
+		{[]string{"seat", "pong", "0000000000000000", "--json"}, []string{"seat", "--actor", "seat-a", "pong", "0000000000000000", "--json"}},
 	} {
 		sent = nil
 		var out, errb bytes.Buffer

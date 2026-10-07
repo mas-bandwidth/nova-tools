@@ -166,7 +166,7 @@ func (a *app) recordPushTarget(srv string, c common, push sprint.PushRecord, std
 	if srv != "" {
 		res, err := a.ask(context.Background(), srv, []string{"seat"}, words)
 		if err != nil {
-			return a.unanswered(name, srv, err, stderr)
+			return a.unanswered(name, srv, true, err, stderr)
 		}
 		if res.Code == 2 {
 			return refuse(stderr, name, "the server refused the push record: "+strings.TrimSpace(res.Stderr))

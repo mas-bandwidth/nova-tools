@@ -118,6 +118,7 @@ func (e *exitErr) Error() string { return fmt.Sprintf("exit %d", e.code) }
 type serverSource struct {
 	a       *app
 	addr    string
+	named   bool // whether the server was explicitly named via NOVA_SPRINT_SERVER
 	plain   []string // the verb's words without its wait flags
 	timeout time.Duration
 	from    string // the last tick-end note id seen
@@ -125,8 +126,8 @@ type serverSource struct {
 	stderr  io.Writer
 }
 
-func (a *app) serverSource(ctx context.Context, addr string, fs *flag.FlagSet, args []string, timeout time.Duration, stdout, stderr io.Writer) (*serverSource, error) {
-	s := &serverSource{a: a, addr: addr, plain: without(fs, args, "wait", "timeout", "push", "json"), timeout: timeout, stdout: stdout, stderr: stderr}
+func (a *app) serverSource(ctx context.Context, addr string, named bool, fs *flag.FlagSet, args []string, timeout time.Duration, stdout, stderr io.Writer) (*serverSource, error) {
+	s := &serverSource{a: a, addr: addr, named: named, plain: without(fs, args, "wait", "timeout", "push", "json"), timeout: timeout, stdout: stdout, stderr: stderr}
 	var err error
 	s.from, err = s.lastTickEnd(ctx)
 	return s, err
@@ -349,7 +350,7 @@ func (a *app) inboxWaitAt(addr string, fs *flag.FlagSet, args []string, atEpoch 
 		return refuse(stderr, "inbox", "--wait waits on the sprint's epoch for at most a --timeout above zero")
 	}
 	ctx := context.Background()
-	src, err := a.serverSource(ctx, addr, fs, args, timeout, stdout, stderr)
+	src, err := a.serverSource(ctx, addr, true, fs, args, timeout, stdout, stderr)
 	if err != nil {
 		return a.waitFailed(err, stderr)
 	}
