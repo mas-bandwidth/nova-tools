@@ -388,8 +388,8 @@ level and the attempt cap's deal alike (`sprint.friendDealable`; 2026-10-06: a f
 whose row read down, her daemon beating, was dealt 18 cards twice;
 `TestTheDealSkipsADownRowAndHonoursTheWhoPin`), and her row's `streams` and
 `kinds` restriction (docs/SPEC-CONFIG.md, friend) filters every card the deal, the
-level and the attempt cap's deal may hand her (`sprint.friendRestrictionAllows`;
-`TestDealerNeverDealsAFriendOutsideHerStreams`): in
+level, the start-bound level and the attempt cap's deal may hand her
+(`sprint.friendRestrictionAllows`; `TestDealerNeverDealsAFriendOutsideHerStreams`): in
 batch mode (the default, her nova-config row's `mode: batch`), DealAhead (two)
 times her friends row's `width`, as the machines' rule fills a member (section
 5; the cards on her row, ready and working, her work and her reads together, count
