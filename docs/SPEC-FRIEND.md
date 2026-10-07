@@ -1425,7 +1425,7 @@ says nothing, and a failed job is staged again once its remedy lands; three reve
 What is scratch, and when it goes. `jobs/<job>/` is scratch. The branch in the mirror is the
 record. A lane the daemon starts, batch or one-shot (the same `laneDone`), removes
 `jobs/<job>/` when its run ends and `outbox/<job>/REPORT.md` names a head origin holds, whatever
-the verdict (`Stager.Release`, called from the lane's end, from a restart that finishes a card
+the verdict (`Stager.ReleaseAsync` queues the bounded cleanup, called from the lane's end, from a restart that finishes a card
 the dead daemon had started, and from the outbox pass once the finish is taken). Origin holds
 the head when a remote-tracking ref under `refs/remotes/origin/` in the job's git directory
 (the mirror, for a worktree) names that sha. The checkout goes only when it is clean: no
@@ -1443,14 +1443,20 @@ commits, so it cannot preserve either of those. The newest
 even inside that cap. At most `PrunePerPass` (4) a cleanup, confirmed first, never waiting on
 a mirror a stage holds.
 
-Finished jobs are pruned by the cleanup the daemon already owns: after each inbox reconcile
-(which retires the briefs of cards that left her row), in the loop itself, `pruneStep` hands
-`Stager.Prune` the live jobs (held on her row, run by a lane, being staged). Each job removed
-is one line (`prune: removed jobs/<job> and its worktree: its card is finished (8 finished kept)`);
-a failure is said once while it stands (`prune: not pruned: ...`). A release at the lane's end
-is `release: removed jobs/<job>: its report names a head origin holds`. The prune runs in the
-loop, never on a goroutine handed a snapshot: a job dealt to her again meanwhile would have its
-brief written, be handed to a lane on its old `JOB.md`, and lose its checkout under it.
+Finished jobs are pruned asynchronously after each inbox reconcile. `PruneAsync` reserves
+inactive jobs before returning; a reserved checkout cannot be staged or handed to a lane
+on its old `JOB.md`. One worker performs origin checks and removes at most four jobs;
+new live/inbox observations protect bulk prune candidates. Release requests from ended
+lanes share that cap and remain queued until their head is confirmed and their checkout
+is clean. The next tick consumes the receipt and releases the reservations. Removal is
+recorded only after the worker actually succeeds; queueing is `release: queued`.
+
+Production staging uses `~/.cache/nova/mirrors/<owner>/<repo>.git`, shared by friends on
+this OS account. A kernel file lock serializes fetch/worktree mutation across processes.
+Existing mirrors under the working directory remain recognized and are never migrated or
+deleted. Readers get detached local clones with hardlinked mirror objects and no alternates,
+so a native bench snapshot is self-contained. The checkout creator receipt guards deletion.
+
 `TestJobsAreWorktreesOfOneMirror` stages two jobs of one repository and sees one full bare
 mirror and two worktrees on their branches at the base, origin the repository; a push from one
 is read by `PushedHead`; a fetch that fails is a judgment named on the job and leaves nothing
@@ -1460,15 +1466,12 @@ branch back. `TestAFinishedLaneLeavesNoJobDirectory` is the confirmed head: the 
 is gone inside the cap of 8, the unconfirmed job beside it stays, and a checkout with tracked
 work origin does not hold stays. `TestAMirrorOfTheCloneLayoutIsConverted` and
 `TestTheInboxCleanupPrunesFinishedJobs` pin the rest. The cap on jobs whose head is not
-confirmed is modelled in `internal/friend/tla/JobWorktrees.tla` (TLC on a Linux bench, three
-jobs, cap 1, one a pass, `MCJobWorktrees`: 33,344 distinct states, no error;
-`NoLaneLosesItsCheckout`, `WorkKept`, `CapKept`, `HeldKept`), with three reversed witnesses:
-`MCJobWorktreesBrokenAsync` (the prune on a goroutine, the first cut of this change) breaks
-`NoLaneLosesItsCheckout` in 16 states as above, `MCJobWorktreesBrokenDropBranch` breaks
-`WorkKept`, and `MCJobWorktreesBrokenNoLimit` breaks `CapKept`. A confirmed finish is outside
-that grain: `tla/DeliveryLane.tla` (TLC on a Linux bench, one job, `MCDeliveryLane`: 13 distinct
-states, no error; `FinishedLaneLeavesNoJobDirectory`, `NoLaneLosesItsJob`; the reversed witness
-`MCDeliveryLaneBrokenKeepsJob` breaks `FinishedLaneLeavesNoJobDirectory`, 10 distinct states).
+confirmed is modelled in `internal/friend/tla/JobWorktrees.tla`: reservation blocks
+staging/handoff, completion rechecks live jobs, branches survive cleanup and the cap remains.
+The unreserved async twin loses a lane's checkout. `tla/DeliveryLane.tla` makes the
+asynchronous finishing phase explicit: a confirmed ended lane is pending cleanup;
+`FinishedLaneLeavesNoJobDirectory` holds after that phase, and fair cleanup satisfies
+`CleanupCompletes`. The keep-directory twin violates the finished invariant.
 `tla/Delivery.tla` is the present, a different machine. A clone without the stager's `JOB.md` contract naming that checkout is left, as is a clone
 whose report does not name a head origin holds:
 removing it would drop commits that exist only there.
@@ -1487,10 +1490,11 @@ with `git switch --force-create` inside the clone it keeps, and the next batch c
 again. It leaves no checkout worktree. That lander is `cmd/nova-sprint`, outside the paths
 that remove a friend's job.
 
-Not yet: the server's `friend cards` answer does not send `repo` and `base` (cmd/nova-sprint is
-outside this card's paths), so the brief's lines are read; a read's checkout at the head under
-read is not staged from the mirror (the reader still clones into `reads/<id>/repo`, and the
-lane removes that clone when the finding is recorded).
+A successful reader queue also sweeps owned checkouts whose read is absent and no local
+lane runs it, recovering a killed daemon. Recorded-finding receipts retry failed removal
+without submitting the finding again. A failed queue read authorizes no sweep. An abruptly
+killed remote bench runner remains outside this contract's implementation: the bench factory
+must expose its host/run ownership receipt before execution before a daemon can safely sweep it.
 
 ## One-shot lanes (internal/friend/lanes.go)
 

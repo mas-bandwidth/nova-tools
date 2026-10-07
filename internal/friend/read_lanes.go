@@ -158,7 +158,7 @@ func ReadText(friend, jobDir string, r AskedRead) string {
 
 You are %[3]s, a reader of %[4]s reading one card. Work only in %[5]s. Change nothing in the work, commit nothing, push nothing.
 
-1. Clone: cd %[5]s && git clone -q https://github.com/%[6]s.git repo && cd repo && git fetch -q origin %[7]s && git checkout -q --detach %[8]s (verify git rev-parse HEAD is %[8]s; if the head cannot be had, write RESULT.md with verdict: none and say why).
+1. Checkout: cd %[5]s; if test ! -d repo; then git clone -q https://github.com/%[6]s.git repo && git -C repo fetch -q origin %[7]s && git -C repo checkout -q --detach %[8]s; fi; cd repo (verify git rev-parse HEAD is %[8]s; if the head cannot be had, write RESULT.md with verdict: none and say why).
 2. The work's change is exactly $(git merge-base %[8]s origin/%[9]s)..%[8]s, on branch %[7]s against %[9]s. %[9]s may have moved since the work began; a diff against its tip shows every change landed since as a deletion, and those are never the work's and never a finding. Judge the work by the merge-base diff alone.
 3. The card under review is BRIEF.md beside this file; the worker's own report is WORKER-REPORT.txt. Judge: does the change do the brief's task, touch only its PATHS, add the test the TEST line names (red before, green after, pinning the behaviour), and keep the brief's RULES.
 4. The read's gate, in place of the card's: the packages the change touches and the tests that read a doc it changes, each as nice -n 19 go vet <pkg> and nice -n 19 go test -count=1 -timeout 600s <pkg>. Never ./... . %[10]s
@@ -261,6 +261,8 @@ func (l *loop) readStep(now time.Time) {
 			s.asked = nil
 		} else if s.asked, err = ParseReadQueue(out); err != nil {
 			d.Record(fmt.Sprintf("%s reads: %s", at, err))
+		} else {
+			l.sweepReads(out, now)
 		}
 	}
 	if l.lanes.gov.Held() != "" || l.lanes.gov.Paused(now) {
@@ -322,6 +324,11 @@ func (l *loop) startRead(r AskedRead, now time.Time) {
 				return
 			}
 		}
+		if d.StageRead != nil {
+			if res.err = d.StageRead(l.ctx, r); res.err != nil {
+				return
+			}
+		}
 		ctx, prompt := LaneContext(l.ctx), ReadPrompt(d.Friend, dir)
 		switch h := d.Deliver.(type) {
 		case ReadHarness:
@@ -354,6 +361,7 @@ func (l *loop) readDone(r readResult, now time.Time) {
 		out, err := d.Sprint(l.ctx, ReadVerdictArgv(d.Friend, r.read, verdict, finding, usage))
 		d.Record(fmt.Sprintf("%s read %s: verdict=%s wall=%s: %s", at, r.read.ID, verdict, now.Sub(r.start).Round(time.Second), recorded(out, err)))
 		if err == nil {
+			_ = os.WriteFile(filepath.Join(r.dir, ".finding-recorded"), []byte("recorded\n"), 0600)
 			l.releaseRead(r.read.ID, now)
 		}
 		return
@@ -386,7 +394,13 @@ func (l *loop) releaseRead(id string, now time.Time) {
 		return
 	}
 	dir := filepath.Join(d.Dir, "reads", id)
-	if err := safepath.RemoveUnder(dir, filepath.Join(dir, "repo")); err != nil {
+	remove := func() error {
+		if d.ReleaseRead != nil {
+			return d.ReleaseRead(id)
+		}
+		return safepath.RemoveUnder(dir, filepath.Join(dir, "repo"))
+	}
+	if err := remove(); err != nil {
 		d.Record(fmt.Sprintf("%s read %s: not removed reads/%s/repo: %s", now.UTC().Format(time.RFC3339), id, id, oneLine(err.Error(), 200)))
 	}
 	if d.BenchRoot == "" || !validJob(d.Friend) {
@@ -403,4 +417,43 @@ func recorded(out string, err error) string {
 		return "not recorded: " + oneLine(err.Error(), 200)
 	}
 	return oneLine(out, 120)
+}
+
+// sweepReads recovers owned checkouts after a daemon crash. A failed queue read
+// never authorizes cleanup, and running/begun queue entries remain protected.
+func (l *loop) sweepReads(queue string, now time.Time) {
+	if l.d.ReleaseRead == nil {
+		return
+	}
+	var q struct {
+		Cards []struct {
+			ID string `json:"id"`
+		} `json:"cards"`
+	}
+	if json.Unmarshal([]byte(queue), &q) != nil {
+		return
+	}
+	live := map[string]bool{}
+	for _, c := range q.Cards {
+		live[c.ID] = true
+	}
+	entries, err := os.ReadDir(filepath.Join(l.d.Dir, "reads"))
+	if err != nil {
+		return
+	}
+	removed := 0
+	for _, e := range entries {
+		id := e.Name()
+		if removed == PrunePerPass {
+			break
+		}
+		if !validJob(id) || l.reads.running[id] || !exists(filepath.Join(l.d.Dir, "reads", id, ".checkout-created")) {
+			continue
+		}
+		if live[id] && !exists(filepath.Join(l.d.Dir, "reads", id, ".finding-recorded")) {
+			continue
+		}
+		l.releaseRead(id, now)
+		removed++
+	}
 }

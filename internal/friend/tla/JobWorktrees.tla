@@ -32,8 +32,8 @@ VARIABLES held,     \* the card is on her row
           wt,       \* jobs/<job>/repo, a worktree of the mirror, and its JOB.md
           branch,   \* the card's branch in the mirror: "none", "base", "work"
           worked,   \* ghost: a lane committed on the branch
-          pending,  \* async only: the finished set a prune under way read, or {} with none
-          busy      \* async only: a prune is under way
+          pending,  \* reserved: the finished set a prune under way read, or {} with none
+          busy      \* cleanup: a prune is under way
 
 vars == <<held, inbox, lane, staging, wt, branch, worked, pending, busy>>
 
@@ -81,21 +81,24 @@ Reconcile ==
   LET i == [j \in Jobs |-> IF held[j] THEN TRUE ELSE IF lane[j] THEN inbox[j] ELSE FALSE]
       f == Finished(i)
   IN /\ inbox' = i
-     /\ IF Broken = "async"
-          THEN /\ IF busy
-                    THEN UNCHANGED <<pending, busy>>
-                    ELSE \E r \in SUBSET f : Cardinality(r) = Removes(f) /\ pending' = r /\ busy' = TRUE
-               /\ UNCHANGED <<wt, branch>>
-          ELSE /\ \E r \in SUBSET f : Cardinality(r) = Removes(f) /\ Remove(r)
-               /\ UNCHANGED <<pending, busy>>
+     /\ IF busy
+          THEN UNCHANGED <<pending, busy>>
+          ELSE \E r \in SUBSET f : Cardinality(r) = Removes(f) /\ pending' = r /\ busy' = TRUE
+     /\ UNCHANGED <<wt, branch>>
      /\ UNCHANGED <<held, lane, staging, worked>>
 
 \* async only: the prune's goroutine removes what it read when it began
-PruneEnd == /\ busy /\ Remove(pending) /\ pending' = {} /\ busy' = FALSE
-            /\ UNCHANGED <<held, inbox, lane, staging, worked>>
+PruneEnd ==
+  LET eligible == pending \cap Finished(inbox)
+      count == Min(Cardinality(eligible), Removes(Finished(inbox)))
+  IN /\ busy
+     /\ IF Broken = "async" THEN Remove(pending)
+          ELSE \E r \in SUBSET eligible : Cardinality(r) = count /\ Remove(r)
+     /\ pending' = {} /\ busy' = FALSE
+     /\ UNCHANGED <<held, inbox, lane, staging, worked>>
 
 \* stageStep: a held card's brief there, its job not staged
-BeginStage(j) == /\ held[j] /\ inbox[j] /\ ~wt[j] /\ ~staging[j]
+BeginStage(j) == /\ (Broken = "async" \/ j \notin pending) /\ held[j] /\ inbox[j] /\ ~wt[j] /\ ~staging[j]
                  /\ staging' = [staging EXCEPT ![j] = TRUE]
                  /\ UNCHANGED <<held, inbox, lane, wt, branch, worked, pending, busy>>
 \* Stager.Stage: worktree add -b at the base, or of the branch as it stands
@@ -106,7 +109,7 @@ EndStage(j) == /\ staging[j]
                /\ UNCHANGED <<held, inbox, lane, worked, pending, busy>>
 
 \* nextCard: a held card, its brief there and its job staged
-Hand(j) == /\ held[j] /\ inbox[j] /\ wt[j] /\ ~lane[j]
+Hand(j) == /\ (Broken = "async" \/ j \notin pending) /\ held[j] /\ inbox[j] /\ wt[j] /\ ~lane[j]
            /\ lane' = [lane EXCEPT ![j] = TRUE]
            /\ UNCHANGED <<held, inbox, staging, wt, branch, worked, pending, busy>>
 Work(j) == /\ lane[j] /\ wt[j] /\ branch[j] # "none"

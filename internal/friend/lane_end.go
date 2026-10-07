@@ -293,6 +293,8 @@ func (l *loop) releaseJob(job string, now time.Time) {
 	}
 	err := d.Release(l.ctx, job)
 	switch {
+	case errors.Is(err, errCleanupQueued):
+		d.Record(fmt.Sprintf("%s release: queued %s/%s for bounded cleanup", now.UTC().Format(time.RFC3339), JobsDir, job))
 	case err == nil:
 		d.Record(fmt.Sprintf("%s release: removed %s/%s: its report names a head origin holds", now.UTC().Format(time.RFC3339), JobsDir, job))
 	case errors.Is(err, errHeadUnconfirmed), errors.Is(err, errCheckoutDirty), errors.Is(err, errMirrorHeld), errors.Is(err, errJobGone):

@@ -1439,14 +1439,17 @@ func (w world) run(c *tool.Call) *tool.Out {
 			}
 			return nil
 		},
-		SaveLanes: func(s friend.LaneState) error { return friend.WriteLanes(state, s) },
-		Held:      w.held(name, server),
-		Seat:      w.seat(server),
-		Stage:     stager.stage(),
-		Prune:     stager.prune(),
-		Release:   stager.release(),
-		BenchRoot: benchRoot(w.home),
-		Tip:       w.tip,
+		SaveLanes:      func(s friend.LaneState) error { return friend.WriteLanes(state, s) },
+		Held:           w.held(name, server),
+		Seat:           w.seat(server),
+		Stage:          stager.stage(),
+		StageRead:      stager.stageRead(),
+		ReleaseRead:    stager.releaseRead(),
+		CleanupPending: stager.pending(),
+		Prune:          stager.prune(),
+		Release:        stager.release(),
+		BenchRoot:      benchRoot(w.home),
+		Tip:            w.tip,
 		Finish: func(ctx context.Context, argv []string) error {
 			if w.finish == nil {
 				return errors.New("this world sends no finish") // a test's: friend sync reads the lane's REPORT.md
@@ -1611,7 +1614,11 @@ func (w world) stager(dir string) daemonStager {
 	if w.stage == nil || w.cards == nil || dir == "" {
 		return daemonStager{}
 	}
-	return daemonStager{w.stage(dir)}
+	s := w.stage(dir)
+	if w.home != "" {
+		s.MirrorRoot = filepath.Join(w.home, ".cache", "nova", "mirrors")
+	}
+	return daemonStager{s}
 }
 
 // daemonStager is a Stager as the daemon's Stage and Prune, nil for none.
@@ -1629,7 +1636,7 @@ func (d daemonStager) prune() func(ctx context.Context, live map[string]bool) ([
 		return nil
 	}
 	return func(ctx context.Context, live map[string]bool) ([]string, error) {
-		return d.s.Prune(ctx, live, friend.FinishedJobsKept)
+		return d.s.PruneAsync(ctx, live, friend.FinishedJobsKept)
 	}
 }
 
@@ -1637,7 +1644,7 @@ func (d daemonStager) release() func(ctx context.Context, job string) error {
 	if d.s == nil {
 		return nil
 	}
-	return d.s.Release
+	return d.s.ReleaseAsync
 }
 
 // benchRoot is the home directory's nova-bench when that directory is there. A recorded
@@ -2348,4 +2355,24 @@ func parseHolders(out string) (map[string]string, error) {
 		}
 	}
 	return holders, nil
+}
+
+func (d daemonStager) pending() func(string) bool {
+	if d.s == nil {
+		return nil
+	}
+	return d.s.CleanupPending
+}
+func (d daemonStager) stageRead() func(context.Context, friend.AskedRead) error {
+	if d.s == nil {
+		return nil
+	}
+	return d.s.StageRead
+}
+
+func (d daemonStager) releaseRead() func(string) error {
+	if d.s == nil {
+		return nil
+	}
+	return d.s.ReleaseRead
 }

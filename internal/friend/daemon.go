@@ -191,7 +191,10 @@ type Daemon struct {
 	// Stage stages a held work card's job (Stager.Stage: jobs/<job>/repo and its JOB.md) and
 	// answers the commit staged (stage.go); nil stages none, and a lane is handed a card with
 	// its brief alone.
-	Stage func(ctx context.Context, p Packet) (string, error)
+	Stage          func(ctx context.Context, p Packet) (string, error)
+	StageRead      func(ctx context.Context, r AskedRead) error
+	ReleaseRead    func(id string) error
+	CleanupPending func(job string) bool
 	// Prune removes finished jobs (Stager.Prune): one whose report names a head origin holds
 	// even inside FinishedJobsKept, and the other worktrees past that cap, given the jobs
 	// that are live (held on her row, run by a lane, being staged), after each inbox

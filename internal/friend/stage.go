@@ -17,6 +17,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
+	"github.com/mas-bandwidth/nova-tools/internal/filelock"
 	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 )
@@ -177,8 +178,13 @@ func GitHubURL(repo string) string { return "https://github.com/" + repo + ".git
 // GIT_TERMINAL_PROMPT=0, so git never waits on a prompt no one answers).
 type Stager struct {
 	Dir string
-	URL func(repo string) string
-	Env []string
+	// MirrorRoot is shared by every friend on this machine; empty preserves the local layout.
+	MirrorRoot string
+	cleanupMu  sync.Mutex
+	cleanup    *cleanupPass
+	releases   map[string]bool
+	URL        func(repo string) string
+	Env        []string
 
 	mu      sync.Mutex
 	repos   map[string]*sync.Mutex
@@ -237,6 +243,9 @@ func (s *Stager) Stage(ctx context.Context, p Packet) (string, error) {
 	if err := p.check(); err != nil {
 		return "", &NotStageable{Repo: p.Repo, Card: p.Card, Job: p.Job, Why: err.Error(), Remedy: "rework the card with a packet that names its repository (owner/name), its base and its branch"}
 	}
+	if s.CleanupPending(p.Job) {
+		return "", errors.New("job cleanup is still running")
+	}
 	job := JobDir(s.Dir, p.Job)
 	checkout := filepath.Join(job, "repo")
 	if Staged(s.Dir, p.Job) {
@@ -257,6 +266,11 @@ func (s *Stager) Stage(ctx context.Context, p Packet) (string, error) {
 	lock := s.repoLock(p.Repo)
 	lock.Lock()
 	defer lock.Unlock()
+	disk, err := s.lockMirror(p.Repo, false)
+	if err != nil {
+		return "", err
+	}
+	defer disk.Unlock()
 	mirror, err := s.mirror(ctx, p.Repo)
 	var ns *NotStageable
 	if errors.As(err, &ns) {
@@ -327,7 +341,7 @@ var mirrorFetch = []string{"+refs/heads/*:refs/remotes/origin/*", "+refs/tags/*:
 // that fails is her account not reaching the repository.
 func (s *Stager) mirror(ctx context.Context, repo string) (string, error) {
 	owner, name, _ := strings.Cut(repo, "/")
-	mirror := filepath.Join(s.Dir, MirrorsDir, owner, name+".git")
+	mirror := filepath.Join(s.mirrorRoot(), owner, name+".git")
 	url := s.url(repo)
 	unreachable := func(err error) error {
 		return &NotStageable{Repo: repo, Why: fmt.Sprintf("git could not fetch %s: %s", url, oneLine(err.Error(), 300)),
@@ -504,6 +518,12 @@ type scratch struct {
 // (jobs/<job>); a worktree is removed from the mirror and its branch stays, so any commit on
 // it is kept, and a stage of the job again takes the branch as it stands.
 func (s *Stager) Prune(ctx context.Context, live map[string]bool, kept int) ([]string, error) {
+	return s.prune(ctx, live, kept, PrunePerPass)
+}
+func (s *Stager) prune(ctx context.Context, live map[string]bool, kept, limit int) ([]string, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
 	confirmed, rest, err := s.finishedScratch(ctx, live)
 	if err != nil {
 		return nil, err
@@ -515,7 +535,10 @@ func (s *Stager) Prune(ctx context.Context, live map[string]bool, kept int) ([]s
 	var pruned []string
 	var firstErr error
 	for _, f := range queue {
-		if len(pruned) == PrunePerPass {
+		if s.cleanupLive(f.job) || exists(filepath.Join(s.Dir, "inbox", f.job, "BRIEF.md")) {
+			continue
+		}
+		if len(pruned) == limit {
 			break
 		}
 		if err := s.removeScratch(ctx, f); err != nil {
@@ -714,6 +737,11 @@ func (s *Stager) removeScratch(ctx context.Context, f scratch) error {
 			return errMirrorHeld
 		}
 		defer lock.Unlock()
+		disk, err := s.lockMirror(f.repo, true)
+		if err != nil {
+			return errMirrorHeld
+		}
+		defer disk.Unlock()
 		return s.pruneJob(ctx, f.mirror, f.job)
 	}
 	return s.removeClone(f.job)
@@ -831,15 +859,22 @@ func (s *Stager) worktreeOf(checkout string) (repo, mirror string, ok bool) {
 	if !found || !filepath.IsAbs(gitdir) {
 		return "", "", false
 	}
-	mirrors, err := filepath.EvalSymlinks(filepath.Join(s.Dir, MirrorsDir))
-	if err != nil {
-		return "", "", false
-	}
 	if real, err := filepath.EvalSymlinks(gitdir); err == nil {
 		gitdir = real
 	}
-	rel, err := filepath.Rel(mirrors, gitdir)
-	if err != nil {
+	var mirrors, rel string
+	for _, root := range []string{s.mirrorRoot(), filepath.Join(s.Dir, MirrorsDir)} {
+		real, err := filepath.EvalSymlinks(root)
+		if err != nil {
+			continue
+		}
+		candidate, err := filepath.Rel(real, gitdir)
+		if err == nil && candidate != ".." && !strings.HasPrefix(candidate, ".."+string(filepath.Separator)) {
+			mirrors, rel = real, candidate
+			break
+		}
+	}
+	if mirrors == "" {
 		return "", "", false
 	}
 	parts := strings.Split(filepath.ToSlash(rel), "/")
@@ -940,7 +975,7 @@ func (l *loop) stageStep(cards []HeldCard, now time.Time) {
 	}
 	for _, h := range cards {
 		p, ok := PacketOf(h)
-		if !ok || !validJob(p.Job) || d.staging[p.Job] || now.Before(d.stageRetry[p.Job]) {
+		if !ok || !validJob(p.Job) || d.cleanupPending(p.Job) || d.staging[p.Job] || now.Before(d.stageRetry[p.Job]) {
 			continue
 		}
 		if !exists(filepath.Join(d.Dir, "inbox", p.Job, "BRIEF.md")) || Staged(d.Dir, p.Job) || exists(filepath.Join(d.Dir, "outbox", p.Job, "REPORT.md")) {
@@ -958,13 +993,8 @@ func (l *loop) stageStep(cards []HeldCard, now time.Time) {
 	}
 }
 
-// pruneStep is the daemon's cleanup of finished jobs, run in the loop after each inbox
-// cleanup, so what is live cannot change under it (a prune on a goroutine of its own, handed a
-// snapshot, could remove a job dealt to her again and handed to a lane meanwhile: the reversed
-// witness "async" of tla/JobWorktrees.tla). Live is every job held on her row, run by a lane
-// (keep) or being staged; Stager.Prune never touches one, nor a job whose brief is in her
-// inbox, and removes at most PrunePerPass, never waiting on a mirror a stage holds. Each job
-// removed is said, and a failure once while it stands.
+// pruneStep supplies the current live set and drains the bounded asynchronous cleanup.
+// Reserved jobs cannot be staged or handed to lanes until the pass returns.
 func (l *loop) pruneStep(held []HeldCard, keep map[string]bool, now time.Time) {
 	d := l.d
 	if d.Prune == nil {
@@ -1002,7 +1032,7 @@ func (d *Daemon) stageOwed(h HeldCard) bool {
 		return false
 	}
 	_, ok := PacketOf(h)
-	return ok && !Staged(d.Dir, h.Job)
+	return ok && (d.cleanupPending(h.Job) || !Staged(d.Dir, h.Job))
 }
 
 // TipBudget bounds the one ls-remote of Tip.
