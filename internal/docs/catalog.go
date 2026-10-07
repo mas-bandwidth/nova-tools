@@ -139,6 +139,7 @@ var DefaultCatalog = []Entry{
 
 	// docs/
 	E("docs/acceptance", "release acceptance records: one measured requirement per file, with the raw numbers", "go test ./internal/ci", "go test ./internal/ci -run TestAcceptanceRecordsAreWellFormed"),
+	E("docs/audit", "dated cold audits of the tools, one file per audit and tool", "go test ./internal/docs", "go test ./internal/docs"),
 	E("docs/dogfood", "dated dogfood records of the tools, one file per tool and run: every verb used cold, every finding graded", "go test ./internal/docs", "go test ./internal/docs"),
 	E("docs/fixtures", "doc examples and test fixtures", "go test ./internal/docs", "go test ./internal/docs"),
 	E("docs/nova-config", "nova-config guide: the permanent configuration and its apply into Redis", "go test ./internal/docs", "go test ./internal/docs"),
