@@ -70,7 +70,7 @@ func TestA4_MarkdownEmphasisDoesNotHideAClaim(t *testing.T) {
 		"> *I cannot check my own work.*",
 		"- `I cannot` check my own work.",
 	} {
-		assert.NotEmpty(t, Scan(in), "markdown hid the claim: %q", in)
+		t.Run(in, func(t *testing.T) { t.Parallel(); assert.NotEmpty(t, Scan(in), "markdown hid the claim: %q", in) })
 	}
 }
 
@@ -88,10 +88,13 @@ func TestAHeadingOrABlankLineEndsASentence(t *testing.T) {
 		{"blank line", "A paragraph with no stop\n\nI am bad at estimating time.\n", 3},
 		{"heading after a paragraph", "Some prose\n## Notes\nI am bad at estimating time.\n", 3},
 	} {
-		got := Scan(tc.in)
-		require.Len(t, got, 1, "want 1 claim for %q", tc.name)
-		assert.Equal(t, tc.line, got[0].Line)
-		assert.Equal(t, "I am bad at estimating time.", got[0].Text)
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := Scan(tc.in)
+			require.Len(t, got, 1)
+			assert.Equal(t, tc.line, got[0].Line)
+			assert.Equal(t, "I am bad at estimating time.", got[0].Text)
+		})
 	}
 }
 

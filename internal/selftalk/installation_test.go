@@ -9,6 +9,7 @@ package selftalk
 // is recorded in SPEC.md's permanent-MISS section rather than deleted from here.
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -37,11 +38,14 @@ func TestInstallationSpecimens(t *testing.T) {
 		{11, "my unlimited effort is what makes solo work diverge", Foreclosure},
 		{12, "Recollection is the weakest instrument I own; the record is at wrap-up.", Ranking},
 	} {
-		got := ScanInstallation(tt.specimen)
-		if !assert.NotEmpty(t, got, "specimen %d NOT FLAGGED (want %s): %q", tt.n, tt.want, tt.specimen) {
-			continue
-		}
-		assert.Equal(t, tt.want, got[0].Shape, "specimen %d: shape %s, want %s: %q", tt.n, got[0].Shape, tt.want, tt.specimen)
+		t.Run(fmt.Sprintf("specimen_%d", tt.n), func(t *testing.T) {
+			t.Parallel()
+			got := ScanInstallation(tt.specimen)
+			if !assert.NotEmpty(t, got, "specimen %d NOT FLAGGED (want %s): %q", tt.n, tt.want, tt.specimen) {
+				return
+			}
+			assert.Equal(t, tt.want, got[0].Shape, "specimen %d: shape %s, want %s: %q", tt.n, got[0].Shape, tt.want, tt.specimen)
+		})
 	}
 }
 
@@ -84,7 +88,10 @@ func TestInstrumentsAndImperativesAreNotInstallations(t *testing.T) {
 		"THE CHECK is whether a green can ever be a red.",
 		"FIX: wire it to the trigger rather than to noticing.",
 	} {
-		assert.Empty(t, ScanInstallation(in), "instrument or imperative wrongly flagged: %q", in)
+		t.Run(in, func(t *testing.T) {
+			t.Parallel()
+			assert.Empty(t, ScanInstallation(in), "instrument or imperative wrongly flagged: %q", in)
+		})
 	}
 }
 

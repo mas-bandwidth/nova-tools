@@ -32,15 +32,6 @@ func assertScanEmpty[T any](t *testing.T, scan func(string) []T, format string, 
 	}
 }
 
-// assertScanNonEmpty asserts scan reports a finding for each of ins, with format naming what the
-// inputs should have been caught as. It is the loop the package's positive tables each wrote.
-func assertScanNonEmpty[T any](t *testing.T, scan func(string) []T, format string, ins ...string) {
-	t.Helper()
-	for _, in := range ins {
-		assert.NotEmpty(t, scan(in), format, in)
-	}
-}
-
 // Every row of the detector table, which is what `nova-self-talk shapes` prints, is held to its own
 // words: the sentence it says it finds is found, once, under its name, and its near miss is not
 // found at all. A row whose pattern drifts from its sentences, or a listing that claims a shape the
@@ -93,7 +84,7 @@ func TestTheShapesTheHelpNamesAreFoundInTheirPlainForms(t *testing.T) {
 		{"I never finish anything.", string(Trait)},
 		{"I never ask for help.", string(Trait)},
 	} {
-		assert.Equal(t, []string{tc.want}, names(tc.in), "input %q", tc.in)
+		t.Run(tc.in, func(t *testing.T) { t.Parallel(); assert.Equal(t, []string{tc.want}, names(tc.in)) })
 	}
 }
 
@@ -120,7 +111,7 @@ func TestThePlainFormsNearMissesAreNotFound(t *testing.T) {
 		"I cannot merge without a read.",
 		"I can't merge without a read.",
 	} {
-		assert.Empty(t, names(in), "near miss %q should not be found", in)
+		t.Run(in, func(t *testing.T) { t.Parallel(); assert.Empty(t, names(in)) })
 	}
 }
 
