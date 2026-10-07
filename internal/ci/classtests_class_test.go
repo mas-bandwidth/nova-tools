@@ -1517,6 +1517,43 @@ func TestPromotionMergeNeverRefusedForDeletionsDeclaredBelowIt(t *testing.T) {
 	assert.NotEmpty(t, mBad.findings(), "undeclared deletion below merge must be caught by reading all commits since last promotion")
 }
 
+// TestPromotionReadsEveryCommitBelowTheTip pins the range read itself, not only
+// the tip: an undeclared deletion made in a commit since the last gated
+// promotion and masked at HEAD by a later re-add is still a finding. A tip-only
+// read of HEAD sees no deletion at all (the file is back), so this test is red
+// when readMergeDeletionsFor falls back to HEAD alone and green with the range
+// read.
+func TestPromotionReadsEveryCommitBelowTheTip(t *testing.T) {
+	t.Parallel()
+
+	body := func(name string) string {
+		return "package a\n\n" + strings.Repeat("// "+name+": distinct content\n", 4)
+	}
+
+	r := newScratchRepo(t, "dev")
+	r.write(deletedTestsLogPath, "# the log\n")
+	r.write("keep_test.go", body("keep"))
+	r.write("del_test.go", body("del"))
+	base := r.commit("base")
+	r.git("update-ref", "refs/promoted/last", base)
+
+	// A commit below HEAD deletes a guarded test and declares nothing.
+	r.remove("del_test.go")
+	r.stage("delete del_test.go without a declaration")
+	// A later commit puts the file back: HEAD's own first-parent comparison
+	// shows no deletion, so only the range read sees the one below it.
+	r.write("del_test.go", body("del"))
+	head := r.commit("restore del_test.go")
+
+	tipOnly, _, err := readCommitDeletions(r.root, head, "push", "refs/heads/dev", "dev")
+	require.NoError(t, err)
+	assert.Empty(t, tipOnly.findings(), "HEAD's own comparison is clean; the deletion is masked below it")
+
+	m, _, err := readMergeDeletionsFor(r.root, "push", "refs/heads/dev")
+	require.NoError(t, err)
+	assert.NotEmpty(t, m.findings(), "the undeclared deletion below HEAD is read since the last gated promotion")
+}
+
 // TestDevRunReadsTheEventRefAndBranch pins which runs audit what landed on
 // dev against its reversed witnesses: a pull request's merge ref, main's
 // events, another branch's queue, a local run elsewhere, a half-set
