@@ -533,15 +533,17 @@ func friendReadCloseUnit(s *Snapshot, name string, pr, rc *Card, verdict, findin
 		notes = append(notes, j)
 	}
 	changes := []Change{change(Fleet, removeEntry(rc, set))}
+	// the terminal record is unconditional: an outbox report carries no usage, and
+	// that run is unpriced with the reason, never omitted (cost.go)
+	rec := readCostRecord(s, rc, usage, rc.F("asked"), cmp.Or(rc.F("begun"), stamp(s.Now)))
 	if strings.TrimSpace(usage) != "" {
-		rec := readCostRecord(s, rc, usage, rc.F("asked"), cmp.Or(rc.F("begun"), stamp(s.Now)))
 		set[FieldUsage] = rec
 		maps.Copy(set, readUsageFields(rc, usage))
-		if pr.Placed() {
-			costs := map[string]string{}
-			addConsumer(pr, costs, readConsumer(s, rc, 0, verdict, rec))
-			changes = append(changes, change(Work, setEntry(pr, costs)))
-		}
+	}
+	if pr.Placed() {
+		costs := map[string]string{}
+		addConsumer(pr, costs, readConsumer(s, rc, 0, verdict, rec))
+		changes = append(changes, change(Work, setEntry(pr, costs)))
 	}
 	return Unit{Key: pr.ID, Stream: pr.Row, Changes: changes, Moved: rc.ID + " retired " + verdict, Notes: notes}
 }
@@ -601,6 +603,8 @@ func readCardVerb(s *Snapshot, r ReadReq, row, name string) Plan {
 	for _, c := range chosen {
 		pr := s.Work.Card(c.F("primary"))
 		if r.Return {
+			// a return adds no cost record: an unstarted hand-back has no run, and this
+			// path does not price a started one (the deal asks it of another reader)
 			set := map[string]string{"retired": stamp(s.Now), "retired_by": RetiredByReturned, "reason": cutText(r.Reason, MaxCardTextBytes)}
 			if r.Usage != "" {
 				set["usage"] = r.Usage

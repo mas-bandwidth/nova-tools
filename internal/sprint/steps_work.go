@@ -2202,9 +2202,12 @@ func downPlan(s *Snapshot, r FleetReq, up []string, rr *round, moves roundMoves,
 		if !isRead(c) {
 			return false
 		}
-		p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.F("stream"),
+		u := Unit{Key: c.ID, Stream: c.F("stream"),
 			Changes: []Change{change(Fleet, removeEntry(c, map[string]string{"retired": stamp(s.Now), "retired_by": RetiredByAway}))},
-			Moved:   c.ID + " taken back: " + r.Member + " is " + r.Op})
+			Moved:   c.ID + " taken back: " + r.Member + " is " + r.Op}
+		// a working read has started: its cost stays. a ready read has not
+		u.Changes = retiredReadCosts(s, u.Changes)
+		p.Units = append(p.Units, u)
 		return true
 	})
 	withdrew := 0
