@@ -74,8 +74,8 @@ func TestStatsPrintsThePassFromTheCards(t *testing.T) {
 		"accept to land":      "5.0 5.0 n=2",
 		"total":               "75.0 75.0 n=2",
 		"m1":                  "2 | 0 | 3.0 4.0 n=2 | 7.0 8.0 n=2 | 3.0 4.0 n=2",
-		"reader-a":            "2 | 3.0 3.0 n=2 | 15.0 15.0 n=2 | 5.0 5.0 n=2",
-		"reader-b":            "2 | 30.0 30.0 n=2 | 5.0 5.0 n=2 | -5.0 -5.0 n=2", // a report with no begin is its begin
+		"reader-a":            "2 | 3.0 3.0 n=2 | 15.0 15.0 n=2 | 5.0 5.0 n=2 | $0.01 | $0.01 | 0",
+		"reader-b":            "2 | 30.0 30.0 n=2 | 5.0 5.0 n=2 | -5.0 -5.0 n=2 | $0.01 | $0.01 | 0", // a report with no begin is its begin
 		// a read runs on its card's tier, so the flash cards' four reads are flash-a's
 		// takes too; the provider's take is a take of the route
 		"flash-a": "7 | 6 | 0 | 1 | 6.0 15.0 n=7",

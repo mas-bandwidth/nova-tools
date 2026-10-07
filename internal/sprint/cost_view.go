@@ -42,6 +42,13 @@ type TierCosts struct {
 	// dashboard shows the reads as their own number beside the work.
 	WorkCost string `json:"work_cost,omitempty"`
 	ReadCost string `json:"read_cost,omitempty"`
+	// CostReads is ReadCost under the name the coordinator view and the dashboard's
+	// stream costs show the reads by (cost_reads): the same dollars. "" when no read
+	// was priced.
+	CostReads string `json:"cost_reads,omitempty"`
+	// ReadsUnpriced counts the stream's read runs with no dollar figure (reads_unpriced).
+	// A subscription read's tokens are not among them: its cost is the tokens.
+	ReadsUnpriced int `json:"reads_unpriced,omitempty"`
 	// ReadTokens is the tokens of the stream's subscription reads (WhySubscription), the
 	// reads whose cost is their tokens; 0 when none.
 	ReadTokens int64 `json:"read_tokens,omitempty"`
@@ -137,6 +144,10 @@ func streamTierCosts(s *Snapshot, stream string) TierCosts {
 					rd := t.Readers[cmp.Or(con.Who, "-")]
 					rd.addRead(con, s.Now)
 					t.Readers[cmp.Or(con.Who, "-")] = rd
+					// a read with no dollar figure, a subscription read's tokens apart
+					if con.Usage.Unpriced != WhySubscription && cmp.Or(con.Usage.Actual, con.Usage.Predicted) == "" {
+						t.ReadsUnpriced++
+					}
 				}
 				usd, err := amountOf(cmp.Or(con.Usage.Actual, con.Usage.Predicted))
 				if err != nil || usd == nil {
@@ -175,6 +186,7 @@ func streamTierCosts(s *Snapshot, stream string) TierCosts {
 	}
 	if pricedRead {
 		t.ReadCost = cardcost.Cents(readCost)
+		t.CostReads = t.ReadCost
 	}
 	if len(t.ReadsToday) == 0 {
 		t.ReadsToday = nil
