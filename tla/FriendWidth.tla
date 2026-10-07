@@ -95,7 +95,7 @@ WidthTick ==
     IN /\ idle' = idle1
        /\ raised' = raised1
        /\ sinceRaise' = IF due THEN 0 ELSE since1
-       /\ pinged' = pinged \/ (due /\ Broken # "noping")
+       /\ pinged' = (pinged \/ (due /\ Broken # "noping"))
        /\ maxRan' = maxRan1
        /\ width' = IF Broken = "setswidth" /\ due /\ raised1 = MaxRaises THEN maxRan1 ELSE width
   ELSE
@@ -116,8 +116,8 @@ DeliveryTick ==
        IN /\ silence' = silence1
           /\ raisedD' = IF due THEN Min(raisedD + 1, MaxRaises) ELSE raisedD
           /\ sinceRaiseD' = IF due THEN 0 ELSE since1
-          /\ pingedD' = pingedD \/ due
-          /\ down' = down \/ downNow
+          /\ pingedD' = (pingedD \/ due)
+          /\ down' = (down \/ downNow)
           /\ downSilence' = IF downNow THEN silence1 ELSE downSilence
           /\ up' = IF downNow THEN FALSE ELSE up
      ELSE
