@@ -10,7 +10,7 @@ import (
 // A card the store records landed whose head is not on origin's base is listed by
 // verify-landed, by git alone, and the verb exits 1; a card land put on the branch is not
 // listed, and nothing in the store moves (docs/SPEC-SPRINT.md section 7,
-// land-verify-landed-ancestry-r.w1). The false record is made as it was found: merge recorded
+// land-verify-landed-ancestry-rb-b.w3). The false record is made as it was found: merge recorded
 // the card landed and nothing pushed it.
 func TestVerifyLandedListsALandedRecordMissingFromTheBase(t *testing.T) {
 	t.Parallel()
