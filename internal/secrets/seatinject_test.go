@@ -143,11 +143,31 @@ func TestSeatInjectReSealsNamedValuesIntoAnExistingSeat(t *testing.T) {
 	if strings.Contains(git, "push") || readMaybe(t, f.ghArgs) != "" {
 		assert.Fail(t, fmt.Sprintf("--no-pr pushed or called gh:\ngit:\n%s\ngh:\n%s", git, readMaybe(t, f.ghArgs)))
 	}
-	want := "SECRETS SEAT INJECT OK seat=air from=rowan names=1 committed branch=seal/air-NOVA_REDIS_BENCH_PASSWORD-20260927-013000"
-	assert.Equal(t, want, line, "OK line:\n got %s\nwant %s", line, want)
-	assertNoValue(t, "the OK line", line)
+	want := "SECRETS SEAT INJECT OK seat=air from=rowan names=1 committed branch=seal/air-NOVA_REDIS_BENCH_PASSWORD-20260927-013000\n" +
+		"SECRETS SEAT INJECT NOTE exec and check read the store's own branch, which does not hold this value yet; next: git -C " +
+		f.storeDir + " push -u origin seal/air-NOVA_REDIS_BENCH_PASSWORD-20260927-013000, then open and merge its pull request"
+	assert.Equal(t, want, line, "OK line and NOTE:\n got %s\nwant %s", line, want)
+	assertNoValue(t, "the OK line and NOTE", line)
 	assertNoValue(t, "sops argv", readMaybe(t, f.sopsArgs))
 	assertNoValue(t, "git argv", git)
+}
+
+// TestASeatInjectNotYetInTheStoreSaysSoAndWhatIsNext: a --no-pr seat inject, whose
+// commit is not on the store's own branch, prints the same next-step NOTE a --no-pr
+// seal prints, naming the push that opens the change, and carries no value
+// (use-secrets-3-t, STEP 2: inject next).
+func TestASeatInjectNotYetInTheStoreSaysSoAndWhatIsNext(t *testing.T) {
+	t.Parallel()
+
+	f := newInjectFixture(t)
+	out, err := RunSeatInject(f.options("NOVA_REDIS_BENCH_PASSWORD", true))
+	require.NoError(t, err, "RunSeatInject: %v", err)
+	lines := strings.Split(out, "\n")
+	require.Len(t, lines, 2, "the OK line, then its NOTE: %q", out)
+	assert.True(t, strings.HasPrefix(lines[0], "SECRETS SEAT INJECT OK seat=air from=rowan names=1 committed branch=seal/air-NOVA_REDIS_BENCH_PASSWORD-20260927-013000"))
+	assert.Equal(t, "SECRETS SEAT INJECT NOTE exec and check read the store's own branch, which does not hold this value yet; next: git -C "+
+		f.storeDir+" push -u origin seal/air-NOVA_REDIS_BENCH_PASSWORD-20260927-013000, then open and merge its pull request", lines[1])
+	assertNoValue(t, "the seat inject receipt", out)
 }
 
 // TestSeatInjectAddsANewNameAndKeepsTheClearOnes: a name the target never held is
