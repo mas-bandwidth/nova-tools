@@ -344,7 +344,7 @@ func dayLine(s *sink, day string, file *tokens.DayFile, written, dryRun, wouldWr
 			nonutc++
 		}
 	}
-	kv := []any{"date", day, "rows", len(file.Rows), "models", len(models), "repos", len(repos), "turns", count(file.Turns),
+	kv := []any{"day", day, "rows", len(file.Rows), "models", len(models), "repos", len(repos), "turns", count(file.Turns),
 		"unknown", tokens.Percent(unknown, whole) + "%", "other", tokens.Percent(other, whole) + "%",
 		"rough", rough, "dashes", dashes, "nonutc", nonutc, "sources", strings.Join(file.Sources, ","), "written", written}
 	if dryRun {
