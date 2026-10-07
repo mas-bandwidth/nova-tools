@@ -374,7 +374,7 @@ var aspiration = regexp.MustCompile(
 		`|(?i)\b(?:i|we) (?:want|choose|intend|aim|hope|plan|wish) to\b`)
 
 // imperativeLead suppresses a policy line: an imperative has no subject, so it is not a
-// self-report. A5 lives here for the shapes that do not require a subject of their own.
+// self-report. Some imperative forms go here for the shapes that do not require a subject of their own.
 var imperativeLead = regexp.MustCompile(`(?i)^(?:never|always|do not|don't|avoid|refuse|keep|make|` +
 	`treat|use|read|write|state|say|ask|check|add|trim|give|take|hold|leave|stop|start|let|` +
 	`prefer|choose|name|record|report|measure|run|show|tell|point|fix|cut|date|ground|reframe|` +
@@ -409,7 +409,7 @@ func Rules() []Rule { return slices.Concat([]Rule{standingRule}, installationRul
 // ---------------------------------------------------------------------------------------------
 
 // rank is the CLOSED evaluative ranking vocabulary. It is closed for the same reason
-// ranking.go's pattern list is closed: the failure mode that killed this tool's cousin was
+// the closed rank vocabulary below is closed: the failure mode that killed this tool's cousin was
 // widening a pattern the first time it missed something. A generic `\w+est` was considered and
 // rejected -- "honest", "interest", "modest", "latest", "request" are not superlatives. "best"
 // was in the first draft and is REMOVED: measured over the live surfaces it fired only on the

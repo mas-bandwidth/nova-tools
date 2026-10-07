@@ -77,7 +77,7 @@ var negative = regexp.MustCompile(`(?i)\b(fallib\w*|fail\w*|unreliab\w*|weak\w*|
 var standingRule = Rule{Class: "standing", Name: string(Standing), Pattern: negative.String(),
 	Says: "a first-person claim (I am, I cannot, I always, I never, my <noun> is, I tend, I fail ...) " +
 		"carrying a word of failure: fallible, weak, broken, bad at, terrible at, worst, cannot check, cannot ever ...",
-	Finds: "I am bad at estimating time.", Passes: "I cannot merge without a read."}
+	Finds: "I am bad at estimating time.", Passes: "I am bad at estimating time."}
 
 // dated marks a claim as a record rather than a standing property.
 var dated = regexp.MustCompile(`(?i)\b(20\d\d-\d\d-\d\d|measured|that day|that night|once,|first time)\b`)
