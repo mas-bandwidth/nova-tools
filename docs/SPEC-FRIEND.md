@@ -965,10 +965,12 @@ the reader, the outbox finished by the daemon.**
   taken 161 of them earlier in the day, and nothing said which one was live.
   `TestTheLiveConversationFollowsWhoReads`.
 - **The outbox finished by the daemon.** Her `outbox/<job>/REPORT.md` is
-  finished by the daemon's outbox pass ("the daemon reads every outbox job"),
-  which runs each reconcile beside whatever turn is under way and never
-  inside one, so a session that is never free still has its reports
-  finished. `TestAnAntigravityReportIsFinishedWhileTheSessionIsBusy`.
+  finished by the daemon, never by the session's turn. The outbox pass
+  ("the daemon reads every outbox job") runs on the daemon's loop, beside
+  whatever turn is under way and never inside one, so a session that is
+  never free still has its reports finished.
+  `TestAnAntigravityReportIsFinishedWhileTheSessionIsBusy`,
+  `TestAWrittenReportIsFinishedWhileTheSessionIsBusy`.
 
 The mailbox and `agentapi` are the harness's internals for its subagents and
 scheduled tasks, not a documented API; a release that moves them breaks this
@@ -1837,8 +1839,12 @@ whoever wrote the brief:
 - Every job in `outbox/` named `<work>~<epoch>[.g<gen>]` (`ParseJob`) with a
   `REPORT.md` (a regular file, never followed through a symlink, at most
   `ReportCap`, 64 KiB, friend sync's cap) is matched to her row by its job, or
-  by its card, epoch and generation. A job a lane is running is left to the
-  lane's end.
+  by its card, epoch and generation. The pass is the loop's (`outboxWatch`),
+  not the session's turn: it runs while a lane's turn is still going, at
+  least every `OutboxPoll` (10s) and on each beat. A report is finished when
+  it appears. The lane's own end does not send a second finish for a report
+  it already sent (`outbox-finished.json`). A kernel watch is not linked; the
+  poll is the watch.
 - Its card working on her row, a work card: the report's verdict and head are
   read as friend sync reads them (the first `Verdict:` and `Head:` lines,
   markdown trimmed, the verdict upper case, the head lower case). `LAND` with a
@@ -1851,13 +1857,19 @@ whoever wrote the brief:
   card <c> from outbox/<job>/REPORT.md (Verdict <v>, working on her row):
   finish=ok|failed head=<sha> sent=server`).
 - A finish is sent once: a job finished is never sent again, nor noted when its
-  card leaves her row. One the server did not answer or refused is said once
+  card leaves her row. The jobs the server took are kept in the state
+  directory (`outbox-finished.json`, with `finished_today` for the UTC day),
+  so a restart does not send them again. The beat does not carry
+  `finished_today`: `friend beat` has no flag for it and `FriendReport` has
+  no field for it. One the server did not answer or refused is said once
   and sent again after `OutboxRetry` (a minute); friend sync may finish it
   first, and the server refuses the second.
 - A report with no `Verdict:` line, a report that cannot be read, a card not
   on her row, ready and not working, or a read, is said once while it stands
   (`outbox: left outbox/<job>/REPORT.md: <why>`) and left; the next pass reads
-  it again, so a verdict she writes later is finished then.
+  it again, so a verdict she writes later is finished then. A report whose
+  card is on her row at another generation, and a report for a card that is
+  not on her row, are logged superseded (`superseded: ...`) and not finished.
 
 The model is `internal/friend/tla/OutboxFinish.tla` (TLC on a Linux bench, two
 cards, one of them staged by another hand: 324 distinct states,
@@ -1865,7 +1877,15 @@ cards, one of them staged by another hand: 324 distinct states,
 witness `MCOutboxFinishBrokenOwnOnly.cfg`, a daemon that finishes only the cards
 it staged, breaks `Finished` in 5 states: the other hand's card is dealt, she
 writes a verdict, the daemon asks, and nothing finishes it. The test is
-`TestTheDaemonFinishesAReportItDidNotStage`.
+`TestTheDaemonFinishesAReportItDidNotStage`. A report written while a lane's
+turn is still running is finished before that turn ends
+(`TestAWrittenReportIsFinishedWhileTheSessionIsBusy`). The poll bound is
+`internal/friend/tla/Delivery.tla`: a written report is finished within
+`Poll` (10) ticks. TLC on a Linux bench (`Poll` = 10, `StallOK` false,
+`MCDelivery.cfg`): 78 distinct states, `TypeOK` and `WithinPoll` hold, and
+`WrittenFinishes` holds. The reversed witness `MCDeliveryBrokenStall.cfg`
+(`StallOK` true) breaks `WithinPoll`: time passes with the report unfinished
+until the clock is `Poll` ticks past the write.
 
 ### collect-is-a-verb-and-the-daemons-duty.w1 — the daemon's collect: origin's tip and dead lanes (internal/friend/outbox.go)
 

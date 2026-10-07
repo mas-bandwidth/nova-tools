@@ -365,7 +365,8 @@ func (l *loop) inboxStep(now time.Time) {
 		ids = append(ids, h.Card)
 	}
 	d.heldIDs, d.heldCards = ids, row.Cards // in the server's order
-	l.outboxStep(now)                       // every report in her outbox against the row just read
+	// the outbox pass is the loop's, after this step, so a reconcile that did not
+	// run (not due, or the server did not answer) still leaves the last row to it
 }
 
 // nextCard is the next card a free lane is handed: while the server has said what is on

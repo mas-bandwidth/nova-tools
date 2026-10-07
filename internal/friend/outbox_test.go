@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/synctest"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -77,7 +78,7 @@ func TestTheDaemonFinishesAReportItDidNotStage(t *testing.T) {
 	}
 	assert.Equal(t, 1, count("outbox: left outbox/silent.w1~15/REPORT.md: it has no Verdict line"), "a report with no verdict is noted once: %v", r.records)
 	assert.Equal(t, 1, count("outbox: left outbox/ready.w1~15/REPORT.md: card ready.w1 is ready on her row, not working"), "%v", r.records)
-	assert.Equal(t, 1, count("outbox: left outbox/gone.w1~15/REPORT.md: card gone.w1 is not on her row"), "%v", r.records)
+	assert.Equal(t, 1, count("outbox: left outbox/gone.w1~15/REPORT.md: superseded: card gone.w1 is not on her row"), "%v", r.records)
 	assert.Equal(t, 0, count("not-a-job"), "a directory no card names is not hers to finish")
 	assert.Equal(t, 4, count("outbox: finished card "), "one line per finish: %v", r.records)
 
@@ -88,6 +89,69 @@ func TestTheDaemonFinishesAReportItDidNotStage(t *testing.T) {
 	assert.Len(t, f.got(), 5)
 	assert.Equal(t, "silent.w1@1", f.got()[4][3])
 	assert.Equal(t, 0, count("card landed.w1 is not on her row"), "a job the daemon finished is not noted when its card leaves her row")
+}
+
+// A report written while a one-shot lane's turn is still running is finished by the
+// outbox pass before that turn ends, and not again: the finish is kept in the state
+// directory, a reload of that file does not send it, and the lane's own end finds the
+// report already there. A report for another generation of the same card is logged
+// superseded and not finished. The harness is the lane rig over a temp directory; the
+// finish is the fake, and nothing here dials a sprint server.
+func TestAWrittenReportIsFinishedWhileTheSessionIsBusy(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		h := &lanesHarness{dir: cardDirFixture(t, nil, nil, nil), active: map[string]int{}, block: make(chan struct{})}
+		r, _ := laneRig(t, h, 1)
+		row := &twinRow{}
+		card := workCard("busy.w1", "working")
+		card.Branch = "sprint/busy.w1.g1.e15"
+		card.Epoch = 15
+		card.Gen = 1
+		row.set(card)
+		r.d.Held = row.held
+		f := &finishes{}
+		r.d.Finish = f.finish
+		const head = "0123456789abcdef0123456789abcdef01234567"
+		outboxReport(t, h.dir, "busy.w1~15.g3", "Verdict: LAND\nHead: "+head+"\n\nAn older generation.\n")
+
+		var activeWhenSeen, finishesWhenSeen, finishesAfterReload int
+		var sawSeen, sawReload bool
+		r.at[8] = func() {
+			outboxReport(t, h.dir, card.Job, "Verdict: LAND\nHead: "+head+"\n\nDone while the turn runs.\n")
+		}
+		r.at[9] = func() {
+			h.mu.Lock()
+			activeWhenSeen = h.active["ses_1"]
+			h.mu.Unlock()
+			finishesWhenSeen = len(f.got())
+			sawSeen = true
+			r.d.outbox = outboxState{} // the next pass reads the finish record back, as a restart would
+		}
+		r.at[12] = func() {
+			finishesAfterReload = len(f.got())
+			sawReload = true
+			close(h.block) // the turn ends after the finish, and must not send another
+		}
+		r.run(t, 20)
+
+		require.True(t, sawSeen && sawReload, "the run reached the beat that writes the report and the beat after the reload")
+		assert.Equal(t, 1, activeWhenSeen, "the lane's turn was still inside the session when the report was finished")
+		assert.Equal(t, 1, finishesWhenSeen, "one finish while the turn was running: %v", f.got())
+		assert.Equal(t, 1, finishesAfterReload, "reloading the finish record does not send it again")
+		got := f.got()
+		require.Len(t, got, 1, "the lane's end does not finish a report the outbox pass already sent: %v", r.records)
+		assert.Equal(t, []string{"finish", "--as", "friend.bob", "busy.w1@1", "--epoch", "15", "--head", head, "--branch", "sprint/busy.w1.g1.e15", "--report", "friend bob LAND: Done while the turn runs."}, got[0])
+		said := strings.Join(r.records, "\n")
+		assert.Contains(t, said, "outbox: finished card busy.w1 from outbox/busy.w1~15/REPORT.md")
+		assert.Contains(t, said, "finished_today=1")
+		assert.Contains(t, said, "superseded: card busy.w1 is generation 1 epoch 15 on her row, and this report is generation 3 epoch 15")
+		assert.NotContains(t, said, "finished card busy.w1 from outbox/busy.w1~15.g3")
+		raw, err := os.ReadFile(filepath.Join(StateDirIn(h.dir), outboxMarksFile))
+		require.NoError(t, err)
+		assert.Contains(t, string(raw), `"busy.w1~15"`)
+		assert.NotContains(t, string(raw), "busy.w1~15.g3")
+		assert.Contains(t, string(raw), `"finished_today": 1`)
+	})
 }
 
 func TestReportVerdictReadsTheFriendsWords(t *testing.T) {

@@ -435,7 +435,7 @@ reset when it names one (a clock time in the zone it names, "resets Oct 10 at 5a
 row's mode and width come with each beat's answer (row_mode=, row_width=, row_config_dir=). In one-shot mode width lanes run, each its own session seeded from the friend's AGENTS.md and
 memory/, kept in lanes.json; each lane hands one card a turn from <dir>/inbox/QUEUE.json (its BRIEF.md, the
 REPORT.md and RESULT.md to write, one bus line to send), the waiting messages riding along, and hands the
-next only when the turn ends; a card with no RESULT.md after two turns is set aside and reported. A claude
+next only when the turn ends. The daemon finishes that REPORT.md when the file appears, while the turn is still running: the outbox is finished by the daemon, never by the session's turn. A report for a card that is no longer hers is logged superseded and not finished, and a finish is recorded in the state directory so it is not sent again; a card with no RESULT.md after two turns is set aside and reported. A claude
 lane is a process per card instead (env CLAUDE_CONFIG_DIR=<config_dir> claude -p <the brief>, stdin
 /dev/null, inside the lane wall with the row's config_dir as its --config-dir), its result read from the
 card's outbox; a claude row in one-shot mode with no config_dir (nor --config-dir) is refused on the
@@ -1222,7 +1222,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 	}
 	stager := w.stager(dir)
 	d := &friend.Daemon{
-		Friend: name, Harness: c.Str("harness"), Dir: dir, Width: c.Int("width"),
+		Friend: name, Harness: c.Str("harness"), Dir: dir, State: state, Width: c.Int("width"),
 		Store: sc.DaemonStore(), Deliver: sc.Deliver, Now: w.now, Pause: w.sleep,
 		Sent: func() time.Time {
 			if at := sent.Load(); at != nil {

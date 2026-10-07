@@ -278,6 +278,7 @@ func (l *loop) endCard(lane int, card Card, end LaneEnd, now time.Time) string {
 	if err := d.Finish(ctx, FinishArgv(d.Friend, card, report, head, branch)); err != nil {
 		return words + fmt.Sprintf(" sent=sync finish_error=%q", oneLine(err.Error(), 300))
 	}
+	d.markOutboxFinished(filepath.Base(card.Outbox), now) // the outbox pass must not send this finish again
 	return words + " sent=server"
 }
 

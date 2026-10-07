@@ -22,16 +22,32 @@ import (
 // coordinator's delivery stopgap had written those briefs; the tick raised "a friend holds
 // working cards and finishes none"). Each reconcile that the server answered, the daemon
 // reads every job in her outbox whose name parses to a card (<work>~<epoch>[.g<gen>],
-// ParseJob) and finishes it when that card is working on her row, whoever wrote its brief:
-// LAND with a full sha Head finishes with that head, HOLD and FAIL (any other verdict too)
-// finish --failed with the report's first 600 characters. A report with no Verdict line,
-// and a job whose card is not working on her row, are noted once and left. The model is
-// internal/friend/tla/OutboxFinish.tla (docs/SPEC-FRIEND.md, the daemon reads every outbox
-// job).
+// ParseJob) and finishes it when that card is working on her row, whoever wrote its brief,
+// including while a lane's turn is still running: the session's turn writes the report and
+// does not finish the card. LAND with a full sha Head finishes with that head, HOLD and
+// FAIL (any other verdict too) finish --failed with the report's first 600 characters. A
+// report with no Verdict line is noted once and left. A report whose card is not on her
+// row, or whose generation is not the row's, is logged superseded and not finished. A
+// finish the server took is kept in the state directory so a restart does not send it
+// again. The pass runs on the daemon's loop, at least every OutboxPoll, never inside the
+// session's turn. The models are internal/friend/tla/OutboxFinish.tla and
+// internal/friend/tla/Delivery.tla (docs/SPEC-FRIEND.md, the daemon reads every outbox job).
 
 // OutboxRetry is how long a finish the server did not answer, or refused, waits before it
 // is sent again; the report stays where it is, and friend sync may finish it first.
 const OutboxRetry = time.Minute
+
+// OutboxPoll is the bound on finishing a report once it is in the outbox. The loop steps
+// every beat and passes at least this often, while a turn is running and while it is not.
+// A kernel watch is not linked: the fsnotify module is not a dependency of this tree, and
+// go.mod is outside the change that added the pass. The poll is the watch.
+const OutboxPoll = 10 * time.Second
+
+// outboxMarksFile is the state directory's record of finishes the server took, so a
+// restart does not send one again. finished_today is that file's count for FinishedOn
+// (UTC). The sprint beat cannot carry it: friend beat has no such flag, and FriendReport
+// has no such field.
+const outboxMarksFile = "outbox-finished.json"
 
 // ReportCap bounds the REPORT.md the daemon reads (friend sync's own cap): a verdict, a head
 // and 600 characters need far less, and a larger report is noted and never read whole.
@@ -42,11 +58,24 @@ const ReportChars = 600
 
 // outboxState is what the daemon keeps between its outbox passes: the jobs it finished
 // (never sent again, and never noted after their card leaves her row), the finishes the
-// server did not take and when, and the notes said while they stand.
+// server did not take and when, the notes said while they stand, when it last passed,
+// and the day's finish count (outboxMarks). loaded says the state file has been read.
 type outboxState struct {
-	finished map[string]bool
-	tried    map[string]time.Time
-	said     map[string]bool
+	finished      map[string]bool
+	tried         map[string]time.Time
+	said          map[string]bool
+	polled        time.Time
+	loaded        bool
+	finishedOn    string
+	finishedToday int
+}
+
+// outboxMarks is outbox-finished.json: the jobs whose finish the server took, and how
+// many of those were today (UTC).
+type outboxMarks struct {
+	Finished      []string `json:"finished,omitempty"`
+	FinishedOn    string   `json:"finished_on,omitempty"`
+	FinishedToday int      `json:"finished_today,omitempty"`
 }
 
 // reportVerdict is a report's verdict (the first word of its first Verdict: line, upper
@@ -150,21 +179,143 @@ func readReport(outbox, job string) (string, bool, error) {
 	return string(raw), true, err
 }
 
-// outboxStep is the daemon's outbox pass, after each reconcile the server answered: every
-// job in her outbox named <work>~<epoch>[.g<gen>] with a REPORT.md is finished when its card
-// is working on her row (a work card, never a read), the job no lane is running; the finish
-// is sent once, and one the server did not take is sent again after OutboxRetry. A report
-// with no Verdict line, one that cannot be read, and a job whose card is not working on her
-// row are said once while they stand, and left.
+// outboxStateDir is where the finish record is kept: Daemon.State, else the state
+// directory under her working directory. Empty when she has neither.
+func (d *Daemon) outboxStateDir() string {
+	if d.State != "" {
+		return d.State
+	}
+	if d.Dir == "" {
+		return ""
+	}
+	return StateDirIn(d.Dir)
+}
+
+// ensureOutbox reads the finish record once and makes the maps the pass uses.
+func (d *Daemon) ensureOutbox(now time.Time) {
+	o := &d.outbox
+	if o.loaded {
+		return
+	}
+	o.loaded = true
+	if o.finished == nil {
+		o.finished = map[string]bool{}
+	}
+	if o.tried == nil {
+		o.tried = map[string]time.Time{}
+	}
+	if o.said == nil {
+		o.said = map[string]bool{}
+	}
+	dir := d.outboxStateDir()
+	if dir == "" {
+		return
+	}
+	var marks outboxMarks
+	found, err := read(filepath.Join(dir, outboxMarksFile), &marks)
+	if err != nil {
+		d.Record(now.UTC().Format(time.RFC3339) + " outbox: the finish record cannot be read: " + oneLine(err.Error(), 300) + "; a finish this run is sent again if its report still stands")
+		return
+	}
+	if !found {
+		return
+	}
+	for _, job := range marks.Finished {
+		if validJob(job) {
+			o.finished[job] = true
+		}
+	}
+	o.finishedOn, o.finishedToday = marks.FinishedOn, marks.FinishedToday
+}
+
+// saveOutboxMarks writes the finish record. A write that fails is said by the caller;
+// the memory mark still holds for this run.
+func (d *Daemon) saveOutboxMarks() error {
+	dir := d.outboxStateDir()
+	if dir == "" {
+		return nil
+	}
+	o := &d.outbox
+	jobs := make([]string, 0, len(o.finished))
+	for job := range o.finished {
+		jobs = append(jobs, job)
+	}
+	slices.Sort(jobs)
+	return write(filepath.Join(dir, outboxMarksFile), outboxMarks{
+		Finished: jobs, FinishedOn: o.finishedOn, FinishedToday: o.finishedToday,
+	})
+}
+
+// markOutboxFinished records that job's finish was taken, in memory and in the state
+// directory, and counts it toward finished_today. A second call does nothing.
+func (d *Daemon) markOutboxFinished(job string, now time.Time) {
+	d.ensureOutbox(now)
+	o := &d.outbox
+	if o.finished[job] {
+		return
+	}
+	day := now.UTC().Format("2006-01-02")
+	if o.finishedOn != day {
+		o.finishedOn, o.finishedToday = day, 0
+	}
+	o.finishedToday++
+	o.finished[job] = true
+	if err := d.saveOutboxMarks(); err != nil {
+		d.Record(now.UTC().Format(time.RFC3339) + " outbox: finished " + job + " and the finish record cannot be written: " + oneLine(err.Error(), 300))
+	}
+}
+
+// outboxHeld is the row's card for the job, or why the report is superseded: the row
+// holds the same card at another generation or epoch. A card the row does not hold at
+// all is ("", "") and the pass says so without treating a later deal as already superseded.
+func outboxHeld(cards []HeldCard, job, id string, epoch, gen int) (*HeldCard, string) {
+	var same *HeldCard
+	for i := range cards {
+		c := &cards[i]
+		if c.Job == job || (c.Card == id && int(c.Epoch) == epoch && max(c.Gen, 1) == gen) {
+			return c, ""
+		}
+		if c.Card == id {
+			same = c
+		}
+	}
+	if same != nil {
+		return nil, fmt.Sprintf("superseded: card %s is generation %d epoch %d on her row, and this report is generation %d epoch %d", id, max(same.Gen, 1), same.Epoch, gen, epoch)
+	}
+	return nil, ""
+}
+
+// outboxWatch is the daemon's outbox poll. It runs on the loop, while a turn is under
+// way and while the session is free, and not from inside the turn. The first pass is
+// immediate; a later pass waits out a beat, and never longer than OutboxPoll. It uses
+// the row the last reconcile read. Before that row is known there is nothing to match.
+func (l *loop) outboxWatch(now time.Time) {
+	d := l.d
+	if d.Held == nil || !d.status.HeldKnown {
+		return
+	}
+	o := &d.outbox
+	if !o.polled.IsZero() && now.Sub(o.polled) < min(OutboxPoll, BeatEvery) {
+		return
+	}
+	o.polled = now
+	l.outboxStep(now)
+}
+
+// outboxStep is the daemon's outbox pass: every job in her outbox named
+// <work>~<epoch>[.g<gen>] with a REPORT.md is finished when its card is working on her
+// row (a work card, never a read), whether or not a lane is still running that job. The
+// finish is sent once, and one the server did not take is sent again after OutboxRetry.
+// A report with no Verdict line, one that cannot be read, and a job whose card is not
+// working on her row are said once while they stand, and left. A report whose generation
+// is not the row's is logged superseded and not finished.
 func (l *loop) outboxStep(now time.Time) {
 	d := l.d
 	if d.Finish == nil {
 		return
 	}
+	d.ensureOutbox(now)
 	o := &d.outbox
-	if o.finished == nil {
-		o.finished, o.tried, o.said = map[string]bool{}, map[string]time.Time{}, map[string]bool{}
-	}
 	at := now.UTC().Format(time.RFC3339)
 	said := map[string]bool{}
 	note := func(job, why string) {
@@ -198,7 +349,7 @@ func (l *loop) outboxStep(now time.Time) {
 	for _, e := range entries {
 		job := e.Name()
 		id, epoch, gen, ok := ParseJob(job)
-		if !e.IsDir() || !ok || !validJob(job) || o.finished[job] || running[job] {
+		if !e.IsDir() || !ok || !validJob(job) || o.finished[job] {
 			continue
 		}
 		report, there, err := readReport(outbox, job)
@@ -209,16 +360,14 @@ func (l *loop) outboxStep(now time.Time) {
 			note(job, "it cannot be read: "+oneLine(err.Error(), 300))
 			continue
 		}
-		var h *HeldCard
-		for i, c := range d.heldCards {
-			if c.Job == job || (c.Card == id && c.Epoch == uint64(epoch) && max(c.Gen, 1) == gen) {
-				h = &d.heldCards[i]
-				break
-			}
+		h, superseded := outboxHeld(d.heldCards, job, id, epoch, gen)
+		if superseded != "" {
+			note(job, superseded) // a generation the row no longer holds: not finished, and not retried as a finish
+			continue
 		}
 		switch {
 		case h == nil:
-			note(job, "card "+id+" is not on her row")
+			note(job, "superseded: card "+id+" is not on her row")
 			continue
 		case h.Col != "working":
 			note(job, "card "+id+" is "+dash(h.Col)+" on her row, not working")
@@ -255,7 +404,7 @@ func (l *loop) outboxStep(now time.Time) {
 			continue
 		}
 		delete(o.tried, job)
-		o.finished[job] = true
+		d.markOutboxFinished(job, now)
 		words := "finish=ok head=" + head
 		if slices.Contains(argv, "--failed") {
 			words = "finish=failed"
@@ -263,7 +412,7 @@ func (l *loop) outboxStep(now time.Time) {
 				words += " head=" + head
 			}
 		}
-		d.Record(fmt.Sprintf("%s outbox: finished card %s from outbox/%s/REPORT.md (Verdict %s, %s on her row): %s sent=server", at, id, job, verdict, h.Col, words))
+		d.Record(fmt.Sprintf("%s outbox: finished card %s from outbox/%s/REPORT.md (Verdict %s, %s on her row): %s sent=server finished_today=%d", at, id, job, verdict, h.Col, words, o.finishedToday))
 	}
 }
 

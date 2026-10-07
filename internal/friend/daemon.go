@@ -196,6 +196,10 @@ type Daemon struct {
 	// jobs that are live (held on her row, run by a lane, being staged), after each inbox
 	// cleanup, and answers the jobs it removed; nil prunes none.
 	Prune func(ctx context.Context, live map[string]bool) ([]string, error)
+	// State is the daemon's state directory. A finish the outbox pass sent is recorded
+	// there (outbox-finished.json) so a restart does not send it again. Empty is
+	// StateDirIn(Dir).
+	State string
 	// Tip is origin's tip of a branch of a repository (owner/name), "" when origin has no
 	// such branch (Stager.Tip: one git ls-remote): a report's LAND finishes only at that tip,
 	// as nova-sprint collect's does (outbox.go). Nil reads none, and a LAND finishes at its
@@ -505,7 +509,8 @@ func (d *Daemon) Run(ctx context.Context) error {
 			l.mode = mode
 		}
 		d.status.Mode = l.mode
-		l.inboxStep(now) // before the lanes: a card written this step is handed this step
+		l.inboxStep(now)   // before the lanes: a card written this step is handed this step
+		l.outboxWatch(now) // the report is finished when it is there, not when the session is free
 		switch {
 		case l.broken:
 		case !proven: // the push rule: nothing goes into a session that has not answered
