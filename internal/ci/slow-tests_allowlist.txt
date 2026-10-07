@@ -18,7 +18,3 @@
 # The 33 rows #4413 first carried at @run36255893861 were the budget divided by 1.5,
 # not measured, and are dropped; the first enforcing nightly run's raw times re-add
 # the ones still over, measured (a follow-up PR).
-# internal/update at 9.4 s on a macOS bench (load 12 to 15 of 32 CPUs, nice -n
-# 15, go test -p 2 -parallel 2, GOMAXPROCS=2, -count=1, 2026-09-26) after its
-# staged-kill tests moved to process_functional_test.go. Budget 1.5x.
-internal/update	-	14.1	9.4s@studio
