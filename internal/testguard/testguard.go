@@ -77,6 +77,10 @@ func init() { Reload() }
 // path needs it.
 func Reload() { defaultGuard.refusing.Store(os.Getenv(EnvNoHost) == "1") }
 
+// Arm forces the default guard to refuse host access until the returned
+// function is called. Tests that need an armed guard in parallel use this.
+func Arm() func() { return defaultGuard.Arm() }
+
 // Refusing reports whether the guard is armed. It exists so a test can say
 // what it is testing without reading the environment itself.
 func Refusing() bool { return defaultGuard.Refusing() }
