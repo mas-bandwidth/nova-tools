@@ -199,9 +199,10 @@ func cardCheck(pr *sprint.Card, base, verb string) landedCheck {
 	return ch
 }
 
-// verify checks each card still unjudged, one fetch of the base per repository and base:
-// a head the fetched base does not hold is missing (every ancestor of the base came with
-// it), else git merge-base --is-ancestor says.
+// verify checks each card still unjudged, one fetch of the base per repository and base
+// (none when this pass's batch already fetched it, l.fetched): a head the fetched base does
+// not hold is missing (every ancestor of the base came with it), else git merge-base
+// --is-ancestor says.
 func (l *lander) verify(ctx context.Context, checks []landedCheck) {
 	type fetched struct{ tip, why string }
 	bases := map[string]fetched{} // by clone and base: one fetch each
@@ -223,7 +224,13 @@ func (l *lander) verify(ctx context.Context, checks []landedCheck) {
 		f, done := bases[key]
 		if !done {
 			ref := "refs/remotes/origin/" + ch.Base
-			if _, err := l.git(ctx, dir, "fetch", "--no-tags", "origin", "+refs/heads/"+ch.Base+":"+ref); err != nil {
+			// a land pass reads a base its own batch fetched as is: the push moved the
+			// remote-tracking ref with it (land.go, build, lander.fetched)
+			var err error
+			if !l.fetched[key] {
+				_, err = l.git(ctx, dir, "fetch", "--no-tags", "origin", "+refs/heads/"+ch.Base+":"+ref)
+			}
+			if err != nil {
 				f.why = "the fetch of " + ch.Base + " in " + dir + " failed: " + firstLine("", err)
 			} else if f.tip, err = l.git(ctx, dir, "rev-parse", "--verify", ref+"^{commit}"); err != nil {
 				f.why = "the base " + ch.Base + " could not be read in " + dir + ": " + firstLine("", err)

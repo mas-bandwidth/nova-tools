@@ -2821,8 +2821,8 @@ func (a *app) cmdMerge(args []string, stdout, stderr io.Writer) int {
 	batch := fs.Int("batch", 10, "the batch: the head n of the stream's queue (the lander's selection; to record a landing name the cards with --landed)")
 	var landed listFlag
 	fs.Var(&landed, "landed", "the record by name: <id>@<head> of each card pushed, again or comma separated; each must be merging in --stream at that head and the head an ancestor of --base-ref in --repo, or all are refused and nothing is written")
-	repo := fs.String("repo", "", "with --landed: a clone whose --base-ref is fetched; git merge-base --is-ancestor runs there, once per card")
-	baseRef := fs.String("base-ref", "", "with --landed: the fetched tip of the base branch in --repo (origin/<base>)")
+	repo := fs.String("repo", "", "with --landed, or a record by place: a clone whose --base-ref is fetched; git merge-base --is-ancestor runs there, once per card (default for a record by place: each card's brief REPO: and BASE:, fetched in land's clone)")
+	baseRef := fs.String("base-ref", "", "with --repo: the fetched tip of the base branch in --repo (origin/<base>)")
 	conflict := fs.String("conflict", "", "fact: this card of the batch did not merge")
 	cross := fs.String("cross", "", "fact: <card>=<other>: the card needs <other> first; <other> is on the table, in another stream, not landed")
 	red := fs.Bool("red", false, "fact: the stream branch went red on the batch")
@@ -2855,19 +2855,37 @@ func (a *app) cmdMerge(args []string, stdout, stderr io.Writer) int {
 	}
 	var pins []sprint.LandedPin
 	if len(landed) > 0 || *repo != "" || *baseRef != "" {
-		if len(landed) == 0 || *repo == "" || *baseRef == "" || facts > 0 {
-			return refuse(stderr, "merge", "the record by name wants --landed <id>@<head>... with --repo <dir> and --base-ref <ref>, and no fact flag; run: nova-sprint merge --stream "+*stream+" --landed <id>@<head> --repo <dir> --base-ref origin/<base>")
+		// --repo and --base-ref go together, with --landed or with the record by place, never a fact
+		if facts > 0 || (*repo == "") != (*baseRef == "") || len(landed) > 0 && *repo == "" {
+			return refuse(stderr, "merge", "the record by name wants --landed <id>@<head>... with --repo <dir> and --base-ref <ref>, and no fact flag; run: nova-sprint merge --stream "+*stream+" --landed <id>@<head> --repo <dir> --base-ref origin/<base> (or nova-sprint land --stream "+*stream+", which merges, pushes and records)")
 		}
-		var err error
-		if pins, err = landedPins(context.Background(), landed, *repo, *baseRef); err != nil {
-			return refuse(stderr, "merge", err.Error())
+		if len(landed) > 0 {
+			var err error
+			if pins, err = landedPins(context.Background(), landed, *repo, *baseRef); err != nil {
+				return refuse(stderr, "merge", err.Error())
+			}
 		}
 	}
 	st, err := a.store(*c)
 	if err != nil {
 		return refuse(stderr, "merge", err.Error())
 	}
-	return a.runStep("merge", *c, st, store.MergeStep(sprint.MergeReq{Stream: *stream, Batch: *batch, Landed: pins, Conflict: *conflict, Cross: *cross,
+	// a record by place from a caller that did not push: every queued head is checked against
+	// its base first, and the step refuses one off it (merge_ancestry.go). The no-git twin's
+	// merge stands in for land and has no base to check.
+	check := facts == 0 && len(pins) == 0 && !a.twinOpen(c.redis)
+	var ancestry []sprint.LandedPin
+	if check {
+		ctx := context.Background()
+		s, err := st.Load(ctx, []string{sprint.Work, sprint.Merge}, nil)
+		if err != nil {
+			return a.readFailed("merge", err, stderr)
+		}
+		if ancestry, err = a.mergeAncestry(ctx, *c, s, *stream, *repo, *baseRef); err != nil {
+			return refuse(stderr, "merge", err.Error())
+		}
+	}
+	return a.runStep("merge", *c, st, store.MergeStep(sprint.MergeReq{Stream: *stream, Batch: *batch, Landed: pins, CheckAncestry: check, Ancestry: ancestry, Conflict: *conflict, Cross: *cross,
 		Red: *red, Suspects: suspects, Rejected: *rejected, BaseRed: *baseRed, ConflictKind: *conflictKind, ConflictPaths: conflictPaths, Note: *note, Who: c.actor}), stdout, stderr)
 }
 

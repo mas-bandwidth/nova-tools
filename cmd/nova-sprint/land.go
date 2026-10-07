@@ -263,6 +263,10 @@ type lander struct {
 	st                         *store.Store
 	repoDir, base, check, root string
 	dry, twin                  bool // twin: a mem twin, which has no git
+	// fetched is each clone and base this pass fetched, by clone and base: a landing's push
+	// moves the remote-tracking ref with it, so the reconcile after the batches reads it as is
+	// and fetches no base the batch already fetched (land_reconcile.go, landverify.go)
+	fetched map[string]bool
 	// conflictKind and conflictPaths are what the last merge that stopped on unmerged paths
 	// left (mergeHead): the conflict fact carries them (conflictCard).
 	conflictKind  string
@@ -417,7 +421,11 @@ func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
 		sctx = a.landCtx
 	}
 	l.scoreAll(sctx)
-	return l.report(failed, pruned, stdout, stderr)
+	code := l.report(failed, pruned, stdout, stderr)
+	// every land pass reconciles its landed records with the base after its batches
+	// (land_reconcile.go, no-merge-step-prints-land-and-merge-refuses-a-head-off-the-base-bb.w1)
+	l.reconcileLanded(ctx, streams, stdout, stderr)
+	return code
 }
 
 // report prints the batches, the cleanup and the summary: exit 0 when every batch
@@ -1177,6 +1185,13 @@ func (l *lander) build(ctx context.Context, dir, stream string, cards []landCard
 	if err != nil {
 		return nil, failed, "the fetch of origin in " + dir + " failed: " + firstLine("", err)
 	}
+	// the batch fetched this base, and the push moves the remote-tracking ref with it: the
+	// pass's reconcile after the batches reads this base without fetching it again
+	// (land_reconcile.go, landverify.go: lander.verify)
+	if l.fetched == nil {
+		l.fetched = map[string]bool{}
+	}
+	l.fetched[dir+"\x00"+base] = true
 	start = time.Now()
 	defer since(&t.Merge, start)
 	if _, err := l.git(ctx, dir, "switch", "--no-track", "--force-create", "land/"+stream, "refs/remotes/origin/"+base); err != nil {

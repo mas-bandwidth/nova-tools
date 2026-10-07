@@ -123,7 +123,7 @@ func TestShadowReadRound(t *testing.T) {
 		ta.ok("read --as reader-b --ok --limit 100")
 	}
 	ta.ok("accept --read-ok")
-	ta.ok("merge --stream s1 --batch 10")
+	ta.recordLanded("s1", 10) // the heads are commit ids no git holds: merge would refuse them
 
 	buf.Reset()
 	ta.a.decideRound(ctx, "mem:0", &buf)
