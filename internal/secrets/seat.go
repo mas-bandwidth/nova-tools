@@ -154,9 +154,16 @@ func RunSeatAdd(opts SeatAddOptions) ([]string, error) {
 	}
 
 	opts.say("encrypting %d value(s) to the new seat's recipients", len(names))
-	ciphertext, err := sealEncrypt(run, opts.SopsPath, opts.KeyPath, opts.StoreDir, seatFile, "seat add", carried)
+	// The rule written just above admits the mark already, so rules is nil here; were it
+	// not, the rule that does is the one the commit must carry.
+	ciphertext, rules, err := sealEncrypt(run, opts.SopsPath, opts.KeyPath, opts.StoreDir, seatFile, "seat add", carried)
 	if err != nil {
 		return nil, restore(err)
+	}
+	if rules != nil {
+		if err := atomicWriteFile(configPath, rules, 0644); err != nil {
+			return nil, restore(err)
+		}
 	}
 	if err := atomicWriteFile(targetFile, ciphertext, 0600); err != nil {
 		return nil, restore(err)

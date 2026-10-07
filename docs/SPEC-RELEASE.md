@@ -41,6 +41,8 @@ cmd/nova-secrets/
 infra/image/
 internal/sandbox/
 internal/secrets/
+profiles/
+tools/sandboxcheck/
 ```
 
 **The list lives in `internal/release/sensitive.go`, and this block is the same list in the same order.**

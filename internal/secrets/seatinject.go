@@ -164,10 +164,11 @@ func RunSeatInject(opts SeatInjectOptions) (string, error) {
 	}
 
 	opts.say("encrypting %d value(s) to %s's own recipients", len(names), seatFile)
-	ciphertext, err := sealEncrypt(run, opts.SopsPath, opts.KeyPath, opts.StoreDir, seatFile, "seat inject", document)
+	ciphertext, rules, err := sealEncrypt(run, opts.SopsPath, opts.KeyPath, opts.StoreDir, seatFile, "seat inject", document)
 	if err != nil {
 		return "", err
 	}
+	carry.rules = rules
 
 	prNum, merged, err := carry.carry(ciphertext)
 	if err != nil {
@@ -286,6 +287,9 @@ func seatInjectTarget(storeDir, seatFile, recoveryKey string) (seatInjectHeld, e
 		held.names = append(held.names, k.Name)
 		if !k.Clear {
 			continue
+		}
+		if k.Name == SeatMarkKey && !isSeatMark(k.Value) {
+			return held, fmt.Errorf("seat file %s holds key %s in the clear with a value that is not a verb's mark; the store's gate refuses the file as it stands", seatFile, oneline.Field(k.Name))
 		}
 		if k.Name != SeatMarkKey && (unencRe == nil || !unencRe.MatchString(k.Name)) {
 			return held, fmt.Errorf("seat file %s holds key %s as a plain value, not encrypted, and the rule does not permit it in the clear; the store's gate refuses the file as it stands", seatFile, oneline.Field(k.Name))

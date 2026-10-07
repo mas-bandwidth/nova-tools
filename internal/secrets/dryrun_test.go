@@ -127,6 +127,8 @@ func TestSealDryRunPlansWhatTheRealRunThenTakes(t *testing.T) {
 	want := []string{
 		"SECRETS SEAL PLAN write=" + oneLineField(filepath.Join(f.storeDir, "rowan.yaml")) + " action=replace name=TARGET seat=rowan recipients=age1abc",
 		"SECRETS SEAL PLAN git store=",
+		// The fixture's rule predates the mark, so the commit gives it the regex as well.
+		"SECRETS SEAL PLAN rule .sops.yaml rule for rowan.yaml gains unencrypted_regex ^NOVA_SECRETS_WRITTEN_BY$ in the same commit",
 		"SECRETS SEAL PLAN push remote=origin branch=seal/rowan-TARGET-20260917-120000 pr title=",
 		"SECRETS SEAL DRY-RUN OK name=TARGET seat=rowan nothing written",
 	}
@@ -141,7 +143,7 @@ func TestSealDryRunPlansWhatTheRealRunThenTakes(t *testing.T) {
 	require.NoError(t, err, "RunSeal: %v", err)
 	git := readMaybe(t, f.gitArgs)
 	branch, msg := planField(t, plan, "branch"), quotedField(t, plan, "commit")
-	for _, w := range []string{"checkout\n-b\n" + branch + "\n", "commit\n-m\n" + msg + "\n"} {
+	for _, w := range []string{"checkout\n-b\n" + branch + "\n", "add\n.sops.yaml\n", "commit\n-m\n" + msg + "\n"} {
 		assert.Contains(t, git, w, "the real run's git calls do not hold the planned %q:\n%s", w, git)
 	}
 	gh := readMaybe(t, f.ghArgs)
