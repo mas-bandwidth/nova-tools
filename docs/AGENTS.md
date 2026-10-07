@@ -5,7 +5,7 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | dir | purpose | guard | command |
 | --- | --- | --- | --- |
 | `acceptance/` | release acceptance records: one measured requirement per file, with the raw numbers | `go test ./internal/ci` | `go test ./internal/ci -run TestAcceptanceRecordsAreWellFormed` |
-| `dogfood/` | dogfood runs of the tools, one file per tool and run, every finding with the command, its output and a grade | `go test ./internal/docs` | `go test ./internal/docs` |
+| `dogfood/` | dogfood runs of the tools by date and rater, findings recorded and graded | `go test ./internal/docs` | `go test ./internal/docs` |
 | `fixtures/` | doc examples and test fixtures | `go test ./internal/docs` | `go test ./internal/docs` |
 | `nova-config/` | nova-config guide: the permanent configuration and its apply into Redis | `go test ./internal/docs` | `go test ./internal/docs` |
 | `nova-table/` | nova-table guide: the design statement, the keys, the verbs, the render rules | `go test ./internal/docs` | `go test ./internal/docs` |
