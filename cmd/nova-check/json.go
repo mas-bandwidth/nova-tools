@@ -63,7 +63,7 @@ func renderFailures(w io.Writer, verb string, failures []check.Failure, max int,
 	return renderResult(w, out)
 }
 
-func renderLinks(w io.Writer, dir string, res check.LinksResult, max int) int {
+func renderLinks(w io.Writer, dir string, res check.LinksResult, max int, emptyRemedy string) int {
 	out := &tool.Out{Verb: "links", Status: tool.OK}
 	out.Fact("dir", dir).Fact("files", res.MDFiles).Fact("links", res.Checked).Fact("excluded", res.Excluded).Fact("broken", len(res.Broken))
 	shown := len(res.Broken)
@@ -79,6 +79,14 @@ func renderLinks(w io.Writer, dir string, res check.LinksResult, max int) int {
 	if len(res.Broken) > 0 {
 		out.Status = tool.Failed
 		out.Exit = 1
+	}
+	if emptyRemedy != "" {
+		// The JSON is the same FAILED value the line prints: the zero count is
+		// the why and --allow-empty the way out (docs/STANDARD.md section 2,
+		// one value, two renderings).
+		out.Status, out.Exit = tool.Failed, 1
+		out.Why = append(out.Why, "looked at nothing: "+looks["links"]+"=0")
+		out.Remedy = emptyRemedy
 	}
 	return renderResult(w, out)
 }
@@ -134,6 +142,13 @@ func renderSpelling(w io.Writer, dir string, res check.SpellingResult, v spellin
 	}
 	if shown < len(res.Findings) {
 		out.More = []tool.More{{Kind: kind, Shown: shown, Total: len(res.Findings), Remedy: maxRemedy}}
+	}
+	if v.empty {
+		// The JSON is the same FAILED value the line prints: the zero count is
+		// the why and --allow-empty the way out (docs/STANDARD.md section 2,
+		// one value, two renderings).
+		out.Why = append(out.Why, "looked at nothing: "+looks["spelling"]+"=0")
+		out.Remedy = v.remedy
 	}
 	if v.failed {
 		out.Status = tool.Failed
