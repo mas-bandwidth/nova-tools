@@ -289,8 +289,10 @@ func TestReviewJudgmentSeesG1ReadAndAvoidsSpuriousReadsExhausted(t *testing.T) {
 	readPlan2 := Read(w.s, ReadReq{As: "reader-a", Verdict: "ok", Sel: Sel{IDs: []string{ReadCardSecondID("s1-1", 1, "reader-a")}}})
 	w.must(readPlan2)
 
-	// Both readers have said ok: ready to accept should be emitted
-	assert.NotEmpty(t, w.notesOf(NReadyToAccept), "ready to accept must be emitted after both readers (including .g1) say ok")
+	// Both readers have said ok: the tick accepts it (since 2026-10-06 no ready to
+	// accept judgment, no hand step)
+	assert.Empty(t, w.notesOf(NReadyToAccept), "no ready to accept judgment for a primary the tick accepts")
+	assert.True(t, tickTakes(w, "s1-1"), "the tick accepts it after both readers (including .g1) say ok")
 }
 
 // TestTickLevelReadsCanMoveToReturnedReaderWithSecondIdentity pins that

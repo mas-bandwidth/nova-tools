@@ -95,7 +95,9 @@ func TestTheWholeLifeOfAPrimary(t *testing.T) {
 	require.Len(t, first, 2)
 	require.NotEqual(t, first[0].F("reader"), first[1].F("reader"))
 	w.must(Read(w.s, ReadReq{Usage: "input=1000 output=100", As: first[1].F("reader"), Verdict: "ok", Sel: Sel{IDs: []string{first[1].ID}}}))
-	require.Len(t, w.notesOf(NReadyToAccept), 1, "ready-to-accept notes: %d", len(w.notesOf(NReadyToAccept)))
+	// the tick's to accept, no judgment (2026-10-06); the coordinator's accept takes it too
+	require.Empty(t, w.notesOf(NReadyToAccept), "ready-to-accept notes: %d", len(w.notesOf(NReadyToAccept)))
+	require.True(t, tickTakes(w, "s1-1"), "the tick accepts s1-1 on its two oks")
 	w.must(Accept(w.s, AcceptReq{Sel: Sel{IDs: []string{"s1-1"}}}))
 	require.Equal(t, Merging, w.state("s1-1"), "accept: work %s", w.state("s1-1"))
 	require.Equal(t, Queued, w.s.Merge.Placed("s1-1").Col, "accept: work %s", w.state("s1-1"))

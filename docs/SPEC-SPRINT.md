@@ -3169,16 +3169,43 @@ the adoption `release.OneMachine` (internal/release/adopt_one.go). Test:
   (`read --as <reader> --return <card> --reason <the stage's reason>`), and the next tick asks
   it again as above.
 - The read that completes the ok reads a primary needs at its head (one
-  reader's for a flash card, two different readers' for a pro card) writes
-  the judgment ready to accept; accept, rework and drop close it.
+  reader's for a flash card, two different readers' for a pro card), whoever
+  read it (a reader on the readers table, a friend on her fleet row), is no
+  judgment: the tick accepts the primary. There is no hand step between review
+  and merging (`TestTheTickAcceptsAPrimaryWhoseReadsAreAllOk`).
 - The machine's tick accepts every acceptable primary in review whose work did
-  not fail, except one whose CI is red at its head ("ci red on a primary" is
-  the coordinator's: a green at its head, or the coordinator's accept, takes
-  it) and one the coordinator returned to review at its attempt ("returned to
-  review" decides it: accept, rework, drop; its reads stand, and a rework's new
-  attempt with its own reads is the tick's to accept again). An
-  acceptable primary the tick does not accept is told as ready to accept when
-  no open judgment on it offers accept.
+  not fail, in the pump of the first tick after its last needed read closed ok
+  (RUNNING, the next tick; STOPPED, the first tick after start): review ->
+  merging queued, the move `accept --read-ok` makes, the readers it was
+  accepted on named in its record (`readers`, `accepted`). The seat is told,
+  never asked: one notice a tick, "ready to merge", happened and addressed to
+  the coordinator, names every primary the tick accepted and each stream's
+  `land --stream <s>`; nothing in it asks for an answer
+  (`TestTheSeatIsToldWhatWasAcceptedNotAskedToAccept`). The pump holds two:
+  one whose CI is red at its head ("ci red on a primary" is the coordinator's:
+  a green at its head, or the coordinator's accept, takes it) and one the
+  coordinator returned to review at its attempt ("returned to review" decides
+  it: accept, rework, drop; its reads stand, and a rework's new attempt with
+  its own reads is the tick's to accept again). A primary held so, with no
+  open judgment on it that offers accept (its CI judgment acknowledged), is
+  told as ready to accept; accept, rework and drop close it. That is the one
+  case ready to accept is written for: the hold is a mind's. The guards of the
+  attempt stand as they are: a broken read is its judgment, the read tier and
+  the heavy read (`accept --heavy`) are unchanged. `accept --read-ok` stays,
+  for a stuck case; when no primary waits it says `nothing waits: the tick
+  accepts every primary in review whose reads are all ok and tells the seat
+  (ready to merge)`. The models are tla/DirtyTick.tla `AcceptAll` (the pump
+  takes every read card nothing holds) and `CoordAccept` (the coordinator's
+  accept, for a held one), and the reference model's `acceptNote` and
+  `tickAccept` (`TestTheModelAndTheEngineAgreeTheTickAcceptsWithNoHandStep`;
+  the read-card path, `TestTheTickAcceptsAPrimaryWhoseReadsAreAllOkOnReadCards`).
+- Check's rule 6 (section 9) counts an ok read on the fleet table (a friend's
+  on her row, a read card on a member's) that the accept recorded on the
+  primary (`readers`) when the read card, retired off its row with its
+  verdict, is not in the snapshot it judges: a sparse read loads such a read
+  by id only for a primary in review. A card that is loaded is judged as it
+  is. Before this, every primary accepted on a friend's read or a read card
+  raised a rule 6 invariant judgment at the tick's check.
 - A primary is acceptable when as many different readers as it needs have an
   ok read card at its current attempt and head: one for a flash card, two for a
   pro card. For a pro card one reader's ok alone is never enough, whoever the
@@ -3978,7 +4005,7 @@ the tick would make, no other open judgment on it).
 | a primary is blocked on something dropped | drop, ack (waives the dropped need); `relink <old> <new>` answers it when the dropped card has a twin (section 2, a card replaced by its twin) | yes |
 | a primary is blocked on something missing | drop, ack (waives the named missing need) | yes |
 | reads exhausted | ask --another, rework, drop | no |
-| ready to accept | accept, rework, drop | no |
+| ready to accept (a primary the pump holds: its CI red at its head, its CI judgment acknowledged; one nothing holds the tick accepts, section 6) | accept, rework, drop | no |
 | returned to review | rework, accept (while its reads stand at its head), drop | no |
 | stranded in review | rework, drop (and ask when never asked) | no |
 | sentinel reached | release, add --before (do more before going on), drop | no |
@@ -4052,7 +4079,9 @@ When the named prerequisites exist again,
 resolve closes that missing-need judgment and still waits for them to land.
 
 A primary in review is never silent. With the ok reads it needs at its head
-(one reader's for a flash card, two different readers' for a pro card), some open judgment on it offers accept (ready to accept, or
+(one reader's for a flash card, two different readers' for a pro card), the
+tick accepts it, or, when the pump holds it (its CI red at its head, returned
+at its attempt), some open judgment on it offers accept (ready to accept, or
 returned to review). Otherwise, with nothing open on it and no read
 outstanding, it is stranded in review (failed work, or never asked after its
 last judgment closed) or its reads are exhausted. Acknowledging exactly that
@@ -4956,7 +4985,7 @@ command that loads it.
 | stats | the epoch's pass in seconds since the last `stats tidy` (the whole epoch before the first; a sample counts when it ended at or after the tidy, `sprint.StatsSince`, and the text frame's first line says `since <RFC3339> (stats tidy)`, the OK line `since=`), each as median, max and count, from one read of the work, fleet and readers tables (every primary's work and read cards of every attempt, retired ones too, in read sets; `sprint.Stats`, pure): the stages (deal wait: admitted to the first work card's `first_dealt`; finish to two reads: the last ok take's `finished` to `accepted`; accept to land; total: admitted to landed), each member's work cards (cards, failed, take wait `dealt` to `taken`, run wall the usage's `wall`, or for a friend's card, which reports no usage, `taken` to `reported` (her REPORT.md's time, which `friend sync` keeps on the card, no later than the finish; `TestStatsTimesAFriendsRunFromHerReport`), report lag `finished` - `taken` - wall), each reader's read cards (cards asked, begin wait `asked` to `begun`, run wall, report lag `read` - `begun` - wall), and each route's takes from the primaries' cost records (takes; ok: a work take finished ok or a read with its verdict; provider: provider failure or no result; failed: every other end; a launch refused at staging is no take; a read whose record names no route counts on its card's route; run wall); members, readers and routes in name order; changes nothing; `--json`. `--routes [--since <time>]` prints the route table from the log over that window instead, the window from the last tidy of the routes when `--since` is not given (refused, exit 2, with neither) (`sprint.RouteTable`): takes, ok, failed, no-result, provider failures, landed, first-take rate, wrong at review, dollars per take, dollars per landing, median wall, imputed; a finish before the window is left out, and the provider takes on that finish with it; a deal, a take, an accept and a read before the window stay, as the route, the wall and the review of a finish inside it; a provider take whose error begins `no result:` is a no-result and every other provider take is a provider failure; `actual_usd` counts when the usage writes it; an accept is the verb `accept` or `tick accept` |
 | stats tidy | starts the statistics afresh and keeps the work (the owner, 2026-10-06: "can you please clear the sets of done consumer cards for all friends and fleet", "I would like a semi-fresh start to stats now"; named tidy the same day, "reset sounds too aggressive"): `stats tidy (--friends \| --fleet \| --routes \| --streams \| --all)... --reason <text> [--dry-run]`, the coordinator's; see Statistics, below |
 | read | a reader records ok or broken with the finding; `--as <reader>`, `--begin`; `--usage <text>` (what the read spent) is kept on the read card, timed and priced by the read card's route (section 2, What a card cost); a verdict on a routed read with no `--usage` at all is refused, the remedy named; one whose usage reports no token is kept and recorded `unpriced=no-tokens` (section 2, Reads are priced like work) |
-| accept | review -> merging and into merge queued; refused without the ok reads it needs (one reader for a flash card, two different readers for a pro card); named ids all or nothing, a selection moves the eligible |
+| accept | review -> merging and into merge queued; refused without the ok reads it needs (one reader for a flash card, two different readers for a pro card); named ids all or nothing, a selection moves the eligible. The tick makes this move itself for every primary whose reads are all ok and nothing holds (section 6), so the verb is for a held primary and a stuck case: `accept --read-ok` with nothing eligible says `nothing waits: the tick accepts` |
 | rework | delegates the next attempt at once with a fix (the member stages it at the tip of the card's base branch, the last pushed attempt's work carried on top where it applies cleanly, docs/SPEC-CARD-CONTRACT.md, where a rework starts), and writes on that attempt's work card `fix`, `finding` (its broken reads' findings, each once) and `why` (how the attempt before ended: failed with its report, finished and found broken, or sent back), and on the primary `finding_reader`, the reader whose finding it sends back, who checks the fix (section 6), each cut to MaxCardTextBytes with a trailing `...` and never refused for its size, and kept on the primary too for a rework that deals later; its packet carries them to the child's JOB.md and `card` prints per attempt; ready when no member is up; a primary at its redeal bound (ready, its work card withdrawn) is reworked too, with `--fix`, its withdrawn card taken off and its bound's class written as the primary's record of its failed work; `--tier`: at a redeal bound it never names a lower tier, and when the attempt before also ended at its bound on the card's tier the rework is refused unless it names a tier above (flash, pro, heavy, frontier) or the provider its takes failed on is back, which lifts it once per tier per card; the refusal is one line naming that attempt, the class and the tiers above (section 5, the bound holds across attempts); without `--fix` each primary's fix is the finding of its broken read, else the report of its failed work, and a primary with neither is refused by name; a rework of several cards (`--group`) writes on each card its own finding, the finding of the read that put it in the group, never the group's first, and a `--fix` given once is every card's fix as written, beside its own finding (on 2026-10-05 a grouped `a reader found it broken` answered with the first card's finding as the `--fix` of all three told every next attempt to fix another card's defect; `TestAGroupReworkGivesEachCardItsOwnFinding`); `--tier <flash|pro|heavy|frontier>` writes the tier on the primary (`tier`), and this attempt's deal and every later deal and read of the card draw from it over its brief's line 1, so a flash card that failed twice is reworked on pro, the same card and brief; it pins the card: the tier is its ceiling too and the machine never escalates it (section 5, flash first); a word that names no tier is usage (exit 2), and a card whose brief pins a model is refused by name, since it runs on its pin whatever its tier; one id while the inbox holds a judgment group of several naming it is refused unless `--one`: `the inbox holds a group of <n> for this card; answer the group; run: nova-sprint rework --group <id> --expect <n>; or say --one` (`TestReworkAndDropRefuseOneCardOfAGroupWithoutOne`; the group is read from the open notes alone, `store.OpenGroups`, never the whole inbox: `TestOpenGroupsAreTheInboxsJudgmentGroupsFromTheOpenNotesAlone`) Its read cards are retired with the attempt it replaces, the readers table's and a friend's open read on her fleet row alike, so none keeps her room or closes against that attempt (`TestAFriendsOpenReadIsRetiredByBriefAndByRework`). |
 | return | merging -> review, off the merge queue |
 | redo | atomically executes return, rework with fix "redo the same change on the current tip", and resumes the stopped stream in one step with one history line; refused when the card is not in a conflict |
@@ -5635,8 +5664,9 @@ moved, and is marked reached when all it needs has landed), resume (T7: a
 stream stopped only on a cross need whose card has landed), deal (T3), accept
 (R9: every acceptable primary in review the tick does not hold, section 6,
 moves to merging and into its stream's merge queue, and the coordinator is
-told once for each stream "ready to merge"; the merge is the coordinator's, and
-the note names `land --stream <s>`, which a `run --land` does itself),
+told once a tick, one "ready to merge" notice naming every primary accepted;
+the merge is the coordinator's, and the notice names each stream's
+`land --stream <s>`, which a `run --land` does itself),
 ask (T2: the reads each primary in review with work not failed wants now, one
 at a time: its first read alone, the rest it needs once the first came back ok,
 one for a flash card and two for a pro card; a read asked of a

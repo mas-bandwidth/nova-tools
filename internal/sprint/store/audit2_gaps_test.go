@@ -179,7 +179,8 @@ func TestAudit2ClosedAckedStrandedPrimaryIsSilentForEver(t *testing.T) {
 	h.a2Names("s1-1", "failed work, its ack refused, ten hours")
 }
 
-// GAP A3 (the ack family, ready to accept). Two ok reads, the judgment
+// GAP A3 (the ack family, ready to accept). Two ok reads of a primary the
+// pump holds (its CI red at its head, acknowledged), the judgment
 // acknowledged: nothing writes it again; only accept moves the primary.
 func TestAudit2ClosedAckedReadyToAcceptIsSilentForEver(t *testing.T) {
 	t.Parallel()
@@ -187,6 +188,7 @@ func TestAudit2ClosedAckedReadyToAcceptIsSilentForEver(t *testing.T) {
 	h.setup(1)
 	h.a2ToReview("s1-1", false)
 	h.must(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
+	h.heldByRedCI("s1-1")
 	h.nReadAll("s1-1", "ok")
 	h.a2AckRefused(sprint.NReadyToAccept)
 	h.readInbox()

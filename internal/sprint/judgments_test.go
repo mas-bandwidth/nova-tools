@@ -8,8 +8,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// H2: the read that completes two different readers' ok writes one judgment,
-// ready to accept; rework and drop close it as accept does.
+// H2: the read that completes two different readers' ok of a primary the pump
+// holds (its CI red at its head, AcceptHeld) writes one judgment, ready to
+// accept, beside the CI's; rework and drop close both as accept does. (A
+// primary nothing holds is the tick's to accept, no judgment: since 2026-10-06.)
 func TestReadyToAcceptIsClosedByReworkAndDrop(t *testing.T) {
 	t.Parallel()
 	w := setup(t, 2)
@@ -19,6 +21,7 @@ func TestReadyToAcceptIsClosedByReworkAndDrop(t *testing.T) {
 		w.must(Take(w.s, TakeReq{As: c.Row, Sel: Sel{IDs: []string{c.ID}}, Gens: gensOf(w.s, c.ID)}))
 		w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{c.ID}}, Gens: gensOf(w.s, c.ID)}))
 	}
+	w.must(RecordCI(w.s, CIReq{Sel: Sel{IDs: []string{"s1-1", "s1-2"}}, Red: true, Run: "1"}))
 	w.must(Ask(w.s, AskReq{}))
 	for _, id := range []string{"s1-1", "s1-2"} {
 		readOK(w, id)
@@ -26,8 +29,8 @@ func TestReadyToAcceptIsClosedByReworkAndDrop(t *testing.T) {
 	notes := w.notesOf(NReadyToAccept)
 	require.Len(t, notes, 2, "ready to accept: %+v", notes)
 	require.Equal(t, Judgment, notes[0].Kind, "ready to accept: %+v", notes)
-	require.Len(t, w.openOn("s1-1"), 1, "ready to accept: %+v", notes)
-	require.Len(t, w.openOn("s1-2"), 1, "ready to accept: %+v", notes)
+	require.Len(t, w.openOn("s1-1"), 2, "ci red and ready to accept: %+v", notes)
+	require.Len(t, w.openOn("s1-2"), 2, "ci red and ready to accept: %+v", notes)
 	w.must(Rework(w.s, ReworkReq{Sel: Sel{IDs: []string{"s1-1"}}, Fix: "more"}))
 	w.must(Drop(w.s, DropReq{Sel: Sel{IDs: []string{"s1-2"}}, Reason: "obsolete"}))
 	require.Empty(t, w.openOn("s1-1"), "still open: %v", w.s.Open)

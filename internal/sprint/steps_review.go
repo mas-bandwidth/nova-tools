@@ -409,9 +409,9 @@ type ReadReq struct {
 // back: back in asked on its row, stamped returned, the reason in one happened
 // note, and the next tick's ask asks it of another reader up at the same
 // attempt, or of the same reader when none is free (tla/DirtyTick.tla,
-// ReadReturn, JudgedOnlyAfterTheBound). A broken read is a judgment; the second different reader's
-// ok at the primary's head is the judgment ready to accept, which accept,
-// rework and drop close. As may name several readers, comma separated: every
+// ReadReturn, JudgedOnlyAfterTheBound). A broken read is a judgment; the last ok read a primary
+// needs at its head leaves it to the tick, which accepts it (TickAccept): no
+// judgment, no hand step. As may name several readers, comma separated: every
 // card named is one of theirs, each read as its own reader's, in the one plan;
 // a read by selection names one reader.
 func Read(s *Snapshot, r ReadReq) Plan {
@@ -712,12 +712,16 @@ func inReview(pr *Card, set map[string]string) *Card {
 
 // reviewJudgment is the judgment a primary the step leaves in review (pr, as
 // the step leaves it) needs now, so that no primary in review is silent:
-//   - ready to accept, when ok reads from two different readers stand at its
-//     head, no judgment open on it after the step offers accept (ready to
-//     accept, or returned to review with its reads standing), and the
-//     machine is STOPPED or its pump holds it (AcceptHeld: its CI red at its
-//     head, or returned at its attempt): a RUNNING machine's pump accepts the
-//     rest (TickAccept);
+//   - nothing when the ok reads it needs stand at its head and the tick's
+//     pump takes it (AcceptHeld says nothing holds it): the tick accepts it,
+//     RUNNING at its next pump, STOPPED at the first pump after start, and
+//     the seat is told what was accepted ("ready to merge", a notice); a
+//     primary whose reads are all ok is never a judgment and never a hand
+//     step (TickAccept);
+//   - ready to accept, only when those reads stand and the pump holds it
+//     (AcceptHeld: its CI red at its head, or returned at its attempt) and no
+//     judgment open on it after the step offers accept (returned to review
+//     with its reads standing does): the hold is a mind's;
 //   - else, when nothing is open on it after the step and no read is
 //     outstanding: stranded in review when its work came back failed, or when
 //     it was never asked at its attempt and the step closes the last judgment
@@ -796,8 +800,9 @@ func reviewJudgment(s *Snapshot, pr *Card, st reviewStep) (Note, bool) {
 	var typ, why string
 	switch {
 	case len(oks) >= ReadsNeeded(pr):
-		if offers || s.Running && AcceptHeld(pr) == "" {
-			// a RUNNING machine's pump accepts it: "accept is mechanical"
+		if offers || AcceptHeld(pr) == "" {
+			// the tick's pump accepts it, RUNNING or STOPPED (at the first pump after
+			// start): "accept is mechanical", and a hand step is a missing instruction
 			return Note{}, false
 		}
 		typ = NReadyToAccept
@@ -838,7 +843,15 @@ type AcceptReq struct {
 	Heavy                 bool
 	Evidence, EvidenceSHA string
 	Reason                string
+	// ReadOK is accept --read-ok: every primary in review with the ok reads it
+	// needs. The tick accepts those itself (TickAccept); the verb is for a stuck
+	// case, and says so when nothing waits.
+	ReadOK bool `json:",omitempty"`
 }
+
+// NothingWaits is what accept --read-ok says when no primary in review has the
+// ok reads it needs: the tick accepts them, so nothing waits on the verb.
+const NothingWaits = "nothing waits: the tick accepts every primary in review whose reads are all ok and tells the seat (ready to merge)"
 
 // okReaders is the primary's ok read cards from different readers at its
 // current attempt and head, in reader row order, as many as it needs
@@ -1010,6 +1023,9 @@ func Accept(s *Snapshot, r AcceptReq) Plan {
 			n.Who = r.Who
 			setStream(&p, s, st, map[string]string{"state": StreamMerging, "since": stamp(s.Now)}, n)
 		}
+	}
+	if r.ReadOK && len(chosen) == 0 {
+		p.Said = append(p.Said, NothingWaits)
 	}
 	answered(&p, s, r.Answers, r.Who)
 	p = Lawful(p)

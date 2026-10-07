@@ -2317,7 +2317,7 @@ func (a *app) cmdAccept(args []string, stdout, stderr io.Writer) int {
 	var ans, evidence, reason *string
 	var sha string
 	return a.setVerb("accept", args, stdout, stderr, false, func(fs flagSet) {
-		readOK = fs.Bool("read-ok", false, "every primary in review with the ok reads it needs (one reader's for a flash card, two different readers' for a pro card); moves eligible primaries into the merge queue")
+		readOK = fs.Bool("read-ok", false, "every primary in review with the ok reads it needs (one reader's for a flash card, two different readers' for a pro card); moves eligible primaries into the merge queue. The tick does this itself every tick and tells the seat (ready to merge); the verb is for a stuck case, and says \"nothing waits: the tick accepts\" when there is nothing")
 		ans = fs.String("answers", "", answersWords)
 		heavy = fs.Bool("heavy", false, "the coordinator's own heavy read of each named primary in review, at its attempt and head: one ok read toward its read rule, recorded on the primary under coordinator:<actor> with --evidence and its sha256, never as a reader's read; a reader's broken read at the attempt stays, marked overruled; wants ids, --evidence and --reason")
 		evidence = fs.String("evidence", "", "with --heavy: the path of a readable file the coordinator's heavy read rests on; its sha256 is recorded beside it")
@@ -2347,7 +2347,7 @@ func (a *app) cmdAccept(args []string, stdout, stderr io.Writer) int {
 		}
 		return strings.Join(why, "; ")
 	}, func(ids []string, s *sel, c *common) store.Step {
-		r := sprint.AcceptReq{Sel: s.sel(ids), Answers: answers(*ans), Who: c.actor}
+		r := sprint.AcceptReq{Sel: s.sel(ids), Answers: answers(*ans), Who: c.actor, ReadOK: *readOK}
 		if *heavy {
 			r.Heavy, r.Evidence, r.EvidenceSHA, r.Reason = true, *evidence, sha, *reason
 		}

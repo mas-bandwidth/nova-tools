@@ -208,6 +208,11 @@ func TestReadyToAcceptOncePerAttempt(t *testing.T) {
 	h.setup(3)
 	h.nWork("s1-1", "s1-2", "s1-3")
 	h.nDo(AskStep(sprint.AskReq{}))
+	// held by the pump (CI red at the head, acknowledged): ready to accept is for those
+	// alone; one nothing holds is the tick's to accept
+	for _, id := range []string{"s1-1", "s1-2", "s1-3"} {
+		h.heldByRedCI(id)
+	}
 	// s1-1: two oks, then a third reader broken
 	h.nReadAll("s1-1", "ok")
 	if n := len(h.nAllNotes(sprint.NReadyToAccept)); n != 1 || len(h.nOpenOf(sprint.NReadyToAccept, "s1-1")) != 1 {
@@ -244,6 +249,7 @@ func TestReadyToAcceptOncePerAttempt(t *testing.T) {
 	h.nDo(TakeStep(sprint.TakeReq{As: w.Row, Sel: sprint.Sel{IDs: []string{w.ID}}, Gens: map[string]int{w.ID: 1}}))
 	h.nDo(FinishStep(sprint.FinishReq{Sel: sprint.Sel{IDs: []string{w.ID}}, Gens: map[string]int{w.ID: 1}}))
 	h.nDo(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-2"}}})) // the machine's ask: the finish asks no reader
+	h.heldByRedCI("s1-2")                                                 // a new head: held again
 	h.nReadAll("s1-2", "ok")
 	var on2 int
 	for _, n := range h.nAllNotes(sprint.NReadyToAccept) {

@@ -37,14 +37,16 @@ func (h *harness) toReview() {
 	h.must(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
 }
 
-// M1: deal, take, finish ok, ask, both reads ok (ready to accept opens), ack:
-// refused (ack answers only a judgment that lists it), naming the commands
-// that move the card; the judgment stays open.
+// M1: deal, take, finish ok, ask, its CI red at its head (acknowledged: the
+// pump holds it), both reads ok (ready to accept opens), ack: refused (ack
+// answers only a judgment that lists it), naming the commands that move the
+// card; the judgment stays open.
 func TestModelAckCannotSilenceACard(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	h.setup(1)
 	h.toReview()
+	h.heldByRedCI("s1-1")
 	h.readAllOK("s1-1")
 	open := h.openOn("s1-1")
 	require.Len(t, open, 1, "after two ok reads: %+v", open)
