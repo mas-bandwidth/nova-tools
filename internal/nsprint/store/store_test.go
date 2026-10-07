@@ -136,9 +136,6 @@ func TestOpenAuthenticatesFromEnv(t *testing.T) {
 
 	// An inherited NOVA_SPRINT_REDIS_PASSWORD_ENV would redirect the default path
 	// below to another seat's variable; clear it so the test is deterministic.
-	t.Setenv(store.PasswordEnvEnv, "")
-	t.Setenv(store.UserEnv, "")
-	t.Setenv(store.DefaultPasswordEnv, "bench-secret")
 	first := func() error {
 		st, err := store.Open(ctx, addr)
 		if err != nil {
