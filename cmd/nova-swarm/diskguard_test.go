@@ -636,3 +636,23 @@ func TestDiskGuardProcPathsReadsCwdAndOpenFiles(t *testing.T) {
 	_, err = procPaths(filepath.Join(proc, "missing"), 42)
 	assert.Error(t, err, "an unreadable /proc is no empty list")
 }
+
+// The stop floor reads the data volume's free. A volume whose free could not be read is
+// no reading of zero: it must not fake a stop. The failure is said on its NOTE line and
+// the closing line is DISK-GUARD INCOMPLETE, never DISK-GUARD STOP (the reader's finding,
+// diskguard.go's free stays zero when the home volume could not be read).
+func TestDiskGuardDoesNotStopOnAnUnreadVolume(t *testing.T) {
+	t.Parallel()
+	g, out := dgGuard(t)
+	g.home = filepath.Join(t.TempDir(), "data")
+	g.stopFloor = 200 * gib
+	g.free = func(p string) (uint64, error) {
+		if p == g.home {
+			return 0, errors.New("permission denied")
+		}
+		return 300 * gib, nil
+	}
+	assert.Equal(t, 1, g.run(), "an unread volume is reported, not read as zero")
+	assert.Contains(t, out.String(), "DISK-GUARD INCOMPLETE")
+	assert.NotContains(t, out.String(), "DISK-GUARD STOP")
+}

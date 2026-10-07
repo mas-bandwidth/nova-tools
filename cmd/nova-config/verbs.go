@@ -77,6 +77,7 @@ var toolExamples = map[string]string{
 	"status":    "nova-config status --file try.json",
 	"apply":     "nova-config apply --dry-run --redis 127.0.0.1:6379 --file try.json",
 	"inventory": "nova-config inventory --example > inv.yml",
+	"loop run":  "nova-config loop run sleeper --run-dir ./run -- sleep 1",
 	"version":   "nova-config version",
 }
 
@@ -99,6 +100,9 @@ func verbExtra(verb string) string {
 	case verb == "inventory":
 		effect = effectInventory
 		more = inventoryMore
+	case verb == "loop run":
+		effect = loopRunEffect
+		more = loopRunMore
 	case verb == "machine self":
 		effect = "inspection: prints this machine's name and opens no store; --check reads the machine rows"
 	case len(words) == 1:
