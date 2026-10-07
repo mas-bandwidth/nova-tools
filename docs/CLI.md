@@ -1123,7 +1123,7 @@ nova-sprint read --as <reader> (--begin | --ok | --broken) [<card>...] --epoch <
 nova-sprint accept (<id>... | --stream <s> | --read-ok | --group <id> [--expect <n>]) [--answers <note>]   # the tick accepts every primary whose reads are all ok and tells the seat (ready to merge); accept is for a held primary or a stuck case, and accept --read-ok with nothing eligible says "nothing waits: the tick accepts"
 nova-sprint rework (<id>... | --group <id> [--expect <n>]) [--fix <text>] [--answers <note>]
 nova-sprint return (<id>... | --group <id> [--expect <n>]) [--reason <text>] [--answers <note>]
-nova-sprint drop (<id>... | --stream <s> --col <state> | --group <id> [--expect <n>]) --reason <text> [--answers <note>]
+nova-sprint drop (<id>... | --stream <s> --col <state> | --repo <owner/name>... --expect <n> | --group <id> [--expect <n>]) --reason <text> [--answers <note>]
 nova-sprint rank <id>... (--score <n> | --first) [--answers <note>]
 nova-sprint priority <id>... | (<id>... | --stream <s>) (--blocker | --critical | --high | --normal | --low) --reason <text>
 nova-sprint relink <old-id>[,<old-id>...] <new-id> [--reason <text>]
@@ -1175,6 +1175,7 @@ nova-sprint answer [--dry-run] [--bar <p>] [--every <duration>] [--timeout <dura
 nova-sprint inbox [--open <group>] [--read] [--wait [--timeout <duration>]] [--deadline <duration>] [--stale <duration>]
 nova-sprint card <id> [--brief | --fields] [--json] [--at-epoch <n>]
 nova-sprint card (--all | --stream <s>) --json [--at-epoch <n>]
+nova-sprint streams [--repo <owner/name>] [--release <name>] [--cards]
 nova-sprint log [--card <id>] [--stream <s>] [--member <m>] [--since <10m|RFC3339>] [--at-epoch <n>]
 nova-sprint check
 nova-sprint repair

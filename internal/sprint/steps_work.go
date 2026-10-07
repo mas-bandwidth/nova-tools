@@ -36,6 +36,9 @@ type CardAdd struct {
 	// Base is the branch the brief names on its BASE: line (swarm.ReadCardBase), "" for
 	// none: add admits a card based on dev only into the promotion stream (SprintBranchWhy).
 	Base string
+	// Repo is the repository the brief names on its REPO: line (swarm.ReadCardBase),
+	// recorded on its stream's control card as the stream's repository (FieldRepo).
+	Repo string
 	// Sentinel marks this card a sentinel (a stop), not a primary: the
 	// many-brief form's --sentinel <id>, admitted after the brief cards.
 	Sentinel bool
@@ -51,6 +54,8 @@ type AddReq struct {
 	Rules  string // the held rules file of every card the add admits with Brief (FieldRules)
 	// Base is the branch Brief names on its BASE: line, as CardAdd.Base.
 	Base string
+	// Repo is the repository Brief names on its REPO: line, as CardAdd.Repo.
+	Repo string
 	// Cards, when set, is the many-brief form: one card per entry, in order,
 	// each with its own brief and needs (a need names a primary already on
 	// the table or one of this add). IDs, Count, Brief and Needs are then
@@ -220,6 +225,12 @@ func Add(s *Snapshot, r AddReq) Plan {
 		}
 		return r.Base
 	}
+	repoOf := func(i int) string {
+		if len(r.Cards) > 0 {
+			return r.Cards[i].Repo
+		}
+		return r.Repo
+	}
 	// isSent says the i'th card admitted is a sentinel: the one --sentinel form,
 	// or a card of the many-brief form marked one (its --sentinel <id>).
 	isSent := func(i int) bool {
@@ -237,6 +248,8 @@ func Add(s *Snapshot, r AddReq) Plan {
 		model  string // the words of a card add tiered frontier (ModelTier)
 		rules  string // FieldRules
 		bench  string // FieldBench: the members its brief's BENCH line names (bench_deal.go)
+		repo   string // the repository its brief's REPO: line names (FieldRepo)
+		base   string // the base its brief's BASE: line names (FieldBase)
 		behind string // the sentinel it waits behind by position
 		gate   bool   // a stop of --sentinel-every
 		sent   bool   // a stop: --sentinel or a many-brief card marked one
@@ -313,7 +326,7 @@ func Add(s *Snapshot, r AddReq) Plan {
 			continue
 		}
 		seen[id] = true
-		a := admit{id: id, score: scores[i], needs: needs, brief: brief, model: modelSaid, rules: rulesOf(i), bench: strings.Join(bench, ","), gate: r.IsGate(id), sent: isSent(i)}
+		a := admit{id: id, score: scores[i], needs: needs, brief: brief, model: modelSaid, rules: rulesOf(i), bench: strings.Join(bench, ","), repo: repoOf(i), base: baseOf(i), gate: r.IsGate(id), sent: isSent(i)}
 		if st := sentinelBefore(s, r.Stream, a.score); st != nil && !a.sent {
 			a.behind = st.ID // it waits behind the stop by its place; nothing is written of it
 		}
@@ -325,6 +338,64 @@ func Add(s *Snapshot, r AddReq) Plan {
 			lastGate = id
 		}
 		in = append(in, a)
+	}
+	// Every card admitted records its repository and base on its stream's control
+	// card: the union of what the stream already records and this add's briefs, so a
+	// stream whose cards name more than one repository keeps them all (FieldRepo,
+	// FieldBase; docs/SPEC-SPRINT.md section 11, the streams verb).
+	{
+		var repos, bases []string
+		if ctl != nil {
+			repos, bases = Split(ctl.F(FieldRepo)), Split(ctl.F(FieldBase))
+		}
+		for _, a := range in {
+			if a.repo != "" && !contains(repos, a.repo) {
+				repos = append(repos, a.repo)
+			}
+			if a.base != "" && !contains(bases, a.base) {
+				bases = append(bases, a.base)
+			}
+		}
+		if len(repos) > 0 || len(bases) > 0 {
+			set := map[string]string{}
+			if len(repos) > 0 {
+				sort.Strings(repos)
+				set[FieldRepo] = strings.Join(repos, ",")
+			}
+			if len(bases) > 0 {
+				sort.Strings(bases)
+				set[FieldBase] = strings.Join(bases, ",")
+			}
+			if ctl == nil {
+				for i := range head {
+					e := &head[i].Entry
+					if e.ID == CtlID(r.Stream) && e.Create != nil {
+						if e.Set == nil {
+							e.Set = map[string]string{}
+						}
+						maps.Copy(e.Set, set)
+					}
+				}
+			} else {
+				// one change of the control card a step: a state change already in
+				// head is merged into, never changed twice (setStream's rule)
+				merged := false
+				for i := range head {
+					e := &head[i].Entry
+					if e.ID == CtlID(r.Stream) {
+						if e.Set == nil {
+							e.Set = map[string]string{}
+						}
+						maps.Copy(e.Set, set)
+						merged = true
+						break
+					}
+				}
+				if !merged {
+					head = append(head, change(Merge, setEntry(ctl, set)))
+				}
+			}
+		}
 	}
 	// What the admitted change in the cards already in line.
 	mods := map[string]*mod{}
