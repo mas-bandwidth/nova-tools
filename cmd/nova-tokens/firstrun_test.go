@@ -61,7 +61,8 @@ func fixtureIn(t *testing.T) string {
 var firstRunStamp = time.Date(2026, 9, 11, 23, 55, 2, 0, time.UTC)
 
 func TestTheExampleLinesRun(t *testing.T) {
-	fixtureIn(t)
+	t.Parallel()
+	fixture := fixtureIn(t)
 	var banner bytes.Buffer
 	{
 		exit := run([]string{"help"}, &banner, io.Discard, firstRunStamp)
@@ -72,6 +73,12 @@ func TestTheExampleLinesRun(t *testing.T) {
 	require.NotEmpty(t, examples, "the example: block holds no line")
 	for _, line := range examples {
 		args := strings.Fields(line)[1:]
+		// Convert relative fixture paths to absolute paths
+		for i, arg := range args {
+			if strings.HasPrefix(arg, "./") {
+				args[i] = filepath.Join(fixture, arg[2:])
+			}
+		}
 		var out, errb bytes.Buffer
 		exit := run(args, &out, &errb, firstRunStamp)
 		// A line that RUNS answers 0 or 1. Exit 2 is "could not run", and an example
@@ -137,10 +144,11 @@ func TestThereIsNoQuickstartVerbAndTheCommandReferenceSaysWhy(t *testing.T) {
 // names in order -- and deliberately not by value, so the transcript stays a document
 // instead of becoming a fixture.
 func TestTheTranscriptIsWhatTheToolPrints(t *testing.T) {
+	t.Parallel()
 	doc := readRepoFile(t, filepath.Join("docs", "TESTS.md"))
 	lines, err := onboarding.FirstRun(doc, "nova-tokens")
 	require.NoError(t, err, err)
-	fixtureIn(t)
+	fixture := fixtureIn(t)
 	var want []string
 	var got []string
 	var pending []string
@@ -151,8 +159,15 @@ func TestTheTranscriptIsWhatTheToolPrints(t *testing.T) {
 	for _, line := range lines {
 		if args, ok := strings.CutPrefix(line, "$ nova-tokens "); ok {
 			flush()
+			// Convert relative fixture paths to absolute paths
+			fields := strings.Fields(args)
+			for i, arg := range fields {
+				if strings.HasPrefix(arg, "./") {
+					fields[i] = filepath.Join(fixture, arg[2:])
+				}
+			}
 			var out, errb bytes.Buffer
-			run(strings.Fields(args), &out, &errb, firstRunStamp)
+			run(fields, &out, &errb, firstRunStamp)
 			for _, printed := range strings.Split(out.String()+errb.String(), "\n") {
 				if shape := onboarding.Shape(printed); shape != "" {
 					pending = append(pending, shape)
@@ -207,9 +222,28 @@ func TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine(t *testing.T) {
 	assert.Equal(t, 3, len(steps), "the `### First run` block runs %d commands, want 3", len(steps))
 	// The fold WRITES, so it runs against a copy of the fixture in t.TempDir()
 	// and the test moves into it; the documented paths are relative to here.
-	fixtureIn(t)
-	for _, p := range onboarding.Execute(steps, runDocumented(t)) {
-		assert.Fail(t, "%v", p)
+	fixture := fixtureIn(t)
+	for _, s := range steps {
+		if s.Stdin != "" {
+			assert.Fail(t, "the documented command reads from %q, and nova-tokens takes no stdin", s.Stdin)
+			continue
+		}
+		// Convert relative fixture paths to absolute paths
+		args := make([]string, len(s.Args))
+		copy(args, s.Args)
+		for i, arg := range args {
+			if strings.HasPrefix(arg, "./") {
+				args[i] = filepath.Join(fixture, arg[2:])
+			}
+		}
+		var out, errb bytes.Buffer
+		code := run(args, &out, &errb, firstRunStamp)
+		result := onboarding.Result{Code: code, Stdout: out.String(), Stderr: errb.String()}
+		for _, line := range strings.Split(result.Stdout+result.Stderr, "\n") {
+			if line != "" {
+				assert.Fail(t, "the documented command\n  %v prints\n  %s", s.Args, line)
+			}
+		}
 	}
 }
 
