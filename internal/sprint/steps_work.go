@@ -191,6 +191,15 @@ func Add(s *Snapshot, r AddReq) Plan {
 		head = append(head, change(Merge, createEntry(CtlID(r.Stream), r.Stream, Ctl, 0,
 			map[string]string{"kind": "stream", "state": StreamWaiting, "since": stamp(s.Now)})))
 	case ctl.F("state") == StreamLanded:
+		// Check if there are open cards - if so, we need to reopen the stream with a new stop sentinel
+		openCards := Unlanded(s, r.Stream)
+		if len(openCards) > 0 && !r.Sentinel {
+			// Stream needs to be reopened - call StreamReopen
+			reopenPlan := StreamReopen(s, r)
+			p.Units = append(p.Units, reopenPlan.Units...)
+			p.Notes = append(p.Notes, reopenPlan.Notes...)
+			ctl = s.Merge.Card(CtlID(r.Stream))
+		}
 		head = append(head, change(Merge, setEntry(ctl, map[string]string{"state": StreamWaiting, "since": stamp(s.Now)})))
 	}
 	adding := map[string]bool{}

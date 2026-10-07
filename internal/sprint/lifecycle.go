@@ -30,7 +30,7 @@ const (
 )
 
 // States is every state, in the work table's column order.
-var States = []State{Waiting, Ready, Working, Review, Merging, Landed}
+var States = []State{Waiting, Ready, Working, Review, Merging, Landed, Closed}
 
 // The class of a move: mechanical moves need no decision; the coordinator's
 // moves are made only by the coordinator's verbs.

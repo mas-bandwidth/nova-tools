@@ -56,7 +56,10 @@ const (
 )
 
 // Held is the status of a member the coordinator holds down.
-const Held = "held"
+const (
+	Held   = "held"
+	Closed = "closed"
+)
 
 // HowGiven is a load given on the command line rather than measured.
 const HowGiven = "given"
