@@ -7,6 +7,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
 // log prints every line of the epoch in local time, filtered by card,
@@ -165,4 +167,63 @@ func TestWhereHidesTheMergeTablesSince(t *testing.T) {
 	block := tableOf(out, "merge")
 	require.NotEmpty(t, block, "no merge table:\n%s", out)
 	require.NotContains(t, block, "since", "where shows since:\n%s", out)
+}
+
+// log --json --since takes a window wider than about 22 h in every shape a
+// caller types: a Go duration, a whole number of days and a date or an
+// instant, each wider than a page, and returns every entry at or after the
+// window's time. The window is the instant it names, compared in UTC; the
+// clock is the twin store's, injected, so the test reads no real time.
+func TestLogJsonSinceWithAWindowWiderThan22HoursReturnsEveryEntry(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.a.loc = time.UTC
+	ta.ok("init --readers reader-a --members m1")
+	ta.mu.Lock()
+	t0 := ta.now
+	ta.mu.Unlock()
+	ta.ok("add --stream s1 --count 1 --one --brief-file " + writeBrief(t, "early card"))
+	ta.mu.Lock()
+	ta.now = ta.now.Add(25 * time.Hour) // s1-1 is now 25 h old: wider than 22 h
+	ta.mu.Unlock()
+	ta.ok("add --stream s1 --count 1 --one --after s1-1 --brief-file " + writeBrief(t, "later card"))
+
+	// cards is the card ids the verb returned for a --since window.
+	cards := func(line string) map[string]bool {
+		t.Helper()
+		var j struct {
+			Lines []sprint.Line `json:"lines"`
+		}
+		ta.json(line, &j)
+		got := map[string]bool{}
+		for _, l := range j.Lines {
+			if l.Card != "" {
+				got[l.Card] = true
+			}
+		}
+		return got
+	}
+	// 26 h back is wider than 22 h: both entries are in the window.
+	wide := cards("log --since 26h")
+	assert.True(t, wide["s1-1"], "26h: s1-1, 25 h old, is in a 26 h window")
+	assert.True(t, wide["s1-2"], "26h: s1-2 is in a 26 h window")
+	// A whole number of days: the unit time.ParseDuration has none for.
+	day := cards("log --since 1d")
+	assert.False(t, day["s1-1"], "1d: s1-1, 25 h old, is before a 24 h window")
+	assert.True(t, day["s1-2"], "1d: s1-2 is in a 24 h window")
+	twoDays := cards("log --since 2d")
+	assert.True(t, twoDays["s1-1"], "2d: s1-1 is in a 48 h window")
+	assert.True(t, twoDays["s1-2"], "2d: s1-2 is in a 48 h window")
+	// A date, in the run's own zone.
+	date := cards("log --since " + t0.Format(time.DateOnly))
+	assert.True(t, date["s1-1"], "the date: s1-1 is at or after its midnight")
+	assert.True(t, date["s1-2"], "the date: s1-2 is at or after its midnight")
+	// A date and time without seconds, the shape a person pastes.
+	space := cards("log --since '" + t0.Format("2006-01-02 15:04Z07:00") + "'")
+	assert.True(t, space["s1-1"], "the date and time without seconds: s1-1 is in the window")
+	assert.True(t, space["s1-2"], "the date and time without seconds: s1-2 is in the window")
+	// An instant in RFC 3339, the form the child cut its window to.
+	instant := cards("log --since " + t0.Format(time.RFC3339))
+	assert.True(t, instant["s1-1"], "the instant: s1-1 is at or after it")
+	assert.True(t, instant["s1-2"], "the instant: s1-2 is at or after it")
 }
