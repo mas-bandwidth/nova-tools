@@ -768,6 +768,17 @@ scanned as before:
 `nova-sprint add` runs the same lint, so the exemption holds there. Pinned by
 `TestPatternsToRefuseBlockIsExemptForAClassTestCard` (`internal/swarm`).
 
+### lint-refuses-hiding-attribution: the ATTRIBUTION paragraph
+
+A brief must never tell a worker to hide or misstate its model or harness. The
+`ATTRIBUTION` paragraph (or any other paragraph) must not contain a line that
+names a specific model or harness that the worker is told to deny, hide, omit or
+use instead of its own: for example `never claim Claude`, `do not mention the
+model`, `sign as another model`, or a `Co-Authored-By` trailer naming a fixed
+model the worker is told to use. A brief that says to name the actual model and
+never claim one you are not passes. Pinned by `TestAddRefusesABriefHidingTheModel`
+(`cmd/nova-sprint`) and `TestLintCardChildHonestAttribution` (`internal/swarm`).
+
 ## Test inventory
 
 List the current unit tests with `go test -list . ./cmd/nova-swarm/`.
