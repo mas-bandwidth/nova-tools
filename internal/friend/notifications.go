@@ -67,17 +67,19 @@ type NotificationBatch struct {
 	Accepted bool          `json:"accepted,omitempty"`
 }
 
-// NotificationState is bounded to one full batch and one global ready-queue bit. The
+// NotificationState is bounded to one active batch, one deferred report and a ready bit. The
 // bus remains the source of every message; filtered entries retain their audit there.
 type NotificationState struct {
-	Pending   *NotificationBatch `json:"pending,omitempty"`
-	Ready     bool               `json:"ready,omitempty"`
-	ReadyDue  time.Time          `json:"ready_due,omitzero"`
-	NextReady time.Time          `json:"next_ready,omitzero"`
-	RetryAt   time.Time          `json:"retry_at,omitzero"`
-	Failures  int                `json:"failures,omitempty"`
-	Audited   int                `json:"audited"`
-	LastID    string             `json:"last_id,omitempty"`
+	Pending       *NotificationBatch `json:"pending,omitempty"`
+	Report        *NotificationBatch `json:"report,omitempty"`
+	ReportRetryAt time.Time          `json:"report_retry_at,omitzero"`
+	Ready         bool               `json:"ready,omitempty"`
+	ReadyDue      time.Time          `json:"ready_due,omitzero"`
+	NextReady     time.Time          `json:"next_ready,omitzero"`
+	RetryAt       time.Time          `json:"retry_at,omitzero"`
+	Failures      int                `json:"failures,omitempty"`
+	Audited       int                `json:"audited"`
+	LastID        string             `json:"last_id,omitempty"`
 }
 
 // ReadNotificationState and WriteNotificationState use the existing fsynced atomic
@@ -86,6 +88,9 @@ func ReadNotificationState(dir string) (s NotificationState, err error) {
 	_, err = read(filepath.Join(dir, NotificationStateFile), &s)
 	if err == nil && s.Pending != nil && (len(s.Pending.Messages) > MaxBatch || len(s.Pending.Entries) != len(s.Pending.Messages)) {
 		return NotificationState{}, fmt.Errorf("notification journal holds no bounded batch; preserve it and repair %s", filepath.Join(dir, NotificationStateFile))
+	}
+	if err == nil && s.Report != nil && (len(s.Report.Messages) > MaxBatch || len(s.Report.Entries) != len(s.Report.Messages)) {
+		return NotificationState{}, fmt.Errorf("notification report journal holds no bounded batch")
 	}
 	return s, err
 }
@@ -140,7 +145,7 @@ func (n *notificationReceiver) save() error {
 }
 
 func (n *notificationReceiver) step(ctx context.Context, now time.Time) error {
-	// A full failed batch stays pending. A ready wake is only a bit until it is due, so
+	// A failed urgent batch stays pending; a failed report has its own slot. A ready wake is only a bit until due, so
 	// requests and blockers never wait behind its coalescing or retry window.
 	if n.state.Pending == nil {
 		if err := n.receive(ctx, now); err != nil {
@@ -149,6 +154,13 @@ func (n *notificationReceiver) step(ctx context.Context, now time.Time) error {
 	}
 	if n.state.Pending == nil && n.state.Ready && !now.Before(n.state.ReadyDue) && !now.Before(n.state.RetryAt) {
 		n.state.Pending = &NotificationBatch{Text: NotificationReadyText, Ready: true}
+		if err := n.save(); err != nil {
+			return err
+		}
+	}
+	if n.state.Pending == nil && n.state.Report != nil && !now.Before(n.state.ReportRetryAt) {
+		n.state.Pending, n.state.Report = n.state.Report, nil
+		n.state.RetryAt = time.Time{}
 		if err := n.save(); err != nil {
 			return err
 		}
@@ -170,7 +182,16 @@ func (n *notificationReceiver) step(ctx context.Context, now time.Time) error {
 			if p.Ready {
 				n.state.Pending = nil
 			}
-			n.d.Record(fmt.Sprintf("%s notification pending: enqueue exit=%d error=%v; next attempt no earlier than %s", now.UTC().Format(time.RFC3339), exit, err, n.state.RetryAt.UTC().Format(time.RFC3339)))
+			if NotificationCategory(p.Text) == "report" {
+				n.state.Report, n.state.Pending = p, nil
+				n.state.ReportRetryAt = n.state.RetryAt
+				n.state.RetryAt = time.Time{}
+			}
+			retryAt := n.state.RetryAt
+			if NotificationCategory(p.Text) == "report" {
+				retryAt = n.state.ReportRetryAt
+			}
+			n.d.Record(fmt.Sprintf("%s notification pending: enqueue exit=%d error=%v; next attempt no earlier than %s", now.UTC().Format(time.RFC3339), exit, err, retryAt.UTC().Format(time.RFC3339)))
 			return n.save()
 		}
 		p.Accepted = true
@@ -244,6 +265,10 @@ func (n *notificationReceiver) receive(ctx context.Context, now time.Time) error
 			}
 			silent = append(silent, e.Entry)
 			audited = append(audited, m)
+		} else if m.KindName() == bus.KindReport && n.state.Report != nil {
+			// Backpressured reports remain bus-pending, not released or acknowledged;
+			// the same bounded receiver can still reach later requests and blockers.
+			n.d.Record(fmt.Sprintf("notification capacity pending id=%s kind=report", m.ID))
 		} else if n.policy.selected(m) || strings.HasPrefix(m.Body, SessionCheckPrefix) || strings.HasPrefix(m.Subject, "stall wake: friend ") {
 			entries = append(entries, e.Entry)
 			messages = append(messages, m)
@@ -262,7 +287,20 @@ func (n *notificationReceiver) receive(ctx context.Context, now time.Time) error
 			ids[i] = m.ID
 		}
 		hash := sha256.Sum256([]byte(strings.Join(ids, "\n")))
-		text := fmt.Sprintf("%s%x\n%s", NotificationBatchPrefix, hash, BatchFor(n.d.Coordinator, messages, "", pong))
+		category := "report"
+		for _, m := range messages {
+			if m.KindName() == bus.KindRequest || m.KindName() == bus.KindBlocker {
+				category = "urgent"
+				break
+			}
+			if m.KindName() != bus.KindReport {
+				category = "notice"
+			}
+		}
+		text := fmt.Sprintf("%s%s %x\n%s", NotificationBatchPrefix, category, hash, BatchFor(n.d.Coordinator, messages, "", pong))
+		if len(messages) == 1 && pong != "" {
+			text = WakeTurnText(pong)
+		}
 		n.state.Pending = &NotificationBatch{Text: text, Entries: entries, Messages: messages}
 		// Genuine input bypasses a failed ready wake's retry, without clearing the owed bit.
 		n.state.RetryAt = time.Time{}
@@ -304,4 +342,21 @@ func NotificationKey(text string) string {
 		return first
 	}
 	return ""
+}
+
+// NotificationCategory bounds unread useful input to one batch of each category;
+// report backpressure cannot consume the urgent category's capacity.
+func NotificationCategory(text string) string {
+	if text == NotificationReadyText {
+		return "ready"
+	}
+	first, _, ok := strings.Cut(text, "\n")
+	if !ok || !strings.HasPrefix(first, NotificationBatchPrefix) {
+		return ""
+	}
+	parts := strings.Fields(first)
+	if len(parts) == 4 && slices.Contains([]string{"urgent", "report", "notice"}, parts[2]) {
+		return parts[2]
+	}
+	return "urgent" // the earlier immutable marker format remains recognizable on recovery
 }

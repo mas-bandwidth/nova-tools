@@ -215,6 +215,11 @@ func (c *Codex) queueing(ctx context.Context, thread, text string, routes [][]st
 				return 0, nil
 			}
 		}
+		for _, q := range items {
+			if NotificationCategory(q.Text) == NotificationCategory(text) {
+				return 0, Deferred{Reason: "one unread " + NotificationCategory(text) + " notification already stands; full input stays pending until capacity opens"}
+			}
+		}
 	}
 	kind, nonce, only := PongRequest(text)
 	var old []superseded

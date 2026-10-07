@@ -180,3 +180,69 @@ func TestCodexNotificationQueueStaysBoundedAndNewWorkAfterConsumptionCanWake(t *
 	assert.ErrorAs(t, err, &deferred)
 	assert.Equal(t, 2, f.queuedN, "no speculative enqueue when the queue cannot be checked")
 }
+
+// Distinct full report batches stay source-pending while one report is unread. Their
+// capacity never borrows the urgent or ready category's slot (SPEC-FRIEND.md, notifications).
+func TestDistinctUsefulNotificationsAreBackpressuredWithUrgentCapacityReserved(t *testing.T) {
+	t.Parallel()
+	f := &codexApp{now: t0}
+	c := f.codex(nil)
+	c.QueueOnly = true
+	for i := range 100 {
+		text := fmt.Sprintf("%sreport %064x\nfull report %d", NotificationBatchPrefix, i, i)
+		exit, err := c.Deliver(context.Background(), text)
+		assert.Zero(t, exit)
+		if i == 0 {
+			require.NoError(t, err)
+		} else {
+			var deferred Deferred
+			require.ErrorAs(t, err, &deferred)
+		}
+	}
+	assert.Equal(t, 1, f.queuedN)
+	require.Len(t, f.texts(), 1)
+	codexDeliver(t, c, NotificationBatchPrefix+"urgent first\nblocker payload")
+	codexDeliver(t, c, NotificationReadyText)
+	assert.Equal(t, 3, f.queuedN)
+	require.Len(t, f.texts(), 3)
+}
+
+type notificationDelivery func(context.Context, string) (int, error)
+
+func (f notificationDelivery) Deliver(ctx context.Context, text string) (int, error) {
+	return f(ctx, text)
+}
+
+// A deferred report is a separate durable slot. The next receive pass can reach and
+// enqueue a new blocker without waiting for the report retry window.
+func TestDeferredReportDoesNotHoldLaterBlockerBehindIt(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	dir := t.TempDir()
+	send := func(kind, body string) {
+		_, err := r.bus.Send(context.Background(), bus.Message{From: "ada", To: []string{"bob"}, Kind: kind, Subject: kind, Body: body})
+		require.NoError(t, err)
+	}
+	var delivered []string
+	r.d.Deliver = notificationDelivery(func(_ context.Context, text string) (int, error) {
+		if NotificationCategory(text) == "report" {
+			return 0, Deferred{Reason: "report capacity occupied"}
+		}
+		delivered = append(delivered, text)
+		return 0, nil
+	})
+	n := &notificationReceiver{d: r.d, b: r.bus, policy: NotificationPolicy{Window: NotificationWindow}, dir: dir}
+	send(bus.KindReport, "full report pending")
+	require.NoError(t, n.step(context.Background(), t0))
+	require.NotNil(t, n.state.Report)
+	assert.Nil(t, n.state.Pending)
+	send(bus.KindBlocker, "urgent blocker survives")
+	require.NoError(t, n.step(context.Background(), t0.Add(time.Second)))
+	require.Len(t, delivered, 1)
+	assert.Contains(t, delivered[0], "urgent blocker survives")
+	require.NotNil(t, n.state.Report)
+	assert.Contains(t, n.state.Report.Text, "full report pending")
+	saved, err := ReadNotificationState(dir)
+	require.NoError(t, err)
+	require.NotNil(t, saved.Report)
+}

@@ -1720,9 +1720,6 @@ func (w world) install(c *tool.Call) *tool.Out {
 	if err != nil {
 		return noteClaudeWait(noteGrokMonitor(tool.Fail(err.Error()).Fact("plist", path), a.Harness, a.Session), a.Harness, a.Friend, w.claudeWake(c, a.Friend))
 	}
-	if a.NotificationsOnly {
-		return o.Note("notification queue acceptance is not session proof; native proof and job state are unchanged")
-	}
 	// the delivery check, once, against the session the agent now serves; a fail is said, never undone
 	state := c.Str("state-dir") // where the agent just started keeps its files, as its run will choose them
 	if state == "" {
