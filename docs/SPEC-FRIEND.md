@@ -88,10 +88,10 @@ below): the daemon answering is never the session.
   the person's permission; measured 2026-10-04, the mkdir refused with
   "operation not permitted") puts it at `~/.nova-friend/<friend>` under the home
   directory, said on the record (`state: ... refused`). A reader with no
-  `--state-dir` (`status`, `check`) looks under `--dir` (else the plist's) where
-  a daemon wrote its status, else under the home directory, where a daemon from
-  before the move kept it. The activity walk skips `.nova-friend`: the daemon's
-  writes are not the session's. `status.json`
+  `--state-dir` (`status`, `check`, `renew`) looks under `--dir` (else the
+  plist's) where a daemon wrote its status, else under the home directory, where
+  a daemon from before the move kept it. The activity walk skips
+  `.nova-friend`: the daemon's writes are not the session's. `status.json`
   (the daemon: its state, rewritten whole every five seconds and when it
   changes; a reader calls the daemon up while the file is under thirty seconds
   old), `pong.json` (the `pong` verb: the session's last answer), `deliver.log`
@@ -522,7 +522,8 @@ pings are still answered and every message stays pending; the status file and
 coordinator is told once on the bus, `friend <name>: session <id> broken:
 <reason>`, to the seat the last ping named, else `--coordinator`. It stays
 broken until the daemon restarts (install again, or `launchctl kickstart -k`),
-which is how a renewed session is taken up. The finding of 2026-10-04:
+which is how a renewed session is taken up; `nova-friend renew` (Renew, below)
+does the whole of it. The finding of 2026-10-04:
 a friend's session refused every turn with `invalid_request_error` for two hours
 and nothing said so.
 
@@ -2823,6 +2824,46 @@ Each step has one `--step-timeout` budget (default 60s), including delivery and 
 A proof ends the ladder: `REACH PROOF step=<s> after=<duration> by=<pong|message>` and `REACH OK friend=<f> step=<s>`. Exit 0 on that proof. No proof prints `REACH NONE step=<s> waited=<d>` and the ladder climbs. No proof after the steps from `--from` prints `REACH FAILED friend=<f> tried=<steps>`, Exit 1, and one note of that line on the coordinator's own stream. A skipped push counts as tried. Exit 2 when it could not run (a flag, a store that did not answer, or the window step without the accessibility permission); that refusal sends no failed note. `--from bus|push|window` starts partway up. `--dry-run` prints `REACH DRY-RUN` and one `REACH STEP` per planned step, and sends, pushes and types nothing. `--json` carries the same value: facts `friend`, `step` (on OK), `tried` (on FAILED), `from` and `step_timeout` (on a dry run), `dry_run`; items `STEP` (`step`, `sent`, `nonce`), `PROOF` (`step`, `after`, `by`), `NONE` (`step`, `waited`, text when skipped).
 
 example: nova-friend reach --as ada --to bob --dry-run
+
+## Renew (cmd/nova-friend/renew.go; internal/friend/renew.go)
+
+A broken session gets a fresh one in the same harness and directory, as one
+verb: `nova-friend renew --as <coordinator> <friend> [--reason <text>]`. It
+reads the friend's daemon state: the installed agent's command line (its
+`--harness`, `--dir` and `--session`) and the status file, which says the
+harness, the directory, the pinned session (`pinned`, the daemon's
+`--session`; empty, the harness's newest) and the broken mark. The status file
+is read from `<dir>/.nova-friend` when the daemon wrote its status there, else
+`~/.nova-friend/<friend>` (`friend.FindStateDir`); `--state-dir` names it
+outright. It starts a new
+session through the harness's own command for one, and the session's first
+turn is the wake brief: the friend's `AGENTS.md` and `memory/` under its
+directory, named and never copied; the old session's id; why it was renewed
+(`--reason`, else the broken mark's reason; with neither, refused); and the
+pong line to run when a `PING <nonce>` arrives. Then it re-pins the daemon:
+the agent's `--session` in its plist, when one is installed, and the status
+file's pinned session with the broken mark cleared; and restarts the daemon
+(`launchctl bootout`, the status written, `launchctl bootstrap`). The old
+session is never deleted, edited or sent a turn. Every harness command goes
+through the Exec seam.
+
+The new-session command, per harness:
+
+| Harness | New-session command |
+| --- | --- |
+| opencode | `opencode run --dir <dir> <the wake brief>`; the new id is the session of `<dir>` the listing (`opencode session list --format json`) did not hold before |
+| codex, dsh, grok, antigravity, gemini | none this tool drives: refused, nothing changed; start one by hand, then `install ... --session <its id>` |
+| claude and the surveyed passive harnesses | none (no deliver command): refused, nothing changed |
+
+`RENEW OK friend= old= new=` leads, then `RENEW NEW friend= harness= old=
+new=`, `RENEW SEEDED friend= bytes=`, one `RENEW RAN command=` per launchctl
+command, and `RENEW PINNED friend= session=`, exit 0; with no agent installed a
+`RENEW NOTE` says to restart the daemon with `--session <new>`. A harness with
+no route, or no daemon state at all, is `RENEW REFUSED` with its remedy at exit
+1, nothing changed; 2 could not run (a flag, a state file, the harness or
+launchctl failing: a failure after the new session opened is `RENEW FAILED`
+with the new id and the install line that pins it). `--dry-run` reads the
+state files and prints the plan (`RENEW PLAN command=`), running nothing.
 
 ## Identity
 

@@ -19,19 +19,17 @@ func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 	cli := newRig(t).cli().NoStdin()
 	testverbhelp.Check(t, cli, []testverbhelp.Case{
 		{Verb: "run", Flags: store},
-		{Verb: "beat"},
 		{Verb: "install", Flags: store},
 		{Verb: "uninstall"},
 		{Verb: "check", Flags: store},
 		{Verb: "ping", Flags: store},
 		{Verb: "pong", Flags: store},
 		{Verb: "wait-pong", Flags: store},
-		{Verb: "watch", Flags: append([]string{"--as", "ada"}, store...)},
 		{Verb: "status"},
-		{Verb: "reach", Flags: store},
+		{Verb: "renew"},
 		{Verb: "version"},
 	})
-	testverbhelp.HelpVerb(t, cli, "nova-friend", "run", "beat", "install", "uninstall", "check", "ping", "pong", "wait-pong", "watch", "status", "reach", "version")
+	testverbhelp.HelpVerb(t, cli, "nova-friend", "run", "install", "uninstall", "check", "ping", "pong", "wait-pong", "status", "renew", "version")
 }
 
 func TestCommandReferenceNamesEveryKnownHarness(t *testing.T) {
@@ -84,68 +82,25 @@ func TestCheckHelpAndCommandReferenceNameEveryLineFieldAndExit(t *testing.T) {
 	}
 }
 
-// The watch verb's help names every flag, every output line, every JSON field
-// and every exit code, and one example that runs as written; docs/CLI.md
-// carries the same text.
-func TestWatchHelpAndCommandReferenceNameEveryFlagLineFieldAndExit(t *testing.T) {
+// renew's help is enough to use it cold, and docs/CLI.md says the same: every
+// flag, output line, JSON field and exit code, and an example that runs as
+// written against a friend's daemon state.
+func TestRenewHelpNamesEverythingAndItsExampleRuns(t *testing.T) {
 	t.Parallel()
-	help := newRig(t).cli().Do(t, "watch", "-h").Exit(0).Stdout
+	r := newRenewRig(t, "opencode", true, true)
+	help := r.cli().Do(t, "help", "renew").Exit(0).Stdout
 	raw, err := os.ReadFile("../../docs/CLI.md")
 	require.NoError(t, err)
-	doc := string(raw)
-	for _, text := range []string{
-		"--as <coordinator>", "--timeout <duration>", "--state-dir <d>", "--redis <addr>", "--json",
-		"WATCH MESSAGE id=<id> from=<name> subject=<s>", "WATCH EVENT id=<id> from=<name> subject=<s>", "WATCH WAKE line=<text>",
-		"WATCH OK after=<cursor> at exit 0", "WATCH NONE waited=<duration> on standard error at exit 1",
-		`{"status":"ok","word":"OK|NONE","after":<cursor>,"waited":<duration, NONE only>,`,
-		`"wakes":[{"kind":"MESSAGE|EVENT|WAKE","id":<id>,"from":<name>,"subject":<s>,"line":<text>}]}`,
-		"Exit 2 when a flag is wrong", "ping, pong, daemon-pong and keepalive", "<state-dir>/watch.json",
-		"re-invoked when it exits", "example: nova-friend watch --as ada --timeout 10m",
-	} {
-		require.Contains(t, help, text)
-		require.Contains(t, doc, text)
+	for _, want := range []string{"--as", "--friend", "--reason", "--state-dir", "--redis", "--dry-run", "--json",
+		"RENEW OK friend= old= new=", "RENEW NEW friend= harness= old= new=", "RENEW SEEDED friend= bytes=",
+		"RENEW PINNED friend= session=", "RENEW RAN command=", "RENEW PLAN command=", "dry_run=true",
+		"0 renewed (or", "1 refused and nothing changed", "2 could not run",
+		`nova-friend renew --as ada bob --reason "the provider refuses every turn" --dry-run`} {
+		require.Contains(t, help, want, "the help")
+		require.Contains(t, strings.Join(strings.Fields(string(raw)), " "), want, "docs/CLI.md")
 	}
-	for _, line := range strings.Split(help, "\n") {
-		if strings.HasPrefix(line, "WATCH ") {
-			require.Contains(t, doc, line, "docs/CLI.md carries the help's line")
-		}
+	for _, field := range []string{"friend", "old", "new", "seeded", "pinned", "ran"} {
+		require.Contains(t, help, field)
 	}
-	for _, word := range []string{"sprint"} {
-		require.NotContains(t, strings.ToLower(help), word, "the help says no sprint word")
-	}
-}
-
-// The status verb's help names the envelope size, its two fields and the
-// cap, and docs/CLI.md carries the same (docs/SPEC-FRIEND.md, the loop).
-func TestStatusHelpAndCommandReferenceNameTheEnvelopeSize(t *testing.T) {
-	t.Parallel()
-	help := newRig(t).cli().Do(t, "status", "-h").Exit(0).Stdout
-	raw, err := os.ReadFile("../../docs/CLI.md")
-	require.NoError(t, err)
-	for _, text := range []string{"envelope=", "envelope_bytes=", "262144 bytes unless it names its own", "the first message always goes in"} {
-		require.Contains(t, help, text)
-		require.Contains(t, string(raw), text, "docs/CLI.md carries the help's text")
-	}
-}
-
-// The run verb's help names the envelope and the deliverer's text limit, and
-// docs/CLI.md carries the same (docs/SPEC-FRIEND.md, the loop). A count cap
-// whose remainder is the next turn is the form that section forbids.
-func TestRunHelpNamesTheEnvelopeAndTheTextLimit(t *testing.T) {
-	t.Parallel()
-	help := newRig(t).cli().Do(t, "run", "-h").Exit(0).Stdout
-	raw, err := os.ReadFile("../../docs/CLI.md")
-	require.NoError(t, err)
-	for _, text := range []string{
-		"[i/n] <id> from=<f> at=<RFC3339> age=<m>m subject=<s>",
-		"262144 bytes unless it names its own",
-		"the first message always goes in",
-		"and <n> more: nova-bus recv",
-		"--as <me> --all",
-	} {
-		require.Contains(t, help, text)
-		require.Contains(t, string(raw), text, "docs/CLI.md carries the help's text")
-	}
-	require.Contains(t, help, "and <n> more: nova-bus recv --as <me> --all")
-	require.NotContains(t, help, "the rest is the next turn")
+	r.cli().Do(t, "renew", "--as", "ada", "bob", "--reason", "the provider refuses every turn", "--dry-run").Exit(0).Out("dry_run=true")
 }

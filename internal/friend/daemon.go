@@ -93,6 +93,9 @@ const (
 // bus's Fake, a fake harness and its own clock.
 type Daemon struct {
 	Friend, Harness, Dir string
+	// Session is the session the daemon is pinned to (--session; empty: the
+	// harness's newest in Dir), said in the status file so renew reads it.
+	SessionPin           string
 	Width                int
 	Store                bus.Store
 	Deliver              Deliverer
@@ -650,7 +653,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 	}
 	defer d.stageWG.Wait() // a stage under way ends with ctx (its git is killed) and its result is kept for the next Run
 	defer l.followWG.Wait()
-	d.status = Status{Friend: d.Friend, Harness: d.Harness, Started: d.m.LastPing, Width: d.Width}
+	d.status = Status{Friend: d.Friend, Harness: d.Harness, Dir: d.Dir, Pinned: d.SessionPin, Started: d.m.LastPing, Width: d.Width}
 	if !l.passive {
 		d.status.Session = SessionOK
 	}

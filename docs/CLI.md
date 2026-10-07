@@ -2105,6 +2105,38 @@ once the row's unit runs. What it gets wrong first: no `--redis` and no
 `NOVA_BUS_REDIS` (refused); no friend row but its own (refused, with
 `nova-config friend add`).
 
+### Renew a broken session
+
+```sh
+nova-friend renew --as ada bob --reason "the provider refuses every turn" --dry-run
+nova-friend renew --as <coordinator> <friend>
+```
+
+`renew` gives a friend whose session is broken a fresh one in the same
+harness and directory: it reads the daemon state (the installed agent's
+`--harness`, `--dir` and `--session`, and the status file under
+`<dir>/.nova-friend` where the daemon wrote its status there, else
+`~/.nova-friend/<friend>`, or `--state-dir`), starts a new session through
+the harness's own command (opencode: `opencode run --dir <dir> <the wake
+brief>`; a harness with none is refused at exit 1, nothing changed), seeds it
+with the wake brief (the friend's `AGENTS.md` and `memory/` named, the old
+session's id, the reason: `--reason`, else the broken mark's, and the pong
+line), re-pins the agent's `--session` and the status file, clears the broken
+mark, and restarts the daemon (`launchctl bootout`, then `bootstrap`). The old
+session is never deleted or edited. It prints `RENEW OK friend= old= new=`,
+then `RENEW NEW friend= harness= old= new=`, `RENEW SEEDED friend= bytes=`,
+`RENEW RAN command=` per launchctl command and `RENEW PINNED friend=
+session=`; `--json` carries the same facts (`friend`, `old`, `new`) and items
+(`new`, `seeded`, `ran`, `pinned`). `--dry-run` prints `RENEW OK friend=
+harness= dir= old= bytes= dry_run=true` and one `RENEW PLAN command=` per
+step, and runs nothing. The friend is the last word, or `--friend`; `--redis`
+(else `NOVA_BUS_REDIS`) is the store the pong line names. Exit 0 renewed (or,
+with --dry-run, the plan), 1 refused and nothing changed (no daemon state for
+the friend, or a harness with no new-session route), 2 could not run. What it gets
+wrong first: no `--reason` for a session that is not marked broken (refused:
+it wants why); a daemon from before renew with no agent installed (its status
+file names no directory: install the agent).
+
 ### Commands
 
 | Command | What it does |
@@ -2119,6 +2151,7 @@ once the row's unit runs. What it gets wrong first: no `--redis` and no
 | `wait-pong --from <friend> --nonce <n> [--timeout <d>]` | Waits for the pong on the log, from the friend's own stream |
 | `watch --as <coordinator> [--timeout <duration>] [--state-dir <d>] [--redis <addr>] [--json]` | The coordinator's wake: waits on its stream, its wake file and events (subject `event:`), prints one line per wake, then `WATCH OK after=<cursor>` (exit 1 `WATCH NONE` past `--timeout`); the cursor is saved in the state directory |
 | `status --as <me> --dir <d> [--state-dir <d>]` | The daemon's state, the last pong, the queue file's counts, and the envelope size: `envelope=<n>` messages the last turn's envelope carried and `envelope_bytes=<b>` its size (at most the harness's text limit, 262144 bytes unless it names its own; the first message always goes in; 0 before the first) |
+| `renew --as <coordinator> <friend> [--reason <text>] [--state-dir <d>] [--dry-run] [--json]` | A fresh session in the friend's harness and directory, seeded with the wake brief; the daemon re-pinned to it and restarted; the old session untouched |
 | `serve --as <coordinator> [--redis <addr>] [--dry-run]` | The coordinator's ping loop: a `PING` to every friend row each second, one line per friend up or down (ten seconds without a pong); until a signal |
 | `version`, `help [<verb>]` | The version line; the banner, or a verb's help |
 
