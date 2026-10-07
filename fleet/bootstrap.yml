@@ -45,9 +45,9 @@
           {{ (['-e nova_version=<the build to install>'] if nova_version is not defined else [])
              + (['-e nova_source=<a nova-tools checkout at that build>'] if nova_source is not defined else [])
              + (['fleet_store: exactly one host in the inventory group fleet_store'] if (groups['fleet_store'] | default([]) | length) != 1 else [])
-             + (groups['all'] | reject('in', groups['fleet_store'] | default([]) + groups['fleet_members'] | default([])) | map('regex_replace', '^(.*)$', '\\1: in neither fleet_store nor fleet_members') | list)
+             + (groups['all'] | reject('in', groups['fleet_store'] | default([]) + groups['fleet_members'] | default([])) | map('regex_replace', '$', ': in neither fleet_store nor fleet_members') | list)
              + (groups['all'] | map('extract', hostvars) | selectattr('nova_seat', 'undefined') | map(attribute='inventory_hostname')
-                | map('regex_replace', '^(.*)$', '\\1: nova_seat=<the seat the host opens its secrets as>') | list)
+                | map('regex_replace', '$', ': nova_seat=<the seat the host opens its secrets as>') | list)
              + (['nova_bootstrap_seat_keys=<the directory holding <seat>.key for each seat, on this machine>'] if nova_bootstrap_seat_keys is not defined else [])
              + (['nova_bootstrap_secrets_store=<the sealed secrets store directory, on this machine>'] if nova_bootstrap_secrets_store is not defined else [])
              + (['nova_bootstrap_backup_dir=<the absolute directory the store host keeps its backups in>'] if nova_bootstrap_backup_dir is not defined else [])
@@ -79,9 +79,9 @@
         get_checksum: false
       loop: >-
         {{ (groups['fleet_store'] + (groups['fleet_members'] | default([]))) | unique
-           | map('extract', hostvars, 'nova_seat') | map('regex_replace', '^(.*)$', nova_bootstrap_seat_keys ~ '/\\1.key') | list
+           | map('extract', hostvars, 'nova_seat') | map('regex_replace', '^', nova_bootstrap_seat_keys ~ '/') | map('regex_replace', '$', '.key') | list
            + (groups['fleet_store'] + (groups['fleet_members'] | default([]))) | unique
-           | map('extract', hostvars, 'nova_seat') | map('regex_replace', '^(.*)$', nova_bootstrap_secrets_store ~ '/\\1.yaml') | list
+           | map('extract', hostvars, 'nova_seat') | map('regex_replace', '^', nova_bootstrap_secrets_store ~ '/') | map('regex_replace', '$', '.yaml') | list
            + [nova_bootstrap_secrets_store ~ '/.sops.yaml'] }}
       register: bootstrap_owner_files
 
