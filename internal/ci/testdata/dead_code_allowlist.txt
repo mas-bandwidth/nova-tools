@@ -7,7 +7,6 @@ cmd/nova-sandbox 3
 cmd/nova-swarm 2
 internal/filelock 2
 internal/gitrun 2
-internal/nsprint/fn 5
 internal/nsprint/store 3
 internal/ntable 11
 internal/pkgselect 16
