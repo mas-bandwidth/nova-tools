@@ -164,8 +164,9 @@ CHECK line, so nothing was hidden to make it green. A gate that cannot go red is
 either: an --out with no day file in it is CHECK FAILED, never a green over nothing.
 
 sources --unattributed prints the path stems that were SEEN and matched no rule, heaviest
-first, capped by --max. That listing is what other=<pct>% on a day line is made of, and it
-is the evidence for improving the --repos file.
+first, capped by --max, with the mentions each stem got (one per message that touched a path
+in it). That listing is what other=<pct>% on a day line is made of, and it is the evidence
+for improving the --repos file.
 
 setup:
   mkdir -p ./transcripts ./out
@@ -561,7 +562,7 @@ func maxRemedy(verb string) string { return "nova-tokens " + verb + " ... --max 
 func sourceLine(s *sink, token string, src *tokens.Source) string {
 	kv := []any{"label", src.Label, "kind", src.Kind, "path", src.Path, "reports", src.ReportsList(), "day_basis", src.Basis}
 	for _, f := range []string{"files", "unreadable", "messages", "dup", "noid", "nousage", "unparsed", "comments", "redated", "superseded", "rows"} {
-		kv = append(kv, f, src.StatField(f))
+		kv = append(kv, f, count(src.StatField(f)))
 	}
 	return s.line(token, "SOURCE", "", kv...)
 }
