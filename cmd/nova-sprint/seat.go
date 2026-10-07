@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -618,7 +619,24 @@ func (a *app) cmdSeat(args []string, stdout, stderr io.Writer) int {
 		line += fmt.Sprintf(" record=%s server=%s", oneline.Field(orDashStr(s.Record, s.Holder)), oneline.Field(orDashStr(s.Server, "-")))
 	}
 	facts := map[string]any{"holder": s.Holder, "epoch": s.Epoch, "generation": s.Generation, "record": s.Record, "server": s.Server}
+	now := time.Now()
+	if st.Now != nil {
+		now = st.Now()
+	}
+	friends, err := seatFriendLines(ctx, st, now)
+	if err != nil {
+		return a.readFailed("seat", err, stderr)
+	}
+	if friends.text != "" {
+		facts["friends"] = friends.rows
+		if len(friends.alarms) > 0 {
+			facts["alarms"] = friends.alarms
+		}
+	}
 	if s.Drift == "" {
+		if friends.text != "" {
+			line += "\n" + friends.text
+		}
 		sayOK(stdout, c.json, "seat", line, facts)
 		return 0
 	}
@@ -628,8 +646,113 @@ func (a *app) cmdSeat(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stdout, string(b))
 		return 1
 	}
-	fmt.Fprintln(stdout, line+" DRIFT "+oneline.Escape(s.Drift))
+	line += " DRIFT " + oneline.Escape(s.Drift)
+	if friends.text != "" {
+		line += "\n" + friends.text
+	}
+	fmt.Fprintln(stdout, line)
 	return 1
+}
+
+// seatFriendReport is one friend's daemon as nova-sprint seat prints it
+// (docs/SPEC-SPRINT.md, daemon-supervised-r-b.w5).
+type seatFriendReport struct {
+	text   string
+	rows   []map[string]any
+	alarms []string
+}
+
+// seatFriendLines is one FRIEND line per friend of the roster, and one ALARM
+// line per condition: her daemon stamp differs from the newest stamp any
+// friend beats, or her last beat is older than the beat's down bound
+// (Beat.Alive). No friends: empty, so the seat line stays the one line it was.
+func seatFriendLines(ctx context.Context, st *store.Store, now time.Time) (seatFriendReport, error) {
+	beats, err := st.FriendBeats(ctx)
+	if err != nil || len(beats) == 0 {
+		return seatFriendReport{}, err
+	}
+	versions, err := seatDaemonVersions(ctx, st, beats)
+	if err != nil {
+		return seatFriendReport{}, err
+	}
+	names := slices.Sorted(maps.Keys(beats))
+	newest, have := "", false
+	var newestAt time.Time
+	for _, name := range names {
+		v := versions[name]
+		if v == "" {
+			continue
+		}
+		at := beats[name].At
+		if !have || at.After(newestAt) || (at.Equal(newestAt) && v > newest) {
+			newest, newestAt, have = v, at, true
+		}
+	}
+	bound := (sprint.MissedBeatsDown * sprint.BeatDeadline).String()
+	var b strings.Builder
+	var rows []map[string]any
+	var alarms []string
+	for _, name := range names {
+		beat := beats[name]
+		version := versions[name]
+		age := "-"
+		if beat.Beaten() {
+			age = now.Sub(beat.At).Round(time.Second).String()
+		}
+		shown := "-"
+		if version != "" {
+			shown = oneline.Field(version)
+		}
+		fmt.Fprintf(&b, "FRIEND friend=%s daemon_version=%s last_beat_age=%s\n", oneline.Field(name), shown, age)
+		row := map[string]any{"friend": name, "daemon_version": version, "last_beat_age": age}
+		if version != "" && have && version != newest {
+			line := fmt.Sprintf("ALARM friend=%s version drift: daemon_version=%s newest=%s", oneline.Field(name), oneline.Field(version), oneline.Field(newest))
+			fmt.Fprintln(&b, line)
+			alarms = append(alarms, line)
+			row["drift"] = true
+		}
+		if !beat.Alive(now) {
+			why := "no beat"
+			if beat.Beaten() {
+				why = "last beat older than " + bound
+			}
+			line := fmt.Sprintf("ALARM friend=%s daemon down: %s", oneline.Field(name), why)
+			fmt.Fprintln(&b, line)
+			alarms = append(alarms, line)
+			row["down"] = true
+		}
+		rows = append(rows, row)
+	}
+	text := strings.TrimSuffix(b.String(), "\n")
+	return seatFriendReport{text: text, rows: rows, alarms: alarms}, nil
+}
+
+// seatDaemonVersions reads daemon_version off each friend's beat record. The
+// stamp is a key on that record, not a field of sprint.Beat (FriendReport is
+// outside this card's paths). A record with none is an empty stamp.
+func seatDaemonVersions(ctx context.Context, st *store.Store, beats map[string]sprint.Beat) (map[string]string, error) {
+	out := map[string]string{}
+	kv, ok := st.B.(store.KV)
+	if !ok {
+		return out, nil
+	}
+	for name := range beats {
+		raw, found, err := kv.GetKey(ctx, friendBeatRecordKey(name))
+		if err != nil {
+			return nil, err
+		}
+		if !found || raw == "" {
+			continue
+		}
+		var rec struct {
+			DaemonVersion string `json:"daemon_version"`
+		}
+		if err := json.Unmarshal([]byte(raw), &rec); err != nil {
+			continue
+		}
+		out[name] = rec.DaemonVersion
+	}
+	return out, nil
 }
 
 // seatRepair is seat --repair: the coordinator key written from the seat's

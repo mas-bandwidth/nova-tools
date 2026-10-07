@@ -31,6 +31,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
 	"github.com/mas-bandwidth/nova-tools/internal/friend"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/redisauth"
@@ -225,6 +226,7 @@ func realWorld() world {
 			if !active.IsZero() {
 				args = append(args, "--active", active.UTC().Format(time.RFC3339))
 			}
+			args = append(args, "--daemon-version", buildinfo.Version(version))
 			return sprintBeat(ctx, server, append(args, proofArgs(proof)...))
 		},
 		beatDown: func(ctx context.Context, server, name string, active, until time.Time, reason string, proof friend.BeatWords) error {
@@ -232,6 +234,7 @@ func realWorld() world {
 			if !active.IsZero() {
 				args = append(args, "--active", active.UTC().Format(time.RFC3339))
 			}
+			args = append(args, "--daemon-version", buildinfo.Version(version))
 			_, err := sprintBeat(ctx, server, append(args, proofArgs(proof)...))
 			return err
 		},
@@ -813,7 +816,7 @@ or WAIT-PONG NONE at exit 1.`,
 			},
 			{
 				Name:    "status",
-				Usage:   "status --as <me> --dir <d> [--state-dir <d>]",
+				Usage:   "status --as <me> --dir <d> [--state-dir <d>] | status --all",
 				Example: "status --as bob --dir ./bob",
 				Effect:  tool.Inspection,
 				Detail: `Prints STATUS OK daemon=<up|down> harness= connection=<connected|silent> seat= last_ping= challenge=<quiet|challenged|deaf>
@@ -834,10 +837,21 @@ deliver (the daemon down, the session broken, the store failing) is down; otherw
 is the rule that decided it, as a person reads it ("no session answer 12m", "limit until Mon 1:00 PM"); evidence is every piece,
 "; "-separated: the harness, the session answer, the limit, the messages waiting on the stream (counted with --redis), the last
 turn's end and exit from the log. STATUS NONE at
-exit 1 when no daemon ever ran as --as (no status file in the state directory).`,
+exit 1 when no daemon ever ran as --as (no status file in the state directory). daemon_version= is the daemon's build stamp and
+last_beat_age= the age of its last beat that the sprint server answered (- for none); binary= the path it runs from. status --all
+lists every friend daemon agent installed for this login (~/Library/LaunchAgents/com.nova.friend-<name>.plist that runs the
+daemon), one AGENT line each: name= daemon=<up|down|none> daemon_version= last_beat= last_beat_age=, read from the status
+file in the agent's state directory (up while it is under ` + friend.DaemonStale.String() + ` old; none: no status file).`,
 				Flags: func(f *tool.Flags) {
-					f.Required("as", "your name")
-					f.Required("dir", "the friend's working directory, where the queue file lives")
+					f.String("as", "", "your name (required without --all)")
+					f.String("dir", "", "the friend's working directory, where the queue file lives (required without --all)")
+					f.Bool("all", false, "one line per friend daemon agent installed for this login (com.nova.friend-*): name, daemon up or down, daemon_version, last_beat_age")
+					f.Check(func(c *tool.Call) {
+						if !c.Bool("all") {
+							c.Want("as", "your name")
+							c.Want("dir", "the friend's working directory, where the queue file lives")
+						}
+					})
 					stateDir(f)
 					redis(f)
 				},
@@ -964,8 +978,9 @@ func (w world) run(c *tool.Call) *tool.Out {
 	var rowTokenCap atomic.Int64            // her row's per-card token cap as her beat last answered; DefaultTokenCap until it says, 0 none
 	rowTokenCap.Store(friend.DefaultTokenCap)
 	wall := friend.Wall{Dir: dir, Jobs: commaList(c.Str("wall-jobs")), Reads: commaList(c.Str("wall-reads")), Deny: commaList(c.Str("deny-self"))}
-	if bin, err := w.binary(); err == nil {
-		wall.Self = []string{bin}
+	self, selfErr := w.binary() // the daemon's binary, by path in its status
+	if selfErr == nil {
+		wall.Self = []string{self}
 	} // else no Self: a lane's child is refused, never run outside the wall
 	walledRaw := func(ctx context.Context, d, prog string, args []string, stdin string) (string, int, error) {
 		if w.wall == nil {
@@ -1205,7 +1220,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 	}
 	stager := w.stager(dir)
 	d := &friend.Daemon{
-		Friend: name, Harness: c.Str("harness"), Dir: dir, Width: c.Int("width"),
+		Friend: name, Harness: c.Str("harness"), Dir: dir, Width: c.Int("width"), Version: buildinfo.Version(version), Binary: self,
 		Store: sc.DaemonStore(), Deliver: sc.Deliver, Now: w.now, Pause: w.sleep,
 		Sent: func() time.Time {
 			if at := sent.Load(); at != nil {
@@ -1824,7 +1839,41 @@ func (w world) resume(c *tool.Call) *tool.Out {
 	return tool.Done().Fact("cleared", "yes").Fact("pause", msg)
 }
 
+// statusAll is status --all: one line per friend daemon agent installed under
+// the home's LaunchAgents, its daemon up or down by its status file's age
+// (friend.DaemonStale), its version and its last beat (docs/SPEC-FRIEND.md,
+// daemon-supervised-r-b.w5).
+func (w world) statusAll() *tool.Out {
+	agents, err := friend.InstalledAgents(w.home)
+	if err != nil {
+		return tool.Refuse("the installed agents cannot be read: " + err.Error())
+	}
+	now := w.now()
+	o := tool.Done().Fact("agents", len(agents))
+	for _, a := range agents {
+		s, found, err := friend.ReadStatus(a.StateDir)
+		daemon := "none"
+		switch {
+		case err != nil:
+			o.Note(a.Friend + ": the status file cannot be read: " + err.Error())
+		case found && now.Sub(s.At) < friend.DaemonStale:
+			daemon = "up"
+		case found:
+			daemon = "down"
+		}
+		o.Item("agent", "name", a.Friend, "daemon", daemon, "daemon_version", dash(s.DaemonVersion),
+			"last_beat", stamp(s.LastBeat), "last_beat_age", age(now, s.LastBeat), "state_dir", a.StateDir)
+	}
+	if len(agents) == 0 {
+		o.Note("no friend daemon agent is installed for this login; run: nova-friend install --as <me> --harness <h> --dir <d>")
+	}
+	return o
+}
+
 func (w world) status(c *tool.Call) *tool.Out {
+	if c.Bool("all") {
+		return w.statusAll()
+	}
 	dir, name := c.Str("dir"), c.Str("as")
 	state := w.stateDir(c, dir)
 	s, found, err := friend.ReadStatus(state)
@@ -1851,7 +1900,8 @@ func (w world) status(c *tool.Call) *tool.Out {
 	o := tool.Done().Fact("daemon", daemon).Fact("harness", s.Harness).Fact("status_age", age(now, s.At)).
 		Fact("connection", s.Connection).Fact("seat", dash(s.Seat)).Fact("last_ping", stamp(s.LastPing)).Fact("ping_age", age(now, s.LastPing)).
 		Fact("challenge", s.Challenge).Fact("nonce", dash(s.Nonce)).Fact("last_pong", stamp(p.At)).Fact("session_pong_age", age(now, p.At)).Fact("daemon_pong_age", age(now, s.LastDaemonPong)).Fact("pongs", s.Pongs).
-		Fact("queue", queue).Fact("working", working).Fact("width", width).Fact("beats", s.Beats).Fact("last_beat", stamp(s.LastBeat)).Fact("delivered", s.Delivered).Fact("session", dash(s.Session)).Fact("mode", dash(s.Mode))
+		Fact("queue", queue).Fact("working", working).Fact("width", width).Fact("beats", s.Beats).Fact("last_beat", stamp(s.LastBeat)).Fact("last_beat_age", age(now, s.LastBeat)).
+		Fact("daemon_version", dash(s.DaemonVersion)).Fact("binary", dash(s.Binary)).Fact("delivered", s.Delivered).Fact("session", dash(s.Session)).Fact("mode", dash(s.Mode))
 	if s.Lanes != "" {
 		o.Fact("lanes", tool.Text(s.Lanes))
 	}
