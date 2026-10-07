@@ -438,3 +438,14 @@ func TestGeneratedBriefPinsTheFriendReportFirstTwoLines(t *testing.T) {
 	assert.Contains(t, brief, "first line exactly Verdict: LAND|HOLD|FAIL, second line exactly Head: <40-hex>")
 	assert.Contains(t, brief, "for HOLD and FAIL omit Head: and leave line 2 blank")
 }
+
+// A generated brief does not ask the worker to set TMPDIR or GOTMPDIR by hand: the lane
+// that starts the card sets both inside the job directory and removes that directory
+// (docs/SPEC-SPRINT.md section 18, bench lanes).
+func TestAGeneratedBriefDoesNotAskTheWorkerToSetTmp(t *testing.T) {
+	t.Parallel()
+	brief := Render(header, Card{ID: "tmp", File: "internal/x/x.go", Paths: []string{"internal/x/x.go"}, Test: "internal/x TestX", Tier: "pro", Kind: "fix-red", Task: "Fix x."})
+	assert.Contains(t, brief, "TMPDIR and GOTMPDIR are already set inside the job directory by the card's lane")
+	assert.Contains(t, brief, "set neither by hand")
+	assert.NotContains(t, brief, "set TMPDIR and GOTMPDIR inside the job directory")
+}
