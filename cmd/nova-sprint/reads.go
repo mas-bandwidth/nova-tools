@@ -643,6 +643,10 @@ type whereView struct {
 	// tick's where record (sprint.ReadsWaiting).
 	Backup       string `json:"backup"`
 	ReadsWaiting int    `json:"reads_waiting"`
+	// ReadCards is the epoch's read cards ready, working and done, and each fleet and friends
+	// row of tables carries its cards by level and its reads (rowCardFields), from the tick's
+	// where record (sprint.RowCardCounts).
+	ReadCards sprint.ReadCardCounts `json:"read_cards"`
 	// Priorities is every open primary whose level is not normal, by level, and
 	// StreamPriorities each stream's default level that is not normal, from the tick's where
 	// record (sprint.PriorityCounts, sprint.StreamPriorities); absent when every card is normal.
@@ -1160,6 +1164,7 @@ func (a *app) whereOf(ctx context.Context, st *store.Store, stale time.Duration,
 	working, review, merging := pipelineCounts(shapes[0])
 	v.Backup = sprint.BackupOf(int(working), int(review), int(merging))
 	v.ReadsWaiting, v.Priorities, v.StreamPriorities = facts.ReadsWaiting, facts.Priorities, facts.StreamPriorities
+	v.ReadCards = facts.ReadCards
 	v.Width = upWidth(shapes[3])
 	v.Buffer = fmt.Sprintf("%d/%d", v.Ready, 2*v.Width)
 	v.Low = v.Ready < int64(v.Width)
@@ -1231,6 +1236,9 @@ func (a *app) whereOf(ctx context.Context, st *store.Store, stale time.Duration,
 			cells := map[string]any{}
 			for j, col := range t.Columns {
 				cells[col.Name] = ntable.CellText(t.Columns, r, j)
+			}
+			if logical == sprint.Fleet {
+				rowCardFields(cells, facts.RowCards[r.Key])
 			}
 			rows[r.Key] = cells
 		}
@@ -1308,6 +1316,15 @@ func (a *app) whereOf(ctx context.Context, st *store.Store, stale time.Duration,
 			cells[col.Name] = ntable.CellText(ft.Columns, r, j)
 		}
 		v.Tables[sprint.Friends][r.Key] = cells
+	}
+	for _, f := range friends {
+		if cells := v.Tables[sprint.Friends][f.Name]; cells != nil {
+			n := facts.RowCards[sprint.FriendRow(f.Name)]
+			if f.Status == sprint.Down {
+				n = map[string]int{"reads_ready": n["reads_ready"]} // down, she works nothing
+			}
+			rowCardFields(cells, n)
+		}
 	}
 	// the table layer draws it as it draws the fleet: header, rule, rows, rule,
 	// the folded footer; with no friend the header, its rule and the footer
@@ -1401,6 +1418,15 @@ func perLandedColumn(t ntable.Table, streams map[string]sprint.TierCosts) ntable
 	}
 	t.Rows = rows
 	return t
+}
+
+// rowCardFields writes on a row of tables its fleet row's counts (sprint.RowCardFields): its
+// working cards by level, highest first, summing to its working, and its reads ready; each
+// "0" when it has none, a count cell's text as every cell of tables is.
+func rowCardFields(cells map[string]any, n map[string]int) {
+	for _, k := range sprint.RowCardFields {
+		cells[k] = strconv.Itoa(n[k])
+	}
 }
 
 // splitFriendRows is the fleet table without the friends' rows (sprint.FriendRow), and
