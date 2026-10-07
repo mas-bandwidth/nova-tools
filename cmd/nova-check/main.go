@@ -46,12 +46,13 @@ usage:
                                                      then nocode. Both run even if the
                                                      first says NO.
   nova-check attest --home <dir> --manifest <file>   did the full self load
-  nova-check links  --dir <dir> [--file <path>] [--exclude <prefix>]
+  nova-check links  --dir <dir> [--file <path>] [--exclude <prefix>] [--allow-empty]
                                                      every relative md link resolves;
                                                      --file (repeatable) checks just those
                                                      files, not the whole tree; --exclude
                                                      leaves a subtree unscanned and skips
-                                                     links into it
+                                                     links into it; --allow-empty accepts
+                                                     a tree that held no markdown
   nova-check kernel --file <file> --max-bytes <n>    kernel size budget, in bytes
   nova-check kernel --file <file> --max-tokens <n> --bytes-per-token <r>
                                                      kernel size budget, in tokens
@@ -127,11 +128,12 @@ usage:
                                                      the stream names.
   nova-check spelling (--dir <dir> | --file <path> | --path <pattern>)
                       [--ignore <word|@file>] [--write] [--exclude <prefix>]
-                      [--max <n>] [--dry-run]
+                      [--max <n>] [--dry-run] [--allow-empty]
                                                      check markdown or prose for misspellings;
                                                      fenced code blocks and inline code spans
                                                      are blanked so code is not prose;
-                                                     --write fixes misspellings in place
+                                                     --write fixes misspellings in place;
+                                                     --allow-empty accepts a read of no files
 
   --json           on attest, links, kernel, nocode, floors, corpus, hygiene, spelling
                    and version: structured findings and totals; convergence uses
@@ -260,6 +262,17 @@ var effects = map[string]string{
 	"convergence":    "local write: --state stores the two-tick streak (--dry-run writes none); LANDING and PRS read the forge through gh, over the network, and CLASSES reads --repo-dir through git",
 	"spelling":       "local write: --write edits the files in place (--dry-run, or no --write, writes nothing)",
 	"version":        "inspection: prints this build identity",
+}
+
+// looks is each check verb's declaration of the fact its OK line counts as what
+// the verb read: the skeleton's no-green-over-nothing field (Verb.Looks), which
+// this hand-dispatched tool declares here because the field is not on
+// internal/tool. A verb that read nothing is not green, so it prints FAILED and
+// names --allow-empty as the way to say the empty set is the answer
+// (docs/STANDARD.md section 2, exit codes tell the truth).
+var looks = map[string]string{
+	"links":    "files",
+	"spelling": "files",
 }
 
 // verbHelp is the lines run adds to a verb's -h: its effect, and for the
@@ -567,6 +580,7 @@ func cmdLinks(e env, args []string, stdout, stderr io.Writer) int {
 	fs.Var(&exclude, "exclude", "path prefix not scanned, and links into it not checked (repeatable; empty by default)")
 	var files repeatable
 	fs.Var(&files, "file", "one markdown file to scan, narrowing the walk to just these (repeatable; --dir is still the resolution root)")
+	allowEmpty := fs.Bool("allow-empty", false, "answer OK when zero markdown files are read; without it, a run that read nothing is FAILED")
 	if !parse(fs, args, stderr, map[string]*string{"dir": dir}) {
 		return 2
 	}
@@ -585,8 +599,14 @@ func cmdLinks(e env, args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return refuse(stderr, " links", oneline.Err(err))
 	}
+	// One value, two renderings: the empty-set FAILED and the way out are built
+	// once, so the line and the JSON cannot drift (docs/STANDARD.md section 2).
+	emptyRemedy := ""
+	if res.MDFiles == 0 && !*allowEmpty {
+		emptyRemedy = "nova-check links --dir " + oneline.ShellWord(*dir) + " --allow-empty"
+	}
 	if asJSON {
-		return renderLinks(stdout, *dir, res, *maxFlag)
+		return renderLinks(stdout, *dir, res, *maxFlag, emptyRemedy)
 	}
 	if len(res.Broken) > 0 {
 		list := bounded.Capped(stderr, *maxFlag, "LINKS", "broken", maxRemedy)
@@ -606,6 +626,15 @@ func cmdLinks(e env, args []string, stdout, stderr io.Writer) int {
 		// and never N: the one number a reader wanted was the one thing they had to
 		// derive by counting the output.
 		fmt.Fprintf(stderr, "LINKS FAILED files=%d links=%d broken=%d shown=%d excluded=%d\n", res.MDFiles, res.Checked, list.Total(), list.Shown(), res.Excluded)
+		return 1
+	}
+	if emptyRemedy != "" {
+		// No green over nothing: the walk read no markdown file, so it read
+		// nothing, and an OK over nothing is not green (docs/STANDARD.md
+		// section 2, exit codes tell the truth). The FAILED names the count and
+		// the flag that accepts the empty set.
+		fmt.Fprintf(stderr, "LINKS FAILED %s=0 links=%d excluded=%d: looked at nothing; run: %s\n",
+			oneline.Field(looks["links"]), res.Checked, res.Excluded, oneline.Escape(emptyRemedy))
 		return 1
 	}
 	fmt.Fprintf(stdout, "LINKS OK files=%d links=%d excluded=%d\n", res.MDFiles, res.Checked, res.Excluded)
