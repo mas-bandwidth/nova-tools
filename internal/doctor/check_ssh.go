@@ -2,6 +2,7 @@ package doctor
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 )
