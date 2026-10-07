@@ -64,7 +64,11 @@ ceiling: a flash card escalated to pro shows both), every dollar of the stream's
 tier, else the route name's prefix `pro-*`, `flash-*`, `heavy-*`, `frontier-*`), else
 the card attempt's (its `tier_now`, else its pinned `tier`, else its brief's), and a
 card's records past the list's bound take the card attempt's; `no tier` only when none
-of these exists (`TestCostByTierTakesTheRouteTierWhenTheRunRecordsNone`); and
+of these exists (`TestCostByTierTakesTheRouteTierWhenTheRunRecordsNone`). The displayed
+partition rounds the stream total up once: each tier keeps its whole cents, and the
+remaining cents go to the largest fractional remainders, ties in alphabetical tier
+order. Thus displayed tier amounts sum exactly to `total_cost`, including fractional-cent
+records (`TestCostByTierAllocatesFractionalCentsWithoutChangingTheTotal`); and
 `reconciles`, each provider's latest cost reconciliation (the sprint's, the same on every
 stream: its day, the provider's figure, the records', the gap), money strings as the cost column shows them. All of it is counted
 by the tick from the sprint it reads anyway and kept in the where record

@@ -29,7 +29,7 @@ type TierCosts struct {
 	// rounded up (MoneyText); "-" with nothing landed or nothing priced.
 	PerLanded string `json:"per_landed"`
 	// CostByTier is the stream's spend by the tier each attempt and read ran on, dollars
-	// and cents rounded up, over every card of the stream, every dollar of TotalCost in one
+	// and cents allocated from the rounded-up total, over every card of the stream, every dollar of TotalCost in one
 	// tier: a record with no tier takes its route's (runTier), and a card's records past
 	// the list's bound (in its total, not its list) take the card's; "no tier" only when
 	// none of these names one.
@@ -194,19 +194,50 @@ func streamTierCosts(s *Snapshot, stream string) TierCosts {
 	if len(t.Readers) == 0 {
 		t.Readers = nil
 	}
-	tiers := make([]string, 0, len(byTier))
-	for tier := range byTier {
-		tiers = append(tiers, tier)
-	}
-	sort.Strings(tiers)
-	for _, tier := range tiers {
-		t.CostByTier[tier] = cardcost.Cents(byTier[tier])
-	}
+	t.CostByTier = tierCostCents(byTier)
 	if unrec := UnreconciledSpend(s); unrec > 0 {
 		t.Unreconciled = cardcost.Cents(new(big.Rat).SetFloat64(unrec))
 	}
 	t.Reconciles = LatestReconciles(s)
 	return t
+}
+
+// tierCostCents partitions the rounded-up stream total into displayed tier cents.
+// Whole cents stay with their tier; remaining cents go to the largest fractional
+// remainders, with alphabetical ties. Recorded exact amounts are never changed.
+func tierCostCents(byTier map[string]*big.Rat) map[string]string {
+	type allocation struct {
+		tier     string
+		whole    *big.Int
+		fraction *big.Rat
+	}
+	tiers := make([]string, 0, len(byTier))
+	for tier := range byTier {
+		tiers = append(tiers, tier)
+	}
+	sort.Strings(tiers)
+	parts := make([]allocation, 0, len(tiers))
+	remainders := new(big.Rat)
+	for _, tier := range tiers {
+		cents := new(big.Rat).Mul(byTier[tier], big.NewRat(100, 1))
+		whole := new(big.Int).Quo(cents.Num(), cents.Denom())
+		fraction := new(big.Rat).Sub(cents, new(big.Rat).SetInt(whole))
+		remainders.Add(remainders, fraction)
+		parts = append(parts, allocation{tier, whole, fraction})
+	}
+	left := new(big.Int).Quo(remainders.Num(), remainders.Denom()).Int64()
+	if !remainders.IsInt() {
+		left++
+	}
+	sort.SliceStable(parts, func(i, j int) bool { return parts[i].fraction.Cmp(parts[j].fraction) > 0 })
+	out := make(map[string]string, len(parts))
+	for i, part := range parts {
+		if int64(i) < left {
+			part.whole.Add(part.whole, big.NewInt(1))
+		}
+		out[part.tier] = cardcost.Cents(new(big.Rat).SetFrac(part.whole, big.NewInt(100)))
+	}
+	return out
 }
 
 // runTier is the tier a record's run is counted under: the tier it recorded, else its

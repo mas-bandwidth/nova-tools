@@ -677,10 +677,13 @@ and the CHANGELOG section carries `Spend gate waived: <why> (window <from>..<to>
 reconciliation (`streams[<s>].reconciles`, the sprint's, the same on every stream), and the
 per-tier split (`streams[<s>].cost_by_tier`) accounts for every dollar of `total_cost`: a run with
 no recorded tier takes its route's (the route row's tier, else the route name's prefix `pro-*`,
-`flash-*`, `heavy-*`, `frontier-*`), else the card attempt's; `no tier` only when none exists.
+`flash-*`, `heavy-*`, `frontier-*`), else the card attempt's; `no tier` only when none exists. The stream total is rounded up once; tiers keep their whole cents and receive
+remaining cents by largest fractional remainder, with alphabetical ties, so displayed
+tier amounts sum exactly to the displayed total.
 
 *Tests: `TestAReleaseIsRefusedWhenRecordedSpendMissesTheProvidersOwn`, `TestOpenRouterSpendIsTheActivityDaysAndToday`,
-`TestReceiptsAreReadOnlyForTheirWindow`, `TestCostByTierTakesTheRouteTierWhenTheRunRecordsNone`.*
+`TestReceiptsAreReadOnlyForTheirWindow`, `TestCostByTierTakesTheRouteTierWhenTheRunRecordsNone`,
+`TestCostByTierAllocatesFractionalCentsWithoutChangingTheTotal`.*
 
 ## What this file does not cover
 

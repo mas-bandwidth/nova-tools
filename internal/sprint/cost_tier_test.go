@@ -59,3 +59,43 @@ func TestCostByTierTakesTheRouteTierWhenTheRunRecordsNone(t *testing.T) {
 	assert.Equal(t, total.FloatString(2), sum.FloatString(2), "every dollar of the total is in one tier: %v", tc.CostByTier)
 	assert.Equal(t, "$7.00", tc.CostByTier["pro"], "the read on pro-x and the three records past the bound, on the card's tier")
 }
+
+// Displayed tier amounts allocate the stream's rounded-up total once, so rounding
+// fractional cents never creates dollars the stream did not spend.
+func TestCostByTierAllocatesFractionalCentsWithoutChangingTheTotal(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		name    string
+		amounts map[string]string
+		want    map[string]string
+		total   string
+	}{
+		{"two equal fractions", map[string]string{"flash": "0.001", "pro": "0.001"}, map[string]string{"flash": "$0.01", "pro": "$0.00"}, "$0.01"},
+		{"larger fraction receives the cent", map[string]string{"flash": "0.001", "pro": "0.009"}, map[string]string{"flash": "$0.00", "pro": "$0.01"}, "$0.01"},
+		{"whole cents stay with their tier", map[string]string{"flash": "1.001", "pro": "2.009"}, map[string]string{"flash": "$1.00", "pro": "$2.01"}, "$3.01"},
+		{"more than one residual cent", map[string]string{"flash": "0.009", "heavy": "0.008", "pro": "0.007"}, map[string]string{"flash": "$0.01", "heavy": "$0.01", "pro": "$0.01"}, "$0.03"},
+		{"exact cents", map[string]string{"flash": "0.01", "pro": "0.02"}, map[string]string{"flash": "$0.01", "pro": "$0.02"}, "$0.03"},
+		{"zero spend", map[string]string{"flash": "0", "pro": "0"}, map[string]string{"flash": "$0.00", "pro": "$0.00"}, "$0.00"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			w := newWorld(t)
+			w.s.Work.SetRows([]string{"s1"})
+			pr := &Card{ID: "s1-1", Row: "s1", Col: Working, Fields: map[string]string{}}
+			for tier, amount := range tt.amounts {
+				RecordConsumer(pr, Consumer{Kind: "work", Card: pr.ID, Key: tier, Tier: tier, End: "ok", At: stamp(w.s.Now), Usage: cardcost.ParseUsage("input=1 actual_usd=" + amount + " actual_by=harness")})
+			}
+			w.s.Work.Put(pr)
+			tc := StreamTierCosts(w.s)["s1"]
+			assert.Equal(t, tt.want, tc.CostByTier)
+			assert.Equal(t, tt.total, tc.TotalCost)
+			sum := new(big.Rat)
+			for _, amount := range tc.CostByTier {
+				usd, ok := new(big.Rat).SetString(amount[1:])
+				require.True(t, ok)
+				sum.Add(sum, usd)
+			}
+			assert.Equal(t, tc.TotalCost, "$"+sum.FloatString(2), "displayed tiers must sum to the displayed stream total")
+		})
+	}
+}
