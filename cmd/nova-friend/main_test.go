@@ -199,6 +199,7 @@ func TestRefusalsNameEveryProblemAndWhatEachWants(t *testing.T) {
 		{"status nothing given", []string{"status"}, []string{"--as is required", "--dir is required"}},
 		{"check delivery nothing given", []string{"check", "--harness", "opencode"}, []string{"--as is required", "--dir is required"}},
 		{"check bad harness and window", []string{"check", "--as", "bob", "--harness", "vim", "--dir", "d", "--within", "0s"}, []string{`--harness "vim" is no harness`, "--within wants a positive duration"}},
+		{"renew nothing given", []string{"renew"}, []string{"--as is required", "--friend is required", "the last word or --friend"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
