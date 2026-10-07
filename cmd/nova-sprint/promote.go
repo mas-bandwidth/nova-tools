@@ -261,7 +261,7 @@ func (a *app) cmdPromote(args []string, stdout, stderr io.Writer) int {
 }
 
 // step is one promote pass: fetch, cut from origin's sprint tip, merge the
-// target into the cut, gate, push, open the pull request, then watch it. Each
+// target into the cut, gateMergedCut, push, open the pull request, then watch it. Each
 // step prints a line as it goes, so the verb never waits without saying on what.
 func (p *promoter) step(ctx context.Context, stdout, stderr io.Writer) (promoteOutcome, int) {
 	o := promoteOutcome{Live: p.live, Dry: p.dry}
@@ -381,11 +381,8 @@ func (p *promoter) step(ctx context.Context, stdout, stderr io.Writer) (promoteO
 	if _, err := p.git(ctx, "branch", "--no-track", branch, cut); err != nil {
 		return o, p.fail(stderr, err)
 	}
-	if p.check != "" || p.gate != nil {
-		fmt.Fprintf(stdout, "PROMOTE GATE branch=%s sha=%s\n", oneline.Field(branch), cut)
-	}
-	if _, err := p.runGate(ctx, cut); err != nil {
-		return o, p.fail(stderr, err)
+	if code := p.gateMergedCut(ctx, stdout, stderr, branch, cut); code != 0 {
+		return o, code
 	}
 	spec := "refs/heads/" + branch + ":refs/heads/" + branch
 	if strings.Contains(spec, "refs/heads/"+live+":") {
@@ -794,6 +791,21 @@ func (p *promoter) rev(ctx context.Context, rev string) (string, error) {
 		return "", errors.New("no revision " + rev)
 	}
 	return out, nil
+}
+
+// gateMergedCut is the tree gate on the merged cut: it runs after the target
+// is merged into the cut and before that cut is pushed. A configured gate
+// prints one line and a failure stops the promotion; with no gate the cut
+// passes. Nothing is resolved or pushed here.
+func (p *promoter) gateMergedCut(ctx context.Context, stdout, stderr io.Writer, branch, cut string) int {
+	if p.check == "" && p.gate == nil {
+		return 0
+	}
+	fmt.Fprintf(stdout, "PROMOTE GATE branch=%s sha=%s\n", oneline.Field(branch), cut)
+	if _, err := p.runGate(ctx, cut); err != nil {
+		return p.fail(stderr, err)
+	}
+	return 0
 }
 
 func (p *promoter) runGate(ctx context.Context, sha string) (string, error) {
