@@ -25,15 +25,15 @@
   /* the six card states */
   --s-waiting: #4a4f58;
   --s-ready: #7d8490;
-  --s-working: #3987e5;
+  --s-working: #3d9bff;  /* brighter, to sit with the reader orange (the owner, 2026-10-06) */
   /* a card's priority by colour: a blocker bright red, a critical dark red, a read (reader) the
      orange of the robot logo's shoes (logo-robot-384.png's modal shoe pixel), work blue */
   --p-blocker: #ff1a1a;
   --p-critical: #9b1c1c;
   --p-reader: #fb8321;
   --p-work: var(--s-working);
-  --s-review: #d55181;
-  --s-merging: #c98500;
+  --s-review: #fb8321;   /* review is the reader orange, the colour of a read card (the owner, 2026-10-06) */
+  --s-merging: #d55181;  /* merging takes the pink review had */
   --s-landed: #199e70;
   /* status, reserved: never a series */
   --good: #22b35e;
@@ -158,6 +158,7 @@ img#logo.logo-tile { width: 6rem; height: 6rem; flex: none; }
 .merging { background: var(--s-merging); } .landed { background: var(--s-landed); }
 .p-blocker { background: var(--p-blocker); } .p-critical { background: var(--p-critical); }
 .p-reader { background: var(--p-reader); } .p-work { background: var(--p-work); }
+/* a Fleet or Friends row's working cells by level take the same classes (docs/SPEC-SPRINT-DASHBOARD.md, Fleet) */
 .marks { display: flex; flex-wrap: wrap; gap: 0.25rem; margin-top: 0.75rem; }
 .mark { width: 1rem; height: 1rem; border-radius: 2px; }
 
@@ -266,10 +267,14 @@ footer a:hover { color: var(--text); }
    track to the figure; cells a fixed 27 x 11 px with 4 px gaps; the bar column is the widest bar
    plus 8 px each side (the cells' padding), so the bar reads centred in its own column */
 .fleet .row, .friends .row { --pad: 2rem; --gap: 3.5rem; --S: 9.5rem; column-gap: var(--gap); padding: 0 var(--pad); }
-.fleet .row { grid-template-columns: var(--name-w) var(--status-w) minmax(4.5rem, 1fr) calc(var(--track-w, 61.75rem) + 1rem) 7.5rem minmax(3.75rem, 1fr) minmax(5.375rem, 1fr) minmax(5.375rem, 1fr); }
-.friends .row { grid-template-columns: var(--name-w) var(--status-w) minmax(4.5rem, 1fr) calc(var(--track-w, 61.75rem) + 1rem) 7.5rem minmax(3.75rem, 1fr) minmax(5.375rem, 1fr); }
+/* the fraction (10rem) and done (5.5rem) columns are fixed, never content-sized: each row is its own
+   grid, so a content-sized column made the Total row (a longer "n / width", a 4-digit done) wider
+   than the rows and its figures sat off the line (the owner, 2026-10-06 9:28 PM; 9:33 PM "that did it") */
+.fleet .row { grid-template-columns: var(--name-w) var(--status-w) minmax(4.5rem, 1fr) calc(var(--track-w, 61.75rem) + 1rem) 10rem 5.5rem minmax(5.375rem, 1fr) minmax(5.375rem, 1fr); }
+.friends .row { grid-template-columns: var(--name-w) var(--status-w) minmax(4.5rem, 1fr) calc(var(--track-w, 61.75rem) + 1rem) 10rem 5.5rem minmax(5.375rem, 1fr); }
 .fleet .cells, .friends .cells { gap: .25rem; grid-auto-rows: .6875rem; padding: 0 .5rem; }
 .fleet .row.head > :nth-child(4), .friends .row.head > :nth-child(4) { margin-left: .5rem; }
+.panel.off { opacity: .45; } /* a side switched off (set --fleet off, --friends off) is dimmed (the owner, 2026-10-06 8:02 PM) */
 
 /* compact forms: Work is stream | status (dot) | landed; Fleet and Friends are
    Machine | Status (dot only) | Working "n / width" | OK% */

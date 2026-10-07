@@ -204,13 +204,14 @@ func TestTheBarColumnHasEqualInsets(t *testing.T) {
 		assert.InDelta(t, left, right, 1.0/16/2, "%s: first cell %.4frem from the bar column's left edge, widest row's last cell %.4frem from its right edge (width 24 of %d rows)", id, left, right, len(tb.Rows))
 		assert.Greater(t, left, 0.0, "%s: the insets are real, not zero", id)
 
-		// nothing else moves: the count's box begins tw + 4rem and ends tw + 11.5rem after the
-		// first cell, as it did when the column was tw + .5rem with the slack on the right
+		// nothing else moves: the count's box begins tw + 4rem after the first cell, as it did
+		// when the column was tw + .5rem with the slack on the right, and ends tw + 14rem after it,
+		// the fraction column a fixed 10rem (docs/SPEC-SPRINT-DASHBOARD.md, Fleet, the Total row line)
 		gapRem := remOf(t, cssDecl(t, css, ".fleet .row, .friends .row", "--gap"))
 		countW := trackLen(t, tracks[4], tb.TrackW)
 		fromFirstCell := (colW - left) + gapRem + countPad
 		assert.InDelta(t, cellsW+4.0, fromFirstCell, 1.0/16/2, "%s: the count's content began elsewhere", id)
-		assert.InDelta(t, cellsW+11.5, (colW-left)+gapRem+countW, 1.0/16/2, "%s: the count's column ended elsewhere", id)
+		assert.InDelta(t, cellsW+14.0, (colW-left)+gapRem+countW, 1.0/16/2, "%s: the count's column ended elsewhere", id)
 
 		// the head's "working" label stays where it was, .5rem into the column
 		assert.InDelta(t, 0.5, remOf(t, cssDecl(t, css, ".fleet .row.head > :nth-child(4), .friends .row.head > :nth-child(4)", "margin-left")), 1.0/16/2, "%s: the head label moved", id)

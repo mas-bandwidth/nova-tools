@@ -160,20 +160,31 @@ from the owner edits one line here and nothing else moves.
   computes nothing of its own. Not yet: "since <time>" beside it; `where --json` carries no stats_since yet
   (cmd/nova-sprint/reads.go, owed).
 
-## Fleet (title "Fleet"; subtitle "<u> up · <h> held · <d> down")
+## Fleet (title "Fleet"; subtitle "<u> up · <h> held · <d> down", then " · off" and " · tiers <list>" as below)
 - Columns: machine | status | ready | working | done | ok% | load (headers exactly so, all lowercase).
 - Machine column capped, and the Status column takes part in the even spread like the numeric columns (as in Work
   streams); names never dimmed. Status pill: up (green), held (amber), down (red).
 - Working: a cell track, one cell per slot of the machine's width (nothing drawn beyond its width), cells 1.5x their current
   width (~27 px wide, height unchanged) with a 4 px gap, so the Working column is about 1.5x as wide, lit blue for working, dark fill for free, aligned on one grid down
-  the column; then the "n / width" figure right after the track. Gaps: Ready to track and track to figure equal and
+  the column; then the "n / width" figure right after the track. The lit cells run in the priority ladder, highest
+  on the left: blocker (`--p-blocker`), critical (`--p-critical`), reads (`--p-reader`), then every work card (high,
+  normal, low) in the working blue, counts from the row's `<level>_working` fields in `where --json`; a read is half
+  a slot, so one orange cell per two reads, a lone read filling a whole cell until its pair arrives. The figure is
+  "n / width" alone, no reads count beside it. Gaps: Ready to track and track to figure equal and
   wide (double the first attempt, ~64 px); every column gutter ~56 px.
 - Cells: no steady pulse; a cell flashes once when it lights or unlights. No numeric column in Fleet ever flashes.
-- OK% and Load: plain numbers, right-aligned, no bars, no dots. Total row: Ready and Done and OK% numbers, no cells.
+- OK% and Load: plain numbers, right-aligned, no bars, no dots. Total row: Ready, the working "x / y" (the sum of
+  working over the sum of width), Done and OK%; no cells. Every row's "n / width" numerator, the Total's included,
+  is as wide as the widest numerator, so every slash sits on one line; only the Total's denominator may be wider.
+  The fraction (10rem) and done (5.5rem) columns are fixed widths, never content-sized, so the Total row's figures
+  sit on the rows' lines.
+- The side's work switch and tiers (`where --json`'s `fleet_work`, `fleet_tiers`; Friends: `friends_work`,
+  `friends_tiers`): the subtitle adds " · off" when the side is off and " · tiers <list>" when its tiers are limited
+  ("all" otherwise); an off side's whole panel is dimmed to 45% opacity.
 - Done and OK% (and the Friends table's) count from the last `nova-sprint stats tidy --fleet` (`--friends`): the tidy takes
   the history off the done cells the page's counts are read from. Not yet: "since <time>" beside OK%, as for Cost.
 
-## Friends (title "Friends"): same shape as Fleet without load (ready, working, done, ok%, status; headers lowercase); honest empty
+## Friends (title "Friends"; subtitle "<n> friends", then " · off" and " · tiers <list>" as for Fleet): same shape as Fleet without load (ready, working, done, ok%, status; headers lowercase); honest empty
   state until the JSON carries tables.friends.
 
 ## Lanes (the card dash-lanes-panel.w2, 2026-10-04; the owner's line is owed)
@@ -207,6 +218,19 @@ This specification is locked. No line changes without his words, quoted here wit
 - 2026-10-06 ~5:30 PM ET, the owner (relayed by the seat), a quoted change after the lock: "The dashboard
   shows priority by colour on the card marks: a blocker card bright red, a critical card dark red, a reader
   card the orange of the robot's shoes ..., work cards blue whatever their priority." The Priority row under the progress bar.
+- 2026-10-06 evening ET, the owner, quoted changes after the lock, made on the live page first; the repo page
+  follows it:
+  - State colours: working the brighter blue #3d9bff, review the reader orange #fb8321 (the colour of a read
+    card), merging the pink review had, #d55181. The page stays dark only; the live page's light variants have no
+    place here.
+  - 8:42-8:46 PM: "the segmented bar when fleet or friends work on them", "so highest priority on the left"; 9:09 PM:
+    "orange is ON THE LEFT, not right"; 9:11 PM: "Each segment is 1 work, or 2 reads"; 9:08 PM, no reads count
+    beside the fraction: "I'll just use the number of orange cells to estimate it". The Fleet Working line above.
+  - 9:25 PM: "you only need to reserve the maximum value across each row's digits because the sum is below and no
+    segmented bars are there"; 9:28 PM: "the totals are slightly misaligned"; 9:33 PM, of the fixed columns, "that
+    did it". The Total row line above.
+  - ~8:02 PM: "We should be able to enable/disable fleet, enable/disable friends. default enabled", "When
+    [disabled], the table greys out a bit visually in the dash". The work switch line above.
 - 2026-10-03 11:30 AM, the owner, a quoted change after the lock: "nova sprint website is not updating once
   per-second. something is chug." The page's refresh is the event stream, the timer's poll its fallback (the
   Refresh line above); nothing else moves.

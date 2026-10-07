@@ -196,17 +196,20 @@ function allocate(counts, total, n) {
 // VU meter track: exactly `slots` cells (the machine's width), on a grid of
 // `scale` columns (the widest member's width) so the cells line up down the
 // column; the first `value` are lit, the rest dark; nothing past the width.
-function setTrack(box, value, slots, scale) {
+// `segs`, when given, names the class of each lit cell from the left (the priority ladder);
+// a lit cell past its end is plain working blue.
+function setTrack(box, value, slots, scale, segs) {
   var classes = [];
-  for (var i = 0; i < slots; i++) classes.push(i < value ? "working" : "");
+  for (var i = 0; i < slots; i++) classes.push(i < value ? (segs && segs[i]) || "working" : "");
   setCells(box, classes, scale, TRACK_CELL);
   setTitle(box, value + " working of " + slots);
 }
 // "a / b" as a block of fixed width: a right-aligned in `digits` character widths, b
 // left-aligned in as many, so the slash of every row in a column sits on one vertical line
 // and the block can be right-aligned in its column like any number.
-function frac(a, b, digits) {
-  return "<span class=\"fa\" style=\"width:" + digits + "ch\">" + a + "</span><span class=\"fs\"> / </span><span class=\"fb\" style=\"width:" + digits + "ch\">" + b + "</span>";
+// `bDigits`, when given, widens b alone (the Total row's sum of widths).
+function frac(a, b, digits, bDigits) {
+  return "<span class=\"fa\" style=\"width:" + digits + "ch\">" + a + "</span><span class=\"fs\"> / </span><span class=\"fb\" style=\"width:" + (bDigits || digits) + "ch\">" + b + "</span>";
 }
 function escHTML(s) { return String(s).replace(/[&<>"']/g, function (c) { return "&#" + c.charCodeAt(0) + ";"; }); }
 function digitsOf(n) { return String(Math.max(0, n)).length; }
@@ -400,16 +403,20 @@ function fleetLike(box, table, withLoad) {
   if (!box._head) {
     box._head = pageHead(box.id);
     box._total = el("div", "row total");
-    box._total._c = [el("div", "", "Total"), el("div"), quiet(numCell()), el("div"), el("div"), quiet(numCell()), quiet(numCell())];
+    box._total._c = [el("div", "", "Total"), el("div"), quiet(numCell()), el("div"), quiet(numCell("frac")), quiet(numCell()), quiet(numCell())];
     if (withLoad) box._total._c.push(el("div"));
     box._total._c.forEach(function (c) { box._total.appendChild(c); });
   }
-  var t = { ready: 0, done: 0, ok: 0, up: 0, held: 0, down: 0 };
+  var t = { ready: 0, working: 0, width: 0, done: 0, ok: 0, up: 0, held: 0, down: 0 };
   var scale = Math.max(1, names.reduce(function (a, n) { return Math.max(a, int(table[n].width)); }, 0));
   // the track column is exactly the widest track, so the figure sits right after it
   var tw = (scale * (TRACK_CELL + TRACK_GAP) - TRACK_GAP).toFixed(3) + "rem";
   if (box.style.getPropertyValue("--track-w") !== tw) box.style.setProperty("--track-w", tw);
+  // every row's numerator, the Total's included, is as wide as the widest numerator, so every
+  // slash sits on one line; only the Total's denominator may be wider (the owner, 2026-10-06
+  // 9:25 PM, 9:28 PM: "the totals are slightly misaligned")
   var digits = Math.max(digitsOf(names.reduce(function (a, n) { return a + int(table[n].working); }, 0)), digitsOf(scale));
+  var totalDigits = digitsOf(names.reduce(function (a, n) { return a + int(table[n].width); }, 0));
   syncRows(box, box._head, names, function () {
     var r = { node: el("div", "row") };
     r.name = el("div", "name"); r.pill = makePill(); r.track = el("div", "cells"); r.wf = numCell("frac");
@@ -421,11 +428,21 @@ function fleetLike(box, table, withLoad) {
   }, function (r, k) {
     var m = table[k], working = int(m.working), width = int(m.width), done = int(m.done);
     var okv = m.okpct != null ? m.okpct : m["ok%"];
-    t.ready += int(m.ready); t.done += done; t.ok += int(m.ok);
+    t.ready += int(m.ready); t.working += working; t.width += width; t.done += done; t.ok += int(m.ok);
     if (m.status in t) t[m.status]++;
     setText(r.name, k);
     setPill(r.pill, m.status || "-", STATUS_TONE[m.status] || "neutral");
-    setTrack(r.track, working, width, scale);
+    // the working cells in the priority ladder, highest on the left: blocker, critical, reads,
+    // then every blue work card (high, normal, low) on the right (the owner, 2026-10-06 8:46 PM,
+    // 9:09 PM: "orange is ON THE LEFT"); a read holds half a slot, so one orange cell per two
+    // reads, a lone read filling a whole cell until its pair arrives (9:11 PM: "Each segment is 1
+    // work, or 2 reads"); no reads count beside the fraction, the orange cells say it (9:08 PM)
+    var segs = [];
+    [["blocker_working", "p-blocker"], ["critical_working", "p-critical"]].forEach(function (p) {
+      for (var j = 0; j < int(m[p[0]]); j++) segs.push(p[1]);
+    });
+    for (var j = 0; j < Math.ceil(int(m.reads_working) / 2); j++) segs.push("p-reader");
+    setTrack(r.track, working, width, scale, segs);
     // a subscription friend's window use beside her width (docs/SPEC-SPRINT.md, the friends table)
     setHTML(r.wf, frac(working, width, digits) + (m.window ? "<span class=\"win\"> · " + escHTML(m.window) + "</span>" : ""));
     setNum(r.ready, int(m.ready)); setNum(r.done, done);
@@ -434,6 +451,8 @@ function fleetLike(box, table, withLoad) {
   }, box._total);
   var c = box._total._c;
   setNum(c[2], t.ready);
+  // working as "x / y": the sum of working over the sum of width
+  setHTML(c[4], frac(t.working, t.width, digits, Math.max(digits, totalDigits)));
   setNum(c[5], t.done);
   setOk(c[6], t.done ? t.ok / t.done * 100 : null, t.done);
   return { t: t, n: names.length };
@@ -441,7 +460,8 @@ function fleetLike(box, table, withLoad) {
 
 function renderFleet(d) {
   var r = fleetLike($("fleet"), d.tables.fleet || {}, true);
-  setText($("fleet-head"), r.t.up + " up · " + r.t.held + " held · " + r.t.down + " down");
+  setText($("fleet-head"), r.t.up + " up · " + r.t.held + " held · " + r.t.down + " down" + sideWord(d.fleet_work, d.fleet_tiers));
+  setSideOff($("fleet"), d.fleet_work);
 }
 
 function renderFriends(d) {
@@ -458,7 +478,22 @@ function renderFriends(d) {
   }
   if (box._empty) { box.textContent = ""; box._empty = false; }
   var r = fleetLike(box, table, false);
-  setText($("friends-sub"), r.n + " friends");
+  setText($("friends-sub"), r.n + " friends" + sideWord(d.friends_work, d.friends_tiers));
+  setSideOff(box, d.friends_work);
+}
+// A side (fleet, friends) can be switched off or limited to some tiers (set --fleet on|off,
+// --fleet-tiers; the same for friends; the owner, 2026-10-06 8:02 PM: "When [disabled], the table
+// greys out a bit visually"): the head says "· off" or "· tiers flash, pro", and an off side's
+// whole panel is dimmed.
+function sideWord(work, tiers) {
+  var w = "";
+  if (String(work || "on") === "off") w += " · off";
+  if (tiers && tiers !== "all") w += " · tiers " + (Array.isArray(tiers) ? tiers.join(", ") : String(tiers));
+  return w;
+}
+function setSideOff(box, work) {
+  var sec = box && box.closest ? box.closest("section") : null;
+  if (sec) sec.classList.toggle("off", String(work || "on") === "off");
 }
 
 // Lanes (docs/SPEC-SPRINT-DASHBOARD.md, "Lanes"): each machine's lane of a kind, the
