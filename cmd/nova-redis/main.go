@@ -127,7 +127,12 @@ func redisTool(d deps) *tool.Tool {
 spill writes a value under <owner>:<name> with a required expiry; recall reads it back.
 fn load and fn check install and verify the functions nova-table and nova-sprint call.
 The password is read from the variable NOVA_REDIS_PASSWORD_ENV names, else NOVA_REDIS_PASSWORD.
-first run: the --dry-run line needs no store; spill and recall need a Redis at 127.0.0.1:6379.`,
+first run: --dry-run needs no store; the throwaway recipe below starts a store on a socket.`,
+		UsageNote: `a throwaway store, by hand: (stop it: redis-cli -s "$d/redis.sock" shutdown nosave)
+  d=$(mktemp -d)
+  redis-server --port 0 --unixsocket "$d/redis.sock" --save '' --appendonly no --daemonize yes
+  for _ in $(seq 50); do redis-cli -s "$d/redis.sock" ping >/dev/null 2>&1 && break; sleep 0.1; done
+then run spill or recall with --redis "$d/redis.sock" (or a store you may write to).`,
 		ExitTable: "0 done (spill written, recall found, fn load done, fn check finds the library loaded, serve stopped); 1 ran and said NO (a recall of a missing, expired or unbounded key, fn check STALE or MISSING, a spill whose reply was lost, a refusal by the store, a serve that could not start); 2 could not run (a usage error, a flag refused before dialling, a store that did not answer or a login it refused).",
 		Words:     []string{"UNCONFIRMED", "MISSING", "EXPIRED", "UNBOUNDED"},
 		Verbs: append([]tool.Verb{
