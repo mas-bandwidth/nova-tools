@@ -1125,6 +1125,8 @@ beat loops are retired, with no replacement"). The beat itself proves the daemon
 nothing more: it is recorded and shown, and it never makes her up (below); the
 session's answer it carries (`--pong`) is her session's evidence.
 
+Her beat also measures the volume her working directory lives on (`MeasureWorkingVolume` in `internal/friend/beat.go`: `sprint.MeasureVolume` and a bounded scan of the AI root). The tick reads that reading on her seat (`FriendSeat.DiskVolume`, `DiskUse`, `DiskInode`) and, when it is above the full line, deals her no card and no read (docs/SPEC-SPRINT.md section 8, Disk watermark). The daemon's loop does not call `MeasureWorkingVolume` yet, so a friend's row carries the figure only once her beat writes those fields.
+
 ## Presence is her session's evidence (internal/sprint/presence.go)
 
 The owner, 2026-10-05 ~9:30 AM ET, on the daemon: "there is no value in things

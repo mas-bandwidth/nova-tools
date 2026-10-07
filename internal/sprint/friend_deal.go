@@ -154,6 +154,16 @@ type FriendSeat struct {
 	Evidence   string
 	DaemonOnly bool
 	Current    string
+	// DiskVolume is the volume her working directory is on, as her beat measured
+	// it, empty when that beat said none. DiskUse and DiskInode are the percent
+	// full of its blocks and its inodes. Above the full line friendCanRead is
+	// false (disk.go), so the deal and her reads start no lane on that volume.
+	DiskVolume    string
+	DiskUse       int
+	DiskInode     int
+	DiskFree      string
+	DiskInodeFree string
+	DiskDirs      string
 }
 
 // FieldFriendsLeft is the friends a friend's work card has left, comma joined: each the
@@ -189,7 +199,7 @@ func friendDealable(s *Snapshot, f FriendSeat) bool {
 // friends' work switch, which stops her work and never her reads (set --friends off: "her
 // reads still flow"; read_cards.go).
 func friendCanRead(s *Snapshot, f FriendSeat) bool {
-	if f.Status != Up {
+	if f.Status != Up || friendVolumeFull(s, f) {
 		return false
 	}
 	if s == nil || s.Fleet == nil {
