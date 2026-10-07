@@ -31,17 +31,27 @@
 \*             files met: one gate of the combined tree)
 \*   collided  a ghost: the streams a red combined gate refused in this pass, cleared as
 \*             each starts merging again
+\*   cached    the trees recorded as gated (baseGateCache): a tip whose whole tree passed
+\*             a gate with the tree tests (the batch's own, or the combined gate), never a
+\*             clean merge of disjoint files, which no gate saw as a tree
 \*
 \* THE ACTIONS. Phase 1, any order, up to Width at once: StartMerge(s) cuts the batch
-\* from the base as it is, Gate(s) gates the batch's tree once (green: the batch waits
-\* to land; red: the heads are gated alone and the red one is blamed, the stream stops).
-\* EndMerges closes phase 1 when no stream is queued or merging. Phase 2, in Order:
-\* Push(s) for a batch cut from the tip the base still has; PushDisjoint(s) and
-\* PushCombined(s) for a batch whose base moved, merged again onto it: pushed with no new
-\* gate when its files and the files landed since are disjoint, else gated once combined
-\* and pushed when green; Refuse(s) when that gate is red: the batch stays queued for the
-\* next pass, the base unchanged, no stream stopped. Skip(s) passes a stream with nothing
-\* to land. EndLanding starts the next pass.
+\* from the base as it is; the base's own gate runs first unless the base is in the cache
+\* (BaseRed(s): a red base refuses the batch for the pass, no head merged, as the base-gate
+\* rule does before its third refusal; its cure is below this module's grain); Gate(s)
+\* gates the batch's tree once (green: the batch waits to land; red: the heads are gated
+\* alone and the red one is blamed, the stream stops). EndMerges closes phase 1 when no
+\* stream is queued or merging. Phase 2, in Order: Push(s) for a batch cut from the tip the
+\* base still has; PushDisjoint(s) and PushCombined(s) for a batch whose base moved, merged
+\* again onto it: pushed with no new gate when its files and the files landed since are
+\* disjoint and every head merged again, else gated once combined and pushed when green;
+\* Refuse(s) when that gate is red: the batch stays queued for the next pass, the base
+\* unchanged, no stream stopped. ShrinkConflict(s) is a re-merge where the first head no
+\* longer merges: nothing is pushed and the stream stops on the conflict; ShrinkPrefix(s)
+\* is one where fewer heads merge: the prefix is gated combined whatever the files (a
+\* tree not the one gated), pushed when green, refused when red, and the stream stops on
+\* the conflict after its push. Skip(s) passes a stream with nothing to land. EndLanding
+\* starts the next pass.
 \*
 \* THE RULES.
 \*   BoundHeld: never more than Width streams merge at once.
@@ -53,7 +63,10 @@
 \*     store), not landed and not stopped.
 \*   RefusalTouchesNoOtherStream (an action property): a refusal changes the base and no
 \*     other stream's phase or cut.
-\*   Lands (liveness, under fairness): a batch green on every tree that holds it lands.
+\*   CachedIsGreen: every tree recorded as gated is green: a disjoint merge is never
+\*     recorded, so the next pass's base gate runs on it and a base red from two heads green
+\*     alone is found there, blaming no head.
+\*   Lands (liveness, under fairness): when every tree is green, every batch lands.
 \*
 \* Broken: "none" is the design.
 \*   "nogate"      pushes a moved batch with no combined gate whatever the files
@@ -64,6 +77,11 @@
 \*                 (RefusedStaysMerging fails).
 \*   "revert"      a red combined gate resets the base to the batch's cut
 \*                 (RefusalTouchesNoOtherStream fails).
+\*   "cachedisjoint" records a disjoint merge's tip as gated (CachedIsGreen fails: the
+\*                 next pass gates no base and the red tree is trusted).
+\*   "pushempty"   a re-merge that merges no head is reported landed all the same, the
+\*                 base's own tip pushed and a batch of none reported (BaseKeepsLandings
+\*                 fails: landed, and not in the base).
 \*
 \* WHAT IS NOT MODELLED. The report (Land.tla), the base's own gate and its cure (the base
 \* is green here), --check, pushes from outside the pass (a rejected push is met once more
@@ -72,7 +90,7 @@
 \* TLC, 2026-10-07, on a Linux bench, tla2tools.jar as tla/tla2tools.sha256 pins it:
 \* MCLandPass (three streams in order, two files, width 2, every oracle) passes every
 \* invariant and RefusalTouchesNoOtherStream; MCLandPassSerial (width 1) passes the same;
-\* MCLandPassLive passes Lands under fairness; the four reversed witnesses each fail the
+\* MCLandPassLive passes Lands under fairness; the six reversed witnesses each fail the
 \* property their configuration names. The records are tla/RUNS.tsv.
 EXTENDS Integers, Sequences, FiniteSets, TLC
 
@@ -82,9 +100,9 @@ ASSUME Width \in Nat \ {0}
 ASSUME Len(Order) = Cardinality(Streams) /\ {Order[i] : i \in 1..Len(Order)} = Streams
 ASSUME Touches \in [Streams -> SUBSET Files]
 
-VARIABLES phase, cut, base, green, running, stage, next, pushes, collided
+VARIABLES phase, cut, base, green, running, stage, next, pushes, collided, cached
 
-vars == <<phase, cut, base, green, running, stage, next, pushes, collided>>
+vars == <<phase, cut, base, green, running, stage, next, pushes, collided, cached>>
 
 Trees == SUBSET Streams
 
@@ -109,6 +127,7 @@ TypeOK ==
   /\ next \in 1..(Len(Order) + 1)
   /\ pushes \in Seq([s : Streams, tree : Trees, since : Trees, how : {"own", "disjoint", "combined"}])
   /\ collided \subseteq Streams
+  /\ cached \subseteq Trees
 
 Init ==
   /\ phase = [s \in Streams |-> "queued"]
@@ -120,6 +139,7 @@ Init ==
   /\ next = 1
   /\ pushes = <<>>
   /\ collided = {}
+  /\ cached = {{}}
 
 \* ---- phase 1: the merges, in parallel (landpass.go, prepare and merges) ----
 
@@ -130,14 +150,25 @@ StartMerge(s) ==
   /\ cut' = [cut EXCEPT ![s] = base]
   /\ running' = running + 1
   /\ collided' = collided \ {s}
-  /\ UNCHANGED <<base, green, stage, next, pushes>>
+  /\ UNCHANGED <<base, green, stage, next, pushes, cached>>
 
-\* The batch's tree is gated once: green, it waits to land; red, each head is gated alone
-\* again and the red one ends the batch with the fact that stops the stream.
+\* The base's own gate, before any head is merged, unless the base is recorded as gated:
+\* a red base refuses the batch for the pass and blames no head (the base-gate rule; the
+\* cure is below this grain).
+BaseRed(s) ==
+  /\ phase[s] = "merging" /\ cut[s] \notin cached /\ ~green[cut[s]]
+  /\ phase' = [phase EXCEPT ![s] = "queued"]
+  /\ running' = running - 1
+  /\ UNCHANGED <<cut, base, green, stage, next, pushes, collided, cached>>
+
+\* The base green (gated now and recorded, or recorded before), the batch's tree is gated
+\* once: green, it waits to land; red, each head is gated alone again and the red one ends
+\* the batch with the fact that stops the stream.
 Gate(s) ==
-  /\ phase[s] = "merging"
+  /\ phase[s] = "merging" /\ (cut[s] \in cached \/ green[cut[s]])
   /\ phase' = [phase EXCEPT ![s] = IF green[cut[s] \cup {s}] THEN "green" ELSE "stopped"]
   /\ running' = running - 1
+  /\ cached' = cached \cup {cut[s]}
   /\ UNCHANGED <<cut, base, green, stage, next, pushes, collided>>
 
 \* Phase 1 ends when no stream is queued or merging.
@@ -145,7 +176,7 @@ EndMerges ==
   /\ stage = "merge"
   /\ \A s \in Streams : phase[s] \notin {"queued", "merging"}
   /\ stage' = "land" /\ next' = 1
-  /\ UNCHANGED <<phase, cut, base, green, running, pushes, collided>>
+  /\ UNCHANGED <<phase, cut, base, green, running, pushes, collided, cached>>
 
 \* ---- phase 2: the landings, one at a time in Order (landpass.go, land) ----
 
@@ -159,39 +190,72 @@ Landing(s) == stage = "land" /\ next <= Len(Order) /\ Current = s
 Skip(s) ==
   /\ Landing(s) /\ phase[s] # "green"
   /\ next' = next + 1
-  /\ UNCHANGED <<phase, cut, base, green, running, stage, pushes, collided>>
+  /\ UNCHANGED <<phase, cut, base, green, running, stage, pushes, collided, cached>>
 
-\* The base still has the tip the batch was cut from: its gated tip is pushed, no new gate.
+\* The base still has the tip the batch was cut from: its gated tip is pushed, no new gate,
+\* and recorded as gated.
 Push(s) ==
   /\ Landing(s) /\ phase[s] = "green" /\ cut[s] = base
   /\ base' = base \cup {s}
   /\ phase' = [phase EXCEPT ![s] = "landed"]
   /\ Pushed(s, base \cup {s}, "own")
+  /\ cached' = cached \cup {base \cup {s}}
   /\ next' = next + 1
   /\ UNCHANGED <<cut, green, running, stage, collided>>
 
-\* The base moved: the batch is merged again onto its tip; the files disjoint, it is pushed
-\* with no new gate (nogate: whatever the files; nocut: the batch's own tip is pushed over
-\* the moved base, and what landed since is gone from it).
+\* The base moved: the batch is merged again onto its tip, every head merging; the files
+\* disjoint, it is pushed with no new gate and is not recorded as gated (nogate: whatever
+\* the files; nocut: the batch's own tip is pushed over the moved base, and what landed
+\* since is gone from it; cachedisjoint: recorded as gated all the same).
 PushDisjoint(s) ==
   /\ Landing(s) /\ phase[s] = "green" /\ cut[s] # base
   /\ Broken = "nogate" \/ Disjoint(s)
   /\ base' = IF Broken = "nocut" THEN cut[s] \cup {s} ELSE base \cup {s}
   /\ phase' = [phase EXCEPT ![s] = "landed"]
   /\ Pushed(s, base', "disjoint")
+  /\ cached' = IF Broken = "cachedisjoint" THEN cached \cup {base'} ELSE cached
   /\ next' = next + 1
   /\ UNCHANGED <<cut, green, running, stage, collided>>
 
-\* The base moved and the files met: the combined tree is gated once, and green, pushed.
+\* The base moved and the files met, or fewer heads merged (ShrinkPrefix): the combined
+\* tree is gated once, and green, pushed and recorded as gated.
+Combined(s) ==
+  /\ green[base \cup {s}]
+  /\ base' = base \cup {s}
+  /\ Pushed(s, base \cup {s}, "combined")
+  /\ cached' = cached \cup {base \cup {s}}
+  /\ next' = next + 1
+  /\ UNCHANGED <<cut, green, running, stage, collided>>
+
 PushCombined(s) ==
   /\ Landing(s) /\ phase[s] = "green" /\ cut[s] # base
   /\ Broken # "nogate" /\ ~Disjoint(s)
-  /\ green[base \cup {s}]
-  /\ base' = base \cup {s}
+  /\ Combined(s)
   /\ phase' = [phase EXCEPT ![s] = "landed"]
-  /\ Pushed(s, base \cup {s}, "combined")
+
+\* The re-merge onto the moved base merges fewer heads than the batch alone did: the heads
+\* before the conflict are gated combined whatever the files (the tree is not the one gated)
+\* and pushed when green, and the stream stops on the conflict after its push; a red gate
+\* refuses the batch as Refuse does.
+ShrinkPrefix(s) ==
+  /\ Landing(s) /\ phase[s] = "green" /\ cut[s] # base
+  /\ Broken # "nogate"
+  /\ \/ /\ Combined(s)
+        /\ phase' = [phase EXCEPT ![s] = "stopped"]
+     \/ /\ ~green[base \cup {s}]
+        /\ phase' = [phase EXCEPT ![s] = "queued"]
+        /\ collided' = collided \cup {s}
+        /\ next' = next + 1
+        /\ UNCHANGED <<cut, base, green, running, stage, pushes, cached>>
+
+\* The re-merge onto the moved base merges no head: the first met a conflict there; nothing
+\* is pushed and nothing reported as a batch, the stream stops on the conflict (pushempty:
+\* the batch is reported landed all the same, the base unchanged).
+ShrinkConflict(s) ==
+  /\ Landing(s) /\ phase[s] = "green" /\ cut[s] # base
+  /\ phase' = [phase EXCEPT ![s] = IF Broken = "pushempty" THEN "landed" ELSE "stopped"]
   /\ next' = next + 1
-  /\ UNCHANGED <<cut, green, running, stage, collided>>
+  /\ UNCHANGED <<cut, base, green, running, stage, pushes, collided, cached>>
 
 \* The combined tree is red: the batch is refused for this pass, its cards still queued,
 \* nothing pushed, no fact, no stream stopped (stopcollide: the stream stops; revert: the
@@ -204,16 +268,17 @@ Refuse(s) ==
   /\ base' = IF Broken = "revert" THEN cut[s] ELSE base
   /\ collided' = collided \cup {s}
   /\ next' = next + 1
-  /\ UNCHANGED <<cut, green, running, stage, pushes>>
+  /\ UNCHANGED <<cut, green, running, stage, pushes, cached>>
 
 \* Phase 2 ends after the last stream in Order; the next pass begins.
 EndLanding ==
   /\ stage = "land" /\ next > Len(Order)
   /\ stage' = "merge" /\ next' = 1
-  /\ UNCHANGED <<phase, cut, base, green, running, pushes, collided>>
+  /\ UNCHANGED <<phase, cut, base, green, running, pushes, collided, cached>>
 
 Next ==
-  \/ \E s \in Streams : StartMerge(s) \/ Gate(s) \/ Skip(s) \/ Push(s) \/ PushDisjoint(s) \/ PushCombined(s) \/ Refuse(s)
+  \/ \E s \in Streams : StartMerge(s) \/ BaseRed(s) \/ Gate(s) \/ Skip(s) \/ Push(s) \/ PushDisjoint(s) \/ PushCombined(s)
+                        \/ ShrinkPrefix(s) \/ ShrinkConflict(s) \/ Refuse(s)
   \/ EndMerges \/ EndLanding
 
 Spec == Init /\ [][Next]_vars
@@ -221,7 +286,7 @@ Spec == Init /\ [][Next]_vars
 \* Every action weakly fair: the loop runs pass after pass, every stream in its turn.
 FairSpec ==
   /\ Spec
-  /\ \A s \in Streams : WF_vars(StartMerge(s)) /\ WF_vars(Gate(s)) /\ WF_vars(Skip(s)) /\ WF_vars(Push(s))
+  /\ \A s \in Streams : WF_vars(StartMerge(s)) /\ WF_vars(BaseRed(s)) /\ WF_vars(Gate(s)) /\ WF_vars(Skip(s)) /\ WF_vars(Push(s))
                         /\ WF_vars(PushDisjoint(s)) /\ WF_vars(PushCombined(s)) /\ WF_vars(Refuse(s))
   /\ WF_vars(EndMerges) /\ WF_vars(EndLanding)
 
@@ -245,10 +310,13 @@ BaseKeepsLandings == \A s \in Streams : phase[s] = "landed" => s \in base
 
 RefusedStaysMerging == \A s \in collided : phase[s] = "queued"
 
+CachedIsGreen == \A T \in cached : green[T]
+
 RefusalTouchesNoOtherStream ==
   [][\A s \in Streams : Refuse(s) => base' = base /\ \A t \in Streams \ {s} : phase'[t] = phase[t] /\ cut'[t] = cut[t]]_vars
 
-\* A batch green on every tree that holds it lands, under fairness.
-Lands == \A s \in Streams : (\A T \in Trees : s \in T => green[T]) => <>(phase[s] = "landed")
+\* Every tree green, every batch lands, under fairness (a re-merge may still stop a stream
+\* on a conflict, so ShrinkPrefix and ShrinkConflict are not fair: they are the outside).
+Lands == (\A T \in Trees : green[T]) => \A s \in Streams : <>(phase[s] = "landed")
 
 =============================================================================
