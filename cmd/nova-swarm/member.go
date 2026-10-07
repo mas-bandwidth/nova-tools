@@ -35,7 +35,6 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/log"
 	"github.com/mas-bandwidth/nova-tools/internal/member"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/provbalance"
 	"github.com/mas-bandwidth/nova-tools/internal/readregular"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 	"github.com/mas-bandwidth/nova-tools/internal/secrets"
@@ -796,6 +795,7 @@ var noUsageReported = func() string {
 
 // generationIDPattern finds explicit generation metadata, including OpenRouter
 // response ids in a native log (SPEC-SWARM, Every run's cost).
+const generationReadTimeout = 15 * time.Second
 const maxGenerationQuotes = 128
 const maxGenerationCapture = 16 << 20
 
@@ -830,7 +830,7 @@ func priceRunWithoutUsage(usage string, log []byte, job, cardPath, model string,
 		u.Extra = append(u.Extra, "generation_usage=too-many-requests")
 	}
 	if len(ids) > 0 && len(ids) <= maxGenerationQuotes && lookup != nil && captureComplete && strings.HasPrefix(cmp.Or(u.Model, model), "openrouter/") {
-		ctx, cancel := context.WithTimeout(context.Background(), provbalance.Timeout)
+		ctx, cancel := context.WithTimeout(context.Background(), generationReadTimeout)
 		defer cancel()
 		total := cardcost.NoTotal()
 		var models []string

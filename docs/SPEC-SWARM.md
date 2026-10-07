@@ -773,7 +773,9 @@ List the current unit tests with `go test -list . ./cmd/nova-swarm/`.
 
 ### Every run's cost
 
-A member reports usage when its child ends with any result or none. Durable
+A member reports usage when it collects a held launch's terminal result, with
+any result or none. A moved or dropped claim is reaped without this collection;
+its spend remains visible only through provider reconciliation. Durable
 per-attempt receipts recover a lost native summary. When measured usage is
 absent, generation ids from the native log and the launch's own
 `harness-output.log` recover complete OpenRouter request quotes through the
