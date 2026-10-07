@@ -496,3 +496,19 @@ func TestReceiptsAndOverdueSayWhereEachMessageIs(t *testing.T) {
 	cli.Do(t, "receipts", "--as", "bob", "--id", mid).Exit(0).Out("state=acted")
 	cli.Do(t, "overdue", "--older", "-1s").Exit(2).Err("--older wants a duration of at least 0")
 }
+
+func TestTopLevelHelpNamesTheSameRedisAddressPrecedenceAsHelpSend(t *testing.T) {
+	t.Parallel()
+	r := newRig("ada", "bob")
+	cli := r.cli()
+
+	// Get top-level help
+	topHelp := cli.Do(t, "help").Exit(0).Stdout
+	// Get help send
+	sendHelp := cli.Do(t, "help", "send").Exit(0).Stdout
+
+	// Both should contain the same precedence sentence
+	precedence := RedisEnv + ", else " + SprintRedisEnv + ", else " + FleetBusKey
+	require.Contains(t, topHelp, precedence)
+	require.Contains(t, sendHelp, precedence)
+}
