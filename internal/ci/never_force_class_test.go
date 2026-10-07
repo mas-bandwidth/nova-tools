@@ -70,7 +70,7 @@ func TestNeverForceRefusesPushMinusF(t *testing.T) {
 	res, err := CheckNeverForce(root, "")
 	require.NoError(t, err)
 	require.Equal(t, 1, res.Refused(), "push -f is one refusal, got %d: %+v", res.Refused(), res.Findings)
-	require.Len(t, res.Findings, 1) "push -f is one refusal, got %d: %+v", res.Refused(), res.Findings)
+	require.Len(t, res.Findings, 1, "push -f is one refusal, got %d: %+v", res.Refused(), res.Findings)
 	f := res.Findings[0]
 	assert.Equal(t, "force", f.Kind)
 	got := forceLineAt(t, root, f.File, f.Line)
