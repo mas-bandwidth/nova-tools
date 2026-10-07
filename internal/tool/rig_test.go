@@ -127,7 +127,11 @@ func FromJSON(t *testing.T, raw string) parsed {
 			Kind   string
 			Fields json.RawMessage
 		}
-		More    []struct{ Kind string; Shown, Total int; Remedy string }
+		More []struct {
+			Kind         string
+			Shown, Total int
+			Remedy       string
+		}
 		Notes   []string
 		Payload string
 	}
