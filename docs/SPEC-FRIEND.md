@@ -202,14 +202,11 @@ Presence is therefore the session's, never the daemon's:
   a process per card) has no session for its daemon to check: its beat says no
   check and no answer, ever, and her evidence is a card of hers finished. The
   status file's `proof_sent` is when the server last took an answer as proof,
-  and `check` prints it (`proof=sent proof_age=`). While down, her beat says so:
-  `friend beat --until <t> --reason <why>` (`SessionCheck.BeatOr`), the until
-  the open check's bound or the next check's, the reason `push unproven:
-  session check <nonce> ...` before the first answer and `no session answer to
-  session check <nonce> within 5m0s` after one, so the server reads her down
-  with the daemon's reason at once; a beat can say down, never up. The friend
-  row's mode and width arrive with an up beat's answer, so while down the
-  daemon delivers by the row it last read (batch at `--width` before any).
+  and `check` prints it (`proof=sent proof_age=`). While the session is down,
+  the native heartbeat still runs; the common server rule names its missing
+  session evidence. `--until`/`--reason` are reserved for a harness limit or
+  an explicit pause. The friend row's mode and width arrive with any accepted
+  beat, so the daemon learns its row even before the session answers.
 - On a headless harness (dsh, gemini: each turn a one-shot process into the
   session) the check goes in as a turn of its own as soon as no turn runs. A
   turn runs from the moment it comes to the gate (`SessionCheck.Gate`), before
@@ -1075,7 +1072,7 @@ beat" below), and her own session has given evidence within its window:
   generation; or
 - her session's answer to a check her daemon asked, under `FriendProofLive`
   (fifteen minutes) old while her beat is fresh
-  (`BeatDeadline`): her daemon's beat says `--check <nonce> --run <run>` when it
+  (`FriendBeatLive`): her daemon's beat says `--check <nonce> --run <run>` when it
   asks and `--pong <nonce> --run <run>` when her session answers, and the
   server (`sprint.ProveBeat`) keeps the checks asked on her beat record and
   takes an answer as proof only when it names a check that run asked, once,
@@ -1102,10 +1099,10 @@ Else she is `down`. Nothing else is evidence: not her beat itself, whoever
 sends it (her daemon, or any loop that beats for her; only the session's answer
 it carries counts), not `daemon-pong` (her daemon's own answer, shown as down), not a hold released (`friend up`), not a
 coordinator's down. Her row names the evidence and its age (`where --json`,
-`friends[].evidence`: `session pong 3m0s ago`, `finish 12m0s ago`) or, down,
+`friends[].evidence`: `daemon up, session pong 3m0s ago`, `daemon up, finish 12m0s ago`) or, down,
 what is missing and the age of the last of each, with her beat's age said to be
 no evidence; a beat that says down (her daemon's `--until`/`--reason`: her
-harness at its limit, her push unproven, no session answer) is down with its
+harness at its limit or explicitly paused) is down with its
 reason whatever else stands. A friend down keeps the cards dealt to her row (the deadline judges
 them, docs/SPEC-SPRINT.md section 1): going down takes nothing back. Her
 unstarted cards return to ready only when the coordinator takes them
@@ -1121,44 +1118,34 @@ active 2d ago`, and was dealt nothing, because her daemon held its beat back
 under "no beat until a session check answers" while the sprint read beats; the
 coordinator beat for her, and for another friend, from shell loops.
 
-The daemon beats every second (`BeatEvery`, the sprint's `FriendBeatEvery`),
-unconditionally, from its loop's first step until it stops: before the session
-has answered anything, while the session check is past its bound, while the bus
-store refuses, and while her harness is at its limit (then the beat says down,
-`--until --reason`, above). The beat is the daemon's liveness and nothing else.
-It carries what the daemon knows: her session's last activity (`--active`) and
-her session's last evidence (`--pong`, the session's last answer to a check or
-its own bus message, `SessionCheck.Evidence`; zero while it has given none, so
-its age is the sprint's to read), and her row's mode and width come back on its
-answer. The sprint server takes a beat from any friend on its roster and never
-refuses one for want of a session proof (cmd/nova-sprint `friend beat`; a name
-the roster lacks is refused). Whether she is up is the sprint's rule over the
-two facts (above). A daemon that cannot get a session answer still beats, and
-her row reads `daemon up, session deaf 14m0s` rather than `down (stalled)`.
-`TestTheDaemonBeatsEverySecondWhateverTheSessionSays` (internal/friend, a fake
-clock and no socket: thirty minutes of steps, a beat each step a second apart
-with the session deaf for twenty and the store refusing for one, the evidence
-zero until the session answers and its time after). The model is
-`tla/Presence.tla` (`MCPresence.cfg`): a running daemon's last beat is never
-older than two ticks (`BeatFresh`), whatever the session and the store do, and
-the sprint's up is the daemon's beat and the session's evidence together
-(`UpIsBothFacts`); its reversed witnesses are the hold this replaced
-(`MCPresenceBrokenHeldBeat.cfg`) and an up rule that reads the beat alone
-(`MCPresenceBrokenBeatUp.cfg`). Not yet: the disk figures (jobs bytes, free
-disk) a later card adds to the beat.
+The native heartbeat (`Heartbeat`) sends immediately once the configured
+daemon starts, before opening its bus store, and every second until it stops.
+It runs independently of bus reads, session checks, inbox work and filesystem
+walks. Each send has a 900ms context deadline, with one send at a time. A failed
+transport attempt is an error on status and is tried again on the next tick;
+it creates no session evidence. The Presence model assumes a reachable beat
+recipient and a scheduler that runs the heartbeat each tick; an unavailable
+server cannot record a successful beat.
 
-What stays: the daemon as the mailman (bus messages and dealt cards pushed
-into her session as turns), the session-answered wake ping, `HarnessWatch`
-(`WatchHarness`, below), and finishes as evidence. Tested on the twin store
-with an injected clock: `TestFriendIsUpOnlyOnEvidenceFromHerSession` (a friend
-beaten every second with no pong and no card reads down past the window,
-naming the missing evidence; one answered pong makes her up, then down again
-after the window without another; a finish the same for its window),
-`TestFriendEvidenceRule`, and through the command
-`TestAFinishFromHerReportIsHerSessionsEvidence`. The roster and her cards are moved by the
-friend sync loop, `nova-sprint friend sync --every <d>`, a nova-config loop
-row kept alive with no shell in its argv (docs/FRIENDS.md, "The friend sync
-loop"; cmd/nova-sprint/friend_loop.go).
+The heartbeat reads bounded snapshots of what the worker knows: width, start,
+running jobs and working/queue counts once known, latest activity, and the
+check/answer words whose nonce and run the server validates. Session bus
+activity is advisory `--active`; it never stands in for nonce proof. No bus
+read or filesystem access runs on the sender's path. Status writes run on a
+separate worker with a single pending snapshot, so a stalled filesystem cannot
+stop beats. The status file carries the actual successful beat count, last
+success and current transport error. Unknown report fields, including an empty
+running list, preserve the server's last known facts. Jobs bytes/free space
+remain absent until their space measurement is implemented.
+
+The up rule is `FriendEvidence`, shared by every server view: held wins; an
+explicit harness limit or pause is down; otherwise up requires a daemon beat
+no older than ten seconds AND live session evidence (a seat-observed pong, a
+verified check answer, or a finish in its own window). The row names both
+facts: `daemon up, session deaf 14m0s` or `daemon not beating ..., session pong
+1m0s ago`. `tla/Presence.tla` separates Heartbeat from SessionStep and checks
+BeatFresh, UpHasSessionEvidence and UpHasDaemon. The reversed held-beat and
+beat-alone-up witnesses fail their named invariant.
 
 ## The push proof (internal/friend/pushproof_start.go)
 

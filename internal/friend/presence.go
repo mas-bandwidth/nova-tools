@@ -211,6 +211,7 @@ type SessionCheck struct {
 	// in it proves the push, whatever restarts came between. "" starts fresh.
 	Keep string
 
+	stepMu     sync.Mutex // serializes log cursors; transport never holds mu
 	mu         sync.Mutex
 	m          *Presence
 	cursor     string          // the last log entry read
@@ -380,8 +381,8 @@ func (s *SessionCheck) Present() (bool, string) {
 }
 
 // Evidence is the session's last evidence: its last bus message or its last
-// answer to a check, zero while it has given none. It goes on every beat (friend
-// beat --pong), and its age is what the sprint reads a deaf session by.
+// answer to a check, zero while it has given none. It is advisory activity, separate from nonce-based server proof
+// (docs/SPEC-FRIEND.md, The beat).
 func (s *SessionCheck) Evidence() time.Time {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -410,17 +411,17 @@ func (s *SessionCheck) Beat(beat func(ctx context.Context) error) func(ctx conte
 // says so (down: until when the daemon next expects an answer, and why: the
 // push unproven with the check's nonce, or no session answer to it), so the
 // sprint server reads her down with the daemon's reason the second it knows
-// (docs/SPEC-FRIEND.md, presence). A nil down holds the beat back instead.
+// (docs/SPEC-FRIEND.md, presence). A nil down sends the liveness beat without a session gate.
 // Each call steps the check first.
 func (s *SessionCheck) BeatOr(beat func(ctx context.Context) error, down func(ctx context.Context, until time.Time, reason string) error) func(ctx context.Context) error {
 	return func(ctx context.Context) error {
 		s.Step(ctx)
-		up, reason := s.Present()
+		up, _ := s.Present()
 		if up {
 			return beat(ctx)
 		}
 		if down == nil {
-			return fmt.Errorf("not beating: the session is down (%s); the daemon answering is not the session", reason)
+			return beat(ctx)
 		}
 		until, why := s.downBeat(s.Now())
 		if err := down(ctx, until, why); err != nil {
@@ -526,6 +527,8 @@ func (s *SessionCheck) nextNonce() string {
 // Step is one look: the session's messages since the last, the clock, and
 // the check when it is owed.
 func (s *SessionCheck) Step(ctx context.Context) {
+	s.stepMu.Lock()
+	defer s.stepMu.Unlock()
 	now := s.Now()
 	s.mu.Lock()
 	if s.m == nil {
@@ -578,17 +581,22 @@ func (s *SessionCheck) Step(ctx context.Context) {
 // answer, whose nonce it answers; any other is heard (rose: it brought the
 // friend up). Called with mu held.
 func (s *SessionCheck) read(ctx context.Context, now time.Time) (answered string, rose bool, err error) {
-	if s.cursor == "" {
+	cursor := s.cursor
+	s.mu.Unlock() // store I/O never blocks heartbeat Words/Said
+	if cursor == "" {
 		_, storeNow, err := s.Store.Roster(ctx)
 		if err != nil {
+			s.mu.Lock()
 			return "", false, err
 		}
-		s.cursor = bus.IDAt(storeNow)
+		cursor = bus.IDAt(storeNow)
 	}
-	es, err := s.Store.Range(ctx, bus.LogKey, "("+s.cursor, "+", LogBatch)
+	es, err := s.Store.Range(ctx, bus.LogKey, "("+cursor, "+", LogBatch)
+	s.mu.Lock()
 	if err != nil {
 		return "", false, err
 	}
+	s.cursor = cursor
 	for _, e := range es {
 		s.cursor = e.Entry
 		m := e.Message()

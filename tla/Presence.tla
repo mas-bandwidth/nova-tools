@@ -4,25 +4,13 @@
 (* 2026-10-06; docs/SPEC-FRIEND.md, The beat; docs/SPEC-SPRINT.md, Friend   *)
 (* presence: the up rule).                                                  *)
 (*                                                                         *)
-(* The daemon (internal/friend Daemon.Run) steps its loop once a second     *)
-(* and beats to the sprint server at every step, whatever the session and  *)
-(* the bus store say (SessionCheck.Beat steps the check and never holds    *)
-(* the beat). The session, separately, gives evidence or does not: a wake  *)
-(* ping it answered, or a card it finished, which the sprint records      *)
-(* (friend health, friend-finish). The sprint's up rule (sprint.FriendStatus)*)
-(* is both facts together: her last beat at most BeatLive old, and her     *)
-(* session's evidence under Window old.                                     *)
-(*                                                                         *)
-(* One unit of the clock is one second. The loop's step takes under a      *)
-(* second (the read blocks at most BeatEvery), so a running daemon steps    *)
-(* between two ticks: Tick waits for the step. That is the timing the code *)
-(* promises; what the model checks is that the step beats unconditionally. *)
-(*                                                                         *)
-(* HoldBeat is the code before this card: the step beats only while the   *)
-(* session's evidence is fresh ("no beat until a session check answers"),  *)
-(* and BeatFresh fails. BeatAloneUp is an up rule that reads the beat alone *)
-(* (the finding of 2026-10-04, friends up for hours on beats a loop sent), *)
-(* and UpHasSessionEvidence fails.                                          *)
+(* The native heartbeat is a separate one-second task, with each send     *)
+(* bounded below one second. Session work and bus reads run independently *)
+(* and can block without preventing Heartbeat. Tick waits only for that  *)
+(* heartbeat task, never for SessionStep. A reachable server is assumed:  *)
+(* store below is the bus store, independent of the beat recipient.       *)
+(* HoldBeat reverses the old session gate; BeatAloneUp reverses an up rule *)
+(* that treats daemon liveness as session evidence.                      *)
 (***************************************************************************)
 EXTENDS Integers
 
@@ -45,7 +33,7 @@ VARIABLES
     stopped,   \* when it last stopped, Never while it never has
     stepped,   \* the running daemon has stepped its loop since the last tick
     lastBeat,  \* the sprint's record of her last beat, Never before the first
-    carried,   \* the session evidence her last beat carried (friend beat --pong)
+    carried,   \* last evidence the worker knew, distinct from the server-verified heard
     known,     \* the session evidence the daemon knows (SessionCheck.Evidence)
     session,   \* "answering" or "deaf"
     heard,     \* the sprint's record of the session's last evidence (pong, finish)
@@ -96,20 +84,22 @@ Stop ==
     /\ stopped' = clock
     /\ UNCHANGED <<clock, started, stepped, lastBeat, carried, known, session, heard, store>>
 
-\* One step of the loop: the bus store read (the session's word reaches the
-\* daemon only through it), the session check stepped, then the beat,
-\* carrying what the daemon knows. Under HoldBeat the beat goes only while
-\* the session's evidence the daemon knows is fresh.
-Step ==
+\* Independent bounded heartbeat, carrying only what the worker already knows.
+Heartbeat ==
     /\ daemon = "running"
     /\ ~stepped
     /\ stepped' = TRUE
-    /\ LET k == IF store = "up" /\ session = "answering" THEN clock ELSE known
-           beats == ~HoldBeat \/ (k # Never /\ clock - k < Window)
-       IN /\ known' = k
-          /\ lastBeat' = IF beats THEN clock ELSE lastBeat
-          /\ carried' = IF beats THEN k ELSE carried
-    /\ UNCHANGED <<clock, daemon, started, stopped, session, heard, store>>
+    /\ LET beats == ~HoldBeat \/ (known # Never /\ clock - known < Window)
+       IN /\ lastBeat' = IF beats THEN clock ELSE lastBeat
+          /\ carried' = IF beats THEN known ELSE carried
+    /\ UNCHANGED <<clock, daemon, started, stopped, known, session, heard, store>>
+
+\* Session work can make progress only when the bus answers; no heartbeat waits for it.
+SessionStep ==
+    /\ daemon = "running"
+    /\ store = "up"
+    /\ known' = IF session = "answering" THEN clock ELSE known
+    /\ UNCHANGED <<clock, daemon, started, stopped, stepped, lastBeat, carried, session, heard, store>>
 
 \* The session gives the sprint evidence (a wake ping answered, a card finished).
 SessionEvidence ==
@@ -125,7 +115,7 @@ StoreFlips ==
     /\ store' = IF store = "up" THEN "down" ELSE "up"
     /\ UNCHANGED <<clock, daemon, started, stopped, stepped, lastBeat, carried, known, session, heard>>
 
-\* A second passes, once a running daemon has stepped in it.
+\* A second passes, once the independent heartbeat has run in it.
 Tick ==
     /\ clock < MaxT
     /\ daemon = "running" => stepped
@@ -133,7 +123,7 @@ Tick ==
     /\ stepped' = FALSE
     /\ UNCHANGED <<daemon, started, stopped, lastBeat, carried, known, session, heard, store>>
 
-Next == Start \/ Stop \/ Step \/ SessionEvidence \/ SessionFlips \/ StoreFlips \/ Tick
+Next == Start \/ Stop \/ Heartbeat \/ SessionStep \/ SessionEvidence \/ SessionFlips \/ StoreFlips \/ Tick
 
 Spec == Init /\ [][Next]_vars
 

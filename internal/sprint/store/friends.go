@@ -284,6 +284,34 @@ func (st *Store) FriendBeatProof(ctx context.Context, friend string, rep sprint.
 	} else if len(oks) == 1 && oks[0] {
 		_ = json.Unmarshal([]byte(vals[0]), &prev) // ignored: an unreadable record holds no check and no proof
 	}
+	// A liveness beat may know no jobs: preserve the last known running ids
+	// (docs/SPEC-SPRINT.md, Friend presence: the up rule).
+	if old := prev.Friend; old != nil {
+		if len(rep.Running) == 0 {
+			rep.Running = append([]string(nil), old.Running...)
+		}
+		if rep.Working == nil {
+			rep.Working = old.Working
+		}
+		if rep.Queue == nil {
+			rep.Queue = old.Queue
+		}
+		if rep.Width == nil {
+			rep.Width = old.Width
+		}
+		if rep.Active.IsZero() {
+			rep.Active = old.Active
+		}
+		if rep.Build == "" {
+			rep.Build = old.Build
+		}
+		if rep.Started.IsZero() {
+			rep.Started = old.Started
+		}
+		if rep.Present.IsZero() {
+			rep.Present = old.Present
+		}
+	}
 	b := sprint.Beat{At: now}
 	if len(rep.Running) > 0 || rep.Working != nil || rep.Queue != nil || rep.Width != nil || !rep.Active.IsZero() {
 		b.Friend = &rep // a beat that reports nothing carries no report

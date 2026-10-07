@@ -96,6 +96,7 @@ type Daemon struct {
 	Width                int
 	Store                bus.Store
 	Deliver              Deliverer
+	HeartbeatState       func() BeatState                                  // native heartbeat transport result, nil for a stepped test sender
 	Beat                 func(ctx context.Context, active time.Time) error // one beat to the sprint server, carrying the session's last activity (zero: none known)
 	// Activity is the newest write of the session's files and Cards the ids of
 	// the cards she holds, oldest first (nil: the queue file's queued and working
@@ -1219,6 +1220,10 @@ func (d *Daemon) daemonPong(ctx context.Context, b *bus.Bus, ping bus.Message, n
 // flush writes the status when it changed, and every StatusEvery anyway,
 // so a reader tells a live daemon from a dead one by the file's age.
 func (d *Daemon) flush(now time.Time) {
+	if d.HeartbeatState != nil {
+		b := d.HeartbeatState()
+		d.status.LastBeat, d.status.Beats, d.status.BeatError = b.At, b.Count, b.Error
+	}
 	s := d.status
 	s.Connection, s.LastPing, s.Seat, s.SeatSince = d.m.Connection, d.m.LastPing, d.m.Seat, d.m.SeatSince
 	s.Challenge, s.Nonce, s.LastPong, s.Pongs = d.m.Challenge, d.m.Nonce, d.m.LastPong, d.m.Pongs
