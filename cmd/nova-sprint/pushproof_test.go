@@ -127,7 +127,7 @@ func TestTheSeatRefusesEveryVerbUntilThePushIsProven(t *testing.T) {
 	ta.a.outside = mockHealthyOutside()
 	code, out, _ = ta.do("seat check")
 	require.Equal(t, 1, code, out)
-	assert.Contains(t, out, "MACHINERY push DOWN holder="+name+" harness=- adapter=- why=", out)
+	assert.Contains(t, out, "MACHINERY push DOWN holder="+name+" harness=- adapter=- proven=- why=", out)
 	assert.Contains(t, out, "remedy=\"nova-sprint seat install --actor "+name, out)
 
 	// the seat is given to no name without a live proof
