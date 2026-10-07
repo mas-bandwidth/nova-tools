@@ -269,25 +269,48 @@ func ReadCardExtras(s *Snapshot) []string {
 // a work card is dealt by (its tier: a friend's tiers reach it, friendAtOrAbove; a member's reader
 // row serves it, readerServesTier) and the two of a read: it did not work the attempt, and
 // it holds no read card of the attempt and closed none (readSpent).
-func mayReadCard(s *Snapshot, u readUnit, pr *Card, attempt int, worker string, cards []*Card) bool {
+//
+// below says the unit may read it only by the interim rule (the owner, 2026-10-06 7:11 PM
+// ET "let flash read pro", 7:41 PM "let pro do it"): it is one tier below the read's tier,
+// never two; the deal prefers a unit at or above the tier while one has room.
+func mayReadCard(s *Snapshot, u readUnit, pr *Card, attempt int, worker string, cards []*Card) (ok, below bool) {
 	mine := readerCardsAt(cards, pr.ID, attempt, u.name)
 	if u.name == worker || readSpent(mine) || readCardIDFor(mine, pr.ID, attempt, u.name) == "" {
-		return false
+		return false, false
 	}
 	if u.friend {
 		// a friend reads her tier or any below it, as her reads always did: a heavy friend
 		// reads a flash and a pro card (friendAtOrAbove)
-		return friendAtOrAbove(u.seat, friendReadTier(s, pr))
+		t := friendReadTier(s, pr)
+		if friendAtOrAbove(u.seat, t) {
+			return true, false
+		}
+		b := tierBelow(t)
+		return b != "" && friendAtOrAbove(u.seat, b), true
 	}
 	// a machine whose reader row holds a read of the attempt on the readers table (asked
 	// the old way, before read cards were on) reads it there, never twice
 	rd := ReaderPrefix + u.name
 	for _, id := range ReadCardIDs(pr.ID, attempt, rd) {
 		if c := s.Readers.Card(id); c.Placed() || c != nil && c.F("verdict") != "" {
-			return false
+			return false, false
 		}
 	}
-	return s.readerServesTier(rd, s.readTierOf(pr))
+	t := s.readTierOf(pr)
+	if s.readerServesTier(rd, t) {
+		return true, false
+	}
+	b := tierBelow(t)
+	return b != "" && s.readerServesTier(rd, b), true
+}
+
+// tierBelow is the tier one below t on the ladder (flash, pro, heavy, frontier), "" for
+// flash or a word off the ladder.
+func tierBelow(t string) string {
+	if i := slices.Index(capLadder, t); i > 0 {
+		return capLadder[i-1]
+	}
+	return ""
 }
 
 // readCardsStanding is the primary's reads that stand at its attempt, both tables: the
@@ -363,7 +386,7 @@ func readCardsTakeBack(s *Snapshot) map[string][]Change {
 		switch {
 		case pr == nil || pr.Col != Review || readAttempt(pr) != c.Int("attempt"):
 			by = RetiredByPrimary
-		case c.F(FieldReadCard) != "" && c.Col == Working && !s.Now.Before(readStart(c).Add(ReadCardDeadline)):
+		case c.F(FieldReadCard) != "" && c.Col == Working && !readStart(c).IsZero() && !s.Now.Before(readStart(c).Add(ReadCardDeadline)):
 			by = RetiredByLate
 		case c.F(FieldReadCard) != "" && c.Col == Ready && !s.Now.Before(stampAt(c, "asked").Add(s.DealtMax())):
 			by = RetiredByUnstarted
@@ -417,9 +440,11 @@ func readCardsAsk(s *Snapshot, seats []FriendSeat, ri routeIndexes) (p Plan, wai
 		worker := attemptUnit(view, pr.ID, attempt)
 		cards := idx[pr.ID]
 		var may []int
+		below := map[int]bool{}
 		for i, u := range units {
-			if mayReadCard(view, u, pr, attempt, worker, cards) {
+			if ok, b := mayReadCard(view, u, pr, attempt, worker, cards); ok {
 				may = append(may, i)
+				below[i] = b
 			}
 		}
 		var room []int
@@ -431,6 +456,12 @@ func readCardsAsk(s *Snapshot, seats []FriendSeat, ri routeIndexes) (p Plan, wai
 		slices.SortStableFunc(room, func(a, b int) int {
 			x, y := units[a], units[b]
 			switch {
+			case below[a] != below[b]:
+				// a reader at or above the tier first; one tier below only for the rest
+				if below[b] {
+					return -1
+				}
+				return 1
 			case x.friend != y.friend:
 				if x.friend {
 					return -1
