@@ -5315,6 +5315,25 @@ epoch's.
 
 `release check [--json] [--streams <glob>] [--check <name>]...` is a read-class verb (the owner, 2026-10-04: a release ships when the tool says so, not when someone feels it is done): it runs the registry of release checks (`sprint.ReleaseChecks`, internal/sprint/releasecheck.go) over the store's log and the sprint's settings and writes nothing. Each check is a pure function over `sprint.ReleaseFacts` (the clock, the log, the dealt bound; later checks add git facts), prints `RELEASE CHECK <name> ok|fail <evidence>`, and on a fail the evidence names what to look at; then one summary line, `RELEASE OK checks=<n>` or `RELEASE NOT READY failed=<n>`; exit 0 every check passed, 1 a check failed, 2 usage or a store that did not answer. `--json` prints the one report object (`results`, `checks`, `failed`, `ready`, `summary`); `--streams` keeps the log of the streams the glob names; `--check` runs only the named checks. `release check` is its own verb beside `release <id> --reason`, which still releases a held card or sentinel; `add` refuses a card whose id is `check`, naming the reason. The first check, `no-stuck-friend`, fails when a friend was stuck at any moment of the last 4 hours, stuck being the deadline rule's own lateness (`WorkDeadline`): a working card held past its deadline (its own `friend_deadline`, else `DeadlineUnfinished`, from its first take), or a card dealt to it and not taken past the dealt bound. No other definition of a stuck friend exists on this tree (the where table carries none), so this is the one, and any later count of stuck friends reuses `sprint.NoStuckFriend`'s spans. Tests: `TestReleaseCheckFailsWhileAFriendWasStuckInTheLastFourHours`, `TestTheReleaseReportSaysOKOrNotReadyByTheChecksRun`, `TestEveryReleaseCheckStatesItsBar`, `TestReleaseStreamsFilterKeepsTheStreamsTheGlobNames`.
 
+### release-check-acceptance-r-b.w3
+
+`release check` also runs the acceptance sentinel's six checks, source: the
+coordinator's answer over the bus, 2026-10-06 12:50 ET (message
+`01M48ZHQ5ZNWYV5FAKBRTTW038`): `cards-settled`, `base-gate-green`,
+`two-ok-reads`, `prose-true`, `landings-promoted`, `no-open-judgment`. Each is
+a pure function in `internal/sprint/releasecheck_acceptance.go` over
+`sprint.Acceptance`: the streams the verb named, their primaries, the readers'
+reads, the tree gate's runs at the base, nova-check's prose results, the
+promotion, the open judgments and the dropped cards. The verb binds it with
+`sprint.AcceptanceOf` from the store's tables, the log and the `--streams` glob;
+a unit test builds a twin of it and opens no socket. Each prints one
+`RELEASE CHECK <name> ok|fail <evidence>` line, and on a fail the evidence names
+the first item that did not hold. With no stream named there is no acceptance to
+check, so each passes and says so; the bars are in
+[docs/SPEC-RELEASE.md](SPEC-RELEASE.md) section 16, subsection
+release-check-acceptance-r-b.w3. Test:
+`TestReleaseCheckRunsTheAcceptanceSentinelsSixChecks`.
+
 ## 12. The driver
 
 `nova-sprint play` plays the outside world on a tick (`--every`), seeded
