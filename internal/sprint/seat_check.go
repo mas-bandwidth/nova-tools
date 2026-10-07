@@ -225,6 +225,8 @@ func (r SeatCheckReport) Summary() string {
 
 // JSON is the report as --json prints it.
 func (r SeatCheckReport) JSON() string {
+	// Measurements are public too; only the folder reveals the proof nonce.
+	r.Measures.Push.Record = PublicPushRecord(r.Measures.Push.Record)
 	if r.Lines == nil {
 		r.Lines = []SeatCheckLine{}
 	}

@@ -231,3 +231,11 @@ func PushProofState(rec PushRecord) string {
 	}
 	return "pending"
 }
+
+// PublicPushRecord is status without the verification secret (SPEC-SPRINT,
+// "The push proof"). The persisted record remains the verifier's truth.
+func PublicPushRecord(rec PushRecord) PushRecord {
+	rec.Failed = HidePushNonces(rec, rec.Failed)
+	rec.Nonce, rec.PongOf = "", ""
+	return rec
+}

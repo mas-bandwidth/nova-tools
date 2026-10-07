@@ -332,8 +332,7 @@ func (a *app) sayPush(rec sprint.PushRecord, ok bool, now time.Time, asJSON bool
 	why := sprint.PushWhy(rec.Name, rec, ok, now)
 	if asJSON {
 		proof := sprint.PushProofState(rec)
-		rec.Failed = sprint.HidePushNonces(rec, rec.Failed)
-		rec.Nonce, rec.PongOf = "", ""
+		rec = sprint.PublicPushRecord(rec)
 		b, _ := json.Marshal(map[string]any{"record": rec, "recorded": ok, "live": why == "", "proof": proof, "why": why}) // ignored: a record of strings and times always encodes
 		fmt.Fprintln(stdout, string(b))
 	} else {
