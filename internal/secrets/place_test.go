@@ -10,22 +10,13 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/testguard"
 )
 
-func armHostGuard(t *testing.T) {
-	t.Helper()
-	t.Setenv(testguard.EnvNoHost, "1")
-	testguard.Reload()
-	t.Cleanup(func() {
-		// ignored: the cleanup is best effort; t.Setenv restores the value after it
-		_ = os.Unsetenv(testguard.EnvNoHost)
-		testguard.Reload()
-	})
-}
-
 // TestPlaceSSHSeamPanicsUnderTheGuard pins 47d81e9c: sshPlaceSecret calls
 // testguard.RefuseHosts before the child. Reverting place.go left
 // ./internal/secrets green because the package had no test of that seam.
 func TestPlaceSSHSeamPanicsUnderTheGuard(t *testing.T) {
-	armHostGuard(t)
+	t.Parallel()
+	os.Setenv(testguard.EnvNoHost, "1")
+	testguard.Reload()
 	defer func() {
 		r := recover()
 		require.NotNil(t, r, "sshPlaceSecret ran a child under the guard; an unfaked seam must refuse before it reaches a host")
