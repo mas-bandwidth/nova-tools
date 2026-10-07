@@ -98,6 +98,14 @@ type Status struct {
 	// one-shot lanes as n:session:card/turn, empty in batch.
 	Mode  string `json:"mode,omitempty"`
 	Lanes string `json:"lanes,omitempty"`
+	// SessionRecovery is "recovered" when the daemon auto-recovered a broken session,
+	// SessionRecoveryFrom the old session ID, SessionRecoveryTo the new one,
+	// SessionRecoveryReason why recovery was triggered, and SessionRecoveryAt when.
+	SessionRecovery    string `json:"session_recovery,omitempty"`
+	SessionRecoveryFrom string `json:"session_recovery_from,omitempty"`
+	SessionRecoveryTo   string `json:"session_recovery_to,omitempty"`
+	SessionRecoveryReason string `json:"session_recovery_reason,omitempty"`
+	SessionRecoveryAt   time.Time `json:"session_recovery_at,omitzero"`
 	// Paced is the lanes' effective width under the subscription windows' pacing
 	// (pacing.go), nil before the lanes have stepped; Window is the windows' use
 	// as the harness last reported it ("5h 62% 7d 31%", empty when none is live),

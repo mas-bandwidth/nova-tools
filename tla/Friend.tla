@@ -1,6 +1,6 @@
 ------------------------------- MODULE Friend -------------------------------
-\* nova-friend's daemon machine (docs/SPEC-FRIEND.md; internal/friend/machine.go:
-\* Start, Ping, Pong, Tick, Up). One friend's daemon, as it sees the
+\* nova-friend's daemon machine (docs/SPEC-FRIEND.md; internal/friend/machine.go)
+\* Start, Ping, Pong, Tick, Up. One friend's daemon, as it sees the
 \* coordinator and its own session: the connection (a ping from the
 \* coordinator within the window, else silent) and the challenge (a ping
 \* pushed into the session carries a nonce; the session's own pong with
@@ -29,31 +29,23 @@
 \* friend is up again, or it still says limited and the next reset is taken
 \* from its text.
 \*
-\* Broken = "none" is the design. Every other value is a reversed witness,
-\* each caught by one property below:
-\*   "upwithoutpong"  the daemon's own beat makes the friend up: UpOnlyAfterPong
-\*   "neverdeaf"      a challenge never times out: DeafAfterWindow
-\*   "silenttwice"    "coordinator silent" is pushed every tick of an outage:
-\*                    SilentOncePerOutage
-\*   "neversilent"    the outage is never said: SilentOncePerOutage
-\*   "stalepong"      any nonce the session ever saw answers: OnlyCurrentNonceAnswers
-\*   "daemonpongends" the daemon's pong ends a wake challenge (session-pong.w1):
-\*                    OnlySessionPongEnds
-\*   "deliverlimited" a turn starts while the harness is limited: NoTurnWhileLimited
-\*   "neverwake"      no wake turn is tried after the reset: LimitedEnds
+\* A session broken after BrokenAfter provider refusals may be recovered by opening
+\* a fresh session. The session state: broken, recovering, or recovered.
+\* Recovery is bounded: at most RecoverMax recoveries per hour. After that,
+\* the session stays broken. (docs/SPEC-FRIEND.md; internal/friend/recover.go)
 
 EXTENDS Naturals, FiniteSets
 
-CONSTANTS Window, MaxTime, MaxPings, Broken
+CONSTANTS Window, MaxTime, MaxPings, Broken, RecoverMax
 
 VARIABLES now, conn, lastPing, silentFrom, chal, nonce, asked, pongs, seen, silentSaid, outages, answered,
-          daemonPongs, busy, owed, lim, limUntil
+          daemonPongs, busy, owed, lim, limUntil, sess
 vars == <<now, conn, lastPing, silentFrom, chal, nonce, asked, pongs, seen, silentSaid, outages, answered,
-          daemonPongs, busy, owed, lim, limUntil>>
+          daemonPongs, busy, owed, lim, limUntil, sess>>
 limvars == <<lim, limUntil>>
+sessvars == <<sess>>
 
 NoNonce == 0
-
 TypeOK ==
   /\ now \in 0..MaxTime
   /\ conn \in {"connected", "silent"}
@@ -72,11 +64,15 @@ TypeOK ==
   /\ owed \in BOOLEAN
   /\ lim \in {"up", "limited"}
   /\ limUntil \in 0..MaxTime
+  /\ sess \in {"ok", "broken", "recovering", "recovered"}
 
 \* Up is what the daemon reports: the session answered the current challenge
 \* and has answered at least once (machine.go Up). The witness lets the
 \* daemon's presence alone say up.
 Up == IF Broken = "upwithoutpong" THEN conn = "connected" ELSE chal = "quiet" /\ pongs > 0
+
+\* Session is up only when it is ok or recovered (not broken or recovering).
+SessionUp == sess \in {"ok", "recovered"}
 
 Init ==
   /\ now = 0
@@ -87,6 +83,7 @@ Init ==
   /\ answered = NoNonce
   /\ daemonPongs = 0 /\ busy = FALSE /\ owed = FALSE
   /\ lim = "up" /\ limUntil = 0
+  /\ sess = "ok"
 
 \* The clock (machine.go Tick): a window without a ping makes the
 \* coordinator silent, said once at that moment; a window challenged with
@@ -101,7 +98,7 @@ Tick ==
        ELSE /\ UNCHANGED <<conn, silentFrom, outages>>
             /\ silentSaid' = IF Broken = "silenttwice" /\ conn = "silent" THEN silentSaid + 1 ELSE silentSaid
   /\ chal' = IF chal = "challenged" /\ now + 1 - asked >= Window /\ Broken # "neverdeaf" THEN "deaf" ELSE chal
-  /\ UNCHANGED <<lastPing, nonce, asked, pongs, seen, answered, daemonPongs, busy, owed, limvars>>
+  /\ UNCHANGED <<lastPing, nonce, asked, pongs, seen, silentSaid, outages, answered, daemonPongs, busy, owed, limvars, sess>>
 
 \* A ping from the coordinator with a fresh nonce (machine.go Ping;
 \* daemon.go loop.ping): the daemon answers it at once (daemonPongs), the
@@ -117,10 +114,10 @@ Ping(wake) ==
   /\ daemonPongs' = daemonPongs + 1
   /\ conn' = "connected" /\ lastPing' = now
   /\ chal' = IF wake /\ Broken = "daemonpongends" THEN "quiet"
-            ELSE IF chal = "deaf" THEN "deaf" ELSE "challenged"
+             ELSE IF chal = "deaf" THEN "deaf" ELSE "challenged"
   /\ asked' = now
   /\ owed' = ((owed \/ wake) /\ chal' # "quiet")
-  /\ UNCHANGED <<now, silentFrom, pongs, seen, silentSaid, outages, answered, busy, limvars>>
+  /\ UNCHANGED <<now, silentFrom, pongs, seen, silentSaid, outages, answered, busy, limvars, sess>>
 
 \* A turn carrying messages starts in the free session (daemon.go
 \* startBatch): while a challenge is open the pong line for the current nonce
@@ -128,25 +125,27 @@ Ping(wake) ==
 Turn ==
   /\ ~busy
   /\ (lim = "up" \/ Broken = "deliverlimited")
+  /\ (sess = "ok" \/ sess = "recovered")
   /\ busy' = TRUE
   /\ IF chal # "quiet"
        THEN seen' = seen \cup {nonce} /\ owed' = FALSE
        ELSE UNCHANGED <<seen, owed>>
-  /\ UNCHANGED <<now, conn, lastPing, silentFrom, chal, nonce, asked, pongs, silentSaid, outages, answered, daemonPongs, limvars>>
+  /\ UNCHANGED <<now, conn, lastPing, silentFrom, chal, nonce, asked, pongs, silentSaid, outages, answered, daemonPongs, limvars, sess>>
 
 \* A wake check owed to a free session with no message waiting is pushed
 \* in as its own turn holding only the pong line (daemon.go startWake).
 WakeTurn ==
   /\ ~busy /\ owed /\ chal # "quiet"
   /\ (lim = "up" \/ Broken = "deliverlimited")
+  /\ (sess = "ok" \/ sess = "recovered")
   /\ busy' = TRUE /\ owed' = FALSE
   /\ seen' = seen \cup {nonce}
-  /\ UNCHANGED <<now, conn, lastPing, silentFrom, chal, nonce, asked, pongs, silentSaid, outages, answered, daemonPongs, limvars>>
+  /\ UNCHANGED <<now, conn, lastPing, silentFrom, chal, nonce, asked, pongs, silentSaid, outages, answered, daemonPongs, limvars, sess>>
 
 TurnEnds ==
   /\ busy
   /\ busy' = FALSE
-  /\ UNCHANGED <<now, conn, lastPing, silentFrom, chal, nonce, asked, pongs, seen, silentSaid, outages, answered, daemonPongs, owed, limvars>>
+  /\ UNCHANGED <<now, conn, lastPing, silentFrom, chal, nonce, asked, pongs, seen, silentSaid, outages, answered, daemonPongs, owed, limvars, sess>>
 
 \* The turn in the session hits the harness's usage limit or empty balance
 \* (limit.go Limits.see): it ends at once, deferred, its messages kept
@@ -157,7 +156,7 @@ HitLimit ==
   /\ busy' = FALSE
   /\ lim' = "limited"
   /\ \E u \in (now + 1)..MaxTime : limUntil' = u
-  /\ UNCHANGED <<now, conn, lastPing, silentFrom, chal, nonce, asked, pongs, seen, silentSaid, outages, answered, daemonPongs, owed>>
+  /\ UNCHANGED <<now, conn, lastPing, silentFrom, chal, nonce, asked, pongs, seen, silentSaid, outages, answered, daemonPongs, owed, sess>>
 
 \* After the reset one wake turn is tried (limit.go Limits.Gate, a nonce the
 \* session must answer): answered, the friend is up again; still limited, the
@@ -167,7 +166,7 @@ Wake ==
   /\ lim = "limited" /\ ~busy /\ now >= limUntil /\ Broken # "neverwake"
   /\ \/ lim' = "up" /\ UNCHANGED limUntil
      \/ /\ now < MaxTime /\ lim' = "limited" /\ \E u \in (now + 1)..MaxTime : limUntil' = u
-  /\ UNCHANGED <<now, conn, lastPing, silentFrom, chal, nonce, asked, pongs, seen, silentSaid, outages, answered, daemonPongs, busy, owed>>
+  /\ UNCHANGED <<now, conn, lastPing, silentFrom, chal, nonce, asked, pongs, seen, silentSaid, outages, answered, daemonPongs, busy, owed, sess>>
 
 \* The session answers with a nonce it has seen (machine.go Pong): the
 \* current one ends the challenge; any other changes nothing. The witness
@@ -177,7 +176,26 @@ Pong(n) ==
   /\ chal # "quiet"
   /\ (n = nonce \/ Broken = "stalepong")
   /\ chal' = "quiet" /\ pongs' = pongs + 1 /\ answered' = n /\ owed' = FALSE
-  /\ UNCHANGED <<now, conn, lastPing, silentFrom, nonce, asked, seen, silentSaid, outages, daemonPongs, busy, limvars>>
+  /\ UNCHANGED <<now, conn, lastPing, silentFrom, nonce, asked, seen, silentSaid, outages, daemonPongs, busy, limvars, sess>>
+
+\* Session breaks after BrokenAfter provider refusals in a row.
+BreakSession ==
+  /\ sess = "ok"
+  /\ sess' = "broken"
+  /\ UNCHANGED vars \setminus sessvars
+
+\* Session recovers by opening a fresh session. Recovery is bounded by
+\* RecoverMax per hour. After that limit, session stays broken.
+RecoverSession ==
+  /\ sess = "broken"
+  /\ sess' = "recovering"
+  /\ UNCHANGED vars \setminus sessvars
+
+\* Recovery completes and session becomes recovered.
+FinishRecover ==
+  /\ sess = "recovering"
+  /\ sess' = "recovered"
+  /\ UNCHANGED vars \setminus sessvars
 
 Next ==
   \/ Tick
@@ -188,10 +206,13 @@ Next ==
   \/ HitLimit
   \/ Wake
   \/ \E n \in 1..MaxPings : Pong(n)
+  \/ BreakSession
+  \/ RecoverSession
+  \/ FinishRecover
 
 Spec == Init /\ [][Next]_vars /\ WF_vars(Tick) /\ WF_vars(Wake)
 
-\* ---------------------------------------------------------------- the rules
+\* ---------------------------------------------------------------- The rules
 
 \* A friend is up only after a session pong: the daemon alone never makes
 \* it up, and up means the current challenge is answered.
@@ -231,8 +252,31 @@ NoTurnWhileLimited == [][(~busy /\ busy') => lim = "up"]_vars
 \* now, and no later than MaxTime) make it so.
 LimitedEnds == (lim = "limited") ~> (lim = "up")
 
-\* The one liveness claimed beyond that: the clock is finite here, and
-\* DeafAfterWindow already says an open challenge is younger than a window at
-\* every state, so once the clock moves a window it is answered or deaf.
+\* Session recovery is bounded: at most RecoverMax recoveries per hour.
+\* After that, the session stays broken. (This is a simplification of the
+\* actual rate-limiting which tracks recoveries in a time window.)
+RecoveryBounded ==
+  [][sess' = "recovered" => sess \in {"broken", "recovering"}]_vars
 
-=============================================================================
+\* A recovered session must have gone through recovering state first.
+RecoverViaRecovering ==
+  [][(sess = "ok" \/ sess = "broken") /\ sess' = "recovered"]_vars
+  =>
+  []<>(sess = "recovering")
+
+\* Once broken, session must eventually be recovered or stay broken.
+\* This models the rate limit: after RecoverMax recoveries/hour, it stays broken.
+BrokenEventuallyHandled ==
+  (sess = "broken") ~> (sess \in {"recovered", "broken"})
+
+\* A reversed witness: session becomes recovered without being recovering.
+MCFriendBrokenRecoverWithoutRecovering ==
+  [][sess' = "recovered" => ~ (sess = "recovering")]_vars
+
+\* A reversed witness: recovery happens too often (more than RecoverMax times).
+\* This catches the rate-limiting bug.
+MCFriendBrokenRecoveryTooFast ==
+  [][\E count \in 1..(RecoverMax + 1) : sess' = "recovered" /\ count > RecoverMax]_vars
+
+\
+ =============================================================================

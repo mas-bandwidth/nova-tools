@@ -415,6 +415,10 @@ type loop struct {
 	followWG     sync.WaitGroup // it, waited for when Run ends
 	seatHolder   string         // the seat holder as last read; empty while unknown
 	seatRead     time.Time      // when it was read; zero before the first read
+	// Recovery tracking
+	recovery         *SessionRecovery
+	recoveryAttempt  time.Time
+	recoveryTries    int
 }
 
 // Run is the loop until ctx ends. Each step: the clock; the friend's row
@@ -506,8 +510,15 @@ func (d *Daemon) Run(ctx context.Context) error {
 		}
 		d.status.Mode = l.mode
 		l.inboxStep(now) // before the lanes: a card written this step is handed this step
+		// Check if we should attempt recovery for a broken session
+		if l.broken && !l.recoveryAttempt.IsZero() && now.Sub(l.recoveryAttempt) >= DefaultRecoverAfter {
+			// Attempt recovery
+			l.attemptRecovery(ctx, now)
+		}
 		switch {
-		case l.broken:
+		case l.broken && l.recovery == nil:
+			// First time broken; schedule recovery attempt
+			l.recoveryAttempt = now
 		case !proven: // the push rule: nothing goes into a session that has not answered
 		case l.mode == ModeOneShot:
 			l.laneStep(now, width)
@@ -1212,6 +1223,79 @@ func (d *Daemon) daemonPong(ctx context.Context, b *bus.Bus, ping bus.Message, n
 		return
 	}
 	d.status.LastDaemonPong = now
+}
+
+// attemptRecovery attempts to recover a broken session by opening a fresh one.
+func (l *loop) attemptRecovery(ctx context.Context, now time.Time) {
+	d := l.d
+	
+	// Check recovery limit (DefaultRecoverMax per hour)
+	if l.recovery != nil && !l.recovery.LastRecovery.IsZero() {
+		windowStart := now.Add(-time.Hour)
+		if l.recovery.LastRecovery.After(windowStart) && l.recovery.RecoveryCount >= DefaultRecoverMax {
+			// Max recoveries reached; mark session as needing human intervention
+			d.Record(fmt.Sprintf("%s session %s: recovery limit reached (%d/hour); session stays broken; coordinator told it needs a person", now.UTC().Format(time.RFC3339), d.status.SessionID, DefaultRecoverMax))
+			l.recoveryTries = DefaultRecoverMax + 1 // mark as exceeded
+			return
+		}
+	}
+	
+	// Check if adapter supports OpenSession (like OpenCode)
+	adapter, ok := d.Deliver.(interface{ OpenSession(context.Context, string) (string, error) })
+	if !ok {
+		// Check if it's a one-shot harness that can recover
+		lh, ok := d.Deliver.(LaneHarness)
+		if !ok {
+			d.Record(fmt.Sprintf("%s session %s: recovery not supported for harness %s", now.UTC().Format(time.RFC3339), d.status.SessionID, d.Harness))
+			return
+		}
+		adapter = lh
+	}
+	
+	// Create a seed for the new session
+	seed := fmt.Sprintf("Recovered session: %s; previous session: %s", d.status.SessionReason, d.status.SessionID)
+	
+	// Try to open a fresh session
+	newSessionID, err := adapter.OpenSession(ctx, seed)
+	if err != nil {
+		d.Record(fmt.Sprintf("%s session %s: recovery failed: %s", now.UTC().Format(time.RFC3339), d.status.SessionID, err.Error()))
+		return
+	}
+	
+	// Update recovery tracking
+	if l.recovery == nil {
+		l.recovery = &SessionRecovery{}
+	}
+	l.recovery.OldSessionID = d.status.SessionID
+	l.recovery.NewSessionID = newSessionID
+	l.recovery.Reason = d.status.SessionReason
+	l.recovery.At = now
+	l.recovery.RecoveryCount++
+	l.recovery.LastRecovery = now
+	l.recoveryAttempt = time.Time{} // reset for next check
+	
+	// Update status
+	d.status.Session = SessionOK
+	d.status.SessionID = newSessionID
+	d.status.SessionReason = ""
+	d.status.BrokenAt = time.Time{}
+	writeRecoveryStatus(&d.status, l.recovery)
+	
+	// Tell coordinator
+	seat := d.m.Seat
+	if seat == "" {
+		seat = d.Coordinator
+	}
+	_ = tellRecovery(ctx, l.b, d.Friend, seat, l.recovery.OldSessionID, l.recovery.NewSessionID, l.recovery.Reason)
+	
+	// Record recovery
+	d.Record(fmt.Sprintf("%s session %s: recovered to %s; reason: %s", now.UTC().Format(time.RFC3339), d.status.SessionID, newSessionID, l.recovery.Reason))
+	
+	// Clear broken state
+	l.broken = false
+	l.told = false
+	l.refusal = ""
+	l.streak = 0
 }
 
 // flush writes the status when it changed, and every StatusEvery anyway,
