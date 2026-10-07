@@ -74,7 +74,14 @@ func TestStatsRecordsNameEveryAttemptsWorkAndReadCards(t *testing.T) {
 	t.Parallel()
 	rec := StatsRecords(statsSnapshot())
 	assert.ElementsMatch(t, []string{"p1.w1", "p1.w2", "p2.w1"}, rec[Fleet])
-	assert.ElementsMatch(t, []string{"p1.r1.reader-a", "p1.r1.reader-b", "p1.r2.reader-a", "p1.r2.reader-b", "p2.r1.reader-a", "p2.r1.reader-b"}, rec[Readers])
+	assert.ElementsMatch(t, []string{
+		"p1.r1.reader-a", "p1.r1.reader-a.g1", "p1.r1.reader-a.g2",
+		"p1.r1.reader-b", "p1.r1.reader-b.g1", "p1.r1.reader-b.g2",
+		"p1.r2.reader-a", "p1.r2.reader-a.g1", "p1.r2.reader-a.g2",
+		"p1.r2.reader-b", "p1.r2.reader-b.g1", "p1.r2.reader-b.g2",
+		"p2.r1.reader-a", "p2.r1.reader-a.g1", "p2.r1.reader-a.g2",
+		"p2.r1.reader-b", "p2.r1.reader-b.g1", "p2.r1.reader-b.g2",
+	}, rec[Readers])
 }
 
 func TestStatsArePassNumbersFromTheCards(t *testing.T) {

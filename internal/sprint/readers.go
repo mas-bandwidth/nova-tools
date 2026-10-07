@@ -352,45 +352,108 @@ func returnedReadsAt(s *Snapshot, pr *Card, attempt int) []*Card {
 	return out
 }
 
-// ReadCardForAsk returns the read card ID to use when asking a reader of a primary
-// at an attempt: plain identity if no card exists yet, or second identity if an
-// away-retired or refused card (RetiredByRefused) exists with the plain identity and no
-// second card exists yet.
-// ok is true if the reader is eligible to be asked.
-func ReadCardForAsk(s *Snapshot, primary string, attempt int, reader string) (id string, ok bool) {
-	plain := ReadCardID(primary, attempt, reader)
-	existing := s.Readers.Card(plain)
-	if existing == nil {
-		return plain, true
+// noVerdictTakeback says the read card was retired with no verdict and counts
+// toward the take-back bound: the reader marked away, a server restart's lapse,
+// or a read deadline. A refused launch is no verdict too, but it is not a
+// take-back of a read (it never ran) and is handled apart (ReadCardForAsk); a
+// level, a coordinator's instead, a return, an accept or a verdict is not one
+// of these.
+func noVerdictTakeback(c *Card) bool {
+	if c == nil || c.Placed() {
+		return false
 	}
-	if by := existing.F("retired_by"); by == "away" || by == RetiredByRefused {
-		second := ReadCardSecondID(primary, attempt, reader)
-		if s.Readers.Card(second) == nil {
-			return second, true
-		}
+	switch c.F("retired_by") {
+	case "away", "restart", "deadline", RetiredByLapsed:
+		return true
 	}
-	return plain, false
+	return false
 }
 
-// freeReaders is the readers the ask may ask the primary's attempt of: up,
-// serving the primary's tier (readerServesTier; an empty tiers cell reads every
-// tier, and a fleet reader serves only a tier it can draw a route of), with no
-// read card of it at the attempt, placed or retired (a reader with one, even
-// retired, has read it). When an away-retired card exists with
-// the plain identity and no second card exists yet, the reader is eligible to
-// be re-asked under second identity .g1. The next attempt is read on new
-// cards, by every reader of the tier.
-func (s *Snapshot) freeReaders(pr *Card, attempt int) []string {
-	tier := s.readTierOf(pr)
-	var out []string
-	for _, rd := range s.Readers.Rows() {
-		if s.ReaderIsUp(rd) && s.readerServesTier(rd, tier) {
-			if _, ok := ReadCardForAsk(s, pr.ID, attempt, rd); ok {
-				out = append(out, rd)
+// readTakebacks counts the no-verdict take-backs this reader already has of
+// the primary at the attempt, from the first ask while each is one.
+func (s *Snapshot) readTakebacks(primary string, attempt int, reader string) int {
+	if s == nil || s.Readers == nil {
+		return 0
+	}
+	n := 0
+	for take := 1; take <= MaxReadTakebacks; take++ {
+		if !noVerdictTakeback(s.Readers.Card(ReadCardTakeID(primary, attempt, reader, take))) {
+			break
+		}
+		n++
+	}
+	return n
+}
+
+// ReadCardForAsk returns the read card ID to use when asking a reader of a primary
+// at an attempt: the next identity not yet retired with no verdict. The plain
+// identity is the first ask; after a no-verdict take-back the ask moves to .g1,
+// then .g2 (ReadCardTakeID). A refusal to launch is asked of its reader once
+// more under .g1 and counts toward no bound (a read refused is not a read; the
+// read-route rule); a placed card, a verdict, a return, a level or a
+// coordinator take-back, or MaxReadTakebacks no-verdict take-backs, leaves the
+// reader out. ok is true when the reader is eligible to be asked.
+func ReadCardForAsk(s *Snapshot, primary string, attempt int, reader string) (id string, ok bool) {
+	plain := ReadCardID(primary, attempt, reader)
+	if s == nil || s.Readers == nil {
+		return plain, false
+	}
+	for take := 1; take <= MaxReadTakebacks; take++ {
+		c := s.Readers.Card(ReadCardTakeID(primary, attempt, reader, take))
+		if c == nil {
+			return ReadCardTakeID(primary, attempt, reader, take), true
+		}
+		if noVerdictTakeback(c) {
+			continue
+		}
+		if c.F("retired_by") == RetiredByRefused && take == 1 {
+			// a refusal is no verdict but not a take-back: one more ask, .g1
+			next := ReadCardTakeID(primary, attempt, reader, 2)
+			if s.Readers.Card(next) == nil {
+				return next, true
 			}
 		}
+		return ReadCardTakeID(primary, attempt, reader, take), false
 	}
-	return out
+	// the read was taken back the bound number of times: not asked again
+	return ReadCardTakeID(primary, attempt, reader, MaxReadTakebacks), false
+}
+
+// readAskPools splits the readers up into those never asked this attempt and
+// those whose earlier ask was taken back with no verdict. A reader is up and
+// serves the primary's tier (readerServesTier; an empty tiers cell reads every
+// tier, and a fleet reader serves only a tier it can draw a route of). The ask
+// fills from the first pool, then from the second (pickAsks); a reader at the
+// take-back bound is in neither. A placed card, a verdict, a return, a level or
+// a coordinator take-back leaves a reader out.
+func (s *Snapshot) readAskPools(pr *Card, attempt int) (fresh, again []string) {
+	if s == nil || s.Readers == nil || pr == nil {
+		return nil, nil
+	}
+	tier := s.readTierOf(pr)
+	for _, rd := range s.Readers.Rows() {
+		if !s.ReaderIsUp(rd) || !s.readerServesTier(rd, tier) {
+			continue
+		}
+		if _, ok := ReadCardForAsk(s, pr.ID, attempt, rd); !ok {
+			continue
+		}
+		if s.Readers.Card(ReadCardID(pr.ID, attempt, rd)) == nil {
+			fresh = append(fresh, rd)
+		} else {
+			again = append(again, rd)
+		}
+	}
+	return fresh, again
+}
+
+// freeReaders is the readers the ask may ask the primary's attempt of: up and
+// serving its tier, with an identity left to ask, whether never asked or taken
+// back with no verdict below the bound (readAskPools). The next attempt is read
+// on new cards, by every reader of the tier.
+func (s *Snapshot) freeReaders(pr *Card, attempt int) []string {
+	fresh, again := s.readAskPools(pr, attempt)
+	return append(fresh, again...)
 }
 
 // ReadsWanted is how many reads the ask places on the primary now, at its
@@ -505,6 +568,18 @@ func askPicks(rr *round, finder string, want int, free []string, room map[string
 		free = without(free, []string{finder})
 	}
 	return append(picked, rr.pickByRoom(want-len(picked), free, room)...)
+}
+
+// pickAsks chooses up to want readers: the never-asked readers first
+// (askPicks), then the readers whose read was taken back with no verdict, each
+// by room (round.pickByRoom). A re-ask comes after every reader never asked
+// (read-asked-again-after-takebackc-t-b).
+func pickAsks(rr *round, finder string, want int, fresh, again []string, room map[string]readerRoom) []string {
+	chosen := askPicks(rr, finder, want, fresh, room)
+	if len(chosen) >= want || len(again) == 0 {
+		return chosen
+	}
+	return append(chosen, rr.pickByRoom(want-len(chosen), again, room)...)
 }
 
 // sweepReads is the readers' rebalance safety: every read asked or reading of a

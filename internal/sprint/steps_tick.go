@@ -1009,7 +1009,8 @@ func TickAsk(s *Snapshot, r TickReq) (Plan, int) {
 		// one at a time (ReadsWanted)
 		need := ReadsNeeded(c) - len(liveReadsAt(s, c, attempt))
 		want := ReadsWanted(s, c)
-		free := s.freeReaders(c, attempt)
+		fresh, reask := s.readAskPools(c, attempt)
+		free := len(fresh) + len(reask)
 		returned := len(returnedInTier(s, c, attempt))
 		switch {
 		case !enoughReadersUp(s, c):
@@ -1020,13 +1021,14 @@ func TickAsk(s *Snapshot, r TickReq) (Plan, int) {
 			// holds it (TickDeal, NNoRoute), never a cannot-ask judgment of its own
 		case len(ids) >= TickMaxMoves:
 			due++
-		case len(free)+returned < need:
+		case free+returned < need:
 			// no readers to ask it of, whatever their room: Ask refuses it,
-			// and the refusal is the judgment
+			// or, when the attempt was taken back with no verdict until the
+			// bound, raises reads exhausted (read-asked-again-after-takebackc-t-b)
 			ids = append(ids, c.ID)
 		default:
 			finder := finders[c.ID]
-			picked := askPicks(rr, finder, want, free, room)
+			picked := pickAsks(rr, finder, want, fresh, reask, room)
 			if len(picked)+returned < want {
 				for _, rd := range picked {
 					room[rd] = room[rd].after(-1)

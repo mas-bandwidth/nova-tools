@@ -313,16 +313,39 @@ func ReadCardID(primary string, attempt int, reader string) string {
 	return primary + ".r" + strconv.Itoa(attempt) + "." + reader
 }
 
-// ReadCardSecondID is the second identity of one reader's read of a primary at one attempt,
-// given to a re-asked read when a retired card with the plain identity exists (e.g. taken back by the away sweep).
-func ReadCardSecondID(primary string, attempt int, reader string) string {
-	return ReadCardID(primary, attempt, reader) + ".g1"
+// MaxReadTakebacks is how many no-verdict take-backs of one reader's read of
+// one attempt retire it before the reader is not asked that attempt again
+// (read-asked-again-after-takebackc-t-b; ReadCardForAsk walks this many
+// identities, and reviewJudgment reads the bound as reads exhausted).
+const MaxReadTakebacks = 3
+
+// ReadCardTakeID is the identity of one reader's nth ask of a primary at one
+// attempt: the first ask is ReadCardID with no suffix, the second is .g1 and
+// the third .g2. An id already stored parses unchanged (ParseReadCard).
+func ReadCardTakeID(primary string, attempt int, reader string, take int) string {
+	plain := ReadCardID(primary, attempt, reader)
+	if take >= 2 {
+		return plain + ".g" + strconv.Itoa(take-1)
+	}
+	return plain
 }
 
-// ReadCardIDs returns both the plain identity and the second identity for a reader's read of a primary at an attempt.
+// ReadCardSecondID is the second identity of one reader's read of a primary at
+// one attempt: the ask after one no-verdict take-back.
+func ReadCardSecondID(primary string, attempt int, reader string) string {
+	return ReadCardTakeID(primary, attempt, reader, 2)
+}
+
+// ReadCardIDs returns every identity a reader's read of a primary at an
+// attempt can hold: the plain one and each re-ask's generation suffix up to
+// the take-back bound (MaxReadTakebacks). A per-tick record load lists them
+// all, so a re-asked read is visible without extra round trips.
 func ReadCardIDs(primary string, attempt int, reader string) []string {
-	plain := ReadCardID(primary, attempt, reader)
-	return []string{plain, plain + ".g1"}
+	out := make([]string, 0, MaxReadTakebacks)
+	for take := 1; take <= MaxReadTakebacks; take++ {
+		out = append(out, ReadCardTakeID(primary, attempt, reader, take))
+	}
+	return out
 }
 
 // CtlID is the identity of a stream's or a member's control card.

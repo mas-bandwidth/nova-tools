@@ -3287,6 +3287,24 @@ cards had none outstanding.
 (`TestTheAskStepAsksInSmallFencedSteps`, `TestTheAskStepStopsAtItsBudget`,
 `TestAnAskConflictIsOneCardsRefusalNotTheTicks`, `TestTheFriendAskAsksEveryReviewCardAFriendMayRead`.)
 
+### read-asked-again-after-takebackc-t-b.w1
+
+A read taken back with no verdict does not count as asked. That take-back is
+the reader marked away, a server restart's lapse, or a read deadline
+(`retired_by` away, lapsed, restart or deadline). The reader may be asked the
+same attempt again, after every reader who has never been asked it: the ask
+fills from the readers never asked before any whose read was taken back. The
+first ask keeps the identity `<primary>.r<attempt>.<reader>`; a re-ask appends
+a generation suffix `.gN`, so the second ask is `.g1` and the third `.g2`, and
+an identity already stored parses unchanged. A reader that gave a verdict (ok,
+broken or a return) is never asked that attempt again. A reader whose read of
+one attempt was taken back three times is not asked it again, and the card
+raises the reads-exhausted judgment, as it does when the reads are done without
+the oks it needs. No store operation restores a removed record: the re-ask is a
+new identity. The store's per-tick record enumeration lists every identity up
+to the bound, so the ask sees a retired re-ask rather than recreating an
+identity that exists.
+
 ## 7. Merging
 
 1. In work order, never random: the head of the stream's queued cell first.

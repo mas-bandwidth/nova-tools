@@ -200,7 +200,8 @@ func Ask(s *Snapshot, r AskReq) Plan {
 				kept = append(kept, rc)
 			}
 		}
-		free := s.freeReaders(c, attempt)
+		fresh, reask := s.readAskPools(c, attempt)
+		free := append(append([]string{}, fresh...), reask...)
 		// the reads that stand, kept, say how many are asked now (readsWantedOf): the
 		// first alone, then the rest once it came back ok; a read handed back, or taken
 		// back from a reader away, is not a read and is asked again whatever stands: it
@@ -213,9 +214,11 @@ func Ask(s *Snapshot, r AskReq) Plan {
 			// not even its first read is asked when no reader could ever read the rest
 			want = ReadsNeeded(c) - len(all)
 		}
-		// each read to a free reader with room, the finder's first (askPicks)
+		// each read to a free reader with room, the finder's first, the readers never
+		// asked before any whose read was taken back with no verdict (pickAsks;
+		// read-asked-again-after-takebackc-t-b)
 		finder := finders[c.ID]
-		chosenReaders := askPicks(rr, finder, want, free, room)
+		chosenReaders := pickAsks(rr, finder, want, fresh, reask, room)
 		// A return is not a read (tla/DirtyTick.tla, PlaceReads and
 		// JudgedOnlyAfterTheBound): a read handed back goes to a free
 		// reader when there is one, its card retired; when none is free its
@@ -244,6 +247,20 @@ func Ask(s *Snapshot, r AskReq) Plan {
 		if len(chosenReaders)+len(again) < want {
 			for _, rd := range chosenReaders {
 				room[rd] = room[rd].after(-1) // a primary refused takes no room from the next
+			}
+			if len(free) == 0 {
+				// no reader can be asked: the attempt was taken back with no
+				// verdict until the bound. Raise reads exhausted here rather
+				// than a cannot-ask refusal, which would say the card waits for
+				// a reader; the card is done. A judgment already open is not
+				// written again (read-asked-again-after-takebackc-t-b).
+				if len(closesFor(s.Open, []string{NReadsExhausted}, c.ID)) > 0 {
+					continue
+				}
+				if j, ok := reviewJudgment(s, c, reviewStep{who: r.Who}); ok && j.Type == NReadsExhausted {
+					p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.Row, Notes: []Note{j}})
+					continue
+				}
 			}
 			full := 0
 			for _, rd := range free {
@@ -731,27 +748,41 @@ func reviewJudgment(s *Snapshot, pr *Card, st reviewStep) (Note, bool) {
 	oks := map[string]bool{}
 	outstanding, broken, reads := false, false, 0
 	for _, r := range s.Readers.Rows() {
+		var c *Card
+		col, moved := "", false
 		for _, id := range ReadCardIDs(pr.ID, attempt, r) {
-			c := s.Readers.Placed(id)
-			col, moved := st.moved[id]
-			switch {
-			case c == nil && !moved:
-				continue
-			case c == nil:
-				col = Asked
-			case !moved:
-				col = c.Col
+			if coln, ok := st.moved[id]; ok {
+				moved, col = true, coln
 			}
+			if pc := s.Readers.Placed(id); pc != nil {
+				c = pc
+				if !moved {
+					col = pc.Col
+				}
+			}
+		}
+		bound := s.readTakebacks(pr.ID, attempt, r) >= MaxReadTakebacks
+		switch {
+		case c == nil && !moved && !bound:
+			continue
+		case c == nil && !moved:
+			// taken back with no verdict the bound number of times: a finished
+			// read, not an ok (read-asked-again-after-takebackc-t-b)
 			reads++
-			switch {
-			case col == Asked || col == Reading:
-				outstanding = true
-			case col == Broken:
-				broken = true
-			case col == OK && c.F("head") == pr.F("head") && ReadCardAgrees(c):
-				oks[r] = true
-			}
-			break
+			continue
+		case c == nil:
+			col = Asked
+		case !moved:
+			col = c.Col
+		}
+		reads++
+		switch {
+		case col == Asked || col == Reading:
+			outstanding = true
+		case col == Broken:
+			broken = true
+		case c != nil && col == OK && c.F("head") == pr.F("head") && ReadCardAgrees(c):
+			oks[r] = true
 		}
 	}
 	// a friend's read stands the same way (friendReadLive). The step's moved

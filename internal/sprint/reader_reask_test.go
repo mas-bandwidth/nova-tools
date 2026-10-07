@@ -134,9 +134,10 @@ func TestAReadTakenBackByTheAwaySweepCanBeAskedAgainAtTheSameAttempt(t *testing.
 	_, reaskAgainOK := ReadCardForAsk(w.s, "s1-1", 1, r1)
 	assert.False(t, reaskAgainOK, "r1 cannot be asked a third time at the same attempt")
 
-	// ReadCardIDs returns both identities for per-tick record loads without extra round trips.
+	// ReadCardIDs returns every identity (the plain one and one per re-ask up
+	// to the take-back bound) for per-tick record loads without extra round trips.
 	sprintIDs := ReadCardIDs("s1-1", 1, r1)
-	assert.Equal(t, []string{"s1-1.r1." + r1, "s1-1.r1." + r1 + ".g1"}, sprintIDs)
+	assert.Equal(t, []string{"s1-1.r1." + r1, "s1-1.r1." + r1 + ".g1", "s1-1.r1." + r1 + ".g2"}, sprintIDs)
 }
 
 // TestAskDoesNotOveraskBesideALiveG1Read pins that readsAt enumerates both plain
@@ -384,7 +385,8 @@ func TestTickLevelReadsCanMoveToReturnedReaderWithSecondIdentity(t *testing.T) {
 }
 
 // TestReadCardSecondIDAndGenerationSuffix pins that ReadCardSecondID and ReadCardIDs
-// generate the correct second identity (.g1) and identity pairs.
+// generate the correct identities: the second (.g1) and every generation up to
+// the take-back bound (MaxReadTakebacks).
 func TestReadCardSecondIDAndGenerationSuffix(t *testing.T) {
 	t.Parallel()
 	plain := ReadCardID("s1-1", 1, "reader-a")
@@ -394,7 +396,7 @@ func TestReadCardSecondIDAndGenerationSuffix(t *testing.T) {
 	assert.Equal(t, "s1-1.r1.reader-a.g1", second)
 
 	ids := ReadCardIDs("s1-1", 1, "reader-a")
-	require.Equal(t, []string{"s1-1.r1.reader-a", "s1-1.r1.reader-a.g1"}, ids)
+	require.Equal(t, []string{"s1-1.r1.reader-a", "s1-1.r1.reader-a.g1", "s1-1.r1.reader-a.g2"}, ids)
 }
 
 // TestValidCardIDWithGenerationSuffix pins that ValidCardID accepts read cards
