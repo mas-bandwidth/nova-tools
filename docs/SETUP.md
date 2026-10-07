@@ -138,3 +138,37 @@ when its backend state is not `Running`, when this machine has no name on the ta
 a machine of `nova-config machine list` is not named on the tailnet; the evidence names each
 missing machine and the fix line runs `tailscale up` on it. The check passes when tailscale is
 up, this machine is named, and every inventory machine answers on the tailnet.
+
+### dep-secrets-bb.w4: the secrets store and keys
+
+The secrets dependency is [nova-secrets](SPEC-SECRETS.md): a git store of sops-sealed yaml
+files, one age key per machine, and the store's `.sops.yaml` naming the recipients of each
+file. Every seat and every loop that runs with a credential opens its own `<seat>.yaml` from
+the store by name — `nova-up --local` seals the coordinator's Redis passwords into it, and a
+fleet's loop records name the provider and store keys their commands read — so a missing key,
+a key readable by anybody, or a `sops` that is not installed is a hidden dependency: the
+command starts and fails later with a provider's or a store's error.
+
+`nova-up --local` provides it on the one machine it sets up. Its `binaries` step stops with
+the install command when `sops`, `age` or `git` is not on PATH, and its `secrets` step makes
+the rest: the seat's age key through `nova-secrets keygen`, a bare git upstream beside the
+store, the store working copy on `main` tracking it, and the `.sops.yaml` rule for the seat's
+public key; `seat.env` then carries `NOVA_SECRETS_STORE`, `NOVA_SECRETS_SEAT` and
+`NOVA_SECRETS_KEY`. A person on another machine does the same by hand: install `sops` (brew,
+its release page, or `go install github.com/getsops/sops/v3/cmd/sops@latest`) and `age`, run
+`nova-secrets keygen --as <seat> --key <path>`, clone the store to the path the seat names,
+keep the key readable only by its owner (`chmod 600` in a `chmod 700` directory), and give the
+seat its file with `nova-secrets seat add`.
+
+The `secrets` check (`internal/doctor/check_secrets.go`) reads the three variables and PATH,
+and prints names and modes only, never a value. It is ok when `sops` is on PATH, the key file
+is readable at mode `0600` in a directory at mode `0700` and carries the `# public key:` line
+`age-keygen` writes, the store is a git working copy with its `.sops.yaml`, and every secret
+name the seat's enabled loop records require (`nova-config loop list --json`, the `keys` of
+each row whose `seat` is this machine's) appears in the store's own listing
+(`nova-secrets names`, which takes no key). Any other answer is a fail with one fix line
+naming the verb or the step above: install `sops`, set the missing variable, `chmod 600` or
+`chmod 700` the key, `nova-secrets keygen`, the `git clone` of the store, or `nova-secrets
+seal --store <store> --as <seat> --name <NAME>` for a name the loops require and the store
+does not hold. The check is fleet-scoped: `nova-doctor --local` skips it with the other fleet
+checks and says which; run `nova-doctor` plain to see it.
