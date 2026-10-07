@@ -113,3 +113,27 @@ func TestRoutePricesRefusals(t *testing.T) {
 		assert.Equal(t, 1, strings.Count(errs, "\n"), "%s: one refusal line", tc.name)
 	}
 }
+
+// TestRoutePricesDailyLoopRefreshesEveryProviderWithAList pins the daily loop row
+// (docs/SPEC-CONFIG.md, "route prices") to the verb's default read. The reader
+// found the row passing --provider openrouter, which PlanPriceRefresh filters to,
+// so the opencode rows the list is assumed for were never refreshed and could go
+// stale indefinitely; the argv names no --provider, so every provider with a list
+// is read.
+func TestRoutePricesDailyLoopRefreshesEveryProviderWithAList(t *testing.T) {
+	t.Parallel()
+
+	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "SPEC-CONFIG.md"))
+	require.NoError(t, err)
+	row := ""
+	for _, line := range strings.Split(string(raw), "\n") {
+		if strings.Contains(line, "loop add route-prices") {
+			row = line
+			break
+		}
+	}
+	require.NotEmpty(t, row, "docs/SPEC-CONFIG.md names the daily route-prices loop row")
+	assert.Contains(t, row, `"--refresh"`)
+	assert.Contains(t, row, "--every 86400")
+	assert.NotContains(t, row, "--provider", "the daily loop refreshes every provider with a list; --provider would skip the opencode rows")
+}

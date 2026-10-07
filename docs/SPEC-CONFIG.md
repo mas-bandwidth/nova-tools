@@ -365,9 +365,13 @@ reads the list and sets each enabled route's `price_input`, `price_cache_read`,
   name as their source. Exit 0, 1 on a judgment, 2 when the list or the store could
   not be read.
 - The machine runs it daily as a loop row, then applies:
-  `nova-config loop add route-prices --machine <coordinator machine> --argv '["nova-config","route","prices","--refresh","--provider","openrouter","--as","<coordinator>"]' --every 86400 --as <coordinator>`
+  `nova-config loop add route-prices --machine <coordinator machine> --argv '["nova-config","route","prices","--refresh","--as","<coordinator>"]' --every 86400 --as <coordinator>`
   followed by `nova-config apply --kind route` (the row is the fleet's, added by
-  its coordinator; the apply carries the prices to the sprint).
+  its coordinator; the apply carries the prices to the sprint). The argv names no
+  `--provider`, so the daily read refreshes every provider with a list: the
+  `openrouter` rows from OpenRouter's list, and the `opencode` rows assumed from
+  it. A loop that passes `--provider` leaves the other providers' rows unread, and
+  a hand-typed price there goes stale.
 - Follow-up cards, outside this verb: the run before `nova-sprint funded <provider>`
   (`cmd/nova-sprint/verbs.go`, `cmdFunded`) should refresh the provider's list
   first, and `nova-sprint routes` (`cmd/nova-sprint/reads.go`, `cmdRoutes`, and
