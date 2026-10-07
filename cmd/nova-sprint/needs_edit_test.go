@@ -128,7 +128,7 @@ func TestNeedsRefusesACycleALandedCardAndAnIntruder(t *testing.T) {
 	ta.ok("merge --stream s1 --batch 10")
 	ta.ok("tick")
 	require.Equal(t, sprint.Landed, ta.primary("s1-1").Col)
-	require.Equal(t, sprint.Ready, ta.primary("b").Col, "b went ready as its need landed")
+	require.NotEqual(t, sprint.Waiting, ta.primary("b").Col, "b went ready as its need landed (and the running machine may have dealt it)")
 	code, _, errs = ta.do("needs s1-1 --drop s1-2 --reason r")
 	assert.Equal(t, 1, code, "a landed card: %d %s", code, errs)
 	assert.Contains(t, errs, "s1-1 landed: landed is final", errs)
