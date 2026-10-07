@@ -3,9 +3,9 @@
 I read `nova-ci`'s own help and `docs/CLI.md`, then used each listed verb at
 least once against this Linux scratch checkout. I built the tool from base
 `ea4a285c32a5f58c3b65b85ca2a5ea6c32924d82`; scaffold verbs and the receipt
-writer used `--dry-run`. A branch-built macOS binary ran `bench run` from the
-Studio against Vision, printed `go version go1.26.6 linux/amd64`, and removed
-its scratch run directory. I did not write to a Redis store.
+writer used `--dry-run`. A branch-built macOS binary used `bench run` to run
+`go version go1.26.6 linux/amd64` on a Linux scratch host, then removed its
+run directory. I did not write to a Redis store.
 
 No URGENT or NEXT findings. The clean-checkout `local --base HEAD --dry-run`
 selected `./internal/ci` and `./internal/docs`, which the CI selector's
