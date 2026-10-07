@@ -1,0 +1,4 @@
+# refusal-grammar: refusals that are not the one grammar; each row's count only falls
+# ceiling: 2
+cmd/nova-fuse:verb-no-flags 1 nova-fuse lift lockdown REFUSED, forever, by design: a blown fuse is not reset; it names no `; run:` remedy (2026-10-06, seed)
+cmd/nova-sandbox:verb-no-flags 9 the egress, policy, probe, sandbox and worktree refusals carry no `; run:` remedy, though each why names the command to run (2026-10-06, seed)
