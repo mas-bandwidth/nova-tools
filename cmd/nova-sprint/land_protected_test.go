@@ -93,3 +93,44 @@ func TestLandProtectedRefusesAnUnavailableReaderSnapshot(t *testing.T) {
 	_, err := l.withReaders(context.Background(), &sprint.Snapshot{})
 	require.ErrorContains(t, err, "reader snapshot")
 }
+
+// A marked local or file origin cannot bypass a durable PR even when the backend
+// refuses it (docs/SPEC-SPRINT.md section 7): the protected base stays unchanged.
+func TestLandProtectedLocalAndFileOriginsRefuseWithoutAConfirmedMerge(t *testing.T) {
+	t.Parallel()
+	for _, fileURL := range []bool{false, true} {
+		t.Run(strconv.FormatBool(fileURL), func(t *testing.T) {
+			t.Parallel()
+			r := newLandRig(t)
+			r.ok("add --stream s1 --count 1 --one")
+			head := r.head("s1-1", "main", "a.txt", "a\n")
+			r.queued(map[string]string{"s1-1": head}, "s1-1")
+			if fileURL {
+				r.git(r.clone, "remote", "set-url", "origin", "file://"+r.remote)
+			}
+			before := r.git(r.remote, "rev-parse", "main")
+			gh := filepath.Join(r.dir, "refusing-gh")
+			require.NoError(t, os.WriteFile(gh, []byte("#!/bin/sh\necho private PR backend refuses confirmation >&2\nexit 1\n"), 0755))
+			st, err := r.a.store(common{redis: "mem:0", actor: "tester"})
+			require.NoError(t, err)
+			snap, err := st.Load(context.Background(), []string{sprint.Work, sprint.Merge, sprint.Readers}, nil)
+			require.NoError(t, err)
+			primary := snap.Work.Card("s1-1")
+			primary.Fields[sprint.FieldLandPR] = "https://forge.example.invalid/owner/repo/pull/1"
+			primary.Fields[sprint.FieldLandCardHead] = head
+			primary.Fields[sprint.FieldLandHead] = head
+			pins := []landCard{{id: "s1-1", head: head, base: "main", attempt: primary.F("attempt"), primary: primary}}
+			l := &lander{a: r.a, st: st, c: common{redis: "mem:0", actor: "tester"}, epoch: st.PinnedEpoch(), repoDir: r.clone, check: "true", ghBin: gh, diffs: map[string]string{}, scope: map[string][]string{}, prose: map[string][]string{}}
+			defer l.release()
+			done, on, ok := l.batch(context.Background(), snap, "s1", pins)
+			require.True(t, ok)
+			require.Zero(t, done)
+			require.False(t, on)
+			require.Len(t, l.out, 1)
+			require.Contains(t, l.out[0].Reason, "private PR backend refuses confirmation")
+			require.Equal(t, "refused", l.out[0].Status)
+			require.Equal(t, before, r.git(r.remote, "rev-parse", "main"))
+			require.Equal(t, map[string]string{"s1-1": "merging/queued"}, r.places("s1-1"))
+		})
+	}
+}

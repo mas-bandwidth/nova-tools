@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-// A land-protected stream landing on a protected branch of a forge does not push
+// A land-protected stream landing on a protected branch does not push
 // onto that branch and does not record the card landed. It pushes land/<stream>,
 // opens a pull request into the protected branch, and enables auto-merge when the
 // repository allows it. The card stays merging, the pull request's URL on it, until
@@ -34,28 +34,13 @@ func LandBranch(stream string) string { return "land/" + stream }
 // LandBranchRef is the ref LandBranch is pushed to.
 func LandBranchRef(stream string) string { return "refs/heads/" + LandBranch(stream) }
 
-// ForgeOrigin says origin is a forge URL (https, ssh or scp-like), not a local
-// path. A lander's own bare clone is a path, and a marked stream still pushes
-// that base directly: the pull request is for a forge, whose protected branch
-// rejects the push.
-func ForgeOrigin(origin string) bool {
-	u := strings.TrimSpace(origin)
-	if strings.HasPrefix(strings.ToLower(u), "file:") {
-		return false
-	}
-	if strings.Contains(u, "://") {
-		return true
-	}
-	colon := strings.Index(u, ":")
-	return colon > 0 && !strings.Contains(u[:colon], "/")
-}
-
-// LandProtectedDefers says a landing of stream onto base in repo, fetched from
-// origin, opens a pull request instead of pushing the protected branch: the
-// base is protected, the stream is marked for the repository, and origin is a
-// forge. A local path does not defer.
-func LandProtectedDefers(s *Snapshot, stream, repo, base, origin string) bool {
-	if s == nil || !ForgeOrigin(origin) || !contains(ProtectedBranches, base) {
+// LandProtectedDefers says a marked landing onto a protected base opens a
+// pull request instead of pushing that base (docs/SPEC-SPRINT.md section 7).
+// Origin's scheme never weakens the mark: an unavailable PR backend refuses
+// the request and leaves the cards merging. The last argument is retained for
+// callers that already read origin, but is not an admission condition.
+func LandProtectedDefers(s *Snapshot, stream, repo, base, _ string) bool {
+	if s == nil || !contains(ProtectedBranches, base) {
 		return false
 	}
 	ctl := s.StreamCtl(stream)

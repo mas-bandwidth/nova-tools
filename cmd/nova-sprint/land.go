@@ -730,13 +730,10 @@ func (l *lander) batch(ctx context.Context, s *sprint.Snapshot, stream string, c
 	if l.dry {
 		return l.dryBatch(b, cards)
 	}
-	// a forge origin of a marked stream opens a pull request into the protected
-	// branch instead of pushing it (docs/SPEC-SPRINT.md section 7). A pull request
-	// already recorded is polled, and the batch is not built again.
-	var deferPR bool
-	if origin, err := l.git(ctx, dir, "remote", "get-url", "origin"); err == nil {
-		deferPR = sprint.LandProtectedDefers(s, stream, cards[0].repo, cards[0].base, origin)
-	}
+	// A marked stream opens a PR into its protected base for every origin
+	// scheme (docs/SPEC-SPRINT.md section 7). Backend refusal never falls back
+	// to pushing that base. A recorded PR is polled without rebuilding the batch.
+	deferPR := sprint.LandProtectedDefers(s, stream, cards[0].repo, cards[0].base, "")
 	if deferPR {
 		if _, anySet, mismatch := landPRState(cards); anySet || mismatch {
 			return l.protectedDrive(ctx, s, dir, &b, stream, cards, landHeadOf(cards))
