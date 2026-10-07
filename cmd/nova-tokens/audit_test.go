@@ -33,7 +33,7 @@ var tokensAudit = audit.Config{
 	// reader can check.
 	Exempt: map[string]string{
 		"report.go|runReportStore|line": "one REPORT line built in the loop above from literal key names, oneline.Field over each key value, a %d row count and strconv.FormatInt or the literal dash per type; nothing in it is unescaped text",
-		"main.go|formatFields|kv[i+1]":   "a value of a key=value pair, put through oneline.Field on the same line",
+		"main.go|formatFields|kv[i+1]":  "a value of a key=value pair, put through oneline.Field on the same line",
 		"report.go|runReportLocal|body": "the report's stdout IS the artifact: every line of it was rendered by tokens.BodyLine, which puts each of its stored fields through oneline.Field, and the lines are joined with \\n by this function. Escaping the join again would escape those newlines and destroy the note body this verb exists to print",
 	},
 	Imports: []string{

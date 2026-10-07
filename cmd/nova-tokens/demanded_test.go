@@ -1541,7 +1541,7 @@ func TestRule20ReportRefusesAndSupersedes(t *testing.T) {
 		wantExit(t, r, 1)
 		assert.Equal(t, "", r.stdout, "a failed report wrote to stdout: %q", r.stdout)
 		wantContains(t, r.stderr, "REPORT FAILED")
-		wantContains(t, r.stderr, "FOLD UNREADABLE")
+		wantContains(t, r.stderr, "TOKENS UNREADABLE")
 		assert.Equal(t, "what was there before\n", read(t, note), "a failed report replaced the --note file")
 		{
 			_, err := os.Stat(note + ".tmp")
@@ -1791,17 +1791,17 @@ func TestReportCountsAndPrintsEverythingItDropped(t *testing.T) {
 
 	r := invoke(t, "report", "--who", "emma", "--day", "2026-09-11", "--repos", repos, "--claude", "g="+tr)
 	wantExit(t, r, 1)
-	wantContains(t, r.stderr, "FOLD UNPARSED label=claude:g")
+	wantContains(t, r.stderr, "TOKENS UNPARSED label=claude:g")
 	wantContains(t, r.stderr, "yesterday")
 	// The status word follows the exit, so what says the day is short is the line above
 	// it, the note, and the FAILED word -- and the body still printed.
 	wantContains(t, r.stderr, "REPORT FAILED who=emma day=2026-09-11 rows=1")
 	{
-		n := strings.Count(r.stderr, "FOLD UNPARSED")
+		n := strings.Count(r.stderr, "TOKENS UNPARSED")
 		assert.Equal(t, 1, n, "%d TOKENS UNPARSED lines, want 1:\n%s", n, r.stderr)
 	}
 	// The no-id message is spend that was read and dropped, and it is named.
-	note := lineWith(r.stderr, "FOLD NOTE")
+	note := lineWith(r.stderr, "TOKENS NOTE")
 	wantContains(t, note, "no id")
 	wantContains(t, note, "claude:g")
 	// Exit 1 still writes: the body is what it could compute, and it is only the 3.
@@ -2018,7 +2018,7 @@ func TestReportKeepsTheLinesForEveryKeyThatIsNotMixed(t *testing.T) {
 	r := invoke(t, "report", "--who", "emma", "--day", "2026-09-11", "--repos", repos, "--note", note,
 		"--provider", "google:emma="+g, "--provider", "xai:johnny="+x)
 	wantExit(t, r, 1)
-	wantContains(t, r.stderr, "FOLD MIXED")
+	wantContains(t, r.stderr, "TOKENS MIXED")
 	wantContains(t, r.stderr, "REPORT FAILED")
 	// The key that is not mixed keeps its line; the mixed key has none.
 	wantContains(t, r.stdout, "clean-model")

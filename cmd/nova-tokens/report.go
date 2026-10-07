@@ -37,6 +37,7 @@ func reportVerb(now time.Time) tool.Verb {
 		Name:    "report",
 		Usage:   "report (local mode) --who <name> --day <YYYY-MM-DD> --repos <file>\nreport (store mode) --redis <host:port> --month <YYYY-MM> [--by model|repo|day|tuple] [--max <n>]",
 		Example: "report --who ada --day 2026-09-11 --repos ./repos.tsv --claude bench=./transcripts",
+		Detail:  "mode: local note body, printed as the tokens note artifact\nmode: Redis month summary",
 		Effect:  tool.Effect("local write: --note writes the note body to that file, and --opencode copies the database into --scratch/opencode-<label>/ (replaced, and left); --dry-run names the note, copies the database only into a new directory under --scratch removed before it exits, and writes nothing; --redis reads the ledger store over the network, with or without --dry-run"),
 		DryRun:  true,
 		Flags: func(f *tool.Flags) {
@@ -401,16 +402,15 @@ func runReportLocal(c *tool.Call, sf sourceFlags, supersedes []string, now time.
 		return o
 	}
 
-	dry := dryRunFields(dryRun, "note", notePath)
 	if unreadable > 0 || unparsed > 0 {
 		fmt.Fprintf(c.Stderr, "REPORT FAILED who=%s day=%s rows=%d at=%s build=%s%s subject=%s\n",
 			oneline.Field(who), oneline.Field(day), lines, oneline.Field(stamp(now)),
-			oneline.Field(buildVersion()), dry, oneline.Quote(subject))
+			oneline.Field(buildVersion()), dryRunFields(dryRun, "note", notePath), oneline.Quote(subject))
 		return tool.Exit(1)
 	}
 	fmt.Fprintf(c.Stderr, "REPORT OK who=%s day=%s rows=%d at=%s build=%s%s subject=%s\n",
 		oneline.Field(who), oneline.Field(day), lines, oneline.Field(stamp(now)),
-		oneline.Field(buildVersion()), dry, oneline.Quote(subject))
+		oneline.Field(buildVersion()), dryRunFields(dryRun, "note", notePath), oneline.Quote(subject))
 	return tool.Exit(0)
 }
 

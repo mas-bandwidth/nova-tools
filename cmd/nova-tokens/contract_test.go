@@ -488,11 +488,11 @@ func TestAHalfReadSuccessorDoesNotReplaceItsPredecessor(t *testing.T) {
 
 	r := invoke(t, "fold", "--out", out, "--all", "--repos", repos, "--bus", bus)
 	wantExit(t, r, 1)
-	wantContains(t, r.stderr, "TOKENS UNPARSED")
-	wantNotContains(t, r.stdout, "TOKENS SUPERSEDED")
+	wantContains(t, r.stderr, "FOLD UNPARSED")
+	wantNotContains(t, r.stdout, "FOLD SUPERSEDED")
 	// Two tips now, so the lane-day is a conflict and nothing folds for it: the half-read
 	// correction never quietly became the day.
-	wantContains(t, r.stderr, "TOKENS CONFLICT label=bus:emma day=2026-09-11")
+	wantContains(t, r.stderr, "FOLD CONFLICT label=bus:emma day=2026-09-11")
 	{
 		_, err := os.Stat(filepath.Join(out, "2026-09-11.tsv"))
 		assert.Error(t, err, "a day folded from a successor that did not parse whole")

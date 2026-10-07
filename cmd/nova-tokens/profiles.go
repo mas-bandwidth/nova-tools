@@ -64,9 +64,9 @@ const wantsSwarmRoot = "the directory the swarm batches live under"
 
 func profilesVerb(now time.Time) tool.Verb {
 	return tool.Verb{
-		Name:    "profiles",
-		Usage:   "profiles --swarm-root <dir>\n                      one PROFILES MODEL line per model (cards, median output, overshoot), then a PROFILES OK line with totals",
-		Effect:  tool.Inspection,
+		Name:   "profiles",
+		Usage:  "profiles --swarm-root <dir>\n                      one PROFILES MODEL line per model (cards, median output, overshoot), then a PROFILES OK line with totals",
+		Effect: tool.Inspection,
 		Flags: func(f *tool.Flags) {
 			f.String("swarm-root", "", "root containing the swarm pool profiles")
 			f.Check(func(c *tool.Call) {

@@ -28,7 +28,7 @@ func TestFoldThatDroppedEveryMessageFails(t *testing.T) {
 	wantContains(t, r.stderr, "FOLD FAILED days=0 rows=0")
 	wantNotContains(t, r.stdout, "FOLD OK")
 	// the note still names the source and does not claim that nothing else says so.
-	note := lineWith(r.stderr, "FOLD NOTE")
+	note := lineWith(r.stdout, "FOLD NOTE")
 	wantContains(t, note, "claude:g")
 	wantNotContains(t, note, "nothing else says so")
 }

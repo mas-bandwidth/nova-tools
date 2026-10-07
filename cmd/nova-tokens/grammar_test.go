@@ -351,7 +351,7 @@ func TestStatusGrammar(t *testing.T) {
 				empty := mkdir(t, filepath.Join(t.TempDir(), "out"))
 				return []string{"ledger", "--out", empty, "--day", "2026-09-11", "--redis", "127.0.0.1:0", "--dry-run"}
 			},
-			"LEDGER", "FAILED", 1, "stderr",
+			"LEDGER", "FAILED", 1, "stdout",
 		},
 		{
 			"report ok",
