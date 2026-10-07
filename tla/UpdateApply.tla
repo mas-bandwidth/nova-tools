@@ -222,7 +222,7 @@ WriteState(p) ==
        /\ changedAgrees' = \A e \in Entries :
             (e \in changedSet') = (stateObserved[e] # instRead[p][e])
        /\ stateObserved' = instRead[p]
-       /\ pending' = pending \/ sends
+       /\ pending' = (pending \/ sends)
        /\ phase' = [phase EXCEPT ![p] = IF pending \/ sends THEN "written" ELSE "idle"]
        /\ lockBy' = IF Broken = "nolock" THEN lockBy
                     ELSE IF pending \/ sends THEN p ELSE None
@@ -371,10 +371,10 @@ Spec == Init /\ [][Next]_vars
         /\ \A p \in Updaters :
              /\ WF_vars(StartRun(p)) /\ WF_vars(WriteState(p))
              /\ WF_vars(BusyRefused(p)) /\ WF_vars(DeliverOK(p))
-        /\ \A p \in Updaters, e \in Entries :
-             /\ WF_vars(Read(p, e))
-             /\ WF_vars(ApplyInstall(p, e))
-             /\ WF_vars(ApplyPlan(p, e))
+         /\ \A q \in Updaters, e \in Entries :
+              /\ WF_vars(Read(q, e))
+              /\ WF_vars(ApplyInstall(q, e))
+              /\ WF_vars(ApplyPlan(q, e))
 
 ----------------------------------------------------------------------------
 \* The invariants.
