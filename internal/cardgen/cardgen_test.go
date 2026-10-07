@@ -430,3 +430,11 @@ func TestAGeneratedCardNamesNoStaleGoCacheLine(t *testing.T) {
 	assert.True(t, strings.Contains(writes, "swarm.FriendGoCacheLine("), "friendBrief names the friend's own cache through the one line")
 	assert.False(t, strings.Contains(writes, "GOCACHE=~/"), "the friend's cache path lives in the one line, never hand-written in friendBrief")
 }
+
+// docs/FRIENDS.md: all generated briefs teach the friend report's pinned shape.
+func TestGeneratedBriefPinsTheFriendReportFirstTwoLines(t *testing.T) {
+	t.Parallel()
+	brief := Render(header, Card{ID: "shape", File: "internal/x/x.go", Paths: []string{"internal/x/x.go"}, Test: "internal/x TestX", Tier: "pro", Kind: "fix-red", Task: "Fix x."})
+	assert.Contains(t, brief, "first line exactly Verdict: LAND|HOLD|FAIL, second line exactly Head: <40-hex>")
+	assert.Contains(t, brief, "for HOLD and FAIL omit Head: and leave line 2 blank")
+}
