@@ -58,7 +58,7 @@ func externalOperandForm(s string) bool {
 		sha := s[idx+8:]
 		return branch != "" && sha != ""
 	}
-	if len(s) >= 6 && s[0:5] == "after " {
+	if len(s) >= 6 && s[0:6] == "after " {
 		timestamp := s[6:]
 		for i := 0; i < len(timestamp); i++ {
 			if timestamp[i] >= 48 && timestamp[i] <= 57 {
