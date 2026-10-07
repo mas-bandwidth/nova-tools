@@ -1,4 +1,4 @@
-# nova-check dogfood, 2026-10-06 (freddy)
+# nova-check dogfood, 2026-10-06 (friend)
 
 Tool: nova-check. Build: `nova-check devel linux/amd64 go1.26.6`, from the staged checkout. Read as a stranger from the tool's own help (`nova-check`, `nova-check -h`, `nova-check help`, `nova-check help <verb>`, `nova-check <verb> -h`) and its docs/CLI.md page. Every verb was run at least once against example fixtures or scratch dirs; refusals were exercised. No code was changed.
 
