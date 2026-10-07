@@ -156,7 +156,7 @@ func baseGateStep(p Plan, s *Snapshot, ctl *Card, r MergeReq) Plan {
 func missingBaseStep(p Plan, s *Snapshot, r MergeReq) Plan {
 	cards := MissingBaseCards(s, r.MissingBase)
 	j := MissingBaseJudgment(r.MissingBase, cards)
-	j.Who = r.Who
+	j.Who, j.At = r.Who, s.Now
 	if len(cards) == 0 {
 		return p
 	}

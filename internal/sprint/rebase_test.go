@@ -163,3 +163,30 @@ func TestMissingBaseJudgmentNamesEveryCardAndTheRebaseLine(t *testing.T) {
 	assert.Contains(t, j.What, "nova-sprint rebase --from dev --to")
 	assert.Contains(t, j.What, "s1-1")
 }
+
+// TestMissingBaseJudgmentCarriesItsRaiseTime: the one judgment a land whose
+// base branch is gone raises is stamped with the time the step committed it,
+// so the coordinator's inbox ages it from the incident instead of showing it
+// born at the zero time and permanently overdue (rebase.go, the missing-base
+// judgment; docs/SPEC-SPRINT.md, the rebase verb).
+func TestMissingBaseJudgmentCarriesItsRaiseTime(t *testing.T) {
+	t.Parallel()
+	r := newHoldRig(t, 0, 0)
+	r.must(store.AddStep(sprint.AddReq{Stream: "s1", Cards: []sprint.CardAdd{
+		{ID: "s1-1", Brief: rebaseBrief("dev")},
+	}}))
+	raised := r.st.Now()
+	r.must(store.MergeStep(sprint.MergeReq{Stream: "s1", MissingBase: "dev", Who: "lander"}))
+
+	lines, err := r.st.Log(r.ctx)
+	require.NoError(t, err)
+	var got *sprint.Note
+	for _, l := range lines {
+		if l.Note != nil && l.Note.Type == sprint.NMissingBase {
+			got = l.Note
+		}
+	}
+	require.NotNil(t, got, "the land raises the missing-base judgment")
+	assert.False(t, got.At.IsZero(), "the judgment is not born at the zero time")
+	assert.Equal(t, raised, got.At, "the judgment carries the step's raise time")
+}
