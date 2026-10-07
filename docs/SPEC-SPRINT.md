@@ -6066,7 +6066,13 @@ server runs, the reads included, is not run where it is typed: its arguments are
 server, with the caller's actor and each file it names as an absolute path, and what the
 server's run of it printed (its stdout, its stderr, its exit code) is printed there byte for
 byte as the verb run on the store prints it. So the coordinator's side names no store and holds
-no store credentials. The verbs not served, a verb given its own `--redis` (it names its own
+no store credentials. When neither `NOVA_SPRINT_SERVER` nor a store address
+(`NOVA_SPRINT_REDIS`, `NOVA_REDIS_ADDR`, or a recorded `seat login`) is set, the verb is
+sent to the local server `127.0.0.1:6390` all the same, so a cold coordinator runs
+`nova-sprint <verb>` and nothing else, with no wrapper and no Redis password; a verb that
+takes that path says so in one NOTE line on stderr, naming the local server and how to
+name a store (`--redis <addr>`) or another server (`NOVA_SPRINT_SERVER=<addr>`) instead.
+The verbs not served, a verb given its own `--redis` (it names its own
 store), a verb's help and flags the verb refuses run where they are typed. A waiting read waits
 where it is typed and holds the server between none of its reads: `where --watch` sends one plain
 `where` a frame and draws it as its own watch does; `inbox --wait` reads the log's tick-end notes
