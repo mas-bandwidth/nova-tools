@@ -21,19 +21,21 @@ func init() {
 		Name:       "ssh",
 		Dependency: "ssh between the coordinator and the benches",
 		Fleet:      true,
-		Run:        checkSSH,
+		Run:        checkBenchReach,
 	})
 }
 
-// checkSSH covers the ssh a fleet machine needs to reach the benches: the land,
-// the sandbox worktrees and the bench rule all start `ssh <bench>` on a machine
-// that must answer without a prompt (docs/SPEC-DOCTOR.md, the checks). It reads
-// the inventory (`nova-config machine list`, with the seat loaded) and runs
-// `ssh -o BatchMode=yes -o ConnectTimeout=5 <bench> true` for each machine,
+// checkBenchReach covers the ssh a fleet machine needs to reach the benches: the
+// land, the sandbox worktrees and the bench rule all start `ssh <bench>` on a
+// machine that must answer without a prompt (docs/SPEC-DOCTOR.md, the checks).
+// It reads the inventory (`nova-config machine list`, with the seat loaded) and
+// runs `ssh -o BatchMode=yes -o ConnectTimeout=5 <bench> true` for each machine,
 // naming each one that fails and the reason (unknown host key, no key, timeout).
 // The fix line is the documented step; the check never copies a key. It is
-// fleet-only: a single-machine setup has no other machine to reach.
-func checkSSH(ctx context.Context, env Env) Result {
+// fleet-only: a single-machine setup has no other machine to reach. The child
+// goes through Env.Exec, whose real seam (OSEnv.Exec) is the one place a host is
+// reached, so this function is not itself a host seam.
+func checkBenchReach(ctx context.Context, env Env) Result {
 	cctx, cancel := context.WithTimeout(ctx, sshTimeout)
 	defer cancel()
 	benches, err := inventoryNames(cctx, env)
@@ -54,7 +56,7 @@ func checkSSH(ctx context.Context, env Env) Result {
 		if err == nil {
 			continue
 		}
-		failures = append(failures, fmt.Sprintf("%s: %s", bench, sshReason(err, out)))
+		failures = append(failures, fmt.Sprintf("%s: %s", bench, reachReason(err, out)))
 	}
 	if len(failures) == 0 {
 		return Result{Status: OK, Evidence: fmt.Sprintf("all %d bench(es) answer `ssh -o BatchMode=yes <bench> true`", len(benches))}
@@ -66,11 +68,11 @@ func checkSSH(ctx context.Context, env Env) Result {
 	}
 }
 
-// sshReason names why one probe failed, from ssh's own words: it timed out
+// reachReason names why one probe failed, from ssh's own words: it timed out
 // (including the check's own deadline), the host key is unknown, no key was
 // accepted, else the connection failed. ssh's wording is matched without case,
 // because the same failure is "Host key verification failed." and "host key".
-func sshReason(err error, out string) string {
+func reachReason(err error, out string) string {
 	text := strings.ToLower(err.Error() + " " + out)
 	switch {
 	case errors.Is(err, context.DeadlineExceeded) || strings.Contains(text, "timeout") || strings.Contains(text, "timed out"):

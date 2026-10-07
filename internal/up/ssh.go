@@ -14,12 +14,14 @@ import (
 // key, because a host key taken without asking is the tool trusting a bench for
 // the person. A person fills the file and puts this machine's key on each bench.
 func init() {
-	Register(Step{Name: "ssh", Order: 55, Plan: sshPlan, Apply: sshApply})
+	Register(Step{Name: "ssh", Order: 55, Plan: planRemote, Apply: applyRemote})
 }
 
-// sshPlan reports ssh missing when its binary is not on PATH, create until
-// `~/.ssh/known_hosts` exists, and ok once it does.
-func sshPlan(e *Env) Finding {
+// planRemote reports ssh missing when its binary is not on PATH, create until
+// `~/.ssh/known_hosts` exists, and ok once it does. The child is not started
+// here; Env.Exec's real seam is the one place a host is reached, so this
+// function is not itself a host seam.
+func planRemote(e *Env) Finding {
 	if _, err := e.Exec.LookPath("ssh"); err != nil {
 		return Finding{State: Missing, Detail: "ssh not found; install openssh-client (linux) or openssh (darwin)"}
 	}
@@ -30,9 +32,9 @@ func sshPlan(e *Env) Finding {
 	return Finding{State: OK, Detail: "ssh configured"}
 }
 
-// sshApply makes `~/.ssh` at mode 0700 and an empty `known_hosts` at mode 0600,
-// each only when it is absent, and changes nothing else.
-func sshApply(e *Env) error {
+// applyRemote makes `~/.ssh` at mode 0700 and an empty `known_hosts` at mode
+// 0600, each only when it is absent, and changes nothing else.
+func applyRemote(e *Env) error {
 	sshDir := filepath.Join(e.Machine.Home, ".ssh")
 	if err := os.MkdirAll(sshDir, 0o700); err != nil {
 		return fmt.Errorf("mkdir %s: %w", sshDir, err)
