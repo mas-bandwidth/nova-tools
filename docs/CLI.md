@@ -6,6 +6,7 @@ Command reference and worked examples. Run shell examples from the repository ro
 
 ## nova-check
 
+<!-- clidoc:begin nova-check -->
 ```
 nova-check quickstart --dir <dir> [--max <n>] # the first run: links, then nocode, both run even if the first says NO
 nova-check attest --home <dir> --manifest <file>   # did the full self load: count + bytes + sha256, pasteable at session start
@@ -24,6 +25,7 @@ nova-check dogfood gate (--cli <docs/CLI.md> | --tools <dir>) --receipts <dir> [
 nova-check convergence --repo <owner/name> --ledger <md> --receipts <dir> --retired <file> --since <RFC3339|24h> [--bin <dir>] [--repo-dir <dir>] [--batch-logs <dir>] [--versions <tsv>] [--certs <tsv>] [--state <file>] [--by <name>] [--json] [--timeout <n>] [--dry-run]   # are we converging: one line per stream, now against --since, with the ratio and the trend
 nova-check spelling (--dir <dir> | --file <path> | --path <pattern>) [--ignore <word|@file>] [--write] [--dry-run] [--exclude <prefix>] [--max <n>]   # check markdown or prose for misspellings; fenced code blocks and inline code spans are blanked so code is not prose; --write fixes misspellings in place
 ```
+<!-- clidoc:end nova-check -->
 
 Most verbs only read. Three write, each only when asked and each with `--dry-run`, which makes every check and writes nothing: `dogfood record` appends a receipt, `spelling --write` edits files in place, `convergence --state` stores its two-tick streak. `convergence` also reads the forge through `gh`, over the network. A refusal is one line, `<VERB> REFUSED: <why>; run: <door>`, where the door is `nova-check help`, or `nova-check <verb> -h` after a flag the verb does not take; `<verb> -h` ends in the verb's `effect:` line.
 
@@ -245,6 +247,7 @@ are in [SPEC-CHECK.md](SPEC-CHECK.md).
 
 ## nova-self-talk
 
+<!-- clidoc:begin nova-self-talk -->
 ```
 nova-self-talk [--skip <basename>]... [--rule-doc <basename>]... [--max <n>] [--json] <file>...
 nova-self-talk scan [flags] <file>...        the same scan, named as a verb
@@ -253,6 +256,7 @@ nova-self-talk example [--dry-run] [--json] <dir>   write the two example pages 
 nova-self-talk version
 nova-self-talk help [<verb>]
 ```
+<!-- clidoc:end nova-self-talk -->
 
 ### First run
 
@@ -289,6 +293,7 @@ SELFTALK FAIL ./pages/RULES.md:8: VERDICT-IDIOM match="dead as a practice": A ru
 
 ## nova-fuse
 
+<!-- clidoc:begin nova-fuse -->
 ```
 nova-fuse version    print this build identity (--version also accepted)
 nova-fuse init --box <path> [--dry-run]                  make an empty box where none is; never replaces one
@@ -302,6 +307,7 @@ nova-fuse lift quarantine --box <path> [--dry-run] <surface>
 nova-fuse lift lockdown                                  REFUSED forever, by design
 nova-fuse path --box <path>                              echo the box path this invocation would use
 ```
+<!-- clidoc:end nova-fuse -->
 
 ### First run
 
@@ -338,6 +344,7 @@ LIFT OK verified: a-forum is no longer quarantined (soft: your own dial, both di
 
 ## nova-memory
 
+<!-- clidoc:begin nova-memory -->
 ```
 nova-memory quickstart --root <dir>... [--words <w>]... [--draft <file>] [--exclude <glob>]... [--json]
                                                                         the first run: stats, one search, one check, each with the line that ran it
@@ -354,6 +361,7 @@ nova-memory eval   --root <dir>... --channels <list> --k <n> --floor <f> [--excl
 nova-memory boot   --root <dir> --pin <file> [--json]
                                                                         the pin check: every pinned memory present and readable, and their size; never walks the directory
 ```
+<!-- clidoc:end nova-memory -->
 
 ### First run
 
@@ -558,6 +566,7 @@ machine is `tla/Friend.tla`.
 A Redis whose nova-config rows name ada and bob, its address in `--redis` or
 `NOVA_BUS_REDIS` (the transcript is in [TESTS.md](TESTS.md#nova-friend)):
 
+<!-- clidoc:begin nova-friend -->
 ```sh
 nova-friend install --as bob --harness opencode --dir ./bob --dry-run
 nova-friend uninstall --as bob --dry-run
@@ -566,6 +575,7 @@ nova-friend pong --as bob --nonce abc123 --to ada --queue 2 --working 1 --width 
 nova-friend wait-pong --from bob --nonce abc123 --timeout 2s
 nova-friend status --as bob --dir ./bob
 ```
+<!-- clidoc:end nova-friend -->
 
 `install --dry-run` prints the agent's label, plist path and launchd log, and
 the plan (`INSTALL PLAN command=`): write the plist, boot out whatever runs

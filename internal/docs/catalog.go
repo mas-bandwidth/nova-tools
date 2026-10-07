@@ -149,6 +149,7 @@ var DefaultCatalog = []Entry{
 
 	// tools/
 	E("tools/agentsmap", "AGENTS.md map generator CLI", "go test ./internal/docs", "make map"),
+	E("tools/clidoc", "CLI reference generator from tool help", "go test ./internal/docs", "make clidoc"),
 	E("tools/analyzers", "vetlaw verb-law analyzers", "go test ./tools/analyzers/...", "make vet-laws"),
 	E("tools/benchstandard", "the Linux bench's acceptance witness: one DRIFT line per finding against the standard, STANDARD OK or STANDARD DRIFT, and --apply kills stray runner listeners and nothing else", "go test ./tools/benchstandard", "go run ./tools/benchstandard"),
 	E("tools/ci", "the verbs CI and the Makefile call: package selection and the shard deal, the test-step checks, the ancestry fetch, gofmt, the redis, postgres and sbcl installs, the lisp tier, the job aggregates, revert-on-red and the run reports; one runner for every process", "go test ./tools/ci", "go run ./tools/ci help"),
