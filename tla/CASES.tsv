@@ -446,3 +446,15 @@ MCDelivery.cfg	MCDelivery.tla	pass	-	ignore-terminal	delivery	required	-
 MCDeliveryBrokenNoPresent.cfg	MCDelivery.tla	invariant	GapCarriesThePresent	ignore-terminal	delivery	required	-
 MCDeliveryBrokenReclaim.cfg	MCDelivery.tla	invariant	NoSupersededDelivered	ignore-terminal	delivery	required	-
 MCDeliveryBrokenAnswerStale.cfg	MCDelivery.tla	invariant	NoStaleNonceAnswered	ignore-terminal	delivery	required	-
+MCFriendCard.cfg	MCFriendCard.tla	pass	-	check	friendcard	required	-
+MCFriendCardLiveSettles.cfg	MCFriendCard.tla	pass	-	check	friendcard	required	-
+MCFriendCardLiveReturns.cfg	MCFriendCard.tla	pass	-	check	friendcard	required	-
+MCFriendCardLiveUp.cfg	MCFriendCard.tla	pass	-	check	friendcard	required	-
+MCFriendCardFindingPresenceFromSessionOnly.cfg	MCFriendCard.tla	invariant	DealOnlyToHearing	check	friendcard	required	-
+MCFriendCardFindingFriendWorkingMeansStarted.cfg	MCFriendCard.tla	invariant	WorkingMeansStarted	check	friendcard	required	-
+MCFriendCardFindingFriendDealOneTier.cfg	MCFriendCard.tla	invariant	TierHeld	check	friendcard	required	-
+MCFriendCardFindingDashboardFriendLowestLayer.cfg	MCFriendCard.tla	invariant	DashboardIsDerived	check	friendcard	required	-
+MCFriendCardFindingPrFriendStallComplete.cfg	MCFriendCard.tla	invariant	NoCardOffUp	check	friendcard	required	-
+MCFriendCardFindingWakePingEvery.cfg	MCFriendCard.tla	temporal	EveryAbleFriendUp	check	friendcard	required	-
+MCFriendCardFindingCoordinatorPassJudgments.cfg	MCFriendCard.tla	temporal	EveryFinishedReturns	check	friendcard	required	-
+MCFriendCardFindingFriendBackUpAutomatic.cfg	MCFriendCard.tla	temporal	EveryAbleFriendUp	check	friendcard	required	-
