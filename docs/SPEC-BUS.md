@@ -84,8 +84,9 @@ A reader waits on its stream with `BLOCK`, never on a clock: a message is pushed
 `nova-bus help` opens with the loop a harness runs, three lines. Every verb
 takes `--json`; `log` takes `--max`.
 
-- `send [--as <me>] --to <a,b> [--cc <c>] --subject <s> (--body <text> | --stdin) [--re <id>]`
-  prints `SEND OK id=<id> to=<names> cc=<names> at=<time> bytes=<n> sha256=<hex>` (and `login=none` on a store with no
+- `send [--as <me>] --to <a,b> [--cc <c>] --subject <s> (--body <text> |
+  --stdin) [--re <id>]` prints `SEND OK id=<id> to=<names> cc=<names>
+  at=<time> bytes=<n> sha256=<hex>` (and `login=none` on a store with no
   users): the count and the digest are the body's as the store holds it, the
   sender's check that a file arrived whole without asking the receiver. A body's
   trailing newline is the body's and is kept by send, the store, log and recv. Refuses, naming every problem at once: an unknown name (with the
@@ -95,8 +96,8 @@ takes `--json`; `log` takes `--max`.
   line each, writing nothing (bus-requires-inbox-push-proof, below).
   `--token <t> [--token-life <d>] [--token-cleanup <d>]` makes the send safe
   to retry (a-lost-send-response-is-safe-to-retry.w1, below).
-- `recv [--as <me>] [--max <n> | --all] [--ack] [--exec <command>] [--forever --exec <command>]`
-  prints one message (a `RECV OK` line with id, from, to, cc, re, at and subject, a blank
+- `recv [--as <me>] [--max <n> | --all] [--ack] [--exec <command>] [--forever --exec
+  <command>]` prints one message (a `RECV OK` line with id, from, to, cc, re, at and subject, a blank
   line, the body) and exits 0, or `RECV NONE` at exit 1 when nothing waits.
   `--exec` runs the command with that same text on its stdin (the body ending
   in a newline) and acks the message when it exits 0; a non-zero exit leaves it
@@ -140,8 +141,8 @@ takes `--json`; `log` takes `--max`.
   blocking read that never runs out.
 - `ack [--as <me>] --id <id,...>` prints `ACK OK acked=<n> asked=<n>` and one
   `ACK ID id= acked=true|false` line per id.
-- `peek [--as <me>]` prints `PEEK OK pending=<n> new=<n>` and one
-  `PEEK MESSAGE state= id= from= at= subject=` line per message. Writes nothing, makes no
+- `peek [--as <me>]` prints `PEEK OK pending=<n> new=<n>` and one `PEEK MESSAGE
+  state= id= from= at= subject=` line per message. Writes nothing, makes no
   group.
 - `log [--bodies] [--max <n>]` reads `bus2:log`, oldest first. Writes nothing.
 - `names` prints `NAMES OK count=<n> proven=<n>` and one line per known name:
