@@ -74,7 +74,9 @@ Landing, the coordinator's: an external delivery (git pushes the base) and a sto
     second rejected push as --rejected. Each head merged is checked first, by
     script and no model: a head whose diff changes a file outside its brief's
     PATHS, or leaves a stranded sentence fragment or an unmatched backquote in
-    prose, ends the batch as a head in conflict does. A card that adds a directory
+    prose, ends the batch as a head in conflict does. A test, a file under testdata,
+    tla/RUNS.tsv, tla/CASES.tsv, the docs catalog and an AGENTS.md map are inside
+    every card's PATHS. A card that adds a directory
     owns its catalog row and the AGENTS.md maps; a conflict only in those maps, or
     those maps and added catalog rows, resolves as the ledgers do. A conflict only
     in the generated ledgers lands: the tip's side, then their tests' update run
@@ -146,6 +148,7 @@ type landBatch struct {
 	Also []string `json:"also,omitempty"`
 	// Scope is each merged card's scope amendments, card:file: the files outside its PATHS
 	// the rule allows as the test, fixture or doc of the same change (sprint.ScopeAmended).
+	// A file inside every PATHS by cardgen.AlwaysInPaths is not one (sprint.LandScope).
 	Scope  []string `json:"scope,omitempty"`
 	DryRun bool     `json:"dry_run,omitempty"`
 	// Times is how long each of the batch's steps took; nil for a batch refused before
@@ -286,7 +289,7 @@ type lander struct {
 	out           []landBatch
 	epoch         uint64              // the epoch land read: every report is fenced to it
 	diffs         map[string]string   // each card's merge diff, as checkCard read it, for its score
-	scope         map[string][]string // each card's scope amendments, as checkCard allowed them (sprint.ScopeAmended)
+	scope         map[string][]string // each card's scope amendments, as checkCard allowed them (sprint.LandScope)
 	prose         map[string][]string // each stream's prose globs (sprint.StreamProse), whose backquotes checkCard does not read
 	toScore       []scoreJob          // the landed batches, scored after the whole pass (landscore.go)
 	// ledgerLog is the land log's lines for the shrink-only ledgers the batch's merges
@@ -1544,7 +1547,9 @@ func (l *lander) ledgers() []landLedger {
 
 // checkCard is the lander's mechanical checks of one card merged onto the batch branch
 // at before (internal/diffcheck; docs/SPEC-SPRINT.md section 7, the lander's checks): the
-// merge's own diff touches no file outside the card's PATHS (E12) and leaves no stranded
+// merge's own diff touches no file outside the card's PATHS (E12, sprint.LandScope: a
+// test, a testdata file, tla/RUNS.tsv, tla/CASES.tsv, the docs catalog and an AGENTS.md
+// map are inside every card's PATHS by cardgen.AlwaysInPaths) and leaves no stranded
 // sentence fragment or unmatched backquote (E4). A card that adds a directory owns its
 // catalog row and the AGENTS.md maps (diffcheck.Outside). First the documents the merge
 // writes are repaired on the merge commit (sprint.RepairMerge: a stray backquote, an
@@ -1588,13 +1593,11 @@ func (l *lander) checkCard(ctx context.Context, dir, stream string, c landCard, 
 	if tracked != "" {
 		beforePaths = strings.Split(tracked, "\n")
 	}
-	// a test, fixture or doc of the same change outside PATHS is a scope amendment, allowed
-	// by rule and recorded on the batch's line (sprint.ScopeAmended; section 7)
-	var changed []string
-	for _, f := range diffcheck.Parse(diff) {
-		changed = append(changed, f.New)
-	}
-	amended, out := sprint.ScopeAmended(changed, diffcheck.Outside(c.paths, diff, beforePaths))
+	// a file a change must touch to keep the tree green is inside every card's PATHS
+	// (cardgen.AlwaysInPathsRule), and a test, fixture or doc of the same change outside
+	// PATHS is a scope amendment, allowed by rule and recorded on the batch's line
+	// (sprint.LandScope; section 7)
+	amended, out := sprint.LandScope(c.paths, diff, beforePaths)
 	if len(out) > 0 {
 		why = append(why, "it changes files outside its PATHS (E12): "+strings.Join(out, ", "))
 	}
