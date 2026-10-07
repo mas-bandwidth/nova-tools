@@ -77,6 +77,9 @@ func ReadersBehind(s *Snapshot) (ReadersLag, bool) {
 	}
 	late := 0
 	for _, c := range s.Readers.Column(Asked, Reading) {
+		if s.IsFriendReader(c.Row) {
+			continue // a friend's reader is judged on its own (readWaitsConds, read_slots.go)
+		}
 		l := load(c.Row)
 		if c.Col == Reading {
 			l.Reading++
@@ -142,9 +145,11 @@ func (b ReadersLag) Decisions() []string {
 
 // readersBehindCond is the tick's condition when the readers are behind (NReadersBehind).
 func readersBehindCond(s *Snapshot) []cond {
-	b, ok := ReadersBehind(s)
-	if !ok {
-		return nil
+	var out []cond
+	if b, ok := ReadersBehind(s); ok {
+		out = append(out, cond{typ: NReadersBehind, streamLevel: true, what: b.What(), decisions: b.Decisions()})
 	}
-	return []cond{{typ: NReadersBehind, streamLevel: true, what: b.What(), decisions: b.Decisions()}}
+	// and one on each friend reader whose asked read has waited past the bound
+	// (read_slots.go), which the sprint's line above leaves out
+	return append(out, readWaitsConds(s)...)
 }
