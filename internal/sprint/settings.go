@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
+	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 )
 
 // The sprint's settings, the coordinator's (`set`, `stream set`; nova-tools#5096
@@ -173,7 +174,9 @@ type SetReq struct {
 	// whole numbers from 1, or default.
 	DriftCommits string `json:",omitempty"`
 	DriftHours   string `json:",omitempty"`
-	Who          string
+	// Base, with Streams, is the new base branch for not-yet-dealt and queued-to-merge cards.
+	Base       string `json:",omitempty"`
+	Who        string
 }
 
 // Set writes the settings: refused whole, writing nothing, for an actor who is not
@@ -258,7 +261,10 @@ func Set(s *Snapshot, r SetReq) Plan {
 			why = append(why, "--friend-stall-step wants a duration above zero (5m, 10m), or "+ReadTierDefault+" for "+FriendStallStepDefault.String()+"; found "+r.FriendStallStep)
 		}
 	}
-	if r.ReadTier == "" && r.DealtMax == "" && r.LandProtected == "" && r.Release == "" && r.Prose == "" && len(alarms) == 0 && r.GoLanes == "" && r.Attempts == "" && r.FriendIdle == "" && r.FriendStallAfter == "" && r.FriendStallStep == "" && r.DriftCommits == "" && r.DriftHours == "" {
+	if r.Base != "" && len(r.Streams) == 0 {
+		why = append(why, "--base is a stream's, not the sprint's: nova-sprint stream set <stream> --base <branch>")
+	}
+	if r.ReadTier == "" && r.DealtMax == "" && r.LandProtected == "" && r.Release == "" && r.Prose == "" && r.Base == "" && len(alarms) == 0 && r.GoLanes == "" && r.Attempts == "" && r.FriendIdle == "" && r.FriendStallAfter == "" && r.FriendStallStep == "" && r.DriftCommits == "" && r.DriftHours == "" {
 		why = append(why, "nothing to set: --read-tier, --prose, --dealt-max, --go-lanes, --attempts, --friend-idle, --friend-stall-after, --friend-stall-step, --drift-commits, --drift-hours or an --alarm-... threshold")
 	}
 	if len(r.Streams) > 0 && r.GoLanes != "" {
@@ -339,7 +345,31 @@ func Set(s *Snapshot, r SetReq) Plan {
 					moved = append(moved, "attempts "+r.Attempts)
 				}
 			}
+			if r.Base != "" {
+				moved = append(moved, "base "+r.Base)
+			}
 			p.Units = append(p.Units, Unit{Key: ctl.ID, Stream: st, Changes: []Change{change(Merge, setEntry(ctl, set, unset...))}, Moved: "stream " + st + " " + strings.Join(moved, ", "), Closes: closes})
+			// Update bases for not-yet-dealt (waiting/ready) and queued-to-merge cards
+			if r.Base != "" {
+				baseCards := 0
+				// Not-yet-dealt cards: waiting or ready primaries
+				for _, c := range s.Work.Cards() {
+					if c.Placed() && c.Row == st && (c.Col == Waiting || c.Col == Ready) {
+						p.Units = append(p.Units, Unit{Key: c.ID, Stream: st, Changes: []Change{change(Work, ntable.BatchMemberEntry{ID: c.ID, Expect: at(c), Set: map[string]string{"base": r.Base}})},
+							Moved: fmt.Sprintf("%s base set to %s stream=%s %s", c.ID, r.Base, c.Row, c.Col)})
+						baseCards++
+					}
+				}
+				// Queued-to-merge cards
+				for _, c := range s.Merge.Cell(st, Queued) {
+					p.Units = append(p.Units, Unit{Key: c.ID, Stream: st, Changes: []Change{change(Merge, ntable.BatchMemberEntry{ID: c.ID, Expect: at(c), Set: map[string]string{"base": r.Base}})},
+						Moved: fmt.Sprintf("%s base set to %s stream=%s %s", c.ID, r.Base, c.Row, c.Col)})
+					baseCards++
+				}
+				if baseCards == 0 {
+					moved = append(moved, "no base-yet-dealt or queued cards")
+				}
+			}
 		}
 		answered(&p, s, r.Answers, r.Who)
 		return p
