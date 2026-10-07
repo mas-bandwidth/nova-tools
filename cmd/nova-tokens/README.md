@@ -17,7 +17,7 @@ nova-tokens version
 
 ## First run
 
-The transcript below is executed line for line by the docs tests; the full record is in [docs/TESTS.md](../../docs/TESTS.md#nova-tokens).
+The transcript below is copied from the first run in [docs/TESTS.md](../../docs/TESTS.md#nova-tokens), which `cmd/nova-tokens/firstrun_test.go` executes line for line; a docs test holds this copy to that record.
 
 Fixture: `cmd/nova-tokens/testdata/example-bench` (copied into a temp directory first, because a first run WRITES; the bus lane is `example.com`).
 
