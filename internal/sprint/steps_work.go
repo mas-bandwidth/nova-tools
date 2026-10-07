@@ -964,6 +964,10 @@ func dealPlan(s *Snapshot, r DealReq, rr *round, ri routeIndexes) (Plan, roundMo
 		}
 		return p, moves
 	}
+	// a quiet member is dealt nothing until its quiet ends (fleet_quiet.go;
+	// docs/SPEC-SPRINT.md section 5, fleet-quiet-machine-b.w6)
+	quiet := quietWhy(s, up)
+	up = notQuiet(s, up)
 	q, widths := memberLoads(s, up), memberWidths(s, up)
 	for _, c := range chosen {
 		// its bench: the members its brief's BENCH line names, and the deal deals it to
@@ -978,6 +982,9 @@ func dealPlan(s *Snapshot, r DealReq, rr *round, ri routeIndexes) (Plan, roundMo
 		roomWhy := noRoomWhy
 		if len(bench) > 0 {
 			roomWhy = benchRoom(bench)
+		}
+		if quiet != "" {
+			roomWhy += "; " + quiet
 		}
 		if wc := s.Fleet.Placed(WorkCardID(c.ID, c.Int("attempt"))); wc != nil && wc.Col == Withdrawn {
 			if redealBound(wc) {
@@ -1866,7 +1873,7 @@ func withdrawUnit(s *Snapshot, c *Card, extra map[string]string, unset []string,
 // coordinator's hold on a member (hold) and its release (release), or the
 // whole fleet made to match the inventory (sync).
 type FleetReq struct {
-	Op     string // up, down, level, hold, release, sync
+	Op     string // up, down, level, hold, release, sync, quiet
 	Member string
 	Who    string
 	// Fresh says the member is alive (Beat.Alive: fewer than MissedBeatsDown
@@ -1907,6 +1914,10 @@ type FleetReq struct {
 	// only its ready cards, never begun, are dealt round the fleet, and the hold
 	// is marked so (FieldHeldFinish) for the sweep to leave them (hold.go).
 	Finish bool `json:",omitempty"`
+	// Until, with quiet, is when the member's quiet ends, and End ends it now (fleet
+	// quiet, fleet_quiet.go); Reason is its reason.
+	Until time.Time `json:",omitzero"`
+	End   bool      `json:",omitempty"`
 	// keep is the streams whose cards a member's hold leaves where they are: streams
 	// held in the same step, whose hold withdraws them (hold.go).
 	keep map[string]bool
@@ -2052,7 +2063,8 @@ func fleetStepPlan(s *Snapshot, r FleetReq, rr *round, moves roundMoves) Plan {
 			line += " deadline=the card's, or " + itoa(DeadlineK) + " times the member's median run wall (the pin taken off)"
 		}
 		if comeUp {
-			level(s, &p, orderLike(s.Members(), append(liveFor(s, r), r.Member), r.Member), rr, moves, nil)
+			// a quiet member is levelled no card (fleet_quiet.go)
+			level(s, &p, notQuiet(s, orderLike(s.Members(), append(liveFor(s, r), r.Member), r.Member)), rr, moves, nil)
 			if len(moves) > 0 {
 				to, from := map[string]int{}, map[string]int{}
 				for id, m := range moves {
@@ -2066,17 +2078,22 @@ func fleetStepPlan(s *Snapshot, r FleetReq, rr *round, moves roundMoves) Plan {
 	case "down", "hold":
 		// the room of each receiver is its width (width.go): its work cards
 		// held, ready and working, under it
-		up := liveFor(s, r)
+		up := notQuiet(s, liveFor(s, r)) // a quiet member is dealt no card (fleet_quiet.go)
 		return downPlan(s, r, up, rr, moves, memberLoads(s, up), memberWidths(s, up))
 	case "level":
-		up := s.UpMembers()
+		// a quiet member is swept and levelled no card, and a quiet past its time is
+		// logged as ended (fleet_quiet.go)
+		quietEnds(s, &p)
+		up := notQuiet(s, s.UpMembers())
 		held := memberLoads(s, up)
 		sweep(s, &p, r, up, rr, moves, held)
 		level(s, &p, up, rr, moves, held)
+	case "quiet":
+		return quietPlan(s, r)
 	case "sync":
 		return fleetSyncPlan(s, r, rr, moves)
 	default:
-		p.refuse(r.Op, "fleet wants up, down, level, hold, release or sync")
+		p.refuse(r.Op, "fleet wants up, down, level, hold, release, sync or quiet")
 	}
 	return p
 }
