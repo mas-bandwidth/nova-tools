@@ -47,6 +47,19 @@ const (
 	DeadlineJudgment = 10 * time.Minute
 )
 
+// WaveSentinel is the first held sentinel waiting that waits for nothing itself (a wave loads
+// behind a held sentinel with nothing before it), in work order: the wave behind it is what
+// the tick offers when the fleet is starving (NStarving), since its release is what lets the
+// wave through; nil when no such sentinel is held.
+func WaveSentinel(s *Snapshot) *Card {
+	for _, c := range s.Work.Column(Waiting) {
+		if IsSentinel(c) && IsHeld(c) && len(WaitsFor(s, c, nil)) == 0 {
+			return c
+		}
+	}
+	return nil
+}
+
 // MaxRedeals is how many times one attempt's work card is dealt again after
 // a take of it ended without a finish, its member down or away while the card
 // was working (its redeals counter, which no take resets). A card that was
@@ -737,7 +750,7 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 		}
 		conds = append(conds, c)
 	}
-	if sentinel := heldWave(s); sentinel != nil && len(up) > 0 {
+	if sentinel := WaveSentinel(s); sentinel != nil && len(up) > 0 {
 		// ready is kept at twice the fleet's width (the owner, 2026-10-02: "Ready always
 		// full"; 2026-10-03: "BATCH EVERYTHING"): under it while a wave is held, the tick
 		// says so every tick and offers the wave, never a single card
