@@ -19,6 +19,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
+	"github.com/mas-bandwidth/nova-tools/internal/config"
 	"github.com/mas-bandwidth/nova-tools/internal/friend"
 	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 	"github.com/mas-bandwidth/nova-tools/internal/member"
@@ -375,6 +376,18 @@ func (a *app) friendCardsOf(ctx context.Context, st *store.Store, name, dir stri
 		}
 		return 0, 0, writeQueueFile(dir, states, left, nil)
 	}
+	spec, err := st.FriendSpecOf(ctx, name)
+	if err != nil {
+		return 0, 0, err
+	}
+	var dealt []sprint.Packet
+	wake := func(p sprint.Packet, brief, line string) error {
+		if spec.Mode == config.FriendModeOneShot {
+			return a.wakeFriend(ctx, st, name, p, brief, line, say)
+		}
+		dealt = append(dealt, p)
+		return nil
+	}
 	var cards []*sprint.Card
 	for _, c := range all {
 		states[c.ID] = map[string]string{string(sprint.Working): "working", string(sprint.Ready): "queued", string(sprint.Withdrawn): queueTaken}[string(c.Col)]
@@ -390,10 +403,15 @@ func (a *app) friendCardsOf(ctx context.Context, st *store.Store, name, dir stri
 		if err == nil {
 			err = writeQueueFile(dir, states, left, packets)
 		}
+		// Files already delivered stand even if a later collect or queue write
+		// fails; their one courtesy wake still belongs to this pass (FRIENDS.md).
+		if len(dealt) > 0 {
+			err = errors.Join(err, a.wakeFriendPass(ctx, st, name, filepath.Join(dir, "inbox"), dealt, say))
+		}
 	}()
 	for i, p := range packets {
 		if p.Kind == "read" {
-			d, f, err := a.friendReadOf(ctx, st, name, dir, p, cards[i], say)
+			d, f, err := a.friendReadOf(ctx, st, name, dir, p, cards[i], say, wake)
 			delivered, finished = delivered+d, finished+f
 			if err != nil {
 				return delivered, finished, err
@@ -419,7 +437,7 @@ func (a *app) friendCardsOf(ctx context.Context, st *store.Store, name, dir stri
 				delivered++
 				line := fmt.Sprintf("FRIEND-CARD DELIVERED friend=%s card=%s job=%s branch=%s", name, p.Card, oneline.Field(job), p.Branch)
 				say(line)
-				if err := a.wakeFriend(ctx, st, name, p, brief, line, say); err != nil {
+				if err := wake(p, brief, line); err != nil {
 					return delivered, finished, err
 				}
 			case !errors.Is(err, fs.ErrExist):
@@ -605,6 +623,34 @@ func (a *app) wakeFriend(ctx context.Context, st *store.Store, name string, p sp
 	return err
 }
 
+// wakeFriendPass is docs/FRIENDS.md's batch wake: one bounded status message
+// for the files delivered in this pass, and one pass note if the send fails.
+func (a *app) wakeFriendPass(ctx context.Context, st *store.Store, name, inbox string, dealt []sprint.Packet, say func(string)) error {
+	a.enrollBus(ctx, name, say)
+	ids := make([]string, 0, min(len(dealt), 10)+1)
+	for _, p := range dealt[:min(len(dealt), 10)] {
+		ids = append(ids, p.Card)
+	}
+	if len(dealt) > 10 {
+		ids = append(ids, fmt.Sprintf("and %d more", len(dealt)-10))
+	}
+	subject := fmt.Sprintf("cards dealt: %d (%s)", len(dealt), strings.Join(ids, ", "))
+	m := bus.Message{From: st.Actor, To: []string{name}, Kind: bus.KindStatus, Subject: subject,
+		Body: "Your sprint cards are in your inbox: " + inbox + "\nRead the inbox briefs and start; each STATUS line says where to push and where to report."}
+	if err := a.bus(ctx, m, say); err != nil {
+		why := oneline.Escape(err.Error())
+		say(fmt.Sprintf("FRIEND-CARD NOTE friend=%s pass=%s: the bus message to her was not sent (%s); the inbox files stand, tell her by hand", name, oneline.Field(subject), why))
+		n := sprint.Note{Kind: sprint.Happened, Type: sprint.NFriendNotWoken, Count: len(dealt), Who: st.Actor,
+			What: fmt.Sprintf("friend sync pass for %s delivered %s into %s, and its bus message failed: %s; tell her by hand: nova-bus send --as %s --to %s --subject '%s' --body '%s'", name, subject, inbox, why, st.Actor, name, subject, inbox)}
+		res, err := st.Run(ctx, store.NoteStep("friend sync", n))
+		if err == nil && len(res.Refused) > 0 {
+			err = errors.New(res.Refused[0].Why)
+		}
+		return err
+	}
+	return nil
+}
+
 // stallWaker is the store's WakeFriend for the machine (tick and run): the friend stall
 // part's wake turn sent on the bus (wakeFriendStall), a message not sent said on out.
 func (a *app) stallWaker(st *store.Store, out io.Writer) func(string, int, time.Duration) error {
@@ -672,7 +718,7 @@ func friendReadText(st *store.Store, name string, p sprint.Packet, c *sprint.Car
 // minutes on the sprint clock), and the close retires the fleet card
 // (sprint.FriendReadClose). It is not a work finish. The job directory is
 // the card id, the path the ask writes, so a brief already there is kept.
-func (a *app) friendReadOf(ctx context.Context, st *store.Store, name, dir string, p sprint.Packet, c *sprint.Card, say func(string)) (delivered, finished int, err error) {
+func (a *app) friendReadOf(ctx context.Context, st *store.Store, name, dir string, p sprint.Packet, c *sprint.Card, say func(string), wake func(sprint.Packet, string, string) error) (delivered, finished int, err error) {
 	job := friendJobOf(p)
 	in, why, err := friendInbox(dir, p)
 	if err != nil {
@@ -693,7 +739,7 @@ func (a *app) friendReadOf(ctx context.Context, st *store.Store, name, dir strin
 			delivered++
 			line := fmt.Sprintf("FRIEND-READ DELIVERED friend=%s card=%s job=%s", name, p.Card, oneline.Field(job))
 			say(line)
-			if err := a.wakeFriend(ctx, st, name, p, brief, line, say); err != nil {
+			if err := wake(p, brief, line); err != nil {
 				return delivered, finished, err
 			}
 		case !errors.Is(err, fs.ErrExist):
