@@ -1,13 +1,13 @@
 # nova-sandbox READ and USE rating, nova-tools 1.2.0
 
-Rater: Freddy (inception/mercury-2.5)
+Rater: friend on a re-rate card (inception/mercury-2.5)
 Build: 1c5a46e10594
 READ: 7/10
 USE: 7/10
 
 ## Reasons
 
-READ. Read `nova-sandbox help` and each verb's `-h` cold, then ran on a throwaway directory on the vision bench. The help explains the wall, provides working first-run examples, and documents exit codes. Every verb responds to `-h`. Refusal messages are good—they name the reason and the correct command. The first confusion is that the tool's own directory is added as a read+execute root, but help never mentions this; `SANDBOX OK` shows `read=0` for this root. The first doubting a claim is `Every path is yours and none is guessed` at help line 167—the computed command directory root is only in the spec (lines 1332, 1775). The first boredom is the spec's length: 2337 lines when ~200 would suffice for the bare form. Flags like `--json`, probe's `--max`, and run's `--max-procs`, `--max-mem`, `--out`, `--artifact`, `--out-max-bytes` are missing from top help.
+READ. Read `nova-sandbox help` and each verb's `-h` cold, then ran on a throwaway directory on a Linux bench. The help explains the wall, provides working first-run examples, and documents exit codes. Every verb responds to `-h`. Refusal messages are good—they name the reason and the correct command. The first confusion is that the tool's own directory is added as a read+execute root, but help never mentions this; `SANDBOX OK` shows `read=0` for this root. The first doubting a claim is `Every path is yours and none is guessed` at help line 167—the computed command directory root is only in the spec (lines 1332, 1775). The first boredom is the spec's length: 2337 lines when ~200 would suffice for the bare form. Flags like `--json`, probe's `--max`, and run's `--max-procs`, `--max-mem`, `--out`, `--artifact`, `--out-max-bytes` are missing from top help.
 
 USE. Tested on Linux (Landlock ABI 8, kernel 6.x) in a throwaway directory. Ran `check`, `probe`, `policy`, `version`, and ~25 bare-form runs. The wall held: writes outside `--write` denied, reads outside grants denied, `--net-deny` blocked HTTPS, `--read-noexec` prevented execution. Exit status passed through (`exit 7` returned as 7), and `SANDBOX DONE exit=<n>` reported the command's status. About 15 refusals provoked and all were precise: missing `--write`, relative paths (answered with absolute), missing paths, `--read`+`--read-noexec` overlap, HOME outside wall, bad `--net-allow`, unknown flags, and egress issues.
 
