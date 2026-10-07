@@ -121,7 +121,7 @@ const RoleReader = "reader"
 func readUnitsOf(s *Snapshot, seats []FriendSeat) []readUnit {
 	var out []readUnit
 	for _, f := range seats {
-		if !friendDealable(s, f) || !slices.Contains(f.Roles, RoleReader) {
+		if !friendCanRead(s, f) || !slices.Contains(f.Roles, RoleReader) {
 			continue
 		}
 		g := f

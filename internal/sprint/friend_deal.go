@@ -182,7 +182,14 @@ func friendTiers(f FriendSeat) []string {
 // twice; a row that cannot work is filled by no deal. While the friends' work is off
 // (FriendsOff, nova-sprint set --friends off) no friend's row is.
 func friendDealable(s *Snapshot, f FriendSeat) bool {
-	if f.Status != Up || s.FriendsOff() {
+	return !s.FriendsOff() && friendCanRead(s, f)
+}
+
+// friendCanRead says the friend's row may be dealt a read card: friendDealable but for the
+// friends' work switch, which stops her work and never her reads (set --friends off: "her
+// reads still flow"; read_cards.go).
+func friendCanRead(s *Snapshot, f FriendSeat) bool {
+	if f.Status != Up {
 		return false
 	}
 	if s == nil || s.Fleet == nil {

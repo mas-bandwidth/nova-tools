@@ -275,3 +275,20 @@ func TestAReadCardsDeadlineRunsFromItsStart(t *testing.T) {
 	require.Equal(t, RetiredByLate, w.s.Fleet.Card(again[0].ID).F("retired_by"), "taken and not closed in time: late, spent")
 	require.Empty(t, readCardsOf(w, "s1-1"), "m2 spent it and m1 worked it: no reader left, it waits")
 }
+
+// TestTheWorkSwitchesStopWorkNeverReads pins read cards beside set --fleet off and
+// --friends off (PR 5395): the switches stop the work dealt, and a machine's reader and a
+// friend who reads are still dealt read cards.
+func TestTheWorkSwitchesStopWorkNeverReads(t *testing.T) {
+	t.Parallel()
+	w := readCardsWorld(t, 4, "m1", "m2")
+	w.s.Work.SetProp(PropFleet, "off")
+	w.s.Work.SetProp(PropFriends, "off")
+	putReviewBy(w, "s1-1", "s1-1: work (s1) tier: pro\n", "m1", 1)
+	dealReads(t, w, []FriendSeat{readerSeat("pat", 2, []string{"pro"}, []string{"reader"})})
+	var rows []string
+	for _, c := range readCardsOf(w, "s1-1") {
+		rows = append(rows, c.Row)
+	}
+	require.ElementsMatch(t, []string{"m2", FriendRow("pat")}, rows)
+}
