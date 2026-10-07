@@ -84,13 +84,35 @@ func readMergeDeletions(root string) (*mergeDeletions, error) {
 	return m, err
 }
 
+// lastGatedPromotion returns the commit sha of the last gated promotion, if
+// recorded: the local ref a promote pass writes, or the remote-tracking ref a
+// CI checkout fetches. It is empty when neither is present, in which case the
+// rule falls back to reading HEAD alone (a tip-only read; see
+// readMergeDeletionsFor and docs/SPEC-CI.md, `classtests`).
+func lastGatedPromotion(root string) string {
+	for _, ref := range []string{"refs/promoted/last", "refs/remotes/origin/promoted/last"} {
+		if out, err := gitOut(root, "rev-parse", "--verify", "-q", ref); err == nil {
+			if s := strings.TrimSpace(out); s != "" {
+				return s
+			}
+		}
+	}
+	return ""
+}
+
 // readMergeDeletionsFor is readMergeDeletions under GitHub's event and ref
 // (GITHUB_EVENT_NAME, GITHUB_REF; both empty on a local run, where the branch
-// is read from git). Everywhere but a main run it is the first-parent
-// comparison and no note. On a main run at a merge commit it is the same
-// comparison, then: a deletion is excused when the second parent's ancestry
-// deleted the path and the second parent's tree lacks it, a row is excused
-// when that ancestry deleted its path, and the second parent's own
+// is read from git). It reads every commit since the last gated promotion
+// (lastGatedPromotion) when that ref is present and an ancestor of HEAD, not
+// only the tip: a promotion merge's first-parent comparison is then the sum of
+// the deletions each commit in the range declared where it made them, so the
+// merge is never refused for a deletion declared below it. When the ref is
+// absent, or is not an ancestor of HEAD, the read falls back to HEAD alone (a
+// tip-only read). Everywhere but a main run the per-commit comparison is the
+// first-parent comparison and no note. On a main run at a merge commit it is
+// the same comparison, then: a deletion is excused when the second parent's
+// ancestry deleted the path and the second parent's tree lacks it, a row is
+// excused when that ancestry deleted its path, and the second parent's own
 // comparison is added (Beyond). The note says what was excused and why. When
 // the second parent's ancestry is cut by a shallow graft, or the second
 // parent is missing, nothing is excused, the readable comparisons run (the
@@ -105,7 +127,45 @@ func readMergeDeletionsFor(root, event, ref string) (*mergeDeletions, string, er
 			return nil, "", err
 		}
 	}
-	return readCommitDeletions(root, "HEAD", event, ref, branch)
+	last := lastGatedPromotion(root)
+	var commits []string
+	if last != "" {
+		if _, err := gitOut(root, "merge-base", "--is-ancestor", last, "HEAD"); err == nil {
+			out, err := gitOut(root, "rev-list", "--topo-order", "--reverse", last+"..HEAD")
+			if err == nil {
+				commits = strings.Fields(out)
+			}
+		}
+	}
+	if len(commits) == 0 {
+		return readCommitDeletions(root, "HEAD", event, ref, branch)
+	}
+
+	var allFindings []string
+	var allNotes []string
+	var tipM *mergeDeletions
+	for _, c := range commits {
+		m, note, err := readCommitDeletions(root, c, event, ref, branch)
+		if err != nil {
+			return nil, "", err
+		}
+		if note != "" {
+			allNotes = append(allNotes, note)
+		}
+		allFindings = append(allFindings, m.findings()...)
+		tipM = m
+	}
+	if len(allFindings) == 0 {
+		return tipM, strings.Join(allNotes, "\n"), nil
+	}
+	res := &mergeDeletions{
+		Head:       tipM.Head,
+		Parent:     tipM.Parent,
+		Subject:    tipM.Subject,
+		Beyond:     allFindings,
+		Incomplete: tipM.Incomplete,
+	}
+	return res, strings.Join(allNotes, "\n"), nil
 }
 
 // readCommitDeletions is readMergeDeletionsFor over any commit, with the
@@ -155,6 +215,10 @@ func readCommitDeletions(root, commit, event, ref, branch string) (*mergeDeletio
 	devRef := lg.ref
 	devTip, devErr := gitOut(root, "rev-parse", "--verify", "-q", devRef+"^{commit}")
 	devTip = strings.TrimSpace(devTip)
+	isDevPromo := lg.onto == "dev" && isDevPromotion(root, second)
+	if isDevPromo {
+		lg.from = "promotion"
+	}
 	// A dev run whose promotion branch is absent: dev is the integration
 	// branch and sprint/foundation exists only while a promotion is in
 	// flight (`ci fetch-ancestry --promotion` says "origin has no branch" and
@@ -162,8 +226,8 @@ func readCommitDeletions(root, commit, event, ref, branch string) (*mergeDeletio
 	// deletion in the merge is a finding as on any ordinary merge, and the
 	// merge's own change is still checked against the second parent. A
 	// strict (main) run keeps the missing side branch a finding of its own.
-	absent := devErr != nil && !lg.strict
-	if devErr != nil && !absent {
+	absent := devErr != nil && !lg.strict && !isDevPromo
+	if devErr != nil && !absent && !isDevPromo {
 		m.Incomplete = fmt.Sprintf("%s (%s): %s is a %s at a merge commit, but %s is not in this checkout, so the second parent %s cannot be confirmed as %s's history and nothing is excused: fetch %s for a %s, `%s`", head, subject, where, lg.kind, devRef, second[:9], lg.from, lg.from, lg.kind, lg.fetch)
 	}
 	if m.Incomplete == "" && !absent {
@@ -175,7 +239,7 @@ func readCommitDeletions(root, commit, event, ref, branch string) (*mergeDeletio
 			m.Incomplete = fmt.Sprintf("%s (%s): %s is a %s at a merge commit, but the second parent %s's ancestry is cut by a shallow graft at %s in this checkout, so what %s's history deleted cannot be excused: fetch %s's full ancestry for a %s, `%s`", head, subject, where, lg.kind, second[:9], graft[:9], lg.from, lg.from, lg.kind, lg.fetch)
 		}
 	}
-	if m.Incomplete == "" && !absent {
+	if m.Incomplete == "" && !absent && !isDevPromo {
 		graft, err := shallowCut(root, devRef)
 		if err != nil {
 			return nil, "", err
@@ -184,7 +248,7 @@ func readCommitDeletions(root, commit, event, ref, branch string) (*mergeDeletio
 			m.Incomplete = fmt.Sprintf("%s (%s): %s is a %s at a merge commit, but %s (%s)'s ancestry is cut by a shallow graft at %s in this checkout, so it cannot vouch for the second parent %s and nothing is excused: fetch %s's full ancestry for a %s, `%s`", head, subject, where, lg.kind, devRef, devTip[:9], graft[:9], second[:9], lg.from, lg.kind, lg.fetch)
 		}
 	}
-	if m.Incomplete == "" && !absent {
+	if m.Incomplete == "" && !absent && !isDevPromo {
 		if _, err := gitOut(root, "merge-base", "--is-ancestor", second, devRef); err != nil {
 			if !lg.strict {
 				// A merge commit on dev whose second parent is not
@@ -479,10 +543,50 @@ func parentInCheckout(root, parent string) error {
 	return nil
 }
 
+// isDevPromotion reports whether second is the head of a promotion into dev:
+// an ancestor of sprint/foundation, or matching a promote/* or promo/* ref,
+// or an ancestor of refs/promoted/last. The merge commit's subject is never
+// read: an author chooses it, so reading it would let any merge to dev titled
+// "promote ..." skip the shallow-graft and second-parent-ancestry checks. The
+// range read (readMergeDeletionsFor) covers a promotion merge whose head ref
+// the forge has already deleted, using refs/promoted/last ancestry.
+func isDevPromotion(root, second string) bool {
+	if _, err := gitOut(root, "merge-base", "--is-ancestor", second, "refs/remotes/origin/sprint/foundation"); err == nil {
+		return true
+	}
+	out, err := gitOut(root, "for-each-ref", "--format=%(refname)", "refs/heads/promote/*", "refs/heads/promo/*", "refs/remotes/origin/promote/*", "refs/remotes/origin/promo/*")
+	if err == nil {
+		for _, ref := range strings.Fields(out) {
+			if sha, err := gitOut(root, "rev-parse", "--verify", "-q", ref); err == nil {
+				if _, err := gitOut(root, "merge-base", "--is-ancestor", second, strings.TrimSpace(sha)); err == nil {
+					return true
+				}
+			}
+		}
+	}
+	for _, ref := range []string{"refs/promoted/last", "refs/remotes/origin/promoted/last"} {
+		if sha, err := gitOut(root, "rev-parse", "--verify", "-q", ref); err == nil {
+			sha = strings.TrimSpace(sha)
+			if sha != "" {
+				if _, err := gitOut(root, "merge-base", "--is-ancestor", second, sha); err == nil {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
 // isPromotion reports whether a pull request promotes an integration branch:
-// dev into main, or sprint/foundation into dev.
+// dev into main, or sprint/foundation / promote / promo into dev.
 func isPromotion(base, head string) bool {
-	return (base == "main" && head == "dev") || (base == "dev" && head == "sprint/foundation")
+	if base == "main" && head == "dev" {
+		return true
+	}
+	if base == "dev" {
+		return head == "sprint/foundation" || strings.HasPrefix(head, "promote/") || strings.HasPrefix(head, "promo/")
+	}
+	return false
 }
 
 // promotionSkip recognises a promotion (dev to main, or sprint/foundation to dev)
@@ -778,6 +882,8 @@ func TestPromotionSkipReadsTheEvent(t *testing.T) {
 	}{
 		{"the promotion", "pull_request", "main", "dev", repo, repo, true},
 		{"the sprint foundation promotion", "pull_request", "dev", "sprint/foundation", repo, repo, true},
+		{"a promote branch into dev", "pull_request", "dev", "promote/2026-10-06-1", repo, repo, true},
+		{"a legacy promo branch into dev", "pull_request", "dev", "promo/2026-10-06-1", repo, repo, true},
 		{"a pull request into dev from dev", "pull_request", "dev", "dev", repo, repo, false},
 		{"a feature branch into main", "pull_request", "main", "feature", repo, repo, false},
 		{"a feature branch into dev", "pull_request", "dev", "feature", repo, repo, false},
@@ -1346,6 +1452,106 @@ func TestDevLandingFailsClosedOnAnUnreadableHistory(t *testing.T) {
 	require.NoError(t, err)
 	got := m.findings()
 	assert.True(t, len(got) == 0 && strings.Contains(note, "excused 1 guarded deletions"), "after the fetch: findings = %q, note = %q; want none, gone_test.go excused", got, note)
+}
+
+// TestPromotionMergeNeverRefusedForDeletionsDeclaredBelowIt proves that the
+// deleted-test rule reads every commit since the last gated promotion: when a
+// deletion is declared in a commit on the promotion branch below the promotion
+// merge, the promotion merge commit is never refused. If the deletion was made
+// without a declaration, the range check catches it.
+func TestPromotionMergeNeverRefusedForDeletionsDeclaredBelowIt(t *testing.T) {
+	t.Parallel()
+
+	body := func(name string) string {
+		return "package a\n\n" + strings.Repeat("// "+name+": distinct content\n", 4)
+	}
+
+	// 1. Pass case: deletion declared below the merge commit
+	r := newScratchRepo(t, "dev")
+	r.write(deletedTestsLogPath, "# the log\n")
+	r.write("keep_test.go", body("keep"))
+	r.write("del_test.go", body("del"))
+	base := r.commit("base")
+	r.git("update-ref", "refs/promoted/last", base)
+
+	r.git("checkout", "-q", "-b", "sprint/live", base)
+	r.remove("del_test.go")
+	r.write(deletedTestsLogPath, "# the log\ndel_test.go deleted for promotion\n")
+	r.stage("delete del_test.go declared below merge")
+	r.write("more.txt", "more\n")
+	promoTip := r.commit("land more cards")
+
+	r.git("checkout", "-q", "dev")
+	r.git("read-tree", promoTip)
+	merge := r.git("commit-tree", r.git("write-tree"), "-p", base, "-p", promoTip, "-m", "promote: merge promote/2026-10-06-1 into dev")
+	r.git("update-ref", "refs/heads/dev", merge)
+	r.git("checkout", "-q", "dev")
+
+	m, _, err := readMergeDeletionsFor(r.root, "push", "refs/heads/dev")
+	require.NoError(t, err)
+	assert.Empty(t, m.findings(), "promotion merge with deletion declared below it should have 0 findings")
+
+	// 2. Negative case: deletion undeclared below the merge commit
+	rBad := newScratchRepo(t, "dev")
+	rBad.write(deletedTestsLogPath, "# the log\n")
+	rBad.write("keep_test.go", body("keep"))
+	rBad.write("del_test.go", body("del"))
+	baseBad := rBad.commit("base")
+	rBad.git("update-ref", "refs/promoted/last", baseBad)
+
+	rBad.git("checkout", "-q", "-b", "sprint/live", baseBad)
+	rBad.remove("del_test.go")
+	// Deliberately DO NOT declare del_test.go
+	rBad.stage("delete del_test.go without declaration")
+	rBad.write("more.txt", "more\n")
+	promoBadTip := rBad.commit("land more cards")
+
+	rBad.git("checkout", "-q", "dev")
+	rBad.git("read-tree", promoBadTip)
+	mergeBad := rBad.git("commit-tree", rBad.git("write-tree"), "-p", baseBad, "-p", promoBadTip, "-m", "promote: merge promote/2026-10-06-1 into dev")
+	rBad.git("update-ref", "refs/heads/dev", mergeBad)
+	rBad.git("checkout", "-q", "dev")
+
+	mBad, _, err := readMergeDeletionsFor(rBad.root, "push", "refs/heads/dev")
+	require.NoError(t, err)
+	assert.NotEmpty(t, mBad.findings(), "undeclared deletion below merge must be caught by reading all commits since last promotion")
+}
+
+// TestPromotionReadsEveryCommitBelowTheTip pins the range read itself, not only
+// the tip: an undeclared deletion made in a commit since the last gated
+// promotion and masked at HEAD by a later re-add is still a finding. A tip-only
+// read of HEAD sees no deletion at all (the file is back), so this test is red
+// when readMergeDeletionsFor falls back to HEAD alone and green with the range
+// read.
+func TestPromotionReadsEveryCommitBelowTheTip(t *testing.T) {
+	t.Parallel()
+
+	body := func(name string) string {
+		return "package a\n\n" + strings.Repeat("// "+name+": distinct content\n", 4)
+	}
+
+	r := newScratchRepo(t, "dev")
+	r.write(deletedTestsLogPath, "# the log\n")
+	r.write("keep_test.go", body("keep"))
+	r.write("del_test.go", body("del"))
+	base := r.commit("base")
+	r.git("update-ref", "refs/promoted/last", base)
+
+	// A commit below HEAD deletes a guarded test and declares nothing.
+	r.remove("del_test.go")
+	r.stage("delete del_test.go without a declaration")
+	// A later commit puts the file back: HEAD's own first-parent comparison
+	// shows no deletion, so only the range read sees the one below it.
+	r.write("del_test.go", body("del"))
+	head := r.commit("restore del_test.go")
+
+	tipOnly, _, err := readCommitDeletions(r.root, head, "push", "refs/heads/dev", "dev")
+	require.NoError(t, err)
+	assert.Empty(t, tipOnly.findings(), "HEAD's own comparison is clean; the deletion is masked below it")
+
+	m, _, err := readMergeDeletionsFor(r.root, "push", "refs/heads/dev")
+	require.NoError(t, err)
+	assert.NotEmpty(t, m.findings(), "the undeclared deletion below HEAD is read since the last gated promotion")
 }
 
 // TestDevRunReadsTheEventRefAndBranch pins which runs audit what landed on
