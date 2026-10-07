@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprintdash"
 )
 
@@ -172,8 +173,8 @@ func (a *app) whereJSON(addr string, given bool) ([]byte, error) {
 }
 
 // dashboardAddrs is the --listen or --pull list (flag), each a host:port whose host is an
-// IP address of loopback, a private range or the tailnet's (or localhost), each once; none
-// is no address.
+// IP address of loopback (in local-only mode) or loopback/tailnet (otherwise). Each once;
+// none is no address.
 func dashboardAddrs(flag, list string) ([]string, error) {
 	if strings.TrimSpace(list) == noListener {
 		return nil, nil
@@ -184,14 +185,9 @@ func dashboardAddrs(flag, list string) ([]string, error) {
 		if addr == "" {
 			continue
 		}
-		host, _, err := net.SplitHostPort(addr)
-		if err != nil {
-			return nil, fmt.Errorf("%s wants address:port (or none), found %s", flag, addr)
-		}
-		if host != "localhost" {
-			if why := listenable(net.ParseIP(host)); why != "" {
-				return nil, fmt.Errorf("%s %s: %s", flag, addr, why)
-			}
+		// Use CheckAddr which handles both local-only mode and regular mode
+		if why := sprint.CheckAddr(addr); why != "" {
+			return nil, fmt.Errorf("%s %s: %s", flag, addr, why)
 		}
 		if !slices.Contains(out, addr) {
 			out = append(out, addr)

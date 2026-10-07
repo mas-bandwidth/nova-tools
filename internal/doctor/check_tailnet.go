@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
 // tailnetTimeout bounds the tailscale and nova-config calls one run makes.
@@ -44,9 +46,15 @@ type tailnetNode struct {
 // checkTailnet covers the tailnet a fleet leans on: tailscale is installed and
 // the backend is running, this machine names itself on it, and every machine of
 // the nova-config inventory is named on the tailnet so it can be reached by name
-// (docs/SPEC-DOCTOR.md, the checks). Fleet marks it: --local skips it, because a
-// single-machine setup has no fleet to reach.
+// (docs/SPEC-DOCTOR.md, the checks). Fleet marks it: --local skips it and when
+// sprint.LocalOnlyMode() is true, because a single-machine setup has no fleet to
+// reach.
 func checkTailnet(ctx context.Context, env Env) Result {
+	// Skip when in local-only mode: no tailnet is needed there.
+	if sprint.LocalOnlyMode() {
+		return Result{Status: OK,
+			Evidence: "local-only mode: no fleet to reach; tailnet check skipped"}
+	}
 	ctx, cancel := context.WithTimeout(ctx, tailnetTimeout)
 	defer cancel()
 
