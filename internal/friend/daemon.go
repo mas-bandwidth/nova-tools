@@ -206,6 +206,10 @@ type Daemon struct {
 	// it names another friend running, and a lane whose card left her row names its friend
 	// on the job's lane mark (one_lane.go). Nil says none; the lane marks still hold.
 	Running func() map[string]string
+	// Holders reads the server's current card-to-holder map (view cards), once
+	// per outbox pass that finds a report outside her row. Nil uses Running's
+	// known holders; an error refuses with the explicit unknown-holder remedy.
+	Holders func(ctx context.Context) (map[string]string, error)
 	// Mailbox is the adapter under Deliver when her harness's session queues what is
 	// delivered (Antigravity: a mailbox): a delivery goes in at once, whatever turn runs, so
 	// nothing is ever deferred for a turn under way; each step the daemon hands it the

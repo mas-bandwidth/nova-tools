@@ -3,6 +3,7 @@ package friend
 import (
 	"cmp"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -32,6 +33,9 @@ import (
 // OutboxRetry is how long a finish the server did not answer, or refused, waits before it
 // is sent again; the report stays where it is, and friend sync may finish it first.
 const OutboxRetry = time.Minute
+
+// HoldersBudget bounds the current ownership view asked for an old report.
+const HoldersBudget = 10 * time.Second
 
 // ReportCap bounds the REPORT.md the daemon reads (friend sync's own cap): a verdict, a head
 // and 600 characters need far less, and a larger report is noted and never read whole.
@@ -195,6 +199,23 @@ func (l *loop) outboxStep(now time.Time) {
 			return
 		}
 	}
+	// Ask for every holder together, only when an old report needs a refusal.
+	// Hundreds of old reports cost one view, not one server trip per report.
+	owners, ownersRead, ownersError := d.Running, false, ""
+	refusal := func(card, job string) string {
+		if d.Holders != nil && !ownersRead {
+			ownersRead = true
+			ctx, cancel := context.WithTimeout(l.ctx, HoldersBudget)
+			held, err := d.Holders(ctx)
+			cancel()
+			owners = func() map[string]string { return held }
+			if err != nil {
+				owners = nil // an old running list cannot stand in for a failed current view
+				ownersError = "; the holder view could not be read: " + oneLine(err.Error(), 200)
+			}
+		}
+		return NotHers(card, job, d.Friend, owners) + ownersError
+	}
 	for _, e := range entries {
 		job := e.Name()
 		id, epoch, gen, ok := ParseJob(job)
@@ -218,7 +239,7 @@ func (l *loop) outboxStep(now time.Time) {
 		}
 		switch {
 		case h == nil:
-			note(job, NotHers(id, job, d.Friend, d.Running))
+			note(job, refusal(id, job))
 			continue
 		case h.Col != "working":
 			note(job, "card "+id+" is "+dash(h.Col)+" on her row, not working")
@@ -423,4 +444,35 @@ func NotHers(card, job, friend string, running func() map[string]string) string 
 	default:
 		return "refused: card " + card + " is not on her row, no longer hers; no row the daemon reads says who holds it now (nova-sprint view coordinator does)"
 	}
+}
+
+// ParseHolders reads the server's view cards document, schema 1. Empty holders
+// mean no working fleet row holds the card; malformed or mismatched documents
+// never supply an ownership name.
+func ParseHolders(out string) (map[string]string, error) {
+	var v struct {
+		View   string `json:"view"`
+		Schema int    `json:"schema"`
+		Cards  []struct {
+			ID     string `json:"id"`
+			Holder string `json:"holder"`
+		} `json:"cards"`
+	}
+	if err := json.Unmarshal([]byte(out), &v); err != nil {
+		return nil, fmt.Errorf("card holders: the view is not JSON: %w", err)
+	}
+	if v.View != "cards" || v.Schema != 1 {
+		return nil, fmt.Errorf("card holders: expected view cards schema 1, got %q schema %d", v.View, v.Schema)
+	}
+	holders, seen := map[string]string{}, map[string]bool{}
+	for _, c := range v.Cards {
+		if c.ID == "" || seen[c.ID] {
+			return nil, fmt.Errorf("card holders: empty or duplicate card id %q", c.ID)
+		}
+		seen[c.ID] = true
+		if c.Holder != "" {
+			holders[c.ID] = c.Holder
+		}
+	}
+	return holders, nil
 }

@@ -74,6 +74,7 @@ type world struct {
 	sqlite    friend.Exec                                                                                                            // reads opencode's database (the sqlite3 CLI); nil reads none: no card cost, no token cap
 	cards     func(ctx context.Context, server string, argv []string) (string, error)                                                // the cards on her row, asked of the sprint server (friend.FriendCardsArgv); nil asks none
 	friends   func(ctx context.Context, server string) (rows []friend.WakeRow, seat string, err error)                               // the friends table and the seat's holder, from the sprint server's coordinator view (GET /api/view/coordinator?all=1)
+	holders   func(ctx context.Context, server string) (map[string]string, error)                                                    // current card holders from GET /api/view/cards; nil in a world that reads none
 	view      func(ctx context.Context, server, friend string) (string, error)                                                       // the sprint server's worker view of her (GET /api/view/worker), while friend cards is refused; nil reads none
 	stage     func(dir string) *friend.Stager                                                                                        // stages a held card's job under her working directory and prunes the finished ones (friend.Stager, with the daemon's git credentials); nil stages none (a test's)
 	tip       func(ctx context.Context, repo, branch string) (string, error)                                                         // origin's tip of a card's branch (friend.Stager.Tip, one git ls-remote): a report's LAND finishes only there; nil reads none (a test's)
@@ -181,9 +182,14 @@ const maxView = 4 << 20
 // sprintView reads the sprint server's worker view of a friend (nova-sprint serve, GET
 // /api/view/worker?as=<friend>), the JSON document whole.
 func sprintView(ctx context.Context, server, name string) (string, error) {
+	return readSprintView(ctx, server, "/api/view/worker?as="+url.QueryEscape(name))
+}
+
+// readSprintView is the bounded GET shared by the worker and holder views.
+func readSprintView(ctx context.Context, server, route string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+server+"/api/view/worker?as="+url.QueryEscape(name), nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+server+route, nil)
 	if err != nil {
 		return "", err
 	}
@@ -202,6 +208,16 @@ func sprintView(ctx context.Context, server, name string) (string, error) {
 		return "", fmt.Errorf("the sprint server at %s refused the view (%s): %s", server, resp.Status, oneline.Cap(strings.TrimSpace(string(raw)), 300))
 	}
 	return string(raw), nil
+}
+
+// sprintHolders reads current ownership from the existing cards view, without
+// asking another friend to run or answer anything.
+func sprintHolders(ctx context.Context, server string) (map[string]string, error) {
+	raw, err := readSprintView(ctx, server, "/api/view/cards")
+	if err != nil {
+		return nil, err
+	}
+	return friend.ParseHolders(raw)
 }
 
 func realWorld() world {
@@ -241,6 +257,7 @@ func realWorld() world {
 		cards:    sprintAsk,
 		view:     sprintView,
 		friends:  coordinatorFriends,
+		holders:  sprintHolders,
 		stage:    func(dir string) *friend.Stager { return &friend.Stager{Dir: dir} },
 		tip:      (&friend.Stager{}).Tip,
 		lookPath: exec.LookPath,
@@ -1458,6 +1475,9 @@ func (w world) run(c *tool.Call) *tool.Out {
 			}
 			return fmt.Sprintf("%s pong --as %s --nonce %s --state-dir %s --redis %s --width %d --queue <tasks queued> --working <tasks working>", bin, name, nonce, state, c.Str("redis"), c.Int("width"))
 		},
+	}
+	if w.holders != nil {
+		d.Holders = func(ctx context.Context) (map[string]string, error) { return w.holders(ctx, server) }
 	}
 	if !perCard {
 		d.Proof = sc.Proof // nothing goes into the session until it answers its check

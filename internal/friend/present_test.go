@@ -410,3 +410,53 @@ func TestAPresentDoesNotDeliverAnActedNoteWhoseAckWasLost(t *testing.T) {
 	assert.Contains(t, r.delivered[0], "Skipped: 0 deals, 0 pings, 1 notes")
 	r.streamEmpty(t)
 }
+
+func TestCurrentHoldersAreReadOnceForAllOldReportsInAPass(t *testing.T) {
+	t.Parallel()
+	for _, failed := range []bool{false, true} {
+		t.Run(fmt.Sprint(failed), func(t *testing.T) {
+			t.Parallel()
+			r := newRig(t)
+			f := &finishes{}
+			r.d.Finish = f.finish
+			calls := 0
+			r.d.Running = func() map[string]string { return map[string]string{"taken.w1": "old-owner"} }
+			r.d.Holders = func(context.Context) (map[string]string, error) {
+				calls++
+				if failed {
+					return nil, errors.New("injected holder-view failure")
+				}
+				return map[string]string{"taken.w1": "cy", "other.w1": "dana"}, nil
+			}
+			for _, job := range []string{"taken.w1~15", "other.w1~15"} {
+				outboxReport(t, r.d.Dir, job, "Verdict: LAND\nHead: 0123456789abcdef0123456789abcdef01234567\n")
+			}
+			l := &loop{d: r.d, ctx: context.Background(), lanes: &laneSet{}}
+			l.outboxStep(t0)
+			assert.Equal(t, 1, calls, "one view for two old reports")
+			assert.Empty(t, f.got(), "no finish leaves her row")
+			if failed {
+				assert.Contains(t, r.recordText(), "the holder view could not be read: injected holder-view failure")
+				assert.NotContains(t, r.recordText(), "old-owner holds it now", "a stale running list cannot replace the failed current view")
+			} else {
+				assert.Contains(t, r.recordText(), "cy holds it now")
+				assert.Contains(t, r.recordText(), "dana holds it now")
+			}
+		})
+	}
+}
+
+func TestHolderViewRejectsMalformedOrUnrelatedDocuments(t *testing.T) {
+	t.Parallel()
+	holders, err := ParseHolders(`{"view":"cards","schema":1,"cards":[{"id":"a.w1","holder":"cy"},{"id":"b.w1"}]}`)
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{"a.w1": "cy"}, holders)
+	for _, raw := range []string{
+		`broken`, `{"view":"worker","schema":1}`, `{"view":"cards","schema":2}`,
+		`{"view":"cards","schema":1,"cards":[{"holder":"cy"}]}`,
+		`{"view":"cards","schema":1,"cards":[{"id":"a"},{"id":"a","holder":"cy"}]}`,
+	} {
+		_, err := ParseHolders(raw)
+		assert.Error(t, err, raw)
+	}
+}

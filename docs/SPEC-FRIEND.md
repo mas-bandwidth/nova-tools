@@ -730,6 +730,13 @@ so a lost stream ack cannot make it an instruction twice. The carried note is ac
 the turn ends at exit 0, as any turn's message; a present turn
 that fails is owed again after `RecheckEvery`, carrying the same note.
 
+When an outbox report's card has left her row, the daemon refuses its finish and names the
+current holder from the server's existing `GET /api/view/cards` document (`Daemon.Holders`,
+`ParseHolders`): one bounded view for every old report in that outbox pass. An unavailable or
+malformed view keeps the explicit unknown-holder remedy and says the error; it never guesses
+from an old running list. The production command wires this source through its injectable
+world (`TestRunNamesTheCurrentHolderWhenItRefusesAnOldReport`).
+
 The acks are on the record (`present at <time>: skipped ... acked=<n> reason="superseded by
 the present at <time>" queue=<n> note=<id>|none`) and on the bus log: one status message to
 the seat, `friend <f>: present at <time>: skipped <n> deals, <n> pings, <n> notes`, naming
