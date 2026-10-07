@@ -190,6 +190,7 @@ type workerView struct {
 	Kind   string       `json:"kind"` // member or friend
 	Cursor string       `json:"cursor"`
 	Next   string       `json:"next,omitempty"`
+	Quiet  []string     `json:"quiet,omitempty"` // a QUIET line per machine quiet now (fleet quiet)
 	Cards  []workerCard `json:"cards"`
 	Wait   []waitCard   `json:"wait,omitempty"`
 	NWait  int          `json:"nwait,omitempty"` // every result not landed, when more than are listed
@@ -819,6 +820,13 @@ func (a *app) workerView(ctx context.Context, st *store.Store, as string) (worke
 	if len(mine) > 0 {
 		v.Next = workerNext(v, mine[0], ps[0])
 	}
+	// every machine quiet now, for every member and friend: run no go build or test there
+	// (docs/SPEC-SPRINT.md section 5, fleet-quiet-machine-b.w5)
+	shapes, err := st.B.Shapes(ctx, []string{st.Names.Table(sprint.Fleet)})
+	if err != nil {
+		return v, false, err
+	}
+	v.Quiet = sprint.QuietLines(shapes[0].Props, now)
 
 	// my results not landed: the cards finished ok whose primaries wait in review or merging
 	done, err := st.ReadCells(ctx, sprint.Fleet, row, sprint.DoneOK)
@@ -891,6 +899,9 @@ func workerText(v workerView) string {
 	line("VIEW worker " + v.Sum)
 	if v.Next != "" {
 		line("NEXT " + v.Next)
+	}
+	for _, q := range v.Quiet {
+		line(q)
 	}
 	for _, c := range v.Cards {
 		l := "CARD " + c.ID + " " + c.St + " att=" + strconv.Itoa(c.Att) + " base=" + cmp.Or(c.Base, "-") + " paths=" + cmp.Or(strings.Join(c.Paths, ","), "-")
