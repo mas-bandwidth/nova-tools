@@ -51,10 +51,11 @@ func TestLintPathsResolveAtBase(t *testing.T) {
 	repo, sha := baseRepo(t)
 	bc := fullEvidence(repo)
 
-	// nx-f19: `PATHS: internal/decide/entry.go`, a file that does not exist at base.
-	fs := findingsFor(LintCardBase(baseCard(map[string]string{"base-sha": sha, "PATHS": "internal/decide/entry.go"}), bc), "paths-at-base")
+	// nx-f19: `PATHS: example.com/decide/entry.go`, a placeholder under a foreign
+	// root that does not exist at base.
+	fs := findingsFor(LintCardBase(baseCard(map[string]string{"base-sha": sha, "PATHS": "example.com/decide/entry.go"}), bc), "paths-at-base")
 	require.Len(t, fs, 1, "a PATHS file absent at base-sha is refused by name and sha, got %v", fs)
-	require.Contains(t, fs[0].Excerpt, "internal/decide/entry.go", "a PATHS file absent at base-sha is refused by name and sha, got %v", fs)
+	require.Contains(t, fs[0].Excerpt, "example.com/decide/entry.go", "a PATHS file absent at base-sha is refused by name and sha, got %v", fs)
 	require.Contains(t, fs[0].Excerpt, sha[:12], "a PATHS file absent at base-sha is refused by name and sha, got %v", fs)
 	require.Equal(t, 6, fs[0].Line, "the finding sits on the PATHS: line (6), got %d", fs[0].Line)
 
