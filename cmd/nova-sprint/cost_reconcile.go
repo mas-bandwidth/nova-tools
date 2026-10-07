@@ -8,10 +8,10 @@ import (
 	"maps"
 	"slices"
 
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/provbalance"
-	"github.com/mas-bandwidth/nova-tools/internal/sprint"
-	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
+	"github.com/nova-tools/internal/oneline"
+	"github.com/nova-tools/internal/provbalance"
+	"github.com/nova-tools/internal/sprint"
+	"github.com/nova-tools/internal/sprint/store"
 )
 
 // cmdCostReconcile is `cost reconcile`: the cost reconciliation run once (docs/SPEC-SPRINT.md,

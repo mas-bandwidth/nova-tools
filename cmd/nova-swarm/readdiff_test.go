@@ -10,8 +10,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/cardcontract"
-	"github.com/mas-bandwidth/nova-tools/internal/swarm"
+	"github.com/nova-tools/internal/cardcontract"
+	"github.com/nova-tools/internal/swarm"
 )
 
 // readStartRE is the line of a read's JOB.md that shows the work's change.

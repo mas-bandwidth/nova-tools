@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/ntable"
+	"github.com/nova-tools/internal/ntable"
 )
 
 // The work table's queue: "nothing advances the work stream table EXCEPT on the next tick", and

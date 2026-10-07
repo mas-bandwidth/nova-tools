@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/units"
+	"github.com/nova-tools/internal/units"
 )
 
 // nova-swarm install disk-guard writes the unit for macOS and Linux into a directory

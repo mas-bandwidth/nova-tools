@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/redisacl"
+	"github.com/nova-tools/internal/redisacl"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

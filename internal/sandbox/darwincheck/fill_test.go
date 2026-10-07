@@ -6,7 +6,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/mas-bandwidth/nova-tools/profiles"
+	"github.com/nova-tools/profiles"
 )
 
 // fakeFS answers the filler's questions from tables.

@@ -11,9 +11,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
-	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
+	"github.com/nova-tools/internal/nsprint/fn"
+	"github.com/nova-tools/internal/nsprint/testutil"
+	"github.com/nova-tools/internal/onboarding"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

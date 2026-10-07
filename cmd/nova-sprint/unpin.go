@@ -6,8 +6,8 @@ import (
 	"io"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/sprint"
-	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
+	"github.com/nova-tools/internal/sprint"
+	"github.com/nova-tools/internal/sprint/store"
 )
 
 // cmdUnpin removes a stored WHO pin on unstarted cards (docs/SPEC-SPRINT.md,

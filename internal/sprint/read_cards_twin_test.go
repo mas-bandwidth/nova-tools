@@ -10,9 +10,9 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/hostload"
-	"github.com/mas-bandwidth/nova-tools/internal/sprint"
-	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
+	"github.com/nova-tools/internal/hostload"
+	"github.com/nova-tools/internal/sprint"
+	"github.com/nova-tools/internal/sprint/store"
 )
 
 // Read cards on the twin store (store.Mem): a read is a consumer card (docs/SPEC-SPRINT.md

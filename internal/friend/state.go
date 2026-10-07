@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
+	"github.com/nova-tools/internal/atomicfile"
 )
 
 // The friend's files, one writer each. The state files live in the state

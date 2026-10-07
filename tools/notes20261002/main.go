@@ -36,7 +36,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/subproc"
+	"github.com/nova-tools/internal/subproc"
 )
 
 // routeNote is one disabled route and the reason it carries.

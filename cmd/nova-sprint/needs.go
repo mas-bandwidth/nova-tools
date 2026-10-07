@@ -8,7 +8,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/nova-tools/internal/sprint"
 )
 
 // The needs verb is a read (docs/SPEC-SPRINT.md section 11): it changes

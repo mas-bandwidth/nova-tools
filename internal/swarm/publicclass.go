@@ -6,7 +6,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/nova-tools/internal/oneline"
 )
 
 // THE PUBLIC-CLASS GATE (CARD-8390). A worker description may carry

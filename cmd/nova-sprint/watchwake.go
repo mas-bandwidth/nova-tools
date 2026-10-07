@@ -15,13 +15,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
-	"github.com/mas-bandwidth/nova-tools/internal/bus"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/redisauth"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
-	"github.com/mas-bandwidth/nova-tools/internal/sprint"
-	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
+	"github.com/nova-tools/internal/atomicfile"
+	"github.com/nova-tools/internal/bus"
+	"github.com/nova-tools/internal/nsprint/redisauth"
+	"github.com/nova-tools/internal/oneline"
+	"github.com/nova-tools/internal/redisconn"
+	"github.com/nova-tools/internal/sprint"
+	"github.com/nova-tools/internal/sprint/store"
 )
 
 // watch --wake: the coordinator's wake as a verb (card coordinator-wake-verb;

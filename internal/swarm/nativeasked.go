@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/nova-tools/internal/oneline"
 )
 
 // A native run can finish successfully after asking a question instead of publishing a

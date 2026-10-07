@@ -10,8 +10,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/seatcred"
-	"github.com/mas-bandwidth/nova-tools/internal/seatcred/seattest"
+	"github.com/nova-tools/internal/seatcred"
+	"github.com/nova-tools/internal/seatcred/seattest"
 )
 
 // TestResolveReadsTheSeatThroughTheSecretsLibrary is the resolution half of

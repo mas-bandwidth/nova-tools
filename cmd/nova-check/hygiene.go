@@ -19,9 +19,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/hygiene"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/tool"
+	"github.com/nova-tools/internal/hygiene"
+	"github.com/nova-tools/internal/oneline"
+	"github.com/nova-tools/internal/tool"
 )
 
 func hygieneVerb() tool.Verb {

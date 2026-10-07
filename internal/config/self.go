@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/subproc"
+	"github.com/nova-tools/internal/subproc"
 )
 
 // A machine's name is its tailnet host (docs/SPEC-CONFIG.md, "The machine

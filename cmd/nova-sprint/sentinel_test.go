@@ -6,7 +6,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/nova-tools/internal/sprint"
 )
 
 // H7: through the command: init names the coordinator, where --json carries it

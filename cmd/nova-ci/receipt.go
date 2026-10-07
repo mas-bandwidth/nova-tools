@@ -8,10 +8,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/cireceipt"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/nova-tools/internal/cireceipt"
+	"github.com/nova-tools/internal/nsprint/store"
+	"github.com/nova-tools/internal/nsprint/verbflag"
+	"github.com/nova-tools/internal/oneline"
 )
 
 // receiptTimeout bounds the one XADD, so a store that is down or hung reddens

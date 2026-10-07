@@ -4,7 +4,7 @@ import (
 	"encoding/binary"
 	"syscall"
 
-	"github.com/mas-bandwidth/nova-tools/internal/hostload"
+	"github.com/nova-tools/internal/hostload"
 )
 
 func localBox() Box {

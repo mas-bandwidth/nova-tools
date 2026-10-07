@@ -13,9 +13,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
-	"github.com/mas-bandwidth/nova-tools/internal/ntable"
-	"github.com/mas-bandwidth/nova-tools/internal/testredis"
+	"github.com/nova-tools/internal/nsprint/fn"
+	"github.com/nova-tools/internal/ntable"
+	"github.com/nova-tools/internal/testredis"
 )
 
 // TestACLVerbsOnARedisServer applies the rendered users to a real store and

@@ -36,10 +36,10 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/redisacl"
-	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
-	"github.com/mas-bandwidth/nova-tools/internal/tool"
+	"github.com/nova-tools/internal/oneline"
+	"github.com/nova-tools/internal/redisacl"
+	"github.com/nova-tools/internal/redisconn"
+	"github.com/nova-tools/internal/tool"
 )
 
 // aclServer is the store the acl verbs read and write; aclStore is the one

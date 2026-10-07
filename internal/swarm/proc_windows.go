@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"syscall"
 
-	"github.com/mas-bandwidth/nova-tools/internal/subproc"
+	"github.com/nova-tools/internal/subproc"
 )
 
 // The process layer on Windows.

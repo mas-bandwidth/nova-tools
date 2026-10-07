@@ -16,13 +16,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/bounded"
-	"github.com/mas-bandwidth/nova-tools/internal/ci/slowtests"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/subproc"
-	"github.com/mas-bandwidth/nova-tools/internal/tool"
-	"github.com/mas-bandwidth/nova-tools/internal/tty"
+	"github.com/nova-tools/internal/bounded"
+	"github.com/nova-tools/internal/ci/slowtests"
+	"github.com/nova-tools/internal/nsprint/verbflag"
+	"github.com/nova-tools/internal/oneline"
+	"github.com/nova-tools/internal/subproc"
+	"github.com/nova-tools/internal/tool"
+	"github.com/nova-tools/internal/tty"
 )
 
 // hostLoad reads this host's load average for the CI-LOAD line slowtests

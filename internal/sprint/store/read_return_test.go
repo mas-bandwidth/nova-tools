@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/nova-tools/internal/sprint"
 )
 
 // asked1 is a sprint of n primaries in s1, each asked of two of the three

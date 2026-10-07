@@ -21,7 +21,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
+	"github.com/nova-tools/internal/gitrun"
 )
 
 // StagingIdentity is the pool's one identity row: the name and email every

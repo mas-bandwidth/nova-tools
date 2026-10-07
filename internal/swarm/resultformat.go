@@ -3,7 +3,7 @@ package swarm
 import (
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
+	"github.com/nova-tools/internal/typedrec"
 )
 
 // CardPrompt is the message a native run hands its harness for a card: the

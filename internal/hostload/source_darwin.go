@@ -8,7 +8,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/subproc"
+	"github.com/nova-tools/internal/subproc"
 )
 
 // topTimeout bounds one run of top.

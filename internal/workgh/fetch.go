@@ -9,7 +9,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/workfile"
+	"github.com/nova-tools/internal/workfile"
 )
 
 // ErrBudget is returned when the next call would pass the fetcher's budget.

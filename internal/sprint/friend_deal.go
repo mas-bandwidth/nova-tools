@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
-	"github.com/mas-bandwidth/nova-tools/internal/config"
+	"github.com/nova-tools/internal/cardhdr"
+	"github.com/nova-tools/internal/config"
 )
 
 // A friend's card (the owner, 2026-10-03: "Could we try expressing the work left for

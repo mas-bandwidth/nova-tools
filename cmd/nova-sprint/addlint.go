@@ -8,11 +8,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/sprint"
-	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
-	"github.com/mas-bandwidth/nova-tools/internal/swarm"
+	"github.com/nova-tools/internal/cardhdr"
+	"github.com/nova-tools/internal/oneline"
+	"github.com/nova-tools/internal/sprint"
+	"github.com/nova-tools/internal/sprint/store"
+	"github.com/nova-tools/internal/swarm"
 )
 
 // briefBaseFetch bounds the fetch of one base into the lander's clone: a forge that does not

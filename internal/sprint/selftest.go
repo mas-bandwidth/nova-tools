@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/safepath"
-	"github.com/mas-bandwidth/nova-tools/internal/subproc"
+	"github.com/nova-tools/internal/safepath"
+	"github.com/nova-tools/internal/subproc"
 )
 
 // SelftestLandOption configures SelftestLand.

@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/config"
+	"github.com/nova-tools/internal/config"
 )
 
 // coordrules_test.go holds the coordinator's numbered rules, section 10 of

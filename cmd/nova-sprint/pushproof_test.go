@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/nova-tools/internal/sprint"
 )
 
 // fakeSession is a session the push loop delivers into: every text it took,

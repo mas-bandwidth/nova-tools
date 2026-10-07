@@ -24,7 +24,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/testguard"
+	"github.com/nova-tools/internal/testguard"
 )
 
 // modelPlaceFake is the small exec fake place runs through here: sops reaches

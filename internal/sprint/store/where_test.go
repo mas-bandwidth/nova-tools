@@ -9,8 +9,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/ntable"
-	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/nova-tools/internal/ntable"
+	"github.com/nova-tools/internal/sprint"
 )
 
 // whereRecord is the where record as stored; false when there is none.

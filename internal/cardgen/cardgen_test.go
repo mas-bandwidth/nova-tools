@@ -10,9 +10,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/cardlimits"
-	"github.com/mas-bandwidth/nova-tools/internal/hygiene"
-	"github.com/mas-bandwidth/nova-tools/internal/swarm"
+	"github.com/nova-tools/internal/cardlimits"
+	"github.com/nova-tools/internal/hygiene"
+	"github.com/nova-tools/internal/swarm"
 )
 
 const serialFixture = `# The tests that do not open with t.Parallel()

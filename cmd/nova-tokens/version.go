@@ -35,9 +35,9 @@ import (
 	"runtime"
 	"runtime/debug"
 
-	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/nova-tools/internal/buildinfo"
+	"github.com/nova-tools/internal/nsprint/verbflag"
+	"github.com/nova-tools/internal/oneline"
 )
 
 // version is empty in every ordinary build and is the one override: a release stamps it

@@ -20,7 +20,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/goenv"
+	"github.com/nova-tools/internal/goenv"
 )
 
 // seatLaunchctl is a launchctl for the seat play's test: it holds the

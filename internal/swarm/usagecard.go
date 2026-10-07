@@ -20,7 +20,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
+	"github.com/nova-tools/internal/cardcost"
 )
 
 // CardUsageColumns are the fourteen columns of one card's usage.tsv, in this order. The

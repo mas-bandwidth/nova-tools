@@ -14,8 +14,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/nova-tools/internal/nsprint/verbflag"
+	"github.com/nova-tools/internal/oneline"
 )
 
 // AdoptHeader is the checks file watch --adopt reads: one adoption check per

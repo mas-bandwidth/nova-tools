@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/friend"
-	"github.com/mas-bandwidth/nova-tools/internal/testverbhelp"
+	"github.com/nova-tools/internal/friend"
+	"github.com/nova-tools/internal/testverbhelp"
 	"github.com/stretchr/testify/require"
 )
 

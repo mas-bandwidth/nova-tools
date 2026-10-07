@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/fuse"
+	"github.com/nova-tools/internal/fuse"
 	"github.com/stretchr/testify/require"
 )
 

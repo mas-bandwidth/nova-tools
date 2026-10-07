@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
+	"github.com/nova-tools/internal/ci/allowlist"
 )
 
 // ci_waits.go is the machine behind the `waits` class test in

@@ -42,7 +42,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/subproc"
+	"github.com/nova-tools/internal/subproc"
 )
 
 // Exit codes: the exit code of the step that failed, else 0. A gofmt finding,

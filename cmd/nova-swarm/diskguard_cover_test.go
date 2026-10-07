@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/safepath"
+	"github.com/nova-tools/internal/safepath"
 )
 
 // The coverage card for diskguard.go (cover-cmd-nova-swarm-diskguard.w1): the helpers a

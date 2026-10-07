@@ -10,9 +10,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
-	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
-	"github.com/mas-bandwidth/nova-tools/internal/testgit"
+	"github.com/nova-tools/internal/cardhdr"
+	"github.com/nova-tools/internal/gitrun"
+	"github.com/nova-tools/internal/testgit"
 )
 
 // scriptRepo is a temporary repository whose one start commit holds a.txt and b.txt, and

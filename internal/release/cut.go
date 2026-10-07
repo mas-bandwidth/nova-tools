@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/nova-tools/internal/oneline"
 )
 
 // prNumber matches the `(#123)` a squash merge puts at the end of the subject.

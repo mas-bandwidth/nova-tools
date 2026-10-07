@@ -10,9 +10,9 @@ import (
 	"sort"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/hostload"
-	"github.com/mas-bandwidth/nova-tools/internal/ntable"
-	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/nova-tools/internal/hostload"
+	"github.com/nova-tools/internal/ntable"
+	"github.com/nova-tools/internal/sprint"
 )
 
 // A fleet member's beats (sprint/presence.go): one record per member under

@@ -8,7 +8,7 @@ import (
 	"slices"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/nova-tools/internal/sprint"
 )
 
 // HoldStep is hold or unhold of members, readers, friends and streams as one step

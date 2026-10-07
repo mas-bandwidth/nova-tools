@@ -15,9 +15,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/decide"
-	"github.com/mas-bandwidth/nova-tools/internal/sprint"
-	"github.com/mas-bandwidth/nova-tools/internal/sprintwire"
+	"github.com/nova-tools/internal/decide"
+	"github.com/nova-tools/internal/sprint"
+	"github.com/nova-tools/internal/sprintwire"
 )
 
 // fixedGrade is the fixed backend answering every grade with pro at 0.81.

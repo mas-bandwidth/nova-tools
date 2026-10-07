@@ -13,8 +13,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/swarm"
-	"github.com/mas-bandwidth/nova-tools/internal/testbin"
+	"github.com/nova-tools/internal/swarm"
+	"github.com/nova-tools/internal/testbin"
 )
 
 // The fixture is built at test time and is a valid key for nothing. It is the string the

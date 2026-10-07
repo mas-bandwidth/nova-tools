@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/config"
+	"github.com/nova-tools/internal/config"
 	"github.com/stretchr/testify/require"
 )
 

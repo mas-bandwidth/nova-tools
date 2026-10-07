@@ -43,13 +43,13 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/ci/slowtests"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/pkgselect"
-	"github.com/mas-bandwidth/nova-tools/internal/safepath"
-	"github.com/mas-bandwidth/nova-tools/internal/subproc"
-	"github.com/mas-bandwidth/nova-tools/internal/yield"
+	"github.com/nova-tools/internal/ci/slowtests"
+	"github.com/nova-tools/internal/nsprint/verbflag"
+	"github.com/nova-tools/internal/oneline"
+	"github.com/nova-tools/internal/pkgselect"
+	"github.com/nova-tools/internal/safepath"
+	"github.com/nova-tools/internal/subproc"
+	"github.com/nova-tools/internal/yield"
 )
 
 const (

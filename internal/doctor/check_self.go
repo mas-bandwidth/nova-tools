@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
+	"github.com/nova-tools/internal/buildinfo"
 )
 
 // selfTimeout bounds one tool's `version` answer.

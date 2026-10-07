@@ -11,7 +11,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/pkgselect"
+	"github.com/nova-tools/internal/pkgselect"
 )
 
 // THE READ'S GATE (docs/SPEC-CARD-CONTRACT.md, JOB.md). A read judges a diff, and the tests

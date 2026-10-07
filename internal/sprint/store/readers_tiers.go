@@ -5,8 +5,8 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/ntable"
-	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/nova-tools/internal/ntable"
+	"github.com/nova-tools/internal/sprint"
 )
 
 // EnsureReaderTiers adds readers.tiers to a table created before the column

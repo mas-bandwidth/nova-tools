@@ -19,8 +19,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/check"
-	"github.com/mas-bandwidth/nova-tools/internal/tool"
+	"github.com/nova-tools/internal/check"
+	"github.com/nova-tools/internal/tool"
 )
 
 // seams are the process-wide resources a run reads: the git program the

@@ -3,7 +3,7 @@ package store
 import (
 	"context"
 
-	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/nova-tools/internal/sprint"
 )
 
 // RuleAnswers is what the tick's rules would do with every open judgment now

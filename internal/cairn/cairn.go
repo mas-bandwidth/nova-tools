@@ -44,8 +44,8 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
-	"github.com/mas-bandwidth/nova-tools/internal/filelock"
+	"github.com/nova-tools/internal/atomicfile"
+	"github.com/nova-tools/internal/filelock"
 )
 
 // Publish policies name who publishes a checkpoint and when. This package

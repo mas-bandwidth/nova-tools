@@ -7,8 +7,8 @@ import (
 	"strconv"
 	"strings"
 
-	novalog "github.com/mas-bandwidth/nova-tools/internal/log"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	novalog "github.com/nova-tools/internal/log"
+	"github.com/nova-tools/internal/oneline"
 )
 
 // WHAT FAILED IS ON THE RECORD (docs/SPEC-CARD-CONTRACT.md section 4, the provider failure).

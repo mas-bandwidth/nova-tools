@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/mas-bandwidth/nova-tools/internal/config"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
-	"github.com/mas-bandwidth/nova-tools/internal/tool"
+	"github.com/nova-tools/internal/config"
+	"github.com/nova-tools/internal/nsprint/verbflag"
+	"github.com/nova-tools/internal/tool"
 )
 
 func runKinds(args []string, stdout, stderr io.Writer) int {

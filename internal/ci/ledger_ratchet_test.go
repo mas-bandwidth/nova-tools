@@ -12,7 +12,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/testgit"
+	"github.com/nova-tools/internal/testgit"
 )
 
 // The counted class-rule ledgers only shrink and the slowtests budgets only

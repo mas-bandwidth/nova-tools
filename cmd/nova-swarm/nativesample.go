@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
-	"github.com/mas-bandwidth/nova-tools/internal/swarm"
+	"github.com/nova-tools/internal/cardcost"
+	"github.com/nova-tools/internal/swarm"
 )
 
 // THE LIVE SAMPLER, IN THE PROCESS THAT HOLDS THE CARD'S DEADLINE.

@@ -16,8 +16,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/tlc"
+	"github.com/nova-tools/internal/oneline"
+	"github.com/nova-tools/internal/tlc"
 )
 
 // run --bench: a record refresh as one command from a working machine. The

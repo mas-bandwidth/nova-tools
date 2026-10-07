@@ -6,8 +6,8 @@ import (
 	"io"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/sprint"
-	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
+	"github.com/nova-tools/internal/sprint"
+	"github.com/nova-tools/internal/sprint/store"
 )
 
 // rebase is the coordinator's: it rewrites the base of every unlanded card on

@@ -11,9 +11,9 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
-	"github.com/mas-bandwidth/nova-tools/internal/member"
-	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
+	"github.com/nova-tools/internal/cardhdr"
+	"github.com/nova-tools/internal/member"
+	"github.com/nova-tools/internal/typedrec"
 )
 
 // A HOLD's PATHS-PROPOSED line answered by rule (docs/SPEC-SPRINT.md section 8, the rules

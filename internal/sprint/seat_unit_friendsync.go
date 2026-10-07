@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/units"
+	"github.com/nova-tools/internal/units"
 )
 
 // friend sync install (docs/SPEC-SPRINT.md, "The friend sync loop as a service"; the

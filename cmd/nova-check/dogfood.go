@@ -7,10 +7,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/bounded"
-	"github.com/mas-bandwidth/nova-tools/internal/dogfood"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/tool"
+	"github.com/nova-tools/internal/bounded"
+	"github.com/nova-tools/internal/dogfood"
+	"github.com/nova-tools/internal/oneline"
+	"github.com/nova-tools/internal/tool"
 )
 
 // The dogfood verb answers the one question a tool's own tests cannot: has

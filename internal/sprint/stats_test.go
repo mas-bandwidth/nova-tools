@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
+	"github.com/nova-tools/internal/cardcost"
 )
 
 // statsSnapshot is a pass with known numbers, the clock in seconds from t0:

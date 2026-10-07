@@ -16,8 +16,8 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
-	"github.com/mas-bandwidth/nova-tools/internal/subproc"
+	"github.com/nova-tools/internal/onboarding"
+	"github.com/nova-tools/internal/subproc"
 )
 
 // CILegsFromYAML reads the ci.yml workflow text and returns the GOOS values

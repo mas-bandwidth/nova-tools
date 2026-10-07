@@ -12,7 +12,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/safepath"
+	"github.com/nova-tools/internal/safepath"
 )
 
 // machineName is what may be handed to ssh as a destination. It is deliberately

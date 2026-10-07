@@ -14,10 +14,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
-	"github.com/mas-bandwidth/nova-tools/internal/bus"
-	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
-	"github.com/mas-bandwidth/nova-tools/internal/sandbox"
+	"github.com/nova-tools/internal/atomicfile"
+	"github.com/nova-tools/internal/bus"
+	"github.com/nova-tools/internal/cardcost"
+	"github.com/nova-tools/internal/sandbox"
 )
 
 // The delivery modes (internal/config FriendModes, the friend row's mode).

@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/member"
+	"github.com/nova-tools/internal/member"
 )
 
 // termRig is the replace rig driven by an injected signal and clock: no real time

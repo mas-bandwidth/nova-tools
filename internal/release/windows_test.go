@@ -12,7 +12,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/testbin"
+	"github.com/nova-tools/internal/testbin"
 )
 
 // THE WINDOWS BENCH IS A TARGET LIKE ANY OTHER, and the Threadripper arriving

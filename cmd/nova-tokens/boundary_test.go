@@ -37,7 +37,7 @@ import (
 // binary's graph is covered the day it is added, with nobody remembering to widen a list.
 func binaryPackages(t *testing.T) []string {
 	t.Helper()
-	const mod = "github.com/mas-bandwidth/nova-tools/"
+	const mod = "github.com/nova-tools/"
 	seen := map[string]bool{}
 	var order []string
 	var walk func(pkg string)
@@ -244,7 +244,7 @@ func TestNamesGitKnowsAProgramNameFromASubstring(t *testing.T) {
 		assert.True(t, namesGit(yes), "namesGit(%q) is false; that is a program to run", yes)
 	}
 	for _, no := range []string{
-		"github.com/mas-bandwidth/nova-tools/internal/oneline",
+		"github.com/nova-tools/internal/oneline",
 		"an ID is sha256: and 64 lowercase hex digits",
 		"a \\u escape is not four hex digits",
 		"digits", "legitimate", "gitignore", "", "gi t", "(git)",

@@ -5,7 +5,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
+	"github.com/nova-tools/internal/nsprint/verbflag"
 )
 
 // releaseHoldWords tells release apart from the holds on a member, a reader,

@@ -13,12 +13,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/config"
-	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
-	"github.com/mas-bandwidth/nova-tools/internal/gocache"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/safepath"
-	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/nova-tools/internal/config"
+	"github.com/nova-tools/internal/gitrun"
+	"github.com/nova-tools/internal/gocache"
+	"github.com/nova-tools/internal/oneline"
+	"github.com/nova-tools/internal/safepath"
+	"github.com/nova-tools/internal/sprint"
 )
 
 // FRIENDS' WORKING DIRECTORIES (docs/FRIENDS.md; ideas#833). The owner, 2026-10-02: "we

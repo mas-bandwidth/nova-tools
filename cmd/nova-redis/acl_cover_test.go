@@ -9,7 +9,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
-	"github.com/mas-bandwidth/nova-tools/internal/redisacl"
+	"github.com/nova-tools/internal/redisacl"
 
 	"github.com/stretchr/testify/assert"
 )

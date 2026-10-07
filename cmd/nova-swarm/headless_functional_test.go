@@ -14,8 +14,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/harness"
-	"github.com/mas-bandwidth/nova-tools/internal/swarm"
+	"github.com/nova-tools/internal/harness"
+	"github.com/nova-tools/internal/swarm"
 )
 
 // TestHeadlessHarnessesRunAOneLineCard runs one one-line card through each headless

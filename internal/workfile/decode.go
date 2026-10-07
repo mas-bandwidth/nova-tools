@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/worklang"
+	"github.com/nova-tools/internal/worklang"
 )
 
 // Limits is the reader's bounds for a tree file of at most maxBytes: the

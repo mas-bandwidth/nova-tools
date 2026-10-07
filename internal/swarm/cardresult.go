@@ -10,8 +10,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/cardcontract"
-	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
+	"github.com/nova-tools/internal/cardcontract"
+	"github.com/nova-tools/internal/typedrec"
 )
 
 // resultLiftDepth is how far below the job root the lookup looks for a result the card wrote

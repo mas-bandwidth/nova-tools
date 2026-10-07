@@ -26,7 +26,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/delayproxy"
+	"github.com/nova-tools/internal/delayproxy"
 )
 
 // The exit codes: 0 stopped as asked or help, 2 could not run.

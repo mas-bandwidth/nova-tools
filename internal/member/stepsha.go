@@ -11,10 +11,10 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/cardtree"
-	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
-	"github.com/mas-bandwidth/nova-tools/internal/safepath"
-	"github.com/mas-bandwidth/nova-tools/internal/subproc"
+	"github.com/nova-tools/internal/cardtree"
+	"github.com/nova-tools/internal/gitrun"
+	"github.com/nova-tools/internal/safepath"
+	"github.com/nova-tools/internal/subproc"
 )
 
 // branchRE is a branch a step commit is resolved on: a ref name with no

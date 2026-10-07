@@ -20,9 +20,9 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
-	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
-	"github.com/mas-bandwidth/nova-tools/internal/tool"
+	"github.com/nova-tools/internal/buildinfo"
+	"github.com/nova-tools/internal/nsprint/store"
+	"github.com/nova-tools/internal/tool"
 )
 
 // fleetRegistry is the set of registered benches (ns_bench_register).

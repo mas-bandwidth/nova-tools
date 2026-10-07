@@ -10,8 +10,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/member"
-	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/nova-tools/internal/member"
+	"github.com/nova-tools/internal/sprint"
 )
 
 // A brief correction edits the card in place (the owner, 2026-10-06: "We gotta stop doing

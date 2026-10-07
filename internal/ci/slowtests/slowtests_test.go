@@ -338,15 +338,15 @@ func TestSlowTestsVerdictIsTheSameAtAnyLoad(t *testing.T) {
 	b := Budgets{Package: 2, Test: 1, Rows: rows}
 	timeOnly := `{"Action":"pass","Package":"example.com/m/internal/busy","Test":"TestSlow","Elapsed":1.4}
 {"Action":"pass","Package":"example.com/m/internal/busy","Elapsed":1.5}
-{"Action":"pass","Package":"github.com/mas-bandwidth/nova-tools/cmd/nova-bus","Test":"TestWait","Elapsed":0.9}
-{"Action":"pass","Package":"github.com/mas-bandwidth/nova-tools/cmd/nova-bus","Elapsed":58.8}
+{"Action":"pass","Package":"github.com/nova-tools/cmd/nova-bus","Test":"TestWait","Elapsed":0.9}
+{"Action":"pass","Package":"github.com/nova-tools/cmd/nova-bus","Elapsed":58.8}
 `
 	sleeps := `{"Action":"output","Package":"example.com/m/internal/busy","Test":"TestSleeps","Output":"    x_test.go:3: SLEEPS: needs a mocked clock\n"}
 {"Action":"skip","Package":"example.com/m/internal/busy","Test":"TestSleeps","Elapsed":0}
 {"Action":"pass","Package":"example.com/m/internal/busy","Elapsed":0.1}
 `
 	slowLines := []string{
-		"CI-SLOW package=github.com/mas-bandwidth/nova-tools/cmd/nova-bus seconds=58.8s budget=2s slowest=TestWait:0.9s",
+		"CI-SLOW package=github.com/nova-tools/cmd/nova-bus seconds=58.8s budget=2s slowest=TestWait:0.9s",
 		"CI-SLOW test=TestSlow package=example.com/m/internal/busy seconds=1.4s budget=1.2s",
 	}
 	const sleepsLine = "CI-SLEEPS test=TestSleeps package=example.com/m/internal/busy: skipped for a wall-clock wait and not on ledger.txt; inject a clock or tag it //go:build functional"

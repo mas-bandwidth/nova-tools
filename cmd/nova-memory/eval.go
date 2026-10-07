@@ -11,10 +11,10 @@ import (
 	"os"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/bounded"
-	"github.com/mas-bandwidth/nova-tools/internal/memindex"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/tool"
+	"github.com/nova-tools/internal/bounded"
+	"github.com/nova-tools/internal/memindex"
+	"github.com/nova-tools/internal/oneline"
+	"github.com/nova-tools/internal/tool"
 )
 
 func cmdEval(args []string, stdout, stderr io.Writer) int {

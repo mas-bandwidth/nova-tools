@@ -7,8 +7,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/redisauth"
-	"github.com/mas-bandwidth/nova-tools/internal/seatcred"
+	"github.com/nova-tools/internal/nsprint/redisauth"
+	"github.com/nova-tools/internal/seatcred"
 	"github.com/redis/go-redis/v9"
 	"github.com/redis/go-redis/v9/maintnotifications"
 )

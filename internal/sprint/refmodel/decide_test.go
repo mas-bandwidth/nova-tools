@@ -10,8 +10,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/sprint"
-	"github.com/mas-bandwidth/nova-tools/internal/sprint/refmodel"
+	"github.com/nova-tools/internal/sprint"
+	"github.com/nova-tools/internal/sprint/refmodel"
 )
 
 // brief is a move as one short line: what it does to which card or judgment,

@@ -16,13 +16,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
-	"github.com/mas-bandwidth/nova-tools/internal/decide"
-	"github.com/mas-bandwidth/nova-tools/internal/ntable"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/sprint"
-	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
-	"github.com/mas-bandwidth/nova-tools/internal/sprintdash"
+	"github.com/nova-tools/internal/cardcost"
+	"github.com/nova-tools/internal/decide"
+	"github.com/nova-tools/internal/ntable"
+	"github.com/nova-tools/internal/oneline"
+	"github.com/nova-tools/internal/sprint"
+	"github.com/nova-tools/internal/sprint/store"
+	"github.com/nova-tools/internal/sprintdash"
 )
 
 // The read verbs: queue, where, inbox, card, check. Each has --json, one

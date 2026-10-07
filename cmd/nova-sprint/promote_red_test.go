@@ -10,9 +10,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
-	"github.com/mas-bandwidth/nova-tools/internal/sprint"
-	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
+	"github.com/nova-tools/internal/cardhdr"
+	"github.com/nova-tools/internal/sprint"
+	"github.com/nova-tools/internal/sprint/store"
 )
 
 // ghLog is a failed job's log as gh run view --log-failed prints it: each line
@@ -56,12 +56,12 @@ func TestARedPromotionCutsOneFixCardPerFailingTest(t *testing.T) {
 			"--- FAIL: "+links+" (0.01s)",
 			"    links_test.go:88: want the target reported, got none",
 			"FAIL",
-			"FAIL\tgithub.com/mas-bandwidth/nova-tools/internal/docs\t0.31s",
+			"FAIL\tgithub.com/nova-tools/internal/docs\t0.31s",
 		) + ghLog("functional (ubuntu-latest)",
 			"--- FAIL: "+fork+" (2.00s)",
 			"    wall_functional_test.go:41: the fork bomb ran past its cap",
 			"FAIL",
-			"FAIL\tgithub.com/mas-bandwidth/nova-tools/cmd/nova-sprint\t2.10s",
+			"FAIL\tgithub.com/nova-tools/cmd/nova-sprint\t2.10s",
 		),
 		"8": ghLog("hosted (macos-latest)",
 			"--- FAIL: "+links+" (0.01s)",
@@ -69,7 +69,7 @@ func TestARedPromotionCutsOneFixCardPerFailingTest(t *testing.T) {
 			"--- FAIL: "+snap+" (0.02s)",
 			"    snapshot_test.go:120: the symlinked entry was not noted",
 			"FAIL",
-			"FAIL\tgithub.com/mas-bandwidth/nova-tools/internal/docs\t0.40s",
+			"FAIL\tgithub.com/nova-tools/internal/docs\t0.40s",
 		),
 		"9": ghLog("hosted (ubuntu-latest)",
 			"--- FAIL: "+cover+" (0.05s)",
@@ -77,7 +77,7 @@ func TestARedPromotionCutsOneFixCardPerFailingTest(t *testing.T) {
 			"--- FAIL: "+fork+" (2.00s)",
 			"    wall_functional_test.go:41: the fork bomb ran past its cap",
 			"FAIL",
-			"FAIL\tgithub.com/mas-bandwidth/nova-tools/cmd/nova-sprint\t2.10s",
+			"FAIL\tgithub.com/nova-tools/cmd/nova-sprint\t2.10s",
 		),
 	}
 	s := &promoteScript{live: live, tip: tip, baseSHA: base, logText: "land s1-1 (sprint stream s1)\n"}
@@ -85,7 +85,7 @@ func TestARedPromotionCutsOneFixCardPerFailingTest(t *testing.T) {
 	git := func(ctx context.Context, dir string, args ...string) (string, error) {
 		switch {
 		case args[0] == "show":
-			return "module github.com/mas-bandwidth/nova-tools\n\ngo 1.25\n", nil
+			return "module github.com/nova-tools\n\ngo 1.25\n", nil
 		case promoted && args[0] == "rev-parse" && args[len(args)-1] == "refs/promoted/last":
 			return merged, nil
 		}

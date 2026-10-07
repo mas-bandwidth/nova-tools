@@ -10,7 +10,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
+	"github.com/nova-tools/internal/nsprint/store"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

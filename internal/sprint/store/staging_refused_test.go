@@ -6,8 +6,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
-	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/nova-tools/internal/cardhdr"
+	"github.com/nova-tools/internal/sprint"
 )
 
 // A launch refused at staging is the member's failure, never the card's (tla/CardContract.tla,

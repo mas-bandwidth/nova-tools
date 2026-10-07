@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/testgit"
+	"github.com/nova-tools/internal/testgit"
 )
 
 // briefTwin is a repository in the shape of a card's base: one package with its test,

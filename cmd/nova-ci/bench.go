@@ -16,9 +16,9 @@ import (
 	"path/filepath"
 	"slices"
 
-	"github.com/mas-bandwidth/nova-tools/internal/bench"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/tool"
+	"github.com/nova-tools/internal/bench"
+	"github.com/nova-tools/internal/oneline"
+	"github.com/nova-tools/internal/tool"
 )
 
 // benchEffect is what `bench run` does beyond printing, the last line of its -h.

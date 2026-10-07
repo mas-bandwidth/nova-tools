@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/nova-tools/internal/sprint"
 )
 
 // A stuck operation: one pending past its grace that the tick could not

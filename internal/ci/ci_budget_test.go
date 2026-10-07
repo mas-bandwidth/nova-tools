@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/pkgselect"
+	"github.com/nova-tools/internal/pkgselect"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

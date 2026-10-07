@@ -6,7 +6,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
+	"github.com/nova-tools/internal/buildinfo"
 )
 
 // TestParseTakesEveryToolsLineApart holds the ONE grammar from the reading side.

@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
+	"github.com/nova-tools/internal/gitrun"
 )
 
 // LocalRemote is a local bare git repository configured to enforce dev-integrity.

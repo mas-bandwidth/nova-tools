@@ -8,7 +8,7 @@ import (
 	"os"
 	"os/exec"
 
-	"github.com/mas-bandwidth/nova-tools/internal/subproc"
+	"github.com/nova-tools/internal/subproc"
 )
 
 // command is one program run: where, with which added variables, what.

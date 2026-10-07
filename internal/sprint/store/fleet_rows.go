@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"slices"
 
-	"github.com/mas-bandwidth/nova-tools/internal/ntable"
-	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/nova-tools/internal/ntable"
+	"github.com/nova-tools/internal/sprint"
 )
 
 // The fleet rows of members with no machine row (docs/SPEC-SPRINT.md, section 5,

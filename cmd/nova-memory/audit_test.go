@@ -3,7 +3,7 @@ package main
 import (
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/oneline/audit"
+	"github.com/nova-tools/internal/oneline/audit"
 )
 
 // The source-level tripwire behind the one-line guarantee: every argument this binary
@@ -51,16 +51,16 @@ var memoryAudit = audit.Config{
 		"verify.go|cmdVerify|*links":              "validated above the site to be exactly gate or info",
 	},
 	Imports: []string{
-		`"github.com/mas-bandwidth/nova-tools/internal/tool"`, // shared JSON renderer marshals the result as one escaped JSON record
+		`"github.com/nova-tools/internal/tool"`, // shared JSON renderer marshals the result as one escaped JSON record
 		// the verb-help seam (the CLI style's rule (b), #4505): on -h it prints only flag names,
 		// their usage literals and lines of this package's own usage const, to the stdout run
 		// hands it; it never prints an argument, so nothing it writes can carry a newline in.
-		`"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"`,
+		`"github.com/nova-tools/internal/nsprint/verbflag"`,
 		// version.go, and the reason it cannot write past the escape: buildinfo reads
 		// debug.ReadBuildInfo and runtime's GOOS, GOARCH and Version, holds no writer of
 		// its own, and returns a STRING that this package prints -- rendered field by
 		// field through oneline.Field before it is returned.
-		`"github.com/mas-bandwidth/nova-tools/internal/buildinfo"`,
+		`"github.com/nova-tools/internal/buildinfo"`,
 		// runtime is read for GOOS alone, in commandLine: which shell the echoed
 		// quickstart line has to paste into is a property of the machine printing it.
 		// It writes to no stream.
@@ -81,8 +81,8 @@ var memoryAudit = audit.Config{
 		// package, which the classifier walks like any other print site, and bounded puts
 		// its own two fields -- the kind and the remedy -- through oneline before writing
 		// them. It writes to the stream the caller hands it and to nothing else.
-		`"github.com/mas-bandwidth/nova-tools/internal/bounded"`,
-		`"github.com/mas-bandwidth/nova-tools/internal/memindex"`,
+		`"github.com/nova-tools/internal/bounded"`,
+		`"github.com/nova-tools/internal/memindex"`,
 	},
 	MinClassified: 30,
 }

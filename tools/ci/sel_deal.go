@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/pkgselect"
+	"github.com/nova-tools/internal/pkgselect"
 )
 
 func init() {

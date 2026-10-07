@@ -8,9 +8,9 @@ import (
 	"io"
 	"strconv"
 
-	"github.com/mas-bandwidth/nova-tools/internal/config"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
-	"github.com/mas-bandwidth/nova-tools/internal/tool"
+	"github.com/nova-tools/internal/config"
+	"github.com/nova-tools/internal/nsprint/verbflag"
+	"github.com/nova-tools/internal/tool"
 )
 
 func runStatus(ctx context.Context, args []string, stdout, stderr io.Writer, d deps) int {

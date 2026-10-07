@@ -12,11 +12,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
-	"github.com/mas-bandwidth/nova-tools/internal/cardlimits"
-	"github.com/mas-bandwidth/nova-tools/internal/cardtree"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/swarm"
+	"github.com/nova-tools/internal/cardhdr"
+	"github.com/nova-tools/internal/cardlimits"
+	"github.com/nova-tools/internal/cardtree"
+	"github.com/nova-tools/internal/oneline"
+	"github.com/nova-tools/internal/swarm"
 )
 
 // A card is the one artefact whose defects are paid for in tokens before a test runs: a

@@ -16,11 +16,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
-	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/safepath"
-	"github.com/mas-bandwidth/nova-tools/internal/subproc"
+	"github.com/nova-tools/internal/atomicfile"
+	"github.com/nova-tools/internal/gitrun"
+	"github.com/nova-tools/internal/oneline"
+	"github.com/nova-tools/internal/safepath"
+	"github.com/nova-tools/internal/subproc"
 )
 
 // errSeatFileAbsent is the typed refusal `seal` makes for a seat file the store does

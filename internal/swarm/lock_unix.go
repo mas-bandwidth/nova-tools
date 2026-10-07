@@ -9,7 +9,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/filelock"
+	"github.com/nova-tools/internal/filelock"
 )
 
 // takeKernelLock takes internal/filelock's lock on path, waiting until deadline, and

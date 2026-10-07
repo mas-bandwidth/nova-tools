@@ -14,7 +14,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
+	"github.com/nova-tools/internal/ci/allowlist"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -45,7 +45,7 @@ import (
 // - Compound standard library names (e.g. TrimSpace, TrimLeadingSpace, IsSpace) are excluded.
 // - A token that is also an English word, in an English phrase (englishPhrases: "leave
 //   space for", "disk space"), is the word; bare, or beside a bare article, it is the name.
-// - Go package import declarations (including "github.com/mas-bandwidth/nova-tools/...")
+// - Go package import declarations (including "github.com/nova-tools/...")
 //   are identified via real AST import specs and excluded as language-level imports.
 // - Explicitly marked documentation examples in real AST comments (e.g. lines with "e.g.",
 //   "example:", "for example", "example.com") are excluded; code contracts, defaults,
@@ -693,7 +693,7 @@ func TestGeneralityOccurrenceWitness(t *testing.T) {
 		assert.Empty(t, vComment, "legitimate marked comment failed: %v", vComment)
 
 		// Real AST import must be exempt
-		importPass := []GeneralitySourceFile{{Rel: "fixture.go", Src: []byte("package fixture\nimport (\n\t\"github.com/mas-bandwidth/nova-tools/internal/ci\"\n)\n")}}
+		importPass := []GeneralitySourceFile{{Rel: "fixture.go", Src: []byte("package fixture\nimport (\n\t\"github.com/nova-tools/internal/ci\"\n)\n")}}
 		vImport := checkGenerality(importPass, a)
 		assert.Empty(t, vImport, "legitimate import failed: %v", vImport)
 

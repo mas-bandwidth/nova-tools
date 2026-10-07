@@ -16,11 +16,11 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/config"
-	"github.com/mas-bandwidth/nova-tools/internal/goenv"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil/pg"
+	"github.com/nova-tools/internal/config"
+	"github.com/nova-tools/internal/goenv"
+	"github.com/nova-tools/internal/nsprint/fn"
+	"github.com/nova-tools/internal/nsprint/testutil"
+	"github.com/nova-tools/internal/nsprint/testutil/pg"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
 )

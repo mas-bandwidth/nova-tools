@@ -11,11 +11,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/cardcontract"
-	"github.com/mas-bandwidth/nova-tools/internal/decide"
-	"github.com/mas-bandwidth/nova-tools/internal/member"
-	"github.com/mas-bandwidth/nova-tools/internal/swarm"
-	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
+	"github.com/nova-tools/internal/cardcontract"
+	"github.com/nova-tools/internal/decide"
+	"github.com/nova-tools/internal/member"
+	"github.com/nova-tools/internal/swarm"
+	"github.com/nova-tools/internal/typedrec"
 )
 
 // fakeDecide answers the read decision with one p(defect) and counts its asks: the

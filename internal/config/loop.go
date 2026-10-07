@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/subproc"
+	"github.com/nova-tools/internal/subproc"
 )
 
 // A LOOP WHOSE VERB IS GONE. A loop row runs a nova verb; when a release retires

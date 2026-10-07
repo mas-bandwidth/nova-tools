@@ -45,15 +45,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/decide"
-	"github.com/mas-bandwidth/nova-tools/internal/diffcheck"
-	"github.com/mas-bandwidth/nova-tools/internal/filelock"
-	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/sprint"
-	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
-	"github.com/mas-bandwidth/nova-tools/internal/subproc"
-	"github.com/mas-bandwidth/nova-tools/internal/swarm"
+	"github.com/nova-tools/internal/decide"
+	"github.com/nova-tools/internal/diffcheck"
+	"github.com/nova-tools/internal/filelock"
+	"github.com/nova-tools/internal/gitrun"
+	"github.com/nova-tools/internal/oneline"
+	"github.com/nova-tools/internal/sprint"
+	"github.com/nova-tools/internal/sprint/store"
+	"github.com/nova-tools/internal/subproc"
+	"github.com/nova-tools/internal/swarm"
 )
 
 // landCheckBudget bounds one --check run: a batch's whole test command.

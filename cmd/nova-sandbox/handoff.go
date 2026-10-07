@@ -49,9 +49,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/safepath"
-	"github.com/mas-bandwidth/nova-tools/internal/sandbox"
+	"github.com/nova-tools/internal/oneline"
+	"github.com/nova-tools/internal/safepath"
+	"github.com/nova-tools/internal/sandbox"
 )
 
 // defaultOutMaxBytes is the ceiling on everything one run hands back, 64 MiB. It

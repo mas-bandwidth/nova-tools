@@ -10,8 +10,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/fuse"
-	"github.com/mas-bandwidth/nova-tools/internal/testkit"
+	"github.com/nova-tools/internal/fuse"
+	"github.com/nova-tools/internal/testkit"
 )
 
 // foldBanner joins the banner's wrapped lines into running prose, so a

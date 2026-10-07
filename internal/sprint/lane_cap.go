@@ -7,7 +7,7 @@ import (
 	"slices"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
+	"github.com/nova-tools/internal/cardhdr"
 )
 
 // A lane's wall time is capped by its card's tier (a-lane-is-capped-by-its-tier.w1;

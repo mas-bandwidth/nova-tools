@@ -10,9 +10,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/fleet"
-	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/nova-tools/internal/fleet"
+	"github.com/nova-tools/internal/gitrun"
+	"github.com/nova-tools/internal/oneline"
 )
 
 // GateInput is one call of the gate: the store, the two refs, and -- optionally -- the

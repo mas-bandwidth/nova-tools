@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/nova-tools/internal/oneline"
 )
 
 // UNKNOWNERROR AT ANY WALL IS THE PROVIDER'S, AND THE CARD GOES TO THE NEXT ROUTE (issue

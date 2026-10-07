@@ -28,11 +28,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/bench"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/sprint"
-	"github.com/mas-bandwidth/nova-tools/internal/subproc"
-	"github.com/mas-bandwidth/nova-tools/internal/testguard"
+	"github.com/nova-tools/internal/bench"
+	"github.com/nova-tools/internal/oneline"
+	"github.com/nova-tools/internal/sprint"
+	"github.com/nova-tools/internal/subproc"
+	"github.com/nova-tools/internal/testguard"
 )
 
 // landGoBudget bounds one go run in the clone: a build of the module, a vet, a test of

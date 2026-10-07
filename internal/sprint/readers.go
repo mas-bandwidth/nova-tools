@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
-	"github.com/mas-bandwidth/nova-tools/internal/member"
+	"github.com/nova-tools/internal/cardhdr"
+	"github.com/nova-tools/internal/member"
 )
 
 // A reader's state (docs/SPEC-SPRINT.md section 6, the readers table; the

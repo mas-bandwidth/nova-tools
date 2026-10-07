@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
+	"github.com/nova-tools/internal/cardcost"
 )
 
 // RouteTable is stats --routes (docs/SPEC-SPRINT.md, the verb stats): the route

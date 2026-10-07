@@ -10,8 +10,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
-	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
+	"github.com/nova-tools/internal/nsprint/fn"
+	"github.com/nova-tools/internal/redisconn"
 	"github.com/redis/go-redis/v9"
 )
 

@@ -11,7 +11,7 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/testbin"
+	"github.com/nova-tools/internal/testbin"
 
 	"github.com/stretchr/testify/require"
 )

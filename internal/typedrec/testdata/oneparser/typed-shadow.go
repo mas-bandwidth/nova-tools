@@ -1,6 +1,6 @@
 package oneparser
 
-import "github.com/mas-bandwidth/nova-tools/internal/typedrec"
+import "github.com/nova-tools/internal/typedrec"
 
 // A value the typed parser returned is typed text: a raw compare on it
 // outside typedrec is a parse (cold read of #4429).

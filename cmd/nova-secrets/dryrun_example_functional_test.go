@@ -14,7 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
+	"github.com/nova-tools/internal/onboarding"
 )
 
 // The help banner's three --dry-run example lines, run as a reader types them -- `./secrets`

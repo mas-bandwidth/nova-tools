@@ -11,9 +11,9 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/dogfood"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/readregular"
+	"github.com/nova-tools/internal/dogfood"
+	"github.com/nova-tools/internal/oneline"
+	"github.com/nova-tools/internal/readregular"
 )
 
 // Options is every source of one reading. A path that is empty is a source the

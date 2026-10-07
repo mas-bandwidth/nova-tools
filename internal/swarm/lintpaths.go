@@ -8,8 +8,8 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
-	"github.com/mas-bandwidth/nova-tools/internal/hygiene"
+	"github.com/nova-tools/internal/cardhdr"
+	"github.com/nova-tools/internal/hygiene"
 )
 
 // THE BRIEF CHECKS: WHAT NOVA-SPRINT ADD HOLDS A CARD BRIEF TO AT ITS BASE TIP.

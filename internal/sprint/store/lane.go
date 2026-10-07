@@ -7,7 +7,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/nova-tools/internal/sprint"
 )
 
 // The lanes (sprint/lane.go; docs/SPEC-SPRINT.md section 18): one record per lane

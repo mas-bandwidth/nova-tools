@@ -34,9 +34,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/safepath"
+	"github.com/nova-tools/internal/atomicfile"
+	"github.com/nova-tools/internal/oneline"
+	"github.com/nova-tools/internal/safepath"
 )
 
 // SlotLease is one bench slot lease: the directory name is the id.

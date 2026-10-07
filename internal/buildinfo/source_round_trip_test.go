@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
+	"github.com/nova-tools/internal/buildinfo"
 )
 
 // TestSourceMetadataRoundTripsThroughTheVersionLine reproduces nova-tools#2291 from the buildinfo slice the issue
@@ -40,7 +40,7 @@ func TestSourceMetadataRoundTripsThroughTheVersionLine(t *testing.T) {
 		{
 			"a clean build from a known repo writes and reads back the four fields",
 			buildinfo.Source{
-				Repository: "github.com/mas-bandwidth/nova-tools",
+				Repository: "github.com/nova-tools",
 				Revision:   "0123456789abcdef0123456789abcdef01234567",
 				Dirty:      false,
 				BuildHost:  "studio-darwin",
@@ -49,7 +49,7 @@ func TestSourceMetadataRoundTripsThroughTheVersionLine(t *testing.T) {
 		{
 			"a dirty build says so; dirty=false and dirty=true are distinct",
 			buildinfo.Source{
-				Repository: "github.com/mas-bandwidth/nova-tools",
+				Repository: "github.com/nova-tools",
 				Revision:   "0123456789abcdef0123456789abcdef01234567",
 				Dirty:      true,
 				BuildHost:  "ci-runner-04",
@@ -91,7 +91,7 @@ func TestSourceMetadataRoundTripsThroughTheVersionLine(t *testing.T) {
 	// silent disagreement (#2291, SPEC-VERSION item 6).
 	t.Run("a partial source is no source", func(t *testing.T) {
 		for _, partial := range [][]string{
-			{"repo=github.com/mas-bandwidth/nova-tools"},
+			{"repo=github.com/nova-tools"},
 			{"revision=0123456789abcdef0123456789abcdef01234567"},
 			{"dirty=false"},
 			{"build_host=studio"},
@@ -112,7 +112,7 @@ func TestSourceMetadataRoundTripsThroughTheVersionLine(t *testing.T) {
 	// and the test asserts that disagreement is visible.
 	t.Run("a disagreeing source is visible to the reader", func(t *testing.T) {
 		want := buildinfo.Source{
-			Repository: "github.com/mas-bandwidth/nova-tools",
+			Repository: "github.com/nova-tools",
 			Revision:   "0123456789abcdef0123456789abcdef01234567",
 			Dirty:      false,
 			BuildHost:  "studio-darwin",
@@ -138,7 +138,7 @@ func TestSourceMetadataRoundTripsThroughTheVersionLine(t *testing.T) {
 			// empty values) and parse the line to get Fields, then test
 			// FindSource.
 			extras := []string{
-				"repo=github.com/mas-bandwidth/nova-tools",
+				"repo=github.com/nova-tools",
 				"revision=0123456789abcdef0123456789abcdef01234567",
 				"dirty=" + bad,
 				"build_host=studio",
@@ -156,7 +156,7 @@ func TestSourceMetadataRoundTripsThroughTheVersionLine(t *testing.T) {
 			Version:  stamp,
 			Platform: "linux/amd64",
 			Extras: []string{
-				"repo=github.com/mas-bandwidth/nova-tools",
+				"repo=github.com/nova-tools",
 				"revision=0123456789abcdef0123456789abcdef01234567",
 				"dirty=",
 				"build_host=studio",
@@ -172,10 +172,10 @@ func TestSourceMetadataRoundTripsThroughTheVersionLine(t *testing.T) {
 	// `repo=foo repo=bar` would silently accept `repo=foo`.
 	t.Run("duplicate source keys are refused", func(t *testing.T) {
 		for _, dups := range [][]string{
-			{"repo=github.com/mas-bandwidth/nova-tools", "repo=github.com/other/repo", "revision=0123456789abcdef0123456789abcdef01234567", "dirty=false", "build_host=studio"},
-			{"repo=github.com/mas-bandwidth/nova-tools", "revision=0123456789abcdef0123456789abcdef01234567", "revision=fedcba9876543210fedcba9876543210fedcba98", "dirty=false", "build_host=studio"},
-			{"repo=github.com/mas-bandwidth/nova-tools", "revision=0123456789abcdef0123456789abcdef01234567", "dirty=true", "dirty=false", "build_host=studio"},
-			{"repo=github.com/mas-bandwidth/nova-tools", "revision=0123456789abcdef0123456789abcdef01234567", "dirty=false", "build_host=studio", "build_host=ci-runner"},
+			{"repo=github.com/nova-tools", "repo=github.com/other/repo", "revision=0123456789abcdef0123456789abcdef01234567", "dirty=false", "build_host=studio"},
+			{"repo=github.com/nova-tools", "revision=0123456789abcdef0123456789abcdef01234567", "revision=fedcba9876543210fedcba9876543210fedcba98", "dirty=false", "build_host=studio"},
+			{"repo=github.com/nova-tools", "revision=0123456789abcdef0123456789abcdef01234567", "dirty=true", "dirty=false", "build_host=studio"},
+			{"repo=github.com/nova-tools", "revision=0123456789abcdef0123456789abcdef01234567", "dirty=false", "build_host=studio", "build_host=ci-runner"},
 		} {
 			line := buildinfo.Line("nova-bus", stamp, dups...)
 			_, ok := buildinfo.Parse(line)

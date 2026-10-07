@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/tokens"
+	"github.com/nova-tools/internal/tokens"
 )
 
 // ---------------------------------------------------------------- rule 1: every path is a flag

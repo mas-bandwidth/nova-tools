@@ -6,7 +6,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
+	"github.com/nova-tools/internal/redisconn"
 )
 
 // The bus is dialed with its own login, never the sprint store's: with only the store's

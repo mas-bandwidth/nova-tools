@@ -13,8 +13,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/sprint"
-	"github.com/mas-bandwidth/nova-tools/internal/sprint/refmodel"
+	"github.com/nova-tools/internal/sprint"
+	"github.com/nova-tools/internal/sprint/refmodel"
 )
 
 // A move carries a notification's fields, and these tests say which and how, in

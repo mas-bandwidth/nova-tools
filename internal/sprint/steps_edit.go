@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
-	"github.com/mas-bandwidth/nova-tools/internal/ntable"
+	"github.com/nova-tools/internal/cardhdr"
+	"github.com/nova-tools/internal/ntable"
 )
 
 // The coordinator's edits of primaries: brief replaces a primary's brief in place, on a

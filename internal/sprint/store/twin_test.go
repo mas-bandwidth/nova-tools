@@ -13,8 +13,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/sprint"
-	"github.com/mas-bandwidth/nova-tools/internal/sprint/store/storetest"
+	"github.com/nova-tools/internal/sprint"
+	"github.com/nova-tools/internal/sprint/store/storetest"
 )
 
 // A busy sprint is read whole once: the first tick reads the four tables,

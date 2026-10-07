@@ -11,9 +11,9 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/mas-bandwidth/nova-tools/internal/cardgen"
-	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
-	"github.com/mas-bandwidth/nova-tools/internal/swarm"
+	"github.com/nova-tools/internal/cardgen"
+	"github.com/nova-tools/internal/cardhdr"
+	"github.com/nova-tools/internal/swarm"
 )
 
 // PackagePaths is a card's PATHS computed from what it starts from: every directory a

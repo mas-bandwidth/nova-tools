@@ -30,10 +30,10 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/diffcheck"
-	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/nova-tools/internal/diffcheck"
+	"github.com/nova-tools/internal/gitrun"
+	"github.com/nova-tools/internal/oneline"
+	"github.com/nova-tools/internal/sprint"
 )
 
 // landLedger is a family of generated, shrink-only files and the tests that own them: the

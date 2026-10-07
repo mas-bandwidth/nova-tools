@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/testbin"
+	"github.com/nova-tools/internal/testbin"
 )
 
 // The store's move to hetzner, 2026-09-27. Every bench seat that already existed

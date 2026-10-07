@@ -24,9 +24,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/bounded"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/subproc"
+	"github.com/nova-tools/internal/bounded"
+	"github.com/nova-tools/internal/oneline"
+	"github.com/nova-tools/internal/subproc"
 )
 
 // CycleNote is the verb said where a person meets it.

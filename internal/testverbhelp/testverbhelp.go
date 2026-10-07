@@ -28,7 +28,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/nova-tools/internal/oneline"
 )
 
 // Run is the tool, in process: args after the tool's name, the two streams,

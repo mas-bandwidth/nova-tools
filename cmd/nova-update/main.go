@@ -1,7 +1,7 @@
 package main
 
 import (
-	"github.com/mas-bandwidth/nova-tools/internal/update"
+	"github.com/nova-tools/internal/update"
 	"os"
 )
 

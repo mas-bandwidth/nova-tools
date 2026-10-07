@@ -3,7 +3,7 @@ package main
 import (
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/oneline/audit"
+	"github.com/nova-tools/internal/oneline/audit"
 )
 
 func TestEveryPrintedArgumentIsLiteralQuotedOrEscaped(t *testing.T) {
@@ -45,16 +45,16 @@ var secretsAudit = audit.Config{
 		// the verb-help seam (the CLI style's rule (b), #4505): on -h it prints only flag names,
 		// their usage literals and lines of this package's own usage const, to the stdout run
 		// hands it; it never prints an argument, so nothing it writes can carry a newline in.
-		`"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"`,
+		`"github.com/nova-tools/internal/nsprint/verbflag"`,
 		`"flag"`, `"fmt"`, `"io"`, `"os"`, `"path/filepath"`, `"strings"`,
 		// slices.Index finds exec's '--' delimiter; it writes nothing.
 		`"slices"`,
 		// names --json: tool.Out renders one JSON object through encoding/json, which
 		// escapes every control character, so nothing it writes can break the line.
-		`"github.com/mas-bandwidth/nova-tools/internal/tool"`,
-		`"github.com/mas-bandwidth/nova-tools/internal/buildinfo"`,
-		`"github.com/mas-bandwidth/nova-tools/internal/oneline"`,
-		`"github.com/mas-bandwidth/nova-tools/internal/secrets"`,
+		`"github.com/nova-tools/internal/tool"`,
+		`"github.com/nova-tools/internal/buildinfo"`,
+		`"github.com/nova-tools/internal/oneline"`,
+		`"github.com/nova-tools/internal/secrets"`,
 	},
 	MinClassified: 20,
 }

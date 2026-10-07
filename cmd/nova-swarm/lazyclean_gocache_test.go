@@ -14,7 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/gocache"
+	"github.com/nova-tools/internal/gocache"
 )
 
 // The member's build cache limit (2026-10-04): --gocache-limit, default gocache.Limit; a

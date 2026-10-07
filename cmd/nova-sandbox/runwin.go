@@ -39,8 +39,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/sandbox"
+	"github.com/nova-tools/internal/oneline"
+	"github.com/nova-tools/internal/sandbox"
 )
 
 // winScratchPrefix is the one directory-name shape this verb makes under --scratch and the

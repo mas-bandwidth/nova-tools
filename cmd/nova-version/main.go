@@ -14,7 +14,7 @@ package main
 import (
 	"os"
 
-	"github.com/mas-bandwidth/nova-tools/internal/update"
+	"github.com/nova-tools/internal/update"
 )
 
 var version string

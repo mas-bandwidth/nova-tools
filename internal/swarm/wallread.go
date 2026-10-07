@@ -35,7 +35,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/nova-tools/internal/oneline"
 )
 
 // PermissionDeniedMark is the kernel's refusal on linux. landlock denies a write outside the

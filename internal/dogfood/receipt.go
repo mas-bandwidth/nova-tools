@@ -15,8 +15,8 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
-	"github.com/mas-bandwidth/nova-tools/internal/readregular"
+	"github.com/nova-tools/internal/atomicfile"
+	"github.com/nova-tools/internal/readregular"
 )
 
 // Receipt is one person saying: I ran this verb, on this day, on real work, and

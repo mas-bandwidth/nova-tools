@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/pkgselect"
+	"github.com/nova-tools/internal/pkgselect"
 )
 
 // ci_selection_test.go pins the SELECTION side of the class-test contract. The

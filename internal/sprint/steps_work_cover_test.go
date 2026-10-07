@@ -3,8 +3,8 @@ package sprint
 import (
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
-	"github.com/mas-bandwidth/nova-tools/internal/decide"
+	"github.com/nova-tools/internal/cardhdr"
+	"github.com/nova-tools/internal/decide"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

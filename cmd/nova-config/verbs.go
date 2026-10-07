@@ -4,7 +4,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/config"
+	"github.com/nova-tools/internal/config"
 )
 
 // What each verb's -h adds above its flags (verbflag.RecoverWith): its effect

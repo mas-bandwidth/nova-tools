@@ -6,8 +6,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/sprint"
-	"github.com/mas-bandwidth/nova-tools/internal/sprint/refmodel"
+	"github.com/nova-tools/internal/sprint"
+	"github.com/nova-tools/internal/sprint/refmodel"
 )
 
 // proBrief is a pro card's brief: line 1 names tier pro, so its reads are two,

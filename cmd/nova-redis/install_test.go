@@ -10,8 +10,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/secrets"
-	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/nova-tools/internal/secrets"
+	"github.com/nova-tools/internal/sprint"
 )
 
 // install store and install bus write a unit that runs nova-redis serve itself, with

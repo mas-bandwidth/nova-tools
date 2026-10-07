@@ -31,7 +31,7 @@ func threeJourneys() []Journey {
 // event is one `go test -json` line.
 func event(action, test, output string) string {
 	raw, err := json.Marshal(map[string]string{
-		"Action": action, "Package": "github.com/mas-bandwidth/nova-tools/internal/friend",
+		"Action": action, "Package": "github.com/nova-tools/internal/friend",
 		"Test": test, "Output": output,
 	})
 	if err != nil {
@@ -226,7 +226,7 @@ func TestTheGateRefusesAPromisedJourneyWithoutEvidence(t *testing.T) {
 		t.Parallel()
 		f := cutForge()
 		changelog := changelogIn(t, t.TempDir())
-		lines := append(allProven(), "FAIL\tgithub.com/mas-bandwidth/nova-tools/internal/friend [build failed]")
+		lines := append(allProven(), "FAIL\tgithub.com/nova-tools/internal/friend [build failed]")
 		var out, errs bytes.Buffer
 		code := Run("nova-update", cutArgs(changelog, "--journeys", evidenceFile(t, lines...)), &out, &errs, journeyDeps(t, f))
 		cutRefused(t, code, f, changelog, &out, &errs)

@@ -17,7 +17,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/testbin"
+	"github.com/nova-tools/internal/testbin"
 )
 
 // foldStamp is the clock every test hands run(), so that `at=` is a fixture and not a

@@ -27,7 +27,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/ghevent"
+	"github.com/nova-tools/internal/ghevent"
 	"github.com/redis/go-redis/v9"
 )
 

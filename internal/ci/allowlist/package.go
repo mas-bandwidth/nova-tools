@@ -16,7 +16,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
+	"github.com/nova-tools/internal/atomicfile"
 )
 
 // Packages is a counted ledger split by source directory or explicit package.

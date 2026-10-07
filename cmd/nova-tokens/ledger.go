@@ -11,11 +11,11 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/redisauth"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/record"
-	"github.com/mas-bandwidth/nova-tools/internal/tokens"
-	"github.com/mas-bandwidth/nova-tools/internal/tool"
+	"github.com/nova-tools/internal/nsprint/redisauth"
+	"github.com/nova-tools/internal/oneline"
+	"github.com/nova-tools/internal/record"
+	"github.com/nova-tools/internal/tokens"
+	"github.com/nova-tools/internal/tool"
 )
 
 // The token ledger (docs/SPEC-STATE.md test 17): `ledger` writes each folded day to

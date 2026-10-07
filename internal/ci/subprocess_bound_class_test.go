@@ -34,7 +34,7 @@ import (
 const (
 	osExecPath   = "os/exec"
 	contextPath  = "context"
-	subprocPath  = "github.com/mas-bandwidth/nova-tools/internal/subproc"
+	subprocPath  = "github.com/nova-tools/internal/subproc"
 	subprocDoor  = "internal/subproc/"
 	gitrunDoor   = "internal/gitrun/"
 	dotImportMsg = "dot import of os/exec hides its calls from this test; import it by name"
@@ -174,7 +174,7 @@ func TestEveryChildProcessGoesThroughTheSubprocDoor(t *testing.T) {
 func TestSubprocessClassTestRefusesItsProbes(t *testing.T) {
 	t.Parallel()
 
-	const head = "package p\n\nimport (\n\t\"context\"\n\t\"os/exec\"\n\n\t\"github.com/mas-bandwidth/nova-tools/internal/subproc\"\n)\n\n"
+	const head = "package p\n\nimport (\n\t\"context\"\n\t\"os/exec\"\n\n\t\"github.com/nova-tools/internal/subproc\"\n)\n\n"
 	cases := []struct {
 		name string
 		src  string
@@ -197,7 +197,7 @@ func TestSubprocessClassTestRefusesItsProbes(t *testing.T) {
 		{"aliased os/exec, Command", strings.Replace(head, "\"os/exec\"", "x \"os/exec\"", 1) + "func f() { _ = x.Command(\"git\") }", 1},
 		{"aliased os/exec, CommandContext without WaitDelay", strings.Replace(head, "\"os/exec\"", "x \"os/exec\"", 1) + "func f(ctx context.Context) { _ = x.CommandContext(ctx, \"git\") }", 1},
 		{"dot import of os/exec", strings.Replace(head, "\"os/exec\"", ". \"os/exec\"", 1) + "func f() {}", 1},
-		{"aliased subproc and context", "package p\n\nimport (\n\tc \"context\"\n\tsp \"github.com/mas-bandwidth/nova-tools/internal/subproc\"\n)\n\nfunc f() { _ = sp.Long(c.Background(), \"git\") }", 1},
+		{"aliased subproc and context", "package p\n\nimport (\n\tc \"context\"\n\tsp \"github.com/nova-tools/internal/subproc\"\n)\n\nfunc f() { _ = sp.Long(c.Background(), \"git\") }", 1},
 	}
 	for _, c := range cases {
 		got := subprocFindings("internal/probe/probe.go", []byte(c.src))

@@ -17,7 +17,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/goenv"
+	"github.com/nova-tools/internal/goenv"
 	"github.com/stretchr/testify/assert"
 )
 

@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 
-	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
+	"github.com/nova-tools/internal/sprint/store"
 )
 
 // Who may run a verb. Every verb has one class (a class test holds it):

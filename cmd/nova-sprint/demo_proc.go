@@ -14,7 +14,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/subproc"
+	"github.com/nova-tools/internal/subproc"
 )
 
 // demoReady is how long the demo's Redis has to say it is ready once started,

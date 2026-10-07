@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/nova-tools/internal/sprint"
 )
 
 // A reader's presence (sprint/readers.go; docs/SPEC-SPRINT.md section 6): two

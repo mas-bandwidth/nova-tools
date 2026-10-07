@@ -7,11 +7,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/bus"
-	"github.com/mas-bandwidth/nova-tools/internal/friend"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
-	"github.com/mas-bandwidth/nova-tools/internal/tool"
+	"github.com/nova-tools/internal/bus"
+	"github.com/nova-tools/internal/friend"
+	"github.com/nova-tools/internal/oneline"
+	"github.com/nova-tools/internal/redisconn"
+	"github.com/nova-tools/internal/tool"
 )
 
 // serveRange bounds one read of the coordinator's stream; the rest is the next tick's.

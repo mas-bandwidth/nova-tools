@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
+	"github.com/nova-tools/internal/ci/allowlist"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -96,7 +96,7 @@ func TestCIOneBenchRunner(t *testing.T) {
 
 	t.Run("git-transport-excluded", func(t *testing.T) {
 		fixture := `package x
-import ("os/exec"; "github.com/mas-bandwidth/nova-tools/internal/testguard")
+import ("os/exec"; "github.com/nova-tools/internal/testguard")
 func transportCmd(host string) string { testguard.RefuseHosts("ssh", host); return "ssh -o BatchMode=yes" }
 func pull(host string) error {
 	c := exec.Command("git", "fetch", host)

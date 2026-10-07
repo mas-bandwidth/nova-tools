@@ -21,7 +21,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/mas-bandwidth/nova-tools/internal/fleet"
+	"github.com/nova-tools/internal/fleet"
 )
 
 // scriptRemote adapts this package's argv-shaped SSH edge to the script-shaped remote the

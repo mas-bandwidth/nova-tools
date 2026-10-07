@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/safepath"
-	"github.com/mas-bandwidth/nova-tools/internal/tlc"
+	"github.com/nova-tools/internal/safepath"
+	"github.com/nova-tools/internal/tlc"
 )
 
 // TraceStep is one step of the retained trace: the call, whether it was

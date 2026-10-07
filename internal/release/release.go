@@ -35,7 +35,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/nova-tools/internal/oneline"
 )
 
 // CheckRun is one CI check on a commit, as the forge reports it: the name a

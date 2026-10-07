@@ -8,8 +8,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/dogfood"
-	"github.com/mas-bandwidth/nova-tools/internal/release"
+	"github.com/nova-tools/internal/dogfood"
+	"github.com/nova-tools/internal/release"
 )
 
 // LESSON 10 of docs/SPEC-RELEASE.md. The fourth release dogfood went looking

@@ -11,7 +11,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/nova-tools/internal/oneline"
 )
 
 // `seal` cannot initialize a new seat: folding a value into a seat file means

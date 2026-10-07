@@ -5,7 +5,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
+	"github.com/nova-tools/internal/cardhdr"
 )
 
 // ReaderTiers is the readers table's text column: the tiers that reader reads.

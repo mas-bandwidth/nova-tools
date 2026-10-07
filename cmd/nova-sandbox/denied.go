@@ -41,7 +41,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/nova-tools/internal/oneline"
 )
 
 // EVERY PATH IN THIS FILE IS A POSIX PATH, and that is a contract rather than an accident.

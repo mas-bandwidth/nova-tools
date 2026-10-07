@@ -6,8 +6,8 @@ import (
 	"slices"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/sprint"
-	"github.com/mas-bandwidth/nova-tools/internal/sprint/refmodel"
+	"github.com/nova-tools/internal/sprint"
+	"github.com/nova-tools/internal/sprint/refmodel"
 )
 
 // The random snapshots of the property tests are the states of random sprints:

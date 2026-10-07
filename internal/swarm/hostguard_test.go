@@ -6,7 +6,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/testguard"
+	"github.com/nova-tools/internal/testguard"
 	"github.com/stretchr/testify/require"
 )
 

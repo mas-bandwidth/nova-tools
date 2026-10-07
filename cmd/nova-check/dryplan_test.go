@@ -8,7 +8,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/testkit"
+	"github.com/nova-tools/internal/testkit"
 )
 
 func checkRun(args ...string) testkit.Result {

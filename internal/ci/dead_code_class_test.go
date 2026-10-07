@@ -18,8 +18,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
-	"github.com/mas-bandwidth/nova-tools/internal/goenv"
+	"github.com/nova-tools/internal/ci/allowlist"
+	"github.com/nova-tools/internal/goenv"
 )
 
 // deadCodeLedgerPath is the shrink-only per-package ledger of unreachable functions
@@ -110,7 +110,7 @@ func findDeadCodeUnion(t *testing.T, ctx context.Context, root string) (map[stri
 	bin := deadcodeToolBinary(t, ctx)
 	oses := []string{"linux", "darwin", "windows"}
 	union := make(map[string]map[string]bool)
-	modulePrefix := "github.com/mas-bandwidth/nova-tools/"
+	modulePrefix := "github.com/nova-tools/"
 
 	for _, goos := range oses {
 		pkgs, err := runDeadcode(t, ctx, bin, root, goos)

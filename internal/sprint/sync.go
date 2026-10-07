@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
+	"github.com/nova-tools/internal/gitrun"
 )
 
 // Dev sync every cycle (docs/SPEC-SPRINT.md, "Dev sync every cycle"; the owner, 2026-10-04:

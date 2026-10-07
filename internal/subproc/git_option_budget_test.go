@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/subproc"
+	"github.com/nova-tools/internal/subproc"
 	"github.com/stretchr/testify/assert"
 )
 

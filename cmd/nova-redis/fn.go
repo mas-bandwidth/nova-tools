@@ -40,11 +40,11 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
-	"github.com/mas-bandwidth/nova-tools/internal/redisfn"
-	"github.com/mas-bandwidth/nova-tools/internal/tool"
+	"github.com/nova-tools/internal/nsprint/fn"
+	"github.com/nova-tools/internal/oneline"
+	"github.com/nova-tools/internal/redisconn"
+	"github.com/nova-tools/internal/redisfn"
+	"github.com/nova-tools/internal/tool"
 )
 
 // library is the function library the fn verbs load and check.

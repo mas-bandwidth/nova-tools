@@ -6,7 +6,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/nova-tools/internal/oneline"
 )
 
 // The typed lines nova-config prints (docs/SPEC-CONFIG.md, "Lines"). Every

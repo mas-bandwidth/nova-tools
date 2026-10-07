@@ -21,7 +21,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/redisfn"
+	"github.com/nova-tools/internal/redisfn"
 )
 
 // The roles, by the name the CLI prints.

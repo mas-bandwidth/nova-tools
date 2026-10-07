@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
+	"github.com/nova-tools/internal/onboarding"
 )
 
 // TestTheHelpReportExampleIsWhatItPrints runs the help's report line as a reader

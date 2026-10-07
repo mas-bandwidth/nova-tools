@@ -3,7 +3,7 @@ package cairn
 import (
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/nova-tools/internal/oneline"
 )
 
 // command is a remedy: a POSIX-shell line running `nova-cairn <verb>` with

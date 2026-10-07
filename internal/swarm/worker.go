@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/nova-tools/internal/oneline"
 )
 
 // THE WORKER DESCRIPTION: which provider, which model, which environment variable the

@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/bus"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/nova-tools/internal/bus"
+	"github.com/nova-tools/internal/oneline"
 )
 
 // The stages of the delivery check, in the order they are passed: the

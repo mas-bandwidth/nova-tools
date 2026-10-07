@@ -7,9 +7,9 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/nova-tools/internal/atomicfile"
+	"github.com/nova-tools/internal/oneline"
+	"github.com/nova-tools/internal/sprint"
 )
 
 // The reminder duty of the tick (docs/SPEC-SPRINT.md, "Reminders"): the

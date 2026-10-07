@@ -7,10 +7,10 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
-	"github.com/mas-bandwidth/nova-tools/internal/config"
-	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
-	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/nova-tools/internal/cardcost"
+	"github.com/nova-tools/internal/config"
+	"github.com/nova-tools/internal/redisconn"
+	"github.com/nova-tools/internal/sprint"
 )
 
 // RouteReader is a store that holds the model tiers' routes and route arrays

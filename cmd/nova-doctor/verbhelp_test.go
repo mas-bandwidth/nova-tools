@@ -4,9 +4,9 @@ import (
 	"io"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/doctor"
-	"github.com/mas-bandwidth/nova-tools/internal/testkit"
-	"github.com/mas-bandwidth/nova-tools/internal/testverbhelp"
+	"github.com/nova-tools/internal/doctor"
+	"github.com/nova-tools/internal/testkit"
+	"github.com/nova-tools/internal/testverbhelp"
 )
 
 // The one verb answers -h and --help with its own help at exit 0 and runs no check.

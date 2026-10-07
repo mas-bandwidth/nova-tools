@@ -20,7 +20,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/tokens"
+	"github.com/nova-tools/internal/tokens"
 )
 
 func TestASecondFoldWaitsAndThenRefusesNamingTheHolder(t *testing.T) {

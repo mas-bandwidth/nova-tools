@@ -16,7 +16,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/swarm"
+	"github.com/nova-tools/internal/swarm"
 )
 
 // ISSUE #779: the deadline killed only the child the run spawned directly, never the tree,

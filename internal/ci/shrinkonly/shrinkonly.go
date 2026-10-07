@@ -4,7 +4,7 @@ import (
 	"path"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/diffcheck"
+	"github.com/nova-tools/internal/diffcheck"
 )
 
 // ShrinkOnlyOutsideTestdata are the shrink-only ledgers that live outside

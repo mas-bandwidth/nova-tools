@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/sandbox/darwincheck"
+	"github.com/nova-tools/internal/sandbox/darwincheck"
 )
 
 // recordingSystem is a darwin whose processes all succeed and are recorded, so the

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
+	"github.com/nova-tools/internal/cardcost"
 )
 
 // MergeReq is one mechanical merge step for a stream, given its facts by the

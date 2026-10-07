@@ -41,11 +41,11 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/redisacl"
-	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
-	"github.com/mas-bandwidth/nova-tools/internal/secrets"
-	"github.com/mas-bandwidth/nova-tools/internal/tool"
+	"github.com/nova-tools/internal/oneline"
+	"github.com/nova-tools/internal/redisacl"
+	"github.com/nova-tools/internal/redisconn"
+	"github.com/nova-tools/internal/secrets"
+	"github.com/nova-tools/internal/tool"
 	"github.com/redis/go-redis/v9"
 )
 

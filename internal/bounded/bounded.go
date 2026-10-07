@@ -47,7 +47,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/nova-tools/internal/oneline"
 )
 
 // Default is the ceiling every --*-max flag in this repo starts at. Twenty is a screen:

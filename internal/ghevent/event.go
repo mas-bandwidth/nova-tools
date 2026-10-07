@@ -15,7 +15,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	gheventwire "github.com/mas-bandwidth/nova-tools/internal/ghevent/wire"
+	gheventwire "github.com/nova-tools/internal/ghevent/wire"
 	"github.com/redis/go-redis/v9"
 )
 

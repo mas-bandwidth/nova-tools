@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/nova-tools/internal/oneline"
+	"github.com/nova-tools/internal/sprint"
 )
 
 // cmdLog prints the epoch's log: every change of every card and every

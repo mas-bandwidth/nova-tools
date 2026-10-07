@@ -18,7 +18,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/testguard"
+	"github.com/nova-tools/internal/testguard"
 )
 
 // wildcard stands for any one argv word a scripted step cannot predict, such as the

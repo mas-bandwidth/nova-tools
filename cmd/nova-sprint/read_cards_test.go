@@ -9,8 +9,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/config"
-	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/nova-tools/internal/config"
+	"github.com/nova-tools/internal/sprint"
 )
 
 // TestAOneShotFriendRunsAReadCardFromItsBrief pins the read card's delivery to a friend

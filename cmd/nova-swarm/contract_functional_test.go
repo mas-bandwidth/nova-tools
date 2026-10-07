@@ -17,9 +17,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/cardcontract"
-	"github.com/mas-bandwidth/nova-tools/internal/member"
-	"github.com/mas-bandwidth/nova-tools/internal/testbin"
+	"github.com/nova-tools/internal/cardcontract"
+	"github.com/nova-tools/internal/member"
+	"github.com/nova-tools/internal/testbin"
 )
 
 // familyModel is a model id of each family the scripted child runs as: the member hands

@@ -3,7 +3,7 @@
 package main
 
 import (
-	"github.com/mas-bandwidth/nova-tools/internal/swarm"
+	"github.com/nova-tools/internal/swarm"
 )
 
 // ISSUE #1463: THE HARNESS FENCE IGNORED THE WORKER DESCRIPTION'S `read_roots`, so a staged

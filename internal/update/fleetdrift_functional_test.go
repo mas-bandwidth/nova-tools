@@ -18,7 +18,7 @@ import (
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
+	"github.com/nova-tools/internal/nsprint/store"
 	"github.com/redis/go-redis/v9"
 
 	"github.com/stretchr/testify/require"

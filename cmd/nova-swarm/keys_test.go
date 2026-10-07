@@ -9,9 +9,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/decide"
-	"github.com/mas-bandwidth/nova-tools/internal/seatcred"
-	"github.com/mas-bandwidth/nova-tools/internal/secrets"
+	"github.com/nova-tools/internal/decide"
+	"github.com/nova-tools/internal/seatcred"
+	"github.com/nova-tools/internal/secrets"
 )
 
 // A child is handed the decision key and the one route key read in this process,

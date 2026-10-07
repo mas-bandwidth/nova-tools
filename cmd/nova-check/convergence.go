@@ -18,9 +18,9 @@ import (
 	"io"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/converge"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/tool"
+	"github.com/nova-tools/internal/converge"
+	"github.com/nova-tools/internal/oneline"
+	"github.com/nova-tools/internal/tool"
 )
 
 // The hints, one per required flag. Each says what the flag is and what a first

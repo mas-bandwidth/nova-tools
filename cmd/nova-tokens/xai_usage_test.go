@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/tokens"
+	"github.com/nova-tools/internal/tokens"
 )
 
 // TestXaiProviderOneUsageFileFoldsRow is #2671: --provider xai names one

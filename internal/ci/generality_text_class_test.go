@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
+	"github.com/nova-tools/internal/ci/allowlist"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -457,14 +457,14 @@ func TestGeneralityTextFindings(t *testing.T) {
 		{"HOME=/home/card", nil},
 		{"--seat studio --as rowan", []string{"rowan", "studio"}},
 		{"sed -e 's/[[:space:]]*$//'", nil},
-		{"go install github.com/mas-bandwidth/nova-tools/cmd/x@latest", nil},
+		{"go install github.com/nova-tools/cmd/x@latest", nil},
 		{"see mas-bandwidth/nova-tools#4339", nil},
 		{"see mas-bandwidth/ideas#12", []string{"mas-bandwidth"}},
 		{"[seed](github.com/mas-bandwidth/nova) and [sec](github.com/mas-bandwidth/nova/blob/main/SECURITY.md)", nil},
 		{"the store `mas-bandwidth/secrets`, and repos/mas-bandwidth/secrets/collaborators", nil},
 		{"mas-bandwidth/nova-tools-x and mas-bandwidth/novax and mas-bandwidth/secrets2", []string{"mas-bandwidth", "mas-bandwidth", "mas-bandwidth"}},
 		{"mas-bandwidth/nova mas-bandwidth/nova-tools", nil},
-		{`{"Output":"FAIL\tgithub.com/mas-bandwidth/nova-tools/cmd/x"}`, nil},
+		{`{"Output":"FAIL\tgithub.com/nova-tools/cmd/x"}`, nil},
 		{"other/mas-bandwidth/nova and xgithub.com/mas-bandwidth/nova and other/github.com/mas-bandwidth/nova", []string{"mas-bandwidth", "mas-bandwidth", "mas-bandwidth"}},
 		{"gh api repos/mas-bandwidth/secrets/collaborators and (mas-bandwidth/nova)", nil},
 		{"mail ada@mas-bandwidth.com", []string{"mas-bandwidth"}},

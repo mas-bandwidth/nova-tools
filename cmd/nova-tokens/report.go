@@ -14,13 +14,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
-	"github.com/mas-bandwidth/nova-tools/internal/bounded"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/redisauth"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/record"
-	"github.com/mas-bandwidth/nova-tools/internal/tokens"
-	"github.com/mas-bandwidth/nova-tools/internal/tool"
+	"github.com/nova-tools/internal/atomicfile"
+	"github.com/nova-tools/internal/bounded"
+	"github.com/nova-tools/internal/nsprint/redisauth"
+	"github.com/nova-tools/internal/oneline"
+	"github.com/nova-tools/internal/record"
+	"github.com/nova-tools/internal/tokens"
+	"github.com/nova-tools/internal/tool"
 )
 
 // openLedger opens the fleet Redis at addr. The seat is the one every nova tool dials with

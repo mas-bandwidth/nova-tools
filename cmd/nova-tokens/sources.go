@@ -8,8 +8,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/bounded"
-	"github.com/mas-bandwidth/nova-tools/internal/tokens"
+	"github.com/nova-tools/internal/bounded"
+	"github.com/nova-tools/internal/tokens"
 )
 
 // cmdSources reads the declared sources exactly as fold does, through the same code -- a

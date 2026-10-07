@@ -3,7 +3,7 @@ package main
 import (
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/testverbhelp"
+	"github.com/nova-tools/internal/testverbhelp"
 )
 
 // Every verb answers -h and --help with its own help on stdout at exit 0, and

@@ -13,7 +13,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
+	"github.com/nova-tools/internal/ci/allowlist"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -184,7 +184,7 @@ func namedPathMayMatch(text string) bool {
 }
 
 // namedPathStartsAToken reports whether the candidate begins a word. It is what keeps an
-// import path (`github.com/mas-bandwidth/nova-tools/internal/ci`), a URL and a path on a
+// import path (`github.com/nova-tools/internal/ci`), a URL and a path on a
 // bench (`~/rowan-working/tools/x`) out of the rule: the rule is about paths written from
 // the root of THIS repository, and those are the only ones whose existence it can judge.
 func namedPathStartsAToken(text string, start int) bool {
@@ -405,7 +405,7 @@ func TestTheNamedPathHeuristicReadsWhatItClaims(t *testing.T) {
 		},
 		{
 			name: "an import path is somebody else's tree",
-			text: `import "github.com/mas-bandwidth/nova-tools/internal/ci"`,
+			text: `import "github.com/nova-tools/internal/ci"`,
 		},
 		{
 			name: "a path on a bench is not ours",

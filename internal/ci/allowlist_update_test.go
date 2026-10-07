@@ -13,7 +13,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
+	"github.com/nova-tools/internal/ci/allowlist"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -516,7 +516,7 @@ func TestPackageShardGuardRecognizesConsumptionAndRawReads(t *testing.T) {
 			name:   "package loader consumes every shard",
 			ledger: "discarded",
 			source: `package ci
-import "github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
+import "github.com/nova-tools/internal/ci/allowlist"
 const ledgerPath = "testdata/discarded"
 func readLedger() { _, _ = allowlist.LoadPackages(ledgerPath, allowlist.Options{}) }
 `,
@@ -526,7 +526,7 @@ func readLedger() { _, _ = allowlist.LoadPackages(ledgerPath, allowlist.Options{
 			name:   "testify ledger is consumed through the same loader",
 			ledger: "testify",
 			source: `package ci
-import "github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
+import "github.com/nova-tools/internal/ci/allowlist"
 func readLedger() { _, _ = allowlist.LoadPackages("testdata/testify", allowlist.Options{PackageKeys: true}) }
 `,
 			wantLoaded: true,
@@ -535,7 +535,7 @@ func readLedger() { _, _ = allowlist.LoadPackages("testdata/testify", allowlist.
 			name:   "cyclic aliases stop while an independent valid alias resolves",
 			ledger: "discarded",
 			source: `package ci
-import "github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
+import "github.com/nova-tools/internal/ci/allowlist"
 func readLedger() {
 	var first string
 	var second string

@@ -7,7 +7,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/testkit"
+	"github.com/nova-tools/internal/testkit"
 )
 
 // A dry run is the real run's own plan: on a parent that is a file, a parent

@@ -29,7 +29,7 @@ import (
 // worker runs (onewriterWorkerRoots) import, directly or through any package of this
 // module, none of the packages that open it (onewriterStore). A worker asks the server.
 
-const onewriterModule = "github.com/mas-bandwidth/nova-tools/"
+const onewriterModule = "github.com/nova-tools/"
 
 // onewriterWorkerRoots are the packages a worker's machine runs for a sprint.
 var onewriterWorkerRoots = []string{"cmd/nova-swarm", "internal/member", "internal/sprintwire"}

@@ -14,7 +14,7 @@ import (
 	"path/filepath"
 	"runtime"
 
-	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
+	"github.com/nova-tools/internal/atomicfile"
 )
 
 // Name is the file the shim is written as.

@@ -12,7 +12,7 @@ package main
 import (
 	"os"
 
-	"github.com/mas-bandwidth/nova-tools/internal/up"
+	"github.com/nova-tools/internal/up"
 )
 
 var version string

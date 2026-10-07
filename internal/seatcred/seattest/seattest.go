@@ -14,8 +14,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/seatcred"
-	"github.com/mas-bandwidth/nova-tools/internal/subproc"
+	"github.com/nova-tools/internal/seatcred"
+	"github.com/nova-tools/internal/subproc"
 )
 
 // Home returns a new HOME holding <home>/nova-bench/secrets (the store, with

@@ -45,11 +45,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
-	"github.com/mas-bandwidth/nova-tools/internal/harness"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/seatcred"
-	"github.com/mas-bandwidth/nova-tools/internal/swarm"
+	"github.com/nova-tools/internal/buildinfo"
+	"github.com/nova-tools/internal/harness"
+	"github.com/nova-tools/internal/oneline"
+	"github.com/nova-tools/internal/seatcred"
+	"github.com/nova-tools/internal/swarm"
 )
 
 // doctorLookPath resolves a bare binary name on PATH. A package var so a test answers the

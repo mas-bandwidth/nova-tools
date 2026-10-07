@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
+	"github.com/nova-tools/internal/cardhdr"
 )
 
 // The attempt cap's default answer (docs/SPEC-SPRINT.md, the attempt cap; the

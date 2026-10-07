@@ -23,7 +23,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/subproc"
+	"github.com/nova-tools/internal/subproc"
 )
 
 // DefaultTimeout is how long one local git may run when the caller's context has no

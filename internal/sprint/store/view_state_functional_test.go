@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/ntable"
+	"github.com/nova-tools/internal/ntable"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
 )

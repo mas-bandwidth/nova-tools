@@ -10,8 +10,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/nova-tools/internal/atomicfile"
+	"github.com/nova-tools/internal/oneline"
 )
 
 // The day file: one file per day, eleven columns, every one written on every row.

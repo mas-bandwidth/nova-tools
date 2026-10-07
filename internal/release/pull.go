@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/safepath"
+	"github.com/nova-tools/internal/safepath"
 )
 
 // PulledPrefix is how a changelog section says the release was withdrawn. It is

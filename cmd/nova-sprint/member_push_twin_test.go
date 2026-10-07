@@ -11,8 +11,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/member"
-	"github.com/mas-bandwidth/nova-tools/internal/sprintwire"
+	"github.com/nova-tools/internal/member"
+	"github.com/nova-tools/internal/sprintwire"
 )
 
 // twinChild is a child the test ends by hand; twinRunner hands one per card.

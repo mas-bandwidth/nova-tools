@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/safepath"
+	"github.com/nova-tools/internal/safepath"
 )
 
 // Artifact is one shipped binary: the name it installs under and the checksum

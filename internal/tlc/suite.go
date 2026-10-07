@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/safepath"
+	"github.com/nova-tools/internal/safepath"
 )
 
 // Bounds of a run. A bounded run is the only kind a required case can be

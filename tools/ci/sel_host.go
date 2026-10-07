@@ -14,7 +14,7 @@ import (
 	"net/http"
 	"runtime"
 
-	"github.com/mas-bandwidth/nova-tools/internal/pkgselect"
+	"github.com/nova-tools/internal/pkgselect"
 )
 
 // selHTTP is the one method of *http.Client a verb uses.

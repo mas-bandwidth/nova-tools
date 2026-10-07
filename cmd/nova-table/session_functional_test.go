@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/ntable"
-	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
+	"github.com/nova-tools/internal/ntable"
+	"github.com/nova-tools/internal/redisconn"
 	"github.com/stretchr/testify/require"
 )
 

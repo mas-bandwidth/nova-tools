@@ -15,7 +15,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/sandbox"
+	"github.com/nova-tools/internal/sandbox"
 )
 
 // laneWallChild is set while TestALaneRunsInsideItsWallProfile runs: this test binary,

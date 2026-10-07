@@ -29,7 +29,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/nova-tools/internal/oneline"
 )
 
 // page is the page's files: index.html, app.js, the wordmark's face and its licence.

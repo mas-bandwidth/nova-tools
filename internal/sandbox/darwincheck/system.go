@@ -11,7 +11,7 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/subproc"
+	"github.com/nova-tools/internal/subproc"
 )
 
 // Spec is one process to run.

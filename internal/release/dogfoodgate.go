@@ -33,7 +33,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/dogfood"
+	"github.com/nova-tools/internal/dogfood"
 )
 
 // DefaultReceiptsDir is where this fleet keeps its receipts, relative to the

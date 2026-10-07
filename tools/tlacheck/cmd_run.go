@@ -11,9 +11,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/tlc"
+	"github.com/nova-tools/internal/atomicfile"
+	"github.com/nova-tools/internal/oneline"
+	"github.com/nova-tools/internal/tlc"
 )
 
 // findTLC resolves the jar and java of a verb and echoes what it found.

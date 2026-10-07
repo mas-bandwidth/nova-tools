@@ -4,7 +4,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/tool"
+	"github.com/nova-tools/internal/tool"
 )
 
 // VersionTool is nova-version on internal/tool: its verbs are this package's

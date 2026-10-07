@@ -1,6 +1,6 @@
 package store
 
-import "github.com/mas-bandwidth/nova-tools/internal/sprint"
+import "github.com/nova-tools/internal/sprint"
 
 // DealStep cuts and deals work cards by hand, the step the tick's deal replaced
 // (sprint.TickDeal): a test that needs exact queues deals with it.

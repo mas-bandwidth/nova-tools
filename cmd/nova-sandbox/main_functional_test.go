@@ -10,9 +10,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/goenv"
-	"github.com/mas-bandwidth/nova-tools/internal/sandbox/darwincheck"
-	"github.com/mas-bandwidth/nova-tools/profiles"
+	"github.com/nova-tools/internal/goenv"
+	"github.com/nova-tools/internal/sandbox/darwincheck"
+	"github.com/nova-tools/profiles"
 	"github.com/stretchr/testify/require"
 )
 

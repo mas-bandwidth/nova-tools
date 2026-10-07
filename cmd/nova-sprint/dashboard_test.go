@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/sprintdash"
+	"github.com/nova-tools/internal/sprintdash"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

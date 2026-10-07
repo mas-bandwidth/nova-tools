@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/testbin"
-	"github.com/mas-bandwidth/nova-tools/internal/update"
+	"github.com/nova-tools/internal/testbin"
+	"github.com/nova-tools/internal/update"
 
 	"github.com/stretchr/testify/require"
 )

@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
-	"github.com/mas-bandwidth/nova-tools/internal/config"
-	"github.com/mas-bandwidth/nova-tools/internal/decide"
+	"github.com/nova-tools/internal/cardhdr"
+	"github.com/nova-tools/internal/config"
+	"github.com/nova-tools/internal/decide"
 )
 
 // The steps that move primaries through the work table and the fleet: add,

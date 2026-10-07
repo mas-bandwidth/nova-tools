@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/harness"
+	"github.com/nova-tools/internal/harness"
 )
 
 // The three captures below are what the three CLIs printed on 2026-10-04 for the one-line

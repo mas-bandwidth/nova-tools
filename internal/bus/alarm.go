@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
+	"github.com/nova-tools/internal/redisconn"
 )
 
 // The classes of a send alarm: the store refused the login, or could not be

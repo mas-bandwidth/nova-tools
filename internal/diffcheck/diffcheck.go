@@ -15,7 +15,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/mas-bandwidth/nova-tools/internal/hygiene"
+	"github.com/nova-tools/internal/hygiene"
 )
 
 // File is one file of a diff: its path before and after (equal unless renamed; a

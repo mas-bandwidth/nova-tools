@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/member"
+	"github.com/nova-tools/internal/member"
 )
 
 // The cleaner's lazy work (lazyclean.go): what launches of epochs older than the current

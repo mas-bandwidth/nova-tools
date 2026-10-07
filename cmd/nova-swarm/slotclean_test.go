@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/member"
+	"github.com/nova-tools/internal/member"
 )
 
 // A finished launch's checkout is removed (slotclean.go): the member done with a launch

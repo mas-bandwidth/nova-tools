@@ -16,8 +16,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/dogfood"
-	"github.com/mas-bandwidth/nova-tools/internal/readregular"
+	"github.com/nova-tools/internal/dogfood"
+	"github.com/nova-tools/internal/readregular"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

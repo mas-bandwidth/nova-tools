@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/testgit"
+	"github.com/nova-tools/internal/testgit"
 )
 
 // Unit coverage for wall.go's capture and commit-count seam, untagged and store-free: each

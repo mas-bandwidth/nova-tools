@@ -22,8 +22,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/member"
-	"github.com/mas-bandwidth/nova-tools/internal/sprintwire"
+	"github.com/nova-tools/internal/member"
+	"github.com/nova-tools/internal/sprintwire"
 )
 
 // The sprint's server is tested as the state machine it is (the owner,

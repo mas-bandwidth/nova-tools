@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/bus"
+	"github.com/nova-tools/internal/bus"
 )
 
 // Courier is how the sprint server sends its notes to friends: each send on

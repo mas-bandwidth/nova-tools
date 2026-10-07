@@ -11,7 +11,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
+	"github.com/nova-tools/internal/atomicfile"
 )
 
 // Harness settings are what a friend's harness must hold in its own config

@@ -13,8 +13,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/config"
-	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/nova-tools/internal/config"
+	"github.com/nova-tools/internal/sprint"
 )
 
 // friend sync --every is the coordinator's hand-typed zsh loop made the verb's own

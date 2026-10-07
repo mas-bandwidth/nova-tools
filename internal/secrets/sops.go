@@ -8,8 +8,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/safepath"
+	"github.com/nova-tools/internal/oneline"
+	"github.com/nova-tools/internal/safepath"
 )
 
 const MinSopsVersion = "3.13.3"

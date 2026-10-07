@@ -8,8 +8,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/mas-bandwidth/nova-tools/internal/sprint"
-	"github.com/mas-bandwidth/nova-tools/internal/sprint/refmodel"
+	"github.com/nova-tools/internal/sprint"
+	"github.com/nova-tools/internal/sprint/refmodel"
 )
 
 // Today's bounds, stated as numbers: one part of the tick moves at most 2,000

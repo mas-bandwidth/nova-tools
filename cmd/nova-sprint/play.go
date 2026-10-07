@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/sprint/driver"
+	"github.com/nova-tools/internal/oneline"
+	"github.com/nova-tools/internal/sprint/driver"
 )
 
 // appClock is the app's clock for the driver.

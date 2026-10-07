@@ -9,7 +9,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/subproc"
+	"github.com/nova-tools/internal/subproc"
 )
 
 // exeSuffix is the extension a built binary carries on Windows. It IS the

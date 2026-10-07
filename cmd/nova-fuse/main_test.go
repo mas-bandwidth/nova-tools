@@ -23,9 +23,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/fuse"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline/audit"
-	"github.com/mas-bandwidth/nova-tools/internal/testkit"
+	"github.com/nova-tools/internal/fuse"
+	"github.com/nova-tools/internal/oneline/audit"
+	"github.com/nova-tools/internal/testkit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -1262,7 +1262,7 @@ var fuseAudit = audit.Config{
 		// debug.ReadBuildInfo and runtime's GOOS, GOARCH and Version, holds no writer of
 		// its own, and returns a STRING that this package prints -- rendered field by
 		// field through oneline.Field before it is returned.
-		`"github.com/mas-bandwidth/nova-tools/internal/buildinfo"`,
+		`"github.com/nova-tools/internal/buildinfo"`,
 		`"flag"`, `"fmt"`, `"io"`, `"os"`, `"strings"`, `"time"`,
 		// path/filepath joins a relative --box onto the injected working directory
 		// and reports whether a path is already absolute. It holds no writer and
@@ -1274,7 +1274,7 @@ var fuseAudit = audit.Config{
 		// verbflag words a flag parse error (Explain) and finds the nearest verb
 		// (Nearest); both return strings this package escapes before printing, and
 		// nothing here hands it a stream or calls its Parse or Recover.
-		`"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"`,
+		`"github.com/nova-tools/internal/nsprint/verbflag"`,
 		// errors and io/fs classify an error (errors.Is against fuse.ErrNoBox and
 		// fs.ErrExist); neither holds a writer.
 		`"errors"`, `"io/fs"`,
@@ -1284,8 +1284,8 @@ var fuseAudit = audit.Config{
 		// bounded puts its own two fields -- the kind and the remedy -- through oneline
 		// before writing them. It writes to the stream the caller hands it and nowhere
 		// else.
-		`"github.com/mas-bandwidth/nova-tools/internal/bounded"`,
-		`"github.com/mas-bandwidth/nova-tools/internal/fuse"`,
+		`"github.com/nova-tools/internal/bounded"`,
+		`"github.com/nova-tools/internal/fuse"`,
 	},
 	MinClassified: 40,
 }

@@ -5,7 +5,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
+	"github.com/nova-tools/internal/nsprint/verbflag"
 )
 
 // exitParagraph is the banner's exit codes, every verb's at once: `nova-swarm help` prints

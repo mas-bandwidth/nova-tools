@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/mas-bandwidth/nova-tools/internal/workfile"
+	"github.com/nova-tools/internal/workfile"
 )
 
 type login struct {

@@ -15,7 +15,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
+	"github.com/nova-tools/internal/ci/allowlist"
 )
 
 // gitIdentityAllowlistPath is the counted, shrink-only ledger of the test files that
@@ -119,7 +119,7 @@ func TestNoTestCommitsWithoutTheSharedGitIdentity(t *testing.T) {
 func TestGitIdentityRuleRefusesItsProbes(t *testing.T) {
 	t.Parallel()
 
-	const head = "package p\n\nimport (\n\t\"os/exec\"\n\t\"testing\"\n\n\t\"github.com/mas-bandwidth/nova-tools/internal/testgit\"\n)\n\nvar _ = testgit.Env\nvar _ = exec.Command\n\n"
+	const head = "package p\n\nimport (\n\t\"os/exec\"\n\t\"testing\"\n\n\t\"github.com/nova-tools/internal/testgit\"\n)\n\nvar _ = testgit.Env\nvar _ = exec.Command\n\n"
 	cases := []struct {
 		name, src string
 		want      []bool // OK of each site, in source order

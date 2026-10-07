@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/release"
+	"github.com/nova-tools/internal/release"
 )
 
 // sensitiveMarker is the HTML comment docs/SPEC-RELEASE.md puts immediately

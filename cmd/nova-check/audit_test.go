@@ -3,7 +3,7 @@ package main
 import (
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/oneline/audit"
+	"github.com/nova-tools/internal/oneline/audit"
 )
 
 // The source-level tripwire behind the one-line guarantee: every argument this binary
@@ -66,12 +66,12 @@ var checkAudit = audit.Config{
 		// the verb-help seam (the CLI style's rule (b), #4505): on -h it prints only flag names,
 		// their usage literals and lines of this package's own usage const, to the stdout run
 		// hands it; it never prints an argument, so nothing it writes can carry a newline in.
-		`"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"`,
+		`"github.com/nova-tools/internal/nsprint/verbflag"`,
 		// version.go, and the reason it cannot write past the escape: buildinfo reads
 		// debug.ReadBuildInfo and runtime's GOOS, GOARCH and Version, holds no writer of
 		// its own, and returns a STRING that this package prints -- rendered field by
 		// field through oneline.Field before it is returned.
-		`"github.com/mas-bandwidth/nova-tools/internal/buildinfo"`,
+		`"github.com/nova-tools/internal/buildinfo"`,
 		`"flag"`, `"fmt"`, `"io"`, `"os"`, `"sort"`, `"strings"`,
 		// maps and slices sort map keys (slices.Sorted(maps.Keys), slices.AppendSeq):
 		// they return values and hold no writer.
@@ -81,14 +81,14 @@ var checkAudit = audit.Config{
 		// THIS package, which the classifier walks like any other print site, and bounded
 		// puts its own two fields -- the kind and the remedy -- through oneline before
 		// writing them. It writes to the stream the caller hands it and to nothing else.
-		`"github.com/mas-bandwidth/nova-tools/internal/bounded"`,
-		`"github.com/mas-bandwidth/nova-tools/internal/check"`,
+		`"github.com/nova-tools/internal/bounded"`,
+		`"github.com/nova-tools/internal/check"`,
 		// The shared envelope escapes line fields and JSON strings before writing.
-		`"github.com/mas-bandwidth/nova-tools/internal/tool"`,
+		`"github.com/nova-tools/internal/tool"`,
 		// gitrun starts one bounded git child and hands back its stdout and stderr as bytes
 		// to this package (stagedGit, the cat-file batch); it prints to no stream, and what
 		// comes back is read, never printed, except through the escaped error line.
-		`"github.com/mas-bandwidth/nova-tools/internal/gitrun"`,
+		`"github.com/nova-tools/internal/gitrun"`,
 		// dogfood.go's three, and why none of them can write past the escape:
 		// internal/dogfood holds no writer at all -- it reads a command
 		// reference and a directory of receipts, returns values, and renders
@@ -99,14 +99,14 @@ var checkAudit = audit.Config{
 		// the receipt's RFC3339 stamp; neither holds a stream.
 		`"context"`,
 		`"time"`,
-		`"github.com/mas-bandwidth/nova-tools/internal/dogfood"`,
+		`"github.com/nova-tools/internal/dogfood"`,
 		// convergence.go's two. internal/converge holds no writer at all: it
 		// reads a forge, a checkout, a directory and three documents through
 		// seams, and returns VALUES -- a report whose every line it renders
 		// through internal/oneline. encoding/json is the --json shape, and its
 		// encoder escapes rather than prints: it returns bytes this file writes.
 		`"encoding/json"`,
-		`"github.com/mas-bandwidth/nova-tools/internal/converge"`,
+		`"github.com/nova-tools/internal/converge"`,
 		// staged.go's six, and why none of them can write past the escape.
 		// bufio READS the batch reader's framed stream (NewReader, ReadString,
 		// ReadByte) from a pipe this package opened; bytes holds the stdout
@@ -127,7 +127,7 @@ var checkAudit = audit.Config{
 		// never printed, and reach the stream only through refuse, which escapes them.
 		// The matched text of a secret finding is not in any field it returns (its own
 		// TestHygieneRejectsAKeyShapeAndNeverPrintsIt searches every field for it).
-		`"github.com/mas-bandwidth/nova-tools/internal/hygiene"`,
+		`"github.com/nova-tools/internal/hygiene"`,
 	},
 	MinClassified: 30,
 }

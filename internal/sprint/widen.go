@@ -6,10 +6,10 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
-	"github.com/mas-bandwidth/nova-tools/internal/decide"
-	"github.com/mas-bandwidth/nova-tools/internal/hygiene"
-	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
+	"github.com/nova-tools/internal/cardhdr"
+	"github.com/nova-tools/internal/decide"
+	"github.com/nova-tools/internal/hygiene"
+	"github.com/nova-tools/internal/typedrec"
 )
 
 // Twinned wider by rule (docs/SPEC-SPRINT.md section 8, the rules table's row widen). On

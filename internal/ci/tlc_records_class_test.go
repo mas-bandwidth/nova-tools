@@ -19,7 +19,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/tlc"
+	"github.com/nova-tools/internal/tlc"
 )
 
 // Model changes require new measured evidence, independent of checkout mtimes.

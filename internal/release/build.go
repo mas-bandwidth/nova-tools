@@ -14,7 +14,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/dogfood"
+	"github.com/nova-tools/internal/dogfood"
 )
 
 // SumsFile is the name of the checksum file in every artifact directory, in the

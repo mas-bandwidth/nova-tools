@@ -35,7 +35,7 @@ import (
 // operand with no separator before it, and is a finding. A final `args...` spread is not
 // read: the argv it spreads is read where it is built.
 const (
-	gitrunPath = "github.com/mas-bandwidth/nova-tools/internal/gitrun"
+	gitrunPath = "github.com/nova-tools/internal/gitrun"
 )
 
 // gitOperandDirs are where card values reach git.
@@ -273,7 +273,7 @@ func TestCardDerivedGitOperandsFollowTheSeparator(t *testing.T) {
 func TestGitOperandClassTestRefusesItsProbes(t *testing.T) {
 	t.Parallel()
 
-	const head = "package p\n\nimport (\n\t\"context\"\n\t\"os/exec\"\n\n\t\"github.com/mas-bandwidth/nova-tools/internal/gitrun\"\n)\n\nvar _ = context.Background\nvar _ = exec.Command\nvar _ = gitrun.Run\n\n"
+	const head = "package p\n\nimport (\n\t\"context\"\n\t\"os/exec\"\n\n\t\"github.com/nova-tools/internal/gitrun\"\n)\n\nvar _ = context.Background\nvar _ = exec.Command\nvar _ = gitrun.Run\n\n"
 	cases := []struct {
 		name string
 		src  string
@@ -291,7 +291,7 @@ func TestGitOperandClassTestRefusesItsProbes(t *testing.T) {
 		{"an argv spread is read where it is built", head + "func f(ctx context.Context, argv []string) { stageGit(ctx, argv...) }", 0},
 		{"a gitrun call with a card value", head + "func f(ctx context.Context, sha string) { _, _ = gitrun.Output(ctx, gitrun.Options{}, \"show\", sha) }", 1},
 		{"a gitrun call behind --end-of-options", head + "func f(ctx context.Context, sha string) { _, _ = gitrun.Output(ctx, gitrun.Options{}, \"show\", \"--end-of-options\", sha) }", 0},
-		{"an aliased gitrun", strings.Replace(head, "\"github.com/mas-bandwidth/nova-tools/internal/gitrun\"", "g \"github.com/mas-bandwidth/nova-tools/internal/gitrun\"", 1) + "func f(ctx context.Context, sha string) { _, _ = g.Output(ctx, g.Options{}, \"show\", sha) }", 1},
+		{"an aliased gitrun", strings.Replace(head, "\"github.com/nova-tools/internal/gitrun\"", "g \"github.com/nova-tools/internal/gitrun\"", 1) + "func f(ctx context.Context, sha string) { _, _ = g.Output(ctx, g.Options{}, \"show\", sha) }", 1},
 		{"exec.CommandContext of git with a card value", head + "func f(ctx context.Context, sha string) { _ = exec.CommandContext(ctx, \"git\", \"show\", sha) }", 1},
 		{"exec.Command of git behind --", head + "func f(sha string) { _ = exec.Command(\"git\", \"show\", \"--\", sha) }", 0},
 		{"exec.Command of another program", head + "func f(sha string) { _ = exec.Command(\"ls\", sha) }", 0},

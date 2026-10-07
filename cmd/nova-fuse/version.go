@@ -10,7 +10,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
+	"github.com/nova-tools/internal/buildinfo"
 )
 
 // version is empty in an ordinary build and is the one override: a release stamps it

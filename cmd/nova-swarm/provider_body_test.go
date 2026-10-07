@@ -18,8 +18,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/swarm"
+	"github.com/nova-tools/internal/oneline"
+	"github.com/nova-tools/internal/swarm"
 )
 
 // The card does not dial the provider. The fake harness posts to the baseURL

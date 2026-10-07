@@ -160,7 +160,7 @@ func TestSlowtestsRefusesATerminalOnStdin(t *testing.T) {
 	stderr.Reset()
 	code = run([]string{"slowtests", "--example", "--budget", "120", "--load", "1", "--cpus", "2"}, terminal{}, &stdout, &stderr)
 	assert.Equal(t, 0, code, "--example reads the built-in stream, not the terminal: %s", stderr.String())
-	assert.Equal(t, "CI-SLOW OK packages=2 slowest=github.com/mas-bandwidth/nova-tools/internal/example:65.1s\n"+loadLine1of2, stdout.String())
+	assert.Equal(t, "CI-SLOW OK packages=2 slowest=github.com/nova-tools/internal/example:65.1s\n"+loadLine1of2, stdout.String())
 }
 
 // terminal is a reader that answers as a terminal through the seam isTerminal
@@ -548,8 +548,8 @@ func TestSlowtestsVerdictIsTheSameAtAnyLoadEndToEnd(t *testing.T) {
 	require.NoError(t, os.WriteFile(allow, append(repoRows, []byte("internal/pkg\tTestA\t1.2\t0.4s@run36264290984\n")...), 0o644))
 	slow := `{"Action":"pass","Package":"example.com/internal/pkg","Test":"TestA","Elapsed":1.4}
 {"Action":"pass","Package":"example.com/internal/pkg","Elapsed":1.5}
-{"Action":"pass","Package":"github.com/mas-bandwidth/nova-tools/cmd/nova-bus","Test":"TestWait","Elapsed":0.9}
-{"Action":"pass","Package":"github.com/mas-bandwidth/nova-tools/cmd/nova-bus","Elapsed":58.8}
+{"Action":"pass","Package":"github.com/nova-tools/cmd/nova-bus","Test":"TestWait","Elapsed":0.9}
+{"Action":"pass","Package":"github.com/nova-tools/cmd/nova-bus","Elapsed":58.8}
 `
 	sleeps := `{"Action":"output","Package":"example.com/internal/pkg","Test":"TestKnown","Output":"SLEEPS: x\n"}
 {"Action":"skip","Package":"example.com/internal/pkg","Test":"TestKnown","Elapsed":0}
@@ -565,7 +565,7 @@ func TestSlowtestsVerdictIsTheSameAtAnyLoadEndToEnd(t *testing.T) {
 		}{{"pull request", nil, 0}, {"nightly", []string{"--enforce"}, 1}} {
 			args := append([]string{"slowtests", "--package-budget", "2", "--test-budget", "1", "--allowlist", allow, "--sleeps", ledger, "--load", load, "--cpus", "32"}, leg.args...)
 			code, stdout, stderr := runCI(t, args, slow)
-			want := "CI-SLOW package=github.com/mas-bandwidth/nova-tools/cmd/nova-bus seconds=58.8s budget=2s slowest=TestWait:0.9s\n" +
+			want := "CI-SLOW package=github.com/nova-tools/cmd/nova-bus seconds=58.8s budget=2s slowest=TestWait:0.9s\n" +
 				"CI-SLOW test=TestA package=example.com/internal/pkg seconds=1.4s budget=1.2s\n" +
 				"CI-LOAD load=" + load + ".00 cpus=32 per-cpu="
 			assert.Equal(t, leg.code, code, "load %s, %s leg: exit %d stdout %q stderr %q, want %d and %q...", load, leg.name, code, stdout, stderr, leg.code, want)

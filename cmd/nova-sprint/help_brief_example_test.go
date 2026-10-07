@@ -10,9 +10,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
-	"github.com/mas-bandwidth/nova-tools/internal/cardtree"
-	"github.com/mas-bandwidth/nova-tools/internal/swarm"
+	"github.com/nova-tools/internal/cardhdr"
+	"github.com/nova-tools/internal/cardtree"
+	"github.com/nova-tools/internal/swarm"
 )
 
 // cleanLine normalizes a line of text, unquoting Go string literals if scanning source code.

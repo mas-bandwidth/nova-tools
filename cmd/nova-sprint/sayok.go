@@ -7,7 +7,7 @@ import (
 	"maps"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/swarm"
+	"github.com/nova-tools/internal/swarm"
 )
 
 // sayOK prints a verb's success as its typed line, or, with --json, as one JSON

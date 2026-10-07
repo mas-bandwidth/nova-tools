@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
+	"github.com/nova-tools/internal/cardcost"
 )
 
 // Stats tidy (`nova-sprint stats tidy`; docs/SPEC-SPRINT.md section 11, Statistics): the

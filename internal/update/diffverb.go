@@ -8,7 +8,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/tool"
+	"github.com/nova-tools/internal/tool"
 )
 
 // readSnapshotFile reads the TSV `snapshot` writes. A missing or wrong header,

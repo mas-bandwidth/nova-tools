@@ -9,10 +9,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/tool"
-	"github.com/mas-bandwidth/nova-tools/internal/workfile"
-	"github.com/mas-bandwidth/nova-tools/internal/workgh"
+	"github.com/nova-tools/internal/oneline"
+	"github.com/nova-tools/internal/tool"
+	"github.com/nova-tools/internal/workfile"
+	"github.com/nova-tools/internal/workgh"
 )
 
 // checkImport is import's rules over its flags, run with every other rule so

@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/units"
+	"github.com/nova-tools/internal/units"
 )
 
 // seat install (docs/SPEC-SPRINT.md, "Handing over the seat"; the owner, 2026-10-04:

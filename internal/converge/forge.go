@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/subproc"
+	"github.com/nova-tools/internal/oneline"
+	"github.com/nova-tools/internal/subproc"
 )
 
 // PR is one pull request, in the four facts convergence reads.

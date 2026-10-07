@@ -15,7 +15,7 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/alicebob/miniredis/v2/server"
 
-	"github.com/mas-bandwidth/nova-tools/internal/tokens"
+	"github.com/nova-tools/internal/tokens"
 )
 
 // ledgerRedis is the Redis the ledger/report verbs are pointed at for the test: a miniredis

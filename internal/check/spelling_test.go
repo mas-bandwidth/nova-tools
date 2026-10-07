@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/check"
+	"github.com/nova-tools/internal/check"
 )
 
 // checkSpellingText is the tests' in-memory seam over the live checker: one

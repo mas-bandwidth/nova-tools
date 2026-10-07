@@ -10,7 +10,7 @@ import (
 	"runtime/debug"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
+	"github.com/nova-tools/internal/atomicfile"
 )
 
 // The layout of a root (docs/SPEC-UP.md "The root"). Every path a step

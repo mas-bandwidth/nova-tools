@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/tlc"
+	"github.com/nova-tools/internal/tlc"
 	tassert "github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

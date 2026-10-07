@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
+	"github.com/nova-tools/internal/gitrun"
 )
 
 // The base cure (docs/SPEC-SPRINT.md section 8, the base-gate rule): a base red at its tip

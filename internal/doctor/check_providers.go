@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/provbalance"
+	"github.com/nova-tools/internal/provbalance"
 )
 
 // The providers check: each nova-config route names a provider and model, and the friends

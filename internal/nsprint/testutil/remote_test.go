@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
+	"github.com/nova-tools/internal/nsprint/testutil"
 	"github.com/stretchr/testify/require"
 )
 

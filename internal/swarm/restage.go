@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/cardcontract"
-	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
+	"github.com/nova-tools/internal/cardcontract"
+	"github.com/nova-tools/internal/typedrec"
 )
 
 // restageAtTip stages a rework's checkout at the tip of its base branch (docs/SPEC-CARD-CONTRACT.md,

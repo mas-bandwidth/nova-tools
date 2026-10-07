@@ -10,8 +10,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/mas-bandwidth/nova-tools/internal/ntable"
-	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/nova-tools/internal/ntable"
+	"github.com/nova-tools/internal/sprint"
 )
 
 // The tick's twin: the sprint read once and kept, so every tick stays

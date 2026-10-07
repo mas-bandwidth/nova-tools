@@ -4,8 +4,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
-	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
+	"github.com/nova-tools/internal/cardcost"
+	"github.com/nova-tools/internal/cardhdr"
 )
 
 // A read needs a reader, not a route (docs/SPEC-SPRINT.md section 6; the card

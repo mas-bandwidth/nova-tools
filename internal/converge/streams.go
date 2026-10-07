@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/dogfood"
+	"github.com/nova-tools/internal/dogfood"
 )
 
 // Order is the fixed order of the reading.

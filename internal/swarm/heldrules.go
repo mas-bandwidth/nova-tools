@@ -6,7 +6,7 @@ import (
 	"path"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/fleet"
+	"github.com/nova-tools/fleet"
 )
 
 // RULES BY REFERENCE: THE MEMBER INJECTS THE RULES ONCE; THE CARD DOES NOT CARRY THEM.

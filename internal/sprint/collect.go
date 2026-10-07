@@ -3,7 +3,7 @@ package sprint
 import (
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
+	"github.com/nova-tools/internal/typedrec"
 )
 
 // Collect is the coordinator's hand on the friends' outboxes (the coordinator's stopgap

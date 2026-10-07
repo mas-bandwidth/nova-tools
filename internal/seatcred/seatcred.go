@@ -20,7 +20,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/mas-bandwidth/nova-tools/internal/secrets"
+	"github.com/nova-tools/internal/secrets"
 )
 
 const (

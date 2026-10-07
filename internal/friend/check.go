@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/bus"
+	"github.com/nova-tools/internal/bus"
 )
 
 // Verdict constants for the friend health check.

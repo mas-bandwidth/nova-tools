@@ -9,8 +9,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
-	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
+	"github.com/nova-tools/internal/cardhdr"
+	"github.com/nova-tools/internal/typedrec"
 )
 
 // The steps of review: ask and read (mechanical, and the readers' own), and

@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/tlc"
+	"github.com/nova-tools/internal/tlc"
 )
 
 // loads reads the given 1-minute loads in turn, the last one again and again.

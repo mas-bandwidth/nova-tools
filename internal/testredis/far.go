@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/delayproxy"
+	"github.com/nova-tools/internal/delayproxy"
 )
 
 // Far puts a store at a distance. It listens on 127.0.0.1, on a port the

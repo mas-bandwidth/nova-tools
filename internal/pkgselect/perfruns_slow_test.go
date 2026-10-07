@@ -16,7 +16,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/goenv"
+	"github.com/nova-tools/internal/goenv"
 )
 
 // realRun is a Runner over real processes, bounded.
@@ -60,7 +60,7 @@ func TestThePerfJobSchedulesEveryToolsHelpBudget(t *testing.T) {
 		if !strings.Contains(string(b), "testverbhelp.Check(") {
 			continue
 		}
-		pkg := "github.com/mas-bandwidth/nova-tools/cmd/" + filepath.Base(filepath.Dir(f))
+		pkg := "github.com/nova-tools/cmd/" + filepath.Base(filepath.Dir(f))
 		assert.Contains(t, scheduled[pkg], "TestEveryVerbsHelpIsWithinTheBudget", "%s's help budget is not scheduled by the perf job; notes: %q", pkg, notes)
 	}
 }

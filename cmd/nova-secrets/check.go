@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/mas-bandwidth/nova-tools/internal/secrets"
+	"github.com/nova-tools/internal/secrets"
 )
 
 func runCheckCLI(args []string, s streams) int {

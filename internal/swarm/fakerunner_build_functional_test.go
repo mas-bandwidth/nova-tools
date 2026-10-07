@@ -16,8 +16,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/goenv"
-	"github.com/mas-bandwidth/nova-tools/internal/testbin"
+	"github.com/nova-tools/internal/goenv"
+	"github.com/nova-tools/internal/testbin"
 	"github.com/stretchr/testify/require"
 )
 

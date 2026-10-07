@@ -8,7 +8,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/redisfn"
+	"github.com/nova-tools/internal/redisfn"
 )
 
 // A function runs every command its Lua calls under the caller's ACL, so a

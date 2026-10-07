@@ -7,9 +7,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
-	"github.com/mas-bandwidth/nova-tools/internal/cardtree"
-	"github.com/mas-bandwidth/nova-tools/internal/decide"
+	"github.com/nova-tools/internal/cardhdr"
+	"github.com/nova-tools/internal/cardtree"
+	"github.com/nova-tools/internal/decide"
 )
 
 // NOVA-DECIDE'S LAYER 2 in the sprint (docs/SPEC-SPRINT.md sections 2 and 5; the owner,

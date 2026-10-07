@@ -23,15 +23,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/bounded"
-	"github.com/mas-bandwidth/nova-tools/internal/cardcontract"
-	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
-	"github.com/mas-bandwidth/nova-tools/internal/harness"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
+	"github.com/nova-tools/internal/bounded"
+	"github.com/nova-tools/internal/cardcontract"
+	"github.com/nova-tools/internal/cardcost"
+	"github.com/nova-tools/internal/harness"
+	"github.com/nova-tools/internal/nsprint/verbflag"
 
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/seatcred"
-	"github.com/mas-bandwidth/nova-tools/internal/swarm"
+	"github.com/nova-tools/internal/oneline"
+	"github.com/nova-tools/internal/seatcred"
+	"github.com/nova-tools/internal/swarm"
 )
 
 const usage = `nova-swarm: one-task AI workers, each run in the sandbox with a deadline and a token budget

@@ -6,7 +6,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
+	"github.com/nova-tools/internal/typedrec"
 )
 
 // A card result is read in the card contract's shape (docs/SPEC-CARD-CONTRACT.md

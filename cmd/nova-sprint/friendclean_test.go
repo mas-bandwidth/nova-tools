@@ -13,10 +13,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/config"
-	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
-	"github.com/mas-bandwidth/nova-tools/internal/gocache"
-	"github.com/mas-bandwidth/nova-tools/internal/testkit"
+	"github.com/nova-tools/internal/config"
+	"github.com/nova-tools/internal/gitrun"
+	"github.com/nova-tools/internal/gocache"
+	"github.com/nova-tools/internal/testkit"
 )
 
 // friend clean (friendclean.go; docs/FRIENDS.md; ideas#833, the owner 2026-10-02: "we

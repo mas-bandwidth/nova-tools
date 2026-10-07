@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
-	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
-	"github.com/mas-bandwidth/nova-tools/internal/decide"
+	"github.com/nova-tools/internal/cardcost"
+	"github.com/nova-tools/internal/cardhdr"
+	"github.com/nova-tools/internal/decide"
 )
 
 // The card decides the model it runs on.

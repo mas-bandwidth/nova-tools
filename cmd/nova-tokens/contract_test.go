@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/tokens"
+	"github.com/nova-tools/internal/tokens"
 )
 
 // The contract tests: the exit codes, the ceilings, the source-level tripwires the spec

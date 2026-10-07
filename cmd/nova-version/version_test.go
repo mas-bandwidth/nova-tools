@@ -3,7 +3,7 @@ package main
 import (
 	"bytes"
 	"fmt"
-	"github.com/mas-bandwidth/nova-tools/internal/update"
+	"github.com/nova-tools/internal/update"
 	"strings"
 	"testing"
 

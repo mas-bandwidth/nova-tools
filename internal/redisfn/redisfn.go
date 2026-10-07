@@ -100,7 +100,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/nova-tools/internal/oneline"
 )
 
 // MaxSourceBytes is the largest source a library may have, 4 MiB: a library

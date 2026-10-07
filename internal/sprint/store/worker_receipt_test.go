@@ -6,8 +6,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/ntable"
-	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/nova-tools/internal/ntable"
+	"github.com/nova-tools/internal/sprint"
 	"github.com/stretchr/testify/require"
 )
 

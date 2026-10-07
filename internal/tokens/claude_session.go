@@ -24,7 +24,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/nova-tools/internal/oneline"
 )
 
 // Weights is the four ratios the WEIGHTED equivalent is built from: how many fresh input

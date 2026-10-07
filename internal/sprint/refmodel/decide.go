@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/nova-tools/internal/sprint"
 )
 
 // The duties of today's tick, by name, in the order the machine runs them: the

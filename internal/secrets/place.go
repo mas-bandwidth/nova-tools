@@ -11,10 +11,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/safepath"
-	"github.com/mas-bandwidth/nova-tools/internal/testguard"
+	"github.com/nova-tools/internal/atomicfile"
+	"github.com/nova-tools/internal/oneline"
+	"github.com/nova-tools/internal/safepath"
+	"github.com/nova-tools/internal/testguard"
 )
 
 // place.go implements `nova-secrets place`, which copies one named secret from the

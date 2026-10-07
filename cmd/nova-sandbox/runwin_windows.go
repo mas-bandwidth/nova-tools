@@ -29,8 +29,8 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/mas-bandwidth/nova-tools/internal/safepath"
-	"github.com/mas-bandwidth/nova-tools/internal/sandbox"
+	"github.com/nova-tools/internal/safepath"
+	"github.com/nova-tools/internal/sandbox"
 )
 
 // The Win32 constants, each with its value, because a constant referred to by name from a

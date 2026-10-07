@@ -12,10 +12,10 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/cardtree"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/subproc"
-	"github.com/mas-bandwidth/nova-tools/internal/swarm"
+	"github.com/nova-tools/internal/cardtree"
+	"github.com/nova-tools/internal/oneline"
+	"github.com/nova-tools/internal/subproc"
+	"github.com/nova-tools/internal/swarm"
 )
 
 // cmdStep is the script-step executor (docs/SPEC-SPRINT.md, a card is a tree of steps;

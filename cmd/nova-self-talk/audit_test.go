@@ -3,7 +3,7 @@ package main
 import (
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/oneline/audit"
+	"github.com/nova-tools/internal/oneline/audit"
 )
 
 // The source-level tripwire behind the one-line guarantee: every argument this binary
@@ -42,16 +42,16 @@ var selfTalkAudit = audit.Config{
 	Imports: []string{
 		// example.go uses atomicfile only to publish embedded page bytes to a file.
 		// It has no stdout or stderr writer; failures return through the escaped refusal.
-		`"github.com/mas-bandwidth/nova-tools/internal/atomicfile"`,
+		`"github.com/nova-tools/internal/atomicfile"`,
 		// the verb-help seam (the CLI style's rule (b), #4505): on -h it prints only flag names,
 		// their usage literals and lines of this package's own usage const, to the stdout run
 		// hands it; it never prints an argument, so nothing it writes can carry a newline in.
-		`"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"`,
+		`"github.com/nova-tools/internal/nsprint/verbflag"`,
 		// version.go, and the reason it cannot write past the escape: buildinfo reads
 		// debug.ReadBuildInfo and runtime's GOOS, GOARCH and Version, holds no writer of
 		// its own, and returns a STRING that this package prints -- rendered field by
 		// field through oneline.Field before it is returned.
-		`"github.com/mas-bandwidth/nova-tools/internal/buildinfo"`,
+		`"github.com/nova-tools/internal/buildinfo"`,
 		`"errors"`, `"flag"`, `"fmt"`, `"io"`, `"io/fs"`, `"os"`, `"slices"`, `"strings"`,
 		// cmp.Or picks between two strings a caller already holds; it holds no writer.
 		`"cmp"`,
@@ -64,15 +64,15 @@ var selfTalkAudit = audit.Config{
 		// tool renders the --json form: Out.Render(stdout, true) marshals one value with
 		// encoding/json, which escapes every control character, so a JSON line is one line
 		// whatever a file name or a sentence holds. Its typed-line rendering is not used here.
-		`"github.com/mas-bandwidth/nova-tools/internal/tool"`,
+		`"github.com/nova-tools/internal/tool"`,
 		// bounded prints the capped finding listings and the one MORE line that stands
 		// for what they did not print. Every line reaching it is rendered by a
 		// fmt.Sprintf in THIS package, which the classifier walks like any other print
 		// site, and bounded puts its own two fields -- the kind and the remedy -- through
 		// oneline before writing them. It writes to the stream the caller hands it and
 		// to nothing else.
-		`"github.com/mas-bandwidth/nova-tools/internal/bounded"`,
-		`"github.com/mas-bandwidth/nova-tools/internal/selftalk"`,
+		`"github.com/nova-tools/internal/bounded"`,
+		`"github.com/nova-tools/internal/selftalk"`,
 	},
 	MinClassified: 10,
 }

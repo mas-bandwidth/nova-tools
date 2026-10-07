@@ -14,9 +14,9 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
-	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
-	"github.com/mas-bandwidth/nova-tools/internal/redisfn"
+	"github.com/nova-tools/internal/nsprint/fn"
+	"github.com/nova-tools/internal/redisconn"
+	"github.com/nova-tools/internal/redisfn"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

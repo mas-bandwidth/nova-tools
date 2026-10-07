@@ -20,7 +20,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/nova-tools/internal/oneline"
 )
 
 // DefaultNativeIdle is the window a native run gives a card that is saying nothing and

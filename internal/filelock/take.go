@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/nova-tools/internal/oneline"
 )
 
 // maxAsks bounds how many times a taker that only askers kept out tries again

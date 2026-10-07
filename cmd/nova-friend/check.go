@@ -12,9 +12,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/bus"
-	"github.com/mas-bandwidth/nova-tools/internal/friend"
-	"github.com/mas-bandwidth/nova-tools/internal/tool"
+	"github.com/nova-tools/internal/bus"
+	"github.com/nova-tools/internal/friend"
+	"github.com/nova-tools/internal/tool"
 )
 
 var callArgs sync.Map // *tool.Call -> []string

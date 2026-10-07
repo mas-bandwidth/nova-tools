@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/testverbhelp"
+	"github.com/nova-tools/internal/testverbhelp"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

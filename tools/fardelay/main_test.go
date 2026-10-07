@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/delayproxy"
+	"github.com/nova-tools/internal/delayproxy"
 )
 
 // farCeiling bounds each read of a socket here, generously: a test that is not

@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/seatcred"
+	"github.com/nova-tools/internal/seatcred"
 )
 
 func TestFromArgsTakesTheSeatFlagOrTheEnvironment(t *testing.T) {

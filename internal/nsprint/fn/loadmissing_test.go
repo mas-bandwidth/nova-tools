@@ -10,8 +10,8 @@ import (
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
+	"github.com/nova-tools/internal/nsprint/fn"
+	"github.com/nova-tools/internal/nsprint/testutil"
 )
 
 // TestLoadMissingNeverReplaces is nova-tools #3620: a verb's load on the way

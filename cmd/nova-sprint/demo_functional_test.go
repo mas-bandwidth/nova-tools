@@ -19,9 +19,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
-	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
-	"github.com/mas-bandwidth/nova-tools/internal/testredis"
+	"github.com/nova-tools/internal/nsprint/fn"
+	"github.com/nova-tools/internal/sprint/store"
+	"github.com/nova-tools/internal/testredis"
 )
 
 // demoBackup makes a backup of a sprint made on a throwaway twin: every key a

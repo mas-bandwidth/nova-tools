@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/hostload"
-	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/nova-tools/internal/hostload"
+	"github.com/nova-tools/internal/sprint"
 	"github.com/stretchr/testify/require"
 )
 

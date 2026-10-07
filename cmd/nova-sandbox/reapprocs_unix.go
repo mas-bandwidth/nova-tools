@@ -15,8 +15,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/sandbox"
-	"github.com/mas-bandwidth/nova-tools/internal/subproc"
+	"github.com/nova-tools/internal/sandbox"
+	"github.com/nova-tools/internal/subproc"
 )
 
 // runGroupUsage is the run verb's count of a tree, for the wall's caps: the same count the

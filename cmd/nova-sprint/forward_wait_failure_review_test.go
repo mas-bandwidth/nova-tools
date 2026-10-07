@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/sprintwire"
+	"github.com/nova-tools/internal/sprintwire"
 )
 
 // A failed log poll cannot satisfy inbox --wait: a subsequent ordinary inbox

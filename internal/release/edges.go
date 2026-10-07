@@ -13,10 +13,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/bounded"
-	"github.com/mas-bandwidth/nova-tools/internal/goenv"
-	"github.com/mas-bandwidth/nova-tools/internal/subproc"
-	"github.com/mas-bandwidth/nova-tools/internal/testguard"
+	"github.com/nova-tools/internal/bounded"
+	"github.com/nova-tools/internal/goenv"
+	"github.com/nova-tools/internal/subproc"
+	"github.com/nova-tools/internal/testguard"
 )
 
 // childCap is the ceiling on one child's captured output, the same 64 KiB the

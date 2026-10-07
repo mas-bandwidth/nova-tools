@@ -12,9 +12,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/harness"
-	"github.com/mas-bandwidth/nova-tools/internal/member"
-	"github.com/mas-bandwidth/nova-tools/internal/swarm"
+	"github.com/nova-tools/internal/harness"
+	"github.com/nova-tools/internal/member"
+	"github.com/nova-tools/internal/swarm"
 )
 
 // A launch whose binary is a headless harness builds its argv from the harness's own

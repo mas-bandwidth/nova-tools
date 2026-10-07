@@ -13,7 +13,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/swarm"
+	"github.com/nova-tools/internal/swarm"
 )
 
 // THE CARD THAT HUNG, AND WHAT IT COST. `js-under-20-bytes` (2026-09-19) took a refusal,

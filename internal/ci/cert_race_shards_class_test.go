@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/pkgselect"
+	"github.com/nova-tools/internal/pkgselect"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
@@ -108,7 +108,7 @@ func TestCertificationRaceShardsPartitionTheLiveTree(t *testing.T) {
 	// The deal reads pkgselect.DeprecatedFile: a package under its internal/nsprint
 	// prefix that no keep line names is dropped. No such package is in the tree
 	// any more, so the control is one that is not.
-	probe := "github.com/mas-bandwidth/nova-tools/internal/nsprint/deprecatedprobe"
+	probe := "github.com/nova-tools/internal/nsprint/deprecatedprobe"
 	dep, err := pkgselect.LoadDeprecated(repoRoot(t))
 	require.NoError(t, err)
 	require.False(t, dep.LivePackage(probe), "the deprecated list kept %s; the stand-in for %s is not being read", probe, pkgselect.DeprecatedFile)

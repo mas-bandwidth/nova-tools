@@ -9,8 +9,8 @@ import (
 
 	"golang.org/x/text/width"
 
-	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/nova-tools/internal/cardcost"
+	"github.com/nova-tools/internal/oneline"
 )
 
 // RenderOpts is what Render is told beyond the table.

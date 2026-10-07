@@ -12,7 +12,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/nova-tools/internal/oneline"
 )
 
 // ExtractPublicKeyFromKeyFile parses '# public key: (age1...)' from an age private key file.

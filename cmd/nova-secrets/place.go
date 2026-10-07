@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/mas-bandwidth/nova-tools/internal/secrets"
+	"github.com/nova-tools/internal/secrets"
 )
 
 func runPlaceCLI(args []string, s streams) int {

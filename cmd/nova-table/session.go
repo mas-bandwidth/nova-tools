@@ -10,11 +10,11 @@ import (
 	"strings"
 	"sync/atomic"
 
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
-	"github.com/mas-bandwidth/nova-tools/internal/ntable"
-	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
-	"github.com/mas-bandwidth/nova-tools/internal/seatcred"
-	"github.com/mas-bandwidth/nova-tools/internal/tty"
+	"github.com/nova-tools/internal/nsprint/verbflag"
+	"github.com/nova-tools/internal/ntable"
+	"github.com/nova-tools/internal/redisconn"
+	"github.com/nova-tools/internal/seatcred"
+	"github.com/nova-tools/internal/tty"
 	"github.com/redis/go-redis/v9"
 )
 

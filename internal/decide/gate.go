@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
-	"github.com/mas-bandwidth/nova-tools/internal/diffcheck"
+	"github.com/nova-tools/internal/cardhdr"
+	"github.com/nova-tools/internal/diffcheck"
 )
 
 // The gate decision (SPEC-NOVA-DECIDE section 12; docs/SPEC-SPRINT.md section 5, the gate

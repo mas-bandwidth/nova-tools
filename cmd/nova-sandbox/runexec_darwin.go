@@ -19,8 +19,8 @@ import (
 	"os"
 	"syscall"
 
-	"github.com/mas-bandwidth/nova-tools/internal/sandbox"
-	"github.com/mas-bandwidth/nova-tools/internal/subproc"
+	"github.com/nova-tools/internal/sandbox"
+	"github.com/nova-tools/internal/subproc"
 )
 
 // startInOwnGroup applies the policy, starts the command in a new process group, and

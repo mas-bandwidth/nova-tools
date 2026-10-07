@@ -16,10 +16,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/release"
-	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/nova-tools/internal/buildinfo"
+	"github.com/nova-tools/internal/oneline"
+	"github.com/nova-tools/internal/release"
+	"github.com/nova-tools/internal/sprint"
 )
 
 // cmdAdopt is the adoption pipeline (internal/sprint/adopt.go;

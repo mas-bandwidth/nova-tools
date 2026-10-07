@@ -48,8 +48,8 @@ import (
 	"io"
 	"os"
 
-	"github.com/mas-bandwidth/nova-tools/internal/sandbox/darwincheck"
-	"github.com/mas-bandwidth/nova-tools/profiles"
+	"github.com/nova-tools/internal/sandbox/darwincheck"
+	"github.com/nova-tools/profiles"
 )
 
 const usage = `usage: sandboxcheck [--scratch DIR] [--no-network] [--dump-profile] [--fill BIN]

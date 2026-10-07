@@ -10,7 +10,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/filelock"
+	"github.com/nova-tools/internal/filelock"
 )
 
 // lockSnapshot takes the snapshot's lock, waiting until ctx ends.

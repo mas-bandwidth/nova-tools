@@ -13,9 +13,9 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
-	"github.com/mas-bandwidth/nova-tools/internal/ntable"
-	"github.com/mas-bandwidth/nova-tools/internal/testredis"
+	"github.com/nova-tools/internal/nsprint/fn"
+	"github.com/nova-tools/internal/ntable"
+	"github.com/nova-tools/internal/testredis"
 	"github.com/stretchr/testify/require"
 )
 

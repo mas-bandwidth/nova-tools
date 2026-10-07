@@ -16,7 +16,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/hostload"
+	"github.com/nova-tools/internal/hostload"
 )
 
 // scriptSprint is a Sprint that records every argv and answers from a table,

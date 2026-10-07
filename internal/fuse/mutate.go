@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/filelock"
+	"github.com/nova-tools/internal/filelock"
 )
 
 // LockSuffix names the sibling lock file every box mutation holds: <box>.lock.

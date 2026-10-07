@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/decide"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/nova-tools/internal/decide"
+	"github.com/nova-tools/internal/oneline"
 )
 
 // lint --decide is the brief decision of the card (docs/SPEC-NOVA-DECIDE.md section 14),

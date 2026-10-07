@@ -22,8 +22,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/subproc"
-	"github.com/mas-bandwidth/nova-tools/internal/tool"
+	"github.com/nova-tools/internal/subproc"
+	"github.com/nova-tools/internal/tool"
 )
 
 // Status is one check's verdict.

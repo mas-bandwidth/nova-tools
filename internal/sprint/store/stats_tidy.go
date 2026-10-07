@@ -9,7 +9,7 @@ import (
 	"slices"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/nova-tools/internal/sprint"
 )
 
 // Stats tidy (`nova-sprint stats tidy`, sprint.TidyDone; docs/SPEC-SPRINT.md section 11,

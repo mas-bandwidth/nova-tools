@@ -36,8 +36,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
-	"github.com/mas-bandwidth/nova-tools/internal/diffcheck"
+	"github.com/nova-tools/internal/atomicfile"
+	"github.com/nova-tools/internal/diffcheck"
 )
 
 // UpdateEnv is the variable that turns Check into a rewrite. Only the value "1" does. It

@@ -8,7 +8,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/profiles"
+	"github.com/nova-tools/profiles"
 )
 
 // The six markers of profiles/darwin.sb.tmpl. A line whose WHOLE content is one of

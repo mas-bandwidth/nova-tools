@@ -5,7 +5,7 @@ import (
 	"slices"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/hostload"
+	"github.com/nova-tools/internal/hostload"
 )
 
 // A fleet member's presence (docs/SPEC-SPRINT.md, the fleet). A member says

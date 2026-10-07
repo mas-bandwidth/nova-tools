@@ -8,7 +8,7 @@ import (
 	"io"
 	"os"
 
-	"github.com/mas-bandwidth/nova-tools/internal/secrets"
+	"github.com/nova-tools/internal/secrets"
 )
 
 func runSealCLI(args []string, s streams) int {

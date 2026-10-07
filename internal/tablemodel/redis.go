@@ -12,8 +12,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/safepath"
-	"github.com/mas-bandwidth/nova-tools/internal/subproc"
+	"github.com/nova-tools/internal/safepath"
+	"github.com/nova-tools/internal/subproc"
 	"github.com/redis/go-redis/v9"
 )
 

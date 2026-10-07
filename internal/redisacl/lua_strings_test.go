@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/redisfn"
+	"github.com/nova-tools/internal/redisfn"
 )
 
 // A file is read as Lua's own lexer reads it: a double-quoted string is a

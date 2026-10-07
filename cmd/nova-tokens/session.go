@@ -18,9 +18,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/tokens"
-	"github.com/mas-bandwidth/nova-tools/internal/tool"
+	"github.com/nova-tools/internal/oneline"
+	"github.com/nova-tools/internal/tokens"
+	"github.com/nova-tools/internal/tool"
 )
 
 // mkdirAllRefuses is the refusal os.MkdirAll(path) would give before it makes anything:

@@ -12,7 +12,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/nova-tools/internal/sprint"
 )
 
 // OpenRouterURL is openrouter's credits endpoint: GET with the key as a bearer token answers

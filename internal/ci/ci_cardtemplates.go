@@ -29,7 +29,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
+	"github.com/nova-tools/internal/ci/allowlist"
 )
 
 // CardTemplatesVerbLine is the help line the class test is entered under, word

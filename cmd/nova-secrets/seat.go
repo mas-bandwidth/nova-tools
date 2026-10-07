@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/secrets"
+	"github.com/nova-tools/internal/oneline"
+	"github.com/nova-tools/internal/secrets"
 )
 
 // runSeatCLI dispatches the seat subverbs: `add` gives a new seat its first values,

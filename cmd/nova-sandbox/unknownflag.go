@@ -3,7 +3,7 @@ package main
 import (
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/nova-tools/internal/oneline"
 )
 
 // unknownArg is the refusal for one argument the verb's flag table does not match, worded

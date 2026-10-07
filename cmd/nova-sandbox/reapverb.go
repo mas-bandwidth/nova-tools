@@ -30,8 +30,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/sandbox"
+	"github.com/nova-tools/internal/oneline"
+	"github.com/nova-tools/internal/sandbox"
 )
 
 // ownerMarker is the file a run leaves at its volume's root: the pid of the tool that

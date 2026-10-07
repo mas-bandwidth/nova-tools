@@ -8,9 +8,9 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
-	"github.com/mas-bandwidth/nova-tools/internal/nogh"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/nova-tools/internal/atomicfile"
+	"github.com/nova-tools/internal/nogh"
+	"github.com/nova-tools/internal/oneline"
 )
 
 // THE CARD'S SHELL NEVER SEES A SECRET (issue #1814).

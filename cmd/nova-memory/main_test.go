@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/memindex"
+	"github.com/nova-tools/internal/memindex"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

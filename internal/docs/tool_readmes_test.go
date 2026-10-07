@@ -96,7 +96,7 @@ func TestEveryToolHasAStandaloneReadme(t *testing.T) {
 				assert.Contains(t, body, tool, "%s: ## What it is does not name %s", rel, tool)
 			}
 
-			assert.Contains(t, md, "go install github.com/mas-bandwidth/nova-tools/cmd/"+tool+"@",
+			assert.Contains(t, md, "go install github.com/nova-tools/cmd/"+tool+"@",
 				"%s: ## Install does not carry the one install line for %s", rel, tool)
 
 			if body, ok := mdSection(md, "First run"); ok {

@@ -15,12 +15,12 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/cardcontract"
-	"github.com/mas-bandwidth/nova-tools/internal/hostload"
-	"github.com/mas-bandwidth/nova-tools/internal/member"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/sprintwire"
-	"github.com/mas-bandwidth/nova-tools/internal/testbin"
+	"github.com/nova-tools/internal/cardcontract"
+	"github.com/nova-tools/internal/hostload"
+	"github.com/nova-tools/internal/member"
+	"github.com/nova-tools/internal/oneline"
+	"github.com/nova-tools/internal/sprintwire"
+	"github.com/nova-tools/internal/testbin"
 )
 
 // resultFixture writes a RESULT.md under a fresh directory and returns its path.

@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/subproc"
+	"github.com/nova-tools/internal/oneline"
+	"github.com/nova-tools/internal/subproc"
 )
 
 // StepBudget bounds one program, one POST command or one git of a script step; the card's own

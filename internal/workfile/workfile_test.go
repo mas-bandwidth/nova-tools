@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/workfile"
-	"github.com/mas-bandwidth/nova-tools/internal/workgh"
+	"github.com/nova-tools/internal/workfile"
+	"github.com/nova-tools/internal/workgh"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

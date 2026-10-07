@@ -8,7 +8,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/nova-tools/internal/sprint"
 )
 
 // TwinDiff is how a snapshot planned on from the twin differs from a fresh

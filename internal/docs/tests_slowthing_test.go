@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/ci/slowtests"
+	"github.com/nova-tools/internal/ci/slowtests"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -32,6 +32,6 @@ func TestSlowThing(t *testing.T) {
 	lines := report.OverLines()
 	require.Len(t, lines, 1, "over lines = %d, want 1: %v", len(lines), lines)
 
-	want := "CI-SLOW package=github.com/mas-bandwidth/nova-tools/internal/example seconds=65.1s budget=60s slowest=TestSlowThing:63.4s,TestAlsoSlow:1.5s"
+	want := "CI-SLOW package=github.com/nova-tools/internal/example seconds=65.1s budget=60s slowest=TestSlowThing:63.4s,TestAlsoSlow:1.5s"
 	assert.Equal(t, want, lines[0], "over line = %q, want %q", lines[0], want)
 }

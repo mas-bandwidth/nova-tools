@@ -100,8 +100,8 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
-	"github.com/mas-bandwidth/nova-tools/internal/filelock"
+	"github.com/nova-tools/internal/atomicfile"
+	"github.com/nova-tools/internal/filelock"
 )
 
 // UnreadableSuffix names where the bytes of an unreadable box are kept when a lockdown has

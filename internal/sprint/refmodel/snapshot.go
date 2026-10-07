@@ -5,7 +5,7 @@ import (
 	"slices"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/nova-tools/internal/sprint"
 )
 
 // Snapshot is the whole state one tick of the scanning machine decides from:

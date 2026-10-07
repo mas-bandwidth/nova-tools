@@ -20,8 +20,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/fleet"
-	"github.com/mas-bandwidth/nova-tools/internal/testguard"
+	"github.com/nova-tools/internal/fleet"
+	"github.com/nova-tools/internal/testguard"
 )
 
 // certifySSH is fakeSSH plus the one thing certification needs: it reads the script back out

@@ -6,7 +6,7 @@ package main
 import (
 	"os"
 
-	"github.com/mas-bandwidth/nova-tools/internal/doctor"
+	"github.com/nova-tools/internal/doctor"
 )
 
 var version string

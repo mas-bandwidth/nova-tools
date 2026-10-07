@@ -13,7 +13,7 @@ import (
 	"path/filepath"
 	"sync"
 
-	swarm "github.com/mas-bandwidth/nova-tools/internal/swarm"
+	swarm "github.com/nova-tools/internal/swarm"
 )
 
 func main() {

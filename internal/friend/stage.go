@@ -14,11 +14,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
-	"github.com/mas-bandwidth/nova-tools/internal/bus"
-	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
-	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
-	"github.com/mas-bandwidth/nova-tools/internal/safepath"
+	"github.com/nova-tools/internal/atomicfile"
+	"github.com/nova-tools/internal/bus"
+	"github.com/nova-tools/internal/cardhdr"
+	"github.com/nova-tools/internal/gitrun"
+	"github.com/nova-tools/internal/safepath"
 )
 
 // The daemon stages every job it holds (the finding of 2026-10-05: the first lanes of the

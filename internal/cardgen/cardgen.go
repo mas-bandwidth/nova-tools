@@ -16,11 +16,11 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
-	"github.com/mas-bandwidth/nova-tools/internal/cardtree"
-	"github.com/mas-bandwidth/nova-tools/internal/hygiene"
-	"github.com/mas-bandwidth/nova-tools/internal/swarm"
-	"github.com/mas-bandwidth/nova-tools/internal/tlc"
+	"github.com/nova-tools/internal/cardhdr"
+	"github.com/nova-tools/internal/cardtree"
+	"github.com/nova-tools/internal/hygiene"
+	"github.com/nova-tools/internal/swarm"
+	"github.com/nova-tools/internal/tlc"
 )
 
 // Row is one entry of a source: the file (or package directory) the work lives in,

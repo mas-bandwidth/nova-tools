@@ -46,7 +46,7 @@ func TestThePackageImportsTheStandardLibraryGoRedisAndOnelineOnly(t *testing.T) 
 			}
 			first, _, _ := strings.Cut(path, "/")
 			standard := !strings.Contains(first, ".")
-			if !standard && path != "github.com/redis/go-redis/v9" && path != "github.com/mas-bandwidth/nova-tools/internal/oneline" {
+			if !standard && path != "github.com/redis/go-redis/v9" && path != "github.com/nova-tools/internal/oneline" {
 				assert.Failf(t, "", "%s imports %s; the package may import the standard library, go-redis and internal/oneline", name, path)
 			}
 		}

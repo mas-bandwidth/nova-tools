@@ -10,7 +10,7 @@ package main
 import (
 	"strconv"
 
-	"github.com/mas-bandwidth/nova-tools/internal/tokens"
+	"github.com/nova-tools/internal/tokens"
 )
 
 // count is a count field's value as its text rendering. String keeps that rendering; the

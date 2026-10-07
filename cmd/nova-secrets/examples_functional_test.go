@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
+	"github.com/nova-tools/internal/onboarding"
 )
 
 // TestTheHelpExamplesAreWhatTheSeatsVerbsPrint: names, check, exec, place, placed and seat

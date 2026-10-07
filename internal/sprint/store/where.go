@@ -8,7 +8,7 @@ import (
 	"slices"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/nova-tools/internal/sprint"
 )
 
 // The where record (docs/SPEC-SPRINT.md section 1): what where shows that the

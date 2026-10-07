@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/swarm"
+	"github.com/nova-tools/internal/swarm"
 )
 
 // `nova-swarm lint --card` is the mechanical shape check that runs BEFORE any spend. A card
@@ -23,7 +23,7 @@ func lintGoodCard() string {
 	return strings.Join([]string{
 		"RESULT: CARD-0000 do the thing",
 		"You are a Go engineer. Work in $(pwd).",
-		"STEP 1. pwd && { [ -d repo ] || git clone -q https://github.com/mas-bandwidth/nova-tools.git repo; } && cd repo && git log --oneline -1",
+		"STEP 1. pwd && { [ -d repo ] || git clone -q https://github.com/nova-tools.git repo; } && cd repo && git log --oneline -1",
 		"STEP 2. Read docs/SPEC-SWARM.md first.",
 		"STEP 3. Write a red test named TestCardLintPasses, run go test ./internal/swarm/, and record the failing output in <working directory>/scratch/red.txt using that absolute path.",
 		"STEP 4. Run: export TMPDIR=\"$PWD/scratch\" && go test ./internal/swarm/ ./cmd/nova-swarm/",
@@ -60,7 +60,7 @@ func TestLintNamesTheParentPathLine(t *testing.T) {
 
 	body := strings.Join([]string{
 		"RESULT: CARD-1111 do the thing",
-		"STEP 1. pwd && git clone -q https://github.com/mas-bandwidth/nova-tools.git repo && cd repo",
+		"STEP 1. pwd && git clone -q https://github.com/nova-tools.git repo && cd repo",
 		"STEP 2. Write a red test named TestThing and record the failing output in ../scratch/red.txt.",
 		"STEP 3. Run: go test ./internal/swarm/",
 		"STEP 4. finish within 20 minutes.",
@@ -81,7 +81,7 @@ func TestLintNamesTheMissingRedTest(t *testing.T) {
 
 	body := strings.Join([]string{
 		"RESULT: CARD-2222 change a constant",
-		"STEP 1. pwd && git clone -q https://github.com/mas-bandwidth/nova-tools.git repo && cd repo",
+		"STEP 1. pwd && git clone -q https://github.com/nova-tools.git repo && cd repo",
 		"STEP 2. Open internal/thing.go and change the constant 3 to 4.",
 		"STEP 3. Run: go test ./internal/thing/",
 		"STEP 4. finish within 10 minutes.",

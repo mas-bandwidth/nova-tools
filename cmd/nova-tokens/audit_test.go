@@ -3,7 +3,7 @@ package main
 import (
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/oneline/audit"
+	"github.com/nova-tools/internal/oneline/audit"
 )
 
 // The source-level tripwire behind the one-line guarantee: every argument this binary
@@ -40,12 +40,12 @@ var tokensAudit = audit.Config{
 		// the verb-help seam (the CLI style's rule (b), #4505): on -h it prints only flag names,
 		// their usage literals and lines of this package's own usage const, to the stdout run
 		// hands it; it never prints an argument, so nothing it writes can carry a newline in.
-		`"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"`,
+		`"github.com/nova-tools/internal/nsprint/verbflag"`,
 		// version.go's resolution order, which now lives once in internal/buildinfo
 		// rather than in a copy per binary: it reads debug.ReadBuildInfo, holds no
 		// writer of its own, and returns a string this package renders through
 		// oneline.Field at the print site below.
-		`"github.com/mas-bandwidth/nova-tools/internal/buildinfo"`,
+		`"github.com/nova-tools/internal/buildinfo"`,
 		`"flag"`, `"fmt"`, `"io"`, `"os"`, `"path/filepath"`, `"runtime"`, `"sort"`, `"strconv"`, `"strings"`, `"time"`,
 		// maps and slices hold no writer: they return keys, sorted copies and membership,
 		// which this package renders through oneline at its own print sites.
@@ -59,21 +59,21 @@ var tokensAudit = audit.Config{
 		// ledger rows from the fleet Redis that this package renders through oneline.Field
 		// at the print site; record prints nothing itself.
 		`"context"`,
-		`"github.com/mas-bandwidth/nova-tools/internal/record"`,
+		`"github.com/nova-tools/internal/record"`,
 		// ledger.go's seat (#3461): redisauth.Auth (a leaf: no net, no os/exec) resolves the ACL user and the password from
 		// the environment, the one config nova-sprint dials with; it holds no writer and
 		// returns strings and an error this package prints through oneline.Err.
-		`"github.com/mas-bandwidth/nova-tools/internal/nsprint/redisauth"`,
-		`"github.com/mas-bandwidth/nova-tools/internal/bounded"`,
+		`"github.com/nova-tools/internal/nsprint/redisauth"`,
+		`"github.com/nova-tools/internal/bounded"`,
 		// atomicfile writes one FILE whole (the report note and the ledger): it takes a path
 		// and the bytes of the file and puts no byte on any stream of this binary.
-		`"github.com/mas-bandwidth/nova-tools/internal/atomicfile"`,
-		`"github.com/mas-bandwidth/nova-tools/internal/oneline"`,
-		`"github.com/mas-bandwidth/nova-tools/internal/tokens"`,
+		`"github.com/nova-tools/internal/atomicfile"`,
+		`"github.com/nova-tools/internal/oneline"`,
+		`"github.com/nova-tools/internal/tokens"`,
 		// the --json rendering and the refusal under --json: tool.Out renders the one
 		// result as a JSON object (encoding/json, every string escaped) on the stdout this
 		// package hands it, and prints nothing else.
-		`"github.com/mas-bandwidth/nova-tools/internal/tool"`,
+		`"github.com/nova-tools/internal/tool"`,
 	},
 	MinClassified: 30,
 }

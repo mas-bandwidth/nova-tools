@@ -15,8 +15,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/bounded"
-	"github.com/mas-bandwidth/nova-tools/internal/subproc"
+	"github.com/nova-tools/internal/bounded"
+	"github.com/nova-tools/internal/subproc"
 )
 
 const ChildCap = 64 * 1024

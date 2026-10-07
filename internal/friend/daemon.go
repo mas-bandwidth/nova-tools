@@ -10,7 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/bus"
+	"github.com/nova-tools/internal/bus"
 )
 
 // BeatEvery is how often the daemon beats to the sprint server while its

@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/subproc"
+	"github.com/nova-tools/internal/oneline"
+	"github.com/nova-tools/internal/subproc"
 )
 
 // Git is what CLASSES needs from a checkout, and all of it.

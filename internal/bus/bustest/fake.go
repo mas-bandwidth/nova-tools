@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/bus"
+	"github.com/nova-tools/internal/bus"
 )
 
 // Fake is the Store in memory: the streams, the groups with their pending

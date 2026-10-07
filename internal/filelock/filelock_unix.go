@@ -9,7 +9,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/nova-tools/internal/oneline"
 )
 
 func openFileSafe(path string, flag int, perm os.FileMode) (*os.File, error) {

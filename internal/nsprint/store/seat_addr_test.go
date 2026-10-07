@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/seatcred"
+	"github.com/nova-tools/internal/seatcred"
 	"github.com/stretchr/testify/require"
 )
 

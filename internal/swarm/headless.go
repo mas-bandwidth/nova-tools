@@ -9,8 +9,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
-	"github.com/mas-bandwidth/nova-tools/internal/harness"
+	"github.com/nova-tools/internal/cardcost"
+	"github.com/nova-tools/internal/harness"
 )
 
 // THE HEADLESS HARNESSES (docs/SPEC-SWARM.md, the headless harnesses). The heavy tier

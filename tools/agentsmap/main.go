@@ -10,7 +10,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/mas-bandwidth/nova-tools/internal/docs"
+	"github.com/nova-tools/internal/docs"
 )
 
 func main() {

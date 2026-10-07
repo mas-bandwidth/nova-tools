@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
+	"github.com/nova-tools/internal/cardhdr"
 )
 
 // The brief's bound (docs/SPEC-SPRINT.md, "The brief is wrong, not the worker"; the owner,

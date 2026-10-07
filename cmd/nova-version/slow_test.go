@@ -17,8 +17,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
-	"github.com/mas-bandwidth/nova-tools/internal/update"
+	"github.com/nova-tools/internal/onboarding"
+	"github.com/nova-tools/internal/update"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

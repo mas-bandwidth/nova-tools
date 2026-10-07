@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/mas-bandwidth/nova-tools/internal/scaffold"
+	"github.com/nova-tools/internal/scaffold"
 )
 
 func main() {

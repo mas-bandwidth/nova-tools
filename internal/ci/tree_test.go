@@ -16,7 +16,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/goenv"
+	"github.com/nova-tools/internal/goenv"
 )
 
 // tree_test.go is the shared repository tree the class tests read: ONE walk and

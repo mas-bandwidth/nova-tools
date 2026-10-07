@@ -19,10 +19,10 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/mas-bandwidth/nova-tools/internal/config"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/secrets"
-	"github.com/mas-bandwidth/nova-tools/internal/tool"
+	"github.com/nova-tools/internal/config"
+	"github.com/nova-tools/internal/oneline"
+	"github.com/nova-tools/internal/secrets"
+	"github.com/nova-tools/internal/tool"
 )
 
 // loginFileKey is the name a getenv answers with the login file's path. It has

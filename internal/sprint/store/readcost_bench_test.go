@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
-	"github.com/mas-bandwidth/nova-tools/internal/sprint"
-	"github.com/mas-bandwidth/nova-tools/internal/testredis"
+	"github.com/nova-tools/internal/nsprint/fn"
+	"github.com/nova-tools/internal/sprint"
+	"github.com/nova-tools/internal/testredis"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
 )

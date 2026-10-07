@@ -11,7 +11,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/filelock"
+	"github.com/nova-tools/internal/filelock"
 )
 
 // takeFold takes internal/filelock's lock on path, waiting up to wait, and reports held

@@ -26,9 +26,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/sandbox"
-	"github.com/mas-bandwidth/nova-tools/internal/subproc"
+	"github.com/nova-tools/internal/oneline"
+	"github.com/nova-tools/internal/sandbox"
+	"github.com/nova-tools/internal/subproc"
 )
 
 // egressRemedy is the one remedy line every refusal of these verbs carries.

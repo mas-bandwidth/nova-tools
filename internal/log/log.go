@@ -28,7 +28,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/nova-tools/internal/oneline"
 )
 
 // Line is one structured event: the fixed field list of SPEC-LOGS.md Part 2. It is a

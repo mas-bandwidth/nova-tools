@@ -14,8 +14,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
-	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
+	"github.com/nova-tools/internal/atomicfile"
+	"github.com/nova-tools/internal/cardcost"
 )
 
 // What a friend's card runner script (runner.zsh, one copy each for two friends, the

@@ -14,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
+	"github.com/nova-tools/internal/atomicfile"
 )
 
 // A one-shot lane's card is capped by its tokens (docs/SPEC-FRIEND.md,

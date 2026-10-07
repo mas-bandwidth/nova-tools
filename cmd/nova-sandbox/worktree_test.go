@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/subproc"
+	"github.com/nova-tools/internal/subproc"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -55,7 +55,7 @@ func (g *fakeGit) run(dir string, args ...string) (string, error) {
 			return "", fmt.Errorf("fatal: cannot resolve HEAD")
 		}
 	case "remote":
-		return "https://github.com/mas-bandwidth/nova-tools.git\n", nil
+		return "https://github.com/nova-tools.git\n", nil
 	case "fetch":
 		return "", nil
 	case "status":

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
+	"github.com/nova-tools/internal/ci/allowlist"
 	"github.com/stretchr/testify/require"
 )
 
@@ -40,7 +40,7 @@ func parseDeprecatedImportEdgeKey(row string) string {
 }
 
 func isDroppedDeprecated(lt *liveTree, p string) bool {
-	p = strings.TrimPrefix(p, "github.com/mas-bandwidth/nova-tools/")
+	p = strings.TrimPrefix(p, "github.com/nova-tools/")
 	p = strings.TrimPrefix(filepath.ToSlash(p), "./")
 	if lt.keep[p] {
 		return false
@@ -54,7 +54,7 @@ func isDroppedDeprecated(lt *liveTree, p string) bool {
 }
 
 func cleanPkgPath(p string) string {
-	const mod = "github.com/mas-bandwidth/nova-tools/"
+	const mod = "github.com/nova-tools/"
 	p = strings.TrimPrefix(p, mod)
 	p = strings.TrimPrefix(filepath.ToSlash(p), "./")
 	if idx := strings.Index(p, " ["); idx != -1 {

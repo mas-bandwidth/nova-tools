@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/nova-tools/internal/sprint"
 )
 
 // The timer duty of the tick (docs/SPEC-SPRINT.md, "Timers"; tla/Timer.tla):

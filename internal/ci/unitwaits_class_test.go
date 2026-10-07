@@ -15,7 +15,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/ci/slowtests"
+	"github.com/nova-tools/internal/ci/slowtests"
 )
 
 // unitwaits_class_test.go is the ENFORCED half of Rowan's ruling on

@@ -11,7 +11,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/secrets"
+	"github.com/nova-tools/internal/secrets"
 )
 
 // A seat profile is one row of a tool's seats.tsv: the seat

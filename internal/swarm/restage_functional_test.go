@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/cardcontract"
+	"github.com/nova-tools/internal/cardcontract"
 )
 
 // reworkOrigin is a bare origin whose main holds files a and b at base, and a branch

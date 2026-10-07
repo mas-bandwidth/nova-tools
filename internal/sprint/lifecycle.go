@@ -4,7 +4,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/ntable"
+	"github.com/nova-tools/internal/ntable"
 )
 
 // The lifecycle of a primary: six states and the legal moves between them,

@@ -6,7 +6,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/hostload"
+	"github.com/nova-tools/internal/hostload"
 )
 
 // TestFleetBeatMeasuresOpenFilesBesideTheLoad: fleet beat measures the machine's open

@@ -7,7 +7,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/memindex"
+	"github.com/nova-tools/internal/memindex"
 )
 
 func cmdSearch(args []string, stdout, stderr io.Writer) int {

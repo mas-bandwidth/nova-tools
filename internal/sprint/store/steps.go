@@ -3,7 +3,7 @@ package store
 import (
 	"slices"
 
-	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/nova-tools/internal/sprint"
 )
 
 // The steps of the verbs: each names the tables its plan reads and whether

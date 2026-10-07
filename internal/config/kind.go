@@ -25,12 +25,12 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/harness"
+	"github.com/nova-tools/internal/harness"
 	"time"
 	"unicode"
 
-	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
-	"github.com/mas-bandwidth/nova-tools/internal/decide"
+	"github.com/nova-tools/internal/cardcost"
+	"github.com/nova-tools/internal/decide"
 )
 
 // Type is a field's type. It decides the SQL column, the flag's parsing and

@@ -3,7 +3,7 @@ package typedrec_test
 import (
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
+	"github.com/nova-tools/internal/typedrec"
 	"github.com/stretchr/testify/assert"
 )
 

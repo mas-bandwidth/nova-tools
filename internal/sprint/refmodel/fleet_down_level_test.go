@@ -6,7 +6,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/sprint/refmodel"
+	"github.com/nova-tools/internal/sprint/refmodel"
 )
 
 // TestFleetDownAndLevelGoRoundTheFleet verifies on the reference model (the twin)

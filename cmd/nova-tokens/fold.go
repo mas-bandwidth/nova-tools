@@ -12,10 +12,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/bounded"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/tokens"
-	"github.com/mas-bandwidth/nova-tools/internal/tool"
+	"github.com/nova-tools/internal/bounded"
+	"github.com/nova-tools/internal/oneline"
+	"github.com/nova-tools/internal/tokens"
+	"github.com/nova-tools/internal/tool"
 )
 
 // foldLists are fold's listings in the order their lines print, each capped by --max with

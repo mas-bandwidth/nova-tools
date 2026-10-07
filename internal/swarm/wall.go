@@ -10,8 +10,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/nova-tools/internal/gitrun"
+	"github.com/nova-tools/internal/oneline"
 )
 
 // THE WALL DEATH (issue #918). A harness that DENIES a tool call returns a tool error the

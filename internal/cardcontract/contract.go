@@ -13,8 +13,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
-	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
+	"github.com/nova-tools/internal/atomicfile"
+	"github.com/nova-tools/internal/typedrec"
 )
 
 // Frame is what the member knows of one launch and hands native as a file: the repository

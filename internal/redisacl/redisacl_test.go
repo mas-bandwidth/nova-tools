@@ -10,13 +10,13 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/config"
-	"github.com/mas-bandwidth/nova-tools/internal/ghevent/wire"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
-	"github.com/mas-bandwidth/nova-tools/internal/ntable"
-	"github.com/mas-bandwidth/nova-tools/internal/record"
-	"github.com/mas-bandwidth/nova-tools/internal/redisfn"
-	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/nova-tools/internal/config"
+	"github.com/nova-tools/internal/ghevent/wire"
+	"github.com/nova-tools/internal/nsprint/fn"
+	"github.com/nova-tools/internal/ntable"
+	"github.com/nova-tools/internal/record"
+	"github.com/nova-tools/internal/redisfn"
+	"github.com/nova-tools/internal/sprint"
 )
 
 // lib is a small library: a ping file, a table file with one writer and one

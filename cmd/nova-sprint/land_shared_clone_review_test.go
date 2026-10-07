@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
+	"github.com/nova-tools/internal/gitrun"
 	"github.com/stretchr/testify/assert"
 )
 

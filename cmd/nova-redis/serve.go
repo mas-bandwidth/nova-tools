@@ -43,10 +43,10 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/secrets"
-	"github.com/mas-bandwidth/nova-tools/internal/subproc"
-	"github.com/mas-bandwidth/nova-tools/internal/tool"
+	"github.com/nova-tools/internal/oneline"
+	"github.com/nova-tools/internal/secrets"
+	"github.com/nova-tools/internal/subproc"
+	"github.com/nova-tools/internal/tool"
 )
 
 // redisServerProgram is the instance program, found on PATH.
