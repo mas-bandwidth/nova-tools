@@ -100,9 +100,10 @@ func TestFriendTakeRefusesAStartedCardAndAnotherFriendsCard(t *testing.T) {
 	assert.Equal(t, 1, code)
 	assert.Contains(t, errs, "REFUSED s1-2: s1-2.w1 has started: friend amy finished it")
 
-	code, _, errs = ta.do("friend take bob s1-2")
+	// a card taken elsewhere is refused naming its lane (the-dealer-honors-who.w1)
+	code, _, errs = ta.do("friend take bob s1-1")
 	assert.Equal(t, 1, code)
-	assert.Contains(t, errs, "REFUSED s1-2: s1-2.w1 is not dealt to friend bob")
+	assert.Contains(t, errs, "REFUSED s1-1: s1-1.w1 is taken: it works in the lane at friend.amy:working")
 	code, _, errs = ta.do("friend take cat s1-2")
 	assert.Equal(t, 1, code)
 	assert.Contains(t, errs, "no friend cat on the friends table")

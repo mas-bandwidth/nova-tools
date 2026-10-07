@@ -78,12 +78,12 @@ func TestAReworkKeepsTheWhoPin(t *testing.T) {
 		w.must(Redo(w.s, RedoReq{Sel: Sel{IDs: []string{"s1-2"}}, Who: "coordinator"}))
 		waitsForAmy(t, w, "s1-2")
 	})
-	t.Run("a first deal is a preference", func(t *testing.T) {
+	t.Run("a first deal is hers alone", func(t *testing.T) {
 		t.Parallel()
-		// unchanged: a WHO: friend <name> card never dealt goes to a friend up when she is down
 		w := friendWorld(t, friendBrief("friend amy"))
 		dealWith(w, amy(Down), bob)
-		require.NotNil(t, w.s.Fleet.Card("s1-1.w1"))
-		assert.Equal(t, FriendRow("bob"), w.s.Fleet.Card("s1-1.w1").Row)
+		assert.Nil(t, w.s.Fleet.Card("s1-1.w1"), "amy down: it waits for her, never to bob")
+		assert.Equal(t, Ready, w.s.StateOf("s1-1"))
+		assert.Zero(t, w.s.Fleet.Count(FriendRow("bob"), Ready)+w.s.Fleet.Count(FriendRow("bob"), Working))
 	})
 }

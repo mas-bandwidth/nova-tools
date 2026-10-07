@@ -476,6 +476,26 @@ func (a *app) coordinatorView(ctx context.Context, st *store.Store, all bool) (c
 			S:    fmt.Sprintf("%s %s and holds %d ready, %d working", f.Name, why, r, w),
 			Next: "nova-sprint friend take " + f.Name + " --all-unstarted --reason '" + f.Name + " " + strings.ReplaceAll(why, "'", "") + "'", age: since})
 	}
+	// the cards whose WHO line names a friend not up: each waits ready for her alone
+	// (sprint.PinnedFriend; tla/Deal.tla, WhoIsHonored), one item a friend
+	status := map[string]string{}
+	for _, f := range friends {
+		status[f.Name] = f.Status
+	}
+	waiting := map[string][]string{}
+	for _, c := range s.Work.Column(sprint.Ready) {
+		if name := sprint.PinnedFriend(c); name != "" && status[name] != sprint.Up {
+			waiting[name] = append(waiting[name], c.ID)
+		}
+	}
+	for _, name := range slices.Sorted(maps.Keys(waiting)) {
+		ids := waiting[name]
+		slices.Sort(ids)
+		st := cmp.Or(status[name], "not on the friends table")
+		v.Items = append(v.Items, viewItem{K: "w:" + name, T: itemFriend, W: "waits for friend", B: len(ids),
+			S:    viewClip(fmt.Sprintf("%d ready cards wait for friend %s (their WHO line names her; she is %s): %s", len(ids), name, st, strings.Join(ids, ", "))),
+			Next: "nova-sprint card " + ids[0]})
+	}
 	if all {
 		v.Rows = rows
 	}

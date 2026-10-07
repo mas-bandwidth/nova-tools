@@ -8,9 +8,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// The level evens every card a friend holds but a hard pin (WHO: only friend): friends
-// first gives friends cards with no WHO line and cards preferring a named friend, so those
-// move from a friend's ready backlog to a friend up with an idle lane like WHO: friend.
+// The level evens every card a friend holds but one whose WHO line names a friend
+// (PinnedFriend; the-dealer-honors-who.w1): friends first gives friends cards with no WHO
+// line, and those move from a friend's ready backlog to a friend up with an idle lane like
+// WHO: friend.
 func TestTheLevelMovesUnpinnedCardsToAnIdleFriend(t *testing.T) {
 	t.Parallel()
 	w := friendWorld(t, "c: no WHO\n\nThe task.", friendBrief("friend amy"), friendBrief("only friend amy"))
@@ -19,7 +20,15 @@ func TestTheLevelMovesUnpinnedCardsToAnIdleFriend(t *testing.T) {
 	require.Equal(t, 1, w.s.Fleet.Count(FriendRow("amy"), Working))
 	require.Equal(t, 1, w.s.Fleet.Count(FriendRow("amy"), Ready), "room 2: one working, one ready behind")
 	ready := w.s.Fleet.Cell(FriendRow("amy"), Ready)[0]
-	require.False(t, OnlyFriend(w.s.Primary(ready.F("primary"))), "the ready card behind her is not the hard pin")
+	if PinnedFriend(w.s.Primary(ready.F("primary"))) != "" {
+		// a card naming her stays with her: the level never moves it
+		dealWith(w, amy, FriendSeat{Name: "bob", Width: 1, Status: Up, Tiers: []string{cardhdr.RouteFlash}})
+		assert.Equal(t, FriendRow("amy"), w.s.Fleet.Card(ready.ID).Row, "a card naming amy is never levelled away")
+		w = friendWorld(t, "c: no WHO\n\nThe task.", "c: no WHO\n\nThe task.")
+		dealWith(w, amy, FriendSeat{Name: "bob", Width: 1, Status: Held, Tiers: []string{cardhdr.RouteFlash}})
+		ready = w.s.Fleet.Cell(FriendRow("amy"), Ready)[0]
+	}
+	require.Empty(t, PinnedFriend(w.s.Primary(ready.F("primary"))), "the ready card behind her names no friend")
 
 	// bob comes up idle: the tick's level moves amy's unpinned ready card to him
 	dealStarted(w, amy, FriendSeat{Name: "bob", Width: 1, Status: Up, Tiers: []string{cardhdr.RouteFlash}})
@@ -87,8 +96,8 @@ func TestACardWithTwoProviderFailuresGoesToAFriendNotAnUnfundedRoute(t *testing.
 }
 
 // A friend is dealt a card only when her tiers hold its tier, whatever its WHO line: a
-// frontier card goes to the friend with frontier, never to a friend it names without it
-// or to a friend whose row names no tier; a hard pin to a friend without the tier waits.
+// frontier card goes to the friend with frontier, never to a friend whose row names no
+// tier; a card naming a friend without the tier waits for her, dealt to no one else.
 func TestAFrontierCardGoesOnlyToAFriendWithFrontier(t *testing.T) {
 	t.Parallel()
 	brief := func(who string) string { return "c: work tier: frontier\nWHO: " + who + "\n\nThe task." }
@@ -98,7 +107,7 @@ func TestAFrontierCardGoesOnlyToAFriendWithFrontier(t *testing.T) {
 
 	w := friendWorld(t, brief("friend amy"), brief("friend"))
 	dealStarted(w, amy, dan, cat)
-	assert.Equal(t, FriendRow("cat"), w.s.Fleet.Card("s1-1.w1").Row, "named amy, but only cat has frontier")
+	assert.Nil(t, w.s.Fleet.Card("s1-1.w1"), "named amy, who has no frontier: it waits for her, never to cat")
 	assert.Equal(t, FriendRow("cat"), w.s.Fleet.Card("s1-2.w1").Row, "any friend: cat, not dan whose row names no tier")
 
 	only := friendWorld(t, brief("only friend amy"))
