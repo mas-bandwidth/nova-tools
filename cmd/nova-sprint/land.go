@@ -1265,6 +1265,7 @@ func (l *lander) build(ctx context.Context, dir, stream string, cards []landCard
 			// remaining members still merge in work order and share one batch push
 			// (docs/SPEC-SPRINT.md section 7, the lander's batch).
 			l.conflicts = append(l.conflicts, f)
+			continue
 		}
 		merged = append(merged, c.id)
 	}
