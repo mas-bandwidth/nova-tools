@@ -125,6 +125,52 @@ func gateRuns(tests bool, have []string) [][]string {
 	return runs
 }
 
+// batchPackages computes the packages to test from a batch's changed files. It returns the
+// packages directly touched by the changed files plus their importers (computed via go list
+// -deps in the actual gate run). The caller provides the go list output shaped as one package
+// per line with its imports; the function returns the union of the touched packages and their
+// importers. A test feeds this a fake go list output.
+func batchPackages(changedFiles []string, goListOutput string) []string {
+	// Extract unique package paths from changed files
+	pkgs := map[string]bool{}
+	for _, f := range changedFiles {
+		dir := filepath.Dir(f)
+		pkgs[dir] = true
+	}
+
+	// Parse go list output to find importers (each line: "pkg\timporter1 importer2 ...")
+	// For each package in pkgs, find all packages that import it
+	importers := map[string]bool{}
+	for _, line := range strings.Split(goListOutput, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		parts := strings.Fields(line)
+		if len(parts) < 2 {
+			continue
+		}
+		pkg := parts[0]
+		// Check if any importer imports a package in pkgs
+		for i := 1; i < len(parts); i++ {
+			if pkgs[parts[i]] {
+				importers[pkg] = true
+				break
+			}
+		}
+	}
+
+	// Return union of touched packages and their importers
+	result := make([]string, 0, len(pkgs)+len(importers))
+	for p := range pkgs {
+		result = append(result, p)
+	}
+	for p := range importers {
+		result = append(result, p)
+	}
+	return result
+}
+
 // gateWhy is a red run as a finding, one line: the run, how it ended and its output.
 func gateWhy(run []string, err error, out string) string {
 	var lines []string
@@ -249,11 +295,29 @@ func treePackages(dir string) []string {
 // member that grants its Go lane, as one bench run (benchGate); a bench that cannot be
 // reached runs it here instead, and never blames the card. Otherwise, and for a land
 // command on its own, it runs here (goRun). The ledgers' update runs stay here.
-func (l *lander) treeGate(ctx context.Context, dir string, tests bool) string {
+// changedFiles (when non-empty) are packages that should be tested in addition to treePackages.
+func (l *lander) treeGate(ctx context.Context, dir string, tests bool, changedFiles ...string) string {
 	if _, err := os.Stat(filepath.Join(dir, "go.mod")); err != nil {
 		return ""
 	}
-	runs := gateRuns(tests, treePackages(dir))
+	pkgs := treePackages(dir)
+	if len(changedFiles) > 0 {
+		// Add packages from changed files and their importers to pkgs
+		for _, f := range changedFiles {
+			pkgs = append(pkgs, filepath.Dir(f))
+		}
+		// Remove duplicates
+		seen := map[string]bool{}
+		uniq := make([]string, 0, len(pkgs))
+		for _, p := range pkgs {
+			if !seen[p] {
+				seen[p] = true
+				uniq = append(uniq, p)
+			}
+		}
+		pkgs = uniq
+	}
+	runs := gateRuns(tests, pkgs)
 	hosts, inLoop := l.gateBenches(ctx)
 	if len(hosts) > 0 {
 		if why, ran := l.benchGate(ctx, hosts, dir, runs, tests); ran {
@@ -477,7 +541,9 @@ func (l *lander) gateCard(ctx context.Context, dir string, c landCard, before st
 	if err != nil {
 		return "", "the files the merge of " + c.id + " changed could not be listed: " + firstLine("", err)
 	}
-	why := l.treeGate(ctx, dir, slices.ContainsFunc(strings.Split(changed, "\n"), treeTested))
+	// Gate the tree: test tree packages when tree files changed, and also test batch packages
+	treeChanged := slices.ContainsFunc(strings.Split(changed, "\n"), treeTested)
+	why := l.treeGate(ctx, dir, treeChanged, strings.Split(changed, "\n")...)
 	if why == "" {
 		return "", ""
 	}

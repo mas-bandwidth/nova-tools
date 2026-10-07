@@ -3951,11 +3951,12 @@ section 6). The test is internal/sprint/land_records_test.go
 
 **The tree gate.** Every tip of the batch branch passes the tree gate before the
 next head is merged onto it, in a clone that holds a `go.mod`: the module builds
-and vets (`go build ./...`, `go vet ./...`), and when the head's merge changes a
-document or a test file (a `.md`, a `_test.go`) the packages that test the tree
-itself pass (`go test ./internal/docs/ ./internal/ci/`, those the clone has). The
-base's tip is gated once a batch, the tree tests included, before any head is
-merged. A base that is red is first offered its cure (section 8, the base cure):
+and vets (`go build ./...`, `go vet ./...`), and on the merged batch tip the gate
+also runs `go test` on every package the batch's changed files touch plus every
+package that imports them (computed from the changed file list via `go list -deps`),
+plus the tree's own test packages (`go test ./internal/docs/ ./internal/ci/`, those
+the clone has). The base's tip is gated once a batch, the tree tests included, before
+any head is merged. A base that is red is first offered its cure (section 8, the base cure):
 each head of the batch, merged onto the base alone, through the same gate; the
 first whose tree passes lands first as the base fix and the batch goes on after
 it. With no such head the base refuses the batch, nothing pushed or reported and
