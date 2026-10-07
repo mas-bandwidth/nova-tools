@@ -136,15 +136,18 @@ const (
 // newline included. It returns package constants only, which is why printing
 // its result is safe.
 func hintFor(kind string) string {
-	switch kind {
-	case "files":
-		return "  " + filesHint + "\n"
-	case "unread":
-		return "  " + unreadHint + "\n"
-	case "basename":
-		return "  " + baseHint + "\n"
+	if h, ok := hints[kind]; ok {
+		return "  " + h + "\n"
 	}
 	return ""
+}
+
+// hints is the one hint each kind of refusal carries; hintFor indents it and
+// adds the newline.
+var hints = map[string]string{
+	"files":    filesHint,
+	"unread":   unreadHint,
+	"basename": baseHint,
 }
 
 // verbs are the words that are a verb in first position; anything else is a file.

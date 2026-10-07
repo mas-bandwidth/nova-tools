@@ -255,17 +255,42 @@ loops:
 }
 
 // A fixture that is not the fixture's shape is refused in one line naming
-// what it wants, with the YAML reader's words quoted, never its newlines.
+// what it wants, with the YAML reader's line and never its Go type.
 func TestAFixtureOfTheWrongShapeIsRefusedInOneLine(t *testing.T) {
 	t.Parallel()
-	path := filepath.Join(t.TempDir(), "fx.yml")
-	require.NoError(t, os.WriteFile(path, []byte("- one\n- two\n"), 0o600))
-	_, err := LoadFixture(path)
-	require.Error(t, err)
-	msg := err.Error()
-	assert.NotContains(t, msg, "\n")
-	assert.Contains(t, msg, "is not the fixture's shape: \"yaml: unmarshal errors: line 1: cannot unmarshal !!seq into config.fixture\"")
-	assert.Contains(t, msg, "want a mapping with machines")
+	cases := []struct {
+		name string
+		doc  string
+		want string
+	}{
+		{"root is a list", "- one\n- two\n", "line 1: the document is a map with machines, fleet and loops, got a list"},
+		{"machines is a list", "machines:\n  - one\n  - two\n", "line 2: machines is a map of name to machine, got a list"},
+		{"machine is text", "machines:\n  m1: five\n", "line 2: a machine is a map of user, seat, slots, runners, tla, os and arch, got text"},
+		{"machine field is text", "machines:\n  m1: {slots: soon}\n", "line 2: a number is wanted, got text"},
+		{"fleet is text", "fleet: five\n", "line 1: fleet is a map of store, coordinator, redis_port, pg_dsn and loops_dir, got text"},
+		{"loops is a list", "loops:\n  - one\n", "line 2: loops is a map of name to loop, got a list"},
+		{"loop is text", "loops:\n  l1: five\n", "line 2: a loop is a map of machine, argv, seat, keys, every, keepalive and enabled, got text"},
+		{"unknown field", "machines: {}\nfleet: {}\nbogus: 1\n", "line 3: bogus is not a fixture field; want machines, fleet or loops"},
+		{"machine unknown field", "machines:\n  m1: {bogus: 1}\n", "line 2: bogus is not a fixture field; want user, seat, slots, runners, tla, os or arch"},
+		{"two problems at once", "machines:\n  - one\nfleet: five\n", "line 2: machines is a map of name to machine, got a list; line 3: fleet is a map of store, coordinator, redis_port, pg_dsn and loops_dir, got text"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			path := filepath.Join(t.TempDir(), "fx.yml")
+			require.NoError(t, os.WriteFile(path, []byte(tc.doc), 0o600))
+			_, err := LoadFixture(path)
+			require.Error(t, err)
+			msg := err.Error()
+			assert.NotContains(t, msg, "\n")
+			assert.Contains(t, msg, "is not the fixture's shape: "+tc.want)
+			assert.NotContains(t, msg, "map[string]")
+			assert.NotContains(t, msg, "struct {")
+			assert.NotContains(t, msg, "yaml:")
+		})
+	}
+	_, err := LoadFixture(filepath.Join(t.TempDir(), "absent.yml"))
+	assert.ErrorContains(t, err, "--fixture")
 }
 
 // A machine row's tla fact is the inventory's tla group and its nova_tla

@@ -26,7 +26,7 @@ package swarm
 // the `database is locked` failure, closed on purpose. So two live runs in one
 // job directory is never a thing to make safe -- it is a thing to refuse.
 //
-// FOUR RULES HOLD IT, AND THE FIRST TWO ARE STELLA'S (her HOLD on the first repair, which
+// FOUR RULES HOLD IT, AND THE FIRST TWO ARE A FRIEND'S (her HOLD on the first repair, which
 // still admitted two launchers in two demonstrated ways):
 //
 //  1. OWNERSHIP IS PUBLISHED WHOLE. The lease is written to a temp file in the same

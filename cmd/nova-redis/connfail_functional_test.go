@@ -154,7 +154,7 @@ func TestSpillWhoseExecReplyIsLostIsUnconfirmed(t *testing.T) {
 	for _, part := range []string{
 		"SPILL UNCONFIRMED key=rowan:note ",
 		"confirmation was lost after the transaction was sent, so the write may have committed",
-		"nova-redis recall --addr " + relay + " --owner rowan --name note",
+		"nova-redis recall --redis " + relay + " --owner rowan --name note",
 	} {
 		assert.Contains(t, stderr, part, "stderr lacks %q: %q", part, stderr)
 	}
