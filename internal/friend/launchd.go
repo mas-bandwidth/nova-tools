@@ -41,6 +41,9 @@ type Agent struct {
 	// Command, when set, is what the agent runs in place of the daemon: this tool's
 	// own verb and flags, after Binary (the wake ping loop, nova-friend ping-install).
 	Command []string
+	// Sleep is how Install waits between two looks at the old service after the
+	// bootout (ReleasePoll); nil is time.Sleep. A test passes its own clock.
+	Sleep func(time.Duration)
 }
 
 // Label is the agent's launchd label.
@@ -237,10 +240,63 @@ func removePartial(path string, err error) error {
 // for a second or so after the bootout, measured 2026-10-04).
 const BootstrapTries = 5
 
+// ReleasePoll is how often Install asks launchd, after the bootout, whether it still holds
+// the old service; DefaultExitTimeout is how long it asks, the launchd default for a plist
+// with no ExitTimeOut (the time launchd gives a daemon to exit before it kills it).
+const (
+	ReleasePoll        = 250 * time.Millisecond
+	DefaultExitTimeout = 20 * time.Second
+)
+
+// ExitTimeout is the plist's ExitTimeOut, DefaultExitTimeout when it has none.
+func ExitTimeout(plist string) time.Duration {
+	_, rest, ok := strings.Cut(plist, "<key>ExitTimeOut</key>")
+	if !ok {
+		return DefaultExitTimeout
+	}
+	rest = strings.TrimSpace(rest)
+	v, ok := strings.CutPrefix(rest, "<integer>")
+	if !ok {
+		return DefaultExitTimeout
+	}
+	v, _, ok = strings.Cut(v, "</integer>")
+	var n int
+	if _, err := fmt.Sscan(strings.TrimSpace(v), &n); !ok || err != nil || n <= 0 {
+		return DefaultExitTimeout
+	}
+	return time.Duration(n) * time.Second
+}
+
+// WaitReleased waits until launchd no longer holds the service target (gui/<uid>/<label>)
+// after its bootout: `launchctl print <target>` asked every poll, until it no longer finds
+// the service (anything but exit 0 with the service's own `<target> = {` block), at most
+// timeout. A bootstrap sent while launchd is still removing the old service is refused with
+// "37: Operation already in progress" for as long as the old daemon takes to exit (about
+// 5 s, the seat's adopt runs of 2026-10-07), more than BootstrapTries one second apart.
+// It answers how long it waited, and on timeout an error naming the label and the seconds.
+func WaitReleased(ctx context.Context, run Launchctl, target string, timeout, poll time.Duration, sleep func(time.Duration)) (time.Duration, error) {
+	var waited time.Duration
+	for {
+		out, err := run(ctx, "print", target)
+		if err != nil || !strings.Contains(out, target+" = {") {
+			return waited, nil
+		}
+		if waited >= timeout {
+			return waited, fmt.Errorf("launchd still holds %s %.0fs after its bootout (its exit timeout): the old daemon has not exited; nothing was bootstrapped", target, waited.Seconds())
+		}
+		if ctx.Err() != nil {
+			return waited, ctx.Err()
+		}
+		sleep(poll)
+		waited += poll
+	}
+}
+
 // Install writes the plist and loads it. A binary on /Volumes is copied under
 // the home first (PlanBinary); a copy that cannot be made is refused and
 // nothing is written (docs/SPEC-FRIEND.md). Then a bootout of whatever that
-// label runs now (nothing loaded is fine), then a bootstrap into the user's
+// label runs now (nothing loaded is fine), a wait until launchd no longer holds
+// the label (WaitReleased), then a bootstrap into the user's
 // domain, sent again after wait() while launchd answers EIO, so running it
 // again replaces the agent with the same result. It answers the plist's
 // path and the commands it ran.
@@ -269,6 +325,18 @@ func Install(ctx context.Context, a Agent, uid int, run Launchctl, write func(pa
 	bootout := []string{"bootout", domain + "/" + a.Label()}
 	ran = append(ran, "launchctl "+strings.Join(bootout, " "))
 	_, _ = run(ctx, bootout...) // ignored: a label that is not loaded answers an error, and that is the state wanted
+	sleep := a.Sleep
+	if sleep == nil {
+		sleep = time.Sleep
+	}
+	target := domain + "/" + a.Label()
+	waited, err := WaitReleased(ctx, run, target, ExitTimeout(a.Plist()), ReleasePoll, sleep)
+	if waited > 0 {
+		ran = append(ran, fmt.Sprintf("launchctl print %s (every %s until launchd released it: %s)", target, ReleasePoll, waited))
+	}
+	if err != nil {
+		return path, ran, err
+	}
 	bootstrap := []string{"bootstrap", domain, path}
 	for try := 1; ; try++ {
 		ran = append(ran, "launchctl "+strings.Join(bootstrap, " "))
@@ -276,7 +344,7 @@ func Install(ctx context.Context, a Agent, uid int, run Launchctl, write func(pa
 		if err == nil {
 			return path, ran, nil
 		}
-		if try == BootstrapTries || !strings.Contains(out, "Input/output error") {
+		if try == BootstrapTries || !(strings.Contains(out, "Input/output error") || strings.Contains(out, "Operation already in progress")) {
 			return path, ran, fmt.Errorf("launchctl bootstrap: %v: %s", err, strings.TrimSpace(out))
 		}
 		wait()

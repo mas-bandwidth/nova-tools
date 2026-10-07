@@ -2423,6 +2423,18 @@ lints fine — where the daemon's own `install` already retries that
 bootstrap (`BootstrapTries`, internal/friend/launchd.go). No hand plist is
 written or kept for the beat: `install` covers it.
 
+`install` waits for launchd to release the label before it bootstraps (three
+of the seat's adopt runs of 2026-10-07 rolled back without it). After the bootout
+it asks `launchctl print gui/<uid>/<label>` every 250 ms (`ReleasePoll`) until
+launchd no longer finds the service, at most the plist's exit timeout (its
+`ExitTimeOut`, else launchd's default of 20 s: `ExitTimeout`), and only then
+bootstraps, still with `BootstrapTries` for an EIO or `37: Operation already
+in progress`. Without the wait, a daemon that takes about 5 s to exit made every
+one of the five bootstraps, one second apart, answer 37, and the adopt play
+rolled back. A label still held past the timeout is refused: `launchd still
+holds <gui/uid/label> <n>s after its bootout`, and nothing is bootstrapped
+(`TestInstallWaitsForLaunchdToReleaseTheLabelAfterTheBootout`).
+
 ## Watch (cmd/nova-friend watch; internal/friend/state.go)
 
 The coordinator of friends wakes on what is addressed to it. `nova-friend watch --as <coordinator> [--timeout <duration>] [--state-dir <d>] [--redis <addr>] [--json]` is that wake as one run of a verb, with nothing to remember between
