@@ -72,7 +72,7 @@ func TestDoctorUnitsCheckFindsAHandPlistAndAMissingLoop(t *testing.T) {
 			require.NoError(t, os.WriteFile(filepath.Join(dir, "com.nova.loop.redis-local.plist"),
 				[]byte(units.LaunchdPlist("com.nova.loop.redis-local", []string{"/opt/nova/nova-redis", "serve", "--bind", "127.0.0.1"}, nil, "", 10)), 0o644))
 			// the record helper, installed running another verb: different
-			require.NoError(t, os.WriteFile(filepath.Join(dir, "com.nova.loop.helper.service"),
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "nova-loop-helper.service"),
 				[]byte(units.SystemdUnit("nova loop helper", []string{"/opt/nova/nova-sprint", "server"}, nil, 10)), 0o644))
 			// a hand plist no record names: a unit with no record
 			require.NoError(t, os.WriteFile(filepath.Join(dir, "com.nova.loop.orphan.plist"),
