@@ -64,7 +64,7 @@ function el(tag, cls, text) {
 // (.fv) inside the node, so the tint hugs the digits, not the cell. A track
 // cell flashes only when it goes lit <-> unlit. The clock never flashes
 // (setLiveHTML does not use these helpers).
-["all", "all2", "pct", "eta", "eta-at", "cost", "cost-per", "cost-unreconciled", "inflight", "inflight-sub", "tput", "coord", "epoch", "machine",
+["all", "all2", "pct", "eta", "eta-at", "eta-sample", "cost", "cost-per", "cost-coverage", "cost-dev", "cost-unreconciled", "inflight", "inflight-sub", "held-work", "tput", "coord", "epoch", "machine",
  "streams-sub", "fleet-head", "friends-sub", "readers-sub"].forEach(function (id) { var e = document.getElementById(id); if (e) quiet(e); });
 function valEl(e) {
   if (!e._fv) {
@@ -248,6 +248,29 @@ function renderArchived(d) {
   setText(b, n + " archived stream" + (n === 1 ? "" : "s") + ", " + a.landed + " card" + (a.landed === 1 ? "" : "s") + " landed, " + a.cost + " · " + (showArchived ? "hide" : "show"));
 }
 
+// Cost coverage is additive over the same streams as the headline. Legacy
+// data has unknown coverage; an absent price is never a zero-dollar record.
+function addCostCoverage(to, sc) {
+  var cv = sc.coverage, lc = sc.landed_coverage;
+  to.coverageKnown = to.coverageKnown !== false && !!cv;
+  to.actual = (to.actual || 0) + int(cv && cv.actual);
+  to.estimated = (to.estimated || 0) + int(cv && cv.estimated);
+  to.dollarUnknown = (to.dollarUnknown || 0) + int(cv && cv.unpriced);
+  to.priced = (to.priced || 0) + int(cv && cv.priced);
+  to.runs = (to.runs || 0) + int(cv && cv.all);
+  to.landedPriced = (to.landedPriced || 0) + int(lc && lc.priced);
+  to.landedAll = (to.landedAll || 0) + int(lc && lc.all);
+  to.landedCost = (to.landedCost || 0) + (cents(sc.landed_priced_cost) || 0);
+  to.verifiedDev = (to.verifiedDev || 0) + int(sc.verified_dev);
+  to.missingLineage = (to.missingLineage || 0) + int(sc.missing_lineage);
+  to.unattributed = (to.unattributed || 0) + int(sc.unattributed_runs);
+}
+
+function costCoverageText(c) {
+  if (!c.coverageKnown) return "known spend; dollar coverage unknown";
+  return "priced " + c.priced + "/" + c.runs + " runs · actual " + c.actual + " · estimated " + c.estimated + " · unpriced " + c.dollarUnknown;
+}
+
 function renderStreams(d) {
   lastStreams = d;
   renderArchived(d);
@@ -283,6 +306,7 @@ function renderStreams(d) {
     var wc = cents(sc.work_cost); if (wc) epoch.workCost += wc;
     var rc = cents(sc.read_cost); if (rc) epoch.readCost += rc;
     epoch.unpriced += int(sc.unpriced_runs);
+    addCostCoverage(epoch,sc);
   });
   sum.epoch = epoch;
   var digits = digitsOf(streamOrder(d).reduce(function (a, k) { return a + FLOW.reduce(function (b, st) { return b + int(work[k][st]); }, 0); }, 0));
@@ -310,6 +334,7 @@ function renderStreams(d) {
       var wc = cents(sc.work_cost); if (wc) sum.workCost += wc;
       var rc = cents(sc.read_cost); if (rc) sum.readCost += rc;
       sum.unpriced += int(sc.unpriced_runs);
+      addCostCoverage(sum,sc);
     }
     var status = statusOf[k];
     if (status === "held") held++;
@@ -569,23 +594,31 @@ function renderHero(d, s) {
   // is. The cost is every recorded take and read of their cards in any column; the cost per
   // card is that over the cards that landed
   var c = d.done ? s.sum.epoch : s.sum, recorded = c.totalCost;
-  setText($("cost"), money(recorded));
+  setText($("cost"), c.priced || recorded ? money(recorded) : "unknown");
   // the reads are their own number beside the work, with their share of the two:
   // "$0.42 per card · $310 work · $96 reads (24%)"
   var both = c.workCost + c.readCost;
   var split = both ? money(c.workCost) + " work \u00b7 " + money(c.readCost) + " reads (" + Math.round(100 * c.readCost / both) + "%)" : "";
-  var per = landed ? money(Math.ceil(recorded / landed)) + " per card" : "";
+  var per = c.coverageKnown && c.landedPriced ? money(Math.ceil(c.landedCost / c.landedPriced)) + " per priced landed outcome (" + c.landedPriced + "/" + c.landedAll + ")" : "per landed outcome unknown";
+  var dev = c.coverageKnown && !c.dollarUnknown && !c.missingLineage && c.priced && c.verifiedDev ? money(Math.ceil(recorded / c.verifiedDev)) + " all recorded spend / verified dev outcome (" + c.verifiedDev + "/" + c.landedAll + ")" : "all recorded spend / verified dev outcome unknown (" + c.verifiedDev + "/" + (c.landedAll || landed) + ")";
   var unpriced = c.unpriced ? c.unpriced + " runs unpriced" : "";
   setHTML($("cost-per"), [per, split, unpriced].filter(Boolean).join(" \u00b7 ") || " ");
+  setText($("cost-coverage"), costCoverageText(c) + (c.missingLineage ? " · lineage unknown " + c.missingLineage : "") + (c.unattributed ? " · kind attribution unavailable for " + c.unattributed + " records" : ""));
+  setText($("cost-dev"), dev);
+  setTitle($("cost-coverage"), "completed recorded runs; actual=harness-reported; estimated=route-prices; work and reads; provider gap shown separately");
   setTitle($("cost-per"), readerSpendTitle(d, d.done ? null : archivedSet(d)));
   // what the providers counted beyond the records is the epoch's (sprint.UnreconciledSpend,
   // every day since the epoch began), never added into the tile: its own line, its scope named
   setText($("cost-unreconciled"), money(s.sum.unreconciled) + " unreconciled since " + epochStart(d));
   setText($("inflight"), s.sum.working + s.sum.review + s.sum.merging);
   inflightLast = s.sum; renderInflight(s.sum);
+  setText($("held-work"), s.sum.working + " executing · " + int(d.held) + " held; held work included in overall ETA");
+  var evidence = d.eta_rate;
+  setText($("eta-sample"), evidence && evidence.window_seconds ? "rate: " + Math.round(evidence.window_seconds / 60) + " min running · " + evidence.landings + " landings · " + evidence.basis : "ETA rate window and sample unknown");
+  setTitle($("inflight"), s.sum.working + " executing · " + int(d.held) + " held · " + s.sum.review + " review · " + s.sum.merging + " merging; held work is included in the overall ETA");
   // throughput: cards landed per hour over the last hour, from the server's samples
   setText($("tput"), throughput == null ? "\u2014" : String(Math.round(throughput)));
-  setTitle($("tput"), throughput == null ? "needs ten minutes of samples" : "over the last " + Math.round(throughputMinutes) + " min");
+  setTitle($("tput"), throughput == null ? "needs ten minutes of samples" : "over the last " + Math.round(throughputMinutes) + " min · " + throughputSamples + " observations · " + throughputLandings + " landings");
   setText($("coord"), d.coordinator || "-"); setText($("epoch"), d.epoch != null ? d.epoch : "-");
   setMachine(d.machine);
 }
@@ -641,7 +674,7 @@ function renderInflight(sum) {
 window.addEventListener("resize", function () { if (inflightLast) renderInflight(inflightLast); fitEtaAt(); });
 
 // ---------- poll loop ----------
-var lastSnap = null, lastGood = null, inFlight = false, build = null, throughput = null, throughputMinutes = 0;
+var lastSnap = null, lastGood = null, inFlight = false, build = null, throughput = null, throughputMinutes = 0, throughputSamples = 0, throughputLandings = 0;
 // Readers and merge are hidden by default; ?all=1 shows them.
 var SHOW_ALL = /(?:^|[?&])all=1(?:&|$)/.test(location.search);
 if (SHOW_ALL) $("readers-panel").hidden = false;
@@ -762,9 +795,9 @@ function renderTopStreams(d) {
   var work = (d.tables && d.tables.work) || {}, rows = [];
   var sp = tierSpend(d), byTier = sp.byTier, order = sp.order, fmt = sp.fmt;
   Object.keys(work).forEach(function (k) {
-    var w = work[k], ct = cents(w.cost); if (!ct) return;
+    var w = work[k], sc = (d.stream_costs || {})[k] || {}, modern = !!sc.coverage, ct = cents(modern ? sc.total_cost : w.cost); if (ct === null) return;
     var n = {}; ["waiting", "ready", "working", "review", "merging", "landed"].forEach(function (c) { n[c] = parseInt(w[c], 10) || 0; });
-    rows.push({ name: k, cost: ct, n: n, per: n.landed ? Math.ceil(ct / n.landed) : null, tiers: tierCounts(w.tiers), byTier: w.cost_by_tier || null });
+    rows.push({ name: k, cost: ct, n: n, scope: modern ? "completed recorded runs; work and reads" : "legacy landed aggregate; coverage unknown", per: sc.per_landed || null, tiers: tierCounts(w.tiers), byTier: sc.cost_by_tier || w.cost_by_tier || null });
   });
   rows.sort(function (a, b) { return b.cost - a.cost; });
   var cols = String(order.length + 1); // the tiers with spend, then total
@@ -787,6 +820,7 @@ function renderTopStreams(d) {
     return { node: el("div", "row") };
   }, function (r, k) {
     var row = byName[k];
+    setTitle(r.node, row.scope);
     setCount(r.node, cellCount, function () { return quiet(el("div")); });
     putKid(r.node, 0, "name", k);
     order.forEach(function (t, i) { // the stream's spend on the tier, in the panel's format
@@ -896,7 +930,7 @@ function poll() {
 }
 function apply(j) {
   if (j.data) {
-    throughput = j.throughput == null ? null : j.throughput; throughputMinutes = j.throughputMinutes || 0;
+    throughput = j.throughput == null ? null : j.throughput; throughputMinutes = j.throughputMinutes || 0; throughputSamples = j.throughputSamples || 0; throughputLandings = j.throughputLandings || 0;
     // a snapshot byte-identical to the one on screen draws nothing
     var snap = JSON.stringify(j.data);
     if (snap !== lastSnap) { lastSnap = snap; try { render(j.data); } catch (e) { console.error(e); } }

@@ -129,6 +129,7 @@ img#logo.logo-tile { width: 6rem; height: 6rem; flex: none; }
 .big { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Inter", system-ui, sans-serif; font-variant-numeric: tabular-nums; letter-spacing: -.01em; } /* a monospace comma reads as whitespace */
 .sub { font-size: 1.625rem; line-height: 2.25rem; color: var(--text-2); }
 .hero .sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } /* a tile's subline is one line at every width */
+.hero .cost-detail { white-space: normal; overflow: visible; }
 #inflight-sub .pn { color: var(--text); font-variant-numeric: tabular-nums; }
 .sub.small { font-size: 1.25rem; line-height: 1.75rem; }
 .progress-card { background: var(--surface); border: 1px solid var(--border); border-radius: 1.5rem; padding: 2rem 3rem; margin-bottom: 3rem; }
@@ -339,18 +340,22 @@ footer a:hover { color: var(--text); }
   <div class="tile">
     <div class="label">ETA</div>
     <div class="big" id="eta">-</div>
+    <div class="sub" id="eta-sample"></div>
     <div class="sub" id="eta-at">&nbsp;</div>
   </div>
   <div class="tile">
     <div class="label">Cost</div>
     <div class="big" id="cost">-</div>
     <div class="sub" id="cost-per">&nbsp;</div>
+    <div class="sub small cost-detail" id="cost-coverage"></div>
+    <div class="sub small cost-detail" id="cost-dev"></div>
     <div class="sub" id="cost-unreconciled">&nbsp;</div>
   </div>
   <div class="tile">
     <div class="label">In flight</div>
     <div class="big" id="inflight">-</div>
     <div class="sub" id="inflight-sub">&nbsp;</div>
+    <div class="sub small" id="held-work"></div>
   </div>
   <div class="tile">
     <div class="label">Throughput</div>

@@ -93,18 +93,20 @@ type Server struct {
 // current the one shown when none is asked, releases every label a stream carries, and
 // releaseStreams the streams shown (absent for all).
 type snapshot struct {
-	OK                bool            `json:"ok"`
-	Data              json.RawMessage `json:"data"`
-	Release           string          `json:"release,omitempty"`
-	Current           string          `json:"current,omitempty"`
-	Releases          []string        `json:"releases,omitempty"`
-	ReleaseStreams    []string        `json:"releaseStreams,omitempty"`
-	FetchedAt         *time.Time      `json:"fetchedAt"`
-	Error             *string         `json:"error"`
-	Throughput        *float64        `json:"throughput"`
-	ThroughputMinutes float64         `json:"throughputMinutes"`
-	Build             string          `json:"build"`
-	Stale             bool            `json:"stale"`
+	OK                 bool            `json:"ok"`
+	Data               json.RawMessage `json:"data"`
+	Release            string          `json:"release,omitempty"`
+	Current            string          `json:"current,omitempty"`
+	Releases           []string        `json:"releases,omitempty"`
+	ReleaseStreams     []string        `json:"releaseStreams,omitempty"`
+	FetchedAt          *time.Time      `json:"fetchedAt"`
+	Error              *string         `json:"error"`
+	Throughput         *float64        `json:"throughput"`
+	ThroughputSamples  int             `json:"throughputSamples"`
+	ThroughputLandings int64           `json:"throughputLandings"`
+	ThroughputMinutes  float64         `json:"throughputMinutes"`
+	Build              string          `json:"build"`
+	Stale              bool            `json:"stale"`
 }
 
 // sample is one good read's landed count and when it began.
@@ -263,6 +265,16 @@ func (s *Server) record(start, end time.Time, body []byte, up *snapshot, err err
 		s.snap.OK, s.snap.Error = true, nil
 		s.snap.Data = placed(bytes.TrimSpace(body))
 		s.snap.FetchedAt, s.snap.Throughput, s.snap.ThroughputMinutes = &at, rate, minutes
+		if up != nil {
+			s.snap.ThroughputSamples = up.ThroughputSamples
+			s.snap.ThroughputLandings = up.ThroughputLandings
+		} else {
+			s.snap.ThroughputSamples = len(s.samples)
+			s.snap.ThroughputLandings = 0
+			if len(s.samples) > 0 {
+				s.snap.ThroughputLandings = max(0, s.samples[len(s.samples)-1].landed-s.samples[0].landed)
+			}
+		}
 	}
 	s.summarize(end, took, err != nil)
 }

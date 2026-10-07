@@ -18,7 +18,7 @@ const readCostDriver = `
 context.render(input.data);
 const txt = id => doc.getElementById(id).textContent;
 process.stdout.write(JSON.stringify({ cost: txt('cost'), per: doc.getElementById('cost-per').innerHTML, title: doc.getElementById('cost-per').title || "",
-  unreconciled: txt('cost-unreconciled'), landed: txt('landed'), all: txt('all'), eta: txt('eta') }));
+  unreconciled: txt('cost-unreconciled'), landed: txt('landed'), all: txt('all'), eta: txt('eta'), coverage: txt('cost-coverage'), dev: txt('cost-dev'), etaSample: txt('eta-sample'), held: txt('held-work') }));
 `
 
 // The cost tile shows the reads as their own number beside the work (reads are priced like
@@ -57,7 +57,7 @@ func TestTheHeroOfASprintDoneIsTheEpochs(t *testing.T) {
 }
 
 // costTile is the cost tile and the hero as app.js draws them.
-type costTile struct{ Cost, Per, Title, Unreconciled, Landed, All, Eta string }
+type costTile struct{ Cost, Per, Title, Unreconciled, Landed, All, Eta, Coverage, Dev, EtaSample, Held string }
 
 // drawCostTile draws the fixture with an archived stream old ($1.50: $1.00 work, $0.50 reads)
 // beside ci ($3.00: $2.00 work, $1.00 reads) and $0.40 unreconciled, edited by edit, and reads
@@ -104,4 +104,27 @@ func drawCostTile(t *testing.T, edit func(map[string]any)) costTile {
 	var res costTile
 	require.NoError(t, json.Unmarshal(outBuf.Bytes(), &res), outBuf.String())
 	return res
+}
+
+func TestCostCoverageKeepsTheDashboardDenominatorTruthful(t *testing.T) {
+	t.Parallel()
+	for _, n := range []int{3, 4} {
+		t.Run(itoa(n), func(t *testing.T) {
+			t.Parallel()
+			res := drawCostTile(t, func(d map[string]any) {
+				costs := d["stream_costs"].(map[string]any)["ci"].(map[string]any)
+				costs["coverage"] = map[string]any{"all": 3, "priced": 2, "actual": 1, "estimated": 1, "unpriced": 1}
+				costs["landed_coverage"] = map[string]any{"all": n, "priced": 1, "actual": 1, "estimated": 0, "unpriced": n - 1}
+				costs["landed_priced_cost"] = "$2.00"
+				costs["verified_dev"] = 0
+				d["eta_rate"] = map[string]any{"window_seconds": 3600, "landings": 8, "basis": "recent-running-time"}
+				d["held"] = 2
+			})
+			assert.Contains(t, res.Per, "$2.00 per priced landed outcome (1/"+itoa(n)+")")
+			assert.Contains(t, res.Coverage, "priced 2/3 runs · actual 1 · estimated 1 · unpriced 1")
+			assert.Contains(t, res.Dev, "verified dev outcome unknown (0/"+itoa(n)+")")
+			assert.Contains(t, res.EtaSample, "60 min running · 8 landings")
+			assert.Contains(t, res.Held, "2 held")
+		})
+	}
 }

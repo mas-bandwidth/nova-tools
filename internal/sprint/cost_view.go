@@ -25,9 +25,22 @@ import (
 type TierCosts struct {
 	// Tiers counts the stream's cards by the tier their briefs name (TierWord).
 	Tiers map[string]int `json:"tiers,omitempty"`
-	// PerLanded is the stream's landed cards' cost per landed card, dollars and cents
-	// rounded up (MoneyText); "-" with nothing landed or nothing priced.
-	PerLanded string `json:"per_landed"`
+	// PerLanded is spend over fully priced landed outcomes only (cost headline
+	// coverage); partial or unpriced outcomes never lower its denominator.
+	PerLanded        string                   `json:"per_landed"`
+	LandedPricedCost string                   `json:"landed_priced_cost"`
+	LegacyOutcomes   int                      `json:"legacy_outcomes,omitempty"`
+	UnattributedRuns int                      `json:"unattributed_runs,omitempty"`
+	Coverage         PriceCoverage            `json:"coverage"`
+	LandedCoverage   PriceCoverage            `json:"landed_coverage"`
+	TierCoverage     map[string]PriceCoverage `json:"tier_coverage,omitempty"`
+	Routes           map[string]CostHeadline  `json:"routes,omitempty"`
+	AccountingScope  string                   `json:"accounting_scope"`
+	DeliveryStage    string                   `json:"delivery_stage"`
+	VerifiedDev      int                      `json:"verified_dev"`
+	PerVerifiedDev   string                   `json:"per_verified_dev"`
+	VerifiedDevScope string                   `json:"verified_dev_scope"`
+	MissingLineage   int                      `json:"missing_lineage,omitempty"`
 	// CostByTier is the stream's spend by the tier each attempt and read ran on, dollars
 	// and cents rounded up, over every card of the stream; a record with no tier is
 	// "untiered".
@@ -94,14 +107,13 @@ func StreamTierCosts(s *Snapshot) map[string]TierCosts {
 }
 
 func streamTierCosts(s *Snapshot, stream string) TierCosts {
-	t := TierCosts{Tiers: map[string]int{}, PerLanded: "-", CostByTier: map[string]string{}, ReadsToday: map[string]ReadDay{}, Readers: map[string]ReaderSpend{}}
+	t := TierCosts{Tiers: map[string]int{}, PerLanded: "-", CostByTier: map[string]string{}, ReadsToday: map[string]ReadDay{}, Readers: map[string]ReaderSpend{}, TierCoverage: map[string]PriceCoverage{}, Routes: map[string]CostHeadline{}, PerVerifiedDev: "unknown", DeliveryStage: "landed-on-recorded-base", AccountingScope: "completed-recorded-runs; placed-primary-records; work-and-reads; actual=harness-reported; estimated=route-prices; excludes-provider-gap", VerifiedDevScope: "all-stream-recorded-spend / verified-dev-outcomes"}
 	byTier := map[string]*big.Rat{}
 	workCost, readCost := new(big.Rat), new(big.Rat)
 	pricedWork, pricedRead := false, false
 	day := s.Now.UTC().Format(time.DateOnly)
 	var landedCost []string
 	var allCost []string
-	landed := 0
 	for _, col := range States {
 		for _, c := range s.Work.Cell(stream, col) {
 			if IsSentinel(c) {
@@ -109,19 +121,41 @@ func streamTierCosts(s *Snapshot, stream string) TierCosts {
 			}
 			t.Tiers[TierWord(c)]++
 			if col == Landed {
-				landed++
-				if v := c.F(FieldCost); v != "" {
-					landedCost = append(landedCost, v)
+				t.LandedCoverage.All++
+				usd, actual, priced := pricedOutcome(CardCostOf(c), c.F(FieldCost))
+				if priced {
+					if CardCostOf(c).Total.Records == 0 {
+						t.LegacyOutcomes++
+					}
+					t.LandedCoverage.Priced++
+					if actual {
+						t.LandedCoverage.Actual++
+					} else {
+						t.LandedCoverage.Estimated++
+					}
+					landedCost = append(landedCost, usd)
+				} else {
+					t.LandedCoverage.Unpriced++
 				}
 			}
 			// the card's whole record, whatever its column: every take and read behind it,
 			// the records past the list's bound included (FieldCostTotal)
 			tot := CardCostOf(c).Total
+			t.Coverage.add(coverageOf(tot))
+			t.UnattributedRuns += max(0, tot.Records-len(CardCostOf(c).Consumers))
 			if tot.Charged != "" {
 				allCost = append(allCost, tot.Charged)
 			}
 			t.UnpricedRuns += tot.Records - tot.ChargedOf
 			for _, con := range CardCostOf(c).Consumers {
+				tier := cmp.Or(con.Tier, "untiered")
+				cov := t.TierCoverage[tier]
+				cov.add(coverageOf(cardcost.NoTotal().Add(con.Usage)))
+				t.TierCoverage[tier] = cov
+				route := cmp.Or(con.Route, con.Usage.Route, "unattributed")
+				headline := t.Routes[route]
+				headline.add(con.Usage)
+				t.Routes[route] = headline
 				if con.Kind == "read" && con.Usage.Unpriced == WhySubscription {
 					// a subscription read's cost is its tokens: priced, never a run unpriced
 					t.UnpricedRuns--
@@ -152,7 +186,7 @@ func streamTierCosts(s *Snapshot, stream string) TierCosts {
 				} else {
 					pricedWork = true
 				}
-				tier := cmp.Or(con.Tier, "untiered")
+
 				if byTier[tier] == nil {
 					byTier[tier] = new(big.Rat)
 				}
@@ -160,9 +194,10 @@ func streamTierCosts(s *Snapshot, stream string) TierCosts {
 			}
 		}
 	}
-	if sum, ok := cardcost.Sum(landedCost...); ok && landed > 0 && len(landedCost) > 0 {
+	if sum, ok := cardcost.Sum(landedCost...); ok && t.LandedCoverage.Priced > 0 && len(landedCost) > 0 {
 		if total, err := amountOf(sum); err == nil && total != nil {
-			t.PerLanded = cardcost.Cents(total.Quo(total, big.NewRat(int64(landed), 1)))
+			t.LandedPricedCost = cardcost.Cents(new(big.Rat).Set(total))
+			t.PerLanded = cardcost.Cents(total.Quo(total, big.NewRat(int64(t.LandedCoverage.Priced), 1)))
 		}
 	}
 	if sum, ok := cardcost.Sum(allCost...); ok && len(allCost) > 0 {
@@ -182,6 +217,39 @@ func streamTierCosts(s *Snapshot, stream string) TierCosts {
 	if len(t.Readers) == 0 {
 		t.Readers = nil
 	}
+	// Aggregate totals retain records past the detail bound. Their price source
+	// counts and known dollars stay visible in an unattributed bucket.
+	var attributed PriceCoverage
+	for _, v := range t.TierCoverage {
+		attributed.add(v)
+	}
+	gap := PriceCoverage{All: max(0, t.Coverage.All-attributed.All), Priced: max(0, t.Coverage.Priced-attributed.Priced), Actual: max(0, t.Coverage.Actual-attributed.Actual), Estimated: max(0, t.Coverage.Estimated-attributed.Estimated), Unpriced: max(0, t.Coverage.Unpriced-attributed.Unpriced)}
+	if gap.All > 0 {
+		cov := t.TierCoverage["unattributed"]
+		cov.add(gap)
+		t.TierCoverage["unattributed"] = cov
+		h := t.Routes["unattributed"]
+		h.Coverage.add(gap)
+		if sum, ok := cardcost.Sum(allCost...); ok && gap.Priced > 0 {
+			remaining, err := amountOf(sum)
+			if err == nil && remaining != nil {
+				for _, v := range byTier {
+					remaining.Sub(remaining, v)
+				}
+				if remaining.Sign() >= 0 {
+					if byTier["unattributed"] == nil {
+						byTier["unattributed"] = new(big.Rat)
+					}
+					byTier["unattributed"].Add(byTier["unattributed"], remaining)
+					if prior, err := amountOf(h.USD); err == nil && prior != nil {
+						remaining.Add(remaining, prior)
+					}
+					h.USD = remaining.RatString()
+				}
+			}
+		}
+		t.Routes["unattributed"] = h
+	}
 	tiers := make([]string, 0, len(byTier))
 	for tier := range byTier {
 		tiers = append(tiers, tier)
@@ -189,6 +257,9 @@ func streamTierCosts(s *Snapshot, stream string) TierCosts {
 	sort.Strings(tiers)
 	for _, tier := range tiers {
 		t.CostByTier[tier] = cardcost.Cents(byTier[tier])
+	}
+	for route, h := range t.Routes {
+		t.Routes[route] = h.finish()
 	}
 	if unrec := UnreconciledSpend(s); unrec > 0 {
 		t.Unreconciled = cardcost.Cents(new(big.Rat).SetFloat64(unrec))
@@ -211,19 +282,10 @@ func amountOf(usd string) (*big.Rat, error) {
 	return r, nil
 }
 
-// PerLandedOf is a stream's dollars per landed card from the where view's cells alone
-// (the cost cell, MoneyText, over the landed count): what the text table shows when the
-// tick's record is not there; "-" with nothing landed or no cost.
-func PerLandedOf(costCell string, landed int) string {
-	if landed <= 0 || len(costCell) < 2 || costCell[0] != '$' {
-		return "-"
-	}
-	r, err := amountOf(costCell[1:])
-	if err != nil || r == nil {
-		return "-"
-	}
-	return cardcost.Cents(r.Quo(r, big.NewRat(int64(landed), 1)))
-}
+// PerLandedOf refuses to infer dollar coverage from aggregate cells alone
+// (docs/SPEC-SPRINT.md, cost headline coverage). Only the tick's explicit
+// priced/all outcome counts support a per-outcome figure.
+func PerLandedOf(costCell string, landed int) string { return "-" }
 
 // ReadDay is one route's reads of a UTC day: the exact dollars charged (each read's
 // actual cost where reported, else its predicted one; "" when none was priced), the

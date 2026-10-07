@@ -46,26 +46,55 @@ stream's control card; `SyncMirrors` shows it in the cell. The sum is set
 from the cards, never added to: a replayed merge writes the same, and `clear`
 empties it with the tables.
 
-After `cost` the text table draws `per landed` (the owner, 2026-10-04: cost
-visibility, after a night of $437 for 844 landings whose pro streams landed at
-$4.50 to $8.88 a card and flash streams at $0.10 to $0.27): the stream's
-dollars per landed card, rounded up to the cent, `-` with nothing landed or
-nothing priced, the tick's count when its where record holds one
-(`sprint.TierCosts`, cost_view.go) and else the row's cost cell over its landed
-count (`sprint.PerLandedOf`); its footer is blank (the sprint's figure is the
-dashboard's). `where --json` carries, additively: `tiers` at the top, every
-card counted by the tier its brief names (flash when it names none; any word
-the briefs carry), on each `tables.work[<stream>]` row `per_landed` (every table
-cell stays a string, the shape the dashboard's pull decodes), and `stream_costs`
-beside the tables, each stream's `tiers` (its cards by tier) and `cost_by_tier`, its spend by the
-tier each attempt and read ran on (the cost records' tier, not the card's
-ceiling: a flash card escalated to pro shows both; a record with no tier is
-`untiered`), money strings as the cost column shows them. All of it is counted
-by the tick from the sprint it reads anyway and kept in the where record
-(store.WhereRecord), never read card by card at `where`; before the first tick
-of an epoch `tiers` and `cost_by_tier` are absent and `per_landed` is from the
-cells (`TestTheWhereRecordCountsTiersAndCostsByTier`,
-`TestWhereCarriesTiersAndPerLandedCost`).
+After `cost` the text table draws `per landed`: the recorded spend of fully
+priced landed outcomes divided by their **priced** count, rounded up to the
+cent, `-` when none is fully priced. A partially priced outcome is unpriced at
+this stage: adding it cannot dilute the priced average. A legacy `cost` field
+without consumer records has estimated outcome coverage, never actual source
+coverage. `where --json` keeps the string table cells and adds `stream_costs`.
+
+### Cost headline coverage
+
+Each stream's cost record carries `coverage` with disjoint `actual`,
+`estimated`, and `unpriced` completed-run counts, plus `priced` and `all`.
+Actual means the harness reports dollars; it does not mean a reconciled provider
+invoice. Estimated means route-price dollars without a reported actual. A
+subscription's tokens are retained, but its dollar spend is unknown. `total_cost`
+is the known subtotal over the scope, never a claim that missing dollars are
+zero. Work and reads are split separately. `unattributed_runs` names records past
+the bounded detailed history: their totals remain counted, and route attribution
+is unavailable.
+
+`landed_coverage` counts outcomes separately from runs. `per_landed` and
+`landed_priced_cost` cover fully priced landed outcomes; they carry both the
+priced and all outcome denominators. `legacy_outcomes` distinguishes older
+aggregate fields with no run-source breakdown. `tiers` counts admitted cards by
+their brief, and `cost_by_tier` and `tier_coverage` count recorded spend and its
+coverage by the tier the run uses. A record with no run tier remains `untiered`.
+`routes` carries each route's dollar subtotal,
+coverage, average per priced completed run, `stage` and `scope`. An unknown run
+never enters a priced denominator. Figures are compared only at the same stage
+and accounting scope. The epoch's provider gap is separate (`unreconciled`), never
+assigned to a route, stream or outcome by guess.
+
+`verified_dev`, `per_verified_dev`, and `verified_dev_scope` describe all recorded
+stream spend per outcome with explicit dev ancestry evidence. A landed column
+alone proves no dev outcome. Without that evidence or complete dollar coverage,
+the figure is `unknown`; its denominator is still shown. A pre-tick aggregate cost cell has no priced
+outcome denominator and therefore shows `-`, rather than dividing by every landing.
+The current projection covers placed primary records; durable retired-lineage
+retention and persisted dev-proof recording remain outside this projection.
+This view neither reads
+providers nor changes the source accounting records.
+
+### ETA rate evidence
+
+The coordinator view carries `eta_rate`: `landings_per_hour`, `basis`,
+`window_seconds`, `landings`, `from`, and `to`. It uses the same recent running-time
+window and sparse-sample epoch fallback as `LandingRate`; stopped time is excluded.
+The coordinator summary names executing and held work separately. The overall
+ETA includes held work and therefore depends on its eventual release. An absent
+rate record is unknown, rather than an invented observation window.
 
 Each reader's spend (the owner, 2026-10-05, before funding a provider for reads: "I would ask
 that you need to track spend on readers, can you do this before we start?"; the coordinator had

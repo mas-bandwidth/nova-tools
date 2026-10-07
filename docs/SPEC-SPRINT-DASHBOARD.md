@@ -109,10 +109,17 @@ from the owner edits one line here and nothing else moves.
 
 ## Hero row: five tiles, one row at 2000 px, three and two below, two per row below 1100 px, large figure (72 px)
 1. LANDED: n of all; sub-line "<pct>% complete". Narrow: the number alone, sub-line "of <all> · <pct>%".
-2. ETA: "2h 9m"; sub-line "around 9:06 PM".
-3. COST: total to the cent; sub-line "$0.24 per card" (never "per landed card").
-4. IN FLIGHT: n; sub-line "14 working · 9 review" on one line.
-5. THROUGHPUT: cards landed per hour over the last 60 min; "—" until ten minutes of samples; sub-line "cards / hour".
+2. ETA: "2h 9m"; sub-line "around 9:06 PM". The rate evidence names its running-time window, landing sample and basis; absent evidence says the rate window and sample are unknown.
+3. COST: known recorded spend to the cent, or `unknown` when no dollar figure exists.
+   The average is per priced landed outcome, with priced/all denominators. Separate
+   wrapping detail lines show actual, estimated and unpriced run coverage, and all
+   recorded spend per verified dev outcome with its verified/all denominator.
+   Incomplete coverage or absent dev ancestry says `unknown`. These lines remain
+   visible at narrow widths. Actual is harness reported, not a provider invoice;
+   the epoch's unreconciled provider gap stays separate. The top-stream breakdown
+   uses the same completed-recorded-run scope as its tier breakdown.
+4. IN FLIGHT: n; sub-line "14 working · 9 review" on one line. Executing and held work are named separately below it; held work is included in the overall ETA.
+5. THROUGHPUT: cards landed per hour over the last 60 min; "—" until ten minutes of samples; sub-line "cards / hour"; the tooltip also names observation count, landing sample and observed minutes.
    A lone tile on its row spans the width with its figure centered.
 - No FLEET tile. Flash on change: LANDED only; the others never.
 

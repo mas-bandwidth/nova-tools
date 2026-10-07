@@ -144,14 +144,16 @@ type coordinatorView struct {
 	Friends string `json:"friends,omitempty"`
 	// FleetTiers and FriendsTiers are the tiers each side may take, carried only when set
 	// (nova-sprint set --fleet-tiers, --friends-tiers); absent is all.
-	FleetTiers   []string    `json:"fleet_tiers,omitempty"`
-	FriendsTiers []string    `json:"friends_tiers,omitempty"`
-	Cursor       string      `json:"cursor"`
-	N            coordCounts `json:"n"`
-	Items        []viewItem  `json:"items"`
-	Rows         []viewRow   `json:"rows,omitempty"`
-	Same         int         `json:"same,omitempty"` // with --since: items left out, unchanged
-	Gone         int         `json:"gone,omitempty"` // with --since: items the cursor's read showed that stand no more
+	FleetTiers    []string                    `json:"fleet_tiers,omitempty"`
+	FriendsTiers  []string                    `json:"friends_tiers,omitempty"`
+	Cursor        string                      `json:"cursor"`
+	N             coordCounts                 `json:"n"`
+	ETAEvidence   sprint.ETARate              `json:"eta_rate"`
+	CostHeadlines map[string]sprint.TierCosts `json:"stream_costs,omitempty"`
+	Items         []viewItem                  `json:"items"`
+	Rows          []viewRow                   `json:"rows,omitempty"`
+	Same          int                         `json:"same,omitempty"` // with --since: items left out, unchanged
+	Gone          int                         `json:"gone,omitempty"` // with --since: items the cursor's read showed that stand no more
 }
 
 // workerCard is one of a worker's cards.
@@ -284,7 +286,7 @@ func (a *app) cmdViewWorker(args []string, stdout, stderr io.Writer) int {
 // epoch. With all, every friend's and machine's row is carried too.
 func (a *app) coordinatorView(ctx context.Context, st *store.Store, all bool) (coordinatorView, error) {
 	now := a.now()
-	v := coordinatorView{View: "coordinator", Schema: viewSchema, At: now.UTC().Truncate(time.Second), Items: []viewItem{}}
+	v := coordinatorView{View: "coordinator", Schema: viewSchema, At: now.UTC().Truncate(time.Second), Items: []viewItem{}, ETAEvidence: sprint.ETARate{Basis: "unavailable"}}
 	// the holder's push, read where seat push writes it: the store as given, never an epoch's
 	holder, err := st.B.Coordinator(ctx)
 	if err != nil {
@@ -355,6 +357,17 @@ func (a *app) coordinatorView(ctx context.Context, st *store.Store, all bool) (c
 		}
 	}
 	n.Held = sprint.HeldBack(s)
+	v.CostHeadlines = sprint.StreamTierCosts(s)
+	var stamps []time.Time
+	for _, c := range s.Work.Column(sprint.Landed) {
+		if at, err := time.Parse(time.RFC3339, c.F("landed")); err == nil {
+			stamps = append(stamps, at)
+		}
+	}
+	if merr == nil {
+		v.ETAEvidence = sprint.LandingRateEvidence(stamps, int64(n.Landed), machine.Spans, machine.FirstStart(s.Cleared), now)
+	}
+
 	for _, k := range sprint.RuleAnsweredWithin(append(s.Work.Cards(), s.Fleet.Cards()...), now, time.Hour) {
 		n.Rules += k
 	}
@@ -583,6 +596,7 @@ func (a *app) coordinatorView(ctx context.Context, st *store.Store, all bool) (c
 	})
 	v.Cursor = cursorOf(itemDigests(v.Items), rowDigests(v.Rows))
 	v.Sum = coordinatorSum(v, merr == nil, machine)
+	v.Sum += fmt.Sprintf(" | executing %d held %d | ETA rate %s window=%ds sample=%d landings", v.N.Working, v.N.Held, v.ETAEvidence.Basis, v.ETAEvidence.WindowSeconds, v.ETAEvidence.Landings)
 	return v, nil
 }
 
