@@ -44,6 +44,7 @@ func newLandRig(t *testing.T) *landRig {
 	// a fetch, not the push, writes the worker's remote-tracking refs: a push updates
 	// them only as a side effect, and r.head starts each card from refs/remotes/origin
 	r.git(r.worker, "fetch", "-q", "origin")
+	r.git(r.worker, "update-ref", "refs/remotes/origin/main", "HEAD")
 	r.git("", "clone", "-q", r.remote, r.clone)
 	r.a.gitEnv = r.env
 	r.a.landRoot = func() (string, error) { return filepath.Join(r.dir, "land"), nil }
