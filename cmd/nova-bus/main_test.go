@@ -496,3 +496,25 @@ func TestReceiptsAndOverdueSayWhereEachMessageIs(t *testing.T) {
 	cli.Do(t, "receipts", "--as", "bob", "--id", mid).Exit(0).Out("state=acted")
 	cli.Do(t, "overdue", "--older", "-1s").Exit(2).Err("--older wants a duration of at least 0")
 }
+
+
+// The top-level help and the verb help texts (e.g., help send) must state the
+// same Redis address precedence from one shared source: NOVA_BUS_REDIS,
+// else NOVA_SPRINT_REDIS, else fleet:bus.
+func TestTopLevelHelpNamesTheSameRedisAddressPrecedenceAsHelpSend(t *testing.T) {
+	t.Parallel()
+	r := newRig("ada", "bob")
+	cli := r.cli()
+
+	// Get the top-level help
+	topHelp := cli.Do(t, "help").Exit(0).Stdout
+
+	// Get the help send text
+	sendHelp := cli.Do(t, "help", "send").Exit(0).Stdout
+
+	// Both must contain the same precedence string
+	precedence := RedisEnv + ", else " + SprintRedisEnv + ", else " + FleetBusKey
+
+	assert.Contains(t, topHelp, precedence, "top-level help missing precedence")
+	assert.Contains(t, sendHelp, precedence, "help send missing precedence")
+}
