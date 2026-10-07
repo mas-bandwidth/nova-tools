@@ -368,13 +368,13 @@ func aclVerbRun(c *tool.Call, d deps, sub string) *tool.Out {
 	if len(unsourced) > 0 {
 		line(c.Stdout, "ACL APPLY REFUSED", "users", len(users), "missing", free(strings.Join(unsourced, ",")),
 			"", why("a user the store lacks is created only with a password"),
-			"", next("nova-redis acl apply "+store.flags()+" --password-env-for "+unsourced[0]+"=<VARIABLE> (the variable set, under nova-secrets exec --only <VARIABLE>)"))
+			"", next("nova-redis acl apply "+store.flags()+passwordFlags(unsourced)+" (the variable set, under nova-secrets exec --only <VARIABLE>)"))
 		return tool.Exit(1)
 	}
 	if len(unsourcedNoPass) > 0 {
 		line(c.Stdout, "ACL APPLY REFUSED", "users", len(users), "nopass", free(strings.Join(unsourcedNoPass, ",")),
 			"", why("a live user that carries nopass is mended only with a password from the variable --password-env-for names"),
-			"", next("nova-redis acl apply "+store.flags()+" --password-env-for "+unsourcedNoPass[0]+"=<VARIABLE> (the variable set, under nova-secrets exec --only <VARIABLE>)"))
+			"", next("nova-redis acl apply "+store.flags()+passwordFlags(unsourcedNoPass)+" (the variable set, under nova-secrets exec --only <VARIABLE>)"))
 		return tool.Exit(1)
 	}
 	for i, u := range differ {
@@ -408,4 +408,15 @@ func aclVerbRun(c *tool.Call, d deps, sub string) *tool.Out {
 	}
 	line(c.Stdout, "ACL APPLY OK", "users", len(users), "set", len(differ), "saved", saved, "library", digest, "store", at)
 	return tool.Exit(0)
+}
+
+// passwordFlags is the remedy text a refused apply carries for every user it
+// names: one --password-env-for <user>=<VARIABLE> per user, so a reader fixes
+// the whole call in one turn instead of one user per run.
+func passwordFlags(users []string) string {
+	var b strings.Builder
+	for _, u := range users {
+		b.WriteString(" --password-env-for " + u + "=<VARIABLE>")
+	}
+	return b.String()
 }
