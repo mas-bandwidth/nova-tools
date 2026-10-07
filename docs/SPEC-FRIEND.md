@@ -1378,6 +1378,21 @@ Not yet: the server's `friend cards` answer does not send `repo` and `base` (cmd
 outside this card's paths), so the brief's lines are read; a read's checkout at the head under
 read is not staged here.
 
+## A batch deal follows the lanes she starts (internal/sprint/friend_deal.go)
+
+The owner, the night of 2026-10-05: a friend at width 8 held seven heavy builds
+for six hours and started none, while she did every audit, carry and read she
+was handed at once. In batch mode the tick's deal is bounded by the work cards
+her session has started, not by her width alone. Width stays the ceiling. A
+ready work card her beat does not report as running within the start bound
+(`friend_start_max`, default 20 minutes), once a card she started is
+already working on her row, goes back to the pool with the NOTE `not started by <friend> in
+<window>; back to the pool`, and her next deals use the number she has started
+(`sprint.friendStartedLanes`). While she runs nothing, an unstarted card still
+moves to another friend with an idle lane. A reader-first friend is dealt her
+reads before work. One-shot mode is unchanged: one card at a time.
+`TestAFriendIsDealtOnlyWhatHerSessionStarts`.
+
 ## One-shot lanes (internal/friend/lanes.go)
 
 A friend's delivery mode is a column of her nova-config friend row, `mode`,

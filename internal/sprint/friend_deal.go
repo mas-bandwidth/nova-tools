@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -315,6 +316,209 @@ func friendRoom(f FriendSeat) (room, width int) {
 	return DealAhead*f.Width - f.ReadsFirst, f.Width
 }
 
+// A friend is dealt by the lanes she starts, not by her width alone (docs/SPEC-SPRINT.md
+// section 1, a friend is dealt what her session starts). The night of 2026-10-05: a friend
+// at width 8 held seven heavy builds for six hours and started none, while she did every
+// audit, carry and read she was handed at once.
+//
+// In batch mode, once a card of hers goes back unstarted, or a record of her started lanes
+// is already on her row, her lanes are the work cards she has started (at least 1), never
+// past her width, which stays the ceiling. Her room is those cards and DealAhead times her
+// lanes, never past friendRoom. A ready work card she has not started within the start
+// bound (FriendStartMax), while she is already running something (her beat names a job, or
+// a card she started is working), goes back to the pool in this deal: withdrawn on her
+// row, taken from her, its primary ready, with the NOTE "not started by <friend> in
+// <window>; back to the pool". While she runs nothing, friendUnstartedLevel still moves an
+// unstarted card to another friend, and this deal does not also return it. A one-shot
+// friend is unchanged. A hard pin stays. A reader-first friend is dealt her reads before
+// work by the tick's ladder (friendReadsFirst); this bound does not deal her work first.
+
+const (
+	// FieldStartedLanes is a friend's started lanes as of the deal that wrote it,
+	// "<friend>:<n>", on the cards the deal places on her row and the ones it returns.
+	FieldStartedLanes = "started_lanes"
+	// FieldStartedLanesAt is when FieldStartedLanes was written: the newest is hers.
+	FieldStartedLanesAt = "started_lanes_at"
+)
+
+// startedLanes is a friend's lanes as the cards she starts set them (friendStartedLanes).
+type startedLanes struct {
+	// started is the work cards on her row, ready or working, that she has begun.
+	started int
+	// lanes is her started lanes, at least 1; recorded says she has a record or a card
+	// goes back this tick, and throttled says the lanes are below her width.
+	lanes               int
+	recorded, throttled bool
+	// returning is her ready work cards past the start bound that she has not started,
+	// while she is already running something: the deal returns them to the pool this tick.
+	returning []*Card
+}
+
+// friendRunsSomething says a card she started is already working on her row. The tick her
+// beat first names a card running starts that card (friendStartUnits) and leaves the others;
+// a later tick, with her start already on the row, is the one that returns the cards still
+// unstarted past the bound. friendUnstartedLevel skips her in either case, so this return
+// is the only move of those cards.
+func friendRunsSomething(s *Snapshot, f FriendSeat) bool {
+	if s == nil || s.Fleet == nil {
+		return false
+	}
+	return slices.ContainsFunc(s.Fleet.Cell(FriendRow(f.Name), Working), startedNow)
+}
+
+// cardBegun says she has started the work card: her beat or its progress stamp (friendStarted),
+// or her start receipt at this generation (startedNow).
+func cardBegun(s *Snapshot, f FriendSeat, c *Card) bool {
+	return startedNow(c) || friendStarted(s, f, c)
+}
+
+// unstartedFor is how long a ready card has waited to be started, by the same stamps the
+// start bound's level uses (WorkDeadline): its own deal or return, the later of the two.
+func unstartedFor(s *Snapshot, c *Card) (time.Duration, bool) {
+	field, _, _, own := WorkDeadline(s, c)
+	if own == "" {
+		return 0, false
+	}
+	t, err := time.Parse(time.RFC3339, max(c.F(own), c.F(field)))
+	if err != nil {
+		return 0, false
+	}
+	return s.Now.Sub(t), true
+}
+
+// friendStartedLanes reads a friend's started lanes off her row. One-shot mode has none
+// (one card at a time is her bound already). With a card going back this tick, her lanes
+// are the cards she has started (at least 1). Otherwise they are the larger of her newest
+// record (FieldStartedLanes) and the cards she has started now. No record and nothing
+// returning leaves her at friendRoom.
+func friendStartedLanes(s *Snapshot, f FriendSeat) startedLanes {
+	var st startedLanes
+	if f.Mode == config.FriendModeOneShot || s == nil || s.Fleet == nil {
+		return st
+	}
+	row, window := FriendRow(f.Name), s.FriendStartMax()
+	running := friendRunsSomething(s, f)
+	for _, col := range []string{Ready, Working} {
+		for _, c := range s.Fleet.Cell(row, col) {
+			if c.F("kind") != "work" || isRead(c) {
+				continue
+			}
+			if cardBegun(s, f, c) {
+				st.started++
+				continue
+			}
+			if !running || col != Ready {
+				continue
+			}
+			if pr := s.Work.Placed(c.F("primary")); pr != nil && OnlyFriend(pr) {
+				continue
+			}
+			if d, ok := unstartedFor(s, c); ok && d >= window {
+				st.returning = append(st.returning, c)
+			}
+		}
+	}
+	SortCards(st.returning)
+	rec, at := 0, time.Time{}
+	for _, col := range []string{Ready, Working, Withdrawn, DoneOK, DoneFailed} {
+		for _, c := range s.Fleet.Cell(row, col) {
+			name, n, ok := startedLanesOf(c)
+			if !ok || name != f.Name {
+				continue
+			}
+			if t := stampAt(c, FieldStartedLanesAt); t.After(at) || t.Equal(at) && n > rec {
+				rec, at = n, t
+			}
+		}
+	}
+	switch {
+	case len(st.returning) > 0:
+		st.lanes = max(1, st.started)
+	case !at.IsZero():
+		st.lanes = max(rec, st.started)
+	default:
+		return st
+	}
+	st.lanes = min(st.lanes, max(f.Width, 1))
+	st.recorded, st.throttled = true, st.lanes < f.Width
+	return st
+}
+
+// startedLanesOf reads a card's FieldStartedLanes.
+func startedLanesOf(c *Card) (friend string, n int, ok bool) {
+	name, v, found := strings.Cut(c.F(FieldStartedLanes), ":")
+	if !found || name == "" {
+		return "", 0, false
+	}
+	n, err := strconv.Atoi(v)
+	return name, n, err == nil && n > 0
+}
+
+// friendLimits is the friend's room and her lanes as the deal and the level count them,
+// against the cards on her row now (the ones going back this tick among them): friendRoom
+// while her started lanes are not below her width; below it, her started cards and
+// DealAhead times her started lanes held, never past friendRoom. The cards going back
+// this tick are added to both, so the room they still occupy in the snapshot is free.
+func friendLimits(f FriendSeat, st startedLanes) (room, width int) {
+	room, width = friendRoom(f)
+	if !st.throttled {
+		return room, width
+	}
+	n := len(st.returning)
+	return min(room, st.started+DealAhead*st.lanes) + n, min(width, st.started+st.lanes) + n
+}
+
+// startedLanesRecord is the fields that record her started lanes on a card placed on her
+// row now; none while she has no record.
+func startedLanesRecord(s *Snapshot, name string, st startedLanes) map[string]string {
+	if !st.recorded {
+		return nil
+	}
+	return map[string]string{FieldStartedLanes: name + ":" + itoa(st.lanes), FieldStartedLanesAt: stamp(s.Now)}
+}
+
+// markCard adds the fields to the unit's change of the card on the fleet table.
+func markCard(u *Unit, id string, set map[string]string) {
+	if len(set) == 0 {
+		return
+	}
+	for i := range u.Changes {
+		if ch := &u.Changes[i]; ch.Table == Fleet && ch.Entry.ID == id {
+			if ch.Entry.Set == nil {
+				ch.Entry.Set = map[string]string{}
+			}
+			maps.Copy(ch.Entry.Set, set)
+		}
+	}
+}
+
+// windowWords is the start bound as the NOTE line says it: 20m, 1h, 1h30m.
+func windowWords(d time.Duration) string {
+	w := d.String()
+	if strings.HasSuffix(w, "m0s") {
+		w = strings.TrimSuffix(w, "0s")
+	}
+	if strings.HasSuffix(w, "h0m") {
+		w = strings.TrimSuffix(w, "0m")
+	}
+	return w
+}
+
+// notStartedWhy is why a card goes back to the pool, the NOTE line's words.
+func notStartedWhy(friend string, window time.Duration) string {
+	return "not started by " + friend + " in " + windowWords(window) + "; back to the pool"
+}
+
+// friendReturnUnit is a ready card she has not started within the bound, back to the pool:
+// withdrawn on her row, taken from her, its primary ready, the NOTE line its happened note
+// (withdrawUnit), and her started lanes recorded on it.
+func friendReturnUnit(s *Snapshot, f FriendSeat, c *Card, st startedLanes) Unit {
+	why := notStartedWhy(f.Name, s.FriendStartMax())
+	set := map[string]string{FieldTakenBack: why, FieldTakenFrom: FriendRow(f.Name), "untaken_since": stamp(s.Now)}
+	maps.Copy(set, startedLanesRecord(s, f.Name, st))
+	return withdrawUnit(s, c, set, []string{"first_taken"}, NTakenBack, MachineActor, why)
+}
+
 // preferredFriend is the friend of names a card goes to (docs/SPEC-SPRINT.md section 1,
 // friend-deal-idle-lanes-first.w1): a friend with an idle lane (lanes > 0) before every
 // friend with none, the most idle lanes first, then the most room free, then the first by
@@ -431,14 +635,20 @@ func friendDeal(s *Snapshot, cards []*Card, seats []FriendSeat) (p Plan, dealt, 
 func friendDealPass(s *Snapshot, cards []*Card, seats []FriendSeat, reclaim bool) (p Plan, dealt, dealtWorking map[string]int) {
 	free, lanes, seat := map[string]int{}, map[string]int{}, map[string]FriendSeat{}
 	dealt, dealtWorking = map[string]int{}, map[string]int{}
+	startedBy := map[string]startedLanes{}
+	record := map[string]map[string]string{}
 	var up []string
 	for _, f := range seats {
 		if friendDealable(s, f) {
-			room, width := friendRoom(f)
+			st := friendStartedLanes(s, f)
+			room, width := friendLimits(f, st)
 			free[f.Name] = room - friendLoad(s, f.Name)
-			// a lane is idle while no card on her row holds it, started or not
+			// a lane is idle while no card on her row holds it, started or not;
+			// below her width, her started lanes are the ones that count (friendLimits)
 			lanes[f.Name] = width - friendLoad(s, f.Name)
 			seat[f.Name] = f
+			startedBy[f.Name] = st
+			record[f.Name] = startedLanesRecord(s, f.Name, st)
 			up = append(up, f.Name)
 		}
 	}
@@ -452,6 +662,13 @@ func friendDealPass(s *Snapshot, cards []*Card, seats []FriendSeat, reclaim bool
 	starts, started := friendStartUnits(s, seats)
 	p.Units = append(p.Units, starts...)
 	maps.Copy(dealtWorking, started)
+	// a ready card she has not started within the bound, while she runs something, goes
+	// back to the pool; her room counted its place free (friendLimits, friendReturnUnit)
+	for _, name := range up {
+		for _, c := range startedBy[name].returning {
+			p.Units = append(p.Units, friendReturnUnit(s, seat[name], c, startedBy[name]))
+		}
+	}
 	members := s.UpMembers()
 	declared := map[string]bool{}
 	for _, c := range cards {
@@ -535,11 +752,12 @@ func friendDealPass(s *Snapshot, cards []*Card, seats []FriendSeat, reclaim bool
 		default:
 			u = friendDealUnit(s, c, card, row, Ready, tierNowSet(c, tier))
 		}
+		placedID := card
+		if wc != nil && !escalated {
+			placedID = wc.ID
+		}
+		markCard(&u, placedID, record[name])
 		if pinnedCard && pinned != "" && !OnlyFriend(c) && name != pinned {
-			placedID := card
-			if wc != nil && !escalated {
-				placedID = wc.ID
-			}
 			u.Notes = append(u.Notes, pinIgnoredNote(s, c, placedID, pinned, pinSkipWhy(s, seats, pinned, leftAtPin, tier, free), row, Ready))
 		}
 		p.Units = append(p.Units, u)
