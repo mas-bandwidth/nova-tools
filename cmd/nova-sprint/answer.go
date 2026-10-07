@@ -171,9 +171,9 @@ func (a *app) cmdAnswer(args []string, stdout, stderr io.Writer) int {
 	}
 	server := a.server(fs)
 	w.call = func(ctx context.Context, argv []string) (sprintwire.Result, error) {
-		if server != "" {
-			n := readVerb(argv).words
-			return a.ask(ctx, server, argv[:n], argv[n:])
+		if server.addr != "" {
+			n := readVerb(a, argv).words
+			return a.ask(ctx, server.addr, argv[:n], argv[n:])
 		}
 		return a.runHere(argv, *c), nil
 	}
@@ -220,7 +220,7 @@ func (a *app) cmdAnswer(args []string, stdout, stderr io.Writer) int {
 // runHere runs one verb in this process, on the store the answer verb was given, as its
 // actor: the answer verb with no server.
 func (a *app) runHere(argv []string, c common) sprintwire.Result {
-	n := readVerb(argv).words
+	n := readVerb(a, argv).words
 	words := slices.Concat(argv[:n], []string{"--actor", c.actor}, argv[n:])
 	if c.redis != "" {
 		words = slices.Concat(argv[:n], []string{"--redis", c.redis, "--actor", c.actor}, argv[n:])
