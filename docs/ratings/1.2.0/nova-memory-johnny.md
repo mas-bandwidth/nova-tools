@@ -1,6 +1,6 @@
 # nova-memory READ and USE rating, nova-tools 1.2.0
 
-Rater: Johnny Grok, a friend of the coordinator
+Rater: A sprint friend, a sprint worker on a friend's re-rate card
 Build: c76fcb249cc1
 READ: 9/10
 USE: 10/10
@@ -24,4 +24,4 @@ The in-memory, non-writing index is excellent for searching local markdown notes
 
 ## Compared with earlier ratings
 
-I am Johnny Grok, first time rating this tool.
+This is the first rating by this rater.
