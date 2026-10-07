@@ -20,148 +20,6 @@ import (
 
 // parsed is one rendering read back into the parts of Out, for comparing the
 // lines with the JSON field for field.
-type parsed struct {
-	Verb, Status, Remedy string
-	Exit                 int
-	Why                  []string
-	Facts                map[string]string
-	Items                []string // kind k=v ... with values as strings
-	More                 []string
-	Notes                []string
-	Payload              string
-}
-
-// fromLines reads the text rendering. Exit is not in the text: the process's
-// exit code carries it, so the caller copies it across. "-" is the empty value.
-func fromLines(t *testing.T, token, text string) parsed {
-	t.Helper()
-	p := parsed{Facts: map[string]string{}}
-	for i, l := range strings.Split(strings.TrimSuffix(text, "\n"), "\n") {
-		rest, ok := strings.CutPrefix(l, token+" ")
-		if !ok { // the payload: alone, or last
-			if i == 0 {
-				p.Status = "ok"
-			}
-			p.Payload = l
-			continue
-		}
-		word, rest, _ := strings.Cut(rest, " ")
-		if w, ok := strings.CutSuffix(word, ":"); ok {
-			word, rest = w, ": "+rest
-		}
-		switch word {
-		case "OK", "FAILED", "REFUSED":
-			p.Status = map[string]string{"OK": "ok", "FAILED": "failed", "REFUSED": "refused"}[word]
-			if i := strings.LastIndex(rest, "; run: "); i >= 0 {
-				p.Remedy, rest = rest[i+len("; run: "):], rest[:i]
-			}
-			fields, why, found := strings.Cut(rest, ": ")
-			if found {
-				p.Why = append(p.Why, why)
-			}
-			if len(p.Why) > 1 {
-				continue // the fields repeat on every why line
-			}
-			for _, kv := range tokens(fields) {
-				k, v, _ := strings.Cut(kv, "=")
-				if v == "-" {
-					v = ""
-				}
-				p.Facts[k] = v
-			}
-		case "MORE":
-			p.More = append(p.More, rest)
-		case "NOTE":
-			p.Notes = append(p.Notes, rest)
-		default:
-			var kv []string
-			for _, f := range strings.Fields(rest) {
-				k, v, _ := strings.Cut(f, "=")
-				if v == "-" {
-					v = ""
-				}
-				kv = append(kv, k+"="+v)
-			}
-			p.Items = append(p.Items, strings.Join(append([]string{strings.ToLower(word)}, kv...), " "))
-		}
-	}
-	return p
-}
-
-// tokens splits s at spaces outside a quoted value (oneline.Quote's).
-func tokens(s string) []string {
-	var out []string
-	var cur strings.Builder
-	quoted, escaped := false, false
-	for _, r := range s {
-		switch {
-		case escaped:
-			escaped = false
-		case quoted && r == '\\':
-			escaped = true
-		case r == '"':
-			quoted = !quoted
-		case r == ' ' && !quoted:
-			if cur.Len() > 0 {
-				out = append(out, cur.String())
-				cur.Reset()
-			}
-			continue
-		}
-		cur.WriteRune(r)
-	}
-	if cur.Len() > 0 {
-		out = append(out, cur.String())
-	}
-	return out
-}
-
-// fromJSON reads the JSON rendering into the same parts.
-func fromJSON(t *testing.T, raw string) parsed {
-	t.Helper()
-	var j struct {
-		Result struct {
-			Verb, Status, Remedy string
-			Exit                 int
-			Why                  []string
-		}
-		Facts map[string]any
-		Items []struct {
-			Kind   string
-			Fields json.RawMessage
-		}
-		More    []More
-		Notes   []string
-		Payload string
-	}
-	err := json.Unmarshal([]byte(raw), &j)
-	require.NoError(t, err, "not one JSON object: %v: %s", err, raw)
-	p := parsed{Verb: j.Result.Verb, Status: j.Result.Status, Remedy: j.Result.Remedy, Exit: j.Result.Exit,
-		Why: j.Result.Why, Facts: map[string]string{}, Notes: j.Notes, Payload: j.Payload}
-	for k, v := range j.Facts {
-		p.Facts[k] = fmt.Sprint(v)
-	}
-	for _, it := range j.Items {
-		// The fields are an object in insertion order; decode them in order.
-		dec := json.NewDecoder(bytes.NewReader(it.Fields))
-		kv := []string{strings.ToLower(it.Kind)}
-		_, err := dec.Token()
-		require.NoError(t, err)
-		for dec.More() {
-			k, _ := dec.Token()
-			var v any
-			require.NoError(t, dec.Decode(&v))
-			kv = append(kv, fmt.Sprint(k)+"="+fmt.Sprint(v))
-		}
-		p.Items = append(p.Items, strings.Join(kv, " "))
-	}
-	for _, m := range j.More {
-		p.More = append(p.More, fmt.Sprintf("kind=%s shown=%d total=%d %s", m.Kind, m.Shown, m.Total, m.Remedy))
-	}
-	return p
-}
-
-// TestRender pins the encoder: each value's lines, exactly, and its lines and
 // its JSON read back to the same parts, field for field.
 func TestRender(t *testing.T) {
 	t.Parallel()
@@ -214,7 +72,8 @@ func TestRender(t *testing.T) {
 				assert.Contains(t, js.String(), `"word":"`+w+`"`)
 				lines = strings.Replace(lines, "DEMO "+w+" ", "DEMO FAILED ", 1)
 			}
-			got, want := fromLines(t, "DEMO", lines), fromJSON(t, js.String())
+			r := NewRig()
+			got, want := r.FromLines(t, "DEMO", lines), r.FromJSON(t, js.String())
 			got.Verb, got.Exit = want.Verb, tc.out.Exit
 			assert.True(t, want.Verb == "demo" && want.Exit == tc.out.Exit, "JSON result is %s exit %d, want demo exit %d", want.Verb, want.Exit, tc.out.Exit)
 			assert.NotContains(t, js.String(), `\`+`u003c`, "the JSON is HTML-escaped")
