@@ -548,8 +548,9 @@ session's own `pong --nonce`, its line at the head of the next turn, alone
 makes the friend up. No ping for a window and the session is told the
 coordinator is silent, once, inside a turn that carries messages. A turn runs as
 long as it prints (`--silent-stop`, twenty minutes of silence, stops it); the
-same provider refusal three turns in a row (`--broken-after`) marks the session
-broken, delivers nothing more, and tells the coordinator. The
+provider's refusal on three turns in a row (`--broken-after`) marks the session
+broken, delivers nothing more, and tells the coordinator once; `reset` clears it
+([A broken session](#a-broken-session)). The
 spec is [SPEC-FRIEND.md](SPEC-FRIEND.md); the rules are `internal/friend`; the
 machine is `tla/Friend.tla`.
 
@@ -582,7 +583,7 @@ OK nonce= from= at= took= queue= working= width= daemon=` (whether the daemon
 pong came too), or `WAIT-PONG NONE` at exit 1. `status` prints `STATUS OK
 daemon=<up|down> ... connection= seat= challenge=<quiet|challenged|deaf>
 last_pong= queue= working= width= session=<ok|broken> held= inbox= missing=` (broken:
-`session_id= broken_at= reason=`; held, inbox and missing are the daemon's last reconcile of
+`broken=<RFC3339> session_id= reason=<line>`, and the line is `STATUS BROKEN` at exit 1; held, inbox and missing are the daemon's last reconcile of
 her inbox with her row, `-` until the sprint server has answered: SPEC-FRIEND.md, "The
 daemon writes every card she holds"), then `status= why= evidence= harness_seen=`, or
 `STATUS NONE` at exit 1 where no daemon ever ran. A friend is up on her session's
@@ -603,6 +604,39 @@ rebuilt (a daemon refused its state directory under `--dir` says so and keeps
 it under the home directory); a `RUN ... plist drift:` line on start, which is
 a daemon running other arguments than its installed plist (a `launchctl
 kickstart` keeps what launchd loaded): run `install` again.
+
+### A broken session
+
+A session whose provider refuses the request itself (an `invalid_request_error`, an
+authentication or permission error, out of credit or funds, an HTTP 400, 401, 402 or 403 from
+the provider) refuses every turn the same way, and delivering into it only piles up failed
+turns. Three such refusals in a row from one session, no success between (`--broken-after`),
+mark it broken. A rate limit (429) is not a refusal: the turn is deferred and tried again,
+counted toward nothing. Once broken:
+
+- the daemon delivers nothing more into the session; every message stays pending, is never
+  acked and never counts toward giving up;
+- it sends ONE message to its coordinator (the seat the last ping named, else `--coordinator`),
+  subject `session broken: <friend>`, body the refusal line, when it was first seen, the count and
+  the remedy;
+- `status` prints `STATUS BROKEN` with `broken=<RFC3339> reason=<line>` at exit 1, and the
+  daemon's presence file carries `broken` and `reason`, so the friend reads down with the reason;
+- the mark and the failed-delivery counts are in the state file (`delivery.json`), so a restart
+  keeps them.
+
+The mark is cleared by `reset`, once the session is fixed, or by the session's own
+`pong --nonce` for the current ping (the session proved it takes turns); the next delivery then goes.
+
+```sh
+nova-friend reset --as bob --dir ./bob
+```
+
+`reset --as <me> --dir <d> [--state-dir <d>] [--json]` prints
+`RESET OK broken=false cleared_reason= cleared_since=` at exit 0 (JSON fields `broken`,
+`cleared_reason`, `cleared_since`), and `RESET NONE` at exit 1 when nothing was marked; exit 2
+when a flag is wrong or the state file cannot be read or written.
+A daemon that is running lifts the mark at its next step. The rules are in
+[SPEC-FRIEND.md](SPEC-FRIEND.md), the loop; the model is `tla/Delivery.tla`.
 
 ### The daemon
 

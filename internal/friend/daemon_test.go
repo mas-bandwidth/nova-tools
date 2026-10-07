@@ -484,7 +484,7 @@ func TestDSHRefusalOnExitZeroMarksTheFriendDownWithTheReason(t *testing.T) {
 				assert.Empty(t, fresh)
 				got := r.adaGot(t)
 				require.Len(t, got, 1, "the seat is told once")
-				assert.True(t, strings.HasPrefix(got[0], "friend bob: session session-zhi broken: "+c.reason), got[0])
+				assert.True(t, strings.HasPrefix(got[0], "session broken: bob: session broken: bob\nrefusal: "+c.reason), got[0])
 				all := strings.Join(r.records, "\n")
 				assert.Contains(t, all, `session=broken reason="`+c.reason+`"`)
 				assert.Regexp(t, `session=ok: a turn succeeded after [3-9] refused; no longer `+regexp.QuoteMeta(c.reason), all)
@@ -708,4 +708,234 @@ func TestATurnStampsItsMessagesReadAndActed(t *testing.T) {
 	got, _, err := r.bus.Stages(context.Background(), "bob", m.ID)
 	require.NoError(t, err)
 	assert.Equal(t, bus.Acted, got[0].State)
+}
+
+// brokenRig is a daemon over a real OpenCode adapter whose Exec is a fake:
+// every turn prints out and exits exit, and counts. The delivery record is
+// the state file under the rig's state directory, so a second run of the same
+// rig is a restart that keeps only that file; the clock is the rig's, one
+// second a read, and no socket opens.
+type brokenRig struct {
+	*rig
+	state string
+	mu    sync.Mutex
+	out   string
+	exit  int
+	turns int
+}
+
+func newBrokenRig(t *testing.T, out string) *brokenRig {
+	t.Helper()
+	b := &brokenRig{rig: newRig(t), state: t.TempDir(), out: out, exit: 1}
+	b.passive = true
+	b.d.Pause = func(context.Context, time.Duration) { synctest.Wait() }
+	b.d.Coordinator = "ada"
+	b.d.LoadDelivery = func() (Delivery, bool, error) { return ReadDelivery(b.state) }
+	b.d.SaveDelivery = func(d Delivery) error { return WriteDelivery(b.state, d) }
+	b.d.Deliver = &OpenCode{Dir: b.d.Dir, Session: "ses_x", Run: func(_ context.Context, _, _ string, _ []string, _ string) (string, int, error) {
+		b.mu.Lock()
+		defer b.mu.Unlock()
+		b.turns++
+		return b.out, b.exit, nil
+	}}
+	return b
+}
+
+func (b *brokenRig) set(out string, exit int) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.out, b.exit = out, exit
+}
+
+func (b *brokenRig) count() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.turns
+}
+
+func (b *brokenRig) told(t *testing.T) []bus.Message {
+	t.Helper()
+	got, err := b.store.Range(context.Background(), bus.StreamOf("ada"), "-", "+", 100)
+	require.NoError(t, err)
+	var out []bus.Message
+	for _, e := range got {
+		if m := e.Message(); m.Subject == BrokenSubject("bob") {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+// the measured refusal (docs/SPEC-FRIEND.md, the loop: a broken session)
+const measuredRefusal = freddyRefusal
+
+// The same provider refusal on three turns in a row, no success between,
+// marks the session broken: one message to the coordinator with the refusal
+// line, first seen, count and the remedy, no fourth delivery, and every
+// message stays pending and is never counted toward given_up.
+func TestARepeatedProviderRefusalMarksTheSessionBroken(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		b := newBrokenRig(t, measuredRefusal)
+		b.send(t, "ada", "one", "x")
+		b.at[3] = func() { b.send(t, "ada", "two", "x") }
+		b.at[6] = func() { b.send(t, "ada", "three", "x") }
+		b.at[9] = func() { b.send(t, "ada", "four", "x") }
+		b.at[15] = func() { b.store.Advance(bus.ClaimAfter) } // claims open: still nothing goes in
+		b.run(t, 30)
+		assert.Equal(t, 3, b.count(), "three refused turns, then none")
+		s := b.last()
+		assert.Equal(t, SessionBroken, s.Session)
+		assert.Contains(t, s.SessionReason, "invalid_request_error")
+		told := b.told(t)
+		require.Len(t, told, 1, "one message to the coordinator")
+		assert.Contains(t, told[0].Body, "refusal: invalid_request_error: The request could not be processed")
+		assert.Contains(t, told[0].Body, "first seen: ")
+		assert.Contains(t, told[0].Body, "count: 3")
+		assert.Contains(t, told[0].Body, "remedy: fix the session, then: nova-friend reset --as bob --dir "+b.d.Dir)
+		pending, _ := b.pending(t)
+		assert.Len(t, pending, 3, "the refused messages stay pending, never acked")
+		for _, line := range b.records {
+			assert.NotContains(t, line, "given_up")
+			assert.NotContains(t, line, "acked")
+		}
+		rec, found, err := ReadDelivery(b.state)
+		require.NoError(t, err)
+		require.True(t, found)
+		require.NotNil(t, rec.Broken)
+		assert.Empty(t, rec.Failed, "a refusal counts toward no message")
+	})
+}
+
+// A rate limit defers: the message stays pending in the daemon's hand, tried
+// again, counted toward nothing, and the session is never broken.
+func TestARateLimitDefersAndIsNotBroken(t *testing.T) {
+	t.Parallel()
+	for _, out := range []string{
+		`{"type":"error","error":{"type":"rate_limit_error","message":"slow down"}}`,
+		"Error: HTTP 429 Too Many Requests\n",
+	} {
+		synctest.Test(t, func(t *testing.T) {
+			b := newBrokenRig(t, out)
+			b.send(t, "ada", "one", "x")
+			b.run(t, 60)
+			assert.Greater(t, b.count(), DefaultBrokenAfter, "tried again past the refusal count: %q", out)
+			assert.NotEqual(t, SessionBroken, b.last().Session)
+			assert.Empty(t, b.told(t))
+			pending, _ := b.pending(t)
+			assert.Len(t, pending, 1, "never acked")
+			for _, line := range b.records {
+				assert.NotContains(t, line, "given_up")
+			}
+			rec, _, err := ReadDelivery(b.state)
+			require.NoError(t, err)
+			assert.Empty(t, rec.Failed, "a deferral counts toward nothing")
+			assert.Nil(t, rec.Broken)
+		})
+	}
+}
+
+// The mark is in the state file: a restart keeps the session broken, delivers
+// nothing, and does not tell the coordinator again.
+func TestBrokenSurvivesARestart(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		b := newBrokenRig(t, measuredRefusal)
+		b.send(t, "ada", "one", "x")
+		b.at[3] = func() { b.send(t, "ada", "two", "x") }
+		b.at[6] = func() { b.send(t, "ada", "three", "x") }
+		b.run(t, 20)
+		require.Equal(t, SessionBroken, b.last().Session)
+		require.Equal(t, 3, b.count())
+		b.send(t, "ada", "two", "x")
+		b.at[25] = func() { b.store.Advance(bus.ClaimAfter) }
+		b.run(t, 50) // the daemon starts again, with the state file alone
+		assert.Equal(t, SessionBroken, b.last().Session)
+		assert.Contains(t, b.last().SessionReason, "invalid_request_error")
+		assert.Equal(t, 3, b.count(), "no delivery into a session the file says is broken")
+		assert.Len(t, b.told(t), 1, "told once, across the restart")
+	})
+}
+
+// reset (ClearBroken) lifts the mark: the running daemon sees it at its next
+// step and the next delivery goes.
+func TestResetClearsBrokenAndTheNextDeliveryGoes(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		b := newBrokenRig(t, measuredRefusal)
+		b.send(t, "ada", "one", "x")
+		b.at[3] = func() { b.send(t, "ada", "two", "x") }
+		b.at[6] = func() { b.send(t, "ada", "three", "x") }
+		b.at[20] = func() {
+			b.set("fine\n", 0)
+			mark, had, err := ClearBroken(b.state)
+			assert.NoError(t, err)
+			assert.True(t, had)
+			assert.Contains(t, mark.Reason, "invalid_request_error")
+			b.store.Advance(bus.ClaimAfter) // the claims open: the pending messages are handed in again
+		}
+		b.run(t, 40)
+		assert.Equal(t, SessionOK, b.last().Session)
+		assert.Greater(t, b.count(), 3, "the pending messages went in after the reset")
+		pending, _ := b.pending(t)
+		assert.Empty(t, pending, "and were acked")
+		_, had, err := ClearBroken(b.state)
+		require.NoError(t, err)
+		assert.False(t, had, "nothing is marked now")
+	})
+}
+
+// The session's own pong for the current nonce proves it takes turns: it
+// clears the mark with no reset.
+func TestTheSessionsOwnPongClearsBroken(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		b := newBrokenRig(t, measuredRefusal)
+		b.send(t, "ada", "one", "x")
+		b.at[3] = func() { b.send(t, "ada", "two", "x") }
+		b.at[6] = func() { b.send(t, "ada", "three", "x") }
+		b.at[15] = func() { b.send(t, "ada", "PING n9", PingText("ada", t0, "n9")) }
+		b.at[20] = func() {
+			b.set("fine\n", 0)
+			b.mu.Lock()
+			b.pong, b.pongSet = Pong{Nonce: "n9", At: b.now}, true
+			b.mu.Unlock()
+			b.store.Advance(bus.ClaimAfter)
+		}
+		b.run(t, 40)
+		assert.Equal(t, SessionOK, b.last().Session)
+		assert.Greater(t, b.count(), 3)
+		pending, _ := b.pending(t)
+		assert.Empty(t, pending)
+		rec, _, err := ReadDelivery(b.state)
+		require.NoError(t, err)
+		assert.Nil(t, rec.Broken)
+	})
+}
+
+// A failure that is neither a deferral nor a refusal counts toward its message
+// in the state file: a restart neither forgets the count nor starts it again.
+func TestFailedCountsSurviveARestart(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		b := newBrokenRig(t, "Error: no such file\n")
+		b.send(t, "ada", "poison", "x")
+		b.at[4] = func() { b.store.Advance(bus.ClaimAfter) }
+		b.run(t, 8) // two failures
+		rec, found, err := ReadDelivery(b.state)
+		require.NoError(t, err)
+		require.True(t, found)
+		require.Len(t, rec.Failed, 1)
+		for _, n := range rec.Failed {
+			assert.Equal(t, 2, n)
+		}
+		require.Equal(t, 2, b.count())
+		b.at[12] = func() { b.store.Advance(bus.ClaimAfter) }
+		b.run(t, 20) // restart: the third failure gives it up
+		assert.Equal(t, 3, b.count(), "one more delivery, not three")
+		assert.Contains(t, b.records[len(b.records)-1], "deliveries=3/3 given_up=true acked=true")
+		rec, _, err = ReadDelivery(b.state)
+		require.NoError(t, err)
+		assert.Empty(t, rec.Failed, "given up: the count is gone")
+	})
 }

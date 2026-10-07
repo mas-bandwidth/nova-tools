@@ -289,11 +289,12 @@ func TestTheSameRefusalThreeTurnsInARowMarksTheSessionBrokenAndTellsTheSeat(t *t
 		assert.Equal(t, "ses_x", s.SessionID)
 		assert.Equal(t, "invalid_request_error: The request could not be processed", s.SessionReason)
 		got := r.adaGot(t)
-		assert.Equal(t, []string{
-			"daemon-pong: daemon-pong n1",
-			"friend bob: session ses_x broken: invalid_request_error: The request could not be processed: friend bob: session ses_x broken: invalid_request_error: The request could not be processed\nThe provider refused 3 turns in a row the same way. The daemon delivers nothing into the session until it restarts; every message stays pending, none given up. Renew the session, then restart the daemon (nova-friend install again, or launchctl kickstart -k gui/<uid>/com.nova.friend-bob).",
-			"daemon-pong: daemon-pong n2",
-		}, got, "told once; pings still answered while broken")
+		require.Len(t, got, 3, "told once; pings still answered while broken: %v", got)
+		assert.Equal(t, "daemon-pong: daemon-pong n1", got[0])
+		assert.True(t, strings.HasPrefix(got[1], "session broken: bob: session broken: bob\nrefusal: invalid_request_error: The request could not be processed\nfirst seen: "), got[1])
+		assert.Contains(t, got[1], "count: 3")
+		assert.Contains(t, got[1], "remedy: fix the session, then: nova-friend reset --as bob --dir ")
+		assert.Equal(t, "daemon-pong: daemon-pong n2", got[2])
 		pending, fresh := r.pending(t)
 		assert.Len(t, pending, 3, "the refused messages stay pending")
 		assert.Len(t, fresh, 2, "the fourth and the second ping wait unread")
@@ -337,7 +338,7 @@ func TestARefusalStreakResetsOnSuccessAndTheFlagNamesTheCoordinator(t *testing.T
 		assert.Equal(t, SessionBroken, r.last().Session, "the sixth is the third refusal in a row")
 		got := r.adaGot(t)
 		require.Len(t, got, 1)
-		assert.True(t, strings.HasPrefix(got[0], "friend bob: session ses_y broken: authentication_error"), "no seat named: the flag's coordinator is told: %v", got)
+		assert.True(t, strings.HasPrefix(got[0], "session broken: bob: session broken: bob\nrefusal: authentication_error"), "no seat named: the flag's coordinator is told: %v", got)
 	})
 }
 

@@ -184,11 +184,19 @@ func (p ProviderRefused) Error() string {
 	return "the provider refused the turn in session " + p.Session + ": " + p.Reason
 }
 
-// providerErrorType is a provider's JSON error, the shape OpenAI- and
-// Anthropic-style APIs print and harnesses pass on: "type":"<x>_error".
+// The patterns a failed turn's output is read by, as data beside the adapters
+// (docs/SPEC-FRIEND.md, the loop: a broken session). providerErrorType is a
+// provider's JSON error, the shape OpenAI- and Anthropic-style APIs print and
+// harnesses pass on: "type":"<x>_error". refusalText and refusalStatus are the
+// refusals a harness prints without that shape: the account out of credit or
+// funds, an HTTP 400, 401, 402 or 403 from the provider. rateLimitText is the
+// rate limit, an HTTP 429, which passes by itself.
 var (
 	providerErrorType    = regexp.MustCompile(`"type"\s*:\s*"([a-z_]+_error)"`)
 	providerErrorMessage = regexp.MustCompile(`"message"\s*:\s*"([^"]{0,200})`)
+	refusalStatus        = regexp.MustCompile(`(?i)(?:\b(?:http|status(?: code)?)\b[^0-9\n]{0,4}|"(?:status|code)"\s*:\s*"?)(40[0-3])\b`)
+	refusalText          = regexp.MustCompile(`(?i)(insufficient[ _](?:quota|funds|credits?)|out of (?:credits?|funds)|credit balance is too low|payment required)`)
+	rateLimitText        = regexp.MustCompile(`(?i)(?:\b(?:http|status(?: code)?)\b[^0-9\n]{0,4}|"(?:status|code)"\s*:\s*"?)429\b|too many requests`)
 )
 
 // transientProviderErrors are provider errors that pass by themselves: a
@@ -197,26 +205,82 @@ var (
 var transientProviderErrors = map[string]bool{"rate_limit_error": true, "overloaded_error": true, "api_error": true}
 
 // ProviderRefusal reads a failed turn's output for a provider's refusal:
-// the error type and the head of its message, one line; ok is false when
-// the output carries none, or only a transient one.
+// the error type and the head of its message, or the status or text that
+// named it, one line; ok is false when the output carries none, or only a
+// transient one (ProviderRateLimit says the rate limit)
+// (docs/SPEC-FRIEND.md, the loop: a broken session).
 func ProviderRefusal(out string) (reason string, ok bool) {
-	m := providerErrorType.FindStringSubmatch(out)
-	if m == nil || transientProviderErrors[m[1]] {
+	if m := providerErrorType.FindStringSubmatch(out); m != nil {
+		if transientProviderErrors[m[1]] {
+			return "", false
+		}
+		reason = m[1]
+		if msg := providerErrorMessage.FindStringSubmatch(out); msg != nil {
+			reason += ": " + strings.Join(strings.Fields(msg[1]), " ")
+		}
+		return reason, true
+	}
+	if rateLimitText.MatchString(out) {
 		return "", false
 	}
-	reason = m[1]
-	if msg := providerErrorMessage.FindStringSubmatch(out); msg != nil {
-		reason += ": " + strings.Join(strings.Fields(msg[1]), " ")
+	if m := refusalStatus.FindStringSubmatch(out); m != nil {
+		return "provider HTTP " + m[1] + lineAround(out, m[0]), true
 	}
-	return reason, true
+	if m := refusalText.FindStringSubmatch(out); m != nil {
+		return "provider refused: " + strings.ToLower(m[1]), true
+	}
+	return "", false
+}
+
+// ProviderRateLimit reads a failed turn's output for the provider's rate
+// limit (an HTTP 429, a rate_limit_error): not a refusal, the session is fine
+// and the turn is tried again later (docs/SPEC-FRIEND.md, the loop: a broken
+// session).
+func ProviderRateLimit(out string) (reason string, ok bool) {
+	if m := providerErrorType.FindStringSubmatch(out); m != nil {
+		if m[1] != "rate_limit_error" {
+			return "", false
+		}
+		return "rate_limit_error", true
+	}
+	if rateLimitText.MatchString(out) {
+		return "provider rate limit (HTTP 429)", true
+	}
+	return "", false
+}
+
+// lineAround is ": <the head of the line holding at>", empty when there is none.
+func lineAround(out, at string) string {
+	i := strings.Index(out, at)
+	if i < 0 {
+		return ""
+	}
+	start := strings.LastIndex(out[:i], "\n") + 1
+	end := len(out)
+	if j := strings.Index(out[i:], "\n"); j >= 0 {
+		end = i + j
+	}
+	line := strings.Join(strings.Fields(stripANSI(out[start:end])), " ")
+	if len(line) > 160 {
+		line = line[:160]
+	}
+	if line == "" {
+		return ""
+	}
+	return ": " + line
 }
 
 // refused is the answer of an adapter whose turn exited nonzero: the
-// provider's refusal when the output carries one, else the exit as it was.
+// provider's refusal when the output carries one, a deferral when it carries a
+// rate limit (the message stays pending, counted toward nothing), else the exit
+// as it was (docs/SPEC-FRIEND.md, the loop: a broken session).
 func refused(session string, out string, exit int, err error) (int, error) {
 	if exit != 0 && err == nil {
 		if reason, ok := ProviderRefusal(out); ok {
 			return exit, ProviderRefused{Session: session, Reason: reason}
+		}
+		if reason, ok := ProviderRateLimit(out); ok {
+			return exit, Deferred{Reason: reason}
 		}
 	}
 	return exit, err

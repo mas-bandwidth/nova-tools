@@ -194,3 +194,41 @@ func TestOpenCodeCheckRunRefusesARunLackingAFlagItPasses(t *testing.T) {
 	assert.NotContains(t, err.Error(), "\n", "one line")
 	assert.NoError(t, (&OpenCode{Dir: "/w/bob", Run: runner("")}).CheckRun(context.Background()), "a help that lists no flag cannot tell")
 }
+
+// The patterns a failed turn is read by (docs/SPEC-FRIEND.md, the loop: a
+// broken session): HTTP 400, 401, 402 and 403 from the provider and an account
+// out of credit are refusals of the session; an HTTP 429 is a rate limit, which
+// defers; anything else is neither.
+func TestAFailedTurnIsReadAsARefusalARateLimitOrNeither(t *testing.T) {
+	t.Parallel()
+	for out, want := range map[string]string{
+		"Error: HTTP 400 Bad Request\n":                                 "provider HTTP 400: Error: HTTP 400 Bad Request",
+		"request failed: status code 401\n":                             "provider HTTP 401: request failed: status code 401",
+		`{"status": 402, "detail": "pay"}`:                              "provider HTTP 402",
+		"Your credit balance is too low to access the API":              "provider refused: credit balance is too low",
+		"Error: insufficient_quota: you exceeded your current quota":    "provider refused: insufficient_quota",
+		`{"error":{"type":"permission_error","message":"not allowed"}}`: "permission_error: not allowed",
+	} {
+		reason, ok := ProviderRefusal(out)
+		require.True(t, ok, "%q", out)
+		assert.Contains(t, reason, want, "%q", out)
+		_, limited := ProviderRateLimit(out)
+		assert.False(t, limited, "%q", out)
+	}
+	for _, out := range []string{"Error: HTTP 429 Too Many Requests", `{"type":"rate_limit_error","message":"slow"}`, "429 too many requests"} {
+		_, refused := ProviderRefusal(out)
+		assert.False(t, refused, "%q", out)
+		reason, limited := ProviderRateLimit(out)
+		assert.True(t, limited, "%q", out)
+		assert.NotEmpty(t, reason)
+	}
+	for _, out := range []string{"Error: HTTP 500 Internal Server Error", "exit 1: no such file", `{"type":"overloaded_error"}`, ""} {
+		_, refused := ProviderRefusal(out)
+		_, limited := ProviderRateLimit(out)
+		assert.False(t, refused || limited, "%q", out)
+	}
+	exit, err := refused("ses_x", "Error: HTTP 429 Too Many Requests", 1, nil)
+	assert.Equal(t, 1, exit)
+	var deferred Deferred
+	assert.ErrorAs(t, err, &deferred, "a rate limit is answered as a deferral")
+}

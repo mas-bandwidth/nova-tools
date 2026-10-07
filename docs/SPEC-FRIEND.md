@@ -400,22 +400,52 @@ record says so with the reason (`stopping: no output for 20m0s`, then
 The finding of 2026-10-04: a fixed ten-minute cap killed a friend's real work
 mid-turn.
 
-A session the provider refuses is broken, not its messages. An adapter that
-sees the turn's output (OpenCode, Codex, DSH, Gemini) reads a provider's JSON
-error, `"type":"<x>_error"`, from a failed turn and answers `ProviderRefused`
-with the session and the reason; `rate_limit_error`, `overloaded_error` and
-`api_error` pass by themselves and are ordinary failures. A refused turn
-counts toward nothing a message owns: its messages stay pending, never given
-up. The same refusal on `--broken-after` turns in a row (three by default) marks
-the session broken: the daemon delivers nothing more into it, only peeks, so
-pings are still answered and every message stays pending; the status file and
-`status` say `session=broken session_id= broken_at= reason=`; and the
-coordinator is told once on the bus, `friend <name>: session <id> broken:
-<reason>`, to the seat the last ping named, else `--coordinator`. It stays
-broken until the daemon restarts (install again, or `launchctl kickstart -k`),
-which is how a renewed session is taken up. The finding of 2026-10-04:
-a friend's session refused every turn with `invalid_request_error` for two hours
-and nothing said so.
+A session the provider refuses is broken, not its messages (the model is
+`tla/Delivery.tla`, checked by `tla/MCDelivery.tla`). An adapter that sees the
+turn's output (OpenCode, Codex, DSH, Gemini, the Claude lanes) classifies a
+failed delivery from its exit code and output, by patterns that are data beside
+the adapter (`internal/friend/adapter.go`): a **provider refusal** is the
+provider's error type in the output (`invalid_request_error`,
+`authentication_error`, `permission_error`), out of credit or funds, or an HTTP
+400, 401, 402 or 403 from the provider, and is answered `ProviderRefused` with
+the session and the reason; a **rate limit** (`rate_limit_error`, HTTP 429) is
+answered `Deferred`: the message stays in the daemon's hand, tried again every
+`RecheckEvery`, counted toward nothing, and the session is never broken by it;
+`overloaded_error`, `api_error` and every other failure are ordinary failures
+that count toward `MaxDeliveries`. A refused turn counts toward nothing a
+message owns: its messages stay pending, never acked, never given up.
+
+Three provider refusals in a row from one session (`--broken-after`, three by
+default; no success between) mark the session **broken**. Broken:
+
+- the daemon delivers nothing more into the session, only peeks, so pings are
+  still answered and every message stays pending;
+- it sends ONE message to its coordinator, to the seat the last ping named, else
+  `--coordinator`: subject `session broken: <friend>`, body the refusal line,
+  when it was first seen, the count and the remedy (`fix the session, then:
+  nova-friend reset --as <friend> --dir <d>`);
+- `status` says `broken=<RFC3339> reason=<line>` and exits 1, and the daemon's
+  presence file carries `broken` and `reason`, so the friend reads down with the
+  reason;
+- the mark is in the state file `delivery.json`, with the refusal streak and
+  every message's failed-delivery count, so a restart keeps all three: it neither
+  forgets a poison message's count nor lifts a broken mark, and it does not tell
+  the coordinator again.
+
+It is cleared by `nova-friend reset --as <me> --dir <d> [--json]` (`RESET OK
+broken=false`, exit 0; `RESET NONE` at exit 1 when nothing was marked), which
+removes the mark from the file and which the running daemon reads at its next
+step, or by the session's own `pong --nonce` for the current challenge (the
+session proved it takes turns); the next delivery then goes. The model's
+invariants: at most one message delivering per session; nothing delivering
+while the session is broken; a message acked only when delivered or given up;
+given up only after `MaxDeliveries` failures that were neither deferrals nor
+refusals of a broken session; a restart (which keeps only the state file)
+changes none of them. `MCDeliveryBrokenTwoTurns`,
+`MCDeliveryBrokenDeliverWhileBroken` and `MCDeliveryBrokenDeferralCounts` each
+break one invariant and TLC finds it. The finding of 2026-10-04: a friend's
+session refused every turn with `invalid_request_error` for two hours and
+nothing said so, and the failed turns piled up in it.
 
 **A turn the session cannot take.** Some output says the session cannot take a
 turn at all, whatever the exit code: dsh's one-shot runner refusing a session

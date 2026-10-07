@@ -380,8 +380,8 @@ nova-bus stream and, when the session is free, pushes every waiting message in a
 harness's deliver command), beats to the sprint server while the session answers, answers the
 coordinator PING at once (daemon-pong); presence is the session's word on the bus, never a process.
 state: <dir>/.nova-friend/ (--state-dir moves it), the queue: <dir>/inbox/QUEUE.json.`,
-		ExitTable: "0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no daemon; check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).",
-		Words:     []string{"NONE", "FAIL", "DRIFT", "DRY-RUN"},
+		ExitTable: "0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no daemon or a broken session; reset: nothing was marked; check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).",
+		Words:     []string{"NONE", "FAIL", "DRIFT", "DRY-RUN", "BROKEN"},
 		Verbs: []tool.Verb{
 			{
 				Name:    "run",
@@ -818,7 +818,8 @@ or WAIT-PONG NONE at exit 1.`,
 				Effect:  tool.Inspection,
 				Detail: `Prints STATUS OK daemon=<up|down> harness= connection=<connected|silent> seat= last_ping= challenge=<quiet|challenged|deaf>
 last_pong= session_pong_age= daemon_pong_age= pongs= queue= working= width= beats= delivered= session=<ok|broken|-> mode=<batch|one-shot|-> presence=<up|down>
-(once a daemon has written it; last_session=, and when down presence_reason=, "no session answer" or "no daemon") (broken: session_id= broken_at= reason=; one-shot: lanes=)
+(once a daemon has written it; last_session=, and when down presence_reason=, "no session answer" or "no daemon") (broken: broken=<RFC3339> reason=<line> session_id=, at exit 1,
+cleared by reset or the session's own pong; one-shot: lanes=)
 status=<up|down> why= evidence=, and for harness grok route=<push|defer>, for harness claude route=passive,
 from the daemon's status file (up while it is under ` + friend.DaemonStale.String() + ` old), the session's pong file and the queue file;
 session_pong_age is the session's own pong (the pong file), daemon_pong_age the daemon's answer to the last ping (status.json
@@ -834,7 +835,7 @@ deliver (the daemon down, the session broken, the store failing) is down; otherw
 is the rule that decided it, as a person reads it ("no session answer 12m", "limit until Mon 1:00 PM"); evidence is every piece,
 "; "-separated: the harness, the session answer, the limit, the messages waiting on the stream (counted with --redis), the last
 turn's end and exit from the log. STATUS NONE at
-exit 1 when no daemon ever ran as --as (no status file in the state directory).`,
+exit 1 when no daemon ever ran as --as (no status file in the state directory), and STATUS BROKEN (the same facts) at exit 1 when the session is marked broken.`,
 				Flags: func(f *tool.Flags) {
 					f.Required("as", "your name")
 					f.Required("dir", "the friend's working directory, where the queue file lives")
@@ -842,6 +843,27 @@ exit 1 when no daemon ever ran as --as (no status file in the state directory).`
 					redis(f)
 				},
 				Run: w.status,
+			},
+			{
+				Name:    "reset",
+				Usage:   "reset --as <me> --dir <d> [--state-dir <d>] [--json]",
+				Example: "", // clears a mark a real daemon writes: -h carries the example
+				Effect:  tool.LocalWrite + ": removes the broken mark from the delivery record " + friend.DeliveryFile + " in the state directory",
+				Detail: `Clears a session the daemon marked broken (the provider refused ` + fmt.Sprint(friend.DefaultBrokenAfter) + ` turns in a row; nothing is delivered into a
+broken session, every message stays pending), after the person has fixed the session: a new key, credit, a model the provider takes.
+Prints RESET OK broken=false cleared_reason=<the refusal line> cleared_since=<RFC3339>, and RESET NONE at exit 1 when nothing was
+marked. JSON fields: broken (false), cleared_reason, cleared_since. A running daemon reads the record each step while broken: it lifts
+the mark at its next step and delivers the pending messages again; one that is down starts with no mark. The session's own
+pong --nonce <n> (the session proved it takes turns) clears the mark too, with no reset. status shows a mark as broken=<RFC3339>
+reason=<line> at exit 1.
+example: nova-friend reset --as bob --dir ./bob`,
+				ExitTable: "0 cleared, 1 nothing was marked (RESET NONE), 2 could not run (a flag, or the record cannot be read or written).",
+				Flags: func(f *tool.Flags) {
+					f.Required("as", "your name")
+					f.Required("dir", "the friend's working directory, where the daemon keeps its state")
+					stateDir(f)
+				},
+				Run: w.reset,
 			},
 			{
 				Name:    "refuse-go",
@@ -1104,6 +1126,9 @@ func (w world) run(c *tool.Call) *tool.Out {
 		if until, reason, limited := fl.Limited(); limited {
 			p.Presence, p.Reason = friend.PresenceDown, "harness limit until "+until.UTC().Format(time.RFC3339)+": "+reason
 		}
+		if rec, found, err := friend.ReadDelivery(state); err == nil && found && rec.Broken != nil {
+			return friend.WritePresenceBroken(state, p, *rec.Broken)
+		}
 		return friend.WritePresence(state, p)
 	}
 	// what her lanes have cost and the limit they last read (friend.Spender), said on the beat
@@ -1218,8 +1243,10 @@ func (w world) run(c *tool.Call) *tool.Out {
 			return fl.Kind(), until, limited
 		},
 		SilentStop: c.Dur("silent-stop"), BrokenAfter: c.Int("broken-after"), Coordinator: c.Str("coordinator"),
-		Mailbox: mailbox,
-		Queued:  queued,
+		Mailbox:      mailbox,
+		Queued:       queued,
+		LoadDelivery: func() (friend.Delivery, bool, error) { return friend.ReadDelivery(state) },
+		SaveDelivery: func(rec friend.Delivery) error { return friend.WriteDelivery(state, rec) },
 		Activity: func() time.Time {
 			return friend.NewestWrite(os.DirFS(dir), friend.ActivityRoots, w.now, friend.DefaultActivityLimits)
 		},
@@ -1824,6 +1851,20 @@ func (w world) resume(c *tool.Call) *tool.Out {
 	return tool.Done().Fact("cleared", "yes").Fact("pause", msg)
 }
 
+// reset clears the broken mark in the delivery record (docs/SPEC-FRIEND.md,
+// the loop: a broken session; tla/Delivery.tla, Clear).
+func (w world) reset(c *tool.Call) *tool.Out {
+	state := w.stateDir(c, c.Str("dir"))
+	mark, had, err := friend.ClearBroken(state)
+	if err != nil {
+		return tool.Refuse("the delivery record cannot be cleared: " + err.Error())
+	}
+	if !had {
+		return tool.Fail("nothing is marked broken for " + c.Str("as") + " in " + state).As("NONE")
+	}
+	return tool.Done().Fact("broken", false).Fact("cleared_reason", tool.Text(mark.Reason)).Fact("cleared_since", stamp(mark.At))
+}
+
 func (w world) status(c *tool.Call) *tool.Out {
 	dir, name := c.Str("dir"), c.Str("as")
 	state := w.stateDir(c, dir)
@@ -1874,8 +1915,9 @@ func (w world) status(c *tool.Call) *tool.Out {
 	}
 	v := friend.FriendStatus(w.evidence(c, s, p, now, daemon == "up", route, o), now, friend.AnswerBound, time.Local)
 	if s.Session == friend.SessionBroken {
-		o.Fact("session_id", dash(s.SessionID)).Fact("reason", tool.Text(s.SessionReason)).Fact("broken_at", stamp(s.BrokenAt))
-		o.Note("the session is broken: the provider refused the same way turn after turn; the daemon delivers nothing into it, every message stays pending; renew the session, then restart the daemon (install again)")
+		o.Fact("broken", stamp(s.BrokenAt)).Fact("reason", tool.Text(s.SessionReason)).Fact("session_id", dash(s.SessionID))
+		o.Note("the session is broken: the daemon delivers nothing into it, every message stays pending; " + friend.ResetRemedy(name, dir))
+		o.Status, o.Exit, o.Word = tool.Failed, 1, "BROKEN" // a broken session is a verb that ran and said no
 	}
 	pr, prFound, prErr := friend.ReadPresence(state)
 	switch {

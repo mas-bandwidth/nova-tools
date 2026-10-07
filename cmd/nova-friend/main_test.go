@@ -660,9 +660,51 @@ func TestStatusSaysABrokenSessionAndWhy(t *testing.T) {
 	state := friend.DefaultStateDir(r.home, "bob")
 	require.NoError(t, friend.WriteStatus(state, friend.Status{Friend: "bob", Harness: "opencode", At: start, Connection: friend.Connected, Challenge: friend.Quiet,
 		Session: friend.SessionBroken, SessionID: "ses_x", SessionReason: "invalid_request_error: bad input", BrokenAt: start.Add(-time.Minute)}))
-	cli.Do(t, "status", "--as", "bob", "--dir", dir).Exit(0).
-		Out(`delivered=0 session=broken mode=- held=- inbox=- missing=- session_id=ses_x broken_at=2026-10-04T02:59:00Z status=down reason="invalid_request_error: bad input"`,
-			"NOTE the session is broken: the provider refused the same way turn after turn")
+	cli.Do(t, "status", "--as", "bob", "--dir", dir).Exit(1).
+		Err(`STATUS BROKEN daemon=up`, `delivered=0 session=broken mode=- held=- inbox=- missing=- broken=2026-10-04T02:59:00Z session_id=ses_x status=down reason="invalid_request_error: bad input"`,
+			"NOTE the session is broken: the daemon delivers nothing into it, every message stays pending; fix the session, then: nova-friend reset --as bob --dir "+dir)
+}
+
+// reset clears the broken mark the daemon wrote into the state file: RESET OK
+// broken=false at exit 0 with the refusal it cleared, then RESET NONE at exit 1
+// because nothing is marked; --json carries the same fields.
+func TestResetClearsTheBrokenMarkAndSaysNoneWhenThereIsNone(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, "ada", "bob")
+	cli := r.cli()
+	dir := t.TempDir()
+	state := friend.DefaultStateDir(r.home, "bob")
+	cli.Do(t, "reset", "--as", "bob", "--dir", dir).Exit(1).Err("RESET NONE: nothing is marked broken for bob")
+	require.NoError(t, friend.WriteDelivery(state, friend.Delivery{Failed: map[string]int{"1-1": 2}, Broken: &friend.BrokenMark{At: start.Add(-time.Minute), Reason: "invalid_request_error: bad input", Count: 3}}))
+	cli.Do(t, "reset", "--as", "bob", "--dir", dir, "--json").Exit(0).Out(`"broken":false`, `"cleared_reason":"invalid_request_error: bad input"`, `"cleared_since":"2026-10-04T02:59:00Z"`)
+	rec, found, err := friend.ReadDelivery(state)
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.Nil(t, rec.Broken)
+	assert.Equal(t, map[string]int{"1-1": 2}, rec.Failed, "the failed counts stay")
+	cli.Do(t, "reset", "--as", "bob", "--dir", dir).Exit(1).Err("RESET NONE")
+}
+
+// reset's help names every flag, the output lines, the JSON fields, the exit
+// codes and one example, and docs/CLI.md carries the same lines.
+func TestResetHelpAndCommandReferenceNameEveryLineFieldAndExit(t *testing.T) {
+	t.Parallel()
+	help := newRig(t, "ada", "bob").cli().Do(t, "reset", "-h").Exit(0).Stdout
+	raw, err := os.ReadFile("../../docs/CLI.md")
+	require.NoError(t, err)
+	doc := string(raw)
+	for _, text := range []string{
+		"--as", "--dir", "--state-dir", "--json",
+		"RESET OK broken=false cleared_reason=<the refusal line> cleared_since=<RFC3339>",
+		"RESET NONE at exit 1 when nothing was", "JSON fields: broken (false), cleared_reason, cleared_since",
+		"0 cleared, 1 nothing was marked (RESET NONE), 2 could not run", "reset --as bob --dir ./bob",
+		"pong --nonce",
+	} {
+		assert.Contains(t, strings.Join(strings.Fields(help), " "), strings.Join(strings.Fields(text), " "))
+	}
+	for _, text := range []string{"RESET OK broken=false cleared_reason= cleared_since=", "RESET NONE", "nova-friend reset --as bob --dir ./bob", "STATUS BROKEN"} {
+		assert.Contains(t, doc, text)
+	}
 }
 
 // A claude friend is reached by the open session's own wait: install
