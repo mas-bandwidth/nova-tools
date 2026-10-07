@@ -420,11 +420,14 @@ func appendLog(store, event, session, id, stamp, policy, source string) error {
 	return appendLine(filepath.Join(store, "log.jsonl"), string(rec))
 }
 
-// OpenRecord is what a session's open recorded in log.jsonl: its source and
-// its publication policy. Found is false when the log holds no open record
-// for the session (a flat store, or no log at all).
+// OpenRecord is what a session's open recorded in log.jsonl: its source, its
+// publication policy and the opened stamp. Found is false when the log holds
+// no open record for the session (a flat store, or no log at all). Opened is
+// zero when the record names no stamp. Index prints the policy and the stamp
+// on the session line (docs/SPEC-CAIRN.md, the index verb).
 type OpenRecord struct {
 	Source, Publish string
+	Opened          time.Time
 	Found           bool
 }
 
@@ -467,7 +470,15 @@ func ReadOpen(store, session string) (OpenRecord, error) {
 			continue
 		}
 		if rec["event"] == "open" && rec["session"] == session {
-			return OpenRecord{Source: rec["source"], Publish: rec["publish"], Found: true}, nil
+			var opened time.Time
+			if rec["stamp"] != "" {
+				var perr error
+				opened, perr = time.Parse(time.RFC3339Nano, rec["stamp"])
+				if perr != nil {
+					return OpenRecord{}, fmt.Errorf("%s:%d open record of session %q has an invalid stamp %q", name, i+1, session, rec["stamp"])
+				}
+			}
+			return OpenRecord{Source: rec["source"], Publish: rec["publish"], Opened: opened, Found: true}, nil
 		}
 	}
 	return OpenRecord{}, nil
