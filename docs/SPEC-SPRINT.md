@@ -260,6 +260,18 @@ reported activity raises none of this kind: her silence is the report rule's (15
 without a beat). The column is a field of a table locked on 2026-10-01 and is added by the card
 friend-session-liveness.w1 (internal/sprint/TABLES.lock, the 2026-10-04 entry).
 
+**A friend's usage** (the card friends-tokens-column, 2026-10-07). The friends table's
+`tokens` column, after `active`, text with no fold, sums her cards' usage records
+(`sprint.FriendTokensFromCards`, `input` + `output` + `cache_read` + `cache_write` from
+each card's `usage` field, the run's record that `finish` keeps). A friend on a
+subscription shows the compact count, `1.2M`; a friend her nova-config row bills per
+call, `api` or `metered` in its `billing` field, shows the dollars those records
+charged, rounded up to the cent (`cardcost.Cents`). The billing field is added by the
+cost card; until a row sets it every friend is a subscription. The card's usage is read
+from the report her session writes when it finishes (the `usage:` line, else the `tokens`
+segment of the friend machinery's `Cost:` line), so a card with no usage reported adds
+nothing to the column.
+
 **A subscription friend's window use** (subscription-pacing-is-a-setting.w1; the owner,
 2026-10-05 ~10:45 PM, "Please try to go easy on <friend> (<machine>) and this session until
 11PM, or you will run out of credits"). A friend on a subscription is paced by her daemon against
@@ -706,7 +718,7 @@ primary's AS A READ section through the next heading, the attempt's branch
 `WHO: friend <name>`, and a deadline of thirty minutes on the sprint's clock.
 A generated brief's AS A READ section (`cardgen.AsARead`) says a `By:`
 trailer is judged only for being present and true, the friend who pushed, so a
-reader never fails a head because the WHO line preferred another friend. `friend sync` writes that brief when the ask has not, and a
+reader never fails a head because the WHO line preferred another friend. The same section carries `cardgen.AlwaysInPathsRule`, and `sprint.FriendReadBrief` copies it, so a friend read of a generated brief holds a test, a testdata file, `tla/RUNS.tsv`, `tla/CASES.tsv`, the docs catalog or an `AGENTS.md` map inside the change; a hand-written brief with no AS A READ section hands that read no such sentence. `friend sync` writes that brief when the ask has not, and a
 `Verdict: LAND` or a `Verdict: HOLD` with a finding that names a file, a line
 or a rule in `outbox/<read>/REPORT.md` retires that read on her fleet row
 the way a reader's verdict does (`FriendReadClose`: LAND is ok, and a HOLD
@@ -766,6 +778,11 @@ tip of the card's base branch on origin, never an older base, carrying the work 
 attempt that pushed onto it herself (`git diff origin/<base>...<head>` shows it, redone where it
 does not apply), and that the Head she reports must be on that tip: the rule a member's rework is
 staged by, docs/SPEC-CARD-CONTRACT.md, where a rework starts; `TestAFriendsReworkStartsFromTheTipOfItsBase`.
+Her daemon writes a rework's brief with the fix first, not as the `The coordinator asks:` line under
+the start: `THE ONE THING LEFT: <fix>` and `The reader found: <finding>` are the first lines after
+STATUS, then the carried head and branch, the card's STOP is the fix alone, and a LAND whose report
+does not name the fix's key words is finished as a HOLD (docs/SPEC-FRIEND.md, a reworked brief
+opens with the fix; `TestAReworkedBriefOpensWithTheFix`).
 A friend has no staged commit, so nothing checks that her Head descends from that tip: the
 `ls-remote` tip check below, Head is origin's tip of her branch, is the only guard on her finish),
 `<job>` the card's id as the table layer holds it at its
@@ -881,12 +898,18 @@ lanes), so the verb is the coordinator's hand and the daemon's duty. The model i
 "Are they actually doing the work that is shown in the friend table? Really?"). A worker's
 failed finish (a friend's `Verdict: HOLD` or `FAIL`, by its first paragraph, or a member's
 failed report) whose reason names a brief defect is the brief's, never the worker's: no
-worker could do the card as cut (`sprint.BriefDefectOf`). Each of the three reasons alone
+worker could do the card as cut (`sprint.BriefDefectOf`). Each of the four reasons alone
 names one, with no label needed, the earliest in the report being the one recorded: the
-base lacks a PATHS file (`the base lacks`, `not on the base`, `missing from the base`, `does not exist on the base`), a duplicate of landed work (`duplicate of landed work`), and a
-decision delivered (`decision delivered`, `decision already delivered`). The label `brief defect` (two words) with none of the three names one in the worker's own words. A
-negated reason or label ("not a duplicate of landed work", "no brief defect") names none,
-and a hyphenated token, such as a card id `hold-is-a-brief-defect`, is no label. The finish
+base lacks a PATHS file (`the base lacks`, `not on the base`, `missing from the base`, `does not exist on the base`), a duplicate of landed work (`duplicate of landed work`), a
+decision delivered (`decision delivered`, `decision already delivered`), and PATHS do not
+hold what the brief names (`PATHS do not hold`). That last reason is raised on the first
+such failed finish, not at the attempt cap and not at the second identical failure: the
+finish is the brief-defect judgment, and when the report carries `PATHS-PROPOSED:` (or a
+line that starts `PATHS:`) the reason recorded is `PATHS do not hold what the brief names; PATHS: <globs>`,
+the worker's proposed PATHS as the one-line fix. A report that only proposes PATHS, without
+those words, stays the worker's failed work, so the paths rule can widen it. The label `brief defect` (two words) with none of the four names one in the worker's own words. A
+negated reason or label ("not a duplicate of landed work", "no brief defect", "not PATHS do not hold") names none,
+and a hyphenated token, such as a card id `hold-is-a-brief-defect` or `paths-do-not-hold`, is no label. The finish
 moves the work card to the member's hidden `defect` cell, never `ok` or `failed`, so `done`
 and `ok%` on the fleet and friends tables count only work the worker could do; the card and
 its primary carry `brief_defect` (the reason); the primary goes to review with result
@@ -1515,6 +1538,59 @@ default) and `low` (it fills only an idle lane).
   or that names none while the store holds routes, is never asked a pro read (the owner,
   2026-10-06, "I'm ok with flash readers on fleet but not pro"); a row naming pro is; a
   friend's reader naming none reads every tier (section 6; `TestFleetReadersReadOnlyTheirTiers`).
+### gc: the machinery's scratch is reclaimed by a verb
+
+On 2026-10-06 the coordinator freed 314 GiB with a hand-written `clean-jobs.py` (job
+directories whose lane is dead and whose report is written), run from a shell loop every ten
+minutes; the owner, 2026-10-04: no bash scripts, ship verbs, every coordinator need is a nova
+verb. `nova-sprint gc [--machine <m>] [--dry-run] [--max-age <d>] [--ai-root <dir>]` is that verb
+(`sprint.GC`, `cmd/nova-sprint/gc.go`). On the machine it runs on, or with `--machine` on that
+machine through the fleet runner (`internal/bench`'s ssh, which runs the same verb there), it
+removes exactly the scratch the machinery made and no longer needs, class by class:
+
+- `jobs`: `<w>/jobs/<job>` of every working directory `<w>` (a `<home>/<name>-working` link
+  resolving under the AI root, `<ai-root>/<name>/working`, `<ai-root>/buds/<name>/working`, or
+  a plain `<home>/<name>-working` directory as a bench keeps a friend's; each once) whose lane is finished or absent: its runner's log (`runner.log` in `<w>` or
+  beside it, the lines `collect` reads) has the job's last event an `END`; or no runner names
+  the lane and `outbox/<job>/REPORT.md` is at least an hour old; or no runner names it and the
+  directory is older than `--max-age`. A lane the log last STARTed, RESUMEd or LIMITed is
+  live and kept. `inbox/` and `outbox/` are never touched;
+- `reads`: `<w>/reads/<id>` whose `RESULT.md` names a verdict (`ok` or `broken`, the finding
+  the reader's daemon records) and is at least an hour old;
+- `landers`: the linked worktrees of land's clones (`git worktree list`, after `git worktree prune`) older than `--max-age`; the clones are land's and kept;
+- `bench`: `<home>/nova-bench/runs/run.*` and `<home>/nova-bench/buds/<name>/{jobs,reads}/<x>`
+  older than `--max-age` (default 2 days; `2d` or a Go duration). A bench directory is a copy
+  of a tree that lives elsewhere; a clone inside it with uncommitted work keeps the directory,
+  as any other removal does;
+- `cache`: every Go build cache of the bench root (`cache/go-build`, `buds/<name>/cache/go-build`)
+  and of each working directory (`.cache/go-build`), held under its cap (`internal/gocache`,
+  20 GiB).
+
+The known scratch roots are the AI root, the bench root (`~/nova-bench`), land's clone root
+and each plain `<home>/<name>-working` directory; one that is the disk, the home or a
+directory above the home is refused. The AI root is `--ai-root`, else `NOVA_AI_ROOT`, else
+`~/ai`; when that is no directory, it is the one the home's links name as the machinery lays
+them out (`sprint.GCAIRoot`): a link `<home>/<name>-working` resolving to
+`<root>/<name>/working` or `<root>/buds/<name>/working` names `<root>`. A machine that exports
+no `NOVA_AI_ROOT` and has no `~/ai`, with its working directories such links into
+`/Volumes/nova/ai`, has that as its AI root. Links naming two roots name none (each is refused,
+`why=` naming both), and a link to anything else stays refused. `--machine` carries
+`--ai-root` when given; without it the machine finds its own the same way. Every removal must resolve strictly under a known root and is
+`safepath.RemoveUnderRoots` under its class's own directory; a path under none is refused
+(`GC REFUSED class= path= why=`) and never removed, so a working directory linked from
+outside the AI root is never walked. A clone inside a removal (a directory holding `.git`)
+with uncommitted paths, a stash or a commit on no remote-tracking ref (friend clean's check)
+keeps the whole removal (`GC KEPT class= path= why=`). Each removal is `GC REMOVED class= path= bytes= why=` (`--dry-run`: `GC WOULD-REMOVE`, nothing removed); each class one line, `GC <class> count=<n> bytes=<b> kept=<n> refused=<n> failed=<n>`; then `GC OK freed=<bytes> volume=<use%>`,
+the fullest volume of the known roots and the home (`-` where not measured), or `GC INCOMPLETE ... failed=<n>`, exit 1. `--machine` that does not answer is `GC FAILED machine=<m>`, exit 1.
+
+The tick runs it: `nova-sprint run` runs gc on its own machine and on every machine row of
+the config (through the fleet runner) once an hour, and on a machine whose fullest volume is
+at 80% or above (read every five minutes with `df -P`, and from each run's `volume=`) as
+soon as the loop sees it, at most once every ten minutes while it stays there
+(`sprint.GCDue`). Each run says its class lines and summary, `<time> GC machine=<m> why=first|hourly|volume <p>% >= 80%: <line>`. (`TestGcRemovesOnlyFinishedScratchUnderKnownRoots`,
+`TestGcFindsTheAIRootThroughTheHomesWorkingLinks`, `TestGcVerbFindsTheAIRootWithoutNovaAIRoot`,
+`TestTheTickRunsGcHourlyAndOnAFullVolume`, `TestGcVerbReclaimsThisMachinesFinishedScratch`,
+`TestGcMachineRunsTheVerbThroughTheFleetRunner`.)
 
 ## 2. The cards
 
@@ -2949,6 +3025,25 @@ is up at once. The part is `sprint.FleetBackPresence` (internal/sprint/fleet_bac
 the adoption `release.OneMachine` (internal/release/adopt_one.go). Test:
 `TestAMachineBackFromDownAdoptsTheLatestBeforeItIsDealt`.
 
+### fleet-quiet-machine-b.w7: a quiet machine
+
+`fleet quiet <member> --for <duration> --reason <text>` (or `--until <RFC3339>`), the
+coordinator's, holds a fleet member out of the deal until that time: the deal, the level,
+the sweep and `fleet down` give it no card, and the work already dealt to it finishes where
+it is. A rework's deal and `hold`'s redeal of another member's cards do not yet read the
+quiet.
+Every worker's view (`view worker`, for each member and friend) carries one line per quiet
+machine, `QUIET <member> until <time>: <reason>; run no go build or test there`. The quiet
+is a property of the fleet table (`quiet_<member>`), written at once by its step and read
+by the deal against the clock, so it ends by itself at its time whether or not anything
+runs; the tick's level then writes the end to the log once ("quiet ended at its time").
+`fleet quiet <member> --end` ends it early, and the log says who ended it. A ready card
+that waits only because every member up is quiet is held (d), not stalled: the deal
+resumes by itself at the time. A quiet with no reason, a time not after now, a name that is
+no fleet member, and an `--end` with no quiet in force are refused, nothing written. The
+rule is `internal/sprint/fleet_quiet.go`; the twin test is
+`TestFleetQuietDealsNothingAndTellsWorkersUntilItEnds`.
+
 ## 6. The readers
 
 - **The interim rules of 2026-10-06, until read cards** (the owner, 7:25 PM ET: "fix it
@@ -3859,7 +3954,7 @@ What each of the lander's checks does with a head:
 
 | check | does |
 |---|---|
-| files outside PATHS (E12) | refuses |
+| files outside PATHS (E12) | refuses; a `*_test.go`, a file under `testdata/`, `tla/RUNS.tsv`, `tla/CASES.tsv`, `internal/docs/catalog.go` and an `AGENTS.md` map are inside every PATHS (`sprint.LandScope`) |
 | a rename outside PATHS (E12) | refuses |
 | a stranded sentence fragment (E4) | refuses |
 | an unmatched backquote in a Markdown or text file (E4) | repairs; refuses only when ambiguous, naming the line; not read on a prose path |
@@ -3987,6 +4082,21 @@ the install walkthrough) runs it there as before and its line carries no
 bench. The ledgers' update runs stay in the clone.
 `--check` is the caller's own command on top, once a batch, as before.
 
+**Always inside PATHS.** Files a change must touch to keep the tree green are always
+inside PATHS, whatever the brief names: every `*_test.go`, every file under a `testdata/`
+directory, `tla/RUNS.tsv` and `tla/CASES.tsv`, `internal/docs/catalog.go`, and every
+`AGENTS.md` map; any other file outside PATHS is still out of scope
+(`cardgen.AlwaysInPathsRule`). The lander's E12 reads the merge through `sprint.LandScope`
+(`cmd/nova-sprint/land.go`, `checkCard`): those files are never refused and are not
+recorded as scope amendments, and a non-test source file outside PATHS is still refused,
+as is a source file renamed to a test's name (a rename is inside by rule only when both
+sides are). The readers' rule `sprint.FilesOutsidePaths` does not count them, so a finding
+that names only them is a rework, never a twin (`TestE12NeverRefusesATestOrALedger`,
+`TestLandNeverRefusesATestOrALedgerOutsidePaths`, `TestAFindingNamesFilesOutsidePaths`).
+A generated brief carries the sentence in its AS A READ section (`cardgen.AsARead`;
+`sprint.FriendReadBrief` copies that section onto a friend read). The owner, 2026-10-06:
+"Can we stop this whole 'test outside of paths' thing. It's wasteful."
+
 **The scope amendment.** A file outside the brief's `PATHS` that is the test, the fixture or
 the doc of the same change is allowed by rule, never by a message to the coordinator
 (`sprint.ScopeAmended`): the change also changes a file of its own (in `PATHS`), and the
@@ -3994,7 +4104,9 @@ file is a Go test file (`_test.go`) in the directory of one of those files, a fi
 that directory's `testdata/`, or a Markdown file under `docs/` or in that directory. Each
 one is recorded on the batch's line, `scope=<card>:<file>,...` (and `scope` under
 `--json`). Any other file outside `PATHS` is refused as E12 says; a change with no file
-of its own amends nothing.
+of its own amends nothing. A file `cardgen.AlwaysInPaths` puts inside every PATHS is
+neither an amendment nor a refusal (`sprint.LandScope`): it is inside by rule even when
+the change touches no other file of its own.
 
 **The generated ledgers.** A merge that stops only on generated ledgers lands.
 The generated ledgers are the class ledgers the checks above name (a `.txt` shard
@@ -4027,8 +4139,12 @@ directory that holds no tracked file before the merge) that its PATHS name
 owns the catalog row that directory costs and the maps `make map` writes.
 `internal/docs/catalog.go` is the card's when its change is added lines only,
 each a row naming one of those new directories; every `AGENTS.md` map
-`tools/agentsmap` writes is the card's. Any other change to `catalog.go`, or a
-map change from a card that adds no directory, stays outside PATHS (E12). The
+`tools/agentsmap` writes is the card's. `diffcheck.Outside` still reports any
+other change to `catalog.go`, or a map change from a card that adds no directory,
+as outside the brief's globs. The lander does not refuse them: the catalog and
+every `AGENTS.md` map are inside every card's PATHS by `cardgen.AlwaysInPaths`
+(`sprint.LandScope`), so an edit of an existing row and a map change with no new
+directory land (`TestLandExemptsTheCatalogRowAndMapOfANewPackage`). The
 maps are a second generated-ledger family, owned by
 `TestCommittedMapMatchesTree`, its update run `go run ./tools/agentsmap` under
 `GOFLAGS=-mod=readonly`. A merge whose unmerged paths are only those maps, or
@@ -4543,6 +4659,7 @@ The mechanisms: a **blocking read** waits in the store until the thing arrives (
 | land loop | the merge queue to the lander | timer poll | LandEvery (2 s) | card land-loop-wakes-on-the-queue-note |
 | decide loop | sprint to nova-decide's lane | timer poll | DecideEvery (5 s) | card decide-loop-wakes-on-the-tick-end |
 | provider balance | each provider's balance API to the sprint | timer poll | BalancePollEvery (10 min) | measured: the providers' balance endpoints offer no push, and one read per ten minutes is what the rests are judged on |
+| machinery gc | the sprint server to every machine's scratch (nova-sprint gc, here and through the fleet runner) | timer poll | what is due read every gcLoopEvery (1 min): each machine once an hour (GCEvery), its volume read every GCProbeEvery (5 min), a volume at 80% at most once every GCVolumeRetry (10 min) | measured: a volume's use and a scratch directory's age have no event to push; the hourly pass and the 80% alarm are the rule (section 1, gc) |
 | promote | the sprint's landed count to a promotion | timer poll | --every (1 h) | a promotion is a schedule, not an event a party waits on |
 | dashboard pull | sprint to the Television and the dashboard page | timer poll | one read per --every (1 s) whoever is looking, pushed on to each page as server-sent events; a keepalive every 15 s | a display pull: one read serves every viewer, and the page itself is pushed to |
 | table and where displays | sprint to a terminal (nova-table watch, where --watch) | timer poll | --every (1 s) | a display pull: a person's terminal, no party waits on it |
@@ -4984,8 +5101,8 @@ rules` prints the same answers, read-only: one `RULE` line per judgment and subj
 | `read-late` | a read card is past its deadline (asked and not begun, or begun and not reported), of the primary's attempt in review | its reader's read taken back and asked of one other reader (`ask <card> --instead <reader>`, `rule ask`, one a tick: each ask writes the readers' round index), once an attempt (`rule_reread` on the primary); the second late read of the attempt, and one no other reader can take (the ask's refusal), are left. A read handed back with no verdict needs no rule: the ask places it again on a free reader itself (section 6) |
 | `hold-need` | work came back failed and its report says the word `HOLD` | a HOLD naming a card on the table that has not landed (the first by id; the stream controls aside) waits for it: `rule_need` (`<card>@<attempt>`) and `rule_answer` on the primary and the judgment's text prefixed `waiting on <card> by rule hold-need: `, once an attempt (`rule need`); the judgment stays open, since a primary in review has no move to waiting (section 3). Once that card lands the primary is reworked (`rule rework`), its fix `<card> has landed: do the brief again on the current tip` with the report. A HOLD naming no such card, or one dropped since, is left, and `failed` does not redeal it |
 | `conflict` | stream stopped: conflict on a card, where the lander refused a head one of three ways (`sprint.RefusalWay`): its paths that did not merge are files no generated ledger owns (`conflict_kind=file`, `conflict_paths` on the stream's control card, from `merge --conflict-kind --conflict-path`, which land reports), it fails the lander's checks (files outside its PATHS, E12, or another check), or its merged tree fails the tree gate | in one tick: the card returned to review (`rule_redo` its attempt, `rule_refused` the way, `rule_refusal` the lander's words, `tier_now=flash`), the stream resumed, so the rest of its batch lands on the next landing, and the card reworked at flash, staged on the base's tip, with the fix `redo the same change on the current tip` (a PATHS, checks or gate refusal adds `; the lander refused attempt <n>: <its words>`). The same card refused the same way as the refusal it was last returned on is a brief defect: the card marked (`brief_defect`), the judgment's text prefixed `brief defect: `, the stream left stopped for a mind. A conflict in a ledger the lander could not resolve, one whose files the lander did not say, and a head that is no commit or that origin does not hold are left |
-| `read-broken` | a reader found it broken, on a card in review below its brief's bound | the next attempt (rework) on the same tier, the findings of the attempt's broken reads its fix (as `rework <card> --answers <id>` with no `--fix`); when the findings name a file outside the brief's PATHS (`sprint.FilesOutsidePaths`: a relative path with a directory and an extension of letters, read through quotes and a line number, that no PATHS name, glob or directory covers), the card is twinned instead (`rule twin`: `add --replaces`), its brief's `PATHS:` lines widened by exactly those files and a `CARRY: <id> attempt <n> head=<sha>` line at the broken attempt's head, the findings the twin's `fix`, one card a tick. A card at its brief's bound (the same finding twice, or its attempts cap: the read raises `the brief is wrong` instead), a friend's card, a brief defect and a card whose twin ids are all taken are left; the coordinator sees only those and refusals (`TestABrokenReadIsReworkedByRuleWithItsFinding`; tla/SprintRules.tla Part `reads`: `ReadAnswersBounded`, `TwinsWiden`, `ReadAnswered`) |
-| `widen` | work came back failed, a card reached its bound, or its brief is wrong, where the worker's report is a HOLD that says PATHS and names files outside them; or returned to review by the merge step or the `conflict` rule on an E12 refusal (files outside its PATHS) at this attempt; on a card in review at a full sha head, not a friend's, a brief defect or a pinned model's | when every file named outside PATHS (`sprint.FilesOutsidePaths`) is adjacent to the change (`sprint.WidenAdjacent`: a test file of a package PATHS name, a file under that package's `testdata/`, a ledger under `internal/ci/testdata/`, a markdown file under `docs/` or an `AGENTS.md` map, or, in a HOLD, a file named with its reason, three words or more after it), the card's brief is edited in place (`rule widen`, before `rule rework`; `brief`, as `brief --widen` edits it, never a twin: the owner, 2026-10-06, "stop doing this twin shit"), its `PATHS:` and `SHARED:` lines widened by exactly those files and a `CARRY: <id> attempt <n> head=<sha>` line at the finished head: the same id, review -> ready, its next attempt staged from that head and its brief's bound counted from it, its `fix` naming the head to start from and the files, one card a tick, and the coordinator gets one happened note, `PATHS widened by rule`, naming each file and why it is adjacent. A HOLD naming a file that is not adjacent stays a judgment, its text prefixed `outside PATHS and not adjacent: <files> (its HOLD): ` once, and neither `failed` nor `bound` reworks it; an E12 refusal naming one is the `conflict` rule's redo, inside its PATHS. A HOLD with a `PATHS-PROPOSED:` line is `paths`'s, one naming a card that has not landed `hold-need`'s, and a reader's finding `read-broken`'s (`TestACardHeldOnlyForAdjacentPathsIsWidenedInPlace`, `TestAFileOutsidePathsIsAdjacentByRule`) |
+| `read-broken` | a reader found it broken, on a card in review below its brief's bound | the next attempt (rework) on the same tier, the findings of the attempt's broken reads its fix (as `rework <card> --answers <id>` with no `--fix`); when the findings name a file outside the brief's PATHS (`sprint.FilesOutsidePaths`: a relative path with a directory and an extension of letters, read through quotes and a line number, that no PATHS name, glob or directory covers, and that `cardgen.AlwaysInPaths` does not put inside every PATHS), the card is twinned instead (`rule twin`: `add --replaces`), its brief's `PATHS:` lines widened by exactly those files and a `CARRY: <id> attempt <n> head=<sha>` line at the broken attempt's head, the findings the twin's `fix`, one card a tick. A card at its brief's bound (the same finding twice, or its attempts cap: the read raises `the brief is wrong` instead), a friend's card, a brief defect and a card whose twin ids are all taken are left; the coordinator sees only those and refusals (`TestABrokenReadIsReworkedByRuleWithItsFinding`; tla/SprintRules.tla Part `reads`: `ReadAnswersBounded`, `TwinsWiden`, `ReadAnswered`) |
+| `widen` | work came back failed, a card reached its bound, or its brief is wrong, where the worker's report is a HOLD that says PATHS and names files outside them; or returned to review by the merge step or the `conflict` rule on an E12 refusal (files outside its PATHS) at this attempt; on a card in review at a full sha head, not a friend's, a brief defect or a pinned model's | when every file named outside PATHS (`sprint.FilesOutsidePaths`, which does not count a file `cardgen.AlwaysInPaths` puts inside every PATHS) is adjacent to the change (`sprint.WidenAdjacent`: a test file of a package PATHS name, a file under that package's `testdata/`, a ledger under `internal/ci/testdata/`, a markdown file under `docs/` or an `AGENTS.md` map, or, in a HOLD, a file named with its reason, three words or more after it), the card's brief is edited in place (`rule widen`, before `rule rework`; `brief`, as `brief --widen` edits it, never a twin: the owner, 2026-10-06, "stop doing this twin shit"), its `PATHS:` and `SHARED:` lines widened by exactly those files and a `CARRY: <id> attempt <n> head=<sha>` line at the finished head: the same id, review -> ready, its next attempt staged from that head and its brief's bound counted from it, its `fix` naming the head to start from and the files, one card a tick, and the coordinator gets one happened note, `PATHS widened by rule`, naming each file and why it is adjacent. A HOLD naming a file that is not adjacent stays a judgment, its text prefixed `outside PATHS and not adjacent: <files> (its HOLD): ` once, and neither `failed` nor `bound` reworks it; an E12 refusal naming one is the `conflict` rule's redo, inside its PATHS. A HOLD with a `PATHS-PROPOSED:` line is `paths`'s, one naming a card that has not landed `hold-need`'s, and a reader's finding `read-broken`'s (`TestACardHeldOnlyForAdjacentPathsIsWidenedInPlace`, `TestAFileOutsidePathsIsAdjacentByRule`) |
 | `brief-defect` | a card has reached its bound: the brief is wrong, not the worker (the same finding twice, section 2) | the card marked (`brief_defect`), the judgment's text prefixed `brief defect: `, once; the judgment stays open (brief or drop) and no rule moves the card |
 | `base-gate` | (no judgment: the lander's) the base fails its tree gate at its tip | a queued head whose tree, merged onto that base alone, passes the same gate lands first as the base fix and the stream goes on (the base cure, below); with none, land gates that base commit again after 2 minutes and again after 5 (`sprint.BaseGateRetries`), each landing in between refused with the finding and when it is gated again; the third failure stops the stream that met it, `stream stopped: the base fails its tree gate` (`merge --base-red`), the one judgment for that base, carrying the error and naming the failing tests; every other stream that meets the base red is refused under that judgment and never stopped. Each land pass re-checks the tip of a base that stopped a stream, and a green tip (`sprint.BaseGreen`, `base_gate_passed`) resumes every stream stopped only on that base's red, the judgment answered by rule (`v11-base-red-auto-resume-now`, below); a green base is cached for its commit. With the rule off, a red base is cached for its commit as before (every landing refused until the base moves), the pass re-checks nothing and a stopped stream waits for a mind |
 | `paths` | work came back failed (or at its bound or its attempt cap) and its report proposes PATHS: a `PATHS-PROPOSED:` line (docs/SPEC-CARD-CONTRACT.md section 4), read off its work card's report; checked before the judgment's own rule, so the same brief is never dealt again on the same proposal | no proposed glob SHARED (named on the `PATHS:` or `SHARED:` line of another open card, or on the card's own `SHARED:` line): the card replaced by its twin (`recut`, so dependents need the twin), its id the old one with `-t` (`-t2` to `-t9` after it), its brief every `PATHS:` line widened by the proposed globs it lacked and a `CARRY:` line naming the held attempt's pushed head; the judgment closed with `answered by rule paths: <id> attempt <n> held with PATHS-PROPOSED: <globs>: replaced by <twin>, ...`. A proposed glob SHARED: the judgment stays the one judgment, its text prefixed `paths proposed, shared: a mind's; ...` with the shared globs and the cards that name them and the complete command `nova-sprint add --stream <s> --replaces <id> --before <id> --brief-file <file> [--needs ...] [--held]`, the twin's brief written by the machine at `<jobs>/<id>/<twin>.md` (`NOVA_SPRINT_JOBS`, else `~/nova-sprint/jobs`), once (`paths_proposed` on the primary); the card is dealt nothing more. A proposal that climbs out of the repository, is no glob, or is inside its PATHS already is left, and not dealt again either |
@@ -5327,6 +5444,7 @@ land's place; a head that is not a commit id stops the dry run where land stops,
 | merge-window open | `merge-window open --for <duration> --reason <text>`: landing pauses from now for the duration, the reason on every batch it pauses (section 7, the lander's pause); a store write of the merge table's properties `merge_window_until` and `merge_window_reason`, replacing a window open before; the coordinator's; refused whole, nothing written, for a duration that is none or not above zero, no reason, a reason over 8 KiB, or another actor |
 | friend sync | the friends table's rows made nova-config's friend rows (section 1); `--every <d>` loops as the seat each pass, and `friend sync install --every <d>` / `friend sync uninstall` put that loop in place as this machine's service ("Handing over the seat") |
 | collect | every friend's outbox report of a card working on a friend's row finished as her row, a LAND only at origin's tip, and with `--dead-lanes` a lane her runner ENDed with no report finished failed (section 1, collect): `collect [<friend>...] [--dead-lanes] [--root <dir>] [--dry-run]`; never run by the server |
+| gc | the machinery's scratch reclaimed on the machine it runs on, or on `--machine`'s through the fleet runner (section 1, gc): `gc [--machine <m>] [--dry-run] [--max-age <d>] [--ai-root <dir>]`; job directories of finished or absent lanes, reader checkouts of recorded findings, lander worktrees and bench directories past `--max-age`, the go caches trimmed to their cap, never a path under no known scratch root or a clone with work that is nowhere else; one line per class and `GC OK freed=<bytes> volume=<use%>`; run by `run` on every machine hourly and on a volume at 80%; never run by the server |
 | friend reconcile | a friend's own account of her cards, `<friend>-working/inbox/QUEUE.json`, and her outbox compared with the cards working on her row, each collected, kept or returned to ready (section 1, friend reconcile): `friend reconcile <friend> [--root <dir>] [--dry-run]`; never run by the server |
 | friend give | the coordinator's undo of `friend take` (section 1, a friend's card taken back): `friend give <friend> <id>... [--reason <text>]`; on each card named (a primary or its work card), ready or waiting, its current attempt's work card loses `taken_from` her row, so the next deal may deal it to her again, a hard pin taken back from her included; the marks of other friends stay. A card not ready or waiting, or never taken back from her, and a friend not on the friends table are refused, one `REFUSED` line each, the rest given; each given says `MOVED <card> may be dealt to <friend> again (<reason>)` (default reason: given back by the coordinator) with a happened note, then `FRIEND-GIVE OK moved=<n> refused=<m>` (`FAILED`, exit 1, when any is refused) |
 | friend clean | the retention rule of the friends' working directories (docs/FRIENDS.md; ideas#833), run nightly from a loop row on the machine that holds them, never by the server and never on the store: `friend clean [--pg <dsn>] [--root <dir>] [--days <n>] [--dry-run]`. For each friend row of nova-config (as `friend sync` reads them; the coordinator is one), `<root>/<friend>-working` (`--root`, else HOME); a friend with no directory there is said and skipped. A job is `inbox/<job>/` or `jobs/<job>/`, done when `outbox/<job>/REPORT.md` is a regular file, its age that file's. Inside a done job at least `--days` old (default 3) a clone (a directory holding `.git`) is removed when `git status --porcelain` is empty, it holds no stash and no commit of `HEAD` or a local branch is missing from every remote-tracking ref (`git log HEAD --branches --not --remotes`, no network); build output (`node_modules`, `target`, `gocache`, `gocache-*`, `.gocache`, `go-build`, `wt-*`) that is no clone is removed. A clone that fails the check, or whose git fails, is dirty: listed each run, `FRIENDS-CLEAN DIRTY friend= path= age=<d>d why=`, and removed once its job is 14 days old whatever its state, its line saying `dirty=<why>`. Nothing else is touched: the brief and any text of the job, `outbox/`, every file outside `inbox/` and `jobs/`; a link is never followed; a job under `jobs/` that is itself a clone is one target, one under `inbox/` is never removed (a NOTE). Every removal is `safepath.RemoveUnderRoots` under the job's directory. The friend's one build cache, `<friend>-working/.cache/go-build`, is held under 20 GiB by the member's trim (`internal/gocache`). `--dry-run` says `WOULD-REMOVE` in place of `REMOVED` with the bytes and removes nothing. Lines `FRIENDS-CLEAN REMOVED\|WOULD-REMOVE friend= path= bytes= age=<d>d kind=clone\|build[ dirty=<why>]`, `FRIENDS-CLEAN CACHE ...`, `FRIENDS-CLEAN FRIEND <f> dir= jobs= done= freed= listed=` (or `absent`), `FRIENDS-CLEAN FAILED friend= path=: <why>`, and last `FRIENDS-CLEAN OK freed=<bytes> listed=<n>` (a dry run adds `dry-run: nothing was removed`), or `FRIENDS-CLEAN INCOMPLETE ... failed=<n>`, exit 1; a config that cannot be read or holds no friend row, exit 3, nothing removed; `--json` one object with the lines |
@@ -5748,6 +5866,25 @@ refuses the whole call. The code is `swarm.LintBrief` (internal/swarm/lintpaths.
 `TestAddLintRefusesABriefWhosePathsMissTheFilesItNames` (internal/swarm, a twin of a base, one
 brief per token that fails it and one that passes, and the corrections applied passing) and
 `TestAddRunsTheBriefChecksAtTheBase` (cmd/nova-sprint, add against a twin repository).
+
+add (both forms), brief (one brief, `--dir`, and `--widen`) and recut `--brief-file` also hold
+the brief to `sprint.PathsAdmission` after those checks on add and after the card lint on brief
+and recut (`cmd/nova-sprint/add.go`, `holdPathsAdmit`; the tree is the same lander's clone and
+the same fetch into `refs/nova-add/<base>`, cached per tip for the call). A literal PATHS entry
+must be a file or a directory at the tip, a glob must match one file (`hygiene.MatchGlob`), and
+every func, type or verb STOP or START names in the same clause as a repository path, and a
+TEST name the tree already holds, must occur inside a file PATHS covers, by a plain grep.
+Markdown code-span delimiters are not part of the name or the path, and a qualified name is
+its last component (`sprint.AdmissionTree` is `AdmissionTree`; `file.go` is not a qualified
+name). A TEST name the tree does not hold is the new red test and is not a miss. A new
+`_test` file and an entry a `NEW:` line names may be absent. A brief whose header carries
+`CARRY:` with `head=` (a widen) skips the existence check, because a path it adds may exist
+only at that head, and still checks identifiers. Each miss is one `LINT DRIFT` line,
+`check=paths-hold-named`, naming the nearest file that holds the identifier, then one
+refusal, nothing written. No tree is one `MISSING` line, not a pass, and so is a named
+`REPO:` that no clone can be made of. A brief with no PATHS, or that omits REPO, or that
+omits BASE, is not read against a tree. The test is
+`TestAdmissionRefusesABriefWhosePathsDoNotHoldWhatItNames`.
 
 ### Statistics
 
@@ -6232,7 +6369,7 @@ The coordinator's verbs go to the server too. The server listens a second time o
 loopback address at the same port, and there it runs any verb of the command but the ones it
 runs for nobody: itself (`run`, `tick`), `land` and `play`, which work outside the store for
 seconds or minutes, `fleet sync` and `friend sync`, which read the config store with their
-caller's own credentials, and `friend clean` and `friend reconcile`, which work on the directories of the machine they
+caller's own credentials, and `friend clean`, `friend reconcile` and `gc`, which work on the directories of the machine they
 run on, nor a read that waits for the sprint to move (`where --watch`, `inbox --wait`): the
 server moves the sprint on the one line of control such a verb would hold. With
 `NOVA_SPRINT_SERVER=<host:port>` set (the loopback address `run --listen` prints), every verb the

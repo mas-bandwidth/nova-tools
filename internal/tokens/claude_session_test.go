@@ -1,9 +1,5 @@
 package tokens
 
-// G5's red test: the fold of a fixture session matches a HAND COUNT. The numbers below were
-// added up by hand and written here as constants, so a change to the arithmetic is red and a
-// change to the reader that quietly counts a streamed message twice is red too.
-
 import (
 	"fmt"
 	"os"
@@ -15,19 +11,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// fixtureSession is five turns of a Claude Code window, as the transcript writes them: an
-// id per turn, a usage block per line, and one STREAMED turn whose id appears twice with a
-// growing usage block. Six lines, five turns.
-//
-// The hand count, turn by turn:
-//
-//	turn 1  input   12  cache_write  2000  cache_read      0  output  300
-//	turn 2  input    4  cache_write   500  cache_read  20000  output  120
-//	turn 3  input    9  cache_write     0  cache_read  21000  output   45
-//	turn 4  input    2  cache_write   150  cache_read  22000  output  900
-//	turn 5  input    7  cache_write     0  cache_read  23000  output  210   (streamed, last line wins)
-//	        ------      -----------        ----------         ------
-//	          34             2650              86000            1575
+// fixtureSession is five turns of a Claude Code window. The hand count: input=34,
+// cache_write=2650, cache_read=86000, output=1575, weighted=19821, avg_context=17736.
 const (
 	wantTurns      = 5
 	wantInput      = 34
@@ -90,12 +75,6 @@ func TestReadClaudeSessionMatchesTheHandCount(t *testing.T) {
 	assert.EqualValuesf(t, 0, sum.Unstamped, "unstamped=%d, want 0: every turn in the fixture carries a stamp", sum.Unstamped)
 }
 
-// TestSessionRowIsTheCoordinatorsOwnLine: the fold writes a session as a model line of its
-// own, per day, with the four counts and a reasoning cell that is a dash -- a transcript
-// carries no reasoning count, and a zero there would sum into a month claiming to be whole.
-// The role is the --role flag's, and the seeded word "coordinator" books the coordinator's
-// own line, <model>/coordinator with the role in the repo cell, cell for cell the row the
-// constants booked before the role became a flag.
 func TestSessionRowIsTheCoordinatorsOwnLine(t *testing.T) {
 	t.Parallel()
 
@@ -120,8 +99,6 @@ func TestSessionRowIsTheCoordinatorsOwnLine(t *testing.T) {
 	assert.Falsef(t, len(row.Sources) != 1 || row.Sources[0] != SessionLabel, "sources=%v, want [%s]: every number names the flag that wrote it", row.Sources, SessionLabel)
 }
 
-// TestSessionSplitsAcrossMidnight: a window that runs past midnight is two rows on two days,
-// never one row dated by the file it lives in.
 func TestSessionSplitsAcrossMidnight(t *testing.T) {
 	t.Parallel()
 
@@ -143,9 +120,6 @@ func TestSessionSplitsAcrossMidnight(t *testing.T) {
 	assert.Falsef(t, sum.Turns != 3 || sum.Input != 35 || sum.Unstamped != 1, "turns=%d input=%d unstamped=%d, want 3, 35 and 1", sum.Turns, sum.Input, sum.Unstamped)
 }
 
-// TestSessionRowsAreBookedUnderTheModelTheTranscriptNames: a transcript of one model is that
-// model's row, a window that changes model is one row per model, and a turn naming no model
-// makes the session unbookable instead of booking it under a guess.
 func TestSessionRowsAreBookedUnderTheModelTheTranscriptNames(t *testing.T) {
 	t.Parallel()
 

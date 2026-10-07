@@ -406,6 +406,35 @@ in place, the same id (docs/SPEC-SPRINT.md section 2). The widened brief carries
 head as it stages a rework at its last pushed head (`member.Carried`), as does a friend's brief
 (`TestBriefWidenKeepsTheId`).
 
+### What admission verifies
+
+`nova-sprint add`, `brief` and `recut` check a brief that names `PATHS:`, `REPO:` and `BASE:`
+against the BASE tip of that repository before the brief is admitted
+(`sprint.PathsAdmission`, `cmd/nova-sprint/add.go`). The tree is the lander's clone, fetched
+shallow into `refs/nova-add/<base>` (or the commit `BASE:` pins), cached per tip for the call.
+A literal PATHS entry must be a file or a directory there. A glob must match at least one file.
+A new `*_test` file, and an entry a `NEW:` line names, may be absent. A brief whose header
+carries `CARRY: <id> attempt <n> head=<sha>` skips that existence check (a widen's new path
+may exist only at the carried head) and still checks identifiers. Every `func`, `type` or
+`verb` that `STOP:` or `START:` names in the same clause as a repository path, and a `TEST:`
+name the tree already holds, must occur inside a file PATHS covers, found by a plain grep of
+the tree. Markdown code-span delimiters are not part of the name or the path
+(`func` then a backticked `cmdBrief`, or a backticked `sprint.cmdBrief`, is `cmdBrief`).
+A qualified name is its last component (`type sprint.AdmissionTree` is `AdmissionTree`),
+not the package, which may sit in a PATHS file while the name does not. A dotted file
+name (`file.go`) is not a qualified name. A `TEST:` name the tree does not hold is the
+new red test and is not a miss. A brief that fails is refused with one line per miss, and
+the line names the nearest file that holds the identifier, so the author fixes PATHS in
+one edit. A tip that cannot be read is one `MISSING` line, not a pass. A named `REPO:`
+that no clone can be made of is that same `MISSING` line, not a pass. A brief with no
+PATHS, or that omits REPO, or that omits BASE, is not read against a tree.
+
+A worker HOLD after admission whose words are `PATHS do not hold` is a brief defect at that
+first finish, not at the fourth attempt (`sprint.BriefDefectOf`). The defect carries the
+worker's proposed PATHS, from `PATHS-PROPOSED:` or a `PATHS:` line of the report, as the
+one-line fix. A report that only proposes PATHS, without those words, stays the worker's
+failed work.
+
 ## 5. Profiles
 
 A profile is keyed by model family, derived from the model id the member runs the child on:
@@ -497,7 +526,9 @@ with no clock and no store). What it holds:
   which a worker of another model completes with its own model's name. Its
   `AS A READ` section says a `By:` trailer is judged only for being present and
   true (the worker who pushed the branch under read), and attribution alone never
-  decides a verdict. Briefs stamped `By: <friend>` from a WHO pin sent readers to
+  decides a verdict. It also says the scope of the change is its `PATHS` line and
+  carries `cardgen.AlwaysInPathsRule`, so a reader holds a test or a ledger the
+  line does not name inside the change. Briefs stamped `By: <friend>` from a WHO pin sent readers to
   fail landed-quality heads for that line alone, because another worker had done
   the work, and landed heads signed with the name of a friend who never ran them.
 - A card's PATHS are computed from the START line its brief carries, never
@@ -507,12 +538,18 @@ with no clock and no store). What it holds:
   package of its test, so a ledger card's PATHS are the row's file's package,
   the class test's package and the ledger; a findings card's, the file's
   package and its test's package; a help card's, `cmd/<tool>` and
-  `docs/CLI.md`. A
-  package is the unit a change lives in: a typed file list one file short holds
-  the card at land (E12). Two cards that share an entry and neither needs the
-  other set `shared-paths=yes`. With a checkout, every entry is checked to
-  exist in it; a package's `*.go` is not answered by a test file the card
-  creates.
+  `docs/CLI.md`. A package is the unit a change lives in: a typed file list
+  one file short holds the card at land (E12). Files a change must touch to
+  keep the tree green are always inside PATHS, whatever the brief names: every
+  `*_test.go`, every file under a `testdata/` directory, `tla/RUNS.tsv` and
+  `tla/CASES.tsv`, `internal/docs/catalog.go`, and every `AGENTS.md` map; any
+  other file outside PATHS is still out of scope (`cardgen.AlwaysInPathsRule`;
+  SPEC-SPRINT.md section 7, always inside PATHS): the lander's E12
+  (`sprint.LandScope`) and the readers (`sprint.FilesOutsidePaths`) hold every
+  card to that sentence, and every generated brief carries it in its AS A READ
+  section. Two cards that share an entry and neither needs the other set
+  `shared-paths=yes`. With a checkout, every entry is checked to exist in it;
+  a package's `*.go` is not answered by a test file the card creates.
 - Waves: cards of one ordinary ledger alternate (odd wave 1, even wave 2
   depending on their wave 1 neighbours), because adjacent deletions of one file
   conflict at land; a generated ledger (SPEC-SPRINT.md section 7) gets one wave

@@ -82,9 +82,12 @@ func refusedWriteAttempts(t *testing.T) int {
 
 func countingRefusedStore(n *int) receiptOpener {
 	return func(ctx context.Context, addr string) (*store.Store, error) {
-		c := redis.NewClient(&redis.Options{Addr: addr})
-		c.AddHook(countRefusedHook{n: n})
-		return store.New(c), nil
+		st, err := store.Open(ctx, addr)
+		if err != nil {
+			return nil, err
+		}
+		st.Client().AddHook(countRefusedHook{n: n})
+		return st, nil
 	}
 }
 

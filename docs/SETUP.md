@@ -100,6 +100,24 @@ zero. A disabled route is listed with its note and never checked; a route that w
 is named in the evidence, with the one fix line (seal the key, or `nova-sprint funded <provider> --reason '<the payment>'`). The check is one only a fleet needs, so
 `nova-doctor --local` skips it and a fleet run includes it.
 
+### dep-harnesses-b.w7: the friend harnesses
+
+Each friend row names a harness (`claude`, `opencode`, `codex`, or `grok`) and its mode; a
+Claude one-shot row also names `config_dir`. This is a hidden dependency because a friend
+cannot take a card when its harness binary or account directory is absent.
+
+Who needs it: every machine that runs cards with friends. `nova-up --local` does not install
+third-party harnesses or create their account directories. A person installs the harness on
+PATH and provisions each row with the nova-friend verb:
+
+```sh
+nova-friend install --as <friend> --harness <h> --dir <friend-dir> --config-dir <claude-config-dir>
+```
+
+The `harness` doctor check asks each row's harness for `--version` without running it against
+a model, and checks the version is supported and the Claude one-shot `config_dir` exists. A
+failure names the friend and the fix line runs `nova-friend install` with the needed paths.
+
 ### dep-go-sdk-b.w2: the Go toolchain
 
 The Go SDK is a dependency of a bench, and never of the coordinator's machine. A bench

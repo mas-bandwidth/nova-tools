@@ -37,6 +37,7 @@ cmd/nova-sprint/run.go app.runLoop sprint server tick
 cmd/nova-sprint/landloop.go app.landLoop land loop
 cmd/nova-sprint/decidelane.go app.decideLoop decide loop
 cmd/nova-sprint/balance.go app.balanceLoop provider balance
+cmd/nova-sprint/gc.go app.gcLoop machinery gc
 cmd/nova-sprint/promote.go app.cmdPromote promote
 
 # displays
