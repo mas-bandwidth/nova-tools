@@ -12,15 +12,18 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 )
 
-// Twinned wider by rule (docs/SPEC-SPRINT.md section 8, the rules table's row widen). On
+// Widened in place by rule (docs/SPEC-SPRINT.md section 8, the rules table's row widen). On
 // 2026-10-05 the coordinator twinned ten cards by hand whose work was done and green but held
 // for files outside PATHS: each file read from the HOLD or the finding, appended to PATHS and
-// SHARED, the twin pointed at the finished head. The tick does it: a card in review whose
+// SHARED, the twin pointed at the finished head. The tick does it, on the card itself (the
+// owner, 2026-10-06: "We gotta stop doing this twin shit. it's waste."): a card in review whose
 // worker's HOLD (work failed, a bound, a brief at its bound) names files outside its PATHS,
-// or whose head the lander refused for them (E12, returned by the conflict rule), is twinned
-// (Recut, add --replaces) with PATHS widened by exactly those files when each is adjacent to
-// the change (WidenAdjacent), starting from the finished head, and the coordinator gets one
-// note naming the files. A HOLD naming a file that is not adjacent stays a judgment, its
+// or whose head the lander refused for them (E12, returned by the merge step or the conflict
+// rule), has its brief edited in place (Brief, as brief --widen edits it) with PATHS and
+// SHARED widened by exactly those files when each is adjacent to the change (WidenAdjacent)
+// and a CARRY: line at the finished head: the same id, its next attempt staged from that head,
+// its brief's bound counted again from it, and the coordinator gets one note naming the
+// files. A HOLD naming a file that is not adjacent stays a judgment, its
 // text naming what blocks it, and no other rule reworks it; an E12 refusal naming one is
 // redone by the conflict rule. A reader's finding is the read-broken rule's (rules_read.go).
 
@@ -29,12 +32,12 @@ import (
 const RuleWiden = "widen"
 
 // ActWiden is the widen rule's act.
-const ActWiden = "twin with adjacent PATHS"
+const ActWiden = "widen PATHS in place"
 
-// PartRuleWiden is the tick part that twins the cards the widen rule answers.
+// PartRuleWiden is the tick part that widens the cards the widen rule answers.
 const PartRuleWiden = "rule widen"
 
-// NPathsWidened is the happened note, to the coordinator, naming the files a twin's PATHS
+// NPathsWidened is the happened note, to the coordinator, naming the files a card's PATHS
 // were widened by.
 const NPathsWidened = "PATHS widened by rule"
 
@@ -140,13 +143,13 @@ func isHold(report string) bool {
 	return slices.ContainsFunc(strings.Fields(report), func(w string) bool { return strings.Trim(w, "*_:.,;") == "HOLD" })
 }
 
-// widenAnswer is the widen rule's answer for one card: twin (twin set) or leave (far set).
+// widenAnswer is the widen rule's answer for one card: widen it (widen) or leave it (far set).
 type widenAnswer struct {
 	pr    *Card
 	opens []Open
 	files []WidenFile
 	far   []string
-	twin  string
+	widen bool
 	text  string
 	from  string
 }
@@ -159,8 +162,8 @@ var widenTypes = []string{NWorkFailed, NBound, NBriefWrong, NReturned}
 // mindCard) whose HOLD names files outside PATHS and says PATHS, or that the conflict rule
 // returned on an E12 refusal at this attempt. A HOLD with a PATHS-PROPOSED line is the paths
 // rule's (paths_proposed.go), and one naming a card that has not landed the hold-need rule's
-// (judgment_rules.go). Every file adjacent: twinned (twin, "" when
-// every twin id is taken, which leaves it). A HOLD naming a file not adjacent: left (far). An
+// (judgment_rules.go). Every file adjacent: widened in place (widen). A HOLD naming a file
+// not adjacent: left (far). An
 // E12 refusal naming one is no answer: the conflict rule redoes it inside its PATHS.
 func widenAnswers(s *Snapshot, r TickReq) []widenAnswer {
 	if !r.AnswerRules || s.RuleOff(RuleWiden) {
@@ -207,7 +210,7 @@ func widenAnswers(s *Snapshot, r TickReq) []widenAnswer {
 		case len(a.files) == 0, len(a.far) > 0 && !hold:
 			continue
 		case len(a.far) == 0:
-			a.twin = TwinID(s, pr)
+			a.widen = true
 		}
 		at[pr.ID] = len(out)
 		out = append(out, a)
@@ -215,14 +218,14 @@ func widenAnswers(s *Snapshot, r TickReq) []widenAnswer {
 	return out
 }
 
-// widenSaid is the twin's words: the files, each with why it is adjacent, and the head.
+// widenSaid is the widen's words: the files, each with why it is adjacent, and the head.
 func (a widenAnswer) widenSaid() string {
 	var each []string
 	for _, f := range a.files {
 		each = append(each, f.File+" ("+f.Adjacent+")")
 	}
-	return fmt.Sprintf("%s attempt %s held only for files outside its PATHS (%s), each adjacent: twinned as %s with PATHS widened by %s, from head %s",
-		a.pr.ID, a.pr.F("attempt"), a.from, a.twin, strings.Join(each, ", "), a.pr.F("head"))
+	return fmt.Sprintf("%s attempt %s held only for files outside its PATHS (%s), each adjacent: PATHS widened in place by %s, its next attempt from head %s",
+		a.pr.ID, a.pr.F("attempt"), a.from, strings.Join(each, ", "), a.pr.F("head"))
 }
 
 // fileNames is the files' names.
@@ -253,12 +256,13 @@ func SharedWidened(brief string, files []string) string {
 }
 
 // TickRuleWiden is the widen rule's part (docs/SPEC-SPRINT.md section 8, the row widen): the
-// first card it twins, by Recut with PATHS and SHARED widened by exactly the files and a
-// CARRY: line at the finished head, the twin's fix naming the head to start from and the
-// files, the old card dropped "replaced by <twin>" with its judgments closed by the decided
-// note, and one note to the coordinator naming the files; one card a tick, as the rule twin
-// part. Every card it leaves has its judgments' text prefixed with WidenBlocked and the
-// files, once. A recut refused leaves the judgment open, the coordinator's.
+// first card it widens, by Brief in place with PATHS and SHARED widened by exactly the files
+// and a CARRY: line at the finished head (the same id, review -> ready, its next attempt from
+// that head and its brief's bound counted from it), its fix naming the head to start from and
+// the files, its judgments closed by the decided note, and one note to the coordinator naming
+// the files; one card a tick. Every card it leaves has its judgments' text prefixed with
+// WidenBlocked and the files, once. A brief edit refused leaves the judgment open, the
+// coordinator's.
 func TickRuleWiden(s *Snapshot, r TickReq) (Plan, int) {
 	var p Plan
 	var updates []Note
@@ -272,21 +276,21 @@ func TickRuleWiden(s *Snapshot, r TickReq) (Plan, int) {
 			}
 			continue
 		}
-		if len(p.Units) == 0 && a.twin != "" {
-			p = widenTwin(s, r, a)
+		if len(p.Units) == 0 && a.widen {
+			p = widenInPlace(s, r, a)
 		}
 	}
 	p.Updates = append(p.Updates, updates...)
 	return p, 0
 }
 
-// widenTwin is the twin of one card the widen rule answers; an empty plan when the recut is
-// refused.
-func widenTwin(s *Snapshot, r TickReq, a widenAnswer) Plan {
+// widenInPlace is one card the widen rule answers, its brief widened in place (Brief, as brief
+// --widen edits it: no twin); an empty plan when the edit is refused.
+func widenInPlace(s *Snapshot, r TickReq, a widenAnswer) Plan {
 	files := fileNames(a.files)
 	pr := a.pr
 	carry := fmt.Sprintf("CARRY: %s attempt %d head=%s", pr.ID, pr.Int("attempt"), pr.F("head"))
-	p := Recut(s, RecutReq{ID: pr.ID, New: a.twin, Brief: SharedWidened(PathsWidened(pr.F("brief"), files, carry), files), Rules: pr.F(FieldRules), Who: r.who()})
+	p := Brief(s, BriefReq{ID: pr.ID, Brief: SharedWidened(PathsWidened(pr.F("brief"), files, carry), files), Rules: pr.F(FieldRules), Who: r.who()})
 	if len(p.Refused) > 0 {
 		return Plan{}
 	}
@@ -296,19 +300,25 @@ func widenTwin(s *Snapshot, r TickReq, a widenAnswer) Plan {
 		pr.F("head"), pr.ID, pr.F("attempt"), strings.Join(files, ","), a.from, a.text), MaxCardTextBytes)
 	for i := range p.Units {
 		u := &p.Units[i]
-		for j, ch := range u.Changes {
-			if ch.Table == Work && ch.Entry.ID == a.twin && ch.Entry.Create != nil {
-				set := u.Changes[j].Entry.Set
-				set["fix"] = fix
-				set["why"] = fmt.Sprintf("%s attempt %s finished, held for files outside its PATHS", pr.ID, pr.F("attempt"))
-				set[FieldNote], set[FieldRuleAnswer] = said, RuleWiden+": "+ActWiden+" at "+stamp(s.Now)
-				if w := pr.F(FieldWho); w != "" && set[FieldWho] == "" {
-					set[FieldWho] = w // whoever held the work keeps the twin
-				}
-			}
-		}
 		if u.Key != pr.ID {
 			continue
+		}
+		for j, ch := range u.Changes {
+			if ch.Table != Work || ch.Entry.ID != pr.ID {
+				continue
+			}
+			e := &u.Changes[j].Entry
+			if e.Set == nil {
+				e.Set = map[string]string{}
+			}
+			e.Set["fix"] = fix
+			e.Set[FieldNote], e.Set[FieldRuleAnswer] = said, RuleWiden+": "+ActWiden+" at "+stamp(s.Now)
+			keep := []string{"fix"}
+			if w := pr.F(FieldWho); w != "" && e.Set[FieldWho] == "" {
+				e.Set[FieldWho] = w // whoever held the work keeps the card
+				keep = append(keep, FieldWho)
+			}
+			e.Unset = slices.DeleteFunc(e.Unset, func(f string) bool { return slices.Contains(keep, f) })
 		}
 		u.Moved += "; answered by rule " + RuleWiden
 		for _, o := range u.Closes {
@@ -316,7 +326,7 @@ func widenTwin(s *Snapshot, r TickReq, a widenAnswer) Plan {
 				u.Notes = append(u.Notes, decided(o, said, r.who(), s.Now, pr.ID))
 			}
 		}
-		u.Notes = append(u.Notes, Note{Kind: Happened, Type: NPathsWidened, Stream: pr.Row, Primaries: []string{a.twin}, Count: 1,
+		u.Notes = append(u.Notes, Note{Kind: Happened, Type: NPathsWidened, Stream: pr.Row, Primaries: []string{pr.ID}, Count: 1,
 			Who: r.who(), To: s.Coordinator, At: s.Now, What: cutText(why, MaxCardTextBytes)})
 	}
 	return p

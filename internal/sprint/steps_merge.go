@@ -208,7 +208,10 @@ func span(ids []string) string {
 
 // MergeStep merges the head of the stream's queue, in work order, as one
 // batch; or, given a fact that stops the stream, stops it and tells the
-// coordinator why. A stopped stream moves only after resume.
+// coordinator why. A stopped stream moves only after resume. A conflict fact
+// on the card's own head (RefusalWay) stops nothing: the card is reworked at
+// the tip, or returned for the widen rule, and the stream goes on
+// (landRefused).
 func MergeStep(s *Snapshot, r MergeReq) Plan { return Lawful(mergeStep(s, r)) }
 
 func mergeStep(s *Snapshot, r MergeReq) Plan {
@@ -324,6 +327,19 @@ func mergeStep(s *Snapshot, r MergeReq) Plan {
 			return p
 		}
 		pr := s.Work.Placed(r.Conflict)
+		if way := RefusalWay(r.ConflictKind, r.Note); way != "" {
+			// a refusal of the card's own head never stops the stream: the card is reworked at
+			// the tip, or returned for the widen rule, and the stream lands on (redo.go)
+			if pr == nil || pr.Col != Merging {
+				p.refuse(r.Conflict, "queued in merge but not merging in work ("+placeWord(orEmpty(pr, r.Conflict))+"); run: nova-sprint check")
+				return p
+			}
+			p.Units = append(p.Units, landRefused(s, r, way, state, ctl, ctlSet, notes, pr, m))
+			break
+		}
+		// the lander's own failure (a generated ledger it could not resolve, a head that is no
+		// commit or that origin does not hold, a conflict it did not place): a mind's, the
+		// stream stopped
 		ctlSet["card"] = r.Conflict
 		if r.ConflictKind != "" {
 			ctlSet[FieldConflictKind] = r.ConflictKind
