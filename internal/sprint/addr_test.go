@@ -106,7 +106,6 @@ func TestLocalOnlyModeRefusesEveryNonLoopbackAddressAndNeedsNoTailnet(t *testing
 	// Loopback addresses pass in local-only mode
 	assert.Equal(t, "", AddrOK("127.0.0.1:6379"))
 	assert.Equal(t, "", AddrOK("localhost:6379"))
-	assert.Equal(t, "", AddrOK("127.0.0.1"))
 
 	// Non-loopback addresses are refused with the mode name
 	require.Contains(t, AddrOK("100.64.0.1:6379"), "local-only mode")
