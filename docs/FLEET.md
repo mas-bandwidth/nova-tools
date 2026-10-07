@@ -3,12 +3,16 @@
 A fleet is machines on a tailnet, each a row in nova-config, and the plays
 under `fleet/` put every machine in the state those rows say: the build of the
 tools in its bin directory, the store's function library and ACL, and one
-supervised unit per loop. The plays read nothing but the inventory
-`nova-config inventory` prints (the applied state in Redis) and the defaults in
-`fleet/group_vars/all.yml`; every change goes through a Go tool (`nova-update
-release build` and `install`, `nova-config migrate`, `nova-redis fn` and
-`acl`). Every play has a `--check` form that changes nothing and says what a
-run would do.
+supervised unit per loop. Two phases, one Ansible path each. The first,
+`fleet/bootstrap.yml`, takes a fresh host to a host that has those stores; it
+reads an inventory the owner writes, because nova-config's stores are among
+what it makes. The steady-state plays (`tools.yml`, `redis.yml`, `loops.yml`,
+every run after) read nothing but the inventory `nova-config inventory` prints
+(the applied state in Redis) and the defaults in `fleet/group_vars/all.yml`;
+every change goes through a Go tool (`nova-update release build` and `install`,
+`nova-config migrate`, `nova-redis fn` and `acl`). Every play has a `--check`
+form that changes nothing and says what a run would do. "From a fresh host",
+below, is the first phase, the owner's inputs, and the hand-off.
 
 | play | what it converges | on |
 |---|---|---|
