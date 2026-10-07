@@ -1438,9 +1438,7 @@ a symlink and a `.git` pointer to another checkout are refused. The mirror's rec
 for the worktree, `git worktree remove` on that checkout. A job with a report is not staged
 again. A lane killed before that end is swept by the next prune: a job that is not live (not
 held, not run by a lane, not being staged) and whose brief is not in her inbox. Tracked edits and a stash stay even without a confirmed report: the mirror preserves
-commits, so it cannot preserve either of those. The newest
-`FinishedJobsKept` (8) of those whose head is not confirmed stay; a confirmed head is removed
-even inside that cap. At most `PrunePerPass` (4) a cleanup, confirmed first, never waiting on
+commits, so it cannot preserve either of those. Production retains no cache of inactive clean worktrees: the branch in the mirror preserves their commits, so a killed lane whose card left working is swept on the next cleanup pass. A confirmed report also releases a still-held job once its lane ends. At most `PrunePerPass` (4) a cleanup, confirmed first, never waiting on
 a mirror a stage holds.
 
 Finished jobs are pruned asynchronously after each inbox reconcile. `PruneAsync` reserves
@@ -1460,7 +1458,7 @@ so a native bench snapshot is self-contained. The checkout creator receipt guard
 `TestJobsAreWorktreesOfOneMirror` stages two jobs of one repository and sees one full bare
 mirror and two worktrees on their branches at the base, origin the repository; a push from one
 is read by `PushedHead`; a fetch that fails is a judgment named on the job and leaves nothing
-of it; a finished job whose head is not confirmed is pruned past the cap and its branch and
+of it; a finished job whose head is not confirmed is pruned and its branch and
 commit stay; a job in her inbox or live is never pruned; a pruned job staged again takes its
 branch back. `TestAFinishedLaneLeavesNoJobDirectory` is the confirmed head: the job directory
 is gone inside the cap of 8, the unconfirmed job beside it stays, and a checkout with tracked

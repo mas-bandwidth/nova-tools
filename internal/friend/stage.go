@@ -17,7 +17,6 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
-	"github.com/mas-bandwidth/nova-tools/internal/filelock"
 	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 )
@@ -1013,7 +1012,7 @@ func (l *loop) pruneStep(held []HeldCard, keep map[string]bool, now time.Time) {
 	pruned, err := d.Prune(l.ctx, live)
 	at := now.UTC().Format(time.RFC3339)
 	for _, job := range pruned {
-		d.Record(fmt.Sprintf("%s prune: removed %s/%s and its worktree: its card is finished (%d finished kept)", at, JobsDir, job, FinishedJobsKept))
+		d.Record(fmt.Sprintf("%s prune: removed %s/%s and its worktree: its card is finished", at, JobsDir, job))
 	}
 	switch {
 	case err == nil:

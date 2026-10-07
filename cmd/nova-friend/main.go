@@ -1636,7 +1636,7 @@ func (d daemonStager) prune() func(ctx context.Context, live map[string]bool) ([
 		return nil
 	}
 	return func(ctx context.Context, live map[string]bool) ([]string, error) {
-		return d.s.PruneAsync(ctx, live, friend.FinishedJobsKept)
+		return d.s.PruneAsync(ctx, live, 0)
 	}
 }
 
