@@ -777,7 +777,7 @@ use instead of its own: for example `never claim Claude`, `do not mention the
 model`, `sign as another model`, or a `Co-Authored-By` trailer naming a fixed
 model the worker is told to use. A brief that says to name the actual model and
 never claim one you are not passes. Pinned by `TestAddRefusesABriefHidingTheModel`
-(`cmd/nova-sprint`) and `TestLintCardChildHonestAttribution` (`internal/swarm`).
+(`cmd/nova-sprint`) and `TestLintRefusesABriefThatHidesTheModel` (`internal/swarm`).
 
 ## Test inventory
 
