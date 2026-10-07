@@ -105,7 +105,7 @@ func TestEveryRefusalSaysWhatTheInputWantsAndOneRunNamesEveryProblem(t *testing.
 		n := strings.Count(strings.TrimSuffix(r.stderr, "\n"), "\n")
 		assert.Equal(t, 0, n, "a flag typo cost %d lines; the banner is behind `nova-tokens help`:\n%s", n+1, r.stderr)
 	}
-	assert.Contains(t, r.stderr, "TOKENS REFUSED: unknown flag --ou; the flags of fold are --all,")
+	assert.Contains(t, r.stderr, "FOLD REFUSED: unknown flag --ou; the flags of fold are --all,")
 	assert.Contains(t, r.stderr, "did you mean --out?; run: nova-tokens fold -h")
 	assert.NotContains(t, r.stderr, "flag provided but not defined")
 	// An unknown verb, and a bare invocation, name the verbs there are and the door.

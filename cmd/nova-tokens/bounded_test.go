@@ -147,15 +147,15 @@ func TestFoldIsBoundedAtTheLargestPlausibleState(t *testing.T) {
 
 	// Ten declared sources: three transcript directories, one swarm pool, two exports and
 	// four bus lanes.
-	assert.Equal(t, 10, byToken["TOKENS SOURCE"], "%d SOURCE lines, want 10", byToken["TOKENS SOURCE"])
-	for _, kind := range []string{"TOKENS UNREADABLE", "TOKENS UNPARSED", "TOKENS SUPERSEDED",
-		"TOKENS CONFLICT", "TOKENS TOUCHED", "TOKENS MIXED", "TOKENS DAY"} {
+	assert.Equal(t, 10, byToken["FOLD SOURCE"], "%d SOURCE lines, want 10", byToken["FOLD SOURCE"])
+	for _, kind := range []string{"FOLD UNREADABLE", "FOLD UNPARSED", "FOLD SUPERSEDED",
+		"FOLD CONFLICT", "FOLD TOUCHED", "FOLD MIXED", "FOLD DAY"} {
 		assert.Equal(t, 20, byToken[kind], "%d %s lines, want the prefix of 20 the default ceiling allows", byToken[kind], kind)
 	}
 	assert.Equal(t, 7, more, "%d MORE lines, want one per overflowing kind (7)", more)
 	{
-		n := byToken["TOKENS NOTE"]
-		assert.Equal(t, 1, n, "%d TOKENS NOTE lines, want exactly one remedy line", n)
+		n := byToken["FOLD NOTE"]
+		assert.Equal(t, 1, n, "%d FOLD NOTE lines, want exactly one remedy line", n)
 	}
 	{
 		n := len(lines(all))
@@ -166,7 +166,7 @@ func TestFoldIsBoundedAtTheLargestPlausibleState(t *testing.T) {
 		assert.LessOrEqual(t, n, 28*1024, "%d bytes at the largest plausible state, want under 28 KB", n)
 	}
 	// The counts are the truth about the STATE, never about the output.
-	fail := lineWith(r.stderr, "TOKENS FAILED")
+	fail := lineWith(r.stderr, "FOLD FAILED")
 	for _, want := range []string{"unreadable=25", "conflict=25", "mixed=25"} {
 		wantContains(t, fail, want)
 	}
@@ -176,7 +176,7 @@ func TestFoldIsBoundedAtTheLargestPlausibleState(t *testing.T) {
 	r = invoke(t, append(append([]string{"fold"}, args...), "--max", "0")...)
 	more, byToken = countKinds(r.stdout + r.stderr)
 	assert.Equal(t, 0, more, "--max 0 printed %d MORE lines; a caller who asked for all of it gets all of it", more)
-	assert.Equal(t, overflow, byToken["TOKENS UNREADABLE"], "--max 0 printed %d of %d unreadable lines", byToken["TOKENS UNREADABLE"], overflow)
+	assert.Equal(t, overflow, byToken["FOLD UNREADABLE"], "--max 0 printed %d of %d unreadable lines", byToken["FOLD UNREADABLE"], overflow)
 	// --max -1 is a typo with two readings, and is refused.
 	r = invoke(t, append(append([]string{"fold"}, args...), "--max", "-1")...)
 	wantExit(t, r, 2)

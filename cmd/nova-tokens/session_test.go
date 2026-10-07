@@ -56,7 +56,7 @@ func TestSessionFoldsIntoTheDayFileAndKeepsTheOtherRows(t *testing.T) {
 
 	r := invoke(t, "session", "--claude-session", writeSession(t), "--out", out)
 	wantExit(t, r, 0)
-	wantContains(t, r.stdout, "TOKENS DAY day=2026-09-11 written=true rows=2 retained=1")
+	wantContains(t, r.stdout, "SESSION DAY day=2026-09-11 written=true rows=2 retained=1")
 	wantContains(t, r.stdout, "model=claude-opus-5 weighted=7241")
 
 	raw, err := os.ReadFile(filepath.Join(out, "2026-09-11.tsv"))
@@ -178,7 +178,7 @@ func TestSessionRefusesUnreadableDayFile(t *testing.T) {
 	release := makeUnreadable(t, dayPath)
 	r := invoke(t, "session", "--claude-session", writeSession(t), "--out", out)
 	wantExit(t, r, 1)
-	wantContains(t, r.stderr, "TOKENS REFUSED: cannot read")
+	wantContains(t, r.stderr, "SESSION REFUSED: cannot read")
 	wantContains(t, r.stderr, "2026-09-11.tsv")
 
 	release()

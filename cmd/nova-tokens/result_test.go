@@ -173,7 +173,7 @@ func TestADryRunWritesNothing(t *testing.T) {
 	r := invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", repos, "--claude", "bench="+tr, "--dry-run")
 	wantExit(t, r, 0)
 	assert.Contains(t, r.stdout, "written=false would_write=true")
-	assert.Contains(t, r.stdout, "TOKENS OK days=1 rows=2 ")
+	assert.Contains(t, r.stdout, "FOLD OK days=1 rows=2 ")
 	assert.Contains(t, r.stdout, " dry_run=true\n")
 	ents, err := os.ReadDir(out)
 	require.NoError(t, err)
@@ -183,7 +183,7 @@ func TestADryRunWritesNothing(t *testing.T) {
 	newOut := filepath.Join(dir, "new-out")
 	r = invoke(t, "session", "--claude-session", session, "--out", newOut, "--dry-run")
 	wantExit(t, r, 0)
-	assert.Contains(t, r.stdout, "TOKENS DAY day=2026-09-11 written=false")
+	assert.Contains(t, r.stdout, "SESSION DAY day=2026-09-11 written=false")
 	assert.NoDirExists(t, newOut, "a dry-run session made its --out")
 
 	note := filepath.Join(dir, "note.txt")
@@ -227,9 +227,9 @@ func TestAQuietSourceIsTheNoteNotTheAllClear(t *testing.T) {
 	r := invoke(t, "fold", "--out", out, "--day", "2026-09-14", "--repos", repos, "--swarm", "ada="+poolA, "--swarm", "bo="+poolB)
 	wantExit(t, r, 0)
 	assert.Contains(t, r.stdout, " quiet=1\n")
-	assert.Contains(t, r.stderr, "TOKENS QUIET label=swarm:ada day=2026-09-14")
+	assert.Contains(t, r.stderr, "FOLD QUIET label=swarm:ada day=2026-09-14")
 	assert.NotContains(t, r.stdout, "nothing was wrong")
-	assert.Contains(t, r.stdout, "TOKENS NOTE a declared source fed no message for a day its file names (swarm:ada on 2026-09-14)")
+	assert.Contains(t, r.stdout, "FOLD NOTE a declared source fed no message for a day its file names (swarm:ada on 2026-09-14)")
 }
 
 // The banner's word on the environment is the code's: the Redis verbs read the seat from

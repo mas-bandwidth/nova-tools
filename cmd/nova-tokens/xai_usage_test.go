@@ -77,7 +77,7 @@ func TestXaiProviderOneUsageFileFoldsRow(t *testing.T) {
 		opened := tokens.Opens() - before
 		assert.Equal(t, int64(1), opened, "opened %d source files, want the one usage.json the flag names", opened)
 	}
-	wantContains(t, r.stdout, "TOKENS DAY date=2026-09-12 rows=1 ")
+	wantContains(t, r.stdout, "FOLD DAY date=2026-09-12 rows=1 ")
 	body := read(t, filepath.Join(out, "2026-09-12.tsv"))
 	const wantRow = "2026-09-12\tgrok-model-example\tunattributed\t1000\t100\t-\t-\t-\t0\tutc\txai:johnny"
 	var data []string
@@ -101,7 +101,7 @@ func TestXaiProviderOneUsageFileFoldsRow(t *testing.T) {
 		opened := tokens.Opens() - before
 		assert.Equal(t, int64(0), opened, "a missing xai path opened %d source files; that is a scan", opened)
 	}
-	wantContains(t, miss.stderr, "TOKENS UNREADABLE")
+	wantContains(t, miss.stderr, "FOLD UNREADABLE")
 	wantContains(t, miss.stderr, "does not scan a session store")
 	require.False(t, strings.Contains(miss.all(), bait), "a missing path folded the session store:\n%s", miss.all())
 	_, err := tokens.ReadXaiUsageFile(missing)

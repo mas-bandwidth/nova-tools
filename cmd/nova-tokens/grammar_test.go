@@ -153,6 +153,11 @@ func checkAgainstGrammar(t *testing.T, grammar map[string]string, line string) {
 	}
 	kind := f[0] + " " + strings.TrimSuffix(f[1], ":")
 	tmpl, ok := grammar[kind]
+	if kind == "FOLD FAILED" && strings.Contains(line, "days=") {
+		tmpl, ok = grammar["TOKENS FAILED"]
+	} else if !ok && strings.HasPrefix(kind, "FOLD ") {
+		tmpl, ok = grammar["TOKENS "+strings.TrimPrefix(kind, "FOLD ")]
+	}
 	if !ok {
 		assert.Failf(t, "output grammar lacks printed line", "the tool prints %q; the output grammar has no line for %s, so a consumer scanning the grammar cannot parse it", line, kind)
 		return
@@ -180,7 +185,7 @@ func printedLines(r result) []string {
 	for _, s := range []string{r.stdout, r.stderr} {
 		for _, line := range strings.Split(s, "\n") {
 			switch strings.Fields(line + " x")[0] {
-			case "TOKENS", "SOURCES", "SUM", "CHECK", "REPORT":
+			case "TOKENS", "FOLD", "SOURCES", "SUM", "CHECK", "REPORT":
 				out = append(out, line)
 			}
 		}
@@ -254,12 +259,12 @@ func TestTheOutputGrammarAdmitsTheLinesTheToolPrints(t *testing.T) {
 		for _, line := range printedLines(r) {
 			n++
 			checkAgainstGrammar(t, grammar, line)
-			if strings.HasPrefix(line, "TOKENS PARTIAL ") {
+			if strings.HasPrefix(line, "TOKENS PARTIAL ") || strings.HasPrefix(line, "FOLD PARTIAL ") {
 				sawPartial = true
 			}
 		}
 	}
-	require.True(t, sawPartial, "no TOKENS PARTIAL line was checked against the grammar")
+	require.True(t, sawPartial, "no PARTIAL line was checked against the grammar")
 	require.GreaterOrEqual(t, n, 10, "%d printed lines checked against the grammar; the fixtures printed nothing and this test would have passed by checking nothing", n)
 }
 
@@ -269,7 +274,7 @@ func TestTheOutputGrammarAdmitsTheLinesTheToolPrints(t *testing.T) {
 // store, so no case opens a socket. sources, sum and profiles have no exit-1 path:
 // cmdSources ends in SOURCES OK (main.go), cmdSum exits 0 whenever it ran (its comment
 // above it), and profileSwarmRoot ends in PROFILES OK (profiles.go), so their rows stop
-// at REFUSED. session's exit 1 carries TOKENS REFUSED, never FAILED (session.go), and
+// at REFUSED. session's exit 1 carries SESSION REFUSED, never FAILED (session.go), and
 // version prints no status word on success and never exits 1 (version.go); those rows pin
 // the exit code alone.
 func TestStatusGrammar(t *testing.T) {
@@ -286,17 +291,17 @@ func TestStatusGrammar(t *testing.T) {
 		{
 			"fold ok",
 			func(t *testing.T) []string { return statusFoldArgs(t, false) },
-			"TOKENS", "OK", 0, "stdout",
+			"FOLD", "OK", 0, "stdout",
 		},
 		{
 			"fold refused",
 			func(t *testing.T) []string { return []string{"fold"} },
-			"TOKENS", "REFUSED", 2, "stderr",
+			"FOLD", "REFUSED", 2, "stderr",
 		},
 		{
 			"fold failed",
 			func(t *testing.T) []string { return statusFoldArgs(t, true) },
-			"TOKENS", "FAILED", 1, "stderr",
+			"FOLD", "FAILED", 1, "stderr",
 		},
 		{
 			"check ok",
@@ -346,7 +351,7 @@ func TestStatusGrammar(t *testing.T) {
 				empty := mkdir(t, filepath.Join(t.TempDir(), "out"))
 				return []string{"ledger", "--out", empty, "--day", "2026-09-11", "--redis", "127.0.0.1:0", "--dry-run"}
 			},
-			"LEDGER", "FAILED", 1, "stdout",
+			"LEDGER", "FAILED", 1, "stderr",
 		},
 		{
 			"report ok",
@@ -409,7 +414,7 @@ func TestStatusGrammar(t *testing.T) {
 		{
 			"session refused",
 			func(t *testing.T) []string { return []string{"session"} },
-			"TOKENS", "REFUSED", 2, "stderr",
+			"SESSION", "REFUSED", 2, "stderr",
 		},
 		{
 			"session refused at exit 1",
@@ -418,7 +423,7 @@ func TestStatusGrammar(t *testing.T) {
 				write(t, filepath.Join(out, "2026-09-11.tsv"), "not a day file\n")
 				return []string{"session", "--claude-session", writeSession(t), "--out", out}
 			},
-			"TOKENS", "REFUSED", 1, "stderr",
+			"SESSION", "REFUSED", 1, "stderr",
 		},
 		{
 			"version ok",
