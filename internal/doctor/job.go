@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/friend"
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
 // A job is one thing a machine is set up to do (keep local notes, message, be a friend,
@@ -113,7 +114,7 @@ func init() {
 		{"redis-acl", AppliedState, stepRedisACL},
 		{"redis-functions", Installed, stepRedisFunctions},
 		{"binaries", Installed, stepBinaries},
-		{"self", Installed, func(ctx context.Context, r *jobRun) Result { return checkSelf(ctx, r.env) }},
+		{"self", Installed, stepSelf},
 		{"swarm-binary", Installed, stepSwarmBinary},
 		{"daemon-running", Supervisor, stepDaemonRunning},
 		{"harness-responsive", SessionStage, stepHarnessResponsive},
@@ -140,11 +141,11 @@ func JobSteps(job string) []Step {
 	return out
 }
 
-// The bounds of a job's output: a step's evidence and fix are cut to these many bytes,
-// so the JSON of a whole job stays under a few kilobytes whatever a tool printed.
+// The bounds of a job's output (docs/SPEC-DOCTOR.md, Jobs): evidence is clipped;
+// a repair that exceeds the bound is refused rather than cut into another command.
 const (
 	maxEvidence = 240
-	maxFix      = 240
+	maxFix      = 4096
 	stepTimeout = 15 * time.Second
 )
 
@@ -172,6 +173,9 @@ func (j JobReport) SummaryLine() string {
 // RunJob runs a job's steps in order. The first fail stops the chain: every later step
 // is reported blocked on it. A warn does not stop it.
 func RunJob(ctx context.Context, env Env, in JobInput, strict bool) (JobReport, error) {
+	if in.Since < 0 {
+		return JobReport{}, fmt.Errorf("--since wants a positive duration; run: nova-doctor help run")
+	}
 	list := JobSteps(in.Job)
 	if list == nil {
 		return JobReport{}, fmt.Errorf("no job named %q; the jobs are %s", in.Job, strings.Join(Jobs, ", "))
@@ -186,7 +190,10 @@ func RunJob(ctx context.Context, env Env, in JobInput, strict bool) (JobReport, 
 		}
 		res := runOne(ctx, env, Check{Name: s.Name, Dependency: s.Stage.String(),
 			Run: func(ctx context.Context, _ Env) Result { return s.Run(ctx, r) }})
-		res.Evidence, res.Fix = clip(res.Evidence, maxEvidence), clip(res.Fix, maxFix)
+		res.Evidence = clip(res.Evidence, maxEvidence)
+		if len(res.Fix) > maxFix {
+			return JobReport{}, fmt.Errorf("the %s repair exceeds %d bytes; use shorter input paths and run: nova-doctor help run", s.Name, maxFix)
+		}
 		if res.Status == Fail {
 			rep.FirstMissing, rep.Next = s.Name, res.Fix
 		}
@@ -297,7 +304,10 @@ func remedy(said, def string) string {
 		got = m[1]
 	}
 	got = strings.TrimSpace(got)
-	if got == "" || strings.HasSuffix(got, " -h") || strings.HasSuffix(got, " help") || !strings.HasPrefix(got, "nova-") {
+	if strings.Contains(got, ", then ") || strings.Contains(got, " again") || strings.Contains(got, " from the command line") {
+		return def // the owning tool names a sequence in prose, not one runnable command
+	}
+	if len(got) > maxFix || got == "" || strings.HasSuffix(got, " -h") || strings.HasSuffix(got, " help") || !strings.HasPrefix(got, "nova-") {
 		return def
 	}
 	return got
@@ -336,19 +346,22 @@ func (r *jobRun) since() string {
 func (r *jobRun) again(extra string) string {
 	s := "nova-doctor --job " + r.in.Job
 	if r.in.As != "" {
-		s += " --as " + r.in.As
+		s += " --as " + oneline.ShellWord(r.in.As)
 	}
 	if r.in.Dir != "" {
-		s += " --dir " + r.in.Dir
+		s += " --dir " + oneline.ShellWord(r.in.Dir)
 	}
 	if r.in.Harness != "" {
-		s += " --harness " + r.in.Harness
+		s += " --harness " + oneline.ShellWord(r.in.Harness)
 	}
 	if r.in.ConfigDir != "" {
-		s += " --config-dir " + r.in.ConfigDir
+		s += " --config-dir " + oneline.ShellWord(r.in.ConfigDir)
 	}
 	if r.in.Since > 0 {
 		s += " --since " + r.in.Since.String()
+	}
+	if addr := r.redisAddr(); addr != "" {
+		s += " --redis " + oneline.ShellWord(addr)
 	}
 	return s + extra
 }
@@ -360,6 +373,10 @@ func stepRedisReachable(ctx context.Context, r *jobRun) Result {
 			Fix: r.again(" --redis 127.0.0.1:6390")}
 	}
 	host, port, err := net.SplitHostPort(addr)
+	number, portErr := strconv.ParseUint(port, 10, 16)
+	if err == nil && (host == "" || portErr != nil || number == 0) {
+		err = fmt.Errorf("the host must be named and the port a number from 1 to 65535")
+	}
 	if err != nil {
 		return Result{Status: Fail, Evidence: fmt.Sprintf("the Redis address %q is not host:port: %v", addr, err),
 			Fix: r.again(" --redis 127.0.0.1:6390")}
@@ -367,9 +384,12 @@ func stepRedisReachable(ctx context.Context, r *jobRun) Result {
 	dctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 	if err := r.env.Dial(dctx, "tcp", addr); err != nil {
-		fix := "tailscale ping " + host
+		fix := "tailscale ping " + oneline.ShellWord(host)
 		if ip := net.ParseIP(host); host == "localhost" || (ip != nil && ip.IsLoopback()) {
-			fix = fmt.Sprintf("nova-redis serve --bind %s --port %s --dir %s", host, port, r.home("nova/stores/redis"))
+			if host == "localhost" {
+				host = "127.0.0.1"
+			}
+			fix = fmt.Sprintf("nova-redis serve --bind %s --port %s --dir %s", host, port, oneline.ShellWord(r.home("nova/stores/redis")))
 		}
 		return Result{Status: Fail, Evidence: fmt.Sprintf("Redis at %s did not answer: %v", addr, err), Fix: fix}
 	}
@@ -409,7 +429,7 @@ func stepRedisACL(ctx context.Context, r *jobRun) Result {
 	if ev == "" {
 		ev = c.said
 	}
-	return Result{Status: Fail, Evidence: "nova-redis acl check: " + ev, Fix: "nova-redis acl apply --addr " + r.redisAddr()}
+	return Result{Status: Fail, Evidence: "nova-redis acl check: " + ev, Fix: "nova-redis acl apply --addr " + oneline.ShellWord(r.redisAddr())}
 }
 
 // lineWith is the first line of out that starts with prefix, or "" when none does.
@@ -431,7 +451,7 @@ func stepRedisFunctions(ctx context.Context, r *jobRun) Result {
 		return Result{Status: OK, Evidence: firstLine(c.out)}
 	}
 	return Result{Status: Fail, Evidence: "nova-redis fn check: " + c.said,
-		Fix: "nova-redis fn load --addr " + r.redisAddr()}
+		Fix: "nova-redis fn load --addr " + oneline.ShellWord(r.redisAddr())}
 }
 
 func stepStoreLogin(ctx context.Context, r *jobRun) Result {
@@ -484,7 +504,7 @@ func stepConfigApplied(ctx context.Context, r *jobRun) Result {
 	}
 	if kinds == 0 {
 		return Result{Status: Fail, Evidence: "nova-config apply --check printed no CONFIG CHECK line: " + firstLine(c.out),
-			Fix: "nova-config apply --check --redis " + r.redisAddr()}
+			Fix: "nova-config apply --check --redis " + oneline.ShellWord(r.redisAddr())}
 	}
 	if len(behind) > 0 {
 		return Result{Status: Fail, Evidence: "Redis is behind the config: " + strings.Join(behind, " "), Fix: r.applyFix()}
@@ -495,9 +515,9 @@ func stepConfigApplied(ctx context.Context, r *jobRun) Result {
 // applyFix is nova-config apply to the Redis the doctor checked, recorded under --as when
 // the job names who is applying (else apply reads NOVA_FRIEND or the seat, or refuses).
 func (r *jobRun) applyFix() string {
-	s := "nova-config apply --redis " + r.redisAddr()
+	s := "nova-config apply --redis " + oneline.ShellWord(r.redisAddr())
 	if r.in.As != "" {
-		s += " --as " + r.in.As
+		s += " --as " + oneline.ShellWord(r.in.As)
 	}
 	return s
 }
@@ -537,7 +557,7 @@ func stepSwarmBinary(ctx context.Context, r *jobRun) Result {
 		onPath = "<nova-swarm-on-PATH>"
 	}
 	return Result{Status: Fail, Evidence: "nova-swarm doctor: " + said,
-		Fix: "install -m 0755 " + r.home(".local/bin/nova-swarm") + " " + onPath}
+		Fix: "install -m 0755 " + oneline.ShellWord(r.home(".local/bin/nova-swarm")) + " " + oneline.ShellWord(onPath)}
 }
 
 // friendCheckArgs is the health check's argv: every flag before the first positional,
@@ -591,7 +611,7 @@ func (r *jobRun) theFriend(ctx context.Context) (friend.FriendCheck, *Result) {
 // config directory, which no check reports, so it is --config-dir, else CLAUDE_CONFIG_DIR.
 func (r *jobRun) installFix(f friend.FriendCheck) string {
 	h := r.harnessOf(f)
-	s := fmt.Sprintf("nova-friend install --as %s --harness %s --dir %s --redis %s", r.in.As, h, r.dirOf(), r.redisAddr())
+	s := fmt.Sprintf("nova-friend install --as %s --harness %s --dir %s --redis %s", oneline.ShellWord(r.in.As), oneline.ShellWord(h), oneline.ShellWord(r.dirOf()), oneline.ShellWord(r.redisAddr()))
 	if h == "claude" {
 		cd := r.in.ConfigDir
 		if cd == "" {
@@ -600,7 +620,7 @@ func (r *jobRun) installFix(f friend.FriendCheck) string {
 		if cd == "" {
 			cd = "<config-dir>"
 		}
-		s += " --config-dir " + cd
+		s += " --config-dir " + oneline.ShellWord(cd)
 	}
 	return s
 }
@@ -670,7 +690,7 @@ func stepMessageDelivered(ctx context.Context, r *jobRun) Result {
 	h := f.Harness
 	if h.Delivered == 0 {
 		return Result{Status: Fail, Evidence: "no message was delivered into the session within " + r.since(),
-			Fix: fmt.Sprintf("nova-friend ping --as %s --to %s --redis %s", r.coordinator(), r.in.As, r.redisAddr())}
+			Fix: fmt.Sprintf("nova-friend ping --as %s --to %s --redis %s", oneline.ShellWord(r.coordinator()), oneline.ShellWord(r.in.As), oneline.ShellWord(r.redisAddr()))}
 	}
 	return Result{Status: OK, Evidence: fmt.Sprintf("%d messages delivered, %d failed, last %s", h.Delivered, h.Failed, h.Last)}
 }
@@ -697,7 +717,7 @@ func stepSessionReceipt(ctx context.Context, r *jobRun) Result {
 	case "deaf":
 		return Result{Status: Fail, Evidence: "deaf: " + ev,
 			Fix: fmt.Sprintf("nova-friend check --as %s --harness %s --dir %s --redis %s --to %s",
-				r.in.As, r.harnessOf(f), r.dirOf(), r.redisAddr(), r.coordinator())}
+				oneline.ShellWord(r.in.As), oneline.ShellWord(r.harnessOf(f)), oneline.ShellWord(r.dirOf()), oneline.ShellWord(r.redisAddr()), oneline.ShellWord(r.coordinator()))}
 	}
 	return Result{Status: Fail, Evidence: "no receipt: " + ev, Fix: r.installFix(f)}
 }
@@ -736,8 +756,24 @@ func stepFriends(ctx context.Context, r *jobRun) Result {
 	for _, f := range rep.Friends {
 		if f.Verdict.Verdict != "ok" {
 			return Result{Status: Warn, Evidence: ev + "; first not ok: " + f.Friend + " " + f.Verdict.Verdict + ": " + f.Verdict.Why,
-				Fix: "nova-doctor --job friend --as " + f.Friend + " --redis " + r.redisAddr()}
+				Fix: "nova-doctor --job friend --as " + oneline.ShellWord(f.Friend) + " --redis " + oneline.ShellWord(r.redisAddr())}
 		}
 	}
 	return Result{Status: OK, Evidence: ev}
+}
+
+// countedEnv includes the existing self check's version reads in the job's call count
+// (docs/SPEC-DOCTOR.md, Jobs); self stays the one owner of the release comparison.
+type countedEnv struct {
+	Env
+	calls *int
+}
+
+func (e countedEnv) Exec(ctx context.Context, name string, args ...string) (string, error) {
+	*e.calls++
+	return e.Env.Exec(ctx, name, args...)
+}
+
+func stepSelf(ctx context.Context, r *jobRun) Result {
+	return checkSelf(ctx, countedEnv{Env: r.env, calls: &r.calls})
 }

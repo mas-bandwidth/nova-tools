@@ -1,14 +1,17 @@
 package doctor
 
 import (
+	"net"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 
 	"github.com/mas-bandwidth/nova-tools/internal/friend"
+	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
 )
 
 // realVerb is one real verb's argv rules, pinned from its source, so the job tests' fake
@@ -70,6 +73,13 @@ var realVerbs = map[string]realVerb{
 	// cmd/nova-redis/serve.go: --bind, --port and --dir required, --dir absolute.
 	"nova-redis serve": {values: []string{"bind", "port", "dir", "users", "secrets", "as", "key", "sops", "secret"}, bools: []string{"dry-run"},
 		rule: all(needs("bind", "port", "dir"), func(a argv) string {
+			number, err := strconv.ParseUint(a.flags["port"], 10, 16)
+			if err != nil || number == 0 {
+				return "--port wants 1 to 65535"
+			}
+			if net.ParseIP(a.flags["bind"]) == nil {
+				return "--bind wants an IP address, not a hostname"
+			}
 			if !filepath.IsAbs(a.flags["dir"]) {
 				return "--dir " + a.flags["dir"] + " is not absolute"
 			}
@@ -97,6 +107,7 @@ var realVerbs = map[string]realVerb{
 			return needs("as")(a)
 		}},
 	"nova-config migrate": {values: []string{"pg", "file"}, bools: []string{"print", "dry-run", "json"}},
+	"nova-update apply":   {values: []string{"file", "version", "timeout"}, bools: []string{"dry-run", "json"}, positionals: true, rule: needs("file")},
 	"nova-swarm doctor":   {values: []string{"path", "local"}},
 	// cmd/nova-friend/main.go, check: the friends are its arguments; with --harness it
 	// is the delivery check, which wants --as (the friend itself) and --dir
@@ -139,7 +150,10 @@ var realVerbs = map[string]realVerb{
 
 // parseArgv reads a nova command as its tool would, or says why the tool refuses it.
 func parseArgv(line string) (argv, string) {
-	words := strings.Fields(line)
+	words, err := onboarding.SplitShell(line)
+	if err != nil {
+		return argv{}, err.Error()
+	}
 	if len(words) == 0 {
 		return argv{}, "an empty command"
 	}

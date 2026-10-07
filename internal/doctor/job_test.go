@@ -2,6 +2,7 @@ package doctor
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -107,13 +108,13 @@ func (w *world) env() fakeEnv {
 // exec is every tool the job steps call, answering as the real one does from the world.
 func (w *world) exec(name string, args ...string) (string, error) {
 	tool := filepath.Base(name)
+	w.calls++
 	if !w.installed(tool) {
 		return "", &exec.Error{Name: tool, Err: exec.ErrNotFound}
 	}
 	if len(args) == 1 && args[0] == "version" { // the self check, which runs through the frame's Env
 		return buildinfo.Line(tool, "v1.0.0"), nil
 	}
-	w.calls++
 	cmd := tool + " " + strings.Join(args, " ")
 	a, refused := parseArgv(cmd)
 	if refused != "" {
@@ -404,7 +405,7 @@ func TestDoctorNamesTheFirstMissingDependencyAndItsFix(t *testing.T) {
 			assert.Equal(t, 2, doctorRuns)
 			assert.Contains(t, lines[len(lines)-1], "DOCTOR job="+tc.job+" ready ")
 			t.Logf("calls: job=%s missing=%s doctor_runs=%d repairs=%d tool_calls=%d", tc.job, tc.step, doctorRuns, repairs, w.calls)
-			assert.LessOrEqual(t, w.calls, 2*len(names), "each tool call is made once per run")
+			assert.LessOrEqual(t, w.calls, 2*(len(names)+len(allTools)), "each tool call is made once per run")
 		})
 	}
 
@@ -454,7 +455,7 @@ func TestDoctorFriendJobKeepsTheFiveFactsApart(t *testing.T) {
 	assert.Contains(t, got["message-delivered"], "3 messages delivered")
 	assert.Contains(t, got["session-receipt"], "the session answered")
 	assert.Contains(t, got["card-completion"], "newest=card-7")
-	assert.Equal(t, 2, w.calls, "the five friend steps read one nova-friend check, and the Redis steps one acl check")
+	assert.Equal(t, 2+len(allTools), w.calls, "one friend check, one acl check, and the self version reads")
 
 	t.Run("a running daemon with a silent session is not ready", func(t *testing.T) {
 		t.Parallel()
@@ -553,6 +554,10 @@ func TestRemedyAndClip(t *testing.T) {
 		"nova-config status REFUSED: bad flag; run: nova-config status -h": "def",
 		"something else":  "def",
 		"remedy=rm -rf /": "def",
+		"no login; run: nova-config logout, then nova-config login again":                                 "def",
+		"no password; run: nova-config login --check, then nova-config login again or nova-config logout": "def",
+		"no login; run: nova-config login from the command line":                                          "def",
+		"no password; run: nova-config login again with the store, seat, key and secret that hold it":     "def",
 	} {
 		assert.Equal(t, want, remedy(said, "def"), said)
 	}
@@ -562,4 +567,57 @@ func TestRemedyAndClip(t *testing.T) {
 	assert.True(t, strings.HasSuffix(c, "..."))
 	assert.Equal(t, "short", clip("short", 10))
 	assert.Equal(t, fmt.Sprint(Blocked), "blocked")
+}
+
+// Repair commands preserve the caller's directory and accept the real Redis bind grammar.
+func TestDoctorRepairsPreserveTheirArguments(t *testing.T) {
+	t.Parallel()
+	t.Run("localhost is an IP bind", func(t *testing.T) {
+		t.Parallel()
+		w := healthyWorld(t)
+		w.redisUp = false
+		rep, err := RunJob(context.Background(), w.env(), JobInput{Job: "local-notes", Redis: "localhost:6390"}, false)
+		require.NoError(t, err)
+		a, refused := parseArgv(rep.Next)
+		assert.Empty(t, refused, rep.Next)
+		assert.Equal(t, "127.0.0.1", a.flags["bind"])
+	})
+	for _, dir := range []string{"/home/example/work  trees", "/home/example/" + strings.Repeat("long-directory/", 24)} {
+		t.Run(dir, func(t *testing.T) {
+			t.Parallel()
+			w := healthyWorld(t)
+			w.daemon = false
+			rep, err := RunJob(context.Background(), w.env(), JobInput{Job: "friend", Redis: testRedis, As: "bob", Dir: dir, Harness: "claude", ConfigDir: dir + "/.claude"}, false)
+			require.NoError(t, err)
+			a, refused := parseArgv(rep.Next)
+			assert.Empty(t, refused, rep.Next)
+			assert.Equal(t, dir, a.flags["dir"], "the next command keeps the complete directory")
+			assert.Equal(t, dir+"/.claude", a.flags["config-dir"])
+			assert.Equal(t, w.calls, rep.Calls, "all tool invocations count, including self")
+		})
+	}
+}
+
+func TestDoctorRefusesANonpositiveReceiptWindow(t *testing.T) {
+	t.Parallel()
+	for _, since := range []string{"0s", "-1s"} {
+		t.Run(since, func(t *testing.T) {
+			t.Parallel()
+			w := healthyWorld(t)
+			var out, errb bytes.Buffer
+			code := Main(NewRegistry(), w.env(), "", []string{"--job", "friend", "--since", since}, strings.NewReader(""), &out, &errb)
+			assert.Equal(t, 2, code)
+			assert.Contains(t, errb.String(), "--since wants a positive duration")
+			assert.Equal(t, 0, w.calls, "invalid receipt windows read no dependencies")
+		})
+	}
+}
+
+func TestDoctorNeverTruncatesARepairCommand(t *testing.T) {
+	t.Parallel()
+	w := healthyWorld(t)
+	w.daemon = false
+	_, err := RunJob(context.Background(), w.env(), JobInput{Job: "friend", Redis: testRedis, As: "bob", Dir: "/" + strings.Repeat("d", maxFix), Harness: "claude"}, false)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "repair exceeds 4096 bytes")
 }

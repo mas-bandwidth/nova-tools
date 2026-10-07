@@ -57,7 +57,7 @@ a name wins, as the shell resolves it), runs `<tool> version`, and reads the ver
 (`internal/buildinfo`). `ok` when every tool reports the same version. `fail` when a
 tool does not answer with a version line (named), when none is on PATH, or when the
 versions differ: the evidence names every tool that differs from the version most of the
-tools report, and the fix is `nova-update apply --file <manifest> <tool> --version <release>`.
+tools report, and the fix is `nova-update apply --file <manifest> --version <release> <tool>`.
 
 `nova-up --local` ends by running `nova-doctor --local`.
 
@@ -96,6 +96,7 @@ so every flag comes before the first argument: `nova-friend check --json <f>`, n
 `nova-friend check <f> --json`, which the tool reads as two friends. Each line carries every
 flag its verb requires, and the address the doctor checked is passed explicitly (`--redis`,
 `--addr`) rather than left to an environment variable the next tool may read differently.
+Caller-supplied values in repair commands are shell-quoted, preserving spaces as one argument.
 Paths are absolute: `nova-redis serve` refuses a `--dir` that is not, and a line run without a
 shell expands no `~`. A value the doctor cannot know is a `<placeholder>` with no spaces in it.
 
@@ -140,7 +141,8 @@ the **session's receipt**, and **card completion** (the outbox).
 The session's receipt is nova-friend's own verdict (docs/SPEC-FRIEND.md, "The verdicts"), not
 a rule of the doctor's own: `deaf` is a delivery in the `--since` window that succeeded with no
 session pong aged within the window and no real message back. The doctor passes the window
-explicitly (`--since`, default 24h, nova-friend's own default) and judges no pong itself:
+explicitly (`--since` wants a positive duration, default 24h, nova-friend's own default) and
+judges no pong itself:
 `pong_age` is the last pong ever recorded, so a pong of any age is never a receipt here. A
 pong 72 hours old with nothing back is `deaf` over 24h; one 11 minutes old is `deaf` over
 `--since 10m`. The line prints the verdict, its window, its why, the pong's age and the
@@ -154,10 +156,12 @@ DOCTOR job=<job> ready steps=<n> calls=<n>
 DOCTOR job=<job> not-ready first_missing=<step> calls=<n> next: <the fix of that step>
 ```
 
-`calls` is how many tool calls the run made. `--json` prints
+`calls` is how many tool calls the run made, including every `self` version read. `--json` prints
 `{"job","exit","ready","first_missing","next","calls","steps":[{check,dependency,status,evidence,fix}]}`.
-It is bounded: a step's evidence and fix are cut to 240 bytes (ending `...`), and a job has at
-most ten steps. `--check` and `--local` select checks, not steps, and are refused with `--job`;
+It is bounded: a step's evidence is cut to 240 bytes (ending `...`), and a job has at
+most ten steps. Repair commands remain complete up to 4096 bytes; a longer repair is refused
+with a remedy instead of printing a truncated command. The whole JSON stays under 64 KiB.
+`--check` and `--local` select checks, not steps, and are refused with `--job`;
 `--as`, `--dir`, `--harness`, `--config-dir`, `--redis` and `--since` are refused without it.
 
 The acceptance is `TestDoctorNamesTheFirstMissingDependencyAndItsFix`

@@ -66,7 +66,7 @@ func TestSelfCheck(t *testing.T) {
 		assert.Equal(t, Fail, r.Status, r)
 		assert.Contains(t, r.Evidence, "nova-card=v1.1.0 differ from v1.2.0 (2 tools)")
 		assert.NotContains(t, r.Evidence, "nova-bus=")
-		assert.Equal(t, "nova-update apply --file <manifest> nova-card --version v1.2.0", r.Fix)
+		assert.Equal(t, "nova-update apply --file <manifest> --version v1.2.0 nova-card", r.Fix)
 	})
 	t.Run("a tool that does not answer is a fail naming it", func(t *testing.T) {
 		t.Parallel()

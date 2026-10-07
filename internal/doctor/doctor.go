@@ -22,6 +22,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 	"github.com/mas-bandwidth/nova-tools/internal/tool"
 )
@@ -144,7 +145,7 @@ func runOne(ctx context.Context, env Env, c Check) (res Result) {
 		}
 		res.Check, res.Dependency = c.Name, c.Dependency
 		res.Evidence = oneLine(res.Evidence)
-		res.Fix = oneLine(res.Fix)
+		res.Fix = oneline.Escape(res.Fix)
 		switch {
 		case res.Status != OK && res.Status != Warn && res.Status != Fail:
 			res.Evidence = fmt.Sprintf("the check answered status %q: %s", res.Status, res.Evidence)
@@ -235,6 +236,9 @@ first run: the binary alone, no flags; nothing is changed, no fix is run for you
 				f.Duration("since", 0, "with --job friend or coordinator, the `window` nova-friend check judges its verdict over (default "+DefaultSince.String()+")")
 				f.Check(func(c *tool.Call) {
 					if job := c.Str("job"); job != "" {
+						if c.Given("since") && c.Dur("since") <= 0 {
+							c.Problem("--since wants a positive duration, such as 10m")
+						}
 						if JobSteps(job) == nil {
 							c.Problem(fmt.Sprintf("no job named %q; the jobs are %s", job, strings.Join(Jobs, ", ")))
 						}
