@@ -34,8 +34,8 @@ import (
 // the text and of the xz are recorded; the parts are put together again,
 // checked against both sums and restored into a throwaway store holding this
 // build's function library. A twin's restore is compared as sprint state
-// (restore=semantic). A Redis's restore is compared as keys and column counts
-// and says restore=integrity: that is never a semantic restore. The
+// (restore=semantic). A Redis's restore compares the same sprint state and the
+// keys and column counts, under this build's function library. The
 // dump and the restored values are scanned for every nova-secrets value by a
 // child of nova-secrets exec, the one way a value reaches a process, which
 // prints counts only; and the README says what the files are and how to load
@@ -641,6 +641,11 @@ func compactStrings(s []string) []string {
 	return out
 }
 
+// State is the Redis backup source's logical sprint at the save (store.ReadState).
+func (r redisBackup) State(ctx context.Context) (store.SprintState, error) {
+	return store.ReadState(ctx, r.b, r.names)
+}
+
 // dumpKeys is DUMP and PTTL of each key, a pipeline of 500; a key gone
 // between the SCAN and its DUMP is left out (the counts then differ, and the
 // backup fails as a sprint that moved while it was read).
@@ -732,6 +737,11 @@ func (t *serverTwin) Restore(ctx context.Context, keys []store.DumpKey) (store.B
 	}
 	cols, err := store.CardsByColumn(ctx, &store.Redis{C: t.c, Names: t.names}, t.names)
 	return store.BackupCounts{Keys: int(n), Columns: cols}, err
+}
+
+// State reads the restored Redis sprint through this build's function library.
+func (t *serverTwin) State(ctx context.Context) (store.SprintState, error) {
+	return store.ReadState(ctx, &store.Redis{C: t.c, Names: t.names, Now: time.Now}, t.names)
 }
 
 func (t *serverTwin) Values(ctx context.Context, w io.Writer) error {

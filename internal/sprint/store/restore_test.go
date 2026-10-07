@@ -354,3 +354,55 @@ func TestARestartOnADumpWithoutTheResultsCannotAnswerTheRetry(t *testing.T) {
 	require.False(t, res.Replay, "the retry is answered as a replay without the recorded result")
 	require.NotEmpty(t, res.Refused, "the retry of a step that happened ran again as new work: %+v", res)
 }
+
+// The pending replay payload and the table definition are logical state too:
+// identical IDs, checksums and member counts cannot prove either survived.
+func TestASemanticRestoreKeepsThePendingOperationAndTableShape(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, part string
+		pending    bool
+		mutate     func(map[string]any)
+	}{
+		{name: "table definition", part: "table work", mutate: func(d map[string]any) {
+			def := d["tables"].(map[string]any)["t-work"].(map[string]any)["def"].(map[string]any)
+			def["Columns"].([]any)[0].(map[string]any)["Fold"] = "changed-fold"
+		}},
+		{name: "pending result", part: "fence", pending: true, mutate: func(d map[string]any) {
+			for _, l := range d["logs"].(map[string]any) {
+				if pending, ok := l.(map[string]any)["fence"].(map[string]any); ok {
+					pending["result"] = "changed replay result"
+				}
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			h := restoreSprint(t)
+			if tc.pending {
+				h = newHarness(t)
+				h.setup(1)
+				h.must(DealStep(sprint.DealReq{}))
+				s := h.snap()
+				c := s.Fleet.Card(s.Work.Card("s1-1").F("work"))
+				h.must(TakeStep(sprint.TakeReq{As: c.Row, Sel: sprint.Sel{IDs: []string{c.ID}}, Gens: map[string]int{c.ID: c.Int("gen")}}))
+				cut := &cutter{Mem: h.m, at: "pending"}
+				h.st.B = cut
+				step := FinishStep(sprint.FinishReq{Sel: sprint.Sel{IDs: []string{c.ID}}, Gens: map[string]int{c.ID: c.Int("gen")}, Failed: true, Report: "red"})
+				step.CallerOp = "pending-finish"
+				_, _ = h.st.Run(h.ctx, step) // ignored: the cut simulates the process dying before commit
+				require.NotNil(t, cut.dump)
+			}
+			doc, err := h.m.Snapshot()
+			require.NoError(t, err)
+			want, err := ReadState(h.ctx, h.m, h.st.Names)
+			require.NoError(t, err)
+			var d map[string]any
+			require.NoError(t, json.Unmarshal(doc, &d))
+			tc.mutate(d)
+			incomplete, err := json.Marshal(d)
+			require.NoError(t, err)
+			require.ErrorContains(t, SemanticRestore(h.ctx, want, MemTwin{Names: h.st.Names}, incomplete), tc.part)
+		})
+	}
+}

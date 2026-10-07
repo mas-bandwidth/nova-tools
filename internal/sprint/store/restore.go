@@ -25,13 +25,14 @@ const (
 )
 
 // SprintState is a store's logical sprint state, one canonical value per part:
-// the epoch, the coordinator and the machine; each table's epoch, revision,
-// properties and rows; every record each table has held (its place, score,
+// the epoch, the coordinator and the machine; each table's complete definition,
+// epoch, revision, properties and rows; every record each table has held (its place, score,
 // revision and fields: the ids, heads, attempts, dependencies, decisions and
 // costs the cards carry); and, at the sprint's epoch, the fence and the work
 // table's queue, each stream's progress, the open judgments and who answered
 // each judgment, the aliases, the notifications and the log, the log's cursor
-// and every caller's recorded result. Two stores hold the same sprint when
+// and every caller's recorded result. A pending fence includes the full replay
+// operation, not just its identifier. Two stores hold the same sprint when
 // their states have the same parts with the same values.
 type SprintState struct {
 	Parts map[string]string `json:"parts"`
@@ -90,11 +91,9 @@ func ReadState(ctx context.Context, b Backend, names sprint.Names) (SprintState,
 	if err != nil {
 		return s, fmt.Errorf("the fence: %w", err)
 	}
-	pending := ""
-	if fence.Pending != nil {
-		pending = fence.Pending.ID + " " + fence.Pending.Verb
+	if err := put("fence", fence); err != nil {
+		return s, err
 	}
-	_ = put("fence", map[string]any{"gen": fence.Gen, "pending": pending, "running": fence.Running, "queued": fence.Queued, "stuck": fence.Stuck}) // ignored: plain values always marshal
 	queue, err := at.QueueRead(ctx)
 	if err != nil {
 		return s, fmt.Errorf("the queue: %w", err)
@@ -203,7 +202,9 @@ func readTableState(ctx context.Context, b Backend, names sprint.Names, logical 
 		return fmt.Errorf("table %s: the store answered %d shapes for one", logical, len(shapes))
 	}
 	shape := shapes[0]
-	if err := put("table "+logical, map[string]any{"epoch": shape.Epoch, "revision": shape.Revision, "props": shape.Props}); err != nil {
+	definition := shape
+	definition.Rows = nil // rows have their own canonical parts below
+	if err := put("table "+logical, definition); err != nil {
 		return err
 	}
 	for i, r := range shape.Rows {
