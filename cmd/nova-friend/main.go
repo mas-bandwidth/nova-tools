@@ -1622,7 +1622,11 @@ func (w world) agent(c *tool.Call) (friend.Agent, error) {
 	name := c.Str("as")
 	log := c.Str("launchd-log")
 	if log == "" {
-		log = filepath.Join(w.home, "Library", "Logs", "nova-friend-"+name+".log")
+		prefix := "nova-friend-"
+		if c.Bool("notifications-only") {
+			prefix = "nova-friend-notifications-"
+		}
+		log = filepath.Join(w.home, "Library", "Logs", prefix+name+".log")
 	}
 	a := friend.Agent{
 		Friend: name, Harness: c.Str("harness"), Dir: c.Str("dir"), Session: c.Str("session"), StateDir: c.Str("state-dir"), Width: c.Int("width"),

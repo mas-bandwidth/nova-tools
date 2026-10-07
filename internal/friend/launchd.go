@@ -278,6 +278,15 @@ func Install(ctx context.Context, a Agent, uid int, run Launchctl, write func(pa
 		}
 	}
 	a.Binary = placed
+	if a.NotificationsOnly {
+		verified, _, err := a.BinaryPlan()
+		if err != nil {
+			return "", nil, err
+		}
+		if verified != placed {
+			return "", nil, fmt.Errorf("notification binary changed during copy; preserve the previous service and install the reviewed binary again")
+		}
+	}
 	path = a.PlistPath()
 	if err := os.MkdirAll(filepath.Dir(a.LaunchdLog), 0o755); err != nil {
 		return path, nil, err
@@ -411,6 +420,13 @@ func (a Agent) BinaryPlan() (path string, copy bool, err error) {
 	in, err := os.Open(a.Binary)
 	if err != nil {
 		return "", false, err
+	}
+	st, err := in.Stat()
+	if err != nil {
+		return "", false, closeWith(in, err)
+	}
+	if !st.Mode().IsRegular() {
+		return "", false, closeWith(in, fmt.Errorf("notification binary %s is not a regular file; install a reviewed executable", a.Binary))
 	}
 	hash := sha256.New()
 	_, copyErr := io.Copy(hash, in)

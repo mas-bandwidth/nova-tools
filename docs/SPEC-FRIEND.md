@@ -1078,7 +1078,9 @@ so later blockers and requests can use the separate urgent capacity. No report p
 is discarded to satisfy a queue bound.
 The state writer syncs the file, renames it, and attempts a parent-directory sync;
 its directory-sync errors are best effort. Recovery guarantees concern process
-crashes, not storage-media failure. `tla/FriendNotifications.tla` models that boundary:
+crashes, not storage-media failure. `tla/FriendNotifications.tla` models that boundary;
+`tla/FriendNotificationsCapacity.tla` models distinct batch capacity and deferred-report
+urgent eligibility, with deliberate queue-bound and head-of-line failures:
 ready intent before ACK, accepted before settlement, one queued ready family, no lost
 urgent input and no native mutation. Its 100-card case uses 32-entry receive passes;
 negative controls skip durable intent, permit duplicate queue insertion, or mutate native state.
