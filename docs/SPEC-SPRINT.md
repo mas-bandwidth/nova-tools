@@ -2052,20 +2052,20 @@ deal, one finish, one push, one pull request, its reads; dependencies stay at th
 A card held for PATHS too narrow is widened by the tool, not by hand, and in place (the
 owner, 2026-10-06: "We gotta stop doing this twin shit. it's waste."): `brief <id> --widen
 [--repo-dir <clone>]` reads the PATHS-PROPOSED line of the report of the card's latest
-attempt (docs/SPEC-CARD-CONTRACT.md section 4), the paths alone, read before any prose on
-that line (`member.PathsProposed`: each comma-separated item its first word, and an item
-with words after it ends the paths), and edits the card's brief in place, the same id: every
-`PATHS:` line the union of the old globs and the proposed ones (the old first, each once),
-and a `CARRY: <id> attempt <n> head=<sha>` header line naming that attempt's pushed head,
-where its next attempt starts (the member's packet takes it as `base_head` when no attempt
-of the card pushed one ok); the verb says `NEXT <id> attempt <n+1> starts from attempt <n>
-head=<sha>`, and the edit is the brief verb's in place (section 11, brief). The base's files
-and the head's are read in `--repo-dir`, else land's clone of the card's `REPO:`, the head's
-branch and the base fetched from origin when the clone lacks them. Refused, exit 1, nothing
-written, naming every problem: a card with no attempt, a report with no PATHS-PROPOSED line,
-an attempt with no pushed head, no clone, a glob that climbs out with `..` or is absolute,
-and a glob that names no file at the base nor at the head; and as `brief` is refused
-otherwise (`TestBriefWidenKeepsTheId`). `recut --widen` is retired: it refuses, exit 2,
+attempt (docs/SPEC-CARD-CONTRACT.md section 4), each comma-separated item's path up to its
+first whitespace, dash or semicolon and the rest its writer's reason, and edits the card's
+brief in place, the same id: every `PATHS:` line the union of the old globs and the proposed
+ones (the old first, each once), and a `CARRY: <id> attempt <n> head=<sha>` header line
+naming that attempt's pushed head, where its next attempt starts (the member's packet takes
+it as `base_head` when no attempt of the card pushed one ok); the verb says `NEXT <id> attempt <n+1> starts from attempt <n> head=<sha>`, and the edit is the brief verb's in place
+(section 11, brief). The base's files and the head's are read in `--repo-dir`, else land's
+clone of the card's `REPO:`, the head's branch and the base fetched from origin when the
+clone lacks them. An item with no path before its prose is refused, that item printed.
+Refused, exit 1, nothing written, naming every problem: a card with no attempt, a report with
+no PATHS-PROPOSED line, an attempt with no pushed head, no clone, a glob that climbs out with
+`..` or is absolute, and a glob that names no file at the base nor at the head; and as
+`brief` is refused otherwise (`TestBriefWidenKeepsTheId`,
+`TestAWidenReadsThePathBeforeTheProse`). `recut --widen` is retired: it refuses, exit 2,
 nothing written, naming `brief <id> --widen` to run instead.
 
 ## 3. The lifecycle of a primary
