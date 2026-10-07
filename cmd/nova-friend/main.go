@@ -1357,6 +1357,8 @@ func (w world) run(c *tool.Call) *tool.Out {
 		Seat:      w.seat(server),
 		Stage:     stager.stage(),
 		Prune:     stager.prune(),
+		Release:   stager.release(),
+		BenchRoot: benchRoot(w.home),
 		Tip:       w.tip,
 		Finish: func(ctx context.Context, argv []string) error {
 			if w.finish == nil {
@@ -1497,6 +1499,21 @@ func (w world) seat(server string) func(context.Context) (string, error) {
 	}
 }
 
+// benchRoot is ~/nova-bench when that directory is there. A recorded read's bench
+// copy is removed under it. It is empty when the directory is not there, and a
+// bench on another machine is not reached.
+func benchRoot(home string) string {
+	if home == "" {
+		return ""
+	}
+	p := filepath.Join(home, "nova-bench")
+	fi, err := os.Stat(p)
+	if err != nil || !fi.IsDir() {
+		return ""
+	}
+	return p
+}
+
 // stager is the daemon's one Stager: every held work card's job staged under her working
 // directory (jobs/<job>/repo, a worktree of the repository's mirror, and its JOB.md), and the
 // finished jobs past friend.FinishedJobsKept pruned, both under the mirror's one lock; nil in a
@@ -1525,6 +1542,13 @@ func (d daemonStager) prune() func(ctx context.Context, live map[string]bool) ([
 	return func(ctx context.Context, live map[string]bool) ([]string, error) {
 		return d.s.Prune(ctx, live, friend.FinishedJobsKept)
 	}
+}
+
+func (d daemonStager) release() func(ctx context.Context, job string) error {
+	if d.s == nil {
+		return nil
+	}
+	return d.s.Release
 }
 
 func (w world) agent(c *tool.Call) (friend.Agent, error) {
