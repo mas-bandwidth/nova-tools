@@ -190,7 +190,7 @@ and started again at login, that runs the verb itself by the tool's absolute pat
 | the friend sync loop | `nova-sprint install friend-sync --every 15s` | `nova-sprint friend sync --every` |
 | the live table | `nova-sprint install table --out <file>` | `nova-sprint where --watch` |
 | the disk guard | `nova-swarm install disk-guard` | `nova-swarm disk-guard`, one pass every 15 minutes |
-| the mirrors' refresh | `nova-swarm install mirror-refresh` (owed) | `nova-swarm mirror` (owed: no mirror verb) |
+| the mirrors' refresh | `nova-swarm install mirror-refresh` (owed) | `nova-swarm mirror`, one pass every minute |
 
 serve writes redis-server's configuration from its flags (binding, port, store directory under the
 bench root, persistence) and reads its password in its own process from the secret its unit names;
@@ -201,10 +201,10 @@ the service's environment has to give them. `nova-sprint units --check` names ea
 machine a stranger set up is checked against what a sprint needs; a unit written by hand around a
 wrapper reads as different. `nova-swarm install disk-guard` writes that unit in the swarm
 binary, and the unit runs `nova-swarm disk-guard` itself. The unit text the sprint and redis
-verbs share lives in `internal/units`, which a worker's binary may import. `nova-swarm install mirror-refresh` stays owed: nova-swarm has no mirror verb for the unit
-to run, and `units --check` says so rather than telling a stranger to run it. Until that verb
-exists, a mirror refresh is not installed from here. The play's disk-guard row above is the fleet's
-copy of the same pass.
+verbs share lives in `internal/units`, which a worker's binary may import. `nova-swarm install mirror-refresh` stays owed: the mirror verb `nova-swarm mirror` is written, its
+unit is not, and `units --check` says the unit is owed rather than telling a stranger to run it. Until
+that unit is written, a mirror refresh is not installed from here. The play's disk-guard row above is the
+fleet's copy of the same pass.
 
 ## A fixture inventory
 
@@ -380,6 +380,11 @@ need no `nova-secrets exec` wrapper for `JEV_API_KEY` or a provider key.
   one is a oneshot service started by `nova-loop-<name>.timer`
   (`templates/nova-loop.timer.j2`, `OnUnitActiveSec` the record's `every`). A
   record with `enabled: false` is written, stopped and disabled.
+
+A unit's command can be wrapped in `nova-config loop run <name> -- <command>`, the
+single-instance lock a bash `nova-loop` wrapper once gave (docs/SPEC-CONFIG.md, "loop run"): a
+second copy exits 3, and `--metrics <dir>` writes the restart count node_exporter reads. The plays
+do not wrap the units in it yet.
 
 Every unit the play writes carries its mark (`written by fleet/loops.yml from
 the loop record <name>`). A marked unit that no record on the machine names,

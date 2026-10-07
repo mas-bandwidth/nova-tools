@@ -137,6 +137,9 @@ func TestEveryRenderedBriefPassesTheLint(t *testing.T) {
 			assert.True(t, strings.HasPrefix(brief, "RESULT: "+c.ID+" sha=0123456789ab tier: "+c.Tier+"\n"), brief)
 			assert.Contains(t, brief, "\nTEST: "+l.Test+"\n")
 			assert.Contains(t, brief, "\nKIND: fix-red\n")
+			_, read, ok := strings.Cut(brief, "\nAS A READ\n")
+			assert.True(t, ok, "the brief has an AS A READ section")
+			assert.Contains(t, "\n"+read, "\nThe scope of this change is its PATHS line. "+AlwaysInPathsRule+"\n", "the reader is handed the scope rule")
 		}
 	}
 }
@@ -356,7 +359,7 @@ func TestACardThatTouchesAModelRunsItInItsGate(t *testing.T) {
 	}
 	plain := Render(header, Card{ID: "go-only", File: "internal/x/x.go", Paths: []string{"internal/x/x.go", "docs/tla.md"}, Test: "internal/x TestX", Tier: "pro", Wave: 1, Kind: "fix-red", Task: "Fix x."})
 	assert.NotContains(t, plain, "make tlc")
-	assert.NotContains(t, plain, "tla/RUNS.tsv")
+	assert.NotContains(t, strings.ReplaceAll(plain, AlwaysInPathsRule, ""), "tla/RUNS.tsv", "only the rule names the ledger")
 }
 
 // Every place the repository writes a card's GOCACHE sentence says the one thing JOB.md
