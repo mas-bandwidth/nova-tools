@@ -42,6 +42,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
@@ -388,8 +389,8 @@ func (l *lander) worktree(ctx context.Context, clone, stream, base string) (dir,
 	if !slices.ContainsFunc(listed, func(p string) bool { return samePath(p, dir) }) {
 		if _, err := os.Stat(dir); err == nil {
 			// a directory git does not know under the lander's own root: a worktree whose
-			// record was pruned, the lander's to remove
-			if err := os.RemoveAll(dir); err != nil {
+			// record was pruned, the lander's to remove (strictly under its root, safepath)
+			if err := safepath.RemoveUnder(root, dir); err != nil {
 				return "", "the stale worktree " + dir + " could not be removed: " + oneline.Err(err)
 			}
 		}
