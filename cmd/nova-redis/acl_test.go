@@ -90,7 +90,7 @@ func aclRun(t *testing.T, f *fakeACL, args ...string) (int, string, string) {
 	return code, out.String(), errb.String()
 }
 
-var login4 = []string{"--addr", "127.0.0.1:6379", "--user", "admin", "--password-env", "ADMIN_PW"}
+var login4 = []string{"--redis", "127.0.0.1:6379", "--user", "admin", "--password-env", "ADMIN_PW"}
 
 // sourced is every rendered user's password source, for an apply that
 // creates them.
@@ -125,7 +125,7 @@ func TestACLCheckApplyConverge(t *testing.T) {
 	assert.Equal(t, 1, code)
 	assert.Equal(t, 4, strings.Count(out, "ACL MISSING user="))
 	assert.Contains(t, out, "ACL CHECK DRIFT users=4 differ=4 ")
-	assert.Contains(t, out, `remedy="nova-redis acl apply --addr 127.0.0.1:6379 --user admin --password-env ADMIN_PW sets the users that differ"`)
+	assert.Contains(t, out, `remedy="nova-redis acl apply --redis 127.0.0.1:6379 --user admin --password-env ADMIN_PW sets the users that differ"`)
 	assert.Empty(t, f.set, "check wrote")
 
 	code, out, _ = aclRun(t, f, append(append([]string{"apply", "--dry-run"}, login4...), sourced...)...)
