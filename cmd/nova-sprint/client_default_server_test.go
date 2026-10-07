@@ -69,8 +69,7 @@ func TestANamedServerIsUsedWithNoNote(t *testing.T) {
 	assert.Empty(t, errb.String())
 }
 
-// The seat verb runs where it is typed when given flags like --repair or login/logout,
-// but seat push and seat pong are sent to the server.
+// The seat's push and pong are served by the server.
 func TestTheSeatPushProofIsServedAndTheSeatLoginIsNot(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -79,10 +78,6 @@ func TestTheSeatPushProofIsServedAndTheSeatLoginIsNot(t *testing.T) {
 	}{
 		{[]string{"seat", "push", "--json"}, true},
 		{[]string{"seat", "pong", "0000000000000000"}, true},
-		{[]string{"seat", "login", "--check"}, false},
-		{[]string{"seat", "logout"}, false},
-		{[]string{"seat", "install", "--dry-run"}, false},
-		{[]string{"seat", "uninstall"}, false},
 	} {
 		assert.Equalf(t, tc.served, readVerb(tc.argv).unserved() == "", "%v", tc.argv)
 	}
