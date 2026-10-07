@@ -678,7 +678,12 @@ func (l *lander) batch(ctx context.Context, s *sprint.Snapshot, stream string, c
 		}
 		since(&b.Times.Check, start)
 		if why != "" {
-			b.Cards, b.IDs = len(merged), mergedCards[0].id + ".." + mergedCards[len(merged)-1].id
+			b.Cards = len(merged)
+			idsSlice := make([]string, len(merged))
+			for i, c := range mergedCards {
+				idsSlice[i] = c.id
+			}
+			b.IDs = idsSlice
 			return l.fact(b, sprint.MergeReq{Stream: stream, Batch: len(merged), Red: true, Note: why}, mergedCards, "red", why)
 		}
 		start = time.Now()
@@ -713,7 +718,12 @@ func (l *lander) batch(ctx context.Context, s *sprint.Snapshot, stream string, c
 			return refuse("the push to " + b.Base + " failed: " + firstLine("", err) + "; nothing was reported")
 		}
 		if attempt == 2 {
-			b.Cards, b.IDs = len(merged), mergedCards[0].id + ".." + mergedCards[len(merged)-1].id
+			b.Cards = len(merged)
+			idsSlice2 := make([]string, len(merged))
+			for i, c := range mergedCards {
+				idsSlice2[i] = c.id
+			}
+			b.IDs = idsSlice2
 			return l.fact(b, sprint.MergeReq{Stream: stream, Batch: len(merged), Rejected: true, Note: firstLine("", err)}, mergedCards, "rejected", "the push to "+b.Base+" was rejected again after a rebuild on the moved base: "+firstLine("", err))
 		}
 		merged, failed, why = l.build(ctx, dir, stream, cards, b.Times)
