@@ -174,6 +174,13 @@
 # fleet defect --after failed, then nova-table set fleet --hide defect. Held by
 # TestSprintTablesAreLocked and
 # TestAHoldNamingABriefDefectCountsAgainstTheStreamNotTheWorker.
+# Note, 2026-10-04, the friend row's work restriction, not a display column: her
+# nova-config row's `streams` and `kinds` (docs/SPEC-CONFIG.md, friend) are carried into
+# her friends record by friend sync and applied by the dealer, which hands her no card
+# outside them; nothing the where view draws changes, so no column, fold or row below is
+# added and the friends table's shape stands. Held by
+# TestDealerNeverDealsAFriendOutsideHerStreams and
+# TestAddAndBriefRefuseNamedFriendOutsideRestrictions.
 work.waiting count sum shown
 work.ready count sum shown
 work.working count sum shown
