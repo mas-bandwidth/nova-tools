@@ -3629,6 +3629,24 @@ not marked for promotion, its remedy the sprint branch (re-cut the card with
 `BASE: <the sprint branch>`, or `--base <the sprint branch>` for a card naming no
 `BASE:`) or, for the promotion stream, the mark (the protected branches, below).
 
+**The rebase verb.** `nova-sprint rebase --from <branch> --to <branch> [--repo-dir <clone>] [--dry-run]` moves every unlanded card whose brief's `BASE:` line names
+`--from` to `--to`, on a RUNNING machine as on a STOPPED one. It exists because a
+base branch can be merged and deleted while cards still name it: on 2026-10-04 an
+integration branch was auto-deleted with 29 cards cut on it and 118 on dev, every
+landing on it failed its fetch, and the coordinator rewrote 147 briefs by hand
+during a stopped sprint. A waiting or ready card with no work dealt has its brief
+rewritten; a dealt or merging card keeps its head, its brief's line rewritten so
+the head lands on the new base. The new base must contain the old one, checked by
+`git merge-base --is-ancestor <from> <to>` in `--repo-dir` (one check for the
+operation); a base that does not is refused, nothing changed. A card landed, a
+sentinel, and a card whose `BASE:` names another branch are left alone. Each card
+is one line in the log and one `MOVED` line, naming `BASE <from> -> <to>`. The
+preview (`--dry-run`) reports the plan without writing it. A land whose base
+branch is missing raises one judgment, `the base branch is gone`, naming every
+unlanded card on that base and the rebase line that fixes them
+(`sprint.MissingBaseJudgment`), so the incident's 29 cards are one decision rather
+than 29 hand-rewritten briefs.
+
 **The protected branches.** The lander never lands on a protected branch of a
 repository, dev or main, unless the card's stream is marked for that repository: a
 stream lands on its sprint branch, and promotion to dev is the marked stream's work
@@ -3837,6 +3855,23 @@ clone, the gate's and the update runs below, is under `GOFLAGS=-mod=readonly`:
 no run writes `go.mod` or `go.sum` (under a caller's `-mod=mod` the update runs
 of 2026-10-03 rewrote `go.mod` and every resolution was refused for it), and a
 module that needs them changed fails the run, which is the card's finding.
+When the server's land loop (`run --land`) has a landing in flight and a fleet
+member other than this machine is up, that landing's gate does not run on the
+server: the lander asks every such member's Go lane, takes the first granted
+(giving its place back on the others; a lane not yet granted is asked again
+on the next cycle of the land loop, on that loop's clock, not on a timer of
+its own, so the beat keeps printing), and runs the gate's go commands there
+as one bench run (a copy of the clone, its `.git` too when the tree tests run,
+since `internal/ci` reads the history; `nice -n 19`, `GOFLAGS=-mod=readonly`,
+`NOVA_TEST_NO_HOST=1`; each run named on its own line, the first red ending
+it and named in the finding), then gives the lane back. A bench that does not
+answer, or a copy that fails, is nobody's finding: that gate runs in the clone
+instead. The batch's `LAND` line carries `bench=<member>` (`here` for a gate
+the loop ran in the clone; `+` between them when a batch's gates ran in more
+than one place) and `wall=<seconds>`, the gates' total. With no such bench,
+the loop's gate runs in the clone; a `land` command on its own (a hand land,
+the install walkthrough) runs it there as before and its line carries no
+bench. The ledgers' update runs stay in the clone.
 `--check` is the caller's own command on top, once a batch, as before.
 
 **The scope amendment.** A file outside the brief's `PATHS` that is the test, the fixture or
@@ -5679,6 +5714,25 @@ epoch's.
 
 Cards that edited `tla/*.tla` landed without refreshing `tla/RUNS.tsv`, and the TLC records class test (`internal/ci/tlc_records_class_test.go`) then called the records stale on the base (found by hand, 2026-10-04). `add` refuses a brief whose `PATHS:` or `NEW:` header lines cover a TLA+ model (a `.tla` file under `tla/`, a glob of them, or `tla/` itself or a glob over it: `tla/**`, `tla/*`) when those lines do not cover `tla/RUNS.tsv` (the file, `tla/`, `tla/**` or a glob that matches it), or when no STEP of the brief (a line that begins `STEP` and the lines under it up to the next blank line) names `tlacheck merge` with `--keep`. The refusal names the card, the model entries and what is missing, and the remedy: name `tla/RUNS.tsv` in PATHS and add a STEP that runs the changed groups on a Linux bench, then `tlacheck merge --keep tla/RUNS.tsv`, as `tla/README.md` says ("Refreshing the records after a model edit"); exit 2, nothing written, and in the many-brief form one such brief refuses the whole call. A card that only reads `tla/` (no model in its PATHS) is untouched (`holdTlaRecords`, cmd/nova-sprint/verbs.go; `TestAddRefusesATlaEditWithoutARecordsRefresh`).
 
+### release-check-acceptance-r-b.w3
+
+`release check` also runs the acceptance sentinel's six checks, source: the
+coordinator's answer over the bus, 2026-10-06 12:50 ET (message
+`01M48ZHQ5ZNWYV5FAKBRTTW038`): `cards-settled`, `base-gate-green`,
+`two-ok-reads`, `prose-true`, `landings-promoted`, `no-open-judgment`. Each is
+a pure function in `internal/sprint/releasecheck_acceptance.go` over
+`sprint.Acceptance`: the streams the verb named, their primaries, the readers'
+reads, the tree gate's runs at the base, nova-check's prose results, the
+promotion, the open judgments and the dropped cards. The verb binds it with
+`sprint.AcceptanceOf` from the store's tables, the log and the `--streams` glob;
+a unit test builds a twin of it and opens no socket. Each prints one
+`RELEASE CHECK <name> ok|fail <evidence>` line, and on a fail the evidence names
+the first item that did not hold. With no stream named there is no acceptance to
+check, so each passes and says so; the bars are in
+[docs/SPEC-RELEASE.md](SPEC-RELEASE.md) section 16, subsection
+release-check-acceptance-r-b.w3. Test:
+`TestReleaseCheckRunsTheAcceptanceSentinelsSixChecks`.
+
 ## 12. The driver
 
 `nova-sprint play` plays the outside world on a tick (`--every`), seeded
@@ -6107,6 +6161,12 @@ what landed and everything land said was wrong (a refused or failed batch, a ref
 batch, its remedy); a round that could not read the merge queue prints `LAND FAILED` with why,
 since an unreadable queue is not an empty one, and the next round tries again. A failure is
 printed once, when it begins: the same failure again prints nothing until it changes or clears.
+Every cycle prints one line: `LAND OK` or `LAND REFUSED` when a landing finished
+on that cycle, or `LAND IDLE queued=<n> step=<stage> since=<age>` while one is
+still running (`step=-` and `since=0s` when nothing is in flight). A cycle with
+cards queued whose landing has not finished within 10 minutes (`LandDeadline`)
+raises one judgment, `an operation was stuck`, naming the stage and the process
+it waits on. The landing is not stopped.
 
 With `server switch <binary> [--rollback]` the coordinator or an install switches the server's
 binary file on disk, keeping the previous binary (`<target>.prev`). With `--rollback`, if a
@@ -6384,11 +6444,6 @@ done while one waits. A ready primary whose work card was withdrawn (no member
 up) stays ready when a sentinel is inserted in front of it: it has started,
 and is past the stop; check's bijection rule holds that the primary of a withdrawn card
 is ready.
-
-A sentinel is the one `wait` kind of [SPEC-ISA.md](SPEC-ISA.md): with a held
-card (`add --held`) and the wave behind a held sentinel it is one wait, read by
-`sprint.WaitOf` (`internal/sprint/held.go`); only the operand differs, a
-sentinel's being its line.
 
 `add --held` admits every card of the add held (nova-tools#5096 item 15: a
 sentinel at the head of an empty stream was reached at once and raised a

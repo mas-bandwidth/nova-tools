@@ -630,6 +630,35 @@ answers pings with the daemon
 pong, beats, and records what it could not push in; the beat and the daemon
 pong are real for it all the same.
 
+### The coordinator's watch
+
+```sh
+nova-friend watch --as <coordinator> --timeout 10m
+```
+
+`watch` is the coordinator's wake as one run of a verb. Run it in the background; the session is re-invoked when it exits, and it needs no flag the next time. Its help, which this section carries line for line:
+
+```text
+The coordinator's wake, one run. A session that runs this in the background is re-invoked when it exits, so
+run it again each time it returns; it needs no flag between runs. It waits on your stream, on your wake file
+(<state-dir>/<me>.wake, where the claude adapter appends one line per message) and on events, and returns
+on the first wake with one line per wake, at most 5, the wake file's lines first:
+WATCH MESSAGE id=<id> from=<name> subject=<s>   a bus message for you
+WATCH EVENT id=<id> from=<name> subject=<s>     a bus message whose subject starts event: (any tool may send one, e.g. event: machine stopped unasked)
+WATCH WAKE line=<text>                          a line appended to the wake file
+then WATCH OK after=<cursor> at exit 0. Subjects and wake lines are quoted. Your own messages and the subjects
+ping, pong, daemon-pong and keepalive (matched without case) are skipped and never wake you. Past --timeout
+(a Go duration; 0, the default, is for ever) it prints WATCH NONE waited=<duration> on standard error at exit 1.
+The cursor (the last stream entry id seen and the wake file's offset) is saved in <state-dir>/watch.json, written
+whole and renamed, after every run, so the next run misses nothing; the first run starts at the stream's end
+and the wake file's end. The watch takes nothing: a later recv still delivers what it saw. --json prints one
+object when the watch ends: {"status":"ok","word":"OK|NONE","after":<cursor>,"waited":<duration, NONE only>,
+"wakes":[{"kind":"MESSAGE|EVENT|WAKE","id":<id>,"from":<name>,"subject":<s>,"line":<text>}]} (id, from and
+subject are left out of a WAKE, line out of the others). Exit 2 when a flag is wrong, the name is not on the
+roster, or the store does not answer.
+example: nova-friend watch --as ada --timeout 10m
+```
+
 ### The harness's settings
 
 `install` first writes the settings the friend's harness needs in its own
@@ -776,6 +805,7 @@ once the row's unit runs. What it gets wrong first: no `--redis` and no
 | `ping --as <coordinator> --wake --to-friends [--every <d>] [--within <d>] [--never-wake <f,...>] [--server <addr>]` | The wake loop: a wake `PING` to every friend the friends table holds up (never held, down, or never-wake), each session's pong waited for, one blocker note to the coordinator per change of who is deaf |
 | `ping-install --as <coordinator> --every <d> [...]` / `ping-uninstall --as <coordinator>` | Installs the wake loop as the launchd agent `com.nova.friend-wake-ping-<as>`; removes it |
 | `wait-pong --from <friend> --nonce <n> [--timeout <d>]` | Waits for the pong on the log, from the friend's own stream |
+| `watch --as <coordinator> [--timeout <duration>] [--state-dir <d>] [--redis <addr>] [--json]` | The coordinator's wake: waits on its stream, its wake file and events (subject `event:`), prints one line per wake, then `WATCH OK after=<cursor>` (exit 1 `WATCH NONE` past `--timeout`); the cursor is saved in the state directory |
 | `status --as <me> --dir <d> [--state-dir <d>]` | The daemon's state, the last pong, the queue file's counts |
 | `serve --as <coordinator> [--redis <addr>] [--dry-run]` | The coordinator's ping loop: a `PING` to every friend row each second, one line per friend up or down (ten seconds without a pong); until a signal |
 | `version`, `help [<verb>]` | The version line; the banner, or a verb's help |
@@ -1133,6 +1163,7 @@ nova-sprint recut <id> (--tier <flash|pro|heavy|frontier> | --brief-file <path> 
 nova-sprint move <id>... --stream <s> [--before <id> | --after <id> | --score <n>]
 nova-sprint merge --stream <s> [--batch <n>] [--conflict <id> [--conflict-kind file|ledger] [--conflict-path <p>...] | --cross <id>=<other> | --red [--suspect <id>...] | --rejected | --base-red <error>] [--note <text>]
 nova-sprint land [--stream <s>...] [--repo-dir <clone>] [--base <branch>] [--check <command>] [--dry-run]
+nova-sprint rebase --from <branch> --to <branch> [--repo-dir <clone>] [--dry-run]
 nova-sprint stream set <stream>... [--read-tier <flash|pro|heavy|default>] [--land-protected <owner/name,...|any|default>] [--release <name>] [--prose <glob,...|default>] [--attempts <n|default>] [--reason <text>] [--answers <notes>]
 nova-sprint set [--read-tier <flash|pro|default>] [--read-cards <on|off|default>] [--dealt-max <duration|default>] [--go-lanes <n|default>] [--attempts <n|default>] [--friend-idle <duration|default>] [--friend-finish <duration|default>] [--fleet <on|off>] [--friends <on|off>] [--fleet-tiers <flash,pro,heavy,frontier|all>] [--friends-tiers <flash,pro,heavy,frontier|all>]
 nova-sprint resume --stream <s> [--did <text>] [--answers <note>]
@@ -1509,6 +1540,23 @@ then `merge`, records a landing without a push. The work table's cost column
 is, per stream, the sum of its landed cards' total cost in US dollars — each
 card's actual cost where one was priced, else its predicted one, `-` when
 none was — so a total is a ledger of recorded spend, not a proof of it.
+
+### release-check-acceptance-r-b.w3: the acceptance sentinel's six checks
+
+`nova-sprint release check` runs the acceptance sentinel's six checks beside
+`no-stuck-friend`, source: the coordinator's answer over the bus, 2026-10-06
+12:50 ET. Each prints one `RELEASE CHECK <name> ok|fail <evidence>`
+line, and the release refuses on any fail: `cards-settled` (every card of the
+stream landed or dropped with a reason), `base-gate-green` (the unit and
+functional classes and `./internal/docs` and `./internal/ci` green on the base
+at the stream's last landing), `two-ok-reads` (every landed card has the ok
+reads its tier needs at its final head), `prose-true` (`nova-check links` and
+`nocode` clean on the stream's specs and help), `landings-promoted` (the
+landings are in dev or a promotion carries them) and `no-open-judgment` (no
+open judgment names the stream). One check alone: `release check --check cards-settled`; one stream's facts: `release check --streams 's1*'`. With no
+stream named there is no acceptance to check, so each passes and says so. The
+contract is [SPEC-RELEASE.md](SPEC-RELEASE.md) section 16, subsection
+release-check-acceptance-r-b.w3.
 
 ## nova-sandbox
 

@@ -32,6 +32,7 @@
 package cairn
 
 import (
+	"cmp"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -48,8 +49,9 @@ import (
 )
 
 // Publish policies name who publishes a checkpoint and when. This package
-// implements no transport: every append reports Published=false and the
-// policy travels with the entry, so a later explicit act can carry it.
+// implements no transport: the tool prints published=false for every append
+// and receipt, and the policy travels with the entry, so a later explicit act
+// can carry it.
 const (
 	PublishNever     = "never"
 	PublishManual    = "manual"
@@ -64,6 +66,11 @@ var Policies = []string{PublishNever, PublishManual, PublishDeferred, PublishImm
 
 // ValidPublish reports whether p is one of Policies.
 func ValidPublish(p string) bool { return slices.Contains(Policies, p) }
+
+// errNoStore is the one refusal for a call that names no store. main refuses a
+// missing --store before any verb runs; this keeps the library honest for a
+// direct caller, and the line is written once.
+var errNoStore = errors.New("no store given; refusing to guess")
 
 // IDRule is what ValidID asks of a session or entry id, for a refusal to quote.
 const IDRule = "an id names exactly one file or directory of that name inside the store, on every platform: " +
@@ -120,12 +127,11 @@ func (e *NotFoundError) Error() string { return e.Msg }
 
 // AppendResult separates what this package guarantees from what it does not:
 // Persisted is true once the words are fsync-durable on this machine (false
-// only for a plan, PlanAppend, of words not yet stored); Published names the
-// remote, which this package never touches.
+// only for a plan, PlanAppend, of words not yet stored); the tool prints the
+// remote fact, published=false, apart from it.
 type AppendResult struct {
 	Stamp     time.Time // the stamp actually stored, including on a duplicate retry
 	Persisted bool
-	Published bool
 	Policy    string
 	// Source is the pointer the entry carries: its own --source, or the
 	// session's when the append named none.
@@ -134,7 +140,8 @@ type AppendResult struct {
 }
 
 // ReceiptInfo is what receipt and index read back: the stamp, the pointer,
-// the size, and the same persisted/published split the append reported.
+// the size, and the persisted fact the append reported; the tool prints
+// published=false beside it.
 type ReceiptInfo struct {
 	Session   string
 	ID        string
@@ -143,7 +150,6 @@ type ReceiptInfo struct {
 	Bytes     int
 	Policy    string
 	Persisted bool
-	Published bool
 }
 
 // IndexRow is one row of the entry index.
@@ -503,7 +509,7 @@ func PlanOpen(store, session, source string, now time.Time, publish string) (Ope
 
 func open(store, session, source string, now time.Time, publish string, write bool) (OpenRecord, error) {
 	if store == "" {
-		return OpenRecord{}, errors.New("no store given; refusing to guess")
+		return OpenRecord{}, errNoStore
 	}
 	if !ValidID(session) {
 		return OpenRecord{}, fmt.Errorf("bad session id %q: %s", session, IDRule)
@@ -541,10 +547,10 @@ func open(store, session, source string, now time.Time, publish string, write bo
 			// A different --publish names both policies: the one the session
 			// holds and the one this call asked for (docs/SPEC-CAIRN.md, the open verb).
 			msg := fmt.Sprintf("session %q is already open with publish=%s source=%s; a re-open names the same, and another policy or source is a new session id",
-				session, rec.Publish, cmpOr(rec.Source, "-"))
+				session, rec.Publish, cmp.Or(rec.Source, "-"))
 			if rec.Publish != publish {
 				msg = fmt.Sprintf("session %q is already open with publish=%s source=%s; --publish %s names another, and a re-open names the same",
-					session, rec.Publish, cmpOr(rec.Source, "-"), publish)
+					session, rec.Publish, cmp.Or(rec.Source, "-"), publish)
 			}
 			return rec, &ConflictError{
 				Msg:    msg,
@@ -573,13 +579,6 @@ func open(store, session, source string, now time.Time, publish string, write bo
 		return OpenRecord{}, err
 	}
 	return planned, appendLog(store, "open", session, "", stamp, publish, source)
-}
-
-func cmpOr(s, empty string) string {
-	if s == "" {
-		return empty
-	}
-	return s
 }
 
 // pointerLine is the one machine-scannable line an append adds to the
@@ -611,8 +610,8 @@ func ensurePointer(store, session, id string, stamp time.Time) error {
 // stamp and a source pointer. A retry of the same request succeeds with
 // Duplicate=true and no second entry; the same id with other words is a
 // conflict, never an overwrite. Offline use succeeds: the result carries
-// Persisted=true with Published=false, because local durability never waits
-// for a remote.
+// Persisted=true and the tool prints published=false, because local durability
+// never waits for a remote.
 //
 // An empty source carries the session's, and an empty publish the session's
 // recorded policy: open named where the record points back to and who
@@ -633,7 +632,7 @@ func PlanAppend(store, session, id, text, source string, now time.Time, publish 
 func appendEntry(store, session, id, text, source string, now time.Time, publish string, write bool) (AppendResult, error) {
 	var res AppendResult
 	if store == "" {
-		return res, errors.New("no store given; refusing to guess")
+		return res, errNoStore
 	}
 	if !ValidID(session) {
 		return res, fmt.Errorf("bad session id %q: %s", session, IDRule)
@@ -774,7 +773,7 @@ func existingAppend(store, session, id, text, final string, write bool) (AppendR
 			return res, false, err
 		}
 	}
-	return AppendResult{Stamp: prevStamp, Persisted: true, Published: false, Policy: prev.Publish, Source: prev.Source, Duplicate: true}, true, nil
+	return AppendResult{Stamp: prevStamp, Persisted: true, Policy: prev.Publish, Source: prev.Source, Duplicate: true}, true, nil
 }
 
 // readEntry loads one stored entry or explains its absence. It validates that
@@ -782,7 +781,7 @@ func existingAppend(store, session, id, text, final string, write bool) (AppendR
 func readEntry(store, session, id string) (entryFile, time.Time, error) {
 	var ef entryFile
 	if store == "" {
-		return ef, time.Time{}, errors.New("no store given; refusing to guess")
+		return ef, time.Time{}, errNoStore
 	}
 	raw, err := os.ReadFile(entryPath(store, session, id))
 	if err != nil {
@@ -805,7 +804,7 @@ func readEntry(store, session, id string) (entryFile, time.Time, error) {
 // record returns the section body in the form its reader indexes.
 func EntryText(store, session, id string) (string, error) {
 	if store == "" {
-		return "", errors.New("no store given; refusing to guess")
+		return "", errNoStore
 	}
 	if !ValidID(id) {
 		return "", fmt.Errorf("bad entry id %q: %s", id, IDRule)
@@ -836,8 +835,8 @@ func EntryText(store, session, id string) (string, error) {
 }
 
 // Receipt names what was preserved for one entry: its stamp, pointers and
-// size, with the persisted/published split repeated so a reader never has to
-// infer the remote from the local.
+// size, with the persisted fact repeated and published=false printed beside
+// it, so a reader never has to infer the remote from the local.
 func Receipt(store, session, id string) (ReceiptInfo, error) {
 	var rc ReceiptInfo
 	if err := existingStore(store); err != nil {
@@ -883,25 +882,44 @@ func Receipt(store, session, id string) (ReceiptInfo, error) {
 
 // Index builds the entry index from the stored entries: no words are
 // recopied, entries are linked by session and entry id, and a stale *.tmp
-// from an interrupted append is never a row. session "" indexes every record;
-// max <= 0 lifts the ceiling. It returns the rows kept and the total.
-func Index(store, session string, max int) ([]IndexRow, int, error) {
+// from an interrupted append is never a row. The sessions the store holds,
+// from sessions/<id>.md and a flat <store>/<id>.md, come back from the same
+// walk, so index prints and counts every session, an empty one included,
+// without reading the store a second time. session "" indexes every record;
+// a named session is the only one returned. It returns the rows, the session
+// ids and the total.
+func Index(store, session string) ([]IndexRow, []string, int, error) {
 	if err := existingStore(store); err != nil {
-		return nil, 0, err
+		return nil, nil, 0, err
 	}
 	if session != "" {
 		if _, _, err := recordForRead(store, session); err != nil {
-			return nil, 0, err
+			return nil, nil, 0, err
+		}
+	}
+	names := map[string]bool{}
+	for _, dir := range [2]string{filepath.Join(store, "sessions"), store} {
+		files, err := os.ReadDir(dir)
+		if err != nil {
+			continue // a store with no sessions/ yet, or a flat-only store, names none here
+		}
+		for _, f := range files {
+			if f.IsDir() || !strings.HasSuffix(f.Name(), ".md") {
+				continue
+			}
+			if id := strings.TrimSuffix(f.Name(), ".md"); ValidID(id) && (session == "" || id == session) {
+				names[id] = true
+			}
 		}
 	}
 	rows, flat, err := flatIndexRows(store, session)
 	if err != nil {
-		return nil, 0, err
+		return nil, nil, 0, err
 	}
 	root := filepath.Join(store, "entries")
 	entries, err := os.ReadDir(root)
 	if err != nil && !os.IsNotExist(err) {
-		return nil, 0, err
+		return nil, nil, 0, err
 	}
 	for _, sess := range entries {
 		if !sess.IsDir() || flat[sess.Name()] || (session != "" && sess.Name() != session) {
@@ -909,7 +927,7 @@ func Index(store, session string, max int) ([]IndexRow, int, error) {
 		}
 		files, err := os.ReadDir(filepath.Join(root, sess.Name()))
 		if err != nil {
-			return nil, 0, err
+			return nil, nil, 0, err
 		}
 		for _, f := range files {
 			name := f.Name()
@@ -918,7 +936,7 @@ func Index(store, session string, max int) ([]IndexRow, int, error) {
 			}
 			ef, stamp, err := readEntry(store, sess.Name(), strings.TrimSuffix(name, ".json"))
 			if err != nil {
-				return nil, 0, err
+				return nil, nil, 0, err
 			}
 			rows = append(rows, IndexRow{Session: ef.Session, ID: ef.ID, Stamp: stamp, Source: ef.Source, Bytes: len(ef.Text)})
 		}
@@ -932,9 +950,10 @@ func Index(store, session string, max int) ([]IndexRow, int, error) {
 		}
 		return strings.Compare(a.ID, b.ID)
 	})
-	total := len(rows)
-	if max > 0 && len(rows) > max {
-		rows = rows[:max]
+	sessions := make([]string, 0, len(names))
+	for id := range names {
+		sessions = append(sessions, id)
 	}
-	return rows, total, nil
+	slices.Sort(sessions)
+	return rows, sessions, len(rows), nil
 }

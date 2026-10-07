@@ -17,7 +17,6 @@ func TestAppendOpenRemedyRoundTripsThroughShell(t *testing.T) {
 	for _, tc := range []struct{ name, store, session string }{
 		{"plain", "store", "s"},
 		{"quotes", "my store's $HOME `literal`", "s'$HOME"},
-		{"controls", "store\t\n", "s\u202eend"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -43,4 +42,15 @@ func TestAppendOpenRemedyRoundTripsThroughShell(t *testing.T) {
 			require.FileExists(t, filepath.Join(store, "sessions", tc.session+".md"), "session not opened")
 		})
 	}
+}
+
+// A store path the one-line rendering cannot carry is refused whole: the remedy
+// is the rename, never a subshell that decodes it.
+func TestAppendOpenRemedyRefusesAPathItCannotPrint(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	store := filepath.Join(root, "store\t\n")
+	r := cli.Run("append", "--store", store, "--session", "s", "--entry", "e", "--text", "note", "--publish", "never")
+	require.Equal(t, 2, r.Code, "append: %+v", r)
+	require.Contains(t, r.Stderr, "this path cannot be printed as one line; rename it", "append: %+v", r)
 }
