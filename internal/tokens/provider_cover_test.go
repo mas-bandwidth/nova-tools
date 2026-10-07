@@ -68,15 +68,15 @@ func TestProviderCoverReadXaiUsageFile(t *testing.T) {
 	body := `{"turns":[]}`
 	require.NoError(t, os.WriteFile(path, []byte(body), 0o644))
 
-	raw, err := ReadXaiUsageFile(path)
+	raw, err := readXaiUsageFile(path)
 	require.NoError(t, err)
 	assert.Equal(t, body, string(raw))
 
-	_, err = ReadXaiUsageFile(filepath.Join(dir, "absent.json"))
+	_, err = readXaiUsageFile(filepath.Join(dir, "absent.json"))
 	var missing *XaiUsageMissingError
 	require.ErrorAs(t, err, &missing)
 
-	_, err = ReadXaiUsageFile(dir)
+	_, err = readXaiUsageFile(dir)
 	var notFile *XaiUsageNotFileError
 	require.ErrorAs(t, err, &notFile)
 }
