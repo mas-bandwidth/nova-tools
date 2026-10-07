@@ -214,7 +214,7 @@ func TestUpLocalPlansAWorkingSingleMachineWithNoConfig(t *testing.T) {
 
 			code, out, errs := f.nova(c.goos, "--local")
 			require.Equal(t, 0, code, "first run: %s%s", out, errs)
-			assert.True(t, strings.HasPrefix(out, "UP OK root="+root+" steps=8 changes=6 applied=6"), out)
+			assert.True(t, strings.HasPrefix(out, "UP OK root="+root+" steps=9 changes=7 applied=7"), out)
 			assert.Equal(t, [][2]string{{"platform", "ok"}, {"dirs", "create"}, {"binaries", "ok"}, {"sprint", "create"},
 				{"secrets", "create"}, {"ssh", "create"}, {"redis", "create"}, {"seat", "create"}, {"smoke", "create"}}, upLines(out))
 
@@ -254,7 +254,7 @@ func TestUpLocalPlansAWorkingSingleMachineWithNoConfig(t *testing.T) {
 			before, calls := tree(t, f.home), len(f.writes())
 			code, out, errs = f.nova(c.goos, "--local")
 			require.Equal(t, 0, code, "second run: %s%s", out, errs)
-			assert.True(t, strings.HasPrefix(out, "UP UNCHANGED root="+root+" steps=8 changes=0 applied=0"), out)
+			assert.True(t, strings.HasPrefix(out, "UP UNCHANGED root="+root+" steps=9 changes=0 applied=0"), out)
 			assert.Contains(t, out, "UP NOTE nothing to change")
 			for _, l := range upLines(out) {
 				assert.Equal(t, "ok", l[1], "second run, step %s", l[0])
