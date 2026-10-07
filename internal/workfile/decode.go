@@ -52,7 +52,9 @@ func (d *decoder) errf(at, format string, a ...any) error {
 
 // fail records a problem for finish to report with the others and goes on;
 // a caller that needs the error itself uses errf.
-func (d *decoder) fail(at, format string, a ...any) { _ = d.errf(at, format, a...) }
+func (d *decoder) fail(at, format string, a ...any) {
+	_ = d.errf(at, format, a...) // ignored: errf appended it to d.probs; finish reports every problem together
+}
 
 // finish returns the tree when nothing was wrong, or every problem found,
 // together (SPEC-WORK-V1 section 1.2).
