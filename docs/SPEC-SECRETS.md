@@ -360,7 +360,7 @@ proven by one line is a store proven for one line), or who has cloned the store.
 ```
 nova-secrets gate --store <dir> --base <git ref> --head <git ref> [--machines <registry>]
 GATE APPROVE files=<n> machines=<registry|->
-GATE REFUSE rule=<n> check=<k> file=<f>: <why>
+GATE FAILED rule=<n> check=<k> file=<f>: <why>
 ```
 
 **Gate checks (k = 1..5):**
@@ -384,7 +384,7 @@ is the shape of a git option and is refused at exit 2 as
 `SECRETS GATE REFUSED: --head <ref> begins with "-", the shape of an option, not a git ref`
 before git sees it. Every other ref is resolved with
 `git rev-parse --verify --end-of-options <ref>^{commit}`; a ref that names no commit (an
-unknown name, a tree, two words) is `GATE REFUSE rule=0 check=0 file=: --head <ref> does not name a
+unknown name, a tree, two words) is `SECRETS GATE REFUSED: --head <ref> does not name a
 commit in the store <dir>` at exit 2. The diff, the tree listings and every file read are
 then made from the two resolved SHAs, each behind `--end-of-options`, so no value the caller
 passes is ever read by git as an option. Two refs naming one commit are an empty diff, and an
@@ -395,7 +395,7 @@ is refused at exit 2 with one line on stderr naming the flag,
 `SECRETS GATE REFUSED: --head is given more than once; every gate flag takes one value`, before
 any ref is read.
 
-**It refuses, at exit 2, unless every changed `.sops.yaml` rule has exactly two age
+**It prints `GATE FAILED` at exit 1 unless every changed `.sops.yaml` rule has exactly two age
 recipients, one of which is the key `recovery.pub` declares at the head, and its
 `path_regex` names exactly one seat file; unless every changed seat file `<seat>.yaml` is
 encrypted — `sops:` metadata present, and no line matching `^[A-Z][A-Z0-9_]*: ` whose value
@@ -409,14 +409,14 @@ named by its key and **never quoted**, exactly as `check` invariant 3. On succes
 measures a **diff before review** and `check` measures the **working copy after**; each is the
 other's witness, and neither substitutes for the other.
 
-**It also refuses, at exit 2, when a seat file in the store at `--base` is gone at `--head`.**
+**It also prints `GATE FAILED` at exit 1 when a seat file in the store at `--base` is gone at `--head`.**
 Removing a seat is how a seat loses its credentials inside a pull request whose subject says
 it is adding one, and it is never part of adding a seat. Keep what exists.
 
-**It also refuses, at exit 2, a changed seat file no verb wrote.** `seal`, `seat add` and
+**It also prints `GATE FAILED` at exit 1 for a changed seat file no verb wrote.** `seal`, `seat add` and
 `seat inject` each put one root key into the file they write, in the clear:
 `NOVA_SECRETS_WRITTEN_BY: <seal|seat add|seat inject> <tool version>`, and the gate refuses a
-changed seat file that lacks it, `GATE REFUSE rule=<n> check=2 file=<f>: the seat file was not written
+changed seat file that lacks it, `GATE FAILED rule=<n> check=2 file=<f>: the seat file was not written
 by a nova-secrets verb; seal it with nova-secrets seal or seat add, never by hand`. **The
 decision, and why.** Without the mark the gate is a check on bytes, and a seat file sealed by
 hand (`sops <seat>.yaml`, `sops updatekeys <seat>.yaml`, any editor that leaves sops metadata
@@ -463,7 +463,7 @@ the `<seat>` of the single `<seat>.yaml` the rule's `path_regex` names.** A row 
 because the seat is what a reader goes and checks:
 
 ```
-GATE REFUSE rule=1 check=4 file=air.yaml: rule adds a recipient no seat file rule named before, and no machine in queue/control/machines.tsv carries the seat air; add the machine's row (its seat column must read air) or drop the rule
+GATE FAILED rule=1 check=4 file=air.yaml: rule adds a recipient no seat file rule named before, and no machine in queue/control/machines.tsv carries the seat air; add the machine's row (its seat column must read air) or drop the rule
 ```
 
 The registry is read **first and whole**, before any judgement leans on it — an unreadable or
