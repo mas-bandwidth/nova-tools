@@ -16,8 +16,10 @@ import (
 // Its brief's line 1 names a tier, and the deal resolves
 // the tier through the routes nova-config applies to the store (the route kind,
 // docs/nova-config/README.md) and the tier's route array (the tier kind: an ordered
-// list of route names, a name repeated for more turns). The deal takes the array's
-// entry at the tier's rolling index, a uint64 counter modulo the array's length,
+// list of route names, a name repeated for more turns). The machine's route draw handles
+// only work left after the friends' deal offers heavy/pro cards to subscription friends
+// with room first (docs/SPEC-SPRINT.md section 1, deal-subscription-first-r-t-bb). The deal
+// takes the array's entry at the tier's rolling index, a uint64 counter modulo its length,
 // exactly as the deal takes a member (round.go), and moves the index by one for
 // each card dealt. The route is written on the work card, so the packet hands the member
 // the provider, model, budget and deadline it launches with. A `model:` header line
