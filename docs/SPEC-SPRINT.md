@@ -5157,8 +5157,13 @@ failed`, bound and stranded judgments close in the same step, a late finish free
 the worker's row, and the log says `a late report for the attempt the deadline failed`. A
 report that is itself a provider failure, a take with no result, a staging refusal or a lane
 cap, and a report carrying an attempt decision, are still refused; once a later attempt has
-started the old one stays failed (`TestFinishAcceptsAReportForAnAttemptTheDeadlineFailed`,
-`TestALateLandFinishesTheFailedAttemptOnTheStore`).
+started the old one stays failed. Only an attempt the deadline failed takes a late report
+(`sprint.deadlineFailed`: the work card's failed report is the harness fault `lane died`,
+`deadline` or `no result`, the attempt ended with no report from its worker); an attempt its
+own worker failed was reported already, and a finish for it again, a retry after a restart
+too, is refused as before (`TestFinishAcceptsAReportForAnAttemptTheDeadlineFailed`,
+`TestALateLandFinishesTheFailedAttemptOnTheStore`,
+`TestARestartOnADumpWithoutTheResultsCannotAnswerTheRetry`).
 
 #### paths-proposed-answered-by-rule
 
