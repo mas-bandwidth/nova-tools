@@ -126,7 +126,7 @@ func TestTheSeatRefusesEveryVerbUntilThePushIsProven(t *testing.T) {
 	ta.a.outside = mockHealthyOutside()
 	code, out, _ = ta.do("seat check")
 	require.Equal(t, 1, code, out)
-	assert.Contains(t, out, "MACHINERY push DOWN holder="+name+" harness=- adapter=- why=", out)
+	assert.Contains(t, out, "MACHINERY push DOWN holder="+name+" harness=- adapter=- proven=- why=", out)
 	assert.Contains(t, out, "remedy=\"nova-sprint seat install --actor "+name, out)
 
 	// the seat is given to no name without a live proof
@@ -162,9 +162,12 @@ func TestTheSeatRefusesEveryVerbUntilThePushIsProven(t *testing.T) {
 	var said bytes.Buffer
 	ta.a.prove(ctx, src, name, false, &said)
 	nonce := nonceOf(t, session.last())
-	assert.Contains(t, said.String(), "PUSH CHECK name="+name+" nonce="+nonce+"\n")
+	assert.Contains(t, said.String(), "PUSH CHECK name="+name+"\n")
+	assert.NotContains(t, said.String(), nonce)
 	assert.Contains(t, session.last(), "nova-sprint seat pong "+nonce+" --actor "+name)
-	ta.refusedPushDown("add --stream s1 --count 2", "the push check "+nonce+" went into "+name+"'s opencode session and no pong carrying it came back")
+	ta.refusedPushDown("add --stream s1 --count 2", "the push check went into "+name+"'s opencode session and no pong carrying it came back")
+	_, _, errs = ta.do("add --stream s1 --count 2")
+	assert.NotContains(t, errs, nonce)
 	said.Reset()
 	ta.a.prove(ctx, src, name, false, &said)
 	assert.Empty(t, said.String(), "a check is delivered again before its answer bound")
@@ -174,7 +177,8 @@ func TestTheSeatRefusesEveryVerbUntilThePushIsProven(t *testing.T) {
 	require.Equal(t, 2, code, errs)
 	assert.Contains(t, errs, "only the session's answer to the last check counts", errs)
 	out = ta.ok("seat pong " + nonce)
-	assert.Contains(t, out, "SEAT PONG OK name="+name+" nonce="+nonce, out)
+	assert.Contains(t, out, "SEAT PONG OK name="+name+" proven=", out)
+	assert.NotContains(t, out, nonce)
 	code, _, errs = ta.do("seat pong " + nonce)
 	require.Equal(t, 2, code, errs)
 	assert.Contains(t, errs, "counted already", errs)
@@ -237,10 +241,11 @@ type pushArmedOnly struct{}
 // records adapter=folder and prints the two commands the session runs, the
 // Monitor on the folder and seat pong; the push loop writes the check as
 // PROOF-<nonce> into the folder; until the session answers that nonce every
-// coordinator verb is refused with the two commands, the nonce filled in; the
-// answer proves the seat, the status says adapter=folder proven=<time>, and the
-// next check replaces the file. Judgments already written into the folder are
-// not written again.
+// coordinator verb is refused with the two commands, the nonce left as the
+// placeholder <nonce>; the answer proves the seat, the status says
+// adapter=folder proven=<time>, and the next check replaces the file.
+// Judgments already written into the folder are not written again. A printed
+// line that contains the nonce fails.
 func TestASeatOnAFolderAdapterIsProvenByItsNonceAndRefusedWithout(t *testing.T) {
 	t.Parallel()
 	const name = "pushproof-folder"
@@ -290,21 +295,28 @@ func TestASeatOnAFolderAdapterIsProvenByItsNonceAndRefusedWithout(t *testing.T) 
 	body, err := os.ReadFile(proofs[0])
 	require.NoError(t, err)
 	assert.Equal(t, sprint.PushCheckText(name, nonce), string(body), "the file is the check")
-	assert.Contains(t, said.String(), "PUSH CHECK name="+name+" nonce="+nonce+"\n")
-	ta.refusedPushDown("add --stream s1 --count 2", "the push check "+nonce+" went into "+name+"'s claude session and no pong carrying it came back")
+	assert.Contains(t, said.String(), "PUSH CHECK name="+name+"\n")
+	assert.NotContains(t, said.String(), nonce, "a printed line carries the nonce")
+	ta.refusedPushDown("add --stream s1 --count 2", "the push check went into "+name+"'s claude session and no pong carrying it came back")
 	_, _, errs = ta.do("add --stream s1 --count 2")
-	assert.Contains(t, errs, "answer the PROOF-"+nonce+" file it shows: nova-sprint seat pong "+nonce+" --actor "+name, errs)
+	assert.Contains(t, errs, "answer the PROOF-<nonce> file it shows: nova-sprint seat pong <nonce> --actor "+name, errs)
+	assert.NotContains(t, errs, nonce, "a refusal carries the nonce")
 	code, out, _ = ta.do("seat push")
 	require.Equal(t, 1, code, out)
 	assert.Contains(t, out, "PUSH DOWN name="+name+" harness=claude target="+folder+" adapter=folder why=", out)
-	assert.Contains(t, out, "nova-sprint seat pong "+nonce+" --actor "+name, out)
+	assert.Contains(t, out, "nova-sprint seat pong <nonce> --actor "+name, out)
+	assert.NotContains(t, out, nonce, "seat push carries the nonce")
+	_, out, _ = ta.do("seat push --json")
+	assert.Contains(t, out, `"proof":"pending"`)
+	assert.NotContains(t, out, nonce, "seat push --json carries the nonce")
 
 	// only that nonce proves it
 	code, _, errs = ta.do("seat pong 0000000000000000")
 	require.Equal(t, 2, code, errs)
 	assert.Contains(t, errs, "only the session's answer to the last check counts", errs)
 	out = ta.ok("seat pong " + nonce)
-	assert.Contains(t, out, "SEAT PONG OK name="+name+" nonce="+nonce, out)
+	assert.Contains(t, out, "SEAT PONG OK name="+name+" proven=", out)
+	assert.NotContains(t, out, nonce, "seat pong carries the nonce")
 	proven := ta.a.now().UTC().Format(time.RFC3339)
 
 	// proven: the verbs run, and the status says adapter=folder proven=<time>
@@ -327,12 +339,13 @@ func TestASeatOnAFolderAdapterIsProvenByItsNonceAndRefusedWithout(t *testing.T) 
 	assert.Contains(t, said.String(), "PUSH OK name="+name)
 	// into any other folder a judgment is one file, the text whole
 	elsewhere := t.TempDir()
-	exit, err := (&folderAdapter{Dir: elsewhere}).Deliver(ctx, "JUDGMENT two\n")
+	exit, err := (&folderAdapter{Dir: elsewhere, Now: ta.a.now}).Deliver(ctx, "JUDGMENT two\n")
 	require.NoError(t, err)
 	assert.Equal(t, 0, exit)
 	pushed, err := filepath.Glob(filepath.Join(elsewhere, "PUSH-*.md"))
 	require.NoError(t, err)
 	require.Len(t, pushed, 1)
+	assert.True(t, strings.HasPrefix(filepath.Base(pushed[0]), "PUSH-"+ta.a.now().UTC().Format("20060102T150405Z")+"-"), filepath.Base(pushed[0]))
 	body, err = os.ReadFile(pushed[0])
 	require.NoError(t, err)
 	assert.Equal(t, "JUDGMENT two\n", string(body))
@@ -358,4 +371,131 @@ func TestASeatOnAFolderAdapterIsProvenByItsNonceAndRefusedWithout(t *testing.T) 
 	require.NoError(t, writePush(ctx, st, sprint.PushRecord{Name: other, Harness: "claude", Adapter: sprint.AdapterFolder, Target: folder, Nonce: "n1", Sent: now, Proven: now, PongOf: "n1"}))
 	out = ta.ok("coordinator " + other + " --reason 'its folder is proven'")
 	assert.Contains(t, out, "COORDINATOR OK holder="+other+" from="+name+" by="+name+" given adapter=folder proven="+now.UTC().Format(time.RFC3339), out)
+}
+
+// The nonce is the PROOF- file's name. A refusal, a why, and seat push,
+// including seat push --json, do not carry it. A relative --target that does
+// not resolve is refused; one that does is stored absolute.
+func TestTheNonceIsOnlyInTheFolder(t *testing.T) {
+	t.Parallel()
+	const name = "pushproof-nonce"
+	ta, _ := pushProofSprint(t, name)
+	pushTests.Store(name, pushArmedOnly{})
+	ctx := context.Background()
+	ta.ok("init --readers reader-a,reader-b --members m1,m2 --owner owner")
+	st, err := ta.a.store(common{redis: "mem:0", actor: name})
+	require.NoError(t, err)
+
+	code, _, errs := ta.do("seat install --harness claude --target no-such-seat-target")
+	require.Equal(t, 2, code, errs)
+	assert.Contains(t, errs, "--target no-such-seat-target is relative and does not resolve; nothing was written", errs)
+	_, ok, err := readPush(ctx, st, name)
+	require.NoError(t, err)
+	require.False(t, ok, "a relative target that does not resolve was recorded")
+
+	for _, rel := range []string{".", ".."} {
+		got, why := seatPushTarget(sprint.PushRecord{Name: name, Harness: "opencode", Target: rel})
+		require.Empty(t, why, rel)
+		assert.True(t, filepath.IsAbs(got.Target), "%s stored as %s", rel, got.Target)
+	}
+
+	home, err := ta.a.home()
+	require.NoError(t, err)
+	folder := filepath.Join(home, name+"-working", "inbox", "sprint-judgments")
+	require.NoError(t, os.MkdirAll(folder, 0o755))
+	cwd, err := os.Getwd()
+	require.NoError(t, err)
+	rel, err := filepath.Rel(cwd, folder)
+	require.NoError(t, err)
+	require.False(t, filepath.IsAbs(rel), rel)
+	ta.ok("seat install --redis 127.0.0.1:1 --harness claude --target " + rel)
+	rec, ok, err := readPush(ctx, st, name)
+	require.NoError(t, err)
+	require.True(t, ok)
+	want, err := filepath.Abs(rel)
+	require.NoError(t, err)
+	assert.Equal(t, want, rec.Target)
+	assert.Equal(t, sprint.AdapterFolder, rec.Adapter)
+	folder = rec.Target
+
+	src := &storeSource{st: st}
+	var said bytes.Buffer
+	ta.a.prove(ctx, src, name, false, &said)
+	proofs, err := filepath.Glob(filepath.Join(folder, "PROOF-*"))
+	require.NoError(t, err)
+	require.Len(t, proofs, 1)
+	nonce := strings.TrimPrefix(filepath.Base(proofs[0]), "PROOF-")
+	require.NotEmpty(t, nonce)
+	assert.Equal(t, "PROOF-"+nonce, filepath.Base(proofs[0]))
+	assert.NotContains(t, said.String(), nonce)
+	assert.Contains(t, said.String(), "PUSH CHECK name="+name+"\n")
+
+	code, _, errs = ta.do("add --stream s1 --count 2")
+	require.Equal(t, 2, code, errs)
+	assert.NotContains(t, errs, nonce)
+	assert.Contains(t, errs, "PROOF-<nonce>")
+	assert.Contains(t, errs, "nova-sprint seat watch ")
+	assert.Contains(t, errs, "nova-sprint seat pong <nonce>")
+
+	code, out, _ := ta.do("seat push")
+	require.Equal(t, 1, code, out)
+	assert.NotContains(t, out, nonce)
+	assert.Contains(t, out, "PUSH DOWN")
+	code, out, _ = ta.do("seat push --json")
+	require.Equal(t, 1, code, out)
+	assert.Contains(t, out, `"proof":"pending"`)
+	assert.NotContains(t, out, nonce)
+
+	ta.a.outside = mockHealthyOutside()
+	code, out, _ = ta.do("seat check")
+	require.Equal(t, 1, code, out)
+	assert.Contains(t, out, "proven=-")
+	assert.Contains(t, out, "nova-sprint seat watch ")
+	assert.Contains(t, out, "nova-sprint seat pong <nonce>")
+	assert.NotContains(t, out, nonce)
+	_, out, _ = ta.do("seat check --json")
+	assert.NotContains(t, out, nonce)
+}
+
+// seat watch prints each new file's path, one flushed line, and not a file
+// that was already there, a dot name, or a directory.
+func TestSeatWatchPrintsEachNewFile(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "old.md"), []byte("old"), 0o644))
+	missing := filepath.Join(dir, "missing")
+	code, _, errs := ta.do("seat watch " + missing)
+	require.Equal(t, 1, code, errs)
+	assert.Contains(t, errs, "is not a directory")
+	assert.Equal(t, 1, strings.Count(errs, "\n"), errs)
+
+	var n int
+	var cancel context.CancelFunc
+	ta.a.notify = func(ctx context.Context) (context.Context, context.CancelFunc) {
+		ctx, cancel = context.WithCancel(ctx)
+		return ctx, cancel
+	}
+	ta.a.after = func(d time.Duration) <-chan time.Time {
+		assert.Equal(t, 5*time.Second, d)
+		n++
+		if n == 1 {
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "PROOF-abc"), []byte("x"), 0o644))
+			require.NoError(t, os.WriteFile(filepath.Join(dir, ".half"), []byte("x"), 0o644))
+			require.NoError(t, os.Mkdir(filepath.Join(dir, "sub"), 0o755))
+		}
+		if n == 2 {
+			cancel()
+		}
+		ch := make(chan time.Time, 1)
+		ch <- ta.a.now()
+		return ch
+	}
+	code, out, errs := ta.do("seat watch " + dir)
+	require.Equal(t, 0, code, "%s%s", out, errs)
+	assert.Equal(t, filepath.Join(dir, "PROOF-abc")+"\n", out)
+	assert.NotContains(t, out, "old.md")
+	assert.NotContains(t, out, ".half")
+	assert.NotContains(t, out, "sub")
+	assert.GreaterOrEqual(t, n, 2)
 }

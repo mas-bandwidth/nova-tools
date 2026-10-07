@@ -228,6 +228,7 @@ func (r SeatCheckReport) JSON() string {
 	if r.Lines == nil {
 		r.Lines = []SeatCheckLine{}
 	}
+	r.Measures.Push.Record = PrintedPush(r.Measures.Push.Record)
 	b, _ := json.Marshal(r)
 	return string(b)
 }
@@ -548,7 +549,7 @@ func JudgeSeatCheck(m SeatCheckMeasures, now time.Time) SeatCheckReport {
 	if p := m.Push; p.Measured && !failed(SeatCheckPush) {
 		facts := []string{"holder=" + orDash(p.Holder), "harness=" + orDash(p.Record.Harness), "adapter=" + p.Record.AdapterName()}
 		if why := PushWhy(p.Holder, p.Record, p.Recorded, now); why != "" {
-			add(SeatCheckLine{Thing: SeatCheckPush, Facts: append(facts, "why="+quoteSeatCheck(why)), Remedy: PushSetup(p.Holder, p.Record, p.Recorded)})
+			add(SeatCheckLine{Thing: SeatCheckPush, Facts: append(facts, "proven=-", "why="+quoteSeatCheck(why)), Remedy: PushRemedy(p.Holder, p.Record, p.Recorded)})
 		} else {
 			add(SeatCheckLine{Thing: SeatCheckPush, Up: true, Facts: append(facts, "proven="+formatAge(now.Sub(p.Record.Proven))+" ago")})
 		}

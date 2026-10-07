@@ -52,14 +52,13 @@ line the inbox prints for it, filled in; `nova-sprint inbox --open <id>` shows t
   nova-sprint seat install --actor $NOVA_SPRINT_ACTOR --harness claude --target ~/$NOVA_SPRINT_ACTOR-working/inbox/sprint-judgments
   ```
 
-  1. Run as a Monitor, from inside the session, the `monitor:` line it printed (each new file in the folder is
-     one event: a judgment, or a `PROOF-<nonce>`):
-     `d=<folder>; s=$(ls -1 "$d"); while sleep 5; do n=$(ls -1 "$d"); [ -n "$n" ] && printf '%s\n' "$n" | grep -vxF "$s" | sed "s|^|$d/|"; s=$n; done`
+  1. Run as a Monitor, from inside the session, `nova-sprint seat watch <folder>` (each new file in the folder is
+     one event, one flushed line, no shell: a judgment, or a `PROOF-<nonce>`).
   2. Answer each `PROOF-<nonce>` the Monitor shows, at once: `nova-sprint seat pong <nonce> --actor $NOVA_SPRINT_ACTOR`.
 
-  The push loop writes a new check every 10 minutes and the seat is down 15 minutes after the last answer;
-  `seat push` and `seat check` say `adapter=folder proven=<time>`, and a refusal carries both commands with the
-  nonce filled in.
+  The push loop writes a new check every 10 minutes and the seat is down 15 minutes after the last answer.
+  `seat check` OK says `proven=<age> ago`. DOWN says `proven=-` and the two commands. A refusal never fills in
+  the nonce.
 - Not served, and run where typed with credentials of their own: `run`, `tick`, `land`, `play`, `fleet sync`,
   `friend sync`, and any verb given its own `--redis`. `fleet sync` and `friend sync` read the config store, so
   they run under one `nova-secrets exec` wrapper that names variables and never a value;
