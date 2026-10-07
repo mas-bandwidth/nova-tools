@@ -898,6 +898,7 @@ type whereRun struct {
 	rows  bool
 	// archived puts the archived streams' rows in --json's tables and rows
 	archived bool
+	fresh    bool
 	release  releaseFlag
 	every    time.Duration
 	stale    time.Duration
@@ -948,6 +949,7 @@ func (a *app) cmdWhere(args []string, stdout, stderr io.Writer) int {
 	cards := fs.Bool("cards", false, "with --json: also every work card dealt to a fleet row and not finished (its row, state, since, deadline and branch) and the open judgments on them, as the dashboard's pull routes serve them, and every machine's lanes (lane list)")
 	archived := fs.Bool("archived", false, "with --json: the archived streams' rows of the work and merge tables in tables, and their primaries in --rows, beside the live ones (stream archive); the summary and the drawn footers count only the streams on the table either way, and archived_cards and archived_landed carry theirs")
 	rows := fs.Bool("rows", false, "with --json: also every primary's row of the work table (id, stream, state, score, and its fields but the brief: card <id> --brief), in work order, so a child reads every card in one call and never loops card calls")
+	fresh := fs.Bool("fresh", false, "with --json: read the store directly instead of returning the server's cached snapshot")
 	stale := fs.Duration("stale", defaultStale, "a stream with no progress for longer is shown stalled (--json)")
 	atEpoch := fs.Int64("at-epoch", -1, "the sprint as it was at an earlier epoch (before a clear)")
 	var rel releaseFlag
@@ -985,7 +987,7 @@ func (a *app) cmdWhere(args []string, stdout, stderr io.Writer) int {
 	if *rows && !c.json {
 		return refuse(stderr, "where", "--rows is a field of the JSON view: give --json with it")
 	}
-	r := whereRun{c: *c, watch: *watch, all: *all, cards: *cards, rows: *rows, archived: *archived, release: rel, every: *every, stale: *stale, atEpoch: *atEpoch}
+	r := whereRun{c: *c, watch: *watch, all: *all, cards: *cards, rows: *rows, archived: *archived, fresh: *fresh, release: rel, every: *every, stale: *stale, atEpoch: *atEpoch}
 	if addr := a.server(fs); addr != "" {
 		// the sprint's server draws each frame: one plain where a frame, so the watch
 		// never holds the server between frames
@@ -1013,6 +1015,28 @@ func (a *app) cmdWhere(args []string, stdout, stderr io.Writer) int {
 // one object a frame.
 func (a *app) whereLoop(ctx context.Context, r whereRun, stdout, stderr io.Writer) int {
 	return a.drawLoop(ctx, r, stdout, stderr, func(ctx context.Context) (string, int, bool) {
+		if r.c.json && !r.fresh {
+			// When running through the server, check for a cached snapshot
+			cached, _ := a.snapshot.get()
+			if cached != nil {
+				// Refuse stale snapshots (>2 ticks old)
+				if a.snapshot.isStale() {
+					return "", refuse(stderr, "where", "snapshot stale: "+strconv.FormatInt(a.snapshot.ageMs(), 10)+"ms; run where --json --fresh"), false
+				}
+				// Add snapshot metadata to JSON
+				var v whereView
+				if err := json.Unmarshal(cached.Data, &v); err != nil {
+					return "", refuse(stderr, "where", "cached snapshot corrupted: "+err.Error()), false
+				}
+				// Add snapshot info to the JSON
+				snap := map[string]any{"at": cached.At.UTC().Format(time.RFC3339), "age_ms": a.snapshot.ageMs()}
+				if r.c.json {
+					b, _ := json.Marshal(map[string]any{"view": v, "snapshot": snap})
+					return string(b) + "\n", 0, true
+				}
+				return string(cached.Data) + "\n", 0, true
+			}
+		}
 		// every frame reads the sprint's epoch again: a clear while it
 		// watches shows the new epoch
 		st, err := a.storeAtCtx(ctx, r.c, r.atEpoch)

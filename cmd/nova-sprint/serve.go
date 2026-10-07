@@ -293,6 +293,10 @@ func (a *app) serveHTTP(w http.ResponseWriter, r *http.Request, local bool) {
 		a.serveFriendCards(w, r)
 		return
 	}
+	if r.URL.Path == sprintPath {
+		a.serveSprint(w, r)
+		return
+	}
 	if r.URL.Path != sprintwire.Path || r.Method != http.MethodPost {
 		http.Error(w, "the sprint server takes POST "+sprintwire.Path, http.StatusNotFound)
 		return
@@ -495,6 +499,35 @@ func runningIDs(v string) bool {
 // all=1. They are reads, served on both listeners as the workers' queue is: the fleet's
 // private network is the whole of the access control (listen).
 const viewPath = "/api/view/"
+const sprintPath = "/api/sprint"
+
+// serveSprint is the server's GET endpoint for the cached where --json snapshot.
+func (a *app) serveSprint(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "the sprint is read with GET "+sprintPath, http.StatusMethodNotAllowed)
+		return
+	}
+	cached, _ := a.snapshot.get()
+	if cached == nil {
+		http.Error(w, "no snapshot available", http.StatusNotFound)
+		return
+	}
+	// Refuse stale snapshots (>2 ticks old)
+	if a.snapshot.isStale() {
+		http.Error(w, "snapshot stale: "+strconv.FormatInt(a.snapshot.ageMs(), 10)+"ms; run where --json --fresh", http.StatusGone)
+		return
+	}
+	// Add snapshot metadata
+	var v whereView
+	if err := json.Unmarshal(cached.Data, &v); err != nil {
+		http.Error(w, "cached snapshot corrupted: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	snap := map[string]any{"at": cached.At.UTC().Format(time.RFC3339), "age_ms": a.snapshot.ageMs()}
+	b, _ := json.Marshal(map[string]any{"view": v, "snapshot": snap})
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(b)
+}
 
 // serveView runs view <role> --json for a GET, on the line of control as any verb the server
 // runs (a.serial: never during a tick), and answers its JSON, gzipped for a client that takes

@@ -147,6 +147,8 @@ type app struct {
 	// serveAddr is the store the server runs the workers' verbs on.
 	serial    controlLine
 	serveAddr string
+	// snapshot is the cached where --json document from the last tick.
+	snapshot snapshotCache
 	// serveStarted is when this server started serving (serve.go), zero for a verb run
 	// alone: a beat's old --pong <time> counts for sprint.LegacyPongGrace after it.
 	serveStarted time.Time

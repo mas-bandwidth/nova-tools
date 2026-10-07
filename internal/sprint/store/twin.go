@@ -169,6 +169,21 @@ func (tw *Twin) drop(why string) {
 	tw.why = why
 }
 
+// Valid says whether the twin has valid data.
+func (tw *Twin) Valid() bool {
+	return tw.valid && tw.tables != nil
+}
+
+// Tables returns the twin's tables.
+func (tw *Twin) Tables() map[string]*sprint.Table {
+	return tw.tables
+}
+
+// Snapshot returns the twin's last snapshot.
+func (tw *Twin) Snapshot() *sprint.Snapshot {
+	return tw.last
+}
+
 // reset is an empty twin of the epoch.
 func (tw *Twin) reset(epoch uint64) {
 	why := tw.why
