@@ -326,6 +326,10 @@ type lander struct {
 	// process, which a hand land starts empty every run and the server every start
 	baseCount bool
 	baseWhy   string
+	// baseAbsent says the last build's fetch of the base alone failed with origin's
+	// words for a ref it does not hold (notOnOrigin). The batch is the dead-base
+	// fact (deadBaseRefused), not a fetch to retry.
+	baseAbsent bool
 	// baseNotes is what the pass's re-check of the bases that stopped streams did (baseRecheck)
 	baseNotes []string
 	// held is each clone's land lock this land holds (hold), released as it ends
@@ -538,6 +542,8 @@ func (l *lander) report(failed bool, pruned []pruneResult, stdout, stderr io.Wri
 			fmt.Fprintf(w, "NOTE land would report this as merge --%s and stop stream %s; nothing was reported (dry run)\n", b.WouldRecord, oneline.Field(b.Stream))
 		case b.Fact == "conflict" && !b.stopped:
 			fmt.Fprintf(w, "NOTE the card is reworked at the tip and stream %s goes on; the seat is told\n", oneline.Field(b.Stream))
+		case b.Fact == "dead-base":
+			fmt.Fprintf(w, "NOTE stream %s is not stopped: these cards are held from landing until their judgment is answered or their base re-pointed, and the rest of the stream lands; run: nova-sprint inbox\n", oneline.Field(b.Stream))
 		case b.Fact != "":
 			fmt.Fprintf(w, "NOTE the stream is stopped (%s); run: nova-sprint inbox\n", b.Fact)
 		case b.Status == "refused" && !l.dry:
@@ -617,14 +623,22 @@ func (l *lander) stream(ctx context.Context, s *sprint.Snapshot, stream string) 
 		return refused("nothing queued to merge in stream " + stream + "; run: nova-sprint queue --stream " + stream)
 	}
 	var cards []landCard
+	// a card held on a dead base is skipped, and a card that needs one, until its judgment
+	// is answered or its base is re-pointed (sprint.DeadBaseHeld): the refusal was said once
+	held := map[string]bool{}
 	for _, c := range queue {
 		lc := landCard{id: c.ID, base: l.base}
-		if pr := s.Work.Placed(c.ID); pr != nil {
+		pr := s.Work.Placed(c.ID)
+		if pr != nil {
 			lc.head, lc.attempt, lc.primary = pr.F("head"), pr.F("attempt"), pr
 			cb := swarm.ReadCardBase([]byte(pr.F("brief")))
 			lc.repo, lc.paths, lc.brief = cb.Repo, swarm.CardPaths([]byte(pr.F("brief"))), pr.F("brief")
 			if cb.Ref != "" {
 				lc.base = cb.Ref
+			}
+			if sprint.DeadBaseHeld(s, pr, lc.base) || slices.ContainsFunc(sprint.Split(pr.F("needs")), func(n string) bool { return held[n] }) {
+				held[c.ID] = true
+				continue
 			}
 			if s.Fleet != nil {
 				lc.result = claimText(s.Fleet.Card(sprint.WorkCardID(pr.ID, pr.Int("attempt"))))
@@ -723,6 +737,10 @@ func (l *lander) batch(ctx context.Context, s *sprint.Snapshot, stream string, c
 	for i, c := range cards {
 		ids[i] = c.id // a base fix lands first (cureBase)
 	}
+	if why != "" && l.baseAbsent {
+		// the base is not on origin: one fact, recorded once, and the stream goes on
+		return l.deadBaseRefused(b, stream, cards)
+	}
 	if why != "" && l.baseCount {
 		// the base-gate rule: the refusal counted per stream and base in the store, its third
 		// (or this process's third failure) stopping the stream with the coordinator's judgment
@@ -730,12 +748,6 @@ func (l *lander) batch(ctx context.Context, s *sprint.Snapshot, stream string, c
 		return 0, false, true
 	}
 	if why != "" {
-		if strings.Contains(why, "couldn't find remote ref") && l.baseGone(ctx, dir, b.Base) {
-			// the base branch is gone (merged and deleted): one judgment names every
-			// card on it and the rebase line that fixes them (rebase.go)
-			l.missingBase(b, why)
-			return 0, false, true
-		}
 		return refuse(why)
 	}
 	b.Scope = l.scopeOf(merged)
@@ -1117,29 +1129,30 @@ func (l *lander) greenStep(r sprint.BaseGreenReq) (store.Result, error) {
 	return l.st.Run(context.Background(), step)
 }
 
-// baseGone says the build's failure is the base branch's: origin no longer
-// holds refs/heads/<base>. It asks origin once, only after a build failed.
-func (l *lander) baseGone(ctx context.Context, dir, base string) bool {
-	if base == "" {
-		return false
+// deadBaseRefused records a batch whose base is not on origin through the merge step
+// (sprint.MergeReq.DeadBase): each card marked and one judgment raised for it, the stream not
+// stopped, and the batch refused once with the sentence of each card. The land pass skips the
+// cards after it (sprint.DeadBaseHeld) and goes on to the rest of the stream; a step that did
+// not record it leaves the cards to be tried again by the next pass.
+func (l *lander) deadBaseRefused(b landBatch, stream string, cards []landCard) (int, bool, bool) {
+	var why []string
+	for _, c := range cards {
+		why = append(why, sprint.DeadBaseWhy(c.id, b.Base))
 	}
-	out, err := l.git(ctx, dir, "ls-remote", "--exit-code", "--heads", "origin", "refs/heads/"+base)
-	return err != nil || strings.TrimSpace(out) == ""
-}
-
-// missingBase records the one judgment of a land whose base branch is gone
-// (sprint.MergeReq.MissingBase): every unlanded card on that base and the
-// rebase line that fixes them, through the merge step; the batch is refused
-// with git's own words.
-func (l *lander) missingBase(b landBatch, why string) (bool, bool) {
-	b.Status, b.Reason = "refused", why
-	r := sprint.MergeReq{Stream: b.Stream, Base: b.Base, MissingBase: b.Base, Who: l.c.actor}
-	res, err := l.step(r, nil)
+	id := "<id>"
+	if len(cards) == 1 {
+		id = cards[0].id
+	}
+	b.Status, b.Reason = "refused", strings.Join(why, "; ")+"; run: nova-sprint card base "+id+" <a branch on origin>"
+	res, err := l.step(sprint.MergeReq{Stream: stream, DeadBase: b.Base, Who: l.c.actor}, cards)
 	if code := stepExit(res, err); code != 0 {
-		b.Reason = why + "; the merge step did not record it (" + stepWhy(res, err) + "); " + againRemedy(b.Stream)
+		b.Reason += "; the merge step did not record it (" + stepWhy(res, err) + "); " + againRemedy(stream)
+		l.keep(b)
+		return 0, false, true
 	}
-	l.out = append(l.out, b)
-	return false, true
+	b.Fact = "dead-base"
+	l.keep(b)
+	return len(cards), true, true
 }
 
 // againRemedy is the one remedy land names when a report did not go through:
@@ -1352,12 +1365,16 @@ func (l *lander) build(ctx context.Context, dir, stream string, cards []landCard
 	}
 	l.stage("fetch", "git fetch")
 	start := time.Now()
+	l.baseAbsent = false
 	_, err := l.git(ctx, dir, fetch...)
 	if err != nil {
 		_, err = l.git(ctx, dir, "fetch", "--no-tags", "origin", baseRef)
 	}
 	since(&t.Fetch, start)
 	if err != nil {
+		// the base alone fetched and origin holds no such branch: a dead base, the batch's
+		// cards' fact, never retried as a fetch that failed (deadBaseRefused)
+		l.baseAbsent = containsAny(err.Error(), notOnOrigin)
 		return nil, failed, "the fetch of origin in " + dir + " failed: " + firstLine("", err)
 	}
 	l.stage("merge", "git merge")

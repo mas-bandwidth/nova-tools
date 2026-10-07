@@ -134,6 +134,7 @@ func TestEveryCoordinatorVerbIsTheCoordinators(t *testing.T) {
 		// the friends' directories are read only after the store refuses the intruder
 		"friend reconcile": "friend reconcile friend-a",
 		"collect":          "collect",
+		"card base":        "card base s1-1 main",
 		"rebase":           "rebase --from a --to b",
 	}
 	for _, v := range verbs {
