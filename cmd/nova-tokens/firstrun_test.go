@@ -77,6 +77,10 @@ func TestTheExampleLinesRun(t *testing.T) {
 		for i, arg := range args {
 			if strings.HasPrefix(arg, "./") {
 				args[i] = filepath.Join(fixture, arg[2:])
+			} else if strings.HasPrefix(arg, "bench=./") {
+				// Handle bench=./path style arguments
+				args[i] = strings.TrimPrefix(arg, "bench=./")
+				args[i] = "bench=" + filepath.Join(fixture, args[i])
 			}
 		}
 		var out, errb bytes.Buffer
@@ -164,6 +168,10 @@ func TestTheTranscriptIsWhatTheToolPrints(t *testing.T) {
 			for i, arg := range fields {
 				if strings.HasPrefix(arg, "./") {
 					fields[i] = filepath.Join(fixture, arg[2:])
+				} else if strings.HasPrefix(arg, "bench=./") {
+					// Handle bench=./path style arguments
+					fields[i] = strings.TrimPrefix(arg, "bench=./")
+					fields[i] = "bench=" + filepath.Join(fixture, fields[i])
 				}
 			}
 			var out, errb bytes.Buffer
@@ -234,6 +242,10 @@ func TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine(t *testing.T) {
 		for i, arg := range args {
 			if strings.HasPrefix(arg, "./") {
 				args[i] = filepath.Join(fixture, arg[2:])
+			} else if strings.HasPrefix(arg, "bench=./") {
+				// Handle bench=./path style arguments
+				args[i] = strings.TrimPrefix(arg, "bench=./")
+				args[i] = "bench=" + filepath.Join(fixture, args[i])
 			}
 		}
 		var out, errb bytes.Buffer
