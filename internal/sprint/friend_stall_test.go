@@ -336,3 +336,44 @@ func TestAFriendWithAReportInTheWindowIsNeverStalled(t *testing.T) {
 	assert.Equal(t, Withdrawn, w.s.Fleet.Card("s1-2.w1").Col, "no evidence past the bound: her unstarted card is taken back")
 	assert.Equal(t, Working, w.s.Fleet.Card("s1-1.w1").Col, "a card with a report of hers on it is started and stays")
 }
+
+// A report or a session proof stamped after the server's clock counts as that
+// clock (FriendWorked), not as evidence that stays fresh until the stamp
+// arrives, and the future stamp is logged once. Friend health already refuses
+// a proof from the future; the stall ladder used to take the stamp as the
+// time of the work.
+func TestFutureDatedEvidenceCountsAsNow(t *testing.T) {
+	t.Parallel()
+	w := friendWorld(t, friendBrief("friend amy"))
+	now := w.s.Now
+	past := now.Add(-time.Minute)
+	future := now.Add(48 * time.Hour).UTC().Truncate(time.Second)
+
+	at, what := FriendWorked(w.s, "amy", friendWorkOf(TickReq{Beats: map[string]Beat{"amy": {Proof: past}}}, "amy"))
+	assert.True(t, at.Equal(past), "a proof before now is that time, got %s", at)
+	assert.Equal(t, "session proof", what)
+	assert.Equal(t, 0, futureEvidenceLogCount("amy", past))
+
+	at, what = FriendWorked(w.s, "amy", friendWorkOf(TickReq{Beats: map[string]Beat{"amy": {Proof: future}}}, "amy"))
+	assert.True(t, at.Equal(now), "a future proof counts as the server's now, got %s", at)
+	assert.Equal(t, "session proof", what)
+	assert.Equal(t, 1, futureEvidenceLogCount("amy", future), "the future stamp is logged once")
+
+	at, what = FriendWorked(w.s, "amy", friendWorkOf(TickReq{Beats: map[string]Beat{"amy": {Proof: future}}}, "amy"))
+	assert.True(t, at.Equal(now), "a future proof still counts as now")
+	assert.Equal(t, 1, futureEvidenceLogCount("amy", future), "the same future stamp is not logged again")
+
+	row := FriendRow("amy")
+	w.s.Fleet.Put(&Card{
+		ID: "s1-1.w1", Row: row, Col: Working, Rev: 1,
+		Fields: map[string]string{"kind": "work", FieldReported: stamp(future.Add(time.Hour))},
+	})
+	reportAt := future.Add(time.Hour)
+	at, what = FriendWorked(w.s, "amy", FriendWork{})
+	assert.True(t, at.Equal(now), "a future report counts as the server's now, got %s", at)
+	assert.Equal(t, "report", what)
+	assert.Equal(t, 1, futureEvidenceLogCount("amy", reportAt), "the future report is logged once")
+	at, _ = FriendWorked(w.s, "amy", FriendWork{})
+	assert.True(t, at.Equal(now))
+	assert.Equal(t, 1, futureEvidenceLogCount("amy", reportAt), "the same future report is not logged again")
+}
