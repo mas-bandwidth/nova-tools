@@ -59,7 +59,7 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 	fi, statErr := os.Stat(*out)
 	if statErr != nil || !fi.IsDir() {
 		if statErr != nil && os.IsNotExist(statErr) {
-			r.add("--out does not exist: " + *out + "; it wants " + wantsOut)
+			r.addRemedy("--out does not exist: "+*out+"; it wants "+wantsOut, "mkdir -p "+*out)
 		} else if statErr != nil {
 			r.add("--out " + *out + ": " + statErr.Error() + "; it wants " + wantsOut)
 		} else {

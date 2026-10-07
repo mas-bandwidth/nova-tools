@@ -102,11 +102,21 @@ func (s *sink) done(code, max int) int {
 // knew about. With a sink under --json the refusal is one JSON object on stdout.
 type refusals struct {
 	token string
-	list  []string
+	list  []problem
 	s     *sink
 }
 
-func (r *refusals) add(problem string) { r.list = append(r.list, problem) }
+// problem is one refusal: the reason, and the command that clears it. An empty remedy
+// falls back to the tool's help, so a call that is wrong points at the door while one
+// bad state points at the act that fixes it.
+type problem struct{ why, remedy string }
+
+func (r *refusals) add(why string) { r.addRemedy(why, "") }
+
+// addRemedy is add for a problem whose next turn is one named act, not the banner.
+func (r *refusals) addRemedy(why, remedy string) {
+	r.list = append(r.list, problem{why: why, remedy: remedy})
+}
 
 func (r *refusals) required(name, value, wants string) {
 	if strings.TrimSpace(value) == "" {
@@ -117,14 +127,37 @@ func (r *refusals) required(name, value, wants string) {
 // print writes one line per problem, in the order they were found, and returns exit 2.
 func (r *refusals) print(stderr io.Writer) int {
 	if r.s != nil && r.s.json {
-		o := tool.Refuse(r.list...)
-		o.Verb, o.Remedy = r.s.o.Verb, "nova-tokens help"
+		whys := make([]string, len(r.list))
+		for i, p := range r.list {
+			whys[i] = p.why
+		}
+		o := tool.Refuse(whys...)
+		o.Verb, o.Remedy = r.s.o.Verb, r.oneRemedy()
 		return o.Render(r.s.stdout, true)
 	}
-	for _, problem := range r.list {
-		writeRefusal(stderr, r.token, problem, "nova-tokens help")
+	for _, p := range r.list {
+		writeRefusal(stderr, r.token, p.why, r.remedyFor(p))
 	}
 	return 2
+}
+
+// remedyFor is a problem's own command, or the tool's help when it carries none.
+func (r *refusals) remedyFor(p problem) string {
+	if p.remedy != "" {
+		return p.remedy
+	}
+	return "nova-tokens help"
+}
+
+// oneRemedy is the single remedy the JSON refusal carries: the first problem that names
+// one, else the door.
+func (r *refusals) oneRemedy() string {
+	for _, p := range r.list {
+		if p.remedy != "" {
+			return p.remedy
+		}
+	}
+	return "nova-tokens help"
 }
 
 // writeRefusal is the one refusal line: `<TOKEN> REFUSED: <why>; run: <remedy>`.
