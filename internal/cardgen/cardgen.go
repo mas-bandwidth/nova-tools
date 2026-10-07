@@ -649,8 +649,11 @@ const Attribution = "ATTRIBUTION: By: your own name, the worker who does this at
 
 // AsARead is the brief's AS A READ section, the text a reader of the work is given
 // (sprint.FriendReadBrief carries it through the next heading): a By: trailer is judged
-// only for being present and true.
-const AsARead = "AS A READ\nA By: trailer is judged only for being present and true: it names the worker who pushed the branch under read, whoever was preferred for the card. A trailer naming another friend than a WHO line or an earlier brief expected is no finding, and attribution alone never decides a verdict; read the change against the task, its test and its PATHS.\n"
+// only for being present and true, and the scope of the change is its PATHS line as
+// AlwaysInPathsRule widens it. The sentence stays out of THE TASK: add's paths-cover-named
+// check would otherwise refuse every generated brief for naming tla/RUNS.tsv, tla/CASES.tsv
+// and internal/docs/catalog.go.
+const AsARead = "AS A READ\nA By: trailer is judged only for being present and true: it names the worker who pushed the branch under read, whoever was preferred for the card. A trailer naming another friend than a WHO line or an earlier brief expected is no finding, and attribution alone never decides a verdict; read the change against the task, its test and its PATHS.\nThe scope of this change is its PATHS line. " + AlwaysInPathsRule + "\n"
 
 // Deadline is the minutes a tier gets when the header names none.
 func Deadline(tier string) int {
@@ -681,7 +684,8 @@ func touchesModels(paths []string) bool {
 
 // Render writes one brief: the header lines nova-sprint add reads, the paragraph
 // every card of the night carried, the rules verbatim from the card template, the
-// ATTRIBUTION line, the task, the steps, and the AS A READ section a reader is given.
+// ATTRIBUTION line, the task, the steps, and the AS A READ section a reader is given
+// (AsARead, which carries AlwaysInPathsRule).
 // It is the card template's shape with the <...> filled, so it passes the add's lint
 // and nova-swarm lint --card --child-rules by construction.
 func Render(h Header, c Card) string {

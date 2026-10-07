@@ -74,7 +74,8 @@ Landing, the coordinator's: an external delivery (git pushes the base) and a sto
     second rejected push as --rejected. Each head merged is checked first, by
     script and no model: a head whose diff changes a file outside its brief's
     PATHS, or leaves a stranded sentence fragment or an unmatched backquote in
-    prose, ends the batch as a head in conflict does. A card that adds a directory
+    prose, ends the batch as a head in conflict does. Tests, testdata, tla/RUNS.tsv and
+    tla/CASES.tsv, the docs catalog and AGENTS.md maps are inside every PATHS. A card that adds a directory
     owns its catalog row and the AGENTS.md maps; a conflict only in those maps, or
     those maps and added catalog rows, resolves as the ledgers do. A conflict only
     in the generated ledgers lands: the tip's side, then their tests' update run
@@ -1743,13 +1744,9 @@ func (l *lander) checkCard(ctx context.Context, dir, stream string, c landCard, 
 	if tracked != "" {
 		beforePaths = strings.Split(tracked, "\n")
 	}
-	// a test, fixture or doc of the same change outside PATHS is a scope amendment, allowed
-	// by rule and recorded on the batch's line (sprint.ScopeAmended; section 7)
-	var changed []string
-	for _, f := range diffcheck.Parse(diff) {
-		changed = append(changed, f.New)
-	}
-	amended, out := sprint.ScopeAmended(changed, diffcheck.Outside(c.paths, diff, beforePaths))
+	// SPEC-SPRINT section 7: required validation files are inside every PATHS;
+	// ordinary scope amendments remain recorded and unrelated source stays refused.
+	amended, out := sprint.LandScope(c.paths, diff, beforePaths)
 	if len(out) > 0 {
 		why = append(why, "it changes files outside its PATHS (E12): "+strings.Join(out, ", "))
 	}

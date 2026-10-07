@@ -497,7 +497,9 @@ with no clock and no store). What it holds:
   which a worker of another model completes with its own model's name. Its
   `AS A READ` section says a `By:` trailer is judged only for being present and
   true (the worker who pushed the branch under read), and attribution alone never
-  decides a verdict. Briefs stamped `By: <friend>` from a WHO pin sent readers to
+  decides a verdict. It also says the scope of the change is its `PATHS` line and
+  carries `cardgen.AlwaysInPathsRule`, so a reader holds a test or a ledger the
+  line does not name inside the change. Briefs stamped `By: <friend>` from a WHO pin sent readers to
   fail landed-quality heads for that line alone, because another worker had done
   the work, and landed heads signed with the name of a friend who never ran them.
 - A card's PATHS are computed from the START line its brief carries, never
@@ -507,12 +509,18 @@ with no clock and no store). What it holds:
   package of its test, so a ledger card's PATHS are the row's file's package,
   the class test's package and the ledger; a findings card's, the file's
   package and its test's package; a help card's, `cmd/<tool>` and
-  `docs/CLI.md`. A
-  package is the unit a change lives in: a typed file list one file short holds
-  the card at land (E12). Two cards that share an entry and neither needs the
-  other set `shared-paths=yes`. With a checkout, every entry is checked to
-  exist in it; a package's `*.go` is not answered by a test file the card
-  creates.
+  `docs/CLI.md`. A package is the unit a change lives in: a typed file list
+  one file short holds the card at land (E12). Files a change must touch to
+  keep the tree green are always inside PATHS, whatever the brief names: every
+  `*_test.go`, every file under a `testdata/` directory, `tla/RUNS.tsv` and
+  `tla/CASES.tsv`, `internal/docs/catalog.go`, and every `AGENTS.md` map; any
+  other file outside PATHS is still out of scope (`cardgen.AlwaysInPathsRule`;
+  SPEC-SPRINT.md section 7, always inside PATHS): the lander's E12
+  (`sprint.LandScope`) and the readers (`sprint.FilesOutsidePaths`) hold every
+  card to that sentence, and every generated brief carries it in its AS A READ
+  section. Two cards that share an entry and neither needs the other set
+  `shared-paths=yes`. With a checkout, every entry is checked to exist in it;
+  a package's `*.go` is not answered by a test file the card creates.
 - Waves: cards of one ordinary ledger alternate (odd wave 1, even wave 2
   depending on their wave 1 neighbours), because adjacent deletions of one file
   conflict at land; a generated ledger (SPEC-SPRINT.md section 7) gets one wave
