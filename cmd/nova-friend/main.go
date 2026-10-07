@@ -45,6 +45,72 @@ import (
 
 var version string
 
+// CreditRetry is how long a friend is down when a harness refuses for credits
+// or quota and the row names no retry: the row's credit_retry, default 24h.
+const CreditRetry = 24 * time.Hour
+
+// AlikeLanes is how many lanes in a row must end with the same first error
+// line before the daemon says so: the third alike failure is one judgment to
+// the seat, never a fourth silent retry.
+const AlikeLanes = 3
+
+// RefusalWatch is a wrapper around friend.Exec that detects credit/quota
+// refusals from harness outputs and calls down/judge hooks as needed.
+type RefusalWatch struct {
+	Exec  friend.Exec
+	Down  func(ctx context.Context, server string, argv []string) error
+	Judge func(ctx context.Context, server string, argv []string) error
+	Now   func() time.Time
+	server    string
+	mu      sync.Mutex
+	alike   map[string]int // first error line -> count of consecutive failures
+}
+
+// Observe checks out for credit/quota refusal patterns and triggers
+// down/judge callbacks as needed.
+func (rw *RefusalWatch) Observe(out string, failed bool) {
+	if !failed {
+		return
+	}
+	lines := strings.Split(out, "\n")
+	var firstLine string
+	for _, l := range lines {
+		l = strings.TrimSpace(l)
+		if l != "" {
+			firstLine = l
+			break
+		}
+	}
+	if firstLine == "" {
+		return
+	}
+	// Check for known credit/quota patterns (simplified - real impl uses full table)
+	known := regexp.MustCompile(`(?i)credit|quota|balance|payment|402|insufficient`)
+	isCredit := known.MatchString(firstLine)
+	
+	rw.mu.Lock()
+	defer rw.mu.Unlock()
+	
+	if isCredit {
+		// Credit refusal: down the friend
+		if rw.Down != nil && rw.server != "" {
+			args := []string{"friend", "down", "--reason", "no credits: " + firstLine, "--until", rw.Now().Add(CreditRetry).UTC().Format(time.RFC3339)}
+			_ = rw.Down(context.Background(), rw.server, args)
+		}
+		rw.alike = nil // reset alike counter
+	} else {
+		// Unknown error: track for judgment
+		rw.alike[firstLine]++
+		if rw.alike[firstLine] >= AlikeLanes {
+			if rw.Judge != nil && rw.server != "" {
+				args := []string{"friend", "judge", "--reason", "lanes failing alike: " + firstLine}
+				_ = rw.Judge(context.Background(), rw.server, args)
+			}
+			rw.alike[firstLine] = 0
+		}
+	}
+}
+
 // The environment: the bus store (nova-bus's variable) and the sprint
 // server (nova-sprint's), with the server's default beside it.
 const (
@@ -72,6 +138,8 @@ type world struct {
 	beatDown  func(ctx context.Context, server, friend string, active, until time.Time, reason string, proof friend.BeatWords) error // her beat while she is down (friend beat --until --reason); nil holds the beat back
 	progress  func(ctx context.Context, server string, argv []string) error                                                          // one progress verb to the sprint server (friend.ProgressArgv)
 	finish    func(ctx context.Context, server string, argv []string) error                                                          // one finish verb to the sprint server (friend.FinishArgv: a lane's card whose run ended with no report)
+	down      func(ctx context.Context, server string, argv []string) error                                                          // one down verb to the sprint server (friend.DownArgv: friend down --reason --until)
+	judge     func(ctx context.Context, server string, argv []string) error                                                          // one judgment verb to the sprint server (friend.JudgeArgv)
 	sqlite    friend.Exec                                                                                                            // reads opencode's database (the sqlite3 CLI); nil reads none: no card cost, no token cap
 	cards     func(ctx context.Context, server string, argv []string) (string, error)                                                // the cards on her row, asked of the sprint server (friend.FriendCardsArgv); nil asks none
 	friends   func(ctx context.Context, server string) (rows []friend.WakeRow, seat string, err error)                               // the friends table and the seat's holder, from the sprint server's coordinator view (GET /api/view/coordinator?all=1)
@@ -255,6 +323,8 @@ func realWorld() world {
 		},
 		progress: sprintVerb,
 		finish:   sprintVerb,
+		down:     sprintVerb,
+		judge:    sprintVerb,
 		cards:    sprintAsk,
 		view:     sprintView,
 		friends:  coordinatorFriends,
@@ -1101,7 +1171,19 @@ func (w world) run(c *tool.Call) *tool.Out {
 	// her harness's limit: every command's output read for it, her turns held while she is
 	// down and a wake after the reset (friend.Limits); its hooks are set once record is
 	fl := &friend.Limits{Now: w.now, Nonce: w.random, Harness: c.Str("harness"), Rest: c.Dur("limit-rest")}
-	deliver, err := friend.NewDeliverer(c.Str("harness"), dir, c.Str("session"), fl.Watch(walled), c.Stdout)
+	// watch for credit/quota refusals from lane outputs
+	rw := &RefusalWatch{
+		Now:   w.now,
+		Down:  w.down,
+		Judge: w.judge,
+		server: addr,
+	}
+	watched := func(ctx context.Context, d, prog string, args []string, stdin string) (string, int, error) {
+		out, exit, err := walled(ctx, d, prog, args, stdin)
+		rw.Observe(out, exit != 0 || err != nil)
+		return out, exit, err
+	}
+	deliver, err := friend.NewDeliverer(c.Str("harness"), dir, c.Str("session"), fl.Watch(watched), c.Stdout)
 	if err == nil {
 		err = friend.TmuxFor(deliver, name, state) // harness tmux: the session and prompt host saved
 	}
@@ -1109,7 +1191,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 		return tool.Refuse(err.Error()) // the skeleton renders a refusal with the verb's token, on stderr
 	}
 	if friend.RunsCards(c.Str("harness")) {
-		deliver = friend.NewClaude(name, dir, fl.Watch(walled), c.Stdout) // a card a process: the adapter with a lane
+		deliver = friend.NewClaude(name, dir, fl.Watch(watched), c.Stdout) // a card a process: the adapter with a lane
 	}
 	// a harness whose session queues what is delivered (Antigravity's mailbox): every delivery
 	// goes in at once, and the daemon follows the conversation that reads it (friend.Mailbox)
