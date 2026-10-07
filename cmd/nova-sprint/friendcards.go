@@ -231,6 +231,11 @@ func friendFinish(ctx context.Context, name string, p sprint.Packet, report stri
 	para = oneline.Cap(para, maxFriendReport)
 	row := sprint.FriendRow(name)
 	r := sprint.FinishReq{Sel: sprint.Sel{IDs: []string{p.Card}}, As: row, Gens: map[string]int{p.Card: p.Gen}, Branch: p.Branch, Who: row}
+	// her card's usage (the result's usage line, or the machinery's Cost: line) rides
+	// on the work card, so the friends table's tokens column sums it per friend
+	if usage, ok := sprint.FriendUsage(report); ok {
+		r.Usage = usage.String()
+	}
 	switch {
 	case verdict == VerdictLand && typedrec.IsFullSha(head):
 		// the head is origin's tip, never the report's word: what lands is what is there
