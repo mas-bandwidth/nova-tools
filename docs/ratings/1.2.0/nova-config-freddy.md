@@ -1,6 +1,6 @@
 # nova-config READ and USE rating, nova-tools 1.2.0
 
-Rater: rater
+Rater: gpt-5.6-luna (opencode)
 Build: 65416146b5bb
 READ: 9/10
 USE: 8.5/10
@@ -11,7 +11,7 @@ Built and run on a Linux machine in a scratch directory. Used with `--file` stor
 
 READ. `nova-config help` answers what it is in one line, explains the two stores, and gives a first run with no database. Every verb's `-h` shows its effect, required flags, an example, and exit codes. SPEC-CONFIG.md is well-structured and covers the boundary, kinds, schema, history, and apply. cmd/nova-config/main.go is 668 lines, a marked reduction from earlier versions. `migrate` sets up a file store correctly.
 
-What keeps READ at 9. The banner offers `--seat` as a store for every verb in `help`, but `machine list --seat` is an unknown flag. The inventory first run names a fixture by a path relative to a source checkout, which refuses as printed from anywhere else. The spec has small drifts: loop has `width` in the field table but `loop add --width` is unknown; fleet has `bus` and `loops_dir` in the binary but not in the spec field table; tier is missing from apply order in the spec. The friend kind's help uses "she/her" pronouns. `login --as` means the seat while `--as` on every other verb means the actor. Every verb's `-h` repeats `migrate --dry-run` and `machine self` exit codes that don't apply.
+What keeps READ at 9. The inventory first run names a fixture by a path relative to a source checkout, which refuses as printed from anywhere else. The spec has small drifts: loop has `width` in the field table but `loop add --width` is unknown; fleet has `bus` and `loops_dir` in the binary but not in the spec field table; tier is missing from apply order in the spec. The friend kind's help uses "she/her" pronouns. `login --as` means the seat while `--as` on every other verb means the actor. Every verb's `-h` repeats `migrate --dry-run` and `machine self` exit codes that don't apply.
 
 USE. The tool works well on a file store. `migrate` made the file (35 migrations applied), and a second `migrate` applied none. Adding machines, friends, loops, routes, and tiers all worked. `list`, `show`, and `history` agreed with every write. Refusals are excellent: missing flags, bad values, duplicates, refs naming no row, and disabled routes without notes all refuse in one line with a runnable remedy. `--dry-run` writes nothing. `--json` prints one envelope.
 
@@ -29,9 +29,8 @@ A 10 would put the refusal envelope on stdout under `--json`, silence the Redis 
 | 5 | internal/config/inventory.go:412 | A fixture of wrong shape dumps a Go struct type and lists fleet as `store, coordinator`, omitting required `redis_port` and `pg_dsn`. | Say the YAML path that failed and the wanted mapping with all four fleet fields. | S |
 | 6 | internal/config/inventory.go:207 | Under `--fixture`, missing `redis_port` and `pg_dsn` names `nova-config fleet set ... then apply` as the remedy, a store write the fixture does not read. | Under `--fixture`, name the fixture file and the two keys to add to its fleet mapping. | S |
 | 7 | cmd/nova-config/inventory.go:142 | `--host nope` against a fixture points at `nova-config machine list`, which reads the store, not the fixture. | Under `--fixture`, the remedy is the same inventory with `--list`. | S |
-| 8 | cmd/nova-config/main.go:109 | The banner offers `--seat` as a store for every verb; `machine list --seat` is unknown (only writes take it). | Accept `--seat` on every verb that opens the store, or clarify in the banner that reads do not take it. | S |
-| 9 | internal/config/kind.go:412 | The friend kind's Doc and field help use "she/her" pronouns; the tool cannot know a friend's pronouns. | Write "the friend's slots", "the tiers it can do", or use they/their. | S |
-| 10 | internal/config/kind.go:444 | sprint set's decide flags carry calibration history (AUC, label counts) in `-h`; help lines run past 400 characters. | Keep the bar's meaning and default in `-h`; cite the spec section for calibration details. | S |
+| 9 | internal/config/kind.go:432 | The friend kind's Doc and field help use "she/her" pronouns; the tool cannot know a friend's pronouns. | Write "the friend's slots", "the tiers it can do", or use they/their. | S |
+| 10 | internal/config/kind.go:461 | sprint set's decide flags carry calibration history (AUC, label counts) in `-h`; help lines run past 400 characters. | Keep the bar's meaning and default in `-h`; cite the spec section for calibration details. | S |
 | 11 | cmd/nova-config/login.go:320 | `login --as` is the seat; on every other verb `--as` is the actor. | Name it `--seat` and keep `--as` the actor everywhere. | S |
 | 12 | `nova-config help machine` | Prints `width` and `self` usage lines and four examples, not the six verbs (add, set, remove, list, show, history). | Print the kind's usage block from the banner, then its examples. | S |
 | 13 | internal/config/store.go:247 | Migrate seeds rows with `created=2023-11-14T22:13:20Z`, the in-memory store's fixed test clock. | Stamp the file store's seed rows with the wall clock. | S |
