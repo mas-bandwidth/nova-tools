@@ -131,7 +131,12 @@ type FriendSeat struct {
 	// start bound is at work, and the tick moves none of her cards for want of a start
 	// (friendUnstartedLevel).
 	Active time.Time
-	// Proof is her session's last proof as her beat carries it (Beat.Proof: a SESSION CHECK
+	// Billing is how her work is paid (config.FriendBilling): config.BillingAPI at API
+	// rates; empty or config.BillingSubscription, a subscription, and dealt heavy and pro
+	// cards first (subscriptionFirst).
+	Billing string
+	// Proof is her session's last proof as
+parameter> as her beat carries it (Beat.Proof: a SESSION CHECK
 	// it answered, or a bus message of its own), and Finished the store's record of her
 	// last finish, working to done; each zero when there is none. The stall ladder reads
 	// them as evidence of her work (FriendWorked).
@@ -313,6 +318,27 @@ func friendRoom(f FriendSeat) (room, width int) {
 		return 1 - f.ReadsFirst, 1
 	}
 	return DealAhead*f.Width - f.ReadsFirst, f.Width
+}
+
+// subscriptionFirst is the friends of names a card of the tier is offered first
+// (docs/SPEC-SPRINT.md section 1, deal-subscription-first-r-t-b.w2): for a heavy or pro
+// card, the ones billed by subscription (any billing but config.BillingAPI) when one is
+// among them, else names; for any other tier, names. The api friends, and the fleet's
+// routes after the friends' deal, take only what the subscription friends have no room for.
+func subscriptionFirst(names []string, seat map[string]FriendSeat, tier string) []string {
+	if tier != cardhdr.RouteHeavy && tier != cardhdr.RoutePro {
+		return names
+	}
+	var sub []string
+	for _, f := range names {
+		if seat[f].Billing != config.BillingAPI {
+			sub = append(sub, f)
+		}
+	}
+	if len(sub) == 0 {
+		return names
+	}
+	return sub
 }
 
 // preferredFriend is the friend of names a card goes to (docs/SPEC-SPRINT.md section 1,
@@ -508,7 +534,7 @@ func friendDealPass(s *Snapshot, cards []*Card, seats []FriendSeat, reclaim bool
 				}
 				left = slices.DeleteFunc(slices.Clone(left), func(f string) bool { return !slices.Contains(gone, f) })
 			}
-			name = preferredFriend(may, lanes, free)
+			name = preferredFriend(subscriptionFirst(may, seat, tier), lanes, free)
 		}
 		if name == "" || slices.Contains(left, name) || free[name] <= 0 {
 			continue // no friend it may go to is up with room: the fleet's, or (only) it waits ready

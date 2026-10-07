@@ -1441,6 +1441,28 @@ default) and `low` (it fills only an idle lane).
   2026-10-06, "I'm ok with flash readers on fleet but not pro"); a row naming pro is; a
   friend's reader naming none reads every tier (section 6; `TestFleetReadersReadOnlyTheirTiers`).
 
+### deal-subscription-first-r-t-b.w2: heavy and pro cards go to subscription friends first
+
+**A heavy or pro card is offered first to a friend billed by subscription**
+(the safety and SRE lenses on nova-sprint for v1.0.0, 2026-10-04, and the
+coordinator's decisions of 5:00 PM; `sprint.subscriptionFirst`,
+`sprint.friendDeal`). A
+friend's billing is her nova-config row's `billing` (`api` or `subscription`,
+default `subscription`; docs/SPEC-CONFIG.md), carried on her `FriendSeat`
+(`Billing`; empty is `subscription`). A subscription friend's work costs no
+dollar per token, so the friends' deal, among the friends a heavy or pro card
+may go to (up, her tiers hold its tier, below her room, not one it has left:
+friend-deal-idle-lanes-first.w1 above), takes the subscription friends alone
+while one is among them, and chooses between them as before (`preferredFriend`:
+an idle lane first, the most idle lanes, then the most room, then by name). Only
+a card no subscription friend has room for goes to an api friend, and only what
+the friends leave goes to the fleet's routes. A card naming a friend
+(`WHO: friend <name>`, or `WHO: only friend <name>`) keeps her whatever her
+billing, as above. A card of any other tier (flash, frontier) is dealt as
+before, billing not read (`TestHeavyAndProCardsGoToSubscriptionFriendsFirst`:
+with a subscription friend of room 4, an api friend and a pro route, five pro
+cards go four to the subscription friend and one elsewhere).
+
 ## 2. The cards
 
 Layer 1 of the processor, the instruction set, is [SPEC-ISA.md](SPEC-ISA.md): a
