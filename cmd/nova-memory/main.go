@@ -530,6 +530,25 @@ func scoreFields(score float64, chn string) string {
 	return fmt.Sprintf("score=%.2f score-channel=%s", score, chn)
 }
 
+// receiptHits stops a receipt list at the last hit above zero. scoreFields
+// prints every native score with two decimals, so a hit whose score rounds to
+// 0.00 is the same text an absent score would give and a reader cannot tell it
+// from no evidence. The list is left whole when no hit prints above zero: the
+// MISS line already explains an empty result as out-of-vocabulary, which a
+// weak in-vocabulary match is not.
+func receiptHits(hits []memindex.FileHit) []memindex.FileHit {
+	last := -1
+	for i, h := range hits {
+		if math.Round(h.Native*100) > 0 {
+			last = i
+		}
+	}
+	if last < 0 {
+		return hits
+	}
+	return hits[:last+1]
+}
+
 // wholeCap bounds a --whole paragraph. The snippet cuts at 120 bytes and the
 // words searched for can sit just past that cut; --whole prints the whole
 // paragraph up to this cap, and oneline.Cap counts the bytes it dropped, so
