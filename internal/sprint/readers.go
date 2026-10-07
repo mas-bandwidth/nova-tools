@@ -386,7 +386,8 @@ func ReadCardForAsk(s *Snapshot, primary string, attempt int, reader string) (id
 // read card of it at the attempt, placed or retired with a verdict (a reader
 // with one has read it). When a card retired without a verdict exists with the
 // plain identity and no second card exists yet, the reader is eligible to be
-// re-asked under second identity .g1 (ReadCardForAsk). The next attempt is read on new
+// re-asked under second identity .g1 (ReadCardForAsk): an away-retired card and
+// a refused card (RetiredByRefused) alike. The next attempt is read on new
 // cards, by every reader of the tier.
 func (s *Snapshot) freeReaders(pr *Card, attempt int) []string {
 	tier := s.readTierOf(pr)

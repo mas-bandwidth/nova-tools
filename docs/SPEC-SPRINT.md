@@ -3075,8 +3075,12 @@ the adoption `release.OneMachine` (internal/release/adopt_one.go). Test:
   reader. It is retired off the reader (`retired_by` refused, its reason in
   `refused_why`) and asked of another reader of its tier; the reader that refused
   it may be asked it once more at the attempt, under the second identity, as a
-  reader whose read was taken back away may. When fewer readers are free for it
-  than the reads it still needs and a reader refused it for want of a route, the
+  reader whose read was taken back away may. The model carries it as the
+  refused-read transition (`tla/DirtyTick.tla`, `ReadRefuse`, `nrt`): the one
+  re-ask moves `rea` at most `MaxReasks`, so `ReasksBounded` holds, and a second
+  refusal opens the tier's judgment instead of another re-ask. When fewer readers
+  are free for it than the reads it still needs and a reader refused it for want
+  of a route, the
   tier's one judgment holds it (`no route serves the tier`, one per tier, the
   deal's, its text naming the refusals), the card stays in review, no `cannot ask`
   is raised for it, and the readers stay up and are asked their next reads
@@ -6504,7 +6508,10 @@ row the card is on now), and a report of hers on a card of her row (`reported`).
 reads the newest of all of them (`sprint.FriendWorked`), never one field: on 2026-10-06
 her daemon's walk of her working directory read three days old while her outbox held
 reports from that hour and her bus notes came every few minutes, and the ladder took two of
-her working cards back (`TestAFriendWithAReportInTheWindowIsNeverStalled`). The view's
+her working cards back (`TestAFriendWithAReportInTheWindowIsNeverStalled`). A stamp dated
+after the server's clock counts as that clock, logged once, so a future stamp cannot hold
+her at rung 0 until a time that has not arrived (`TestFutureDatedEvidenceCountsAsNow`); her
+own health already refuses a proof from the future. The view's
 `friend idle` item measures the same evidence and her cards' moves (a take, a progress
 stamp), never her daemon's walk alone.
 
