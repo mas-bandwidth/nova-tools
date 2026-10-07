@@ -246,3 +246,61 @@ func TestDeferredReportDoesNotHoldLaterBlockerBehindIt(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, saved.Report)
 }
+
+// Category bounds apply through multiple real receive passes, not only to the queue
+// helper (SPEC-FRIEND.md, Notifications; FriendNotificationsCapacity.tla).
+func TestDistinctUsefulBusBurstsKeepOneUnreadBatchPerCategory(t *testing.T) {
+	t.Parallel()
+	for _, kind := range []string{bus.KindReport, bus.KindRequest, bus.KindBlocker} {
+		t.Run(kind, func(t *testing.T) {
+			t.Parallel()
+			r := newRig(t)
+			app := &codexApp{now: t0}
+			adapter := app.codex(nil)
+			adapter.QueueOnly = true
+			n := &notificationReceiver{d: r.d, b: r.bus, policy: NotificationPolicy{}, dir: t.TempDir()}
+			n.d.Deliver = adapter
+			for i := 0; i < 100; i++ {
+				_, err := r.bus.Send(context.Background(), bus.Message{From: "ada", To: []string{"bob"}, Kind: kind, Subject: fmt.Sprintf("distinct %d", i), Body: fmt.Sprintf("full distinct payload %d", i)})
+				require.NoError(t, err)
+			}
+			for i := 0; i < 6; i++ {
+				require.NoError(t, n.step(context.Background(), t0.Add(time.Duration(i)*time.Minute)))
+			}
+			assert.Len(t, app.texts(), 1)
+			assert.Equal(t, 1, app.queuedN)
+			pending, err := r.store.Pending(context.Background(), bus.StreamOf("bob"), "bob", 1000)
+			require.NoError(t, err)
+			assert.NotEmpty(t, pending)
+		})
+	}
+}
+
+// An enqueue refusal, restart and long idle retain the report's immutable input,
+// while recovery uses newly available queue capacity (SPEC-FRIEND.md, Notifications).
+func TestDeferredReportSurvivesRestartThenEnqueuesWhenCapacityOpens(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	app := &codexApp{now: t0, queueFail: true}
+	adapter := app.codex(nil)
+	adapter.QueueOnly = true
+	n := &notificationReceiver{d: r.d, b: r.bus, policy: NotificationPolicy{}, dir: t.TempDir()}
+	n.d.Deliver = adapter
+	_, err := r.bus.Send(context.Background(), bus.Message{From: "ada", To: []string{"bob"}, Kind: bus.KindReport, Subject: "report", Body: "complete retained report"})
+	require.NoError(t, err)
+	require.NoError(t, n.step(context.Background(), t0))
+	state, err := ReadNotificationState(n.dir)
+	require.NoError(t, err)
+	require.NotNil(t, state.Report)
+	text := state.Report.Text
+	app.queueFail = false
+	n.state = state
+	require.NoError(t, n.step(context.Background(), t0.Add(48*time.Hour)))
+	require.Len(t, app.texts(), 1)
+	assert.Equal(t, text, app.texts()[0])
+	assert.Nil(t, n.state.Report)
+	assert.Nil(t, n.state.Pending)
+	pending, err := r.store.Pending(context.Background(), bus.StreamOf("bob"), "bob", 1000)
+	require.NoError(t, err)
+	assert.Empty(t, pending)
+}
