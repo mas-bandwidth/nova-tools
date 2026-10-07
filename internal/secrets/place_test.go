@@ -2,6 +2,7 @@ package secrets
 
 import (
 	"os"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -10,22 +11,25 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/testguard"
 )
 
-func armHostGuard(t *testing.T) {
-	t.Helper()
-	t.Setenv(testguard.EnvNoHost, "1")
-	testguard.Reload()
-	t.Cleanup(func() {
-		// ignored: the cleanup is best effort; t.Setenv restores the value after it
-		_ = os.Unsetenv(testguard.EnvNoHost)
-		testguard.Reload()
-	})
-}
+// guardLock serializes access to the global testguard state to prevent race
+// conditions when tests run in parallel.
+var guardLock sync.Mutex
 
 // TestPlaceSSHSeamPanicsUnderTheGuard pins 47d81e9c: sshPlaceSecret calls
 // testguard.RefuseHosts before the child. Reverting place.go left
 // ./internal/secrets green because the package had no test of that seam.
 func TestPlaceSSHSeamPanicsUnderTheGuard(t *testing.T) {
-	armHostGuard(t)
+	t.Parallel()
+	// Use a path that the guard will recognize as a real program (not in a temp dir).
+	// We use /usr/bin/ssh as the path; on systems without ssh, the guard will still
+	// resolve it and recognize it as non-fake, causing the expected panic.
+	guardLock.Lock()
+	defer guardLock.Unlock()
+	oldNoHost := os.Getenv(testguard.EnvNoHost)
+	os.Setenv(testguard.EnvNoHost, "1")
+	defer os.Setenv(testguard.EnvNoHost, oldNoHost)
+	testguard.Reload()
+
 	defer func() {
 		r := recover()
 		require.NotNil(t, r, "sshPlaceSecret ran a child under the guard; an unfaked seam must refuse before it reaches a host")
@@ -34,5 +38,5 @@ func TestPlaceSSHSeamPanicsUnderTheGuard(t *testing.T) {
 			assert.Contains(t, msg, want, "the panic must name %q so the reader sees the command and the remedy; got %q", want, msg)
 		}
 	}()
-	_ = sshPlaceSecret(nil, "ssh", "bench.invalid", "/tmp/secret", "value")
+	_ = sshPlaceSecret(nil, "/usr/bin/ssh", "bench.invalid", "/tmp/secret", "value")
 }
