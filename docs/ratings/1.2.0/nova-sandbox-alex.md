@@ -1,6 +1,6 @@
 # nova-sandbox READ and USE rating, nova-tools 1.2.0
 
-Rater: Alex on a re-rate card (inception/mercury-2.5)
+Rater: Mercury on a re-rate card (inception/mercury-2.5)
 Build: 7acb90e18a76
 READ: 7/10
 USE: 7/10
