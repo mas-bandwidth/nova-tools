@@ -52,8 +52,8 @@ func checkSSH(ctx context.Context, env Env) Result {
 		if strings.HasPrefix(line, "benches:") {
 			continue
 		}
-		if strings.HasPrefix(line, "  - ") {
-			benches = append(benches, strings.TrimPrefix(line, "  - "))
+		if strings.HasPrefix(line, "- ") {
+			benches = append(benches, strings.TrimPrefix(line, "- "))
 		} else if strings.Contains(line, ":") {
 			// Key-value line, skip
 			continue
