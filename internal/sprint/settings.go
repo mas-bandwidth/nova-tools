@@ -303,6 +303,8 @@ type SetReq struct {
 	// Reads is the reads every card in review needs (PropReadsNeeded): 0, 1, 2, or
 	// default (each card's own rule, ReadsNeeded).
 	Reads string `json:",omitempty"`
+	// Base is the base branch to set for the stream's cards (stream set --base).
+	Base string `json:",omitempty"`
 	Who   string
 }
 
@@ -430,7 +432,10 @@ func Set(s *Snapshot, r SetReq) Plan {
 			why = append(why, "--reads is the sprint's, not a stream's: nova-sprint set --reads "+r.Reads)
 		}
 	}
-	if r.ReadTier == "" && r.DealtMax == "" && r.LandProtected == "" && r.Release == "" && r.Prose == "" && len(alarms) == 0 && r.GoLanes == "" && r.Attempts == "" && r.FriendIdle == "" && r.FriendStallAfter == "" && r.FriendStallStep == "" && r.DriftCommits == "" && r.DriftHours == "" && r.Fleet == "" && r.Friends == "" && len(sideTiers) == 0 && r.ReadCards == "" && r.Reads == "" {
+	if r.Base != "" && len(r.Streams) == 0 {
+		why = append(why, "--base is a stream's, not the sprint's: nova-sprint stream set <s> --base <branch>")
+	}
+	if r.ReadTier == "" && r.DealtMax == "" && r.LandProtected == "" && r.Release == "" && r.Prose == "" && r.Base == "" && len(alarms) == 0 && r.GoLanes == "" && r.Attempts == "" && r.FriendIdle == "" && r.FriendStallAfter == "" && r.FriendStallStep == "" && r.DriftCommits == "" && r.DriftHours == "" && r.Fleet == "" && r.Friends == "" && len(sideTiers) == 0 && r.ReadCards == "" && r.Reads == "" {
 		why = append(why, "nothing to set: --read-tier, --read-cards, --reads, --prose, --dealt-max, --go-lanes, --attempts, --friend-idle, --friend-stall-after, --friend-stall-step, --drift-commits, --drift-hours, --fleet, --friends, --fleet-tiers, --friends-tiers or an --alarm-... threshold")
 	}
 	if len(r.Streams) > 0 && r.GoLanes != "" {
@@ -509,6 +514,44 @@ func Set(s *Snapshot, r SetReq) Plan {
 				} else {
 					set[FieldAttempts] = r.Attempts
 					moved = append(moved, "attempts "+r.Attempts)
+				}
+			}
+			// Set Base for stream's cards: update briefs for non-dealt cards
+			if r.Base != "" {
+				dealt := map[string]bool{}
+				for _, c := range s.Work.Cards() {
+					if c.Placed() && c.Row == st {
+						if c.Int("attempt") > 0 || c.Col == Landed {
+							dealt[c.ID] = true
+							moved = append(moved, c.ID+" keeps its base")
+						}
+					}
+				}
+				for _, c := range s.Work.Cards() {
+					if c.Placed() && c.Row == st && !dealt[c.ID] {
+						brief := c.F("brief")
+						if brief != "" {
+							baseVal, ok := cardhdr.Value(brief, "BASE")
+							if ok && baseVal != "" {
+								if ref, _, ok := cardhdr.ParseBase(baseVal); ok && ref != r.Base {
+									// BASE exists but differs, replace it
+									lines := strings.Split(brief, "\n")
+									for i, l := range lines {
+										if k, _, isKV := cardhdr.KeyValue(l); isKV && k == "BASE" {
+											lines[i] = "BASE: " + r.Base
+											break
+										}
+									}
+									c.Fields["brief"] = strings.Join(lines, "\n")
+									moved = append(moved, c.ID+" base to "+r.Base)
+								}
+							} else {
+								// No BASE, add it
+								c.Fields["brief"] = brief + "\nBASE: " + r.Base
+								moved = append(moved, c.ID+" base to "+r.Base)
+							}
+						}
+					}
 				}
 			}
 			p.Units = append(p.Units, Unit{Key: ctl.ID, Stream: st, Changes: []Change{change(Merge, setEntry(ctl, set, unset...))}, Moved: "stream " + st + " " + strings.Join(moved, ", "), Closes: closes})
