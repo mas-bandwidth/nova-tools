@@ -925,14 +925,16 @@ func (s State) AcceptHeld(p string) string {
 }
 
 // acceptNote is the ready to accept judgment a step that leaves an
-// acceptable primary in review writes (sprint's reviewJudgment): when no
-// judgment open on it offers accept (ready to accept, returned to review), and
-// the machine is STOPPED or holds it (AcceptHeld).
+// acceptable primary in review writes (sprint's reviewJudgment): only when the
+// pump holds it (AcceptHeld) and no judgment open on it offers accept (ready
+// to accept, returned to review). A primary nothing holds is the tick's to
+// accept, RUNNING or STOPPED (at the first pump after start): never a
+// judgment, never a hand step.
 func (n *State) acceptNote(p string) {
 	if !n.InWork(p, Review) || !n.Acceptable(p) || n.Open[Judgment{JAccept, p}] || n.Open[Judgment{JReturned, p}] {
 		return
 	}
-	if n.Machine != Running || n.AcceptHeld(p) != "" {
+	if n.AcceptHeld(p) != "" {
 		n.open(JAccept, p)
 	}
 }

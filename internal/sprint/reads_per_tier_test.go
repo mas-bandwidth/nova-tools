@@ -99,8 +99,11 @@ func TestAFlashCardIsAcceptedOnOneReadAndAProCardOnTwo(t *testing.T) {
 					assert.NotContains(t, openTypes(w, tc.id), NReadyToAccept, "ready to accept on %d of %d oks", i+1, tc.reads)
 				}
 			}
-			assert.Contains(t, openTypes(w, tc.id), NReadyToAccept)
-			w.must(Accept(w.s, AcceptReq{Sel: Sel{IDs: []string{tc.id}}}))
+			// the tick's to accept, no judgment (2026-10-06)
+			assert.NotContains(t, openTypes(w, tc.id), NReadyToAccept)
+			p, _ := TickAccept(w.s, TickReq{})
+			require.Len(t, p.Units, 1, "the tick accepts %s on %d oks", tc.id, tc.reads)
+			w.must(p)
 			assert.Equal(t, Merging, w.s.Work.Card(tc.id).Col)
 			assert.Len(t, Split(w.s.Work.Card(tc.id).F("readers")), tc.reads, "the readers it was accepted on")
 			w.clean("accepted on " + tc.tier + " reads")

@@ -15,7 +15,8 @@ import (
 // primary is refused, naming the card's decisions: ack answers only a
 // judgment whose decisions list it, and ready to accept, stranded in review,
 // reads exhausted and sentinel reached do not; the overdue decision act
-// prints only wait for them.
+// prints only wait for them. Ready to accept is for a primary the pump holds
+// (its CI red at its head, acknowledged): one nothing holds is the tick's.
 func TestAnAckOfTheOneJudgmentThatHoldsAPrimaryLeavesItSilent(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
@@ -24,6 +25,7 @@ func TestAnAckOfTheOneJudgmentThatHoldsAPrimaryLeavesItSilent(t *testing.T) {
 	h.must(DealStep(sprint.DealReq{Sel: sprint.Sel{IDs: []string{"p1"}}}))
 	h.takeAndFinish(false, "p1")
 	h.must(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"p1"}}}))
+	h.heldByRedCI("p1")
 	h.readAll()
 	open := h.openOf(sprint.NReadyToAccept)
 	require.Len(t, open, 1, "ready to accept: %v", open)

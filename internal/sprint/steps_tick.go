@@ -338,24 +338,26 @@ var TickParts = func() []TickPartDef {
 	return append(out, TickEnd...)
 }()
 
-// NReadyToMerge is the note the pump addresses to the coordinator once a
-// tick for each stream it queued accepted cards in: the merge is the
-// coordinator's ("accept is mechanical, but the merge step is not").
+// NReadyToMerge is the notice the pump addresses to the coordinator once a
+// tick in which it accepted primaries: a notice, not a decision ("accept is
+// mechanical, but the merge step is not"), naming every primary accepted.
 const NReadyToMerge = "ready to merge"
 
 // TickAccept is the machine's accept: accept is mechanical, but the merge
 // step is the coordinator's. Every primary in review with the ok reads it
-// needs at its head (ReadsNeeded) moves to merging and
-// into its stream's merge queue, in stream turns from the accept's index, in
-// the pump's one plan (Accept). The coordinator is told once for each stream
-// the tick queued cards in, "ready to merge" with the cards in order: the
-// merge is the coordinator's.
+// needs at its head (ReadsNeeded), whoever read it (a reader on the readers
+// table, a friend on her fleet row: okReaders), moves to merging and into its
+// stream's merge queue, in stream turns from the accept's index, in the pump's
+// one plan (Accept, the move accept --read-ok makes, the readers named in the
+// record). It is never a judgment and never a hand step: the seat is told once
+// a tick, one "ready to merge" notice naming every primary the tick accepted
+// and the land command of each stream; nothing in it asks for an answer.
 //
 // A primary a change queued after the drain names (s.Held) is not eligible: it
 // waits for the next tick's pump, where the change finds it where it expects
 // it (docs/SPEC-SPRINT.md's accept row: review -> merging only on the ok reads
 // it needs at the head, and the work table advances only at a tick's pump). It is
-// dropped here, before the plan, so the stream's state change and both notes
+// dropped here, before the plan, so the stream's state change and the notice
 // are planned for the cards accepted and for no others.
 func TickAccept(s *Snapshot, r TickReq) (Plan, int) {
 	eligible := func(c *Card) string {
@@ -384,27 +386,46 @@ func TickAccept(s *Snapshot, r TickReq) (Plan, int) {
 		return Plan{}, 0
 	}
 	p := Accept(s, AcceptReq{Sel: Sel{Only: ids}, Who: r.who()})
-	by := map[string][]string{}
-	var streams []string
+	if n, ok := acceptedNotice(p, ids, s.Now, r.who(), s.Coordinator); ok {
+		p.Notes = append(p.Notes, n)
+	}
+	return p, 0
+}
+
+// acceptedNotice is the one notice of a tick's accept (TickAccept): "ready to
+// merge", addressed to the coordinator, naming every primary the plan accepted
+// in the order accepted, with the land command of each stream they are in. The
+// stream is the note's when the primaries are of one stream. ok is false when the
+// plan accepted none.
+func acceptedNotice(p Plan, ids []string, now time.Time, who, to string) (Note, bool) {
+	var accepted, streams []string
 	for _, u := range p.Units {
 		if !contains(ids, u.Key) {
 			continue
 		}
-		if _, ok := by[u.Stream]; !ok {
+		accepted = append(accepted, u.Key)
+		if !contains(streams, u.Stream) {
 			streams = append(streams, u.Stream)
 		}
-		by[u.Stream] = append(by[u.Stream], u.Key)
+	}
+	if len(accepted) == 0 {
+		return Note{}, false
 	}
 	sort.Strings(streams)
-	for _, st := range streams {
-		n := happened(NReadyToMerge, st, s.Now, by[st]...)
-		n.Who, n.To = r.who(), s.Coordinator
-		// the thing to run is land (git merges and pushes, then the merge step); merge alone
-		// records a landing without touching git; nova-sprint run --land lands by itself
-		n.What = fmt.Sprintf("%d accepted and queued to merge: %s; run: nova-sprint land --stream %s (a nova-sprint run started with --land lands them itself)", len(by[st]), Preview(by[st], " "), st)
-		p.Notes = append(p.Notes, n)
+	stream := ""
+	if len(streams) == 1 {
+		stream = streams[0]
 	}
-	return p, 0
+	n := happened(NReadyToMerge, stream, now, accepted...)
+	n.Who, n.To = who, to
+	// the thing to run is land (git merges and pushes, then the merge step); merge alone
+	// records a landing without touching git; nova-sprint run --land lands by itself
+	lands := make([]string, len(streams))
+	for i, st := range streams {
+		lands[i] = "nova-sprint land --stream " + st
+	}
+	n.What = fmt.Sprintf("%d accepted and queued to merge: %s; run: %s (a nova-sprint run started with --land lands them itself)", len(accepted), Preview(accepted, " "), strings.Join(lands, "; "))
+	return n, true
 }
 
 // AcceptHeld is why the pump leaves a primary in review that has the ok reads
@@ -1567,12 +1588,20 @@ func notify(p *Plan, s *Snapshot, conds []cond, types []string, r TickReq) int {
 
 // MovesDue is how many moves the tick would make on the snapshot's work and
 // fleet: primaries ready to deal, work cards withdrawn, waiting primaries
-// whose needs have all landed (a sentinel is the coordinator's release), and
-// primaries in review to ask (as TickAsk picks them).
+// whose needs have all landed (a sentinel is the coordinator's release),
+// primaries in review to ask (as TickAsk picks them), and primaries in review
+// with the ok reads they need that nothing holds (the pump accepts them,
+// TickAccept): a STOPPED machine with any of these says so to the seat.
 func MovesDue(s *Snapshot) int {
 	n := len(s.Fleet.Column(Withdrawn))
 	for _, c := range s.Work.Column(Review) {
-		if s.Readers != nil && c.F("result") != "failed" && ReadsWanted(s, c) > 0 && enoughReadersUp(s, c) {
+		switch {
+		case s.Readers == nil || c.F("result") == "failed":
+		case acceptable(s, c):
+			if AcceptHeld(c) == "" {
+				n++
+			}
+		case ReadsWanted(s, c) > 0 && enoughReadersUp(s, c):
 			n++
 		}
 	}

@@ -1116,7 +1116,7 @@ nova-sprint progress --as <worker> <card>[@<gen>]... --epoch <n>
 nova-sprint ask [<id>... | --group <id> [--expect <n>]] [--stream <s>] [--limit <n>] [--another] [--answers <note>]
 nova-sprint queue --as <reader|member> | --stream <s>
 nova-sprint read --as <reader> (--begin | --ok | --broken) [<card>...] --epoch <n> [--limit <n>] [--finding <text>] [--usage <text>] | --as <reader> --return <card> --reason <text> --epoch <n> [--usage <text>]
-nova-sprint accept (<id>... | --stream <s> | --read-ok | --group <id> [--expect <n>]) [--answers <note>]
+nova-sprint accept (<id>... | --stream <s> | --read-ok | --group <id> [--expect <n>]) [--answers <note>]   # the tick accepts every primary whose reads are all ok and tells the seat (ready to merge); accept is for a held primary or a stuck case, and accept --read-ok with nothing eligible says "nothing waits: the tick accepts"
 nova-sprint rework (<id>... | --group <id> [--expect <n>]) [--fix <text>] [--answers <note>]
 nova-sprint return (<id>... | --group <id> [--expect <n>]) [--reason <text>] [--answers <note>]
 nova-sprint drop (<id>... | --stream <s> --col <state> | --group <id> [--expect <n>]) --reason <text> [--answers <note>]
@@ -1381,7 +1381,7 @@ them; once an episode, and `the fleet is working again` when it recovers. `run
 
 `nova-sprint answer` answers the routine judgments (a reader found it
 broken, work came back failed, blocked on something dropped, stalled, a conflict,
-past its deadline, cannot ask, ready to accept, a card at its bound) by
+past its deadline, cannot ask, ready to accept for a held primary, a card at its bound) by
 nova-decide's judgment decision, card by card: it applies the verb chosen when
 its probability is at or above `decide_judgment_bar` (nova-config's sprint row,
 empty by default: with no bar it applies nothing, records every decision and lists
@@ -1488,8 +1488,9 @@ verb table and the tick does not call its pass.
 ### What it does not prove
 
 A landed card records a completed flow: the worker reports done, two different
-readers pass that head, the tick (or the coordinator's `accept`) queues it for
-merging, and the landing is reported. These are recorded judgments, not a
+readers pass that head, the tick queues it for merging and tells the seat
+("ready to merge", a notice; the coordinator's `accept` is for a primary the
+tick holds), and the landing is reported. These are recorded judgments, not a
 proof that the work is correct. A twin exercises that flow one command at a
 time. It has no beats or ticks between commands, so it does not test fleet
 timing, the `run` loop, `inbox --wait` or liveness. `finish` without `--head`,
