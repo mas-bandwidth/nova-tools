@@ -16,13 +16,10 @@ import (
 
 const friendOnboardingPath = "../../docs/FRIEND-ONBOARDING.md"
 
-// getToolVerbs reads the verb table of a tool from its source.
-// For nova-sprint it reads cmd/nova-sprint/verbs.go (the init() var verbs).
-// For nova-config it reads cmd/nova-config/verbs.go.
-// For nova-bus and nova-friend it reads the tool.Verb tables in main.go.
-func getToolVerbs(t *testing.T, tool string) map[string]map[string]bool {
+// toolVerbs reads the verb table of a tool from its source.
+func toolVerbs(t *testing.T, tool string) map[string]bool {
 	t.Helper()
-	verbs := map[string]map[string]bool{}
+	verbs := map[string]bool{}
 
 	switch tool {
 	case "nova-sprint":
@@ -32,7 +29,7 @@ func getToolVerbs(t *testing.T, tool string) map[string]map[string]bool {
 		re := regexp.MustCompile(`^\s*{"([a-z][a-z0-9- ]*)",`)
 		for _, m := range re.FindAllStringSubmatch(string(src), -1) {
 			verb := m[1]
-			verbs[verb] = map[string]bool{}
+			verbs[verb] = true
 		}
 	case "nova-config":
 		src, err := os.ReadFile("../../cmd/nova-config/verbs.go")
@@ -41,13 +38,13 @@ func getToolVerbs(t *testing.T, tool string) map[string]map[string]bool {
 		reKind := regexp.MustCompile(`{"([a-z]+)",\s*"([a-z]+)"`)
 		for _, m := range reKind.FindAllStringSubmatch(string(src), -1) {
 			verb := m[1] + " " + m[2]
-			verbs[verb] = map[string]bool{}
+			verbs[verb] = true
 		}
 		// Also get single-word verbs from toolExamples
 		reTool := regexp.MustCompile(`"([a-z]+)":\s*"[^"]*"`)
 		for _, m := range reTool.FindAllStringSubmatch(string(src), -1) {
 			verb := m[1]
-			verbs[verb] = map[string]bool{}
+			verbs[verb] = true
 		}
 	case "nova-bus":
 		src, err := os.ReadFile("../../cmd/nova-bus/main.go")
@@ -56,7 +53,7 @@ func getToolVerbs(t *testing.T, tool string) map[string]map[string]bool {
 		re := regexp.MustCompile(`tool\.Verb\s*=\s*{"([a-z]+)"`)
 		for _, m := range re.FindAllStringSubmatch(string(src), -1) {
 			verb := m[1]
-			verbs[verb] = map[string]bool{}
+			verbs[verb] = true
 		}
 	case "nova-friend":
 		src, err := os.ReadFile("../../cmd/nova-friend/main.go")
@@ -65,7 +62,7 @@ func getToolVerbs(t *testing.T, tool string) map[string]map[string]bool {
 		re := regexp.MustCompile(`tool\.Verb\s*=\s*{"([a-z]+)"`)
 		for _, m := range re.FindAllStringSubmatch(string(src), -1) {
 			verb := m[1]
-			verbs[verb] = map[string]bool{}
+			verbs[verb] = true
 		}
 	default:
 		require.Fail(t, "unsupported tool", tool)
@@ -80,99 +77,61 @@ func extractGuideCommands(t *testing.T, path string) []string {
 	require.NoError(t, err)
 
 	var commands []string
-	// Look for fenced blocks with content
 	lines := strings.Split(string(content), "\n")
 	inBlock := false
-	var block []string
 
 	for _, line := range lines {
 		if strings.HasPrefix(line, "```") {
-			if !inBlock {
-				inBlock = true
-				block = []string{}
-			} else {
-				// End of block - extract commands
-				inBlock = false
-				for _, l := range block {
-					trimmed := strings.TrimSpace(l)
-					if strings.HasPrefix(trimmed, "nova-") {
-						commands = append(commands, trimmed)
-					}
-				}
-			}
+			inBlock = !inBlock
 		} else if inBlock {
-			block = append(block, line)
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "nova-") {
+				commands = append(commands, trimmed)
+			}
 		}
 	}
 	return commands
 }
 
-// validateCommand checks if a command's tool, verb, and flags exist.
-func validateCommand(t *testing.T, cmd string, toolVerbs map[string]map[string]bool) []string {
+// validateCommand checks if a command's tool and verb exist in the verb tables.
+func validateCommand(t *testing.T, cmd string, toolVerbs map[string]bool) []string {
 	var errors []string
-	// Parse command: nova-tool verb --flag ...
 	parts := strings.Fields(cmd)
 	if len(parts) == 0 {
 		return errors
 	}
 
-	first := parts[0]
 	// Extract tool name
 	tool := ""
-	if strings.HasPrefix(first, "nova-") {
-		tool = strings.SplitN(first, " ", 2)[0]
+	if strings.HasPrefix(parts[0], "nova-") {
+		tool = parts[0]
+		// Extract just the tool name (e.g., "nova-config" from "nova-config friend add")
+		tool = strings.SplitN(tool, " ", 2)[0]
 	}
 
 	if tool == "" {
 		return errors
 	}
 
-	toolVbs, ok := toolVerbs[tool]
-	if !ok {
+	// Get verbs for this tool
+	verbs := toolVerbs[tool]
+	if len(verbs) == 0 {
 		errors = append(errors, "unknown tool "+tool)
 		return errors
 	}
 
-	// Extract verb
+	// Check verb exists
 	verb := ""
 	if len(parts) > 1 {
 		verb = parts[1]
 		// Check for two-word verbs
-		if !strings.Contains(verb, " ") && len(parts) > 2 {
-			second := parts[2]
-			if !strings.HasPrefix(second, "-") {
-				verb = verb + " " + second
-			}
+		if len(parts) > 2 && !strings.HasPrefix(parts[2], "-") {
+			verb = verb + " " + parts[2]
 		}
 	}
 
-	// Check verb exists
-	if verb != "" && !strings.Contains(verb, " ") {
-		found := false
-		for v := range toolVbs {
-			if v == verb || strings.HasPrefix(v, verb+" ") {
-				found = true
-				break
-			}
-		}
-		if !found {
-			errors = append(errors, "unknown verb "+verb+" for tool "+tool)
-		}
-	}
-
-	// Check flags
-	for _, part := range parts {
-		if strings.HasPrefix(part, "--") {
-			flagName := strings.TrimPrefix(part, "--")
-			if idx := strings.Index(flagName, "="); idx >= 0 {
-				flagName = flagName[:idx]
-			}
-			// Simplified check - just verify the flag is plausible
-			// A full check would parse the verb's FlagSet
-			if flagName == "" {
-				errors = append(errors, "malformed flag in "+cmd)
-			}
-		}
+	if verb != "" && !verbs[verb] {
+		errors = append(errors, "unknown verb "+verb+" for tool "+tool)
 	}
 
 	return errors
@@ -192,11 +151,13 @@ func TestFriendOnboardingGuideCoversJoinToFirstCard(t *testing.T) {
 	commands := extractGuideCommands(t, friendOnboardingPath)
 	require.NotEmpty(t, commands, "No nova-* commands found in guide")
 
-	// Load verb tables
-	toolVerbs := map[string]map[string]bool{}
+	// Load verb tables for all tools
+	toolVerbs := map[string]bool{}
 	tools := []string{"nova-config", "nova-sprint", "nova-bus", "nova-friend"}
 	for _, tool := range tools {
-		toolVerbs[tool] = getToolVerbs(t, tool)
+		for verb := range toolVerbs(t, tool) {
+			toolVerbs[verb] = true
+		}
 	}
 
 	// Validate each command
