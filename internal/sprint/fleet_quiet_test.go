@@ -36,7 +36,7 @@ func (r *holdRig) quietLog() []string {
 // TestFleetQuietDealsNothingAndTellsWorkersUntilItEnds: fleet quiet holds a member out of
 // the deal until its time while its dealt work finishes, every worker's view carries the
 // QUIET line, and at the time the deal resumes by itself and the log says the quiet ended;
-// --end ends one early (docs/SPEC-SPRINT.md section 5, fleet-quiet-machine-b.w6).
+// --end ends one early (docs/SPEC-SPRINT.md section 5, fleet-quiet-machine-b.w7).
 func TestFleetQuietDealsNothingAndTellsWorkersUntilItEnds(t *testing.T) {
 	t.Parallel()
 	t.Run("until its time", func(t *testing.T) {

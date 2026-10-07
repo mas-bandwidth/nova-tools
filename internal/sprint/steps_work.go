@@ -965,7 +965,7 @@ func dealPlan(s *Snapshot, r DealReq, rr *round, ri routeIndexes) (Plan, roundMo
 		return p, moves
 	}
 	// a quiet member is dealt nothing until its quiet ends (fleet_quiet.go;
-	// docs/SPEC-SPRINT.md section 5, fleet-quiet-machine-b.w6)
+	// docs/SPEC-SPRINT.md section 5, fleet-quiet-machine-b.w7)
 	quiet := quietWhy(s, up)
 	up = notQuiet(s, up)
 	q, widths := memberLoads(s, up), memberWidths(s, up)

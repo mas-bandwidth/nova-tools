@@ -9,7 +9,7 @@ import (
 )
 
 // The coordinator's quiet on a machine (docs/SPEC-SPRINT.md section 5,
-// fleet-quiet-machine-b.w6): fleet quiet <member> --for <duration> --reason <text> holds a
+// fleet-quiet-machine-b.w7): fleet quiet <member> --for <duration> --reason <text> holds a
 // fleet member out of the deal until a time, while the work dealt to it finishes, and every
 // worker's view says so (a QUIET line: the machine, the end time and the reason; run no go
 // build or test there). It ends by itself at the time: the deal reads the clock, so nothing
@@ -100,7 +100,7 @@ func quietNow(s *Snapshot) map[string]Quiet {
 }
 
 // notQuiet is up without the members quiet now: the deal and the level give a quiet member
-// nothing (docs/SPEC-SPRINT.md section 5, fleet-quiet-machine-b.w6).
+// nothing (docs/SPEC-SPRINT.md section 5, fleet-quiet-machine-b.w7).
 func notQuiet(s *Snapshot, up []string) []string {
 	quiet := quietNow(s)
 	if len(quiet) == 0 {

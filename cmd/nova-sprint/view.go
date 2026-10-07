@@ -821,7 +821,7 @@ func (a *app) workerView(ctx context.Context, st *store.Store, as string) (worke
 		v.Next = workerNext(v, mine[0], ps[0])
 	}
 	// every machine quiet now, for every member and friend: run no go build or test there
-	// (docs/SPEC-SPRINT.md section 5, fleet-quiet-machine-b.w6)
+	// (docs/SPEC-SPRINT.md section 5, fleet-quiet-machine-b.w7)
 	shapes, err := st.B.Shapes(ctx, []string{st.Names.Table(sprint.Fleet)})
 	if err != nil {
 		return v, false, err

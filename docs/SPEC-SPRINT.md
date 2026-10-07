@@ -2949,7 +2949,7 @@ is up at once. The part is `sprint.FleetBackPresence` (internal/sprint/fleet_bac
 the adoption `release.OneMachine` (internal/release/adopt_one.go). Test:
 `TestAMachineBackFromDownAdoptsTheLatestBeforeItIsDealt`.
 
-### fleet-quiet-machine-b.w6: a quiet machine
+### fleet-quiet-machine-b.w7: a quiet machine
 
 `fleet quiet <member> --for <duration> --reason <text>` (or `--until <RFC3339>`), the
 coordinator's, holds a fleet member out of the deal until that time: the deal, the level,

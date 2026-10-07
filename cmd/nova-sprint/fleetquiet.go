@@ -16,7 +16,7 @@ func init() {
 
 // cmdFleetQuiet is fleet quiet <member> (--for <duration> | --until <RFC3339>) --reason <text>,
 // or --end: the coordinator's quiet on a machine (docs/SPEC-SPRINT.md section 5,
-// fleet-quiet-machine-b.w6; sprint/fleet_quiet.go). The deal gives the member nothing until
+// fleet-quiet-machine-b.w7; sprint/fleet_quiet.go). The deal gives the member nothing until
 // the time, its dealt work finishes, every worker's view says QUIET, and it ends by itself at
 // the time.
 func (a *app) cmdFleetQuiet(args []string, stdout, stderr io.Writer) int {
