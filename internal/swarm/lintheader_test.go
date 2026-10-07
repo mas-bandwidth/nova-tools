@@ -12,8 +12,8 @@ import (
 
 // THE FOUR TOKENS OF SPEC-TOOLWORK §5 RULE 1 (issue #1651), RED FIRST.
 //
-// `cut` writes five typed lines under the contract line; internal/pulse/cardheader.go
-// (T03, PR #1721 @f927bccc) parses them; this file is what `lint --card` checks before
+// `cut` writes five typed lines under the contract line; pulse/cardheader.go at
+// f927bccc (T03, PR #1721) parses them; this file is what `lint --card` checks before
 // any spend, so the three readers agree. Each test below was red before LintCardHeader
 // existed -- the package did not compile -- and each one has a negative control beside
 // it: a card that is right in exactly the way the red card is wrong, drawing nothing.
