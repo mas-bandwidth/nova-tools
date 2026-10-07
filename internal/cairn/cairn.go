@@ -32,6 +32,7 @@
 package cairn
 
 import (
+	"cmp"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -65,6 +66,11 @@ var Policies = []string{PublishNever, PublishManual, PublishDeferred, PublishImm
 
 // ValidPublish reports whether p is one of Policies.
 func ValidPublish(p string) bool { return slices.Contains(Policies, p) }
+
+// errNoStore is the one refusal for a call that names no store. main refuses a
+// missing --store before any verb runs; this keeps the library honest for a
+// direct caller, and the line is written once.
+var errNoStore = errors.New("no store given; refusing to guess")
 
 // IDRule is what ValidID asks of a session or entry id, for a refusal to quote.
 const IDRule = "an id names exactly one file or directory of that name inside the store, on every platform: " +
@@ -503,7 +509,7 @@ func PlanOpen(store, session, source string, now time.Time, publish string) (Ope
 
 func open(store, session, source string, now time.Time, publish string, write bool) (OpenRecord, error) {
 	if store == "" {
-		return OpenRecord{}, errors.New("no store given; refusing to guess")
+		return OpenRecord{}, errNoStore
 	}
 	if !ValidID(session) {
 		return OpenRecord{}, fmt.Errorf("bad session id %q: %s", session, IDRule)
@@ -541,10 +547,10 @@ func open(store, session, source string, now time.Time, publish string, write bo
 			// A different --publish names both policies: the one the session
 			// holds and the one this call asked for (docs/SPEC-CAIRN.md, the open verb).
 			msg := fmt.Sprintf("session %q is already open with publish=%s source=%s; a re-open names the same, and another policy or source is a new session id",
-				session, rec.Publish, cmpOr(rec.Source, "-"))
+				session, rec.Publish, cmp.Or(rec.Source, "-"))
 			if rec.Publish != publish {
 				msg = fmt.Sprintf("session %q is already open with publish=%s source=%s; --publish %s names another, and a re-open names the same",
-					session, rec.Publish, cmpOr(rec.Source, "-"), publish)
+					session, rec.Publish, cmp.Or(rec.Source, "-"), publish)
 			}
 			return rec, &ConflictError{
 				Msg:    msg,
@@ -573,13 +579,6 @@ func open(store, session, source string, now time.Time, publish string, write bo
 		return OpenRecord{}, err
 	}
 	return planned, appendLog(store, "open", session, "", stamp, publish, source)
-}
-
-func cmpOr(s, empty string) string {
-	if s == "" {
-		return empty
-	}
-	return s
 }
 
 // pointerLine is the one machine-scannable line an append adds to the
@@ -633,7 +632,7 @@ func PlanAppend(store, session, id, text, source string, now time.Time, publish 
 func appendEntry(store, session, id, text, source string, now time.Time, publish string, write bool) (AppendResult, error) {
 	var res AppendResult
 	if store == "" {
-		return res, errors.New("no store given; refusing to guess")
+		return res, errNoStore
 	}
 	if !ValidID(session) {
 		return res, fmt.Errorf("bad session id %q: %s", session, IDRule)
@@ -782,7 +781,7 @@ func existingAppend(store, session, id, text, final string, write bool) (AppendR
 func readEntry(store, session, id string) (entryFile, time.Time, error) {
 	var ef entryFile
 	if store == "" {
-		return ef, time.Time{}, errors.New("no store given; refusing to guess")
+		return ef, time.Time{}, errNoStore
 	}
 	raw, err := os.ReadFile(entryPath(store, session, id))
 	if err != nil {
@@ -805,7 +804,7 @@ func readEntry(store, session, id string) (entryFile, time.Time, error) {
 // record returns the section body in the form its reader indexes.
 func EntryText(store, session, id string) (string, error) {
 	if store == "" {
-		return "", errors.New("no store given; refusing to guess")
+		return "", errNoStore
 	}
 	if !ValidID(id) {
 		return "", fmt.Errorf("bad entry id %q: %s", id, IDRule)

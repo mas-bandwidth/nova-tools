@@ -1,5 +1,5 @@
 // Unit coverage for the plan and refusal paths the per-function coverage
-// table showed at zero: ConflictError.Error, PlanOpen, cmpOr and PlanAppend.
+// table showed at zero: ConflictError.Error, PlanOpen and PlanAppend.
 // Everything runs in-process over plain files in t.TempDir() with clock
 // readings passed in: no sleeps, no real time, no network, no subprocess, no
 // Redis or Postgres.
@@ -43,24 +43,6 @@ func TestCairnCoverConflictErrorMessage(t *testing.T) {
 		t.Run(row.name, func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, row.want, row.err.Error(), "ConflictError.Error must return Msg and nothing else")
-		})
-	}
-}
-
-func TestCairnCoverCmpOr(t *testing.T) {
-	t.Parallel()
-
-	rows := []struct {
-		name, s, empty, want string
-	}{
-		{name: "an empty value takes the fallback", s: "", empty: "-", want: "-"},
-		{name: "a value stands as written", s: "bench-a/session-7", empty: "-", want: "bench-a/session-7"},
-		{name: "an empty fallback renders empty", s: "", empty: "", want: ""},
-	}
-	for _, row := range rows {
-		t.Run(row.name, func(t *testing.T) {
-			t.Parallel()
-			assert.Equal(t, row.want, cmpOr(row.s, row.empty))
 		})
 	}
 }

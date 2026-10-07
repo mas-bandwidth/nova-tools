@@ -12,6 +12,7 @@
 package main
 
 import (
+	"cmp"
 	"errors"
 	"io"
 	"os"
@@ -227,14 +228,6 @@ func clock(c *tool.Call) time.Time {
 
 func stampOf(t time.Time) string { return t.Format(time.RFC3339Nano) }
 
-// sourceOf is a source pointer as a field: "" reads as absent, "-".
-func sourceOf(s string) string {
-	if s == "" {
-		return "-"
-	}
-	return s
-}
-
 // refusal is the result for an error from the store: a conflict ran and said
 // no (exit 1); anything else could not run (exit 2). Either names the command
 // to run next when the store knows it.
@@ -274,7 +267,7 @@ func open(c *tool.Call) *tool.Out {
 		return refusal(err)
 	}
 	shown := stamp
-	o := tool.Done().Fact("session", session).Fact("store", store).Fact("source", sourceOf(rec.Source)).
+	o := tool.Done().Fact("session", session).Fact("store", store).Fact("source", cmp.Or(rec.Source, "-")).
 		Fact("publish", publish)
 	if before.Found {
 		if !before.Opened.IsZero() {
@@ -307,7 +300,7 @@ func appendEntry(c *tool.Call) *tool.Out {
 		}
 		return o
 	}
-	return tool.Done().Fact("session", session).Fact("entry", entry).Fact("source", sourceOf(res.Source)).
+	return tool.Done().Fact("session", session).Fact("entry", entry).Fact("source", cmp.Or(res.Source, "-")).
 		Fact("persisted", res.Persisted).Fact("published", false).Fact("publish", res.Policy).
 		Fact("duplicate", res.Duplicate).Fact("stamp", stampOf(res.Stamp))
 }
@@ -350,7 +343,7 @@ func index(c *tool.Call) *tool.Out {
 	}
 	o.Fact("sessions", len(names)).Fact("entries", total)
 	for _, r := range all {
-		o.Item("entry", "session", r.Session, "entry", r.ID, "stamp", stampOf(r.Stamp), "bytes", r.Bytes, "source", sourceOf(r.Source))
+		o.Item("entry", "session", r.Session, "entry", r.ID, "stamp", stampOf(r.Stamp), "bytes", r.Bytes, "source", cmp.Or(r.Source, "-"))
 	}
 	return o
 }
@@ -379,7 +372,7 @@ func receipt(c *tool.Call) *tool.Out {
 		return refusal(err)
 	}
 	o := tool.Done().Fact("session", rc.Session).Fact("entry", rc.ID).Fact("stamp", stampOf(rc.Stamp)).
-		Fact("bytes", rc.Bytes).Fact("source", sourceOf(rc.Source)).Fact("persisted", true).
+		Fact("bytes", rc.Bytes).Fact("source", cmp.Or(rc.Source, "-")).Fact("persisted", true).
 		Fact("published", false).Fact("publish", rc.Policy)
 	if c.Bool("text") {
 		text, err := cairn.EntryText(c.Str("store"), c.Str("session"), c.Str("entry"))
