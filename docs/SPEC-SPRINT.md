@@ -277,6 +277,18 @@ reported activity raises none of this kind: her silence is the report rule's (15
 without a beat). The column is a field of a table locked on 2026-10-01 and is added by the card
 friend-session-liveness.w1 (internal/sprint/TABLES.lock, the 2026-10-04 entry).
 
+**A friend's usage** (the card friends-tokens-column, 2026-10-07). The friends table's
+`tokens` column, after `active`, text with no fold, sums her cards' usage records
+(`sprint.FriendTokensFromCards`, `input` + `output` + `cache_read` + `cache_write` from
+each card's `usage` field, the run's record that `finish` keeps). A friend on a
+subscription shows the compact count, `1.2M`; a friend her nova-config row bills per
+call, `api` or `metered` in its `billing` field, shows the dollars those records
+charged, rounded up to the cent (`cardcost.Cents`). The billing field is added by the
+cost card; until a row sets it every friend is a subscription. The card's usage is read
+from the report her session writes when it finishes (the `usage:` line, else the `tokens`
+segment of the friend machinery's `Cost:` line), so a card with no usage reported adds
+nothing to the column.
+
 **A subscription friend's window use** (subscription-pacing-is-a-setting.w1; the owner,
 2026-10-05 ~10:45 PM, "Please try to go easy on <friend> (<machine>) and this session until
 11PM, or you will run out of credits"). A friend on a subscription is paced by her daemon against

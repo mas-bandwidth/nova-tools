@@ -241,6 +241,8 @@ func TestDashboardPageIsTheSpec(t *testing.T) {
 	friendsSec := sp.section(t, "Friends")
 	assert.Contains(t, friendsSec, "same shape as Fleet without load")
 	friends := append([]string{"friend"}, slices.DeleteFunc(slices.Clone(fleet[1:]), func(c string) bool { return c == "load" })...)
+	// the tokens column is the friends table's alone (docs/SPEC-SPRINT.md, the friends table)
+	friends = append(friends, "tokens")
 	for _, c := range splitList(match(t, `same shape as Fleet without load \(([^;)]+)`, friendsSec, "Friends' columns"), ",") {
 		assert.Contains(t, friends, c, "Friends names column %q, which the shape of Fleet without load has not", c)
 	}
