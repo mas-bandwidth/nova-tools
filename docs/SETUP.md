@@ -119,3 +119,21 @@ The `gosdk` check reads the role from the machine's seat. On the coordinator's m
 no `go` there it is ok. On a bench it fails when `go` is absent, when its version is not
 `go.mod`'s toolchain version, or when `GOCACHE` is not writable, and warns when `GOFLAGS`
 does not carry `-mod=readonly`. Each fix line names the step above.
+
+### sprint-dashboard-verb-r-b.w5: the sprint dashboard
+
+The sprint dashboard is `nova-sprint dashboard`, run as a loop record on the
+coordinator's machine, never a hand-written launchd or systemd unit. Add the record, apply
+it, and the fleet's loops play writes its unit:
+
+```
+nova-config loop add sprint-dashboard --machine <m> --argv '["env","NOVA_SPRINT_SERVER=127.0.0.1:6390","nova-sprint","dashboard","--logo","<home>/sprint-logo.svg"]' --keepalive true --as <name>
+```
+
+It serves the page on `127.0.0.1:7390` and reads the sprint once a second whether or not
+a page is open; `--logo` is optional. The contract is
+[SPEC-SPRINT-DASHBOARD.md](SPEC-SPRINT-DASHBOARD.md); the loop record and its play are in
+[FLEET.md](FLEET.md). `nova-doctor --check dashboard` says `ok` when the loop record's unit
+is installed and its loopback port answers, `warn` when no loop record runs the dashboard
+on this machine or a hand unit serves it, and `fail` when the unit is there and the port
+does not answer. It is a fleet check: `--local` skips it.
