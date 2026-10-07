@@ -32,6 +32,12 @@ import (
 // ServerEnv names the sprint's server for the coordinator's verbs: host:port.
 const ServerEnv = "NOVA_SPRINT_SERVER"
 
+// LocalServer is the local sprint server's loopback address (the port `run --listen`
+// serves; docs/SPEC-SPRINT.md, "The server", and docs/CLI.md, "nova-sprint"): it is
+// what a verb with no store and no server named reaches, so a cold coordinator runs
+// `nova-sprint <verb>` and nothing else, with no store credentials.
+const LocalServer = "127.0.0.1:6390"
+
 // fileFlags are the flags of the coordinator's verbs whose value is a file or a
 // directory: the server runs in another directory, so a path sent to it is absolute.
 var fileFlags = []string{"rules", "brief-file", "brief-dir", "file", "decide-record"}
@@ -44,6 +50,7 @@ var waits = map[string]string{"where": "watch", "inbox": "wait", "lane take": "w
 // verbArgs is an argument list as its verb's own flags read it.
 type verbArgs struct {
 	name  string        // the verb; "" when the list names none
+	sub   string        // the word after the verb, for a verb whose subcommands differ (seat)
 	words int           // how many words the verb is
 	fs    *flag.FlagSet // the verb's flags, set as the list sets them; nil for no verb
 	help  bool          // the list asks for the verb's help
@@ -51,17 +58,22 @@ type verbArgs struct {
 }
 
 // readVerb is the argument list read by its verb's flags, as the verb parses them.
-func readVerb(argv []string) (v verbArgs) {
+// a is the app the flags are read for: a flag whose default comes from the
+// environment (--redis) reads the same environment the verb will run with.
+func readVerb(a *app, argv []string) (v verbArgs) {
 	for _, vb := range verbs {
 		w := strings.Fields(vb.name)
 		if len(argv) >= len(w) && slices.Equal(argv[:len(w)], w) && len(w) > v.words {
 			v.name, v.words = vb.name, len(w)
+			if len(argv) > len(w) {
+				v.sub = argv[len(w)]
+			}
 		}
 	}
 	if v.words == 0 {
 		return v
 	}
-	if v.fs = verbFlags(v.name); v.fs == nil {
+	if v.fs = verbFlags(a, v.name); v.fs == nil {
 		v.err = fmt.Errorf("the flags of %s could not be read", v.name)
 		return v
 	}
@@ -79,7 +91,7 @@ func readVerb(argv []string) (v verbArgs) {
 
 // verbFlags is the verb's flag set, got as its -h is (helpCommand): the verb run with
 // --help stops at its flags, before it reads or writes anything. nil when it did not.
-func verbFlags(name string) (fs *flag.FlagSet) {
+func verbFlags(a *app, name string) (fs *flag.FlagSet) {
 	for _, v := range verbs {
 		if v.name != name {
 			continue
@@ -92,7 +104,7 @@ func verbFlags(name string) (fs *flag.FlagSet) {
 				panic(r)
 			}
 		}()
-		v.run(newApp(func(string) string { return "" }), []string{"--help"}, io.Discard, io.Discard)
+		v.run(a, []string{"--help"}, io.Discard, io.Discard)
 		return nil
 	}
 	return nil
@@ -115,16 +127,47 @@ func (v verbArgs) given(name string) (yes bool) {
 	return yes
 }
 
+// seatSubs are the words after `seat` that name a subcommand: the seat's push
+// proof (push, pong) is the store's and the server runs it, while login and
+// logout record and remove the login of the machine they are typed on and are
+// not the server's (notServed; docs/SPEC-SPRINT.md, "The seat's store login"
+// and "The push proof"). They are not verbs of the table, so the forwarding
+// machinery reads the word after `seat` and keeps it where cmdSeat dispatches
+// from: the client's and the server's own words go after it, never between the
+// verb and its subcommand.
+var seatSubs = []string{"login", "logout", "push", "pong"}
+
+// seatSub says word is one of the seat verb's subcommands.
+func seatSub(word string) bool { return slices.Contains(seatSubs, word) }
+
+// servedSeatSub says the list is a seat subcommand the server runs: push and
+// pong write the seat's push proof in the store (docs/SPEC-SPRINT.md, "The
+// push proof"). The server's flags go after the subcommand (serve.go), and a
+// flag only the subcommand knows (--harness) still parses there.
+func (v verbArgs) servedSeatSub() bool {
+	return v.name == "seat" && (v.sub == "push" || v.sub == "pong")
+}
+
+// notServedName is the name the not-served list is read by: the verb, or the
+// seat's subcommand, so `seat login` is not served while `seat push` is.
+func (v verbArgs) notServedName() string {
+	if v.name == "seat" && seatSub(v.sub) {
+		return "seat " + v.sub
+	}
+	return v.name
+}
+
 // unserved is why the server does not run the verb sent from this machine, "" when it
 // does: any verb of the command but the ones no one is served (notServed), one that
 // waits for the sprint to move (waits), and one naming a store (the server's is the
 // store).
 func (v verbArgs) unserved() string {
+	name := v.notServedName()
 	switch {
 	case v.words == 0:
 		return "not a verb of nova-sprint; run: nova-sprint help"
-	case slices.Contains(notServed, v.name):
-		return v.name + " is not run by the server; run it by itself"
+	case slices.Contains(notServed, name):
+		return name + " is not run by the server; run it by itself"
 	case v.given("redis"):
 		return "--redis is not given to the server: its store is the sprint's"
 	case waits[v.name] != "" && v.given(waits[v.name]) && !slices.Contains([]string{"false", "0s"}, v.fs.Lookup(waits[v.name]).Value.String()):
@@ -133,23 +176,69 @@ func (v verbArgs) unserved() string {
 	return ""
 }
 
-// server is the sprint's server this process sends the verb's reads and writes to
-// (NOVA_SPRINT_SERVER), "" when the verb runs on a store here: no server named, this
-// process is the server, or the verb was given its own --redis (fs, as parsed).
-func (a *app) server(fs *flag.FlagSet) string {
+// namedServer is the server a caller's verb goes to: addr, and whether the caller
+// named it (NOVA_SPRINT_SERVER set) rather than the default standing in for a process
+// that named no store and no server.
+type namedServer struct {
+	addr  string
+	named bool
+}
+
+// server is the sprint's server this process sends the verb's reads and writes to,
+// and whether the caller named it; the zero value says the verb runs on a store here:
+// this process is the server (a served verb never forwards), the verb was given its
+// own --redis, or a store is named in the environment or by a recorded seat login
+// (the store the verb runs on), so a server is not what reaches the store. With no
+// store and no server named anywhere, the local sprint server (LocalServer) is the
+// default, and named is false: docs/SPEC-SPRINT.md, "The coordinator's verbs go to
+// the server too"; docs/CLI.md, "nova-sprint".
+func (a *app) server(fs *flag.FlagSet) namedServer {
 	if a.serveAddr != "" || (verbArgs{fs: fs}).given("redis") {
-		return ""
+		return namedServer{}
 	}
-	return a.getenv(ServerEnv)
+	if addr := a.getenv(ServerEnv); addr != "" {
+		return namedServer{addr: addr, named: true}
+	}
+	if a.storeNamed(fs) {
+		return namedServer{}
+	}
+	return namedServer{addr: LocalServer}
+}
+
+// storeNamed says a store is named for this verb: NOVA_SPRINT_REDIS or NOVA_REDIS_ADDR
+// set, or a seat login on record (the verb's --redis has an address, read from the
+// recorded login by the default; the sentinel alone means none is). A malformed login
+// file is a named store all the same: the verb runs here and reads the file, so its
+// refusal names the file and the remedy rather than the local server.
+func (a *app) storeNamed(fs *flag.FlagSet) bool {
+	if firstEnv(a.getenv, "NOVA_SPRINT_REDIS", "NOVA_REDIS_ADDR") != "" {
+		return true
+	}
+	if fs != nil {
+		if f := fs.Lookup("redis"); f != nil && f.Value.String() != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // forwarded sends the verb to the sprint's server when there is one and the server runs
 // the verb; sent is false when the verb runs here.
 func (a *app) forwarded(args []string, stdout, stderr io.Writer) (code int, sent bool) {
-	v := readVerb(args)
-	addr := a.server(v.fs)
-	if addr == "" || v.unserved() != "" || v.help || v.err != nil {
-		return 0, false // no server, not served, a wait, its help, or flags it refuses: runs here
+	v := readVerb(a, args)
+	srv := a.server(v.fs)
+	addr := srv.addr
+	// NOVA_SPRINT_PREFIX is refused where the verb runs, before a store or a server is
+	// reached (storeCtx); the refusal is the verb's own, so it is never sent on. A
+	// seat subcommand the server runs (push, pong) is sent on though the bare seat
+	// verb's flags do not parse its own (--harness): the server's seat verb refuses
+	// what it does not know, as it would where it is typed.
+	if addr == "" || a.getenv("NOVA_SPRINT_PREFIX") != "" || v.unserved() != "" || v.help || (v.err != nil && !v.servedSeatSub()) {
+		return 0, false // no server, a prefix, not served, a wait, its help, or flags it refuses: runs here
+	}
+	if !srv.named { // the server is the local default: say which was used (docs/CLI.md, "nova-sprint")
+		fmt.Fprintf(stderr, "NOTE %s %s: no NOVA_SPRINT_REDIS and no %s named, so through the local sprint server at %s; name a store with --redis <addr>, or a server with %s=<addr>\n",
+			prog, v.name, ServerEnv, oneline.Field(LocalServer), ServerEnv)
 	}
 	rest := args[v.words:]
 	var brief []string
@@ -162,7 +251,7 @@ func (a *app) forwarded(args []string, stdout, stderr io.Writer) (code int, sent
 	}
 	res, err := a.ask(context.Background(), addr, args[:v.words], rest)
 	if err != nil {
-		return a.unanswered(v.name, addr, err, stderr), true
+		return a.unanswered(v.name, addr, srv.named, err, stderr), true
 	}
 	a.answer(withBrief(res, brief), stdout, stderr)
 	return res.Code, true
@@ -171,7 +260,9 @@ func (a *app) forwarded(args []string, stdout, stderr io.Writer) (code int, sent
 // ask sends the server one verb (its words, then what follows them) as this caller:
 // who acts is this caller's alone, said even when it is no one (the server never acts
 // as its own environment names), before the caller's own words so a --actor it gave
-// wins; each file it names is absolute.
+// wins; each file it names is absolute. The seat's subcommand stays the word after
+// the verb: the caller's --actor goes after it, so cmdSeat still dispatches from the
+// first word it reads (seatSubs).
 func (a *app) ask(ctx context.Context, addr string, verb, rest []string) (sprintwire.Result, error) {
 	send := a.forward
 	if send == nil {
@@ -179,7 +270,12 @@ func (a *app) ask(ctx context.Context, addr string, verb, rest []string) (sprint
 			return sprintwire.Client{Addr: addr}.Do(ctx, verbs...)
 		}
 	}
-	argv := absolutePaths(slices.Concat(verb, []string{"--actor", a.getenv("NOVA_SPRINT_ACTOR")}, rest))
+	argv := slices.Concat(verb, rest)
+	at := len(verb)
+	if at < len(argv) && argv[0] == "seat" && seatSub(argv[at]) {
+		at++
+	}
+	argv = absolutePaths(a, slices.Concat(argv[:at], []string{"--actor", a.getenv("NOVA_SPRINT_ACTOR")}, argv[at:]))
 	res, err := send(ctx, addr, argv)
 	if err != nil {
 		return sprintwire.Result{}, err
@@ -194,9 +290,16 @@ func (a *app) answer(res sprintwire.Result, stdout, stderr io.Writer) {
 }
 
 // unanswered says the server did not answer the verb, with what to do, and is its exit
-// code: the verb is not run here behind the server's back.
-func (a *app) unanswered(verb, addr string, err error, stderr io.Writer) int {
-	fmt.Fprintf(stderr, "%s %s: %s (NOVA_SPRINT_SERVER=%s); nothing is known of what ran: once it answers, read the sprint (nova-sprint where, log) before running it again; the server is the run loop: run: nova-sprint run --listen <host:port>\n", prog, verb, oneline.Escape(err.Error()), oneline.Field(addr))
+// code: the verb is not run here behind the server's back. named says the caller named
+// the server (NOVA_SPRINT_SERVER set); false is the default local server standing in
+// for a process that named no store and no server, and the line says so rather than
+// quoting a variable the caller never set.
+func (a *app) unanswered(verb, addr string, named bool, err error, stderr io.Writer) int {
+	where := "(" + ServerEnv + "=" + oneline.Field(addr) + ")"
+	if !named {
+		where = "(the local sprint server " + oneline.Field(addr) + " is the default: no " + ServerEnv + " and no NOVA_SPRINT_REDIS named)"
+	}
+	fmt.Fprintf(stderr, "%s %s: %s %s; nothing is known of what ran: once it answers, read the sprint (nova-sprint where, log) before running it again; the server is the run loop: run: nova-sprint run --listen <host:port>\n", prog, verb, oneline.Escape(err.Error()), where)
 	return 2
 }
 
@@ -224,8 +327,8 @@ func without(fs *flag.FlagSet, words []string, names ...string) []string {
 // flag is a value, a boolean flag takes no word, and nothing after -- is a flag.
 // Arguments whose flags do not parse are left as they are, for the verb to refuse; so
 // is a value that cannot be made absolute.
-func absolutePaths(argv []string) []string {
-	v := readVerb(argv)
+func absolutePaths(app *app, argv []string) []string {
+	v := readVerb(app, argv)
 	if v.fs == nil || v.err != nil || v.help {
 		return argv
 	}
@@ -237,7 +340,7 @@ func absolutePaths(argv []string) []string {
 	}
 	words := argv[v.words:]
 	// ignored: the words parsed above (readVerb), and parse the same again
-	_, _ = parseEach(verbFlags(v.name), words, func(name string, at, n int) {
+	_, _ = parseEach(verbFlags(app, v.name), words, func(name string, at, n int) {
 		w := words[at]
 		_, value, inline := strings.Cut(w, "=")
 		switch {

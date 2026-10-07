@@ -17,6 +17,10 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/sprintwire"
 )
 
+// emptyEnvApp is an app with nothing in its environment: a test of a flag's own
+// parsing, where the environment's defaults are not what is under test.
+func emptyEnvApp() *app { return newApp(func(string) string { return "" }) }
+
 // coordinatorAt is a coordinator's command whose sprint is the rig's server: it names
 // the server and no store, so a verb that reached a store from here would be refused.
 // sent is every verb it forwarded.
@@ -276,7 +280,7 @@ func TestACoordinatorsVerbTheServerDidNotAnswer(t *testing.T) {
 // directory.
 func TestAFileNamedToTheServerIsAbsolute(t *testing.T) {
 	t.Parallel()
-	got := absolutePaths([]string{"add", "--stream", "s1", "--brief-file", "briefs/a.md", "--rules=rules.txt", "--brief-dir", "/abs/dir", "--brief", "--brief-file"})
+	got := absolutePaths(emptyEnvApp(), []string{"add", "--stream", "s1", "--brief-file", "briefs/a.md", "--rules=rules.txt", "--brief-dir", "/abs/dir", "--brief", "--brief-file"})
 	assert.True(t, filepath.IsAbs(got[4]), got[4])
 	assert.Equal(t, "a.md", filepath.Base(got[4]))
 	rules, _ := filepath.Abs("rules.txt")
@@ -341,6 +345,6 @@ func TestAFileFlagIsFoundAsTheVerbParsesIt(t *testing.T) {
 		{[]string{"add", "--stream", "s1", "-rules=r.txt"}, []string{"add", "--stream", "s1", "-rules=" + rules}},
 		{[]string{"add", "--no-such-flag", "--rules", "r.txt"}, []string{"add", "--no-such-flag", "--rules", "r.txt"}},
 	} {
-		assert.Equal(t, c.want, absolutePaths(append([]string(nil), c.in...)), "%v", c.in)
+		assert.Equal(t, c.want, absolutePaths(emptyEnvApp(), append([]string(nil), c.in...)), "%v", c.in)
 	}
 }
