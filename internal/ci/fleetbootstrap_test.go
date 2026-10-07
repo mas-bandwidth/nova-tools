@@ -70,6 +70,9 @@ func TestFleetPlaysConvergeAFreshHostIdempotently(t *testing.T) {
 			edit func(*bootstrapSource)
 			want string
 		}{
+			{"preflight does not stop host plays", func(s *bootstrapSource) {
+				s.play = strings.Replace(s.play, "  any_errors_fatal: true\n", "", 1)
+			}, "owner input failures do not stop later host plays"},
 			{"shell", func(s *bootstrapSource) {
 				s.tasks["redis.yml"] += "- name: by hand\n  ansible.builtin.shell: redis-cli ping\n"
 			}, "runs ansible.builtin.shell"},
@@ -216,6 +219,9 @@ func bootstrapProblems(s bootstrapSource) []string {
 	var plays []map[string]any
 	if err := yaml.Unmarshal([]byte(s.play), &plays); err != nil {
 		return []string{fmt.Sprintf("bootstrap.yml: not YAML: %v", err)}
+	}
+	if len(plays) == 0 || plays[0]["any_errors_fatal"] != true {
+		out = append(out, "bootstrap.yml: owner input failures do not stop later host plays (any_errors_fatal: true)")
 	}
 	tags := map[string]bool{}
 	for _, p := range plays {

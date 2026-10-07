@@ -31,6 +31,7 @@
 - name: the owner's inputs
   hosts: localhost
   gather_facts: false
+  any_errors_fatal: true
   tags: [always]
   tasks:
     - name: every input is named (one line per input missing)
