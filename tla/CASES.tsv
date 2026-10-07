@@ -332,9 +332,12 @@ MCTimerBrokenTwice.cfg	MCTimer.tla	invariant	AtMostOnce	ignore-terminal	timer	re
 MCTimerBrokenEarly.cfg	MCTimer.tla	invariant	NeverEarly	ignore-terminal	timer	required	-
 MCTimerBrokenLost.cfg	MCTimer.tla	temporal	NoLapse	ignore-terminal	timer	required	-
 MCUpdateApply.cfg	MCUpdateApply.tla	pass	-	ignore-terminal	updateapply	required	-
+MCUpdateApplyTwo.cfg	MCUpdateApply.tla	pass	-	ignore-terminal	updateapply	required	-
 MCUpdateApplyBrokenInstallOnVerdict.cfg	MCUpdateApply.tla	invariant	ApplyOnlyWhatIsNamed	ignore-terminal	updateapply	required	-
 MCUpdateApplyBrokenDryRunInstalls.cfg	MCUpdateApply.tla	invariant	DryRunInstallsNothing	ignore-terminal	updateapply	required	-
 MCUpdateApplyBrokenSentOnRefusal.cfg	MCUpdateApply.tla	invariant	SentOnlyOnOK	ignore-terminal	updateapply	required	-
+MCUpdateApplyBrokenNoLock.cfg	MCUpdateApply.tla	invariant	WriterHoldsTheLock	ignore-terminal	updateapply	required	-
+MCUpdateApplyBrokenAsideIsVersion.cfg	MCUpdateApply.tla	invariant	AsideIsUnknown	ignore-terminal	updateapply	required	-
 MCSeatHealth.cfg	MCSeatHealth.tla	pass	-	ignore-terminal	seathealth	required	-
 MCSeatHealthBrokenNoFence.cfg	MCSeatHealth.tla	action	AcceptedAtTheSeat	ignore-terminal	seathealth	required	-
 MCSeatHealthBrokenOlderProof.cfg	MCSeatHealth.tla	action	ProofNeverGoesBack	ignore-terminal	seathealth	required	-
