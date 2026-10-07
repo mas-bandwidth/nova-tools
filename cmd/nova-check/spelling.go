@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
 	"github.com/mas-bandwidth/nova-tools/internal/check"
@@ -28,6 +29,7 @@ func cmdSpelling(e env, args []string, stdout, stderr io.Writer) int {
 	dryRun := fs.Bool("dry-run", false, "with --write, print the corrections it would make and write nothing")
 	var exclude repeatable
 	fs.Var(&exclude, "exclude", "path prefix not scanned (repeatable; empty by default)")
+	allowEmpty := fs.Bool("allow-empty", false, "answer OK when zero files are read; without it, a run that read nothing is FAILED")
 	maxFlag := addMax(fs)
 
 	if !parseFlags(fs, args, stderr) {
@@ -113,9 +115,24 @@ func cmdSpelling(e env, args []string, stdout, stderr io.Writer) int {
 	// One verdict for both renderings: what was asked (a check, a write, or a
 	// write planned by --dry-run) decides the status, the exit, the facts and
 	// the listing's bound; the line form and the JSON print the same value.
-	v := spellingVerdictOf(res, *write, *dryRun, *maxFlag)
+	v := spellingVerdictOf(res, *write, *dryRun, *maxFlag, *allowEmpty)
+	if v.empty {
+		// The way out names the same flags that chose what this run read, so the
+		// command in the FAILED line runs as printed (docs/STANDARD.md section 2,
+		// a result names the next command).
+		v.remedy = "nova-check spelling" + spellingSelector(*dir, files, paths) + " --allow-empty"
+	}
 	if asJSON {
 		return renderSpelling(stdout, root, res, v)
+	}
+	if v.empty {
+		// No green over nothing: the run read no file, so it read nothing, and
+		// an OK over nothing is not green (docs/STANDARD.md section 2, exit
+		// codes tell the truth). The FAILED names the count and the flag that
+		// accepts the empty set.
+		fmt.Fprintf(stderr, "SPELLING FAILED %s=0 misspellings=0: looked at nothing; run: %s\n",
+			oneline.Field(looks["spelling"]), oneline.Escape(v.remedy))
+		return 1
 	}
 	if v.planned {
 		list := bounded.Capped(stdout, v.max, "SPELLING", "misspelling", maxRemedy)
@@ -157,13 +174,15 @@ func cmdSpelling(e env, args []string, stdout, stderr io.Writer) int {
 // both renderings: a check of prose says FAILED when it finds a misspelling; a
 // write, real or planned by --dry-run, says OK with what it wrote (or would).
 type spellingVerdict struct {
-	planned bool // --write --dry-run: corrections listed, nothing written
-	failed  bool
-	exit    int
-	max     int // the listing's bound: --max, except a real write lists every correction it made
+	planned bool   // --write --dry-run: corrections listed, nothing written
+	failed  bool   // the run said no: misspellings found, or nothing read
+	empty   bool   // the run read no file and --allow-empty did not accept that
+	exit    int    // 0 ok, 1 failed
+	max     int    // the listing's bound: --max, except a real write lists every correction it made
+	remedy  string // the empty-set FAILED line's way out, the flags as given
 }
 
-func spellingVerdictOf(res check.SpellingResult, write, dryRun bool, maxFlag int) spellingVerdict {
+func spellingVerdictOf(res check.SpellingResult, write, dryRun bool, maxFlag int, allowEmpty bool) spellingVerdict {
 	v := spellingVerdict{planned: write && dryRun, max: maxFlag}
 	if write && !dryRun {
 		v.max = 0
@@ -171,5 +190,29 @@ func spellingVerdictOf(res check.SpellingResult, write, dryRun bool, maxFlag int
 	if !write && len(res.Findings) > 0 {
 		v.failed, v.exit = true, 1
 	}
+	if res.FilesScanned == 0 && !allowEmpty {
+		// A verb that declares Looks is not green over a read of nothing: the
+		// count the OK line would carry is zero (docs/STANDARD.md section 2,
+		// exit codes tell the truth).
+		v.empty, v.failed, v.exit = true, true, 1
+	}
 	return v
+}
+
+// spellingSelector echoes the flags that chose what a spelling run read, so the
+// empty-set FAILED names a command that runs with --allow-empty appended
+// (docs/STANDARD.md section 2, a result names the next command). Each value is
+// one escaped shell word, so a path with a blank still pastes.
+func spellingSelector(dir string, files, paths []string) string {
+	var b strings.Builder
+	if dir != "" {
+		fmt.Fprintf(&b, " --dir %s", oneline.Escape(oneline.ShellWord(dir)))
+	}
+	for _, f := range files {
+		fmt.Fprintf(&b, " --file %s", oneline.Escape(oneline.ShellWord(f)))
+	}
+	for _, p := range paths {
+		fmt.Fprintf(&b, " --path %s", oneline.Escape(oneline.ShellWord(p)))
+	}
+	return b.String()
 }
