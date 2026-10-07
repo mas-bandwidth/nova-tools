@@ -47,8 +47,7 @@ root (`~/nova`, or `--root <dir>`). The design is [SPEC-UP.md](SPEC-UP.md).
    nova-sprint where
    ```
 
-   The coordinator's day is [SPRINT-COORDINATOR.md](SPRINT-COORDINATOR.md); its seat is
-   [SPRINT-COORDINATOR-SEAT.md](SPRINT-COORDINATOR-SEAT.md).
+   The coordinator's day and its seat are in the nova-sprint repository's docs.
 
 What `--local` never touches, and how each step decides it has nothing to do, is in
 [SPEC-UP.md](SPEC-UP.md).
