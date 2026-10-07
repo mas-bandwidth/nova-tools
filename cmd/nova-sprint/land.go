@@ -43,6 +43,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/decide"
@@ -414,6 +415,20 @@ func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
 	}
 	l := &lander{a: a, c: *c, st: st, repoDir: *repoDir, base: *base, check: *check, dry: *dry, twin: a.twinOpen(c.redis), epoch: st.PinnedEpoch(), diffs: map[string]string{}, scope: map[string][]string{}, prose: map[string][]string{}, baseGateCache: a.baseGateCache, baseGateFails: a.baseGateFails}
 	defer l.release()
+	// Clean up any gate process from an earlier run in the land directory.
+	if root, err := a.landRoot(); err == nil {
+		gateFile := filepath.Join(root, ".gate_pid")
+		if data, err := os.ReadFile(gateFile); err == nil {
+			pid := 0
+			fmt.Sscanf(string(data), "%d", &pid)
+			if pid > 0 {
+				if p, err := os.FindProcess(pid); err == nil {
+					_ = p.Kill()
+					fmt.Fprintf(stdout, "LAND KILLED gate pid=%d from earlier run\n", pid)
+				}
+			}
+		}
+	}
 	if *check != "" && !*dry {
 		a.serial.Lock()
 		l.gate, l.gateNote = a.landGate(context.Background(), st)
@@ -1622,13 +1637,21 @@ func containsAny(s string, words []string) bool {
 }
 
 // runCheck runs --check in the clone: why "" when it passed or there is none, and its
-// output.
+// output. The check runs in its own process group so it is terminated with the server.
 func (l *lander) runCheck(ctx context.Context, dir string) (why, out string) {
 	if l.check == "" {
 		return "", ""
 	}
 	b := subproc.Prepare(ctx, landCheckBudget, "sh", "-c", l.check)
 	defer b.Cancel()
+	b.Cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	// Save the gate process ID so it can be killed on the next run.
+	if root, err := l.a.landRoot(); err == nil {
+		gateFile := filepath.Join(root, ".gate_pid")
+		if err := os.WriteFile(gateFile, []byte(fmt.Sprintf("%d\n", b.Cmd.Process.Pid)), 0o600); err == nil {
+			defer os.Remove(gateFile)
+		}
+	}
 	b.Cmd.Dir, b.Cmd.Env = dir, l.a.gitEnv
 	raw, err := b.Cmd.CombinedOutput()
 	if err = b.Wrap("check "+l.check, err); err != nil {
