@@ -204,7 +204,7 @@ func TestFnLoadAndCheckOnAStore(t *testing.T) {
 	const addr = "127.0.0.1:6399"
 	const list = "FUNCTION LIST LIBRARYNAME nova_sprint WITHCODE"
 	other := "#!lua name=nova_sprint\nredis.register_function('ns_ping', function() return 'PONG' end)\n"
-	remedy := ` remedy="nova-redis fn load --addr 127.0.0.1:6399 puts this binary's library on the store"`
+	remedy := ` remedy="nova-redis fn load --redis 127.0.0.1:6399 puts this binary's library on the store"`
 
 	steps := []struct {
 		name   string
@@ -214,19 +214,19 @@ func TestFnLoadAndCheckOnAStore(t *testing.T) {
 		out    string
 		sent   []string
 	}{
-		{"check an empty store", nil, []string{"fn", "check", "--addr", addr}, 1,
+		{"check an empty store", nil, []string{"fn", "check", "--redis", addr}, 1,
 			"MISSING nova_sprint sha=" + sha + " loaded=none want=" + sha + " store=" + addr + remedy + "\n", []string{list}},
-		{"load onto it", nil, []string{"fn", "load", "--addr", addr}, 0,
+		{"load onto it", nil, []string{"fn", "load", "--redis", addr}, 0,
 			"LOADED nova_sprint sha=" + sha + " store=" + addr + "\n", []string{list, "FUNCTION LOAD REPLACE"}},
-		{"check it", nil, []string{"fn", "check", "--addr", addr}, 0,
+		{"check it", nil, []string{"fn", "check", "--redis", addr}, 0,
 			"OK nova_sprint sha=" + sha + " loaded=" + sha + " want=" + sha + " store=" + addr + "\n", []string{list}},
-		{"load it again", nil, []string{"fn", "load", "--addr", addr}, 0,
+		{"load it again", nil, []string{"fn", "load", "--redis", addr}, 0,
 			"UNCHANGED nova_sprint sha=" + sha + " store=" + addr + "\n", []string{list}},
-		{"check other code", func() { h.store.held["nova_sprint"] = other }, []string{"fn", "check", "--addr", addr}, 1,
+		{"check other code", func() { h.store.held["nova_sprint"] = other }, []string{"fn", "check", "--redis", addr}, 1,
 			"STALE nova_sprint sha=" + sha + " loaded=" + redisfn.DigestOf(other) + " want=" + sha + " store=" + addr + remedy + "\n", []string{list}},
-		{"replace it", nil, []string{"fn", "load", "--addr", addr}, 0,
+		{"replace it", nil, []string{"fn", "load", "--redis", addr}, 0,
 			"REPLACED nova_sprint sha=" + sha + " was=" + redisfn.DigestOf(other) + " store=" + addr + "\n", []string{list, "FUNCTION LOAD REPLACE"}},
-		{"check the replacement", nil, []string{"fn", "check", "--addr", addr}, 0,
+		{"check the replacement", nil, []string{"fn", "check", "--redis", addr}, 0,
 			"OK nova_sprint sha=" + sha + " loaded=" + sha + " want=" + sha + " store=" + addr + "\n", []string{list}},
 	}
 	for i, s := range steps {
@@ -277,23 +277,23 @@ func TestFnFailuresNameTheStateAndTheRemedy(t *testing.T) {
 	}{
 		{"check, store unreachable", unreachable, []string{"check"}, 2,
 			[]string{"FAILED nova_sprint sha=", "store=127.0.0.1:6399", "redisfn: check nova_sprint: the store did not answer", "nothing was changed",
-				`remedy="no answer: check that the store at 127.0.0.1:6399 is up and --addr is right, then nova-redis fn check --addr 127.0.0.1:6399"`}, []string{credentials}, ""},
+				`remedy="no answer: check that the store at 127.0.0.1:6399 is up and --redis is right, then nova-redis fn check --redis 127.0.0.1:6399"`}, []string{credentials}, ""},
 		{"load, store unreachable", unreachable, []string{"load"}, 2,
 			[]string{"FAILED nova_sprint sha=", "redisfn: check nova_sprint: the store did not answer", "nothing was changed",
-				`remedy="no answer, so the store may hold either library: check that the store at 127.0.0.1:6399 is up and --addr is right, then nova-redis fn check --addr 127.0.0.1:6399"`}, []string{credentials}, "FUNCTION LOAD REPLACE"},
+				`remedy="no answer, so the store may hold either library: check that the store at 127.0.0.1:6399 is up and --redis is right, then nova-redis fn check --redis 127.0.0.1:6399"`}, []string{credentials}, "FUNCTION LOAD REPLACE"},
 		{"load, NOPERM, as a named user", noperm, []string{"load", "--user", "nofn"}, 1,
 			[]string{"the store refused: NOPERM User nofn", "nothing was changed",
-				`remedy="log in as a user that may run FUNCTION LIST and FUNCTION LOAD: check --user (NOVA_REDIS_USER) and the password in NOVA_REDIS_PASSWORD, then nova-redis fn load --addr 127.0.0.1:6399 --user nofn"`}, nil, "FUNCTION LOAD REPLACE"},
+				`remedy="log in as a user that may run FUNCTION LIST and FUNCTION LOAD: check --user (NOVA_REDIS_USER) and the password in NOVA_REDIS_PASSWORD, then nova-redis fn load --redis 127.0.0.1:6399 --user nofn"`}, nil, "FUNCTION LOAD REPLACE"},
 		{"check, NOPERM", noperm, []string{"check"}, 1,
-			[]string{`remedy="log in as a user that may run FUNCTION LIST: check --user (NOVA_REDIS_USER) and the password in NOVA_REDIS_PASSWORD, then nova-redis fn check --addr 127.0.0.1:6399"`}, nil, ""},
+			[]string{`remedy="log in as a user that may run FUNCTION LIST: check --user (NOVA_REDIS_USER) and the password in NOVA_REDIS_PASSWORD, then nova-redis fn check --redis 127.0.0.1:6399"`}, nil, ""},
 		{"load, store refuses the library", func(s *fnStore) {
 			s.loadErr = storeReply("ERR Error compiling function: user_function:3: '=' expected")
 		}, []string{"load"}, 1,
 			[]string{"FAILED nova_sprint sha=", "redisfn: load nova_sprint: the store refused", "the store holds what it held before", "user_function:3 = ",
-				`remedy="the store would not take this binary's library; err names the file and line: fix the Lua and rebuild, then nova-redis fn load --addr 127.0.0.1:6399"`}, []string{credentials}, ""},
+				`remedy="the store would not take this binary's library; err names the file and line: fix the Lua and rebuild, then nova-redis fn load --redis 127.0.0.1:6399"`}, []string{credentials}, ""},
 		{"load, a function name another library holds", collision, []string{"load", "--user", "coordinator"}, 1,
 			[]string{"FAILED nova_sprint sha=", "function ns_ping is registered by library other_lib",
-				`remedy="a function name belongs to one library and library other_lib registers ns_ping: load the version of that library that no longer registers it, or delete it, then nova-redis fn load --addr 127.0.0.1:6399 --user coordinator"`},
+				`remedy="a function name belongs to one library and library other_lib registers ns_ping: load the version of that library that no longer registers it, or delete it, then nova-redis fn load --redis 127.0.0.1:6399 --user coordinator"`},
 			[]string{credentials, "NOVA_REDIS_PASSWORD", "FUNCTION LIST and"}, ""},
 	}
 	for _, c := range cases {
@@ -304,7 +304,7 @@ func TestFnFailuresNameTheStateAndTheRemedy(t *testing.T) {
 				h.user = c.args[2]
 			}
 			c.setup(h.store)
-			code, out, errOut := h.run(append([]string{"fn", c.args[0], "--addr", addr}, c.args[1:]...)...)
+			code, out, errOut := h.run(append([]string{"fn", c.args[0], "--redis", addr}, c.args[1:]...)...)
 			if assert.Equal(t, c.code, code, "exit %d stdout %q; want exit %d and no stdout", code, out, c.code) {
 				assert.Empty(t, out, "exit %d stdout %q; want exit %d and no stdout", code, out, c.code)
 			}
@@ -330,9 +330,9 @@ func TestFnRemedyLogsInAsTheVerbDid(t *testing.T) {
 	t.Parallel()
 	h := newFnHarness(t)
 	h.user, h.passwordEnv = "coordinator", "SEAT_PW"
-	code, out, _ := h.run("fn", "check", "--addr", "127.0.0.1:6399", "--user", "coordinator", "--password-env", "SEAT_PW")
+	code, out, _ := h.run("fn", "check", "--redis", "127.0.0.1:6399", "--user", "coordinator", "--password-env", "SEAT_PW")
 	{
-		want := `remedy="nova-redis fn load --addr 127.0.0.1:6399 --user coordinator --password-env SEAT_PW puts this binary's library on the store"`
+		want := `remedy="nova-redis fn load --redis 127.0.0.1:6399 --user coordinator --password-env SEAT_PW puts this binary's library on the store"`
 		if assert.Equal(t, 1, code, "exit %d %q; want MISSING ending in %s", code, out, want) {
 			assert.True(t, strings.HasSuffix(out, want+"\n"), "exit %d %q; want MISSING ending in %s", code, out, want)
 		}
@@ -508,12 +508,12 @@ func TestLoginFlagsEchoWhatWasGiven(t *testing.T) {
 		env  map[string]string
 		want string
 	}{
-		{[]string{"--addr", "127.0.0.1:6379"}, nil, "--addr 127.0.0.1:6379"},
-		{[]string{"--addr", "127.0.0.1:6379", "--user", ""}, map[string]string{UserEnv: "wronguser"}, "--addr 127.0.0.1:6379 --user ''"},
-		{[]string{"--addr", "127.0.0.1:6379", "--password-env", PasswordEnv}, map[string]string{PasswordEnvEnv: "OTHER_PW"}, "--addr 127.0.0.1:6379 --password-env NOVA_REDIS_PASSWORD"},
-		{[]string{"--addr", "127.0.0.1:6379", "--user", "fn'user"}, nil, `--addr 127.0.0.1:6379 --user 'fn'"'"'user'`},
-		{[]string{"--addr", "127.0.0.1:6379"}, map[string]string{UserEnv: "coordinator", PasswordEnvEnv: "SEAT_PW"}, "--addr 127.0.0.1:6379 --user coordinator --password-env SEAT_PW"},
-		{[]string{"--addr", "[::1]:6379"}, nil, "--addr '[::1]:6379'"},
+		{[]string{"--addr", "127.0.0.1:6379"}, nil, "--redis 127.0.0.1:6379"},
+		{[]string{"--addr", "127.0.0.1:6379", "--user", ""}, map[string]string{UserEnv: "wronguser"}, "--redis 127.0.0.1:6379 --user ''"},
+		{[]string{"--addr", "127.0.0.1:6379", "--password-env", PasswordEnv}, map[string]string{PasswordEnvEnv: "OTHER_PW"}, "--redis 127.0.0.1:6379 --password-env NOVA_REDIS_PASSWORD"},
+		{[]string{"--addr", "127.0.0.1:6379", "--user", "fn'user"}, nil, `--redis 127.0.0.1:6379 --user 'fn'"'"'user'`},
+		{[]string{"--addr", "127.0.0.1:6379"}, map[string]string{UserEnv: "coordinator", PasswordEnvEnv: "SEAT_PW"}, "--redis 127.0.0.1:6379 --user coordinator --password-env SEAT_PW"},
+		{[]string{"--addr", "[::1]:6379"}, nil, "--redis '[::1]:6379'"},
 	}
 	for _, c := range cases {
 		fs := flag.NewFlagSet("fn check", flag.ContinueOnError)
