@@ -9,6 +9,7 @@ import (
 
 	nsstore "github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
+	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
 )
@@ -17,7 +18,7 @@ func TestEveryTableOperationCountsOneTrip(t *testing.T) {
 	t.Parallel()
 	_, c := live(t)
 	ctx := context.Background()
-	trips := nsstore.New(c).CountTrips()
+	trips := redisconn.CountTrips(c)
 	one := func(name string, f func() error) {
 		t.Helper()
 		events := c.XLen(ctx, ntable.ChangesKey("demo")).Val()
