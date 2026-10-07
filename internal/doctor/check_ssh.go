@@ -45,20 +45,20 @@ func checkSSH(ctx context.Context, env Env) Result {
 	// Parse bench names from inventory (simple YAML parsing)
 	var benches []string
 	for _, line := range strings.Split(string(invBytes), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "secrets:") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, "secrets:") {
 			continue
 		}
-		if strings.HasPrefix(line, "benches:") {
+		if strings.HasPrefix(trimmed, "benches:") {
 			continue
 		}
-		if strings.HasPrefix(line, "- ") {
-			benches = append(benches, strings.TrimPrefix(line, "- "))
-		} else if strings.Contains(line, ":") {
+		if strings.HasPrefix(trimmed, "- ") {
+			benches = append(benches, strings.TrimPrefix(trimmed, "- "))
+		} else if strings.Contains(trimmed, ":") {
 			// Key-value line, skip
 			continue
-		} else if line != "" {
-			benches = append(benches, line)
+		} else if trimmed != "" {
+			benches = append(benches, trimmed)
 		}
 	}
 
