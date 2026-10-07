@@ -155,6 +155,10 @@ type landBatch struct {
 	// Cleaned is every file the lander's restore of its own clone discarded before the
 	// batch (restore), one LAND CLEANED line; nil when the clone was clean.
 	Cleaned []string `json:"cleaned,omitempty"`
+	// Bench is the fleet member whose Go lane ran the batch's tree gate, empty when
+	// the gate ran in this process or did not run. Wall is that gate's seconds.
+	Bench string  `json:"bench,omitempty"`
+	Wall  float64 `json:"wall,omitempty"`
 }
 
 // landTimes is a batch's steps, in seconds: the fetch, the merges (with any head
@@ -188,6 +192,9 @@ func (b landBatch) line() string {
 	}
 	if t := b.Times; t != nil {
 		l += fmt.Sprintf(" fetch=%.1fs merge=%.1fs check=%.1fs queue=%.1fs push=%.1fs report=%.1fs", t.Fetch, t.Merge, t.Check, t.Queue, t.Push, t.Report)
+	}
+	if b.Bench != "" {
+		l += fmt.Sprintf(" bench=%s wall=%.1fs", oneline.Field(b.Bench), b.Wall)
 	}
 	if p := b.Prune; p != nil {
 		switch {
@@ -308,6 +315,43 @@ type lander struct {
 	held     map[string]*filelock.FileLock
 	now      func() time.Time
 	rulesOff []string
+	// gateHost is the bench the batch's tree gate ran on, gateWall how long those
+	// runs took on the lander's clock; keep stamps them onto the next batch line.
+	gateHost string
+	gateWall time.Duration
+}
+
+// keep appends a batch, carrying the tree gate's bench and wall when one ran.
+func (l *lander) keep(b landBatch) {
+	if b.Bench == "" && l.gateHost != "" {
+		b.Bench = l.gateHost
+		b.Wall = l.gateWall.Seconds()
+	}
+	l.gateHost, l.gateWall = "", 0
+	l.out = append(l.out, b)
+}
+
+// ranOnBench adds one tree gate run on host ("here" for this machine) to the batch's
+// bench line: every host the batch's gates ran on, joined by +, and their total wall.
+func (l *lander) ranOnBench(host string, wall time.Duration) {
+	if host == "" {
+		return
+	}
+	if !slices.Contains(strings.Split(l.gateHost, "+"), host) {
+		l.gateHost = strings.TrimPrefix(l.gateHost+"+"+host, "+")
+	}
+	l.gateWall += wall
+}
+
+// stage names where the landing is, for the land loop's beat (landloop.go).
+func (l *lander) stage(name, proc string) {
+	if l == nil || l.a == nil || name == "" {
+		return
+	}
+	if proc == "" {
+		proc = "nothing named"
+	}
+	l.a.landStage(name, proc)
 }
 
 func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
@@ -532,7 +576,7 @@ func landQueue(s *sprint.Snapshot, stream string) []*sprint.Card {
 // that does not land whole; false when a push landed and its report did not.
 func (l *lander) stream(ctx context.Context, s *sprint.Snapshot, stream string) bool {
 	refused := func(why string) bool {
-		l.out = append(l.out, landBatch{Stream: stream, Status: "refused", IDs: []string{}, Reason: why})
+		l.keep(landBatch{Stream: stream, Status: "refused", IDs: []string{}, Reason: why})
 		return true
 	}
 	ctl := s.StreamCtl(stream)
@@ -599,7 +643,7 @@ func (l *lander) batch(ctx context.Context, s *sprint.Snapshot, stream string, c
 	b := landBatch{Stream: stream, Status: "refused", Cards: len(cards), IDs: ids, Repo: cards[0].repo, Base: cards[0].base, DryRun: l.dry}
 	refuse := func(why string) (bool, bool) {
 		b.Reason = why
-		l.out = append(l.out, b)
+		l.keep(b)
 		return false, true
 	}
 	if why, also := l.placeWhy(stream, cards); why != "" {
@@ -647,6 +691,11 @@ func (l *lander) batch(ctx context.Context, s *sprint.Snapshot, stream string, c
 		return l.baseRefused(b, stream, why)
 	}
 	if why != "" {
+		if strings.Contains(why, "couldn't find remote ref") && l.baseGone(ctx, dir, b.Base) {
+			// the base branch is gone (merged and deleted): one judgment names every
+			// card on it and the rebase line that fixes them (rebase.go)
+			return l.missingBase(b, why)
+		}
 		return refuse(why)
 	}
 	b.Scope = l.scopeOf(merged)
@@ -659,6 +708,7 @@ func (l *lander) batch(ctx context.Context, s *sprint.Snapshot, stream string, c
 		if err != nil {
 			return refuse("the batch branch has no tip: " + firstLine("", err))
 		}
+		l.stage("check", "check")
 		start := time.Now()
 		why, out := l.runCheck(ctx, dir)
 		if why != "" {
@@ -669,6 +719,7 @@ func (l *lander) batch(ctx context.Context, s *sprint.Snapshot, stream string, c
 			b.Cards, b.IDs = len(merged), ids[:len(merged)]
 			return l.fact(b, sprint.MergeReq{Stream: stream, Batch: len(merged), Red: true, Note: why}, cards[:len(merged)], "red", why)
 		}
+		l.stage("queue", "queue read")
 		start = time.Now()
 		why = l.queueHead(ctx, stream, cards[:len(merged)])
 		since(&b.Times.Queue, start)
@@ -678,6 +729,7 @@ func (l *lander) batch(ctx context.Context, s *sprint.Snapshot, stream string, c
 		if l.a.beforePush != nil {
 			l.a.beforePush(attempt)
 		}
+		l.stage("push", "git push")
 		start = time.Now()
 		_, err = l.git(ctx, dir, "push", "--porcelain", "origin", tip+":refs/heads/"+b.Base)
 		since(&b.Times.Push, start)
@@ -761,17 +813,17 @@ func (l *lander) dryBatch(b landBatch, cards []landCard) (landed, ok bool) {
 	if cut < 0 {
 		b.Status = "ok"
 		l.tag(context.Background(), &b, cards)
-		l.out = append(l.out, b)
+		l.keep(b)
 		return true, true
 	}
 	if cut > 0 {
 		before := b
 		before.Status, before.Cards, before.IDs = "ok", cut, b.IDs[:cut]
 		l.tag(context.Background(), &before, cards[:cut])
-		l.out = append(l.out, before)
+		l.keep(before)
 	}
 	c := cards[cut]
-	l.out = append(l.out, landBatch{Stream: b.Stream, Status: "refused", Cards: 1, IDs: []string{c.id}, WouldRecord: "conflict", Reason: headNotCommit(b.Stream, c), DryRun: true})
+	l.keep(landBatch{Stream: b.Stream, Status: "refused", Cards: 1, IDs: []string{c.id}, WouldRecord: "conflict", Reason: headNotCommit(b.Stream, c), DryRun: true})
 	return false, true
 }
 
@@ -822,7 +874,7 @@ func (l *lander) fact(b landBatch, r sprint.MergeReq, pins []landCard, fact, why
 		b.Fact = ""
 		b.Reason = why + "; the merge step did not record it (" + stepWhy(res, err) + "); " + againRemedy(r.Stream)
 	}
-	l.out = append(l.out, b)
+	l.keep(b)
 	return false, true
 }
 
@@ -843,7 +895,7 @@ func (l *lander) baseRefused(b landBatch, stream, why string) (bool, bool) {
 	case slices.ContainsFunc(res.Moved, func(m string) bool { return strings.Contains(m, " stopped: ") }):
 		b.Fact = "base"
 	}
-	l.out = append(l.out, b)
+	l.keep(b)
 	return false, true
 }
 
@@ -961,6 +1013,31 @@ func (l *lander) greenStep(r sprint.BaseGreenReq) (store.Result, error) {
 	return l.st.Run(context.Background(), step)
 }
 
+// baseGone says the build's failure is the base branch's: origin no longer
+// holds refs/heads/<base>. It asks origin once, only after a build failed.
+func (l *lander) baseGone(ctx context.Context, dir, base string) bool {
+	if base == "" {
+		return false
+	}
+	out, err := l.git(ctx, dir, "ls-remote", "--exit-code", "--heads", "origin", "refs/heads/"+base)
+	return err != nil || strings.TrimSpace(out) == ""
+}
+
+// missingBase records the one judgment of a land whose base branch is gone
+// (sprint.MergeReq.MissingBase): every unlanded card on that base and the
+// rebase line that fixes them, through the merge step; the batch is refused
+// with git's own words.
+func (l *lander) missingBase(b landBatch, why string) (bool, bool) {
+	b.Status, b.Reason = "refused", why
+	r := sprint.MergeReq{Stream: b.Stream, Base: b.Base, MissingBase: b.Base, Who: l.c.actor}
+	res, err := l.step(r, nil)
+	if code := stepExit(res, err); code != 0 {
+		b.Reason = why + "; the merge step did not record it (" + stepWhy(res, err) + "); " + againRemedy(b.Stream)
+	}
+	l.out = append(l.out, b)
+	return false, true
+}
+
 // againRemedy is the one remedy land names when a report did not go through:
 // land again, which rereads the current queue and lets its own checks decide.
 // A bare merge step is never offered: after a rework the queue starts with the
@@ -978,6 +1055,7 @@ func (l *lander) landed(b landBatch, stream string, pins []landCard) bool {
 		ids[i] = c.id
 	}
 	b.Cards, b.IDs = len(ids), ids
+	l.stage("report", "merge report")
 	start := time.Now()
 	res, err := l.step(sprint.MergeReq{Stream: stream, Batch: len(ids), Who: l.c.actor}, pins)
 	if b.Times != nil {
@@ -986,7 +1064,7 @@ func (l *lander) landed(b landBatch, stream string, pins []landCard) bool {
 	if code := stepExit(res, err); code != 0 || !movedExactly(res.Moved, ids) {
 		b.Status, b.Reason = "failed", "the batch was pushed to "+b.Base+" at "+b.Tip+" and NOT reported ("+stepWhy(res, err)+
 			"); "+againRemedy(stream)
-		l.out = append(l.out, b)
+		l.keep(b)
 		return false
 	}
 	b.Status = "ok"
@@ -999,7 +1077,7 @@ func (l *lander) landed(b landBatch, stream string, pins []landCard) bool {
 		ends = append(ends, briefEndOf(c.id, c.primary, decide.End{Label: label, Note: note}))
 	}
 	b.Also = append(b.Also, l.a.attachBriefs(ends)...)
-	l.out = append(l.out, b)
+	l.keep(b)
 	// its diffs are scored after the whole pass (landscore.go): a score never holds a landing
 	l.toScore = append(l.toScore, scoreJob{at: len(l.out) - 1, stream: stream, pins: pins})
 	return true
@@ -1168,6 +1246,7 @@ func (l *lander) build(ctx context.Context, dir, stream string, cards []landCard
 			fetch = append(fetch, c.head)
 		}
 	}
+	l.stage("fetch", "git fetch")
 	start := time.Now()
 	_, err := l.git(ctx, dir, fetch...)
 	if err != nil {
@@ -1177,6 +1256,7 @@ func (l *lander) build(ctx context.Context, dir, stream string, cards []landCard
 	if err != nil {
 		return nil, failed, "the fetch of origin in " + dir + " failed: " + firstLine("", err)
 	}
+	l.stage("merge", "git merge")
 	start = time.Now()
 	defer since(&t.Merge, start)
 	if _, err := l.git(ctx, dir, "switch", "--no-track", "--force-create", "land/"+stream, "refs/remotes/origin/"+base); err != nil {
@@ -1282,7 +1362,9 @@ func (l *lander) mergeHead(ctx context.Context, dir, stream string, c landCard) 
 		return "", derr, ""
 	}
 	if dcard != "" {
-		l.git(ctx, dir, "reset", "--hard", before)
+		if _, err := l.git(ctx, dir, "reset", "--hard", before); err != nil {
+			return "", "the reset to " + before + " after the dedupe refusal of " + c.id + " failed: " + firstLine("", err), ""
+		}
 		return dcard, "", ""
 	}
 	l.ledgerLog = append(l.ledgerLog, append(l.recLog, lines...)...)

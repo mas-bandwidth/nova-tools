@@ -51,7 +51,7 @@ func init() {
 		{"quack", "--streams <a,b,...> --count <n> --repo <clone url> [--tiers <t,...>] [--base <branch>]", "quack --streams a,b --count 2 --repo https://example.com/quack.git", (*app).cmdQuack},
 		{"preflight", "--brief-dir <dir> [--repo-dir <dir>]", "preflight --brief-dir .", (*app).cmdPreflight},
 		{"release check", "[--json] [--streams <glob>] [--check <name>]...", "release check", (*app).cmdReleaseCheck},
-		{"release", "<sentinel or held card>... --reason <text> [--answers <note>]", "release s1-stop --reason 'the layer is green and read'", (*app).cmdRelease},
+		{"release", "(<sentinel or held card>... | <selector> [--dry-run]) --reason <text> [--answers <note>]", "release s1-stop --reason 'the layer is green and read'", (*app).cmdReleaseSel},
 		{"resolve", "[<id>...] [--stream <s>] [--max <n>]", "resolve", (*app).cmdResolve},
 		{"start", "", "start", (*app).cmdMachineStart},
 		{"stop", "--reason <text> --until <time or duration>", "stop --reason 'the bench is rebooting' --until 30m", (*app).cmdMachineStop},
@@ -69,16 +69,17 @@ func init() {
 		{"queue", "--as <reader|member> | --stream <s>", "queue --as reader-a", (*app).cmdQueue},
 		{"read", "--as <reader> (--begin | --ok | --broken) [<card>...] --epoch <n> [--max <n>] [--finding <text>] [--usage <text>] | --as <reader> --return <card> --reason <text> --epoch <n> [--usage <text>]", "read --as reader-a --ok --max 5 --epoch 0", (*app).cmdRead},
 		{"accept", "(<id>... [--heavy --evidence <path> --reason <text>] | --stream <s> | --read-ok | --group <id> [--expect <n>]) [--answers <note>]", "accept --read-ok", (*app).cmdAccept},
-		{"rework", "(<id>... | --group <id> [--expect <n>]) [--fix <text>] [--tier <tier>] [--answers <note>] [--one]", "rework s1-4 --fix 'handle the empty case'", (*app).cmdRework},
-		{"return", "(<id>... | --group <id> [--expect <n>]) [--reason <text>] [--answers <note>]", "return s1-7 --reason 'suspect of the red batch'", (*app).cmdReturn},
+		{"rework", "(<id>... | --group <id> [--expect <n>] | <selector> [--dry-run]) [--fix <text>] [--tier <tier>] [--answers <note>] [--one]", "rework s1-4 --fix 'handle the empty case'", (*app).cmdReworkSel},
+		{"return", "(<id>... | --group <id> [--expect <n>] | <selector> [--dry-run]) [--reason <text>] [--answers <note>]", "return s1-7 --reason 'suspect of the red batch'", (*app).cmdReturnSel},
 		{"redo", "<card>... [--stream <s>] [--answers <note>]", "redo s1-2", (*app).cmdRedo},
-		{"drop", "(<id>... | --stream <s> --col <state> | --group <id> [--expect <n>]) --reason <text> [--answers <note>] [--one]", "drop s1-9 --reason obsolete", (*app).cmdDrop},
+		{"drop", "(<id>... | --stream <s> --col <state> | --group <id> [--expect <n>] | <selector> [--dry-run]) --reason <text> [--answers <note>] [--one]", "drop s1-9 --reason obsolete", (*app).cmdDropSel},
 		{"priority", "<id>... | (<id>... | --stream <s>) (--blocker | --critical | --high | --normal | --low) --reason <text>", "priority s1-4 --high --reason 'the release waits on it'", (*app).cmdPriority},
 		{"unpin", "(<id>... | --stream <s>) --reason <text> [--dry-run]", "unpin s1-1 --reason available", (*app).cmdUnpin},
-		{"rank", "<id>... (--score <n> | --first | --before <id>) [--answers <note>]", "rank s2-3 --first", (*app).cmdRank},
+		{"rebase", "--from <branch> --to <branch> [--repo-dir <clone>] [--dry-run]", "rebase --from dev --to sprint/s1 --repo-dir ../name --dry-run", (*app).cmdRebase},
+		{"rank", "(<id>... | <selector> [--dry-run]) (--score <n> | --first | --before <id>) [--answers <note>]", "rank s2-3 --first", (*app).cmdRankSel},
 		{"relink", "<old-id>[,<old-id>...] <new-id> [--reason <text>]", "relink lint-pkg-cairn-t lint-pkg-cairn-tb --reason 're-cut as its twin'", (*app).cmdRelink},
-		{"recut", "<id> (--tier <flash|pro|heavy|frontier> | --brief-file <path> [--rules <file>]) [--new <id>]", "recut lint-pkg-cairn-t --tier heavy", (*app).cmdRecut},
-		{"brief", "<id> (--brief <text> | --brief-file <path>) [--rules <file>] [--answers <note>] | --dir <dir> [--rules <file>] | --group <id> [--expect <n>] (--brief-file <path> | --dir <dir>) [--answers <note>] | <id> --widen [--repo-dir <clone>] | <id> --tier <flash|pro|heavy|frontier>", "brief s1-4 --brief-file s1-4.md", (*app).cmdBrief},
+		{"recut", "<id> (--tier <flash|pro|heavy|frontier> | --brief-file <path> [--rules <file>]) [--new <id>] | <selector> (--tier <t> | --set-base <branch> | --drop-who)... [--dry-run]", "recut lint-pkg-cairn-t --tier heavy", (*app).cmdRecutSel},
+		{"brief", "<id> (--brief <text> | --brief-file <path>) [--rules <file>] [--answers <note>] | --dir <dir> [--rules <file>] | --group <id> [--expect <n>] (--brief-file <path> | --dir <dir>) [--answers <note>] | <id> --widen [--repo-dir <clone>] | <id> --tier <flash|pro|heavy|frontier> | <selector> (--set-base <branch> | --drop-who | --tier <t>)... [--dry-run]", "brief s1-4 --brief-file s1-4.md", (*app).cmdBriefSel},
 		{"move", "<id>... --stream <s> [--before <id> | --after <id> | --score <n>]", "move s1-4 s1-5 --stream s2", (*app).cmdMove},
 		{"merge", "--stream <s> [--batch <n>] [--conflict <id> [--conflict-kind file|ledger] [--conflict-path <p>...] | --cross <id>=<other> | --red [--suspect <id>...] | --rejected | --base-red <error>] [--note <text>]", "merge --stream s1 --batch 100", (*app).cmdMerge},
 		{"land", "[--stream <s>...] [--repo-dir <clone>] [--base <branch>] [--check <command>] [--dry-run]", "land --stream s1 --dry-run", (*app).cmdLand},
@@ -351,6 +352,7 @@ one answer to each judgment (every one prints its own, filled in):
   needs another stream first  rank <other> --first, then resume --stream <s> once <other> has landed
   merge queue rejected        resume --stream <s> --did '<what you did>' --answers <note>
   the base fails its gate     resume --stream <s> --did '<the base is green again>' --answers <note>  (land gated it three times: at 0, 2 and 7 minutes)
+  the base branch is gone     rebase --from <the base> --to '<the branch that replaces it>'  (every unlanded card on it moves, dealt cards included)
   ci red                      rework --group <id> --expect <n> --fix '<fix>' --answers <notes>
   blocked on a dropped card   drop --group <id> --expect <n> --reason '<why>' --answers <notes>
   blocked on a missing card   drop <ids> --reason '<why>' or ack <notes> --reason '<why the named missing needs can be waived>'
