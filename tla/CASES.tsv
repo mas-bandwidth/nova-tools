@@ -446,3 +446,5 @@ MCDelivery.cfg	MCDelivery.tla	pass	-	ignore-terminal	delivery	required	-
 MCDeliveryBrokenNoPresent.cfg	MCDelivery.tla	invariant	GapCarriesThePresent	ignore-terminal	delivery	required	-
 MCDeliveryBrokenReclaim.cfg	MCDelivery.tla	invariant	NoSupersededDelivered	ignore-terminal	delivery	required	-
 MCDeliveryBrokenAnswerStale.cfg	MCDelivery.tla	invariant	NoStaleNonceAnswered	ignore-terminal	delivery	required	-
+MCRouteIndexCapable.cfg	MCRouteIndex.tla	pass	-	ignore-terminal	routeindex	required	-
+MCRouteIndexBrokenCapable.cfg	MCRouteIndex.tla	invariant	CapabilityRespected	ignore-terminal	routeindex	required	-

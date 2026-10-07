@@ -202,6 +202,7 @@ func Ask(s *Snapshot, r AskReq) Plan {
 			}
 		}
 		free := s.freeReaders(c, attempt)
+		free = slices.DeleteFunc(free, func(rd string) bool { return !s.readerCanLaunch(rd, s.readTierOf(c)) })
 		// the reads that stand, kept, say how many are asked now (readsWantedOf): the
 		// rest of those it needs, together, none once one found it broken; a read handed back, or taken
 		// back from a reader away, is not a read and is asked again whatever stands: it
@@ -216,6 +217,10 @@ func Ask(s *Snapshot, r AskReq) Plan {
 		}
 		// each read to a free reader with room, the finder's first (askPicks)
 		finder := finders[c.ID]
+		if finder != "" && !s.readerCanLaunch(finder, s.readTierOf(c)) {
+			room[finder] = room[finder].after(-1)
+			finder = ""
+		}
 		chosenReaders := askPicks(rr, finder, want, free, room)
 		// A return is not a read (tla/DirtyTick.tla, PlaceReads and
 		// JudgedOnlyAfterTheBound): a read handed back goes to a free
@@ -234,7 +239,7 @@ func Ask(s *Snapshot, r AskReq) Plan {
 			// in place only on a reader of the card's tier. A reader outside it
 			// is not asked the read again; the card is taken back (retired_by
 			// returned) and the read goes to a reader who reads the tier.
-			if len(chosenReaders)+len(again) < want && s.readerServesTier(rc.F("reader"), s.readTierOf(c)) {
+			if len(chosenReaders)+len(again) < want && s.readerServesTier(rc.F("reader"), s.readTierOf(c)) && s.readerCanLaunch(rc.F("reader"), s.readTierOf(c)) {
 				inPlace = append(inPlace, rc)
 				again = append(again, rc.F("reader"))
 				continue
@@ -263,7 +268,7 @@ func Ask(s *Snapshot, r AskReq) Plan {
 		}
 		for _, rc := range inPlace {
 			set := map[string]string{"asked": stamp(s.Now)}
-			maps.Copy(set, s.readRouteOf(ri, c, failed))
+			maps.Copy(set, s.readRouteOf(ri, c, failed, rc.F("reader")))
 			takenBack = append(takenBack, change(Readers, setEntry(rc, set, FieldReturned)))
 		}
 		u := Unit{Key: c.ID, Stream: c.Row, Changes: takenBack}
@@ -280,7 +285,7 @@ func Ask(s *Snapshot, r AskReq) Plan {
 			if rd == finder {
 				fields[FieldFinderRead] = "1" // placed on purpose: the level leaves it where it is
 			}
-			maps.Copy(fields, s.readRouteOf(ri, c, failed))
+			maps.Copy(fields, s.readRouteOf(ri, c, failed, rd))
 			maps.Copy(fields, s.decideFields(c, !another && !decided && i == 0))
 			cardID, _ := ReadCardForAsk(s, c.ID, attempt, rd)
 			u.Changes = append(u.Changes, change(Readers, createEntry(cardID, rd, Asked, c.Score, fields)))
@@ -1319,7 +1324,7 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 		_, _, toFriend, byFriend := s.routeOf(c, nil, nil)
 		if len(up) > 0 && !friend && !byFriend {
 			// a bench card's next attempt goes to a member of its bench alone (bench_deal.go)
-			m = rr.next(onlyBench(up, bench), q, room, reworkAvoid(s, c))
+			m = rr.next(s.membersForRoute(c, onlyBench(up, bench)), q, room, reworkAvoid(s, c))
 		}
 		if m != "" {
 			var why string

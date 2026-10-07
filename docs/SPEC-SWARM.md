@@ -210,11 +210,12 @@ member up can launch, with its harness and the machines up: one judgment for the
 never one failure per card). On 2026-10-06 a heavy `subscription-claude` route was drawn
 by four fleet members that hold no claude login, and 73 attempts
 ended in one second `launch refused`, each a failure of the card, the member and the
-route (`TestAMemberNeverDrawsARouteWhoseHarnessItLacks`). The machine row's list and these
-functions are in place; the deal and the ask in `internal/sprint` (route.go,
-steps_work.go, steps_review.go) and `nova-sprint fleet sync`, which carries the list to
-the fleet table, are not yet wired to them, so until they are a member without the
-program still refuses the launch at staging as above.
+route (`TestAMemberNeverDrawsARouteWhoseHarnessItLacks`). Fleet sync carries the machine list to its fleet control card. The deal and ask
+filter target machines and route entries through `CanLaunch`; down and level
+moves keep an existing route on a capable machine. The shared reader eligibility
+and tick's route-level capability judgment are not wired: their existing tier
+checks can still count incapable readers, and `Unserved` does not yet become a
+persistent route judgment in the tick.
 
 | harness | the child | the usage |
 |---|---|---|

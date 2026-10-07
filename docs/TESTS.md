@@ -720,7 +720,7 @@ Postgres and a throwaway Redis.
 
 ```text
 $ nova-config migrate --file try.json
-CONFIG MIGRATE file=try.json from=0 to=35 applied=35
+CONFIG MIGRATE file=try.json from=0 to=36 applied=36
 
 $ nova-config machine add m1 --user nova --seat s1 --slots 8 --width 4 --actor a1 --file try.json
 CONFIG ADD kind=machine name=m1 rev=1
@@ -1280,3 +1280,10 @@ the lane rig on its fake clock (synctest, no socket, no wall-clock sleep), the t
 coordinator verb as the real one does; `TestResumeClearsTheLanesPauseAPersonBringsUp` and
 `TestRefuseGoRefusesWithTheWayToABench` run the two new verbs, and `TestRunBeatsDownWhileTheLanesArePausedUntilAPersonResumes`
 the daemon's down beat while the pause stands.
+
+The route-capability regression `TestAMemberNeverDrawsARouteWhoseHarnessItLacks`
+exercises the actual dealer as well as the pure capability rule. The subscription
+route is preferred, but an opencode-only machine receives the API route.
+`TestRouteDrawAndSyncRespectMachineHarnesses` checks fleet sync, work draws,
+read draws and actual asks for each headless harness. RouteIndex's restricted
+capability control passes; its random-draw mutation violates `CapabilityRespected`.

@@ -6935,3 +6935,15 @@ friend reaches that friend's inbox by the route her judgments already take: the
 push loop writes a group addressed to someone to that actor's own inbox
 directory (`pushTarget.dirOf`, `~/<actor>-working/inbox/sprint-judgments`), the
 group carrying the note's addressee (`sprint.Group.To`).
+
+### Machine harnesses and route draws
+
+Fleet sync projects each machine's `harnesses` list onto its fleet control card.
+An absent list means opencode only. Work and read draws skip array entries whose
+harness the target machine cannot launch; the route index moves past skipped
+entries. The deal skips incapable members, and the ask skips incapable fleet
+readers. A friend's reader brings its own model. The RouteIndex model checks the
+capability guard for work and read cards.
+The shared reader eligibility still tests tier availability alone. The tick's
+no-route judgment is by tier and does not yet report an unlaunchable route by
+machine capability.
