@@ -28,11 +28,11 @@ A 10 would make the CAL rule match what the tool's own examples show, describe g
 | 4 | internal/memindex/channels.go:321 | Snippets stop at 120 bytes, in the JSON too. | Add `--snippet <n>` with 0 meaning the whole paragraph. | S |
 | 5 | cmd/nova-memory/boot.go:123 | boot refuses at the first missing pin entry and names only that one. | Collect every bad entry and refuse once with all of them. | S |
 | 6 | internal/memindex/verify.go:267 | verify's coverage passes on a mention, not a link. | Match a markdown link or wikilink to the file. | S |
-| 7 | cmd/nova-memory/main.go:376 | `verify -h` says `--root` is repeatable but verify refuses two. | Give verify its own --root flag text without "repeatable". | S |
-| 8 | cmd/nova-memory/main.go:143 | Every verb's `-h` repeats the whole exit-code paragraph with hard-to-parse text. | Print only the verb's own exit codes in its `-h`. | S |
-| 9 | cmd/nova-memory/main.go:252 | `version -h` and `boot -h` say "(the index lives in memory for the run)"; neither builds an index. | Print the index clause only for verbs that build one. | S |
-| 10 | cmd/nova-memory/main.go:97 | The text MISS line prints escaped spaces. | Quote the field as the SEARCH line does. | S |
-| 11 | cmd/nova-memory/main.go:missing Missing-flag refusals send the reader to the whole banner. | Point every refusal after a verb at `nova-memory <verb> -h`. | S |
+| 7 | cmd/nova-memory/main.go:390 | `verify -h` says `--root` is repeatable but verify refuses two. | Give verify its own --root flag text without "repeatable". | S |
+| 8 | cmd/nova-memory/main.go:144 | Every verb's `-h` repeats the whole exit-code paragraph with hard-to-parse text. | Print only the verb's own exit codes in its `-h`. | S |
+| 9 | cmd/nova-memory/main.go:259 | `version -h` and `boot -h` say "(the index lives in memory for the run)"; neither builds an index. | Print the index clause only for verbs that build one. | S |
+| 10 | cmd/nova-memory/retrieval.go:83 | The text MISS line prints escaped spaces. | Quote the field as the SEARCH line does. | S |
+| 11 | cmd/nova-memory/main.go:229 | Missing-flag refusals send the reader to the whole banner. | Point every refusal after a verb at `nova-memory <verb> -h`. | S |
 
 ## Good, keep
 
