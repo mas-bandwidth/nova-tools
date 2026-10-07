@@ -1033,7 +1033,7 @@ func TickAsk(s *Snapshot, r TickReq) (Plan, int) {
 	for _, c := range cards {
 		attempt := c.Int("attempt")
 		if len(askNow) < TickMaxMoves && enoughReadersUp(s, c) &&
-			len(s.freeReaders(c, attempt))+len(returnedInTier(s, c, attempt)) >= ReadsNeeded(c)-len(liveReadsAt(s, c, attempt)) {
+			len(s.freeReaders(c, attempt))+len(returnedInTier(s, c, attempt)) >= ReadsNeededIn(s, c)-len(liveReadsAt(s, c, attempt)) {
 			askNow = append(askNow, c)
 		}
 	}
@@ -1042,7 +1042,7 @@ func TickAsk(s *Snapshot, r TickReq) (Plan, int) {
 		attempt := c.Int("attempt")
 		// the readers it still needs, whatever their room, and the reads asked now:
 		// together (ReadsWanted)
-		need := ReadsNeeded(c) - len(liveReadsAt(s, c, attempt))
+		need := ReadsNeededIn(s, c) - len(liveReadsAt(s, c, attempt))
 		want := ReadsWanted(s, c)
 		free := s.freeReaders(c, attempt)
 		returned := len(returnedInTier(s, c, attempt))
