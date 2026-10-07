@@ -2111,9 +2111,12 @@ func groupText(g sprint.Group, now time.Time, opened bool) string {
 // cardView is everything about one primary.
 type cardView struct {
 	Primary *sprint.Card `json:"primary"`
-	Tier    string       `json:"tier"`            // the tier it is on (sprint.CardTiers)
-	Ceiling string       `json:"ceiling"`         // the highest the machine escalates it to
-	Grade   string       `json:"grade,omitempty"` // nova-decide's grade, as the card holds it (sprint.FieldGrade)
+	// Column is the live table placement, as linePlace reads it, never the
+	// legacy place:work field (docs/SPEC-SPRINT.md section 11).
+	Column  string `json:"column"`
+	Tier    string `json:"tier"`            // the tier it is on (sprint.CardTiers)
+	Ceiling string `json:"ceiling"`         // the highest the machine escalates it to
+	Grade   string `json:"grade,omitempty"` // nova-decide's grade, as the card holds it (sprint.FieldGrade)
 	// Who is the worker its brief's WHO line names (sprint.FieldWho): friend for any
 	// friend, friend.<name> for one; absent on a machine's card.
 	Who string `json:"who,omitempty"`
@@ -2203,7 +2206,7 @@ func (a *app) cmdCard(args []string, stdout, stderr io.Writer) int {
 		}
 		tier, ceiling := sprint.CardTiers(v.Primary)
 		level, source := sprint.CardPriority(v.Primary)
-		b, _ := json.Marshal(cardView{Primary: v.Primary, Tier: tier, Ceiling: ceiling, Grade: v.Primary.F(sprint.FieldGrade), Who: v.Primary.F(sprint.FieldWho), Priority: level, PrioritySource: source, Work: v.Work, Reads: v.Reads, Merge: v.Merge, Open: v.Open, Needs: v.Needs, NeededBy: v.NeededBy, Held: held,
+		b, _ := json.Marshal(cardView{Primary: v.Primary, Column: v.Primary.Col, Tier: tier, Ceiling: ceiling, Grade: v.Primary.F(sprint.FieldGrade), Who: v.Primary.F(sprint.FieldWho), Priority: level, PrioritySource: source, Work: v.Work, Reads: v.Reads, Merge: v.Merge, Open: v.Open, Needs: v.Needs, NeededBy: v.NeededBy, Held: held,
 			Cost: sprint.CardCostOf(v.Primary), Timeline: events, Texts: texts})
 		fmt.Fprintln(stdout, string(b))
 		return 0
@@ -2508,8 +2511,10 @@ func printBrief(stdout, stderr io.Writer, id, brief string, asJSON bool) int {
 // that; the comfort list of 2026-10-03, item 8: a child's loop of card calls timed
 // out against the store).
 type primaryRow struct {
-	ID     string            `json:"id"`
-	Stream string            `json:"stream"`
+	ID     string `json:"id"`
+	Stream string `json:"stream"`
+	Column string `json:"column"`
+	// State is a deprecated alias of Column for one release (SPEC-SPRINT section 11).
 	State  string            `json:"state"`
 	Score  float64           `json:"score"`
 	Fields map[string]string `json:"fields"`
@@ -2531,7 +2536,7 @@ func rowsView(s *sprint.Snapshot, gone *archivedView) []primaryRow {
 				fields[k] = v
 			}
 		}
-		rows = append(rows, primaryRow{ID: c.ID, Stream: c.Row, State: c.Col, Score: c.Score, Fields: fields})
+		rows = append(rows, primaryRow{ID: c.ID, Stream: c.Row, Column: c.Col, State: c.Col, Score: c.Score, Fields: fields})
 	}
 	slices.SortStableFunc(rows, func(a, b primaryRow) int {
 		return cmp.Or(cmp.Compare(a.Stream, b.Stream), cmp.Compare(a.Score, b.Score), cmp.Compare(a.ID, b.ID))

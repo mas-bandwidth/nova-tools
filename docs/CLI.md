@@ -1245,6 +1245,12 @@ records, its needs, its place in line and its hold from one read of the tables
 one JSON object a line: `id`, `stream`, `column`, `score`, `needs`, `brief_len` and
 the other fields (the brief's text is `card <id> --brief`); `card --stream <s> --json` prints one stream's.
 
+A card's live `column` comes from its table row in `card <id> --json`,
+`card --all --json`, `where --json --rows` and `needs --json`. The rows listing
+keeps `state` as a deprecated alias of `column` for one release. `needs` labels
+the waiting card as `card <id> column <c>` and each unmet need as
+`need <id> column <c>`; JSON names both columns separately on their objects.
+
 A `<selector>` is `--stream <s>`, `--who <friend.<name>|friend|none>`, `--state <ready|waiting|held|merging>` and `--ids-file <path>`, combinable: the verb changes every
 card it selects in one store step, prints one line per card and the total, and with
 `--dry-run` lists what would change and writes nothing (docs/SPEC-SPRINT.md, "One

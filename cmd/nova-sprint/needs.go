@@ -17,18 +17,19 @@ import (
 // table registers the verb and needs.go adds its class.
 func init() { verbClasses["needs"] = classRead }
 
-// needLine is one unmet need as needs prints it: the need's id and its state
-// (a column name, dropped for a kept record with outcome dropped, or absent
-// for no record at all).
+// needLine is one unmet need with its own column, distinct from the waiting
+// card's column (docs/SPEC-SPRINT.md section 11). Off-table needs name their
+// outcome, or absent when no record exists.
 type needLine struct {
-	ID    string `json:"id"`
-	State string `json:"state"`
+	ID     string `json:"id"`
+	Column string `json:"column"`
 }
 
 // needsCard is one waiting card in the graph: its stream, its depth, whether
 // it is a root, and its unmet needs.
 type needsCard struct {
 	ID     string     `json:"id"`
+	Column string     `json:"column"`
 	Stream string     `json:"stream"`
 	Depth  int        `json:"depth"`
 	Root   bool       `json:"root"`
@@ -165,7 +166,7 @@ func sprintNeeds(s *sprint.Snapshot, only string, rootsOnly bool) needsView {
 		}
 		st := &v.Streams[i]
 		st.Total++
-		card := needsCard{ID: c.ID, Stream: c.Row, Depth: depth[c.ID]}
+		card := needsCard{ID: c.ID, Column: c.Col, Stream: c.Row, Depth: depth[c.ID]}
 		// orphan is whether this card's needs name a dropped or absent id:
 		// the closing count counts cards, one card once however many of its
 		// needs name one (docs/SPEC-SPRINT.md section 11).
@@ -175,7 +176,7 @@ func sprintNeeds(s *sprint.Snapshot, only string, rootsOnly bool) needsView {
 			if n.Waived || word == sprint.Landed {
 				continue
 			}
-			card.Needs = append(card.Needs, needLine{ID: n.ID, State: word})
+			card.Needs = append(card.Needs, needLine{ID: n.ID, Column: word})
 			if word == droppedWord || word == absentWord {
 				orphan = true
 			}
@@ -288,7 +289,7 @@ func needsText(v needsView, rootsOnly bool) string {
 			if c.Root {
 				root = " ROOT"
 			}
-			fmt.Fprintf(&b, "NEEDS stream=%s depth=%d%s %s", st.Stream, c.Depth, root, c.ID)
+			fmt.Fprintf(&b, "NEEDS stream=%s depth=%d%s card %s column %s", st.Stream, c.Depth, root, c.ID, c.Column)
 			if len(c.Needs) == 0 {
 				b.WriteString(" needs none")
 			} else {
@@ -297,7 +298,7 @@ func needsText(v needsView, rootsOnly bool) string {
 					if i > 0 {
 						b.WriteString(", ")
 					}
-					fmt.Fprintf(&b, "%s %s", n.ID, n.State)
+					fmt.Fprintf(&b, "need %s column %s", n.ID, n.Column)
 				}
 			}
 			b.WriteString("\n")
