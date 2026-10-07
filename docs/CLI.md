@@ -3497,11 +3497,11 @@ secrets store checkout, `--base` and `--head` are the pull request's two shas, a
 The store's own review, as a verb: run it in CI on every pull request against the
 secrets store. It diffs the two refs with git and asks GitHub nothing. It prints
 `GATE APPROVE files=<n> machines=<registry|->` at exit 0, or one
-`GATE REFUSE rule=<n> check=<k> file=<f>: <why>` line at exit 2.
+`GATE FAILED rule=<n> check=<k> file=<f>: <why>` line at exit 1.
 
 `--base` and `--head` each name one commit. A ref beginning with `-`, a ref that
-names no commit, and any gate flag given twice are each refused at exit 2 with one
-line naming the flag, before anything is judged.
+names no commit, and any gate flag given twice are each a gate that could not run,
+one `SECRETS GATE REFUSED` line at exit 2 naming the flag, before anything is judged.
 
 `--machines` is the fleet's machines registry, and its `seat` column is what
 vouches for a recipient key the diff introduces: a new key is permitted only for
