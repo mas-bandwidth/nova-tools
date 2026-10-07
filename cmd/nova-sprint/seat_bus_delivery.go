@@ -38,7 +38,8 @@ func (a *app) cmdSeatDeliver(args []string, stdout, stderr io.Writer) int {
 		return a.readFailed(name, err, stderr)
 	}
 	if o.Now.IsZero() || o.Set.Proven.After(o.Now) || !sprint.PushLive(o.Set.PushRecord, true, o.Now) {
-		return refuse(stderr, name, "the judgments target is unproven; run: "+sprint.PushSetup(c.actor, o.Set.PushRecord, true))
+		fmt.Fprintf(stderr, "SEAT DELIVER DOWN: the judgments target is unproven; run: %s\n", sprint.PushSetup(c.actor, o.Set.PushRecord, true))
+		return 1
 	}
 	if o.Set.Session == "" && o.Set.Adapter != sprint.AdapterFolder {
 		return refuse(stderr, name, "the resident harness session id is unknown; run: nova-sprint seat push --actor "+oneline.ShellWord(c.actor)+" --harness "+oneline.ShellWord(o.Set.Harness)+" --target "+oneline.ShellWord(o.Set.Target)+" --session <live-session-id>, then prove its nonce")

@@ -49,12 +49,15 @@ func (a *app) seatPushLinesForArgs(name string, args []string) ([]sprint.SeatPus
 // withSeatPushLines gives every seat-changing verb the same four observations.
 // JSON keeps one result object; text prints each proof before the operation.
 func (a *app) withSeatPushLines(name string, args []string, o, e io.Writer, run func(*app, []string, io.Writer, io.Writer) int) int {
+	if !pushArmedDefault && !pushArmed(a.getenv("NOVA_SPRINT_ACTOR")) {
+		return run(a, args, o, e)
+	}
 	if len(args) > 0 && verbflag.IsHelp(args[0]) {
 		return run(a, args, o, e)
 	}
 	rows, asJSON, err := a.seatPushLinesForArgs(name, args)
 	if err != nil {
-		return a.readFailed(name, err, e)
+		return refuse(e, name, err.Error())
 	}
 	if len(rows) == 0 {
 		return run(a, args, o, e)
