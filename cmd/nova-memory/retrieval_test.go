@@ -156,3 +156,59 @@ func TestWholePrintsThePassageTheSnippetCut(t *testing.T) {
 	assert.Regexpf(t, `\.\.\.\+\d+B"`, theLine(t, text, "SEARCH HIT "),
 		"a paragraph past the byte cap did not carry the cap's note:\n%s", text)
 }
+
+// Absent frontmatter is null in JSON, never an empty string: `""` is a name
+// that is empty, while null is no name, and the typed line already prints `-`
+// for it (docs/STANDARD.md: absent is null, `-` in text). A frontmatter block
+// that is present keeps its string.
+func TestAbsentFrontmatterIsNullInJSON(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	body := "The brass lantern needs clean glazing cloths for the brass and the glass.\n"
+	require.NoError(t, os.WriteFile(filepath.Join(root, "plain.md"), []byte(body), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "named.md"), []byte("---\nname: lantern-care\ntype: measured\n---\n\n"+body), 0o600))
+
+	args := []string{"search", "--root", root, "--channels", "bm25", "--k", "2", "brass", "lantern", "glazing", "cloths"}
+	code, raw, stderr := runCLI(t, "", append(args, "--json")...)
+	require.Equal(t, 0, code, stderr)
+	var out struct {
+		Items []struct {
+			Kind   string
+			Fields map[string]any
+		}
+	}
+	require.NoError(t, json.Unmarshal([]byte(raw), &out))
+	files := map[string]map[string]any{}
+	for _, item := range out.Items {
+		if item.Kind == "hit" {
+			file, _ := item.Fields["file"].(string)
+			files[file] = item.Fields
+		}
+	}
+	require.Len(t, files, 2, "the query did not surface both files:\n%s", raw)
+	plain := files["plain.md"]
+	require.NotNil(t, plain, "no hit for plain.md:\n%s", raw)
+	assert.Nilf(t, plain["name"], "an absent name is not null in JSON: %v", plain["name"])
+	assert.Nilf(t, plain["type"], "an absent type is not null in JSON: %v", plain["type"])
+	named := files["named.md"]
+	require.NotNil(t, named, "no hit for named.md:\n%s", raw)
+	assert.Equalf(t, "lantern-care", named["name"], "a present name did not survive: %v", named["name"])
+	assert.Equalf(t, "measured", named["type"], "a present type did not survive: %v", named["type"])
+
+	code, text, stderr := runCLI(t, "", args...)
+	require.Equal(t, 0, code, stderr)
+	plainLine, namedLine := "", ""
+	for _, line := range strings.Split(text, "\n") {
+		if strings.Contains(line, ": plain.md:") {
+			plainLine = line
+		}
+		if strings.Contains(line, ": named.md:") {
+			namedLine = line
+		}
+	}
+	assert.Containsf(t, plainLine, "name=- type=-",
+		"an absent name no longer prints `-` in the typed line:\n%s", text)
+	assert.Containsf(t, namedLine, "name=lantern-care type=measured",
+		"a present name no longer prints in the typed line:\n%s", text)
+}

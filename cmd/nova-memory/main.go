@@ -93,10 +93,10 @@ flags:
                         answer means, and no channel set is right by default:
                         eval can measure bm25+trigram worse than bm25 alone.
                         With two channels a hit is ranked by fused= (rank
-                        fusion over the channels); its score= is its score in
-                        the channel named beside it (score-channel=), which
-                        compares only with scores of that channel and with the
-                        CAL line, so score= need not fall with rank.
+                        fusion over the channels); its native score is named
+                        for the channel that produced it (bm25= or trigram=),
+                        beside score-channel=, which compares only with scores
+                        of that channel and with the CAL line, so score= need not fall with rank.
   --k <n>               receipts per query, positive. Required: k IS the mind's
                         budget, and zero is not "unlimited".
   --exclude <glob>      path or glob to skip, repeatable. Nothing is excluded
@@ -566,7 +566,13 @@ func wholePassage(s string) string { return oneline.Cap(s, wholeCap) }
 // token; the file is a positional slot and keeps its spaces; the passage is
 // Go-quoted, which is one line in a different escape form. whole swaps the
 // 120-byte snippet for the whole paragraph (capped, and marked when cut).
-func hitLine(token, prefix string, rank int, h memindex.FileHit, whole bool) string {
+//
+// Under fusion (more than one channel) the native score is printed under the
+// name of the channel that produced it — bm25= or trigram= — because the
+// channels score on different scales and one bare score= beside rank= would
+// claim an ordering the number does not have (M-4). score-channel= still names
+// it, so a reader who looks for the channel finds it either way.
+func hitLine(token, prefix string, rank int, h memindex.FileHit, whole, fused bool) string {
 	name, typ := h.FMName, h.FMType
 	if name == "" {
 		name = "-"
@@ -578,12 +584,16 @@ func hitLine(token, prefix string, rank int, h memindex.FileHit, whole bool) str
 	if root == "" {
 		root = "-"
 	}
+	native := scoreFields(h.Native, h.NativeChan)
+	if fused && h.NativeChan != "" {
+		native = fmt.Sprintf("%s=%.2f score-channel=%s", h.NativeChan, h.Native, h.NativeChan)
+	}
 	passage := h.Snippet
 	if whole {
 		passage = wholePassage(h.Whole)
 	}
 	return fmt.Sprintf("%s HIT %srank=%d %s fused=%.5f class=%s name=%s type=%s root=%s: %s:%d %q\n",
-		token, prefix, rank, scoreFields(h.Native, h.NativeChan), h.Fused, oneline.Field(h.Class), oneline.Field(name), oneline.Field(typ), oneline.Field(root), oneline.Escape(h.File), h.Line, passage)
+		token, prefix, rank, native, h.Fused, oneline.Field(h.Class), oneline.Field(name), oneline.Field(typ), oneline.Field(root), oneline.Escape(h.File), h.Line, passage)
 }
 
 // ---------------------------------------------------------------------------
