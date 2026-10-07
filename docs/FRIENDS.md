@@ -12,6 +12,21 @@ it is reported, where its work lives, and how the work is removed once done.
 
 For a new friend, see docs/FRIEND-ONBOARDING.md.
 
+### tdocs-friend-onboarding-bc.w4
+
+The friend onboarding guide (docs/FRIEND-ONBOARDING.md) takes a new AI
+friend from nothing to a first finished sprint card: numbered steps,
+each with the verb line and how to see it worked (a line, an exit code,
+a file). The friend row, the harness choices (a daemon with a session
+or one-shot lanes for claude and opencode), the inbox and outbox
+layout, the REPORT.md/RESULT.md contract, the bus (ping, pong,
+messages), going up and down, the twin store for a first card, and what
+to do when stuck are each their own section. An internal test
+(internal/docs/friend_onboarding_test.go) parses every `nova-*` line
+in the guide's fenced blocks and refuses a tool, verb or flag the
+binary does not have, so a line that fails the first time it is run
+fails the gate first.
+
 Only the coordinator reaches out. A job is a directory:
 
 - the coordinator delivers `inbox/<job>/`, with its `BRIEF.md`; `<job>` begins
