@@ -66,6 +66,7 @@ var verbEffect = map[string]string{
 	"seat uninstall":    "local write: unloads the push loop's unit and removes its file from --dir; --dry-run names the unit and unloads and removes nothing",
 	"machinery":         "inspection: checks server, store, loop, beats, readers, dashboard, installed versions, merge queue, writes nothing",
 	"needs":             "inspection: reads the waiting cards, writes nothing",
+	"streams":           "inspection: reads the work and merge tables once and prints each stream with the repositories and bases its cards record, its release, its open and landed counts, and with --cards every card's id, state, tier, title and needs; writes nothing",
 	"held":              "inspection: reads the held cards of the table, writes nothing",
 	"sentinels":         "inspection: reads the sentinels and what each waits on, writes nothing",
 	"sentinel set":      "local write: replaces the sentinel's needs in the sprint's store, keeping its id, stream, score and log",
