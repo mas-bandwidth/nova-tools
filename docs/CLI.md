@@ -1518,6 +1518,15 @@ The adoption pipeline (`(*app).cmdAdopt`, `cmd/nova-sprint/adopt.go`; the runboo
 [SPRINT-COORDINATOR.md](SPRINT-COORDINATOR.md) section 7, "Adoption is a pipeline") is in no
 verb table and the tick does not call its pass.
 
+### nova-sprint promote
+
+`nova-sprint promote [--once] [--poll <duration>] [--every <duration>] [--landings <n>] [--dry-run] [--branch <branch>] [--repo-dir <dir>] [--base <branch>] [--check <cmd>]`
+carries a sprint promotion to its target development branch (`dev` by default): cuts a throwaway frozen branch (`promote/<YYYY-MM-DD>-<n>`, `git branch --no-track` at the sprint tip), gates the base tip before pushing (`--check`, default: the whole-tree gate the verb runs for the reader — build, vet and every package's tests; a promoter with no gate refuses), pushes the throwaway branch to `origin`, opens the pull request to `--base`, and admits it to the merge queue. The pull request head is always the throwaway branch, never the live sprint branch, ensuring the live branch remains intact when the merged PR head is deleted on the forge.
+`--once` carries one promotion from cut to recorded merge (or stops on a judgment or refusal) and exits.
+`--poll <duration>` configures how often to inspect in-flight checks and merge-queue status (default 1m).
+`--dry-run` prints the branch and landed cards and changes nothing.
+On merge, records `promoted --sha <sha>` in the sprint store (`PromotedOnce`) and advances `refs/promoted/last`. The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md) section 11.
+
 ### Exit codes
 
 | exit | meaning |
