@@ -90,3 +90,12 @@ The `gosdk` check reads the role from the machine's seat. On the coordinator's m
 no `go` there it is ok. On a bench it fails when `go` is absent, when its version is not
 `go.mod`'s toolchain version, or when `GOCACHE` is not writable, and warns when `GOFLAGS`
 does not carry `-mod=readonly`. Each fix line names the step above.
+
+### dep-ssh-b.w4: ssh between the coordinator and the benches
+
+The coordinator and benches communicate via SSH. Nova-up does not install packages on
+a bench: it only reports whether `ssh` is available and the install command for the
+bench's OS. On a bench, a person installs openssh-client (apt on Linux, brew on darwin).
+The doctor check `ssh` verifies the binary is present and is OpenSSH. On the coordinator,
+the check is skipped since it runs remotely. Fix lines name the install command for
+the bench's OS.
