@@ -1905,7 +1905,8 @@ provider_take_<n> record), one line of key=value words (`internal/cardcost`,
   model table and keeps it as a float, and the figure is the decimal of the
   store's float sum of those, the harness's computation and never an invoice; a
   class not reported is left out, never written as 0, and a cost is never
-  guessed;
+  guessed except the marked estimate of a run whose usage line never came
+  (`estimated=yes`, below);
 - added by the step when the card ends: `wait` (dealt to taken; a read's asked to
   begun) and `run` (taken to the end; begun to the end), in seconds; and the
   prediction: `price_route` (a work card's route by name, a pinned card's by its
@@ -1960,12 +1961,24 @@ section 5), end, the tokens, wait, run, predicted, actual and
 card retired and no consumer record cleaned up can lose cost: the record is
 already in the card. A figure not known prints `-`, never 0.
 
-**Every run's cost, whatever its end.** A take or a read records its cost in the step
-that ends it, whatever the end (done, failed, no result, the provider's failure, a refusal
-at staging, a read of any verdict or none): the consumer record carries its route, model,
-tier, card, kind (work or read) and end, and its charged figure is the harness's own cost
-where it reported one, else its tokens at the route's prices (`costRecord`); a run that
-reported no token is counted unpriced, never as a zero. A launch's child appends one row
+**Every run's cost, whatever its end.** Every run is priced or carries its reason. A take
+or a read records its cost in the step that ends it, whatever the end (done, failed, no
+result, the provider's failure, a refusal at staging, a read of any verdict or none): the
+consumer record carries its route, model, tier, card, kind (work or read) and end. The
+cascade (`costRecord`) is the usage line when one came (its tokens, or the harness's own
+cost), else the provider's per-request quote when the line carries one (OpenRouter
+`generation_input`, `generation_output`, `generation_reasoning`, `generation_usd`; an id
+alone is not a quote; the figures fold into the token counts and `actual_usd` with
+`actual_by=generation`), else an estimate from the prompt bytes sent (`prompt_bytes`) at
+the route's input price, four bytes to one token rounded up, the long input price when
+that estimate crosses `long_context`, marked `estimated=yes`, and never written into
+`input`. A route with no price table stays `unpriced=no-price-sheet`, and a run with no
+route `unpriced=no-route`, the reason on the record. A usage line that came and reported
+no token, and carried neither a generation quote nor prompt bytes, stays
+`unpriced=no-tokens`, never a zero. `unpriced_runs` counts the records that carry no
+charged figure: a run on a route with a price table that the cascade priced is not among
+them. What remains is a route with no price table, the reason on the record, and a usage
+line that named no token and no prompt to estimate from. A launch's child appends one row
 per attempt to its job's `usage.tsv` before the summary line that carries the launch's
 spend; a launch stopped between the two still reports what the rows say
 (`member.ReceiptUsage`): every attempt's tokens summed, the model, and the harness's cost
@@ -2042,8 +2055,12 @@ spread as the records are, `reads are $4.00 of the records (40.0%, work $6.00), 
 the records are, about $4.00 of the gap is reads` (an estimate, said as one: the gap is what no
 record holds); the record keeps `internal_reads` beside `internal`, and the step's line says
 `reads=<$>` (`TestTheReconcileJudgmentNamesTheReadShareOfTheGap`); a read back within
-the bound closes it. A provider with no usage endpoint (opencode) or no key is recorded
-unknown with why, and changes nothing. **`nova-sprint cost reconcile [--dry-run] [--json]`** runs it
+the bound closes it. The fleet property `cost_reconcile_<provider>` is the reconcile row;
+the unreconciled gap is not added into the cost tile. A provider with no usage endpoint
+(opencode) is recorded unknown with why, and changes nothing. A provider whose key is
+absent is refused before anything is written, dry-run included, and the refusal names the
+exact command `nova-secrets exec --only <ENV> -- nova-sprint cost reconcile` (OpenRouter:
+`nova-secrets exec --only OPENROUTER_API_KEY -- nova-sprint cost reconcile`). **`nova-sprint cost reconcile [--dry-run] [--json]`** runs it
 once: each provider the routes name is read through the seat's key in its own environment
 (`provbalance.ReadUsage`, today's UTC day), the reads go to the step (`store.CostReconcileStep`),
 and one line per provider is printed, `COST provider=<p> day=<d> provider_usd=<$> records=<$>

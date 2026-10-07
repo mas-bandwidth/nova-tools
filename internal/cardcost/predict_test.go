@@ -73,6 +73,18 @@ func TestPredictPricesEachClassExactly(t *testing.T) {
 	}
 }
 
+func TestEstimatePromptPricesInputOnly(t *testing.T) {
+	t.Parallel()
+	p := Prices{Input: "1", Output: "10", Request: "0.01"}
+	assert.Equal(t, Prediction{USD: "1"}, EstimatePrompt(4_000_000, p))
+	assert.Equal(t, Prediction{USD: "0.000001"}, EstimatePrompt(1, p), "a short prompt rounds up to one token")
+	long := Prices{Input: "1", InputLong: "2", LongContext: 10}
+	assert.Equal(t, Prediction{USD: "0.000022", Long: true}, EstimatePrompt(44, long))
+	assert.Equal(t, Prediction{Why: WhyNoSheet}, EstimatePrompt(40, Prices{}))
+	assert.Equal(t, Prediction{Why: WhyNoTokens}, EstimatePrompt(0, p))
+	assert.Equal(t, Prediction{Why: WhyNoPrice + "input"}, EstimatePrompt(40, Prices{Output: "10"}))
+}
+
 func TestTheSheetsCopyOnACardReadsBackAsTheSheet(t *testing.T) {
 	t.Parallel()
 	cases := []struct {

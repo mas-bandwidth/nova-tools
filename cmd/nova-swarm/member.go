@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -766,6 +768,9 @@ type nativeChild struct {
 	err                         error
 	once                        sync.Once
 	result                      member.Result
+	// generation reads one OpenRouter per-request usage id. Nil is the live
+	// endpoint, and only when OPENROUTER_API_KEY is set.
+	generation func(id string) (cardcost.GenerationUsage, bool)
 }
 
 // noUsageReported is the usage of a launch whose harness reported no token and left no
@@ -776,6 +781,103 @@ var noUsageReported = func() string {
 	u.Extra = []string{"usage_source=none"}
 	return u.String()
 }()
+
+// generationIDPattern is an OpenRouter generation id a native log names.
+var generationIDPattern = regexp.MustCompile(`\bgeneration_id=([A-Za-z0-9_-]+)`)
+
+// priceRunWithoutUsage is the usage a finish reports when the harness named no
+// token and no cost: the provider's per-request quote when the log names a
+// generation id and the key is present, else the prompt's bytes (JOB.md) so the
+// sprint can estimate. A line that already carries tokens or a cost is returned
+// unchanged. With neither an id nor prompt bytes, the line is noUsageReported.
+func priceRunWithoutUsage(usage string, log []byte, job string, lookup func(id string) (cardcost.GenerationUsage, bool)) string {
+	original := usage
+	if usage == "" {
+		usage = noUsageReported
+		original = usage
+	}
+	u := cardcost.ParseUsage(usage)
+	if u.Tokens.Reported() || u.Actual != "" {
+		return original
+	}
+	if id := generationIDOf(log); id != "" {
+		if lookup == nil {
+			lookup = fetchOpenRouterGeneration
+		}
+		if g, ok := lookup(id); ok {
+			if g.ID == "" {
+				g.ID = id
+			}
+			u = u.ApplyGeneration(g)
+		} else if u.GenerationID == "" {
+			u.GenerationID = id
+		}
+	}
+	if !u.Tokens.Reported() && u.Actual == "" {
+		if n := promptBytesOf(job); n > 0 {
+			u.PromptBytes = n
+		}
+	}
+	if !u.Tokens.Reported() && u.Actual == "" && u.GenerationID == "" && u.PromptBytes == 0 {
+		return original
+	}
+	return u.String()
+}
+
+// generationIDOf is the first generation id the log names, or "".
+func generationIDOf(log []byte) string {
+	m := generationIDPattern.FindSubmatch(log)
+	if m == nil {
+		return ""
+	}
+	return string(m[1])
+}
+
+// promptBytesOf is the length of the job's JOB.md, 0 when it is missing or empty.
+func promptBytesOf(job string) int64 {
+	if job == "" {
+		return 0
+	}
+	b, err := os.ReadFile(filepath.Join(job, "JOB.md"))
+	if err != nil || len(b) == 0 {
+		return 0
+	}
+	return int64(len(b))
+}
+
+// fetchOpenRouterGeneration reads GET /api/v1/generation?id= with the seat's key.
+// No key, a non-200, or an answer with nothing to price is not a quote. The key
+// is never in what this returns.
+func fetchOpenRouterGeneration(id string) (cardcost.GenerationUsage, bool) {
+	key := os.Getenv("OPENROUTER_API_KEY")
+	if key == "" || id == "" {
+		return cardcost.GenerationUsage{}, false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://openrouter.ai/api/v1/generation?id="+url.QueryEscape(id), nil)
+	if err != nil {
+		return cardcost.GenerationUsage{}, false
+	}
+	req.Header.Set("Authorization", "Bearer "+key)
+	resp, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
+	if err != nil {
+		return cardcost.GenerationUsage{}, false
+	}
+	defer resp.Body.Close() // ignored: the body is already read or the read failed; a close error loses nothing
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+	if err != nil || resp.StatusCode != http.StatusOK {
+		return cardcost.GenerationUsage{}, false
+	}
+	g, err := cardcost.ParseOpenRouterGeneration(body)
+	if err != nil {
+		return cardcost.GenerationUsage{}, false
+	}
+	if g.ID == "" {
+		g.ID = id
+	}
+	return g, true
+}
 
 // receiptSpend is this launch's durable per-attempt usage rows read back
 // (member.ReceiptUsage; docs/SPEC-SPRINT.md, "What a card cost"). The job directory is
@@ -958,8 +1060,10 @@ func (c *nativeChild) Result() member.Result {
 	c.once.Do(func() {
 		ran := false
 		var end, usage, provider, refused, budget, gate, gateTests, carry, usageError, nativeSpendLine string
+		var logBytes []byte
 		nativeHasSpend := false
 		if b, err := os.ReadFile(c.logPath); err == nil {
+			logBytes = b
 			carry = cardcontract.ParseCarryLine(b)
 			if m := nativeGateLine.FindSubmatch(b); m != nil {
 				gate, gateTests = string(m[1]), strings.ReplaceAll(strings.TrimSpace(string(m[2])), ",", ", ")
@@ -1066,13 +1170,13 @@ func (c *nativeChild) Result() member.Result {
 			usage = u.String()
 			report = oneline.Cap(report+"; usage receipt unreadable: "+oneline.Escape(usageError), 300)
 		}
-		if usage == "" {
-			// the harness reported nothing and left no receipt: the finish or the read
-			// still carries --usage, saying so (noUsageReported), so a routed read's
-			// verdict is kept and recorded unpriced=no-tokens, never refused for a
-			// missing --usage (docs/SPEC-SPRINT.md, "Reads are priced like work")
-			usage = noUsageReported
-		}
+		// the harness reported nothing and left no receipt: still carry --usage.
+		// A generation id on the log is the provider's per-request quote when the
+		// key is present; otherwise JOB.md's length rides as prompt_bytes so the
+		// sprint can estimate. With neither, the line is noUsageReported, and a
+		// routed read's verdict is kept (docs/SPEC-SPRINT.md, "Reads are priced
+		// like work"; docs/SPEC-SWARM.md, the member).
+		usage = priceRunWithoutUsage(usage, logBytes, c.job, c.generation)
 		if verdict == "not-done" && gate == member.GateGreen {
 			// the child's gate was red only on failures the gate decision classed flaky, and
 			// their rerun passed: the work is done as far as its gate says; the readers read it

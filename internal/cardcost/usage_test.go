@@ -96,6 +96,27 @@ func TestPricedCopiesTheSheetAndNeverGuesses(t *testing.T) {
 	assert.Equal(t, "", nowhere.Route)
 }
 
+func TestOpenRouterGenerationFoldsIntoTheRecord(t *testing.T) {
+	t.Parallel()
+	g, err := ParseOpenRouterGeneration([]byte(`{"data":{"id":"gen-1","model":"vendor/m","tokens_prompt":12,"tokens_completion":3,"native_tokens_reasoning":1,"total_cost":0.5}}`))
+	require.NoError(t, err)
+	assert.Equal(t, GenerationUsage{ID: "gen-1", Model: "vendor/m", PromptTokens: 12, OutputTokens: 3, ReasoningTokens: 1, CostUSD: "0.5"}, g)
+	u := NoUsage().ApplyGeneration(g)
+	assert.Equal(t, int64(12), u.Tokens.Input)
+	assert.Equal(t, "0.5", u.Actual)
+	assert.Equal(t, ActualByGeneration, u.ActualBy)
+	assert.Equal(t, "gen-1", u.GenerationID)
+	assert.Empty(t, u.GenerationUSD)
+	_, err = ParseOpenRouterGeneration([]byte(`{"data":{"id":"gen-1"}}`))
+	assert.ErrorIs(t, err, errGenerationShape)
+	est := ParseUsage("prompt_bytes=4000000").EstimatedFrom("pro-a", Prices{Input: "1", Output: "10"})
+	assert.True(t, est.Estimated)
+	assert.Equal(t, "1", est.Predicted)
+	assert.False(t, est.Tokens.Reported())
+	again := est.Priced("pro-a", Prices{Input: "1"})
+	assert.False(t, again.Estimated, "a token pricing clears the estimate mark")
+}
+
 func TestTimedMeasuresWaitingAndRunning(t *testing.T) {
 	t.Parallel()
 	end := time.Date(2026, 10, 1, 12, 1, 0, 0, time.UTC)

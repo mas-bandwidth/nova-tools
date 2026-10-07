@@ -72,3 +72,21 @@ func TestCostReconcileSetsEachProvidersDayBesideTheRecords(t *testing.T) {
 	bare.ok("init --readers reader-a --members m1")
 	assert.Equal(t, "COST RECONCILE OK providers=0 notes=0: the routes name no provider (nova-sprint routes)\n", bare.ok("cost reconcile"))
 }
+
+// A provider whose key is absent is refused before any read and before any write.
+// The refusal names the exact nova-secrets command. Dry-run is the same refusal.
+func TestCostReconcileRefusesWhenTheProviderKeyIsAbsent(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.ok("init --readers reader-a --members m1")
+	ta.m.SetRoutes([]sprint.Route{{Name: "pro-a", Tier: "pro", Provider: "openrouter", Model: "m", Enabled: true}})
+	code, out, errs := ta.do("cost reconcile")
+	assert.Equal(t, 2, code)
+	assert.Empty(t, out)
+	assert.Contains(t, errs, "OPENROUTER_API_KEY is not in this environment; run: nova-secrets exec --only OPENROUTER_API_KEY -- nova-sprint cost reconcile")
+	code, out, errs = ta.do("cost reconcile --dry-run")
+	assert.Equal(t, 2, code)
+	assert.Empty(t, out)
+	assert.Contains(t, errs, "nova-secrets exec --only OPENROUTER_API_KEY -- nova-sprint cost reconcile")
+	assert.NotContains(t, ta.ok("inbox"), sprint.NCostGap, "a refused reconcile writes no judgment")
+}

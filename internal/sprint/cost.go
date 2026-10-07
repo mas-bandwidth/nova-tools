@@ -30,19 +30,45 @@ import (
 // timed from the stamp it was dealt or asked (from) through the one it was taken or
 // begun (began) to now, and priced. A work card is priced by its route (route, by
 // name; a pinned or unrouted card by the model it ran), a read by an enabled route of
-// the provider/model its harness reported (onlyEnabled). A run that reported no token
-// is not priced.
+// the provider/model its harness reported (onlyEnabled). Every run is priced or
+// carries its reason: the usage line when one came (tokens, or a cost), else the
+// provider's per-request quote when the line carries one (generation_*), else an
+// estimate from the prompt bytes and the route's input price, marked estimated. A
+// route with no price table stays unpriced, the reason on the record. A line that
+// came and reported no token, and carried neither a quote nor prompt bytes, stays
+// unpriced=no-tokens.
 func costRecord(s *Snapshot, usage, route, model string, onlyEnabled bool, from, began string) string {
 	u := cardcost.ParseUsage(usage).Timed(from, began, s.Now)
-	if !u.Tokens.Reported() {
+	fromGeneration := false
+	if q, ok := u.GenerationQuote(); ok && !u.Tokens.Reported() && u.Actual == "" {
+		u = u.ApplyGeneration(q)
+		fromGeneration = true
+	}
+	if u.PromptBytes > 0 && !u.Tokens.Reported() && u.Actual == "" {
+		r, ok := s.priceRoute(route, cmp.Or(u.Model, model), onlyEnabled)
+		if !ok {
+			u.Unpriced = cardcost.WhyNoRoute
+			return u.String()
+		}
+		return u.EstimatedFrom(r.Name, r.Prices).String()
+	}
+	if !u.Tokens.Reported() && !fromGeneration {
 		u.Unpriced = cardcost.WhyNoTokens
 		return u.String()
 	}
 	r, ok := s.priceRoute(route, cmp.Or(u.Model, model), onlyEnabled)
 	if !ok {
-		return u.Priced("", cardcost.Prices{}).String()
+		priced := u.Priced("", cardcost.Prices{})
+		if fromGeneration && priced.Actual != "" {
+			priced.Unpriced = ""
+		}
+		return priced.String()
 	}
-	return u.Priced(r.Name, r.Prices).String()
+	priced := u.Priced(r.Name, r.Prices)
+	if fromGeneration && priced.Actual != "" && priced.Unpriced == cardcost.WhyNoTokens {
+		priced.Unpriced = ""
+	}
+	return priced.String()
 }
 
 // A read is priced as work is (the owner, 2026-10-05: "do we have the cost for readers

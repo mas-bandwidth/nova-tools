@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
@@ -70,4 +71,56 @@ func TestTheMemberReportsTheSpendInTheUsageRecord(t *testing.T) {
 			assert.Equal(t, tc.usage, c.Result().Usage)
 		})
 	}
+}
+
+// A launch that reported no token still carries a generation quote or the prompt's
+// bytes. The lookup is the child's own function: the test opens no socket.
+func TestNoResultUsageCarriesPromptBytesOrAGenerationQuote(t *testing.T) {
+	t.Parallel()
+	done := make(chan struct{})
+	close(done)
+
+	t.Run("prompt bytes", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		job := filepath.Join(dir, "job")
+		body := "the brief\n"
+		write(t, filepath.Join(job, "JOB.md"), body)
+		logPath := filepath.Join(dir, "c1.native.log")
+		write(t, logPath, "the child printed nothing native reads\n")
+		c := &nativeChild{card: "c1", logPath: logPath, results: filepath.Join(dir, "results"), job: job, done: done}
+		u := cardcost.ParseUsage(c.Result().Usage)
+		assert.Equal(t, int64(len(body)), u.PromptBytes)
+		assert.False(t, u.Tokens.Reported())
+		assert.Empty(t, u.Actual)
+		assert.Contains(t, c.Result().Usage, "usage_source=none")
+	})
+
+	t.Run("generation quote", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		job := filepath.Join(dir, "job")
+		logPath := filepath.Join(dir, "c1.native.log")
+		write(t, logPath, "openrouter generation_id=gen-1 stopped\n")
+		c := &nativeChild{
+			card: "c1", logPath: logPath, results: filepath.Join(dir, "results"), job: job, done: done,
+			generation: func(id string) (cardcost.GenerationUsage, bool) {
+				if id != "gen-1" {
+					return cardcost.GenerationUsage{}, false
+				}
+				return cardcost.GenerationUsage{PromptTokens: 10, OutputTokens: 2, CostUSD: "0.5"}, true
+			},
+		}
+		got := c.Result().Usage
+		u := cardcost.ParseUsage(got)
+		assert.Equal(t, int64(10), u.Tokens.Input)
+		assert.Equal(t, int64(2), u.Tokens.Output)
+		assert.Equal(t, "0.5", u.Actual)
+		assert.Equal(t, cardcost.ActualByGeneration, u.ActualBy)
+		assert.Equal(t, "gen-1", u.GenerationID)
+		assert.Empty(t, u.GenerationInput)
+		assert.Empty(t, u.GenerationUSD)
+		assert.Zero(t, u.PromptBytes)
+		require.NotContains(t, got, "prompt_bytes=")
+	})
 }
