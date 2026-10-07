@@ -1,0 +1,3 @@
+# never_force_allowlist.txt - shrink-only allowlist of legitimate force push uses
+# Format: path:line reason
+# This file may only shrink; a new entry is a refusal, not a place to park an issue.
