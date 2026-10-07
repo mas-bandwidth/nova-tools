@@ -270,6 +270,46 @@ func TestCalibrationProbeAndSchemaVersionMoveTogether(t *testing.T) {
 		memindex.SchemaVersion, wantSchema)
 }
 
+// The CAL line is context, not a cutoff. The probe is one fixed unrelated
+// query, so a corpus that happens to be ABOUT the probe scores it high, and on
+// the banner's own example the right rank-1 answer (0.99) scores below CAL
+// (1.46): the old "at or below it is no better than noise" rule condemned the
+// tool's own answer. The help says what CAL is, prints the probe text in
+// `help search`, and no hit is labelled noise.
+func TestCalibrationIsContextNotACutoff(t *testing.T) {
+	t.Parallel()
+
+	sit := exampleSitting(t)
+	code, stdout, stderr := runExampleLine(t, sit, usageExamples(t)[1])
+	require.Equalf(t, 0, code, "the example's search answered %d: %s%s", code, stdout, stderr)
+	cal := firstScore(t, theLine(t, stdout, "SEARCH CAL "))
+	hit := firstScore(t, theLine(t, stdout, "SEARCH HIT rank=1 "))
+	require.Lessf(t, hit, cal,
+		"the example's rank-1 hit no longer scores below CAL; the premise that a cutoff would condemn the right answer is gone:\n%s", stdout)
+
+	assert.NotContainsf(t, flat(t, stdout), "noise", "a hit was labelled noise on the CAL band:\n%s", stdout)
+	assert.NotContainsf(t, flat(t, usage), "no better than noise", "the help still calls a hit at or below CAL noise:\n%s", usage)
+	assert.Containsf(t, flat(t, usage), "CAL is the top score of a fixed unrelated query, for scale; it does not prove relevance",
+		"the help does not say what CAL is or that it does not prove relevance:\n%s", usage)
+	assert.Containsf(t, flat(t, usage), "not a cutoff", "the help does not say CAL is context rather than a cutoff:\n%s", usage)
+
+	code, help, stderr := runCLI(t, "", "help", "search")
+	require.Equalf(t, 0, code, "help search answered %d: %s", code, stderr)
+	assert.Containsf(t, flat(t, help), calibrationProbe, "help search does not print the probe text a reader must judge CAL against:\n%s", help)
+}
+
+// firstScore returns the first score=NUMBER value on a line.
+func firstScore(t *testing.T, line string) float64 {
+	t.Helper()
+	_, tail, found := strings.Cut(line, "score=")
+	require.Truef(t, found, "no score= on %q", line)
+	end := strings.IndexByte(tail, ' ')
+	require.GreaterOrEqualf(t, end, 0, "no score value on %q", line)
+	v, err := strconv.ParseFloat(tail[:end], 64)
+	require.NoErrorf(t, err, "score on %q is not a number", line)
+	return v
+}
+
 // The receipt names the channel its score came from, and the channel named is
 // the one that ACTUALLY surfaced the chunk. A hit reached through the second
 // channel alone used to print score=0.00, which reads against the calibration

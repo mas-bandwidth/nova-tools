@@ -16,6 +16,7 @@ import (
 func cmdCheck(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("check", flag.ContinueOnError)
 	asJSON := fs.Bool("json", false, "render the retrieval result as JSON")
+	whole := fs.Bool("whole", false, "print each hit's whole paragraph instead of its 120-byte snippet, capped and marked when cut")
 	rf := addRootFlags(fs)
 	channels := fs.String("channels", "", "comma-separated retrieval channels (required)")
 	k := fs.Int("k", 0, "receipts per candidate, positive (required)")
@@ -77,7 +78,7 @@ func cmdCheck(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	chans := newChannels(c, names)
 
-	result := retrievalResult{Verb: "check", Source: name, K: *k, Channels: chanNames(chans), Files: len(c.Files), Chunks: len(c.Chunks), Calibration: calibrationHits(c, chans), Notes: []string{noteLexical, "this verb asserts nothing and never exits 1: it hands you k receipts and the verdict stays yours", "a hit in a dated log class is evidence the event was recorded, not that the lesson was banked — the class on each receipt is the distinction"}}
+	result := retrievalResult{Verb: "check", Source: name, K: *k, Channels: chanNames(chans), Files: len(c.Files), Chunks: len(c.Chunks), Whole: *whole, Calibration: calibrationHits(c, chans), Notes: []string{noteLexical, "this verb asserts nothing and never exits 1: it hands you k receipts and the verdict stays yours", "a hit in a dated log class is evidence the event was recorded, not that the lesson was banked — the class on each receipt is the distinction"}}
 	for _, cand := range candidates {
 		result.Candidates = append(result.Candidates, retrievalCandidate{Text: memindex.Truncate(strings.TrimSpace(cand), 100), Hits: memindex.Retrieve(c, chans, cand, *k)})
 	}
