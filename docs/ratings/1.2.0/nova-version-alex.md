@@ -1,19 +1,63 @@
 # nova-version READ and USE rating, nova-tools 1.2.0
 
-Rater: openrouter/google/gemini-3.1-flash-lite
-Build: c76fcb249cc1
-Score: 10/10
+Rater: openrouter/minimax/minimax-m3
+Build: ea429c304eaf
+READ: 7/10
+USE: 7/10
+
+No v1.2.0 tag exists on the forge yet, so this rates the release candidate at the head of sprint/mechanical-2026-10-02. `nova-version version` prints `nova-version v1.0.1-0.20261007015953-ea429c304eaf linux/amd64 go1.26.6`. Built and run on a Linux bench machine, in a scratch directory made for the trial: hand-written manifests, hand-built stub `nova-*` binaries copied into a `bins` directory, snapshots and diffs over them, and a throwaway `versions.tsv` for the manifest verbs. No live store, no bus, no `send` that could deliver, no server.
 
 ## Reasons
-The tool `nova-version` is clean, simple, and follows the project's onboarding standard perfectly. Its banner, help messages, and refusal grammar are all consistent and helpful. The ability to read a manifest, snapshot a directory, and diff two snapshots provides a complete and intuitive workflow for version management of tools. The tool worked flawlessly on a throwaway directory during my cold run.
+
+READ. `nova-version help` is a good first screen: one purpose line, a five-line "how it works" naming every verb and saying which half of the tool belongs to nova-update, one usage line per verb, an exit table by verb, and a four-line first run that works with the binary alone. Every verb's `-h` carries its usage line, its flags, and an `effect:` line that says before the run whether the verb inspects, writes locally or delivers. The spec is numbered, each rule states the mistake it prevents, and its tests are named. The thirty-second bound is argued in place (internal/update/snapverb.go:21-39).
+
+What keeps READ at 7. Most of the 1.1.0 findings are still there. The tool still lives inside its sibling's package, and `moved` with its helpers fills the last 340 lines of cli.go (internal/update/cli.go:766-1109). The reference still speaks in counts the tool does not own ("the adopted 16", "the 32 `nova-*` executables", docs/CLI.md:2078,2119), and still argues the bound from one bench's timings and an issue link (docs/CLI.md:2097-2106). The source-gate comments still cite SPEC-VERSION item 6 for a rule that sits in item 4 (internal/update/snapverb.go:71,123,241). The entry comment and the reference still name two different contracts (cmd/nova-version/main.go:3, docs/CLI.md:2053). `moved -h` does not print a default for `--timeout` or `--budget`, while its sibling verbs do. `report -h` and `send -h` both list `--draft`, `--kind`, `--max`, `--timeout`, `--budget` for the verb's flags, but the usage line omits most of them and `send` then refuses `--draft`. The banner's "how it works" line and the usage note both define THE MANIFEST. Every verb's `-h` repeats the whole five-verb exit table. The README's trial section still pins 1.0.0 (README.md:55-59).
+
+USE. The first run works as printed: `example --out versions.tsv`, then `snapshot --file versions.tsv`, then `report --file versions.tsv`, each with a next-step note. Running `example` again does not overwrite (`unchanged=true`). A manifest with four bad lines is refused in one run naming each line with its fix. A symlinked `nova-*` is noted by name and not silently dropped. `diff` reports changed, added and removed entries, with `to=-` on the absent side, and `--json` carries facts and items. `--version` and `version` agree, and a stray argument is refused. `moved` over a three-commit range wrote its note.
+
+What keeps USE at 7. `moved`'s summary line gives bare counts and no rows: `added=0 deleted=0 renamed=0 verbs=288` while the note has `added=wait tool=nova-bus` (internal/update/cli.go:935-936, 1014-1023). `--json` has the same zero and no items; an AI reading either concludes nothing moved. `snapshot --bin <dir> --dry-run` is refused `missing --out`, although `-h` says `--dry-run` writes no `--out` (internal/update/versiontool.go:82,86-99). `snapshot --bin <dir>` aborts at the first binary that does not answer `version` and exits 2, naming only that one binary; help's exit table promises exit 1 for an UNKNOWN tool, which only holds for `--file`. With two unreadable binaries it names one per run. `snapshot --bin <dir> --out <path>` replaces an existing `--out` without a word, while `example --out` never overwrites and prints `unchanged=true`. `report` without `--host` writes `Subject: versions on - at <time>` (internal/update/report.go:91). `send` with no nova-bus on PATH says `send not confirmed: ... the bus said: nothing (retry --send with the same --snapshot)`; it does not name nova-bus. A bad flag value ends the list early: `report --kind bogus --max -2 --timeout 0` names only `--kind`; `snapshot --timeout 5x --max -1` names only `--timeout`. `report --json` is refused (`unknown flag --json`), although the verb's first line on stdout reads `REPORT OK checked=1 known=1 ...`, the shape every other verb renders as JSON. Bare `nova-version` (no verb) prints `VERSION REFUSED: takes no positional arguments`, but `VERSION REFUSED` is also the prefix for unknown verbs and for `version -h` refusals, so a tool-level refusal reads as the `version` verb.
+
+A 10 needs `moved`'s counts and JSON to match its note, a snapshot that names every bad binary in one run and uses the exit code the help promises, `--dry-run` that needs no invented `--out`, a `--out` that says `replaced=true` or refuses an existing file, a host-unknown subject that omits `on -`, a send that names nova-bus when it is missing, every bad flag value named in one refusal, a `--json` for report and send, a tool-level refusal that does not read as a verb, and moved in its own file rather than the sibling's cli.go.
 
 ## Findings
 | # | where | finding | fix | size |
 |---|---|---|---|---|
-| - | - | no defects found | - | - |
+| 1 | `nova-version moved --from <sha> --to <sha> --repo <checkout> --out note.md` | Exit 0 with `added=0 deleted=0 renamed=0 verbs=288`, while note.md says `added=wait tool=nova-bus`. `verbs` is the total verb count at `--to`, not a change, and `added` counts only whole tools (internal/update/cli.go:935-936, 1014-1023). `--json` has the same zero and no items. An AI reading the summary line or the JSON concludes nothing moved. | Count added and deleted verbs and flags as well as tools, or name the fields `tools_added`, `verbs_total`; put each note entry in the JSON items; define every count in `moved -h`. | M |
+| 2 | `nova-version moved -h` | `--timeout` reads `one child's deadline` and `--budget` reads `whole run deadline` (internal/update/versiontool.go:59-60); the defaults are 30s and 60s (internal/update/cli.go:748,753), and only snapshot's help names them. | Print the default beside every flag that has one. | S |
+| 3 | `nova-version snapshot --bin <dir> --dry-run` | Refused `missing --out; refusing to guess`, although `-h` says `--dry-run` writes no `--out` (internal/update/versiontool.go:82,86-99). | Let `--dry-run` run without `--out`. | S |
+| 4 | `nova-version snapshot --bin <dir> --out f.tsv` | An existing f.tsv is replaced without a word, while `example --out` never overwrites and prints `unchanged=true` (internal/update/snapverb.go:289). | Say `replaced=true` on the OK line, or refuse an existing `--out` without a flag, as example does. | S |
+| 5 | `nova-version snapshot --bin <dir>` (two unreadable binaries) | Exits 2 naming only the first bad binary; help's exit table says snapshot exits 1 when a tool is UNKNOWN, which only holds for `--file` (internal/update/snapverb.go:224,228, internal/update/versiontool.go:35). | Read every binary, then name every bad one in one refusal; split the exit table into the `--file` and `--bin` shapes. | S |
+| 6 | `nova-version report --file m.tsv --kind bogus --max -2 --timeout 0` | Names only `--kind`, and reads `it wants kind filter; repeat to select kinds` (internal/update/versiontool.go:165). `snapshot --timeout 5x --max -1` names only `--timeout`. The manifest rule promises every problem at once, and the flags do not meet it. | Validate every flag value before refusing and name each; give `--kind` a wants-phrase that lists the kinds. | S |
+| 7 | `nova-version send -h` | Lists `--draft`, `--kind`, `--max`, `--timeout`, `--budget` (internal/update/versiontool.go:152-165), none on its usage line. `send ... --draft` is refused `--draft and --send are exclusive`, naming a `--send` the caller never gave. | Drop `--draft` from send's flag list, or make it print the note; put send's flags on its usage line. | S |
+| 8 | `nova-version report --json` | `unknown flag --json` (internal/update/versiontool.go:28). The only machine form is the line `REPORT OK checked=1 known=1 ...` and the `REPORT TOOL ...` items, where every other verb renders the same shape as JSON. | Give report a `--json` with the same shape (result, facts, items, notes). | S |
+| 9 | `nova-version report --file m.tsv --draft --as a --to b` | The draft's subject reads `versions on - at <time>` when `--host` is not given (internal/update/report.go:91). | Omit `on <host>` when no host was given. | S |
+| 10 | `nova-version send --file m.tsv --as a --to b` (no nova-bus on PATH) | `send not confirmed: ... the bus said: nothing (retry --send with the same --snapshot)` (internal/update/report.go:190). It does not name nova-bus. | When the child is not found, say `nova-bus not on PATH`. | S |
+| 11 | `nova-version` (no verb) | Prints `VERSION REFUSED: ...`; `VERSION REFUSED` is also the prefix for `version -h` and unknown verbs. | Tag tool-level refusals `NOVA-VERSION REFUSED`. | S |
+| 12 | `nova-version <verb> -h` | Every verb's `-h` repeats the whole five-verb exit table, including report's and send's codes. | Print the verb's own exit line in `-h` and keep the full table in `help`. | S |
+| 13 | `nova-version help` | `THE MANIFEST` is defined twice on one screen (the how-it-works line and the usage note). | State the manifest once. | S |
+| 14 | internal/update/snapverb.go:71,123,241 | The source-gate comments cite SPEC-VERSION item 6, but the mixed-source rule is item 4 of docs/SPEC-VERSION.md (the snapshot section's rule 4). | Cite item 4 at all three sites. | S |
+| 15 | cmd/nova-version/main.go:3 | Names SPEC-VERSION.md as the contract; docs/CLI.md:2053 names SPEC-UPDATE.md. Each covers half the verbs. | Name both at each site. | S |
+| 16 | README.md:55-59 | The trial section still calls the commands "Nova Tools 1.0.0 commands" and pins `@v1.0.0`. | Pin the release this tree is rated as once it is tagged. | S |
+| 17 | internal/update/cli.go:766 | `moved` and its helpers fill about 340 lines of the sibling's cli.go, and the whole tool still lives in package update (cmd/nova-version/main.go:22). | Give moved its own file beside snapverb.go and diffverb.go; lift the shared manifest reader and report body into a package both binaries import. | L |
 
 ## Good, keep
-The tool follows the standard, provides clear feedback on errors, and is easy to use for a newcomer.
+
+The first run works as printed with the binary alone, and a next-step note appears after every success. Every refusal ends with `run:` and the next command. A manifest refusal names every bad line with its fix in one run. The UNKNOWN remedy names the command searched and PATH. `snapshot` reads each binary's own `version`, notes a skipped symlink by name, and refuses a mixed-stamp set naming both binaries with the rebuild commands. `example` never overwrites. `--json` on example, snapshot, diff, moved and version has one shape: result, facts, items, notes. The `effect:` line on every verb's `-h` says before the run whether the verb inspects, writes locally or delivers. `moved`'s refusal of a revision it does not hold, naming `git fetch`.
 
 ## Compared with earlier ratings
-This is the first rating for 1.2.0.
+| earlier | now | evidence |
+|---|---|---|
+| 1.1.0 READ 8, USE 8 | CHANGED | now READ 7, USE 7: the 1.1.0 findings mostly stand; a cold run on a throwaway reproduces them and finds the same defects with the same exits |
+| `moved`'s counts are unexplained (1.1.0 USE) | STILL THERE, and worse than stated | `added=0 deleted=0 renamed=0 verbs=288` while note says `added=wait tool=nova-bus`; `moved -h` defines no count |
+| `snapshot --dry-run` demands `--out` (1.1.0 USE) | STILL THERE | `snapshot --bin <dir> --dry-run` is `SNAPSHOT REFUSED: missing --out` |
+| `send` lists a `--draft` it refuses (1.1.0 USE) | STILL THERE | `send ... --draft` is refused `--draft and --send are exclusive` |
+| `report --json` is refused (1.1.0 USE) | STILL THERE | `REPORT REFUSED: unknown flag --json`; the help says so up front, so this is a stated limit |
+| a bad value ends the list early (1.1.0 USE) | STILL THERE | `report --kind bogus --max -2 --timeout 0` names only `--kind`; `snapshot --timeout 5x --max -1` names only `--timeout` |
+| manifest bad lines named together (1.1.0 USE, kept) | KEPT | four bad manifest lines are named in one refusal, line by line |
+| the whole tool lives in its sibling's package (1.1.0 READ) | STILL THERE | cmd/nova-version/main.go:22 calls `update.VersionTool`; `moved` is at internal/update/cli.go:766-1109 |
+| two contract names (1.1.0 READ) | STILL THERE | cmd/nova-version/main.go:3 says SPEC-VERSION.md; docs/CLI.md:2053 says SPEC-UPDATE.md |
+| README trial pins 1.0.0 (1.1.0 READ) | STILL THERE | README.md:55-59 |
+| item 6 cited for item 4's rule (1.1.0 READ) | STILL THERE | internal/update/snapverb.go:71,123,241 cite item 6; the rule is item 4 of docs/SPEC-VERSION.md |
+| stale fixed-count prose (1.1.0 READ) | STILL THERE | docs/CLI.md:2078 "the adopted 16"; docs/CLI.md:2119 "the 32 `nova-*` executables" |
+| the doc argues the bound from one bench (1.1.0 READ) | STILL THERE | docs/CLI.md:2097-2106 argues the thirty-second default from one darwin/arm64 bench |
+| `moved`'s default bounds | NEW | `moved -h` says no default for `--timeout` and `--budget`; the defaults are 30s/60s and the help's spec only names snapshot's defaults |
