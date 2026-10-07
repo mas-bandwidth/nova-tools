@@ -208,11 +208,12 @@ func friendCanRead(s *Snapshot, f FriendSeat) bool {
 }
 
 // friendTakes says the friend may be given a card of the tier: it is one of her tiers
-// (friendTiers), never her class as a whole. A friend whose row names no tier takes none,
-// and every friend deal and move is gated on it, whatever the card's WHO line, so a
-// frontier card never reaches a friend without frontier.
-func friendTakes(f FriendSeat, tier string) bool {
-	return slices.Contains(friendTiers(f), tier)
+// (friendTiers), never her class as a whole, and the friends' tiers hold it (FriendsTake,
+// set --friends-tiers). A friend whose row names no tier takes none, and every friend
+// deal and move is gated on it, whatever the card's WHO line, so a frontier card never
+// reaches a friend without frontier.
+func friendTakes(s *Snapshot, f FriendSeat, tier string) bool {
+	return slices.Contains(friendTiers(f), tier) && s.FriendsTake(tier)
 }
 
 // friendsLeft is the friends the work card has left (FieldFriendsLeft), with the one it
@@ -240,7 +241,7 @@ func (s *Snapshot) friendsFor(c *Card, tier string) []FriendSeat {
 	}
 	var out []FriendSeat
 	for _, f := range s.Friends {
-		if friendDealable(s, f) && friendTakes(f, tier) && !slices.Contains(gone, f.Name) {
+		if friendDealable(s, f) && friendTakes(s, f, tier) && !slices.Contains(gone, f.Name) {
 			out = append(out, f)
 		}
 	}
@@ -483,13 +484,13 @@ func friendDealPass(s *Snapshot, cards []*Card, seats []FriendSeat, reclaim bool
 		if !pinnedCard {
 			name = ""
 		}
-		if name != "" && (free[name] <= 0 || slices.Contains(left, name) || !friendTakes(seat[name], tier)) {
+		if name != "" && (free[name] <= 0 || slices.Contains(left, name) || !friendTakes(s, seat[name], tier)) {
 			name = "" // the friend it names is not up with room, it has left her, or not her tier
 		}
 		if name == "" && !OnlyFriend(c) {
 			var may []string
 			for _, f := range up {
-				if free[f] > 0 && !slices.Contains(left, f) && friendTakes(seat[f], tier) {
+				if free[f] > 0 && !slices.Contains(left, f) && friendTakes(s, seat[f], tier) {
 					may = append(may, f)
 				}
 			}
@@ -501,7 +502,7 @@ func friendDealPass(s *Snapshot, cards []*Card, seats []FriendSeat, reclaim bool
 				// never the friend it was withdrawn from or taken back from
 				gone := withdrawnFrom(wc)
 				for _, f := range up {
-					if free[f] > 0 && !slices.Contains(gone, f) && friendTakes(seat[f], tier) {
+					if free[f] > 0 && !slices.Contains(gone, f) && friendTakes(s, seat[f], tier) {
 						may = append(may, f)
 					}
 				}
@@ -539,7 +540,7 @@ func friendDealPass(s *Snapshot, cards []*Card, seats []FriendSeat, reclaim bool
 			if wc != nil && !escalated {
 				placedID = wc.ID
 			}
-			u.Notes = append(u.Notes, pinIgnoredNote(s, c, placedID, pinned, pinSkipWhy(seats, pinned, leftAtPin, tier, free), row, Ready))
+			u.Notes = append(u.Notes, pinIgnoredNote(s, c, placedID, pinned, pinSkipWhy(s, seats, pinned, leftAtPin, tier, free), row, Ready))
 		}
 		p.Units = append(p.Units, u)
 	}
@@ -675,7 +676,7 @@ func reclaimUnit(s *Snapshot, wc *Card, up []string, seat map[string]FriendSeat,
 	tier, left := s.DealTier(pr), friendsLeft(wc)
 	var may []string
 	for _, f := range up {
-		if lanes[f] > 0 && free[f] > 0 && !slices.Contains(left, f) && friendTakes(seat[f], tier) {
+		if lanes[f] > 0 && free[f] > 0 && !slices.Contains(left, f) && friendTakes(s, seat[f], tier) {
 			may = append(may, f)
 		}
 	}

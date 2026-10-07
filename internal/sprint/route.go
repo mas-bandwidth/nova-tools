@@ -124,7 +124,7 @@ func (s *Snapshot) tierServed(tier string, rested []string) (up []string, why st
 	var off []string
 	for _, f := range s.Friends {
 		switch {
-		case !friendTakes(f, tier):
+		case !friendTakes(s, f, tier):
 		case friendDealable(s, f):
 			up = append(up, f.Name)
 		default:
@@ -137,6 +137,12 @@ func (s *Snapshot) tierServed(tier string, rested []string) (up []string, why st
 	why = "no enabled route and no up friend serves tier " + tier + ": enable a route (nova-config route add <name> --tier " + tier + " ..., name it in nova-config tier set " + tier + " --routes <name,...>, then nova-config apply) or bring up a friend whose row lists " + tier + "; or pin the card with a model: <provider>/<model> line"
 	if len(rested) > 0 {
 		why = "every enabled route of tier " + tier + " in its array rests (" + strings.Join(rested, "; ") + ") and no up friend serves it: the deal draws one when its rest ends; or run nova-config route add <name> --tier " + tier + " ..., bring up a friend whose row lists " + tier + ", or pin the card with a model: <provider>/<model> line"
+	}
+	for _, side := range [][3]string{{PropFleetTiers, "the fleet's", "--fleet-tiers"}, {PropFriendsTiers, "the friends'", "--friends-tiers"}} {
+		if !s.sideTakes(side[0], tier) {
+			v, _ := s.Work.Prop(side[0])
+			why += " (" + side[1] + " tiers are " + v + ": nova-sprint set " + side[2] + " all, or a list with " + tier + ")"
+		}
 	}
 	switch n := len(off); {
 	case n > 0 && s.FriendsOff():
@@ -243,6 +249,12 @@ func (s *Snapshot) routeOf(c, wc *Card, ri routeIndexes) (set map[string]string,
 	}
 	if m.Pin != "" {
 		return map[string]string{FieldRoute: RoutePin, FieldModel: m.Pin, FieldTokens: m.Tokens, FieldUSD: "", FieldDeadline: strconv.Itoa(m.Deadline)}, "", "", false
+	}
+	if !s.FleetTakes(tier) {
+		// the fleet's tiers leave it out (set --fleet-tiers): no machine draws it, whatever
+		// its routes; the friends' deal deals it when a friend up serves it
+		up, why := s.tierServed(tier, nil)
+		return nil, tier, why, len(up) > 0
 	}
 	if len(s.Routes) == 0 {
 		return nil, "", "", false

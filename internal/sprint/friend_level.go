@@ -111,7 +111,7 @@ func friendLevel(s *Snapshot, r FriendLevelReq, dealt, dealtWorking map[string]i
 		var may []string
 		for _, f := range seats {
 			n := f.Name
-			if n == giver || held[n] >= room[n] || slices.Contains(left, n) || !friendTakes(f, tier) {
+			if n == giver || held[n] >= room[n] || slices.Contains(left, n) || !friendTakes(s, f, tier) {
 				continue
 			}
 			if (lanes(giver) <= 0 && lanes(n) > 0) || backlog(giver)-backlog(n) > 1 {

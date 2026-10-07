@@ -282,11 +282,14 @@ func mayReadCard(s *Snapshot, u readUnit, pr *Card, attempt int, worker string, 
 		// a friend reads her tier or any below it, as her reads always did: a heavy friend
 		// reads a flash and a pro card (friendAtOrAbove)
 		t := friendReadTier(s, pr)
-		if friendAtOrAbove(u.seat, t) {
+		if !s.FriendsTake(t) {
+			return false, false // the friends' tiers leave the read out (set --friends-tiers)
+		}
+		if friendAtOrAbove(s, u.seat, t) {
 			return true, false
 		}
 		b := tierBelow(t)
-		return b != "" && friendAtOrAbove(u.seat, b), true
+		return b != "" && friendAtOrAbove(s, u.seat, b), true // inside the set: b too (friendAtOrAbove)
 	}
 	// a machine whose reader row holds a read of the attempt on the readers table (asked
 	// the old way, before read cards were on) reads it there, never twice
@@ -297,11 +300,14 @@ func mayReadCard(s *Snapshot, u readUnit, pr *Card, attempt int, worker string, 
 		}
 	}
 	t := s.readTierOf(pr)
+	if !s.FleetTakes(t) {
+		return false, false // the fleet's tiers leave the read out (set --fleet-tiers)
+	}
 	if s.readerServesTier(rd, t) {
 		return true, false
 	}
 	b := tierBelow(t)
-	return b != "" && s.readerServesTier(rd, b), true
+	return b != "" && s.FleetTakes(b) && s.readerServesTier(rd, b), true // inside the set: b too
 }
 
 // tierBelow is the tier one below t on the ladder (flash, pro, heavy, frontier), "" for
