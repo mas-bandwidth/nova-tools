@@ -120,7 +120,7 @@ no `go` there it is ok. On a bench it fails when `go` is absent, when its versio
 `go.mod`'s toolchain version, or when `GOCACHE` is not writable, and warns when `GOFLAGS`
 does not carry `-mod=readonly`. Each fix line names the step above.
 
-### dep-launchd-units-b.w4: the service units
+### dep-launchd-units-b.w6: the service units
 
 Every long-running nova loop is a nova-config loop record installed as a unit: a launchd
 plist (`com.nova.loop.<name>.plist`) on darwin or a systemd user unit
@@ -130,15 +130,13 @@ The machine that runs a loop needs it: the coordinator's machine and every bench
 set up with `nova-up --local` needs only its one loop, `redis-local`, which `nova-up`
 installs itself and reads no `nova-config` for.
 
-A person provides the fleet's units with two commands on each machine:
-`nova-config apply --kind loop --as <actor>` puts the records where the fleet reads them,
-then `ansible-playbook -i ./nova-inventory fleet/loops.yml` renders one unit per record,
-loads the enabled ones, and retires a unit no record names (a hand plist). `nova-up` does
-not yet install the fleet's loop units; run those two commands on each machine.
+For the fleet's units, `nova-up` applies the loop records from the sprint store:
+`nova-config apply --kind loop` reads the records, and `nova-up` installs one unit per record.
+On a machine with no fleet store (`--local`), nova-up is ok and redis-local is handled by
+the redis step.
 
 The `units` check reads `nova-config inventory` for this machine's loop records and the
 service manager's directory (`~/Library/LaunchAgents`, or `~/.config/systemd/user`), and
 names a record with no unit, a unit with no record (a hand plist), and a unit whose command
-differs from its record, with the two commands above as its fix. Under `--local` it is
-skipped; a machine whose sprint store is its own twin (`mem:`) runs no fleet and is `ok`
-with that said.
+differs from its record. Under `--local` it is skipped; a machine whose sprint store is its
+own twin (`mem:`) runs no fleet and is `ok` with that said.
