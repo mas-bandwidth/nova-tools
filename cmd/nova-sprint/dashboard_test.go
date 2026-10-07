@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprintdash"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -61,7 +62,7 @@ func TestDashboardListensOnPrivateAddressesOnly(t *testing.T) {
 		assert.Equal(t, want, got, list)
 	}
 	for list, why := range map[string]string{
-		"bench-a:7390": "never a name",
+		"bench-a:7390": "cannot be resolved",
 		"127.0.0.1":    "wants address:port",
 		"":             "names no address",
 	} {
@@ -73,7 +74,8 @@ func TestDashboardListensOnPrivateAddressesOnly(t *testing.T) {
 	// the ranges, as addresses: none of them is dialled
 	for _, ip := range []net.IP{net.IPv4(127, 0, 0, 1), net.IPv6loopback, net.IPv4(100, 64, 1, 2), net.IPv4(100, 127, 255, 9),
 		net.IPv4(10, 0, 0, 2), net.IPv4(192, 168, 1, 2), net.IPv4(172, 16, 0, 2), {0xfd, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2}} {
-		assert.Empty(t, listenable(ip), "%s", ip)
+		got := sprint.CheckAddr(net.JoinHostPort(ip.String(), "7390"), false)
+	assert.Empty(t, got, "%s", ip)
 	}
 	for _, tc := range []struct {
 		ip  net.IP
@@ -87,7 +89,8 @@ func TestDashboardListensOnPrivateAddressesOnly(t *testing.T) {
 		{net.IPv4(169, 254, 1, 1), "a link-local address"},
 		{net.IP{0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1}, "a link-local address"},
 	} {
-		assert.Contains(t, listenable(tc.ip), tc.why, "%s", tc.ip)
+		got := sprint.CheckAddr(net.JoinHostPort(tc.ip.String(), "7390"), false)
+	assert.Contains(t, got, tc.why, "%s", tc.ip)
 	}
 }
 
@@ -98,9 +101,9 @@ func TestDashboardRefusesBadUse(t *testing.T) {
 	for line, why := range map[string]string{
 		"dashboard now":                       "takes no words",
 		"dashboard --every 0s":                "--every wants a duration above 0",
-		"dashboard --listen 0.0.0.0:7390":     "does not listen on every network",
+		"dashboard --listen 0.0.0.0:7390":     "every network",
 		"dashboard --listen 1.1.1.1:7390":     "a public address",
-		"dashboard --pull 0.0.0.0:7395":       "--pull 0.0.0.0:7395: the page shows the sprint",
+		"dashboard --pull 0.0.0.0:7395":       "every network",
 		"dashboard --pull 127.0.0.1":          "--pull wants address:port (or none)",
 		"dashboard --listen none --pull none": "serve nothing",
 		"dashboard --logo " + t.TempDir():     "is not a file",

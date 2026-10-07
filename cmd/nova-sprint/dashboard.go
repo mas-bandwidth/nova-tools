@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprintdash"
 )
 
@@ -28,10 +29,6 @@ const (
 
 // noListener is the --listen or --pull word that serves nothing there.
 const noListener = "none"
-
-// tailnetRange is the addresses a tailnet hands out (100.64.0.0/10, the shared range):
-// with the private and loopback ranges, the only ones the dashboard listens on.
-var tailnetRange = &net.IPNet{IP: net.IPv4(100, 64, 0, 0), Mask: net.CIDRMask(10, 32)}
 
 // cmdDashboard serves the sprint dashboard (docs/SPEC-SPRINT-DASHBOARD.md) until it is
 // interrupted: the page from the files embedded in the binary, and /api/sprint, the
@@ -189,7 +186,7 @@ func dashboardAddrs(flag, list string) ([]string, error) {
 			return nil, fmt.Errorf("%s wants address:port (or none), found %s", flag, addr)
 		}
 		if host != "localhost" {
-			if why := listenable(net.ParseIP(host)); why != "" {
+			if why := sprint.CheckAddr(addr, sprint.LocalOnlyMode()); why != "" {
 				return nil, fmt.Errorf("%s %s: %s", flag, addr, why)
 			}
 		}
@@ -201,22 +198,6 @@ func dashboardAddrs(flag, list string) ([]string, error) {
 		return nil, fmt.Errorf("%s names no address:port (none serves nothing there)", flag)
 	}
 	return out, nil
-}
-
-// listenable is why the dashboard does not listen on ip, "" when it does: loopback, a
-// private range or the tailnet's, never every network and never a public address.
-func listenable(ip net.IP) string {
-	switch {
-	case ip == nil:
-		return "the address is an IP address of this machine (loopback, or its address on the fleet's private network), never a name"
-	case ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast():
-		return "a link-local address; the page checks no credential, so it listens on loopback or the fleet's private network (the tailnet) only"
-	case ip.IsUnspecified():
-		return "the page shows the sprint and checks no credential, so it does not listen on every network; name loopback or this machine's tailnet address"
-	case !ip.IsLoopback() && !ip.IsPrivate() && !tailnetRange.Contains(ip):
-		return "a public address; the page shows the sprint and checks no credential, so it listens on loopback or the fleet's private network (the tailnet) only"
-	}
-	return ""
 }
 
 // listener is an address the dashboard listens on (and the flag that named it), the handler it serves there (the page
