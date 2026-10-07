@@ -17,16 +17,31 @@ import (
 // what the sprint spends by tier and per landed card, counted by the tick from the
 // sprint it reads anyway (the where record, store/where.go) and never from per-card
 // reads at `where`: the cards' tiers from their briefs' tier lines, each stream's
-// dollars per landed card, and each stream's spend split by the tier its attempts ran
-// on (the cost records' tier, not the card's ceiling: a flash card escalated to pro
-// shows both).
+// complete dollars per landed card, and each stream's spend split by the tier its
+// attempts ran on (the cost records' tier, not the card's ceiling: a flash card
+// escalated to pro shows both).
+
+// CostParts projects recorded charges into four disjoint parts (SPEC-SPRINT,
+// What a card cost). Displayed parts allocate the total's rounded cents. Lost
+// kind/tier detail is explicit as unattributed cost and an incomplete split.
+type CostParts struct {
+	CostWork         string `json:"cost_work,omitempty"`
+	CostReads        string `json:"cost_reads,omitempty"`
+	CostLand         string `json:"cost_land,omitempty"`
+	CostUnanswered   string `json:"cost_unanswered,omitempty"`
+	TotalCost        string `json:"total_cost,omitempty"`
+	CostUnattributed string `json:"cost_unattributed,omitempty"`
+	SplitIncomplete  bool   `json:"cost_split_incomplete,omitempty"`
+}
 
 // TierCosts is one stream's tiers and spend as the where view carries them.
 type TierCosts struct {
 	// Tiers counts the stream's cards by the tier their briefs name (TierWord).
 	Tiers map[string]int `json:"tiers,omitempty"`
-	// PerLanded is the stream's landed cards' cost per landed card, dollars and cents
-	// rounded up (MoneyText); "-" with nothing landed or nothing priced.
+	// PerLanded is the stream's complete recorded spend over its landed cards
+	// (work, reads, landing, unanswered, every card of the stream), dollars and
+	// cents rounded up; "-" with nothing landed or nothing priced. It is not the
+	// landed cell, which is the work written at land.
 	PerLanded string `json:"per_landed"`
 	// CostByTier is the stream's spend by the tier each attempt and read ran on, dollars
 	// and cents rounded up, over every card of the stream; a record with no tier is
@@ -38,10 +53,22 @@ type TierCosts struct {
 	// nothing of it was priced.
 	TotalCost string `json:"total_cost,omitempty"`
 	// WorkCost and ReadCost split TotalCost by kind: every take's charged figure and every
-	// read's, dollars and cents rounded up; "" when nothing of that kind was priced. The
-	// dashboard shows the reads as their own number beside the work.
+	// read's, dollars and cents rounded up; "" when nothing of that kind was priced. A
+	// no-result run and a lander's run stay in this legacy WorkCost alias.
+	// The dashboard shows the reads as their own number beside the work.
 	WorkCost string `json:"work_cost,omitempty"`
 	ReadCost string `json:"read_cost,omitempty"`
+	// CostWork, CostReads, CostLand and CostUnanswered are the complete spend in four
+	// parts (CostParts): a read, a lander's run (kind land), a run whose end begins
+	// "no result". No-result takes priority over kind, so the four do not overlap.
+	// A cut record stays in TotalCost but is explicitly unattributed, not work.
+	// "" when that part priced nothing.
+	CostWork         string `json:"cost_work,omitempty"`
+	CostReads        string `json:"cost_reads,omitempty"`
+	CostLand         string `json:"cost_land,omitempty"`
+	CostUnanswered   string `json:"cost_unanswered,omitempty"`
+	CostUnattributed string `json:"cost_unattributed,omitempty"`
+	SplitIncomplete  bool   `json:"cost_split_incomplete,omitempty"`
 	// ReadTokens is the tokens of the stream's subscription reads (WhySubscription), the
 	// reads whose cost is their tokens; 0 when none.
 	ReadTokens int64 `json:"read_tokens,omitempty"`
@@ -86,20 +113,34 @@ func TierCounts(s *Snapshot) map[string]int {
 
 // StreamTierCosts is each stream's TierCosts, by stream, over the work table's rows.
 func StreamTierCosts(s *Snapshot) map[string]TierCosts {
-	out := map[string]TierCosts{}
-	for _, st := range s.Work.Rows() {
-		out[st] = streamTierCosts(s, st)
-	}
-	return out
+	streams, _ := CostSplits(s)
+	return streams
 }
 
-func streamTierCosts(s *Snapshot, stream string) TierCosts {
+// CostSplits is each stream's TierCosts and, beside it, the same four-part spend
+// gathered by the tier the record ran on (every stream together). A record with
+// no tier is untiered; lost tier detail is a separate unattributed bucket.
+func CostSplits(s *Snapshot) (map[string]TierCosts, map[string]CostParts) {
+	streams := map[string]TierCosts{}
+	tiers := map[string]*partSums{}
+	for _, st := range s.Work.Rows() {
+		streams[st] = streamTierCosts(s, st, tiers)
+	}
+	out := map[string]CostParts{}
+	for name, p := range tiers {
+		out[name] = p.parts()
+	}
+	return streams, out
+}
+
+func streamTierCosts(s *Snapshot, stream string, tiers map[string]*partSums) TierCosts {
 	t := TierCosts{Tiers: map[string]int{}, PerLanded: "-", CostByTier: map[string]string{}, ReadsToday: map[string]ReadDay{}, Readers: map[string]ReaderSpend{}}
 	byTier := map[string]*big.Rat{}
 	workCost, readCost := new(big.Rat), new(big.Rat)
 	pricedWork, pricedRead := false, false
+	parts := newPartSums()
+	blankTier := "untiered" // a record that names no tier, the bucket CostByTier already uses
 	day := s.Now.UTC().Format(time.DateOnly)
-	var landedCost []string
 	var allCost []string
 	landed := 0
 	for _, col := range States {
@@ -110,18 +151,17 @@ func streamTierCosts(s *Snapshot, stream string) TierCosts {
 			t.Tiers[TierWord(c)]++
 			if col == Landed {
 				landed++
-				if v := c.F(FieldCost); v != "" {
-					landedCost = append(landedCost, v)
-				}
 			}
 			// the card's whole record, whatever its column: every take and read behind it,
-			// the records past the list's bound included (FieldCostTotal)
-			tot := CardCostOf(c).Total
+			// the records past the list's bound included (the charged total)
+			cc := CardCostOf(c)
+			tot := cc.Total
 			if tot.Charged != "" {
 				allCost = append(allCost, tot.Charged)
 			}
 			t.UnpricedRuns += tot.Records - tot.ChargedOf
-			for _, con := range CardCostOf(c).Consumers {
+			listed := new(big.Rat)
+			for _, con := range cc.Consumers {
 				if con.Kind == "read" && con.Usage.Unpriced == WhySubscription {
 					// a subscription read's cost is its tokens: priced, never a run unpriced
 					t.UnpricedRuns--
@@ -138,10 +178,11 @@ func streamTierCosts(s *Snapshot, stream string) TierCosts {
 					rd.addRead(con, s.Now)
 					t.Readers[cmp.Or(con.Who, "-")] = rd
 				}
-				usd, err := amountOf(cmp.Or(con.Usage.Actual, con.Usage.Predicted))
+				usd, err := amountOf(cardcost.NoTotal().Add(con.Usage).Charged)
 				if err != nil || usd == nil {
 					continue
 				}
+				listed.Add(listed, usd)
 				byKind := workCost
 				if con.Kind == "read" {
 					byKind = readCost
@@ -152,24 +193,43 @@ func streamTierCosts(s *Snapshot, stream string) TierCosts {
 				} else {
 					pricedWork = true
 				}
-				tier := cmp.Or(con.Tier, "untiered")
+				tier := cmp.Or(con.Tier, blankTier)
 				if byTier[tier] == nil {
 					byTier[tier] = new(big.Rat)
 				}
 				byTier[tier].Add(byTier[tier], usd)
+				part := costPart(con)
+				parts.add(part, usd)
+				addTier(tiers, tier, part, usd)
 			}
-		}
-	}
-	if sum, ok := cardcost.Sum(landedCost...); ok && landed > 0 && len(landedCost) > 0 {
-		if total, err := amountOf(sum); err == nil && total != nil {
-			t.PerLanded = cardcost.Cents(total.Quo(total, big.NewRat(int64(landed), 1)))
+			// The scalar retains cut charges but cannot recover their kind or tier.
+			// Preserve that known amount explicitly, never invent a work charge.
+			parts.incomplete = parts.incomplete || cc.Cut > 0
+			if cardTotal, err := amountOf(tot.Charged); err == nil && cardTotal != nil {
+				rem := new(big.Rat).Sub(cardTotal, listed)
+				parts.incomplete = parts.incomplete || rem.Sign() != 0
+				if rem.Sign() > 0 {
+					parts.add(4, rem)
+					addTier(tiers, "unattributed", 4, rem)
+					if byTier["unattributed"] == nil {
+						byTier["unattributed"] = new(big.Rat)
+					}
+					byTier["unattributed"].Add(byTier["unattributed"], rem)
+				}
+			}
 		}
 	}
 	if sum, ok := cardcost.Sum(allCost...); ok && len(allCost) > 0 {
 		if total, err := amountOf(sum); err == nil && total != nil {
 			t.TotalCost = cardcost.Cents(total)
+			if landed > 0 {
+				per := new(big.Rat).Quo(new(big.Rat).Set(total), big.NewRat(int64(landed), 1))
+				t.PerLanded = cardcost.Cents(per)
+			}
 		}
 	}
+	t.CostWork, t.CostReads, t.CostLand, t.CostUnanswered, t.CostUnattributed = parts.money()
+	t.SplitIncomplete = parts.incomplete
 	if pricedWork {
 		t.WorkCost = cardcost.Cents(workCost)
 	}
@@ -182,18 +242,133 @@ func streamTierCosts(s *Snapshot, stream string) TierCosts {
 	if len(t.Readers) == 0 {
 		t.Readers = nil
 	}
-	tiers := make([]string, 0, len(byTier))
-	for tier := range byTier {
-		tiers = append(tiers, tier)
-	}
-	sort.Strings(tiers)
-	for _, tier := range tiers {
-		t.CostByTier[tier] = cardcost.Cents(byTier[tier])
-	}
+	t.CostByTier = partitionCostCents(byTier)
 	if unrec := UnreconciledSpend(s); unrec > 0 {
 		t.Unreconciled = cardcost.Cents(new(big.Rat).SetFloat64(unrec))
 	}
 	return t
+}
+
+// partSums holds exact charges before display rounding (SPEC-SPRINT, What a
+// card cost). The fifth bucket is priced cost whose classification is lost.
+type partSums struct {
+	r          [5]*big.Rat
+	saw        [5]bool
+	incomplete bool
+}
+
+func newPartSums() *partSums {
+	p := &partSums{}
+	for i := range p.r {
+		p.r[i] = new(big.Rat)
+	}
+	return p
+}
+
+// costPart is a disjoint classification (SPEC-SPRINT, What a card cost):
+// no-result runs are unanswered regardless of kind; an unknown kind is explicit.
+func costPart(con Consumer) int {
+	switch {
+	case strings.HasPrefix(con.End, cardhdr.EndNoResult):
+		return 3
+	case con.Kind == "work":
+		return 0
+	case con.Kind == "read":
+		return 1
+	case con.Kind == "land":
+		return 2
+	default:
+		return 4
+	}
+}
+
+func (p *partSums) add(part int, usd *big.Rat) {
+	p.r[part].Add(p.r[part], usd)
+	p.saw[part] = true
+	p.incomplete = p.incomplete || part == 4
+}
+
+func addTier(tiers map[string]*partSums, tier string, part int, usd *big.Rat) {
+	if tiers == nil {
+		return
+	}
+	p := tiers[tier]
+	if p == nil {
+		p = newPartSums()
+		tiers[tier] = p
+	}
+	p.add(part, usd)
+}
+
+// money allocates rounded total cents across the displayed partition, rather
+// than rounding each part independently (SPEC-SPRINT, What a card cost).
+func (p *partSums) money() (work, reads, land, unanswered, unattributed string) {
+	names := []string{"cost_work", "cost_reads", "cost_land", "cost_unanswered", "cost_unattributed"}
+	exact := map[string]*big.Rat{}
+	for i, name := range names {
+		if p.saw[i] {
+			exact[name] = p.r[i]
+		}
+	}
+	out := partitionCostCents(exact)
+	return out[names[0]], out[names[1]], out[names[2]], out[names[3]], out[names[4]]
+}
+
+// parts is the same partition and exact total, rounded up once (SPEC-SPRINT,
+// What a card cost). Empty parts remain empty instead of implying a measured zero.
+func (p *partSums) parts() CostParts {
+	w, r, l, u, a := p.money()
+	sum := new(big.Rat)
+	any := false
+	for i := range p.r {
+		if p.saw[i] {
+			any = true
+			sum.Add(sum, p.r[i])
+		}
+	}
+	total := ""
+	if any {
+		total = cardcost.Cents(sum)
+	}
+	return CostParts{CostWork: w, CostReads: r, CostLand: l, CostUnanswered: u,
+		CostUnattributed: a, SplitIncomplete: p.incomplete, TotalCost: total}
+}
+
+// partitionCostCents conserves the rounded total across a displayed partition
+// (SPEC-SPRINT, What a card cost). Floor each nonnegative charge in cents, then
+// give the remaining cents to largest remainders, ties by name. Values stay exact.
+func partitionCostCents(exact map[string]*big.Rat) map[string]string {
+	out := map[string]string{}
+	keys := make([]string, 0, len(exact))
+	for name := range exact {
+		keys = append(keys, name)
+	}
+	sort.Strings(keys)
+	whole := map[string]*big.Int{}
+	remainders := map[string]*big.Rat{}
+	total, floors := new(big.Rat), new(big.Int)
+	for _, name := range keys {
+		usd := exact[name]
+		total.Add(total, usd)
+		cents := new(big.Rat).Mul(usd, big.NewRat(100, 1))
+		whole[name] = new(big.Int).Quo(cents.Num(), cents.Denom())
+		floors.Add(floors, whole[name])
+		remainders[name] = new(big.Rat).Sub(cents, new(big.Rat).SetInt(whole[name]))
+	}
+	cents := new(big.Rat).Mul(total, big.NewRat(100, 1))
+	goal := new(big.Int).Quo(cents.Num(), cents.Denom())
+	if cents.Sign() > 0 && !cents.IsInt() {
+		goal.Add(goal, big.NewInt(1))
+	}
+	sort.SliceStable(keys, func(i, j int) bool { return remainders[keys[i]].Cmp(remainders[keys[j]]) > 0 })
+	left := new(big.Int).Sub(goal, floors).Int64()
+	for i := int64(0); i < left; i++ {
+		whole[keys[i]].Add(whole[keys[i]], big.NewInt(1))
+	}
+	for _, name := range keys {
+		out[name] = "$" + new(big.Rat).SetFrac(whole[name], big.NewInt(100)).FloatString(2)
+	}
+	return out
 }
 
 // errBadAmount is a dollar amount that is no decimal.

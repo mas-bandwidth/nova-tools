@@ -49,8 +49,9 @@ empties it with the tables.
 After `cost` the text table draws `per landed` (the owner, 2026-10-04: cost
 visibility, after a night of $437 for 844 landings whose pro streams landed at
 $4.50 to $8.88 a card and flash streams at $0.10 to $0.27): the stream's
-dollars per landed card, rounded up to the cent, `-` with nothing landed or
-nothing priced, the tick's count when its where record holds one
+complete recorded dollars per landed card as defined in section 2, What a
+card cost, rounded up to the cent, `-` with nothing landed or nothing priced,
+the tick's count when its where record holds one
 (`sprint.TierCosts`, cost_view.go) and else the row's cost cell over its landed
 count (`sprint.PerLandedOf`); its footer is blank (the sprint's figure is the
 dashboard's). `where --json` carries, additively: `tiers` at the top, every
@@ -1896,6 +1897,40 @@ what it cost in its own `usage` field (and a take the provider failed in its
 provider_take_<n> record), one line of key=value words (`internal/cardcost`,
 `Usage`), so no table gains a column, line or row:
 
+**Complete recorded spend and per landed.** The complete recorded charge is the
+sum of each consumer's valid actual dollar cost, including actual zero, else
+its valid prediction (`cardcost.Total.Charged`). It covers every priced work,
+read, landing and no-result record on every primary in a stream, in any column.
+`total_cost` is that sum. `per_landed` divides its exact amount by the number of
+landed primaries in the stream and rounds the quotient up to cents; it is `-`
+when nothing landed or no charge is known. The landed cost cell alone does not
+supply this complete numerator.
+
+The four disjoint fields are `cost_work`, `cost_reads`, `cost_land` and
+`cost_unanswered`. An end beginning `no result` is unanswered regardless of
+kind; each other `work`, `read` or `land` record is counted in its own field.
+A record is charged once in that partition. Subscription tokens and unpriced
+runs remain explicit in their existing fields rather than becoming dollar
+zeros. Stream and tier cost projections (`sprint.CostSplits`) use the same
+classification, grouping tiers by the record's tier, with `untiered` for a
+retained record that names none. The streams and tiers tables in `stats` cover
+the whole epoch, independently of the timing tables' tidy window.
+
+The scalar charged total includes records beyond `MaxCostRecords`, but those
+records' kind, tier and key are not retained by the current writer. Their
+known charge is shown as `cost_unattributed`, with
+`cost_split_incomplete=true`, and their tier is a separate `unattributed`
+bucket. An unknown retained kind is also unattributed. No missing detail is
+relabelled work. These projections preserve the known scalar; they do not
+recover cut detail or provide the writer's missing key deduplication.
+
+Display partitions allocate the rounded total's cents once: floor each exact
+nonnegative component, then assign remaining cents by largest fractional
+remainder, ties by field or tier name. Thus the shown components sum to their
+shown aggregate without independently rounding every component upward. Missing
+parts stay absent; a priced zero stays `$0.00`. Exact amounts remain on the
+cards. This paragraph is the cost definition used by the cost views and stats.
+
 - what the member or reader reported from its child (`finish --usage`,
   `read --usage`): `wall`, `budget`, the tokens by class as the harness reported
   them (`input` uncached, `cache_read`, `cache_write`, `output`, `reasoning`),
@@ -1998,8 +2033,10 @@ until that lane reads its harness's own report (opencode's store for the run, as
 on its own plan, which bills no dollar per token) adds `billing=subscription` to its usage:
 its tokens are kept, the harness's notional cost dropped, `unpriced=subscription`, and its
 COST line says `cost=tokens`. A read with no route at all (a store with no routes) is taken
-with or without usage, as before. The where record splits each stream's complete cost by
-kind (`work_cost`, `read_cost`, beside `total_cost`), carries its subscription reads' tokens
+with or without usage, as before. The where record carries the disjoint cost
+fields defined above. Its legacy `work_cost` and `read_cost` retain the old
+non-read/read split for existing readers beside `total_cost`, and it carries
+its subscription reads' tokens
 (`read_tokens`) and its reads that ended on the tick's UTC day by route (`reads_today`); the
 where view prints the day's read spend per route on one line under the summary
 (`reads today: pro-a $1.24 12 reads 3456789 tokens · subscription tokens 3 reads 120000
