@@ -68,12 +68,21 @@ Cold, as a stranger: I read only `nova-bus -h`, `nova-bus help`, `nova-bus help 
    I expected a remedy a machine row's owner can act on. `bench1` is a machine row, not a friend: it has no session to answer a SESSION CHECK, and the same remedy is printed whether the name is a friend or a machine. The refusal names the state clearly but asks the impossible.
    Grade: NEXT (a refusal whose remedy cannot be followed)
 
+8. `nova-bus send --as ada --to bob --subject hi --body x --redis /tmp/somedir`
+   Printed:
+   ```
+   SEND REFUSED: redis at /tmp/somedir as the default user, no password: unreachable: dial unix /tmp/somedir: connect: no such file or directory; next: start the store or correct the address, which was given to this tool; run: nova-bus help
+   (one line printed)
+   ```
+   I expected a refusal that a path is not `host:port` before any dial, as `send -h` says `--redis` is "the Redis address, host:port". The path was dialed as a Unix socket; `peek`, `recv`, `ack`, `log`, and `names` with the same `--redis` print the same dial line, and each of them with no `--redis` prints the `--redis is required` refusal at exit 2.
+   Grade: NEXT (friction)
+
 ## What held
 
 `wait`, `log`, `receipts`, and `version` ran clean end to end, and the plain success paths of `send`, `peek`, `recv`, `ack`, `names`, `overdue`, and `help` printed what their help says; the refusals for an unknown verb, an unknown flag, a missing `--redis`, an off-loopback store, a bad `--token`, a bad `--kind`, a body from both sources, and `--forever` without `--exec` each named the problem and a remedy.
 
-READ 6/10 — the banner, each verb's `-h`, and the `docs/CLI.md` page explain the bus, its outputs, and its refusals in one line with a remedy, but the banner's `--json` and `--max` promises and the `overdue` exit-table word do not match what the verbs do.
+READ 6/10 — the banner, each verb's `-h`, and the `docs/CLI.md` page explain the bus, its outputs, and its refusals in one line with a remedy, but the banner's `--json` and `--max` promises and the `overdue` exit-table word do not match what the verbs do, and `--redis` is documented as `host:port` while a path is dialed.
 
 USE 6/10 — every store verb's success path ran on a scratch Redis, including send, recv, ack, receipts, overdue, log, names, and wait, but `--dry-run` with no reachable store reports FAILED and a write that did not happen, and a filtered `recv` holds a message the reader never saw and makes `peek` over-count it.
 
-urgent=2 next=5
+urgent=2 next=6
