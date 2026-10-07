@@ -302,6 +302,11 @@ type lander struct {
 	// process, which a hand land starts empty every run and the server every start
 	baseCount bool
 	baseWhy   string
+	// baseGone says the last build's fetch found the base not on origin (notOnOrigin).
+	// dead says that batch was refused on it and recorded, so the stream goes on
+	// past its cards (deadBaseRefused; docs/SPEC-SPRINT.md section 7, a dead base).
+	baseGone bool
+	dead     bool
 	// baseNotes is what the pass's re-check of the bases that stopped streams did (baseRecheck)
 	baseNotes []string
 	// held is each clone's land lock this land holds (hold), released as it ends
@@ -475,6 +480,8 @@ func (l *lander) report(failed bool, pruned []pruneResult, stdout, stderr io.Wri
 		switch {
 		case b.WouldRecord != "":
 			fmt.Fprintf(w, "NOTE land would report this as merge --%s and stop stream %s; nothing was reported (dry run)\n", b.WouldRecord, oneline.Field(b.Stream))
+		case b.Fact == "dead-base":
+			fmt.Fprintf(w, "NOTE stream %s is not stopped: these cards are held from landing until their judgment is answered or their base re-pointed, and the rest of the stream lands; run: nova-sprint inbox\n", oneline.Field(b.Stream))
 		case b.Fact != "":
 			fmt.Fprintf(w, "NOTE the stream is stopped (%s); run: nova-sprint inbox\n", b.Fact)
 		case b.Status == "refused" && !l.dry:
@@ -551,14 +558,22 @@ func (l *lander) stream(ctx context.Context, s *sprint.Snapshot, stream string) 
 		return refused("nothing queued to merge in stream " + stream + "; run: nova-sprint queue --stream " + stream)
 	}
 	var cards []landCard
+	// a card held on a dead base is skipped, and a card that needs one, until its judgment
+	// is answered or its base is re-pointed (sprint.DeadBaseHeld): the refusal was said once
+	held := map[string]bool{}
 	for _, c := range queue {
 		lc := landCard{id: c.ID, base: l.base}
-		if pr := s.Work.Placed(c.ID); pr != nil {
+		pr := s.Work.Placed(c.ID)
+		if pr != nil {
 			lc.head, lc.attempt, lc.primary = pr.F("head"), pr.F("attempt"), pr
 			cb := swarm.ReadCardBase([]byte(pr.F("brief")))
 			lc.repo, lc.paths, lc.brief = cb.Repo, swarm.CardPaths([]byte(pr.F("brief"))), pr.F("brief")
 			if cb.Ref != "" {
 				lc.base = cb.Ref
+			}
+			if sprint.DeadBaseHeld(s, pr, lc.base) || slices.ContainsFunc(sprint.Split(pr.F("needs")), func(n string) bool { return held[n] }) {
+				held[c.ID] = true
+				continue
 			}
 		}
 		if lc.protected = sprint.ProtectedLandWhy(s, stream, lc.repo, lc.base, c.ID); lc.protected != "" {
@@ -573,11 +588,12 @@ func (l *lander) stream(ctx context.Context, s *sprint.Snapshot, stream string) 
 		for n < len(cards) && cards[n].repo == cards[0].repo && cards[n].base == cards[0].base {
 			n++
 		}
+		l.dead = false
 		landed, ok := l.batch(ctx, s, stream, cards[:n])
 		if !ok {
 			return false
 		}
-		if !landed {
+		if !landed && !l.dead {
 			return true
 		}
 		cards = cards[n:]
@@ -640,6 +656,10 @@ func (l *lander) batch(ctx context.Context, s *sprint.Snapshot, stream string, c
 	}
 	for i, c := range cards {
 		ids[i] = c.id // a base fix lands first (cureBase)
+	}
+	if why != "" && l.baseGone {
+		// the base is not on origin: one fact, recorded once, and the stream goes on
+		return l.deadBaseRefused(b, stream, cards)
 	}
 	if why != "" && l.baseCount {
 		// the base-gate rule: the refusal counted per stream and base in the store, its third
@@ -723,6 +743,9 @@ func (l *lander) placeWhy(stream string, cards []landCard) (string, []string) {
 	if strings.HasPrefix(base, "-") {
 		return "card " + id + " names the base " + base + ", which is not a branch name; run: nova-sprint card " + id, nil
 	}
+	// A base not on origin is not known here: placeWhy runs before any git. The fetch of
+	// the base alone decides it (notOnOrigin, in build), and the batch is refused once
+	// (deadBaseRefused).
 	var why, flags []string
 	if base == "" {
 		why = append(why, "card "+id+" names no BASE: line and no --base was given")
@@ -842,6 +865,31 @@ func (l *lander) baseRefused(b landBatch, stream, why string) (bool, bool) {
 		b.Reason = why + "; the merge step did not count it (" + stepWhy(res, err) + "); " + againRemedy(stream)
 	case slices.ContainsFunc(res.Moved, func(m string) bool { return strings.Contains(m, " stopped: ") }):
 		b.Fact = "base"
+	}
+	l.out = append(l.out, b)
+	return false, true
+}
+
+// deadBaseRefused records a batch whose base is not on origin through the merge step
+// (sprint.MergeReq.DeadBase): each card marked and one judgment raised for it, the stream not
+// stopped, and the batch refused once with the sentence of each card. The land pass skips the
+// cards after it (sprint.DeadBaseHeld) and goes on to the rest of the stream; a step that did
+// not record it leaves the cards to be tried again by the next pass.
+func (l *lander) deadBaseRefused(b landBatch, stream string, cards []landCard) (bool, bool) {
+	var why []string
+	for _, c := range cards {
+		why = append(why, sprint.DeadBaseWhy(c.id, b.Base))
+	}
+	id := "<id>"
+	if len(cards) == 1 {
+		id = cards[0].id
+	}
+	b.Status, b.Reason = "refused", strings.Join(why, "; ")+"; run: nova-sprint card base "+id+" <a branch on origin>"
+	res, err := l.step(sprint.MergeReq{Stream: stream, DeadBase: b.Base, Who: l.c.actor}, cards)
+	if code := stepExit(res, err); code != 0 {
+		b.Reason += "; the merge step did not record it (" + stepWhy(res, err) + "); " + againRemedy(stream)
+	} else {
+		b.Fact, l.dead = "dead-base", true
 	}
 	l.out = append(l.out, b)
 	return false, true
@@ -1169,12 +1217,16 @@ func (l *lander) build(ctx context.Context, dir, stream string, cards []landCard
 		}
 	}
 	start := time.Now()
+	l.baseGone = false
 	_, err := l.git(ctx, dir, fetch...)
 	if err != nil {
 		_, err = l.git(ctx, dir, "fetch", "--no-tags", "origin", baseRef)
 	}
 	since(&t.Fetch, start)
 	if err != nil {
+		// the base alone fetched and origin holds no such branch: a dead base, the batch's
+		// cards' fact, never retried as a fetch that failed (deadBaseRefused)
+		l.baseGone = containsAny(err.Error(), notOnOrigin)
 		return nil, failed, "the fetch of origin in " + dir + " failed: " + firstLine("", err)
 	}
 	start = time.Now()
