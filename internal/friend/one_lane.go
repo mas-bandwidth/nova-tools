@@ -266,7 +266,7 @@ func (l *loop) endOtherLane(ln *lane, who string, now time.Time) {
 	if ln.t != nil && ln.t.cancel != nil {
 		ln.t.cancel()
 	}
-	d.Record(fmt.Sprintf("%s lane %d: card %s ended: card finished by %s; its run is stopped and nothing is finished by this lane", now.UTC().Format(time.RFC3339), ln.n, c.ID, who))
+	d.Record(fmt.Sprintf("%s lane %d: card %s ended: card finished by %s; its stop is requested and nothing is finished by this lane", now.UTC().Format(time.RFC3339), ln.n, c.ID, who))
 	if ln.t == nil {
 		l.setDown(ln, now)
 	}

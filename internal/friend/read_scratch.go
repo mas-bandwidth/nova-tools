@@ -52,6 +52,9 @@ func (s *Stager) ReleaseRead(ctx context.Context, id string) error {
 		return errScratchRetained
 	}
 	dir := filepath.Join(s.Dir, "reads", id)
+	if _, err := safepath.ResolvedUnder(filepath.Dir(dir), s.Dir); err != nil {
+		return err
+	}
 	if _, err := safepath.ResolvedUnder(dir, filepath.Join(s.Dir, "reads")); err != nil {
 		return err
 	}

@@ -418,6 +418,10 @@ func (l *loop) releaseRead(r readResult, finding []byte, now time.Time) {
 	if !validJob(r.read.ID) || r.dir != filepath.Join(root, r.read.ID) {
 		return
 	}
+	if _, err := safepath.ResolvedUnder(root, d.Dir); err != nil {
+		d.Record(fmt.Sprintf("%s read %s: scratch retained: %s", now.UTC().Format(time.RFC3339), r.read.ID, oneLine(err.Error(), 300)))
+		return
+	}
 	raw, err := os.ReadFile(filepath.Join(r.dir, scratchReceipt))
 	if err != nil || string(raw) != r.read.ID {
 		return

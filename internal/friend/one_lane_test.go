@@ -115,7 +115,7 @@ func TestOneLaneRunsPerCard(t *testing.T) {
 			turns, _, _ := h.got()
 			assert.Equal(t, []string{"ses_1: c1"}, turns)
 			records := strings.Join(r.records, "\n")
-			assert.Contains(t, records, "lane 1: card c1 ended: card finished by zhi; its run is stopped and nothing is finished by this lane")
+			assert.Contains(t, records, "lane 1: card c1 ended: card finished by zhi; its stop is requested and nothing is finished by this lane")
 			assert.Contains(t, records, `card=ended reason="card finished by zhi"`, "the run came back stopped before the daemon's end")
 			raw, err := os.ReadFile(filepath.Join(dir, "jobs", "c1~15", LaneMarkFile))
 			require.NoError(t, err)
