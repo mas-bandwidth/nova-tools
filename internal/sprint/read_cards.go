@@ -55,6 +55,10 @@ const (
 	RetiredByLate     = "late"
 	RetiredByPrimary  = "primary"
 	RetiredByReturned = "returned"
+	// RetiredByDeclined is a read card the seat or her runner handed back for her (friend
+	// take, FriendTakeReq.Spends: she judged it outside her tiers): the one hand-back that
+	// spends her (spentBy).
+	RetiredByDeclined = "declined"
 	// RetiredByAway is a read card the machine took back off a reader down, away or held,
 	// or off a resting route (RetiredByRest): it spends nothing of the reader's.
 	RetiredByAway = "away"
@@ -224,11 +228,15 @@ func attemptUnit(s *Snapshot, primary string, attempt int) string {
 	return ""
 }
 
-// spentBy is the retired_by of a read card its reader itself ended: it closed it (read) or
-// handed it back (returned), or let it pass its deadline (late). A card the machine took
-// back (a reader down, away or held, a restart, the coordinator's hold --return, its
-// primary moved) spends nothing: its reader may be dealt the read again at the attempt.
-var spentBy = []string{"read", RetiredByReturned, RetiredByLate}
+// spentBy is the retired_by of a read card its reader itself ended with a judgment: it
+// closed it (read), declined it (friend take --spends: outside her tiers), or let it pass
+// its deadline (late). A card the machine took back (a reader down, away or held, a restart,
+// the coordinator's hold --return, its primary moved) spends nothing, and neither does one
+// its reader handed back with no verdict (read --return, RetiredByReturned: today a fetch
+// that failed, not a judgment; the owner, 2026-10-07: only a verdict spends a reader): its
+// reader may be dealt the read again at the attempt, under the next generation of the id,
+// MaxReadGen times (TestAReturnedReadSpendsNoReader).
+var spentBy = []string{"read", RetiredByDeclined, RetiredByLate}
 
 // readerCardsAt is the reader's read cards of the primary's attempt, placed or kept, every
 // generation (cards: the primary's read cards, fleetReadIndex).
@@ -245,9 +253,9 @@ func readerCardsAt(cards []*Card, primary string, attempt int, reader string) []
 
 // readSpent says the reader holds or closed a read card of the attempt: one placed, or one
 // retired with a verdict or by itself (spentBy). It is never dealt that read again. A read
-// card the machine withdrew (FriendTake for a friend's hold or stall) is history and spends
-// nothing; one the seat or her runner handed back (friend take, FriendTakeReq.Spends) is
-// withdrawn with retired_by returned and spends her.
+// card the machine withdrew (FriendTake for a friend's hold or stall) or its reader returned
+// with no verdict is history and spends nothing; one the seat or her runner handed back
+// (friend take, FriendTakeReq.Spends) is withdrawn with retired_by declined and spends her.
 func readSpent(cards []*Card) bool { return readSpender(cards) != nil }
 
 // readSpender is the first card that spends its reader (readSpent), nil for none.
@@ -709,6 +717,7 @@ func readCardsAskWhy(s *Snapshot, seats []FriendSeat, ri routeIndexes, why *[]st
 				*why = append(*why, pr.ID+" wants 0: "+readsWantZeroWhy(view, pr, idx))
 			}
 		}
+		*why = append(*why, ReviewWaitsOf(view, idx).String())
 	}
 	// the cards taken back whose primary asks nothing now
 	for _, key := range slices.Sorted(maps.Keys(back)) {
@@ -868,4 +877,70 @@ func readsWantZeroWhy(s *Snapshot, pr *Card, idx map[string][]*Card) string {
 		}
 	}
 	return "attempt=" + itoa(readAttempt(pr)) + " stands: " + strings.Join(out, "; ")
+}
+
+// ReviewWaits is what the primaries in review wait on, each counted once (ReviewWaitsOf):
+// the account the owner asked for on 2026-10-07 ("90 reads that need doing"), when review
+// held 87 primaries, the fleet sat idle and `where` said 0 reads waiting: all three were
+// true, since 57 of them had failed work and 20 a broken read standing, 53 of those marked
+// brief defects for a mind, and 9 had a read running. Reads is the primaries whose reads are
+// out (a read card placed, or a readers-table read live); Wanting those that want a read
+// card now and were dealt none; Broken those a reader found broken at the attempt, with the
+// rework by rule or a mind owed; Failed those whose work came back failed; Acceptable those
+// with their oks at hand (the accept part moves them); BrokenDefects and FailedDefects the
+// brief defects among Broken and Failed.
+type ReviewWaits struct {
+	Review        int `json:"review"`
+	Reads         int `json:"reads"`
+	Wanting       int `json:"wanting"`
+	Broken        int `json:"broken"`
+	BrokenDefects int `json:"broken_defects"`
+	Failed        int `json:"failed"`
+	FailedDefects int `json:"failed_defects"`
+	Acceptable    int `json:"acceptable"`
+}
+
+// ReviewWaitsOf counts what each primary in review waits on (ReviewWaits), the sentinels
+// aside, over a fleet read index (fleetReadIndex), nil to read the table.
+func ReviewWaitsOf(s *Snapshot, idx map[string][]*Card) ReviewWaits {
+	var out ReviewWaits
+	if s == nil || s.Work == nil {
+		return out
+	}
+	for _, pr := range s.Work.Column(Review) {
+		if IsSentinel(pr) {
+			continue
+		}
+		out.Review++
+		defect := pr.F(FieldBriefDefect) != ""
+		switch standing, broken := readCardsStanding(s, pr, idx); {
+		case pr.F("result") == "failed":
+			out.Failed++
+			if defect {
+				out.FailedDefects++
+			}
+		case broken:
+			out.Broken++
+			if defect {
+				out.BrokenDefects++
+			}
+		case acceptable(s, pr):
+			out.Acceptable++
+		case readCardsWanted(s, pr, idx) > 0:
+			out.Wanting++
+		case standing > 0:
+			out.Reads++
+		default:
+			out.Wanting++ // wants nothing and stands nothing: ReadsNeededIn is 0 and no head
+		}
+	}
+	return out
+}
+
+// String is the account in one line: "review 87: 9 reads out, 0 want a reader, 20 found
+// broken (16 brief defects), 57 failed (37 brief defects), 1 acceptable".
+func (r ReviewWaits) String() string {
+	return "review " + itoa(r.Review) + ": " + itoa(r.Reads) + " reads out, " + itoa(r.Wanting) + " want a reader, " +
+		itoa(r.Broken) + " found broken (" + itoa(r.BrokenDefects) + " brief defects), " +
+		itoa(r.Failed) + " failed (" + itoa(r.FailedDefects) + " brief defects), " + itoa(r.Acceptable) + " acceptable"
 }

@@ -234,27 +234,29 @@ func TestAReadCardsVerdictClosesTheRead(t *testing.T) {
 }
 
 // TestAReturnedReadCardIsReplacedWithAnotherReader pins the replacement: a read card its
-// reader hands back with no verdict (read --return) is retired, spends that reader's read of
-// the attempt, and the next deal deals the read to another reader; a read the machine takes
-// back (its member held) spends nothing, and its reader is dealt it again once back, under
-// the next generation of the card's id.
+// reader hands back with no verdict (read --return) is retired and spends nothing of that
+// reader's (the owner, 2026-10-07: only a verdict spends a reader), so the next deal deals
+// the read again, to the cheapest reader that may take it, the one that returned it among
+// them, under the next generation of the card's id; a read the machine takes back (its
+// member held) spends nothing either, and its reader is dealt it again once back.
 func TestAReturnedReadCardIsReplacedWithAnotherReader(t *testing.T) {
 	t.Parallel()
-	r := newReadCardsRig(t)
+	r := newReadCardsRig(t, "m1", "m2") // the worker and one reader
 	worker := r.toReview("s1-1", "c: the work (s1)\nREPO: mas-bandwidth/nova-tools\n\nThe task.\n")
 	reads := r.readCards("s1-1")
 	require.Len(t, reads, 1)
 	first := reads[0]
+	require.NotEqual(t, worker, first.Row, "never the worker")
 	r.read(first, sprint.ReadReq{Return: true, Reason: "no verdict: the child wrote no RESULT.md", Who: first.Row})
 	require.Equal(t, sprint.RetiredByReturned, r.rec(first.ID).F("retired_by"))
 	r.tick()
 	reads = r.readCards("s1-1")
 	require.Len(t, reads, 1, "dealt again")
 	second := reads[0]
-	require.NotEqual(t, first.Row, second.Row, "to another reader")
-	require.NotEqual(t, worker, second.Row, "never the worker")
+	require.Equal(t, first.Row, second.Row, "to the one reader, who returned it: the return spent nothing")
+	require.Equal(t, first.ID+".g1", second.ID, "under the next generation of the id")
 
-	// the machine takes it back: its member held; the only reader left is it
+	// the machine takes it back: its member held; no reader is left
 	res, err := r.st.Hold(r.ctx, sprint.HoldReq{Names: []string{second.Row}, Reason: "a test", Return: true, Who: "coordinator"})
 	require.NoError(t, err)
 	require.Empty(t, res.Refused)
@@ -267,5 +269,8 @@ func TestAReturnedReadCardIsReplacedWithAnotherReader(t *testing.T) {
 	reads = r.readCards("s1-1")
 	require.Len(t, reads, 1, "dealt to it again once back: the take-back spent nothing")
 	require.Equal(t, second.Row, reads[0].Row)
-	require.Equal(t, second.ID+".g1", reads[0].ID)
+	require.Equal(t, first.ID+".g2", reads[0].ID, "the last generation of the id")
+	r.read(reads[0], sprint.ReadReq{Return: true, Reason: "fetch failed again", Who: reads[0].Row})
+	r.tick()
+	require.Empty(t, r.readCards("s1-1"), "every generation used (MaxReadGen): the bound holds and the read waits for another reader")
 }

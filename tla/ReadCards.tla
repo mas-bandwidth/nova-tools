@@ -6,22 +6,28 @@
 \* is ready, then working, then closed ok or broken by its reader, handed back
 \* (returned), let pass its deadline (late), or taken back by the machine (away:
 \* its reader down or held, a resting route, its primary moved). A reader that
-\* closed, returned or let pass a read of the attempt is never dealt it again; a
-\* read the machine took back spends nothing and its reader may be dealt it again
-\* under the next generation, at most MaxGen times. The primary leaves review only
-\* by the existing rules: accepted on Need different oks at the attempt, reworked
-\* on a broken read (a new attempt, its open cards retired).
+\* closed or let pass a read of the attempt is never dealt it again (Spent); a read
+\* the machine took back, or its reader returned with no verdict (the owner,
+\* 2026-10-07: only a verdict spends a reader; a return is a fetch that failed),
+\* spends nothing and its reader may be dealt it again under the next generation,
+\* at most MaxGen times (ReturnedIsDealtAgain). The primary leaves review only by
+\* the existing rules: accepted on Need different oks at the attempt, reworked on a
+\* broken read (a new attempt, its open cards retired). Checked by MCReadCards.cfg
+\* over MCReadCards.tla (the instance, which extends this module unchanged);
+\* MCReadCardsBrokenIgnoreSpent.cfg (BugIgnoreSpent TRUE) breaks NeverTwiceAfterSpent,
+\* and MCReadCardsBrokenReturnSpends.cfg (BugReturnSpends TRUE, the rule before
+\* 2026-10-07) breaks ReturnedIsDealtAgain.
 \*
 \* A read is late only from its start (working): one never started is taken back by
 \* the machine (TakeBack: the deal bound, a member held), spending no one.
 \* The instance is the module, as ReaderTiers' is, run with a cfg setting
 \* BugIgnoreSpent: FALSE holds every invariant; TRUE, the reversed witness (a deal that
-\* forgets a spent reader), breaks NeverTwiceAfterSpent. Its cases in tla/CASES.tsv and
-\* their bench records in tla/RUNS.tsv are owed.
+\* forgets a spent reader), breaks NeverTwiceAfterSpent. BugReturnSpends TRUE counts a
+\* return as spent, the rule before 2026-10-07. Its cases are in tla/CASES.tsv.
 
 EXTENDS Naturals, FiniteSets
 
-CONSTANT BugIgnoreSpent
+CONSTANTS BugIgnoreSpent, BugReturnSpends
 
 Readers == {"w", "a", "b"}
 Worker == "w"
@@ -30,7 +36,10 @@ MaxAttempt == 2
 MaxGen == 1
 
 Open == {"ready", "working"}
-Spent == {"ok", "broken", "returned", "late"}
+\* what spends a reader: a verdict, or a deadline let pass (Judged); a return only under
+\* the old rule
+Judged == {"ok", "broken", "late"}
+Spent == IF BugReturnSpends THEN Judged \cup {"returned"} ELSE Judged
 
 VARIABLES attempt, pstate, cards
 vars == <<attempt, pstate, cards>>
@@ -42,7 +51,7 @@ TypeOK ==
   /\ attempt \in 1..MaxAttempt
   /\ pstate \in {"review", "merging"}
   /\ \A c \in cards : c.att \in 1..MaxAttempt /\ c.rd \in Readers /\ c.gen \in 0..MaxGen
-                     /\ c.st \in Open \cup Spent \cup {"away", "rework"}
+                     /\ c.st \in Open \cup Spent \cup {"away", "returned", "rework"}
 
 Init == attempt = 1 /\ pstate = "review" /\ cards = {}
 
@@ -116,5 +125,16 @@ MergingOnlyOnOks == pstate = "merging" => Cardinality(OkReaders(attempt)) >= Nee
 
 \* the open cards of an attempt past are retired: no read of a reworked attempt stays open
 NoOpenReadOfAnOldAttempt == \A c \in cards : c.att < attempt => c.st \notin Open
+
+\* a reader that returned a read with no verdict is dealt it again: whenever the attempt
+\* still wants a read, she holds no open card of it, judged none (Judged, not Spent: the
+\* returned card itself must not excuse her) and has a generation left, she is eligible
+\* (the deal may pick her); only a verdict or a lapse puts her out
+ReturnedIsDealtAgain ==
+  \A c \in cards :
+    (/\ c.att = attempt /\ c.st = "returned" /\ pstate = "review" /\ Wanted > 0
+     /\ ~\E d \in Mine(attempt, c.rd) : d.st \in Judged \cup Open
+     /\ NextGen(attempt, c.rd) <= MaxGen)
+    => c.rd \in Eligible
 
 =============================================================================

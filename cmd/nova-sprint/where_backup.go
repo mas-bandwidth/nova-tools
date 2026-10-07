@@ -33,13 +33,21 @@ func pipelineCounts(t ntable.Table) (working, review, merging int64) {
 }
 
 // backupLine is where's backup line under the summary, "backup: reads (review 279 > working
-// 77, merging 44), 250 reads waiting"; "" while the state is none.
-func backupLine(state string, working, review, merging int64, waiting int) string {
+// 77, merging 44), 250 reads waiting; review 279: 9 reads out, 250 want a reader, 20 found
+// broken (16 brief defects), 0 failed (0 brief defects), 0 acceptable"; "" while the state
+// is none. The account after the semicolon (sprint.ReviewWaits) is what review waits on,
+// each primary once, so a review count is never read as reads to do; it is left out while
+// the record has none (an older tick's).
+func backupLine(state string, working, review, merging int64, waiting int, waits sprint.ReviewWaits) string {
+	tail := ""
+	if waits.Review > 0 {
+		tail = "; " + waits.String()
+	}
 	switch state {
 	case sprint.BackupReads:
-		return fmt.Sprintf("backup: reads (review %d > working %d, merging %d), %d reads waiting", review, working, merging, waiting)
+		return fmt.Sprintf("backup: reads (review %d > working %d, merging %d), %d reads waiting%s", review, working, merging, waiting, tail)
 	case sprint.BackupMerges:
-		return fmt.Sprintf("backup: merges (merging %d > review %d + working %d), %d reads waiting", merging, review, working, waiting)
+		return fmt.Sprintf("backup: merges (merging %d > review %d + working %d), %d reads waiting%s", merging, review, working, waiting, tail)
 	}
 	return ""
 }
