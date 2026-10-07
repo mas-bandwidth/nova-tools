@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/memindex"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -78,6 +79,7 @@ func (r retrievalResult) render(w io.Writer, asJSON bool) {
 		fmt.Fprintf(w, "MEMORY OK candidates=%d source=%s k=%d channels=%s files=%d chunks=%d\n", len(r.Candidates), oneline.Field(r.Source), r.K, oneline.Field(r.Channels), r.Files, r.Chunks)
 	}
 	fmt.Fprintf(w, "%s CAL %s probe=unrelated-control\n", oneline.Field(token), scoreFields(r.Calibration.Native, r.Calibration.NativeChan))
+	fused := strings.Contains(r.Channels, ",")
 	for i, cand := range r.Candidates {
 		prefix := ""
 		if r.Verb == "check" {
@@ -88,7 +90,7 @@ func (r retrievalResult) render(w io.Writer, asJSON bool) {
 			fmt.Fprintf(w, "%s MISS %severy query term is out of vocabulary for this corpus\n", oneline.Field(token), oneline.Escape(prefix))
 		}
 		for j, h := range cand.Hits {
-			fmt.Fprint(w, hitLine(token, prefix, j+1, h, r.Whole))
+			fmt.Fprint(w, hitLine(token, prefix, j+1, h, r.Whole, fused))
 		}
 	}
 	for _, note := range r.Notes {
