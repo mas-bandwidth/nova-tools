@@ -26,8 +26,8 @@ func TestXaiProviderOneUsageFileFoldsRow(t *testing.T) {
 	}
 	dir := t.TempDir()
 	home := filepath.Join(dir, "home")
-	os.Setenv("HOME", home)
-	os.Setenv("USERPROFILE", home)
+	require.NoError(t, os.Setenv("HOME", home))
+	require.NoError(t, os.Setenv("USERPROFILE", home))
 	const bait = "424242"
 	write(t, filepath.Join(home, ".grok", "sessions", "encoded-cwd", "session-id", "usage.json"), `{
   "sessionId": "bait-session",
