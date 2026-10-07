@@ -368,6 +368,19 @@ func cardTierOf(c *Card) string {
 	return now
 }
 
+// DealTier is the one tier resolution of a card every friend decision reads
+// (docs/SPEC-SPRINT.md section 1, "One tier for every friend decision",
+// friend-deal-one-tier-bb.w2): the friends' deal, the level, the take back of a re-tiered
+// card (retierTakeBacks) and the packet's tier (DealtTier, through the primary's tier
+// field) all call it, so no two of them can disagree about a card. It is the tier a deal
+// draws (dealTierOf), and the dealer's default, flash, when there is no primary.
+func (s *Snapshot) DealTier(c *Card) string {
+	if c == nil {
+		return cardhdr.RouteFlash
+	}
+	return s.dealTierOf(c)
+}
+
 // dealTierOf is the tier a deal of the primary c draws, as the machines' deal draws it
 // (routeOf): the tier it is on once a deal drew one (drawTier), its ceiling when its tier
 // is pinned, and before its first deal its start tier (startTier: flash first, pro for a

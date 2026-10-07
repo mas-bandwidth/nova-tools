@@ -647,6 +647,29 @@ marks it `taken` (a queued record of a card now dealt to another row). The tick
 does not level the friends (`TestFriendLevelEvensTheReadyQueuesOfAClass`,
 `TestFriendLevelMovesAQueuedCardAndTheQueueFilesFollow`).
 
+**One tier for every friend decision** (friend-deal-one-tier-bb.w2; the owner,
+2026-10-05: "You should automatically rebalance queues", "it should just happen
+mechanically"). A card has one tier the friends' decisions read,
+`(*Snapshot).DealTier(primary)`: the tier a deal of it draws (the tier its last
+deal on a route drew, `FieldTierNow`; its ceiling when the coordinator pinned it
+with `rework --tier` or `brief --tier`; before its first deal its start tier,
+flash first and pro for a brief that says pro), and the dealer's default, flash,
+when there is no primary. The friend deal, the friend level, the take back below
+and the packet's `tier` (`sprint.DealtTier`, through the primary's tier field,
+never empty) all read it, so no two of them can disagree: a friend takes a card
+when the tier is one of her tiers (`friendTakes`), never her class as a whole,
+and a named friend (`WHO: friend <name>`) who does not serve the tier is a
+preference skipped for another friend that does (`pin ignored`), never a pin past
+the tier. A card re-tiered after it was dealt to a friend whose tiers do not hold
+the new tier, ready or working and not started (no push, not named running by her
+beat), is taken back by the tick's friend level (and by `friend level`) as
+`friend take` takes it (`taken_back` says "re-tiered"), its primary ready, and
+dealt again by the next deal to a friend that serves the tier
+(`retierTakeBacks`, friend_tier.go, called at the end of `friendLevel`); a
+started card stays and finishes, and a card the attempt cap's default answer
+pinned to its holder (`AttemptCapDeal`) is the one placement outside her tiers
+and stays (`TestEveryFriendDecisionReadsTheOneTierOfTheCard`).
+
 A read at any tier is asked of any unit with room at or above that tier, a
 fleet reader or a friend, by the one ask (`FriendReadAsk` before the machine's
 `Ask`). The tier a friend is matched on is the tier before a frontier card is
