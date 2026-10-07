@@ -1916,7 +1916,8 @@ func Drop(s *Snapshot, r DropReq) Plan {
 	// the weights the drop changes: every primary the dropped cards waited on (weight.go)
 	p.Units = append(p.Units, weighUnits(s, nil, dropping)...)
 	settle(&p, s, r.Who, dropping, dropping)
-	// Each stream counts its dropped primaries on its control card.
+	// Each stream counts its dropped primaries on its control card, and keeps their spend
+	// there (DroppedSpendFields) so a drop or a re-cut cannot make the stream read cheaper.
 	for _, st := range unitStreams(p) {
 		k := 0
 		for _, u := range p.Units {
@@ -1924,7 +1925,17 @@ func Drop(s *Snapshot, r DropReq) Plan {
 				k++
 			}
 		}
-		setStream(&p, s, st, map[string]string{"dropped": itoa(s.StreamCtl(st).Int("dropped") + k)})
+		var left []*Card
+		for _, c := range chosen {
+			if c.Row == st && dropping[c.ID] {
+				left = append(left, c)
+			}
+		}
+		set := map[string]string{"dropped": itoa(s.StreamCtl(st).Int("dropped") + k)}
+		for key, v := range DroppedSpendFields(s.StreamCtl(st), left) {
+			set[key] = v
+		}
+		setStream(&p, s, st, set)
 	}
 	// A sprint this drop finishes is found done by the tick's done part
 	// (TickDone), which says so and stops the machine.

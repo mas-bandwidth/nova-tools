@@ -18,7 +18,7 @@ const readCostDriver = `
 context.render(input.data);
 const txt = id => doc.getElementById(id).textContent;
 process.stdout.write(JSON.stringify({ cost: txt('cost'), per: doc.getElementById('cost-per').innerHTML, title: doc.getElementById('cost-per').title || "",
-  unreconciled: txt('cost-unreconciled'), landed: txt('landed'), all: txt('all'), eta: txt('eta') }));
+  unreconciled: txt('cost-unreconciled'), landed: txt('landed'), all: txt('all'), eta: txt('eta'), basis: txt('eta-basis') }));
 `
 
 // The cost tile shows the reads as their own number beside the work (reads are priced like
@@ -56,8 +56,37 @@ func TestTheHeroOfASprintDoneIsTheEpochs(t *testing.T) {
 	assert.Equal(t, "reader-a $0.88 ($0.13 last hour)\nreader-b $0.63 ($0.00 last hour)", res.Title, "the tooltip over the same scope")
 }
 
+// The headlines carry their denominators. While a run of the tile's scope is unpriced the
+// per-card phrase is unknown, and coverage is named only when the frame carries it. Held
+// work is drawn apart from executing work. The rate window is drawn only when the frame
+// carries eta.
+func TestTheHeadlinesCarryCoverageAndKeepHeldApart(t *testing.T) {
+	t.Parallel()
+	res := drawCostTile(t, func(d map[string]any) {
+		d["held"] = 2
+		sc := d["stream_costs"].(map[string]any)
+		ci := sc["ci"].(map[string]any)
+		ci["coverage"] = map[string]any{"records": 4, "actual": 1, "estimated": 1, "tokens": 0, "unpriced": 2}
+		ci["dropped"] = map[string]any{"cards": 1}
+	})
+	assert.Contains(t, res.Per, "per card unknown")
+	assert.Contains(t, res.Per, "2 runs unpriced")
+	assert.Contains(t, res.Unreconciled, "unreconciled since 2026-10-03")
+	assert.Contains(t, res.Unreconciled, "1 actual · 1 estimated · 0 tokens · 2 unpriced of 4 records · 1 dropped")
+	assert.NotContains(t, res.Basis, "/h over")
+	assert.Regexp(t, `^\d+ held · \d+ executing · \d+ queued$`, res.Basis)
+
+	withRate := drawCostTile(t, func(d map[string]any) {
+		d["eta"] = map[string]any{
+			"rate": map[string]any{"window": "last 1h of running time", "landings": 5, "hours": 1, "per_hour": 5},
+			"work": map[string]any{"held": 2, "executing": 1, "queued": 3},
+		}
+	})
+	assert.Equal(t, "5.0/h over last 1h of running time (5 landings) · 2 held · 1 executing · 3 queued", withRate.Basis)
+}
+
 // costTile is the cost tile and the hero as app.js draws them.
-type costTile struct{ Cost, Per, Title, Unreconciled, Landed, All, Eta string }
+type costTile struct{ Cost, Per, Title, Unreconciled, Landed, All, Eta, Basis string }
 
 // drawCostTile draws the fixture with an archived stream old ($1.50: $1.00 work, $0.50 reads)
 // beside ci ($3.00: $2.00 work, $1.00 reads) and $0.40 unreconciled, edited by edit, and reads

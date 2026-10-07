@@ -47,35 +47,71 @@ from the cards, never added to: a replayed merge writes the same, and `clear`
 empties it with the tables.
 
 After `cost` the text table draws `per landed` (the owner, 2026-10-04: cost
-visibility, after a night of $437 for 844 landings whose pro streams landed at
-$4.50 to $8.88 a card and flash streams at $0.10 to $0.27): the stream's
-dollars per landed card, rounded up to the cent, `-` with nothing landed or
-nothing priced, the tick's count when its where record holds one
-(`sprint.TierCosts`, cost_view.go) and else the row's cost cell over its landed
-count (`sprint.PerLandedOf`); its footer is blank (the sprint's figure is the
-dashboard's). `where --json` carries, additively: `tiers` at the top, every
-card counted by the tier its brief names (flash when it names none; any word
-the briefs carry), on each `tables.work[<stream>]` row `per_landed` (every table
-cell stays a string, the shape the dashboard's pull decodes), and `stream_costs`
-beside the tables, each stream's `tiers` (its cards by tier) and `cost_by_tier`, its spend by the
-tier each attempt and read ran on (the cost records' tier, not the card's
-ceiling: a flash card escalated to pro shows both), every dollar of the stream's
-`total_cost` in one tier: a record with no tier takes its route's (the route row's
-tier, else the route name's prefix `pro-*`, `flash-*`, `heavy-*`, `frontier-*`), else
-the card attempt's (its `tier_now`, else its pinned `tier`, else its brief's), and a
-card's records past the list's bound take the card attempt's; `no tier` only when none
-of these exists (`TestCostByTierTakesTheRouteTierWhenTheRunRecordsNone`). The displayed
-partition rounds the stream total up once: each tier keeps its whole cents, and the
-remaining cents go to the largest fractional remainders, ties in alphabetical tier
-order. Thus displayed tier amounts sum exactly to `total_cost`, including fractional-cent
-records (`TestCostByTierAllocatesFractionalCentsWithoutChangingTheTotal`); and
-`reconciles`, each provider's latest cost reconciliation (the sprint's, the same on every
-stream: its day, the provider's figure, the records', the gap), money strings as the cost column shows them. All of it is counted
-by the tick from the sprint it reads anyway and kept in the where record
-(store.WhereRecord), never read card by card at `where`; before the first tick
-of an epoch `tiers` and `cost_by_tier` are absent and `per_landed` is from the
-cells (`TestTheWhereRecordCountsTiersAndCostsByTier`,
-`TestWhereCarriesTiersAndPerLandedCost`).
+visibility): the stream's cost per landed card priced whole, rounded up to the
+cent (`sprint.TierCosts.PerLanded`, cost_view.go). A landed card is priced whole
+when it has records and every one of them is priced (`FieldCost` set and
+`coverage.unpriced` zero). A landed card with any record unpriced is in neither
+the sum nor the count, so an unpriced completion cannot make the stream read
+cheaper. With cards landed and none priced whole the cell is `unknown`, never a
+smaller number; `-` with nothing landed. When the tick's record is not there,
+the cell is the row's cost cell over its landed count (`sprint.PerLandedOf`).
+The footer's per-landed cell is blank (the sprint's figure is the dashboard's,
+and `view coordinator`'s). `where --json` carries, additively: `tiers` at the
+top, every card counted by the tier its brief names (flash when it names none;
+any word the briefs carry), on each `tables.work[<stream>]` row `per_landed`
+(every table cell stays a string, the shape the dashboard's pull decodes), and
+`stream_costs` beside the tables. Each stream's record carries `tiers` and
+`cost_by_tier`, its spend by the tier each attempt and read ran on (the cost
+records' tier, not the card's ceiling: a flash card escalated to pro shows
+both), every dollar of the stream's `total_cost` in one tier: a record with no
+tier takes its route's (the route row's tier, else the route name's prefix
+`pro-*`, `flash-*`, `heavy-*`, `frontier-*`), else the card attempt's (its
+`tier_now`, else its pinned `tier`, else its brief's), and a card's records
+past the list's bound take the card attempt's; `no tier` only when none of
+these exists (`TestCostByTierTakesTheRouteTierWhenTheRunRecordsNone`). Spend
+kept after a drop or a re-cut has no run tier; it is the tier `lineage`, so the
+displayed tiers still sum to `total_cost`. The displayed partition rounds the
+stream total up once: each tier keeps its whole cents, and the remaining cents
+go to the largest fractional remainders, ties in alphabetical tier order. Thus
+displayed tier amounts sum exactly to `total_cost`, including fractional-cent
+records (`TestCostByTierAllocatesFractionalCentsWithoutChangingTheTotal`). The
+record also carries `unpriced_by_tier` (the runs that tier's dollars cannot
+hold, counted by `runTier`, a subscription read's tokens aside), `landed` and
+`landed_priced` (PerLanded's denominators), `landed_coverage` and `coverage`
+(how the records were priced: `records`, `actual`, `estimated`, `tokens`,
+`unpriced`), `spend_per_landed`, `dropped`, and `reconciles`, each provider's
+latest cost reconciliation (the sprint's, the same on every stream: its day,
+the provider's figure, the records', the gap), money strings as the cost column
+shows them. Spend per landed is every recorded take and read of every card of
+the stream in any column, plus the spend of cards taken off the table, over the
+landed cards; `unknown` while any of those records is unpriced, `-` with
+nothing landed. The two per-card figures are different scopes
+(`sprint.PerLandedScope`, `sprint.SpendPerLandedScope`) and a figure is compared
+only with the same figure. `total_cost` is the same spend, a floor while
+`coverage.unpriced` is above zero: unknown spend is shown as unknown, not as a
+smaller number. `work_cost` and `read_cost` stay the on-table listed consumers;
+a drop's dollars are in `total_cost` and in the tier `lineage`, not in those
+two. A stream's spend includes every card of it the snapshot holds off the
+table (attributed by the stream field) while the control card records no
+dropped card. `drop` writes that spend on the stream's control card as the
+card leaves (`dropped_cost`, `dropped_cover`, `dropped_cards`,
+`sprint.DroppedSpendFields`), and a re-cut does the same because it drops. Once
+that record names any card, the headlines read it and do not also count a card
+the snapshot still holds, so the spend is once. The day's read line names a
+route's reads that were charged no dollar (`(N unpriced)`), so that route's
+dollars are not read as every read's; a subscription route stays `tokens`. All
+of it is counted by the tick from the sprint it reads anyway and kept in the
+where record (store.WhereRecord), never read card by card at `where`. After a
+`stats tidy --streams`, the next tick replaces that record's `per_landed` alone
+with `sprint.PerLandedSince` (Statistics, below): the landed cost since the tidy
+over every card landed since, priced and unpriced together, so that one
+published cell can still read cheaper when a landing since the tidy is
+unpriced. The other headlines on the record are not replaced. `view
+coordinator` reads `sprint.SprintTierCosts` itself, not that replaced cell.
+Before the first tick of an epoch `tiers` and `cost_by_tier` are absent and
+`per_landed` is from the cells (`TestTheWhereRecordCountsTiersAndCostsByTier`,
+`TestWhereCarriesTiersAndPerLandedCost`,
+`TestAnUnpricedLandingCannotLowerPerLanded`).
 
 Each reader's spend (the owner, 2026-10-05, before funding a provider for reads: "I would ask
 that you need to track spend on readers, can you do this before we start?"; the coordinator had
@@ -998,7 +1034,16 @@ dashboard's throughput tile, so the two agree while the machine runs), read
 from the landed cards' `landed` stamps as the where record keeps them; with fewer than five landed in that
 window it is the whole sprint's average, the cards landed over the running
 time since the first start; a read of the stamps that fails leaves that
-average, never a failed view. The ETA is a dash, never a number, with fewer
+average, never a failed view. The rate is stated with the window it was measured over and the landings counted
+there (`sprint.LandingRateBasis`): the last hour of running time when at least
+five landed in it, otherwise the whole sprint since the first start, otherwise
+none. The cards left are split into the held ones, the executing ones (working,
+review, merging) and the queued rest (`sprint.ETAWork`). `view coordinator`
+carries both as `eta` and names them on its summary line. The dashboard's ETA
+tile draws the same split from `held` and the work table's counts, and the
+rate's window and sample when the frame carries `eta`. `where --json` does not
+carry `eta` (the where document is drawn in `cmd/nova-sprint/reads.go`, outside
+this card's paths). The ETA is a dash, never a number, with fewer
 than five landed in all (whatever the rate) and with no rate (no first start
 known):
 `3/10 30.0% held=4 -> ETA 12m`. From a day on it reads in days and hours, the
@@ -5624,7 +5669,7 @@ command that loads it.
 | rework | delegates the next attempt at once with a fix (the member stages it at the tip of the card's base branch, the last pushed attempt's work carried on top where it applies cleanly, docs/SPEC-CARD-CONTRACT.md, where a rework starts), and writes on that attempt's work card `fix`, `finding` (its broken reads' findings, each once) and `why` (how the attempt before ended: failed with its report, finished and found broken, or sent back), and on the primary `finding_reader`, the reader whose finding it sends back, who checks the fix (section 6), each cut to MaxCardTextBytes with a trailing `...` and never refused for its size, and kept on the primary too for a rework that deals later; its packet carries them to the child's JOB.md and `card` prints per attempt; ready when no member is up; a primary at its redeal bound (ready, its work card withdrawn) is reworked too, with `--fix`, its withdrawn card taken off and its bound's class written as the primary's record of its failed work; `--tier`: at a redeal bound it never names a lower tier, and when the attempt before also ended at its bound on the card's tier the rework is refused unless it names a tier above (flash, pro, heavy, frontier) or the provider its takes failed on is back, which lifts it once per tier per card; the refusal is one line naming that attempt, the class and the tiers above (section 5, the bound holds across attempts); without `--fix` each primary's fix is the finding of its broken read, else the report of its failed work, and a primary with neither is refused by name; a rework of several cards (`--group`) writes on each card its own finding, the finding of the read that put it in the group, never the group's first, and a `--fix` given once is every card's fix as written, beside its own finding (on 2026-10-05 a grouped `a reader found it broken` answered with the first card's finding as the `--fix` of all three told every next attempt to fix another card's defect; `TestAGroupReworkGivesEachCardItsOwnFinding`); `--tier <flash|pro|heavy|frontier>` writes the tier on the primary (`tier`), and this attempt's deal and every later deal and read of the card draw from it over its brief's line 1, so a flash card that failed twice is reworked on pro, the same card and brief; it pins the card: the tier is its ceiling too and the machine never escalates it (section 5, flash first); a word that names no tier is usage (exit 2), and a card whose brief pins a model is refused by name, since it runs on its pin whatever its tier; one id while the inbox holds a judgment group of several naming it is refused unless `--one`: `the inbox holds a group of <n> for this card; answer the group; run: nova-sprint rework --group <id> --expect <n>; or say --one` (`TestReworkAndDropRefuseOneCardOfAGroupWithoutOne`; the group is read from the open notes alone, `store.OpenGroups`, never the whole inbox: `TestOpenGroupsAreTheInboxsJudgmentGroupsFromTheOpenNotesAlone`) Its read cards are retired with the attempt it replaces, the readers table's and a friend's open read on her fleet row alike, so none keeps her room or closes against that attempt (`TestAFriendsOpenReadIsRetiredByBriefAndByRework`). |
 | return | merging -> review, off the merge queue |
 | redo | atomically executes return, rework with fix "redo the same change on the current tip", and resumes the stopped stream in one step with one history line; refused when the card is not in a conflict |
-| drop | off the table with the reason; one id while the inbox holds a judgment group of several naming it is refused unless `--one`, as rework's is; refused for a card another card still needs, naming the dependants (`s1-1 is needed by b; drop them too with --cascade`), unless `--cascade` drops the dependants and their dependants in the same plan with the same reason; `--repo <owner/name>...` selects the cards of the streams recording those repositories (the same one-snapshot read as `streams --repo`; a mixed stream is selected by each), and with it `--expect <n>` is required, the number of streams selected as `streams --repo` printed them, so what the call removes is read before it runs |
+| drop | off the table with the reason; one id while the inbox holds a judgment group of several naming it is refused unless `--one`, as rework's is; refused for a card another card still needs, naming the dependants (`s1-1 is needed by b; drop them too with --cascade`), unless `--cascade` drops the dependants and their dependants in the same plan with the same reason; `--repo <owner/name>...` selects the cards of the streams recording those repositories (the same one-snapshot read as `streams --repo`; a mixed stream is selected by each), and with it `--expect <n>` is required, the number of streams selected as `streams --repo` printed them, so what the call removes is read before it runs; the stream's control card keeps the leaving cards' recorded spend (`dropped_cards`, `dropped_cost`, `dropped_cover`, `sprint.DroppedSpendFields`) beside its `dropped` count, and a re-cut writes the same fields because it drops, so taking a card off the table cannot make the stream's headlines cheaper (`TestDropKeepsSpendOnTheControlCard`) |
 | rank | changes a score and every copy: `--score <n>` (the first id's; the rest follow it), `--first` (ahead of every primary), or `--before <id>` (in line in front of a primary of the cards' own stream, in the order named, placed as `add --before` places cards: between the card before the anchor and the anchor, the line never renumbered; a card of another stream, the anchor itself, or no primary refuses the whole step, nothing written) |
 | brief | replaces the brief of a primary in place (the owner, 2026-10-01: "What other things should you be able to do to mutate a stopped sprint" / "Are there other verbs you need as you work with sprints?" / "I don't want you manually hopping in and working around it and doing manual stuff."; 2026-10-04: "what is manual? what needs new verbs in nova-sprint?"; 2026-10-06: "We gotta stop doing this twin shit. it's waste."): `brief <id> (--brief <text> \| --brief-file <path>) [--rules <file>] [--answers <notes>]`, `brief --dir <dir> [--rules <file>]`, `brief --group <id> [--expect <n>] (--brief-file <path> \| --dir <dir>) [--answers <notes>]`, or `brief <id> --widen [--repo-dir <clone>]` (section 2, recut-widen-r.w1); the new brief is held to the card lint and the size bound as `add --brief` holds one (the same function, refused exit 2, nothing written, with the lint's own lines); on a RUNNING machine as on a STOPPED one: on a RUNNING machine the change queues for the next tick's pump like every coordinator verb's, and the pump deals no card a queued change names before the change drains, so the card is dealt with its new brief. A primary waiting, ready or in review takes one, and keeps its id: a correction is never a twin. A card no attempt was dealt for (attempt 0) has its brief replaced. A card an attempt was dealt for opens its next attempt (`sprint.briefInPlace`): from review it goes to ready, its read cards retired (the readers table's, and a friend's open read on her fleet row, which would otherwise keep her room and close against the replaced attempt), the attempt's finding kept in its `findings`, and the judgments on it closed, as a rework's (a failed attempt waiting on a judgment, or at its bound); a ready or waiting card's withdrawn work card is retired, so the deal cuts the next attempt instead of dealing the last again; the next attempt is staged from the last pushed head where the work applies, as a rework's (`sprint.BaseOf` over the card's attempts, or the brief's `CARRY:` line when none pushed ok); its bound is reset, since the bound counts attempts under one brief (`brief_attempt` is the attempt at the edit); a rework's `fix` was for the old brief and is dropped; and the record (its MOVED line, which `card <id>` tells) and the next attempt's `why` say `<id> brief edited in place by <actor> at attempt <n>: <what changed>`, what changed the old brief's lines the new one lacks (`- <line>`) and the lines it adds (`+ <line>`), joined by ` \| `. A read of the primary is not asked again at the carried head because the brief changed. The same brief again on a card an attempt was dealt for, or one with no changed line (its lines only re-spaced, reordered or blank lines added, compared trimmed), is refused, nothing written: it would reset the bound with nothing changed. Refused (exit 1, nothing written) for a card that is no primary, and for a card working, merging or landed, which keeps its brief, its state named, whatever the machine's state, with what changes it instead: once it finishes (review), `brief` in place (from merging after a `return`); from any open state a `drop` and the new brief added as a new card; once landed, a new card (`TestBriefEditsACardInReviewInPlace`, `TestBriefRetiresItsReadsAndCarriesThePushedHead`, `TestAFriendsOpenReadIsRetiredByBriefAndByRework`, `TestBriefRefusesAWorkingOrMergingCard`). `--answers` names the judgments the edit answers, each one it closes, as every verb's. `--group <id>` (or its alias) acts on the members of the inbox group, refused when `--expect` is not its size now, as every `--group` verb's: a group of one takes `--brief` or `--brief-file`, a group of several takes `--dir` holding one `<id>.md` for each member and no other, and one brief for several is refused naming `--dir`. The inbox prints the brief decision in the form the verb takes: `brief <id> --brief-file '<the corrected brief>'` for one card, `brief --group <id> --expect <n> --dir '<a directory of the corrected briefs, <id>.md a card>' --answers <notes>` for several, each running as printed with its placeholder filled (`TestBriefGroupAnswersTheBoundJudgment`, `TestInboxPrintsTheBriefDecisionTheVerbRuns`). `--dir` replaces one brief per `*.md` file of the directory, in byte order of file name, read as `add --brief-dir` reads them, the card the file's base name without `.md` (refused naming the file when not one; not with an id, `--brief` or `--brief-file`); every brief is held to the bound and the lint before anything is written, one failing file refusing the whole call naming it with its findings, exit 2; one step replaces them all or none, a card refused or named twice refusing the call, exit 1, and its `BRIEF OK moved=<n>` is the count replaced, one MOVED line per card. The card keeps its id, stream, score and needs; before this verb the coordinator dropped the card and added it again, or re-cut it as a twin, which changed its id and place (`sprint.Brief`). A brief that differs from the card's in its `DEPENDS-ON:` line alone is taken in any state, on a RUNNING machine (applied by the next tick, as every work-table change is while it runs) and for a card dealt (it applies to the next attempt), and the card's needs become the line's, read as `add` reads it: re-pointing a card's needs after a drop is no change of its task (the comfort list of 2026-10-03, item 2); each need is a primary on the table and not the card itself, and a ready card takes no need that has not landed (the deal would run it first), each refused by name, nothing written; the brief decision and the grade stay (`sprint.Brief`, `briefDepends`); `brief <id> --tier <flash\|pro\|heavy\|frontier>` re-tiers the card instead (the owner, 2026-10-04: "If there are pro cards that are really heavy, then let's mark them as heavy"): the tier is pinned on the primary as `rework --tier` pins it (`tier`: every later deal and read draws from it, never escalated past it), taken in any state, on a RUNNING machine and for a card dealt, where it applies to the next attempt; refused for a card landed, a sentinel, a brief that pins a model, a word that is no class, and the tier it is pinned to already; not with --brief, --brief-file, --dir, --rules, --widen or --group (`sprint.Brief`, `briefTier`) |
 | move | moves primaries that have not started to another stream (the owner, 2026-10-01: "What other things should you be able to do to mutate a stopped sprint" / "Are there other verbs you need as you work with sprints?" / "I don't want you manually hopping in and working around it and doing manual stuff."): `move <id>... --stream <s> [--before <id> \| --after <id> \| --score <n>]`, one step, all or none for the ids named; refused (exit 1, nothing written) on a RUNNING machine (`nova-sprint stop` first), for a card that is no primary or has started (only a primary waiting or ready with no work card ever dealt moves; a card dealt, working, in review, merging or landed keeps its stream, its state named), and for a card of the destination already (`rank` changes a place in line). The destination is placed exactly as `add` places cards (the same plan, on the sprint without the moved cards): a stream new to the sprint is made as `add --stream` makes one, the cards go in line by `--before`/`--after`/`--score`, else at the end in the order named, waiting or ready by their needs and the stream's sentinels, a reached sentinel behind them no longer reached, a cycle of needs refused naming it, and a ready card the destination would put behind a sentinel refused by the lifecycle (ready -> waiting is only the effect of inserting a sentinel; `--before` the sentinel moves it). The card is the same card moved: its id, brief, needs and admission stay, and a need naming it still holds (a need is by id) (`sprint.MoveCards`) |
@@ -5833,12 +5878,19 @@ machines' beats and the machine's record, at one epoch. Its fields: `sum` (one l
 the machine, the open judgments and the heaviest's cards behind, the count of each item type,
 landed of all and landed in the last 30 minutes, the work table's counts, the up machines'
 cards working of their width, the cards a rule answered in the last hour, and the judgments
-suppressed since the epoch began with their causes), `at`, `epoch`, `seat`, `cursor`, `n` (the counts: `landed`,
+suppressed since the epoch began with their causes, then the ETA's rate window and sample and
+the cards left split held, executing and queued, then the sprint's cost headlines with their
+denominators and coverage), `at`, `epoch`, `seat`, `cursor`, `n` (the counts: `landed`,
 `l30`, `all`, `wait`, `ready`, `work`, `review`, `merge` of the primaries, sentinels aside;
 `held`; `width` and `busy`, the up machines' width and their cards working; `j`, the open
 judgments; `rules`, section 8; `suppressed`, the judgments the tick's lane check kept from
 rising since the epoch began, and `by`, its causes `lane`, `readers` and `tier`, section 8, a
-judgment checks the lane before it rises) and `items`, ranked by the cards behind each (`b`), then by type in the order
+judgment checks the lane before it rises), `eta` (`rate`: `window`, `landings`, `hours`,
+`per_hour`; `work`: `left`, `held`, `executing`, `queued`; `sprint.LandingRateBasis` and
+`sprint.ETAWork`; the window is `none` when the machine record is not read) and `cost`
+(`total`, `coverage`, `dropped`, `per_landed`, `landed`, `landed_priced`, `spend_per_landed`;
+`sprint.SprintTierCosts`, every stream counted as one; a figure an unpriced record would lower
+is `unknown`) and `items`, ranked by the cards behind each (`b`), then by type in the order
 below, then oldest first. An item is `k` (its key, stable while it stands), `t` (its type, one
 letter), `w` (what kind), `b`, `n` (the cards a judgment names), `age`, `od` (overdue), `d` (a
 judgment's decisions, `|` separated), `s` (one line, at most 160 bytes) and `next`, the exact
@@ -6152,7 +6204,9 @@ internal/sprint/stats_tidy.go):
   (`sprint.StreamBases`): the work table's `cost` cell is the control card's cost less
   the base's (`sprint.StreamCostSince`, `-` when nothing priced landed since; the control
   card keeps the epoch's figure) and `per landed` is that over the cards landed since
-  (`sprint.PerLandedSince`, counted by the next tick's where record).
+  (`sprint.PerLandedSince`, counted by the next tick's where record, priced and unpriced
+  landings together, so that published cell can still be depressed by an unpriced landing;
+  `view coordinator` does not read it).
 - `--all` is the four. `stats` counts from the last tidy of any kind.
 
 The archive record, `stats:archive:<RFC3339Nano>-<nonce>` (the tidy's time to the
