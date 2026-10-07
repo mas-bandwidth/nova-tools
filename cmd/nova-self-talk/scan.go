@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
@@ -144,6 +145,15 @@ func scan(args []string, stdin io.Reader, stdout, stderr io.Writer, wd string) i
 			continue
 		}
 		contents[i] = string(b)
+		// A byte page is not text, and a file this tool cannot read is not a clean
+		// one (docs/STANDARD.md section 2): a binary decodes into a string that scans
+		// with no claims, which reads as SELFTALK OK. Refuse it with the unreadable
+		// files, naming the file.
+		if !utf8.Valid(b) {
+			unread++
+			problems = append(problems, cannotRead(f, fmt.Errorf("file is not valid UTF-8")))
+			continue
+		}
 	}
 	if len(problems) > 0 {
 		hint := ""
