@@ -228,6 +228,12 @@ func FriendMode(r Row) string {
 // stopgap's cap. 0 on the row is no cap, and is not this default.
 const DefaultFriendTokenCap int64 = 6_000_000
 
+// Billing constants for how friends are paid.
+const (
+	BillingAPI      = "api"
+	BillingSubscription = "subscription"
+)
+
 // FriendTokenCap is a friend row's per-card token cap: its token_cap field,
 // DefaultFriendTokenCap when the row has none or the field is not a
 // non-negative integer. 0 is no cap.
