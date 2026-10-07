@@ -322,9 +322,10 @@ func TestAFriendReadsEveryTierAtOrBelowHers(t *testing.T) {
 
 // TestAReaderOneTierBelowMayTakeAReadCard pins the owner's interim read rule for read cards
 // (2026-10-06 7:11 PM ET "let flash read pro", 7:41 PM "let pro do it"): a reader one tier
-// below a card's read tier may take its read card, and a reader at or above is preferred
-// while it has room. A pro card whose heavy friend is full has its second read dealt to the
-// flash friend; with the heavy friend's room back, both reads go at or above first.
+// below a card's read tier may take its read card, never two below. A pro card whose heavy
+// friend is full has its second read dealt to the flash friend; with every reader idle, its
+// own tier first, then one below, before the tier above
+// (TestAReadCardGoesToTheCheapestReaderThatMayTakeIt).
 func TestAReaderOneTierBelowMayTakeAReadCard(t *testing.T) {
 	t.Parallel()
 	t.Run("the heavy friend full", func(t *testing.T) {
@@ -347,7 +348,7 @@ func TestAReaderOneTierBelowMayTakeAReadCard(t *testing.T) {
 		}
 		require.ElementsMatch(t, []string{FriendRow("jon"), FriendRow("fred")}, rows, "the second read goes to the flash friend")
 	})
-	t.Run("at or above first", func(t *testing.T) {
+	t.Run("its own tier, then one below, before above", func(t *testing.T) {
 		t.Parallel()
 		w := readCardsWorld(t, 4)
 		putReviewBy(w, "s1-1", "s1-1: work (s1) tier: pro\n", "zoe", 1)
@@ -360,7 +361,7 @@ func TestAReaderOneTierBelowMayTakeAReadCard(t *testing.T) {
 		for _, c := range readCardsOf(w, "s1-1") {
 			rows = append(rows, c.Row)
 		}
-		require.ElementsMatch(t, []string{FriendRow("jon"), FriendRow("pat")}, rows, "readers at or above the tier, while they have room")
+		require.ElementsMatch(t, []string{FriendRow("pat"), FriendRow("fred")}, rows, "the pro reader, then the flash reader one below; never the heavy reader while they are idle")
 	})
 	t.Run("two tiers below never", func(t *testing.T) {
 		t.Parallel()
@@ -369,4 +370,95 @@ func TestAReaderOneTierBelowMayTakeAReadCard(t *testing.T) {
 		dealReads(t, w, []FriendSeat{readerSeat("fred", 32, []string{"flash"}, []string{"reader"})})
 		require.Empty(t, readCardsOf(w, "s1-1"), "flash never reads heavy")
 	})
+}
+
+// busyFriend puts n work cards working on the friend's row: at width n she has no idle lane.
+func busyFriend(w *world, name string, n int) {
+	row := FriendRow(name)
+	if !w.s.Fleet.HasRow(row) {
+		w.s.Fleet.SetRows(append(w.s.Fleet.Rows(), row))
+	}
+	for i := 0; i < n; i++ {
+		id := "busy-" + name + "-" + itoa(i)
+		w.s.Fleet.Put(&Card{ID: id + ".w1", Row: row, Col: Working, Score: 1, Rev: 1, Fields: map[string]string{"kind": "work", "primary": id, "stream": "s9", "attempt": "1"}})
+	}
+}
+
+// TestAReadCardGoesToTheCheapestReaderThatMayTakeIt pins the choice of reader (the owner,
+// 2026-10-06: a read's tier is its primary's; "putting a pro task on a heavy model is a
+// waste"; the flash reader is the widest, fastest and cheapest and takes the flash reads;
+// reads are dealt in parallel, never stacked behind one reader). Of the readers that may
+// take a read (mayReadCard), one with an idle lane first; among them the read's own tier,
+// then one tier below, then the tiers above, nearest first; within a tier the most idle
+// lanes, then the most room, then by name. Friends and members are ordered together.
+func TestAReadCardGoesToTheCheapestReaderThatMayTakeIt(t *testing.T) {
+	t.Parallel()
+	fred := func(width int) FriendSeat { return readerSeat("fred", width, []string{"flash"}, []string{"reader"}) }
+	pat := func(width int) FriendSeat { return readerSeat("pat", width, []string{"pro"}, []string{"reader"}) }
+	jon := func(width int) FriendSeat { return readerSeat("jon", width, []string{"heavy"}, []string{"reader"}) }
+	cases := []struct {
+		name    string
+		brief   string
+		members []string
+		seats   []FriendSeat
+		busy    map[string]int
+		holds   string // a reader that already holds a read of the attempt
+		tiers   string // the members' reader rows' tiers (reader set --tiers)
+		want    []string
+	}{
+		{name: "a flash read goes to the flash reader", brief: "tier: flash",
+			seats: []FriendSeat{fred(4), pat(8), jon(16)}, want: []string{FriendRow("fred")}},
+		{name: "a pro read with the pro reader busy goes to the flash reader", brief: "tier: pro",
+			seats: []FriendSeat{fred(4), pat(1), jon(16), readerSeat("kim", 4, []string{"pro"}, []string{"reader"})},
+			busy:  map[string]int{"pat": 1}, holds: "kim", want: []string{FriendRow("fred")}},
+		{name: "a heavy read goes to the heavy reader, then one tier below", brief: "tier: heavy",
+			seats: []FriendSeat{fred(32), pat(4), jon(4), readerSeat("ada", 16, []string{"frontier"}, []string{"reader"})},
+			want:  []string{FriendRow("jon"), FriendRow("pat")}},
+		{name: "a flash read with every flash and pro reader busy goes to the heavy reader", brief: "tier: flash",
+			seats: []FriendSeat{fred(1), pat(1), jon(16)}, busy: map[string]int{"fred": 1, "pat": 1},
+			want: []string{FriendRow("jon")}},
+		{name: "two reads of one primary go to two idle readers of its tier", brief: "tier: pro",
+			seats: []FriendSeat{pat(4), readerSeat("kim", 4, []string{"pro"}, []string{"reader"}), jon(16)},
+			want:  []string{FriendRow("pat"), FriendRow("kim")}},
+		{name: "a frontier read goes to the frontier reader, then the heavy one, before pro members", brief: "tier: frontier",
+			members: []string{"m1", "m2"}, tiers: "pro",
+			seats: []FriendSeat{readerSeat("ada", 16, []string{"frontier"}, []string{"reader"}), jon(16)},
+			want:  []string{FriendRow("ada"), FriendRow("jon")}},
+		{name: "a heavy read: a pro member reads one below, as a pro friend does", brief: "tier: heavy",
+			members: []string{"m1"}, tiers: "pro",
+			seats: []FriendSeat{jon(16), pat(8)},
+			want:  []string{FriendRow("jon"), FriendRow("pat")}},
+		{name: "a member idle before a friend of its tier busy", brief: "tier: flash", members: []string{"m1"},
+			seats: []FriendSeat{fred(1)}, busy: map[string]int{"fred": 1}, want: []string{"m1"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			w := readCardsWorld(t, 4, tc.members...)
+			putReviewBy(w, "s1-1", "s1-1: work (s1) "+tc.brief+"\n", "zoe", 1)
+			if tc.tiers != "" {
+				w.s.Readers.Texts = map[string]map[string]string{}
+				for _, m := range tc.members {
+					w.s.Readers.Texts[ReaderPrefix+m] = map[string]string{ReaderTiers: tc.tiers}
+				}
+			}
+			for name, n := range tc.busy {
+				busyFriend(w, name, n)
+			}
+			if tc.holds != "" {
+				row := FriendRow(tc.holds)
+				w.s.Fleet.SetRows(append(w.s.Fleet.Rows(), row))
+				w.s.Fleet.Put(&Card{ID: ReadCardID("s1-1", 1, tc.holds), Row: row, Col: Working, Score: 1, Rev: 1, Fields: map[string]string{
+					"kind": "read", "primary": "s1-1", "stream": "s1", "reader": tc.holds, "attempt": "1", "head": "work-s1-1", FieldReadCard: "1", "asked": stamp(t0)}})
+			}
+			dealReads(t, w, tc.seats)
+			var rows []string
+			for _, c := range readCardsOf(w, "s1-1") {
+				if c.F("reader") != tc.holds {
+					rows = append(rows, c.Row)
+				}
+			}
+			require.ElementsMatch(t, tc.want, rows)
+		})
+	}
 }

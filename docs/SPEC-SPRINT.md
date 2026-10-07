@@ -3299,7 +3299,7 @@ reads close as `read --ok|--broken` closes them, and it leaves review only by th
 - **Who reads.** The rules a work card is dealt by, and two of a read's own. A friend is dealt
   a read when she is dealable (`friendDealable`), her nova-config row's roles name `reader`
   (`friend sync` copies them to the roster, `FriendSeat.Roles`; on 2026-10-06 builder-only
-  friends were asked reads) and one of her tiers is the read's tier or above it (`friendAtOrAbove`: a heavy friend reads a flash and a pro card). A reader one tier below the read's tier may take it too (the owner, 2026-10-06 7:11 PM ET "let flash read pro", 7:41 PM "let pro do it"; `tierBelow`), a friend or a member alike, never two below; the deal deals a read to a reader at or above its tier first, while one has room (`TestAReaderOneTierBelowMayTakeAReadCard`). A fleet member
+  friends were asked reads) and one of her tiers is the read's tier or above it (`friendAtOrAbove`: a heavy friend reads a flash and a pro card). A reader one tier below the read's tier may take it too (the owner, 2026-10-06 7:11 PM ET "let flash read pro", 7:41 PM "let pro do it"; `tierBelow`), a friend or a member alike, never two below (`TestAReaderOneTierBelowMayTakeAReadCard`). A fleet member
   is dealt a read when it is up and its reader row, `reader-<m>` on the readers table (the
   machine's reader identity: `reader add`), is neither held nor retired and serves the read's
   tier (`reader set --tiers`, `readerServesTier`). Never the unit that worked the attempt, and
@@ -3308,8 +3308,14 @@ reads close as `read --ok|--broken` closes them, and it leaves review only by th
   holds a readers-table read of the attempt. A read the machine took back (its member down,
   away or held, `hold --return`, a resting route, its primary moved: `retired_by` `away`,
   `rest`, `primary`) spends nothing: its reader may be dealt the read again, under the next
-  generation of the id (`.g1`, `.g2`; `MaxReadGen`). The friends are dealt first, then the
-  members; among them the one with the most idle lanes, then the most room, then by name.
+  generation of the id (`.g1`, `.g2`; `MaxReadGen`). A read goes to the cheapest reader
+  that may take it, friends and members alike: one with an idle lane before every one with
+  none (a read waits in a ready queue only when every reader that may take it is busy), then
+  by tier distance (`readTierDistance`, against the read's tier before `readTierOf` lowers
+  it, for friends and members alike: the read's own tier, one tier below, then the tiers
+  above, nearest first, then a member whose read is drawn two or more tiers below; a pro read
+  on a heavy reader is a waste, and the flash reader takes the flash reads), then the most idle lanes, then the most room, then by name
+  (`TestAReadCardGoesToTheCheapestReaderThatMayTakeIt`).
   There is no finder, no rolling index and no per-reader room.
 - **Half a slot.** A read card holds half a slot of its unit's one width: a row's load is its
   work cards and half its reads, rounded up (`halfLoad`), in the deal's room (`memberLoads`,
