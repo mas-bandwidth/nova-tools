@@ -12,8 +12,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardgen"
-	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 	"github.com/mas-bandwidth/nova-tools/internal/testbin"
+	"github.com/mas-bandwidth/nova-tools/internal/testgit"
 )
 
 // fixtureCheckout is a one-commit repository on branch dev with an origin, the
@@ -24,7 +24,7 @@ func fixtureCheckout(t *testing.T, files map[string]string) (dir string, git fun
 	git = func(args ...string) string {
 		t.Helper()
 		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
-		cmd.Env = append(goenv.Clean(os.Environ()), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.com", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.com")
+		cmd.Env = testgit.Environ()
 		out, err := cmd.CombinedOutput()
 		require.NoError(t, err, "git %s: %s", strings.Join(args, " "), out)
 		return strings.TrimSpace(string(out))
@@ -235,4 +235,72 @@ func TestAGeneratedCardThatWritesAModelIsTieredFrontier(t *testing.T) {
 	assert.Contains(t, stdout, "line 1 names tier pro")
 	assert.NotContains(t, stdout, "card=finding-tla-runs-tsv check=model-tier")
 	assert.NoDirExists(t, out2)
+}
+// TestGenerateFromCommitsWritesOneRelandBriefPerCommit tests that --from commits
+// creates one brief per commit in commit order (oldest first), with PATHS
+// computed from the commit's changed files and TEST being the packages plus
+// TestGenerateFromCommitsWritesOneRelandBriefPerCommit tests that --from commits
+// creates one brief per commit in commit order (oldest first), with PATHS
+// computed from the commit's changed files and TEST being the packages plus
+// ./internal/ci/.
+func TestGenerateFromCommitsWritesOneRelandBriefPerCommit(t *testing.T) {
+	t.Parallel()
+
+	// Create a temporary repo with two commits
+	repo := t.TempDir()
+	git := func(args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", repo}, args...)...)
+		cmd.Env = testgit.Environ()
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, "git %s: %s", strings.Join(args, " "), out)
+		return strings.TrimSpace(string(out))
+	}
+
+	// Create initial base files
+	require.NoError(t, os.MkdirAll(filepath.Join(repo, "internal", "ci"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(repo, "internal/ci/ci_test.go"), []byte("package ci\nfunc TestX(t *testing.T) {}\n"), 0o644))
+
+	git("init", "-q", "-b", "dev")
+	git("remote", "add", "origin", "git@example.com:example/repo.git")
+	git("add", ".")
+	git("commit", "-q", "-m", "base")
+
+	// First commit - touches cmd/a
+	require.NoError(t, os.MkdirAll(filepath.Join(repo, "cmd", "a"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(repo, "cmd/a/util.go"), []byte("package main\n"), 0o644))
+	git("add", ".")
+	git("commit", "-q", "-m", "commit one")
+
+	// Second commit - touches cmd/b
+	require.NoError(t, os.MkdirAll(filepath.Join(repo, "cmd", "b"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(repo, "cmd/b/util.go"), []byte("package main\n"), 0o644))
+	git("add", ".")
+	git("commit", "-q", "-m", "commit two")
+
+	// Get commit SHAs (both commits after base)
+	sha1 := git("rev-parse", "HEAD~2")
+	sha2 := git("rev-parse", "HEAD")
+
+	out := filepath.Join(t.TempDir(), "cards")
+	exit, stdout, stderr := runCard("generate", "--from", "commits", "--range", sha1+".."+sha2,
+		"--repo-dir", repo, "--out", out)
+	require.Equal(t, 0, exit, "stdout: %s\nstderr: %s", stdout, stderr)
+
+	// Should have two cards
+	briefs, err := filepath.Glob(filepath.Join(out, "*.md"))
+	require.NoError(t, err)
+	require.Len(t, briefs, 2)
+
+	// Read manifest
+	manifest, err := os.ReadFile(filepath.Join(out, "manifest.tsv"))
+	require.NoError(t, err)
+
+	// First card (oldest, sha1) should have cmd/a paths
+	assert.Contains(t, string(manifest), "land-1")
+	assert.Contains(t, string(manifest), "cmd/a/util.go")
+
+	// Second card (newest, sha2) should have cmd/b paths
+	assert.Contains(t, string(manifest), "land-2")
+	assert.Contains(t, string(manifest), "cmd/b/util.go")
 }
