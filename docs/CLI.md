@@ -1090,7 +1090,7 @@ make go to the coordinator's inbox. The contract is
 
 ### First run
 
-Try one card's whole flow with no Redis or git. `--redis mem:<file>` (or
+With neither `NOVA_SPRINT_REDIS` nor `NOVA_SPRINT_SERVER` set, a coordinator verb tries the local sprint server at `127.0.0.1:6390` by default and prints which it used. A cold coordinator runs `nova-sprint <verb>` and nothing else. Override with `--redis <addr>` for a direct store connection (a twin file or Redis address), or `NOVA_SPRINT_SERVER=<host:port>` for a named server. Try one card's whole flow with no Redis or git. `--redis mem:<file>` (or
 `NOVA_SPRINT_REDIS=mem:<file>`) loads an in-memory twin from a file and saves it
 after each command. A twin is for learning and tests; run one command at a
 time. The first line sets the store and actor. `finish` without `--head` and

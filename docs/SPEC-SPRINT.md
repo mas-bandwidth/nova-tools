@@ -6229,8 +6229,12 @@ runs for nobody: itself (`run`, `tick`), `land` and `play`, which work outside t
 seconds or minutes, `fleet sync` and `friend sync`, which read the config store with their
 caller's own credentials, and `friend clean` and `friend reconcile`, which work on the directories of the machine they
 run on, nor a read that waits for the sprint to move (`where --watch`, `inbox --wait`): the
-server moves the sprint on the one line of control such a verb would hold. With
-`NOVA_SPRINT_SERVER=<host:port>` set (the loopback address `run --listen` prints), every verb the
+server moves the sprint on the one line of control such a verb would hold. When neither
+`NOVA_SPRINT_REDIS` (a Redis address) nor `NOVA_SPRINT_SERVER` is set, every verb tries the
+local sprint server at `127.0.0.1:6390` by default, prints a NOTE naming what it used, and
+a cold coordinator runs `nova-sprint <verb>` and nothing else; name a server with
+`NOVA_SPRINT_SERVER=<host:port>` (the loopback address `run --listen` prints) or a store
+with `--redis <addr>` to override. With `NOVA_SPRINT_SERVER=<host:port>` set, every verb the
 server runs, the reads included, is not run where it is typed: its arguments are sent to the
 server, with the caller's actor and each file it names as an absolute path, and what the
 server's run of it printed (its stdout, its stderr, its exit code) is printed there byte for

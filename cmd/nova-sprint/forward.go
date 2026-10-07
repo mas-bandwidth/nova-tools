@@ -148,10 +148,13 @@ type server struct {
 }
 
 // server is the sprint's server this process sends the verb's reads and writes to
-// (NOVA_SPRINT_SERVER), "" when the verb runs on a store here: no server named, this
-// process is the server, or the verb was given its own --redis (fs, as parsed).
+// (NOVA_SPRINT_SERVER), "" when the verb runs on a store here: this process
+// has no forwarder (a test giving a direct backend), no server nor Redis named
+// (the local default applies only when neither variable is set, so a cold
+// coordinator runs nova-sprint <verb> without credentials), this process is the
+// server, or the verb was given its own --redis (fs, as parsed).
 func (a *app) server(fs *flag.FlagSet) (srv server) {
-	if a.serveAddr != "" || (verbArgs{fs: fs}).given("redis") {
+	if a.forward == nil || a.serveAddr != "" || (verbArgs{fs: fs}).given("redis") {
 		return server{}
 	}
 	if s := a.getenv(ServerEnv); s != "" {
