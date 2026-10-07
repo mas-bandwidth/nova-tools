@@ -77,12 +77,10 @@ func (a *app) cmdSeatInstall(args []string, stdout, stderr io.Writer) int {
 	}
 	goos := a.seatOS()
 	u := sprint.SeatUnit{OS: goos, Log: *logf}
-	srv := a.server(fs)
-	if named := strings.TrimSpace(*server); named != "" {
-		srv = namedServer{addr: named, named: true}
-	}
-	if srv.addr != "" {
-		u.Server = srv.addr
+	if srv := strings.TrimSpace(*server); srv != "" {
+		u.Server = srv
+	} else if srv := a.server(fs); srv != "" {
+		u.Server = srv
 	} else {
 		u.Redis = strings.TrimSpace(c.redis)
 	}
@@ -125,7 +123,7 @@ func (a *app) cmdSeatInstall(args []string, stdout, stderr io.Writer) int {
 		}
 		return 0
 	}
-	if code := a.recordPushTarget(srv, *c, push, stdout, stderr); code != 0 {
+	if code := a.recordPushTarget(u.Server, *c, push, stdout, stderr); code != 0 {
 		return code
 	}
 	r, err := a.seatInstaller(goos, *dir).Install(u)
@@ -159,16 +157,16 @@ func (a *app) cmdSeatInstall(args []string, stdout, stderr io.Writer) int {
 // recordPushTarget writes the push record seat install was given, on the sprint's
 // server when there is one (--server, else NOVA_SPRINT_SERVER), else on the
 // store: the push loop reads it to reach the session.
-func (a *app) recordPushTarget(srv namedServer, c common, push sprint.PushRecord, stdout, stderr io.Writer) int {
+func (a *app) recordPushTarget(srv string, c common, push sprint.PushRecord, stdout, stderr io.Writer) int {
 	const name = "seat install"
 	words := []string{"push", "--actor", push.Name, "--harness", push.Harness, "--target", push.Target} // the server derives the adapter again
 	if push.Session != "" {
 		words = append(words, "--session", push.Session)
 	}
-	if srv.addr != "" {
-		res, err := a.ask(context.Background(), srv.addr, []string{"seat"}, words)
+	if srv != "" {
+		res, err := a.ask(context.Background(), srv, []string{"seat"}, words)
 		if err != nil {
-			return a.unanswered(name, srv.addr, srv.named, err, stderr)
+			return a.unanswered(name, srv, err, stderr)
 		}
 		if res.Code == 2 {
 			return refuse(stderr, name, "the server refused the push record: "+strings.TrimSpace(res.Stderr))

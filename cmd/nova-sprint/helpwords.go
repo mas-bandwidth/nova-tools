@@ -21,10 +21,7 @@ machine, with NOVA_SPRINT_REDIS naming the store:
 The coordinator's shell then sets NOVA_SPRINT_SERVER=127.0.0.1:<port> and
 NOVA_SPRINT_ACTOR, and needs no store address or credential: every verb is sent
 to the server, the reads included (where --watch and inbox --wait draw here and
-read through it). With no NOVA_SPRINT_SERVER and no store named, a verb is sent
-to the local server 127.0.0.1:6390 all the same and says so in a NOTE line, so a
-cold coordinator runs nova-sprint <verb> with no wrapper. Run where typed, on a
-store named there: run, tick, land,
+read through it). Run where typed, on a store named there: run, tick, land,
 play, fleet sync, and any verb given its own --redis. Each
 member is a fleet row first (init --members, fleet up <name> --width <n>, or
 fleet sync) and each reader a readers row (init --readers, reader add); then on

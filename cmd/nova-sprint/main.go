@@ -48,6 +48,9 @@ func main() {
 	a := newApp(os.Getenv)
 	a.briefRecord = a.defaultBriefRecord // a test's app has none: no brief record, no brief decision
 	a.seatLoginOn()                      // a test's app has none: no recorded store login (storelogin.go)
+	// with no store and no server named anywhere, the local sprint server is the
+	// server: a cold coordinator runs nova-sprint <verb> and nothing else (client.go)
+	a.serverDefaulted = a.useLocalServerDefault()
 	defer a.close()
 	os.Exit(a.run(os.Args[1:], os.Stdout, os.Stderr))
 }
@@ -165,6 +168,12 @@ type app struct {
 	// coordinator's verbs, forward.go): nil is sprintwire.Client's Do, a test gives the
 	// server's own step.
 	forward func(ctx context.Context, addr string, verbs ...[]string) ([]sprintwire.Result, error)
+	// serverDefaulted says the local sprint server (LocalServer) stands in for a
+	// NOVA_SPRINT_SERVER no one named: main sets it through useLocalServerDefault
+	// when no store and no server are named anywhere (client.go), and the NOTE line
+	// saying which server a served verb used is printed only under it
+	// (docs/SPEC-SPRINT.md, "The coordinator's verbs go to the server too").
+	serverDefaulted bool
 	// outside is the seat check's reaches past the store (machinery.go): zero
 	// is the machine's own; a test gives fakes.
 	outside outside
@@ -548,7 +557,7 @@ func (a *app) run(args []string, stdout, stderr io.Writer) (code int) {
 		fmt.Fprintln(stdout, versionLine())
 		return 0
 	}
-	if code, sent := a.forwarded(args, stdout, stderr); sent {
+	if code, sent := a.clientForwarded(args, stdout, stderr); sent {
 		return code
 	}
 	for _, v := range verbs {

@@ -97,11 +97,9 @@ func TestAVerbsHelpCarriesItsOwnExitCodes(t *testing.T) {
 
 func TestTheStoreRefusalNamesTheTwin(t *testing.T) {
 	t.Parallel()
-	// --redis= names a store with no address: the verb runs here, not on the default
-	// server, and refuses for want of the address
 	a := newApp(func(string) string { return "" })
 	var out, errb strings.Builder
-	code := a.run([]string{"where", "--redis="}, &out, &errb)
+	code := a.run([]string{"where"}, &out, &errb)
 	assert.Equal(t, 2, code)
 	assert.Contains(t, errb.String(), "nova-sprint where REFUSED: --redis <addr> is required")
 	assert.Contains(t, errb.String(), "--redis mem:<file>")

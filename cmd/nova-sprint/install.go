@@ -197,8 +197,8 @@ func (a *app) installUnit(k sprint.UnitKind, args []string, stdout, stderr io.Wr
 	// the store: the sprint's server when one is named and no --redis is, else the Redis
 	// the unit opens with the seat login, in its own process
 	store := func() ([]string, string) {
-		if srv := a.server(fs); srv.addr != "" {
-			u.Env = append(u.Env, [2]string{ServerEnv, srv.addr})
+		if srv := a.server(fs); srv != "" {
+			u.Env = append(u.Env, [2]string{ServerEnv, srv})
 			return nil, ""
 		}
 		addr := strings.TrimSpace(c.redis)

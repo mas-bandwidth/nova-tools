@@ -986,8 +986,7 @@ func (a *app) cmdWhere(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, "where", "--rows is a field of the JSON view: give --json with it")
 	}
 	r := whereRun{c: *c, watch: *watch, all: *all, cards: *cards, rows: *rows, archived: *archived, release: rel, every: *every, stale: *stale, atEpoch: *atEpoch}
-	if srv := a.server(fs); srv.addr != "" {
-		addr := srv.addr
+	if addr := a.server(fs); addr != "" {
 		// the sprint's server draws each frame: one plain where a frame, so the watch
 		// never holds the server between frames
 		plain := without(fs, args, "watch", "every")
@@ -997,7 +996,7 @@ func (a *app) cmdWhere(args []string, stdout, stderr io.Writer) int {
 			case err != nil && ctx.Err() != nil:
 				return "", 0, false // an interrupt cut the read short: the watch is over, not failed
 			case err != nil:
-				return "", a.unanswered("where", addr, srv.named, err, stderr), false
+				return "", a.unanswered("where", addr, err, stderr), false
 			case res.Code != 0:
 				a.answer(res, stdout, stderr)
 				return "", res.Code, false
@@ -1799,13 +1798,12 @@ func (a *app) cmdInbox(args []string, stdout, stderr io.Writer) int {
 	if *push != "" && (!*wait || *read || *open != "" || *atEpoch >= 0) {
 		return refuse(stderr, "inbox", "--push <dir> runs with --wait alone, a loop that writes each new judgment to the directory: it takes no --read, --open or --at-epoch")
 	}
-	srv := a.server(fs)
-	if *read && *wait && srv.addr != "" {
+	if *read && *wait && a.server(fs) != "" {
 		// the cursor is the server's to move, and a wait never runs on the server (waits)
 		return refuse(stderr, "inbox", "--read moves the cursor, which the sprint's server (NOVA_SPRINT_SERVER) moves, and --wait waits where it is typed, never on the server: run nova-sprint inbox --wait, then nova-sprint inbox --read; nothing was changed")
 	}
-	if srv.addr != "" && *wait {
-		return a.inboxWaitAt(srv.addr, fs, args, *atEpoch, *timeout, *push, c.json, stdout, stderr)
+	if addr := a.server(fs); addr != "" && *wait {
+		return a.inboxWaitAt(addr, fs, args, *atEpoch, *timeout, *push, c.json, stdout, stderr)
 	}
 	st, err := a.storeAt(*c, *atEpoch)
 	if err != nil {
