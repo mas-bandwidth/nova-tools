@@ -83,7 +83,7 @@ usage:
   nova-swarm install   <disk-guard|mirror-refresh> [--dir <dir>] [--log <file>] [--every <duration>] [--dry-run]
                        (writes the unit that runs this binary, kept alive, and loads it. disk-guard's own
                         flags ride on the unit; mirror-refresh is refused here, and its loop runs
-                        `nova-swarm mirror` as a nova-config loop row.)
+                        nova-swarm mirror as a nova-config loop row.)
   nova-swarm uninstall <disk-guard|mirror-refresh> [--dir <dir>] [--dry-run]
                        (unloads that unit and removes its file; a dry run removes nothing.)
   nova-swarm slots init --store <dir> --owner <name> --capacity <n> --share <n>
