@@ -1,6 +1,6 @@
 # nova-decide READ and USE rating, nova-tools 1.2.0
 
-Rater: Freddy (inception/mercury-2.5) via opencode, a sprint worker on a friends re-rate card
+Rater: Spencer (inception/mercury-2.5) via opencode, a sprint worker on a friend re-rate card
 Build: bc9ee29ed2132
 READ: 8/10
 USE: 8/10
@@ -11,7 +11,7 @@ READ. The banner says what the tool is in one line, lists all 14 verbs, gives a 
 
 What keeps READ at 8. The "how it works" paragraph is a compressed pseudo-run (state R?, id=f) instead of a real printout from the first example. The jev backend is only glossed in the key refusal, not in the banner. Default flag values (calibrate --bars, findings --bar) are not shown in -h. Briefs minutes question options are not listed in help. The spec at docs/SPEC-NOVA-DECIDE.md is titled "trained from its own record" but the export and training verbs are not built. The records TLA+ model is still owed.
 
-USE. Used for real on a throwaway directory in ~/freddy-bench/rerate-alex-decide-bb.w2~15.g3/trial. Created a schema, a state, and a fixed answers file. ASK worked, recorded the decision, and returned recorded=existing on replay with the same --op. --dry-run did not touch the record. CALIBRATE refused when there were no outcomes attached, which is correct behavior. Refusals name every missing flag in one turn, with remedies. Unknown flags suggest near matches.
+USE. Used for real on a throwaway directory in a throwaway directory. Created a schema, a state, and a fixed answers file. ASK worked, recorded the decision, and returned recorded=existing on replay with the same --op. --dry-run did not touch the record. CALIBRATE refused when there were no outcomes attached, which is correct behavior. Refusals name every missing flag in one turn, with remedies. Unknown flags suggest near matches.
 
 What keeps USE at 8. The default id includes a timestamp hash, so the same ask run a second apart records twice instead of replaying (gate default default op already hashes content only). Remedy lines say run: nova-decide help instead of run: nova-decide verb -h. The minutes refusal does not list the six options. An import glob that matches nothing is IMPORT OK with every count 0.
 
