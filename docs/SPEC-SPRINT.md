@@ -6456,11 +6456,6 @@ up) stays ready when a sentinel is inserted in front of it: it has started,
 and is past the stop; check's bijection rule holds that the primary of a withdrawn card
 is ready.
 
-A sentinel is the one `wait` kind of [SPEC-ISA.md](SPEC-ISA.md): with a held
-card (`add --held`) and the wave behind a held sentinel it is one wait, read by
-`sprint.WaitOf` (`internal/sprint/held.go`); only the operand differs, a
-sentinel's being its line.
-
 `add --held` admits every card of the add held (nova-tools#5096 item 15: a
 sentinel at the head of an empty stream was reached at once and raised a
 judgment): waiting, stamped `held`, whatever its needs. A held sentinel is never
