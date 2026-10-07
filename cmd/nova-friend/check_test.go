@@ -36,7 +36,7 @@ func TestCheckSaysBrokenWhenTheTableShowsUpButNoTurnWasAnswered(t *testing.T) {
 			"CHECK BUS friend=bob real_since=0 last_real=-",
 			"CHECK WORK friend=bob inbox=0 outbox=0 newest_outbox=- newest_at=-",
 			`CHECK VERDICT friend=bob verdict=broken shown=up/1 why="untrue: shown up/1, session broken: provider quota exceeded"`,
-			"CHECK OK friends=1 ok=0 broken=1 deaf=0 silent=0 down=0 untrue=0")
+			"CHECK OK friends=1 ok=0 broken=1 deaf=0 silent=0 down=0 untrue=0 target_invalid=0")
 }
 
 func TestCheckSaysDeafWhenDeliveriesSucceedAndNothingComesBack(t *testing.T) {
@@ -55,7 +55,7 @@ func TestCheckSaysDeafWhenDeliveriesSucceedAndNothingComesBack(t *testing.T) {
 
 	cli.Do(t, "check", "--as", "ada", "bob").Exit(1).
 		Out("CHECK VERDICT friend=bob verdict=deaf shown=- why=\"deliveries succeed but no session pong or real message came back in the window\"",
-			"CHECK OK friends=1 ok=0 broken=0 deaf=1 silent=0 down=0 untrue=0")
+			"CHECK OK friends=1 ok=0 broken=0 deaf=1 silent=0 down=0 untrue=0 target_invalid=0")
 }
 
 func TestCheckSaysOkForALiveFriend(t *testing.T) {
@@ -93,7 +93,7 @@ func TestCheckSaysOkForALiveFriend(t *testing.T) {
 
 	cli.Do(t, "check", "--as", "ada", "bob").Exit(0).
 		Out("CHECK VERDICT friend=bob verdict=ok shown=- why=live",
-			"CHECK OK friends=1 ok=1 broken=0 deaf=0 silent=0 down=0 untrue=0")
+			"CHECK OK friends=1 ok=1 broken=0 deaf=0 silent=0 down=0 untrue=0 target_invalid=0")
 }
 
 func TestCheckExitsOneOnAnyVerdictButOk(t *testing.T) {
@@ -340,5 +340,5 @@ func TestCheckHelpExampleRunsAsWritten(t *testing.T) {
 
 	cli.Do(t, strings.Fields(example)...).Exit(1).
 		Out("CHECK DAEMON friend=bob", "CHECK VERDICT friend=bob verdict=down",
-			"CHECK OK friends=1 ok=0 broken=0 deaf=0 silent=0 down=1 untrue=0")
+			"CHECK OK friends=1 ok=0 broken=0 deaf=0 silent=0 down=1 untrue=0 target_invalid=0")
 }
