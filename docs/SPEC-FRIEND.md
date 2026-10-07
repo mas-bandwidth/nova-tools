@@ -2345,6 +2345,52 @@ lints fine — where the daemon's own `install` already retries that
 bootstrap (`BootstrapTries`, internal/friend/launchd.go). No hand plist is
 written or kept for the beat: `install` covers it.
 
+## Watch (cmd/nova-friend watch; internal/friend/state.go)
+
+The coordinator of friends wakes on what is addressed to it. `nova-friend watch
+--as <coordinator> [--timeout <duration>] [--state-dir <d>] [--redis <addr>]
+[--json]` is that wake as one run of a verb, with nothing to remember between
+runs: it is the coordinator's use of the bus's wait (SPEC-BUS.md, the verbs:
+wait), and any coordinator of friends runs it.
+
+It waits on three things: the coordinator's stream, the coordinator's wake file
+(`<state-dir>/<me>.wake`, where the claude adapter appends one line per message,
+`ClaudeWakePath`) and events, the bus messages whose subject starts `event:`
+(sent by any tool, for instance `event: machine stopped unasked`). The decision
+over a batch of stream entries is `bus.WaitPick`, not a second copy: the first
+entries not from the coordinator whose subject starts with none of `ping`,
+`pong`, `daemon-pong` or `keepalive` (matched without case) count, and a skipped
+entry moves the cursor and is never printed. An entry that counts is an event
+when its subject starts `event:`, else a message.
+
+It exits on the first wake with one line per wake, at most five, the wake file's
+lines first: `WATCH MESSAGE id= from= subject=`, `WATCH EVENT id= from=
+subject=`, `WATCH WAKE line=`, then `WATCH OK after=<cursor>` at exit 0. Past
+`--timeout` (default for ever) it prints `WATCH NONE waited=<d>` on standard
+error at exit 1; exit 2 is a run that could not happen (a flag, a name the
+roster lacks, a store that did not answer, a cursor file that cannot be read or
+saved). A session that runs it in the background is re-invoked by its exit, so
+the help carries the one line to run.
+
+The cursor is the state: the last stream entry id seen and the wake file's
+offset, in `<state-dir>/watch.json` (`friend.Watch`), written after every run
+(also a run that found nothing) by writing a temporary file and renaming it
+over the old, so a run killed in the middle leaves the old cursor whole. The
+first run starts at the stream's end and the wake file's end; the next run
+starts at the saved cursor and misses nothing, and when more than five wakes
+were waiting, the ones past the fifth stay for the next run. A cursor that
+cannot be saved is a refusal before any line is printed, so the wakes come
+again rather than are lost. The watch takes nothing off the stream: a later
+`recv` still delivers and acks what it saw.
+
+The logic is `watchRun`, a function apart from its transport: the clock, the
+wake file's reads and the store's blocking read are passed in, so its tests open
+no socket and wait no real time. The hand-run shell script that did this on one
+coordinator's machine (`tmp/buswatch/watch.sh`) is retired by
+fg-adopt-friend-daemons; the verb replaces its wake file and message wakes. The
+script's backlog and idle alarms are not this verb's: they read a work
+server's tables and belong to the tool that serves them.
+
 ## Identity
 
 The friend's name comes from one place, `install --as`, written into the
