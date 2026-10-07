@@ -19,7 +19,7 @@ import (
 
 // THE BASE CHECKS: FIVE RULES A CODING CARD IS HELD TO BEFORE IT IS DEALT (#2636, #3083).
 //
-// The first four are each one class of the 2026-09-22 sprint's failed cards (rowan-new
+// The first four are each one class of the 2026-09-22 sprint's failed cards (a friend's
 // reports/failed-cards-2026-09-22.md), and each needs evidence the card text alone
 // does not hold, so they run only under `nova-swarm lint --base-check`:
 //
@@ -682,7 +682,7 @@ func ReadFleetLegs(p string) (FleetLegs, error) {
 	return out, nil
 }
 
-// ReadKindP95 reads `<kind> <seconds>` rows, tab or space separated; `1526s` is
+// ReadKindP95 reads `<kind> <seconds>` rows, tab or whitespace separated; `1526s` is
 // allowed. Blank lines and `#` comments are skipped, and so is a first row whose
 // seconds are not a number (a header). Any later such row is an error: a table
 // that silently dropped a kind would turn a measured bound into a MISSING one.

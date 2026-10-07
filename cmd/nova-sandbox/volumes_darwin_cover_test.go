@@ -1,7 +1,7 @@
 //go:build darwin
 
 // Unit coverage of the diskutil volume manager's own code paths, the ones
-// volumes_darwin_test.go cannot reach because it replaces `diskutilRun` and
+// volumes_darwin_test.go cannot reach because it builds a manager over a fake diskutil and
 // `volumeRootUsable` wholesale to test Create's contract: oneLineOf,
 // rootOwnedAndWritable and Used. Each test is a table of named cases under
 // t.Run, opens with t.Parallel(), writes only inside its own t.TempDir(),
@@ -13,7 +13,7 @@
 // test may do and which it offers no seam to fake — the seam it would fake
 // (the PATH lookup) is the process's own, and swapping it is a package-wide
 // mutation the serial allowlist refuses. Its callers are all tested through
-// the `diskutilRun` swap.
+// the fake diskutil.
 package main
 
 import (

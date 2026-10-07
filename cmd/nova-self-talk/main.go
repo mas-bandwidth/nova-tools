@@ -45,8 +45,9 @@ usage:
   nova-self-talk help [<verb>]                 this text, or one verb's help
 
 The first word is a verb only when it is scan, shapes, example, version or help; anything
-else is the first file, so a file named like a verb is given as ./scan. Flags come before
-files; use -- before a file whose name begins with a dash.
+else is the first file, so a file named like a verb is given as ./scan. Flags may stand
+before, between or after the files; -- ends the flags, for a file whose name begins with
+a dash.
 
 Two disjoint classes.
 

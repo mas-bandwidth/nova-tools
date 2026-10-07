@@ -89,7 +89,7 @@ builder checks each line below against a screenshot at 1440 and 375 and fixes an
 from the owner edits one line here and nothing else moves.
 
 ## Page
-- Dark only: no theme toggle (the card dash-lanes-panel.w2, 2026-10-04; the owner's line is owed). Panels full width, stacked: header, progress bar, Merge, Work, Fleet,
+- Dark only: no theme toggle (the owner, 2:21 PM 2026-10-04: "just remove the toggle light/dark. always dark."). Panels full width, stacked: header, progress bar, Merge, Work, Fleet,
   Friends, Lanes, footer. No readers or merge panel (available at ?all=1 only). No two-column layout at any width.
 - Base type 28 px (doubled). Labels and headers: system proportional face. All numbers: monospace (ui-monospace,
   Menlo), right-aligned. Headers over numeric columns right-aligned too.
@@ -104,7 +104,7 @@ from the owner edits one line here and nothing else moves.
 - The word "nova-sprint" in Nunito 800 (lowercase), the page's primary white (never cream), cap height about two
   thirds of the tile, optically centered with the pills.
 - Pills: coordinator <name>, epoch <n>, machine <state>; then the Updated clock with its live dot; no theme toggle (dark
-  only, the card dash-lanes-panel.w2, 2026-10-04; the owner's line is owed).
+  only, the owner, 2:21 PM 2026-10-04: "just remove the toggle light/dark. always dark.").
   The clock never flashes.
 
 ## Hero row: five tiles, one row at 2000 px, three and two below, two per row below 1100 px, large figure (72 px)

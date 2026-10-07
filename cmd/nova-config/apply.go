@@ -10,7 +10,6 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/config"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
-	"github.com/mas-bandwidth/nova-tools/internal/seatcred"
 	"github.com/mas-bandwidth/nova-tools/internal/tool"
 )
 
@@ -45,20 +44,12 @@ func runApply(ctx context.Context, args []string, stdout, stderr io.Writer, d de
 	if c.seat != nil {
 		seatVal = *c.seat
 	}
-	if !*check {
-		var err error
-		actor, err = actorName(*as, d.getenv, seatVal)
-		if err != nil {
-			problems = append(problems, err.Error())
-		}
-	} else if *as != "" {
-		actor = *as
-	} else if v := d.getenv(envActor); v != "" {
-		actor = v
-	} else if seatVal != "" {
-		actor = seatVal
-	} else if getenv := d.getenv; getenv != nil && getenv(seatcred.SeatEnv) != "" {
-		actor = getenv(seatcred.SeatEnv)
+	// The dry run takes the real run's checks: both resolve the actor the
+	// write is recorded under, so a missing one refuses before either runs
+	// (docs/STANDARD.md, "A verb that writes has a dry run").
+	actor, err := actorName(*as, d.getenv, seatVal)
+	if err != nil {
+		problems = append(problems, err.Error())
 	}
 	dsn, err := c.dsn(d.getenv)
 	if err != nil {

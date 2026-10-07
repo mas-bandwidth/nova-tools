@@ -64,3 +64,37 @@ The first two-file nova-sandbox pilot changes 16 lines and removes 7 across
 imports account for the added lines, so this pilot demonstrates shared
 mechanics and unchanged assertion severity; it does not claim a line-count
 saving.
+
+Use `Script` for a fake with expectations over a transport interface
+(docs/STANDARD.md section 8: "A fake is strict like the real tool: it refuses
+what the real one refuses"). Declare the calls a test expects, in order, as
+`Call{Name, Args, Result, Err}`; the package's fake holds the Script and each
+interface method passes its own name and arguments to `Called`, then returns
+the declared result and error. An unexpected call, a call out of order, or a
+declared call the run never made fails the test naming it; `NewScript` arms the
+leftover check at cleanup. Every call is declared: there is no matcher and no
+wildcard. `script_test.go`'s `fakeStore` is the example:
+
+```go
+type fakeStore struct{ *testkit.Script }
+
+func (f fakeStore) Get(key string) (string, error) {
+	got, err := f.Called("Get", key)
+	if err != nil {
+		return "", err
+	}
+	return got.(string), nil
+}
+```
+
+Script is a small ordered list rather than `testify/mock`, which cannot be
+imported at this base: `mock` imports `github.com/stretchr/objx`, and that
+module is absent from go.mod and go.sum, so `-mod=readonly` refuses it. The two
+behaviors the transport design names are kept: every call is declared, and the
+expectations are asserted at cleanup.
+
+Use `Contract` in a tool's skeleton-contract test to hold the whole shape in one
+call: `testkit.Contract(t, main, verbs)` runs the probes the skeleton contract's
+"How a port is proved" names; the paragraph above `Contract` in contract.go
+lists them.
+

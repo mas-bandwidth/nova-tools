@@ -648,12 +648,10 @@ func (c *held) overdueUnmarked() []Finding {
 			continue
 		}
 		past := false
-		if !n.Review.IsZero() && n.ReviewSet.IsZero() {
-			past = s.Now.After(n.Review)
-		} else if !n.Review.IsZero() {
-			// a wait counts running time from when it was set
-			d, ok := c.running(stamp(n.ReviewSet))
-			past = ok && d >= n.Review.Sub(n.ReviewSet)
+		if !n.Review.IsZero() {
+			// A wait counts running time from when it was set, by the tree's
+			// one clock comparison (stopped.go DueNow; docs/SPEC-SPRINT.md, "Timers").
+			past = DueNow(s.Now, n.Review, n.ReviewSet, c.req.Stopped)
 		} else if d, ok := c.running(stamp(n.At)); ok {
 			past = d > DeadlineJudgment
 		}
@@ -681,6 +679,9 @@ func (c *held) decisions(pr *Card) []string {
 			out = append(out, "fleet down "+wc.Row)
 		}
 		out = append(out, "drop")
+	case pr.Col == Review && pr.F(FieldBriefDefect) != "":
+		// a brief defect is re-cut, never reworked (docs/SPEC-SPRINT.md section 1, a brief defect)
+		out = []string{DecisionRecut, "drop"}
 	case pr.Col == Review && acceptable(c.s, pr):
 		out = []string{"accept", "rework", "drop"}
 	case pr.Col == Review && pr.F("result") == "failed":

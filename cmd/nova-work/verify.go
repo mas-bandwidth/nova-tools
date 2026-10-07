@@ -149,9 +149,36 @@ func readTree(c *tool.Call, flag string) (*workfile.Tree, []byte, *tool.Out) {
 	}
 	tree, err := workfile.Decode(path, data, workfile.Limits(maxBytes))
 	if err != nil {
-		return nil, nil, refuse(err.Error(), "nova-work verify -h")
+		// Every problem of the file, one line each (SPEC-WORK-V1 section 1.2;
+		// docs/STANDARD.md section 2, every problem at once).
+		return nil, nil, refuseTree(err, flag, path)
 	}
 	return tree, data, nil
+}
+
+// refuseTree is every problem of a tree file in one refusal.
+func refuseTree(err error, flag, path string) *tool.Out {
+	o := tool.Refuse(treeProblems(err)...)
+	o.Remedy = "nova-work verify -h"
+	return o.Fact(flag, path)
+}
+
+// treeProblems splits a joined reader error into one reason per problem.
+// A single error stays one reason, in the reader's own words.
+func treeProblems(err error) []string {
+	type joined interface{ Unwrap() []error }
+	if u, ok := err.(joined); ok {
+		var out []string
+		for _, e := range u.Unwrap() {
+			if e != nil {
+				out = append(out, treeProblems(e)...)
+			}
+		}
+		if len(out) > 0 {
+			return out
+		}
+	}
+	return []string{err.Error()}
 }
 
 // withTree names the tree a refusal is about and what to run next.

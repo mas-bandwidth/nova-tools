@@ -14,7 +14,9 @@ import (
 )
 
 // collideUntilRead makes the first few reads of `path` fail and then ENDS the collision, so
-// a test can assert the rule with no Windows and no race. `path` becomes a DIRECTORY -- this
+// a test can assert the rule with no Windows and no race. It returns the seam as a value --
+// the steadyClock's transient field, which a wait consults in place of the platform's rule
+// -- and the count of the reads that went through it. `path` becomes a DIRECTORY -- this
 // package's portable stand-in for the microseconds a Windows replace is pending -- and the
 // reader meets the two things a real collision has: a read that fails, and a path that holds
 // still again a few polls later, far inside SteadyWindow.
@@ -42,7 +44,7 @@ import (
 // caller ends with names the read it means rather than any failure that happened to land
 // while the seam was armed (#132). The narrowing stops at the count: what is transient stays
 // the seam's unnarrowed answer, for the bd6f3d7 reason above.
-func collideUntilRead(t *testing.T, path string, body string) *atomic.Int64 {
+func collideUntilRead(t *testing.T, path string, body string) (func(error) bool, *atomic.Int64) {
 	t.Helper()
 	// A path that is already a record is REPLACED by the stand-in, so a collision can be
 	// armed over a file a reader has read once already -- which is what a rehash meets.
@@ -50,7 +52,7 @@ func collideUntilRead(t *testing.T, path string, body string) *atomic.Int64 {
 	require.NoError(t, os.MkdirAll(path, 0o755))
 	var hits atomic.Int64
 	var restored atomic.Bool
-	forceTransientIO = func(err error) bool {
+	arm := func(err error) bool {
 		if err == nil || restored.Load() || errors.Is(err, fs.ErrNotExist) {
 			return transientIO(err)
 		}
@@ -79,8 +81,7 @@ func collideUntilRead(t *testing.T, path string, body string) *atomic.Int64 {
 		}
 		return true
 	}
-	t.Cleanup(func() { forceTransientIO = nil })
-	return &hits
+	return arm, &hits
 }
 
 // THE FIXTURE'S OWN GUARD IS ONLY AS GOOD AS WHAT IT COUNTS (#132, a LOW of the #126 read).
@@ -97,6 +98,8 @@ func collideUntilRead(t *testing.T, path string, body string) *atomic.Int64 {
 // the path the reader named. This test holds both halves at once -- a wrong-path read is
 // still waited out, and is not counted.
 func TestTheCollisionSeamCountsOnlyReadsOfThePathItArmed(t *testing.T) {
+	t.Parallel()
+
 	const body = "# a published report\n\n## Head\nfindings: 1\n"
 	dir := t.TempDir()
 	armed := filepath.Join(dir, CopiedResult)
@@ -105,12 +108,12 @@ func TestTheCollisionSeamCountsOnlyReadsOfThePathItArmed(t *testing.T) {
 	other := filepath.Join(dir, "somebody-elses-record")
 	require.NoError(t, os.MkdirAll(other, 0o755))
 
-	hits := collideUntilRead(t, armed, body)
+	arm, hits := collideUntilRead(t, armed, body)
 
 	// Half one: the transient ANSWER is not narrowed. A failed read of another path through
 	// the armed seam is still waited out, to its caller's own bound and not this package's,
 	// on a stepped clock, so the wait costs the test no time.
-	clock := &steppedClock{at: time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)}
+	clock := &steppedClock{at: time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC), transient: arm}
 	budget := clock.at.Add(20 * steadyPoll)
 	_, err := readFileSteadyBy(clock.steady(), other, budget)
 	require.Error(t, err, "reading a directory answered no error at all; this fixture has nothing to arm on")
@@ -133,9 +136,15 @@ func TestTheCollisionSeamCountsOnlyReadsOfThePathItArmed(t *testing.T) {
 }
 
 // steppedClock is a steadyClock a test steps: a sleep moves it on at once, so a wait out to a
-// deadline costs the test no time and leaves the clock at the moment the wait ended.
-type steppedClock struct{ at time.Time }
+// deadline costs the test no time and leaves the clock at the moment the wait ended. The
+// collision seam rides the same value -- a field on the value under test, the way off the
+// serial-tests ledger, in place of a package variable the test swaps -- so an armed
+// collision belongs to this test's waits alone and races no parallel test beside it.
+type steppedClock struct {
+	at        time.Time
+	transient func(error) bool
+}
 
 func (c *steppedClock) steady() steadyClock {
-	return steadyClock{now: func() time.Time { return c.at }, sleep: func(d time.Duration) { c.at = c.at.Add(d) }}
+	return steadyClock{now: func() time.Time { return c.at }, sleep: func(d time.Duration) { c.at = c.at.Add(d) }, transient: c.transient}
 }

@@ -5,8 +5,8 @@
 // coordinator's pings at once and pushes them in so the session answers as
 // its own turn, and tells the session when the coordinator goes silent; and,
 // on the coordinator's side, the ping loop that pings every friend each
-// second. The verbs are run, install, uninstall, check, status, pong, ping,
-// wait-pong, host and serve; the
+// second. The verbs are run, beat, install, uninstall, check, status, pong,
+// ping, wait-pong, watch, host and serve; the
 // dispatch, the banner, the help, the refusals and the output envelope are
 // internal/tool's, and the rules are internal/friend's.
 package main
@@ -91,6 +91,7 @@ type world struct {
 	launch    []string          // host: the launch command after "--"
 	settings  friend.SettingsFS // where a harness's own settings are read and written (install, check --settings)
 	argv      []string          // this run's arguments after the program's name: what the plist drift is read against
+	wake      *wakeFS           // watch: the wake file's reads; nil reads the disk
 }
 
 // readPlist is the installed plist at path, empty when there is none or it
@@ -499,6 +500,23 @@ go and gofmt that refuse (this binary, by symlink) first on the lane's PATH; and
 				Run: w.run,
 			},
 			{
+				Name:    "beat",
+				Usage:   "beat --as <me> [--server <addr>]",
+				Example: "", // the daemon's own act; the example block's first run has no beat line
+				Effect:  tool.Delivery + ": one beat to the sprint server, the same beat the daemon's loop sends while its session is alive",
+				Detail: `The daemon's beat on its own (docs/SPEC-FRIEND.md, the loop): one "friend beat <me>" to
+the sprint server, what keeps the friend up in the sprint's friends table. The agent install writes
+runs the daemon, and the daemon beats already while its session is alive, so the beat needs no
+agent of its own and no hand plist: this verb is the canary, run by hand. A server that does not
+answer is exit 2.
+example: nova-friend beat --as bob --server 127.0.0.1:6390`,
+				Flags: func(f *tool.Flags) {
+					f.Required("as", "your name, a nova-config friend row")
+					f.String("server", w.server(), "the sprint server, host:port (default: "+ServerEnv+", else "+DefaultServer+")")
+				},
+				Run: w.beatVerb,
+			},
+			{
 				Name:    "install",
 				Usage:   "install --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--config-dir <d>] [--model <provider/model>] [--secrets NAME[,NAME] --seat <seat>] [--launchd-log <file>] [--dry-run]",
 				Example: "install --as bob --harness opencode --dir ./bob --dry-run",
@@ -810,6 +828,44 @@ or WAIT-PONG NONE at exit 1.`,
 					redis(f)
 				},
 				Run: w.waitPong,
+			},
+			{
+				Name:    "watch",
+				Usage:   "watch --as <coordinator> [--timeout <duration>] [--state-dir <d>] [--redis <addr>] [--json]",
+				Example: "watch --as ada --timeout 10m",
+				Effect:  tool.Inspection + ": the cursor file in the state directory is rewritten",
+				ExitTable: "0 a wake came: WATCH OK; 1 WATCH NONE, --timeout ran out; 2 could not run (a flag, a name the roster lacks, " +
+					"a store that did not answer, a cursor file that cannot be read or saved).",
+				Detail: `The coordinator's wake, one run. A session that runs this in the background is re-invoked when it exits, so
+run it again each time it returns; it needs no flag between runs. It waits on your stream, on your wake file
+(<state-dir>/<me>.wake, where the claude adapter appends one line per message) and on events, and returns
+on the first wake with one line per wake, at most 5, the wake file's lines first:
+WATCH MESSAGE id=<id> from=<name> subject=<s>   a bus message for you
+WATCH EVENT id=<id> from=<name> subject=<s>     a bus message whose subject starts event: (any tool may send one, e.g. event: machine stopped unasked)
+WATCH WAKE line=<text>                          a line appended to the wake file
+then WATCH OK after=<cursor> at exit 0. Subjects and wake lines are quoted. Your own messages and the subjects
+ping, pong, daemon-pong and keepalive (matched without case) are skipped and never wake you. Past --timeout
+(a Go duration; 0, the default, is for ever) it prints WATCH NONE waited=<duration> on standard error at exit 1.
+The cursor (the last stream entry id seen and the wake file's offset) is saved in <state-dir>/watch.json, written
+whole and renamed, after every run, so the next run misses nothing; the first run starts at the stream's end
+and the wake file's end. The watch takes nothing: a later recv still delivers what it saw. --json prints one
+object when the watch ends: {"status":"ok","word":"OK|NONE","after":<cursor>,"waited":<duration, NONE only>,
+"wakes":[{"kind":"MESSAGE|EVENT|WAKE","id":<id>,"from":<name>,"subject":<s>,"line":<text>}]} (id, from and
+subject are left out of a WAKE, line out of the others). Exit 2 when a flag is wrong, the name is not on the
+roster, or the store does not answer.
+example: nova-friend watch --as ada --timeout 10m`,
+				Flags: func(f *tool.Flags) {
+					f.Required("as", "your name, the coordinator whose stream and wake file are watched")
+					f.Duration("timeout", 0, "how long to wait before WATCH NONE, a Go duration (1s, 10m); 0 is for ever")
+					stateDir(f)
+					redis(f)
+					f.Check(func(c *tool.Call) {
+						if c.Dur("timeout") < 0 {
+							c.Problem("--timeout wants a duration of at least 0, 0 for ever (a negative watch is no watch)")
+						}
+					})
+				},
+				Run: w.watch,
 			},
 			{
 				Name:    "status",
@@ -1411,6 +1467,20 @@ func (w world) run(c *tool.Call) *tool.Out {
 		return tool.Exit(1)
 	}
 	return tool.Exit(0)
+}
+
+// beatVerb is the daemon's beat on its own: one "friend beat <me>" to the
+// sprint server, the same call world.beat makes for the daemon's loop each
+// time round (docs/SPEC-FRIEND.md, the loop). The agent install writes
+// runs the daemon, and the daemon beats already while its session is alive,
+// so no agent of the beat's own is written (the hand plists are retired);
+// the verb is the canary, and a server that does not answer is exit 2.
+func (w world) beatVerb(c *tool.Call) *tool.Out {
+	name, server := c.Str("as"), c.Str("server")
+	if _, err := w.beat(context.Background(), server, name, time.Time{}, friend.BeatWords{}); err != nil {
+		return tool.Refuse("the beat was not taken: " + err.Error())
+	}
+	return tool.Done().Fact("as", name).Fact("server", server)
 }
 
 // load1 is the machine's one-minute load, read at most every 5 seconds: /proc/loadavg, else

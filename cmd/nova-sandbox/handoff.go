@@ -47,6 +47,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
@@ -388,8 +389,8 @@ func copyBounded(dst io.Writer, src io.Reader, budget int64) (n int64, over bool
 // when they are not. A handoff that fails after a command that already failed
 // leaves that status alone: the command's own failure is the more important
 // truth, and it is almost always why nothing was there to hand back.
-func handoff(stderr io.Writer, in handoffInput, code int) int {
-	res, err := step(stderr, "out", func() (handoffResult, error) { return copyOut(in) })
+func handoff(now func() time.Time, stderr io.Writer, in handoffInput, code int) int {
+	res, err := step(now, stderr, "out", func() (handoffResult, error) { return copyOut(in) })
 	if err != nil {
 		fmt.Fprintf(stderr, "SANDBOX REFUSED reason=out_failed: %s\n%s\n", oneline.Escape(err.Error()), runRemedy)
 		if code == 0 {

@@ -83,6 +83,15 @@ func (a *app) shadowTick(c common, rules, idle bool, stdout, stderr io.Writer) i
 				part = p.Table + "/" + p.Name
 			}
 			fmt.Fprintf(stdout, "SHADOW PLAN %s size=%d due=%d\n", part, p.Size, p.Due)
+			if part == sprint.Readers+"/ask" {
+				for _, r := range plan.Reads {
+					fmt.Fprintf(stdout, "SHADOW READS %s\n", oneline.Escape(r))
+				}
+				plan.Reads = nil
+			}
+		}
+		for _, r := range plan.Reads { // the ask planned nothing
+			fmt.Fprintf(stdout, "SHADOW READS %s\n", oneline.Escape(r))
 		}
 		status := "OK"
 		if err != nil {
