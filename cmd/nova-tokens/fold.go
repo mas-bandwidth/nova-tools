@@ -214,8 +214,22 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 	} else {
 		fmt.Fprintf(s.out(), "TOKENS OK%s\n", s.factFields(counts...))
 	}
-	note := remedy(sources, lists.unreadable.Total(), lists.unparsed.Total(), lists.mixed.Total(), lists.conflict.Total(), lists.shrank.Total(), lists.partial.Total(), quiet,
-		*allowShrink, *dryRun, *out, mixedLabels, firstPartial, firstQuiet)
+	note := remedy(foldFindings{
+		sources:      sources,
+		unreadable:   lists.unreadable.Total(),
+		unparsed:     lists.unparsed.Total(),
+		mixed:        lists.mixed.Total(),
+		conflict:     lists.conflict.Total(),
+		shrank:       lists.shrank.Total(),
+		partial:      lists.partial.Total(),
+		quiet:        quiet,
+		allowShrink:  *allowShrink,
+		dryRun:       *dryRun,
+		out:          *out,
+		mixedLabels:  mixedLabels,
+		firstPartial: firstPartial,
+		firstQuiet:   firstQuiet,
+	})
 	fmt.Fprintf(s.out(), "TOKENS NOTE %s\n", oneline.Escape(note))
 	s.note(note)
 	copyNote(s, "TOKENS", copyNotes)
