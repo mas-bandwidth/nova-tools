@@ -13,155 +13,12 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/testkit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 // parsed is one rendering read back into the parts of Out, for comparing the
 // lines with the JSON field for field.
-type parsed struct {
-	Verb, Status, Remedy string
-	Exit                 int
-	Why                  []string
-	Facts                map[string]string
-	Items                []string // kind k=v ... with values as strings
-	More                 []string
-	Notes                []string
-	Payload              string
-}
-
-// fromLines reads the text rendering. Exit is not in the text: the process's
-// exit code carries it, so the caller copies it across. "-" is the empty value.
-func fromLines(t *testing.T, token, text string) parsed {
-	t.Helper()
-	p := parsed{Facts: map[string]string{}}
-	for i, l := range strings.Split(strings.TrimSuffix(text, "\n"), "\n") {
-		rest, ok := strings.CutPrefix(l, token+" ")
-		if !ok { // the payload: alone, or last
-			if i == 0 {
-				p.Status = "ok"
-			}
-			p.Payload = l
-			continue
-		}
-		word, rest, _ := strings.Cut(rest, " ")
-		if w, ok := strings.CutSuffix(word, ":"); ok {
-			word, rest = w, ": "+rest
-		}
-		switch word {
-		case "OK", "FAILED", "REFUSED":
-			p.Status = map[string]string{"OK": "ok", "FAILED": "failed", "REFUSED": "refused"}[word]
-			if i := strings.LastIndex(rest, "; run: "); i >= 0 {
-				p.Remedy, rest = rest[i+len("; run: "):], rest[:i]
-			}
-			fields, why, found := strings.Cut(rest, ": ")
-			if found {
-				p.Why = append(p.Why, why)
-			}
-			if len(p.Why) > 1 {
-				continue // the fields repeat on every why line
-			}
-			for _, kv := range tokens(fields) {
-				k, v, _ := strings.Cut(kv, "=")
-				if v == "-" {
-					v = ""
-				}
-				p.Facts[k] = v
-			}
-		case "MORE":
-			p.More = append(p.More, rest)
-		case "NOTE":
-			p.Notes = append(p.Notes, rest)
-		default:
-			var kv []string
-			for _, f := range strings.Fields(rest) {
-				k, v, _ := strings.Cut(f, "=")
-				if v == "-" {
-					v = ""
-				}
-				kv = append(kv, k+"="+v)
-			}
-			p.Items = append(p.Items, strings.Join(append([]string{strings.ToLower(word)}, kv...), " "))
-		}
-	}
-	return p
-}
-
-// tokens splits s at spaces outside a quoted value (oneline.Quote's).
-func tokens(s string) []string {
-	var out []string
-	var cur strings.Builder
-	quoted, escaped := false, false
-	for _, r := range s {
-		switch {
-		case escaped:
-			escaped = false
-		case quoted && r == '\\':
-			escaped = true
-		case r == '"':
-			quoted = !quoted
-		case r == ' ' && !quoted:
-			if cur.Len() > 0 {
-				out = append(out, cur.String())
-				cur.Reset()
-			}
-			continue
-		}
-		cur.WriteRune(r)
-	}
-	if cur.Len() > 0 {
-		out = append(out, cur.String())
-	}
-	return out
-}
-
-// fromJSON reads the JSON rendering into the same parts.
-func fromJSON(t *testing.T, raw string) parsed {
-	t.Helper()
-	var j struct {
-		Result struct {
-			Verb, Status, Remedy string
-			Exit                 int
-			Why                  []string
-		}
-		Facts map[string]any
-		Items []struct {
-			Kind   string
-			Fields json.RawMessage
-		}
-		More    []More
-		Notes   []string
-		Payload string
-	}
-	err := json.Unmarshal([]byte(raw), &j)
-	require.NoError(t, err, "not one JSON object: %v: %s", err, raw)
-	p := parsed{Verb: j.Result.Verb, Status: j.Result.Status, Remedy: j.Result.Remedy, Exit: j.Result.Exit,
-		Why: j.Result.Why, Facts: map[string]string{}, Notes: j.Notes, Payload: j.Payload}
-	for k, v := range j.Facts {
-		p.Facts[k] = fmt.Sprint(v)
-	}
-	for _, it := range j.Items {
-		// The fields are an object in insertion order; decode them in order.
-		dec := json.NewDecoder(bytes.NewReader(it.Fields))
-		kv := []string{strings.ToLower(it.Kind)}
-		_, err := dec.Token()
-		require.NoError(t, err)
-		for dec.More() {
-			k, _ := dec.Token()
-			var v any
-			require.NoError(t, dec.Decode(&v))
-			kv = append(kv, fmt.Sprint(k)+"="+fmt.Sprint(v))
-		}
-		p.Items = append(p.Items, strings.Join(kv, " "))
-	}
-	for _, m := range j.More {
-		p.More = append(p.More, fmt.Sprintf("kind=%s shown=%d total=%d %s", m.Kind, m.Shown, m.Total, m.Remedy))
-	}
-	return p
-}
-
-// TestRender pins the encoder: each value's lines, exactly, and its lines and
 // its JSON read back to the same parts, field for field.
 func TestRender(t *testing.T) {
 	t.Parallel()
@@ -214,7 +71,8 @@ func TestRender(t *testing.T) {
 				assert.Contains(t, js.String(), `"word":"`+w+`"`)
 				lines = strings.Replace(lines, "DEMO "+w+" ", "DEMO FAILED ", 1)
 			}
-			got, want := fromLines(t, "DEMO", lines), fromJSON(t, js.String())
+			rig := NewRig(t, demo())
+			got, want := rig.FromLines("DEMO", lines), rig.FromJSON(js.String())
 			got.Verb, got.Exit = want.Verb, tc.out.Exit
 			assert.True(t, want.Verb == "demo" && want.Exit == tc.out.Exit, "JSON result is %s exit %d, want demo exit %d", want.Verb, want.Exit, tc.out.Exit)
 			assert.NotContains(t, js.String(), `\`+`u003c`, "the JSON is HTML-escaped")
@@ -262,8 +120,7 @@ func TestAResultThatIsNoJSONIsAFail(t *testing.T) {
 	nan := &Tool{Name: "nova-nan", What: "measures", ExitTable: "0 done, 2 could not run.", Verbs: []Verb{
 		{Name: "load", Usage: "load", Effect: Inspection, Run: func(*Call) *Out { return Done().Fact("load", math.NaN()) }},
 	}}
-	r := testkit.Main(nan.Run).Run("load", "--json")
-	assert.Equal(t, 1, r.Code)
+	r := NewRig(t, nan).Run(1, "load", "--json")
 	assert.Empty(t, r.Stdout)
 	assert.True(t, strings.HasPrefix(r.Stderr, "LOAD FAILED: the result is no JSON, so it is not printed: json: unsupported value: NaN\n"), r.Stderr)
 
@@ -516,8 +373,7 @@ func TestRun(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			r := testkit.Main(demo().Run).Run(tc.args...)
-			assert.Equal(t, tc.code, r.Code, "exit %d, want %d\nstdout: %s\nstderr: %s", r.Code, tc.code, r.Stdout, r.Stderr)
+			r := NewRig(t, demo()).Run(tc.code, tc.args...)
 			check := func(name, got string, want []string, empty bool) {
 				assert.True(t, got == "" || !empty, "%s is not empty: %q", name, got)
 				rest := got
@@ -590,8 +446,7 @@ func TestEveryBadFlagValueIsNamedAtOnce(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			r := testkit.Main(tc.tool().Run).Run(tc.args...)
-			assert.Equal(t, 2, r.Code, "stdout %q stderr %q", r.Stdout, r.Stderr)
+			r := NewRig(t, tc.tool()).Run(2, tc.args...)
 			assert.NotContains(t, r.Stdout+r.Stderr, "parse error")
 			assert.NotContains(t, r.Stdout+r.Stderr, "provided but not defined")
 			for _, v := range tc.notRepeated {
@@ -662,8 +517,7 @@ func TestARefusalUnderJSONIsOneObjectOnStdout(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			r := testkit.Main(tc.tool().Run).Run(tc.args...)
-			assert.Equal(t, 2, r.Code, "stdout %q stderr %q", r.Stdout, r.Stderr)
+			r := NewRig(t, tc.tool()).Run(2, tc.args...)
 			assert.Empty(t, r.Stderr, "a refusal under --json leaves nothing on stderr")
 			require.Equal(t, 1, strings.Count(r.Stdout, "\n"), "stdout is the one object:\n%s", r.Stdout)
 			var j struct {
@@ -699,7 +553,7 @@ func TestBannerMeetsTheOnboardingStandard(t *testing.T) {
 	for _, verb := range []string{"put", "who", "deny", "forget", "raw", "fn load", "fn ls", "careless", "version"} {
 		t.Run(verb, func(t *testing.T) {
 			t.Parallel()
-			r := testkit.Main(demo().Run).Run(append(strings.Fields(verb), "-h")...)
+			r := NewRig(t, demo()).Capture(append(strings.Fields(verb), "-h")...)
 			assert.True(t, r.Code == 0 && r.Stderr == "" && strings.HasPrefix(r.Stdout, "usage: nova-demo "+verb) && strings.Contains(r.Stdout, "\nexit codes: 0 "),
 				"%s -h: exit %d stderr %q stdout:\n%s", verb, r.Code, r.Stderr, r.Stdout)
 		})
@@ -760,8 +614,7 @@ func TestADefaultVerb(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			r := testkit.Main(selfTalk().Run).Run(tc.args...)
-			assert.Equal(t, tc.code, r.Code)
+			r := NewRig(t, selfTalk()).Run(tc.code, tc.args...)
 			assert.Equal(t, tc.stdout, r.Stdout)
 			assert.Equal(t, tc.stderr, r.Stderr)
 		})
@@ -955,8 +808,7 @@ func TestHelpRefusedAnswersDashH(t *testing.T) {
 				Verbs: []Verb{{Name: "put", Usage: "put --store <dir>", Effect: Inspection,
 					Flags: func(f *Flags) { f.String("store", "", "a directory") },
 					Run:   func(*Call) *Out { return Done() }}}}
-			r := testkit.Main(tool.Run).Run(tc.args...)
-			assert.Equal(t, tc.code, r.Code, "stdout %q stderr %q", r.Stdout, r.Stderr)
+			r := NewRig(t, tool).Capture(tc.args...)
 			check := func(got, want string) {
 				switch {
 				case want == "":
@@ -1020,8 +872,7 @@ func TestAHiddenVerbRunsAndNoListShowsIt(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			r := testkit.Main(hiddenTool().Run).Run(tc.args...)
-			assert.Equal(t, tc.code, r.Code, "stdout %q stderr %q", r.Stdout, r.Stderr)
+			r := NewRig(t, hiddenTool()).Run(tc.code, tc.args...)
 			check := func(name, got string, want []string) {
 				rest := got
 				for _, s := range want {
@@ -1137,8 +988,7 @@ func TestAHelpTopicPrintsItsText(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			r := testkit.Main(tc.tool().Run).Run(tc.args...)
-			assert.Equal(t, tc.code, r.Code, "stdout %q stderr %q", r.Stdout, r.Stderr)
+			r := NewRig(t, tc.tool()).Run(tc.code, tc.args...)
 			if tc.stdout != "" {
 				assert.Contains(t, r.Stdout, tc.stdout)
 				assert.Empty(t, r.Stderr)
@@ -1222,12 +1072,11 @@ func TestEmitPrintsItemsThenTheClosingLine(t *testing.T) {
 		c.Emit("row", "i", 2)
 		return Done()
 	}
-	text := testkit.Main(walkTool(run).Run).Run("walk")
-	assert.Equal(t, 0, text.Code, text.Stderr)
+	rig := NewRig(t, walkTool(run))
+	text := rig.Run(0, "walk")
 	assert.Equal(t, "WALK ROW i=1\nWALK ROW i=2\nWALK OK\n", text.Stdout)
 	assert.Empty(t, text.Stderr)
-	js := testkit.Main(walkTool(run).Run).Run("walk", "--json")
-	assert.Equal(t, 0, js.Code, js.Stderr)
+	js := rig.Run(0, "walk", "--json")
 	assert.Equal(t, "{\"item\":{\"kind\":\"row\",\"fields\":{\"i\":1}}}\n"+
 		"{\"item\":{\"kind\":\"row\",\"fields\":{\"i\":2}}}\n"+
 		"{\"result\":{\"verb\":\"walk\",\"status\":\"ok\",\"exit\":0},\"facts\":{}}\n", js.Stdout)
@@ -1314,8 +1163,7 @@ func TestProblemAsCarriesTheReason(t *testing.T) {
 			if tc.json {
 				args = append(args, "--json")
 			}
-			r := testkit.Main(tool.Run).Run(args...)
-			assert.Equal(t, 2, r.Code, "stdout %q stderr %q", r.Stdout, r.Stderr)
+			r := NewRig(t, tool).Run(2, args...)
 			assert.Equal(t, tc.stdout, r.Stdout)
 			assert.Equal(t, tc.stderr, r.Stderr)
 		})
@@ -1362,27 +1210,25 @@ func TestWritingVerbUnderDryRunCarriesFactInBothRenderings(t *testing.T) {
 
 	t.Run("skeleton adds dry_run in text line and JSON", func(t *testing.T) {
 		t.Parallel()
-		rText := testkit.Main(tool.Run).Run("save", "--file", "out.txt", "--dry-run")
-		assert.Equal(t, 0, rText.Code)
+		rig := NewRig(t, tool)
+		rText := rig.Run(0, "save", "--file", "out.txt", "--dry-run")
 		assert.Empty(t, rText.Stderr)
 		assert.Equal(t, "SAVE OK file=out.txt dry_run=true\n", rText.Stdout)
 
-		rJSON := testkit.Main(tool.Run).Run("save", "--file", "out.txt", "--dry-run", "--json")
-		assert.Equal(t, 0, rJSON.Code)
+		rJSON := rig.Run(0, "save", "--file", "out.txt", "--dry-run", "--json")
 		assert.Empty(t, rJSON.Stderr)
 		assert.JSONEq(t, `{"result":{"verb":"save","status":"ok","exit":0},"facts":{"file":"out.txt","dry_run":true}}`, rJSON.Stdout)
 	})
 
 	t.Run("verb that sets dry_run fact is not duplicated", func(t *testing.T) {
 		t.Parallel()
-		rText := testkit.Main(tool.Run).Run("custom", "--dry-run")
-		assert.Equal(t, 0, rText.Code)
+		rig := NewRig(t, tool)
+		rText := rig.Run(0, "custom", "--dry-run")
 		assert.Empty(t, rText.Stderr)
 		assert.Equal(t, "CUSTOM OK dry_run=true explicit=true\n", rText.Stdout)
 		assert.Equal(t, 1, strings.Count(rText.Stdout, "dry_run=true"))
 
-		rJSON := testkit.Main(tool.Run).Run("custom", "--dry-run", "--json")
-		assert.Equal(t, 0, rJSON.Code)
+		rJSON := rig.Run(0, "custom", "--dry-run", "--json")
 		assert.Empty(t, rJSON.Stderr)
 		assert.JSONEq(t, `{"result":{"verb":"custom","status":"ok","exit":0},"facts":{"dry_run":true,"explicit":true}}`, rJSON.Stdout)
 		assert.Equal(t, 1, strings.Count(rJSON.Stdout, `"dry_run"`))
@@ -1390,13 +1236,12 @@ func TestWritingVerbUnderDryRunCarriesFactInBothRenderings(t *testing.T) {
 
 	t.Run("real run without dry-run carries no dry_run fact", func(t *testing.T) {
 		t.Parallel()
-		rText := testkit.Main(tool.Run).Run("save", "--file", "out.txt")
-		assert.Equal(t, 0, rText.Code)
+		rig := NewRig(t, tool)
+		rText := rig.Run(0, "save", "--file", "out.txt")
 		assert.Equal(t, "SAVE OK file=out.txt saved=true\n", rText.Stdout)
 		assert.NotContains(t, rText.Stdout, "dry_run")
 
-		rJSON := testkit.Main(tool.Run).Run("save", "--file", "out.txt", "--json")
-		assert.Equal(t, 0, rJSON.Code)
+		rJSON := rig.Run(0, "save", "--file", "out.txt", "--json")
 		assert.NotContains(t, rJSON.Stdout, "dry_run")
 	})
 }
@@ -1435,15 +1280,13 @@ func TestToolExistsSeam(t *testing.T) {
 
 	t.Run("map answers existing file as default verb", func(t *testing.T) {
 		t.Parallel()
-		r := testkit.Main(tl.Run).Run("virtual.txt")
-		assert.Equal(t, 0, r.Code)
+		r := NewRig(t, tl).Run(0, "virtual.txt")
 		assert.Equal(t, "READ OK files=1\n", r.Stdout)
 	})
 
 	t.Run("map answers absent file with refusal naming verbs and path remedy", func(t *testing.T) {
 		t.Parallel()
-		r := testkit.Main(tl.Run).Run("missing.txt")
-		assert.Equal(t, 2, r.Code)
+		r := NewRig(t, tl).Run(2, "missing.txt")
 		assert.Contains(t, r.Stderr, `"missing.txt" is no verb and no file; the verbs are read, other, version, and a file is given by its path (./missing.txt)`)
 	})
 
@@ -1466,13 +1309,12 @@ func TestToolExistsSeam(t *testing.T) {
 			},
 		}
 		// tool.go is in the package's working directory and stat sees it.
-		r := testkit.Main(tlDefault.Run).Run("tool.go")
-		assert.Equal(t, 0, r.Code)
+		rig := NewRig(t, tlDefault)
+		r := rig.Run(0, "tool.go")
 		assert.Equal(t, "READ OK files=1\n", r.Stdout)
 
 		// non-existent file is refused.
-		rMissing := testkit.Main(tlDefault.Run).Run("nonexistent_file_xyz_123.txt")
-		assert.Equal(t, 2, rMissing.Code)
+		rMissing := rig.Run(2, "nonexistent_file_xyz_123.txt")
 		assert.Contains(t, rMissing.Stderr, "is no verb and no file")
 	})
 }
