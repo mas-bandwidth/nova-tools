@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// cli_spelling_flags_test.go pins the reference line in docs/CLI.md against the flag set
+// cli_spelling_flags_test.go pins the whole reference entry in docs/CLI.md against the flag set
 // spellingFlags actually registers in cmd/nova-check/spelling.go.
 func TestTheCLIReferenceNamesEverySpellingFlag(t *testing.T) {
 	t.Parallel()
@@ -85,19 +85,28 @@ func TestTheCLIReferenceNamesEverySpellingFlag(t *testing.T) {
 	require.NoError(t, err, "docs/CLI.md: %v", err)
 	ref := ""
 	seen := 0
+	inEntry := false
 	for _, line := range strings.Split(string(cli), "\n") {
 		if strings.HasPrefix(line, "nova-check spelling ") {
 			seen++
 			ref = line
+			inEntry = true
+		} else if inEntry && (strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t")) {
+			ref += "\n" + line
+		} else {
+			inEntry = false
 		}
 	}
 	require.NotZero(t, seen, "docs/CLI.md: no line begins `nova-check spelling `")
 	require.LessOrEqual(t, seen, 1, "docs/CLI.md: %d lines begin `nova-check spelling `, want exactly one", seen)
 
-	usage := ref
-	if j := strings.Index(usage, "#"); j >= 0 {
-		usage = usage[:j]
+	usageLines := strings.Split(ref, "\n")
+	for i, line := range usageLines {
+		if j := strings.Index(line, "#"); j >= 0 {
+			usageLines[i] = line[:j]
+		}
 	}
+	usage := strings.Join(usageLines, "\n")
 
 	for _, reg := range regs {
 		assert.Contains(t, usage, "--"+reg.name, "docs/CLI.md reference line does not name --%s, registered at cmd/nova-check/spelling.go:%d",
