@@ -127,8 +127,11 @@ card dealt to her is `ready` until she starts it and `working` from her start
 (a friend's card is working once she starts it, section 1), so `working` counts
 started cards only; a `Verdict: LAND` report (with its `Head:` the
 tip) finishes it done ok, a `Verdict: HOLD` or `FAIL` (or `FAILED`, `BROKEN`)
-report done failed, and a report with no verdict word is done failed too,
-never ok. A hand-written inbox job that is
+report done failed, except one whose reason is one of the three brief defects
+(the base lacks a PATHS file, a duplicate of landed work, a decision delivered;
+a brief defect, below), which is the brief's and not hers: it finishes in her
+hidden `defect` cell, in neither done nor ok%; and a report with no verdict
+word is done failed too, never ok. A hand-written inbox job that is
 no card (an `inbox/<job>/` directory named for no card of the sprint) is
 outside the sprint and is shown nowhere in the table; the coordinator's NOW.md
 is its pointer. `ready` and `working` count her cards in those states; `width`
@@ -772,7 +775,11 @@ of <branch>, <tip>; ...`), as are a branch origin does not hold, a card with no
 `REPO:` line and a tip that cannot be read: the card is not finished (the
 deadline still judges it), and the next sync reads the report again; `Verdict: HOLD` or `FAIL` (or
 `FAILED`, `BROKEN`) is a failed finish, the judgment "work came back failed"
-carrying `friend <name> <VERDICT>: <the report's first paragraph>`; a LAND with
+carrying `friend <name> <VERDICT>: <the report's first paragraph>`, except one
+whose first paragraph names one of the three brief defects (the base lacks a
+PATHS file, a duplicate of landed work, a decision delivered; a brief defect,
+below), which is the brief's, not the worker's: it raises "a brief defect",
+never "work came back failed", and counts on the stream, never in her ok%; a LAND with
 no full sha Head, or any other verdict or none, is failed too, its report
 saying what it lacks. It collects from a friend whatever her status. It prints
 `FRIEND-CARD DELIVERED friend= card= job= branch=`, `FRIEND-CARD FINISHED
@@ -860,6 +867,28 @@ finishes nothing and reads no tip. The nova-friend daemon keeps the same rule fo
 tree on every sync (docs/SPEC-FRIEND.md, the daemon reads every outbox job, and its dead
 lanes), so the verb is the coordinator's hand and the daemon's duty. The model is
 `internal/friend/tla/Collect.tla`.
+
+**A brief defect** (the owner, 2026-10-04: "trust but VERIFY"; "I want to trust the ok%";
+"Are they actually doing the work that is shown in the friend table? Really?"). A worker's
+failed finish (a friend's `Verdict: HOLD` or `FAIL`, by its first paragraph, or a member's
+failed report) whose reason names a brief defect is the brief's, never the worker's: no
+worker could do the card as cut (`sprint.BriefDefectOf`). Each of the three reasons alone
+names one, with no label needed, the earliest in the report being the one recorded: the
+base lacks a PATHS file (`the base lacks`, `not on the base`, `missing from the base`, `does not exist on the base`), a duplicate of landed work (`duplicate of landed work`), and a
+decision delivered (`decision delivered`, `decision already delivered`). The label `brief defect` (two words) with none of the three names one in the worker's own words. A
+negated reason or label ("not a duplicate of landed work", "no brief defect") names none,
+and a hyphenated token, such as a card id `hold-is-a-brief-defect`, is no label. The finish
+moves the work card to the member's hidden `defect` cell, never `ok` or `failed`, so `done`
+and `ok%` on the fleet and friends tables count only work the worker could do; the card and
+its primary carry `brief_defect` (the reason); the primary goes to review with result
+`failed` (no work came back, so nothing reads it) and its `failed` count unchanged, so no
+tier escalation or identical-failure bound counts it; the stream's control card counts it
+(`brief_defects`, one more per defect, a bump); and the judgment is `a brief defect`, whose
+decisions are `re-cut the brief` (drop the card, then add the re-cut card from what the
+worker found) and `drop`, never a redeal of the brief as cut: `rework` refuses such a
+primary, naming the drop and then the add, and a rework closes no `a brief defect`
+judgment. A stalled one is offered `re-cut the brief` and `drop`, never `rework`, and when
+nothing is open on it the judgment raised again is `a brief defect`, never `stranded in review`. A route's stats do not count it.
 
 The frame of `where` and `where --watch` shows work, friends, fleet in that order: the
 readers and merge tables are hidden from it (the owner, 2026-10-02: "I feel like
@@ -1145,7 +1174,9 @@ card holds its status, a hidden `withdrawn`
 column where a work card withdrawn because no member was up is kept (the table
 layer never places a removed member again), and hidden `ok` and `failed`
 columns that hold a member's finished work cards, finished ok and finished
-failed. `done` and `ok%` are the table's own formulas over those two cells,
+failed, and a hidden `defect` column that holds those that ended on a brief
+defect (section 1, a brief defect), counted in neither. `done` and `ok%` are
+the table's own formulas over the `ok` and `failed` cells,
 computed at render and never written: `done:sum(ok+failed)` and
 `okpct:pct(ok/ok+failed):pooled:ok%` (the column `okpct`, labelled `ok%`). A
 member with no finished card shows `0` and `0.0%`; the footer pools ok% over
@@ -4084,6 +4115,7 @@ the tick would make, no other open judgment on it).
 | notification | answered by | ack |
 |---|---|---|
 | work came back failed | rework (with a fix), drop | no |
+| a brief defect | re-cut the brief (drop, then add the re-cut card), drop | no |
 | a reader found it broken | rework (with the finding), ask --another, drop | no |
 | a card has reached its bound: the brief is wrong, not the worker | brief (a waiting card; else drop and add again), drop | no |
 | stream stopped: conflict on a card | resume (resolved), rework, drop | no |
