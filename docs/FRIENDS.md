@@ -258,7 +258,7 @@ keepalive) does not clear her running list and does not write zero over a count.
 `--running` with a list replaces the list; `--running ''`, the flag given and
 empty, clears it. `--working` and `--queue` given, including 0, replace that
 count. The beat names the fields it set, `set=running,working` or `set=-` when it
-set none, and the result line carries that (`FRIEND-BEAT OK f=<friend> set=...`).
+set none, and the result line carries that (`FRIEND-BEAT OK <friend> at=<time> set=...`).
 
 ## Where a job's work lives
 

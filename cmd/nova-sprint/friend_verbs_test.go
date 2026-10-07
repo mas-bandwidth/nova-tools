@@ -71,6 +71,7 @@ func TestFriendBeatTakesHerCountsAndLoadAsFleetBeatTakesALoad(t *testing.T) {
 	ta.pong("amy")
 	out := ta.ok("friend beat amy --working 2 --queue 3 --width 4 --running s1-1.w1,s1-2.w1 --load 40%")
 	assert.Contains(t, out, "FRIEND-BEAT OK amy at=")
+	assert.Contains(t, out, "set=running,working,queue")
 	assert.Contains(t, out, " working=2 queue=3 width=4 load=40.0% running=s1-1.w1,s1-2.w1")
 	f := whereFriends(ta)["amy"]
 	require.NotNil(t, f.Report)
@@ -82,11 +83,25 @@ func TestFriendBeatTakesHerCountsAndLoadAsFleetBeatTakesALoad(t *testing.T) {
 	assert.Equal(t, 8, f.Width, "her width is the roster's, not her word")
 	assert.Equal(t, sprint.Up, f.Status, "on her session's pong, never on the beat")
 
-	// a beat with none reports none: the last one's counts are not kept
+	// A bare keepalive leaves the fields it did not name.
 	ta.beatUp("amy")
 	f = whereFriends(ta)["amy"]
-	assert.Nil(t, f.Report)
+	require.NotNil(t, f.Report)
+	assert.Equal(t, []string{"s1-1.w1", "s1-2.w1"}, f.Report.Running)
+	assert.Equal(t, 2, *f.Report.Working)
+	assert.Equal(t, 3, *f.Report.Queue)
 	assert.Zero(t, f.Load)
+	assert.Contains(t, ta.ok("friend beat amy"), "set=-")
+	assert.Contains(t, ta.ok("friend beat amy --running="), "set=running")
+	f = whereFriends(ta)["amy"]
+	require.NotNil(t, f.Report)
+	assert.Empty(t, f.Report.Running, "a named empty list clears the running cards")
+	assert.Equal(t, 2, *f.Report.Working)
+	assert.Equal(t, 3, *f.Report.Queue)
+	assert.Contains(t, ta.ok("friend beat amy --working 0 --queue 0"), "set=working,queue")
+	f = whereFriends(ta)["amy"]
+	assert.Equal(t, 0, *f.Report.Working)
+	assert.Equal(t, 0, *f.Report.Queue)
 
 	for _, bad := range []string{"--working -1", "--queue x", "--width 0", "--load lots"} {
 		code, _, errs := ta.do("friend beat amy " + bad)

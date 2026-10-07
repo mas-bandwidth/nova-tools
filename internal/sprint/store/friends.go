@@ -278,7 +278,7 @@ type friendBeatRecord struct {
 // BeatProof is what one beat's proof words came to: proved (her session answered a check
 // her daemon asked) or why it proved nothing, and the proof the record keeps after it.
 // Set is which of running, working and queue this beat named, comma joined in that
-// order, or "-" when it named none (FRIEND-BEAT OK f=<f> set=<Set>). A field absent
+// order, or "-" when it named none (FRIEND-BEAT OK <friend> ... set=<Set>). A field absent
 // from Set was left as the store had it.
 type BeatProof struct {
 	Proved  bool

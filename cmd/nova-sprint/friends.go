@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -376,7 +377,15 @@ func (a *app) friendBeat(ctx context.Context, args []string, open func(common) (
 	if code != 0 {
 		return code
 	}
-	rep := sprint.FriendReport{Running: sprint.Split(*running)}
+	provided := make(map[string]bool)
+	fs.Visit(func(f *flag.Flag) { provided[f.Name] = true })
+	rep := sprint.FriendReport{}
+	if provided["running"] {
+		rep.Running = sprint.Split(*running)
+		if rep.Running == nil {
+			rep.Running = []string{} // a named empty list clears the stored list
+		}
+	}
 	if b := strings.TrimSpace(*build); b != "" {
 		rep.Build = oneline.Field(b)
 	}
@@ -427,6 +436,9 @@ func (a *app) friendBeat(ctx context.Context, args []string, open func(common) (
 		to         **int
 	}{{"--working", *working, 0, &rep.Working}, {"--queue", *queue, 0, &rep.Queue}, {"--width", *width, 1, &rep.Width}} {
 		if n.text == "" {
+			if provided[strings.TrimPrefix(n.flag, "--")] {
+				return refuse(stderr, name, n.flag+" wants a whole number, found an empty value")
+			}
 			continue
 		}
 		v, err := strconv.Atoi(n.text)
@@ -457,7 +469,7 @@ func (a *app) friendBeat(ctx context.Context, args []string, open func(common) (
 		fmt.Fprintf(stderr, "%s %s: %s\n", prog, name, oneline.Escape(err.Error()))
 		return 1
 	}
-	line, facts := "FRIEND-BEAT OK "+friend+" at="+b.At.Format(time.RFC3339), map[string]any{"friend": friend, "at": b.At}
+	line, facts := "FRIEND-BEAT OK "+friend+" at="+b.At.Format(time.RFC3339)+" set="+proof.Set, map[string]any{"friend": friend, "at": b.At, "set": proof.Set}
 	if words.Check != "" {
 		line += " check=" + words.Check
 		facts["check"] = words.Check
