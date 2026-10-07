@@ -75,8 +75,8 @@ friends between work and fleet in its default frame, which draws no merge
 table; the friends table is drawn after merge only under where --all, up
 first, then held, then down, each by name, with no load column.
 
-WHO: friend <name> prefers a known friend while she is up with room.
-WHO: only friend <name> waits for that friend alone. Other work, including
+WHO: friend <name> pins a known friend; it waits ready until she is up with room.
+WHO: only friend <name> is the legacy spelling of that same ownership pin. Other work, including
 cards with no WHO line, goes first to subscription friends whose tiers cover
 it, then to the fleet. Among eligible friends, most free room wins and name
 breaks ties. In batch mode her room is twice her width: she works at width and

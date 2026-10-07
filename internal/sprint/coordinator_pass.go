@@ -48,7 +48,7 @@ const (
 	// NFriendEmpty is an up friend whose row has been empty for EmptyRowAfter while
 	// cards she could do sit ready in the pool or unstarted on another friend's row.
 	NFriendEmpty = "an up friend has an empty row while cards wait"
-	// NPinIgnored is a named pin (WHO: friend <name>, not a hard pin) sitting ready
+	// NPinIgnored is a named ownership pin from an earlier deal sitting ready
 	// or working off that friend's row.
 	NPinIgnored = "a pinned card was dealt away from its friend"
 	// NFriendRowEmpty is the clock for NFriendEmpty: an acknowledgement, not a
@@ -524,8 +524,8 @@ func emptyRowDecisions(name string, cards []idleWait) []string {
 }
 
 // pinConds is one condition for each named pin whose work card is ready or
-// working on a row that is not its friend's. A hard pin (OnlyFriend) waits for
-// her and is not one of these. The text is the one the deal wrote when it
+// working on a row that is not its friend's, left by an earlier deal. New deals
+// preserve every named WHO ownership pin. The text is the one the deal wrote when it
 // rotated the card, when that judgment is already open, so a later pass does
 // not close it and open another.
 func pinConds(s *Snapshot, r TickReq) []cond {
@@ -563,7 +563,7 @@ func pinConds(s *Snapshot, r TickReq) []cond {
 					continue
 				}
 				pinned, ok := FriendCard(pr)
-				if !ok || pinned == "" || OnlyFriend(pr) || row == FriendRow(pinned) {
+				if !ok || pinned == "" || row == FriendRow(pinned) {
 					continue
 				}
 				seen[prID] = true
@@ -626,16 +626,7 @@ func pinIgnoredWhat(cardID, pinned, why, row, col string) string {
 func pinIgnoredDecisions(pinned, holder, cardID string) []string {
 	ds := []string{"keep", "ack", "wait"}
 	if holder != "" {
-		ds = append([]string{"friend take " + holder + " " + cardID + " --reason pinned to " + pinned}, ds...)
+		ds = append([]string{"friend take " + pinned + " " + cardID + " --reason pinned to " + pinned}, ds...)
 	}
 	return ds
-}
-
-// pinIgnoredNote is the judgment the deal writes on the unit that places a
-// named pin on someone else's row. The pass's pinConds keeps that same text.
-func pinIgnoredNote(s *Snapshot, primary *Card, cardID, pinned, why, row, col string) Note {
-	holder, _ := FriendOfRow(row)
-	return Note{Kind: Judgment, Type: NPinIgnored, Stream: primary.Row, Primaries: []string{primary.ID}, Count: 1,
-		Card: cardID, What: pinIgnoredWhat(cardID, pinned, why, row, col), Who: MachineActor, At: s.Now, Marked: true,
-		Decisions: pinIgnoredDecisions(pinned, holder, cardID)}
 }

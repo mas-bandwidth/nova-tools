@@ -23,16 +23,22 @@ import (
 // is a function of the tables and that set.
 
 // friendTakeWords is what friend take says on -h.
-const friendTakeWords = "friend take takes back cards dealt to the friend that she has not started: each goes back to ready, withdrawn from her row (no failure, no bound spent: the card records \"taken back by the coordinator: <reason>\"), and the next tick deals the same card at its next generation to another friend up with room, never back to her (a friend's card is never a machine's); a card whose WHO line pins her waits until it is given back to her (friend give), briefed for another friend or dropped. A card is refused, one REFUSED line each, when it is not dealt to that friend or when she has started it: a push on its branch, her beat naming it running (friend beat --running), or finished (in review or later); the others named are taken, and the exit is 1 when any is refused. --all-or-nothing takes none when one is refused. --all-unstarted takes every card of hers she has not started and says the ones she keeps. A working card taken frees her lane, and her oldest ready card is taken into working at once. friend sync marks a card taken back as taken in her queue file.\n"
+const friendTakeWords = "friend take <friend> <id> places a ready or dealt-but-not-taken work card on that friend's row, regardless of its current row. It stores the new WHO ownership pin and advances a moved attempt's generation without spending an attempt. A taken card is refused naming its lane: a working lane, a take stamp, a push on its branch, or a beat naming it running. --all-or-nothing moves none if any is refused. --all-unstarted retains withdrawal semantics: it takes back every unstarted card of that friend to ready for a later deal; a named WHO waits for its friend, or friend give, unpin or a new explicit friend take.\n"
 
 // friendStarted is the friend's cards she has started, each with its why: every work card
 // ready or working on her row that her last beat names running (by its id, its job or its
 // primary), or whose branch origin holds (a push on it), or whose push cannot be read (the
 // card stays with her rather than be taken from under her).
-func (a *app) friendStarted(ctx context.Context, st *store.Store, friend string) (map[string]string, error) {
+func (a *app) friendStarted(ctx context.Context, st *store.Store, friend string, ids ...string) (map[string]string, error) {
 	cards, err := st.ReadCells(ctx, sprint.Fleet, sprint.FriendRow(friend), sprint.Working, sprint.Ready)
 	if err != nil || len(cards) == 0 {
 		return nil, err
+	}
+	if len(ids) > 0 {
+		cards = slices.DeleteFunc(cards, func(c *sprint.Card) bool { return !slices.Contains(ids, c.ID) && !slices.Contains(ids, c.F("primary")) })
+		if len(cards) == 0 {
+			return nil, nil
+		}
 	}
 	b, err := st.FriendBeatOf(ctx, friend)
 	if err != nil {
@@ -80,7 +86,7 @@ func keptSays(friend string, started map[string]string) []string {
 func (a *app) cmdFriendTake(args []string, stdout, stderr io.Writer) int {
 	const name = "friend take"
 	fs, c := a.verbSetup(name)
-	reason := fs.String("reason", "", "why the cards are taken back, kept on each card (\"taken back by the coordinator: <reason>\")")
+	reason := fs.String("reason", "", "why the cards are moved or taken back")
 	all := fs.Bool("all-unstarted", false, "take every card of hers she has not started, naming no card")
 	dry := fs.Bool("dry-run", false, "say which cards would be taken back and write nothing")
 	allOrNothing := fs.Bool("all-or-nothing", false, "take none of the cards named when any one is refused")
@@ -90,11 +96,11 @@ func (a *app) cmdFriendTake(args []string, stdout, stderr io.Writer) int {
 	}
 	switch {
 	case len(pos) == 0:
-		return refuse(stderr, name, "wants a friend, then the cards to take back (or --all-unstarted)")
+		return refuse(stderr, name, "wants a friend, then the cards to place on her row (or --all-unstarted)")
 	case !sprint.ValidID(pos[0]):
 		return refuse(stderr, name, "a friend name wants letters, digits, _ and -: "+pos[0])
 	case *all == (len(pos) > 1):
-		return refuse(stderr, name, "wants the cards to take back, or --all-unstarted, and not both")
+		return refuse(stderr, name, "wants cards to place, or --all-unstarted, and not both")
 	}
 	friend, ids := pos[0], pos[1:]
 	st, err := a.store(*c)
@@ -111,7 +117,24 @@ func (a *app) cmdFriendTake(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s %s: no friend %s on the friends table (friends: %s); run: nova-sprint friend sync\n", prog, name, friend, orDashStr(strings.Join(names, ","), "none"))
 		return 1
 	}
-	started, err := a.friendStarted(ctx, st, friend)
+	started, err := a.friendStarted(ctx, st, friend, ids...)
+	if err == nil && !*all {
+		// SPEC-SPRINT friend take: a card on another row may already own a lane.
+		for _, other := range names {
+			if other == friend {
+				continue
+			}
+			more, e := a.friendStarted(ctx, st, other, ids...)
+			if e != nil {
+				err = e
+				break
+			}
+			if started == nil {
+				started = map[string]string{}
+			}
+			maps.Copy(started, more)
+		}
+	}
 	if err != nil {
 		return a.readFailed(name, err, stderr)
 	}
@@ -122,7 +145,7 @@ func (a *app) cmdFriendTake(args []string, stdout, stderr io.Writer) int {
 	if *all {
 		c.says = keptSays(friend, started)
 	}
-	step := store.FriendTakeStep(sprint.FriendTakeReq{Friend: friend, IDs: ids, All: *all, AllOrNothing: *allOrNothing, Reason: *reason, Started: started, Who: c.actor, Spends: true})
+	step := store.FriendTakeStep(sprint.FriendTakeReq{Friend: friend, IDs: ids, Assign: !*all, All: *all, AllOrNothing: *allOrNothing, Reason: *reason, Started: started, Who: c.actor, Spends: true})
 	step.Named = false // the takeable are taken and the rest refused; sprint.FriendTake keeps --all-or-nothing itself
 	return a.runStep(name, *c, st, step, stdout, stderr)
 }

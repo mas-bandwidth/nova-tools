@@ -86,7 +86,7 @@ func TestTakeAllUnstartedTakesEveryOneSheHasNotStarted(t *testing.T) {
 	assert.Equal(t, Ready, w.s.StateOf("s1-1"))
 	hd := Holder(running(w), w.s.Now, "s1-1")
 	assert.Equal(t, HeldByWaiting, hd.By)
-	assert.Contains(t, hd.Why, "waits for only friend amy")
+	assert.Contains(t, hd.Why, "waits for friend amy")
 }
 
 func TestTheHoldOfAFriendWithdrawsEveryCardStartedOrNot(t *testing.T) {

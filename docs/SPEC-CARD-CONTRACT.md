@@ -172,9 +172,10 @@ names the `Stage:` path and the reason.
 **The WHO line** (the owner, 2026-10-03: "Could we try expressing the work left for
 nova-tools-1.1.0 into cards, and doing it via the sprint, but doing parts on friends where we
 would normally do friend work."; 2026-10-04: pins only by choice). `WHO: friend` prefers any
-friend whose class covers the tier. `WHO: friend <name>` prefers that friend while she is up
-with room, then another covering friend, then the fleet. `WHO: only friend <name>` waits for
-that friend alone. A card with no WHO line, or `WHO: -`, is offered to covering friends and
+friend whose class covers the tier. `WHO: friend <name>` pins that friend alone: the next tick deals it to her while
+she is up with room and serves its tier. Otherwise it waits ready with a held reason naming
+her, never another friend or the fleet. `WHO: only friend <name>` is the legacy spelling
+of that same pin. A card with no WHO line, or `WHO: -`, is offered to covering friends and
 then framed for the fleet as this page says. A card placed on a friend is never framed or
 staged: the sprint delivers it to her inbox as `inbox/<card>/BRIEF.md` and finishes it from
 her `outbox/<card>/REPORT.md` (docs/SPEC-SPRINT.md section 1, a friend's card; docs/FRIENDS.md,
@@ -491,7 +492,7 @@ with no clock and no store). What it holds:
   machine, so the brief cannot know who that is: its `ATTRIBUTION:` line reads
   `By: your own name, the worker who does this attempt`, says a model name is
   never a `By:`, and that a Claude worker adds its true `Co-Authored-By` trailer
-  while any other worker adds none; a `WHO:` line stays a preference for who is
+  while any other worker adds none; a `WHO:` line records an ownership choice for who is
   dealt the card, never the name to sign. Neither the line nor the held rules
   (`fleet/child-rules.txt`, rule `commit-trailer`) spell a fill-in Claude trailer,
   which a worker of another model completes with its own model's name. Its

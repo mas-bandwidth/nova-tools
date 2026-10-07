@@ -71,7 +71,10 @@ func PushedTip(why string) string {
 // as started) are taken, and her ready cards not begun wait on her row, none taken into a
 // lane the take frees.
 type FriendTakeReq struct {
-	Friend       string
+	Friend string
+	// Assign is explicit friend take <friend> <id>: place untaken work on this
+	// friend's row. All/hold retain withdrawal semantics (SPEC-SPRINT, friend take).
+	Assign       bool
 	IDs          []string
 	All          bool
 	Hold         bool
@@ -104,6 +107,9 @@ func (r FriendTakeReq) takenBackWhy() string {
 // with All a started card stays (the caller, which read Started, says so). A working card taken frees her lane: her oldest ready card not taken
 // is taken into working in the same unit, as her finish takes it (friendNext).
 func FriendTake(s *Snapshot, r FriendTakeReq) Plan {
+	if r.Assign {
+		return friendAssign(s, r)
+	}
 	var p Plan
 	row := FriendRow(r.Friend)
 	mine := append(append([]*Card(nil), s.Fleet.Cell(row, Ready)...), s.Fleet.Cell(row, Working)...)
@@ -278,4 +284,79 @@ func FriendGive(s *Snapshot, r FriendGiveReq) Plan {
 		}
 	}
 	return p
+}
+
+// friendAssign is the explicit ownership transfer (docs/SPEC-SPRINT.md, friend take).
+// It never moves a taken lane; an untaken move keeps the attempt and advances gen.
+func friendAssign(s *Snapshot, r FriendTakeReq) Plan {
+	var p Plan
+	row := FriendRow(r.Friend)
+	seen := map[string]bool{}
+	for _, id := range r.IDs {
+		pr := s.Work.Placed(id)
+		wc := s.Fleet.Placed(id)
+		if wc != nil && wc.F("kind") == "work" {
+			pr = s.Work.Placed(wc.F("primary"))
+		}
+		if pr == nil {
+			p.refuse(id, "no work card "+id)
+			continue
+		}
+		if seen[pr.ID] {
+			continue
+		}
+		seen[pr.ID] = true
+		wc = s.Fleet.Placed(pr.F("work"))
+		if wc == nil {
+			wc = s.Fleet.Placed(WorkCardID(pr.ID, pr.Int("attempt")))
+		}
+		taken := false
+		if wc != nil {
+			_, _, word, _ := WorkDeadline(s, wc)
+			taken = word != WordNeverTaken || wc.F(FieldStarted) != "" || wc.F(FieldProgress) != ""
+		}
+		switch {
+		case pr.Col != Ready && pr.Col != Working:
+			p.refuse(id, fmt.Sprintf("%s is %s, not ready or dealt", pr.ID, pr.Col))
+			continue
+		case wc != nil && (wc.Col == Working || taken || r.Started[wc.ID] != ""):
+			p.refuse(id, fmt.Sprintf("%s is taken in lane %s:%s; it stays in that lane (%s)", wc.ID, wc.Row, wc.Col, orDash(r.Started[wc.ID])))
+			continue
+		case wc != nil && wc.Col != Ready && wc.Col != Withdrawn:
+			p.refuse(id, fmt.Sprintf("%s is %s, not dealt and untaken", wc.ID, wc.Col))
+			continue
+		}
+		if f := laneRunsIt(s, s.Friends, pr, wc); f != "" {
+			p.refuse(id, "the card is taken in lane "+FriendRow(f))
+			continue
+		}
+		var u Unit
+		set := map[string]string{FieldWho: row}
+		switch {
+		case wc == nil:
+			card := WorkCardID(pr.ID, pr.Int("attempt")+1)
+			if s.Fleet.Card(card) != nil {
+				p.refuse(id, "work card "+card+" exists already")
+				continue
+			}
+			u = friendDealUnit(s, pr, card, row, Ready, set)
+		case wc.Row == row && wc.Col == Ready:
+			u = Unit{Key: pr.ID, Stream: pr.Row, Changes: []Change{change(Work, setEntry(pr, set))}, Moved: pr.ID + " already dealt to " + row}
+		default:
+			u = friendRedealUnit(s, pr, wc, row, set)
+		}
+		p.Units = append(p.Units, u)
+	}
+	if r.AllOrNothing && len(p.Refused) > 0 {
+		for _, u := range p.Units {
+			p.refuse(u.Key, "not moved: --all-or-nothing and another named card was refused")
+		}
+		p.Units = nil
+		return p
+	}
+
+	if len(p.Units) > 0 && !s.Fleet.HasRow(row) {
+		p.Rows = append(p.Rows, RowAdd{Fleet, row})
+	}
+	return Lawful(p)
 }

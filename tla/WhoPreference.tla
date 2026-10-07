@@ -33,7 +33,7 @@ Admits(w, t) == IF w = "fleet" THEN t \in fleetTiers ELSE t \in FriendTiers[w]
 \* Both friends cover the example pro tier; fleet is the final fallback.
 Candidate(c) ==
  IF pin[c] # "none" /\ Room("a") THEN {"a"}
- ELSE IF pin[c] = "only" /\ ~BadOnly THEN {}
+ ELSE IF pin[c] = "preferred" \/ (pin[c] = "only" /\ ~BadOnly) THEN {}
  ELSE IF Room("a") THEN {"a"}
  ELSE IF Room("b") THEN {"b"}
  ELSE IF Room("fleet") THEN {"fleet"}
@@ -58,13 +58,12 @@ Unpin(c) == /\ owner[c] = "none" /\ c \notin started /\ pin[c] # "none"
 \* the rebalance (internal/sprint/rebalance.go Rebalance): a queued card on a
 \* worker whose lane works goes to a worker up with an idle lane that may take
 \* it; never a started card, never a hard pin, never a worker it left. The code
-\* also keeps a preference on the friend it names; the model lets it move, a
-\* superset of the code's moves, so what holds here holds of the code.
+\* keeps every named ownership pin on its friend; only unpinned cards move.
 Rebalance(c, w) ==
   LET g == owner[c] IN
   /\ g \in Workers /\ w \in up /\ w # g
   /\ (c \notin started \/ BadRebalance = "started")
-  /\ pin[c] # "only"
+  /\ pin[c] = "none"
   /\ LaneBusy(g)
   /\ Held(w) = {}
   /\ (Admits(w, CardTier[c]) \/ BadRebalance = "tiers")
@@ -77,6 +76,7 @@ Presence == /\ up' \in SUBSET Workers /\ UNCHANGED <<owner,pin,started,fleetTier
 Next == (\E c \in Cards, w \in Workers : Deal(c,w) \/ Rebalance(c,w))
         \/ (\E c \in Cards : Start(c) \/ TakeBack(c) \/ Unpin(c)) \/ Presence
 Spec == Init /\ [][Next]_vars
+WhoIsHonored == \A c \in Cards : pin[c] # "none" => owner[c] \in {"none","a"}
 OnlyToItsFriend == \A c \in Cards : pin[c] = "only" => owner[c] \in {"none","a"}
 \* room: DealAhead (two) times a width of one
 WidthRespected == \A w \in Workers : Cardinality(Held(w)) <= 2

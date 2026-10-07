@@ -13,7 +13,7 @@ import (
 // move from a friend's ready backlog to a friend up with an idle lane like WHO: friend.
 func TestTheLevelMovesUnpinnedCardsToAnIdleFriend(t *testing.T) {
 	t.Parallel()
-	w := friendWorld(t, "c: no WHO\n\nThe task.", friendBrief("friend amy"), friendBrief("only friend amy"))
+	w := friendWorld(t, "c: no WHO\n\nThe task.", friendBrief("friend"), friendBrief("only friend amy"))
 	amy := FriendSeat{Name: "amy", Width: 1, Status: Up, Tiers: []string{cardhdr.RouteFlash}}
 	dealStarted(w, amy, FriendSeat{Name: "bob", Width: 1, Status: Held, Tiers: []string{cardhdr.RouteFlash}})
 	require.Equal(t, 1, w.s.Fleet.Count(FriendRow("amy"), Working))
@@ -98,7 +98,8 @@ func TestAFrontierCardGoesOnlyToAFriendWithFrontier(t *testing.T) {
 
 	w := friendWorld(t, brief("friend amy"), brief("friend"))
 	dealStarted(w, amy, dan, cat)
-	assert.Equal(t, FriendRow("cat"), w.s.Fleet.Card("s1-1.w1").Row, "named amy, but only cat has frontier")
+	assert.Nil(t, w.s.Fleet.Card("s1-1.w1"), "named amy without frontier waits for her")
+	assert.Equal(t, Ready, w.s.StateOf("s1-1"))
 	assert.Equal(t, FriendRow("cat"), w.s.Fleet.Card("s1-2.w1").Row, "any friend: cat, not dan whose row names no tier")
 
 	only := friendWorld(t, brief("only friend amy"))

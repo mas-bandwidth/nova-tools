@@ -344,3 +344,22 @@ func TestTheCardsDealtAreReadAfterAClear(t *testing.T) {
 	require.Len(t, v.Cards, 2, "%+v", v)
 	assert.Equal(t, "nova-sprint take --as m1 s1-1.w1@1 --epoch 1", v.Next)
 }
+
+// SPEC-SPRINT: the coordinator sees which friend holds a ready WHO pin.
+func TestTheCoordinatorViewNamesTheFriendAWhoPinWaitsFor(t *testing.T) {
+	t.Parallel()
+	ta, _ := friendCardApp(t, "friend amy", "amy", "bob")
+	ta.ok("friend down amy")
+	ta.ok("tick")
+	v := ta.coordView("")
+	it, ok := item(v, "who:s1-1")
+	require.True(t, ok)
+	assert.Contains(t, it.S, "waits for friend amy")
+	assert.Equal(t, "nova-sprint card s1-1", it.Next)
+	var card cardView
+	ta.json("card s1-1", &card)
+	assert.Equal(t, "friend.amy", card.Who)
+	require.NotNil(t, card.Held)
+	assert.Contains(t, card.Held.Why, "friend amy")
+	ta.clean()
+}

@@ -20,7 +20,7 @@ import (
 // idle lane, never back to her.
 func TestAFriendCardIsWorkingOnlyOnceTheFriendStartsIt(t *testing.T) {
 	t.Parallel()
-	w := friendWorld(t, friendBrief("friend amy"), friendBrief("friend amy"), friendBrief("friend amy"))
+	w := friendWorld(t, friendBrief("friend"), friendBrief("friend"), friendBrief("friend"))
 	amy, bob := FriendRow("amy"), FriendRow("bob")
 	seats := func(running ...string) []FriendSeat {
 		return []FriendSeat{
@@ -143,7 +143,7 @@ func TestAFriendCardIsWorkingOnlyOnceTheFriendStartsIt(t *testing.T) {
 // oldest moves.
 func TestAFriendWritingWithinTheBoundKeepsHerUnstartedCards(t *testing.T) {
 	t.Parallel()
-	w := friendWorld(t, friendBrief("friend amy"))
+	w := friendWorld(t, friendBrief("friend"))
 	seat := func(active time.Time) []FriendSeat {
 		return []FriendSeat{{Name: "amy", Width: 1, Status: Up, Class: "flash", Active: active}, {Name: "bob", Width: 1, Status: Up, Class: "flash"}}
 	}
@@ -162,7 +162,7 @@ func TestAFriendWritingWithinTheBoundKeepsHerUnstartedCards(t *testing.T) {
 // the start bound while a card she started is working there, though her beat names nothing.
 func TestAFriendRunningAJobKeepsHerUnstartedCards(t *testing.T) {
 	t.Parallel()
-	w := friendWorld(t, friendBrief("friend amy"), friendBrief("friend amy"))
+	w := friendWorld(t, friendBrief("friend"), friendBrief("friend"))
 	seats := []FriendSeat{{Name: "amy", Width: 2, Status: Up, Class: "flash"}, {Name: "bob", Width: 1, Status: Up, Class: "flash"}}
 	w.must(func() Plan { p, _ := TickDeal(w.s, TickReq{Friends: seats}); return p }())
 	require.Equal(t, 2, w.s.Fleet.Count(FriendRow("amy"), Ready))

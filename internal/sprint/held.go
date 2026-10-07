@@ -556,17 +556,15 @@ func (c *held) waits(pr *Card) (why, root string, ok bool) {
 		return strings.Join(held, "; "), "", true
 	case Ready:
 		if OnlyFriend(pr) {
-			// the one hard pin (WHO: only friend <name>) waits for her up below her room,
-			// DealAhead times her width (friendDeal), whose beats and widths are the friends'
-			// records, not the tables'; every other card a friend may take is the fleet's
-			// when no friend takes it (WHO is a preference)
+			// A named WHO waits for its friend's availability and room; no fallback
+			// changes ownership (docs/SPEC-SPRINT.md, the WHO line).
 			name, _ := FriendCard(pr)
 			if wc := s.Fleet.Placed(WorkCardID(pr.ID, pr.Int("attempt"))); wc != nil && wc.Col == Withdrawn {
 				if from, _ := FriendOfRow(wc.F(FieldTakenFrom)); from != "" && from == name {
-					return "waits for only friend " + name + ", and it was taken back from her: give it back to her (nova-sprint friend give), unpin it (nova-sprint unpin), brief it for another friend, or drop it", "", true
+					return "waits for friend " + name + ", and it was taken back from her: give it back to her (nova-sprint friend give), unpin it (nova-sprint unpin), brief it for another friend, or drop it", "", true
 				}
 			}
-			return "waits for only friend " + name, "", true
+			return "waits for friend " + name, "", true
 		}
 		up := s.UpMembers()
 		if b := Bench(pr); len(b) > 0 && len(onlyBench(up, b)) == 0 {

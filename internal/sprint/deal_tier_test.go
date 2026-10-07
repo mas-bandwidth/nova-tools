@@ -50,8 +50,8 @@ func TestAFriendRowHoldsItsTiersUnlessTheCardIsPinnedToHer(t *testing.T) {
 		"s1-1": "gus flash",    // the attempt cap's friend card: pinned to gus by its WHO line
 		"s2-1": "fay flash",    // flash: the flash friend
 		"s2-2": "gus frontier", // frontier: the frontier friend
-		"s2-3": "pam pro",      // named fay, who does not do pro: passed over for the pro friend
 	}, held)
+	assert.Equal(t, Ready, w.s.StateOf("s2-3"), "named fay without pro waits for her")
 	assert.Equal(t, FriendRow("gus"), w.s.Primary("s1-1").F(FieldWho), "the one card outside her class is pinned to her")
 	assert.Empty(t, Check(w.s, nil))
 }

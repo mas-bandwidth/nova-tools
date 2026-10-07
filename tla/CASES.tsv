@@ -442,3 +442,5 @@ MCBusCursorBrokenAdvanceWithoutAck.cfg	MCBusCursor.tla	invariant	AdvanceOnlyPast
 MCBusCursorBrokenNearerCursorWins.cfg	MCBusCursor.tla	invariant	FurtherReadWins	ignore-terminal	buscursor	required	-
 MCBusCursorBrokenWriteWithoutAdvance.cfg	MCBusCursor.tla	invariant	NoWriteWithoutAdvance	ignore-terminal	buscursor	required	-
 MCDirtyTickRefused.cfg	MCDirtyTick.tla	pass	-	ignore-terminal	dirtytick-small	required	-
+MCDeal.cfg	MCDeal.tla	pass	-	ignore-terminal	deal	required	-
+MCDealBrokenWho.cfg	MCDeal.tla	invariant	WhoIsHonored	ignore-terminal	deal	required	-

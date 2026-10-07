@@ -403,6 +403,17 @@ func (a *app) coordinatorView(ctx context.Context, st *store.Store, all bool) (c
 		}
 	}
 
+	// SPEC-SPRINT WHO ownership: a ready named card waits for this friend's
+	// availability, rather than being handed to another row.
+	for _, pr := range s.Work.Column(sprint.Ready) {
+		name, named := sprint.FriendCard(pr)
+		if !named || name == "" || behindOf[pr.ID] {
+			continue
+		}
+		v.Items = append(v.Items, viewItem{K: "who:" + pr.ID, T: itemFriend, W: "WHO waits", N: 1,
+			S: pr.ID + " waits for friend " + name + " (WHO ownership pin)", Next: "nova-sprint card " + pr.ID})
+	}
+
 	// the sentinels reached, no judgment open on them
 	sentinels := sprintSentinels(s, "")
 	for _, x := range sentinels {

@@ -22,7 +22,7 @@ func givenAndDealt(t *testing.T, ta *testApp) {
 	var c cardView
 	ta.json("card s1-1", &c)
 	require.Equal(t, sprint.FriendRow("amy"), c.Work[0].Row)
-	ta.ok("friend take amy s1-1 --reason 'her harness was down'")
+	ta.ok("friend take amy --all-unstarted --reason 'her harness was down'")
 	ta.ok("tick")
 	ta.ok("tick")
 	ta.json("card s1-1", &c)
@@ -70,7 +70,7 @@ func TestFriendGiveRefusesACardNeverTakenFromHer(t *testing.T) {
 	assert.Contains(t, errs, "REFUSED s1-1: s1-1 is working, not ready or waiting")
 	assert.Contains(t, errs, "FRIEND-GIVE FAILED moved=0 refused=1")
 
-	ta.ok("friend take amy s1-1 s1-2")
+	ta.ok("friend take amy --all-unstarted")
 	code, _, errs = ta.do("friend give bob s1-1")
 	assert.Equal(t, 1, code)
 	assert.Contains(t, errs, "REFUSED s1-1: s1-1.w1 was never taken back from friend bob (taken from friend amy)")

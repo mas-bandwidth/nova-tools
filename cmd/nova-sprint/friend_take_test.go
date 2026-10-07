@@ -50,7 +50,7 @@ func queueStates(t *testing.T, root, friend string) map[string]string {
 	return out
 }
 
-func TestFriendTakeTakesBackAnUnstartedCardAndTheTickDealsItToAnother(t *testing.T) {
+func TestFriendTakeMovesAnUntakenCardToTheNamedFriendsRow(t *testing.T) {
 	t.Parallel()
 	ta, root := takeApp(t, 1, nil, "amy", "bob")
 	ta.ok("friend down bob")
@@ -63,8 +63,8 @@ func TestFriendTakeTakesBackAnUnstartedCardAndTheTickDealsItToAnother(t *testing
 	ta.beatUp("bob")
 
 	assert.Contains(t, ta.dry("friend take amy s1-1 --dry-run"), "FRIEND-TAKE DRY-RUN friend=amy cards=s1-1 all-unstarted=false; nothing was changed")
-	out := ta.ok("friend take amy s1-1 --reason 'she is on another job'")
-	assert.Contains(t, out, "s1-1.w1 withdrawn gen=2")
+	out := ta.ok("friend take bob s1-1 --reason 'move ownership'")
+	assert.Contains(t, out, "member=friend.bob gen=2 ready")
 	assert.Contains(t, out, "FRIEND-TAKE OK moved=1 refused=0")
 	ta.ok("friend sync --root " + root)
 	assert.Equal(t, "taken", queueStates(t, root, "amy")["s1-1.w1"], "her queue file says it is not hers to start")
@@ -74,10 +74,10 @@ func TestFriendTakeTakesBackAnUnstartedCardAndTheTickDealsItToAnother(t *testing
 	ta.json("card s1-1", &c)
 	require.Len(t, c.Work, 1, "the same card, no second attempt")
 	assert.Equal(t, sprint.FriendRow("bob"), c.Work[0].Row, "dealt to the other friend")
-	assert.Equal(t, "3", c.Work[0].F("gen"))
+	assert.Equal(t, "2", c.Work[0].F("gen"))
 	assert.Equal(t, sprint.Working, c.Primary.Col)
-	out = ta.ok("friend sync --root " + root)
-	assert.Contains(t, out, "FRIEND-CARD DELIVERED friend=bob card=s1-1.w1 job=s1-1.w1.g3 branch=sprint/s1-1.w1.g3.e0")
+	assert.Equal(t, "friend.bob", c.Who, "card --json carries the stored ownership pin")
+	ta.ok("friend sync --root " + root)
 	assert.Equal(t, "queued", queueStates(t, root, "bob")["s1-1.w1"], "ready on his row until he starts it")
 	ta.clean()
 }
@@ -92,17 +92,17 @@ func TestFriendTakeRefusesAStartedCardAndAnotherFriendsCard(t *testing.T) {
 	// Default: take what you can, refuse the rest
 	code, _, errs := ta.do("friend take amy s1-1 s1-2")
 	assert.Equal(t, 1, code)
-	assert.Contains(t, errs, "REFUSED s1-1: s1-1.w1 has started: a push on its branch sprint/s1-1.w1.g1.e0 at "+landHead+"; it stays with friend amy and finishes")
+	assert.Contains(t, errs, "REFUSED s1-1: s1-1.w1 is taken in lane friend.amy:")
 	assert.Contains(t, errs, "FRIEND-TAKE FAILED moved=1 refused=1", "takes s1-2 and refuses s1-1")
 
 	ta.ok("friend beat amy --running s1-2.w1")
 	code, _, errs = ta.do("friend take amy s1-2")
 	assert.Equal(t, 1, code)
-	assert.Contains(t, errs, "REFUSED s1-2: s1-2.w1 has started: friend amy finished it")
+	assert.Contains(t, errs, "REFUSED s1-2: s1-2.w1 is taken in lane friend.amy:")
 
 	code, _, errs = ta.do("friend take bob s1-2")
 	assert.Equal(t, 1, code)
-	assert.Contains(t, errs, "REFUSED s1-2: s1-2.w1 is not dealt to friend bob")
+	assert.Contains(t, errs, "REFUSED s1-2: s1-2.w1 is taken in lane friend.amy:")
 	code, _, errs = ta.do("friend take cat s1-2")
 	assert.Equal(t, 1, code)
 	assert.Contains(t, errs, "no friend cat on the friends table")
