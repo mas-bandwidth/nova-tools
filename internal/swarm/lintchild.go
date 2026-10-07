@@ -104,7 +104,18 @@ const EmptyCardRemedy = "the card is empty, and a card is a child's whole brief:
 // LibrariesConsideredRemedy is what that token wants, in the remedies' table shape.
 const LibrariesConsideredRemedy = "a card that builds code carries one line `Libraries considered: <what the standard library and the adopted modules offered, and why each was used or not>`, filled: a line that is empty after the colon or still carries an angle-bracket placeholder does not count; search before any helper of more than about thirty lines is written, and name what was found; `nova-swarm template --name card` prints the line"
 
+// HonestAttributionName is the name of the rule that checks for honest attribution.
+const HonestAttributionName = "honest-attribution"
+
+// HonestAttributionCheck is the token of a finding for a hiding phrase.
+const HonestAttributionCheck = "rule-" + HonestAttributionName
+
+// HonestAttributionRemedy is what that token wants, in the remedies' table shape.
+const HonestAttributionRemedy = "a brief must never tell a worker to hide or misstate its model or harness: name the actual model and harness; a line that says `never claim one you are not` passes"
+
 var (
+	// childAttributionHidingRE matches a line that tells a worker to hide/misstate model/harness.
+	childAttributionHidingRE = regexp.MustCompile(`(?i)\b(?:never\s+claim\s+(?:Claude|model|another)|do\s+not\s+mention|sign\s+as\s+another|Co-Authored-By.*(?:fixed|specified)|omit\s+model|hides?)`)
 	// childLibrariesLine is a `Libraries considered:` line; group 1 is what follows the colon.
 	childLibrariesLine = regexp.MustCompile(`^[ \t]*(?:[-*][ \t]+)?Libraries considered:(.*)$`)
 	// childPlaceholder is an angle-bracket placeholder the writer has not filled.
@@ -501,6 +512,12 @@ func LintCardChildWith(raw []byte, rules []ChildRule) []CardHeaderFinding {
 			out = append(out, CardHeaderFinding{Check: LibrariesConsideredRule, Line: 1, Excerpt: "missing: Libraries considered: <what was found, why used or not>"})
 		}
 	}
+	// honest-attribution check: refuse briefs that tell workers to hide/misstate their model/harness
+	for _, ln := range childLinesRaw(raw) {
+		if childAttributionHidingRE.MatchString(ln.line) {
+			out = append(out, CardHeaderFinding{Check: HonestAttributionCheck, Line: ln.n, Excerpt: ln.line})
+		}
+	}
 	return out
 }
 
@@ -522,6 +539,24 @@ func childLines(raw []byte, fn func(n int, line string)) {
 			fn(n, line)
 		}
 	}
+}
+
+// childLinesRaw returns all lines with their numbers, skipping the RULES paragraph.
+func childLinesRaw(raw []byte) []struct {
+	n    int
+	line string
+} {
+	var out []struct {
+		n    int
+		line string
+	}
+	childLines(raw, func(n int, line string) {
+		out = append(out, struct {
+			n    int
+			line string
+		}{n, line})
+	})
+	return out
 }
 
 // childClause is the text of line before a command that belongs to the command's own
