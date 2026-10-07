@@ -5964,6 +5964,25 @@ check, so each passes and says so; the bars are in
 release-check-acceptance-r-b.w3. Test:
 `TestReleaseCheckRunsTheAcceptanceSentinelsSixChecks`.
 
+### release-check-merge-queue-p90-b.w7
+
+`release check` also runs `merge-queue-p90`, the merge queue's age check (the
+owner, 2026-10-04: "We cannot let merges get behind like this"): its flags are
+`--window` (how far back a card's merging counts; default 24 h) and
+`--merge-p90` (the bar; default 30 m, because a card's merge is a push and a
+green gate and a longer wait is the queue, not the card). It is the pure
+function `sprint.MergeQueueP90` over `sprint.ReleaseFacts`: from the log's
+work-table moves it takes the time each card spent in the `merging` column,
+from entering it to landing or to leaving it, with a card still merging
+counting with its age now and a card counting when any of its merging
+overlapped the window; it takes the p90 of those ages by the nearest rank
+(`sprint.PercentileNearestRank`) and fails above the bar, its evidence naming
+the p90, the number of cards and the oldest card still merging, or passes
+saying n=0 when no card merged in the window. The verb binds the window and
+the bar with the rest of the facts, so a unit test fakes them and opens no
+socket. Tests: `TestReleaseCheckFailsWhenTheMergeQueueAgeP90IsOverTheBar`,
+`TestPercentileNearestRankIsTheValueAtItsRank`.
+
 ## 12. The driver
 
 `nova-sprint play` plays the outside world on a tick (`--every`), seeded

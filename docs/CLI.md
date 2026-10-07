@@ -1136,7 +1136,7 @@ nova-sprint init [--readers <a,b,...>] [--members <m1[:<width>],m2,...>] [--coor
 nova-sprint add --stream <s> (<id>... | --count <n> | --sentinel <id> | --brief-dir <dir> | --brief-file <f1> --brief-file <f2>...: a card per file, its id the file's name without .md) [--needs <a,b>] [--before <id> | --after <id> | --score <n>] [--brief <text> | --brief-file <path>: once, the brief of the cards named] [--rules <file>] [--replaces <old-id>[,<old-id>]]
 nova-sprint quack --streams <a,b,...> --count <n> --repo <clone url> [--tiers <t,...>] [--base <branch>]
 nova-sprint release (<sentinel>... | <selector> [--dry-run]) --reason <text> [--answers <note>]
-nova-sprint release check [--json] [--streams <glob>] [--check <name>]...
+nova-sprint release check [--json] [--streams <glob>] [--window <duration>] [--merge-p90 <duration>] [--check <name>]...
 nova-sprint resolve [<id>...] [--stream <s>] [--limit <n>]
 nova-sprint start
 nova-sprint stop
@@ -1602,6 +1602,20 @@ open judgment names the stream). One check alone: `release check --check cards-s
 stream named there is no acceptance to check, so each passes and says so. The
 contract is [SPEC-RELEASE.md](SPEC-RELEASE.md) section 16, subsection
 release-check-acceptance-r-b.w3.
+
+### release-check-merge-queue-p90-b.w7: the merge queue's p90
+
+`nova-sprint release check` also runs `merge-queue-p90`: over the last
+`--window` (default 24 h) it takes the p90, by the nearest rank, of the time
+each card spent in merging, read from the log's work-table moves into and out
+of the `merging` column (a card still merging counts with its age now), and
+fails above `--merge-p90` (default 30 m). The fail line prints the p90, the
+number of cards and the oldest card still merging. One check alone:
+`release check --check merge-queue-p90`; a shorter bar:
+`release check --merge-p90 15m`; a week's window:
+`release check --window 168h`. With no merge in the window it passes and says
+n=0. The contract is [SPEC-RELEASE.md](SPEC-RELEASE.md) section 16, subsection
+release-check-merge-queue-p90-b.w7.
 
 ## nova-sandbox
 
