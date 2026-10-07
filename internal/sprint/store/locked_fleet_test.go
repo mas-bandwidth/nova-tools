@@ -13,11 +13,16 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
-// lockedFleet is the fleet table's definition as the locked store holds it: the
-// eleven columns init created before 2026-10-01 (git show
-// 36aa250fb^:internal/sprint/schema.go), pinned here as a literal so a build that
-// writes a column the store does not have is red.
-const lockedFleet = "ready,working,width:text:sum,done:sum(ok+failed),okpct:pct(ok/ok+failed):pooled:ok%,status:text,load:text,withdrawn,ok,failed,ctl:first:none"
+// storeFleet is the fleet table's definition as the live store holds it: the eleven
+// columns init created before 2026-10-01 (git show 36aa250fb^:internal/sprint/schema.go),
+// pinned here as a literal so a tick that writes a column the store does not have is red.
+const storeFleet = "ready,working,width:text:sum,done:sum(ok+failed),okpct:pct(ok/ok+failed):pooled:ok%,status:text,load:text,withdrawn,ok,failed,ctl:first:none"
+
+// lockedFleet is the fleet table's definition as internal/sprint/TABLES.lock holds it: the
+// store's, and the hidden defect column after failed (2026-10-05, a brief defect), which only
+// a finish on a brief defect writes and the store takes before that build is installed
+// (nova-table col add fleet defect --after failed; nova-table set fleet --hide defect).
+const lockedFleet = "ready,working,width:text:sum,done:sum(ok+failed),okpct:pct(ok/ok+failed):pooled:ok%,status:text,load:text,withdrawn,ok,failed,defect,ctl:first:none"
 
 // colChecked is the mem twin refusing a display cell of a column its table does
 // not define, as the real store does (ntable: "no such column").
@@ -44,25 +49,27 @@ func (c colChecked) RowSet(ctx context.Context, table, row string, texts map[str
 	return c.Mem.RowSet(ctx, table, row, texts)
 }
 
-// A store whose fleet table was created with the locked eleven-column definition
-// is ticked by this build, a member up and a card ready, without an error: the
-// tick writes no fleet cell the locked table does not have, and the build's own
-// definition is the locked one.
+// A store whose fleet table was created with the eleven-column definition is ticked by
+// this build, a member up and a card ready, without an error: the tick writes no fleet
+// cell that table does not have, and the build's own definition is the locked one.
 func TestATickOnAStoreWithTheLockedFleetTableWritesNoColumnItLacks(t *testing.T) {
 	t.Parallel()
-	cols, err := ntable.ParseColumns(lockedFleet)
+	cols, err := ntable.ParseColumns(storeFleet)
 	require.NoError(t, err)
 	require.Len(t, cols, 11)
+	lockedCols, err := ntable.ParseColumns(lockedFleet)
+	require.NoError(t, err)
 	h := routeHarness(t, route("flash-a", "flash"))
 	h.addReady("s1", 1, briefOf("flash", "")) // dealt on flash (route.go, tierLadder)
 	h.startMachine()
 	name := h.st.Names.Table(sprint.Fleet)
-	// the twin's fleet table made the locked store's: its definition, and no cell of a
+	// the twin's fleet table made the live store's: its definition, and no cell of a
 	// column outside it (the locked store never had one to write)
 	h.m.mu.Lock()
 	ft := h.m.tables[name]
 	ft.def.Columns = cols
 	locked := ft.def
+	locked.Columns = lockedCols
 	for _, ep := range ft.epochs {
 		for _, texts := range ep.texts {
 			for k := range texts {

@@ -2,9 +2,11 @@ package sprint
 
 import (
 	"fmt"
+	"log"
 	"maps"
 	"slices"
 	"strconv"
+	"sync"
 	"time"
 )
 
@@ -381,6 +383,12 @@ func FriendWorked(s *Snapshot, f string, w FriendWork) (time.Time, string) {
 	var at time.Time
 	what := ""
 	see := func(t time.Time, word string) {
+		// A stamp after the server's clock is that clock. Zero now is not a
+		// clock, and clamping to it would drop the evidence (see uses After).
+		if s != nil && !s.Now.IsZero() && t.After(s.Now) {
+			noteFutureEvidence(f, t, s.Now, word)
+			t = s.Now
+		}
 		if t.After(at) {
 			at, what = t, word
 		}
@@ -429,4 +437,35 @@ func FriendCardMoved(s *Snapshot, f string) time.Time {
 		}
 	}
 	return at
+}
+
+// futureEvidenceOnce is the log of a stamp dated after the server's clock,
+// once per friend and stamp. The tick calls FriendWorked every pass, and a
+// parallel test must not swap a process logger to count the line.
+var futureEvidenceOnce sync.Map
+
+func futureEvidenceKey(friend string, stamped time.Time) string {
+	return friend + "\x00" + stamped.UTC().Format(time.RFC3339Nano)
+}
+
+// futureEvidenceLogCount is how many times friend f's evidence stamped at
+// stamped was logged for being after the server's clock. The stall ladder
+// logs each such stamp once.
+func futureEvidenceLogCount(friend string, stamped time.Time) int {
+	v, ok := futureEvidenceOnce.Load(futureEvidenceKey(friend, stamped))
+	if !ok {
+		return 0
+	}
+	n, _ := v.(int)
+	return n
+}
+
+// noteFutureEvidence counts a future stamp as the server's now and logs that
+// once. stamped is the evidence time before the clamp.
+func noteFutureEvidence(friend string, stamped, now time.Time, word string) {
+	if _, loaded := futureEvidenceOnce.LoadOrStore(futureEvidenceKey(friend, stamped), 1); loaded {
+		return
+	}
+	log.Printf("friend %s evidence %s dated %s, after the server's clock %s: counted as now",
+		friend, word, stamped.UTC().Format(time.RFC3339), now.UTC().Format(time.RFC3339))
 }

@@ -141,17 +141,17 @@ func CardNamesRepo(card []byte) bool {
 }
 
 // CardStageBranch is the branch the staged checkout is on, so the card commits on a named
-// branch rather than a detached HEAD: rowan/<label> from line 1 (RESULT: <label> sha=...),
-// rowan/card when line 1 names no label.
+// branch rather than a detached HEAD: worker/<label> from line 1 (RESULT: <label> sha=...),
+// worker/card when line 1 names no label.
 func CardStageBranch(card []byte) string {
 	first, _, _ := strings.Cut(string(card), "\n")
 	first = strings.TrimSpace(first)
 	first = strings.TrimPrefix(first, "RESULT:")
 	first = strings.TrimPrefix(first, "RESULT")
 	if f := strings.Fields(first); len(f) > 0 && cardLabelRE.MatchString(f[0]) {
-		return "rowan/" + f[0]
+		return "worker/" + f[0]
 	}
-	return "rowan/card"
+	return "worker/card"
 }
 
 // FindBenchMirror finds the path to the bench's local mirror for baseRepo.
@@ -283,7 +283,7 @@ func WriteStageTimeoutResult(jobDir, bench string, secs int) (string, error) {
 
 // stageWaitDelay bounds how long a staging git call waits for its pipes after the deadline
 // kill. git clone runs helpers (git-remote-https, index-pack) that inherit the output pipe;
-// killing git alone left them holding it, which is how hulk had 193 clones stuck 43-65
+// killing git alone left them holding it, which is how a bench had 193 clones stuck 43-65
 // minutes (#2882). Each call leads its own process group, the deadline kills the group, and
 // WaitDelay closes the pipes a bounded time after that, so the 120 s timeout is hard.
 const stageWaitDelay = 2 * time.Second
@@ -551,10 +551,10 @@ func StageCard(opts StageOptions) (StageResult, error) {
 
 	// A checkout whose identity could not be set would take the model's commits under no
 	// name, found only when it commits: the stage fails here instead, saying which.
-	if out, err := stageCmd(ctx, "-C", opts.TargetDir, "config", "user.name", "Rowan").CombinedOutput(); err != nil {
+	if out, err := stageCmd(ctx, "-C", opts.TargetDir, "config", "user.name", "worker").CombinedOutput(); err != nil {
 		return fail("config user.name", out, err)
 	}
-	if out, err := stageCmd(ctx, "-C", opts.TargetDir, "config", "user.email", "rowan@mas-bandwidth.com").CombinedOutput(); err != nil {
+	if out, err := stageCmd(ctx, "-C", opts.TargetDir, "config", "user.email", "worker@example.com").CombinedOutput(); err != nil {
 		return fail("config user.email", out, err)
 	}
 

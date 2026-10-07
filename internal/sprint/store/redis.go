@@ -703,6 +703,40 @@ func (r *Redis) commit(ctx context.Context, p redis.Pipeliner, op OpRecord) erro
 		}
 		p.Set(ctx, r.Names.Key(friendHealthKey(op.Health.Friend)), string(rec), 0)
 	}
+	if len(op.CloseTimers) > 0 {
+		raw, err := r.C.Get(ctx, r.Names.Key(keyTimers)).Result()
+		if err != nil && !errors.Is(err, redis.Nil) {
+			return err
+		}
+		if raw != "" {
+			var ts sprint.Timers
+			if err := json.Unmarshal([]byte(raw), &ts); err != nil {
+				return err
+			}
+			closing := map[string]bool{}
+			for _, id := range op.CloseTimers {
+				closing[id] = true
+			}
+			var rem []sprint.Timer
+			for _, tm := range ts.Open {
+				if !closing[tm.ID] {
+					rem = append(rem, tm)
+				}
+			}
+			ts.Open = rem
+			rec, err := json.Marshal(ts)
+			if err != nil {
+				return err
+			}
+			p.Set(ctx, r.Names.Key(keyTimers), string(rec), 0)
+		}
+	} else if op.Timers != nil {
+		rec, err := json.Marshal(op.Timers)
+		if err != nil {
+			return err
+		}
+		p.Set(ctx, r.Names.Key(keyTimers), string(rec), 0)
+	}
 	return nil
 }
 

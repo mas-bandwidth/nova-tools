@@ -33,6 +33,7 @@ const ledgerCeilingPrefix = "# ceiling:"
 const (
 	slowTestsAllowlistPath   = "internal/ci/slow-tests_allowlist.txt"
 	sleepsSkipsAllowlistPath = "internal/ci/sleeps-skips_allowlist.txt"
+	unitSocketsSeedDir       = "internal/ci/testdata/unit-sockets/"
 )
 
 // parseLedgerRows reads a counted shard's text into its row keys (the first
@@ -299,9 +300,18 @@ func ledgerRatchetShards(root string, atBase baseLookup) ([]string, error) {
 }
 
 // checkCountedShards checks every counted shard against its merge base version.
+// The newly introduced unit-sockets ledger is its one seed when no shard exists
+// in the base (docs/SPEC-CI.md, `unit-sockets`); after that, every shard ratchets.
 func checkCountedShards(root, base string, shards []string, atBase baseLookup) ([]string, error) {
+	unitSocketsSeed, err := unitSocketsLedgerIsNew(shards, atBase)
+	if err != nil {
+		return nil, err
+	}
 	var problems []string
 	for _, rel := range shards {
+		if unitSocketsSeed && strings.HasPrefix(rel, unitSocketsSeedDir) {
+			continue
+		}
 		headBytes, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", rel, err)
@@ -313,6 +323,27 @@ func checkCountedShards(root, base string, shards []string, atBase baseLookup) (
 		problems = append(problems, shardProblems(rel, base, baseText, ok, headBytes)...)
 	}
 	return problems, nil
+}
+
+// unitSocketsLedgerIsNew reports whether this tree introduces its first
+// unit-sockets shard; the initial seed is exempt only while no shard is in the
+// merge base (docs/SPEC-CI.md, `unit-sockets`).
+func unitSocketsLedgerIsNew(shards []string, atBase baseLookup) (bool, error) {
+	hasUnitSockets := false
+	for _, rel := range shards {
+		if !strings.HasPrefix(rel, unitSocketsSeedDir) {
+			continue
+		}
+		hasUnitSockets = true
+		_, exists, err := atBase(rel)
+		if err != nil {
+			return false, fmt.Errorf("%s at the merge base: %w", rel, err)
+		}
+		if exists {
+			return false, nil
+		}
+	}
+	return hasUnitSockets, nil
 }
 
 // checkSlowTestsLedger checks slow-tests_allowlist.txt against the merge base.
@@ -418,6 +449,36 @@ func TestClassRuleLedgersOnlyShrinkAgainstMergeBase(t *testing.T) {
 	for _, problem := range problems {
 		t.Errorf("%s", problem)
 	}
+}
+
+// TestUnitSocketsLedgerSeedsOnlyWhenTheBaseHasNoShard pins the one-time seed
+// exception for the newly introduced rule (docs/SPEC-CI.md, `unit-sockets`).
+func TestUnitSocketsLedgerSeedsOnlyWhenTheBaseHasNoShard(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	newShard := unitSocketsSeedDir + "cmd/nova-friend.txt"
+	existingShard := unitSocketsSeedDir + "cmd/nova-sandbox.txt"
+	writeLedgerGuardFixture(t, root, newShard, "# ceiling: 1\ncmd/nova-friend/inbox_test.go:socket 1 reason\n")
+	writeLedgerGuardFixture(t, root, existingShard, "# ceiling: 1\ncmd/nova-sandbox/main_test.go:socket 1 reason\n")
+	shards := []string{existingShard, newShard}
+	missing := func(string) (string, bool, error) { return "", false, nil }
+
+	problems, err := checkCountedShards(root, "123456789abcdef", shards, missing)
+	require.NoError(t, err)
+	require.Empty(t, problems, "the unit-sockets ledger is seeded at its introduction")
+
+	baseHasAnotherShard := func(rel string) (string, bool, error) {
+		if rel == existingShard {
+			return "# ceiling: 1\ncmd/nova-sandbox/main_test.go:socket 1 reason\n", true, nil
+		}
+		return "", false, nil
+	}
+	problems, err = checkCountedShards(root, "123456789abcdef", shards, baseHasAnotherShard)
+	require.NoError(t, err)
+	require.Equal(t, []string{
+		newShard + " is not in the merge base 123456789: a new shard is all growth; justify it beside the rule it measures",
+	}, problems, "a later new package shard remains growth after the ledger has a base")
 }
 
 func testCountedShardInMemory(t *testing.T) {
