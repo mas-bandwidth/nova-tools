@@ -430,6 +430,40 @@ func TestPromoteCarriesACutToARecordedPromotion(t *testing.T) {
 		ta.clean()
 	})
 
+	t.Run("red check then the tip moves", func(t *testing.T) {
+		t.Parallel()
+		w := newPromoteTwin(t)
+		f := &fakeForge{
+			checks: []promoteCheck{{Name: "functional", Bucket: "pending"}},
+			redRun: &promoteRun{ID: 7, Name: "ci", Status: "completed", Conclusion: "failure"},
+			redLog: ghLog("hosted (ubuntu-latest)", "--- FAIL: TestTree (0.01s)", "    tree_test.go:9: the tree is red", "FAIL", "FAIL\tgithub.com/owner/name/cmd/tree\t0.10s"),
+		}
+		useForge(t, w, f)
+		ta := promoteApp(t, w)
+
+		// pass 1: the red check raises one judgment and records it in the clone
+		// (promote.judged), so a later pass knows this promotion was judged
+		code, out, errs := ta.do(args + w.dir)
+		require.Equal(t, 1, code, "%s\n%s", out, errs)
+		require.Contains(t, out, "JUDGMENT promotion red branch=promo/2030-01-02-1")
+		require.Contains(t, w.state(), "promote.judged=promo/2030-01-02-1", "the judgment is recorded, so a later pass can tell it was raised")
+
+		// the fix lands: origin's sprint tip moves past the judged promotion
+		w.onLive(map[string]string{"fix": "fix\n"})
+		f.redRun = nil
+		f.checks = []promoteCheck{{Name: "functional", Bucket: "pass"}}
+		f.merged = func(head string) string { return w.remote("refs/heads/" + head) }
+
+		// pass 2: the tip moved, so the judged promotion is forgotten and the
+		// next pass cuts afresh instead of keeping the old pull request
+		code2, out2, errs2 := ta.do(args + w.dir)
+		require.Zero(t, code2, "%s\n%s", out2, errs2)
+		require.Contains(t, out2, "PROMOTE CUT branch=promo/2030-01-02-2", "a moved tip cuts afresh, never the judged pull request")
+		require.Equal(t, "promo/2030-01-02-2", f.head)
+		require.NotEmpty(t, ta.promotedSha(), "the fresh cut is carried to the recorded merge")
+		ta.clean()
+	})
+
 	t.Run("every gh call is the forge's", func(t *testing.T) {
 		t.Parallel()
 		files, err := filepath.Glob("promote*.go")

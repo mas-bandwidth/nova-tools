@@ -541,7 +541,7 @@ func (p *promoter) watch(ctx context.Context, o promoteOutcome, number string, s
 				fmt.Fprintf(stdout, "PROMOTE WAIT branch=%s judgment=already\n", oneline.Field(o.Branch))
 				return o, 1
 			}
-			p.judged = o.Branch
+			p.markJudged(ctx, o.Branch)
 			o.Judgment = p.redJudgment(ctx, rRuns, "a check of the pull request failed", "the pull request of "+o.Branch, promoteDecisions, stderr)
 			fmt.Fprintf(stdout, "JUDGMENT promotion red branch=%s decisions=%s cards=%s open=%s\n%s\n", oneline.Field(o.Branch), strings.Join(o.Judgment.Decisions, ","),
 				oneline.Field(dashed(strings.Join(o.Judgment.Cards, ","))), oneline.Field(dashed(strings.Join(o.Judgment.Open, ","))), o.Judgment.Tail)
@@ -653,9 +653,7 @@ func (p *promoter) judge(ctx context.Context, o promoteOutcome, kind, check, log
 		fmt.Fprintf(stdout, "PROMOTE WAIT branch=%s judgment=already\n", oneline.Field(o.Branch))
 		return o, 1
 	}
-	p.judged = o.Branch
-	// ignored: the judgment is raised either way; without the mark a later run raises it once more
-	_, _ = p.git(ctx, "config", "--local", "promote.judged", o.Branch)
+	p.markJudged(ctx, o.Branch)
 	o.Judgment = &promoteJudgment{
 		What:      "a " + kind + ": " + check,
 		Check:     check,
@@ -667,6 +665,18 @@ func (p *promoter) judge(ctx context.Context, o promoteOutcome, kind, check, log
 		fmt.Fprintln(stdout, o.Judgment.Tail)
 	}
 	return o, 1
+}
+
+// markJudged records the branch a judgment was raised for in the clone's local
+// config (promote.judged), so a later run does not raise it again while the
+// sprint tip stands; once the tip moves (the fix landed) pending forgets the
+// promotion and the next pass cuts afresh (docs/SPEC-SPRINT.md, promote). A
+// failed config write is ignored: the judgment is raised either way, and
+// without the mark a later run raises it once more.
+func (p *promoter) markJudged(ctx context.Context, branch string) {
+	p.judged = branch
+	// ignored: the judgment is raised either way; without the mark a later run raises it once more
+	_, _ = p.git(ctx, "config", "--local", "promote.judged", branch)
 }
 
 // record records the merge: refs/promoted/last moves to it, so the next pass's
