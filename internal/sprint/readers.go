@@ -366,7 +366,7 @@ func ReadCardForAsk(s *Snapshot, primary string, attempt int, reader string) (id
 	if existing == nil {
 		return plain, true
 	}
-	// Workaround (Rowan, 2026-10-06 7:30 PM ET, Glenn: "fix it now, to work around it"): a
+	// Workaround (the coordinator, 2026-10-06 7:30 PM ET; the owner: "fix it now, to work around it"): a
 	// read card retired for any reason without a verdict (away, refused, returned,
 	// levelled, taken back by a hold or a reader restart) leaves the reader askable again
 	// under the second identity; before, only away and refused did, and tonight's reader
@@ -427,7 +427,7 @@ func ReadsWanted(s *Snapshot, pr *Card) int {
 
 // readsWantedOf is ReadsWanted over the reads that stand, live.
 func readsWantedOf(pr *Card, live []*Card) int {
-	// Workaround (Rowan, 2026-10-06 7:47 PM ET; Glenn 6:02 PM: "send out multiple consumer
+	// Workaround (the coordinator, 2026-10-06 7:47 PM ET; the owner: 6:02 PM: "send out multiple consumer
 	// cards in ||"): a card's reads are asked together, not one after the other; a read
 	// outstanding counts toward the reads it needs, and only a broken read stops the rest.
 	// Read cards replace this.
