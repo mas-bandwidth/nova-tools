@@ -61,6 +61,9 @@ type WhereRecord struct {
 	FleetRev  uint64                    `json:"fleet_rev,omitempty"`
 	RowCards  map[string]map[string]int `json:"row_cards,omitempty"`
 	ReadCards sprint.ReadCardCounts     `json:"read_cards"`
+	// Exclusions is each fleet row's refused, withdrawn and provider counts
+	// (sprint.RowExclusions). where copies the non-zero ones beside ok%.
+	Exclusions map[string]sprint.ExclusionCounts `json:"exclusions,omitempty"`
 }
 
 // whereOf is the where record of a snapshot holding every card of the work
@@ -79,6 +82,7 @@ func whereOf(s *sprint.Snapshot, m Machine, now time.Time) WhereRecord {
 		r.FleetRev = s.Fleet.Revision
 	}
 	r.RowCards, r.ReadCards = sprint.RowCardCounts(s)
+	r.Exclusions = sprint.RowExclusions(s)
 	for _, at := range sprint.RecentLandings(landed, m.Spans, m.FirstStart(s.Cleared), now) {
 		r.Landings = append(r.Landings, at.Unix())
 	}
@@ -287,8 +291,9 @@ type WhereFacts struct {
 	// (sprint.FriendsDealtFleet); nil without the record.
 	DealtFleet map[string]int
 	// RowCards and ReadCards are the record's (sprint.RowCardCounts); nil and zero without it.
-	RowCards  map[string]map[string]int
-	ReadCards sprint.ReadCardCounts
+	RowCards   map[string]map[string]int
+	ReadCards  sprint.ReadCardCounts
+	Exclusions map[string]sprint.ExclusionCounts
 	// ReadsWaiting, Priorities and StreamPriorities are the record's (WhereRecord); zero
 	// without the record.
 	ReadsWaiting     int
@@ -344,7 +349,7 @@ func (st *Store) WhereFacts(ctx context.Context, workRev uint64) (WhereFacts, er
 		if r, ok := readWhere(vals[2], oks[2]); ok && r.Epoch == st.epoch && (r.Rev == workRev || st.keptBy(r, f.Machine, f.Heartbeat)) {
 			f.Held, f.Critical, f.Tiers, f.Streams, f.StageTimes, f.DealtFleet = r.Held, r.Critical, r.Tiers, r.Streams, r.StageTimes, r.DealtFleet
 			f.ReadsWaiting, f.Priorities, f.StreamPriorities = r.ReadsWaiting, r.Priorities, r.StreamPriorities
-			f.RowCards, f.ReadCards = r.RowCards, r.ReadCards
+			f.RowCards, f.ReadCards, f.Exclusions = r.RowCards, r.ReadCards, r.Exclusions
 			for _, s := range r.Landings {
 				f.Landed = append(f.Landed, time.Unix(s, 0).UTC())
 			}

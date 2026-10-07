@@ -744,6 +744,9 @@ func RouteStats(routes []Route, fleet *Table) []RouteStat {
 		if c.Col == Withdrawn && c.F(FieldProviderError) != "" {
 			continue // dealt again at the next deal: no take of it is on this route now
 		}
+		if c.Col == Withdrawn && (strings.HasPrefix(strings.TrimSpace(c.F("report")), cardhdr.EndLaunch) || c.F(FieldDefectClass) == DefectLaunchRefused) {
+			continue // a launch refusal ran no take of the route
+		}
 		if c.Col == DoneDefect {
 			continue // a brief defect (brief_defect.go): the brief's, never the route's
 		}

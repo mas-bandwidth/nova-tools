@@ -127,6 +127,8 @@ type coordCounts struct {
 	// Rules is the cards a rule answered in the last hour (sprint.RuleAnsweredWithin): the
 	// judgments the coordinator did not have to answer.
 	Rules int `json:"rules"`
+	// Defects is coordinator and provider blame over the last day (sprint.FindDefects).
+	Defects int `json:"defects"`
 }
 
 // coordinatorView is view coordinator's document, schema 1.
@@ -358,6 +360,7 @@ func (a *app) coordinatorView(ctx context.Context, st *store.Store, all bool) (c
 	for _, k := range sprint.RuleAnsweredWithin(append(s.Work.Cards(), s.Fleet.Cards()...), now, time.Hour) {
 		n.Rules += k
 	}
+	n.Defects = len(sprint.FindDefects(s, now.Add(-24*time.Hour), ""))
 	finished := func(row string) int {
 		f := 0
 		for _, c := range append(s.Fleet.Cell(row, sprint.DoneOK), s.Fleet.Cell(row, sprint.DoneFailed)...) {
@@ -687,9 +690,9 @@ func coordinatorSum(v coordinatorView, known bool, m store.Machine) string {
 	default:
 		state = "STOPPED"
 	}
-	sum := fmt.Sprintf("seat=%s machine=%s j=%d(max %d behind) alarms=%d asks=%d sentinels=%d friends=%d machines=%d | landed %d/%d +%d/30m | ready %d wait %d work %d review %d merge %d | busy %d/%d | rules %d/h",
+	sum := fmt.Sprintf("seat=%s machine=%s j=%d(max %d behind) alarms=%d asks=%d sentinels=%d friends=%d machines=%d | landed %d/%d +%d/30m | ready %d wait %d work %d review %d merge %d | busy %d/%d | rules %d/h | defects=%d",
 		cmp.Or(v.Seat, "-"), state, n.J, behind, types[itemAlarm], types[itemRequest], types[itemSentinel], types[itemFriend], types[itemMachine],
-		n.Landed, n.All, n.L30, n.Ready, n.Waiting, n.Working, n.Review, n.Merging, n.Busy, n.Width, n.Rules)
+		n.Landed, n.All, n.L30, n.Ready, n.Waiting, n.Working, n.Review, n.Merging, n.Busy, n.Width, n.Rules, n.Defects)
 	if v.Push != "" {
 		sum += " | push " + v.Push
 	}

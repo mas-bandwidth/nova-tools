@@ -3,6 +3,7 @@ package store
 import (
 	"fmt"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -99,7 +100,7 @@ func TestAFailedFinishGoesByItsAttemptDecisionAtItsClassBar(t *testing.T) {
 		{"a provider failure is never made failed work", both, providerLine, decide.ClassNothingToDo, 0.99, sprint.Withdrawn, "", false},
 		{"a provider failure is never made no result", both, providerLine, decide.ClassNoResult, 0.99, sprint.Withdrawn, "", false},
 		{"a staging refusal is the member's", both, cardhdr.EndStaging + ": no bench mirror", decide.ClassNoResult, 0.99, sprint.Withdrawn, "", false},
-		{"a launch refused is the member's", both, cardhdr.EndLaunch + ": no worktree", decide.ClassNoResult, 0.99, sprint.DoneFailed, "", false},
+		{"a launch refused is the member's", both, cardhdr.EndLaunch + ": no worktree", decide.ClassNoResult, 0.99, sprint.Withdrawn, "", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -116,8 +117,8 @@ func TestAFailedFinishGoesByItsAttemptDecisionAtItsClassBar(t *testing.T) {
 			assert.Equal(t, tc.used, wc.F(sprint.FieldDecidedUsed) == "yes")
 			used := map[bool]string{true: "yes", false: "no"}[tc.used]
 			d, _ := decide.ParseDecided(line)
-			staging := tc.report == cardhdr.EndStaging+": no bench mirror"
-			if staging {
+			memberRefusal := strings.HasPrefix(tc.report, cardhdr.EndStaging) || strings.HasPrefix(tc.report, cardhdr.EndLaunch)
+			if memberRefusal {
 				// no take ran: no decision of one is kept
 				assert.Empty(t, wc.F(sprint.FieldDecided))
 				assert.Empty(t, pr.F(sprint.PrefixDecided+d.Op))
@@ -125,7 +126,7 @@ func TestAFailedFinishGoesByItsAttemptDecisionAtItsClassBar(t *testing.T) {
 				assert.Equal(t, line, wc.F(sprint.FieldDecided), "the work card keeps the decision")
 				assert.Equal(t, fmt.Sprintf("%s p=%.3f used=%s", tc.class, tc.p, used), pr.F(sprint.PrefixDecided+d.Op))
 			}
-			if tc.col == sprint.Withdrawn && !staging {
+			if tc.col == sprint.Withdrawn && !memberRefusal {
 				assert.NotEmpty(t, wc.F(sprint.FieldTakeEnded), "an ended take")
 				assert.Zero(t, h.notesOf(sprint.NWorkFailed), "never a failed-work judgment")
 			}
