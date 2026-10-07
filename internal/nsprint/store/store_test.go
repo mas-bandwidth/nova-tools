@@ -18,6 +18,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// storeChildModeEnv picks which behavior a re-entered scenario test asserts,
+// one child per behavior instead of one process changing its environment.
+const storeChildModeEnv = "NOVA_NSPRINT_STORE_TEST_MODE"
+
 func startRedis(t *testing.T, extra ...string) string {
 	t.Helper()
 	return testutil.Start(t, extra...)
