@@ -1,0 +1,17 @@
+# net-allowlist.txt -- existing offenders of the `net` class test in
+# docs/SPEC-CI.md. One row: file:line kind date reason.
+#
+# The file only shrinks. An entry that names no offender on the tree is refused
+# (`fix the host; the allowlist only shrinks`), so fixing a test means deleting
+# its row in the same change, and a new row parks nothing. A row allows ONE
+# offender of its kind in its file and is matched by file and kind, never by
+# line, so a merge that shifts lines in a listed file does not turn dev red.
+#
+# These predate the checker. Each is a GitHub URL carried in a fixture, a fake
+# gh stub, a fake git remote or a card template -- text handed to a fake, not a
+# live unit-test endpoint. The allowed shape is httptest or a local fake.
+cmd/nova-sandbox/worktree_test.go:52 url 2026-09-18 a github.com clone URL in a fake git remote fixture, not a live call; landed on dev after the checker
+cmd/nova-swarm/lint_test.go:21 url 2026-09-17 a github.com clone line in a card template fixture, not a live call; predates the checker
+cmd/nova-swarm/lint_test.go:61 url 2026-09-17 a github.com clone line in a card template fixture, not a live call; predates the checker
+cmd/nova-swarm/lint_test.go:86 url 2026-09-17 a github.com clone line in a card template fixture, not a live call; predates the checker
+cmd/nova-swarm/profile_test.go:93 url 2026-09-17 a github.com clone line in a log fixture, not a live call; predates the checker

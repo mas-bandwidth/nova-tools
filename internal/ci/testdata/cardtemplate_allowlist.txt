@@ -1,0 +1,10 @@
+# The OS-specific spellings this repository still ships in a card template, one
+# `file:line spell date reason` per row. A card template is handed to a worker
+# verbatim and the estate is mixed (linux: hulk, vision, space, mini; darwin: the
+# Studio, the Air), so a GNU-only or Mac-only command here is a card that dies on
+# the first bench of the other kind. Every row is checked in BOTH directions: a
+# spelling not listed is a red run, and a listed spelling that has left is a stale
+# row and also a red run. This list only ever shrinks.
+#
+# Empty today (2026-09-18): no shipped card template names a command only one
+# platform has.

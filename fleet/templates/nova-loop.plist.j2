@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+{# fleet/loops.yml renders this for one loop record l on a darwin machine:
+   every value is the record's (l) or the host layout's (group_vars/all.yml). #}
+<!-- {{ loop_dir }}/com.nova.loop.{{ l.name }}.plist: written by fleet/loops.yml from the loop record {{ l.name }} -->
+<plist version="1.0">
+<dict>
+{% if not l.enabled %}
+<key>Disabled</key>
+<true/>
+{% endif %}
+<key>Label</key>
+<string>com.nova.loop.{{ l.name | e }}</string>
+{% if loop_system %}
+<key>UserName</key>
+<string>{{ ansible_user_id | e }}</string>
+{% endif %}
+<key>ProgramArguments</key>
+<array>
+{% for w in loop_exec %}
+<string>{{ w | e }}</string>
+{% endfor %}
+</array>
+<key>EnvironmentVariables</key>
+<dict>
+<key>HOME</key>
+<string>{{ nova_home | e }}</string>
+<key>PATH</key>
+<string>{{ nova_loop_path | e }}</string>
+<key>NOVA_SPRINT_REDIS</key>
+<string>{{ nova_redis_addr | e }}</string>
+</dict>
+<key>WorkingDirectory</key>
+<string>{{ nova_home | e }}</string>
+<key>RunAtLoad</key>
+<true/>
+{% if l.keepalive %}
+<key>KeepAlive</key>
+<true/>
+<key>ThrottleInterval</key>
+<integer>10</integer>
+{% else %}
+<key>StartInterval</key>
+<integer>{{ l.every }}</integer>
+{% endif %}
+{# A member (nova-swarm member) drains on SIGTERM: a bootout waits for it, nova_member_stop_timeout. #}
+{% if loop_member %}
+<key>ExitTimeOut</key>
+<integer>{{ nova_member_stop_timeout }}</integer>
+{% endif %}
+<key>AbandonProcessGroup</key>
+<true/>
+<key>StandardOutPath</key>
+<string>{{ nova_home | e }}/Library/Logs/nova-loop-{{ l.name | e }}.log</string>
+<key>StandardErrorPath</key>
+<string>{{ nova_home | e }}/Library/Logs/nova-loop-{{ l.name | e }}.log</string>
+</dict>
+</plist>

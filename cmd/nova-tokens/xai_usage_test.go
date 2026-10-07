@@ -1,0 +1,133 @@
+package main
+
+import (
+	"errors"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/tokens"
+)
+
+// TestXaiProviderOneUsageFileFoldsRow is #2671: --provider xai names one
+// usage.json. A fixture file folds to one ledger row. A missing path is
+// *XaiUsageMissingError, and a directory is not walked. A session store
+// planted under HOME is never opened.
+func TestXaiProviderOneUsageFileFoldsRow(t *testing.T) {
+	t.Parallel()
+	if os.Getenv(childTestEnv) == "" {
+		// HOME and USERPROFILE are a process-wide environment; the body runs in a child
+		// where this test owns the process, and sets them there.
+		reenterTest(t, "TestXaiProviderOneUsageFileFoldsRow")
+		return
+	}
+	dir := t.TempDir()
+	home := filepath.Join(dir, "home")
+	require.NoError(t, os.Setenv("HOME", home))
+	require.NoError(t, os.Setenv("USERPROFILE", home))
+	const bait = "424242"
+	write(t, filepath.Join(home, ".grok", "sessions", "encoded-cwd", "session-id", "usage.json"), `{
+  "sessionId": "bait-session",
+  "turns": [
+    {
+      "turnNumber": 1,
+      "endedAt": "2026-09-12T00:05:00Z",
+      "inputTokens": `+bait+`,
+      "outputTokens": 1,
+      "primaryModelId": "bait-model"
+    }
+  ]
+}`)
+	write(t, filepath.Join(dir, "other-usage.json"), `{
+  "sessionId": "sibling",
+  "turns": [
+    {
+      "turnNumber": 1,
+      "endedAt": "2026-09-12T00:05:00Z",
+      "inputTokens": 515151,
+      "outputTokens": 1,
+      "primaryModelId": "sibling-model"
+    }
+  ]
+}`)
+
+	out := mkdir(t, filepath.Join(dir, "out"))
+	grok := write(t, filepath.Join(dir, "usage.json"), `{
+  "sessionId": "fixture-grok-session",
+  "updatedAt": "2026-09-12T00:06:00Z",
+  "turns": [
+    {
+      "turnNumber": 1,
+      "endedAt": "2026-09-12T00:05:00Z",
+      "inputTokens": 1000,
+      "outputTokens": 100,
+      "costUsdTicks": 77,
+      "primaryModelId": "grok-model-example"
+    }
+  ]
+}`)
+	repos := reposFile(t, dir)
+	before := tokens.Opens()
+	r := invoke(t, "fold", "--out", out, "--day", "2026-09-12", "--repos", repos, "--provider", "xai:johnny="+grok)
+	wantExit(t, r, 0)
+	{
+		opened := tokens.Opens() - before
+		assert.Equal(t, int64(1), opened, "opened %d source files, want the one usage.json the flag names", opened)
+	}
+	wantContains(t, r.stdout, "TOKENS DAY day=2026-09-12 rows=1 ")
+	body := read(t, filepath.Join(out, "2026-09-12.tsv"))
+	const wantRow = "2026-09-12\tgrok-model-example\tunattributed\t1000\t100\t-\t-\t-\t0\tutc\txai:johnny"
+	var data []string
+	for _, line := range strings.Split(strings.TrimSuffix(body, "\n"), "\n") {
+		if strings.HasPrefix(line, "2026-") {
+			data = append(data, line)
+		}
+	}
+	require.Equal(t, 1, len(data), "folded rows = %q, want [%s]", data, wantRow)
+	require.Equal(t, wantRow, data[0], "folded rows = %q, want [%s]", data, wantRow)
+	require.False(t, strings.Contains(body, bait), "the fold counted a usage.json the flag did not name:\n%s\n%s", body, r.all())
+	require.False(t, strings.Contains(r.all(), bait), "the fold counted a usage.json the flag did not name:\n%s\n%s", body, r.all())
+	require.False(t, strings.Contains(body, "515151"), "the fold counted a usage.json the flag did not name:\n%s\n%s", body, r.all())
+
+	missing := filepath.Join(dir, "no-such-usage.json")
+	outMiss := mkdir(t, filepath.Join(dir, "out-missing"))
+	before = tokens.Opens()
+	miss := invoke(t, "fold", "--out", outMiss, "--day", "2026-09-12", "--repos", repos, "--provider", "xai:johnny="+missing)
+	wantExit(t, miss, 1)
+	{
+		opened := tokens.Opens() - before
+		assert.Equal(t, int64(0), opened, "a missing xai path opened %d source files; that is a scan", opened)
+	}
+	wantContains(t, miss.stderr, "TOKENS UNREADABLE")
+	wantContains(t, miss.stderr, "does not scan a session store")
+	require.False(t, strings.Contains(miss.all(), bait), "a missing path folded the session store:\n%s", miss.all())
+	_, err := tokens.ReadXaiUsageFile(missing)
+	var typed *tokens.XaiUsageMissingError
+	require.True(t, errors.As(err, &typed), "missing file: got %v, want *XaiUsageMissingError", err)
+	assert.Equal(t, missing, typed.Path, "missing error path = %q, want %q", typed.Path, missing)
+	assert.True(t, errors.Is(err, os.ErrNotExist), "missing file does not unwrap to not-exist: %v", err)
+
+	sessions := filepath.Join(home, ".grok", "sessions")
+	before = tokens.Opens()
+	_, err = tokens.ReadXaiUsageFile(sessions)
+	var notFile *tokens.XaiUsageNotFileError
+	require.True(t, errors.As(err, &notFile), "directory: got %v, want *XaiUsageNotFileError", err)
+	assert.False(t, errors.Is(err, os.ErrNotExist), "a directory that is there unwrapped as not-exist: %v", err)
+	{
+		opened := tokens.Opens() - before
+		assert.Equal(t, int64(0), opened, "reading the sessions directory opened %d files", opened)
+	}
+	outDir := mkdir(t, filepath.Join(dir, "out-dir"))
+	before = tokens.Opens()
+	dirFold := invoke(t, "fold", "--out", outDir, "--day", "2026-09-12", "--repos", repos, "--provider", "xai:johnny="+sessions)
+	wantExit(t, dirFold, 1)
+	{
+		opened := tokens.Opens() - before
+		assert.Equal(t, int64(0), opened, "fold of a directory opened %d source files; that is a scan", opened)
+	}
+	wantContains(t, dirFold.stderr, "does not scan a directory")
+	require.False(t, strings.Contains(dirFold.all(), bait), "a directory flag folded the session store:\n%s", dirFold.all())
+}

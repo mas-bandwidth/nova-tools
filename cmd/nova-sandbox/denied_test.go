@@ -1,0 +1,155 @@
+package main
+
+import (
+	"bytes"
+	"io/fs"
+	"os"
+	"strings"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// posixDirs makes the local stat answer the same question on every platform. These are
+// macOS's own log paths, and whether `/opt` is a directory is not a fact about the machine
+// running the test — without this, the suite was asserting that the READER has an /opt,
+// which is true on the Studio and false on the windows runner (run 35367602664).
+func posixDirs(dirs ...string) statFunc {
+	set := map[string]bool{}
+	for _, d := range dirs {
+		set[d] = true
+	}
+	return func(p string) (fs.FileInfo, error) {
+		if set[p] {
+			return fakeDirInfo{}, nil
+		}
+		return nil, os.ErrNotExist
+	}
+}
+
+// fakeDirInfo is a directory, and remedyDir asks it exactly one question.
+type fakeDirInfo struct{ fs.FileInfo }
+
+func (fakeDirInfo) IsDir() bool { return true }
+
+// The seatbelt violation lines this parser reads are the OS's own, copied from
+// `log show --predicate 'subsystem == "com.apple.sandbox.reporting"'` on the Studio
+// (macOS 26, arm64, 2026-09-18) and NOT invented: the two shapes below — the plain
+// violation and the deduplicated "N duplicate reports for" one — are what the kernel
+// actually wrote there while these tests were being written.
+const fakeDenialLog = `Timestamp                       (process)[PID]
+2026-09-18 11:11:11.806663-0400  localhost kernel[0]: (Sandbox) [com.apple.sandbox.reporting:violation] 3 duplicate reports for Sandbox: maild(2087) deny(1) mach-lookup com.apple.contactsd.persistence
+2026-09-18 11:11:11.806671-0400  localhost kernel[0]: (Sandbox) [com.apple.sandbox.reporting:violation] Sandbox: go(4210) deny(1) file-read-metadata /opt
+2026-09-18 11:11:11.906671-0400  localhost kernel[0]: (Sandbox) [com.apple.sandbox.reporting:violation] Sandbox: go(4211) deny(1) file-read-data /Users/me/go/pkg/mod/github.com/x@v1.2.3/a.go
+2026-09-18 11:11:12.006671-0400  localhost kernel[0]: (Sandbox) [com.apple.sandbox.reporting:violation] Sandbox: go(4211) deny(1) file-read-data /Users/me/go/pkg/mod/github.com/x@v1.2.3/a.go
+2026-09-18 11:11:12.106671-0400  localhost kernel[0]: (Sandbox) [com.apple.sandbox.reporting:violation] Sandbox: sh(4212) deny(1) file-write-create /Users/me/notes/out.txt
+2026-09-18 11:11:12.206671-0400  localhost kernel[0]: (Sandbox) [com.apple.sandbox.reporting:violation] Sandbox: sh(4099) deny(1) file-read-data /Users/someone-else/thing
+2026-09-18 11:11:12.306671-0400  localhost kernel[0]: (Sandbox) [com.apple.sandbox.reporting:violation] Sandbox: sh(4212) deny(1) file-read-data /Volumes/nova-j1/work/inside.txt
+`
+
+// The parser reads the OS's lines and nothing else: the operation, the path and the pid.
+func TestDenialsAreReadOffTheOSsOwnViolationLines(t *testing.T) {
+	t.Parallel()
+
+	got := parseDenials(fakeDenialLog, 0)
+	want := []deniedPath{
+		{Path: "/opt", Op: "read", PID: 4210},
+		{Path: "/Users/me/go/pkg/mod/github.com/x@v1.2.3/a.go", Op: "read", PID: 4211},
+		{Path: "/Users/me/notes/out.txt", Op: "write", PID: 4212},
+		{Path: "/Users/someone-else/thing", Op: "read", PID: 4099},
+		{Path: "/Volumes/nova-j1/work/inside.txt", Op: "read", PID: 4212},
+	}
+	require.Len(t, got, len(want), "parsed %d denials, want %d: %v", len(got), len(want), got)
+	for i := range want {
+		assert.Equal(t, want[i], got[i], "denial %d is %+v, want %+v", i, got[i], want[i])
+	}
+	// mach-lookup is not a path and has no --read that answers it, so it is not a denial
+	// this line can carry a remedy for.
+	for _, d := range got {
+		assert.NotContains(t, d.Path, "com.apple", "a mach-lookup denial was read as a path: %+v", d)
+	}
+}
+
+// A run is told about ITS OWN denials. The machine this tool runs on has eight CI runners
+// on it, so a window of the log holds other people's violations too; the pid floor is the
+// narrowing that keeps a card from being handed a neighbour's problem.
+func TestDenialsBelowThePidFloorAreNotThisRuns(t *testing.T) {
+	t.Parallel()
+
+	got := parseDenials(fakeDenialLog, 4210)
+	for _, d := range got {
+		assert.GreaterOrEqual(t, d.PID, 4210, "a denial from pid %d was kept although this run's leader is 4210: %+v", d.PID, d)
+	}
+	require.Len(t, got, 4, "the pid floor kept %d denials, want 4: %v", len(got), got)
+}
+
+// A denial INSIDE the wall's own allowed set is not a missing --read: it is some other
+// operation on a path the caller already named, and printing a remedy that is already in
+// the argv would send a reader to fix what is not broken.
+func TestDenialsInsideTheAllowedSetAreNotReported(t *testing.T) {
+	t.Parallel()
+
+	got := outsideTheWall(parseDenials(fakeDenialLog, 0), []string{"/Volumes/nova-j1"})
+	for _, d := range got {
+		assert.False(t, strings.HasPrefix(d.Path, "/Volumes/nova-j1"), "a denial inside the write set was reported as one to fix: %+v", d)
+	}
+	require.Len(t, got, 4, "%d denials outside the allowed set, want 4: %v", len(got), got)
+}
+
+// The line is the contract, and the remedy on it is a line to RUN, not a thing to work out.
+func TestTheDeniedLineNamesThePathTheOpAndTheRemedy(t *testing.T) {
+	t.Parallel()
+
+	stat := posixDirs("/opt")
+	var errb bytes.Buffer
+	printDenied(&errb, []deniedPath{
+		{Path: "/opt", Op: "read", PID: 10},
+		{Path: "/Users/me/notes/out.txt", Op: "write", PID: 11},
+	}, 10, stat)
+	out := errb.String()
+	assert.Contains(t, out, `SANDBOX DENIED path=/opt op=read remedy="--read /opt"`, "the denied line for a directory does not name the directory as the remedy:\n%s", out)
+	// A FILE's remedy names the directory to pass, because --read takes a directory.
+	assert.Contains(t, out, `SANDBOX DENIED path=/Users/me/notes/out.txt op=write remedy="--write /Users/me/notes"`, "the denied line for a file does not name its directory as the remedy:\n%s", out)
+}
+
+// Every path this file handles is a POSIX path, because every one of them came out of
+// macOS's log — and this file is compiled and run on windows too, where `path/filepath`
+// means `\`. Both halves are asserted here directly, with no fixture and no machine: the
+// windows leg went red on exactly these two (run 35367602664).
+func TestTheDenialReaderUsesPosixPathsOnEveryPlatform(t *testing.T) {
+	t.Parallel()
+
+	stat := posixDirs() // nothing is a directory: every answer below is path arithmetic
+	got := remedyDir(stat, "/Users/me/notes/out.txt")
+	assert.Equal(t, "/Users/me/notes", got, "remedyDir gave %q; a seatbelt log path is separated by / on every platform, so this is `path` and never `path/filepath`", got)
+	assert.True(t, insidePosix("/Volumes/nova-j1/work/inside.txt", "/Volumes/nova-j1"), "a path under the write set was called outside it; the containment test joins with / and not with os.PathSeparator")
+	assert.False(t, insidePosix("/Volumes/nova-j1x/work", "/Volumes/nova-j1"), "a sibling whose name merely starts the same was called inside the write set")
+	assert.True(t, insidePosix("/Volumes/nova-j1", "/Volumes/nova-j1/"), "a directory is inside itself however it is spelled")
+}
+
+// Rule 16's shape for a list: a cap, and one line standing for the rest. A command that
+// died early can trip hundreds of denials and a wall of them is not a remedy.
+func TestTheDeniedLinesAreCapped(t *testing.T) {
+	t.Parallel()
+
+	var many []deniedPath
+	for i := 0; i < 25; i++ {
+		many = append(many, deniedPath{Path: "/x/" + string(rune('a'+i)), Op: "read", PID: 1})
+	}
+	var errb bytes.Buffer
+	printDenied(&errb, many, 3, posixDirs())
+	out := errb.String()
+	got := strings.Count(out, "SANDBOX DENIED")
+	assert.Equal(t, 3, got, "the cap printed %d denied lines, want 3:\n%s", got, out)
+	assert.Contains(t, out, "22 more", "the cap does not say how many denials it stood for:\n%s", out)
+}
+
+// Nothing denied is nothing printed: a clean run says nothing about denials at all.
+func TestNoDenialsPrintsNothing(t *testing.T) {
+	t.Parallel()
+
+	var errb bytes.Buffer
+	printDenied(&errb, nil, 10, posixDirs())
+	assert.Zero(t, errb.Len(), "a run with no denials printed %q", errb.String())
+}

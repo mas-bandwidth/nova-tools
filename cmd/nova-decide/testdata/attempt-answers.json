@@ -1,0 +1,3 @@
+{
+  "class": {"choice": "needs-pro", "p": {"done": 0.04, "nothing-to-do": 0.02, "wrong-scope": 0.06, "no-result": 0.08, "needs-pro": 0.78, "provider-failure": 0.02}}
+}

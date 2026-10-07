@@ -1,0 +1,7 @@
+{
+  "does_task": {"noul": 0.96},
+  "lines_changed": {"noul": 0.97},
+  "inside_paths": {"noul": 0.99},
+  "defect": {"noul": 0.04},
+  "verdict": {"choice": "LAND", "p": {"BOUNCE": 0.05, "LAND": 0.92, "UNSURE": 0.03}}
+}

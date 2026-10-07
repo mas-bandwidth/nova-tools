@@ -1,0 +1,73 @@
+# The tests that do not open with t.Parallel(), one `path:TestName serial: <reason>`
+# per line (internal/ci/parallel_class_test.go, Glenn 2026-09-25: Go tests always
+# run in parallel). The reasons are what makes a test unsafe beside another:
+#   t.Setenv, t.Chdir     panic under t.Parallel (the testing package refuses both)
+#   os.Setenv, os.Chdir   change the whole process under every other test
+#   swaps package var X   the test (or a helper it calls) assigns a package-level
+#                         seam, which races every parallel test reading it
+# The way off this list is a per-test seam: cmd.Env for a child, a field on the
+# value under test for a clock or a dialer, t.TempDir for a path. The list only
+# shrinks: a test that opens with t.Parallel() while listed, or a listed test
+# that is gone, is a red run, and the ceiling line below caps the count.
+#
+# The ceiling is the row count; it only comes down. NOVA_CI_UPDATE=1 drops the
+# stale rows and lowers it in the same write, and never raises it (#4339).
+# History: 877 on the day the rule landed; 2026-09-25 evening it rose by nine for
+# tests the fleet, redis, nova-sprint and swarm streams landed after the
+# measurement with t.Setenv or a package-var seam (card_moves TestCardSessionCLI
+# and TestCardMovesCLI, fleet_build TestFleetBuildCompileVerb and
+# ...ExecGivesGoItsOwnCaches, jev TestJevMechRefusals, lander_unit
+# TestLanderLoadsMembersFromUnitRecords, line TestLineVerbPostListImport,
+# task_card TestTaskMoveRefusesAPrimaryUnread, card
+# TestReadCopyDealtToBenchRendersALintedCard), then by nine more from the redis
+# stream (seat and #3277 tests on t.Setenv); each owes a per-test seam. Moved
+# from the serialTestsCeiling constant into this file at 876, the count that day.
+# nova-check: TestTESTSFirstRunIsWhatTheToolPrints, TestIssue2296, TestNoCodeStagedRefusals removed (ceiling 226 in abb4e02a3, 207 on current base)
+# ceiling: 206
+cmd/nova-swarm/doctor_test.go:TestDoctorVerbIsReachableFromTheDispatch serial: swaps package var main.doctorHomeDir, swaps package var main.doctorLookPath, swaps package var main.doctorReadVersion
+cmd/nova-swarm/firstrun_test.go:TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine serial: t.Chdir
+cmd/nova-swarm/native_budget_sample_test.go:TestLiveSamplerCountsAFailedReadAndAnAnswerResetsIt serial: t.Setenv
+cmd/nova-swarm/native_budget_stop_test.go:TestNativeAFastLaunchAtTheBudgetIsNotRelaunchedBeforeAnySample serial: t.Setenv
+cmd/nova-swarm/native_budget_stop_test.go:TestNativeALaunchThatReachedTheBudgetAloneIsNeverLaunchedAgain serial: t.Setenv
+cmd/nova-swarm/native_budget_stop_test.go:TestNativeCardBudgetStopsAndPrintsThePromptDefect serial: t.Setenv
+cmd/nova-swarm/native_budget_stop_test.go:TestNativeTwoLaunchAccounting serial: t.Setenv
+cmd/nova-swarm/native_deadline_test.go:TestNativeDeadlineControlALeaderOnlyKillLeavesTheGrandchild serial: swaps package var main.nativeDeadline, swaps package var main.nativeKillGroup
+cmd/nova-swarm/native_deadline_test.go:TestNativeDeadlineKillsTheWholeTree serial: swaps package var main.nativeDeadline
+cmd/nova-swarm/native_idle_test.go:TestNativeIdleIsDecidedByTheWatchsEventNotByAClock serial: swaps package var main.nativeKillGroup, swaps package var main.nativeReap, swaps package var main.nativeWatchIdle
+cmd/nova-swarm/native_idle_test.go:TestNativeIdleReapsTheCardInsteadOfShootingIt serial: swaps package var main.nativeKillGroup, swaps package var main.nativeReap, swaps package var main.nativeWatchIdle
+cmd/nova-swarm/native_idle_test.go:TestNativeIdleSaysACardThatSimplyWentStillWentStill serial: swaps package var main.nativeKillGroup, swaps package var main.nativeReap, swaps package var main.nativeWatchIdle
+cmd/nova-swarm/native_stage_test.go:TestStageFailLinePrintsOnStagingFailure serial: swaps package var os.Stdout
+cmd/nova-swarm/native_stage_test.go:TestStageNamedRepoNotStagedIsRefused serial: swaps package var os.Stdout
+cmd/nova-swarm/native_stage_test.go:TestStageOKLinePrintsOnSuccessfulStage serial: swaps package var os.Stdout
+cmd/nova-swarm/native_stage_test.go:TestStagePushedHeaderStagesRepoBeforeTheModel serial: swaps package var os.Stdout
+cmd/nova-swarm/shellshim_test.go:TestTheChildEnvIsUnchangedWithoutAShim serial: t.Setenv
+cmd/nova-swarm/slow_test.go:TestFriendSequenceLocalModelCard serial: t.Setenv
+cmd/nova-swarm/slow_test.go:TestNativeAllowsProviderLoopback serial: t.Setenv
+cmd/nova-swarm/slow_test.go:TestNativeChildCwdIsJobDirFromForeignCwd serial: os.Chdir, t.Setenv
+cmd/nova-swarm/slow_test.go:TestNativeChildCwdIsJobDirUnwalled serial: os.Chdir, t.Setenv
+cmd/nova-swarm/slow_test.go:TestNativeDrainDeliversPoolIdentityToChild serial: os.Setenv, os.Unsetenv
+cmd/nova-swarm/slow_test.go:TestNativeEnvIsCleanAndInsideTheWall serial: os.Chdir, t.Setenv
+cmd/nova-swarm/slow_test.go:TestNativeFailedReadsEndNothingByThemselves serial: t.Setenv
+cmd/nova-swarm/slow_test.go:TestNativeLaunchGoesThroughTheOneLauncher serial: swaps package var main.launchArgvFor
+cmd/nova-swarm/slow_test.go:TestNativeNoSharedCachesRestoresHomeCaches serial: t.Setenv
+cmd/nova-swarm/slow_test.go:TestNativeNoWallWritesHarnessLog serial: t.Setenv
+cmd/nova-swarm/slow_test.go:TestNativeOKNamesTheWall serial: t.Setenv
+cmd/nova-swarm/slow_test.go:TestNativeRefusesABudgetNothingCanObserve serial: t.Setenv
+cmd/nova-swarm/slow_test.go:TestNativeRefusesMalformedPoolIdentityBeforeHarness serial: os.Setenv, os.Unsetenv
+cmd/nova-swarm/slow_test.go:TestNativeRefusesMissingPoolIdentityBeforeHarness serial: os.Setenv, os.Unsetenv
+cmd/nova-swarm/slow_test.go:TestNativeRefusesWhenWallCannotExpressRule serial: t.Setenv
+cmd/nova-swarm/slow_test.go:TestNativeRefusesWithoutWallUnlessFlagged serial: t.Setenv
+cmd/nova-swarm/slow_test.go:TestNativeRelativeSlotIsAbsolutized serial: os.Chdir, t.Setenv
+cmd/nova-swarm/slow_test.go:TestNativeRunDeniesBusInsideWall serial: t.Setenv
+cmd/nova-swarm/slow_test.go:TestNativeRunPassesRepoAllowRule serial: t.Setenv
+cmd/nova-swarm/slow_test.go:TestNativeRunsWalledWithoutHostRulesWhenNoRepos serial: t.Setenv
+cmd/nova-swarm/slow_test.go:TestNativeRunsWithNoSlotsStore serial: t.Setenv
+cmd/nova-swarm/slow_test.go:TestNativeSamplerNeverOverlapsAndNeverDelaysTheDeadline serial: t.Setenv
+cmd/nova-swarm/slow_test.go:TestNativeSecretWorkerWritesNoAuthFileAndTheHarnessSeesName serial: t.Setenv
+cmd/nova-swarm/slow_test.go:TestNativeSharedGoCaches serial: t.Setenv
+cmd/nova-swarm/slow_test.go:TestNativeSilentHarnessIsNotOK serial: t.Setenv
+cmd/nova-swarm/slow_test.go:TestNativeWalledJobPathWithSpace serial: t.Setenv
+cmd/nova-swarm/slow_test.go:TestNativeWalledJobPathWithSpacesCompletes serial: t.Setenv
+cmd/nova-swarm/slow_test.go:TestNativeWorkerModelGateComparesQualifiedName serial: t.Setenv
+cmd/nova-swarm/slow_test.go:TestUnrecordedUnknownIsStillAHarvestHold serial: swaps package var main.persistUnknownFn
+cmd/nova-swarm/workercheck_test.go:TestWorkerCheckAnAbsentSecretWithEnvNamesTheVariableNotTheValue serial: t.Setenv

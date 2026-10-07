@@ -1,0 +1,9 @@
+//go:build soak
+
+package fixture
+
+import "testing"
+
+func TestFixtureSoakRealURL(t *testing.T) {
+	_ = "https://api.acme.com/v1/status"
+}

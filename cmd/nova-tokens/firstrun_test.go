@@ -1,0 +1,258 @@
+package main
+
+import (
+	"bytes"
+	"fmt"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
+)
+
+// ONBOARDING.md, pinned for this binary: the example lines are EXECUTED against the
+// fixture, every refusal says what the input WANTS and one run names every independent
+// problem, and the TESTS.md transcript is compared against what the tool actually prints.
+
+// fixtureIn copies cmd/nova-tokens/testdata/example-bench into t.TempDir(), makes the
+// output directory the examples write to, and returns it. The caller runs the tool with
+// that directory as its working directory (cmd.Dir), so the documented ./paths resolve as
+// written without a process-wide Chdir. Nothing here reaches outside t.TempDir(): a first
+// run WRITES, so the fixture is copied rather than run in place.
+func fixtureIn(t *testing.T) string {
+	t.Helper()
+	dst := t.TempDir()
+	src := filepath.Join("testdata", "example-bench")
+	root, err := filepath.Abs(src)
+	require.NoError(t, err, err)
+	{
+		err := filepath.Walk(root, func(p string, info os.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
+			rel, err := filepath.Rel(root, p)
+			if err != nil {
+				return err
+			}
+			target := filepath.Join(dst, rel)
+			if info.IsDir() {
+				return os.MkdirAll(target, 0o755)
+			}
+			raw, err := os.ReadFile(p)
+			if err != nil {
+				return err
+			}
+			return os.WriteFile(target, raw, 0o644)
+		})
+		require.NoError(t, err, err)
+	}
+	{
+		err := os.MkdirAll(filepath.Join(dst, "out"), 0o755)
+		require.NoError(t, err, err)
+	}
+	return dst
+}
+
+// firstRunStamp is the clock the transcript in TESTS.md was produced under.
+var firstRunStamp = time.Date(2026, 9, 11, 23, 55, 2, 0, time.UTC)
+
+func TestTheExampleLinesRun(t *testing.T) {
+	t.Parallel()
+
+	dir := fixtureIn(t)
+	var banner bytes.Buffer
+	{
+		exit := run([]string{"help"}, &banner, io.Discard, firstRunStamp)
+		require.Equal(t, 0, exit, "`nova-tokens help` exits %d, want 0", exit)
+	}
+	examples, err := onboarding.ExampleLines(banner.String(), "nova-tokens")
+	require.NoError(t, err, err)
+	require.NotEmpty(t, examples, "the example: block holds no line")
+	for _, line := range examples {
+		args := strings.Fields(line)[1:]
+		r := runToolChild(t, dir, nil, args...)
+		// A line that RUNS answers 0 or 1. Exit 2 is "could not run", and an example
+		// exiting 2 is a broken example.
+		assert.NotEqual(t, 2, r.exit, "the example `%s` could not run (exit 2):\n%s", line, r.stderr)
+	}
+}
+
+func TestEveryRefusalSaysWhatTheInputWantsAndOneRunNamesEveryProblem(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	// Three independent problems, three lines, one run.
+	r := invoke(t, "fold", "--day", "2026-09-11")
+	wantExit(t, r, 2)
+	{
+		n := strings.Count(r.stderr, "\n")
+		assert.Equal(t, 3, n, "%d refusal lines for three independent problems:\n%s", n, r.stderr)
+	}
+	for _, want := range []string{"refusing to guess", "it wants the directory", "it wants a file of", "it wants --claude"} {
+		wantContains(t, r.stderr, want)
+	}
+	// A flag typo costs ONE line: the verb's flags, the nearest one, and the verb's help as
+	// the door, never the banner.
+	r = invoke(t, "fold", "--ou", dir)
+	wantExit(t, r, 2)
+	{
+		n := strings.Count(strings.TrimSuffix(r.stderr, "\n"), "\n")
+		assert.Equal(t, 0, n, "a flag typo cost %d lines; the banner is behind `nova-tokens help`:\n%s", n+1, r.stderr)
+	}
+	assert.Contains(t, r.stderr, "TOKENS REFUSED: unknown flag --ou; the flags of fold are --all,")
+	assert.Contains(t, r.stderr, "did you mean --out?; run: nova-tokens fold -h")
+	assert.NotContains(t, r.stderr, "flag provided but not defined")
+	// An unknown verb, and a bare invocation, name the verbs there are and the door.
+	r = invoke(t, "collate")
+	wantExit(t, r, 2)
+	assert.Equal(t, `TOKENS REFUSED: unknown verb "collate"; the verbs are fold, report, ledger, sum, check, sources, profiles, session, version; run: nova-tokens help`+"\n", r.stderr)
+	r = invoke(t)
+	wantExit(t, r, 2)
+	assert.Equal(t, "TOKENS REFUSED: no verb given; the verbs are fold, report, ledger, sum, check, sources, profiles, session, version, and sources is the one that only looks; run: nova-tokens help\n", r.stderr)
+	assert.Equal(t, "", r.stdout, "a bare invocation wrote to stdout: %q", r.stdout)
+	// And the door opens on stdout at exit 0.
+	r = invoke(t, "help")
+	wantExit(t, r, 0)
+	assert.Equal(t, "", r.stderr, "`help` wrote to stderr: %q", r.stderr)
+}
+
+// There is no quickstart verb, and docs/ONBOARDING.md point 4 wants that said rather than
+// guessed at. Every verb here needs a path this tool must not invent: an output
+// directory, a rules file, a source. A quickstart would have to write state nobody asked
+// for, in a directory nobody named.
+func TestThereIsNoQuickstartVerbAndTheCommandReferenceSaysWhy(t *testing.T) {
+	t.Parallel()
+
+	r := invoke(t, "quickstart")
+	wantExit(t, r, 2)
+	wantContains(t, r.stderr, `unknown verb "quickstart"`)
+	cli := readRepoFile(t, filepath.Join("docs", "CLI.md"))
+	assert.True(t, strings.Contains(cli, "no `quickstart`"), "docs/CLI.md does not say why there is no quickstart verb (docs/STANDARD.md, onboarding point 4)")
+}
+
+// The TESTS.md transcript is compared by SHAPE -- the two-token event prefix and the field
+// names in order -- and deliberately not by value, so the transcript stays a document
+// instead of becoming a fixture.
+func TestTheTranscriptIsWhatTheToolPrints(t *testing.T) {
+	t.Parallel()
+
+	doc := readRepoFile(t, filepath.Join("docs", "TESTS.md"))
+	lines, err := onboarding.FirstRun(doc, "nova-tokens")
+	require.NoError(t, err, err)
+	dir := fixtureIn(t)
+	var want []string
+	var got []string
+	var pending []string
+	flush := func() {
+		got = append(got, pending...)
+		pending = nil
+	}
+	for _, line := range lines {
+		if args, ok := strings.CutPrefix(line, "$ nova-tokens "); ok {
+			flush()
+			r := runToolChild(t, dir, nil, strings.Fields(args)...)
+			for _, printed := range strings.Split(r.stdout+r.stderr, "\n") {
+				if shape := onboarding.Shape(printed); shape != "" {
+					pending = append(pending, shape)
+				}
+			}
+			continue
+		}
+		if shape := onboarding.Shape(line); shape != "" {
+			want = append(want, shape)
+		}
+	}
+	flush()
+	require.NotEmpty(t, want, "the transcript holds no event line")
+	for i, w := range want {
+		require.Less(t, i, len(got), "the transcript has a line the tool does not print: %q", w)
+		assert.Equal(t, w, got[i], "line %d of the transcript is\n  %s\nand the tool prints\n  %s", i+1, w, got[i])
+	}
+	if len(got) > len(want) {
+		assert.Failf(t, "extra event lines", "the tool prints %d event lines and the transcript shows %d; the first missing is %q", len(got), len(want), got[len(want)])
+	}
+}
+
+// The `### First run` block of docs/TESTS.md is EXECUTED, not shape-matched:
+// every command is run in one sitting, in order, against a COPY of the fixture
+// in t.TempDir() (a first run WRITES), and each step's whole output is compared
+// line for line -- same number of lines, same lines, same order -- with the
+// block written under it. TestTheTranscriptIsWhatTheToolPrints above compares
+// only the event shape and stays; this is the whole promise.
+//
+// NOTHING IS NORMALISED, and that is a property of this transcript rather than a
+// shortcut: the `at=` stamps are driven from run()'s injected clock
+// (firstRunStamp, the instant the document was produced at) and the fixture is
+// deterministic, so every value on every line reproduces. onboarding.Execute is
+// told so by being handed no Norm, and it says as much under any line that
+// disagrees.
+//
+// The transcript's paths (`./out`, `./repos.tsv`, `./transcripts`, `./bus`) are
+// written from the copied fixture's root, where a reader typing them stands, so
+// the test moves there rather than rewriting them -- a rewritten path is no
+// longer the line the document promised.
+func TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine(t *testing.T) {
+	t.Parallel()
+
+	raw, err := os.ReadFile(filepath.Join(repoRoot(t), "docs", "TESTS.md"))
+	require.NoError(t, err, err)
+	lines, err := onboarding.FirstRun(string(raw), "nova-tokens")
+	require.NoError(t, err, err)
+	steps, err := onboarding.Steps("nova-tokens", lines)
+	require.NoError(t, err, err)
+	require.NotEmpty(t, steps, "the `### First run` block holds no nova-tokens command; this test would pass by running nothing")
+	// A first run is three commands: fold writes the day, check reads it back,
+	// sum reads it a month at a time. A transcript that lost one still matches
+	// line for line and is still short of the run a reader is promised.
+	assert.Equal(t, 3, len(steps), "the `### First run` block runs %d commands, want 3", len(steps))
+	// The fold WRITES, so it runs against a copy of the fixture in t.TempDir()
+	// and each command runs in a child whose working directory is it; the
+	// documented paths are relative to here.
+	dir := fixtureIn(t)
+	for _, p := range onboarding.Execute(steps, runDocumentedInDir(dir)) {
+		assert.Fail(t, "%v", p)
+	}
+}
+
+// runDocumentedInDir calls this binary's own entry point with the documented
+// arguments in a child whose working directory is dir, so the documented relative
+// paths resolve as written without a process-wide Chdir; the child's clock is
+// foldStamp, the instant the transcript was produced under. nova-tokens takes no
+// stdin, so a step that names a `< path` is reported rather than quietly run
+// without it.
+func runDocumentedInDir(dir string) onboarding.Runner {
+	return func(s onboarding.Step) (onboarding.Result, error) {
+		if s.Stdin != "" {
+			return onboarding.Result{}, fmt.Errorf("the documented command reads from %q, and nova-tokens takes no stdin", s.Stdin)
+		}
+		self, err := os.Executable()
+		if err != nil {
+			return onboarding.Result{}, err
+		}
+		cmd := exec.Command(self, s.Args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(), asToolEnv+"=1")
+		var out, errb bytes.Buffer
+		cmd.Stdout, cmd.Stderr = &out, &errb
+		err = cmd.Run()
+		if err != nil && cmd.ProcessState == nil {
+			return onboarding.Result{}, err
+		}
+		return onboarding.Result{Code: cmd.ProcessState.ExitCode(), Stdout: out.String(), Stderr: errb.String()}, nil
+	}
+}
+
+func readRepoFile(t *testing.T, name string) string {
+	t.Helper()
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	require.NoError(t, err, err)
+	raw, err := os.ReadFile(filepath.Join(root, name))
+	require.NoError(t, err, err)
+	return string(raw)
+}

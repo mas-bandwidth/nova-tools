@@ -1,0 +1,1857 @@
+/*
+Tests for the TOOL: argument parsing, the exit-code contract, the no-guessed-paths rule
+at the CLI, and the fail-closed read that is the entire reason the tool exists.
+
+ORDER: the refusal branch first (the dead half ordinary use never exercises), then
+fail-closed, then the happy path, then the CONTROL -- because a fuse that fires on a
+clean machine is a fuse its owner turns off, and then nothing is guarded at all.
+
+Every test runs against a box in a tempdir named by --box. Nothing here touches a live
+box, and nothing here uses a frozen date.
+*/
+package main
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/fuse"
+	"github.com/mas-bandwidth/nova-tools/internal/oneline/audit"
+	"github.com/mas-bandwidth/nova-tools/internal/testkit"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// capture runs the tool and returns the exit code plus both streams.
+func capture(t *testing.T, args []string, now time.Time) (int, string, string) {
+	t.Helper()
+	return captureWith(t, args, now, getenvNone, "")
+}
+
+// getenvNone is a test's own environment: nothing set. The process environment
+// is not this test's (docs/STANDARD.md section 8).
+func getenvNone(string) string { return "" }
+
+func captureWith(t *testing.T, args []string, now time.Time, getenv func(string) string, wd string) (int, string, string) {
+	t.Helper()
+	var stdout, stderr bytes.Buffer
+	code := run(args, &stdout, &stderr, now, invocation{getenv: getenv, wd: wd, stamp: version})
+	return code, stdout.String(), stderr.String()
+}
+
+// mustRun is capture() for setup steps, where the output is not the subject.
+func mustRun(t *testing.T, args []string, now time.Time) {
+	t.Helper()
+	code, out, errOut := capture(t, args, now)
+	require.Equal(t, 0, code, "setup %v: exit %d\nstdout: %s\nstderr: %s", args, code, out, errOut)
+}
+
+// boxIn is an empty box, made the one way a box is made clear (init).
+func boxIn(t *testing.T) string {
+	t.Helper()
+	box := absentBoxIn(t)
+	require.NoError(t, fuse.CreateBox(box), "fixture box")
+	return box
+}
+
+// absentBoxIn is a path in a tempdir with no box at it.
+func absentBoxIn(t *testing.T) string {
+	t.Helper()
+	return filepath.Join(t.TempDir(), "fuses.json")
+}
+
+// writeRaw puts arbitrary bytes in the fuse box. Hand-edited and half-written boxes are
+// the interesting inputs: a person editing this file by hand is the ONLY
+// lockdown-replacement mechanism there is.
+func writeRaw(t *testing.T, path, content string) {
+	t.Helper()
+	testkit.WriteFile(t, path, content)
+}
+
+func readRaw(t *testing.T, path string) string {
+	t.Helper()
+	return testkit.ReadFile(t, path)
+}
+
+// nowish is the instant the tests pass in as the clock: fixed, because the tool reads
+// no clock of its own (run takes now) and nothing in a box expires, so no test depends
+// on how long ago it was.
+func nowish() time.Time { return time.Date(2026, 9, 9, 18, 27, 40, 0, time.UTC) }
+
+// ------------------------------------------------------------- 1. THE REFUSAL BRANCH
+
+// TestLiftLockdownIsRefusedForever pins the hard half. If this test is deleted, a later
+// "convenience" lift lands and the one fuse that stops EVERYTHING becomes advisory. The
+// refusal must also never document a mechanical way around itself: the remedy is a live
+// conversation with the person you work with, not a file.
+func TestLiftLockdownIsRefusedForever(t *testing.T) {
+	t.Parallel()
+
+	box := boxIn(t)
+	writeRaw(t, box, `{"lockdown":{"at":"x","reason":"y"},"quarantine":{}}`)
+	before := readRaw(t, box)
+
+	for _, args := range [][]string{
+		{"lift", "lockdown"},
+		{"lift", "lockdown", "please"},
+		{"lift", "lockdown", "--box", box},
+		{"lift", "lockdown", "--force"},
+	} {
+		code, out, errOut := capture(t, args, nowish())
+		assert.Equal(t, 2, code, "%v: exit = %d, want 2 -- a lockdown lift is asking for something this tool does not have", args, code)
+		assert.Contains(t, errOut, "REFUSED", "%v: the refusal must say REFUSED, got %q", args, errOut)
+		assert.Contains(t, errOut, "REPLACED", "%v: the design: a blown fuse is not reset, it is replaced -- got %q", args, errOut)
+		assert.Contains(t, errOut, "conversation", "%v: the refusal must name the only path -- a live conversation with the person you work with -- got %q", args, errOut)
+		assert.Contains(t, errOut, "the person you work with", "%v: the refusal must name the only path -- a live conversation with the person you work with -- got %q", args, errOut)
+		for _, leak := range []string{"fuses.json", "by hand", "edit", box, "--box"} {
+			assert.NotContains(t, out, leak, "%v: the refusal must not hint at a mechanical bypass, leaked %q", args, leak)
+			assert.NotContains(t, errOut, leak, "%v: the refusal must not hint at a mechanical bypass, leaked %q", args, leak)
+		}
+	}
+	assert.Equal(t, before, readRaw(t, box), "lift lockdown must not touch the box at all")
+}
+
+// TestLiftLockdownRefusesBeforeReadingAnything: the refusal must not depend on anything a
+// caller or the environment can break -- no flag, no box, no readable state. If it could
+// fail its way past the refusal, the lever exists.
+func TestLiftLockdownRefusesBeforeReadingAnything(t *testing.T) {
+	t.Parallel()
+
+	// No --box at all: the refusal must come BEFORE the missing-flag refusal.
+	code, _, errOut := capture(t, []string{"lift", "lockdown"}, nowish())
+	require.Equal(t, 2, code, "exit = %d, want 2", code)
+	require.Contains(t, errOut, "REFUSED", "want the design refusal, got %q", errOut)
+	assert.NotContains(t, errOut, "refusing to guess", "the refusal must be the design's, not a flag error -- it is answered before flags are parsed")
+
+	// An unreadable box must change nothing: the refusal never reads it.
+	box := boxIn(t)
+	writeRaw(t, box, "{corrupt")
+	code, _, errOut = capture(t, []string{"lift", "lockdown", "--box", box}, nowish())
+	assert.Equal(t, 2, code, "exit = %d, stderr = %q: the refusal must not depend on the box being readable", code, errOut)
+	assert.Contains(t, errOut, "REFUSED", "exit = %d, stderr = %q: the refusal must not depend on the box being readable", code, errOut)
+	assert.NotContains(t, errOut, "JSON", "the refusal must come before any read of the box, got %q", errOut)
+	assert.NotContains(t, errOut, "unreadable", "the refusal must come before any read of the box, got %q", errOut)
+}
+
+// TestNoDefaultBoxRefusesToGuess: the destination law. Every verb that touches the box
+// takes it from --box; a missing flag is a refusal, never a fallback -- and NOVA_FUSE_BOX
+// or any other environment variable is NOT honoured as a substitute.
+func TestNoDefaultBoxRefusesToGuess(t *testing.T) {
+	t.Parallel()
+	decoy := boxIn(t) // a clear, readable box the env var points at
+	mustRunnable := [][]string{
+		{"status"},
+		{"check"},
+		{"check", "discord"},
+		{"lockdown", "reason"},
+		{"quarantine", "discord", "reason"},
+		{"lift", "quarantine", "discord"},
+		{"path"},
+	}
+	getenv := func(k string) string {
+		if k == "NOVA_FUSE_BOX" {
+			return decoy
+		}
+		return ""
+	}
+	for _, args := range mustRunnable {
+		code, out, errOut := captureWith(t, args, nowish(), getenv, "")
+		assert.Equal(t, 2, code, "%v: exit = %d, want 2 -- no flag and no env is a refusal", args, code)
+		assert.Contains(t, errOut, "refusing to guess", "%v: stderr = %q, want it to contain %q", args, errOut, "refusing to guess")
+		assert.Empty(t, out, "%v: a refusal must not print an OK line, got %q", args, out)
+	}
+}
+
+// TestEnvironmentCannotRedirectOrLiftAnything: with a blown box named by --box, an
+// environment variable pointing at a pristine box must change nothing. The box path is
+// the caller's statement, not the environment's -- an env lever that could redirect the
+// check to a decoy would be a lift by another name.
+func TestEnvironmentCannotRedirectOrLiftAnything(t *testing.T) {
+	t.Parallel()
+	box := boxIn(t)
+	now := nowish()
+	mustRun(t, []string{"lockdown", "--box", box, "suspected compromise"}, now)
+
+	decoy := boxIn(t) // absent, i.e. clear
+	getenv := func(k string) string {
+		if k == "NOVA_FUSE_BOX" {
+			return decoy
+		}
+		return ""
+	}
+	code, _, errOut := captureWith(t, []string{"check", "--box", box}, now, getenv, "")
+	require.Equal(t, 1, code, "exit = %d, want 1 -- the env var must not redirect the check to a clear box", code)
+	assert.Contains(t, errOut, "FUSE FAILED lockdown", "stderr = %q, want the lockdown failure", errOut)
+}
+
+// TestUsageErrorsExitTwo: asking for something the tool does not have is exit 2, and no
+// usage error may touch the box.
+func TestUsageErrorsExitTwo(t *testing.T) {
+	t.Parallel()
+
+	box := boxIn(t)
+	writeRaw(t, box, `{"quarantine":{"discord":{"at":"t","reason":"r"}}}`)
+	before := readRaw(t, box)
+
+	cases := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"no command", nil, "run: nova-fuse help"},
+		{"unknown command", []string{"defuse"}, "unknown verb"},
+		{"lockdown with no reason", []string{"lockdown", "--box", box}, "needs a reason"},
+		{"lockdown with a blank reason", []string{"lockdown", "--box", box, "   "}, "needs a reason"},
+		{"quarantine with no reason", []string{"quarantine", "--box", box, "discord"}, "needs a surface and a reason"},
+		{"quarantine with blank surface", []string{"quarantine", "--box", box, "  ", "r"}, "needs a surface and a reason"},
+		{"check with two surfaces", []string{"check", "--box", box, "discord", "bsky"}, "at most one surface"},
+		{"check with a blank surface", []string{"check", "--box", box, "   "}, "must not be blank"},
+		{"status with an argument", []string{"status", "--box", box, "now"}, "unexpected argument"},
+		{"path with an argument", []string{"path", "--box", box, "here"}, "unexpected argument"},
+		{"lift with no power", []string{"lift"}, "takes a power"},
+		{"lift of an unknown power", []string{"lift", "everything"}, "does not know"},
+		{"lift with flags before the power", []string{"lift", "--box", box, "lockdown"}, "takes a power"},
+		{"lift quarantine with no surface", []string{"lift", "quarantine", "--box", box}, "exactly one surface"},
+		{"lift quarantine with a blank surface", []string{"lift", "quarantine", "--box", box, "  "}, "exactly one surface"},
+		{"lift quarantine with two surfaces", []string{"lift", "quarantine", "--box", box, "a", "b"}, "exactly one surface"},
+		{"flags after positionals", []string{"check", "discord", "--box", box}, "flags come before"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			code, out, errOut := capture(t, c.args, nowish())
+			assert.Equal(t, 2, code, "exit = %d, want 2; stderr: %s", code, errOut)
+			assert.Contains(t, errOut, c.want, "stderr = %q, want it to contain %q", errOut, c.want)
+			assert.Empty(t, out, "a refusal must not print an OK line, got %q", out)
+		})
+	}
+	assert.Equal(t, before, readRaw(t, box), "no usage error may touch the box")
+}
+
+// ------------------------------------------------------------- 2. FAIL CLOSED
+
+// TestUnreadableBoxIsTreatedAsBlownNeverClear is the heart of the tool. Every one of
+// these inputs is a real way a JSON file goes wrong -- a torn write, a bad hand-edit, a
+// wrong-shaped value -- and every one must refuse, never read as clear.
+func TestUnreadableBoxIsTreatedAsBlownNeverClear(t *testing.T) {
+	t.Parallel()
+
+	cases := map[string]string{
+		"empty file":                  "",
+		"truncated write":             `{"lockdown": {"at": "2026`,
+		"a JSON array":                `[]`,
+		"a bare string":               `"lockdown"`,
+		"lockdown not object":         `{"lockdown": true}`,
+		"quarantine not map":          `{"quarantine": "discord"}`,
+		"quarantine entry not object": `{"quarantine": {"discord": "spam"}}`,
+	}
+	for name, content := range cases {
+		t.Run(name, func(t *testing.T) {
+			box := boxIn(t)
+			writeRaw(t, box, content)
+
+			code, out, errOut := capture(t, []string{"check", "--box", box, "discord"}, nowish())
+			assert.Equal(t, 2, code, "exit = %d, want 2 -- could not run; an unreadable box can not be proven clear", code)
+			require.NotEqual(t, 0, code, "an unreadable fuse box must NEVER read as clear")
+			assert.Contains(t, errOut, "BLOWN", "the refusal must say the box is treated as BLOWN, got %q", errOut)
+			assert.Contains(t, errOut, "never as clear", "the claim must not outrun the measurement, got %q", errOut)
+			assert.Empty(t, out, "no OK line may accompany a refusal, got %q", out)
+		})
+	}
+}
+
+// TestAnUnreadableFileTypeIsNotClear: a directory where the file should be is the
+// portable way to produce a read error that is not ErrNotExist. It must land on CANNOT
+// TELL, the third answer, never the reassuring one.
+func TestAnUnreadableFileTypeIsNotClear(t *testing.T) {
+	t.Parallel()
+
+	box := filepath.Join(t.TempDir(), "fuses.json")
+	require.NoError(t, os.MkdirAll(box, 0o755))
+	code, _, errOut := capture(t, []string{"check", "--box", box}, nowish())
+	assert.Equal(t, 2, code, "exit = %d, want 2 -- cannot-read is the THIRD answer, never the reassuring one", code)
+	assert.Contains(t, errOut, "BLOWN", "stderr = %q, want BLOWN", errOut)
+}
+
+// TestUnreadableBoxMakesStatusRefuse: status answers or it does not.
+func TestUnreadableBoxMakesStatusRefuse(t *testing.T) {
+	t.Parallel()
+
+	box := boxIn(t)
+	writeRaw(t, box, "{oops")
+	code, out, errOut := capture(t, []string{"status", "--box", box}, nowish())
+	assert.Equal(t, 2, code, "exit = %d, want 2", code)
+	assert.Contains(t, errOut, "BLOWN", "stderr = %q, want it to say every fuse is treated as BLOWN", errOut)
+	assert.Empty(t, out, "status must not print a STATUS OK line it could not verify, got %q", out)
+}
+
+// TestQuarantineRefusesToNarrowAnUnreadableBox is the trap that looks like safety. An
+// unreadable box blocks EVERY surface; replacing it with one holding a single quarantine
+// would unblock the rest. The safety-shaped action would be the fail-open.
+func TestQuarantineRefusesToNarrowAnUnreadableBox(t *testing.T) {
+	t.Parallel()
+
+	box := boxIn(t)
+	writeRaw(t, box, "{corrupt")
+	before := readRaw(t, box)
+
+	code, _, errOut := capture(t, []string{"quarantine", "--box", box, "discord", "many the same way"}, nowish())
+	assert.Equal(t, 2, code, "exit = %d, want 2", code)
+	assert.Contains(t, errOut, "UNBLOCK", "the refusal must say WHY, or it looks like an obstruction: %q", errOut)
+	assert.Contains(t, errOut, "lockdown", "and it must name the remedy that does work: %q", errOut)
+	assert.Equal(t, before, readRaw(t, box), "the corrupt bytes are evidence; they stay put")
+}
+
+// TestQuarantineRefusalQuotesAHostileBoxPathInItsLockdownRemedy pins security#74
+// finding 9: the unreadable-box refusal's lockdown remedy must single-quote the box
+// (through boxRemedy, the same seam its sibling uses), so a path holding shell
+// metacharacters stays data in the pasted command and never becomes commands.
+func TestQuarantineRefusalQuotesAHostileBoxPathInItsLockdownRemedy(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	box := filepath.Join(dir, "box; touch x")
+	writeRaw(t, box, "{corrupt")
+
+	code, _, errOut := capture(t, []string{"quarantine", "--box", box, "s", "r"}, nowish())
+	assert.Equal(t, 2, code, "exit = %d, want 2", code)
+	assert.Contains(t, errOut, `lockdown --box '`+box+`'`, "the remedy must single-quote the hostile path: %q", errOut)
+	assert.NotContains(t, errOut, `lockdown --box `+box, "the bare unquoted span runs the path's metacharacters when pasted: %q", errOut)
+	assert.NoFileExists(t, filepath.Join(dir, "x"), "nothing the refusal suggests may touch the filesystem beside the box")
+}
+
+// TestLiftQuarantineRefusesOnAnUnreadableBox: nothing provable can be lifted from a box
+// that cannot be read.
+func TestLiftQuarantineRefusesOnAnUnreadableBox(t *testing.T) {
+	t.Parallel()
+
+	box := boxIn(t)
+	writeRaw(t, box, "{corrupt")
+	before := readRaw(t, box)
+
+	code, _, errOut := capture(t, []string{"lift", "quarantine", "--box", box, "discord"}, nowish())
+	assert.Equal(t, 2, code, "exit = %d, want 2", code)
+	assert.Contains(t, errOut, "BLOWN", "stderr = %q, want the treated-as-BLOWN sentence", errOut)
+	assert.Equal(t, before, readRaw(t, box), "the corrupt bytes are evidence; they stay put")
+}
+
+// TestLockdownWorksOnAnUnreadableBox is the mirror image, and the asymmetry is the point:
+// a fuse you cannot blow is not a fuse. Lockdown blocks everything, so an unreadable box
+// becoming a lockdown leaves nothing less blocked than it was.
+func TestLockdownWorksOnAnUnreadableBox(t *testing.T) {
+	t.Parallel()
+
+	box := boxIn(t)
+	writeRaw(t, box, "{corrupt")
+
+	code, out, errOut := capture(t, []string{"lockdown", "--box", box, "suspected compromise"}, nowish())
+	require.Equal(t, 0, code, "exit = %d, want 0: a fuse you cannot blow is not a fuse\nstderr: %s", code, errOut)
+	assert.Contains(t, out, "LOCKDOWN OK", "stdout = %q, want LOCKDOWN OK", out)
+	assert.Contains(t, errOut, "unreadable", "the degraded path must say so in its own voice, got %q", errOut)
+
+	// The bytes that could not be parsed are still on disk.
+	kept, err := os.ReadFile(box + fuse.UnreadableSuffix)
+	require.NoError(t, err, "the unreadable bytes must be preserved")
+	assert.Equal(t, "{corrupt", string(kept), "preserved bytes = %q, want the original", kept)
+
+	code, _, errOut = capture(t, []string{"check", "--box", box}, nowish())
+	assert.Equal(t, 1, code, "exit = %d, want 1 -- the recorded lockdown must now block", code)
+	assert.Contains(t, errOut, "FUSE FAILED lockdown", "stderr = %q, want the lockdown failure", errOut)
+}
+
+// TestBlowingFailsLoudlyWhenItCannotWrite. The worst failure this tool could have is
+// announcing a lockdown it did not manage to record: the operator stops worrying, and
+// nothing is actually gated.
+func TestBlowingFailsLoudlyWhenItCannotWrite(t *testing.T) {
+	t.Parallel()
+
+	if runtime.GOOS == "windows" {
+		t.Skip("windows: chmod 0555 does not make a directory refuse writes, so the failure this pins cannot be produced here")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: a read-only directory does not refuse writes")
+	}
+	dir := t.TempDir()
+	require.NoError(t, os.Chmod(dir, 0o555))
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+	box := filepath.Join(dir, "fuses.json")
+	// quarantine writes only into a box it has read, so its failure is pinned on a box
+	// that exists in a directory that then refuses writes.
+	qdir := t.TempDir()
+	qbox := filepath.Join(qdir, "fuses.json")
+	require.NoError(t, fuse.CreateBox(qbox))
+	qbefore := readRaw(t, qbox)
+	require.NoError(t, os.Chmod(qdir, 0o555))
+	t.Cleanup(func() { _ = os.Chmod(qdir, 0o755) })
+
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"lockdown", "--box", box, "suspected compromise"}, "LOCKDOWN FAILED"},
+		{[]string{"quarantine", "--box", qbox, "discord", "many the same way"}, "QUARANTINE FAILED"},
+	} {
+		code, out, errOut := capture(t, tc.args, nowish())
+		assert.Equal(t, 1, code, "%v: exit = %d, want 1 -- could not do it is never a claimed success", tc.args, code)
+		assert.Contains(t, errOut, tc.want, "%v: stderr = %q, want %q", tc.args, errOut, tc.want)
+		assert.Contains(t, errOut, "by hand", "%v: the failure must name what the operator does instead, got %q", tc.args, errOut)
+		assert.NotContains(t, out, "OK", "%v: a failed blow must not print an OK line, got %q", tc.args, out)
+	}
+	_, err := os.Stat(box)
+	assert.True(t, os.IsNotExist(err), "a failed write must not leave a half-made box")
+	assert.Equal(t, qbefore, readRaw(t, qbox), "a failed quarantine must leave the box it read as it was")
+}
+
+// ------------------------------------------------------------- 3. THE EXIT CONTRACT
+
+// TestExitCodes walks the whole table through the CLI a caller actually uses:
+// 0 = clear, 1 = blown (the fuse working), 2 = could not run.
+func TestExitCodes(t *testing.T) {
+	t.Parallel()
+
+	now := nowish()
+
+	t.Run("clear is 0", func(t *testing.T) {
+		box := boxIn(t)
+		code, out, _ := capture(t, []string{"check", "--box", box, "discord"}, now)
+		require.Equal(t, 0, code, "exit = %d, want 0", code)
+		assert.Contains(t, out, "FUSE OK", "stdout = %q, want FUSE OK", out)
+	})
+
+	t.Run("lockdown blocks everything with 1", func(t *testing.T) {
+		box := boxIn(t)
+		mustRun(t, []string{"lockdown", "--box", box, "DoS by my own autonomy"}, now)
+		for _, args := range [][]string{
+			{"check", "--box", box},
+			{"check", "--box", box, "discord"},
+			{"check", "--box", box, "anything-at-all"},
+		} {
+			code, out, errOut := capture(t, args, now)
+			assert.Equal(t, 1, code, "%v: exit = %d, want 1 -- a positively blown fuse is the check failing, which is the check working", args, code)
+			assert.Contains(t, errOut, "FUSE FAILED lockdown", "%v: stderr = %q, want the lockdown failure", args, errOut)
+			assert.Empty(t, out, "%v: a failing check must not print an OK line, got %q", args, out)
+		}
+	})
+
+	t.Run("quarantine blocks only its surface", func(t *testing.T) {
+		box := boxIn(t)
+		mustRun(t, []string{"quarantine", "--box", box, "discord", "many the same way"}, now)
+
+		code, _, errOut := capture(t, []string{"check", "--box", box, "discord"}, now)
+		assert.Equal(t, 1, code, "exit = %d, want 1", code)
+		assert.Contains(t, errOut, "FUSE FAILED quarantine=discord", "stderr = %q, want the quarantine failure", errOut)
+
+		code, out, _ := capture(t, []string{"check", "--box", box, "bsky"}, now)
+		assert.Equal(t, 0, code, "exit = %d, want 0 -- quarantine is ONE surface; blocking the rest would be a different power", code)
+		assert.Contains(t, out, "FUSE OK", "stdout = %q, want FUSE OK", out)
+	})
+}
+
+// ------------------------------------------------------------- 4. THE HAPPY PATH
+
+func TestLockdownIsWrittenVerifiedAndAnnounced(t *testing.T) {
+	t.Parallel()
+
+	box := boxIn(t)
+	now := nowish()
+
+	code, out, _ := capture(t, []string{"lockdown", "--box", box, "suspected compromise"}, now)
+	require.Equal(t, 0, code, "exit = %d, want 0", code)
+	assert.Contains(t, out, "LOCKDOWN OK", "stdout = %q, want LOCKDOWN OK", out)
+	assert.Contains(t, out, "verified by re-reading", "exit 0 means verified, never attempted: %q", out)
+	assert.Contains(t, out, "the person you work with", "the announcement must point at the conversation: %q", out)
+
+	var got fuse.Box
+	require.NoError(t, json.Unmarshal([]byte(readRaw(t, box)), &got), "the box must be valid JSON")
+	require.NotNil(t, got.Lockdown, "the lockdown must be recorded")
+	assert.Equal(t, "suspected compromise", got.Lockdown.Reason, "reason = %q", got.Lockdown.Reason)
+	assert.Equal(t, now.Format(time.RFC3339), got.Lockdown.At, "at = %q: the recorded time comes from the INJECTED clock, never from time.Now inside run", got.Lockdown.At)
+}
+
+// TestLockdownReasonIsJoinedNotTruncated: an unquoted reason must not lose everything
+// after the first word -- that is the audit trail of the most serious action this tool
+// can take, lost quietly, at the worst moment.
+func TestLockdownReasonIsJoinedNotTruncated(t *testing.T) {
+	t.Parallel()
+
+	box := boxIn(t)
+	mustRun(t, []string{"lockdown", "--box", box, "suspected", "prompt", "injection"}, nowish())
+
+	var got fuse.Box
+	require.NoError(t, json.Unmarshal([]byte(readRaw(t, box)), &got))
+	require.NotNil(t, got.Lockdown, "lockdown must be set")
+	assert.Equal(t, "suspected prompt injection", got.Lockdown.Reason, "want the joined reason")
+}
+
+// TestQuarantineMatchingIsNotDefeatedByACapitalLetter: raw string comparison would let
+// `quarantine Discord` then `check discord` answer CLEAR -- a fail-OPEN in a safety
+// control, reached by a capital letter.
+func TestQuarantineMatchingIsNotDefeatedByACapitalLetter(t *testing.T) {
+	t.Parallel()
+
+	box := boxIn(t)
+	now := nowish()
+	mustRun(t, []string{"quarantine", "--box", box, "  Discord  ", "many the same way"}, now)
+
+	for _, spelling := range []string{"discord", "Discord", "DISCORD", " discord "} {
+		code, _, errOut := capture(t, []string{"check", "--box", box, spelling}, now)
+		assert.Equal(t, 1, code, "spelling %q must not walk past a quarantine, exit = %d", spelling, code)
+		assert.Contains(t, errOut, "FUSE FAILED quarantine", "spelling %q: stderr = %q", spelling, errOut)
+	}
+}
+
+// TestCheckQuotesTheStoredSpelling: a hand-edited box can hold a spelling the tool would
+// not have written, and a refusal quotes the file rather than the caller.
+func TestCheckQuotesTheStoredSpelling(t *testing.T) {
+	t.Parallel()
+
+	box := boxIn(t)
+	writeRaw(t, box, `{"quarantine":{"Discord":{"at":"t","reason":"r"}}}`)
+	code, _, errOut := capture(t, []string{"check", "--box", box, "discord"}, nowish())
+	require.Equal(t, 1, code, "exit = %d, want 1", code)
+	assert.Contains(t, errOut, "quarantine=Discord", "quote the file's spelling, not the caller's: %q", errOut)
+}
+
+// TestStatusSurvivesAHandEditedBox. A dropped key must produce an honest sentence, never
+// a crash and never an invented value -- hand-editing is the only lockdown-replacement
+// mechanism, so sparse boxes are normal inputs.
+func TestStatusSurvivesAHandEditedBox(t *testing.T) {
+	t.Parallel()
+
+	box := boxIn(t)
+	writeRaw(t, box, `{"lockdown": {}, "quarantine": {"bsky": {}}}`)
+
+	code, out, _ := capture(t, []string{"status", "--box", box}, nowish())
+	require.Equal(t, 0, code, "exit = %d, want 0 -- a readable box is an answer, even a sparse one", code)
+	assert.Contains(t, out, "lockdown=blown", "stdout = %q, want the lockdown reported", out)
+	assert.Contains(t, out, "NO REASON RECORDED", "never print a claim that was not measured: %q", out)
+	assert.Contains(t, out, "since=unrecorded", "a missing time is 'unrecorded', not invented: %q", out)
+	assert.Contains(t, out, "quarantine=bsky", "stdout = %q, want the quarantine reported", out)
+
+	// And a lockdown key with no fields still BLOCKS: presence is the fact, not the reason.
+	code, _, _ = capture(t, []string{"check", "--box", box}, nowish())
+	assert.Equal(t, 1, code, "exit = %d, want 1 -- an empty lockdown object is still a lockdown", code)
+}
+
+// TestStatusReportsAndNeverGates: status exits 0 whenever the box is readable, blown or
+// not. Answering the question is its whole job; check is the gate.
+func TestStatusReportsAndNeverGates(t *testing.T) {
+	t.Parallel()
+
+	box := boxIn(t)
+	now := nowish()
+	mustRun(t, []string{"lockdown", "--box", box, "suspected compromise"}, now)
+	code, out, _ := capture(t, []string{"status", "--box", box}, now)
+	require.Equal(t, 0, code, "exit = %d, want 0 -- status REPORTS; never gate on it", code)
+	assert.Contains(t, out, "STATUS OK lockdown=blown", "stdout = %q", out)
+}
+
+// TestStatusIsDeterministic. Map iteration is randomized, so a naive port prints a
+// different order every run and status stops being diffable.
+func TestStatusIsDeterministic(t *testing.T) {
+	t.Parallel()
+
+	box := boxIn(t)
+	writeRaw(t, box, `{"quarantine": {"zulip": {"at":"t","reason":"r"},
+		"discord": {"at":"t","reason":"r"}, "bsky": {"at":"t","reason":"r"}}}`)
+
+	_, first, _ := capture(t, []string{"status", "--box", box}, nowish())
+	for i := 0; i < 8; i++ {
+		_, again, _ := capture(t, []string{"status", "--box", box}, nowish())
+		require.Equal(t, first, again, "status must print the same bytes for the same box:\n%q\n%q", first, again)
+	}
+	assert.True(t, strings.Index(first, "bsky") < strings.Index(first, "discord") &&
+		strings.Index(first, "discord") < strings.Index(first, "zulip"), "quarantines must print sorted, got %q", first)
+}
+
+// TestTheWriteLeavesNoLitter. The file whose corruption means PERMANENT lockdown must
+// never be left torn, and no .tmp litter may survive for a later reader to mistake for
+// state.
+func TestTheWriteLeavesNoLitter(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	box := filepath.Join(dir, "fuses.json")
+	now := nowish()
+	mustRun(t, []string{"lockdown", "--box", box, "a"}, now)
+	mustRun(t, []string{"quarantine", "--box", box, "discord", "b"}, now)
+
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	var names []string
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	require.Len(t, entries, 2, "temp files must not survive the rename, dir holds %v", names)
+	assert.Equal(t, []string{"fuses.json", "fuses.json" + fuse.LockSuffix}, names,
+		"the box and the lock its mutations hold are all that stays; dir holds %v", names)
+
+	// A dry run makes every check the write would and writes nothing -- so it takes no
+	// lock and must leave no lock file behind either.
+	dry := t.TempDir()
+	dryBox := filepath.Join(dry, "fuses.json")
+	writeRaw(t, dryBox, `{"lockdown":null,"quarantine":{"discord":{"at":"2026-01-01T00:00:00Z","reason":"r"}}}`)
+	mustRun(t, []string{"lockdown", "--box", dryBox, "--dry-run", "a"}, now)
+	mustRun(t, []string{"quarantine", "--box", dryBox, "--dry-run", "zulip", "b"}, now)
+	mustRun(t, []string{"lift", "quarantine", "--box", dryBox, "--dry-run", "discord"}, now)
+	dEntries, err := os.ReadDir(dry)
+	require.NoError(t, err)
+	var dNames []string
+	for _, e := range dEntries {
+		dNames = append(dNames, e.Name())
+	}
+	assert.Equal(t, []string{"fuses.json"}, dNames,
+		"a dry run writes nothing and creates no lock file; dir holds %v", dNames)
+}
+
+// TestConcurrentQuarantinesAllLandWhenTheyAnnounceOK is the lost-update pin (security#74
+// finding 3): a burst of parallel `quarantine` runs against one box must not lose a fuse
+// it announced. Before the box's read-modify-write was serialized, two writers could each
+// read the box before either renamed over it: the loser printed QUARANTINE OK ... verified
+// by re-reading the box and exited 0, yet its entry was gone from the final box. Every run
+// that returned 0 must find its surface in the box afterwards, however the 16 writers
+// interleave. No sleep and no wall-clock bound here: the wait is the work itself.
+func TestConcurrentQuarantinesAllLandWhenTheyAnnounceOK(t *testing.T) {
+	t.Parallel()
+
+	box := boxIn(t)
+	now := nowish()
+	const writers = 16
+
+	var wg sync.WaitGroup
+	codes := make([]int, writers)
+	for i := range codes {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			surface := fmt.Sprintf("surf-%d", i)
+			code, _, _ := capture(t, []string{"quarantine", "--box", box, surface, "a burst of parallel blows"}, now)
+			codes[i] = code
+		}(i)
+	}
+	wg.Wait()
+
+	after, err := fuse.ReadBox(box)
+	require.NoError(t, err, "the box must be readable after the burst")
+	for i, code := range codes {
+		surface := fmt.Sprintf("surf-%d", i)
+		if code != 0 {
+			continue // a run that did not announce OK owes nothing to the box; it said why on its own streams
+		}
+		_, _, present := after.Quarantined(surface)
+		assert.True(t, present,
+			"run %d exited 0 announcing quarantine=%s, yet %s is missing from the final box (surfaces: %v)",
+			i, surface, surface, after.Surfaces())
+	}
+}
+
+func TestPathEchoesTheBoxFlag(t *testing.T) {
+	t.Parallel()
+
+	box := boxIn(t)
+	code, out, _ := capture(t, []string{"path", "--box", box}, nowish())
+	require.Equal(t, 0, code, "exit = %d, want 0", code)
+	assert.Equal(t, box, strings.TrimSpace(out), "stdout = %q, want %q", out, box)
+}
+
+func TestHelpIsNotAnError(t *testing.T) {
+	t.Parallel()
+
+	code, out, _ := capture(t, []string{"--help"}, nowish())
+	require.Equal(t, 0, code, "exit = %d, want 0", code)
+	assert.Contains(t, out, "REFUSED by design", "usage must state the lockdown-lift refusal: %q", out)
+	assert.Contains(t, out, "refusing to guess", "usage must state the no-guessing rule: %q", out)
+}
+
+// ------------------------------------------------------------- 5. THE CONTROL
+
+// TestAnAbsentBoxIsNeverClear: a box that is not where --box says proves nothing, so
+// every verb that reads it refuses at exit 2 and names init, and none of them makes
+// a box. A mistyped path, a moved or deleted box and a second --box pointing at an
+// empty place (TestASecondBoxCannotAnswerForABlownOne) all land here.
+func TestAnAbsentBoxIsNeverClear(t *testing.T) {
+	t.Parallel()
+
+	for _, box := range []string{
+		absentBoxIn(t),
+		filepath.Join(t.TempDir(), "no", "such", "dir", "fuses.json"),
+	} {
+		for _, args := range [][]string{
+			{"check", "--box", box, "discord"},
+			{"check", "--box", box},
+			{"status", "--box", box},
+			{"quarantine", "--box", box, "discord", "many the same way"},
+			{"lift", "quarantine", "--box", box, "discord"},
+		} {
+			code, out, errOut := capture(t, args, nowish())
+			assert.Equal(t, 2, code, "%q: exit %d, want 2", args, code)
+			assert.Empty(t, out, "%q: stdout %q, want no OK line", args, out)
+			assert.Contains(t, errOut, "no box at", "%q: stderr %q, want naming the absent box", args, errOut)
+			assert.Contains(t, errOut, "nova-fuse init --box", "%q: stderr %q, want naming init", args, errOut)
+			assert.Equal(t, 1, strings.Count(errOut, "\n"), "%q: stderr %q, want one line", args, errOut)
+		}
+		_, err := os.Stat(box)
+		assert.True(t, os.IsNotExist(err), "a refusal over an absent box made %s", box)
+	}
+}
+
+// TestLockdownMakesAnAbsentBox: a fuse you cannot blow is not a fuse, so lockdown is
+// the one write verb that proceeds with no box there, and nothing is less blocked
+// than before, since the absent box already refused.
+func TestLockdownMakesAnAbsentBox(t *testing.T) {
+	t.Parallel()
+
+	box := filepath.Join(t.TempDir(), "no", "such", "dir", "fuses.json")
+	mustRun(t, []string{"lockdown", "--box", box, "suspected compromise"}, nowish())
+	code, _, errOut := capture(t, []string{"check", "--box", box}, nowish())
+	assert.Equal(t, 1, code, "check after lockdown: exit %d, want 1", code)
+	assert.Contains(t, errOut, "FUSE FAILED lockdown", "check after lockdown: stderr %q, want FUSE FAILED lockdown", errOut)
+}
+
+// TestInitMakesAnEmptyBoxOnceAndNeverReplacesOne: init is how a box comes into being
+// clear, and replacing a box is the lockdown reset this tool does not have. Whatever
+// is at the path -- a blown box, a clear one, bytes that are not a box -- is left
+// byte for byte, and the run exits 1.
+func TestInitMakesAnEmptyBoxOnceAndNeverReplacesOne(t *testing.T) {
+	t.Parallel()
+
+	box := absentBoxIn(t)
+	code, out, errOut := capture(t, []string{"init", "--box", box}, nowish())
+	require.Equal(t, 0, code, "init: exit %d stdout %q stderr %q", code, out, errOut)
+	require.True(t, strings.HasPrefix(out, "INIT OK box="), "init: stdout %q", out)
+	require.Empty(t, errOut, "init: stderr %q", errOut)
+	code, out, _ = capture(t, []string{"check", "--box", box, "discord"}, nowish())
+	require.Equal(t, 0, code, "check on an initialised box: exit %d", code)
+	require.Contains(t, out, "FUSE OK", "check on an initialised box: stdout %q", out)
+
+	mustRun(t, []string{"lockdown", "--box", box, "suspected compromise"}, nowish())
+	for _, content := range []string{"", "not json", `{"quarantine":{}}`} {
+		if content != "" {
+			writeRaw(t, box, content)
+		}
+		before := readRaw(t, box)
+		code, out, errOut := capture(t, []string{"init", "--box", box}, nowish())
+		assert.Equal(t, 1, code, "init over %q: exit %d, want exit 1", before, code)
+		assert.Empty(t, out, "init over %q: stdout %q, want empty", before, out)
+		assert.True(t, strings.HasPrefix(errOut, "INIT FAILED"), "init over %q: stderr %q, want INIT FAILED", before, errOut)
+		assert.Contains(t, errOut, "never replaces", "init over %q: stderr %q, want never replaces", before, errOut)
+		got := readRaw(t, box)
+		assert.Equal(t, before, got, "init replaced %q with %q", before, got)
+	}
+	entries, _ := os.ReadDir(filepath.Dir(box))
+	assert.Len(t, entries, 2, "init left litter beside the box (the box and the lock the mutations before it hold are all that stays): %v", entries)
+
+	for _, args := range [][]string{{"init"}, {"init", "--box", box, "extra"}} {
+		code, _, _ := capture(t, args, nowish())
+		assert.Equal(t, 2, code, "%q: exit %d, want 2", args, code)
+	}
+}
+
+// TestBareCheckAdmitsItCheckedNoQuarantine. `check` with no surface proves only that
+// there is no lockdown. A caller reading "clear" as "this surface is clear" is the exact
+// drift that leaves read paths reaching the wire ungated, so the tool has to say what it
+// did NOT measure.
+func TestBareCheckAdmitsItCheckedNoQuarantine(t *testing.T) {
+	t.Parallel()
+
+	box := boxIn(t)
+	now := nowish()
+	mustRun(t, []string{"quarantine", "--box", box, "discord", "many the same way"}, now)
+
+	code, out, _ := capture(t, []string{"check", "--box", box}, now)
+	require.Equal(t, 0, code, "exit = %d, want 0 -- a quarantine on another surface must not block an unnamed check", code)
+	assert.Contains(t, out, "no surface named", "the OK line must admit what it did not measure: %q", out)
+	assert.Contains(t, out, "no quarantine checked", "the OK line must admit what it did not measure: %q", out)
+}
+
+// ----------------------------------------- 6. THE FUSE DESIGN: SOFT VERSUS HARD
+//
+// The design, as the first line's human collaborator stated it (2026-08-03,
+// paraphrased): quarantine is soft — the line's own decision, applied and rescinded
+// as it chooses. Lockdown is hard — one fuse blown, every read surface and all work
+// related to them stops, until the line and its person agree, in a live
+// conversation, to replace the blown fuse. A fuse an attacker can talk you out of
+// is not a fuse.
+
+// TestLiftQuarantineSucceedsAndIsAnnounced is the soft half. A quarantine is your own
+// decision, in both directions -- but the rescind is announced, never silent, and the
+// state file must reflect it.
+func TestLiftQuarantineSucceedsAndIsAnnounced(t *testing.T) {
+	t.Parallel()
+
+	box := boxIn(t)
+	now := nowish()
+	mustRun(t, []string{"quarantine", "--box", box, "discord", "many the same way"}, now)
+	mustRun(t, []string{"quarantine", "--box", box, "bsky", "same template"}, now)
+
+	code, out, _ := capture(t, []string{"lift", "quarantine", "--box", box, "discord"}, now)
+	require.Equal(t, 0, code, "exit = %d, want 0 -- quarantine is SOFT: your own dial, in both directions", code)
+	assert.Contains(t, out, "LIFT OK quarantine=discord", "stdout = %q, want the lift announced with WHAT was lifted", out)
+	assert.Contains(t, out, "many the same way", "the announcement must carry why it had been blown: %q", out)
+	assert.Contains(t, out, "verified", "exit 0 means verified, never attempted: %q", out)
+
+	var got fuse.Box
+	require.NoError(t, json.Unmarshal([]byte(readRaw(t, box)), &got))
+	_, _, still := got.Quarantined("discord")
+	assert.False(t, still, "the state file must reflect the lift")
+	_, _, other := got.Quarantined("bsky")
+	assert.True(t, other, "lifting one surface must not lift another")
+}
+
+// TestALiftedQuarantineChecksClearAgain closes the loop: the whole point of a lift is
+// that the gate opens again.
+func TestALiftedQuarantineChecksClearAgain(t *testing.T) {
+	t.Parallel()
+
+	box := boxIn(t)
+	now := nowish()
+	mustRun(t, []string{"quarantine", "--box", box, "discord", "many the same way"}, now)
+	code, _, _ := capture(t, []string{"check", "--box", box, "discord"}, now)
+	require.Equal(t, 1, code, "setup: the quarantine must actually block first, exit = %d", code)
+
+	mustRun(t, []string{"lift", "quarantine", "--box", box, "discord"}, now)
+	code, out, _ := capture(t, []string{"check", "--box", box, "discord"}, now)
+	require.Equal(t, 0, code, "exit = %d, want 0 -- a lifted quarantine means check(surface) passes again", code)
+	assert.Contains(t, out, "FUSE OK", "stdout = %q", out)
+}
+
+// TestLiftQuarantineMatchesNormalizedAndQuotesTheStoredSpelling: the same normalization
+// that stops `check discord` walking past `quarantine Discord` must let
+// `lift quarantine DISCORD` reach it.
+func TestLiftQuarantineMatchesNormalizedAndQuotesTheStoredSpelling(t *testing.T) {
+	t.Parallel()
+
+	box := boxIn(t)
+	writeRaw(t, box, `{"quarantine":{"Discord":{"at":"t","reason":"r"}}}`)
+
+	code, out, _ := capture(t, []string{"lift", "quarantine", "--box", box, "  DISCORD  "}, nowish())
+	require.Equal(t, 0, code, "exit = %d, want 0", code)
+	assert.Contains(t, out, "quarantine=Discord", "quote the file's spelling, not the caller's: %q", out)
+
+	code, _, _ = capture(t, []string{"check", "--box", box, "discord"}, nowish())
+	assert.Equal(t, 0, code, "the lift must be visible to check under any spelling, exit = %d", code)
+}
+
+// TestLiftQuarantineWithNothingToLiftDoesNotClaimSuccess. A typo must never read as a
+// lift: the operator would walk away believing a surface is open that is still blocked.
+func TestLiftQuarantineWithNothingToLiftDoesNotClaimSuccess(t *testing.T) {
+	t.Parallel()
+
+	box := boxIn(t)
+	writeRaw(t, box, `{"quarantine":{"bsky":{"at":"t","reason":"r"}}}`)
+	before := readRaw(t, box)
+
+	code, out, errOut := capture(t, []string{"lift", "quarantine", "--box", box, "discord"}, nowish())
+	assert.Equal(t, 1, code, "exit = %d, want 1 -- could-not-do-it is never a claimed success", code)
+	assert.Contains(t, errOut, "nothing to lift", "stderr = %q", errOut)
+	assert.Contains(t, errOut, "bsky", "name what IS quarantined so a typo is visible: %q", errOut)
+	assert.Empty(t, out, "no OK line on a failed lift, got %q", out)
+	assert.Equal(t, before, readRaw(t, box), "nothing to lift means nothing to write")
+}
+
+// TestLiftQuarantineUnderLockdownLeavesLockdownBlown pins both halves of the design at
+// once: the soft dial still turns, and the hard fuse still covers every surface.
+func TestLiftQuarantineUnderLockdownLeavesLockdownBlown(t *testing.T) {
+	t.Parallel()
+
+	box := boxIn(t)
+	now := nowish()
+	mustRun(t, []string{"lockdown", "--box", box, "suspected compromise"}, now)
+	mustRun(t, []string{"quarantine", "--box", box, "discord", "many the same way"}, now)
+
+	code, _, errOut := capture(t, []string{"lift", "quarantine", "--box", box, "discord"}, now)
+	require.Equal(t, 0, code, "exit = %d, want 0", code)
+	assert.Contains(t, errOut, "lockdown is still blown", "the output must say lockdown still blocks everything: %q", errOut)
+
+	var got fuse.Box
+	require.NoError(t, json.Unmarshal([]byte(readRaw(t, box)), &got))
+	require.NotNil(t, got.Lockdown, "lifting a quarantine must never touch the lockdown")
+
+	code, _, _ = capture(t, []string{"check", "--box", box, "discord"}, now)
+	assert.Equal(t, 1, code, "exit = %d, want 1 -- LOCKDOWN covers every surface, lifted quarantine or not", code)
+}
+
+// TestLockdownDoesNotExpire: the recorded state carries no expiry, no timer, no deadline
+// -- only `at` and `reason`. A fuse that lifts itself has a timer an attacker can wait
+// out, so there must be nothing in the box a clock could act on.
+func TestLockdownDoesNotExpire(t *testing.T) {
+	t.Parallel()
+
+	box := boxIn(t)
+	mustRun(t, []string{"lockdown", "--box", box, "suspected compromise"}, nowish())
+
+	var raw map[string]any
+	require.NoError(t, json.Unmarshal([]byte(readRaw(t, box)), &raw))
+	ld, ok := raw["lockdown"].(map[string]any)
+	require.True(t, ok, "lockdown must be recorded as an object")
+	for key := range ld {
+		assert.Contains(t, []string{"at", "reason"}, key, "the lockdown record holds %q -- nothing but `at` and `reason` may exist, or a timer could act on it", key)
+	}
+
+	// And a decade-old lockdown still blocks: `at` is an audit fact, never an input.
+	writeRaw(t, box, `{"lockdown":{"at":"2016-01-01T00:00:00Z","reason":"old"},"quarantine":{}}`)
+	code, _, _ := capture(t, []string{"check", "--box", box}, nowish())
+	assert.Equal(t, 1, code, "exit = %d, want 1 -- lockdown does not expire, no matter how old", code)
+}
+
+// ------------------------------- 7. ONE LINE PER EVENT, WHATEVER THE BOX CONTAINS
+
+// The box is world-readable on purpose and hand-editable on purpose -- and on a shared
+// machine that means any local user can author the strings this tool prints. The output
+// grammar SPEC.md tells callers to scan is one line per event, so a reason carrying a
+// newline could forge a second event line beneath a real one: a `FUSE OK lockdown=clear`
+// under a `FUSE FAILED`, authored by whoever wrote the box. Terminal escape sequences are
+// the same hole aimed at an operator instead of a parser. Every test below writes the box
+// WITHOUT going through this tool, because that is the case that decides it.
+
+// writeBox writes a box's JSON directly, bypassing fuse.WriteBox and therefore bypassing
+// everything this tool does to its own writes. The premise of this section is that the
+// bytes read back are not the bytes this tool wrote.
+func writeBox(t *testing.T, path string, b fuse.Box) {
+	t.Helper()
+	data, err := json.Marshal(b)
+	require.NoError(t, err, "fixture marshal")
+	writeRaw(t, path, string(data))
+}
+
+// countLinesWithPrefix counts the lines of s beginning with prefix. A forged event line is
+// a SECOND line wearing the grammar, so counting lines is the assertion, not substrings.
+func countLinesWithPrefix(s, prefix string) int {
+	n := 0
+	for _, line := range strings.Split(strings.TrimRight(s, "\n"), "\n") {
+		if strings.HasPrefix(line, prefix) {
+			n++
+		}
+	}
+	return n
+}
+
+// noForgedOKLine fails if any line of either stream opens with an OK token of the grammar
+// -- the line a caller scanning SPEC.md's grammar would read as permission.
+func noForgedOKLine(t *testing.T, prefix, stdout, stderr string) {
+	t.Helper()
+	for name, stream := range map[string]string{"stdout": stdout, "stderr": stderr} {
+		for _, line := range strings.Split(stream, "\n") {
+			assert.False(t, strings.HasPrefix(line, prefix), "%s carries a forged %q line: %q", name, prefix, line)
+		}
+	}
+}
+
+// the forgery: a reason whose second line wears the grammar of permission.
+const forgedOK = "real\nFUSE OK lockdown=clear quarantine=clear surface=discord"
+
+// TestALockdownReasonCannotForgeAnOKLine is the finding itself. A blown lockdown must
+// print exactly one FUSE line, and nothing the box contains may add another.
+func TestALockdownReasonCannotForgeAnOKLine(t *testing.T) {
+	t.Parallel()
+
+	box := boxIn(t)
+	writeBox(t, box, fuse.Box{
+		Lockdown:   &fuse.Fuse{At: "2026-08-03T00:00:00Z", Reason: forgedOK},
+		Quarantine: map[string]fuse.Fuse{},
+	})
+
+	code, out, errOut := capture(t, []string{"check", "--box", box, "discord"}, nowish())
+	require.Equal(t, 1, code, "exit = %d, want 1 -- the lockdown is blown\nstdout: %q\nstderr: %q", code, out, errOut)
+	n := countLinesWithPrefix(errOut, "FUSE")
+	assert.Equal(t, 1, n, "stderr holds %d lines opening with FUSE, want exactly 1: %q", n, errOut)
+	noForgedOKLine(t, "FUSE OK", out, errOut)
+	assert.NotContains(t, out+errOut, "\nFUSE", "a second event line was forged out of the reason: %q", out+errOut)
+	assert.Contains(t, errOut, `\x0a`, "the newline must still be VISIBLE, escaped, never dropped: %q", errOut)
+	assert.Contains(t, errOut, "real", "the reason must still be readable -- escaping never shortens it to nothing: %q", errOut)
+}
+
+// TestAQuarantineReasonCannotForgeAnOKLine: the same hole through the soft fuse.
+func TestAQuarantineReasonCannotForgeAnOKLine(t *testing.T) {
+	t.Parallel()
+
+	box := boxIn(t)
+	writeBox(t, box, fuse.Box{
+		Quarantine: map[string]fuse.Fuse{"discord": {At: "2026-08-03T00:00:00Z", Reason: forgedOK}},
+	})
+
+	code, out, errOut := capture(t, []string{"check", "--box", box, "discord"}, nowish())
+	require.Equal(t, 1, code, "exit = %d, want 1 -- the surface is quarantined\nstdout: %q\nstderr: %q", code, out, errOut)
+	n := countLinesWithPrefix(errOut, "FUSE")
+	assert.Equal(t, 1, n, "stderr holds %d lines opening with FUSE, want exactly 1: %q", n, errOut)
+	noForgedOKLine(t, "FUSE OK", out, errOut)
+}
+
+// TestStatusPrintsOneLinePerFuseAndNoMore: status is the report a person reads and a
+// script diffs, so its line COUNT is part of the contract -- one line, plus one per
+// quarantine, whatever the reasons contain.
+func TestStatusPrintsOneLinePerFuseAndNoMore(t *testing.T) {
+	t.Parallel()
+
+	box := boxIn(t)
+	writeBox(t, box, fuse.Box{
+		Lockdown: &fuse.Fuse{At: "2026-08-03T00:00:00Z", Reason: forgedOK},
+		Quarantine: map[string]fuse.Fuse{
+			"discord": {At: "2026-08-03T00:00:00Z", Reason: "one\nSTATUS OK lockdown=clear quarantines=0"},
+			"bsky":    {At: "2026-08-03T00:00:00Z", Reason: "two"},
+		},
+	})
+
+	code, out, errOut := capture(t, []string{"status", "--box", box}, nowish())
+	require.Equal(t, 0, code, "exit = %d, want 0 -- status reports\nstderr: %q", code, errOut)
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	assert.Len(t, lines, 3, "status printed %d lines, want 1 + 2 quarantines = 3: %q", len(lines), out)
+	for _, line := range lines {
+		assert.True(t, strings.HasPrefix(line, "STATUS OK"), "every status line must open the grammar, got %q", line)
+	}
+	// The forged text stays visible inside the escaped reason -- what it must never be is
+	// a LINE of its own, which is the only thing a caller scanning the grammar reads.
+	n := countLinesWithPrefix(out, "STATUS OK lockdown=")
+	assert.Equal(t, 1, n, "%d lines report lockdown, want exactly 1: %q", n, out)
+}
+
+// TestAStoredQuarantineKeyWithANewlinePrintsEscaped: the KEY is attacker-authored too --
+// it is a JSON object name, so it carries anything a reason can.
+func TestAStoredQuarantineKeyWithANewlinePrintsEscaped(t *testing.T) {
+	t.Parallel()
+
+	box := boxIn(t)
+	// Written by hand: `dis\ncord` is a JSON escape, so the stored key holds a real newline.
+	const raw = `{"lockdown":null,"quarantine":{"dis\ncord":{"at":"2026-08-03T00:00:00Z","reason":"r"}}}`
+
+	writeRaw(t, box, raw)
+	code, out, errOut := capture(t, []string{"status", "--box", box}, nowish())
+	require.Equal(t, 0, code, "status exit = %d, want 0\nstderr: %q", code, errOut)
+	got := strings.Count(strings.TrimRight(out, "\n"), "\n") + 1
+	assert.Equal(t, 2, got, "status printed %d lines, want 2: %q", got, out)
+	assert.Contains(t, out, `dis\x0acord`, "the stored key must print escaped, got %q", out)
+
+	// The folded spelling matches the folded key: they are one surface.
+	code, out, errOut = capture(t, []string{"check", "--box", box, "dis cord"}, nowish())
+	require.Equal(t, 1, code, "check exit = %d, want 1 -- that surface is quarantined\nstdout: %q\nstderr: %q", code, out, errOut)
+	n := countLinesWithPrefix(errOut, "FUSE")
+	assert.Equal(t, 1, n, "stderr holds %d lines opening with FUSE, want exactly 1: %q", n, errOut)
+	assert.Contains(t, errOut, `dis\x0acord`, "the FAILED line must quote the stored spelling, escaped, got %q", errOut)
+
+	writeRaw(t, box, raw)
+	code, out, errOut = capture(t, []string{"lift", "quarantine", "--box", box, "dis cord"}, nowish())
+	require.Equal(t, 0, code, "lift exit = %d, want 0\nstdout: %q\nstderr: %q", code, out, errOut)
+	for _, line := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
+		assert.True(t, strings.HasPrefix(line, "LIFT OK"), "every lift line must open the grammar, got %q", line)
+	}
+	assert.Contains(t, out, `dis\x0acord`, "the announced lift must quote the stored spelling, escaped, got %q", out)
+}
+
+// TestAnEscapeSequenceNeverReachesTheTerminal: the same hole aimed at an operator. A
+// reason that clears the screen, or repaints what is above it, must arrive as text.
+func TestAnEscapeSequenceNeverReachesTheTerminal(t *testing.T) {
+	t.Parallel()
+
+	box := boxIn(t)
+	writeBox(t, box, fuse.Box{
+		Lockdown:   &fuse.Fuse{At: "\x1b[2J", Reason: "clean\x1b[2J\x1b[Hnothing to see"},
+		Quarantine: map[string]fuse.Fuse{},
+	})
+
+	for _, args := range [][]string{
+		{"status", "--box", box},
+		{"check", "--box", box, "discord"},
+	} {
+		_, out, errOut := capture(t, args, nowish())
+		assert.False(t, strings.ContainsRune(out+errOut, 0x1b), "%v: a raw ESC byte reached the output: %q", args, out+errOut)
+		assert.Contains(t, out+errOut, `\x1b`, "%v: the escape must be shown as text, not dropped: %q", args, out+errOut)
+	}
+}
+
+// TestLockdownTakesANewlineInItsReasonAndStoresItFolded. A fuse you cannot blow is not a
+// fuse, so the reason is never REFUSED -- it is folded, and the write stays tidy. The
+// print-time escape is what actually holds; this only keeps this tool's own writes clean.
+func TestLockdownTakesANewlineInItsReasonAndStoresItFolded(t *testing.T) {
+	t.Parallel()
+
+	box := boxIn(t)
+	code, out, errOut := capture(t, []string{"lockdown", "--box", box, "line one\nline two"}, nowish())
+	require.Equal(t, 0, code, "exit = %d, want 0 -- a reason is never refused for what it contains\nstdout: %q\nstderr: %q", code, out, errOut)
+	got := strings.Count(strings.TrimRight(out, "\n"), "\n") + 1
+	assert.Equal(t, 1, got, "LOCKDOWN OK must be one line, got %d: %q", got, out)
+
+	b, err := fuse.ReadBox(box)
+	require.NoError(t, err, "read back: %v, %+v", err, b)
+	require.NotNil(t, b.Lockdown, "read back: %v, %+v", err, b)
+	assert.False(t, strings.ContainsAny(b.Lockdown.Reason, "\n\r\t"), "the stored reason still holds a control character: %q", b.Lockdown.Reason)
+	assert.Equal(t, "line one line two", b.Lockdown.Reason, "stored reason = %q, want the folded text with nothing lost", b.Lockdown.Reason)
+}
+
+// TestQuarantineFoldsAControlCharacterOutOfTheSurfaceName: folding widens the class of
+// spellings that count as one surface (package note 4), so the plain spelling must still
+// refuse afterwards. The other direction of that same widening is pinned by
+// TestLiftRemovesEveryFoldEquivalentSpelling.
+func TestQuarantineFoldsAControlCharacterOutOfTheSurfaceName(t *testing.T) {
+	t.Parallel()
+
+	box := boxIn(t)
+	code, out, errOut := capture(t, []string{"quarantine", "--box", box, "\x1bdiscord\n", "attacked"}, nowish())
+	require.Equal(t, 0, code, "exit = %d, want 0\nstdout: %q\nstderr: %q", code, out, errOut)
+	got := strings.Count(strings.TrimRight(out, "\n"), "\n") + 1
+	assert.Equal(t, 1, got, "QUARANTINE OK must be one line, got %d: %q", got, out)
+
+	b, err := fuse.ReadBox(box)
+	require.NoError(t, err)
+	names := b.Surfaces()
+	require.Len(t, names, 1, "stored keys = %q, want exactly [discord] -- a control character is folded away", names)
+	require.Equal(t, "discord", names[0], "stored keys = %q, want exactly [discord] -- a control character is folded away", names)
+
+	code, _, errOut = capture(t, []string{"check", "--box", box, "discord"}, nowish())
+	assert.Equal(t, 1, code, "check discord exit = %d, want 1 -- the stored key and this spelling are one surface: %q", code, errOut)
+}
+
+// TestAFailFileErrorStaysOnOneLine closes the last hole in the promise: a FAILED line's
+// <reason> slot is sometimes an ERROR, and an error text carries whatever the path that
+// produced it carried. A --box argument holding a newline is the caller's own, not the
+// box's, but the guarantee SPEC.md states is that nothing an argument contains can add a
+// second line either.
+func TestAFailFileErrorStaysOnOneLine(t *testing.T) {
+	t.Parallel()
+
+	if runtime.GOOS == "windows" {
+		t.Skip("windows: chmod 0555 does not make a directory refuse writes, so the failure this pins cannot be produced here")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: a read-only directory does not refuse writes")
+	}
+	dir := t.TempDir()
+	require.NoError(t, os.Chmod(dir, 0o555))
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+	// The unmakeable directory carries the newline, so the mkdir error text carries it too.
+	box := filepath.Join(dir, "sub\nnew", "fuses.json")
+
+	for _, tc := range []struct {
+		args []string
+		want string
+		code int
+	}{
+		{[]string{"lockdown", "--box", box, "suspected compromise"}, "LOCKDOWN FAILED", 1},
+		// No box there: quarantine refuses before it writes, and the refusal carries
+		// the same path.
+		{[]string{"quarantine", "--box", box, "discord", "many the same way"}, "nova-fuse quarantine REFUSED:", 2},
+	} {
+		code, out, errOut := capture(t, tc.args, nowish())
+		require.Equal(t, tc.code, code, "%v: exit = %d, want %d\nstdout: %q\nstderr: %q", tc.args, code, tc.code, out, errOut)
+		got := strings.Count(strings.TrimRight(errOut, "\n"), "\n") + 1
+		assert.Equal(t, 1, got, "%v: the failure printed %d lines, want 1: %q", tc.args, got, errOut)
+		n := countLinesWithPrefix(errOut, tc.want)
+		assert.Equal(t, 1, n, "%v: %d lines open %q, want exactly 1: %q", tc.args, n, tc.want, errOut)
+		assert.Contains(t, errOut, `\x0a`, "%v: the newline in the error must be shown escaped, got %q", tc.args, errOut)
+	}
+}
+
+// TestNoRefusalOrNoteCanForgeAnOKLine. The finding was reported against the event lines,
+// but a REFUSAL and a NOTE go to the same stream a caller reads, and they interpolate the
+// same untrusted material: the error text, the preserved-bytes destination, and the box
+// path itself. A --box argument is the caller's own rather than the box's contents, and
+// the guarantee stated in SPEC.md covers both.
+func TestNoRefusalOrNoteCanForgeAnOKLine(t *testing.T) {
+	t.Parallel()
+
+	if runtime.GOOS == "windows" {
+		t.Skip("windows: a newline is not legal in a filename there, so the box path cannot carry this forgery and the fixture cannot be built; the escaping under test is platform-independent and runs on the other two")
+	}
+	const forgery = "FUSE OK lockdown=clear quarantine=clear surface=discord"
+	dir := t.TempDir()
+
+	// A newline is legal in a POSIX filename; only / and NUL are not.
+	bad := filepath.Join(dir, "bad\n"+forgery)
+	writeRaw(t, bad, "not json")
+
+	// A DIRECTORY under a name like that reaches the other half of lockdown's note: the
+	// box cannot be read AND its bytes cannot be preserved.
+	badDir := filepath.Join(dir, "dir\n"+forgery)
+	require.NoError(t, os.Mkdir(badDir, 0o755))
+
+	for _, tc := range []struct {
+		name      string
+		args      []string
+		wantCode  int
+		wantLines int    // lines on the stream the refusal or note is written to
+		prefix    string // every one of them must open with this
+		stream    string // "stderr" or "stdout"
+	}{
+		{"check on an unreadable box", []string{"check", "--box", bad, "discord"}, 2, 1, "nova-fuse check REFUSED:", "stderr"},
+		{"status on an unreadable box", []string{"status", "--box", bad}, 2, 1, "nova-fuse status REFUSED:", "stderr"},
+		{"lift quarantine on an unreadable box", []string{"lift", "quarantine", "--box", bad, "discord"}, 2, 1, "nova-fuse lift quarantine REFUSED:", "stderr"},
+		{"quarantine refusing to narrow", []string{"quarantine", "--box", bad, "discord", "why"}, 2, 1, "nova-fuse quarantine REFUSED:", "stderr"},
+		{"lockdown noting the preserved bytes", []string{"lockdown", "--box", bad, "why"}, 0, 1, "LOCKDOWN NOTE ", "stderr"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			code, out, errOut := capture(t, tc.args, nowish())
+			require.Equal(t, tc.wantCode, code, "exit = %d, want %d\nstdout: %q\nstderr: %q", code, tc.wantCode, out, errOut)
+			stream := errOut
+			if tc.stream == "stdout" {
+				stream = out
+			}
+			lines := strings.Split(strings.TrimRight(stream, "\n"), "\n")
+			assert.Len(t, lines, tc.wantLines, "%s printed %d lines, want %d: %q", tc.stream, len(lines), tc.wantLines, stream)
+			for _, line := range lines {
+				assert.True(t, strings.HasPrefix(line, tc.prefix), "every line must open with %q, got %q", tc.prefix, line)
+			}
+			noForgedOKLine(t, "FUSE OK", out, errOut)
+			noForgedOKLine(t, "STATUS OK", out, errOut)
+			noForgedOKLine(t, "LIFT OK", out, errOut)
+		})
+	}
+
+	// lockdown over a box it can neither read nor preserve: both halves of the note, and
+	// then a FAILED line when the rename cannot replace a directory.
+	t.Run("lockdown over an unpreservable box", func(t *testing.T) {
+		code, out, errOut := capture(t, []string{"lockdown", "--box", badDir, "why"}, nowish())
+		require.Equal(t, 1, code, "exit = %d, want 1 -- the write cannot land on a directory\nstdout: %q\nstderr: %q", code, out, errOut)
+		lines := strings.Split(strings.TrimRight(errOut, "\n"), "\n")
+		assert.Len(t, lines, 2, "stderr printed %d lines, want 2 (the note, then the FAILED line): %q", len(lines), errOut)
+		for _, line := range lines {
+			assert.True(t, strings.HasPrefix(line, "LOCKDOWN NOTE ") || strings.HasPrefix(line, "LOCKDOWN FAILED"), "unexpected line: %q", line)
+		}
+		noForgedOKLine(t, "FUSE OK", out, errOut)
+	})
+}
+
+// TestEveryPrintedArgumentIsLiteralQuotedOrEscaped is the tripwire, and it exists because
+// the first round of this fix was audited by counting call sites BY HAND and came up nine
+// short. The classifier lives in internal/oneline/audit now, shared by every binary; what
+// is this tool's own is the list below: its wrappers, its exemptions with their reasons,
+// and its imports. A new interpolation is a decision from now on, never a drive-by.
+func TestEveryPrintedArgumentIsLiteralQuotedOrEscaped(t *testing.T) {
+	t.Parallel()
+
+	audit.PrintedArguments(t, fuseAudit)
+}
+
+// TestNoOtherWriterOrShadowCanBypassTheEscape closes the gap in the sibling test above,
+// which walks fmt calls and therefore sees only one way of putting bytes on a stream. See
+// audit.Bypasses for the list; each entry was proved able to fail by mutation.
+func TestNoOtherWriterOrShadowCanBypassTheEscape(t *testing.T) {
+	t.Parallel()
+
+	audit.Bypasses(t, fuseAudit)
+}
+
+var fuseAudit = audit.Config{
+	// Rendered through one of these, a string cannot carry a line break, a terminal
+	// control sequence or a bidi control. why and since wrap oneline.
+	// hintFor is the fourth: it returns this package's own boxHint constant, or the empty
+	// string, and nothing else -- a check on a flag name, with no caller text in it. The
+	// classifier walks its body like the others, so the claim is checked rather than taken.
+	// buildinfo.Line is the `version` verb's whole line and the fifth escaper: it renders
+	// every one of its four fields through oneline.Field inside internal/buildinfo, where
+	// TestLineShape and TestLineHoldsWhateverTheStampContains pin it -- including against
+	// a release stamp holding a newline, which is the one field of that line that comes
+	// from outside the toolchain.
+	Escapers: []string{"why", "since", "hintFor", "buildinfo.Line"},
+	// One entry per site, keyed by file, function and source text. Each is a claim, and
+	// each claim is either checked by a test named here or stated as the reason a reader
+	// would accept. The usage constant needs no entry: a package constant is a literal.
+	Exempt: map[string]string{
+		"main.go|cmdPath|box":           "`path` hands back the caller-supplied argument unescaped; SPEC.md exempts it by name and states that no caller may scan path output for grammar, because it will print one if the argument is one",
+		"main.go|liftQuarantine|listed": "built immediately above from oneline.Escape over every stored name; pinned by TestTheQuarantinedNowListingCannotForgeALine, because the classifier cannot see inside the loop",
+		"main.go|parseBoxWith|name":     "the verb's own name, chosen by this file at every call site",
+	},
+	Shadows: []string{"fuse", "Fold", "why", "since"},
+	Imports: []string{
+		// version.go, and the reason it cannot write past the escape: buildinfo reads
+		// debug.ReadBuildInfo and runtime's GOOS, GOARCH and Version, holds no writer of
+		// its own, and returns a STRING that this package prints -- rendered field by
+		// field through oneline.Field before it is returned.
+		`"github.com/mas-bandwidth/nova-tools/internal/buildinfo"`,
+		`"flag"`, `"fmt"`, `"io"`, `"os"`, `"strings"`, `"time"`,
+		// path/filepath joins a relative --box onto the injected working directory
+		// and reports whether a path is already absolute. It holds no writer and
+		// prints nothing, so it cannot write past the escape.
+		`"path/filepath"`,
+		// maps and slices sort the lifted surfaces' names (slices.Sorted(maps.Keys)):
+		// they return values and hold no writer.
+		`"maps"`, `"slices"`,
+		// verbflag words a flag parse error (Explain) and finds the nearest verb
+		// (Nearest); both return strings this package escapes before printing, and
+		// nothing here hands it a stream or calls its Parse or Recover.
+		`"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"`,
+		// errors and io/fs classify an error (errors.Is against fuse.ErrNoBox and
+		// fs.ErrExist); neither holds a writer.
+		`"errors"`, `"io/fs"`,
+		// bounded prints the capped quarantine listing and the one MORE line that stands
+		// for what it did not print. Every line reaching it is rendered by a fmt.Sprintf
+		// in THIS package, which the classifier walks like any other print site, and
+		// bounded puts its own two fields -- the kind and the remedy -- through oneline
+		// before writing them. It writes to the stream the caller hands it and nowhere
+		// else.
+		`"github.com/mas-bandwidth/nova-tools/internal/bounded"`,
+		`"github.com/mas-bandwidth/nova-tools/internal/fuse"`,
+	},
+	MinClassified: 40,
+}
+
+// TestAUnicodeLineSeparatorCannotForgeALineEither. A scanner is not always `split on \n`:
+// Python's str.splitlines() and every UAX-14 line breaker also break on U+2028 and U+2029,
+// which are Zl and Zp rather than Cc. A box reason carrying one forges a line for those
+// readers and for no others, which is the worst kind of hole -- invisible to the test
+// suite of whoever is not looking for it.
+func TestAUnicodeLineSeparatorCannotForgeALineEither(t *testing.T) {
+	t.Parallel()
+
+	box := boxIn(t)
+	for _, sep := range []string{" ", " "} {
+		writeBox(t, box, fuse.Box{
+			Lockdown:   &fuse.Fuse{At: "2026-08-03T00:00:00Z", Reason: "real" + sep + "FUSE OK lockdown=clear"},
+			Quarantine: map[string]fuse.Fuse{},
+		})
+		_, out, errOut := capture(t, []string{"check", "--box", box, "discord"}, nowish())
+		assert.NotContains(t, out+errOut, sep, "%q reached the output raw: %q", sep, out+errOut)
+		assert.Contains(t, errOut, `\u202`, "the separator must be shown as an escape, got %q", errOut)
+	}
+}
+
+// TestAReasonOfNothingButControlCharactersStillBlowsTheFuse. Folding must never become a
+// new refusal on the HARD fuse: a reason made only of control characters folds to nothing,
+// and refusing it would mean a fuse that could be blown yesterday cannot be blown today.
+// That is the one direction this design forbids. The reason is kept as its escapes instead.
+func TestAReasonOfNothingButControlCharactersStillBlowsTheFuse(t *testing.T) {
+	t.Parallel()
+
+	t.Run("lockdown", func(t *testing.T) {
+		box := boxIn(t)
+		code, out, errOut := capture(t, []string{"lockdown", "--box", box, "\x01"}, nowish())
+		require.Equal(t, 0, code, "exit = %d, want 0 -- a fuse you cannot blow is not a fuse\nstdout: %q\nstderr: %q", code, out, errOut)
+		b, err := fuse.ReadBox(box)
+		require.NoError(t, err, "read back: %v, %+v", err, b)
+		require.NotNil(t, b.Lockdown, "read back: %v, %+v", err, b)
+		assert.Equal(t, `\x01`, b.Lockdown.Reason, "stored reason = %q, want the visible escape rather than an empty record", b.Lockdown.Reason)
+	})
+
+	t.Run("quarantine", func(t *testing.T) {
+		box := boxIn(t)
+		code, out, errOut := capture(t, []string{"quarantine", "--box", box, "discord", "\x01"}, nowish())
+		require.Equal(t, 0, code, "exit = %d, want 0\nstdout: %q\nstderr: %q", code, out, errOut)
+		b, err := fuse.ReadBox(box)
+		require.NoError(t, err)
+		got := b.Quarantine["discord"].Reason
+		assert.Equal(t, `\x01`, got, "stored reason = %q, want the visible escape", got)
+	})
+
+	// The genuinely empty reason is still refused, exactly as before this branch.
+	t.Run("whitespace only is still refused", func(t *testing.T) {
+		box := boxIn(t)
+		code, _, errOut := capture(t, []string{"lockdown", "--box", box, " \n\t "}, nowish())
+		assert.Equal(t, 2, code, "exit = %d, want 2 -- an empty reason was always refused", code)
+		assert.Contains(t, errOut, "needs a reason", "stderr = %q, want the reason refusal", errOut)
+	})
+}
+
+// TestAFlagErrorCannotForgeALineEither. The last writer outside the fence: package flag
+// prints its OWN error, and that error quotes the argument it could not parse. Every verb
+// parses flags, and the realistic shape is an untrusted surface name that begins with a
+// dash -- so nothing in this file's code had to run for a caller to author a whole line
+// of stderr. This one needs no newline in a path, so unlike the --box tests it runs
+// everywhere.
+func TestAFlagErrorCannotForgeALineEither(t *testing.T) {
+	t.Parallel()
+
+	box := boxIn(t)
+	writeRaw(t, box, `{"lockdown":null,"quarantine":{}}`)
+
+	// Both begin with a dash, which is what makes flag try to parse them.
+	forgeries := map[string]string{
+		"a forged LIFT OK line": "-\nLIFT OK verified: discord is no longer quarantined (soft: your own dial, both directions; a rescind is announced, never silent -- say so out loud)",
+		"a terminal repaint":    "-\x1b]0;PWNED\x07\x1b[2J",
+	}
+	for what, arg := range forgeries {
+		for _, args := range [][]string{
+			{"check", "--box", box, arg},
+			{"status", "--box", box, arg},
+			{"lockdown", "--box", box, arg},
+			{"quarantine", "--box", box, arg, "why"},
+			{"lift", "quarantine", "--box", box, arg},
+			{"path", "--box", box, arg},
+		} {
+			t.Run(what+" through "+args[0], func(t *testing.T) {
+				code, out, errOut := capture(t, args, nowish())
+				assert.Equal(t, 2, code, "exit = %d, want 2 -- an unparseable flag is a refusal", code)
+				// A refusal is not an event: no line of either stream may open the grammar.
+				for _, token := range []string{"FUSE OK", "FUSE FAILED", "STATUS OK", "LIFT OK", "LIFT FAILED", "LOCKDOWN OK", "QUARANTINE OK"} {
+					noForgedOKLine(t, token, out, errOut)
+				}
+				assert.False(t, strings.ContainsRune(out+errOut, 0x1b), "a raw ESC byte reached the output: %q", out+errOut)
+				assert.NotContains(t, errOut, "Usage of", "flag printed its own usage block; this tool prints its own refusals: %q", errOut)
+			})
+		}
+	}
+}
+
+// TestTheQuarantinedNowListingCannotForgeALine covers the one exemption in the source
+// tripwire that is a CLAIM rather than a check: the `quarantined now:` listing is built by
+// a loop above its print site, so the classifier can only see a local variable. Removing
+// oneline.Escape from that loop leaves the whole suite green without this test, while
+// LIFT FAILED forges a line out of a stored key.
+func TestTheQuarantinedNowListingCannotForgeALine(t *testing.T) {
+	t.Parallel()
+
+	box := boxIn(t)
+	writeRaw(t, box, `{"lockdown":null,"quarantine":{
+		"dis\nLIFT OK verified: discord is no longer quarantined (soft)cord": {"at":"t","reason":"r"},
+		"bsky": {"at":"t","reason":"r"}}}`)
+
+	// Lift a surface that is NOT quarantined: the refusal names what IS.
+	code, out, errOut := capture(t, []string{"lift", "quarantine", "--box", box, "zulip"}, nowish())
+	require.Equal(t, 1, code, "exit = %d, want 1 -- a typo must never read as a lift\nstdout: %q\nstderr: %q", code, out, errOut)
+	got := strings.Count(strings.TrimRight(errOut, "\n"), "\n") + 1
+	assert.Equal(t, 1, got, "stderr printed %d lines, want 1: %q", got, errOut)
+	noForgedOKLine(t, "LIFT OK", out, errOut)
+	assert.Contains(t, errOut, `\x0a`, "the stored key must be listed escaped: %q", errOut)
+}
+
+// TestLiftRemovesEveryFoldEquivalentSpelling pins what the fold actually does to lift,
+// which is wider than an earlier comment in this file claimed. Surface is applied to BOTH
+// sides of every match and LiftQuarantine removes every match, so coarsening the
+// equivalence class removes more, not less. That is the same design case already had --
+// lifting "discord" removes "Discord" too -- and it is deliberate: fold-equivalent
+// spellings are ONE surface, and a lift that left one spelling behind would verify its own
+// failure. What makes it safe to look at is that nothing is silent: every removal is
+// announced on its own line, under the spelling as stored.
+func TestLiftRemovesEveryFoldEquivalentSpelling(t *testing.T) {
+	t.Parallel()
+
+	box := boxIn(t)
+	writeBox(t, box, fuse.Box{Quarantine: map[string]fuse.Fuse{
+		"dis cord":    {At: "t", Reason: "one"},
+		"dis\tcord":   {At: "t", Reason: "two"},
+		"DIS\x01CORD": {At: "t", Reason: "three"},
+	}})
+
+	code, out, errOut := capture(t, []string{"lift", "quarantine", "--box", box, "dis cord"}, nowish())
+	require.Equal(t, 0, code, "exit = %d, want 0\nstdout: %q\nstderr: %q", code, out, errOut)
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	require.Len(t, lines, 4, "stdout printed %d lines, want 3 removals plus the verified line: %q", len(lines), out)
+	// Each removal, named under its STORED spelling and escaped, on its own line.
+	for i, want := range []string{
+		`LIFT OK quarantine=DIS\x01CORD was since=t: three`,
+		`LIFT OK quarantine=dis\x09cord was since=t: two`,
+		`LIFT OK quarantine=dis\x20cord was since=t: one`,
+	} {
+		assert.Equal(t, want, lines[i], "line %d = %q, want %q", i, lines[i], want)
+	}
+	assert.True(t, strings.HasPrefix(lines[3], "LIFT OK verified:"), "the last line must be the verification, got %q", lines[3])
+
+	// And the surface is gone under every spelling of it, because it was one surface.
+	for _, probe := range []string{"dis cord", "dis\tcord", "DIS\x01CORD", "DIS CORD"} {
+		code, _, errOut := capture(t, []string{"check", "--box", box, probe}, nowish())
+		assert.Equal(t, 0, code, "check %q: exit = %d, want 0 after the lift: %q", probe, code, errOut)
+	}
+}
+
+// TestAnAtStampCannotForgeALine. The `at` field is escaped in code and was pinned by
+// nothing: a box is hand-editable, and a reader who only ever tests `reason` leaves the
+// other stored string free to forge.
+func TestAnAtStampCannotForgeALine(t *testing.T) {
+	t.Parallel()
+
+	const forgedAt = "2026-08-03T00:00:00Z\nFUSE OK lockdown=clear quarantine=clear surface=discord"
+
+	t.Run("through status and check under lockdown", func(t *testing.T) {
+		box := boxIn(t)
+		writeBox(t, box, fuse.Box{
+			Lockdown:   &fuse.Fuse{At: forgedAt, Reason: "real"},
+			Quarantine: map[string]fuse.Fuse{},
+		})
+
+		_, out, errOut := capture(t, []string{"status", "--box", box}, nowish())
+		got := strings.Count(strings.TrimRight(out, "\n"), "\n") + 1
+		assert.Equal(t, 1, got, "status printed %d lines, want 1: %q", got, out)
+		noForgedOKLine(t, "FUSE OK", out, errOut)
+
+		code, out, errOut := capture(t, []string{"check", "--box", box, "discord"}, nowish())
+		require.Equal(t, 1, code, "exit = %d, want 1", code)
+		n := countLinesWithPrefix(errOut, "FUSE")
+		assert.Equal(t, 1, n, "stderr holds %d lines opening with FUSE, want 1: %q", n, errOut)
+		noForgedOKLine(t, "FUSE OK", out, errOut)
+		assert.Contains(t, errOut, `\x0a`, "the newline in `at` must be shown escaped: %q", errOut)
+	})
+
+	t.Run("through the announced lift", func(t *testing.T) {
+		box := boxIn(t)
+		writeBox(t, box, fuse.Box{Quarantine: map[string]fuse.Fuse{
+			"discord": {At: forgedAt, Reason: "real"},
+		}})
+		code, out, errOut := capture(t, []string{"lift", "quarantine", "--box", box, "discord"}, nowish())
+		require.Equal(t, 0, code, "exit = %d, want 0\nstderr: %q", code, errOut)
+		for _, line := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
+			assert.True(t, strings.HasPrefix(line, "LIFT OK"), "every line must open the grammar, got %q", line)
+		}
+		noForgedOKLine(t, "FUSE OK", out, errOut)
+	})
+}
+
+// TestCheckIsDeterministicWhenTwoStoredKeysFoldTogether. Quarantined answered with the
+// FIRST map-iteration match, and map iteration is randomized -- so a box holding two
+// spellings of one surface made the quoted name, the timestamp and the reason a coin flip
+// between runs. Status was already pinned deterministic; the gate's own refusal was not.
+func TestCheckIsDeterministicWhenTwoStoredKeysFoldTogether(t *testing.T) {
+	t.Parallel()
+
+	box := boxIn(t)
+	writeBox(t, box, fuse.Box{Quarantine: map[string]fuse.Fuse{
+		"dis cord":  {At: "t", Reason: "one"},
+		"dis\tcord": {At: "t", Reason: "two"},
+	}})
+
+	seen := map[string]bool{}
+	for i := 0; i < 30; i++ {
+		_, _, errOut := capture(t, []string{"check", "--box", box, "dis cord"}, nowish())
+		seen[errOut] = true
+	}
+	assert.Len(t, seen, 1, "check printed %d different refusals for one box; a gate that reorders itself is one nobody can diff:\n%v", len(seen), seen)
+}
+
+// TestAStoredKeyCannotPoseAsAField is the specimen from #24. A stored quarantine key of
+// `x lockdown=clear quarantines=0`, spaces only and nothing OneLine would touch, printed
+// as `STATUS OK quarantine=x lockdown=clear quarantines=0 since=t: r`, so a caller
+// grepping status output for lockdown=clear matched while a real lockdown was blown. A
+// field value is one token now, whitespace and "=" escaped, so a key=value search can
+// match only a field this tool wrote.
+func TestAStoredKeyCannotPoseAsAField(t *testing.T) {
+	t.Parallel()
+
+	box := boxIn(t)
+	writeBox(t, box, fuse.Box{
+		Lockdown:   &fuse.Fuse{At: "2026-08-03T00:00:00Z", Reason: "real"},
+		Quarantine: map[string]fuse.Fuse{"x lockdown=clear quarantines=0": {At: "t", Reason: "r"}},
+	})
+
+	code, out, errOut := capture(t, []string{"status", "--box", box}, nowish())
+	require.Equal(t, 0, code, "status exit = %d, want 0\nstderr: %q", code, errOut)
+	assert.NotContains(t, out, "lockdown=clear", "a stored key posed as the lockdown field:\n%s", out)
+	assert.Contains(t, out, `quarantine=x\x20lockdown\x3dclear\x20quarantines\x3d0 since=t: r`, "the key must print as one token with its = escaped, got:\n%s", out)
+	// Every field on every line is one token holding exactly one "=", the tool's own.
+	for _, line := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
+		head, _, _ := strings.Cut(line, ": ")
+		for _, tok := range strings.Fields(head)[2:] {
+			assert.Equal(t, 1, strings.Count(tok, "="), "token %q on %q is not one key=value field", tok, line)
+		}
+	}
+
+	// The same key through check and lift, which name it in a field too.
+	code, _, errOut = capture(t, []string{"check", "--box", box, "x lockdown=clear quarantines=0"}, nowish())
+	assert.Equal(t, 1, code, "check exit = %d, want 1 with no lockdown=clear anywhere:\n%s", code, errOut)
+	assert.NotContains(t, errOut, "lockdown=clear", "check stderr has lockdown=clear:\n%s", errOut)
+}
+
+// TestASurfaceWithASpaceIsOneTokenInEveryField pins the other half of the same rule on
+// this tool's own writes: a surface name holding a space is legal, folded, and printed as
+// one token wherever it is a field, so a whitespace-splitting scanner still counts fields
+// where this tool wrote them.
+func TestASurfaceWithASpaceIsOneTokenInEveryField(t *testing.T) {
+	t.Parallel()
+
+	box := boxIn(t)
+	mustRun(t, []string{"quarantine", "--box", box, "my surface", "why"}, nowish())
+
+	code, out, _ := capture(t, []string{"check", "--box", box, "other"}, nowish())
+	assert.Equal(t, 0, code, "check other: exit %d, %q", code, out)
+	assert.Contains(t, out, "surface=other\n", "check other: exit %d, %q", code, out)
+	_, _, errOut := capture(t, []string{"check", "--box", box, "my surface"}, nowish())
+	assert.Contains(t, errOut, `FUSE FAILED quarantine=my\x20surface since=`, "FUSE FAILED must name the surface as one token, got %q", errOut)
+	_, out, _ = capture(t, []string{"status", "--box", box}, nowish())
+	assert.Contains(t, out, `STATUS OK quarantine=my\x20surface since=`, "STATUS must name the surface as one token, got %q", out)
+	_, out, _ = capture(t, []string{"lift", "quarantine", "--box", box, "my surface"}, nowish())
+	assert.Contains(t, out, `LIFT OK quarantine=my\x20surface was since=`, "LIFT must name the surface as one token, got %q", out)
+}
+
+// TestQuarantineOKNamesTheEntryItVerified. When the box already held a key folding to
+// the surface being quarantined, the verification asked Quarantined, which answers with
+// the sorted-first stored spelling -- so `quarantine discord` over a box holding `Discord`
+// announced `QUARANTINE OK Discord since=<the old stamp>` with the new reason: a true
+// claim about a sibling entry, under the wrong name and the wrong time. A blow onto a
+// standing fuse now keeps the standing record (see TestAReBlowKeepsTheStandingRecordAndSaysSo),
+// so the line names the STORED spelling with the STORED time and reason, and the new
+// reason only as not recorded: a true claim about the one entry, and the box is not
+// rewritten.
+func TestQuarantineOKNamesTheEntryItVerified(t *testing.T) {
+	t.Parallel()
+
+	box := boxIn(t)
+	writeBox(t, box, fuse.Box{Quarantine: map[string]fuse.Fuse{
+		"Discord": {At: "2020-01-01T00:00:00Z", Reason: "old"},
+	}})
+	now := nowish()
+	code, out, errOut := capture(t, []string{"quarantine", "--box", box, "discord", "new"}, now)
+	require.Equal(t, 0, code, "exit = %d, want 0\nstdout: %q\nstderr: %q", code, out, errOut)
+	want := "QUARANTINE OK Discord already=quarantined since=2020-01-01T00:00:00Z: old (standing record kept; the new reason was not recorded: new)\n"
+	assert.Equal(t, want, out, "the entry that stands, not its sibling nor a rewrite")
+}
+
+// TestAReBlowKeepsTheStandingRecordAndSaysSo. A second blow onto a fuse already
+// standing rewrote the box with no check for one, so the first at and reason of the
+// blow were gone without a word (security#74 finding 1). Both verbs now keep the
+// standing record and say so: exit 0 (the state sought holds), one OK line naming
+// already= with the stored at and reason, and the new reason only as not recorded.
+// A dry run reports the same line and writes nothing.
+func TestAReBlowKeepsTheStandingRecordAndSaysSo(t *testing.T) {
+	t.Parallel()
+
+	t.Run("quarantine keeps the first at and reason", func(t *testing.T) {
+		t.Parallel()
+
+		box := boxIn(t)
+		first := nowish()
+		mustRun(t, []string{"quarantine", "--box", box, "a-forum", "first reason"}, first)
+
+		code, out, errOut := capture(t, []string{"quarantine", "--box", box, "a-forum", "second reason"}, first.Add(time.Second))
+		require.Equal(t, 0, code, "re-blow: exit = %d, want 0, the state sought holds\nstdout: %q\nstderr: %q", code, out, errOut)
+		assert.Contains(t, out, "already=quarantined", "stdout = %q, want the OK line to name already", out)
+		assert.Contains(t, out, stamp(first)+": first reason", "stdout = %q, want the standing record's at and reason, not the new ones", out)
+
+		b, err := fuse.ReadBox(box)
+		require.NoError(t, err, "read the box back")
+		_, standing, ok := b.Quarantined("a-forum")
+		require.True(t, ok, "a-forum must still be quarantined after the re-blow")
+		assert.Equal(t, stamp(first), standing.At, "the box must hold the FIRST at, got %q", standing.At)
+		assert.Equal(t, "first reason", standing.Reason, "the box must hold the FIRST reason, got %q", standing.Reason)
+	})
+
+	t.Run("lockdown keeps the first at and reason", func(t *testing.T) {
+		t.Parallel()
+
+		box := boxIn(t)
+		first := nowish()
+		mustRun(t, []string{"lockdown", "--box", box, "first reason"}, first)
+
+		code, out, errOut := capture(t, []string{"lockdown", "--box", box, "second reason"}, first.Add(time.Second))
+		require.Equal(t, 0, code, "re-blow: exit = %d, want 0, the state sought holds\nstdout: %q\nstderr: %q", code, out, errOut)
+		assert.Contains(t, out, "already=blown", "stdout = %q, want the OK line to name already", out)
+		assert.Contains(t, out, stamp(first)+": first reason", "stdout = %q, want the standing record's at and reason, not the new ones", out)
+
+		b, err := fuse.ReadBox(box)
+		require.NoError(t, err, "read the box back")
+		require.NotNil(t, b.Lockdown, "the lockdown must still be blown after the re-blow")
+		assert.Equal(t, stamp(first), b.Lockdown.At, "the box must hold the FIRST at, got %q", b.Lockdown.At)
+		assert.Equal(t, "first reason", b.Lockdown.Reason, "the box must hold the FIRST reason, got %q", b.Lockdown.Reason)
+	})
+
+	t.Run("dry runs report the same and write nothing", func(t *testing.T) {
+		t.Parallel()
+
+		box := boxIn(t)
+		first := nowish()
+		mustRun(t, []string{"quarantine", "--box", box, "a-forum", "first reason"}, first)
+		mustRun(t, []string{"lockdown", "--box", box, "first reason"}, first)
+
+		code, out, errOut := capture(t, []string{"quarantine", "--box", box, "--dry-run", "a-forum", "second reason"}, first.Add(time.Second))
+		require.Equal(t, 0, code, "dry re-blow: exit = %d, want 0\nstdout: %q\nstderr: %q", code, out, errOut)
+		assert.Contains(t, out, "already=quarantined", "dry quarantine stdout = %q, want the same already line", out)
+
+		code, out, errOut = capture(t, []string{"lockdown", "--box", box, "--dry-run", "second reason"}, first.Add(2*time.Second))
+		require.Equal(t, 0, code, "dry re-blow: exit = %d, want 0\nstdout: %q\nstderr: %q", code, out, errOut)
+		assert.Contains(t, out, "already=blown", "dry lockdown stdout = %q, want the same already line", out)
+
+		b, err := fuse.ReadBox(box)
+		require.NoError(t, err, "read the box back")
+		require.NotNil(t, b.Lockdown, "the lockdown must still stand, a dry run writes nothing")
+		assert.Equal(t, stamp(first), b.Lockdown.At, "a dry run must not move the standing at, got %q", b.Lockdown.At)
+		_, standing, ok := b.Quarantined("a-forum")
+		require.True(t, ok, "a-forum must still be quarantined, a dry run writes nothing")
+		assert.Equal(t, stamp(first), standing.At, "a dry run must not move the standing at, got %q", standing.At)
+	})
+}
+
+func TestLeadingDashSurfaceWithDelimiter(t *testing.T) {
+	t.Parallel()
+
+	box := boxIn(t)
+	now := nowish()
+
+	// Quarantine with leading-dash surface name after -- delimiter.
+	code, out, errOut := capture(t, []string{"quarantine", "--box", box, "--", "-weird-surface", "malicious topic"}, now)
+	require.Equal(t, 0, code, "quarantine with -- delimiter failed: exit %d\nstdout: %q\nstderr: %q", code, out, errOut)
+	assert.Contains(t, out, "QUARANTINE OK -weird-surface", "stdout = %q, want QUARANTINE OK -weird-surface", out)
+
+	// Check with leading-dash surface name after -- delimiter.
+	code, out, errOut = capture(t, []string{"check", "--box", box, "--", "-weird-surface"}, now)
+	require.Equal(t, 1, code, "check of quarantined surface: exit = %d, want 1\nstdout: %q\nstderr: %q", code, out, errOut)
+	assert.Contains(t, errOut, "FUSE FAILED quarantine=-weird-surface", "stderr = %q, want FUSE FAILED quarantine=-weird-surface", errOut)
+
+	// Lift with leading-dash surface name after -- delimiter.
+	code, out, errOut = capture(t, []string{"lift", "quarantine", "--box", box, "--", "-weird-surface"}, now)
+	require.Equal(t, 0, code, "lift with -- delimiter failed: exit %d\nstdout: %q\nstderr: %q", code, out, errOut)
+	assert.Contains(t, out, "LIFT OK quarantine=-weird-surface", "stdout = %q, want LIFT OK quarantine=-weird-surface", out)
+}
+
+func TestLateFlagRefusalNamesDoor(t *testing.T) {
+	t.Parallel()
+
+	box := boxIn(t)
+	code, _, errOut := capture(t, []string{"quarantine", "--box", box, "my-surface", "reason", "--extra-flag"}, nowish())
+	require.Equal(t, 2, code, "late flag: exit = %d, want 2", code)
+	assert.Contains(t, errOut, `flags come before positional arguments, got "--extra-flag" late; run: nova-fuse help`, "late flag refusal = %q, want standard refusal naming help door", errOut)
+}
+
+// TestLockdownOnSymlinkedBoxRefuses asserts that lockdown on a symlinked box
+// path is refused because WriteBox does not follow symlinks. The symlink
+// remains intact and the target file is unchanged.
+func TestLockdownOnSymlinkedBoxRefuses(t *testing.T) {
+	t.Parallel()
+
+	if runtime.GOOS == "windows" {
+		t.Skip("windows: symlink creation requires special privileges")
+	}
+
+	dir := t.TempDir()
+	realBox := filepath.Join(dir, "real-fuses.json")
+	require.NoError(t, fuse.WriteBox(realBox, fuse.Box{}), "WriteBox failed")
+	before, err := os.ReadFile(realBox)
+	require.NoError(t, err, "ReadFile failed")
+
+	symlinkedBox := filepath.Join(dir, "symlink-fuses.json")
+	require.NoError(t, os.Symlink(realBox, symlinkedBox), "Symlink failed")
+
+	now := nowish()
+	code, out, errOut := capture(t, []string{"lockdown", "--box", symlinkedBox, "symlink lockdown test"}, now)
+	require.Equal(t, 1, code, "lockdown on symlinked box exit = %d, want 1\nstdout: %q\nstderr: %q", code, out, errOut)
+	assert.Contains(t, errOut, "LOCKDOWN FAILED", "stderr = %q, want LOCKDOWN FAILED naming symlink", errOut)
+	assert.Contains(t, errOut, "symlink", "stderr = %q, want LOCKDOWN FAILED naming symlink", errOut)
+
+	// Symlink must still be intact as a symlink
+	lst, err := os.Lstat(symlinkedBox)
+	require.NoError(t, err, "Lstat(%q) failed: %v", symlinkedBox, err)
+	require.NotEqualValues(t, 0, lst.Mode()&os.ModeSymlink, "symlinked box %q is no longer a symlink", symlinkedBox)
+
+	// Target bytes must not change
+	after, err := os.ReadFile(realBox)
+	require.NoError(t, err, "ReadFile failed")
+	require.Equal(t, string(before), string(after), "target bytes changed:\nbefore: %s\nafter: %s", before, after)
+}
+
+// TestLockdownOnParentSymlinkedBoxRefuses asserts that lockdown on a box path
+// whose parent directory is a symlink is refused. The target file is unchanged.
+func TestLockdownOnParentSymlinkedBoxRefuses(t *testing.T) {
+	t.Parallel()
+
+	if runtime.GOOS == "windows" {
+		t.Skip("windows: symlink creation requires special privileges")
+	}
+
+	root := t.TempDir()
+	outside := filepath.Join(root, "outside")
+	intended := filepath.Join(root, "intended")
+	require.NoError(t, os.Mkdir(outside, 0o755))
+	require.NoError(t, os.Mkdir(intended, 0o755))
+	realBox := filepath.Join(outside, "fuses.json")
+	require.NoError(t, fuse.WriteBox(realBox, fuse.Box{}), "WriteBox failed")
+	before, err := os.ReadFile(realBox)
+	require.NoError(t, err, "ReadFile failed")
+
+	linkdir := filepath.Join(intended, "linkdir")
+	require.NoError(t, os.Symlink(outside, linkdir))
+	symlinkedBox := filepath.Join(linkdir, "fuses.json")
+
+	now := nowish()
+	code, out, errOut := capture(t, []string{"lockdown", "--box", symlinkedBox, "parent symlink lockdown test"}, now)
+	require.Equal(t, 1, code, "lockdown on box in symlinked parent dir exit = %d, want 1\nstdout: %q\nstderr: %q", code, out, errOut)
+	assert.Contains(t, errOut, "LOCKDOWN FAILED", "stderr = %q, want LOCKDOWN FAILED naming symlink", errOut)
+	assert.Contains(t, errOut, "symlink", "stderr = %q, want LOCKDOWN FAILED naming symlink", errOut)
+
+	after, err := os.ReadFile(realBox)
+	require.NoError(t, err, "ReadFile failed")
+	require.Equal(t, string(before), string(after), "target bytes changed:\nbefore: %s\nafter: %s", before, after)
+}
+
+// TestCheckRefusesTheSpellingStatusDisplaysForABlownSurface pins that check
+// fails closed when given the exact oneline.Field-escaped spelling printed by status
+// (e.g. spaced\x20name for a blown surface "spaced name"), rather than failing open
+// with FUSE OK because the literal backslash text matches nothing. (security#74 finding 2)
+func TestCheckRefusesTheSpellingStatusDisplaysForABlownSurface(t *testing.T) {
+	t.Parallel()
+
+	box := boxIn(t)
+	now := nowish()
+	mustRun(t, []string{"quarantine", "--box", box, "spaced name", "testing status spelling"}, now)
+
+	code, out, _ := capture(t, []string{"status", "--box", box}, now)
+	require.Equal(t, 0, code, "status must exit 0")
+
+	var token string
+	for _, line := range strings.Split(out, "\n") {
+		for _, field := range strings.Fields(line) {
+			if strings.HasPrefix(field, "quarantine=") {
+				token = strings.TrimPrefix(field, "quarantine=")
+				break
+			}
+		}
+		if token != "" {
+			break
+		}
+	}
+	require.NotEmpty(t, token, "status output must report a quarantine token: %q", out)
+	require.Equal(t, `spaced\x20name`, token, "status output must escape space as \\x20")
+
+	// Check with that exact token: must exit 1 and report FUSE FAILED
+	code, _, errOut := capture(t, []string{"check", "--box", box, token}, now)
+	assert.Equal(t, 1, code, "check with displayed spelling must exit 1, got %d", code)
+	assert.Contains(t, errOut, "FUSE FAILED", "stderr must report FUSE FAILED: %q", errOut)
+	assert.Contains(t, errOut, `quarantine=spaced\x20name`, "stderr must report quarantine token: %q", errOut)
+
+	// Check with an unrelated surface still exits 0
+	code, out, _ = capture(t, []string{"check", "--box", box, "unrelated"}, now)
+	assert.Equal(t, 0, code, "check with unrelated surface must exit 0, got %d", code)
+	assert.Contains(t, out, "FUSE OK", "stdout must report FUSE OK: %q", out)
+
+	// Also check that equals sign escaped as \x3d is refused when quarantined
+	mustRun(t, []string{"quarantine", "--box", box, "surface=with=equals", "testing equals"}, now)
+	code, _, errOut = capture(t, []string{"check", "--box", box, `surface\x3dwith\x3dequals`}, now)
+	assert.Equal(t, 1, code, "check with \\x3d must exit 1, got %d", code)
+	assert.Contains(t, errOut, "FUSE FAILED", "stderr must report FUSE FAILED: %q", errOut)
+}
+
+// TestCheckRefusesTheSpellingStatusDisplaysForARawByteKey pins that \xNN with NN >= 0x80
+// decodes to the raw byte, as oneline.Field emits it for invalid UTF-8, so fuse.Surface
+// folds it to the same U+FFFD a stored key holds and check refuses rather than failing open.
+func TestCheckRefusesTheSpellingStatusDisplaysForARawByteKey(t *testing.T) {
+	t.Parallel()
+
+	box := boxIn(t)
+	now := nowish()
+	writeRaw(t, box, `{"lockdown":null,"quarantine":{"a\ufffdb":{"at":"2026-01-01T00:00:00Z","reason":"hand edited"}}}`)
+
+	code, _, errOut := capture(t, []string{"check", "--box", box, `a\xffb`}, now)
+	assert.Equal(t, 1, code, "check with a raw-byte escape must exit 1, got %d", code)
+	assert.Contains(t, errOut, "FUSE FAILED", "stderr must report FUSE FAILED: %q", errOut)
+
+	code, out, _ := capture(t, []string{"check", "--box", box, "unrelated"}, now)
+	assert.Equal(t, 0, code, "check with unrelated surface must exit 0, got %d", code)
+	assert.Contains(t, out, "FUSE OK", "stdout must report FUSE OK: %q", out)
+}
+
+func TestUnescapeField(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		in   string
+		want string
+	}{
+		{"", ""},
+		{"simple", "simple"},
+		{`spaced\x20name`, "spaced name"},
+		{`equal\x3dsign`, "equal=sign"},
+		{`non\u00a0breaking`, "non\u00a0breaking"},
+		{`line\u2028separator`, "line\u2028separator"},
+		{`incomplete\x`, `incomplete\x`},
+		{`incomplete\x1`, `incomplete\x1`},
+		{`invalid\xgg`, `invalid\xgg`},
+		{`incomplete\u123`, `incomplete\u123`},
+		{`invalid\uzz00`, `invalid\uzz00`},
+		{`a\xffb`, "a\xffb"},
+		{`a\x80\xc3`, "a\x80\xc3"},
+		{"raw\xffbyte\\x20kept", "raw\xffbyte kept"},
+		{`\xc3\xa9`, "\u00e9"},
+	}
+	for _, tc := range cases {
+		assert.Equal(t, tc.want, unescapeField(tc.in), "unescapeField(%q)", tc.in)
+	}
+}

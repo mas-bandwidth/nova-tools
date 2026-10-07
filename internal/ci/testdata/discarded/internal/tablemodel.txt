@@ -1,0 +1,3 @@
+# Migrated counted package ledger; original row keys preserved.
+# ceiling: 1
+internal/tablemodel/replay.go:runHarness:blank 1 a TLC error trace that cannot be copied is lost as evidence with no line

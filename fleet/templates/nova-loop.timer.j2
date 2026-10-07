@@ -1,0 +1,15 @@
+{# fleet/loops.yml renders this for one loop record l that runs every n
+   seconds on a linux machine: it starts nova-loop-<name>.service, a oneshot,
+   n seconds after the run before it began, and once soon after boot. #}
+# {{ loop_dir }}/nova-loop-{{ l.name }}.timer: written by fleet/loops.yml from the loop record {{ l.name }}
+[Unit]
+Description=nova loop {{ l.name }}, every {{ l.every }} s
+
+[Timer]
+OnBootSec=10
+OnUnitActiveSec={{ l.every }}
+AccuracySec=1s
+Unit=nova-loop-{{ l.name }}.service
+
+[Install]
+WantedBy=timers.target

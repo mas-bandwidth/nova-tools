@@ -1,0 +1,11 @@
+# fixed-waits-allowlist.txt -- existing offenders of the `waits` class
+# test in docs/SPEC-CI.md. One row: file:line kind date reason.
+#
+# The file only shrinks. An entry that names no offender on the tree is refused
+# (`fix the wait; the allowlist only shrinks`), so fixing a wait means deleting
+# its row in the same change, and a new row parks nothing.
+#
+# These predate the checker. Each is a fixed wait the CI path carried before the
+# audit was a verb: a sleep in a helper process, a short bound beside a fake
+# clock, or a wall-clock measurement asserted on. The allowed shape is a poll up
+# to NOVA_TEST_WAIT (default 30s) or a fake clock.

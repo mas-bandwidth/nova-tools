@@ -1,0 +1,92 @@
+# The floor NAME list: files that are machinery by exact name or by location,
+# not by extension.
+#
+# WHY A SECOND LIST. An extension denotes a LANGUAGE. Build and orchestration
+# files are identified by their exact name or by where they sit, and several
+# carry no extension at all — so the extension list cannot reach them, and the
+# executable bit and shebang conditions do not either. A Makefile is not
+# executable and has no shebang; it is machinery because make runs it.
+#
+# WHY NOT JUST ADD .yml TO THE EXTENSION LIST. Because that would be wrong.
+# Plenty of prose repos legitimately carry YAML data and front matter, and a
+# floor that forbids it would either be ignored or would push real content out
+# of the tree. What is unambiguous is not the format but the LOCATION: a file
+# under .github/workflows/ exists to execute on someone else's computer, and
+# that is the highest-consequence kind of machinery to find in a repo that is
+# supposed to be prose.
+#
+# EACH ENTRY IS REASONED, deliberately. A floor list nobody argued about is how
+# a list that fails open gets written in the first place.
+#
+# TO EXTEND IT: add the entry here, in the same commit as the test that proves
+# it is caught, with the reason on the line above it.
+#
+# SYNTAX. One entry per line, lowercase. Blank lines and # comments are
+# ignored, whole-line AND from a # to the end of a line, which means a # cannot
+# appear inside a listed name.
+#   name:<basename>   matches that exact file name anywhere in the tree,
+#                     compared case-insensitively
+#   path:<prefix>/    matches every file at or beneath that repo-relative
+#                     directory prefix
+# Matching is on the name or the repo-relative path only. Contents are never
+# sniffed: a name list cannot be wrong about what it says, and a heuristic over
+# file contents lies in both directions.
+
+# make and its variants: recipes are shell, executed by make
+name:makefile
+name:gnumakefile
+
+# container image builds: each instruction executes during a build
+name:dockerfile
+name:containerfile
+
+# CI pipeline definitions carried as a single named file at the repo root
+name:jenkinsfile
+
+# machine provisioning, written in Ruby and evaluated as Ruby
+name:vagrantfile
+
+# ruby's build tool; a Rakefile is a Ruby program
+name:rakefile
+
+# process definitions a hosting platform reads and executes
+name:procfile
+
+# command runners: every entry is a shell recipe
+name:justfile
+#
+# taskfile.yml and taskfile.yaml were listed and are deliberately REMOVED. A
+# writer's own "taskfile.yml" of things to do is a completely ordinary prose
+# file, and flagging it says something false about it — the false red this list
+# can least afford, since a floor that misfires is one an adopter routes around
+# rather than uses. Task also reads Taskfile.dist.yml, which was not listed, so
+# the entry bought weak coverage at the highest collision risk in the file.
+
+# C and C++ build machinery; CMake's language is a scripting language
+name:cmakelists.txt
+
+# CI configuration by LOCATION, which is what makes it unambiguous. These
+# directories and files exist for one purpose: to run commands on a remote.
+path:.github/workflows/
+path:.circleci/
+# composite and JavaScript actions execute on the runner exactly as a workflow
+# does, and they live one directory over at .github/actions/<name>/action.yml.
+# Matched by LOCATION rather than by name, and that is a correction: listing
+# name:action.yml matched anywhere in the tree, which is the same false red
+# taskfile.yml was just removed for, and worse, since a self repo is prose
+# ABOUT actions and a dated journal entry called action.yaml is entirely
+# ordinary. The location is what carries the argument, exactly as it does for
+# workflows, and .github/ itself stays unlisted because it also holds issue
+# templates, CONTRIBUTING and a pull-request template.
+path:.github/actions/
+# These four are matched ANYWHERE rather than by location, which looks like an
+# exception to the rule that removed taskfile.yml and moved actions to a
+# location. It is not: that rule is about names a writer might plausibly
+# produce, and nobody writes prose into a file called .travis.yml. Each is a
+# vendor's single fixed filename with no ordinary-English reading, so matching
+# it anywhere collides with nothing while catching a repo that keeps its CI
+# config somewhere unusual.
+name:.gitlab-ci.yml
+name:.travis.yml
+name:azure-pipelines.yml
+name:appveyor.yml

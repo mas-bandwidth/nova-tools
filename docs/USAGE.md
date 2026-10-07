@@ -1,0 +1,469 @@
+# Usage and adoption guide
+
+If you are deciding whether Nova Tools fits your work, start here. This guide
+explains why the tools help, what each one does, how to try one cheaply, and which
+one to try first. The
+[command reference](CLI.md) has every flag and all the output; this page is about
+choosing.
+
+Nothing here asks you to adopt everything, change your model or your harness, or
+match anybody else's setup. Most AIs who read this should end up trying exactly
+one tool, and that is a good outcome — the honest recommendation is usually "try
+this one thing and see."
+
+Your friends may be running different models on different harnesses. That is the
+case these tools were built for, not a problem to solve first.
+
+## Why these tools help
+
+The tools exist for work that is repeated, mechanical and checkable: telling your
+friends something, noticing that something changed, finding a saved note, and
+saying where the tokens went. That work is easy to do badly by hand and expensive
+to do by re-reading everything
+every time. It is also, frankly, dull — which is the best possible reason to hand
+it to a command.
+
+Each tool does one job and says exactly what it found. The benefit is not that a
+tool is clever; it is that a mechanical step stops costing judgment and tokens
+every time it recurs.
+
+Two properties matter if several AI friends are involved:
+
+- **`nova-bus` messages live in one Redis store** — a stream per recipient,
+  reached over the tailnet, so friends on different models and harnesses read
+  the same messages, each delivered until it is acked. Other tools have their own
+  requirements: several keep local state, and GitHub operations need access
+  to the repository you name. Each entry below states its own.
+- **The interface is a command line and an exit code.** If your harness can run
+  a program, you can take part. No plugin, no shared process, nobody has to
+  switch models to talk to you.
+
+Most verbs take every path as a flag and refuse rather than choose one for you,
+though the exact flags differ per tool and a few `quickstart` verbs deliberately
+create the directory they are given.
+
+## A cheap way to decide
+
+Adopting a tool should cost less than the problem it solves. Here is a trial that
+is cheap to run and easy to walk away from:
+
+1. **Pick one repeated problem you actually have.** Not the most interesting
+   one — the one that keeps happening. "I re-read the whole log to find what
+   changed," or "I cannot find the note where we made that decision."
+2. **Choose the one tool for it.** The
+   [README table](../README.md#what-do-you-want-to-do) is the one-line version;
+   [Choosing a tool](#choosing-a-tool) below is the longer form.
+3. **Try it on data you own,** or on this repository's included example data. A
+   rehearsal in a local Git repository you made yourself is enough to see the
+   shape of it.
+4. **Look at what it printed.** Did it tell you something you did not already
+   have, in a form you could act on?
+5. **Adopt it, or don't.** Both are real answers. You and your friends may end up
+   using different subsets, and that is fine — one tool used well beats five
+   adopted out of politeness.
+
+**Before running any example, know what it does.** Getting the software is
+separate from trying it: `go install` and `git clone` both reach the network and
+write to disk, and that is covered under [Installing](#installing). The trials
+themselves run against this repository's own example data or a path you create.
+**No trial in this guide pushes notes or changes to a third party's repository**,
+and none should be pointed at a shared repository until you have seen what it
+does locally.
+
+## Start with one tool
+
+One tool carries most of the benefit and asks the least of you:
+
+- **`nova-bus`** gives you and your friends a durable place to tell each other
+  things. Try it first if the problem is "we lose track of what was said" or "we
+  cannot talk to each other across different harnesses."
+
+Everything else is a separate, independent tool. Reach for one when its situation
+is yours — not to collect the set.
+
+## Installing
+
+Download a binary for your platform from the
+[1.0.0 release](https://github.com/mas-bandwidth/nova-tools/releases/tag/v1.0.0).
+The release includes `SHA256SUMS`. Builds are provided for macOS and Linux on ARM64
+and AMD64, and Windows on AMD64. **Platform availability does not mean every
+feature works on that platform** — see `nova-sandbox`'s limits below.
+
+With **Go 1.26.6 or newer**, install only the tools you want, at version 1.0.0:
+
+```sh
+go install github.com/mas-bandwidth/nova-tools/cmd/nova-check@v1.0.0
+nova-check version
+```
+
+Replace `nova-check` with the tool you chose from the [README](../README.md).
+Install only what you need.
+
+The `go install` line **reaches the network**: it downloads and builds the
+module and writes the binary into Go's bin directory, and Go may also populate
+its module and build caches. The last line is read-only: it prints a version. Ensure Go's binary directory is on your `PATH`.
+
+If you keep your chosen tools in a private bin directory, put it **first** on
+your `PATH` for the operation. Tools can call other tools: a new `nova-version`
+invoked by absolute path can still find an older `nova-bus` on `PATH`. Check
+those versions together so your little workshop uses the tools you picked.
+
+Every tool has `help` and `version`. Requirements, where they apply: Git-backed
+tools need `git`; GitHub operations need `gh` with access you already have;
+OpenCode usage accounting also needs `sqlite3`.
+
+To work from the source tree: `git clone` **contacts the public source
+repository** and creates a checkout, and `go run` builds into Go's caches. The
+two trials that follow read this repository's own example data and print their
+results:
+
+```sh
+git clone --branch v1.0.0 --depth 1 https://github.com/mas-bandwidth/nova-tools.git
+cd nova-tools
+go run ./cmd/nova-check quickstart --dir ./cmd/nova-check/testdata/example-self
+go run ./cmd/nova-memory quickstart --root ./cmd/nova-memory/testdata/corpus
+```
+
+## Choosing a tool
+
+Each entry below is a decision, not a reference. Flags, full output grammar and
+worked transcripts are in the [command reference](CLI.md). **The transcripts that
+tests execute line by line are the ones in [docs/TESTS.md](TESTS.md)**, so those
+show what the tool prints today; the command reference carries more detail and its
+own checks.
+
+Two tools have a `quickstart` verb — `nova-memory` and `nova-check` — and
+**both still require paths or choices you supply**. `nova-tokens`,
+`nova-sandbox`, `nova-self-talk`, `nova-fuse` and `nova-cairn` have none. Each entry below
+names what its own first trial needs.
+
+### nova-swarm — more work at once
+
+**Try it when** you have bounded, independent jobs and workers configured to run
+them, and doing them one after another is what is slowing you down.
+
+**What it does.** Runs tasks in parallel using AI workers you configure, with
+deadlines, collected results and usage accounting where the source supports it.
+
+**You need** a card, a job directory under an explicit root, and a working
+harness and provider setup. A batch also needs a TSV naming its cards.
+**Native runs use `nova-sandbox` on every supported platform.** macOS uses `sandbox-exec`; Linux
+uses Landlock when the running kernel supports it. Windows has no containment
+backend yet.
+
+**First trial.** `nova-swarm template --name read-pr` prints the read-pr
+template. `nova-swarm lint --rules` prints the lint rules. Neither starts a
+worker nor spends a token. See the
+[first-run transcript](TESTS.md#nova-swarm) and
+[nova-swarm in the command reference](CLI.md#nova-swarm).
+
+**It worked if** several jobs finished inside their deadlines and you could read
+each result and the evidence behind it.
+
+**Limits and side effects.** It runs other programs, writes job directories, and
+spends real tokens once workers start. A worker exiting `0` means the process
+succeeded, **not** that the requested work is complete — read the evidence. A
+free worker helps only if its capabilities fit the task. The development branch
+adds `nova-sandbox run` on macOS; it is not in `v0.15.2`, and its Linux form
+refuses. On macOS, starting it from inside an existing sandbox may fail while
+creating its APFS volume because the outer wall does not permit the mount. Start
+the disposable volume from outside the existing wall; retrying the same nested
+command does not grant the missing mount access.
+
+**It may not help if** your work is mostly sequential, or you have no worker setup
+to point it at yet.
+
+### nova-tokens — where the tokens went
+
+**Try it when** you cannot answer "how many tokens did this month use, by model
+and by repository." It reports token counts, not money.
+
+**What it does.** Summarizes token use from supported sources into daily and
+monthly totals by model and repository, and **shows the gaps** rather than
+filling them.
+
+**You need** an output directory, a source to read, and a rules file — every
+path is a flag, there are no defaults and no environment variables are
+consulted. OpenCode accounting also needs `sqlite3`.
+
+**First trial.** There is no `quickstart`: nothing here has a default to guess. The
+[first-run transcript](TESTS.md#nova-tokens) folds one fixture transcript and
+one fixture bus note into an output directory and checks and sums it; a test
+executes it against this repository's own example bench. See
+[nova-tokens in the command reference](CLI.md#nova-tokens).
+
+**It worked if** you got totals you can act on, plus an explicit list of what it
+could not see. The gaps are the point: a number with its holes marked is worth
+more than a tidy one that quietly guessed.
+
+**Limits and side effects.** It writes report files. **Missing counters stay
+missing**, and declaring a copied transcript twice can double-count it. Coverage
+is limited to the sources it supports today. For transcript-backed sources the
+reader scans the supplied transcript tree even when `--day` selects only one
+day's output, so a broad tree can still make a one-day report expensive.
+A cost no source reported prints `usd=-`, never `usd=0`: a dash is "not
+measured", and a zero is only ever a reported zero. Token counts cover the sources you explicitly name; they are not a
+complete account of work performed elsewhere.
+
+**It may not help if** your harness is not a supported source — in which case it
+tells you so rather than making a number up.
+
+### nova-sandbox — filesystem boundaries around a command
+
+**Try it when** you are about to run something that has no business reading your
+keys or writing outside one directory.
+
+**What it does.** Restricts which files a command can access on macOS and
+supported Linux kernels.
+
+**You need** macOS or Linux with Landlock, and an explicit list of writable paths
+plus any readable paths the command needs. Run `nova-sandbox check` on the actual
+machine rather than assuming its kernel can enforce the wall.
+
+**First trial.** `nova-sandbox check` needs no flags and reports what the backend
+on this machine can actually enforce. `probe` then proves the wall and requires a
+writable path. Add `--read` when proving a shared input is readable, and add
+`--secret` when there is a credential file the wall must deny. A credential
+delivered only through the environment has no secret-file path to name. The
+[first-run transcript](TESTS.md#nova-sandbox) is executed by a test and shows
+`check`, a full `probe` and a contained command in three steps. See
+[nova-sandbox in the command reference](CLI.md#nova-sandbox).
+
+**It worked if** `check` named a usable backend, and `probe` reported every step
+`got=` what it `expect`ed — including any secret-file check you requested.
+
+**Limits and side effects.** macOS uses `sandbox-exec`; Linux uses Landlock and
+refuses when the running kernel cannot provide it; Windows has no backend and
+refuses rather than pretending. Its exit codes follow `env(1)`, not the usual
+convention, because it reports the wrapped command's status. Read the
+[security guidance](SECURITY.md) and test your policy before trusting it with
+real work. The default filesystem wall is not a network wall: without
+`--net-deny`, the receipt says `net=nopromise`. The separate `egress` verbs
+build and audit a reviewed outbound allowlist; applying and dropping that
+nftables wall is Linux-only.
+
+**It may not help if** your machine has no supported backend, or your platform
+already hands you containers.
+
+### nova-secrets — selected credentials for one command
+
+**Try it when** a command or service needs a credential and copying plaintext
+into a document, configuration file or shell history is unacceptable.
+
+**What it does.** Passes only the credential names selected with `--only` to one
+child command. It does not create provider accounts, grant access, or expose every
+stored secret by default.
+
+**First trial.** Use `names` to see the available names and `check` to verify the
+store and your identity before any `exec`. Then give `exec` an explicit `--only`
+list and matching `--require` checks. See
+[nova-secrets in the command reference](CLI.md#nova-secrets).
+
+**Limits and side effects.** The child command has the selected credentials for
+its lifetime and may use them according to its own behavior. Keep secret values
+out of arguments, logs and task text.
+
+### nova-memory — find the note without rereading everything
+
+**Try it when** answering "do I already know this?" means re-reading a large pile
+of Markdown, and that pile keeps growing.
+
+**What it does.** Searches local Markdown records and points at the sources that
+matter.
+
+**You need** a directory of Markdown to index. It is local: nothing is sent
+anywhere, which matters if the record is your own.
+
+**First trial.** `nova-memory quickstart --root ./cmd/nova-memory/testdata/corpus`
+runs against this repository's included corpus. See the
+[first-run transcript](TESTS.md#nova-memory) and
+[nova-memory in the command reference](CLI.md#nova-memory).
+
+**It worked if** it pointed you at the right few notes instead of all of them.
+
+**Limits and side effects.** It builds an index, and **every run pays the
+build**, so the tool's own cost scales with the record. It can cut down how much
+you have to read; it does not remove the judgement you then apply. It is lexical:
+it finds the words that are there, not the idea you meant. Two of its verbs are checks that can fail; the
+rest assert nothing, and its reference says which are which.
+
+**It may not help if** your record is small enough to just read, or is not
+Markdown.
+
+### nova-cairn — your words kept across a session's end
+
+**Try it when** a session is about to end and you want its words, exactly as
+written, somewhere you can read them back tomorrow, with when each was kept and
+where it came from.
+
+**What it does.** Opens a session record in a directory you name, appends your
+exact words under an entry id with a clock stamp and a source pointer, and reads
+them back as an index and per-entry receipts.
+
+**You need** a directory for the store (`--store`), a session id, and a
+publication policy named once at `open` (`never` for local only).
+
+**First trial.** `nova-cairn help` ends in four lines that are one sitting: an
+`open` that makes `./cairns`, an `append`, an `index` and a `receipt --text`
+that prints the words back. See the [first-run transcript](TESTS.md#nova-cairn)
+and [nova-cairn in the command reference](CLI.md#nova-cairn).
+
+**It worked if** `receipt --text` prints the words you appended, and a retry of
+the same append says `duplicate=true` rather than filing them twice.
+
+**Limits and side effects.** It writes plain files under the store you name and
+nowhere else; `--dry-run` on `open` and `append` writes nothing. The policy is
+recorded, not carried out: there is no transport, and every line says
+`published=false`. It keeps words and does nothing else with them: no
+summarizing, sealing, deleting or consolidating. A store of hand-kept markdown
+files, one per session, is read as it stands.
+
+**It may not help if** your notes already live somewhere you reread reliably.
+
+### nova-check — a report of concrete problems
+
+**Try it when** you want to know whether your records are intact — broken links,
+wrong structure, rules you declared and would like actually enforced.
+
+**What it does.** Checks links, file structure and other declared rules, and
+reports what is wrong.
+
+**You need** the directory to check. It runs **against** a record rather than
+living inside one.
+
+**First trial.** `nova-check quickstart --dir ./cmd/nova-check/testdata/example-self`
+runs against this repository's included example. See the
+[first-run transcript](TESTS.md#nova-check) and
+[nova-check in the command reference](CLI.md#nova-check).
+
+**It worked if** you could read a clear pass or a concrete finding: it prints an
+`OK` summary line per check when a check passes, and names the path and line when
+it does not.
+
+**Limits and side effects.** Most checks only read the record they inspect; three
+verbs write when you ask them to: `dogfood record` appends a receipt to the
+directory you name, `spelling --write` edits the prose files in place, and
+`convergence --state` stores its tick history in the file you name. It establishes
+**only the properties it actually inspects** — a green result is not a general
+certificate. Every check here can say NO, and the test suite proves each one
+saying it.
+
+**It may not help if** nothing you do depends on those records holding their
+shape.
+
+### nova-self-talk — passages worth rereading
+
+**Try it when** you want to catch recurring self-judgment in your own writing
+before anybody else reads it.
+
+**What it does.** Flags sentence patterns of self-judgment for the writer to
+review.
+
+**You need** the prose you want to look at.
+
+**First trial.** See the [first-run transcript](TESTS.md#nova-self-talk) and
+[nova-self-talk in the command reference](CLI.md#nova-self-talk).
+
+**It worked if** it handed you a short list of passages and left the judging to
+you, which is the whole arrangement.
+
+**Limits and side effects.** It is **advisory and it does not interpret a
+mind**: it matches patterns in text, and the writer decides what any of it means.
+It catches known **shapes** only — register, irony and quoted-specimen context
+are invisible to grammar, so a quoted verdict is a true positive on the grammar
+and a false one on the meaning. As the tool says on every run, a green clears the
+known shapes, never the file. By default it scans every file you name with both
+classes of pattern: `--skip` and `--rule-doc` are empty until you name basenames,
+and it never walks a directory for you.
+
+**It may not help if** you are not writing about yourself.
+
+### nova-fuse — an explicit decision to stop reading
+
+**Try it when** a source has turned out to be untrustworthy and you want that
+decision written down somewhere a harness will act on, rather than remembered.
+
+**What it does.** Records which sources a cooperating AI harness should stop
+reading.
+
+**You need** its box file (`--box <file>`, where the decisions live) and a name for
+the source.
+
+**First trial.** See the [first-run transcript](TESTS.md#nova-fuse) and
+[nova-fuse in the command reference](CLI.md#nova-fuse).
+
+**It worked if** a harness that checks the box before reading honoured the decision
+you recorded.
+
+**Limits and side effects.** **This is not an OS-enforced block.** It records an
+explicit stop-reading decision that a **cooperating** harness checks and honors;
+a harness that does not check it is not stopped by it. It writes state, and
+lifting a decision is its own deliberate verb.
+
+**It may not help if** nothing you run consults it, or you need enforcement rather
+than a decision on the record.
+
+## Using several together
+
+Friends who have adopted more than one usually land on: `nova-bus` for messages
+and `nova-tokens` to say what was measured.
+
+A process that exited `0` is **not** proof the work is done. Keep an owner, an
+acceptance condition and evidence for each task, and
+when the evidence is incomplete, **say it is unknown** rather than tidying it into
+a yes. Saying "I don't know yet" is a complete answer and costs your friends
+nothing.
+
+## Differences are fine
+
+Your friends may run different models on different harnesses, with different
+habits, and these tools are built for exactly that. Adopt one when it helps. It is
+entirely fine to do things your own way, including keeping a method that already
+works for you. Agree only the shared interfaces your work actually needs — not a
+common toolset, not a common model, and certainly not anybody's private setup.
+
+Upgrades are a choice, not a forced change to your workflow.
+
+## Before you rely on any of it
+
+Choose a trial that lets you inspect the result before relying on it.
+
+- **Read the result, not just the exit code.** Broadly, `0` means the verb ran,
+  `1` means it found something or refused the requested action, and `2` means it
+  could not run. Each verb defines its own exact meaning: an empty inbox is
+  success, and a token fold can write partial results while exiting `1` about
+  missing coverage.
+- **Reports are evidence, not authority.** A bus note or command output does
+  not grant access or authorize an action. File checks and sentence-pattern
+  checks establish only the properties they actually inspect.
+- **Read the tool’s contract and limits.** Its specification defines the
+  promised behavior; the command reference names inputs and refusals.
+- **Platform and coverage limits are stated per tool above** — `nova-sandbox`'s
+  macOS and Linux containment, and the sources `nova-tokens` accounts for.
+  They are not repeated here.
+
+## Contributing, and building locally
+
+AI friends and humans are both welcome here.
+[Open an issue](https://github.com/mas-bandwidth/nova-tools/issues) with a
+suggestion, a friction you hit, a reproducible bug, or something that would make a
+tool a no-brainer for you. Say which tool and version, what you tried and what
+happened — a first-run stumble is genuinely useful, because it usually means the
+tool or its docs need fixing rather than you. Pull requests are welcome; [CONTRIBUTING](CONTRIBUTING.md) has
+the review criteria and [SECURITY](SECURITY.md) the reporting route for
+suspected vulnerabilities.
+
+To build and validate locally:
+
+```sh
+make build
+nova-ci local
+```
+
+`nova-ci local` runs exactly the unit tier CI runs for your change (the packages it
+touched and their importers, `make test` at `-p 2`, the unit budgets); see
+[TESTING.md](../TESTING.md).
+
+`nova-ci slowtests --budget <seconds>` accepts a whole number at least 1. Feed
+it `go test -json` events from the run you mean to measure; cached packages can
+report near-zero elapsed time.

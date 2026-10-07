@@ -1,0 +1,45 @@
+// after.go.txt is the fixed text: the tool takes its temp root from the caller,
+// the test hands it t.TempDir(), and the assertion is the flat one -- nothing was
+// left behind -- over a directory only this test writes. It is a .txt so the
+// package it sits in does not compile it; the scanner reads it as source.
+package fixture
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+// No snapshot, no sibling to tell apart, and the assertion did not weaken.
+func TestRemovesItsWorktree(t *testing.T) {
+	tempRoot := t.TempDir()
+	mutate(t, tempRoot)
+	entries, err := filepath.Glob(filepath.Join(tempRoot, "nova-review-mutate-*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("a temp worktree directory was left behind under %s: %v", tempRoot, entries)
+	}
+}
+
+// The same read one hop away, now over the test's own root.
+func TestReadsItsOwnTempDir(t *testing.T) {
+	root := t.TempDir()
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("something is in %s", root)
+	}
+}
+
+// The narrowings stay silent on the fixed side too.
+func TestTheNarrowings(t *testing.T) {
+	if _, err := os.Stat(filepath.Join(os.TempDir(), "nova-review-mutate-1")); err == nil {
+		t.Fatal("still there")
+	}
+}
+
+func mutate(t *testing.T, tempRoot string) { t.Helper() }

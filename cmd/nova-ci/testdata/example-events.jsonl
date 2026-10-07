@@ -1,0 +1,6 @@
+{"Action":"run","Package":"github.com/mas-bandwidth/nova-tools/internal/example","Test":"TestSlowThing"}
+{"Action":"pass","Package":"github.com/mas-bandwidth/nova-tools/internal/example","Test":"TestSlowThing","Elapsed":63.4}
+{"Action":"pass","Package":"github.com/mas-bandwidth/nova-tools/internal/example","Test":"TestAlsoSlow","Elapsed":1.5}
+{"Action":"pass","Package":"github.com/mas-bandwidth/nova-tools/internal/example","Elapsed":65.1}
+{"Action":"pass","Package":"github.com/mas-bandwidth/nova-tools/internal/quick","Test":"TestFast","Elapsed":0.3}
+{"Action":"pass","Package":"github.com/mas-bandwidth/nova-tools/internal/quick","Elapsed":0.4}

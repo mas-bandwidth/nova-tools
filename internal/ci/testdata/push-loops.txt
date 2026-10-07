@@ -1,0 +1,88 @@
+# push-loops.txt -- every timer loop of the tree, named (the class rule in
+# internal/ci/push_not_poll_class_test.go, TestEveryTimerLoopIsNamedInThePushTable).
+#
+# One line per loop: `<file> <func> <row>`, the func as the scanner names it
+# (Recv.Name for a method), the row the first cell of a row of the table in
+# docs/SPEC-SPRINT.md, section "Push, not poll". A line is an inventory entry,
+# never an excuse: the row says what the loop is, and a timer poll's row names
+# the card that makes it push or the measured reason it stays. A loop that
+# stops waiting on a clock (it became a push) has its line deleted in the same
+# change; a new timer loop gets its line, and its row, in the change that adds it.
+
+# the friend's daemon (internal/friend, cmd/nova-friend)
+internal/friend/daemon.go loop.read friend bus read
+internal/friend/adapter_tmux.go Tmux.Deliver friend delivery
+cmd/nova-friend/serve.go world.serve coordinator ping
+cmd/nova-friend/wakeping.go world.wakeFriends wake ping
+cmd/nova-friend/wakeping.go world.wakePass wake ping
+cmd/nova-friend/main.go world.waitPong wake ping pong wait
+
+# the fleet member and reader (cmd/nova-swarm member, internal/member)
+cmd/nova-swarm/member.go cmdMember member pass
+cmd/nova-swarm/member.go memberLoop member pass
+internal/member/member.go Member.BeatLoop member beat
+
+# the coordinator's inbox and wake (cmd/nova-sprint)
+cmd/nova-sprint/inboxwait.go serverSource.tickEnd coordinator inbox push, through the server
+internal/sprint/store/tickend.go Store.WaitTickEnd coordinator inbox push, on the store
+cmd/nova-sprint/watchwake.go runWake watch --wake
+cmd/nova-sprint/watchwake.go app.cmdWatch watch --wake
+cmd/nova-sprint/answer.go app.cmdAnswer answer pass
+cmd/nova-sprint/friend_loop.go app.friendSyncLoop friend sync
+cmd/nova-sprint/lane.go app.laneWait lane take wait
+
+# the sprint server's own loops (nova-sprint run --listen)
+cmd/nova-sprint/run.go app.runLoop sprint server tick
+cmd/nova-sprint/landloop.go app.landLoop land loop
+cmd/nova-sprint/decidelane.go app.decideLoop decide loop
+cmd/nova-sprint/balance.go app.balanceLoop provider balance
+cmd/nova-sprint/gc.go app.gcLoop machinery gc
+cmd/nova-sprint/promote.go app.cmdPromote promote
+
+# displays
+cmd/nova-sprint/dashboard.go app.cmdDashboard dashboard pull
+internal/sprintdash/events.go Server.Run dashboard pull
+internal/sprintdash/events.go Server.events dashboard pull
+cmd/nova-sprint/reads.go app.drawLoop table and where displays
+cmd/nova-sprint/watch.go app.pause table and where displays
+cmd/nova-table/watch.go application.cmdWatch table and where displays
+cmd/nova-table/watch.go watchLoop table and where displays
+
+# one machine's own samplers, watchdogs and heartbeats
+cmd/nova-sprint/run.go app.storeRTTLoop samplers and watchdogs
+cmd/nova-swarm/nativesample.go liveSampler.loop samplers and watchdogs
+cmd/nova-swarm/slotclean.go nativeRunner.cleaner samplers and watchdogs
+internal/hostload/sampler.go Sampler.Run samplers and watchdogs
+internal/sandbox/policy.go Policy.watch samplers and watchdogs
+internal/swarm/lease.go startJobLeaseTicking samplers and watchdogs
+internal/swarm/nativeidle.go WatchIdle samplers and watchdogs
+
+# waits on a process, a lock, a file, a server coming up, or a retry backoff
+cmd/nova-friend/main.go realWorld waits and retries
+cmd/nova-friend/main.go world.install waits and retries
+cmd/nova-friend/main.go world.openUntil waits and retries
+cmd/nova-friend/wakeping.go world.pingInstall waits and retries
+cmd/nova-sprint/run.go app.awaitGivenUp waits and retries
+cmd/nova-sandbox/run.go runInVolume waits and retries
+cmd/nova-sandbox/runwin.go waitForWSBExit waits and retries
+cmd/nova-sandbox/runwin_windows.go winPlace.RemoveTree waits and retries
+cmd/nova-sprint/backup_out.go startServerTwin waits and retries
+cmd/nova-sprint/snapshot.go redisSource.Save waits and retries
+cmd/nova-swarm/member.go nativeRunner.Start waits and retries
+internal/nsprint/testutil/pg/pg.go Server.ready waits and retries
+internal/nsprint/testutil/redis.go startOnce waits and retries
+internal/sandbox/tree.go Tree.KillAndAwait waits and retries
+internal/secrets/seal.go sealCarry.carry waits and retries
+internal/sprint/control_line.go ControlLine.TickLock waits and retries
+internal/swarm/deadline.go Reap waits and retries
+internal/swarm/fileretry.go readFileSteadyBy waits and retries
+internal/swarm/fileretry.go renameSteadyBy waits and retries
+internal/swarm/killpoint_unix.go waitForOrphan waits and retries
+internal/swarm/lock_poll_other.go takeKernelLock waits and retries
+internal/swarm/opencode.go walWait.read waits and retries
+internal/swarm/slots.go TakeSlotLeasesWaiting waits and retries
+internal/swarm/stage.go StageCard waits and retries
+internal/tablemodel/redis.go StartServer waits and retries
+internal/tokens/lock_poll_other.go takeFold waits and retries
+internal/update/snapshot_lock_windows.go lockSnapshot waits and retries
+internal/update/snapshot_unix.go lockSnapshot waits and retries

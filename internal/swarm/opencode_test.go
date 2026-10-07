@@ -1,0 +1,243 @@
+package swarm
+
+import (
+	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// THE USAGE SOURCE IS THE DATABASE THE HARNESS ACTUALLY WRITES (rule 12, rule 13).
+//
+// On 2026-09-11 the enum said `opencode` and the reader read a tab-separated file no
+// OpenCode writes: two jobs burned 61,875 and 85,308 tokens against `--tokens 20000` and
+// both reported `budget=-/20000`. These tests hold the reader that closes that: the job's
+// own data home, `opencode/opencode.db`, read through `sqlite3` READ-ONLY, the five token
+// types summed across the message rows, a column no message reported left a dash.
+
+// fakeSQLite3 builds the stand-in sqlite3 in a temp directory of its own and returns the
+// program's path: the reader names it through its own lookup field (the serial-tests
+// ledger's way off, "a field on the value under test"), so no PATH changes.
+// fakeFlushMarker is FlushMarker in testdata/fakesqlite/main.go, repeated here because a
+// testdata `package main` cannot be imported. The two are pinned together by
+// TestFakeSQLite3FlushMarkerMatchesTheFake.
+const fakeFlushMarker = ".flush-on-refusal"
+
+// writeDB writes the rows a real `sqlite3 -tabs` would print for the reader's query into the
+// job's data home, where the harness keeps its database.
+func writeDB(t *testing.T, dataHome, body string) string {
+	t.Helper()
+	path := filepath.Join(dataHome, OpenCodeDB)
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o644))
+	return path
+}
+
+// The one program this source runs is `sqlite3`, and its absence is a source that cannot be
+// read -- never a source that quietly reports nothing. The lookup that finds the program is
+// the reader's own field (the serial-tests ledger's way off: "a field on the value under
+// test"), so a lookup that finds nothing is the empty PATH, and the test runs in parallel.
+func TestNoSQLiteOnPathIsAnError(t *testing.T) {
+	t.Parallel()
+
+	dataHome := t.TempDir()
+	writeDB(t, dataHome, "deepseek\tdeepseek-chat\t1\t1\t\t\t\n")
+
+	_, err := openCodeReader{lookPath: lookFindsNothing}.read(dataHome)
+	require.Error(t, err, "no sqlite3 on PATH is a usage source that cannot be read")
+	assert.Contains(t, err.Error(), SQLiteBinary, "the refusal names the program it needs: %v", err)
+}
+
+// A SOURCE WITH NO READER IS A NAMED REFUSAL, NEVER A SILENT DASH (rule 13).
+//
+// The usage source is `sqlite3`, and a bench without it used to record dashes with nothing
+// said -- the caller saw a completed job and a token row of `-`, and no line named the
+// program the read needed. The refusal carries the literal line
+// `USAGE REFUSED reason=no_sqlite` so the missing reader is a fact on the record.
+func TestOpenCodeSourceWithoutSQLiteIsANamedRefusal(t *testing.T) {
+	t.Parallel()
+
+	dataHome := t.TempDir()
+	writeDB(t, dataHome, "deepseek\tdeepseek-chat\t100\t50\t\t\t\n")
+
+	_, err := openCodeReader{lookPath: lookFindsNothing}.read(dataHome)
+	require.Error(t, err, "no sqlite3 on PATH is a usage source that cannot be read")
+	assert.Contains(t, err.Error(), "USAGE REFUSED reason=no_sqlite", "the refusal names the missing reader: %v", err)
+}
+
+// lookFindsNothing is the reader seam's empty PATH: a lookup that answers like
+// exec.LookPath on a PATH that holds no sqlite3.
+func lookFindsNothing(string) (string, error) { return "", exec.ErrNotFound }
+
+// `usage: none` reports nothing and is never an error: only `--tokens unmetered` tasks run
+// under it, and that refusal is made before the first worker.
+func TestTheNoneSourceReportsNothing(t *testing.T) {
+	t.Parallel()
+
+	usage, err := ReadProviderUsage(UsageNone, t.TempDir())
+	require.NoError(t, err, "`usage: none` is not an error: %v", err)
+	assert.False(t, usage.Observed, "`usage: none` observes nothing: %+v", usage)
+	assert.Empty(t, usage.Values, "`usage: none` observes nothing: %+v", usage)
+}
+
+// TestFakeSQLite3FlushMarkerMatchesTheFake keeps the copied constant honest: the fake's own
+// source is read and the literal it declares must be the one the tests append.
+func TestFakeSQLite3FlushMarkerMatchesTheFake(t *testing.T) {
+	t.Parallel()
+
+	src, err := os.ReadFile(filepath.Join("testdata", "fakesqlite", "main.go"))
+	require.NoError(t, err)
+	want := "const FlushMarker = " + strconv.Quote(fakeFlushMarker)
+	assert.Contains(t, string(src), want, "testdata/fakesqlite/main.go does not declare %s", want)
+}
+
+// THE SETTLE WINDOW IS HOW LONG THE READ WAITS, NEVER HOW LONG THE FIRST READ TOOK.
+//
+// `usageSettleWait` is documented as "how long a read waits for a write-ahead log to be
+// checkpointed", and the deadline used to be taken BEFORE the first attempt -- so the
+// first attempt's own runtime was charged to the budget that exists to outlast the
+// writer. On a loaded macOS bench the first `sqlite3` is a Mach-O the machine has never
+// seen and the kernel assesses it on that first exec: measured on this Studio, idle, a
+// first exec costs ~200ms against ~4ms for the second, and four CI shards contending for
+// the one assessment service stretch it into seconds. When it stretched past five, the
+// reader gave up on the very refusal that was supposed to START the waiting -- `database
+// is locked`, a dash, and the tokens the harness really spent lost. That is the CI red of
+// 2026-09-19 (run 35413886282, opencode_test.go:210, test elapsed 6.85s against a 5s
+// window).
+//
+// The clock here is the test's own, so nothing sleeps and nothing is timed: the failure is
+// deterministic, not a race this test hopes to catch.
+func TestASlowFirstReadDoesNotSpendTheSettleWindow(t *testing.T) {
+	t.Parallel()
+
+	db := filepath.Join(t.TempDir(), "opencode.db")
+	require.NoError(t, os.WriteFile(db, []byte("deepseek\tdeepseek-chat\t100\t50\t\t\t\n"), 0o644))
+	// A write-ahead log beside the database is the file a retry waits on.
+	require.NoError(t, os.WriteFile(db+"-wal", []byte("unflushed\n"), 0o644))
+	clock := time.Unix(0, 0)
+	attempts := 0
+	w := walWait{
+		settle: 5 * time.Second,
+		pause:  50 * time.Millisecond,
+		now:    func() time.Time { return clock },
+		sleep:  func(d time.Duration) { clock = clock.Add(d) },
+		first:  20 * time.Second,
+		query: func(string, time.Duration) ([][]string, error) {
+			attempts++
+			if attempts == 1 {
+				// The first read takes longer, on its own, than the whole window.
+				clock = clock.Add(6 * time.Second)
+				return nil, errors.New("database is locked")
+			}
+			// The writer checkpointed while the reader waited.
+			assert.NoError(t, os.Remove(db+"-wal"))
+			return [][]string{{"deepseek", "deepseek-chat", "100", "50", "", "", ""}}, nil
+		},
+	}
+
+	rows, err := w.read(db)
+	require.NoError(t, err, "a first read slower than the window still gets to wait out the flush: %v", err)
+	assert.Equal(t, 2, attempts, "the reader made %d attempts, want 2: the refusal that starts the waiting is not the end of it", attempts)
+	if assert.Len(t, rows, 1, "the retry's rows are the reading: %v", rows) {
+		assert.Equal(t, "100", rows[0][2], "the retry's rows are the reading: %v", rows)
+	}
+}
+
+// AND IT STILL GIVES UP. The window bounds the waiting, so a writer that never
+// checkpoints is the named refusal the caller can act on -- never a hang, and never an
+// unbounded number of attempts.
+func TestAWriteAheadLogThatOutlastsTheWindowIsStillARefusal(t *testing.T) {
+	t.Parallel()
+
+	db := filepath.Join(t.TempDir(), "opencode.db")
+	require.NoError(t, os.WriteFile(db, []byte("deepseek\tdeepseek-chat\t100\t50\t\t\t\n"), 0o644))
+	require.NoError(t, os.WriteFile(db+"-wal", []byte("unflushed\n"), 0o644))
+	locked := errors.New("database is locked")
+	clock := time.Unix(0, 0)
+	attempts := 0
+	w := walWait{
+		settle: 5 * time.Second,
+		pause:  50 * time.Millisecond,
+		now:    func() time.Time { return clock },
+		sleep:  func(d time.Duration) { clock = clock.Add(d) },
+		first:  20 * time.Second,
+		query:  func(string, time.Duration) ([][]string, error) { attempts++; return nil, locked },
+	}
+
+	rows, err := w.read(db)
+	require.ErrorIs(t, err, locked, "the refusal the writer caused is the one the caller sees: %v (rows %v)", err, rows)
+	// Five seconds of waiting in fifty-millisecond pauses: the first read plus at most one
+	// attempt per pause, and never an endless loop.
+	most := 1 + int(5*time.Second/(50*time.Millisecond))
+	assert.GreaterOrEqual(t, attempts, 2, "the reader made %d attempts, want at least 2 (it waited) and at most %d (it stopped)", attempts, most)
+	assert.LessOrEqual(t, attempts, most, "the reader made %d attempts, want at least 2 (it waited) and at most %d (it stopped)", attempts, most)
+}
+
+// EVERY RETRY IS BOUNDED BY WHAT IS LEFT OF THE WINDOW (Stella's HOLD on #1551).
+//
+// The window bounds the WAITING, but a retry is a `sqlite3` run and used to be started
+// with the tool's whole 20s query timeout however little of the window was left. Two slow
+// queries then stretched ONE sample to about forty seconds, and a retry begun near the end
+// of the window could add a whole query timeout beyond it. That is not free: `supervise`
+// calls ReadProviderUsage synchronously in its select loop (supervise.go:277), so while
+// this read blocks, the worker's own deadline and budget cases cannot run -- the swarm's
+// "never waits forever" becomes a wait nobody bounded.
+//
+// THE WORST CASE THIS READ ALLOWS, and the arithmetic the comment on read() states:
+//
+//	first read       w.first            (usageTimeout, 20s)
+//	+ the waiting    w.settle           (usageSettleWait, 5s)
+//	= 25s of clock inside this function, whatever any single query does.
+//
+// (In the live reader each killed query may also drain up to usageWaitDelay; only a retry
+// that exhausts the window can be killed at its deadline, so that adds one such drain and
+// not one per retry. The process side is not modelled here -- this test holds the clock
+// arithmetic, which is what regressed.)
+//
+// The clock is the test's own: every query advances it by exactly what it was allowed, so
+// a retry handed too much time shows up as an overrun and not as a flake.
+func TestEveryRetryIsBoundedByWhatIsLeftOfTheWindow(t *testing.T) {
+	t.Parallel()
+
+	db := filepath.Join(t.TempDir(), "opencode.db")
+	require.NoError(t, os.WriteFile(db, []byte("deepseek\tdeepseek-chat\t100\t50\t\t\t\n"), 0o644))
+	// The writer never checkpoints, so the reader waits out the whole window and refuses.
+	require.NoError(t, os.WriteFile(db+"-wal", []byte("unflushed\n"), 0o644))
+	const first, settle = 20 * time.Second, 5 * time.Second
+	locked := errors.New("database is locked")
+	start := time.Unix(0, 0)
+	clock := start
+	var limits []time.Duration
+	w := walWait{
+		first:  first,
+		settle: settle,
+		pause:  50 * time.Millisecond,
+		now:    func() time.Time { return clock },
+		sleep:  func(d time.Duration) { clock = clock.Add(d) },
+		query: func(_ string, limit time.Duration) ([][]string, error) {
+			// A query that is given twenty seconds takes twenty seconds: this is the
+			// slow-read case, at the boundary, on every attempt.
+			limits = append(limits, limit)
+			clock = clock.Add(limit)
+			return nil, locked
+		},
+	}
+
+	rows, err := w.read(db)
+	require.ErrorIs(t, err, locked, "the refusal the writer caused is the one the caller sees: %v (rows %v)", err, rows)
+	require.GreaterOrEqual(t, len(limits), 2, "the reader made %d attempts, want at least 2: a slow first read still gets its retry", len(limits))
+	assert.Equal(t, first, limits[0], "the first read was allowed %s, want the tool's whole query timeout %s", limits[0], first)
+	// Every retry after the first is allowed only what the window still has.
+	for i, got := range limits[1:] {
+		assert.LessOrEqual(t, got, settle, "retry %d was allowed %s, want at most the settle window %s: a retry must not be started with the whole query timeout", i+1, got, settle)
+		assert.Positive(t, got, "retry %d was started with %s left: a retry that cannot finish inside the window is not started", i+1, got)
+	}
+	spent := clock.Sub(start)
+	assert.LessOrEqual(t, spent, first+settle, "one sample spent %s, want at most %s (first read %s + window %s); supervise calls this synchronously, so the overrun is the worker's deadline not running", spent, first+settle, first, settle)
+}

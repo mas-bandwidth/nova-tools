@@ -1,0 +1,429 @@
+// Package safepath is the one way a path this tool COMPUTED is removed. It exists
+// because a reaper glob, a lane flag, a slot directory and a job directory are all
+// paths the tool derived rather than paths a person is deleting by hand, and a wrong
+// derivation must not be able to remove an arbitrary directory: this removal is one
+// mistake away from deleting the whole disk.
+//
+// RemoveUnder removes a path only when it is STRICTLY below a root the caller names.
+// It refuses an empty root or path, a root that is the whole disk or the user's home, a
+// path equal to its root, a path that resolves outside its root once symlinks are
+// followed, and a path that is itself a symlink. The removal is the caller's one
+// allowed os.RemoveAll; no other package removes a computed path directly.
+//
+// The hygiene verbs use the second door, RemoveUnderRoots: it is the same removal
+// check reached through a small set of literal roots, with a ".." element refused
+// before anything resolves and no element left non-writable. The path is never
+// built from user text, it is the join of a literal root and a name, and the check
+// is by construction rather than by a caller's care.
+package safepath
+
+import (
+	"errors"
+	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+)
+
+// ErrUnsafe wraps every refusal, so a caller can say "this was a refusal, not an I/O
+// failure" without reading the message.
+var ErrUnsafe = errors.New("refusing to remove an unsafe path")
+
+// Policy configures the environmental boundaries for path removal.
+// The zero value uses os.UserHomeDir and standard path resolution.
+type Policy struct {
+	UserHomeDir func() (string, error)
+	WorkingDir  string
+}
+
+func (p Policy) abs(path string) (string, error) {
+	if p.WorkingDir != "" && !filepath.IsAbs(path) {
+		return filepath.Clean(filepath.Join(p.WorkingDir, path)), nil
+	}
+	return filepath.Abs(path)
+}
+
+func (p Policy) stat(path string) (os.FileInfo, error) {
+	if p.WorkingDir != "" && !filepath.IsAbs(path) {
+		path = filepath.Join(p.WorkingDir, path)
+	}
+	return os.Stat(path)
+}
+
+// RemoveUnder removes path when it is strictly below root.
+func RemoveUnder(root, path string) error {
+	return Policy{}.RemoveUnder(root, path)
+}
+
+// RemoveUnder removes path, which must sit strictly below root. It is os.RemoveAll
+// with the one question that matters answered first: can this path escape the root a
+// person named? A path that does not exist is nothing to remove and returns nil.
+//
+// root and path may be relative; they are made absolute against the process's own
+// directory, the same directory the caller would have opened them from. Symlinks are
+// followed on BOTH sides before the containment test, so a link cannot smuggle a path
+// outside its root, and the path itself may not be a link: removing a link removes
+// only the link, but a link where a directory was expected is a derivation the tool
+// must not act on.
+func (p Policy) RemoveUnder(root, path string) error {
+	if strings.TrimSpace(root) == "" {
+		return fmt.Errorf("%w: the root is empty", ErrUnsafe)
+	}
+	if strings.TrimSpace(path) == "" {
+		return fmt.Errorf("%w: the path is empty", ErrUnsafe)
+	}
+	rootAbs, err := p.abs(root)
+	if err != nil {
+		return fmt.Errorf("%w: the root %q does not resolve: %v", ErrUnsafe, root, err)
+	}
+	pathAbs, err := p.abs(path)
+	if err != nil {
+		return fmt.Errorf("%w: the path %q does not resolve: %v", ErrUnsafe, path, err)
+	}
+	if err := p.refuseUnsafeRoot(rootAbs); err != nil {
+		return err
+	}
+	if filepath.Clean(rootAbs) == filepath.Clean(pathAbs) {
+		return fmt.Errorf("%w: %q is the root itself", ErrUnsafe, path)
+	}
+	// The path may not be a symlink, whether or not its target is inside the root.
+	if info, err := os.Lstat(pathAbs); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("%w: %q is a symlink", ErrUnsafe, path)
+	}
+	rootReal, err := resolveRoot(rootAbs, root)
+	if err != nil {
+		return err
+	}
+	// The resolved root is the boundary that will actually be used, so it is the one
+	// that has to be a boundary: a root spelled as a symlink to the home or to the
+	// whole disk is that directory, whatever the caller called it.
+	if err := p.refuseUnsafeRoot(rootReal); err != nil {
+		return err
+	}
+	pathReal, err := filepath.EvalSymlinks(pathAbs)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("%w: the path %q cannot be resolved: %v", ErrUnsafe, path, err)
+	}
+	if err := p.refuseUnsafePath(pathReal); err != nil {
+		return err
+	}
+	under, err := strictlyUnder(rootReal, pathReal)
+	if err != nil {
+		return fmt.Errorf("%w: %q could not be placed under %q: %v", ErrUnsafe, path, root, err)
+	}
+	if !under {
+		return fmt.Errorf("%w: %q is not below %q", ErrUnsafe, path, root)
+	}
+	return os.RemoveAll(pathAbs)
+}
+
+// A PATH IS NOT A NAME FOR A DIRECTORY. IT IS ONE OF ITS NAMES.
+//
+// On a case-insensitive volume `EvalSymlinks` keeps the spelling of the path it is given, so a
+// string compare misses the same directory named with different case; identify the home
+// by `os.SameFile`, not by the string.
+//
+// EvalSymlinks is not a canonicaliser. It resolves symlinks and it cleans, and on a
+// case-sensitive volume that happens to be enough, because there a string compare
+// agrees with what the kernel says. On a case-insensitive one it is not: two spellings that
+// differ in case, or in Unicode normalisation form, are THE SAME DIRECTORY and compare
+// unequal. Case-folding the string is not the fix either, because the normalisation forms
+// differ too, and neither is a property of the path the process can read off.
+//
+// The kernel already answers the question. A directory's identity is its device and inode,
+// which is exactly what os.SameFile compares, and os.Stat follows the links and the
+// spellings to get there. So every place in this package that asks "is this string
+// the home / the root / below the root" asks the file system, not the string. The sites, all of
+// them in this file and all of them changed together:
+//
+//  1. refuseUnsafeRoot  - is the root the whole disk, or the home?     (was ==)
+//  2. refuseUnsafePath  - is the resolved path the whole disk, or the home? (was ==)
+//  3. strictlyUnder     - is the path strictly below the root?         (was HasPrefix)
+//  4. ResolvedUnder     - the same containment test, the other door.   (was HasPrefix)
+//
+// They are the only four: a sweep of the repository for os.UserHomeDir found four other
+// callers (pulse/statushtmlrows.go at 27c9ffc66, pulse/harvest_working.go at 27c9ffc66,
+// the deleted nova-merge tool's batch.go, cmd/nova-swarm/native.go) and not one of them COMPARES a path to
+// the home -- each joins onto it or hands it to a command -- so none of them can make this
+// mistake.
+//
+// AND EVERY ONE OF THEM FAILS CLOSED. A Stat that does not answer is not permission to
+// remove: it is the one case where the check could not be made, and an unanswered question
+// about the home directory is refused, never waved through. The old code did the opposite:
+// it skipped the home comparison entirely when EvalSymlinks returned an error.
+
+// sameDir reports whether two paths name the same directory, by device and inode rather
+// than by spelling. A Stat that fails is reported as an error, never as "different": the
+// caller refuses on it.
+func sameDir(a, b string) (bool, error) {
+	ai, err := os.Stat(a)
+	if err != nil {
+		return false, err
+	}
+	bi, err := os.Stat(b)
+	if err != nil {
+		return false, err
+	}
+	return os.SameFile(ai, bi), nil
+}
+
+func (p Policy) sameDir(a, b string) (bool, error) {
+	same, err := sameDir(a, b)
+	if err == nil {
+		return same, nil
+	}
+	if p.WorkingDir != "" {
+		ai, err := p.stat(a)
+		if err != nil {
+			return false, err
+		}
+		bi, err := p.stat(b)
+		if err != nil {
+			return false, err
+		}
+		return os.SameFile(ai, bi), nil
+	}
+	return false, err
+}
+
+// strictlyUnder reports whether path is below root and not root itself, deciding every step
+// by identity: it walks up from the path's own parent and asks the file system whether each
+// ancestor IS the root. A string prefix cannot do this, for the reason above, and it is the
+// ancestor relation -- not just the equality -- that has to be identity, or a path whose
+// spelling differs from its root's walks straight out of the boundary.
+//
+// An error anywhere in the walk is a refusal: see FAILS CLOSED above.
+func strictlyUnder(root, path string) (bool, error) {
+	rootInfo, err := os.Stat(root)
+	if err != nil {
+		return false, err
+	}
+	at := filepath.Clean(path)
+	for {
+		parent := filepath.Dir(at)
+		if parent == at {
+			// The volume root, reached without meeting the root: not below it.
+			return false, nil
+		}
+		info, err := os.Stat(parent)
+		if err != nil {
+			return false, err
+		}
+		if os.SameFile(info, rootInfo) {
+			return true, nil
+		}
+		at = parent
+	}
+}
+
+// resolveRoot resolves the root's absolute form through symlinks, so a root that is a
+// symlink to an unsafe directory is refused as that directory. It is the one resolution
+// shared by both removal doors.
+func resolveRoot(rootAbs, root string) (string, error) {
+	rootReal, err := filepath.EvalSymlinks(rootAbs)
+	if err != nil {
+		return "", fmt.Errorf("%w: the root %q cannot be resolved: %v", ErrUnsafe, root, err)
+	}
+	return rootReal, nil
+}
+
+// refuseUnsafeRoot refuses a root that is the whole disk or the user's home: those are
+// not a boundary, they are the absence of one, and a mistake under either is the disk.
+func (p Policy) refuseUnsafeRoot(root string) error {
+	if isDisk, err := p.sameDir(root, string(os.PathSeparator)); err != nil {
+		return fmt.Errorf("%w: the root %q cannot be identified: %v", ErrUnsafe, root, err)
+	} else if isDisk {
+		return fmt.Errorf("%w: the root is %q, the whole disk", ErrUnsafe, root)
+	}
+	homeFn := p.UserHomeDir
+	if homeFn == nil {
+		homeFn = os.UserHomeDir
+	}
+	home, err := homeFn()
+	if err != nil {
+		return fmt.Errorf("%w: the user's home could not be identified: %v", ErrUnsafe, err)
+	}
+	if strings.TrimSpace(home) == "" {
+		return fmt.Errorf("%w: the user's home could not be identified: the answer is blank", ErrUnsafe)
+	}
+	if isHome, err := p.sameDir(root, home); err != nil {
+		return fmt.Errorf("%w: the root %q could not be compared with the user's home: %v", ErrUnsafe, root, err)
+	} else if isHome {
+		return fmt.Errorf("%w: the root is the user's home %q", ErrUnsafe, root)
+	}
+	return nil
+}
+
+// refuseUnsafePath refuses a resolved path that is the whole disk or the user's home,
+// even when it is technically below the root: the home directory is never a directory
+// this tool computed, and deleting it is the bug that matters most.
+func (p Policy) refuseUnsafePath(path string) error {
+	if isDisk, err := p.sameDir(path, string(os.PathSeparator)); err != nil {
+		return fmt.Errorf("%w: the path %q cannot be identified: %v", ErrUnsafe, path, err)
+	} else if isDisk {
+		return fmt.Errorf("%w: the path resolves to %q, the whole disk", ErrUnsafe, path)
+	}
+	homeFn := p.UserHomeDir
+	if homeFn == nil {
+		homeFn = os.UserHomeDir
+	}
+	home, err := homeFn()
+	if err != nil {
+		return fmt.Errorf("%w: the user's home could not be identified: %v", ErrUnsafe, err)
+	}
+	if strings.TrimSpace(home) == "" {
+		return fmt.Errorf("%w: the user's home could not be identified: the answer is blank", ErrUnsafe)
+	}
+	if isHome, err := p.sameDir(path, home); err != nil {
+		return fmt.Errorf("%w: the path %q could not be compared with the user's home: %v", ErrUnsafe, path, err)
+	} else if isHome {
+		return fmt.Errorf("%w: the path resolves to the user's home %q", ErrUnsafe, path)
+	}
+	return nil
+}
+
+// Refused is why a path was not removed: the path and the one reason.
+type Refused struct {
+	Path   string
+	Reason string
+}
+
+func (r *Refused) Error() string { return fmt.Sprintf("%s: %s", r.Path, r.Reason) }
+
+// NameOK reports whether s is one safe path element: not empty, not "." or
+// "..", no slash, not starting with "-", and only [A-Za-z0-9._-].
+func NameOK(s string) bool {
+	if s == "" || s == "." || s == ".." || strings.HasPrefix(s, "-") {
+		return false
+	}
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		case r == '.' || r == '_' || r == '-':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// HasDotDot reports whether any element of p is "..".
+func HasDotDot(p string) bool {
+	return slices.Contains(strings.Split(filepath.ToSlash(p), "/"), "..")
+}
+
+// ResolvedUnder returns path with symlinks resolved when it is strictly below
+// root (also resolved for symlinks). A path with a ".." element, a path that is
+// itself a symlink, and a path that resolves outside root are all refused.
+func ResolvedUnder(path, root string) (string, error) {
+	if strings.TrimSpace(path) == "" {
+		return "", &Refused{Path: path, Reason: "the path is empty"}
+	}
+	if HasDotDot(path) {
+		return "", &Refused{Path: path, Reason: `the path contains ".."`}
+	}
+	li, err := os.Lstat(path)
+	if err != nil {
+		return "", err
+	}
+	if li.Mode()&os.ModeSymlink != 0 {
+		return "", &Refused{Path: path, Reason: "the path is a symlink"}
+	}
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return "", err
+	}
+	resolvedRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return "", err
+	}
+	// The same containment test as RemoveUnder's, by the same identity rather than by a
+	// string prefix: site 4 of the four named at the top of this file.
+	under, err := strictlyUnder(resolvedRoot, resolved)
+	if err != nil {
+		return "", &Refused{Path: path, Reason: "the path could not be placed under " + root + ": " + err.Error()}
+	}
+	if !under {
+		return "", &Refused{Path: path, Reason: "the path is not strictly below " + root}
+	}
+	return resolved, nil
+}
+
+// RemoveUnderRoots removes path when it is strictly below one of roots. It is the
+// only rm in the hygiene verbs; a refusal names the path and the reason.
+func RemoveUnderRoots(path string, roots ...string) error {
+	return Policy{}.RemoveUnderRoots(path, roots...)
+}
+
+// RemoveUnderRoots removes path when it is strictly below one of roots under the given policy.
+func (p Policy) RemoveUnderRoots(path string, roots ...string) error {
+	if len(roots) == 0 {
+		return &Refused{Path: path, Reason: "no root to remove under"}
+	}
+	if HasDotDot(path) {
+		return &Refused{Path: path, Reason: `the path contains ".."`}
+	}
+	var last error
+	for _, root := range roots {
+		rootAbs, err := p.abs(root)
+		if err != nil {
+			last = fmt.Errorf("%w: the root %q does not resolve: %v", ErrUnsafe, root, err)
+			continue
+		}
+		rootReal, err := resolveRoot(rootAbs, root)
+		if err != nil {
+			last = err
+			continue
+		}
+		if err := p.refuseUnsafeRoot(rootReal); err != nil {
+			last = err
+			continue
+		}
+		targetPath := path
+		if p.WorkingDir != "" && !filepath.IsAbs(targetPath) {
+			targetPath = filepath.Join(p.WorkingDir, targetPath)
+		}
+		targetRoot := root
+		if p.WorkingDir != "" && !filepath.IsAbs(targetRoot) {
+			targetRoot = filepath.Join(p.WorkingDir, targetRoot)
+		}
+		resolved, err := ResolvedUnder(targetPath, targetRoot)
+		if err != nil {
+			last = err
+			continue
+		}
+		if err := p.refuseUnsafePath(resolved); err != nil {
+			last = err
+			continue
+		}
+		addUserWrite(resolved)
+		return os.RemoveAll(resolved)
+	}
+	return last
+}
+
+// addUserWrite makes the tree writable, best effort: a directory without the owner
+// write bit refuses to give up its entries, so the bit is added before the removal.
+func addUserWrite(root string) {
+	// ignored: best effort by design (see the comment above); the removal that follows reports what it could not remove
+	_ = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.Type()&os.ModeSymlink != 0 {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil {
+			return nil
+		}
+		// ignored: best effort by design; the removal that follows reports what it could not remove
+		_ = os.Chmod(p, info.Mode().Perm()|0o200)
+		return nil
+	})
+}

@@ -1,0 +1,15 @@
+package fixture
+
+import (
+	"os"
+	"path/filepath"
+
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+)
+
+// writesWorker wraps the path in oneline.Quote, this repo's wrapper over
+// strconv.Quote. The network it reports on is a fake.
+func writesWorker(dir string) {
+	body := `{"name":"w","key_file":` + oneline.Quote(filepath.Join(dir, "key")) + `}`
+	_ = os.WriteFile(filepath.Join(dir, "worker.json"), []byte(body), 0o644)
+}

@@ -1,0 +1,24 @@
+TLC2 Version 2.19 of 08 August 2024 (rev: 5a47802)
+Running breadth-first search Model-Checking with fp 14 and seed -6028465788002140950 with 1 worker on 32 cores with 1926MB heap and 64MB offheap memory [pid: 4067178] (Linux 7.0.0-31-generic amd64, Eclipse Adoptium 21.0.12.1 x86_64, MSBDiskFPSet, DiskStateQueue).
+Parsing file /tmp/port-tlc.GlG0Wb/tt/MCFuseBox.tla
+Parsing file /tmp/port-tlc.GlG0Wb/tt/FuseBox.tla
+Parsing file /tmp/Naturals.tla
+Parsing file /tmp/FiniteSets.tla
+Parsing file /tmp/Sequences.tla
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module FuseBox
+Semantic processing of module MCFuseBox
+Starting... (2026-09-28 22:10:54)
+Computing initial states...
+Error: Invariant GateAnswersOnlyFromEveryNamedBox is violated by the initial state:
+/\ quar = (b1 :> {} @@ b2 :> {})
+/\ pquar = (b1 :> {} @@ b2 :> {})
+/\ st = (b1 :> "absent" @@ b2 :> "absent")
+/\ lock = (b1 :> FALSE @@ b2 :> FALSE)
+/\ plock = (b1 :> FALSE @@ b2 :> FALSE)
+/\ last = <<"start">>
+/\ pst = (b1 :> "absent" @@ b2 :> "absent")
+
+Finished in 00s at (2026-09-28 22:10:54)

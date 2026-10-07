@@ -1,0 +1,80 @@
+---
+# A macOS bench: podman from brew and a podman machine sized from the bench's
+# row (container_runtime_machine_*). macOS has no apt, no subuid, no cgroups and
+# no linger: the machine is a Linux VM that has them, so none of main.yml's
+# Linux tasks apply and none run. Idempotent; `--check --diff` reads and
+# changes nothing. The role never installs brew itself (its installer is a
+# script fetched from the network, run by a person) and never runs as root.
+
+- name: the runner user is not root
+  ansible.builtin.assert:
+    quiet: true
+    that: ansible_facts['user_id'] != "root"
+    fail_msg: "container-runtime role: brew refuses to run as root; connect as the bench's login"
+
+- name: brew on this bench
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop: "{{ container_runtime_brew_candidates }}"
+  register: container_runtime_brew_stat
+
+- name: brew is installed
+  ansible.builtin.assert:
+    quiet: true
+    that: container_runtime_brew_stat.results | selectattr('stat.exists') | list | length > 0
+    fail_msg: >-
+      container-runtime role: this macOS bench has no brew at
+      {{ container_runtime_brew_candidates | join(' or ') }}, so podman is not
+      installed here. Install Homebrew by hand (brew.sh) and run the play again.
+
+- name: the brew on this bench
+  ansible.builtin.set_fact:
+    container_runtime_brew: "{{ (container_runtime_brew_stat.results | selectattr('stat.exists') | map(attribute='item') | list)[0] }}"
+
+- name: podman in brew
+  ansible.builtin.command: "{{ container_runtime_brew }} list --versions podman"
+  register: container_runtime_brewed
+  changed_when: false
+  # ignored: a non-zero exit is the answer (absent), read from rc by the task that follows
+  failed_when: false
+  check_mode: false
+
+- name: podman from brew
+  ansible.builtin.command: "{{ container_runtime_brew }} install podman"
+  environment:
+    HOMEBREW_NO_AUTO_UPDATE: "1"
+  register: container_runtime_brew_install
+  changed_when: true
+  when: container_runtime_brewed.rc != 0
+
+- name: podman's machines
+  ansible.builtin.command: "{{ container_runtime_brew | dirname }}/podman machine list --format {{ '{{' }}.Name{{ '}}' }}"
+  register: container_runtime_machines
+  changed_when: false
+  # ignored: a non-zero exit is the answer (absent), read from rc by the task that follows
+  failed_when: false
+  check_mode: false
+
+- name: podman machine init, sized from the bench's row
+  ansible.builtin.command:
+    argv:
+      - "{{ container_runtime_brew | dirname }}/podman"
+      - machine
+      - init
+      - --now
+      - --cpus
+      - "{{ container_runtime_machine_cpus }}"
+      - --memory
+      - "{{ container_runtime_machine_memory_mib }}"
+      - --disk-size
+      - "{{ container_runtime_machine_disk_gib }}"
+  changed_when: true
+  when: container_runtime_machines.rc != 0 or container_runtime_machines.stdout | trim | length == 0
+
+# A machine that exists but is stopped (after a reboot) is started, not made again.
+- name: podman machine is running
+  ansible.builtin.command: "{{ container_runtime_brew | dirname }}/podman machine start"
+  register: container_runtime_machine_start
+  changed_when: "'already running' not in container_runtime_machine_start.stderr"
+  failed_when: container_runtime_machine_start.rc != 0 and 'already running' not in container_runtime_machine_start.stderr
+  when: container_runtime_machines.rc == 0 and container_runtime_machines.stdout | trim | length > 0

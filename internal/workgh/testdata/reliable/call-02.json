@@ -1,0 +1,1419 @@
+{
+ "vars": {
+  "n": 15,
+  "owner": "mas-bandwidth",
+  "repo": "reliable"
+ },
+ "reply": {
+  "data": {
+   "rateLimit": {
+    "cost": 1,
+    "remaining": 4974,
+    "resetAt": "2026-09-30T19:30:35Z"
+   },
+   "repository": {
+    "issues": {
+     "totalCount": 20,
+     "pageInfo": {
+      "hasNextPage": true,
+      "endCursor": "Y3Vyc29yOnYyOpK0MjAyMC0xMC0wNFQxNDoxNDoxNlrOKpO1kA=="
+     },
+     "nodes": [
+      {
+       "id": "MDU6SXNzdWUyMzE3MjcxNzE=",
+       "number": 1,
+       "url": "https://github.com/mas-bandwidth/reliable/issues/1",
+       "title": "Transport vs Endpoint",
+       "body": "Hi Glenn,\r\n\r\nQuick question. Could you explain the conceptual difference between the terms [endpoint](https://github.com/networkprotocol/reliable.io/blob/master/reliable.c#L407) and [transport](https://github.com/networkprotocol/yojimbo/blob/aff630801c6124043fc84cd342ecfadccb3cee4a/yojimbo_transport.h#L211) in the context of yojimbo/reliable.io?\r\n\r\nThanks!",
+       "state": "CLOSED",
+       "stateReason": "COMPLETED",
+       "createdAt": "2017-05-26T20:27:03Z",
+       "updatedAt": "2017-05-26T22:07:34Z",
+       "closedAt": "2017-05-26T22:06:50Z",
+       "locked": false,
+       "activeLockReason": null,
+       "author": {
+        "login": "RandyGaul"
+       },
+       "authorAssociation": "NONE",
+       "labels": {
+        "totalCount": 0,
+        "nodes": []
+       },
+       "assignees": {
+        "totalCount": 0,
+        "nodes": []
+       },
+       "milestone": null,
+       "comments": {
+        "totalCount": 1,
+        "pageInfo": {
+         "hasNextPage": false,
+         "endCursor": "Y3Vyc29yOnYyOpHOEiS-Sg=="
+        },
+        "nodes": [
+         {
+          "id": "MDEyOklzc3VlQ29tbWVudDMwNDM5Nzg5OA==",
+          "url": "https://github.com/mas-bandwidth/reliable/issues/1#issuecomment-304397898",
+          "body": "Well an endpoint is simply one side of a connection wrt. to the reliability system, for example, check out the new yojimbo experimental branch to see an example of usage. Transport is the thing that does the sending and receiving of packets (eg. sendto/recvfrom), and has gone away in the new yojimbo design, as that part is now handled by netcode.io",
+          "createdAt": "2017-05-26T22:06:50Z",
+          "updatedAt": "2017-05-26T22:07:34Z",
+          "author": {
+           "login": "gafferongames"
+          },
+          "authorAssociation": "MEMBER"
+         }
+        ]
+       },
+       "timelineItems": {
+        "totalCount": 0,
+        "pageInfo": {
+         "hasNextPage": false,
+         "endCursor": null
+        },
+        "nodes": []
+       },
+       "closedByPullRequestsReferences": {
+        "totalCount": 0,
+        "pageInfo": {
+         "hasNextPage": false,
+         "endCursor": null
+        },
+        "nodes": []
+       }
+      },
+      {
+       "id": "MDU6SXNzdWUyNTU0MTIwOTk=",
+       "number": 2,
+       "url": "https://github.com/mas-bandwidth/reliable/issues/2",
+       "title": "questions on reliable_endpoint_t structure",
+       "body": "while looking at:\r\n\r\n```c\r\nstruct reliable_endpoint_t\r\n{\r\n   .\r\n   .\r\n   .\r\n    uint16_t * acks;\r\n    uint16_t sequence;\r\n    struct reliable_sequence_buffer_t * sent_packets;\r\n    struct reliable_sequence_buffer_t * received_packets;\r\n```\r\n\r\nI don't understand the usage `sequence` and `sent_packets` as used on these lines:\r\n\r\nhttps://github.com/networkprotocol/reliable.io/blob/master/reliable.c#L725\r\nhttps://github.com/networkprotocol/reliable.io/blob/master/reliable.c#L733\r\n\r\nIs this redundant? Why effectively store 3 sequence numbers when the 2 above lines seem to conflate `sequence` with `sent_packets-\u003esequence` ?",
+       "state": "CLOSED",
+       "stateReason": "COMPLETED",
+       "createdAt": "2017-09-05T21:18:35Z",
+       "updatedAt": "2017-09-09T17:05:11Z",
+       "closedAt": "2017-09-06T05:17:25Z",
+       "locked": false,
+       "activeLockReason": null,
+       "author": {
+        "login": "mreinstein"
+       },
+       "authorAssociation": "NONE",
+       "labels": {
+        "totalCount": 0,
+        "nodes": []
+       },
+       "assignees": {
+        "totalCount": 0,
+        "nodes": []
+       },
+       "milestone": null,
+       "comments": {
+        "totalCount": 6,
+        "pageInfo": {
+         "hasNextPage": false,
+         "endCursor": "Y3Vyc29yOnYyOpHOE5FQUw=="
+        },
+        "nodes": [
+         {
+          "id": "MDEyOklzc3VlQ29tbWVudDMyNzMxMzkwOA==",
+          "url": "https://github.com/mas-bandwidth/reliable/issues/2#issuecomment-327313908",
+          "body": "Thanks! I'll take a look today",
+          "createdAt": "2017-09-05T21:50:41Z",
+          "updatedAt": "2017-09-05T21:50:41Z",
+          "author": {
+           "login": "gafferongames"
+          },
+          "authorAssociation": "MEMBER"
+         },
+         {
+          "id": "MDEyOklzc3VlQ29tbWVudDMyNzM3NzIwOQ==",
+          "url": "https://github.com/mas-bandwidth/reliable/issues/2#issuecomment-327377209",
+          "body": "Hi, there is no redundancy here:\r\n\r\n1. endpoint::sequence is the current send sequence #\r\n\r\n2. endpoint::sent_packets is a sliding window containing data per-sent packet, indexed by packet sequence #\r\n\r\n3. endpoint::received_packets is a sliding window containing data per-received packet, indexed by sequence number (which corresponds to the endpoint-\u003esequence number on the other side, *not* the endpoint-\u003esequence on the receiver side).\r\n\r\ncheers",
+          "createdAt": "2017-09-06T05:17:25Z",
+          "updatedAt": "2017-09-06T05:17:46Z",
+          "author": {
+           "login": "gafferongames"
+          },
+          "authorAssociation": "MEMBER"
+         },
+         {
+          "id": "MDEyOklzc3VlQ29tbWVudDMyNzM3NzM5Mw==",
+          "url": "https://github.com/mas-bandwidth/reliable/issues/2#issuecomment-327377393",
+          "body": "thanks for the info 👍 ",
+          "createdAt": "2017-09-06T05:19:00Z",
+          "updatedAt": "2017-09-06T05:19:00Z",
+          "author": {
+           "login": "mreinstein"
+          },
+          "authorAssociation": "NONE"
+         },
+         {
+          "id": "MDEyOklzc3VlQ29tbWVudDMyNzM3Nzg1NA==",
+          "url": "https://github.com/mas-bandwidth/reliable/issues/2#issuecomment-327377854",
+          "body": "No worries. The key is to understand the endpoint acts as both the sender and receiver simultaneously. It's a bit hard to parse because of that. -- cheers",
+          "createdAt": "2017-09-06T05:22:11Z",
+          "updatedAt": "2017-09-06T05:22:11Z",
+          "author": {
+           "login": "gafferongames"
+          },
+          "authorAssociation": "MEMBER"
+         },
+         {
+          "id": "MDEyOklzc3VlQ29tbWVudDMyODI1NDc4Ng==",
+          "url": "https://github.com/mas-bandwidth/reliable/issues/2#issuecomment-328254786",
+          "body": "Hey Glenn, congrats on getting funding for your new startup! You must be\nexcited!\n\n-Mike\n\nOn Tue, Sep 5, 2017 at 10:22 PM, Glenn Fiedler \u003cnotifications@github.com\u003e\nwrote:\n\n\u003e No worries. The key is to understand the endpoint acts as both the sender\n\u003e and receiver simultaneously. It's a bit hard to parse because of that. --\n\u003e cheers\n\u003e\n\u003e —\n\u003e You are receiving this because you authored the thread.\n\u003e Reply to this email directly, view it on GitHub\n\u003e \u003chttps://github.com/networkprotocol/reliable.io/issues/2#issuecomment-327377854\u003e,\n\u003e or mute the thread\n\u003e \u003chttps://github.com/notifications/unsubscribe-auth/AAr087fS2iFeqGIw6wwP-aHQcuMD_rapks5sfiwEgaJpZM4PNiYd\u003e\n\u003e .\n\u003e\n",
+          "createdAt": "2017-09-09T05:01:19Z",
+          "updatedAt": "2017-09-09T05:01:19Z",
+          "author": {
+           "login": "mreinstein"
+          },
+          "authorAssociation": "NONE"
+         },
+         {
+          "id": "MDEyOklzc3VlQ29tbWVudDMyODI5MDM4Nw==",
+          "url": "https://github.com/mas-bandwidth/reliable/issues/2#issuecomment-328290387",
+          "body": "Yep! Thanks!",
+          "createdAt": "2017-09-09T17:05:10Z",
+          "updatedAt": "2017-09-09T17:05:10Z",
+          "author": {
+           "login": "gafferongames"
+          },
+          "authorAssociation": "MEMBER"
+         }
+        ]
+       },
+       "timelineItems": {
+        "totalCount": 0,
+        "pageInfo": {
+         "hasNextPage": false,
+         "endCursor": null
+        },
+        "nodes": []
+       },
+       "closedByPullRequestsReferences": {
+        "totalCount": 0,
+        "pageInfo": {
+         "hasNextPage": false,
+         "endCursor": null
+        },
+        "nodes": []
+       }
+      },
+      {
+       "id": "MDU6SXNzdWUyODQ1OTYwMTY=",
+       "number": 4,
+       "url": "https://github.com/mas-bandwidth/reliable/issues/4",
+       "title": "[Question] How retransmits are handled?",
+       "body": "Hi Glenn!\r\n\r\nI read source, and I can't get the way retransmits are handled.\r\nLet's say we have next situation. A send to B single packet, which is dropped during transmission.\r\nA -[DATA1]-XXXXX (missing)-\u003e B\r\nBecause B miss this packet, it will never send ACK to A (or any other thing).\r\n\r\nHow A should resolve this situation?\r\nLikely there should be some timer, which should retransmit non-ACKed packets after some time.\r\nLike (simplified):\r\n\r\n```\r\nwhile (reliable_endpoint_pending(endpoint)) {\r\n   sleep(reliable_endpoint_wait_for_ack_timeout(endpoint));\r\n   if (reliable_endpoint_pending(endpoint)) \r\n       reliable_endpoint_retransmit(endpoint);\r\n}\r\n```\r\n\r\nOr am I missing something?",
+       "state": "CLOSED",
+       "stateReason": "COMPLETED",
+       "createdAt": "2017-12-26T18:51:34Z",
+       "updatedAt": "2018-01-08T08:19:28Z",
+       "closedAt": "2018-01-08T08:15:54Z",
+       "locked": false,
+       "activeLockReason": null,
+       "author": {
+        "login": "alxchk"
+       },
+       "authorAssociation": "NONE",
+       "labels": {
+        "totalCount": 0,
+        "nodes": []
+       },
+       "assignees": {
+        "totalCount": 0,
+        "nodes": []
+       },
+       "milestone": null,
+       "comments": {
+        "totalCount": 4,
+        "pageInfo": {
+         "hasNextPage": false,
+         "endCursor": "Y3Vyc29yOnYyOpHOFTatRA=="
+        },
+        "nodes": [
+         {
+          "id": "MDEyOklzc3VlQ29tbWVudDM1NDU4NDkyOA==",
+          "url": "https://github.com/mas-bandwidth/reliable/issues/4#issuecomment-354584928",
+          "body": "I was looking for the same thing.\r\n\r\nEventually I realized that reliable.io doesn't have a re-transmission strategy, it's left up to the user to implement one in their desired manner.\r\n\r\nyojimbo (which uses reliable.io) does just that. I believe it simply re-transmits un-acked packets at a certain rate (100ms by default) until they are acked.\r\n\r\nI'm not sure what happens if a packet is never acked. Consider Host A and Peer B:\r\n\r\n- Host A sends 30 packets per second to Peer B\r\n- Host A re-transmits at a rate of 0.1s\r\n- Peer B sends back 32 acks also at 30 packets per second\r\n- Packet loss is 10%\r\n\r\nA packet is included in Peer B's acks for 32/30 seconds or roughly 1s. During which time it can be re-transmitted 1s/0.1s = 10 times.\r\n\r\nIf this packet for some reason never reaches Peer B within this time window despite the 10 re-transmissions (odds are very low at 0.1^10), it will never again be included in an ack. There are more factors involved that I haven't included, and some network conditions can make this probability much higher - though you wouldn't really expect a realtime game to work with such conditions anyway.\r\n\r\nI haven't checked if yojimbo just keeps re-sending this packet forever or if it detects it and disconnects the peer. I think that at one point this packet is removed from Host A's circular \"sent packets\" buffer, at which point the host detects the situation when trying to re-transmit it and disconnects the offending peer.\r\n\r\nAgain, this is all just my understanding. I might be wrong.",
+          "createdAt": "2017-12-31T04:38:04Z",
+          "updatedAt": "2017-12-31T04:40:22Z",
+          "author": {
+           "login": "Ohmnivore"
+          },
+          "authorAssociation": "NONE"
+         },
+         {
+          "id": "MDEyOklzc3VlQ29tbWVudDM1NDU4OTM2Mw==",
+          "url": "https://github.com/mas-bandwidth/reliable/issues/4#issuecomment-354589363",
+          "body": "Just FYI, nice interface for the same problem - [KCP](https://github.com/skywind3000/kcp)",
+          "createdAt": "2017-12-31T07:16:36Z",
+          "updatedAt": "2017-12-31T07:16:36Z",
+          "author": {
+           "login": "alxchk"
+          },
+          "authorAssociation": "NONE"
+         },
+         {
+          "id": "MDEyOklzc3VlQ29tbWVudDM1NTkwNDQxMQ==",
+          "url": "https://github.com/mas-bandwidth/reliable/issues/4#issuecomment-355904411",
+          "body": "Confirmed. There are no retransmits. reliable.io is a system that tells you which packets were received by the other side, it is up to you to decide if that means you have to do transmits.\r\n\r\nIf you want something that does transmits for you, try https://github.com/networkprotocol/yojimbo\r\n\r\nIt builds a reliable-ordered message channel concept on top of reliable.io, but in a different, more nuanced way than is normally done.\r\n\r\ncheers",
+          "createdAt": "2018-01-08T08:15:52Z",
+          "updatedAt": "2018-01-08T08:15:52Z",
+          "author": {
+           "login": "gafferongames"
+          },
+          "authorAssociation": "MEMBER"
+         },
+         {
+          "id": "MDEyOklzc3VlQ29tbWVudDM1NTkwNDgzNg==",
+          "url": "https://github.com/mas-bandwidth/reliable/issues/4#issuecomment-355904836",
+          "body": "\u003e I haven't checked if yojimbo just keeps re-sending this packet forever or if it detects it and disconnects the peer. I think that at one point this packet is removed from Host A's circular \"sent packets\" buffer, at which point the host detects the situation when trying to re-transmit it and disconnects the offending peer.\r\n\r\nThe reliable.io ack system guarantees that if you receive an ack for a packet it absolutely was received by the other side, but it does not guarantee that all acks get through.\r\n\r\nAs you have noted it just gives you a *very high probability* that you get most acks. \r\n\r\nBasically, you only miss acks if no packets for 1/2 or 1 second, and at this point, you have bigger problems IMO (eg. an unplayable game...)\r\n\r\nOn the yojmibo side, it does not disconnect on missing acks. Worst case it just resends something it didn't really need to, but everything else just works out.\r\n\r\ncheers\r\n  ",
+          "createdAt": "2018-01-08T08:18:46Z",
+          "updatedAt": "2018-01-08T08:19:28Z",
+          "author": {
+           "login": "gafferongames"
+          },
+          "authorAssociation": "MEMBER"
+         }
+        ]
+       },
+       "timelineItems": {
+        "totalCount": 0,
+        "pageInfo": {
+         "hasNextPage": false,
+         "endCursor": null
+        },
+        "nodes": []
+       },
+       "closedByPullRequestsReferences": {
+        "totalCount": 0,
+        "pageInfo": {
+         "hasNextPage": false,
+         "endCursor": null
+        },
+        "nodes": []
+       }
+      },
+      {
+       "id": "MDU6SXNzdWUyOTYwMDA0NjM=",
+       "number": 5,
+       "url": "https://github.com/mas-bandwidth/reliable/issues/5",
+       "title": "test_packets()",
+       "body": "I'm looking at the`test_packets()` https://github.com/networkprotocol/reliable.io/blob/master/reliable.c#L1959\r\n\r\nIs it fair to characterize this test as mostly about validating packet fragementation/reassembly?",
+       "state": "CLOSED",
+       "stateReason": "COMPLETED",
+       "createdAt": "2018-02-09T20:23:16Z",
+       "updatedAt": "2018-02-11T00:51:56Z",
+       "closedAt": "2018-02-11T00:08:58Z",
+       "locked": false,
+       "activeLockReason": null,
+       "author": {
+        "login": "mreinstein"
+       },
+       "authorAssociation": "NONE",
+       "labels": {
+        "totalCount": 0,
+        "nodes": []
+       },
+       "assignees": {
+        "totalCount": 0,
+        "nodes": []
+       },
+       "milestone": null,
+       "comments": {
+        "totalCount": 3,
+        "pageInfo": {
+         "hasNextPage": false,
+         "endCursor": "Y3Vyc29yOnYyOpHOFb0Fdw=="
+        },
+        "nodes": [
+         {
+          "id": "MDEyOklzc3VlQ29tbWVudDM2NDcwNzAxNQ==",
+          "url": "https://github.com/mas-bandwidth/reliable/issues/5#issuecomment-364707015",
+          "body": "Yes precisely, although it looks like it's not actually testing anything, just exercising that codepath.",
+          "createdAt": "2018-02-11T00:08:58Z",
+          "updatedAt": "2018-02-11T00:08:58Z",
+          "author": {
+           "login": "gafferongames"
+          },
+          "authorAssociation": "MEMBER"
+         },
+         {
+          "id": "MDEyOklzc3VlQ29tbWVudDM2NDcwNzA2NA==",
+          "url": "https://github.com/mas-bandwidth/reliable/issues/5#issuecomment-364707064",
+          "body": "Oh wait, it is testing stuff, because the test context creates packets with a particular pattern, which is asserted on when they are received, thus testing that the packets are reassembled correctly.\r\n\r\nHowever, it would be nice if the loop had a condition that it has received n packets before exiting.",
+          "createdAt": "2018-02-11T00:09:55Z",
+          "updatedAt": "2018-02-11T00:09:55Z",
+          "author": {
+           "login": "gafferongames"
+          },
+          "authorAssociation": "MEMBER"
+         },
+         {
+          "id": "MDEyOklzc3VlQ29tbWVudDM2NDcwOTIzOQ==",
+          "url": "https://github.com/mas-bandwidth/reliable/issues/5#issuecomment-364709239",
+          "body": "I guess having audited the code, one of my few bits of feedback would be to name this test more specifically. Pretty minor though. As usual your code is super tight! 👍 ",
+          "createdAt": "2018-02-11T00:51:56Z",
+          "updatedAt": "2018-02-11T00:51:56Z",
+          "author": {
+           "login": "mreinstein"
+          },
+          "authorAssociation": "NONE"
+         }
+        ]
+       },
+       "timelineItems": {
+        "totalCount": 0,
+        "pageInfo": {
+         "hasNextPage": false,
+         "endCursor": null
+        },
+        "nodes": []
+       },
+       "closedByPullRequestsReferences": {
+        "totalCount": 0,
+        "pageInfo": {
+         "hasNextPage": false,
+         "endCursor": null
+        },
+        "nodes": []
+       }
+      },
+      {
+       "id": "MDU6SXNzdWUyOTYxNDg1Mjc=",
+       "number": 6,
+       "url": "https://github.com/mas-bandwidth/reliable/issues/6",
+       "title": "open to a javascript port?",
+       "body": "I've got a port nearly finished, including all of your unit/soak/fuzz tests (which pass!) The only thing remaining is to put in packet fragmentation/re-assembly.  Would you be willing to link to it in this project's README?\r\n\r\nI intend to keep it a faithful port in terms of structure and naming.\r\n\r\nTotally happy to add you (and/or anyone you designate as qualified) as a maintainer.\r\n\r\nI'd also like to publish this to npm",
+       "state": "CLOSED",
+       "stateReason": "COMPLETED",
+       "createdAt": "2018-02-11T00:54:43Z",
+       "updatedAt": "2018-02-17T03:16:43Z",
+       "closedAt": "2018-02-17T03:16:43Z",
+       "locked": false,
+       "activeLockReason": null,
+       "author": {
+        "login": "mreinstein"
+       },
+       "authorAssociation": "NONE",
+       "labels": {
+        "totalCount": 0,
+        "nodes": []
+       },
+       "assignees": {
+        "totalCount": 0,
+        "nodes": []
+       },
+       "milestone": null,
+       "comments": {
+        "totalCount": 3,
+        "pageInfo": {
+         "hasNextPage": false,
+         "endCursor": "Y3Vyc29yOnYyOpHOFdcBOQ=="
+        },
+        "nodes": [
+         {
+          "id": "MDEyOklzc3VlQ29tbWVudDM2NDc2ODg4Mw==",
+          "url": "https://github.com/mas-bandwidth/reliable/issues/6#issuecomment-364768883",
+          "body": "what I have so far:  https://github.com/mreinstein/reliable.io.js",
+          "createdAt": "2018-02-11T17:19:35Z",
+          "updatedAt": "2018-02-11T17:19:35Z",
+          "author": {
+           "login": "mreinstein"
+          },
+          "authorAssociation": "NONE"
+         },
+         {
+          "id": "MDEyOklzc3VlQ29tbWVudDM2NjQxMTk4NQ==",
+          "url": "https://github.com/mas-bandwidth/reliable/issues/6#issuecomment-366411985",
+          "body": "Wow! Sounds great!",
+          "createdAt": "2018-02-17T03:15:09Z",
+          "updatedAt": "2018-02-17T03:15:09Z",
+          "author": {
+           "login": "gafferongames"
+          },
+          "authorAssociation": "MEMBER"
+         },
+         {
+          "id": "MDEyOklzc3VlQ29tbWVudDM2NjQxMjA4OQ==",
+          "url": "https://github.com/mas-bandwidth/reliable/issues/6#issuecomment-366412089",
+          "body": "I'll add a link to your port from the main page. Thanks!",
+          "createdAt": "2018-02-17T03:16:43Z",
+          "updatedAt": "2018-02-17T03:16:43Z",
+          "author": {
+           "login": "gafferongames"
+          },
+          "authorAssociation": "MEMBER"
+         }
+        ]
+       },
+       "timelineItems": {
+        "totalCount": 0,
+        "pageInfo": {
+         "hasNextPage": false,
+         "endCursor": null
+        },
+        "nodes": []
+       },
+       "closedByPullRequestsReferences": {
+        "totalCount": 0,
+        "pageInfo": {
+         "hasNextPage": false,
+         "endCursor": null
+        },
+        "nodes": []
+       }
+      },
+      {
+       "id": "MDU6SXNzdWUyOTYxNDkwNzM=",
+       "number": 7,
+       "url": "https://github.com/mas-bandwidth/reliable/issues/7",
+       "title": "documentation/logic questions",
+       "body": "@gafferongames in working on a javascript port, I was going through the code in this library. It's so well written that I could follow along very easily. Very refreshing!\r\n\r\nThere are 3 areas where there is a little head scratching:\r\n\r\n1.\r\nI suspect this code has to do with handling very rare cases of extreme packet loss with sequence buffer wrap around:\r\nhttps://github.com/networkprotocol/reliable.io/blob/master/reliable.c#L249-L256\r\n\r\n2.\r\nsimilarly, there's some logic in `_remove_entries which is a little confusing:\r\nhttps://github.com/networkprotocol/reliable.io/blob/master/reliable.c#L207-L226\r\n\r\n3.\r\nIt's not clear to me what the `_with_cleanup` variants of sequence buffer insertion/removal are for\r\nhttps://github.com/networkprotocol/reliable.io/blob/master/reliable.c#L264\r\nhttps://github.com/networkprotocol/reliable.io/blob/master/reliable.c#L264\r\n\r\nI think comments in here about what these little bits are would be _immensely_ helpful. Everything else makes total sense.\r\n\r\nThanks again for a great codebase!\r\n",
+       "state": "CLOSED",
+       "stateReason": "COMPLETED",
+       "createdAt": "2018-02-11T01:05:36Z",
+       "updatedAt": "2018-02-17T05:25:18Z",
+       "closedAt": "2018-02-17T03:38:52Z",
+       "locked": false,
+       "activeLockReason": null,
+       "author": {
+        "login": "mreinstein"
+       },
+       "authorAssociation": "NONE",
+       "labels": {
+        "totalCount": 0,
+        "nodes": []
+       },
+       "assignees": {
+        "totalCount": 0,
+        "nodes": []
+       },
+       "milestone": null,
+       "comments": {
+        "totalCount": 5,
+        "pageInfo": {
+         "hasNextPage": false,
+         "endCursor": "Y3Vyc29yOnYyOpHOFdcZJQ=="
+        },
+        "nodes": [
+         {
+          "id": "MDEyOklzc3VlQ29tbWVudDM2NDcxMDA1Mw==",
+          "url": "https://github.com/mas-bandwidth/reliable/issues/7#issuecomment-364710053",
+          "body": "oh there's 2 more that are a little confusing.\r\n\r\n4.\r\nthe `sequence_difference` variable, and it's affecting the packet header:\r\nhttps://github.com/networkprotocol/reliable.io/blob/master/reliable.c#L667-L679\r\n\r\n5.\r\nthere's mention of a 28 byte/48 byte packet header but I don't know how those numbers add up or see it referenced anywhere else in the code:\r\nhttps://github.com/networkprotocol/reliable.io/blob/master/reliable.c#L538\r\n\r\n",
+          "createdAt": "2018-02-11T01:09:23Z",
+          "updatedAt": "2018-02-11T01:09:23Z",
+          "author": {
+           "login": "mreinstein"
+          },
+          "authorAssociation": "NONE"
+         },
+         {
+          "id": "MDEyOklzc3VlQ29tbWVudDM2NjQxMjcwOA==",
+          "url": "https://github.com/mas-bandwidth/reliable/issues/7#issuecomment-366412708",
+          "body": "1. This is code to reject stale packets, eg. packets that are older than the current sliding window in the sequence buffer.\r\n\r\n2. This code is to remove entries as we advance the sequence buffer, eg. removing old entries that are outside the sliding window. I wrote it in a bit of a weird way to handle wrap around for the sequence #, without having to deal with signed modulus, hence the + 65535... but I think that's actually a bug. Shouldn't it be + 65536!?\r\n\r\n3. The \"_with_cleanup\" variants are necessary to handle extreme packet loss. What happens is that for sequence buffers that have holes (eg. received packets, but not sent packets), if you don't advance with cleanup, you can have stale entries, thet once you wrap around, cause spurious acks, which breaks any reliability system built on top of reliable.io (speaking from experience, it broke yojimbo...)\r\n\r\n4. This is an optimization. If the difference between the ack and the most recent received sequence # is small, we can encode it with fewer bits. There is also another optimization here if the acks are 100%, then we send just one bit, instead of 32bit 0xFFFFFFFFF\r\n\r\n5. This is just an approximation of the actual on-the-wire header sizes for IP+UDP headers, on IPv4  and IPv6, respectively, for bandwidth estimation purposes.",
+          "createdAt": "2018-02-17T03:28:16Z",
+          "updatedAt": "2018-02-17T03:28:16Z",
+          "author": {
+           "login": "gafferongames"
+          },
+          "authorAssociation": "MEMBER"
+         },
+         {
+          "id": "MDEyOklzc3VlQ29tbWVudDM2NjQxMjcyNw==",
+          "url": "https://github.com/mas-bandwidth/reliable/issues/7#issuecomment-366412727",
+          "body": "Let me know if you have any other questions. ps. 100% sure the + 65535 is a bug... I'll go fix that now...",
+          "createdAt": "2018-02-17T03:28:34Z",
+          "updatedAt": "2018-02-17T03:28:34Z",
+          "author": {
+           "login": "gafferongames"
+          },
+          "authorAssociation": "MEMBER"
+         },
+         {
+          "id": "MDEyOklzc3VlQ29tbWVudDM2NjQxMzQ2NQ==",
+          "url": "https://github.com/mas-bandwidth/reliable/issues/7#issuecomment-366413465",
+          "body": "Fixed in 661b1843004a0fc470b2f5a964fc8a60a533ca0a",
+          "createdAt": "2018-02-17T03:38:51Z",
+          "updatedAt": "2018-02-17T03:38:51Z",
+          "author": {
+           "login": "gafferongames"
+          },
+          "authorAssociation": "MEMBER"
+         },
+         {
+          "id": "MDEyOklzc3VlQ29tbWVudDM2NjQxODIxMw==",
+          "url": "https://github.com/mas-bandwidth/reliable/issues/7#issuecomment-366418213",
+          "body": "thanks for the clarifications! I've pulled in your sequence wraparound bugfix as well https://github.com/mreinstein/reliable.io.js/commit/eb762c8af55d9425901a9be1c86cb256f19e9fdc",
+          "createdAt": "2018-02-17T05:25:18Z",
+          "updatedAt": "2018-02-17T05:25:18Z",
+          "author": {
+           "login": "mreinstein"
+          },
+          "authorAssociation": "NONE"
+         }
+        ]
+       },
+       "timelineItems": {
+        "totalCount": 0,
+        "pageInfo": {
+         "hasNextPage": false,
+         "endCursor": null
+        },
+        "nodes": []
+       },
+       "closedByPullRequestsReferences": {
+        "totalCount": 0,
+        "pageInfo": {
+         "hasNextPage": false,
+         "endCursor": null
+        },
+        "nodes": []
+       }
+      },
+      {
+       "id": "MDU6SXNzdWUzMDE1ODcyNzY=",
+       "number": 8,
+       "url": "https://github.com/mas-bandwidth/reliable/issues/8",
+       "title": "why isn't there an acked_packet_function callback?",
+       "body": "I see 2 callback functions defined:\r\n\r\n`void (*transmit_packet_function)(void*,int,uint16_t,uint8_t*,int);` is fired whenever a packet is ready to be sent. it's implementation should handle actually sending data over the socket.\r\n\r\n`int (*process_packet_function)(void*,int,uint16_t,uint8_t*,int);` is fired whenever a packet is received (either a regular packet or a fragmented packet that's been fully re-assembled)\r\n\r\nI'm surprised that there is no callback function that is invoked whenever a packet goes from non-acked -\u003e acked. Isn't this the kind of callback one would need to build a reliable message system on top of reliable.io ?  Otherwise you'd have to duplicate all of https://github.com/networkprotocol/reliable.io/blob/master/reliable.c#L1090-L1120 logic inside your `process_packet_function`. Or is there a better way to handle this?\r\n",
+       "state": "CLOSED",
+       "stateReason": "COMPLETED",
+       "createdAt": "2018-03-01T22:41:13Z",
+       "updatedAt": "2018-03-30T01:21:55Z",
+       "closedAt": "2018-03-13T23:26:21Z",
+       "locked": false,
+       "activeLockReason": null,
+       "author": {
+        "login": "mreinstein"
+       },
+       "authorAssociation": "NONE",
+       "labels": {
+        "totalCount": 0,
+        "nodes": []
+       },
+       "assignees": {
+        "totalCount": 0,
+        "nodes": []
+       },
+       "milestone": null,
+       "comments": {
+        "totalCount": 7,
+        "pageInfo": {
+         "hasNextPage": false,
+         "endCursor": "Y3Vyc29yOnYyOpHOFn7z8w=="
+        },
+        "nodes": [
+         {
+          "id": "MDEyOklzc3VlQ29tbWVudDM3Mjg1Mjc1Mg==",
+          "url": "https://github.com/mas-bandwidth/reliable/issues/8#issuecomment-372852752",
+          "body": "The idea is that once per-frame you are able to query the set of acks from reliable.io, it gives you a list of all sequence numbers that were acked. Does this help?",
+          "createdAt": "2018-03-13T23:25:12Z",
+          "updatedAt": "2018-03-13T23:25:12Z",
+          "author": {
+           "login": "gafferongames"
+          },
+          "authorAssociation": "MEMBER"
+         },
+         {
+          "id": "MDEyOklzc3VlQ29tbWVudDM3Mjg1Mjk5MA==",
+          "url": "https://github.com/mas-bandwidth/reliable/issues/8#issuecomment-372852990",
+          "body": "For example, look at:\r\n\r\n```\r\nuint16_t * reliable_endpoint_get_acks( struct reliable_endpoint_t * endpoint, int * num_acks );\r\n\r\nvoid reliable_endpoint_clear_acks( struct reliable_endpoint_t * endpoint );\r\n\r\n```\r\nThe idea is that once per-frame, you call reliable_endpoint_get_acks, then when you are done with this, you call reliable_endpoint_clear_acks.\r\n\r\ncheers",
+          "createdAt": "2018-03-13T23:26:21Z",
+          "updatedAt": "2018-03-13T23:26:35Z",
+          "author": {
+           "login": "gafferongames"
+          },
+          "authorAssociation": "MEMBER"
+         },
+         {
+          "id": "MDEyOklzc3VlQ29tbWVudDM3NTQ3OTE5NA==",
+          "url": "https://github.com/mas-bandwidth/reliable/issues/8#issuecomment-375479194",
+          "body": "\u003e The idea is that once per-frame you are able to query the set of acks from reliable.io, \r\n\u003e it gives you a list of all sequence numbers that were acked\r\n\r\nSo basically per frame:\r\n1  call `reliable_endpoint_get_acks()` to get the currently acked sequence numbers\r\n2 compare `last_acked` to the current acks, and for any sequence numbers that are now acked, handle them\r\n3 set `last_acked` to the current acks\r\n4 go to 1\r\n\r\n?",
+          "createdAt": "2018-03-22T22:32:31Z",
+          "updatedAt": "2018-03-22T22:32:31Z",
+          "author": {
+           "login": "mreinstein"
+          },
+          "authorAssociation": "NONE"
+         },
+         {
+          "id": "MDEyOklzc3VlQ29tbWVudDM3NzQxMTIxOA==",
+          "url": "https://github.com/mas-bandwidth/reliable/issues/8#issuecomment-377411218",
+          "body": "ah, nevermind I get it now. So basically in each endpoint there is `num_acks` and `acks[]`, and these get buffered internally. It's the responsibility of the caller to read these out and clear them. If this buffer fills up completely, it will stop updating the `acks` array.\r\n",
+          "createdAt": "2018-03-30T00:25:15Z",
+          "updatedAt": "2018-03-30T00:26:21Z",
+          "author": {
+           "login": "mreinstein"
+          },
+          "authorAssociation": "NONE"
+         },
+         {
+          "id": "MDEyOklzc3VlQ29tbWVudDM3NzQxMTU0OQ==",
+          "url": "https://github.com/mas-bandwidth/reliable/issues/8#issuecomment-377411549",
+          "body": "one thing that strikes me as odd: `transmit_packet_function` and `process_packet_function` are callbacks, but the ack getting/clearing is essentially poll based. Is this an accidental inconsistency in the API or an intentional design decision? ",
+          "createdAt": "2018-03-30T00:27:46Z",
+          "updatedAt": "2018-03-30T00:28:09Z",
+          "author": {
+           "login": "mreinstein"
+          },
+          "authorAssociation": "NONE"
+         },
+         {
+          "id": "MDEyOklzc3VlQ29tbWVudDM3NzQxNTU3MQ==",
+          "url": "https://github.com/mas-bandwidth/reliable/issues/8#issuecomment-377415571",
+          "body": "@mreinstein those aren't asynchronous callbacks, they will be called immediately when send/receive_packet are called. In the case of `transmit_packet_function`, it is called once for each fragment. They are just for providing your own implementation of sending/receiving packets. ",
+          "createdAt": "2018-03-30T00:57:36Z",
+          "updatedAt": "2018-03-30T00:57:36Z",
+          "author": {
+           "login": "jakecoffman"
+          },
+          "authorAssociation": "CONTRIBUTOR"
+         },
+         {
+          "id": "MDEyOklzc3VlQ29tbWVudDM3NzQxODczOQ==",
+          "url": "https://github.com/mas-bandwidth/reliable/issues/8#issuecomment-377418739",
+          "body": "\u003e those aren't asynchronous callbacks\r\n\r\nI'm aware that the callbacks are synchronous. What I'm getting at in my question is that there are already 2 callback functions for other event types. Why not just have `process_ack_function` as a callback too? There are 2 benefits that I can see from this:\r\n* the API would be more consistent (callbacks everywhere instead of callbacks in some places, polling in others)\r\n* there would not be a need to manually clear/remove acks. in the current structure, if you don't call `reliable_endpoint_clear_acks()` eventually you'll stop acking packets. \r\n\r\nI'm hoping @gafferongames can give some insight as to whether this was an intentional design decision, if there are things I'm overlooking, etc.",
+          "createdAt": "2018-03-30T01:21:55Z",
+          "updatedAt": "2018-03-30T01:21:55Z",
+          "author": {
+           "login": "mreinstein"
+          },
+          "authorAssociation": "NONE"
+         }
+        ]
+       },
+       "timelineItems": {
+        "totalCount": 0,
+        "pageInfo": {
+         "hasNextPage": false,
+         "endCursor": null
+        },
+        "nodes": []
+       },
+       "closedByPullRequestsReferences": {
+        "totalCount": 0,
+        "pageInfo": {
+         "hasNextPage": false,
+         "endCursor": null
+        },
+        "nodes": []
+       }
+      },
+      {
+       "id": "MDU6SXNzdWUzMDQxNzU2MDM=",
+       "number": 9,
+       "url": "https://github.com/mas-bandwidth/reliable/issues/9",
+       "title": "Go port",
+       "body": "I ported this library to Go here: https://github.com/jakecoffman/rely\r\n\r\nThanks for the great code and blog!",
+       "state": "CLOSED",
+       "stateReason": "COMPLETED",
+       "createdAt": "2018-03-11T17:14:34Z",
+       "updatedAt": "2018-03-11T17:14:44Z",
+       "closedAt": "2018-03-11T17:14:44Z",
+       "locked": false,
+       "activeLockReason": null,
+       "author": {
+        "login": "jakecoffman"
+       },
+       "authorAssociation": "CONTRIBUTOR",
+       "labels": {
+        "totalCount": 0,
+        "nodes": []
+       },
+       "assignees": {
+        "totalCount": 0,
+        "nodes": []
+       },
+       "milestone": null,
+       "comments": {
+        "totalCount": 0,
+        "pageInfo": {
+         "hasNextPage": false,
+         "endCursor": null
+        },
+        "nodes": []
+       },
+       "timelineItems": {
+        "totalCount": 0,
+        "pageInfo": {
+         "hasNextPage": false,
+         "endCursor": null
+        },
+        "nodes": []
+       },
+       "closedByPullRequestsReferences": {
+        "totalCount": 0,
+        "pageInfo": {
+         "hasNextPage": false,
+         "endCursor": null
+        },
+        "nodes": []
+       }
+      },
+      {
+       "id": "MDU6SXNzdWUzNjQ3NTg3ODQ=",
+       "number": 12,
+       "url": "https://github.com/mas-bandwidth/reliable/issues/12",
+       "title": "Pure rust port",
+       "body": "In line with my other issue posted to netcode.io, I have implemented a functionally complete pure rust implementation of reliable.io @ https://github.com/jaynus/reliable.io\r\n\r\nThe code is still a bit immature and undocumented and a crate isn't mature to push yet; but it is complete and working and worth noting, if you'd like to. I will be pushing it to crates once it is further tested in an actual implementation.",
+       "state": "CLOSED",
+       "stateReason": "COMPLETED",
+       "createdAt": "2018-09-28T06:33:53Z",
+       "updatedAt": "2018-09-29T03:32:35Z",
+       "closedAt": "2018-09-29T03:32:35Z",
+       "locked": false,
+       "activeLockReason": null,
+       "author": {
+        "login": "jaynus"
+       },
+       "authorAssociation": "CONTRIBUTOR",
+       "labels": {
+        "totalCount": 0,
+        "nodes": []
+       },
+       "assignees": {
+        "totalCount": 0,
+        "nodes": []
+       },
+       "milestone": null,
+       "comments": {
+        "totalCount": 1,
+        "pageInfo": {
+         "hasNextPage": false,
+         "endCursor": "Y3Vyc29yOnYyOpHOGVo62w=="
+        },
+        "nodes": [
+         {
+          "id": "MDEyOklzc3VlQ29tbWVudDQyNTM0MzcwNw==",
+          "url": "https://github.com/mas-bandwidth/reliable/issues/12#issuecomment-425343707",
+          "body": "This is awesome! Thanks! Please create a pull request for the README.md for this project linking to yours. Thanks again!",
+          "createdAt": "2018-09-28T07:11:06Z",
+          "updatedAt": "2018-09-28T07:11:06Z",
+          "author": {
+           "login": "gafferongames"
+          },
+          "authorAssociation": "MEMBER"
+         }
+        ]
+       },
+       "timelineItems": {
+        "totalCount": 1,
+        "pageInfo": {
+         "hasNextPage": false,
+         "endCursor": "Y3Vyc29yOnYyOpPPAAABZiFNf3gCqTc3Njk5OTY4OA=="
+        },
+        "nodes": [
+         {
+          "createdAt": "2018-09-28T17:50:19Z",
+          "willCloseTarget": false,
+          "actor": {
+           "login": "jaynus"
+          },
+          "source": {
+           "__typename": "PullRequest",
+           "url": "https://github.com/mas-bandwidth/reliable/pull/13",
+           "number": 13,
+           "repository": {
+            "nameWithOwner": "mas-bandwidth/reliable"
+           }
+          }
+         }
+        ]
+       },
+       "closedByPullRequestsReferences": {
+        "totalCount": 1,
+        "pageInfo": {
+         "hasNextPage": false,
+         "endCursor": "MQ"
+        },
+        "nodes": [
+         {
+          "number": 13,
+          "url": "https://github.com/mas-bandwidth/reliable/pull/13",
+          "state": "MERGED",
+          "repository": {
+           "nameWithOwner": "mas-bandwidth/reliable"
+          }
+         }
+        ]
+       }
+      },
+      {
+       "id": "MDU6SXNzdWUzNjk4NDgwNjI=",
+       "number": 14,
+       "url": "https://github.com/mas-bandwidth/reliable/issues/14",
+       "title": "Need hints on how to handle packet re-transmission.",
+       "body": "Reading the docs and the code (no comments!), I am not sure how to proceed. So I am sending a packet over UDP using a reliable \"endpoint\". Does reliable.io handles re-transmission, I see that reliable_endpoint_receive_packet does some ACK computations but never writes back to sending endpoint.   I think a step-by-step explanation would do wonder for this little library.",
+       "state": "CLOSED",
+       "stateReason": "COMPLETED",
+       "createdAt": "2018-10-13T22:38:11Z",
+       "updatedAt": "2018-10-15T12:21:57Z",
+       "closedAt": "2018-10-14T00:01:23Z",
+       "locked": false,
+       "activeLockReason": null,
+       "author": {
+        "login": "aghiles"
+       },
+       "authorAssociation": "NONE",
+       "labels": {
+        "totalCount": 0,
+        "nodes": []
+       },
+       "assignees": {
+        "totalCount": 0,
+        "nodes": []
+       },
+       "milestone": null,
+       "comments": {
+        "totalCount": 6,
+        "pageInfo": {
+         "hasNextPage": false,
+         "endCursor": "Y3Vyc29yOnYyOpHOGZy43Q=="
+        },
+        "nodes": [
+         {
+          "id": "MDEyOklzc3VlQ29tbWVudDQyOTU4NTE3Mw==",
+          "url": "https://github.com/mas-bandwidth/reliable/issues/14#issuecomment-429585173",
+          "body": "reliable.io just tells you which packets were received. You can build reliability on top of that. See yojimbo for an example. https://github.com/networkprotocol/yojimbo",
+          "createdAt": "2018-10-14T00:01:23Z",
+          "updatedAt": "2018-10-14T00:01:23Z",
+          "author": {
+           "login": "gafferongames"
+          },
+          "authorAssociation": "MEMBER"
+         },
+         {
+          "id": "MDEyOklzc3VlQ29tbWVudDQyOTU5MDI5MQ==",
+          "url": "https://github.com/mas-bandwidth/reliable/issues/14#issuecomment-429590291",
+          "body": "Thank you for your reply. \r\n\r\nCan you just let me have more questions here before closing the issue ? I think it would be very useful for future users. I want to use reliable.io but having a look at Yojimbo, a much larger project which is much  harder to understand, discourages me for going ahead. I think reliable.io should be self-contained API/Documentation wise. I can help with that if I just manage to understand some very basics.\r\n\r\nMy usage case is packets smaller than MCU ( \"packet_bytes \u003c= endpoint-\u003econfig.fragment_above\" ), and my question are all about ACK. For example:\r\n\r\n1- When using reliable_endpoint_tranfer_packet(), how do I know that the packet got through?  I see the \"transmit\" function is called but there is nothing to signal that anything was transmitted. Which leads to :\r\n2- Should I rely on the other endpoint replying some information  and should I do that myself ? Which leads to:\r\n3- This probably means that I need to maintain some form of buffers/timers/queues to re-transmit the packets?\r\n\r\nThank you for your patience.",
+          "createdAt": "2018-10-14T02:10:30Z",
+          "updatedAt": "2018-10-14T02:10:30Z",
+          "author": {
+           "login": "aghiles"
+          },
+          "authorAssociation": "NONE"
+         },
+         {
+          "id": "MDEyOklzc3VlQ29tbWVudDQyOTYzODI0Mg==",
+          "url": "https://github.com/mas-bandwidth/reliable/issues/14#issuecomment-429638242",
+          "body": "There is no concept of packet retransmission. Each packet you send has a sequence number. Reliable.io tells you which packets were received by the other side. If you want a packet to get through reliabliy, all you need to do is keep resending its data in new packets (reliable.io never \"resends\" a packet), until you get an ack that that packet has been received.\r\n\r\ncheers",
+          "createdAt": "2018-10-14T16:01:05Z",
+          "updatedAt": "2018-10-14T16:01:05Z",
+          "author": {
+           "login": "gafferongames"
+          },
+          "authorAssociation": "MEMBER"
+         },
+         {
+          "id": "MDEyOklzc3VlQ29tbWVudDQyOTY0MjYzMw==",
+          "url": "https://github.com/mas-bandwidth/reliable/issues/14#issuecomment-429642633",
+          "body": "I understand better now !\r\n\r\nLast question: by which mechanism \"reliable.io tells you which packets were received by the other side\". That's the part that I am missing. \r\n\r\nIs it somehow by calling \"reliable_endpoint_clear_acks\" ? \r\n\r\nI think with this information I could proceed. I will write up something that could maybe be added to the README.",
+          "createdAt": "2018-10-14T16:56:02Z",
+          "updatedAt": "2018-10-14T16:56:02Z",
+          "author": {
+           "login": "aghiles"
+          },
+          "authorAssociation": "NONE"
+         },
+         {
+          "id": "MDEyOklzc3VlQ29tbWVudDQyOTY0MzI2OA==",
+          "url": "https://github.com/mas-bandwidth/reliable/issues/14#issuecomment-429643268",
+          "body": "reliable_endpoint_get_acks\r\n\r\nafter you get the array of acks (list of 16bit sequence #s that have been received by the other side), you call:\r\n\r\nreliable_endpoint_clear_acks",
+          "createdAt": "2018-10-14T17:04:40Z",
+          "updatedAt": "2018-10-14T17:04:40Z",
+          "author": {
+           "login": "gafferongames"
+          },
+          "authorAssociation": "MEMBER"
+         },
+         {
+          "id": "MDEyOklzc3VlQ29tbWVudDQyOTcwMTM0MQ==",
+          "url": "https://github.com/mas-bandwidth/reliable/issues/14#issuecomment-429701341",
+          "body": "Understood!  \r\n\r\nI am trying to find the mechanism that sends back ACK signals to the the other endpoint. I can't find it. It must use the \"transfer\" config method I guess? \r\nThanks for your help.\r\n\r\nEDIT: I think I just got it. ACKS are sent back along with any clients message (in the header). ",
+          "createdAt": "2018-10-15T03:57:37Z",
+          "updatedAt": "2018-10-15T12:21:57Z",
+          "author": {
+           "login": "aghiles"
+          },
+          "authorAssociation": "NONE"
+         }
+        ]
+       },
+       "timelineItems": {
+        "totalCount": 1,
+        "pageInfo": {
+         "hasNextPage": false,
+         "endCursor": "Y3Vyc29yOnYyOpPPAAABa4DrPkgCqTk2MzkxMzMwOA=="
+        },
+        "nodes": [
+         {
+          "createdAt": "2019-06-22T20:40:29Z",
+          "willCloseTarget": false,
+          "actor": {
+           "login": "sro5h"
+          },
+          "source": {
+           "__typename": "Issue",
+           "url": "https://github.com/mas-bandwidth/reliable/issues/20",
+           "number": 20,
+           "repository": {
+            "nameWithOwner": "mas-bandwidth/reliable"
+           }
+          }
+         }
+        ]
+       },
+       "closedByPullRequestsReferences": {
+        "totalCount": 0,
+        "pageInfo": {
+         "hasNextPage": false,
+         "endCursor": null
+        },
+        "nodes": []
+       }
+      },
+      {
+       "id": "MDU6SXNzdWUzNjk5MzYxNDQ=",
+       "number": 15,
+       "url": "https://github.com/mas-bandwidth/reliable/issues/15",
+       "title": "Shouldn't this be \"context.receiver\" ?",
+       "body": "https://github.com/networkprotocol/reliable.io/blob/c22dbd8f1161d3ca74529aa1f564e19e3735bb10/reliable.c#L1818",
+       "state": "CLOSED",
+       "stateReason": "COMPLETED",
+       "createdAt": "2018-10-14T19:39:43Z",
+       "updatedAt": "2018-10-28T01:28:31Z",
+       "closedAt": "2018-10-28T01:28:31Z",
+       "locked": false,
+       "activeLockReason": null,
+       "author": {
+        "login": "aghiles"
+       },
+       "authorAssociation": "NONE",
+       "labels": {
+        "totalCount": 0,
+        "nodes": []
+       },
+       "assignees": {
+        "totalCount": 0,
+        "nodes": []
+       },
+       "milestone": null,
+       "comments": {
+        "totalCount": 4,
+        "pageInfo": {
+         "hasNextPage": false,
+         "endCursor": "Y3Vyc29yOnYyOpHOGdkiaw=="
+        },
+        "nodes": [
+         {
+          "id": "MDEyOklzc3VlQ29tbWVudDQyOTY3NTQ0OA==",
+          "url": "https://github.com/mas-bandwidth/reliable/issues/15#issuecomment-429675448",
+          "body": "Nice find. Yes, it's a cut \u0026 paste bug. Please submit a pull request w. fix!",
+          "createdAt": "2018-10-15T00:11:54Z",
+          "updatedAt": "2018-10-15T00:11:54Z",
+          "author": {
+           "login": "gafferongames"
+          },
+          "authorAssociation": "MEMBER"
+         },
+         {
+          "id": "MDEyOklzc3VlQ29tbWVudDQyOTcwMTEyNA==",
+          "url": "https://github.com/mas-bandwidth/reliable/issues/15#issuecomment-429701124",
+          "body": "OK. Tomorrow should be good.",
+          "createdAt": "2018-10-15T03:55:42Z",
+          "updatedAt": "2018-10-15T03:55:42Z",
+          "author": {
+           "login": "aghiles"
+          },
+          "authorAssociation": "NONE"
+         },
+         {
+          "id": "MDEyOklzc3VlQ29tbWVudDQzMzY2MDQzOA==",
+          "url": "https://github.com/mas-bandwidth/reliable/issues/15#issuecomment-433660438",
+          "body": "ETA?",
+          "createdAt": "2018-10-27T22:33:00Z",
+          "updatedAt": "2018-10-27T22:33:00Z",
+          "author": {
+           "login": "gafferongames"
+          },
+          "authorAssociation": "MEMBER"
+         },
+         {
+          "id": "MDEyOklzc3VlQ29tbWVudDQzMzY2MDUyMw==",
+          "url": "https://github.com/mas-bandwidth/reliable/issues/15#issuecomment-433660523",
+          "body": "Sorry about being late with this. I will do this today.",
+          "createdAt": "2018-10-27T22:34:41Z",
+          "updatedAt": "2018-10-27T22:34:51Z",
+          "author": {
+           "login": "aghiles"
+          },
+          "authorAssociation": "NONE"
+         }
+        ]
+       },
+       "timelineItems": {
+        "totalCount": 0,
+        "pageInfo": {
+         "hasNextPage": false,
+         "endCursor": null
+        },
+        "nodes": []
+       },
+       "closedByPullRequestsReferences": {
+        "totalCount": 0,
+        "pageInfo": {
+         "hasNextPage": false,
+         "endCursor": null
+        },
+        "nodes": []
+       }
+      },
+      {
+       "id": "MDU6SXNzdWUzNzAzNjg0NDI=",
+       "number": 16,
+       "url": "https://github.com/mas-bandwidth/reliable/issues/16",
+       "title": "should process_packet_function receive the endpoint in its parameters?",
+       "body": "Not an issue but more of a philosophical question.\r\n\r\nWhen processing a packet, it would be a normal operation to reply on the same endpoint using `reliable_endpoint_send_packet`.  As of now we receive a `\u003ccontext,index\u003e` pair (btw, not sure what is the index utility).\r\n\r\n",
+       "state": "CLOSED",
+       "stateReason": "COMPLETED",
+       "createdAt": "2018-10-15T22:28:55Z",
+       "updatedAt": "2018-10-27T22:45:50Z",
+       "closedAt": "2018-10-27T22:32:39Z",
+       "locked": false,
+       "activeLockReason": null,
+       "author": {
+        "login": "aghiles"
+       },
+       "authorAssociation": "NONE",
+       "labels": {
+        "totalCount": 0,
+        "nodes": []
+       },
+       "assignees": {
+        "totalCount": 0,
+        "nodes": []
+       },
+       "milestone": null,
+       "comments": {
+        "totalCount": 6,
+        "pageInfo": {
+         "hasNextPage": false,
+         "endCursor": "Y3Vyc29yOnYyOpHOGdklZw=="
+        },
+        "nodes": [
+         {
+          "id": "MDEyOklzc3VlQ29tbWVudDQzMDAzOTk3Mw==",
+          "url": "https://github.com/mas-bandwidth/reliable/issues/16#issuecomment-430039973",
+          "body": "Alternatively, `reliable_rendpoint_receive_packet` could return 1 if it called the processing function. This allows to send a reply right there if needed. This would be ABI-compatible with the current implementation.\r\n\r\nJust a feeling that something is lacking for a very smooth and natural operation of these functions. **Basically, if some data is received, it should be super easy to send back data on the same endpoint.**\r\n",
+          "createdAt": "2018-10-15T22:46:13Z",
+          "updatedAt": "2018-10-15T22:52:06Z",
+          "author": {
+           "login": "aghiles"
+          },
+          "authorAssociation": "NONE"
+         },
+         {
+          "id": "MDEyOklzc3VlQ29tbWVudDQzMzY2MDM1Ng==",
+          "url": "https://github.com/mas-bandwidth/reliable/issues/16#issuecomment-433660356",
+          "body": "The general idea is that you have the endpoint stored internally inside the context, so you can get it if needed. Usually, the endpoint is not the only thing you need, to reply right away.\r\n\r\nCan you explain your use case more?",
+          "createdAt": "2018-10-27T22:31:20Z",
+          "updatedAt": "2018-10-27T22:31:20Z",
+          "author": {
+           "login": "gafferongames"
+          },
+          "authorAssociation": "MEMBER"
+         },
+         {
+          "id": "MDEyOklzc3VlQ29tbWVudDQzMzY2MDQxOQ==",
+          "url": "https://github.com/mas-bandwidth/reliable/issues/16#issuecomment-433660419",
+          "body": "ps. utility of index is that it lets you support a server, with multiple data per-client, it tells you which client index this packet corresponds to.",
+          "createdAt": "2018-10-27T22:32:39Z",
+          "updatedAt": "2018-10-27T22:32:39Z",
+          "author": {
+           "login": "gafferongames"
+          },
+          "authorAssociation": "MEMBER"
+         },
+         {
+          "id": "MDEyOklzc3VlQ29tbWVudDQzMzY2MDQ3OQ==",
+          "url": "https://github.com/mas-bandwidth/reliable/issues/16#issuecomment-433660479",
+          "body": "Yes I understand your point of view. I have a server with a pool of endpoints. I managed to do things a bit differently. Although I think that having a extra \"local context\" when calling the receing_packet would have helped me have a cleaner implementation. Not a biggie.",
+          "createdAt": "2018-10-27T22:33:52Z",
+          "updatedAt": "2018-10-27T22:33:52Z",
+          "author": {
+           "login": "aghiles"
+          },
+          "authorAssociation": "NONE"
+         },
+         {
+          "id": "MDEyOklzc3VlQ29tbWVudDQzMzY2MTIxMg==",
+          "url": "https://github.com/mas-bandwidth/reliable/issues/16#issuecomment-433661212",
+          "body": "Yes, at this point I acknowledge it would be better to have both, it's best not to be backwards incompatible for such a small fix.",
+          "createdAt": "2018-10-27T22:44:50Z",
+          "updatedAt": "2018-10-27T22:44:50Z",
+          "author": {
+           "login": "gafferongames"
+          },
+          "authorAssociation": "MEMBER"
+         },
+         {
+          "id": "MDEyOklzc3VlQ29tbWVudDQzMzY2MTI4Nw==",
+          "url": "https://github.com/mas-bandwidth/reliable/issues/16#issuecomment-433661287",
+          "body": "I agree.",
+          "createdAt": "2018-10-27T22:45:50Z",
+          "updatedAt": "2018-10-27T22:45:50Z",
+          "author": {
+           "login": "aghiles"
+          },
+          "authorAssociation": "NONE"
+         }
+        ]
+       },
+       "timelineItems": {
+        "totalCount": 0,
+        "pageInfo": {
+         "hasNextPage": false,
+         "endCursor": null
+        },
+        "nodes": []
+       },
+       "closedByPullRequestsReferences": {
+        "totalCount": 0,
+        "pageInfo": {
+         "hasNextPage": false,
+         "endCursor": null
+        },
+        "nodes": []
+       }
+      },
+      {
+       "id": "MDU6SXNzdWUzODczMTA4MzA=",
+       "number": 19,
+       "url": "https://github.com/mas-bandwidth/reliable/issues/19",
+       "title": "How does reliable deals with duplicates ?",
+       "body": "I am no sure duplicates are dealt with internally. For example, re-=sending the same packet twice (because ACKs did not arrive) could lead to receive packet duplications. If possible, could someone shed some light on this ?",
+       "state": "CLOSED",
+       "stateReason": "COMPLETED",
+       "createdAt": "2018-12-04T14:25:41Z",
+       "updatedAt": "2018-12-04T16:12:20Z",
+       "closedAt": "2018-12-04T16:11:53Z",
+       "locked": false,
+       "activeLockReason": null,
+       "author": {
+        "login": "aghiles"
+       },
+       "authorAssociation": "NONE",
+       "labels": {
+        "totalCount": 0,
+        "nodes": []
+       },
+       "assignees": {
+        "totalCount": 0,
+        "nodes": []
+       },
+       "milestone": null,
+       "comments": {
+        "totalCount": 2,
+        "pageInfo": {
+         "hasNextPage": false,
+         "endCursor": "Y3Vyc29yOnYyOpHOGnlNZg=="
+        },
+        "nodes": [
+         {
+          "id": "MDEyOklzc3VlQ29tbWVudDQ0NDE1NzEyMA==",
+          "url": "https://github.com/mas-bandwidth/reliable/issues/19#issuecomment-444157120",
+          "body": "reliable.io does not resend dropped packets, it simply tells you which packets were received by the other side.",
+          "createdAt": "2018-12-04T16:11:53Z",
+          "updatedAt": "2018-12-04T16:11:53Z",
+          "author": {
+           "login": "gafferongames"
+          },
+          "authorAssociation": "MEMBER"
+         },
+         {
+          "id": "MDEyOklzc3VlQ29tbWVudDQ0NDE1NzI4Ng==",
+          "url": "https://github.com/mas-bandwidth/reliable/issues/19#issuecomment-444157286",
+          "body": "(So yes, all handling of resending dropped packets, and handling duplication is up to you!)",
+          "createdAt": "2018-12-04T16:12:19Z",
+          "updatedAt": "2018-12-04T16:12:19Z",
+          "author": {
+           "login": "gafferongames"
+          },
+          "authorAssociation": "MEMBER"
+         }
+        ]
+       },
+       "timelineItems": {
+        "totalCount": 0,
+        "pageInfo": {
+         "hasNextPage": false,
+         "endCursor": null
+        },
+        "nodes": []
+       },
+       "closedByPullRequestsReferences": {
+        "totalCount": 0,
+        "pageInfo": {
+         "hasNextPage": false,
+         "endCursor": null
+        },
+        "nodes": []
+       }
+      },
+      {
+       "id": "MDU6SXNzdWU0NTk1MDk0MDQ=",
+       "number": 20,
+       "url": "https://github.com/mas-bandwidth/reliable/issues/20",
+       "title": "Should a packet re-transmission be sent as a new packet?",
+       "body": "I am currently playing around with this library and trying to understand how to handle packet retransmission.\r\n\r\nLet's suppose i send a packet with sequence X, i don't get an ack in for some time and decide to resend it. After reading issue #14 i think i should send a new packet with sequence number Y and it is my responsibility to remember that packets with sequence numbers X and Y are actually the same. \r\n\r\nThis seems rather inconvenient, increasingly so with multiple re-transmissions of the same packet.\r\nIs this how this library is supposed to be used?",
+       "state": "CLOSED",
+       "stateReason": "COMPLETED",
+       "createdAt": "2019-06-22T20:40:29Z",
+       "updatedAt": "2019-06-22T23:23:28Z",
+       "closedAt": "2019-06-22T21:10:12Z",
+       "locked": false,
+       "activeLockReason": null,
+       "author": {
+        "login": "sro5h"
+       },
+       "authorAssociation": "NONE",
+       "labels": {
+        "totalCount": 0,
+        "nodes": []
+       },
+       "assignees": {
+        "totalCount": 0,
+        "nodes": []
+       },
+       "milestone": null,
+       "comments": {
+        "totalCount": 3,
+        "pageInfo": {
+         "hasNextPage": false,
+         "endCursor": "Y3Vyc29yOnYyOpHOHhUx7g=="
+        },
+        "nodes": [
+         {
+          "id": "MDEyOklzc3VlQ29tbWVudDUwNDY5ODUxNw==",
+          "url": "https://github.com/mas-bandwidth/reliable/issues/20#issuecomment-504698517",
+          "body": "Yes, this library tells you what packets were received. It's up to you to implement your own reliability using that knowledge. It's a low-level library, meant to be used as the foundation of other libraries. It's not meant to be convenient for you. :)",
+          "createdAt": "2019-06-22T21:10:12Z",
+          "updatedAt": "2019-06-22T21:10:12Z",
+          "author": {
+           "login": "gafferongames"
+          },
+          "authorAssociation": "MEMBER"
+         },
+         {
+          "id": "MDEyOklzc3VlQ29tbWVudDUwNDcwMjQ0Mg==",
+          "url": "https://github.com/mas-bandwidth/reliable/issues/20#issuecomment-504702442",
+          "body": "Ok fair enough, it is to be expected from a low level library :) thanks for the clarification.\r\nI'll try to figure out how yojimbo handles re-transmits. As far as I understand the correct place to look at would be `ReliableOrderedChannel`?",
+          "createdAt": "2019-06-22T22:19:11Z",
+          "updatedAt": "2019-06-22T22:19:11Z",
+          "author": {
+           "login": "sro5h"
+          },
+          "authorAssociation": "NONE"
+         },
+         {
+          "id": "MDEyOklzc3VlQ29tbWVudDUwNDcwNTUxOA==",
+          "url": "https://github.com/mas-bandwidth/reliable/issues/20#issuecomment-504705518",
+          "body": "You won't find what you are looking for in yojimbo either. Yojimbo doesn't retransmit dropped packets. Instead, it sends packets x times per-second, and includes unacked *messages* in outgoing packets until one of those packets containing those messages are acked. This is more efficient than a traditional resend un-acked packet approach when the majority of your packet is unordered, unreliable data, and reliable-ordered is only a tiny portion of your bandwidth. -- cheers",
+          "createdAt": "2019-06-22T23:21:00Z",
+          "updatedAt": "2019-06-22T23:23:28Z",
+          "author": {
+           "login": "gafferongames"
+          },
+          "authorAssociation": "MEMBER"
+         }
+        ]
+       },
+       "timelineItems": {
+        "totalCount": 0,
+        "pageInfo": {
+         "hasNextPage": false,
+         "endCursor": null
+        },
+        "nodes": []
+       },
+       "closedByPullRequestsReferences": {
+        "totalCount": 0,
+        "pageInfo": {
+         "hasNextPage": false,
+         "endCursor": null
+        },
+        "nodes": []
+       }
+      },
+      {
+       "id": "MDU6SXNzdWU3MTQzMjMzNDQ=",
+       "number": 24,
+       "url": "https://github.com/mas-bandwidth/reliable/issues/24",
+       "title": "How does this compare to other rUDP implementations?",
+       "body": "Such as QUIC, KCP, Laminar, GameNetworkingSockets, ENET, WebRTC datachannels, RakNet?\r\n\r\nI'm looking to put together an rUDP RPC framework and benchmarking utility.",
+       "state": "CLOSED",
+       "stateReason": "COMPLETED",
+       "createdAt": "2020-10-04T14:14:16Z",
+       "updatedAt": "2020-12-18T15:45:27Z",
+       "closedAt": "2020-12-18T15:45:27Z",
+       "locked": false,
+       "activeLockReason": null,
+       "author": {
+        "login": "warvstar"
+       },
+       "authorAssociation": "NONE",
+       "labels": {
+        "totalCount": 0,
+        "nodes": []
+       },
+       "assignees": {
+        "totalCount": 0,
+        "nodes": []
+       },
+       "milestone": null,
+       "comments": {
+        "totalCount": 1,
+        "pageInfo": {
+         "hasNextPage": false,
+         "endCursor": "Y3Vyc29yOnYyOpHOLJgbEg=="
+        },
+        "nodes": [
+         {
+          "id": "MDEyOklzc3VlQ29tbWVudDc0ODE2NTkwNg==",
+          "url": "https://github.com/mas-bandwidth/reliable/issues/24#issuecomment-748165906",
+          "body": "This is a library that tells you which packets were received by the other side of the connection.",
+          "createdAt": "2020-12-18T15:45:27Z",
+          "updatedAt": "2020-12-18T15:45:27Z",
+          "author": {
+           "login": "gafferongames"
+          },
+          "authorAssociation": "MEMBER"
+         }
+        ]
+       },
+       "timelineItems": {
+        "totalCount": 0,
+        "pageInfo": {
+         "hasNextPage": false,
+         "endCursor": null
+        },
+        "nodes": []
+       },
+       "closedByPullRequestsReferences": {
+        "totalCount": 0,
+        "pageInfo": {
+         "hasNextPage": false,
+         "endCursor": null
+        },
+        "nodes": []
+       }
+      }
+     ]
+    }
+   }
+  }
+ }
+}

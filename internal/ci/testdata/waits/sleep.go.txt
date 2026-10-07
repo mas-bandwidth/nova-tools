@@ -1,0 +1,10 @@
+package fixture
+
+import (
+	"testing"
+	"time"
+)
+
+func TestFixtureFixedSleep(t *testing.T) {
+	time.Sleep(150 * time.Millisecond)
+}

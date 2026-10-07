@@ -1,0 +1,1930 @@
+# CI for nova-tools: the CL tier.
+#
+# Why this exists: until now, local `go test` on one machine was the whole
+# evidence behind a release — including for four rounds of fail-open fixes in a
+# check other people are told to run against their own repos. A claim that a
+# released tool is tested is exactly what stops anyone checking whether it was
+# tested anywhere but the releasing machine.
+#
+# This file is the FAST TIER: the checks a change is required to pass in two
+# minutes, ideally one. It runs gofmt, build, vet, and the unit tests sharded
+# across parallel jobs, without the race detector. Everything that cannot fit
+# that budget — the whole-tree `-race` run, Windows build/vet and per-package
+# tests, the three-OS smoke, the release dry-run, and the nightly perf wall
+# clock — lives in .github/workflows/certification.yml, under the same job
+# names, so a red certification is a blocker for the next release and never for
+# a CL. Nothing is deleted by splitting; the slow tier still runs every test.
+#
+# WHERE THINGS RUN. Pull requests run on the self-hosted runners ONLY: a
+# per-package matrix — ./cmd/<tool> and ./internal/... dealt into twelve
+# shards on the four Linux space runners and four on the macOS runners —
+# fanned out in parallel, fail-fast off, so a change's feedback path is a
+# fan-out over the 4+4 machines and never a serial queue, and never
+# GitHub-hosted compute. The GitHub-hosted runners (ubuntu-latest, macos-latest)
+# run only on push to main and on the nightly schedule, with the full suite.
+# There is ONE exception, for the one platform the self-hosted runners cannot
+# see: test-hosted-pr runs internal/sandbox on ubuntu-latest when the sandbox or
+# a *_linux.go moves, because the sandbox is darwin-only in the self-hosted
+# matrix. Every self-hosted job is guarded by the head-repo check, so a
+# pull_request from a fork skips CI rather than running untrusted code on our
+# machines.
+#
+# TWO TIERS. The UNIT
+# tier is the `test` matrix on every pull_request, merge_group and push: only
+# the packages the change touched, at most two cores a leg (GOMAXPROCS and the
+# Makefile's GOTEST_P), no redis-server on PATH, and slowtests failing a
+# package over 2 s or a test over 1 s unless internal/ci/slow-tests_allowlist.txt
+# names it. The FUNCTIONAL tier is the `functional` job: the tests behind
+# `//go:build functional`, over the same packages, on merge_group (a stream's
+# merge into dev), the nightly schedule and a manual run, never on a pull
+# request. See docs/TESTING.md.
+#
+# NO NATIVE WINDOWS LEG. Every windows-latest leg this file
+# carried — test-windows-pr's four shards, test-hosted-merge's windows leg and
+# test-hosted's windows entry — is gone, and so are the measured Windows size
+# table and the Windows per-package ceiling that fed them. What stays is ONE
+# cheap compile guard in the lint job: `make vet-windows`
+# (`GOOS=windows go vet ./...`), which type-checks the whole tree for Windows on
+# a Linux runner in seconds and needs no Windows machine at all. It is the same
+# step the merge gate already runs (nova-merge's `vet-windows`), so a
+# GOOS=windows compile break is refused twice before it can land. The four class
+# tests that held the old legs shut are PARKED in docs/SPEC-CI.md, rules kept for
+# the record. Windows as a place for a bench is the Threadripper under WSL2,
+# which is a LINUX bench with Linux runners: see docs/BENCH-STANDARD-WINDOWS.md.
+#
+# The race detector is the one trade-off that matters to name: it stays, in the
+# certification tier's `test` and `test-windows` jobs. The CL tier's sharded
+# tests are the same tests without `-race`, so a data race on a CL is caught by
+# certification rather than by the CL itself. That is the budget, not a skip.
+
+name: ci
+
+on:
+  push:
+    # dev is the integration branch: every merge lands there and the
+    # push run, hosted legs included, is the evidence a promotion to main waits for.
+    # THE SAME BRANCHES as the concurrency list below, and the one place that
+    # cannot read it: `on:` takes no expressions. internal/ci's
+    # TestIntegrationBranchesAreOneList holds the two spellings equal.
+    branches: [main, dev]
+  pull_request:
+  # merge_group: the merge queue builds a group commit of the PRs about to land and
+  # runs this workflow on it; ci-ok on the group is the merge gate, so every PR is
+  # proved against the main it actually lands on.
+  merge_group:
+  schedule:
+    - cron: "41 3 * * *"
+  workflow_dispatch:
+    inputs:
+      bench:
+        description: "fleet-probe: bench label to prove (hulk, vision, mini); empty runs no probe"
+        required: false
+        default: ""
+      slots:
+        description: "fleet-probe: parallel jobs, one per runner slot"
+        required: false
+        default: "0"
+
+permissions:
+  contents: read
+
+env:
+  # nova-sprint controls that need redis-server fail instead of skipping.
+  # The install step puts the binary on PATH; a green run executed the store.
+  NOVA_CI: "1"
+
+concurrency:
+  # THE INTEGRATION BRANCHES ARE ONE LIST, and this `fromJSON` is it. Adding a
+  # branch is this edit; internal/ci's TestIntegrationBranchesAreOneList fails
+  # on any other copy of the names, and names the two spellings GitHub will not
+  # let read the list (the `on: push: branches:` lines here and in
+  # certification.yml, which take no expression at all). The list cannot be a
+  # workflow-level `env:` either: `concurrency` is the one key whose
+  # expressions cannot see the env context — github, inputs and vars only — so
+  # it lives here, where every other rule can be made to do without it.
+  #
+  # A pending run is evicted by a newly queued run in the same group before it
+  # ever starts. So a push to an integration branch keys on the commit SHA: no
+  # two of its runs share a group, so none can evict or cancel another, and the
+  # mechanical red gate always has a completed run to read.
+  # A PR keys on its number so
+  # its newest head supersedes older runs; every other branch keys on its ref.
+  group: ci-${{ github.event.pull_request.number || (contains(fromJSON('["refs/heads/main","refs/heads/dev"]'), github.ref) && github.sha) || github.ref }}-${{ github.event_name }}-${{ inputs.bench }}
+  # `cancel-in-progress` is a CONSTANT: not the second copy of the branch list. The
+  # sha-keyed group above is what protects an integration branch's verdict: its
+  # group holds that one run and nothing else, so there is never a sibling for
+  # cancel-in-progress to cancel. Everywhere else — a PR's newest head, a
+  # branch push — only the newest run matters, which is what true means.
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    # gofmt, `go build ./...`, `go vet ./...` and the Windows cross-vet on one
+    # runner. Formatting is a property of the source, not of the platform, so
+    # gofmt is checked once; build and vet run here on Linux, and their macOS
+    # coverage is test-hosted's `make build` and per-shard `make vet` on
+    # macos-latest (certification's race legs no longer build or vet: they
+    # compile what they test). On a pull_request this is
+    # a self-hosted Linux job, guarded so fork code never runs here.
+    #
+    # THE WINDOWS COMPILE GUARD LIVES HERE: it is the only Windows this file runs.
+    # `make vet-windows` is `GOOS=windows go vet ./...`: it
+    # builds the Windows standard library into this runner's cache once and then
+    # type-checks every package and every _test.go for Windows, on Linux, in
+    # seconds. It catches the class that a cross-platform Go tree actually
+    # breaks — a *_windows.go that stopped compiling, a syscall used without a
+    # build tag, a fixture path literal in a Windows-only file — without a
+    # windows-latest minute. What it cannot catch is RUNTIME behaviour, and that
+    # is the deliberate trade: the certification tier still runs the real
+    # Windows suite, and nothing on the CL path waits for it.
+    if: github.event_name != 'schedule' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: [self-hosted, linux, x64, space]
+    timeout-minutes: 2
+    steps:
+      - name: remove stale build dirs from the shared runner
+        # The self-hosted runners reuse the _work directory across jobs; a tree left
+        # by an aborted or overlapping run makes checkout fail. Start from clean.
+        # The sweep below is `rm -rf` over whatever the workspace holds, so it only
+        # ever runs on a directory this repository has checked out: an empty
+        # variable is refused, a workspace that does not exist yet is the normal
+        # first-run state, and a workspace with no `.git` is not ours to
+        # empty — actions/checkout clears a non-repository workspace itself.
+        shell: bash
+        run: |
+          [ -n "${GITHUB_WORKSPACE}" ] || exit 1
+          [ -d "${GITHUB_WORKSPACE}" ] || exit 0
+          [ -d "${GITHUB_WORKSPACE}/.git" ] || exit 0
+          # Clean in place, keep the tree (fs_usage on a macOS runner: four
+          # `find ... rm -rf` sweeps and the re-seeds behind them were the
+          # file-event storm fseventsd digested at 100% CPU). A checkout of
+          # ours is reset to its HEAD and every untracked or ignored file is
+          # removed: the same hygiene as emptying it, a few hundred operations
+          # instead of a hundred thousand, and the next checkout fetches only
+          # the new commit. A tree git cannot reset is emptied as before.
+          if git -C "${GITHUB_WORKSPACE}" reset -q --hard && git -C "${GITHUB_WORKSPACE}" clean -ffdxq; then
+            echo "workspace cleaned in place: $(git -C "${GITHUB_WORKSPACE}" rev-parse --short HEAD 2>/dev/null || echo '-')"
+            exit 0
+          fi
+          find "${GITHUB_WORKSPACE}" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null || true
+
+      - name: borrow objects from the bench mirror
+        # THE CHECKOUT FETCH WAS THE HANG. Every self-hosted job empties its
+        # workspace above, so actions/checkout fetched the whole commit from
+        # GitHub (11 MB at --depth=1) on every job, and on the house benches
+        # that fetch stalled: 17 of the cancelled jobs in the last 25 PR runs
+        # died at `git fetch --depth=1 origin +<merge sha>` at the two-minute
+        # job cap (9 on one Linux bench, 5 on another, 3 on a macOS runner),
+        # the same stall that failed 566 staged cards. Every bench
+        # already keeps $HOME/nova-bench/mirror/nova-tools.git fresh, so the
+        # workspace borrows its objects (objects/info/alternates) and starts
+        # detached at the mirror's HEAD: the fetch then carries only what the mirror
+        # lacks. Measured on a Linux bench: 11 MB and 3.1 s -> 24 KB and 1.1 s.
+        # actions/checkout keeps a workspace whose origin URL matches and whose
+        # HEAD is a commit (it cleans and resets it, both no-ops here), so the
+        # checkout step itself is unchanged.
+        # A bench with no mirror, or a workspace that is not empty, is left to
+        # actions/checkout exactly as before, and this step never fails a job.
+        shell: bash
+        run: |
+          m="$HOME/nova-bench/mirror/nova-tools.git"
+          w="${GITHUB_WORKSPACE:?}"
+          [ -d "$m/objects" ] || { echo "no bench mirror at $m: checkout fetches from GitHub"; exit 0; }
+          mkdir -p "$w"
+          [ -z "$(ls -A "$w")" ] || { echo "workspace not empty: left to actions/checkout"; exit 0; }
+          seed() {
+            tip=$(git --git-dir="$m" rev-parse --verify -q 'HEAD^{commit}') || return 1
+            git init -q "$w" &&
+              git -C "$w" remote add origin "${{ github.server_url }}/${{ github.repository }}" &&
+              echo "$m/objects" > "$w/.git/objects/info/alternates" &&
+              git -C "$w" -c advice.detachedHead=false checkout -q --detach "$tip" &&
+              echo "workspace borrows $m, detached at its HEAD $tip"
+          }
+          seed || { echo "seeding from $m failed: left to actions/checkout"; rm -rf -- "$w/.git"; }
+
+      # RESILIENT CHECKOUT: a transient first-fetch failure must
+      # not redden a job. Attempt one tolerates its own failure ONLY so the
+      # retry below runs; the retry itself is not tolerated, so a checkout
+      # that fails twice still fails the job: fail-closed, not fail-open.
+      - name: checkout
+        id: checkout
+        continue-on-error: true
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 2  # the classtests rule reads what HEAD deleted from its first parent
+      - name: checkout retry
+        if: steps.checkout.outcome == 'failure'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 2  # the classtests rule reads what HEAD deleted from its first parent
+
+      - name: use the installed Go toolchain
+        # The self-hosted runners carry Go (1.26 at /usr/bin/go on Linux, under
+        # /opt/homebrew or ~/go on macOS). Prefer it over a setup-go download.
+        shell: bash
+        run: |
+          set -euo pipefail
+          # the bench's own Go wins over a distro Go on the system path: a distro
+          # /usr/bin/go ahead of the bench's ~/go/bin leaves every PR job downloading
+          # a toolchain instead of using the installed one. The newest Go under ~/sdk
+          # comes first: macOS benches keep their newest Go there, and /usr/local/go
+          # can be a stale root-owned install. The toolchain go.mod names wins when
+          # ~/sdk holds it, so builds sharing one ~/sdk keep one toolchain: the
+          # toolchain line, else the go line, which is the toolchain a go.mod without that line implies; else as before
+          want=$(sed -n 's/^toolchain \(go[0-9][0-9a-z.]*\)$/\1/p' go.mod 2>/dev/null | head -1 || true)
+          [ -n "$want" ] || want=$(sed -n 's/^go \([0-9][0-9a-z.]*\)$/go\1/p' go.mod 2>/dev/null | head -1 || true)
+          sdk=
+          if [ -n "$want" ] && [ -x "$HOME/sdk/$want/bin/go" ]; then sdk="$HOME/sdk/$want/bin"; fi
+          [ -n "$sdk" ] || sdk=$(ls -d "$HOME"/sdk/go*/bin 2>/dev/null | sort -V | tail -1 || true) # empty on the Linux benches; under pipefail the failed ls would abort the step
+          for d in "$sdk" "$HOME/go/bin" /usr/local/go/bin /opt/homebrew/bin; do
+            [ -n "$d" ] && [ -x "$d/go" ] && { echo "$d" >> "$GITHUB_PATH"; export PATH="$d:$PATH"; break; }
+          done
+          command -v go >/dev/null 2>&1 || { echo "no Go toolchain on PATH"; exit 1; }
+          go version
+          echo "GO SETUP want=${want:-none} go=$(command -v go) gomodcache=$(go env GOMODCACHE) gocache=$(go env GOCACHE)"
+
+      - name: cache go build and module cache
+        if: runner.environment == 'github-hosted'
+        # Only on GitHub-hosted runners. A self-hosted runner is PERSISTENT: its Go build cache is
+        # already on disk, and this step's save phase tars the whole multi-GB cache on every job,
+        # outlives the job's timeout, and is orphaned still compressing (82 of them put a macOS
+        # bench at load 147). internal/ci holds the class test.
+        # go.mod carries no dependencies today, so the module cache is nearly
+        # empty; the build cache is what pays for itself across the shards
+        # below, which compile the same tree.
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('go.mod') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: gofmt
+        # gofmt -l prints unformatted files and exits 0 either way, so the exit
+        # code is not the product here — the output is.
+        shell: bash
+        run: make fmt
+
+      - name: build
+        run: make build
+
+      - name: vet
+        run: make vet
+
+      - name: vet-functional
+        # The redis-backed tests are behind `//go:build functional` and a pull
+        # request does not run them, but every change still COMPILES them here,
+        # once for the whole tree, so a PR that breaks one is red now rather
+        # than at the stream's landing.
+        run: make vet-functional
+
+      - name: vet-slow
+        # The tests behind `//go:build slow` run only in the nightly job, so a
+        # slow-only build break stayed green until the morning; vet-slow
+        # compiles them on every change.
+        run: make vet-slow
+
+      - name: vet-shippedsmoke
+        run: make vet-shippedsmoke
+
+      - name: vet-novadisk
+        # vet-novadisk is a GOOS=darwin cross-vet: the one test it guards is
+        # `//go:build darwin && novadisk` and this job is linux.
+        run: make vet-novadisk
+
+      - name: vet-laws
+        # tools/analyzers/cmd/vetlaw as a go vet -vettool= analyzer over
+        # ./cmd/..., enforcing the exit-zero-with-zero-bytes, the
+        # help-answers-refused and task-text-in-argv verb laws. Its own
+        # step, not folded into `vet`, because this job is the only one that
+        # runs `make vet` unsharded and un-PKGS-scoped.
+        run: make vet-laws
+
+      - name: lint
+        # The Go best-practice linters as class tests: staticcheck and errcheck,
+        # each held per package to its shrink-only ledger (docs/SPEC-CI.md,
+        # `staticcheck` and `errcheck`). They are functional-tier and the
+        # functional job never runs on a pull request, so this step is where
+        # they gate one. `make lint` also re-runs the gofmt and vet targets
+        # above, which this job's build cache answers at once.
+        # internal/ci: TestTheLintJobRunsTheLinterClassTests.
+        run: make lint
+
+      - name: vet-windows
+        # `GOOS=windows go vet ./...`, the one Windows guard on the CL path.
+        # It is last in this job on purpose: it is the only step that has to
+        # build a second standard library, so a plain Linux break is reported
+        # before this one starts paying for it.
+        run: make vet-windows
+
+  test-packages:
+    # The list the CL tier's test shards run on, READ OUT OF THE SOURCE rather
+    # than written down: ./cmd/* and ./internal/... dealt round-robin into
+    # twelve shards on the Linux space runners and four on the macOS darwin-x64
+    # runners of two Intel macOS benches. The split is a measurement: the third
+    # macOS bench also carried the swarm, and its legs waited forty minutes for
+    # a runner while the `space` legs took two, so weight moved off it — 8/4 with eight `space` runners, not 8/8. A
+    # package that builds on both platforms runs once per OS; the darwin-only
+    # packages run on the darwin-x64 shards only. On pull_request and merge_group it
+    # selects only the packages the change touches and their in-module
+    # importers; the push to dev and the nightly run keep the whole tree.
+    # The darwin shards are dealt only when the target branch is dev or main
+    # (a pull_request's base, the merge queue's base_ref, a push's ref name), on
+    # schedule and on workflow_dispatch; for a working branch the matrix is Linux
+    # only (pkgselect.DarwinOn, read by `ci test-matrix --target-branch` in the list step).
+    # It runs on the nightly schedule too, for the `functional` job's list and
+    # for the unit `test` job's nightly whole-tree Linux shards.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, linux, x64, space]
+    timeout-minutes: 2
+    outputs:
+      packages: ${{ steps.list.outputs.packages }}
+      functional: ${{ steps.list.outputs.functional }}
+    steps:
+      - name: remove stale build dirs from the shared runner
+        # The self-hosted runners reuse the _work directory across jobs; a tree left
+        # by an aborted or overlapping run makes checkout fail. Start from clean.
+        # The sweep below is `rm -rf` over whatever the workspace holds, so it only
+        # ever runs on a directory this repository has checked out: an empty
+        # variable is refused, a workspace that does not exist yet is the normal
+        # first-run state, and a workspace with no `.git` is not ours to
+        # empty — actions/checkout clears a non-repository workspace itself.
+        shell: bash
+        run: |
+          [ -n "${GITHUB_WORKSPACE}" ] || exit 1
+          [ -d "${GITHUB_WORKSPACE}" ] || exit 0
+          [ -d "${GITHUB_WORKSPACE}/.git" ] || exit 0
+          # Clean in place, keep the tree: fs_usage on a macOS bench showed four
+          # `find ... rm -rf` sweeps and the re-seeds behind them as the file-event
+          # storm fseventsd digested at 100% CPU: emptying a checkout's hundred
+          # thousand small files is slow. A checkout of
+          # ours is reset to its HEAD and every untracked or ignored file is
+          # removed: the same hygiene as emptying it, a few hundred operations
+          # instead of a hundred thousand, and the next checkout fetches only
+          # the new commit. A tree git cannot reset is emptied as before.
+          if git -C "${GITHUB_WORKSPACE}" reset -q --hard && git -C "${GITHUB_WORKSPACE}" clean -ffdxq; then
+            echo "workspace cleaned in place: $(git -C "${GITHUB_WORKSPACE}" rev-parse --short HEAD 2>/dev/null || echo '-')"
+            exit 0
+          fi
+          find "${GITHUB_WORKSPACE}" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null || true
+
+      - name: borrow objects from the bench mirror
+        # THE CHECKOUT FETCH WAS THE HANG. Every self-hosted job empties its
+        # workspace above, so actions/checkout fetched the whole commit from
+        # GitHub (11 MB at --depth=1) on every job, and on the house benches
+        # that fetch stalled: 17 of the cancelled jobs in the last 25 PR runs
+        # died at `git fetch --depth=1 origin +<merge sha>` at the two-minute job
+        # cap (9, 5 and 3 on three house benches), the same stall that failed
+        # 566 staged cards. Every bench
+        # already keeps $HOME/nova-bench/mirror/nova-tools.git fresh, so the
+        # workspace borrows its objects (objects/info/alternates) and starts
+        # detached at the mirror's HEAD: the fetch then carries only what the
+        # mirror lacks. Measured on a Linux bench: 11 MB and 3.1 s -> 24 KB and 1.1 s.
+        # actions/checkout keeps a workspace whose origin URL matches and whose
+        # HEAD is a commit (it cleans and resets it, both no-ops here), so the
+        # checkout step itself is unchanged.
+        # A bench with no mirror, or a workspace that is not empty, is left to
+        # actions/checkout exactly as before, and this step never fails a job.
+        shell: bash
+        run: |
+          m="$HOME/nova-bench/mirror/nova-tools.git"
+          w="${GITHUB_WORKSPACE:?}"
+          [ -d "$m/objects" ] || { echo "no bench mirror at $m: checkout fetches from GitHub"; exit 0; }
+          mkdir -p "$w"
+          [ -z "$(ls -A "$w")" ] || { echo "workspace not empty: left to actions/checkout"; exit 0; }
+          seed() {
+            tip=$(git --git-dir="$m" rev-parse --verify -q 'HEAD^{commit}') || return 1
+            git init -q "$w" &&
+              git -C "$w" remote add origin "${{ github.server_url }}/${{ github.repository }}" &&
+              echo "$m/objects" > "$w/.git/objects/info/alternates" &&
+              git -C "$w" -c advice.detachedHead=false checkout -q --detach "$tip" &&
+              echo "workspace borrows $m, detached at its HEAD $tip"
+          }
+          seed || { echo "seeding from $m failed: left to actions/checkout"; rm -rf -- "$w/.git"; }
+
+      # RESILIENT CHECKOUT: a transient first-fetch failure must
+      # not redden a job. Attempt one tolerates its own failure ONLY so the
+      # retry below runs; the retry itself is not tolerated, so a checkout
+      # that fails twice still fails the job: fail-closed, not fail-open.
+      - name: checkout
+        id: checkout
+        continue-on-error: true
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 2  # the classtests rule reads what HEAD deleted from its first parent
+      - name: checkout retry
+        if: steps.checkout.outcome == 'failure'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 2  # the classtests rule reads what HEAD deleted from its first parent
+
+      - name: use the installed Go toolchain
+        # The self-hosted runners carry Go (1.26 at /usr/bin/go on Linux, under
+        # /opt/homebrew or ~/go on macOS). Prefer it over a setup-go download.
+        shell: bash
+        run: |
+          set -euo pipefail
+          # the bench's own Go wins over a distro Go on the system path: a distro
+          # /usr/bin/go ahead of the bench's ~/go/bin leaves every PR job downloading
+          # a toolchain instead of using the installed one. The newest Go under ~/sdk
+          # comes first: macOS benches keep their newest Go there, and /usr/local/go
+          # can be a stale root-owned install. The toolchain go.mod names wins when
+          # ~/sdk holds it, so builds sharing one ~/sdk keep one toolchain: the
+          # toolchain line, else the go line, which is the toolchain a go.mod
+          # without that line implies; else as before
+          want=$(sed -n 's/^toolchain \(go[0-9][0-9a-z.]*\)$/\1/p' go.mod 2>/dev/null | head -1 || true)
+          [ -n "$want" ] || want=$(sed -n 's/^go \([0-9][0-9a-z.]*\)$/go\1/p' go.mod 2>/dev/null | head -1 || true)
+          sdk=
+          if [ -n "$want" ] && [ -x "$HOME/sdk/$want/bin/go" ]; then sdk="$HOME/sdk/$want/bin"; fi
+          [ -n "$sdk" ] || sdk=$(ls -d "$HOME"/sdk/go*/bin 2>/dev/null | sort -V | tail -1 || true) # empty on the Linux benches; under pipefail the failed ls would abort the step
+          for d in "$sdk" "$HOME/go/bin" /usr/local/go/bin /opt/homebrew/bin; do
+            [ -n "$d" ] && [ -x "$d/go" ] && { echo "$d" >> "$GITHUB_PATH"; export PATH="$d:$PATH"; break; }
+          done
+          command -v go >/dev/null 2>&1 || { echo "no Go toolchain on PATH"; exit 1; }
+          go version
+          echo "GO SETUP want=${want:-none} go=$(command -v go) gomodcache=$(go env GOMODCACHE) gocache=$(go env GOCACHE)"
+
+      - name: build the ci runner
+        # tools/ci is built once in this job and every later step runs the binary; `go run` would
+        # compile it again in each step. (`go run ./tools/ci help` lists its verbs.)
+        shell: bash
+        run: go build -o "$RUNNER_TEMP/ci" ./tools/ci
+
+      - id: list
+        # The fan-out: the packages this event tests, dealt onto the runner
+        # groups (internal/pkgselect, `go run ./tools/ci help test-matrix`). A pull
+        # request and a merge group carry the packages the change touched and their
+        # dependents, read against the event's own base; a push and the nightly run
+        # keep the whole tree. The macOS legs are dealt only where the target branch
+        # is dev or main (--target-branch: a pull request's base_ref, a merge
+        # group's base_ref, a push's ref name), and on schedule and
+        # workflow_dispatch; a pull request's macOS legs are for the code that
+        # differs on macOS. The two group labels are the runs-on labels the legs
+        # carry.
+        shell: bash
+        run: |
+          "$RUNNER_TEMP/ci" test-matrix --event "${{ github.event_name }}" --pull-request-base "${{ github.event.pull_request.base.sha }}" --merge-group-base "${{ github.event.merge_group.base_sha }}" --target-branch "${{ github.base_ref || github.event.merge_group.base_ref || github.ref_name }}" --linux-group space --macos-group studio
+
+  test:
+    # THE UNIT TESTS, SHARDED, no race detector: ./cmd/* and ./internal/... in
+    # twelve shards on the self-hosted Linux space runners and four on the
+    # self-hosted Intel macOS runners, in parallel with fail-fast off, so a red
+    # leg does not cancel its siblings. Each leg vets and tests only its own
+    # shard. Measured green end to end in run 35021822106: sixteen legs from
+    # 14 s to 251 s, whole run 5 m 57 s. The whole-tree `-race` run is the
+    # certification tier's `test` job. The darwin legs exist only where the
+    # target branch is dev or main (test-packages deals them); a pull request
+    # to a working branch runs the Linux legs alone, and no darwin job stands in
+    # its merge gate. On pull_request and merge_group the legs
+    # carry the packages the change touched, not the whole tree; a change that
+    # touched no Go package gets one leg with an empty package list that prints
+    # and exits 0.
+    # ON SCHEDULE TOO: the nightly whole-tree run on the space
+    # legs is the one place a unit wall-time budget is ENFORCED (the test
+    # step's schedule branch passes SLOWTESTS_ENFORCE=1); test-packages deals
+    # the schedule's tree onto space only. A red schedule run blocks nothing
+    # (ci-ok does not run on schedule, revert-on-red reads pushes only): it is
+    # evidence, and its raw times are what an allowlist row is measured from.
+    name: test (${{ matrix.entry.name }})
+    needs: test-packages
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    strategy:
+      fail-fast: false
+      matrix:
+        entry: ${{ fromJSON(needs.test-packages.outputs.packages) }}
+    # Labels are carried per entry as single-string variables: runs-on expressions
+    # must resolve to a string, not to an array, so the matrix cannot hand over a
+    # label list as one value.
+    runs-on: [self-hosted, "${{ matrix.entry.os }}", "${{ matrix.entry.arch }}", "${{ matrix.entry.group }}"]
+    # SIX, and the two minutes did not move — what a ceiling MEANS moved. The
+    # two-minute law is about the CL feedback path: how long a change waits.
+    # Until now that path ran on GitHub-hosted runners, where 48 legs start at
+    # once and a per-job ceiling and the run's wall clock are the same number.
+    # On 4+4 fixed machines they stop being the same number: the legs queue, so
+    # the run is the sum over the waves and no per-job ceiling can see it.
+    # Measured in run 35019905236 with the eight-and-eight fan-out: every studio leg and
+    # three space legs were CANCELLED at 2:00 having done nothing wrong, while
+    # five space legs passed at 80-118 s. The cause was oversubscription, since
+    # fixed: several runners share each machine (15 cores on space, 32 on the
+    # macOS M3 Ultra) and each leg sized itself to the whole of it. A leg now
+    # takes its share, the machine's own NOVA_RUNNERS_PER_MACHINE deciding how
+    # many ways to split it. A ceiling that cancels honest work is not a
+    # budget, it is a coin flip. Six is a hang detector for a leg measured at
+    # one to two minutes; the budget itself is the run, and the run is what to
+    # hold to the law. The fast jobs — lint, test-packages, lisp at 32, 11 and
+    # 12 s — keep the 2 they always had.
+    # A macOS bench at load 55 ran a double-size shard in 6-7 min. Two runs
+    # were CANCELLED at 6:23 and 6:07 with every test PASS and
+    # `ok cmd/nova-merge 342.360s` in the log. Twice the slowest green shard
+    # of the last twenty green runs (348 s, run 35457289611) was the size
+    # the ceiling was raised to. `studio` is a GROUP over air, batman, studio
+    # and superman, and superman is an Intel Xeon W-2191B carrying ten runners
+    # while the Studio is an M3 Ultra: one ceiling over a 2x spread censors
+    # the slower machine. In run 35950929169 all sixteen whole-tree studio
+    # shards were cancelled at 12.
+    # The reason lives beside the number
+    # in internal/ci/ci_budget_test.go.
+    timeout-minutes: 2
+    steps:
+      - name: nothing to test for this change
+        # test-packages emits one leg with an empty package list when the change
+        # touches no Go package (docs or lisp only). It prints this and exits 0
+        # in seconds; every real step below is gated off, so the leg never
+        # checks out or compiles anything and a docs-only change costs one
+        # runner instead of the whole fan-out.
+        if: matrix.entry.packages == ''
+        shell: bash
+        run: echo "nothing to test for this change"
+
+      - name: remove stale build dirs from the shared runner
+        if: matrix.entry.packages != ''
+        # The self-hosted runners reuse the _work directory across jobs; a tree left
+        # by an aborted or overlapping run makes checkout fail. Start from clean.
+        # The sweep below is `rm -rf` over whatever the workspace holds, so it only
+        # ever runs on a directory this repository has checked out: an empty
+        # variable is refused, a workspace that does not exist yet is the normal
+        # first-run state, and a workspace with no `.git` is not ours to
+        # empty — actions/checkout clears a non-repository workspace itself.
+        shell: bash
+        run: |
+          [ -n "${GITHUB_WORKSPACE}" ] || exit 1
+          [ -d "${GITHUB_WORKSPACE}" ] || exit 0
+          [ -d "${GITHUB_WORKSPACE}/.git" ] || exit 0
+          # The reset and clean keep the tree, because four `find ... rm -rf`
+          # sweeps and the re-seeds behind them were the file-event storm
+          # fseventsd digested at 100% CPU (fs_usage on a macOS runner):
+          # emptying a checkout's hundred thousand small files is slow. A
+          # checkout of ours is reset to its HEAD and every untracked or
+          # ignored file is removed: the same hygiene as emptying it, a few
+          # hundred operations instead of a hundred thousand, and the next
+          # checkout fetches only the new commit. A tree git cannot reset is
+          # emptied as before.
+          if git -C "${GITHUB_WORKSPACE}" reset -q --hard && git -C "${GITHUB_WORKSPACE}" clean -ffdxq; then
+            echo "workspace cleaned in place: $(git -C "${GITHUB_WORKSPACE}" rev-parse --short HEAD 2>/dev/null || echo '-')"
+            exit 0
+          fi
+          find "${GITHUB_WORKSPACE}" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null || true
+
+      - name: borrow objects from the bench mirror
+        if: matrix.entry.packages != ''
+        # Every self-hosted job empties its workspace above, so a checkout
+        # would fetch the whole commit from GitHub (11 MB at --depth=1) on
+        # every job, and on the house benches that fetch stalled: 17 of the
+        # cancelled jobs in the last 25 PR runs died at `git fetch --depth=1
+        # origin +<merge sha>` at the two-minute job cap (9 on one Linux
+        # bench, 5 on another, 3 on a macOS runner), the same stall that
+        # failed 566 staged cards. Every bench already keeps
+        # $HOME/nova-bench/mirror/nova-tools.git fresh, so the workspace
+        # borrows its objects (objects/info/alternates) and starts detached at
+        # the mirror's HEAD: the fetch then carries only what the mirror
+        # lacks. Measured on a Linux bench: 11 MB and 3.1 s -> 24 KB and
+        # 1.1 s. actions/checkout keeps a workspace whose origin URL matches
+        # and whose HEAD is a commit (it cleans and resets it, both no-ops
+        # here), so the checkout step itself is unchanged.
+        # A bench with no mirror, or a workspace that is not empty, is left to
+        # actions/checkout exactly as before, and this step never fails a job.
+        shell: bash
+        run: |
+          m="$HOME/nova-bench/mirror/nova-tools.git"
+          w="${GITHUB_WORKSPACE:?}"
+          [ -d "$m/objects" ] || { echo "no bench mirror at $m: checkout fetches from GitHub"; exit 0; }
+          mkdir -p "$w"
+          [ -z "$(ls -A "$w")" ] || { echo "workspace not empty: left to actions/checkout"; exit 0; }
+          seed() {
+            tip=$(git --git-dir="$m" rev-parse --verify -q 'HEAD^{commit}') || return 1
+            git init -q "$w" &&
+              git -C "$w" remote add origin "${{ github.server_url }}/${{ github.repository }}" &&
+              echo "$m/objects" > "$w/.git/objects/info/alternates" &&
+              git -C "$w" -c advice.detachedHead=false checkout -q --detach "$tip" &&
+              echo "workspace borrows $m, detached at its HEAD $tip"
+          }
+          seed || { echo "seeding from $m failed: left to actions/checkout"; rm -rf -- "$w/.git"; }
+
+      # A transient first-fetch failure must not redden a job. The first
+      # checkout tolerates its own failure ONLY so the retry below runs; the
+      # retry itself is not tolerated, so a checkout that fails twice still
+      # fails the job: fail-closed, not fail-open.
+      - name: checkout
+        id: checkout
+        if: matrix.entry.packages != ''
+        continue-on-error: true
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 2  # the classtests rule reads what HEAD deleted from its first parent
+      - name: checkout retry
+        if: matrix.entry.packages != '' && steps.checkout.outcome == 'failure'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 2  # the classtests rule reads what HEAD deleted from its first parent
+      - name: use the installed Go toolchain
+        if: matrix.entry.packages != ''
+        # The self-hosted runners carry Go (1.26 at /usr/bin/go on Linux, under
+        # /opt/homebrew or ~/go on macOS). Prefer it over a setup-go download.
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The bench's own Go wins over a distro Go on the system path: a
+          # distro Go 1.22 shadowed ~/go/bin 1.26.5 and every PR job died
+          # downloading a toolchain. The newest Go under ~/sdk comes first:
+          # ~/sdk held 1.27, and a stale root-owned /usr/local/go 1.22 won
+          # this loop. The toolchain a go.mod names wins when ~/sdk holds it:
+          # the toolchain line, else the go line, which is the toolchain a
+          # go.mod without that line implies; else as before.
+          want=$(sed -n 's/^toolchain \(go[0-9][0-9a-z.]*\)$/\1/p' go.mod 2>/dev/null | head -1 || true)
+          [ -n "$want" ] || want=$(sed -n 's/^go \([0-9][0-9a-z.]*\)$/go\1/p' go.mod 2>/dev/null | head -1 || true)
+          sdk=
+          if [ -n "$want" ] && [ -x "$HOME/sdk/$want/bin/go" ]; then sdk="$HOME/sdk/$want/bin"; fi
+          [ -n "$sdk" ] || sdk=$(ls -d "$HOME"/sdk/go*/bin 2>/dev/null | sort -V | tail -1 || true) # empty on the Linux benches; under pipefail the failed ls would abort the step
+          for d in "$sdk" "$HOME/go/bin" /usr/local/go/bin /opt/homebrew/bin; do
+            [ -n "$d" ] && [ -x "$d/go" ] && { echo "$d" >> "$GITHUB_PATH"; export PATH="$d:$PATH"; break; }
+          done
+          command -v go >/dev/null 2>&1 || { echo "no Go toolchain on PATH"; exit 1; }
+          go version
+          echo "GO SETUP want=${want:-none} go=$(command -v go) gomodcache=$(go env GOMODCACHE) gocache=$(go env GOCACHE)"
+
+      - name: build the ci runner
+        if: matrix.entry.packages != ''
+        # tools/ci is built once in this job and every later step runs the binary; `go run` would
+        # compile it again in each step. (`go run ./tools/ci help` lists its verbs.)
+        shell: bash
+        run: go build -o "$RUNNER_TEMP/ci" ./tools/ci
+
+      - name: fetch origin/dev for the deprecated-imports ratchet
+        # internal/ci's TestDeprecatedImportsAllowlistOnlyShrinksAgainstMergeBase compares the
+        # allowlist against the merge base with refs/remotes/origin/dev and refuses when that
+        # ref is missing. actions/checkout here fetches only the commit under test, so the ref
+        # is whatever a runner's persistent workspace happened to keep: a workspace emptied and
+        # re-seeded from the bench mirror has none. Fetched every time, as certification.yml does, and before the ancestry fetches below
+        # so their --unshallow completes it.
+        if: contains(format(' {0} ', matrix.entry.packages), ' ./internal/ci ')
+        shell: bash
+        run: git fetch --no-tags --depth=1 origin +dev:refs/remotes/origin/dev
+
+      - name: fetch dev's ancestry for a main run
+        # On main (the default branch) at a merge commit, the landed promotion,
+        # the classtests rule excuses a deletion only when the second parent's
+        # ancestry shows dev deleting it; a shallow ancestry is a red run naming
+        # this fetch (`go run ./tools/ci help fetch-ancestry`).
+        if: matrix.entry.packages != '' && github.ref_name == github.event.repository.default_branch
+        shell: bash
+        run: |
+          "$RUNNER_TEMP/ci" fetch-ancestry dev
+      - name: fetch sprint/foundation's ancestry for a promotion
+        # The classtests rule reads a promotion from git: on the promotion pull request
+        # (sprint/foundation into dev) dev's tip must be an ancestor of the head, and on a
+        # dev run at a merge commit (a merge-queue group, a push to dev) the second parent
+        # must be sprint/foundation's and its history excuses what it deleted. A shallow
+        # ancestry is a red run naming this fetch (internal/ci foundationHistoryFetch).
+        # A one-parent commit on a dev run has no promotion to read, so nothing is fetched.
+        # Nor is anything when origin has no sprint/foundation: dev is the integration branch and
+        # that branch lives only while a promotion is in flight; the step says so and the dev run
+        # excuses nothing (the merge is compared as everywhere), as a one-parent commit's is.
+        if: (matrix.entry.packages != '') && (github.event_name == 'pull_request' && github.base_ref == 'dev' && github.head_ref == 'sprint/foundation' || github.event_name == 'merge_group' || github.event_name == 'push' && github.ref_name == 'dev')
+        shell: bash
+        run: |
+          "$RUNNER_TEMP/ci" fetch-ancestry --promotion sprint/foundation
+
+      - name: take this runner's share of the machine, not all of it
+        if: matrix.entry.packages != ''
+        # SEVERAL runners share each of these machines, and `go test` defaults
+        # GOMAXPROCS to every core it can see -- so concurrent legs each ask for
+        # the whole machine and spend the difference context-switching. A leg
+        # takes its FAIR SHARE instead: cores divided by the runners on the
+        # machine, never below 1 and at most 2 (the Makefile's GOTEST_P). HOW MANY
+        # RUNNERS is the MACHINE's fact, not this file's: the runner service
+        # exports NOVA_RUNNERS_PER_MACHINE and the leg reads it (default 8); the
+        # number used is printed, so a leg's own log answers what it divided by.
+        # `go run ./tools/ci help runner-share`; internal/ci:
+        # TestRunnersPerMachineIsOneNumber.
+        shell: bash
+        run: |
+          "$RUNNER_TEMP/ci" runner-share
+
+      - name: the unit tier refuses redis-server
+        if: matrix.entry.packages != ''
+        # THE UNIT TIER STARTS NO SERVER (docs/TESTING.md: unit
+        # tests mock, functional tests carry the build tag). A directory FIRST
+        # on PATH holds a redis-server that prints why and exits 86, so a
+        # redis-backed test left untagged fails closed here under NOVA_CI=1
+        # (internal/nsprint/testutil.Start names this line) instead of
+        # starting a real server on a shared runner. The `functional` job
+        # installs the real one. internal/ci: TestUnitTierRefusesRedisServer.
+        shell: bash
+        run: |
+          "$RUNNER_TEMP/ci" unit-tier-shim
+
+      # No actions/cache here. These runners are PERSISTENT: ~/.cache/go-build
+      # survives between jobs on the machine itself, so the action spends 6 s
+      # restoring and 4 s re-uploading a cache the disk already had — a tenth of
+      # the leg's budget, to move a cache one hop it never left.
+      # test-hosted keeps it: a GitHub-hosted runner is a fresh machine.
+
+      # No separate `build` step either: `go vet` and `go test` both compile
+      # what they are given, so building first was a third compile of the same
+      # packages. The whole-tree `go build ./...` still runs once, in lint.
+      # A push to dev is the merge queue's own merge commit almost every time,
+      # and the queue already ran this workflow on that exact sha as a
+      # merge_group (its head_sha is the commit that lands). Running the shards
+      # a third time on the same tree proves nothing and costs a full run on
+      # every machine. The step asks the API for a
+      # successful merge_group run of this sha; when one exists, vet and test
+      # are skipped and the job passes on that evidence. A direct push to dev
+      # has no such run and runs in full. Any API trouble reads as "not
+      # proved", never as a skip.
+      - name: proved by the merge-group run of this sha
+        id: proved
+        if: matrix.entry.packages != '' && github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          "$RUNNER_TEMP/ci" proved-by-merge-group --repo "${{ github.repository }}" --sha "${{ github.sha }}"
+
+      - name: vet
+        if: matrix.entry.packages != '' && steps.proved.outputs.proved != 'true'
+        run: make vet PKGS="${{ matrix.entry.packages }}"
+
+      - name: ensure node for the dashboard tests
+        if: matrix.entry.packages != '' && steps.proved.outputs.proved != 'true'
+        # internal/sprintdash's page tests render the dashboard with node and fail
+        # closed under NOVA_CI=1 when it is missing. A runner user keeps node in its
+        # own ~/sdk/bin, which a listener started before it existed does not have on
+        # PATH; ensure-node finds it there, or installs the pinned release under
+        # RUNNER_TEMP, and publishes only a directory that holds no redis-server, so
+        # the shim above stays first on PATH. internal/ci: TestUnitLegsEnsureNodeBeforeTheTests.
+        shell: bash
+        run: |
+          "$RUNNER_TEMP/ci" ensure-node
+
+      - name: test
+        if: matrix.entry.packages != '' && steps.proved.outputs.proved != 'true'
+        # The default bash flags on a `run:` step are `-eo pipefail`, so a
+        # failing `go test` already stops the step at the pipe, before
+        # slowtests runs; the budget check only ever sees a green stream. The
+        # raw `-json` is teed so a slow package's finding is read once, by
+        # cmd/nova-ci, and the same bytes are on disk if a reader wants them.
+        # The budget is 60 s by the two-minute law, except on the Intel Mac
+        # benches (about 3x slower per core than a macOS runner), where the
+        # alert prints every CI-SLOW line and the budget is 300 s until
+        # cmd/nova-swarm and internal/swarm are fast. The first
+        # night of this check found eight packages between 77 s and 272 s on
+        # a macOS runner at load 60 and an Intel Mac at load 2. All of it
+        # lives in the Makefile's `test` target: the Makefile is the
+        # one entry for the CL test, and the shard travels in PKGS; the target tees
+        # the -json stream to $RUNNER_TEMP/test.json and runs cmd/nova-ci slowtests
+        # over it. `go run ./tools/ci unit-test` checks the refusing redis-server is
+        # first on PATH and runs `make test` with the arguments of
+        # pkgselect.UnitMakeArgs (the go test timeout under the job cap, the test
+        # cache and the link flags, the budgets of the run); which run it is comes
+        # from the two environment variables below. internal/ci:
+        # TestShardGoTestTimeoutIsUnderTheJobCap.
+        # SLOWTESTS_FLAGS: the Makefile's default is the unit tier's 2 s package
+        # and 1 s test budgets with internal/ci/slow-tests_allowlist.txt and
+        # the SLEEPS ledger. A push or a manual run tests the WHOLE tree and
+        # keeps the old 60 s package budget with the ledger; a push to dev is
+        # almost always proved by its merge-group run above and runs nothing.
+        # THE VERDICT IS THE SAME ON ANY MACHINE: on every leg the
+        # CI-SLOW lines and a CI-LOAD line are printed and exit 0, and a
+        # CI-SLEEPS line (a SLEEPS skip off the ledger) fails the leg, the push leg
+        # included. The one leg that fails on a CI-SLOW line is the schedule
+        # branch below, the nightly whole tree on the space shards, with
+        # SLOWTESTS_ENFORCE=1. It is not test-hosted's ubuntu leg (a fresh VM,
+        # idle by construction): that job runs `make test-short`, whose -short
+        # skips are not the unit tier the budgets describe, on a two-core hosted
+        # runner no pull request leg runs on.
+        env:
+          WHOLE_TREE_SLOWTESTS: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && '--budget 60 --sleeps internal/ci/sleeps-skips_allowlist.txt' || '' }}
+          NIGHTLY_ENFORCE: ${{ github.event_name == 'schedule' && matrix.entry.group == 'space' && '1' || '0' }}
+        shell: bash
+        run: |
+          "$RUNNER_TEMP/ci" unit-test --packages "${{ matrix.entry.packages }}"
+
+  functional:
+    # THE FUNCTIONAL TIER: functional tests run when merging whole work streams,
+    # and are built to be frugal and avoid wasting resources.
+    # A functional test is one behind `//go:build functional`: a real
+    # redis-server, a real binary, a real process. It runs on merge_group (the
+    # queue's run of a stream PR into dev), on the nightly schedule and by hand,
+    # and NEVER on pull_request: a card PR into a stream branch and a stream PR
+    # into dev both skip it. Same selected packages as the unit legs, four space
+    # shards, two cores a leg, the two-minute cap. ci-ok requires it when it ran.
+    # internal/ci: TestFunctionalTierRunsOnlyAsStreamsMerge.
+    name: functional (${{ matrix.entry.name }})
+    needs: test-packages
+    if: github.event_name == 'merge_group' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    strategy:
+      fail-fast: false
+      matrix:
+        entry: ${{ fromJSON(needs.test-packages.outputs.functional) }}
+    runs-on: [self-hosted, linux, x64, space]
+    timeout-minutes: 2
+    steps:
+      - name: nothing to test for this change
+        if: matrix.entry.packages == ''
+        shell: bash
+        run: echo "nothing to test for this change"
+
+      - name: remove stale build dirs from the shared runner
+        if: matrix.entry.packages != ''
+        # The same clean-in-place as the unit legs (see the test job).
+        shell: bash
+        run: |
+          [ -n "${GITHUB_WORKSPACE}" ] || exit 1
+          [ -d "${GITHUB_WORKSPACE}" ] || exit 0
+          [ -d "${GITHUB_WORKSPACE}/.git" ] || exit 0
+          if git -C "${GITHUB_WORKSPACE}" reset -q --hard && git -C "${GITHUB_WORKSPACE}" clean -ffdxq; then
+            echo "workspace cleaned in place: $(git -C "${GITHUB_WORKSPACE}" rev-parse --short HEAD 2>/dev/null || echo '-')"
+            exit 0
+          fi
+          find "${GITHUB_WORKSPACE}" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null || true
+
+      - name: borrow objects from the bench mirror
+        if: matrix.entry.packages != ''
+        # The same mirror borrow as the unit legs (see the test job).
+        shell: bash
+        run: |
+          m="$HOME/nova-bench/mirror/nova-tools.git"
+          w="${GITHUB_WORKSPACE:?}"
+          [ -d "$m/objects" ] || { echo "no bench mirror at $m: checkout fetches from GitHub"; exit 0; }
+          mkdir -p "$w"
+          [ -z "$(ls -A "$w")" ] || { echo "workspace not empty: left to actions/checkout"; exit 0; }
+          seed() {
+            tip=$(git --git-dir="$m" rev-parse --verify -q 'HEAD^{commit}') || return 1
+            git init -q "$w" &&
+              git -C "$w" remote add origin "${{ github.server_url }}/${{ github.repository }}" &&
+              echo "$m/objects" > "$w/.git/objects/info/alternates" &&
+              git -C "$w" -c advice.detachedHead=false checkout -q --detach "$tip" &&
+              echo "workspace borrows $m, detached at its HEAD $tip"
+          }
+          seed || { echo "seeding from $m failed: left to actions/checkout"; rm -rf -- "$w/.git"; }
+
+      - name: checkout
+        id: checkout
+        if: matrix.entry.packages != ''
+        continue-on-error: true
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: checkout retry
+        if: matrix.entry.packages != '' && steps.checkout.outcome == 'failure'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: use the installed Go toolchain
+        if: matrix.entry.packages != ''
+        # The same toolchain pick as the unit legs, verbatim (see the test job).
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The bench's own Go wins over a distro Go on the system path: on a Linux bench,
+          # /usr/bin/go 1.22 shadowed ~/go/bin 1.26.5 and every PR job died downloading a toolchain.
+          # The newest Go under ~/sdk is preferred over a stale root-owned /usr/local/go 1.22
+          # on macOS runners that keep 1.27 in ~/sdk.
+          # The toolchain go.mod names wins when ~/sdk holds it (a runner took the newest sdk Go
+          # while the release build beside it switched toolchains in the same caches): the toolchain line,
+          # else the go line, which is the toolchain a go.mod without that line implies; else as before
+          want=$(sed -n 's/^toolchain \(go[0-9][0-9a-z.]*\)$/\1/p' go.mod 2>/dev/null | head -1 || true)
+          [ -n "$want" ] || want=$(sed -n 's/^go \([0-9][0-9a-z.]*\)$/go\1/p' go.mod 2>/dev/null | head -1 || true)
+          sdk=
+          if [ -n "$want" ] && [ -x "$HOME/sdk/$want/bin/go" ]; then sdk="$HOME/sdk/$want/bin"; fi
+          [ -n "$sdk" ] || sdk=$(ls -d "$HOME"/sdk/go*/bin 2>/dev/null | sort -V | tail -1 || true) # empty on the Linux benches; under pipefail the failed ls would abort the step
+          for d in "$sdk" "$HOME/go/bin" /usr/local/go/bin /opt/homebrew/bin; do
+            [ -n "$d" ] && [ -x "$d/go" ] && { echo "$d" >> "$GITHUB_PATH"; export PATH="$d:$PATH"; break; }
+          done
+          command -v go >/dev/null 2>&1 || { echo "no Go toolchain on PATH"; exit 1; }
+          go version
+          echo "GO SETUP want=${want:-none} go=$(command -v go) gomodcache=$(go env GOMODCACHE) gocache=$(go env GOCACHE)"
+
+      - name: build tools/ci once
+        # The verbs are built ONCE here and every later step calls the binary: `go run` compiles
+        # and links the tool again on every step that names it. internal/ci: TestToolsCIIsBuiltOnceAndNeverRun.
+        if: matrix.entry.packages != ''
+        shell: bash
+        run: go build -o "$RUNNER_TEMP/ci" ./tools/ci
+
+      - name: take this runner's share of the machine, not all of it
+        if: matrix.entry.packages != ''
+        # The unit legs' rule: cores over NOVA_RUNNERS_PER_MACHINE, at most 2.
+        shell: bash
+        run: |
+          "$RUNNER_TEMP/ci" runner-share
+
+      - name: install redis-server
+        if: matrix.entry.packages != ''
+        # The functional tests spawn a throwaway redis-server on loopback; the
+        # unit tier refuses one. It does not dial the fleet store.
+        run: |
+          "$RUNNER_TEMP/ci" install-redis-server
+
+      - name: install postgres
+        if: matrix.entry.packages != ''
+        # nova-config's functional tests spawn a throwaway Postgres (initdb,
+        # pg_ctl) on loopback under the test's directory
+        # (internal/nsprint/testutil/pg); a runner without the binaries
+        # FAILS them, never skips. It does not dial the fleet store.
+        run: |
+          "$RUNNER_TEMP/ci" install-postgres
+
+      - name: functional tests
+        if: matrix.entry.packages != ''
+        run: make test-functional PKGS="${{ matrix.entry.packages }}"
+
+  test-hosted:
+    # THE FULL SUITE on the GitHub-hosted runners — ubuntu-latest and
+    # macos-latest — on every push (dev and main), on the nightly schedule and on
+    # workflow_dispatch, as the `if:` below says; never on a pull request.
+    # GitHub-hosted compute is the expensive tier, so a pull request never
+    # touches it: a change's feedback path is the self-hosted matrix above.
+    #
+    # NO NATIVE WINDOWS MATRIX ENTRY: the CL tier covers Windows with the
+    # lint job's `make vet-windows` cross-vet, and the real Windows suite is
+    # the certification tier's, which is a release blocker and never a CL one.
+    #
+    # workflow_dispatch stays in the list: a hosted-only breakage on macOS or
+    # Linux still cannot be reproduced or proved fixed anywhere but here, and
+    # without it the only way to see a hosted leg go green is to merge the fix
+    # to main and find out, which is exactly the "prove the tip before any
+    # merge" rule inverted. A manual run on a branch is a deliberate, named
+    # spend of hosted compute; it is not on the pull_request path, so the
+    # default feedback path is still the self-hosted matrix and costs nothing
+    # here. ci-ok does not gate on it for a dispatch: the run is evidence to
+    # read, not an automatic merge gate.
+    if: github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    #
+    # SHARDS PER OS (dev push run 36269122367 at f7aa36530): at four
+    # shards per OS, ubuntu-latest's shards 1, 2 and 4 went green at 88-95 s and
+    # shard 3 was cancelled by the cap at 123 s; all four macos-latest shards
+    # were cancelled at 125-173 s. The cap stays two minutes; the legs meet it by
+    # more shards: ubuntu-latest deals the tree six ways, macos-latest eight.
+    # `shards` rides in by include, the unused ubuntu indices are excluded, and
+    # the job name keeps its (os, shard) shape. internal/ci:
+    # TestHostedShardsUnderTheCap.
+    name: test-hosted (${{ matrix.os }}, ${{ matrix.shard }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+        exclude:
+          - os: ubuntu-latest
+            shard: 7
+          - os: ubuntu-latest
+            shard: 8
+        include:
+          - os: ubuntu-latest
+            shards: 6
+          - os: macos-latest
+            shards: 8
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 2
+    steps:
+      # RESILIENT CHECKOUT: a transient first-fetch failure must not redden a
+      # job. Attempt one tolerates its own failure ONLY so the retry below runs;
+      # the retry itself is not tolerated, so a checkout that fails twice still
+      # fails the job: fail-closed, not fail-open.
+      - name: checkout
+        id: checkout
+        continue-on-error: true
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 2  # the classtests rule reads what HEAD deleted from its first parent
+      - name: checkout retry
+        if: steps.checkout.outcome == 'failure'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 2  # the classtests rule reads what HEAD deleted from its first parent
+      - name: name the Go toolchain's tool-cache directory
+        # Run 37167141048 spent 23-31 s installing Go on each macOS shard.
+        # Cache the toolchain separately so the native build cache keeps its old paths/key.
+        shell: bash
+        run: echo "GO_TOOL_DIR=${RUNNER_TOOL_CACHE}/go/$(sed -n 's/^go \([0-9.]*\)$/\1/p' go.mod)" >> "$GITHUB_ENV"
+
+      - name: cache go build and module cache
+        id: gocache
+        if: runner.environment == 'github-hosted'
+        # Only on GitHub-hosted runners. A self-hosted runner is PERSISTENT: its Go build cache is
+        # already on disk, and this step's save phase tars the whole multi-GB cache on every job,
+        # outlives the job's timeout, and is orphaned still compressing (82 of them put a macOS
+        # runner at load 147). internal/ci holds the class test.
+        #
+        # The build cache path is per OS and the save is its own step before the tests:
+        # docs/SPEC-CI.md, `hosted-shards`, says why (run 36357749371), and internal/ci's
+        # TestHostedCacheIsWhereGoKeepsIt holds both.
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ${{ runner.os == 'macOS' && '~/Library/Caches/go-build' || '~/.cache/go-build' }}
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('go.mod') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: restore Go toolchain cache
+        id: gotoolcache
+        if: runner.environment == 'github-hosted'
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ env.GO_TOOL_DIR }}
+          key: ${{ runner.os }}-go-toolchain-${{ hashFiles('go.mod') }}
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          # This workflow manages caching explicitly; do not probe for a missing go.sum.
+          cache: false
+
+      - name: save Go toolchain cache
+        # Save immediately after setup: a later test failure must not discard the toolchain.
+        if: runner.environment == 'github-hosted' && steps.gotoolcache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ env.GO_TOOL_DIR }}
+          key: ${{ steps.gotoolcache.outputs.cache-primary-key }}
+
+      - name: build tools/ci once
+        # The verbs are built ONCE here and every later step calls the binary: `go run` compiles
+        # and links the tool again on every step that names it. internal/ci: TestToolsCIIsBuiltOnceAndNeverRun.
+        shell: bash
+        run: go build -o "$RUNNER_TEMP/ci" ./tools/ci
+
+      - name: build
+        run: make build
+
+      - name: save go build and module cache
+        # On a miss or a restore-keys fallback only: an exact hit is already the entry. Shards
+        # race for the key; the first reserves it and the rest log a warning and go on.
+        if: runner.environment == 'github-hosted' && steps.gocache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ${{ runner.os == 'macOS' && '~/Library/Caches/go-build' || '~/.cache/go-build' }}
+            ~/go/pkg/mod
+          key: ${{ steps.gocache.outputs.cache-primary-key }}
+
+      - name: fetch dev's ancestry for a main run
+        # On main (the default branch) at a merge commit, the landed promotion,
+        # the classtests rule excuses a deletion only when the second parent's
+        # ancestry shows dev deleting it; a shallow ancestry is a red run naming
+        # this fetch (`go run ./tools/ci help fetch-ancestry`).
+        if: github.ref_name == github.event.repository.default_branch
+        shell: bash
+        run: |
+          "$RUNNER_TEMP/ci" fetch-ancestry dev
+      - name: fetch sprint/foundation's ancestry for a promotion
+        # The classtests rule reads a promotion from git: on the promotion pull request
+        # (sprint/foundation into dev) dev's tip must be an ancestor of the head, and on a
+        # dev run at a merge commit (a merge-queue group, a push to dev) the second parent
+        # must be sprint/foundation's and its history excuses what it deleted. A shallow
+        # ancestry is a red run naming this fetch (internal/ci foundationHistoryFetch).
+        # A one-parent commit on a dev run has no promotion to read, so nothing is fetched.
+        # Nor is anything when origin has no sprint/foundation: dev is the integration branch and
+        # that branch lives only while a promotion is in flight; the step says so and the dev run
+        # excuses nothing (the merge is compared as everywhere), as a one-parent commit's is.
+        if: (github.event_name == 'pull_request' && github.base_ref == 'dev' && github.head_ref == 'sprint/foundation' || github.event_name == 'merge_group' || github.event_name == 'push' && github.ref_name == 'dev')
+        shell: bash
+        run: |
+          "$RUNNER_TEMP/ci" fetch-ancestry --promotion sprint/foundation
+
+      - name: deal this shard's packages
+        # The heavy packages first, one per shard: two heavy packages dealt by
+        # count alone once shared shard 3 of 4 and the ubuntu leg was cancelled
+        # at 123 s. cmd/nova-swarm is the one heavy command left (the git bus,
+        # 46 s -short, is removed). Then every other package
+        # round-robin in go list order (stable: go list sorts), continuing after the
+        # heavy ones. One line of space-separated packages, so vet and test below
+        # read the same deal ($HOSTED_PKGS). `go run ./tools/ci help deal`;
+        # internal/ci: TestHostedDealSplitsTheHeavyPackages (hostedHeavy).
+        shell: bash
+        run: |
+          "$RUNNER_TEMP/ci" deal --shards ${{ matrix.shards }} --shard ${{ matrix.shard }} --heavy "cmd/nova-swarm"
+
+      - name: fetch dev's ancestry for the hosted ratchet
+        # Main already fetched this ancestry above. Other refs need it only
+        # on the shard running internal/ci's shrink-only merge-base guard.
+        if: contains(format(' {0} ', env.HOSTED_PKGS), '/internal/ci ') && github.ref_name != github.event.repository.default_branch
+        shell: bash
+        run: |
+          "$RUNNER_TEMP/ci" fetch-ancestry dev
+
+      - name: vet this shard's packages
+        # The shard's packages only: every shard vetting the whole tree would be a
+        # fixed cost more shards cannot shrink. The union of the shards is the tree.
+        run: make vet PKGS="$HOSTED_PKGS"
+
+      - name: install redis-server
+        # ubuntu-latest has no redis-server until apt installs it; macos-latest
+        # uses Homebrew. A service container would not put the binary on PATH,
+        # and the controls spawn their own server.
+        run: |
+          "$RUNNER_TEMP/ci" install-redis-server
+
+      - name: ensure node for the dashboard tests
+        # The hosted images carry node on PATH; ensure-node reads it and prints its
+        # version, and would install the pinned release if an image dropped it.
+        # internal/ci: TestUnitLegsEnsureNodeBeforeTheTests.
+        shell: bash
+        run: |
+          "$RUNNER_TEMP/ci" ensure-node
+
+      - name: test (shard ${{ matrix.shard }} of ${{ matrix.shards }})
+        # Six shards on ubuntu-latest and eight on macos-latest (above), dealt by
+        # the step before, so a hosted leg is a sixth or an eighth of the suite:
+        # the whole suite on one hosted runner took ten minutes (run 35045469738)
+        # for a tier whose budget is two. The shard count is the whole tuning.
+        shell: bash
+        run: |
+          # The hosted legs run -short: the multi-process and thousand-note fixture tests
+          # in cmd/nova-swarm are gated
+          # behind testing.Short() and skip here, so a hosted leg answers inside the
+          # two-minute budget instead of hitting Go's 10 m default on main (run
+          # 35052889521, panic: test timed out after 10m0s). The self-hosted shards keep
+          # running everything; the nightly certification runs the hosted legs full.
+          # The Makefile's test-short passes -timeout $(SHORT_TIMEOUT), 50 s per
+          # test binary, so a hung package ends with a Go stack naming it before the
+          # two-minute job cap kills the leg silently (internal/ci:
+          # TestEveryMakeTimeoutIsUnderTheJobCap). The shard travels in PKGS.
+          make test-short PKGS="$HOSTED_PKGS"
+
+  # THERE IS NO HOSTED MERGE LEG. The merge group's gate is the same sharded
+  # `test` legs the pull request ran on our own benches on the group commit
+  # (a Linux bench and a macOS runner, under a minute each). The hosted legs
+  # re-ran the changed packages on two-core hosted runners and crossed the
+  # two-minute cap on four of five queue runs (36207910988, 36208535525,
+  # 36209991791, 36211233173), each one a full PR-plus-queue round lost. The
+  # clean-image property they carried moves to certification.yml.
+
+  test-hosted-pr:
+    # This job runs the sandbox leg, and that is all it runs. A PR that touches
+    # a platform-specific path the self-hosted matrix cannot see runs THAT
+    # platform here, on the hosted runner it belongs to, so the feedback comes
+    # back on the PR and not on main. The sandbox is darwin-only in the
+    # self-hosted matrix, so a Linux sandbox break would otherwise only surface
+    # on main: that is this job's remaining reason to exist, gated by a path
+    # filter over the PR diff (internal/sandbox/**, any *_linux.go or
+    # *_linux_test.go).
+    #
+    # THE WINDOWS ENTRY IS GONE, twice over. A pull request meets Windows once,
+    # in the lint job's `make vet-windows` cross-vet, which type-checks the whole
+    # tree for GOOS=windows on a Linux runner. The paths the retired leg watched
+    # (cmd/nova-bus/**, internal/bus/**, **/*_windows.go) no longer select a
+    # runner of their own: a *_windows.go that stops compiling is caught by the
+    # cross-vet, and what only a real Windows machine can answer is answered by
+    # the certification tier.
+    #
+    # A leg runs ONLY the packages its filter names, under the two-minute rule;
+    # when the diff matches nothing the test step is skipped, and ci-ok counts a
+    # skip as ok. Same head-repo guard as every other PR job: a fork PR skips
+    # the leg rather than running untrusted code on hosted compute. The
+    # concurrency group is the workflow's. The matrix keeps one entry rather
+    # than being flattened away: the shape is "a hosted leg per platform the
+    # self-hosted runners cannot see", and the next such platform is an entry
+    # rather than a rewrite.
+    name: test-hosted-pr (${{ matrix.leg.name }})
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    strategy:
+      fail-fast: false
+      matrix:
+        leg:
+          - name: linux
+            os: ubuntu-latest
+            packages: ./internal/sandbox
+            filters: |
+              changed:
+                - 'internal/sandbox/**'
+                - '**/*_linux.go'
+                - '**/*_linux_test.go'
+    runs-on: ${{ matrix.leg.os }}
+    # 6 is the CL cap the two-minute law allows; 2 killed the windows leg by the clock
+    # (cmd/nova-bus measured 439 s there). The legs run -short.
+    timeout-minutes: 2
+    steps:
+      # RESILIENT CHECKOUT: a transient first-fetch failure must
+      # not redden a job. Attempt one tolerates its own failure ONLY so the
+      # retry below runs; the retry itself is not tolerated, so a checkout
+      # that fails twice still fails the job: fail-closed, not fail-open.
+      - name: checkout
+        id: checkout
+        continue-on-error: true
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 2  # the classtests rule reads what HEAD deleted from its first parent
+      - name: checkout retry
+        if: steps.checkout.outcome == 'failure'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 2  # the classtests rule reads what HEAD deleted from its first parent
+
+      - name: filter the PR diff for this platform's paths
+        # No path filter exists elsewhere in this file to reuse, so
+        # dorny/paths-filter is pinned by sha. On a pull_request it reads the
+        # diff via the REST API and reports whether any changed file matches
+        # this leg's patterns.
+        uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
+        id: filter
+        with:
+          filters: ${{ matrix.leg.filters }}
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        if: steps.filter.outputs.changed == 'true'
+        with:
+          go-version-file: go.mod
+          # This workflow manages caching explicitly; do not probe for a missing go.sum.
+          cache: false
+
+      - name: cache go build and module cache
+        if: runner.environment == 'github-hosted' && (steps.filter.outputs.changed == 'true')
+        # Only on GitHub-hosted runners. A self-hosted runner is PERSISTENT: its Go build cache is
+        # already on disk, and this step's save phase tars the whole multi-GB cache on every job,
+        # outlives the job's timeout, and is orphaned still compressing (82 of them put a macOS
+        # runner at load 147). internal/ci holds the class test.
+        # A GitHub-hosted runner is a fresh machine, so the cache pays for itself
+        # here exactly as it does in test-hosted.
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('go.mod') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: test the packages this leg filters
+        if: steps.filter.outputs.changed == 'true'
+        run: make test-short PKGS="${{ matrix.leg.packages }}"
+
+  e2e:
+    # THE SEQUENCES A FRIEND RUNS, end to end, one job. The sharded `test` job above runs
+    # these too -- they are ordinary Go tests in ordinary packages -- and this job exists
+    # so that the class has a name on the checks list: every breakage was a
+    # verb passing its own tests and leaving state the NEXT verb refused, which no
+    # single-verb test looks at. A red here says the tools do not compose, not that one of
+    # them is wrong.
+    #
+    # `-run TestFriendSequence` is the whole selector, and what keeps it populated is
+    # that a change to a verb names the sequence a friend runs through it and adds
+    # the test. On a pull_request this is a self-hosted Linux job
+    # using the machine's own Go, guarded as every self-hosted job is.
+    if: github.event_name != 'schedule' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: [self-hosted, linux, x64, space]
+    timeout-minutes: 2
+    steps:
+      - name: remove stale build dirs from the shared runner
+        # The self-hosted runners reuse the _work directory across jobs; a tree left
+        # by an aborted or overlapping run makes checkout fail. Start from clean.
+        # The sweep below is `rm -rf` over whatever the workspace holds, so it only
+        # ever runs on a directory this repository has checked out: an empty
+        # variable is refused, a workspace that does not exist yet is the normal
+        # first-run state, and a workspace with no `.git` is not ours to
+        # empty — actions/checkout clears a non-repository workspace itself.
+        shell: bash
+        run: |
+          [ -n "${GITHUB_WORKSPACE}" ] || exit 1
+          [ -d "${GITHUB_WORKSPACE}" ] || exit 0
+          [ -d "${GITHUB_WORKSPACE}/.git" ] || exit 0
+          # Clean in place, keep the tree (fs_usage on a macOS runner: four
+          # `find ... rm -rf` sweeps and the re-seeds behind them were the
+          # file-event storm fseventsd digested at 100% CPU). A checkout of ours
+          # is reset to its HEAD and every untracked or ignored file is removed:
+          # the same hygiene as emptying it, a few hundred operations instead of
+          # a hundred thousand, and the next checkout fetches only the new
+          # commit. A tree git cannot reset is emptied as before.
+          if git -C "${GITHUB_WORKSPACE}" reset -q --hard && git -C "${GITHUB_WORKSPACE}" clean -ffdxq; then
+            echo "workspace cleaned in place: $(git -C "${GITHUB_WORKSPACE}" rev-parse --short HEAD 2>/dev/null || echo '-')"
+            exit 0
+          fi
+          find "${GITHUB_WORKSPACE}" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null || true
+
+      - name: borrow objects from the bench mirror
+        # THE CHECKOUT FETCH WAS THE HANG. Every self-hosted job empties its
+        # workspace above, so actions/checkout fetched the whole commit from
+        # GitHub (11 MB at --depth=1) on every job, and on the house benches
+        # that fetch stalled: 17 of the cancelled jobs in the last 25 PR runs
+        # died at `git fetch --depth=1 origin +<merge sha>` at the two-minute
+        # job cap (9 on one Linux bench, 5 on another, 3 on a macOS runner),
+        # the same stall that failed 566 staged cards. Every bench
+        # already keeps $HOME/nova-bench/mirror/nova-tools.git fresh, so the
+        # workspace borrows its objects (objects/info/alternates) and starts
+        # detached at the mirror's HEAD: the fetch then carries only what the
+        # mirror lacks. Measured on a Linux bench: 11 MB and 3.1 s -> 24 KB and 1.1 s.
+        # actions/checkout keeps a workspace whose origin URL matches and whose
+        # HEAD is a commit (it cleans and resets it, both no-ops here), so the
+        # checkout step itself is unchanged.
+        # A bench with no mirror, or a workspace that is not empty, is left to
+        # actions/checkout exactly as before, and this step never fails a job.
+        shell: bash
+        run: |
+          m="$HOME/nova-bench/mirror/nova-tools.git"
+          w="${GITHUB_WORKSPACE:?}"
+          [ -d "$m/objects" ] || { echo "no bench mirror at $m: checkout fetches from GitHub"; exit 0; }
+          mkdir -p "$w"
+          [ -z "$(ls -A "$w")" ] || { echo "workspace not empty: left to actions/checkout"; exit 0; }
+          seed() {
+            tip=$(git --git-dir="$m" rev-parse --verify -q 'HEAD^{commit}') || return 1
+            git init -q "$w" &&
+              git -C "$w" remote add origin "${{ github.server_url }}/${{ github.repository }}" &&
+              echo "$m/objects" > "$w/.git/objects/info/alternates" &&
+              git -C "$w" -c advice.detachedHead=false checkout -q --detach "$tip" &&
+              echo "workspace borrows $m, detached at its HEAD $tip"
+          }
+          seed || { echo "seeding from $m failed: left to actions/checkout"; rm -rf -- "$w/.git"; }
+
+      # RESILIENT CHECKOUT: a transient first-fetch failure must
+      # not redden a job. Attempt one tolerates its own failure ONLY so the
+      # retry below runs; the retry itself is not tolerated, so a checkout
+      # that fails twice still fails the job: fail-closed, not fail-open.
+      - name: checkout
+        id: checkout
+        continue-on-error: true
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 2  # the classtests rule reads what HEAD deleted from its first parent
+      - name: checkout retry
+        if: steps.checkout.outcome == 'failure'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 2  # the classtests rule reads what HEAD deleted from its first parent
+
+      - name: use the installed Go toolchain
+        # The self-hosted runners carry Go (1.26 at /usr/bin/go on Linux, under
+        # /opt/homebrew or ~/go on macOS). Prefer it over a setup-go download.
+        shell: bash
+        run: |
+          set -euo pipefail
+          # the bench's own Go wins over a distro Go on the system path (a Linux bench: /usr/bin/go 1.22
+          # shadowed ~/go/bin 1.26.5)
+          # The newest Go under ~/sdk comes first: the macOS benches keep
+          # their newest Go there (1.27), and /usr/local/go can be a stale
+          # root-owned 1.22 install. The toolchain go.mod names wins when
+          # ~/sdk holds it, so builds sharing one ~/sdk keep one toolchain:
+          # the toolchain line, else the go line, which is the toolchain a
+          # go.mod without that line implies; else as before
+          want=$(sed -n 's/^toolchain \(go[0-9][0-9a-z.]*\)$/\1/p' go.mod 2>/dev/null | head -1 || true)
+          [ -n "$want" ] || want=$(sed -n 's/^go \([0-9][0-9a-z.]*\)$/go\1/p' go.mod 2>/dev/null | head -1 || true)
+          sdk=
+          if [ -n "$want" ] && [ -x "$HOME/sdk/$want/bin/go" ]; then sdk="$HOME/sdk/$want/bin"; fi
+          [ -n "$sdk" ] || sdk=$(ls -d "$HOME"/sdk/go*/bin 2>/dev/null | sort -V | tail -1 || true) # empty on the Linux benches; under pipefail the failed ls would abort the step
+          for d in "$sdk" "$HOME/go/bin" /usr/local/go/bin /opt/homebrew/bin; do
+            [ -n "$d" ] && [ -x "$d/go" ] && { echo "$d" >> "$GITHUB_PATH"; export PATH="$d:$PATH"; break; }
+          done
+          command -v go >/dev/null 2>&1 || { echo "no Go toolchain on PATH"; exit 1; }
+          go version
+          echo "GO SETUP want=${want:-none} go=$(command -v go) gomodcache=$(go env GOMODCACHE) gocache=$(go env GOCACHE)"
+
+      - name: friend sequences
+        run: make test-e2e
+
+  lisp-changes:
+    # THE PATH FILTER for the lisp tier, and it exists because the lisp job must
+    # not occupy a self-hosted runner for a change that touches no lisp/ path.
+    # This job answers "did a lisp/ path move?" and the lisp job reads the answer
+    # and skips otherwise; no tree holds a lisp/ path today. On a change that
+    # touches none, the lisp job is skipped and ci-ok counts that as a pass. It runs on one Linux runner; it is a gate, not a check.
+    if: github.event_name != 'schedule' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: [self-hosted, linux, x64, space]
+    timeout-minutes: 2
+    outputs:
+      changed: ${{ steps.filter.outputs.changed }}
+    steps:
+      - name: remove stale build dirs from the shared runner
+        # The self-hosted runners reuse the _work directory across jobs; a tree left
+        # by an aborted or overlapping run makes checkout fail. Start from clean.
+        # The sweep below is `rm -rf` over whatever the workspace holds, so it only
+        # ever runs on a directory this repository has checked out: an empty
+        # variable is refused, a workspace that does not exist yet is the normal
+        # first-run state, and a workspace with no `.git` is not ours to
+        # empty — actions/checkout clears a non-repository workspace itself.
+        shell: bash
+        run: |
+          [ -n "${GITHUB_WORKSPACE}" ] || exit 1
+          [ -d "${GITHUB_WORKSPACE}" ] || exit 0
+          [ -d "${GITHUB_WORKSPACE}/.git" ] || exit 0
+          # Clean in place, keep the tree (fs_usage on a macOS runner: four
+          # `find ... rm -rf` sweeps and the re-seeds behind them were the
+          # file-event storm fseventsd digested at 100% CPU). A checkout of
+          # ours is reset to its HEAD and every untracked or ignored file is
+          # removed: the same hygiene as emptying it, a few hundred operations
+          # instead of a hundred thousand, and the next checkout fetches only
+          # the new commit. A tree git cannot reset is emptied as before.
+          if git -C "${GITHUB_WORKSPACE}" reset -q --hard && git -C "${GITHUB_WORKSPACE}" clean -ffdxq; then
+            echo "workspace cleaned in place: $(git -C "${GITHUB_WORKSPACE}" rev-parse --short HEAD 2>/dev/null || echo '-')"
+            exit 0
+          fi
+          find "${GITHUB_WORKSPACE}" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null || true
+
+      - name: borrow objects from the bench mirror
+        # THE CHECKOUT FETCH WAS THE HANG. Every self-hosted job empties its
+        # workspace above, so actions/checkout fetched the whole commit from
+        # GitHub (11 MB at --depth=1) on every job, and on the house benches
+        # that fetch stalled: 17 of the cancelled jobs in the last 25 PR runs
+        # died at `git fetch --depth=1 origin +<merge sha>` at the two-minute
+        # job cap (9 on one Linux bench, 5 on another, 3 on a macOS runner),
+        # the same stall that failed 566 staged cards. Every bench
+        # already keeps $HOME/nova-bench/mirror/nova-tools.git fresh, so the
+        # workspace borrows its objects (objects/info/alternates) and starts
+        # detached at the mirror's HEAD: the fetch then carries only what the
+        # mirror lacks. Measured on a Linux bench: 11 MB and 3.1 s -> 24 KB and 1.1 s.
+        # actions/checkout keeps a workspace whose origin URL matches and whose
+        # HEAD is a commit (it cleans and resets it, both no-ops here), so the
+        # checkout step itself is unchanged.
+        # A bench with no mirror, or a workspace that is not empty, is left to
+        # actions/checkout exactly as before, and this step never fails a job.
+        shell: bash
+        run: |
+          m="$HOME/nova-bench/mirror/nova-tools.git"
+          w="${GITHUB_WORKSPACE:?}"
+          [ -d "$m/objects" ] || { echo "no bench mirror at $m: checkout fetches from GitHub"; exit 0; }
+          mkdir -p "$w"
+          [ -z "$(ls -A "$w")" ] || { echo "workspace not empty: left to actions/checkout"; exit 0; }
+          seed() {
+            tip=$(git --git-dir="$m" rev-parse --verify -q 'HEAD^{commit}') || return 1
+            git init -q "$w" &&
+              git -C "$w" remote add origin "${{ github.server_url }}/${{ github.repository }}" &&
+              echo "$m/objects" > "$w/.git/objects/info/alternates" &&
+              git -C "$w" -c advice.detachedHead=false checkout -q --detach "$tip" &&
+              echo "workspace borrows $m, detached at its HEAD $tip"
+          }
+          seed || { echo "seeding from $m failed: left to actions/checkout"; rm -rf -- "$w/.git"; }
+
+      # RESILIENT CHECKOUT: a transient first-fetch failure must
+      # not redden a job. Attempt one tolerates its own failure ONLY so the
+      # retry below runs; the retry itself is not tolerated, so a checkout
+      # that fails twice still fails the job: fail-closed, not fail-open.
+      - name: checkout
+        id: checkout
+        continue-on-error: true
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0  # the path filter traverses merge ancestry across retained refs
+      - name: checkout retry
+        if: steps.checkout.outcome == 'failure'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0  # the path filter traverses merge ancestry across retained refs
+
+      - uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
+        id: filter
+        with:
+          filters: |
+            changed:
+              - 'lisp/**'
+
+  lisp:
+    # PARKED SUBJECT. The nova-work Lisp kernel, the one Lisp system, is
+    # parked: it lives outside this repository, in the nova-work-old
+    # repository, for reference only, and lisp/ holds no system. The job stays, because
+    # the merge gate names a lisp step. The filter above fires only on a lisp/
+    # path, so today it never runs; if it does, `make test-lisp` runs
+    # `go run ./tools/ci lisp-test`, which refuses a lisp/ tree it does not
+    # know. The history below is the job's.
+    # THE LISP TIER, and it is one job because it is one system. `lisp/nova-work`
+    # is the engine's own tree; its
+    # acceptance suite runs under SBCL non-interactively and exits non-zero on
+    # any failing case, so the exit code is the product here. It is in the CL
+    # tier, but no longer inside two minutes: the 579-case suite alone takes
+    # 62-110 s, and the cap is lispCeiling in internal/ci/ci_budget_test.go.
+    # It runs on the Linux space runners because a failure that is really
+    # about SBCL or the platform (journal fsync differs between Darwin and
+    # Linux) must be caught somewhere that is not just Linux — but the macOS
+    # leg does not come back as darwin-x64 (darwin-x64 runs on the Intel
+    # Macs, and every run there has failed: TestE02F06PinCommonLispImplementationGo
+    # requires the platform to be in the pinned table, which is darwin-arm64 and linux-x64 only — darwin-x64 is not pinned and
+    # stays unpinned — and a-flooding-resolver-is-refused-and-its-
+    # output-is-never-drained's 3 s bound is missed on a loaded Intel iMac).
+    # The macOS leg returns here as darwin-arm64 once an arm64 CI bench
+    # exists; the friends' macOS machine is not a CI runner, so it is not the fallback.
+    # It only starts when the path filter above saw a lisp/ path
+    # move, so a Go-only change never waits on the SBCL
+    # runners, and it is fork-guarded transitively: the filter job above is the
+    # guarded entry point, so a fork never reaches the SBCL machines.
+    needs: lisp-changes
+    if: needs.lisp-changes.outputs.changed == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        entry:
+          - {os: linux, arch: x64, group: space}
+    name: lisp (${{ matrix.entry.group }})
+    # Labels are carried per entry as single-string variables: runs-on expressions
+    # must resolve to a string, not to an array.
+    runs-on: [self-hosted, "${{ matrix.entry.os }}", "${{ matrix.entry.arch }}", "${{ matrix.entry.group }}"]
+    # 15 = 2x the measured max lisp job, 430 s (a macOS runner at load 50-70, runs 36011449625/36011918432: checkout 107-157 s, suite up to 110 s)
+    timeout-minutes: 2
+    steps:
+      - name: remove stale build dirs from the shared runner
+        # The self-hosted runners reuse the _work directory across jobs; a tree left
+        # by an aborted or overlapping run makes checkout fail. Start from clean.
+        # The sweep below is `rm -rf` over whatever the workspace holds, so it only
+        # ever runs on a directory this repository has checked out: an empty
+        # variable is refused, a workspace that does not exist yet is the normal
+        # first-run state, and a workspace with no `.git` is not ours to
+        # empty — actions/checkout clears a non-repository workspace itself.
+        shell: bash
+        run: |
+          [ -n "${GITHUB_WORKSPACE}" ] || exit 1
+          [ -d "${GITHUB_WORKSPACE}" ] || exit 0
+          [ -d "${GITHUB_WORKSPACE}/.git" ] || exit 0
+          # Clean in place, keep the tree (fs_usage on a macOS runner: four
+          # `find ... rm -rf` sweeps and the re-seeds behind them were the
+          # file-event storm fseventsd digested at 100% CPU). A checkout of
+          # ours is reset to its HEAD and every untracked or ignored file is
+          # removed: the same hygiene as emptying it, a few hundred operations
+          # instead of a hundred thousand, and the next checkout fetches only
+          # the new commit. A tree git cannot reset is emptied as before.
+          if git -C "${GITHUB_WORKSPACE}" reset -q --hard && git -C "${GITHUB_WORKSPACE}" clean -ffdxq; then
+            echo "workspace cleaned in place: $(git -C "${GITHUB_WORKSPACE}" rev-parse --short HEAD 2>/dev/null || echo '-')"
+            exit 0
+          fi
+          find "${GITHUB_WORKSPACE}" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null || true
+
+      - name: borrow objects from the bench mirror
+        # THE CHECKOUT FETCH WAS THE HANG. Every self-hosted job empties its
+        # workspace above, so actions/checkout fetched the whole commit from
+        # GitHub (11 MB at --depth=1) on every job, and on the house benches
+        # that fetch stalled: 17 of the cancelled jobs in the last 25 PR runs
+        # died at `git fetch --depth=1 origin +<merge sha>` at the two-minute
+        # job cap (9 on one Linux bench, 5 on another, 3 on a macOS runner),
+        # the same stall that failed 566 staged cards. Every bench
+        # already keeps $HOME/nova-bench/mirror/nova-tools.git fresh, so the
+        # workspace borrows its objects (objects/info/alternates) and starts
+        # detached at the mirror's HEAD: the fetch then carries only what the
+        # mirror lacks. Measured on a Linux bench: 11 MB and 3.1 s -> 24 KB and 1.1 s.
+        # actions/checkout keeps a workspace whose origin URL matches and whose
+        # HEAD is a commit (it cleans and resets it, both no-ops here), so the
+        # checkout step itself is unchanged.
+        # A bench with no mirror, or a workspace that is not empty, is left to
+        # actions/checkout exactly as before, and this step never fails a job.
+        shell: bash
+        run: |
+          m="$HOME/nova-bench/mirror/nova-tools.git"
+          w="${GITHUB_WORKSPACE:?}"
+          [ -d "$m/objects" ] || { echo "no bench mirror at $m: checkout fetches from GitHub"; exit 0; }
+          mkdir -p "$w"
+          [ -z "$(ls -A "$w")" ] || { echo "workspace not empty: left to actions/checkout"; exit 0; }
+          seed() {
+            tip=$(git --git-dir="$m" rev-parse --verify -q 'HEAD^{commit}') || return 1
+            git init -q "$w" &&
+              git -C "$w" remote add origin "${{ github.server_url }}/${{ github.repository }}" &&
+              echo "$m/objects" > "$w/.git/objects/info/alternates" &&
+              git -C "$w" -c advice.detachedHead=false checkout -q --detach "$tip" &&
+              echo "workspace borrows $m, detached at its HEAD $tip"
+          }
+          seed || { echo "seeding from $m failed: left to actions/checkout"; rm -rf -- "$w/.git"; }
+
+      # RESILIENT CHECKOUT: a transient first-fetch failure must
+      # not redden a job. Attempt one tolerates its own failure ONLY so the
+      # retry below runs; the retry itself is not tolerated, so a checkout
+      # that fails twice still fails the job: fail-closed, not fail-open.
+      - name: checkout
+        id: checkout
+        continue-on-error: true
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 2  # the classtests rule reads what HEAD deleted from its first parent
+      - name: checkout retry
+        if: steps.checkout.outcome == 'failure'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 2  # the classtests rule reads what HEAD deleted from its first parent
+
+      - name: use the installed Go toolchain
+        # The self-hosted runners carry Go (1.26 at /usr/bin/go on Linux, under
+        # /opt/homebrew or ~/go on macOS). Prefer it over a setup-go download.
+        shell: bash
+        run: |
+          set -euo pipefail
+          # the bench's own Go wins over a distro Go on the system path, and the newest Go under
+          # ~/sdk wins over a stale one under /usr/local/go; the toolchain go.mod names wins when
+          # ~/sdk holds it (the toolchain line, else the go line, which is the toolchain a go.mod
+          # without that line implies); else as before
+          want=$(sed -n 's/^toolchain \(go[0-9][0-9a-z.]*\)$/\1/p' go.mod 2>/dev/null | head -1 || true)
+          [ -n "$want" ] || want=$(sed -n 's/^go \([0-9][0-9a-z.]*\)$/go\1/p' go.mod 2>/dev/null | head -1 || true)
+          sdk=
+          if [ -n "$want" ] && [ -x "$HOME/sdk/$want/bin/go" ]; then sdk="$HOME/sdk/$want/bin"; fi
+          [ -n "$sdk" ] || sdk=$(ls -d "$HOME"/sdk/go*/bin 2>/dev/null | sort -V | tail -1 || true) # empty on the Linux benches; under pipefail the failed ls would abort the step
+          for d in "$sdk" "$HOME/go/bin" /usr/local/go/bin /opt/homebrew/bin; do
+            [ -n "$d" ] && [ -x "$d/go" ] && { echo "$d" >> "$GITHUB_PATH"; export PATH="$d:$PATH"; break; }
+          done
+          command -v go >/dev/null 2>&1 || { echo "no Go toolchain on PATH"; exit 1; }
+          go version
+          echo "GO SETUP want=${want:-none} go=$(command -v go) gomodcache=$(go env GOMODCACHE) gocache=$(go env GOCACHE)"
+
+      - name: build tools/ci once
+        # The verbs are built ONCE here and every later step calls the binary: `go run` compiles
+        # and links the tool again on every step that names it. internal/ci: TestToolsCIIsBuiltOnceAndNeverRun.
+        shell: bash
+        run: go build -o "$RUNNER_TEMP/ci" ./tools/ci
+
+      - name: install sbcl if missing
+        # The self-hosted runners need no sudo; ensure-sbcl installs directly when sbcl is
+        # absent, and finds a runner user's own ~/.local/bin/sbcl that a listener started
+        # before it existed did not have on PATH.
+        run: |
+          "$RUNNER_TEMP/ci" ensure-sbcl
+
+      - name: sbcl version
+        # The runners carry SBCL already (2.2.9 on Linux, 2.6.8 on macOS); the
+        # suite is written to the older of the two, so nothing newer than 2.2.9
+        # is used. No install step: apt-get does not exist on macOS.
+        run: sbcl --version
+
+      - name: nova-work acceptance
+        # Loads the system from the checkout with the ASDF SBCL bundles — no
+        # quicklisp, no download — and runs every acceptance case; the script
+        # exits non-zero on any failure. The budget is the job's
+        # timeout-minutes above.
+        run: make test-lisp
+
+  # fleet-probe proves a bench's runners before the loop trusts them.
+  # One job per runner slot, targeted by the bench label, doing what a CI job does. Read the
+  # result by runner_name from the wire; a bench is trusted when every name is green. Runs
+  # only on a workflow_dispatch that names a bench; lives here because a new workflow file
+  # cannot be dispatched until it is on the default branch.
+  fleet-probe:
+    if: github.event_name == 'workflow_dispatch' && inputs.bench != ''
+    strategy:
+      fail-fast: false
+      matrix:
+        slot: [1, 2, 3, 4, 5, 6, 7, 8]
+    runs-on: [self-hosted, "${{ inputs.bench }}"]
+    timeout-minutes: 2
+    steps:
+      - name: this slot is in the ask
+        id: want
+        run: |
+          [ "${{ matrix.slot }}" -le "${{ inputs.slots }}" ] && echo "run=yes" >> "$GITHUB_OUTPUT" || echo "run=no" >> "$GITHUB_OUTPUT"
+      # RESILIENT CHECKOUT: a transient first-fetch failure must
+      # not redden a job. Attempt one tolerates its own failure ONLY so the
+      # retry below runs; the retry itself is not tolerated, so a checkout
+      # that fails twice still fails the job: fail-closed, not fail-open.
+      - name: checkout
+        id: checkout
+        if: steps.want.outputs.run == 'yes'
+        continue-on-error: true
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 2  # the classtests rule reads what HEAD deleted from its first parent
+      - name: checkout retry
+        if: steps.want.outputs.run == 'yes' && steps.checkout.outcome == 'failure'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 2  # the classtests rule reads what HEAD deleted from its first parent
+      - name: toolchains the way ci.yml finds them
+        if: steps.want.outputs.run == 'yes'
+        run: |
+          # The bench's own Go wins over a distro Go on the system path: on a Linux
+          # bench, /usr/bin/go 1.22 shadowed ~/go/bin 1.26.5 and every PR job died
+          # downloading a toolchain.
+          # The newest Go under ~/sdk is tried first: two macOS benches kept 1.27 there,
+          # and one also carried a stale root-owned /usr/local/go 1.22 that won this loop.
+          # The toolchain go.mod names wins when ~/sdk holds it: the toolchain line,
+          # else the go line, which is the toolchain a go.mod without that line implies; else as before.
+          want=$(sed -n 's/^toolchain \(go[0-9][0-9a-z.]*\)$/\1/p' go.mod 2>/dev/null | head -1 || true)
+          [ -n "$want" ] || want=$(sed -n 's/^go \([0-9][0-9a-z.]*\)$/go\1/p' go.mod 2>/dev/null | head -1 || true)
+          sdk=
+          if [ -n "$want" ] && [ -x "$HOME/sdk/$want/bin/go" ]; then sdk="$HOME/sdk/$want/bin"; fi
+          [ -n "$sdk" ] || sdk=$(ls -d "$HOME"/sdk/go*/bin 2>/dev/null | sort -V | tail -1 || true) # empty on the Linux benches; under pipefail the failed ls would abort the step
+          for d in "$sdk" "$HOME/go/bin" /usr/local/go/bin /opt/homebrew/bin; do
+            [ -n "$d" ] && [ -x "$d/go" ] && { echo "$d" >> "$GITHUB_PATH"; export PATH="$d:$PATH"; break; }
+          done
+          for d in "$HOME/.local/bin"; do [ -x "$d/sbcl" ] && { echo "$d" >> "$GITHUB_PATH"; export PATH="$d:$PATH"; }; done
+          echo "PROBE runner=$RUNNER_NAME slot=${{ matrix.slot }} go=$(command -v go || echo -) sbcl=$(command -v sbcl || echo -) home=$HOME"
+          command -v go >/dev/null 2>&1 || { echo "PROBE FAIL runner=$RUNNER_NAME no Go on PATH"; exit 1; }
+          command -v sbcl >/dev/null 2>&1 || { echo "PROBE FAIL runner=$RUNNER_NAME no sbcl on PATH"; exit 1; }
+          go version; sbcl --version
+          echo "GO SETUP want=${want:-none} go=$(command -v go) gomodcache=$(go env GOMODCACHE) gocache=$(go env GOCACHE)"
+      - name: build the ci runner
+        if: steps.want.outputs.run == 'yes' && runner.os == 'Linux'
+        run: go build -o "$RUNNER_TEMP/ci" ./tools/ci
+      - name: the network probe, inside nova-sandbox
+        # Nothing enters the loop untested, and the probe itself is no
+        # exception. Prove the bench the way a card
+        # sees it: build the sandbox from this checkout and fetch inside it, so a
+        # bench enters the loop only after the SANDBOXED probe is green. Linux
+        # only, because the fleet-probe job runs on the Linux benches (the
+        # sandbox backend is landlock there, seatbelt on the macOS benches).
+        # `go run ./tools/ci help sandbox-probe`.
+        if: steps.want.outputs.run == 'yes' && runner.os == 'Linux'
+        run: |
+          "$RUNNER_TEMP/ci" sandbox-probe --slot "${{ matrix.slot }}"
+      - name: build, one real package, write beside the repo
+        if: steps.want.outputs.run == 'yes'
+        run: |
+          go build ./... && go test -count=1 ./internal/oneline/
+          t="$(dirname "$GITHUB_WORKSPACE")/fleet-probe-$RUNNER_NAME.txt"; echo ok > "$t" && rm -f "$t"
+          echo "PROBE OK runner=$RUNNER_NAME slot=${{ matrix.slot }}"
+
+  ci-ok:
+    # THE ONE CHECK TO REQUIRE, and the reason it exists rather than a list of check names
+    # in a branch ruleset. It aggregates EXACTLY the jobs of this file and nothing else —
+    # the CL tier: what a change is required to pass. On a pull_request that is the
+    # self-hosted matrix (lint, test, e2e, lisp) plus test-hosted-pr on the
+    # platform leg whose paths the PR touches; on push to main the hosted full
+    # suite joins it, so ci-ok on main needs the hosted matrix too. `needs` on a
+    # matrix job is success
+    # only when EVERY leg succeeded, so a leg renamed out of existence shows up here as a
+    # missing success and not as silence. The certification tier has its own aggregate,
+    # certification-ok; a red certification is a blocker for the next release, never for a
+    # CL. The nightly schedule fires test-hosted only, so ci-ok does not run on schedule:
+    # the nightly run is evidence to read, not a gate to merge against.
+    # NO head-repo guard here, on purpose. Every self-hosted job carries one, so
+    # on a fork's pull_request they are all skipped and this aggregate reads
+    # those skips as red: a fork PR's ci-ok is red and the PR cannot enter the
+    # merge queue. A guard on this job would skip ci-ok instead, and GitHub
+    # counts a skipped required check as passing, so the fork PR could be
+    # enqueued with no PR-stage CI at all. The
+    # guard lives on the one step that must not see fork code, the receipt
+    # step below, which runs this tree's code holding the bench seat's password.
+    if: always() && github.event_name != 'schedule'
+    # A STATIC needs list. GitHub does not evaluate expressions in `needs`, so the
+    # conditional array the previous revision used was refused as an invalid job
+    # reference and the run was never created. test-hosted is skipped on a pull
+    # request and ci-ok's `always()` still runs; the per-event steps below check
+    # exactly the jobs that event actually ran.
+    needs: [lint, test, functional, e2e, lisp-changes, lisp, test-hosted, test-hosted-pr]
+    # PRs are self-hosted only; hosted runners are reserved for push to main and
+    # the nightly schedule. ci-ok aggregates on the Linux space runner either way.
+    runs-on: [self-hosted, linux, x64, space]
+    timeout-minutes: 2
+    steps:
+      # The receipt below is written by this tree's nova-ci (`go run
+      # ./cmd/nova-ci`), and these steps (clean, borrow the bench mirror,
+      # checkout, the installed Go) are what it builds from. always(): they
+      # run for a red run too, which is reported as red.
+      - name: remove stale build dirs from the shared runner
+        if: always()
+        # The self-hosted runners reuse the _work directory across jobs; a tree left
+        # by an aborted or overlapping run makes checkout fail. Start from clean.
+        # The sweep below is `rm -rf` over whatever the workspace holds, so it only
+        # ever runs on a directory this repository has checked out: an empty
+        # variable is refused, a workspace that does not exist yet is the normal
+        # first-run state, and a workspace with no `.git` is not ours to
+        # empty — actions/checkout clears a non-repository workspace itself.
+        shell: bash
+        run: |
+          [ -n "${GITHUB_WORKSPACE}" ] || exit 1
+          [ -d "${GITHUB_WORKSPACE}" ] || exit 0
+          [ -d "${GITHUB_WORKSPACE}/.git" ] || exit 0
+          # Clean in place, keep the tree (fs_usage on a macOS runner: four
+          # `find ... rm -rf` sweeps and the re-seeds behind them were the
+          # file-event storm fseventsd digested at 100% CPU). A checkout of
+          # ours is reset to its HEAD and every untracked or ignored file is
+          # removed: the same hygiene as emptying it, a few hundred operations
+          # instead of a hundred thousand, and the next checkout fetches only
+          # the new commit. A tree git cannot reset is emptied as before.
+          if git -C "${GITHUB_WORKSPACE}" reset -q --hard && git -C "${GITHUB_WORKSPACE}" clean -ffdxq; then
+            echo "workspace cleaned in place: $(git -C "${GITHUB_WORKSPACE}" rev-parse --short HEAD 2>/dev/null || echo '-')"
+            exit 0
+          fi
+          find "${GITHUB_WORKSPACE}" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null || true
+
+      - name: borrow objects from the bench mirror
+        if: always()
+        # THE CHECKOUT FETCH WAS THE HANG. Every self-hosted job empties its
+        # workspace above, so actions/checkout fetched the whole commit from
+        # GitHub (11 MB at --depth=1) on every job, and on the house benches
+        # that fetch stalled: 17 of the cancelled jobs in the last 25 PR runs
+        # died at `git fetch --depth=1 origin +<merge sha>` at the two-minute
+        # job cap (9 on one Linux bench, 5 on another, 3 on a macOS runner),
+        # the same stall that failed 566 staged cards. Every bench
+        # already keeps $HOME/nova-bench/mirror/nova-tools.git fresh, so the
+        # workspace borrows its objects (objects/info/alternates) and starts
+        # detached at the mirror's HEAD: the fetch then carries only what the
+        # mirror lacks. Measured on a Linux bench: 11 MB and 3.1 s -> 24 KB and 1.1 s.
+        # actions/checkout keeps a workspace whose origin URL matches and whose
+        # HEAD is a commit (it cleans and resets it, both no-ops here), so the
+        # checkout step itself is unchanged.
+        # A bench with no mirror, or a workspace that is not empty, is left to
+        # actions/checkout exactly as before, and this step never fails a job.
+        shell: bash
+        run: |
+          m="$HOME/nova-bench/mirror/nova-tools.git"
+          w="${GITHUB_WORKSPACE:?}"
+          [ -d "$m/objects" ] || { echo "no bench mirror at $m: checkout fetches from GitHub"; exit 0; }
+          mkdir -p "$w"
+          [ -z "$(ls -A "$w")" ] || { echo "workspace not empty: left to actions/checkout"; exit 0; }
+          seed() {
+            tip=$(git --git-dir="$m" rev-parse --verify -q 'HEAD^{commit}') || return 1
+            git init -q "$w" &&
+              git -C "$w" remote add origin "${{ github.server_url }}/${{ github.repository }}" &&
+              echo "$m/objects" > "$w/.git/objects/info/alternates" &&
+              git -C "$w" -c advice.detachedHead=false checkout -q --detach "$tip" &&
+              echo "workspace borrows $m, detached at its HEAD $tip"
+          }
+          seed || { echo "seeding from $m failed: left to actions/checkout"; rm -rf -- "$w/.git"; }
+
+      # RESILIENT CHECKOUT: a transient first-fetch failure must not redden a
+      # job. Attempt one tolerates its own failure ONLY so the
+      # retry below runs; the retry itself is not tolerated, so a checkout
+      # that fails twice still fails the job: fail-closed, not fail-open.
+      - name: checkout
+        id: checkout
+        if: always()
+        continue-on-error: true
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: checkout retry
+        if: always() && steps.checkout.outcome == 'failure'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: use the installed Go toolchain
+        if: always()
+        # The self-hosted runners carry Go (1.26 at /usr/bin/go on Linux, under
+        # /opt/homebrew or ~/go on macOS). Prefer it over a setup-go download.
+        shell: bash
+        run: |
+          set -euo pipefail
+          # the bench's own Go wins over a distro Go on the system path (a Linux bench:
+          # /usr/bin/go 1.22 shadowed ~/go/bin 1.26.5 and every PR job died downloading a toolchain)
+          # newest Go under ~/sdk first (the Mac benches keep 1.27 there, and one of them also
+          # carries a stale root-owned /usr/local/go 1.22 that won this loop)
+          # the toolchain go.mod names wins when ~/sdk holds it (a Linux runner took the newest sdk Go
+          # while the release build beside it switched toolchains in the same caches): the toolchain line,
+          # else the go line, which is the toolchain a go.mod without that line implies; else as before
+          want=$(sed -n 's/^toolchain \(go[0-9][0-9a-z.]*\)$/\1/p' go.mod 2>/dev/null | head -1 || true)
+          [ -n "$want" ] || want=$(sed -n 's/^go \([0-9][0-9a-z.]*\)$/go\1/p' go.mod 2>/dev/null | head -1 || true)
+          sdk=
+          if [ -n "$want" ] && [ -x "$HOME/sdk/$want/bin/go" ]; then sdk="$HOME/sdk/$want/bin"; fi
+          [ -n "$sdk" ] || sdk=$(ls -d "$HOME"/sdk/go*/bin 2>/dev/null | sort -V | tail -1 || true) # empty on the Linux benches; under pipefail the failed ls would abort the step
+          for d in "$sdk" "$HOME/go/bin" /usr/local/go/bin /opt/homebrew/bin; do
+            [ -n "$d" ] && [ -x "$d/go" ] && { echo "$d" >> "$GITHUB_PATH"; export PATH="$d:$PATH"; break; }
+          done
+          command -v go >/dev/null 2>&1 || { echo "no Go toolchain on PATH"; exit 1; }
+          go version
+          echo "GO SETUP want=${want:-none} go=$(command -v go) gomodcache=$(go env GOMODCACHE) gocache=$(go env GOCACHE)"
+
+      - name: build tools/ci once
+        # The verbs are built ONCE here and every later step calls the binary. This step runs this
+        # tree's Go, so it carries the same-repo guard the report step below carries: a fork's
+        # pull_request never reaches it. internal/ci: TestCIOKRunsNoForkCodeAndIsRedOnAFork.
+        if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        shell: bash
+        run: go build -o "$RUNNER_TEMP/ci" ./tools/ci
+
+      # THE VERDICT, after the checkout and the Go toolchain it needs. A checkout that fails
+      # twice fails the job before any verdict is stated (fail closed: ci-ok is red), and the
+      # verdict steps are always() so a red need is reported by name even when an earlier step
+      # of this job went wrong. The skip rules are tools/ci/aggregate.go's; the arguments below
+      # are the events' own: a skip is ok for the legs that do not run on this event (lisp when
+      # no lisp/ path moved, test-hosted-pr on a fork PR, a manual run or a diff that matches no
+      # platform path; functional on a pull request only: it runs on merge_group and
+      # workflow_dispatch, and when it ran it must pass). test-windows-pr is not aggregated:
+      # the Windows guard is the lint job's `make vet-windows`, so a GOOS=windows compile break
+      # is a red `lint`, which this verdict reads.
+      - name: every CL-tier job succeeded (pull request, merge group or manual)
+        # merge_group is the queue's group commit: ci-ok on it is THE merge gate,
+        # so this step must run there too; a guard that names no event lets ci-ok
+        # report success over red needs.
+        # The verdict is this tree's Go, so a fork's pull request never runs it on this
+        # runner: the step below states a fork's ci-ok red without running anything of
+        # the fork's (its self-hosted jobs are all skipped, so it is red either way).
+        # internal/ci: TestCIOKRunsNoForkCodeAndIsRedOnAFork.
+        if: always() && (github.event_name == 'merge_group' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository))
+        shell: bash
+        run: |
+          "$RUNNER_TEMP/ci" aggregate --event "${{ github.event_name }}" \
+            --skip-ok lisp,test-hosted-pr --skip-ok-on pull_request=functional \
+            lint=${{ needs.lint.result }} test=${{ needs.test.result }} functional=${{ needs.functional.result }} \
+            lisp-changes=${{ needs.lisp-changes.result }} lisp=${{ needs.lisp.result }} e2e=${{ needs.e2e.result }} test-hosted-pr=${{ needs.test-hosted-pr.result }}
+      - name: a fork's pull request is red here
+        if: always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository
+        shell: bash
+        run: |
+          echo "a fork's pull request: the self-hosted CL-tier jobs do not run on fork code, so ci-ok is red"
+          exit 1
+      - name: every CL-tier job succeeded (push to main)
+        if: always() && github.event_name == 'push'
+        shell: bash
+        run: |
+          "$RUNNER_TEMP/ci" aggregate --event "${{ github.event_name }}" --skip-ok lisp \
+            lint=${{ needs.lint.result }} test=${{ needs.test.result }} e2e=${{ needs.e2e.result }} \
+            lisp-changes=${{ needs.lisp-changes.result }} lisp=${{ needs.lisp.result }} test-hosted=${{ needs.test-hosted.result }}
+
+      # THE RUNNER IS THE EVENT SOURCE. The signed webhook receiver sits behind
+      # a tailscale funnel kept off by design, so this job, on our own runner
+      # as the bench seat, reports the run itself at the end of every run: one
+      # ev:github row of the workflow_run shape, sender runner, from the run's
+      # own context, no GitHub call. Its reader is ghevent.Reader,
+      # which blocks on ev:github. always(): a red run is
+      # reported as red. A write that fails is loud here and reddens ci-ok: a
+      # receipt that silently did not happen must never read as one that did.
+      # The password never touches a flag or a file: nova-secrets exec under
+      # the bench seat (card.env names it).
+      # THE WRITER IS THIS TREE'S nova-ci (internal/cireceipt), run from the
+      # checkout above, so the writer is versioned with the commit under test
+      # and no runner's installed build matters. A tree that does not compile
+      # writes no receipt and exits 1: the red ci-ok is itself the signal.
+      # THE HEAD-REPO GUARD IS ON THIS STEP, NOT ON THE JOB. This step runs the
+      # checked-out tree's code with NOVA_REDIS_BENCH_PASSWORD in its
+      # environment, so a pull_request from a fork must never reach it. It
+      # cannot be the job's guard: a skipped ci-ok counts as a passing required
+      # check on GitHub, and a fork PR could then be enqueued with no PR-stage
+      # CI, whereas ci-ok running over its skipped needs stays red exactly as
+      # on dev. So on a fork PR ci-ok runs, is red, and writes no receipt;
+      # everywhere else the receipt is written for a red run too.
+      - name: report this run to Redis from the runner
+        if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        shell: bash
+        run: |
+          "$RUNNER_TEMP/ci" report-run \
+            --repo "${{ github.repository }}" \
+            --sha "${{ github.event.pull_request.head.sha || github.sha }}" \
+            --run-id "${{ github.run_id }}" \
+            --pr "${{ github.event.pull_request.number }}" \
+            --workflow "${{ github.workflow }}" \
+            --conclusion "${{ job.status }}"

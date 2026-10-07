@@ -1,0 +1,474 @@
+package update
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"math/big"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"slices"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/bounded"
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
+)
+
+const ChildCap = 64 * 1024
+
+// killGrace is the drain allowance a healthy child gets after it exits: its
+// output copy may still be finishing, and under load a ten millisecond grace
+// lost that race and reported a healthy tool as UNKNOWN. It is a cap, not a
+// promise: the actual allowance is what is left of the budget, so a child whose
+// pipe an escaped grandchild keeps open cannot extend the run past its deadline.
+const killGrace = 2 * time.Second
+
+// drainFloor is the smallest a drain may shrink to. It is reached only when the
+// budget is already spent at the moment the child is gone, so a held pipe is
+// still closed without ever growing into a second timeout.
+const drainFloor = 50 * time.Millisecond
+
+// leakRemedy names the one thing a person can do about a held pipe: the version
+// command, not this tool, decides whether its children keep stdout open.
+const leakRemedy = "make the version command wait for its own children, or send their output elsewhere"
+
+var dotted = regexp.MustCompile(`[0-9]\.[0-9]`)
+var digit = regexp.MustCompile(`[0-9]`)
+var bareCommit = regexp.MustCompile(`^[0-9a-f]{7,40}$`)
+
+// dottedRelease is a plain numeric release tag, `1.2` or `1.2.3`. It is named for
+// what it matches rather than for the concept, because the package now also
+// carries the `release` VERB and one name for two things is one too few.
+var dottedRelease = regexp.MustCompile(`^[0-9]+(\.[0-9]+)+$`)
+var digest = regexp.MustCompile(`^[0-9a-f]{12,64}$`)
+var pseudo = regexp.MustCompile(`^([0-9]+\.[0-9]+\.[0-9]+)-0\.[0-9]+-([0-9a-f]{7,40})(\+.*)?$`)
+
+type Read struct{ Raw, Version, Path, Reason, Remedy, Source string }
+
+func (r Read) Known() bool      { return r.Reason == "" }
+func firstLine(s string) string { s, _, _ = strings.Cut(s, "\n"); return strings.TrimSuffix(s, "\r") }
+func opaque(line string) bool {
+	f := strings.Fields(line)
+	return len(f) > 1 && (f[1] == "devel" || bareCommit.MatchString(f[1]))
+}
+func versionKey(line string) (string, error) {
+	if opaque(line) {
+		return "", fmt.Errorf("no_release_identity")
+	}
+	for _, t := range strings.Fields(line) {
+		if dotted.MatchString(t) {
+			return t[digit.FindStringIndex(t)[0]:], nil
+		}
+	}
+	return "", fmt.Errorf("no_version")
+}
+func identity(e Entry, raw string, report bool) Read {
+	r := Read{Raw: firstLine(raw), Remedy: "wrap it in a script that prints the version alone"}
+	if e.Kind == "pin" {
+		f := strings.Fields(r.Raw)
+		if len(f) < 2 {
+			r.Reason = "version line has fewer than two tokens"
+		} else {
+			r.Version = f[1]
+		}
+		return r
+	}
+	if e.Kind == "model" {
+		for _, line := range strings.Split(raw, "\n") {
+			f := strings.Fields(line)
+			if len(f) > 1 && f[0] == e.Name && digest.MatchString(strings.ToLower(f[1])) {
+				r.Raw = strings.TrimSuffix(line, "\r")
+				r.Version = strings.ToLower(f[1])[:12]
+				return r
+			}
+		}
+		r.Reason = "model_not_found"
+		r.Remedy = "this weight is not on this box: its owner " + e.Owner + " pulls it, ollama pull " + e.Name
+		return r
+	}
+	if report && opaque(r.Raw) {
+		return r
+	}
+	v, err := versionKey(r.Raw)
+	if err != nil {
+		r.Reason = err.Error()
+		if r.Reason == "no_release_identity" {
+			r.Remedy = "install a stamped build, or read it with report"
+		}
+	} else {
+		r.Version = v
+	}
+	return r
+}
+
+type ProcessResult struct{ Stdout, Stderr, Path, Reason string }
+
+func process(ctx context.Context, childEnv []string, args []string, input io.Reader, cap int) ProcessResult {
+	r := ProcessResult{}
+	if ctx.Err() != nil {
+		r.Reason = "budget"
+		return r
+	}
+	if len(args) == 0 {
+		r.Reason = "empty argv"
+		return r
+	}
+	path, err := lookPath(childEnv, args[0])
+	if err != nil {
+		r.Reason = "not_found"
+		return r
+	}
+	r.Path = path
+	child, cancel := context.WithCancel(ctx)
+	defer cancel()
+	out, errs := bounded.NewCapture(cap, cancel), bounded.NewCapture(cap, cancel)
+	cmd := subproc.Context(child, path, args[1:]...)
+	cmd.Env = childEnv
+	cmd.Stdin = input
+	// The pipes are created here rather than handed to os/exec as plain writers,
+	// so this process can close the read ends itself when the deadline passes and
+	// an escaped grandchild is still holding the write ends open.
+	stdoutRead, stdoutWrite, err := os.Pipe()
+	if err != nil {
+		r.Reason = "execution failed: " + clip(err.Error(), 160)
+		return r
+	}
+	defer func() { _ = stdoutRead.Close() }() // ignored: pipe read end; child's exit is the report
+	stderrRead, stderrWrite, err := os.Pipe()
+	if err != nil {
+		_ = stdoutWrite.Close() // ignored: pipe management on pipe creation failure
+		r.Reason = "execution failed: " + clip(err.Error(), 160)
+		return r
+	}
+	defer func() { _ = stderrRead.Close() }() // ignored: pipe read end; child's exit is the report
+	cmd.Stdout = stdoutWrite
+	cmd.Stderr = stderrWrite
+	configureProcess(cmd)
+
+	var copyWG sync.WaitGroup
+	copyWG.Add(2)
+	// ignored: a pipe pump; the child's exit, waited on below, is the report
+	go func() { defer copyWG.Done(); _, _ = io.Copy(out, stdoutRead) }()
+	// ignored: a pipe pump; the child's exit, waited on below, is the report
+	go func() { defer copyWG.Done(); _, _ = io.Copy(errs, stderrRead) }()
+
+	if err := cmd.Start(); err != nil {
+		_ = stdoutWrite.Close() // ignored: pipe management on start failure
+		_ = stderrWrite.Close() // ignored: pipe management on start failure
+		_ = stdoutRead.Close()  // ignored: pipe management on start failure
+		_ = stderrRead.Close()  // ignored: pipe management on start failure
+		copyWG.Wait()
+		if ctx.Err() != nil || child.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || strings.Contains(err.Error(), "context canceled") || strings.Contains(err.Error(), "context deadline exceeded") {
+			r.Reason = "timeout"
+			return r
+		}
+		r.Reason = "execution failed: " + clip(err.Error(), 160)
+		return r
+	}
+	// The parent's write ends must close so a read sees EOF once the child and
+	// its descendants have all closed theirs.
+	_ = stdoutWrite.Close() // ignored: parent closing write end to deliver EOF
+	_ = stderrWrite.Close() // ignored: parent closing write end to deliver EOF
+
+	waitCh := make(chan error, 1)
+	go func() { waitCh <- cmd.Wait() }()
+
+	// Reap the child as soon as it exits or the deadline kills it, whichever
+	// comes first, then drain its output within what the budget leaves.
+	var waitErr error
+	select {
+	case waitErr = <-waitCh:
+	case <-child.Done():
+		waitErr = <-waitCh
+	}
+
+	done := make(chan struct{})
+	go func() { copyWG.Wait(); close(done) }()
+	held := false
+	if drain := drainAllowance(ctx); drain > 0 {
+		var timerChan <-chan time.Time
+		var stopTimer func() bool
+		if seam, ok := ctx.Value(drainTimerKey{}).(func(time.Duration) (<-chan time.Time, func() bool)); ok && seam != nil {
+			timerChan, stopTimer = seam(drain)
+		} else {
+			t := time.NewTimer(drain)
+			timerChan = t.C
+			stopTimer = t.Stop
+		}
+		select {
+		case <-done:
+			stopTimer()
+		case <-timerChan:
+			held = true
+			_ = stdoutRead.Close() // ignored: killing the pipe on drain timeout
+			_ = stderrRead.Close() // ignored: killing the pipe on drain timeout
+			<-done
+		}
+	} else {
+		<-done
+	}
+
+	r.Stdout = string(out.Bytes())
+	r.Stderr = string(errs.Bytes())
+	switch {
+	case out.Hit() || errs.Hit():
+		r.Reason = "output"
+	case ctx.Err() != nil:
+		r.Reason = "timeout"
+	case waitErr != nil:
+		if e, ok := waitErr.(*exec.ExitError); ok {
+			r.Reason = fmt.Sprintf("exit %d", e.ExitCode())
+		} else {
+			r.Reason = "execution failed: " + clip(waitErr.Error(), 160)
+		}
+	case held:
+		// The process itself is gone and its status was a clean exit, but the
+		// output we did capture is not proof of a version because a grandchild
+		// kept the pipe open past the drain. Name the leaked pipe rather than
+		// blaming the version command, which ran.
+		r.Reason = "output_not_closed"
+	}
+	return r
+}
+
+// drainAllowance is how long process lets a child's output copy finish after the
+// child is gone or the deadline kills it. A healthy child that printed and
+// exited gets the full grace; a child gone at the deadline gets only what the
+// budget leaves, floored, so a held pipe is closed promptly rather than kept
+// open by a fixed grace begun at cancellation.
+func drainAllowance(ctx context.Context) time.Duration {
+	return drainAllowanceAt(ctx, time.Now())
+}
+
+// drainAllowanceAt computes the remaining drain budget from the caller's time.
+func drainAllowanceAt(ctx context.Context, now time.Time) time.Duration {
+	if ctx.Err() != nil {
+		return drainFloor
+	}
+	drain := killGrace
+	if deadline, ok := ctx.Deadline(); ok {
+		drain = min(drain, deadline.Sub(now))
+	}
+	return max(drain, drainFloor)
+}
+
+type drainTimerKey struct{}
+
+// WithDrainTimer attaches a custom drain timer seam to the context.
+func WithDrainTimer(ctx context.Context, fn func(time.Duration) (<-chan time.Time, func() bool)) context.Context {
+	return context.WithValue(ctx, drainTimerKey{}, fn)
+}
+
+// clip bounds a diagnostic clause. A reason a person cannot read is not a
+// record, so the cut is marked rather than silent.
+func clip(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	return s[:max] + "..."
+}
+
+// recordedVersion reports the version an installed column HOLDS rather than names a
+// command to read: one token, beginning with a digit, carrying a dotted number, and no
+// path separator. It is what `nova-version snapshot` writes -- a reading taken at a
+// moment -- and it is unambiguous against every argv a manifest can hold: `go version` is
+// two tokens, `nova-bus` carries no dotted number, and a path to a binary carries a
+// separator.
+func recordedVersion(installed []string) (string, bool) {
+	if len(installed) != 1 {
+		return "", false
+	}
+	tok := installed[0]
+	if tok == "" {
+		return "", false
+	}
+	v := tok
+	v = strings.TrimPrefix(v, "v")
+	if v == "" || !digit.MatchString(v[:1]) || !dotted.MatchString(v) {
+		return "", false
+	}
+	if strings.ContainsAny(tok, `/\`) {
+		return "", false
+	}
+	return v, true
+}
+
+// ladder is the invocations one entry is asked for its version, in order. A manifest row
+// whose installed column is a WHOLE argv -- `go version`, `sops --version` -- is the
+// caller's sentence and is run exactly as written, once: appending to it would run a verb
+// the caller did not ask for.
+//
+// A `tool` row that names nothing but the executable is the other case.
+// `nova-version snapshot` writes such rows, and so does every hand-written manifest:
+// `nova-swarm  tool  ~/.local/bin/nova-swarm  ...`. Run bare, EVERY
+// nova tool answers a usage refusal -- the banner is behind `help`, not in front of every
+// mistake -- so the adoption pass read UNKNOWN for every one of our own tools while each
+// of them was perfectly able to say which build it was. They are asked the verb they
+// answer: `version`, then `--version`, then bare for a foreign tool that prints its
+// version with no argument at all.
+func ladder(e Entry) [][]string {
+	if len(e.Installed) != 1 || e.Kind != "tool" {
+		return [][]string{e.Installed}
+	}
+	exe := e.Installed[0]
+	return [][]string{{exe, "version"}, {exe, "--version"}, {exe}}
+}
+
+type processFunc func(context.Context, []string, io.Reader, int) ProcessResult
+
+// installed keeps the version decisions independent of the child transport.
+func installed(ctx context.Context, e Entry, timeout time.Duration, report bool, run processFunc) Read {
+	if ctx.Err() != nil {
+		return Read{Reason: "budget", Remedy: "increase --budget"}
+	}
+	// A version already in the file is not read again: no process is started, nothing is
+	// searched for on PATH, and the reading the snapshot took is what is reported.
+	if v, ok := recordedVersion(e.Installed); ok {
+		return Read{Raw: v, Version: v, Source: "manifest"}
+	}
+	// ONE deadline covers the whole ladder, not one deadline per rung: --timeout is what
+	// a friend budgeted for reading this tool, and three invocations of a hung binary
+	// must not cost three times what one costs.
+	child, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	var last Read
+	for _, argv := range ladder(e) {
+		p := run(child, argv, nil, ChildCap)
+		last = reading(e, p, report)
+		if last.Known() {
+			break
+		}
+		// A binary that is not there, a deadline spent or a held pipe is the same
+		// answer at every rung; only a refusal is worth asking again.
+		switch p.Reason {
+		case "not_found", "timeout", "budget", "output_not_closed":
+			return budgetCheck(ctx, last)
+		}
+	}
+	return budgetCheck(ctx, last)
+}
+
+// reading turns one invocation's result into the Read a report prints, with the remedy
+// that names what the person can do about this particular failure.
+func reading(e Entry, p ProcessResult, report bool) Read {
+	raw := p.Stdout
+	if raw == "" {
+		raw = p.Stderr
+	}
+	r := identity(e, raw, report)
+	r.Path = p.Path
+	if p.Reason != "" {
+		r.Reason = p.Reason
+		r.Remedy = "wrap it in a script that prints the version alone"
+		if p.Reason == "not_found" {
+			r.Remedy = "install " + e.Installed[0] + " or supply its executable path; searched PATH=" + os.Getenv("PATH")
+		}
+		if p.Reason == "timeout" {
+			r.Remedy = "increase --timeout or repair the version command"
+		}
+		if p.Reason == "output_not_closed" {
+			r.Remedy = leakRemedy
+		}
+	}
+	return r
+}
+
+// budgetCheck: a reading taken after the run's whole budget is gone is not a reading of
+// the tool, whatever the child managed to print.
+func budgetCheck(ctx context.Context, r Read) Read {
+	if ctx.Err() != nil {
+		r.Reason = "budget"
+		r.Remedy = "increase --budget"
+	}
+	return r
+}
+
+// Compare orders only equally long, plain numeric release tags. Arbitrary-size
+// components avoid both floating-point loss and machine integer overflow.
+func Compare(a, b string) string {
+	if a == b {
+		return "EQUAL"
+	}
+	if !dottedRelease.MatchString(a) || !dottedRelease.MatchString(b) {
+		return "DIFFERENT"
+	}
+	aa, bb := strings.Split(a, "."), strings.Split(b, ".")
+	if len(aa) != len(bb) {
+		return "DIFFERENT"
+	}
+	for i := range aa {
+		x, _ := new(big.Int).SetString(aa[i], 10)
+		y, _ := new(big.Int).SetString(bb[i], 10)
+		switch x.Cmp(y) {
+		case -1:
+			return "OLDER"
+		case 1:
+			return "NEWER"
+		}
+	}
+	return "DIFFERENT"
+}
+
+// ahead reports the pseudo-version's commit when installed names a build the Go toolchain
+// stamped as a commit on main after the release tag latest reports. A pseudo-version
+// vX.Y.Z-0.<stamp>-<sha> is Go's record that the build's nearest preceding release tag is
+// vX.Y.(Z-1): decrement the final component back to that tag and compare, and the string
+// alone says "this build descends from the release", with no git read to re-verify it.
+func ahead(installed, latest string) (string, bool) {
+	m := pseudo.FindStringSubmatch(installed)
+	if m == nil {
+		return "", false
+	}
+	if decPatch(m[1]) != latest {
+		return "", false
+	}
+	return m[2], true
+}
+
+// decPatch is vX.Y.Z minus one in its final component, the release tag a vX.Y.Z-0
+// pseudo-version leaves behind. A zero or absent final component has no such tag.
+func decPatch(v string) string {
+	parts := strings.Split(v, ".")
+	if len(parts) < 3 {
+		return ""
+	}
+	p, ok := new(big.Int).SetString(parts[len(parts)-1], 10)
+	if !ok || p.Sign() <= 0 {
+		return ""
+	}
+	p.Sub(p, big.NewInt(1))
+	parts[len(parts)-1] = p.String()
+	return strings.Join(parts, ".")
+}
+
+// lookPath finds name on the PATH of childEnv, or on this process's own PATH
+// when childEnv is nil.
+func lookPath(childEnv []string, name string) (string, error) {
+	if childEnv == nil || strings.ContainsRune(name, filepath.Separator) {
+		return exec.LookPath(name)
+	}
+	for _, kv := range slices.Backward(childEnv) {
+		if v, ok := strings.CutPrefix(kv, "PATH="); ok {
+			for _, dir := range filepath.SplitList(v) {
+				if p, err := exec.LookPath(filepath.Join(dir, name)); err == nil {
+					return p, nil
+				}
+			}
+			break
+		}
+	}
+	return "", exec.ErrNotFound
+}
+
+// runProcess uses the supplied transport or the real child adapter.
+func (env Environment) runProcess(ctx context.Context, args []string, input io.Reader, cap int) ProcessResult {
+	if env.Process != nil {
+		return env.Process(ctx, args, input, cap)
+	}
+	return process(ctx, env.Env, args, input, cap)
+}

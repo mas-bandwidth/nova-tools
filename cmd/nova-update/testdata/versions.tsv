@@ -1,0 +1,6 @@
+name	kind	installed	latest	apply	owner
+gh	tool	gh --version	github:cli/cli	brew upgrade gh	ada
+sops	tool	sops --version --disable-version-check	github:getsops/sops	brew upgrade sops	ada
+opencode	harness	opencode --version	npm:opencode-ai	npm install -g opencode-ai@{version}	lin
+qwen3-coder:30b	model	ollama list	ollama:qwen3-coder:30b	none	kit
+nova-wake-pin-nova-bus	pin	nova-wake version	local:nova-bus version	none	ada
