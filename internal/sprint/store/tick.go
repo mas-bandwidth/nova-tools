@@ -1927,6 +1927,9 @@ type ShadowPlan struct {
 	Parts []ShadowPart  `json:"parts"`
 	Size  int           `json:"size"`
 	Took  time.Duration `json:"took_ns"`
+	// Reads is why each read waits, read cards on (sprint.ReadCardsWhy), planned with the
+	// readers' ask
+	Reads []string `json:"reads,omitempty"`
 }
 
 // planSize is how much a plan would write: its units, notes, rows, closes and
@@ -2014,6 +2017,9 @@ func (st *Store) ShadowTick(ctx context.Context) (ShadowPlan, error) {
 					view = &v
 				}
 				p, due = part.Fn(view, req)
+				if table == sprint.Readers && part.Name == "ask" {
+					out.Reads = sprint.ReadCardsWhy(view, req.Friends)
+				}
 			}
 			if p.Empty() && due == 0 {
 				continue
