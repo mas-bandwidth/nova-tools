@@ -184,6 +184,14 @@ func TestFinishAcceptsAReportForAnAttemptTheDeadlineFailed(t *testing.T) {
 		rules(w, on(amy))
 		assert.Contains(t, w.s.Work.Card("s1-1").F("fix"), "internal/x/a.go:40", "reworked with the HOLD's findings")
 	})
+	t.Run("an attempt its worker failed: a retried finish is refused as before", func(t *testing.T) {
+		t.Parallel()
+		w, _ := friendInReview(t, true, "friend amy FAIL: red")
+		p := Finish(w.s, FinishReq{Sel: Sel{IDs: []string{"s1-1.w1"}}, Gens: gensOf(w.s, "s1-1.w1"), Failed: true, Report: "friend amy FAIL: red"})
+		require.Len(t, p.Refused, 1, "the worker's own failure was its report")
+		assert.Contains(t, p.Refused[0].Why, "not working")
+		assert.Equal(t, 1, w.s.Work.Card("s1-1").Int("failed"), "counted once")
+	})
 	t.Run("a later attempt started: refused as before", func(t *testing.T) {
 		t.Parallel()
 		w, amy := friendInReview(t, true, harnessFaults["lane died"])
