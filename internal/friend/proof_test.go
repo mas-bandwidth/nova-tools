@@ -408,7 +408,7 @@ func TestADaemonWaitsForItsProofInsteadOfExiting(t *testing.T) {
 		require.Len(t, r.lines("push proof: proved"), 1)
 		got := r.h.got()
 		require.Len(t, got, 3, "the waiting message went in once the push was proved")
-		assert.Contains(t, got[2], `subject="card dealt"`)
+		assert.Contains(t, got[2], "subject=card dealt\n")
 	})
 }
 
@@ -498,7 +498,7 @@ func TestAQuietDshSessionStillGetsTheNextDelivery(t *testing.T) {
 		mu.Lock()
 		defer mu.Unlock()
 		require.Len(t, texts, 2, "both messages went in as headless turns: %q", texts)
-		assert.Contains(t, texts[1], `subject="next"`)
+		assert.Contains(t, texts[1], "subject=next\n")
 		assert.LessOrEqual(t, ranAt[1]-sentAt, 2, "the next message goes in the step after it arrives, quiet or not")
 		all := strings.Join(r.records, "\n")
 		assert.NotContains(t, all, "deferred", "nothing was deferred")

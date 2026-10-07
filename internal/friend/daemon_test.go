@@ -709,6 +709,7 @@ func TestATurnStampsItsMessagesReadAndActed(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, bus.Acted, got[0].State)
 }
+
 // head is a message's line in an envelope (docs/SPEC-FRIEND.md, the loop).
 func head(i, n int, m bus.Message, age int) string {
 	return fmt.Sprintf("[%d/%d] %s from=%s at=%s age=%dm subject=%s\n", i, n, m.ID, m.From, m.At.Format(time.RFC3339), age, m.Subject)
@@ -821,7 +822,12 @@ func TestTheSupersedeRuleNeverDropsAMessageOnTheStream(t *testing.T) {
 	r.run(t, 4)
 	require.Len(t, r.delivered, 1)
 	for i, m := range []bus.Message{s1, s2, work} {
-		assert.Contains(t, r.delivered[0], head(i+1, 3, m, 0)+m.Body+"\n")
+		assert.Contains(t, r.delivered[0], head(i+1, 3, m, 0))
+		prefix := "\n"
+		if m.From != "ada" {
+			prefix += "> "
+		}
+		assert.Contains(t, r.delivered[0], prefix+m.Body+"\n")
 	}
 	assert.NotContains(t, strings.Join(r.records, "\n"), "superseded=")
 	pending, fresh, err := r.bus.Peek(context.Background(), "bob")
@@ -879,13 +885,13 @@ func TestTheEnvelopeNamesWhatDidNotFit(t *testing.T) {
 		{ID: "m2", From: "ada", At: t0.Add(time.Minute), Subject: "two", Body: "y"},
 		{ID: "m3", From: "ada", At: t0.Add(2 * time.Minute), Subject: "three", Body: "z"},
 	}
-	text, shown := Envelope(msgs, now, "bob", 300, "", "")
+	text, shown := Envelope("ada", msgs, now, "bob", 300, "", "")
 	assert.Equal(t, 1, shown)
 	assert.Contains(t, text, head(1, 3, msgs[0], 10)+strings.Repeat("x", 200)+"\n")
 	assert.True(t, strings.HasSuffix(text, "\nand 2 more: nova-bus recv --as bob --all\n"), "the first message alone passes the limit: only the count line follows it: %q", text)
 	assert.NotContains(t, text, "\ny\n")
 
-	text, shown = Envelope(msgs, now, "bob", 460, "", "")
+	text, shown = Envelope("ada", msgs, now, "bob", 460, "", "")
 	assert.Equal(t, 2, shown)
 	assert.LessOrEqual(t, len(text), 460)
 	assert.True(t, strings.HasSuffix(text, "\nand 1 more: nova-bus recv --as bob --all\n"), "the id line does not fit, the count line does: %q", text)
@@ -896,7 +902,7 @@ func TestTheEnvelopeNamesWhatDidNotFit(t *testing.T) {
 	}
 	named := 0
 	for limit := 400; limit <= 1000; limit += 7 {
-		text, shown = Envelope(many, now, "bob", limit, "", "")
+		text, shown = Envelope("ada", many, now, "bob", limit, "", "")
 		assert.LessOrEqual(t, len(text), limit, "limit %d, shown %d", limit, shown)
 		assert.Less(t, shown, len(many))
 		assert.Contains(t, text, fmt.Sprintf("and %d more: nova-bus recv --as bob --all\n", len(many)-shown))
@@ -906,7 +912,7 @@ func TestTheEnvelopeNamesWhatDidNotFit(t *testing.T) {
 	}
 	assert.Positive(t, named, "where the limit allows, the rest are named by id after the count")
 
-	text, shown = Envelope(msgs, now, "bob", 0, "", "")
+	text, shown = Envelope("ada", msgs, now, "bob", 0, "", "")
 	assert.Equal(t, 3, shown, "no limit: every message")
 	assert.NotContains(t, text, "more:")
 
@@ -931,3 +937,80 @@ type limited struct {
 }
 
 func (l limited) TextLimit() int { return l.n }
+
+// The pending set has no message-count cap: the adapter's text limit alone
+// decides what enters a turn (docs/SPEC-FRIEND.md, the loop).
+func TestTheEnvelopeIncludesMessagesBeyondTheOldReadCap(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name  string
+		limit int
+		body  string
+	}{
+		{name: "all fit", limit: 65536, body: "work"},
+		{name: "rest counted", limit: 1200, body: strings.Repeat("x", 200)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r := newRig(t)
+			r.d.Deliver = limited{r, tc.limit}
+			var msgs []bus.Message
+			for i := 0; i < 33; i++ {
+				msgs = append(msgs, r.send(t, "ada", fmt.Sprintf("work %d", i), tc.body))
+			}
+			r.run(t, 4)
+			require.NotEmpty(t, r.delivered)
+			text := r.delivered[0]
+			assert.Contains(t, text, "nova-friend: 33 message(s) for you")
+			assert.LessOrEqual(t, len(text), tc.limit)
+			if tc.name == "all fit" {
+				assert.Contains(t, text, "[33/33] "+msgs[32].ID)
+				assert.Equal(t, 33, r.last().Delivered)
+			} else {
+				shown := strings.Count(text, "\n"+tc.body+"\n")
+				require.Positive(t, shown)
+				assert.Contains(t, text, fmt.Sprintf("and %d more: nova-bus recv --as bob --all", 33-shown))
+			}
+		})
+	}
+}
+
+// Answering any number of keepalive pings keeps no proof ids: daemon-pongs
+// are already excluded by subject (docs/SPEC-FRIEND.md, the loop).
+func TestAnsweringManyPingsKeepsNoProofIDs(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	r.d.m = Start(t0)
+	r.d.m.Ping(t0, "ada", t0, "open-challenge")
+	for i := 0; i < 1000; i++ {
+		r.d.daemonPong(context.Background(), r.bus, bus.Message{From: "ada"}, fmt.Sprint(i), t0)
+	}
+	assert.Empty(t, r.d.own)
+}
+
+// Proof ids live only until their line is scanned or a newer ping makes
+// them too old to prove life (docs/SPEC-FRIEND.md, the loop).
+func TestProofIDsAreReleasedAfterReadingOrANewerPing(t *testing.T) {
+	t.Parallel()
+	for _, event := range []string{"scan", "new ping"} {
+		t.Run(event, func(t *testing.T) {
+			t.Parallel()
+			r := newRig(t)
+			r.d.m = Start(t0)
+			l := &loop{d: r.d, b: r.bus, ctx: context.Background(), answered: map[string]bool{}}
+			l.ping(bus.Entry{Entry: "ping"}, bus.Message{From: "ada", At: t0}, "n1", "ada", t0, t0)
+			r.store.Advance(time.Second)
+			sent, err := r.d.send(l.ctx, r.bus, bus.Message{From: "bob", To: []string{"ada"}, Subject: "status", Body: "daemon status"})
+			require.NoError(t, err)
+			require.Len(t, r.d.own, 1)
+			if event == "scan" {
+				l.sessionProof()
+			} else {
+				next := sent.At.Add(time.Second)
+				l.ping(bus.Entry{Entry: "ping2"}, bus.Message{From: "ada", At: next}, "n2", "ada", t0, next)
+			}
+			assert.Empty(t, r.d.own)
+			assert.NotEqual(t, Quiet, r.d.m.Challenge, "a daemon send proves nothing even when its id is released")
+		})
+	}
+}
