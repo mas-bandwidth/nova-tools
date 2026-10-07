@@ -201,6 +201,8 @@ func TestBackupOutPrintsItsResultLine(t *testing.T) {
 	require.Equal(t, 0, code, "backup: exit %d\n%s%s", code, stdout, stderr)
 	require.Contains(t, stdout, "BACKUP OK out="+out+" ", "the OK line names the out directory")
 	require.Contains(t, stdout, "restored=twin", "the restore-check verdict")
+	require.Contains(t, stdout, "restore=semantic compared=state+counts", "a twin's restore is the sprint's state, not its counts")
+	require.NotContains(t, stdout, "integrity only", "a semantic restore is not labelled integrity")
 	require.Contains(t, stdout, "parts=", "the parts")
 	require.Contains(t, stdout, "bytes=", "the bytes")
 	require.Contains(t, stdout, "secrets=1 matched=0", "the scan's verdict")
