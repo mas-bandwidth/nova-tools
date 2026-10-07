@@ -16,7 +16,6 @@ internal/ci/testdata/generality-text/.github/workflows.txt this scan's ledger: e
 internal/ci/testdata/generality-text/docs.txt this scan's ledger: each row is a file:token count, so it names the tokens it counts
 internal/ci/testdata/generality-text/internal/ci/testdata.txt this scan's ledger: each row is a file:token count, so it names the tokens it counts
 internal/ci/testdata/generality-text/tla.txt this scan's ledger: each row is a file:token count, so it names the tokens it counts
-internal/ci/testdata/generality/internal/swarm.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
 internal/ci/testdata/generality/tools/ghrelease.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
 internal/tlc/testdata/temporal-new.log captured TLC model checker output
 internal/tlc/testdata/temporal-old.log captured TLC model checker output
