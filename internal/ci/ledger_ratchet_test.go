@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -60,12 +61,14 @@ func parseLedgerRows(text string) (keys map[string]bool, ceiling int) {
 // ledgerShardGrowth compares a counted shard's base text with its head text:
 // every head row key the base lacks, and a head ceiling above the base's. A
 // head with no ceiling over a base with one is a raise; adding a ceiling when
-// the base had none is not a raise.
+// the base had none is not a raise. A row keyed by file:function:kind whose
+// function moved to a sibling Go file (movedWithin) is the same row, not one
+// the base lacks: the debt followed the function and did not grow.
 func ledgerShardGrowth(base, head string) (added []string, raisedCeiling bool) {
 	baseKeys, baseCeiling := parseLedgerRows(base)
 	headKeys, headCeiling := parseLedgerRows(head)
 	for key := range headKeys {
-		if !baseKeys[key] {
+		if !baseKeys[key] && !movedWithin(baseKeys, key) {
 			added = append(added, key)
 		}
 	}
@@ -74,6 +77,30 @@ func ledgerShardGrowth(base, head string) (added []string, raisedCeiling bool) {
 		raisedCeiling = true
 	}
 	return added, raisedCeiling
+}
+
+// movedWithin reports whether key is a base row moved to another Go file in the
+// same directory, keeping the rest of its `file:function:kind` key. The remedy
+// shard keys its rows that way, so when a pure move puts a refusal site's
+// function in a sibling file, the same row under the new file is the same debt,
+// not a row the base lacks. A key naming no Go file, or whose function-and-kind
+// remainder differs, is not a move and stays growth; a package:rule key (a
+// staticcheck shard) names no `.go` file and is never read as a move.
+func movedWithin(baseKeys map[string]bool, key string) bool {
+	file, rest, ok := strings.Cut(key, ":")
+	if !ok || rest == "" || !strings.HasSuffix(file, ".go") {
+		return false
+	}
+	for base := range baseKeys {
+		baseFile, baseRest, ok := strings.Cut(base, ":")
+		if !ok || baseFile == file || baseRest != rest || !strings.HasSuffix(baseFile, ".go") {
+			continue
+		}
+		if path.Dir(baseFile) == path.Dir(file) {
+			return true
+		}
+	}
+	return false
 }
 
 // shardProblems evaluates growth for a single shard against its base text.
@@ -456,6 +483,29 @@ func testCountedShardInMemory(t *testing.T) {
 	require.Equal(t, []string{
 		"internal/ci/testdata/rule/shard.txt is not in the merge base 123456789: a new shard is all growth; justify it beside the rule it measures",
 	}, absent)
+
+	// A row keyed by file:function:kind follows its function to a sibling Go
+	// file: the moved key is the same row, not growth.
+	moveBase := "# remedy\ncmd/nova-fuse/main.go:cmdLockdown:refuse-print 1 why\n# ceiling: 1\n"
+	moveHead := "# remedy\ncmd/nova-fuse/blow.go:cmdLockdown:refuse-print 1 why\n# ceiling: 1\n"
+	added, raised = ledgerShardGrowth(moveBase, moveHead)
+	require.Empty(t, added, "a row that moved with its function to a sibling Go file is not growth")
+	require.Equal(t, false, raised, "a move keeps the ceiling")
+
+	// A different function in the moved-to file, or the same function in another
+	// directory, is still growth.
+	otherFn := "# remedy\ncmd/nova-fuse/blow.go:cmdQuarantine:refuse-print 1 why\n# ceiling: 1\n"
+	added, _ = ledgerShardGrowth(moveBase, otherFn)
+	require.Equal(t, []string{"cmd/nova-fuse/blow.go:cmdQuarantine:refuse-print"}, added, "a new function's row is growth")
+	otherDir := "# remedy\ncmd/other/main.go:cmdLockdown:refuse-print 1 why\n# ceiling: 1\n"
+	added, _ = ledgerShardGrowth(moveBase, otherDir)
+	require.Equal(t, []string{"cmd/other/main.go:cmdLockdown:refuse-print"}, added, "a key that moved to another directory is growth")
+
+	// A package:rule key names no Go file, so a changed package is growth.
+	scBase := "# staticcheck\ncmd/nova-sandbox:SA4006 1 why\n# ceiling: 1\n"
+	scHead := "# staticcheck\ncmd/nova-foo:SA4006 1 why\n# ceiling: 1\n"
+	added, _ = ledgerShardGrowth(scBase, scHead)
+	require.Equal(t, []string{"cmd/nova-foo:SA4006"}, added, "a package:rule key that changed package is growth")
 }
 
 func testSlowAndSleepInMemory(t *testing.T) {
