@@ -150,3 +150,47 @@ func TestAHarnessFaultFailureReworksTheCardByRule(t *testing.T) {
 		}
 	})
 }
+
+func TestFinishAcceptsAReportForAnAttemptTheDeadlineFailed(t *testing.T) {
+	t.Parallel()
+	t.Run("a LAND finishes the failed attempt ok", func(t *testing.T) {
+		t.Parallel()
+		w, _ := friendInReview(t, true, harnessFaults["lane died"])
+		require.Len(t, openOf(w, NWorkFailed, "s1-1"), 1)
+		p := w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{"s1-1.w1"}}, Gens: gensOf(w.s, "s1-1.w1"), Head: answerHead, Report: "friend amy LAND: done, the tests pass"}))
+		require.Len(t, p.Units, 1)
+		wc := w.s.Fleet.Card("s1-1.w1")
+		assert.Equal(t, DoneOK, wc.Col, "the attempt is finished ok")
+		assert.Equal(t, answerHead, wc.F("head"))
+		pr := w.s.Work.Card("s1-1")
+		assert.Equal(t, Review, pr.Col)
+		assert.Equal(t, "ok", pr.F("result"), "its work stands")
+		assert.Equal(t, answerHead, pr.F("head"))
+		assert.Equal(t, 1, pr.Int("attempt"), "the card does not go round again")
+		assert.Equal(t, 1, pr.Int("failed"), "the deadline's failure is not counted twice")
+		assert.Empty(t, openOf(w, NWorkFailed, "s1-1"), "the failed judgment is closed")
+		assert.Contains(t, p.Units[0].Moved, "late report", "the log says why it finished from failed")
+	})
+	t.Run("a HOLD replaces the failure with its findings", func(t *testing.T) {
+		t.Parallel()
+		w, amy := friendInReview(t, true, harnessFaults["lane died"])
+		hold := "friend amy HOLD: internal/x/a.go:40 asserts the old name; the brief's rename misses it"
+		w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{"s1-1.w1"}}, Gens: gensOf(w.s, "s1-1.w1"), Failed: true, Report: hold}))
+		pr := w.s.Work.Card("s1-1")
+		assert.Equal(t, 1, pr.Int("failed"), "one failed attempt")
+		open := openOf(w, NWorkFailed, "s1-1")
+		require.Len(t, open, 1, "one judgment, the HOLD's")
+		assert.Contains(t, open[0].Note.What, "internal/x/a.go:40")
+		rules(w, on(amy))
+		assert.Contains(t, w.s.Work.Card("s1-1").F("fix"), "internal/x/a.go:40", "reworked with the HOLD's findings")
+	})
+	t.Run("a later attempt started: refused as before", func(t *testing.T) {
+		t.Parallel()
+		w, amy := friendInReview(t, true, harnessFaults["lane died"])
+		rules(w, on(amy))
+		require.Equal(t, 1, w.s.Work.Card("s1-1").Int("reworks"))
+		p := Finish(w.s, FinishReq{Sel: Sel{IDs: []string{"s1-1.w1"}}, Gens: gensOf(w.s, "s1-1.w1"), Head: answerHead, Report: "friend amy LAND: done"})
+		require.Len(t, p.Refused, 1, "the attempt after it has begun")
+		assert.Contains(t, p.Refused[0].Why, "not working")
+	})
+}

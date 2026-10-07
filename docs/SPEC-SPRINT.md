@@ -4851,6 +4851,23 @@ keeps the `the brief is wrong` judgment, a brief defect stays a person's, and a 
 card that has not landed is `hold-need`'s. A failure outside every class stays the judgment
 `work came back failed` (`TestAHarnessFaultFailureReworksTheCardByRule`).
 
+#### A late report finishes the failed attempt
+
+A deadline and a finisher can race: a lane ended at its deadline fails its attempt, and the
+worker's real report, LAND or HOLD, arrives after it. `finish` named by id accepts that
+report when the attempt is failed and no later attempt has started (`sprint.lateFinish`: the
+work card done failed, its primary in review on it at its attempt, its result failed), where
+it once refused it as `not working (it is <row>:failed)` and the card went round again for
+work that was done. A LAND moves the work card to done ok at its head and the primary's
+result to ok, and the reads are asked as for any finish; a HOLD replaces the failure with its
+own report, counted as the one failed attempt it is. The attempt's open `work came back
+failed`, bound and stranded judgments close in the same step, a late finish frees no lane on
+the worker's row, and the log says `a late report for the attempt the deadline failed`. A
+report that is itself a provider failure, a take with no result, a staging refusal or a lane
+cap, and a report carrying an attempt decision, are still refused; once a later attempt has
+started the old one stays failed (`TestFinishAcceptsAReportForAnAttemptTheDeadlineFailed`,
+`TestALateLandFinishesTheFailedAttemptOnTheStore`).
+
 #### paths-proposed-answered-by-rule
 
 A HOLD that proposes PATHS is the tick's (the owner, 2026-10-05: "every step the coordinator
