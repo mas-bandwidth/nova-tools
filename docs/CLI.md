@@ -1251,6 +1251,16 @@ keeps `state` as a deprecated alias of `column` for one release. `needs` labels
 the waiting card as `card <id> column <c>` and each unmet need as
 `need <id> column <c>`; JSON names both columns separately on their objects.
 
+`needs --max n` caps the displayed streams, cards, unmet needs, width rows and
+cycle ids independently across one answer. Totals, depths, roots and each
+shown width's count describe the complete graph. Each truncated list has a
+`more` object with `shown`, `total`, `omitted`, `first_hidden` and an exact
+`command` that reveals the full list; width and cycle lists use `width_more`
+and `cycle_more`. Text prints the same facts in `MORE kind=...` lines after
+that list. Hidden needs still carry their count and boundary id, including
+when none are displayed. `needs --max 0` prints the full graph; drill-down
+commands preserve `--stream`, `--roots` and `--json` as appropriate.
+
 A `<selector>` is `--stream <s>`, `--who <friend.<name>|friend|none>`, `--state <ready|waiting|held|merging>` and `--ids-file <path>`, combinable: the verb changes every
 card it selects in one store step, prints one line per card and the total, and with
 `--dry-run` lists what would change and writes nothing (docs/SPEC-SPRINT.md, "One
