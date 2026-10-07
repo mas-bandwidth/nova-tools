@@ -35,7 +35,7 @@ package goenv
 import (
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/keyshape"
+	"github.com/nova-tools/internal/keyshape"
 )
 
 // Removed is the documented list of what Clean drops, and the only list. It is
