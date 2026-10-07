@@ -3067,6 +3067,36 @@ the original failed measurement.
 **`secrets-check-reads-fixtures` — the secrets-in-errors check is held against openers whose answer is known.** *The rule.* The check that reads an opener's output for a secret finds an opener that echoes its DSN, one that wraps the secret with `%w`, one that logs it and one that panics with it; it passes an opener that names only a type; it puts the boundary at exactly eight bytes; it does not count a token's public prefix as the secret; each shape's marker is its own; and the comparison of the table with the tree refuses a function the table lacks and a row the tree lacks. *The mistake it prevents.* A check that passes everything reads like cover: a scan that looked in the wrong text, or at the wrong length, would be green over a tree that leaks. *The test.* `TestSecretCheckReadsItsFixtures` (`internal/ci/secrets_in_errors_class_test.go`). *Its allowlist.* None. *Its remedy line.* None of its own; it fails with the assertion that names the case. *Its narrowings.* It holds the check's decisions, not the openers: which functions leak is `TestNoSecretReachesAnError`'s answer.
 
 
+### `never-force` — refuse force-push or hard-reset of shared refs
+
+**The rule.** Nothing in nova-tools may rewrite a shared ref. The class test
+reads every Go source, Makefile, workflow and card template under the
+repository root, and refuses patterns that force-push or hard-reset shared refs.
+The allowed shape is a normal push or reset to a private branch (origin/
+anything>, dev, main).
+
+**The mistake it prevents.** Force-push of shared branches like `dev` or
+`sprint/*` that other workers rely on: a worker accidentally ran `push --force`
+or `reset --hard origin/` on a shared ref, overwriting everyone else's work and
+breaking the sprint.
+
+**The test.** `TestNoForcePushOrHardResetOfASharedRef` (`internal/ci/never_force_class_test.go`):
+walks from the repository root and reads every `.go`, `.sh`, `Makefile`, `.yml`
+and `.yaml` file under `internal/`, `cmd/`, `fleet/`, `scripts/`, `infra/` and
+`tools/`, and refuses patterns that force-push or hard-reset shared refs. The
+patterns are `push --force`, `push -f`, `--force-with-lease`, `push origin +`,
+and `reset --hard origin/`.
+
+**Its allowlist.** `internal/ci/never_force_allowlist.txt`, one `file:line` per
+row, shrink-only: a line whose pattern is gone or was legitimate (a test fixture
+that asserts the refusal) is red until deleted. The ledger is empty at start.
+
+**Its remedy line.** `<file> <line>: push --force|push -f|--force-with-lease|push origin +|reset --hard origin/; use a normal push or reset; never force a shared ref (docs/SPEC-CI.md, never-force)`.
+
+**Its narrowings.** It reads text, so a force-push reached through a variable or
+a helper in another file is not seen; testdata directories are skipped so
+fixtures are never read as offenders.
+
 ## How the class tests read the tree: one walk, one parse, in parallel
 
 Every rule above is a sweep of this repository's own source. A rule that pays

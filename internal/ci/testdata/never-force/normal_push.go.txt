@@ -1,0 +1,9 @@
+package fixture
+
+import "testing"
+
+func TestNormalPush(t *testing.T) {
+	// This is allowed: a normal push without force
+	pushCmd := "push origin dev"
+	_ = pushCmd
+}

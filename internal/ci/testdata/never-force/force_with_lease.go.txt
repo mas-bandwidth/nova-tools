@@ -1,0 +1,8 @@
+package fixture
+
+import "testing"
+
+func TestForceWithLease(t *testing.T) {
+	pushCmd := "push --force-with-lease origin dev"
+	_ = pushCmd
+}

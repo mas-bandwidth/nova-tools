@@ -1,0 +1,9 @@
+package fixture
+
+import "testing"
+
+func TestPushForce(t *testing.T) {
+	// This is the forbidden pattern
+	pushCmd := "push --force origin dev"
+	_ = pushCmd
+}

@@ -1,0 +1,8 @@
+package fixture
+
+import "testing"
+
+func TestResetHardOrigin(t *testing.T) {
+	resetCmd := "reset --hard origin/main"
+	_ = resetCmd
+}

@@ -1,0 +1,8 @@
+package fixture
+
+import "testing"
+
+func TestPushMinusF(t *testing.T) {
+	pushCmd := "push -f origin dev"
+	_ = pushCmd
+}
