@@ -231,10 +231,16 @@ func TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine(t *testing.T) {
 	// The fold WRITES, so it runs against a copy of the fixture in t.TempDir()
 	// and the test moves into it; the documented paths are relative to here.
 	fixture := fixtureIn(t)
-	for _, s := range steps {
+	for _, p := range onboarding.Execute(steps, runDocumented(fixture)) {
+		assert.Fail(t, "%v", p)
+	}
+}
+
+// runDocumented returns a runner that converts relative fixture paths to absolute paths
+func runDocumented(fixture string) onboarding.Runner {
+	return func(s onboarding.Step) (onboarding.Result, error) {
 		if s.Stdin != "" {
-			assert.Fail(t, "the documented command reads from %q, and nova-tokens takes no stdin", s.Stdin)
-			continue
+			return onboarding.Result{}, fmt.Errorf("the documented command reads from %q, and nova-tokens takes no stdin", s.Stdin)
 		}
 		// Convert relative fixture paths to absolute paths
 		args := make([]string, len(s.Args))
@@ -250,28 +256,6 @@ func TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine(t *testing.T) {
 		}
 		var out, errb bytes.Buffer
 		code := run(args, &out, &errb, firstRunStamp)
-		result := onboarding.Result{Code: code, Stdout: out.String(), Stderr: errb.String()}
-		for _, line := range strings.Split(result.Stdout+result.Stderr, "\n") {
-			if line != "" {
-				assert.Fail(t, "the documented command\n  "+strings.Join(s.Args, " ")+
-					"\n prints\n  "+line)
-			}
-		}
-	}
-}
-
-// runDocumented calls this binary's own entry point with the documented
-// arguments and the clock the transcript was produced under. nova-tokens takes
-// no stdin, so a step that names a `< path` is reported rather than quietly run
-// without it.
-func runDocumented(t *testing.T) onboarding.Runner {
-	t.Helper()
-	return func(s onboarding.Step) (onboarding.Result, error) {
-		if s.Stdin != "" {
-			return onboarding.Result{}, fmt.Errorf("the documented command reads from %q, and nova-tokens takes no stdin", s.Stdin)
-		}
-		var out, errb bytes.Buffer
-		code := run(s.Args, &out, &errb, firstRunStamp)
 		return onboarding.Result{Code: code, Stdout: out.String(), Stderr: errb.String()}, nil
 	}
 }
