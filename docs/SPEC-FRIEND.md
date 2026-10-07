@@ -575,6 +575,14 @@ The table's status cell shows reason and until for a hold and an observation onl
 (`internal/sprint/store/friends.go`, `friendRows`); a down beat's pair is on her
 report and in why she is down.
 
+### Every harness's credit and quota refusal (cmd/nova-friend/limit.go)
+
+A harness that refuses for credits or quota marks the friend down whatever harness it is, not only the ones whose wording is already known. One table holds each harness's provider 402 and the wordings the harness prints itself, every harness the daemon runs: claude, codex, opencode, grok, antigravity, dsh and gemini, credits before quota so a line that says both is the balance. A lane's evidence is read from the four places it leaves it -- the lane's stdout, its stderr, the harness log it writes and the REPORT.md it leaves (`LaneText`, `ReadRefusal`) -- and the first line that matches a row is the reason. The antigravity and gemini rows are their real refusals ("Insufficient AI Credits. Your credits will refresh 6:52 PM." and "Your prepayment credits are depleted."). The lane step (`cmd/nova-friend/main.go`) reads each failed lane's output and the runner log beside her working directory and hands a hit the harness's own wording did not name to the daemon's own limit path (`friend.Limits.Refuse`), so it takes the same hold, status and seat line as a limit the harness names itself.
+
+On a match the daemon sends `nova-sprint friend down <friend> --reason 'no credits: <harness>: <first line>' --until <now + the row's credit_retry, default 24h>` through its existing sprint call (`DownArgv`), so every begun card is handed back, the status says `session=limited limit_kind=<kind> limit_until=<t>` and the seat is told once as a judgment. The daemon keeps beating; at the until it tries one lane, and a second refusal is a new down.
+
+A refusal the table does not know is never silently retried: three lanes in a row that end with the same first error line surface to the seat as one judgment, `lanes failing alike: <line>` (`RefusalWatch`, `AlikeLanes`, `friend.LimitAlikeText`), and a different line starts the count again. `TestEveryHarnessCreditRefusalMarksTheFriendDown`, `TestALaneErrorThatIsNotARefusalChangesNothing` and `TestThreeAlikeLanesSurfaceOneJudgmentAndNoDown` pin the table, a non-refusal and the judgment.
+
 ### The harness check (internal/friend/alive.go)
 
 Presence is the session's check (above); this one says whether the harness
