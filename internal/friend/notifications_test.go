@@ -108,8 +108,13 @@ func TestNotificationOnlyNeverInvokesNativeMutationHooks(t *testing.T) {
 			state, err := ReadNotificationState(r.d.NotificationStateDir)
 			require.NoError(t, err)
 			if fail {
-				require.NotNil(t, state.Pending)
-				assert.False(t, state.Pending.Accepted)
+				pending := state.Pending
+				if pending == nil {
+					pending = state.Report
+				}
+				require.NotNil(t, pending)
+				assert.False(t, pending.Accepted)
+				assert.Contains(t, pending.Text, "retain this input")
 			}
 		})
 	}
