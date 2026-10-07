@@ -39,13 +39,27 @@ func TestDashboardReadsTheSprintAsWhereJSONDoes(t *testing.T) {
 	assert.JSONEq(t, want, string(v.Data))
 }
 
-// A read where refuses is the dashboard's failed read, with where's own line.
+// A read where refuses is the dashboard's failed read: the page is shown the exit alone,
+// and where's own line goes to the log, never to the page.
 func TestDashboardReadFailureIsWheresRefusal(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
 	_, err := ta.a.whereJSON("", false) // no init: no sprint here yet
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "where exited 1: nova-sprint where: this store: no sprint here yet")
+
+	var log strings.Builder
+	srv := ta.a.dashboardServer("", false, "", time.Second, "", &log)
+	srv.Tick()
+	var v struct {
+		OK    bool   `json:"ok"`
+		Error string `json:"error"`
+	}
+	require.NoError(t, json.Unmarshal(srv.Snapshot(), &v))
+	assert.False(t, v.OK)
+	assert.Equal(t, "where exited 1", v.Error)
+	assert.NotContains(t, string(srv.Snapshot()), "no sprint here yet")
+	assert.Contains(t, log.String(), "read failed: where exited 1: nova-sprint where: this store: no sprint here yet")
 }
 
 // The page listens on loopback and the fleet's private network only, each address once.
