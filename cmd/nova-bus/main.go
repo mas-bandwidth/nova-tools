@@ -223,7 +223,7 @@ example: nova-bus wait --as bob --timeout 1s`,
 			},
 			{
 				Name:    "send",
-				Usage:   "send [--as <me>] --to <a,b> [--cc <c>] --subject <s> (--body <text> | --stdin) [--re <id>] [--kind <k>] [--token <t>] [--redis <addr>] [--dry-run]",
+				Usage:   "send [--as <me>] --to <a,b> [--cc <c>] --subject <s> (--body <text> | --stdin) [--re <id>] [--kind <k>] [--token <t>] [--timeout <duration>] [--redis <addr>] [--dry-run]",
 				Example: `send --as ada --to bob --subject hello --body "are you there?"`,
 				Effect:  tool.Delivery + ": one entry on every recipient's stream and the log, in one transaction",
 				DryRun:  true,
@@ -256,7 +256,9 @@ Delivery to a reader is still at least once: a reader may be handed one message 
 					f.Duration("token-life", bus.DefaultTokenLife, "how long a retry under --token answers the first send")
 					f.Duration("token-cleanup", bus.DefaultTokenCleanup, "when the store drops the token (never before its life ends)")
 					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else the fleet row's bus from the sprint store)")
+					callTimeoutFlag(f)
 					f.Check(func(c *tool.Call) {
+						refuseNonPositiveTimeout(c)
 						if c.Given("body") == c.Given("stdin") {
 							c.Problem("the body comes from exactly one of --body <text> or --stdin")
 						}
@@ -269,7 +271,7 @@ Delivery to a reader is still at least once: a reader may be handed one message 
 			},
 			{
 				Name:    "peek",
-				Usage:   "peek [--as <me>] [--kind <k>[,<k>]] [--redis <addr>]",
+				Usage:   "peek [--as <me>] [--kind <k>[,<k>]] [--timeout <duration>] [--redis <addr>]",
 				Example: "peek --as bob",
 				Effect:  tool.Inspection,
 				Detail: `Prints PEEK OK pending=<n> new=<n>, then one PEEK MESSAGE state=<pending|new> id=<id> from=<name>
@@ -279,12 +281,14 @@ Delivery to a reader is still at least once: a reader may be handed one message 
 					f.String("as", "", "your name, the recipient: the login user when there is one (then it may be left out)")
 					f.String("kind", "", "only these kinds, comma-separated, of "+strings.Join(bus.Kinds, ", ")+" (default: every kind)")
 					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else the fleet row's bus from the sprint store)")
+					callTimeoutFlag(f)
+					f.Check(refuseNonPositiveTimeout)
 				},
 				Run: w.peek,
 			},
 			{
 				Name:    "recv",
-				Usage:   "recv [--as <me>] [--kind <k>[,<k>]] [--max <n> | --all] [--ack] [--exec <command>] [--forever --exec <command>] [--redis <addr>] [--dry-run]",
+				Usage:   "recv [--as <me>] [--kind <k>[,<k>]] [--max <n> | --all] [--ack] [--exec <command>] [--forever --exec <command>] [--timeout <duration>] [--redis <addr>] [--dry-run]",
 				Example: "recv --as bob --exec true",
 				Effect:  tool.Delivery + ": moves one message to pending; with --exec it runs the command and acks on exit 0",
 				DryRun:  true,
@@ -314,7 +318,9 @@ before kinds existed.`,
 					f.Bool("forever", false, "loop over every message, delivering each with --exec, until a signal")
 					f.String("exec", "", "a shell command run with each message on its stdin; exit 0 acks the message")
 					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else the fleet row's bus from the sprint store)")
+					callTimeoutFlag(f)
 					f.Check(func(c *tool.Call) {
+						refuseNonPositiveTimeout(c)
 						if c.Bool("forever") && c.Str("exec") == "" {
 							c.Problem("--forever wants --exec <command>: a loop that acks nothing would hand out the same message for ever")
 						}
@@ -336,7 +342,7 @@ before kinds existed.`,
 			},
 			{
 				Name:    "ack",
-				Usage:   "ack [--as <me>] --id <id,...> [--redis <addr>] [--dry-run]",
+				Usage:   "ack [--as <me>] --id <id,...> [--timeout <duration>] [--redis <addr>] [--dry-run]",
 				Example: "ack --as bob --id 01ARZ3NDEKTSV4RRFFQ69G5FAV",
 				Effect:  tool.Delivery + ": acks the messages on your stream",
 				DryRun:  true,
@@ -348,12 +354,14 @@ user, as in send. --dry-run acks nothing: acked= says which ids are pending for 
 					f.String("as", "", "your name, the recipient: the login user when there is one (then it may be left out)")
 					f.Required("id", "the message ids, comma-separated, as recv printed them")
 					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else the fleet row's bus from the sprint store)")
+					callTimeoutFlag(f)
+					f.Check(refuseNonPositiveTimeout)
 				},
 				Run: w.ack,
 			},
 			{
 				Name:   "receipts",
-				Usage:  "receipts [--as <me>] [--id <id,...>] [--max <n>] [--redis <addr>]",
+				Usage:  "receipts [--as <me>] [--id <id,...>] [--max <n>] [--timeout <duration>] [--redis <addr>]",
 				Effect: tool.Inspection,
 				Detail: `Prints RECEIPTS OK count=<n>, then one RECEIPTS RECEIPT id=<id> state=<delivered|read|acted|none>
 age=<duration> line per message: how far each message to you has come, and how long it has stood
@@ -368,12 +376,14 @@ example: nova-bus receipts --as bob`,
 					f.String("id", "", "the message ids, comma-separated, as recv printed them (default: every receipt you hold)")
 					f.Max()
 					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else the fleet row's bus from the sprint store)")
+					callTimeoutFlag(f)
+					f.Check(refuseNonPositiveTimeout)
 				},
 				Run: w.receipts,
 			},
 			{
 				Name:      "overdue",
-				Usage:     "overdue [--older <duration>] [--max <n>] [--redis <addr>]",
+				Usage:     "overdue [--older <duration>] [--max <n>] [--timeout <duration>] [--redis <addr>]",
 				Effect:    tool.Inspection,
 				ExitTable: "0 OVERDUE OK, nothing short of delivered past --older; 1 BUS OVERDUE, one or more; 2 could not run (a flag, a store that did not answer).",
 				Detail: `The alarm the coordinator's loop and the seat check run. Looks at every known name's stream and
@@ -387,7 +397,9 @@ example: nova-bus overdue --older 10m`,
 					f.Duration("older", 10*time.Minute, "how long a message may wait short of delivered before it is overdue, a Go duration (10m, 1h)")
 					f.Max()
 					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else the fleet row's bus from the sprint store)")
+					callTimeoutFlag(f)
 					f.Check(func(c *tool.Call) {
+						refuseNonPositiveTimeout(c)
 						if c.Dur("older") < 0 {
 							c.Problem("--older wants a duration of at least 0 (0 lists every message short of delivered)")
 						}
@@ -397,7 +409,7 @@ example: nova-bus overdue --older 10m`,
 			},
 			{
 				Name:    "log",
-				Usage:   "log [--bodies] [--max <n>] [--redis <addr>]",
+				Usage:   "log [--bodies] [--max <n>] [--timeout <duration>] [--redis <addr>]",
 				Example: "log --max 5",
 				Effect:  tool.Inspection,
 				Detail: `Prints LOG OK total=<n>, then one LOG MESSAGE id=<id> from=<name> to=<names> cc=<names> re=<id>
@@ -406,12 +418,14 @@ example: nova-bus overdue --older 10m`,
 					f.Bool("bodies", false, "print each message's body as well")
 					f.Max()
 					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else the fleet row's bus from the sprint store)")
+					callTimeoutFlag(f)
+					f.Check(refuseNonPositiveTimeout)
 				},
 				Run: w.log,
 			},
 			{
 				Name:    "names",
-				Usage:   "names [--redis <addr>]",
+				Usage:   "names [--timeout <duration>] [--redis <addr>]",
 				Example: "names",
 				Effect:  tool.Inspection,
 				Detail: `Prints NAMES OK count=<n> proven=<n>, then one NAMES NAME name=<name> push=<state> age=<age>
@@ -421,6 +435,8 @@ daemon stopped renewing), down (its session did not answer the daemon's SESSION 
 daemon ever recorded one); age is how long ago the daemon wrote it, never when there is none.`,
 				Flags: func(f *tool.Flags) {
 					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else the fleet row's bus from the sprint store)")
+					callTimeoutFlag(f)
+					f.Check(refuseNonPositiveTimeout)
 				},
 				Run: w.names,
 			},
@@ -428,11 +444,26 @@ daemon ever recorded one); age is how long ago the daemon wrote it, never when t
 	}
 }
 
+// callTimeoutFlag is --timeout on a verb whose calls do not park: how long one
+// Redis call may take (SPEC-BUS.md, the deadlines). wait's own --timeout is
+// how long the wait parks, and is not this flag.
+func callTimeoutFlag(f *tool.Flags) {
+	f.Duration("timeout", bus.CallTimeout, "how long one call to Redis may take before it is refused as unanswered; a blocking read gets this, its block, and "+bus.BlockMargin.String()+" more")
+}
+
+func refuseNonPositiveTimeout(c *tool.Call) {
+	if c.Dur("timeout") <= 0 {
+		c.Problem("--timeout must be above zero: a call with no deadline can wait for ever on a store that does not answer")
+	}
+}
+
 // bus opens the store named by --redis for a verb, or says why not: an
 // empty address is a usage refusal, an address off loopback and the tailnet
 // is one (bus.CheckAddr, before any dial), and a store that did not answer
-// is one too (exit 2, the banner's table), in redisconn's one line.
-func (w world) bus(c *tool.Call) (*bus.Bus, string, func(), *tool.Out) {
+// is one too (exit 2, the banner's table), in redisconn's one line. timeout
+// is the deadline of one call (SPEC-BUS.md, the deadlines); a blocking read
+// gets its block and the margin more on top of it.
+func (w world) bus(c *tool.Call, timeout time.Duration) (*bus.Bus, string, func(), *tool.Out) {
 	ctx, cancel := context.WithTimeout(context.Background(), redisconn.OpenTimeout)
 	defer cancel()
 	addr, refused := w.address(ctx, c)
@@ -445,6 +476,14 @@ func (w world) bus(c *tool.Call) (*bus.Bus, string, func(), *tool.Out) {
 	st, login, closeStore, err := w.open(ctx, addr)
 	if err != nil {
 		return nil, "", nil, tool.Refuse(err.Error())
+	}
+	if timeout <= 0 {
+		closeStore()
+		return nil, "", nil, tool.Refuse("--timeout must be above zero: a call with no deadline can wait for ever on a store that does not answer")
+	}
+	if r, ok := st.(bus.Redis); ok {
+		r.Timeout = timeout
+		st = r
 	}
 	return &bus.Bus{Store: bus.Hearing(st)}, login, closeStore, nil
 }
@@ -507,7 +546,7 @@ func (w world) send(c *tool.Call) *tool.Out {
 		}
 		body = string(raw)
 	}
-	b, login, closeStore, refused := w.bus(c)
+	b, login, closeStore, refused := w.bus(c, c.Dur("timeout"))
 	if refused != nil {
 		return refused
 	}
@@ -586,7 +625,7 @@ func text(m bus.Message, login string) string {
 }
 
 func (w world) recv(c *tool.Call) *tool.Out {
-	b, login, closeStore, refused := w.bus(c)
+	b, login, closeStore, refused := w.bus(c, c.Dur("timeout"))
 	if refused != nil {
 		return refused
 	}
@@ -706,7 +745,7 @@ func (w world) recv(c *tool.Call) *tool.Out {
 }
 
 func (w world) ack(c *tool.Call) *tool.Out {
-	b, login, closeStore, refused := w.bus(c)
+	b, login, closeStore, refused := w.bus(c, c.Dur("timeout"))
 	if refused != nil {
 		return refused
 	}
@@ -738,7 +777,7 @@ func (w world) ack(c *tool.Call) *tool.Out {
 }
 
 func (w world) peek(c *tool.Call) *tool.Out {
-	b, login, closeStore, refused := w.bus(c)
+	b, login, closeStore, refused := w.bus(c, c.Dur("timeout"))
 	if refused != nil {
 		return refused
 	}
@@ -770,7 +809,7 @@ func (w world) peek(c *tool.Call) *tool.Out {
 }
 
 func (w world) log(c *tool.Call) *tool.Out {
-	b, _, closeStore, refused := w.bus(c)
+	b, _, closeStore, refused := w.bus(c, c.Dur("timeout"))
 	if refused != nil {
 		return refused
 	}
@@ -792,7 +831,7 @@ func (w world) log(c *tool.Call) *tool.Out {
 }
 
 func (w world) names(c *tool.Call) *tool.Out {
-	b, _, closeStore, refused := w.bus(c)
+	b, _, closeStore, refused := w.bus(c, c.Dur("timeout"))
 	if refused != nil {
 		return refused
 	}
@@ -825,7 +864,7 @@ func (w world) names(c *tool.Call) *tool.Out {
 // receipts is as's receipts: the named ids', or every one held (SPEC-BUS.md,
 // message-receipts).
 func (w world) receipts(c *tool.Call) *tool.Out {
-	b, login, closeStore, refused := w.bus(c)
+	b, login, closeStore, refused := w.bus(c, c.Dur("timeout"))
 	if refused != nil {
 		return refused
 	}
@@ -854,7 +893,7 @@ func (w world) receipts(c *tool.Call) *tool.Out {
 // overdue is every message on every stream still short of delivered past
 // --older: OVERDUE at exit 1 when there is one (SPEC-BUS.md, message-receipts).
 func (w world) overdue(c *tool.Call) *tool.Out {
-	b, _, closeStore, refused := w.bus(c)
+	b, _, closeStore, refused := w.bus(c, c.Dur("timeout"))
 	if refused != nil {
 		return refused
 	}
@@ -1016,7 +1055,10 @@ func waitObject(c *tool.Call, v waitJSON, exit int) *tool.Out {
 // entries past the cursor that count, on a wake line, or at the timeout
 // (docs/SPEC-BUS.md, the verbs: wait).
 func (w world) wait(c *tool.Call) *tool.Out {
-	b, login, closeStore, refused := w.bus(c)
+	// wait's --timeout is how long the wait parks (0 is for ever), not the
+	// call bound. Non-blocking reads use CallTimeout; a blocking XREAD carries
+	// its block and the margin more (SPEC-BUS.md, the deadlines).
+	b, login, closeStore, refused := w.bus(c, bus.CallTimeout)
 	if refused != nil {
 		return refused
 	}
