@@ -147,8 +147,8 @@ symlinks.
 
 fold and session hold --out/fold.lock while they write, so two folds of one --out never
 write the same day at once; the second waits, then refuses naming the holder. The lock
-file is empty and stays in --out after the run (it is never data); check counts it as
-neither a day file nor a stray.
+file holds the folding process's id and stays in --out between runs (it is never data);
+check counts it as neither a day file nor a stray.
 
 This tool removes nothing it was given. There is no month file, sum writes nothing, check
 names a stray and leaves it, and no verb deletes, truncates or trims a file it did not make:
