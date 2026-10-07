@@ -266,8 +266,11 @@ func runDocumented(fixture string) onboarding.Runner {
 		code := run(args, &out, &errb, firstRunStamp)
 		// Normalize paths in output for comparison
 		return onboarding.Result{
-			Code: code, Stdout: normalizePath(out.String()), Stderr: normalizePath(errb.String())
-		}, nil
+				Code:    code,
+				Stdout:  normalizePath(out.String()),
+				Stderr:  normalizePath(errb.String()),
+			},
+			nil
 	}
 }
 
