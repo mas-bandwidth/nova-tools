@@ -121,6 +121,12 @@ func (b *Bus) PushProofs(ctx context.Context, names ...string) ([]PushProof, tim
 	return proofs, now, err
 }
 
+// ProofsOf is each name's proof, in the order asked, in one trip (HGETALL on PushKey)
+// and with no roster trip: what nova-bus's advisory gate reads, judged at a time it has.
+func (b *Bus) ProofsOf(ctx context.Context, names ...string) ([]PushProof, error) {
+	return b.proofs(ctx, names)
+}
+
 // proofs is each name's proof, in the order asked, in one trip (HGETALL on
 // PushKey). A name with none, or whose value is no proof, has the zero
 // proof: PushNone.

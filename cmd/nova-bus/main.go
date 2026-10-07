@@ -51,6 +51,13 @@ const (
 	FleetBusKey    = "fleet:bus"
 )
 
+// RequirePushEnv set to 1 makes the push gate refuse, as --require-push does. The gate
+// is advisory until every harness proves its push (the owner, 2026-10-07: adopt wide
+// ASAP; the seat's push proof is card
+// the-seats-pushes-are-proven-before-the-sprint-moves-b): send and recv print
+// NOTE push=<state> for <name> for each name not heard, and go on.
+const RequirePushEnv = "NOVA_BUS_REQUIRE_PUSH"
+
 // ExecBudget bounds one run of --exec's command: a delivery into a harness
 // is a write of a few lines; one that takes longer is stuck. It is also how
 // long a reader keeps a message before another may claim it (bus.ClaimAfter).
@@ -173,7 +180,7 @@ func busTool(w world) *tool.Tool {
 		Stamp: version,
 		How: `the loop: send --as <me> --to <friend> --subject <s> --body <text> sends;
 recv --as <me> --forever --exec '<deliver-into-session>' takes each message in, acked on exit 0;
-ack --as <me> --id <id> acks by hand; send and recv refuse a deaf name (no push proven in 10m).
+ack --as <me> --id <id> acks; send, recv note a deaf name (no push in 10m); --require-push refuses.
 one stream per recipient (bus2:to:<name>) under a consumer group, one log (bus2:log); all or none.
 first run: a Redis naming ada and bob at --redis (else ` + RedisEnv + `); loopback or tailnet only.`,
 		ExitTable: "0 done, 1 the verb ran and said no (recv: nothing waiting; recv --exec: the command failed; wait: nothing came), 2 could not run (a flag, an input, a store that did not answer).",
@@ -234,8 +241,10 @@ You are the user the connection logged in as (NOVA_SPRINT_REDIS_USER): --as may 
 out, and another name is refused. With no login (a store with no users) --as is your word for who you
 are, and the line says login=none. The sender and every recipient must be heard: a name whose friend
 daemon proved its inbox push (a SESSION CHECK carried in by its harness's deliver adapter and answered
-by the session) under ten minutes ago; any other is refused with deaf: <name> has no proven push since
-<age> and the remedy, and nothing is written (nova-bus names shows each name's push). --dry-run checks
+by the session) under ten minutes ago. For now the gate is advisory: each name not heard is a
+NOTE push=<none|stale|down> [age=<age>] for <name> line and the send goes on; with --require-push (or
+` + RequirePushEnv + `=1) any such name is refused with deaf: <name> has no proven push since <age>
+and the remedy, and nothing is written (nova-bus names shows each name's push). --dry-run checks
 the message as send does (every problem named) and prints the line with no id, writing nothing.
 --token <t> makes the send safe to retry: the same token and the same arguments within --token-life
 (default 24h) print the first send's SEND OK line again (its id and at) and write nothing, so a send
@@ -255,6 +264,7 @@ Delivery to a reader is still at least once: a reader may be handed one message 
 					f.String("token", "", "your word for this one send, the same on every retry of it (letters, digits, . _ : -; at most 128 bytes)")
 					f.Duration("token-life", bus.DefaultTokenLife, "how long a retry under --token answers the first send")
 					f.Duration("token-cleanup", bus.DefaultTokenCleanup, "when the store drops the token (never before its life ends)")
+					f.Bool("require-push", false, "refuse a name with no proven push (deaf: ...) instead of noting it; also "+RequirePushEnv+"=1")
 					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else the fleet row's bus from the sprint store)")
 					callTimeoutFlag(f)
 					f.Check(func(c *tool.Call) {
@@ -294,8 +304,9 @@ Delivery to a reader is still at least once: a reader may be handed one message 
 				DryRun:  true,
 				Detail: `Prints one message: a line RECV OK id=<id> from=<name> to=<names> cc=<names> re=<id> [kind=<k>] at=<RFC3339>
 subject=<s> (login=none when the connection has no login user), a blank line, the body; or RECV
-NONE at exit 1 when nothing waits. You are the login user, as in send, and must be heard as there: a
-recv for a name with no proven push is refused (deaf: <name> ...). The oldest message a
+NONE at exit 1 when nothing waits. You are the login user, as in send, and are noted as there when
+not heard (NOTE push=... for <name>); with --require-push (or ` + RequirePushEnv + `=1) a recv for a
+name with no proven push is refused (deaf: <name> ...). The oldest message a
 reader lost (delivered, not acked, idle fifteen minutes) comes first, else the oldest new one; the
 reader keeps it for fifteen minutes. --exec '<command>' runs the command with that same text on its stdin and
 acks the message when it exits 0 (the line adds acked=true exec_exit=0); a non-zero exit leaves
@@ -317,6 +328,7 @@ before kinds existed.`,
 					f.Bool("ack", false, "ack each message after printing it (a plain recv leaves it pending)")
 					f.Bool("forever", false, "loop over every message, delivering each with --exec, until a signal")
 					f.String("exec", "", "a shell command run with each message on its stdin; exit 0 acks the message")
+					f.Bool("require-push", false, "refuse a name with no proven push (deaf: ...) instead of noting it; also "+RequirePushEnv+"=1")
 					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else the fleet row's bus from the sprint store)")
 					callTimeoutFlag(f)
 					f.Check(func(c *tool.Call) {
@@ -464,6 +476,50 @@ func refuseNonPositiveTimeout(c *tool.Call) {
 // is the deadline of one call (SPEC-BUS.md, the deadlines); a blocking read
 // gets its block and the margin more on top of it.
 func (w world) bus(c *tool.Call, timeout time.Duration) (*bus.Bus, string, func(), *tool.Out) {
+	return w.openBus(c, timeout, true)
+}
+
+// requirePush says send's or recv's push gate refuses: --require-push, or RequirePushEnv=1.
+func (w world) requirePush(c *tool.Call) bool {
+	return c.Bool("require-push") || w.getenv(RequirePushEnv) == "1"
+}
+
+// pushNotes is one NOTE for each name of names (deduplicated, in order) not heard at now:
+// push=<state> for <name>, with age=<age> when a proof was ever written. One HGETALL and no
+// roster trip.
+func pushNotes(ctx context.Context, b *bus.Bus, now time.Time, names ...string) ([]string, error) {
+	var uniq []string
+	for _, n := range names {
+		if !slices.Contains(uniq, n) {
+			uniq = append(uniq, n)
+		}
+	}
+	proofs, err := b.ProofsOf(ctx, uniq...)
+	if err != nil {
+		return nil, err
+	}
+	var notes []string
+	for _, p := range proofs {
+		switch st := p.State(now); st {
+		case bus.PushProven:
+		case bus.PushNone:
+			notes = append(notes, fmt.Sprintf("push=%s for %s", st, p.Name))
+		default:
+			notes = append(notes, fmt.Sprintf("push=%s age=%s for %s", st, p.AgeWord(now), p.Name))
+		}
+	}
+	return notes, nil
+}
+
+func withNotes(o *tool.Out, notes []string) *tool.Out {
+	for _, n := range notes {
+		o.Note(n)
+	}
+	return o
+}
+
+// openBus is the bus at the verb's store, behind the push gate when gated.
+func (w world) openBus(c *tool.Call, timeout time.Duration, gated bool) (*bus.Bus, string, func(), *tool.Out) {
 	ctx, cancel := context.WithTimeout(context.Background(), redisconn.OpenTimeout)
 	defer cancel()
 	addr, refused := w.address(ctx, c)
@@ -484,6 +540,9 @@ func (w world) bus(c *tool.Call, timeout time.Duration) (*bus.Bus, string, func(
 	if r, ok := st.(bus.Redis); ok {
 		r.Timeout = timeout
 		st = r
+	}
+	if !gated {
+		return &bus.Bus{Store: st}, login, closeStore, nil
 	}
 	return &bus.Bus{Store: bus.Hearing(st)}, login, closeStore, nil
 }
@@ -546,7 +605,8 @@ func (w world) send(c *tool.Call) *tool.Out {
 		}
 		body = string(raw)
 	}
-	b, login, closeStore, refused := w.bus(c, c.Dur("timeout"))
+	gated := w.requirePush(c)
+	b, login, closeStore, refused := w.openBus(c, c.Dur("timeout"), gated)
 	if refused != nil {
 		return refused
 	}
@@ -566,7 +626,7 @@ func (w world) send(c *tool.Call) *tool.Out {
 		// push gate the write would meet is asked for by name
 		send = func(ctx context.Context, m bus.Message) (bus.Message, error) {
 			m, err := b.Check(ctx, m)
-			if err != nil {
+			if err != nil || !gated {
 				return m, err
 			}
 			return m, b.Heard(ctx, slices.Concat([]string{m.From}, m.To, m.CC)...)
@@ -576,10 +636,20 @@ func (w world) send(c *tool.Call) *tool.Out {
 	if err != nil {
 		return answer(err)
 	}
+	var notes []string
+	if !gated {
+		at := m.At
+		if at.IsZero() {
+			at = w.now()
+		}
+		if notes, err = pushNotes(context.Background(), b, at, slices.Concat([]string{as}, draft.To, draft.CC)...); err != nil {
+			return answer(err)
+		}
+	}
 	sum := sha256.Sum256([]byte(m.Body))
 	o := tool.Done().Fact("id", m.ID).Fact("to", strings.Join(m.To, ",")).Fact("cc", strings.Join(m.CC, ","))
-	return loginFact(kindFact(o, m).Fact("at", m.At.Format(time.RFC3339)).
-		Fact("bytes", len(m.Body)).Fact("sha256", hex.EncodeToString(sum[:])), login)
+	return withNotes(loginFact(kindFact(o, m).Fact("at", m.At.Format(time.RFC3339)).
+		Fact("bytes", len(m.Body)).Fact("sha256", hex.EncodeToString(sum[:])), login), notes)
 }
 
 // kindFact adds kind=<k> to a result when the message is not a status: a
@@ -625,7 +695,8 @@ func text(m bus.Message, login string) string {
 }
 
 func (w world) recv(c *tool.Call) *tool.Out {
-	b, login, closeStore, refused := w.bus(c, c.Dur("timeout"))
+	gated := w.requirePush(c)
+	b, login, closeStore, refused := w.openBus(c, c.Dur("timeout"), gated)
 	if refused != nil {
 		return refused
 	}
@@ -638,12 +709,21 @@ func (w world) recv(c *tool.Call) *tool.Out {
 	if p := bus.CheckKinds(kinds...); p != "" {
 		return tool.Refuse(p)
 	}
+	var notes []string
+	if !gated {
+		var err error
+		if notes, err = pushNotes(context.Background(), b, w.now(), as); err != nil {
+			return answer(err)
+		}
+	}
 	if c.DryRun() {
 		// what waits, read only: the next delivered is a pending one held past fifteen
 		// minutes when there is one, else the oldest new one; a deaf name is refused
 		// as the recv itself would be
-		if err := b.Heard(context.Background(), as); err != nil {
-			return answer(err)
+		if gated {
+			if err := b.Heard(context.Background(), as); err != nil {
+				return answer(err)
+			}
 		}
 		pending, fresh, err := b.Peek(context.Background(), as)
 		if err != nil {
@@ -654,7 +734,7 @@ func (w world) recv(c *tool.Call) *tool.Out {
 		if len(fresh) > 0 {
 			next = fresh[0].Message().ID
 		}
-		return loginFact(tool.Done().Fact("pending", len(pending)).Fact("new", len(fresh)).Fact("next_new", next), login)
+		return withNotes(loginFact(tool.Done().Fact("pending", len(pending)).Fact("new", len(fresh)).Fact("next_new", next), login), notes)
 	}
 	command := c.Str("exec")
 	ctx, stop := w.signals(context.Background())
@@ -703,7 +783,10 @@ func (w world) recv(c *tool.Call) *tool.Out {
 	}
 	if !c.Bool("forever") && !c.Bool("all") && c.Int("max") == 1 {
 		o, _ := one(0)
-		return o
+		return withNotes(o, notes)
+	}
+	for _, n := range notes { // a batch or a loop says it once, before its first message
+		fmt.Fprintln(c.Stderr, "RECV NOTE "+n)
 	}
 	if !c.Bool("forever") {
 		// the batch: what waits now, in order, each its own result, until the
