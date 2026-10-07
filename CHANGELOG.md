@@ -4,6 +4,7 @@
 
 Cut from the head of sprint/mechanical-2026-10-02, promoted to dev and main. The sprint's landings carry no pull request numbers: each lands as `land <card> (sprint stream <stream>)`, so the entries below name the card.
 
+- docs: `nova-secrets gate`'s exit contract matches the binary — a verdict prints `GATE FAILED` at exit 1, and a gate that could not run prints `SECRETS GATE REFUSED` at exit 2 (docs/CLI.md, docs/SPEC-SECRETS.md)
 - land bus-requires-inbox-push-proof-p3: `nova-bus` send and recv refuse a deaf name, `names` shows each name's push
   - members: bus-requires-inbox-push-proof-p2
 - land friend-requires-push-proof-p4: `nova-friend` install and run refuse a harness nothing pushes into; run proves the push before its loop
