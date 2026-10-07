@@ -1562,9 +1562,9 @@ cannot pass as a green run, and `TestTheNamedPathExistenceCheckReadsTheTree`,
 which holds the other half against this package's own directory.
 **Its allowlist.** `internal/ci/testdata/namedpaths_allowlist.txt`, one
 `<name> <reason>` per line, in three groups: the files a specification has
-PLANNED and nobody has written yet, the invented names a document uses to show the SHAPE of a path
-(`internal/decide/entry.go`), and the paths that live in another
-tree — another repository, another branch, or a retired file. Checked in BOTH
+PLANNED and nobody has written yet, the invented names a document uses to show
+the SHAPE of a path, and the paths that live in another tree — another
+repository, another branch, or a retired file. Checked in BOTH
 directions, and the second direction has two spellings: a listed name nothing
 writes any more is a stale row, and a listed name that is IN the tree now is the
 good red — the planned file was written, so the row goes on the same day.
