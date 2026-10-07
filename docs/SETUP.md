@@ -138,6 +138,41 @@ no `go` there it is ok. On a bench it fails when `go` is absent, when its versio
 `go.mod`'s toolchain version, or when `GOCACHE` is not writable, and warns when `GOFLAGS`
 does not carry `-mod=readonly`. Each fix line names the step above.
 
+### dep-redis-stores-b.w7: the Redis stores and their ACL users
+
+The Redis stores and their ACL users are a hidden dependency because the sprint store,
+the bus store and any other the inventory names each have ACL users per role
+(coordinator, member, friend, reader). The `nova-redis acl` verbs render and compare
+the store's ACL with the expected users and rules as code in `internal/redisacl`; a
+misconfigured ACL will cause card runs to fail or behave unexpectedly.
+
+Who needs it: any machine that runs cards with Redis stores. `nova-up --local` provides
+the Redis store on the one machine it sets up, with ACL users `coordinator`, `bench`,
+`ns-table` and `ns-friend` rendered by `nova-redis acl render` and sealed into the
+secrets store; the `redis` step in `nova-up` (`internal/up/redis.go`) applies the ACL
+users and their passwords. A person on another machine does the same by hand: ensure
+the Redis store is running, then run `nova-redis acl render` to see the expected users,
+and `nova-redis acl check --redis <addr> --user <user> --password-env <NAME>` to verify
+the live ACL matches, and `nova-redis acl apply --redis <addr> --user <user>
+--password-env <NAME>` to fix any drift. The doctor check `redis-stores`
+(`internal/doctor/check_redis.go`) reads each store's ACL and compares it with the
+expected users, reporting any missing or different user by name with the fix line.
+
+The `redis-stores` doctor check is fleet only, so `nova-doctor --local` skips it and
+lists it among the skipped checks. Without `--local` it fails when the Redis store is
+not running or its ACL does not match the expected users; the evidence names each
+missing or different user and the fix line runs `nova-redis acl apply` with the needed
+address and user. The check passes when every store's ACL has the expected users present
+with the expected command and key rules.
+
+```sh
+# Check the ACL of a Redis store
+nova-redis acl check --redis 127.0.0.1:6390 --user coordinator --password-env NOVA_REDIS_PASSWORD
+
+# Apply ACL fixes if drift is found
+nova-redis acl apply --redis 127.0.0.1:6390 --user coordinator --password-env NOVA_REDIS_PASSWORD
+```
+
 ### dep-tailnet-b.w4: the tailnet
 
 A fleet's machines reach each other and the stores only over its tailnet (tailscale): the
