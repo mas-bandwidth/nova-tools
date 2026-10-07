@@ -230,10 +230,10 @@ func unmatched(files []string, skips, ruleDocs baseList) []string {
 // flagsAndFiles splits one scan invocation into its flags and its files. Flags
 // may stand before, between or after the files (docs/STANDARD.md section 1, one
 // shape across the set; nova-memory's parse takes them anywhere), so the flags
-// are moved ahead of the files for the one parse, and the caller joins them with
-// a `--` so a file whose name begins with a dash is a file. A `--` the caller
-// writes ends the flags; a value of a flag that takes one (--skip --) is that
-// value, never the terminator; a lone `-` is standard input, a file.
+// are moved ahead of the files for the one parse, where each value-taking flag
+// keeps its value. A `--` the caller writes ends the flags; a value of a flag
+// that takes one (--skip --) is that value, never the terminator; a lone `-` is
+// standard input, a file.
 func flagsAndFiles(args []string, fset *flag.FlagSet) (flags, files []string) {
 	literal := false
 	for i := 0; i < len(args); i++ {
