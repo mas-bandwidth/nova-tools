@@ -111,7 +111,7 @@ func TestReadsOutrankNormalWork(t *testing.T) {
 			t.Parallel()
 			w, amy := priorityWorld(t, 5, tc.reads, tc.backed, 10)
 			require.Equal(t, tc.backup, Backup(w.s))
-			r, _ := friendRoom(amy)
+			r, _ := friendRoom(w.s, amy)
 			require.Equal(t, 3, r-friendLoad(w.s, "amy"), "her room is three")
 
 			p, _ := TickDeal(w.s, TickReq{Friends: []FriendSeat{amy}})
@@ -178,7 +178,7 @@ func TestAFriendsRoomGoesToReadsFirst(t *testing.T) {
 		t.Parallel()
 		w, amy := priorityWorld(t, 1, 5, 0, 10)
 		seats := friendReadsFirst(w.s, []FriendSeat{amy}, readsWaitingCards(w.s), Plan{})
-		r, _ := friendRoom(seats[0])
+		r, _ := friendRoom(w.s, seats[0])
 		assert.LessOrEqual(t, r-friendLoad(w.s, "amy"), 0, "a waiting read she may take leaves no room for work")
 		tickDealAndAsk(t, w, amy)
 		assert.Len(t, friendReads(w, "amy"), 3, "three of the five fill her room")

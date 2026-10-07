@@ -636,8 +636,16 @@ func (a *app) wakeFriendStall(ctx context.Context, st *store.Store, name string,
 
 // friendReadText is the BRIEF.md of a friend's read, as friend sync and friend cards
 // both write it: the read's brief, the attempt's branch, start commit and head (the packet's,
-// else the card's), and a deadline of thirty minutes on the sprint clock.
+// else the card's), and a deadline friend_read_deadline (policy.go; thirty minutes by default)
+// on the sprint clock.
 func friendReadText(st *store.Store, name string, p sprint.Packet, c *sprint.Card) string {
+	readDeadline := func() time.Duration {
+		policy, err := st.Policy(context.Background())
+		if err != nil {
+			return sprint.FriendReadDeadline
+		}
+		return (&sprint.Snapshot{Policy: policy}).PolicyDuration(sprint.PolicyFriendReadDeadline)
+	}
 	if p.ReadJob != "" {
 		// a read asked the old way keeps the old brief
 		branch, head, start := p.WorkBranch, p.Head, ""
@@ -646,7 +654,7 @@ func friendReadText(st *store.Store, name string, p sprint.Packet, c *sprint.Car
 		}
 		var deadline time.Time
 		if st.Now != nil {
-			deadline = st.Now().Add(sprint.FriendReadDeadline)
+			deadline = st.Now().Add(readDeadline())
 		}
 		return sprint.FriendReadBrief(name, p.Primary, p.Brief, branch, start, head, p.Attempt, deadline)
 	}

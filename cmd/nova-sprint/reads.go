@@ -2015,7 +2015,7 @@ func groupLine(g sprint.Group, now time.Time) string {
 	}
 	kind := strings.ToUpper(g.Kind)
 	l := fmt.Sprintf("%s %s %s %s", kind, g.ID, mark, g.Type)
-	if g.Behind >= sprint.CriticalBehind {
+	if g.Critical {
 		l = fmt.Sprintf("CRITICAL %d behind: %s", g.Behind, l) // the cards that wait on it (weight.go)
 	}
 	if g.Alias != "" {
@@ -2181,6 +2181,12 @@ func (a *app) cmdCard(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return a.readFailed("card", err, stderr)
 	}
+	// its tiers as the tick reads them: critical_behind, nova-config's, can raise its ceiling
+	policy, err := st.Policy(ctx)
+	if err != nil {
+		return a.readFailed("card", err, stderr)
+	}
+	tiers := &sprint.Snapshot{Policy: policy}
 	if v.Primary == nil {
 		fmt.Fprintf(stderr, "%s card: no primary %s; run: nova-sprint where\n", prog, oneline.Escape(id))
 		return 1
@@ -2204,7 +2210,7 @@ func (a *app) cmdCard(args []string, stdout, stderr io.Writer) int {
 		if texts == nil {
 			texts = []storyText{}
 		}
-		tier, ceiling := sprint.CardTiers(v.Primary)
+		tier, ceiling := sprint.CardTiers(tiers, v.Primary)
 		level, source := sprint.CardPriority(v.Primary)
 		b, _ := json.Marshal(cardView{Primary: v.Primary, Column: v.Primary.Col, Tier: tier, Ceiling: ceiling, Grade: v.Primary.F(sprint.FieldGrade), Who: v.Primary.F(sprint.FieldWho), Priority: level, PrioritySource: source, Work: v.Work, Reads: v.Reads, Merge: v.Merge, Open: v.Open, Needs: v.Needs, NeededBy: v.NeededBy, Held: held,
 			Cost: sprint.CardCostOf(v.Primary), Timeline: events, Texts: texts})
@@ -2234,7 +2240,7 @@ func (a *app) cmdCard(args []string, stdout, stderr io.Writer) int {
 			epoch = pinned.PinnedEpoch()
 		}
 		// the tier it is on and its ceiling: flash first, pro on escalation
-		tier, ceiling := sprint.CardTiers(v.Primary)
+		tier, ceiling := sprint.CardTiers(tiers, v.Primary)
 		// and its grade, nova-decide's convergence grade before its first deal (decide.go)
 		grade := ""
 		if g, ok := decide.ParseDecided(v.Primary.F(sprint.FieldGrade)); ok {

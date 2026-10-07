@@ -65,7 +65,7 @@ func ParseLaneCap(report string) (lc LaneCap, ok bool) {
 // capNextTier is the tier a capped primary pr is re-dealt on: the next of capLadder above
 // the tier it is on; "" when the cap has been spent on it already, at the top, or when its
 // tier is pinned (pinnedTier: a re-deal there would run on the same tier).
-func capNextTier(pr *Card) string {
+func capNextTier(s *Snapshot, pr *Card) string {
 	if pr.F(FieldCapRedealt) != "" {
 		return ""
 	}
@@ -73,7 +73,7 @@ func capNextTier(pr *Card) string {
 	if bad != "" || pinnedTier(pr, m) {
 		return ""
 	}
-	i := slices.Index(capLadder, cardTier(pr, m))
+	i := slices.Index(capLadder, cardTier(s, pr, m))
 	if i < 0 || i+1 >= len(capLadder) {
 		return ""
 	}
@@ -109,7 +109,7 @@ func capRedeal(s *Snapshot, c, pr *Card, r FinishReq, lc LaneCap, next string, p
 	if r.Usage != "" {
 		cardSet[FieldUsage] = rec
 	}
-	from := cardTierOf(pr)
+	from := cardTierOf(s, pr)
 	why := fmt.Sprintf("capped at %s on %s (overrun %s): %s, %s", lc.Cap, from, lc.Overrun, laneCapRedealWord, next)
 	set := map[string]string{FieldTierNow: next, "why": why, FieldCapRedealt: from + " -> " + next}
 	maps.Copy(set, finishStamps(pr, c, s.Now))

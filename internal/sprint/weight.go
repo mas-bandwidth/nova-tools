@@ -25,7 +25,8 @@ import (
 // FieldBehind is the primary's weight as the tick last wrote it.
 const FieldBehind = "behind"
 
-// CriticalBehind is the weight at and above which a card is critical.
+// CriticalBehind is the weight at and above which a card is critical by default: the
+// critical_behind setting's default (policy.go).
 const CriticalBehind = 10
 
 // openPrimaries is every primary on the table not landed, sentinels aside.
@@ -88,8 +89,18 @@ func byWeight(cards []*Card, w map[string]int) []*Card {
 	return out
 }
 
-// IsCritical says the primary's weight, as the tick last wrote it, makes it critical.
-func IsCritical(c *Card) bool { return c.Int(FieldBehind) >= CriticalBehind }
+// IsCritical says the primary's weight, as the tick last wrote it, makes it critical at
+// the default critical_behind. The tick uses (*Snapshot).IsCritical, which reads the setting.
+func IsCritical(c *Card) bool { return (*Snapshot)(nil).IsCritical(c) }
+
+// IsCritical says the primary's weight, as the tick last wrote it, makes it critical: at
+// or above critical_behind (policy.go); a nil snapshot is the default's.
+func (s *Snapshot) IsCritical(c *Card) bool { return s.CriticalAt(c.Int(FieldBehind)) }
+
+// CriticalAt says a weight of behind is critical: at or above critical_behind.
+func (s *Snapshot) CriticalAt(behind int) bool {
+	return behind >= s.PolicyCount(PolicyCriticalBehind)
+}
 
 // weighUnits is the units that write each open primary's weight where a needs change moves
 // it (FieldBehind): adding is the cards an add admits (their ids and needs), dropping the
@@ -164,8 +175,8 @@ func CriticalLine(cards []CriticalCard) string {
 // criticalTier is the tier a critical card starts on and never goes below (ceilingTier):
 // pro, whatever its brief's line 1 says; a pinned model, a pinned tier and a frontier card
 // keep their own.
-func criticalTier(c *Card, m cardhdr.Model) (string, bool) {
-	if IsCritical(c) && m.Pin == "" && m.Tier != cardhdr.RouteFrontier && c.F(FieldTier) == "" {
+func criticalTier(s *Snapshot, c *Card, m cardhdr.Model) (string, bool) {
+	if s.IsCritical(c) && m.Pin == "" && m.Tier != cardhdr.RouteFrontier && c.F(FieldTier) == "" {
 		return cardhdr.RoutePro, true
 	}
 	return "", false
