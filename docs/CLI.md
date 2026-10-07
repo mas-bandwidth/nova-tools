@@ -1540,6 +1540,23 @@ is, per stream, the sum of its landed cards' total cost in US dollars — each
 card's actual cost where one was priced, else its predicted one, `-` when
 none was — so a total is a ledger of recorded spend, not a proof of it.
 
+### release-check-acceptance-r-b.w3: the acceptance sentinel's six checks
+
+`nova-sprint release check` runs the acceptance sentinel's six checks beside
+`no-stuck-friend`, source: the coordinator's answer over the bus, 2026-10-06
+12:50 ET. Each prints one `RELEASE CHECK <name> ok|fail <evidence>`
+line, and the release refuses on any fail: `cards-settled` (every card of the
+stream landed or dropped with a reason), `base-gate-green` (the unit and
+functional classes and `./internal/docs` and `./internal/ci` green on the base
+at the stream's last landing), `two-ok-reads` (every landed card has the ok
+reads its tier needs at its final head), `prose-true` (`nova-check links` and
+`nocode` clean on the stream's specs and help), `landings-promoted` (the
+landings are in dev or a promotion carries them) and `no-open-judgment` (no
+open judgment names the stream). One check alone: `release check --check cards-settled`; one stream's facts: `release check --streams 's1*'`. With no
+stream named there is no acceptance to check, so each passes and says so. The
+contract is [SPEC-RELEASE.md](SPEC-RELEASE.md) section 16, subsection
+release-check-acceptance-r-b.w3.
+
 ## nova-sandbox
 
 Runs one command under OS-enforced containment using `sandbox-exec` on macOS

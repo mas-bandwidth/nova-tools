@@ -5707,6 +5707,25 @@ epoch's.
 
 Cards that edited `tla/*.tla` landed without refreshing `tla/RUNS.tsv`, and the TLC records class test (`internal/ci/tlc_records_class_test.go`) then called the records stale on the base (found by hand, 2026-10-04). `add` refuses a brief whose `PATHS:` or `NEW:` header lines cover a TLA+ model (a `.tla` file under `tla/`, a glob of them, or `tla/` itself or a glob over it: `tla/**`, `tla/*`) when those lines do not cover `tla/RUNS.tsv` (the file, `tla/`, `tla/**` or a glob that matches it), or when no STEP of the brief (a line that begins `STEP` and the lines under it up to the next blank line) names `tlacheck merge` with `--keep`. The refusal names the card, the model entries and what is missing, and the remedy: name `tla/RUNS.tsv` in PATHS and add a STEP that runs the changed groups on a Linux bench, then `tlacheck merge --keep tla/RUNS.tsv`, as `tla/README.md` says ("Refreshing the records after a model edit"); exit 2, nothing written, and in the many-brief form one such brief refuses the whole call. A card that only reads `tla/` (no model in its PATHS) is untouched (`holdTlaRecords`, cmd/nova-sprint/verbs.go; `TestAddRefusesATlaEditWithoutARecordsRefresh`).
 
+### release-check-acceptance-r-b.w3
+
+`release check` also runs the acceptance sentinel's six checks, source: the
+coordinator's answer over the bus, 2026-10-06 12:50 ET (message
+`01M48ZHQ5ZNWYV5FAKBRTTW038`): `cards-settled`, `base-gate-green`,
+`two-ok-reads`, `prose-true`, `landings-promoted`, `no-open-judgment`. Each is
+a pure function in `internal/sprint/releasecheck_acceptance.go` over
+`sprint.Acceptance`: the streams the verb named, their primaries, the readers'
+reads, the tree gate's runs at the base, nova-check's prose results, the
+promotion, the open judgments and the dropped cards. The verb binds it with
+`sprint.AcceptanceOf` from the store's tables, the log and the `--streams` glob;
+a unit test builds a twin of it and opens no socket. Each prints one
+`RELEASE CHECK <name> ok|fail <evidence>` line, and on a fail the evidence names
+the first item that did not hold. With no stream named there is no acceptance to
+check, so each passes and says so; the bars are in
+[docs/SPEC-RELEASE.md](SPEC-RELEASE.md) section 16, subsection
+release-check-acceptance-r-b.w3. Test:
+`TestReleaseCheckRunsTheAcceptanceSentinelsSixChecks`.
+
 ## 12. The driver
 
 `nova-sprint play` plays the outside world on a tick (`--every`), seeded
