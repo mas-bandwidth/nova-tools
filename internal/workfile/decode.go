@@ -44,11 +44,15 @@ type decoder struct {
 	probs []error
 }
 
-// errf records a problem for finish to report together with the others; no
-// caller acts on it alone, so it returns nothing.
-func (d *decoder) errf(at, format string, a ...any) {
-	d.probs = append(d.probs, fmt.Errorf("workfile: file=%s %s: %s", d.file, at, fmt.Sprintf(format, a...)))
+func (d *decoder) errf(at, format string, a ...any) error {
+	err := fmt.Errorf("workfile: file=%s %s: %s", d.file, at, fmt.Sprintf(format, a...))
+	d.probs = append(d.probs, err)
+	return err
 }
+
+// fail records a problem for finish to report with the others and goes on;
+// a caller that needs the error itself uses errf.
+func (d *decoder) fail(at, format string, a ...any) { _ = d.errf(at, format, a...) }
 
 // finish returns the tree when nothing was wrong, or every problem found,
 // together (SPEC-WORK-V1 section 1.2).
@@ -88,22 +92,22 @@ func (d *decoder) pairs(at, head string, rest []worklang.Form, keys []string) (m
 			return nil, d.errf(at, "(%s) holds a value where a key belongs, at byte=%d", head, k.Offset)
 		}
 		if !want[k.Value] {
-			d.errf(at, "(%s) holds the unknown key :%s", head, k.Value)
+			d.fail(at, "(%s) holds the unknown key :%s", head, k.Value)
 			continue
 		}
 		if _, dup := m[k.Value]; dup {
-			d.errf(at, "(%s) holds :%s twice", head, k.Value)
+			d.fail(at, "(%s) holds :%s twice", head, k.Value)
 			continue
 		}
 		if i+1 >= len(rest) {
-			d.errf(at, "(%s) :%s has no value", head, k.Value)
+			d.fail(at, "(%s) :%s has no value", head, k.Value)
 			continue
 		}
 		m[k.Value] = rest[i+1]
 	}
 	for _, k := range keys {
 		if _, ok := m[k]; !ok {
-			d.errf(at, "(%s) has no :%s", head, k)
+			d.fail(at, "(%s) has no :%s", head, k)
 		}
 	}
 	return m, nil
@@ -198,7 +202,7 @@ func (d *decoder) tree(f worklang.Form) (*Tree, error) {
 		return d.finish(nil)
 	}
 	if id.Kind != worklang.String || id.Value != Format {
-		d.errf("(root)", "format %q, this reader reads %q", id.Value, Format)
+		d.fail("(root)", "format %q, this reader reads %q", id.Value, Format)
 	}
 	t := &Tree{}
 	if s, ok := d.takeStr("(root)", "source", m); ok {
@@ -218,7 +222,7 @@ func (d *decoder) tree(f worklang.Form) (*Tree, error) {
 					continue
 				}
 				if len(t.Repos) > 0 && r.Name <= t.Repos[len(t.Repos)-1].Name {
-					d.errf("repos/"+r.Name, "out of order or repeated")
+					d.fail("repos/"+r.Name, "out of order or repeated")
 				}
 				t.Repos = append(t.Repos, r)
 			}
@@ -233,7 +237,7 @@ func (d *decoder) repo(f worklang.Form) (Repo, bool) {
 		return Repo{}, true
 	}
 	if id.Kind != worklang.String {
-		d.errf("repos", "a repo's identity is its owner/name string")
+		d.fail("repos", "a repo's identity is its owner/name string")
 		return Repo{}, true
 	}
 	r := Repo{Name: id.Value}
@@ -254,7 +258,7 @@ func (d *decoder) repo(f worklang.Form) (Repo, bool) {
 					continue
 				}
 				if len(r.Issues) > 0 && is.Number <= r.Issues[len(r.Issues)-1].Number {
-					d.errf(Path(r.Name, is.Number), "out of order or repeated")
+					d.fail(Path(r.Name, is.Number), "out of order or repeated")
 				}
 				r.Issues = append(r.Issues, is)
 			}
@@ -301,13 +305,13 @@ func (d *decoder) issue(repo string, f worklang.Form) (Issue, bool) {
 		if o.Kind == worklang.Keyword && (o.Value == "internal" || o.Value == "external") {
 			is.Origin = o.Value
 		} else {
-			d.errf(at, ":origin wants :internal or :external")
+			d.fail(at, ":origin wants :internal or :external")
 		}
 	}
 	if numErr == nil {
 		if fv, ok := m["url"]; ok && fv.Kind == worklang.String {
 			if want := IssueURL(repo, n); is.URL != want {
-				d.errf(at, ":url %q is not the URL its path gives, %q", is.URL, want)
+				d.fail(at, ":url %q is not the URL its path gives, %q", is.URL, want)
 			}
 		}
 	}
@@ -330,7 +334,7 @@ func (d *decoder) issue(repo string, f worklang.Form) (Issue, bool) {
 		}
 	}
 	if labelsOK && assigneesOK && (!sort.StringsAreSorted(is.Labels) || !sort.StringsAreSorted(is.Assignees)) {
-		d.errf(at, ":labels and :assignees must be sorted")
+		d.fail(at, ":labels and :assignees must be sorted")
 	}
 	if fv, ok := m["milestone"]; ok {
 		if ms, err := d.list(at, "milestone", fv); err == nil && len(ms) > 0 {
@@ -361,7 +365,7 @@ func (d *decoder) issue(repo string, f worklang.Form) (Issue, bool) {
 				}
 				c.ID = idStr
 				if seen[c.ID] {
-					d.errf(at+"/comments/"+c.ID, "the comment id is repeated")
+					d.fail(at+"/comments/"+c.ID, "the comment id is repeated")
 					continue
 				}
 				seen[c.ID] = true
@@ -419,7 +423,7 @@ func (d *decoder) issue(repo string, f worklang.Form) (Issue, bool) {
 					r.At = v
 				}
 				if kindOK && r.Kind == "" && ((repoOK && r.Repo != "") || (urlOK && r.URL != "")) {
-					d.errf(rat, ":kind \"\" wants :repo \"\" and :url \"\"")
+					d.fail(rat, ":kind \"\" wants :repo \"\" and :url \"\"")
 				}
 				if kindOK {
 					if num, ok := rm["number"]; ok {
