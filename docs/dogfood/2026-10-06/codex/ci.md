@@ -1,4 +1,4 @@
-# nova-ci dogfood — Codex (Stella), 2026-10-07
+# nova-ci dogfood — Codex, 2026-10-07
 
 I read `nova-ci`'s own help and `docs/CLI.md`, then used each listed verb at
 least once against this Linux scratch checkout. I built the tool from base
