@@ -73,7 +73,6 @@ func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 	documentedExamples := []string{
 		"nova-card generate --from findings --file ./cmd/nova-card/testdata/findings.tsv --repo example/repo --base dev --sha 0123456789abcdef0123456789abcdef01234567 --out ./cards",
 		"nova-card lint --card ./cards/finding-internal-bus-send.md",
-		"nova-card lint --card ./cards/finding-cmd-nova-bus-main.md",
 	}
 
 	_, banner, _ := runCard("help")

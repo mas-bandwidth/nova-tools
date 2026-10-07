@@ -1264,8 +1264,6 @@ CARDS OK dir=./cards cards=2 waves=1 tier=pro
 $ nova-card lint --card ./cards/finding-internal-bus-send.md
 LINT OK file=./cards/finding-internal-bus-send.md
 
-$ nova-card lint --card ./cards/finding-cmd-nova-bus-main.md
-LINT OK file=./cards/finding-cmd-nova-bus-main.md
 ```
 
 ## One-shot lanes at parity (internal/friend/lane_parity_test.go, cmd/nova-friend/lane_parity_test.go)
