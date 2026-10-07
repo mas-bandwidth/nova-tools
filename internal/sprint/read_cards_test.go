@@ -1,6 +1,7 @@
 package sprint
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -528,4 +529,40 @@ func TestAReadHandedBackByFriendTakeIsNotDealtToHerAgain(t *testing.T) {
 		}
 		require.Nil(t, w.s.Fleet.Placed(id+".g1"), "a read she handed back is never dealt to her again at the attempt")
 	}
+}
+
+// TestAReadCardHoldsItsPrimaryToTheReadCardsDeadline pins the 2026-10-06 10:18 PM finding:
+// a read card working on a friend's row holds its primary in review until the read card's
+// own deadline (ReadCardDeadline from its start, when the ask takes it back late), never
+// only the old friend read's DeadlineUnbegun from its ask; eight primaries with a read
+// working were judged stalled ("no read is outstanding") 30 minutes after the ask.
+func TestAReadCardHoldsItsPrimaryToTheReadCardsDeadline(t *testing.T) {
+	t.Parallel()
+	w := readCardsWorld(t, 4)
+	putReviewBy(w, "s1-1", "s1-1: work (s1)\n", "bob", 1)
+	dealReads(t, w, []FriendSeat{readerSeat("amy", 8, []string{"flash"}, []string{"builder", "reader"})})
+	rc := w.s.Fleet.Placed(ReadCardID("s1-1", 1, "amy"))
+	require.NotNil(t, rc)
+	require.Equal(t, Working, rc.Col)
+	w.s.Now = w.s.Now.Add(DeadlineUnbegun + 15*time.Minute)
+	hd := mustHold(t, running(w), "s1-1", HeldByActor)
+	require.Contains(t, hd.Why, rc.ID)
+	w.s.Now = w.s.Now.Add(ReadCardDeadline)
+	require.NotEqual(t, HeldByActor, Holder(running(w), w.s.Now, "s1-1").By, "past the read card's deadline it holds nothing")
+}
+
+// TestReadCardsWhySaysWhyAPrimaryWantsNoRead pins tick --shadow's wants-0 line: a primary in
+// review, not acceptable, that wants no read card says why (failed work, or the reads that
+// stand, each named).
+func TestReadCardsWhySaysWhyAPrimaryWantsNoRead(t *testing.T) {
+	t.Parallel()
+	w := readCardsWorld(t, 4)
+	putReviewBy(w, "s1-1", "s1-1: work (s1)\n", "bob", 1)
+	putReviewBy(w, "s1-2", "s1-2: work (s1)\n", "bob", 2)
+	w.s.Work.Card("s1-2").Fields["result"] = "failed"
+	seats := []FriendSeat{readerSeat("amy", 8, []string{"flash"}, []string{"builder", "reader"})}
+	dealReads(t, w, seats)
+	why := strings.Join(ReadCardsWhy(w.s, seats), "\n")
+	require.Contains(t, why, "s1-1 wants 0: attempt=1 stands: placed "+ReadCardID("s1-1", 1, "amy")+" col=working")
+	require.Contains(t, why, "s1-2 wants 0: its work came back failed (result=failed)")
 }

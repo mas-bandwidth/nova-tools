@@ -699,6 +699,13 @@ func readCardsAskWhy(s *Snapshot, seats []FriendSeat, ri routeIndexes, why *[]st
 		u.Closes = closesFor(s.Open, []string{NStranded, NStalled}, pr.ID)
 		p.Units = append(p.Units, u)
 	}
+	if why != nil {
+		for _, pr := range view.Work.Column(Review) {
+			if !IsSentinel(pr) && readCardsWanted(view, pr, idx) == 0 && !acceptable(view, pr) {
+				*why = append(*why, pr.ID+" wants 0: "+readsWantZeroWhy(view, pr, idx))
+			}
+		}
+	}
 	// the cards taken back whose primary asks nothing now
 	for _, key := range slices.Sorted(maps.Keys(back)) {
 		if done[key] {
@@ -821,4 +828,32 @@ func readStart(c *Card) time.Time {
 		return t
 	}
 	return stampAt(c, "asked")
+}
+
+// readsWantZeroWhy says why a primary in review that is not acceptable wants no read card
+// (ReadCardsWhy): failed work, or the reads that stand (readCardsStanding), each named.
+func readsWantZeroWhy(s *Snapshot, pr *Card, idx map[string][]*Card) string {
+	if pr.F("result") == "failed" {
+		return "its work came back failed (result=failed)"
+	}
+	placed, oks, brk := fleetReadLiveOf(s, pr, idx[pr.ID])
+	var out []string
+	say := func(kind string, c *Card) {
+		out = append(out, kind+" "+c.ID+" col="+orDash(c.Col)+" verdict="+orDash(c.F("verdict"))+" start="+stamp(readStart(c)))
+	}
+	for _, c := range placed {
+		say("placed", c)
+	}
+	for _, c := range oks {
+		say("ok", c)
+	}
+	for _, c := range brk {
+		say("broken", c)
+	}
+	if s.Readers != nil {
+		for _, c := range liveReadsAt(s, pr, readAttempt(pr)) {
+			say("readers-table", c)
+		}
+	}
+	return "attempt=" + itoa(readAttempt(pr)) + " stands: " + strings.Join(out, "; ")
 }
