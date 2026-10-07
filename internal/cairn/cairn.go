@@ -538,9 +538,16 @@ func open(store, session, source string, now time.Time, publish string, write bo
 			if rec.Source != "" {
 				again = append(again, "--source", rec.Source)
 			}
+			// A different --publish names both policies: the one the session
+			// holds and the one this call asked for (docs/SPEC-CAIRN.md, the open verb).
+			msg := fmt.Sprintf("session %q is already open with publish=%s source=%s; a re-open names the same, and another policy or source is a new session id",
+				session, rec.Publish, cmpOr(rec.Source, "-"))
+			if rec.Publish != publish {
+				msg = fmt.Sprintf("session %q is already open with publish=%s source=%s; --publish %s names another, and a re-open names the same",
+					session, rec.Publish, cmpOr(rec.Source, "-"), publish)
+			}
 			return rec, &ConflictError{
-				Msg: fmt.Sprintf("session %q is already open with publish=%s source=%s; a re-open names the same, and another policy or source is a new session id",
-					session, rec.Publish, cmpOr(rec.Source, "-")),
+				Msg:    msg,
 				Remedy: command("open", append(again, "--publish", rec.Publish)...),
 			}
 		}
