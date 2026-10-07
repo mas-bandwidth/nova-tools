@@ -1040,6 +1040,99 @@ where the coordinator reads it (a sprint note, like the idle alarm); and
 the model (tla/Bus2.tla gaining the owed set, with a reversed witness for
 a daemon ack that clears it).
 
+## The row is followed (internal/friend/follow.go, live.go; tla/FriendFollow.tla)
+
+The owner, 2026-10-07: "There's only ever one max, and that max lives in nova-config. A friend
+harness should periodically (every 10 seconds, every 1s) just update their own width from what is
+in nova-config, and any other config for them. This should be automatic, and happen mechanically";
+"make runner upgrades mechanical. You can set the runner version via nova-config, and then the
+runners themselves in their 1s check, see if they should be on a different version, then
+automatically quit, get the new version they need, and restart with the new version! nova-config
+is the thing the runners AUTOMATICALLY FOLLOW"; "never manual. Never you having to remember to
+update them. nova-config is the only thing you ever change."
+
+**The beat's answer carries the row.** A friend's host reaches the sprint server and the bus and
+nothing else (no config store, no secret), so her daemon learns her row from the server: every
+`friend beat` answer (`FRIEND-BEAT OK <f> at=`) carries her row as friend sync last copied it from
+nova-config: `row_mode=`, `row_width=`, `row_config_dir=` (when set), `row_token_cap=`,
+`row_tiers=`, `row_roles=`, `row_release=` (when set) and `row_held=true` (while the coordinator
+holds her). Strict in what is sent, permissive in what is read: each word is `key=value`, a daemon
+on an older build reads past the words it does not know, and a word absent is the row naming none
+(`ParseRow`, `RowConfigDir`, `TokenCapOf`, `LaneRulesOf`, `ParseRelease`). The server reads the
+row off its roster, one read it already makes; no new store trip.
+
+**Width, every second.** `--width` on `nova-friend run` is the width until the first beat answers;
+from then on the row's `row_width=` is the only width (`Daemon.Row`, read every step): the lanes
+beyond it take no new card and retire at their next lane start, never killed; lanes up to it are
+opened. A change is one record line, `CONFIG width=16 (was 8) from the friend row`. The same for
+the rest of the row: mode (a change waits for the other mode's turns to end), config_dir, token
+cap, tiers and streams as lane rules (`LaneRules.Over`), read slots, profile, lane caps, pacing.
+
+**The release, with a restart.** The row's `release` (`nova-config friend set <f> --release
+vX.Y.Z`; `--release ''` clears it) is the nova-tools release her daemon runs under. Each beat the
+daemon compares `row_release=` with its own build (the `-X main.version` stamp every release
+binary carries; `nova-friend version` prints it). When they differ (`Follower`, follow.go):
+
+1. it holds: no new lane is opened, no card taken, no batch turn or read begun (`loop.hold`);
+   a lane with a card in hand finishes that card's turns, and messages wait on the stream;
+2. it fetches that release's `nova-friend` for its own OS and architecture from the repository
+   `--release-repo` names (else `NOVA_RELEASE_REPO`; `install` writes the flag into the agent),
+   the GitHub release's asset `nova-friend_<tag>_<goos>_<goarch>` (`release.FetchTool`,
+   `release.GitHubSource`, HTTPS, no credential: a public release needs none and a friend's host
+   carries none), into a private temporary file beside the running binary, verified: the
+   release's `SHA256SUMS` is read first and, when the tag object carries a `sums=` digest (the one
+   `release cut` annotates and `adopt` checks), held to it; the asset's bytes must hash to its
+   `SHA256SUMS` line. A release cut before the tags were annotated is held to its checksum file
+   alone, which is what every reader of a GitHub release has; the record says which;
+3. it runs the staged binary's `version` verb and reads the tag off its line; a binary that does
+   not answer with the release is removed, never run (`NeverRunsUnverified`);
+4. once no lane holds a card and no turn or read runs (`loop.quiet`), it renames the staged
+   binary over its own path (`release.Swap`, one rename: the running image is untouched) and runs
+   itself again under it with the same arguments and the same pid (`syscall.Exec`), so launchd
+   sees one process throughout. The lanes' children are the daemon's own processes (their output
+   pipes are the daemon's), so the restart waits for them rather than orphaning them: that wait is
+   bounded by `FollowDrain` (3 h, the longest default lane cap and a little over), past which the
+   daemon restarts anyway, says which lanes still ran, and the daemon that comes up finishes their
+   cards as it finishes every started card whose run is gone (lane_end.go). The restarted daemon
+   reads the same `row_release=`, sees its own build, and does nothing.
+
+A fetch that fails, a checksum that does not match, a binary that does not answer, a swap or a
+restart that fails: the running binary stays, the reason is said once per release value
+(`release follow: <tag> not followed: <why>; the running build <b> stays in place; tried again in
+1m0s, then every 5m0s`), and the follow is tried again after `FollowRetry` (a minute, then five),
+never in a tight loop, and never from a timer of its own: it rides the beat. An unstamped build
+(a hand build, no version) follows nothing and says so once. A row that names no release, or the
+build already running, is nothing to do.
+
+**Every beat names the work** (the seat's finding of 2026-10-07: the daemon's beat carried no
+`--running` and no `--working`, so the server never marked a friend's cards working and the tick's
+friend-take rule took them back while her lanes were mid-card). Each beat carries `--running
+<job,...>`, `--working <n>`, `--width <n>` and `--build <tag>` (`BeatReport`, `Daemon.Report`,
+live.go): the cards the daemon's own lanes hold until their `RESULT.md` or `REPORT.md` is there
+or the lane ends them (the lanes' hands and the started map), and, for a harness whose friend
+runs children outside the daemon (a session, a runner script), each job whose lane mark
+(`jobs/<job>/LANE`) says a lane runs it and is fresh, and each job a runner's pid file names
+(`runner/<job>.pid` beside or above the working directory, the one-shot runner scripts' marker)
+whose pid is alive, while `outbox/<job>/REPORT.md` is not there. The server's beat lane takes
+`--build`, `--started` and `--present` as it takes the report's other flags, and `where` shows each
+friend's build in the friends table (`build`).
+
+**The model** (tla/FriendFollow.tla, instance MCFriendFollow): one daemon on build B with the row's
+release R, its lanes holding cards, the fetch answering good, bad or failing, the restart. It
+proves the daemon never runs a build that failed verification (`NeverRunsUnverified`), no lane's
+card dies from a follow before the drain bound (`LanesSurvive`), the running build equals the
+row's release after a follow (`FollowedIsTheRow`), and, with a source that answers, a changed row
+is followed (`Follows`); reversed witnesses swap an unverified binary, restart over running lanes,
+and never try a failed fetch again.
+
+**The mirror's fetch** (stage.go `fetchMirror`; the fault of 2026-10-07, three times on one
+daemon): two fetches of one bare mirror at once fail with `cannot lock ref '<ref>': is at X but
+expected Y`, after which nothing was staged until a person deleted the ref. A mirror is fetched
+under a file lock beside it (`<mirror>.fetch.lock`, `internal/filelock`, waited for up to
+`MirrorFetchLockWait`), so two daemons, or a daemon and a runner, on one machine never fetch the
+same mirror at once; and a fetch git refuses for a ref it cannot lock has that ref deleted
+(`update-ref -d`) and is run once more before it is refused.
+
 ## The beat comes from the daemon
 
 A friend's beat is the daemon's alone: the loop above beats once a second

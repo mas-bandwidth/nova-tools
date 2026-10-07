@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"sort"
 	"strings"
 	"time"
 
@@ -32,39 +31,7 @@ func ReadSums(dir string) ([]Artifact, error) {
 	if err != nil {
 		return nil, err
 	}
-	var arts []Artifact
-	for i, line := range strings.Split(strings.TrimSpace(string(body)), "\n") {
-		if strings.TrimSpace(line) == "" {
-			continue
-		}
-		sum, name, ok := strings.Cut(line, "  ")
-		if !ok || sum == "" || name == "" {
-			return nil, refuse("build the release again with `nova-update release build`",
-				"%s line %d is not a sha256sum line: %q", SumsFile, i+1, line)
-		}
-		// A name with a separator in it would install outside --bin. The
-		// build writes bare names; anything else is not this file's.
-		if strings.ContainsAny(name, `/\`) || name == "." || name == ".." {
-			return nil, refuse("build the release again with `nova-update release build`",
-				"%s line %d names a path rather than a file: %q", SumsFile, i+1, name)
-		}
-		// The name is also written under --bin by install and interpolated into
-		// the remote `rm -f` adopt composes, which the far shell parses after ssh
-		// reassembles argv: held here to the narrowness pull already enforces
-		// (remoteArtifactName), so every caller sees only safe names
-		// (security#72 finding 1, artifact-name half).
-		if !remoteArtifactName.MatchString(name) {
-			return nil, refuse("build the release again with `nova-update release build`",
-				"%s line %d names %q, which is not a file name this tool will install or delete", SumsFile, i+1, name)
-		}
-		arts = append(arts, Artifact{Name: name, Sum: sum})
-	}
-	if len(arts) == 0 {
-		return nil, refuse("build the release again with `nova-update release build`",
-			"%s lists no artifact", SumsFile)
-	}
-	sort.Slice(arts, func(i, j int) bool { return arts[i].Name < arts[j].Name })
-	return arts, nil
+	return ParseSums(body)
 }
 
 // VerifyArtifacts checks every artifact in dir against the checksums the build

@@ -38,6 +38,9 @@ type Agent struct {
 	// ConfigDir is the friend's harness config directory (CLAUDE_CONFIG_DIR),
 	// the daemon's --config-dir, written only when set.
 	ConfigDir string
+	// ReleaseRepo is the repository (owner/name) whose releases the daemon follows when
+	// its row names one, the daemon's --release-repo, written only when set.
+	ReleaseRepo string
 	// Command, when set, is what the agent runs in place of the daemon: this tool's
 	// own verb and flags, after Binary (the wake ping loop, nova-friend ping-install).
 	Command []string
@@ -79,6 +82,9 @@ func (a Agent) Args() []string {
 	}
 	if a.ConfigDir != "" {
 		args = append(args, "--config-dir", a.ConfigDir)
+	}
+	if a.ReleaseRepo != "" {
+		args = append(args, "--release-repo", a.ReleaseRepo)
 	}
 	if a.SilentStop > 0 && a.SilentStop != DefaultSilentStop {
 		args = append(args, "--silent-stop", a.SilentStop.String())

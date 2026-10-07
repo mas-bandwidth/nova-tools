@@ -24,21 +24,26 @@ import (
 	"os/signal"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
 	"github.com/mas-bandwidth/nova-tools/internal/friend"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/redisauth"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
+	"github.com/mas-bandwidth/nova-tools/internal/release"
 	"github.com/mas-bandwidth/nova-tools/internal/sandbox"
 	"github.com/mas-bandwidth/nova-tools/internal/sprintwire"
 	"github.com/mas-bandwidth/nova-tools/internal/subproc"
+	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 	"github.com/mas-bandwidth/nova-tools/internal/tool"
 )
 
@@ -50,6 +55,10 @@ const (
 	RedisEnv      = "NOVA_BUS_REDIS"
 	ServerEnv     = "NOVA_SPRINT_SERVER"
 	DefaultServer = "127.0.0.1:6390"
+	// ReleaseRepoEnv names the repository (owner/name) whose releases the daemon follows
+	// when its row names one (docs/SPEC-FRIEND.md, "The row is followed"); --release-repo
+	// over it.
+	ReleaseRepoEnv = "NOVA_RELEASE_REPO"
 )
 
 // WaitPongEvery is how often wait-pong reads the log.
@@ -92,6 +101,17 @@ type world struct {
 	settings  friend.SettingsFS // where a harness's own settings are read and written (install, check --settings)
 	argv      []string          // this run's arguments after the program's name: what the plist drift is read against
 	wake      *wakeFS           // watch: the wake file's reads; nil reads the disk
+	// the follow of the row's release (friend.Follower): fetch stages the release's
+	// nova-friend beside the running binary, verified (release.FetchTool); verifyBin runs a
+	// staged binary's version verb; swap renames it into place; reexec runs this process
+	// again under the binary in place, the same argv, and returns only when it could not;
+	// alive says whether a pid names a live process (the runner pid files the beat reads)
+	fetch     func(ctx context.Context, repo, version, dir string) (string, error)
+	verifyBin func(ctx context.Context, path string) (string, error)
+	swap      func(staged, target string) error
+	reexec    func(bin string, argv []string) error
+	pidAlive  func(pid int) bool
+	build     string // this binary's build stamp (version); a test's rig stamps its own
 }
 
 // readPlist is the installed plist at path, empty when there is none or it
@@ -160,7 +180,10 @@ func sprintBeat(ctx context.Context, server string, argv []string) (string, erro
 
 // proofArgs are a beat's proof words as flags: the check her daemon asked and the
 // check her session answered, each with the daemon's run (friend.BeatWords;
-// sprint.ProveBeat on the server); none when there is nothing to say.
+// sprint.ProveBeat on the server); none when there is nothing to say. Then the daemon's
+// report (friend.BeatReport): the jobs its lanes run, always, so the server marks her
+// cards working and never takes back a card mid-run (the finding of 2026-10-07); how many;
+// her width as the row gave it; and the build it runs, each when it has one.
 func proofArgs(w friend.BeatWords) []string {
 	var args []string
 	if w.Check != "" {
@@ -171,6 +194,17 @@ func proofArgs(w friend.BeatWords) []string {
 	}
 	if len(args) > 0 && w.Run != "" {
 		args = append(args, "--run", w.Run)
+	}
+	r := w.Report
+	if len(r.Running) > 0 {
+		args = append(args, "--running", strings.Join(r.Running, ","))
+	}
+	args = append(args, "--working", strconv.Itoa(r.Working))
+	if r.Width > 0 {
+		args = append(args, "--width", strconv.Itoa(r.Width))
+	}
+	if r.Build != "" {
+		args = append(args, "--build", r.Build)
 	}
 	return args
 }
@@ -205,7 +239,7 @@ func sprintView(ctx context.Context, server, name string) (string, error) {
 }
 
 func realWorld() world {
-	w := world{getenv: os.Getenv, exec: friend.RealExec, sqlite: friend.RealExec, wall: friend.Wall.Exec, now: time.Now, uid: os.Getuid(), home: os.Getenv("HOME"),
+	w := world{getenv: os.Getenv, exec: friend.RealExec, build: version, sqlite: friend.RealExec, wall: friend.Wall.Exec, now: time.Now, uid: os.Getuid(), home: os.Getenv("HOME"),
 		sleep: func(ctx context.Context, d time.Duration) {
 			select {
 			case <-ctx.Done():
@@ -246,6 +280,16 @@ func realWorld() world {
 		lookPath: exec.LookPath,
 		copy:     friend.CopyExecutable,
 		settings: friend.OSFS{},
+		fetch: func(ctx context.Context, repo, version, dir string) (string, error) {
+			got, err := release.FetchTool(ctx, release.GitHubSource{}, repo, version, "nova-friend", runtime.GOOS, runtime.GOARCH, dir)
+			return got.Staged, err
+		},
+		verifyBin: release.ExecVersion,
+		swap:      release.Swap,
+		reexec: func(bin string, argv []string) error {
+			return syscall.Exec(bin, append([]string{bin}, argv...), os.Environ())
+		},
+		pidAlive: func(pid int) bool { return swarm.Alive(pid, "") },
 		binary: func() (string, error) {
 			p, err := os.Executable()
 			if err != nil {
@@ -358,7 +402,8 @@ func friendTool(w world) *tool.Tool {
 		f.Required("dir", "the friend's working directory: the session's, and where the state files live")
 		f.String("session", "", "the session to deliver into (default: the harness's newest session in --dir; harness tmux: the tmux session, default: the one host saved, else friend-<me>)")
 		f.String("server", w.server(), "the sprint server, host:port (default: "+ServerEnv+", else "+DefaultServer+")")
-		f.Int("width", 0, "the friend's width, from the nova-config friend row; 0 is unknown")
+		f.Int("width", 0, "the friend's width until the first beat answers: from then on the nova-config friend row's width, read off every beat, is the only width (docs/SPEC-FRIEND.md, the row is followed); 0 is unknown")
+		f.String("release-repo", w.getenv(ReleaseRepoEnv), "the repository (owner/name) whose GitHub releases the daemon follows when the friend row names a release (nova-config friend set <me> --release <tag>): it fetches that release's nova-friend, verifies it and restarts under it (default: "+ReleaseRepoEnv+"; none: the row's release is said and not followed)")
 		f.Duration("silent-stop", friend.DefaultSilentStop, "stop a turn that has printed nothing for this long; a turn that prints runs on")
 		f.Int("broken-after", friend.DefaultBrokenAfter, "turns in a row the provider refuses the same way before the session is broken")
 		f.Duration("limit-rest", friend.DefaultLimitWait, "how long the friend is down when its harness's usage limit or empty balance names no reset")
@@ -386,7 +431,7 @@ state: <dir>/.nova-friend/ (--state-dir moves it), the queue: <dir>/inbox/QUEUE.
 		Verbs: []tool.Verb{
 			{
 				Name:    "run",
-				Usage:   "run --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--profile <p>] [--config-dir <d>] [--deny-self <d,...>] [--wall-jobs <d,...>] [--wall-reads <d,...>] [--model <provider/model>] [--db <opencode.db>] [--lane-tiers <t,...>] [--lane-streams <p,...>] [--token-cap <n>] [--load-max <n>] [--load-width <n>] [--pause-on funds|any] [--refuse-go] [--dry-run]",
+				Usage:   "run --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--width <n>] [--release-repo <owner/name>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--profile <p>] [--config-dir <d>] [--deny-self <d,...>] [--wall-jobs <d,...>] [--wall-reads <d,...>] [--model <provider/model>] [--db <opencode.db>] [--lane-tiers <t,...>] [--lane-streams <p,...>] [--token-cap <n>] [--load-max <n>] [--load-width <n>] [--pause-on funds|any] [--refuse-go] [--dry-run]",
 				Example: "", // a daemon: the example block has no line that runs for ever
 				Effect:  tool.Delivery + ": the daemon; messages go into the session, beats and pongs go out, until a signal",
 				DryRun:  true,
@@ -518,7 +563,7 @@ example: nova-friend beat --as bob --server 127.0.0.1:6390`,
 			},
 			{
 				Name:    "install",
-				Usage:   "install --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--config-dir <d>] [--model <provider/model>] [--secrets NAME[,NAME] --seat <seat>] [--launchd-log <file>] [--dry-run]",
+				Usage:   "install --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--width <n>] [--release-repo <owner/name>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--config-dir <d>] [--model <provider/model>] [--secrets NAME[,NAME] --seat <seat>] [--launchd-log <file>] [--dry-run]",
 				Example: "install --as bob --harness opencode --dir ./bob --dry-run",
 				Effect:  tool.LocalWrite + ": writes the harness's settings and the launchd agent com.nova.friend-<me>, and loads it",
 				Detail: `First writes the settings the friend's harness needs in its own config (docs/SPEC-FRIEND.md, Harness
@@ -1130,6 +1175,48 @@ func (w world) run(c *tool.Call) *tool.Out {
 	}
 	// her row, as her beat last answered it (nova-sprint friend beat: row_mode, row_width, row_config_dir)
 	rowMode, rowWidth := "", 0
+	// the follow of her row's release (friend.Follower; docs/SPEC-FRIEND.md, "The row is
+	// followed"): this build's stamp against row_release=, the fetch into the running
+	// binary's directory, the swap and the restart; without a repository the release is
+	// said and not followed
+	bin, binErr := w.binary()
+	follower := &friend.Follower{Build: w.build, Now: w.now, Remove: os.Remove}
+	follower.Fetch = func(ctx context.Context, rel string) (string, error) {
+		if repo := c.Str("release-repo"); repo == "" {
+			return "", friend.ErrNoReleaseRepo
+		} else if binErr != nil {
+			return "", fmt.Errorf("this binary's path: %w", binErr)
+		} else if w.fetch == nil {
+			return "", errors.New("this world fetches no release")
+		} else {
+			return w.fetch(ctx, repo, rel, filepath.Dir(bin))
+		}
+	}
+	follower.Verify = func(ctx context.Context, staged string) (string, error) {
+		if w.verifyBin == nil {
+			return "", errors.New("this world verifies no binary")
+		}
+		line, err := w.verifyBin(ctx, staged)
+		if err != nil {
+			return "", err
+		}
+		if words := strings.Fields(line); len(words) >= 2 {
+			return words[1], nil // "nova-friend <version> <goos>/<goarch> <go>" (buildinfo.Line)
+		}
+		return "", fmt.Errorf("the staged binary's version line is not one: %q", oneline.Cap(strings.TrimSpace(line), 120))
+	}
+	follower.Swap = func(staged string) error {
+		if w.swap == nil {
+			return errors.New("this world swaps no binary")
+		}
+		return w.swap(staged, bin)
+	}
+	follower.Exec = func() error {
+		if w.reexec == nil {
+			return errors.New("this world restarts nothing")
+		}
+		return w.reexec(bin, w.argv)
+	}
 	var rowReadSlots atomic.Int64 // her row's read slots as her beat last answered; friend.DefaultReadSlots until it says
 	rowReadSlots.Store(friend.DefaultReadSlots)
 	// her row's lane caps by tier as her beat last answered; friend.DefaultLaneCaps until it says
@@ -1260,7 +1347,8 @@ func (w world) run(c *tool.Call) *tool.Out {
 		}
 	}
 	stager := w.stager(dir)
-	d := &friend.Daemon{
+	var d *friend.Daemon
+	d = &friend.Daemon{
 		Friend: name, Harness: c.Str("harness"), Dir: dir, Width: c.Int("width"),
 		Store: sc.DaemonStore(), Deliver: sc.Deliver, Now: w.now, Pause: w.sleep,
 		Sent: func() time.Time {
@@ -1292,10 +1380,13 @@ func (w world) run(c *tool.Call) *tool.Out {
 			// just by the daemon". A per-card harness has no session to check, so its beat says
 			// no proof at all: her evidence is a card of hers finished, which the server counts
 			words := func() friend.BeatWords {
-				if perCard {
-					return friend.BeatWords{}
+				var said friend.BeatWords
+				if !perCard {
+					said = sc.Words() // the check asked and the check answered that no beat has said
 				}
-				return sc.Words() // the check asked and the check answered that no beat has said
+				said.Report = d.Report() // the jobs the lanes run, her width, this build
+				said.Report.Build = buildinfo.Version(w.build)
+				return said
 			}
 			up := func(ctx context.Context) error {
 				said := words()
@@ -1308,9 +1399,16 @@ func (w world) run(c *tool.Call) *tool.Out {
 					}
 				}
 				if m, wd, ok := friend.ParseRow(answer); err == nil && ok {
+					if wd != rowWidth {
+						record(fmt.Sprintf("%s CONFIG width=%d (was %d) from the friend row", w.now().UTC().Format(time.RFC3339), wd, rowWidth))
+					}
 					rowMode, rowWidth = m, wd
 					dir := friend.RowConfigDir(answer)
 					rowConfigDir.Store(&dir)
+				}
+				if err == nil {
+					rel, _ := friend.ParseRelease(answer) // none is a row that names none
+					follower.Want(rel)
 				}
 				if n, ok := friend.ParseReadSlots(answer); err == nil && ok {
 					rowReadSlots.Store(int64(n))
@@ -1375,6 +1473,8 @@ func (w world) run(c *tool.Call) *tool.Out {
 			}
 			return rowMode, rowWidth
 		},
+		Follow:    follower.Step,
+		Alive:     w.pidAlive,
 		LoadLanes: func() (friend.LaneState, error) { return friend.ReadLanes(state) },
 		Sprint:    w.sprintAsk(server),
 		Rules:     rules,
@@ -1443,7 +1543,11 @@ func (w world) run(c *tool.Call) *tool.Out {
 			if err != nil {
 				bin = "nova-friend" // ignored: the name on PATH stands in when this binary's path is unknown
 			}
-			return fmt.Sprintf("%s pong --as %s --nonce %s --state-dir %s --redis %s --width %d --queue <tasks queued> --working <tasks working>", bin, name, nonce, state, c.Str("redis"), c.Int("width"))
+			width := rowWidth // the row's, as the beat last answered; the flag until it does
+			if width == 0 {
+				width = c.Int("width")
+			}
+			return fmt.Sprintf("%s pong --as %s --nonce %s --state-dir %s --redis %s --width %d --queue <tasks queued> --working <tasks working>", bin, name, nonce, state, c.Str("redis"), width)
 		},
 	}
 	if !perCard {
@@ -1616,6 +1720,7 @@ func (w world) agent(c *tool.Call) (friend.Agent, error) {
 	if a.Harness == "claude" {
 		a.ConfigDir = c.Str("config-dir")
 	}
+	a.ReleaseRepo = c.Str("release-repo")
 	if len(a.Secrets) > 0 {
 		for _, p := range []struct {
 			name string

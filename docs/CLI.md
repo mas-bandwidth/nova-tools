@@ -609,8 +609,17 @@ kickstart` keeps what launchd loaded): run `install` again.
 ```sh
 nova-friend install --as <me> --harness opencode --dir <my working directory> --width <n>
 nova-friend install --as <me> --harness dsh --dir <d> --width <n> --secrets DEEPSEEK_API_KEY --seat <seat>
+nova-friend install --as <me> --harness opencode --dir <d> --release-repo <owner/name>   # the daemon follows the friend row's release from that repository's GitHub releases (nova-config friend set <me> --release <tag>)
 nova-friend status --as <me> --dir <my working directory>
 ```
+
+The daemon follows its nova-config friend row off every beat's answer (docs/SPEC-FRIEND.md,
+"The row is followed"): `--width` is the width until the first beat answers, then the row's
+`row_width=` is the only width (`CONFIG width=16 (was 8) from the friend row` on the record);
+`row_release=` names the release the daemon runs under, and a daemon on another build takes no
+new lane, fetches that release's `nova-friend` from `--release-repo` (else `NOVA_RELEASE_REPO`),
+verifies it, waits for its lanes' cards, swaps it into place and restarts itself under it. Every
+beat names the jobs its lanes run (`--running`, `--working`), its width and its build.
 
 A harness that needs a secret in its environment gets it through `--secrets
 NAME[,NAME]` with the machine's nova-secrets `--seat`: the agent runs
@@ -1185,7 +1194,7 @@ nova-sprint install seat-push|friend-sync (seat install's and friend sync instal
 nova-sprint install table --out <file> [--every <duration>] [--redis <addr>] [--dir <dir>] [--log <file>] [--dry-run]
 nova-sprint uninstall server|member|seat-push|friend-sync|table [--dir <dir>] [--dry-run]
 nova-sprint units --check [--dir <dir>]
-nova-sprint friend beat <friend> [--working <n>] [--queue <n>] [--width <n>] [--running <id>,...] [--load <percent>]
+nova-sprint friend beat <friend> [--working <n>] [--queue <n>] [--width <n>] [--running <id>,...] [--load <percent>] [--active <RFC3339>] [--build <tag>] [--started <RFC3339>] [--present <RFC3339>] [--check <nonce> --run <run>] [--pong <nonce> --run <run>] [--until <RFC3339> --reason <text>]   # answers FRIEND-BEAT OK <friend> at= and her row: row_mode= row_width= [row_config_dir=] row_token_cap= [row_tiers=] [row_roles=] [row_release=] [row_held=true]; her daemon follows the row off every answer
 nova-sprint friend down <friend> [--reason <text>] [--until <RFC3339>]
 nova-sprint friend up <friend> [--width <n>]
 nova-sprint friend cards <friend> [--json]

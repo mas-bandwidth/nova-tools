@@ -421,12 +421,15 @@ var friendBeatFlags = map[string]func(string) bool{
 		f, err := strconv.ParseFloat(strings.TrimSuffix(v, "%"), 64)
 		return err == nil && f >= 0
 	},
-	"--active": rfc3339,
-	"--pong":   oneLineText, // any word: the server's proof step says a beat with no proof
-	"--check":  sprint.ValidID,
-	"--run":    sprint.ValidID,
-	"--until":  rfc3339,
-	"--reason": oneLineText,
+	"--active":  rfc3339,
+	"--pong":    oneLineText, // any word: the server's proof step says a beat with no proof
+	"--check":   sprint.ValidID,
+	"--run":     sprint.ValidID,
+	"--until":   rfc3339,
+	"--reason":  oneLineText,
+	"--build":   oneLineText, // the build her daemon runs, so the table shows which release each friend follows
+	"--started": rfc3339,
+	"--present": rfc3339,
 }
 
 // oneLineText is the shape of a short text on one line: not empty, no control character.

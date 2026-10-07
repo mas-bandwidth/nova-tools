@@ -446,8 +446,11 @@ func (s *SessionCheck) downBeat(now time.Time) (until time.Time, reason string) 
 // --pong): the daemon's run, the check it put into the session, and the check
 // its session answered, each "" when there is none to say. The sprint server
 // counts an answer only when it names a check this run asked (sprint.ProveBeat).
+// Report is what the beat says of the daemon's work beside them (--running,
+// --working, --width, --build; BeatReport), the zero value saying none.
 type BeatWords struct {
 	Run, Check, Pong string
+	Report           BeatReport
 }
 
 // Words is what the next beat says: the check asked and the check answered that

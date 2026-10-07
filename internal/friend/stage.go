@@ -17,6 +17,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
+	"github.com/mas-bandwidth/nova-tools/internal/filelock"
 	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 )
@@ -176,6 +177,9 @@ type Stager struct {
 	Dir string
 	URL func(repo string) string
 	Env []string
+	// Git runs one git command and answers its output (gitrun.Output when nil); a test's
+	// fake stands in for the fetch that fails.
+	Git func(ctx context.Context, budget time.Duration, args ...string) (string, error)
 
 	mu      sync.Mutex
 	repos   map[string]*sync.Mutex
@@ -197,7 +201,45 @@ func (s *Stager) env() []string {
 }
 
 func (s *Stager) git(ctx context.Context, budget time.Duration, args ...string) (string, error) {
+	if s.Git != nil {
+		return s.Git(ctx, budget, args...)
+	}
 	return gitrun.Output(ctx, gitrun.Options{Env: s.env(), OwnRepo: true, Timeout: budget}, args...)
+}
+
+// MirrorFetchLockWait bounds the wait for another process's fetch of the same mirror.
+const MirrorFetchLockWait = MirrorCloneBudget
+
+// cannotLockRef is git's refusal when two fetches of one mirror race on a ref ("cannot lock
+// ref 'refs/remotes/origin/x': is at A but expected B"): the ref the other left behind.
+var cannotLockRef = regexp.MustCompile(`cannot lock ref '([^']+)'`)
+
+// fetchMirror is one fetch of the mirror at dir, under the mirror's fetch lock
+// (<mirror>.fetch.lock beside it, a file lock, so two daemons or a daemon and a runner on
+// one machine never fetch the same bare mirror at once: the fault of 2026-10-07, two lanes
+// fetching one mirror, "cannot lock ref ... is at X but expected Y", after which nothing
+// was staged until a person deleted the ref). A fetch git refuses for a ref it cannot lock
+// has that ref deleted (update-ref -d) and is run once more before it is refused.
+func (s *Stager) fetchMirror(ctx context.Context, dir string, args ...string) error {
+	lock, err := filelock.Lock(dir+".fetch.lock", "nova-friend fetch", MirrorFetchLockWait)
+	if err != nil {
+		return fmt.Errorf("the mirror's fetch lock: %w", err)
+	}
+	defer func() { _ = lock.Unlock() }() // ignored: an unlock at the end of the fetch; the fetch's error is the one returned
+	argv := append([]string{"-C", dir, "fetch", "--quiet"}, args...)
+	_, err = s.git(ctx, MirrorCloneBudget, argv...)
+	if err == nil {
+		return nil
+	}
+	m := cannotLockRef.FindStringSubmatch(err.Error())
+	if m == nil {
+		return err
+	}
+	if _, derr := s.git(ctx, 0, "-C", dir, "update-ref", "-d", m[1]); derr != nil {
+		return fmt.Errorf("%w; and the ref it could not lock, %s, could not be deleted: %v", err, m[1], derr)
+	}
+	_, err = s.git(ctx, MirrorCloneBudget, argv...)
+	return err
 }
 
 // repoLock is the lock of one repository's mirror: its fetch, the worktrees added to it and
@@ -352,16 +394,14 @@ func (s *Stager) mirror(ctx context.Context, repo string) (string, error) {
 				return "", err
 			}
 		}
-		if _, err := s.git(ctx, MirrorCloneBudget, "-C", tmp, "fetch", "--quiet", "origin"); err != nil {
+		if err := s.fetchMirror(ctx, tmp, "origin"); err != nil {
 			_ = safepath.RemoveUnder(filepath.Dir(mirror), tmp) // ignored: the next stage removes it first
 			return "", unreachable(err)
 		}
 		if err := os.Rename(tmp, mirror); err != nil {
 			return "", err
 		}
-		s.mu.Lock()
-		s.fetched[repo] = time.Now()
-		s.mu.Unlock()
+		s.noteFetched(repo)
 		return mirror, nil
 	} else if err != nil {
 		return "", err
@@ -375,13 +415,21 @@ func (s *Stager) mirror(ctx context.Context, repo string) (string, error) {
 	if err := s.mirrorLayout(ctx, mirror, url); err != nil {
 		return "", err
 	}
-	if _, err := s.git(ctx, MirrorCloneBudget, "-C", mirror, "fetch", "--quiet", "--prune", "origin"); err != nil {
+	if err := s.fetchMirror(ctx, mirror, "--prune", "origin"); err != nil {
 		return "", unreachable(err)
 	}
-	s.mu.Lock()
-	s.fetched[repo] = time.Now()
-	s.mu.Unlock()
+	s.noteFetched(repo)
 	return mirror, nil
+}
+
+// noteFetched records that the repository's mirror was fetched now (MirrorFreshFor).
+func (s *Stager) noteFetched(repo string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.fetched == nil {
+		s.fetched = map[string]time.Time{}
+	}
+	s.fetched[repo] = time.Now()
 }
 
 // mirrorLayout makes a mirror's origin url and refspecs the stager's. A mirror that held

@@ -262,7 +262,7 @@ func (l *loop) readStep(now time.Time) {
 			d.Record(fmt.Sprintf("%s reads: %s", at, err))
 		}
 	}
-	if l.lanes.gov.Held() != "" || l.lanes.gov.Paused(now) {
+	if l.lanes.gov.Held() != "" || l.lanes.gov.Paused(now) || l.hold {
 		return
 	}
 	for _, r := range s.asked {

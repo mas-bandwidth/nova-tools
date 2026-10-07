@@ -1496,9 +1496,18 @@ func (a *app) friendsTable(friends []store.FriendRow, now time.Time) ntable.Tabl
 		cells[at[sprint.DoneOK]].Count = int64(f.OK)
 		cells[at[sprint.DoneFailed]].Count = int64(f.Failed)
 		t.Rows = append(t.Rows, ntable.Row{Key: f.Name, Cells: cells,
-			Texts: map[string]string{sprint.FieldWidth: strconv.Itoa(f.Width), sprint.Status: a.statusCell(f, now), sprint.Active: activeCell(f, now)}})
+			Texts: map[string]string{sprint.FieldWidth: strconv.Itoa(f.Width), sprint.Build: buildCell(f), sprint.Status: a.statusCell(f, now), sprint.Active: activeCell(f, now)}})
 	}
 	return t
+}
+
+// buildCell is the friends table's build cell: the build her daemon runs as her last beat
+// reported it (friend beat --build), "-" when none has.
+func buildCell(f store.FriendRow) string {
+	if f.Report == nil || f.Report.Build == "" {
+		return "-"
+	}
+	return f.Report.Build
 }
 
 // activeCell is the friends table's active cell: how long ago her session last wrote a file

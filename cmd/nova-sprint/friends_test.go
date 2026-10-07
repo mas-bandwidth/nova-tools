@@ -115,24 +115,24 @@ func TestTheFriendsTableCountsTheFriendsSprintCards(t *testing.T) {
 	}
 	// dealt, not started: ready, and none working (docs/SPEC-SPRINT.md section 1, a friend's
 	// card is working once she starts it)
-	assert.Equal(t, map[string]any{"ready": "2", "working": "0", "width": "8", "done": "0", "okpct": "0.0%", "status": "up", "active": "-", "ok": "0", "failed": "0"}, amy(), "two cards dealt, neither started")
+	assert.Equal(t, map[string]any{"ready": "2", "working": "0", "width": "8", "build": "-", "done": "0", "okpct": "0.0%", "status": "up", "active": "-", "ok": "0", "failed": "0"}, amy(), "two cards dealt, neither started")
 	ta.startFriend("amy", 2)
-	assert.Equal(t, map[string]any{"ready": "0", "working": "2", "width": "8", "done": "0", "okpct": "0.0%", "status": "up", "active": "-", "ok": "0", "failed": "0"}, amy(), "two cards started, both working; the hand job is nowhere")
+	assert.Equal(t, map[string]any{"ready": "0", "working": "2", "width": "8", "build": "-", "done": "0", "okpct": "0.0%", "status": "up", "active": "-", "ok": "0", "failed": "0"}, amy(), "two cards started, both working; the hand job is nowhere")
 
 	// amy finishes s1-1 with a LAND: done ok
 	outboxReport(t, root, "amy", "s1-1.w1", "# s1-1\n\n**Verdict:** LAND\nHead: "+landHead+"\n\nThe change is pushed.\n")
 	ta.ok("friend sync --root " + root)
-	assert.Equal(t, map[string]any{"ready": "0", "working": "1", "width": "8", "done": "1", "okpct": "100.0%", "status": "up", "active": "-", "ok": "1", "failed": "0"}, amy(), "s1-1 done ok, s1-2 still working")
+	assert.Equal(t, map[string]any{"ready": "0", "working": "1", "width": "8", "build": "-", "done": "1", "okpct": "100.0%", "status": "up", "active": "-", "ok": "1", "failed": "0"}, amy(), "s1-1 done ok, s1-2 still working")
 
 	// amy reports s1-2 with no verdict word: finished failed, never ok
 	outboxReport(t, root, "amy", "s1-2.w1", "# s1-2\n\nAll green, nothing more.\n")
 	ta.ok("friend sync --root " + root)
-	assert.Equal(t, map[string]any{"ready": "0", "working": "0", "width": "8", "done": "2", "okpct": "50.0%", "status": "up", "active": "-", "ok": "1", "failed": "1"}, amy(), "s1-2 done failed (no verdict), s1-1 done ok")
+	assert.Equal(t, map[string]any{"ready": "0", "working": "0", "width": "8", "build": "-", "done": "2", "okpct": "50.0%", "status": "up", "active": "-", "ok": "1", "failed": "1"}, amy(), "s1-2 done failed (no verdict), s1-1 done ok")
 
 	var w whereView
 	ta.json("where", &w)
-	assert.Equal(t, map[string]any{"ready": "0", "working": "0", "width": "8", "done": "0", "okpct": "0.0%", "status": "up", "active": "-", "ok": "0", "failed": "0"}, withoutRowCards(w.Tables[sprint.Friends]["bob"]), "bob has no card")
-	assert.Equal(t, map[string]any{"ready": "0", "working": "0", "width": "8", "done": "0", "okpct": "0.0%", "status": "up", "active": "-", "ok": "0", "failed": "0"}, withoutRowCards(w.Tables[sprint.Friends]["cat"]), "cat has no card")
+	assert.Equal(t, map[string]any{"ready": "0", "working": "0", "width": "8", "build": "-", "done": "0", "okpct": "0.0%", "status": "up", "active": "-", "ok": "0", "failed": "0"}, withoutRowCards(w.Tables[sprint.Friends]["bob"]), "bob has no card")
+	assert.Equal(t, map[string]any{"ready": "0", "working": "0", "width": "8", "build": "-", "done": "0", "okpct": "0.0%", "status": "up", "active": "-", "ok": "0", "failed": "0"}, withoutRowCards(w.Tables[sprint.Friends]["cat"]), "cat has no card")
 }
 
 // A friend's width is her friend row's (the owner, 2026-10-02: "6/1 seems a bit
@@ -493,11 +493,14 @@ func TestAFriendBeatsThroughTheServer(t *testing.T) {
 func TestAFriendsBeatAnswersHerRowsModeAndWidth(t *testing.T) {
 	t.Parallel()
 	r := newServerRig(t, "nova-sprint init --readers reader-a,reader-b --members m1:2")
-	mode, width := "", ""
+	mode, width, release := "", "", ""
 	r.a.friends = func(context.Context, string) ([]config.Row, error) {
 		f := map[string]string{"slots": "2", "tiers": "flash"}
 		if mode != "" {
 			f["mode"], f["width"] = mode, width
+		}
+		if release != "" {
+			f["release"] = release
 		}
 		return []config.Row{{Name: "amy", Fields: f}}, nil
 	}
@@ -513,4 +516,14 @@ func TestAFriendsBeatAnswersHerRowsModeAndWidth(t *testing.T) {
 	require.Equal(t, 0, res.Code, res.Stderr)
 	assert.Contains(t, res.Stdout, " row_mode=one-shot row_width=1")
 	assert.Contains(t, res.Stdout, " row_token_cap=6000000")
+	assert.Contains(t, res.Stdout, " row_tiers=flash")
+	assert.NotContains(t, res.Stdout, "row_release=", "a row that names no release says none")
+	release = "v1.2.0"
+	r.boss("nova-sprint friend sync --root " + root)
+	res = r.one("friend", "beat", "amy")
+	require.Equal(t, 0, res.Code, res.Stderr)
+	assert.Contains(t, res.Stdout, " row_release=v1.2.0", "the row's release, for her daemon to follow")
+	res = r.one("friend", "beat", "amy", "--build", "v1.1.0")
+	require.Equal(t, 0, res.Code, res.Stderr)
+	assert.Contains(t, res.Stdout, " build=v1.1.0", "the build her daemon reports is taken through the server")
 }

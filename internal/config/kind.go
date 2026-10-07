@@ -243,16 +243,31 @@ func FriendTokenCap(r Row) int64 {
 	return n
 }
 
+// FriendRelease is a friend row's release: the nova-tools release tag her
+// daemon follows (docs/SPEC-FRIEND.md, "The row is followed"); "" when the row
+// names none, and her daemon keeps the build it runs.
+func FriendRelease(r Row) string { return r.Fields["release"] }
+
+// releaseTag is the shape of a release tag a friend row may name: internal/release's
+// ValidVersion, vX.Y.Z with an optional prerelease or build suffix of safe characters,
+// held here without that package: the tag travels into a beat's answer line and a
+// release URL, where whitespace, % and = would be read as separators.
+var releaseTag = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.+-]*)?$`)
+
 // checkFriend is the friend kind's Check: her width is at least 1, a friend
 // working no job at once being no friend of the sprint's (remove the row
-// instead), and her config_dir, when set, is an absolute path. A width that
-// failed its own validation is absent and skipped.
+// instead), her config_dir, when set, is an absolute path, and her release,
+// when set, is a release tag. A width that failed its own validation is
+// absent and skipped.
 func checkFriend(r Row) error {
 	if w, ok := r.Fields["width"]; ok && w != "" && r.Int("width") < 1 {
 		return fmt.Errorf("friend %s has width %s; a friend's width is the jobs she works at once, at least 1: want --width <n> with n >= 1", r.Name, w)
 	}
 	if d := r.Fields["config_dir"]; d != "" && !filepath.IsAbs(d) {
 		return fmt.Errorf("friend %s has config_dir %q; CLAUDE_CONFIG_DIR is read as given, never expanded: want --config_dir <an absolute path>", r.Name, d)
+	}
+	if v := r.Fields["release"]; v != "" && !releaseTag.MatchString(v) {
+		return fmt.Errorf("friend %s has release %q; her daemon follows a nova-tools release tag: want --release vX.Y.Z (or --release '' to leave her daemon on the build it runs)", r.Name, v)
 	}
 	return nil
 }
@@ -429,7 +444,7 @@ var Kinds = []*Kind{
 		// rather than stored in configuration.
 		Name:  KindFriend,
 		Table: "friends",
-		Doc:   "an AI friend: her slots, which tiers she can do, her roles, and her width, the jobs she works at once, her delivery mode, the config directory her claude lanes run with, and the per-card token cap her one-shot lanes hold a card at",
+		Doc:   "an AI friend: her slots, which tiers she can do, her roles, and her width, the jobs she works at once, her delivery mode, the config directory her claude lanes run with, the per-card token cap her one-shot lanes hold a card at, and the release her daemon follows",
 		Fields: []Field{
 			{Name: "slots", Type: TypeInt, Required: true, Help: "her desired slots, under the ceiling of the machine her beat reports; no machine's width"},
 			{Name: "tiers", Type: TypeList, Enum: Tiers, Required: true, Help: "which tiers she can do: comma list of " + strings.Join(Tiers, ", ")},
@@ -438,6 +453,7 @@ var Kinds = []*Kind{
 			{Name: "mode", Type: TypeEnum, Enum: FriendModes, Default: DefaultFriendMode, Help: "how her daemon hands her work: batch (the default: every waiting message in one turn) or one-shot (width lanes, each its own session, handed one card per turn)"},
 			{Name: "config_dir", Type: TypeText, Nullable: true, Help: "the absolute directory a claude one-shot lane runs with as CLAUDE_CONFIG_DIR, her account's login and settings; unset (the default, or --config_dir '') for any other harness; nova-friend run refuses a claude friend in one-shot mode without it"},
 			{Name: "token_cap", Type: TypeInt, Default: strconv.FormatInt(DefaultFriendTokenCap, 10), Help: "tokens one card may spend (input, cached input, output and reasoning summed) before a one-shot lane stops its own run and holds the card; " + strconv.FormatInt(DefaultFriendTokenCap, 10) + " by default, and 0 is no cap"},
+			{Name: "release", Type: TypeText, Nullable: true, Help: "the nova-tools release tag her daemon follows, vX.Y.Z: her beat answers it, and a daemon on another build fetches that release's nova-friend, verifies it and restarts itself under it within a beat; unset (the default, or --release '') leaves her daemon on the build it runs"},
 		},
 		Check: checkFriend,
 		ApplyOrder: func(r Row) int {

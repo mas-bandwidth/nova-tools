@@ -236,7 +236,7 @@ func (a *app) friendSyncPass(c common, pg, root string, stdout, stderr io.Writer
 			fmt.Fprintf(stderr, "%s %s: friend %s has width %d, and a friend's width is at least 1; run: nova-config friend set %s --width <n>; nothing was changed\n", prog, name, n, width, n)
 			return 1, false
 		}
-		specs = append(specs, store.FriendSpec{Name: n, Width: width, Class: friendClass(r), Mode: config.FriendMode(r), ConfigDir: r.Fields["config_dir"], TokenCap: config.FriendTokenCap(r), TokenCapSet: true, Roles: friendRoles(r)})
+		specs = append(specs, store.FriendSpec{Name: n, Width: width, Class: friendClass(r), Mode: config.FriendMode(r), ConfigDir: r.Fields["config_dir"], TokenCap: config.FriendTokenCap(r), TokenCapSet: true, Roles: friendRoles(r), Release: config.FriendRelease(r)})
 	}
 	added, removed, updated, err := st.SyncFriends(ctx, specs)
 	if err != nil {
@@ -496,6 +496,26 @@ func (a *app) friendBeat(ctx context.Context, args []string, open func(common) (
 		}
 		line += fmt.Sprintf(" row_token_cap=%d", capN)
 		facts["row_token_cap"] = capN
+		// the rest of her row, so her daemon follows it without reaching the config store
+		// (docs/SPEC-FRIEND.md, "The row is followed"): her tiers and roles, the release
+		// her daemon runs under, and the coordinator's hold; each absent when empty, and a
+		// daemon on an older build reads past what it does not know
+		if spec.Class != "" {
+			line += " row_tiers=" + spec.Class
+			facts["row_tiers"] = spec.Class
+		}
+		if spec.Roles != "" {
+			line += " row_roles=" + spec.Roles
+			facts["row_roles"] = spec.Roles
+		}
+		if spec.Release != "" {
+			line += " row_release=" + spec.Release
+			facts["row_release"] = spec.Release
+		}
+		if spec.Held {
+			line += " row_held=true"
+			facts["row_held"] = true
+		}
 	}
 	for _, n := range []struct {
 		key string

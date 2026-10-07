@@ -206,6 +206,13 @@ type Daemon struct {
 	// it names another friend running, and a lane whose card left her row names its friend
 	// on the job's lane mark (one_lane.go). Nil says none; the lane marks still hold.
 	Running func() map[string]string
+	// Follow is the daemon's follow of its row's release (Follower.Step, follow.go), stepped
+	// once a step with whether the daemon is idle (no lane holds a card, no turn or read
+	// runs); it answers hold, under which no new lane, turn or read starts. Nil follows
+	// nothing. Alive says whether a pid names a live process, for the runner pid files the
+	// beat's running list reads (LiveJobsOn); nil reads none.
+	Follow func(ctx context.Context, now time.Time, idle bool) (hold bool)
+	Alive  func(pid int) bool
 	// Mailbox is the adapter under Deliver when her harness's session queues what is
 	// delivered (Antigravity: a mailbox): a delivery goes in at once, whatever turn runs, so
 	// nothing is ever deferred for a turn under way; each step the daemon hands it the
@@ -237,11 +244,12 @@ type Daemon struct {
 	limitSaid   time.Time // the reset of the limit last said on the record
 	written0    Status
 	statusErrAt time.Time
-	active      time.Time // the last walk's answer
-	cards       []string  // the cards she held at it
-	walked      time.Time // when it was
-	inboxAt     time.Time // when the inbox was last reconciled
-	heldIDs     []string  // the cards on her row at it
+	active      time.Time  // the last walk's answer
+	cards       []string   // the cards she held at it
+	walked      time.Time  // when it was
+	report      BeatReport // what the next beat says of the work (Report; set on the loop before each beat)
+	inboxAt     time.Time  // when the inbox was last reconciled
+	heldIDs     []string   // the cards on her row at it
 	heldCards   []HeldCard
 	inboxSaid   map[string]bool      // the inbox lines the last reconcile said that are said once while they stand
 	turnEnded   func()               // a test's hook: a turn's result is on its channel (nil: none)
@@ -415,6 +423,7 @@ type loop struct {
 	followWG     sync.WaitGroup // it, waited for when Run ends
 	seatHolder   string         // the seat holder as last read; empty while unknown
 	seatRead     time.Time      // when it was read; zero before the first read
+	hold         bool           // the follow holds: no new lane, turn or read starts (Daemon.Follow)
 }
 
 // Run is the loop until ctx ends. Each step: the clock; the friend's row
@@ -499,6 +508,11 @@ func (d *Daemon) Run(ctx context.Context) error {
 			}
 			d.status.SessionLive = d.Mailbox.Live()
 		}
+		if d.Follow != nil {
+			// the follow of the row's release: idle is no card in a lane's hand and no turn or read
+			// under way, so a restart never lands between a card's turns
+			l.hold = d.Follow(ctx, now, l.quiet())
+		}
 		// a change of mode waits for the other mode's turns to end
 		if mode != l.mode && l.busy == nil && !l.lanes.running() && len(l.reads.running) == 0 {
 			d.Record(fmt.Sprintf("%s mode: %s, from %s (the friend row)", now.UTC().Format(time.RFC3339), mode, l.mode))
@@ -509,6 +523,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 		switch {
 		case l.broken:
 		case !proven: // the push rule: nothing goes into a session that has not answered
+		case l.hold && l.mode != ModeOneShot: // the follow holds: messages wait on the stream for the daemon that comes up
 		case l.mode == ModeOneShot:
 			l.laneStep(now, width)
 			l.readStep(now)
@@ -532,6 +547,8 @@ func (d *Daemon) Run(ctx context.Context) error {
 			if d.Activity != nil && (d.walked.IsZero() || now.Sub(d.walked) >= ActivityEvery) {
 				d.active, d.cards, d.walked = d.Activity(), d.held(), now // one walk serves the beat and the idle watch (they share walked)
 			}
+			d.report = BeatReport{Running: l.liveJobs(now), Width: d.status.Width}
+			d.report.Working = len(d.report.Running)
 			if err := d.Beat(ctx, d.active); err != nil {
 				d.status.BeatError = err.Error()
 			} else {
@@ -681,6 +698,20 @@ func (l *loop) row(now time.Time) (mode string, width int) {
 		}
 	}
 	return mode, width
+}
+
+// quiet says no card is in a lane's hand, no lane opens a session, and no batch turn or
+// read runs: the daemon may be replaced without a card's run dying under it.
+func (l *loop) quiet() bool {
+	if l.busy != nil || len(l.reads.running) > 0 {
+		return false
+	}
+	for _, ln := range l.lanes.lanes {
+		if ln.card != nil || ln.t != nil || ln.opening {
+			return false
+		}
+	}
+	return true
 }
 
 // turns is every turn running now: the batch turn and the lanes'.

@@ -436,3 +436,7 @@ MCBusCursorBrokenAdvanceWithoutAck.cfg	MCBusCursor.tla	invariant	AdvanceOnlyPast
 MCBusCursorBrokenNearerCursorWins.cfg	MCBusCursor.tla	invariant	FurtherReadWins	ignore-terminal	buscursor	required	-
 MCBusCursorBrokenWriteWithoutAdvance.cfg	MCBusCursor.tla	invariant	NoWriteWithoutAdvance	ignore-terminal	buscursor	required	-
 MCDirtyTickRefused.cfg	MCDirtyTick.tla	pass	-	ignore-terminal	dirtytick-small	required	-
+MCFriendFollow.cfg	MCFriendFollow.tla	pass	-	ignore-terminal	friendfollow	required	-
+MCFriendFollowBrokenUnverified.cfg	MCFriendFollow.tla	invariant	NeverRunsUnverified	ignore-terminal	friendfollow	required	-
+MCFriendFollowBrokenKillLanes.cfg	MCFriendFollow.tla	invariant	LanesSurvive	ignore-terminal	friendfollow	required	-
+MCFriendFollowBrokenNoRetry.cfg	MCFriendFollow.tla	temporal	Follows	ignore-terminal	friendfollow	required	-

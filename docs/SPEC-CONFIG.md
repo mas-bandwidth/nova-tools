@@ -47,7 +47,7 @@ Where each field of this cut sits:
 | --- | --- |
 | machine (varies per machine) | `user`, `seat`, `slots`, `runners`, `width`, `tla`, `note` |
 | fleet (one value for the whole fleet) | `store`, `coordinator` (both machines), `redis_port`, `pg_dsn` |
-| friend (decided for her) | `slots`, `tiers`, `roles`, `width`, `mode`, `config_dir`, `token_cap` |
+| friend (decided for her) | `slots`, `tiers`, `roles`, `width`, `mode`, `config_dir`, `token_cap`, `release` |
 | sprint (one value for the whole sprint) | `coordinator` (a friend), `decide_bounce`, `decide_review`, `decide_score_bar`, `decide_attempt_no_result`, `decide_attempt_nothing_to_do`, `decide_grade`, `decide_gate_flaky`, `decide_gate_preexisting`, `decide_judgment_bar`, `decide_brief_bar`, `answer_rules_off` |
 | loop (decided per supervised process) | `machine`, `argv`, `seat`, `keys`, `every`, `keepalive`, `width`, `enabled` |
 | route (decided per way to run a tier) | `tier`, `provider`, `model`, `harness`, `tokens`, `deadline`, `enabled`, and the price sheet: `price_input`, `price_cache_read`, `price_cache_write`, `price_output`, `reasoning_as_output`, `long_context`, `price_input_long`, `price_output_long`, `price_request`, `billing`, `gateway_percent`, `price_source`, `price_as_of`, `note` |
@@ -226,6 +226,7 @@ configuration. Who coordinates is not her field either: it is the sprint's.
 | `mode` | enum: batch, one-shot; default batch | | nova-sprint friend sync, onto her friends row; her beat answers it (`row_mode=`), and nova-friend run delivers by it: batch, every waiting message as one turn, or one-shot, `width` lanes each its own session, one card a turn (docs/SPEC-FRIEND.md, one-shot lanes). Migration 0030 gives every row before it batch | `friend:<f>:desired` mode |
 | `config_dir` | text, an absolute path; unset (NULL) by default, and `--config_dir ''` clears it | | nova-friend run, for a claude friend in one-shot mode: the directory each lane runs `claude -p` with as `CLAUDE_CONFIG_DIR`, her account's login and settings (docs/SPEC-FRIEND.md, one-shot lanes); her beat answers it as `row_config_dir=`. A claude row in one-shot mode without one runs no lane: nova-friend refuses it on the record with the remedy (the row names no harness, so the refusal is the daemon's). Migration 0034 adds the column; every row before it has none | `friend:<f>:desired` config_dir |
 | `token_cap` | int, at least 0, default 6000000 | | nova-sprint friend sync, onto her friends row; her beat answers it as `row_token_cap=`, and a one-shot lane holds a card when the card's tokens (input, cached input, output and reasoning) reach it (docs/SPEC-FRIEND.md, friend-token-cap-bb.w2). 0 is no cap. Migration 0035 adds the column; every row before it is 6000000 | `friend:<f>:desired` token_cap |
+| `release` | text, a release tag vX.Y.Z (internal/release's version grammar); unset (NULL) by default, and `--release ''` clears it | | nova-sprint friend sync, onto her friends row; her beat answers it as `row_release=`, and nova-friend run follows it (docs/SPEC-FRIEND.md, "The row is followed"): a daemon whose own build is another stops taking new lanes, fetches that release's nova-friend from the repository's GitHub release, verifies it against the release's SHA256SUMS (and the tag's `sums=` digest when the tag carries one), swaps it into place and restarts itself under it once its lanes are done. Unset leaves her daemon on the build it runs. Migration 0036 adds the column; every row before it has none | `friend:<f>:desired` release |
 
 **`sprint`** (`config.sprint`, singleton): the one row of sprint-global
 facts.
@@ -614,7 +615,7 @@ registry member, the desired and roles hashes are removed in one
 transaction, with a `config-remove` receipt in `cap:log`; her beat, logins
 and wake path stay, they are hers.
 
-Her token cap is `HSET friend:<f>:desired token_cap <n>` the same way (6000000 when the row names none, 0 for no cap).
+Her token cap is `HSET friend:<f>:desired token_cap <n>` the same way (6000000 when the row names none, 0 for no cap), and her release `HSET friend:<f>:desired release <tag>` (`""` when unset).
 
 **sprint:** a plain `SET sprint:<field>` for each field (`sprint:coordinator
 <friend>`), `DEL` when empty — except the seat: the coordinator is written

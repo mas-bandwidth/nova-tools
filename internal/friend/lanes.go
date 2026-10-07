@@ -436,6 +436,9 @@ func (l *loop) laneStep(now time.Time, width int) {
 		if paused {
 			continue
 		}
+		if l.hold && ln.card == nil {
+			continue // the follow holds: no session opened, no card taken; a card in hand finishes its turns
+		}
 		if ln.session == "" && !perCard {
 			if now.Before(ln.openAt) {
 				continue
