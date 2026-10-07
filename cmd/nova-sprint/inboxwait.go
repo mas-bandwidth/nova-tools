@@ -118,6 +118,7 @@ func (e *exitErr) Error() string { return fmt.Sprintf("exit %d", e.code) }
 type serverSource struct {
 	a       *app
 	addr    string
+	named   bool // whether the server was explicitly named via NOVA_SPRINT_SERVER
 	plain   []string // the verb's words without its wait flags
 	timeout time.Duration
 	from    string // the last tick-end note id seen
@@ -125,8 +126,8 @@ type serverSource struct {
 	stderr  io.Writer
 }
 
-func (a *app) serverSource(ctx context.Context, addr string, fs *flag.FlagSet, args []string, timeout time.Duration, stdout, stderr io.Writer) (*serverSource, error) {
-	s := &serverSource{a: a, addr: addr, plain: without(fs, args, "wait", "timeout", "push", "json"), timeout: timeout, stdout: stdout, stderr: stderr}
+func (a *app) serverSource(ctx context.Context, addr string, named bool, fs *flag.FlagSet, args []string, timeout time.Duration, stdout, stderr io.Writer) (*serverSource, error) {
+	s := &serverSource{a: a, addr: addr, named: named, plain: without(fs, args, "wait", "timeout", "push", "json"), timeout: timeout, stdout: stdout, stderr: stderr}
 	var err error
 	s.from, err = s.lastTickEnd(ctx)
 	return s, err
@@ -136,7 +137,7 @@ func (a *app) serverSource(ctx context.Context, addr string, fs *flag.FlagSet, a
 func (s *serverSource) lastTickEnd(ctx context.Context) (string, error) {
 	res, err := s.a.ask(ctx, s.addr, []string{"log"}, []string{"--json", "--since", (s.timeout + tickEndPoll).String()})
 	if err != nil {
-		return "", &exitErr{s.a.unanswered("inbox --wait", s.addr, err, s.stderr)}
+		return "", &exitErr{s.a.unanswered("inbox --wait", s.addr, s.named, err, s.stderr)}
 	}
 	if res.Code != 0 {
 		s.a.answer(res, s.stdout, s.stderr)
@@ -179,7 +180,7 @@ func (s *serverSource) inbox(ctx context.Context, open string) (inboxLook, error
 	}
 	res, err := s.a.ask(ctx, s.addr, []string{"inbox"}, words)
 	if err != nil {
-		return inboxLook{}, &exitErr{s.a.unanswered("inbox", s.addr, err, s.stderr)}
+		return inboxLook{}, &exitErr{s.a.unanswered("inbox", s.addr, s.named, err, s.stderr)}
 	}
 	if res.Code == 1 && open != "" {
 		return inboxLook{}, nil // the group closed since the look that found it: nothing to read
@@ -349,7 +350,7 @@ func (a *app) inboxWaitAt(addr string, fs *flag.FlagSet, args []string, atEpoch 
 		return refuse(stderr, "inbox", "--wait waits on the sprint's epoch for at most a --timeout above zero")
 	}
 	ctx := context.Background()
-	src, err := a.serverSource(ctx, addr, fs, args, timeout, stdout, stderr)
+	src, err := a.serverSource(ctx, addr, true, fs, args, timeout, stdout, stderr)
 	if err != nil {
 		return a.waitFailed(err, stderr)
 	}
@@ -369,7 +370,7 @@ func (a *app) inboxWaitAt(addr string, fs *flag.FlagSet, args []string, atEpoch 
 	// The wait ended: read the inbox itself.
 	res, err := a.ask(ctx, addr, []string{"inbox"}, without(fs, args, "wait", "timeout", "push"))
 	if err != nil {
-		return a.unanswered("inbox", addr, err, stderr)
+		return a.unanswered("inbox", addr, true, err, stderr)
 	}
 	var out map[string]json.RawMessage
 	if !asJSON || res.Code != 0 || json.Unmarshal([]byte(res.Stdout), &out) != nil {

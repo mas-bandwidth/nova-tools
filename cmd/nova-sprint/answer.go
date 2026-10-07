@@ -169,11 +169,11 @@ func (a *app) cmdAnswer(args []string, stdout, stderr io.Writer) int {
 	if w.backend, err = a.judgmentBackend(*backend, *answers, *timeout); err != nil {
 		return refuse(stderr, "answer", err.Error())
 	}
-	server := a.server(fs)
+	srv := a.server(fs)
 	w.call = func(ctx context.Context, argv []string) (sprintwire.Result, error) {
-		if server != "" {
+		if srv.addr != "" {
 			n := readVerb(argv).words
-			return a.ask(ctx, server, argv[:n], argv[n:])
+			return a.ask(ctx, srv.addr, argv[:n], argv[n:])
 		}
 		return a.runHere(argv, *c), nil
 	}
