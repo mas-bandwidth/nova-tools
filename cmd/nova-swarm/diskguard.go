@@ -229,26 +229,39 @@ func (g *guard) run() int {
 	g.pools()
 	g.landClones()
 	g.mirrors()
-	free, freeRead := uint64(0), false
-	for i, p := range append([]string{g.home}, g.roots...) {
+	// The floors read every volume this pass reads, the home volume and each --root, never
+	// the home volume alone: a root under the stop floor stops the loops, and the free the
+	// closing line reports is the tightest volume read. A volume whose free could not be
+	// read is no reading of zero: it fails on its NOTE line, and its run reaches the
+	// INCOMPLETE line, never STOP.
+	var free uint64
+	freeRead, freeFailed, stop := false, false, false
+	for _, p := range append([]string{g.home}, g.roots...) {
 		n, err := g.free(p)
 		if err != nil {
 			if !os.IsNotExist(err) {
+				freeFailed = true
 				g.fail(fmt.Sprintf("the free disk on the volume of %s could not be read (%s)", oneline.Field(p), oneline.Err(err)))
 			}
 			continue
 		}
-		if i == 0 {
+		if !freeRead || n < free {
 			free, freeRead = n, true
 		}
 		if g.floor > 0 && n < uint64(g.floor) {
 			g.say(fmt.Sprintf("DISK-GUARD WARN free=%d floor=%d on the volume of %s: members there start no card; run: df -h %s, and read what this log removed and kept", n, g.floor, oneline.Field(p), oneline.Field(p)))
 		}
+		if g.stopFloor > 0 && n < uint64(g.stopFloor) {
+			stop = true
+		}
 	}
-	// The stop floor reads the data volume's free, the reading the bash --check it
-	// replaces made. A volume whose free could not be read is no reading of zero: it fails
-	// on its NOTE line and the run ends INCOMPLETE, never STOP.
-	if freeRead && g.stopFloor > 0 && free < uint64(g.stopFloor) {
+	// A volume that could not be read reaches the closing line: the run does not stop on
+	// the readings it has while one volume is unknown.
+	if freeFailed {
+		fmt.Fprintf(g.out, "DISK-GUARD INCOMPLETE freed=%d free=%d failed=%d\n", g.freed, free, g.failed)
+		return 1
+	}
+	if stop {
 		fmt.Fprintf(g.out, "DISK-GUARD STOP freed=%d free=%d floor=%d: the volume is under the stop floor; run: stop the loops on this machine, then free disk\n", g.freed, free, g.stopFloor)
 		return 3
 	}

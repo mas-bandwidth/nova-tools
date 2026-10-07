@@ -656,3 +656,47 @@ func TestDiskGuardDoesNotStopOnAnUnreadVolume(t *testing.T) {
 	assert.Contains(t, out.String(), "DISK-GUARD INCOMPLETE")
 	assert.NotContains(t, out.String(), "DISK-GUARD STOP")
 }
+
+// The stop floor reads every volume this pass reads, the home volume and each --root, not
+// the home volume alone: a root under the stop floor stops the loops whatever the home
+// volume reads (the reader's finding, diskguard.go stored the free of index 0, the home
+// volume, so a root under the floor never stopped).
+func TestDiskGuardStopsOnARootUnderTheStopFloor(t *testing.T) {
+	t.Parallel()
+	g, out := dgGuard(t)
+	root := t.TempDir()
+	g.roots = []string{root}
+	g.stopFloor = 200 * gib
+	g.free = func(p string) (uint64, error) {
+		if p == root {
+			return 150 * gib, nil
+		}
+		return 300 * gib, nil
+	}
+	assert.Equal(t, 3, g.run(), "a root under the stop floor stops the loops")
+	assert.Contains(t, out.String(), "DISK-GUARD STOP ")
+	assert.Contains(t, out.String(), "free=161061273600")
+	assert.NotContains(t, out.String(), "DISK-GUARD OK")
+}
+
+// A volume that could not be read reaches the closing line: the run never stops on the
+// readings it has while one volume is unknown, even when another volume is under the stop
+// floor (the reader's finding, diskguard.go returned STOP before the INCOMPLETE line, so
+// an unread root lost to a low home reading).
+func TestDiskGuardDoesNotStopWhenAVolumeCouldNotBeRead(t *testing.T) {
+	t.Parallel()
+	g, out := dgGuard(t)
+	root := filepath.Join(t.TempDir(), "data")
+	g.roots = []string{root}
+	g.stopFloor = 200 * gib
+	g.free = func(p string) (uint64, error) {
+		if p == root {
+			return 0, errors.New("permission denied")
+		}
+		return 10 * gib, nil // the home volume is under the stop floor
+	}
+	assert.Equal(t, 1, g.run(), "an unread root is reported, not read as a low home volume")
+	assert.Contains(t, out.String(), "could not be read (permission denied)")
+	assert.Contains(t, out.String(), "DISK-GUARD INCOMPLETE")
+	assert.NotContains(t, out.String(), "DISK-GUARD STOP")
+}
