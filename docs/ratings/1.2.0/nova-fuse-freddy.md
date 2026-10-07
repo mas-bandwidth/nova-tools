@@ -1,9 +1,9 @@
-# nova-fuse READ rating, nova-tools 1.2.0
+# nova-fuse READ and USE rating, nova-tools 1.2.0
 
 Rater: mer (cold reader, reading only)
 Build: d665016b9693
-Score: 8/10
-README: 8/10
+READ: 8/10
+USE: 8/10
 
 ## Reasons
 
