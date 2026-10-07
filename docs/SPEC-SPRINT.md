@@ -142,7 +142,7 @@ footer; `ok` and `failed` count her cards done; `done` is `sum(ok+failed)` and
 table's own formulas.
 
 A friend says she is there with `friend beat <friend>` (answered `FRIEND-BEAT OK
-<friend> at=<t> ... row_mode=<batch|one-shot> row_width=<n>`, her nova-config row
+<friend> at=<t> ... row_mode=<batch|one-shot> row_width=<n> row_read_slots=<n>`, her nova-config row
 as friend sync last copied it, which is how her daemon reads her delivery mode;
 docs/SPEC-FRIEND.md, one-shot lanes), which her own machinery
 runs every second (`FriendBeatEvery`) beside her harness (it writes
@@ -2915,6 +2915,35 @@ the adoption `release.OneMachine` (internal/release/adopt_one.go). Test:
   the two narrow machines while 31 reader slots sat idle); a reader named for
   no fleet row keeps unbounded room, so such readers order by load alone. No
   reader is bounded at DealAhead times a width: its room is its width.
+- A friend's reader is `reader-<friend>`. Its room is her nova-config row's
+  `read_slots` (default 2; `nova-config friend set <friend> --read-slots <n>`,
+  the same field as `--read_slots`; 0 asks her none), not her card width and
+  not a fleet machine row of her name (the owner, 2026-10-05: "Reads are in
+  extra slots per-friend! Read slots are different from worker cards."; "We
+  read while we work."). Friend sync writes the map as the fleet property
+  `friend_read_slots` (`sprint.PropFriendReadSlots`, a JSON object of name to
+  slots), and her `read_wait` (seconds, default 600) as `friend_read_wait`
+  (`sprint.PropFriendReadWait`); each is written only when it differs, so a
+  second sync is idle. `ReaderWidth` returns her slots when her name is in the
+  map, including 0, and otherwise the machine row's width, or unbounded room
+  when the property is absent or not that JSON. Her beat answers
+  `row_read_slots=<n>` beside `row_width`. Friend sync delivers each read
+  asked of her reader (asked or reading, its directory not yet written) into
+  `<friend>-working/inbox/reads/<read-card>/` as `READ.md` (begin it with
+  `read --begin`, clone the brief's REPO at the head, judge the merge-base
+  diff against the brief, run the touched packages' vet and tests on a Linux
+  bench, finish with `nova-sprint read --as reader-<friend> --ok`, `--broken
+  --finding <file:line>`, or `--return --reason <reason>`, each with the
+  read's `--epoch`), `BRIEF.md` and `WORKER-REPORT.txt`, sends a bus note
+  `read asked: <read-card>`, and removes that directory once the read is no
+  longer asked or reading of her reader. It does not follow a symlink there.
+  A read asked of a friend's reader that waits not begun past her read wait
+  raises the readers are behind on that reader (the judgment's table row,
+  section 8), and the sprint's own readers-behind line leaves friends'
+  readers out, so each wait is one judgment. `where` draws `reader-<friend>`'s
+  width cell (the readers table's width beside reading, and `where --json` on
+  her reader's row) as her read slots, read off `friend_read_slots`
+  (`sprint.FriendReadSlotsOf`), while her friends row keeps her card width.
 - A card's reads are counted by its tier (the owner, 2026-10-02, cost rule 4,
   nova-tools#5174: "Reads: one cold read per flash card on a flash route; two
   per pro card; readers still equal workers per machine"): a flash card needs
@@ -4048,6 +4077,7 @@ the tick would make, no other open judgment on it).
 | the fleet is starving (ready, sentinels aside, is under twice the up members' width while a wave is held: `the fleet is starving: ready <n> is under twice the width <2w>; release a wave: nova-sprint release <sentinel> --reason '<why>'`, raised once and updated in place every tick while it holds, naming the first held sentinel in work order; closed when no wave is held; `TestTheTickRaisesStarvingWhileReadyIsUnderTwiceTheWidth`) | release (the wave's sentinel; never a single card), wait | no |
 | a member is overloaded (the owner, 2026-10-03: "the overload is defined as -- cards are timing out. not any CPU%": within the last 15 minutes, `sprint.OverloadWindow`, a member up has had three or more cards, `sprint.OverloadTimeouts`, end on a timeout of any kind, counted from the finishes it reported: a launch refused at staging on `stage-timeout` (the work card's staging take, on whatever row the card sits now), a failed finish `deadline: ...`, or one the budget rule ended because `the usage source stopped answering`; `sprint.TimeoutKind`, `sprint.MemberTimeouts`, `sprint.Overloaded` in internal/sprint/overload.go, one pure decision the tick and the seat check both read; no load number is in it, the beat's load stays a fact for the table): `<m> is overloaded: <k> cards ended on a timeout in the last 15m0s: <card> (<kind>), ...; halve its width: nova-sprint fleet up <m> --width <half>, or wait 15m`, one per member, updated in place every tick while it holds and closed when the window has no three (`TestTheTickRaisesOverloadedOnThreeTimeoutsInTheWindow`) | fleet up <m> --width <half of its width>, wait 15m | no |
 | the readers are behind (the owner, 2026-10-03: "This is another type of thing that should be escalated to you mechanically"; one night review held 75 cards while five readers read 44, their widths kept from before their machines were widened): a read has sat asked and not begun on a reader up for `sprint.ReadersWindow`, 10 minutes (`sprint.ReadersBehind` in internal/sprint/readers_behind.go, one pure decision beside `Overloaded`; a reader's width is its machine row's, `Snapshot.ReaderWidth`, 0 for a reader named for no row): `the readers are behind: review <n>, reads asked and not begun past 10m0s; the readers read <k> of width <w> (<reader> reads <k> of width <w>, <a> waiting past the window[: it reads under its width, restart its loop (nova-config loop show <reader>)][: away, run: nova-sprint reader up <reader>]; ...)`, one for the sprint, updated in place every tick while it holds and closed when no read has waited the window (`TestTheTickRaisesReadersBehindWhenReadsWaitTheWindow`) | reader up <r> (a reader not up holding reads), restart <r> (it reads under its width while reads wait: the loop record of its name in nova-config), wait 10m | no |
+| the readers are behind on a friend's reader (`readWaitsConds` in internal/sprint/read_slots.go, raised by `readersBehindCond`): a read asked of `reader-<friend>`, up, has waited not begun for her `read_wait` (nova-config, seconds, 600 by default; the fleet property `friend_read_wait`): `the readers are behind: reader-<friend> has <n> read(s) asked and not begun past <bound>, the oldest <read-card>; friend sync delivers it to the friend's inbox/reads/<read-card>/: wake the friend`, one per such reader, its subject the reader, updated in place every tick while it holds and closed when no read of hers waits past the bound (begun, recorded or taken back); a reader the `friend_read_slots` map does not name is the line above's, never this one (`TestAnAskedReadPastTheBoundRaisesOneJudgment`) | wait 10m | no |
 | raise the read tier of the stream? (readtier.go: a landed card of the stream returned by dev or an audit, `promoted --returned`; two readers at the stream's read tier disagreeing on one attempt; a card alternating broken and ok across attempts; one judgment per stream, `raise the read tier of <s> to <next>? <why>`, updated in place while a cause holds and closed by the raise; section 6) | raise (`stream set <s> --read-tier <next> --reason '<why>'`, the default), keep (`ack`) | no |
 | a card reached its bound (at its ceiling tier, flash first, section 5: an attempt's work card redealt MaxRedeals, 3, times after takes that ended, the provider's failures among them, and a take of it ended again; the judgment names the provider and the last error line when the provider failed that take; or the second identical failure, section 2: two takes of the card, or two attempts of its primary, failed the same way, and the judgment names the class) | rework with a fix (a new attempt, on the next tier), drop, wait (at a redeal bound, wait only when the bound was a provider failure); when the attempt before also ended at its bound on the card's tier (section 5, the bound holds across attempts): rework with a fix on a higher tier (`--tier`, when the ladder has one), drop, and wait only when the bound was a provider failure and the provider's return has not yet lifted a bound on that tier | no |
 | a work card is past its deadline | fleet down (the member, only when it has held the card its own whole deadline: never the member a late card was just redealt to, nor one it was withdrawn from), wait, drop | no |
