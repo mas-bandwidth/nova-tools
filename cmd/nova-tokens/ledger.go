@@ -131,8 +131,14 @@ func runLedger(c *tool.Call) *tool.Out {
 		sort.Strings(paths)
 	}
 
+	asJSON := c.Bool("json")
+
 	seatUser, password, err := redisauth.Auth(user, passwordEnv)
 	if err != nil {
+		if !asJSON {
+			fmt.Fprintf(c.Stderr, "LEDGER FAILED store=redis err=%s\n", oneline.Err(err))
+			return tool.Exit(1)
+		}
 		o := tool.Fail(err.Error())
 		o.Fact("store", "redis")
 		return o
@@ -176,6 +182,14 @@ func runLedger(c *tool.Call) *tool.Out {
 	}
 	if len(batch) > 0 && !dryRun {
 		if err := ls.ReplaceLedgerDays(context.Background(), batch); err != nil {
+			if !asJSON {
+				key, value := "store", "redis"
+				if day != "" {
+					key, value = "day", day
+				}
+				fmt.Fprintf(c.Stderr, "LEDGER FAILED %s=%s err=%s\n", oneline.Field(key), oneline.Field(value), oneline.Err(err))
+				return tool.Exit(1)
+			}
 			o := tool.Fail(err.Error())
 			if day != "" {
 				o.Fact("day", day)
@@ -185,6 +199,28 @@ func runLedger(c *tool.Call) *tool.Out {
 			return o
 		}
 	}
+
+	if !asJSON {
+		for _, res := range results {
+			if res.bad {
+				fmt.Fprintf(c.Stdout, "LEDGER FAILED day=%s why=%s\n", oneline.Field(res.day), oneline.Escape(res.why))
+			} else {
+				fmt.Fprintf(c.Stdout, "LEDGER day=%s rows=%d\n", oneline.Field(res.day), res.rows)
+			}
+		}
+		verdict, code := "OK", 0
+		if bad > 0 || days == 0 {
+			verdict, code = "FAILED", 1
+		}
+		scope, value := "day", day
+		if day == "" {
+			scope, value = "month", month
+		}
+		fmt.Fprintf(c.Stdout, "LEDGER %s%s%s\n", oneline.Field(verdict),
+			formatFields(scope, value, "days", days, "rows", rows, "bad", bad), dryRunFields(dryRun))
+		return tool.Exit(code)
+	}
+
 	o := tool.Done()
 	if bad > 0 || days == 0 {
 		o.Status = tool.Failed

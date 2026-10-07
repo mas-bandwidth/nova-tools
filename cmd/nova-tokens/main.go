@@ -50,7 +50,7 @@ databases, swarm pools, bus notes) and writes one day file per day into --out,
 one row per (day, model, repo). The repo comes from the --repos file: lines of
 <name><TAB><regexp>, and the first match on a session's path wins. check, sum
 and report read the day files back; a count a source never gave prints as -.`,
-		UsageNote: `  the local mode is selected by --who and --day; the store mode by --redis and --month; giving both --who and --redis selects the store mode (--redis wins); a mix of --who and --redis prints the store summary`,
+		UsageNote: `  the local mode is selected by --who and --day; the store mode by --redis and --month; giving both --who and --redis selects the store mode (--redis wins); a mix of --who and --redis prints the store summary
 
 Every verb but version takes --json: the same result as one JSON object on stdout, a
 refusal included. A verb that writes takes --dry-run: it is the real run's own plan --
