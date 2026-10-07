@@ -17,6 +17,16 @@ func Value(text, key string) (value string, ok bool) {
 	return "", false
 }
 
+// IsRepoValue reports whether a REPO: line's value names one repository: a single
+// whitespace-free word (an owner/name, a clone URL or a local path; "-" or "none" names
+// none). A value with a word after it -- the tier a writer appended to the line -- is no
+// repository: the friend's staging reads the whole value and refuses the card
+// (internal/friend/stage.go).
+func IsRepoValue(value string) bool {
+	v := strings.TrimSpace(value)
+	return v != "" && !strings.ContainsAny(v, " \t")
+}
+
 // sha40RE is a full commit sha as a card tree writes it.
 var sha40RE = regexp.MustCompile(`^[0-9a-f]{40}$`)
 
