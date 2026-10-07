@@ -420,11 +420,14 @@ func appendLog(store, event, session, id, stamp, policy, source string) error {
 	return appendLine(filepath.Join(store, "log.jsonl"), string(rec))
 }
 
-// OpenRecord is what a session's open recorded in log.jsonl: its source and
-// its publication policy. Found is false when the log holds no open record
-// for the session (a flat store, or no log at all).
+// OpenRecord is what a session's open recorded in log.jsonl: its source, its
+// publication policy and the opened stamp. Found is false when the log holds
+// no open record for the session (a flat store, or no log at all). Opened is
+// zero when the record names no stamp. Index prints the policy and the stamp
+// on the session line (docs/SPEC-CAIRN.md, the index verb).
 type OpenRecord struct {
 	Source, Publish string
+	Opened          time.Time
 	Found           bool
 }
 
@@ -467,7 +470,15 @@ func ReadOpen(store, session string) (OpenRecord, error) {
 			continue
 		}
 		if rec["event"] == "open" && rec["session"] == session {
-			return OpenRecord{Source: rec["source"], Publish: rec["publish"], Found: true}, nil
+			var opened time.Time
+			if rec["stamp"] != "" {
+				var perr error
+				opened, perr = time.Parse(time.RFC3339Nano, rec["stamp"])
+				if perr != nil {
+					return OpenRecord{}, fmt.Errorf("%s:%d open record of session %q has an invalid stamp %q", name, i+1, session, rec["stamp"])
+				}
+			}
+			return OpenRecord{Source: rec["source"], Publish: rec["publish"], Opened: opened, Found: true}, nil
 		}
 	}
 	return OpenRecord{}, nil
@@ -527,9 +538,16 @@ func open(store, session, source string, now time.Time, publish string, write bo
 			if rec.Source != "" {
 				again = append(again, "--source", rec.Source)
 			}
+			// A different --publish names both policies: the one the session
+			// holds and the one this call asked for (docs/SPEC-CAIRN.md, the open verb).
+			msg := fmt.Sprintf("session %q is already open with publish=%s source=%s; a re-open names the same, and another policy or source is a new session id",
+				session, rec.Publish, cmpOr(rec.Source, "-"))
+			if rec.Publish != publish {
+				msg = fmt.Sprintf("session %q is already open with publish=%s source=%s; --publish %s names another, and a re-open names the same",
+					session, rec.Publish, cmpOr(rec.Source, "-"), publish)
+			}
 			return rec, &ConflictError{
-				Msg: fmt.Sprintf("session %q is already open with publish=%s source=%s; a re-open names the same, and another policy or source is a new session id",
-					session, rec.Publish, cmpOr(rec.Source, "-")),
+				Msg:    msg,
 				Remedy: command("open", append(again, "--publish", rec.Publish)...),
 			}
 		}
@@ -637,20 +655,27 @@ func appendEntry(store, session, id, text, source string, now time.Time, publish
 	if flat {
 		return appendFlat(store, session, path, id, text, stamp, publish, write)
 	}
-	if source == "" || publish == "" {
-		rec, err := ReadOpen(store, session)
-		if err != nil {
-			return res, err
+	// The session's policy is a fact, read before the write. An empty --publish
+	// carries it. One that names another is a conflict naming both. A session
+	// with no open record still refuses an empty --publish, and a session that
+	// is not open is refused above (docs/SPEC-CAIRN.md, the append verb).
+	opened, err := ReadOpen(store, session)
+	if err != nil {
+		return res, err
+	}
+	if source == "" {
+		source = opened.Source
+	}
+	if publish == "" {
+		if !ValidPublish(opened.Publish) {
+			return res, fmt.Errorf("--publish is required: session %q has no open record naming a policy in %s; name one (%s)",
+				session, filepath.Join(store, "log.jsonl"), strings.Join(Policies, "|"))
 		}
-		if source == "" {
-			source = rec.Source
-		}
-		if publish == "" {
-			if !ValidPublish(rec.Publish) {
-				return res, fmt.Errorf("--publish is required: session %q has no open record naming a policy in %s; name one (%s)",
-					session, filepath.Join(store, "log.jsonl"), strings.Join(Policies, "|"))
-			}
-			publish = rec.Publish
+		publish = opened.Publish
+	} else if opened.Found && ValidPublish(opened.Publish) && publish != opened.Publish {
+		return res, &ConflictError{
+			Msg:    fmt.Sprintf("session %q holds publish=%s; --publish %s names another", session, opened.Publish, publish),
+			Remedy: command("append", "--store", store, "--session", session, "--entry", id, "--publish", opened.Publish),
 		}
 	}
 	final := entryPath(store, session, id)
