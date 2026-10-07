@@ -496,3 +496,28 @@ func TestReceiptsAndOverdueSayWhereEachMessageIs(t *testing.T) {
 	cli.Do(t, "receipts", "--as", "bob", "--id", mid).Exit(0).Out("state=acted")
 	cli.Do(t, "overdue", "--older", "-1s").Exit(2).Err("--older wants a duration of at least 0")
 }
+
+func TestTopLevelHelpNamesTheSameRedisAddressPrecedenceAsHelpSend(t *testing.T) {
+	t.Parallel()
+	r := newRig("ada")
+	cli := r.cli()
+
+	// Get top-level help
+	topHelp := cli.Do(t, "help").Stdout
+
+	// Get help send
+	sendHelp := cli.Do(t, "help", "send").Stdout
+
+	// Both should mention the same precedence:
+	// --redis flag default: NOVA_BUS_REDIS
+	// else NOVA_SPRINT_REDIS
+	// else fleet:bus (the fleet row's bus from the sprint store)
+	assert.Contains(t, topHelp, "NOVA_BUS_REDIS")
+	assert.Contains(t, topHelp, "NOVA_SPRINT_REDIS")
+	assert.Contains(t, topHelp, "fleet:bus")
+
+	assert.Contains(t, sendHelp, "NOVA_BUS_REDIS")
+	assert.Contains(t, sendHelp, "NOVA_SPRINT_REDIS")
+	assert.Contains(t, sendHelp, "fleet:bus")
+	assert.Contains(t, sendHelp, "fleet row's bus from the sprint store")
+}
