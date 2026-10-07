@@ -34,13 +34,11 @@ func runSSH(t *testing.T, r sshRig) Result {
 	}
 	env.exec = func(name string, args ...string) (string, error) {
 		if name == "ssh" {
-			// Extract bench name from args
-			var bench string
-			for _, arg := range args {
-				if arg != "-o" && arg != "BatchMode=yes" && arg != "ConnectTimeout=5" {
-					bench = arg
-					break
-				}
+			// Extract bench name from args (args: ssh, -o, BatchMode=yes, -o, ConnectTimeout=5, bench, true)
+			// bench is at index 5
+			bench := ""
+			if len(args) > 5 {
+				bench = args[5]
 			}
 			if r.failBench != "" && bench == r.failBench {
 				return "", errors.New("ssh: " + r.failReason)
