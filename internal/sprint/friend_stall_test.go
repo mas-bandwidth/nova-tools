@@ -361,7 +361,7 @@ func TestFutureDatedEvidenceCountsAsNow(t *testing.T) {
 
 	at, what = FriendWorked(w.s, "amy", friendWorkOf(TickReq{Beats: map[string]Beat{"amy": {Proof: future}}}, "amy"))
 	assert.True(t, at.Equal(now), "a future proof still counts as now")
-	assert.Equal(t, "session proof", what, "the second future proof is still the session's")
+	assert.Equal(t, "session proof", what)
 	assert.Equal(t, 1, futureEvidenceLogCount("amy", future), "the same future stamp is not logged again")
 
 	row := FriendRow("amy")

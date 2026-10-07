@@ -1367,7 +1367,9 @@ func (l *lander) mergeHead(ctx context.Context, dir, stream string, c landCard) 
 		return "", derr, ""
 	}
 	if dcard != "" {
-		l.git(ctx, dir, "reset", "--hard", before)
+		if _, err := l.git(ctx, dir, "reset", "--hard", before); err != nil {
+			return "", "the reset to " + before + " after the dedupe refusal of " + c.id + " failed: " + firstLine("", err), ""
+		}
 		return dcard, "", ""
 	}
 	l.ledgerLog = append(l.ledgerLog, append(l.recLog, lines...)...)

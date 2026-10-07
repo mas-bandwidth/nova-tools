@@ -19,8 +19,8 @@ import (
 // needs, read from one snapshot of the work and merge tables.
 func init() { verbClasses["streams"] = classRead }
 
-// streamsView and streamsRow are the internal/sprint view under this package's names,
-// so the text and the JSON are the one value (docs/STANDARD.md).
+// streamsView and streamsRow are the internal/sprint view under this package's
+// names, so the text and the JSON are the one value (docs/STANDARD.md).
 type (
 	streamsView = sprint.StreamsView
 	streamsRow  = sprint.StreamRow
