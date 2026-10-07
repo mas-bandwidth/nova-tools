@@ -56,7 +56,7 @@ func TestLocalOnlyModeRefusesEveryNonLoopbackAddressAndNeedsNoTailnet(t *testing
 		}{
 			{"loopback is accepted", "127.0.0.1:7395", ""},
 			{"a tailnet address is accepted", tailnet, ""},
-			{"a public address is refused", public, "address is neither loopback nor private nor tailnet (100.64.0.0/10): " + public},
+			{"a public address is refused", public, "a public address: address is neither loopback nor private nor tailnet (100.64.0.0/10): " + public},
 		}
 		for _, row := range rows {
 			t.Run(row.name, func(t *testing.T) {

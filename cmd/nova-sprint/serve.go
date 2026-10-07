@@ -351,7 +351,17 @@ func takesGzip(accept string) bool {
 // The caller returns this before net.Listen.
 func listenRefused(host string) string {
 	const refused = "--listen wants one address of this machine (its address on the fleet's private network, or 127.0.0.1): the server checks no credential, so it does not listen on every network"
-	if host == "" || sprint.CheckAddr(host+":7390", sprint.LocalOnlyMode()) != "" {
+	if host == "" {
+		return refused
+	}
+	// Wrap IPv6 addresses in brackets for CheckAddr
+	addr := host
+	if strings.Contains(host, ":") {
+		addr = "[" + host + "]:7390"
+	} else {
+		addr = host + ":7390"
+	}
+	if sprint.CheckAddr(addr, sprint.LocalOnlyMode()) != "" {
 		return refused
 	}
 	return ""

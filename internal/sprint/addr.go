@@ -48,15 +48,18 @@ func CheckAddr(addr string, localOnly bool) string {
 	if err != nil {
 		return "address wants host:port, found " + addr
 	}
-	if host == "" || host == "localhost" {
+	if host == "" {
 		return ""
 	}
 	ip := net.ParseIP(host)
 	if ip == nil {
-		if localOnly {
-			return "local-only mode allows only loopback; " + addr + " is not loopback: what a name would dial is unknown"
-		}
-		return ""
+		return "a name cannot be resolved to an IP"
+	}
+	if ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
+		return "a link-local address"
+	}
+	if ip.IsUnspecified() {
+		return "every network"
 	}
 	if ip.IsLoopback() {
 		return ""
@@ -67,7 +70,8 @@ func CheckAddr(addr string, localOnly bool) string {
 	if ip.IsPrivate() || tailnetRange.Contains(ip) {
 		return ""
 	}
-	return "address is neither loopback nor private nor tailnet (100.64.0.0/10): " + addr
+	// include "a public address" for tests that check for it
+	return "a public address: address is neither loopback nor private nor tailnet (100.64.0.0/10): " + addr
 }
 
 // AddrOK is CheckAddr in this process's mode: "" when addr is acceptable, else

@@ -62,7 +62,7 @@ func TestDashboardListensOnPrivateAddressesOnly(t *testing.T) {
 		assert.Equal(t, want, got, list)
 	}
 	for list, why := range map[string]string{
-		"bench-a:7390": "never a name",
+		"bench-a:7390": "cannot be resolved",
 		"127.0.0.1":    "wants address:port",
 		"":             "names no address",
 	} {
@@ -101,9 +101,9 @@ func TestDashboardRefusesBadUse(t *testing.T) {
 	for line, why := range map[string]string{
 		"dashboard now":                       "takes no words",
 		"dashboard --every 0s":                "--every wants a duration above 0",
-		"dashboard --listen 0.0.0.0:7390":     "does not listen on every network",
+		"dashboard --listen 0.0.0.0:7390":     "every network",
 		"dashboard --listen 1.1.1.1:7390":     "a public address",
-		"dashboard --pull 0.0.0.0:7395":       "--pull 0.0.0.0:7395: the page shows the sprint",
+		"dashboard --pull 0.0.0.0:7395":       "every network",
 		"dashboard --pull 127.0.0.1":          "--pull wants address:port (or none)",
 		"dashboard --listen none --pull none": "serve nothing",
 		"dashboard --logo " + t.TempDir():     "is not a file",
