@@ -55,6 +55,7 @@ type ReleaseCheck struct {
 // of stream sprint-v1-release adds its check here and its bar to the spec.
 var ReleaseChecks = []ReleaseCheck{
 	{CheckNoStuckFriend, "no friend was stuck at any moment of the last " + StuckWindow.String(), NoStuckFriend},
+	{CheckMergeQueueP90, "over the last 24 hours, the p90 age of cards in merging is under the merge-p90 bar (default 30m)", MergeQueueP90},
 	{CheckCardsSettled, "every card of the stream is landed or dropped with a reason: none is ready, waiting, working, review or merging", CardsSettled},
 	{CheckBaseGateGreen, "the tree gate is green on the base at the stream's last landing: the unit class and the functional class of the packages the cards name, plus ./internal/docs and ./internal/ci", BaseGateGreen},
 	{CheckTwoOKReads, "every landed card has the ok reads its tier needs at its final head, one for a flash card and two different readers for a heavier one, none accepted on the coordinator's word alone", TwoOKReads},
@@ -172,8 +173,17 @@ func ReleaseStreamLines(lines []Line, glob string) ([]Line, error) {
 // CheckNoStuckFriend is the name of the first check.
 const CheckNoStuckFriend = "no-stuck-friend"
 
+// CheckMergeQueueP90 is the name of the merge-queue-p90 check.
+const CheckMergeQueueP90 = "merge-queue-p90"
+
 // StuckWindow is how far back no friend may have been stuck.
 const StuckWindow = 4 * time.Hour
+
+// MergeQueueP90Window is how far back to look for merging ages.
+const MergeQueueP90Window = 24 * time.Hour
+
+// MergeQueueP90Bar is the default bar for the merge-queue-p90 check.
+const MergeQueueP90Bar = 30 * time.Minute
 
 // NoStuckFriend: no friend was stuck at any moment of the last StuckWindow.
 // Stuck is the deadline rule's own lateness (WorkDeadline, docs/SPEC-SPRINT.md
@@ -384,4 +394,76 @@ func friendLateSpans(lines []Line, now time.Time, dealtMax time.Duration) (spans
 		checkSpan(id, c, now)
 	}
 	return spans, cards
+}
+
+// MergeQueueP90 computes the p90 age of cards spent in merging over the last
+// MergeQueueP90Window (24 hours). It compares this against the merge-p90 bar
+// (default MergeQueueP90Bar, 30m). Fails and prints the p90, how many cards,
+// and the oldest card still merging.
+func MergeQueueP90(f ReleaseFacts) ReleaseResult {
+	now := f.Now()
+	windowStart := now.Add(-MergeQueueP90Window)
+
+	// Collect all merging spans from the log.
+	var ages []time.Duration
+	var oldestMerging string
+	var oldestAge time.Duration
+
+	for _, l := range f.Log() {
+		if l.Kind != LineMove || l.Table != Fleet {
+			continue
+		}
+		// Track cards that entered merging (To ends with :merging).
+		if strings.HasSuffix(l.To, ":merging") {
+			startAt := l.At
+			// Find when it left merging or still merging.
+			var endAt time.Time
+			merged := false
+			for _, l2 := range f.Log() {
+				if l2.At.After(startAt) && l2.Card == l.Card {
+					if l2.To != "" && !strings.HasSuffix(l2.To, ":merging") {
+						endAt = l2.At
+						merged = true
+						break
+					}
+				}
+			}
+			if !merged {
+				// Still merging, use now as end.
+				endAt = now
+			}
+			age := endAt.Sub(startAt)
+			if startAt.After(windowStart) || endAt.After(windowStart) {
+				// Age overlaps with the window.
+				ages = append(ages, age)
+				if age > oldestAge {
+					oldestAge = age
+					oldestMerging = l.Card
+				}
+			}
+		}
+	}
+
+	if len(ages) == 0 {
+		return ReleaseResult{Name: CheckMergeQueueP90, OK: true,
+			Evidence: fmt.Sprintf("no cards merged in the last %s; p90=0", MergeQueueP90Window)}
+	}
+
+	// Compute p90 using nearest-rank method.
+	sort.Slice(ages, func(i, j int) bool { return ages[i] < ages[j] })
+	rank := int(float64(len(ages)+1) * 0.90)
+	if rank > len(ages) {
+		rank = len(ages)
+	}
+	if rank < 1 {
+		rank = 1
+	}
+	p90 := ages[rank-1]
+
+	if p90 <= MergeQueueP90Bar {
+		return ReleaseResult{Name: CheckMergeQueueP90, OK: true,
+			Evidence: fmt.Sprintf("p90=%.0fm n=%d oldest=%s", p90.Minutes(), len(ages), oldestMerging)}
+	}
+	return ReleaseResult{Name: CheckMergeQueueP90, OK: false,
+		Evidence: fmt.Sprintf("p90=%.0fm n=%d oldest=%s; bar=%.0fm", p90.Minutes(), len(ages), oldestMerging, MergeQueueP90Bar.Minutes())}
 }

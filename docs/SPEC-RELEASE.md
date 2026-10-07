@@ -576,6 +576,7 @@ version read back, and a rollback from kept copies on missed ticks. The runbook 
 | check | the bar |
 |---|---|
 | `no-stuck-friend` | no friend was stuck at any moment of the last 4 hours: stuck is a working card held past its deadline (her `friend_deadline`, else 2 hours, from its first take), or a card dealt to her and not taken past the dealt bound; read from the store's log, a spell that has ended counting while it overlaps the window; a fail names the friend, the card and the moment |
+| `merge-queue-p90` | over the last 24 hours, the p90 age of cards in merging is under the merge-p90 bar (default 30m); p90 is computed by the nearest-rank method; fail prints the p90, how many cards, and the oldest card still merging |
 
 Each later card of stream sprint-v1-release adds its row here with its check.
 

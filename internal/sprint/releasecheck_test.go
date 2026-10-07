@@ -210,6 +210,64 @@ func TestReleaseCheckFailsWhileAFriendWasStuckInTheLastFourHours(t *testing.T) {
 	})
 }
 
+func TestMergeQueueP90(t *testing.T) {
+	t.Parallel()
+
+	t.Run("cards merged inside window are considered", func(t *testing.T) {
+		t.Parallel()
+		// 3 cards merged in the last 24h, ages 10m, 20m, 30m
+		// p90 (nearest-rank) = 30m, under bar (30m), ok
+		moves := []Line{
+			fleetMove(hr(0), "c1", "", "m1:merging", nil),
+			fleetMove(hr(0.167), "c1", "m1:merging", "m1:done", nil), // 10m
+			fleetMove(hr(0.5), "c2", "", "m1:merging", nil),
+			fleetMove(hr(0.833), "c2", "m1:merging", "m1:done", nil), // 20m
+			fleetMove(hr(1), "c3", "", "m1:merging", nil),
+			fleetMove(hr(1.5), "c3", "m1:merging", "m1:done", nil), // 30m
+		}
+		f := fakeRelease{now: hr(1.5), lines: moves, dealtMax: DealtMaxDefault}
+		r := MergeQueueP90(f)
+		assert.True(t, r.OK)
+		assert.Contains(t, r.Evidence, "p90=30")
+		assert.Contains(t, r.Evidence, "n=3")
+	})
+
+	t.Run("p90 over bar fails", func(t *testing.T) {
+		t.Parallel()
+		// 5 cards merged, ages 10m, 15m, 20m, 25m, 50m
+		// p90 (nearest-rank) = 50m, over bar (30m), fail
+		moves := []Line{
+			fleetMove(hr(0), "c1", "", "m1:merging", nil),
+			fleetMove(hr(0.167), "c1", "m1:merging", "m1:done", nil), // 10m
+			fleetMove(hr(0), "c2", "", "m1:merging", nil),
+			fleetMove(hr(0.25), "c2", "m1:merging", "m1:done", nil), // 15m
+			fleetMove(hr(0), "c3", "", "m1:merging", nil),
+			fleetMove(hr(0.333), "c3", "m1:merging", "m1:done", nil), // 20m
+			fleetMove(hr(0), "c4", "", "m1:merging", nil),
+			fleetMove(hr(0.417), "c4", "m1:merging", "m1:done", nil), // 25m
+			fleetMove(hr(0), "c5", "", "m1:merging", nil),
+			fleetMove(hr(0.833), "c5", "m1:merging", "m1:done", nil), // 50m
+		}
+		f := fakeRelease{now: hr(1), lines: moves, dealtMax: DealtMaxDefault}
+		r := MergeQueueP90(f)
+		assert.False(t, r.OK)
+		assert.Contains(t, r.Evidence, "p90=50")
+		assert.Contains(t, r.Evidence, "bar=30")
+	})
+
+	t.Run("no cards merged is ok", func(t *testing.T) {
+		t.Parallel()
+		moves := []Line{
+			fleetMove(hr(0), "c1", "", "m1:ready", nil),
+			fleetMove(hr(0.5), "c1", "m1:ready", "m1:done", nil),
+		}
+		f := fakeRelease{now: hr(1), lines: moves, dealtMax: DealtMaxDefault}
+		r := MergeQueueP90(f)
+		assert.True(t, r.OK)
+		assert.Contains(t, r.Evidence, "no cards merged")
+	})
+}
+
 func TestTheReleaseReportSaysOKOrNotReadyByTheChecksRun(t *testing.T) {
 	t.Parallel()
 	good := relFacts(hr(1))
