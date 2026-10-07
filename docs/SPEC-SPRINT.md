@@ -3311,9 +3311,10 @@ reads close as `read --ok|--broken` closes them, and it leaves review only by th
   generation of the id (`.g1`, `.g2`; `MaxReadGen`). A read goes to the cheapest reader
   that may take it, friends and members alike: one with an idle lane before every one with
   none (a read waits in a ready queue only when every reader that may take it is busy), then
-  by tier distance (`readTierDistance`: the read's own tier, one tier below, then the tiers
-  above, nearest first; a pro read on a heavy reader is a waste, and the flash reader takes
-  the flash reads), then the most idle lanes, then the most room, then by name
+  by tier distance (`readTierDistance`, against the read's tier before `readTierOf` lowers
+  it, for friends and members alike: the read's own tier, one tier below, then the tiers
+  above, nearest first, then a member whose read is drawn two or more tiers below; a pro read
+  on a heavy reader is a waste, and the flash reader takes the flash reads), then the most idle lanes, then the most room, then by name
   (`TestAReadCardGoesToTheCheapestReaderThatMayTakeIt`).
   There is no finder, no rolling index and no per-reader room.
 - **Half a slot.** A read card holds half a slot of its unit's one width: a row's load is its

@@ -443,10 +443,10 @@ func (s *Snapshot) NextTier(c *Card) string {
 // read on pro would be weaker than the writer, which item 27 refuses; the one weaker read is
 // the interim rule's, a pro card read on flash while no enabled route serves pro and one
 // serves flash (the owner, 2026-10-06: "let flash read pro"). The value returned
-// is that collapse: a route drawn for the card is named from it. A friend is asked the
-// tier before this collapse (friendReadTier) when her class is at or above it and she
-// has room; the tick draws this route only when no such friend has room
-// (docs/SPEC-SPRINT.md, a read asked of any unit with room at or above the read tier).
+// is that collapse: a route drawn for the card is named from it. The deal measures every
+// reader, friend or member, against the tier before this collapse (friendReadTier,
+// readTierDistance), so a member whose read is drawn lower ranks by how far below it
+// really reads (docs/SPEC-SPRINT.md section 6, who reads).
 func (s *Snapshot) readTierOf(pr *Card) string {
 	m, _ := cardhdr.ReadModel(pr.F("brief"))
 	t := cardTier(pr, m)

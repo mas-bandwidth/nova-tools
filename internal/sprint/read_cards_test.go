@@ -403,6 +403,7 @@ func TestAReadCardGoesToTheCheapestReaderThatMayTakeIt(t *testing.T) {
 		seats   []FriendSeat
 		busy    map[string]int
 		holds   string // a reader that already holds a read of the attempt
+		tiers   string // the members' reader rows' tiers (reader set --tiers)
 		want    []string
 	}{
 		{name: "a flash read goes to the flash reader", brief: "tier: flash",
@@ -419,6 +420,14 @@ func TestAReadCardGoesToTheCheapestReaderThatMayTakeIt(t *testing.T) {
 		{name: "two reads of one primary go to two idle readers of its tier", brief: "tier: pro",
 			seats: []FriendSeat{pat(4), readerSeat("kim", 4, []string{"pro"}, []string{"reader"}), jon(16)},
 			want:  []string{FriendRow("pat"), FriendRow("kim")}},
+		{name: "a frontier read goes to the frontier reader, then the heavy one, before pro members", brief: "tier: frontier",
+			members: []string{"m1", "m2"}, tiers: "pro",
+			seats: []FriendSeat{readerSeat("ada", 16, []string{"frontier"}, []string{"reader"}), jon(16)},
+			want:  []string{FriendRow("ada"), FriendRow("jon")}},
+		{name: "a heavy read: a pro member reads one below, as a pro friend does", brief: "tier: heavy",
+			members: []string{"m1"}, tiers: "pro",
+			seats: []FriendSeat{jon(16), pat(8)},
+			want:  []string{FriendRow("jon"), FriendRow("pat")}},
 		{name: "a member idle before a friend of its tier busy", brief: "tier: flash", members: []string{"m1"},
 			seats: []FriendSeat{fred(1)}, busy: map[string]int{"fred": 1}, want: []string{"m1"}},
 	}
@@ -427,6 +436,12 @@ func TestAReadCardGoesToTheCheapestReaderThatMayTakeIt(t *testing.T) {
 			t.Parallel()
 			w := readCardsWorld(t, 4, tc.members...)
 			putReviewBy(w, "s1-1", "s1-1: work (s1) "+tc.brief+"\n", "zoe", 1)
+			if tc.tiers != "" {
+				w.s.Readers.Texts = map[string]map[string]string{}
+				for _, m := range tc.members {
+					w.s.Readers.Texts[ReaderPrefix+m] = map[string]string{ReaderTiers: tc.tiers}
+				}
+			}
 			for name, n := range tc.busy {
 				busyFriend(w, name, n)
 			}

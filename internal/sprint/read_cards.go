@@ -166,8 +166,8 @@ type readUnit struct {
 const RoleReader = "reader"
 
 // readUnitsOf is every unit up that may be dealt a read: the friends dealable (friendDealable)
-// whose roles name reader first, as a friend is dealt a card before a paid route is drawn,
-// then the members up whose reader row is neither held nor retired, in row order.
+// whose roles name reader, then the members up whose reader row is neither held nor
+// retired, in row order; the ask orders them together (readCardsAsk).
 func readUnitsOf(s *Snapshot, seats []FriendSeat) []readUnit {
 	var out []readUnit
 	for _, f := range seats {
@@ -360,33 +360,40 @@ func mayReadCard(s *Snapshot, u readUnit, pr *Card, attempt int, worker string, 
 	return b != "" && s.FleetTakes(b) && s.readerServesTier(rd, b) // inside the set: b too
 }
 
-// readTierDistance is how far the unit's tier is from the read's tier, the cheaper first:
-// 0 when the unit reads the read's own tier, 1 when it reads the tier one below
-// (mayReadCard's interim rule), 1+k when the nearest tier it reads is k above, and past
-// the ladder when it reads none of them. A friend reads her tiers (friendTiers); a member
-// the tiers its reader row serves (readerServesTier).
+// readTierDistance is how far below or above the read's tier the unit reads, the cheaper
+// first, measured against the tier before readTierOf lowers it (friendReadTier) for every
+// unit: 0 at the read's own tier, 1 one tier below (mayReadCard's interim rule), 1+k at k
+// tiers above, and after every tier above, len(capLadder)+k at k tiers below, as a member
+// reads a card whose route tier readTierOf lowered (a frontier or heavy card is drawn on
+// pro). A friend reads at the nearest of her tiers (friendTiers); a member at the tier its
+// read is drawn on, readTierOf's or the one below it when its reader row serves only that.
 func readTierDistance(s *Snapshot, u readUnit, pr *Card) int {
-	t := s.readTierOf(pr)
-	reads := func(x string) bool { return s.readerServesTier(ReaderPrefix+u.name, x) }
-	if u.friend {
-		t = friendReadTier(s, pr)
-		reads = func(x string) bool { return slices.Contains(friendTiers(u.seat), x) }
-	}
-	i := slices.Index(capLadder, t)
-	switch {
-	case i < 0:
-		return len(capLadder) + 1
-	case reads(t):
-		return 0
-	case i > 0 && reads(capLadder[i-1]):
-		return 1
-	}
-	for k := i + 1; k < len(capLadder); k++ {
-		if reads(capLadder[k]) {
-			return 1 + k - i
+	want := slices.Index(capLadder, friendReadTier(s, pr))
+	gap := func(at int) int {
+		switch {
+		case want < 0 || at < 0:
+			return 2*len(capLadder) + 1
+		case at == want:
+			return 0
+		case at == want-1:
+			return 1
+		case at > want:
+			return 1 + at - want
 		}
+		return len(capLadder) + want - at
 	}
-	return len(capLadder) + 1
+	if !u.friend {
+		e := s.readTierOf(pr)
+		if !s.readerServesTier(ReaderPrefix+u.name, e) {
+			e = tierBelow(e)
+		}
+		return gap(slices.Index(capLadder, e))
+	}
+	best := gap(-1)
+	for _, x := range friendTiers(u.seat) {
+		best = min(best, gap(slices.Index(capLadder, x)))
+	}
+	return best
 }
 
 // tierBelow is the tier one below t on the ladder (flash, pro, heavy, frontier), "" for
