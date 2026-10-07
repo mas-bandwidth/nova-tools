@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -187,7 +188,7 @@ func TestABehindStreamLandsAsOneBatchInWorkOrder(t *testing.T) {
 	r.queued(heads, "s1-1", "s1-2", "s1-3")
 
 	code, out, errs := r.do("land --repo-dir " + r.clone + " --base main")
-	require.Equal(t, 0, code, out+errs)
+	require.Equal(t, 1, code, out+errs)
 	assert.Contains(t, out, "LAND OK stream=s1 cards=2 base=main")
 	assert.Contains(t, out, "ids=s1-1..s1-3")
 	assert.Equal(t, []string{"land s1-3 (sprint stream s1)", "land s1-1 (sprint stream s1)", "moved s1-2.txt", "base"}, r.mainLog())
@@ -221,9 +222,8 @@ func TestLandFetchesTheBaseAndTheBatchsHeadsAndNoOtherBranch(t *testing.T) {
 	r.clean()
 }
 
-// A head that does not merge ends its batch: the cards before it land, it is
-// reported with the merge step's conflict fact carrying git's words, and the
-// card behind it stays queued.
+// A missing head ends its batch, while a code conflict parks only that card and
+// lets later cards land in the same batch.
 
 func TestLandStopsAtAHeadThatDoesNotMerge(t *testing.T) {
 	t.Parallel()
@@ -242,11 +242,21 @@ func TestLandStopsAtAHeadThatDoesNotMerge(t *testing.T) {
 			r.queued(heads, "s1-1", "s1-2", "s1-3")
 			code, out, errs := r.do("land --repo-dir " + r.clone + " --base main")
 			assert.Equal(t, 1, code)
-			assert.Contains(t, out, "LAND OK stream=s1 cards=1 base=main")
+			cards := 1
+			if tc.name == "a conflicting head" {
+				cards = 2
+			}
+			assert.Contains(t, out, fmt.Sprintf("LAND OK stream=s1 cards=%d base=main", cards))
 			assert.Contains(t, errs, "LAND REFUSED stream=s1 cards=1 base=- tip=- ids=s1-2 fact=conflict reason=the head "+heads["s1-2"]+" of s1-2 "+tc.why)
-			assert.Contains(t, errs, "LAND DONE batches=1 cards=1 refused=1")
-			assert.Equal(t, []string{"land s1-1 (sprint stream s1)", "base"}, r.mainLog())
-			assert.Equal(t, map[string]string{"s1-1": "landed/merged", "s1-2": "merging/stuck", "s1-3": "merging/queued"}, r.places("s1-1", "s1-2", "s1-3"))
+			assert.Contains(t, errs, fmt.Sprintf("LAND DONE batches=1 cards=%d refused=1", cards))
+			wantLog := []string{"land s1-1 (sprint stream s1)", "base"}
+			wantPlaces := map[string]string{"s1-1": "landed/merged", "s1-2": "merging/stuck", "s1-3": "merging/queued"}
+			if tc.name == "a conflicting head" {
+				wantLog = []string{"land s1-3 (sprint stream s1)", "land s1-1 (sprint stream s1)", "base"}
+				wantPlaces["s1-3"] = "landed/merged"
+			}
+			assert.Equal(t, wantLog, r.mainLog())
+			assert.Equal(t, wantPlaces, r.places("s1-1", "s1-2", "s1-3"))
 			assert.Equal(t, "stopped conflict", r.streamState("s1"))
 			assert.Contains(t, r.ok("inbox"), "stream stopped: conflict on a card")
 			r.clean()

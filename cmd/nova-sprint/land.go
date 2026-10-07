@@ -276,6 +276,8 @@ type lander struct {
 	// ledgerLog is the land log's lines for the shrink-only ledgers the batch's merges
 	// resolved (ledgerunion.go), reported with the batch (NOTE) and then cleared.
 	ledgerLog []string
+	// conflicts are code conflicts parked while the rest of the batch is built.
+	conflicts []conflictCard
 	// recLog and recNote are the lines and the note of the records a merge
 	// resolved (landappend.go), taken by mergeHead when the merge lands
 	recLog  []string
@@ -686,8 +688,13 @@ func (l *lander) batch(ctx context.Context, s *sprint.Snapshot, stream string, c
 			if !l.landed(b, stream, cards[:len(merged)]) {
 				return false, false
 			}
-			if failed.id != "" {
-				l.conflict(stream, failed)
+			if len(l.conflicts) > 0 || failed.id != "" {
+				for _, conflict := range l.conflicts {
+					l.conflict(stream, conflict)
+				}
+				if failed.id != "" {
+					l.conflict(stream, failed)
+				}
 				return false, true
 			}
 			return true, true
@@ -706,7 +713,12 @@ func (l *lander) batch(ctx context.Context, s *sprint.Snapshot, stream string, c
 		}
 		b.Scope = l.scopeOf(merged)
 	}
-	l.conflict(stream, failed)
+	for _, conflict := range l.conflicts {
+		l.conflict(stream, conflict)
+	}
+	if failed.id != "" {
+		l.conflict(stream, failed)
+	}
 	return false, true
 }
 
@@ -1152,6 +1164,7 @@ func headWhy(s *sprint.Snapshot, stream string, pins []landCard) string {
 // identity, a hook, the disk), nothing to report. The fetch's seconds and the
 // merges' are added to t.
 func (l *lander) build(ctx context.Context, dir, stream string, cards []landCard, t *landTimes) (merged []string, failed conflictCard, why string) {
+	l.conflicts = nil
 	base := cards[0].base
 	// THE FETCH BRINGS WHAT THE BATCH NEEDS AND NOTHING ELSE: the base, and the cards'
 	// heads by their ids, in one exchange. A fetch of every branch of origin costs a
@@ -1243,12 +1256,16 @@ func (l *lander) build(ctx context.Context, dir, stream string, cards []landCard
 		case env != "":
 			return nil, failed, env + "; no card is blamed and nothing was pushed or reported"
 		case card != "":
+			f := conflictCard{landCard: *c, why: card, kind: l.conflictKind, paths: l.conflictPaths}
+			if l.conflictKind == "" {
+				// Mechanical and tree-gate failures remain a barrier: a later card is
+				// never passed over (docs/SPEC-SPRINT.md section 7).
+				return merged, f, ""
+			}
 			// A code conflict parks only this member for redo on the current tip. The
 			// remaining members still merge in work order and share one batch push
 			// (docs/SPEC-SPRINT.md section 7, the lander's batch).
-			if failed.id == "" {
-				failed = conflictCard{landCard: *c, why: card, kind: l.conflictKind, paths: l.conflictPaths}
-			}
+			l.conflicts = append(l.conflicts, f)
 			// Keep successfully merged cards at the front: batch's landed slice is
 			// the prefix, while the parked card is reported separately.
 			parked := *c
