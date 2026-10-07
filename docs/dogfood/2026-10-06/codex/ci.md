@@ -1,8 +1,9 @@
 # nova-ci dogfood — codex (zhi), 2026-10-07
 
-A stranger's pass over `nova-ci` built from `3c658bbc698c`, the base this
-attempt fetched (`cmd/nova-ci` and `internal/ci/slowtests` are identical at this
-commit's parent, the base tip `574b61f3d`). I read only the tool's own help
+A stranger's pass over `nova-ci` built from `3c658bbc698c`, the commit this pass
+fetched; `cmd/nova-ci`, `internal/ci/slowtests` and `internal/scaffold` are
+identical at the base tip this attempt carries the report onto, `60f8a299d`, so
+the observations below hold there too. I read only the tool's own help
 (`nova-ci -h`, `nova-ci help`, `nova-ci <verb> -h`) and its page `docs/CLI.md`,
 built it with `go build ./cmd/nova-ci`, and used every
 verb at least once with its real flags. The timing verbs ran against a scratch
@@ -13,9 +14,10 @@ a throwaway directory. No Redis store was dialled and nothing was fixed here.
 
 ## Findings
 
-### 1. `slowtests --allowlist` and `--sleeps` refuse every package in a module that is not nova-tools — URGENT
+### 1. `slowtests --allowlist` and `--sleeps` refuse a module-relative column whose first element is not `cmd/`, `internal/` or `tools/` — URGENT
 
-**Command** (run in the scratch module; `allow.ok` holds one row,
+**Command** (run in the scratch module `example.com/scratch/mod`, whose only
+package `beta` sits at the module root; `allow.ok` holds one row,
 `example.com/scratch/mod/beta<TAB>TestSlow<TAB>0.5<TAB>0.1s@run1`):
 
     nova-ci slowtests --package-budget 0.2 --allowlist allow.ok < events.json
@@ -24,28 +26,34 @@ a throwaway directory. No Redis store was dialled and nothing was fixed here.
 
     nova-ci slowtests REFUSED: --allowlist allow.ok: line 1: package "example.com/scratch/mod/beta" must be the full module-relative path; run: nova-ci slowtests -h
 
-The same line is printed when the column is the module-relative name `beta`
-(`package "beta" must be the full module-relative path`) and when the row is a
-package row (`-`); `--sleeps` refuses its row the same way; and the named remedy
-`nova-ci slowtests -h` still shows only the
-`internal/pkg<TAB>test<TAB>seconds<TAB><measured>s@<where>` shape with the
-`internal/ci/slowtests` example, never the rule the parser enforces. The parser
-(`refuseShortPackage`) accepts a package column only when it starts with `cmd/`,
-`internal/` or `tools/`, so no row a stranger in their own module can write is
-accepted: a row given an `internal/` prefix to pass the parser matches no
-package in the stream and is dropped in silence.
+The same line is printed for the module-relative column `beta` (`package "beta"
+must be the full module-relative path`) and for a package row (`-`); `--sleeps`
+refuses its row the same way; and the named remedy `nova-ci slowtests -h` still
+shows only the `internal/pkg<TAB>test<TAB>seconds<TAB><measured>s@<where>` shape
+with the `internal/ci/slowtests` example, never the rule the parser enforces.
+
+The rule is narrower than "not nova-tools". `refuseShortPackage`
+(`internal/ci/slowtests/slowtests.go:434-449`) accepts any package column whose
+first path element is `cmd`, `internal` or `tools`, and `matches` there names an
+event by equality or trailing-path suffix. A module-relative column under one of
+those roots in this scratch module is therefore accepted and matched to the
+event's import path by its trailing elements; what is refused is a
+module-relative column whose first element is none of those three — `beta`
+here, or a package under `pkg`. `example.com/scratch/mod/beta` is a
+module-qualified path and `beta` is the module-relative path the flag's text
+asks for, yet the run refuses both and never says the column must be
+module-relative and start under `cmd`, `internal` or `tools`.
 
 **Expected:** `nova-ci help` and `docs/CLI.md` both promise "slowtests and
 functional work in any Go module", and the flag's own text calls the first
-column the package's "full module-relative path" — which
-`example.com/scratch/mod/beta` is — so the row should raise that package's
-budget. Where a column is wrong, the refusal should say what the column wants,
-and the named `slowtests -h` should carry that rule instead of a page that omits
-it.
+column the package's "full module-relative path" — `beta` is exactly that for
+this module — so the row should raise that package's budget. Where a column is
+wrong, the refusal should say what the column wants, and the named `slowtests
+-h` should carry the rule instead of a page that omits it.
 
 **Grade:** URGENT
 
-### 2. `new-rule` and `new-verb` treat any module with a `go.mod` as a nova-tools checkout and write into it — NEXT
+### 2. `new-rule` and `new-verb` treat any module with a `go.mod` as a nova-tools checkout and write into it — URGENT
 
 **Command** (run in a throwaway directory holding only `go.mod` with
 `module example.com/scratch/thrown2`):
@@ -69,9 +77,10 @@ not the module.
 nova-tools checkout" and `new-rule -h` says "(local write; needs a nova-tools
 checkout)", so a module that is not nova-tools should be refused with that
 remedy before three class-rule files land in a stranger's tree; as it stands the
-help names a requirement the verb does not check.
+help names a requirement the verb does not check, so the help lies about the
+verb and the write lands where the help promised a refusal.
 
-**Grade:** NEXT
+**Grade:** URGENT
 
 ## What was not done
 
@@ -120,8 +129,9 @@ do not make.
 
 USE 6/10 — every verb ran at least once with its real flags against a scratch
 module or a throwaway directory and the refusals were read; held down because
-the one real budget flag (`--allowlist`, with `--sleeps`) cannot be used in the
-module the banner promises, its only parser-passing form is silently ignored,
-and the scaffold verbs write into a module they say they need not be in.
+the one real budget flag (`--allowlist`, with `--sleeps`) refuses a root-level
+package in the module the banner promises, accepts a column only when its first
+element is `cmd/`, `internal/` or `tools/`, and the scaffold verbs write into a
+module they say they need not be in.
 
-urgent=1 next=1
+urgent=2 next=0
