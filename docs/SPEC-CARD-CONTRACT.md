@@ -405,6 +405,7 @@ in place, the same id (docs/SPEC-SPRINT.md section 2). The widened brief carries
 `CARRY: <id> attempt <n> head=<sha>`, and the member stages the card's next attempt at that
 head as it stages a rework at its last pushed head (`member.Carried`), as does a friend's brief
 (`TestBriefWidenKeepsTheId`).
+The tick answers that HOLD by rule when every proposed path is inside the repository, none is a protected or secrets path, and the card has not proposed PATHS before: the card is dropped and a twin is added with PATHS widened by the proposal, `--replaces` the card, the carried head and the branch named in THE TASK as `carry <head>; the only change is PATHS`, the tier kept, dependents inherited, and the rule recorded on both cards. A second proposal for the same card, or a path outside the repository or a protected or secrets path, is the judgment it was. A reader whose only defect is PATHS writes `Verdict: HOLD` and a `PATHS-PROPOSED` line, not a broken finding.
 
 ## 5. Profiles
 
