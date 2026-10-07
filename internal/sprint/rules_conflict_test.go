@@ -56,6 +56,7 @@ func newConflictRig(t *testing.T) *conflictRig {
 		{Name: "pro-a", Tier: "pro", Provider: "prov-pro-a", Model: "model-pro-a", Tokens: 1000, Deadline: conflictRouteSeconds, Enabled: true},
 	})
 	r.beat()
+	friendReaders(t, r.st, r.ctx)
 	r.must(store.FleetStep(sprint.FleetReq{Op: "up", Member: "m1", Width: 4}))
 	r.must(store.FleetStep(sprint.FleetReq{Op: "up", Member: "m2", Width: 4}))
 	r.must(store.AddStep(sprint.AddReq{Stream: "s1", Count: 3, Brief: "c: the work (s1) tier: flash\nREPO: mas-bandwidth/nova-tools\n\nThe task.\n"}))
@@ -72,6 +73,7 @@ func (r *conflictRig) beat() {
 		_, err := r.st.Beat(r.ctx, m, &zero, hostload.Source{})
 		require.NoError(r.t, err)
 	}
+	beatFriendReaders(r.t, r.st, r.ctx)
 }
 
 func (r *conflictRig) must(step store.Step) store.Result {
@@ -119,17 +121,9 @@ func (r *conflictRig) toMerging(id string) {
 	r.must(store.TakeStep(sprint.TakeReq{As: wc.Row, Sel: sprint.Sel{IDs: []string{wc.ID}}, Gens: map[string]int{wc.ID: wc.Int("gen")}}))
 	wc = r.snap().Fleet.Card(wc.ID)
 	r.must(store.FinishStep(sprint.FinishReq{Sel: sprint.Sel{IDs: []string{wc.ID}}, Gens: map[string]int{wc.ID: wc.Int("gen")}}))
-	for range 4 {
-		s = r.snap()
-		if pr := s.Work.Card(id); pr.Col != sprint.Review || sprint.ReadsWanted(s, pr) == 0 {
-			break
-		}
-		r.must(store.AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{id}}}))
-		for _, rc := range r.snap().Readers.Of(id) {
-			if rc.Col == sprint.Asked || rc.Col == sprint.Reading {
-				r.must(store.ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: rc.Row, Verdict: "ok", Finding: "f:1", Sel: sprint.Sel{IDs: []string{rc.ID}}}))
-			}
-		}
+	cutReads(r.t, r.st, r.ctx)
+	for _, rc := range placedReadCards(r.snap(), id) {
+		r.must(store.ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: rc.Row, Verdict: "ok", Finding: "f:1", Sel: sprint.Sel{IDs: []string{rc.ID}}}))
 	}
 	r.must(store.AcceptStep(sprint.AcceptReq{Sel: sprint.Sel{IDs: []string{id}}}))
 	require.Equal(r.t, sprint.Merging, r.snap().Work.Card(id).Col, id)

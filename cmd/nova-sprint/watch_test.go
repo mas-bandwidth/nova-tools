@@ -74,7 +74,7 @@ func (l *writeLog) Write(p []byte) (int, error) {
 func whereFixture(t *testing.T) *testApp {
 	t.Helper()
 	ta := newTestApp(t)
-	ta.ok("init --readers reader-a,reader-b --members m1,m2")
+	ta.ok("init --readers reader-m1,reader-m2 --members m1,m2") // the members read
 	ta.ok("add --stream s1 --count 3")
 	ta.ok("add --stream s2 --count 1 --one")
 	ta.ok("drop s2-1 --reason obsolete")
@@ -91,9 +91,10 @@ func whereFixture(t *testing.T) *testApp {
 	}
 	require.NotEmpty(t, taken, "m1 took nothing: %+v", q.Cards)
 	ta.ok("finish --as m1 " + taken + "@1")
-	ta.ok("ask")
-	ta.ok("read --as reader-a --ok --limit 10")
-	ta.ok("read --as reader-b --ok --limit 10")
+	ta.cutReads() // its read card, on m2's row
+	read := strings.TrimSuffix(taken, ".w1") + ".r1.m2"
+	ta.ok("take --as m2 " + read + "@1")
+	ta.ok("read --as m2 --ok " + read)
 	ta.ok("accept --read-ok")
 	ta.ok("tick") // the pump drains the accept the machine queued
 	return ta
@@ -200,7 +201,7 @@ func TestWhereFrameHoldsOnlyTheHeaderAndTheTables(t *testing.T) {
 	assert.NotEmpty(t, w.Stalled, "where --json: pending=%q stalled=%v goals=%v coordinator=%q", w.Pending, w.Stalled, w.Goals, w.Coordinator)
 	assert.Len(t, w.Goals, 1, "where --json: pending=%q stalled=%v goals=%v coordinator=%q", w.Pending, w.Stalled, w.Goals, w.Coordinator)
 	assert.NotEmpty(t, w.Coordinator, "where --json: pending=%q stalled=%v goals=%v coordinator=%q", w.Pending, w.Stalled, w.Goals, w.Coordinator)
-	assert.ElementsMatch(t, []string{"reader-a", "reader-b"}, slices.Collect(maps.Keys(w.Tables[sprint.Readers])), "where --json keeps each reader's row")
+	assert.ElementsMatch(t, []string{"reader-m1", "reader-m2"}, slices.Collect(maps.Keys(w.Tables[sprint.Readers])), "where --json keeps each reader's row")
 	assert.ElementsMatch(t, []string{"s1", "s2"}, slices.Collect(maps.Keys(w.Tables[sprint.Merge])), "where --json keeps each stream's merge row")
 }
 
@@ -251,7 +252,7 @@ func TestWhereShowsEveryTableAndEveryStream(t *testing.T) {
 			ta.ok("finish --as m1 " + c.ID + "@1")
 		}
 	}
-	ta.ok("ask")
+	ta.cutReads()
 	ta.ok("read --as reader-a --ok --limit 10")
 	ta.ok("read --as reader-b --ok --limit 10")
 	ta.ok("accept --read-ok")
@@ -825,6 +826,6 @@ func TestWhereHidesTheReadersAndMergeTables(t *testing.T) {
 	assert.Equal(t, plain, withAll, "where --json differs with --all")
 	var w whereView
 	ta.json("where", &w)
-	assert.ElementsMatch(t, []string{"reader-a", "reader-b"}, slices.Collect(maps.Keys(w.Tables[sprint.Readers])), "where --json keeps each reader's row")
+	assert.ElementsMatch(t, []string{"reader-m1", "reader-m2"}, slices.Collect(maps.Keys(w.Tables[sprint.Readers])), "where --json keeps each reader's row")
 	assert.ElementsMatch(t, []string{"s1", "s2"}, slices.Collect(maps.Keys(w.Tables[sprint.Merge])), "where --json keeps each stream's merge row")
 }

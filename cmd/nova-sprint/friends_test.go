@@ -203,12 +203,12 @@ func TestFriendSyncWritesOnlyACardsBriefAndReadsItsReport(t *testing.T) {
 }
 
 // friendRows is a friendsFn over friend rows of the names given, each with
-// no width field (so the default width).
+// no width field (so the default width), each a reader (her roles name it).
 func friendRows(names ...string) friendsFn {
 	return func(context.Context, string) ([]config.Row, error) {
 		rows := make([]config.Row, len(names))
 		for i, n := range names {
-			rows[i] = config.Row{Name: n, Fields: map[string]string{"slots": "2", "tiers": "flash"}}
+			rows[i] = config.Row{Name: n, Fields: map[string]string{"slots": "2", "tiers": "flash", "roles": "reader"}}
 		}
 		return rows, nil
 	}

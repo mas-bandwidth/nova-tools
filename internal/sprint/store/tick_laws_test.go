@@ -54,6 +54,7 @@ func TestTheMachineDoesNotAcceptAReturnedPrimaryAgain(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	h.setup(1)
+	h.friendReaders()
 	h.startMachine()
 	h.driveTo("s1-1", sprint.Merging)
 	h.must(ReturnStep(sprint.ReturnReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Reason: "the stream branch went red"}))
@@ -176,7 +177,7 @@ func TestTheModelAndTheEngineAgreeOnTheAcceptAndRedealLaws(t *testing.T) {
 		for range 2 {
 			s := h.observe()
 			for _, id := range refmodel.Keys(s.Reads) {
-				if rc := s.Reads[id]; rc.Primary == p && (rc.Place == refmodel.Asked || rc.Place == refmodel.Reading) {
+				if rc := s.Reads[id]; rc.Primary == p && rc.Place != refmodel.Retired {
 					do(dAction{Kind: "read", Reader: rc.Reader, Card: id, OK: true})
 				}
 			}
@@ -194,6 +195,7 @@ func TestTheModelAndTheEngineAgreeOnTheAcceptAndRedealLaws(t *testing.T) {
 
 	do(dAction{Kind: "fleet", Op: "up", Member: "m1"})
 	do(dAction{Kind: "fleet", Op: "up", Member: "m2"})
+	do(dAction{Kind: "fleet", Op: "up", Member: "m3"}) // a pro card's two reads: two members that did not work it
 	do(dAction{Kind: "start"})
 	do(dAction{Kind: "add", Stream: "s1", IDs: []string{"a1", "a2"}})
 	do(dAction{Kind: "tick"})
@@ -242,6 +244,7 @@ func TestReturnedPrimariesStayHeldThroughMoreReads(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	h.setup(2)
+	h.friendReaders()
 	h.startMachine()
 	h.driveTo("s1-1", sprint.Merging)
 	h.driveTo("s1-2", sprint.Merging)
@@ -303,7 +306,7 @@ func TestAnOrphanReturnIsHeldByTheMachine(t *testing.T) {
 	p := newProbe(t)
 	p.setup(1)
 	p.toReview("h", "s1-1")
-	p.do("ask", AskStep(sprint.AskReq{Sel: ids("s1-1")}))
+	p.do("ask", p.cutStep())
 	p.readAllOK("s1-1")
 	p.m.Fail = func(pt string) error {
 		if pt == "apply t-work before" {

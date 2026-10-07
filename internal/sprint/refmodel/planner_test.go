@@ -22,19 +22,8 @@ import (
 // never make anything of is a duty the test never compared.
 const minSamplesWithMoves = 10
 
-// noFloor is the steps of the old read path held to no floor of samples with
-// moves: since read cards, the readers table's level reads rarely moves
-// anything in the walks (7 of 1000), and the whole old read path is being
-// excised. Each step is still compared on every sample it is run on.
-var noFloor = map[string]bool{refmodel.DutyLevelReads: true}
-
 // floorOf is the fewest samples with moves the step must have.
-func floorOf(step string) int {
-	if noFloor[step] {
-		return 0
-	}
-	return minSamplesWithMoves
-}
+func floorOf(string) int { return minSamplesWithMoves }
 
 // todaysDecision is what today's tick decides on the sample, from today's code
 // and not from the reference: each part of the tick planned as the store's tick

@@ -224,16 +224,16 @@ func TestAnEscalationNoRouteServesIsJudgedUnderItsTier(t *testing.T) {
 // card's first attempt, on flash, is read once on a flash route (cost rule 4).
 func TestAProCardsFlashAttemptIsReadOnFlash(t *testing.T) {
 	t.Parallel()
-	h := flashAndPro(t)
-	require.NoError(t, h.st.BeatReaders(h.ctx))
+	h := readersHarness(t, route("flash-a", "flash"), route("flash-b", "flash"), route("pro-a", "pro"), route("pro-b", "pro"))
 	h.onFlashBelowPro("s1")
 	h.startMachine()
 	h.machine()
 	require.Equal(t, "flash", h.workCards()["s1-1.w1"].F(sprint.FieldTier))
 	h.work("m1")
 	h.work("m2")
+	h.work("m3")
 	h.machine()
-	reads := h.snap().Readers.Of("s1-1")
+	reads := readsAt(h.snap(), h.snap().Work.Card("s1-1"))
 	require.Len(t, reads, 1, "a card on flash is read once (cost rule 4, readers.go ReadsNeeded)")
 	for _, rc := range reads {
 		assert.Equal(t, "flash", tierOfRoute(rc.F(sprint.FieldRoute)), "%s read on %s", rc.ID, rc.F(sprint.FieldRoute))

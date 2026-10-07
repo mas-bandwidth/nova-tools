@@ -123,8 +123,8 @@ func TestAFlashFriendWithRoomIsDealtFleetFlashCards(t *testing.T) {
 }
 
 // One width bounds a friend's row, her reads and her work together (the owner's rule): a
-// friend at width 16 holding 10 work cards and 9 reads has no lane free and is dealt no
-// work, and a one-shot friend holding a read is dealt no work card.
+// friend at width 16 holding 10 work cards and 18 reads (half a slot each) has no lane free
+// and is dealt no work, and a one-shot friend holding a read is dealt no work card.
 func TestOneWidthHoldsHerWorkAndReads(t *testing.T) {
 	t.Parallel()
 	briefs := make([]string, 30)
@@ -139,8 +139,8 @@ func TestOneWidthHoldsHerWorkAndReads(t *testing.T) {
 		w.s.Fleet.Put(&Card{ID: WorkCardID("busy-"+itoa(i), 1), Row: row, Col: Working, Rev: 1, Fields: map[string]string{
 			"kind": "work", "primary": "busy-" + itoa(i), "stream": "s9", "attempt": "1"}})
 	}
-	putReads(w, "amy", 9)
-	assert.Equal(t, 19, friendLoad(w.s, "amy"), "her load is her work and her reads")
+	putReads(w, "amy", 18)
+	assert.Equal(t, 19, friendLoad(w.s, "amy"), "her load is her work and her reads at half a slot")
 	room, width := friendRoom(amy)
 	assert.Equal(t, 13, room-friendLoad(w.s, "amy"), "her room less work and reads")
 	assert.Equal(t, -3, width-friendLoad(w.s, "amy"), "her lanes: 16 less 19, none idle")
@@ -164,8 +164,8 @@ func TestOneWidthHoldsHerWorkAndReads(t *testing.T) {
 		w3.s.Fleet.Put(&Card{ID: WorkCardID("busy-"+itoa(i), 1), Row: FriendRow("bee"), Col: Working, Rev: 1, Fields: map[string]string{
 			"kind": "work", "primary": "busy-" + itoa(i), "stream": "s9", "attempt": "1"}})
 	}
-	p, _, err := friendReadAsk(w3.s, []FriendSeat{bee}, "")
-	require.NoError(t, err)
+	bee.Roles = []string{RoleReader}
+	p, _ := readCardsAsk(w3.s, []FriendSeat{bee}, nil)
 	w3.do(p)
 	assert.Nil(t, w3.s.Fleet.Card(ReadCardID("s1-1", 1, "bee")), "her row is full: one width, no read room beside it")
 }

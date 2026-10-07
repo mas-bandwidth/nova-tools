@@ -99,7 +99,7 @@ func TestTheStreamStateThroughAStreamsLife(t *testing.T) {
 	c := p.snap().Fleet.Card("s1-1.w2")
 	p.do("take", TakeStep(sprint.TakeReq{As: c.Row, Sel: ids(c.ID), Gens: map[string]int{c.ID: 1}}))
 	p.do("finish", FinishStep(sprint.FinishReq{As: c.Row, Sel: ids(c.ID), Gens: map[string]int{c.ID: 1}, Head: "h2"}))
-	p.do("ask again", AskStep(sprint.AskReq{Sel: ids("s1-1")})) // the machine's ask: the finish asks no reader
+	p.do("ask again", p.cutStep()) // the machine's ask: the finish asks no reader
 	p.readAllOK("s1-1")
 	p.do("accept s1-1", AcceptStep(sprint.AcceptReq{Sel: ids("s1-1")}))
 	st("accept s1-1 again", sprint.StreamMerging)
@@ -173,22 +173,6 @@ func TestReturnAndDropAnswerTheStreamJudgmentsThatListThem(t *testing.T) {
 	}
 }
 
-// reads exhausted: ask --another names it with --answers.
-func TestAskAnotherAnswersABrokenRead(t *testing.T) {
-	t.Parallel()
-	p := newProbe(t)
-	p.setup(1)
-	p.toReview("h", "s1-1")
-	rs := p.pairAsked("s1-1")
-	p.read(rs[0].F("reader"), rs[0].ID, "ok")
-	p.read(rs[1].F("reader"), rs[1].ID, "broken")
-	br := p.noteOf("s1-1", sprint.NReadBroken)
-	r := p.do("ask another --answers broken", AskStep(sprint.AskReq{Sel: ids("s1-1"), Another: true, Answers: []string{br}}))
-	if len(r.Moved) != 1 || len(r.Refused) != 0 || p.noteOf("s1-1", sprint.NReadBroken) != "" {
-		assert.Fail(t, fmt.Sprintf("ask --another --answers <broken read>: moved=%v refused=%v; open after: %v", r.Moved, r.Refused, p.openOn("s1-1")))
-	}
-}
-
 // A repair that skipped accept's work entry leaves the merge card queued and
 // the primary in review (rule 4 broken, and said so). rework, or return, takes
 // the orphan off in the same step, rule 4 holds again, and accept works after.
@@ -200,7 +184,7 @@ func TestReworkOrReturnTakesAnOrphanMergeCardOff(t *testing.T) {
 			p := newProbe(t)
 			p.setup(1)
 			p.toReview("h", "s1-1")
-			p.do("ask", AskStep(sprint.AskReq{Sel: ids("s1-1")}))
+			p.do("ask", p.cutStep())
 			p.readAllOK("s1-1")
 			p.m.Fail = func(pt string) error {
 				if pt == "apply t-work before" {
@@ -232,7 +216,7 @@ func TestReworkOrReturnTakesAnOrphanMergeCardOff(t *testing.T) {
 				c := p.snap().Fleet.Card("s1-1.w2")
 				p.do("take", TakeStep(sprint.TakeReq{As: c.Row, Sel: ids(c.ID), Gens: map[string]int{c.ID: 1}}))
 				p.do("finish", FinishStep(sprint.FinishReq{As: c.Row, Sel: ids(c.ID), Gens: map[string]int{c.ID: 1}, Head: "h2"}))
-				p.do("ask again", AskStep(sprint.AskReq{Sel: ids("s1-1")})) // the machine's ask: the finish asks no reader
+				p.do("ask again", p.cutStep()) // the machine's ask: the finish asks no reader
 				p.readAllOK("s1-1")
 			}
 			if res := p.do("accept", AcceptStep(sprint.AcceptReq{Sel: ids("s1-1")})); len(res.Moved) != 1 || p.state("s1-1") != sprint.Merging {

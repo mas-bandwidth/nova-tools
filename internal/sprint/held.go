@@ -1,6 +1,7 @@
 package sprint
 
 import (
+	"cmp"
 	"fmt"
 	"slices"
 	"sort"
@@ -209,7 +210,14 @@ func (c *held) dealTurn(id string) int {
 
 // heldParts is the tick's parts the rule asks what the next tick does: every
 // part but the check, whose duty the rule is.
-var heldParts = []TickPartFn{TickLevel, TickLevelReads, TickResolve, TickResume, TickDeal, TickAccept, TickAsk, TickDeadlines, TickOverdue}
+var heldParts = []TickPartFn{TickLevel, TickResolve, TickResume, TickDeal, TickAccept, heldAskPart, TickDeadlines, TickOverdue}
+
+// heldAskPart is the tick's ask as the rule asks it: what it leaves due, the primaries that
+// wait for a reader apart (each held by readWaitHeld).
+func heldAskPart(s *Snapshot, r TickReq) (Plan, int) {
+	p, due, _ := readCardsAsks(s, r)
+	return p, due
+}
 
 func newHeld(h HeldState, now time.Time) *held {
 	s := *h.Snap
@@ -368,16 +376,20 @@ func (c *held) actor(pr *Card) string {
 				return fmt.Sprintf("reader %s holds %s (%s), %s of %s running", rc.Row, rc.ID, rc.Col, d.Round(time.Second), limit)
 			}
 		}
-		// a friend holds the read she was asked, on her fleet row, the same
-		// window a reader holds one not yet begun (docs/SPEC-SPRINT.md, a read
-		// asked of any unit with room at or above the read tier)
+		// a read card on a fleet row, a friend's or a member's, holds its primary until the
+		// read-card ask takes it back (read_cards.go, readCardsTakeBack): untaken, the deal
+		// bound from its deal; taken, ReadCardDeadline from its start
 		if fp, _, _ := friendReadLive(s, pr); len(fp) > 0 {
 			for _, rc := range fp {
 				if !friendReadAgrees(rc) {
 					continue
 				}
-				if d, ok := c.running(rc.F("asked")); ok && d <= DeadlineUnbegun {
-					return fmt.Sprintf("friend %s holds %s (%s), %s of %s running", rc.F("reader"), rc.ID, rc.Col, d.Round(time.Second), DeadlineUnbegun)
+				field, limit := "asked", s.DealtMax()
+				if rc.Col == Working {
+					field, limit = cmp.Or(fieldIf(rc, "taken"), "asked"), ReadCardDeadline
+				}
+				if d, ok := c.running(rc.F(field)); ok && d <= limit {
+					return fmt.Sprintf("%s holds %s (%s), %s of %s running", rc.F("reader"), rc.ID, rc.Col, d.Round(time.Second), limit)
 				}
 			}
 		}
@@ -585,6 +597,9 @@ func (c *held) waits(pr *Card) (why, root string, ok bool) {
 	case Working:
 		return "no live work card of an up member holds it before its deadline, and no judgment is open on it", "", false
 	case Review:
+		if pr.F("result") != "failed" && readWaitHeld(s, pr) {
+			return "waits for a reader of its tier, there and free to read it, to have room", "", true
+		}
 		switch {
 		case acceptable(s, pr):
 			return "acceptable (" + readersWord(ReadsNeeded(pr)) + " said ok at its head), and no judgment is open on it", "", false
@@ -686,14 +701,20 @@ func (c *held) decisions(pr *Card) []string {
 		out = []string{"accept", "rework", "drop"}
 	case pr.Col == Review && pr.F("result") == "failed":
 		out = []string{"rework", "drop"}
-	case pr.Col == Review && ReadsWanted(c.s, pr) == 0:
-		out = []string{"ask --another", "rework", "drop"} // ask alone is refused: asked already
 	case pr.Col == Review:
-		out = []string{"ask", "rework", "drop"}
+		out = []string{"rework", "drop"}
 	case pr.Col == Merging:
 		out = []string{"return", "drop"}
 	default:
 		out = []string{"look at the card", "drop"}
 	}
 	return append(out, "wait")
+}
+
+// fieldIf is the name of the card's field when the card holds it, "" else.
+func fieldIf(c *Card, name string) string {
+	if c.F(name) == "" {
+		return ""
+	}
+	return name
 }

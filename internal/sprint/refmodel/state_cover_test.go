@@ -22,7 +22,12 @@ func coverState() State {
 // coverRead places one read card of p at its attempt with reader r in place.
 func coverRead(s *State, p string, attempt int, r, place string) {
 	id := RC(p, attempt, r)
-	s.Reads[id] = ReadCard{Primary: p, Attempt: attempt, Reader: r, Place: place}
+	c := ReadCard{Primary: p, Attempt: attempt, Reader: r, Place: place}
+	if place == OK || place == Broken {
+		// a verdict: the card retired with it
+		c.Place, c.Verdict, c.By = Retired, place, ByRead
+	}
+	s.Reads[id] = c
 }
 
 // TestStateCoverJudgmentString covers Judgment.String (state.go:225): a
@@ -471,187 +476,6 @@ func TestStateCoverReworkChoice(t *testing.T) {
 	}
 }
 
-// TestStateCoverNextReaders covers NextReaders (state.go:583): the ask's k
-// readers, from just past AskLast in name order, wrapping, each without a
-// read card at the attempt. The refusal is no reader left free.
-func TestStateCoverNextReaders(t *testing.T) {
-	t.Parallel()
-	for name, tc := range map[string]struct {
-		build func(s *State)
-		k     int
-		want  []string
-	}{
-		"the first k free round from the last ask": {
-			build: func(s *State) {
-				s.Primaries["p"] = Primary{Stream: "s", Attempt: 1}
-				coverRead(s, "p", 1, "r1", Asked)
-			},
-			k:    2,
-			want: []string{"r2", "r3"},
-		},
-		"AskLast names where the round starts": {
-			build: func(s *State) {
-				s.Primaries["p"] = Primary{Stream: "s", Attempt: 1}
-				s.AskLast = "r2"
-			},
-			k:    2,
-			want: []string{"r3", "r1"},
-		},
-		"no reader free is refused": {
-			build: func(s *State) {
-				s.Primaries["p"] = Primary{Stream: "s", Attempt: 1}
-				for _, r := range []string{"r1", "r2", "r3"} {
-					coverRead(s, "p", 1, r, Asked)
-				}
-			},
-			k: 3,
-		},
-	} {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-			s := coverState()
-			tc.build(&s)
-			assert.Equal(t, tc.want, s.NextReaders("p", tc.k))
-		})
-	}
-}
-
-// TestStateCoverAskedLen covers AskedLen (state.go:607): the reader's cards
-// still asked. The refusals are a card past asked and a reader with none.
-func TestStateCoverAskedLen(t *testing.T) {
-	t.Parallel()
-	s := coverState()
-	coverRead(&s, "p1", 1, "r1", Asked)
-	coverRead(&s, "p2", 1, "r1", Asked)
-	coverRead(&s, "p3", 1, "r1", Reading)
-	coverRead(&s, "p4", 1, "r2", Asked)
-	for name, tc := range map[string]struct {
-		r    string
-		want int
-	}{
-		"two asked, its reading card aside":   {r: "r1", want: 2},
-		"one asked":                           {r: "r2", want: 1},
-		"a reader with no cards asks nothing": {r: "r3", want: 0},
-	} {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-			assert.Equal(t, tc.want, s.AskedLen(tc.r))
-		})
-	}
-}
-
-// TestStateCoverOutOf covers OutOf (state.go:618): p's read cards asked or
-// reading, in id order. The refusals are a card already judged, another
-// primary's cards, and a primary with none.
-func TestStateCoverOutOf(t *testing.T) {
-	t.Parallel()
-	s := coverState()
-	coverRead(&s, "p", 1, "r2", Asked)
-	coverRead(&s, "p", 1, "r1", Reading)
-	coverRead(&s, "p", 1, "r3", OK)
-	coverRead(&s, "q", 1, "r1", Asked)
-	s.Primaries["r"] = Primary{Stream: "s"}
-	s.Primaries["j"] = Primary{Stream: "s"}
-	coverRead(&s, "j", 1, "r1", OK)
-	for name, tc := range map[string]struct {
-		p    string
-		want []string
-	}{
-		"asked and reading, in id order":            {p: "p", want: []string{"p.r1.r1", "p.r1.r2"}},
-		"another primary's card stays out":          {p: "q", want: []string{"q.r1.r1"}},
-		"a primary with no cards is out of nothing": {p: "r"},
-		"a primary whose only card was judged":      {p: "j"},
-	} {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-			assert.Equal(t, tc.want, s.OutOf(tc.p))
-		})
-	}
-}
-
-// TestStateCoverLiveReadsOf covers LiveReadsOf (state.go:631): p's read
-// cards on the table in any cell but retired, in id order. The refusal is a
-// primary whose only card retired.
-func TestStateCoverLiveReadsOf(t *testing.T) {
-	t.Parallel()
-	s := coverState()
-	coverRead(&s, "p", 1, "r3", Asked)
-	coverRead(&s, "p", 1, "r1", OK)
-	coverRead(&s, "p", 2, "r2", Retired)
-	coverRead(&s, "q", 1, "r1", Reading)
-	coverRead(&s, "r", 1, "r1", Retired)
-	for name, tc := range map[string]struct {
-		p    string
-		want []string
-	}{
-		"asked and ok live, the retired and q's aside": {p: "p", want: []string{"p.r1.r1", "p.r1.r3"}},
-		"another primary's card stays out":             {p: "q", want: []string{"q.r1.r1"}},
-		"a retired card is not live":                   {p: "r"},
-	} {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-			assert.Equal(t, tc.want, s.LiveReadsOf(tc.p))
-		})
-	}
-}
-
-// TestStateCoverOkReaders covers OkReaders (state.go:644): the readers with
-// an ok read card at p's head, in reader row order. The refusals are a card
-// not ok, one at an older attempt, and a primary with no head yet.
-func TestStateCoverOkReaders(t *testing.T) {
-	t.Parallel()
-	s := coverState()
-	s.Primaries["p"] = Primary{Stream: "s", Head: 2}
-	coverRead(&s, "p", 2, "r1", OK)
-	coverRead(&s, "p", 2, "r2", OK)
-	coverRead(&s, "p", 2, "r3", Broken)
-	coverRead(&s, "p", 1, "r3", OK)
-	s.Primaries["q"] = Primary{Stream: "s"}
-	coverRead(&s, "q", 0, "r1", OK)
-	for name, tc := range map[string]struct {
-		p    string
-		want []string
-	}{
-		"the two ok at the head, in row order": {p: "p", want: []string{"r1", "r2"}},
-		"no head yet refuses its ok card":      {p: "q"},
-		"a stranger has no ok readers":         {p: "p9"},
-	} {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-			assert.Equal(t, tc.want, s.OkReaders(tc.p))
-		})
-	}
-}
-
-// TestStateCoverAcceptable covers Acceptable (state.go:656): two ok readers
-// at the head accept it. The refusal is one short.
-func TestStateCoverAcceptable(t *testing.T) {
-	t.Parallel()
-	build := func(broken bool) State {
-		s := coverState()
-		s.Primaries["p"] = Primary{Stream: "s", Head: 1}
-		coverRead(&s, "p", 1, "r1", OK)
-		if broken {
-			coverRead(&s, "p", 1, "r2", Broken)
-		} else {
-			coverRead(&s, "p", 1, "r2", OK)
-		}
-		return s
-	}
-	for name, tc := range map[string]struct {
-		s    State
-		want bool
-	}{
-		"two ok readers at the head": {s: build(false), want: true},
-		"one ok reader is refused":   {s: build(true), want: false},
-	} {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-			assert.Equal(t, tc.want, tc.s.Acceptable("p"))
-		})
-	}
-}
-
 // TestStateCoverFailed covers Failed (state.go:659): the current attempt's
 // work card came back failed. The refusals are an ok card and a primary with
 // no card at its attempt.
@@ -688,32 +512,6 @@ func TestStateCoverFailed(t *testing.T) {
 			s := coverState()
 			tc.build(&s)
 			assert.Equal(t, tc.want, s.Failed(tc.p))
-		})
-	}
-}
-
-// TestStateCoverAskedNow covers AskedNow (state.go:665): a read card of p's
-// attempt was made, even one since retired. The refusal is cards only of an
-// older attempt.
-func TestStateCoverAskedNow(t *testing.T) {
-	t.Parallel()
-	s := coverState()
-	s.Primaries["p"] = Primary{Stream: "s", Attempt: 2}
-	coverRead(&s, "p", 2, "r1", Retired)
-	s.Primaries["q"] = Primary{Stream: "s", Attempt: 3}
-	coverRead(&s, "q", 2, "r1", OK)
-	s.Primaries["r"] = Primary{Stream: "s", Attempt: 1}
-	for name, tc := range map[string]struct {
-		p    string
-		want bool
-	}{
-		"a retired card of the attempt was still made":   {p: "p", want: true},
-		"only an older attempt's cards asks nothing now": {p: "q", want: false},
-		"no cards at all asks nothing":                   {p: "r", want: false},
-	} {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-			assert.Equal(t, tc.want, s.AskedNow(tc.p))
 		})
 	}
 }

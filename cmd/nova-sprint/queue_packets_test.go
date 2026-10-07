@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"slices"
 	"strings"
 	"testing"
 
@@ -52,23 +51,6 @@ func workedRig(t *testing.T, n, ready int) (*serverRig, []string) {
 	return r, cards
 }
 
-// askedRig is a server whose reader r holds n asked reads: n primaries worked and finished
-// ok, and asked of the sprint's two readers.
-func askedRig(t *testing.T, n int) *serverRig {
-	t.Helper()
-	r, cards := workedRig(t, n, 0)
-	for _, c := range cards {
-		res := r.one("finish", "--as", "m", c, "--epoch", "0", "--report", "done", "--head", "0123456789abcdef0123456789abcdef01234567")
-		require.Equal(t, 0, res.Code, res.Stderr)
-	}
-	r.queue("r") // a reader's queue is its beat: a reader that never beat is asked nothing
-	r.boss("nova-sprint tick")
-	r.boss("nova-sprint tick")
-	// a card's reads are asked together: every card's two at once, so r holds them all
-	require.Len(t, r.queue("r")["asked"], n)
-	return r
-}
-
 // queueCardOut is one card of a queue's answer, as a worker reads it.
 type queueCardOut struct {
 	ID      string          `json:"id"`
@@ -114,56 +96,6 @@ func (q queueAnswer) ids(col string) []string {
 		}
 	}
 	return ids
-}
-
-// TestAQueueAskingForPacketsCarriesOnlyThose: a reader of width 8 holding 150 asked reads
-// asks for the packets of its 8 free lanes and is handed those 8, the first 8 asked in
-// queue order; every other card is listed with its id, column and attempt, and the answer
-// its epoch. With all 8 lanes reading it asks for none and is handed none; a read in flight
-// it does not name in --have (a restart) comes with its packet. The answer's bytes, before
-// and after, are the measure.
-func TestAQueueAskingForPacketsCarriesOnlyThose(t *testing.T) {
-	t.Parallel()
-	r := askedRig(t, 150)
-
-	before := r.queueWith("--as", "r", "--json")
-	require.Len(t, before.Cards, 150)
-	require.Len(t, before.packeted(), 150, "no flag: every card carries its packet, as before")
-	asked := before.ids("asked")
-
-	after := r.queueWith("--as", "r", "--json", "--packets", "8")
-	require.Len(t, after.Cards, 150, "every card is listed")
-	assert.Equal(t, asked[:8], after.packeted(), "the packets of the first 8 asked, in queue order")
-	require.NotNil(t, after.Epoch)
-	assert.Equal(t, *before.Epoch, *after.Epoch)
-	for _, c := range after.Cards {
-		assert.Equal(t, "asked", c.Col, c.ID)
-		assert.Equal(t, 1, c.Attempt, "%s carries its claim without its packet", c.ID)
-	}
-	t.Logf("a reader's queue, 150 asked reads, width 8: %d bytes before, %d bytes asking --packets 8", before.bytes, after.bytes)
-	assert.Less(t, after.bytes*8, before.bytes, "the answer is an eighth of what it was, or less: 8 packets, and 150 cards listed")
-
-	// the 8 begun: a pass with every lane busy asks for none, and is handed none
-	res := r.one(append(append([]string{"read", "--as", "r", "--begin"}, asked[:8]...), "--epoch", "0")...)
-	require.Equal(t, 0, res.Code, res.Stderr)
-	have := strings.Join(asked[:8], ",")
-	busy := r.queueWith("--as", "r", "--json", "--packets", "0", "--have", have)
-	assert.Equal(t, asked[:8], busy.ids("reading"))
-	assert.Empty(t, busy.packeted(), "all lanes busy, nothing asked: no packet")
-	t.Logf("the same reader, its 8 lanes reading: %d bytes asking --packets 0 --have <its 8>", busy.bytes)
-
-	// a read in flight the worker does not name comes with its packet (it holds no launch for it)
-	recovered := r.queueWith("--as", "r", "--json", "--packets", "0", "--have", strings.Join(asked[:7], ","))
-	assert.Equal(t, asked[7:8], recovered.packeted())
-	// none named: every read in flight, and the first n asked
-	restart := r.queueWith("--as", "r", "--json", "--packets", "2")
-	assert.Equal(t, append(slices.Clone(asked[8:10]), asked[:8]...), restart.packeted(), "the asked column, then the reading")
-
-	// no flag is the answer as it was: byte for byte the answer that asks for every packet
-	plain := r.one("queue", "--as", "r", "--json")
-	all := r.one("queue", "--as", "r", "--json", "--packets", "1024")
-	require.Equal(t, 0, plain.Code, plain.Stderr)
-	assert.Equal(t, all.Stdout, plain.Stdout)
 }
 
 // TestAMembersQueueCarriesNoPacketForACardItRuns: a member's ready cards come with their

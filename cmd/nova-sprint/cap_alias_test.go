@@ -50,13 +50,12 @@ func TestLimitAliasIsMax(t *testing.T) {
 		max   string
 	}{
 		{"take", ready, "take --as m1 --limit 2", "take --as m1 --max 2"},
-		{"ask", finished, "ask --limit 2", "ask --max 2"},
 		{"read", func(t *testing.T) *testApp {
 			t.Helper()
 			ta := finished(t)
-			ta.ok("ask --max 3")
+			ta.cutReads()
 			return ta
-		}, "read --as reader-a --begin --limit 2", "read --as reader-a --begin --max 2"},
+		}, "read --as reader-a --ok --limit 2", "read --as reader-a --ok --max 2"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -53,9 +53,8 @@ const done = `{"landed":2,"all":2,"summary":"2/2 100.0% -> ETA","tables":{},"str
 func TestTheLoopPlaysTheWorldThroughVerbsOnly(t *testing.T) {
 	t.Parallel()
 	w := &world{where: []string{busy, busy, done}, queue: map[string]string{
-		"m1":       `{"cards":[{"id":"s1-1.w2","col":"working","gen":3},{"id":"s1-4.w1","col":"ready","gen":2}]}`,
-		"reader-a": `{"cards":[{"id":"s1-2.r1.reader-a","col":"asked"},{"id":"s1-5.r1.reader-a","col":"reading"}]}`,
-		"s1":       `{"cards":[{"id":"s1-3","col":"queued"}]}`,
+		"m1": `{"cards":[{"id":"s1-1.w2","col":"working","gen":3},{"id":"s1-4.w1","col":"ready","gen":2},{"id":"s1-2.r1.m1","col":"ready","gen":1},{"id":"s1-5.r1.m1","col":"working","gen":1}]}`,
+		"s1": `{"cards":[{"id":"s1-3","col":"queued"}]}`,
 	}, inbox: `{"groups":[{"kind":"judgment","type":"work came back failed","stream":"s1","count":2,"oldest":"2030-01-02T03:00:00Z"}]}`}
 	var out bytes.Buffer
 	facts := NewSeeded(7)
@@ -71,7 +70,7 @@ func TestTheLoopPlaysTheWorldThroughVerbsOnly(t *testing.T) {
 	}
 	all := strings.Join(lines, "\n")
 	for _, want := range []string{"finish --as m1 --epoch 0 s1-1.w2@3 --redis 127.0.0.1:1", "take --as m1 --limit 64 --epoch 0 --redis 127.0.0.1:1",
-		"read --as reader-a --ok --epoch 0 s1-5.r1.reader-a --redis", "read --as reader-a --begin --epoch 0 s1-2.r1.reader-a --redis",
+		"read --as m1 --ok --usage input=1 billing=subscription --epoch 0 s1-5.r1.m1 --redis",
 		"merge --stream s1 --batch 5"} {
 		assert.Contains(t, all, want, "no %q in\n%s", want, all)
 	}
@@ -395,24 +394,24 @@ func TestASilenceEndsWithTheSeededFacts(t *testing.T) {
 	require.Len(t, beats, 4, "m1 beat at ticks %v in six ticks, two of them silent: %v", beats, w.ran)
 }
 
-// A tick is one call a verb for each machine and reader (the owner's ruling
-// of 2026-09-30): one take of the ready queue up to the member's width, one
-// finish of what it took, the failed in a second, one read --begin and one
-// report; a batch over three cards prints its count and first three, never
-// a line per card.
+// A tick is one call a verb for each machine (the owner's ruling of 2026-09-30): one
+// take of the ready queue up to the member's width, one finish of what it took, the
+// failed in a second, and one report of the read cards on its row for each verdict; a
+// batch over three cards prints its count and first three, never a line per card.
 func TestEveryMachineMovesItsCardsInOneBatchATick(t *testing.T) {
 	t.Parallel()
-	var working, ready, asked, reading []string
-	for i := 1; i <= 40; i++ {
-		working = append(working, fmt.Sprintf(`{"id":"s1-%d.w1","col":"working","gen":1}`, i))
-		ready = append(ready, fmt.Sprintf(`{"id":"s1-%d.w1","col":"ready","gen":1}`, 100+i))
-		asked = append(asked, fmt.Sprintf(`{"id":"s1-%d.r1.reader-a","col":"asked"}`, i))
-		reading = append(reading, fmt.Sprintf(`{"id":"s1-%d.r1.reader-a","col":"reading"}`, 100+i))
+	queueOf := func(m string) string {
+		var cards []string
+		for i := 1; i <= 40; i++ {
+			cards = append(cards, fmt.Sprintf(`{"id":"s1-%d.w1","col":"working","gen":1}`, i),
+				fmt.Sprintf(`{"id":"s1-%d.w1","col":"ready","gen":1}`, 100+i),
+				fmt.Sprintf(`{"id":"s2-%d.r1.%s","col":"working","gen":1}`, i, m))
+		}
+		return `{"cards":[` + strings.Join(cards, ",") + `]}`
 	}
-	mine := `{"cards":[` + strings.Join(append(ready, working...), ",") + `]}`
 	where := strings.Replace(busy, `"fleet":{"m1":{"status":"up"}}`, `"fleet":{"m1":{"status":"up","width":"128"},"m2":{"status":"up"}}`, 1)
 	w := &world{where: []string{where}, queue: map[string]string{
-		"m1": mine, "m2": mine, "reader-a": `{"cards":[` + strings.Join(append(asked, reading...), ",") + `]}`, "s1": `{"cards":[]}`,
+		"m1": queueOf("m1"), "m2": queueOf("m2"), "s1": `{"cards":[]}`,
 	}, inbox: `{"groups":[]}`}
 	f := NewSeeded(3)
 	f.Fail, f.Broken = 0.5, 0.5
@@ -445,20 +444,20 @@ func TestEveryMachineMovesItsCardsInOneBatchATick(t *testing.T) {
 			}
 		}
 	}
-	// one finish of every member's cards (the failed in a second call), one
-	// take for each width, one of each read: every member's row in one step
+	// one finish of every member's work cards (the failed in a second call), one take for
+	// each width, and each member's read cards in one report for each verdict
 	for _, verb := range []string{"take --as m1 --limit 128", "take --as m2 --limit 64", "finish --as m1,m2", "finish --as m1,m2 --failed",
-		"read --as reader-a --begin --epoch", "read --as reader-a --ok --epoch", "read --as reader-a --broken --finding"} {
+		"read --as m1 --ok --usage", "read --as m1 --broken --finding", "read --as m2 --ok --usage", "read --as m2 --broken --finding"} {
 		assert.Equal(t, 1, calls[verb], "%q ran %d times in a tick, want once", verb, calls[verb])
 	}
-	assert.Len(t, calls, 7, "the calls of a tick: %v", calls)
+	assert.Len(t, calls, 8, "the calls of a tick: %v", calls)
 	assert.Equal(t, 80, finished, "m1 and m2 finished %d of their 80 working cards in the two calls", finished)
 	text := out.String()
-	assert.Contains(t, text, "read --as reader-a --begin --epoch 0 [40 cards: s1-1.r1.reader-a s1-2.r1.reader-a s1-3.r1.reader-a ...]", "a batch prints its count and first three:\n%s", text)
+	assert.Regexp(t, `read --as m1 --ok --usage 'input=1 billing=subscription' --epoch 0 \[[0-9]+ cards: s2-[0-9]+\.r1\.m1 s2-[0-9]+\.r1\.m1 s2-[0-9]+\.r1\.m1 \.\.\.\]`, text, "a batch prints its count and first three")
 	for _, l := range strings.Split(text, "\n") {
 		n := 0
 		for _, x := range strings.Fields(l) {
-			if strings.HasSuffix(x, "@1") || strings.HasSuffix(x, ".reader-a") {
+			if strings.HasSuffix(x, "@1") || strings.Contains(x, ".r1.") {
 				n++
 			}
 		}

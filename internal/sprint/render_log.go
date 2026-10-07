@@ -34,6 +34,8 @@ func Render(l Line) string {
 		return renderCtl(l, toRow)
 	case l.Table == Work:
 		return renderPrimary(l, fromCol, toCol, moved, by)
+	case l.Table == Fleet && isReadCardLine(l):
+		return renderReadCard(l, toCol, moved, by)
 	case l.Table == Fleet:
 		return renderWork(l, fromRow, fromCol, toRow, toCol, moved, by)
 	case l.Table == Readers:
@@ -157,6 +159,34 @@ func renderWork(l Line, fromRow, fromCol, toRow, toCol string, moved bool, by st
 		return fmt.Sprintf("attempt %s moved from %s's queue to %s's to even the queues %s (generation %d)", a, fromRow, toRow, by, l.Gen)
 	case toCol == string(Ready) && fromRow != toRow:
 		return fmt.Sprintf("attempt %s redealt from %s to %s %s (generation %d%s)", a, fromRow, toRow, whyOf(l), l.Gen, redealOf(l))
+	}
+	return renderPlain(l, by)
+}
+
+// isReadCardLine says the fleet line is a read card's (<primary>.r<attempt>.<reader>).
+func isReadCardLine(l Line) bool {
+	_, _, _, ok := ParseReadCard(l.Card)
+	return ok
+}
+
+// renderReadCard is a read card's line on the fleet table: cut on its reader's row, taken
+// (a member's), closed with its verdict, handed back, or taken back by the machine.
+func renderReadCard(l Line, toCol string, moved bool, by string) string {
+	_, attempt, reader, _ := ParseReadCard(l.Card)
+	a := itoa(attempt)
+	switch {
+	case l.From == "" && !l.Removed:
+		return fmt.Sprintf("%s asked to read attempt %s %s", reader, a, by)
+	case l.Removed && (l.Set["verdict"] == "ok" || l.Set["verdict"] == "broken"):
+		return fmt.Sprintf("%s read attempt %s: %s", reader, a, l.Set["verdict"])
+	case l.Removed && l.Set["retired_by"] == RetiredByReturned:
+		return fmt.Sprintf("%s returned its read of attempt %s with no verdict", reader, a)
+	case l.Removed:
+		return fmt.Sprintf("the read of attempt %s by %s taken back (%s) %s", a, reader, orDash(l.Set["retired_by"]), by)
+	case moved && toCol == string(Working):
+		return fmt.Sprintf("%s took its read of attempt %s", reader, a)
+	case !moved:
+		return fmt.Sprintf("the read of attempt %s by %s changed: %s", a, reader, setWords(l.Set))
 	}
 	return renderPlain(l, by)
 }

@@ -15,12 +15,6 @@ import (
 // own queue, and reader-away:<reader>, the coordinator's hold, written by
 // reader away and emptied by reader up.
 
-// ReadCardIDs returns both identities (the plain identity and the second identity with generation suffix)
-// for a reader at a primary's attempt, so store loads can enumerate both without extra round trips.
-func ReadCardIDs(primary string, attempt int, reader string) []string {
-	return sprint.ReadCardIDs(primary, attempt, reader)
-}
-
 func readerBeatKey(reader string) string { return "reader-beat:" + reader }
 func readerAwayKey(reader string) string { return "reader-away:" + reader }
 

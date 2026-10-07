@@ -99,7 +99,7 @@ func (r *landRig) queued(heads map[string]string, order ...string) {
 		}
 		r.ok(finish)
 	}
-	r.ok("ask")
+	r.cutReads()
 	r.ok("read --as reader-a --ok --limit 100")
 	r.ok("read --as reader-b --ok --limit 100")
 	r.ok("accept --read-ok")
@@ -290,7 +290,7 @@ func TestLandReportsItsCardsWhenAnotherIsQueuedAheadUnderThePush(t *testing.T) {
 		for _, id := range ids {
 			r.ok("finish --as m1 " + id + ".w1@1 --head " + heads[id])
 		}
-		r.ok("ask")
+		r.cutReads()
 		r.ok("read --as reader-a --ok --limit 100")
 		r.ok("read --as reader-b --ok --limit 100")
 		r.ok("accept --read-ok")
@@ -563,7 +563,7 @@ func TestLandRefusesAReworkedHeadAndLandsItOnTheNextRun(t *testing.T) {
 			r.ok("take --as m1 " + w)
 		}
 		r.ok("finish --as m1 " + w + " --head " + replacement)
-		r.ok("ask")
+		r.cutReads()
 		r.ok("read --as reader-a --ok --limit 100")
 		r.ok("read --as reader-b --ok --limit 100")
 		r.ok("accept --read-ok")

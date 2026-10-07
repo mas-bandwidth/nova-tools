@@ -32,7 +32,14 @@ type Observed struct {
 // clock's and are left out.
 func Abstract(o Observed) State {
 	s := o.Snap
-	a := New(s.Readers.Rows(), s.Members(), "")
+	// the readers are the members whose reader row names them readers (reader-<m>)
+	var readers []string
+	for _, rd := range s.Readers.Rows() {
+		if m, ok := sprint.ReaderMachine(rd); ok {
+			readers = append(readers, m)
+		}
+	}
+	a := New(readers, s.Members(), "")
 	a.Epoch = s.Epoch
 	a.Pending = o.Pending
 	a.Machine = o.Machine
@@ -43,9 +50,7 @@ func Abstract(o Observed) State {
 		}
 	}
 	a.DealLast, _ = s.Fleet.Prop(sprint.PropDealIndex)
-	a.AskLast, _ = s.Readers.Prop(sprint.PropAskIndex)
 	a.StreamLast, _ = s.Work.Prop(sprint.PropStreamIndex)
-	a.AskStreamLast, _ = s.Readers.Prop(sprint.PropAskStreamIndex)
 	a.AcceptStreamLast, _ = s.Work.Prop(sprint.PropAcceptStreamIndex)
 	for _, st := range s.Work.Rows() {
 		x := Stream{State: SWaiting}
@@ -65,7 +70,7 @@ func Abstract(o Observed) State {
 		}
 		p := Primary{Stream: c.F("stream"), Kind: k, State: Off, Score: c.Score,
 			Needs: sorted(sprint.Split(c.F("needs"))), Waived: sorted(sprint.Split(c.F("waived"))),
-			Attempt: c.Int("attempt"), Pair: sorted(sprint.Split(c.F("asked"))), Reached: c.F("reached") != ""}
+			Attempt: c.Int("attempt"), Reached: c.F("reached") != ""}
 		if c.Placed() {
 			p.State = c.Col
 		}
@@ -73,7 +78,7 @@ func Abstract(o Observed) State {
 		p.Head = headAttempt(c.F("head"))
 		p.CI, p.CIHead = c.F("ci"), headAttempt(c.F("ci_head"))
 		p.ReturnedAt = c.Int(sprint.FieldReturnedAttempt)
-		p.Finder, p.FindingAttempt = c.F(sprint.FieldFindingReader), c.Int(sprint.FieldFindingAttempt)
+		p.FindingAttempt = c.Int(sprint.FieldFindingAttempt)
 		a.Primaries[id] = p
 	}
 	// A primary ready or waiting whose card at its attempt field is done
@@ -114,16 +119,15 @@ func Abstract(o Observed) State {
 		}
 		a.Work[id] = w
 	}
-	for _, c := range s.Readers.Cards() {
-		id := c.ID
+	for _, c := range s.Fleet.Cards() {
 		if c.F("kind") != "read" {
 			continue
 		}
-		r := ReadCard{Primary: c.F("primary"), Attempt: c.Int("attempt"), Reader: c.F("reader"), Place: Retired, Verdict: c.F("verdict"), Finder: c.F(sprint.FieldFinderRead) != ""}
+		r := ReadCard{Primary: c.F("primary"), Attempt: max(c.Int("attempt"), 1), Reader: c.F("reader"), Place: Retired, Verdict: c.F("verdict"), By: c.F("retired_by")}
 		if c.Placed() {
-			r.Place = c.Col
+			r.Place, r.By = c.Col, ""
 		}
-		a.Reads[id] = r
+		a.Reads[c.ID] = r
 	}
 	for _, c := range s.Merge.Cards() {
 		id := c.ID

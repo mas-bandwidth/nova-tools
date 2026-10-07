@@ -54,17 +54,9 @@ func (r *conflictRig) refusedE12(id, stream, file string) {
 	r.t.Helper()
 	wc := r.taken(id)
 	r.must(store.FinishStep(sprint.FinishReq{Sel: sprint.Sel{IDs: []string{wc.ID}}, Gens: map[string]int{wc.ID: wc.Int("gen")}, Head: readHead}))
-	for range 4 {
-		s := r.snap()
-		if pr := s.Work.Card(id); pr.Col != sprint.Review || sprint.ReadsWanted(s, pr) == 0 {
-			break
-		}
-		r.must(store.AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{id}}}))
-		for _, rc := range r.snap().Readers.Of(id) {
-			if rc.Col == sprint.Asked || rc.Col == sprint.Reading {
-				r.must(store.ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: rc.Row, Verdict: "ok", Finding: "f:1", Sel: sprint.Sel{IDs: []string{rc.ID}}}))
-			}
-		}
+	cutReads(r.t, r.st, r.ctx)
+	for _, rc := range placedReadCards(r.snap(), id) {
+		r.must(store.ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: rc.Row, Verdict: "ok", Finding: "f:1", Sel: sprint.Sel{IDs: []string{rc.ID}}}))
 	}
 	r.must(store.AcceptStep(sprint.AcceptReq{Sel: sprint.Sel{IDs: []string{id}}}))
 	r.must(store.MergeStep(sprint.MergeReq{Stream: stream, Batch: 1, Conflict: id,

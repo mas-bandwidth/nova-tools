@@ -94,6 +94,11 @@ func tell(run []sprint.Line) []storyLine {
 			asked = append(asked, reader)
 			askedLines = append(askedLines, l)
 			continue
+		case l.Note == nil && l.Table == sprint.Fleet && l.From == "" && !l.Removed && readCardReader(l) != "":
+			// a read card cut on its reader's row: the reads cut together are one event
+			asked = append(asked, readCardReader(l))
+			askedLines = append(askedLines, l)
+			continue
 		case l.Note != nil && l.Note.Kind == sprint.Decided && moved:
 			answers = append(answers, l.Note.Type)
 			continue
@@ -238,11 +243,14 @@ func texts(a *app, about []sprint.Line) []storyText {
 			}
 			_, col, _ := strings.Cut(l.To, ":")
 			verdict := ""
-			switch l.Table {
-			case sprint.Fleet:
+			switch {
+			case l.Table == sprint.Fleet && readCardReader(l) != "":
+				// a read card's words are its reader's, with its verdict
+				who, verdict = readCardReader(l), l.Set["verdict"]
+			case l.Table == sprint.Fleet:
 				who, _, _ = strings.Cut(l.From, ":")
 				verdict = col
-			case sprint.Readers:
+			case l.Table == sprint.Readers:
 				who, _, _ = strings.Cut(l.To, ":")
 				verdict = col
 			}
@@ -502,6 +510,15 @@ func linePlace(p *sprint.Card, all []*sprint.Card) string {
 			return "first in line in " + p.Row
 		}
 		return fmt.Sprintf("%d of %d in line in %s, after %s", i+1, len(open), p.Row, open[i-1].ID)
+	}
+	return ""
+}
+
+// readCardReader is the reader a read card's line names (<primary>.r<attempt>.<reader>),
+// "" for a line of any other card.
+func readCardReader(l sprint.Line) string {
+	if _, _, reader, ok := sprint.ParseReadCard(l.Card); ok {
+		return reader
 	}
 	return ""
 }

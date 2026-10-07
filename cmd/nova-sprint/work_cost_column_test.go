@@ -37,7 +37,7 @@ func (ta *testApp) landStream(stream string, work []string, readA, readB []strin
 	}
 	// a card's reads are asked together: every read it needs in one ask (a pro card's two, a
 	// flash card's one), reader-a's read with readA's usage and reader-b's with readB's
-	ta.ok("ask")
+	ta.cutReads()
 	for i := range work {
 		id := stream + "-" + strconv.Itoa(i+1)
 		require.True(ta.t, slices.Contains(ta.askedOf("reader-a"), id+".r1.reader-a") || slices.Contains(ta.askedOf("reader-b"), id+".r1.reader-b"), "%s is asked its reads", id)
@@ -156,16 +156,16 @@ func TestALandingCountsAReadReturnedAndRetired(t *testing.T) {
 	ta.ok("tick")
 	ta.ok("take --as m1 s1-1.w1@1")
 	ta.ok("finish --as m1 s1-1.w1@1 --usage 'input=1 actual_usd=0.1 actual_by=harness'")
-	ta.ok("ask")
+	ta.cutReads()
 	var asked []string
 	for _, rd := range []string{"reader-a", "reader-b", "reader-c"} {
-		if code, _, _ := ta.do("read --as " + rd + " --begin s1-1.r1." + rd); code == 0 {
+		if len(ta.askedOf(rd)) > 0 {
 			asked = append(asked, rd)
 		}
 	}
 	require.Len(t, asked, 2)
 	ta.ok("read --as " + asked[0] + " --return s1-1.r1." + asked[0] + " --reason 'no verdict' --usage 'input=1 actual_usd=0.02 actual_by=harness'")
-	ta.ok("tick") // the tick asks the returned read of the reader free
+	ta.ok("tick") // the tick's deal cuts the returned read for the reader free
 	for _, rd := range []string{"reader-a", "reader-b", "reader-c"} {
 		if rd == asked[0] {
 			continue

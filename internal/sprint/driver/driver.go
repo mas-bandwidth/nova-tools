@@ -1,5 +1,5 @@
 // Package driver plays the world outside the sprint table, on a tick: workers
-// taking and finishing work cards, readers reporting read cards, each
+// taking and finishing work cards and reporting the read cards on their rows, each
 // stream's merge step with its facts, and fleet members going down and up.
 // The mechanical moves are the machine's (nova-sprint run): the driver plays
 // only the outside actors, and refuses to play while no machine is running.
@@ -63,8 +63,8 @@ type Config struct {
 	// TakeLimit is the work cards a member takes in its one take of a tick;
 	// 0 is the member's width, as the view shows it, else DefaultWidth.
 	TakeLimit int
-	// ReadLimit is the read cards a reader begins, and reports, in its one
-	// call of each a tick; 0 is its whole queue. Every batch is cut at Most.
+	// ReadLimit is the read cards a member reports in its one call of each
+	// verdict a tick; 0 is every one it holds. Every batch is cut at Most.
 	ReadLimit int
 	Ticks     int // stop after this many ticks; 0 is until every stream lands
 	// Hold plays the facts' downs as the coordinator's hold (fleet down and
@@ -409,21 +409,26 @@ func (d *Driver) tick(tick int, c Config, w where) {
 			next[m] = false // a silent machine's worker does no work
 		}
 	}
-	// The workers and the readers move in one batch a world tick, all of them
-	// at once (the design batches every move and updates every row of the fleet table
-	// per tick): one finish of every card
-	// every member took last tick (a card's simulated work is one tick), the
-	// failed in one call for each report, then one take of every member's
-	// ready queue, up to each one's width; one report of every read begun last
-	// tick, then one begin of every read asked. Each call names every member
-	// (reader) it acts for, so every row of the table moves in the one step,
-	// never one member's after another's. A batch larger than Most is cut at
-	// it.
+	// The members move in one batch a world tick, all of them at once (the design batches
+	// every move and updates every row of the fleet table per tick): one finish of every
+	// work card every member took last tick (a card's simulated work is one tick), the
+	// failed in one call for each report, then one take of every member's ready queue, up
+	// to each one's width. A member with its reader row reads too (docs/SPEC-SPRINT.md
+	// section 6, a read is a consumer card): the read cards the deal put on its row are
+	// taken with its work, and each one taken last tick is reported with its verdict, one
+	// read call a member (a read card is reported by its own row). Each work call names
+	// every member it acts for, so every row of the table moves in the one step, never
+	// one member's after another's. A batch larger than Most is cut at it.
 	var finishers []string
 	var good []string
 	bad := map[string][]string{}
 	takers := map[int][]string{} // by take limit, the members up whose queue was read
 	anyReady := false            // a member's queue showed a ready card
+	type verdicts struct {
+		ok     []string
+		broken map[string][]string
+	}
+	reads := map[string]*verdicts{} // by member
 	for _, m := range members {
 		if !next[m] {
 			continue
@@ -432,12 +437,31 @@ func (d *Driver) tick(tick int, c Config, w where) {
 		if !d.read(&q, "queue", "--as", m) {
 			continue
 		}
-		ready, done := 0, 0
+		ready, done, read := 0, 0, 0
 		for _, card := range q.Cards {
+			attempt, isRead := readAttempt(card.ID)
 			switch {
 			case card.Col == "ready":
 				ready++
-			case card.Col == "working" && done < Most:
+			case card.Col != "working":
+			case isRead && read < c.ReadLimit:
+				read++
+				v := reads[m]
+				if v == nil {
+					v = &verdicts{broken: map[string][]string{}}
+					reads[m] = v
+				}
+				if good, finding := d.Facts.Read(card.ID); good {
+					v.ok = append(v.ok, card.ID)
+				} else {
+					// one finding per attempt: a card found broken again at its next attempt
+					// is found broken another way, as readers find it (the same finding
+					// twice is the brief's bound, sprint.AtBriefBound)
+					finding = fmt.Sprintf("%s (attempt %s)", finding, attempt)
+					v.broken[finding] = append(v.broken[finding], card.ID)
+				}
+			case isRead:
+			case done < Most:
 				done++
 				word := card.ID + "@" + strconv.Itoa(card.Gen)
 				if ok, report := d.Facts.Work(card.ID); ok {
@@ -466,53 +490,19 @@ func (d *Driver) tick(tick int, c Config, w where) {
 	for _, report := range slices.Sorted(maps.Keys(bad)) {
 		d.batches(append([]string{"finish", "--as", as, "--failed", "--report", report}, held...), bad[report])
 	}
+	for _, m := range slices.Sorted(maps.Keys(reads)) {
+		v := reads[m]
+		d.batches(append([]string{"read", "--as", m, "--ok", "--usage", readUsage}, held...), v.ok)
+		for _, f := range slices.Sorted(maps.Keys(v.broken)) {
+			d.batches(append([]string{"read", "--as", m, "--broken", "--finding", f, "--usage", readUsage}, held...), v.broken[f])
+		}
+	}
 	for _, n := range slices.Sorted(maps.Keys(takers)) {
 		if !anyReady {
 			break
 		}
 		d.run(false, append([]string{"take", "--as", strings.Join(takers[n], ","), "--limit", strconv.Itoa(n)}, held...)...)
 	}
-	var reporters, beginners []string
-	var begin, ok []string
-	broken := map[string][]string{}
-	for _, r := range slices.Sorted(maps.Keys(w.Tables["readers"])) {
-		var q queue
-		if !d.read(&q, "queue", "--as", r) {
-			continue
-		}
-		asked, reported := 0, 0
-		for _, card := range q.Cards {
-			switch {
-			case card.Col == "asked" && asked < c.ReadLimit:
-				asked++
-				begin = append(begin, card.ID)
-			case card.Col == "reading" && reported < c.ReadLimit:
-				reported++
-				if good, finding := d.Facts.Read(card.ID); good {
-					ok = append(ok, card.ID)
-				} else {
-					// one finding per attempt: a card found broken again at its next attempt is
-					// found broken another way, as readers find it (the same finding twice is
-					// the brief's bound, sprint.AtBriefBound), and this tick's broken reads of one
-					// attempt number still go in one batch (the read card's id carries the
-					// attempt: <primary>.r<attempt>.<reader>)
-					finding = fmt.Sprintf("%s (attempt %s)", finding, readAttempt(card.ID))
-					broken[finding] = append(broken[finding], card.ID)
-				}
-			}
-		}
-		if reported > 0 {
-			reporters = append(reporters, r)
-		}
-		if asked > 0 {
-			beginners = append(beginners, r)
-		}
-	}
-	d.batches(append([]string{"read", "--as", strings.Join(reporters, ","), "--ok"}, held...), ok)
-	for _, f := range slices.Sorted(maps.Keys(broken)) {
-		d.batches(append([]string{"read", "--as", strings.Join(reporters, ","), "--broken", "--finding", f}, held...), broken[f])
-	}
-	d.batches(append([]string{"read", "--as", strings.Join(beginners, ","), "--begin"}, held...), begin)
 	// Each stream's merge step, with its facts. A stream's queue is read just
 	// before its step, and the other streams' queues only when a fact needs
 	// them, after every step before it has run.
@@ -612,13 +602,19 @@ func (d *Driver) waits() {
 }
 
 // readAttempt is the attempt number in a read card's id (<primary>.r<attempt>.<reader>,
-// sprint.ReadCardID), "" when the id has no such part.
-func readAttempt(id string) string {
-	// <primary>.r<attempt>.<reader>: the parts, never a cut at ".r" (a reader's name
-	// may hold it: reader-c, and the cut gave the attempt as "eader-c")
+// sprint.ReadCardID), and whether the id is a read card's.
+func readAttempt(id string) (string, bool) {
+	// <primary>.r<attempt>.<reader>[.g<n>]: the parts, never a cut at ".r" (a reader's
+	// name may hold it: reader-c, and the cut gave the attempt as "eader-c")
 	parts := strings.Split(id, ".")
-	if len(parts) < 3 {
-		return ""
+	for i := 1; i+1 < len(parts); i++ {
+		if a, ok := strings.CutPrefix(parts[i], "r"); ok && a != "" && strings.Trim(a, "0123456789") == "" {
+			return a, true
+		}
 	}
-	return strings.TrimPrefix(parts[len(parts)-2], "r")
+	return "", false
 }
+
+// readUsage is what a simulated read spent: a subscription reader's tokens, no dollar (a
+// routed read card's verdict carries its usage, sprint.ReadUsageMissing).
+const readUsage = "input=1 billing=subscription"

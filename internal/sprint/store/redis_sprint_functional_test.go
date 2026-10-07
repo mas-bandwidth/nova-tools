@@ -517,7 +517,7 @@ func TestRedisALateWriterAfterAClearIsRefused(t *testing.T) {
 	h.clean("cleared")
 	img := liveImage(h, c)
 	held := uint64(0)
-	rc := before.Readers.Of("s1-1")
+	rc := placedReadsOf(before, "s1-1")
 	steps := map[string]Step{
 		"take":   TakeStep(sprint.TakeReq{As: "m1", Sel: sprint.Sel{IDs: []string{"s1-3.w1"}}, Gens: map[string]int{"s1-3.w1": 1}}),
 		"finish": FinishStep(sprint.FinishReq{Sel: sprint.Sel{IDs: []string{"s1-3.w1"}}, Gens: map[string]int{"s1-3.w1": 1}}),

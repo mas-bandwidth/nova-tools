@@ -326,24 +326,22 @@ func TestTheCheckWritesAStallOnceAndClosesItWhenItClears(t *testing.T) {
 	require.True(t, p.Empty(), "the check after the rework: %+v", p)
 }
 
-// A stall's decisions are only those that would be accepted (reader finding
-// 6): a primary in review already asked is offered ask --another, never
-// ask, which would be refused as asked already.
+// A stall's decisions are only those that would be accepted (reader finding 6): a primary
+// in review is offered rework, drop and wait, never a verb that is gone.
 func TestAStallOffersOnlyEnabledDecisions(t *testing.T) {
 	t.Parallel()
 	w := dealt(t)
 	w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{"s1-1.w1"}}, Gens: gensOf(w.s, "s1-1.w1")}))
-	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-1"}}})) // a card's reads are asked together: both in one ask
-	reads := w.s.Readers.Of("s1-1")
+	w.askReads()
+	reads := readCardsAt(w.s, w.s.Work.Card("s1-1"), 1)
 	require.Len(t, reads, 2)
 	w.must(Read(w.s, ReadReq{Usage: "input=1000 output=100", As: reads[0].Row, Verdict: "broken", Finding: "f:1", Sel: Sel{IDs: []string{reads[0].ID}}}))
 	w.must(Read(w.s, ReadReq{Usage: "input=1000 output=100", As: reads[1].Row, Verdict: "ok", Sel: Sel{IDs: []string{reads[1].ID}}}))
 	w.s.Open = nil // the broken read's judgment closed without the step that writes what it needs next
 	f := mustStall(t, running(w), "s1-1", "")
-	require.NotContains(t, f.Decisions, "ask", "asked already: %v", f.Decisions)
-	require.Contains(t, f.Decisions, "ask --another", "asked already: %v", f.Decisions)
+	require.Contains(t, f.Decisions, "rework", "%v", f.Decisions)
 	for _, d := range f.Decisions {
-		if d == "wait" || d == "drop" || d == "rework" || d == "ask --another" {
+		if d == "wait" || d == "drop" || d == "rework" {
 			continue
 		}
 		t.Errorf("a decision not expected: %s", d)
@@ -358,7 +356,7 @@ func TestMovesDueCountsAsks(t *testing.T) {
 	w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{"s1-1.w1"}}, Gens: gensOf(w.s, "s1-1.w1")}))
 	n := MovesDue(w.s)
 	require.Equal(t, 1, n, "a primary in review never asked: %d moves due", n)
-	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-1"}}}))
+	w.askReads()
 	n = MovesDue(w.s)
 	require.Equal(t, 0, n, "asked: %d moves due", n)
 }

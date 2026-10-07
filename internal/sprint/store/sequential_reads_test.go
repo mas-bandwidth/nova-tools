@@ -1,6 +1,7 @@
 package store
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -9,17 +10,16 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
-// The reads of a card (docs/SPEC-SPRINT.md section 6; readers.go ReadsWanted). The night of
-// 2026-10-03 asked 3,513 reads for 844 landings, 4.2 per landing against a design of 2, and
-// the reads were then asked one at a time. The interim rule of 2026-10-06 (the owner, 6:02
-// PM ET: "send out multiple consumer cards in ||") asks them together again: a pro card's
-// two reads go out at once, a read outstanding counts toward the two, and only a broken
-// read stops the rest.
+// The reads of a card (docs/SPEC-SPRINT.md section 6; read_cards.go readCardsWanted). The
+// night of 2026-10-03 asked 3,513 reads for 844 landings, 4.2 per landing against a design
+// of 2. Read cards go out together (the owner, 2026-10-06, 6:02 PM ET: "send out multiple
+// consumer cards in ||"): a pro card's two read cards are cut at once, a read card placed
+// counts toward the two, and only a broken read stops the rest.
 
-// readsOf is the primary's reads at its current attempt, by reader, in reader row order.
+// readsOf is the primary's read cards placed, in work order.
 func (h *harness) readsOf(id string) []*sprint.Card {
 	h.t.Helper()
-	return h.snap().Readers.Of(id)
+	return placedReadsOf(h.snap(), id)
 }
 
 // readOne has the reader of the one read card read it with the verdict.
@@ -28,9 +28,9 @@ func (h *harness) readOne(rc *sprint.Card, verdict, finding string) {
 	h.must(ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: rc.Row, Verdict: verdict, Finding: finding, Sel: sprint.Sel{IDs: []string{rc.ID}}}))
 }
 
-// A pro card whose read finds attempt 1 broken: attempt 1 is asked both reads together,
-// and the broken one stops any more; attempt 2 is asked both together, both ok, accepted.
-// Four reads for the landing (reads are asked together, sprint.ReadsWanted).
+// A pro card whose read finds attempt 1 broken: attempt 1's two read cards are cut
+// together, and the broken one stops any more; attempt 2's two are cut together, both ok,
+// accepted. Four reads for the landing.
 func TestAProCardsReadsAreAskedTogether(t *testing.T) {
 	t.Parallel()
 	h := routeHarness(t, route("flash-a", "flash"), route("pro-a", "pro"), route("pro-b", "pro"))
@@ -41,13 +41,13 @@ func TestAProCardsReadsAreAskedTogether(t *testing.T) {
 	ask := func(when string, want int) {
 		h.t.Helper()
 		before := len(h.readsOf("s1-1"))
-		h.run(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
+		h.askReads()
 		got := len(h.readsOf("s1-1")) - before
 		assert.Equal(t, want, got, "%s: reads asked", when)
 		asked += got
 	}
 
-	// attempt 1: both reads together; one broken, and no other read is asked
+	// attempt 1: both read cards together; one broken, and no other is cut
 	h.finishAttempt("s1-1", false, "h1")
 	ask("attempt 1", 2)
 	reads := h.readsOf("s1-1")
@@ -74,59 +74,63 @@ func TestAProCardsReadsAreAskedTogether(t *testing.T) {
 	h.must(AcceptStep(sprint.AcceptReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
 	assert.Equal(t, sprint.Merging, h.snap().Work.Card("s1-1").Col)
 
-	// the measure: reads asked per landing on a card that failed a read once
-	t.Logf("reads asked per landing: %d", asked)
-	assert.Equal(t, 4, asked, "reads asked for one landing with one broken read")
-	h.clean("a pro card's reads asked together")
+	// the measure: read cards cut per landing on a card that failed a read once
+	t.Logf("read cards per landing: %d", asked)
+	assert.Equal(t, 4, asked, "read cards for one landing with one broken read")
+	h.clean("a pro card's read cards cut together")
 }
 
-// A flash card is read once, as before: one read, ok, accepted.
+// A flash card is read once: one read card, ok, and no other is cut.
 func TestAFlashCardIsStillReadOnce(t *testing.T) {
 	t.Parallel()
 	h := routeHarness(t, route("flash-a", "flash"))
 	h.addReady("s1", 1, briefOf("flash", ""))
 	h.must(DealStep(sprint.DealReq{}))
 	h.finishAttempt("s1-1", false, "h1")
-	h.must(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
+	h.askReads()
 	reads := h.readsOf("s1-1")
 	require.Len(t, reads, 1)
 	h.readOne(reads[0], "ok", "")
-	r := h.run(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
-	require.Len(t, r.Refused, 1, "asked already: %+v", r)
-	assert.Equal(t, "asked already", r.Refused[0].Why)
+	h.askReads()
+	assert.Empty(t, h.readsOf("s1-1"), "read once: no other read card")
 	require.Empty(t, h.openOf(sprint.NReadyToAccept), "the tick's to accept, no judgment")
 	h.clean("a flash card read once")
 }
 
-// A pro card's read taken back from a reader that went away is asked again of one other
-// reader, the other read standing; and ask on a card whose reads are outstanding says it
-// is asked already (reads are asked together, sprint.ReadsWanted).
+// A pro card's read card taken back off a reader that went down is cut again for one other
+// reader, the other read standing; and a cut while both are placed cuts nothing.
 func TestAReadTakenBackIsAskedAgainOfOneOtherReader(t *testing.T) {
 	t.Parallel()
-	h := routeHarness(t, route("flash-a", "flash"), route("pro-a", "pro"))
+	h := readersHarness(t, route("flash-a", "flash"), route("pro-a", "pro"))
+	h.mu.Lock()
+	h.live = append(h.live, "m4")
+	h.mu.Unlock()
+	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m4", Width: sprint.MaxWidth}))
+	h.memberReaders("m4")
+	h.readersRead("flash,pro,heavy,frontier")
 	h.addReady("s1", 1, briefOf("pro", ""))
 	h.setPrimary("s1-1", map[string]string{sprint.FieldTierNow: "pro"})
 	h.must(DealStep(sprint.DealReq{}))
 	h.finishAttempt("s1-1", false, "h1")
-	h.must(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
+	h.askReads()
 	reads := h.readsOf("s1-1")
-	require.Len(t, reads, 2, "both reads asked together")
-	r := h.run(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
-	require.Len(t, r.Refused, 1)
-	assert.Equal(t, "asked already", r.Refused[0].Why)
-	require.NoError(t, h.st.SetReaderAway(h.ctx, reads[0].Row, true, "tester"))
-	h.beat()
-	h.must(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
+	require.Len(t, reads, 2, "both read cards cut together")
+	h.askReads()
+	require.Len(t, h.readsOf("s1-1"), 2, "a cut while both are placed cuts nothing")
+	gone := reads[0].Row
+	h.mu.Lock()
+	h.live = slices.DeleteFunc(h.live, func(m string) bool { return m == gone })
+	h.mu.Unlock()
+	h.must(FleetStep(sprint.FleetReq{Op: "down", Member: gone}))
+	h.askReads()
 	var again []string
 	for _, rc := range h.readsOf("s1-1") {
-		if rc.Col == sprint.Asked || rc.Col == sprint.Reading {
-			again = append(again, rc.Row)
-		}
+		again = append(again, rc.Row)
 	}
-	require.Len(t, again, 2, "the read taken back is asked of one other reader: %v", again)
-	assert.NotContains(t, again, reads[0].Row)
+	require.Len(t, again, 2, "the read taken back is cut for one other reader: %v", again)
+	assert.NotContains(t, again, gone)
 	assert.Contains(t, again, reads[1].Row, "the other read stands")
-	h.clean("a read taken back asked again")
+	h.clean("a read taken back cut again")
 }
 
 // readersRead names the tiers on every reader row, as reader set --tiers does.

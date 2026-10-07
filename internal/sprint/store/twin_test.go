@@ -26,6 +26,7 @@ func TestATickReadsTheSprintOnce(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	h.setup(200)
+	h.friendReaders()
 	h.startMachine()
 	caught := int64(0)
 	for i := 0; i < 8; i++ {
@@ -93,7 +94,7 @@ func TestAWriteDuringTheTickIsReadAgain(t *testing.T) {
 			require.NoError(t, err, "the world's finish: %v %v", err, res.Refused)
 			require.Empty(t, res.Refused, "the world's finish: %v %v", err, res.Refused)
 		}
-		return sprint.TickAsk(s, r)
+		return sprint.TickTables[1].Parts[0].Fn(s, r) // the tick's ask part
 	}}}}, sprint.TickTables[2], sprint.TickTables[3]}
 	res := h.machine()
 	c := res.Cost()
@@ -125,7 +126,7 @@ func TestATwinThatDriftsIsCaught(t *testing.T) {
 			}
 			return sprint.Plan{Notes: []sprint.Note{{Kind: sprint.Happened, Type: "scribbled", Who: sprint.MachineActor, At: s.Now, What: "scribbled"}}}, 0
 		}}}},
-		{Table: sprint.Readers, Parts: []sprint.TickPartDef{{Name: "ask", Fn: sprint.TickAsk}}},
+		{Table: sprint.Readers, Parts: []sprint.TickPartDef{{Name: "ask", Fn: sprint.TickTables[1].Parts[0].Fn}}},
 	}
 	_, err := h.st.Tick(h.ctx)
 	require.Error(t, err, "a scribbled twin was not caught: %v", err)
@@ -238,10 +239,10 @@ func TestATicksPartsTripsArePinned(t *testing.T) {
 	// also catches the readers table up from its change stream; the readers'
 	// beats and holds are read once by the tick, before its parts (first read)
 	// one more each since 2026-10-04: the seat record (the seat's generation),
-	// read with the coordinator. The ask writes its forty primaries in steps of
-	// AskBatch (tick_ask.go), each a fenced step of its own: the first step's
-	// 10 trips, and 9 for each step after it (its readers caught up already)
-	want := map[string]int64{"work/drain": 9, "readers/ask": 10 + 9*(40/AskBatch-1)}
+	// read with the coordinator. The ask is one fenced step, as the drain is: it writes
+	// the waiting mark on the forty primaries no reader may read (read_cards.go,
+	// readCardsAskPart)
+	want := map[string]int64{"work/drain": 9, "readers/ask": 9}
 	require.Equal(t, fmt.Sprint(want), fmt.Sprint(got), "the busy tick's parts made %v round trips, want %v: %s", got, want, busy.TimesLine())
 }
 

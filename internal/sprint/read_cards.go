@@ -23,21 +23,6 @@ import (
 // leaves review only by the existing rules. The model is tla/ReadCards.tla. With the setting
 // off, the readers table's ask and the friends' read ask, as before; they retire next release.
 
-// PropReadCards is the work table's property that turns read cards on: ReadCardsOnWord.
-const PropReadCards = "read_cards"
-
-// ReadCardsOnWord is the setting's on word; any other value is off.
-const ReadCardsOnWord = "on"
-
-// ReadCardsOn says the sprint asks its reads as read cards (PropReadCards).
-func (s *Snapshot) ReadCardsOn() bool {
-	if s == nil || s.Work == nil {
-		return false
-	}
-	v, _ := s.Work.Prop(PropReadCards)
-	return v == ReadCardsOnWord
-}
-
 // FieldReadCard marks a read card the deal cut (read_cards.go), "1": a friend's read asked
 // before read cards has none (its inbox job is its card id: Packet.ReadJob).
 const FieldReadCard = "read_card"
@@ -296,25 +281,37 @@ func readCardIDFor(cards []*Card, primary string, attempt int, reader string) st
 // step names): every identity of a read card of each primary in review, at its attempt, of
 // every reader the fleet table has a row for (a friend, by her name; a member with its
 // reader row).
-func ReadCardExtras(s *Snapshot) []string {
+func ReadCardExtras(s *Snapshot) []string { return ReadCardExtrasIn(s, Review) }
+
+// ReadCardExtrasIn is ReadCardExtras of the primaries in the columns given: a step that
+// moves a primary out of merging back to review (return) judges the reads that stand at
+// its attempt, retired with their verdicts.
+func ReadCardExtrasIn(s *Snapshot, cols ...string) []string {
 	if s == nil || s.Work == nil || s.Fleet == nil {
 		return nil
 	}
 	var out []string
-	for _, c := range s.Work.Column(Review) {
-		attempt := readAttempt(c)
-		for _, row := range s.Fleet.Rows() {
-			name, ok := FriendOfRow(row)
-			if !ok {
-				if s.Readers == nil || !s.Readers.HasRow(ReaderPrefix+row) {
-					continue // a member with no reader row is dealt no read
-				}
-				name = row
+	for _, c := range s.Work.Column(cols...) {
+		out = append(out, readCardExtrasOf(s, c)...)
+	}
+	return out
+}
+
+// readCardExtrasOf is ReadCardExtras of the one primary.
+func readCardExtrasOf(s *Snapshot, c *Card) []string {
+	var out []string
+	attempt := readAttempt(c)
+	for _, row := range s.Fleet.Rows() {
+		name, ok := FriendOfRow(row)
+		if !ok {
+			if s.Readers == nil || !s.Readers.HasRow(ReaderPrefix+row) {
+				continue // a member with no reader row is dealt no read
 			}
-			for _, id := range ReadCardGenIDs(c.ID, attempt, name) {
-				if s.Fleet.Placed(id) == nil {
-					out = append(out, id)
-				}
+			name = row
+		}
+		for _, id := range ReadCardGenIDs(c.ID, attempt, name) {
+			if s.Fleet.Placed(id) == nil {
+				out = append(out, id)
 			}
 		}
 	}
@@ -347,6 +344,18 @@ func readRefusal(s *Snapshot, u readUnit, pr *Card, attempt int, worker string, 
 	case readCardIDFor(mine, pr.ID, attempt, u.name) == "":
 		return "no id"
 	}
+	return readTierRefusal(s, u, pr, attempt)
+}
+
+// readsTierOf says the unit reads the primary's read tier (or the one below it, the interim
+// rule), whoever worked the attempt and whatever it read of it: the tier half of mayReadCard.
+func readsTierOf(s *Snapshot, u readUnit, pr *Card, attempt int) bool {
+	return readTierRefusal(s, u, pr, attempt) == ""
+}
+
+// readTierRefusal is the clause of readsTierOf that refuses the unit the read's tier, ""
+// when none does: friends' set, friend tier, reader row, fleet set, reader tier.
+func readTierRefusal(s *Snapshot, u readUnit, pr *Card, attempt int) string {
 	if u.friend {
 		// a friend reads her tier or any below it, as her reads always did: a heavy friend
 		// reads a flash and a pro card (friendAtOrAbove)
@@ -526,13 +535,10 @@ func readCardsAsk(s *Snapshot, seats []FriendSeat, ri routeIndexes) (p Plan, wai
 // units it deals reads to, each with its half slots and idle lanes, and the reader friends
 // it leaves out; then a line per primary that waits, its read tier, the reads it wants, why
 // it waits and each unit not dealt it with the clause that refuses it (readRefusal), or
-// half<=0 for one at its room as the ask reached the primary. Nothing with read cards off.
+// half<=0 for one at its room as the ask reached the primary.
 func ReadCardsWhy(s *Snapshot, seats []FriendSeat) []string {
-	if !s.ReadCardsOn() {
-		return nil
-	}
 	if seats == nil {
-		seats = withoutDirs(s.Friends)
+		seats = s.Friends
 	}
 	var why []string
 	readCardsAskWhy(s, seats, nil, &why)
@@ -593,6 +599,17 @@ func readCardsAskWhy(s *Snapshot, seats []FriendSeat, ri routeIndexes, why *[]st
 				dist[i] = readTierDistance(view, u, pr)
 			}
 		}
+		if len(may) == 0 {
+			// no reader of its tier, up or not, may ever read it at this attempt: none is
+			// there, or every one worked the attempt or read it; no read card is cut for
+			// it, whatever frees (cannotAskCond)
+			if tiered, possible := readersOf(view, seats, pr, attempt, worker, cards); !possible {
+				waits[pr.ID] = ReadWaitSpent
+				if !tiered {
+					waits[pr.ID] = ReadWaitNone
+				}
+			}
+		}
 		var room []int
 		for _, i := range may {
 			if units[i].half > 0 {
@@ -623,6 +640,7 @@ func readCardsAskWhy(s *Snapshot, seats []FriendSeat, ri routeIndexes, why *[]st
 		delete(back, pr.ID)
 		if len(picked) < want {
 			switch {
+			case waits[pr.ID] == ReadWaitSpent, waits[pr.ID] == ReadWaitNone:
 			case len(may) == 0:
 				waits[pr.ID] = "no reader up may read it: no friend whose tiers reach its read tier, and no member whose reader row serves its tier, besides its own worker"
 			default:
@@ -726,7 +744,19 @@ func fieldOf(c *Card, name string) string {
 // due so the no-stall rule holds it, clears the mark of one that waits no more, and keeps
 // the readers' standing judgments: the readers behind and the read tier to raise; cannot
 // ask and fewer than two readers up close.
-func readCardsAskPart(s *Snapshot, r TickReq, seats []FriendSeat) (Plan, int) {
+func readCardsAskPart(s *Snapshot, r TickReq) (Plan, int) {
+	p, due, waits := readCardsAsks(s, r)
+	return p, due + waits
+}
+
+// readCardsAsks is the tick's ask (readCardsAskPart), with the primaries left waiting for a
+// reader counted apart from what is due: the no-stall rule holds a waiting primary itself
+// (readWaitHeld), never the whole sprint by its count.
+func readCardsAsks(s *Snapshot, r TickReq) (Plan, int, int) {
+	seats := r.Friends
+	if seats == nil {
+		seats = s.Friends
+	}
 	var p Plan
 	_, waits := readCardsAsk(s, seats, nil)
 	for _, c := range s.Work.Column(Review) {
@@ -735,15 +765,78 @@ func readCardsAskPart(s *Snapshot, r TickReq, seats []FriendSeat) (Plan, int) {
 				Moved: c.ID + " waits for a reader no more"})
 		}
 	}
+	// a primary no reader of its tier may ever read at its attempt (none there, or every one
+	// worked or read it) waits on no reader: it is the cannot-ask judgment's, never a silent
+	// wait (rework or drop it, or bring a reader of its tier)
+	var spent []Refusal
+	for _, id := range slices.Sorted(maps.Keys(waits)) {
+		if w := waits[id]; w == ReadWaitSpent || w == ReadWaitNone {
+			spent = append(spent, Refusal{Key: id, Why: w})
+			delete(waits, id)
+		}
+	}
 	markWaiting(&p, s, map[string]int{}, waits)
-	var conds []cond
+	conds := cannotAskCond(s, spent)
 	if s.Readers != nil {
 		conds = append(conds, readersBehindCond(s)...)
 	}
 	conds = append(conds, raiseReadTierConds(s)...)
 	due := notify(&p, s, conds, []string{NCannotAsk, NFewReaders, NReadersBehind, NRaiseReadTier}, r)
-	return p, due + len(waits)
+	return p, due, len(waits)
 }
+
+// readersOf says whether the primary has readers of its tier (tiered), and whether one of
+// them may yet be dealt its read at the attempt (possible: not its worker, holding or
+// having spent no read of it), up, down or held alike.
+func readersOf(s *Snapshot, seats []FriendSeat, pr *Card, attempt int, worker string, cards []*Card) (tiered, possible bool) {
+	var all []readUnit
+	for _, f := range seats {
+		if slices.Contains(f.Roles, RoleReader) {
+			all = append(all, readUnit{name: f.Name, row: FriendRow(f.Name), friend: true, seat: f})
+		}
+	}
+	for _, m := range s.Members() {
+		if s.Readers != nil && s.Readers.HasRow(ReaderPrefix+m) {
+			all = append(all, readUnit{name: m, row: m})
+		}
+	}
+	for _, u := range all {
+		if !readsTierOf(s, u, pr, attempt) {
+			continue
+		}
+		tiered = true
+		mine := readerCardsAt(cards, pr.ID, attempt, u.name)
+		if u.name != worker && !readSpent(mine) && readCardIDFor(mine, pr.ID, attempt, u.name) != "" {
+			return true, true
+		}
+	}
+	return tiered, false
+}
+
+// readWaitHeld says the primary in review waits for a reader that may yet read it: it wants
+// read cards, and a reader of its tier that did not work it and spent no read of it is
+// there, up or not (readersOf). Its wait is held, not a stall: the deal cuts the read when
+// the reader has room. A primary no reader may ever read is no wait (the cannot-ask
+// judgment, or with no reader at all, a stall).
+func readWaitHeld(s *Snapshot, pr *Card) bool {
+	if readCardsWanted(s, pr, nil) == 0 {
+		return false
+	}
+	attempt := readAttempt(pr)
+	_, possible := readersOf(s, s.Friends, pr, attempt, attemptUnit(s, pr.ID, attempt), fleetReadIndex(s)[pr.ID])
+	return possible
+}
+
+// ReadWaitSpent is why a primary waits when every reader up of its tier worked its attempt
+// or read it (a read closed, handed back or let pass its deadline spends its reader at the
+// attempt, spentBy): no reader that frees can be dealt it, so the tick's cannot-ask judgment
+// holds it, for a rework (a new attempt every reader may read again) or a drop.
+const ReadWaitSpent = "every reader of its tier worked this attempt or has read it"
+
+// ReadWaitNone is why a primary waits when no reader of its tier is there at all (a member
+// with its reader row, a friend whose roles name reader; up, down or held alike): the
+// tick's cannot-ask judgment holds it, never a silent wait.
+const ReadWaitNone = "no reader of its tier is there (a member with its reader row, or a friend whose roles name reader)"
 
 // readCardsWaitingCount is the reads waiting while read cards are on (ReadsWaiting): the
 // reads wanted and not yet dealt (readCardsWanted), and the read cards dealt and not
@@ -772,19 +865,12 @@ func readCardsWaitingCount(s *Snapshot) int {
 // cards placed and the cards it takes back off their rows, which the work of the same deal
 // is dealt on: every room the deal counts (memberLoads, widthRoom, friendLoad) holds the
 // reads first, at half a slot each (reads are a card priority: a read waits behind no
-// work card). With read cards off, nothing and the snapshot as it is.
+// work card).
 func (s *Snapshot) withReadCards(seats []FriendSeat) (*Snapshot, Plan) {
-	if !s.ReadCardsOn() || s.Fleet == nil {
+	if s.Work == nil || s.Fleet == nil {
 		return s, Plan{}
 	}
-	if seats == nil {
-		seats = s.Friends
-	}
-	var ri routeIndexes
-	if len(s.Routes) > 0 {
-		ri = routeIndexesOf(s)
-	}
-	p, _ := readCardsAsk(s, seats, ri)
+	p := CutReadCards(s, seats)
 	if len(p.Units) == 0 {
 		return s, p
 	}
@@ -814,6 +900,22 @@ func (s *Snapshot) withReadCards(seats []FriendSeat) (*Snapshot, Plan) {
 	return &v, p
 }
 
+// CutReadCards is the read-card cut of the tick's deal alone (readCardsAsk, run first in
+// TickDeal): the read cards every primary in review wants, each drawn on its tier's route
+// when the store holds routes, and the cards taken back. The seats are the friends that
+// may read; nil reads the snapshot's.
+func CutReadCards(s *Snapshot, seats []FriendSeat) Plan {
+	if seats == nil {
+		seats = s.Friends
+	}
+	var ri routeIndexes
+	if len(s.Routes) > 0 {
+		ri = routeIndexesOf(s)
+	}
+	p, _ := readCardsAsk(s, seats, ri)
+	return p
+}
+
 // readStart is when a working read card started: its take, else its deal (a friend's read
 // dealt straight to working).
 func readStart(c *Card) time.Time {
@@ -821,4 +923,35 @@ func readStart(c *Card) time.Time {
 		return t
 	}
 	return stampAt(c, "asked")
+}
+
+// cannotAskCond is the tick's condition for the primaries no read card can be cut for
+// (ReadWaitSpent, readCardsAskPart): one judgment, "no eligible reader for
+// <ids>" with the first such refusal's reason, in the stream of its first
+// primary, every such primary of the tick a subject of it. The ids it names
+// are the primaries no open judgment of the type names yet, and notify writes
+// it on those alone, keeping the rest open: a card is never silent in review
+// for want of a reader, and five stranded cards are one judgment, not five
+// (the night of 2026-10-03: five cards, five readers, five judgments).
+func cannotAskCond(s *Snapshot, refused []Refusal) []cond {
+	var all, fresh []string
+	stream, why := "", ""
+	for _, x := range refused {
+		pr := s.Work.Placed(x.Key)
+		if pr == nil {
+			continue
+		}
+		all = append(all, pr.ID)
+		if len(closesFor(s.Open, []string{NCannotAsk}, pr.ID)) > 0 {
+			continue
+		}
+		if len(fresh) == 0 {
+			stream, why = pr.Row, x.Why
+		}
+		fresh = append(fresh, pr.ID)
+	}
+	if len(all) == 0 {
+		return nil
+	}
+	return []cond{{typ: NCannotAsk, stream: stream, primaries: all, what: NoEligibleReader + strings.Join(fresh, ", ") + ": " + why}}
 }

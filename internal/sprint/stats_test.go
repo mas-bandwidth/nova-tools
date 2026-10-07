@@ -73,7 +73,9 @@ func statsSnapshot() *Snapshot {
 func TestStatsRecordsNameEveryAttemptsWorkAndReadCards(t *testing.T) {
 	t.Parallel()
 	rec := StatsRecords(statsSnapshot())
-	assert.ElementsMatch(t, []string{"p1.w1", "p1.w2", "p2.w1"}, rec[Fleet])
+	// the work cards, and the read cards each primary's consumer records name (a read card
+	// retired on the fleet table is read back by its id)
+	assert.ElementsMatch(t, []string{"p1.w1", "p1.w2", "p2.w1", "p1.r2.reader-a", "p1.r2.reader-b"}, rec[Fleet])
 	assert.ElementsMatch(t, []string{"p1.r1.reader-a", "p1.r1.reader-b", "p1.r2.reader-a", "p1.r2.reader-b", "p2.r1.reader-a", "p2.r1.reader-b"}, rec[Readers])
 }
 

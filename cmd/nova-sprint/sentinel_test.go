@@ -30,9 +30,9 @@ func TestReleaseIsTheCoordinators(t *testing.T) {
 	ta.deal(1)
 	ta.ok("take --as m1 s1-1.w1@1")
 	ta.ok("finish --as m1 s1-1.w1@1")
-	ta.ok("ask --actor lead")
+	ta.cutReads()
 	ta.ok("read --as reader-a --ok s1-1.r1.reader-a")
-	ta.ok("ask --actor lead") // the second read, the first ok
+	ta.cutReads()
 	ta.ok("read --as reader-b --ok s1-1.r1.reader-b")
 	ta.ok("accept s1-1 --actor lead")
 	ta.ok("merge --stream s1")
@@ -110,9 +110,9 @@ func TestSentinelSetNeedsRepointsInPlace(t *testing.T) {
 	ta.deal(1)
 	ta.ok("take --as m1 s1-3.w1@1")
 	ta.ok("finish --as m1 s1-3.w1@1")
-	ta.ok("ask")
+	ta.cutReads()
 	ta.ok("read --as reader-a --ok s1-3.r1.reader-a")
-	ta.ok("ask") // the second read, the first ok
+	ta.cutReads() // the second read, the first ok
 	ta.ok("read --as reader-b --ok s1-3.r1.reader-b")
 	ta.ok("accept s1-3")
 	ta.ok("merge --stream s1")

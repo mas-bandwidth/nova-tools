@@ -8,6 +8,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
 // chancesLine is the chances play prints before its first tick.
@@ -26,7 +28,7 @@ func chancesLine(t *testing.T, out string) string {
 func playing(t *testing.T) *testApp {
 	t.Helper()
 	ta := newTestApp(t)
-	ta.ok("init --readers reader-a,reader-b --members m1,m2")
+	ta.ok("init --readers reader-m1,reader-m2 --members m1,m2") // the members read: the simulation plays them
 	ta.ok("add --stream s1 --count 6")
 	ta.ok("start")
 	return ta
@@ -79,7 +81,7 @@ func TestTheFlagsReachTheSourceThatDraws(t *testing.T) {
 	}
 	// --red 1 with nothing else drawn: the first merge batch is red
 	ta := newTestApp(t)
-	ta.ok("init --readers reader-a,reader-b --members m1,m2")
+	ta.ok("init --readers reader-m1,reader-m2 --members m1,m2")
 	ta.ok("add --stream s1 --count 6")
 	ta.ok("start")
 	for round := 1; round <= 60; round++ {
@@ -142,7 +144,7 @@ var simulationEvents = map[string]string{
 func landsUnder(t *testing.T, flags string) map[string]int {
 	t.Helper()
 	ta := newTestApp(t)
-	ta.ok("init --readers reader-a,reader-b,reader-c --members m1,m2,m3")
+	ta.ok("init --readers reader-m1,reader-m2,reader-m3 --members m1,m2,m3") // the members read: the simulation plays them
 	for _, s := range []string{"s1", "s2", "s3"} {
 		ta.ok("add --stream " + s + " --count 20")
 	}
@@ -225,7 +227,7 @@ func TestPlaySimulationBatchesOneCallForEveryMachineATick(t *testing.T) {
 	members := []string{"m1", "m2", "m3", "m4", "m5", "m6", "m7", "m8"}
 	ta := newTestApp(t)
 	ta.live = members
-	ta.ok("init --readers reader-a,reader-b,reader-c --members " + strings.Join(members, ","))
+	ta.ok("init --readers " + readerRows(members) + " --members " + strings.Join(members, ","))
 	ta.ok("add --stream s1 --count 150")
 	ta.ok("start")
 	ta.ok("tick") // the machine deals the ready queues
@@ -274,4 +276,14 @@ func TestPlaySimulationBatchesOneCallForEveryMachineATick(t *testing.T) {
 	assert.LessOrEqual(t, finishes, 2, "%d finish calls moving %d of the %d taken, want one or two moving all\n%s", finishes, finished, taken, out)
 	assert.Equal(t, taken, finished, "%d finish calls moving %d of the %d taken, want one or two moving all\n%s", finishes, finished, taken, out)
 	t.Logf("%d ready over %d machines: one take, %d finishes", total, len(members), finishes)
+}
+
+// readerRows is each member's reader row (reader-<member>): the members read, and the
+// simulation plays their read cards with their work.
+func readerRows(members []string) string {
+	var out []string
+	for _, m := range members {
+		out = append(out, sprint.ReaderPrefix+m)
+	}
+	return strings.Join(out, ",")
 }

@@ -101,14 +101,12 @@ func (a dAction) verb() string {
 			v = "--failed"
 		}
 		return fmt.Sprintf("finish --as %s %s@%d %s", a.Member, a.Card, a.Gen, v)
-	case "begin":
-		return fmt.Sprintf("read --as %s --begin %s", a.Reader, a.Card)
 	case "read":
 		v := "ok"
 		if !a.OK {
 			v = "broken"
 		}
-		return fmt.Sprintf("read --as %s %s %s", a.Reader, a.Card, v)
+		return fmt.Sprintf("read --as %s --%s %s", a.Reader, v, a.Card)
 	case "merge":
 		s := fmt.Sprintf("merge --stream %s --batch %d", a.Stream, a.Batch)
 		switch a.Fact {
@@ -140,8 +138,6 @@ func (a dAction) verb() string {
 		return fmt.Sprintf("ci %s %s --run %d", ids, v, a.Run)
 	case "ack":
 		return fmt.Sprintf("ack <%s on %s> --reason looked", a.Type, a.Subject)
-	case "another":
-		return "ask --another " + ids
 	case "clear":
 		return "clear"
 	case "rework":
@@ -217,8 +213,10 @@ func (f dFinding) String() string {
 
 const dCoordinator = "tester"
 
-var dReaders = []string{"r1", "r2", "r3"}
 var dMembers = []string{"m1", "m2", "m3"}
+
+// dReaders is the reader rows: every member reads (sprint read_cards.go, memberReads).
+var dReaders = []string{sprint.ReaderPrefix + "m1", sprint.ReaderPrefix + "m2", sprint.ReaderPrefix + "m3"}
 var dStreams = []string{"s1", "s2", "s3"}
 
 type dHarness struct {
@@ -260,8 +258,13 @@ func newDHarness(t testing.TB) *dHarness {
 		Sleep: func(time.Duration) {}, Rand: func(int64) int64 { return 0 }, Grace: 200 * time.Millisecond}
 	require.NoError(t, h.st.Init(h.ctx))
 	require.NoError(t, h.m.RowsAdd(h.ctx, "d-readers", dReaders))
+	// every member reads every tier, as reader set --tiers all writes it
+	require.NoError(t, h.st.EnsureReaderTiers(h.ctx))
+	for _, rd := range dReaders {
+		require.NoError(t, h.m.RowSet(h.ctx, "d-readers", rd, map[string]string{sprint.ReaderTiers: "flash,pro,heavy,frontier"}))
+	}
 	require.NoError(t, h.m.SetCoordinator(h.ctx, dCoordinator))
-	h.model = refmodel.New(dReaders, nil, dCoordinator)
+	h.model = refmodel.New(dMembers, nil, dCoordinator)
 	h.Acted, h.Tried = map[string]int{}, map[string]int{}
 	h.seen = map[string]map[string]bool{}
 	return h
@@ -286,7 +289,7 @@ func (h *dHarness) observe() refmodel.State {
 		add(sprint.Fleet, id)
 	}
 	for id := range h.model.Reads {
-		add(sprint.Readers, id)
+		add(sprint.Fleet, id)
 	}
 	for id := range h.model.Merge {
 		add(sprint.Merge, id)
@@ -512,17 +515,19 @@ func (h *dHarness) engine(a dAction, pre refmodel.State) (refused string, cutOK 
 		_, _, _, err := h.st.SetMachine(h.ctx, a.Kind == "start")
 		return engineErr(err, nil), cutOK
 	case "take":
-		return run(TakeStep(sprint.TakeReq{As: a.Member, Sel: sprint.Sel{IDs: []string{a.Card}}, Gens: map[string]int{a.Card: a.Gen}})), cutOK
+		r := sprint.TakeReq{As: a.Member, Sel: sprint.Sel{IDs: []string{a.Card}}}
+		if a.Gen != 0 {
+			r.Gens = map[string]int{a.Card: a.Gen}
+		}
+		return run(TakeStep(r)), cutOK
 	case "finish":
 		return run(FinishStep(sprint.FinishReq{As: a.Member, Sel: sprint.Sel{IDs: []string{a.Card}}, Gens: map[string]int{a.Card: a.Gen}, Failed: !a.OK, Report: "report"})), cutOK
-	case "begin":
-		return run(ReadStep(sprint.ReadReq{As: a.Reader, Sel: sprint.Sel{IDs: []string{a.Card}}, Begin: true})), cutOK
 	case "read":
 		v := "ok"
 		if !a.OK {
 			v = "broken"
 		}
-		return run(ReadStep(sprint.ReadReq{As: a.Reader, Sel: sprint.Sel{IDs: []string{a.Card}}, Verdict: v, Finding: "finding:1"})), cutOK
+		return run(ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: a.Reader, Sel: sprint.Sel{IDs: []string{a.Card}}, Verdict: v, Finding: "finding:1"})), cutOK
 	case "accept":
 		return run(AcceptStep(sprint.AcceptReq{Sel: sprint.Sel{IDs: a.IDs}})), cutOK
 	case "rework":
@@ -566,10 +571,6 @@ func (h *dHarness) engine(a dAction, pre refmodel.State) (refused string, cutOK 
 			return "no open judgment " + a.Type + " on " + a.Subject, cutOK
 		}
 		return run(AckStep(sprint.AckReq{Notes: []string{note}, Reason: "looked"})), cutOK
-	case "ask":
-		return run(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: a.IDs}})), cutOK
-	case "another":
-		return run(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: a.IDs}, Another: true})), cutOK
 	case "release":
 		return run(ReleaseStep(sprint.ReleaseReq{IDs: a.IDs, Reason: "r", Coordinator: dCoordinator, Who: dCoordinator})), cutOK
 	case "resolve":
@@ -653,11 +654,13 @@ func (h *dHarness) modelStep(a dAction, pre, post refmodel.State) (refmodel.Stat
 	case "start", "stop":
 		next, err = refmodel.SetMachine(s, a.Kind == "start")
 	case "take":
-		next, err = refmodel.Take(s, a.Member, a.Card, a.Gen)
+		if _, read := s.Reads[a.Card]; read {
+			next, err = refmodel.TakeRead(s, a.Member, a.Card)
+		} else {
+			next, err = refmodel.Take(s, a.Member, a.Card, a.Gen)
+		}
 	case "finish":
 		next, err = refmodel.Finish(s, a.Member, a.Card, a.Gen, a.OK)
-	case "begin":
-		next, err = refmodel.ReadStart(s, a.Reader, a.Card)
 	case "read":
 		next, err = refmodel.Read(s, a.Reader, a.Card, a.OK)
 	case "accept":
@@ -719,16 +722,6 @@ func (h *dHarness) modelStep(a dAction, pre, post refmodel.State) (refmodel.Stat
 			subs = h.preSubjects
 		}
 		next, err = refmodel.Ack(s, a.Type, subs, h.preNeeds)
-	case "ask":
-		next, err = refmodel.Ask(s, a.id(), newReaders(pre, post, a.id()))
-	case "another":
-		r := ""
-		if rs := newReaders(pre, post, a.id()); len(rs) == 1 {
-			r = rs[0]
-		} else if rs == nil {
-			r = firstUnasked(s, a.id())
-		}
-		next, err = refmodel.AskAnother(s, a.id(), r)
 	case "release":
 		next, err = refmodel.Release(s, a.IDs, dCoordinator)
 	case "resolve":
@@ -750,28 +743,6 @@ func minScore(s refmodel.State, p string) float64 {
 		}
 	}
 	return lo
-}
-
-func firstUnasked(s refmodel.State, p string) string {
-	a := s.Primaries[p].Attempt
-	for _, r := range s.Readers {
-		if _, ok := s.Reads[refmodel.RC(p, a, r)]; !ok {
-			return r
-		}
-	}
-	return ""
-}
-
-// newReaders is the readers of the read cards of p cut by the step.
-func newReaders(pre, post refmodel.State, p string) []string {
-	var out []string
-	for id, c := range post.Reads {
-		if _, ok := pre.Reads[id]; !ok && c.Primary == p {
-			out = append(out, c.Reader)
-		}
-	}
-	sort.Strings(out)
-	return out
 }
 
 // moved is the work cards the step moved from one member's ready or
@@ -926,7 +897,7 @@ func (h *dHarness) pick1(rng *rand.Rand, n *int) dAction {
 		case w < 70:
 			var cards []string
 			for _, id := range refmodel.Keys(s.Reads) {
-				if pl := s.Reads[id].Place; pl == refmodel.Asked || pl == refmodel.Reading {
+				if s.Reads[id].Place != refmodel.Retired {
 					cards = append(cards, id)
 				}
 			}
@@ -934,8 +905,8 @@ func (h *dHarness) pick1(rng *rand.Rand, n *int) dAction {
 				continue
 			}
 			c := one(cards)
-			if s.Reads[c].Place == refmodel.Asked && rng.IntN(3) == 0 {
-				return dAction{Kind: "begin", Reader: s.Reads[c].Reader, Card: c}
+			if s.Reads[c].Place == refmodel.FReady && rng.IntN(3) == 0 {
+				return dAction{Kind: "take", Member: s.Reads[c].Reader, Card: c, Gen: 1} // a read card is dealt at generation 1
 			}
 			return dAction{Kind: "read", Reader: s.Reads[c].Reader, Card: c, OK: rng.IntN(6) != 0}
 		case w < 78:
@@ -1042,10 +1013,8 @@ func (h *dHarness) pick1(rng *rand.Rand, n *int) dAction {
 			sort.Slice(js, func(i, k int) bool { return js[i].String() < js[k].String() })
 			j := js[rng.IntN(len(js))]
 			return dAction{Kind: "ack", Type: j.Type, Subject: j.Subject}
-		case w < 112:
-			return dAction{Kind: "ask", IDs: []string{one(placed(refmodel.Review))}}
 		case w < 114:
-			return dAction{Kind: "another", IDs: []string{one(placed(refmodel.Review))}}
+			continue // once the old ask's: the tick's deal cuts every read card
 		case w < 118:
 			var due []string
 			for _, id := range refmodel.Keys(s.Primaries) {

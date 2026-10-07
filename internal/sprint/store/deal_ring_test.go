@@ -24,19 +24,13 @@ var ringMembers = []string{"m1", "m2", "m3", "m4", "m5", "m6", "m7", "m8"}
 
 // ringTick is what one tick of the machine did to the rolling indexes.
 type ringTick struct {
-	deals    []string   // the members dealt to, in the deal's order
-	asks     [][]string // the readers asked, per primary, in the ask's order
-	dealAt   string     // the fleet table's deal_index after the tick
-	askAt    string     // the readers table's ask_index after the tick
-	eligible []string   // the members up with room as the tick's deal saw them
+	deals    []string // the members dealt to, in the deal's order
+	dealAt   string   // the fleet table's deal_index after the tick
+	eligible []string // the members up with room as the tick's deal saw them
 }
 
 func (r ringTick) String() string {
-	asks := make([]string, len(r.asks))
-	for i, a := range r.asks {
-		asks[i] = strings.Join(a, "+")
-	}
-	return fmt.Sprintf("deals=%v deal_index=%s eligible=%v asks=%v ask_index=%s", r.deals, r.dealAt, r.eligible, asks, r.askAt)
+	return fmt.Sprintf("deals=%v deal_index=%s eligible=%v", r.deals, r.dealAt, r.eligible)
 }
 
 // ringFleet adds the members as the owner's fleet has them (rows, down until
@@ -65,16 +59,11 @@ func ringMachineTick(h *harness) ringTick {
 					m, _, _ = strings.Cut(m, " ")
 					out.deals = append(out.deals, m)
 				}
-			case "ask":
-				if _, rs, ok := strings.Cut(line, " asked of "); ok {
-					out.asks = append(out.asks, strings.Split(rs, ", "))
-				}
 			}
 		}
 	}
 	s := h.snap()
 	out.dealAt, _ = s.Fleet.Prop(sprint.PropDealIndex)
-	out.askAt, _ = s.Readers.Prop(sprint.PropAskIndex)
 	for _, m := range s.UpMembers() {
 		if heldBy(s, m) < s.Width(m) || slices.Contains(out.deals, m) {
 			out.eligible = append(out.eligible, m)
@@ -127,9 +116,9 @@ func dealRingOwnersRun(t *testing.T, h *harness) {
 	require.True(t, slices.Equal(deals[:16], want), "the first 16 deals %v, want %v: eight members up are dealt round the fleet", deals, want)
 }
 
-// dealRingAcrossTicks deals one card a tick, and asks one primary a tick: the
-// index goes on from tick to tick, and across a stop and a start of the
-// machine and a new loop on the same store, never back to the first name.
+// dealRingAcrossTicks deals one card a tick: the index goes on from tick to
+// tick, and across a stop and a start of the machine and a new loop on the same
+// store, never back to the first name.
 func dealRingAcrossTicks(t *testing.T, h *harness) {
 	ringFleet(h)
 	h.startMachine()
@@ -139,7 +128,6 @@ func dealRingAcrossTicks(t *testing.T, h *harness) {
 		h.tick(time.Second)
 	}
 	var deals []string
-	var asks [][]string
 	for i := 0; i < 2*len(ringMembers); i++ {
 		if i == len(ringMembers)+3 {
 			// a stop, a start and a new loop: a store of its own on the backend
@@ -152,21 +140,13 @@ func dealRingAcrossTicks(t *testing.T, h *harness) {
 		r := ringMachineTick(h)
 		t.Logf("tick %d: %s", i+1, r)
 		deals = append(deals, r.deals...)
-		asks = append(asks, r.asks...)
 		for _, m := range r.deals {
 			h.work(m)
 		}
-		h.readOutstanding() // both reads asked this tick come back ok
 		h.tick(time.Second)
 	}
 	want := append(append([]string(nil), ringMembers...), ringMembers...)
 	require.True(t, slices.Equal(deals, want), "deals across ticks %v, want %v: each tick's deal starts past the member the last one dealt to", deals, want)
-	readers := []string{"reader-a", "reader-b", "reader-c"}
-	for i, a := range asks {
-		w := []string{readers[(2*i)%3], readers[(2*i+1)%3]} // two reads an ask: both together
-		require.True(t, slices.Equal(a, w), "ask %d of %v asked %v, want %v: each tick's ask starts past the reader the last one asked", i+1, asks, a, w)
-	}
-	require.GreaterOrEqual(t, len(asks), 2*len(ringMembers)-1, "asks %v: want one a tick", asks)
 }
 
 func TestTheDealGoesRoundTheFleetThroughTheTick(t *testing.T) {

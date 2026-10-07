@@ -59,7 +59,7 @@ func (p *twinPusher) Push(pk member.Packet, _ member.Result) member.Push {
 func twinMemberFlow(t *testing.T, pu *twinPusher) (r *serverRig, branch, out string) {
 	t.Helper()
 	r = newServerRig(t,
-		"nova-sprint init --readers reader-a,reader-b --members m1",
+		"nova-sprint init --readers reader-m2 --members m1,m2", // m2 reads what m1 works
 		"nova-sprint add --stream s1 --count 1 --one",
 		"nova-sprint start",
 		"nova-sprint tick",
@@ -102,10 +102,8 @@ func TestTheMembersPushIsWhatTheLandingReads(t *testing.T) {
 
 	for _, line := range []string{
 		"nova-sprint tick",
-		"nova-sprint read --as reader-a --begin --epoch 0",
-		"nova-sprint read --as reader-b --begin --epoch 0",
-		"nova-sprint read --as reader-a --ok --epoch 0",
-		"nova-sprint read --as reader-b --ok --epoch 0",
+		"nova-sprint take --as m2 --epoch 0",
+		"nova-sprint read --as m2 --ok --epoch 0",
 		"nova-sprint tick",
 	} {
 		r.boss(line)

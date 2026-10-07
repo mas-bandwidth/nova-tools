@@ -77,46 +77,15 @@ func TestAWithdrawnFriendReadIsAskedAgain(t *testing.T) {
 	require.NotNil(t, amy, "the withdrawn record stays, as history")
 	assert.Equal(t, sprint.Withdrawn, amy.Col)
 
-	// amy is back as a reader and bob's read is withdrawn in turn: she is not asked the
-	// attempt again (her withdrawn read keeps its id); a paid reader is
+	// amy is back as a reader and bob's read is withdrawn in turn: a hold's take-back spends
+	// no one, so she is dealt the attempt again under the next identity, her withdrawn read
+	// kept as history (read cards: a withdrawn read card spends no one)
 	r.hold(sprint.HoldReq{Names: []string{"amy"}, Release: true, Reason: "her reader role is back"})
 	r.withdrawRead("bob")
 	r.tick()
 	s = r.snap()
-	reads := placedReads(s)
-	require.Len(t, reads, 1, "one read is asked: %v", reads)
-	assert.NotNil(t, s.Readers.Placed(reads[0]), "a paid reader is asked, not amy: %v", reads)
+	assert.Equal(t, []string{sprint.ReadCardID("s1-1", 1, "amy") + ".g1"}, placedReads(s), "amy is dealt the attempt again")
 	assert.Equal(t, sprint.Withdrawn, s.Fleet.Placed(sprint.ReadCardID("s1-1", 1, "amy")).Col)
-}
-
-func TestAWithdrawnReaderReadIsAskedAgain(t *testing.T) {
-	t.Parallel()
-	r := newHoldRig(t, 1, 0)
-	r.hold(sprint.HoldReq{Names: []string{"amy", "bob"}, Reason: "the readers table alone"})
-	r.tick()
-	wc := r.takeOne("m1")
-	r.must(store.FinishStep(sprint.FinishReq{As: "m1", Sel: sprint.Sel{IDs: []string{wc}}, Gens: map[string]int{wc: r.snap().Fleet.Card(wc).Int("gen")}, Head: "abc", Who: "m1"}))
-	r.tick()
-	reads := placedReads(r.snap())
-	require.Len(t, reads, 1, "the fixture: one read asked")
-	first := r.snap().Readers.Placed(reads[0])
-	require.NotNil(t, first)
-
-	// its reader is held: the read is taken back and asked of another reader in the tick
-	r.hold(sprint.HoldReq{Names: []string{first.Row}, Reason: "its reader role is removed"})
-	r.tick()
-	s := r.snap()
-	reads = placedReads(s)
-	require.Len(t, reads, 1, "asked again: %v", reads)
-	again := s.Readers.Placed(reads[0])
-	require.NotNil(t, again)
-	assert.NotEqual(t, first.Row, again.Row, "another reader is asked")
-	s, err := r.st.Load(r.ctx, store.All, func(*sprint.Snapshot) map[string][]string { return map[string][]string{sprint.Readers: {first.ID}} })
-	require.NoError(t, err)
-	old := s.Readers.Card(first.ID)
-	require.NotNil(t, old, "the taken-back record stays, as history")
-	assert.False(t, old.Placed())
-	assert.Empty(t, ruleTwo(s), "a taken-back read is a normal state")
 }
 
 func TestRuleTwoIsQuietForAWithdrawnRead(t *testing.T) {
@@ -125,9 +94,8 @@ func TestRuleTwoIsQuietForAWithdrawnRead(t *testing.T) {
 	r.withdrawRead("amy")
 	assert.Empty(t, ruleTwo(r.snap()), "a withdrawn read whose primary is in review is a normal state")
 
-	// ask <id> asks it, by hand, as the tick would
-	res := r.must(store.AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Who: "coordinator"}))
-	assert.NotEmpty(t, res.Moved)
+	// the tick deals it to the other friend
+	r.tick()
 	assert.Len(t, placedReads(r.snap()), 1)
 
 	// a day on: the withdrawn read raises nothing, neither rule 2 nor a lateness

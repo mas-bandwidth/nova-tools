@@ -35,7 +35,7 @@ func (a *app) cmdPlay(args []string, stdout, stderr io.Writer) int {
 	fs.Var(&silent, "silent", "<member>@<from>+<for>: the member's machine stops beating <from> after play starts, for <for> (e.g. m3@30s+20s); repeatable")
 	ticks := fs.Int("ticks", 0, "stop after n ticks; 0 is until every stream lands")
 	take := fs.Int("take", 0, "work cards a member takes in its one take a tick; 0 is the member's width, else 64")
-	reads := fs.Int("reads", 0, "read cards a reader begins, and reports, in its one call of each a tick; 0 is its whole queue")
+	reads := fs.Int("reads", 0, "read cards a member reports in its one call of each verdict a tick; 0 is every one it holds")
 	pos, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, "play", err.Error())

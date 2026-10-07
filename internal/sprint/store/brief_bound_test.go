@@ -20,8 +20,8 @@ import (
 // them finding it broken with the finding.
 func (h *harness) readBrokenAt(id, finding string) {
 	h.t.Helper()
-	h.must(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{id}}}))
-	rc := h.snap().Readers.Of(id)
+	h.askReads()
+	rc := placedReadsOf(h.snap(), id)
 	require.NotEmpty(h.t, rc, "reads asked")
 	for i, c := range rc {
 		verdict, f := "ok", ""

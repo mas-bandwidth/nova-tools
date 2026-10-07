@@ -37,6 +37,11 @@ type harness struct {
 	// clock: the fleet machines alive (a test that has one fall silent takes
 	// it out).
 	live []string
+	// readers is the friends that read (friendReaders), beat with the members
+	readers []string
+	// membersRead is set once a member reads (memberReaders): the read cards go to the
+	// members, and no friend reader is made
+	membersRead bool
 }
 
 func newHarness(t *testing.T) *harness {
@@ -72,6 +77,82 @@ func (h *harness) beat() {
 		_, err := h.st.Beat(h.ctx, m, &zero, hostload.Source{})
 		require.NoError(h.t, err)
 	}
+	h.mu.Lock()
+	readers := append([]string(nil), h.readers...)
+	h.mu.Unlock()
+	for _, f := range readers {
+		_, err := h.st.FriendBeat(h.ctx, f)
+		var pe *PendingError
+		if errors.As(err, &pe) {
+			continue // a friend's beat waits for the operation pending, as her daemon's does
+		}
+		require.NoError(h.t, err)
+		_, _, _, err = h.st.FriendHealth(h.ctx, f, h.st.Actor, sprint.FriendHealth{State: sprint.Up, Seen: h.st.Now(), Generation: sprint.FirstSeatGeneration}, "")
+		if errors.As(err, &pe) {
+			continue
+		}
+		require.NoError(h.t, err)
+	}
+}
+
+// askReads cuts the read cards every primary in review wants, as the tick's deal does first
+// (sprint.CutReadCards), with the machine RUNNING or STOPPED; the harness's friend readers
+// (friendReaders) are made the first time, unless a member reads (memberReaders).
+func (h *harness) askReads() Result {
+	h.t.Helper()
+	return h.must(h.cutStep())
+}
+
+// cutStep is the step that cuts the read cards every primary in review wants (askReads),
+// the friend readers made the first time.
+func (h *harness) cutStep() Step {
+	h.t.Helper()
+	h.mu.Lock()
+	made := len(h.readers) > 0 || h.membersRead
+	h.mu.Unlock()
+	if !made {
+		h.friendReaders()
+	}
+	seats, err := h.st.FriendSeats(h.ctx, h.st.Now())
+	require.NoError(h.t, err)
+	due := 0
+	step := TickPartStep("deal", func(s *sprint.Snapshot, _ sprint.TickReq) (sprint.Plan, int) {
+		return sprint.CutReadCards(s, seats), 0
+	}, sprint.TickReq{Who: sprint.MachineActor, Friends: seats}, nil, nil, &due)
+	step.Routes = true
+	return step
+}
+
+// placedReadsOf is the primary's read cards placed on the fleet table, in work order.
+func placedReadsOf(s *sprint.Snapshot, id string) []*sprint.Card {
+	var out []*sprint.Card
+	for _, c := range s.Fleet.Column(sprint.Ready, sprint.Working) {
+		if c.F("kind") == "read" && c.F("primary") == id {
+			out = append(out, c)
+		}
+	}
+	sprint.SortCards(out)
+	return out
+}
+
+// friendReaders makes two friends, ra and rb, the sprint's readers: their roles name
+// reader, and the friends' work is off (set --friends off), so they are dealt the read
+// cards of the cards in review and no work card, and the members' room is the work's
+// alone. A read card on a friend's row is read with read --as friend.<name> (readCardsOK).
+func (h *harness) friendReaders() {
+	h.t.Helper()
+	names := []string{"ra", "rb"}
+	var specs []FriendSpec
+	for _, n := range names {
+		specs = append(specs, FriendSpec{Name: n, Width: 8, Class: "pro", Roles: "reader"})
+	}
+	_, _, _, err := h.st.SyncFriends(h.ctx, specs)
+	require.NoError(h.t, err)
+	h.must(SetStep(sprint.SetReq{Friends: sprint.SwitchOff, Who: h.st.Actor}))
+	h.mu.Lock()
+	h.readers = names
+	h.mu.Unlock()
+	h.beat()
 }
 
 func (h *harness) run(step Step) Result {
@@ -106,6 +187,30 @@ func (h *harness) snap() *sprint.Snapshot {
 	q, err := pinned.B.QueueRead(h.ctx)
 	require.NoError(h.t, err)
 	return sprint.WithQueue(s, q)
+}
+
+// snapReads is snap with the read card records a step that judges reads reads
+// (tickExtras): a read card retired with its verdict is there.
+func (h *harness) snapReads() *sprint.Snapshot {
+	h.t.Helper()
+	s, err := h.st.Load(h.ctx, All, tickExtras)
+	require.NoError(h.t, err)
+	return s
+}
+
+// memberReaders gives each member its reader row (reader-<m>): the read cards of a card
+// in review are dealt to it (sprint read_cards.go, memberReads).
+func (h *harness) memberReaders(members ...string) {
+	h.t.Helper()
+	var rows []string
+	for _, m := range members {
+		rows = append(rows, sprint.ReaderPrefix+m)
+	}
+	require.NoError(h.t, h.m.RowsAdd(h.ctx, h.st.Names.Table(sprint.Readers), rows))
+	h.mu.Lock()
+	h.membersRead = true
+	h.mu.Unlock()
+	h.beat()
 }
 
 func (h *harness) table() *sprint.Snapshot {
@@ -148,33 +253,19 @@ func (h *harness) through(ids ...string) {
 		h.must(TakeStep(sprint.TakeReq{As: c.Row, Sel: sprint.Sel{IDs: []string{c.ID}}, Gens: map[string]int{c.ID: c.Int("gen")}}))
 		h.must(FinishStep(sprint.FinishReq{Sel: sprint.Sel{IDs: []string{c.ID}}, Gens: map[string]int{c.ID: c.Int("gen")}}))
 	}
-	h.must(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: ids}}))
+	h.askReads()
 	for _, id := range ids {
 		h.readAllOK(id)
 	}
 	h.must(AcceptStep(sprint.AcceptReq{Sel: sprint.Sel{IDs: ids}}))
 }
 
-// readAllOK has every outstanding read of the primary say ok and, while it wants
-// another (its reads are asked one at a time, sprint.ReadsWanted), asks it and
-// has that one say ok too.
+// readAllOK cuts the primary's read cards (askReads) and has each say ok.
 func (h *harness) readAllOK(id string) {
 	h.t.Helper()
-	for {
-		s := h.snap()
-		for _, rc := range s.Readers.Of(id) {
-			if rc.Col == sprint.Asked || rc.Col == sprint.Reading {
-				h.must(ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: rc.F("reader"), Verdict: "ok", Sel: sprint.Sel{IDs: []string{rc.ID}}}))
-			}
-		}
-		s = h.snap()
-		pr := s.Work.Card(id)
-		if pr == nil || pr.Col != sprint.Review || sprint.ReadsWanted(s, pr) == 0 {
-			return
-		}
-		if res := h.run(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{id}}})); len(res.Refused) > 0 {
-			return
-		}
+	h.askReads()
+	for _, rc := range placedReadsOf(h.snap(), id) {
+		h.must(ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: rc.Row, Verdict: "ok", Sel: sprint.Sel{IDs: []string{rc.ID}}, Who: rc.Row}))
 	}
 }
 
@@ -533,7 +624,7 @@ func TestD7InboxThroughTheStore(t *testing.T) {
 	}
 	h.must(FinishStep(sprint.FinishReq{Sel: sprint.Sel{IDs: []string{"s1-1.w1"}}, Gens: map[string]int{"s1-1.w1": 1}, Failed: true}))
 	h.must(FinishStep(sprint.FinishReq{Sel: sprint.Sel{IDs: []string{"s1-2.w1"}}, Gens: map[string]int{"s1-2.w1": 1}}))
-	h.must(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-2"}}})) // asked: no move is due while STOPPED
+	h.askReads()
 	v, err := h.st.Inbox(h.ctx, time.Hour, 0, 1000)
 	require.NoError(t, err)
 	require.NoError(t, h.m.SetCursor(h.ctx, v.Last))

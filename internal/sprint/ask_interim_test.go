@@ -24,62 +24,14 @@ func spendSecond(w *world, primary string, attempt int, reader string) {
 		"retired": stamp(t0), "retired_by": "returned"}})
 }
 
-// Six readers free with room and two reads wanted, the round's name index holding one of
-// them: two are picked. The index walked alone gave one.
-func TestPickByRoomPicksFromTheFreeReaders(t *testing.T) {
-	t.Parallel()
-	free := []string{"reader-a", "reader-b", "reader-c", "reader-d", "reader-e", "reader-f"}
-	room := map[string]readerRoom{}
-	for _, rd := range free {
-		room[rd] = readerRoom{width: 2, free: 2}
-	}
-	r := newRound([]string{"reader-d"}, "")
-	got := r.pickByRoom(2, free, room)
-	require.Len(t, got, 2, "two reads wanted of six readers free: %v", got)
-	assert.Equal(t, "reader-d", got[0], "the index's name wins the tie")
-	assert.NotEqual(t, got[0], got[1], "two different readers")
-}
-
-// A read retired without a verdict (returned, levelled, held) leaves its reader askable at
-// the attempt again, under the second identity; a read closed with a verdict does not.
-func TestARetiredReadWithoutAVerdictLeavesTheReaderAskable(t *testing.T) {
-	t.Parallel()
-	for _, by := range []string{"returned", RetiredByLevel, RetiredByHold} {
-		t.Run(by, func(t *testing.T) {
-			t.Parallel()
-			w := setup(t, 1)
-			toReview(w, "s1-1")
-			rc := putRead(w, "s1-1", 1, "reader-a", "")
-			rc.Fields["retired"], rc.Fields["retired_by"] = stamp(t0), by
-			id, ok := ReadCardForAsk(w.s, "s1-1", 1, "reader-a")
-			assert.True(t, ok, "retired by %s with no verdict: reader-a is asked again", by)
-			assert.Equal(t, ReadCardSecondID("s1-1", 1, "reader-a"), id)
-			assert.Contains(t, w.s.freeReaders(w.s.Work.Card("s1-1"), 1), "reader-a")
-			spendSecond(w, "s1-1", 1, "reader-a")
-			_, ok = ReadCardForAsk(w.s, "s1-1", 1, "reader-a")
-			assert.False(t, ok, "once more only: the second identity is spent")
-		})
-	}
-	t.Run("a closed verdict", func(t *testing.T) {
-		t.Parallel()
-		w := setup(t, 1)
-		toReview(w, "s1-1")
-		rc := putRead(w, "s1-1", 1, "reader-a", "")
-		rc.Fields["retired"], rc.Fields["retired_by"], rc.Fields["verdict"] = stamp(t0), "read", "ok"
-		id, ok := ReadCardForAsk(w.s, "s1-1", 1, "reader-a")
-		assert.False(t, ok, "a read with a verdict spends its reader at the attempt")
-		assert.Equal(t, ReadCardID("s1-1", 1, "reader-a"), id)
-		assert.NotContains(t, w.s.freeReaders(w.s.Work.Card("s1-1"), 1), "reader-a")
-	})
-}
-
 // A pro card is read on flash while no enabled route serves pro and one serves flash (the
 // owner, 2026-10-06 7:11 PM ET: "let flash read pro"): its read card is drawn on a flash
 // route and records tier flash. With a pro route enabled it is read on pro, and with no
 // flash route either it stays pro.
 func TestAProCardIsReadOnFlashWhenNoProRouteIsEnabled(t *testing.T) {
 	t.Parallel()
-	w := setup(t, 1)
+	w := readCardsWorld(t, 4, "m1", "m2")
+	w.must(Add(w.s, AddReq{Brief: proBrief, Stream: "s1", Count: 1}))
 	w.s.Work.Card("s1-1").Fields[FieldTierNow] = cardhdr.RoutePro
 	toReview(w, "s1-1") // worked before the routes are read: the work's route is not the subject
 	w.s.Routes = []Route{
@@ -89,8 +41,8 @@ func TestAProCardIsReadOnFlashWhenNoProRouteIsEnabled(t *testing.T) {
 	readersReadEveryTier(w)
 	pr := w.s.Work.Card("s1-1")
 	require.Equal(t, cardhdr.RouteFlash, w.s.readTierOf(pr), "no pro route enabled: read on flash")
-	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-1"}}}))
-	reads := readsAt(w.s, pr, 1)
+	w.must(CutReadCards(w.s, nil))
+	reads := readCardsAt(w.s, pr, 1)
 	require.NotEmpty(t, reads, "the pro card is asked of a reader")
 	for _, rc := range reads {
 		assert.Equal(t, "flash-a", rc.F(FieldRoute), rc.ID)
@@ -126,9 +78,8 @@ func TestFleetOffDealsNoWorkToMachines(t *testing.T) {
 	p, _ = TickIdle(w.s, TickReq{IdleAlarm: true})
 	assert.Empty(t, p.Units, "no idle alarm while the fleet's work is off")
 
-	p, _ = TickAsk(w.s, TickReq{})
-	w.must(p)
-	assert.NotEmpty(t, readsAt(w.s, w.s.Work.Card("s1-1"), 1), "reads flow")
+	w.askReads()
+	assert.NotEmpty(t, readCardsAt(w.s, w.s.Work.Card("s1-1"), 1), "reads flow")
 
 	w.must(Set(w.s, SetReq{Fleet: SwitchOn, Who: "coordinator"}))
 	require.False(t, w.s.FleetOff())
@@ -185,7 +136,7 @@ func TestAHeavyCardIsReadOnPro(t *testing.T) {
 	w := newWorld(t, "reader-m1", "reader-m2")
 	w.must(FleetStep(w.s, FleetReq{Op: "up", Member: "m1"}))
 	w.must(FleetStep(w.s, FleetReq{Op: "up", Member: "m2"}))
-	johnny := FriendSeat{Name: "johnny", Width: 2, Status: Up, Tiers: []string{cardhdr.RouteHeavy}}
+	johnny := FriendSeat{Name: "johnny", Width: 2, Status: Up, Tiers: []string{cardhdr.RouteHeavy}, Roles: []string{RoleReader}}
 	w.s.Friends = []FriendSeat{johnny}
 	w.s.Routes = []Route{
 		{Name: "flash-a", Tier: cardhdr.RouteFlash, Provider: "p", Model: "f", Tokens: 1000, Enabled: true},
@@ -203,30 +154,9 @@ func TestAHeavyCardIsReadOnPro(t *testing.T) {
 
 	tickDealAndAsk(t, w, johnny)
 	require.NotNil(t, w.s.Fleet.Placed(ReadCardID("s1-1", 1, "johnny")), "the heavy friend is asked, at the tier before the collapse")
-	reads := readsAt(w.s, pr, 1)
-	require.Len(t, reads, 1, "in the same tick (reads together) the second read is asked of the fleet pro reader")
-	assert.Equal(t, "reader-m1", reads[0].F("reader"))
-	assert.Equal(t, "pro-a", reads[0].F(FieldRoute))
-	assert.Equal(t, cardhdr.RoutePro, reads[0].F(FieldTier))
-}
-
-// A card's reads are asked together (Glenn, 2026-10-06 6:02 PM ET: "send out multiple
-// consumer cards in ||"): a pro primary with two free readers is asked of both in one ask; a
-// read outstanding counts toward the two it needs; once a read finds it broken no more is asked.
-func TestACardsReadsAreAskedTogether(t *testing.T) {
-	t.Parallel()
-	w := setup(t, 2)
-	toReview(w, "s1-1", "s1-2")
-	pr := w.s.Work.Card("s1-1")
-	require.Equal(t, 2, ReadsWanted(w.s, pr), "both reads wanted at once")
-	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-1"}}}))
-	reads := readsAt(w.s, pr, 1)
-	require.Len(t, reads, 2, "two reads asked in one ask")
-	assert.NotEqual(t, reads[0].F("reader"), reads[1].F("reader"), "of two different readers")
-	assert.Equal(t, 0, ReadsWanted(w.s, pr), "outstanding reads count toward the two it needs")
-
-	other := w.s.Work.Card("s1-2")
-	rc := putRead(w, "s1-2", 1, "reader-a", Broken)
-	rc.Fields["verdict"] = "broken"
-	assert.Equal(t, 0, ReadsWanted(w.s, other), "a broken read stops the rest")
+	rc := w.s.Fleet.Placed(ReadCardID("s1-1", 1, "m1"))
+	require.NotNil(t, rc, "in the same deal (reads together) the second read card is the fleet pro reader's")
+	assert.Nil(t, w.s.Fleet.Placed(ReadCardID("s1-1", 1, "m2")), "m2 reads flash alone")
+	assert.Equal(t, "pro-a", rc.F(FieldRoute))
+	assert.Equal(t, cardhdr.RoutePro, rc.F(FieldTier))
 }

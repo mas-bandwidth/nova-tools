@@ -76,28 +76,28 @@ func (w *world) finish(t *testing.T, id string, failed bool) {
 		Failed: failed, Head: "h-" + id, Report: "boom", Who: "worker"}))
 }
 
-// ask asks the readers of the primary.
+// ask cuts the primary's read cards, as the tick's deal does (sprint.CutReadCards): the
+// world's readers are two friends, ra and rb, whose roles name reader alone, made the
+// first time (with the friends' work off, so the deal gives them no work card).
 func (w *world) ask(t *testing.T, id string) {
 	t.Helper()
-	w.must(t, sprint.Ask(w.s, sprint.AskReq{Sel: sprint.Sel{IDs: []string{id}}, Who: sprint.MachineActor}))
+	if len(w.s.Friends) == 0 {
+		for _, f := range []string{"ra", "rb"} {
+			w.s.Friends = append(w.s.Friends, sprint.FriendSeat{Name: f, Width: 16, Status: sprint.Up, Roles: []string{sprint.RoleReader}, Tiers: []string{"flash", "pro", "heavy", "frontier"}})
+			w.s.Fleet.SetRows(append(w.s.Fleet.Rows(), sprint.FriendRow(f)))
+		}
+		w.s.Work.SetProp(sprint.PropFriends, sprint.SwitchOff)
+	}
+	w.must(t, sprint.CutReadCards(w.s, nil))
 }
 
-// report has every reader asked of the primary say the verdict and, after an
-// ok, asks the next read the primary wants (reads are asked one at a time) and
-// has that reader say it too, until the primary wants no read.
+// report has every read card of the primary say the verdict.
 func (w *world) report(t *testing.T, id, verdict string) {
 	t.Helper()
-	for {
-		for _, rc := range w.s.Readers.Of(id) {
-			if rc.Col == sprint.Asked || rc.Col == sprint.Reading {
-				w.must(t, sprint.Read(w.s, sprint.ReadReq{As: rc.Row, Verdict: verdict, Finding: "f:1", Sel: sprint.Sel{IDs: []string{rc.ID}}, Who: rc.Row}))
-			}
+	for _, rc := range w.s.Fleet.Column(sprint.Ready, sprint.Working) {
+		if rc.F("kind") == "read" && rc.F("primary") == id {
+			w.must(t, sprint.Read(w.s, sprint.ReadReq{As: rc.Row, Verdict: verdict, Finding: "f:1", Sel: sprint.Sel{IDs: []string{rc.ID}}, Who: rc.Row}))
 		}
-		pr := w.s.Work.Card(id)
-		if verdict != "ok" || pr.Col != sprint.Review || sprint.ReadsWanted(w.s, pr) == 0 {
-			return
-		}
-		w.ask(t, id)
 	}
 }
 

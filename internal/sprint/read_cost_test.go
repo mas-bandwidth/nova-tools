@@ -23,11 +23,12 @@ import (
 var pricedRoute = Route{Name: "pro-a", Tier: cardhdr.RoutePro, Provider: "openrouter", Model: "vendor/m", Enabled: true,
 	Prices: cardcost.Prices{Input: "1", Output: "10", ReasoningAsOutput: true}}
 
-// routedReads is s1-1 finished with a priced take, in review, asked of two readers on
-// the route; it returns the two read cards.
+// routedReads is s1-1 finished with a priced take, in review, its two read cards cut on
+// the route for the two members that did not work it; it returns the two read cards.
 func routedReads(t *testing.T) (w *world, reads []*Card) {
 	t.Helper()
-	w = setup(t, 1)
+	w = readCardsWorld(t, 4, "m1", "m2", "m3")
+	w.must(Add(w.s, AddReq{Brief: proBrief, Stream: "s1", Count: 1}))
 	w.s.Routes = []Route{pricedRoute}
 	readersReadEveryTier(w) // a fleet row reads flash unless it says more (fleetReadsFlashOnly)
 	w.must(Deal(w.s, DealReq{Sel: Sel{IDs: []string{"s1-1"}}}))
@@ -36,8 +37,8 @@ func routedReads(t *testing.T) (w *world, reads []*Card) {
 	w.must(Take(w.s, TakeReq{As: c.Row, Sel: Sel{IDs: []string{c.ID}}, Gens: gensOf(w.s, c.ID)}))
 	// the take: 1,000,000 in and 100,000 out at the route's prices is $1 + $1 = $2
 	w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{c.ID}}, Gens: gensOf(w.s, c.ID), Report: "r", Usage: "input=1000000 output=100000"}))
-	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-1"}}})) // a card's reads are asked together: both in one ask
-	reads = readsAt(w.s, w.s.Work.Card("s1-1"), 1)
+	w.must(CutReadCards(w.s, nil))
+	reads = readCardsAt(w.s, w.s.Work.Card("s1-1"), 1)
 	require.Len(t, reads, 2)
 	for _, rc := range reads {
 		require.Equal(t, "pro-a", rc.F(FieldRoute), "the read is asked on the route")
@@ -63,15 +64,11 @@ func TestAReadWithoutUsageIsRefusedAndAPricedReadSumsIntoTheCard(t *testing.T) {
 	p := Read(w.s, ReadReq{As: a.Row, Verdict: "broken", Finding: "internal/x.go:3 is wrong: change it", Sel: Sel{IDs: []string{a.ID}}})
 	requireNothingPlanned(t, p, "a read on route pro-a is priced as work is")
 
-	// a return with no usage is still taken: a read that never ran has no tokens
-	// (the member's staging and launch refusals); begin needs none
-	w.must(Read(w.s, ReadReq{As: a.Row, Begin: true, Sel: Sel{IDs: []string{a.ID}}}))
-
 	// with usage the read is priced from the read card's route row, as a take is from its
 	// work card's: 500,000 in and 50,000 out is $0.5 + $0.5 = $1, whatever model the
 	// harness says it ran
 	w.must(Read(w.s, ReadReq{As: a.Row, Verdict: "ok", Usage: "input=500000 output=50000 model=opencode/other", Sel: Sel{IDs: []string{a.ID}}}))
-	got := cardcost.ParseUsage(w.s.Readers.Card(a.ID).F(FieldUsage))
+	got := cardcost.ParseUsage(w.s.Fleet.Card(a.ID).F(FieldUsage))
 	assert.Equal(t, "pro-a", got.Route)
 	assert.Equal(t, "1", got.Predicted)
 	assert.Equal(t, cardcost.CostPredicted, got.Present())
@@ -80,7 +77,7 @@ func TestAReadWithoutUsageIsRefusedAndAPricedReadSumsIntoTheCard(t *testing.T) {
 	// notional one its harness printed
 	w.must(Read(w.s, ReadReq{As: b.Row, Verdict: "ok", Usage: "input=200000 output=1000 actual_usd=0.9 actual_by=harness model=anthropic/claude " + UsageSubscription,
 		Sel: Sel{IDs: []string{b.ID}}}))
-	sub := cardcost.ParseUsage(w.s.Readers.Card(b.ID).F(FieldUsage))
+	sub := cardcost.ParseUsage(w.s.Fleet.Card(b.ID).F(FieldUsage))
 	assert.Equal(t, WhySubscription, sub.Unpriced)
 	assert.Empty(t, sub.Predicted)
 	assert.Empty(t, sub.Actual)
@@ -132,8 +129,8 @@ func TestAnUnroutedReadIsTakenWithoutUsage(t *testing.T) {
 	t.Parallel()
 	w := setup(t, 1)
 	finished(w, "s1-1", false)
-	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-1"}}}))
-	rc := readsAt(w.s, w.s.Work.Card("s1-1"), 1)[0]
+	w.askReads()
+	rc := readCardsAt(w.s, w.s.Work.Card("s1-1"), 1)[0]
 	require.Empty(t, rc.F(FieldRoute))
 	w.must(Read(w.s, ReadReq{As: rc.Row, Verdict: "ok", Sel: Sel{IDs: []string{rc.ID}}}))
 	assert.Equal(t, "", ReadUsageMissing(rc, "", "ok"))
@@ -150,7 +147,7 @@ func TestAFleetReadWithNoTokensKeepsItsVerdict(t *testing.T) {
 	a, b := reads[0], reads[1]
 	w.must(Read(w.s, ReadReq{As: a.Row, Verdict: "ok", Usage: "wall=3s budget=unmetered usage_source=none", Sel: Sel{IDs: []string{a.ID}}}))
 	w.must(Read(w.s, ReadReq{As: b.Row, Verdict: "broken", Finding: "internal/x.go:3 is wrong: change it", Usage: "usage_source=none", Sel: Sel{IDs: []string{b.ID}}}))
-	ra, rb := w.s.Readers.Card(a.ID), w.s.Readers.Card(b.ID)
+	ra, rb := w.s.Fleet.Card(a.ID), w.s.Fleet.Card(b.ID)
 	assert.Equal(t, "ok", ra.F("verdict"), "the verdict is kept")
 	assert.Equal(t, "broken", rb.F("verdict"), "the verdict is kept")
 	for _, rc := range []*Card{ra, rb} {

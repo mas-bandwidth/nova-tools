@@ -92,8 +92,9 @@ func TestCRResolveThatLosesToOtherWritersIsNeverRetried(t *testing.T) {
 	require.NotEqual(t, sprint.Waiting, h.state("b"), "STALL: b is waiting with its need a landed; no judgment; the tick recorded the landing as seen")
 }
 
-// PROBE D1: the deadlines read stamps "dealt" (work card in ready), "asked"
-// and "begun" (read cards). Nothing writes them.
+// PROBE D1: the deadline reads the stamp "dealt" (a work card in ready): a card
+// dealt and never taken is judged late. A read card's deadlines take it back
+// (sprint read_cards.go, readCardsTakeBack) and judge nothing.
 func TestCRDeadlinesThatNeverFire(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
@@ -103,27 +104,7 @@ func TestCRDeadlinesThatNeverFire(t *testing.T) {
 	h.tick(sprint.DealtMaxDefault + time.Hour)
 	h.crTicks(2, "untaken")
 	assert.NotEqual(t, 0, h.written(sprint.NWorkLate), "MISSING: a work card dealt 7h ago and never taken raised nothing")
-	// readers: finish both, the tick asks, nobody begins
-	h.work("m1")
-	h.work("m2")
-	h.machine()
-	h.tick(3 * time.Hour)
-	h.crTicks(2, "unbegun")
-	assert.NotEqual(t, 0, h.written(sprint.NReadLate), "MISSING: read cards asked 3h ago and never begun raised nothing")
-	// begin and never report
-	for _, r := range []string{"reader-a", "reader-b", "reader-c"} {
-		h.run(ReadStep(sprint.ReadReq{As: r, Begin: true, Sel: sprint.Sel{Limit: 100}, Who: r}))
-	}
-	h.tick(5 * time.Hour)
-	h.crTicks(2, "unreported")
-	assert.NotEqual(t, 0, h.written(sprint.NReadLate), "MISSING: read cards begun 5h ago and never reported raised nothing")
-	s := h.snap()
-	for _, c := range s.Readers.Column(sprint.Reading) {
-		t.Logf("read card %s fields: %v", c.ID, c.Fields)
-	}
-	for _, c := range s.Fleet.Column(sprint.Done) {
-		t.Logf("work card %s fields: %v", c.ID, c.Fields)
-	}
+
 }
 
 // PROBE A2: a primary with two ok reads is accepted by the machine ("accept is
@@ -273,39 +254,6 @@ func TestCRThousandReadyThreeMembers(t *testing.T) {
 		}
 	}
 	h.clean("thousand")
-}
-
-// PROBE 4: fewer than two readers, then one added: asked without a verb.
-func TestCROneReaderThenTwo(t *testing.T) {
-	t.Parallel()
-	h := &harness{t: t, m: NewMem(), ctx: context.Background(), now: t0, live: []string{"m1"}}
-	n := 0
-	h.st = &Store{B: h.m, Names: sprint.Names{Prefix: "t-"}, Actor: "tester",
-		Now: func() time.Time { h.mu.Lock(); defer h.mu.Unlock(); return h.now }, NewID: func() string { n++; return fmt.Sprint(n) }, Sleep: func(time.Duration) {}}
-	require.NoError(t, h.st.Init(h.ctx))
-	h.beat()
-	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m1"}))
-	h.must(AddStep(sprint.AddReq{Brief: proBrief, Stream: "s1", Count: 3}))
-	h.startMachine()
-	h.machine()
-	h.work("m1")
-	h.crTicks(3, "no readers")
-	got := len(h.openOf(sprint.NFewReaders))
-	require.Equal(t, 1, got, "fewer than two readers up: open %d, want 1 (one judgment for the three dealt in one tick, at m1's width)", got)
-	w := h.written(sprint.NFewReaders)
-	require.NoError(t, h.m.RowsAdd(h.ctx, "t-readers", []string{"reader-a"}))
-	h.beat()
-	h.crTicks(3, "one reader")
-	t.Logf("few-readers written %d then %d after the first reader (the why text changes 0 free -> 1 free)", w, h.written(sprint.NFewReaders))
-	require.NoError(t, h.m.RowsAdd(h.ctx, "t-readers", []string{"reader-b"}))
-	h.beat()
-	h.crTicks(2, "two readers")
-	got = len(h.openOf(sprint.NFewReaders))
-	require.Equal(t, 0, got, "still open %d", got)
-	s := h.snap()
-	for _, c := range s.Work.Column(sprint.Review) {
-		require.Len(t, s.Readers.Of(c.ID), 2, "%s asked of %d (both reads together)", c.ID, len(s.Readers.Of(c.ID)))
-	}
 }
 
 // PROBE 9: the idle cost.

@@ -34,7 +34,7 @@ func (h *harness) toReview() {
 	c := h.snap().Fleet.Card("s1-1.w1")
 	h.must(TakeStep(sprint.TakeReq{As: c.Row, Sel: sprint.Sel{IDs: []string{c.ID}}, Gens: map[string]int{c.ID: 1}}))
 	h.must(FinishStep(sprint.FinishReq{Sel: sprint.Sel{IDs: []string{c.ID}}, Gens: map[string]int{c.ID: 1}}))
-	h.must(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
+	h.askReads()
 }
 
 // M1: deal, take, finish ok, ask, its CI red at its head (acknowledged: the
@@ -160,25 +160,6 @@ func TestModelNoMemberJudgmentAfterAClear(t *testing.T) {
 		require.Failf(t, "", "after the clear: open %+v, p3 %s", open, h.state("p3"))
 	}
 	h.clean("M2")
-}
-
-// M3: ask --another before the first ask of the primary is refused, naming
-// ask (or the tick) as what asks first.
-func TestModelAskAnotherBeforeTheFirstAsk(t *testing.T) {
-	t.Parallel()
-	h := newHarness(t)
-	h.setup(1)
-	h.must(DealStep(sprint.DealReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
-	c := h.snap().Fleet.Card("s1-1.w1")
-	h.must(TakeStep(sprint.TakeReq{As: c.Row, Sel: sprint.Sel{IDs: []string{c.ID}}, Gens: map[string]int{c.ID: 1}}))
-	h.must(FinishStep(sprint.FinishReq{Sel: sprint.Sel{IDs: []string{c.ID}}, Gens: map[string]int{c.ID: 1}}))
-	res := h.run(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Another: true}))
-	require.Empty(t, res.Moved, "ask --another before the first ask: %+v", res)
-	require.Len(t, res.Refused, 1, "ask --another before the first ask: %+v", res)
-	require.Contains(t, res.Refused[0].Why, "nova-sprint ask s1-1", "ask --another before the first ask: %+v", res)
-	require.Contains(t, res.Refused[0].Why, "tick", "ask --another before the first ask: %+v", res)
-	n := len(h.snap().Readers.Of("s1-1"))
-	require.Equal(t, 0, n, "asked of %d readers", n)
 }
 
 // orphanInMerging is s1-1 merging with no merge card (a repair skipped the

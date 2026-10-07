@@ -140,18 +140,24 @@ func TestInboxPrintsTheBriefDecisionTheVerbRuns(t *testing.T) {
 	assert.Equal(t, sprint.Ready, ta.primary("s1-1").Col)
 }
 
-// readersOf is the readers table's read cards on the primary still placed.
+// readersOf is the primary's read cards placed on the fleet table.
 func (ta *testApp) readersOf(id string) []*sprint.Card {
 	ta.t.Helper()
 	st, err := ta.a.store(common{redis: "mem:0", actor: "tester"})
 	require.NoError(ta.t, err)
-	s, err := st.Load(context.Background(), []string{sprint.Readers}, nil)
+	s, err := st.Load(context.Background(), []string{sprint.Fleet}, nil)
 	require.NoError(ta.t, err)
-	return s.Readers.Of(id)
+	var out []*sprint.Card
+	for _, c := range s.Fleet.Column(sprint.Ready, sprint.Working) {
+		if c.F("kind") == "read" && c.F("primary") == id {
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 // A card in review whose attempt pushed a head and whose read is open takes a brief in
-// place: the readers table's read is retired with the edit, and the next attempt is staged
+// place: its read card is retired with the edit, and the next attempt is staged
 // from that pushed head (BaseOf, the rework's carry), the same id.
 func TestBriefRetiresItsReadsAndCarriesThePushedHead(t *testing.T) {
 	t.Parallel()
@@ -161,7 +167,7 @@ func TestBriefRetiresItsReadsAndCarriesThePushedHead(t *testing.T) {
 	ta.deal(1)
 	ta.ok("take --as m1 s1-1.w1@1")
 	ta.ok("finish --as m1 s1-1.w1@1 --head " + landHead + " --report done")
-	ta.ok("ask s1-1")
+	ta.cutReads()
 	require.NotEmpty(t, ta.readersOf("s1-1"), "a read is open at the edit")
 
 	out := ta.ok("brief s1-1 --brief-file " + writeNeedsBrief(t, t.TempDir(), "s1-1", "the new work", ""))

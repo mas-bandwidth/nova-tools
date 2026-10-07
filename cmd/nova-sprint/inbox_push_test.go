@@ -246,7 +246,6 @@ func TestInboxPushThroughTheServerWritesTheGroupWhole(t *testing.T) {
 		waited = waited.Add(d)
 		switch polls++; polls {
 		case 2:
-			r.boss("nova-sprint reader away reader-a") // fewer than two readers up: a judgment at the tick
 			r.boss("nova-sprint tick")
 		case 4:
 			stop()
@@ -266,7 +265,7 @@ func TestInboxPushThroughTheServerWritesTheGroupWhole(t *testing.T) {
 	assert.Equal(t, "INBOX OK pushed="+id+" file="+path+"\n", out, "one push, said once")
 	file, err := os.ReadFile(path)
 	require.NoError(t, err)
-	assert.Contains(t, string(file), "JUDGMENT "+id+" ! fewer than two readers up", string(file))
-	assert.Contains(t, string(file), "\n  wait:\n    nova-sprint wait "+id+" --for 30m\n  notes: "+id+"\nclock: ", string(file))
+	assert.Contains(t, string(file), "JUDGMENT "+id+" ! cannot ask", string(file)) // the card in review drained by the tick, and no reader of its tier
+	assert.Contains(t, string(file), "\n  wait:\n    nova-sprint wait "+id+" --for 30m\n  s1-1\n  notes: "+id+"\nclock: ", string(file))
 	assert.Contains(t, sent, []string{"inbox", "--actor", "boss", "--json", "--open", id}, "the group was read whole through the server: %v", sent)
 }

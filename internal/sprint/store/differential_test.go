@@ -81,6 +81,13 @@ var dKnown = []dKnownDiff{
 		a := f.Seq[len(f.Seq)-1]
 		return a.Kind == "add" && a.Sentinel && f.Kind == "state" && strings.Contains(f.Sig(), "primary.state=ready/waiting")
 	}},
+	// ENGINE or MODEL, found 2026-10-06 when the old ask left the generator (its draws
+	// moved), and reachable on the code before it (replayed on the base): a sentinel added
+	// behind cards taken after it was added is released by the engine (it lands, waiving
+	// them) and refused by the model (not reached). Owed: which one section 16 means.
+	{"ENGINE/MODEL release of a sentinel whose cards before it were taken after it was added", func(f dFinding) bool {
+		return f.Kind == "refusal" && f.Seq[len(f.Seq)-1].Kind == "release" && strings.Contains(f.Detail, "is not a reached sentinel")
+	}},
 	// MODEL (or SPEC). NoNeedCycle and Add's guard judge cycles over every
 	// primary admitted, dropped ones included; the engine judges them over
 	// the primaries on the table, so a chain through a dropped card (whose

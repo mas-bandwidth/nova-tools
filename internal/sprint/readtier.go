@@ -115,6 +115,14 @@ func RaiseReadTier(s *Snapshot, stream string) (ReadTierRaise, bool) {
 				brokens = append(brokens, rc.Row)
 			}
 		}
+		// the read cards closed at the attempt, by their reader
+		_, fok, fbr := friendReadLive(s, c)
+		for _, rc := range fok {
+			oks = append(oks, rc.F("reader"))
+		}
+		for _, rc := range fbr {
+			brokens = append(brokens, rc.F("reader"))
+		}
 		at := s.readTierOf(c)
 		switch {
 		case len(oks) > 0 && len(brokens) > 0:

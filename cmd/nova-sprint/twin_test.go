@@ -94,7 +94,7 @@ func TestTheTwinRefusesWhatWaitsForAMachine(t *testing.T) {
 func TestASnapshotRestoredIsTheStoreItWas(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
-	ta.live = []string{"m1"}
+	ta.live = []string{"m1", "m2"} // m2 reads what m1 works
 	for _, line := range twinSteps {
 		ta.ok(strings.TrimPrefix(line, prog+" "))
 		doc, err := ta.m.Snapshot()

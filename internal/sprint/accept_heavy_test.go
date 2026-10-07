@@ -44,6 +44,7 @@ func newHeavyRig(t *testing.T) *conflictRig {
 		{Name: "pro-a", Tier: "pro", Provider: "prov-pro-a", Model: "model-pro-a", Tokens: 1000, Deadline: conflictRouteSeconds, Enabled: true},
 	})
 	r.beat()
+	friendReaders(t, r.st, r.ctx)
 	r.must(store.FleetStep(sprint.FleetReq{Op: "up", Member: "m1", Width: 4}))
 	r.must(store.FleetStep(sprint.FleetReq{Op: "up", Member: "m2", Width: 4}))
 	r.must(store.AddStep(sprint.AddReq{Stream: "s1", Count: 1, Brief: "c: the work (s1) tier: pro\nREPO: mas-bandwidth/nova-tools\n\nThe task.\n"}))
@@ -64,20 +65,19 @@ func (r *conflictRig) toSplitReads(id string) (ok, broken *sprint.Card) {
 	wc = r.snap().Fleet.Card(wc.ID)
 	r.must(store.FinishStep(sprint.FinishReq{Sel: sprint.Sel{IDs: []string{wc.ID}}, Gens: map[string]int{wc.ID: wc.Int("gen")}}))
 	require.Equal(r.t, 2, sprint.ReadsNeeded(r.snap().Work.Card(id)), "a pro card needs two reads")
-	r.must(store.AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{id}}}))
+	cutReads(r.t, r.st, r.ctx)
 	verdicts := []string{"ok", "broken"}
-	for _, rc := range r.snap().Readers.Of(id) {
-		if rc.Col != sprint.Asked && rc.Col != sprint.Reading {
-			continue
-		}
+	for _, rc := range placedReadCards(r.snap(), id) {
 		require.NotEmpty(r.t, verdicts, "two reads asked, no more")
 		verdict := verdicts[0]
 		verdicts = verdicts[1:]
 		r.must(store.ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: rc.Row, Verdict: verdict, Finding: "f:1 the model trailer is wrong", Sel: sprint.Sel{IDs: []string{rc.ID}}}))
+		recs, err := r.st.Records(r.ctx, sprint.Fleet, []string{rc.ID})
+		require.NoError(r.t, err)
 		if verdict == "ok" {
-			ok = r.snap().Readers.Card(rc.ID)
+			ok = recs[0]
 		} else {
-			broken = r.snap().Readers.Card(rc.ID)
+			broken = recs[0]
 		}
 	}
 	require.NotNil(r.t, ok)
@@ -98,7 +98,6 @@ func TestAcceptHeavyRecordsTheCoordinatorsReadNotAReaders(t *testing.T) {
 	r := newHeavyRig(t)
 	id := "s1-1"
 	ok, broken := r.toSplitReads(id)
-	readersBefore := r.snap().Readers.Of(id)
 
 	refused := func(req sprint.AcceptReq) string {
 		t.Helper()
@@ -122,7 +121,7 @@ func TestAcceptHeavyRecordsTheCoordinatorsReadNotAReaders(t *testing.T) {
 
 	t.Run("the card is accepted on one reader ok and the coordinator heavy read", func(t *testing.T) {
 		assert.Equal(t, sprint.Merging, pr.Col)
-		assert.Equal(t, ok.Row, pr.F("readers"), "readers names the readers' oks alone")
+		assert.Equal(t, ok.F("reader"), pr.F("readers"), "readers names the readers' oks alone")
 	})
 	t.Run("the card shows the coordinator verdict with its evidence", func(t *testing.T) {
 		assert.Equal(t, "coordinator:coordinator", pr.F(sprint.FieldHeavyReader))
@@ -136,18 +135,16 @@ func TestAcceptHeavyRecordsTheCoordinatorsReadNotAReaders(t *testing.T) {
 	})
 	t.Run("the broken read stays, marked overruled by the coordinator heavy read", func(t *testing.T) {
 		assert.Equal(t, broken.ID, pr.F(sprint.FieldHeavyOverrules))
-		assert.Equal(t, sprint.Broken, s.Readers.Card(broken.ID).Col, "the reader's verdict is its own")
-		assert.Equal(t, broken.Rev, s.Readers.Card(broken.ID).Rev)
+		recs, err := r.st.Records(r.ctx, sprint.Fleet, []string{broken.ID})
+		require.NoError(t, err)
+		require.Len(t, recs, 1)
+		assert.Equal(t, "broken", recs[0].F("verdict"), "the reader's verdict is its own")
+		assert.Equal(t, broken.Rev, recs[0].Rev)
 	})
-	t.Run("no reader row is forged", func(t *testing.T) {
-		after := s.Readers.Of(id)
-		require.Len(t, after, len(readersBefore))
-		for i, c := range after {
-			assert.Equal(t, readersBefore[i].ID, c.ID)
-			assert.Equal(t, readersBefore[i].Col, c.Col)
+	t.Run("no reader card is forged", func(t *testing.T) {
+		for _, c := range r.snap().Fleet.Cards() {
 			assert.NotContains(t, c.F("reader"), "coordinator")
 		}
-		assert.Equal(t, []string{"reader-a", "reader-b", "reader-c"}, s.Readers.Rows())
 	})
 	t.Run("a card not in review is refused", func(t *testing.T) {
 		assert.Contains(t, refused(heavy(id, "/evidence/read.md", sha)), "merging")

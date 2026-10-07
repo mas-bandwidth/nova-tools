@@ -31,7 +31,6 @@ const (
 // The tick parts of these rules (TickRules).
 const (
 	PartRuleTake = "rule take"
-	PartRuleAsk  = "rule ask"
 	PartRuleNeed = "rule need"
 )
 
@@ -62,43 +61,6 @@ func ruleFriendTake(s *Snapshot, r TickReq, a *RuleAnswer, wc *Card) {
 	}
 	a.Act, a.from = ActTake, friend
 	a.Why = fmt.Sprintf("friend %s has not started %s past its bound (%s): taken back and dealt again, never to her", friend, wc.ID, wc.Col)
-}
-
-// ruleReadLate: a read card past its deadline (asked and not begun, or begun and not
-// reported) of the primary's live attempt. Its reader's read is taken back and asked of one
-// other reader (ask --instead), once an attempt (FieldRuleReread); the second late read of
-// the attempt, and one no other reader can take, are a mind's. A read handed back with no
-// verdict needs no rule: the ask places it again itself (Ask, returnedRead).
-func ruleReadLate(s *Snapshot, a *RuleAnswer) {
-	a.Rule = RuleReadLate
-	rc := s.Readers.Placed(a.open.Note.Card)
-	if rc == nil || rc.Col != Asked && rc.Col != Reading {
-		left(a, "the read card moved")
-		return
-	}
-	pr := s.Work.Placed(rc.F("primary"))
-	switch {
-	case pr == nil || pr.Col != Review || rc.Int("attempt") != pr.Int("attempt"):
-		left(a, "not a read of the primary's attempt in review")
-		return
-	case pr.F(FieldBriefDefect) != "":
-		left(a, mindCard(pr))
-		return
-	case pr.F(FieldRuleReread) == pr.F("attempt"):
-		left(a, "another reader was asked once at attempt "+pr.F("attempt")+" already: a mind's")
-		return
-	}
-	if p := Ask(s, AskReq{Sel: Sel{IDs: []string{pr.ID}}, Instead: rc.F("reader")}); len(p.Refused) > 0 || len(p.Units) == 0 {
-		why := "the ask placed nothing"
-		if len(p.Refused) > 0 {
-			why = p.Refused[0].Why
-		}
-		left(a, "no other reader can take it: "+why)
-		return
-	}
-	a.Card, a.Act, a.from = pr.ID, ActAsk, rc.F("reader")
-	a.Why = fmt.Sprintf("%s's read of attempt %s is past its deadline (%s): taken back and asked of another reader, once an attempt", rc.F("reader"), pr.F("attempt"), rc.Col)
-	a.set = map[string]string{FieldRuleReread: pr.F("attempt")}
 }
 
 // holdsFor is the card the primary's failed work HOLDs for: the one the hold-need rule
@@ -239,27 +201,6 @@ func TickRuleTake(s *Snapshot, r TickReq) (Plan, int) {
 		p.Rows = append(p.Rows, q.Rows...)
 	}
 	return p, 0
-}
-
-// TickRuleAsk asks another reader for the first late read the read-late rule answers: one a
-// tick, as the ask's round index is written with each ask; the next tick asks the next.
-func TickRuleAsk(s *Snapshot, r TickReq) (Plan, int) {
-	for _, a := range acting(s, r, ActAsk) {
-		p := Ask(s, AskReq{Sel: Sel{IDs: []string{a.Card}}, Instead: a.from, Who: r.who()})
-		if len(p.Refused) > 0 || len(p.Units) == 0 {
-			continue
-		}
-		said := RuleSaid(RuleReadLate, a.Act+": "+a.Why)
-		set := ruleAnswerSet(a, s.Now)
-		maps.Copy(set, a.set)
-		setOn(&p, s, Work, a.Card, a.Card, set)
-		u := &p.Units[0]
-		u.Closes = append(u.Closes, a.open)
-		u.Notes = append(u.Notes, decided(a.open, said, r.who(), s.Now, a.Subject))
-		u.Moved += "; answered by rule " + RuleReadLate
-		return p, 0
-	}
-	return Plan{}, 0
 }
 
 // TickRuleNeed records, once an attempt, the card a HOLD waits for: FieldRuleNeed on the

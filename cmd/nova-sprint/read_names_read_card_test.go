@@ -8,8 +8,7 @@ import (
 
 // A read names its read card; a reader that names the primary instead is
 // refused naming the read card it holds for that primary
-// (<primary>.r<attempt>.<reader>), asked or begun, so the next call is a
-// paste. A name that is no card at all is refused as before.
+// (<primary>.r<attempt>.<reader>), so the next call is a paste. A name that is no card at all is refused as before.
 func TestAReadOfAPrimaryNamesTheReadCard(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
@@ -19,11 +18,10 @@ func TestAReadOfAPrimaryNamesTheReadCard(t *testing.T) {
 	ta.ok("tick")
 	ta.ok("take --as m1")
 	ta.ok("finish --as m1 s1-1.w1@1 --report done")
-	ta.ok("tick") // the pair: a card's reads are asked together
-	ta.ok("read --as reader-b --begin")
+	ta.cutReads() // the pair: a pro card's two read cards, cut together
 	for _, row := range []struct{ line, reader string }{
-		{"read --as reader-a --ok s1-1", "reader-a"}, // asked
-		{"read --as reader-b --ok s1-1", "reader-b"}, // reading
+		{"read --as reader-a --ok s1-1", "reader-a"},
+		{"read --as reader-b --ok s1-1", "reader-b"},
 	} {
 		code, _, errs := ta.do(row.line)
 		assert.Equal(t, 1, code, row.line)

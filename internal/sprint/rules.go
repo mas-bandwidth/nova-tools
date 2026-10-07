@@ -34,7 +34,10 @@ const (
 	RuleFriendTake  = "friend-take"  // a friend's work card past its bound that she has not started: taken back, dealt again (judgment_rules.go)
 	RuleHoldNeed    = "hold-need"    // failed work whose report HOLDs naming a card that has not landed: waits for it, reworked once it lands (judgment_rules.go)
 	RuleLate        = "late"         // a work card past its deadline: a wait once with progress; returned and redealt only once its holder stamped and went silent
-	RuleReadLate    = "read-late"    // a read past its deadline: taken back and asked of another reader, once an attempt (judgment_rules.go)
+	// RuleReadLate answers nothing: a read card past its deadline is taken back and dealt
+	// again by the deal itself (read_cards.go). The name stays, as nova-config's
+	// answer_rules_off enum names it, so a row that turns it off still reads.
+	RuleReadLate = "read-late"
 	// RulePaths: a failed attempt whose report proposes PATHS (PATHS-PROPOSED): its widened
 	// twin, or one judgment with the twin's command when a proposed file is shared
 	// (paths_proposed.go). Not in RuleNames: nova-config's answer_rules_off enum
@@ -145,7 +148,6 @@ const (
 	ActResume = "resume"                    // the stream again, its conflict card out
 	ActMark   = "mark brief defect"         // the card marked, the judgment kept
 	ActTake   = "take back and deal again"  // the friend's card she has not started withdrawn from her row, dealt to another
-	ActAsk    = "ask another reader"        // the late read taken back, asked of another reader
 	ActNeed   = "wait for the card"         // the HOLD's card has not landed: the judgment waits on it
 	ActLeft   = "left"                      // the judgment needs a mind
 	ActOff    = "off"                       // its rule is turned off
@@ -177,7 +179,7 @@ type RuleAnswer struct {
 	fix   string
 	files []string // the files outside PATHS a twin widens them by (ruleReadBroken)
 	twin  string   // the twin's id (ActTwinWider)
-	from  string   // the friend a card is taken back from (ActTake), the reader a read is taken back from (ActAsk)
+	from  string   // the friend a card is taken back from (ActTake)
 	set   map[string]string
 	until time.Time
 	open  Open
@@ -230,8 +232,6 @@ func ruleByType(s *Snapshot, r TickReq, a *RuleAnswer) {
 		ruleBrief(s, a)
 	case NReadBroken:
 		ruleReadBroken(s, a)
-	case NReadLate:
-		ruleReadLate(s, a)
 	case NBaseRed:
 		ruleBaseGate(s, a)
 	default:
@@ -585,7 +585,6 @@ var TickRules = []TickPartDef{
 	{PartRuleRework, TickRuleRework},
 	{PartRuleLate, TickRuleLate},
 	{PartRuleTake, TickRuleTake},
-	{PartRuleAsk, TickRuleAsk},
 	{PartRuleNeed, TickRuleNeed},
 	{PartRuleBrief, TickRuleBrief},
 }

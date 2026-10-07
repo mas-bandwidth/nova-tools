@@ -42,7 +42,7 @@ func TestTheWhereRecordCountsTiersAndCostsByTier(t *testing.T) {
 	g := map[string]int{wc.ID: wc.Int("gen")}
 	h.must(TakeStep(sprint.TakeReq{As: wc.Row, Sel: sprint.Sel{IDs: []string{wc.ID}}, Gens: g}))
 	h.must(FinishStep(sprint.FinishReq{As: wc.Row, Sel: sprint.Sel{IDs: []string{wc.ID}}, Gens: g, Head: "h3", Usage: "input=1 actual_usd=2 actual_by=harness"}))
-	h.must(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-f"}}}))
+	h.askReads()
 	h.readAllOK("s1-f")
 	h.must(AcceptStep(sprint.AcceptReq{Sel: sprint.Sel{IDs: []string{"s1-f"}}}))
 	h.must(MergeStep(sprint.MergeReq{Stream: "s1", Batch: 10}))

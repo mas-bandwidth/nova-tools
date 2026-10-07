@@ -41,24 +41,22 @@ func TestTheCardCarriesEveryConsumerWhoeverIsRemoved(t *testing.T) {
 	ta.ok("finish --as m1 s1-1.w2@1" + use("0.004"))
 
 	// the reads: one handed back by its reader, asked of another, then two ok
-	ta.ok("ask")
+	ta.cutReads()
 	var asked []string
 	for _, rd := range []string{"reader-a", "reader-b", "reader-c"} {
-		if code, _, _ := ta.do("read --as " + rd + " --begin s1-1.r2." + rd); code == 0 {
+		if len(ta.askedOf(rd)) > 0 {
 			asked = append(asked, rd)
 		}
 	}
 	require.Len(t, asked, 2)
 	gone := asked[0]
 	ta.ok("read --as " + gone + " --return s1-1.r2." + gone + " --reason 'no verdict'" + use("0.0008"))
-	ta.ok("ask")
+	ta.cutReads()
 	for _, rd := range []string{"reader-a", "reader-b", "reader-c"} {
 		if rd != gone {
 			ta.ok("read --as " + rd + " --ok s1-1.r2." + rd + use("0.0001"))
 		}
 	}
-	// the reader that returned its read leaves the readers table: its read's cost stays in the card
-	ta.ok("reader remove " + gone)
 
 	out := ta.ok("card s1-1")
 	lines := costLines(out)
@@ -72,7 +70,7 @@ func TestTheCardCarriesEveryConsumerWhoeverIsRemoved(t *testing.T) {
 		}
 	}
 	assert.ElementsMatch(t, []string{"provider-failure", "failed", "ok", "returned", "ok", "ok"}, ends)
-	assert.Contains(t, out, "who="+gone+" ", "the removed reader's read is in the card")
+	assert.Contains(t, out, "who="+gone+" ", "the returned read is in the card")
 	// 0.001 + 0.002 + 0.004 + 0.0008 + 0.0001 + 0.0001
 	assert.Contains(t, lines[6], "COST TOTAL consumers=6 input=60 ")
 	assert.Contains(t, lines[6], "actual_usd=0.008 actual_by=harness actual_of=6/6 charged_usd=0.008")

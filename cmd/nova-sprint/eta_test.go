@@ -180,7 +180,7 @@ func TestTheViewHoldsTheLargestETAOfTheLastTenSeconds(t *testing.T) {
 func TestTheETAIsRecomputedOnTheTickAfterAnAddADropOrARelease(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
-	ta.ok("init --readers reader-a,reader-b,reader-c --members m1,m2")
+	ta.ok("init --readers reader-m1,reader-m2 --members m1,m2")
 	ta.ok("add --stream s1 --count 30")
 	ta.ok("start")
 	var w whereView
@@ -258,7 +258,7 @@ func TestTheETAIsRecomputedOnTheTickAfterAnAddADropOrARelease(t *testing.T) {
 func TestWhereKeepsTheWholeSprintAverageWhenTheLandedStampsFailToRead(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
-	ta.ok("init --readers reader-a,reader-b,reader-c --members m1,m2")
+	ta.ok("init --readers reader-m1,reader-m2 --members m1,m2")
 	ta.ok("add --stream s1 --count 30")
 	ta.ok("start")
 	var w whereView

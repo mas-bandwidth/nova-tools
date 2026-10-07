@@ -143,10 +143,15 @@ func TestMachineCoverTick(t *testing.T) {
 			wantErr: true, errWant: "not the next member round the fleet", errChoice: true,
 			cell: Ready, machine: Running,
 		},
-		"the ask's bad choice is refused by the tick": {
-			s:       func() State { s := mcWorked(mcSprint(), "p1"); s.Machine = Running; return s }(),
-			ch:      TickChoices{Ask: map[string][]string{"p1": {"r1", "r1"}}},
-			wantErr: true, errWant: "not the next 2 round the readers", errChoice: true,
+		"the read cards' bad choice is refused by the tick": {
+			s: func() State {
+				s := mcWorked(mcSprint(), "p1")
+				s.Machine, s.Members["m2"], s.Members["m3"] = Running, Up, Up
+				s.Order, s.Readers = []string{"m1", "m2", "m3"}, []string{"m1", "m2", "m3"}
+				return s
+			}(),
+			ch:      TickChoices{Ask: map[string][]string{"p1": {"m2", "m2"}}},
+			wantErr: true, errWant: "not 2 different readers", errChoice: true,
 			cell: Review, machine: Running,
 		},
 	} {
@@ -460,78 +465,6 @@ func TestMachineCoverTickDeal(t *testing.T) {
 	}
 }
 
-// TestMachineCoverTickAsk covers tickAsk (machine.go), T2: a primary in
-// review with no read card and work that did not fail is asked both its reads
-// at once (ReadsWanted, reads together: the interim rule of 2026-10-06), of the
-// least loaded readers (AskChoice), and the named pair is asked when it is the
-// ask's choice; the refusals are one read named alone and one reader twice,
-// answered with a *ChoiceError and no read card. A card with a live read is
-// asked the rest; a card whose work came back failed is passed over.
-func TestMachineCoverTickAsk(t *testing.T) {
-	t.Parallel()
-	failed := func() State {
-		s := mcWorked(coverState(), "p1")
-		w := s.Work[WC("p1", 1)]
-		w.OK = "failed"
-		s.Work[WC("p1", 1)] = w
-		return s
-	}
-	live := func() State {
-		s := mcWorked(coverState(), "p1")
-		coverRead(&s, "p1", 1, "r3", Asked)
-		return s
-	}
-	for name, tc := range map[string]struct {
-		s       State
-		choice  map[string][]string
-		wantErr bool
-		asked   int // read cards left asked
-	}{
-		"a primary in review is asked both its reads at once, of the least loaded readers": {
-			s: mcWorked(coverState(), "p1"), asked: 2,
-		},
-		"the named pair is asked": {
-			s: mcWorked(coverState(), "p1"), choice: map[string][]string{"p1": {"r2", "r1"}}, asked: 2,
-		},
-		"one read named alone is refused: the reads are asked together": {
-			s: mcWorked(coverState(), "p1"), choice: map[string][]string{"p1": {"r1"}}, wantErr: true, asked: 0,
-		},
-		"a pair of one reader twice is refused": {
-			s: mcWorked(coverState(), "p1"), choice: map[string][]string{"p1": {"r1", "r1"}}, wantErr: true, asked: 0,
-		},
-		"a card with a live read is asked the rest": {
-			s: live(), asked: 2,
-		},
-		"failed work is not asked": {
-			s: failed(), asked: 0,
-		},
-	} {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-			n := tc.s.Clone()
-			err := n.tickAsk(tc.choice)
-			if tc.wantErr {
-				assert.Error(t, err)
-				assert.ErrorAs(t, err, new(*ChoiceError))
-			} else {
-				assert.NoError(t, err)
-			}
-			var asked []string
-			for id, c := range n.Reads {
-				if c.Place == Asked {
-					asked = append(asked, id)
-				}
-			}
-			assert.Len(t, asked, tc.asked)
-			if tc.asked == 2 && tc.choice != nil {
-				assert.Equal(t, Asked, n.Reads[RC("p1", 1, "r1")].Place)
-				assert.Equal(t, Asked, n.Reads[RC("p1", 1, "r2")].Place)
-				assert.Equal(t, []string{"r1", "r2"}, n.Primaries["p1"].Pair)
-			}
-		})
-	}
-}
-
 // TestMachineCoverTickAccept covers tickAccept (machine.go:240): a primary
 // in review with ok reads from two different readers, its work not failed
 // and not held, moves to merging and into its stream's queue; the refusal is
@@ -720,7 +653,7 @@ func TestMachineCoverClear(t *testing.T) {
 		s := mcCard(mcSprint(), "s1", "p1", Working, 1)
 		s = mcSentinel(s, "s1", "e1", Waiting, 2)
 		s.Work[WC("p1", 1)] = WorkCard{Primary: "p1", Attempt: 1, Member: "m1", Place: FWorking, Gen: 1}
-		coverRead(&s, "p1", 1, "r1", Asked)
+		coverRead(&s, "p1", 1, "r1", FReady)
 		s.Merge["p1"] = MergeCard{Place: Queued}
 		s.Streams["b"] = Stream{State: SStopped, Cause: CCross}
 		s.Open[Judgment{JFailed, "p1"}] = true

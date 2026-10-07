@@ -46,7 +46,7 @@ func TestTheLandedSeriesCountsEachCardOnceByItsWorker(t *testing.T) {
 	require.True(t, mach.Placed(), "mach-1.w1 dealt")
 	require.Equal(t, "m1", mach.Row, "the machine card is m1's")
 
-	_, _, _, err = r.st.SyncFriends(r.ctx, []store.FriendSpec{{Name: "amy", Width: 1, Class: "flash"}})
+	_, _, _, err = r.st.SyncFriends(r.ctx, []store.FriendSpec{{Name: "amy", Width: 1, Class: "flash"}, {Name: "ra", Width: 8, Class: "pro", Roles: sprint.RoleReader}, {Name: "rb", Width: 8, Class: "pro", Roles: sprint.RoleReader}})
 	require.NoError(t, err)
 	r.must(store.AddStep(sprint.AddReq{Stream: "fr", Cards: []sprint.CardAdd{{
 		ID: "fr-1", Brief: "tier: flash\nWHO: only friend amy\n\nA friend's card.",
@@ -157,6 +157,11 @@ func newLandedRig(t *testing.T) *landedRig {
 	require.NoError(t, r.st.Init(r.ctx))
 	require.NoError(t, m.RowsAdd(r.ctx, "t-readers", []string{"reader-a", "reader-b"}))
 	require.NoError(t, m.SetCoordinator(r.ctx, "coordinator"))
+	friendReaders(t, r.st, r.ctx)
+	// the readers read alone: amy's card is hers (WHO), the friends' work on
+	res, err := r.st.Run(r.ctx, store.SetStep(sprint.SetReq{Friends: sprint.SwitchOn, Who: "coordinator"}))
+	require.NoError(t, err)
+	require.Empty(t, res.Refused)
 	return r
 }
 
@@ -166,6 +171,7 @@ func (r *landedRig) beatMachines() {
 	zero := 0.0
 	_, err := r.st.Beat(r.ctx, "m1", &zero, hostload.Source{})
 	require.NoError(r.t, err)
+	beatFriendReaders(r.t, r.st, r.ctx)
 }
 
 func (r *landedRig) beat() {
@@ -213,26 +219,9 @@ func (r *landedRig) land(id, stream string) {
 		Head: "abc", Who: wc.Row,
 	}))
 	require.Equal(r.t, sprint.Review, r.snap().StateOf(id), "%s after finish", id)
-	r.must(store.AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{id}}}))
-	for {
-		s = r.snap()
-		for _, rc := range s.Readers.Of(id) {
-			if rc.Col == sprint.Asked || rc.Col == sprint.Reading {
-				r.must(store.ReadStep(sprint.ReadReq{
-					As: rc.F("reader"), Verdict: "ok", Sel: sprint.Sel{IDs: []string{rc.ID}}, Who: rc.F("reader"),
-				}))
-			}
-		}
-		s = r.snap()
-		pr = s.Work.Card(id)
-		if pr.Col != sprint.Review || sprint.ReadsWanted(s, pr) == 0 {
-			break
-		}
-		res, err := r.st.Run(r.ctx, store.AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{id}}}))
-		require.NoError(r.t, err)
-		if len(res.Refused) > 0 || len(res.Moved) == 0 {
-			break
-		}
+	cutReads(r.t, r.st, r.ctx)
+	for _, rc := range placedReadCards(r.snap(), id) {
+		r.must(store.ReadStep(sprint.ReadReq{As: rc.Row, Verdict: "ok", Sel: sprint.Sel{IDs: []string{rc.ID}}, Who: rc.Row}))
 	}
 	r.must(store.AcceptStep(sprint.AcceptReq{Sel: sprint.Sel{IDs: []string{id}}, Who: "coordinator"}))
 	r.must(store.MergeStep(sprint.MergeReq{Stream: stream, Cards: []string{id}}))

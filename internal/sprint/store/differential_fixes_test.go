@@ -90,37 +90,6 @@ func TestASecondCIRedOnACardWritesNoSecondJudgment(t *testing.T) {
 	h.clean("acked")
 }
 
-// 5. ask --another's reader is for that attempt only: it leaves the primary's
-// asked field as the two of the attempt, and after rework attempt 2 is asked
-// of two different readers together (reads are asked together), and no third.
-func TestAskAnotherIsForItsAttemptOnly(t *testing.T) {
-	t.Parallel()
-	h := newHarness(t)
-	h.setup(1)
-	h.a2ToReview("s1-1", false)
-	h.must(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
-	pair := h.snap().Work.Card("s1-1").F("asked")
-	rc := h.snap().Readers.Of("s1-1")
-	h.must(ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: rc[0].Row, Verdict: "broken", Finding: "f:1", Sel: sprint.Sel{IDs: []string{rc[0].ID}}}))
-	h.must(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Another: true}))
-	got := h.snap().Work.Card("s1-1").F("asked")
-	require.Equal(t, pair, got, "ask --another changed the primary's asked field: %s, was %s", got, pair)
-	h.must(ReworkStep(sprint.ReworkReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Fix: "fix"}))
-	c := h.snap().Fleet.Card("s1-1.w2")
-	h.must(TakeStep(sprint.TakeReq{As: c.Row, Sel: sprint.Sel{IDs: []string{c.ID}}, Gens: map[string]int{c.ID: c.Int("gen")}}))
-	h.must(FinishStep(sprint.FinishReq{Sel: sprint.Sel{IDs: []string{c.ID}}, Gens: map[string]int{c.ID: c.Int("gen")}}))
-	h.must(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}})) // the machine's ask: the finish asks no reader
-	var asked []string
-	for _, rc := range h.snap().Readers.Of("s1-1") {
-		if rc.Int("attempt") == 2 {
-			asked = append(asked, rc.F("reader"))
-		}
-	}
-	require.Len(t, asked, 2, "readers asked at attempt 2: both reads together, and no third")
-	require.NotEqual(t, asked[0], asked[1], "two different readers")
-	h.clean("asked again")
-}
-
 // 6. A refused add writes nothing: its stream's rows are not declared.
 func TestARefusedAddWritesNothing(t *testing.T) {
 	t.Parallel()
@@ -254,14 +223,12 @@ func TestTheDealTakesEachStreamsFrontInTurnAsTheModelDoes(t *testing.T) {
 	require.True(t, slices.Equal(dealt, want), "the tick dealt %v, want %v: each stream's front in turn, round the fleet", dealt, want)
 }
 
-// The deal goes round the fleet and the ask goes round the readers (errata 3,
-// amendment 5; the model's NextMember and NextReaders, tla/SprintEvents.tla's
-// RoundAssign and RoundTwo): with three idle members the second card goes to
-// m2, past m1, where the shortest queue with its ties by name gives m1 again;
-// with the first two readers reading, the second primary is asked of r3 and
-// r1, past r2, where the shortest asked queues give r1 and r2. Red when either
-// the engine's choice or the model's is put back to the shortest queue.
-func TestTheDealAndTheAskGoRoundAsTheModelDoes(t *testing.T) {
+// The deal goes round the fleet (errata 3, amendment 5; the model's NextMember,
+// tla/SprintEvents.tla's RoundAssign): with three idle members the second card
+// goes to m2, past m1, where the shortest queue with its ties by name gives m1
+// again; its read cards go to the two members that did not work it. Red when
+// either the engine's choice or the model's is put back to the shortest queue.
+func TestTheDealGoesRoundAsTheModelDoes(t *testing.T) {
 	t.Parallel()
 	h := newDHarness(t)
 	for _, a := range []dAction{
@@ -276,7 +243,6 @@ func TestTheDealAndTheAskGoRoundAsTheModelDoes(t *testing.T) {
 		{Kind: "tick"},
 		{Kind: "finish", Member: "m1", Card: "a1.w1", Gen: 1, OK: true},
 		{Kind: "tick"},
-		{Kind: "begin", Reader: "r1", Card: "a1.r1.r1"},
 		{Kind: "take", Member: "m2", Card: "a2.w1", Gen: 1},
 		{Kind: "finish", Member: "m2", Card: "a2.w1", Gen: 1, OK: true},
 		{Kind: "tick"},
@@ -285,7 +251,7 @@ func TestTheDealAndTheAskGoRoundAsTheModelDoes(t *testing.T) {
 	}
 	for _, f := range h.findings {
 		_, known := dClassify(f)
-		require.True(t, known, "a difference between the engine and the model on the deal or the ask:\n%s", f)
+		require.True(t, known, "a difference between the engine and the model on the deal or the reads:\n%s", f)
 	}
 	s := h.observe()
 	w := s.Work["a2.w1"]
@@ -297,10 +263,9 @@ func TestTheDealAndTheAskGoRoundAsTheModelDoes(t *testing.T) {
 		}
 	}
 	slices.Sort(readers)
-	want := []string{"r1", "r3"} // both reads together (reads are asked together): r3 and r1, past r2
-	require.True(t, slices.Equal(readers, want), "a2 was asked of %v, want %v: past r2, round the readers", readers, want)
-	require.Equal(t, "m2", indexPast(s.Order, s.DealLast), "the store's indexes are past %q and %q, want m2 and r1", s.DealLast, s.AskLast)
-	require.Equal(t, "r1", indexPast(s.Readers, s.AskLast), "the store's indexes are past %q and %q, want m2 and r1", s.DealLast, s.AskLast)
+	want := []string{"m1", "m3"} // both reads at once, never its worker's
+	require.True(t, slices.Equal(readers, want), "a2's read cards went to %v, want %v", readers, want)
+	require.Equal(t, "m2", indexPast(s.Order, s.DealLast), "the store's deal index is past %q, want m2", s.DealLast)
 }
 
 // Every placement of a card on a member goes round the fleet and moves the

@@ -22,8 +22,7 @@ func TestAWorkersVerbIsRecordedAsTheWorker(t *testing.T) {
 	ta.ok("tick")
 	ta.ok("take --as m1")
 	ta.ok("finish --as m1 s1-1.w1@1 --report done --actor someone-else")
-	ta.ok("tick")
-	ta.ok("read --as reader-a --begin")
+	ta.cutReads()
 	ta.ok("read --as reader-a --ok --finding fine")
 	var log struct {
 		Lines []sprint.Line `json:"lines"`

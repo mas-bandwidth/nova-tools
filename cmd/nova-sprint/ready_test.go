@@ -23,7 +23,7 @@ func TestReadyToAcceptIsAJudgmentAcceptedByGroup(t *testing.T) {
 	ta.deal(3)
 	ta.ok("take --as m1 --limit 3")
 	ta.ok("finish --as m1 s1-1.w1@1 s1-2.w1@1 s1-3.w1@1")
-	ta.ok("ask")
+	ta.cutReads()
 	ta.ok("ci s1-1 s1-2 s1-3 --red --run 1")
 	red := ta.group(sprint.NCIRed, "s1")
 	ta.ok("ack " + strings.Join(red.Notes, ",") + " --reason 'a flaky runner'")
@@ -32,7 +32,7 @@ func TestReadyToAcceptIsAJudgmentAcceptedByGroup(t *testing.T) {
 	ta.ok("read --as reader-a --ok s1-1.r1.reader-a")
 	ta.ok("read --as reader-b --ok s1-2.r1.reader-b")
 	ta.ok("read --as reader-a --ok s1-3.r1.reader-a")
-	ta.ok("ask")
+	ta.cutReads()
 	ta.ok("read --as reader-b --ok s1-1.r1.reader-b")
 	ta.ok("read --as reader-a --ok s1-2.r1.reader-a")
 	// s1-3: one reader ok, its second read outstanding: not ready
@@ -79,7 +79,7 @@ func TestTheTickAcceptsAndReadOkSaysNothingWaits(t *testing.T) {
 	ta.deal(2)
 	ta.ok("take --as m1 --limit 2")
 	ta.ok("finish --as m1 s1-1.w1@1 s1-2.w1@1")
-	ta.ok("ask")
+	ta.cutReads()
 	ta.ok("read --as reader-a --ok --limit 100")
 	ta.ok("read --as reader-b --ok --limit 100")
 	for _, g := range ta.inboxGroups() {

@@ -227,14 +227,10 @@ func unblocked(open []Open, id string, gone []string, typ string) []string {
 	return out
 }
 
-// strandedNote is the judgment of a stranded primary: failed work is not
-// read, so asking is not a decision for it.
+// strandedNote is the judgment of a stranded primary.
 func strandedNote(s *Snapshot, pr *Card, typ, why, who string) Note {
 	j := judgment(typ, pr.Row, s.Now, 0, pr.ID)
 	j.Who, j.Attempt, j.What = who, pr.Int("attempt"), why
-	if pr.F("result") == "failed" {
-		j.Decisions = removeDecision(j.Decisions, "ask")
-	}
 	return j
 }
 

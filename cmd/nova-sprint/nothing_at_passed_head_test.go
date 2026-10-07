@@ -29,7 +29,7 @@ func TestNothingToDoAtAHeadAReaderPassedIsBackInReview(t *testing.T) {
 			ta.deal(1)
 			ta.ok("take --as m1 s1-1.w1@1")
 			ta.ok("finish --as m1 s1-1.w1@1 --head " + head + " --branch sprint/s1-1.w1")
-			ta.ok("ask")
+			ta.cutReads()
 			ta.ok("read --as reader-a --ok s1-1.r1.reader-a --finding 'the renames are right'")
 			ta.ok("read --as reader-b --broken s1-1.r1.reader-b --finding 'internal/ci/testdata/deleted-tests.txt:12 names the old file'")
 			ta.ok("rework s1-1")
@@ -43,7 +43,7 @@ func TestNothingToDoAtAHeadAReaderPassedIsBackInReview(t *testing.T) {
 			for _, g := range ta.inboxGroups() {
 				assert.NotEqual(t, sprint.NWorkFailed, g.Type, "the coordinator is not asked to judge a failure: %+v", g)
 			}
-			ta.ok("ask")
+			ta.cutReads()
 			var asked []string
 			for _, rd := range []string{"reader-a", "reader-b", "reader-c"} {
 				asked = append(asked, ta.askedOf(rd)...)
@@ -67,7 +67,7 @@ func TestNothingToDoWithNoPassedHeadIsFailedWork(t *testing.T) {
 	ta.deal(1)
 	ta.ok("take --as m1 s1-1.w1@1")
 	ta.ok("finish --as m1 s1-1.w1@1 --head " + head + " --branch sprint/s1-1.w1")
-	ta.ok("ask")
+	ta.cutReads()
 	ta.ok("read --as reader-a --broken s1-1.r1.reader-a --finding 'main.go:3 is wrong'")
 	ta.ok("read --as reader-b --broken s1-1.r1.reader-b --finding 'main.go:4 is wrong'")
 	ta.ok("rework s1-1")

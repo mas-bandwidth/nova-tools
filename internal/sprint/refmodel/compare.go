@@ -50,8 +50,6 @@ func Compare(e, m State) []Difference {
 			add("primary", id, "score", ep.Score, mp.Score)
 			add("primary", id, "attempt", ep.Attempt, mp.Attempt)
 			add("primary", id, "head", ep.Head, mp.Head)
-			add("primary", id, "pair", ep.Pair, mp.Pair)
-			add("primary", id, "finder", ep.Finder, mp.Finder)
 			add("primary", id, "reached", ep.Reached, mp.Reached)
 		}
 		if ep.State == Review && mp.State == Review {
@@ -88,6 +86,7 @@ func Compare(e, m State) []Difference {
 		add("read", id, "verdict", er.Verdict, mr.Verdict)
 		add("read", id, "reader", er.Reader, mr.Reader)
 		add("read", id, "attempt", er.Attempt, mr.Attempt)
+		add("read", id, "by", er.By, mr.By)
 	}
 	for _, id := range union(Keys(e.Merge), Keys(m.Merge)) {
 		em, eok := e.Merge[id]
@@ -130,9 +129,7 @@ func Compare(e, m State) []Difference {
 	add("epoch", "", "n", e.Epoch, m.Epoch)
 	add("pending", "", "verb", e.Pending, m.Pending)
 	add("round", "", "deal", e.DealLast, m.DealLast)
-	add("round", "", "ask", e.AskLast, m.AskLast)
 	add("round", "", "stream deal", e.StreamLast, m.StreamLast)
-	add("round", "", "stream ask", e.AskStreamLast, m.AskStreamLast)
 	add("round", "", "stream accept", e.AcceptStreamLast, m.AcceptStreamLast)
 	return out
 }

@@ -25,7 +25,7 @@ const (
 func scenarios() []sample {
 	var out []sample
 	for seed := uint64(0); seed < scenarioSeeds; seed++ {
-		for _, run := range []func(*walk) []sample{stoppedOnALandedCard, unevenQueues, unevenReads, aLateCardRedealt, lanesFreedBesideABacklog, aFriendStalls, aCardPastItsCap, aMemberWithFreeLanes} {
+		for _, run := range []func(*walk) []sample{stoppedOnALandedCard, unevenQueues, aLateCardRedealt, lanesFreedBesideABacklog, aFriendStalls, aCardPastItsCap, aMemberWithFreeLanes} {
 			out = append(out, run(newWalk(scenarioBase+seed))...)
 		}
 	}
@@ -60,13 +60,11 @@ func (k *walk) advance(id string, to sprint.State) bool {
 		k.try(sprint.Finish(k.s, sprint.FinishReq{As: wc.Row, Sel: sprint.Sel{IDs: []string{wc.ID}}, Gens: map[string]int{wc.ID: wc.Int("gen")}, Head: "h-" + id, Report: "ok", Who: wc.Row}))
 	}
 	if at() == sprint.Review && to != sprint.Review {
-		// the reads are asked one at a time: each read ok, the next is asked
-		for range 2 {
-			k.try(sprint.Ask(k.s, sprint.AskReq{Sel: sprint.Sel{IDs: []string{id}}, Who: sprint.MachineActor}))
-			for _, rc := range k.s.Readers.Of(id) {
-				if rc.Col == sprint.Asked {
-					k.try(sprint.Read(k.s, sprint.ReadReq{As: rc.Row, Verdict: "ok", Finding: "f", Sel: sprint.Sel{IDs: []string{rc.ID}}, Who: rc.Row}))
-				}
+		// its read cards cut at once (the tick's deal does it first), each read ok
+		k.try(sprint.CutReadCards(k.s, nil))
+		for _, rc := range k.s.Fleet.Column(sprint.Ready, sprint.Working) {
+			if rc.F("kind") == "read" && rc.F("primary") == id {
+				k.try(sprint.Read(k.s, sprint.ReadReq{As: rc.Row, Verdict: "ok", Finding: "f", Usage: "input=1000 output=100", Sel: sprint.Sel{IDs: []string{rc.ID}}, Who: rc.Row}))
 			}
 		}
 		k.try(sprint.Accept(k.s, sprint.AcceptReq{Sel: sprint.Sel{IDs: []string{id}}, Who: coordinator}))
@@ -120,33 +118,6 @@ func unevenQueues(k *walk) []sample {
 	}
 	k.wholeTick()
 	if !k.unlevel() {
-		return nil
-	}
-	return []sample{k.sample()}
-}
-
-// unevenReads fills the readers with asked reads, three a reader, and has one
-// reader read all of its own: the loads differ by more than one, and the
-// readers' level has reads to move (reads are asked one at a time, so the walks
-// alone seldom pile them up).
-func unevenReads(k *walk) []sample {
-	readers := k.s.Readers.Rows()
-	var ids []string
-	for range 3 * len(readers) {
-		if id := k.addTo(k.streams[0]); id != "" {
-			ids = append(ids, id)
-		}
-	}
-	for _, id := range ids {
-		k.advance(id, sprint.Review)
-	}
-	k.wholeTick() // asks each primary its first read, round the readers
-	first := readers[0]
-	var mine []string
-	for _, c := range k.s.Readers.Cell(first, sprint.Asked) {
-		mine = append(mine, c.ID)
-	}
-	if len(mine) == 0 || !k.try(sprint.Read(k.s, sprint.ReadReq{As: first, Sel: sprint.Sel{IDs: mine}, Verdict: "ok", Finding: "f", Who: first})) {
 		return nil
 	}
 	return []sample{k.sample()}

@@ -25,12 +25,11 @@ func attemptFoundBrokenBy(w *world, id, finding string) string {
 		w.must(Take(w.s, TakeReq{As: wc.Row, Sel: Sel{IDs: []string{wc.ID}}, Gens: gensOf(w.s, wc.ID)}))
 	}
 	w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{wc.ID}}, Gens: gensOf(w.s, wc.ID)}))
-	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{id}}}))
-	for _, rc := range w.s.Readers.Of(id) {
-		if rc.Col == Asked && rc.Int("attempt") == pr.Int("attempt") {
-			w.must(Read(w.s, ReadReq{Usage: "input=1000 output=100", As: rc.Row, Verdict: "broken", Finding: finding, Sel: Sel{IDs: []string{rc.ID}}}))
-			return rc.Row
-		}
+	w.askReads()
+	for _, rc := range readCardsAt(w.s, pr, pr.Int("attempt")) {
+		reader := rc.F("reader")
+		w.must(Read(w.s, ReadReq{Usage: "input=1000 output=100", As: rc.Row, Verdict: "broken", Finding: finding, Sel: Sel{IDs: []string{rc.ID}}}))
+		return reader
 	}
 	w.t.Fatalf("no read of %s asked at attempt %s", id, pr.F("attempt"))
 	return ""
@@ -45,20 +44,19 @@ func TestTwoIdenticalFindingsStopACard(t *testing.T) {
 		t.Parallel()
 		w := setup(t, 1)
 		w.must(Deal(w.s, DealReq{Sel: Sel{IDs: []string{"s1-1"}}}))
-		first := attemptFoundBrokenBy(w, "s1-1", "internal/x.go:12: the guard is missing. Add it.")
+		attemptFoundBrokenBy(w, "s1-1", "internal/x.go:12: the guard is missing. Add it.")
 		require.Empty(t, briefWrong(w), "one finding is no repeat")
 		w.must(rework(w))
 		require.Equal(t, 2, w.s.Work.Card("s1-1").Int("attempt"))
-		assert.Equal(t, "attempt 1: "+first+" at internal/x.go:12", w.s.Work.Card("s1-1").F(FieldFindingKeys), "the rework keeps the attempt's key")
+		assert.Equal(t, "attempt 1: work at internal/x.go:12", w.s.Work.Card("s1-1").F(FieldFindingKeys), "the rework keeps the attempt's key")
 
 		// the same reader at the same file and line, worded otherwise: the card stops here
-		second := attemptFoundBrokenBy(w, "s1-1", "Still broken at internal/x.go:12; the guard was never added")
-		require.Equal(t, first, second, "the finder checks the fix")
+		attemptFoundBrokenBy(w, "s1-1", "Still broken at internal/x.go:12; the guard was never added")
 		notes := briefWrong(w)
 		require.Len(t, notes, 1, "the brief defect is raised at the second attempt, not the fourth")
 		n := notes[0]
 		assert.Equal(t, Decisions[NBriefWrong], n.Decisions, "brief and drop, never rework")
-		assert.Contains(t, n.What, "s1-1 has failed the same way twice (attempts 1 to 2, the same finding: "+first+" at internal/x.go:12)")
+		assert.Contains(t, n.What, "s1-1 has failed the same way twice (attempts 1 to 2, the same finding: work at internal/x.go:12)")
 		assert.Contains(t, n.What, "findings: attempt 1: internal/x.go:12: the guard is missing.; attempt 2: Still broken at internal/x.go:12; the guard was never added", "both findings carried")
 		assert.Empty(t, w.notesOf(NReadBroken)[1:], "the repeat raises the brief defect in place of a broken read")
 

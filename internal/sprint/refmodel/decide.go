@@ -8,7 +8,7 @@ import (
 )
 
 // The duties of today's tick, by name, in the order the machine runs them: the
-// parts of sprint.TickParts in their order (the start's level and level reads,
+// parts of sprint.TickParts in their order (the start's level,
 // then the four tables' updates: the work pump's resolve, cap deal, deal and accept, the
 // readers' ask, the merge's resume, the fleet's presence and friend stall; then the end), the unknown machines it tells of
 // (with the fleet's update), and the reminders. The machine's repair of an operation the fence holds is not one:
@@ -22,7 +22,6 @@ const (
 	DutyCapDeal     = "cap deal"     // a ready card past its attempt cap is dealt to a frontier or heavy friend with room
 	DutyDeal        = "deal"         // ready primaries are dealt to the members up
 	DutyLevel       = "level"        // the members' backlogs are evened, at the tick's start
-	DutyLevelReads  = "level reads"  // the readers' loads are evened, at the tick's start
 	DutyAccept      = "accept"       // primaries in review with two ok reads are accepted and queued to merge
 	DutyAsk         = "ask"          // primaries in review are asked the reads they want, one at a time
 	DutyCheck       = "check"        // a broken rule and a stall are judgments
@@ -34,7 +33,7 @@ const (
 
 // dutyNames is the duties' names in the tick's order, which the canonical order
 // of moves follows. Duties lists the same names, and a test holds them equal.
-var dutyNames = []string{DutyLevel, DutyLevelReads, DutyResolve, DutyCapDeal, DutyDeal, DutyAccept, DutyAsk, DutyResume, DutyStrangers, DutyPresence, DutyFriendStall, DutyCheck, DutyDeadlines, DutyOverdue, DutyDone, DutyRemind}
+var dutyNames = []string{DutyLevel, DutyResolve, DutyCapDeal, DutyDeal, DutyAccept, DutyAsk, DutyResume, DutyStrangers, DutyPresence, DutyFriendStall, DutyCheck, DutyDeadlines, DutyOverdue, DutyDone, DutyRemind}
 
 // Duty is one duty of the tick: its name and the function that decides it.
 type Duty struct {
@@ -48,7 +47,6 @@ type Duty struct {
 // Duties is every duty of today's tick in the order the machine runs them.
 var Duties = []Duty{
 	{DutyLevel, LevelMoves},
-	{DutyLevelReads, LevelReadsMoves},
 	{DutyResolve, ResolveMoves},
 	{DutyCapDeal, CapDealMoves},
 	{DutyDeal, DealMoves},
@@ -140,11 +138,6 @@ func AcceptMoves(s Snapshot, now time.Time) []Move { return oneDuty(s, now, Duty
 // the fleet while two backlogs differ by more than one, at the tick's start (T4).
 func LevelMoves(s Snapshot, now time.Time) []Move { return oneDuty(s, now, DutyLevel) }
 
-// LevelReadsMoves is the newest asked reads moved from the reader with the
-// largest load round the readers while two loads differ by more than one, at
-// the tick's start.
-func LevelReadsMoves(s Snapshot, now time.Time) []Move { return oneDuty(s, now, DutyLevelReads) }
-
 // AskMoves is the primaries in review asked of two different readers, and the
 // judgment for one that cannot be (T2).
 func AskMoves(s Snapshot, now time.Time) []Move { return oneDuty(s, now, DutyAsk) }
@@ -192,7 +185,6 @@ type dutyOn struct {
 func decisions() []dutyOn {
 	return []dutyOn{
 		{DutyLevel, partOn(DutyLevel)},
-		{DutyLevelReads, partOn(DutyLevelReads)},
 		{DutyResolve, partOn(DutyResolve)},
 		{DutyCapDeal, partOn(DutyCapDeal)},
 		{DutyDeal, partOn(DutyDeal)},

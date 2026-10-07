@@ -22,7 +22,7 @@ func TestReadyToAcceptIsClosedByReworkAndDrop(t *testing.T) {
 		w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{c.ID}}, Gens: gensOf(w.s, c.ID)}))
 	}
 	w.must(RecordCI(w.s, CIReq{Sel: Sel{IDs: []string{"s1-1", "s1-2"}}, Red: true, Run: "1"}))
-	w.must(Ask(w.s, AskReq{}))
+	w.askReads()
 	for _, id := range []string{"s1-1", "s1-2"} {
 		readOK(w, id)
 	}
@@ -79,30 +79,6 @@ func TestAMergeFactNamesACardOfTheBatch(t *testing.T) {
 	require.Equal(t, Stuck, w.s.Merge.Placed("s1-2").Col, "a conflict inside the batch")
 	require.Equal(t, Queued, w.s.Merge.Placed("s1-1").Col, "a conflict inside the batch")
 	w.clean("stuck")
-}
-
-// H5: a report on a read card still asked is accepted: the begin and the
-// report in one step, begun stamped with it.
-func TestAReportOnAnAskedCardBeginsIt(t *testing.T) {
-	t.Parallel()
-	w := setup(t, 1)
-	w.must(Deal(w.s, DealReq{Sel: Sel{IDs: []string{"s1-1"}}}))
-	c := w.s.Fleet.Card("s1-1.w1")
-	w.must(Take(w.s, TakeReq{As: c.Row, Sel: Sel{IDs: []string{c.ID}}, Gens: gensOf(w.s, c.ID)}))
-	w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{c.ID}}, Gens: gensOf(w.s, c.ID)}))
-	w.must(Ask(w.s, AskReq{}))
-	w.tick(time.Minute)
-	for i, verdict := range []string{"ok", "broken"} {
-		if i > 0 {
-			w.must(Ask(w.s, AskReq{})) // the second read, once the first came back ok
-		}
-		rc := readsAt(w.s, w.s.Work.Card("s1-1"), 1)[i]
-		w.must(Read(w.s, ReadReq{Usage: "input=1000 output=100", As: rc.F("reader"), Verdict: verdict, Finding: "f:1", Sel: Sel{IDs: []string{rc.ID}}}))
-		require.Equal(t, verdict, rc.Col, "%s on an asked card: %s %v", verdict, rc.Col, rc.Fields)
-		require.Equal(t, stamp(w.s.Now), rc.F("begun"), "%s on an asked card: %s %v", verdict, rc.Col, rc.Fields)
-		require.Equal(t, rc.F("begun"), rc.F("read"), "%s on an asked card: %s %v", verdict, rc.Col, rc.Fields)
-	}
-	w.clean("read")
 }
 
 // H6, as errata 3 amendment 6 amends it: no step that lands or drops the
@@ -200,6 +176,7 @@ func TestReturnOpensAJudgment(t *testing.T) {
 	w2 := setup(t, 1)
 	accepted(w2, "s1-1")
 	w2.s.Work.Card("s1-1").Fields["head"] = "moved"
+	w2.s.Fleet.Card("s1-1.w1").Fields["head"] = "moved" // a new head: the reads at the old stand no more
 	w2.must(Return(w2.s, ReturnReq{Sel: Sel{IDs: []string{"s1-1"}}}))
 	d := w2.openOn("s1-1")[0].Note.Decisions
 	require.Equal(t, "rework,drop", strings.Join(d, ","), "decisions without standing reads: %v", d)
@@ -221,9 +198,9 @@ func TestAStrandedPrimaryIsAJudgment(t *testing.T) {
 	o := w.openOn("s1-1")
 	require.Len(t, o, 1, "stranded: %+v", o)
 	require.Equal(t, NStranded, o[0].Note.Type, "stranded: %+v", o)
-	require.Equal(t, "ask,rework,drop", strings.Join(o[0].Note.Decisions, ","), "stranded: %+v", o)
+	require.Equal(t, "rework,drop", strings.Join(o[0].Note.Decisions, ","), "stranded: %+v", o)
 	require.Contains(t, o[0].Note.What, "never asked", "stranded: %+v", o)
-	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-1"}}}))
+	w.askReads()
 	require.Empty(t, w.openOn("s1-1"), "ask left it open")
 	w.clean("asked")
 }

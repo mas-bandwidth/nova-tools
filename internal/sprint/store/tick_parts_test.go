@@ -85,53 +85,6 @@ func (h *harness) poke(logical string, e ntable.BatchMemberEntry) {
 	require.NoError(h.t, err)
 }
 
-func TestTheTickAsksTwoReadersAndSaysWhenItCannot(t *testing.T) {
-	t.Parallel()
-	h := newHarness(t)
-	h.setup(2)
-	h.startMachine()
-	h.machine()
-	// one reader less than two free: the readers table keeps one row only
-	h.work("m1")
-	h.work("m2")
-	s := h.snap()
-	n := len(s.Readers.Column(sprint.Asked))
-	require.Equal(t, 0, n, "asked before a tick: %d", n)
-	h.machine()
-	s = h.snap()
-	for _, id := range []string{"s1-1", "s1-2"} {
-		n := len(s.Readers.Of(id))
-		require.Equal(t, 2, n, "%s asked of %d readers (both reads together)", id, n)
-	}
-	h.quiet("asked")
-
-	// a sprint with one reader up: the tick asks no pro card, and says so once (one judgment, the sprint's)
-	h2 := newHarness(t)
-	h2.m = NewMem()
-	h2.st.B = h2.m
-	require.NoError(t, h2.st.Init(h2.ctx))
-	require.NoError(t, h2.m.RowsAdd(h2.ctx, "t-readers", []string{"reader-a"}))
-	h2.beat()
-	h2.beat()
-	h2.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m1"}))
-	h2.must(AddStep(sprint.AddReq{Brief: proBrief, Stream: "s1", Count: 1}))
-	h2.startMachine()
-	h2.machine()
-	h2.work("m1")
-	h2.machine()
-	require.Len(t, h2.openOf(sprint.NFewReaders), 1, "few readers: open %d written %d", len(h2.openOf(sprint.NFewReaders)), h2.written(sprint.NFewReaders))
-	require.Equal(t, 1, h2.written(sprint.NFewReaders), "few readers: open %d written %d", len(h2.openOf(sprint.NFewReaders)), h2.written(sprint.NFewReaders))
-	h2.machine()
-	h2.tick(2 * time.Minute)
-	h2.machine()
-	require.Equal(t, 1, h2.written(sprint.NFewReaders), "written again: %d", h2.written(sprint.NFewReaders))
-	require.NoError(t, h2.m.RowsAdd(h2.ctx, "t-readers", []string{"reader-b"}))
-	h2.beat()
-	h2.machine()
-	require.Len(t, h2.snap().Readers.Of("s1-1"), 2, "after a reader was added, both reads asked together: reads %d, open %d", len(h2.snap().Readers.Of("s1-1")), len(h2.openOf(sprint.NFewReaders)))
-	require.Empty(t, h2.openOf(sprint.NFewReaders), "after a reader was added: reads %d, open %d", len(h2.snap().Readers.Of("s1-1")), len(h2.openOf(sprint.NFewReaders)))
-}
-
 func TestTheTickLevelsUnevenQueues(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
@@ -249,6 +202,7 @@ func TestDeadlinesCountRunningTimeAndNotifyOnce(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	h.setup(2)
+	h.friendReaders()
 	h.startMachine()
 	h.machine()
 	h.run(TakeStep(sprint.TakeReq{As: "m1", Sel: sprint.Sel{Limit: 1}, Who: "m1"}))
@@ -272,18 +226,11 @@ func TestDeadlinesCountRunningTimeAndNotifyOnce(t *testing.T) {
 	h.work("m2")
 	h.machine()
 	require.Empty(t, h.openOf(sprint.NWorkLate), "still open after the finish")
-	// N5: read cards asked and not begun past the deadline, by the stamp the
-	// ask writes: one judgment per read card (two cards, both reads of each asked together)
-	h.tick(sprint.DeadlineUnbegun + time.Minute)
-	h.machine()
-	if n := len(h.snap().Readers.Column(sprint.Asked)); n != 4 || len(h.openOf(sprint.NReadLate)) != n {
-		require.Failf(t, "", "the late read cards: %d asked, %d open", n, len(h.openOf(sprint.NReadLate)))
-	}
-	// N6: a merging stream with no merge step
+	// N6: a merging stream with no merge step (a read card past its deadline is taken
+	// back and dealt again, judged by no deadline: read_cards.go)
 	h.readAll()
 	h.run(AcceptStep(sprint.AcceptReq{Sel: sprint.Sel{Stream: "s1"}}))
 	h.machine()
-	require.Empty(t, h.openOf(sprint.NReadLate), "the read card's judgment outlived the read")
 	h.tick(sprint.DeadlineMergeIdle + time.Minute)
 	h.machine()
 	require.Len(t, h.openOf(sprint.NMergeLate), 1, "the idle stream: %d", len(h.openOf(sprint.NMergeLate)))
@@ -350,6 +297,7 @@ func sprintOf(t *testing.T, n, stopAt int) *harness {
 	h := newHarness(t)
 	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m1"}))
 	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m2"}))
+	h.friendReaders()
 	for _, s := range []string{"s1", "s2", "s3"} {
 		h.must(AddStep(sprint.AddReq{Brief: proBrief, Stream: s, Count: n / 3}))
 	}

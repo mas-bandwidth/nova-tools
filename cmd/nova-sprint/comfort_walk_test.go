@@ -30,9 +30,10 @@ func TestAVerbBeforeInitSaysRunInitFirst(t *testing.T) {
 func TestALandRefusalNamesEachCauseOnItsLineAndTheTwinsMerge(t *testing.T) {
 	t.Parallel()
 	file := filepath.Join(t.TempDir(), "sprint.twin")
-	for _, line := range []string{"init --readers reader-a,reader-b --members m1", "add --stream s1 --count 1 --one --brief-file " + proBriefFile(t), "start", "tick", "tick",
+	// m2 and m3 read what m1 works: a pro card's two read cards
+	for _, line := range []string{"init --readers reader-m2,reader-m3 --members m1,m2,m3", "add --stream s1 --count 1 --one --brief-file " + proBriefFile(t), "start", "tick", "tick",
 		"take --as m1 --epoch 0", "finish --as m1 s1-1.w1@1 --epoch 0 --report done", "tick",
-		"read --as reader-a --ok s1-1.r1.reader-a --epoch 0", "tick", "read --as reader-b --ok s1-1.r1.reader-b --epoch 0", "tick"} {
+		"take --as m2 --epoch 0", "read --as m2 --ok s1-1.r1.m2 --epoch 0", "take --as m3 --epoch 0", "read --as m3 --ok s1-1.r1.m3 --epoch 0", "tick"} {
 		code, out, errs := twinProcess(t, file, line)
 		require.Equal(t, 0, code, "%s: %s%s", line, out, errs)
 	}
@@ -66,7 +67,7 @@ func TestTheLogPrintsACostRecordAsOneShortLine(t *testing.T) {
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1")
 	ta.inReview(1)
-	ta.ok("ask")
+	ta.cutReads()
 	ta.ok("read --as reader-a --ok s1-1.r1.reader-a --usage 'wall=6s budget=100/400000 input=5 output=7'")
 	out := ta.ok("log")
 	assert.NotContains(t, out, "cost_record:", out)

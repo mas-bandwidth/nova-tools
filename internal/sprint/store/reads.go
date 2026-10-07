@@ -208,6 +208,9 @@ func (st *Store) cardOf(ctx context.Context, id string, held bool) (CardInfo, er
 		want := append([]string{id}, sprint.Split(v.Primary.F("needs"))...)
 		if len(tables) > 1 {
 			want = append(want, sprint.ResolveExtras(s)...)
+			// the reads that stand on the cards in review, retired with their verdicts: what
+			// the tick's ask holds against (sprint.ReadCardExtras)
+			return map[string][]string{sprint.Work: want, sprint.Fleet: sprint.ReadCardExtras(s)}
 		}
 		return map[string][]string{sprint.Work: want}
 	})

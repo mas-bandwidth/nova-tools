@@ -231,57 +231,6 @@ func TestTheDealSkipsADownMemberEvenly(t *testing.T) {
 	require.Equal(t, want, got, "deals %v, want %v: m2 is down and skipped, the others in turn", got, want)
 }
 
-// 4 free readers, 40 reads asked one primary at a time (two each): every
-// reader's count is within one of the others after each ask, equal after each
-// full round, and the index is in the store.
-func TestTheAskGoesRoundTheReaders(t *testing.T) {
-	t.Parallel()
-	readers := []string{"reader-a", "reader-b", "reader-c", "reader-d"}
-	w := eightIdle(t, readers...)
-	proCards(w)
-	for i := 1; i <= 20; i++ {
-		id := fmt.Sprintf("s1-%d", i)
-		w.must(Deal(w.s, DealReq{Sel: Sel{IDs: []string{id}}}))
-		workIt(w, w.s.Fleet.Card(WorkCardID(id, 1)))
-	}
-	asked := map[string]int{}
-	for i := 1; i <= 20; i++ {
-		id := fmt.Sprintf("s1-%d", i)
-		w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{id}}}))
-		for _, rd := range readers {
-			if w.s.Readers.Card(ReadCardID(id, 1, rd)) != nil {
-				asked[rd]++
-			}
-		}
-		evenly(t, fmt.Sprintf("after ask %d", i), asked, readers, i%len(readers) == 0) // one read an ask
-	}
-	last, ok := w.s.Readers.Prop(PropAskIndex)
-	require.True(t, ok, "the readers table's ask_index is %q (%v), want reader-d", last, ok)
-	require.Equal(t, "reader-d", indexPast(w.s.Readers.Rows(), last), "the readers table's ask_index is %q (%v), want reader-d", last, ok)
-}
-
-// The tick's ask (T2) asks round the readers too: one primary in review at a
-// time, each worked as it is dealt.
-func TestTheTickAskGoesRoundTheReaders(t *testing.T) {
-	t.Parallel()
-	w := eightIdle(t, "reader-a", "reader-b", "reader-c")
-	readers := w.s.Readers.Rows()
-	asked := map[string]int{}
-	for i := 1; i <= 12; i++ {
-		id := fmt.Sprintf("s1-%d", i)
-		w.must(Deal(w.s, DealReq{Sel: Sel{IDs: []string{id}}}))
-		workIt(w, w.s.Fleet.Card(WorkCardID(id, 1)))
-		p := w.part(TickAsk, TickReq{})
-		require.Len(t, p.Units, 1, "ask %d: the tick asked %d primaries, want the one in review", i, len(p.Units))
-		for _, rd := range readers {
-			if w.s.Readers.Card(ReadCardID(id, 1, rd)) != nil {
-				asked[rd]++
-			}
-		}
-		evenly(t, fmt.Sprintf("after ask %d", i), asked, readers, i%len(readers) == 0) // one read an ask
-	}
-}
-
 // The index is one for the fleet, not one a stream: three streams, one card a
 // deal from each in turn, and every member's count is within one of the
 // others fleet-wide after each deal, equal after each round of 8.
@@ -336,39 +285,6 @@ func TestTheTickDealGoesRoundTheFleetOverTenStreams(t *testing.T) {
 		total += n
 	}
 	require.Equal(t, 30, total, "dealt %d, want 30", total)
-}
-
-// The ask's index is one for the readers: primaries of three streams asked in
-// turn keep every reader within one of the others.
-func TestTheAskGoesRoundTheReadersAcrossStreams(t *testing.T) {
-	t.Parallel()
-	readers := []string{"reader-a", "reader-b", "reader-c", "reader-d"}
-	w := newWorld(t, readers...)
-	for i := 1; i <= 8; i++ {
-		w.must(FleetStep(w.s, FleetReq{Op: "up", Member: fmt.Sprintf("m%d", i)}))
-	}
-	streams := []string{"s1", "s2", "s3"}
-	var ids []string
-	for i := 0; i < 18; i++ {
-		ids = append(ids, fmt.Sprintf("%s-%d", streams[i%3], i/3+1))
-	}
-	for _, st := range streams {
-		w.must(Add(w.s, AddReq{Brief: proBrief, Stream: st, Count: 6}))
-	}
-	for _, id := range ids {
-		w.must(Deal(w.s, DealReq{Sel: Sel{IDs: []string{id}}}))
-		workIt(w, w.s.Fleet.Card(WorkCardID(id, 1)))
-	}
-	asked := map[string]int{}
-	for i, id := range ids {
-		w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{id}}}))
-		for _, rd := range readers {
-			if w.s.Readers.Card(ReadCardID(id, 1, rd)) != nil {
-				asked[rd]++
-			}
-		}
-		evenly(t, fmt.Sprintf("after ask %d", i+1), asked, readers, (i+1)%len(readers) == 0) // one read an ask
-	}
 }
 
 // indexPast is the name a rolling index's counter is past (round.go, errata 3

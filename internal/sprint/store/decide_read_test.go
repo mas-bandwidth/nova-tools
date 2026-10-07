@@ -27,7 +27,7 @@ func TestTheFirstReadOfAFlashCardIsADecideRead(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			h := routeHarness(t, route("pro-a", "pro"), route("pro-b", "pro"), route("flash-a", "flash"), route("flash-b", "flash"))
+			h := readersHarness(t, route("pro-a", "pro"), route("pro-b", "pro"), route("flash-a", "flash"), route("flash-b", "flash"))
 			h.m.SetDecideBars(Bars{Bounce: tc.bounce, Review: tc.review})
 			require.NoError(t, h.st.BeatReaders(h.ctx))
 			h.addReady("s1", 1, briefOf("pro", "model: prov-pro-a/model-pro-a\ntokens: 1000\ndeadline: 60"))
@@ -36,11 +36,12 @@ func TestTheFirstReadOfAFlashCardIsADecideRead(t *testing.T) {
 			h.machine()
 			h.work("m1")
 			h.work("m2")
+			h.work("m3")
 			h.machine()
 			s := h.snap()
 			for id, want := range map[string]int{"s1-1": 0, "s2-1": tc.decide} {
-				reads := s.Readers.Of(id)
-				require.NotEmpty(t, reads, "%s is asked", id)
+				reads := readsAt(s, s.Work.Card(id))
+				require.NotEmpty(t, reads, "%s's read cards are cut", id)
 				decided := 0
 				for _, rc := range reads {
 					p := sprint.PacketOf("", 0, rc, s.Work.Card(id), nil, nil)
@@ -73,7 +74,7 @@ func TestAReadAskedAgainKeepsOneDecideReadAtTheAttempt(t *testing.T) {
 	for _, which := range []string{"the strings read", "the decide read"} {
 		t.Run(which, func(t *testing.T) {
 			t.Parallel()
-			h := routeHarness(t, route("flash-a", "flash"), route("flash-b", "flash"))
+			h := readersHarness(t, route("flash-a", "flash"), route("flash-b", "flash"))
 			h.m.SetDecideBars(Bars{Bounce: "0.5", Review: "0.3"})
 			require.NoError(t, h.st.BeatReaders(h.ctx))
 			h.addReady("s1", 1, briefOf("flash", ""))
@@ -81,6 +82,7 @@ func TestAReadAskedAgainKeepsOneDecideReadAtTheAttempt(t *testing.T) {
 			h.machine()
 			h.work("m1")
 			h.work("m2")
+			h.work("m3")
 			h.machine()
 			var back *sprint.Card
 			for _, rc := range readsAt(h.snap(), h.snap().Work.Card("s1-1")) {

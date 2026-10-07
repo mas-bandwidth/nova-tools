@@ -102,19 +102,18 @@ var propCutPoints = []string{"release", "apply p-work before", "apply p-merge be
 
 // genProp is the random sprint of a seed: 2 to 4 streams, 5 to 40
 // primaries with needs within and across streams (each on one admitted
-// before it: never a cycle), 0 to 3 sentinels per stream, 2 to 4 members, 2
-// to 4 readers, and a run of random actions with actors silent for stretches.
+// before it: never a cycle), 0 to 3 sentinels per stream, 3 to 5 members, each
+// a reader (its reader row: a pro card's two read cards go to two members that
+// did not work it), and a run of random actions with actors silent for stretches.
 func genProp(seed uint64) (propConfig, []pAct) {
 	rng := rand.New(rand.NewPCG(seed, 0x5eed))
 	cfg := propConfig{seed: seed}
 	for i := range 2 + rng.IntN(3) {
 		cfg.streams = append(cfg.streams, fmt.Sprintf("s%d", i+1))
 	}
-	for i := range 2 + rng.IntN(3) {
+	for i := range 3 + rng.IntN(3) {
 		cfg.members = append(cfg.members, fmt.Sprintf("m%d", i+1))
-	}
-	for i := range 2 + rng.IntN(3) {
-		cfg.readers = append(cfg.readers, "reader-"+string(rune('a'+i)))
+		cfg.readers = append(cfg.readers, sprint.ReaderPrefix+cfg.members[i])
 	}
 	var acts []pAct
 	for i := range cfg.members {
@@ -333,7 +332,6 @@ func (r *propRun) act(a pAct) {
 	}
 	cfg := r.cfg
 	member, _ := pickOf(cfg.members, a.A)
-	reader, _ := pickOf(cfg.readers, a.A)
 	stream, _ := pickOf(cfg.streams, a.A)
 	switch a.K {
 	case "up", "down":
@@ -365,7 +363,7 @@ func (r *propRun) act(a pAct) {
 		if s == nil {
 			return
 		}
-		if c, ok := pickOf(s.Fleet.Cell(member, sprint.Working), a.B); ok {
+		if c, ok := pickOf(propKind(s.Fleet.Cell(member, sprint.Working), "work"), a.B); ok {
 			line := fmt.Sprintf("nova-sprint finish %s@%s --as %s", c.ID, c.F("gen"), member)
 			if a.F {
 				line += " --failed --report boom"
@@ -373,25 +371,20 @@ func (r *propRun) act(a pAct) {
 			r.run(line, FinishStep(sprint.FinishReq{As: member, Sel: sprint.Sel{IDs: []string{c.ID}}, Gens: map[string]int{c.ID: c.Int("gen")}, Failed: a.F, Report: "boom", Who: member}))
 		}
 	case "begin":
-		s := r.snap()
-		if s == nil {
-			return
-		}
-		if c, ok := pickOf(s.Readers.Cell(reader, sprint.Asked), a.B); ok {
-			r.run(fmt.Sprintf("nova-sprint read %s --as %s --begin", c.ID, reader), ReadStep(sprint.ReadReq{As: reader, Begin: true, Sel: sprint.Sel{IDs: []string{c.ID}}, Who: reader}))
-		}
+		// a member's reader loop takes its read cards with its work (take)
+		r.run(fmt.Sprintf("nova-sprint take --as %s --limit %d", member, a.B%3+1), TakeStep(sprint.TakeReq{As: member, Sel: sprint.Sel{Limit: a.B%3 + 1}, Who: member}))
 	case "report":
 		s := r.snap()
 		if s == nil {
 			return
 		}
-		cs := append(append([]*sprint.Card{}, s.Readers.Cell(reader, sprint.Asked)...), s.Readers.Cell(reader, sprint.Reading)...)
+		cs := propKind(append(append([]*sprint.Card{}, s.Fleet.Cell(member, sprint.Working)...), s.Fleet.Cell(member, sprint.Ready)...), "read")
 		if c, ok := pickOf(cs, a.B); ok {
 			v := "ok"
 			if a.F {
 				v = "broken"
 			}
-			r.run(fmt.Sprintf("nova-sprint read %s --as %s --verdict %s --finding f:1", c.ID, reader, v), ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: reader, Verdict: v, Finding: "f:1", Sel: sprint.Sel{IDs: []string{c.ID}}, Who: reader}))
+			r.run(fmt.Sprintf("nova-sprint read %s --as %s --verdict %s --finding f:1", c.ID, member, v), ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: member, Verdict: v, Finding: "f:1", Sel: sprint.Sel{IDs: []string{c.ID}}, Who: member}))
 		}
 	case "merge":
 		r.merge(stream, a.B, a.C, a.F)
@@ -400,6 +393,17 @@ func (r *propRun) act(a pAct) {
 	default:
 		panic("no action " + a.K)
 	}
+}
+
+// propKind is the cards of the kind ("work" or "read") among cs.
+func propKind(cs []*sprint.Card, kind string) []*sprint.Card {
+	var out []*sprint.Card
+	for _, c := range cs {
+		if (c.F("kind") == "read") == (kind == "read") {
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 // beat is one beat of every member's machine: they beat while time passes
@@ -727,10 +731,6 @@ func (r *propRun) decide(v InboxView, g sprint.Group, choice int, progress bool)
 	case d == sprint.ReworkOnAHigherTier:
 		r.run("nova-sprint rework "+strings.Join(members, " ")+" --fix 'fix' --tier pro --answers "+strings.Join(notes, ","),
 			ReworkStep(sprint.ReworkReq{Sel: sprint.Sel{IDs: members}, Fix: "fix", Tier: "pro", Answers: notes, Who: "coord"}))
-	case d == "ask":
-		r.run("nova-sprint ask "+strings.Join(members, " ")+" --answers "+strings.Join(notes, ","), AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: members}, Answers: notes, Who: "coord"}))
-	case d == "ask another reader" || d == "ask --another":
-		r.run("nova-sprint ask "+strings.Join(members, " ")+" --another --answers "+strings.Join(notes, ","), AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: members}, Another: true, Answers: notes, Who: "coord"}))
 	case d == "accept":
 		r.run("nova-sprint accept "+strings.Join(members, " ")+" --answers "+strings.Join(notes, ","), AcceptStep(sprint.AcceptReq{Sel: sprint.Sel{Only: members}, Answers: notes, Who: "coord"}))
 	case d == "drop":
@@ -958,6 +958,11 @@ func (r *propRun) check(i int, a pAct) *propFail {
 				continue
 			}
 			p, due := part.Fn(fs, req)
+			if part.Name == "ask" {
+				// a primary that waits for a reader is counted due while it waits, marked
+				// waiting (read_cards.go, readCardsAskPart): the tick runs again for it
+				due -= waitingForReaders(fs)
+			}
 			// what the store applies of the plan: a judgment of a cause already
 			// open is not written again (sprint.Applied), as the tick's step sees it
 			if p = sprint.Applied(fs, p); !p.Empty() || due > 0 {
@@ -996,7 +1001,10 @@ func (r *propRun) check(i int, a pAct) *propFail {
 	// what the first tick's steps queued is the next pump's to apply (the owner's
 	// tick, errata 3 amendment 12), so a tick that finds a queue may change the
 	// sprint, and the ticks after it reach a tick that finds none and changes
-	// nothing, within a few.
+	// nothing, within a few. The level runs once, at a tick's start: a tick whose
+	// deal cut read cards onto a member leaves its backlog for the next tick's level,
+	// which may move that member's work cards and nothing else (levelsAfterPlacements).
+	last := *res
 	for n := 0; ; n++ {
 		q, err := r.st.B.QueueRead(r.ctx)
 		if err != nil {
@@ -1007,16 +1015,57 @@ func (r *propRun) check(i int, a pAct) *propFail {
 		if err != nil {
 			return fail("error", "the second tick: %v", err)
 		}
+		if len(q) == 0 && n < 3 && levelsAfterPlacements(res2, last) {
+			last = res2
+			continue
+		}
 		if len(q) == 0 {
 			if after := r.image(); after != before {
 				return fail("second-tick", "a second tick changed the sprint: moved %v, %d notes", res2.Moved(), res2.Notes())
 			}
 			return nil
 		}
+		last = res2
 		if n == 3 {
 			return fail("second-tick", "the work table's queue still held %d changes at the fourth tick after the action: moved %v", len(q), res2.Moved())
 		}
 	}
+}
+
+// waitingForReaders is the primaries in review marked waiting for a reader.
+func waitingForReaders(s *sprint.Snapshot) int {
+	n := 0
+	for _, c := range s.Work.Column(sprint.Review) {
+		if c.F(sprint.FieldWaitingReader) != "" {
+			n++
+		}
+	}
+	return n
+}
+
+// levelsAfterPlacements says the tick moved something, and only by its level, and only
+// off members the tick before placed cards on (a work card dealt, a read card cut).
+func levelsAfterPlacements(tick, before TickResult) bool {
+	if len(tick.Moved()) == 0 {
+		return false
+	}
+	placed := strings.Join(before.Moved(), "\n")
+	for _, p := range tick.Parts {
+		if p.Name != sprint.PartLevel && (len(p.Moved) > 0 || p.Notes > 0) {
+			return false
+		}
+		for _, m := range p.Moved {
+			f := strings.Fields(m)
+			if len(f) < 2 {
+				return false
+			}
+			from, _, _ := strings.Cut(f[1], ":")
+			if !strings.Contains(placed, "member="+from+" ") && !strings.Contains(placed, " of "+from) && !strings.Contains(placed, ", "+from) {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // image is the tables' revisions, the notifications and the open set.
@@ -1094,7 +1143,7 @@ func (r *propRun) drain(i0 int) *propFail {
 				}
 			}
 		}
-		for k := range r.cfg.readers {
+		for k := range r.cfg.members {
 			for n := 0; n < 4; n++ {
 				if f := do(pAct{K: "report", A: k, F: fault(10)}); f != nil {
 					return f

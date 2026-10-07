@@ -2,10 +2,13 @@ package sprint
 
 import (
 	"fmt"
+	"slices"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 	"github.com/stretchr/testify/require"
 )
 
@@ -18,16 +21,61 @@ type world struct {
 	s     *Snapshot
 	notes []Note
 	seq   int
+	// readers is the world's readers, made friends that read by readerSeats
+	readers     []string
+	readersMade bool
 }
 
 var t0 = time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
 
+// newWorld is an empty sprint. readers names its readers: rows of the readers table (a
+// reader-<m> row makes member m read), and, the first time the world
+// cuts read cards (askReads): each a friend up whose roles name reader alone, at every
+// tier, on her fleet row, with the friends' work off (set --friends off), so she reads and
+// is dealt no work card. A reader's read card is read with read --as <her name>.
 func newWorld(t testing.TB, readers ...string) *world {
 	t.Helper()
 	s := &Snapshot{Now: t0, Work: NewTable(Work), Readers: NewTable(Readers), Merge: NewTable(Merge), Fleet: NewTable(Fleet),
 		Coordinator: "coordinator", Actor: "coordinator"}
 	s.Readers.SetRows(append(s.Readers.Rows(), readers...))
-	return &world{t: t, s: s}
+	return &world{t: t, s: s, readers: readers}
+}
+
+// readerSeats makes the world's readers (newWorld) its friends, once, and is their seats.
+func (w *world) readerSeats() []FriendSeat {
+	if !w.readersMade {
+		w.readersMade = true
+		for _, r := range w.readers {
+			w.s.Friends = append(w.s.Friends, FriendSeat{Name: r, Width: 16, Status: Up, Roles: []string{RoleReader},
+				Tiers: []string{cardhdr.RouteFlash, cardhdr.RoutePro, cardhdr.RouteHeavy, cardhdr.RouteFrontier}})
+			w.s.Fleet.SetRows(append(w.s.Fleet.Rows(), FriendRow(r)))
+		}
+		if len(w.readers) > 0 {
+			w.s.Work.SetProp(PropFriends, SwitchOff)
+		}
+	}
+	return w.s.Friends
+}
+
+// askReads cuts the read cards every primary in review wants, as the tick's deal does
+// (readCardsAsk), and applies them.
+func (w *world) askReads() Plan {
+	w.t.Helper()
+	p, _ := readCardsAsk(w.s, w.readerSeats(), nil)
+	return w.must(p)
+}
+
+// readCardsAt is the primary's read cards placed on the fleet table at the attempt, by
+// reader name.
+func readCardsAt(s *Snapshot, pr *Card, attempt int) []*Card {
+	var out []*Card
+	for _, c := range s.Fleet.Column(Ready, Working) {
+		if isRead(c) && c.F("primary") == pr.ID && readAttempt(c) == attempt {
+			out = append(out, c)
+		}
+	}
+	slices.SortFunc(out, func(a, b *Card) int { return strings.Compare(a.F("reader"), b.F("reader")) })
+	return out
 }
 
 func (w *world) tick(d time.Duration) { w.s.Now = w.s.Now.Add(d) }

@@ -28,7 +28,7 @@ const (
 	walkMaxPrimaries  = 14
 	walkTries         = 8
 	walkMaxStreams    = 3
-	walkMaxMembers    = 3
+	walkMaxMembers    = 4
 	walkMaxNeeds      = 2
 	walkSentinelOneIn = 14
 	walkBeatAge       = 5 // seconds
@@ -52,17 +52,18 @@ type walk struct {
 	friends []sprint.FriendSeat // the friends' seats a scenario gives the sprint; none in a walk
 }
 
-// newWalk is the sprint of a seed: two or three streams, two or three members
-// up, two to four readers, the machine RUNNING since t0.
+// newWalk is the sprint of a seed: two or three streams, three or four members
+// up, each a reader (its reader row: a pro card's two read cards are dealt to two
+// members that did not work it), the machine RUNNING since t0.
 func newWalk(seed uint64) *walk {
 	rng := rand.New(rand.NewPCG(seed, 0x5eed))
-	readers := []string{"reader-a", "reader-b", "reader-c", "reader-d"}[:2+rng.IntN(3)]
-	k := &walk{world: newWorld(readers...), rng: rng, now: t0, beats: map[string]sprint.Beat{}, silent: map[string]bool{}, running: true, since: t0}
+	k := &walk{world: newWorld(), rng: rng, now: t0, beats: map[string]sprint.Beat{}, silent: map[string]bool{}, running: true, since: t0}
 	for i := range walkMaxStreams - 1 + rng.IntN(2) {
 		k.streams = append(k.streams, fmt.Sprintf("s%d", i+1))
 	}
 	for i := range walkMaxMembers - 1 + rng.IntN(2) {
 		k.members = append(k.members, fmt.Sprintf("m%d", i+1))
+		k.s.Readers.SetRows(append(k.s.Readers.Rows(), sprint.ReaderPrefix+k.members[i]))
 	}
 	for _, m := range k.members {
 		k.try(sprint.FleetStep(k.s, sprint.FleetReq{Op: "release", Member: m, Who: coordinator, Fresh: true}))
@@ -209,7 +210,7 @@ func (k *walk) take() bool {
 
 // finish has a member finish a work card it holds, failed now and then.
 func (k *walk) finish() bool {
-	cs := k.s.Fleet.Column(sprint.Working)
+	cs := workOnly(k.s.Fleet.Column(sprint.Working))
 	if len(cs) == 0 {
 		return false
 	}
@@ -218,23 +219,33 @@ func (k *walk) finish() bool {
 		Failed: k.pick(6) == 0, Head: "h-" + c.F("primary"), Report: "boom", Who: c.Row}))
 }
 
-// read has a reader begin a read card or report on it, broken now and then.
+// read has a member report on a read card it holds: ok, broken now and then, or handed
+// back with no verdict now and then.
 func (k *walk) read() bool {
-	cs := k.s.Readers.Column(sprint.Asked, sprint.Reading)
+	cs := readsOnly(k.s.Fleet.Column(sprint.Ready, sprint.Working))
 	if len(cs) == 0 {
 		return false
 	}
 	c := cs[k.pick(len(cs))]
-	r := sprint.ReadReq{As: c.Row, Sel: sprint.Sel{IDs: []string{c.ID}}, Who: c.Row}
-	if k.pick(4) == 0 && c.Col == sprint.Asked {
-		r.Begin = true
-	} else {
+	r := sprint.ReadReq{As: c.Row, Sel: sprint.Sel{IDs: []string{c.ID}}, Usage: "input=1000 output=100", Who: c.Row}
+	switch k.pick(8) {
+	case 0:
+		r.Return, r.Reason = true, "launch refused"
+	case 1:
+		r.Verdict, r.Finding = "broken", "f:1"
+	default:
 		r.Verdict, r.Finding = "ok", "f:1"
-		if k.pick(6) == 0 {
-			r.Verdict = "broken"
-		}
 	}
 	return k.try(sprint.Read(k.s, r))
+}
+
+// workOnly and readsOnly are the work cards and the read cards of cs.
+func workOnly(cs []*sprint.Card) []*sprint.Card {
+	return slices.DeleteFunc(slices.Clone(cs), func(c *sprint.Card) bool { return c.F("kind") == "read" })
+}
+
+func readsOnly(cs []*sprint.Card) []*sprint.Card {
+	return slices.DeleteFunc(slices.Clone(cs), func(c *sprint.Card) bool { return c.F("kind") != "read" })
 }
 
 // acceptOrRework has the coordinator accept the primaries of a stream that
@@ -486,7 +497,33 @@ type sample struct {
 func (k *walk) sample() sample {
 	k.s.Now = time.Time{} // the tables' own clock is not read
 	snap := refmodel.Snapshot{Tables: k.s, Running: k.running, Since: k.since, Stopped: k.spans, Beats: k.beats, Goals: k.goals(), Untold: k.untold(), Friends: k.friends}
-	return sample{snap: snap.Clone(), now: k.now}
+	c := snap.Clone()
+	c.Tables.Fleet = asTheTickLoads(c.Tables)
+	return sample{snap: c, now: k.now}
+}
+
+// asTheTickLoads is the fleet table as the tick reads it: its placed cards, and of its
+// retired read cards only those the tick names (sprint.ReadCardExtras: of the primaries in
+// review); a read card retired with its verdict past review is a record no tick reads.
+func asTheTickLoads(s *sprint.Snapshot) *sprint.Table {
+	named := map[string]bool{}
+	for _, id := range sprint.ReadCardExtras(s) {
+		named[id] = true
+	}
+	out := sprint.NewTable(s.Fleet.Name)
+	out.Epoch, out.Revision = s.Fleet.Epoch, s.Fleet.Revision
+	out.SetRows(slices.Clone(s.Fleet.Rows()))
+	out.SetProps(s.Fleet.Props())
+	for row, texts := range s.Fleet.Texts {
+		out.Texts[row] = texts
+	}
+	for _, c := range s.Fleet.Cards() {
+		if c.F("kind") == "read" && !c.Placed() && !named[c.ID] {
+			continue
+		}
+		out.Put(c)
+	}
+	return out
 }
 
 // goals is up to walkMaxGoals people: pushed a while ago or never, their
@@ -561,38 +598,30 @@ func (k *walk) emptyLanes() bool {
 	}
 	gens := map[string]int{}
 	var ids []string
-	for _, c := range k.s.Fleet.Cell(most, sprint.Working) {
+	for _, c := range workOnly(k.s.Fleet.Cell(most, sprint.Working)) {
 		ids, gens[c.ID] = append(ids, c.ID), c.Int("gen")
+	}
+	if len(ids) == 0 {
+		return false
 	}
 	return k.try(sprint.Finish(k.s, sprint.FinishReq{As: most, Sel: sprint.Sel{IDs: ids}, Gens: gens, Head: "h-" + most, Report: "done", Who: most}))
 }
 
-// readAll has a reader with reads asked or reading report all of them ok: the
-// one that leaves the most asked reads of other readers it could take (none of
-// its own at their attempt), so it is idle beside a backlog it may be given:
-// the readers' level's case.
+// readAll has the member holding the most read cards report all of them ok, so the
+// primaries it read reach the accept.
 func (k *walk) readAll() bool {
 	best, most := "", 0
-	for _, rd := range k.s.Readers.Rows() {
-		if k.s.Readers.Count(rd, sprint.Asked)+k.s.Readers.Count(rd, sprint.Reading) == 0 {
-			continue
-		}
-		n := 0
-		for _, c := range k.s.Readers.Column(sprint.Asked) {
-			if c.Row != rd && k.s.Readers.Card(sprint.ReadCardID(c.F("primary"), c.Int("attempt"), rd)) == nil {
-				n++
-			}
-		}
-		if n > most {
-			best, most = rd, n
+	for _, m := range k.members {
+		if n := len(readsOnly(append(k.s.Fleet.Cell(m, sprint.Ready), k.s.Fleet.Cell(m, sprint.Working)...))); n > most {
+			best, most = m, n
 		}
 	}
 	if best == "" {
 		return false
 	}
 	var ids []string
-	for _, c := range append(k.s.Readers.Cell(best, sprint.Asked), k.s.Readers.Cell(best, sprint.Reading)...) {
+	for _, c := range readsOnly(append(k.s.Fleet.Cell(best, sprint.Ready), k.s.Fleet.Cell(best, sprint.Working)...)) {
 		ids = append(ids, c.ID)
 	}
-	return k.try(sprint.Read(k.s, sprint.ReadReq{As: best, Sel: sprint.Sel{IDs: ids}, Verdict: "ok", Finding: "f", Who: best}))
+	return k.try(sprint.Read(k.s, sprint.ReadReq{As: best, Sel: sprint.Sel{IDs: ids}, Verdict: "ok", Finding: "f", Usage: "input=1000 output=100", Who: best}))
 }

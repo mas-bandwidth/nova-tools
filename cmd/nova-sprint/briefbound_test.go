@@ -109,7 +109,6 @@ func TestEveryVerbThatPrintsFailExitsNonZero(t *testing.T) {
 		{"resolve s1-nope", "RESOLVE"},
 		{"take --as m1 s1-nope.w1@1", "TAKE-BY-ID"},
 		{"finish --as m1 s1-nope.w1@1 --report x", "FINISH"},
-		{"ask s1-nope", "ASK"},
 		{"read --as reader-a --ok s1-nope", "READ"},
 		{"accept s1-nope", "ACCEPT"},
 		{"rework s1-nope --fix x", "REWORK"},

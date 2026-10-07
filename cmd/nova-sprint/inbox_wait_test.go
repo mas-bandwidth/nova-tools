@@ -35,7 +35,7 @@ func TestAcceptReadOkRefusesOneOkRead(t *testing.T) {
 	ta.ok("tick")
 	ta.ok("take --as m1 --limit 5")
 	ta.ok("finish --as m1 s1-1.w1@1")
-	ta.ok("ask")
+	ta.cutReads()
 	ta.ok("read --as reader-a --ok --limit 10")
 	require.Contains(t, ta.ok("accept --read-ok"), "moved=0", "accept --read-ok with one ok read")
 	ta.ok("tick") // the pump applies the queued finish; one ok read accepts nothing

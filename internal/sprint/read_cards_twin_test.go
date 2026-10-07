@@ -3,6 +3,7 @@ package sprint_test
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -64,7 +65,6 @@ func newReadCardsRig(t *testing.T, members ...string) *readCardsRig {
 	for _, m := range members {
 		r.must(store.FleetStep(sprint.FleetReq{Op: "up", Member: m, Width: 4}))
 	}
-	r.must(store.SetStep(sprint.SetReq{ReadCards: sprint.ReadCardsOnWord, Who: "coordinator"}))
 	_, _, _, err := r.st.SetMachine(r.ctx, true)
 	require.NoError(t, err)
 	return r
@@ -155,6 +155,10 @@ func TestAReviewOpensNReadCardsAtOnceOnTheTwin(t *testing.T) {
 		require.Equal(t, sprint.Ready, c.Col)
 		require.Equal(t, "pro", c.F(sprint.FieldTier))
 		require.Equal(t, "pro-a", c.F(sprint.FieldRoute), "drawn on its tier's route")
+		require.Equal(t, "prov-pro-a/model-pro-a", c.F(sprint.FieldModel), "with the route's model")
+		require.Equal(t, strconv.Itoa(readCardsRouteSeconds), c.F(sprint.FieldDeadline), "and its deadline")
+		p := sprint.PacketOf("", 0, c, s.Work.Card("s1-1"), nil, nil)
+		require.Equal(t, "prov-pro-a/model-pro-a", p.Model, "the read card's packet carries its model: a reader loop needs no --model")
 		rows[c.Row] = true
 	}
 	require.Len(t, rows, 2)
@@ -180,6 +184,9 @@ func (r *readCardsRig) rec(id string) *sprint.Card {
 func (r *readCardsRig) read(c *sprint.Card, req sprint.ReadReq) store.Result {
 	r.t.Helper()
 	req.As, req.Sel = c.Row, sprint.Sel{IDs: []string{c.ID}}
+	if req.Usage == "" && !req.Return {
+		req.Usage = "input=1000 output=100" // a routed read card's verdict carries its usage
+	}
 	return r.must(store.ReadStep(req))
 }
 

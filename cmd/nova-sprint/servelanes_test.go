@@ -47,10 +47,11 @@ func serveOne(a *app, local bool, argv ...string) sprintwire.Result {
 func TestVerbAnsweredWhileLandInProgress(t *testing.T) {
 	t.Parallel()
 	r := newLandRig(t)
-	r.a.friends = friendRows("amy")
-	r.ok("friend sync --root " + t.TempDir())
 	r.ok("add --stream s1 --count 1 --one")
 	r.queued(map[string]string{"s1-1": r.head("s1-1", "main", "a.txt", "a\n")}, "s1-1")
+	// amy on the roster once the card is read: the beat answered while the landing waits
+	r.a.friends = friendRows("amy")
+	r.ok("friend sync --root " + t.TempDir())
 	r.ok("start")
 	r.a.serveAddr = "mem:0"
 	r.a.serial.waiting = func() { t.Error("a verb waited for the line while the landing ran its git") }

@@ -99,21 +99,6 @@ func readersText(s *Snapshot) string {
 // card; ReadsNeeded): the ask raises it once, and asks no absent reader.
 const NFewReaders = "fewer than two readers up"
 
-// fewReaders is the text of the judgment.
-func fewReaders(s *Snapshot) string {
-	return fmt.Sprintf("%s: %s", NFewReaders, readersText(s))
-}
-
-// cannotAskWhy is the ask's refusal of a primary at an attempt no reader can be
-// asked: it needs want different readers, free is the number up with room and
-// no read card at the attempt, full the number more that are at width. A reader
-// is asked an attempt once (its read card, placed or retired, is one read per
-// reader per attempt: a read taken back away, levelled or returned counts), so
-// the readers left are new ones (reader add), or the next attempt (rework).
-func cannotAskWhy(s *Snapshot, pr *Card, attempt, want, free, full int) string {
-	return fmt.Sprintf("needs %d different readers and %d is free with no read card at attempt %d of %s (%d free but at width); a reader is asked an attempt once, and once more when its read was taken back with no verdict, and a reader away or down is not asked (readers: %s); run: nova-sprint reader add <name>, nova-sprint reader up <name>, or nova-sprint rework %s --fix <text> for a new attempt every reader may read", want, free, attempt, pr.ID, full, readersText(s), pr.ID)
-}
-
 // NWaitingForReader is the tick's note on a primary in review whose read it
 // could not ask for want of a reader with room (a machine reader of its tier
 // at its width, or a friend at or above its read tier at her room when no paid
@@ -402,43 +387,10 @@ func (s *Snapshot) freeReaders(pr *Card, attempt int) []string {
 	return out
 }
 
-// ReadsWanted is how many reads the ask places on the primary now, at its
-// attempt. Under the interim rule of 2026-10-06 (docs/SPEC-SPRINT.md section 6;
-// the owner, 6:02 PM ET: "send out multiple consumer cards in ||") a card's reads
-// are asked together: the rest it needs (ReadsNeeded), a read outstanding counted
-// among those that stand; none once a read found it broken (the judgment stands
-// and a rework follows). The sequential rule before it (2026-10-04) asked the
-// first read alone and the rest once it came back ok. A read
-// taken back from a reader away or handed back with no verdict (liveReadsAt)
-// does not stand and is asked again whatever stands: it was wanted when it
-// was placed (a pair's second read by --another too). Each read wanted goes
-// to a reader with room (askPicks): how many are wanted is this rule, where
-// they go is the readers' room. A friend's read of the attempt stands with
-// them (friendReadLive): placed or ok, it counts toward ReadsNeeded; broken, no second
-// read is asked (docs/SPEC-SPRINT.md, a read asked of any unit with room at
-// or above the read tier).
-func ReadsWanted(s *Snapshot, pr *Card) int {
-	placed := readsAt(s, pr, pr.Int("attempt"))
-	live := liveReadsAt(s, pr, pr.Int("attempt"))
-	fp, fok, fbr := friendReadLive(s, pr)
-	placed = append(placed, fp...)
-	live = append(append(append(live, fp...), fok...), fbr...)
-	return max(readsWantedOf(pr, live), len(placed)-len(live))
-}
-
-// readsWantedOf is ReadsWanted over the reads that stand, live.
-func readsWantedOf(pr *Card, live []*Card) int {
-	// Workaround (the coordinator, 2026-10-06 7:47 PM ET; the owner: 6:02 PM: "send out multiple consumer
-	// cards in ||"): a card's reads are asked together, not one after the other; a read
-	// outstanding counts toward the reads it needs, and only a broken read stops the rest.
-	// Read cards replace this.
-	for _, rc := range live {
-		if rc.Col == Broken {
-			return 0
-		}
-	}
-	return max(0, ReadsNeeded(pr)-len(live))
-}
+// ReadsWanted is how many read cards the deal cuts for the primary now (readCardsWanted):
+// the rest of the reads it needs, at once, none once a read found it broken, none for work
+// that failed. The one ask: read cards are cut when a primary enters review.
+func ReadsWanted(s *Snapshot, pr *Card) int { return readCardsWanted(s, pr, nil) }
 
 // FieldFindingReader is the primary's field naming the reader whose finding its
 // last rework sent back (the first broken read's reader at that attempt, in
@@ -450,134 +402,9 @@ const FieldFindingReader = "finding_reader"
 // placed on purpose, the level leaves it where it is (levelReads).
 const FieldFinderRead = "finder"
 
-// finderFirst is the reader the primary's first read at attempt is asked of out
-// of turn: the reader whose finding the attempt's fix answers (FieldFindingReader
-// at FieldFindingAttempt, the attempt before), so the check is against the finding
-// and not a fresh opinion (docs/SPEC-SPRINT.md section 6; the owner, 2026-10-04),
-// when that reader is free at the attempt (free: up, with no card at it) and has
-// free room under its machine's width (room, readerRooms); "" otherwise, and the
-// room chooses. The second reader stays fresh: only the first read is the finder's.
-func finderFirst(c *Card, attempt int, free []string, room map[string]readerRoom) string {
-	rd := c.F(FieldFindingReader)
-	if rd == "" || c.Int(FieldFindingAttempt) != attempt-1 || !contains(free, rd) || room[rd].free <= 0 {
-		return ""
-	}
-	return rd
-}
-
-// askFinders is the finders the ask asks out of turn, by primary, over the
-// primaries it asks in the order it asks them: each the primary's finder
-// (finderFirst) when the primary has no read placed at its attempt (its
-// first read; not for --another) and the finder is free with room, the read
-// taken off the finder's room at once. The finders are placed before any
-// other read of the step, so every read after them goes by the room they
-// left and the ask's placement stays the level's fixed point: a finder read
-// is never levelled, and a reader it fills is not also given reads its room
-// no longer holds (docs/SPEC-SPRINT.md section 6; the model is
-// tla/ReadsByRoom.tla FinderFirst).
-func (s *Snapshot) askFinders(cards []*Card, another bool, room map[string]readerRoom) map[string]string {
-	finders := map[string]string{}
-	if another {
-		return finders
-	}
-	for _, c := range cards {
-		attempt := c.Int("attempt")
-		if len(readsAt(s, c, attempt)) > 0 {
-			continue
-		}
-		if f := finderFirst(c, attempt, s.freeReaders(c, attempt), room); f != "" {
-			finders[c.ID] = f
-			room[f] = room[f].after(1)
-		}
-	}
-	return finders
-}
-
-// askPicks is the readers the ask asks of the primary now, want of them, at
-// most: its finder first (askFinders, whose room the finder's read already
-// took), then the rest each the free reader with the greatest share of room
-// (round.pickByRoom), so the reads wanted (ReadsWanted) go
-// where the machines' widths have room (docs/SPEC-SPRINT.md section 6, the
-// reads, sequential and by room; the model is tla/ReadsByRoom.tla and the
-// reference model's AskChoice). Every read picked is taken off its reader's
-// room, so the room, not a turn count, keeps the readers' loads even. It
-// moves no index: the ask moves it past the readers it picked in turn, never
-// the finder (an out-of-turn read leaves the round where it was).
-func askPicks(rr *round, finder string, want int, free []string, room map[string]readerRoom) []string {
-	if want <= 0 {
-		return nil
-	}
-	var picked []string
-	if finder != "" {
-		picked = append(picked, finder)
-		free = without(free, []string{finder})
-	}
-	return append(picked, rr.pickByRoom(want-len(picked), free, room)...)
-}
-
-// sweepReads is the readers' rebalance safety: every read asked or reading of a
-// reader that is not up is taken back, retired as the ask takes back a read
-// asked of a reader away
-// (retired_by away: that reader keeps its card at the attempt, so it is not
-// asked that attempt again), and the tick's ask asks it of the readers up. A
-// read stays where it is when the ask could not place it (fewer readers up
-// than its primary needs, ReadsNeeded, or none up without a card at its
-// attempt): it is judged while its reader is away and read when the reader is
-// back (read_return_test.go). A snapshot with no reader states holds every
-// reader up: nothing moves.
-func sweepReads(s *Snapshot, p *Plan) {
-	up := s.UpReaders()
-	if s.ReaderStates == nil || len(up) == 0 {
-		return
-	}
-	taker := func(c *Card) bool {
-		pr := s.Work.Card(c.F("primary"))
-		if pr == nil || !enoughReadersUp(s, pr) {
-			return false
-		}
-		tier := s.readTierOf(pr)
-		for _, rd := range up {
-			if !s.readerServesTier(rd, tier) {
-				continue
-			}
-			if _, ok := ReadCardForAsk(s, c.F("primary"), c.Int("attempt"), rd); ok {
-				return true
-			}
-		}
-		return false
-	}
-	for _, rd := range s.Readers.Rows() {
-		if s.ReaderIsUp(rd) {
-			continue
-		}
-		cards := append([]*Card{}, s.Readers.Cell(rd, Asked)...)
-		if s.ReaderStates[rd] != ReaderHeld {
-			// a held reader's reads begun finish (hold.go); an away or down one's go
-			cards = append(cards, s.Readers.Cell(rd, Reading)...)
-		}
-		SortCards(cards)
-		for _, c := range cards {
-			if !taker(c) {
-				continue
-			}
-			p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.F("stream"),
-				Changes: []Change{change(Readers, removeEntry(c, map[string]string{"retired": stamp(s.Now), "retired_by": "away"}))},
-				Moved:   fmt.Sprintf("%s %s:%s -> taken back (%s is %s); the ask asks it of a reader up", c.ID, rd, c.Col, rd, orDash(s.ReaderStates[rd]))})
-		}
-	}
-}
-
 // RetiredByLevel is a read card's retired_by when the tick's level moved its
 // read, asked and not begun, to another reader (levelReads).
 const RetiredByLevel = "level"
-
-// TickLevelReads is the readers' rebalance, once at the start of every tick,
-// before any other part: levelReads, in one plan.
-func TickLevelReads(s *Snapshot, _ TickReq) (Plan, int) {
-	var p Plan
-	levelReads(s, &p)
-	return bound(p)
-}
 
 // ReaderWidth is a reader's width, the most reads it runs at once: its
 // machine's fleet row's (ReaderPrefix: reader-<m> runs at m's width, the width
@@ -597,157 +424,6 @@ func (s *Snapshot) ReaderWidth(reader string) int {
 		return math.MaxInt
 	}
 	return MemberWidth(ctl)
-}
-
-// readerLoad is a reader's reads asked and reading together.
-func (s *Snapshot) readerLoad(reader string) int {
-	return s.Readers.Count(reader, Asked) + s.Readers.Count(reader, Reading)
-}
-
-// readerRoom is a reader's room: its width (ReaderWidth) and its free room,
-// the width less its load (readerLoad), below zero for a reader over its
-// width. The ask and the level compare rooms by share, free room as a part of
-// width, so a machine of 4 and one of 24 are each filled to the same fraction
-// (ten reads: the 24 takes eight), never by count alone.
-type readerRoom struct{ width, free int }
-
-// roomParts is the parts a share is counted in.
-const roomParts = 1 << 20
-
-// share is the reader's free room as parts of its width (roomParts when idle,
-// below zero when over width); a reader with unbounded width (no fleet row)
-// counts roomParts less its load, so such readers order by load alone, below
-// an idle reader with a width and above any that has begun to fill.
-func (r readerRoom) share() int {
-	if r.width == math.MaxInt {
-		return roomParts - (r.width - r.free)
-	}
-	return r.free * roomParts / r.width
-}
-
-// after is the room with n more reads placed on it.
-func (r readerRoom) after(n int) readerRoom { return readerRoom{width: r.width, free: r.free - n} }
-
-// readerRooms is each reader's room (readerRoom). The ask gives a read to the
-// reader with the greatest share (round.pickByRoom, taking the reads it places
-// off the room as it goes) and the level moves reads toward it
-// (round.levelToRoom); a reader with no free room is given nothing by either.
-func (s *Snapshot) readerRooms(readers []string) map[string]readerRoom {
-	room := make(map[string]readerRoom, len(readers))
-	for _, rd := range readers {
-		w := s.ReaderWidth(rd)
-		room[rd] = readerRoom{width: w, free: w - s.readerLoad(rd)}
-	}
-	return room
-}
-
-// levelReads evens the up readers' room, the fleet's level (level) in the
-// readers' shape: a reader's room is its width less its load, reads asked and
-// reading together, compared as a share of its width (readerRoom), and a
-// reader named for no fleet row has unbounded room, so among such readers the
-// share differs by the load alone. While the reader with the least share that
-// holds an asked read not yet levelled (over its width when the share is
-// below zero) could hand one to a reader with free room whose share would
-// still not fall under its own, its newest such read (the last in work order)
-// moves to the reader with the greatest share, ties the first round the
-// readers from the ask's index (askRound, round.levelToRoom), the index moved
-// past it as the ask moves it. So no reader up has free lanes while another
-// holds a backlog, no move fills a reader past its width (a reader at width is
-// given nothing), and no read is shuttled back: the ask's placement is the
-// level's fixed point. A read moves only to a reader with no card at
-// its primary's attempt, placed or retired: a primary's two reads stay with
-// two different readers, and no reader is asked an attempt it already read.
-// The move retires the read card (retired_by level: the reader it left is
-// never asked that attempt again) and asks the read of the other reader at
-// the same attempt and head, its route kept, in the readers table only,
-// marked leveled: a read is moved at most once, so a late read is not asked
-// afresh on reader after reader. A read begun stays with its reader; a reader
-// that is not up is neither a source nor a target: sweepReads takes its reads
-// back first. Each move takes a read off a queue, so the level ends.
-func levelReads(s *Snapshot, p *Plan) {
-	sweepReads(s, p)
-	up := s.UpReaders()
-	if len(up) < 2 {
-		return
-	}
-	queues := map[string][]*Card{}
-	for _, rd := range up {
-		for _, c := range s.Readers.Cell(rd, Asked) {
-			if c.F(FieldLeveled) == "" && c.F(FieldFinderRead) == "" { // a finder's read is placed on purpose
-				queues[rd] = append(queues[rd], c)
-			}
-		}
-		SortCards(queues[rd])
-	}
-	room := s.readerRooms(up)
-	rr := askRound(s)
-	moves := roundMoves{}
-	planned := map[string]bool{} // the read cards this plan already creates: none is created twice
-	for {
-		long := ""
-		for _, rd := range up {
-			if len(queues[rd]) > 0 && (long == "" || room[rd].share() < room[long].share()) {
-				long = rd
-			}
-		}
-		if long == "" {
-			break
-		}
-		q := queues[long]
-		i, to := len(q)-1, ""
-		for ; i >= 0 && to == ""; i-- {
-			avoid := []string{long}
-			pr := s.Work.Card(q[i].F("primary"))
-			tier := ""
-			if pr != nil {
-				tier = s.readTierOf(pr)
-			}
-			for _, rd := range up {
-				targetID, ok := ReadCardForAsk(s, q[i].F("primary"), q[i].Int("attempt"), rd)
-				if !ok || planned[targetID] || (tier != "" && !s.readerServesTier(rd, tier)) {
-					avoid = append(avoid, rd)
-				}
-			}
-			to = rr.levelToRoom(up, room, long, avoid)
-		}
-		if to == "" {
-			break
-		}
-		i++
-		c := q[i]
-		room[long] = room[long].after(-1)
-		room[to] = room[to].after(1)
-		queues[long] = append(q[:i:i], q[i+1:]...)
-		moves[c.ID] = to
-		fields := movedReadFields(c, to, s.Now)
-		targetID, _ := ReadCardForAsk(s, c.F("primary"), c.Int("attempt"), to)
-		planned[targetID] = true
-		p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{
-			change(Readers, removeEntry(c, map[string]string{"retired": stamp(s.Now), "retired_by": RetiredByLevel})),
-			change(Readers, createEntry(targetID, to, Asked, c.Score, fields)),
-		}, Moved: fmt.Sprintf("%s %s:asked -> %s:asked (%s)", c.ID, long, to, targetID)})
-	}
-	roundWrites(p, rr, moves)
-}
-
-// movedReadFields is the fields of the card a read moved by the level is asked
-// on: the read's own (its primary, stream, attempt, head and route) for the
-// reader it goes to, asked now, marked leveled, and none of its run on the reader it left: not
-// returned, not reasked (the new reader's bound starts at zero), no
-// read_take_<n> and no usage. The card it leaves is retired with every field it
-// had, and a returned run's cost is the primary's (cost_record:<card>#r<n>,
-// cost.go): the move loses none of it.
-func movedReadFields(c *Card, to string, now time.Time) map[string]string {
-	fields := map[string]string{}
-	for k, v := range c.Fields {
-		switch {
-		case k == FieldReturned, k == FieldReasked, k == FieldUsage, strings.HasPrefix(k, FieldReadTake):
-			continue
-		}
-		fields[k] = v
-	}
-	fields["reader"], fields["asked"], fields[FieldLeveled] = to, stamp(now), "1"
-	return fields
 }
 
 // DefaultReadLease is how long an in-flight read's lease stands without renewal (10m).
@@ -900,6 +576,16 @@ func heavyRead(s *Snapshot, pr *Card, r AcceptReq) (fields map[string]string, ov
 		if rc.Col == Broken {
 			overruled = append(overruled, rc)
 			ids = append(ids, rc.ID)
+		}
+	}
+	// a read card's broken verdict, retired on the fleet table (read_cards.go)
+	if s.Fleet != nil {
+		_, _, fbr := friendReadLive(s, pr)
+		for _, syn := range fbr {
+			if rc := s.Fleet.Card(syn.ID); rc != nil {
+				overruled = append(overruled, rc)
+				ids = append(ids, rc.ID)
+			}
 		}
 	}
 	who := r.Who

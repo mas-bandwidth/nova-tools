@@ -224,7 +224,7 @@ func heldOK(s *sprint.Snapshot) string {
 		if n := heldBy(s, m); n > sprint.DealAhead*s.Width(m) {
 			return fmt.Sprintf("%s holds %d work cards, over DealAhead times its width %d", m, n, s.Width(m))
 		}
-		if n := s.Fleet.Count(m, sprint.Working); n > s.Width(m) {
+		if n := loadOf(s, m, sprint.Working); n > s.Width(m) {
 			return fmt.Sprintf("%s works %d cards, over its width %d", m, n, s.Width(m))
 		}
 	}
@@ -243,6 +243,7 @@ func holesUp(h *harness, n int) {
 	h.t.Helper()
 	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m1", Width: 2}))
 	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m2", Width: 2}))
+	h.memberReaders("m1", "m2")
 	for _, st := range []string{"s1", "s2", "s3"} {
 		h.must(AddStep(sprint.AddReq{Stream: st, Count: n}))
 	}
@@ -380,38 +381,6 @@ func TestG1AWorkPlacementFollowsTheFleetTableBetweenPlans(t *testing.T) {
 	require.Empty(t, got, "none up in the table: %v", got)
 }
 
-// G1. A read is placed on a reader, and no fleet row enters it: the ask's plan
-// over the same state is the same with the fleet table empty, and with every
-// member held the reads are still asked in a tick that ends. A read that
-// waited on a host's status would trade with the fleet (the model's G1, in
-// its readers).
-func TestG1AReadsPlacementNeverDependsOnAFleetRow(t *testing.T) {
-	t.Parallel()
-	h := newHarness(t)
-	h.setup(2)
-	h.startMachine()
-	x := newHoleTick(h)
-	x.tick()
-	h.work("m1")
-	h.work("m2")
-	s := h.snap()
-	n := len(s.Work.Column(sprint.Review))
-	require.EqualValues(t, 2, n, "%d in review, want 2", n)
-	want, _ := sprint.TickAsk(s, sprint.TickReq{})
-	require.Len(t, want.Units, 2, "the ask plans %d units, want 2", len(want.Units))
-	empty := *s
-	empty.Fleet = sprint.NewTable(s.Fleet.Name)
-	got, _ := sprint.TickAsk(&empty, sprint.TickReq{})
-	require.Equal(t, want.Units, got.Units, "the ask's plan depends on the fleet table:\n got %+v\nwant %+v", got.Units, want.Units)
-	require.Equal(t, want.Notes, got.Notes, "the ask's plan depends on the fleet table:\n got %+v\nwant %+v", got.Units, want.Units)
-	h.must(FleetStep(sprint.FleetReq{Op: "hold", Member: "m1"}))
-	h.must(FleetStep(sprint.FleetReq{Op: "hold", Member: "m2"}))
-	res := x.tick()
-	n = len(h.table().Readers.Column(sprint.Asked))
-	require.EqualValues(t, 4, n, "with no member up %d reads are asked, want 4 (each card's two, together), in %v", n, res.Order)
-	require.LessOrEqual(t, len(res.Order), 12, "with no member up %d reads are asked, want 4, in %v", n, res.Order)
-}
-
 // G1. A member that falls silent after the pump placed cards on it (the table
 // still had it up) does not keep the tick going: every tick ends within the
 // model's bound of 12 updates, the fleet takes the member down, and the next
@@ -460,7 +429,7 @@ func TestG2TheDealWritesTheFleetInThePumpsOwnStep(t *testing.T) {
 		}
 		held := 0
 		for _, m := range s.Fleet.Rows() {
-			held += heldBy(s, m)
+			held += workBy(s, m)
 		}
 		working := len(s.Work.Column(sprint.Working))
 		require.Equal(t, working, held, "before %s the fleet holds %d work cards and %d primaries are working: the deal's fleet write is not in the pump's step", part, held, working)
@@ -519,30 +488,38 @@ func TestG2ALapseNeverTakesAMachineOverDealAheadTimesItsWidth(t *testing.T) {
 	h := newHarness(t)
 	holesUp(h, 8)
 	x := newHoleTick(h)
-	held := map[string]int{}
+	held := map[string][2]int{} // each member's work cards and read cards before the deal
 	x.onPlan = func(part string, s *sprint.Snapshot) {
 		why := heldOK(s)
 		require.Empty(t, why, "before %s: %s", part, why)
 		if part == "work/deal" {
 			for _, m := range s.UpMembers() {
-				held[m] = heldBy(s, m)
+				all := len(s.Fleet.Cell(m, sprint.Ready)) + len(s.Fleet.Cell(m, sprint.Working))
+				held[m] = [2]int{workBy(s, m), all - workBy(s, m)}
 			}
 		}
 	}
 	dealt, withdrawn := 0, 0
 	holesRun(x, 8, true, func(round int, res TickResult, ws []holeWrite) {
-		made := map[string]int{}
+		made := map[string][2]int{}
 		for _, w := range ws {
 			for _, e := range w.Members {
 				if w.Table == sprint.Fleet && w.Part == "work/deal" && e.Create != nil {
-					made[e.Create.Row]++
+					n := made[e.Create.Row]
+					if e.Set["kind"] == "read" {
+						n[1]++
+					} else {
+						n[0]++
+					}
+					made[e.Create.Row] = n
 				}
 			}
 		}
 		for m, n := range made {
-			dealt += n
-			room := max(0, sprint.DealAhead*2-held[m])
-			require.LessOrEqual(t, n, room, "round %d: the deal gave %s %d cards, its room was %d (it held %d of DealAhead times width 2)", round, m, n, room, held[m])
+			dealt += n[0] + n[1]
+			// a read holds half a slot: the member's load after the deal, in slots, is in its room
+			after := held[m][0] + n[0] + (held[m][1]+n[1]+1)/2
+			require.LessOrEqual(t, after, sprint.DealAhead*2, "round %d: the deal gave %s %d work and %d read cards over its room (it held %d and %d of DealAhead times width 2)", round, m, n[0], n[1], held[m][0], held[m][1])
 		}
 		clear(held)
 		why := heldOK(h.table())

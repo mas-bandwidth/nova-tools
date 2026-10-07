@@ -104,6 +104,7 @@ func TestATickThatWentStaleLeavesAFullReadDue(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	h.setup(1)
+	h.memberReaders("m1", "m2")
 	h.startMachine()
 	h.machine()
 	_, hb, _ := h.st.Machine(h.ctx)
@@ -111,15 +112,15 @@ func TestATickThatWentStaleLeavesAFullReadDue(t *testing.T) {
 	// A part that lost every attempt: the next tick reads the whole sprint.
 	h.tick(time.Second)
 	h.work("m1")
-	h.st.B = &loseTickPart{Mem: h.m, verb: "tick ask", left: FenceTries}
+	h.st.B = &loseTickPart{Mem: h.m, verb: "tick deal", left: FenceTries}
 	_, err := h.st.Tick(h.ctx)
 	require.NoError(t, err)
 	h.st.B = h.m
 	_, hb, _ = h.st.Machine(h.ctx)
 	require.True(t, hb.Full.IsZero(), "a tick whose part lost every attempt left no full read due: %+v", hb)
 	h.tick(time.Second)
-	if res := h.machine(); res.Idle || len(h.snap().Readers.Of("s1-1")) != 2 { // both reads asked together
-		require.Failf(t, "", "the next tick: idle=%v, s1-1 asked of %d", res.Idle, len(h.snap().Readers.Of("s1-1")))
+	if res := h.machine(); res.Idle || len(readsAt(h.snap(), h.snap().Work.Card("s1-1"))) != 1 { // its read card, the other member's
+		require.Failf(t, "", "the next tick: idle=%v, s1-1 read cards %d", res.Idle, len(readsAt(h.snap(), h.snap().Work.Card("s1-1"))))
 	}
 }
 
@@ -229,45 +230,9 @@ func TestNoPartBeginsAfterStop(t *testing.T) {
 	h.tick(time.Second)
 	h.machine()
 	s := h.snap()
-	require.Len(t, s.Readers.Of("rv"), 2, "after start: rv asked of %d (both reads together), s3 %s", len(s.Readers.Of("rv")), s.StreamCtl("s3").F("state"))
-	require.NotEqual(t, string(sprint.StreamStopped), s.StreamCtl("s3").F("state"), "after start: rv asked of %d, s3 %s", len(s.Readers.Of("rv")), s.StreamCtl("s3").F("state"))
-}
-
-// With fewer than two readers up the tick asks none and writes one judgment
-// for the sprint, whatever its wording: "none up" becoming "one up" writes
-// nothing again, and it closes when two are up.
-func TestFewReadersIsWrittenOncePerSprint(t *testing.T) {
-	t.Parallel()
-	h := newHarness(t)
-	h.m = NewMem()
-	h.st.B = h.m
-	require.NoError(t, h.st.Init(h.ctx))
-	h.beat()
-	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m1"}))
-	h.must(AddStep(sprint.AddReq{Brief: proBrief, Stream: "s1", Count: 2}))
-	h.startMachine()
-	h.machine()
-	h.work("m1")
-	h.machine()
-	got := len(h.openOf(sprint.NFewReaders))
-	require.Equal(t, 1, got, "fewer than two readers up: open %d, want 1 for the two primaries", got)
-	was := h.written(sprint.NFewReaders)
-	require.NoError(t, h.m.RowsAdd(h.ctx, "t-readers", []string{"reader-a"}))
-	h.beat()
-	h.tick(time.Second)
-	h.machine()
-	h.tick(time.Minute + time.Second)
-	h.machine()
-	n := h.written(sprint.NFewReaders)
-	open := len(h.openOf(sprint.NFewReaders))
-	require.Equal(t, was, n, "few readers written %d times (was %d), open %d, after one reader came", n, was, open)
-	require.Equal(t, 1, open, "few readers written %d times (was %d), open %d, after one reader came", n, was, open)
-	require.NoError(t, h.m.RowsAdd(h.ctx, "t-readers", []string{"reader-b"}))
-	h.beat()
-	h.tick(time.Second)
-	h.machine()
-	got = len(h.openOf(sprint.NFewReaders))
-	require.Equal(t, 0, got, "still open %d with two readers", got)
+	rv := len(readsAt(s, s.Work.Card("rv")))
+	require.Equal(t, 2, rv, "after start: rv's read cards %d (two readers that did not work it), s3 %s", rv, s.StreamCtl("s3").F("state"))
+	require.NotEqual(t, string(sprint.StreamStopped), s.StreamCtl("s3").F("state"), "after start: rv's read cards %d, s3 %s", rv, s.StreamCtl("s3").F("state"))
 }
 
 // A tick judgment is answered by wait, not ack: the condition is held until

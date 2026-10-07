@@ -75,23 +75,22 @@ func TestTheWholeLifeOfAPrimary(t *testing.T) {
 	require.Len(t, w.openOn("s1-4"), 1, "failed work is not an open judgment: %v", w.s.Open)
 	assert.Equal(t, 1, w.s.Fleet.Count("m1", DoneFailed)+w.s.Fleet.Count("m2", DoneFailed), "the failed work card is not in a member's failed cell")
 
-	ask := w.must(Ask(w.s, AskReq{}))
+	ask := w.askReads()
 	require.Len(t, ask.Units, 3, "ask dealt %d primaries, want the 3 that came back ok (failed work is not read)", len(ask.Units))
 	for _, id := range []string{"s1-1", "s1-2", "s1-3"} {
-		reads := readsAt(w.s, w.s.Work.Card(id), 1)
+		reads := readCardsAt(w.s, w.s.Work.Card(id), 1)
 		require.Len(t, reads, 2, "%s asked of %d readers: %v (a card's reads are asked together)", id, len(reads), reads)
 	}
 	w.clean("ask")
 
 	// One reader's ok is never enough.
-	first := readsAt(w.s, w.s.Work.Card("s1-1"), 1)
+	first := readCardsAt(w.s, w.s.Work.Card("s1-1"), 1)
 	w.must(Read(w.s, ReadReq{Usage: "input=1000 output=100", As: first[0].F("reader"), Verdict: "ok", Sel: Sel{IDs: []string{first[0].ID}}}))
 	acc := Accept(w.s, AcceptReq{Sel: Sel{IDs: []string{"s1-1"}}})
 	require.Empty(t, acc.Units, "accept with one ok: %+v", acc)
 	require.Len(t, acc.Refused, 1, "accept with one ok: %+v", acc)
 	require.Contains(t, acc.Refused[0].Why, "two different readers", "accept with one ok: %+v", acc)
 	// the second read was asked with the first, of a different reader
-	first = readsAt(w.s, w.s.Work.Card("s1-1"), 1)
 	require.Len(t, first, 2)
 	require.NotEqual(t, first[0].F("reader"), first[1].F("reader"))
 	w.must(Read(w.s, ReadReq{Usage: "input=1000 output=100", As: first[1].F("reader"), Verdict: "ok", Sel: Sel{IDs: []string{first[1].ID}}}))
@@ -105,7 +104,7 @@ func TestTheWholeLifeOfAPrimary(t *testing.T) {
 	w.clean("accept")
 
 	// A broken read, rework with the finding; the fixed work is asked of two different readers again.
-	second := readsAt(w.s, w.s.Work.Card("s1-2"), 1)
+	second := readCardsAt(w.s, w.s.Work.Card("s1-2"), 1)
 	w.must(Read(w.s, ReadReq{Usage: "input=1000 output=100", As: second[0].F("reader"), Verdict: "broken", Finding: "line 1: off by one", Sel: Sel{IDs: []string{second[0].ID}}}))
 	require.Len(t, w.openOn("s1-2"), 1, "a broken read is not an open judgment")
 	score := w.s.Work.Card("s1-2").Score
@@ -121,8 +120,8 @@ func TestTheWholeLifeOfAPrimary(t *testing.T) {
 	member := w.s.Fleet.Card(card).Row
 	w.must(Take(w.s, TakeReq{As: member, Sel: Sel{IDs: []string{card}}, Gens: gensOf(w.s, card)}))
 	w.must(Finish(w.s, FinishReq{As: member, Sel: Sel{IDs: []string{card}}, Gens: gensOf(w.s, card)}))
-	w.must(Ask(w.s, AskReq{})) // the machine's ask: round the readers
-	again := readsAt(w.s, w.s.Work.Card("s1-2"), 2)
+	w.askReads()
+	again := readCardsAt(w.s, w.s.Work.Card("s1-2"), 2)
 	require.Len(t, again, 2, "fixed work not asked both its reads together: %v", again)
 	w.clean("fixed work returned")
 
@@ -250,7 +249,7 @@ func accepted(w *world, ids ...string) {
 		w.must(Take(w.s, TakeReq{As: c.Row, Sel: Sel{IDs: []string{c.ID}}, Gens: gensOf(w.s, c.ID)}))
 		w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{c.ID}}, Gens: gensOf(w.s, c.ID)}))
 	}
-	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: ids}}))
+	w.askReads()
 	for _, id := range ids {
 		readOK(w, id) // every read it needs, asked together
 	}
@@ -349,6 +348,7 @@ func TestCheckFindsEveryBrokenRule(t *testing.T) {
 		Fields: map[string]string{"primary": "s1-3", "reader": "reader-a", "attempt": "1"}}) // rule 3
 	s.StreamCtl("s1").Fields["state"] = StreamStopped // rule 9
 	s.Work.Card("s1-1").Fields["head"] = "other"      // rule 6
+	s.Fleet.Card("s1-1.w1").Fields["head"] = "other"
 	for _, tb := range []*Table{s.Work, s.Readers, s.Merge, s.Fleet} {
 		tb.cells, tb.byPrimary = nil, nil
 	}

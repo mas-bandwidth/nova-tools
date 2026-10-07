@@ -30,18 +30,16 @@ func midFlight(t *testing.T) *harness {
 	c := s.Fleet.Card("s1-4.w1")
 	h.must(TakeStep(sprint.TakeReq{As: c.Row, Sel: sprint.Sel{IDs: []string{c.ID}}, Gens: map[string]int{c.ID: 1}}))
 	h.must(FinishStep(sprint.FinishReq{As: c.Row, Sel: sprint.Sel{IDs: []string{c.ID}}, Gens: map[string]int{c.ID: 1}}))
-	rs := h.pairAsked("s1-4") // one read begun, one asked: both columns mid-flight
-	h.must(ReadStep(sprint.ReadReq{As: rs[0].F("reader"), Begin: true, Sel: sprint.Sel{IDs: []string{rs[0].ID}}}))
+	h.pairAsked("s1-4") // its two read cards mid-flight on the friends' rows
 	c = h.snap().Fleet.Card("s1-5.w1")
 	h.must(TakeStep(sprint.TakeReq{As: c.Row, Sel: sprint.Sel{IDs: []string{c.ID}}, Gens: map[string]int{c.ID: 1}}))
 	h.must(DealStep(sprint.DealReq{Sel: sprint.Sel{IDs: []string{"s1-6"}}}))
 	h.clean("mid-flight")
 	s = h.snap()
 	for table, cols := range map[*sprint.Table][]string{
-		s.Work:    {sprint.Waiting, sprint.Ready, sprint.Working, sprint.Review, sprint.Merging, sprint.Landed},
-		s.Fleet:   {sprint.Ready, sprint.Working, sprint.DoneOK},
-		s.Readers: {sprint.Asked, sprint.Reading, sprint.OK},
-		s.Merge:   {sprint.Queued, sprint.Merged, sprint.Stuck},
+		s.Work:  {sprint.Waiting, sprint.Ready, sprint.Working, sprint.Review, sprint.Merging, sprint.Landed},
+		s.Fleet: {sprint.Ready, sprint.Working, sprint.DoneOK},
+		s.Merge: {sprint.Queued, sprint.Merged, sprint.Stuck},
 	} {
 		for _, col := range cols {
 			require.NotEmpty(t, table.Column(col), "mid-flight: nothing in %s %s", table.Name, col)
@@ -66,7 +64,12 @@ func TestClearStopsTheSprintAndClearsAllWork(t *testing.T) {
 	after := h.snap()
 	require.Equal(t, uint64(1), after.Epoch, "epoch %d", after.Epoch)
 	for _, pair := range [][2]*sprint.Table{{before.Work, after.Work}, {before.Readers, after.Readers}, {before.Merge, after.Merge}, {before.Fleet, after.Fleet}} {
-		if !slices.Equal(pair[0].Rows(), pair[1].Rows()) {
+		was, now := pair[0].Rows(), pair[1].Rows()
+		if pair[0] == before.Fleet {
+			// a friend's row is her seat's, made again by the next friend sync
+			was, now = slices.DeleteFunc(slices.Clone(was), sprint.IsFriendRow), slices.DeleteFunc(slices.Clone(now), sprint.IsFriendRow)
+		}
+		if !slices.Equal(was, now) {
 			require.Fail(t, fmt.Sprintf("%s rows %v, were %v", pair[1].Name, pair[1].Rows(), pair[0].Rows()))
 		}
 		for _, c := range pair[1].Cards() {
@@ -87,7 +90,7 @@ func TestClearStopsTheSprintAndClearsAllWork(t *testing.T) {
 	held := uint64(0)
 	for name, step := range map[string]Step{
 		"finish": FinishStep(sprint.FinishReq{As: before.Fleet.Card("s1-5.w1").Row, Sel: sprint.Sel{IDs: []string{"s1-5.w1"}}, Gens: map[string]int{"s1-5.w1": 1}}),
-		"read":   ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: before.Readers.Of("s1-4")[1].F("reader"), Verdict: "ok", Sel: sprint.Sel{IDs: []string{before.Readers.Of("s1-4")[1].ID}}}),
+		"read":   ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: placedReadsOf(before, "s1-4")[1].F("reader"), Verdict: "ok", Sel: sprint.Sel{IDs: []string{placedReadsOf(before, "s1-4")[1].ID}}}),
 		"merge":  MergeStep(sprint.MergeReq{Stream: "s1"}),
 	} {
 		step.Epoch = &held
@@ -165,6 +168,7 @@ func TestTeardownAfterClearsLeavesNoKey(t *testing.T) {
 	before := m.Keys(h.st.Names)
 	require.NoError(t, h.st.Init(h.ctx))
 	require.NoError(t, m.RowsAdd(h.ctx, "t-readers", []string{"reader-a", "reader-b", "reader-c"}))
+	require.NoError(t, m.SetCoordinator(h.ctx, h.st.Actor)) // judgments are the coordinator's: the read cards' friends are set by one
 	h.beat()
 	h.setup(2)
 	h.through("s1-1")

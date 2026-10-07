@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// readCardsWorld is a world with read cards on (set --read-cards on), the members up at
+// readCardsWorld is a world with the members up at
 // the width with a reader row each (reader-<m>: the reader role), and nothing else.
 func readCardsWorld(t *testing.T, width int, members ...string) *world {
 	t.Helper()
@@ -19,7 +19,6 @@ func readCardsWorld(t *testing.T, width int, members ...string) *world {
 	for _, m := range members {
 		w.must(FleetStep(w.s, FleetReq{Op: "up", Member: m, Width: width}))
 	}
-	w.s.Work.SetProp(PropReadCards, ReadCardsOnWord)
 	return w
 }
 
@@ -90,18 +89,6 @@ func TestAReviewOpensNReadCardsAtOnce(t *testing.T) {
 	askReaders(t, w, nil)
 	require.Len(t, readCardsOf(w, "s1-1"), 2)
 	require.Len(t, readCardsOf(w, "s1-2"), 1)
-}
-
-// TestReadCardsOffAskAsBefore pins the setting: with read cards off the readers table is
-// asked, one read at a time, as before.
-func TestReadCardsOffAskAsBefore(t *testing.T) {
-	t.Parallel()
-	w := readCardsWorld(t, 4, "m1", "m2", "m3")
-	w.s.Work.SetProp(PropReadCards, "off")
-	putReviewBy(w, "s1-1", "s1-1: work (s1) tier: pro\n", "m1", 1)
-	askReaders(t, w, nil)
-	require.Empty(t, readCardsOf(w, "s1-1"))
-	require.NotNil(t, placedReaderRead(w, "s1-1"))
 }
 
 // readerSeat is a friend up of the tiers and roles given.
@@ -501,9 +488,7 @@ func TestReadCardsWhySaysWhichClauseRefusesEachUnit(t *testing.T) {
 	why := ReadCardsWhy(w.s, seats)
 	require.Len(t, why, 2, "the units, then the one primary that waits")
 	require.Contains(t, why[0], "units: amy half=")
-	require.Equal(t, "s1-1 tier=heavy wants=2 waits: no reader up may read it: no friend whose tiers reach its read tier, and no member whose reader row serves its tier, besides its own worker; refused: amy=friend tier, bob=worker", why[1])
-	w.s.Work.SetProp(PropReadCards, "off")
-	require.Empty(t, ReadCardsWhy(w.s, seats), "nothing with read cards off")
+	require.Equal(t, "s1-1 tier=heavy wants=2 waits: "+ReadWaitSpent+"; refused: amy=friend tier, bob=worker", why[1])
 }
 
 // TestAReadHandedBackByFriendTakeIsNotDealtToHerAgain pins PR 5407's cold read: a read card

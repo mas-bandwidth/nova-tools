@@ -312,26 +312,6 @@ func TestLevelMovesTheNewestFromTheLongestRoundTheFleet(t *testing.T) {
 	assert.Contains(t, got[1].Set, "member=m2", "a card dealt again is the next generation, of its new member: %v", got[1].Set)
 }
 
-func TestAskAsksTheReadersOfAPrimaryInReview(t *testing.T) {
-	t.Parallel()
-	w := sprintOf(t, "m1")
-	w.add(t, "s1", 2)
-	w.deal(t, "s1-1")
-	w.take(t, "s1-1")
-	w.finish(t, "s1-1", false)
-	w.deal(t, "s1-2")
-	w.take(t, "s1-2")
-	w.finish(t, "s1-2", true) // failed work is not read
-	got := refmodel.AskMoves(w.snapshot(w.fresh()), later(0))
-	// both reads at once (reads together, the interim rule of 2026-10-06)
-	expect(t, got,
-		"set work s1-1 asked=reader-a,reader-b",
-		"prop readers ask_index=2",
-		"create readers s1-1.r1.reader-a >reader-a:asked",
-		"create readers s1-1.r1.reader-b >reader-b:asked",
-		"prop readers stream_index_ask=1")
-}
-
 func TestAcceptMovesAPrimaryWithTwoOkReadsToMergingAndTellsTheCoordinatorOnce(t *testing.T) {
 	t.Parallel()
 	w := sprintOf(t, "m1")
@@ -360,18 +340,6 @@ func TestAcceptMovesAPrimaryWithTwoOkReadsToMergingAndTellsTheCoordinatorOnce(t 
 	if notices != 1 {
 		assert.Failf(t, "assertion failed", "the coordinator is told %d times that a stream is ready to merge, want once:%s", notices, show(got))
 	}
-}
-
-func TestAskTellsOnceWhenFewerThanTwoReadersAreFree(t *testing.T) {
-	t.Parallel()
-	w := newWorld("reader-a")
-	w.must(t, sprint.FleetStep(w.s, sprint.FleetReq{Op: "up", Member: "m1", Who: coordinator}))
-	w.add(t, "s1", 1)
-	w.deal(t, "s1-1")
-	w.take(t, "s1-1")
-	w.finish(t, "s1-1", false)
-	got := refmodel.AskMoves(w.snapshot(w.fresh()), later(0))
-	expect(t, got, "open cannot ask [s1-1]")
 }
 
 func TestCheckRaisesAJudgmentForABrokenRule(t *testing.T) {
@@ -430,22 +398,6 @@ func TestDeadlinesCountRunningTimeOnly(t *testing.T) {
 	expect(t, refmodel.DeadlineMoves(snap, later(sprint.DeadlineUnfinished+19*time.Minute)))
 	expect(t, refmodel.DeadlineMoves(snap, later(sprint.DeadlineUnfinished+19*time.Minute+time.Second)),
 		"open a work card is past its deadline [s1-1]")
-}
-
-func TestDeadlinesJudgeAReadCardNotBegun(t *testing.T) {
-	t.Parallel()
-	w := sprintOf(t, "m1")
-	w.add(t, "s1", 1)
-	w.drive(t, "s1-1", sprint.Review)
-	w.ask(t, "s1-1") // two reads outstanding: both asked at once (reads together, the interim rule)
-	snap := w.snapshot(nil)
-	expect(t, refmodel.DeadlineMoves(snap, later(30*time.Minute)))
-	got := refmodel.DeadlineMoves(snap, later(30*time.Minute+time.Second))
-	expect(t, got,
-		"open a read card is past its deadline [s1-1]",
-		"open a read card is past its deadline [s1-1]")
-	want := []string{"ask --another", "wait", "drop"}
-	assert.Equal(t, want, got[0].Decisions, "the decisions offered: %q, want %q", got[0].Decisions, want)
 }
 
 func TestDeadlinesJudgeAStreamWithNoMergeStep(t *testing.T) {
@@ -598,7 +550,7 @@ func TestEveryPartOfTheTickIsADutyAndEveryDutyIsNamedInOrder(t *testing.T) {
 	for _, p := range sprint.TickParts {
 		assert.True(t, names[p.Name], "the tick's part %s is no duty: Decide would leave it out", p.Name)
 	}
-	want := []string{refmodel.DutyLevel, refmodel.DutyLevelReads, refmodel.DutyResolve, refmodel.DutyCapDeal, refmodel.DutyDeal, refmodel.DutyAccept, refmodel.DutyAsk, refmodel.DutyResume,
+	want := []string{refmodel.DutyLevel, refmodel.DutyResolve, refmodel.DutyCapDeal, refmodel.DutyDeal, refmodel.DutyAccept, refmodel.DutyAsk, refmodel.DutyResume,
 		refmodel.DutyStrangers, refmodel.DutyPresence, refmodel.DutyFriendStall, refmodel.DutyCheck, refmodel.DutyDeadlines, refmodel.DutyOverdue, refmodel.DutyDone, refmodel.DutyRemind}
 	var got []string
 	for _, d := range refmodel.Duties {

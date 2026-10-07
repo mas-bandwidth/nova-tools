@@ -295,7 +295,7 @@ func TestASentinelInsertedInLine(t *testing.T) {
 	c := w.s.Fleet.Card("s1-4.w1")
 	w.must(Take(w.s, TakeReq{As: c.Row, Sel: Sel{IDs: []string{c.ID}}, Gens: gensOf(w.s, c.ID)}))
 	w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{c.ID}}, Gens: gensOf(w.s, c.ID)}))
-	w.must(Ask(w.s, AskReq{}))
+	w.askReads()
 	readOK(w, "s1-4")
 	w.must(Accept(w.s, AcceptReq{Sel: Sel{IDs: []string{"s1-4"}}}))
 	p = mergeOne(w, "s1")

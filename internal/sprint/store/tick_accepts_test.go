@@ -53,8 +53,35 @@ func (h *harness) notesOfType(typ string) []sprint.Note {
 	return out
 }
 
-// friendsRead sets the machine readers away and brings two friends up, so the
-// tick's ask asks every primary in review of the friends (sprint.friendReadAsk).
+// inReview is a harness whose n primaries are in review, none read yet: the next tick
+// cuts their read cards. members, when set, makes the readers the members: a third
+// member is brought up and each member is given its reader row.
+func inReview(t *testing.T, n int, members bool) *harness {
+	t.Helper()
+	h := newHarness(t)
+	h.setup(n)
+	if members {
+		h.mu.Lock()
+		h.live = append(h.live, "m3")
+		h.mu.Unlock()
+		h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m3"}))
+		h.memberReaders("m1", "m2", "m3")
+	}
+	h.startMachine()
+	h.machine()
+	// the workers finish while the machine is stopped, so no tick cuts a read before
+	// the one under test
+	h.stopMachine()
+	for _, m := range []string{"m1", "m2", "m3"} {
+		h.work(m)
+	}
+	h.startMachine()
+	require.Len(t, h.snap().Work.Column(sprint.Review), n, "the primaries in review before the tick")
+	return h
+}
+
+// friendsRead sets the machine readers away and brings two friends up whose roles name
+// reader, so the tick's deal cuts every primary's read cards for the friends.
 func (h *harness) friendsRead() []string {
 	h.t.Helper()
 	for _, rd := range []string{"reader-a", "reader-b", "reader-c"} {
@@ -62,8 +89,8 @@ func (h *harness) friendsRead() []string {
 	}
 	friends := []string{"stella", "johnny"}
 	_, _, _, err := h.st.SyncFriends(h.ctx, []FriendSpec{
-		{Name: "stella", Width: 32, Class: "flash,frontier,heavy,pro"},
-		{Name: "johnny", Width: 16, Class: "flash,pro"},
+		{Name: "stella", Width: 32, Class: "flash,frontier,heavy,pro", Roles: "reader"},
+		{Name: "johnny", Width: 16, Class: "flash,pro", Roles: "reader"},
 	})
 	require.NoError(h.t, err)
 	for _, f := range friends {
@@ -73,16 +100,14 @@ func (h *harness) friendsRead() []string {
 }
 
 // A primary whose reads are all ok is accepted by the tick, with no judgment and
-// no hand step, whoever read it (a reader on the readers table, a friend on her
-// fleet row) and whether the machine was RUNNING or STOPPED when the last read
-// closed: STOPPED, the first tick after start accepts it. The record names the
-// readers it was accepted on, as accept --read-ok's does, and accept --read-ok
-// after it finds nothing waiting. (Read cards, PR 5392, close through the
-// friend's close, friendReadCloseUnit, and stand as hers do: not yet landed here.)
+// no hand step, whoever read it (a member's read card, a friend's on her fleet row)
+// and whether the machine was RUNNING or STOPPED when the last read closed: STOPPED,
+// the first tick after start accepts it. The record names the readers it was accepted
+// on, as accept --read-ok's does, and accept --read-ok after it finds nothing waiting.
 func TestTheTickAcceptsAPrimaryWhoseReadsAreAllOk(t *testing.T) {
 	t.Parallel()
 	ids := []string{"s1-1", "s1-2"}
-	for _, path := range []string{"reader table", "friend"} {
+	for _, path := range []string{"member", "friend"} {
 		for _, stopped := range []bool{false, true} {
 			name := path + " running"
 			if stopped {
@@ -90,28 +115,17 @@ func TestTheTickAcceptsAPrimaryWhoseReadsAreAllOk(t *testing.T) {
 			}
 			t.Run(name, func(t *testing.T) {
 				t.Parallel()
-				h := inReview(t, len(ids))
+				h := inReview(t, len(ids), path == "member")
 				var friends []string
 				if path == "friend" {
 					friends = h.friendsRead()
 				}
-				h.machine() // asks every primary its reads
+				h.machine() // cuts every primary's read cards
 				if stopped {
 					h.stopMachine()
 				}
-				switch path {
-				case "reader table":
-					h.readAll()
-				case "friend":
-					s := h.snap()
-					for _, id := range ids {
-						got := friendReadsOf(s, id)
-						require.NotEmpty(t, got, "%s asked of the friends", id)
-						for _, f := range got {
-							h.friendRead(f, id, "Verdict: LAND\n")
-						}
-					}
-				}
+				// each reader reports ok: a member with read, a friend as her packet's read verb does
+				h.readCardsOK()
 				require.Empty(t, h.openOf(sprint.NReadyToAccept), "the last ok read opened a ready to accept judgment")
 				if stopped {
 					for _, id := range ids {
@@ -152,6 +166,7 @@ func TestTheSeatIsToldWhatWasAcceptedNotAskedToAccept(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	h.setup(2)
+	h.friendReaders()
 	h.must(AddStep(sprint.AddReq{Stream: "s2", Count: 1}))
 	h.startMachine()
 	h.machine() // deals
@@ -227,7 +242,7 @@ func TestTheModelAndTheEngineAgreeTheTickAcceptsWithNoHandStep(t *testing.T) {
 		t.Helper()
 		s := h.observe()
 		for _, id := range refmodel.Keys(s.Reads) {
-			if rc := s.Reads[id]; rc.Primary == p && (rc.Place == refmodel.Asked || rc.Place == refmodel.Reading) {
+			if rc := s.Reads[id]; rc.Primary == p && rc.Place != refmodel.Retired {
 				do(dAction{Kind: "read", Reader: rc.Reader, Card: id, OK: true})
 			}
 		}
@@ -247,6 +262,7 @@ func TestTheModelAndTheEngineAgreeTheTickAcceptsWithNoHandStep(t *testing.T) {
 
 	do(dAction{Kind: "fleet", Op: "up", Member: "m1"})
 	do(dAction{Kind: "fleet", Op: "up", Member: "m2"})
+	do(dAction{Kind: "fleet", Op: "up", Member: "m3"}) // a pro card's two reads: two members that did not work it
 	do(dAction{Kind: "start"})
 	do(dAction{Kind: "add", Stream: "s1", IDs: []string{"a1", "a2"}})
 	do(dAction{Kind: "tick"})

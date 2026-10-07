@@ -24,20 +24,16 @@ func finished(w *world, id string, failed bool) {
 // only after a read taken back), asks it and has that one say ok too.
 func readOK(w *world, id string) {
 	w.t.Helper()
-	for {
-		for _, rc := range w.s.Readers.Of(id) {
-			if rc.Col == Asked || rc.Col == Reading {
-				w.must(Read(w.s, ReadReq{Usage: "input=1000 output=100", As: rc.Row, Verdict: "ok", Sel: Sel{IDs: []string{rc.ID}}}))
-			}
+	for range 4 {
+		for _, rc := range readCardsAt(w.s, w.s.Work.Card(id), readAttempt(w.s.Work.Card(id))) {
+			w.must(Read(w.s, ReadReq{Usage: "input=1000 output=100", As: rc.Row, Verdict: "ok", Sel: Sel{IDs: []string{rc.ID}}}))
 		}
 		pr := w.s.Work.Card(id)
-		if pr == nil || pr.Col != Review || ReadsWanted(w.s, pr) == 0 {
+		if pr == nil || pr.Col != Review || readCardsWanted(w.s, pr, nil) == 0 {
 			return
 		}
-		if p := Ask(w.s, AskReq{Sel: Sel{IDs: []string{id}}}); len(p.Refused) > 0 {
+		if p := w.askReads(); len(p.Units) == 0 {
 			return // no reader free: the test says what it wants
-		} else {
-			w.do(p)
 		}
 	}
 }
@@ -45,12 +41,7 @@ func readOK(w *world, id string) {
 // askedRead is the primary's one read card asked and not read at its attempt.
 func askedRead(w *world, id string) *Card {
 	w.t.Helper()
-	var out []*Card
-	for _, rc := range w.s.Readers.Of(id) {
-		if rc.Col == Asked || rc.Col == Reading {
-			out = append(out, rc)
-		}
-	}
+	out := readCardsAt(w.s, w.s.Work.Card(id), readAttempt(w.s.Work.Card(id)))
 	require.Len(w.t, out, 1, "%s: one read outstanding", id)
 	return out[0]
 }
@@ -114,18 +105,18 @@ func TestReviewJudgmentRead(t *testing.T) {
 	t.Parallel()
 	w := setup(t, 2)
 	finished(w, "s1-1", false)
-	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-1"}}}))
+	w.askReads()
 	readOK(w, "s1-1")
 	got := openTypes(w, "s1-1")
 	require.Empty(t, got, "two oks: %q", got)
 	require.True(t, tickTakes(w, "s1-1"), "two oks: the tick accepts it")
-	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-1"}}, Another: true}))
+	w.askReads()
 	readOK(w, "s1-1")
 	n := len(w.notesOf(NReadyToAccept))
 	require.Zero(t, n, "an ok wrote ready to accept: %d", n)
 	finished(w, "s1-2", false)
-	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-2"}}})) // a card's reads are asked together: both in one ask
-	rcs := readsAt(w.s, w.s.Work.Card("s1-2"), 1)
+	w.askReads()
+	rcs := readCardsAt(w.s, w.s.Work.Card("s1-2"), 1)
 	require.Len(t, rcs, 2)
 	w.must(Read(w.s, ReadReq{Usage: "input=1000 output=100", As: rcs[0].Row, Verdict: "ok", Sel: Sel{IDs: []string{rcs[0].ID}}}))
 	w.must(Read(w.s, ReadReq{Usage: "input=1000 output=100", As: rcs[1].Row, Verdict: "broken", Finding: "f:1", Sel: Sel{IDs: []string{rcs[1].ID}}}))
@@ -148,7 +139,7 @@ func TestReviewJudgmentReturnAndAck(t *testing.T) {
 	require.Len(t, open, 1, "returned: %+v", open)
 	require.Equal(t, NReturned, open[0].Note.Type, "returned: %+v", open)
 	require.Contains(t, open[0].Note.Decisions, "accept", "returned: %+v", open)
-	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-1"}}, Another: true}))
+	w.askReads()
 	readOK(w, "s1-1")
 	got := openTypes(w, "s1-1")
 	require.Equal(t, NReturned, got, "a third ok after return: %q", got)
@@ -165,10 +156,10 @@ func TestReviewJudgmentAsk(t *testing.T) {
 	t.Parallel()
 	w := setup(t, 1)
 	finished(w, "s1-1", false)
-	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-1"}}}))
+	w.askReads()
 	readOK(w, "s1-1")
 	require.Empty(t, openTypes(w, "s1-1"), "two oks: the tick's")
-	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-1"}}, Another: true}))
+	w.askReads()
 	got := openTypes(w, "s1-1")
 	require.Empty(t, got, "asked of another: %q", got)
 	require.True(t, tickTakes(w, "s1-1"), "asked of another: the tick accepts it")
@@ -181,7 +172,7 @@ func TestReviewJudgmentRefusedRework(t *testing.T) {
 	t.Parallel()
 	w := setup(t, 1)
 	finished(w, "s1-1", false)
-	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-1"}}}))
+	w.askReads()
 	readOK(w, "s1-1")
 	p := w.do(Rework(w.s, ReworkReq{Sel: Sel{IDs: []string{"s1-1"}}}))
 	require.Len(t, p.Refused, 1, "rework with no fix: %+v", p)

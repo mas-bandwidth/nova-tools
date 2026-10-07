@@ -88,39 +88,26 @@ func ProgressStep(r sprint.ProgressReq) Step {
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Progress(s, r) }}
 }
 
-// AskStep deals primaries in review to readers.
-func AskStep(r sprint.AskReq) Step {
-	return Step{Answers: r.Answers, Named: len(r.IDs) > 0, Args: ArgsOf(r), Verb: "ask", Load: tables(sprint.Work, sprint.Readers, sprint.Merge, sprint.Fleet), Readers: true, Routes: true,
-		// Every read card id each reader could get at the primaries' attempts,
-		// placed or retired: a reader who already has one is not free.
-		Extras: func(s *sprint.Snapshot) map[string][]string {
-			var ids []string
-			for _, c := range s.Work.Column(sprint.Review) {
-				for _, rd := range s.Readers.Rows() {
-					ids = append(ids, ReadCardIDs(c.ID, c.Int("attempt"), rd)...)
-				}
-			}
-			return map[string][]string{sprint.Readers: ids}
-		},
-		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Ask(s, r) }}
-}
-
-// ReadStep is a reader recording its reads.
+// ReadStep is a reader closing its read cards (sprint.Read): a read card is on its
+// reader's fleet row, a friend's or a member's, and the verb reads the fleet table, closes
+// it as the friend's outbox report does, and brings the row's display cells up to date.
+// The records of the review's read cards retired with a verdict (ReadCardExtras) are read
+// with it: the close judges the attempt with every read that stands, not the named alone.
+// A read that reports what it spent prices it with the routes alone, the keys a reader may
+// read (sprint's cost.go; Step.Prices).
 func ReadStep(r sprint.ReadReq) Step {
-	// a read asked of a friend is a card on her fleet row (sprint.FriendReadAsk): the
-	// verb reads the fleet table and closes it as her outbox report does, and brings
-	// her row's display cells up to date
-	for _, rd := range sprint.Split(r.As) {
-		// a read card on a member's row (sprint read_cards.go) is read as hers is: a name
-		// that is no reader-<m> is a fleet row
-		if _, isReader := sprint.ReaderMachine(rd); sprint.IsFriendRow(rd) || !isReader {
-			return Step{Named: len(r.IDs) > 0, Args: ArgsOf(r), Verb: "read", Load: tables(sprint.Fleet, sprint.Work, sprint.Readers), Extras: sprint.NamedExtras(sprint.Fleet, r.IDs), Mirrors: true, Prices: r.Usage != "",
-				Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Read(s, r) }}
+	extras := func(s *sprint.Snapshot) map[string][]string {
+		out := map[string][]string{}
+		for table, ids := range sprint.NamedExtras(sprint.Fleet, r.IDs)(s) {
+			out[table] = append(out[table], ids...)
 		}
+		for table, ids := range sprint.NamedExtras(sprint.Readers, r.IDs)(s) {
+			out[table] = append(out[table], ids...)
+		}
+		out[sprint.Fleet] = append(out[sprint.Fleet], sprint.ReadCardExtras(s)...)
+		return out
 	}
-	// a read that reports what it spent prices it with the routes alone, the keys a
-	// reader may read (sprint's cost.go; Step.Prices)
-	return Step{Named: len(r.IDs) > 0, Args: ArgsOf(r), Verb: "read", Load: tables(sprint.Readers, sprint.Work), Extras: sprint.NamedExtras(sprint.Readers, r.IDs), Prices: r.Usage != "",
+	return Step{Named: len(r.IDs) > 0, Args: ArgsOf(r), Verb: "read", Load: tables(sprint.Fleet, sprint.Work, sprint.Readers), Extras: extras, Mirrors: true, Prices: r.Usage != "",
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Read(s, r) }}
 }
 
@@ -144,13 +131,22 @@ func ReworkStep(r sprint.ReworkReq) Step {
 
 // ReturnStep is the coordinator sending merging primaries back to review.
 func ReturnStep(r sprint.ReturnReq) Step {
-	return Step{Answers: r.Answers, Named: len(r.IDs) > 0, Args: ArgsOf(r), Verb: "return", Load: tables(sprint.Work, sprint.Readers, sprint.Merge),
+	// the read cards that stand at a merging primary's attempt, retired with their
+	// verdicts, are read: the returned judgment offers accept on the oks that stand
+	return Step{Answers: r.Answers, Named: len(r.IDs) > 0, Args: ArgsOf(r), Verb: "return", Load: tables(sprint.Work, sprint.Readers, sprint.Merge, sprint.Fleet),
+		Extras: func(s *sprint.Snapshot) map[string][]string {
+			return map[string][]string{sprint.Fleet: sprint.ReadCardExtrasIn(s, sprint.Review, sprint.Merging)}
+		},
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Return(s, r) }}
 }
 
 // RedoStep is the coordinator atomically returning, reworking and resuming conflicted cards.
 func RedoStep(r sprint.RedoReq) Step {
 	return Step{Named: len(r.Sel.IDs) > 0, Args: ArgsOf(r), Verb: "redo", Load: tables(sprint.Work, sprint.Readers, sprint.Fleet, sprint.Merge), Mirrors: true, Routes: true, Friends: true,
+		// the read cards that stand at a merging primary's attempt: the head they passed
+		Extras: func(s *sprint.Snapshot) map[string][]string {
+			return map[string][]string{sprint.Fleet: sprint.ReadCardExtrasIn(s, sprint.Review, sprint.Merging)}
+		},
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Redo(s, r) }}
 }
 

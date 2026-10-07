@@ -87,38 +87,3 @@ func TestTheDealAlternatesTheStreamsWithCardsAndAnEmptyOneJoinsAtItsTurn(t *test
 	want = []string{"s1", "s2", "s3", "s1", "s2", "s3"}
 	require.Equal(t, want, got, "with s2 ready the deal goes %v, want %v", got, want)
 }
-
-// The ask takes the primaries in review in stream turns from its own index on
-// the work table, and the deal's index is left where the deal left it: one
-// step's move never resets another's rotation.
-func TestTheAskTakesTheStreamsInTurnFromItsOwnIndex(t *testing.T) {
-	t.Parallel()
-	w := fleetWorld(t, 4, 64, "m1")
-	w.s.Readers.SetRows(append(w.s.Readers.Rows(), "reader-b"))
-	w.must(Add(w.s, AddReq{Stream: "s2", Count: 4}))
-	w.must(Add(w.s, AddReq{Stream: "s3", Count: 4}))
-	first, _ := dealOne(t, w)
-	require.Equal(t, "s1", first, "the first deal takes s1, took %s", first)
-	for _, st := range []string{"s1", "s2", "s3"} {
-		for i := 2; i <= 4; i++ {
-			w.place(w.s.Work, st+"-"+itoa(i), st, Review)
-		}
-	}
-	s := w.s
-	p := w.must(Ask(s, AskReq{Sel: Sel{Limit: 4}, Who: "coordinator"}))
-	got, want := streamOfTaken(s, p), []string{"s1", "s2", "s3", "s1"}
-	require.Equal(t, want, got, "the ask takes %v, want %v", got, want)
-	idx, _ := w.s.Readers.Prop(PropAskStreamIndex)
-	require.Equal(t, "s1", indexPast(w.s.Work.Rows(), idx), "the ask's index is %q, want s1", idx)
-	// the tick's ask asks every primary left, in turns past s1
-	s = w.s
-	tp, due := TickAsk(s, TickReq{})
-	got, want = streamOfTaken(s, tp), []string{"s2", "s3", "s1", "s2", "s3"}
-	require.Zero(t, due, "the tick's ask past s1 takes %v (due %d), want %v", got, due, want)
-	require.Equal(t, want, got, "the tick's ask past s1 takes %v (due %d), want %v", got, due, want)
-	w.must(tp)
-	idx, _ = w.s.Work.Prop(PropStreamIndex)
-	require.Equal(t, "s1", indexPast(w.s.Work.Rows(), idx), "the deal's index is %q after the asks, want s1 where the deal left it", idx)
-	next, _ := dealOne(t, w)
-	require.Equal(t, "s2", next, "the deal after the asks takes %s, want s2, past its own index", next)
-}

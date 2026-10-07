@@ -11,7 +11,7 @@ s2   |       0 |     0 |       0 |      0 |       0 |      0 |    - | -
 
 readers | asked | reading | width | ok | broken | tiers
 --------+-------+---------+-------+----+--------+--------
-        |     0 |       0 | -     |  1 |      0 | default
+        |     0 |       0 | 128   |  0 |      0 | default
 
 merge | queued | merged | stuck | ci | state
 ------+--------+--------+-------+----+--------

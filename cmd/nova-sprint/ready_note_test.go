@@ -13,6 +13,7 @@ func TestTheReadyToMergeNoteNamesLand(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1")
+	ta.readersUp() // the tick cuts the read cards
 	ta.ok("add --stream s1 --count 1 --one")
 	ta.ok("start")
 	ta.ok("tick")

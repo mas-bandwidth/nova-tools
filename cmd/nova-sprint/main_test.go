@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -41,6 +42,17 @@ type testApp struct {
 	quiet map[string]bool
 	// queue is the merge queues land asks, a fake: no forge is asked
 	queue *heldQueue
+	// friendReaders is the readers the test's init named (--readers): each is a friend
+	// whose roles name reader (the friends' work off), dealt the read cards of the cards
+	// in review, and beat with the members; a reader the test keeps quiet does not beat
+	friendReaders []string
+	// initArgs is the test's init line: its readers are made friend readers at the first
+	// cut of read cards (cutReads) or by readersUp, so a test that reads nothing sees no
+	// friend
+	initArgs []string
+	// ownFriends is set once the test syncs friends of its own: they are the sprint's
+	// readers (a friend row whose roles name reader), and no friend reader is made
+	ownFriends bool
 }
 
 func newTestApp(t *testing.T) *testApp {
@@ -96,13 +108,158 @@ func (ta *testApp) beat() {
 		_, err := st.ReaderBeat(context.Background(), r)
 		require.NoError(ta.t, err)
 	}
+	ta.mu.Lock()
+	friends := append([]string(nil), ta.friendReaders...)
+	ta.mu.Unlock()
+	if len(friends) == 0 {
+		return
+	}
+	// the seat answers for a friend's health; a friend a test's own sync took off the
+	// roster beats no more
+	seat, err := ta.m.Coordinator(context.Background())
+	require.NoError(ta.t, err)
+	seats, err := st.FriendSeats(context.Background(), ta.a.now())
+	require.NoError(ta.t, err)
+	for _, f := range friends {
+		ta.mu.Lock()
+		quiet := ta.quiet[f]
+		ta.mu.Unlock()
+		if quiet || !slices.ContainsFunc(seats, func(x sprint.FriendSeat) bool { return x.Name == f }) {
+			continue
+		}
+		var pe *store.PendingError
+		if _, err := st.FriendBeat(context.Background(), f); errors.As(err, &pe) {
+			continue // her beat waits for the operation pending, as her daemon's does
+		} else {
+			require.NoError(ta.t, err)
+		}
+		_, _, _, err := st.FriendHealth(context.Background(), f, seat, sprint.FriendHealth{State: sprint.Up, Seen: ta.a.now(), Generation: sprint.FirstSeatGeneration}, "")
+		if !errors.As(err, &pe) {
+			require.NoError(ta.t, err)
+		}
+	}
+}
+
+// readersAsFriends makes the readers the test's init line names (--readers) the sprint's
+// friend readers, at the first cut of read cards (cutReads), all but a member's own reader
+// row (reader-<member>): read cards are dealt to the fleet's units that read, a friend
+// whose roles name reader or a member with its reader row (sprint read_cards.go). The
+// friends' work is off, so each is dealt read cards alone.
+func (ta *testApp) readersAsFriends(args []string) {
+	ta.t.Helper()
+	ta.mu.Lock()
+	own := ta.ownFriends
+	ta.mu.Unlock()
+	if own {
+		return
+	}
+	var readers, members []string
+	for i := 0; i+1 < len(args); i++ {
+		switch args[i] {
+		case "--readers":
+			readers = strings.Split(args[i+1], ",")
+		case "--members":
+			members = strings.Split(args[i+1], ",")
+		}
+	}
+	var specs []store.FriendSpec
+	var names []string
+	for _, r := range readers {
+		if m, ok := sprint.ReaderMachine(r); r == "" || ok && slices.Contains(members, m) {
+			continue
+		}
+		specs = append(specs, store.FriendSpec{Name: r, Width: 8, Class: "pro", Roles: sprint.RoleReader})
+		names = append(names, r)
+	}
+	if len(specs) == 0 {
+		return
+	}
+	st, err := ta.a.store(common{redis: "mem:0", actor: "coordinator"})
+	require.NoError(ta.t, err)
+	_, _, _, err = st.SyncFriends(context.Background(), specs)
+	require.NoError(ta.t, err)
+	seat, err := ta.m.Coordinator(context.Background())
+	require.NoError(ta.t, err)
+	res, err := st.Run(context.Background(), store.SetStep(sprint.SetReq{Friends: sprint.SwitchOff, Who: seat}))
+	require.NoError(ta.t, err)
+	require.Empty(ta.t, res.Refused, "set --friends off: %+v", res.Refused)
+	ta.mu.Lock()
+	ta.friendReaders = names
+	ta.mu.Unlock()
+	ta.beat()
+}
+
+// dropFriendReaders takes the friend readers off the roster and the friends' work on
+// again, before a test syncs friends of its own (friend sync): its friends are the
+// sprint's, as the test's config names them.
+func (ta *testApp) dropFriendReaders() {
+	ta.t.Helper()
+	ta.mu.Lock()
+	had := len(ta.friendReaders) > 0
+	ta.friendReaders, ta.ownFriends = nil, true
+	ta.mu.Unlock()
+	if !had {
+		return
+	}
+	st, err := ta.a.store(common{redis: "mem:0", actor: "coordinator"})
+	require.NoError(ta.t, err)
+	_, _, _, err = st.SyncFriends(context.Background(), nil)
+	require.NoError(ta.t, err)
+	seat, err := ta.m.Coordinator(context.Background())
+	require.NoError(ta.t, err)
+	res, err := st.Run(context.Background(), store.SetStep(sprint.SetReq{Friends: sprint.SwitchOn, Who: seat}))
+	require.NoError(ta.t, err)
+	require.Empty(ta.t, res.Refused, "set --friends on: %+v", res.Refused)
+}
+
+// readersUp makes the init line's readers the sprint's friend readers now, before the
+// machine's ticks cut the read cards of the cards that reach review.
+func (ta *testApp) readersUp() {
+	ta.t.Helper()
+	ta.mu.Lock()
+	args, made := ta.initArgs, len(ta.friendReaders) > 0
+	ta.mu.Unlock()
+	if !made {
+		ta.readersAsFriends(args)
+	}
+}
+
+// cutReads cuts the read cards every primary in review wants, as the tick's deal does
+// first (sprint.CutReadCards), with the machine RUNNING or STOPPED.
+func (ta *testApp) cutReads() {
+	ta.t.Helper()
+	ta.readersUp()
+	ta.beat()
+	st, err := ta.a.store(common{redis: "mem:0", actor: "coordinator"})
+	require.NoError(ta.t, err)
+	ctx := context.Background()
+	seats, err := st.FriendSeats(ctx, ta.a.now())
+	require.NoError(ta.t, err)
+	due := 0
+	step := store.TickPartStep("deal", func(s *sprint.Snapshot, _ sprint.TickReq) (sprint.Plan, int) {
+		return sprint.CutReadCards(s, seats), 0
+	}, sprint.TickReq{Who: sprint.MachineActor, Friends: seats}, nil, nil, &due)
+	step.Routes = true
+	res, err := st.Run(ctx, step)
+	require.NoError(ta.t, err)
+	require.Empty(ta.t, res.Refused, "the read cards' cut: %+v", res.Refused)
 }
 
 // do runs a command line and returns its exit code, stdout and stderr.
 func (ta *testApp) do(line string) (int, string, string) {
 	var out, errb bytes.Buffer
 	ta.beat()
-	code := ta.a.run(ta.withEpoch(split(line)), &out, &errb)
+	args := split(line)
+	if len(args) >= 2 && args[0] == "friend" && args[1] == "sync" {
+		ta.dropFriendReaders()
+	}
+	code := ta.a.run(ta.withEpoch(args), &out, &errb)
+	if code == 0 && len(args) > 0 && args[0] == "init" {
+		ta.mu.Lock()
+		ta.initArgs = args
+		ta.mu.Unlock()
+	}
+
 	return code, out.String(), errb.String()
 }
 
@@ -214,7 +371,7 @@ func TestTheCommandDrivesAStreamToLanded(t *testing.T) {
 		}
 		ta.ok("finish --as " + m + " " + strings.Join(words, " "))
 	}
-	ta.ok("ask")
+	ta.cutReads()
 	for _, r := range []string{"reader-a", "reader-b", "reader-c"} {
 		ta.ok("read --as " + r + " --ok --limit 10")
 	}
@@ -274,7 +431,7 @@ func TestJudgmentsReachTheInboxAndTheCoordinatorAnswers(t *testing.T) {
 	out = ta.ok("inbox")
 	require.NotContains(t, out, "HAPPENED", "the cursor did not move")
 	// accept refused without two readers: exit 1, the reason on stderr
-	ta.ok("ask")
+	ta.cutReads()
 	code, _, errs = ta.do("accept s1-1")
 	require.Equal(t, 1, code, "accept with no reads: %d %s", code, errs)
 	require.Contains(t, errs, "REFUSED s1-1: needs ok from two different readers", "accept with no reads: %d %s", code, errs)
@@ -291,7 +448,7 @@ func TestAStoppedStreamWaitsForResume(t *testing.T) {
 	ta.ok("tick")
 	ta.ok("take --as m1 --limit 2")
 	ta.ok("finish --as m1 s1-1.w1@1 s1-2.w1@1")
-	ta.ok("ask")
+	ta.cutReads()
 	ta.ok("read --as reader-a --ok --limit 5")
 	ta.ok("read --as reader-b --ok --limit 5")
 	ta.ok("accept --stream s1")

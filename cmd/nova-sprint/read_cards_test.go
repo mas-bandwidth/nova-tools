@@ -43,7 +43,6 @@ func TestAOneShotFriendRunsAReadCardFromItsBrief(t *testing.T) {
 	}
 	ta.a.tip = tipIs(t, landHead)
 	ta.ok("init --readers reader-a --members m1:8")
-	ta.ok("set --read-cards on")
 	root := t.TempDir()
 	ta.ok("friend sync --root " + root) // roster only: they stay down, so the card is the machine's work
 

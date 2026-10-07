@@ -210,7 +210,7 @@ func (st *Store) Held(ctx context.Context, id string) (sprint.Hold, error) {
 		return sprint.Hold{ID: id, Place: id, Why: pendingWhy(f)}, nil
 	}
 	s, err := st.Load(ctx, All, func(s *sprint.Snapshot) map[string][]string {
-		return map[string][]string{sprint.Work: append(sprint.ResolveExtras(s), id)}
+		return map[string][]string{sprint.Work: append(sprint.ResolveExtras(s), id), sprint.Fleet: sprint.ReadCardExtras(s)}
 	})
 	if err != nil {
 		return sprint.Hold{}, err
@@ -428,7 +428,11 @@ func (st *Store) machineGroups(ctx context.Context, m Machine, hb Heartbeat) ([]
 		}
 		return out, nil
 	}
-	s, err := st.Load(ctx, tables(sprint.Work, sprint.Fleet, sprint.Readers), nil)
+	// the reads that stand on the cards in review, retired with their verdicts, are read
+	// with the tables: a review whose reads are all in is no move due
+	s, err := st.Load(ctx, tables(sprint.Work, sprint.Fleet, sprint.Readers), func(s *sprint.Snapshot) map[string][]string {
+		return map[string][]string{sprint.Fleet: sprint.ReadCardExtras(s)}
+	})
 	if err != nil {
 		return out, err
 	}

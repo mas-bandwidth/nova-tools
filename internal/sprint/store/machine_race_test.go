@@ -77,6 +77,7 @@ func raceScene(t *testing.T) *harness {
 	h.must(MergeStep(sprint.MergeReq{Stream: "s2", Batch: 1}))
 	require.Equal(t, sprint.Landed, h.state("b"), "b %s", h.state("b"))
 	h.must(AddStep(sprint.AddReq{Brief: proBrief, Stream: "s1", Count: 4}))
+	h.memberReaders("m1", "m2")
 	h.clean("scene")
 	return h
 }
@@ -146,9 +147,13 @@ func TestCRTickRacesEveryVerbAtEveryCall(t *testing.T) {
 				if !c.Placed() && c.F("outcome") != "dropped" {
 					assert.Fail(t, fmt.Sprintf("%s: %s off the table without an outcome: %v", where, id, c.Fields))
 				}
-				live := 0
+				live, reads := 0, 0
 				for _, fc := range s.Fleet.Of(id) {
-					if fc.Col == sprint.Ready || fc.Col == sprint.Working {
+					switch {
+					case fc.Col != sprint.Ready && fc.Col != sprint.Working:
+					case fc.F("kind") == "read":
+						reads++
+					default:
 						live++
 					}
 				}
@@ -156,13 +161,7 @@ func TestCRTickRacesEveryVerbAtEveryCall(t *testing.T) {
 					assert.Fail(t, fmt.Sprintf("%s: %s in %s with %d live work cards", where, id, c.Col, live))
 				}
 				if c.Placed() && c.Col == sprint.Review && c.F("result") != "failed" {
-					n := 0
-					for _, rc := range s.Readers.Of(id) {
-						if rc.Int("attempt") == c.Int("attempt") && (rc.Col == sprint.Asked || rc.Col == sprint.Reading) {
-							n++
-						}
-					}
-					assert.LessOrEqual(t, n, 2, "%s: %s asked of %d readers", where, id, n)
+					assert.LessOrEqual(t, reads, 2, "%s: %s has %d read cards placed", where, id, reads)
 				}
 			}
 			n := h.written(sprint.NResumed)

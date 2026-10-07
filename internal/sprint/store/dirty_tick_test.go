@@ -113,7 +113,7 @@ func TestTheQueueIsDrainedExactlyOnce(t *testing.T) {
 			fired = true
 			h.must(finish("m2"))
 		}
-		return sprint.TickAsk(s, r)
+		return sprint.TickTables[1].Parts[0].Fn(s, r) // the tick's ask part
 	}}}}, sprint.TickTables[2], sprint.TickTables[3]}
 	h.machine()
 	q, _ = h.m.QueueRead(h.ctx)
@@ -216,13 +216,14 @@ func TestOneTickEndNoteOnlyWhenTheTickAddressedTheCoordinator(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	h.setup(2)
+	h.friendReaders() // the readers there before review: the tick cuts their read cards
 	h.startMachine()
 	ends := func() int { return h.written(sprint.NTickEnd) }
 	h.machine() // deals: nothing for the coordinator
 	require.Zero(t, ends(), "a tick that addressed nothing wrote %d tick-end notes", ends())
 	h.work("m1")
 	h.work("m2")
-	h.machine() // to review, asked
+	h.machine() // to review, its read cards cut
 	h.readAll()
 	res := h.machine() // accepted: ready to merge, once for the stream, and the reads' notes
 	require.EqualValues(t, 1, ends(), "the accepting tick: %d tick-end notes, count %d, want one note counting at least the ready to merge", ends(), res.TickEnd)
@@ -299,7 +300,7 @@ func TestAReadOnARunningMachineOpensNoReadyToAccept(t *testing.T) {
 	g.must(DealStep(sprint.DealReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
 	g.work("m1")
 	g.work("m2")
-	g.must(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
+	g.must(g.cutStep())
 	g.readAll()
 	n = len(g.openOf(sprint.NReadyToAccept))
 	require.Zero(t, n, "the reads on a stopped machine opened %d ready-to-accept judgments", n)
@@ -461,7 +462,7 @@ func TestAMergeBeforeThePumpSeesTheQueuedAccept(t *testing.T) {
 	h.must(DealStep(sprint.DealReq{Sel: sprint.Sel{IDs: []string{"s1-1", "s1-2"}}}))
 	h.work("m1")
 	h.work("m2")
-	h.must(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-1", "s1-2"}}}))
+	h.askReads()
 	h.readAll()
 	h.startMachine()
 	h.must(AcceptStep(sprint.AcceptReq{Sel: sprint.Sel{IDs: []string{"s1-1", "s1-2"}}}))

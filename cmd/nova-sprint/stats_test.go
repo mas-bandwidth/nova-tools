@@ -14,8 +14,8 @@ import (
 // statsSprint plays s1-1 and s1-2 to landed on the twin, the clock stepped by hand:
 // both dealt at 0; s1-1 taken at 2 and finished at 12 (wall 8); s1-2 taken at 14,
 // failed by its provider at 16 (wall 1) and dealt again, taken at 20 and finished at
-// 30 (wall 6); asked at 30, each of a second reader too; reader-a begins both at 33 and reads them at 53 (wall
-// 15), reader-b reads both at 60 with no begin (wall 5); accepted at 70, landed at 75.
+// 30 (wall 6); their read cards cut working at 30, s1-1's on reader-a's row (read at 53,
+// wall 15) and s1-2's on reader-b's (read at 60, wall 5); accepted at 70, landed at 75.
 func statsSprint(t *testing.T) *testApp {
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1")
@@ -40,11 +40,8 @@ func statsSprint(t *testing.T) *testApp {
 	ta.ok("take --as m1 s1-2.w1@" + gen)
 	step(10)
 	ta.ok("finish --as m1 s1-2.w1@" + gen + usage("6.00s", "deepseek-v4-flash"))
-	ta.ok("ask")
-	ta.ok("ask s1-1 s1-2 --another") // a flash card is read once: each one more reader, both read by both
-	step(3)
-	ta.ok("read --as reader-a --begin --limit 2")
-	step(20)
+	ta.cutReads() // a flash card is read once: one read card each, s1-1's on reader-a's row and s1-2's on reader-b's
+	step(23)
 	ta.ok("read --as reader-a --ok --limit 2" + usage("15.00s", "deepseek-v4-pro"))
 	step(7)
 	ta.ok("read --as reader-b --ok --limit 2" + usage("5.00s", "deepseek-v4-pro"))
@@ -74,24 +71,25 @@ func TestStatsPrintsThePassFromTheCards(t *testing.T) {
 		"accept to land":      "5.0 5.0 n=2",
 		"total":               "75.0 75.0 n=2",
 		"m1":                  "2 | 0 | 3.0 4.0 n=2 | 7.0 8.0 n=2 | 3.0 4.0 n=2",
-		"reader-a":            "2 | 3.0 3.0 n=2 | 15.0 15.0 n=2 | 5.0 5.0 n=2",
-		"reader-b":            "2 | 30.0 30.0 n=2 | 5.0 5.0 n=2 | -5.0 -5.0 n=2", // a report with no begin is its begin
-		// a read runs on its card's tier, so the flash cards' four reads are flash-a's
-		// takes too; the provider's take is a take of the route
-		"flash-a": "7 | 6 | 0 | 1 | 6.0 15.0 n=7",
+		// a friend's read card is working from its cut: no begin wait
+		"reader-a": "1 | 0.0 0.0 n=1 | 15.0 15.0 n=1 | 8.0 8.0 n=1",
+		"reader-b": "1 | 0.0 0.0 n=1 | 5.0 5.0 n=1 | 25.0 25.0 n=1",
+		// the provider's take is a take of the route; a friend's read draws no route
+		"flash-a": "3 | 2 | 0 | 1 | 6.0 8.0 n=3",
+		"-":       "2 | 2 | 0 | 0 | 10.0 15.0 n=2",
 	}
 	for k, v := range want {
 		assert.Equal(t, v, rows[k], "row %s\n%s", k, out)
 	}
-	assert.Contains(t, out, "STATS OK epoch=0 primaries=2 members=1 readers=2 routes=1\n")
+	assert.Contains(t, out, "STATS OK epoch=0 primaries=2 members=1 readers=2 routes=2\n")
 
 	var ps sprint.PassStats
 	ta.json("stats", &ps)
 	require.Len(t, ps.Work, 1)
 	assert.Equal(t, sprint.Measure{Median: 7, Max: 8, N: 2}, ps.Work[0].RunWall)
 	assert.Equal(t, sprint.Measure{Median: 49, Max: 58, N: 2}, ps.Stages.FinishToReads)
-	require.Len(t, ps.Routes, 1)
-	assert.Equal(t, sprint.RouteTakes{Route: "flash-a", Takes: 7, OK: 6, Provider: 1, RunWall: sprint.Measure{Median: 6, Max: 15, N: 7}}, ps.Routes[0])
+	require.Len(t, ps.Routes, 2)
+	assert.Equal(t, sprint.RouteTakes{Route: "flash-a", Takes: 3, OK: 2, Provider: 1, RunWall: sprint.Measure{Median: 6, Max: 8, N: 3}}, ps.Routes[1])
 
 }
 

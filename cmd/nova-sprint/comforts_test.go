@@ -121,7 +121,7 @@ func TestTheCoordinatorsMergeNeedsNoEpoch(t *testing.T) {
 	ta.deal(3)
 	ta.ok("take --as m1 --limit 3")
 	ta.ok("finish --as m1 s1-1.w1@1 s1-2.w1@1 s1-3.w1@1")
-	ta.ok("ask")
+	ta.cutReads()
 	for _, r := range []string{"reader-a", "reader-b"} {
 		ta.ok("read --as " + r + " --ok --limit 10")
 	}
@@ -273,7 +273,7 @@ func byStream(t *testing.T, js []inboxJudgment, stream string) inboxJudgment {
 func TestInboxJSONSaysWhenTheSprintIsDone(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
-	ta.ok("init --readers reader-a,reader-b,reader-c --members m1,m2")
+	ta.ok("init --readers reader-m1,reader-m2 --members m1,m2")
 	ta.ok("add --stream s1 --count 3")
 	ta.ok("start")
 	ta.playToDone(1)

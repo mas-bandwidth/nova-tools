@@ -19,16 +19,15 @@ func TestOnTheTwinARoutedReadIsPricedAndATokenlessOneKeepsItsVerdict(t *testing.
 	t.Parallel()
 	pro := route("pro-a", "pro")
 	pro.Prices = cardcost.Prices{Input: "1", Output: "10", ReasoningAsOutput: true}
-	h := routeHarness(t, pro)
-	require.NoError(t, h.st.SetReaderAway(h.ctx, "reader-c", true, "tester"))
-	require.NoError(t, h.st.BeatReaders(h.ctx))
+	h := readersHarness(t, pro)
 	h.addReady("s1", 1, briefOf("pro", ""))
 	h.setPrimary("s1-1", map[string]string{sprint.FieldTierNow: "pro"})
 	h.startMachine()
 	h.machine()
 	h.work("m1")
 	h.work("m2")
-	h.machine() // asks both reads together
+	h.work("m3")
+	h.machine() // cuts both read cards together, on the two members that did not work it
 	reads := readsAt(h.snap(), h.snap().Work.Card("s1-1"))
 	require.Len(t, reads, 2)
 	a, b := reads[0], reads[1]
@@ -40,17 +39,17 @@ func TestOnTheTwinARoutedReadIsPricedAndATokenlessOneKeepsItsVerdict(t *testing.
 	require.Len(t, res.Refused, 1)
 	assert.Contains(t, res.Refused[0].Why, "has no --usage")
 	assert.Contains(t, res.Refused[0].Why, "--usage '<the harness's own token report")
-	assert.Equal(t, sprint.Asked, h.snap().Readers.Card(a.ID).Col)
+	assert.Equal(t, sprint.Ready, h.snap().Fleet.Card(a.ID).Col)
 
 	// tokens: priced from the route row, $0.5 + $0.5
 	h.must(ReadStep(sprint.ReadReq{As: a.Row, Verdict: "ok", Usage: "input=500000 output=50000 model=other/m", Sel: sprint.Sel{IDs: []string{a.ID}}}))
-	ua := cardcost.ParseUsage(h.snap().Readers.Card(a.ID).F(sprint.FieldUsage))
+	ua := cardcost.ParseUsage(h.snapReads().Fleet.Card(a.ID).F(sprint.FieldUsage))
 	assert.Equal(t, "pro-a", ua.Route)
 	assert.Equal(t, "1", ua.Predicted)
 
 	// no token reported: the verdict is kept and recorded unpriced=no-tokens
 	h.must(ReadStep(sprint.ReadReq{As: b.Row, Verdict: "ok", Usage: "usage_source=none cost=none", Sel: sprint.Sel{IDs: []string{b.ID}}}))
-	rb := h.snap().Readers.Card(b.ID)
+	rb := h.snapReads().Fleet.Card(b.ID)
 	assert.Equal(t, "ok", rb.F("verdict"))
 	assert.Equal(t, cardcost.WhyNoTokens, cardcost.ParseUsage(rb.F(sprint.FieldUsage)).Unpriced)
 

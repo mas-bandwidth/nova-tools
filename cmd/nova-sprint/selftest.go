@@ -129,10 +129,11 @@ func (a *app) selftestEnv(d string) []string {
 // selftestFlow runs the card's flow of the help's walkthrough (twin.go
 // realSteps), in process, on a twin file in d: a bare origin.git standing for
 // the forge and a clone work whose base commit holds the go module, then init
-// with two readers and one member, one card, start, ticks, take, a commit
-// pushed to the card's branch, finish at its head, a read ok, land and a tick,
-// and the landing read back from origin's main. It returns the land step's
-// duration and the cards it landed, or the step that failed and why.
+// with two members that read, one card, start, ticks, take, a commit pushed to
+// the card's branch, finish at its head, the other member's read card taken and
+// read ok, land and a tick, and the landing read back from origin's main. It
+// returns the land step's duration and the cards it landed, or the step that
+// failed and why.
 func (a *app) selftestFlow(d string, env []string) (land time.Duration, landed int, step, why string) {
 	ctx := context.Background()
 	git := func(args ...string) (string, error) {
@@ -195,7 +196,7 @@ func (a *app) selftestFlow(d string, env []string) (land time.Duration, landed i
 		name string
 		args []string
 	}{
-		{"init", []string{"init", "--readers", "reader-a,reader-b", "--members", "m1"}},
+		{"init", []string{"init", "--readers", "reader-m1,reader-m2", "--members", "m1,m2"}},
 		{"add", []string{"add", "--stream", "s1", "--count", "1", "--one"}}, // one card on purpose: add refuses a single card without --one
 		// the throwaway origin stands for the promotion stream: its main is the protected
 		// branch the flow lands on (docs/SPEC-SPRINT.md section 7, the protected branches)
@@ -231,8 +232,8 @@ func (a *app) selftestFlow(d string, env []string) (land time.Duration, landed i
 	}{
 		{"finish", []string{"finish", "--as", "m1", "s1-1.w1@1", "--epoch", "0", "--head", head, "--report", "done"}},
 		{"tick", []string{"tick"}},
-		{"read", []string{"read", "--as", "reader-a", "--begin", "--epoch", "0"}},
-		{"read", []string{"read", "--as", "reader-a", "--ok", "--epoch", "0"}},
+		{"take", []string{"take", "--as", "m2", "--epoch", "0"}},
+		{"read", []string{"read", "--as", "m2", "--ok", "--epoch", "0"}},
 		{"tick", []string{"tick"}},
 	} {
 		if step, why = stepVerb(s.name, s.args...); step != "" {

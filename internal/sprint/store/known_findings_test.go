@@ -24,7 +24,7 @@ func TestAnAckOfTheOneJudgmentThatHoldsAPrimaryLeavesItSilent(t *testing.T) {
 	h.must(AddStep(sprint.AddReq{Stream: "s1", IDs: []string{"p1"}}))
 	h.must(DealStep(sprint.DealReq{Sel: sprint.Sel{IDs: []string{"p1"}}}))
 	h.takeAndFinish(false, "p1")
-	h.must(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"p1"}}}))
+	h.askReads()
 	h.heldByRedCI("p1")
 	h.readAll()
 	open := h.openOf(sprint.NReadyToAccept)

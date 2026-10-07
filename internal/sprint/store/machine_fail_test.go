@@ -51,7 +51,12 @@ func TestCRTickFailsAtEveryCallAndRecovers(t *testing.T) {
 		// every due move happened: w resolved and dealt, s3 resumed, rv asked, s1 dealt
 		assert.NotEqual(t, sprint.Waiting, s.StateOf("w"), "%s: w still waiting after recovery", where)
 		assert.NotEqual(t, string(sprint.StreamStopped), s.StreamCtl("s3").F("state"), "%s: s3 still stopped after recovery", where)
-		assert.Len(t, s.Readers.Of("rv"), 2, "%s: rv asked of %d (both reads together)", where, len(s.Readers.Of("rv")))
+		// rv's two read cards were cut, and its worker reads none of it
+		rv := readsAt(s, s.Work.Card("rv"))
+		assert.Len(t, rv, 2, "%s: rv's read cards dealt %d", where, len(rv))
+		for _, rc := range rv {
+			assert.NotEqual(t, s.Fleet.Card(sprint.WorkCardID("rv", 1)).Row, rc.Row, "%s: rv's worker reads it", where)
+		}
 		n := h.written(sprint.NResumed)
 		assert.Equal(t, 1, n, "%s: resumed written %d", where, n)
 		notes, _, _ := h.m.NotesSince(h.ctx, "", 100000)

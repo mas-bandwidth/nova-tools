@@ -80,11 +80,11 @@ func brokenOnce(t *testing.T, w *world, finding string) {
 		}
 		w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{wc.ID}}, Gens: gensOf(w.s, wc.ID), Report: "r"}))
 	}
-	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-1"}}}))
+	w.askReads()
 	pr := w.s.Work.Card("s1-1")
 	var rc *Card
-	for _, c := range readsAt(w.s, pr, pr.Int("attempt")) {
-		if c.Col == Asked && (rc == nil || rc.Row != pr.F(FieldFindingReader)) {
+	for _, c := range readCardsAt(w.s, pr, pr.Int("attempt")) {
+		if rc == nil {
 			rc = c
 		}
 	}
@@ -115,19 +115,6 @@ func friendDealt(t *testing.T, running ...string) (*world, FriendSeat) {
 	deadlines(w, on(amy, bob))
 	require.Len(t, openOf(w, NWorkLate, "s1-1"), 1, "past its bound on her row: a late judgment")
 	return w, bob
-}
-
-// readLate is a world with s1-1 in review, its two reads asked together and both past their
-// deadline.
-func readLate(t *testing.T) *world {
-	t.Helper()
-	w := setup(t, 1)
-	finished(w, "s1-1", false)
-	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-1"}}}))
-	w.tick(DeadlineUnbegun + time.Minute)
-	deadlines(w, TickReq{})
-	require.Len(t, openOf(w, NReadLate, "s1-1"), 2, "both reads are late")
-	return w
 }
 
 // heldFor is a world with s1-1 and s1-2, s1-1's work come back failed with the report given.
@@ -214,49 +201,6 @@ func TestAMechanicalJudgmentIsAnsweredByItsRule(t *testing.T) {
 		assert.Len(t, openOf(w, NWorkLate, "s1-1"), 1)
 	})
 
-	t.Run("read-late: a late read is asked of another reader, once an attempt", func(t *testing.T) {
-		t.Parallel()
-		w := readLate(t) // its two reads asked together, both late
-		pr := w.s.Work.Card("s1-1")
-		late := readsAt(w.s, pr, 1)
-		require.Len(t, late, 2)
-		a := answerOn(t, w, on(), NReadLate, "s1-1")
-		require.Equal(t, RuleReadLate, a.Rule)
-		require.Equal(t, ActAsk, a.Act, a.Why)
-		from, other := a.from, ""
-		for _, rc := range late {
-			if rc.F("reader") != from {
-				other = rc.F("reader")
-			}
-		}
-		rules(w, on())
-		assert.False(t, w.s.Readers.Card(ReadCardID("s1-1", 1, from)).Placed(), "the late read is taken back")
-		var now []string
-		for _, rc := range liveReadsAt(w.s, w.s.Work.Card("s1-1"), 1) {
-			now = append(now, rc.F("reader"))
-		}
-		require.Len(t, now, 2)
-		assert.NotContains(t, now, from, "asked of another reader")
-		assert.Contains(t, now, other, "the other late read stands")
-		open := openOf(w, NReadLate, "s1-1")
-		require.Len(t, open, 1, "one answered; the other late read's judgment stays open")
-		assert.Equal(t, ActLeft, answerOn(t, w, on(), NReadLate, "s1-1").Act, "the second late read of the attempt is a mind's")
-		assert.Len(t, logged(w, RuleReadLate), 1, "logged with the rule's name")
-		assert.Equal(t, "1", w.s.Work.Card("s1-1").F(FieldRuleReread))
-
-		w.tick(DeadlineUnbegun + time.Minute)
-		deadlines(w, TickReq{})
-		require.Len(t, openOf(w, NReadLate, "s1-1"), 2, "the read asked instead is late too")
-		for _, a := range RuleAnswers(w.s, on()) {
-			if a.Subject == "s1-1" && a.Type == NReadLate {
-				assert.Equal(t, ActLeft, a.Act, "a late read after the rule asked once at the attempt is a mind's: %s", a.Why)
-			}
-		}
-		rules(w, on())
-		assert.Len(t, openOf(w, NReadLate, "s1-1"), 2)
-		w.clean("asked another reader by rule")
-	})
-
 	t.Run("hold-need: a HOLD naming a card that has not landed waits for it, then is reworked", func(t *testing.T) {
 		t.Parallel()
 		w := heldFor(t, "HOLD: needs s1-2 to land first; its API is missing")
@@ -313,12 +257,6 @@ func TestAMechanicalJudgmentIsAnsweredByItsRule(t *testing.T) {
 		rules(w, on())
 		assert.Empty(t, w.s.Work.Card("s1-1").F(FieldRuleNeed))
 
-		r := readLate(t)
-		r.s.RulesOff = []string{RuleReadLate}
-		rules(r, on())
-		assert.Len(t, openOf(r, NReadLate, "s1-1"), 2)
-		assert.Empty(t, logged(r, RuleReadLate))
-
 		f, bob := friendDealt(t)
 		f.s.RulesOff = []string{RuleFriendTake}
 		amy := FriendSeat{Name: "amy", Width: 1, Status: Up, Class: "flash,pro"}
@@ -342,8 +280,8 @@ func TestAMechanicalJudgmentIsAnsweredByItsRule(t *testing.T) {
 		at := func(d time.Duration) string { return stamp(now.Add(-d)) }
 		cards := []*Card{
 			{ID: "a", Fields: map[string]string{FieldRuleAnswer: RuleFriendTake + ": " + ActTake + " at " + at(time.Minute)}},
-			{ID: "b", Fields: map[string]string{FieldRuleAnswer: RuleReadLate + ": " + ActAsk + " at " + at(59*time.Minute)}},
-			{ID: "c", Fields: map[string]string{FieldRuleAnswer: RuleReadLate + ": " + ActAsk + " at " + at(61*time.Minute)}},
+			{ID: "b", Fields: map[string]string{FieldRuleAnswer: RuleReadLate + ": ask another reader at " + at(59*time.Minute)}},
+			{ID: "c", Fields: map[string]string{FieldRuleAnswer: RuleReadLate + ": ask another reader at " + at(61*time.Minute)}},
 			{ID: "d", Fields: map[string]string{}},
 		}
 		assert.Equal(t, map[string]int{RuleFriendTake: 1, RuleReadLate: 1}, RuleAnsweredWithin(cards, now, time.Hour))

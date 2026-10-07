@@ -66,6 +66,7 @@ func TestAReworkKeepsTheWhoPin(t *testing.T) {
 	t.Run("return then rework", func(t *testing.T) {
 		t.Parallel()
 		w := stoppedForConflict(t)
+		w.s.Work.SetProp(PropFriends, SwitchOn) // its reads are read: the friends' work back on
 		w.s.Work.Card("s1-2").Fields[FieldWho] = FriendRow("amy")
 		w.must(Return(w.s, ReturnReq{Sel: Sel{IDs: []string{"s1-2"}}, Reason: "suspect"}))
 		w.must(Rework(w.s, ReworkReq{Sel: Sel{IDs: []string{"s1-2"}}, Fix: "a fix"}))
@@ -74,6 +75,7 @@ func TestAReworkKeepsTheWhoPin(t *testing.T) {
 	t.Run("redo", func(t *testing.T) {
 		t.Parallel()
 		w := stoppedForConflict(t)
+		w.s.Work.SetProp(PropFriends, SwitchOn) // its reads are read: the friends' work back on
 		w.s.Work.Card("s1-2").Fields[FieldWho] = FriendRow("amy")
 		w.must(Redo(w.s, RedoReq{Sel: Sel{IDs: []string{"s1-2"}}, Who: "coordinator"}))
 		waitsForAmy(t, w, "s1-2")

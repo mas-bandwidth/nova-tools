@@ -52,23 +52,22 @@ func TestAComputedCriticalIsShownNotYetOrdered(t *testing.T) {
 
 // A read inherits its primary's level, the higher of reader and its primary's (the owner,
 // 2026-10-06: "that work stream jumps to the front of the reader and merge queue"): a high
-// primary's read is asked and dealt before high work and before a normal primary's older read,
-// and its read card carries the level a reader's queue shows.
+// primary's read card is dealt before a normal primary's older read, and every read before
+// work, and it carries the level a reader's queue shows.
 func TestAHighPrimarysReadIsAskedAndDealtFirst(t *testing.T) {
 	t.Parallel()
 
 	t.Run("a friend", func(t *testing.T) {
 		t.Parallel()
-		w, amy := priorityWorld(t, 5, 4, 0, 3)                     // her room is three
-		w.s.Work.Card("s1-4").Fields[FieldPriority] = PriorityHigh // the newest in review
+		w, amy := priorityWorld(t, 5, 7, 0, 3)                     // her room is three slots, six reads
+		w.s.Work.Card("s1-7").Fields[FieldPriority] = PriorityHigh // the newest in review
 		for i := 1; i <= 3; i++ {
 			w.s.Work.Card("s2-" + itoa(i)).Fields[FieldPriority] = PriorityHigh
 		}
 		tickDealAndAsk(t, w, amy)
-		reads := friendReads(w, "amy")
-		assert.Equal(t, []string{"s1-4"}, reads, "the high read first, before high work and the older normal reads")
-		assert.Len(t, friendNewWork(w, "amy"), 2, "then the high work in the room it leaves")
-		rc := w.s.Fleet.Card(ReadCardID("s1-4", 1, "amy"))
+		assert.ElementsMatch(t, []string{"s1-7", "s1-1", "s1-2", "s1-3", "s1-4", "s1-5"}, friendReads(w, "amy"), "the high read first, before the older normal reads; the last normal read waits")
+		assert.Empty(t, friendNewWork(w, "amy"), "and before high work: the reads fill her room")
+		rc := w.s.Fleet.Card(ReadCardID("s1-7", 1, "amy"))
 		require.NotNil(t, rc)
 		assert.Equal(t, PriorityHigh, QueuePriority(rc), "the read card carries its primary's level")
 	})
@@ -82,9 +81,10 @@ func TestAHighPrimarysReadIsAskedAndDealtFirst(t *testing.T) {
 		w.s.Work.Put(&Card{ID: "s1-2", Row: "s1", Col: Review, Score: 2, Rev: 1, Fields: map[string]string{
 			"kind": "primary", "attempt": "1", "stream": "s1", "brief": "s1-2: high (s1) tier: flash\n", "head": "h2", FieldPriority: PriorityHigh}})
 		askReaders(t, w, nil)
-		assert.NotNil(t, w.s.Readers.Card(ReadCardID("s1-2", 1, "reader-m1")), "the high primary's read takes the reader's one lane")
-		assert.Nil(t, w.s.Readers.Card(ReadCardID("s1-1", 1, "reader-m1")), "the older normal read waits")
-		assert.Equal(t, PriorityHigh, QueuePriority(w.s.Readers.Card(ReadCardID("s1-2", 1, "reader-m1"))))
+		rc := w.s.Fleet.Card(ReadCardID("s1-2", 1, "m1"))
+		require.NotNil(t, rc, "the high primary's read card is the member's")
+		assert.Equal(t, PriorityHigh, QueuePriority(rc), "it carries its primary's level")
+		assert.NotEqual(t, PriorityHigh, QueuePriority(w.s.Fleet.Card(ReadCardID("s1-1", 1, "m1"))), "the normal read is at reader level")
 	})
 }
 

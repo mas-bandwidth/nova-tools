@@ -118,7 +118,7 @@ func TestShadowReadRound(t *testing.T) {
 
 	// Outcomes attached when card lands
 	for range 2 {
-		ta.ok("ask --limit 100")
+		ta.cutReads()
 		ta.ok("read --as reader-a --ok --limit 100")
 		ta.ok("read --as reader-b --ok --limit 100")
 	}

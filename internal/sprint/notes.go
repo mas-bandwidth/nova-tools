@@ -107,7 +107,7 @@ var Decisions = map[string][]string{
 	NReturned:        {"rework", "accept", "drop"}, // accept only while its reads stand at its head
 	NWorkFailed:      {"rework with a fix", "drop"},
 	NBriefDefect:     {DecisionRecut, "drop"}, // never a redeal of the brief as cut
-	NReadBroken:      {"rework with the finding", "ask another reader", "drop"},
+	NReadBroken:      {"rework with the finding", "drop"},
 	NBriefWrong:      {"brief", "drop"}, // never rework: a --fix changes the brief not at all (brief_bound.go)
 	NConflict:        {"resolve and resume", "rework", "drop"},
 	NRed:             {"take the suspect off and resume", "rework the suspect"},
@@ -118,8 +118,8 @@ var Decisions = map[string][]string{
 	NBlocked:         {"drop", "ack"},
 	NMissingNeed:     {"drop", "ack"},
 	NCIRed:           {"rework with a fix", "return", "drop", "look", "ack"},
-	NReadsExhausted:  {"ask another reader", "rework", "drop"},
-	NStranded:        {"ask", "rework", "drop"},
+	NReadsExhausted:  {"rework", "drop"},
+	NStranded:        {"rework", "drop"},
 	NRepairSkipped:   {"look at the card", "return", "drop", "rework", "ack"},
 	NOpStuck:         {"check", "ack"},
 	NOverdue:         {"act"},

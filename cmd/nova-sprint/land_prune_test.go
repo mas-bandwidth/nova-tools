@@ -264,7 +264,7 @@ func TestLandDeletesTheBranchOfEveryAttemptOfACard(t *testing.T) {
 		r.ok("take --as m1 " + w)
 	}
 	r.ok("finish --as m1 " + w + " --head " + second + " --branch sprint/s1-1.w2.g1.e0")
-	r.ok("ask")
+	r.cutReads()
 	r.ok("read --as reader-a --ok --limit 100")
 	r.ok("read --as reader-b --ok --limit 100")
 	r.ok("accept --read-ok")

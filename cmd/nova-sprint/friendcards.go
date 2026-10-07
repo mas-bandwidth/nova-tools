@@ -606,22 +606,10 @@ func (a *app) wakeFriendStall(ctx context.Context, st *store.Store, name string,
 	return err
 }
 
-// friendReadText is the BRIEF.md of a friend's read, as friend sync and friend cards
-// both write it: the read's brief, the attempt's branch, start commit and head (the packet's,
-// else the card's), and a deadline of thirty minutes on the sprint clock.
+// friendReadText is the BRIEF.md of a friend's read card, as friend sync and friend cards
+// both write it (sprint.ReadCardBrief): the read's brief, the attempt's branch, start commit
+// and head (the packet's, else the card's), and its deadline from its start.
 func friendReadText(st *store.Store, name string, p sprint.Packet, c *sprint.Card) string {
-	if p.ReadJob != "" {
-		// a read asked the old way keeps the old brief
-		branch, head, start := p.WorkBranch, p.Head, ""
-		if c != nil {
-			branch, head, start = cmp.Or(branch, c.F("branch")), cmp.Or(head, c.F("head")), c.F("start")
-		}
-		var deadline time.Time
-		if st.Now != nil {
-			deadline = st.Now().Add(sprint.FriendReadDeadline)
-		}
-		return sprint.FriendReadBrief(name, p.Primary, p.Brief, branch, start, head, p.Attempt, deadline)
-	}
 	start := ""
 	var deadline time.Time
 	if c != nil {
@@ -639,9 +627,7 @@ func friendReadText(st *store.Store, name string, p sprint.Packet, c *sprint.Car
 }
 
 // friendReadOf delivers one friend's read and closes it from the friend's
-// report. The brief is the read's (sprint.FriendReadBrief: the AS A READ
-// section, the attempt's branch, start commit and head, deadline thirty
-// minutes on the sprint clock), and the close retires the fleet card
+// report. The brief is the read card's (friendReadText), and the close retires the fleet card
 // (sprint.FriendReadClose). It is not a work finish. The job directory is
 // the card id, the path the ask writes, so a brief already there is kept.
 func (a *app) friendReadOf(ctx context.Context, st *store.Store, name, dir string, p sprint.Packet, c *sprint.Card, say func(string)) (delivered, finished int, err error) {

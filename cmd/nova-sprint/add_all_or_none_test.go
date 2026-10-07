@@ -139,9 +139,9 @@ func TestAVerbWhoseDisplaySyncFailsAfterItsWriteReportsOK(t *testing.T) {
 			ta.deal(1)
 			ta.ok("take --as m1 s1-1.w1@1")
 			ta.ok("finish --as m1 s1-1.w1@1")
-			ta.ok("ask")
+			ta.cutReads()
 			ta.ok("read --as reader-a --ok s1-1.r1.reader-a")
-			ta.ok("ask") // the second read, the first ok
+			ta.cutReads() // the second read, the first ok
 			ta.ok("read --as reader-b --ok s1-1.r1.reader-b")
 			ta.ok("accept s1-1")
 			ta.ok("merge --stream s1")
@@ -193,7 +193,7 @@ func (ta *testApp) toMergingAdded(stream string) {
 		words = append(words, c.ID+"@"+strconv.Itoa(c.Gen))
 	}
 	ta.ok("finish --as m1 " + strings.Join(words, " "))
-	ta.ok("ask --limit 100")
+	ta.cutReads()
 	ta.ok("read --as reader-a --ok --limit 100")
 	ta.ok("read --as reader-b --ok --limit 100")
 	ta.ok("accept --read-ok")

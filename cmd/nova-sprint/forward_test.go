@@ -180,7 +180,6 @@ func TestAnInboxWaitThroughTheServerPollsForATickEnd(t *testing.T) {
 		assert.Equal(t, time.Second, d)
 		waited = waited.Add(d)
 		if polls++; polls == 2 {
-			r.boss("nova-sprint reader away reader-a") // fewer than two readers up: a judgment at the tick
 			r.boss("nova-sprint tick")
 		}
 	}
@@ -188,8 +187,8 @@ func TestAnInboxWaitThroughTheServerPollsForATickEnd(t *testing.T) {
 	require.Equal(t, 0, code, errs)
 	assert.Equal(t, 2, polls, "woke at the tick end after the judgment, not at the timeout")
 	plain := r.boss("nova-sprint inbox")
-	assert.Equal(t, "inbox --wait: new=tick-ask-t29-1.1\n"+plain, out, "the wake line, then the inbox as inbox --wait prints it when it woke")
-	assert.Contains(t, out, "fewer than two readers up")
+	assert.Equal(t, "inbox --wait: new=tick-ask-t28-1.1\n"+plain, out, "the wake line, then the inbox as inbox --wait prints it when it woke")
+	assert.Contains(t, out, "cannot ask") // the card in review drained by the tick, and no reader of its tier
 	assert.Len(t, sent, 6, "the log and the inbox at the start, two reads of the log, the inbox at the tick end, then the inbox")
 
 	code, out, errs = boss("inbox", "--wait", "--timeout", "3s", "--json")

@@ -1294,7 +1294,7 @@ func takeOne(s *Snapshot, r TakeReq) Plan {
 	// read working holds half a slot (read_cards.go): the room is counted in half slots,
 	// twice the width less twice the work and the reads working, a read taking one and a
 	// work card two.
-	halves := s.ReadCardsOn()
+	halves := true
 	room := max(width-len(s.Fleet.Cell(r.As, Working)), 0)
 	if halves {
 		ww, wr := rowWorking(s, r.As)

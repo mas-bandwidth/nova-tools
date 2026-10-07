@@ -53,8 +53,8 @@ func TestReworkDelegatesAtOnce(t *testing.T) {
 		w.must(Take(w.s, TakeReq{As: c.Row, Sel: Sel{IDs: []string{c.ID}}, Gens: gensOf(w.s, c.ID)}))
 		w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{c.ID}}, Gens: gensOf(w.s, c.ID)}))
 	}
-	w.must(Ask(w.s, AskReq{}))
-	reads := readsAt(w.s, w.s.Work.Card("s1-1"), 1)
+	w.askReads()
+	reads := readCardsAt(w.s, w.s.Work.Card("s1-1"), 1)
 	w.must(Read(w.s, ReadReq{Usage: "input=1000 output=100", As: reads[0].F("reader"), Verdict: "broken", Finding: "f:1", Sel: Sel{IDs: []string{reads[0].ID}}}))
 	w.must(Rework(w.s, ReworkReq{Sel: Sel{IDs: []string{"s1-1"}}, Fix: "the fix"}))
 	pr := w.s.Work.Card("s1-1")
@@ -69,7 +69,6 @@ func TestReworkDelegatesAtOnce(t *testing.T) {
 	// A report against the retired card is refused, naming the retirement.
 	late := Read(w.s, ReadReq{Usage: "input=1000 output=100", As: reads[0].F("reader"), Verdict: "ok", Sel: Sel{IDs: []string{reads[0].ID}}})
 	require.Empty(t, late.Units, "a report against a retired card moved: %+v", late)
-	w.s.Readers.Put(w.s.Readers.Card(reads[0].ID)) // the loader reads the retired record by name
 	late = Read(w.s, ReadReq{Usage: "input=1000 output=100", As: reads[0].F("reader"), Verdict: "ok", Sel: Sel{IDs: []string{reads[0].ID}}})
 	require.Len(t, late.Refused, 1, "the refusal does not name the retirement: %+v", late.Refused)
 	require.Contains(t, late.Refused[0].Why, "retired", "the refusal does not name the retirement: %+v", late.Refused)
@@ -77,9 +76,9 @@ func TestReworkDelegatesAtOnce(t *testing.T) {
 	// ask asks two different readers at the new head.
 	w.must(Take(w.s, TakeReq{As: card.Row, Sel: Sel{IDs: []string{card.ID}}, Gens: gensOf(w.s, card.ID)}))
 	w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{card.ID}}, Gens: gensOf(w.s, card.ID), Head: "h2"}))
-	require.Empty(t, readsAt(w.s, w.s.Work.Card("s1-1"), 2), "the finish asked readers itself")
-	w.must(Ask(w.s, AskReq{}))
-	again := readsAt(w.s, w.s.Work.Card("s1-1"), 2)
+	require.Empty(t, readCardsAt(w.s, w.s.Work.Card("s1-1"), 2), "the finish asked readers itself")
+	w.askReads()
+	again := readCardsAt(w.s, w.s.Work.Card("s1-1"), 2)
 	require.Len(t, again, 2, "not asked again (both reads asked together)")
 	for _, rc := range again {
 		assert.Equal(t, "h2", rc.F("head"), "not asked again at the new head: %s", rc.ID)
@@ -89,7 +88,7 @@ func TestReworkDelegatesAtOnce(t *testing.T) {
 	// No member up: review -> ready with the fix, no card.
 	w.must(FleetStep(w.s, FleetReq{Op: "down", Member: "m1"}))
 	w.must(FleetStep(w.s, FleetReq{Op: "down", Member: "m2"}))
-	r2 := readsAt(w.s, w.s.Work.Card("s1-2"), 1)
+	r2 := readCardsAt(w.s, w.s.Work.Card("s1-2"), 1)
 	w.must(Read(w.s, ReadReq{Usage: "input=1000 output=100", As: r2[0].F("reader"), Verdict: "broken", Finding: "f:1", Sel: Sel{IDs: []string{r2[0].ID}}}))
 	w.must(Rework(w.s, ReworkReq{Sel: Sel{IDs: []string{"s1-2"}}, Fix: "later"}))
 	require.Equal(t, Ready, w.state("s1-2"), "rework with nobody up: %s", w.state("s1-2"))
@@ -172,7 +171,7 @@ func TestD4AcceptNamedIsAllOrNothing(t *testing.T) {
 		w.must(Take(w.s, TakeReq{As: c.Row, Sel: Sel{IDs: []string{c.ID}}, Gens: gensOf(w.s, c.ID)}))
 		w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{c.ID}}, Gens: gensOf(w.s, c.ID)}))
 	}
-	w.must(Ask(w.s, AskReq{}))
+	w.askReads()
 	for _, id := range []string{"s1-1", "s1-2"} {
 		readOK(w, id)
 	}
@@ -381,46 +380,6 @@ func TestF3ReturnAnswersAndAckCloses(t *testing.T) {
 	require.Equal(t, ci, p.Units[0].Notes[0].Answers, "ack: open %v, notes %+v", w.openOn("s1-1"), p.Units[0].Notes)
 }
 
-// G3: a primary in review whose reads are exhausted (no read outstanding, not
-// two different readers' ok at its head, no open judgment) is a judgment,
-// written by the step that causes the condition: a read, or an ack.
-func TestG3ReadsExhaustedIsAJudgment(t *testing.T) {
-	t.Parallel()
-	w := setup(t, 2)
-	w.must(Deal(w.s, DealReq{Sel: Sel{Limit: 2}}))
-	for _, id := range []string{"s1-1.w1", "s1-2.w1"} {
-		c := w.s.Fleet.Card(id)
-		w.must(Take(w.s, TakeReq{As: c.Row, Sel: Sel{IDs: []string{id}}, Gens: w.gens(id)}))
-		w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{id}}, Gens: w.gens(id)}))
-	}
-	w.must(Ask(w.s, AskReq{}))
-	// s1-1: both broken; ask another closes both; the third says ok.
-	r1 := readsAt(w.s, w.s.Work.Card("s1-1"), 1)
-	w.must(Read(w.s, ReadReq{Usage: "input=1000 output=100", As: r1[0].F("reader"), Verdict: "broken", Finding: "f:1", Sel: Sel{IDs: []string{r1[0].ID}}}))
-	second := askedRead(w, "s1-1") // the second read was asked with the first
-	w.must(Read(w.s, ReadReq{Usage: "input=1000 output=100", As: second.F("reader"), Verdict: "broken", Finding: "f:1", Sel: Sel{IDs: []string{second.ID}}}))
-	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-1"}}, Another: true}))
-	third := askedRead(w, "s1-1")
-	w.must(Read(w.s, ReadReq{Usage: "input=1000 output=100", As: third.F("reader"), Verdict: "ok", Sel: Sel{IDs: []string{third.ID}}}))
-	o := w.openOn("s1-1")
-	require.Len(t, o, 1, "reads exhausted by a read: %v", o)
-	require.Equal(t, NReadsExhausted, o[0].Note.Type, "reads exhausted by a read: %v", o)
-	require.Contains(t, o[0].Note.Decisions, "ask another reader", "reads exhausted by a read: %v", o)
-	// s1-2: one ok, one broken; ack does not answer a broken read: refused,
-	// and the broken judgment stays open.
-	r2 := readsAt(w.s, w.s.Work.Card("s1-2"), 1)
-	w.must(Read(w.s, ReadReq{Usage: "input=1000 output=100", As: r2[0].F("reader"), Verdict: "ok", Sel: Sel{IDs: []string{r2[0].ID}}}))
-	next := askedRead(w, "s1-2") // the second read, asked with the first
-	w.must(Read(w.s, ReadReq{Usage: "input=1000 output=100", As: next.F("reader"), Verdict: "broken", Finding: "f:1", Sel: Sel{IDs: []string{next.ID}}}))
-	broken := w.openOn("s1-2")[0].Note.ID
-	p := w.do(Ack(w.s, AckReq{Notes: []string{broken}, Reason: "not a defect"}))
-	require.Len(t, p.Refused, 1, "ack of a broken read: %+v", p)
-	require.Empty(t, p.Units, "ack of a broken read: %+v", p)
-	o = w.openOn("s1-2")
-	require.Len(t, o, 1, "after the refused ack: %v", o)
-	require.Equal(t, NReadBroken, o[0].Note.Type, "after the refused ack: %v", o)
-}
-
 // G4: every step that changes what is queued keeps the stream's state true:
 // accept makes a waiting stream merging (and closes the card judgments of what
 // it accepts); return empties the queue to waiting; a drop that leaves only
@@ -434,7 +393,7 @@ func TestG4StreamStateIsKeptTrue(t *testing.T) {
 		w.must(Take(w.s, TakeReq{As: c.Row, Sel: Sel{IDs: []string{id}}, Gens: w.gens(id)}))
 		w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{id}}, Gens: w.gens(id)}))
 	}
-	w.must(Ask(w.s, AskReq{}))
+	w.askReads()
 	for _, id := range []string{"s1-1", "s1-2"} {
 		readOK(w, id)
 	}
@@ -494,45 +453,6 @@ func TestG1WithdrawnCardsAreDroppedAndChecked(t *testing.T) {
 		found = found || v.Rule == 2 && strings.Contains(v.Detail, "withdrawn")
 	}
 	require.True(t, found, "a withdrawn card of a primary in review: %v", Check(w.s, nil))
-}
-
-// A reader counts once, and a read card counts for the row it occupies only
-// when that row is the reader its id and field name: a primary with both ok
-// cards on one reader's row is not acceptable, and a named set with it moves
-// nothing.
-func TestAReaderCountsOnceWhereItsCardIs(t *testing.T) {
-	t.Parallel()
-	w := setup(t, 2)
-	w.must(Deal(w.s, DealReq{Sel: Sel{Limit: 2}}))
-	for _, id := range []string{"s1-1.w1", "s1-2.w1"} {
-		c := w.s.Fleet.Card(id)
-		w.must(Take(w.s, TakeReq{As: c.Row, Sel: Sel{IDs: []string{id}}, Gens: gensOf(w.s, id)}))
-		w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{id}}, Gens: gensOf(w.s, id)}))
-	}
-	w.must(Ask(w.s, AskReq{}))
-	for _, id := range []string{"s1-1", "s1-2"} {
-		readOK(w, id) // both reads, one at a time
-	}
-	// A writer outside the verbs moves s1-2's second ok card onto the first reader's row.
-	rs := readsAt(w.s, w.s.Work.Card("s1-2"), 1)
-	rs[1].Row = rs[0].Row
-	w.s.Readers.cells, w.s.Readers.byPrimary = nil, nil
-	p := Accept(w.s, AcceptReq{Sel: Sel{IDs: []string{"s1-1", "s1-2"}}})
-	require.Empty(t, p.Units, "accept: %+v", p)
-	require.Len(t, p.Refused, 2, "accept: %+v", p)
-	for _, r := range p.Refused {
-		if r.Key == "s1-2" {
-			require.Contains(t, r.Why, "two different readers", "refusal: %+v", r)
-		}
-		if r.Key == "s1-1" {
-			require.Contains(t, r.Why, "eligible, not moved", "refusal: %+v", r)
-		}
-	}
-	found := false
-	for _, v := range Check(w.s, nil) {
-		found = found || v.Rule == 1 && strings.Contains(v.Detail, rs[1].ID)
-	}
-	require.True(t, found, "check does not report the card off its reader's row: %v", Check(w.s, nil))
 }
 
 // Every decision of every judgment type, the tick's included, prints the

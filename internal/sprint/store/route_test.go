@@ -42,6 +42,20 @@ func routeHarness(t *testing.T, routes ...sprint.Route) *harness {
 	return h
 }
 
+// readersHarness is routeHarness with a third member, m3, and every member a reader (its
+// reader row, at every tier): a card's read cards go to the members that did not work it,
+// a pro card's two to the other two.
+func readersHarness(t *testing.T, routes ...sprint.Route) *harness {
+	h := routeHarness(t, routes...)
+	h.mu.Lock()
+	h.live = append(h.live, "m3")
+	h.mu.Unlock()
+	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m3", Width: sprint.MaxWidth}))
+	h.memberReaders("m1", "m2", "m3")
+	h.readersRead("flash,pro,heavy,frontier")
+	return h
+}
+
 // addReady admits n cards of the brief to the stream, ready.
 func (h *harness) addReady(stream string, n int, brief string) {
 	h.t.Helper()
@@ -492,62 +506,6 @@ func TestATickOf1000CardsKeepsTheTripPin(t *testing.T) {
 	assert.Equal(t, map[string]int{"a": 250, "b": 250, "c": 500}, n, "exactly the array's share, every route")
 }
 
-// A read runs on its card's tier (the owner, 2026-10-01: "i think readers being
-// conservatively the same tier as the work being done seems fine?"; route.go,
-// readRouteOf; tla/RouteIndex.tla, THE READS): in one sprint a flash card's one
-// read carries a flash route and a pro card's two reads pro routes (the owner,
-// 2026-10-02, cost rule 4: "one cold read per flash card on a flash route; two per
-// pro card"; ReadsNeeded), each drawn at its tier's rolling index, which the deal
-// and the reads share; the route, model, budget and deadline are on the read card
-// and in its packet, so a reader loop needs no --model.
-func TestAReadRunsOnItsCardsTierAtThatTiersIndex(t *testing.T) {
-	t.Parallel()
-	h := routeHarness(t, route("pro-a", "pro"), route("pro-b", "pro"), route("flash-a", "flash"), route("flash-b", "flash"))
-	require.NoError(t, h.st.BeatReaders(h.ctx))
-	h.addReady("s1", 1, briefOf("pro", ""))
-	h.setPrimary("s1-1", map[string]string{sprint.FieldTierNow: "pro"}) // as the machine's escalation leaves it
-	h.addReady("s2", 1, briefOf("flash", ""))
-	h.startMachine()
-	h.machine()
-	// each deal took its tier's entry at index 0
-	require.Equal(t, "pro-a", h.workCards()["s1-1.w1"].F(sprint.FieldRoute))
-	require.Equal(t, "flash-a", h.workCards()["s2-1.w1"].F(sprint.FieldRoute))
-	h.work("m1")
-	h.work("m2")
-	h.machine()
-	s := h.snap()
-	for id, want := range map[string]struct {
-		tier   string
-		routes []string
-		index  string
-	}{
-		"s1-1": {"pro", []string{"pro-b", "pro-a"}, "3"}, // the deal took pro-a: the two reads, asked together, take entries 1 and 0
-		"s2-1": {"flash", []string{"flash-b"}, "2"},      // the deal took flash-a: the one read takes entry 1
-	} {
-		tier := want.tier
-		reads := s.Readers.Of(id)
-		require.Len(t, reads, len(want.routes), "%s, a %s card, asked of %d readers", id, tier, len(want.routes))
-		var got []string
-		for _, rc := range reads {
-			name := rc.F(sprint.FieldRoute)
-			got = append(got, name)
-			assert.Equal(t, "prov-"+name+"/model-"+name, rc.F(sprint.FieldModel), rc.ID)
-			assert.Equal(t, "1000", rc.F(sprint.FieldTokens), rc.ID)
-			assert.Equal(t, fmt.Sprint(routeSeconds), rc.F(sprint.FieldDeadline), rc.ID)
-			p := sprint.PacketOf("", 0, rc, s.Work.Card(id), nil, nil)
-			assert.Equal(t, "prov-"+name+"/model-"+name, p.Model, "the read's packet carries its model")
-			assert.Equal(t, routeSeconds, p.Deadline)
-		}
-		assert.ElementsMatch(t, want.routes, got, "%s, a %s card, is read on %s routes", id, tier, tier)
-		for _, rc := range reads {
-			assert.Equal(t, tier, rc.F(sprint.FieldTier), "%s records the tier of its route", rc.ID)
-		}
-		v, _ := s.Fleet.Prop(sprint.PropRouteIndex(tier))
-		assert.Equal(t, want.index, v, "the %s index moves once a card, work or read", tier)
-	}
-	h.clean("reads drawn")
-}
-
 // A primary in review waiting for reads while no enabled route serves its tier
 // is held by the tier's "no route serves the tier" judgment at once, the deal's
 // own (route.go, readRouteMissing; TickDeal), not at the unreported deadline; a
@@ -576,42 +534,4 @@ func TestReadsTheirCardsTierCannotServeAreJudgedAtOnce(t *testing.T) {
 	h.m.SetRoutes([]sprint.Route{route("heavy-a", "heavy"), route("flash-a", "flash")})
 	h.machine()
 	assert.Empty(t, h.a2Open(sprint.NNoRoute), "a flash route, which reads a pro card while no pro route is enabled, closes it")
-}
-
-// One path asks (commit 255180e2; fleet pass 7, 2026-10-01): the finish of reworked work
-// asks no reader; the machine's ask, in the tick the finish wakes, asks two different
-// readers round the readers (a pro card's two reads, together), each read with the route it draws.
-// A read the finish asked itself carried no route, and no reader could start it.
-func TestAReadOfReworkedWorkCarriesARoute(t *testing.T) {
-	t.Parallel()
-	h := routeHarness(t, route("pro-a", "pro"), route("pro-b", "pro"), route("flash-a", "flash"), route("flash-b", "flash"))
-	require.NoError(t, h.st.BeatReaders(h.ctx))
-	h.addReady("s1", 1, briefOf("pro", ""))
-	h.setPrimary("s1-1", map[string]string{sprint.FieldTierNow: "pro"}) // a pro card on pro (flash first: escalated)
-	h.startMachine()
-	h.machine()
-	h.finishAttempt("s1-1", false, pushedA)
-	h.machine()
-	first := h.snap().Readers.Of("s1-1")
-	require.Len(t, first, 2, "attempt 1 asked both its reads together")
-	h.must(ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: first[0].Row, Verdict: "ok", Sel: sprint.Sel{IDs: []string{first[0].ID}}}))
-	h.must(ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: first[1].Row, Verdict: "broken", Finding: "f:1", Sel: sprint.Sel{IDs: []string{first[1].ID}}}))
-	h.must(ReworkStep(sprint.ReworkReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Fix: "fix"}))
-	h.finishAttempt("s1-1", false, pushedB)
-	pr := h.snap().Work.Card("s1-1")
-	require.Equal(t, 2, pr.Int("attempt"))
-	assert.Empty(t, readsAt(h.snap(), pr), "the finish asks no reader")
-	h.machine()
-	reads := readsAt(h.snap(), h.snap().Work.Card("s1-1"))
-	require.Len(t, reads, 2, "attempt 2 asked of two readers together, by the machine's ask")
-	var who []string
-	for _, rc := range reads {
-		who = append(who, rc.F("reader"))
-		assert.NotEmpty(t, rc.F(sprint.FieldRoute), "%s has a route", rc.ID)
-		assert.NotEmpty(t, rc.F(sprint.FieldModel), "%s has a model", rc.ID)
-		assert.NotEmpty(t, rc.F(sprint.FieldDeadline), "%s has a deadline", rc.ID)
-	}
-	assert.NotEqual(t, who[0], who[1], "asked twice of one reader")
-	assert.ElementsMatch(t, sprint.Split(h.snap().Work.Card("s1-1").F("asked")), who, "the primary's asked field names the readers of attempt 2")
-	h.clean("reworked work asked with routes")
 }

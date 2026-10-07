@@ -35,15 +35,10 @@ func finishFlow(w *world, id string, f stageFlow) {
 	sec(f.work)
 	w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{card.ID}}, Gens: gensOf(w.s, card.ID)}))
 	sec(f.readWait)
-	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{id}}})) // a card's reads are asked together: both in one ask
+	w.askReads()
 	for i, d := range []int{f.r1, f.r2} {
 		sec(d)
-		var out []*Card
-		for _, rc := range w.s.Readers.Of(id) {
-			if rc.Col == Asked || rc.Col == Reading {
-				out = append(out, rc)
-			}
-		}
+		out := readCardsAt(w.s, w.s.Work.Card(id), readAttempt(w.s.Work.Card(id)))
 		require.Len(w.t, out, 2-i, "read %d: the reads outstanding", i+1)
 		w.must(Read(w.s, ReadReq{Usage: "input=1000 output=100", As: out[0].Row, Verdict: "ok", Sel: Sel{IDs: []string{out[0].ID}}}))
 		require.Equal(w.t, Review, w.state(id), "read %d", i+1)
@@ -84,9 +79,9 @@ func TestStageTimesGiveMedianAndP90PerStage(t *testing.T) {
 	sec(300)
 	w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{first.ID}}, Gens: gensOf(w.s, first.ID)}))
 	sec(7)
-	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-3"}}}))
+	w.askReads()
 	sec(2)
-	rc := readsAt(w.s, w.s.Work.Card("s1-3"), 1)[0]
+	rc := readCardsAt(w.s, w.s.Work.Card("s1-3"), 1)[0]
 	w.must(Read(w.s, ReadReq{Usage: "input=1000 output=100", As: rc.Row, Verdict: "broken", Finding: "cycletime.go:1: off by one, change the count", Sel: Sel{IDs: []string{rc.ID}}}))
 	sec(40)
 	w.must(Rework(w.s, ReworkReq{Sel: Sel{IDs: []string{"s1-3"}}, Fix: "off by one"}))

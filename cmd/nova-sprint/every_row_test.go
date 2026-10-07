@@ -25,10 +25,10 @@ type tablesView struct {
 // world moves without waiting on the coordinator, and the columns whose
 // change says it moved.
 var busy = map[string]struct{ work, moved []string }{
-	"fleet":   {[]string{"ready", "working"}, []string{"ready", "working", "done"}},
-	"readers": {[]string{"asked", "reading"}, []string{"asked", "reading", "ok", "broken"}},
-	"work":    {[]string{"ready", "working"}, []string{"ready", "working", "review"}},
-	"merge":   {[]string{"queued"}, []string{"queued", "merging", "landed"}},
+	// a member's read cards are on its fleet row with its work (reads_ready, reads_working)
+	"fleet": {[]string{"ready", "working", "reads_ready", "reads_working"}, []string{"ready", "working", "done", "reads_ready", "reads_working"}},
+	"work":  {[]string{"ready", "working"}, []string{"ready", "working", "review"}},
+	"merge": {[]string{"queued"}, []string{"queued", "merging", "landed"}},
 }
 
 // rowsWithWork is each table's rows that have work in the view.
@@ -65,15 +65,15 @@ func rowsMoved(a, b tablesView) map[string][]string {
 	return out
 }
 
-// Eight machines, three streams of 50, four readers, the world with no
+// Eight machines, three streams of 50, every member a reader, the world with no
 // failures at one world tick per machine tick: in every tick, every row of the
-// readers', merge and fleet tables that has work at the start of the tick moves
+// merge and fleet tables that has work at the start of the tick moves
 // in it, and every tick's output names the four tables. The work table is the
 // pump's, advanced once a tick from what the other tables' updates queued for
 // it (the owner, 2026-09-30: "nothing advances the work stream table EXCEPT on
 // the next tick"): what is queued is not in the view, so its rows are not
 // required to move in a tick that has nothing queued, and the test holds that
-// it moves in the ticks the queue fills. The machine accepts what the readers
+// it moves in the ticks the queue fills. The machine accepts what the members
 // passed. At width 64 the fleet takes the whole sprint in one wave; at width 8
 // the waves overlap, and every table has work in the same ticks.
 func TestEveryRowWithWorkMovesEveryTick(t *testing.T) {
@@ -94,7 +94,7 @@ func everyRowMoves(t *testing.T, width int) {
 	for _, m := range members {
 		ms = append(ms, m+":"+strconv.Itoa(width))
 	}
-	ta.ok("init --readers reader-a,reader-b,reader-c,reader-d --members " + strings.Join(ms, ","))
+	ta.ok("init --readers " + readerRows(members) + " --members " + strings.Join(ms, ","))
 	for _, s := range []string{"s1", "s2", "s3"} {
 		ta.ok("add --stream " + s + " --count 50")
 	}
@@ -140,7 +140,7 @@ func everyRowMoves(t *testing.T, width int) {
 			break
 		}
 	}
-	for _, tb := range []string{"fleet", "readers", "work", "merge"} {
+	for _, tb := range []string{"fleet", "work", "merge"} {
 		assert.NotZero(t, seen[tb], "the %s table never had work in the ticks: %v", tb, seen)
 	}
 	assert.GreaterOrEqual(t, workMoved, 3, "the work table moved in %d ticks, fewer than 3: the pump did not advance it from what the other tables queued", workMoved)

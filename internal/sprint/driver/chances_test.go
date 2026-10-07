@@ -340,18 +340,20 @@ func TestAMachineHeldDownTakesNoWorkAndTakesWorkAgainWhenReleased(t *testing.T) 
 	assert.GreaterOrEqual(t, index(w.ran, 0, "fleet up m1"), 0, "no hold and release: %v", w.ran)
 }
 
-// eventful is a world with members, readers and streams whose queues never
-// empty, so that every tick draws every kind of fact.
+// eventful is a world with members that read and streams whose queues never empty, so
+// that every tick draws every kind of fact.
 func eventful() *world {
-	const cards = `{"cards":[{"id":"s1-1.w1","col":"working","gen":1},{"id":"s1-2.w1","col":"working","gen":1},{"id":"s1-3.w1","col":"ready","gen":1}]}`
+	cards := func(m string) string {
+		return `{"cards":[{"id":"s1-1.w1","col":"working","gen":1},{"id":"s1-2.w1","col":"working","gen":1},{"id":"s1-3.w1","col":"ready","gen":1},` +
+			`{"id":"s2-1.r1.` + m + `","col":"ready","gen":1},{"id":"s2-2.r1.` + m + `","col":"working","gen":1},{"id":"s2-3.r1.` + m + `","col":"working","gen":1}]}`
+	}
 	where := strings.Replace(twoStreams, `"fleet":{"m1":{"status":"up"}},"readers":{}`,
-		`"fleet":{"m1":{"status":"up"},"m2":{"status":"up"},"m3":{"status":"up"}},"readers":{"reader-a":{}}`, 1)
+		`"fleet":{"m1":{"status":"up"},"m2":{"status":"up"},"m3":{"status":"up"}}`, 1)
 	return &world{where: []string{where},
 		queue: map[string]string{
-			"m1": cards, "m2": cards, "m3": cards,
-			"reader-a": `{"cards":[{"id":"s1-1.r1.reader-a","col":"asked"},{"id":"s1-2.r1.reader-a","col":"reading"},{"id":"s1-3.r1.reader-a","col":"reading"}]}`,
-			"s1":       `{"cards":[{"id":"s1-5","col":"queued"},{"id":"s1-6","col":"queued"}]}`,
-			"s2":       `{"cards":[{"id":"s2-5","col":"queued"},{"id":"s2-6","col":"queued"}]}`,
+			"m1": cards("m1"), "m2": cards("m2"), "m3": cards("m3"),
+			"s1": `{"cards":[{"id":"s1-5","col":"queued"},{"id":"s1-6","col":"queued"}]}`,
+			"s2": `{"cards":[{"id":"s2-5","col":"queued"},{"id":"s2-6","col":"queued"}]}`,
 		}, inbox: `{"groups":[]}`}
 }
 
@@ -386,7 +388,7 @@ func TestTheSameSeedPlaysTheSameEventsAndAnotherSeedOthers(t *testing.T) {
 	require.Equal(t, outB, outA, "the same seed played two runs")
 	ranC, _ := play(t, 12, 300)
 	require.NotEqual(t, ranC, ranA, "another seed played the same run")
-	for _, want := range []string{"finish --as", "--failed", "read --as reader-a --broken", "--conflict", "--cross", "(m1 falls silent", "(m1 beats again)"} {
+	for _, want := range []string{"finish --as", "--failed", "read --as m1 --broken", "--conflict", "--cross", "(m1 falls silent", "(m1 beats again)"} {
 		assert.Contains(t, ranA+outA, want, "300 ticks of the simulation never played %q", want)
 	}
 	for _, l := range strings.Split(ranA, "\n") {

@@ -1,8 +1,10 @@
 package store
 
 // Cold reader's sprint: 40 primaries, three streams with needs (a chain, a
-// diamond, cross-stream needs), 3 members, 3 readers, driven only by the tick,
-// scripted outside facts and coordinator decisions from the open judgments.
+// diamond, cross-stream needs), 3 members that work and read (each with its
+// reader row: the read cards of a card in review are theirs), driven only by
+// the tick, scripted outside facts and coordinator decisions from the open
+// judgments.
 
 import (
 	"fmt"
@@ -31,11 +33,11 @@ type crWorld struct {
 }
 
 var crMembers = []string{"m1", "m2", "m3"}
-var crReaders = []string{"reader-a", "reader-b", "reader-c"}
 
 func crSprint(t *testing.T, seed uint64) *crWorld {
 	h := newHarness(t)
 	w := &crWorld{h: h, rng: rand.New(rand.NewPCG(seed, 7)), crossAge: map[string]int{}, readyToAccept: map[string]int{}}
+	h.memberReaders(crMembers...)
 	for _, m := range crMembers {
 		h.must(FleetStep(sprint.FleetReq{Op: "up", Member: m}))
 	}
@@ -88,7 +90,7 @@ func openBy(open []sprint.Open) map[string][]string {
 // named by an open judgment. Called right after a tick of a RUNNING machine.
 func (w *crWorld) holders(round int) {
 	h := w.h
-	s := h.snap()
+	s := h.snapReads()
 	open, _ := h.m.OpenNotes(h.ctx)
 	by := openBy(open)
 	up := s.UpMembers()
@@ -138,14 +140,14 @@ func (w *crWorld) holders(round int) {
 					}
 					out := 0
 					for _, rc := range readsAt(s, c) {
-						if rc.Col == sprint.Asked || rc.Col == sprint.Reading {
+						if rc.Col == sprint.Asked || rc.Col == sprint.Reading || rc.Col == sprint.Ready || rc.Col == sprint.Working {
 							out++
 						}
 					}
 					if out > 0 || pj {
 						continue
 					}
-					if crOks(s, c) >= 2 {
+					if crOks(s, c) >= sprint.ReadsNeeded(c) {
 						w.readyToAccept[c.ID]++
 						continue
 					}
@@ -165,20 +167,23 @@ func (w *crWorld) holders(round int) {
 	}
 }
 
+// readsAt is the primary's reads at its attempt: its read cards on the fleet table, placed
+// or (when the snapshot read them, snapReads) retired, and any on the readers table.
 func readsAt(s *sprint.Snapshot, pr *sprint.Card) []*sprint.Card {
 	var out []*sprint.Card
-	for _, rc := range s.Readers.Of(pr.ID) {
-		if rc.Int("attempt") == pr.Int("attempt") {
+	for _, rc := range s.Fleet.Cards() {
+		if rc.F("kind") == "read" && rc.F("primary") == pr.ID && rc.Int("attempt") == max(pr.Int("attempt"), 1) {
 			out = append(out, rc)
 		}
 	}
 	return out
 }
 
+// crOks is the readers whose read of the primary's attempt is ok at its head.
 func crOks(s *sprint.Snapshot, pr *sprint.Card) int {
 	seen := map[string]bool{}
 	for _, rc := range readsAt(s, pr) {
-		if rc.Col == sprint.OK && rc.F("head") == pr.F("head") {
+		if (rc.Col == sprint.OK || rc.F("verdict") == "ok") && rc.F("head") == pr.F("head") {
 			seen[rc.F("reader")] = true
 		}
 	}
@@ -201,10 +206,20 @@ func (w *crWorld) round(r int) {
 		w.holders(r)
 		// E: a second tick right after changes nothing but the drain of the
 		// work table's queue: what the first tick's steps queued is the next
-		// pump's to apply (errata 3 amendment 12).
+		// pump's to apply (errata 3 amendment 12), and the level of a card the
+		// first tick placed after its own level (a rework's next attempt the drain
+		// dealt, a card the deal dealt beside the read cards it cut): the level
+		// runs once, at a tick's start (sprint.TickStart).
 		before := h.revisionsAll()
+		var placed []string
+		for _, q := range res.Parts {
+			placed = append(placed, q.Moved...)
+		}
 		res2 := h.machine()
 		for _, p := range res2.Parts {
+			if p.Name == sprint.PartLevel && levelsOnlyPlaced(p.Moved, placed) {
+				continue
+			}
 			if p.Name != sprint.PartDrain && (len(p.Moved) > 0 || p.Notes > 0) {
 				var first []string
 				for _, q := range res.Parts {
@@ -228,18 +243,23 @@ func (w *crWorld) round(r int) {
 			h.run(TakeStep(sprint.TakeReq{As: m, Sel: sprint.Sel{Limit: 100}, Who: m}))
 			s := h.snap()
 			for _, c := range s.Fleet.Cell(m, sprint.Working) {
+				if c.F("kind") == "read" {
+					continue // the member's reads are the readers' turn
+				}
 				fail := w.rng.Float64() < 0.15
 				h.run(FinishStep(sprint.FinishReq{As: m, Sel: sprint.Sel{IDs: []string{c.ID}}, Gens: map[string]int{c.ID: c.Int("gen")}, Failed: fail, Report: "boom", Who: m}))
 			}
 		}
 		h.clean(fmt.Sprintf("round %d after the workers", r))
 	}
-	// readers
+	// readers: each member reads the read cards it holds working
 	if w.silentReaders == 0 || r < w.silentReaders {
-		for _, rd := range crReaders {
-			h.run(ReadStep(sprint.ReadReq{As: rd, Begin: true, Sel: sprint.Sel{Limit: 100}, Who: rd}))
+		for _, rd := range crMembers {
 			s := h.snap()
-			for _, c := range s.Readers.Cell(rd, sprint.Reading) {
+			for _, c := range s.Fleet.Cell(rd, sprint.Working) {
+				if c.F("kind") != "read" {
+					continue
+				}
 				v := "ok"
 				if w.rng.Float64() < 0.1 {
 					v = "broken"
@@ -293,6 +313,23 @@ func (w *crWorld) round(r int) {
 		}
 		h.clean(fmt.Sprintf("round %d after the merger", r))
 	}
+}
+
+// levelsOnlyPlaced says every card the level moved was placed by one of the moves given.
+func levelsOnlyPlaced(moved, placed []string) bool {
+	for _, m := range moved {
+		id := strings.Fields(m)[0]
+		found := false
+		for _, d := range placed {
+			if strings.Contains(d, "card="+id+" ") {
+				found = true
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
 }
 
 func (h *harness) revisionsAll() [4]uint64 {

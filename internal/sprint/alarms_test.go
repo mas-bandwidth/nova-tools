@@ -28,6 +28,22 @@ type alarmRig struct {
 	st  *store.Store
 	mu  sync.Mutex
 	now time.Time
+	// friends is the friends that read (friendReaders), beat with the member
+	friends []string
+}
+
+// friendReaders makes the named friends readers (roles builder,reader) and beats them: the
+// read cards of a card in review are theirs.
+func (r *alarmRig) friendReaders(names ...string) {
+	r.t.Helper()
+	var specs []store.FriendSpec
+	for _, n := range names {
+		specs = append(specs, store.FriendSpec{Name: n, Width: 2, Class: "pro", Roles: "builder,reader"})
+	}
+	_, _, _, err := r.st.SyncFriends(r.ctx, specs)
+	require.NoError(r.t, err)
+	r.friends = names
+	r.beat()
 }
 
 func newAlarmRig(t *testing.T) *alarmRig {
@@ -58,6 +74,12 @@ func (r *alarmRig) beat() {
 	zero := 0.0
 	_, err := r.st.Beat(r.ctx, "m1", &zero, hostload.Source{})
 	require.NoError(r.t, err)
+	for _, f := range r.friends {
+		_, err := r.st.FriendBeat(r.ctx, f)
+		require.NoError(r.t, err)
+		_, _, _, err = r.st.FriendHealth(r.ctx, f, "coordinator", sprint.FriendHealth{State: sprint.Up, Seen: r.st.Now(), Generation: sprint.FirstSeatGeneration}, "")
+		require.NoError(r.t, err)
+	}
 }
 
 func (r *alarmRig) must(step store.Step) {
@@ -122,6 +144,8 @@ func TestBacklogAlarmsPushOncePerEpisodeFromConfigThresholds(t *testing.T) {
 	r.must(store.FleetStep(sprint.FleetReq{Op: "up", Member: "m1", Width: 4}))
 	r.must(store.AddStep(sprint.AddReq{Stream: "s1", IDs: []string{"a", "b", "c"}}))
 	r.must(store.AddStep(sprint.AddReq{Stream: "s1", IDs: []string{"d"}, Needs: []string{"a"}}))
+	r.friendReaders("amy", "bob")
+	r.must(store.SetStep(sprint.SetReq{Friends: sprint.SwitchOff, Who: "coordinator"})) // they read only
 	_, _, _, err := r.st.SetMachine(r.ctx, true)
 	require.NoError(t, err)
 	quiet := [2]int{0, 0}
@@ -169,7 +193,8 @@ func TestBacklogAlarmsPushOncePerEpisodeFromConfigThresholds(t *testing.T) {
 	want("three in review, m1 idle", [2]int{1, 0}, [2]int{2, 1}, [2]int{1, 0}, quiet)
 
 	// the reads come back ok: the machine accepts all three, merging 3 above 0, review clears
-	for _, rd := range []string{"reader-a", "reader-b"} {
+	for _, f := range []string{"amy", "bob"} {
+		rd := sprint.FriendRow(f)
 		res, err := r.st.Run(r.ctx, store.ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: rd, Verdict: "ok", Sel: sprint.Sel{Limit: 100}, Who: rd}))
 		require.NoError(t, err, "read as %s: %+v", rd, res)
 	}

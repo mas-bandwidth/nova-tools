@@ -132,7 +132,7 @@ func TestReworkTakesTheFindingOrTheReport(t *testing.T) {
 	ta.ok("take --as m1 --limit 4")
 	ta.ok("finish --as m1 s1-1.w1@1 s1-3.w1@1 s1-4.w1@1")
 	ta.ok("finish --as m1 s1-2.w1@1 --failed --report 'the tests went red'")
-	ta.ok("ask")
+	ta.cutReads()
 	ta.ok("read --as reader-a --broken --finding 'line 3: the empty case is not handled' s1-1.r1.reader-a")
 	broken := ta.group(sprint.NReadBroken, "s1")
 	// all or nothing: s1-3 has no finding, report or --fix, so nothing moves
@@ -174,7 +174,7 @@ func (ta *testApp) toMerging(streams ...string) {
 		words = append(words, c.ID+"@"+strconv.Itoa(c.Gen))
 	}
 	ta.ok("finish --as m1 " + strings.Join(words, " "))
-	ta.ok("ask --limit 100")
+	ta.cutReads()
 	ta.ok("read --as reader-a --ok --limit 100")
 	ta.ok("read --as reader-b --ok --limit 100")
 	// both reads of each card were asked together, so both readers' oks come back in one
@@ -220,7 +220,7 @@ func TestEveryJudgmentPrintsItsDecisionsAsCommands(t *testing.T) {
 	ta.ok("finish --as m1 s1-1.w1@1 s1-2.w1@1 s1-3.w1@1 s2-2.w1@1")
 	ta.a.sleep(time.Second)
 	ta.ok("finish --as m1 s2-1.w1@1 --failed --report 'the tests went red'")
-	ta.ok("ask --limit 100")
+	ta.cutReads()
 	ta.a.sleep(time.Second)
 	ta.ok("read --as reader-a --broken --finding 'line 3: the empty case is not handled' s2-2.r1.reader-a")
 	ta.ok("read --as reader-a --ok --limit 100")
@@ -252,8 +252,6 @@ JUDGMENT N2   a reader found it broken  alias=j2  stream=s2  size=1  waited=1m1s
   line 3: the empty case is not handled
   rework with the finding:
     nova-sprint rework s2-2
-  ask another reader:
-    nova-sprint ask s2-2 --another
   drop:
     nova-sprint drop s2-2 --reason '<why>'
 JUDGMENT N3   stream stopped: stream branch red  alias=j3  stream=s1  size=3  waited=1m0s  due=HH:MM:SS  (s1-1,s1-2,s1-3)
@@ -302,7 +300,7 @@ func TestInboxPrintsTheReaderFindingInFullUnderTheJudgment(t *testing.T) {
 	ta.deal(1)
 	ta.ok("take --as m1 --limit 1")
 	ta.ok("finish --as m1 s1-1.w1@1")
-	ta.ok("ask")
+	ta.cutReads()
 	ta.a.sleep(time.Second)
 	finding := "line 3: the empty case is not handled: it panics on the last line" + strings.Repeat(" of a very long finding", 12)
 	ta.ok("read --as reader-a --broken --finding '" + finding + "' s1-1.r1.reader-a")
@@ -332,12 +330,11 @@ func TestInboxNamesASingleCardJudgmentByItsCard(t *testing.T) {
 	ta.deal(1)
 	ta.ok("take --as m1 --limit 1")
 	ta.ok("finish --as m1 s1-1.w1@1")
-	ta.ok("ask")
+	ta.cutReads()
 	ta.a.sleep(time.Second)
 	ta.ok("read --as reader-a --broken --finding 'line 3: off by one' s1-1.r1.reader-a")
 	out := ta.ok("inbox")
 	require.Contains(t, out, "nova-sprint rework s1-1\n", "rework with the finding names the card:\n%s", out)
-	require.Contains(t, out, "nova-sprint ask s1-1 --another\n", "ask --another names the card:\n%s", out)
 	require.Contains(t, out, "nova-sprint drop s1-1 --reason '<why>'\n", "drop names the card:\n%s", out)
 	require.NotContains(t, out, "--group ", "a single-card judgment names a group token:\n%s", out)
 	ta.clean()

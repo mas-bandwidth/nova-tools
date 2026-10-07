@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -83,7 +84,7 @@ func TestCardTellsTheStory(t *testing.T) {
 	ta.deal(1)
 	ta.ok("take --as m1 s1-1.w2@1")
 	ta.ok("finish --as m1 s1-1.w2@1 --head h2 --report 'handled; tests green'")
-	ta.ok("ask") // the pair: a card's reads are asked together
+	ta.cutReads() // the pair: a pro card's two read cards, cut together
 	ta.ok("read --as reader-a --ok s1-1.r2.reader-a --finding 'the empty case is tested'")
 	ta.ok("read --as reader-b --ok s1-1.r2.reader-b --finding 'fine'")
 	ta.ok("accept s1-1")
@@ -96,7 +97,7 @@ func TestCardTellsTheStory(t *testing.T) {
 		"  attempt 2, because attempt 1 failed\n",
 		`s1-1 reworked by coordinator: attempt 2; answers "work came back failed"`,
 		`m1 finished attempt 2: ok, head h2. "handled; tests green"`,
-		"reader-a and reader-b asked to read attempt 2 by coordinator", // reads asked together: one ask
+		"reader-a and reader-b asked to read attempt 2 by the machine", // read cards cut together: one event
 		`reader-a read attempt 2: ok. "the empty case is tested"`,
 		"merged into s1 and landed by coordinator",
 		"attempt 1, report by m1 (failed):\n    the tests went red",
@@ -147,10 +148,10 @@ func TestTakeAndQueueHandTheirPackets(t *testing.T) {
 	assert.Equal(t, 1, strings.Count(ta.ok("card s1-1"), "check the nil slice too"), "card says the fix once")
 	assert.Contains(t, ta.ok("card s1-1"), "attempt 2 was given:\n  because:\n    attempt 1 failed: the tests went red\n  the fix:\n    check the nil slice too")
 	ta.ok("finish --as m1 s1-1.w2@1 --head h2 --branch feature/empty-2 --base feature/empty --report 'handled; tests green'")
-	ta.ok("ask")
-	out = ta.ok("queue --as reader-a")
+	ta.cutReads()
+	out = ta.ok("queue --as " + sprint.FriendRow("reader-a"))
 	for _, want := range []string{"PACKET s1-1.r2.reader-a attempt=2", "  work: attempt 2 by m1", "  head: h2", "  branch: feature/empty-2", "  base: feature/empty",
-		"  report:\n    handled; tests green", "  report it: nova-sprint read --as reader-a (--ok | --broken) s1-1.r2.reader-a --epoch 0"} {
+		"  report:\n    handled; tests green", "  report it: write outbox/s1-1.r2.reader-a/REPORT.md"} {
 		assert.Contains(t, out, want, "the reader's queue has no %q", want)
 	}
 }

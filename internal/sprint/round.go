@@ -139,90 +139,6 @@ func (r *round) scan(ok func(string) bool) string {
 	return ""
 }
 
-// pickByRoom is up to k names of free the ask asks, each the one with the
-// greatest share of room left (readerRoom: free room as a part of width),
-// with free room above zero, a tie going to the first from the index, each
-// scan starting past the name the one before took; a name already taken or
-// with no free room is never one, and fewer come back when fewer have room.
-// It takes each read it places off the name's room, so one ask that places
-// many reads spreads them by the room left (widths 4 and 24, ten reads: the
-// 24 takes eight), and it does not move the index: the ask that takes them
-// moves it past each (moved), in order. With every room unbounded (readers
-// named for no fleet row) the order is by load, the least loaded first.
-func (r *round) pickByRoom(k int, free []string, room map[string]readerRoom) []string {
-	// Workaround (the coordinator, 2026-10-06 7:40 PM ET; the owner: "fix it now, to work around it"): pick
-	// from the free readers themselves, never from the round's name index, which did not
-	// hold every reader up and left asks at one pick with six readers free. The index order
-	// still breaks ties, each scan starting past the name the one before took, as the
-	// reference model's NextReaders does. Read cards replace this path next.
-	var out []string
-	order := r.inIndexOrder(free)
-	at, n := 0, len(order)
-	for len(out) < k {
-		pick := -1
-		for i := 0; i < n; i++ {
-			j := (at + i) % n
-			x := order[j]
-			if contains(out, x) || room[x].free <= 0 {
-				continue
-			}
-			if pick < 0 || room[x].share() > room[order[pick]].share() {
-				pick = j
-			}
-		}
-		if pick < 0 {
-			break
-		}
-		out = append(out, order[pick])
-		room[order[pick]] = room[order[pick]].after(1)
-		at = pick + 1
-	}
-	return out
-}
-
-// inIndexOrder is names in the round's index order from its start, then the
-// names the index does not hold, in the order given.
-func (r *round) inIndexOrder(names []string) []string {
-	var out []string
-	n := len(r.order)
-	for i := 0; i < n; i++ {
-		if x := r.order[(r.start()+i)%n]; contains(names, x) && !contains(out, x) {
-			out = append(out, x)
-		}
-	}
-	for _, x := range names {
-		if !contains(out, x) {
-			out = append(out, x)
-		}
-	}
-	return out
-}
-
-// levelToRoom is where the readers' level moves the newest asked read of the
-// reader with the least share of room (from), and moves the index past it:
-// the reader up with the greatest share (readerRoom), with free room so no
-// reader is filled past its width, whose share after the move would still be
-// at or above from's after it, so the move never swaps a backlog from one
-// reader to another and the next level does not move it back; a tie goes to
-// the first from the index. A reader of avoid (one with a card at the read's
-// attempt) is never the target. "" when none, and the index does not move.
-func (r *round) levelToRoom(up []string, room map[string]readerRoom, from string, avoid []string) string {
-	to := ""
-	for i := 0; i < len(r.order); i++ {
-		x := r.order[(r.start()+i)%len(r.order)]
-		if !contains(up, x) || contains(avoid, x) || room[x].free < 1 || room[x].after(1).share() < room[from].after(-1).share() {
-			continue
-		}
-		if to == "" || room[x].share() > room[to].share() {
-			to = x
-		}
-	}
-	if to != "" {
-		r.moved(to)
-	}
-	return to
-}
-
 // moved moves the index past name: the counter goes up by one for the
 // placement and by one for each name it passed over to reach name, so the next
 // scan starts at the name after it.
@@ -327,9 +243,6 @@ func tableRound(t *Table, name string, names []string) *round {
 // dealRound is the deal's rolling index over the fleet's members.
 func dealRound(s *Snapshot) *round { return tableRound(s.Fleet, PropDealIndex, s.Members()) }
 
-// askRound is the ask's rolling index over the readers.
-func askRound(s *Snapshot) *round { return tableRound(s.Readers, PropAskIndex, s.Readers.Rows()) }
-
 // The streams take turns: every step that takes cards across the
 // streams (the deal, and the withdrawn card dealt again with it; the ask; the
 // accept) takes one card from each stream in turn, starting at the stream
@@ -343,16 +256,6 @@ func askRound(s *Snapshot) *round { return tableRound(s.Readers, PropAskIndex, s
 // k/n, give or take one, and the one a step gives the extra card to is the
 // last served, so the next step starts past it. The index survives a stop and
 // a start of the machine; a clear starts the next epoch at the first stream.
-
-// askStreamRound is the ask's rolling index over the streams, a property of
-// the readers table: the ask is the readers' update, and only the pump writes
-// the work table while the machine runs.
-func askStreamRound(s *Snapshot) *round {
-	if s.Work == nil || s.Readers == nil {
-		return newRound(nil, "")
-	}
-	return tableRound(s.Readers, PropAskStreamIndex, s.Work.Rows())
-}
 
 // streamRound is a step's rolling index over the streams (the work table's
 // rows), the work table's property name.
@@ -510,12 +413,4 @@ func roundWrite(p *Plan, r *round, moves roundMoves) {
 		return
 	}
 	p.Props = append(p.Props, PropWrite{Table: r.table, Name: r.name, Value: w.value(), Was: r.read, WasAbsent: !r.had})
-}
-
-// joinMoves is a unit's moves with one more name it moved an index past.
-func joinMoves(moves, name string) string {
-	if moves == "" {
-		return name
-	}
-	return moves + "," + name
 }

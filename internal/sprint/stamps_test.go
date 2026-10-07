@@ -35,14 +35,11 @@ func TestCardsCarryTheirStamps(t *testing.T) {
 	require.Equal(t, stamp(w.s.Now), card.F("taken"), "taken: %q", card.F("taken"))
 	w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{card.ID}}, Gens: gensOf(w.s, card.ID)}))
 	w.tick(time.Minute)
-	w.must(Ask(w.s, AskReq{}))
-	reads := readsAt(w.s, w.s.Work.Card("s1-1"), 1)
+	w.askReads()
+	reads := readCardsAt(w.s, w.s.Work.Card("s1-1"), 1)
 	for _, rc := range reads {
 		require.Equal(t, stamp(w.s.Now), rc.F("asked"), "a read card asked: %v", rc.Fields)
 		require.Empty(t, rc.F("begun"), "a read card asked: %v", rc.Fields)
 	}
-	w.tick(time.Minute)
-	w.must(Read(w.s, ReadReq{As: reads[0].F("reader"), Begin: true, Sel: Sel{IDs: []string{reads[0].ID}}}))
-	require.Equal(t, stamp(w.s.Now), reads[0].F("begun"), "begun: %q", reads[0].F("begun"))
 	w.clean("stamped")
 }

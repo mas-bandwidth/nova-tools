@@ -404,176 +404,6 @@ func Finish(s State, m, c string, gen int, ok bool) (State, error) {
 
 // ------------------------------------------------------------------ readers
 
-// Ask is SprintTables.tla Ask(p) (line 375) with the reads asked one at a
-// time and by room (spec section 6; tla/ReadsByRoom.tla): a primary in
-// review whose work did not fail is dealt the reads it wants now
-// (ReadsWanted: its first read alone while none stands, the second once the
-// first came back ok, none while one is outstanding or found it broken) to
-// the readers AskChoice names: the finder first on a rework's next attempt,
-// out of turn, the rolling index not moved for it; else the least loaded
-// readers (NextReaders, the engine's room for readers with no width), the
-// index moved past them. Reworked work is asked the same way, at its new
-// attempt, with no reader of an earlier attempt preferred, the finder aside,
-// and none skipped for it. Its pair is the readers of the reads that stand.
-// It closes stranded in review.
-func Ask(s State, p string, readers []string) (State, error) {
-	if err := free(s); err != nil {
-		return s, err
-	}
-	want := s.ReadsWanted(p)
-	if !s.InWork(p, Review) || s.Failed(p) || want == 0 {
-		return s, refuse("%s is not a primary in review wanting a read", p)
-	}
-	if len(s.Readers) < 2 {
-		return s, refuse("fewer than two readers")
-	}
-	pr := s.Primaries[p]
-	live := 0
-	for _, r := range s.Readers {
-		if _, ok := s.AskID(p, pr.Attempt, r); !ok {
-			live++
-		}
-	}
-	if len(s.Readers)-live < 2-len(s.LiveReadsOf(p)) {
-		return s, refuse("fewer than two readers free for %s", p)
-	}
-	sorted := addSorted(nil, readers...)
-	next, finder := s.AskChoice(p)
-	if len(readers) != want || Join(sorted) != Join(addSorted(nil, next...)) {
-		return s, badChoice("%s asked of %v, not the next %d round the readers, %v (past %q)", p, readers, want, next, s.AskLast)
-	}
-	n := s.Clone()
-	order := addSorted(nil, s.Readers...)
-	for i, r := range next {
-		if finder && i == 0 { // the finder's read is out of turn: the index does not move for it
-			if n.Reserved[r] > 0 {
-				n.Reserved[r]-- // placed now: its load counts it from here
-			}
-			continue
-		}
-		n.AskLast = roundPast(order, n.AskLast, r)
-	}
-	n.AskStreamLast = roundPast(s.streamOrder(pr.Stream), s.AskStreamLast, pr.Stream) // the ask's stream index moves past it
-	for _, r := range readers {
-		id, _ := s.AskID(p, pr.Attempt, r)
-		if _, made := n.Reads[id]; made {
-			return s, badChoice("%s cut a second time (NoCardLostOrTwice)", id)
-		}
-		n.Reads[id] = ReadCard{Primary: p, Attempt: pr.Attempt, Reader: r, Place: Asked, Finder: finder && r == next[0]}
-	}
-	var pair []string
-	for _, id := range n.LiveReadsOf(p) {
-		pair = append(pair, n.Reads[id].Reader)
-	}
-	n.setPrimary(p, func(x *Primary) { x.Pair = addSorted(nil, pair...) })
-	delete(n.Open, Judgment{JStranded, p})
-	return n, nil
-}
-
-// AskAnother is SprintTables.tla AskAnother(p, r) (line 397): one more reader
-// for a primary in review (free, F1, FreeCoordinator); it answers a broken
-// read and reads exhausted. Refused for work that came back failed and for
-// a primary not asked yet at its attempt: the spec's section 6 ("work that
-// came back failed is not read"; "ask --another deals a primary already asked
-// to one more reader"), which the model's AskAnother does not guard.
-func AskAnother(s State, p, r string) (State, error) {
-	if err := free(s); err != nil {
-		return s, err
-	}
-	if !s.InWork(p, Review) || s.Failed(p) || !s.AskedNow(p) {
-		return s, refuse("%s is not in review, asked, with work that did not fail", p)
-	}
-	pr := s.Primaries[p]
-	free := 0
-	for _, x := range s.Readers {
-		if _, ok := s.AskID(p, pr.Attempt, x); ok {
-			free++
-		}
-	}
-	if free == 0 {
-		return s, refuse("every reader has read %s at attempt %d", p, pr.Attempt)
-	}
-	id, _ := s.AskID(p, pr.Attempt, r)
-	if !slices.Contains(s.Readers, r) {
-		return s, badChoice("%s is not a reader", r)
-	}
-	if _, made := s.Reads[id]; made {
-		return s, badChoice("%s cut a second time (NoCardLostOrTwice)", id)
-	}
-	n := s.Clone()
-	n.AskLast = roundPast(sorted(s.Readers), s.AskLast, r)
-	n.Reads[id] = ReadCard{Primary: p, Attempt: pr.Attempt, Reader: r, Place: Asked}
-	delete(n.Open, Judgment{JBroken, p})
-	delete(n.Open, Judgment{JReads, p})
-	return n, nil
-}
-
-// ReadStart is SprintTables.tla ReadStart(r, c) (line 408): a reader moves
-// its own read card asked -> reading.
-func ReadStart(s State, r, c string) (State, error) {
-	if err := free(s); err != nil {
-		return s, err
-	}
-	rc, ok := s.Reads[c]
-	if !ok || rc.Reader != r || rc.Place != Asked {
-		return s, refuse("%s is not in %s's asked cell", c, r)
-	}
-	n := s.Clone()
-	rc.Place = Reading
-	n.Reads[c] = rc
-	return n, nil
-}
-
-// Read is SprintTables.tla Read(r, c, v) (line 418): a reader records ok or
-// broken; a report against a retired card is refused. Broken opens the
-// broken judgment; the read that leaves the reads exhausted opens reads
-// exhausted (G3). A report on a card still asked is the begin and the report
-// in one step, and the read that completes two different readers' ok at the
-// head opens ready to accept only for a primary the pump holds (AcceptHeld);
-// the tick accepts the rest, RUNNING or STOPPED (at the first pump after
-// start): both the spec's (section 6), not the model's.
-func Read(s State, r, c string, ok bool) (State, error) {
-	if err := free(s); err != nil {
-		return s, err
-	}
-	rc, found := s.Reads[c]
-	if !found || rc.Reader != r || (rc.Place != Reading && rc.Place != Asked) {
-		return s, refuse("%s is not in %s's asked or reading cell", c, r)
-	}
-	n := s.Clone()
-	p := rc.Primary
-	before := len(n.OkReaders(p))
-	v := OK
-	if !ok {
-		v = Broken
-	}
-	rc.Place, rc.Verdict = v, v
-	n.Reads[c] = rc
-	if !ok {
-		n.open(JBroken, p)
-	} else if before < 2 {
-		// the tick's pump accepts it unless it holds it: "accept is mechanical"
-		n.acceptNote(p)
-	}
-	n.exhaust(p)
-	return n, nil
-}
-
-// exhaust is SprintTables.tla ExhaustNote (G3) as the spec states it
-// (section 6): a primary in review with no read outstanding, not acceptable
-// and no open judgment is a judgment: reads exhausted when it was asked at its
-// attempt, else stranded in review. Stranded is the spec's, not the model's.
-func (n *State) exhaust(p string) {
-	if !n.InWork(p, Review) || len(n.OutOf(p)) > 0 || n.Acceptable(p) || n.OpenOn(p) || n.ReadsWanted(p) > 0 {
-		return // a read wanted is the ask's (sequential reads), nothing to judge
-	}
-	if n.AskedNow(p) {
-		n.open(JReads, p)
-	} else {
-		n.open(JStranded, p)
-	}
-}
-
 // ------------------------------------------------------------------ coordinator
 
 // Accept is SprintTables.tla Accept(S) (line 436): named, all or nothing
@@ -601,11 +431,6 @@ func Accept(s State, set []string) (State, error) {
 		n.AcceptStreamLast = roundPast(s.streamOrder(st), n.AcceptStreamLast, st)
 	}
 	for _, p := range set {
-		for _, id := range n.OutOf(p) {
-			rc := n.Reads[id]
-			rc.Place = Retired
-			n.Reads[id] = rc
-		}
 		n.Merge[p] = MergeCard{Place: Queued}
 		st := n.Primaries[p].Stream
 		if n.Streams[st].State != SStopped {
@@ -643,27 +468,10 @@ func Rework(s State, p, m string) (State, error) {
 		w.Place = Gone
 		n.Work[bound] = w
 	}
-	// the reader who found it broken checks the fix (sprint.Rework, FieldFindingReader):
-	// the first broken read at the attempt in the model's reader list order (the
-	// readers table's row order, sprint.finderOf), never in name order (LiveReadsOf
-	// is sorted by id, so by reader name)
+	// its read cards still placed retire with the attempt they read (sprint.Rework)
+	n.retireReads(p, ByRework)
 	pr := n.Primaries[p]
-	pr.Finder, pr.FindingAttempt = "", pr.Attempt
-	broken := map[string]bool{}
-	for _, id := range n.LiveReadsOf(p) {
-		rc := n.Reads[id]
-		if rc.Place == Broken && rc.Attempt == pr.Attempt {
-			broken[rc.Reader] = true
-		}
-		rc.Place = Retired
-		n.Reads[id] = rc
-	}
-	for _, r := range n.Readers {
-		if broken[r] {
-			pr.Finder = r
-			break
-		}
-	}
+	pr.FindingAttempt = pr.Attempt
 	pr.Attempt++
 	if len(up) > 0 {
 		if m != choice {
@@ -719,11 +527,7 @@ func Drop(s State, p string) (State, error) {
 			n.Work[id] = w
 		}
 	}
-	for _, id := range n.OutOf(p) {
-		rc := n.Reads[id]
-		rc.Place = Retired
-		n.Reads[id] = rc
-	}
+	n.retireReads(p, "") // a drop retires its read cards with no cause of a read's
 	if mc, ok := n.Merge[p]; ok && mc.Place != Merged {
 		n.Merge[p] = MergeCard{Place: Gone}
 	}
@@ -999,6 +803,13 @@ func FleetDown(s State, m string, dest map[string]string) (State, error) {
 	}
 	n := s.Clone()
 	n.Members[m] = Down
+	// its read cards are taken back, spending nothing of its reads (sprint downPlan)
+	for _, id := range Keys(n.Reads) {
+		if c := n.Reads[id]; c.Reader == m && c.Place != Retired {
+			c.Place, c.By = Retired, ByAway
+			n.Reads[id] = c
+		}
+	}
 	var cs []string
 	for _, id := range Keys(n.Work) {
 		w := n.Work[id]
@@ -1184,122 +995,6 @@ func (n State) levelMove(moved map[string]string) (string, string) {
 	return "", ""
 }
 
-// ReaderLoad is a reader's reads asked and reading.
-func (s State) ReaderLoad(r string) int {
-	n := 0
-	for _, c := range s.Reads {
-		if c.Reader == r && (c.Place == Asked || c.Place == Reading) {
-			n++
-		}
-	}
-	return n
-}
-
-// levelReads is the readers' rebalance, once at the start of every tick, the
-// fleet's level in the readers' shape (sprint.TickLevelReads; not yet in
-// the model): while the largest load
-// of a reader with an asked read and the smallest load of a reader differ by
-// more than one, the newest asked read of the largest (by its primary's score,
-// then its id) that has a reader to go to moves to the next reader round the
-// readers past AskLast, other than the largest and with no card of the
-// primary at that attempt, whose load is below the readers' mean rounded down,
-// or, when none such is below, at it: its card retired, the read asked of that
-// reader at the same attempt, and AskLast moved past it. No reader width is
-// known, so none bounds it.
-func (n *State) levelReads() {
-	for {
-		rs := n.Readers
-		if len(rs) < 2 {
-			return
-		}
-		lo, hi, total := "", "", 0
-		for _, x := range rs {
-			total += n.ReaderLoad(x)
-			if lo == "" || n.ReaderLoad(x) < n.ReaderLoad(lo) {
-				lo = x
-			}
-			if n.readerHasAsked(x) && (hi == "" || n.ReaderLoad(x) > n.ReaderLoad(hi)) {
-				hi = x
-			}
-		}
-		if hi == "" || n.ReaderLoad(hi)-n.ReaderLoad(lo) <= 1 {
-			return
-		}
-		mean := floorDiv(total, len(rs))
-		var asked []string
-		for _, id := range Keys(n.Reads) {
-			if c := n.Reads[id]; c.Reader == hi && c.Place == Asked && !c.Finder { // a finder's read is placed on purpose
-				asked = append(asked, id)
-			}
-		}
-		sort.SliceStable(asked, func(i, j int) bool {
-			a, b := n.Primaries[n.Reads[asked[i]].Primary].Score, n.Primaries[n.Reads[asked[j]].Primary].Score
-			if a != b {
-				return a < b
-			}
-			return asked[i] < asked[j]
-		})
-		moved := false
-		for i := len(asked) - 1; i >= 0 && !moved; i-- {
-			c := n.Reads[asked[i]]
-			var below, at []string
-			for _, x := range rs {
-				if x == hi {
-					continue
-				}
-				if _, ok := n.AskID(c.Primary, c.Attempt, x); !ok {
-					continue
-				}
-				if n.ReaderLoad(x) < mean {
-					below = append(below, x)
-				}
-				if n.ReaderLoad(x) <= mean {
-					at = append(at, x)
-				}
-			}
-			to := n.nextReader(below)
-			if to == "" {
-				to = n.nextReader(at)
-			}
-			if to == "" {
-				continue
-			}
-			id, _ := n.AskID(c.Primary, c.Attempt, to)
-			c.Place = Retired
-			n.Reads[asked[i]] = c
-			n.Reads[id] = ReadCard{Primary: c.Primary, Attempt: c.Attempt, Reader: to, Place: Asked}
-			n.AskLast = roundPast(sorted(n.Readers), n.AskLast, to)
-			moved = true
-		}
-		if !moved {
-			return
-		}
-	}
-}
-
-// readerHasAsked says the reader holds a read asked and not begun.
-func (s State) readerHasAsked(r string) bool {
-	for _, c := range s.Reads {
-		if c.Reader == r && c.Place == Asked {
-			return true
-		}
-	}
-	return false
-}
-
-// nextReader is the first of set round the readers in name order from just
-// past AskLast, wrapping; "" when set is empty.
-func (s State) nextReader(set []string) string {
-	order := sorted(s.Readers)
-	at := roundFrom(order, s.AskLast)
-	for i := range order {
-		if r := order[(at+i)%len(order)]; slices.Contains(set, r) {
-			return r
-		}
-	}
-	return ""
-}
-
 func sameMap(a, b map[string]string) bool {
 	if len(a) != len(b) {
 		return false
@@ -1344,8 +1039,7 @@ func CiGreen(s State, p string) (State, error) {
 	n.setPrimary(p, func(x *Primary) { x.CI, x.CIHead = "green", x.Head })
 	if n.Open[Judgment{JCI, p}] {
 		delete(n.Open, Judgment{JCI, p})
-		n.acceptNote(p)
-		n.exhaust(p)
+		n.judgeReview(p, true)
 	}
 	return n, nil
 }
@@ -1403,8 +1097,7 @@ func Ack(s State, typ string, subjects []string, waive []string) (State, error) 
 	if typ != JReads && typ != JStranded {
 		for _, sub := range subjects {
 			if _, ok := n.Primaries[sub]; ok {
-				n.acceptNote(sub)
-				n.exhaust(sub)
+				n.judgeReview(sub, true)
 			}
 		}
 	}

@@ -58,14 +58,27 @@ const (
 	Gone       = ""
 )
 
-// Read places of a read card (ReadCells), and Retired ("") for a read card
-// retired with its record kept.
+// A read card's places are a work card's on its reader's fleet row (FReady, FWorking), and
+// Retired ("") for a read card retired with its record kept: closed with its verdict, or
+// taken back (ReadCard.By).
+const Retired = ""
+
+// The verdicts a read card closes with (ReadCard.Verdict).
 const (
-	Asked   = "asked"
-	Reading = "reading"
-	OK      = "ok"
-	Broken  = "broken"
-	Retired = ""
+	OK     = "ok"
+	Broken = "broken"
+)
+
+// The causes a read card is retired by (sprint read_cards.go, its retired_by): its reader's
+// verdict, a hand back, its deadline, a rework of its primary, its reader taken down, its
+// primary no longer in review at its attempt. A drop retires with none.
+const (
+	ByRead     = "read"
+	ByReturned = "returned"
+	ByLate     = "late"
+	ByRework   = "rework"
+	ByAway     = "away"
+	ByPrimary  = "primary"
 )
 
 // Merge places of a primary (MergeCells), and Returned for one sent back from
@@ -160,10 +173,9 @@ type Primary struct {
 	Needs   []string // sorted
 	Waived  []string // sorted: the dropped needs the coordinator waived
 	Score   float64
-	Attempt int      // the attempt of its current or next work card, from 1
-	Head    int      // the attempt whose finished work is its head; 0 before
-	Pair    []string // sorted: the readers of the reads that stand at its attempt (the work table's asked field)
-	Reached bool     // a sentinel whose needs have all landed or been waived
+	Attempt int  // the attempt of its current or next work card, from 1
+	Head    int  // the attempt whose finished work is its head; 0 before
+	Reached bool // a sentinel whose needs have all landed or been waived
 	// CI and CIHead are its last CI observation: "", "red" or "green", and
 	// the attempt whose head it was for (0: no head yet).
 	CI     string
@@ -171,10 +183,7 @@ type Primary struct {
 	// ReturnedAt is the attempt at which the coordinator last returned it to
 	// review, 0 when never (sprint.FieldReturnedAttempt).
 	ReturnedAt int
-	// Finder is the reader whose finding its last rework sent back and
-	// FindingAttempt that attempt (sprint.FieldFindingReader, FieldFindingAttempt):
-	// the next attempt's first read is asked of the finder, out of turn (Ask).
-	Finder         string
+	// FindingAttempt is the attempt its last rework sent back (sprint.FieldFindingAttempt).
 	FindingAttempt int
 }
 
@@ -198,14 +207,15 @@ type WorkCard struct {
 	Refusers []string
 }
 
-// ReadCard is one read card: <primary>.r<attempt>.<reader>.
+// ReadCard is one read card, <primary>.r<attempt>.<reader>[.g<n>], on its reader's fleet
+// row: the reader is a member whose reader row names it a reader (the reader role).
 type ReadCard struct {
 	Primary string
 	Attempt int
 	Reader  string
-	Place   string // Asked, Reading, OK, Broken, Retired
-	Verdict string // "", "ok" or "broken"
-	Finder  bool   // asked of the finder out of turn: the level leaves it (sprint.FieldFinderRead)
+	Place   string // FReady, FWorking, Retired
+	Verdict string // "", OK or Broken
+	By      string // what retired it, "" while placed (ByRead and the rest)
 }
 
 // MergeCard is one primary's merge place, and a stuck card's cross-stream
@@ -247,26 +257,16 @@ type State struct {
 	Pending   string // the verb of the pending operation (D1), "" when none
 	// Coordinator is the one actor who releases sentinels.
 	Coordinator string
-	// DealLast and AskLast are the rolling indexes of the deal and the ask
-	// (tla/SprintEvents.tla dcur and acur): each a
-	// counter, as the table's property holds it (a decimal uint64 from 0 this
-	// epoch, up by one with every placement and by one for every name passed
-	// over, roundPast). The next member is the first up with room from
-	// DealLast modulo the members in name order, wrapping; the next readers
-	// the first able from AskLast modulo the readers.
-	DealLast, AskLast string
-	// Reserved is each reader's finder reads the tick's ask has placed in advance
-	// (sprint.askFinders): counted in the reader's load (NextReaders) until the
-	// primary's own Ask places the read, as the engine takes every finder's read
-	// off its room before any other read of the step. nil outside the tick's ask.
-	Reserved map[string]int
-	// StreamLast, AskStreamLast and AcceptStreamLast are the work table's
-	// stream indexes of the deal, the ask and the accept (sprint.PropStreamIndex,
-	// PropAskStreamIndex, PropAcceptStreamIndex):
-	// the stream of the last primary each took. Each takes the streams in
-	// turn from the first past its own, in name order, wrapping, a stream with
-	// nothing to take skipped.
-	StreamLast, AskStreamLast, AcceptStreamLast string
+	// DealLast is the rolling index of the deal (tla/SprintEvents.tla dcur): a counter, as
+	// the table's property holds it (a decimal uint64 from 0 this epoch, up by one with
+	// every placement and by one for every name passed over, roundPast). The next member
+	// is the first up with room from DealLast modulo the members in name order, wrapping.
+	DealLast string
+	// StreamLast and AcceptStreamLast are the work table's stream indexes of the deal and
+	// the accept (sprint.PropStreamIndex, PropAcceptStreamIndex): the stream of the last
+	// primary each took. Each takes the streams in turn from the first past its own, in
+	// name order, wrapping, a stream with nothing to take skipped.
+	StreamLast, AcceptStreamLast string
 }
 
 // New is an empty sprint with its readers and members, every member down,
@@ -292,7 +292,6 @@ func (s State) Clone() State {
 	for k, v := range s.Primaries {
 		v.Needs = append([]string(nil), v.Needs...)
 		v.Waived = append([]string(nil), v.Waived...)
-		v.Pair = append([]string(nil), v.Pair...)
 		c.Primaries[k] = v
 	}
 	c.Work = make(map[string]WorkCard, len(s.Work))
@@ -314,9 +313,6 @@ func (s State) Clone() State {
 	c.Acked = make(map[Judgment]bool, len(s.Acked))
 	for k := range s.Acked {
 		c.Acked[k] = true
-	}
-	if s.Reserved != nil {
-		c.Reserved = maps.Clone(s.Reserved)
 	}
 	return c
 }
@@ -346,24 +342,6 @@ func WC(p string, a int) string { return fmt.Sprintf("%s.w%d", p, a) }
 
 // RC is a read card's id.
 func RC(p string, a int, r string) string { return fmt.Sprintf("%s.r%d.%s", p, a, r) }
-
-// AskID is the read card the ask cuts for reader r of p at attempt a, and whether r may be
-// asked (sprint.ReadCardForAsk, the interim rule of 2026-10-06): the plain id while none is
-// made; the second identity (.g1) once the plain card is retired without a verdict and no
-// second is made; else r has read it.
-func (s State) AskID(p string, a int, r string) (string, bool) {
-	plain := RC(p, a, r)
-	c, made := s.Reads[plain]
-	if !made {
-		return plain, true
-	}
-	if second := plain + ".g1"; c.Place == Retired && c.Verdict == "" {
-		if _, made := s.Reads[second]; !made {
-			return second, true
-		}
-	}
-	return plain, false
-}
 
 // ------------------------------------------------------------------ views
 
@@ -476,15 +454,21 @@ func (s State) Up() []string {
 	return out
 }
 
-// Held is the member's work cards held against its width: ready and working.
+// Held is the member's load against its width: its work cards ready and working, and its
+// read cards placed at half a slot each, rounded up (sprint width.go, halfLoad).
 func (s State) Held(m string) int {
-	n := 0
+	n, reads := 0, 0
 	for _, w := range s.Work {
 		if w.Member == m && (w.Place == FReady || w.Place == FWorking) {
 			n++
 		}
 	}
-	return n
+	for _, c := range s.Reads {
+		if c.Reader == m && c.Place != Retired {
+			reads++
+		}
+	}
+	return n + (reads+1)/2
 }
 
 // RL is SprintTables.tla RL(m): the member's ready queue length.
@@ -608,158 +592,9 @@ func without(xs []string, x string) []string {
 	return out
 }
 
-// NextReaders is the ask's choice of k readers for p at its attempt: the
-// reader with the most free room among those without a read card at the
-// attempt, a tie going to the first from just past AskLast, in name order,
-// wrapping (SprintEvents.tla RoundTwo), then the one with the most room left
-// past it, and so on. The model's readers have no width (none is named for a
-// fleet row), so the room is unbounded and ordered by the load alone, reads
-// asked and reading (Load), the engine's readerRooms and round.pickByRoom.
-func (s State) NextReaders(p string, k int) []string { return s.nextReaders(p, k, "") }
-
-// nextReaders is NextReaders leaving out the reader but (the finder, asked out of turn).
-func (s State) nextReaders(p string, k int, but string) []string {
-	order := sorted(s.Readers)
-	attempt := s.Primaries[p].Attempt
-	at := roundFrom(order, s.AskLast)
-	load := map[string]int{}
-	for _, r := range order {
-		load[r] = s.Load(r) + s.Reserved[r] // a finder's read placed in advance counts
-	}
-	var out []string
-	for len(out) < k && len(order) > 0 {
-		pick := -1
-		for i := range order {
-			j := (at + i) % len(order)
-			if _, ok := s.AskID(p, attempt, order[j]); !ok || slices.Contains(out, order[j]) || order[j] == but {
-				continue
-			}
-			if pick < 0 || load[order[j]] < load[order[pick]] {
-				pick = j
-			}
-		}
-		if pick < 0 {
-			break
-		}
-		out = append(out, order[pick])
-		load[order[pick]]++
-		at = pick + 1
-	}
-	return out
-}
-
-// Load is a reader's reads asked and reading together, the engine's readerLoad.
-func (s State) Load(r string) int {
-	n := 0
-	for _, c := range s.Reads {
-		if c.Reader == r && (c.Place == Asked || c.Place == Reading) {
-			n++
-		}
-	}
-	return n
-}
-
-// AskedLen is SprintTables.tla AskedLen(r).
-func (s State) AskedLen(r string) int {
-	n := 0
-	for _, c := range s.Reads {
-		if c.Reader == r && c.Place == Asked {
-			n++
-		}
-	}
-	return n
-}
-
-// OutOf is SprintTables.tla OutOf(p): p's read cards asked or reading.
-func (s State) OutOf(p string) []string {
-	var out []string
-	for id, c := range s.Reads {
-		if c.Primary == p && (c.Place == Asked || c.Place == Reading) {
-			out = append(out, id)
-		}
-	}
-	sort.Strings(out)
-	return out
-}
-
-// LiveReadsOf is p's read cards on the table in any cell (SprintTables.tla
-// LiveReads restricted to p).
-func (s State) LiveReadsOf(p string) []string {
-	var out []string
-	for id, c := range s.Reads {
-		if c.Primary == p && c.Place != Retired {
-			out = append(out, id)
-		}
-	}
-	sort.Strings(out)
-	return out
-}
-
-// OkReaders is SprintTables.tla OkReaders(p): the readers with an ok read
-// card at p's head.
-func (s State) OkReaders(p string) []string {
-	pr := s.Primaries[p]
-	var out []string
-	for _, r := range s.Readers {
-		if c, ok := s.Reads[RC(p, pr.Head, r)]; ok && pr.Head > 0 && c.Place == OK {
-			out = append(out, r)
-		}
-	}
-	return out
-}
-
-// Acceptable is SprintTables.tla Acceptable(p) (Broken = "none").
-func (s State) Acceptable(p string) bool { return len(s.OkReaders(p)) >= 2 }
-
-// AskChoice is the readers the ask asks p of now (ReadsWanted), and whether the
-// first is the finder out of turn (sprint.finderFirst, sprint.askPicks): p's
-// first read goes to the reader whose finding the attempt's fix answers when
-// that reader has no card at the attempt (the model's readers have no width,
-// so the finder always has room); every other read to the least loaded reader
-// without a card at the attempt (NextReaders). The finder's read counts in its
-// load (Load) like any read, and in the tick's ask from the step's start
-// (Reserved), so no turn is kept for it.
-func (s State) AskChoice(p string) (readers []string, finder bool) {
-	want := s.ReadsWanted(p)
-	pr := s.Primaries[p]
-	if want >= 1 && len(s.LiveReadsOf(p)) == 0 && pr.Finder != "" && pr.FindingAttempt == pr.Attempt-1 {
-		if _, ok := s.AskID(p, pr.Attempt, pr.Finder); ok {
-			// the finder first, out of turn, then the rest round the readers without her
-			return append([]string{pr.Finder}, s.nextReaders(p, want-1, pr.Finder)...), true
-		}
-	}
-	return s.NextReaders(p, want), false
-}
-
-// ReadsWanted is how many reads the ask places on p now (sprint.ReadsWanted,
-// reads together, the interim rule of 2026-10-06: "send out multiple consumer
-// cards in ||"): the rest of the two it needs, an outstanding read counted
-// among them, none while one found it broken.
-func (s State) ReadsWanted(p string) int {
-	live := s.LiveReadsOf(p)
-	for _, id := range live {
-		if s.Reads[id].Place == Broken {
-			return 0
-		}
-	}
-	return max(0, 2-len(live))
-}
-
 // Failed is SprintTables.tla Failed(p).
 func (s State) Failed(p string) bool {
 	return s.Work[WC(p, s.Primaries[p].Attempt)].OK == "failed"
-}
-
-// AskedNow is SprintTables.tla AskedNow(p): a read card of p's attempt was
-// made (placed or retired).
-func (s State) AskedNow(p string) bool {
-	a := s.Primaries[p].Attempt
-	for _, c := range s.Reads {
-		if c.Primary == p && c.Attempt == a {
-			return true
-		}
-	}
-	return false
 }
 
 // OpenOn says a judgment is open on the subject.

@@ -58,10 +58,13 @@ func TestCRTwoRunLoopsAtOnce(t *testing.T) {
 				run(TakeStep(sprint.TakeReq{As: m, Sel: sprint.Sel{Limit: 100}, Who: m}))
 				s := h.snap()
 				for _, c := range s.Fleet.Cell(m, sprint.Working) {
+					if c.F("kind") == "read" {
+						continue
+					}
 					run(FinishStep(sprint.FinishReq{As: m, Sel: sprint.Sel{IDs: []string{c.ID}}, Gens: map[string]int{c.ID: c.Int("gen")}, Who: m}))
 				}
 			}
-			for _, rd := range crReaders {
+			for _, rd := range crMembers {
 				run(ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: rd, Verdict: "ok", Sel: sprint.Sel{Limit: 100}, Who: rd}))
 			}
 			w.coordinate(r)
@@ -96,7 +99,7 @@ func TestCRTwoRunLoopsAtOnce(t *testing.T) {
 		}
 		for _, c := range s.Work.Column(sprint.Review) {
 			n := 0
-			for _, rc := range s.Readers.Of(c.ID) {
+			for _, rc := range placedReadsOf(s, c.ID) {
 				if rc.Int("attempt") == c.Int("attempt") {
 					n++
 				}

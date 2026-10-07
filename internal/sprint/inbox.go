@@ -529,12 +529,8 @@ func commands(g Group, first Note, prefix string) []Command {
 			add(d, cmd+"rework"+subj+" --fix "+fixText+" --tier '<a higher tier>'"+subjAns)
 		case d == "rework with a fix" || d == "rework":
 			add(d, cmd+"rework"+subj+" --fix "+fixText+subjAns)
-		case d == "ask":
-			add(d, cmd+"ask"+grp+ans)
 		case d == "accept":
 			add(d, cmd+"accept"+grp+ans)
-		case d == "ask another reader":
-			add(d, cmd+"ask"+subj+" --another"+subjAns)
 		case d == "brief":
 			// the brief is wrong, not the worker (brief_bound.go): corrected in place, the card's
 			// next attempt; one card takes one file, a group of several one file a card under a
@@ -577,8 +573,6 @@ func commands(g Group, first Note, prefix string) []Command {
 			add(d, cmd+"fleet up '<member>'")
 		case d == "fleet beat":
 			add(d, cmd+"fleet beat '<member>'")
-		case d == "ask --another":
-			add(d, cmd+"ask"+subj+" --another"+subjAns)
 		case strings.HasPrefix(d, "merge --stream "):
 			// a merge step is a report: it names its epoch, the judgment's
 			add(d, cmd+d+" --epoch "+strconv.FormatUint(IDEpoch(g.ID), 10))

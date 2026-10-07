@@ -373,14 +373,11 @@ func (s *Snapshot) Members() []string {
 // card; the owner's rule): her reads hold her lanes and her room as her work does, and a
 // one-shot friend holds one card at a time, read or work.
 //
-// While read cards are on (read_cards.go) a read holds half a slot of her width, as a
-// member's does (halfLoad): her row holds her width of work or twice it of reads.
+// A read card holds half a slot of her width, as a member's does (read_cards.go,
+// halfLoad): her row holds her width of work or twice it of reads.
 func friendLoad(s *Snapshot, name string) int {
 	row := FriendRow(name)
-	if s.ReadCardsOn() {
-		return halfLoad(rowLoad(s, row))
-	}
-	return s.Fleet.Count(row, Ready) + s.Fleet.Count(row, Working)
+	return halfLoad(rowLoad(s, row))
 }
 
 // friendDeal is the tick's friend deal (TickDeal), run before the machines' deal: friends

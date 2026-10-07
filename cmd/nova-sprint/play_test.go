@@ -52,7 +52,7 @@ func (ta *testApp) coordinate() {
 func TestPlayWithACoordinatorLandsEveryStream(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
-	ta.ok("init --readers reader-a,reader-b,reader-c --members m1,m2")
+	ta.ok("init --readers reader-m1,reader-m2 --members m1,m2") // the members read: the simulation plays them
 	for _, s := range []string{"s1", "s2", "s3"} {
 		ta.ok("add --stream " + s + " --count 15")
 	}

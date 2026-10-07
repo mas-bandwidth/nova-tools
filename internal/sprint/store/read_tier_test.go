@@ -36,13 +36,9 @@ func TestAReadTierSettingRaisesTheReadsAndNeverLowersThem(t *testing.T) {
 	readsOf := func(h *harness, id string) (drawn, recorded, packed []string) {
 		h.t.Helper()
 		s := h.snap()
-		// the reads are asked one at a time: each read ok, the next is asked
-		for len(s.Readers.Of(id)) < sprint.ReadsNeeded(s.Work.Card(id)) {
-			h.readAllOK(id)
-			s = h.snap()
-		}
-		reads := s.Readers.Of(id)
-		require.Len(h.t, reads, sprint.ReadsNeeded(s.Work.Card(id)), "%s asked of as many readers as its tier needs", id)
+		// every read card is cut at once, each on a member that did not work it
+		reads := readsAt(s, s.Work.Card(id))
+		require.Len(h.t, reads, sprint.ReadsNeeded(s.Work.Card(id)), "%s's read cards: as many as its tier needs", id)
 		for _, rc := range reads {
 			drawn = append(drawn, tierOf(rc.F(sprint.FieldRoute)))
 			recorded = append(recorded, rc.F(sprint.FieldTier))
@@ -67,6 +63,7 @@ func TestAReadTierSettingRaisesTheReadsAndNeverLowersThem(t *testing.T) {
 		h.machine()
 		h.work("m1")
 		h.work("m2")
+		h.work("m3")
 		h.machine()
 	}
 	// reads is the tier once for each read the card's own tier needs: s3, the pro
@@ -79,7 +76,7 @@ func TestAReadTierSettingRaisesTheReadsAndNeverLowersThem(t *testing.T) {
 	}
 	t.Run("a stream's read tier", func(t *testing.T) {
 		t.Parallel()
-		h := routeHarness(t, routes...)
+		h := readersHarness(t, routes...)
 		h.addReady("s1", 1, briefOf("flash", ""))
 		h.addReady("s3", 1, briefOf("pro", ""))
 		h.setPrimary("s3-1", map[string]string{sprint.FieldTierNow: "pro"}) // a pro card on pro: escalated (flash first)
@@ -93,6 +90,7 @@ func TestAReadTierSettingRaisesTheReadsAndNeverLowersThem(t *testing.T) {
 		h.machine()
 		h.work("m1")
 		h.work("m2")
+		h.work("m3")
 		h.machine()
 		for id, want := range map[string]string{"s1-1": "pro", "s2-1": "flash", "s3-1": "pro"} {
 			drawn, recorded, packed := readsOf(h, id)
@@ -104,7 +102,7 @@ func TestAReadTierSettingRaisesTheReadsAndNeverLowersThem(t *testing.T) {
 	})
 	t.Run("the sprint's read tier, a stream's over it", func(t *testing.T) {
 		t.Parallel()
-		h := routeHarness(t, routes...)
+		h := readersHarness(t, routes...)
 		h.addReady("s1", 1, briefOf("flash", ""))
 		set(h, sprint.SetReq{ReadTier: "pro"})
 		set(h, sprint.SetReq{Streams: []string{"s1"}, ReadTier: "flash"})
@@ -118,7 +116,7 @@ func TestAReadTierSettingRaisesTheReadsAndNeverLowersThem(t *testing.T) {
 	})
 	t.Run("default takes a setting off", func(t *testing.T) {
 		t.Parallel()
-		h := routeHarness(t, routes...)
+		h := readersHarness(t, routes...)
 		h.addReady("s1", 1, briefOf("flash", ""))
 		set(h, sprint.SetReq{ReadTier: "pro"})
 		set(h, sprint.SetReq{Streams: []string{"s1"}, ReadTier: "pro"})
@@ -132,7 +130,7 @@ func TestAReadTierSettingRaisesTheReadsAndNeverLowersThem(t *testing.T) {
 	})
 	t.Run("refused, writing nothing", func(t *testing.T) {
 		t.Parallel()
-		h := routeHarness(t, routes...)
+		h := readersHarness(t, routes...)
 		h.addReady("s1", 1, briefOf("flash", ""))
 		for _, r := range []sprint.SetReq{
 			{ReadTier: "frontier", Who: h.st.Actor},

@@ -109,10 +109,10 @@ func TestARedealInOneEpochPushesBothTakesAndTheReadChecksOutTheSecond(t *testing
 	assert.Equal(t, headTwo, h.snap().Fleet.Card("s1-1.w1").F("head"), "the card's head is take 2's")
 
 	h.machine()
-	if len(h.snap().Readers.Of("s1-1")) == 0 {
-		h.must(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
+	if len(placedReadsOf(h.snap(), "s1-1")) == 0 {
+		h.askReads()
 	}
-	reads := h.snap().Readers.Of("s1-1")
+	reads := placedReadsOf(h.snap(), "s1-1")
 	require.NotEmpty(t, reads, "the work is asked of its readers")
 	ps, err := h.st.Packets(h.ctx, reads[:1])
 	require.NoError(t, err)

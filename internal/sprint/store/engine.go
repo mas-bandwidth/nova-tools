@@ -186,14 +186,6 @@ type Step struct {
 	// DrainMax, above zero, is the most entries of the queue's head a drain
 	// takes: the pump's second drain takes only what its first requeued.
 	DrainMax int
-	// Tries, above zero and below the store's Attempts, is the plans this step
-	// makes before it gives up on a fence other writers keep moving: the tick's
-	// ask writes in small steps of AskTries each (tick_ask.go).
-	Tries int
-	// Until, when set, is the time past which the step plans no further try:
-	// a try begun before it finishes, and a step past it gives up as a step
-	// whose tries are spent does (the tick's ask's budget, tick_ask.go).
-	Until time.Time
 }
 
 // ArgsOf is a request's arguments in one canonical form: a digest of its JSON
@@ -498,13 +490,7 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 		}
 	}
 	tries := st.attempts()
-	if step.Tries > 0 && step.Tries < tries {
-		tries = step.Tries
-	}
 	for res.Attempts < tries {
-		if res.Attempts > 0 && !step.Until.IsZero() && !st.now().Before(step.Until) {
-			break
-		}
 		res.Attempts++
 		if wantLock && lock == nil && !locked {
 			if lock, err = st.takeLock(ctx, step, family); err != nil {
@@ -594,6 +580,13 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 				// pump will leave it: its changes queue after the ones before
 				// it, each where they leave the card (sprint.Drain).
 				snap = sprint.WithQueue(snap, q)
+				if len(q) > 0 && step.Extras != nil {
+					// the records its extras name of the table as the queue leaves it (a
+					// read card of a primary the queue has in review)
+					if snap, err = st.queuedExtras(ctx, snap, step.Extras); err != nil {
+						return res, err
+					}
+				}
 			}
 		}
 		if step.Routes {
@@ -2283,4 +2276,48 @@ func abandonment(op OpRecord, by string, now time.Time) OpRecord {
 	n := sprint.Note{ID: op.ID + ".abandoned", Kind: sprint.Happened, Type: sprint.NAbandoned, At: now, Who: by,
 		What: fmt.Sprintf("operation %s (%s) by %s, %s old: its first manifest never applied", op.ID, op.Verb, who, now.Sub(op.At).Round(time.Second))}
 	return OpRecord{ID: op.ID, Verb: op.Verb, At: op.At, Notes: []sprint.Note{n}}
+}
+
+// queuedExtras is the snapshot with the records its extras name, read on the work table as
+// its queue leaves it, that the fenced read did not bring (it read them on the table as
+// stored): each read by identity, placed or kept, into a copy of its table.
+func (st *Store) queuedExtras(ctx context.Context, snap *sprint.Snapshot, extras func(*sprint.Snapshot) map[string][]string) (*sprint.Snapshot, error) {
+	out := snap
+	for _, name := range All {
+		var missing []string
+		for _, id := range extras(snap)[name] {
+			if snap.T(name) != nil && snap.T(name).Card(id) == nil {
+				missing = append(missing, id)
+			}
+		}
+		if len(missing) == 0 {
+			continue
+		}
+		recs, err := st.records(ctx, name, missing)
+		if err != nil {
+			return snap, err
+		}
+		if len(recs) == 0 {
+			continue
+		}
+		if out == snap {
+			c := *snap
+			out = &c
+		}
+		tb := out.T(name).Frozen()
+		for _, c := range recs {
+			tb.Put(c)
+		}
+		switch name {
+		case sprint.Work:
+			out.Work = tb
+		case sprint.Readers:
+			out.Readers = tb
+		case sprint.Merge:
+			out.Merge = tb
+		case sprint.Fleet:
+			out.Fleet = tb
+		}
+	}
+	return out, nil
 }

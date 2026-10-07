@@ -35,7 +35,6 @@ func TestTheDashboardRowsSayHowManyAreReads(t *testing.T) {
 	require.NoError(t, err)
 	ta.a.tip = tipIs(t, landHead)
 	ta.ok("init --members m1:8")
-	ta.ok("set --read-cards on")
 	root := t.TempDir()
 	ta.ok("friend sync --root " + root) // roster only: fred is down, so m1 is dealt every card
 	dir := t.TempDir()

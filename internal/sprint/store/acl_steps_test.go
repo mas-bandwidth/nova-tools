@@ -141,7 +141,6 @@ func TestEveryStepReadsOnlyKeysItsRoleMayRead(t *testing.T) {
 		{name: "read return with usage", role: redisacl.Member, step: ReadStep(sprint.ReadReq{Sel: sprint.Sel{IDs: []string{"s1-1.r1.reader-a"}}, As: "reader-a", Return: true, Reason: "no verdict", Usage: usage})},
 		// the coordinator's steps read the whole route set
 		{name: "deal", role: redisacl.Coordinator, step: DealStep(sprint.DealReq{})},
-		{name: "ask", role: redisacl.Coordinator, step: AskStep(sprint.AskReq{})},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

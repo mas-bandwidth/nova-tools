@@ -81,15 +81,15 @@ func TestRedisAWorkersStepsRunUnderTheRenderedMemberACL(t *testing.T) {
 	assert.Contains(t, h.snap().Fleet.Card(ids[0]).F(sprint.FieldUsage), "price_route=flash-a", "the finish priced the take with the route it may read")
 
 	h.beat()
-	h.must(AskStep(sprint.AskReq{}))
+	h.askReads()
 	// a flash card is read once (cost rule 4): s1-1's read says ok, s1-2's broken, s1-3's is returned
-	reads := h.snap().Readers.Of("s1-1")
+	reads := placedReadsOf(h.snap(), "s1-1")
 	require.Len(t, reads, 1)
 	w.must(ReadStep(sprint.ReadReq{Sel: sprint.Sel{IDs: []string{reads[0].ID}}, As: reads[0].Row, Verdict: "ok", Finding: "good", Usage: usage, Who: reads[0].Row}))
-	bad := h.snap().Readers.Of("s1-2")
+	bad := placedReadsOf(h.snap(), "s1-2")
 	require.Len(t, bad, 1)
 	w.must(ReadStep(sprint.ReadReq{Sel: sprint.Sel{IDs: []string{bad[0].ID}}, As: bad[0].Row, Verdict: "broken", Finding: "bad:1", Usage: usage, Who: bad[0].Row}))
-	ret := h.snap().Readers.Of("s1-3")
+	ret := placedReadsOf(h.snap(), "s1-3")
 	require.NotEmpty(t, ret)
 	w.must(ReadStep(sprint.ReadReq{Sel: sprint.Sel{IDs: []string{ret[0].ID}}, As: ret[0].Row, Return: true, Reason: "no verdict", Usage: usage, Who: ret[0].Row}))
 

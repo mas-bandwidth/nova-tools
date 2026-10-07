@@ -67,11 +67,11 @@ func TestLateWritersOfEveryKind(t *testing.T) {
 	h.clean("cleared")
 	img := h.image()
 	held := uint64(0)
-	rc := before.Readers.Of("s1-4")
+	rc := placedReadsOf(before, "s1-4")
 	steps := map[string]Step{
 		"take":   TakeStep(sprint.TakeReq{As: "m1", Sel: sprint.Sel{IDs: []string{"s1-6.w1"}}, Gens: map[string]int{"s1-6.w1": 1}}),
 		"finish": FinishStep(sprint.FinishReq{Sel: sprint.Sel{IDs: []string{"s1-5.w1"}}, Gens: map[string]int{"s1-5.w1": 1}}),
-		"begin":  ReadStep(sprint.ReadReq{As: rc[1].F("reader"), Begin: true, Sel: sprint.Sel{IDs: []string{rc[1].ID}}}),
+		"begin":  TakeStep(sprint.TakeReq{As: rc[1].Row, Sel: sprint.Sel{IDs: []string{rc[1].ID}}, Gens: map[string]int{rc[1].ID: 1}}),
 		"report": ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: rc[0].F("reader"), Verdict: "ok", Sel: sprint.Sel{IDs: []string{rc[0].ID}}}),
 		"merge":  MergeStep(sprint.MergeReq{Stream: "s1", Batch: 1}),
 		"accept": AcceptStep(sprint.AcceptReq{Sel: sprint.Sel{IDs: []string{"s1-4"}}}),

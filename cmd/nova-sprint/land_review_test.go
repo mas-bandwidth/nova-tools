@@ -55,7 +55,7 @@ func TestLandReviewReportPinsTheHeadItPushed(t *testing.T) {
 		r.deal(1)
 		r.ok("take --as m1 --limit 100")
 		r.ok("finish --as m1 s1-1.w2@1 --head " + newHead)
-		r.ok("ask")
+		r.cutReads()
 		r.ok("read --as reader-a --ok --limit 100")
 		r.ok("read --as reader-b --ok --limit 100")
 		r.ok("accept --read-ok")

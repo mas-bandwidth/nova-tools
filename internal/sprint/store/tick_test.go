@@ -51,6 +51,9 @@ func (h *harness) work(member string) {
 		var ids []string
 		gens := map[string]int{}
 		for _, c := range s.Fleet.Cell(member, sprint.Working) {
+			if c.F("kind") == "read" {
+				continue // a read card is reported with read (readAs)
+			}
 			ids = append(ids, c.ID)
 			gens[c.ID] = c.Int("gen")
 		}
@@ -64,32 +67,43 @@ func (h *harness) work(member string) {
 // heldBy is the work cards a member holds against its width: ready and
 // working.
 func heldBy(s *sprint.Snapshot, m string) int {
-	return s.Fleet.Count(m, sprint.Ready) + s.Fleet.Count(m, sprint.Working)
+	return loadOf(s, m, sprint.Ready, sprint.Working)
 }
 
-// readAll plays the readers: every read card asked of them is reported ok.
-func (h *harness) readAll() {
-	h.t.Helper()
-	for {
-		for _, r := range []string{"reader-a", "reader-b", "reader-c"} {
-			h.run(ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: r, Verdict: "ok", Sel: sprint.Sel{Limit: 100}, Who: r}))
-		}
-		// a read still wanted (one taken back, or a reader freed) is asked here, as
-		// the tick's ask would (reads are asked together, sprint.ReadsWanted)
-		s := h.snap()
-		var want []string
-		for _, c := range s.Work.Column(sprint.Review) {
-			if c.F("result") != "failed" && sprint.ReadsWanted(s, c) > 0 {
-				want = append(want, c.ID)
-			}
-		}
-		if len(want) == 0 {
-			return
-		}
-		if res := h.run(AskStep(sprint.AskReq{Sel: sprint.Sel{Only: want}})); len(res.Moved) == 0 {
-			return
+// workBy is the work cards the member holds, ready and working: its read cards aside.
+func workBy(s *sprint.Snapshot, m string) int {
+	n := 0
+	for _, c := range append(s.Fleet.Cell(m, sprint.Ready), s.Fleet.Cell(m, sprint.Working)...) {
+		if c.F("kind") != "read" {
+			n++
 		}
 	}
+	return n
+}
+
+// loadOf is the member's load in the columns, in slots: a work card one, a read card half
+// (rounded up), as the deal counts it (sprint width.go, halfLoad).
+func loadOf(s *sprint.Snapshot, m string, cols ...string) int {
+	work, reads := 0, 0
+	for _, col := range cols {
+		for _, c := range s.Fleet.Cell(m, col) {
+			if c.F("kind") == "read" {
+				reads++
+			} else {
+				work++
+			}
+		}
+	}
+	return work + (reads+1)/2
+}
+
+// readAll plays the readers: every read card placed is read ok, and the read cards every
+// primary in review still wants are cut and read ok too (askReads).
+func (h *harness) readAll() {
+	h.t.Helper()
+	h.readCardsOK()
+	h.askReads()
+	h.readCardsOK()
 }
 
 // readOutstanding has the readers read every read asked of them, ok, and asks
@@ -99,28 +113,36 @@ func (h *harness) readOutstanding() {
 	for _, r := range []string{"reader-a", "reader-b", "reader-c"} {
 		h.run(ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: r, Verdict: "ok", Sel: sprint.Sel{Limit: 100}, Who: r}))
 	}
+	h.readCardsOK()
 }
 
-// pairAsked asks the primary its reads: two reads outstanding at once, for a test of
-// two verdicts on one attempt (reads are asked together, sprint.ReadsWanted). It
-// returns the two read cards.
+// readCardsOK has every read card placed on a fleet row, a member's or a friend's, read
+// ok by its row (read --as <row> --ok), as the member's loop and the friend's report do.
+func (h *harness) readCardsOK() {
+	h.t.Helper()
+	s := h.snap()
+	for _, c := range s.Fleet.Column(sprint.Ready, sprint.Working) {
+		if c.F("kind") != "read" {
+			continue
+		}
+		h.must(ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: c.Row, Verdict: "ok", Sel: sprint.Sel{IDs: []string{c.ID}}, Who: c.Row}))
+	}
+}
+
+// pairAsked cuts the primary's read cards: two outstanding at once, for a test of two
+// verdicts on one attempt. It returns the two read cards.
 func (h *harness) pairAsked(id string) []*sprint.Card {
 	h.t.Helper()
-	h.must(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{id}}}))
-	rc := h.snap().Readers.Of(id)
-	require.Len(h.t, rc, 2, "%s asked of two readers", id)
+	h.askReads()
+	rc := placedReadsOf(h.snap(), id)
+	require.Len(h.t, rc, 2, "%s's two read cards", id)
 	return rc
 }
 
-// askedRead is the primary's one read card outstanding (asked or reading).
+// askedRead is the primary's one read card placed.
 func (h *harness) askedRead(id string) *sprint.Card {
 	h.t.Helper()
-	var out []*sprint.Card
-	for _, rc := range h.snap().Readers.Of(id) {
-		if rc.Col == sprint.Asked || rc.Col == sprint.Reading {
-			out = append(out, rc)
-		}
-	}
+	out := placedReadsOf(h.snap(), id)
 	require.Len(h.t, out, 1, "%s: one read outstanding", id)
 	return out[0]
 }
@@ -690,40 +712,6 @@ func TestARedealtCardAfterATakeIsLateNotTaken(t *testing.T) {
 		if x.Type == sprint.NStalled && x.Kind == sprint.Judgment {
 			require.Fail(t, fmt.Sprintf("a stalled judgment speaks for the late card: %s", x.What))
 		}
-	}
-}
-
-// A late read or work card is its own judgment (reader finding 6): a read
-// card late while another read of the same primary is judged late is a
-// second judgment, each naming its card and closing when its own card moves.
-func TestTwoLateReadsOfOnePrimaryAreTwoJudgments(t *testing.T) {
-	t.Parallel()
-	h := newHarness(t)
-	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m1"}))
-	h.must(AddStep(sprint.AddReq{Brief: proBrief, Stream: "s1", IDs: []string{"p"}}))
-	h.startMachine()
-	h.machine()
-	h.takeAndFinish(false, "p")
-	h.machine() // asks both readers together: two reads outstanding
-	cards := h.snap().Readers.Of("p")
-	require.Len(t, cards, 2, "asked: %d", len(cards))
-	h.must(ReadStep(sprint.ReadReq{As: cards[0].Row, Begin: true, Sel: sprint.Sel{IDs: []string{cards[0].ID}}}))
-	h.tick(sprint.DeadlineUnbegun + time.Minute)
-	h.machine() // the unbegun read is late
-	late := h.openOf(sprint.NReadLate)
-	require.Len(t, late, 1, "the unbegun read late: %+v", late)
-	require.Equal(t, cards[1].ID, late[0].Note.Card, "the unbegun read late: %+v", late)
-	h.tick(sprint.DeadlineUnreported)
-	h.machine() // the begun read is late too, while the first is open
-	late = h.openOf(sprint.NReadLate)
-	require.Len(t, late, 2, "two late reads: %+v", late)
-	require.NotEqual(t, late[1].Note.Card, late[0].Note.Card, "two late reads: %+v", late)
-	h.must(ReadStep(sprint.ReadReq{As: cards[1].Row, Begin: true, Sel: sprint.Sel{IDs: []string{cards[1].ID}}}))
-	h.tick(time.Second)
-	h.machine()
-	late = h.openOf(sprint.NReadLate)
-	if len(late) != 1 || late[0].Note.Card != cards[0].ID {
-		require.Fail(t, fmt.Sprintf("after %s began: %+v", cards[1].ID, late))
 	}
 }
 

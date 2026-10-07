@@ -19,11 +19,11 @@ import (
 // <next>?", decisions raise and keep; the raise is recorded on the stream row with its
 // reason, and it never lowers.
 
-// readTiersOf is the tiers the primary's live reads were drawn on, in reader row order.
+// readTiersOf is the read tier of each of the primary's read cards placed, in work order.
 func (h *harness) readTiersOf(id string) []string {
 	h.t.Helper()
 	var out []string
-	for _, rc := range h.snap().Readers.Of(id) {
+	for _, rc := range placedReadsOf(h.snap(), id) {
 		out = append(out, rc.F(sprint.FieldTier))
 	}
 	return out
@@ -42,18 +42,18 @@ func TestTheReadTierFloorIsPerAttemptAndAStreamSettingOnlyRaises(t *testing.T) {
 	h.must(DealStep(sprint.DealReq{}))
 	// attempt 1 on flash: read at flash
 	h.finishAttempt("s1-1", false, "h1")
-	h.must(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
+	h.askReads()
 	assert.Equal(t, []string{"flash"}, h.readTiersOf("s1-1"), "a flash attempt is read at flash")
 	h.readOne(h.askedRead("s1-1"), "broken", "internal/x.go:1: wrong")
 	h.must(ReworkStep(sprint.ReworkReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Fix: "f", Who: "tester"}))
 	h.finishAttempt("s1-1", false, "h2")
-	h.must(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
+	h.askReads()
 	h.readOne(h.askedRead("s1-1"), "broken", "internal/y.go:2: wrong too")
 	// attempt 3 runs on pro: its reads, both asked together, are at pro, the stream's read
 	// tier (none: flash) no cap
 	h.must(ReworkStep(sprint.ReworkReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Fix: "g", Tier: "pro", Who: "tester"}))
 	h.finishAttempt("s1-1", false, "h3")
-	h.must(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
+	h.askReads()
 	assert.Equal(t, []string{"pro", "pro"}, h.readTiersOf("s1-1"), "the third attempt ran on pro: pro reads")
 	// a stream read tier of heavy raises everything in it, a heavy read drawn on pro (the
 	// interim rule, readTierOf: "let pro do it")
@@ -63,8 +63,8 @@ func TestTheReadTierFloorIsPerAttemptAndAStreamSettingOnlyRaises(t *testing.T) {
 	assert.Equal(t, "audited", h.snap().StreamCtl("s1").F(sprint.FieldReadTierReason), "the reason is recorded on the stream row")
 	h.must(DealStep(sprint.DealReq{Sel: sprint.Sel{IDs: []string{"s1-2"}}}))
 	h.finishAttempt("s1-2", false, "h1")
-	h.must(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-2"}}}))
-	assert.Equal(t, []string{"pro"}, h.readTiersOf("s1-2"), "a flash attempt in a heavy-read stream is read at heavy, drawn on pro")
+	h.askReads()
+	assert.Equal(t, []string{"heavy"}, h.readTiersOf("s1-2"), "a flash attempt in a heavy-read stream is read at heavy (a pro reader may take it: one tier below)")
 	// the floor: the stream's work tier is pro (s1-1 is on pro... its brief names flash; a pro
 	// brief in the stream makes the work tier pro), and a read tier below it is refused in one line
 	h.must(AddStep(sprint.AddReq{Stream: "s1", IDs: []string{"s1-p"}, Brief: briefOf("pro", "")}))
@@ -99,12 +99,12 @@ func TestReadersDisagreeingRaiseOneJudgmentPerStream(t *testing.T) {
 	assert.True(t, n.StreamLevel)
 	assert.Equal(t, "s1", n.Stream)
 	assert.Equal(t, "heavy", n.Tier)
-	assert.Equal(t, "raise the read tier of s1 to heavy? two readers at pro disagree on s1-1 attempt 1 (reader-a ok, reader-b broken)", n.What)
+	assert.Equal(t, "raise the read tier of s1 to heavy? two readers at pro disagree on s1-1 attempt 1 (ra ok, rb broken)", n.What)
 	assert.Equal(t, []string{"raise", "keep"}, n.Decisions)
 	for _, c := range h.commandsOf(sprint.NRaiseReadTier) {
 		switch c.Decision {
 		case "raise":
-			assert.True(t, strings.HasPrefix(c.Lines[0], "nova-sprint stream set s1 --read-tier heavy --reason 'two readers at pro disagree on s1-1 attempt 1 (reader-a ok, reader-b broken)' --answers "), c.Lines[0])
+			assert.True(t, strings.HasPrefix(c.Lines[0], "nova-sprint stream set s1 --read-tier heavy --reason 'two readers at pro disagree on s1-1 attempt 1 (ra ok, rb broken)' --answers "), c.Lines[0])
 		case "keep":
 			assert.Contains(t, c.Lines[0], "nova-sprint ack ")
 		default:
@@ -132,7 +132,7 @@ func TestALandedCardReturnedByDevAsksToRaiseTheReadTierAndKeepHoldsIt(t *testing
 	h.startMachine()
 	h.must(DealStep(sprint.DealReq{}))
 	h.finishAttempt("s1-1", false, "h1")
-	h.must(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
+	h.askReads()
 	h.readAllOK("s1-1")
 	h.must(AcceptStep(sprint.AcceptReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
 	h.must(MergeStep(sprint.MergeReq{Stream: "s1", Batch: 10}))
@@ -171,7 +171,7 @@ func TestACardAlternatingBrokenAndOkAsksToRaiseTheReadTier(t *testing.T) {
 	// attempt 1 read ok, accepted, then returned to review by the coordinator and reworked:
 	// the rework keeps the head a reader passed (FieldPassedHead)
 	h.finishAttempt("s1-1", false, "h1")
-	h.must(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
+	h.askReads()
 	h.readAllOK("s1-1")
 	h.must(AcceptStep(sprint.AcceptReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
 	h.must(ReturnStep(sprint.ReturnReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Reason: "an audit found a hole"}))
@@ -179,11 +179,11 @@ func TestACardAlternatingBrokenAndOkAsksToRaiseTheReadTier(t *testing.T) {
 	require.Equal(t, "h1", h.snap().Work.Card("s1-1").F(sprint.FieldPassedHead))
 	// attempt 2 found broken: ok then broken across attempts
 	h.finishAttempt("s1-1", false, "h2")
-	h.must(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
+	h.askReads()
 	h.readOne(h.askedRead("s1-1"), "broken", "internal/w.go:4: the hole is open")
 	h.machine()
 	open := h.openOf(sprint.NRaiseReadTier)
 	require.Len(t, open, 1)
-	assert.Equal(t, "raise the read tier of s1 to pro? s1-1 alternates broken and ok across attempts: a reader passed it at h1 and attempt 2 was found broken by reader-b", open[0].Note.What)
+	assert.Equal(t, "raise the read tier of s1 to pro? s1-1 alternates broken and ok across attempts: a reader passed it at h1 and attempt 2 was found broken by ra", open[0].Note.What)
 	h.clean("alternating")
 }

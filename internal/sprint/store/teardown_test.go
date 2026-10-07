@@ -28,8 +28,10 @@ func TestTeardownLeavesTheKeysAsBeforeInit(t *testing.T) {
 
 	work := func() {
 		t.Helper()
+		h.readers = nil // the friend readers are made again on the store after a teardown
 		require.NoError(t, h.st.Init(h.ctx))
 		require.NoError(t, m.RowsAdd(h.ctx, "t-readers", []string{"reader-a", "reader-b", "reader-c"}))
+		require.NoError(t, m.SetCoordinator(h.ctx, h.st.Actor)) // judgments are the coordinator's: the read cards' friends are set by one
 		h.beat()
 		h.setup(3)
 		h.through("s1-1")

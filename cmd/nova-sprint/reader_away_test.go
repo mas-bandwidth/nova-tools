@@ -59,14 +59,20 @@ func (ta *testApp) inReview(n int) {
 	ta.ok("finish --as m1 " + strings.Join(words, " "))
 }
 
-// askedOf is the read cards a reader holds asked, by id.
+// askedOf is the read cards placed on a reader's row (a friend's or a member's), by id.
 func (ta *testApp) askedOf(reader string) []string {
 	ta.t.Helper()
-	var q struct{ Cards []queueCard }
-	ta.json("queue --as "+reader, &q)
+	st, err := ta.a.store(common{redis: "mem:0", actor: "tester"})
+	require.NoError(ta.t, err)
+	s, err := st.Load(context.Background(), []string{sprint.Fleet}, nil)
+	require.NoError(ta.t, err)
 	var ids []string
-	for _, c := range q.Cards {
-		ids = append(ids, c.ID)
+	for _, row := range []string{sprint.FriendRow(reader), reader} {
+		for _, c := range s.Fleet.Column(sprint.Ready, sprint.Working) {
+			if c.Row == row && c.F("kind") == "read" {
+				ids = append(ids, c.ID)
+			}
+		}
 	}
 	return ids
 }
@@ -122,79 +128,6 @@ func TestReaderAwayRefusesAnUnknownReader(t *testing.T) {
 	assert.Contains(t, errs, "a reader name wants letters, digits, _ and -: bad.name")
 }
 
-// The ask never asks a reader that is away: the pair is the readers up.
-func TestTheAskNeverAsksAnAwayReader(t *testing.T) {
-	t.Parallel()
-	ta := newTestApp(t)
-	ta.ok("init --readers reader-a,reader-b,reader-c --members m1")
-	ta.ok("reader away reader-a")
-	ta.inReview(2)
-	ta.ok("ask")
-	assert.Empty(t, ta.askedOf("reader-a"), "reader-a is away: no read is asked of it")
-	// each card's two reads asked together, of the two readers up
-	assert.Len(t, ta.askedOf("reader-b"), 2)
-	assert.Len(t, ta.askedOf("reader-c"), 2)
-}
-
-// With fewer than two readers up the tick asks none, raises one judgment for
-// every primary waiting, and asks them when readers are up again.
-func TestFewerThanTwoReadersUpIsOneJudgmentPerTick(t *testing.T) {
-	t.Parallel()
-	ta := newTestApp(t)
-	ta.ok("init --readers reader-a,reader-b,reader-c --members m1")
-	ta.ok("reader away reader-a reader-b")
-	ta.inReview(3)
-	ta.ok("start")
-	ta.ok("tick")
-	ta.ok("tick")
-	for _, r := range []string{"reader-a", "reader-b", "reader-c"} {
-		assert.Empty(t, ta.askedOf(r), "%s was asked with one reader up", r)
-	}
-	var judgments []sprint.Group
-	for _, g := range ta.inboxGroups() {
-		if g.Kind == sprint.Judgment && g.Type == sprint.NFewReaders {
-			judgments = append(judgments, g)
-		}
-	}
-	require.Len(t, judgments, 1, "one judgment for the sprint, whatever the primaries waiting: %+v", ta.inboxGroups())
-	assert.Contains(t, judgments[0].What, "fewer than two readers up: reader-a held, reader-b held, reader-c up")
-	ta.ok("reader up reader-a")
-	ta.ok("tick")
-	// each card's two reads asked together, of the two readers up
-	assert.Len(t, append(ta.askedOf("reader-a"), ta.askedOf("reader-c")...), 6)
-	for _, g := range ta.inboxGroups() {
-		assert.False(t, g.Kind == sprint.Judgment && g.Type == sprint.NFewReaders, "the judgment closes when two are up")
-	}
-}
-
-// A read asked of a reader that goes away is asked of another reader by the
-// next tick: no ask --another, and the primary stays at its attempt.
-func TestAReadAskedOfAReaderThatGoesAwayIsAskedAgain(t *testing.T) {
-	t.Parallel()
-	ta := newTestApp(t)
-	ta.ok("init --readers reader-a,reader-b,reader-c --members m1")
-	ta.ok("reader away reader-c")
-	ta.inReview(1)
-	ta.ok("ask") // the pair: a card's reads are asked together
-	require.Len(t, ta.askedOf("reader-a"), 1)
-	require.Len(t, ta.askedOf("reader-b"), 1)
-	ta.ok("reader up reader-c")
-	ta.ok("reader away reader-b")
-	ta.ok("start")
-	ta.ok("tick")
-	assert.Empty(t, ta.askedOf("reader-b"), "the read returned from the reader that went away")
-	assert.Equal(t, []string{"s1-1.r1.reader-a"}, ta.askedOf("reader-a"))
-	// reads are asked together: reader-a's stands, and the read taken back is asked of
-	// the next reader up in the same tick
-	assert.Equal(t, []string{"s1-1.r1.reader-c"}, ta.askedOf("reader-c"), "asked of the next reader up at the same attempt")
-	ta.ok("read --as reader-a --ok s1-1.r1.reader-a")
-	out := ta.ok("card s1-1")
-	assert.NotContains(t, out, "attempt 2")
-	for _, g := range ta.inboxGroups() {
-		assert.NotEqual(t, sprint.Judgment, g.Kind, "no judgment is owed: %+v", g)
-	}
-}
-
 // reader remove takes the rows off the readers table, in one write.
 func TestReaderRemove(t *testing.T) {
 	t.Parallel()
@@ -209,43 +142,6 @@ func TestReaderRemove(t *testing.T) {
 	assert.Empty(t, ta.readerRows())
 	ta.ok("reader add reader-c")
 	assert.Equal(t, "up", ta.readerState("reader-c"), "a reader added again starts clean: its hold went with its row")
-}
-
-// A reader that holds a read, asked or reading, is refused, naming the reader
-// and the read; the table is unchanged.
-func TestReaderRemoveRefusesAReaderWithReads(t *testing.T) {
-	t.Parallel()
-	ta := newTestApp(t)
-	ta.ok("init --readers reader-a,reader-b,reader-c --members m1")
-	ta.inReview(1)
-	ta.ok("ask")
-	for _, r := range []string{"reader-a", "reader-b"} {
-		if len(ta.askedOf(r)) == 1 {
-			code, out, errs := ta.do("reader remove " + r + " reader-c")
-			assert.Equal(t, 1, code, "%s%s", out, errs)
-			assert.Contains(t, errs, r+" holds s1-1.r1."+r+" (asked)")
-			assert.NotContains(t, out, "READER-REMOVE OK")
-		}
-	}
-	assert.ElementsMatch(t, []string{"reader-a", "reader-b", "reader-c"}, ta.readerRows(), "the table is unchanged: reader-c, named with the others, was not removed")
-	ta.ok("read --as reader-a --begin --limit 5")
-	code, _, errs := ta.do("reader remove reader-a")
-	assert.Equal(t, 1, code)
-	assert.Contains(t, errs, "reader-a holds s1-1.r1.reader-a (reading)")
-}
-
-// A reader that read holds its read card ok: its row is not removed either, so
-// the read stands.
-func TestReaderRemoveRefusesAReaderWhoseReadStands(t *testing.T) {
-	t.Parallel()
-	ta := newTestApp(t)
-	ta.ok("init --readers reader-a,reader-b,reader-c --members m1")
-	ta.inReview(1)
-	ta.ok("ask")
-	ta.ok("read --as reader-a --ok --limit 5")
-	code, _, errs := ta.do("reader remove reader-a")
-	assert.Equal(t, 1, code)
-	assert.Contains(t, errs, "reader-a holds s1-1.r1.reader-a (ok)")
 }
 
 func TestReaderRemoveRefusesAnUnknownReader(t *testing.T) {

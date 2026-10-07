@@ -49,7 +49,7 @@ func newHoldRig(t *testing.T, s1, f1 int) *holdRig {
 	require.NoError(t, r.st.Init(r.ctx))
 	require.NoError(t, m.RowsAdd(r.ctx, "t-readers", []string{"reader-a", "reader-b", "reader-c"}))
 	require.NoError(t, m.SetCoordinator(r.ctx, "coordinator"))
-	_, _, _, err := r.st.SyncFriends(r.ctx, []store.FriendSpec{{Name: "amy", Width: 2, Class: "pro"}, {Name: "bob", Width: 2, Class: "pro"}})
+	_, _, _, err := r.st.SyncFriends(r.ctx, []store.FriendSpec{{Name: "amy", Width: 2, Class: "pro", Roles: "builder,reader"}, {Name: "bob", Width: 2, Class: "pro", Roles: "builder,reader"}})
 	require.NoError(t, err)
 	r.beat()
 	r.must(store.FleetStep(sprint.FleetReq{Op: "up", Member: "m1", Width: 2}))
@@ -337,33 +337,4 @@ func TestHoldAndUnholdServeMembersReadersFriendsAndStreams(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, sprint.ReaderUp, states["reader-a"], "released, the reader's state is its beat's")
 
-	// a reader: its reads asked go to another; --return takes back the reads begun
-	r.tick()
-	pr := strings.TrimSuffix(r.takeOne("m2"), ".w1")
-	s = r.snap()
-	wc := s.Fleet.Card(s.Work.Card(pr).F("work"))
-	r.must(store.FinishStep(sprint.FinishReq{As: "m2", Sel: sprint.Sel{IDs: []string{wc.ID}}, Gens: map[string]int{wc.ID: wc.Int("gen")}, Who: "m2"}))
-	// Amy and bob are pro, so each is asked a flash read while she has room
-	// (docs/SPEC-SPRINT.md). Hold them so this read stays on a reader.
-	r.hold(sprint.HoldReq{Names: []string{"amy", "bob"}, Reason: "the flash read stays with a reader"})
-	r.tick()
-	reads := r.snap().Readers.Of(pr)
-	require.Len(t, reads, 1, "a flash card is read once")
-	reader := reads[0].Row
-	r.must(store.ReadStep(sprint.ReadReq{As: reader, Begin: true, Sel: sprint.Sel{IDs: []string{reads[0].ID}}, Who: reader}))
-	r.hold(sprint.HoldReq{Names: []string{reader}, Reason: "its model rests"})
-	r.tick()
-	assert.Equal(t, sprint.Reading, r.snap().Readers.Card(reads[0].ID).Col, "a held reader's read begun finishes")
-	r.hold(sprint.HoldReq{Names: []string{reader}, Reason: "its model rests all day", Return: true})
-	assert.False(t, r.snap().Readers.Card(reads[0].ID).Placed(), "--return takes the read begun back")
-	r.tick()
-	again := r.snap().Readers.Of(pr)
-	require.NotEmpty(t, again)
-	for _, rc := range again {
-		if rc.Placed() {
-			assert.NotEqual(t, reader, rc.Row, "the ask asks another reader")
-		}
-	}
-	lines := r.holdLines()
-	assert.Contains(t, lines[len(lines)-1], "reader "+reader+" held: its model rests all day; --return")
 }

@@ -41,8 +41,8 @@ func (r *conflictRig) brokenRead(id, finding string) {
 	asked := func() *sprint.Card {
 		s := r.snap()
 		pr := s.Work.Card(id)
-		for _, rc := range s.Readers.Of(id) {
-			if rc.Int("attempt") == pr.Int("attempt") && (rc.Col == sprint.Asked || rc.Col == sprint.Reading) {
+		for _, rc := range placedReadCards(s, id) {
+			if rc.Int("attempt") == pr.Int("attempt") {
 				return rc
 			}
 		}
@@ -50,7 +50,7 @@ func (r *conflictRig) brokenRead(id, finding string) {
 	}
 	rc := asked()
 	if rc == nil {
-		r.must(store.AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{id}}}))
+		cutReads(r.t, r.st, r.ctx)
 		rc = asked()
 	}
 	require.NotNil(r.t, rc, "a read of %s is asked", id)

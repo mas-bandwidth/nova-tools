@@ -187,7 +187,7 @@ func TestAudit2ClosedAckedReadyToAcceptIsSilentForEver(t *testing.T) {
 	h := newHarness(t)
 	h.setup(1)
 	h.a2ToReview("s1-1", false)
-	h.must(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
+	h.askReads()
 	h.heldByRedCI("s1-1")
 	h.nReadAll("s1-1", "ok")
 	h.a2AckRefused(sprint.NReadyToAccept)
@@ -503,44 +503,6 @@ func TestAudit2ClosedReminderDecisionsHaveNoCommands(t *testing.T) {
 	require.FailNow(t, "no reminder group")
 }
 
-// DEFECT I. ask --another after accept retired a slow reader's card and the
-// primary was returned: the only free reader is that one, whose card id
-// exists (retired), so the create is refused by the table layer on every
-// plan and the verb ends "the sprint kept changing ... run it again", which
-// can never succeed. Now the slow reader's card, retired by the accept with no
-// verdict, leaves it askable once more under the second identity (ReadCardForAsk):
-// --another asks it there, a create of a new record; the next --another, with no
-// reader left, is refused naming reader add.
-func TestAudit2ClosedAskAnotherHitsARetiredCard(t *testing.T) {
-	t.Parallel()
-	h := newHarness(t) // readers a, b, c
-	h.setup(1)
-	h.a2ToReview("s1-1", false)
-	rc := h.pairAsked("s1-1")
-	h.must(ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: rc[0].Row, Verdict: "ok", Sel: sprint.Sel{IDs: []string{rc[0].ID}}}))
-	h.must(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Another: true}))
-	for _, c := range h.snap().Readers.Of("s1-1") {
-		if c.Col == sprint.Asked && c.ID != rc[1].ID {
-			h.must(ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: c.Row, Verdict: "ok", Sel: sprint.Sel{IDs: []string{c.ID}}}))
-		}
-	}
-	h.must(AcceptStep(sprint.AcceptReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
-	h.must(ReturnStep(sprint.ReturnReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Reason: "look again"}))
-	res := h.run(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Another: true}))
-	require.Empty(t, res.Refused, "ask --another of the slow reader, under .g1: %+v", res)
-	require.Equal(t, 1, res.Attempts, "ask --another: %+v", res)
-	require.NotNil(t, h.snap().Readers.Placed(sprint.ReadCardSecondID("s1-1", 1, rc[1].Row)), "asked again of %s, under .g1", rc[1].Row)
-	res = h.run(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Another: true}))
-	require.Len(t, res.Refused, 1, "ask --another: %+v", res)
-	require.Contains(t, res.Refused[0].Why, "no read card at attempt", "ask --another: %+v", res)
-	require.Contains(t, res.Refused[0].Why, "reader add", "ask --another: %+v", res)
-	require.Equal(t, 1, res.Attempts, "ask --another: %+v", res)
-	require.NoError(t, h.m.RowsAdd(h.ctx, "t-readers", []string{"reader-d"}))
-	h.beat()
-	res = h.run(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Another: true}))
-	require.Len(t, res.Moved, 1, "ask --another with a new reader: %+v", res)
-}
-
 // DEFECT J. The tick marked "the sprint is done" overdue, which the inbox and
 // Note.Due say is never overdue. Since errata 3 amendment 6 it is no judgment:
 // the tick says it once, addressed to the coordinator, and stops the machine,
@@ -595,10 +557,10 @@ func TestNoStoredIDReachesTheCoordinator(t *testing.T) {
 	h.must(ResolveStep(sprint.ResolveReq{}))
 	h.a2ToReview("s1-1", true) // work failed
 	h.a2ToReview("s1-2", false)
-	h.must(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-2"}}}))
+	h.askReads()
 	h.nReadAll("s1-2", "broken") // a broken read
 	h.a2ToReview("s1-3", false)
-	h.must(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-3"}}}))
+	h.askReads()
 	h.nReadAll("s1-3", "ok") // ready to accept
 	h.must(AcceptStep(sprint.AcceptReq{Sel: sprint.Sel{IDs: []string{"s1-3"}}}))
 	h.must(MergeStep(sprint.MergeReq{Stream: "s1", Batch: 1, Conflict: "s1-3"})) // a stopped stream
@@ -622,7 +584,7 @@ func TestTheTickAsksNoReaderWhoAlreadyReadTheAttempt(t *testing.T) {
 	h := newHarness(t) // readers a, b, c
 	h.setup(1)
 	h.a2ToReview("s1-1", false)
-	h.must(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
+	h.askReads()
 	h.readAllOK("s1-1")
 	h.must(AcceptStep(sprint.AcceptReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
 	h.must(ReturnStep(sprint.ReturnReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Reason: "look again"}))

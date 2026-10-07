@@ -85,8 +85,8 @@ type PassStats struct {
 }
 
 // StatsRecords is the Load extras Stats wants: every work card and read card of
-// every primary on the work table, each attempt's, placed or retired, so a read
-// asked and moved to another reader is counted against the one first asked.
+// every primary on the work table, each attempt's, placed or retired: a retired read
+// card by the consumer record its end wrote on the primary (CardCostOf).
 func StatsRecords(s *Snapshot) map[string][]string {
 	var work, reads []string
 	for _, p := range statsPrimaries(s) {
@@ -96,8 +96,24 @@ func StatsRecords(s *Snapshot) map[string][]string {
 				reads = append(reads, ReadCardID(p.ID, k, r))
 			}
 		}
+		for _, c := range CardCostOf(p).Consumers {
+			if c.Kind == "read" && !slices.Contains(work, c.Card) {
+				work = append(work, c.Card)
+			}
+		}
 	}
 	return map[string][]string{Fleet: work, Readers: reads}
+}
+
+// readCardSample is a read card's wait (asked to its run's start: a member's take, else
+// its cut, a friend's being placed working), and its end (retired), for the reader's
+// samples.
+func readCardSample(rc *Card) (asked, began, ended time.Time) {
+	asked, began, ended = stampAt(rc, "asked"), stampAt(rc, "taken"), stampAt(rc, "retired")
+	if began.IsZero() {
+		began = asked
+	}
+	return asked, began, ended
 }
 
 // statsPrimaries is the work table's primaries, sentinels left out.
@@ -130,6 +146,7 @@ func StatsSince(s *Snapshot, since time.Time) PassStats {
 		}
 		return appendSpan(xs, a, b)
 	}
+	readCards := fleetReadIndex(s)
 	for _, p := range statsPrimaries(s) {
 		if !since.IsZero() && lastStamp(p, "landed", "accepted", "admitted").Before(since) && !anyCardSince(s, p, since) {
 			continue
@@ -158,6 +175,14 @@ func StatsSince(s *Snapshot, since time.Time) PassStats {
 					y.timed(stampAt(rc, "asked"), stampAt(rc, "begun"), stampAt(rc, "read"), cardcost.ParseUsage(rc.F(FieldUsage)).Wall)
 				}
 			}
+			for _, rc := range readCards[p.ID] {
+				if rc.Int("attempt") != k || before(rc, since, "retired", "taken", "asked") {
+					continue
+				}
+				y := sampleOf(reads, cmp.Or(rc.F("reader"), rc.Row))
+				asked, began, ended := readCardSample(rc)
+				y.timed(asked, began, ended, cardcost.ParseUsage(rc.F(FieldUsage)).Wall)
+			}
 		}
 		toReads = span(toReads, lastFinished, accepted)
 		toLand = span(toLand, accepted, landed)
@@ -172,7 +197,7 @@ func StatsSince(s *Snapshot, since time.Time) PassStats {
 			// a read's record names the route that priced it, and a read returned
 			// unpriced names none: then the route its card was dealt on
 			own := s.Fleet.Card(c.Card)
-			if c.Kind == "read" {
+			if c.Kind == "read" && own == nil {
 				own = s.Readers.Card(c.Card)
 			}
 			name := cmp.Or(c.Route, c.Usage.Route, own.F(FieldRoute), "-")

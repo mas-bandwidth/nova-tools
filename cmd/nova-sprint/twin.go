@@ -44,7 +44,7 @@ func (a *app) twinOpen(addr string) bool { return a.twins[addr] != nil }
 var realSteps = []string{
 	"git init -q --bare origin.git && git clone -q origin.git work",
 	"git -C work commit -q --allow-empty -m base && git -C work push -q origin HEAD:sprint/s1",
-	"nova-sprint init --readers reader-a,reader-b --members m1",
+	"nova-sprint init --readers reader-m1,reader-m2 --members m1,m2",
 	"nova-sprint add --stream s1 --count 1 --one",
 	"nova-sprint start",
 	"nova-sprint tick",
@@ -53,8 +53,8 @@ var realSteps = []string{
 	"git -C work commit -q --allow-empty -m s1-1 && git -C work push -q origin HEAD:sprint/s1-1.w1.g1.e0",
 	`nova-sprint finish --as m1 s1-1.w1@1 --epoch 0 --head "$(git -C work rev-parse HEAD)" --report done`,
 	"nova-sprint tick",
-	"nova-sprint read --as reader-a --begin --epoch 0",
-	"nova-sprint read --as reader-a --ok --epoch 0",
+	"nova-sprint take --as m2 --epoch 0",
+	"nova-sprint read --as m2 --ok --epoch 0",
 	"nova-sprint tick",
 	"nova-sprint land --stream s1 --repo-dir work --base sprint/s1",
 	"nova-sprint tick",
@@ -67,7 +67,7 @@ var realSteps = []string{
 // help shows its two lines that differ; the test that runs them holds the help
 // to what a twin does.
 var twinSteps = []string{
-	"nova-sprint init --readers reader-a,reader-b --members m1",
+	"nova-sprint init --readers reader-m1,reader-m2 --members m1,m2",
 	"nova-sprint add --stream s1 --count 1 --one",
 	"nova-sprint start",
 	"nova-sprint tick",
@@ -75,8 +75,8 @@ var twinSteps = []string{
 	"nova-sprint take --as m1 --epoch 0",
 	"nova-sprint finish --as m1 s1-1.w1@1 --epoch 0 --report done",
 	"nova-sprint tick",
-	"nova-sprint read --as reader-a --begin --epoch 0",
-	"nova-sprint read --as reader-a --ok --epoch 0",
+	"nova-sprint take --as m2 --epoch 0",
+	"nova-sprint read --as m2 --ok --epoch 0",
 	"nova-sprint tick",
 	"nova-sprint merge --stream s1 --batch 1",
 	"nova-sprint tick",

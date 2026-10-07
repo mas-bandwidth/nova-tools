@@ -18,9 +18,9 @@ import "maps"
 // place a card is taken out of waiting or ready or accepted out of review.
 
 // TickChoices is the choices a tick makes: the member each primary is dealt
-// to, the member each levelled card moves to, and the two readers each
-// primary is asked of. A primary the choices do not name is dealt or asked by
-// the first allowed choice in row order.
+// to, the member each levelled card moves to, and the readers each primary's
+// read cards are dealt to (cutReads). A primary the choices do not name is
+// dealt by the first allowed choice in row order.
 type TickChoices struct {
 	Deal  map[string]string
 	Level map[string]string
@@ -40,17 +40,18 @@ func SetMachine(s State, running bool) (State, error) {
 
 // Tick is one tick of the machine (spec section 14): a STOPPED machine moves
 // nothing; a RUNNING one runs its parts in order, each on the state the one
-// before left: the start, the fleet's level (T4) and the readers' (levelReads),
-// once; then the four tables' updates in the owner's order: the work pump's
-// resolve (T1), deal (T3) and accept (mechanical: the machine applies the
-// rule, no judgment), the readers' ask (T2), the merge's resume (T7); and
-// then done, which stops
+// before left: the start, the fleet's level (T4), once; then the four tables'
+// updates in the owner's order: the work pump's resolve (T1), deal (T3: the
+// read cards first, cutReads, then the work) and accept (mechanical: the
+// machine applies the rule, no judgment), the ask (T2: what no read card can
+// be cut for is a judgment, cannotAsk), the merge's resume (T7); and then
+// done, which stops
 // the machine on a done sprint. The tables the updates dirty are updated again
 // until none is; the model's parts dirty no earlier table, so one pass is the
 // fixpoint.
 // The check, deadline and overdue parts write nothing while the rules hold
 // and no clock deadline passes, which the differential test keeps so. From
-// the spec, not yet in the model (the model's Resolve, Start, FleetUp and Ask
+// the spec, not yet in the model (the model's Resolve, Start and FleetUp
 // happen one at a time, in any order).
 func Tick(s State, ch TickChoices) (State, error) {
 	if err := free(s); err != nil {
@@ -59,23 +60,24 @@ func Tick(s State, ch TickChoices) (State, error) {
 	if s.Machine != Running {
 		return s, nil
 	}
-	// the start: the fleet's and the readers' rebalance, each table once,
-	// before the tick's updates.
+	// the start: the fleet's rebalance, once, before the tick's updates.
 	n, err := s.level(ch.Level)
 	if err != nil {
 		return s, err
 	}
-	n.levelReads()
 	n.tickResolve()
+	// the deal: the read cards first, then the work in the room they leave
+	if err := n.cutReads(ch.Ask); err != nil {
+		return s, err
+	}
 	if err := n.tickDeal(ch.Deal); err != nil {
 		return s, err
 	}
 	if err := n.tickAccept(); err != nil {
 		return s, err
 	}
-	if err := n.tickAsk(ch.Ask); err != nil {
-		return s, err
-	}
+	// the ask: what no read card can be cut for is a judgment
+	n.cannotAsk()
 	n.tickResume()
 	n.tickDone()
 	return n, nil
@@ -195,42 +197,6 @@ func (n *State) tickDeal(choice map[string]string) error {
 			m = n.NextMember(room)
 		}
 		next, err := Start(*n, p, m, Room)
-		if err != nil {
-			return err
-		}
-		*n = next
-	}
-	return nil
-}
-
-// tickAsk is T2: the reads wanted now (ReadsWanted: one at a time) for each
-// primary in review whose work did not fail, in stream turns from the ask's
-// stream index.
-func (n *State) tickAsk(choice map[string][]string) error {
-	var review []string
-	for id, p := range n.Primaries {
-		if p.State == Review && !n.Failed(id) && n.ReadsWanted(id) > 0 {
-			review = append(review, id)
-		}
-	}
-	// in stream turns from the ask's stream index;
-	// Ask moves it past each primary's stream
-	review = n.streamTurns(review, n.AskStreamLast)
-	// the finders' reads first (sprint.askFinders): each counted in its reader's
-	// load before the primary's own Ask places it (Reserved)
-	n.Reserved = map[string]int{}
-	for _, p := range review {
-		if readers, finder := n.AskChoice(p); finder {
-			n.Reserved[readers[0]]++
-		}
-	}
-	defer func() { n.Reserved = nil }()
-	for _, p := range review {
-		readers := choice[p]
-		if readers == nil {
-			readers, _ = n.AskChoice(p)
-		}
-		next, err := Ask(*n, p, readers)
 		if err != nil {
 			return err
 		}

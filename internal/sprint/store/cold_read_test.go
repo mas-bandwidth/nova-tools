@@ -101,6 +101,18 @@ func (p *probe) toReview(head string, xs ...string) {
 	}
 }
 
+// readOn is the primary's read card placed on the row.
+func (p *probe) readOn(id, row string) *sprint.Card {
+	p.t.Helper()
+	for _, c := range placedReadsOf(p.snap(), id) {
+		if c.Row == row {
+			return c
+		}
+	}
+	require.FailNow(p.t, "no read card of "+id+" on "+row)
+	return nil
+}
+
 func (p *probe) read(reader, card, verdict string) Result {
 	return p.do("read "+card+" "+verdict, ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: reader, Verdict: verdict, Finding: "f:1", Sel: ids(card)}))
 }
@@ -183,11 +195,11 @@ func TestACutAfterEachWriteIsFinishedByRepair(t *testing.T) {
 			return FinishStep(sprint.FinishReq{Sel: ids("s1-1.w1"), Gens: map[string]int{"s1-1.w1": 1}, Failed: true})
 		}, []string{"t-fleet", "t-work"}},
 		{"accept", func(p *probe) { p.through("s1-1"); p.do("return", ReturnStep(sprint.ReturnReq{Sel: ids("s1-1")})) },
-			func(p *probe) Step { return AcceptStep(sprint.AcceptReq{Sel: ids("s1-1")}) }, []string{"t-readers", "t-merge", "t-work"}},
+			func(p *probe) Step { return AcceptStep(sprint.AcceptReq{Sel: ids("s1-1")}) }, []string{"t-fleet", "t-merge", "t-work"}},
 		{"rework", func(p *probe) {
 			p.toReview("h1", "s1-1")
-			p.do("ask", AskStep(sprint.AskReq{Sel: ids("s1-1")}))
-		}, func(p *probe) Step { return ReworkStep(sprint.ReworkReq{Sel: ids("s1-1"), Fix: "f"}) }, []string{"t-fleet", "t-readers", "t-work"}},
+			p.do("ask", p.cutStep())
+		}, func(p *probe) Step { return ReworkStep(sprint.ReworkReq{Sel: ids("s1-1"), Fix: "f"}) }, []string{"t-fleet", "t-work"}},
 		{"merge", func(p *probe) { p.through("s1-1") }, func(p *probe) Step { return MergeStep(sprint.MergeReq{Stream: "s1"}) }, []string{"t-merge", "t-work"}},
 		{"drop", func(p *probe) { p.through("s1-1") }, func(p *probe) Step { return DropStep(sprint.DropReq{Sel: ids("s1-1"), Reason: "x"}) }, []string{"t-merge", "t-work"}},
 		{"withdraw", func(p *probe) {
@@ -267,7 +279,6 @@ func everyVerb() map[string]Step {
 		"deal":     DealStep(sprint.DealReq{Sel: sprint.Sel{Limit: 5}}),
 		"take":     TakeStep(sprint.TakeReq{As: "m1"}),
 		"finish":   FinishStep(sprint.FinishReq{As: "m1", Sel: sprint.Sel{Limit: 5}}),
-		"ask":      AskStep(sprint.AskReq{}),
 		"read":     ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: "reader-a", Verdict: "ok"}),
 		"accept":   AcceptStep(sprint.AcceptReq{Sel: sprint.Sel{Stream: "s1"}}),
 		"rework":   ReworkStep(sprint.ReworkReq{Sel: sprint.Sel{Stream: "s1"}, Fix: "x"}),
@@ -289,23 +300,25 @@ func TestAcceptNamedThenSelection(t *testing.T) {
 	p.setup(3)
 	// s1-1: eligible (a, b ok at head)
 	p.toReview("h", "s1-1")
-	p.do("ask 1", AskStep(sprint.AskReq{Sel: ids("s1-1")}))
+	p.do("ask 1", p.cutStep())
 	p.readAllOK("s1-1")
 	// s1-2: the same reader twice: a ok at attempt 1, b broken; rework; a ok at attempt 2, b not yet
 	p.toReview("h1", "s1-2")
 	rs := p.pairAsked("s1-2")
-	p.read(rs[0].F("reader"), rs[0].ID, "ok")
-	p.read(rs[1].F("reader"), rs[1].ID, "broken")
+	p.read(rs[0].Row, rs[0].ID, "ok")
+	p.read(rs[1].Row, rs[1].ID, "broken")
 	p.do("rework 2", ReworkStep(sprint.ReworkReq{Sel: ids("s1-2"), Fix: "f"}))
 	c := p.snap().Fleet.Card("s1-2.w2")
 	p.do("take 2.w2", TakeStep(sprint.TakeReq{As: c.Row, Sel: ids(c.ID), Gens: map[string]int{c.ID: 1}}))
 	p.do("finish 2.w2", FinishStep(sprint.FinishReq{As: c.Row, Sel: ids(c.ID), Gens: map[string]int{c.ID: 1}, Head: "h2"}))
-	p.read(rs[0].F("reader"), sprint.ReadCardID("s1-2", 2, rs[0].F("reader")), "ok")
+	p.do("ask 2 again", p.cutStep())
+	again := p.readOn("s1-2", rs[0].Row)
+	p.read(again.Row, again.ID, "ok")
 	// s1-3: one reader ok
 	p.toReview("h", "s1-3")
-	p.do("ask 3", AskStep(sprint.AskReq{Sel: ids("s1-3")}))
-	r3 := p.snap().Readers.Of("s1-3")
-	p.read(r3[0].F("reader"), r3[0].ID, "ok")
+	p.do("ask 3", p.cutStep())
+	r3 := placedReadsOf(p.snap(), "s1-3")
+	p.read(r3[0].Row, r3[0].ID, "ok")
 	res := p.do("accept named 1,2,3", AcceptStep(sprint.AcceptReq{Sel: ids("s1-1", "s1-2", "s1-3")}))
 	if len(res.Moved) != 0 || len(res.Refused) != 3 {
 		assert.Fail(t, fmt.Sprintf("named all-or-nothing: %+v", res))
@@ -317,51 +330,6 @@ func TestAcceptNamedThenSelection(t *testing.T) {
 	// Named-twice in a named set.
 	res = p.do("accept named dup", AcceptStep(sprint.AcceptReq{Sel: ids("s1-2", "s1-2")}))
 	t.Logf("dup: %+v", res)
-}
-
-// A third reader asked with --another (no broken read needed) is still
-// asked or reading when the other two say ok: accept moves the primary to
-// merging with a read card outstanding (rule 3).
-func TestAcceptRetiresAReadOutstanding(t *testing.T) {
-	t.Parallel()
-	p := newProbe(t)
-	p.setup(1)
-	p.toReview("h", "s1-1")
-	p.pairAsked("s1-1")
-	p.do("ask another", AskStep(sprint.AskReq{Sel: ids("s1-1"), Another: true}))
-	rs := p.snap().Readers.Of("s1-1")
-	t.Logf("read cards: %d", len(rs))
-	p.read(rs[0].F("reader"), rs[0].ID, "ok")
-	p.read(rs[1].F("reader"), rs[1].ID, "ok")
-	p.do("accept", AcceptStep(sprint.AcceptReq{Sel: ids("s1-1")}))
-	assert.Empty(t, p.inv("accepted with a third read outstanding"), "a legal sequence breaks rule 3")
-	p.do("merge", MergeStep(sprint.MergeReq{Stream: "s1"}))
-	p.read(rs[2].F("reader"), rs[2].ID, "broken")
-}
-
-// The same with a broken read first (the model's own AskAnother guard):
-// four readers.
-func TestAcceptAfterAskingAnotherTwice(t *testing.T) {
-	t.Parallel()
-	p := newProbe(t)
-	require.NoError(t, p.m.RowsAdd(p.ctx, "t-readers", []string{"reader-d"}))
-	p.beat()
-	p.setup(1)
-	p.toReview("h", "s1-1")
-	rs := p.pairAsked("s1-1")
-	p.read(rs[0].F("reader"), rs[0].ID, "broken")
-	p.do("ask another", AskStep(sprint.AskReq{Sel: ids("s1-1"), Another: true}))
-	p.do("ask another", AskStep(sprint.AskReq{Sel: ids("s1-1"), Another: true}))
-	rs = p.snap().Readers.Of("s1-1")
-	var oks int
-	for _, rc := range rs {
-		if rc.Col == sprint.Asked && oks < 2 {
-			p.read(rc.F("reader"), rc.ID, "ok")
-			oks++
-		}
-	}
-	p.do("accept", AcceptStep(sprint.AcceptReq{Sel: ids("s1-1")}))
-	p.inv("accepted")
 }
 
 // One ok and one broken; rework; a late report on the retired card; the
@@ -376,7 +344,6 @@ func TestReworkTwice(t *testing.T) {
 	rs := p.pairAsked("s1-1")
 	a, b := rs[0].F("reader"), rs[1].F("reader")
 	p.read(a, rs[0].ID, "ok")
-	p.do("b begins", ReadStep(sprint.ReadReq{As: b, Begin: true, Sel: ids(rs[1].ID)}))
 	p.read(b, rs[1].ID, "broken")
 	nid := p.openOn("s1-1")[0].Note.ID
 	p.do("rework 1", ReworkStep(sprint.ReworkReq{Sel: ids("s1-1"), Fix: "fix1", Answers: []string{nid}}))
@@ -388,9 +355,9 @@ func TestReworkTwice(t *testing.T) {
 	c := p.snap().Fleet.Card("s1-1.w2")
 	p.do("take w2", TakeStep(sprint.TakeReq{As: c.Row, Sel: ids(c.ID), Gens: map[string]int{c.ID: 1}}))
 	p.do("finish w2 ok h2", FinishStep(sprint.FinishReq{As: c.Row, Sel: ids(c.ID), Gens: map[string]int{c.ID: 1}, Head: "h2"}))
-	require.Empty(t, p.snap().Readers.Of("s1-1"), "the finish asked readers itself (one path asks)")
-	p.do("ask again", AskStep(sprint.AskReq{Sel: ids("s1-1")})) // the machine's ask
-	again := p.snap().Readers.Of("s1-1")
+	require.Empty(t, placedReadsOf(p.snap(), "s1-1"), "the finish cut read cards itself (the deal cuts them)")
+	p.do("ask again", p.cutStep()) // the machine's ask
+	again := placedReadsOf(p.snap(), "s1-1")
 	var who []string
 	for _, rc := range again {
 		t.Logf("asked again: %s reader=%s head=%s col=%s", rc.ID, rc.F("reader"), rc.F("head"), rc.Col)
@@ -425,8 +392,8 @@ func TestReworkTwice(t *testing.T) {
 	c = p.snap().Fleet.Card("s1-1.w5")
 	p.do("take w5", TakeStep(sprint.TakeReq{As: c.Row, Sel: ids(c.ID), Gens: map[string]int{c.ID: 1}}))
 	p.do("finish w5 ok", FinishStep(sprint.FinishReq{As: c.Row, Sel: ids(c.ID), Gens: map[string]int{c.ID: 1}, Head: "h5"}))
-	p.do("ask at attempt 5", AskStep(sprint.AskReq{Sel: ids("s1-1")})) // the machine's ask
-	for _, rc := range p.snap().Readers.Of("s1-1") {
+	p.do("ask at attempt 5", p.cutStep()) // the machine's ask
+	for _, rc := range placedReadsOf(p.snap(), "s1-1") {
 		t.Logf("at attempt 5: %s head=%s", rc.ID, rc.F("head"))
 	}
 }
@@ -455,7 +422,7 @@ func TestMergeOrderConflictAndCrossNeed(t *testing.T) {
 	c := p.snap().Fleet.Card("s1-3.w2")
 	p.do("take", TakeStep(sprint.TakeReq{As: c.Row, Sel: ids(c.ID), Gens: map[string]int{c.ID: 1}}))
 	p.do("finish", FinishStep(sprint.FinishReq{As: c.Row, Sel: ids(c.ID), Gens: map[string]int{c.ID: 1}, Head: "h2"}))
-	p.do("ask again", AskStep(sprint.AskReq{Sel: ids("s1-3")})) // the machine's ask: the finish asks no reader
+	p.do("ask again", p.cutStep()) // the machine's ask: the finish asks no reader
 	p.readAllOK("s1-3")
 	p.do("accept s1-3 again", AcceptStep(sprint.AcceptReq{Sel: ids("s1-3")}))
 	q := p.snap().Merge.Cell("s1", sprint.Queued)
@@ -698,28 +665,5 @@ func TestReturnAnswersCIRed(t *testing.T) {
 	// ci red is answered; what is open is the returned primary's own judgment.
 	if left := p.openOn("s1-1"); len(left) != 1 || left[0].Note.Type != sprint.NReturned {
 		assert.Fail(t, fmt.Sprintf("return, a listed decision of %q, acted on the card and left open %v; refused: %v", sprint.NCIRed, left, res.Refused))
-	}
-}
-
-// The model's "readsexhausted": both readers broken, ask another answers
-// both judgments, the third says ok: one ok, nothing outstanding, no open
-// judgment on the primary.
-func TestReadsExhaustedIsAJudgment(t *testing.T) {
-	t.Parallel()
-	p := newProbe(t)
-	p.setup(1)
-	p.toReview("h", "s1-1")
-	rs := p.pairAsked("s1-1")
-	p.read(rs[0].F("reader"), rs[0].ID, "broken")
-	p.read(rs[1].F("reader"), rs[1].ID, "broken")
-	p.do("ask another", AskStep(sprint.AskReq{Sel: ids("s1-1"), Another: true}))
-	for _, rc := range p.snap().Readers.Of("s1-1") {
-		if rc.Col == sprint.Asked {
-			p.read(rc.F("reader"), rc.ID, "ok")
-		}
-	}
-	o := p.openOn("s1-1")
-	if len(o) != 1 || o[0].Note.Type != sprint.NReadsExhausted {
-		assert.Fail(t, fmt.Sprintf("s1-1 sits in review with one ok, nothing outstanding, and open judgments %v", o))
 	}
 }
