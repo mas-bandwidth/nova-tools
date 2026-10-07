@@ -140,7 +140,7 @@ var TickDecisions = map[string][]string{
 	NInvariant:      {"look at the card", "repair", "wait"},
 	NWorkLate:       {"fleet level", "fleet down <member>", "wait", "drop"},
 	NReadLate:       {"ask --another", "wait", "drop"},
-	NMergeLate:      {"merge --stream <s>", "look", "wait"},
+	NMergeLate:      {"land --stream <s>", "look", "wait"}, // the act, never the merge report: land merges, pushes and records
 	NStalled:        {"look at the card", "wait"},
 	// the backlog alarms (alarms.go): seen, or quiet for a while
 	NAlarmReview:  {"ack", "wait"},
@@ -1208,7 +1208,7 @@ func TickDeadlines(s *Snapshot, r TickReq) (Plan, int) {
 		if d, ok := r.running(s.Now, last); ok && d > DeadlineMergeIdle {
 			conds = append(conds, cond{typ: NMergeLate, stream: st, streamLevel: true,
 				what:      fmt.Sprintf("state %s, no merge step since %s", state, last),
-				decisions: []string{"merge --stream " + st, "look", "wait"}})
+				decisions: []string{"land --stream " + st, "look", "wait"}})
 		}
 	}
 	due := notify(&p, s, conds, []string{NWorkLate, NReadLate, NMergeLate}, r)
