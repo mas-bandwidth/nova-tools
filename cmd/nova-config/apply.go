@@ -122,8 +122,15 @@ func runApply(ctx context.Context, args []string, stdout, stderr io.Writer, d de
 		}
 		fmt.Fprintf(stdout, "CONFIG APPLY kind=%s add=%d set=%d remove=%d rev=%d ms=%d\n", kn, res.Add, res.Set, res.Remove, res.Rev, d.now().Sub(start).Milliseconds())
 	}
+	note := actorAliasNote(fs)
+	if note != "" {
+		o.Note(note)
+	}
 	if *asJSON {
 		return emit(stdout, o)
+	}
+	if note != "" {
+		printNotes(stdout, []string{note})
 	}
 	return 0
 }

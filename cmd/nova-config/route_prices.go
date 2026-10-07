@@ -54,7 +54,7 @@ func routePricesTool(d deps) *tool.Tool {
 func routePricesVerb(d deps) tool.Verb {
 	return tool.Verb{
 		Name:      "route prices",
-		Usage:     "route prices --refresh [--provider <provider>] [--from <path>] [--pg <dsn> | --file <path> | --seat <seat>] [--dry-run] --as <name>",
+		Usage:     "route prices --refresh [--provider <provider>] [--from <path>] [--pg <dsn> | --file <path> | --seat <seat>] [--dry-run] --actor <name>",
 		Effect:    tool.LocalWrite + ": writes the enabled routes' price fields in the config store",
 		Detail:    "reads the provider's published list and sets each enabled route's price fields, with price_as_of today and price_source the list's URL; a price that moved past 2x is a JUDGMENT line, left as it is, and the verb exits 1; a row more than 10 percent off the list is named STALE.",
 		ExitTable: "0 done, 1 a price moved past 2x and was left as it is, 2 could not run (usage, or a list or store that did not answer)",
@@ -75,7 +75,7 @@ func routePricesFlags(f *tool.Flags) {
 	f.String("from", "", "read the list from a `path` saved from its URL instead of fetching it; the rows still name the URL as their source")
 	f.Check(func(c *tool.Call) {
 		if !c.Bool("refresh") {
-			c.Problem("want route prices --refresh [--provider <provider>] [--from <path>] [--dry-run] --as <name>")
+			c.Problem("want route prices --refresh [--provider <provider>] [--from <path>] [--dry-run] --actor <name>")
 		}
 		if p := c.Str("provider"); p != "" {
 			if _, ok := config.PriceListOf(p); !ok {
@@ -95,7 +95,7 @@ func runRoutePrices(c *tool.Call, d deps) *tool.Out {
 	cn := conn{pg: &pg, file: &file, seat: &seat}
 	provider, from := c.Str("provider"), c.Str("from")
 	dry := c.DryRun()
-	actor, err := actorName(c.Str("as"), d.getenv, seat)
+	actor, err := actorName(c.Str("actor"), d.getenv, seat)
 	if err != nil && !dry {
 		c.Problem(err.Error())
 		return nil
@@ -189,6 +189,9 @@ func runRoutePrices(c *tool.Call, d deps) *tool.Out {
 	}
 	fmt.Fprintf(c.Stdout, "CONFIG PRICES source=%s as_of=%s routes=%d set=%d same=%d missing=%d judgments=%d stale=%d\n",
 		list.URL, today, len(plan), set, same, missing, judgments, stale)
+	if c.Given("as") {
+		fmt.Fprintln(c.Stdout, "NOTE --as is --actor")
+	}
 	return tool.Exit(code)
 }
 

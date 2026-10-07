@@ -34,7 +34,7 @@ func TestTheReasonFlagIsRecordedOnEveryWriteAndShownByHistory(t *testing.T) {
 	require.Equal(t, 0, code)
 	assert.Contains(t, out, `reason=the\x20only\x2064-core\x20box\x20left`, "the add's reason")
 	assert.Contains(t, out, `reason=resting\x20for\x20the\x20measured\x20load`, "the set's reason")
-	code, out, errs = h.run(t, "machine", "remove", "box", "--as", "rowan", "--reason", "returned to the pool")
+	code, out, errs = h.run(t, "machine", "remove", "box", "--actor", "rowan", "--reason", "returned to the pool")
 	require.Equal(t, 0, code, errs)
 	assert.Equal(t, "CONFIG REMOVE kind=machine name=box rev=3\n", out)
 	code, out, _ = h.run(t, "machine", "history", "box")

@@ -29,8 +29,8 @@ cmd/nova-table/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: no
 cmd/nova-table/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-table show demo
 cmd/nova-table/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-table render demo
 cmd/nova-config/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-config migrate --file try.json
-cmd/nova-config/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-config machine add m1 --user nova --seat s1 --slots 8 --width 4 --as a1 --file try.json
-cmd/nova-config/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-config machine set m1 --width 6 --as a1 --file try.json
+cmd/nova-config/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-config machine add m1 --user nova --seat s1 --slots 8 --width 4 --actor a1 --file try.json
+cmd/nova-config/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-config machine set m1 --width 6 --actor a1 --file try.json
 cmd/nova-config/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-config machine list --file try.json
 cmd/nova-config/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-config machine history m1 --file try.json
 cmd/nova-secrets/seat_inject_functional_test.go:TestTheHelpExampleIsWhatSeatInjectPrints example: nova-secrets seat inject --store ./secrets --as bo --from ada --only NOVA_REDIS_BENCH_PASSWORD --key ~/.config/nova-secrets/ada.key --sops /opt/homebrew/bin/sops --no-pr

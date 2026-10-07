@@ -210,7 +210,10 @@ func runKindWrite(ctx context.Context, k *config.Kind, add bool, args []string, 
 	var notes []string
 	if add && k.Name == config.KindMachine && row.Fields["width"] == "" {
 		// width is set apart from slots and is the default when unset: say so where a newcomer meets it
-		notes = append(notes, fmt.Sprintf("machine=%s width=default: a sprint member at half its cores, as nova-sprint fleet sync reads them from its beat; its width is set apart from its slots; run: %s machine set %s --width <n> (0: no member) --as %s%s", config.Value(name), toolName, name, actor, c.again()))
+		notes = append(notes, fmt.Sprintf("machine=%s width=default: a sprint member at half its cores, as nova-sprint fleet sync reads them from its beat; its width is set apart from its slots; run: %s machine set %s --width <n> (0: no member) --actor %s%s", config.Value(name), toolName, name, actor, c.again()))
+	}
+	if note := actorAliasNote(fs); note != "" {
+		notes = append(notes, note)
 	}
 	var id int64
 	var changed []string
@@ -426,10 +429,16 @@ func runKindRemove(ctx context.Context, k *config.Kind, args []string, stdout, s
 	}
 	if *asJSON {
 		o := tool.Done().Fact("op", config.OpRemove).Fact("kind", k.Name).Fact("name", name).Fact("rev", id)
+		if note := actorAliasNote(fs); note != "" {
+			o.Note(note)
+		}
 		o.Verb = verb
 		return emit(stdout, o)
 	}
 	fmt.Fprintf(stdout, "CONFIG REMOVE kind=%s name=%s rev=%d\n", k.Name, config.Value(name), id)
+	if note := actorAliasNote(fs); note != "" {
+		printNotes(stdout, []string{note})
+	}
 	return 0
 }
 
