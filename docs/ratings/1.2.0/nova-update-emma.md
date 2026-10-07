@@ -1,0 +1,61 @@
+# nova-update READ and USE rating, nova-tools 1.2.0
+
+Rater: deepseek-v4.1-flash in opencode, a sprint worker given a friend's re-rate card; the card's friend is not this rater's model
+Build: a65b5cba44ab
+READ: 7/10
+USE: 7/10
+
+Question: is this a good tool for an AI to use?
+
+## Reasons
+
+READ. `nova-update help`, every verb's `-h`, `help release`, every release verb's `-h` and docs/SPEC-UPDATE.md were read cold. The banner answers what the tool does in one line, how it works in five lines that name the manifest and the two binaries, and a `first run:` block the binary alone can run. The manifest is stated once as six numbered rules with the example byte for byte, and the exit-code paragraph is the same in every help. Each manifest verb's `-h` quotes its usage line from help, names its effect class (inspection, local write, delivery) and lists its flags with what each wants. That is findable in a minute. What holds it from 10 is that the texts still disagree with the binary and with each other. The banner says "check and report compare the two" (internal/update/cli.go:165) while `report -h` and the spec (docs/SPEC-UPDATE.md:19) say report reads the installed side only. Help, docs/CLI.md:1904 and the grammar at docs/SPEC-UPDATE.md:621 all say a first line is OK, FAIL or REFUSED, and the binary prints FAILED (internal/update/out.go:30). The spec opens "One tool, three verbs" (docs/SPEC-UPDATE.md:6) and then lists four bullets, and still says "five usage lines" (:415) and "Five verbs" (:440) for six release verbs. The top usage line names five release verbs (internal/update/cli.go:146) while `help release` prints a sixth, `cycle`. And the release help remains a wall: each verb's `-h` and `help release` repeat multi-hundred-character paragraphs on the dogfood gate, the journey gate and remote path rules that a reader checking their own tools never needs.
+
+USE. Cold, on a Linux bench, in a scratch directory with a scratch PATH: no live store, no server, no bus, no forge, and no process started that a real run would not. The first run worked as printed: `example --out versions.tsv` exit 0 and named the next command, a second run said `unchanged=true` and never overwrote, `report` exit 0 with the installed identity and `status` exit 0 EQUAL. The real job, on a toy manifest of a local tool with a local latest: `check` exit 1 with `CHECK STALE ... installed=1.0.0 latest=1.2.0`, `apply toy --dry-run` exit 0 with `APPLY PLAN` and "nothing installed, nothing written", `apply toy` exit 0 with `APPLY BEFORE`, `APPLY RUN` (the resolved argv) and `APPLY AFTER installed=1.2.0`, and the next `status` exit 0 EQUAL. `apply --version 2.0.0` installed past latest and the next `status` said NEWER, exit 1, as the exit table promises. `report --snapshot` printed `changed=yes` then `changed=no` and left its `.lock` file; `report --draft` printed a note. About a dozen refusals were provoked — no verb, an unknown verb (names the nine), an unknown flag (lists the flags), missing `--file`, `--max -1`, `report --send` without `--to`, a manifest with three problems (all three named at once, each with its line and remedy, then one `run:` line), a name the file lacks (lists its entries), `release install --dry-run` (unknown flag) and an unversioned `--version` — and every one named the fault and the next command at exit 2.
+
+The score is held at 7 by things met in use. The example manifest's own `apply` cannot move the read: `go install golang.org/dl/go{version}@latest` installs a `go<v>` wrapper and never changes what `go version` reads, and with `local:go version` on both sides it is EQUAL anyway, so the documented first-run apply is a no-op with a 5s default `--timeout` (internal/update/example.go:20, internal/update/cli.go:406). A pin written the way the help suggests (`local:go version`) answers `installed=version latest=version`, EQUAL, exit 0 — a green that is not true. `watch` splits one pass across two streams, so a caller reading stdout sees `ADOPT OK` and loses `ADOPT REFUSED`, `ADOPT ESCALATE` and `ADOPT DONE`, and ESCALATE claims a duty files an issue while `watch -h` says this tool files nothing. The documented word FAIL is never printed; the binary prints FAILED. `apply --version` prints `latest=` as the asked target under a source whose answer is different. A 10 needs an example whose apply can succeed (or an apply of none), a pin read that refuses a non-version token, one stream for a watch pass, one spelling of FAIL, the release surface and the release help stated once without the wall, and `latest=` and `target=` told apart.
+
+Not tried, because each needs a live service, a forge or a real fleet: `report --store`, `report --send`, `watch --as --to`, `release cut`, `adopt`, `pull`, `cycle`, `release build` and every network latest source (github:, npm:, brew:, ollama:). `release` beyond `install` is judged from its help.
+
+## Findings
+| # | where | finding | fix | size |
+|---|---|---|---|---|
+| 1 | internal/update/out.go:30 | first lines print FAILED; the help (internal/update/cli.go:199), docs/CLI.md:1904 and the spec grammar (docs/SPEC-UPDATE.md:621) all say FAIL, so a caller parsing the documented word misses every failure line | one spelling across binary, help, CLI and spec, held by a test | S |
+| 2 | internal/update/cli.go:165 | the banner says "check and report compare the two"; `report -h` and docs/SPEC-UPDATE.md:19 say report reads the installed side only, no latest, no network | say check and status compare; report prints what this box runs | S |
+| 3 | internal/update/example.go:20 | the example's apply `go install golang.org/dl/go{version}@latest` installs a `go<v>` wrapper and never changes what `go version` reads, and with `local:go version` on both sides it is EQUAL anyway, so the first-run example's apply cannot move the read | make the example's apply `none` and say so, or ship an example whose apply moves the installed read | S |
+| 4 | internal/update/cli.go:406 | apply inherits the 5s default `--timeout` for the install command itself (the general default is stated at internal/update/cli.go:196 while apply -h says "such as 5m for a slow installer"), and a timed-out install prints FAILED with no remedy on the line | give apply its own default in minutes, and print `pass --timeout <d>` on a timeout FAIL | S |
+| 5 | `nova-update status --file pin.tsv --kind pin` | a pin whose installed and latest columns are the help's own `local:go version` reads the line's second token, so it reports installed=version latest=version, counts the entry current and exits 0 — a green that is not true | refuse a pin read when no token is version-shaped, naming the two-token shape | M |
+| 6 | internal/update/adopt.go:148 | watch splits one pass across stdout and stderr (ADOPT OK on stdout; ADOPT REFUSED, ESCALATE and DONE on stderr) and takes no `--json`, and ESCALATE says "duty files an issue and a fix card" while `watch -h` says this tool files nothing | keep every ADOPT line of a pass on one stream (or add a `--json` receipt), and say who answers rather than that something was filed | M |
+| 7 | internal/release/cli.go:233 | every release verb's `--version` help says "such as 1.2.0"; `release install` and `release cut` refuse exactly that spelling as not v-prefixed | say "such as v1.2.0" | S |
+| 8 | internal/release/cli.go:24 | `release install` is the only verb that writes the live bin directory and it has no `effect:` line and no `--dry-run`; `release install --dry-run` is refused as an unknown flag, so its only preview is running it | add the effect line and a `--dry-run` that prints the install plan, as cut's does | M |
+| 9 | internal/update/cli.go:146 | the top usage line names five release verbs (cut, build, install, adopt, pull) while `help release` lists six with cycle | name cycle in the usage line, or point the reader to `nova-update help release` | S |
+| 10 | docs/SPEC-UPDATE.md:6 | "One tool, three verbs", then four verb bullets; :415 says "five usage lines" and :440 "Five verbs" for six release verbs | open with the verbs that exist, and count six | S |
+| 11 | internal/update/cli.go:702 | `APPLY BEFORE` (and the dry-run item at internal/update/cli.go:733) prints `latest=` as the asked `--version` (2.0.0) while the entry's source answered 1.2.0 | print `latest=` as the source's answer and `target=` separately | S |
+| 12 | internal/update/report.go:91 | a `--draft` with no `--host` composes the subject "versions on - at <stamp>" | leave the host out of the subject when none is given | S |
+| 13 | internal/release/install.go:352 | install's success line opens `RELEASE INSTALLED` while its refusals open `INSTALL REFUSED` (internal/release/cli.go:173) and its step failures `INSTALL FAILED` (internal/release/install.go:267); the first token is not one name | one first token per verb, as the manifest verbs have | S |
+| 14 | `nova-update adoption -h` | the help lists the ledger's five fields but never the state vocabulary; a caller learns the eight states only from the refusal for a wrong one | enumerate the accepted states in the flags block of `nova-update adoption -h` | S |
+| 15 | docs/SPEC-UPDATE.md:23 | "this estate's first tool", "The estate runs it nightly" and a release pipeline written for one estate's coordinator and fleet describe an estate a stranger does not have | describe what the tool does now and move the release pipeline to its own spec | M |
+| 16 | internal/release/cli.go:120 | `help release` and each release verb's `-h` repeat multi-hundred-character paragraphs on the dogfood gate, the journey gate and remote path rules, so the usage line a reader wants sits under a wall of policy | keep the usage line, the flags and the exit table, and move the policy to docs/SPEC-RELEASE.md | M |
+
+## Good, keep
+
+Every refusal names every problem of an invocation at once, each with its line and remedy, then one `run:` line; a three-problem manifest was fixed from one answer (internal/update/cli.go:65).
+The local apply loop: `BEFORE`, `RUN` with the resolved argv, `AFTER` re-read against the target, and `--dry-run` showing the same command and starting nothing (internal/update/cli.go:690).
+`example --out` writes the first-run manifest from the binary alone, never overwrites another file, and says `unchanged=true` on a rerun.
+One `--json` envelope (result, facts, items) on every manifest verb, and every verb's `-h` quoting its usage line from help and naming its effect class.
+
+## Compared with earlier ratings
+| earlier | now | evidence |
+|---|---|---|
+| READ 6.5/10 at 1.1.0 (docs/ratings/1.1.0/update-read.md) and READ 7/10 at 1.2.0 (the two earlier 1.2.0 re-rates in this directory) | SAME, 7 | per-verb `-h` still quote usage and name the effect class; the banner, FAIL and spec-count defects remain |
+| USE 8/10 at 1.1.0 (docs/ratings/1.1.0/update-use.md) and USE 7/10 at 1.2.0 (the two earlier 1.2.0 re-rates in this directory) | SAME, 7 | the local upgrade completes and rechecks; the pin lie, the watch split and the example's dead apply remain |
+| banner says check and report compare | STILL THERE | internal/update/cli.go:165 |
+| a pin through the help's own `local:go version` reports latest=version | STILL THERE | `status --file pin.tsv` prints installed=version latest=version, EQUAL, exit 0 |
+| release verbs refuse the help's example version | STILL THERE | internal/release/cli.go:233 says "such as 1.2.0"; install refuses 1.2.0 |
+| a refused check splits a watch pass across streams | STILL THERE | ADOPT OK on stdout; ADOPT REFUSED, ESCALATE and DONE on stderr, exit 1 |
+| FAILED against the documented FAIL | STILL THERE | internal/update/out.go:30 |
+| `release install -h` has no effect line and no `--dry-run` | STILL THERE | release install --dry-run refused as an unknown flag |
+| "One tool, three verbs" | STILL THERE | docs/SPEC-UPDATE.md:6 |
+| the example's apply cannot move the installed read | STILL THERE | internal/update/example.go:20 |
+| adoption -h never names the state vocabulary | CHANGED | the refusal for a wrong state now lists all eight; the -h still does not |
+| the local fake upgrade completes and rechecks | STILL THERE | APPLY OK from=1.0.0 to=1.2.0, AFTER installed=1.2.0, exit 0 |
