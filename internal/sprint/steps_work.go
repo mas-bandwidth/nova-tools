@@ -186,12 +186,35 @@ func Add(s *Snapshot, r AddReq) Plan {
 		p.Places = append(p.Places, pl)
 	}
 	var head []Change
+	// stopN is the highest stop sentinel this add names (add --sentinel
+	// <stream>-stop-<n>): the stream records it, so its row reads closed once
+	// its stop lands (FieldStop, StreamStateTextClosed).
+	stopN := 0
+	for i, id := range ids {
+		isSent := r.Sentinel || (len(r.Cards) > 0 && i < len(r.Cards) && r.Cards[i].Sentinel)
+		if isSent && IsStopSentinel(id, r.Stream) && StopNumber(id) > stopN {
+			stopN = StopNumber(id)
+		}
+	}
 	switch {
 	case ctl == nil:
-		head = append(head, change(Merge, createEntry(CtlID(r.Stream), r.Stream, Ctl, 0,
-			map[string]string{"kind": "stream", "state": StreamWaiting, "since": stamp(s.Now)})))
+		create := map[string]string{"kind": "stream", "state": StreamWaiting, "since": stamp(s.Now)}
+		if stopN > 0 {
+			create[FieldStop] = itoa(stopN)
+		}
+		head = append(head, change(Merge, createEntry(CtlID(r.Stream), r.Stream, Ctl, 0, create)))
 	case ctl.F("state") == StreamLanded:
-		head = append(head, change(Merge, setEntry(ctl, map[string]string{"state": StreamWaiting, "since": stamp(s.Now)})))
+		// the stream's stop landed: it is closed, and the add reopens it
+		// (the sentinel itself is placed after the cards, below)
+		set := map[string]string{"state": StreamWaiting, "since": stamp(s.Now)}
+		if id, _, err := StreamReopen(s, StreamReopenReq{Stream: r.Stream, Who: r.Who}); err == nil {
+			set[FieldStop] = itoa(StopNumber(id))
+		} else if stopN > ctl.Int(FieldStop) {
+			set[FieldStop] = itoa(stopN)
+		}
+		head = append(head, change(Merge, setEntry(ctl, set)))
+	case stopN > 0:
+		head = append(head, change(Merge, setEntry(ctl, map[string]string{FieldStop: itoa(max(ctl.Int(FieldStop), stopN))})))
 	}
 	adding := map[string]bool{}
 	for _, id := range ids {
@@ -338,6 +361,30 @@ func Add(s *Snapshot, r AddReq) Plan {
 			lastGate = id
 		}
 		in = append(in, a)
+	}
+	// A card admitted to a stream whose stop landed reopens it: one new stop
+	// sentinel <stream>-stop-<n>, placed after every card this add admits, so
+	// the stream works again and the lander never refuses a landing it dealt
+	// (StreamReopen, docs/SPEC-SPRINT.md section 16).
+	if ctl != nil && ctl.F("state") == StreamLanded {
+		primaries := 0
+		for _, a := range in {
+			if !a.sent && !a.gate {
+				primaries++
+			}
+		}
+		if primaries > 0 {
+			if id, said, err := StreamReopen(s, StreamReopenReq{Stream: r.Stream, Who: r.Who}); err == nil {
+				p.Said = append(p.Said, said)
+				last := 0.0
+				for _, a := range in {
+					if a.score > last {
+						last = a.score
+					}
+				}
+				in = append(in, admit{id: id, score: last + 1, sent: true})
+			}
+		}
 	}
 	// Every card admitted records its repository and base on its stream's control
 	// card: the union of what the stream already records and this add's briefs, so a

@@ -231,13 +231,14 @@ func StreamHeld(s *Snapshot, stream string) bool {
 }
 
 // StreamStateText is a stream's state cell: held while the coordinator holds it and it
-// is not stopped (a stop is the merge's, and says more), else its control card's state
+// is not stopped (a stop is the merge's, and says more), else its control card's state,
+// which a stream whose stop landed shows as closed (StreamStateTextClosed, section 16)
 // (docs/SPEC-SPRINT.md section 11, hold).
 func StreamStateText(fields map[string]string) string {
 	if fields[FieldHeld] != "" && fields["state"] != StreamStopped {
 		return Held
 	}
-	return fields["state"]
+	return StreamStateTextClosed(fields)
 }
 
 // HeldToFinish says a member's hold lets its working cards finish (hold with no

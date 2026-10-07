@@ -6720,6 +6720,23 @@ up) stays ready when a sentinel is inserted in front of it: it has started,
 and is past the stop; check's bijection rule holds that the primary of a withdrawn card
 is ready.
 
+A stop sentinel that lands closes the stream: its control card's state goes to
+landed, and `where` and `streams` show the row as `closed`, never `landed`, while
+the stop is what ended it (`StreamStateTextClosed`, `StreamLandedWithOpen`). A
+card admitted to a closed stream reopens it: the add makes a new stop sentinel
+`<stream>-stop-<n>`, numbered after the highest the stream recorded, places it
+after the card, sets the stream's state back to waiting, and says one NOTE line,
+`STREAM REOPENED <stream> stop=<id>`. So a stream never admits a card into a
+closed stream silently, and never refuses a landing it dealt.
+
+A lander whose push succeeded and whose report the store did not take is a
+lander fault. It writes its line with the store's reason text and marks each card
+of the batch `pushed-unreported <sha>` on its merge card and its timeline
+(`sprint.MarkPushedUnreported`): the merge is on the base and the report is the
+only step left. The next `land` on that stream records a marked card first, with
+no build and no push (`IsPushedUnreported`, `PushedUnreportedID`), before any new
+merge.
+
 A sentinel is the one `wait` kind of [SPEC-ISA.md](SPEC-ISA.md): with a held
 card (`add --held`) and the wave behind a held sentinel it is one wait, read by
 `sprint.WaitOf` (`internal/sprint/held.go`); only the operand differs, a

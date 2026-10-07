@@ -228,8 +228,13 @@ func mergeStep(s *Snapshot, r MergeReq) Plan {
 		p.refuse(r.Stream, "stopped ("+ctl.F("cause")+"); run: nova-sprint resume --stream "+r.Stream)
 		return p
 	case StreamLanded:
-		p.refuse(r.Stream, "landed")
-		return p
+		// a stream never refuses a landing it dealt: a card admitted after its
+		// stop landed (or a merge it pushed whose report did not go through) is
+		// recorded, and the stream reopens (docs/SPEC-SPRINT.md section 16)
+		if s.Merge.Count(r.Stream, Queued)+s.Merge.Count(r.Stream, Stuck) == 0 {
+			p.refuse(r.Stream, "landed: its stop sentinel landed and the stream holds no card to report")
+			return p
+		}
 	}
 	if r.BaseRed != "" || r.BaseRefused != "" {
 		return baseGateStep(p, s, ctl, r)
@@ -430,6 +435,10 @@ func mergeStep(s *Snapshot, r MergeReq) Plan {
 		switch {
 		case streamDone(s, r.Stream, len(landing)):
 			ctlSet["state"], ctlSet["since"] = StreamLanded, now
+		case state == StreamLanded:
+			// the stream was closed and this report is a card admitted after
+			// its stop: it works again (StreamReopen)
+			ctlSet["state"], ctlSet["since"] = StreamWaiting, now
 		case s.Merge.Count(r.Stream, Queued)+s.Merge.Count(r.Stream, Stuck) == len(landing):
 			// The last queued card lands and the stream is not done: nothing
 			// is queued or stuck, so the stream is waiting.

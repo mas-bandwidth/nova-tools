@@ -274,6 +274,10 @@ type landCard struct {
 	// result is the finished work card's recorded result (claimText), empty when the
 	// sprint holds none. checkEmptyCommit reads it as the attempt's RESULT.md.
 	result string
+	// pushed is the sha of a merge this card's batch already pushed and the store did
+	// not record (sprint.FieldPushedUnreported): the next pass records it without
+	// merging again, before any new merge (sprint.MarkPushedUnreported).
+	pushed string
 }
 
 // pin is the card as the report's guard and the operation's arguments name
@@ -619,6 +623,9 @@ func (l *lander) stream(ctx context.Context, s *sprint.Snapshot, stream string) 
 	var cards []landCard
 	for _, c := range queue {
 		lc := landCard{id: c.ID, base: l.base}
+		if mark := c.F(sprint.FieldPushedUnreported); sprint.IsPushedUnreported(mark) {
+			lc.pushed = sprint.PushedUnreportedID(mark)
+		}
 		if pr := s.Work.Placed(c.ID); pr != nil {
 			lc.head, lc.attempt, lc.primary = pr.F("head"), pr.F("attempt"), pr
 			cb := swarm.ReadCardBase([]byte(pr.F("brief")))
@@ -648,6 +655,28 @@ func (l *lander) stream(ctx context.Context, s *sprint.Snapshot, stream string) 
 		}
 		cards = append(cards, lc)
 	}
+	// a merge this batch pushed and the store did not record is recorded first,
+	// with no merge: the report is the only step left (docs/SPEC-SPRINT.md
+	// section 7, land-record-unreported-push-bc.w2)
+	var pushed, fresh []landCard
+	for _, c := range cards {
+		if c.pushed != "" {
+			pushed = append(pushed, c)
+		} else {
+			fresh = append(fresh, c)
+		}
+	}
+	for len(pushed) > 0 {
+		n := 1
+		for n < len(pushed) && pushed[n].repo == pushed[0].repo && pushed[n].base == pushed[0].base && pushed[n].pushed == pushed[0].pushed {
+			n++
+		}
+		if !l.recordPushed(ctx, stream, pushed[:n], pushed[0].pushed) {
+			return false
+		}
+		pushed = pushed[n:]
+	}
+	cards = fresh
 	for len(cards) > 0 {
 		n := 1
 		for n < len(cards) && cards[n].repo == cards[0].repo && cards[n].base == cards[0].base {
@@ -1166,8 +1195,10 @@ func (l *lander) landed(b landBatch, stream string, pins []landCard) bool {
 		since(&b.Times.Report, start)
 	}
 	if code := stepExit(res, err); code != 0 || !movedExactly(res.Moved, ids) {
+		mark := sprint.PushedUnreportedPrefix + b.Tip
+		l.markPushed(stream, pins, b.Tip)
 		b.Status, b.Reason = "failed", "the batch was pushed to "+b.Base+" at "+b.Tip+" and NOT reported ("+stepWhy(res, err)+
-			"); "+againRemedy(stream)
+			"); the cards are marked "+mark+", so the next pass records them without merging again; "+againRemedy(stream)
 		l.keep(b)
 		return false
 	}
@@ -1185,6 +1216,53 @@ func (l *lander) landed(b landBatch, stream string, pins []landCard) bool {
 	// its diffs are scored after the whole pass (landscore.go): a score never holds a landing
 	l.toScore = append(l.toScore, scoreJob{at: len(l.out) - 1, stream: stream, pins: pins})
 	return true
+}
+
+// markPushed writes a pushed-unreported mark on each card of a batch whose
+// report the store did not take (sprint.MarkPushedUnreported): the merge is on
+// the base and the report is the only step left, so the next pass reads the
+// mark and records it without merging again. A mark that does not land fails
+// no landing: the batch's own line already names the push and its reason.
+func (l *lander) markPushed(stream string, pins []landCard, sha string) {
+	ids := make([]string, len(pins))
+	heads := make([]string, len(pins))
+	for i, c := range pins {
+		ids[i], heads[i] = c.id, c.head
+	}
+	r := sprint.PushedUnreportedReq{Stream: stream, Cards: ids, Heads: heads, Sha: sha, Who: l.c.actor}
+	step := store.Step{Verb: "merge pushed-unreported", Args: store.ArgsOf(r), Load: []string{sprint.Merge, sprint.Work},
+		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.MarkPushedUnreported(s, r) }}
+	epoch := l.epoch
+	step.Epoch = &epoch
+	if l.c.op != "" {
+		step.CallerOp = l.c.op + "." + stream + "." + step.Args
+	}
+	l.a.serial.Lock()
+	defer l.a.serial.Unlock()
+	_, _ = l.st.Run(context.Background(), step) // ignored: the batch's line already names the push; the mark is best effort
+}
+
+// recordPushed reports a batch whose merge a previous pass pushed and marked
+// (sprint.FieldPushedUnreported), with no build and no push: the report is the
+// only step left. false when the store did not take it, as a failed report.
+func (l *lander) recordPushed(ctx context.Context, stream string, pins []landCard, sha string) bool {
+	if len(pins) == 0 {
+		return true
+	}
+	b := landBatch{Stream: stream, Status: "refused", Repo: pins[0].repo, Base: pins[0].base, Tip: sha}
+	if l.dry {
+		b.Status, b.Reason = "ok", "would record the pushed merge of "+strconv.Itoa(len(pins))+" cards"
+		l.keep(b)
+		return true
+	}
+	dir, why := l.clone(ctx, b.Repo)
+	if why != "" {
+		b.Reason = why
+		l.keep(b)
+		return false
+	}
+	b.Dir = dir
+	return l.landed(b, stream, pins)
 }
 
 // movedExactly says the step's moved lines are the landings of ids, each once and no

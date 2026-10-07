@@ -32,12 +32,15 @@ type StreamCard struct {
 }
 
 // StreamRow is one stream in a streams listing: the repositories and bases its cards
-// record, its release, its open and landed counts, and its cards when asked.
+// record, its release, its state, its open and landed counts, and its cards when asked.
+// State is closed when its stop landed and a card of it is still open, and the control
+// card's own state otherwise (StreamStateTextClosed, docs/SPEC-SPRINT.md section 16).
 type StreamRow struct {
 	Stream  string       `json:"stream"`
 	Repos   []string     `json:"repos"`
 	Bases   []string     `json:"bases"`
 	Release string       `json:"release,omitempty"`
+	State   string       `json:"state,omitempty"`
 	Open    int          `json:"open"`
 	Landed  int          `json:"landed"`
 	Cards   []StreamCard `json:"cards,omitempty"`
@@ -133,14 +136,18 @@ func StreamsOf(s *Snapshot, r StreamsReq) StreamsView {
 		if len(r.Repos) > 0 && !anyRepo(r.Repos, repos) {
 			continue
 		}
-		var release string
+		var release, state string
 		if ctl := s.StreamCtl(stream); ctl != nil {
 			release = ctl.F(FieldRelease)
+			state = StreamStateTextClosed(ctl.Fields)
+		}
+		if StreamLandedWithOpen(s, stream) {
+			state = StreamClosed // a landed stop with an open card, whatever the record says
 		}
 		if r.Release != "" && release != r.Release {
 			continue
 		}
-		row := StreamRow{Stream: stream, Repos: repos, Bases: StreamBasesOf(s, stream), Release: release}
+		row := StreamRow{Stream: stream, Repos: repos, Bases: StreamBasesOf(s, stream), Release: release, State: state}
 		for _, col := range States {
 			for _, c := range s.Work.Cell(stream, col) {
 				if IsOpen(col) {
