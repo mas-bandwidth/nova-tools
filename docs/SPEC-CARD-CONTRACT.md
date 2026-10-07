@@ -617,12 +617,12 @@ here instead, once, versioned, and a brief names it in one line.
   dead-code ledger cards, six findings cards, four help cards), the long form against the brief
   by reference, and the contract a lane reads once beside it:
 
-    MEASURE briefs=20 full_bytes=103291 full_tokens=25831 ref_bytes=25463 ref_tokens=6373 contract_bytes=4048 contract_tokens=1012
+    MEASURE briefs=20 full_bytes=103291 full_tokens=25831 ref_bytes=25463 ref_tokens=6373 contract_bytes=4225 contract_tokens=1057
 
   A brief by reference weighs about a quarter of the long form (6,373 tokens against 25,831 over
-  the 20, 319 against 1,292 a brief). The contract is 1,012 tokens: a session that reads it once for
-  all 20 briefs reads 7,385 tokens against 25,831; a session that reads it afresh for one brief
-  reads 1,331 against 1,292, so the saving is in every brief read past the first in a session.
+  the 20, 319 against 1,292 a brief). The contract is 1,057 tokens: a session that reads it once for
+  all 20 briefs reads 7,430 tokens against 25,831; a session that reads it afresh for one brief
+  reads 1,376 against 1,292, so the saving is in every brief read past the first in a session.
 
 <!-- contract v1 -->
 You are a child of the coordinator: one task, one staged checkout, one branch, unattended. The card is the whole task: its header lines above and this contract, read once. Read $JOB/JOB.md first. Start at the current BASE tip; admission inspected the base whose sha line 1 names. Verify the defect still exists before editing; if already fixed report not-done with exact evidence rather than duplicate work. One change, one test that is red before and green after.
@@ -676,7 +676,7 @@ STEP 2. Make it red first, as the task says, with the test the TEST line names: 
 STEP 3. Make it pass in the files this card names, and only those. Commit the draft on your own branch as soon as the test is green, before any further probe; a later commit may refine it. A change any other file needs goes in the report as a proposed diff, never a commit.
 STEP 4. Run the gate: go test -count=1 -timeout 600s on the package the TEST line names and on ./internal/ci/ (one run when they are the same), and read the last line of each. Run gofmt -l on every changed Go file; it must print nothing. Where the STOP line names a model gate, run it as part of this step. When a test fails, name its file and say whether that file was changed by your work (yours) or is unchanged (already red at BASE: run the same test on the unchanged base to say so), and report that line first.
 STEP 5. Commit on your own branch with the trailer. Nothing reaches the forge from inside the wall: in the job the git shim records a push, the pull request is the finish JOB.md names (STEP 6), and the member makes both, against the card's BASE, from outside the wall when the card finishes. The pull request body states the diff stat, what was deleted, the tests with what each pins, and what was not done.
-STEP 6. End as JOB.md says (docs/SPEC-CARD-CONTRACT.md): where JOB.md ends the card with its pull request, that is the end and there is nothing else to write, the gate's lines in the pull request body; where it asks for RESULT.md, write it in JOB.md's shape (head, branch, verdict, gate, output, report).
+STEP 6. End as JOB.md says (docs/SPEC-CARD-CONTRACT.md): where JOB.md ends the card with its pull request, that is the end and there is nothing else to write, the gate's lines in the pull request body; where it asks for RESULT.md, write it in JOB.md's shape (head, branch, verdict, gate, output, report). For a friend's REPORT.md (docs/FRIENDS.md), first line exactly Verdict: LAND|HOLD|FAIL, second line exactly Head: <40-hex>; for HOLD and FAIL omit Head: and leave line 2 blank.
 
 AS A READ
 A By: trailer is judged only for being present and true: it names the worker who pushed the branch under read, whoever was preferred for the card. A trailer naming another friend than a WHO line or an earlier brief expected is no finding, and attribution alone never decides a verdict; read the change against the task, its test and its PATHS.

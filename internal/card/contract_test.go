@@ -145,7 +145,7 @@ func TestTheHeldContractIsTheDocsBlock(t *testing.T) {
 	t.Parallel()
 	doc, err := os.ReadFile("../../" + cardgen.ContractPath)
 	require.NoError(t, err)
-	for version, digest := range map[string]string{"v1": "1454b189c47367bfe17f9b4ce33618797457a8a5f732842210d3fcf145f8491a", "v2": "2191b69808375d374cc8cff2842e15f58903dc010d1cceb041a31d3f425b41bd"} {
+	for version, digest := range map[string]string{"v1": "1454b189c47367bfe17f9b4ce33618797457a8a5f732842210d3fcf145f8491a", "v2": "909a085975d3dd7869b11037433476fb89931e61282aa7ecc0b1091a4dc46887"} {
 		text, err := cardgen.ContractText(doc, version)
 		require.NoError(t, err)
 		held, ok := cardgen.HeldContract(version)

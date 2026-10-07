@@ -185,6 +185,8 @@ func TestAStagedBriefSignsTheWorkersOwnName(t *testing.T) {
 	rules, err := swarm.HeldRules(swarm.OwnRulesName(cardgen.Render(h, c), ""))
 	require.NoError(t, err)
 	staged := swarm.StagedBrief(cardgen.Render(h, c)+"WHO: friend ada\n", rules)
+	staged, why := cardgen.AsRead(staged)
+	require.Empty(t, why)
 
 	assert.Contains(t, staged, "\nWHO: friend ada\n", "the pin is the deal's and stays")
 	assert.Empty(t, Lint(c.ID, staged, opts), "no line names the pinned friend as the author")

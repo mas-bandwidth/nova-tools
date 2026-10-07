@@ -416,6 +416,9 @@ func TestAGeneratedCardNamesNoStaleGoCacheLine(t *testing.T) {
 	cards["remedy-step-go-clean"] = swarm.ChildRemedy(rules, "step-go-clean")
 
 	for name, card := range cards {
+		read, why := AsRead(card)
+		require.Empty(t, why, name)
+		card = read
 		assert.Contains(t, card, swarm.GoCacheLine, name)
 		assert.Equal(t, 1, strings.Count(card, swarm.GoCacheLine), "%s: the one sentence, once", name)
 		assert.NotContains(t, card, "GOCACHE=", "%s: a child card assigns no GOCACHE of its own", name)
@@ -446,6 +449,8 @@ func TestAGeneratedCardNamesNoStaleGoCacheLine(t *testing.T) {
 func TestGeneratedBriefPinsTheFriendReportFirstTwoLines(t *testing.T) {
 	t.Parallel()
 	brief := Render(header, Card{ID: "shape", File: "internal/x/x.go", Paths: []string{"internal/x/x.go"}, Test: "internal/x TestX", Tier: "pro", Kind: "fix-red", Task: "Fix x."})
-	assert.Contains(t, brief, "first line exactly Verdict: LAND|HOLD|FAIL, second line exactly Head: <40-hex>")
-	assert.Contains(t, brief, "for HOLD and FAIL omit Head: and leave line 2 blank")
+	read, why := AsRead(brief)
+	require.Empty(t, why)
+	assert.Contains(t, read, "first line exactly Verdict: LAND|HOLD|FAIL, second line exactly Head: <40-hex>")
+	assert.Contains(t, read, "for HOLD and FAIL omit Head: and leave line 2 blank")
 }
