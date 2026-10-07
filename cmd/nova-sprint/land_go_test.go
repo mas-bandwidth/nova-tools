@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -27,10 +28,16 @@ func TestTreeGateWords(t *testing.T) {
 	assert.Equal(t, "GOFLAGS=-tags=custom -mod=readonly", readonlyGoFlags([]string{"GOFLAGS=-tags=custom -mod=mod"}))
 	assert.Equal(t, "GOFLAGS=-tags=custom -count=1 -mod=readonly",
 		readonlyGoFlags([]string{"GOFLAGS=-tags=custom", "PATH=/bin", "GOFLAGS=-count=1 -mod=vendor"}))
-	assert.Equal(t, [][]string{{"go", "build", "./..."}, {"go", "vet", "./..."}}, gateRuns(false, []string{"internal/docs"}))
-	assert.Equal(t, [][]string{{"go", "build", "./..."}, {"go", "vet", "./..."}}, gateRuns(true, nil))
-	assert.Equal(t, [][]string{{"go", "build", "./..."}, {"go", "vet", "./..."}, {"go", "test", "./internal/docs/", "./internal/ci/"}},
+	gofmt := []string{"gofmt", "-l", "."}
+	lint := []string{"go", "test", "-tags", "functional", "-count=1", "-run", "^(TestStaticcheckFindings|TestUncheckedErrors)$", "./internal/ci/"}
+	assert.Equal(t, [][]string{{"go", "build", "./..."}, {"go", "vet", "./..."}, gofmt}, gateRuns(false, []string{"internal/docs"}))
+	assert.Equal(t, [][]string{{"go", "build", "./..."}, {"go", "vet", "./..."}, gofmt}, gateRuns(true, nil))
+	assert.Equal(t, [][]string{{"go", "build", "./..."}, {"go", "vet", "./..."}, gofmt, {"go", "test", "./internal/docs/"}},
+		gateRuns(true, []string{"internal/docs"}), "no internal/ci, no linter class tests")
+	assert.Equal(t, [][]string{{"go", "build", "./..."}, {"go", "vet", "./..."}, gofmt, {"go", "test", "./internal/docs/", "./internal/ci/"}, lint},
 		gateRuns(true, []string{"internal/docs", "internal/ci"}))
+	assert.Equal(t, []string{"sh", "-c", gofmtScript}, gateArgv(gofmt), "gofmt runs as the toolchain's own, any output red")
+	assert.Equal(t, lint, gateArgv(lint))
 	for p, want := range map[string]bool{
 		"docs/CLI.md":            true,
 		"a/b_test.go":            true,
@@ -44,8 +51,16 @@ func TestTreeGateWords(t *testing.T) {
 	} {
 		assert.Equal(t, want, treeTested(p), p)
 	}
-	assert.Equal(t, "go vet ./...: exit status 1: # example.com/m | ./bad.go:5:2: Printf format %d has arg \"s\" of wrong type string",
+	assert.Equal(t, "vet, ./bad.go:5:2: Printf format %d has arg \"s\" of wrong type string; go vet ./...: exit status 1: # example.com/m | ./bad.go:5:2: Printf format %d has arg \"s\" of wrong type string",
 		gateWhy([]string{"go", "vet", "./..."}, errors.New("exit status 1"), "# example.com/m\n./bad.go:5:2: Printf format %d has arg \"s\" of wrong type string\n\n"))
+	assert.Equal(t, "gofmt, internal/x/y.go is not gofmt-clean; gofmt -l .: exit status 1: internal/x/y.go | z.go",
+		gateWhy(gofmt, errors.New("exit status 1"), "internal/x/y.go\nz.go\n"))
+	lintOut := "--- FAIL: TestUncheckedErrors (9.10s)\n    errcheck_class_test.go:78: internal/bus/timeout_test.go:54: defer server.Close(): internal/bus:unchecked (no row in testdata/errcheck)\nFAIL\n"
+	assert.True(t, strings.HasPrefix(gateWhy(lint, errors.New("exit status 1"), lintOut),
+		"errcheck, internal/bus/timeout_test.go:54: defer server.Close(): internal/bus:unchecked (no row in testdata/errcheck); go test -tags functional"))
+	assert.True(t, strings.HasPrefix(gateWhy(lint, errors.New("exit status 1"), strings.ReplaceAll(lintOut, "TestUncheckedErrors", "TestStaticcheckFindings")), "staticcheck, "))
+	assert.True(t, strings.HasPrefix(gateWhy([]string{"go", "test", "./internal/docs/"}, errors.New("exit status 1"), "--- FAIL: TestTree (0.00s)\n    docs_test.go:9: NOTES.md says BAD\nFAIL\n"),
+		"tree tests, NOTES.md says BAD; go test ./internal/docs/: "))
 	long := gateWhy([]string{"go", "build", "./..."}, errors.New("exit status 2"), strings.Repeat("x", 2000))
 	assert.Less(t, len(long), 1600, "the output is capped")
 }
@@ -84,9 +99,33 @@ func TestTree(t *testing.T) {
 `,
 }
 
+// lintModule stands in for the linter class tests on the base: internal/ci's functional
+// TestUncheckedErrors fails, as errcheck's ledger does, while the module holds
+// unchecked.go, an unchecked Close.
+var lintModule = map[string]string{
+	"internal/ci/ci.go": "package ci\n",
+	"internal/ci/errcheck_class_test.go": `//go:build functional
+
+package ci
+
+import (
+	"os"
+	"testing"
+)
+
+func TestUncheckedErrors(t *testing.T) {
+	if _, err := os.Stat("../../unchecked.go"); err == nil {
+		t.Error("unchecked.go:6: f.Close(): example.com/m:unchecked (no row in testdata/errcheck)")
+	}
+}
+`,
+}
+
 const (
-	vetRed   = "package main\n\nimport \"fmt\"\n\nfunc bad() { fmt.Printf(\"%d\", \"s\") }\n"
-	buildRed = "package main\n\nfunc broken( {\n"
+	uglyGo      = "package main\n\nfunc  ugly()  {}\n"
+	uncheckedGo = "package main\n\nimport \"os\"\n\nfunc unchecked(f *os.File) {\n\tf.Close()\n}\n"
+	vetRed      = "package main\n\nimport \"fmt\"\n\nfunc bad() { fmt.Printf(\"%d\", \"s\") }\n"
+	buildRed    = "package main\n\nfunc broken( {\n"
 )
 
 // Every tip of the batch branch passes the tree gate: a head whose merged tree fails the
@@ -105,17 +144,21 @@ func TestLandGatesEveryTipOfTheBatchBranch(t *testing.T) {
 		base_red      string // the base's finding, which refuses the batch; "" for a green base
 	}{
 		{"a vet failure", nil, map[string]string{"ok.go": "package main\n\nfunc ok() {}\n"}, map[string]string{"bad.go": vetRed},
-			`fails the tree gate: go vet ./...: exit status 1: bad.go:5:26: fmt.Printf format %d has arg "s" of wrong type string`, ""},
+			`fails the tree gate: vet, bad.go:5:26: fmt.Printf format %d has arg "s" of wrong type string; go vet ./...: exit status 1: bad.go:5:26: fmt.Printf format %d has arg "s" of wrong type string`, ""},
 		{"a build failure", nil, map[string]string{"ok.go": "package main\n\nfunc ok() {}\n"}, map[string]string{"bad.go": buildRed},
-			"fails the tree gate: go build ./...: exit status 1: # example.com/m | ./bad.go:3:14: syntax error:", ""},
+			"fails the tree gate: build, ./bad.go:3:14: syntax error: unexpected {", ""},
 		{"a document the tree tests refuse", nil, map[string]string{"ok.go": "package main\n\nfunc ok() {}\n"}, map[string]string{"NOTES.md": "BAD\n"},
-			"fails the tree gate: go test ./internal/docs/: exit status 1: ", ""},
+			"fails the tree gate: tree tests, NOTES.md says BAD; go test ./internal/docs/: exit status 1: ", ""},
 		{"a Go file the tree tests refuse", nil, map[string]string{"ok.go": "package main\n\nfunc ok() {}\n"}, map[string]string{"forbidden.go": "package main\n\nfunc forbidden() {}\n"},
-			"fails the tree gate: go test ./internal/docs/: exit status 1: ", ""},
+			"fails the tree gate: tree tests, forbidden.go is in the module; go test ./internal/docs/: exit status 1: ", ""},
+		{"an unformatted Go file", nil, map[string]string{"ok.go": "package main\n\nfunc ok() {}\n"}, map[string]string{"ugly.go": uglyGo},
+			"fails the tree gate: gofmt, ugly.go is not gofmt-clean; gofmt -l .: exit status 1: ugly.go", ""},
+		{"an unchecked error the linter class tests refuse", lintModule, map[string]string{"ok.go": "package main\n\nfunc ok() {}\n"}, map[string]string{"unchecked.go": uncheckedGo},
+			"fails the tree gate: errcheck, unchecked.go:6: f.Close(): example.com/m:unchecked (no row in testdata/errcheck); go test -tags functional -count=1 -run ^(TestStaticcheckFindings|TestUncheckedErrors)$ ./internal/ci/: exit status 1: ", ""},
 		{"a plain file the tree tests would refuse is not tested", nil, map[string]string{"forbidden.txt": "plain\n"}, map[string]string{"notes.txt": "more plain\n"},
 			"", ""},
 		{"a red base refuses the batch", map[string]string{"bad.go": vetRed}, map[string]string{"ok.go": "package main\n\nfunc ok() {}\n"}, map[string]string{"NOTES.md": "still fine\n"},
-			"", "reason=the base main fails the tree gate at its tip, so no head is merged onto it; fix the base, then run land again: go vet ./...: exit status 1: bad.go:5:26: fmt.Printf format %d"},
+			"", "reason=the base main fails the tree gate at its tip, so no head is merged onto it; fix the base, then run land again: vet, bad.go:5:26: fmt.Printf format %d"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -142,7 +185,11 @@ func TestLandGatesEveryTipOfTheBatchBranch(t *testing.T) {
 			case tc.why != "":
 				assert.Equal(t, 1, code, out+errs)
 				assert.Contains(t, errs, "LAND REFUSED stream=s1 cards=1 base=- tip=- ids=s1-2 fact=conflict reason=the head "+heads["s1-2"]+" of s1-2 "+tc.why)
-				assert.Equal(t, []string{"land s1-1 (sprint stream s1)", "the module", "base"}, r.mainLog())
+				log := []string{"land s1-1 (sprint stream s1)", "the module", "base"}
+				if tc.base != nil {
+					log = []string{"land s1-1 (sprint stream s1)", "the base's change", "the module", "base"}
+				}
+				assert.Equal(t, log, r.mainLog())
 				assert.Equal(t, map[string]string{"s1-1": "landed/merged", "s1-2": "merging/stuck"}, r.places("s1-1", "s1-2"))
 				assert.Equal(t, "", r.git(r.remote, "ls-tree", "main", "bad.go"), "the red head is off the batch branch")
 				assert.Empty(t, r.git(r.clone, "status", "--porcelain", "--untracked-files=all"), "the clone is clean")
@@ -217,4 +264,24 @@ func TestTreeGateBaseCache(t *testing.T) {
 	require.NoError(t, os.WriteFile(mainGo, []byte(goModule["main.go"]), 0o600))
 	again, _ := l.treeGateBase(context.Background(), dir, "base-2")
 	assert.Equal(t, why, again)
+}
+
+// On a bench the gofmt check is the same script as here: a tree gofmt lists a file in is
+// red, the run named and the file printed; a clean tree is green.
+func TestTheBenchGateRunsGofmtAsTheToolchainsOwn(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "ok.go"), []byte("package m\n"), 0o600))
+	runs := [][]string{{"true"}, gofmtRun}
+	cmd := exec.Command("sh", "-c", gateScript(runs))
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, string(out))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "ugly.go"), []byte(uglyGo), 0o600))
+	cmd = exec.Command("sh", "-c", gateScript(runs))
+	cmd.Dir = dir
+	out, err = cmd.CombinedOutput()
+	require.Error(t, err, string(out))
+	assert.Equal(t, gofmtRun, redRun(runs, string(out)))
+	assert.True(t, strings.HasPrefix(gateWhy(gofmtRun, err, strings.TrimPrefix(string(out), gateMark+"true\n"+gateMark+"gofmt -l .\n")), "gofmt, ugly.go is not gofmt-clean; "), string(out))
 }

@@ -9,9 +9,14 @@ package main
 // card's finding.
 //
 // The tree gate is what every tip of the batch branch passes before the next head is
-// merged: the module builds and vets (`go build ./...`, `go vet ./...`), and when a
-// head changes a Go file, a document, or testdata (.go, .md, testdata/), the packages
-// that test the tree itself (treeTests, where the clone has them) pass. The base's tip
+// merged, the checks of CI's lint job on the merged tree: the module builds and vets
+// (`go build ./...`, `go vet ./...`) and is gofmt-clean (`gofmt -l .` lists nothing),
+// and when a head changes a Go file, a document, or testdata (.go, .md, testdata/), the
+// packages that test the tree itself (treeTests, where the clone has them) pass, and so
+// do the linter class tests (lintTests: staticcheck and errcheck, functional tier) where
+// the clone has internal/ci. A red run is refused with its class and its first finding
+// named (gateWhy), so the card is reworked with it and no lint finding reaches the
+// base's tip to turn every pull request's lint job red (2026-10-07). The base's tip
 // is gated once a batch before any head is merged, so a base that is red refuses the
 // batch and blames no card, unless a head of the batch cures it (cureBase): that head lands
 // first as the base fix. A head whose merged tree is red is taken off the batch branch
@@ -24,6 +29,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -111,21 +117,103 @@ func treeTested(p string) bool {
 	return strings.HasSuffix(p, ".go") || strings.HasSuffix(p, ".md") || strings.Contains(p, "testdata/")
 }
 
-// gateRuns is the tree gate's runs, in order: the build and the vet of the module, then
-// the tree tests (have: the ones the clone holds) when tests is asked.
+// gofmtRun is the gate's gofmt check as it is named (the stage, the bench's run line, the
+// finding); gateArgv runs it as gofmtScript.
+var gofmtRun = []string{"gofmt", "-l", "."}
+
+// gofmtScript runs the toolchain's own gofmt over the tree, as `make fmt` does: any file
+// it lists, or gofmt failing (a file that does not parse), is red, the files printed.
+const gofmtScript = `out=$("$(go env GOROOT)/bin/gofmt" -l .) || { printf '%s\n' "$out"; exit 1; }; [ -z "$out" ] || { printf '%s\n' "$out"; exit 1; }`
+
+// lintPackage is the package whose functional-tier class tests are the linters of CI's
+// lint job (`make lint`), and lintTests those tests, run in one go test invocation.
+const lintPackage = "internal/ci"
+
+var lintTests = map[string]string{"TestStaticcheckFindings": "staticcheck", "TestUncheckedErrors": "errcheck"}
+
+// lintRun is the linter class tests' one run: -count=1 because they read the tree
+// through the linters' own processes, which go test's cache does not see.
+var lintRun = []string{"go", "test", "-tags", "functional", "-count=1", "-run", "^(TestStaticcheckFindings|TestUncheckedErrors)$", "./" + lintPackage + "/"}
+
+// gateRuns is the tree gate's runs, in order: the build and the vet of the module and
+// gofmt over the tree, then, when tests is asked, the tree tests (have: the ones the
+// clone holds) and the linter class tests (when the clone holds lintPackage).
 func gateRuns(tests bool, have []string) [][]string {
-	runs := [][]string{{"go", "build", "./..."}, {"go", "vet", "./..."}}
+	runs := [][]string{{"go", "build", "./..."}, {"go", "vet", "./..."}, gofmtRun}
 	if tests && len(have) > 0 {
 		run := []string{"go", "test"}
 		for _, p := range have {
 			run = append(run, "./"+p+"/")
 		}
 		runs = append(runs, run)
+		if slices.Contains(have, lintPackage) {
+			runs = append(runs, lintRun)
+		}
 	}
 	return runs
 }
 
-// gateWhy is a red run as a finding, one line: the run, how it ended and its output.
+// gateArgv is the command that carries out run: gofmtRun as gofmtScript, any other as
+// itself.
+func gateArgv(run []string) []string {
+	if slices.Equal(run, gofmtRun) {
+		return []string{"sh", "-c", gofmtScript}
+	}
+	return run
+}
+
+// gateClass is the class of finding a red run is: gofmt, build, vet, the linter its
+// failing class test names (staticcheck, errcheck), or the tree tests.
+func gateClass(run []string, out string) string {
+	switch {
+	case slices.Equal(run, gofmtRun):
+		return "gofmt"
+	case len(run) > 1 && run[0] == "go" && run[1] != "test":
+		return run[1]
+	case slices.Equal(run, lintRun):
+		for _, l := range strings.Split(out, "\n") {
+			if name, ok := strings.CutPrefix(strings.TrimSpace(l), "--- FAIL: "); ok {
+				name, _, _ = strings.Cut(name, " ")
+				if class, ok := lintTests[name]; ok {
+					return class
+				}
+			}
+		}
+		return "lint"
+	}
+	return "tree tests"
+}
+
+// testLogPrefix is a go test log line's own position (`x_test.go:78: `), which names
+// the test's line and not the finding.
+var testLogPrefix = regexp.MustCompile(`^\S+_test\.go:\d+: `)
+
+// firstFinding is the first finding of a red run's output: gofmt's first file, a build's
+// or a vet's first line that is not a package header, a test's first line logged after
+// its first failure (its own position cut off); "" when the output has none. gateWhy caps it.
+func firstFinding(run []string, out string) string {
+	failed := false
+	for _, l := range strings.Split(out, "\n") {
+		t := strings.TrimSpace(l)
+		switch {
+		case t == "":
+		case slices.Equal(run, gofmtRun):
+			return t + " is not gofmt-clean"
+		case run[0] == "go" && len(run) > 1 && run[1] != "test":
+			if !strings.HasPrefix(t, "#") {
+				return t
+			}
+		case strings.HasPrefix(t, "--- FAIL: "):
+			failed = true
+		case failed && l != t:
+			return testLogPrefix.ReplaceAllString(t, "")
+		}
+	}
+	return ""
+}
+
+// gateWhy is a red run as a finding, one line: its class and first finding, then the
+// run, how it ended and its output, the whole as long as the output alone was capped at.
 func gateWhy(run []string, err error, out string) string {
 	var lines []string
 	for _, l := range strings.Split(out, "\n") {
@@ -133,7 +221,11 @@ func gateWhy(run []string, err error, out string) string {
 			lines = append(lines, l)
 		}
 	}
-	return strings.Join(run, " ") + ": " + oneline.Err(err) + ": " + oneline.Cap(strings.Join(lines, " | "), 1500)
+	head := gateClass(run, out)
+	if first := firstFinding(run, out); first != "" {
+		head += ", " + oneline.Cap(first, 400)
+	}
+	return head + "; " + strings.Join(run, " ") + ": " + oneline.Err(err) + ": " + oneline.Cap(strings.Join(lines, " | "), 1500-len(head))
 }
 
 // baseGateFail is a base commit's failures of its tree gate under the base-gate rule: how
@@ -268,7 +360,7 @@ func (l *lander) treeGate(ctx context.Context, dir string, tests bool) string {
 	}()
 	for _, run := range runs {
 		l.stage("gate", strings.Join(run, " "))
-		if out, err := l.goRun(ctx, dir, run); err != nil {
+		if out, err := l.goRun(ctx, dir, gateArgv(run)); err != nil {
 			return gateWhy(run, err, out)
 		}
 	}
@@ -310,8 +402,9 @@ const gateMark = "GATE RUN: "
 func gateScript(runs [][]string) string {
 	parts := []string{"set -e"}
 	for _, run := range runs {
-		words := make([]string, len(run))
-		for i, w := range run {
+		argv := gateArgv(run)
+		words := make([]string, len(argv))
+		for i, w := range argv {
 			words[i] = bench.Quote(w)
 		}
 		parts = append(parts, "echo "+bench.Quote(gateMark+strings.Join(run, " ")), strings.Join(words, " "))

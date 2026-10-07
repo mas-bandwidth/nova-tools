@@ -74,7 +74,14 @@ Landing, the coordinator's: an external delivery (git pushes the base) and a sto
     second rejected push as --rejected. Each head merged is checked first, by
     script and no model: a head whose diff changes a file outside its brief's
     PATHS, or leaves a stranded sentence fragment or an unmatched backquote in
-    prose, ends the batch as a head in conflict does. A card that adds a directory
+    prose, ends the batch as a head in conflict does. Each tip of the batch
+    branch then passes the tree gate, the checks of CI's lint job on the merged
+    tree: go build ./..., go vet ./..., gofmt -l . listing nothing, and, when the
+    head changes a .go, a .md or testdata, go test ./internal/docs/
+    ./internal/ci/ and the linter class tests (staticcheck and errcheck, go test
+    -tags functional -count=1 -run '^(TestStaticcheckFindings|TestUncheckedErrors)$'
+    ./internal/ci/); a red run ends the batch as a head in conflict does, its
+    class and first finding first in the reason. A card that adds a directory
     owns its catalog row and the AGENTS.md maps; a conflict only in those maps, or
     those maps and added catalog rows, resolves as the ledgers do. A conflict only
     in the generated ledgers lands: the tip's side, then their tests' update run
