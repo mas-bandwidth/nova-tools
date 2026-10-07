@@ -22,7 +22,7 @@ falls back to its vcs stamp or to devel, and every check downstream passes
 because the build never complained. A release whose nova-wake answered devel
 would refuse every nova-bus in the same release. So the refusal lives here.
 
-A stamp is refused when it is empty, when it carries white space (the linker
+A stamp is refused when it is empty, when it carries whitespace (the linker
 flag would split and stamp the first word), when it carries % (the stamp
 reaches a printf format further down the release, where % reads a directive
 that is not there and fails the job with no message), and when it carries =
@@ -63,7 +63,7 @@ func composeLdflags(stamp string) (string, []string) {
 			"  version and every binary would report devel while the release page says a tag",
 		}
 	}
-	if hasSpace(stamp) {
+	if carriesWhitespace(stamp) {
 		return "", []string{fmt.Sprintf("refusing: the release stamp <%s> carries whitespace; it would split the linker flag", stamp)}
 	}
 	if strings.Contains(stamp, "%") {
@@ -87,4 +87,14 @@ func composeLdflags(stamp string) (string, []string) {
 		return "", []string{"refusing: composed ldflags carry no non-empty -X main.version: " + flags}
 	}
 	return flags, nil
+}
+
+func carriesWhitespace(s string) bool {
+	for _, r := range s {
+		switch r {
+		case ' ', '\t', '\n', '\r', '\v', '\f', 0x85, 0xA0:
+			return true
+		}
+	}
+	return false
 }

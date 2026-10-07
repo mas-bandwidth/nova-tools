@@ -1,4 +1,3 @@
 # Migrated counted package ledger; original row keys preserved.
 # ceiling: 2
 tools/ghrelease/gh.go:space 2 the English word, not a machine
-tools/ghrelease/ldflags.go:space 1 the English word, not a machine
