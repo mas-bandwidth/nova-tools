@@ -306,9 +306,12 @@ var wrongType = storeReply("WRONGTYPE Operation against a key holding the wrong 
 // refusedHook answers without calling the next hook, so the client dials
 // nothing (STANDARD §8: unit tests own no sockets).
 func refusedReceiptStore(ctx context.Context, addr string) (*store.Store, error) {
-	c := redis.NewClient(&redis.Options{Addr: addr})
-	c.AddHook(refusedHook{})
-	return store.New(c), nil
+	st, err := store.Open(ctx, addr)
+	if err != nil {
+		return nil, err
+	}
+	st.Client().AddHook(refusedHook{})
+	return st, nil
 }
 
 // refusedHook answers every command with WRONGTYPE and never passes one on,
