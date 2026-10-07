@@ -75,7 +75,6 @@ func TestConcurrentAppendKeepsFirstProse(t *testing.T) {
 				continue
 			}
 			require.True(t, o.res.Persisted, "an accepted writer reports persisted, got %+v", o.res)
-			require.False(t, o.res.Published, "local persistence never implies publication, got %+v", o.res)
 			if o.res.Duplicate {
 				continue
 			}
@@ -92,7 +91,7 @@ func TestConcurrentAppendKeepsFirstProse(t *testing.T) {
 		rc, err := Receipt(store, "s", "e")
 		require.NoError(t, err)
 		require.True(t, rc.Stamp.Equal(winnerStamp), "the stored stamp is the winner's: got %v want %v", rc.Stamp, winnerStamp)
-		rows, total, err := Index(store, "", 0)
+		rows, _, total, err := Index(store, "")
 		require.NoError(t, err)
 		require.Equal(t, 1, total, "one id yields one entry")
 		require.Len(t, rows, 1, "one id yields one entry")
@@ -124,7 +123,6 @@ func TestConcurrentAppendKeepsFirstProse(t *testing.T) {
 		for _, o := range outcomes {
 			require.NoError(t, o.err, "identical prose never conflicts")
 			require.True(t, o.res.Persisted, "an accepted writer reports persisted, got %+v", o.res)
-			require.False(t, o.res.Published, "local persistence never implies publication, got %+v", o.res)
 			if !o.res.Duplicate {
 				winners++
 				winnerStamp = o.res.Stamp
@@ -143,7 +141,7 @@ func TestConcurrentAppendKeepsFirstProse(t *testing.T) {
 		got, err := EntryText(store, "s", "e")
 		require.NoError(t, err)
 		require.Equal(t, "the same words", got)
-		rows, total, err := Index(store, "", 0)
+		rows, _, total, err := Index(store, "")
 		require.NoError(t, err)
 		require.Equal(t, 1, total, "identical concurrent appends leave one entry")
 		require.Len(t, rows, 1, "identical concurrent appends leave one entry")

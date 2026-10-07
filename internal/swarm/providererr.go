@@ -32,7 +32,7 @@ import (
 // ProviderClass5xx is the class word the hand-back line carries in place of INCOMPLETE.
 const ProviderClass5xx = "PROVIDER-5XX"
 
-// RoutesEnv names the ordered route list (provider/model, comma or space separated) the
+// RoutesEnv names the ordered route list (provider/model, comma or whitespace separated) the
 // launcher hands the run, so the run can name the route after the one that failed.
 const RoutesEnv = "NOVA_SWARM_ROUTES"
 
@@ -139,7 +139,7 @@ func (h Handback) Line(label string) string {
 		oneline.Field(dashIfEmpty(h.Route)), oneline.Field(dashIfEmpty(h.Next)), oneline.Field(dashIfEmpty(h.Route)), h.Cause.Reason())
 }
 
-// ParseRouteList reads RoutesEnv's value: routes separated by commas or white space, empty
+// ParseRouteList reads RoutesEnv's value: routes separated by commas or whitespace, empty
 // entries dropped, first occurrence winning.
 func ParseRouteList(s string) []string {
 	var out []string

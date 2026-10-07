@@ -1358,12 +1358,11 @@ func tickOverdue(s *Snapshot, r TickReq) (Plan, int) {
 // JudgmentOverdue says the judgment is past its due time in running time: its review
 // time when the coordinator set one (wait), else DeadlineJudgment after it was written.
 func JudgmentOverdue(s *Snapshot, r TickReq, n Note) bool {
-	if !n.Review.IsZero() && n.ReviewSet.IsZero() {
-		return s.Now.After(n.Review)
-	}
 	if !n.Review.IsZero() {
-		d, ok := r.running(s.Now, stamp(n.ReviewSet))
-		return ok && d >= n.Review.Sub(n.ReviewSet)
+		// The review time wait set counts running time from when wait set
+		// it, by the tree's one clock comparison, the same one a timer is
+		// due by (stopped.go DueNow; docs/SPEC-SPRINT.md, "Timers").
+		return DueNow(s.Now, n.Review, n.ReviewSet, r.Stopped)
 	}
 	d, ok := r.running(s.Now, stamp(n.At))
 	return ok && d > DeadlineJudgment
@@ -1476,7 +1475,14 @@ func notify(p *Plan, s *Snapshot, conds []cond, types []string, r TickReq) int {
 	held = append(held, s.Open...)
 	for _, o := range s.Acked {
 		if !o.Note.Review.IsZero() && contains(types, o.Note.Type) {
-			if d, ok := r.running(s.Now, o.Note.At.UTC().Format(time.RFC3339)); ok && d >= o.Note.Review.Sub(o.Note.At) {
+			// A held condition's wait (WaitStep) is based at the judgment's
+			// write when wait recorded no base, so its STOPPED time still does
+			// not count; the comparison is the tree's one (stopped.go DueNow).
+			base := o.Note.ReviewSet
+			if base.IsZero() {
+				base = o.Note.At
+			}
+			if DueNow(s.Now, o.Note.Review, base, r.Stopped) {
 				p.Closes = append(p.Closes, o)
 				continue
 			}

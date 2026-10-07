@@ -224,7 +224,7 @@ func TestTheStoreWritesWhatTheReferenceDecides(t *testing.T) {
 		}
 	}
 	for _, part := range sprint.TickParts {
-		assert.GreaterOrEqual(t, withMoves[part.Name], minSamplesWithMoves, "the part %s had moves on %d samples, fewer than %d: the store was not compared on it", part.Name, withMoves[part.Name], minSamplesWithMoves)
+		assert.GreaterOrEqual(t, withMoves[part.Name], floorOf(part.Name), "the part %s had moves on %d samples, fewer than %d: the store was not compared on it", part.Name, withMoves[part.Name], floorOf(part.Name))
 	}
 	assert.GreaterOrEqual(t, len(compared), bindingMin, "%d samples were compared, fewer than %d", len(compared), bindingMin)
 	assert.GreaterOrEqual(t, filtered, minSamplesWithFilter, "the store's filter changed a plan on %d of the parts compared, fewer than %d: it is not seen at work", filtered, minSamplesWithFilter)

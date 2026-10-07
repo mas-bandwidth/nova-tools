@@ -24,7 +24,7 @@ import (
 // The cost of the disagreement: every card `cut` writes drew a `result-first` drift, and
 // six cards written by hand on 2026-09-19 each drew one for a colon.
 //
-// RULED: THE COLON FORM WINS (Rowan, 2026-09-19, on the cold read of PR #1759;
+// RULED: THE COLON FORM WINS (a friend, 2026-09-19, on the cold read of PR #1759;
 // docs/SPEC-TOOLWORK.md §5 rule 7). It is SPEC-SWARM's own law and it is what the
 // majority of writers already write -- `cut --kind` (internal/pulse/cutkind.go),
 // `internal/pulse/manager.go`. `RESULT: <label>

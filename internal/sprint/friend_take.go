@@ -80,6 +80,10 @@ type FriendTakeReq struct {
 	Reason       string
 	Started      map[string]string
 	Who          string
+	// Spends is a take the seat or her runner asked for (friend take): a read card it takes
+	// spends its reader (retired_by returned, readSpent), as read --return does; the
+	// machine's take-backs (a hold, a stall) spend nothing.
+	Spends bool
 }
 
 // takenBackWhy is the words a taken card carries (FieldTakenBack).
@@ -160,6 +164,9 @@ func FriendTake(s *Snapshot, r FriendTakeReq) Plan {
 		// the take, not the hold, keeps her from it; a card never taken from her has its whole
 		// dealt bound again from now (untaken_since), its first take unset
 		set, unset := map[string]string{FieldTakenBack: why, "untaken_since": stamp(s.Now)}, []string{"first_taken"}
+		if r.Spends && isRead(c) {
+			set["retired_by"] = RetiredByReturned // handed back: it spends her (readSpent)
+		}
 		if r.Hold {
 			unset = append(unset, FieldTakenFrom)
 		} else {

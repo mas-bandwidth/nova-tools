@@ -135,7 +135,7 @@ func (a *app) redCutter(c common) func(context.Context, []sprint.RedTest, sprint
 				brief += "\n\n" + strings.TrimSuffix(swarm.RulesParagraph(cs.rules), "\n")
 			}
 			id := sprint.FixCardID(r.Test)
-			req.Cards = append(req.Cards, sprint.CardAdd{ID: id, File: id, Brief: brief, Rules: cardRules(brief, rs).held, Base: sp.Base})
+			req.Cards = append(req.Cards, sprint.CardAdd{ID: id, File: id, Brief: brief, Rules: cardRules(brief, rs).held, Base: sp.Base, Repo: swarm.ReadCardBase([]byte(brief)).Named})
 		}
 		var lint strings.Builder
 		if lintBriefFiles("promote", req.Cards, rs, 0, &lint) != 0 {
