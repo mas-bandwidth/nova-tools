@@ -418,3 +418,36 @@ func TestTheDealSkipsADownRowAndHonoursTheWhoPin(t *testing.T) {
 		assert.Contains(t, []string{FriendRow("amy"), FriendRow("dan")}, c.Row, "%s goes to a row that can work", id)
 	}
 }
+
+// A friend whose status is up is still not dealt when her fleet control card says
+// down or held (friendDealable): the row cannot work, whatever her session says.
+// On 2026-10-06 a friend whose row read down, her lanes paused and her daemon
+// beating, was dealt 18 cards twice.
+func TestAFriendUpWhoseControlCardIsHeldOrDownIsNotDealt(t *testing.T) {
+	t.Parallel()
+	w := friendWorld(t, friendBrief("friend"), friendBrief("friend"), friendBrief("friend"))
+	putCtl := func(name, status, held string) {
+		t.Helper()
+		row := FriendRow(name)
+		w.s.Fleet.Put(&Card{
+			ID: CtlID(row), Row: row, Col: Ctl, Rev: 1,
+			Fields: map[string]string{"kind": "member", "status": status, "held": held},
+		})
+	}
+	putCtl("amy", Down, "")
+	putCtl("bob", Held, "")
+	putCtl("cat", Up, stamp(w.s.Now))
+	seats := []FriendSeat{
+		{Name: "amy", Width: 4, Status: Up, Class: "flash,pro"},
+		{Name: "bob", Width: 4, Status: Up, Class: "flash,pro"},
+		{Name: "cat", Width: 4, Status: Up, Class: "flash,pro"},
+		{Name: "dan", Width: 4, Status: Up, Class: "flash,pro"},
+	}
+	dealWith(w, seats...)
+
+	for _, name := range []string{"amy", "bob", "cat"} {
+		n := w.s.Fleet.Count(FriendRow(name), Ready) + w.s.Fleet.Count(FriendRow(name), Working)
+		assert.Zero(t, n, "friend %s is up, and her control card is held or down: dealt nothing", name)
+	}
+	assert.Equal(t, 3, w.s.Fleet.Count(FriendRow("dan"), Ready)+w.s.Fleet.Count(FriendRow("dan"), Working), "a friend up whose control card is not held or down is dealt")
+}

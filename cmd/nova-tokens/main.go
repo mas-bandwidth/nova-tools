@@ -164,8 +164,9 @@ CHECK line, so nothing was hidden to make it green. A gate that cannot go red is
 either: an --out with no day file in it is CHECK FAILED, never a green over nothing.
 
 sources --unattributed prints the path stems that were SEEN and matched no rule, heaviest
-first, capped by --max. That listing is what other=<pct>% on a day line is made of, and it
-is the evidence for improving the --repos file.
+first, capped by --max, with the mentions each stem got (one per message that touched a path
+in it). That listing is what other=<pct>% on a day line is made of, and it is the evidence
+for improving the --repos file.
 
 setup:
   mkdir -p ./transcripts ./out
@@ -561,13 +562,17 @@ func maxRemedy(verb string) string { return "nova-tokens " + verb + " ... --max 
 func sourceLine(s *sink, token string, src *tokens.Source) string {
 	kv := []any{"label", src.Label, "kind", src.Kind, "path", src.Path, "reports", src.ReportsList(), "day_basis", src.Basis}
 	for _, f := range []string{"files", "unreadable", "messages", "dup", "noid", "nousage", "unparsed", "comments", "redated", "superseded", "rows"} {
-		kv = append(kv, f, src.StatField(f))
+		kv = append(kv, f, count(src.StatField(f)))
 	}
 	return s.line(token, "SOURCE", "", kv...)
 }
 
 func unreadableLine(s *sink, token string, u tokens.Unreadable) string {
-	return s.line(token, "UNREADABLE", oneline.Cap(u.Why, oneline.TailBytes), "label", u.Label, "path", u.Path)
+	why := u.Why
+	if u.Line > 0 {
+		why = "line " + strconv.Itoa(u.Line) + ": " + why
+	}
+	return s.line(token, "UNREADABLE", oneline.Cap(why, oneline.TailBytes), "label", u.Label, "path", u.Path)
 }
 
 func unparsedLine(s *sink, token string, u tokens.Unparsed) string {
@@ -587,10 +592,19 @@ func checkDay(r *refusals, day string, all bool) {
 }
 
 // remedy is the ONE line TOKENS NOTE carries. It names the label and the act, in the order
-// a reader would act on them, and when nothing was wrong it names the gate.
-func remedy(sources []*tokens.Source, unreadable, unparsed, mixed, conflict, shrank, partial, quiet int, allowShrink bool, out, mixedLabels, firstPartial, firstQuiet string) string {
+// a reader would act on them, and when nothing was wrong it names the gate. SPEC-TOKENS:
+// "TOKENS NOTE is exactly one remedy line." dryRun is the plan the run would take, so a
+// day --allow-shrink would write is reported as it would be, never as it was.
+func remedy(sources []*tokens.Source, unreadable, unparsed, mixed, conflict, shrank, partial, quiet int, allowShrink, dryRun bool, out, mixedLabels, firstPartial, firstQuiet string) string {
 	switch {
 	case unreadable > 0:
+		// A line that is not JSON is not a permission problem: its remedy is the one act
+		// that clears it, naming the file and the first bad line. Every other unreadable
+		// (a file that would not open, a day file this run could not write) keeps the
+		// permission remedy SPEC-TOKENS gives.
+		if u, ok := firstBadline(sources); ok {
+			return "a declared source has a line that is not JSON (" + u.Label + ", " + u.Path + " line " + strconv.Itoa(u.Line) + "): inspect or remove that line, or drop the flag"
+		}
 		return "a declared source could not be read whole (" + firstUnreadableLabel(sources) + "): open those files to this group, or drop the flag -- a declared source is a claim that the report covers it"
 	case unparsed > 0:
 		// The advice is for the KIND that failed. Every unparsed was a bus line once, and
@@ -621,6 +635,8 @@ func remedy(sources []*tokens.Source, unreadable, unparsed, mixed, conflict, shr
 		return "a row of the day file was written by sources this fold did not declare (" + firstPartial + "): declare every source in that file's sources= line, or fold this day into its own --out -- --allow-shrink does not write it"
 	case shrank > 0 && !allowShrink:
 		return "a day would have gone backwards and was left as it was: --allow-shrink writes it anyway, and it is a person's act"
+	case shrank > 0 && dryRun:
+		return "a day would be written smaller at your word (--allow-shrink); nova-tokens check --out " + out + " is the gate"
 	case shrank > 0:
 		return "a day was written smaller at your word (--allow-shrink); nova-tokens check --out " + out + " is the gate"
 	case quiet > 0:
@@ -640,6 +656,19 @@ func firstUnreadableLabel(sources []*tokens.Source) string {
 		}
 	}
 	return "-"
+}
+
+// firstBadline is the first unreadable whose failure is a line that is not JSON, and the
+// one the NOTE's remedy names: a bad line is inspected or removed, never opened to a group.
+func firstBadline(sources []*tokens.Source) (tokens.Unreadable, bool) {
+	for _, s := range sources {
+		for _, u := range s.Unreadables {
+			if u.Line > 0 {
+				return u, true
+			}
+		}
+	}
+	return tokens.Unreadable{}, false
 }
 
 // firstUnparsed names the kind of the first source with an unparsed line and what it was

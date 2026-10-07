@@ -285,7 +285,7 @@ func readAllowlist(path string) ([]slowtests.Row, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close() // ignored: a read-only file
+	defer func() { _ = f.Close() }() // ignored: a read-only file
 
 	sc := bufio.NewScanner(f)
 	var errs []string

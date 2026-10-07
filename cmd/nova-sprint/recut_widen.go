@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
@@ -28,12 +29,12 @@ type widened struct {
 
 // widen is the widened brief of a card held for PATHS too narrow (docs/SPEC-SPRINT.md section
 // 2, "recut-widen-r.w1: a HOLD's PATHS-PROPOSED line widens the card in place"): its latest
-// attempt's report's PATHS-PROPOSED globs (the paths before any prose on that line,
-// member.PathsProposed), each one that stays in the repository and names a file at the
-// brief's base or at the attempt's pushed head, joined to the old PATHS on every PATHS:
-// line, and a CARRY: line naming that head, so the card's next attempt starts from it
-// (member.Carried). why refuses it, naming every problem: no attempt, no line, no pushed
-// head, no clone to read the trees in, a glob that climbs out with .. or names no file.
+// attempt's report's PATHS-PROPOSED globs, each read as the path before its prose (proposals),
+// each one that stays in the repository and names a file at the brief's base or at the
+// attempt's pushed head, joined to the old PATHS on every PATHS: line, and a CARRY: line
+// naming that head, so the card's next attempt starts from it (member.Carried). why refuses
+// it, naming every problem: no attempt, no line, no pushed head, no clone to read the trees
+// in, a glob that climbs out with .. or names no file, and an item with no path before its prose.
 func (a *app) widen(ctx context.Context, st *store.Store, id, repoDir string) (w widened, why string, err error) {
 	v, err := st.CardOf(ctx, id)
 	if err != nil {
@@ -52,8 +53,8 @@ func (a *app) widen(ctx context.Context, st *store.Store, id, repoDir string) (w
 		return w, id + " has no attempt, so no report proposes PATHS", nil
 	}
 	n := last.Int("attempt")
-	globs, ok := member.PathsProposed(last.F("report"))
-	if !ok || len(globs) == 0 {
+	ps, ok := proposals(last.F("report"))
+	if !ok || len(ps) == 0 {
 		return w, "the report of " + id + " attempt " + strconv.Itoa(n) + " has no PATHS-PROPOSED line (docs/SPEC-CARD-CONTRACT.md section 4): widen it by hand with brief " + id + " --brief-file <path>", nil
 	}
 	head := last.F("head")
@@ -76,7 +77,14 @@ func (a *app) widen(ctx context.Context, st *store.Store, id, repoDir string) (w
 	if why != "" {
 		return w, why, nil
 	}
-	var bad []string
+	var globs, bad []string
+	for _, p := range ps {
+		if p.path == "" {
+			bad = append(bad, p.item+": no path before its prose")
+			continue
+		}
+		globs = append(globs, p.path)
+	}
 	for _, g := range globs {
 		if path.IsAbs(g) || slices.Contains(strings.Split(g, "/"), "..") {
 			bad = append(bad, g+" climbs out of the repository")
@@ -92,6 +100,56 @@ func (a *app) widen(ctx context.Context, st *store.Store, id, repoDir string) (w
 	w.carry = member.Carry{Card: id, Attempt: n, Head: head}
 	w.brief = widenBrief(brief, globs, member.CarryLine(w.carry))
 	return w, "", nil
+}
+
+// proposal is one comma-separated item of a PATHS-PROPOSED line: item as the writer wrote it,
+// and path, the path at its start, empty when the item has prose but no path.
+type proposal struct {
+	item, path string
+}
+
+// proposals is every item of the first PATHS-PROPOSED line of report, in the order written
+// (docs/SPEC-CARD-CONTRACT.md section 4): the line runs to its end, each comma-separated item
+// is a path up to its first whitespace, dash or semicolon and the rest of the item is the
+// writer's reason, read as prose and ignored. ok is false when report has no such line.
+func proposals(report string) (ps []proposal, ok bool) {
+	_, rest, ok := strings.Cut(report, member.ProposedKey)
+	if !ok {
+		return nil, false
+	}
+	rest, _, _ = strings.Cut(rest, "\n")
+	for _, item := range strings.Split(rest, ",") {
+		if item = strings.TrimSpace(item); item == "" {
+			continue
+		}
+		ps = append(ps, proposal{item: item, path: proposedPath(item)})
+	}
+	return ps, true
+}
+
+// proposedPath is the path at the start of one PATHS-PROPOSED item: up to its first whitespace,
+// dash or semicolon, that punctuation and everything after it the writer's reason. It is ""
+// when the item has no path before its prose. A hyphen inside a path (cmd/nova-sprint) is not
+// a dash; a dash is the punctuation a writer puts between the path and the reason.
+func proposedPath(item string) string {
+	s := strings.Trim(item, " \t`")
+	rs := []rune(s)
+	for i, r := range rs {
+		if unicode.IsSpace(r) || r == ';' || proseDash(r) || (r == '-' && (i+1 == len(rs) || unicode.IsSpace(rs[i+1]))) {
+			return strings.Trim(string(rs[:i]), " \t`")
+		}
+	}
+	return s
+}
+
+// proseDash is whether r is a dash a writer puts between a path and its reason. The ASCII
+// hyphen-minus is not one: a path names it (cmd/nova-sprint).
+func proseDash(r rune) bool {
+	switch r {
+	case '\u2010', '\u2011', '\u2012', '\u2013', '\u2014', '\u2015', '\u2212', '\ufe58', '\ufe63', '\uff0d':
+		return true
+	}
+	return false
 }
 
 // widenTrees is every file of the base's tree and the head's, read in the clone at dir; the

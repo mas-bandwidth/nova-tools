@@ -10,6 +10,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
 )
 
 // release check is a read (docs/SPEC-SPRINT.md, the release check; docs/SPEC-RELEASE.md,
@@ -40,11 +41,13 @@ type storeRelease struct {
 	now      time.Time
 	lines    []sprint.Line
 	dealtMax time.Duration
+	accept   sprint.Acceptance
 }
 
-func (s storeRelease) Now() time.Time          { return s.now }
-func (s storeRelease) Log() []sprint.Line      { return s.lines }
-func (s storeRelease) DealtMax() time.Duration { return s.dealtMax }
+func (s storeRelease) Now() time.Time                { return s.now }
+func (s storeRelease) Log() []sprint.Line            { return s.lines }
+func (s storeRelease) DealtMax() time.Duration       { return s.dealtMax }
+func (s storeRelease) Acceptance() sprint.Acceptance { return s.accept }
 
 // cmdReleaseCheck runs the release checks and prints one RELEASE CHECK line per check, then
 // RELEASE OK checks=<n> or RELEASE NOT READY failed=<n>; --json prints the one report
@@ -81,11 +84,11 @@ func (a *app) cmdReleaseCheck(args []string, stdout, stderr io.Writer) int {
 	if lines, err = sprint.ReleaseStreamLines(lines, *streams); err != nil {
 		return refuse(stderr, "release check", err.Error())
 	}
-	s, err := st.Load(ctx, []string{sprint.Work}, nil)
+	s, err := st.Load(ctx, store.All, nil)
 	if err != nil {
 		return a.readFailed("release check", err, stderr)
 	}
-	rep, err := sprint.RunReleaseChecks(storeRelease{now: now, lines: lines, dealtMax: s.DealtMax()}, names)
+	rep, err := sprint.RunReleaseChecks(storeRelease{now: now, lines: lines, dealtMax: s.DealtMax(), accept: sprint.AcceptanceOf(s, lines, *streams)}, names)
 	if err != nil {
 		return refuse(stderr, "release check", err.Error())
 	}

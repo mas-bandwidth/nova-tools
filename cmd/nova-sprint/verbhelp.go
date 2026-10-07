@@ -8,9 +8,9 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 )
 
-// releaseHoldWords distinguishes a card's release operand from the holds on a
-// member, a reader and a friend (docs/SPEC-ISA.md, the one wait kind).
-const releaseHoldWords = `release resolves a wait on a release: a sentinel or a held card. It does not release a held member, reader, friend or stream:
+// releaseHoldWords tells release apart from the holds on a member, a reader,
+// and a friend (docs/SPEC-SPRINT.md: release is the sentinel and held-card step).
+const releaseHoldWords = `release acts on a sentinel or a held card. It does not release a held member, reader, friend or stream:
   unhold <name>... releases any of them (one verb for the four)
   fleet up <member> releases a held member
   reader up <reader> releases a held reader
@@ -76,6 +76,7 @@ var verbEffect = map[string]string{
 	"view worker":       "inspection: reads the worker's cards, their packets and its results not landed, writes nothing",
 	"seat":              "inspection: reads the seat (holder, epoch, generation), writes nothing",
 	"rules":             "inspection: reads the rules the tick answers by and why the fleet is idle, writes nothing",
+	"remind":            "store write: writes one timer to the sprint's timer record, which the tick of a RUNNING machine raises as one judgment of kind \"timer\" addressed to its actor at its due time, once (--list reads the open timers, --cancel takes one off); --dry-run writes nothing",
 	"relink":            "local write: re-points what waited on the old cards to their twin in the sprint's store and answers their blocked judgments; --dry-run writes nothing",
 	"friend cards":      "inspection: reads the cards held on the friend's row, their packets and briefs, writes nothing",
 	"friend take":       "local write: takes the named cards back from the friend in the sprint's store; --dry-run writes nothing",

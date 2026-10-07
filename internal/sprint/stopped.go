@@ -95,3 +95,26 @@ func StoppedText(who, reason string, until, now time.Time) string {
 	}
 	return "STOPPED by " + who + ": " + strings.Join(strings.Fields(reason), " ") + ", back by " + when
 }
+
+// DueNow is the tree's one "is this due at now" test: the clock time due is
+// reached at now when the running time from set to now has reached due's own
+// distance from set, so the time the machine was STOPPED never counts
+// (docs/SPEC-SPRINT.md, "Timers" and "Deadlines"). A timer is based at the
+// time it was written and a judgment's review time at the time wait set it;
+// a due with no base recorded is read against the wall clock. The timer tick
+// (timers.go, DueTimers) and the judgment review time (steps_tick.go,
+// JudgmentOverdue) both call this and there is no second clock comparison, so a
+// later external wait operand (`after <time>`) calls the same function.
+func DueNow(now, due, set time.Time, stopped func(from, to time.Time) time.Duration) bool {
+	if due.IsZero() {
+		return false
+	}
+	if set.IsZero() {
+		return now.After(due)
+	}
+	d := now.Sub(set)
+	if stopped != nil {
+		d -= stopped(set, now)
+	}
+	return d >= due.Sub(set)
+}

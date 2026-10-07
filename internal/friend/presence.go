@@ -687,6 +687,7 @@ func (s *SessionCheck) held(now time.Time) string {
 		return "it waits for the turn under way since " + s.gatedSince.UTC().Format(time.RFC3339)
 	}
 	if rec == nil {
+		s.staleSince = time.Time{}
 		return "it waits for the turn under way"
 	}
 	if running, since := rec.TurnUnderWay(); running {
