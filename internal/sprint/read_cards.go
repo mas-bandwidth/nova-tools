@@ -96,6 +96,56 @@ func rowWorking(s *Snapshot, row string) (work, reads int) {
 	return work, reads
 }
 
+// ReadCardCounts is the epoch's read cards on the fleet table: ready, working, and done (ok
+// or failed), where --json's read_cards.
+type ReadCardCounts struct {
+	Ready   int `json:"ready"`
+	Working int `json:"working"`
+	Done    int `json:"done"`
+}
+
+// RowCardFields is the fields of a row's counts (RowCardCounts), highest level first.
+var RowCardFields = []string{"blocker_working", "critical_working", "high_working", "reads_working", "normal_working", "low_working", "reads_ready"}
+
+// RowCardCounts is each fleet row's cards as the dashboard's segmented bar draws them,
+// highest on the left: its working cards by level, a read card as reads whatever level it
+// inherits and a work card at the level its deal wrote (QueuePriority), the fields
+// <level>_working summing to its working (RowCardFields); and reads_ready, the read cards
+// among its ready. A row with none is absent. all is the epoch's read cards.
+func RowCardCounts(s *Snapshot) (rows map[string]map[string]int, all ReadCardCounts) {
+	rows = map[string]map[string]int{}
+	if s == nil || s.Fleet == nil {
+		return rows, all
+	}
+	for _, row := range s.Fleet.Rows() {
+		n := map[string]int{}
+		for _, c := range s.Fleet.Cell(row, Working) {
+			level := PriorityLadder[priorityRank(QueuePriority(c))]
+			if isRead(c) {
+				level, all.Working = "reads", all.Working+1
+			}
+			n[level+"_working"]++
+		}
+		for _, c := range s.Fleet.Cell(row, Ready) {
+			if isRead(c) {
+				n["reads_ready"]++
+				all.Ready++
+			}
+		}
+		for _, col := range []string{DoneOK, DoneFailed} {
+			for _, c := range s.Fleet.Cell(row, col) {
+				if isRead(c) {
+					all.Done++
+				}
+			}
+		}
+		if len(n) > 0 {
+			rows[row] = n
+		}
+	}
+	return rows, all
+}
+
 // halfLoad is a load counted in slots with a read at half a slot, rounded up: the room a
 // work card needs is whole.
 func halfLoad(work, reads int) int { return work + (reads+1)/2 }
