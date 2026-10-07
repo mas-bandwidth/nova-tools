@@ -34,9 +34,12 @@
 # 5309) and is never taken from nova_source's cmd/: the machine running the
 # play checks out nova_sprint_repo at nova_sprint_ref (main) and builds its
 # ./cmd/nova-sprint for every platform, stamped with nova_version the way the
-# release build stamps the rest; every machine then copies its platform's
-# nova-sprint into the bin directory by that name, after the release's own
-# install, so `nova-update` and the loops find it where they always have.
+# release build stamps the rest. Every release install in this play -- the
+# install play's, and the seat window's on the coordinator, which installs
+# instead of it -- replaces a tool whose bytes differ from the release artifact
+# (internal/release/install.go), so each is followed by a copy of that
+# platform's nova-sprint into the bin directory by that name, and `nova-update`
+# and the loops find it where they always have.
 - name: the platform of every machine
   hosts: all
   gather_facts: true
@@ -91,7 +94,7 @@
     # nova-sprint from its own repository (docs/FLEET.md, "tools.yml", step
     # 2): -trimpath, CGO off and `-s -w -X main.version=` as the release build
     # stamps every tool (internal/release Ldflags, GoBuild), so the binary
-    # answers nova_version and a later release install skips it.
+    # answers nova_version the way nova-update and the loops expect.
     - name: the nova-sprint checkout at nova_sprint_ref (its own repository)
       ansible.builtin.git: { repo: "{{ nova_sprint_repo }}", dest: "{{ nova_sprint_src }}", version: "{{ nova_sprint_ref }}" }
       register: tools_sprint_src
@@ -406,9 +409,11 @@
 
     # After the release's own install (docs/FLEET.md, "tools.yml", step 3), so
     # the bin directory holds the build of nova-sprint's own repository even
-    # while a nova-tools release still ships a cmd/nova-sprint; that build
-    # answers nova_version, so the next release install skips it, and the copy
-    # changes nothing on a machine whose bytes are already these.
+    # while a nova-tools release still ships a cmd/nova-sprint: install skips a
+    # tool only when its bytes are already the artifact's (internal/release/
+    # install.go, security#72 finding 2), so a copy made before that install
+    # would be replaced; the copy changes nothing on a machine whose bytes are
+    # already these.
     - name: nova-sprint, built from its own repository, into the bin directory by its name
       ansible.builtin.copy:
         src: "{{ nova_sprint_out }}/{{ nova_platform }}/{{ tools_sprint_file }}"
@@ -589,6 +594,7 @@
   tags: [seat]
   vars:
     seat_stage: "{{ nova_release_dir }}/{{ nova_version }}/{{ nova_platform }}"
+    tools_sprint_file: "nova-sprint{{ '.exe' if nova_platform.startswith('windows-') else '' }}"
     seat_wrap_as: >-
       {{ [nova_bin_dir ~ '/nova-secrets', 'exec', '--store', nova_secrets_store, '--as', nova_seat,
           '--key', nova_secrets_key_dir ~ '/' ~ nova_seat ~ '.key', '--sops', nova_sops | default('')] }}
@@ -732,6 +738,26 @@
                         --bin, "{{ nova_bin_dir }}", --platform, "{{ nova_platform }}" ]
               register: seat_install
               changed_when: "seat_install.stdout is search('RELEASE INSTALLED .*tools=[1-9]')"
+
+            # The coordinator installs in this window, not the install play
+            # (that task's `when` skips it), and install replaces a tool whose
+            # bytes differ from the release artifact (internal/release/
+            # install.go, security#72 finding 2): the same copy follows this
+            # release install too, so the bin directory holds the build of
+            # nova-sprint's own repository when the seat reads it below.
+            - name: "window: nova-sprint, built from its own repository, into the bin directory by its name"
+              ansible.builtin.copy:
+                src: "{{ nova_sprint_out }}/{{ nova_platform }}/{{ tools_sprint_file }}"
+                dest: "{{ nova_bin_dir }}/{{ tools_sprint_file }}"
+                mode: "0755"
+              register: seat_sprint
+
+            - name: "window: the nova-sprint receipt"
+              ansible.builtin.debug:
+                msg: >-
+                  SPRINT host={{ inventory_hostname }} platform={{ nova_platform }} version={{ nova_version }}
+                  repo={{ nova_sprint_repo }} ref={{ nova_sprint_ref }}
+                  {{ 'INSTALLED' if seat_sprint.changed else 'UP-TO-DATE' }}
 
             - name: "window: the build fact's directory"
               ansible.builtin.file: { path: "{{ nova_build_file | dirname }}", state: directory, mode: "0700" }
