@@ -10,7 +10,7 @@ import (
 func init() {
 	Register(Step{
 		Name:  "ssh",
-		Order: 50,
+		Order: 55,
 		Plan:  sshPlan,
 		Apply: sshApply,
 	})
