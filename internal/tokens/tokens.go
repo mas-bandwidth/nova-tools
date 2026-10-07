@@ -667,9 +667,6 @@ func UsdPerMtok(micro, tokens int64) string {
 // fact about a disk rather than about this code.
 var opens atomic.Int64
 
-// Opens is how many source files have been opened since the process started.
-func Opens() int64 { return opens.Load() }
-
 // openSource is the ONE door every reader opens a source file through, so that the count
 // above cannot drift from the truth by somebody reaching for os.Open directly.
 func openSource(path string) (*os.File, error) {
