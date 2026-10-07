@@ -17,8 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// parsed is one rendering read back into the parts of Out, for comparing the
-// lines with the JSON field for field.
+// TestRender pins the encoder: each value's lines, exactly, and its lines and
 // its JSON read back to the same parts, field for field.
 func TestRender(t *testing.T) {
 	t.Parallel()
@@ -808,7 +807,7 @@ func TestHelpRefusedAnswersDashH(t *testing.T) {
 				Verbs: []Verb{{Name: "put", Usage: "put --store <dir>", Effect: Inspection,
 					Flags: func(f *Flags) { f.String("store", "", "a directory") },
 					Run:   func(*Call) *Out { return Done() }}}}
-			r := NewRig(t, tool).Capture(tc.args...)
+			r := NewRig(t, tool).Run(tc.code, tc.args...)
 			check := func(got, want string) {
 				switch {
 				case want == "":
