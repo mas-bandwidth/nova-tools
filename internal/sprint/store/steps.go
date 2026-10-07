@@ -352,9 +352,10 @@ func UnpinStep(r sprint.UnpinReq) Step {
 }
 
 // PriorityStep sets a card's priority, or every card of a stream's and the stream's default
-// (sprint.SetPriority): it reads the work table and the streams' control cards.
+// (sprint.SetPriority): it reads the work table and the streams' control cards, and the
+// fleet and readers tables for the dealt cards it re-levels in place (relevelCards).
 func PriorityStep(r sprint.PriorityReq) Step {
-	return Step{Args: ArgsOf(r), Verb: "priority", Load: tables(sprint.Work, sprint.Merge),
+	return Step{Args: ArgsOf(r), Verb: "priority", Load: tables(sprint.Work, sprint.Merge, sprint.Fleet, sprint.Readers),
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.SetPriority(s, r) }}
 }
 

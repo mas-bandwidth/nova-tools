@@ -1464,37 +1464,63 @@ default) and `low` (it fills only an idle lane).
   lowest priority card, and then after this, the card that has been running the shortest"; "a
   blocker can never evict another blocker card"). The deal places blockers first on every
   row, a friend's and a member's, ahead of the reads (the ladder's top level), and a member's
-  take takes a blocker before its other ready cards (`takeOne`). When a blocker is ready after
-  the deal and every row that would take it (a friend of its tier it may still go to, an up
-  member a machine route of its tier serves, its bench) is at its room, the deal evicts one
-  running work card on those rows: the lowest level first (the primary's level as it stands),
-  then among equals the one running the shortest (from the stamp `WorkDeadline` counts a
-  working card from, the one clock), then work order; never a blocker
-  (`sprint.blockerEvictions`, `evictionPick`). The evicted card is withdrawn at a new
+  take takes its ready cards by the level each carries (`queueOrder`: a work card's as its
+  deal wrote it, a read card's inherited level), so a blocker's work and a blocker primary's
+  read go before critical work and the reader-level reads before normal work. Raising a dealt
+  card re-levels it in place: `priority` writes the level on its attempt's work card, ready or
+  working, and on its live read cards at the read's inherited level, so the take and the
+  eviction see the level set (`relevelCards`, `TestPriorityRaisesADealtCardInPlace`). The
+  eviction is one step of the deal (`sprint.blockerEvictions`), with two cases. A blocker
+  ready after the deal whose rows (a friend of its tier it may still go to, an up member a
+  machine route of its tier serves, its bench) are all at their room, DealAhead times the
+  width less the load with a read half a slot (`halfLoad`, the deal's own count), evicts one
+  running work card on those rows and is dealt into the room it frees in the same unit: a
+  member's ready, which its take takes first, or a friend's lane (as her finish's next and a
+  take-back's next are moved; her start confirms it). A blocker dealt and ready on a row whose
+  lanes are all held (a member's width in half slots; a friend's lanes) evicts one running
+  work card of that row, so the lane that frees is its: the member's take takes it first, a
+  friend's lane takes it now. The pick is the lowest level first (the primary's level as it
+  stands), then the shortest running (from the stamp `WorkDeadline` counts a working card
+  from, the one clock), then work order; never a blocker, never a read card, never a card a
+  unit of the same plan touches (`evictionPick`). The evicted card is withdrawn at a new
   generation, as the hold's take-back withdraws one: its lane ends by the generation (the
   member reaps the claim that moved; a `finish` at the old generation is refused as stale, on
   a member's and a friend's row alike); its primary goes back to ready at its own level; the
-  card carries `taken_back` "evicted by <blocker>" and `carry_gen`, the generation whose
-  branch holds the work it pushed (the hold's carry; the branch is `BranchOf` at that
-  generation), and no `taken_from`, so a friend may have it back; the happened note `a card
-  evicted by a blocker` on the evicted primary's timeline says "evicted by <blocker>: <work
-  card> (<level>, running <time>) gives its lane on <row> to the blocker". One card is evicted
-  per blocker per tick, none that a unit of the same plan touches; the eviction is due work,
-  so the tick that follows runs at once and deals the blocker into the room, first by the
-  ladder. A blocker never evicts a blocker: with every lane of its rows holding one, nothing
-  is evicted and the blocker waits under one judgment, `a blocker waits` ("a blocker waits:
-  every lane holds a blocker"; decisions `wait`, `drop`), which closes when it is dealt
+  card carries `taken_back` "evicted by <blocker>" and `carry_gen`, the generation whose branch
+  holds the work it pushed, and no `taken_from`, so a friend may have it back. The carry is
+  read: a work card at a later generation that carries `carry_gen` starts from that
+  generation's branch (`Packet.Base`), and from `carry_head` when the take-back read a pushed
+  tip (the hold's), as its `BaseHead` of this attempt (`PacketOf`,
+  `TestANextGenerationStartsFromTheCarriedBranchAndHead`); the tick reads no tip, so an
+  eviction carries the branch. A friend whose working card is taken back, by an eviction or a
+  hold, is told on the bus by `friend sync`, once, when her queue file turns from working to
+  taken: why, the job and generation to stop, the branch that keeps her push, and that a
+  finish of that generation is stale (`tellTakenBack`,
+  `TestAFriendIsToldOnTheBusWhenHerWorkingCardIsTakenBack`); the message is a courtesy and
+  the queue file the record. The happened note `a card evicted by a blocker` on the evicted
+  primary's timeline says "evicted by <blocker>: <work card> (<level>, running <time>) gives
+  its lane on <row> to the blocker". A blocker never evicts a blocker, and never a read: with
+  every lane of its rows holding one, nothing is evicted and the blocker waits under one
+  judgment, `a blocker waits` ("a blocker waits: every lane holds a blocker", or "... or a
+  read" with the counts; decisions `wait`, `drop`), which closes when it is dealt
   (`TestABlockerIsStoredAndEvictsTheLowestThenTheShortest`: the low card running 10 minutes
-  is evicted before the normal running 2; with no low card the normal running 2 minutes is
-  evicted before the ones at 10 and 20; with only blockers running nothing is, and the
-  judgment stands once; the friend's lane the same way). The reference model runs the same
-  planner (`refmodel`, `TestEngineAgreesWithTheReferenceModel`). The model is
-  tla/Priority.tla: one row's lanes, the cards at their levels, the clock in ticks; actions
-  arrive, deal (a blocker first), evict, finish, tick (only when nothing is due);
-  invariants `NoBlockerEvicted`, `ABlockerReadyWithARowOfItsTierIsRunningWithinOneTick`
-  and the action property `EvictedIsLowestThenShortest`, with three reversed witnesses
-  (tla/CASES.tsv group `priority`; the code spreads the eviction and the deal over two
-  consecutive ticks, which the model takes as one step).
+  is evicted before the normal running 2, and the blocker dealt in the same plan; with no low
+  card the normal running 2 minutes before the ones at 10 and 20; only blockers running: none,
+  one judgment; a blocker dealt behind held lanes evicts for its lane the tick after; two
+  reads on a width of one leave room for a work card, and lanes of reads are the judgment;
+  the friend's lane the same way, the blocker into it). The reference model runs the same
+  planner on the same samples, a blocker eviction among them (`refmodel`, the scenario
+  `aBlockerEvicts`; `TestEngineAgreesWithTheReferenceModel`). The model is tla/Priority.tla:
+  one row's lanes in half slots and its ready queue behind them, cards work or read at their
+  levels, the clock in ticks; actions arrive, the verb's raise, deal (a blocker first), take
+  (a blocker first), evict (and the blocker into the lane in the same step), judge, finish,
+  tick (only when nothing is due); invariants `ABlockerReadyWithARowOfItsTierIsRunningWithinOneTick`
+  (a queued blocker behind held lanes too), `BlockerWaitingIsJudged`, `NoReadEvicted`, and
+  the action properties `NoBlockerEvicted`, `EvictedIsLowestThenShortest`,
+  `EvictedLaneGoesToTheBlocker`, with six reversed witnesses: one each for a blocker never
+  evicted, the wrong pick, no eviction, the eviction blind to a queued blocker, the eviction
+  and the deal spread over two ticks (a take fills the lane between), and no judgment when
+  reads hold the lanes (tla/CASES.tsv group `priority`, TLC on a bench, tla/RUNS.tsv).
 - **Order within a level** is the modelled one: stream turns for the deal and the ask, work
   order for the friends' ask (tla/SprintTables.tla; `TestEngineAgreesWithTheReferenceModel`).
   Owed with the reference model: the weight (the cards behind) within a level for the deal and

@@ -1277,13 +1277,17 @@ stream's default or `priority` sets it. `priority s1-4 --high --reason '<why>'` 
 (its own level overwritten) and the stream's default for cards added later, and `priority s1-4` prints the level and where it comes from;
 each change is on the card's timeline (`log --card`) with the actor and the reason. The verb
 is a plain set: every level of the ladder, higher, lower or the same, blocker and critical
-included, is stored and read back as set. Every
+included, is stored and read back as set, and a card already dealt is re-levelled in place
+(its work card and its read cards). Every
 deal places the cards above reader first, then the reads, then normal and low work in the
-room the reads leave. A blocker that no row of its tier has room for evicts one running card
-on those rows, the lowest level first, then the one running the shortest, never a blocker; the
-evicted card is withdrawn at a new generation (its lane ends by it) and goes back to ready at
-its level, marked "evicted by <blocker>", and the tick that follows deals the blocker into the
-room; with only blockers running it waits under the judgment `a blocker waits`. `where` prints the levels beside the critical list and the backup
+room the reads leave; a take ranks a row's cards by the level each carries. A blocker that no
+row of its tier has room for, or that is dealt behind lanes all held, evicts one running work
+card on those rows, the lowest level first, then the one running the shortest, never a
+blocker, never a read; the evicted card is withdrawn at a new generation (its lane ends by it;
+a friend is told on the bus by `friend sync`) and goes back to ready at its level, marked
+"evicted by <blocker>", its next generation starting from the branch that holds its push, and
+the blocker takes the room in the same plan; with only blockers or reads running it waits
+under the judgment `a blocker waits`. `where` prints the levels beside the critical list and the backup
 state (`backup: reads (review ... > working ...)`) while there is one
 (docs/SPEC-SPRINT.md section 1, "Priority").
 

@@ -347,15 +347,22 @@ func (a *app) friendCardsOf(ctx context.Context, st *store.Store, name, dir stri
 		}
 		return 0, 0, writeQueueFile(dir, states, left, nil)
 	}
-	var cards []*sprint.Card
+	var cards, taken []*sprint.Card
 	for _, c := range all {
 		states[c.ID] = map[string]string{string(sprint.Working): "working", string(sprint.Ready): "queued", string(sprint.Withdrawn): queueTaken}[string(c.Col)]
 		if c.Col != sprint.Withdrawn {
 			cards = append(cards, c)
+		} else {
+			taken = append(taken, c)
 		}
 	}
 	packets, err := st.Packets(ctx, cards)
 	if err != nil {
+		return 0, 0, err
+	}
+	// a card taken back from a lane she was working (a hold, an eviction): her queue file
+	// said working and says taken now, and she is told on the bus, once (tellTakenBack)
+	if err := a.tellTakenBack(ctx, st, name, dir, taken, say); err != nil {
 		return 0, 0, err
 	}
 	defer func() {
@@ -701,6 +708,74 @@ func (a *app) friendReadOf(ctx context.Context, st *store.Store, name, dir strin
 	finished++
 	say(fmt.Sprintf("FRIEND-READ finished friend=%s card=%s", name, p.Card))
 	return delivered, finished, nil
+}
+
+// queueFileStates is the state of each task in the friend's queue file, none when there is no
+// file or it is no queue.
+func queueFileStates(dir string) map[string]string {
+	out := map[string]string{}
+	before, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(queueFile)))
+	if err != nil {
+		return out
+	}
+	var q friendQueue
+	if json.Unmarshal(before, &q) != nil {
+		_ = json.Unmarshal(before, &q.Tasks) // ignored: a file that is no queue has no states
+	}
+	for _, t := range q.Tasks {
+		out[t.ID] = t.State
+	}
+	return out
+}
+
+// tellTakenBack tells the friend of each card taken back out of a lane she was working
+// (the hold's take-back, a blocker's eviction: sprint.FriendTake, sprint.blockerEvictions),
+// one bus message each, once: her queue file said working and the card is withdrawn on
+// her row now (friend sync writes it taken after this). The message says why
+// (taken_back), the generation whose branch keeps what she pushed (carry_gen), and that a
+// finish of the taken generation is refused as stale. A send that fails is said on sync's
+// line and never fails the sync: the queue file is the record (docs/SPEC-SPRINT.md section
+// 1, "A blocker evicts").
+func (a *app) tellTakenBack(ctx context.Context, st *store.Store, name, dir string, taken []*sprint.Card, say func(string)) error {
+	if len(taken) == 0 {
+		return nil
+	}
+	was := queueFileStates(dir)
+	var tell []*sprint.Card
+	for _, c := range taken {
+		if was[c.ID] == "working" && c.F(sprint.FieldTakenBack) != "" {
+			tell = append(tell, c)
+		}
+	}
+	if len(tell) == 0 {
+		return nil
+	}
+	packets, err := st.Packets(ctx, tell)
+	if err != nil {
+		return err
+	}
+	for i, c := range tell {
+		p := packets[i]
+		gen := max(c.Int("gen")-1, 1) // the generation she worked: the withdrawal made a new one
+		if g := c.Int(sprint.FieldCarryGen); g > 0 {
+			gen = g
+		}
+		job := sprint.StoredID(p.Card, p.Epoch)
+		if gen > 1 {
+			job += ".g" + strconv.Itoa(gen)
+		}
+		why := c.F(sprint.FieldTakenBack)
+		m := bus.Message{From: st.Actor, To: []string{name}, Subject: "card " + p.Card + " taken back: " + why,
+			Body: fmt.Sprintf("Stop work on your sprint card %s (job %s, generation %d): %s. Its branch %s keeps what you pushed, and the next generation starts from it; a finish of generation %d is refused as stale. Your queue file marks it taken.",
+				p.Card, job, gen, why, sprint.BranchOf("", p.Epoch, p.Card, gen), gen)}
+		line := fmt.Sprintf("FRIEND-CARD TAKEN-BACK friend=%s card=%s gen=%d: %s", name, p.Card, gen, oneline.Escape(why))
+		if err := a.bus(ctx, m, say); err != nil {
+			say(line + "; the bus message to her was not sent (" + oneline.Escape(err.Error()) + "); her queue file marks it taken, tell her by hand")
+			continue
+		}
+		say(line + "; told on the bus")
+	}
+	return nil
 }
 
 // queueFile is the friend's queue file under her working directory, nova-friend's

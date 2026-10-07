@@ -165,6 +165,55 @@ func ladderOrder(cards []*Card) []*Card {
 	return out
 }
 
+// queueOrder is the cards of a row's queue by the level each carries (QueuePriority: a work
+// card's as its deal wrote it, a read card's inherited level), highest first, stable: a take
+// takes a blocker's work and a blocker primary's read before anything else (takeOne).
+func queueOrder(cards []*Card) []*Card {
+	out := slices.Clone(cards)
+	sort.SliceStable(out, func(i, j int) bool { return priorityRank(QueuePriority(out[i])) < priorityRank(QueuePriority(out[j])) })
+	return out
+}
+
+// relevelCards is the changes that write the primary's new level on the cards it has out:
+// its attempt's work card, ready or working (its deal wrote the old level, priorityOnWork),
+// and its live read cards, each at the read's inherited level (ReadPriority), so a queue and
+// a take rank them by the level set (the verb priority raises a dealt card in place).
+func relevelCards(s *Snapshot, c *Card, level string) []Change {
+	var out []Change
+	set := func(tb *Table, table string, card *Card, l string) {
+		if card == nil || card.F(FieldPriority) == l || tb == nil {
+			return
+		}
+		if l == PriorityNormal || l == PriorityReader {
+			if card.F(FieldPriority) != "" {
+				out = append(out, change(table, setEntry(card, nil, FieldPriority)))
+			}
+			return
+		}
+		out = append(out, change(table, setEntry(card, map[string]string{FieldPriority: l})))
+	}
+	attempt := c.Int("attempt")
+	read := PriorityLadder[min(priorityRank(level), priorityRank(PriorityReader))]
+	if s.Fleet != nil {
+		if wc := s.Fleet.Placed(WorkCardID(c.ID, attempt)); wc != nil && (wc.Col == Ready || wc.Col == Working) {
+			set(s.Fleet, Fleet, wc, level)
+		}
+		for _, rc := range s.Fleet.Column(Ready, Working) {
+			if isRead(rc) && rc.F("primary") == c.ID && rc.Int("attempt") == max(attempt, 1) {
+				set(s.Fleet, Fleet, rc, read)
+			}
+		}
+	}
+	if s.Readers != nil {
+		for _, rc := range liveReadsAt(s, c, max(attempt, 1)) {
+			if rc.Col == Asked || rc.Col == Reading {
+				set(s.Readers, Readers, rc, read)
+			}
+		}
+	}
+	return out
+}
+
 // readRank is the place on the ladder of the primary's read: the higher of reader and its
 // primary's own level (cardRank), so the reads of a blocker, critical or high primary go to
 // the front of the read queue, and a normal or low primary's read is reader (the owner,
@@ -308,9 +357,12 @@ func SetPriority(s *Snapshot, r PriorityReq) Plan {
 		}
 		n := happened(NPrioritySet, c.Row, s.Now, c.ID)
 		n.Who, n.What = r.Who, fmt.Sprintf("%s priority %s -> %s%s", c.ID, was, r.Level, why)
-		p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.Row,
-			Changes: []Change{change(Work, setEntry(c, map[string]string{FieldPriority: r.Level}))}, Notes: []Note{n},
-			Moved: n.What})
+		// the cards it has out take the level too: a dealt card is raised in place
+		changes := append([]Change{change(Work, setEntry(c, map[string]string{FieldPriority: r.Level}))}, relevelCards(s, c, r.Level)...)
+		if len(changes) > 1 {
+			n.What += fmt.Sprintf(" (%d dealt cards re-levelled)", len(changes)-1)
+		}
+		p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.Row, Changes: changes, Notes: []Note{n}, Moved: n.What})
 	}
 	return p
 }

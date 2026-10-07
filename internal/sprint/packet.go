@@ -180,6 +180,15 @@ func PacketOf(prefix string, epoch uint64, c, primary *Card, earlier []*Card, wo
 		}
 		b := BaseOf(earlier)
 		p.BaseHead, p.BaseAttempt = b.Head, b.Attempt
+		// the generation whose branch holds the work this attempt pushed before it was taken
+		// back or evicted (FieldCarryGen; friend_take.go, priority_evict.go): this generation
+		// starts from that branch, and from its pushed head when the take-back read one
+		if g := c.Int(FieldCarryGen); g > 0 && g < max(c.Int("gen"), 1) {
+			p.Base = BranchOf(prefix, epoch, c.ID, g)
+			if h := c.F(FieldCarryHead); typedrec.IsFullSha(h) {
+				p.BaseHead, p.BaseAttempt = h, p.Attempt
+			}
+		}
 		return p
 	}
 	p.DecideBounce, p.DecideReview = c.F(FieldDecideBounce), c.F(FieldDecideReview)

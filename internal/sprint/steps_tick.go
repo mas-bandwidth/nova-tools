@@ -804,8 +804,8 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 		}
 	}
 	p.Units = append(reads.Units, p.Units...)
-	// a blocker placed nowhere whose rows are all at their room evicts one running card
-	// (priority_evict.go): the room it frees takes the blocker on the tick that follows
+	// a blocker placed nowhere whose rows are all at their room, or dealt and ready behind
+	// held lanes, evicts one running card and takes the room it frees (priority_evict.go)
 	{
 		placed, touched := map[string]bool{}, map[string]bool{}
 		for _, u := range p.Units {
@@ -819,7 +819,6 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 		evicted, waits := blockerEvictions(s, placed, touched, up, r.who())
 		p.Units = append(p.Units, evicted...)
 		conds = append(conds, waits...)
-		due += len(evicted)
 	}
 	if len(r.Friends) > 0 {
 		// the friends level after the deal, every tick and on the tick a friend comes up, so
