@@ -90,3 +90,15 @@ The `gosdk` check reads the role from the machine's seat. On the coordinator's m
 no `go` there it is ok. On a bench it fails when `go` is absent, when its version is not
 `go.mod`'s toolchain version, or when `GOCACHE` is not writable, and warns when `GOFLAGS`
 does not carry `-mod=readonly`. Each fix line names the step above.
+
+### dep-postgres-b.w4: the nova-config database
+
+`nova-config` stores the fleet's rows (machines, friends, routes, loops) in Postgres.
+The schema is defined by embedded migrations in `internal/config/migrations/` and
+applied with `nova-config migrate`. The DSN comes from `NOVA_CONFIG_DSN`.
+
+Under `--local` (one machine setup), `nova-up` does not start postgres itself; a person
+installs and starts postgres, creates the database, then sets `NOVA_CONFIG_DSN` and
+runs `nova-config migrate`. The doctor check `pg` verifies the database answers at
+the configured address and the schema is at the newest migration. In fleet mode,
+the database is external and the check ensures it is reachable and up to date.
