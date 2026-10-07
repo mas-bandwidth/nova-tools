@@ -59,8 +59,18 @@ the briefs carry), on each `tables.work[<stream>]` row `per_landed` (every table
 cell stays a string, the shape the dashboard's pull decodes), and `stream_costs`
 beside the tables, each stream's `tiers` (its cards by tier) and `cost_by_tier`, its spend by the
 tier each attempt and read ran on (the cost records' tier, not the card's
-ceiling: a flash card escalated to pro shows both; a record with no tier is
-`untiered`), money strings as the cost column shows them. All of it is counted
+ceiling: a flash card escalated to pro shows both), every dollar of the stream's
+`total_cost` in one tier: a record with no tier takes its route's (the route row's
+tier, else the route name's prefix `pro-*`, `flash-*`, `heavy-*`, `frontier-*`), else
+the card attempt's (its `tier_now`, else its pinned `tier`, else its brief's), and a
+card's records past the list's bound take the card attempt's; `no tier` only when none
+of these exists (`TestCostByTierTakesTheRouteTierWhenTheRunRecordsNone`). The displayed
+partition rounds the stream total up once: each tier keeps its whole cents, and the
+remaining cents go to the largest fractional remainders, ties in alphabetical tier
+order. Thus displayed tier amounts sum exactly to `total_cost`, including fractional-cent
+records (`TestCostByTierAllocatesFractionalCentsWithoutChangingTheTotal`); and
+`reconciles`, each provider's latest cost reconciliation (the sprint's, the same on every
+stream: its day, the provider's figure, the records', the gap), money strings as the cost column shows them. All of it is counted
 by the tick from the sprint it reads anyway and kept in the where record
 (store.WhereRecord), never read card by card at `where`; before the first tick
 of an epoch `tiers` and `cost_by_tier` are absent and `per_landed` is from the
@@ -2051,7 +2061,9 @@ gap=<$> share=<n>%` or `COST provider=<p> unknown: <why>`, then `COST RECONCILE 
 providers=<n> notes=<n>` (with `--json`, the providers' records and the notes written; with
 no provider named by a route, `providers=0` and nothing written; with `--dry-run`, the same
 lines from the step's plan, `COST RECONCILE DRY-RUN ...: nothing was written`); the
-release's spend check calls it (`TestCostReconcileSetsEachProvidersDayBesideTheRecords`).
+release's spend check (docs/SPEC-RELEASE.md section 18) sets the same records beside each
+provider's own count over the release's window, refusing a cut past 5%
+(`TestCostReconcileSetsEachProvidersDayBesideTheRecords`).
 
 **The reprice** (`internal/sprint/cost_reprice.go`, `sprint.Reprice`; the owner, 2026-10-05: "Is
 it possible to fix historical prices for this sprint ... More accurate prices allow us to
