@@ -97,7 +97,7 @@ func LintCardDepends(raw []byte, lineup Lineup) []CardHeaderFinding {
 			continue
 		}
 		// A reference is shape only. It is not a lineup id, and not this card's id.
-		if dependsReferenceRE.MatchString(id) {
+		if dependsReferenceRE.MatchString(id) || externalOperandRE.MatchString(id) {
 			continue
 		}
 		if !oneCardID(id) {
@@ -109,7 +109,7 @@ func LintCardDepends(raw []byte, lineup Lineup) []CardHeaderFinding {
 		}
 	}
 	if len(bad) > 0 {
-		add(f.line, fmt.Sprintf("DEPENDS-ON: %s is not a card id or an owner/repo#n reference", quoteDepends(bad)))
+		add(f.line, fmt.Sprintf("DEPENDS-ON: %s is not a card id, an owner/repo#n reference, or an external operand (pr ... merged, branch contains sha, or after RFC3339)", quoteDepends(bad)))
 	}
 	if len(selfs) > 0 {
 		add(f.line, fmt.Sprintf("DEPENDS-ON: %s names this card's own id", strings.Join(selfs, ", ")))
@@ -149,6 +149,18 @@ func firstLine(raw []byte) string {
 // `mas-bandwidth/nova-tools#2550` matches. `nova-tools #2550` does not (a space).
 // `nova-tools#2550` does not (no slash). `a/b/c#1` does not (two slashes).
 var dependsReferenceRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*#[0-9]+$`)
+
+// externalOperandRE matches one of the three external operand forms:
+// - `pr <repo>#<n> merged`
+// - `<branch> contains <sha>`
+// - `after <RFC3339>`
+var externalOperandRE = regexp.MustCompile(`^(pr [A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*#[0-9]+ merged|[A-Za-z0-9_/-]+ contains [A-Za-z0-9]+|after [A-Za-z0-9:+-]+)$`)
+
+// externalOperandRE matches one of the three external operand forms:
+// - `pr <repo>#<n> merged`
+// - `<branch> contains <sha>`
+// - `after <RFC3339>`
+var externalOperandRE = regexp.MustCompile(`^(pr [A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*#[0-9]+ merged|[A-Za-z0-9_/-]+ contains [A-Za-z0-9]+|after [A-Za-z0-9:+-]+)$`)
 
 // oneCardID is one dependency token. `-` is the whole-line declaration, never an
 // entry in the list. An entry with whitespace is two words, not an id.
