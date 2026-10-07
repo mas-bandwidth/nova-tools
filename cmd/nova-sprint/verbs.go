@@ -2794,14 +2794,15 @@ func landedPins(ctx context.Context, pairs []string, repo, baseRef string) ([]sp
 
 func (a *app) cmdResume(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("resume")
-	stream := fs.String("stream", "", "the stopped stream")
+	var streams listFlag
+	fs.Var(&streams, "stream", "a stopped stream; again, or comma separated, for more (each is resumed or refused on its own line, and the exit is 1 when any is refused)")
 	did := fs.String("did", "", "what the coordinator did about the cause; required after a red branch")
 	ans := fs.String("answers", "", answersWords)
 	pos, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, "resume", err.Error())
 	}
-	if *stream == "" || len(pos) > 0 {
+	if len(streams) == 0 || len(pos) > 0 {
 		return refuse(stderr, "resume", "wants --stream <s>")
 	}
 	st, err := a.store(*c)
@@ -2811,7 +2812,15 @@ func (a *app) cmdResume(args []string, stdout, stderr io.Writer) int {
 	if err := unaliasFlag(context.Background(), st, fs, "answers"); err != nil {
 		return refuse(stderr, "resume", "--answers: "+err.Error())
 	}
-	return a.runStep("resume", *c, st, store.ResumeStep(sprint.ResumeReq{Stream: *stream, Did: *did, Answers: answers(*ans), Who: c.actor}), stdout, stderr)
+	// Each stream is its own step: one stopped stream never hides another's
+	// refusal, and one --did applies to all of them (docs/SPEC-SPRINT.md).
+	code := 0
+	for _, s := range streams {
+		if rc := a.runStep("resume", *c, st, store.ResumeStep(sprint.ResumeReq{Stream: s, Did: *did, Answers: answers(*ans), Who: c.actor}), stdout, stderr); rc != 0 {
+			code = rc
+		}
+	}
+	return code
 }
 
 func (a *app) cmdFleet(op string, args []string, stdout, stderr io.Writer) int {
