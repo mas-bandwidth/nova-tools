@@ -1,7 +1,6 @@
 package up
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"path/filepath"
