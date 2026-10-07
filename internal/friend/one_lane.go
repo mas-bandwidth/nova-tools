@@ -131,8 +131,18 @@ func ClaimLane(dir, job, who string, now time.Time) (holder string, err error) {
 // endLaneMark writes "ended: card finished by <who>" on the job, unless its mark already
 // says it ended.
 func endLaneMark(dir, job, who string) error {
-	if m, ok := ReadLaneMark(dir, job); ok && m.Ended {
-		return nil
+	return endLaneMarkFor(dir, job, who, who)
+}
+
+// endLaneMarkFor separates the lane whose run ended from the recorded disposition.
+func endLaneMarkFor(dir, job, owner, who string) error {
+	if m, ok := ReadLaneMark(dir, job); ok {
+		if m.Ended {
+			return nil
+		}
+		if m.Who != owner {
+			return fmt.Errorf("lane mark belongs to %s; verify that lane ended before releasing its scratch", m.Who)
+		}
 	}
 	path := laneMarkPath(dir, job)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -253,14 +263,10 @@ func (l *loop) leftRow(c Card) (who string, gone bool) {
 func (l *loop) endOtherLane(ln *lane, who string, now time.Time) {
 	d, c := l.d, *ln.card
 	ln.ended = who
-	words := ""
-	if err := endLaneMark(d.Dir, filepath.Base(c.Outbox), who); err != nil {
-		words = fmt.Sprintf(" mark_error=%q", oneLine(err.Error(), 300))
-	}
 	if ln.t != nil && ln.t.cancel != nil {
 		ln.t.cancel()
 	}
-	d.Record(fmt.Sprintf("%s lane %d: card %s ended: card finished by %s; its run is stopped and nothing is finished by this lane%s", now.UTC().Format(time.RFC3339), ln.n, c.ID, who, words))
+	d.Record(fmt.Sprintf("%s lane %d: card %s ended: card finished by %s; its run is stopped and nothing is finished by this lane", now.UTC().Format(time.RFC3339), ln.n, c.ID, who))
 	if ln.t == nil {
 		l.setDown(ln, now)
 	}
@@ -269,6 +275,13 @@ func (l *loop) endOtherLane(ln *lane, who string, now time.Time) {
 // setDown is a lane's card set down after another lane ended it: no longer started, never
 // handed again, and the lane free.
 func (l *loop) setDown(ln *lane, now time.Time) {
+	// SPEC-FRIEND scratch: cancellation is a request; only the joined turn's setDown
+	// may end its ownership mark, so cleanup cannot delete while that run is still live.
+	if ln.card != nil && ln.ended != "" {
+		if err := endLaneMarkFor(l.d.Dir, filepath.Base(ln.card.Outbox), l.laneWho(ln.n), ln.ended); err != nil {
+			l.d.Record(fmt.Sprintf("%s cleanup: lane mark retained: %s", now.UTC().Format(time.RFC3339), oneLine(err.Error(), 300)))
+		}
+	}
 	s := l.lanes
 	job := filepath.Base(ln.card.Outbox)
 	delete(s.state.Started, job)

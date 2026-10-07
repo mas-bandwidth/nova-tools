@@ -185,9 +185,11 @@ type Daemon struct {
 	// queue, begin, verdict and return (read_lanes.go). Nil runs no reads. ReadSlots is the
 	// row's read slots, read each step (nil: DefaultReadSlots), and ReadModel the model of a
 	// read's tier ("": the harness's own).
-	Sprint    func(ctx context.Context, argv []string) (string, error)
-	ReadSlots func() int
-	ReadModel func(tier string) string
+	Sprint      func(ctx context.Context, argv []string) (string, error)
+	ReadSlots   func() int
+	ReadModel   func(tier string) string
+	ReadStage   func(context.Context, AskedRead) error
+	ReadRelease func(context.Context, string) error
 	// Stage stages a held work card's job (Stager.Stage: jobs/<job>/repo and its JOB.md) and
 	// answers the commit staged (stage.go); nil stages none, and a lane is handed a card with
 	// its brief alone.
@@ -196,6 +198,9 @@ type Daemon struct {
 	// jobs that are live (held on her row, run by a lane, being staged), after each inbox
 	// cleanup, and answers the jobs it removed; nil prunes none.
 	Prune func(ctx context.Context, live map[string]bool) ([]string, error)
+	// Release removes a finished lane's owned clean job after its report head is on
+	// origin. A retained job is retried by Prune; nil releases none.
+	Release func(ctx context.Context, job string) error
 	// Tip is origin's tip of a branch of a repository (owner/name), "" when origin has no
 	// such branch (Stager.Tip: one git ls-remote): a report's LAND finishes only at that tip,
 	// as nova-sprint collect's does (outbox.go). Nil reads none, and a LAND finishes at its

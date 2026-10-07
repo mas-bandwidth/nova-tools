@@ -12,6 +12,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
+	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 )
 
 // The friend's reader row (docs/SPEC-FRIEND.md, the reader row; the owner, 2026-10-05: "Make
@@ -144,8 +147,7 @@ func briefField(re *regexp.Regexp, brief string) string {
 // BenchRule is the sentence every read prompt carries: the machine the friend runs on runs no go command, a Linux
 // bench does.
 func BenchRule(friend, card string) string {
-	d := "~/nova-bench/buds/" + friend + "/reads/" + card
-	return fmt.Sprintf("BENCH RULE, over any GOCACHE or go command the brief gives: this machine (the one you are on) runs no go build, go test or go vet, ever. Read the checkout here (change nothing), then copy the tree to a Linux bench and run every go command there: ssh <bench> 'mkdir -p %s' && rsync -a --delete <your repo dir>/ <bench>:%s/repo/ && ssh <bench> 'cd %s/repo && export GOCACHE=~/nova-bench/buds/%s/cache/go-build GOFLAGS=-mod=readonly NOVA_TEST_NO_HOST=1 && nice -n 19 go ...' (<bench> is the Linux bench your AGENTS.md names; the next one it names only when that one does not answer). Re-sync after each edit. When you are done, remove that bench directory: ssh <bench> 'rm -rf %s'. Report the gate lines as the bench printed them, naming the bench.", d, d, d, friend, d)
+	return "BENCH RULE, over any GOCACHE or go command the brief gives: this machine runs no go build, go test or go vet. Run gates with nova-ci bench run --host <bench> --dir <your repo dir> --with-git -- flock /tmp/nova-go-gate.lock go test -p 2 -count=1 -timeout 600s <packages> (<bench> is the Linux bench your AGENTS.md names). The bench runner creates a private copy and removes it after every command, including a failed or cancelled command. Keep the gate output in RESULT.md, naming the bench."
 }
 
 // ReadText is READ.md: the read's job, as the reader loops wrote it.
@@ -157,7 +159,7 @@ func ReadText(friend, jobDir string, r AskedRead) string {
 
 You are %[3]s, a reader of %[4]s reading one card. Work only in %[5]s. Change nothing in the work, commit nothing, push nothing.
 
-1. Clone: cd %[5]s && git clone -q https://github.com/%[6]s.git repo && cd repo && git fetch -q origin %[7]s && git checkout -q --detach %[8]s (verify git rev-parse HEAD is %[8]s; if the head cannot be had, write RESULT.md with verdict: none and say why).
+1. The runner stages repo from its shared mirror of https://github.com/%[6]s.git: cd %[5]s/repo && git rev-parse HEAD (verify it is %[8]s; if the head cannot be had, write RESULT.md with verdict: none and say why).
 2. The work's change is exactly $(git merge-base %[8]s origin/%[9]s)..%[8]s, on branch %[7]s against %[9]s. %[9]s may have moved since the work began; a diff against its tip shows every change landed since as a deletion, and those are never the work's and never a finding. Judge the work by the merge-base diff alone.
 3. The card under review is BRIEF.md beside this file; the worker's own report is WORKER-REPORT.txt. Judge: does the change do the brief's task, touch only its PATHS, add the test the TEST line names (red before, green after, pinning the behaviour), and keep the brief's RULES.
 4. The read's gate, in place of the card's: the packages the change touches and the tests that read a doc it changes, each as nice -n 19 go vet <pkg> and nice -n 19 go test -count=1 -timeout 600s <pkg>. Never ./... . %[10]s
@@ -312,9 +314,39 @@ func (l *loop) startRead(r AskedRead, now time.Time) {
 	go func() {
 		res := readResult{read: r, model: model, dir: dir, start: now}
 		defer func() { s.results <- res }()
-		_ = os.Remove(filepath.Join(dir, "RESULT.md")) // ignored: a result of an earlier attempt is not this read's
-		if res.err = os.MkdirAll(dir, 0o755); res.err != nil {
+		if !validJob(r.ID) {
+			res.err = errors.New("read id is no scratch directory name")
 			return
+		}
+		if res.err = os.MkdirAll(filepath.Dir(dir), 0o755); res.err != nil {
+			return
+		}
+		if _, res.err = safepath.ResolvedUnder(filepath.Dir(dir), d.Dir); res.err != nil {
+			return
+		}
+		if res.err = os.Mkdir(dir, 0o755); os.IsExist(res.err) {
+			raw, err := os.ReadFile(filepath.Join(dir, scratchReceipt))
+			if err != nil || string(raw) != r.ID {
+				res.err = errors.New("read directory was not created by this runner")
+				return
+			}
+			res.err = nil
+		}
+		if res.err != nil {
+			return
+		}
+		if _, res.err = safepath.ResolvedUnder(dir, filepath.Join(d.Dir, "reads")); res.err != nil {
+			return
+		}
+		_ = os.Remove(filepath.Join(dir, "RESULT.md")) // ignored: the validated owned directory's previous attempt
+		// SPEC-FRIEND scratch: the read runner records the directory it prepared.
+		if res.err = atomicfile.WriteFile(filepath.Join(dir, scratchReceipt), []byte(r.ID), 0o644); res.err != nil {
+			return
+		}
+		if d.ReadStage != nil {
+			if res.err = d.ReadStage(l.ctx, r); res.err != nil {
+				return
+			}
 		}
 		for name, text := range map[string]string{"BRIEF.md": r.Packet.Brief, "WORKER-REPORT.txt": r.Packet.Report, "READ.md": ReadText(d.Friend, dir, r)} {
 			if res.err = os.WriteFile(filepath.Join(dir, name), []byte(text), 0o644); res.err != nil {
@@ -352,6 +384,9 @@ func (l *loop) readDone(r readResult, now time.Time) {
 	if verdict != "" {
 		out, err := d.Sprint(l.ctx, ReadVerdictArgv(d.Friend, r.read, verdict, finding, usage))
 		d.Record(fmt.Sprintf("%s read %s: verdict=%s wall=%s: %s", at, r.read.ID, verdict, now.Sub(r.start).Round(time.Second), recorded(out, err)))
+		if err == nil {
+			l.releaseRead(r, raw, now)
+		}
 		return
 	}
 	why := fmt.Sprintf("no verdict from the %s run (exit %d)", d.Harness, r.turn.Exit)
@@ -370,6 +405,52 @@ func (l *loop) readDone(r readResult, now time.Time) {
 	}
 	out, err := d.Sprint(l.ctx, ReadReturnArgv(d.Friend, r.read, why, usage))
 	d.Record(fmt.Sprintf("%s read %s: returned: %s: %s", at, r.read.ID, oneLine(why, 200), recorded(out, err)))
+	if err == nil {
+		l.releaseRead(r, []byte(why), now)
+	}
+}
+
+// releaseRead preserves the finding outside scratch before removing the directory
+// prepared by startRead. Failed delivery leaves the read and its checkout available.
+func (l *loop) releaseRead(r readResult, finding []byte, now time.Time) {
+	d := l.d
+	root := filepath.Join(d.Dir, "reads")
+	if !validJob(r.read.ID) || r.dir != filepath.Join(root, r.read.ID) {
+		return
+	}
+	raw, err := os.ReadFile(filepath.Join(r.dir, scratchReceipt))
+	if err != nil || string(raw) != r.read.ID {
+		return
+	}
+	archive := filepath.Join(d.Dir, "outbox", "reads", r.read.ID)
+	if err = os.MkdirAll(archive, 0o755); err == nil {
+		err = atomicfile.WriteFile(filepath.Join(archive, "RESULT.md"), finding, 0o644)
+	}
+	if err == nil {
+		for _, name := range []string{"BRIEF.md", "READ.md", "WORKER-REPORT.txt"} {
+			var body []byte
+			body, err = os.ReadFile(filepath.Join(r.dir, name))
+			if os.IsNotExist(err) {
+				err = nil // a failed stage may have produced only its owned receipt
+				continue
+			}
+			if err == nil {
+				err = atomicfile.WriteFile(filepath.Join(archive, name), body, 0o644)
+			}
+			if err != nil {
+				break
+			}
+		}
+	}
+	if err == nil && d.ReadRelease != nil {
+		err = d.ReadRelease(l.ctx, r.read.ID)
+	}
+	if err == nil {
+		err = safepath.RemoveUnder(root, r.dir)
+	}
+	if err != nil {
+		d.Record(fmt.Sprintf("%s read %s: scratch retained: %s", now.UTC().Format(time.RFC3339), r.read.ID, oneLine(err.Error(), 300)))
+	}
 }
 
 func recorded(out string, err error) string {

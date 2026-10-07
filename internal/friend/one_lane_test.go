@@ -135,7 +135,7 @@ func TestOneLaneRunsPerCard(t *testing.T) {
 				out := filepath.Join(dir, "outbox", "c1~15")
 				require.NoError(t, os.MkdirAll(out, 0o755))
 				require.NoError(t, os.WriteFile(filepath.Join(out, "REPORT.md"), []byte("Verdict: LAND\n"), 0o644))
-				require.NoError(t, endLaneMark(dir, "c1~15", "bob lane 2 (daemon 7.1)"))
+				require.NoError(t, os.WriteFile(laneMarkPath(dir, "c1~15"), []byte(LaneMarkEnded("bob lane 2 (daemon 7.1)")), 0o644))
 			})
 			records := strings.Join(r.records, "\n")
 			assert.Contains(t, records, "lane 1: card c1 ended: card finished by bob lane 2 (daemon 7.1)")
@@ -175,4 +175,37 @@ func TestALaneMarkIsClaimedByOneLane(t *testing.T) {
 	holder, err = ClaimLane(dir, "c1~15", "bob lane 3", at.Add(time.Hour))
 	require.NoError(t, err)
 	assert.Equal(t, "bob lane 2", holder, "an ended card is never claimed again")
+}
+
+func TestAnEndingLaneCannotOverwriteAnotherRunningLane(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	at := time.Unix(1, 0)
+	_, err := ClaimLane(dir, "c1~15", "owner", at)
+	require.NoError(t, err)
+	require.Error(t, endLaneMark(dir, "c1~15", "restarted daemon"))
+	mark, found := ReadLaneMark(dir, "c1~15")
+	require.True(t, found)
+	assert.False(t, mark.Ended)
+	assert.Equal(t, "owner", mark.Who)
+}
+
+func TestCancelledLaneKeepsItsMarkUntilTheTurnJoins(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	l := &loop{d: r.d, tag: "test", lanes: &laneSet{given: map[string]bool{}, state: LaneState{Started: map[string]Started{}}}}
+	c := Card{ID: "c1", Outbox: filepath.Join(r.d.Dir, "outbox", "c1~15")}
+	cancelled := false
+	ln := &lane{n: 1, card: &c, t: &turn{cancel: func() { cancelled = true }}}
+	_, err := ClaimLane(r.d.Dir, "c1~15", l.laneWho(1), r.now)
+	require.NoError(t, err)
+	l.endOtherLane(ln, "withdrawn by the server", r.now)
+	assert.True(t, cancelled)
+	mark, ok := ReadLaneMark(r.d.Dir, "c1~15")
+	require.True(t, ok)
+	assert.False(t, mark.Ended, "requesting cancellation cannot authorize cleanup")
+	l.setDown(ln, r.now)
+	mark, ok = ReadLaneMark(r.d.Dir, "c1~15")
+	require.True(t, ok)
+	assert.True(t, mark.Ended, "the joined turn can release its own mark")
 }

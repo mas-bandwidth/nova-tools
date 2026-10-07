@@ -248,6 +248,16 @@ func remoteRef(gd, ref string) string {
 // the record's words.
 func (l *loop) endCard(lane int, card Card, end LaneEnd, now time.Time) string {
 	d, s := l.d, l.lanes
+	defer func() {
+		if d.Release == nil {
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(l.ctx), TipBudget)
+		defer cancel()
+		if err := d.Release(ctx, filepath.Base(card.Outbox)); err != nil {
+			d.Record(fmt.Sprintf("%s cleanup: retained %s: %s", now.UTC().Format(time.RFC3339), filepath.Base(card.Outbox), oneLine(err.Error(), 300)))
+		}
+	}()
 	delete(s.state.Started, filepath.Base(card.Outbox))
 	defer l.saveLanes(now)
 	mark := ""

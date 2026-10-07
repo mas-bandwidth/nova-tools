@@ -1348,35 +1348,43 @@ The machine is modelled in `tla/FriendStage.tla` (`MCFriendStage*`): a lane is h
 only once its `JOB.md` is there, one judgment per repository or card while it stands, a stop
 says nothing, and a failed job is staged again once its remedy lands; three reversed witnesses
 (nextCard without the guard, a judgment per failed stage, no retry).
-Finished jobs are pruned by the cleanup the daemon already owns: after each inbox reconcile
-(which retires the briefs of cards that left her row), in the loop itself, `pruneStep` hands
-`Stager.Prune` the live jobs (held on her row, run by a lane, being staged). A job is finished
-when it is not live and its brief is not in her inbox; only a job whose checkout is a worktree
-of one of her mirrors is ever pruned, never a clone or anything another hand staged. The newest
-`FinishedJobsKept` (8, by their `JOB.md`) are kept and the rest removed oldest first, at most
-`PrunePerPass` (4) a cleanup and never waiting on a mirror a stage holds (its lock is tried,
-not taken): the worktree is removed from the mirror (`worktree remove --force`, then `worktree
-prune`) and `jobs/<job>` with it, and the branch stays in the mirror, so a commit on it is never
-lost. Each job removed is one line (`prune: removed jobs/<job> and its worktree: its card is
-finished (8 finished kept)`); a failure is said once while it stands (`prune: not pruned: ...`).
-The prune runs in the loop, never on a goroutine handed a snapshot: a job dealt to her again
-meanwhile would have its brief written, be handed to a lane on its old `JOB.md`, and lose its
-checkout under it. `TestJobsAreWorktreesOfOneMirror` stages two jobs of one repository and sees
-one full bare mirror and two worktrees on their branches at the base, origin the repository; a
-push from one is read by `PushedHead`; a fetch that fails is a judgment named on the job and
-leaves nothing of it; a finished job is pruned past the cap and its branch and commit stay; a
-job in her inbox or live is never pruned; a pruned job staged again takes its branch back.
-`TestAMirrorOfTheCloneLayoutIsConverted` and `TestTheInboxCleanupPrunesFinishedJobs` pin the
-rest. The worktrees and their pruning are modelled in `internal/friend/tla/JobWorktrees.tla`
-(TLC on a Linux bench, three jobs, cap 1, one a pass, `MCJobWorktrees`: 33,344 distinct states,
-no error; `NoLaneLosesItsCheckout`, `WorkKept`, `CapKept`, `HeldKept`), with three reversed
-witnesses: `MCJobWorktreesBrokenAsync` (the prune on a goroutine, the first cut of this change)
-breaks `NoLaneLosesItsCheckout` in 16 states as above, `MCJobWorktreesBrokenDropBranch` breaks
-`WorkKept`, and `MCJobWorktreesBrokenNoLimit` breaks `CapKept`. Jobs staged as clones before
-this change are never pruned (they are no worktree of a mirror) and are left to a hand.
+Finished lane scratch is disposable only after durable publication. The stager writes
+`jobs/<job>/.nova-scratch.json` when it creates the worktree; a directory another hand
+stages gains no receipt. `endCard` calls `Stager.Release` after the report and lane end
+mark are written. Removal requires the ownership packet, the same repository and branch,
+a recognized report verdict and full head, a clean checkout at that head (including
+untracked and ignored files), and a current `ls-remote` of that exact origin branch
+naming the same head. Worktree removal uses no force. The branch stays in the mirror;
+the outbox report stays outside scratch. LAND, HOLD and FAIL use the same publication
+requirement. A retained job is reported, never silently discarded.
+
+`pruneStep` sweeps between reconciliations. Held cards, current lanes, stages and inbox
+entries remain protected; any running LANE mark also blocks removal even when the
+server loses its running IDs. A stopped daemon's marker is not proof its harness session
+ended, so uncertain markers retain their work until a verified lane end clears them.
+Missing server presence and a retention cap never authorize deletion of unpublished
+work. At most `PrunePerPass` (4) jobs are attempted per sweep; the cursor rotates past
+retained jobs. Mirror locks serialize staging and cleanup; deletion stays in the loop
+so a stale asynchronous snapshot cannot remove a newly assigned live job. Completed
+published jobs leave no job directory even below the old retention cap.
+
+Reader scratch lives in `reads/<read>`. The runner prepares it with its own receipt and
+stages a detached worktree from the shared mirror at the requested head. After the
+finding or return is successfully recorded, the runner writes its result, brief and
+read instructions under `outbox/reads/<read>` and removes the owned checkout and read
+directory. Failed delivery, failed archival and dirty checkouts retain scratch. Reader
+gates use `nova-ci bench run`, whose existing transport creates a private copy and
+removes it on success, failure or cancellation.
+
+`TestAFinishedLaneLeavesNoJobDirectory` pins immediate removal of a clean published
+completion. `TestCleanupRequiresOwnedPublishedCompletion` pins retained running,
+unowned, unpublished, dirty and changed work, including symlink escape. The delivery
+scratch model and its MC instance registration remain outside this change: the case
+runner requires an MC instance module beyond the permitted model paths. The older JobWorktrees cap model describes the
+former cap-based pruning policy and is not a proof of the publication policy.
+
 Not yet: the server's `friend cards` answer does not send `repo` and `base` (cmd/nova-sprint is
-outside this card's paths), so the brief's lines are read; a read's checkout at the head under
-read is not staged here.
+outside this card's paths), so the brief's lines are read.
 
 ## One-shot lanes (internal/friend/lanes.go)
 

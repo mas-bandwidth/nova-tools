@@ -6807,3 +6807,14 @@ friend reaches that friend's inbox by the route her judgments already take: the
 push loop writes a group addressed to someone to that actor's own inbox
 directory (`pushTarget.dirOf`, `~/<actor>-working/inbox/sprint-judgments`), the
 group carrying the note's addressee (`sprint.Group.To`).
+
+### Lane scratch lifecycle
+
+A lane's branch on origin and report in the outbox are its durable record. Its job
+checkout is scratch owned by the friend stager. After a lane ends, the friend removes
+its directory only when its receipt validates the created worktree, its report names
+the clean current HEAD and the same origin branch confirms that head. Live lane marks
+and unpublished or dirty work survive missing server presence and every cleanup cap.
+The next friend cleanup retries retained completed jobs with a bounded rotating pass.
+Reader findings are archived outside scratch before their checkout is removed; reader
+bench copies use the bench runner's deferred cleanup. See SPEC-FRIEND.md, staging.

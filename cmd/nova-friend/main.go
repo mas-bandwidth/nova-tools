@@ -436,7 +436,10 @@ reset when it names one (a clock time in the zone it names, "resets Oct 10 at 5a
 row's mode and width come with each beat's answer (row_mode=, row_width=, row_config_dir=). In one-shot mode width lanes run, each its own session seeded from the friend's AGENTS.md and
 memory/, kept in lanes.json; each lane hands one card a turn from <dir>/inbox/QUEUE.json (its BRIEF.md, the
 REPORT.md and RESULT.md to write, one bus line to send), the waiting messages riding along, and hands the
-next only when the turn ends; a card with no RESULT.md after two turns is set aside and reported. A claude
+next only when the turn ends; a card with no RESULT.md after two turns is set aside and reported.
+A finished lane removes its owned job scratch after a clean HEAD and the report match the exact origin
+branch; live markers and unpublished work are retained. Reader findings are archived in outbox/reads
+before their shared-mirror checkout is removed; nova-ci bench run removes each private gate copy. A claude
 lane is a process per card instead (env CLAUDE_CONFIG_DIR=<config_dir> claude -p <the brief>, stdin
 /dev/null, inside the lane wall with the row's config_dir as its --config-dir), its result read from the
 card's outbox; a claude row in one-shot mode with no config_dir (nor --config-dir) is refused on the
@@ -1408,12 +1411,15 @@ func (w world) run(c *tool.Call) *tool.Out {
 			}
 			return nil
 		},
-		SaveLanes: func(s friend.LaneState) error { return friend.WriteLanes(state, s) },
-		Held:      w.held(name, server),
-		Seat:      w.seat(server),
-		Stage:     stager.stage(),
-		Prune:     stager.prune(),
-		Tip:       w.tip,
+		SaveLanes:   func(s friend.LaneState) error { return friend.WriteLanes(state, s) },
+		Held:        w.held(name, server),
+		Seat:        w.seat(server),
+		Stage:       stager.stage(),
+		Prune:       stager.prune(),
+		Release:     stager.release(),
+		ReadStage:   stager.readStage(),
+		ReadRelease: stager.readRelease(),
+		Tip:         w.tip,
 		Finish: func(ctx context.Context, argv []string) error {
 			if w.finish == nil {
 				return errors.New("this world sends no finish") // a test's: friend sync reads the lane's REPORT.md
@@ -1569,7 +1575,7 @@ func (w world) seat(server string) func(context.Context) (string, error) {
 
 // stager is the daemon's one Stager: every held work card's job staged under her working
 // directory (jobs/<job>/repo, a worktree of the repository's mirror, and its JOB.md), and the
-// finished jobs past friend.FinishedJobsKept pruned, both under the mirror's one lock; nil in a
+// clean published jobs released, both under the mirror's one lock; nil in a
 // world that stages none or asks no held cards.
 func (w world) stager(dir string) daemonStager {
 	if w.stage == nil || w.cards == nil || dir == "" {
@@ -1580,6 +1586,27 @@ func (w world) stager(dir string) daemonStager {
 
 // daemonStager is a Stager as the daemon's Stage and Prune, nil for none.
 type daemonStager struct{ s *friend.Stager }
+
+func (d daemonStager) release() func(context.Context, string) error {
+	if d.s == nil {
+		return nil
+	}
+	return d.s.Release
+}
+
+func (d daemonStager) readStage() func(context.Context, friend.AskedRead) error {
+	if d.s == nil {
+		return nil
+	}
+	return d.s.StageRead
+}
+
+func (d daemonStager) readRelease() func(context.Context, string) error {
+	if d.s == nil {
+		return nil
+	}
+	return d.s.ReleaseRead
+}
 
 func (d daemonStager) stage() func(ctx context.Context, p friend.Packet) (string, error) {
 	if d.s == nil {

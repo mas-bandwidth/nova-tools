@@ -116,6 +116,9 @@ func TestJobsAreWorktreesOfOneMirror(t *testing.T) {
 	require.NoError(t, err)
 	old := time.Now().Add(-time.Hour)
 	require.NoError(t, os.Chtimes(filepath.Join(JobDir(dir, a.Job), JobFile), old, old))
+	report := filepath.Join(dir, "outbox", a.Job, "REPORT.md")
+	require.NoError(t, os.MkdirAll(filepath.Dir(report), 0o755))
+	require.NoError(t, os.WriteFile(report, []byte("Verdict: LAND\nHead: "+work+"\n"), 0o644))
 	require.NoError(t, os.RemoveAll(filepath.Dir(brief))) // a's card left her row: the inbox cleanup retired inbox/<job>
 	pruned, err := stager.Prune(context.Background(), map[string]bool{b.Job: true}, 1)
 	require.NoError(t, err)
@@ -131,8 +134,8 @@ func TestJobsAreWorktreesOfOneMirror(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "inbox", b.Job, "BRIEF.md"), []byte("STATUS: nova-sprint card b.w1\n"), 0o644))
 	pruned, err = stager.Prune(context.Background(), nil, 0)
 	require.NoError(t, err)
-	assert.Equal(t, []string{d.Job}, pruned)
-	assert.Equal(t, evalPaths(t, checkouts[1:2]), evalPaths(t, worktreesOf(t, env, mirror)))
+	assert.Empty(t, pruned, "the cap cannot delete an unpublished job")
+	assert.Len(t, worktreesOf(t, env, mirror), 2)
 
 	// a pruned job staged again takes its branch back from the mirror, its work on it
 	sha, err := stager.Stage(context.Background(), a)
