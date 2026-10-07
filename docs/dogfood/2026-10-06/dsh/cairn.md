@@ -17,7 +17,7 @@ directory: `open` (create, re-open matching and conflicting, `--dry-run`,
 and the refusals (missing flags, bad ids, a bad policy, a bad clock, both
 `--text` and `--file`, a missing file, an empty note, a store that is a
 regular file, a missing store or session or entry, an unknown verb and an
-unknown flag) were run too. `S` below is a store named on that run.
+unknown flag) were run too.
 
 ## Findings
 
@@ -168,12 +168,12 @@ that could not answer).
 
     go test -count=1 -timeout 600s ./internal/docs ./internal/ci
 
-    ok  	github.com/mas-bandwidth/nova-tools/internal/docs	1.821s
-    ok  	github.com/mas-bandwidth/nova-tools/internal/ci	10.971s
+    ok  	github.com/mas-bandwidth/nova-tools/internal/docs	1.858s
+    ok  	github.com/mas-bandwidth/nova-tools/internal/ci	11.226s
 
     go test -count=1 -timeout 600s ./internal/docs -run TestDocsTreeIsConsistent
 
-    ok  	github.com/mas-bandwidth/nova-tools/internal/docs	0.009s [no tests to run]
+    ok  	github.com/mas-bandwidth/nova-tools/internal/docs	0.007s [no tests to run]
 
 The card's named test `TestDocsTreeIsConsistent` does not exist in
 `./internal/docs` at this tip, so the named-test run passes with nothing to
