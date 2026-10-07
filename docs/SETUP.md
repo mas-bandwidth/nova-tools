@@ -138,3 +138,14 @@ when its backend state is not `Running`, when this machine has no name on the ta
 a machine of `nova-config machine list` is not named on the tailnet; the evidence names each
 missing machine and the fix line runs `tailscale up` on it. The check passes when tailscale is
 up, this machine is named, and every inventory machine answers on the tailnet.
+
+### sprint-local-only-mode-r-bb.w1: local-only mode
+
+A single-machine setup with no tailnet uses `NOVA_SPRINT_LOCAL=1` (or a sprint row setting with
+the same name) to run in local-only mode. In local-only mode every address must be loopback;
+tailnet and other addresses are refused with a reason naming the mode. No tailnet is needed.
+
+`nova-up --local` sets local-only mode by default. `nova-doctor --local` skips the tailnet check
+and names this mode as the reason.
+
+The `tailnet` check is skipped under local-only mode, just as `nova-doctor --local` skips it.

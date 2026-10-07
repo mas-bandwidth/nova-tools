@@ -6112,6 +6112,12 @@ the same port. The server checks no credential (the owner: "I am OK
 with relying on tailnet as secure"): what can reach the address can run a worker's verb as any
 worker, and nothing else.
 
+When `NOVA_SPRINT_LOCAL=1` is set (local-only mode), only loopback addresses are accepted;
+tailnet and other addresses are refused with a reason naming the mode. A single-machine setup
+with no tailnet uses local-only mode. The `nova-doctor --local` flag skips the tailnet check
+and names this mode as the reason.
+
+
 A worker whose answer was lost sends the verb again with the same operation id (`--op`): a
 committed operation returns its recorded result and changes nothing twice; a refusal, or a take
 that found nothing, left no operation and is run again. A server that does not answer is, to the
