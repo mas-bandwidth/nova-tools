@@ -1,0 +1,4 @@
+# refusal-grammar class test ledger
+# This ledger is seeded at 6fff2a9ed7e22c2bbdf88b6bfc433cc0728e7be4 (sprint/mechanical-2026-10-02)
+# One shard per tool; rows only shrink.
+# Format: cmd/<tool> <count> <why>

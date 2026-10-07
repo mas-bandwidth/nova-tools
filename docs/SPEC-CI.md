@@ -2992,6 +2992,15 @@ the original failed measurement.
 **Its remedy line.** `a flag registered with no description; give it a usage string that says what it wants ...`.
 **Its narrowings.** A usage built at run time (a variable, a concatenation) is not read; `testdata/` is not read.
 
+### `refusal-grammar` — every refusal matches the house grammar
+
+**The rule.** Every built tool's refusal is one line that matches the house grammar: `<TOKEN> REFUSED[ k=v ...]: <why>; run: <remedy>`, with no stdout. TOKEN is the tool/verb name; k=v are optional key=value pairs; why explains what went wrong; remedy is a command to fix it. This prevents refusals that give no direction, print to stdout, or use inconsistent formatting.
+**The mistake it prevents.** Tools that refuse with vague messages, no remedy, or stdout output, making it hard for AIs to recover from mistakes in one turn.
+**The test.** `TestRefusalGrammarFunctional` (`internal/ci/refusalgrammar_class_test.go`) walks built tools via tools/functionalrun; `TestRefusalGrammarJudges` proves the checker on known good and bad refusals; `TestRefusalGrammarWitness` proves a planted breach is refused.
+**Its allowlist.** `internal/ci/testdata/refusal-grammar/allowlist.txt`, one shard per tool (`cmd/<tool> <count> <why>`), shrink-only.
+**Its remedy line.** `refusal must match '<TOKEN> REFUSED[ k=v ...]: <why>; run: <remedy>' with stdout on refusal; ledger only shrinks`.
+**Its narrowings.** Only refusals (lines with REFUSED word) are checked; the check runs through tools/functionalrun against built binaries; `internal/tool` skeleton satisfies this by construction.
+
 ### `tool-answers` — every tool answers a mistake with the way forward
 
 **The rule.** Run as an AI would run it wrongly, every tool answers with the next step: a bare command prints the `REFUSED` word; an unknown verb is refused at exit 2 in one line naming the tool's verbs; an unknown flag is refused naming the verb's flags (never the flag package's `flag provided but not defined`); a verb group's `-h` lists its verbs on stdout at exit 0; every verb's `-h` states its effect, and a verb that writes takes `--dry-run`. On `internal/tool` each holds by construction (`tool.FlagRefusal` is the unknown-flag answer for a tool not on it).
