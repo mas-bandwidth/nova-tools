@@ -6,7 +6,7 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"strings"
+	"os"
 	"sync/atomic"
 	"testing"
 
@@ -130,60 +130,68 @@ func TestPipelineThousandReadsOneRoundTrip(t *testing.T) {
 // never from a flag. Open sends nothing (#3277), so a refused login is the
 // first command's error.
 func TestOpenAuthenticatesFromEnv(t *testing.T) {
+	t.Parallel()
+	if inStoreTestChild(t) {
+		addr := os.Getenv("NOVA_NSPRINT_STORE_TEST_ADDR")
+		ctx := context.Background()
+		switch os.Getenv("NOVA_NSPRINT_STORE_TEST_MODE") {
+		case "missing-user":
+			first := func() error {
+				st, err := store.Open(ctx, addr)
+				if err != nil {
+					return err
+				}
+				defer st.Close()
+				return st.Client().Get(ctx, "auth:probe").Err()
+			}
+			// #3520 DONE-WHEN: a password without a user refuses with the line naming
+			// the missing variable and the pair (user + password), not a bare NOAUTH.
+			err := first()
+			require.Error(t, err)
+			require.Contains(t, err.Error(), "NOAUTH")
+			require.Contains(t, err.Error(), store.UserEnv+" is unset")
+			require.Contains(t, err.Error(), store.UserEnv+"=bench and "+store.DefaultPasswordEnv)
+			st, err := store.Open(ctx, addr)
+			require.NoError(t, err)
+			defer st.Close()
+			_, err = st.PipelineHMGet(ctx, []store.HashRead{{Key: "auth:probe", Fields: []string{"f"}}})
+			require.Error(t, err)
+			require.Contains(t, err.Error(), "NOAUTH")
+			require.Contains(t, err.Error(), store.UserEnv+" is unset")
+		case "valid-user":
+			st, err := store.Open(ctx, addr)
+			require.NoError(t, err)
+			defer st.Close()
+			require.NoError(t, st.Client().Set(ctx, "auth:probe", "1", 0).Err())
+		case "empty-named-password":
+			_, err := store.Open(ctx, addr)
+			require.Error(t, err)
+			require.Contains(t, err.Error(), "NOVA_REDIS_OTHER_SEAT is empty")
+		case "wrong-password":
+			st, err := store.Open(ctx, addr)
+			require.NoError(t, err)
+			defer st.Close()
+			err = st.Client().Get(ctx, "auth:probe").Err()
+			require.Error(t, err)
+			require.Contains(t, err.Error(), "WRONGPASS")
+		default:
+			require.Fail(t, "unknown store test child mode")
+		}
+		return
+	}
+
 	addr := startRedis(t, "--user", "default", "off", "--user", "bench", "on", ">bench-secret", "~*", "&*", "+@all")
-	ctx := context.Background()
-
-	// An inherited NOVA_SPRINT_REDIS_PASSWORD_ENV would redirect the default path
-	// below to another seat's variable; clear it so the test is deterministic.
-	t.Setenv(store.PasswordEnvEnv, "")
-	t.Setenv(store.UserEnv, "")
-	t.Setenv(store.DefaultPasswordEnv, "bench-secret")
-	first := func() error {
-		st, err := store.Open(ctx, addr)
-		if err != nil {
-			return err
-		}
-		defer st.Close()
-		return st.Client().Get(ctx, "auth:probe").Err()
-	}
-	// #3520 DONE-WHEN: a password without a user refuses with the line naming
-	// the missing variable and the pair (user + password), not a bare NOAUTH.
-	if err := first(); err == nil ||
-		!strings.Contains(err.Error(), "NOAUTH") ||
-		!strings.Contains(err.Error(), store.UserEnv+" is unset") ||
-		!strings.Contains(err.Error(), store.UserEnv+"=bench and "+store.DefaultPasswordEnv) {
-		require.Failf(t, "assertion failed", "first command with %s but no %s = %v; want NOAUTH and a refusal naming the missing variable and the pair", store.DefaultPasswordEnv, store.UserEnv, err)
-	}
-	pipe := func() error {
-		st, err := store.Open(ctx, addr)
-		if err != nil {
-			return err
-		}
-		defer st.Close()
-		_, err = st.PipelineHMGet(ctx, []store.HashRead{{Key: "auth:probe", Fields: []string{"f"}}})
-		return err
-	}
-	if err := pipe(); err == nil || !strings.Contains(err.Error(), "NOAUTH") || !strings.Contains(err.Error(), store.UserEnv+" is unset") {
-		require.Failf(t, "assertion failed", "first batch with %s but no %s = %v; want NOAUTH and the named refusal", store.DefaultPasswordEnv, store.UserEnv, err)
-	}
-
-	t.Setenv(store.UserEnv, "bench")
-	st, err := store.Open(ctx, addr)
-	if err != nil {
-		require.NoError(t, err, "Open as bench with %s: %v", store.DefaultPasswordEnv, err)
-	}
-	if err := st.Client().Set(ctx, "auth:probe", "1", 0).Err(); err != nil {
-		require.NoError(t, err, "authenticated write: %v", err)
-	}
-	_ = st.Close()
-
-	t.Setenv(store.PasswordEnvEnv, "NOVA_REDIS_OTHER_SEAT")
-	t.Setenv("NOVA_REDIS_OTHER_SEAT", "")
-	if _, err := store.Open(ctx, addr); err == nil || !strings.Contains(err.Error(), "NOVA_REDIS_OTHER_SEAT is empty") {
-		require.Failf(t, "assertion failed", "Open with an empty named password variable = %v; want a refusal naming it", err)
-	}
-	t.Setenv("NOVA_REDIS_OTHER_SEAT", "wrong")
-	if err := first(); err == nil || !strings.Contains(err.Error(), "WRONGPASS") {
-		require.Failf(t, "assertion failed", "first command with the wrong password = %v; want WRONGPASS", err)
+	baseEnv := []string{"NOVA_NSPRINT_STORE_TEST_ADDR=" + addr}
+	for _, scenario := range []struct {
+		mode string
+		env  []string
+	}{
+		{"missing-user", []string{store.PasswordEnvEnv + "=", store.UserEnv + "=", store.DefaultPasswordEnv + "=bench-secret"}},
+		{"valid-user", []string{store.PasswordEnvEnv + "=", store.UserEnv + "=bench", store.DefaultPasswordEnv + "=bench-secret"}},
+		{"empty-named-password", []string{store.PasswordEnvEnv + "=NOVA_REDIS_OTHER_SEAT", store.UserEnv + "=bench", "NOVA_REDIS_OTHER_SEAT="}},
+		{"wrong-password", []string{store.PasswordEnvEnv + "=NOVA_REDIS_OTHER_SEAT", store.UserEnv + "=bench", "NOVA_REDIS_OTHER_SEAT=wrong"}},
+	} {
+		env := append(append([]string{}, baseEnv...), "NOVA_NSPRINT_STORE_TEST_MODE="+scenario.mode)
+		runStoreTestChild(t, append(env, scenario.env...)...)
 	}
 }
