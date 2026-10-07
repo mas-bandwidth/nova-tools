@@ -27,6 +27,9 @@ this row has no colon
 
 var header = Header{Repo: "example/repo", Base: "dev", Sha: "0123456789abcdef0123456789abcdef01234567"}
 
+// fullHeader renders the long form, the whole frame in the brief (Header.Full).
+var fullHeader = Header{Repo: header.Repo, Base: header.Base, Sha: header.Sha, Full: true}
+
 // A ledger's rows group by file, in ledger order; a row the parser cannot read is
 // reported, not dropped silently.
 func TestLedgerRowsGroupByFileInLedgerOrder(t *testing.T) {
@@ -147,7 +150,7 @@ func TestTheLintNamesWhatTheAddWouldRefuse(t *testing.T) {
 	l := Ledgers["serial-tests"]
 	rows, _ := ParseLedger(l, serialFixture)
 	c := PlanLedger(l, rows, "", "", 0).Cards[0]
-	good := Render(header, c)
+	good := Render(fullHeader, c)
 	bad := strings.Replace(good, "Never kill a process you did not start.", "", 1)
 	bad = strings.Replace(bad, "tier: flash", "tier: cheap", 1)
 	bad = strings.Replace(bad, "THE TASK.", "THE TASK. <fill me>", 1)
@@ -308,10 +311,15 @@ func TestTheGateStepNamesWhoseFileFailed(t *testing.T) {
 	cards := append(PlanLedger(Ledgers["serial-tests"], rows, "", "", 0).Cards, PlanFindings(fs, "", "", 0).Cards...)
 	cards = append(cards, PlanHelp("nova-x", "x\n", "", "", ""))
 	for _, c := range cards {
-		brief := Render(header, c)
+		brief := Render(fullHeader, c)
 		assert.Contains(t, gateStep(brief), sentence, c.ID)
 		assert.Empty(t, Lint(c.ID, brief), c.ID)
 		assert.Less(t, len(brief), cardlimits.BriefAdvisoryBytes, c.ID)
+		ref := Render(header, c)
+		read, why := AsRead(ref)
+		assert.Empty(t, why, c.ID)
+		assert.Contains(t, gateStep(read), sentence, "%s: by reference, the contract's gate step", c.ID)
+		assert.Empty(t, Lint(c.ID, ref), c.ID)
 	}
 
 	tmpl, err := swarm.Template("card")
@@ -336,8 +344,11 @@ func TestACardThatTouchesAModelRunsItInItsGate(t *testing.T) {
 	}
 	for _, paths := range [][]string{{"tla/Land.tla", "tla/MCLand.cfg"}, {"tla/*", "internal/sprint/land*.go"}, {"tla/**"}} {
 		c := Card{ID: "model-land", File: paths[0], Paths: paths, Test: "internal/tlc TestTLCRecordsCoverCurrentModels", Tier: "pro", Wave: 1, Kind: "fix-red", Task: "Fix the model."}
-		brief := Render(header, c)
+		brief := Render(fullHeader, c)
 		step := gateStep(brief)
+		ref := Render(header, c)
+		assert.Contains(t, ref, modelGate, "%v: by reference, the model gate rides on the STOP line", paths)
+		assert.Empty(t, Lint(c.ID, ref), paths)
 		assert.Contains(t, step, "make tlc TLC_JAR=/opt/tla/tla2tools.jar TLC_OUT=$JOB/scratch/tlc-$g TLC_GROUP=$g", paths)
 		assert.Contains(t, step, "go run ./tools/tlacheck groups --root . --stale", paths)
 		assert.Contains(t, step, "go run ./tools/tlacheck merge --root . --keep tla/RUNS.tsv --out tla/RUNS.tsv", paths)
@@ -354,7 +365,7 @@ func TestACardThatTouchesAModelRunsItInItsGate(t *testing.T) {
 		assert.Less(t, len(brief), cardlimits.BriefAdvisoryBytes, paths)
 		assert.Equal(t, paths, c.Paths, "the card's own PATHS are not changed")
 	}
-	plain := Render(header, Card{ID: "go-only", File: "internal/x/x.go", Paths: []string{"internal/x/x.go", "docs/tla.md"}, Test: "internal/x TestX", Tier: "pro", Wave: 1, Kind: "fix-red", Task: "Fix x."})
+	plain := Render(fullHeader, Card{ID: "go-only", File: "internal/x/x.go", Paths: []string{"internal/x/x.go", "docs/tla.md"}, Test: "internal/x TestX", Tier: "pro", Wave: 1, Kind: "fix-red", Task: "Fix x."})
 	assert.NotContains(t, plain, "make tlc")
 	assert.NotContains(t, plain, "tla/RUNS.tsv")
 }
