@@ -21,8 +21,10 @@ import (
 // that names a file outside the card's PATHS twins it (add --replaces) with PATHS
 // widened by exactly those files, starting from the broken attempt's head; a card at its
 // brief's bound (the same finding twice, or its attempts cap) is left to the coordinator,
-// as is a friend's card and a brief defect. Every answer is a note on the card naming the
-// rule ("note", logged with the move) and the decided note of the judgment.
+// as is a brief defect and a broken verdict with no finding. A friend's card is answered the
+// same way, its next attempt hers (ReworkPinned): the finding rides on the card whoever
+// worked it. Every answer is a note on the card naming the rule ("note", logged with the
+// move) and the decided note of the judgment.
 
 // RuleReadBroken is the read-broken rule's name. run --answer-rules=false turns it off with
 // every rule; the sprint's answer_rules_off naming it turns it off alone (RuleOff), though
@@ -41,7 +43,7 @@ const FieldNote = "note"
 
 // ruleReadBroken: a reader found the primary's attempt broken. Below its brief's bound it
 // is reworked with the findings as the fix, on its tier, or twinned with PATHS widened when
-// the findings name files outside them.
+// the findings name files outside them; a friend's card as a machine's.
 func ruleReadBroken(s *Snapshot, a *RuleAnswer) {
 	a.Rule = RuleReadBroken
 	pr := s.Work.Placed(a.Subject)
@@ -49,13 +51,13 @@ func ruleReadBroken(s *Snapshot, a *RuleAnswer) {
 		left(a, "not in review")
 		return
 	}
-	if _, f := FriendCard(pr); f || pr.F(FieldBriefDefect) != "" {
+	if pr.F(FieldBriefDefect) != "" {
 		left(a, mindCard(pr))
 		return
 	}
 	finding := brokenFindings(s, pr)
 	if finding == "" {
-		left(a, "no broken read of attempt "+pr.F("attempt")+" stands: a mind's")
+		left(a, "no broken read of attempt "+pr.F("attempt")+" with a finding stands: a mind's")
 		return
 	}
 	if bb, ok := AtBriefBound(pr, finding, s.AttemptsCap(pr.Row)); ok {
