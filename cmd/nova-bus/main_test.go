@@ -496,3 +496,37 @@ func TestReceiptsAndOverdueSayWhereEachMessageIs(t *testing.T) {
 	cli.Do(t, "receipts", "--as", "bob", "--id", mid).Exit(0).Out("state=acted")
 	cli.Do(t, "overdue", "--older", "-1s").Exit(2).Err("--older wants a duration of at least 0")
 }
+
+// TestTopLevelHelpNamesTheSameRedisAddressPrecedenceAsHelpSend checks that
+// the top-level help and the help send help text agree on the Redis address
+// precedence: --redis flag, then NOVA_BUS_REDIS env, then NOVA_SPRINT_REDIS
+// env with the fleet row's bus.
+func TestTopLevelHelpNamesTheSameRedisAddressPrecedenceAsHelpSend(t *testing.T) {
+	t.Parallel()
+	r := newRig("ada", "bob")
+	cli := r.cli()
+
+	// Get the top-level help
+	topHelp := cli.OK(t, "help").Stdout
+
+	// Get the help send help text
+	sendHelp := cli.OK(t, "help", "send").Stdout
+
+	// The precedence text that both should contain.
+	// The code reads: --redis flag, then NOVA_BUS_REDIS, then NOVA_SPRINT_REDIS + fleet bus.
+	precedenceText := "--redis"
+	
+	// Check top-level help contains the precedence
+	assert.Contains(t, topHelp, precedenceText, "top-level help should mention --redis flag")
+	
+	// Check help send contains the precedence  
+	assert.Contains(t, sendHelp, precedenceText, "help send should mention --redis flag")
+
+	// Both should reference NOVA_BUS_REDIS as the first fallback
+	assert.Contains(t, topHelp, "NOVA_BUS_REDIS", "top-level help should mention NOVA_BUS_REDIS")
+	assert.Contains(t, sendHelp, "NOVA_BUS_REDIS", "help send should mention NOVA_BUS_REDIS")
+
+	// Both should reference NOVA_SPRINT_REDIS as the second fallback
+	assert.Contains(t, topHelp, "NOVA_SPRINT_REDIS", "top-level help should mention NOVA_SPRINT_REDIS")
+	assert.Contains(t, sendHelp, "NOVA_SPRINT_REDIS", "help send should mention NOVA_SPRINT_REDIS")
+}
