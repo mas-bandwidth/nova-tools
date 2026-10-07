@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -235,4 +236,27 @@ func TestAGeneratedCardThatWritesAModelIsTieredFrontier(t *testing.T) {
 	assert.Contains(t, stdout, "line 1 names tier pro")
 	assert.NotContains(t, stdout, "card=finding-tla-runs-tsv check=model-tier")
 	assert.NoDirExists(t, out2)
+}
+
+// The banner from generate -h should not print any line twice; the example
+// line appears in the "from `nova-card help`" section and should not appear
+// again in the example block of the banner.
+func TestTheUsageBannerPrintsEachExampleOnce(t *testing.T) {
+	t.Parallel()
+	_, banner, _ := runCard("generate", "-h")
+	// Collect all lines and check for duplicates
+	lines := strings.Split(banner, "\n")
+	counts := make(map[string]int)
+	for _, line := range lines {
+		counts[line]++
+	}
+	// Find any line that appears more than once (excluding empty lines)
+	var dups []string
+	for line, count := range counts {
+		if count > 1 {
+			require.NotEmpty(t, strings.TrimSpace(line))
+			dups = append(dups, fmt.Sprintf("line %q appears %d times", line, count))
+		}
+	}
+	require.Empty(t, dups, "banner contains duplicate lines:\n%s", strings.Join(dups, "\n"))
 }

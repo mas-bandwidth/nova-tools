@@ -522,6 +522,10 @@ func Excerpt(banner, prog, verb string) []string {
 		}
 	}
 	for i := 0; i < len(lines); i++ {
+		// Skip lines after "example:" section
+		if strings.TrimSpace(lines[i]) == "example:" {
+			break
+		}
 		words := strings.Fields(lines[i])
 		if len(words) < len(want) || strings.Join(words[:len(want)], " ") != strings.Join(want, " ") {
 			continue
