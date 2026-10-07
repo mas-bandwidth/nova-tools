@@ -31,7 +31,7 @@ type NotificationPolicy struct {
 
 func (p NotificationPolicy) selected(m bus.Message) bool {
 	kind := m.KindName()
-	if kind == bus.KindRequest || kind == bus.KindBlocker {
+	if kind == bus.KindRequest || kind == bus.KindBlocker || strings.HasPrefix(m.Body, SessionCheckPrefix) || strings.HasPrefix(m.Subject, "stall wake: friend ") {
 		return true
 	}
 	kinds := p.Kinds
@@ -67,10 +67,11 @@ type NotificationBatch struct {
 	Accepted bool          `json:"accepted,omitempty"`
 }
 
-// NotificationState is bounded to one active batch, one deferred report and a ready bit. The
+// NotificationState is bounded to one active batch, one deferred nonurgent batch and a ready bit. The
 // bus remains the source of every message; filtered entries retain their audit there.
 type NotificationState struct {
-	Pending       *NotificationBatch `json:"pending,omitempty"`
+	Pending *NotificationBatch `json:"pending,omitempty"`
+	// Report retains the legacy JSON key for the one deferred report or notice batch.
 	Report        *NotificationBatch `json:"report,omitempty"`
 	ReportRetryAt time.Time          `json:"report_retry_at,omitzero"`
 	Ready         bool               `json:"ready,omitempty"`
@@ -145,7 +146,7 @@ func (n *notificationReceiver) save() error {
 }
 
 func (n *notificationReceiver) step(ctx context.Context, now time.Time) error {
-	// A failed urgent batch stays pending; a failed report has its own slot. A ready wake is only a bit until due, so
+	// A failed urgent batch stays pending; a failed nonurgent batch has its own slot. A ready wake is only a bit until due, so
 	// requests and blockers never wait behind its coalescing or retry window.
 	if n.state.Pending == nil {
 		if err := n.receive(ctx, now); err != nil {
@@ -182,13 +183,14 @@ func (n *notificationReceiver) step(ctx context.Context, now time.Time) error {
 			if p.Ready {
 				n.state.Pending = nil
 			}
-			if NotificationCategory(p.Text) == "report" {
+			nonurgent := slices.Contains([]string{"report", "notice"}, NotificationCategory(p.Text))
+			if nonurgent {
 				n.state.Report, n.state.Pending = p, nil
 				n.state.ReportRetryAt = n.state.RetryAt
 				n.state.RetryAt = time.Time{}
 			}
 			retryAt := n.state.RetryAt
-			if NotificationCategory(p.Text) == "report" {
+			if nonurgent {
 				retryAt = n.state.ReportRetryAt
 			}
 			n.d.Record(fmt.Sprintf("%s notification pending: enqueue exit=%d error=%v; next attempt no earlier than %s", now.UTC().Format(time.RFC3339), exit, err, retryAt.UTC().Format(time.RFC3339)))
@@ -265,11 +267,11 @@ func (n *notificationReceiver) receive(ctx context.Context, now time.Time) error
 			}
 			silent = append(silent, e.Entry)
 			audited = append(audited, m)
-		} else if m.KindName() == bus.KindReport && n.state.Report != nil {
-			// Backpressured reports remain bus-pending, not released or acknowledged;
+		} else if n.policy.selected(m) && n.state.Report != nil && m.KindName() != bus.KindRequest && m.KindName() != bus.KindBlocker {
+			// Backpressured nonurgent input remains bus-pending, never released or acknowledged;
 			// the same bounded receiver can still reach later requests and blockers.
-			n.d.Record(fmt.Sprintf("notification capacity pending id=%s kind=report", m.ID))
-		} else if n.policy.selected(m) || strings.HasPrefix(m.Body, SessionCheckPrefix) || strings.HasPrefix(m.Subject, "stall wake: friend ") {
+			n.d.Record(fmt.Sprintf("notification capacity pending id=%s kind=%s", m.ID, m.KindName()))
+		} else if n.policy.selected(m) {
 			entries = append(entries, e.Entry)
 			messages = append(messages, m)
 			size += len(m.Body)

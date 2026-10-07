@@ -1071,9 +1071,9 @@ constant ready-queue wake asks the coordinator to read the canonical queue. It
 claims or executes nothing. Child-finish refill belongs to the existing dispatcher.
 
 The file-synced atomic journal holds one active immutable batch, at most one deferred
-report batch, and one ready bit. The app queue permits one unread notification batch
+nonurgent report or notice batch, and one ready bit. The app queue permits one unread notification batch
 each for urgent, report and opt-in notice input, plus one global ready wake. Distinct
-reports are backpressured and stay bus-pending; the receiver continues bounded passes
+nonurgent reports and notices are backpressured and stay bus-pending; the receiver continues bounded passes
 so later blockers and requests can use the separate urgent capacity. No report payload
 is discarded to satisfy a queue bound.
 The state writer syncs the file, renames it, and attempts a parent-directory sync;

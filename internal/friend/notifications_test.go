@@ -213,38 +213,41 @@ func (f notificationDelivery) Deliver(ctx context.Context, text string) (int, er
 	return f(ctx, text)
 }
 
-// A deferred report is a separate durable slot. The next receive pass can reach and
-// enqueue a new blocker without waiting for the report retry window.
-func TestDeferredReportDoesNotHoldLaterBlockerBehindIt(t *testing.T) {
+// A deferred nonurgent batch has a separate durable slot (SPEC-FRIEND.md,
+// Notifications). Reports and opted-in notices cannot own urgent intake.
+func TestDeferredNonUrgentDoesNotHoldLaterBlockerBehindIt(t *testing.T) {
 	t.Parallel()
-	r := newRig(t)
-	dir := t.TempDir()
-	send := func(kind, body string) {
-		_, err := r.bus.Send(context.Background(), bus.Message{From: "ada", To: []string{"bob"}, Kind: kind, Subject: kind, Body: body})
-		require.NoError(t, err)
+	for _, kind := range []string{bus.KindReport, bus.KindStatus} {
+		t.Run(kind, func(t *testing.T) {
+			t.Parallel()
+			r := newRig(t)
+			dir := t.TempDir()
+			send := func(kind, body string) {
+				_, err := r.bus.Send(context.Background(), bus.Message{From: "ada", To: []string{"bob"}, Kind: kind, Subject: kind, Body: body})
+				require.NoError(t, err)
+			}
+			var delivered []string
+			r.d.Deliver = notificationDelivery(func(_ context.Context, text string) (int, error) {
+				if NotificationCategory(text) != "urgent" {
+					return 0, Deferred{Reason: "nonurgent capacity occupied"}
+				}
+				delivered = append(delivered, text)
+				return 0, nil
+			})
+			n := &notificationReceiver{d: r.d, b: r.bus, policy: NotificationPolicy{Kinds: []string{bus.KindReport, bus.KindStatus}, Window: NotificationWindow}, dir: dir}
+			send(kind, "full nonurgent payload pending")
+			require.NoError(t, n.step(context.Background(), t0))
+			send(bus.KindBlocker, "urgent blocker survives")
+			require.NoError(t, n.step(context.Background(), t0.Add(time.Second)))
+			require.Len(t, delivered, 1)
+			assert.Contains(t, delivered[0], "urgent blocker survives")
+			require.NotNil(t, n.state.Report)
+			assert.Contains(t, n.state.Report.Text, "full nonurgent payload pending")
+			saved, err := ReadNotificationState(dir)
+			require.NoError(t, err)
+			require.NotNil(t, saved.Report)
+		})
 	}
-	var delivered []string
-	r.d.Deliver = notificationDelivery(func(_ context.Context, text string) (int, error) {
-		if NotificationCategory(text) == "report" {
-			return 0, Deferred{Reason: "report capacity occupied"}
-		}
-		delivered = append(delivered, text)
-		return 0, nil
-	})
-	n := &notificationReceiver{d: r.d, b: r.bus, policy: NotificationPolicy{Window: NotificationWindow}, dir: dir}
-	send(bus.KindReport, "full report pending")
-	require.NoError(t, n.step(context.Background(), t0))
-	require.NotNil(t, n.state.Report)
-	assert.Nil(t, n.state.Pending)
-	send(bus.KindBlocker, "urgent blocker survives")
-	require.NoError(t, n.step(context.Background(), t0.Add(time.Second)))
-	require.Len(t, delivered, 1)
-	assert.Contains(t, delivered[0], "urgent blocker survives")
-	require.NotNil(t, n.state.Report)
-	assert.Contains(t, n.state.Report.Text, "full report pending")
-	saved, err := ReadNotificationState(dir)
-	require.NoError(t, err)
-	require.NotNil(t, saved.Report)
 }
 
 // Category bounds apply through multiple real receive passes, not only to the queue
