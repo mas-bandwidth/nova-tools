@@ -60,7 +60,7 @@ func pkgText(t *testing.T, pkg string) map[string]string {
 }
 
 // rule9Emptiers is the tripwire's list of calls that can empty a file. It is a package
-// variable and not a local so TestRule9EmptierListMatchesTheSpec below can pin it: a name
+// variable and not a local so TestEmptierListMatchesTheSpec below can pin it: a name
 // quietly deleted from this list would otherwise take its tripwire with it and go green.
 var rule9Emptiers = []string{"os.Remove", "os.RemoveAll", "os.Truncate", ".Truncate(", "os.Create(", "os.WriteFile(", "os.O_TRUNC", "syscall.Unlink("}
 
@@ -134,7 +134,7 @@ func TestNothingInThisToolRemovesAFile(t *testing.T) {
 // docs/SPEC-TOKENS.md and compared both ways -- a name the spec demands and the list lacks
 // is a hole, a name the list carries and the spec does not is drift. Neither side can be
 // edited alone.
-func TestRule9EmptierListMatchesTheSpec(t *testing.T) {
+func TestEmptierListMatchesTheSpec(t *testing.T) {
 	t.Parallel()
 
 	root, err := filepath.Abs(filepath.Join("..", ".."))

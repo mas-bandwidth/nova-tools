@@ -294,3 +294,39 @@ func TestNoFleetNameInHelpOrOutput(t *testing.T) {
 		})
 	}
 }
+
+// TestDryRunSessionReportsWouldMkdir: a dry run names the directory the real run would make
+// and makes nothing, and a --out whose nearest existing ancestor is a file is refused
+// before anything is made.
+func TestDryRunSessionReportsWouldMkdir(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	session := writeSession(t)
+
+	t.Run("a new --out is the directory a dry run would make", func(t *testing.T) {
+		t.Parallel()
+		newOut := filepath.Join(dir, "new-out")
+		r := invoke(t, "session", "--claude-session", session, "--out", newOut, "--dry-run")
+		wantExit(t, r, 0)
+		wantContains(t, r.stdout, "would_mkdir=true")
+		assert.NoDirExists(t, newOut, "a dry-run session made its --out")
+	})
+
+	t.Run("an --out that exists is not made again", func(t *testing.T) {
+		t.Parallel()
+		out := mkdir(t, t.TempDir())
+		r := invoke(t, "session", "--claude-session", session, "--out", out, "--dry-run")
+		wantExit(t, r, 0)
+		wantContains(t, r.stdout, "would_mkdir=false")
+	})
+
+	t.Run("a file where the directory would go is refused", func(t *testing.T) {
+		t.Parallel()
+		file := write(t, filepath.Join(t.TempDir(), "a-file"), "not a directory\n")
+		r := invoke(t, "session", "--claude-session", session, "--out", filepath.Join(file, "out"), "--dry-run")
+		wantExit(t, r, 2)
+		wantContains(t, r.stderr, "cannot open --out")
+		wantContains(t, r.stderr, "not a directory")
+	})
+}
