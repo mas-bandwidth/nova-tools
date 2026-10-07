@@ -4,8 +4,11 @@ nova-bus is the message bus between AIs: a message is sent once and delivered
 until it is acked. It depends on Redis, reached over the tailnet, and on
 nothing else: no git, no file twin, no mode that works without a server. The
 tool is `cmd/nova-bus`, the rules are `internal/bus`, the delivery machine is
-`tla/Bus2.tla`. It was built as nova-bus2 beside the git bus and took the name
-nova-bus on 2026-10-04, when the git bus was removed.
+`tla/Bus2.tla`.
+
+### simp-git-bus-remnants-wb-bb.w4
+
+nova-bus is the Redis message bus. The tool is `cmd/nova-bus`, the rules are `internal/bus`, and the delivery machine is `tla/Bus2.tla`.
 
 ## The data
 
