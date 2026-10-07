@@ -606,6 +606,32 @@ func (a *app) wakeFriendStall(ctx context.Context, st *store.Store, name string,
 	return err
 }
 
+// friendPinger is the store's PingFriend for the machine (tick and run): the friend-width and
+// friend-delivery rules' ping of her session sent on the bus (pingFriendRule), a message not
+// sent said on out.
+func (a *app) friendPinger(st *store.Store, out io.Writer) func(string, string, string) error {
+	return func(name, subject, body string) error {
+		return a.pingFriendRule(context.Background(), st, name, subject, body, func(l string) { fmt.Fprintln(out, l) })
+	}
+}
+
+// pingFriendRule pings a friend whose judgment the friend-width or friend-delivery rule
+// answers (docs/SPEC-SPRINT.md, section friend-width-and-delivery; the model is
+// tla/FriendWidth.tla): a bus message pushed to her daemon as a turn, its subject the
+// judgment's facts and its body the card ids it names, so she starts or reports them.
+func (a *app) pingFriendRule(ctx context.Context, st *store.Store, name, subject, body string, say func(string)) error {
+	m := bus.Message{From: st.Actor, To: []string{name}, Subject: subject, Body: body}
+	err := a.bus(ctx, m, say)
+	if err == nil {
+		return nil
+	}
+	why := oneline.Escape(err.Error())
+	if say != nil {
+		say(fmt.Sprintf("FRIEND-PING NOTE friend=%s: the bus message to her was not sent (%s); tell her by hand", name, why))
+	}
+	return err
+}
+
 // friendReadText is the BRIEF.md of a friend's read, as friend sync and friend cards
 // both write it: the read's brief, the attempt's branch, start commit and head (the packet's,
 // else the card's), and a deadline of thirty minutes on the sprint clock.

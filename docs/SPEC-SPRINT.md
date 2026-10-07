@@ -5229,7 +5229,7 @@ land's place; a head that is not a commit id stops the dry run where land stops,
 | reader remove | takes readers off the readers table; refused (exit 1, nothing written) when a named reader is no row or holds a read card, asked, reading, ok or broken, naming the reader and its read cards |
 | reader retire | retires readers and keeps their history (the comfort list of 2026-10-03, item 6: `reader remove` refuses a reader that holds read cards, so the second readers could not be retired without losing the record): each named reader, a row of the readers table, is held away for good, its state `retired`: no read is asked of it and a read asked and not begun is asked of another at the next tick (as `reader away`); a read it is reading is taken back at the next tick and asked of a reader up with no card at that attempt, and it stays when none can take it, the few-readers judgment names it no more, its own `queue --as` writes no beat and answers `reader: false` (its loop stops as for a name with no row), while its row and its read cards stay on the table, counted on their cards and in `where`; `reader up` brings it back; a named reader with no row refuses the whole call, nothing written; `--dry-run` prints `READER-RETIRE DRY-RUN readers=<names>; nothing was changed` and writes nothing; `reader remove` is as it was |
 | stream set | `stream set <s>... [--read-tier <flash|pro|heavy|default>] [--land-protected <owner/name,...|any|default>] [--release <name>] [--prose <glob,...|default>] [--attempts <n|default>] [--reason <why>] [--answers <note>]`: `--prose` sets the streams' prose globs, their control cards' `prose`, the files the lander does not read for a code span (section 7, the document repairs), `default` takes them off; `--attempts` sets the streams' attempt cap, their control cards' `attempts`, over the sprint's (section 2); `--reason` records why the read tier is set as `read_tier_reason`, and `--answers` answers the judgment `raise the read tier of the stream?`; the read tier of the streams named, their control cards' `read_tier`, over the sprint's (`set`), and their protected-branch mark, `land_protected` (section 7, the protected branches); `default` takes a stream's off; `--release <name>` records the release on each stream's control card, `default` or `none` takes it off; the coordinator's; refused whole, nothing written, for a stream that is no row, a tier that is not flash, pro or heavy, a mark that names no repository, or another actor |
-| set | `set [--read-tier <flash|pro|heavy|default>] [--dealt-max <duration|default>] [--go-lanes <n|default>] [--alarm-review <n|off>] [--alarm-merging <n|off>] [--alarm-fleet <percent|off>] [--alarm-ready <on|off>] [--friend-idle <duration|default>] [--attempts <n|default>] [--fleet <on|off>] [--friends <on|off>] [--fleet-tiers <tiers|all>] [--friends-tiers <tiers|all>]`: also `fleet` and `friends` (the work switches, default on: off deals that side no work card, reads still flow; section 6, the interim rules), `fleet_tiers` and `friends_tiers` (the tiers each side may take, flash, pro, heavy, frontier comma separated, default all, which `all` sets again; an unknown tier is refused naming the four; section 5, the deal), `friend_idle` (how long a friend holding cards may show no file write before it is an alarm, default 20 minutes) and `attempts` (the attempt cap: how many attempts one brief may run before the card is the coordinator's as a brief defect; default 4; section 2); the sprint's settings, the work table's properties `read_tier` (every card's reads raised to it, never lowered), `dealt_max` (how long a work card may wait dealt and never taken before it is a judgment; default 3 times the take deadline, 6 hours), `go_lanes` (the Go lanes of every machine, section 18; default 1) and the backlog alarms' thresholds `alarm_review`, `alarm_merging`, `alarm_fleet` and `alarm_ready` (section 8, off by default); the coordinator's; refused whole, nothing written, for a tier that is not flash, pro or heavy, a bound that is not a duration above zero, a lane count under 1, a threshold its alarm does not take, nothing to set, or another actor; a clear starts the next epoch with none of them |
+| set | `set [--read-tier <flash|pro|heavy|default>] [--dealt-max <duration|default>] [--go-lanes <n|default>] [--alarm-review <n|off>] [--alarm-merging <n|off>] [--alarm-fleet <percent|off>] [--alarm-ready <on|off>] [--friend-idle <duration|default>] [--width-idle-after <duration|default>] [--delivery-window <duration|default>] [--attempts <n|default>] [--fleet <on|off>] [--friends <on|off>] [--fleet-tiers <tiers|all>] [--friends-tiers <tiers|all>]`: also `fleet` and `friends` (the work switches, default on: off deals that side no work card, reads still flow; section 6, the interim rules), `fleet_tiers` and `friends_tiers` (the tiers each side may take, flash, pro, heavy, frontier comma separated, default all, which `all` sets again; an unknown tier is refused naming the four; section 5, the deal), `friend_idle` (how long a friend holding cards may show no file write before it is an alarm, default 20 minutes), `width_idle_after` and `delivery_window` (the friend-width and friend-delivery checks' windows, section friend-width-and-delivery; default 5 minutes, and the friend-finish window) and `attempts` (the attempt cap: how many attempts one brief may run before the card is the coordinator's as a brief defect; default 4; section 2); the sprint's settings, the work table's properties `read_tier` (every card's reads raised to it, never lowered), `dealt_max` (how long a work card may wait dealt and never taken before it is a judgment; default 3 times the take deadline, 6 hours), `go_lanes` (the Go lanes of every machine, section 18; default 1) and the backlog alarms' thresholds `alarm_review`, `alarm_merging`, `alarm_fleet` and `alarm_ready` (section 8, off by default); the coordinator's; refused whole, nothing written, for a tier that is not flash, pro or heavy, a bound that is not a duration above zero, a lane count under 1, a threshold its alarm does not take, nothing to set, or another actor; a clear starts the next epoch with none of them |
 | stream remove | takes streams off the work and merge tables (the owner, 2026-10-01: "remove work streams a/b/c" / "you should have a verb to remove work streams" / "they should only succeed on a STOPPED sprint machine"): each stream's row of both tables, with the stream's control card, the one card `add` made for it, which the merge row's delete takes off the table (its record kept); refused (exit 1, nothing written) on a RUNNING machine (`nova-sprint stop` first), for a stream that is no row of either table, named, and for a stream that holds a card (a primary or a sentinel placed in any column of its work row, landed included, or a merge card in its merge row), naming how many of each and the remedy (`nova-sprint clear --confirm sprint`, or `drop`); all or none for the streams named. A clear keeps the streams and does not bring a removed one back. A removal is not a tombstone: `add --stream <s>` of a stream removed in this epoch adds its rows again and places its control card again, the record the removal kept, by the table layer's cell add before the step's manifests (a batch never places a removed member; `sprint.Plan.Places`, as a fleet member's control card rejoins), and prints `NOTE stream <s> was removed in this epoch and comes back: its control card is placed again`; after a clear the name is added fresh (`sprint.StreamRemove`, `sprint.RemovedStream`, `sprint.ComeBack`; the roadmap re-add of 2026-10-06 was refused for 384 of 844 cards under removed streams' names before this rule). `stream archive` stays the verb that takes landed streams off the table. Every open judgment and held condition (an alarm held, an overdue hold, a stale stream's) that names a removed stream is retired with it, closed with a decided note `retired: stream <s> was removed (stream remove), ...`, and the verb prints a `NOTE judgment <alias> <id> (<type>) retired: ...` line for each (the coordinator view of 2026-10-06 00:11 held six `stream stopped` judgments of removed streams, each next step refused "no such stream"). The tick, every RUNNING tick before its start part, retires with the same note any open judgment or held condition naming a stream that is a row of neither table (one open before this rule, or left by a remove whose retirement did not finish), and no tick part raises or rewrites a judgment or held condition for such a stream (`sprint.RetireStreams`, `sprint.TickRetireGone`, `sprint.ForTables`) |
 | stream archive | takes streams whose every card has landed off the work and merge tables and keeps their record (the owner, 2026-10-05 ~11:45 PM ET: "I would like you to remove all the already landed work streams"; 107 streams of landed cards crowded the table, and `stream remove` refuses them): each stream's rows of both tables are hidden (the table layer's row hide) and no card moves, so every landed card stays placed in its landed cell with its cost and its landing, and `where --json --rows --archived`, `stream_costs` and every record that reads the cards count them as before; the headline (the summary line, the frame's footers, the dashboard's hero, total row and cost) counts only the streams on the table, so the stream's cards leave it when it is archived, and `where --json` keeps its figures in `archived` and in `archived_cards` and `archived_landed` beside the headline (section 1, the summary line); runs on a RUNNING machine (no stop); refused (exit 1, nothing written) for a stream that is no row of either table and for one holding a card not landed (a primary or sentinel in any column of its work row but landed, a merge card queued or stuck), naming the cards; all or none for the streams named; archiving an archived stream changes nothing. The tick archives a stream itself (the archive part, after the end, every tick and on the tick that finds the sprint done) once its last card has landed and nothing waits behind it (no card of it in another column, no merge card queued or stuck, no queued change for its row), and writes one happened note, `streams archived`, naming each stream it archived once (information, addressed to no one); an archived stream that holds a card not landed again (an `add`) is drawn again by the next tick, RUNNING or STOPPED. A clear keeps an archived stream archived. where draws no archived row and prints one line under the work table, `N archived streams, M cards landed, $X (where --json --archived)`; `where --json` carries `archived` (`streams`, `cards`, `landed`, `cost`, the cost cells summed to the cent) and leaves the archived rows out of `tables` and `rows` but with `--archived` (`sprint.StreamArchive`, `store.ArchiveStreams`, `store.keepArchive`). The verb retires every open judgment and held condition that names a stream it archived, as `stream remove` does, a NOTE line each (`sprint.RetireStreams`); the tick's own archive retires nothing, so a judgment raised as the last card landed (a low score) stays open on the archived stream |
 | stream unarchive | draws archived streams' rows again (`stream unarchive <s>...`): refused for a stream that is no row or is not archived, all or none; the tick does not archive a stream brought back by hand again until it holds a card not landed and that card lands (the archive record, `archive`, keeps those streams) (`sprint.StreamUnarchive`, `store.UnarchiveStreams`) |
@@ -6652,6 +6652,86 @@ The TLA+ specification `tla/StallLadder.tla` verifies five invariants:
 - `NoWakeWithoutRung`: a wake is sent only at a rung the ladder climbed, and once
   (`PlanUncommitted`, a plan the tick makes and does not commit; reversed witness
   `wakeinplan`: the planner sends the wake as it plans).
+
+## friend-width-and-delivery
+
+**The friend-width and friend-delivery checks** (`internal/sprint/friend_width.go`,
+`friend_delivery.go`; the model is `tla/FriendWidth.tla`). The owner, 2026-10-07: "The #2
+thing you have to do is make sure the friends are working to their width and actually
+delivering work over time. [It] should become machinery because you cannot do it inside LLM
+thought reliably." That morning at 11:48 AM three friends sat for an hour with free lanes
+beside queued cards (2 of 8 working with 3 ready; 4 of 16 with 4 ready; 10 of 16 with 23
+ready) and nothing in the machinery noticed; the causes were each friend's own (a runner
+with a constant cap, a daemon that runs one lane and names no running card, a friend who
+takes what she wants), the symptom one. Two parts of the tick, in the fleet's update after
+the stall ladder (`PartFriendWidth`, `PartFriendDelivery`), each pure over the snapshot
+and the tick's clock, keep their state in the fleet table's properties (`friend_width_*.<f>`,
+`friend_delivery_*.<f>`) so a server switch keeps the clocks:
+
+- **friend-width** (`a friend has free lanes beside queued cards`, `NFriendWidth`): for
+  every friend up (her seat up, the friends' work switch on, not held), while her working
+  lanes (the cards working on her row; a read half a slot while read cards are on) are
+  under her width and a card sits ready on her row (dealt to her and not started), the
+  clock runs from the tick that first sees it (`friend_width_since.<f>`; the MOVED line
+  "first seen" says so). Once it has run `width_idle_after` (`set --width-idle-after
+  <duration|default>`, default 5m) the tick raises one judgment on her row: "friend <f>
+  has <free> free lanes and <ready> queued cards for <d>", with the queued card ids, and
+  the remedies `nova-friend ping --as <coordinator> --to <f> --wake`, `friend take <f>
+  --all-unstarted` (the queue handed back for the deal to give to a friend with live
+  lanes), `friend down <f> --reason`, `ack` and `wait`. It is raised again in place at
+  most every `width_idle_after` while the condition holds (the raises counted in the
+  judgment's `before`, with the pass's push `a judgment still holds: raised again`), and
+  closed, its clock cleared, when her working reaches her width, her queue empties, or
+  she is not up. From the third raise on it says her observed concurrency: "over the last
+  <d> she never ran more than <n> lanes; her width in nova-config is <w>; nova-config
+  friend set <f> --width <n> if that is her real width" (the most lanes she ran in the
+  episode, `friend_width_max.<f>`), and never changes the width itself: one width per
+  friend, set by people in nova-config (the owner, 2026-10-06).
+- **friend-delivery** (`a friend has lanes busy and delivers nothing`, `NFriendDelivery`):
+  for every friend up with a card working on her row, her last delivery is the newest
+  report of hers (ok, failed or HOLD: the store's record of her last finish, a finish
+  stamp on a done card of her row, a `reported` stamp on any card of her row), or her
+  oldest working card's take when that is later. When it is `delivery_window` old (`set
+  --delivery-window <duration|default>`; default the friend-finish window, `friend_finish`,
+  30m unless set) the tick raises one judgment on her row: "friend <f> has <working>
+  lanes busy and delivered nothing for <d>", with the remedies the ping, `friend down <f>
+  --reason 'no delivery since <t>' --until <now+window>`, `ack` and `wait`; raised again
+  at most every window while it holds, closed when a report of hers arrives, she has no
+  card working, or she is not up. A friend with no card working is not judged by this
+  check. The pass's `a friend holds working cards and finishes none` reads the same facts
+  over the friend-finish window and only reminds; this check acts.
+
+**Answered by rule** (`RuleFriendWidth`, `RuleFriendDelivery`; cases of the one engine,
+`RuleAnswers`, applied by the tick's rule parts `rule friend ping` and `rule friend down`;
+not yet in nova-config's `answer_rules_off`, so `run --answer-rules=false` alone turns them
+off, as the paths rule): the first answer to either judgment is a ping of her session, once
+an episode (`friend_width_pinged.<f>`, `friend_delivery_pinged.<f>`): a bus message pushed
+to her daemon as a turn (`pingFriendRule`, through the store's `PingFriend`, which the tick
+collects as it plans and sends once the part's step commits, as the stall ladder's wakes),
+its subject the judgment's facts and its body the queued (or working) card ids, logged
+`MOVED rule friend-width: pinged <f> with <n> cards (...)`; the judgment stays open for the
+coordinator and says she was pinged. The friend-delivery rule's answer on the second
+consecutive window (her silence two windows long) is `friend down`: she is observed down
+with reason `no delivery since <t>` until a window on (her health record, as the stall
+ladder's rung 5 writes it), her unstarted cards are taken back to ready (`FriendTake` with
+`All`; a started card stays with her and finishes), the judgment is closed as answered by
+rule, and the log says `MOVED rule friend-delivery: friend <f> down`. She comes back as a
+down friend does today: by her session's next proof, which the next observation of her
+carries. The rule marks her down once an episode (`friend_delivery_down.<f>`); the rest is a
+mind's.
+
+`where --json` and `view coordinator --json` carry, per friend, `idle_for` (how long free
+lanes have sat beside queued cards on her row, from the friend-width clock) and
+`last_delivery` (the age of her last finished card), so the dashboard can show them.
+
+The TLA+ specification `tla/FriendWidth.tla` holds one friend under the two checks, with
+ages that stop at their bound so the clock never ends: `RaisedOnlyAfterWindow` (a judgment
+is raised only once the condition held a whole window), `RaisedWhenWindowHeld` (and
+whenever it did), `WidthNeverChangedByMachine`, `DownOnlyAfterTwoWindows`, and the
+liveness `PingedWithinWindow` (a friend with free lanes and a queue is pinged within one
+window, unless the condition breaks first), each with a reversed witness TLC catches
+(`raiseearly`, `noraise`, `setswidth`, `downfirstwindow`, `noping`). Pinned by the tests
+of `friend_width_test.go` and `friend_delivery_test.go` on a fake clock.
 
 ## 19. Timers
 

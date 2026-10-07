@@ -1276,7 +1276,7 @@ func (t *tickRun) parts(table string, parts []sprint.TickPartDef) tickOutcome {
 			if !drain {
 				// a plan made to see whether the part has work wakes no one
 				probe := t.req
-				probe.WakeFriend = nil
+				probe.WakeFriend, probe.PingFriend = nil, nil
 				if p, due := part.Fn(view, probe); p.Empty() && due == 0 {
 					// a part that brings the display cells up to date after
 					// it leaves them to the tick's end (tickRun.display)
@@ -1295,18 +1295,26 @@ func (t *tickRun) parts(table string, parts []sprint.TickPartDef) tickOutcome {
 		// tla/StallLadder.tla, NoWakeWithoutRung): a plan made again after a commit lost
 		// to another writer wakes her once, not once a plan
 		var wakes []stallWake
+		// the friend-width and friend-delivery rules' pings, the same way (sprint.TickRuleFriendPing)
+		var pings []friendPing
 		fn := func(s *sprint.Snapshot, r sprint.TickReq) (sprint.Plan, int) {
 			if drain {
 				planned = sprint.Drain(s, s.Queue, sprint.MachineActor)
 				return planned, 0
 			}
-			wakes = nil
+			wakes, pings = nil, nil
 			if s.Friends == nil {
 				s.Friends = r.Friends
 			}
 			if r.WakeFriend != nil {
 				r.WakeFriend = func(friend string, rung int, d time.Duration) error {
 					wakes = append(wakes, stallWake{friend, rung, d})
+					return nil
+				}
+			}
+			if r.PingFriend != nil {
+				r.PingFriend = func(friend, subject, body string) error {
+					pings = append(pings, friendPing{friend, subject, body})
 					return nil
 				}
 			}
@@ -1403,6 +1411,7 @@ func (t *tickRun) parts(table string, parts []sprint.TickPartDef) tickOutcome {
 		}
 		if !r.Lost {
 			t.wake(wakes)
+			t.ping(pings)
 		}
 		// Each table this part wrote, other than its own and the work table,
 		// holds what it wrote in its queue until its update runs.
@@ -1460,6 +1469,25 @@ func (t *tickRun) wake(ws []stallWake) {
 	for _, w := range ws {
 		if err := t.st.WakeFriend(w.friend, w.rung, w.idle); err != nil {
 			t.res.Said = append(t.res.Said, fmt.Sprintf("the stall wake %d of friend %s was not sent: %v", w.rung, w.friend, err))
+		}
+	}
+}
+
+// friendPing is one ping of a friend's session a rule part's plan made (sprint.TickRuleFriendPing).
+type friendPing struct {
+	friend, subject, body string
+}
+
+// ping sends the rule parts' pings of a part's plan, its step committed
+// (Store.PingFriend): each once, a send that fails said on the tick's result and never
+// failing the tick, as the ping is recorded on her episode and the judgment stands.
+func (t *tickRun) ping(ps []friendPing) {
+	if t.st.PingFriend == nil {
+		return
+	}
+	for _, x := range ps {
+		if err := t.st.PingFriend(x.friend, x.subject, x.body); err != nil {
+			t.res.Said = append(t.res.Said, fmt.Sprintf("the ping of friend %s was not sent: %v", x.friend, err))
 		}
 	}
 }

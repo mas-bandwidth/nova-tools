@@ -249,6 +249,10 @@ type SetReq struct {
 	FriendIdle       string   `json:",omitempty"`
 	FriendStallAfter string   `json:",omitempty"`
 	FriendStallStep  string   `json:",omitempty"`
+	// WidthIdleAfter and DeliveryWindow are the friend-width and friend-delivery checks'
+	// windows (friend_width.go, friend_delivery.go): a duration, or default.
+	WidthIdleAfter string `json:",omitempty"`
+	DeliveryWindow string `json:",omitempty"`
 	// Reason, with Streams and ReadTier, is why the read tier is set, recorded on the
 	// stream's control card (FieldReadTierReason); Answers the judgments this answers.
 	Reason  string   `json:",omitempty"`
@@ -391,6 +395,16 @@ func Set(s *Snapshot, r SetReq) Plan {
 			why = append(why, "--friend-stall-step wants a duration above zero (5m, 10m), or "+ReadTierDefault+" for "+FriendStallStepDefault.String()+"; found "+r.FriendStallStep)
 		}
 	}
+	if r.WidthIdleAfter != "" && r.WidthIdleAfter != ReadTierDefault {
+		if d, err := time.ParseDuration(r.WidthIdleAfter); err != nil || d <= 0 {
+			why = append(why, "--width-idle-after wants a duration above zero (5m, 15m), or "+ReadTierDefault+" for "+WidthIdleAfterDefault.String()+"; found "+r.WidthIdleAfter)
+		}
+	}
+	if r.DeliveryWindow != "" && r.DeliveryWindow != ReadTierDefault {
+		if d, err := time.ParseDuration(r.DeliveryWindow); err != nil || d <= 0 {
+			why = append(why, "--delivery-window wants a duration above zero (30m, 1h), or "+ReadTierDefault+" for the friend-finish window ("+FriendFinishDefault.String()+" unless set); found "+r.DeliveryWindow)
+		}
+	}
 	if r.ReadCards != "" {
 		if r.ReadCards != ReadCardsOnWord && r.ReadCards != "off" && r.ReadCards != ReadTierDefault {
 			why = append(why, "--read-cards wants on, off or "+ReadTierDefault+" (off); found "+r.ReadCards)
@@ -399,8 +413,8 @@ func Set(s *Snapshot, r SetReq) Plan {
 			why = append(why, "--read-cards is the sprint's, not a stream's: nova-sprint set --read-cards "+r.ReadCards)
 		}
 	}
-	if r.ReadTier == "" && r.DealtMax == "" && r.LandProtected == "" && r.Release == "" && r.Prose == "" && len(alarms) == 0 && r.GoLanes == "" && r.Attempts == "" && r.FriendIdle == "" && r.FriendStallAfter == "" && r.FriendStallStep == "" && r.DriftCommits == "" && r.DriftHours == "" && r.Fleet == "" && r.Friends == "" && len(sideTiers) == 0 && r.ReadCards == "" {
-		why = append(why, "nothing to set: --read-tier, --read-cards, --prose, --dealt-max, --go-lanes, --attempts, --friend-idle, --friend-stall-after, --friend-stall-step, --drift-commits, --drift-hours, --fleet, --friends, --fleet-tiers, --friends-tiers or an --alarm-... threshold")
+	if r.ReadTier == "" && r.DealtMax == "" && r.LandProtected == "" && r.Release == "" && r.Prose == "" && len(alarms) == 0 && r.GoLanes == "" && r.Attempts == "" && r.FriendIdle == "" && r.FriendStallAfter == "" && r.FriendStallStep == "" && r.WidthIdleAfter == "" && r.DeliveryWindow == "" && r.DriftCommits == "" && r.DriftHours == "" && r.Fleet == "" && r.Friends == "" && len(sideTiers) == 0 && r.ReadCards == "" {
+		why = append(why, "nothing to set: --read-tier, --read-cards, --prose, --dealt-max, --go-lanes, --attempts, --friend-idle, --friend-stall-after, --friend-stall-step, --width-idle-after, --delivery-window, --drift-commits, --drift-hours, --fleet, --friends, --fleet-tiers, --friends-tiers or an --alarm-... threshold")
 	}
 	if len(r.Streams) > 0 && r.GoLanes != "" {
 		why = append(why, "--go-lanes is the sprint's, not a stream's: nova-sprint set --go-lanes "+r.GoLanes)
@@ -419,6 +433,12 @@ func Set(s *Snapshot, r SetReq) Plan {
 	}
 	if len(r.Streams) > 0 && r.FriendStallStep != "" {
 		why = append(why, "--friend-stall-step is the sprint's, not a stream's: nova-sprint set --friend-stall-step "+r.FriendStallStep)
+	}
+	if len(r.Streams) > 0 && r.WidthIdleAfter != "" {
+		why = append(why, "--width-idle-after is the sprint's, not a stream's: nova-sprint set --width-idle-after "+r.WidthIdleAfter)
+	}
+	if len(r.Streams) > 0 && r.DeliveryWindow != "" {
+		why = append(why, "--delivery-window is the sprint's, not a stream's: nova-sprint set --delivery-window "+r.DeliveryWindow)
 	}
 	for _, st := range r.Streams {
 		if s.StreamCtl(st) == nil {
@@ -496,6 +516,8 @@ func Set(s *Snapshot, r SetReq) Plan {
 		{PropFriendIdle, r.FriendIdle},
 		{PropFriendStallAfter, r.FriendStallAfter},
 		{PropFriendStallStep, r.FriendStallStep},
+		{PropWidthIdleAfter, r.WidthIdleAfter},
+		{PropDeliveryWindow, r.DeliveryWindow},
 		{PropDriftCommits, r.DriftCommits},
 		{PropDriftHours, r.DriftHours},
 		{PropFleet, r.Fleet},
@@ -536,6 +558,10 @@ func orDefault(v, name string) string {
 		return fmt.Sprintf("default (%s)", FriendStallAfterDefault)
 	case name == PropFriendStallStep:
 		return fmt.Sprintf("default (%s)", FriendStallStepDefault)
+	case name == PropWidthIdleAfter:
+		return fmt.Sprintf("default (%s)", WidthIdleAfterDefault)
+	case name == PropDeliveryWindow:
+		return fmt.Sprintf("default (the friend-finish window, %s unless set)", FriendFinishDefault)
 	case name == PropDriftCommits:
 		return fmt.Sprintf("default (%d commits)", DriftCommitsDefault)
 	case name == PropDriftHours:

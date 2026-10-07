@@ -107,6 +107,10 @@ type viewRow struct {
 	Wd  int    `json:"wd"`            // the row's width
 	F30 int    `json:"f30"`           // finished in the last 30m
 	Rep string `json:"rep,omitempty"` // how long since its last beat; "never"
+	// IdleFor and LastDelivery are a friend's clocks (friendClocks): how long free lanes
+	// have sat beside queued cards on her row, and the age of her last finished card.
+	IdleFor      string `json:"idle_for,omitempty"`
+	LastDelivery string `json:"last_delivery,omitempty"`
 }
 
 // coordCounts are the sprint's counts, always carried: the work table's primaries by state,
@@ -445,7 +449,8 @@ func (a *app) coordinatorView(ctx context.Context, st *store.Store, all bool) (c
 			since = now.Sub(f.Beat)
 			rep = ageWord(since)
 		}
-		rows = append(rows, viewRow{K: "f:" + f.Name, St: f.Status, R: r, W: w, Wd: f.Width, F30: finished(row), Rep: rep})
+		idleFor, lastDelivery := friendClocks(s.Fleet.Props(), f, now)
+		rows = append(rows, viewRow{K: "f:" + f.Name, St: f.Status, R: r, W: w, Wd: f.Width, F30: finished(row), Rep: rep, IdleFor: idleFor, LastDelivery: lastDelivery})
 		if r+w == 0 {
 			continue
 		}

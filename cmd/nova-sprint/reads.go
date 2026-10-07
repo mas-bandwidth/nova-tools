@@ -1300,6 +1300,7 @@ func (a *app) whereOf(ctx context.Context, st *store.Store, stale time.Duration,
 	if err != nil {
 		return whereView{}, "", err
 	}
+	fleetProps := shapes[slices.Index(sprint.ViewOrder, sprint.Fleet)].Props
 	for i, f := range friends {
 		// the counts are the friend's sprint cards on her fleet row, and nothing
 		// else: ready, working, done ok and failed, all from the fleet table
@@ -1313,6 +1314,7 @@ func (a *app) whereOf(ctx context.Context, st *store.Store, stale time.Duration,
 		if f.Status == sprint.Down {
 			friends[i].Working = 0 // down, she works nothing
 		}
+		friends[i].IdleFor, friends[i].LastDelivery = friendClocks(fleetProps, f, now)
 	}
 	v.Friends = friends
 	ft := a.friendsTable(friends, now)
@@ -1499,6 +1501,20 @@ func (a *app) friendsTable(friends []store.FriendRow, now time.Time) ntable.Tabl
 			Texts: map[string]string{sprint.FieldWidth: strconv.Itoa(f.Width), sprint.Status: a.statusCell(f, now), sprint.Active: activeCell(f, now)}})
 	}
 	return t
+}
+
+// friendClocks is a friend's idle_for and last_delivery (store.FriendRow): how long free
+// lanes have sat beside queued cards on her row, from the friend-width check's clock in the
+// fleet table's properties (sprint.PropFriendWidthSince), and the age of her last finished
+// card; "" for none.
+func friendClocks(fleetProps map[string]string, f store.FriendRow, now time.Time) (idleFor, lastDelivery string) {
+	if t, err := time.Parse(time.RFC3339, fleetProps[sprint.PropFriendWidthSince(f.Name)]); err == nil {
+		idleFor = ageWord(now.Sub(t))
+	}
+	if !f.Finished.IsZero() {
+		lastDelivery = ageWord(now.Sub(f.Finished))
+	}
+	return idleFor, lastDelivery
 }
 
 // activeCell is the friends table's active cell: how long ago her session last wrote a file

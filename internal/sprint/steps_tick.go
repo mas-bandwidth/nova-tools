@@ -153,6 +153,10 @@ var TickDecisions = map[string][]string{
 	NFriendDeaf:        {"ack", "wait"},
 	NFriendIdle:        {"ack", "wait"},
 	NCoordinatorBehind: {"act", "wait"},
+	// the friend-width and friend-delivery checks (friend_width.go, friend_delivery.go): each
+	// names its own remedies; ack and wait quiet one as they quiet any pass judgment
+	NFriendWidth:    {"ack", "wait"},
+	NFriendDelivery: {"ack", "wait"},
 	// the drift alarms (drift.go): mended, or quiet for a while; raised again every
 	// PassEvery while they hold and not waited
 	NDriftAhead:    {"act", "wait"},
@@ -188,6 +192,11 @@ type TickReq struct {
 	IdleAlarm bool
 	// WakeFriend wakes a friend by bus message during the stall ladder (cmd/nova-sprint/friendcards.go).
 	WakeFriend func(friend string, rung int, d time.Duration) error
+	// PingFriend pings a friend's session by bus message with a subject and a body: the
+	// friend-width and friend-delivery rules' first answer (TickRuleFriendPing). The store's
+	// tick hands the part one that collects the plan's pings and sends them once the part's
+	// step commits, as WakeFriend's wakes; nil sends nothing and the ping is recorded the same.
+	PingFriend func(friend, subject, body string) error
 	// Sessions is each friend's session as her last beat carries it, and whether the
 	// coordinator holds her, read by the binding with every tick (coordinator_pass.go);
 	// nil is none read, and no friend is deaf.
@@ -258,7 +267,7 @@ var TickTables = []TableUpdate{
 	{Work, []TickPartDef{{PartDrain, nil}, {"resolve", TickResolve}, {PartCapDeal, TickCapDeal}, {"deal", TickDeal}, {"accept", TickAccept}}},
 	{Readers, []TickPartDef{{"ask", TickAsk}}},
 	{Merge, []TickPartDef{{"resume", TickResume}}},
-	{Fleet, []TickPartDef{{"presence", TickPresence}, {PartFriendStall, TickFriendStall}}},
+	{Fleet, []TickPartDef{{"presence", TickPresence}, {PartFriendStall, TickFriendStall}, {PartFriendWidth, TickFriendWidth}, {PartFriendDelivery, TickFriendDelivery}}},
 }
 
 // PartCapDeal is the attempt cap's default answer, the pump's part before the deal

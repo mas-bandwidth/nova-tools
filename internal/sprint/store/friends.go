@@ -131,6 +131,11 @@ type FriendRow struct {
 	// finished, zero for never.
 	Evidence string    `json:"evidence,omitempty"`
 	Finished time.Time `json:"finished,omitzero"`
+	// IdleFor is how long free lanes have sat beside queued cards on her row (the
+	// friend-width check's clock, sprint.PropFriendWidthSince), and LastDelivery the age of
+	// her last finished card (Finished); each absent when there is none (where --json).
+	IdleFor      string `json:"idle_for,omitempty"`
+	LastDelivery string `json:"last_delivery,omitempty"`
 	// Proof is her session's last proof as her beat carries it (sprint.Beat.Proof: a
 	// SESSION CHECK it answered, or a bus message of its own), zero when none.
 	Proof time.Time `json:"proof,omitzero"`

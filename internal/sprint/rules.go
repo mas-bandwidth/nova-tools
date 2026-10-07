@@ -147,8 +147,10 @@ const (
 	ActTake   = "take back and deal again"  // the friend's card she has not started withdrawn from her row, dealt to another
 	ActAsk    = "ask another reader"        // the late read taken back, asked of another reader
 	ActNeed   = "wait for the card"         // the HOLD's card has not landed: the judgment waits on it
-	ActLeft   = "left"                      // the judgment needs a mind
-	ActOff    = "off"                       // its rule is turned off
+	// ActPing and ActFriendDown are the friend-width and friend-delivery rules' acts
+	// (friend_width.go, friend_delivery.go)
+	ActLeft = "left" // the judgment needs a mind
+	ActOff  = "off"  // its rule is turned off
 )
 
 // RuleSaid is the answer a rule records on a judgment: "answered by rule <name>: <what>".
@@ -234,6 +236,10 @@ func ruleByType(s *Snapshot, r TickReq, a *RuleAnswer) {
 		ruleReadLate(s, a)
 	case NBaseRed:
 		ruleBaseGate(s, a)
+	case NFriendWidth:
+		ruleFriendWidth(s, a)
+	case NFriendDelivery:
+		ruleFriendDelivery(s, r, a)
 	default:
 		a.Act, a.Why = ActLeft, "no rule answers it"
 	}
@@ -588,6 +594,8 @@ var TickRules = []TickPartDef{
 	{PartRuleAsk, TickRuleAsk},
 	{PartRuleNeed, TickRuleNeed},
 	{PartRuleBrief, TickRuleBrief},
+	{PartRuleFriendPing, TickRuleFriendPing},
+	{PartRuleFriendDown, TickRuleFriendDown},
 }
 
 // IsRulePart says the tick part is a rule part: it plans with the routes and the rules

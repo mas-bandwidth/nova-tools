@@ -86,6 +86,10 @@ type Store struct {
 	// friend stall part of the tick climbs her ladder to rung 1 or 2 (sprint.TickFriendStall,
 	// a bus message pushed to her daemon); nil sends nothing and the rung climbs the same.
 	WakeFriend func(friend string, rung int, d time.Duration) error
+	// PingFriend, when set (run and tick), pings a friend's session by bus message as the
+	// friend-width and friend-delivery rules answer her judgment (sprint.TickRuleFriendPing);
+	// nil sends nothing and the ping is recorded the same.
+	PingFriend func(friend, subject, body string) error
 	// Stats is what the store's reads cost (stats.go); nil is made on the
 	// first tick. Its pinned copies share it.
 	Stats *Stats
