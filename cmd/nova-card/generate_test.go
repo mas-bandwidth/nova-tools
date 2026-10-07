@@ -237,7 +237,6 @@ func TestAGeneratedCardThatWritesAModelIsTieredFrontier(t *testing.T) {
 	assert.NoDirExists(t, out2)
 }
 
-
 // TestTheUsageBannerPrintsEachExampleOnce verifies that each example line appears
 // exactly once in the help output for the generate command.
 func TestTheUsageBannerPrintsEachExampleOnce(t *testing.T) {
