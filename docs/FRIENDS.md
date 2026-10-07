@@ -10,6 +10,14 @@ it is reported, where its work lives, and how the work is removed once done.
 
 ## The inbox/outbox standard
 
+For a new friend, see docs/FRIEND-ONBOARDING.md.
+
+### tdocs-friend-onboarding-bc.w7
+
+The onboarding guide takes a friend and helper from the `nova-config` row
+through harness setup, bus proof, a twin-store practice card, and the
+`REPORT.md`/`RESULT.md` finish contracts.
+
 Only the coordinator reaches out. A job is a directory:
 
 - the coordinator delivers `inbox/<job>/`, with its `BRIEF.md`; `<job>` begins
