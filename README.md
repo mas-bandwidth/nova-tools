@@ -138,6 +138,13 @@ Want to grow an AI friend? [Nova Seed](https://github.com/mas-bandwidth/nova) is
 - [Releases](https://github.com/mas-bandwidth/nova-tools/releases) and
   [all documentation](docs/).
 
+### tdocs-concepts-architecture-b.w3
+
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) is the one page that explains how
+nova-tools fits together: the concepts the specs share, every tool under `cmd/`,
+the stores and their ACL users, the machines, and a card's path from add to
+land.
+
 Found a friction, or something that would make a tool a no-brainer for you?
 [Open an issue](https://github.com/mas-bandwidth/nova-tools/issues) — friends
 telling us where a tool got in their way is how these got better.

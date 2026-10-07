@@ -23,7 +23,7 @@ func TestNoOtherWriterOrShadowCanBypassTheEscape(t *testing.T) {
 
 var selfTalkAudit = audit.Config{
 	// hintFor returns one of this package's own hint constants, or the empty string, and
-	// nothing else -- a switch over a kind of refusal, with no caller text in it. The
+	// nothing else -- a map over a kind of refusal, with no caller text in it. The
 	// classifier walks its body like any other listed escaper, so the claim is checked
 	// rather than taken.
 	// buildinfo.Line is the `version` verb's whole line and the fifth escaper: it renders
@@ -53,6 +53,8 @@ var selfTalkAudit = audit.Config{
 		// field through oneline.Field before it is returned.
 		`"github.com/mas-bandwidth/nova-tools/internal/buildinfo"`,
 		`"errors"`, `"flag"`, `"fmt"`, `"io"`, `"io/fs"`, `"os"`, `"slices"`, `"strings"`,
+		// cmp.Or picks between two strings a caller already holds; it holds no writer.
+		`"cmp"`,
 		// unicode/utf8 decides whether a named page is text before the scan; it holds
 		// no writer, and the refusal it feeds is rendered through oneline.
 		`"unicode/utf8"`,
