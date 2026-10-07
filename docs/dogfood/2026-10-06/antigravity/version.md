@@ -2,125 +2,103 @@
 
 Read as a stranger: only `nova-version -h`, `nova-version help`, `nova-version
 <verb> -h` and the page under `docs/`. Built from the staged checkout at
-1c05149f60a74e73707c4eb6325b84194648ffcf and used as
-`nova-version v1.0.1-0.20261007140251-1c05149f60a7 linux/amd64 go1.26.6`: the
-`example:` lines run as printed, then snapshot (manifest and `--bin`), diff,
-report (lines and draft), moved `--dry-run`, send, version, the refusals too.
-Commands ran in one scratch directory; `nova-version example --out versions.tsv`
-wrote `versions.tsv` and `nova-version snapshot --bin ../bin --out ./snap.tsv`
-wrote `snap.tsv` first.
+1c05149f60a74e73707c4eb6325b84194648ffcf on a Linux bench and used as
+`nova-version v1.0.1-0.20261007140251-1c05149f60a7 linux/amd64 go1.26.6`. The
+commands below ran from a scratch directory holding `versions.tsv` (written by
+`nova-version example --out versions.tsv`), with `nova-version` on `PATH` from
+`../../bin` and the checkout at `../../repo`; `py.tsv` is a hand-written one-row
+manifest whose `installed` field is `python3`. Every verb ran with its real flags
+(`example`, `snapshot --file`, `snapshot --bin`, `--dry-run`, `--json`, `diff`,
+`report`, `report --draft`, `report --host`, `send`, `moved`, `moved --dry-run`,
+`version`, `--version`), the refusals too; a finding is recorded, never fixed
+here.
 
 ## Findings
 
-1. An escaped blank leaks into the human-facing lines. The command as typed:
-
-   `nova-version report --file versions.tsv`
-
-   first lines of its output:
+1. `nova-version report --file py.tsv` prints the manifest's `installed` command
+   escaped:
    ```
-   REPORT OK checked=1 known=1 unknown=0 changed=- sent=- took=36ms file=versions.tsv host=- as=- entries=1 kinds=tool at=2026-10-07T14:11:01Z timeout=5s budget=1m0s max=20 snapshot=-
-   REPORT TOOL name=go kind=tool version=1.26.6 raw=go\x20version\x20go1.26.6\x20linux/amd64 path=/tmp/nvzhi/bin/go
+   REPORT OK checked=1 known=1 unknown=0 changed=- sent=- took=21ms file=py.tsv host=- as=- entries=1 kinds=tool at=2026-10-07T14:14:26Z timeout=5s budget=1m0s max=20 snapshot=-
+   REPORT TOOL name=py kind=tool version=3.14.4 raw=Python\x203.14.4 path=/usr/bin/python3
    ```
-   `nova-version send --file versions.tsv --as zhi --to reader` prints the same
-   `raw=` field. The manifest's third field is the command `go version` (six
-   tab-separated fields, a blank inside one), so I expected the plain text there
-   (`raw=go version go1.26.6 linux/amd64`), as `path=` and `version=` beside it
-   are plain; a person reads `go\x20version`.
-   Grade: NEXT.
+   (the whole output; two lines). I expected the raw line the command printed to
+   read as plain text, the way `version=` and `path=` do in the same line —
+   `raw=Python 3.14.4` — because `docs/STANDARD.md:56` says a row's command is
+   prose and plain in the line; here each blank becomes `\x20`, which a person
+   reads as noise and cannot paste back. Grade: NEXT.
 
-2. A report without `--host` writes the placeholder into the prose subject. The
-   command as typed:
-
-   `nova-version report --file versions.tsv --draft --as zhi --to reader`
-
-   first three lines of its output:
+2. `nova-version report --file py.tsv --draft --as zhi --to caller` writes the
+   absent host into the note's subject:
    ```
    From: zhi
-   To: reader
-   Subject: versions on - at 2026-10-07T14:11:01Z
+   To: caller
+   Subject: versions on - at 2026-10-07T14:14:26Z
    ```
    I expected the subject to drop the host when none was given (`Subject:
-   versions at ...`), not to print `on -`.
-   Grade: NEXT.
+   versions at 2026-10-07T14:14:26Z`) rather than print `on -`. The same run's
+   `REPORT OK` line spells the absent host `host=-`, so the `-` is a placeholder,
+   not a value a reader can act on. Grade: NEXT.
 
-3. The status word names a short form, not the tool. The commands as typed and
-   the first line each printed:
-
-   `nova-version`
+3. `nova-version` (bare), `nova-version bogus` and `nova-version help bogus`
+   print:
    ```
    VERSION REFUSED: no verb given; the verbs are example, moved, snapshot, diff, report, send, version; run: nova-version help
-   ```
-   `nova-version bogus`
-   ```
    VERSION REFUSED: unknown verb "bogus"; the verbs are example, moved, snapshot, diff, report, send, version; run: nova-version help
    ```
-   `nova-version snapshot`
-   ```
-   SNAPSHOT REFUSED: missing --bin, --out; refusing to guess (--bin wants the directory holding the binaries, for example ./bin, and --out the TSV snapshot to write, for example ./before.tsv; or give --file <manifest> alone to count which adopted tools answer); run: nova-version help
-   ```
-   `nova-version diff --from ./snap.tsv --to ./snap.tsv`
-   ```
-   DIFF OK from=./snap.tsv to=./snap.tsv tools=1 changed=0
-   ```
-   `nova-version send --file versions.tsv --as zhi --to reader`
-   ```
-   SEND FAILED checked=1 known=1 unknown=0 changed=- sent=uncertain took=29ms file=versions.tsv host=- as=zhi entries=1 kinds=tool at=2026-10-07T14:11:01Z timeout=5s budget=1m0s max=20 snapshot=-
-   SEND TOOL name=go kind=tool version=1.26.6 raw=go\x20version\x20go1.26.6\x20linux/amd64 path=/tmp/nvzhi/bin/go
-   SEND NOTE send not confirmed: exit 2; the bus said: SEND REFUSED: --redis is required: NOVA_BUS_REDIS is unset, and with no NOVA_SPRINT_REDIS the fleet's bus row (nova-config fleet set --bus <host:port>, then apply) cannot be read either; refusing to g... (retry --send with the same --snapshot)
-   ```
-   So the bare and unknown-verb refusals printed `VERSION REFUSED:`, `snapshot`
-   printed `SNAPSHOT REFUSED:`, `diff` printed `DIFF OK` and `send` printed
-   `SEND FAILED`, while the banner opens `nova-version:`. docs/STANDARD.md:57
-   ("After the verb's name the first word is `OK`, `REFUSED` or `FAILED`")
-   judges `DIFF OK` and `SEND FAILED` and gives the refusals their status word;
-   docs/STANDARD.md:70 gives the refusal form `<tool>[ <verb>] REFUSED: <what
-   was wrong>; run: <tool> help`, which supports the refusals. Read together,
-   the leading word is the short verb name plus the status, not the tool name;
-   other tools lead with their own name (`nova-ci REFUSED:`), so a reader
-   matching a line to the tool must translate. I expected the leading word to
-   be `nova-version` (`nova-version DIFF OK ...`, `nova-version REFUSED: ...`).
-   Grade: NEXT.
+   `docs/STANDARD.md:70` gives the grammar of a call the tool cannot run as
+   `<tool>[ <verb>] REFUSED: <what was wrong>; run: <tool> help`, so the bare
+   call wants `nova-version REFUSED: ...` and the unknown verb wants
+   `nova-version bogus REFUSED: ...`; `VERSION` names neither the tool
+   (`nova-version`) nor a verb that ran. The verb-level lines are right under
+   `docs/STANDARD.md:57` ("After the verb's name the first word is `OK`,
+   `REFUSED` or `FAILED`"): `nova-version snapshot` printed `SNAPSHOT REFUSED:
+   missing --bin, --out; ...`, `nova-version diff --from snap.tsv --to snap.tsv`
+   printed `DIFF OK from=snap.tsv to=snap.tsv tools=5 changed=0`, and
+   `nova-version send --file versions.tsv --as zhi --to caller` printed `SEND
+   FAILED checked=1 ... sent=uncertain`. Only the no-verb and unknown-verb
+   refusals use the short form. Grade: NEXT.
 
-4. `moved` prints `verbs=` with no statement of what it counts. The command as
-   typed:
-
-   `nova-version moved --from 1c05149f60a74e73707c4eb6325b84194648ffcf --to 1c05149f60a74e73707c4eb6325b84194648ffcf --repo ../repo --out ./moved.md --dry-run`
-
-   first lines of its output:
+4. `nova-version moved --from 08d5d63f4 --to 1c05149f6 --repo ../../repo --out
+   moved-note.md` prints:
    ```
-   MOVED OK from=1c05149f60a74e73707c4eb6325b84194648ffcf to=1c05149f60a74e73707c4eb6325b84194648ffcf added=0 deleted=0 renamed=0 verbs=310 file=./moved.md dry_run=true
-   MOVED from=1c05149f60a74e73707c4eb6325b84194648ffcf to=1c05149f60a74e73707c4eb6325b84194648ffcf at=2026-10-07T14:09:14Z
+   MOVED OK from=08d5d63f4651b134ad1e28184ad352e79a99b71d to=1c05149f60a74e73707c4eb6325b84194648ffcf added=0 deleted=0 renamed=0 verbs=310 file=moved-note.md
    ```
-   With the same revision on both sides `added=0 deleted=0 renamed=0`, yet
-   `verbs=310`: `moved -h` never says whether the number counts the verbs at
-   `--from`, at `--to`, or both, and the note under the line does not name it
-   either. I expected the help (or the note) to say what `verbs=` counts, so a
-   reader can tell the number from a count of the note's own entries.
-   Grade: NEXT.
+   The note it writes holds only `MOVED from=... to=... at=...`; no verb list is
+   in it, so `verbs=310` cannot be derived from the note, and `nova-version moved
+   -h` lists `--from`, `--to`, `--repo`, `--out`, `--timeout`, `--budget` and
+   `--dry-run` and never says what `verbs` counts. `docs/SPEC-VERSION.md` rule 3
+   names the field but not its unit. I expected the verb's help to say it counts
+   the (tool, verb) pairs the `--to` build answers. Grade: NEXT.
 
 ## What the tool got right
 
-- The first run is two commands and reads local `go version`:
-  `nova-version example --out versions.tsv` writes a one-entry manifest, and
-  `nova-version report --file versions.tsv` (and `snapshot --file
-  versions.tsv`) answers it in tens of milliseconds.
-- `nova-version snapshot --bin ../bin --out ./snap.tsv` records each binary's
-  stamp and revision (`SNAPSHOT OK ... tools=1`), and `--dry-run` prints the row
-  and writes nothing.
-- `nova-version diff --from ./snap.tsv --to ./snap.tsv` is `changed=0` on
-  identical snapshots.
-- Refusals name every want at once and how to satisfy it: `snapshot` with no
-  flags lists `--bin` and `--out` with examples; `report --file ./missing.tsv`
-  says what the manifest is and that `example --out` writes one.
-- `send` with no bus is honest: `SEND FAILED ... sent=uncertain` with the bus's
-  own refusal (`--redis is required`) in the note and a retry offered with the
-  same `--snapshot`.
+- The first run is two commands and reads local `go version`: `nova-version
+  example --out versions.tsv` writes a one-entry manifest and names the next
+  command; the same call again is `EXAMPLE OK wrote=versions.tsv entries=1
+  unchanged=true`; a file holding anything else is refused (`EXAMPLE REFUSED:
+  other.txt exists and is not the example manifest; ...`), never overwritten.
+- `nova-version snapshot --bin ../../bin --out snap.tsv` records five binaries as
+  `SNAPSHOT ROW` lines carrying `name`, `stamp`, `revision` and `platform`, and
+  `--dry-run` prints the same rows plus `dry_run=true` with `SNAPSHOT NOTE dry
+  run: snap2.tsv not written`; `--json` renders the same value as the lines.
+- `nova-version diff --from snap.tsv --to snap.tsv` is `DIFF OK from=snap.tsv
+  to=snap.tsv tools=5 changed=0` on identical snapshots.
+- Refusals name every want at once and how to satisfy it: `nova-version snapshot`
+  lists `--bin` and `--out` with examples; a mixed-stamp `--bin` names both
+  binaries and both stamps and points at `nova-update release build`;
+  `nova-version moved` with no flags names all four missing flags.
+- `nova-version send` with no bus is honest: `SEND FAILED ... sent=uncertain`,
+  exit 1, the bus's own `--redis is required` refusal in the note, and a retry
+  offered with the same `--snapshot`.
 
 READ 8/10 — the banner answers what it does, how it works and where its state
-lives, and the manifest rules live in `report -h`; the escaped field and the
-subject keep it off a 9.
+lives (`THE MANIFEST is the file --file names`), `report -h` carries the six
+manifest rules, and every verb's `-h` quotes the exit table; the escaped `raw=`
+field and the `-` subject keep it off a 9.
 
-USE 8/10 — every verb tried ran with no store and no network from one manifest;
-the short status prefix and the unexplained `verbs=` are the stumbles.
+USE 8/10 — every verb ran with no store and no network from one manifest, the
+first run is two pasteable commands, and the refusals carry a remedy; the
+escaped field, the placeholder subject and the undefined `verbs=` are the
+stumbles.
 
 urgent=0 next=4
