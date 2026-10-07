@@ -43,14 +43,16 @@ func getVerbs(t *testing.T, tool string) map[string]bool {
 	case "nova-bus":
 		src, err := os.ReadFile("../../cmd/nova-bus/main.go")
 		require.NoError(t, err)
-		re := regexp.MustCompile(`tool\.Verb\s*=\s*{"([a-z]+)"`)
+		// Read verb names from Name field in Verbs table
+		re := regexp.MustCompile(`Name:\s*"?([a-z]+)"?`)
 		for _, m := range re.FindAllStringSubmatch(string(src), -1) {
 			verbs[m[1]] = true
 		}
 	case "nova-friend":
 		src, err := os.ReadFile("../../cmd/nova-friend/main.go")
 		require.NoError(t, err)
-		re := regexp.MustCompile(`tool\.Verb\s*=\s*{"([a-z]+)"`)
+		// Read verb names from Name field in Verbs table
+		re := regexp.MustCompile(`Name:\s*"?([a-z]+)"?`)
 		for _, m := range re.FindAllStringSubmatch(string(src), -1) {
 			verbs[m[1]] = true
 		}
