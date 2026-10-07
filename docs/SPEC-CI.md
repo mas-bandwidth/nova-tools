@@ -3070,16 +3070,10 @@ the original failed measurement.
 ### `never-force` — refuse force-push or hard-reset of shared refs
 
 **The rule.** Nothing in nova-tools may rewrite a shared ref. The rule is
-named `never-force`, and its line reads `never-force   read every Go source,
-Makefile, workflow and card template; refuse force-push or hard-reset of shared
-refs`. The class test reads every Go source, Makefile, workflow and card template
+named `never-force`, and its line reads `never-force   read every Go source, Makefile, workflow and card template; refuse force-push or hard-reset of shared refs`. The class test reads every Go source, Makefile, workflow and card template
 under the repository root, and refuses patterns that force-push or hard-reset
 shared refs. The allowed shape is a normal push or reset to a private branch
 (origin/<anything>, dev, main).
-reads every Go source, Makefile, workflow and card template under the
-repository root, and refuses patterns that force-push or hard-reset shared refs.
-The allowed shape is a normal push or reset to a private branch (origin/
-anything>, dev, main).
 
 **The mistake it prevents.** Force-push of shared branches like `dev` or
 `sprint/*` that other workers rely on: a worker accidentally ran `push --force`
