@@ -508,4 +508,27 @@ func TestPromoteCarriesACutToARecordedPromotion(t *testing.T) {
 		require.NotEmpty(t, ta.promotedSha(), "the fresh cut promotes successfully")
 		ta.clean()
 	})
+
+	t.Run("closed pr cleanup failure", func(t *testing.T) {
+		t.Parallel()
+		w := newPromoteTwin(t)
+		tip := w.remote("refs/heads/sprint/live")
+		w.inFlight(tip, false)
+		// the clone's config cannot be rewritten: git config --unset fails for a
+		// reason other than the key being absent (exit 255, "could not lock
+		// config file"), so the promotion is not cleared
+		lock := filepath.Join(w.dir, ".git", "config.lock")
+		require.NoError(t, os.Mkdir(lock, 0o755))
+		t.Cleanup(func() { _ = os.RemoveAll(lock) })
+		f := &fakeForge{prState: "CLOSED"}
+		useForge(t, w, f)
+		ta := promoteApp(t, w)
+
+		code, out, errs := ta.do(args + w.dir)
+		require.Equal(t, 1, code, "%s\n%s", out, errs)
+		require.Contains(t, errs, "was not cleared", "a failed cleanup is a refusal naming it, not a false claim")
+		require.Contains(t, errs, "promote.branch", "the keys that remain are named")
+		require.NotContains(t, out, "the next pass cuts afresh", "the closed pull request is not claimed cleared")
+		require.Contains(t, w.state(), "promote.branch", "the in-flight key remains")
+	})
 }
