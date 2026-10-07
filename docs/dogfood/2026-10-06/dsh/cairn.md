@@ -168,8 +168,8 @@ that could not answer).
 
     go test -count=1 -timeout 600s ./internal/docs ./internal/ci
 
-    ok  	github.com/mas-bandwidth/nova-tools/internal/docs	1.858s
-    ok  	github.com/mas-bandwidth/nova-tools/internal/ci	11.226s
+    ok  	github.com/mas-bandwidth/nova-tools/internal/docs	1.871s
+    ok  	github.com/mas-bandwidth/nova-tools/internal/ci	13.316s
 
     go test -count=1 -timeout 600s ./internal/docs -run TestDocsTreeIsConsistent
 
