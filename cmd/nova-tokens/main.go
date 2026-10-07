@@ -351,6 +351,8 @@ type sourceFlags struct {
 	scratch  string
 	timeout  int
 	repos    string
+	maxFiles int
+	exclude  stringList
 }
 
 func (s *sourceFlags) declare(fs *flag.FlagSet, withSwarmAndBus bool) {
@@ -364,6 +366,8 @@ func (s *sourceFlags) declare(fs *flag.FlagSet, withSwarmAndBus bool) {
 	}
 	fs.StringVar(&s.scratch, "scratch", "", "directory the OpenCode database is copied into: opencode-<label>/ in it, replaced and left by a run that writes; a new directory removed before exit by a dry run or sources")
 	fs.StringVar(&s.repos, "repos", "", "tab-separated repo names and path regular expressions")
+	fs.IntVar(&s.maxFiles, "max-files", tokens.DefaultMaxClaudeFiles, "ceiling on the transcript files one --claude tree holds (default 20000); the whole tree is walked and counted before any file is opened, and a tree over the ceiling is refused naming the files and bytes it found; 0 is no ceiling")
+	fs.Var(&s.exclude, "exclude", "path or glob kept out of a recursive source tree (--claude), repeatable (nothing is excluded by default)")
 	fs.IntVar(&s.timeout, "timeout", int(tokens.DefaultTimeout/time.Second), "seconds to wait for the OpenCode sqlite3 reader")
 }
 
@@ -481,7 +485,8 @@ func (s *sourceFlags) check(r *refusals) {
 // is named in the returned notes.
 func (s *sourceFlags) read(rules *tokens.Rules, now time.Time, private bool) (out []*tokens.Source, notes []string) {
 	for _, it := range s.claude.items {
-		out = append(out, tokens.ReadClaude(it.label, it.value, os.DirFS(it.value), rules))
+		out = append(out, tokens.ReadClaude(it.label, it.value, os.DirFS(it.value), rules,
+			tokens.ClaudeBound{MaxFiles: s.maxFiles, Exclude: []string(s.exclude)}))
 	}
 	scratch := s.scratch
 	if private && len(s.opencode.items) > 0 {
