@@ -32,6 +32,12 @@ import (
 // ServerEnv names the sprint's server for the coordinator's verbs: host:port.
 const ServerEnv = "NOVA_SPRINT_SERVER"
 
+// LocalServer is the local sprint server's loopback address (the port `run --listen`
+// serves; docs/SPEC-SPRINT.md, "The server", and docs/CLI.md, "nova-sprint"): it is
+// what a verb with no store and no server named reaches, so a cold coordinator runs
+// `nova-sprint <verb>` and nothing else, with no store credentials.
+const LocalServer = "127.0.0.1:6390"
+
 // fileFlags are the flags of the coordinator's verbs whose value is a file or a
 // directory: the server runs in another directory, so a path sent to it is absolute.
 var fileFlags = []string{"rules", "brief-file", "brief-dir", "file", "decide-record"}
@@ -133,23 +139,39 @@ func (v verbArgs) unserved() string {
 	return ""
 }
 
+// server names the sprint's server this process sends the verb's reads and writes to
+// (NOVA_SPRINT_SERVER). When the server is the local default (not explicitly named),
+// it says so so the verb can print a NOTE line (docs/CLI.md, "nova-sprint").
+type server struct {
+	addr string
+	named bool
+}
+
 // server is the sprint's server this process sends the verb's reads and writes to
 // (NOVA_SPRINT_SERVER), "" when the verb runs on a store here: no server named, this
 // process is the server, or the verb was given its own --redis (fs, as parsed).
-func (a *app) server(fs *flag.FlagSet) string {
+func (a *app) server(fs *flag.FlagSet) (srv server) {
 	if a.serveAddr != "" || (verbArgs{fs: fs}).given("redis") {
-		return ""
+		return server{}
 	}
-	return a.getenv(ServerEnv)
+	if s := a.getenv(ServerEnv); s != "" {
+		return server{addr: s, named: true}
+	}
+	return server{addr: LocalServer, named: false}
 }
 
 // forwarded sends the verb to the sprint's server when there is one and the server runs
 // the verb; sent is false when the verb runs here.
 func (a *app) forwarded(args []string, stdout, stderr io.Writer) (code int, sent bool) {
 	v := readVerb(args)
-	addr := a.server(v.fs)
-	if addr == "" || v.unserved() != "" || v.help || v.err != nil {
-		return 0, false // no server, not served, a wait, its help, or flags it refuses: runs here
+	srv := a.server(v.fs)
+	addr := srv.addr
+	if addr == "" || a.getenv("NOVA_SPRINT_PREFIX") != "" || v.unserved() != "" || v.help || v.err != nil {
+		return 0, false // no server, a prefix, not served, a wait, its help, or flags it refuses: runs here
+	}
+	if !srv.named { // the server is the local default: say which was used
+		fmt.Fprintf(stderr, "NOTE %s %s: no NOVA_SPRINT_REDIS and no %s named, so through the local sprint server at %s; name a store with --redis <addr>, or a server with %s=<addr>\n",
+			prog, v.name, ServerEnv, oneline.Field(LocalServer), ServerEnv)
 	}
 	rest := args[v.words:]
 	var brief []string
@@ -162,7 +184,7 @@ func (a *app) forwarded(args []string, stdout, stderr io.Writer) (code int, sent
 	}
 	res, err := a.ask(context.Background(), addr, args[:v.words], rest)
 	if err != nil {
-		return a.unanswered(v.name, addr, err, stderr), true
+		return a.unanswered(v.name, addr, srv.named, err, stderr), true
 	}
 	a.answer(withBrief(res, brief), stdout, stderr)
 	return res.Code, true
@@ -195,8 +217,12 @@ func (a *app) answer(res sprintwire.Result, stdout, stderr io.Writer) {
 
 // unanswered says the server did not answer the verb, with what to do, and is its exit
 // code: the verb is not run here behind the server's back.
-func (a *app) unanswered(verb, addr string, err error, stderr io.Writer) int {
-	fmt.Fprintf(stderr, "%s %s: %s (NOVA_SPRINT_SERVER=%s); nothing is known of what ran: once it answers, read the sprint (nova-sprint where, log) before running it again; the server is the run loop: run: nova-sprint run --listen <host:port>\n", prog, verb, oneline.Escape(err.Error()), oneline.Field(addr))
+func (a *app) unanswered(verb, addr string, named bool, err error, stderr io.Writer) int {
+	if !named {
+		fmt.Fprintf(stderr, "%s %s: %s (no NOVA_SPRINT_REDIS and no %s named, using local sprint server at %s); nothing is known of what ran: once it answers, read the sprint (nova-sprint where, log) before running it again; the server is the run loop: run: nova-sprint run --listen <host:port>\n", prog, verb, oneline.Escape(err.Error()), ServerEnv, oneline.Field(LocalServer))
+	} else {
+		fmt.Fprintf(stderr, "%s %s: %s (NOVA_SPRINT_SERVER=%s); nothing is known of what ran: once it answers, read the sprint (nova-sprint where, log) before running it again; the server is the run loop: run: nova-sprint run --listen <host:port>\n", prog, verb, oneline.Escape(err.Error()), oneline.Field(addr))
+	}
 	return 2
 }
 
