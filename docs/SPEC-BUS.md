@@ -453,3 +453,45 @@ five (the roster, the group, the claim, the read, the delivered stamp). wait: tw
 roster, the stream's tail), then one `XREAD` per block (one parked read when
 nothing else is watched). ack: five (group, pending,
 the entries, `XACK`, the receipt's `HDEL`). peek: up to four. log: one. names: one.
+
+## The deadlines
+
+The finding (2026-10-04, one timeout on a host whose load average was 35) was
+read against the base tip first. The client already set a bound on every network
+step, in `internal/redisconn/open.go`: `OpenTimeout`, `DialTimeout`, `WriteTimeout`,
+`ReadTimeout` and `PoolTimeout`, 5 s each; a command that blocks gets its block
+plus 10 s (go-redis); `MaxRetries` is -1, so nothing was retried. What was missing
+was a bound of the bus's own and the words for it: a call that ran out surfaced
+as a bare `i/o timeout`, there was no `--timeout` on the verbs that do not park,
+and a transient stall on a read ended the verb at once.
+
+The rule, in `internal/bus/redis.go` (`Redis.call`):
+
+- Every store call runs under a context deadline of `Timeout` (`--timeout`, default
+  `CallTimeout`, 5 s). A blocking `Read` (recv, including `recv --forever`'s
+  `BLOCK` of `ForeverBlock`, 30 s) and a blocking `BlockRead` whose block is
+  above zero get that plus the block plus `BlockMargin`, a fixed 10 s.
+  `BlockRead` with block 0 is the wait that asked to park for ever: it keeps
+  the caller's context and sets no bus deadline, because one would end that wait.
+- `wait`'s own `--timeout` stays how long the wait parks (0 is for ever). It is
+  not the call bound. The wait's non-blocking reads (the roster, the stream's
+  tail) use `CallTimeout`.
+- A call that runs out is refused with
+  `redis did not answer within <d> at <host:port>: the host may be overloaded (load average), try again`.
+  The line names the address and nothing of the login.
+- One retry, for a read that changes nothing: `Members` (names), `Marks`, `Pending`,
+  `Group`, `Range`, `Get` (peek, log) and `Sent`, `Tail`. Never a send (`AddAll`,
+  `AddOnce`), a `Forward`, an `Ack`, an `Unmark`, a `Release`, a `Claim`, a `Read`
+  or a `BlockRead`: a second try of those could act twice or hand an entry out
+  twice. A caller whose own context ended is not retried.
+- `--timeout` must be above zero on the verbs that take it: a call with no
+  deadline is the defect.
+
+Worst case for a retried read is two deadlines (10 s at the default); for a send, one (5 s).
+A blocking read's worst case is one deadline of `Timeout` plus the block plus `BlockMargin`.
+
+Measured with a stalled in-process store (`internal/bus/timeout_test.go`, a pipe
+that reads and never answers, no port): `Roster` at `Timeout` 20 ms sent its pipeline (two SMEMBERS) twice and
+refused in the words above; `AddAll` and `Ack` sent once; a blocking `Read` of 10 ms with a 20 ms
+margin and 20 ms timeout refused at 50 ms (20 + 10 + 20) having sent XREADGROUP once. The tests
+assert counts and the refusal, never elapsed time. A cancelled caller is not that refusal and is not retried.
