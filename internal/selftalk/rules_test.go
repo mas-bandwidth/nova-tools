@@ -93,10 +93,7 @@ func TestTheShapesTheHelpNamesAreFoundInTheirPlainForms(t *testing.T) {
 		{"I never finish anything.", string(Trait)},
 		{"I never ask for help.", string(Trait)},
 	} {
-		t.Run(tc.in, func(t *testing.T) {
-			t.Parallel()
-			assert.Equal(t, []string{tc.want}, names(tc.in))
-		})
+		assert.Equal(t, []string{tc.want}, names(tc.in), "input %q", tc.in)
 	}
 }
 
@@ -123,10 +120,7 @@ func TestThePlainFormsNearMissesAreNotFound(t *testing.T) {
 		"I cannot merge without a read.",
 		"I can't merge without a read.",
 	} {
-		t.Run(in, func(t *testing.T) {
-			t.Parallel()
-			assert.Empty(t, names(in))
-		})
+		assert.Empty(t, names(in), "near miss %q should not be found", in)
 	}
 }
 
