@@ -442,3 +442,7 @@ MCBusCursorBrokenAdvanceWithoutAck.cfg	MCBusCursor.tla	invariant	AdvanceOnlyPast
 MCBusCursorBrokenNearerCursorWins.cfg	MCBusCursor.tla	invariant	FurtherReadWins	ignore-terminal	buscursor	required	-
 MCBusCursorBrokenWriteWithoutAdvance.cfg	MCBusCursor.tla	invariant	NoWriteWithoutAdvance	ignore-terminal	buscursor	required	-
 MCDirtyTickRefused.cfg	MCDirtyTick.tla	pass	-	ignore-terminal	dirtytick-small	required	-
+MCDelivery.cfg	MCDelivery.tla	pass	-	ignore-terminal	frienddelivery	required	-
+MCDeliveryBrokenNewestFirst.cfg	MCDelivery.tla	invariant	NoYoungerFirst	ignore-terminal	frienddelivery	required	-
+MCDeliveryBrokenOnePerTurn.cfg	MCDelivery.tla	invariant	EnvelopeTakesAll	ignore-terminal	frienddelivery	required	-
+MCDeliveryFailureReorders.cfg	MCDelivery.tla	invariant	NoYoungerFirstAcrossFailure	ignore-terminal	frienddelivery	required	-
