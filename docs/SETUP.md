@@ -55,6 +55,19 @@ What `--local` never touches, and how each step decides it has nothing to do, is
 
 ## Checking the setup
 
+### dep-launchd-units-b.w5: the service units (launchd and systemd) for every loop
+
+Every long-running nova loop is a nova-config loop record installed as a launchd plist
+(darwin) or systemd unit (linux). The `nova-doctor` check named `units` reads those
+records for this machine and compares them with the installed units. It names a record
+without a unit, a unit not from a record (a hand plist like
+`com.nova.loop.friend-beat-<name>`), and a unit whose command differs from its record.
+The fix line is `nova-up --local` (or `nova-up fleet` to apply to all machines).
+
+`nova-up` provides a `units` step that applies the records: it writes the unit files
+under the service manager's directory and asks the service manager to load them.
+Run `nova-up --local --dry-run` to see the plan, then `nova-up --local` to apply.
+
 ### setup-nova-doctor-r-r5.w1: nova-doctor
 
 When anything is wrong, run `nova-doctor` first. It runs every check, prints one
