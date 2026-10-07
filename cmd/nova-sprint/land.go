@@ -636,6 +636,7 @@ func (l *lander) batch(ctx context.Context, s *sprint.Snapshot, stream string, c
 	}
 	b.Times = &landTimes{}
 	merged, failed, why := l.build(ctx, dir, stream, cards, b.Times)
+	fmt.Printf("DEBUG build returned merged=%v failed=%v\n", merged, failed)
 	b.Also, l.ledgerLog = append(b.Also, l.ledgerLog...), nil
 	if l.baseFix != "" {
 		b.Also, l.baseFix = append(b.Also, l.baseFix), ""
