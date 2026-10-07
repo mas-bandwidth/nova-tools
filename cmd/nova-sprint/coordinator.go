@@ -49,10 +49,10 @@ var verbClasses = map[string]string{
 
 	"merge": classReport, "ci": classReport,
 
-	"tick": classMachine, "run": classMachine, "friend clean": classMachine, "seat install": classMachine, "seat uninstall": classMachine, "selftest land": classMachine, "server switch": classMachine,
+	"seat deliver": classMachine, "tick": classMachine, "run": classMachine, "friend clean": classMachine, "seat install": classMachine, "seat uninstall": classMachine, "selftest land": classMachine, "server switch": classMachine,
 
-	"queue": classRead, "inbox": classRead, "card": classRead, "log": classRead, "check": classRead, "where": classRead, "watch": classRead, "dashboard": classRead, "routes": classRead, "rules": classRead, "stats": classRead, "bases": classRead,
-	"goal show": classRead, "handover": classRead, "seat": classRead, "lane list": classRead, "fsck seat": classRead,
+	"queue": classRead, "inbox": classRead, "card": classRead, "log": classRead, "check": classRead, "where": classRead, "watch": classRead, "friends watch": classRead, "status watch": classRead, "dashboard": classRead, "routes": classRead, "rules": classRead, "stats": classRead, "bases": classRead,
+	"seat push": classRead, "seat pong": classRead, "goal show": classRead, "handover": classRead, "seat": classRead, "lane list": classRead, "fsck seat": classRead,
 
 	"coordinator": classSeat,
 }

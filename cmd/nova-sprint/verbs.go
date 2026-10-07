@@ -53,6 +53,8 @@ func init() {
 		{"release check", "[--json] [--streams <glob>] [--window <duration>] [--merge-p90 <duration>] [--check <name>]...", "release check", (*app).cmdReleaseCheck},
 		{"release", "(<sentinel or held card>... | <selector> [--dry-run]) --reason <text> [--answers <note>]", "release s1-stop --reason 'the layer is green and read'", (*app).cmdReleaseSel},
 		{"resolve", "[<id>...] [--stream <s>] [--max <n>]", "resolve", (*app).cmdResolve},
+		{"friends watch", "[--actor <seat>] [--state <file>]", "friends watch --actor seat-a --state friends-push.json", (*app).cmdFriendsWatch},
+		{"status watch", "[--actor <seat>] [--state <file>]", "status watch --actor seat-a --state status-push.json", (*app).cmdStatusWatch},
 		{"start", "", "start", (*app).cmdMachineStart},
 		{"stop", "--reason <text> --until <time or duration>", "stop --reason 'the bench is rebooting' --until 30m", (*app).cmdMachineStop},
 		{"run", "[--answer-rules=false] [--idle-alarm=false] [--listen <address:port>] [--land] [--decide <dir>]", "run", (*app).cmdRunGC},
@@ -158,6 +160,9 @@ func init() {
 		{"view worker", "--as <member|friend> [--since <cursor>] [--json]", "view worker --as m1 --json", (*app).cmdViewWorker},
 		{"seat install", "--harness <name> --target <dir> [--session <id>] [--dir <dir>] [--log <file>] [--server <host:port>] [--config-seat <name> --config-dsn <dsn> --config-password-env <NAME>] [--dry-run]", "seat install --dry-run --redis 127.0.0.1:6381", (*app).cmdSeatInstall},
 		{"seat uninstall", "[--dir <dir>]", "seat uninstall --dir ./no-unit-here", (*app).cmdSeatUninstall},
+		{"seat deliver", "[--text <message>] --actor <seat>", "seat deliver --actor seat-a --text hello", (*app).cmdSeatDeliver},
+		{"seat push", "[--harness <name> --target <dir> [--session <id>]] [--beat bus|friends|transitions [--failed <why>]] [--observe friends|transitions --json]", "seat push --actor seat-a", (*app).cmdSeatPush},
+		{"seat pong", "<nonce>", "seat pong n1 --actor seat-a", (*app).cmdSeatPong},
 		{"seat", "[--repair --reason <text>] | push [--harness <name> --target <dir> [--session <id>]] | pong <nonce>", "seat", (*app).cmdSeat},
 		{"fsck seat", "[--pg <host:port or postgres:// URI>]", "fsck seat", (*app).cmdFsckSeat},
 		{"routes", "", "routes", (*app).cmdRoutes},
@@ -176,6 +181,17 @@ func init() {
 	// install, uninstall and units stay before coordinator, whose example moves the seat.
 	verbs = slices.Insert(verbs, len(verbs)-1, installVerbs...)
 	installVerbMeta()
+	notServed = append(notServed, "friends watch", "status watch", "seat deliver")
+	for i := range verbs {
+		switch verbs[i].name {
+		case "start", "stop", "resume", "hold", "unhold", "coordinator", "friend health", "fleet up":
+			name, run := verbs[i].name, verbs[i].run
+			verbs[i].run = func(a *app, args []string, o, e io.Writer) int { return a.withSeatPushLines(name, args, o, e, run) }
+		case "where":
+			verbs[i].run = (*app).cmdWherePushProof
+		}
+	}
+
 }
 
 func verbNames() []string {
