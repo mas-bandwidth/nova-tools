@@ -25,9 +25,9 @@ func TestHelpExamplesRunThroughTheComparator(t *testing.T) {
 
 	sitting := []onboarding.Step{
 		{Line: "$ nova-redis version", Want: []string{"nova-redis devel darwin/arm64 go1.27.1"}},
-		{Line: "$ nova-redis spill --dry-run --addr 127.0.0.1:6379 --owner ada --name note --ttl 10m --value hi", Want: []string{"SPILL OK key=ada:note ttl=10m0s expires=2026-09-23T12:10:00Z bytes=2 store=127.0.0.1:6379 written=0 dry_run=true"}},
-		{Line: "$ nova-redis spill --addr 127.0.0.1:6379 --owner ada --name note --ttl 10m --value hi", Want: []string{"SPILL OK key=ada:note ttl=10m0s expires=2026-09-23T12:10:00Z bytes=2"}},
-		{Line: "$ nova-redis recall --addr 127.0.0.1:6379 --owner ada --name note", Want: []string{"RECALL OK key=ada:note bytes=2 value=hi"}},
+		{Line: "$ nova-redis spill --dry-run --addr 127.0.0.1:6379 --owner ada --name note --ttl 10m --value hi", Want: []string{"SPILL OK key=ada:note ttl=10m0s expires=2026-09-23T12:10:00Z bytes=2 store=127.0.0.1:6379 written=0 dry_run=true", "SPILL NOTE --addr is --redis"}},
+		{Line: "$ nova-redis spill --addr 127.0.0.1:6379 --owner ada --name note --ttl 10m --value hi", Want: []string{"SPILL OK key=ada:note ttl=10m0s expires=2026-09-23T12:10:00Z bytes=2", "SPILL NOTE --addr is --redis"}},
+		{Line: "$ nova-redis recall --addr 127.0.0.1:6379 --owner ada --name note", Want: []string{"RECALL OK key=ada:note bytes=2 value=hi", "RECALL NOTE --addr is --redis"}},
 	}
 	examples, err := onboarding.ExampleLines(usage, "nova-redis")
 	require.NoError(t, err, err)

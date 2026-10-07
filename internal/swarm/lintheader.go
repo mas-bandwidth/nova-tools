@@ -66,7 +66,7 @@ import (
 // parser's rules written out, cited line by line. But `hygiene.ValidatePaths` (T02) HAS
 // landed, and `validGlobs` below is now a call to it rather than a second copy of the
 // PATHS: rule. The copy it replaces had drifted in both directions inside a day (#1853,
-// Emma's item-4 dogfood), which is the whole argument for calling a validator instead of
+// a friend's item-4 dogfood), which is the whole argument for calling a validator instead of
 // restating one. When `cardheader.go` lands, the shape rules above should go the same
 // way, with the class test that the two agree in the lane that owns `internal/pulse`.
 //
@@ -124,7 +124,7 @@ type TrustState map[string]string
 //
 // THE BLOCK IS EVERY KEY LINE, NOT EVERY UPPER-CASE KEY LINE. This was
 // `^([A-Z][A-Z-]*):`, and the two lines every card the darwin launchers stage MUST carry
-// are lower case: `~/rowan-working/rowan-tools/bin/launchers/*-native-darwin.sh:30-31`
+// are lower case: `~/<person>-working/<person>-tools/bin/launchers/*-native-darwin.sh:30-31`
 // read `base-repo:` and `base-sha:` out of the card's first 40 lines with a
 // case-sensitive `sed`, and refuse to launch without both. So on every one of the 59
 // cards of the 2026-09-22 sprint set those two lines ENDED the header block, and
@@ -164,7 +164,7 @@ type headerField struct {
 // cardHeaderBlock reads the typed header the way the gate's parser reads it, stops where
 // it stops (cardheader.go:63-76), and returns what it had to ignore.
 //
-// THE BLOCK'S END STAYS THE GATE'S; WHAT IT SWALLOWED DOES NOT (#1854, Emma's item-4
+// THE BLOCK'S END STAYS THE GATE'S; WHAT IT SWALLOWED DOES NOT (#1854, a friend's item-4
 // dogfood). The block ending at the first line that is not `KEY: value` is the parser's
 // own rule and moving it here would be worse than the defect: a lint that read a header
 // the gate will not read passes a card that dies at `accept`. What was wrong is that a

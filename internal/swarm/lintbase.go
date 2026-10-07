@@ -24,8 +24,8 @@ import (
 // does not hold, so they run only under `nova-swarm lint --base-check`:
 //
 //	paths-at-base  every PATHS entry resolves at the card's base-sha, or is a new
-//	               `_test` file, or (on a repair card) at its PR-HEAD. Class 9: card-nx-f19 named internal/decide/entry.go,
-//	               which does not exist at its base, and ABSTAINed out-of-scope.
+//	               `_test` file, or (on a repair card) at its PR-HEAD. Class 9: card-nx-f19 named example.com/decide/entry.go,
+//	               a placeholder under a foreign root that does not exist at its base, and ABSTAINed out-of-scope.
 //	no-push-steps  no STEP runs `git push` or `gh`. Class 8: 39 nx-r and holdfix
 //	               repair cards asked the wall, which holds no credential by design,
 //	               to push and to post the REPAIR comment. The harvest pushes.
