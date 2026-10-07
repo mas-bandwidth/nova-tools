@@ -37,7 +37,7 @@ func TestGrokUsageFoldsToOneRowWithInOutUsd(t *testing.T) {
 
 	r := invoke(t, "fold", "--out", out, "--day", "2026-09-12", "--repos", repos, "--provider", "xai:johnny="+grok)
 	wantExit(t, r, 0)
-	wantContains(t, r.stdout, "TOKENS DAY day=2026-09-12 rows=1 ")
+	wantContains(t, r.stdout, "FOLD DAY day=2026-09-12 rows=1 ")
 	wantContains(t, read(t, filepath.Join(out, "2026-09-12.tsv")),
 		"2026-09-12\tgrok-model-example\tunattributed\t1000\t100\t-\t-\t-\t0\tutc\txai:johnny")
 	{
@@ -47,7 +47,7 @@ func TestGrokUsageFoldsToOneRowWithInOutUsd(t *testing.T) {
 
 	rep := invoke(t, "report", "--who", "johnny", "--day", "2026-09-12", "--repos", repos, "--provider", "xai:johnny="+grok)
 	wantExit(t, rep, 0)
-	avg := lineWith(rep.stderr, "TOKENS AVG ")
+	avg := lineWith(rep.stderr, "REPORT AVG ")
 	wantContains(t, avg, "model=grok-model-example")
 	wantContains(t, avg, "usd=0.000077")
 	wantContains(t, avg, "usd_per_mtok=0.0700")

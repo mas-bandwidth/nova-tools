@@ -28,13 +28,13 @@ func TestFoldDryRunSaysADayWouldBeWrittenSmaller(t *testing.T) {
 	r := invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", repos, "--claude", "bench="+tr, "--allow-shrink", "--dry-run")
 	wantExit(t, r, 0)
 	wantContains(t, r.stdout, "dry_run=true")
-	note := lineWith(r.stdout, "TOKENS NOTE")
-	require.NotEmpty(t, note, "no TOKENS NOTE line:\n%s", r.stdout)
+	note := lineWith(r.stdout, "FOLD NOTE")
+	require.NotEmpty(t, note, "no FOLD NOTE line:\n%s", r.stdout)
 	assert.Contains(t, note, "would be written smaller", "the dry run reported the day as already written:\n%s", note)
 	assert.NotContains(t, note, "was written smaller")
 
 	// The real run still says it was written, so a green note is not the plan.
 	r = invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", repos, "--claude", "bench="+tr, "--allow-shrink")
 	wantExit(t, r, 0)
-	assert.Contains(t, lineWith(r.stdout, "TOKENS NOTE"), "was written smaller")
+	assert.Contains(t, lineWith(r.stdout, "FOLD NOTE"), "was written smaller")
 }

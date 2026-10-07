@@ -35,7 +35,7 @@ func TestSwarmRetryAttemptIsItsOwnRow(t *testing.T) {
 
 	r := invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", reposFile(t, dir), "--swarm", "deepseek="+pool)
 	wantExit(t, r, 0)
-	src := lineWith(r.stdout, "TOKENS SOURCE")
+	src := lineWith(r.stdout, "FOLD SOURCE")
 	wantContains(t, src, "dup=0")
 	day := read(t, filepath.Join(out, "2026-09-11.tsv"))
 	row := lineWith(day, "deepseek-v3\tserialize")

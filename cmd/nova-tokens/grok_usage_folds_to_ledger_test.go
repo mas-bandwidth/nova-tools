@@ -41,9 +41,9 @@ func TestGrokUsageFileFoldsToLedgerRow(t *testing.T) {
 
 	r := invoke(t, "fold", "--out", out, "--all", "--repos", reposFile(t, dir), "--provider", "xai:johnny="+grok)
 	wantExit(t, r, 0)
-	wantContains(t, lineWith(r.stdout, "TOKENS SOURCE"), "kind=provider")
-	wantContains(t, lineWith(r.stdout, "TOKENS SOURCE"), "label=xai:johnny")
-	wantContains(t, lineWith(r.stdout, "TOKENS SOURCE"), "day_basis=utc")
+	wantContains(t, lineWith(r.stdout, "FOLD SOURCE"), "kind=provider")
+	wantContains(t, lineWith(r.stdout, "FOLD SOURCE"), "label=xai:johnny")
+	wantContains(t, lineWith(r.stdout, "FOLD SOURCE"), "day_basis=utc")
 
 	body := read(t, filepath.Join(out, "2026-09-12.tsv"))
 	line := lineWith(body, "grok-model-example")

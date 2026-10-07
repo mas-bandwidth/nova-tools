@@ -93,7 +93,7 @@ func TestNothingAboutTheCheckoutDecidesWhichNoteIsTheDay(t *testing.T) {
 		t.Helper()
 		r := runToolChild(t, "", gitEnv, "fold", "--out", out, "--all", "--repos", repos, "--bus", bus)
 		wantExit(t, r, 0)
-		wantContains(t, r.stdout, "TOKENS SUPERSEDED")
+		wantContains(t, r.stdout, "FOLD SUPERSEDED")
 		return read(t, filepath.Join(out, "2026-09-11.tsv"))
 	}
 	before := fold(t, mkdir(t, filepath.Join(dir, "out1")))
@@ -149,6 +149,9 @@ func TestAZonedReportCrossesTheBusWithoutBeingCalledUTC(t *testing.T) {
 		"--provider", "xai:johnny="+export, "--note", note)
 	wantExit(t, r, 0)
 	for _, line := range lines(r.stdout) {
+		if strings.HasPrefix(line, "REPORT ") {
+			continue // the skeleton's result line, not a body line
+		}
 		{
 			f := strings.Split(line, "\t")
 			assert.True(t, len(f) == 7 && f[6] == "day_basis=America/Los_Angeles", "a zoned report line is %q; it wants seven fields ending day_basis=<zone>", line)
@@ -162,8 +165,8 @@ func TestAZonedReportCrossesTheBusWithoutBeingCalledUTC(t *testing.T) {
 	busNote(t, bus, "johnny", "n.md", "johnny-000000000001", subject, busDate, read(t, note))
 	f := invoke(t, "fold", "--out", viaBus, "--day", "2026-09-11", "--repos", repos, "--bus", bus)
 	wantExit(t, f, 0)
-	wantContains(t, lineWith(f.stdout, "TOKENS SOURCE"), "day_basis=America/Los_Angeles")
-	wantContains(t, lineWith(f.stdout, "TOKENS DAY"), "nonutc=1")
+	wantContains(t, lineWith(f.stdout, "FOLD SOURCE"), "day_basis=America/Los_Angeles")
+	wantContains(t, lineWith(f.stdout, "FOLD DAY"), "nonutc=1")
 
 	direct := mkdir(t, filepath.Join(dir, "out-direct"))
 	wantExit(t, invoke(t, "fold", "--out", direct, "--day", "2026-09-11", "--repos", repos, "--provider", "xai:johnny="+export), 0)
@@ -191,7 +194,7 @@ func TestAZonedReportCrossesTheBusWithoutBeingCalledUTC(t *testing.T) {
 		o := mkdir(t, filepath.Join(one, "out"))
 		r := invoke(t, "fold", "--out", o, "--day", "2026-09-11", "--repos", repos, "--bus", lane)
 		wantExit(t, r, 1)
-		wantContains(t, r.stderr, "TOKENS UNPARSED")
+		wantContains(t, r.stderr, "FOLD UNPARSED")
 	}
 }
 
@@ -207,7 +210,7 @@ func TestAMalformedRulesFileIsRefusedByLine(t *testing.T) {
 	r := invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", bad, "--claude", "g="+tr)
 	wantExit(t, r, 2)
 	wantContains(t, r.stderr, "line 2")
-	wantContains(t, r.stderr, "TOKENS REFUSED")
+	wantContains(t, r.stderr, "FOLD REFUSED")
 	missing := invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", filepath.Join(dir, "nope.tsv"), "--claude", "g="+tr)
 	wantExit(t, missing, 2)
 	wantContains(t, missing.stderr, "it wants a file of")
