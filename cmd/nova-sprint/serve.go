@@ -345,14 +345,15 @@ func takesGzip(accept string) bool {
 }
 
 // listenRefused is why host is not an address the server binds, "" when it is.
-// The decision is listenable's, so the server and the dashboard refuse the same
-// addresses: a name, a public address, a link-local address and an unspecified
-// address. Loopback, a private address and the tailnet stay. docs/SPEC-SPRINT.md
-// section 14, The server. The caller returns this before net.Listen.
+// Loopback, a private address and the tailnet address are allowed; a public or
+// link-local address is refused. The caller returns this before net.Listen
+// (docs/SPEC-SPRINT.md, section 14, The server).
 func listenRefused(host string) string {
-	const refused = "--listen wants one address of this machine (its address on the fleet's private network, or 127.0.0.1): the server checks no credential, so it does not listen on every network"
-	if host == "" || listenable(net.ParseIP(host)) != "" {
-		return refused
+	if host == "" {
+		return "the address is an IP address of this machine (loopback, or its address on the fleet's private network), never a name"
+	}
+	if addr := net.JoinHostPort(host, "7391"); sprint.CheckAddr(addr, sprint.LocalOnlyMode()) != "" {
+		return "the server checks no credential, so it listens on loopback or the fleet's private network (the tailnet) only"
 	}
 	return ""
 }

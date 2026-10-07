@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprintdash"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -73,7 +74,8 @@ func TestDashboardListensOnPrivateAddressesOnly(t *testing.T) {
 	// the ranges, as addresses: none of them is dialled
 	for _, ip := range []net.IP{net.IPv4(127, 0, 0, 1), net.IPv6loopback, net.IPv4(100, 64, 1, 2), net.IPv4(100, 127, 255, 9),
 		net.IPv4(10, 0, 0, 2), net.IPv4(192, 168, 1, 2), net.IPv4(172, 16, 0, 2), {0xfd, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2}} {
-		assert.Empty(t, listenable(ip), "%s", ip)
+		addr := net.JoinHostPort(ip.String(), "7391")
+		assert.Empty(t, sprint.CheckAddr(addr, false), "%s", ip)
 	}
 	for _, tc := range []struct {
 		ip  net.IP
@@ -87,7 +89,8 @@ func TestDashboardListensOnPrivateAddressesOnly(t *testing.T) {
 		{net.IPv4(169, 254, 1, 1), "a link-local address"},
 		{net.IP{0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1}, "a link-local address"},
 	} {
-		assert.Contains(t, listenable(tc.ip), tc.why, "%s", tc.ip)
+		addr := net.JoinHostPort(tc.ip.String(), "7391")
+		assert.Contains(t, sprint.CheckAddr(addr, false), tc.why, "%s", tc.ip)
 	}
 }
 

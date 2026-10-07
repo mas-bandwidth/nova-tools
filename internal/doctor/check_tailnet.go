@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"strings"
 	"time"
 )
@@ -47,6 +48,11 @@ type tailnetNode struct {
 // (docs/SPEC-DOCTOR.md, the checks). Fleet marks it: --local skips it, because a
 // single-machine setup has no fleet to reach.
 func checkTailnet(ctx context.Context, env Env) Result {
+	// Skip check in local-only mode: a single-machine setup has no fleet to reach.
+	if sprint.LocalOnlyMode() {
+		return Result{Status: Skip, Evidence: "local-only mode: no fleet to reach"}
+	}
+
 	ctx, cancel := context.WithTimeout(ctx, tailnetTimeout)
 	defer cancel()
 

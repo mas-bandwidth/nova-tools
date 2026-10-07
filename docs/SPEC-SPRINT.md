@@ -5799,6 +5799,20 @@ when the environment names one (`wins=env:NOVA_SPRINT_REDIS_USER`, `redis-wins=e
 `cmd/nova-sprint/storelogin.go`; `TestABareVerbOpensTheStoreWithTheSeatLoginFromSecrets` measures
 it on the in-memory store with a fake secrets reader.
 
+### sprint-local-only-mode-r-bc.w8: address rules and local-only mode
+
+nova-sprint accepts only loopback addresses (127.0.0.0/8), private addresses (10.0.0.0/8,
+172.16.0.0/12, 192.168.0.0/16), and tailnet addresses (100.64.0.0/10) for its store and dashboard
+listens. A public address or a link-local address is refused naming the rule. In local-only mode,
+set by `NOVA_SPRINT_LOCAL=1` in the process environment (nova-up writes this to the seat file) or
+by the sprint row `local_only` set to `1`, only loopback addresses are allowed. A tailnet or other
+address is refused with the message "local-only mode allows only loopback; ... is not loopback".
+Nothing asks for a tailnet in this mode: nova-doctor's tailnet check skips under it with the reason
+"local-only mode: no fleet to reach". The address rule is stated in `internal/sprint/addr.go`
+(see `CheckAddr` and `LocalOnlyMode`), cited from `cmd/nova-sprint/main.go` (store address before
+dialing), `cmd/nova-sprint/dashboard.go` (dashboard listens), and `cmd/nova-sprint/serve.go`
+(server listens).
+
 ### bases-view-r.w2
 
 Cards sat on a base nobody watched (2026-10-04: a stream of cards on the coordinator's own branch, its gate red from 12:04 PM), so what the coordinator looked up by hand is a verb. `nova-sprint bases [--json]` (read) prints one row per base a card not landed or dropped names (a placed primary, not a sentinel, its brief's `BASE:` line), keyed by base and `REPO:`, in base order: `BASES <base> repo=<repo> cards=<n> waiting=<n> ready=<n> working=<n> review=<n> merging=<n> ahead=<n> behind=<n> gate=<green|red|-> gated=<RFC3339|->`, then a `NOTE` line per thing not known, then `BASES OK bases=<n> cards=<n>`; `--json` is one object (`bases`, each with its card ids by state; `cards`; `notes`). Ahead and behind are counted against `origin/dev` by `git rev-list --left-right --count` in land's kept clone of the repository (section 7, the clone land keeps under its root), after one fetch of dev and every base named per clone a call; when that fetch fails, one `ls-remote` finds the bases origin does not hold (each a `NOTE`, its counts `-`) and the rest are fetched again. bases clones nothing: a repository land keeps no clone of has its counts `-` and a `NOTE`. The gate is the lander's last record at the base's tip, read from the store: green when a card on the base landed (land gates the tip before it merges), red at the stop of a stream stopped on its base gate (section 8's base-gate rule, its third failure, `cause=base`: its `since`, for the base of each card it holds merging; a refusal before the third is the lander's memory, not the store's); the latest record wins, red on a tie, and `-` when the base was never gated. `add` refuses a card whose `BASE:` is a personal branch, `<name>/*` for the sprint's coordinator, its owner (`init --owner`) or any row of the friends table, naming every such base and `--allow-personal-base`, with nothing written; with the flag it is admitted. The names are read from the store, never written in the code. The code is `cmd/nova-sprint/bases.go` (`basesInUse`, `basesAhead`, `holdBase`, `personalNames`); the test is `TestBasesListsEveryBaseInUseAndAddRefusesAPersonalOne`.
