@@ -1,7 +1,6 @@
 package ci
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"

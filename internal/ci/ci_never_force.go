@@ -81,10 +81,6 @@ type forceAllow struct {
 
 var ForceFileLineListOptions = allowlist.Options{Key: allowlist.Fields(2), Ceiling: true, MissingIsEmpty: true}
 
-func FileLineKey(file string, line int, kind string) string {
-	return fmt.Sprintf("%s:%d %s", file, line, kind)
-}
-
 // CheckNeverForce walks the tree at root and returns findings.
 func CheckNeverForce(root, allowlistPath string) (ForceResult, error) {
 	return checkNeverForceWith(root, allowlistPath, defaultSourceSeams())
