@@ -28,13 +28,13 @@ var tokensAudit = audit.Config{
 	// reason. oneline.Quote is oneline's third rendering: a double-quoted Go string
 	// literal, so the report's subject is one value and the at= and build= it repeats
 	// inside itself are not printed as keys of the line.
-	Escapers: []string{"sourceLine", "unreadableLine", "unparsedLine", "dayLine", "s.line", "s.factFields", "s.dryRunFields", "oneline.Quote"},
+	Escapers: []string{"sourceLine", "unreadableLine", "unparsedLine", "dayLine", "formatLine", "formatFields", "dryRunFields", "oneline.Quote"},
 	// One entry per site, keyed by file, function and source text; each is a claim a
 	// reader can check.
 	Exempt: map[string]string{
-		"report.go|cmdReportStore|line": "one REPORT line built in the loop above from literal key names, oneline.Field over each key value, a %d row count and strconv.FormatInt or the literal dash per type; nothing in it is unescaped text",
-		"out.go|fields|kv[i+1]":         "a value of a key=value pair, put through oneline.Field on the same line",
-		"report.go|cmdReport|body":      "the report's stdout IS the artifact: every line of it was rendered by tokens.BodyLine, which puts each of its stored fields through oneline.Field, and the lines are joined with \\n by this function. Escaping the join again would escape those newlines and destroy the note body this verb exists to print",
+		"report.go|runReportStore|line": "one REPORT line built in the loop above from literal key names, oneline.Field over each key value, a %d row count and strconv.FormatInt or the literal dash per type; nothing in it is unescaped text",
+		"main.go|formatFields|kv[i+1]":  "a value of a key=value pair, put through oneline.Field on the same line",
+		"report.go|runReportLocal|body": "the report's stdout IS the artifact: every line of it was rendered by tokens.BodyLine, which puts each of its stored fields through oneline.Field, and the lines are joined with \\n by this function. Escaping the join again would escape those newlines and destroy the note body this verb exists to print",
 	},
 	Imports: []string{
 		// the verb-help seam (the CLI style's rule (b), #4505): on -h it prints only flag names,

@@ -5,7 +5,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"io"
 	"maps"
 	"path/filepath"
 	"slices"
@@ -15,7 +14,6 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
-	"github.com/mas-bandwidth/nova-tools/internal/bounded"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/redisauth"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/record"
@@ -23,11 +21,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/tool"
 )
 
-// openLedger opens the fleet Redis at addr. The seat is the one every nova tool dials with
-// (redisauth.Auth): --user, else NOVA_SPRINT_REDIS_USER; the password is never a flag,
-// it is the variable --password-env names, else (for a user) NOVA_SPRINT_REDIS_PASSWORD_ENV's
-// or NOVA_REDIS_BENCH_PASSWORD. With no user, no variable is consulted unless --password-env
-// names one. Dialing does not ping.
+// openLedger opens the fleet Redis at addr.
 func openLedger(addr, user, passwordEnv string) (record.LedgerStore, error) {
 	user, password, err := redisauth.Auth(user, passwordEnv)
 	if err != nil {
@@ -36,49 +30,123 @@ func openLedger(addr, user, passwordEnv string) (record.LedgerStore, error) {
 	return record.DialLedger(addr, user, password), nil
 }
 
-// cmdReportStore is `report --redis`: the month's ledger grouped by model, repo,
-// day, or the (day, model, repo) tuple, every one of the five types apart and a dash where
-// no row reported a type.
-func cmdReportStore(s *sink, addr, user, passwordEnv, month, by string, max int, stderr io.Writer) int {
-	r := &refusals{token: "REPORT", s: s}
-	switch {
-	case month == "":
-		r.add("--month is required; it wants " + wantsMonth + "; refusing to guess")
-	case !validMonth(month):
-		r.add("--month is not a month: " + month + "; it wants " + wantsMonth)
+func reportVerb(now time.Time) tool.Verb {
+	var sf sourceFlags
+	var supersedes stringList
+	return tool.Verb{
+		Name:    "report",
+		Usage:   "report (local mode) --who <name> --day <YYYY-MM-DD> --repos <file>\nreport (store mode) --redis <host:port> --month <YYYY-MM> [--by model|repo|day|tuple] [--max <n>]",
+		Example: "report --who ada --day 2026-09-11 --repos ./repos.tsv --claude bench=./transcripts",
+		Detail:  "mode: local note body, printed as the tokens note artifact\nmode: Redis month summary",
+		Effect:  tool.Effect("local write: --note writes the note body to that file, and --opencode copies the database into --scratch/opencode-<label>/ (replaced, and left); --dry-run names the note, copies the database only into a new directory under --scratch removed before it exits, and writes nothing; --redis reads the ledger store over the network, with or without --dry-run"),
+		DryRun:  true,
+		Flags: func(f *tool.Flags) {
+			f.String("who", "", "name to write in each note body row")
+			f.String("day", "", "one UTC day to report as YYYY-MM-DD")
+			f.String("note", "", "atomically write the note body to this path")
+			f.Var(&supersedes, "supersedes", "note id this report replaces; repeatable")
+			f.Max()
+			f.String("month", "", "month to summarize as YYYY-MM")
+			f.String("by", "model", "Redis summary grouping: model, repo, day or tuple")
+			f.String("redis", "", "Redis address for the store summary mode")
+			f.String("user", "", "Redis username for the store summary mode")
+			f.String("password-env", "", "environment variable holding the Redis password")
+			sf.declare(f.FlagSet, true)
+			f.Check(func(c *tool.Call) {
+				redisAddr := c.Str("redis")
+				monthFlag := c.Str("month")
+				if redisAddr != "" {
+					if monthFlag == "" {
+						c.Want("month", wantsMonth)
+					} else if !validMonth(monthFlag) {
+						c.Problem("--month is not a month: " + monthFlag + "; it wants " + wantsMonth)
+					}
+					by := c.Str("by")
+					if _, ok := record.LedgerGroupings[by]; !ok {
+						c.Problem("--by is model, repo, day or tuple, got " + by)
+					}
+					return
+				}
+				if monthFlag != "" {
+					c.Problem("--month is the store's month report; it wants --redis <host:port>")
+					return
+				}
+				c.Want("who", wantsWho)
+				day := c.Str("day")
+				switch {
+				case day == "":
+					c.Want("day", wantsDay)
+				case !tokens.ValidDay(day):
+					c.Problem("--day is not a day: " + day + "; it wants " + wantsDay)
+				}
+				sf.check(c)
+				seen := map[string]bool{}
+				for _, id := range supersedes {
+					switch {
+					case !tokens.ValidNoteID(id):
+						c.Problem("--supersedes " + id + ": it wants a note id of the shape <sender>-<12 hex>")
+					case seen[id]:
+						c.Problem("--supersedes names " + id + " twice; the predecessor set is a set, with no duplicate")
+					}
+					seen[id] = true
+				}
+			})
+		},
+		Run: func(c *tool.Call) *tool.Out {
+			return runReport(c, sf, supersedes, now)
+		},
 	}
-	if _, ok := record.LedgerGroupings[by]; !ok {
-		r.add("--by is model, repo, day or tuple, got " + by)
+}
+
+func runReport(c *tool.Call, sf sourceFlags, supersedes []string, now time.Time) *tool.Out {
+	if c.Str("redis") != "" {
+		return runReportStore(c)
 	}
-	checkMax(r, max)
-	if len(r.list) > 0 {
-		return r.print(stderr)
-	}
-	failed := func(err error) int {
-		fmt.Fprintf(s.err(), "REPORT FAILED store=redis err=%s\n", oneline.Err(err))
-		s.o.Why = append(s.o.Why, err.Error())
-		return s.done(1, 0)
+	return runReportLocal(c, sf, supersedes, now)
+}
+
+func runReportStore(c *tool.Call) *tool.Out {
+	addr := c.Str("redis")
+	user := c.Str("user")
+	passwordEnv := c.Str("password-env")
+	month := c.Str("month")
+	by := c.Str("by")
+	maxRows := c.Int("max")
+	asJSON := c.Bool("json")
+
+	failed := func(err error) *tool.Out {
+		if !asJSON {
+			fmt.Fprintf(c.Stderr, "REPORT FAILED store=redis err=%s\n", oneline.Err(err))
+			return tool.Exit(1)
+		}
+		o := tool.Fail(err.Error())
+		o.Fact("month", month)
+		o.Fact("source", "redis")
+		return o
 	}
 	ls, err := openLedger(addr, user, passwordEnv)
 	if err != nil {
 		return failed(err)
 	}
-	// ignored: a deferred close on a read-only store: every read already carried its answer to the printed report
 	defer func() { _ = ls.Close() }()
 	totals, indexed, missing, err := ls.LedgerReport(context.Background(), month, by)
 	if err != nil {
 		return failed(err)
 	}
 	rows := 0
+	var o *tool.Out
+	if asJSON {
+		o = tool.Done()
+	}
 	for i, t := range totals {
 		rows += t.Rows
-		if max != 0 && i >= max {
+		if maxRows != 0 && i >= maxRows {
 			continue
 		}
 		var keys []string
 		var kv []any
-		for _, c := range record.LedgerGroupings[by] {
-			switch c {
+		for _, col := range record.LedgerGroupings[by] {
+			switch col {
 			case "day":
 				keys, kv = append(keys, "day="+oneline.Field(t.Day)), append(kv, "day", t.Day)
 			case "model":
@@ -97,144 +165,108 @@ func cmdReportStore(s *sink, addr, user, passwordEnv, month, by string, max int,
 			line += " " + name + "=" + cell
 			kv = append(kv, name, cell)
 		}
-		fmt.Fprintln(s.out(), line)
-		s.item("group", kv...)
-	}
-	if max != 0 && len(totals) > max {
-		fmt.Fprintf(s.out(), "REPORT MORE shown=%d of=%d; raise --max (0 = all)\n", max, len(totals))
-		s.o.More = append(s.o.More, tool.More{Kind: "group", Shown: max, Total: len(totals), Remedy: tool.MaxRemedy})
-	}
-	s.fact("month", month)
-	s.fact("source", "redis")
-	if indexed == 0 {
-		fmt.Fprintf(s.out(), "REPORT FAILED month=%s source=redis indexed=0\n", oneline.Field(month))
-		s.fact("indexed", 0)
-		return s.done(1, 0)
-	}
-	fmt.Fprintf(s.out(), "REPORT OK month=%s source=redis groups=%d rows=%d indexed=%d missing=%d\n", oneline.Field(month), len(totals), rows, indexed, missing)
-	s.fact("groups", len(totals))
-	s.fact("rows", rows)
-	s.fact("indexed", indexed)
-	s.fact("missing", missing)
-	return s.done(0, 0)
-}
-
-// avgRate is a model-day's dollars per million tokens (usdMicro / tokens), for sorting the
-// AVG listing highest first. A zero-token or unpriced model has no average and sorts below
-// every real rate, which is never negative.
-func avgRate(usdMicro, tokens int64, priced bool) float64 {
-	if tokens == 0 || !priced {
-		return -1
-	}
-	return float64(usdMicro) / float64(tokens)
-}
-
-// cmdReport is the verb for a friend on another machine, and the first user of this tool
-// is not this bench. It folds that machine's own sources for one day, the same sources and
-// the same attribution as fold, and prints EXACTLY the body lines of a tokens note and
-// nothing else: no heading, no stamp, no comment. The stamp and the build id go on the
-// subject, which it prints on its one OK line.
-//
-// THIS IS THE ONE PLACE IN THE FAMILY WHERE THE OK LINE LEAVES STDOUT, because here stdout
-// is the artifact. The spec says so in as many words, which is the exception SPEC.md's
-// Conventions allow when a spec states one.
-func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
-	fs := newFlagSet("report")
-	who := fs.String("who", "", "name to write in each note body row")
-	day := fs.String("day", "", "one UTC day to report as YYYY-MM-DD")
-	notePath := fs.String("note", "", "atomically write the note body to this path")
-	var supersedes stringList
-	fs.Var(&supersedes, "supersedes", "note id this report replaces; repeatable")
-	max := fs.Int("max", bounded.Default, "maximum summary rows to print; 0 prints all")
-	monthFlag := fs.String("month", "", "month to summarize as YYYY-MM")
-	byFlag := fs.String("by", "model", "Redis summary grouping: model, repo, day or tuple")
-	redisAddr := fs.String("redis", "", "Redis address for the store summary mode")
-	redisUser := fs.String("user", "", "Redis username for the store summary mode")
-	passwordEnv := fs.String("password-env", "", "environment variable holding the Redis password")
-	dryRun := fs.Bool("dry-run", false, "print the body and name the --note file, and write no file")
-	var sf sourceFlags
-	sf.declare(fs, true)
-	s, code, ok := start(fs, args, "REPORT", stdout, stderr)
-	if !ok {
-		return code
-	}
-	if *redisAddr != "" {
-		return cmdReportStore(s, *redisAddr, *redisUser, *passwordEnv, *monthFlag, *byFlag, *max, stderr)
-	}
-	if *monthFlag != "" {
-		return (&refusals{token: "REPORT", s: s, list: []problem{{why: "--month is the store's month report; it wants --redis <host:port>"}}}).print(stderr)
-	}
-	r := &refusals{token: "REPORT", s: s}
-	r.required("who", *who, wantsWho)
-	switch {
-	case *day == "":
-		r.add("--day is required; it wants " + wantsDay + "; refusing to guess")
-	case !tokens.ValidDay(*day):
-		r.add("--day is not a day: " + *day + "; it wants " + wantsDay)
-	}
-	sf.check(r)
-	checkMax(r, *max)
-	seen := map[string]bool{}
-	for _, id := range supersedes {
-		switch {
-		case !tokens.ValidNoteID(id):
-			r.add("--supersedes " + id + ": it wants a note id of the shape <sender>-<12 hex>")
-		case seen[id]:
-			r.add("--supersedes names " + id + " twice; the predecessor set is a set, with no duplicate")
+		if asJSON {
+			o.Item("group", kv...)
+		} else {
+			fmt.Fprintln(c.Stdout, line)
 		}
-		seen[id] = true
 	}
-	if len(r.list) > 0 {
-		return r.print(stderr)
+	if maxRows != 0 && len(totals) > maxRows {
+		if asJSON {
+			o.More = append(o.More, tool.More{Kind: "group", Shown: maxRows, Total: len(totals), Remedy: tool.MaxRemedy})
+		} else {
+			fmt.Fprintf(c.Stdout, "REPORT MORE shown=%d of=%d; raise --max (0 = all)\n", maxRows, len(totals))
+		}
 	}
+	if indexed == 0 {
+		if asJSON {
+			o = tool.Fail()
+			o.Fact("month", month)
+			o.Fact("source", "redis")
+			o.Fact("indexed", 0)
+			return o
+		}
+		fmt.Fprintf(c.Stdout, "REPORT FAILED month=%s source=redis indexed=0\n", oneline.Field(month))
+		return tool.Exit(1)
+	}
+	if asJSON {
+		o.Fact("month", month)
+		o.Fact("source", "redis")
+		o.Fact("groups", len(totals))
+		o.Fact("rows", rows)
+		o.Fact("indexed", indexed)
+		o.Fact("missing", missing)
+		return o
+	}
+	fmt.Fprintf(c.Stdout, "REPORT OK month=%s source=redis groups=%d rows=%d indexed=%d missing=%d\n", oneline.Field(month), len(totals), rows, indexed, missing)
+	return tool.Exit(0)
+}
+
+func runReportLocal(c *tool.Call, sf sourceFlags, supersedes []string, now time.Time) *tool.Out {
+	who := c.Str("who")
+	day := c.Str("day")
+	notePath := c.Str("note")
+	maxRows := c.Int("max")
+	dryRun := c.DryRun()
+	asJSON := c.Bool("json")
+
 	rules, err := tokens.LoadRules(sf.repos)
 	if err != nil {
-		r.add("--repos " + sf.repos + ": " + err.Error() + "; it wants " + wantsRepos)
-		return r.print(stderr)
+		return tool.Refuse("--repos " + sf.repos + ": " + err.Error() + "; it wants " + wantsRepos)
 	}
 	sorted := slices.Sorted(slices.Values(supersedes))
-
-	sources, copyNotes := sf.read(rules, now, *dryRun)
+	sources, copyNotesList := sf.read(rules, now, dryRun)
 	folder := tokens.NewFolder()
 	for _, src := range sources {
 		for _, m := range src.Stream {
 			folder.Add(src.Label, m)
 		}
 	}
-	// Rule 20: report folds that the caller's own sources produce for one day, with the same
-	// sources and the same attribution as fold. That has to include what the fold SAYS about them.
-	// This verb counted only the unreadables, so a transcript line whose stamp does not
-	// parse and a message with no id -- both counted by the reader, both dropped before
-	// the body -- left no trace at all, and the friend pasted a short day onto the bus
-	// under REPORT OK (rule 3: counted and printed, never skipped silently).
+
 	unreadable, unparsed := 0, 0
 	for _, src := range sources {
 		for _, u := range src.Unreadables {
-			fmt.Fprintln(s.err(), unreadableLine(s, "TOKENS", u))
+			if !asJSON {
+				fmt.Fprintln(c.Stderr, formatLine("TOKENS", "UNREADABLE", oneline.Cap(u.Why, oneline.TailBytes), "label", u.Label, "path", u.Path))
+			}
 			unreadable++
 		}
 	}
 	for _, src := range sources {
 		for _, u := range src.Unparseds {
-			fmt.Fprintln(s.err(), unparsedLine(s, "TOKENS", u))
+			if !asJSON {
+				fmt.Fprintln(c.Stderr, formatLine("TOKENS", "UNPARSED", oneline.Cap(u.Text, oneline.TailBytes), "label", u.Label, "note", u.Note, "line", u.Line))
+			}
 			unparsed++
 		}
 	}
-	// A message the fold could not count by id is not an unparsed line and is not a
-	// refusal; it is spend that was read and then dropped, and fold names it on its one
-	// remedy line. So does this verb.
+
+	var o *tool.Out
+	if asJSON {
+		o = tool.Done()
+	}
+
 	if dropped := noidAndDup(sources); dropped != "" {
-		fmt.Fprintf(s.err(), "TOKENS NOTE %s\n", oneline.Escape(dropped))
-		s.note(dropped)
+		if !asJSON {
+			fmt.Fprintf(c.Stderr, "TOKENS NOTE %s\n", oneline.Escape(dropped))
+		} else {
+			o.Note(dropped)
+		}
 	}
-	copyNote(s, "TOKENS", copyNotes)
-	rows, mixed := folder.DayRows(*day)
+	if !asJSON {
+		copyNotesWriter(c.Stderr, "TOKENS", copyNotesList)
+	} else {
+		copyNotes(o, copyNotesList)
+	}
+
+	rows, mixed := folder.DayRows(day)
 	for _, m := range mixed {
-		fmt.Fprintln(s.err(), s.line("TOKENS", "MIXED", "two day bases on one row; declare one export for that day",
-			"date", m.Day, "model", m.Model, "repo", m.Repo, "bases", strings.Join(m.Bases, ",")))
+		if !asJSON {
+			fmt.Fprintln(c.Stderr, formatLine("TOKENS", "MIXED", "two day bases on one row; declare one export for that day",
+				"date", m.Day, "model", m.Model, "repo", m.Repo, "bases", strings.Join(m.Bases, ",")))
+		}
 	}
-	// A mixed key is not in `rows` at all (Folder.DayRows keeps them apart), so the body
-	// below is exactly "no line for that key" and every other key's lines.
+
 	var rendered []string
 	for _, row := range rows {
 		for t := tokens.Type(0); t < tokens.NTypes; t++ {
@@ -242,7 +274,7 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 			if !ok {
 				continue
 			}
-			rendered = append(rendered, tokens.BodyLine(*day, *who, row.Model, row.Repo, t, v, row.Basis()))
+			rendered = append(rendered, tokens.BodyLine(day, who, row.Model, row.Repo, t, v, row.Basis()))
 		}
 	}
 	lines := len(rendered)
@@ -250,47 +282,47 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if lines > 0 {
 		body = strings.Join(rendered, "\n") + "\n"
 	}
-	s.o.Payload = body
-	s.fact("who", *who)
-	s.fact("day", *day)
-	s.fact("rows", lines)
-	if lines == 0 || len(mixed) > 0 {
-		// A friend with nothing to show says so, and never sends zeros. A REPORT FAILED
-		// writes nothing: an existing --note file is left byte-unchanged. A mixed key fails
-		// the day, and the rest of the body is still printed: the spec's sentence
-		// is "no line for that key", not no line for any key.
-		if lines > 0 {
-			fmt.Fprint(s.out(), body)
-		}
-		fmt.Fprintf(s.err(), "REPORT FAILED who=%s day=%s rows=%d unreadable=%d\n",
-			oneline.Field(*who), oneline.Field(*day), lines, unreadable)
-		s.fact("unreadable", unreadable)
-		return s.done(1, *max)
+
+	if asJSON {
+		o.Payload = body
+		o.Fact("who", who)
+		o.Fact("day", day)
+		o.Fact("rows", lines)
 	}
-	fmt.Fprint(s.out(), body)
-	if *notePath != "" {
-		// A dry run checks the note's path exactly as the write would (atomicfile.Check)
-		// and refuses what it refuses; only the write itself is skipped.
-		write := func() error { return atomicfile.Write(filepath.Clean(*notePath), []byte(body), 0o644) }
-		if *dryRun {
-			write = func() error { return atomicfile.Check(filepath.Clean(*notePath), 0o644) }
+
+	if lines == 0 || len(mixed) > 0 {
+		if !asJSON {
+			if lines > 0 {
+				fmt.Fprint(c.Stdout, body)
+			}
+			fmt.Fprintf(c.Stderr, "REPORT FAILED who=%s day=%s rows=%d unreadable=%d\n",
+				oneline.Field(who), oneline.Field(day), lines, unreadable)
+			return tool.Exit(1)
+		}
+		o.Status = tool.Failed
+		o.Exit = 1
+		o.Fact("unreadable", unreadable)
+		return o
+	}
+
+	if !asJSON {
+		fmt.Fprint(c.Stdout, body)
+	}
+
+	if notePath != "" {
+		write := func() error { return atomicfile.Write(filepath.Clean(notePath), []byte(body), 0o644) }
+		if dryRun {
+			write = func() error { return atomicfile.Check(filepath.Clean(notePath), 0o644) }
 		}
 		if err := write(); err != nil {
-			r.add("--note " + *notePath + ": " + err.Error())
-			return r.print(stderr)
+			return tool.Refuse("--note " + notePath + ": " + err.Error())
 		}
 	}
-	// One TOKENS AVG line per model, after the body lines: the daily blended cost per
-	// token, summed over every repo the model wrote that day. Four types count toward
-	// tokens (input, output, cache write, cache read); reasoning is its own column and is
-	// not in the denominator. usd= is the cost the sources reported, usd_per_mtok= divides
-	// it by the tokens that cost covers and no others, and unpriced= counts the tokens no
-	// source priced. A model no source priced prints usd=- and usd_per_mtok=-: a cost
-	// nobody reported is no measurement, and never a zero.
+
 	type modelAvg struct {
-		name         string // provider/model, or model where no source named a provider
-		tokens       int64  // every billed token the model's rows hold
-		pricedTokens int64  // the tokens the reported cost covers
+		name         string
+		tokens       int64
+		pricedTokens int64
 		usd          int64
 		priced       bool
 	}
@@ -319,49 +351,74 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 		}
 		return sortedAvg[i].name < sortedAvg[j].name
 	})
-	avgList := s.list(true, *max, "TOKENS", "avg", maxRemedy("report"))
+
 	var allTokens, allPricedTokens, allUsd int64
 	allPriced := false
-	for _, a := range sortedAvg {
+	for i, a := range sortedAvg {
 		allTokens += a.tokens
 		allPricedTokens += a.pricedTokens
 		allUsd += a.usd
 		allPriced = allPriced || a.priced
-		avgList.Line(s.line("TOKENS", "AVG", "", "day", *day, "model", a.name, "tokens", a.tokens,
+		kv := []any{"day", day, "model", a.name, "tokens", a.tokens,
 			"usd", usdCell(a.usd, a.priced), "usd_per_mtok", usdPerMtokCell(a.usd, a.pricedTokens, a.priced),
-			"unpriced", a.tokens-a.pricedTokens))
+			"unpriced", a.tokens - a.pricedTokens}
+		if asJSON {
+			o.Item("avg", kv...)
+		} else if maxRows == 0 || i < maxRows {
+			fmt.Fprintln(c.Stderr, formatLine("TOKENS", "AVG", "", kv...))
+		}
 	}
-	avgList.More()
-	fmt.Fprintln(s.err(), s.line("TOKENS", "AVG-ALL", "", "day", *day, "tokens", allTokens,
+	if !asJSON && maxRows != 0 && len(sortedAvg) > maxRows {
+		fmt.Fprintf(c.Stderr, "TOKENS MORE shown=%d of=%d; raise --max (0 = all)\n", maxRows, len(sortedAvg))
+	} else if asJSON && maxRows != 0 && len(sortedAvg) > maxRows {
+		o.More = append(o.More, tool.More{Kind: "avg", Shown: maxRows, Total: len(sortedAvg), Remedy: maxRemedy("report")})
+	}
+
+	avgAllKV := []any{"day", day, "tokens", allTokens,
 		"usd", usdCell(allUsd, allPriced), "usd_per_mtok", usdPerMtokCell(allUsd, allPricedTokens, allPriced),
-		"unpriced", allTokens-allPricedTokens))
-	// The closing line is the grammar's, field for field (SPEC-TOKENS' TOKENS SOURCE
-	// section): what says the day is short is the TOKENS UNREADABLE / TOKENS UNPARSED
-	// lines above it, the TOKENS NOTE, and exit 1. Under --dry-run --note was not
-	// written, and the line says so. The subject is one quoted value (oneline.Quote):
-	// it holds blanks and repeats at= and build= inside itself, and unquoted those
-	// inner pairs read as keys of the line.
-	subject := tokens.Subject(*day, stamp(now), buildVersion(), sorted)
-	s.fact("at", stamp(now))
-	s.fact("build", buildVersion())
-	s.fact("subject", tool.Text(subject))
-	// Rule 3, and the exit table: "a declared source with an unreadable file" is exit 1,
-	// and a line that did not parse is the same wall under fold. The body still printed and
-	// --note still landed -- exit 1 still writes -- but a friend about to paste this onto
-	// the bus is told it does not cover what it claims. The status word follows the exit
-	// (skeleton contract 1.5), so that run says FAILED: a report that printed the body
-	// over a source it could not read whole said REPORT OK and exited 1, while --json
-	// already said status=failed.
-	if unreadable > 0 || unparsed > 0 {
-		fmt.Fprintf(s.err(), "REPORT FAILED who=%s day=%s rows=%d at=%s build=%s%s subject=%s\n",
-			oneline.Field(*who), oneline.Field(*day), lines, oneline.Field(stamp(now)),
-			oneline.Field(buildVersion()), s.dryRunFields(*dryRun, "note", *notePath), oneline.Quote(subject))
-		return s.done(1, *max)
+		"unpriced", allTokens - allPricedTokens}
+	if asJSON {
+		o.Item("avg-all", avgAllKV...)
+	} else {
+		fmt.Fprintln(c.Stderr, formatLine("TOKENS", "AVG-ALL", "", avgAllKV...))
 	}
-	fmt.Fprintf(s.err(), "REPORT OK who=%s day=%s rows=%d at=%s build=%s%s subject=%s\n",
-		oneline.Field(*who), oneline.Field(*day), lines, oneline.Field(stamp(now)),
-		oneline.Field(buildVersion()), s.dryRunFields(*dryRun, "note", *notePath), oneline.Quote(subject))
-	return s.done(0, *max)
+
+	subject := tokens.Subject(day, stamp(now), buildVersion(), sorted)
+
+	if asJSON {
+		o.Fact("at", stamp(now))
+		o.Fact("build", buildVersion())
+		if dryRun {
+			o.Fact("dry_run", true)
+			if notePath != "" {
+				o.Fact("note", notePath)
+			}
+		}
+		o.Fact("subject", tool.Text(subject))
+		if unreadable > 0 || unparsed > 0 {
+			o.Status = tool.Failed
+			o.Exit = 1
+		}
+		return o
+	}
+
+	if unreadable > 0 || unparsed > 0 {
+		fmt.Fprintf(c.Stderr, "REPORT FAILED who=%s day=%s rows=%d at=%s build=%s%s subject=%s\n",
+			oneline.Field(who), oneline.Field(day), lines, oneline.Field(stamp(now)),
+			oneline.Field(buildVersion()), dryRunFields(dryRun, "note", notePath), oneline.Quote(subject))
+		return tool.Exit(1)
+	}
+	fmt.Fprintf(c.Stderr, "REPORT OK who=%s day=%s rows=%d at=%s build=%s%s subject=%s\n",
+		oneline.Field(who), oneline.Field(day), lines, oneline.Field(stamp(now)),
+		oneline.Field(buildVersion()), dryRunFields(dryRun, "note", notePath), oneline.Quote(subject))
+	return tool.Exit(0)
+}
+
+func avgRate(usdMicro, tokens int64, priced bool) float64 {
+	if tokens == 0 || !priced {
+		return -1
+	}
+	return float64(usdMicro) / float64(tokens)
 }
 
 // usdCell is a cost as a field: the dollars, or - when no source reported one. The cost

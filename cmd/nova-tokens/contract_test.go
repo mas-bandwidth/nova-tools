@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/tokens"
 )
@@ -325,7 +326,7 @@ func TestMaxZeroPrintsAllAndMaxNegativeIsRefused(t *testing.T) {
 		r := invoke(t, verb...)
 		wantExit(t, r, 2)
 		wantContains(t, r.stderr, "--max")
-		wantContains(t, r.stderr, "0 for all")
+		wantContains(t, r.stderr, "0 lists all")
 	}
 }
 
@@ -350,18 +351,18 @@ func TestTwoSourcesOverOneTreeAreNamedInTheRemedy(t *testing.T) {
 	single := invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", repos, "--claude", "bench="+one)
 	wantExit(t, single, 0)
 	wantContains(t, read(t, filepath.Join(out, "2026-09-11.tsv")), "fable\tschema\t100\t")
-	wantContains(t, lineWith(single.stdout, "TOKENS NOTE"), "nothing was wrong")
+	wantContains(t, lineWith(single.stdout, "FOLD NOTE"), "nothing was wrong")
 
 	out2 := mkdir(t, filepath.Join(dir, "out2"))
 	both := invoke(t, "fold", "--out", out2, "--day", "2026-09-11", "--repos", repos,
 		"--claude", "bench="+one, "--claude", "copy="+two)
 	wantExit(t, both, 2)
-	wantContains(t, both.stderr, "TOKENS REFUSED:")
+	wantContains(t, both.stderr, "FOLD REFUSED:")
 	wantContains(t, both.stderr, "claude:bench")
 	wantContains(t, both.stderr, "claude:copy")
 	wantContains(t, both.stderr, "1 message ids")
 	wantContains(t, both.stderr, "without --claude copy")
-	wantNotContains(t, both.all(), "TOKENS OK")
+	wantNotContains(t, both.all(), "FOLD OK")
 	_, err := os.Stat(filepath.Join(out2, "2026-09-11.tsv"))
 	assert.True(t, os.IsNotExist(err), "an overlap wrote a day file")
 	ents, rdErr := os.ReadDir(out2)
@@ -371,8 +372,8 @@ func TestTwoSourcesOverOneTreeAreNamedInTheRemedy(t *testing.T) {
 	dry := invoke(t, "fold", "--out", out2, "--day", "2026-09-11", "--repos", repos,
 		"--claude", "bench="+one, "--claude", "copy="+two, "--dry-run")
 	wantExit(t, dry, 2)
-	wantContains(t, dry.stderr, "TOKENS REFUSED:")
-	wantNotContains(t, dry.all(), "TOKENS OK")
+	wantContains(t, dry.stderr, "FOLD REFUSED:")
+	wantNotContains(t, dry.all(), "FOLD OK")
 }
 
 // TestDisjointSourcesFoldAsBefore pins TokenFold invariant DisjointSourcesFold:
@@ -487,11 +488,11 @@ func TestAHalfReadSuccessorDoesNotReplaceItsPredecessor(t *testing.T) {
 
 	r := invoke(t, "fold", "--out", out, "--all", "--repos", repos, "--bus", bus)
 	wantExit(t, r, 1)
-	wantContains(t, r.stderr, "TOKENS UNPARSED")
-	wantNotContains(t, r.stdout, "TOKENS SUPERSEDED")
+	wantContains(t, r.stderr, "FOLD UNPARSED")
+	wantNotContains(t, r.stdout, "FOLD SUPERSEDED")
 	// Two tips now, so the lane-day is a conflict and nothing folds for it: the half-read
 	// correction never quietly became the day.
-	wantContains(t, r.stderr, "TOKENS CONFLICT label=bus:emma day=2026-09-11")
+	wantContains(t, r.stderr, "FOLD CONFLICT label=bus:emma day=2026-09-11")
 	{
 		_, err := os.Stat(filepath.Join(out, "2026-09-11.tsv"))
 		assert.Error(t, err, "a day folded from a successor that did not parse whole")
@@ -517,7 +518,7 @@ func TestCwdIsTheLowestRungOfTheAttributionLadder(t *testing.T) {
 	r := invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", reposFile(t, dir), "--claude", "g="+tr)
 	wantExit(t, r, 0)
 	wantContains(t, read(t, filepath.Join(out, "2026-09-11.tsv")), "f\tschema\t100\t")
-	wantContains(t, lineWith(r.stdout, "TOKENS DAY"), "unknown=0.0%")
+	wantContains(t, lineWith(r.stdout, "FOLD DAY"), "unknown=0.0%")
 
 	// A tool path still wins over cwd: cwd is the LOWEST rung, not a new first one.
 	tr2 := mkdir(t, filepath.Join(dir, "tr2"))
@@ -564,8 +565,8 @@ func TestMessagesWithNoIDReachTheRemedyLine(t *testing.T) {
 
 	r := invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", reposFile(t, dir), "--claude", "g="+tr)
 	wantExit(t, r, 0)
-	wantContains(t, lineWith(r.stdout, "TOKENS SOURCE"), "noid=1")
-	note := lineWith(r.stdout, "TOKENS NOTE")
+	wantContains(t, lineWith(r.stdout, "FOLD SOURCE"), "noid=1")
+	note := lineWith(r.stdout, "FOLD NOTE")
 	wantContains(t, note, "no id")
 	wantContains(t, note, "claude:g")
 	wantNotContains(t, note, "nothing was wrong")
@@ -637,7 +638,7 @@ func TestAQuotedFieldWhoseContinuationStartsWithAHashIsNotStripped(t *testing.T)
 	// The stripped line was part of the model's own text: dropping it writes a model name
 	// the export never carried.
 	wantContains(t, day, "2.5")
-	wantContains(t, lineWith(r.stdout, "TOKENS SOURCE"), "rows=1")
+	wantContains(t, lineWith(r.stdout, "FOLD SOURCE"), "rows=1")
 }
 
 // typeNames are the five type constants. A type expression is one of them, the index of a
@@ -752,4 +753,9 @@ func TestNoFunctionAddsOneTypeColumnIntoAnother(t *testing.T) {
 		}
 	}
 	require.GreaterOrEqual(t, checked, 5, "%d type-column writes examined; this tripwire was looking at the wrong shape and would have passed by checking nothing", checked)
+}
+
+func TestTokensToolMeetsTheStandard(t *testing.T) {
+	t.Parallel()
+	assert.Empty(t, tokensTool(time.Time{}).Problems())
 }
