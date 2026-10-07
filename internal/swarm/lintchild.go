@@ -82,6 +82,7 @@ var DefaultChildRules = []ChildRule{
 	{"no-server", "Never start a server on this machine.", DefaultRulesSource},
 	{"no-rm-rf", "No `rm -rf` outside the job directory.", DefaultRulesSource},
 	{"report-not-done", "Report what was not done.", DefaultRulesSource},
+	{"honest-attribution", "name the actual model and harness you run on, never claim one you are not", DefaultRulesSource},
 }
 
 // LibrariesConsideredName is the name of the rule that switches the lint's libraries check
@@ -116,6 +117,9 @@ var (
 	// childGoPath is a path to a Go source file: a name ending `.go` and then a delimiter or
 	// the end of the line, so `pkg.go.dev` is no path.
 	childGoPath = regexp.MustCompile(`[A-Za-z0-9_<>/.-]+\.go(?:[ \t)\x60"',:;]|\.(?:[ \t]|$)|$)`)
+	// childHidesModelOrHarness matches lines that hide, misstate, or deny the model/harness.
+	// This catches instructions like "never claim your model" but not the rule text itself.
+	childHidesModelOrHarness = regexp.MustCompile(`(?i)\b(?:never\s+claim\s+the|do\s+not\s+mention\s+the|sign\s+as\s+(?:another|a)\s+|omit\s+the\s+|hide\s+the\s+)\b`)
 )
 
 // childBuilds reports whether a line outside the RULES paragraph asks for code to be built:
@@ -491,6 +495,12 @@ func LintCardChildWith(raw []byte, rules []ChildRule) []CardHeaderFinding {
 				}
 				out = append(out, CardHeaderFinding{Check: sc.Check, Line: n, Excerpt: line})
 				break
+			}
+		}
+		if have["honest-attribution"] {
+			// Check for patterns that hide or misstate model/harness
+			if childHidesModelOrHarness.MatchString(line) {
+				out = append(out, CardHeaderFinding{Check: "rule-honest-attribution", Line: n, Excerpt: line})
 			}
 		}
 	})
