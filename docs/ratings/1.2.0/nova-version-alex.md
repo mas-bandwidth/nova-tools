@@ -1,6 +1,6 @@
 # nova-version READ and USE rating, nova-tools 1.2.0
 
-Rater: Alex
+Rater: openrouter/google/gemini-3.1-flash-lite
 Build: c76fcb249cc1
 Score: 10/10
 
