@@ -586,8 +586,14 @@ func TickLevelReads(s *Snapshot, _ TickReq) (Plan, int) {
 // reads queued seven deep on the two narrow machines while 31 reader slots sat
 // idle). A reader named for no fleet row, or read with no fleet table, keeps
 // the unbounded room it had: math.MaxInt, so it is never at width and its room
-// is ordered by its load alone.
+// is ordered by its load alone. A friend is the exception: reader-<friend>
+// runs at her read_slots (friendReadSlots, the fleet property friend sync
+// writes), whatever width her friends row holds and whether a machine row
+// of her name exists.
 func (s *Snapshot) ReaderWidth(reader string) int {
+	if n, ok := s.friendReadSlots(reader); ok {
+		return n
+	}
 	m, ok := ReaderMachine(reader)
 	if !ok || s.Fleet == nil {
 		return math.MaxInt
@@ -621,6 +627,11 @@ const roomParts = 1 << 20
 func (r readerRoom) share() int {
 	if r.width == math.MaxInt {
 		return roomParts - (r.width - r.free)
+	}
+	// read_slots 0 asks her none: free is never positive, and the share must
+	// not divide by zero when the level still compares a reader who holds a read.
+	if r.width <= 0 {
+		return r.free - roomParts
 	}
 	return r.free * roomParts / r.width
 }

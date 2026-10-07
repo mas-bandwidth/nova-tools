@@ -166,6 +166,10 @@
 # fleet defect --after failed, then nova-table set fleet --hide defect. Held by
 # TestSprintTablesAreLocked and
 # TestAHoldNamingABriefDefectCountsAgainstTheStreamNotTheWorker.
+# Change, 2026-10-06, asked by the owner 2026-10-05: read slots are extra slots per
+# friend, different from her card width, and where shows the two side by side.
+# friends.read_slots is the new column: text, fold sum, shown, right after width.
+# Held by TestSprintTablesAreLocked.
 work.waiting count sum shown
 work.ready count sum shown
 work.working count sum shown
@@ -201,6 +205,7 @@ fleet.ctl first none hidden
 friends.ready count sum shown
 friends.working count sum shown
 friends.width text sum shown
+friends.read_slots text sum shown
 friends.done sum(ok+failed) sum shown
 friends.okpct pct(ok/ok+failed) pooled shown label=ok%
 friends.status text none shown

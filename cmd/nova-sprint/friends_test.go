@@ -29,9 +29,9 @@ import (
 
 // emptyFriends is the friends table with no friend: its header, one rule and
 // the footer, as every empty table is.
-const emptyFriends = "friends | ready | working | width | done | ok%  | status | active\n" +
-	"--------+-------+---------+-------+------+------+--------+-------\n" +
-	"        |     0 |       0 |     0 |    0 | 0.0% |        |"
+const emptyFriends = "friends | ready | working | width | read_slots | done | ok%  | status | active\n" +
+	"--------+-------+---------+-------+------------+------+------+--------+-------\n" +
+	"        |     0 |       0 |     0 |          0 |    0 | 0.0% |        |"
 
 // friendApp is a test app with an initialised sprint whose friend sync reads the
 // friend rows of nova-config's in-memory store, each named in friends.
@@ -115,24 +115,24 @@ func TestTheFriendsTableCountsTheFriendsSprintCards(t *testing.T) {
 	}
 	// dealt, not started: ready, and none working (docs/SPEC-SPRINT.md section 1, a friend's
 	// card is working once she starts it)
-	assert.Equal(t, map[string]any{"ready": "2", "working": "0", "width": "8", "done": "0", "okpct": "0.0%", "status": "up", "active": "-", "ok": "0", "failed": "0"}, amy(), "two cards dealt, neither started")
+	assert.Equal(t, map[string]any{"ready": "2", "working": "0", "width": "8", "read_slots": "2", "done": "0", "okpct": "0.0%", "status": "up", "active": "-", "ok": "0", "failed": "0"}, amy(), "two cards dealt, neither started")
 	ta.startFriend("amy", 2)
-	assert.Equal(t, map[string]any{"ready": "0", "working": "2", "width": "8", "done": "0", "okpct": "0.0%", "status": "up", "active": "-", "ok": "0", "failed": "0"}, amy(), "two cards started, both working; the hand job is nowhere")
+	assert.Equal(t, map[string]any{"ready": "0", "working": "2", "width": "8", "read_slots": "2", "done": "0", "okpct": "0.0%", "status": "up", "active": "-", "ok": "0", "failed": "0"}, amy(), "two cards started, both working; the hand job is nowhere")
 
 	// amy finishes s1-1 with a LAND: done ok
 	outboxReport(t, root, "amy", "s1-1.w1", "# s1-1\n\n**Verdict:** LAND\nHead: "+landHead+"\n\nThe change is pushed.\n")
 	ta.ok("friend sync --root " + root)
-	assert.Equal(t, map[string]any{"ready": "0", "working": "1", "width": "8", "done": "1", "okpct": "100.0%", "status": "up", "active": "-", "ok": "1", "failed": "0"}, amy(), "s1-1 done ok, s1-2 still working")
+	assert.Equal(t, map[string]any{"ready": "0", "working": "1", "width": "8", "read_slots": "2", "done": "1", "okpct": "100.0%", "status": "up", "active": "-", "ok": "1", "failed": "0"}, amy(), "s1-1 done ok, s1-2 still working")
 
 	// amy reports s1-2 with no verdict word: finished failed, never ok
 	outboxReport(t, root, "amy", "s1-2.w1", "# s1-2\n\nAll green, nothing more.\n")
 	ta.ok("friend sync --root " + root)
-	assert.Equal(t, map[string]any{"ready": "0", "working": "0", "width": "8", "done": "2", "okpct": "50.0%", "status": "up", "active": "-", "ok": "1", "failed": "1"}, amy(), "s1-2 done failed (no verdict), s1-1 done ok")
+	assert.Equal(t, map[string]any{"ready": "0", "working": "0", "width": "8", "read_slots": "2", "done": "2", "okpct": "50.0%", "status": "up", "active": "-", "ok": "1", "failed": "1"}, amy(), "s1-2 done failed (no verdict), s1-1 done ok")
 
 	var w whereView
 	ta.json("where", &w)
-	assert.Equal(t, map[string]any{"ready": "0", "working": "0", "width": "8", "done": "0", "okpct": "0.0%", "status": "up", "active": "-", "ok": "0", "failed": "0"}, withoutRowCards(w.Tables[sprint.Friends]["bob"]), "bob has no card")
-	assert.Equal(t, map[string]any{"ready": "0", "working": "0", "width": "8", "done": "0", "okpct": "0.0%", "status": "up", "active": "-", "ok": "0", "failed": "0"}, withoutRowCards(w.Tables[sprint.Friends]["cat"]), "cat has no card")
+	assert.Equal(t, map[string]any{"ready": "0", "working": "0", "width": "8", "read_slots": "2", "done": "0", "okpct": "0.0%", "status": "up", "active": "-", "ok": "0", "failed": "0"}, withoutRowCards(w.Tables[sprint.Friends]["bob"]), "bob has no card")
+	assert.Equal(t, map[string]any{"ready": "0", "working": "0", "width": "8", "read_slots": "2", "done": "0", "okpct": "0.0%", "status": "up", "active": "-", "ok": "0", "failed": "0"}, withoutRowCards(w.Tables[sprint.Friends]["cat"]), "cat has no card")
 }
 
 // A friend's width is her friend row's (the owner, 2026-10-02: "6/1 seems a bit
@@ -255,12 +255,12 @@ func TestTheFriendsTableShowsAfterMergeAndBeforeFleet(t *testing.T) {
 		{name: "the empty store", want: emptyFriends},
 		{name: "two friends, one up and one held", friends: []string{"friend-a", "friend-b"},
 			lines: []string{"friend sync", "friend beat friend-b", "friend health friend-b --state up --seen 2030-01-02T03:04:05Z --generation 1", "friend down friend-a"},
-			want: "friends  | ready | working | width | done | ok%  | status | active\n" +
-				"---------+-------+---------+-------+------+------+--------+-------\n" +
-				"friend-b |     0 |       0 |     8 |    0 | 0.0% | up     | -\n" +
-				"friend-a |     0 |       0 |     8 |    0 | 0.0% | held   | -\n" +
-				"---------+-------+---------+-------+------+------+--------+-------\n" +
-				"         |     0 |       0 |    16 |    0 | 0.0% |        |"},
+			want: "friends  | ready | working | width | read_slots | done | ok%  | status | active\n" +
+				"---------+-------+---------+-------+------------+------+------+--------+-------\n" +
+				"friend-b |     0 |       0 |     8 |          2 |    0 | 0.0% | up     | -\n" +
+				"friend-a |     0 |       0 |     8 |          2 |    0 | 0.0% | held   | -\n" +
+				"---------+-------+---------+-------+------------+------+------+--------+-------\n" +
+				"         |     0 |       0 |    16 |          4 |    0 | 0.0% |        |"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -471,7 +471,7 @@ func TestAFriendBeatsThroughTheServer(t *testing.T) {
 	res := r.one("friend", "beat", "amy")
 	require.Equal(t, 0, res.Code, res.Stderr)
 	assert.Contains(t, res.Stdout, "FRIEND-BEAT OK amy")
-	assert.Contains(t, r.boss("nova-sprint where"), "amy     |     0 |       0 |     8 |    0 | 0.0% | down", "a beat is recorded, and never makes her up")
+	assert.Contains(t, r.boss("nova-sprint where"), "amy     |     0 |       0 |     8 |          2 |    0 | 0.0% | down", "a beat is recorded, and never makes her up")
 	for name, argv := range map[string][]string{
 		"no friend":       {"friend", "beat"},
 		"another actor":   {"friend", "beat", "amy", "--actor", "boss"},

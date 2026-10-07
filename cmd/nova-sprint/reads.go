@@ -1480,9 +1480,9 @@ func providersView(ctx context.Context, st *store.Store, shapes []ntable.Table, 
 
 // friendsTable is the friends table (sprint.FriendsDef) with a row per friend
 // in the order given: her sprint cards' counts in ready, working and the
-// hidden ok and failed, her width and her status as text; done and ok% are the
-// table's own formulas over the counts (ntable.CellText), as the fleet
-// table's are.
+// hidden ok and failed, her card width and her read slots side by side as
+// text, and her status as text; done and ok% are the table's own formulas
+// over the counts (ntable.CellText), as the fleet table's are.
 func (a *app) friendsTable(friends []store.FriendRow, now time.Time) ntable.Table {
 	t := sprint.FriendsDef()
 	at := map[string]int{}
@@ -1496,7 +1496,7 @@ func (a *app) friendsTable(friends []store.FriendRow, now time.Time) ntable.Tabl
 		cells[at[sprint.DoneOK]].Count = int64(f.OK)
 		cells[at[sprint.DoneFailed]].Count = int64(f.Failed)
 		t.Rows = append(t.Rows, ntable.Row{Key: f.Name, Cells: cells,
-			Texts: map[string]string{sprint.FieldWidth: strconv.Itoa(f.Width), sprint.Status: a.statusCell(f, now), sprint.Active: activeCell(f, now)}})
+			Texts: map[string]string{sprint.FieldWidth: strconv.Itoa(f.Width), "read_slots": strconv.Itoa(f.ReadSlots), sprint.Status: a.statusCell(f, now), sprint.Active: activeCell(f, now)}})
 	}
 	return t
 }
@@ -1565,13 +1565,17 @@ func readerTiersSummary(t ntable.Table) string {
 
 // readersWidths is the readers table with a width column beside reading, each
 // reader's the width of its fleet row (sprint.ReaderWidth: reader-<m> runs at
-// m's width, the fleet table's width cell), "-" for a reader named for no
-// fleet row. Display only: the readers table holds no width column; the width
-// is derived, and where --json carries it on each reader's row.
+// m's width, the fleet table's width cell), a friend's reader her read slots
+// (reader-<friend> runs at those, apart from her card width), "-" for a reader
+// named for neither. Display only: the readers table holds no width column; the
+// width is derived, and where --json carries it on each reader's row.
 func readersWidths(t ntable.Table, fleet ntable.Table) ntable.Table {
 	widths := map[string]string{}
 	for _, r := range fleet.Rows {
 		widths[r.Key] = r.Texts[sprint.FieldWidth]
+	}
+	for f, n := range sprint.FriendReadSlotsOf(fleet) {
+		widths[f] = strconv.Itoa(n) // her read slots win, as in ReaderWidth
 	}
 	at := slices.Index(columnNames(t.Columns), sprint.Reading) + 1
 	cols := slices.Clone(t.Columns)
