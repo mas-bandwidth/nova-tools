@@ -43,6 +43,8 @@ func ReadCardBrief(name, job string, p Packet, start string, deadline time.Time)
 	}
 	if !deadline.IsZero() {
 		fmt.Fprintf(&b, "- deadline: %s (past it the read is dealt to another reader)\n", deadline.UTC().Format(time.RFC3339))
+	} else {
+		fmt.Fprintf(&b, "- deadline: %s from when you start it (past it the read is dealt to another reader)\n", ReadCardDeadline)
 	}
 	b.WriteString("\n## How to read\n\n")
 	clone := "git clone https://github.com/<the repository>.git repo"

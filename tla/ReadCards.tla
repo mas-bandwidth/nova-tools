@@ -12,19 +12,22 @@
 \* by the existing rules: accepted on Need different oks at the attempt, reworked
 \* on a broken read (a new attempt, its open cards retired).
 \*
-\* The instance is the module, as ReaderTiers' is: a small TLC run of the module
-\* itself (RUNS: ReadCards, 2026-10-06), not a cfg in the case list. BugIgnoreSpent
-\* TRUE is the reversed witness: a deal that forgets a spent reader breaks
-\* NeverTwiceAfterSpent.
+\* A read is late only from its start (working): one never started is taken back by
+\* the machine (TakeBack: the deal bound, a member held), spending no one.
+\* The instance is the module, as ReaderTiers' is, run with a cfg setting
+\* BugIgnoreSpent: FALSE holds every invariant; TRUE, the reversed witness (a deal that
+\* forgets a spent reader), breaks NeverTwiceAfterSpent. Its cases in tla/CASES.tsv and
+\* their bench records in tla/RUNS.tsv are owed.
 
 EXTENDS Naturals, FiniteSets
+
+CONSTANT BugIgnoreSpent
 
 Readers == {"w", "a", "b"}
 Worker == "w"
 Need == 2
 MaxAttempt == 2
 MaxGen == 1
-BugIgnoreSpent == FALSE
 
 Open == {"ready", "working"}
 Spent == {"ok", "broken", "returned", "late"}
@@ -74,7 +77,7 @@ Move(c, st) == cards' = (cards \ {c}) \cup {[c EXCEPT !.st = st]}
 Take == \E c \in At(attempt) : c.st = "ready" /\ Move(c, "working") /\ UNCHANGED <<attempt, pstate>>
 Close == \E c \in At(attempt), v \in {"ok", "broken"} : c.st = "working" /\ Move(c, v) /\ UNCHANGED <<attempt, pstate>>
 Return == \E c \in At(attempt) : c.st \in Open /\ Move(c, "returned") /\ UNCHANGED <<attempt, pstate>>
-Late == \E c \in At(attempt) : c.st \in Open /\ Move(c, "late") /\ UNCHANGED <<attempt, pstate>>
+Late == \E c \in At(attempt) : c.st = "working" /\ Move(c, "late") /\ UNCHANGED <<attempt, pstate>>
 TakeBack == \E c \in At(attempt) : c.st \in Open /\ Move(c, "away") /\ UNCHANGED <<attempt, pstate>>
 
 Accept ==

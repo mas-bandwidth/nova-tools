@@ -72,6 +72,10 @@ type Packet struct {
 	WorkBranch string `json:"work_branch,omitempty"`
 	WorkBase   string `json:"work_base,omitempty"`
 	Report     string `json:"report,omitempty"`
+	// ReadJob is the inbox job of a friend's read asked before read cards (a read card with
+	// no read_deadline, read_cards.go): its card id at every epoch, the path it was delivered
+	// at and is closed from; "" for a read card, whose job is a card's.
+	ReadJob string `json:"read_job,omitempty"`
 }
 
 // FieldRules is a primary's rules by reference (nova-tools#5174 rule 6): the base name of the
@@ -179,6 +183,9 @@ func PacketOf(prefix string, epoch uint64, c, primary *Card, earlier []*Card, wo
 		return p
 	}
 	p.DecideBounce, p.DecideReview = c.F(FieldDecideBounce), c.F(FieldDecideReview)
+	if c.F(FieldReadCard) == "" {
+		p.ReadJob = c.ID // asked the old way: delivered at inbox/<card id>, never again elsewhere
+	}
 	if work != nil {
 		p.Worker = work.F("member")
 		p.Head = work.F("head")

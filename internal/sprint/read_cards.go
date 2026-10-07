@@ -38,12 +38,14 @@ func (s *Snapshot) ReadCardsOn() bool {
 	return v == ReadCardsOnWord
 }
 
-// FieldReadDeadline is a read card's deadline, a stamp: asked plus ReadCardDeadline. Past
-// it the ask retires the card (RetiredByLate) and asks the read of another unit.
-const FieldReadDeadline = "read_deadline"
+// FieldReadCard marks a read card the deal cut (read_cards.go), "1": a friend's read asked
+// before read cards has none (its inbox job is its card id: Packet.ReadJob).
+const FieldReadCard = "read_card"
 
-// ReadCardDeadline is how long a read card is given on the sprint's clock before the ask
-// takes it back and asks another reader.
+// ReadCardDeadline is how long a read card is given from its start (its take; a friend's
+// read dealt working, from its deal) before the deal retires it late, spending its reader,
+// and deals the read to another. A read never started is never late: one left untouched in
+// ready past the deal bound (DealtMax) is taken back spending no one (RetiredByUnstarted).
 const ReadCardDeadline = 60 * time.Minute
 
 // The retired_by of a read card the read-card ask takes back: past its deadline, or its
@@ -60,6 +62,9 @@ const (
 	// RetiredByCards is a readers-table read asked and not begun, taken back when read cards
 	// came on: dealt again as a read card.
 	RetiredByCards = "read cards"
+	// RetiredByUnstarted is a read card left in ready past the deal bound: the machine's
+	// take-back, spending nothing.
+	RetiredByUnstarted = "unstarted"
 )
 
 // isRead says the card is a read card.
@@ -356,8 +361,10 @@ func readCardsTakeBack(s *Snapshot) map[string][]Change {
 		switch {
 		case pr == nil || pr.Col != Review || readAttempt(pr) != c.Int("attempt"):
 			by = RetiredByPrimary
-		case c.F(FieldReadDeadline) != "" && !s.Now.Before(stampAt(c, FieldReadDeadline)):
+		case c.F(FieldReadCard) != "" && c.Col == Working && !s.Now.Before(readStart(c).Add(ReadCardDeadline)):
 			by = RetiredByLate
+		case c.F(FieldReadCard) != "" && c.Col == Ready && !s.Now.Before(stampAt(c, "asked").Add(s.DealtMax())):
+			by = RetiredByUnstarted
 		case c.Col == Ready && func() bool { _, ok := cardRest(s, c); return ok }():
 			by = RetiredByRest
 		default:
@@ -390,6 +397,8 @@ func readCardsAsk(s *Snapshot, seats []FriendSeat, ri routeIndexes) (p Plan, wai
 				tb := v.T(ch.Table)
 				c := *tb.Card(ch.Entry.ID)
 				c.Row, c.Col = "", ""
+				c.Fields = maps.Clone(c.Fields)
+				maps.Copy(c.Fields, ch.Entry.Set) // retired_by: whether it spent its reader
 				tb.Put(&c)
 			}
 		}
@@ -462,7 +471,7 @@ func readCardsAsk(s *Snapshot, seats []FriendSeat, ri routeIndexes) (p Plan, wai
 			fields := map[string]string{
 				"kind": "read", "primary": pr.ID, "stream": pr.Row, "reader": un.name,
 				"attempt": itoa(attempt), "head": head, "asked": stamp(s.Now), "gen": "1",
-				FieldReadDeadline: stamp(s.Now.Add(ReadCardDeadline)),
+				FieldReadCard: "1",
 			}
 			if branch != "" {
 				fields["branch"] = branch
@@ -613,4 +622,13 @@ func (s *Snapshot) withReadCards(seats []FriendSeat) (*Snapshot, Plan) {
 		}
 	}
 	return &v, p
+}
+
+// readStart is when a working read card started: its take, else its deal (a friend's read
+// dealt straight to working).
+func readStart(c *Card) time.Time {
+	if t := stampAt(c, "taken"); !t.IsZero() {
+		return t
+	}
+	return stampAt(c, "asked")
 }

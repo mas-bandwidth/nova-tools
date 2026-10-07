@@ -55,7 +55,14 @@ const (
 // A read card is a card: it is delivered as a work card is, under the same job (a one-shot
 // runner finds inbox/<job>/BRIEF.md where it finds a work card's), and friend sync closes it
 // from outbox/<job>/REPORT.md (friendReadOf).
+//
+// A friend's read asked before read cards (the packet's ReadJob) keeps its card id as its
+// job at every epoch, the path it was delivered at: installing this build delivers none of
+// the live reads again.
 func friendJobOf(p sprint.Packet) string {
+	if p.Kind == "read" && p.ReadJob != "" {
+		return p.ReadJob
+	}
 	job := sprint.StoredID(p.Card, p.Epoch)
 	if p.Gen > 1 {
 		job += ".g" + strconv.Itoa(p.Gen)
@@ -601,15 +608,30 @@ func (a *app) wakeFriendStall(ctx context.Context, st *store.Store, name string,
 // both write it: the read's brief, the attempt's branch, start commit and head (the packet's,
 // else the card's), and a deadline of thirty minutes on the sprint clock.
 func friendReadText(st *store.Store, name string, p sprint.Packet, c *sprint.Card) string {
+	if p.ReadJob != "" {
+		// a read asked the old way keeps the old brief
+		branch, head, start := p.WorkBranch, p.Head, ""
+		if c != nil {
+			branch, head, start = cmp.Or(branch, c.F("branch")), cmp.Or(head, c.F("head")), c.F("start")
+		}
+		var deadline time.Time
+		if st.Now != nil {
+			deadline = st.Now().Add(sprint.FriendReadDeadline)
+		}
+		return sprint.FriendReadBrief(name, p.Primary, p.Brief, branch, start, head, p.Attempt, deadline)
+	}
 	start := ""
 	var deadline time.Time
 	if c != nil {
 		p.WorkBranch, p.Head = cmp.Or(p.WorkBranch, c.F("branch")), cmp.Or(p.Head, c.F("head"))
 		start = c.F("start")
-		deadline, _ = time.Parse(time.RFC3339, c.F(sprint.FieldReadDeadline))
-	}
-	if deadline.IsZero() && st.Now != nil {
-		deadline = st.Now().Add(sprint.ReadCardDeadline)
+		if c.Col == sprint.Working {
+			// a read dealt to her working runs from its deal (sprint read_cards.go, readStart)
+			deadline, _ = time.Parse(time.RFC3339, c.F("asked"))
+			if !deadline.IsZero() {
+				deadline = deadline.Add(sprint.ReadCardDeadline)
+			}
+		}
 	}
 	return sprint.ReadCardBrief(name, friendJobOf(p), p, start, deadline)
 }
@@ -651,10 +673,6 @@ func (a *app) friendReadOf(ctx context.Context, st *store.Store, name, dir strin
 		return delivered, finished, err
 	}
 	report, why, _, err := friendReadReport(dir, job) // a read close takes no report time; the work finish does
-	if err == nil && report == "" && why == "" && job != p.Card {
-		// a read delivered before read cards was named by its card id alone
-		report, why, _, err = friendReadReport(dir, p.Card)
-	}
 	if err != nil {
 		return delivered, finished, err
 	}

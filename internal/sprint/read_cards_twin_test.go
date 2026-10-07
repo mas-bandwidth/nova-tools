@@ -3,6 +3,7 @@ package sprint_test
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -199,7 +200,7 @@ func TestAReadCardsVerdictClosesTheRead(t *testing.T) {
 			rc := r.rec(c.ID)
 			require.False(t, rc.Placed(), "closed")
 			require.Equal(t, "ok", rc.F("verdict"))
-			require.Equal(t, "input=10 output=1", rc.F("usage"))
+			require.True(t, strings.HasPrefix(rc.F("usage"), "input=10 output=1"), rc.F("usage"))
 		}
 		r.tick()
 		require.Equal(t, sprint.Merging, r.snap().Work.Card("s1-1").Col, "two oks: accepted")

@@ -591,6 +591,8 @@ func readCardVerb(s *Snapshot, r ReadReq, row, name string) Plan {
 			return "not " + r.As + "'s to read (it is " + placeWord(c) + ")"
 		case s.Work.Card(c.F("primary")) == nil:
 			return "its primary " + c.F("primary") + " is not on the table"
+		case readAttempt(s.Work.Card(c.F("primary"))) != readAttempt(c):
+			return "a read of attempt " + itoa(readAttempt(c)) + " of " + c.F("primary") + ", which is at attempt " + itoa(readAttempt(s.Work.Card(c.F("primary")))) + ": a verdict closes a read of the attempt under review only"
 		}
 		return ""
 	}, s.Fleet.Card)

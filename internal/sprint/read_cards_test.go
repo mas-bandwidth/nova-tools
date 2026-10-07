@@ -2,6 +2,7 @@ package sprint
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -72,7 +73,7 @@ func TestAReviewOpensNReadCardsAtOnce(t *testing.T) {
 		require.Equal(t, PriorityHigh, c.F(FieldPriority), "the read inherits its primary's level")
 		require.Equal(t, "work-s1-1", c.F("head"))
 		require.NotEqual(t, "m1", c.Row, "never the worker's")
-		require.NotEmpty(t, c.F(FieldReadDeadline))
+		require.Equal(t, "1", c.F(FieldReadCard))
 		seen[c.Row] = true
 	}
 	require.Len(t, seen, 2, "two different readers")
@@ -240,4 +241,37 @@ func TestTurningReadCardsOnNeverReadsAPrimaryTwice(t *testing.T) {
 	require.NotContains(t, []string{"m1", "m2"}, reads[0].Row, "never its worker, never the machine reading it the old way")
 	dealReads(t, w, nil)
 	require.Len(t, readCardsOf(w, "s1-1"), 1)
+}
+
+// TestAReadCardsDeadlineRunsFromItsStart pins PR 5392's cold read, finding 2: a read card's
+// deadline runs from its take, never from the deal, so a read that waits in a member's ready
+// queue behind long work is not late and spends no one; one that waits past the deal bound
+// (DealtMax) untouched is taken back spending nothing (unstarted), and its reader may be dealt
+// it again; one taken and not closed within ReadCardDeadline is late and spends its reader.
+func TestAReadCardsDeadlineRunsFromItsStart(t *testing.T) {
+	t.Parallel()
+	w := readCardsWorld(t, 4, "m1", "m2")
+	putReviewBy(w, "s1-1", "s1-1: work (s1)\n", "m1", 1)
+	dealReads(t, w, nil)
+	rc := readCardsOf(w, "s1-1")[0]
+	require.Equal(t, "m2", rc.Row)
+	w.tick(ReadCardDeadline + time.Minute)
+	dealReads(t, w, nil)
+	require.True(t, w.s.Fleet.Card(rc.ID).Placed(), "never taken: not late")
+
+	w.tick(w.s.DealtMax())
+	dealReads(t, w, nil)
+	require.Equal(t, RetiredByUnstarted, w.s.Fleet.Card(rc.ID).F("retired_by"), "untouched past the deal bound: taken back")
+	again := readCardsOf(w, "s1-1")
+	require.Len(t, again, 1, "dealt again, to the reader it spent nothing of")
+	require.Equal(t, rc.ID+".g1", again[0].ID)
+
+	w.must(Take(w.s, TakeReq{As: "m2", Sel: Sel{Limit: -1}, Who: "m2"}))
+	w.tick(ReadCardDeadline - time.Minute)
+	dealReads(t, w, nil)
+	require.True(t, w.s.Fleet.Card(again[0].ID).Placed(), "within its deadline from the take")
+	w.tick(2 * time.Minute)
+	dealReads(t, w, nil)
+	require.Equal(t, RetiredByLate, w.s.Fleet.Card(again[0].ID).F("retired_by"), "taken and not closed in time: late, spent")
+	require.Empty(t, readCardsOf(w, "s1-1"), "m2 spent it and m1 worked it: no reader left, it waits")
 }

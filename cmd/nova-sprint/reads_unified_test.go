@@ -89,8 +89,9 @@ func TestAnyUnitWithRoomAtOrAboveTheReadTierServesARead(t *testing.T) {
 	text, err := os.ReadFile(filepath.Join(inbox, readID, "BRIEF.md"))
 	require.NoError(t, err)
 	require.Contains(t, string(text), "WHO: friend amy\n")
-	deadline := ta.now.Add(sprint.ReadCardDeadline).UTC().Format(time.RFC3339)
-	require.Contains(t, string(text), "- deadline: "+deadline+" ")
+	// a read asked the old way (read cards off) keeps the old brief and its inbox path
+	deadline := ta.now.Add(sprint.FriendReadDeadline).UTC().Format(time.RFC3339)
+	require.Contains(t, string(text), "deadline: "+deadline+"\n")
 
 	outboxReport(t, root, "amy", readID, "Verdict: LAND\n")
 	out = ta.ok("friend sync --root " + root)

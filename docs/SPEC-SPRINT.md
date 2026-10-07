@@ -3230,7 +3230,9 @@ the table its work cards are dealt on, and the readers table asks nothing new
 reads close as `read --ok|--broken` closes them, and it leaves review only by the rules above.
 
 - **The deal deals the reads, first.** The tick's deal (`TickDeal`, `withReadCards`) deals
-  every read a primary in review still needs AT ONCE, before any work card of the same deal:
+  every read a primary in review still needs AT ONCE, before any work card of the same deal
+  (blocker and critical work included: placing the reads within the ladder, after the work
+  above reader, is owed):
   ReadsNeeded (one for a flash card, two for a pro or heavy card) less the reads that stand at
   its attempt (a read card placed, one retired with its verdict at the primary's head, and a
   readers-table read asked the old way and begun). None while a read stands broken (its
@@ -3240,8 +3242,8 @@ reads close as `read --ok|--broken` closes them, and it leaves review only by th
   working on a friend's row while she has a lane free. It carries `head`, `branch` and `start`
   (the attempt's work head, its branch, the commit the attempt started from), `tier`, the
   primary's tier (`readTierOf`; a friend's, `friendReadTier`), `priority` when its inherited
-  level is above reader (`ReadPriority`), `read_deadline` (asked plus `ReadCardDeadline`, an
-  hour on the sprint's clock), and on a member's row the route drawn from its tier's index as
+  level is above reader (`ReadPriority`), `read_card` (1: a read card, not a read asked the
+  old way), and on a member's row the route drawn from its tier's index as
   it stands (a read moves no index; the work cards move it) and the decide bars on a flash
   card's first read (`decideFields`).
 - **Who reads.** The rules a work card is dealt by, and two of a read's own. A friend is dealt
@@ -3280,16 +3282,22 @@ reads close as `read --ok|--broken` closes them, and it leaves review only by th
   (outbox/<job>/REPORT.md whose first line is `Verdict: LAND` or `Verdict: HOLD`, a HOLD naming
   each defect), and the card under review verbatim with the worker's report. A one-shot runner
   that runs inbox/<job>/BRIEF.md and publishes outbox/<job>/REPORT.md runs it unchanged
-  (`TestAOneShotFriendRunsAReadCardFromItsBrief`). A report at the old path, outbox/<card id>/,
-  is read too, for the reads delivered before.
+  (`TestAOneShotFriendRunsAReadCardFromItsBrief`). A friend's read asked before read cards (no `read_card` field) keeps its card id
+  as its job at every epoch (`Packet.read_job`), delivered, queued and closed at inbox/<card id>
+  and outbox/<card id> as it was, so installing this build delivers no live read again
+  (`TestAReadAskedTheOldWayKeepsItsInboxPath`).
 - **The close.** `Verdict: LAND` (or `read --ok`) retires the card with verdict ok, `Verdict:
   HOLD` with a line naming a file, a line or a rule (or `read --broken` with its finding) retires
   it broken and raises the read-broken judgment, exactly as a readers-table read does; the usage
   the verb carries is kept on the card. Two different readers' oks at the head make a pro card
   acceptable, and the tick accepts it (`TestAReadCardsVerdictClosesTheRead`).
-- **Replaced.** A read card handed back (`read --return`) or past its `read_deadline` is retired
-  (`returned`, `late`) and spends that reader's read; the next deal deals the read to another
-  reader. One whose primary left review at its attempt (a rework, a brief replaced, a drop, an
+- **Replaced.** A read card handed back (`read --return`), or taken and not closed within
+  `ReadCardDeadline` (an hour on the sprint's clock from its take; a friend's read dealt
+  working, from its deal), is retired (`returned`, `late`) and spends that reader's read; the
+  next deal deals the read to another reader. A read never started is never late: one left in
+  ready past the deal bound (`DealtMax`) is taken back (`unstarted`), spending no one, and its
+  reader may be dealt it again (`TestAReadCardsDeadlineRunsFromItsStart`). A verdict names a
+  read of the attempt under review only: one for another attempt is refused. One whose primary left review at its attempt (a rework, a brief replaced, a drop, an
   accept) is retired by the deal (`primary`); a rework retires its read cards in its own step
   and takes a read card's finding as its fix (`TestAReturnedReadCardIsReplacedWithAnotherReader`).
 - **Waiting.** The tick's ask asks nothing while read cards are on (`readCardsAskPart`): it marks
