@@ -1159,9 +1159,10 @@ func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickR
 // routesPart says a tick part plans with the routes: the deal and the ask draw
 // from them, and the check asks what the next deal does.
 func routesPart(name string) bool {
+	// the rebalance draws a route for a card it moves off a friend onto a machine
 	// the readers' level too: a fleet reader whose row names no tier reads flash only while
 	// the store holds routes (sprint fleetReadsFlashOnly), so the level plans with them
-	return name == "deal" || name == "ask" || name == "check" || name == sprint.PartLevelReads || sprint.IsRulePart(name)
+	return name == "deal" || name == sprint.PartRebalance || name == "ask" || name == "check" || name == sprint.PartLevelReads || sprint.IsRulePart(name)
 }
 
 // MaxSettle bounds the updates a tick makes past its first pass while the
