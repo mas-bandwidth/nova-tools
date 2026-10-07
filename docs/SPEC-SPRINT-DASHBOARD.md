@@ -109,8 +109,8 @@ from the owner edits one line here and nothing else moves.
 
 ## Hero row: five tiles, one row at 2000 px, three and two below, two per row below 1100 px, large figure (72 px)
 1. LANDED: n of all; sub-line "<pct>% complete". Narrow: the number alone, sub-line "of <all> · <pct>%".
-2. ETA: "2h 9m"; sub-line "around 9:06 PM".
-3. COST: total to the cent; sub-line "$0.24 per card" (never "per landed card").
+2. ETA: "2h 9m"; sub-line "around 9:06 PM". A second sub-line names the cards left as held, executing and queued. When the frame carries `eta`, that line also names the rate's window and the landings it counted. The page does not invent a rate window the frame does not carry.
+3. COST: total to the cent, the recorded spend, never a floor prefix and never the unreconciled spend. Sub-line: the work and the reads, and "per card unknown" while a run of the tile's scope is unpriced (never the recorded spend over every landed card); with every record priced, the recorded spend over the landed cards and the words "per card" (never "per landed card"). A further sub-line is the unreconciled spend since the epoch's first day, and, when the frame's stream costs carry coverage, how those records were priced.
 4. IN FLIGHT: n; sub-line "14 working · 9 review" on one line.
 5. THROUGHPUT: cards landed per hour over the last 60 min; "—" until ten minutes of samples; sub-line "cards / hour".
    A lone tile on its row spans the width with its figure centered.

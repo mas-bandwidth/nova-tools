@@ -47,25 +47,52 @@ from the cards, never added to: a replayed merge writes the same, and `clear`
 empties it with the tables.
 
 After `cost` the text table draws `per landed` (the owner, 2026-10-04: cost
-visibility, after a night of $437 for 844 landings whose pro streams landed at
-$4.50 to $8.88 a card and flash streams at $0.10 to $0.27): the stream's
-dollars per landed card, rounded up to the cent, `-` with nothing landed or
-nothing priced, the tick's count when its where record holds one
-(`sprint.TierCosts`, cost_view.go) and else the row's cost cell over its landed
-count (`sprint.PerLandedOf`); its footer is blank (the sprint's figure is the
-dashboard's). `where --json` carries, additively: `tiers` at the top, every
-card counted by the tier its brief names (flash when it names none; any word
-the briefs carry), on each `tables.work[<stream>]` row `per_landed` (every table
-cell stays a string, the shape the dashboard's pull decodes), and `stream_costs`
-beside the tables, each stream's `tiers` (its cards by tier) and `cost_by_tier`, its spend by the
-tier each attempt and read ran on (the cost records' tier, not the card's
-ceiling: a flash card escalated to pro shows both; a record with no tier is
-`untiered`), money strings as the cost column shows them. All of it is counted
-by the tick from the sprint it reads anyway and kept in the where record
-(store.WhereRecord), never read card by card at `where`; before the first tick
+visibility): the stream's cost per landed card priced whole, rounded up to the
+cent (`sprint.TierCosts.PerLanded`, cost_view.go). A landed card is priced whole
+when it has records and every one of them is priced. A landed card with any
+record unpriced is in neither the sum nor the count, so an unpriced completion
+cannot make the stream read cheaper. With cards landed and none priced whole the
+cell is `unknown`, never a smaller number; `-` with nothing landed. When the
+tick's record is not there, the cell is the row's cost cell over its landed
+count (`sprint.PerLandedOf`). The footer's per-landed cell is blank (the sprint's
+figure is the dashboard's, and `view coordinator`'s). `where --json` carries,
+additively: `tiers` at the top, every card counted by the tier its brief names
+(flash when it names none; any word the briefs carry), on each
+`tables.work[<stream>]` row `per_landed` (every table cell stays a string, the
+shape the dashboard's pull decodes), and `stream_costs` beside the tables. Each
+stream's record carries `tiers`, `cost_by_tier` (spend by the tier each attempt
+and read ran on, the cost records' tier, not the card's ceiling; a record with
+no tier is `untiered`; money strings as the cost column shows them),
+`unpriced_by_tier` (the runs that tier's dollars cannot hold, a subscription
+read's tokens aside), `landed` and `landed_priced` (PerLanded's denominators),
+`landed_coverage` and `coverage` (how the records were priced: actual, estimated,
+tokens, unpriced, of the records), `spend_per_landed`, and `dropped`. Spend per
+landed is every recorded take and read of every card of the stream in any
+column, plus the spend of cards taken off the table, over the landed cards;
+`unknown` while any of those records is unpriced, `-` with nothing landed. The
+two per-card figures are different scopes (`sprint.PerLandedScope`,
+`sprint.SpendPerLandedScope`) and a figure is compared only with the same figure.
+A stream's spend includes every card of it the snapshot holds, placed or kept
+off the table (attributed by the stream field), so a drop or a re-cut whose
+record is still in the snapshot cannot make the stream read cheaper. The same
+spend is read from the stream's control card (`dropped_cost`, `dropped_cover`,
+`dropped_cards`, written by `sprint.DroppedSpendFields`) when the record has
+left the snapshot and a step wrote those fields as it left. No step in this
+card's paths writes those fields: a live drop keeps the spend only while the
+snapshot still holds the card. The day's read line names a route's reads that
+were charged no dollar (`(N unpriced)`), so that route's dollars are not read as
+every read's; a subscription route stays `tokens`. All of it is counted by the
+tick from the sprint it reads anyway and kept in the where record
+(store.WhereRecord), never read card by card at `where`. After a `stats tidy
+--streams`, the next tick replaces that record's `per_landed` alone with
+`sprint.PerLandedSince` (Statistics, below): the landed cost since the tidy over
+every card landed since, priced and unpriced together, so that one cell can
+still read cheaper when a landing since the tidy is unpriced. The other
+headlines on the record are not replaced. `view coordinator` reads
+`sprint.SprintTierCosts` itself, not that replaced cell. Before the first tick
 of an epoch `tiers` and `cost_by_tier` are absent and `per_landed` is from the
 cells (`TestTheWhereRecordCountsTiersAndCostsByTier`,
-`TestWhereCarriesTiersAndPerLandedCost`).
+`TestWhereCarriesTiersAndPerLandedCost`, `TestAnUnpricedLandingCannotLowerPerLanded`).
 
 Each reader's spend (the owner, 2026-10-05, before funding a provider for reads: "I would ask
 that you need to track spend on readers, can you do this before we start?"; the coordinator had
@@ -958,7 +985,16 @@ dashboard's throughput tile, so the two agree while the machine runs), read
 from the landed cards' `landed` stamps as the where record keeps them; with fewer than five landed in that
 window it is the whole sprint's average, the cards landed over the running
 time since the first start; a read of the stamps that fails leaves that
-average, never a failed view. The ETA is a dash, never a number, with fewer
+average, never a failed view. The rate is stated with the window it was measured over and the landings counted
+there (`sprint.LandingRateBasis`): the last hour of running time when at least
+five landed in it, otherwise the whole sprint since the first start, otherwise
+none. The cards left are split into the held ones, the executing ones (working,
+review, merging) and the queued rest (`sprint.ETAWork`). `view coordinator`
+carries both as `eta` and names them on its summary line. The dashboard's ETA
+tile draws the same split from `held` and the work table's counts, and the
+rate's window and sample when the frame carries `eta`. `where --json` does not
+carry `eta` (the where document is drawn in `cmd/nova-sprint/reads.go`, outside
+this card's paths). The ETA is a dash, never a number, with fewer
 than five landed in all (whatever the rate) and with no rate (no first start
 known):
 `3/10 30.0% held=4 -> ETA 12m`. From a day on it reads in days and hours, the
@@ -4989,8 +5025,8 @@ by rule unless `--answer-rules=false` (a `tick` by hand only with `--answer-rule
 read-late`, applied to `sprint:answer_rules_off` and read with the routes) turns single
 rules off (`TestEachRuleHasAnOffSwitch`, `TestAMechanicalJudgmentIsAnsweredByItsRule`);
 `widen` is turned off by that key too, though nova-config's enum does not list it yet.
-`view coordinator` counts what the rules saved the seat: its summary line ends `| rules
-<n>/h`, and its counts carry `rules`, the cards a rule answered in the last hour by the
+`view coordinator` counts what the rules saved the seat: its summary line carries `| rules
+<n>/h`, then the ETA's basis and the cost headlines, and its counts carry `rules`, the cards a rule answered in the last hour by the
 `rule_answer` each move writes (`sprint.RuleAnsweredWithin`; a card answered twice in the
 hour counts once). The tests are internal/sprint/store/rule_answers_test.go, internal/sprint/rules_read_test.go,
 internal/sprint/judgment_rules_test.go, internal/sprint/widen_test.go,
@@ -5475,10 +5511,14 @@ the seat, from one read of the work, merge and fleet tables, the inbox, the frie
 machines' beats and the machine's record, at one epoch. Its fields: `sum` (one line: the seat,
 the machine, the open judgments and the heaviest's cards behind, the count of each item type,
 landed of all and landed in the last 30 minutes, the work table's counts, the up machines'
-cards working of their width), `at`, `epoch`, `seat`, `cursor`, `n` (the counts: `landed`,
+cards working of their width, then the ETA's basis and the sprint's cost headlines), `at`, `epoch`, `seat`, `cursor`, `n` (the counts: `landed`,
 `l30`, `all`, `wait`, `ready`, `work`, `review`, `merge` of the primaries, sentinels aside;
 `held`; `width` and `busy`, the up machines' width and their cards working; `j`, the open
-judgments) and `items`, ranked by the cards behind each (`b`), then by type in the order
+judgments), `eta` (the landing rate with its window, the landings counted, the running hours,
+and the cards left split into `held`, `executing` and `queued`) and `cost` (the sprint's
+recorded spend, its coverage, the dropped cards that spend still holds, and the two per-card
+figures with their denominators; a figure an unpriced record would lower is `unknown`),
+and `items`, ranked by the cards behind each (`b`), then by type in the order
 below, then oldest first. An item is `k` (its key, stable while it stands), `t` (its type, one
 letter), `w` (what kind), `b`, `n` (the cards a judgment names), `age`, `od` (overdue), `d` (a
 judgment's decisions, `|` separated), `s` (one line, at most 160 bytes) and `next`, the exact
@@ -5772,8 +5812,11 @@ internal/sprint/stats_tidy.go):
 - `--streams` takes each stream's landed cost and landed count as its base
   (`sprint.StreamBases`): the work table's `cost` cell is the control card's cost less
   the base's (`sprint.StreamCostSince`, `-` when nothing priced landed since; the control
-  card keeps the epoch's figure) and `per landed` is that over the cards landed since
-  (`sprint.PerLandedSince`, counted by the next tick's where record).
+  card keeps the epoch's figure) and the where record's `per_landed` cell is that over
+  every card landed since, priced and unpriced together (`sprint.PerLandedSince`,
+  counted by the next tick's where record, replacing the priced-whole figure of section
+  1 on that one cell). The priced-whole figure, its denominators and `spend_per_landed`
+  stay on the record beside it.
 - `--all` is the four. `stats` counts from the last tidy of any kind.
 
 The archive record, `stats:archive:<RFC3339Nano>-<nonce>` (the tidy's time to the
