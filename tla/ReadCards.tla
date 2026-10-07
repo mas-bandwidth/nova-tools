@@ -12,7 +12,8 @@
 \* spends nothing and its reader may be dealt it again under the next generation,
 \* at most MaxGen times (ReturnedIsDealtAgain). The primary leaves review only by
 \* the existing rules: accepted on Need different oks at the attempt, reworked on a
-\* broken read (a new attempt, its open cards retired). Checked by MCReadCards.cfg;
+\* broken read (a new attempt, its open cards retired). Checked by MCReadCards.cfg
+\* over MCReadCards.tla (the instance, which extends this module unchanged);
 \* MCReadCardsBrokenIgnoreSpent.cfg (BugIgnoreSpent TRUE) breaks NeverTwiceAfterSpent,
 \* and MCReadCardsBrokenReturnSpends.cfg (BugReturnSpends TRUE, the rule before
 \* 2026-10-07) breaks ReturnedIsDealtAgain.

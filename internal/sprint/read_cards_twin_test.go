@@ -241,23 +241,22 @@ func TestAReadCardsVerdictClosesTheRead(t *testing.T) {
 // member held) spends nothing either, and its reader is dealt it again once back.
 func TestAReturnedReadCardIsReplacedWithAnotherReader(t *testing.T) {
 	t.Parallel()
-	r := newReadCardsRig(t)
+	r := newReadCardsRig(t, "m1", "m2") // the worker and one reader
 	worker := r.toReview("s1-1", "c: the work (s1)\nREPO: mas-bandwidth/nova-tools\n\nThe task.\n")
 	reads := r.readCards("s1-1")
 	require.Len(t, reads, 1)
 	first := reads[0]
+	require.NotEqual(t, worker, first.Row, "never the worker")
 	r.read(first, sprint.ReadReq{Return: true, Reason: "no verdict: the child wrote no RESULT.md", Who: first.Row})
 	require.Equal(t, sprint.RetiredByReturned, r.rec(first.ID).F("retired_by"))
 	r.tick()
 	reads = r.readCards("s1-1")
 	require.Len(t, reads, 1, "dealt again")
 	second := reads[0]
-	require.NotEqual(t, worker, second.Row, "never the worker")
-	if second.Row == first.Row {
-		require.Equal(t, first.ID+".g1", second.ID, "the same reader, under the next generation: the return spent nothing")
-	}
+	require.Equal(t, first.Row, second.Row, "to the one reader, who returned it: the return spent nothing")
+	require.Equal(t, first.ID+".g1", second.ID, "under the next generation of the id")
 
-	// the machine takes it back: its member held; the only reader left is it
+	// the machine takes it back: its member held; no reader is left
 	res, err := r.st.Hold(r.ctx, sprint.HoldReq{Names: []string{second.Row}, Reason: "a test", Return: true, Who: "coordinator"})
 	require.NoError(t, err)
 	require.Empty(t, res.Refused)
@@ -270,5 +269,8 @@ func TestAReturnedReadCardIsReplacedWithAnotherReader(t *testing.T) {
 	reads = r.readCards("s1-1")
 	require.Len(t, reads, 1, "dealt to it again once back: the take-back spent nothing")
 	require.Equal(t, second.Row, reads[0].Row)
-	require.Equal(t, second.ID+".g1", reads[0].ID)
+	require.Equal(t, first.ID+".g2", reads[0].ID, "the last generation of the id")
+	r.read(reads[0], sprint.ReadReq{Return: true, Reason: "fetch failed again", Who: reads[0].Row})
+	r.tick()
+	require.Empty(t, r.readCards("s1-1"), "every generation used (MaxReadGen): the bound holds and the read waits for another reader")
 }
