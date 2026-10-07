@@ -191,7 +191,7 @@ func aclRenderVerb(d deps) tool.Verb {
 func aclCheckVerb(d deps) tool.Verb {
 	return tool.Verb{
 		Name:    "acl check",
-		Usage:   "acl check --addr <host:port> [--user <name>] [--password-env <NAME>]",
+		Usage:   "acl check --redis <host:port> [--user <name>] [--password-env <NAME>]",
 		Example: "",
 		Effect:  tool.Inspection,
 		Flags: func(f *tool.Flags) {
@@ -206,7 +206,7 @@ func aclCheckVerb(d deps) tool.Verb {
 func aclApplyVerb(d deps) tool.Verb {
 	return tool.Verb{
 		Name:    "acl apply",
-		Usage:   "acl apply --addr <host:port> [--user <name>] [--password-env <NAME>] [--password-env-for <user>=<VARIABLE>]... [--dry-run]",
+		Usage:   "acl apply --redis <host:port> [--user <name>] [--password-env <NAME>] [--password-env-for <user>=<VARIABLE>]... [--dry-run]",
 		Example: "",
 		Effect:  tool.LocalWrite,
 		DryRun:  true,
@@ -254,6 +254,16 @@ func aclVerbRun(c *tool.Call, d deps, sub string) *tool.Out {
 	if err := store.check(d); err != nil {
 		return tool.Refuse(err.Error())
 	}
+	// after prints the one NOTE a run that spelled --addr carries, after the
+	// verb's own answer line: the status word leads the line the reader acts
+	// on, and the alias note follows it as internal/tool renders its own
+	// notes. A failure is the answer, and prints nothing more.
+	alias := store.aliasNote()
+	after := func() {
+		if alias != "" {
+			note(c.Stdout, alias)
+		}
+	}
 	at := *store.addr
 	// A dry run prints the plan from this build's rendering alone and dials
 	// nothing: without a store read every rendered user is what apply would
@@ -263,6 +273,7 @@ func aclVerbRun(c *tool.Call, d deps, sub string) *tool.Out {
 			line(c.Stdout, "ACL WOULD-SET", "user", u.Name, "role", u.Role)
 		}
 		line(c.Stdout, "ACL APPLY OK", "dry-run", true, "users", len(users), "set", 0, "would", len(users), "library", digest, "store", at)
+		after()
 		return tool.Exit(0)
 	}
 	failed := func(err error) *tool.Out {
@@ -339,10 +350,12 @@ func aclVerbRun(c *tool.Call, d deps, sub string) *tool.Out {
 	if sub == "check" {
 		if len(differ) == 0 {
 			line(c.Stdout, "ACL CHECK OK", "users", len(users), "library", digest, "store", at)
+			after()
 			return tool.Exit(0)
 		}
 		line(c.Stdout, "ACL CHECK DRIFT", "users", len(users), "differ", len(differ), "library", digest, "store", at,
 			"remedy", quoted("nova-redis acl apply "+store.flags()+" sets the users that differ"))
+		after()
 		return tool.Exit(1)
 	}
 	// A user the store lacks is created only with a password from the
@@ -407,6 +420,7 @@ func aclVerbRun(c *tool.Call, d deps, sub string) *tool.Out {
 		}
 	}
 	line(c.Stdout, "ACL APPLY OK", "users", len(users), "set", len(differ), "saved", saved, "library", digest, "store", at)
+	after()
 	return tool.Exit(0)
 }
 
