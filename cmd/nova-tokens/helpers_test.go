@@ -23,6 +23,16 @@ import (
 // reading of the machine the test happens to run on.
 var foldStamp = time.Date(2026, 9, 11, 23, 55, 2, 0, time.UTC)
 
+// getenv is the environment seam every test can override. It defaults to os.Getenv.
+var getenv = os.Getenv
+
+// setgetenv overrides the getenv seam; callers must restore it when done.
+func setgetenv(fn func(string) string) func() {
+	old := getenv
+	getenv = fn
+	return func() { getenv = old }
+}
+
 type result struct {
 	exit   int
 	stdout string
@@ -209,16 +219,36 @@ func fakeSqlite3OnPath(t *testing.T, mode string) {
 	t.Setenv(fakeSqlite3Env, mode)
 }
 
+// fakeSqlite3OnPathPlace places the test binary (by link, a copy only where a link is not
+// possible) at <tmp>/bin/sqlite3[.exe], and hands the placed program its mode through the
+// environment. It does not mutate PATH; callers must inject the fake into the environment
+// through setgetenv before running run().
+func fakeSqlite3OnPathPlace(t *testing.T, mode string) {
+	t.Helper()
+	self, err := os.Executable()
+	require.NoError(t, err)
+	bin := mkdir(t, filepath.Join(t.TempDir(), "bin"))
+	name := "sqlite3"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	{
+		err := testbin.Place(self, filepath.Join(bin, name))
+		require.NoError(t, err)
+	}
+	t.Setenv(fakeSqlite3Env, mode)
+}
+
 // TestMain is the fake's other half: with the mode set in the environment this binary is
 // not a test run at all but the stub sqlite3 the run under test just executed.
 //
 // With asToolEnv set it is nova-tokens itself, on the process's real stdout and stderr, so
 // a test can see what a library writes to os.Stderr behind run's injected streams (#3463).
 func TestMain(m *testing.M) {
-	if mode := os.Getenv(fakeSqlite3Env); mode != "" {
+	if mode := getenv(fakeSqlite3Env); mode != "" {
 		os.Exit(fakeSqlite3Main(mode, os.Args[1:], os.Stdout))
 	}
-	if os.Getenv(asToolEnv) != "" {
+	if getenv(asToolEnv) != "" {
 		os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, foldStamp))
 	}
 	os.Exit(m.Run())

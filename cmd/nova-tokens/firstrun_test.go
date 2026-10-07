@@ -54,7 +54,6 @@ func fixtureIn(t *testing.T) string {
 		err := os.MkdirAll(filepath.Join(dst, "out"), 0o755)
 		require.NoError(t, err, err)
 	}
-	t.Chdir(dst)
 	return dst
 }
 
