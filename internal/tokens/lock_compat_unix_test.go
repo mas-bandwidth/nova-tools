@@ -13,17 +13,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// The compatibility witnesses for the unix fold lock across an upgrade. Before
-// internal/filelock, a fold took a bare flock(LOCK_EX|LOCK_NB) on <out>/fold.lock (created
-// O_EXCL 0644, or opened when it existed), wrote its bare pid into it and never cleared
-// it. An old binary is staged here as exactly that, on a second descriptor of the same
-// file.
+// Compatibility witnesses for the unix fold lock across an upgrade. Before
+// internal/filelock, a fold took a bare flock on fold.lock, wrote its bare pid, and never
+// cleared it. An old binary is staged as that, on a second descriptor of the same file.
 
 func stageOldFold(t *testing.T, path string) *os.File {
 	t.Helper()
 	old, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o644)
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = old.Close() }) // ignored: a test fixture closed at cleanup; the test's own assertions are the report
+	t.Cleanup(func() { _ = old.Close() })
 	require.NoError(t, syscall.Flock(int(old.Fd()), syscall.LOCK_EX|syscall.LOCK_NB), "stage the old fold's flock")
 	require.NoError(t, old.Truncate(0))
 	_, err = old.WriteAt([]byte("424242\n"), 0)
@@ -31,8 +29,6 @@ func stageOldFold(t *testing.T, path string) *os.File {
 	return old
 }
 
-// An old fold holding the lock keeps the new one out, and the refusal names the old
-// holder's bare pid; once the old fold lets go the new one takes the lock.
 func TestAnOldFoldKeepsTheNewOneOut(t *testing.T) {
 	t.Parallel()
 	out := t.TempDir()
@@ -49,10 +45,6 @@ func TestAnOldFoldKeepsTheNewOneOut(t *testing.T) {
 	release()
 }
 
-// The new fold holding the lock keeps an old fold out. What the old fold would print:
-// its HolderPID took the whole file as one integer, and the new stamp is not one, so an
-// old fold's refusal names the holder as "-" while the new one names the pid. The
-// difference is shown, never decided on: the pid is only printed in the refusal.
 func TestTheNewFoldKeepsAnOldOneOut(t *testing.T) {
 	t.Parallel()
 	out := t.TempDir()
@@ -62,7 +54,7 @@ func TestTheNewFoldKeepsAnOldOneOut(t *testing.T) {
 
 	old, err := os.OpenFile(path, os.O_RDWR, 0)
 	require.NoError(t, err)
-	defer func() { _ = old.Close() }() // ignored: a test fixture closed at cleanup; the test's own assertions are the report
+	defer func() { _ = old.Close() }()
 	require.Error(t, syscall.Flock(int(old.Fd()), syscall.LOCK_EX|syscall.LOCK_NB), "an old fold took the lock while the new one held it")
 
 	raw, err := os.ReadFile(path)
@@ -76,8 +68,6 @@ func TestTheNewFoldKeepsAnOldOneOut(t *testing.T) {
 	require.NoError(t, syscall.Flock(int(old.Fd()), syscall.LOCK_UN))
 }
 
-// A fresh fold.lock is made with the mode the old fold gave it (0644 less the umask), not
-// filelock's 0666 less the umask; the umask is measured with a probe file, not set.
 func TestAFreshFoldLockKeepsTheOldMode(t *testing.T) {
 	t.Parallel()
 	out := t.TempDir()
