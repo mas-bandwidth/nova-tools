@@ -85,7 +85,7 @@ func landedRefusals(s *Snapshot, stream string, pins []LandedPin) []Refusal {
 		case pr.F("head") != pin.Head:
 			why = "head " + pin.Head + " given, the card is at head " + orDash(pr.F("head")) + " now (returned, re-queued or re-cut since it was pushed); nothing recorded for it"
 		case !pin.InBase:
-			why = "head " + pin.Head + " is not an ancestor of the base branch's tip; it was not landed"
+			why = "head " + pin.Head + " is not an ancestor of the base branch's tip; it was not landed; run: nova-sprint land --stream " + stream
 		}
 		seen[pin.ID] = true
 		if why != "" {
@@ -93,6 +93,23 @@ func landedRefusals(s *Snapshot, stream string, pins []LandedPin) []Refusal {
 		}
 	}
 	return out
+}
+
+// commitHead says the recorded head has the shape of a Git commit id. A real SHA needs
+// the caller's Git ancestry proof; non-commit placeholders remain usable by the no-Git twin
+// (docs/SPEC-SPRINT.md section 8, merge --landed).
+func commitHead(head string) bool {
+	if len(head) < 7 || len(head) > 64 {
+		return false
+	}
+	for _, c := range head {
+		if c < '0' || c > '9' {
+			if c < 'a' || c > 'f' {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // The base-gate count on a stream's control card (docs/SPEC-SPRINT.md section 8,
@@ -263,6 +280,17 @@ func mergeStep(s *Snapshot, r MergeReq) Plan {
 	var ids []string
 	for _, c := range batch {
 		ids = append(ids, c.ID)
+	}
+	if len(r.Landed) == 0 && r.Conflict == "" && r.Cross == "" && !r.Red && !r.Rejected && r.BaseRed == "" {
+		for _, c := range batch {
+			pr := s.Work.Placed(c.ID)
+			if pr != nil && commitHead(pr.F("head")) {
+				p.refuse(c.ID, fmt.Sprintf("head %s cannot be recorded landed without Git ancestry proof; run: nova-sprint merge --stream %s --landed %s@%s --repo <dir> --base-ref origin/<base>", pr.F("head"), r.Stream, c.ID, pr.F("head")))
+			}
+		}
+		if len(p.Refused) > 0 {
+			return p
+		}
 	}
 	ctlSet := map[string]string{}
 	var notes []Note
