@@ -80,7 +80,7 @@ func cmdCheck(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 
 	result := retrievalResult{Verb: "check", Source: name, K: *k, Channels: chanNames(chans), Files: len(c.Files), Chunks: len(c.Chunks), Whole: *whole, Calibration: calibrationHits(c, chans), Notes: []string{noteLexical, "this verb asserts nothing and never exits 1: it hands you k receipts and the verdict stays yours", "a hit in a dated log class is evidence the event was recorded, not that the lesson was banked — the class on each receipt is the distinction"}}
 	for _, cand := range candidates {
-		result.Candidates = append(result.Candidates, retrievalCandidate{Text: memindex.Truncate(strings.TrimSpace(cand), 100), Hits: memindex.Retrieve(c, chans, cand, *k)})
+		result.Candidates = append(result.Candidates, retrievalCandidate{Text: memindex.Truncate(strings.TrimSpace(cand), 100), Hits: receiptHits(memindex.Retrieve(c, chans, cand, *k))})
 	}
 	result.render(stdout, *asJSON)
 	return 0
