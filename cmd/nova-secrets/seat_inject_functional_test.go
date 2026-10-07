@@ -71,8 +71,12 @@ func TestSeatInjectReSealsAValueIntoAnExistingSeat(t *testing.T) {
 		"--store", s.storeDir, "--as", "bo", "--from", "ada", "--only", "NOVA_REDIS_BENCH_PASSWORD",
 		"--key", s.ada.privPath, "--sops", sopsPath, "--no-pr")
 	require.Equal(t, 0, code, "seat inject exited %d: %s", code, errOut)
-	line := strings.TrimSpace(out)
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	require.Len(t, lines, 2, "the OK line, then its NOTE: %q", out)
+	line := lines[0]
 	assert.True(t, strings.HasPrefix(line, "SECRETS SEAT INJECT OK seat=bo from=ada names=1 committed branch=seal/bo-NOVA_REDIS_BENCH_PASSWORD-"), "unexpected OK line: %s", line)
+	assert.Equal(t, "SECRETS SEAT INJECT NOTE exec and check read the store's own branch, which does not hold this value yet; next: git -C "+
+		s.storeDir+" push -u origin "+strings.TrimPrefix(line[strings.LastIndex(line, " ")+1:], "branch=")+", then open and merge its pull request", lines[1])
 	for _, v := range injectValues {
 		assert.NotContains(t, out, v, "a value reached a stream:\nstdout:\n%s\nstderr:\n%s", out, errOut)
 		assert.NotContains(t, errOut, v, "a value reached a stream:\nstdout:\n%s\nstderr:\n%s", out, errOut)
@@ -155,6 +159,7 @@ func TestTheHelpExampleIsWhatSeatInjectPrints(t *testing.T) {
 		"! seat inject: encrypting 1 value(s) to bo.yaml's own recipients",
 		"! seat inject: returning the store to its branch",
 		"SECRETS SEAT INJECT OK seat=bo from=ada names=1 committed branch=seal/bo-NOVA_REDIS_BENCH_PASSWORD-20260927-013000",
+		"SECRETS SEAT INJECT NOTE exec and check read the store's own branch, which does not hold this value yet; next: git -C ./secrets push -u origin seal/bo-NOVA_REDIS_BENCH_PASSWORD-20260927-013000, then open and merge its pull request",
 	}
 
 	sopsPath := findSops(t)
