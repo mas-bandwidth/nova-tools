@@ -59,10 +59,10 @@ func ModelTier(brief string) (out, said, why string) {
 		return brief, "", work + "; a card that writes a model is tiered frontier (docs/SPEC-SPRINT.md, the card decides its model), and line 1 names tier " + m.Tier +
 			": write tier: frontier on line 1, or take the model out of PATHS (tla/RUNS.tsv and tla/CASES.tsv alone are run records, any tier)"
 	}
-	first, rest, nl := strings.Cut(brief, "\n")
-	out = strings.TrimRight(first, " \t") + " tier: " + cardhdr.RouteFrontier
-	if nl {
-		out += "\n" + rest
+	// the tier is written on the card's RESULT line, never on a store header (brief_tier.go):
+	// a brief whose own line carries no tier keeps the line as it is, and its pin names the tier
+	if out = tieredBrief(brief, cardhdr.RouteFrontier); out == brief {
+		return brief, "", ""
 	}
 	return out, "tiered frontier: " + work, ""
 }

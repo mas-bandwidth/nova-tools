@@ -133,6 +133,8 @@ func Lint(id, brief string, o Options) []cardgen.LintFinding {
 // Checks are the card checks, past the add's own lint:
 //
 //   - tier-line: line 1 names a tier (`tier: flash|pro|heavy|frontier`);
+//   - repo-line: the REPO: line names one repository, with no word after it (the tier a
+//     writer appended to the line, the friend's staging refusing such a card);
 //   - test-outside-paths: the TEST line's package is a directory PATHS names, so the
 //     test the card lands with is one it may edit;
 //   - personal-name: no name of o.Names outside a double-quoted span (the owner's
@@ -157,6 +159,9 @@ func Checks(id, brief string, o Options) []cardgen.LintFinding {
 		if pkg := TestPackage(brief); pkg != "" && !covers(paths, pkg) {
 			add("test-outside-paths", headerLine(brief, "TEST"), "the TEST package "+pkg+" is no directory PATHS names ("+strings.Join(paths, ", ")+"); a card lands with a test it may edit")
 		}
+	}
+	if v, ok := cardhdr.Value(brief, "REPO"); ok && !cardhdr.IsRepoValue(v) {
+		add("repo-line", headerLine(brief, "REPO"), "the REPO line reads "+v+", which is no repository: one owner/name, URL or path, with the tier on the RESULT line and no word after it")
 	}
 	for i, line := range strings.Split(brief, "\n") {
 		if strings.HasPrefix(line, "WHO:") {
