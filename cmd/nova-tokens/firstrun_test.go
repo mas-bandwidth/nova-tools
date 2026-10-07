@@ -54,6 +54,10 @@ func fixtureIn(t *testing.T) string {
 		err := os.MkdirAll(filepath.Join(dst, "out"), 0o755)
 		require.NoError(t, err, err)
 	}
+	// The example bus: the fixture's one note, on the log of a fake Redis bus at ./bus.
+	addr := busDir(t, "./bus", "emma", "rowan")
+	busNote(t, addr, "emma", "", "01EMMA0000000000004C1F9A2B", "tokens 2026-09-11 at=2026-09-11T21:30:00Z build=devel", "Fri Sep 11 21:30:00 UTC 2026",
+		"2026-09-11\temma\tgemini-2.5-pro\tschema\tinput\t123456\n2026-09-11\temma\tgemini-2.5-pro\tschema\toutput\t7890\n# repos: schema, serialize\n")
 	t.Chdir(dst)
 	return dst
 }
@@ -65,7 +69,7 @@ func TestTheExampleLinesRun(t *testing.T) {
 	fixtureIn(t)
 	var banner bytes.Buffer
 	{
-		exit := run([]string{"help"}, &banner, io.Discard, firstRunStamp)
+		exit := runWith([]string{"help"}, &banner, io.Discard, firstRunStamp, testWorld)
 		require.Equal(t, 0, exit, "`nova-tokens help` exits %d, want 0", exit)
 	}
 	examples, err := onboarding.ExampleLines(banner.String(), "nova-tokens")
@@ -74,7 +78,7 @@ func TestTheExampleLinesRun(t *testing.T) {
 	for _, line := range examples {
 		args := strings.Fields(line)[1:]
 		var out, errb bytes.Buffer
-		exit := run(args, &out, &errb, firstRunStamp)
+		exit := runWith(args, &out, &errb, firstRunStamp, testWorld)
 		// A line that RUNS answers 0 or 1. Exit 2 is "could not run", and an example
 		// exiting 2 is a broken example.
 		assert.NotEqual(t, 2, exit, "the example `%s` could not run (exit 2):\n%s", line, errb.String())
@@ -153,7 +157,7 @@ func TestTheTranscriptIsWhatTheToolPrints(t *testing.T) {
 		if args, ok := strings.CutPrefix(line, "$ nova-tokens "); ok {
 			flush()
 			var out, errb bytes.Buffer
-			run(strings.Fields(args), &out, &errb, firstRunStamp)
+			runWith(strings.Fields(args), &out, &errb, firstRunStamp, testWorld)
 			for _, printed := range strings.Split(out.String()+errb.String(), "\n") {
 				if shape := onboarding.Shape(printed); shape != "" {
 					pending = append(pending, shape)
@@ -225,7 +229,7 @@ func runDocumented(t *testing.T) onboarding.Runner {
 			return onboarding.Result{}, fmt.Errorf("the documented command reads from %q, and nova-tokens takes no stdin", s.Stdin)
 		}
 		var out, errb bytes.Buffer
-		code := run(s.Args, &out, &errb, firstRunStamp)
+		code := runWith(s.Args, &out, &errb, firstRunStamp, testWorld)
 		return onboarding.Result{Code: code, Stdout: out.String(), Stderr: errb.String()}, nil
 	}
 }

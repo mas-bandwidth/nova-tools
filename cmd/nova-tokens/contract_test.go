@@ -83,7 +83,13 @@ func TestNothingInThisToolRemovesAFile(t *testing.T) {
 		// platform with no flock writes, and on unix internal/filelock's holder
 		// stamp, which the take truncates to write and the release truncates to
 		// clear. The file itself is never removed.
-		"internal/tokens/lock_poll_other.go":    {".Truncate("},
+		"internal/tokens/lock_poll_other.go": {".Truncate("},
+		// time.Time.Truncate: the Redis bus rounds a message's at to the second. It is not a
+		// file call; the bus package is in this binary's graph for the log it reads.
+		"internal/bus/bus.go": {".Truncate("},
+		// time.Duration.Truncate: the bus rounds a proof's age to the second (pushproof.go).
+		// The same word as a file trim, never a file call.
+		"internal/bus/pushproof.go":             {".Truncate("},
 		"internal/filelock/filelock.go":         {".Truncate("},
 		"internal/filelock/filelock_unix.go":    {".Truncate("},
 		"internal/filelock/filelock_windows.go": {".Truncate("},
@@ -472,9 +478,9 @@ func TestAHalfReadSuccessorDoesNotReplaceItsPredecessor(t *testing.T) {
 	out := mkdir(t, filepath.Join(dir, "out"))
 	repos := reposFile(t, dir)
 	bus := busDir(t, mkdir(t, filepath.Join(dir, "bus")), "emma")
-	first := busNote(t, bus, "emma", "a.md", "emma-00000000000a", "tokens 2026-09-11", busDate,
+	first := busNote(t, bus, "emma", "a.md", "01EMMA0000000000000000000A", "tokens 2026-09-11", busDate,
 		"2026-09-11\temma\tg\tschema\tinput\t100\n")
-	busNote(t, bus, "emma", "b.md", "emma-00000000000b",
+	busNote(t, bus, "emma", "b.md", "01EMMA0000000000000000000B",
 		"tokens 2026-09-11 at=2026-09-11T20:00:00Z build=b supersedes="+first, busDate,
 		"2026-09-11\temma\tg\tschema\tinput\t250\nthis line is prose\n")
 

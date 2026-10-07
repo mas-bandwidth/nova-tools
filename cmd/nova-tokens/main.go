@@ -52,7 +52,7 @@ above example:, then run the lines under example: in order.
 
 usage:
   nova-tokens fold    --out <dir> (--day <YYYY-MM-DD> | --all) --repos <file>
-                      [--claude <label>=<dir>]... [--opencode <label>=<file>]... [--swarm <label>=<pool>]... [--bus <dir>]
+                      [--claude <label>=<dir>]... [--opencode <label>=<file>]... [--swarm <label>=<pool>]... [--bus <host:port>]
                       [--provider <kind>:<label>=<file>]... [--scratch <dir>] [--timeout <seconds>] [--allow-shrink] [--max <n>] [--dry-run]
   nova-tokens report (local mode) --who <name> --day <YYYY-MM-DD> --repos <file>
                       mode: local note body, printed as the tokens note artifact
@@ -99,7 +99,7 @@ directory, no default database, no default bus and no default rules file. fold, 
 (its local mode), sum, check, sources, profiles and session read no environment variable
 for a path or a setting: $HOME, $TMPDIR and $XDG_DATA_HOME are ignored, and a test sets
 them and proves it. Three things do read the environment: --opencode runs sqlite3 found
-on $PATH; and the two Redis verbs, ledger and report --redis, take the store's ACL user
+on $PATH; and the Redis verbs, ledger and report --redis (which take --user and --password-env) and --bus (which takes neither: it reads the bus log as the login the environment names), take the store's ACL user
 from --user, else NOVA_SPRINT_REDIS_USER, and its password from the variable
 --password-env names, else (with a user) the one NOVA_SPRINT_REDIS_PASSWORD_ENV names,
 else NOVA_REDIS_BENCH_PASSWORD. The password is never a flag. --timeout is the one flag
@@ -206,12 +206,12 @@ note: none of them is an instruction.
 // verbs are the verbs in the order the usage names them, each with its effect: what
 // running it does to the world, the last line of its -h (docs/STANDARD.md section 2).
 var verbs = []struct{ name, effect string }{
-	{"fold", "local write: writes the day files in --out, holding --out/fold.lock while it writes, and with --opencode copies the database into --scratch/opencode-<label>/ (replaced, and left); --dry-run reads the same sources, refuses what the real run refuses, and writes nothing (its database copy is made in a new directory under --scratch and removed before it exits)"},
+	{"fold", "local write: writes the day files in --out, holding --out/fold.lock while it writes, and with --opencode copies the database into --scratch/opencode-<label>/ (replaced, and left); --dry-run reads the same sources, refuses what the real run refuses, and writes nothing (its database copy is made in a new directory under --scratch and removed before it exits); --bus reads the Redis bus log over the network, read only, with or without --dry-run"},
 	{"report", "local write: --note writes the note body to that file, and --opencode copies the database into --scratch/opencode-<label>/ (replaced, and left); --dry-run names the note, copies the database only into a new directory under --scratch removed before it exits, and writes nothing; --redis reads the ledger store over the network, with or without --dry-run"},
 	{"ledger", "delivery: writes each day file's rows to the Redis store at --redis (tokens:ledger:<day>); --dry-run reads the day files, prints what it would write, and dials no store"},
 	{"sum", string(tool.Inspection)},
 	{"check", string(tool.Inspection)},
-	{"sources", string(tool.Inspection) + " (--opencode reads a copy made in a new directory under --scratch and removed before it exits)"},
+	{"sources", string(tool.Inspection) + " (--opencode reads a copy made in a new directory under --scratch and removed before it exits; --bus reads the Redis bus log over the network, read only)"},
 	{"profiles", string(tool.Inspection)},
 	{"session", "local write: with --out it writes the session's days into the day files there, holding --out/fold.lock; without --out, or with --dry-run, it writes nothing"},
 	{"version", string(tool.Inspection)},
@@ -237,10 +237,15 @@ func effectOf(verb string) string {
 
 func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, time.Now().UTC())) }
 
-// run is the whole tool, with its streams and clock injected so the tests can drive it.
+// run is the whole tool over the real world.
+func run(args []string, stdout, stderr io.Writer, now time.Time) int {
+	return runWith(args, stdout, stderr, now, realWorld())
+}
+
+// runWith is the whole tool, with its streams, clock and bus injected so the tests can drive it.
 // The clock is an argument and NOT a flag: the stamp on a day file is when the tool
 // computed it, and a stamp a caller could set would be a stamp nobody could trust.
-func run(args []string, stdout, stderr io.Writer, now time.Time) (code int) {
+func runWith(args []string, stdout, stderr io.Writer, now time.Time, w world) (code int) {
 	// `<verb> -h` and `help <verb>` print that verb's help, its effect included, on stdout
 	// at exit 0, before anything is read or written (the CLI style's rule (b)).
 	defer verbflag.RecoverWith(stdout, "nova-tokens", usage, &code, effectOf)
@@ -253,14 +258,14 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) (code int) {
 	case "help", "-h", "--help":
 		if verb == "help" && len(rest) > 0 && rest[0] != "help" && !verbflag.IsHelp(rest[0]) {
 			// --help goes right after the verb: after a word or a -- it would be one.
-			return run(append([]string{rest[0], "--help"}, rest[1:]...), stdout, stderr, now)
+			return runWith(append([]string{rest[0], "--help"}, rest[1:]...), stdout, stderr, now, w)
 		}
 		fmt.Fprintf(stdout, "%s", usage)
 		return 0
 	case "fold":
-		return cmdFold(rest, stdout, stderr, now)
+		return cmdFold(rest, stdout, stderr, now, w)
 	case "report":
-		return cmdReport(rest, stdout, stderr, now)
+		return cmdReport(rest, stdout, stderr, now, w)
 	case "ledger":
 		return cmdLedger(rest, stdout, stderr)
 	case "sum":
@@ -268,7 +273,7 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) (code int) {
 	case "check":
 		return cmdCheck(rest, stdout, stderr, now)
 	case "sources":
-		return cmdSources(rest, stdout, stderr, now)
+		return cmdSources(rest, stdout, stderr, now, w)
 	case "profiles":
 		return cmdProfiles(rest, stdout, stderr, now)
 	case "session":
@@ -335,7 +340,7 @@ const (
 	wantsDay     = "one UTC day as YYYY-MM-DD, or --all for every day the sources name"
 	wantsWho     = "the name this report is from, as the bus knows it"
 	wantsMonth   = "one month as YYYY-MM"
-	wantsSources = "--claude <label>=<dir>, --opencode <label>=<file>, --swarm <label>=<pool>, --bus <dir> or --provider <kind>:<label>=<file> (kind one of google, openai, xai)"
+	wantsSources = "--claude <label>=<dir>, --opencode <label>=<file>, --swarm <label>=<pool>, --bus <host:port> or --provider <kind>:<label>=<file> (kind one of google, openai, xai)"
 	wantsScratch = "a directory this run may copy the OpenCode database into"
 )
 
@@ -359,7 +364,7 @@ func (s *sourceFlags) declare(fs *flag.FlagSet, withSwarmAndBus bool) {
 	fs.Var(&s.provider, "provider", "kind:labeled provider export file; repeatable")
 	if withSwarmAndBus {
 		fs.Var(&s.swarm, "swarm", "labeled swarm pool directory; repeatable")
-		fs.StringVar(&s.bus, "bus", "", "nova-bus directory with token notes")
+		fs.StringVar(&s.bus, "bus", "", "Redis bus host:port whose log holds token notes (loopback or the tailnet); read only")
 	}
 	fs.StringVar(&s.scratch, "scratch", "", "directory the OpenCode database is copied into: opencode-<label>/ in it, replaced and left by a run that writes; a new directory removed before exit by a dry run or sources")
 	fs.StringVar(&s.repos, "repos", "", "tab-separated repo names and path regular expressions")
@@ -431,15 +436,6 @@ func (s *sourceFlags) check(r *refusals) {
 	}
 	if s.bus != "" {
 		any = true
-		if fi, err := os.Stat(s.bus); err != nil || !fi.IsDir() {
-			if err != nil && os.IsNotExist(err) {
-				r.add("--bus does not exist: " + s.bus + "; it wants the bus directory")
-			} else if err != nil {
-				r.add("--bus " + s.bus + ": " + err.Error() + "; it wants the bus directory")
-			} else {
-				r.add("--bus is not a directory: " + s.bus + "; it wants the bus directory")
-			}
-		}
 	}
 	if !any {
 		r.add("at least one source flag is required; it wants " + wantsSources + "; refusing to guess")
@@ -478,7 +474,7 @@ func (s *sourceFlags) check(r *refusals) {
 // (.nova-tokens-dry-run-*, new and private to the run, so no file there is ever truncated)
 // and removes it before returning, so --scratch is as it was. A copy it could not remove
 // is named in the returned notes.
-func (s *sourceFlags) read(rules *tokens.Rules, now time.Time, private bool) (out []*tokens.Source, notes []string) {
+func (s *sourceFlags) read(w world, rules *tokens.Rules, now time.Time, private bool) (out []*tokens.Source, notes []string) {
 	for _, it := range s.claude.items {
 		out = append(out, tokens.ReadClaude(it.label, it.value, os.DirFS(it.value), rules))
 	}
@@ -515,7 +511,7 @@ func (s *sourceFlags) read(rules *tokens.Rules, now time.Time, private bool) (ou
 		out = append(out, tokens.ReadProvider(kind, name, it.value, rules))
 	}
 	if s.bus != "" {
-		out = append(out, tokens.ReadBus(s.bus, os.DirFS(s.bus), rules, now)...)
+		out = append(out, readBus(w, s.bus, rules, now)...)
 	}
 	for _, src := range out {
 		keys := map[tokens.Key]bool{}
