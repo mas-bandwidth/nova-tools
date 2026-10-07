@@ -1,6 +1,7 @@
 package sprint
 
 import (
+	"encoding/json"
 	"fmt"
 	"slices"
 	"time"
@@ -86,6 +87,58 @@ type Beat struct {
 	// --pong: her session's answer to a SESSION CHECK, or its own bus message), zero
 	// when her beat carried none; the friend beat record keeps it under "pong".
 	Proof time.Time `json:"pong,omitzero"`
+	// Tests is the count of live processes whose name ends in ".test" the beat
+	// agent read, and TestParent the parent pid that has been alive longest among
+	// them (0 when the beat named none). Nil is no reading: a beat that read no
+	// count carries none, and zero is a reading of none. A friend's beat carries
+	// the same field. The tick keeps the runaway test-process alarm of it
+	// (NRunawayTests).
+	Tests      *int `json:"tests,omitempty"`
+	TestParent int  `json:"test_parent,omitempty"`
+}
+
+// BeatRecordKey is a machine's beat record key, the key the store writes
+// (beat:<member>): the beat's own fields live there beside the store's.
+func BeatRecordKey(member string) string { return "beat:" + member }
+
+// FriendBeatRecordKey is a friend's beat record key, the key the store writes
+// (friend-beat:<friend>).
+func FriendBeatRecordKey(friend string) string { return "friend-beat:" + friend }
+
+// StampTests sets a beat record's test-process reading (the count and the
+// oldest parent pid) on the raw record the store wrote, keeping every other
+// field it holds (a friend's pong and the checks she answered). It is the one
+// way a beat carries a count the store's Beat has no field for; a count below
+// zero is refused, and a parent of zero writes none.
+func StampTests(raw string, tests, parent int) (string, error) {
+	if tests < 0 || parent < 0 {
+		return "", fmt.Errorf("a test-process count and its parent pid are zero or more, found %d and %d", tests, parent)
+	}
+	m := map[string]json.RawMessage{}
+	if raw != "" {
+		if err := json.Unmarshal([]byte(raw), &m); err != nil {
+			return "", err
+		}
+	}
+	if b, err := json.Marshal(tests); err != nil {
+		return "", err
+	} else {
+		m["tests"] = b
+	}
+	if parent > 0 {
+		if b, err := json.Marshal(parent); err != nil {
+			return "", err
+		} else {
+			m["test_parent"] = b
+		}
+	} else {
+		delete(m, "test_parent")
+	}
+	out, err := json.Marshal(m)
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
 }
 
 // FriendReport is what a friend's machinery reports with her beat, as a machine's beat
@@ -127,6 +180,17 @@ type FriendReport struct {
 // SaysDown says the beat is her daemon's word that she is down (FriendReport.Until):
 // however fresh, it never makes her up.
 func (b Beat) SaysDown() bool { return b.Friend != nil && !b.Friend.Until.IsZero() }
+
+// TestCount is the beat's reading of the live processes whose name ends in
+// ".test" and the parent pid that has been alive longest among them: the beat's
+// own (a friend's beat carries it the same way). ok is false when the beat
+// carried no reading; a count of zero is a reading.
+func (b Beat) TestCount() (n, parent int, ok bool) {
+	if b.Tests != nil {
+		return *b.Tests, b.TestParent, true
+	}
+	return 0, 0, false
+}
 
 // Beaten says the member has beaten at least once.
 func (b Beat) Beaten() bool { return !b.At.IsZero() }

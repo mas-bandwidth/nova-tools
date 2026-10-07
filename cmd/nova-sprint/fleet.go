@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -14,6 +15,8 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
+	"github.com/mas-bandwidth/nova-tools/internal/testguard"
 )
 
 // fleetWords is how a fleet member's status comes about, in nova-sprint help
@@ -48,7 +51,12 @@ holders, read at most once every `+hostload.HoldersEvery.String()+`; over --fd-a
 NOVA_FD_ALARM, else `+fmt.Sprint(hostload.FilesAlarmDefault)+`) it says alarm, and the tick writes
 one judgment of the member ("`+sprint.NFilesAlarm+`") naming the count, the top
 holders and its cards that ended on a timeout, closed with one cleared note when
-the count falls under the alarm.
+the count falls under the alarm. A beat counts the live processes whose name ends
+in .test (fleet beat --tests gives the count instead of counting this machine):
+the tick writes one judgment ("`+sprint.NRunawayTests+`") while the count is over
+the sprint's tests_alarm (nova-sprint set --tests-alarm, else `+fmt.Sprint(sprint.TestsAlarmFactor)+` times the member's width),
+naming the oldest parent pid, and closes it when a fresh count falls under half
+that threshold.
 
 fleet sync makes the fleet match nova-config's machine rows in one step (--pg,
 else NOVA_PG_DSN, as nova-config takes it): a member the table lacks is added
@@ -121,13 +129,15 @@ func (a *app) fleetStep(st *store.Store, op, member, who string, width int, drai
 
 // beatReport is what fleet beat prints with --json.
 type beatReport struct {
-	Member string          `json:"member"`
-	At     time.Time       `json:"at"`
-	Load   float64         `json:"load"`
-	Last   float64         `json:"last"`
-	How    string          `json:"how"`
-	Cores  int             `json:"cores"`
-	Files  *hostload.Files `json:"files,omitempty"`
+	Member     string          `json:"member"`
+	At         time.Time       `json:"at"`
+	Load       float64         `json:"load"`
+	Last       float64         `json:"last"`
+	How        string          `json:"how"`
+	Cores      int             `json:"cores"`
+	Files      *hostload.Files `json:"files,omitempty"`
+	Tests      *int            `json:"tests,omitempty"`
+	TestParent int             `json:"test_parent,omitempty"`
 }
 
 // fdBound is one of fleet beat's open-files bounds: the flag's count when given, else the
@@ -156,6 +166,7 @@ func (a *app) cmdFleetBeat(args []string, stdout, stderr io.Writer) int {
 	cores := fs.Int("cores", 0, "the machine's logical cores the beat reports, instead of this machine's own (a test's, or another meter's); a member with the default width takes half")
 	fdWarn := fs.Int("fd-warn", 0, fmt.Sprintf("the machine's open file descriptors above which the beat says warn and lists the top holders (else NOVA_FD_WARN, else %d)", hostload.FilesWarnDefault))
 	fdAlarm := fs.Int("fd-alarm", 0, fmt.Sprintf("the machine's open file descriptors above which the beat says alarm and the tick writes one judgment of the member (else NOVA_FD_ALARM, else %d)", hostload.FilesAlarmDefault))
+	tests := fs.String("tests", "", "how many live processes whose name ends in .test the beat reports, instead of counting them on this machine (a test's, or a remote beat's); the tick's runaway judgment reads it")
 	pos, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, "fleet beat", err.Error())
@@ -194,6 +205,10 @@ func (a *app) cmdFleetBeat(args []string, stdout, stderr io.Writer) int {
 	if warn, alarm := hostload.FilesBounds(src); alarm < warn {
 		return refuse(stderr, "fleet beat", fmt.Sprintf("--fd-alarm wants a count at or above the warn bound %d, found %d", warn, alarm))
 	}
+	testsN, testsParent, testsOK, whyTests := beatTestCount(a.serving, *tests)
+	if whyTests != "" {
+		return refuse(stderr, "fleet beat", whyTests)
+	}
 	if given != nil {
 		// a load given is the beat's; the machine's open files are measured beside it
 		// (hostload.Source.Given), so a member that gives its one-second samples still
@@ -215,19 +230,32 @@ func (a *app) cmdFleetBeat(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s fleet beat: %s\n", prog, oneline.Escape(err.Error()))
 		return 1
 	}
+	if testsOK {
+		if err := stampBeatTests(context.Background(), st.B, sprint.BeatRecordKey(pos[0]), testsN, testsParent); err != nil {
+			fmt.Fprintf(stderr, "%s fleet beat: the beat was written and its test-process count was not: %s\n", prog, oneline.Escape(err.Error()))
+			return 1
+		}
+		b.Tests, b.TestParent = &testsN, testsParent
+	}
 	last := 0.0
 	if n := len(b.Samples); n > 0 {
 		last = b.Samples[n-1].Pct
 	}
 	files := b.Meter.Files
 	if c.json {
-		out, _ := json.Marshal(beatReport{Member: pos[0], At: b.At, Load: b.Load, Last: last, How: b.How, Cores: b.Cores, Files: files})
+		out, _ := json.Marshal(beatReport{Member: pos[0], At: b.At, Load: b.Load, Last: last, How: b.How, Cores: b.Cores, Files: files, Tests: b.Tests, TestParent: b.TestParent})
 		fmt.Fprintln(stdout, string(out))
 		return 0
 	}
 	fmt.Fprintf(stdout, "FLEET-BEAT OK %s at=%s load=%.1f%% last=%.1f%% how=%s cores=%d", pos[0], b.At.Format(time.RFC3339), b.Load, last, b.How, b.Cores)
 	if files != nil {
 		fmt.Fprintf(stdout, " fds=%d fds-max=%d fds-level=%s", files.Open, files.Max, files.Level())
+	}
+	if b.Tests != nil {
+		fmt.Fprintf(stdout, " tests=%d", *b.Tests)
+		if b.TestParent > 0 {
+			fmt.Fprintf(stdout, " test_parent=%d", b.TestParent)
+		}
 	}
 	fmt.Fprintln(stdout)
 	if files != nil && files.Level() != hostload.LevelOK {
@@ -239,4 +267,139 @@ func (a *app) cmdFleetBeat(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	return 0
+}
+
+// beatTestCount is fleet beat and friend beat's --tests: the flag's whole number
+// when it gives one (a test's, or a beat agent that counted elsewhere), else this
+// machine's own count of the live processes whose name ends in ".test" and the
+// parent pid that has been alive longest among them. ok is false when there is
+// no reading: none was given, the beat runs on the server for a machine
+// elsewhere, or this process must not reach the host (a test). A count of zero
+// is a reading. why refuses a count that is not a whole number.
+func beatTestCount(serving bool, text string) (n, parent int, ok bool, why string) {
+	if text != "" {
+		v, err := strconv.Atoi(text)
+		if err != nil || v < 0 {
+			return 0, 0, false, "--tests wants a whole number of at least 0, found " + oneline.Escape(text)
+		}
+		return v, 0, true, ""
+	}
+	if serving || testguard.Refusing() {
+		return 0, 0, false, ""
+	}
+	n, parent, ok = countTestProcesses()
+	return n, parent, ok, ""
+}
+
+// testProc is one process the beat counted, with its elapsed seconds on the
+// process table: the larger, the older.
+type testProc struct {
+	pid, ppid, age int
+}
+
+// countTestProcesses is this machine's live processes whose name ends in
+// ".test", and the parent pid that has been alive longest among them (0 when
+// none is listed). ok is false where the process table cannot be listed, and the
+// beat then carries no reading.
+func countTestProcesses() (n, parent int, ok bool) {
+	cmd, cancel := subproc.CommandFor(context.Background(), 5*time.Second, "ps", "-A", "-ww", "-o", "pid=,ppid=,etime=,command=")
+	defer cancel()
+	out, err := cmd.Output()
+	if err != nil {
+		return 0, 0, false
+	}
+	byPID := map[int]testProc{}
+	var tests []testProc
+	for _, line := range strings.Split(string(out), "\n") {
+		f := strings.Fields(line)
+		if len(f) < 4 {
+			continue
+		}
+		pid, err1 := strconv.Atoi(f[0])
+		ppid, err2 := strconv.Atoi(f[1])
+		age, good := parseEtime(f[2])
+		if err1 != nil || err2 != nil || !good || pid <= 0 {
+			continue
+		}
+		p := testProc{pid: pid, ppid: ppid, age: age}
+		byPID[pid] = p
+		if strings.HasSuffix(filepath.Base(f[3]), ".test") {
+			tests = append(tests, p)
+		}
+	}
+	return len(tests), oldestParent(tests, byPID), true
+}
+
+// parseEtime is ps's etime, [[dd-]hh:]mm:ss, as seconds.
+func parseEtime(s string) (int, bool) {
+	s = strings.TrimSpace(s)
+	days := 0
+	if i := strings.IndexByte(s, '-'); i >= 0 {
+		d, err := strconv.Atoi(s[:i])
+		if err != nil {
+			return 0, false
+		}
+		days, s = d, s[i+1:]
+	}
+	parts := strings.Split(s, ":")
+	if len(parts) < 2 || len(parts) > 3 {
+		return 0, false
+	}
+	nums := make([]int, len(parts))
+	for i, p := range parts {
+		n, err := strconv.Atoi(p)
+		if err != nil {
+			return 0, false
+		}
+		nums[i] = n
+	}
+	sec := nums[len(nums)-1] + nums[len(nums)-2]*60
+	if len(nums) == 3 {
+		sec += nums[0] * 3600
+	}
+	return days*86400 + sec, true
+}
+
+// oldestParent is the pid of the parent that has been alive longest among the
+// test processes (the largest elapsed time), the lower pid first of a tie; 0
+// when no parent is listed.
+func oldestParent(tests []testProc, byPID map[int]testProc) int {
+	best, bestAge, found := 0, 0, false
+	seen := map[int]bool{}
+	for _, t := range tests {
+		if t.ppid <= 0 || seen[t.ppid] {
+			continue
+		}
+		seen[t.ppid] = true
+		p, ok := byPID[t.ppid]
+		if !ok {
+			continue
+		}
+		if !found || p.age > bestAge || (p.age == bestAge && p.pid < best) {
+			best, bestAge, found = p.pid, p.age, true
+		}
+	}
+	return best
+}
+
+// stampBeatTests writes the test-process reading onto the beat record the store
+// just wrote, keeping every other field the record holds (a friend's pong and
+// the checks she answered). The store's Beat has no field for it.
+func stampBeatTests(ctx context.Context, b store.Backend, key string, tests, parent int) error {
+	kv, ok := b.(store.KV)
+	if !ok {
+		return fmt.Errorf("this store keeps no beat records")
+	}
+	raw, found, err := kv.GetKey(ctx, key)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return fmt.Errorf("no beat record to write the test-process count on")
+	}
+	stamped, err := sprint.StampTests(raw, tests, parent)
+	if err != nil {
+		return err
+	}
+	return kv.SetKey(ctx, key, stamped)
 }

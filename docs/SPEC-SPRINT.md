@@ -4169,6 +4169,32 @@ alarm:" and says the count now. Over the warn bound only, no judgment is written
 fleet table's load cell says it instead, the load followed by `fds <count> warn` (or
 `alarm` above the alarm bound), while the beat and its reading are fresh.
 
+### fleet-test-process-alarm-b.w4
+
+Runaway test processes are found by the beat, not by hand: 289 `nova-sprint.test`
+processes once sat on one machine at load 64 and were killed by hand. `fleet beat
+<member>` counts the live processes whose name ends in `.test` and stores the count
+and the parent pid that has been alive longest among them on the beat; `fleet beat
+<member> --tests <n>` gives the count instead of counting, which is how a test says
+it, and a beat the server runs for a machine elsewhere carries no count (the server
+cannot read that machine's processes). `friend beat` carries the same reading and
+takes the same `--tests` flag. Under `NOVA_TEST_NO_HOST` a beat counts nothing and
+carries no reading unless `--tests` gives one.
+
+The tick, in its deadlines part with the other alarms, raises one judgment per
+episode while a member's fresh beat reads more than its threshold: the sprint's
+`tests_alarm` (`nova-sprint set --tests-alarm <n>`, a whole number from 1, or
+`default`), and four times the member's width when that is unset. The judgment is
+`runaway test processes`, filed under `member:<m>`, and its line is `runaway test
+processes on <m>: <n>, oldest parent pid <pid>` (the pid only when the beat named
+one). A second beat while the count stays over updates that line and
+writes no second judgment. The episode is not a condition the coordinator answers: it
+ends when a fresh reading falls under half the threshold, or the beat goes stale or
+carries no reading, in the same step as one happened note to the coordinator, `an
+alarm cleared`, whose text opens with `runaway test processes:`. Its decisions are
+`fleet up <m> --width <half>` and `fleet down <m>`. The test is
+`TestFleetBeatRunawayTestsRaisesOneAlarm`.
+
 ### The coordinator's pass
 
 The owner, 2026-10-05: "everything I described above needs to be mechanical, so you

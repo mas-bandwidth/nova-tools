@@ -88,14 +88,14 @@ func init() {
 		{"resume", "--stream <s> [--did <text>] [--answers <note>]", "resume --stream s1 --did 'land merges s1-4 again'", (*app).cmdResume},
 		{"hold", "<member|reader|friend|stream>... --reason <text> [--return] [--dry-run]", "hold m1 --reason 'the build cache cleaner deletes live entries'", func(a *app, args []string, o, e io.Writer) int { return a.cmdHold(false, args, o, e) }},
 		{"unhold", "<member|reader|friend|stream>... [--reason <text>] [--dry-run]", "unhold m1 --reason 'the cleaner is fixed'", func(a *app, args []string, o, e io.Writer) int { return a.cmdHold(true, args, o, e) }},
-		{"fleet beat", "<member> [--load <percent>]", "fleet beat m1", (*app).cmdFleetBeat},
+		{"fleet beat", "<member> [--load <percent>] [--tests <n>]", "fleet beat m1", (*app).cmdFleetBeat},
 		{"fleet up", "<member> [--width <n> | --width 0]", "fleet up m1 --width 64", func(a *app, args []string, o, e io.Writer) int { return a.cmdFleet("up", args, o, e) }},
 		{"fleet down", "<member>", "fleet down m1", (*app).cmdFleetDown},
 		{"fleet sync", "[--check] [--pg <dsn>]", "fleet sync --check", (*app).cmdFleetSync},
 		{"fleet level", "", "fleet level", func(a *app, args []string, o, e io.Writer) int { return a.cmdFleet("level", args, o, e) }},
 		{"friend sync", "[--pg <dsn>] [--root <dir>]", "friend sync", (*app).cmdFriendSync},
 		{"collect", "[<friend>...] [--dead-lanes] [--pg <dsn>] [--root <dir>] [--dry-run]", "collect --dead-lanes", (*app).cmdCollect},
-		{"friend beat", "<friend> [--working <n>] [--queue <n>] [--width <n>] [--running <id>,...] [--load <percent>] [--active <RFC3339>] [--check <nonce>] [--pong <nonce>] [--run <id>]", "friend beat friend-a --working 2 --queue 3 --load 40", (*app).cmdFriendBeat},
+		{"friend beat", "<friend> [--working <n>] [--queue <n>] [--width <n>] [--running <id>,...] [--load <percent>] [--active <RFC3339>] [--check <nonce>] [--pong <nonce>] [--run <id>] [--tests <n>]", "friend beat friend-a --working 2 --queue 3 --load 40", (*app).cmdFriendBeat},
 		{"friend down", "<friend> [--reason <text>] [--until <RFC3339>]", "friend down friend-a --reason 'opus rate limited'", func(a *app, args []string, o, e io.Writer) int { return a.cmdFriendHold(true, args, o, e) }},
 		{"friend up", "<friend> [--width <n>]", "friend up friend-a --width 4", func(a *app, args []string, o, e io.Writer) int { return a.cmdFriendHold(false, args, o, e) }},
 		{"friend cards", "<friend> [--json]", "friend cards friend-a --json", (*app).cmdFriendCards},
@@ -117,7 +117,7 @@ func init() {
 		{"stream archive", "<stream>...", "stream archive a b c", func(a *app, args []string, o, e io.Writer) int { return a.cmdStreamArchive(true, args, o, e) }},
 		{"stream unarchive", "<stream>...", "stream unarchive a", func(a *app, args []string, o, e io.Writer) int { return a.cmdStreamArchive(false, args, o, e) }},
 		{"stream set", "<stream>... [--read-tier <flash|pro|heavy|default>] [--land-protected <owner/name,...|any|default>] [--promotion[=false]] [--release <name>] [--prose <glob,...|default>] [--attempts <n|default>] [--reason <text>] [--answers <notes>]", "stream set skips --read-tier pro", (*app).cmdStreamSet},
-		{"set", "[--read-tier <flash|pro|default>] [--dealt-max <duration|default>] [--go-lanes <n|default>] [--alarm-review <n|off>] [--alarm-merging <n|off>] [--alarm-fleet <percent|off>] [--alarm-ready <on|off>] [--attempts <n|default>] [--friend-idle <duration|default>] [--friend-finish <duration|default>]", "set --read-tier pro", (*app).cmdSet},
+		{"set", "[--read-tier <flash|pro|default>] [--dealt-max <duration|default>] [--go-lanes <n|default>] [--alarm-review <n|off>] [--alarm-merging <n|off>] [--alarm-fleet <percent|off>] [--alarm-ready <on|off>] [--attempts <n|default>] [--friend-idle <duration|default>] [--friend-finish <duration|default>] [--tests-alarm <n|default>]", "set --read-tier pro", (*app).cmdSet},
 		{"promoted", "--sha <merge sha> [--answers <note>]", "promoted --sha 0123abc", (*app).cmdPromoted},
 		{"merge-window open", "--for <duration> --reason <text>", "merge-window open --for 10m --reason 'the release merges by hand'", (*app).cmdMergeWindowOpen},
 		{"funded", "<provider> --reason <text>", "funded opencode --reason 'paid $100 in the console'", (*app).cmdFunded},
@@ -3037,6 +3037,7 @@ func (a *app) cmdSet(args []string, stdout, stderr io.Writer) int {
 	attempts := fs.String("attempts", "", fmt.Sprintf("the attempt cap: how many attempts one brief may run before the card is the coordinator's as a brief defect (brief, drop; never dealt again); 1 to %d, or default (%d); a stream's own: nova-sprint stream set <s> --attempts <n>", sprint.AttemptsMax, sprint.AttemptsDefault))
 	idle := fs.String("friend-idle", "", fmt.Sprintf("how long a friend holding cards may show no file write under her working directory and outbox before it is an alarm: a duration, or default (%s)", sprint.FriendIdleDefault))
 	finish := fs.String("friend-finish", "", fmt.Sprintf("how long a friend holding working cards may finish none (working to done) before the coordinator's pass judges her idle: a duration, or default (%s)", sprint.FriendFinishDefault))
+	testsAlarm := fs.String("tests-alarm", "", fmt.Sprintf("how many live processes whose name ends in .test one member may beat before the tick raises one judgment (the runaway test processes): a whole number from 1, or default (%d times the member's width)", sprint.TestsAlarmFactor))
 	pos, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, "set", err.Error())
@@ -3049,7 +3050,7 @@ func (a *app) cmdSet(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, "set", err.Error())
 	}
 	step := store.SetStep(sprint.SetReq{ReadTier: *tier, DealtMax: *dealt, GoLanes: *lanes, Attempts: *attempts, FriendIdle: *idle,
-		AlarmReview: *review, AlarmMerging: *merging, AlarmFleet: *fleet, AlarmReady: *readyAlarm, Who: c.actor})
+		AlarmReview: *review, AlarmMerging: *merging, AlarmFleet: *fleet, AlarmReady: *readyAlarm, TestsAlarm: *testsAlarm, Who: c.actor})
 	if *finish != "" {
 		set := step.Plan
 		step.Plan = func(s *sprint.Snapshot) sprint.Plan { return sprint.WithFriendFinish(set(s), s, *finish) }

@@ -102,6 +102,9 @@ const (
 	NBound      = "a card reached its bound"
 	NStarving   = "the fleet is starving"  // ready under twice the width while a wave is held (heldWave)
 	NOverloaded = "a member is overloaded" // three timeouts within the window (overload.go)
+	// NRunawayTests is one member's live processes named *.test over its
+	// threshold (Snapshot.TestsAlarm), from its fresh beat (fleet beat --tests).
+	NRunawayTests = "runaway test processes"
 	// NReadersBehind (readers_behind.go): reads asked and not begun for the window
 	// NOverdue (notes.go) is the overdue line: a happened note, once per
 	// judgment, when the judgment passes its due time.
@@ -1227,7 +1230,10 @@ func TickDeadlines(s *Snapshot, r TickReq) (Plan, int) {
 	// the drift alarms, on a plan of their own the same way (drift.go)
 	d, driftDue := TickDrift(s, r, r.Drift)
 	p.Notes, p.Closes, p.Updates = append(p.Notes, d.Notes...), append(p.Closes, d.Closes...), append(p.Updates, d.Updates...)
-	return p, due + alarmsDue + driftDue
+	// runaway test processes, on a plan of their own the same way (tickRunawayTests)
+	rt, testsDue := tickRunawayTests(s, r)
+	p.Notes, p.Closes, p.Updates = append(p.Notes, rt.Notes...), append(p.Closes, rt.Closes...), append(p.Updates, rt.Updates...)
+	return p, due + alarmsDue + driftDue + testsDue
 }
 
 // TickOverdue marks each open judgment overdue once, when it passes its due
@@ -1353,7 +1359,7 @@ func condKey(typ, subject, card, what string) string {
 	switch typ {
 	case NNoMember, NAdoptFailed, NCannotAsk, NNoRoute, NFewReaders, NProviderFunds, NProviderLow, NProviderKey, NAllOutOfCredit, NStarving, NOverloaded, NReadersBehind, NDevBehind, NRaiseReadTier,
 		NAlarmReview, NAlarmMerging, NAlarmReady, NAlarmFleet, NFilesAlarm, NFriendDeaf, NFriendIdle, NCoordinatorBehind,
-		NDriftAhead, NDriftCardBase, NDriftServer, NDriftBaseRed:
+		NDriftAhead, NDriftCardBase, NDriftServer, NDriftBaseRed, NRunawayTests:
 		what = ""
 	case NWorkLate, NReadLate:
 		// a lateness is one per attempt's card and kind (not taken, not
@@ -1484,7 +1490,7 @@ func notify(p *Plan, s *Snapshot, conds []cond, types []string, r TickReq) int {
 			if !open[k] {
 				fresh = append(fresh, sub)
 			}
-			if n, ok := judged[k]; ok && (c.typ == NWorkLate || c.typ == NReadLate || c.typ == NFewReaders || c.typ == NStarving || c.typ == NOverloaded || c.typ == NFilesAlarm || c.typ == NReadersBehind || c.typ == NDevBehind) {
+			if n, ok := judged[k]; ok && (c.typ == NWorkLate || c.typ == NReadLate || c.typ == NFewReaders || c.typ == NStarving || c.typ == NOverloaded || c.typ == NFilesAlarm || c.typ == NReadersBehind || c.typ == NDevBehind || c.typ == NRunawayTests) {
 				update(n, c.what, c.decisions) // the latest facts, in place
 			}
 		}
@@ -1678,4 +1684,101 @@ func TickDone(s *Snapshot, r TickReq) (Plan, int) {
 	n.Who, n.To, n.Hint = r.who(), s.Coordinator, DoneHint
 	n.What = DoneWhat(landed, dropped, s.Now, r.Started)
 	return Plan{Notes: []Note{n}}, 0
+}
+
+// testReading is the beat's test-process count while the beat is fresh and it
+// carried a reading: a stale beat is no reading, and neither raise nor close the
+// runaway episode.
+func testReading(b Beat, now time.Time) (n, parent int, ok bool) {
+	if !b.Fresh(now) {
+		return 0, 0, false
+	}
+	return b.TestCount()
+}
+
+// runawayWhat is the judgment's line: the member, the count, and the parent pid
+// that has been alive longest when the beat named one. The line names no
+// threshold: an episode stays open from half the threshold up, so a line that
+// called a count over it would be false for a count under it.
+func runawayWhat(m string, n, parent int) string {
+	what := fmt.Sprintf("runaway test processes on %s: %d", m, n)
+	if parent > 0 {
+		what += fmt.Sprintf(", oldest parent pid %d", parent)
+	}
+	return what
+}
+
+// runawayDecisions are the judgment's remedies: halve the member's width, or
+// hold it down. The episode closes itself when the count falls under half the
+// threshold, so it is not a condition the coordinator answers: the tick's kept
+// list (TickDecisions) does not name it.
+func runawayDecisions(s *Snapshot, m string) []string {
+	return []string{fmt.Sprintf("fleet up %s --width %d", m, max(1, s.Width(m)/2)), "fleet down " + m}
+}
+
+// runawayHeld says member already has a runaway-test judgment open: the episode
+// is not written again while it does.
+func runawayHeld(s *Snapshot, m string) bool {
+	sub := StreamSubject(MemberSubject(m))
+	for _, o := range s.Open {
+		if o.Note.Type == NRunawayTests && o.Subject() == sub {
+			return true
+		}
+	}
+	return false
+}
+
+// runawayConds is the tick's runaway test-process condition of every member
+// whose fresh beat reads over its threshold (Snapshot.TestsAlarm; fleet beat
+// --tests, or the beat agent's own count), and of a member already in an
+// episode whose fresh read is at or above half it, so a count that dips and
+// stays over half does not end the episode. Under half, and a member with no
+// episode, holds nothing; a stale beat or no reading is skipped, leaving the
+// episode as it was.
+func runawayConds(s *Snapshot, r TickReq) []cond {
+	var out []cond
+	for _, m := range s.Members() {
+		n, parent, ok := testReading(r.Beats[m], s.Now)
+		if !ok {
+			continue
+		}
+		threshold := s.TestsAlarm(m)
+		over := n > threshold
+		under := n*2 < threshold
+		if !over && (under || !runawayHeld(s, m)) {
+			continue
+		}
+		out = append(out, cond{typ: NRunawayTests, stream: MemberSubject(m), streamLevel: true,
+			what: runawayWhat(m, n, parent), decisions: runawayDecisions(s, m)})
+	}
+	return out
+}
+
+// tickRunawayTests is the tick's runaway test-process alarm, kept with the
+// deadlines the way the open-files alarm is: one judgment per member an episode
+// (written when the count passes its threshold, its line updated in place while
+// it stays over, keyed by its type and member), and, for each the tick closes
+// because a fresh reading fell under half the threshold (or the beat went stale
+// or carried no reading), one cleared note to the coordinator.
+func tickRunawayTests(s *Snapshot, r TickReq) (Plan, int) {
+	var p Plan
+	conds := runawayConds(s, r)
+	stands := map[string]bool{}
+	for _, c := range conds {
+		stands[c.stream] = true
+	}
+	due := notify(&p, s, conds, []string{NRunawayTests}, r)
+	for _, o := range p.Closes {
+		if stands[o.Note.Stream] {
+			continue // a condition still standing is not cleared
+		}
+		m := strings.TrimPrefix(o.Note.Stream, MemberSubject(""))
+		now := m + " gives no fresh count of its test processes"
+		if n, _, ok := testReading(r.Beats[m], s.Now); ok {
+			now = fmt.Sprintf("%s has %d test processes, under half its threshold of %d", m, n, s.TestsAlarm(m))
+		}
+		p.Notes = append(p.Notes, Note{Kind: Happened, Type: NAlarmCleared, Who: r.who(), To: s.Coordinator, At: s.Now,
+			What: NRunawayTests + ": " + now})
+	}
+	return p, due
 }
