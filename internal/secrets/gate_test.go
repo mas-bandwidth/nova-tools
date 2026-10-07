@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -99,8 +100,8 @@ func TestGateRefusesARuleWithThreeRecipients(t *testing.T) {
 		"rowan.yaml": gateSealedFile(),
 	})
 	line, code := RunGate(GateInput{StoreDir: dir, Base: base, Head: head})
-	require.Equal(t, 2, code, "RunGate code = %d, want 2 (line=%q)", code, line)
-	require.Contains(t, line, "GATE REFUSE rule=1", "RunGate line = %q, want REFUSE naming rule=1", line)
+	require.Equal(t, 1, code, "RunGate code = %d, want 1 (line=%q)", code, line)
+	require.Contains(t, line, "GATE FAILED rule=1", "RunGate line = %q, want FAILED naming rule=1", line)
 }
 
 func TestGateRefusesAPlaintextValue(t *testing.T) {
@@ -113,9 +114,42 @@ func TestGateRefusesAPlaintextValue(t *testing.T) {
 		"rowan.yaml": gateSealedFile() + "GH_TOKEN: sk-live-notencrypted\n",
 	})
 	line, code := RunGate(GateInput{StoreDir: dir, Base: base, Head: head})
-	require.Equal(t, 2, code, "RunGate code = %d, want 2 (line=%q)", code, line)
-	require.Contains(t, line, "GATE REFUSE", "RunGate line = %q, want REFUSE naming rowan.yaml", line)
-	require.Contains(t, line, "rowan.yaml", "RunGate line = %q, want REFUSE naming rowan.yaml", line)
+	require.Equal(t, 1, code, "RunGate code = %d, want 1 (line=%q)", code, line)
+	require.Contains(t, line, "GATE FAILED", "RunGate line = %q, want FAILED naming rowan.yaml", line)
+	require.Contains(t, line, "rowan.yaml", "RunGate line = %q, want FAILED naming rowan.yaml", line)
+}
+
+// TestGateVerdictExitsOneFailedAndCouldNotRunExitsTwoRefused pins skeleton contract 1.2
+// at the gate (STANDARD §2, exit codes): a verdict of no is the gate that ran and judged
+// the diff, GATE FAILED at exit 1; a gate that could not run -- a ref that names no commit
+// -- is SECRETS GATE REFUSED at exit 2. A CI step reads the two apart, where before both
+// were exit 2 and a broken change was indistinguishable from a gate that never ran.
+func TestGateVerdictExitsOneFailedAndCouldNotRunExitsTwoRefused(t *testing.T) {
+	t.Parallel()
+
+	t.Run("a rule verdict is GATE FAILED at exit 1", func(t *testing.T) {
+		t.Parallel()
+		dir := gateStart(t)
+		base := strings.TrimSpace(gateGit(t, dir, "rev-parse", "HEAD"))
+		head := gateCommit(t, dir, map[string]string{
+			".sops.yaml": gateGoodSops(gateSeatKey, gateRecoveryKey, gateThirdKey),
+			"rowan.yaml": gateSealedFile(),
+		})
+		line, code := RunGate(GateInput{StoreDir: dir, Base: base, Head: head})
+		assert.Equal(t, 1, code, "a rule verdict must exit 1 (line=%q, code=%d)", line, code)
+		assert.True(t, strings.HasPrefix(line, "GATE FAILED"), "a rule verdict must lead with FAILED: %q", line)
+		assert.NotContains(t, line, "GATE REFUSE", "the verdict still prints the old word: %q", line)
+	})
+
+	t.Run("a gate that could not run is SECRETS GATE REFUSED at exit 2", func(t *testing.T) {
+		t.Parallel()
+		dir := gateStart(t)
+		base := strings.TrimSpace(gateGit(t, dir, "rev-parse", "HEAD"))
+		line, code := RunGate(GateInput{StoreDir: dir, Base: base, Head: "no-such-branch"})
+		assert.Equal(t, 2, code, "a ref that names no commit is could-not-run and must exit 2 (line=%q, code=%d)", line, code)
+		assert.True(t, strings.HasPrefix(line, "SECRETS GATE REFUSED"), "could-not-run must lead with REFUSED: %q", line)
+		assert.Contains(t, line, "run: nova-secrets gate -h", "could-not-run must name the next command: %q", line)
+	})
 }
 
 func TestGateRefusesAChangeToAnotherFile(t *testing.T) {
@@ -129,7 +163,7 @@ func TestGateRefusesAChangeToAnotherFile(t *testing.T) {
 		"notes.txt":  "a change outside the gate\n",
 	})
 	line, code := RunGate(GateInput{StoreDir: dir, Base: base, Head: head})
-	require.Equal(t, 2, code, "RunGate code = %d, want 2 (line=%q)", code, line)
-	require.Contains(t, line, "GATE REFUSE", "RunGate line = %q, want REFUSE naming notes.txt", line)
-	require.Contains(t, line, "notes.txt", "RunGate line = %q, want REFUSE naming notes.txt", line)
+	require.Equal(t, 1, code, "RunGate code = %d, want 1 (line=%q)", code, line)
+	require.Contains(t, line, "GATE FAILED", "RunGate line = %q, want FAILED naming notes.txt", line)
+	require.Contains(t, line, "notes.txt", "RunGate line = %q, want FAILED naming notes.txt", line)
 }

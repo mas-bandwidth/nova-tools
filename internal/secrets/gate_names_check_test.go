@@ -24,8 +24,8 @@ func TestGateRefusalNamesTheCheck(t *testing.T) {
 			"rowan.yaml": gateSealedFile() + "GH_TOKEN: sk-live-notencrypted\n",
 		})
 		line, code := RunGate(GateInput{StoreDir: dir, Base: base, Head: head})
-		require.Equal(t, 2, code, line)
-		assert.Contains(t, line, "GATE REFUSE rule=1 check=2 file=rowan.yaml:", line)
+		require.Equal(t, 1, code, line)
+		assert.Contains(t, line, "GATE FAILED rule=1 check=2 file=rowan.yaml:", line)
 	})
 
 	// Check 3: No other file changes. A stray file (not .sops.yaml, not README.md, not a seat file).
@@ -39,7 +39,7 @@ func TestGateRefusalNamesTheCheck(t *testing.T) {
 			"notes.txt":  "a stray file\n",
 		})
 		line, code := RunGate(GateInput{StoreDir: dir, Base: base, Head: head})
-		require.Equal(t, 2, code, line)
-		assert.Contains(t, line, "GATE REFUSE rule=0 check=3 file=notes.txt:", line)
+		require.Equal(t, 1, code, line)
+		assert.Contains(t, line, "GATE FAILED rule=0 check=3 file=notes.txt:", line)
 	})
 }

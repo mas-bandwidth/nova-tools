@@ -30,7 +30,7 @@ func TestGateRefusesARefShapedLikeAnOption(t *testing.T) {
 	dir := gateEvilStore(t)
 	// The honest call refuses the head: the witness that the store is a refusal to hide.
 	line, code := RunGate(GateInput{StoreDir: dir, Base: "HEAD~1", Head: "HEAD"})
-	require.Equal(t, 2, code, "the honest diff is not refused: code=%d %s", code, line)
+	require.Equal(t, 1, code, "the honest diff is not refused: code=%d %s", code, line)
 	require.Contains(t, line, "evil.sh", "the honest diff is not refused: code=%d %s", code, line)
 	for _, c := range []struct{ base, head, flag string }{
 		{"HEAD~1", "--diff-filter=U", "--head"},
@@ -73,7 +73,7 @@ func TestGateRefusesARefThatNamesNoCommit(t *testing.T) {
 	} {
 		line, code := RunGate(GateInput{StoreDir: dir, Base: c.base, Head: c.head})
 		if !assert.Equal(t, 2, code, "base=%q head=%q: code=%d %s; a ref that names no commit is a refusal", c.base, c.head, code, line) ||
-			!assert.True(t, strings.HasPrefix(line, "GATE REFUSE"), "base=%q head=%q: code=%d %s; a ref that names no commit is a refusal", c.base, c.head, code, line) {
+			!assert.True(t, strings.HasPrefix(line, "SECRETS GATE REFUSED"), "base=%q head=%q: code=%d %s; a ref that names no commit is a refusal", c.base, c.head, code, line) {
 			continue
 		}
 		assert.Contains(t, line, c.flag, "base=%q head=%q: the refusal does not name the flag: %s", c.base, c.head, line)
@@ -90,7 +90,7 @@ func TestGateJudgesTheCommitsTheRefsName(t *testing.T) {
 	gateGit(t, dir, "branch", "topic")
 	for _, head := range []string{"HEAD", "topic", sha} {
 		line, code := RunGate(GateInput{StoreDir: dir, Base: "HEAD~1", Head: head})
-		assert.Equal(t, 2, code, "head=%q: code=%d %s; want the refusal of evil.sh", head, code, line)
+		assert.Equal(t, 1, code, "head=%q: code=%d %s; want the refusal of evil.sh", head, code, line)
 		assert.Contains(t, line, "file=evil.sh", "head=%q: code=%d %s; want the refusal of evil.sh", head, code, line)
 	}
 	line, code := RunGate(GateInput{StoreDir: dir, Base: "HEAD", Head: "topic"})
