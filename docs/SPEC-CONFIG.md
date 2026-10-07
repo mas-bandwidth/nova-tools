@@ -16,7 +16,10 @@ So there are two stores with two jobs:
   every change to it. `nova-config` is its one writer.
 - **Redis is a copy.** `nova-config apply` writes the configuration into the
   keys the runtime tools read, through the runtime's own Redis Functions, and
-  removes what Postgres does not have. Lose Redis: run `nova-config apply`.
+  removes what Postgres does not have. Apply is automatic: `nova-config apply
+  --every <d>` follows the store into that copy, and `nova-config apply
+  install` runs the loop as this machine's service. The by-hand verb remains
+  for recovery. Lose Redis: run `nova-config apply`.
   The runtime tools read configuration from Redis and never write it.
 
 **History is not configuration.** Scores, receipts, ledgers, beats, copies,
@@ -555,7 +558,29 @@ global ids, so they rise across kinds and never repeat.
 
 ## Apply
 
-`nova-config apply [--kind <k>] [--check]` runs per kind, in kind order:
+Apply is automatic. `nova-config apply --every <d>` reads each kind's store
+revision and the Redis copy's applied revision and, when they differ, applies
+that kind the way one pass of `nova-config apply` does, then waits d and reads
+again. `nova-config apply install` uses 5s when `--every` is omitted. A kind
+whose revisions already match is left alone. One pass stamps the store's
+current revision, the whole gap in one compare-and-set, and does not replay
+each history id; a second pass of the same store writes nothing. An apply that
+fails leaves that kind's applied revision where it was and is reported once,
+until a later pass fails differently or succeeds.
+
+A gap prints `CONFIG GAP kind=<k> store=<n> applied=<n> age=<seconds>s`. A gap
+older than 60s is also a judgment line for the seat:
+`JUDGMENT kind=<k> store=<n> applied=<n> age=<seconds>s: the Redis copy is behind the store; run: nova-config apply`.
+
+`nova-config apply install [--every <d>] [--machine <m>]` writes the loop as
+this machine's service (a launchd agent, or a systemd user unit) and as the
+loop row `nova-config-apply`, so the dashboard shows it. Its last line is
+`APPLIED rev=<n>` when that row reached Redis, or
+`UNAPPLIED rev=<n>: <why>; run: nova-config apply` when the row is stored and
+the copy is not. `nova-config apply uninstall` removes the unit and that row.
+The by-hand verb remains for recovery. Lose Redis: run `nova-config apply`.
+
+`nova-config apply [--kind <k>] [--check]` runs one pass per kind, in kind order:
 machines (the ceilings), the fleet row (a friend with no beat is charged to
 its coordinator machine), friends, the sprint row, loops (each names a
 machine), routes:
@@ -696,6 +721,13 @@ CHECK ADD|SET|REMOVE kind=<k> name=<n> [changed=<f,g>]
 CONFIG CHECK kind=<k> add=<n> set=<n> remove=<n> rev=<r> applied=<redis rev>
 APPLY ADD|SET|REMOVE kind=<k> name=<n> [changed=<f,g>]
 CONFIG APPLY kind=<k> add=<n> set=<n> remove=<n> rev=<r> ms=<n>
+CONFIG GAP kind=<k> store=<n> applied=<n> age=<seconds>s          (apply --every, a kind whose revisions differ)
+JUDGMENT kind=<k> store=<n> applied=<n> age=<seconds>s: the Redis copy is behind the store; run: nova-config apply
+                                                                   (that gap older than 60s)
+APPLIED rev=<n>                                                    (apply install, the loop row reached Redis)
+UNAPPLIED rev=<n>: <why>; run: nova-config apply                  (apply install, or one pass of --every that failed)
+APPLY INSTALL OK unit=<path> written=<t> loaded=true loop=nova-config-apply every=<d>
+APPLY UNINSTALL OK unit=<path> removed=<t> loop=nova-config-apply
 MIGRATION version=<v> file=<f> lines=<n>                 (migrate --print)
 MIGRATION version=<v> file=<f> lines=<n> state=applied|pending|missing   (migrate --dry-run: the ledger; missing is below the greatest recorded and not in the ledger, which migrate will not apply)
 CONFIG MIGRATE print=<n> pg=-
