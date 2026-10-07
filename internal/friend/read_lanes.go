@@ -435,7 +435,7 @@ func (l *loop) releaseRead(r readResult, finding []byte, now time.Time) {
 			var body []byte
 			body, err = os.ReadFile(filepath.Join(r.dir, name))
 			if os.IsNotExist(err) {
-				err = nil // a failed stage may have produced only its owned receipt
+				err = nil // ignored: a failed stage may have produced only its owned receipt
 				continue
 			}
 			if err == nil {
