@@ -110,7 +110,7 @@ func ReadProvider(kind, name, path string, _ *Rules) *Source {
 	text := strings.ReplaceAll(string(raw), "\r\n", "\n")
 
 	// A `grok usage` export is JSON, not CSV: the xAI parser reads both shapes, chosen by
-	// the first non-space byte. The JSON shape is the documented `grok usage` object
+	// the first non-whitespace byte. The JSON shape is the documented `grok usage` object
 	// (a sessionId and a turns array) and folds to the same rows the CSV shape produces.
 	if trimmed := strings.TrimSpace(text); trimmed != "" && (trimmed[0] == '{' || trimmed[0] == '[') {
 		return readXaiJSON(kind, path, text, s)
