@@ -51,10 +51,13 @@ var AllOrder = []string{Work, Readers, Merge, Friends, Fleet}
 // as text, summed; ok and failed (hidden) count her jobs done ok and done
 // failed, and done and ok% are the table's formulas over them, the footer
 // pooling ok% over the friends; status is text with no fold, and so is active, how long ago
-// her session last wrote a file (her beat's Active; "-" when none was reported). The rows are the
+// her session last wrote a file (her beat's Active; "-" when none was reported).
+// tokens is the sum of tokens (in+out+cache_read+cache_write) from all her landed
+// cards' usage records (subscription friends show token counts; api-billed friends
+// show dollars to the cent, rounded up; TODO: switch on billing field). The rows are the
 // friends'; where draws them from store.FriendRows.
 func FriendsDef() ntable.Table {
-	cols, err := ntable.ParseColumns("ready,working,width:text:sum,done:sum(ok+failed),okpct:pct(ok/ok+failed):pooled:ok%,status:text,active:text,ok,failed")
+	cols, err := ntable.ParseColumns("ready,working,width:text:sum,done:sum(ok+failed),okpct:pct(ok/ok+failed):pooled:ok%,status:text,active:text,tokens:text:sum,ok,failed")
 	if err != nil {
 		panic(fmt.Sprintf("sprint table %s: %v", Friends, err))
 	}

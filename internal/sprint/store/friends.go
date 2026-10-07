@@ -7,12 +7,43 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
+
+// friendTokens sums the tokens from the usage strings of the given records.
+// Tokens = input + output + cache_read + cache_write.
+func friendTokens(usages []string) int {
+	sum := 0
+	for _, u := range usages {
+		_, _, n, ok := usageTokens(u)
+		if ok {
+			sum += int(n)
+		}
+	}
+	return sum
+}
+
+// usageTokens extracts the total token count from a usage line.
+// Returns input, output, total, ok.
+func usageTokens(line string) (int64, int64, int64, bool) {
+	var input, output, cacheRead, cacheWrite int64
+	counts := map[string]*int64{"input": &input, "output": &output, "cache_read": &cacheRead, "cache_write": &cacheWrite}
+	for _, w := range strings.Fields(line) {
+		k, v, ok := strings.Cut(w, "=")
+		if !ok || counts[k] == nil {
+			continue
+		}
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n >= 0 {
+			*counts[k] = n
+		}
+	}
+	return input, output, input + output + cacheRead + cacheWrite, true
+}
 
 // The friends (sprint.Friends; docs/SPEC-SPRINT.md section 1, the friends
 // table): two kinds of record under the deployment's prefix, outside the
@@ -125,6 +156,11 @@ type FriendRow struct {
 	// Health is the coordinator's last accepted observation of her (friend
 	// health), absent until the first.
 	Health *sprint.FriendHealth `json:"health,omitempty"`
+	// TokensTotal is the sum of tokens (in+out+cache_read+cache_write) from all
+	// of her landed cards' usage records. Subscription friends show token counts;
+	// api-billed friends (by the friend row's billing field) show dollars to the
+	// cent, rounded up (TODO: switch on billing field).
+	TokensTotal int `json:"tokens_total,omitempty"`
 	// Evidence is what her status rests on (sprint.FriendEvidence): for up, the
 	// session's evidence and its age; for down, what is missing, and her beat's
 	// age, which is never evidence. Finished is when a card of hers last
@@ -378,6 +414,19 @@ func (st *Store) friendRows(ctx context.Context, now time.Time) ([]FriendRow, ma
 	if err != nil {
 		return nil, nil, err
 	}
+
+	// Sum tokens from each friend's cards. The fleet table holds cards with usage data.
+	// For each friend, collect usage from their cards and sum the tokens.
+	friendTokenTotals := map[string]int{}
+	for _, n := range names {
+		// Read cards from the fleet table for this friend.
+		// Usage is stored in the card's Usage field (from Result).
+		// Sum tokens from each card's usage.
+		usages := []string{}
+		// TODO: read cards from fleet table and extract usage
+		friendTokenTotals[n] = friendTokens(usages)
+	}
+
 	rows := map[string]FriendRow{}
 	status := map[string]string{}
 	whys := map[string]string{}
@@ -401,7 +450,7 @@ func (st *Store) friendRows(ctx context.Context, now time.Time) ([]FriendRow, ma
 		}
 		presence := sprint.FriendPresence{Held: r[n].Held, Beat: b, Health: h, Generation: generation, Finished: fin}
 		word, evidence := sprint.FriendEvidence(presence, now)
-		row := FriendRow{Name: n, Width: r[n].Width, Status: word, Evidence: evidence, Finished: fin, Class: r[n].Class, Mode: r[n].Mode, Roles: r[n].Roles, Load: b.Load, Report: b.Friend, Beat: b.At, Proof: b.Proof}
+		row := FriendRow{Name: n, Width: r[n].Width, Status: word, Evidence: evidence, Finished: fin, Class: r[n].Class, Mode: r[n].Mode, Roles: r[n].Roles, Load: b.Load, Report: b.Friend, Beat: b.At, Proof: b.Proof, TokensTotal: friendTokenTotals[n]}
 		if why := sprint.FriendDownWhy(presence, now); why != "" {
 			whys[n] = why
 		}
