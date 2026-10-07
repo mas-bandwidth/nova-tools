@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
 )
@@ -416,4 +417,63 @@ func MoneyText(usd string) string {
 		return "-"
 	}
 	return cardcost.Cents(r)
+}
+
+// hourSpend is what each route and each friend spent in one clock hour (docs/SPEC-SPRINT.md,
+// spend-circuit-breakerb-bb.w2): the sum, over the consumer records the primaries carry that
+// ended in [from, to), of each record's actual cost where reported, else its predicted one,
+// exact, by the route it ran on and, for a friend's take, by her. A record with neither
+// figure (a subscription run, an unpriced one) adds nothing.
+type hourSpend struct {
+	from, to      time.Time
+	route, friend map[string]*big.Rat
+}
+
+// clockHour is the clock hour holding now, in UTC: [from, to).
+func clockHour(now time.Time) (from, to time.Time) {
+	from = now.UTC().Truncate(time.Hour)
+	return from, from.Add(time.Hour)
+}
+
+// hourSpendOf is the spend of the clock hour holding s.Now, summed once from the work
+// table's cost records (the primary alone holds a card's cost, CardCostOf).
+func hourSpendOf(s *Snapshot) *hourSpend {
+	h := &hourSpend{route: map[string]*big.Rat{}, friend: map[string]*big.Rat{}}
+	h.from, h.to = clockHour(s.Now)
+	add := func(m map[string]*big.Rat, k string, v *big.Rat) {
+		if m[k] == nil {
+			m[k] = new(big.Rat)
+		}
+		m[k].Add(m[k], v)
+	}
+	for _, pr := range s.Work.Cards() {
+		for k, line := range pr.Fields {
+			key, ok := strings.CutPrefix(k, FieldCostRecord)
+			if !ok {
+				continue
+			}
+			c := parseConsumer(key, line)
+			at, err := time.Parse(time.RFC3339, c.At)
+			if err != nil || at.Before(h.from) || !at.Before(h.to) {
+				continue
+			}
+			usd, err := cardcost.Decimal(c.Usage.Actual)
+			if err != nil {
+				if usd, err = cardcost.Decimal(c.Usage.Predicted); err != nil {
+					continue
+				}
+			}
+			if r := cmp.Or(c.Route, c.Usage.Route); r != "" && r != RoutePin {
+				add(h.route, r, usd)
+			}
+			// a work consumer's Who is the member row (a friend's row names her); a read
+			// consumer's Who is the reader's name, which is the friend's
+			if f, ok := FriendOfRow(c.Who); ok {
+				add(h.friend, f, usd)
+			} else if c.Kind == "read" && c.Who != "" {
+				add(h.friend, c.Who, usd)
+			}
+		}
+	}
+	return h
 }
