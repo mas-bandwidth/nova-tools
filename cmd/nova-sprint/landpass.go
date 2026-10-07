@@ -788,7 +788,7 @@ func collidedWith(pushed []*landJob, collide []string, shrank bool) string {
 			}
 		}
 		if len(shared) > 0 {
-			parts = append(parts, "stream "+p.stream+", "+idSpan(p.ids)+", on "+strings.Join(shared, ","))
+			parts = append(parts, "stream "+p.stream+", "+idSpan(p.merged)+", on "+strings.Join(shared, ","))
 		}
 	}
 	if len(parts) == 0 && len(collide) > 0 {
