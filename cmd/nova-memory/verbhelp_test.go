@@ -198,3 +198,20 @@ func flat(t *testing.T, text string) string {
 	t.Helper()
 	return strings.Join(strings.Fields(text), " ")
 }
+
+// TestEvalHelpShowsGoldFileFormatAndTwoLineExample pins that eval's help names
+// the gold file format and shows a two-line example, so a caller does not have
+// to learn the format from a parse refusal.
+func TestEvalHelpShowsGoldFileFormatAndTwoLineExample(t *testing.T) {
+	t.Parallel()
+
+	exit, stdout, stderr := runCLI(t, "", "eval", "-h")
+	require.Equalf(t, 0, exit, "eval -h must exit 0: stderr = %q", stderr)
+	assert.Contains(t, stdout, "gold file format: query<TAB>expected[,expected]")
+	assert.Contains(t, stdout, "how often should the lantern glazing be washed\tnotes/lantern.md")
+	assert.Contains(t, stdout, "washing the glazing before an onshore gale\tnotes/lantern.md,log/1974-03-11.md")
+
+	exit, stdoutHelp, stderr := runCLI(t, "", "help", "eval")
+	require.Equalf(t, 0, exit, "help eval must exit 0: stderr = %q", stderr)
+	assert.Equal(t, stdout, stdoutHelp, "`help eval` and `eval -h` must match")
+}
