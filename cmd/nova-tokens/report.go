@@ -164,32 +164,41 @@ func runReportStore(c *tool.Call) *tool.Out {
 			line += " " + name + "=" + cell
 			kv = append(kv, name, cell)
 		}
-<<<<<<< HEAD
 		if asJSON {
 			o.Item("group", kv...)
 		} else {
 			fmt.Fprintln(c.Stdout, line)
-=======
-		fmt.Fprintln(s.out(), line)
-		s.item("group", kv...)
+		}
 	}
-	if max != 0 && len(totals) > max {
-		fmt.Fprintf(s.out(), "REPORT MORE shown=%d of=%d; raise --max (0 = all)\n", max, len(totals))
-		s.o.More = append(s.o.More, tool.More{Kind: "group", Shown: max, Total: len(totals), Remedy: tool.MaxRemedy})
+	if maxRows != 0 && len(totals) > maxRows {
+		if asJSON {
+			o.More = append(o.More, tool.More{Kind: "group", Shown: maxRows, Total: len(totals), Remedy: tool.MaxRemedy})
+		} else {
+			fmt.Fprintf(c.Stdout, "REPORT MORE shown=%d of=%d; raise --max (0 = all)\n", maxRows, len(totals))
+		}
 	}
-	s.fact("month", month)
-	s.fact("source", "redis")
 	if indexed == 0 {
-		fmt.Fprintf(s.out(), "REPORT FAILED month=%s source=redis indexed=0\n", oneline.Field(month))
-		s.fact("indexed", 0)
-		return s.done(1, 0)
+		if asJSON {
+			o = tool.Fail()
+			o.Fact("month", month)
+			o.Fact("source", "redis")
+			o.Fact("indexed", 0)
+			return o
+		}
+		fmt.Fprintf(c.Stdout, "REPORT FAILED month=%s source=redis indexed=0\n", oneline.Field(month))
+		return tool.Exit(1)
 	}
-	fmt.Fprintf(s.out(), "REPORT OK month=%s source=redis groups=%d rows=%d indexed=%d missing=%d\n", oneline.Field(month), len(totals), rows, indexed, missing)
-	s.fact("groups", len(totals))
-	s.fact("rows", rows)
-	s.fact("indexed", indexed)
-	s.fact("missing", missing)
-	return s.done(0, 0)
+	if asJSON {
+		o.Fact("month", month)
+		o.Fact("source", "redis")
+		o.Fact("groups", len(totals))
+		o.Fact("rows", rows)
+		o.Fact("indexed", indexed)
+		o.Fact("missing", missing)
+		return o
+	}
+	fmt.Fprintf(c.Stdout, "REPORT OK month=%s source=redis groups=%d rows=%d indexed=%d missing=%d\n", oneline.Field(month), len(totals), rows, indexed, missing)
+	return tool.Exit(0)
 }
 
 // avgRate is a model-day's dollars per million tokens (usdMicro / tokens), for sorting the
@@ -508,26 +517,18 @@ func avgRate(usdMicro, tokens int64, priced bool) float64 {
 	return float64(usdMicro) / float64(tokens)
 }
 
-<<<<<<< HEAD
-func usdCell(micro int64, priced bool) string {
-=======
 // usdCell is a cost as a field: the dollars, or - when no source reported one. The cost
 // type carries that same value into --json as null for the dash.
 func usdCell(micro int64, priced bool) cost {
->>>>>>> origin/sprint/mechanical-2026-10-02
 	if !priced {
 		return cost(tokens.Dash)
 	}
 	return cost(tokens.Usd(micro))
 }
 
-<<<<<<< HEAD
-func usdPerMtokCell(micro, n int64, priced bool) string {
-=======
 // usdPerMtokCell is the blended rate as a field: - when no source reported a cost, or the
 // model had no tokens to divide by. The cost type makes that same dash null in --json.
 func usdPerMtokCell(micro, n int64, priced bool) cost {
->>>>>>> origin/sprint/mechanical-2026-10-02
 	if !priced {
 		return cost(tokens.Dash)
 	}
