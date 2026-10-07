@@ -3940,6 +3940,40 @@ marked, naming the stream, the mark and the flag, `nova-sprint stream set <s> --
 (the protected branches, above). `TestAddAndLandRefuseDevAndMainOutsideAPromotionStream`
 covers add, the mark and land.
 
+#### land-verify-landed-ancestry-rb-b.w1
+
+`verify-landed [--stream <s>...] [--repo-dir <clone>] [--base <branch>]` is a read: for
+each landed primary (a sentinel has no head and is not checked) it fetches the card's base
+(the brief's `BASE:` line, else `--base`) from origin in land's clone (`--repo-dir`, else the
+clone per repository) and asks git alone whether the card's recorded head is an ancestor of
+`origin/<base>` at its tip; the store records no merge commit of a landing, and a landing
+merges the head, so the head is what is checked. Each card that is not prints one line,
+`LANDED-MISSING <id> stream=<s> head=<h> base=<b> tip=<t>[ repo=<r>]`; a card it cannot
+check (no head, no base, no repository, a fetch that failed) prints `LANDED-UNCHECKED <id> stream=<s> reason=<why>`; the last line is `VERIFY-LANDED checked=<n> missing=<m> unchecked=<u>`. Exit 0 when every landed record is on its branch, 1 when one is missing, 2
+when one could not be checked. It writes nothing: landed stays final (section 3), and a
+record found missing is the coordinator's to raise; the verb that puts it back (`reopen`)
+waits on a lifecycle move landed -> merging that section 3 does not have (tests
+TestVerifyLandedListsALandedRecordMissingFromTheBase).
+
+### land-record-unreported-push-bc.w2
+
+The reverse of a false landed record is work on the branch that the store does not record
+landed: a pass cut short after its push, so the push was never reported, or work landed
+outside the deal by a pull request. `verify-landed` also checks each card in review or
+merging that has a head, against its base as above, and prints one line for each whose head
+is already an ancestor of `origin/<base>` at its tip: `LANDED-UNRECORDED <id> stream=<s> state=<review|merging> head=<h> base=<b> tip=<t>[ repo=<r>]; run: nova-sprint landed <id> --sha <t> --reason <text>`, then `VERIFY-UNRECORDED checked=<n> unrecorded=<u> unchecked=<k>` before its `VERIFY-LANDED` line. An unrecorded card exits 1 as a missing one
+does. A dropped card is kept off the table, and the store keeps no list of kept records, so
+it is not listed. `landed <id>... --sha <commit> --reason <text> [--repo-dir <clone>] [--base <branch>]` is the coordinator's record of it. Git alone, and no model, decides: after
+fetching the base, the commit must be an ancestor of `origin/<base>` at its tip, and each
+card's head an ancestor of the commit. Otherwise the verb is refused (exit 1), naming for
+each card what git found, and nothing is written. The step (`sprint.RecordLanded`) lands the
+cards as `merge --landed` does (section 8), all or none, merging cards of one stream only.
+Each merge card's note reads `recorded landed at <commit>: <reason>`. A card in review is
+refused naming accept, because the lifecycle (section 3) has no move review -> landed. A
+dropped card is refused and stays dropped, because the lifecycle has no move from off the
+table. Recording those two waits on moves section 3 does not have (tests
+TestLandedRecordsAPushFoundOnTheBranch).
+
 ## 8. Notifications
 
 One stream of notifications, written by the same step as the move that caused
