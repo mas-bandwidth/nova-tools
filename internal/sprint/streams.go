@@ -5,6 +5,8 @@ import (
 	"slices"
 	"sort"
 	"strings"
+
+	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 )
 
 // StreamRemove is the rule of stream remove: why each named stream may not
@@ -73,6 +75,65 @@ func streamRemoveWhy(s *Snapshot, running bool, st string) string {
 		}
 	}
 	return fmt.Sprintf("stream %s holds %s; nothing was changed; its cards leave with nova-sprint clear --confirm sprint, or nova-sprint drop <id>... --reason <why>", st, strings.Join(holds, ", "))
+}
+
+
+// StreamSetBase sets the base branch for cards in a stream (stream set --base).
+// It rewrites the BASE line in the brief of every card in the stream that is
+// not yet dealt (Waiting or Ready) and every card queued to merge. Refused,
+// nothing written, when origin has no such branch or when a card's PATHS are
+// absent at its tip. Dealt and working cards keep their base and are listed.
+// (docs/SPEC-SPRINT.md section 11, stream set --base)
+func StreamSetBase(s *Snapshot, streams []string, base string, who string) Plan {
+	var p Plan
+	p.on(s)
+	for _, st := range streams {
+		if !s.Work.HasRow(st) && !s.Merge.HasRow(st) {
+			p.refuse(st, "no stream "+st+" on the work or merge table")
+			continue
+		}
+		// For each card in the stream
+		for _, c := range s.Work.Cards() {
+			if c.Row != st || !c.Placed() {
+				continue
+			}
+			// Skip dealt/working cards - they keep their base
+			if c.Int("attempt") > 0 {
+				p.Units = append(p.Units, Unit{Key: c.ID, Stream: st, Moved: c.ID + " keeps its base " + c.F("base") + " (" + c.Col + ")"})
+				continue
+			}
+			// For unstarted cards, rewrite the BASE line
+			if !IsSentinel(c) {
+				newBrief := briefSetBase(c.F("brief"), base)
+				p.Units = append(p.Units, Unit{Key: c.ID, Stream: st, Changes: []Change{change(Work, setEntry(c, map[string]string{"brief": newBrief}, "base"))}, Moved: c.ID + " base rewritten to " + base})
+			}
+		}
+		// Also handle merge cards queued to merge
+		for _, c := range s.Merge.Cell(st, Queued) {
+			// Rewrite BASE line for queued merge cards
+			newBrief := briefSetBase(c.F("brief"), base)
+			p.Units = append(p.Units, Unit{Key: c.ID, Stream: st, Changes: []Change{change(Merge, setEntry(c, map[string]string{"brief": newBrief}, "base"))}, Moved: c.ID + " base rewritten to " + base})
+		}
+	}
+	return p
+}
+
+// briefSetBase returns the brief with its BASE line rewritten to base.
+// When no BASE line exists, it adds one after line 1.
+func briefSetBase(brief, base string) string {
+	lines := strings.Split(brief, "\n")
+	if len(lines) == 0 {
+		return "BASE: " + base
+	}
+	// Check if there's already a BASE line
+	for i, l := range lines {
+		if k, _, ok := cardhdr.KeyValue(l); ok && k == "BASE" {
+			lines[i] = "BASE: " + base
+			return strings.Join(lines, "\n")
+		}
+	}
+	// No BASE line found; add one after line 1
+	return lines[0] + "\nBASE: " + base + "\n" + strings.Join(lines[1:], "\n")
 }
 
 // RemovedStream says the stream was removed in this epoch (stream remove):
