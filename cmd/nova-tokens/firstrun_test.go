@@ -165,10 +165,6 @@ func TestTheTranscriptIsWhatTheToolPrints(t *testing.T) {
 	normalizePath := func(line string) string {
 		// Replace fixture path (with trailing slash) with empty string
 		line = strings.ReplaceAll(line, fixture+"/", "")
-		// Remove ./ from paths
-		for strings.Contains(line, "./") {
-			line = strings.Replace(line, "./", "", 1)
-		}
 		return line
 	}
 	for _, line := range lines {
@@ -250,14 +246,10 @@ func TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine(t *testing.T) {
 // runDocumented returns a runner that converts relative fixture paths to absolute paths
 func runDocumented(fixture string) onboarding.Runner {
 	// normalizePath strips the fixture directory prefix from paths in output lines
+	// It replaces absolute paths like /tmp/.../fixture/bus/from-emma with bus/from-emma
 	normalizePath := func(line string) string {
 		// Replace fixture path (with trailing slash) with empty string
-		// This strips the absolute path prefix and leaves relative paths
 		line = strings.ReplaceAll(line, fixture+"/", "")
-		// Remove leading ./ from paths (may appear multiple times)
-		for strings.Contains(line, "./") {
-			line = strings.Replace(line, "./", "", 1)
-		}
 		return line
 	}
 	return func(s onboarding.Step) (onboarding.Result, error) {
