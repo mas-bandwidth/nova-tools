@@ -116,3 +116,54 @@ func TestAnUnconfirmedLaneWithTrackedWorkIsNotPruned(t *testing.T) {
 		assert.Equal(t, "uncommitted work\n", mustRead(t, path))
 	}
 }
+
+// A report for an alias is not authority to remove the live checkout its
+// symlink or copied .git pointer names. The genuine finished checkout still goes.
+func TestAFinishedAliasCannotRemoveALiveJob(t *testing.T) {
+	t.Parallel()
+	g := testkit.Git(t, 1)
+	g.Commit(g.Clones[0], map[string]string{"README.md": "work\n"})
+	env := stageEnv(t)
+	gitIn(t, env, g.Clones[0], "push", "-q", g.Remote, "HEAD:refs/heads/sprint/mechanical")
+	head := gitIn(t, env, g.Clones[0], "rev-parse", "HEAD")
+	root := t.TempDir()
+	stager := &Stager{Dir: root, Env: env, URL: func(string) string { return g.Remote }}
+	keep, ok := PacketOf(stagedCard("keep.w1", "working", "mas-bandwidth/nova-tools", "sprint/mechanical"))
+	require.True(t, ok)
+	done, ok := PacketOf(stagedCard("done.w1", "working", "mas-bandwidth/nova-tools", "sprint/mechanical"))
+	require.True(t, ok)
+	for _, p := range []Packet{keep, done} {
+		_, err := stager.Stage(context.Background(), p)
+		require.NoError(t, err)
+	}
+	for _, kind := range []string{"symlink", "pointer", "unmarked"} {
+		alias := kind + ".w1~15"
+		dir := JobDir(root, alias)
+		require.NoError(t, os.MkdirAll(dir, 0755))
+		if kind == "symlink" {
+			require.NoError(t, os.Symlink(filepath.Join(JobDir(root, keep.Job), "repo"), filepath.Join(dir, "repo")))
+		} else if kind == "unmarked" {
+			gitIn(t, env, dir, "clone", "--quiet", "--branch", "sprint/mechanical", g.Remote, filepath.Join(dir, "repo"))
+		} else {
+			require.NoError(t, os.MkdirAll(filepath.Join(dir, "repo"), 0755))
+			raw, err := os.ReadFile(filepath.Join(JobDir(root, keep.Job), "repo", ".git"))
+			require.NoError(t, err)
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "repo", ".git"), raw, 0644))
+		}
+		report := filepath.Join(root, "outbox", alias, "REPORT.md")
+		require.NoError(t, os.MkdirAll(filepath.Dir(report), 0755))
+		require.NoError(t, os.WriteFile(report, []byte("Verdict: LAND\nHead: "+head+"\n"), 0644))
+	}
+	report := filepath.Join(root, "outbox", done.Job, "REPORT.md")
+	require.NoError(t, os.MkdirAll(filepath.Dir(report), 0755))
+	require.NoError(t, os.WriteFile(report, []byte("Verdict: LAND\nHead: "+head+"\n"), 0644))
+	removed, err := stager.Prune(context.Background(), map[string]bool{keep.Job: true}, FinishedJobsKept)
+	require.NoError(t, err)
+	assert.Equal(t, []string{done.Job}, removed)
+	assert.FileExists(t, filepath.Join(JobDir(root, keep.Job), "repo", "README.md"))
+	assert.NoDirExists(t, JobDir(root, done.Job))
+	for _, kind := range []string{"symlink", "pointer", "unmarked"} {
+		assert.Error(t, stager.Release(context.Background(), kind+".w1~15"))
+		assert.DirExists(t, JobDir(root, kind+".w1~15"))
+	}
+}

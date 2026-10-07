@@ -481,6 +481,7 @@ var (
 	errCheckoutDirty   = errors.New("its checkout holds work origin does not")
 	errMirrorHeld      = errors.New("its mirror is held")
 	errJobGone         = errors.New("its job directory is already gone")
+	errScratchForeign  = errors.New("its checkout is not an owned scratch directory")
 )
 
 // scratch is one finished job directory the cleanup may remove.
@@ -608,6 +609,7 @@ const (
 	scratchSkip = iota
 	scratchConfirmed
 	scratchWorktree
+	scratchForeign
 )
 
 // oneScratch is job's directory when its report names a head origin holds and the
@@ -622,6 +624,8 @@ func (s *Stager) oneScratch(ctx context.Context, job string) (scratch, error) {
 		return f, nil
 	case scratchWorktree:
 		return scratch{}, errHeadUnconfirmed
+	case scratchForeign:
+		return scratch{}, errScratchForeign
 	default:
 		if f.confirmed {
 			return scratch{}, errCheckoutDirty
@@ -642,6 +646,9 @@ func (s *Stager) classify(ctx context.Context, job string) (scratch, int, error)
 		at = fi.ModTime()
 	}
 	f := scratch{job: job, repo: repo, mirror: mirror, at: at, confirmed: onOrigin, worktree: wt}
+	if !s.ownedScratch(job, checkout, wt) {
+		return f, scratchForeign, nil
+	}
 	if onOrigin {
 		ok, err := s.checkoutReleasable(ctx, checkout, head, wt)
 		if err != nil {
@@ -667,9 +674,40 @@ func (s *Stager) classify(ctx context.Context, job string) (scratch, int, error)
 	return f, scratchSkip, nil
 }
 
+// ownedScratch validates both path boundaries before Git can remove a worktree.
+// Only a mirror's reciprocal worktree or a clone carrying the stager's job
+// contract is scratch here; an alias or an unmarked imported clone stays.
+func (s *Stager) ownedScratch(job, checkout string, worktree bool) bool {
+	if _, err := safepath.ResolvedUnder(JobDir(s.Dir, job), s.Dir); err != nil {
+		return false
+	}
+	if _, err := safepath.ResolvedUnder(checkout, JobDir(s.Dir, job)); err != nil {
+		return false
+	}
+	if worktree {
+		_, _, ok := s.worktreeOf(checkout)
+		return ok
+	}
+	fi, err := os.Lstat(filepath.Join(checkout, ".git"))
+	if err != nil || !fi.IsDir() {
+		return false
+	}
+	contract := filepath.Join(JobDir(s.Dir, job), JobFile)
+	fi, err = os.Lstat(contract)
+	if err != nil || !fi.Mode().IsRegular() {
+		return false
+	}
+	raw, err := os.ReadFile(contract)
+	return err == nil && strings.HasPrefix(string(raw), "# JOB: work ") &&
+		strings.Contains(string(raw), "The staged checkout: "+checkout+" (")
+}
+
 // removeScratch removes one finished job: a worktree under its mirror's lock, or a
 // clone by the job directory alone. The branch in the mirror is left.
 func (s *Stager) removeScratch(ctx context.Context, f scratch) error {
+	if !s.ownedScratch(f.job, filepath.Join(JobDir(s.Dir, f.job), "repo"), f.worktree) {
+		return errScratchForeign
+	}
 	if f.worktree {
 		lock := s.repoLock(f.repo)
 		if !lock.TryLock() {
@@ -778,6 +816,13 @@ func (s *Stager) checkoutReleasable(ctx context.Context, checkout, head string, 
 // worktreeOf is the repository (owner/name) and the mirror whose worktree checkout is: its
 // .git a file naming a worktree under one of her mirrors; false for anything else.
 func (s *Stager) worktreeOf(checkout string) (repo, mirror string, ok bool) {
+	if _, err := safepath.ResolvedUnder(checkout, s.Dir); err != nil {
+		return "", "", false
+	}
+	fi, err := os.Lstat(filepath.Join(checkout, ".git"))
+	if err != nil || !fi.Mode().IsRegular() {
+		return "", "", false
+	}
 	raw, err := os.ReadFile(filepath.Join(checkout, ".git"))
 	if err != nil {
 		return "", "", false
@@ -799,6 +844,18 @@ func (s *Stager) worktreeOf(checkout string) (repo, mirror string, ok bool) {
 	}
 	parts := strings.Split(filepath.ToSlash(rel), "/")
 	if len(parts) != 4 || parts[3] == "" || parts[2] != "worktrees" || !strings.HasSuffix(parts[1], ".git") {
+		return "", "", false
+	}
+	linked, err := os.ReadFile(filepath.Join(gitdir, "gitdir"))
+	if err != nil {
+		return "", "", false
+	}
+	dotGit, err := filepath.Abs(filepath.Join(checkout, ".git"))
+	if err != nil {
+		return "", "", false
+	}
+	dotGit, err = filepath.EvalSymlinks(dotGit)
+	if err != nil || filepath.Clean(strings.TrimSpace(string(linked))) != dotGit {
 		return "", "", false
 	}
 	repo = parts[0] + "/" + strings.TrimSuffix(parts[1], ".git")

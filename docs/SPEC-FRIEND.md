@@ -1431,6 +1431,9 @@ the head when a remote-tracking ref under `refs/remotes/origin/` in the job's gi
 (the mirror, for a worktree) names that sha. The checkout goes only when it is clean: no
 tracked change and no stash. A worktree's other commits stay on its branch in the mirror; a
 clone goes only when `HEAD` is that same sha, because a clone's commits live nowhere else.
+Before Git removes a worktree, both job and checkout resolve inside their owned boundaries;
+a symlink and a `.git` pointer to another checkout are refused. The mirror's reciprocal
+`gitdir` must name this checkout. Unmarked imported clones are retained.
 `safepath.RemoveUnder` removes the path, and only a path strictly under the job directory or,
 for the worktree, `git worktree remove` on that checkout. A job with a report is not staged
 again. A lane killed before that end is swept by the next prune: a job that is not live (not
@@ -1466,7 +1469,8 @@ jobs, cap 1, one a pass, `MCJobWorktrees`: 33,344 distinct states, no error;
 that grain: `tla/DeliveryLane.tla` (TLC on a Linux bench, one job, `MCDeliveryLane`: 13 distinct
 states, no error; `FinishedLaneLeavesNoJobDirectory`, `NoLaneLosesItsJob`; the reversed witness
 `MCDeliveryLaneBrokenKeepsJob` breaks `FinishedLaneLeavesNoJobDirectory`, 10 distinct states).
-`tla/Delivery.tla` is the present, a different machine. A clone whose report does not name a head origin holds is left:
+`tla/Delivery.tla` is the present, a different machine. A clone without the stager's `JOB.md` contract naming that checkout is left, as is a clone
+whose report does not name a head origin holds:
 removing it would drop commits that exist only there.
 
 A reader lane removes its checkout `reads/<id>/repo` after the verdict is recorded, and, when
