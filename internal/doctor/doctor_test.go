@@ -148,14 +148,14 @@ type fakeEnv struct {
 func (f fakeEnv) Getenv(k string) string { return f.env[k] }
 func (f fakeEnv) Now() time.Time         { return f.clock }
 func (f fakeEnv) ReadFile(p string) ([]byte, error) {
-	if f.root == "" {
-		return nil, fs.ErrNotExist
+	if f.root == "" || filepath.IsAbs(p) {
+		return os.ReadFile(p)
 	}
 	return os.ReadFile(filepath.Join(f.root, p))
 }
 func (f fakeEnv) ReadDir(p string) ([]fs.DirEntry, error) {
-	if f.root == "" {
-		return nil, fs.ErrNotExist
+	if f.root == "" || filepath.IsAbs(p) {
+		return os.ReadDir(p)
 	}
 	return os.ReadDir(filepath.Join(f.root, p))
 }
