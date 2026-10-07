@@ -732,7 +732,7 @@ that fails is owed again after `RecheckEvery`, carrying the same note.
 
 When an outbox report's card has left her row, the daemon refuses its finish and names the
 current holder from the server's existing `GET /api/view/cards` document (`Daemon.Holders`,
-`ParseHolders`): one bounded view for every old report in that outbox pass. An unavailable or
+the command's holder-view parser): one bounded view for every old report in that outbox pass. An unavailable or
 malformed view keeps the explicit unknown-holder remedy and says the error; it never guesses
 from an old running list. The production command wires this source through its injectable
 world (`TestRunNamesTheCurrentHolderWhenItRefusesAnOldReport`).

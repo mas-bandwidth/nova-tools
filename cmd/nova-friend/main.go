@@ -14,6 +14,7 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -217,7 +218,7 @@ func sprintHolders(ctx context.Context, server string) (map[string]string, error
 	if err != nil {
 		return nil, err
 	}
-	return friend.ParseHolders(raw)
+	return parseHolders(raw)
 }
 
 func realWorld() world {
@@ -2292,4 +2293,35 @@ func (w world) host(c *tool.Call) *tool.Out {
 		return tool.Refuse("the session " + res.Session + " runs, and its state could not be saved: " + err.Error())
 	}
 	return tool.Done().Fact("session", res.Session).Fact("dir", dir).Fact("attach", tool.Text(res.Attach))
+}
+
+// parseHolders reads the server's view cards document, schema 1. Empty holders
+// mean no working fleet row holds the card; malformed or mismatched documents
+// never supply an ownership name.
+func parseHolders(out string) (map[string]string, error) {
+	var v struct {
+		View   string `json:"view"`
+		Schema int    `json:"schema"`
+		Cards  []struct {
+			ID     string `json:"id"`
+			Holder string `json:"holder"`
+		} `json:"cards"`
+	}
+	if err := json.Unmarshal([]byte(out), &v); err != nil {
+		return nil, errors.New("card holders: the view is not valid JSON")
+	}
+	if v.View != "cards" || v.Schema != 1 {
+		return nil, errors.New("card holders: expected view cards schema 1")
+	}
+	holders, seen := map[string]string{}, map[string]bool{}
+	for _, c := range v.Cards {
+		if c.ID == "" || seen[c.ID] {
+			return nil, errors.New("card holders: empty or duplicate card id")
+		}
+		seen[c.ID] = true
+		if c.Holder != "" {
+			holders[c.ID] = c.Holder
+		}
+	}
+	return holders, nil
 }

@@ -49,3 +49,31 @@ func TestRunNamesTheCurrentHolderWhenItRefusesAnOldReport(t *testing.T) {
 	assert.Zero(t, finished, "no finish is sent for a card off her row")
 	assert.Contains(t, out.String(), "refused: card taken.w1 is not on her row, no longer hers; cy holds it now")
 }
+
+func TestHolderViewRejectsMalformedOrUnrelatedDocuments(t *testing.T) {
+	t.Parallel()
+	holders, err := parseHolders(`{"view":"cards","schema":1,"cards":[{"id":"a.w1","holder":"cy"},{"id":"b.w1"}]}`)
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{"a.w1": "cy"}, holders)
+	for _, raw := range []string{
+		`broken`, `{"view":"worker","schema":1}`, `{"view":"cards","schema":2}`,
+		`{"view":"cards","schema":1,"cards":[{"holder":"cy"}]}`,
+		`{"view":"cards","schema":1,"cards":[{"id":"a"},{"id":"a","holder":"cy"}]}`,
+	} {
+		_, err := parseHolders(raw)
+		assert.Error(t, err, raw)
+	}
+}
+
+func TestMalformedHolderViewNeverIncludesItsContentInAnError(t *testing.T) {
+	t.Parallel()
+	secret := "test-holder-secret-abc123"
+	for _, raw := range []string{
+		`{"view":"` + secret + `","schema":1}`,
+		`{"view":"cards","schema":1,"cards":[{"id":"` + secret + `"},{"id":"` + secret + `"}]}`,
+	} {
+		_, err := parseHolders(raw)
+		require.Error(t, err)
+		assert.NotContains(t, err.Error(), secret)
+	}
+}

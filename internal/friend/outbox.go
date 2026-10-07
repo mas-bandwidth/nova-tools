@@ -3,7 +3,6 @@ package friend
 import (
 	"cmp"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -444,35 +443,4 @@ func NotHers(card, job, friend string, running func() map[string]string) string 
 	default:
 		return "refused: card " + card + " is not on her row, no longer hers; no row the daemon reads says who holds it now (nova-sprint view coordinator does)"
 	}
-}
-
-// ParseHolders reads the server's view cards document, schema 1. Empty holders
-// mean no working fleet row holds the card; malformed or mismatched documents
-// never supply an ownership name.
-func ParseHolders(out string) (map[string]string, error) {
-	var v struct {
-		View   string `json:"view"`
-		Schema int    `json:"schema"`
-		Cards  []struct {
-			ID     string `json:"id"`
-			Holder string `json:"holder"`
-		} `json:"cards"`
-	}
-	if err := json.Unmarshal([]byte(out), &v); err != nil {
-		return nil, fmt.Errorf("card holders: the view is not JSON: %w", err)
-	}
-	if v.View != "cards" || v.Schema != 1 {
-		return nil, fmt.Errorf("card holders: expected view cards schema 1, got %q schema %d", v.View, v.Schema)
-	}
-	holders, seen := map[string]string{}, map[string]bool{}
-	for _, c := range v.Cards {
-		if c.ID == "" || seen[c.ID] {
-			return nil, fmt.Errorf("card holders: empty or duplicate card id %q", c.ID)
-		}
-		seen[c.ID] = true
-		if c.Holder != "" {
-			holders[c.ID] = c.Holder
-		}
-	}
-	return holders, nil
 }

@@ -445,18 +445,3 @@ func TestCurrentHoldersAreReadOnceForAllOldReportsInAPass(t *testing.T) {
 		})
 	}
 }
-
-func TestHolderViewRejectsMalformedOrUnrelatedDocuments(t *testing.T) {
-	t.Parallel()
-	holders, err := ParseHolders(`{"view":"cards","schema":1,"cards":[{"id":"a.w1","holder":"cy"},{"id":"b.w1"}]}`)
-	require.NoError(t, err)
-	assert.Equal(t, map[string]string{"a.w1": "cy"}, holders)
-	for _, raw := range []string{
-		`broken`, `{"view":"worker","schema":1}`, `{"view":"cards","schema":2}`,
-		`{"view":"cards","schema":1,"cards":[{"holder":"cy"}]}`,
-		`{"view":"cards","schema":1,"cards":[{"id":"a"},{"id":"a","holder":"cy"}]}`,
-	} {
-		_, err := ParseHolders(raw)
-		assert.Error(t, err, raw)
-	}
-}
