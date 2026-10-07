@@ -49,8 +49,11 @@ type TierCosts struct {
 	// priced them (WhySubscription for a subscription reader's, "-" for none): the exact
 	// dollars, the tokens and the count, which ReadSpendLine sums over the streams.
 	ReadsToday map[string]ReadDay `json:"reads_today,omitempty"`
-	// UnpricedRuns counts the stream's records that carry no cost at all: runs whose usage
-	// never reached the sprint (cardcost.WhyNoTokens), which the total cannot hold.
+	// UnpricedRuns counts the stream's records that carry no charged figure. A run on a
+	// route with a price table is priced at its end (usage, else the provider's
+	// per-request quote, else the prompt-byte estimate), so it is not among them.
+	// What remains is a route with no price table, the reason on the record, and a
+	// usage line that named no token and no prompt to estimate from.
 	UnpricedRuns int `json:"unpriced_runs,omitempty"`
 	// ReadsNoTokens counts the stream's reads whose verdict was kept with a usage that
 	// reported no token (cardcost.WhyNoTokens): one of UnpricedRuns each, counted apart
