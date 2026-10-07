@@ -509,6 +509,10 @@ func readCardsTakeBack(s *Snapshot) map[string][]Change {
 	return out
 }
 
+// NoReaderMayRead begins the wait of a primary no unit up may be dealt its read card: the
+// read-card ask raises cannot ask on it (readCardsAskPart).
+const NoReaderMayRead = "no reader up may read it"
+
 // readCardsAsk is the read-card ask: the cards it takes back (readCardsTakeBack), then for
 // every primary that wants reads (readCardsWaiting) every read it wants, at once, each to a
 // different unit that may read it (mayReadCard) with half a slot free, the cheapest first:
@@ -624,7 +628,7 @@ func readCardsAskWhy(s *Snapshot, seats []FriendSeat, ri routeIndexes, why *[]st
 		if len(picked) < want {
 			switch {
 			case len(may) == 0:
-				waits[pr.ID] = "no reader up may read it: no friend whose tiers reach its read tier, and no member whose reader row serves its tier, besides its own worker"
+				waits[pr.ID] = NoReaderMayRead + ": no friend whose tiers reach its read tier, and no member whose reader row serves its tier, besides its own worker"
 			default:
 				waits[pr.ID] = "every reader up who may read it is at its room"
 			}
@@ -748,6 +752,14 @@ func readCardsAskPart(s *Snapshot, r TickReq, seats []FriendSeat) (Plan, int) {
 		conds = append(conds, readersBehindCond(s)...)
 	}
 	conds = append(conds, raiseReadTierConds(s)...)
+	// a read no unit up may take is cannot ask, one judgment, open until a reader may
+	var refused []Refusal
+	for _, id := range slices.Sorted(maps.Keys(waits)) {
+		if strings.HasPrefix(waits[id], NoReaderMayRead) {
+			refused = append(refused, Refusal{Key: id, Why: waits[id]})
+		}
+	}
+	conds = append(conds, cannotAskCond(s, refused)...)
 	due := notify(&p, s, conds, []string{NCannotAsk, NFewReaders, NReadersBehind, NRaiseReadTier}, r)
 	return p, due + len(waits)
 }
