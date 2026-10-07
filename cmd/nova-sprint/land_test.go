@@ -169,6 +169,32 @@ func TestLandMergesAStreamInQueueOrderAsOneBatch(t *testing.T) {
 	r.clean()
 }
 
+// A stream behind its base keeps work order while one member has a code conflict:
+// the conflicting member is parked for redo on the tip, and the other members land
+// together in one batch (docs/SPEC-SPRINT.md section 7, the lander's batch).
+func TestABehindStreamLandsAsOneBatchInWorkOrder(t *testing.T) {
+	t.Parallel()
+	r := newLandRig(t)
+	r.ok("add --stream s1 --count 3")
+	heads := map[string]string{}
+	for _, id := range []string{"s1-1", "s1-2", "s1-3"} {
+		head := r.head(id, "main", id+".txt", id+"\n")
+		heads[id] = head
+	}
+	// The members were cut from the old base. The middle member now conflicts
+	// with a change made directly on the current base.
+	r.moveBase("main", "s1-2.txt")
+	r.queued(heads, "s1-1", "s1-2", "s1-3")
+
+	code, out, errs := r.do("land --repo-dir " + r.clone + " --base main")
+	require.Equal(t, 0, code, out+errs)
+	assert.Contains(t, out, "LAND OK stream=s1 cards=2 base=main")
+	assert.Contains(t, out, "ids=s1-1..s1-3")
+	assert.Equal(t, []string{"land s1-3 (sprint stream s1)", "land s1-1 (sprint stream s1)", "moved s1-2.txt", "base"}, r.mainLog())
+	assert.Equal(t, map[string]string{"s1-1": "landed/merged", "s1-2": "merging/stuck", "s1-3": "landed/merged"}, r.places("s1-1", "s1-2", "s1-3"))
+	r.clean()
+}
+
 // The landing fetches the base and the batch's heads, and no other branch of origin: a
 // repository a thousand cards have worked in holds thousands of card branches, and a fetch
 // of them all, once a stream a round, was 15 s a fetch (the fleet pass of 2026-10-01

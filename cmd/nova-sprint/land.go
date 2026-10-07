@@ -1211,7 +1211,8 @@ func (l *lander) build(ctx context.Context, dir, stream string, cards []landCard
 		cards[0] = cure
 		merged, first = append(merged, cure.id), 1
 	}
-	for i := first; i < len(cards); i++ {
+	limit := len(cards)
+	for i := first; i < limit; i++ {
 		c := &cards[i]
 		before, err := l.git(ctx, dir, "rev-parse", "--verify", "HEAD^{commit}")
 		if err != nil {
@@ -1242,7 +1243,20 @@ func (l *lander) build(ctx context.Context, dir, stream string, cards []landCard
 		case env != "":
 			return nil, failed, env + "; no card is blamed and nothing was pushed or reported"
 		case card != "":
-			return merged, conflictCard{landCard: *c, why: card, kind: l.conflictKind, paths: l.conflictPaths}, ""
+			// A code conflict parks only this member for redo on the current tip. The
+			// remaining members still merge in work order and share one batch push
+			// (docs/SPEC-SPRINT.md section 7, the lander's batch).
+			if failed.id == "" {
+				failed = conflictCard{landCard: *c, why: card, kind: l.conflictKind, paths: l.conflictPaths}
+			}
+			// Keep successfully merged cards at the front: batch's landed slice is
+			// the prefix, while the parked card is reported separately.
+			parked := *c
+			copy(cards[i:], cards[i+1:])
+			cards[len(cards)-1] = parked
+			limit--
+			i--
+			continue
 		}
 		merged = append(merged, c.id)
 	}
