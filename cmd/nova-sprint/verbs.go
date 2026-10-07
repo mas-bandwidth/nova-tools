@@ -134,6 +134,7 @@ func init() {
 		{"inbox", "[--open <group>] [--read] [--wait [--timeout <duration>] [--push <dir> | --push seat]] [--deadline <duration>] [--stale <duration>]", "inbox --wait", (*app).cmdInbox},
 		{"card", "<id> [--brief | --fields] [--at-epoch <n>] | (--all | --stream <s>) --json: every card, one JSON object a line", "card s1-4", (*app).cmdCard},
 		{"needs", "[--stream <s>] [--roots]", "needs --stream s1", (*app).cmdNeeds},
+		{"streams", "[--repo <owner/name>] [--release <name>] [--cards]", "streams --cards", (*app).cmdStreams},
 		{"held", "[--stream <s>]", "held", (*app).cmdHeld},
 		{"sentinels", "[--stream <s>]", "sentinels", (*app).cmdSentinels},
 		{"sentinel set", "<id> --needs <a,b>", "sentinel set s1-stop --needs s1-2", (*app).cmdSentinelSet},
@@ -572,6 +573,7 @@ type sel struct {
 	group       string // an inbox group's id
 	expect      int    // the group's size when it was printed; 0 is not given
 	one         bool   // rework and drop: the one card named is meant, though the inbox holds a group naming it
+	repo        listFlag
 }
 
 func (s *sel) register(fs flagSet, withCol bool) {
@@ -1235,7 +1237,7 @@ func (a *app) cmdAdd(args []string, stdout, stderr io.Writer) int {
 	}
 	var rs []sprint.AddReq
 	for _, sn := range streams {
-		r := sprint.AddReq{Stream: sn, IDs: ids, Count: *count, Needs: cardNeeds, Brief: *brief, Rules: cardRules(*brief, rs0).held, Base: swarm.ReadCardBase([]byte(*brief)).Ref, Who: c.actor,
+		r := sprint.AddReq{Stream: sn, IDs: ids, Count: *count, Needs: cardNeeds, Brief: *brief, Rules: cardRules(*brief, rs0).held, Base: swarm.ReadCardBase([]byte(*brief)).Ref, Repo: swarm.ReadCardBase([]byte(*brief)).Named, Who: c.actor,
 			Sentinel: *sentinel != "", Before: *before, After: *after, Every: *every, Last: *last, Held: *held, Replaces: sprint.Split(*replaces)}
 		if *score != "" {
 			f, err := strconv.ParseFloat(*score, 64)
@@ -1359,7 +1361,7 @@ func (a *app) cmdAddMany(stream, needs, briefDir string, briefFiles []string, se
 		if len(briefText) > store.MaxBriefBytes {
 			return refuse(stderr, "add", fmt.Sprintf("%s: the brief is %d bytes, over the %d bytes a brief may be; a brief is a child's whole brief; shorten it", path, len(briefText), store.MaxBriefBytes))
 		}
-		cards = append(cards, sprint.CardAdd{ID: id, Brief: briefText, Needs: uniquify(append(briefNeeds(briefText), extra...)), File: path, Base: swarm.ReadCardBase([]byte(briefText)).Ref})
+		cards = append(cards, sprint.CardAdd{ID: id, Brief: briefText, Needs: uniquify(append(briefNeeds(briefText), extra...)), File: path, Base: swarm.ReadCardBase([]byte(briefText)).Ref, Repo: swarm.ReadCardBase([]byte(briefText)).Named})
 	}
 	if !allowShared {
 		if why := sharedPaths(cards); why != "" {
@@ -1985,7 +1987,7 @@ func oneOfAGroupWhy(ctx context.Context, verbName string, st *store.Store, id st
 
 func (a *app) withGroup(verbName string, fs flagSet, c *common, st *store.Store, s *sel, ids []string, stdout, stderr io.Writer) ([]string, int) {
 	if s.group == "" {
-		if s.expect != 0 {
+		if s.expect != 0 && len(s.repo) == 0 {
 			return nil, refuse(stderr, verbName, "--expect goes with --group <id>")
 		}
 		return ids, 0
@@ -2047,6 +2049,12 @@ func (a *app) setVerb(verbName string, args []string, stdout, stderr io.Writer, 
 	fs, c := a.verbSetup(verbName)
 	var s sel
 	s.register(fs, withCol)
+	if verbName == "drop" {
+		// drop alone takes a repository selector: the streams recording it, read from
+		// their control cards, acted on only with --expect <n> (docs/SPEC-SPRINT.md
+		// section 11, the streams verb)
+		fs.Var(&s.repo, "repo", "only the cards of the streams recording this repository (owner/name), comma separated or repeated; needs --expect <n>, the number of streams it selects")
+	}
 	if extra != nil {
 		extra(fs)
 	}
@@ -2058,6 +2066,44 @@ func (a *app) setVerb(verbName string, args []string, stdout, stderr io.Writer, 
 	st, err := a.store(*c)
 	if err != nil {
 		return refuse(stderr, verbName, err.Error())
+	}
+	if len(s.repo) > 0 {
+		if s.group != "" || s.stream != "" {
+			return refuse(stderr, verbName, "--repo and --group or --stream select different sets: give --repo alone")
+		}
+		streams, err := a.repoStreams(context.Background(), st, s.repo)
+		if err != nil {
+			return a.readFailed(verbName, err, stderr)
+		}
+		if len(streams) == 0 {
+			return refuse(stderr, verbName, "no stream records "+strings.Join(s.repo, ",")+": nothing to select; run: nova-sprint streams")
+		}
+		if s.expect == 0 {
+			return refuse(stderr, verbName, "--repo selects "+strconv.Itoa(len(streams))+" stream(s) ("+strings.Join(streams, ",")+"): give --expect "+strconv.Itoa(len(streams))+" to act on them, so what it removes is read before it runs")
+		}
+		if s.expect != len(streams) {
+			return refuse(stderr, verbName, "--expect "+strconv.Itoa(s.expect)+" was printed for another set: the repository selects "+strconv.Itoa(len(streams))+" stream(s) ("+strings.Join(streams, ",")+")")
+		}
+		// The cards of the streams, by id, so one step acts across several streams:
+		// the open cards (a --col keeps its column), landed cards left alone.
+		s2, err := st.Load(context.Background(), []string{sprint.Work}, nil)
+		if err != nil {
+			return a.readFailed(verbName, err, stderr)
+		}
+		for _, stream := range streams {
+			for _, col := range sprint.States {
+				if !sprint.IsOpen(col) || (s.col != "" && col != s.col) {
+					continue
+				}
+				for _, c := range s2.Work.Cell(stream, col) {
+					ids = append(ids, c.ID)
+				}
+			}
+		}
+		if len(ids) == 0 {
+			// nothing open to act on: name the streams, so the step is an empty plan
+			s.stream = strings.Join(streams, ",")
+		}
 	}
 	// a judgment's alias stands for its id in --answers and --group (alias.go)
 	if err := unaliasFlag(context.Background(), st, fs, "answers"); err != nil {
