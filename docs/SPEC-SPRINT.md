@@ -778,6 +778,11 @@ tip of the card's base branch on origin, never an older base, carrying the work 
 attempt that pushed onto it herself (`git diff origin/<base>...<head>` shows it, redone where it
 does not apply), and that the Head she reports must be on that tip: the rule a member's rework is
 staged by, docs/SPEC-CARD-CONTRACT.md, where a rework starts; `TestAFriendsReworkStartsFromTheTipOfItsBase`.
+Her daemon writes a rework's brief with the fix first, not as the `The coordinator asks:` line under
+the start: `THE ONE THING LEFT: <fix>` and `The reader found: <finding>` are the first lines after
+STATUS, then the carried head and branch, the card's STOP is the fix alone, and a LAND whose report
+does not name the fix's key words is finished as a HOLD (docs/SPEC-FRIEND.md, a reworked brief
+opens with the fix; `TestAReworkedBriefOpensWithTheFix`).
 A friend has no staged commit, so nothing checks that her Head descends from that tip: the
 `ls-remote` tip check below, Head is origin's tip of her branch, is the only guard on her finish),
 `<job>` the card's id as the table layer holds it at its

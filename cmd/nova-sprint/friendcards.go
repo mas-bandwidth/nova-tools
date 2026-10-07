@@ -73,8 +73,16 @@ func friendJobOf(p sprint.Packet) string {
 // friendBrief is the BRIEF.md of a friend's sprint card: its STATUS line (the card, its
 // epoch and attempt, the branch to push and the report to write), the working-directory
 // line of docs/FRIENDS.md, a later attempt's start and why it exists (as a child's JOB.md
-// says them), then the brief as a child is handed it (the rules it names injected).
+// says them), then the brief as a child is handed it (the rules it names injected). A
+// reworked card's is the daemon's form (friend.ReworkedBrief): its fix the first line after
+// STATUS and its STOP, whichever of friend sync and the daemon writes it first.
 func friendBrief(name string, p sprint.Packet) string {
+	return friend.ReworkedBrief(friendServerBrief(name, p))
+}
+
+// friendServerBrief is friendBrief before it is reworked: the fix on a 'The coordinator
+// asks:' line under the start, the form friend.ReworkedBrief reads.
+func friendServerBrief(name string, p sprint.Packet) string {
 	job := friendJobOf(p)
 	var b strings.Builder
 	fmt.Fprintf(&b, "STATUS: nova-sprint card %s, epoch %d, attempt %d; push your work to the branch %s; when done, write outbox/%s/REPORT.md with first line exactly Verdict: LAND|HOLD|FAIL, second line exactly Head: <40-hex> (blank for HOLD and FAIL)\n", p.Card, p.Epoch, p.Attempt, p.Branch, job)
@@ -214,7 +222,11 @@ func (a *app) branchTip(ctx context.Context, repo, branch string) (string, error
 	return "", nil
 }
 
-// friendFinish is the finish a friend's report gives her card: LAND with a full sha Head
+// friendFinish is the finish a friend's report gives her card (a reworked card's LAND that
+// does not address its fix is read as a HOLD, friend.UnaddressedLand; the model is
+// internal/friend/tla/OutboxFinish.tla, SyncFinish). friendCollect, the one collect of
+// friend sync, friend reconcile and the run loop, calls it, and collect does too: LAND with
+// a full sha Head
 // that is origin's tip of the card's branch (tip, read once) is work ok at that tip, as a
 // member's ok finish; HOLD, FAIL (or FAILED, BROKEN) is work that came back failed, its
 // report the first paragraph, as a member's failed finish raises "work came back failed";
@@ -228,6 +240,13 @@ func (a *app) branchTip(ctx context.Context, repo, branch string) (string, error
 // sync reads the report again.
 func friendFinish(ctx context.Context, name string, p sprint.Packet, report string, tip tipFn) (sprint.FinishReq, error) {
 	verdict, head, para := friendReportOf(report)
+	if verdict == VerdictLand {
+		// a LAND that does not address its brief's first line is a HOLD, head kept, by the
+		// daemon's own check (friend.UnaddressedLand): whichever finishes it, it is held
+		if held := friend.UnaddressedLand(friend.HeldByFriendSync, report, friendBrief(name, p)); held != "" {
+			verdict, para = VerdictHold, held+" "+para
+		}
+	}
 	para = oneline.Cap(para, maxFriendReport)
 	row := sprint.FriendRow(name)
 	r := sprint.FinishReq{Sel: sprint.Sel{IDs: []string{p.Card}}, As: row, Gens: map[string]int{p.Card: p.Gen}, Branch: p.Branch, Who: row}
