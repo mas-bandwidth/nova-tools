@@ -215,3 +215,18 @@ func TestEvalHelpShowsGoldFileFormatAndTwoLineExample(t *testing.T) {
 	require.Equalf(t, 0, exit, "help eval must exit 0: stderr = %q", stderr)
 	assert.Equal(t, stdout, stdoutHelp, "`help eval` and `eval -h` must match")
 }
+
+// TestBootHelpStatesItChecksThePin pins that boot's help says what the verb
+// does: it checks the pin — every named file present, readable, and its size —
+// rather than loading the pinned memories into the process.
+func TestBootHelpStatesItChecksThePin(t *testing.T) {
+	t.Parallel()
+
+	exit, stdout, stderr := runCLI(t, "", "boot", "-h")
+	require.Equalf(t, 0, exit, "boot -h must exit 0: stderr = %q", stderr)
+	assert.Contains(t, stdout, "checks the pin: every file present and readable, and their size")
+
+	exit, stdoutHelp, stderr := runCLI(t, "", "help", "boot")
+	require.Equalf(t, 0, exit, "help boot must exit 0: stderr = %q", stderr)
+	assert.Equal(t, stdout, stdoutHelp, "`help boot` and `boot -h` must match")
+}
