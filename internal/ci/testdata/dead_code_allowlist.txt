@@ -14,7 +14,7 @@ internal/pkgselect 16
 internal/secrets 1
 internal/sprint 2
 internal/swarm 39
-internal/testguard 2
+internal/testguard 1
 internal/tokens 2
 internal/tool 1
 internal/workgh 1
