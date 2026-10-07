@@ -296,7 +296,7 @@ func TestTheWorkSwitchesStopWorkNeverReads(t *testing.T) {
 // TestAFriendReadsEveryTierAtOrBelowHers pins the read's tier rule on a friend (the live
 // sprint of 2026-10-06 8:32 PM ET, where no read card was cut): a friend reads a card of
 // her tier or any tier below it, as the friends' reads always did (friendAtOrAbove), so a
-// heavy friend reads a flash and a pro card; a flash friend reads no pro card.
+// heavy friend reads a flash and a pro card.
 func TestAFriendReadsEveryTierAtOrBelowHers(t *testing.T) {
 	t.Parallel()
 	w := readCardsWorld(t, 4)
@@ -317,5 +317,56 @@ func TestAFriendReadsEveryTierAtOrBelowHers(t *testing.T) {
 	}
 	require.Equal(t, []string{FriendRow("jon")}, rows("s1-1"), "heavy reads flash")
 	require.Equal(t, []string{FriendRow("jon")}, rows("s1-2"), "heavy reads pro; fred worked it")
-	require.Equal(t, []string{FriendRow("jon")}, rows("s1-3"), "a flash friend reads no pro card")
+	require.ElementsMatch(t, []string{FriendRow("jon"), FriendRow("fred")}, rows("s1-3"), "a flash friend reads a pro card one tier below it (TestAReaderOneTierBelowMayTakeAReadCard)")
+}
+
+// TestAReaderOneTierBelowMayTakeAReadCard pins the owner's interim read rule for read cards
+// (2026-10-06 7:11 PM ET "let flash read pro", 7:41 PM "let pro do it"): a reader one tier
+// below a card's read tier may take its read card, and a reader at or above is preferred
+// while it has room. A pro card whose heavy friend is full has its second read dealt to the
+// flash friend; with the heavy friend's room back, both reads go at or above first.
+func TestAReaderOneTierBelowMayTakeAReadCard(t *testing.T) {
+	t.Parallel()
+	t.Run("the heavy friend full", func(t *testing.T) {
+		t.Parallel()
+		w := readCardsWorld(t, 4)
+		putReviewBy(w, "s1-1", "s1-1: work (s1) tier: pro\n", "zoe", 1)
+		// jon holds one read of it and has no room for more
+		jon := readerSeat("jon", 1, []string{"heavy"}, []string{"builder", "reader"})
+		w.s.Fleet.SetRows(append(w.s.Fleet.Rows(), FriendRow("jon")))
+		w.s.Fleet.Put(&Card{ID: ReadCardID("s1-1", 1, "jon"), Row: FriendRow("jon"), Col: Working, Score: 1, Rev: 1, Fields: map[string]string{
+			"kind": "read", "primary": "s1-1", "stream": "s1", "reader": "jon", "attempt": "1", "head": "work-s1-1", FieldReadCard: "1", "asked": stamp(t0)}})
+		for i := 0; i < 3; i++ {
+			w.s.Fleet.Put(&Card{ID: "busy-" + itoa(i) + ".w1", Row: FriendRow("jon"), Col: Working, Score: 1, Rev: 1, Fields: map[string]string{"kind": "work", "primary": "busy-" + itoa(i), "stream": "s9", "attempt": "1"}})
+		}
+		fred := readerSeat("fred", 32, []string{"flash"}, []string{"builder", "reader"})
+		dealReads(t, w, []FriendSeat{jon, fred})
+		var rows []string
+		for _, c := range readCardsOf(w, "s1-1") {
+			rows = append(rows, c.Row)
+		}
+		require.ElementsMatch(t, []string{FriendRow("jon"), FriendRow("fred")}, rows, "the second read goes to the flash friend")
+	})
+	t.Run("at or above first", func(t *testing.T) {
+		t.Parallel()
+		w := readCardsWorld(t, 4)
+		putReviewBy(w, "s1-1", "s1-1: work (s1) tier: pro\n", "zoe", 1)
+		dealReads(t, w, []FriendSeat{
+			readerSeat("fred", 32, []string{"flash"}, []string{"builder", "reader"}),
+			readerSeat("jon", 16, []string{"heavy"}, []string{"builder", "reader"}),
+			readerSeat("pat", 2, []string{"pro"}, []string{"reader"}),
+		})
+		var rows []string
+		for _, c := range readCardsOf(w, "s1-1") {
+			rows = append(rows, c.Row)
+		}
+		require.ElementsMatch(t, []string{FriendRow("jon"), FriendRow("pat")}, rows, "readers at or above the tier, while they have room")
+	})
+	t.Run("two tiers below never", func(t *testing.T) {
+		t.Parallel()
+		w := readCardsWorld(t, 4)
+		putReviewBy(w, "s1-1", "s1-1: work (s1) tier: heavy\n", "zoe", 1)
+		dealReads(t, w, []FriendSeat{readerSeat("fred", 32, []string{"flash"}, []string{"reader"})})
+		require.Empty(t, readCardsOf(w, "s1-1"), "flash never reads heavy")
+	})
 }
