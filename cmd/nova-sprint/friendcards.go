@@ -683,10 +683,16 @@ func (a *app) friendReadOf(ctx context.Context, st *store.Store, name, dir strin
 		return delivered, finished, nil
 	}
 	primary, reportCopy, epoch := p.Primary, report, p.Epoch
+	// a broken report on a branch origin does not hold is the machine's fault: checked here,
+	// at the close, and the read asked again (sprint read_missing.go)
+	var missing map[string]sprint.MissingBranch
+	if verdict, _, _ := sprint.ParseFriendReadReport(report); verdict == "broken" {
+		missing = a.readMissing(ctx, []sprint.Packet{p})
+	}
 	step := store.Step{Verb: "read", Named: true, Mirrors: true, Load: []string{sprint.Fleet, sprint.Work},
 		Extras: sprint.NamedExtras(sprint.Fleet, []string{p.Card}), Actor: sprint.FriendRow(name), Epoch: &epoch,
 		Plan: func(s *sprint.Snapshot) sprint.Plan {
-			return sprint.FriendReadClose(s, name, primary, reportCopy)
+			return sprint.FriendReadCloseChecked(s, name, primary, reportCopy, missing)
 		}}
 	res, err := st.Run(ctx, step)
 	if err != nil {

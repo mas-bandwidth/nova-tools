@@ -394,6 +394,10 @@ type ReadReq struct {
 	Verdict string // ok or broken
 	Finding string
 	Who     string
+	// Missing is the server's check at the close of a broken read, by read card: the
+	// branch the read named is not on origin (read_missing.go). Such a verdict is no
+	// verdict: the read is retired and asked again, the card not reworked.
+	Missing map[string]MissingBranch `json:",omitempty"`
 	// Return hands the named read back, with the reason: no verdict, no
 	// finding against the work, not a read; the tick asks it again.
 	Return bool   `json:",omitempty"`
@@ -518,6 +522,7 @@ func Read(s *Snapshot, r ReadReq) Plan {
 	// primary in the plan
 	costs := map[string]map[string]string{}
 	costUnit := map[string]int{}
+	var verdicts []ReadVerdict // the ledger's (reads_window.go)
 	record := func(pr *Card, con Consumer) {
 		if !pr.Placed() {
 			return
@@ -586,6 +591,11 @@ func Read(s *Snapshot, r ReadReq) Plan {
 				Moved:   c.ID + " " + c.Col + " -> asked (returned)", Notes: []Note{n}})
 			continue
 		}
+		if m, ok := r.missingBranch(c); ok {
+			// the machine's fault, not the card's: no verdict, asked again (read_missing.go)
+			p.Units = append(p.Units, missingBranchUnit(s, Readers, c, pr, m, r.Finding, r.Usage, r.Who))
+			continue
+		}
 		set := map[string]string{"verdict": r.Verdict, "read": stamp(s.Now)}
 		if c.Col == Asked { // a report on a card never begun is the begin and the report in one step
 			set["begun"] = stamp(s.Now)
@@ -605,6 +615,7 @@ func Read(s *Snapshot, r ReadReq) Plan {
 		if pr != nil {
 			record(pr, readConsumer(s, c, 0, r.Verdict, rec))
 		}
+		verdicts = append(verdicts, verdictOf(s, c, pr, c.Row, r.Verdict, r.Finding))
 		u := Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{change(Readers, moveEntry(c, c.Row, col, set, FieldReturned))},
 			Moved: fmt.Sprintf("%s %s -> %s", c.ID, c.Col, col)}
 		if pr != nil {
@@ -647,6 +658,9 @@ func Read(s *Snapshot, r ReadReq) Plan {
 		if j, ok := reviewJudgment(s, pr, reviewStep{moved: moved[id], writes: written[id], who: lastReader[id]}); ok {
 			p.Units[i].Notes = append(p.Units[i].Notes, j)
 		}
+	}
+	if pw, ok := windowWrite(s.Readers, Readers, verdicts); ok {
+		p.Props = append(p.Props, pw)
 	}
 	// each primary's records ride on the unit of its last read in the plan: a running
 	// machine queues the work-table change for the pump, under that read's words

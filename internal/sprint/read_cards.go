@@ -584,7 +584,8 @@ func readCardsAskPart(s *Snapshot, r TickReq, seats []FriendSeat) (Plan, int) {
 		conds = append(conds, readersBehindCond(s)...)
 	}
 	conds = append(conds, raiseReadTierConds(s)...)
-	due := notify(&p, s, conds, []string{NCannotAsk, NFewReaders, NReadersBehind, NRaiseReadTier}, r)
+	conds = append(conds, readsWindowConds(s, r)...)
+	due := notify(&p, s, conds, []string{NCannotAsk, NFewReaders, NReadersBehind, NRaiseReadTier, NBrokenReadsOutrun, NReaderBreaks}, r)
 	return p, due + len(waits)
 }
 

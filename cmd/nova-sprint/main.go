@@ -77,6 +77,11 @@ type app struct {
 	// tip reads origin's tip of a branch (friend sync, a friend's LAND): tests give
 	// it a table of tips and open no socket.
 	tip tipFn
+	// readTip and readHeads are the server's check of a broken read's branch at its close
+	// (readMissing): origin's tip of the branch the read named, and origin's branches of the
+	// work card by pattern. nil checks nothing: tests open no socket unless they give one.
+	readTip   tipFn
+	readHeads headsFn
 	// bus sends one message on the friends' bus (internal/bus; friend sync wakes a
 	// friend's daemon with it when it delivers her a card): tests give a recorder
 	// and open no socket.
@@ -302,6 +307,7 @@ func newApp(getenv func(string) string) *app {
 	a.inventory = a.readInventory
 	a.friends = a.readFriends
 	a.tip = a.branchTip
+	a.readTip, a.readHeads = a.branchTip, a.branchHeads
 	a.bus = a.sendBus
 	a.busOpen = a.openBus
 	a.landRoot = defaultLandRoot

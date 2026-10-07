@@ -2282,8 +2282,14 @@ func (a *app) cmdRead(args []string, stdout, stderr io.Writer) int {
 			return readShort(ctx, st, res, sprint.Split(*as), col)
 		}
 	}
+	// a broken read whose branch origin does not hold is the machine's fault: the server
+	// checks the branch at the close, and the step asks the read again (sprint read_missing.go)
+	var missing map[string]sprint.MissingBranch
+	if *broken {
+		missing = a.readMissingOf(context.Background(), st, ids)
+	}
 	return a.runStep("read", *c, st, store.ReadStep(sprint.ReadReq{Sel: sprint.Sel{IDs: ids, Limit: limit}, As: *as, Begin: *begin,
-		Verdict: verdict, Finding: *finding, Return: *ret != "", Reason: *reason, Usage: *usage, Who: *as}), stdout, stderr)
+		Verdict: verdict, Finding: *finding, Missing: missing, Return: *ret != "", Reason: *reason, Usage: *usage, Who: *as}), stdout, stderr)
 }
 
 // readShort is why a read by queue moved nothing, one line per reader named: the

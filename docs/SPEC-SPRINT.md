@@ -3268,6 +3268,48 @@ the adoption `release.OneMachine` (internal/release/adopt_one.go). Test:
   asks the readers its tier needs at the new attempt (`TestNothingToDoAtAHeadAReaderPassedIsBackInReview`).
   With no pass at the head it is failed work for the coordinator, as before.
 
+### A read names the branch the work pushed
+
+The owner, 2026-10-06 8:30 PM ET: "We have to catch broken reads faster than this. You should
+get some notification." Between 7:46 and 8:27 PM ET about half of one reader's 54 broken
+verdicts said the branch its read named was not on origin: the work had pushed its first
+generation's branch, a hold took the started card back and it was dealt again, its generation
+moving on with no push, and the read was handed the branch of the generation the card had
+reached. Each such verdict sent its card to rework, a new attempt and two new reads.
+
+- **The packet names the pushed branch and head.** A read's packet (the readers table's and a
+  read card's, `PacketOf`), a friend's read brief and the read card's `branch` field
+  (`attemptEnds`) name the branch that holds the work card's head (`sprint.ReadBranch`): the
+  branch the primary recorded for that head when a read found the named one missing
+  (`read_branch`, `read_branch_head`, below); else, when the head is the one a hold carried
+  (`carry_head`: a later generation finished at the work an earlier one pushed), the carried
+  generation's branch (`carry_gen`); else the branch the work card's finish recorded; else its
+  own generation's. A generation a take-back or a hold moved on never renames the work's branch
+  (`TestAReadNamesTheBranchTheWorkPushed`).
+- **A broken read on a branch origin does not hold is re-asked, not reworked.** The class is
+  defined by origin, never by the finding's words: at the close of a broken verdict (the read
+  verb, and friend sync's close of a friend's report) the server reads origin's tip of the
+  branch the read's packet names (one `git ls-remote` of the card's REPO:), and when origin holds
+  no such branch it lists the work card's branches (`sprint/<prefix><card>.g*`) for the one that
+  holds the read's head, and passes both to the step (`ReadReq.Missing`). Such a verdict is the
+  machine's fault: the read is retired with no verdict (`retired_by` `branch-missing`, its cost
+  kept as a returned run's), which spends no reader (it is not among the retirements that spend
+  one, and a readers-table reader may be asked it again under the second identity); no
+  judgment is written, so the card is not reworked and its attempt is not spent; the primary
+  records the branch that holds its head when the server found one, and the ask asks the read
+  again on it. One happened note, "a read named a branch not on origin", says `re-asked: the
+  read named a branch not on origin (<branch>); asked again on <branch>, which holds <head>` (or
+  that no branch of the work on origin holds it). A tip that cannot be read, or a brief with no
+  REPO:, leaves the verdict the reader's (`TestABrokenReadOnAMissingBranchIsReaskedNotReworked`,
+  `TestTheReadVerbChecksABrokenReadsBranchOnOrigin`).
+- **The seat is told when broken reads outrun ok reads.** Every verdict is kept on a bounded
+  ledger, the `reads_window` property of the table its read card is on (the readers table, or
+  the fleet table for a read card on a fleet row), at most 200 lines, written by the step that
+  records the verdict. The tick raises two judgments from it (section 8), once an episode, each
+  closed when its condition no longer holds: "broken reads outrun ok reads", and "a reader
+  breaks nearly everything", per reader. `where --json` carries the window's counts as
+  `reads_window: {ok, broken, since}`.
+
 ### A read is a consumer card
 
 The owner, 2026-10-06: "reads need to become a type of card"; "These are all good reasons why
@@ -4075,6 +4117,8 @@ the tick would make, no other open judgment on it).
 | the fleet is starving (ready, sentinels aside, is under twice the up members' width while a wave is held: `the fleet is starving: ready <n> is under twice the width <2w>; release a wave: nova-sprint release <sentinel> --reason '<why>'`, raised once and updated in place every tick while it holds, naming the first held sentinel in work order; closed when no wave is held; `TestTheTickRaisesStarvingWhileReadyIsUnderTwiceTheWidth`) | release (the wave's sentinel; never a single card), wait | no |
 | a member is overloaded (the owner, 2026-10-03: "the overload is defined as -- cards are timing out. not any CPU%": within the last 15 minutes, `sprint.OverloadWindow`, a member up has had three or more cards, `sprint.OverloadTimeouts`, end on a timeout of any kind, counted from the finishes it reported: a launch refused at staging on `stage-timeout` (the work card's staging take, on whatever row the card sits now), a failed finish `deadline: ...`, or one the budget rule ended because `the usage source stopped answering`; `sprint.TimeoutKind`, `sprint.MemberTimeouts`, `sprint.Overloaded` in internal/sprint/overload.go, one pure decision the tick and the seat check both read; no load number is in it, the beat's load stays a fact for the table): `<m> is overloaded: <k> cards ended on a timeout in the last 15m0s: <card> (<kind>), ...; halve its width: nova-sprint fleet up <m> --width <half>, or wait 15m`, one per member, updated in place every tick while it holds and closed when the window has no three (`TestTheTickRaisesOverloadedOnThreeTimeoutsInTheWindow`) | fleet up <m> --width <half of its width>, wait 15m | no |
 | the readers are behind (the owner, 2026-10-03: "This is another type of thing that should be escalated to you mechanically"; one night review held 75 cards while five readers read 44, their widths kept from before their machines were widened): a read has sat asked and not begun on a reader up for `sprint.ReadersWindow`, 10 minutes (`sprint.ReadersBehind` in internal/sprint/readers_behind.go, one pure decision beside `Overloaded`; a reader's width is its machine row's, `Snapshot.ReaderWidth`, 0 for a reader named for no row): `the readers are behind: review <n>, reads asked and not begun past 10m0s; the readers read <k> of width <w> (<reader> reads <k> of width <w>, <a> waiting past the window[: it reads under its width, restart its loop (nova-config loop show <reader>)][: away, run: nova-sprint reader up <reader>]; ...)`, one for the sprint, updated in place every tick while it holds and closed when no read has waited the window (`TestTheTickRaisesReadersBehindWhenReadsWaitTheWindow`) | reader up <r> (a reader not up holding reads), restart <r> (it reads under its width while reads wait: the loop record of its name in nova-config), wait 10m | no |
+| broken reads outrun ok reads (the owner, 2026-10-06 8:30 PM ET: "We have to catch broken reads faster than this. You should get some notification."; that evening 66 reads came back broken to 48 ok, 54 of them one reader's): over the last 30 minutes of running time (`sprint.ReadsWindowSpan`, the machine's STOPPED spans left out) broken verdicts exceed ok verdicts and there were at least 10 (`sprint.ReadsWindowMin`), read from the verdicts' ledger (`reads_window.go`): `broken reads outrun ok reads: <b> broken to <o> ok in the last 30m0s of running time; by reader: <reader> <o> ok, <b> broken; ...; top findings: <n>x "<the finding's first 60 characters>"; ...` (three classes at most), one for the sprint, updated in place while it holds and closed when the window falls below the bar, so each episode is told once (`TestBrokenReadsOutrunningOkRaiseOneNotice`) | look at the readers, raise the read tier, act | no |
+| a reader breaks nearly everything: a reader's last 20 verdicts (`sprint.ReaderWindowLen`) are 80% or more broken while another reader's last 20 on the same tiers, at least 5 of them, are under 50% broken: `reader <r> breaks nearly everything: <b> of its last 20 verdicts broken on <tiers>, while <other> broke <k> of <n> on the same tiers; top findings: ...`, one per reader (its subject `reader:<r>`), closed when its last 20 fall under the bar (`TestAReaderBreakingNearlyEverythingIsNamedOnce`) | hold <r>, look at the reader, act | no |
 | raise the read tier of the stream? (readtier.go: a landed card of the stream returned by dev or an audit, `promoted --returned`; two readers at the stream's read tier disagreeing on one attempt; a card alternating broken and ok across attempts; one judgment per stream, `raise the read tier of <s> to <next>? <why>`, updated in place while a cause holds and closed by the raise; section 6) | raise (`stream set <s> --read-tier <next> --reason '<why>'`, the default), keep (`ack`) | no |
 | a card reached its bound (at its ceiling tier, flash first, section 5: an attempt's work card redealt MaxRedeals, 3, times after takes that ended, the provider's failures among them, and a take of it ended again; the judgment names the provider and the last error line when the provider failed that take; or the second identical failure, section 2: two takes of the card, or two attempts of its primary, failed the same way, and the judgment names the class) | rework with a fix (a new attempt, on the next tier), drop, wait (at a redeal bound, wait only when the bound was a provider failure); when the attempt before also ended at its bound on the card's tier (section 5, the bound holds across attempts): rework with a fix on a higher tier (`--tier`, when the ladder has one), drop, and wait only when the bound was a provider failure and the provider's return has not yet lifted a bound on that tier | no |
 | a work card is past its deadline | fleet down (the member, only when it has held the card its own whole deadline: never the member a late card was just redealt to, nor one it was withdrawn from), wait, drop | no |

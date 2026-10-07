@@ -297,15 +297,20 @@ func machineReaderHasRoom(s *Snapshot, pr *Card) bool {
 	return false
 }
 
-// attemptEnds is the work card's branch and head, and the commit the attempt
-// started from (the last earlier attempt that finished ok). Finish writes the
-// branch on the work card, not the primary (steps_work.go).
+// attemptEnds is the branch that holds the work card's head (ReadBranch: the branch the work
+// pushed, never one named by a later generation), its head, and the commit the attempt
+// started from (the last earlier attempt that finished ok). Finish writes the branch on the
+// work card, not the primary (steps_work.go).
 func attemptEnds(s *Snapshot, primary string, attempt int) (branch, start, head string) {
 	if s.Fleet == nil {
 		return "", "", ""
 	}
 	if wc := s.Fleet.Card(WorkCardID(primary, attempt)); wc != nil {
-		branch, head = wc.F("branch"), wc.F("head")
+		var pr *Card
+		if s.Work != nil {
+			pr = s.Work.Card(primary)
+		}
+		branch, head = ReadBranch(s.Prefix, s.Epoch, pr, wc), wc.F("head")
 	}
 	var earlier []*Card
 	for a := 1; a < attempt; a++ {
@@ -478,6 +483,13 @@ func askOneFriend(p *Plan, s *Snapshot, pr *Card, seats []FriendSeat, name, dir 
 // finding raises the same broken-read judgment Read raises. The readers table
 // gains no row.
 func FriendReadClose(s *Snapshot, name, primary, report string) Plan {
+	return FriendReadCloseChecked(s, name, primary, report, nil)
+}
+
+// FriendReadCloseChecked is FriendReadClose with the server's check of the read's branch at
+// its close (missing, as ReadReq.Missing): a broken report on a read whose branch origin does
+// not hold is retired with no verdict and asked again (read_missing.go).
+func FriendReadCloseChecked(s *Snapshot, name, primary, report string, missing map[string]MissingBranch) Plan {
 	var p Plan
 	pr := s.Work.Card(primary)
 	if pr == nil {
@@ -499,7 +511,14 @@ func FriendReadClose(s *Snapshot, name, primary, report string) Plan {
 		p.refuse(primary, why)
 		return p
 	}
+	if m, ok := (ReadReq{Verdict: verdict, Missing: missing}).missingBranch(rc); ok {
+		p.Units = append(p.Units, missingBranchUnit(s, Fleet, rc, pr, m, finding, "", FriendRow(name)))
+		return p
+	}
 	p.Units = append(p.Units, friendReadCloseUnit(s, name, pr, rc, verdict, finding, ""))
+	if pw, ok := windowWrite(s.Fleet, Fleet, []ReadVerdict{verdictOf(s, rc, pr, FriendRow(name), verdict, finding)}); ok {
+		p.Props = append(p.Props, pw)
+	}
 	return p
 }
 
@@ -597,6 +616,7 @@ func readCardVerb(s *Snapshot, r ReadReq, row, name string) Plan {
 		return ""
 	}, s.Fleet.Card)
 	namePrimarysReads(&p, all)
+	var verdicts []ReadVerdict // the ledger's (reads_window.go)
 	for _, c := range chosen {
 		pr := s.Work.Card(c.F("primary"))
 		if r.Return {
@@ -610,9 +630,18 @@ func readCardVerb(s *Snapshot, r ReadReq, row, name string) Plan {
 				Moved: c.ID + " " + c.Col + " -> returned (retired: " + name + " gave no verdict)", Notes: []Note{n}})
 			continue
 		}
+		if m, ok := r.missingBranch(c); ok {
+			// the machine's fault, not the card's: no verdict, asked again (read_missing.go)
+			p.Units = append(p.Units, missingBranchUnit(s, Fleet, c, pr, m, r.Finding, r.Usage, r.Who))
+			continue
+		}
 		u := friendReadCloseUnit(s, name, pr, c, r.Verdict, r.Finding, r.Usage)
 		u.Moved = c.ID + " " + c.Col + " -> " + r.Verdict + " (retired: read by " + name + ")"
 		p.Units = append(p.Units, u)
+		verdicts = append(verdicts, verdictOf(s, c, pr, row, r.Verdict, r.Finding))
+	}
+	if pw, ok := windowWrite(s.Fleet, Fleet, verdicts); ok {
+		p.Props = append(p.Props, pw)
 	}
 	return p
 }

@@ -643,6 +643,10 @@ type whereView struct {
 	// tick's where record (sprint.ReadsWaiting).
 	Backup       string `json:"backup"`
 	ReadsWaiting int    `json:"reads_waiting"`
+	// ReadsWindow is the ok and broken verdicts over the last 30 minutes of running time and
+	// when that window began (sprint.ReadsWindowOf), from the tick's where record; zero before
+	// the first tick of an epoch.
+	ReadsWindow sprint.ReadsWindowView `json:"reads_window"`
 	// Priorities is every open primary whose level is not normal, by level, and
 	// StreamPriorities each stream's default level that is not normal, from the tick's where
 	// record (sprint.PriorityCounts, sprint.StreamPriorities); absent when every card is normal.
@@ -1160,6 +1164,7 @@ func (a *app) whereOf(ctx context.Context, st *store.Store, stale time.Duration,
 	working, review, merging := pipelineCounts(shapes[0])
 	v.Backup = sprint.BackupOf(int(working), int(review), int(merging))
 	v.ReadsWaiting, v.Priorities, v.StreamPriorities = facts.ReadsWaiting, facts.Priorities, facts.StreamPriorities
+	v.ReadsWindow = facts.ReadsWindow
 	v.Width = upWidth(shapes[3])
 	v.Buffer = fmt.Sprintf("%d/%d", v.Ready, 2*v.Width)
 	v.Low = v.Ready < int64(v.Width)
