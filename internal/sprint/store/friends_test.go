@@ -203,3 +203,34 @@ func TestTwinStoreConfigSyncToOneShotGatesQueuedPromotionUntilOccupancyReachesZe
 	assert.Equal(t, 0, snap.Fleet.Count(amyRow, sprint.Ready))
 	assert.Equal(t, sprint.Working, snap.Fleet.Card("s1-4.w1").Col)
 }
+
+// A liveness beat that knows no running ids preserves the last known jobs,
+// including when it explicitly reports an empty list (docs/SPEC-SPRINT.md,
+// Friend presence: the up rule).
+func TestABeatWithNoRunningIDsKeepsTheKnownJobs(t *testing.T) {
+	t.Parallel()
+	for _, running := range [][]string{nil, {}} {
+		t.Run(func() string {
+			if running == nil {
+				return "omitted"
+			}
+			return "empty"
+		}(), func(t *testing.T) {
+			t.Parallel()
+			h := newHarness(t)
+			_, _, _, err := h.st.SyncFriends(h.ctx, []FriendSpec{{Name: "amy", Width: 3}})
+			require.NoError(t, err)
+			_, err = h.st.FriendBeatReport(h.ctx, "amy", sprint.FriendReport{Running: []string{"job-1", "job-2"}}, nil)
+			require.NoError(t, err)
+			h.now = h.now.Add(time.Second)
+			_, _, err = h.st.FriendBeatProof(h.ctx, "amy", sprint.FriendReport{Running: running}, nil, sprint.BeatWords{})
+			require.NoError(t, err)
+			beat, err := h.st.FriendBeatOf(h.ctx, "amy")
+			require.NoError(t, err)
+			require.NotNil(t, beat.Friend)
+			assert.Equal(t, []string{"job-1", "job-2"}, beat.Friend.Running)
+			assert.Equal(t, h.now.UTC().Truncate(time.Second), beat.At)
+			assert.True(t, beat.Proof.IsZero(), "liveness never invents session proof")
+		})
+	}
+}
