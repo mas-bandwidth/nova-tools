@@ -871,12 +871,18 @@ lanes), so the verb is the coordinator's hand and the daemon's duty. The model i
 "Are they actually doing the work that is shown in the friend table? Really?"). A worker's
 failed finish (a friend's `Verdict: HOLD` or `FAIL`, by its first paragraph, or a member's
 failed report) whose reason names a brief defect is the brief's, never the worker's: no
-worker could do the card as cut (`sprint.BriefDefectOf`). Each of the three reasons alone
+worker could do the card as cut (`sprint.BriefDefectOf`). Each of the four reasons alone
 names one, with no label needed, the earliest in the report being the one recorded: the
-base lacks a PATHS file (`the base lacks`, `not on the base`, `missing from the base`, `does not exist on the base`), a duplicate of landed work (`duplicate of landed work`), and a
-decision delivered (`decision delivered`, `decision already delivered`). The label `brief defect` (two words) with none of the three names one in the worker's own words. A
-negated reason or label ("not a duplicate of landed work", "no brief defect") names none,
-and a hyphenated token, such as a card id `hold-is-a-brief-defect`, is no label. The finish
+base lacks a PATHS file (`the base lacks`, `not on the base`, `missing from the base`, `does not exist on the base`), a duplicate of landed work (`duplicate of landed work`), a
+decision delivered (`decision delivered`, `decision already delivered`), and PATHS do not
+hold what the brief names (`PATHS do not hold`). That last reason is raised on the first
+such failed finish, not at the attempt cap and not at the second identical failure: the
+finish is the brief-defect judgment, and when the report carries `PATHS-PROPOSED:` (or a
+line that starts `PATHS:`) the reason recorded is `PATHS do not hold what the brief names; PATHS: <globs>`,
+the worker's proposed PATHS as the one-line fix. A report that only proposes PATHS, without
+those words, stays the worker's failed work, so the paths rule can widen it. The label `brief defect` (two words) with none of the four names one in the worker's own words. A
+negated reason or label ("not a duplicate of landed work", "no brief defect", "not PATHS do not hold") names none,
+and a hyphenated token, such as a card id `hold-is-a-brief-defect` or `paths-do-not-hold`, is no label. The finish
 moves the work card to the member's hidden `defect` cell, never `ok` or `failed`, so `done`
 and `ok%` on the fleet and friends tables count only work the worker could do; the card and
 its primary carry `brief_defect` (the reason); the primary goes to review with result
@@ -5731,6 +5737,21 @@ refuses the whole call. The code is `swarm.LintBrief` (internal/swarm/lintpaths.
 `TestAddLintRefusesABriefWhosePathsMissTheFilesItNames` (internal/swarm, a twin of a base, one
 brief per token that fails it and one that passes, and the corrections applied passing) and
 `TestAddRunsTheBriefChecksAtTheBase` (cmd/nova-sprint, add against a twin repository).
+
+add (both forms), brief (one brief, `--dir`, and `--widen`) and recut `--brief-file` also hold
+the brief to `sprint.PathsAdmission` after those checks on add and after the card lint on brief
+and recut (`cmd/nova-sprint/add.go`, `holdPathsAdmit`; the tree is the same lander's clone and
+the same fetch into `refs/nova-add/<base>`, cached per tip for the call). A literal PATHS entry
+must be a file or a directory at the tip, a glob must match one file (`hygiene.MatchGlob`), and
+every func, type or verb STOP or START names in the same clause as a repository path, and a
+TEST name the tree already holds, must occur inside a file PATHS covers, by a plain grep. A
+TEST name the tree does not hold is the new red test and is not a miss. A new `_test` file and
+an entry a `NEW:` line names may be absent. A brief whose header carries `CARRY:` with `head=`
+(a widen) skips the existence check, because a path it adds may exist only at that head, and
+still checks identifiers. Each miss is one `LINT DRIFT` line, `check=paths-hold-named`, naming
+the nearest file that holds the identifier, then one refusal, nothing written. No tree is one
+`MISSING` line, not a pass. A brief with no PATHS, or no REPO, or no BASE, is not read against
+a tree. The test is `TestAdmissionRefusesABriefWhosePathsDoNotHoldWhatItNames`.
 
 ### Statistics
 

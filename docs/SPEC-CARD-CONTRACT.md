@@ -406,6 +406,30 @@ in place, the same id (docs/SPEC-SPRINT.md section 2). The widened brief carries
 head as it stages a rework at its last pushed head (`member.Carried`), as does a friend's brief
 (`TestBriefWidenKeepsTheId`).
 
+### What admission verifies
+
+`nova-sprint add`, `brief` and `recut` check a brief that names `PATHS:`, `REPO:` and `BASE:`
+against the BASE tip of that repository before the brief is admitted
+(`sprint.PathsAdmission`, `cmd/nova-sprint/add.go`). The tree is the lander's clone, fetched
+shallow into `refs/nova-add/<base>` (or the commit `BASE:` pins), cached per tip for the call.
+A literal PATHS entry must be a file or a directory there. A glob must match at least one file.
+A new `*_test` file, and an entry a `NEW:` line names, may be absent. A brief whose header
+carries `CARRY: <id> attempt <n> head=<sha>` skips that existence check (a widen's new path
+may exist only at the carried head) and still checks identifiers. Every `func`, `type` or
+`verb` that `STOP:` or `START:` names in the same clause as a repository path, and a `TEST:`
+name the tree already holds, must occur inside a file PATHS covers, found by a plain grep of
+the tree. A `TEST:` name the tree does not hold is the new red test and is not a miss. A brief
+that fails is refused with one line per miss, and the line names the nearest file that holds
+the identifier, so the author fixes PATHS in one edit. A tip that cannot be read is one
+`MISSING` line, not a pass. A brief with no PATHS, or no REPO, or no BASE, is not read
+against a tree.
+
+A worker HOLD after admission whose words are `PATHS do not hold` is a brief defect at that
+first finish, not at the fourth attempt (`sprint.BriefDefectOf`). The defect carries the
+worker's proposed PATHS, from `PATHS-PROPOSED:` or a `PATHS:` line of the report, as the
+one-line fix. A report that only proposes PATHS, without those words, stays the worker's
+failed work.
+
 ## 5. Profiles
 
 A profile is keyed by model family, derived from the model id the member runs the child on:
