@@ -1275,19 +1275,15 @@ func (l *lander) build(ctx context.Context, dir, stream string, cards []landCard
 		case env != "":
 			return nil, failed, env + "; no card is blamed and nothing was pushed or reported"
 		case card != "":
-			// DEBUG: log conflict info
-			fmt.Printf("DEBUG card=%s conflictKind=%s\n", c.id, l.conflictKind)
 			f := conflictCard{landCard: *c, why: card, kind: l.conflictKind, paths: l.conflictPaths}
 			if l.conflictKind == "" {
 				// Mechanical and tree-gate failures remain a barrier: a later card is
 				// never passed over (docs/SPEC-SPRINT.md section 7).
-				fmt.Printf("DEBUG: mechanical failure for %s\n", c.id)
 				return merged, f, ""
 			}
 			// A code conflict parks only this member for redo on the current tip. The
 			// remaining members still merge in work order and share one batch push
 			// (docs/SPEC-SPRINT.md section 7, the lander's batch).
-			fmt.Printf("DEBUG: parking conflict for %s\n", c.id)
 			l.conflicts = append(l.conflicts, f)
 			continue
 		}
