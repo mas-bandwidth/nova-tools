@@ -11,8 +11,34 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestAppendPublishThatDisagreesIsRefused pins the session's policy as a fact,
+// not a guess: an append with no --publish, or with the same one, prints it;
+// --publish that names another is refused naming both; no open session stays
+// a refusal and writes no record.
+func TestAppendPublishThatDisagreesIsRefused(t *testing.T) {
+	t.Parallel()
+
+	c := newRig(t)
+	c.ok("open", "--session", "s", "--publish", "manual", "--now", "2026-01-02T03:04:05Z")
+	printed(t, c.ok("append", "--session", "s", "--entry", "same", "--text", "w", "--publish", "manual"), " publish=manual ")
+	printed(t, c.ok("append", "--session", "s", "--entry", "carried", "--text", "w"), " publish=manual ")
+
+	r := c.run("append", "--session", "s", "--entry", "other", "--text", "w", "--publish", "never")
+	require.Equal(t, 1, r.Code, "%+v", r)
+	require.Empty(t, r.Stdout)
+	printed(t, r.Stderr, "holds publish=manual", "--publish never",
+		"; run: nova-cairn append --store "+c.store+" --session s --entry other --publish manual")
+	c.wroteNothing("s", "other")
+
+	r = c.run("append", "--session", "missing", "--entry", "e", "--text", "w", "--publish", "never")
+	require.Equal(t, 2, r.Code, "%+v", r)
+	require.Contains(t, r.Stderr, `no such session "missing"`)
+	_, err := os.Lstat(c.path("sessions", "missing.md"))
+	require.ErrorIs(t, err, os.ErrNotExist)
+}
+
 // The policy is named once, at open: an append with no --publish carries the
-// session's, an append naming one keeps its own, and a flat record, which
+// session's, an append naming another is a conflict, and a flat record, which
 // records no policy, says publish=unknown rather than inventing one.
 func TestAnAppendCarriesTheSessionsPolicy(t *testing.T) {
 	t.Parallel()
@@ -21,7 +47,9 @@ func TestAnAppendCarriesTheSessionsPolicy(t *testing.T) {
 	c.ok("open", "--session", "s", "--publish", "deferred")
 	printed(t, c.ok("append", "--session", "s", "--entry", "inherits", "--text", "w"), " publish=deferred ")
 	printed(t, c.ok("receipt", "--session", "s", "--entry", "inherits"), " publish=deferred")
-	printed(t, c.ok("append", "--session", "s", "--entry", "own", "--text", "w", "--publish", "never"), " publish=never ")
+	r := c.run("append", "--session", "s", "--entry", "own", "--text", "w", "--publish", "never")
+	require.Equal(t, 1, r.Code, "%+v", r)
+	printed(t, r.Stderr, "holds publish=deferred", "--publish never")
 
 	testkit.WriteFile(t, c.path("flat.md"), "# by hand\n")
 	printed(t, c.ok("append", "--session", "flat", "--entry", "e", "--text", "w"), " publish=unknown ")
