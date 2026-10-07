@@ -13,9 +13,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// The package's own tests: the day file's round trip and its strict parse, the shrink
-// comparison with a dash on either side, the attribution ladder, and the lock.
-
 func TestTheDayFileRoundTripsByteIdentically(t *testing.T) {
 	t.Parallel()
 
@@ -172,9 +169,6 @@ func TestTheShrinkComparisonWithADashOnEitherSide(t *testing.T) {
 	}
 }
 
-// R5 (issue #268): the merge itself -- retained, replaced, blended, collision. A retained
-// row comes back byte for byte, because the fold that wrote it is the only run that could
-// compute it and this one must not touch it.
 func TestMergeDayRetainsReplacesAndRefuses(t *testing.T) {
 	t.Parallel()
 
@@ -259,8 +253,6 @@ func TestTheAttributionLadder(t *testing.T) {
 	}
 }
 
-// The tally behind `sources --unattributed`: only the `other` arm feeds it, only when a
-// caller asked for it, and the key is the tree rather than the file.
 func TestTheUnattributedTallyCountsOnlyWhatFellToOther(t *testing.T) {
 	t.Parallel()
 
@@ -290,8 +282,6 @@ func TestTheUnattributedTallyCountsOnlyWhatFellToOther(t *testing.T) {
 	assert.Falsef(t, len(got) != 2 || got[0].Stem != "/home/nova/tree" || got[0].Count != 2 || got[1].Stem != "/home/nova/other-tree", "the tally is %v; it wants the heaviest tree first, keyed by the tree", got)
 }
 
-// TestTheUnattributedTallyScopesToFilteredDay: when FilterDay is set, only messages
-// attributed under that day are tallied.
 func TestTheUnattributedTallyScopesToFilteredDay(t *testing.T) {
 	t.Parallel()
 
@@ -317,9 +307,6 @@ func TestTheUnattributedTallyScopesToFilteredDay(t *testing.T) {
 	assert.Equal(t, []UnattributedStem{{Stem: "/home/nova/day1", Count: 1}}, got, "got %v, want 1 stem for day 1", got)
 }
 
-// The tally is bounded, and past the ceiling it still counts every token: a listing whose
-// memory grows with the tree is the unbounded read this repo's caps exist to end, and a
-// total that stopped at the ceiling would be a number nobody could use.
 func TestTheUnattributedTallyIsBoundedAndKeepsItsTotal(t *testing.T) {
 	t.Parallel()
 
@@ -351,8 +338,6 @@ func TestTheUnattributedTallyIsBoundedAndKeepsItsTotal(t *testing.T) {
 	}
 }
 
-// PathStem is the key, and it is one function so that the listing and the rule a person
-// writes from it are cut from the same string.
 func TestPathStemKeepsTheTree(t *testing.T) {
 	t.Parallel()
 
@@ -471,8 +456,6 @@ func TestValidDayIsACalendarCheck(t *testing.T) {
 	}
 }
 
-// TestValidMonthIsACalendarCheck: a month is a calendar month (01-12), not just seven characters
-// with a hyphen.
 func TestValidMonthIsACalendarCheck(t *testing.T) {
 	t.Parallel()
 
@@ -522,9 +505,6 @@ func TestReadSourceRefusesAnOversizedFile(t *testing.T) {
 	assert.Truef(t, strings.Contains(err.Error(), fmt.Sprint(capInTest)), "the refusal must name the cap %d: %v", capInTest, err)
 }
 
-// L10b: onCycle marked a node seen, walked its predecessors, then deleted it on the way
-// out, so a diamond was re-walked once per path. A node already proven acyclic must stay
-// memoized, which the walk's own seen map must show; the answer is unchanged.
 func TestOnCycleDoesNotRewalkAProvenAcyclicDiamond(t *testing.T) {
 	t.Parallel()
 
@@ -538,7 +518,6 @@ func TestOnCycleDoesNotRewalkAProvenAcyclicDiamond(t *testing.T) {
 	assert.Lenf(t, seen, len(all), "onCycle left %d of %d nodes proven: it re-walked an acyclic node", len(seen), len(all))
 }
 
-// L10b: the memo must not hide a cycle. A diamond with a back edge still reports true.
 func TestOnCycleStillSeesARealCycle(t *testing.T) {
 	t.Parallel()
 
