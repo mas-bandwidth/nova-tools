@@ -34,6 +34,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/tokens"
 	"github.com/mas-bandwidth/nova-tools/internal/tool"
@@ -176,6 +177,9 @@ func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, time.Now().UTC())) 
 // The clock is an argument and NOT a flag: the stamp on a day file is when the tool
 // computed it, and a stamp a caller could set would be a stamp nobody could trust.
 func run(args []string, stdout, stderr io.Writer, now time.Time) int {
+	if len(args) > 1 && args[0] == "help" && args[1] != "help" && !verbflag.IsHelp(args[1]) {
+		args = append([]string{args[1], "--help"}, args[2:]...)
+	}
 	t := tokensTool(now)
 	return t.Run(args, os.Stdin, stdout, stderr)
 }
@@ -446,6 +450,15 @@ func formatLine(token, kind, tail string, kv ...any) string {
 		text += ": " + oneline.Escape(tail)
 	}
 	return text
+}
+
+// dryRunFields is " dry_run=true" and the pairs after it on a write verb's last line under
+// --dry-run, and "" otherwise.
+func dryRunFields(on bool, kv ...any) string {
+	if !on {
+		return ""
+	}
+	return formatFields(append([]any{"dry_run", true}, kv...)...)
 }
 
 func addSourceItem(o *tool.Out, src *tokens.Source) {

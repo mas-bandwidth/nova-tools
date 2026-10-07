@@ -197,8 +197,7 @@ func runSession(c *tool.Call, now time.Time) *tool.Out {
 			if asJSON {
 				o.Item("partial", "day", d, "rows", len(partials), "why", tool.Text("a row already summed over this source and another cannot be taken apart; nothing written; run: nova-tokens fold -h, and fold that day whole"))
 			} else {
-				tail := ": a row already summed over this source and another cannot be taken apart; nothing written; run: nova-tokens fold -h, and fold that day whole"
-				fmt.Fprintf(c.Stderr, "SESSION PARTIAL day=%s rows=%d%s\n", d, len(partials), tail)
+				fmt.Fprintln(c.Stderr, formatLine("SESSION", "PARTIAL", "a row already summed over this source and another cannot be taken apart; nothing written; run: nova-tokens fold -h, and fold that day whole", "day", d, "rows", len(partials)))
 			}
 			exit = 1
 			continue

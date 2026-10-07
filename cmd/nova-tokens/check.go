@@ -112,11 +112,11 @@ func runCheck(c *tool.Call, now time.Time) *tool.Out {
 		bad := files.Total() + rowsList.Total()
 		if bad > 0 || len(res.Missing) > 0 || len(res.Strays) > 0 || res.Stale || empty {
 			fmt.Fprintf(c.Stderr, "CHECK FAILED files=%d rows=%d first=%s last=%s bad=%d missing=%d stray=%d gap=%d notes=%d\n",
-				res.Files, res.Rows, first, last, bad, len(res.Missing), len(res.Strays), len(res.Gaps), len(res.Notes))
+				res.Files, res.Rows, oneline.Field(first), oneline.Field(last), bad, len(res.Missing), len(res.Strays), len(res.Gaps), len(res.Notes))
 			return tool.Exit(1)
 		}
 		fmt.Fprintf(c.Stdout, "CHECK OK at=%s build=%s files=%d rows=%d first=%s last=%s missing=0 stray=0 gap=%d notes=%d\n",
-			stamp(now), buildVersion(), res.Files, res.Rows, first, last, len(res.Gaps), len(res.Notes))
+			oneline.Field(stamp(now)), oneline.Field(buildVersion()), res.Files, res.Rows, oneline.Field(first), oneline.Field(last), len(res.Gaps), len(res.Notes))
 		return tool.Exit(0)
 	}
 
