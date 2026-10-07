@@ -147,7 +147,7 @@ func briefField(re *regexp.Regexp, brief string) string {
 // BenchRule is the sentence every read prompt carries: the machine the friend runs on runs no go command, a Linux
 // bench does.
 func BenchRule(friend, card string) string {
-	return "BENCH RULE, over any GOCACHE or go command the brief gives: this machine runs no go build, go test or go vet. Run gates with nova-ci bench run --host <bench> --dir <your repo dir> --with-git -- flock /tmp/nova-go-gate.lock go test -p 2 -count=1 -timeout 600s <packages> (<bench> is the Linux bench your AGENTS.md names). The bench runner creates a private copy and removes it after every command, including a failed or cancelled command. Keep the gate output in RESULT.md, naming the bench."
+	return "BENCH RULE, over any GOCACHE or go command the brief gives: this machine runs no go build, go test or go vet. Run gates with nova-ci bench run --host <bench> --dir <your repo dir> -- flock /tmp/nova-go-gate.lock go test -p 2 -count=1 -timeout 600s <packages> (<bench> is the Linux bench your AGENTS.md names). The bench runner creates a private copy and removes it after every command, including a failed or cancelled command. Keep the gate output in RESULT.md, naming the bench."
 }
 
 // ReadText is READ.md: the read's job, as the reader loops wrote it.
