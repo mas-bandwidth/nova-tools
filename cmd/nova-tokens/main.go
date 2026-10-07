@@ -412,38 +412,20 @@ func (s *sourceFlags) check(r *refusals) {
 			}
 			switch l.kind {
 			case "claude":
-				if fi, err := os.Stat(it.value); err != nil || !fi.IsDir() {
-					if err != nil && os.IsNotExist(err) {
-						r.add("--claude " + it.label + "=" + it.value + " does not exist; it wants the directory the transcripts live under")
-					} else if err != nil {
-						r.add("--claude " + it.label + "=" + it.value + ": " + err.Error() + "; it wants the directory the transcripts live under")
-					} else {
-						r.add("--claude " + it.label + "=" + it.value + " is not a directory; it wants the directory the transcripts live under")
-					}
+				if why := notADir("claude "+it.label+"="+it.value, it.value, "the directory the transcripts live under"); why != "" {
+					r.add(why)
 				}
 			case "swarm":
-				if fi, err := os.Stat(it.value); err != nil || !fi.IsDir() {
-					if err != nil && os.IsNotExist(err) {
-						r.add("--swarm " + it.label + "=" + it.value + " does not exist; it wants the swarm pool directory")
-					} else if err != nil {
-						r.add("--swarm " + it.label + "=" + it.value + ": " + err.Error() + "; it wants the swarm pool directory")
-					} else {
-						r.add("--swarm " + it.label + "=" + it.value + " is not a directory; it wants the swarm pool directory")
-					}
+				if why := notADir("swarm "+it.label+"="+it.value, it.value, "the swarm pool directory"); why != "" {
+					r.add(why)
 				}
 			}
 		}
 	}
 	if s.bus != "" {
 		any = true
-		if fi, err := os.Stat(s.bus); err != nil || !fi.IsDir() {
-			if err != nil && os.IsNotExist(err) {
-				r.add("--bus does not exist: " + s.bus + "; it wants the bus directory")
-			} else if err != nil {
-				r.add("--bus " + s.bus + ": " + err.Error() + "; it wants the bus directory")
-			} else {
-				r.add("--bus is not a directory: " + s.bus + "; it wants the bus directory")
-			}
+		if why := notADir("bus", s.bus, "the bus directory"); why != "" {
+			r.add(why)
 		}
 	}
 	if !any {
@@ -452,14 +434,8 @@ func (s *sourceFlags) check(r *refusals) {
 	if len(s.opencode.items) > 0 {
 		if strings.TrimSpace(s.scratch) == "" {
 			r.required("scratch", "", wantsScratch)
-		} else if fi, err := os.Stat(s.scratch); err != nil || !fi.IsDir() {
-			if err != nil && os.IsNotExist(err) {
-				r.add("--scratch does not exist: " + s.scratch + "; it wants " + wantsScratch)
-			} else if err != nil {
-				r.add("--scratch " + s.scratch + ": " + err.Error() + "; it wants " + wantsScratch)
-			} else {
-				r.add("--scratch is not a directory: " + s.scratch + "; it wants " + wantsScratch)
-			}
+		} else if why := notADir("scratch", s.scratch, wantsScratch); why != "" {
+			r.add(why)
 		}
 		if err := tokens.HaveSQLite(); err != nil {
 			r.add(err.Error())
@@ -594,6 +570,30 @@ func checkDay(r *refusals, day string, all bool) {
 	case day != "" && !tokens.ValidDay(day):
 		r.add("--day is not a day: " + day + "; it wants " + wantsDay)
 	}
+}
+
+// notADir is the refusal for a flag whose value must be a directory that is there, or "".
+// A label source types its path into the flag itself (--claude <label>=<path>, and so
+// --swarm), so that path is already in flag and is not named twice; every other flag names
+// the directory after the flag name (--bus <path>). The three sentences are "does not
+// exist", the stat error, and "is not a directory".
+func notADir(flag, path, wants string) string {
+	fi, err := os.Stat(path)
+	// A label source is the one flag shaped <label>=<path>: its path is already typed.
+	named := strings.Contains(flag, "=")
+	pathAt, pathMid := ": "+path, " "+path
+	if named {
+		pathAt, pathMid = "", ""
+	}
+	switch {
+	case err != nil && os.IsNotExist(err):
+		return "--" + flag + " does not exist" + pathAt + "; it wants " + wants
+	case err != nil:
+		return "--" + flag + pathMid + ": " + err.Error() + "; it wants " + wants
+	case !fi.IsDir():
+		return "--" + flag + " is not a directory" + pathAt + "; it wants " + wants
+	}
+	return ""
 }
 
 // foldFindings is everything the one remedy line reads: the counts, the flags, the output

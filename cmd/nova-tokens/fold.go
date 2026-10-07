@@ -80,15 +80,13 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if len(r.list) > 0 {
 		return r.print(stderr)
 	}
-	fi, statErr := os.Stat(*out)
-	if statErr != nil || !fi.IsDir() {
-		if statErr != nil && os.IsNotExist(statErr) {
-			r.addRemedy("--out does not exist: "+*out+"; it wants "+wantsOut, "mkdir -p "+*out)
-		} else if statErr != nil {
-			r.add("--out " + *out + ": " + statErr.Error() + "; it wants " + wantsOut)
-		} else {
-			r.add("--out is not a directory: " + *out + "; it wants " + wantsOut)
+	if why := notADir("out", *out, wantsOut); why != "" {
+		// A missing --out carries the act that makes it, so the next turn is a paste.
+		next := ""
+		if _, err := os.Stat(*out); os.IsNotExist(err) {
+			next = "mkdir -p " + *out
 		}
+		r.addRemedy(why, next)
 		return r.print(stderr)
 	}
 	rules, err := tokens.LoadRules(sf.repos)
