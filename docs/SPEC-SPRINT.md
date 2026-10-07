@@ -5125,6 +5125,11 @@ layer retires this section.
 
 ## 11. Verbs
 
+`promote` gates its frozen sprint tip before pushing its throwaway pull-request
+head. Its default gate builds, vets and unit-tests every package, then runs the
+functional tier for all packages in the repository's functional-test container.
+A missing gate refuses promotion; see the `promote` verb below.
+
 Each takes a set and is one step. A set is ids, a stream, a column, `--max n`,
 or an inbox group (`--group <id>`; a group number is refused, naming the ids).
 Every verb taking `--group` takes `--expect <n>`: when the group's members now

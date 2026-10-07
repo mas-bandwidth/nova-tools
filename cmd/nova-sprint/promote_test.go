@@ -287,6 +287,7 @@ func (f *fakePromoForge) Repo(ctx context.Context) (string, error) {
 // sprint branch intact on origin.
 func TestPromoteMergesFromAThrowawayBranchAndKeepsTheBase(t *testing.T) {
 	t.Parallel()
+	require.Contains(t, promoteCheckDefault, "make test-functional-container PKGS=./...", "the whole-tree gate includes the functional tier")
 	root := t.TempDir()
 	bare := filepath.Join(root, "origin.git")
 	dir := filepath.Join(root, "work")
@@ -305,6 +306,10 @@ func TestPromoteMergesFromAThrowawayBranchAndKeepsTheBase(t *testing.T) {
 		_, err := gitrun.Run(context.Background(), gitrun.Options{C: where, Env: testgit.Environ("GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_CONFIG_NOSYSTEM=1"), OwnRepo: true}, args...)
 		return err
 	}
+	syncRemote := func(ref string) {
+		t.Helper()
+		git(bare, "fetch", "-q", dir, "refs/heads/"+ref+":refs/heads/"+ref)
+	}
 
 	// Initialize bare origin repository with dev branch
 	git(bare, "init", "-q", "--bare", "-b", "dev")
@@ -314,7 +319,7 @@ func TestPromoteMergesFromAThrowawayBranchAndKeepsTheBase(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "README.md"), []byte("# dev base\n"), 0o644))
 	git(dir, "add", "README.md")
 	git(dir, "commit", "-q", "-m", "init dev")
-	git(dir, "push", "-q", "origin", "refs/heads/dev:refs/heads/dev")
+	syncRemote("dev")
 
 	// Cut live sprint branch from dev
 	const live = "sprint/live"
@@ -325,18 +330,29 @@ func TestPromoteMergesFromAThrowawayBranchAndKeepsTheBase(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "c2.txt"), []byte("card 2\n"), 0o644))
 	git(dir, "add", "c2.txt")
 	git(dir, "commit", "-q", "-m", "land card-2 (sprint stream s1)")
-	git(dir, "push", "-q", "origin", "refs/heads/"+live+":refs/heads/"+live)
+	syncRemote(live)
 	tip := git(dir, "rev-parse", "HEAD")
+	gitRun := func(ctx context.Context, where string, args ...string) (string, error) {
+		if len(args) > 0 && args[0] == "push" {
+			if len(args) != 3 || args[1] != "origin" {
+				return "", errors.New("unexpected push " + strings.Join(args, " "))
+			}
+			return git(bare, "fetch", "-q", where, args[2]), nil
+		}
+		res, err := gitrun.Run(ctx, gitrun.Options{C: where, Env: env, OwnRepo: true}, args...)
+		return strings.TrimSpace(string(res.Stdout)), err
+	}
 
 	forge := &fakePromoForge{bare: bare, env: env}
 	var gatedSHA string
 	p := &promoter{
-		dir:   dir,
-		live:  live,
-		base:  "dev",
-		env:   env,
-		forge: forge,
-		now:   time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC),
+		dir:    dir,
+		live:   live,
+		base:   "dev",
+		env:    env,
+		forge:  forge,
+		gitRun: gitRun,
+		now:    time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC),
 		gate: func(_ context.Context, _ string, sha string) (string, error) {
 			gatedSHA = sha
 			return "", nil
@@ -385,6 +401,7 @@ func TestPromoteCheckHasAWholeTreeGateDefault(t *testing.T) {
 	require.Contains(t, def, "go build ./...", "the gate builds the tree")
 	require.Contains(t, def, "go vet ./...", "the gate vets the tree")
 	require.Contains(t, def, "go test ./...", "the gate runs every package's tests")
+	require.Contains(t, def, "make test-functional-container PKGS=./...", "the gate runs the functional tier in its container")
 }
 
 // TestPromoteRefusesAnEmptyCheckInsteadOfSkippingIt pins that a promoter with

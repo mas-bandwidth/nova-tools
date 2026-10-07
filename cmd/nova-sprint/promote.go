@@ -79,7 +79,7 @@ const promoteEveryDefault = time.Hour
 // tests (the tree's own checks, internal/docs and internal/ci, among them).
 // It is a refusal, never a skip, when it cannot run: a promoter with no gate
 // at all does not promote.
-const promoteCheckDefault = "go build ./... && go vet ./... && go test ./..."
+const promoteCheckDefault = "go build ./... && go vet ./... && go test ./... && make test-functional-container PKGS=./..."
 
 // promoter is one promote schedule over one clone.
 type promoter struct {
@@ -185,7 +185,7 @@ type promoteOutcome struct {
 // default. cmdPromote and the test that pins the default read it here, so the
 // two cannot drift.
 func promoteCheckFlag(fs flagSet) *string {
-	return fs.String("check", promoteCheckDefault, "the tree gate, a command run on the base tip before the pull request (default: go build ./... && go vet ./... && go test ./...)")
+	return fs.String("check", promoteCheckDefault, "the tree gate, a command run on the base tip before the pull request (build, vet, unit and containerized functional tests)")
 }
 
 // cmdPromote is `nova-sprint promote`. --dry-run is one pass and changes
