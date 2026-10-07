@@ -67,15 +67,25 @@ func steadyDeadline(now, budget time.Time) time.Time {
 	return budget
 }
 
-// forceTransientIO is the SEAM for the one thing a unix test cannot produce: a read that
-// collides. It is nil in every build but a test's, and when it is set it decides transience
-// in place of the platform's rule, so that the bound above can be proved on the machine
-// that runs the tests rather than only on Windows.
-var forceTransientIO func(error) bool
+// steadyClock is what a steady wait reads the time from, spends it on, and asks whether a
+// failure is transient.
+type steadyClock struct {
+	now   func() time.Time
+	sleep func(time.Duration)
+	// transient is the SEAM for the one thing a unix test cannot produce: a read that
+	// collides. Nil is the platform's rule (transientIO), the production answer in every
+	// build; a test carries its own on the value under test -- the per-test seam the
+	// serial-tests ledger names ("a field on the value under test"), so the bound above can
+	// be proved on the machine that runs the tests rather than only on Windows, and no
+	// package variable races the parallel tests beside it.
+	transient func(error) bool
+}
 
-func steadyTransient(err error) bool {
-	if forceTransientIO != nil {
-		return forceTransientIO(err)
+// isTransient is the wait's answer on a failed read: the clock's own seam, else the
+// platform's rule.
+func (c steadyClock) isTransient(err error) bool {
+	if c.transient != nil {
+		return c.transient(err)
 	}
 	return transientIO(err)
 }
@@ -91,12 +101,6 @@ func readFileSteady(path string) ([]byte, error) {
 	return readFileSteadyBy(wallClock, path, time.Time{})
 }
 
-// steadyClock is what a steady wait reads the time from and spends it on.
-type steadyClock struct {
-	now   func() time.Time
-	sleep func(time.Duration)
-}
-
 // wallClock is the real one, the only one outside a test.
 var wallClock = steadyClock{now: time.Now, sleep: time.Sleep}
 
@@ -106,7 +110,7 @@ func readFileSteadyBy(c steadyClock, path string, budget time.Time) ([]byte, err
 	deadline := steadyDeadline(c.now(), budget)
 	for {
 		raw, err := readRegular(path)
-		if err == nil || !steadyTransient(err) || !c.now().Before(deadline) {
+		if err == nil || !c.isTransient(err) || !c.now().Before(deadline) {
 			return raw, err
 		}
 		c.sleep(steadyPoll)
@@ -124,7 +128,7 @@ func renameSteadyBy(c steadyClock, from, to string, budget time.Time) error {
 	deadline := steadyDeadline(c.now(), budget)
 	for {
 		err := os.Rename(from, to)
-		if err == nil || !steadyTransient(err) || !c.now().Before(deadline) {
+		if err == nil || !c.isTransient(err) || !c.now().Before(deadline) {
 			return err
 		}
 		c.sleep(steadyPoll)

@@ -39,20 +39,6 @@ cmd/nova-tokens/token_ledger_test.go:TestLedgerReadsThePasswordFromTheVariableIt
 cmd/nova-tokens/xai_usage_test.go:TestXaiProviderOneUsageFileFoldsRow serial: t.Setenv
 internal/nsprint/store/store_test.go:TestOpenAuthenticatesFromEnv serial: t.Setenv
 internal/secrets/place_test.go:TestPlaceSSHSeamPanicsUnderTheGuard serial: os.Unsetenv, t.Setenv
-internal/swarm/hostguard_test.go:TestHostGuardCleanupRestoresCachedState serial: t.Setenv
-internal/swarm/launchfail_test.go:TestProviderRetryDelayBands serial: os.Unsetenv
-internal/swarm/opencode_numeric_functional_test.go:TestOpenCodeInvalidNumericUsageIsAReadFailure serial: t.Setenv
-internal/swarm/opencode_numeric_functional_test.go:TestOpenCodeNumericBoundsPreserveZeroAndAbsence serial: t.Setenv
-internal/swarm/opencode_functional_test.go:TestAnAbsentOpenCodeDatabaseIsNotAnError serial: t.Setenv
-internal/swarm/opencode_functional_test.go:TestAnUnreadableOpenCodeDatabaseIsAnError serial: t.Setenv
-internal/swarm/opencode_test.go:TestNoSQLiteOnPathIsAnError serial: t.Setenv
-internal/swarm/opencode_functional_test.go:TestOpenCodeSourceFindsTheLocalShareStore serial: t.Setenv
-internal/swarm/opencode_functional_test.go:TestOpenCodeSourceWaitsOutAWriteAheadLog serial: t.Setenv
-internal/swarm/opencode_test.go:TestOpenCodeSourceWithoutSQLiteIsANamedRefusal serial: t.Setenv
-internal/swarm/opencode_functional_test.go:TestTheOpenCodeSourceSumsTheMessageRows serial: t.Setenv
-internal/swarm/result_collision_test.go:TestTheCollisionSeamCountsOnlyReadsOfThePathItArmed serial: swaps package var swarm.forceTransientIO
-internal/swarm/stage_functional_test.go:TestStageUsesTheBenchMirrorAndTimesOut serial: t.Setenv
-internal/swarm/toolchain_test.go:TestToolchainVersionDirReadsTheVersionOffTheLauncher serial: t.Setenv
 internal/testbin/testbin_test.go:TestPlaceFallsBackToCopyWhenLinkFails serial: swaps package var testbin.link
 cmd/nova-tokens/token_ledger_test.go:TestLedgerAndReportDialAsTheAclUser serial: t.Setenv
 internal/nsprint/store/open_sends_no_command_test.go:TestOpenSendsNoCommandBeforeTheCallersFirstBatch serial: t.Setenv

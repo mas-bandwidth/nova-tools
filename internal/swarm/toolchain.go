@@ -231,7 +231,7 @@ func toolchainRootPath(r ToolchainRoot, home string) (string, bool) {
 	case r.Tool != "":
 		// The version under the prefix belongs to the machine: read it off the launcher the
 		// bench's own PATH finds, the way `readlink -f "$(command -v go)"` does.
-		v, ok := toolchainVersionDir(r.Name, r.Tool)
+		v, ok := toolchainVersionDir(r.Name, r.Tool, exec.LookPath)
 		if !ok {
 			return "", false
 		}
@@ -252,8 +252,12 @@ func toolchainRootPath(r ToolchainRoot, home string) (string, bool) {
 // from a launcher whose real path is /opt/homebrew/Cellar/go/1.27.1/libexec/bin/go. A tool
 // that is not on PATH, or whose real path is under some other prefix -- a Go unpacked into
 // ~/sdk, a tool from /usr/bin -- names nothing: this entry is brew's copy and only brew's.
-func toolchainVersionDir(prefix, tool string) (string, bool) {
-	launcher, err := exec.LookPath(tool)
+//
+// lookPath is how the launcher is found: exec.LookPath in the binary, and a test's own
+// lookup over a directory of its own in a test -- the per-test seam the serial-tests
+// ledger names ("a field on the value under test"), in place of t.Setenv("PATH", dir).
+func toolchainVersionDir(prefix, tool string, lookPath func(string) (string, error)) (string, bool) {
+	launcher, err := lookPath(tool)
 	if err != nil {
 		return "", false
 	}
