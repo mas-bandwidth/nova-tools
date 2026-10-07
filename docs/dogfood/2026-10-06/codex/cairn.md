@@ -78,6 +78,6 @@ READ 8/10 — The help lists the verbs, flags, effects and exits; the spec gives
 
 USE 7/10 — The scratch flows for open, append, index and receipt, including duplicate, conflict, dry-run, JSON and both file and stdin input, worked; the policy mismatch and two generic store/file refusals cost time.
 
-Coverage: `open`, `append`, `index`, `receipt`, `version`, and help for every verb; matching and conflicting opens; `--text`, `--file`, `--file -`, `--source`, `--publish`, `--now`, `--dry-run`, `--json`, `--max 1` and `--max 0`; nested and flat records; unknown verb and flag, missing store and entry, invalid id, invalid clock and policy, empty note, both text inputs, and missing file. The documented four-command example ran in a scratch directory. Hands-on use included the staged Linux binary and scratch-only records.
+Coverage: `open`, `append`, `index`, `receipt`, `version`, and help for every verb; matching and conflicting opens; `--text`, `--file`, `--file -`, `--source`, `--publish`, `--now`, `--dry-run`, `--json`, `--max 1` and `--max 0`; nested and flat records; unknown verb and flag, missing store and entry, invalid id, invalid clock and policy, empty note, both text inputs, and missing file. The documented four-command example ran in a scratch directory. Hands-on use of the staged Linux binary ran for about 16 minutes (16:15–16:31 UTC), with scratch-only records.
 
 urgent=2 next=3
