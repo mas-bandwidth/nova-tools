@@ -34,7 +34,13 @@ const (
 	slowTestsAllowlistPath   = "internal/ci/slow-tests_allowlist.txt"
 	sleepsSkipsAllowlistPath = "internal/ci/sleeps-skips_allowlist.txt"
 	unitSocketsSeedDir       = "internal/ci/testdata/unit-sockets/"
+	refusalGrammarSeedDir    = "internal/ci/testdata/refusal-grammar/"
 )
+
+// seedLedgerDirs are the counted ledgers allowed their one-time seed: each is
+// exempt only while the merge base holds no shard of it (docs/SPEC-CI.md,
+// `unit-sockets` and `refusal-grammar`).
+var seedLedgerDirs = []string{unitSocketsSeedDir, refusalGrammarSeedDir}
 
 // parseLedgerRows reads a counted shard's text into its row keys (the first
 // field of each row, the key every class rule's list is shrunk by) and its
@@ -300,16 +306,27 @@ func ledgerRatchetShards(root string, atBase baseLookup) ([]string, error) {
 }
 
 // checkCountedShards checks every counted shard against its merge base version.
-// The newly introduced unit-sockets ledger is its one seed when no shard exists
-// in the base (docs/SPEC-CI.md, `unit-sockets`); after that, every shard ratchets.
+// A ledger named in seedLedgerDirs is its one seed when no shard of it exists in
+// the base (docs/SPEC-CI.md, `unit-sockets` and `refusal-grammar`); after that,
+// every shard ratchets.
 func checkCountedShards(root, base string, shards []string, atBase baseLookup) ([]string, error) {
-	unitSocketsSeed, err := unitSocketsLedgerIsNew(shards, atBase)
-	if err != nil {
-		return nil, err
+	seeds := map[string]bool{}
+	for _, dir := range seedLedgerDirs {
+		isNew, err := ledgerSeedIsNew(shards, atBase, dir)
+		if err != nil {
+			return nil, err
+		}
+		seeds[dir] = isNew
 	}
 	var problems []string
 	for _, rel := range shards {
-		if unitSocketsSeed && strings.HasPrefix(rel, unitSocketsSeedDir) {
+		seeded := false
+		for _, dir := range seedLedgerDirs {
+			if seeds[dir] && strings.HasPrefix(rel, dir) {
+				seeded = true
+			}
+		}
+		if seeded {
 			continue
 		}
 		headBytes, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
@@ -325,16 +342,16 @@ func checkCountedShards(root, base string, shards []string, atBase baseLookup) (
 	return problems, nil
 }
 
-// unitSocketsLedgerIsNew reports whether this tree introduces its first
-// unit-sockets shard; the initial seed is exempt only while no shard is in the
-// merge base (docs/SPEC-CI.md, `unit-sockets`).
-func unitSocketsLedgerIsNew(shards []string, atBase baseLookup) (bool, error) {
-	hasUnitSockets := false
+// ledgerSeedIsNew reports whether this tree introduces the first shard of the
+// ledger under dir; the initial seed is exempt only while no shard is in the
+// merge base (docs/SPEC-CI.md, `unit-sockets` and `refusal-grammar`).
+func ledgerSeedIsNew(shards []string, atBase baseLookup, dir string) (bool, error) {
+	hasShard := false
 	for _, rel := range shards {
-		if !strings.HasPrefix(rel, unitSocketsSeedDir) {
+		if !strings.HasPrefix(rel, dir) {
 			continue
 		}
-		hasUnitSockets = true
+		hasShard = true
 		_, exists, err := atBase(rel)
 		if err != nil {
 			return false, fmt.Errorf("%s at the merge base: %w", rel, err)
@@ -343,7 +360,7 @@ func unitSocketsLedgerIsNew(shards []string, atBase baseLookup) (bool, error) {
 			return false, nil
 		}
 	}
-	return hasUnitSockets, nil
+	return hasShard, nil
 }
 
 // checkSlowTestsLedger checks slow-tests_allowlist.txt against the merge base.
@@ -471,6 +488,36 @@ func TestUnitSocketsLedgerSeedsOnlyWhenTheBaseHasNoShard(t *testing.T) {
 	baseHasAnotherShard := func(rel string) (string, bool, error) {
 		if rel == existingShard {
 			return "# ceiling: 1\ncmd/nova-sandbox/main_test.go:socket 1 reason\n", true, nil
+		}
+		return "", false, nil
+	}
+	problems, err = checkCountedShards(root, "123456789abcdef", shards, baseHasAnotherShard)
+	require.NoError(t, err)
+	require.Equal(t, []string{
+		newShard + " is not in the merge base 123456789: a new shard is all growth; justify it beside the rule it measures",
+	}, problems, "a later new package shard remains growth after the ledger has a base")
+}
+
+// TestRefusalGrammarLedgerSeedsOnlyWhenTheBaseHasNoShard pins the one-time seed
+// exception for the newly introduced rule (docs/SPEC-CI.md, `refusal-grammar`).
+func TestRefusalGrammarLedgerSeedsOnlyWhenTheBaseHasNoShard(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	newShard := refusalGrammarSeedDir + "cmd/nova-redis.txt"
+	existingShard := refusalGrammarSeedDir + "cmd/nova-sandbox.txt"
+	writeLedgerGuardFixture(t, root, newShard, "# ceiling: 1\ncmd/nova-redis:verb-no-flags 1 reason\n")
+	writeLedgerGuardFixture(t, root, existingShard, "# ceiling: 1\ncmd/nova-sandbox:verb-no-flags 1 reason\n")
+	shards := []string{existingShard, newShard}
+	missing := func(string) (string, bool, error) { return "", false, nil }
+
+	problems, err := checkCountedShards(root, "123456789abcdef", shards, missing)
+	require.NoError(t, err)
+	require.Empty(t, problems, "the refusal-grammar ledger is seeded at its introduction")
+
+	baseHasAnotherShard := func(rel string) (string, bool, error) {
+		if rel == existingShard {
+			return "# ceiling: 1\ncmd/nova-sandbox:verb-no-flags 1 reason\n", true, nil
 		}
 		return "", false, nil
 	}
