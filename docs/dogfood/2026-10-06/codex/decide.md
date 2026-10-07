@@ -1,6 +1,6 @@
 # nova-decide dogfood — Codex, 2026-10-07
 
-Read as a stranger: `nova-decide -h`, `nova-decide help`, `nova-decide <verb> -h`, and the `nova-decide` pages in `docs/CLI.md` and `docs/SPEC-NOVA-DECIDE.md`. Built the Linux binary from the current `sprint/mechanical-2026-10-02` tip `eceefa563cba4edabbdc0d123a396c3f3d9106eb` (`nova-decide v0.0.0-20261007161612-eceefa563cba linux/amd64 go1.26.6`). Ran every verb (`ask`, `read`, `score`, `attempt`, `grade`, `gate`, `brief`, `outcome`, `calibrate`, `findings`, `import`, `score-grades`, `version`, `help`) against isolated scratch files with the fixed backend; no provider calls or real sprint data.
+Read as a stranger: `nova-decide -h`, `nova-decide help`, `nova-decide <verb> -h`, and the `nova-decide` pages in `docs/CLI.md` and `docs/SPEC-NOVA-DECIDE.md`. Built the Linux binary from the current `sprint/mechanical-2026-10-02` tip `eceefa563cba4edabbdc0d123a396c3f3d9106eb` (`nova-decide v0.0.0-20261007161612-eceefa563cba linux/amd64 go1.26.6`). Ran every verb (`ask`, `read`, `score`, `attempt`, `grade`, `gate`, `brief`, `outcome`, `calibrate`, `findings`, `import`, `score-grades`, `version`, `help`) from an isolated scratch working directory with the fixed backend; no provider calls or real sprint data.
 
 ## Findings
 
@@ -9,7 +9,7 @@ Read as a stranger: `nova-decide -h`, `nova-decide help`, `nova-decide <verb> -h
 Command:
 
 ```text
-nova-decide findings --record /home/glenn/nova-bench/runs/stella-dogfood-codex-decide-b-w2-20261007/scratch/record.jsonl --since 2026-10-07 --bar 0.5 --max 10
+nova-decide findings --record record.jsonl --since 2026-10-07 --bar 0.5 --max 10
 ```
 
 Printed (exit 2; first three lines):
@@ -25,7 +25,7 @@ Expected: `nova-decide help` says a verb that lists takes `--max` and prints `MO
 Command:
 
 ```text
-nova-decide ask --schema /home/glenn/nova-bench/runs/stella-dogfood-codex-decide-b-w2-20261007/scratch/schema.json --state /home/glenn/nova-bench/runs/stella-dogfood-codex-decide-b-w2-20261007/scratch/state.txt --backend fixed --answers /home/glenn/nova-bench/runs/stella-dogfood-codex-decide-b-w2-20261007/scratch/scalar-answers.json --record /home/glenn/nova-bench/runs/stella-dogfood-codex-decide-b-w2-20261007/scratch/record.jsonl
+nova-decide ask --schema schema.json --state state.txt --backend fixed --answers scalar-answers.json --record record.jsonl
 ```
 
 Printed (exit 2; first three lines):
