@@ -12,11 +12,10 @@
 package main
 
 import (
+	"cmp"
 	"errors"
 	"io"
 	"os"
-	"path/filepath"
-	"slices"
 	"strings"
 	"time"
 
@@ -93,15 +92,15 @@ first run: the four examples are one sitting: the open makes ./cairns, the rest 
 			"  open: 0 the record stands (opened, or already matching); 1 a re-open naming\n" +
 			"    another policy or source; 2 usage, or a store that did not answer\n" +
 			"  append: 0 the words are written, or the entry already holds them\n" +
-			"    (duplicate=true); 1 the entry id holds other words; 2 usage, or a store that\n" +
-			"    did not answer\n" +
+			"    (duplicate=true); 1 the entry id holds other words, or --publish names\n" +
+			"    another policy than the session holds; 2 usage, or a store that did not answer\n" +
 			"  index: 0 listed; 2 usage, or a store that did not answer\n" +
 			"  receipt: 0 read; 2 usage, or no such session or entry",
 		Verbs: []tool.Verb{
 			{
 				Name: "open",
 				Usage: "open --store <dir> --session <id> [--source <ptr>] --publish <never|manual|deferred|immediate> [--now <rfc3339-utc>] [--dry-run]\n" +
-					"NOTE: --publish is a recorded word, nothing more: never, manual, deferred and immediate are the four this tool accepts and it acts on none of them; append --publish records the entry's own word, and one that differs from the session's is recorded as given, not a conflict (exit 0).",
+					"NOTE: --publish is a recorded word, nothing more: never, manual, deferred and immediate are the four this tool accepts and it acts on none of them; append with no --publish carries the session's, and one that differs is a conflict naming both (exit 1).",
 				Example: "open --store ./cairns --session s1 --publish manual",
 				Effect:  tool.LocalWrite,
 				Detail: "A re-open naming the recorded policy (and source, when given) changes nothing; one naming\n" +
@@ -121,8 +120,9 @@ first run: the four examples are one sitting: the open makes ./cairns, the rest 
 				Usage:   "append --store <dir> --session <id> --entry <id> (--text <words> | --file <path|->) [--source <ptr>] [--publish <policy>] [--now <rfc3339-utc>] [--dry-run]",
 				Example: `append --store ./cairns --session s1 --entry e1 --text "the words to keep"`,
 				Effect:  tool.LocalWrite,
-				Detail: "With no --source or --publish the entry carries the session's, as open recorded them; a flat\n" +
-					"record (<store>/<session>.md) records no policy, and says publish=unknown.",
+				Detail: "With no --source or --publish the entry carries the session's, as open recorded them; --publish\n" +
+					"that names another policy is a conflict naming both. A flat record (<store>/<session>.md)\n" +
+					"records no policy, and says publish=unknown.",
 				DryRun: true,
 				Flags: func(f *tool.Flags) {
 					record(f)
@@ -228,14 +228,6 @@ func clock(c *tool.Call) time.Time {
 
 func stampOf(t time.Time) string { return t.Format(time.RFC3339Nano) }
 
-// sourceOf is a source pointer as a field: "" reads as absent, "-".
-func sourceOf(s string) string {
-	if s == "" {
-		return "-"
-	}
-	return s
-}
-
 // refusal is the result for an error from the store: a conflict ran and said
 // no (exit 1); anything else could not run (exit 2). Either names the command
 // to run next when the store knows it.
@@ -257,9 +249,16 @@ func refusal(err error) *tool.Out {
 
 func open(c *tool.Call) *tool.Out {
 	store, session, publish, stamp := c.Str("store"), c.Str("session"), c.Str("publish"), clock(c)
+	// Read DryRun before any return: a verb that skips it is failed as a tool
+	// bug (Call.DryRun). A re-open prints the opened time the record already
+	// stores, not this call's clock (docs/SPEC-CAIRN.md, the open verb).
+	dry := c.DryRun()
+	before, err := cairn.ReadOpen(store, session)
+	if err != nil {
+		return refusal(err)
+	}
 	var rec cairn.OpenRecord
-	var err error
-	if c.DryRun() {
+	if dry {
 		rec, err = cairn.PlanOpen(store, session, c.Str("source"), stamp, publish)
 	} else if err = cairn.Open(store, session, c.Str("source"), stamp, publish); err == nil {
 		rec, err = cairn.ReadOpen(store, session)
@@ -267,8 +266,16 @@ func open(c *tool.Call) *tool.Out {
 	if err != nil {
 		return refusal(err)
 	}
-	return tool.Done().Fact("session", session).Fact("store", store).Fact("source", sourceOf(rec.Source)).
-		Fact("publish", publish).Fact("stamp", stampOf(stamp))
+	shown := stamp
+	o := tool.Done().Fact("session", session).Fact("store", store).Fact("source", cmp.Or(rec.Source, "-")).
+		Fact("publish", publish)
+	if before.Found {
+		if !before.Opened.IsZero() {
+			shown = before.Opened
+		}
+		o = o.Fact("reopened", true)
+	}
+	return o.Fact("stamp", stampOf(shown))
 }
 
 func appendEntry(c *tool.Call) *tool.Out {
@@ -293,7 +300,7 @@ func appendEntry(c *tool.Call) *tool.Out {
 		}
 		return o
 	}
-	return tool.Done().Fact("session", session).Fact("entry", entry).Fact("source", sourceOf(res.Source)).
+	return tool.Done().Fact("session", session).Fact("entry", entry).Fact("source", cmp.Or(res.Source, "-")).
 		Fact("persisted", res.Persisted).Fact("published", false).Fact("publish", res.Policy).
 		Fact("duplicate", res.Duplicate).Fact("stamp", stampOf(res.Stamp))
 }
@@ -308,37 +315,17 @@ func readWords(name string, stdin io.Reader) ([]byte, error) {
 	return os.ReadFile(name)
 }
 
-// sessions lists the session ids a store holds, from sessions/<id>.md and a flat
-// <store>/<id>.md, in the rule Coverage applies them: so an empty session is
-// found and named by index.
-func sessions(store string) []string {
-	var out []string
-	seen := map[string]bool{}
-	for _, dir := range [2]string{filepath.Join(store, "sessions"), store} {
-		if files, err := os.ReadDir(dir); err == nil {
-			for _, f := range files {
-				if f.IsDir() || !strings.HasSuffix(f.Name(), ".md") {
-					continue
-				}
-				if id := strings.TrimSuffix(f.Name(), ".md"); cairn.ValidID(id) && !seen[id] {
-					seen[id] = true
-					out = append(out, id)
-				}
-			}
-		}
-	}
-	slices.Sort(out)
-	return out
-}
-
 // index lists every entry; the coverage counts on its first line are the
 // selection's, so --session counts one session and the full index counts all.
-// An INDEX SESSION line is printed for every session in the selection, entries
-// or none, so an empty session is found.
+// An INDEX SESSION line is printed for every session in the selection, before
+// the entries, entries or none, so an empty session is found. The line names
+// the id, the publish policy and the opened stamp the open record stores
+// (unknown and - when it stores none, a flat file), and --max bounds the
+// lines with MORE (docs/SPEC-CAIRN.md, the index verb).
 func index(c *tool.Call) *tool.Out {
 	store := c.Str("store")
 	session := c.Str("session")
-	all, total, err := cairn.Index(store, session, 0)
+	all, names, total, err := cairn.Index(store, session)
 	if err != nil {
 		return refusal(err)
 	}
@@ -346,21 +333,37 @@ func index(c *tool.Call) *tool.Out {
 	for _, r := range all {
 		perSession[r.Session]++
 	}
-	var names []string
-	if session != "" {
-		names = []string{session}
-	} else {
-		names = sessions(store)
-	}
 	o := tool.Done()
 	for _, s := range names {
-		o.Item("session", "session", s, "entries", perSession[s])
+		publish, opened, err := sessionFacts(store, s)
+		if err != nil {
+			return refusal(err)
+		}
+		o.Item("session", "session", s, "publish", publish, "opened", opened, "entries", perSession[s])
 	}
 	o.Fact("sessions", len(names)).Fact("entries", total)
 	for _, r := range all {
-		o.Item("entry", "session", r.Session, "entry", r.ID, "stamp", stampOf(r.Stamp), "bytes", r.Bytes, "source", sourceOf(r.Source))
+		o.Item("entry", "session", r.Session, "entry", r.ID, "stamp", stampOf(r.Stamp), "bytes", r.Bytes, "source", cmp.Or(r.Source, "-"))
 	}
 	return o
+}
+
+// sessionFacts is the policy and opened stamp index prints for one session.
+// A flat record, or an open that never reached the log, stores neither:
+// publish=unknown and opened=- (docs/SPEC-CAIRN.md, the index verb).
+func sessionFacts(store, session string) (publish, opened string, err error) {
+	rec, err := cairn.ReadOpen(store, session)
+	if err != nil {
+		return "", "", err
+	}
+	publish, opened = cairn.PublishUnknown, "-"
+	if !rec.Found || !cairn.ValidPublish(rec.Publish) {
+		return publish, opened, nil
+	}
+	if !rec.Opened.IsZero() {
+		opened = stampOf(rec.Opened)
+	}
+	return rec.Publish, opened, nil
 }
 
 func receipt(c *tool.Call) *tool.Out {
@@ -369,7 +372,7 @@ func receipt(c *tool.Call) *tool.Out {
 		return refusal(err)
 	}
 	o := tool.Done().Fact("session", rc.Session).Fact("entry", rc.ID).Fact("stamp", stampOf(rc.Stamp)).
-		Fact("bytes", rc.Bytes).Fact("source", sourceOf(rc.Source)).Fact("persisted", true).
+		Fact("bytes", rc.Bytes).Fact("source", cmp.Or(rc.Source, "-")).Fact("persisted", true).
 		Fact("published", false).Fact("publish", rc.Policy)
 	if c.Bool("text") {
 		text, err := cairn.EntryText(c.Str("store"), c.Str("session"), c.Str("entry"))

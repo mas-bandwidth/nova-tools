@@ -198,13 +198,44 @@ func TestIndexSessionCountsOnlyTheSelection(t *testing.T) {
 	// An empty session is counted and named: sessions= is the selection's count,
 	// not the store's, and INDEX SESSION lists it with entries=0.
 	out := c.ok("index", "--session", "s2")
-	printed(t, out, "INDEX SESSION session=s2 entries=0", "INDEX OK sessions=1 entries=0")
+	printed(t, out, "INDEX SESSION session=s2 publish=manual ", " entries=0", "INDEX OK sessions=1 entries=0")
+	require.Regexp(t, `INDEX SESSION session=s2 publish=manual opened=\S+ entries=0`, out)
 	require.NotContains(t, out, "sessions=2", "sessions= counted the whole store, not the selection: %s", out)
 
 	// The full index names every session, empty or not.
 	out = c.ok("index")
-	printed(t, out, "INDEX SESSION session=s1 entries=1", "INDEX SESSION session=s2 entries=0",
+	printed(t, out, "INDEX SESSION session=s1 publish=manual ", "INDEX SESSION session=s2 publish=manual ",
 		"INDEX OK sessions=2 entries=1")
+	require.Regexp(t, `INDEX SESSION session=s1 publish=manual opened=\S+ entries=1`, out)
+	require.Regexp(t, `INDEX SESSION session=s2 publish=manual opened=\S+ entries=0`, out)
+}
+
+// TestIndexNamesEachSessionsPolicyAndOpened pins the session item index was
+// missing: one INDEX SESSION line per session, before the entries, carrying
+// the id, the publish policy and the stored opened time, and --max bounds
+// those lines with MORE the way it bounds entries.
+func TestIndexNamesEachSessionsPolicyAndOpened(t *testing.T) {
+	t.Parallel()
+
+	c := newRig(t)
+	c.ok("open", "--session", "s1", "--publish", "manual", "--source", "bench/s1", "--now", "2026-01-02T03:04:05Z")
+	c.ok("append", "--session", "s1", "--entry", "e1", "--text", "words of s1", "--now", "2026-01-02T04:00:00Z")
+	c.ok("open", "--session", "empty1", "--publish", "never", "--source", "bench/empty", "--now", "2026-01-03T00:00:00Z")
+	testkit.WriteFile(t, c.path("flat.md"), "# by hand\n")
+
+	out := c.ok("index")
+	require.Less(t, strings.Index(out, "INDEX SESSION"), strings.Index(out, "INDEX ENTRY"),
+		"session lines stand before entries:\n%s", out)
+	printed(t, out,
+		"INDEX SESSION session=empty1 publish=never opened=2026-01-03T00:00:00Z entries=0",
+		"INDEX SESSION session=flat publish=unknown opened=- entries=0",
+		"INDEX SESSION session=s1 publish=manual opened=2026-01-02T03:04:05Z entries=1",
+		"INDEX OK sessions=3 entries=1",
+		"INDEX ENTRY session=s1 entry=e1")
+
+	capped := c.ok("index", "--max", "1")
+	printed(t, capped, "INDEX MORE kind=session shown=1 total=3", "INDEX OK sessions=3 entries=1")
+	require.Equal(t, 1, strings.Count(capped, "INDEX SESSION"), "capped index:\n%s", capped)
 }
 
 // TestHelpWithMoreThanOneWordRefusesAsHelp pins the second half of the finding:
