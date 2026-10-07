@@ -12,8 +12,10 @@ import (
 )
 
 var (
-	dogfoodReadLine  = regexp.MustCompile(`(?m)^READ [0-9]+/10 — .+$`)
-	dogfoodUseLine   = regexp.MustCompile(`(?m)^USE [0-9]+/10 — .+$`)
+	// Existing dogfood records use a bare score, an em dash, two hyphens, or a
+	// colon; require the score token while leaving each report's prose format intact.
+	dogfoodReadLine  = regexp.MustCompile(`(?m)^READ[ \t]+(?:[0-9]|10)/10(?:$|[ \t—:-])`)
+	dogfoodUseLine   = regexp.MustCompile(`(?m)^USE[ \t]+(?:[0-9]|10)/10(?:$|[ \t—:-])`)
 	dogfoodCountLine = regexp.MustCompile(`^urgent=[0-9]+ next=[0-9]+$`)
 )
 
