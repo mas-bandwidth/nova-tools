@@ -883,25 +883,44 @@ func Receipt(store, session, id string) (ReceiptInfo, error) {
 
 // Index builds the entry index from the stored entries: no words are
 // recopied, entries are linked by session and entry id, and a stale *.tmp
-// from an interrupted append is never a row. session "" indexes every record;
-// max <= 0 lifts the ceiling. It returns the rows kept and the total.
-func Index(store, session string, max int) ([]IndexRow, int, error) {
+// from an interrupted append is never a row. The sessions the store holds,
+// from sessions/<id>.md and a flat <store>/<id>.md, come back from the same
+// walk, so index prints and counts every session, an empty one included,
+// without reading the store a second time. session "" indexes every record;
+// a named session is the only one returned. It returns the rows, the session
+// ids and the total.
+func Index(store, session string) ([]IndexRow, []string, int, error) {
 	if err := existingStore(store); err != nil {
-		return nil, 0, err
+		return nil, nil, 0, err
 	}
 	if session != "" {
 		if _, _, err := recordForRead(store, session); err != nil {
-			return nil, 0, err
+			return nil, nil, 0, err
+		}
+	}
+	names := map[string]bool{}
+	for _, dir := range [2]string{filepath.Join(store, "sessions"), store} {
+		files, err := os.ReadDir(dir)
+		if err != nil {
+			continue // a store with no sessions/ yet, or a flat-only store, names none here
+		}
+		for _, f := range files {
+			if f.IsDir() || !strings.HasSuffix(f.Name(), ".md") {
+				continue
+			}
+			if id := strings.TrimSuffix(f.Name(), ".md"); ValidID(id) && (session == "" || id == session) {
+				names[id] = true
+			}
 		}
 	}
 	rows, flat, err := flatIndexRows(store, session)
 	if err != nil {
-		return nil, 0, err
+		return nil, nil, 0, err
 	}
 	root := filepath.Join(store, "entries")
 	entries, err := os.ReadDir(root)
 	if err != nil && !os.IsNotExist(err) {
-		return nil, 0, err
+		return nil, nil, 0, err
 	}
 	for _, sess := range entries {
 		if !sess.IsDir() || flat[sess.Name()] || (session != "" && sess.Name() != session) {
@@ -909,7 +928,7 @@ func Index(store, session string, max int) ([]IndexRow, int, error) {
 		}
 		files, err := os.ReadDir(filepath.Join(root, sess.Name()))
 		if err != nil {
-			return nil, 0, err
+			return nil, nil, 0, err
 		}
 		for _, f := range files {
 			name := f.Name()
@@ -918,7 +937,7 @@ func Index(store, session string, max int) ([]IndexRow, int, error) {
 			}
 			ef, stamp, err := readEntry(store, sess.Name(), strings.TrimSuffix(name, ".json"))
 			if err != nil {
-				return nil, 0, err
+				return nil, nil, 0, err
 			}
 			rows = append(rows, IndexRow{Session: ef.Session, ID: ef.ID, Stamp: stamp, Source: ef.Source, Bytes: len(ef.Text)})
 		}
@@ -932,9 +951,10 @@ func Index(store, session string, max int) ([]IndexRow, int, error) {
 		}
 		return strings.Compare(a.ID, b.ID)
 	})
-	total := len(rows)
-	if max > 0 && len(rows) > max {
-		rows = rows[:max]
+	sessions := make([]string, 0, len(names))
+	for id := range names {
+		sessions = append(sessions, id)
 	}
-	return rows, total, nil
+	slices.Sort(sessions)
+	return rows, sessions, len(rows), nil
 }

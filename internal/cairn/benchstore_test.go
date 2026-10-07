@@ -196,7 +196,7 @@ func TestConcurrentAppendsUnderOneNewIDToABenchFileLandOneSection(t *testing.T) 
 	head := flatHeading(entryID, now)
 	assert.Equal(t, 1, strings.Count(got, head), "the file must hold exactly one heading for the id")
 
-	_, _, err = Index(store, "", 0)
+	_, _, _, err = Index(store, "")
 	require.NoError(t, err, "Index must succeed over the bench store")
 
 	rc, err := Receipt(store, session, entryID)

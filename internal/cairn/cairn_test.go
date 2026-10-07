@@ -60,7 +60,7 @@ func TestDuplicateAppendIsIdempotentAndConflictingEntryRefused(t *testing.T) {
 	require.True(t, dup.Duplicate, "retry must report duplicate=true, got %+v", dup)
 	_, err = Append(store, "s", "e", "DIFFERENT words", "src", now, "never")
 	require.Error(t, err, "same entry id with different prose must be refused, not duplicated")
-	rows, _, err := Index(store, "", 0)
+	rows, _, _, err := Index(store, "")
 	require.NoError(t, err, "Index")
 	require.Len(t, rows, 1, "duplicate retry left more than one index row")
 }
@@ -80,7 +80,7 @@ func TestInterruptedAppendRecoversAndPreservesOtherWriters(t *testing.T) {
 	persistedNotPublished(t, res.Persisted, res.Published, "recovered append must report persisted=true published=false, got %+v", res)
 	got, _ := EntryText(store, "s", "other")
 	require.Equal(t, "other writer's note", got, "other writer's entry mangled")
-	rows, _, err := Index(store, "", 0)
+	rows, _, _, err := Index(store, "")
 	require.NoError(t, err, "Index")
 	require.Len(t, rows, 2, "partial tmp must never index")
 }
@@ -115,7 +115,7 @@ func TestOpenConcurrentRecordsAndAlternateHeaders(t *testing.T) {
 	got, err := EntryText(store, "alpha", "e")
 	require.NoError(t, err, "EntryText after header rewrite")
 	require.Equal(t, "note in alpha", got, "entry mangled")
-	rows, total, err := Index(store, "", 0)
+	rows, _, total, err := Index(store, "")
 	require.NoError(t, err, "Index")
 	require.Equal(t, 2, total, "want 2 across both concurrent records")
 	require.Len(t, rows, 2, "want 2 across both concurrent records")
@@ -187,13 +187,13 @@ func TestCorruptStampRejectedByReaders(t *testing.T) {
 	require.Contains(t, err.Error(), "invalid stamp", "Receipt error must mention invalid stamp, got %v", err)
 
 	// Index scoped to session must refuse with corruption error.
-	_, _, err = Index(store, "s", 0)
+	_, _, _, err = Index(store, "s")
 	require.Error(t, err, "Index scoped to session must reject invalid stamp")
 	require.Contains(t, err.Error(), "is corrupt", "Index error must report corruption, got %v", err)
 	require.Contains(t, err.Error(), "invalid stamp", "Index error must mention invalid stamp, got %v", err)
 
 	// Index over all sessions must also refuse.
-	_, _, err = Index(store, "", 0)
+	_, _, _, err = Index(store, "")
 	require.Error(t, err, "Index over all sessions must reject invalid stamp")
 	require.Contains(t, err.Error(), "is corrupt", "Index error must report corruption, got %v", err)
 	require.Contains(t, err.Error(), "invalid stamp", "Index error must mention invalid stamp, got %v", err)

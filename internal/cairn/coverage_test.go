@@ -25,7 +25,7 @@ func Coverage(store string) Ledger {
 		}
 	}
 	led.Sessions = len(names)
-	if _, total, err := Index(store, "", 0); err == nil {
+	if _, _, total, err := Index(store, ""); err == nil {
 		led.Entries = total
 	}
 	return led
