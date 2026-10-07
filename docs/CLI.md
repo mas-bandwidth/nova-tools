@@ -1289,6 +1289,17 @@ need that is no card on the table is refused, naming every one, and nothing chan
 (`release v1 --reason '<why>'`), not emptied. The contract is
 [SPEC-SPRINT.md](SPEC-SPRINT.md) section 16.
 
+### A card's column is one field
+
+A card's live column is read from its row of the work table, and every reader
+prints it under one name, `column`: `card <id> --json`, `needs` (each waiting
+card as `card <id> column <c>` and each of its needs as `need <id> column <c>`,
+the same two labelled fields in `--json`) and the bulk listing, `where --json
+--rows`. No reader computes a state from the card's `place:work`. In `where
+--json --rows` each row also carries `state` with the same value: a deprecated
+alias kept for one release, then removed; read `column`. The contract is
+[SPEC-SPRINT.md](SPEC-SPRINT.md), the `needs` and `where` rows.
+
 ### Role views: what a model reads instead of the dashboard
 
 The owner, 2026-10-04: "i'd rather you hit this vs. hitting my dashboard which is for human

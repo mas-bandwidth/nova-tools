@@ -934,7 +934,7 @@ func (a *app) cmdWhere(args []string, stdout, stderr io.Writer) int {
 	all := fs.Bool("all", false, "draw the readers and merge tables too, hidden from the default frame (--json always carries them)")
 	cards := fs.Bool("cards", false, "with --json: also every work card dealt to a fleet row and not finished (its row, state, since, deadline and branch) and the open judgments on them, as the dashboard's pull routes serve them, and every machine's lanes (lane list)")
 	archived := fs.Bool("archived", false, "with --json: the archived streams' rows of the work and merge tables in tables, and their primaries in --rows, beside the live ones (stream archive); the summary and the drawn footers count only the streams on the table either way, and archived_cards and archived_landed carry theirs")
-	rows := fs.Bool("rows", false, "with --json: also every primary's row of the work table (id, stream, state, score, and its fields but the brief: card <id> --brief), in work order, so a child reads every card in one call and never loops card calls")
+	rows := fs.Bool("rows", false, "with --json: also every primary's row of the work table (id, stream, column, score, and its fields but the brief: card <id> --brief; state is column's deprecated alias for one release), in work order, so a child reads every card in one call and never loops card calls")
 	stale := fs.Duration("stale", defaultStale, "a stream with no progress for longer is shown stalled (--json)")
 	atEpoch := fs.Int64("at-epoch", -1, "the sprint as it was at an earlier epoch (before a clear)")
 	var rel releaseFlag
@@ -2050,9 +2050,13 @@ func groupText(g sprint.Group, now time.Time, opened bool) string {
 // cardView is everything about one primary.
 type cardView struct {
 	Primary *sprint.Card `json:"primary"`
-	Tier    string       `json:"tier"`            // the tier it is on (sprint.CardTiers)
-	Ceiling string       `json:"ceiling"`         // the highest the machine escalates it to
-	Grade   string       `json:"grade,omitempty"` // nova-decide's grade, as the card holds it (sprint.FieldGrade)
+	// Column is the card's live column, read from its table row (Card.Col).
+	// card --json, needs and where --json --rows print this one field under
+	// "column". No reader computes it from place:work.
+	Column  string `json:"column"`
+	Tier    string `json:"tier"`            // the tier it is on (sprint.CardTiers)
+	Ceiling string `json:"ceiling"`         // the highest the machine escalates it to
+	Grade   string `json:"grade,omitempty"` // nova-decide's grade, as the card holds it (sprint.FieldGrade)
 	// Who is the worker its brief's WHO line names (sprint.FieldWho): friend for any
 	// friend, friend.<name> for one; absent on a machine's card.
 	Who string `json:"who,omitempty"`
@@ -2142,7 +2146,7 @@ func (a *app) cmdCard(args []string, stdout, stderr io.Writer) int {
 		}
 		tier, ceiling := sprint.CardTiers(v.Primary)
 		level, source := sprint.CardPriority(v.Primary)
-		b, _ := json.Marshal(cardView{Primary: v.Primary, Tier: tier, Ceiling: ceiling, Grade: v.Primary.F(sprint.FieldGrade), Who: v.Primary.F(sprint.FieldWho), Priority: level, PrioritySource: source, Work: v.Work, Reads: v.Reads, Merge: v.Merge, Open: v.Open, Needs: v.Needs, NeededBy: v.NeededBy, Held: held,
+		b, _ := json.Marshal(cardView{Primary: v.Primary, Column: v.Primary.Col, Tier: tier, Ceiling: ceiling, Grade: v.Primary.F(sprint.FieldGrade), Who: v.Primary.F(sprint.FieldWho), Priority: level, PrioritySource: source, Work: v.Work, Reads: v.Reads, Merge: v.Merge, Open: v.Open, Needs: v.Needs, NeededBy: v.NeededBy, Held: held,
 			Cost: sprint.CardCostOf(v.Primary), Timeline: events, Texts: texts})
 		fmt.Fprintln(stdout, string(b))
 		return 0
@@ -2445,11 +2449,14 @@ func printBrief(stdout, stderr io.Writer, id, brief string, asJSON bool) int {
 // primaryRow is one primary's row of the work table as where --json --rows carries
 // it: its place and score, and every field but the brief (card <id> --brief prints
 // that; the comfort list of 2026-10-03, item 8: a child's loop of card calls timed
-// out against the store).
+// out against the store). Column is the card's live column, the one field card
+// --json and needs print under "column". State carries the same value as the
+// deprecated "state" for one release.
 type primaryRow struct {
 	ID     string            `json:"id"`
 	Stream string            `json:"stream"`
-	State  string            `json:"state"`
+	Column string            `json:"column"`
+	State  string            `json:"state"` // deprecated: column; removed after one release
 	Score  float64           `json:"score"`
 	Fields map[string]string `json:"fields"`
 }
@@ -2470,7 +2477,7 @@ func rowsView(s *sprint.Snapshot, gone *archivedView) []primaryRow {
 				fields[k] = v
 			}
 		}
-		rows = append(rows, primaryRow{ID: c.ID, Stream: c.Row, State: c.Col, Score: c.Score, Fields: fields})
+		rows = append(rows, primaryRow{ID: c.ID, Stream: c.Row, Column: c.Col, State: c.Col, Score: c.Score, Fields: fields})
 	}
 	slices.SortStableFunc(rows, func(a, b primaryRow) int {
 		return cmp.Or(cmp.Compare(a.Stream, b.Stream), cmp.Compare(a.Score, b.Score), cmp.Compare(a.ID, b.ID))
