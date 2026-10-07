@@ -247,6 +247,12 @@ reported activity raises none of this kind: her silence is the report rule's (15
 without a beat). The column is a field of a table locked on 2026-10-01 and is added by the card
 friend-session-liveness.w1 (internal/sprint/TABLES.lock, the 2026-10-04 entry).
 
+**A friend's usage** (friend-tokens-column-b): the friends table's `tokens` column,
+after `active`, sums each friend's reported `in`, `cache` and `out` usage from her
+card results. Subscription rows show a compact token count such as `1.2M`; a row
+whose billing field is API-billed shows its usage dollars rounded up to cents. An
+empty billing field is subscription until the billing field is configured.
+
 **A subscription friend's window use** (subscription-pacing-is-a-setting.w1; the owner,
 2026-10-05 ~10:45 PM, "Please try to go easy on <friend> (<machine>) and this session until
 11PM, or you will run out of credits"). A friend on a subscription is paced by her daemon against

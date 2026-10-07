@@ -76,6 +76,7 @@ type PullRow struct {
 	Width   string `json:"width"`
 	Done    string `json:"done"`
 	OKPct   string `json:"okpct"`
+	Tokens  string `json:"tokens,omitempty"`
 	Load    string `json:"load,omitempty"`
 }
 
@@ -115,7 +116,7 @@ func pullView(c *sprintCopy, kind, name string) (PullView, bool) {
 	v := PullView{At: c.At, Kind: kind, Name: name, Cards: []PullCard{}, Judgments: []PullJudgment{},
 		Sprint: SprintLine{Landed: c.Landed, All: c.All, Held: c.Held, ETA: etaOf(c.Summary), Machine: strings.TrimPrefix(c.Machine, "machine: ")},
 		Row: PullRow{Status: cells["status"], Ready: cells["ready"], Working: cells["working"], Width: cells["width"],
-			Done: cells["done"], OKPct: cells["okpct"], Load: cells["load"]}}
+			Done: cells["done"], OKPct: cells["okpct"], Load: cells["load"], Tokens: cells["tokens"]}}
 	mine := map[string]bool{}
 	for _, card := range c.Cards {
 		if card.Member == member {

@@ -254,6 +254,7 @@ func TestDashboardPageIsTheSpec(t *testing.T) {
 		return out
 	}
 	workFractions, fleetFractions := fractionsOf("Work"), fractionsOf("Fleet")
+	friends = append(friends, "tokens")
 	assert.Equal(t, map[string]bool{"landed": true}, workFractions, "Work's fraction columns in the spec")
 	assert.Equal(t, map[string]bool{"working": true}, fleetFractions, "Fleet's fraction columns in the spec")
 	lanesSec := sp.section(t, "Lanes")

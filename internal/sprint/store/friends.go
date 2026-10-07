@@ -66,7 +66,8 @@ type friendEntry struct {
 	TokenCapSet bool  `json:"token_cap_set,omitempty"`
 	// Roles is her row's roles, comma joined (builder, may-hold, reader): a read card is
 	// dealt only to a friend whose roles name reader (sprint read_cards.go).
-	Roles string `json:"roles,omitempty"`
+	Roles   string `json:"roles,omitempty"`
+	Billing string `json:"billing,omitempty"`
 	// Reason and Until are the hold's (friend down --reason --until, hold <friend>
 	// --reason): why, and when the coordinator expects her back. Return is whether
 	// the hold took her cards back (hold.go).
@@ -90,7 +91,8 @@ type FriendSpec struct {
 	TokenCap    int64
 	TokenCapSet bool
 	// Roles is her row's roles, comma joined: reader is the read cards'.
-	Roles string
+	Roles   string
+	Billing string
 }
 
 // FriendRow is one row of the friends table as where draws it: the counts of
@@ -118,7 +120,9 @@ type FriendRow struct {
 	// Active is the newest write her daemon found under her working directory and
 	// outbox (sprint.FriendReport.Active), zero when it reported none: the last
 	// session activity column.
-	Active time.Time `json:"active,omitzero"`
+	Active  time.Time `json:"active,omitzero"`
+	Tokens  int64     `json:"tokens"`
+	Billing string    `json:"billing,omitempty"`
 	// Beat is when her last beat came, zero when she has never beaten: how stale her
 	// report is (view coordinator).
 	Beat time.Time `json:"beat,omitzero"`
@@ -194,11 +198,11 @@ func (st *Store) SyncFriends(ctx context.Context, specs []FriendSpec) (added, re
 		case !had:
 			added = append(added, s.Name)
 			rosterChanged = true
-		case e.Width != s.Width || e.Class != s.Class || e.Mode != s.Mode || e.ConfigDir != s.ConfigDir || e.TokenCap != s.TokenCap || e.TokenCapSet != s.TokenCapSet || e.Roles != s.Roles:
+		case e.Width != s.Width || e.Class != s.Class || e.Mode != s.Mode || e.ConfigDir != s.ConfigDir || e.TokenCap != s.TokenCap || e.TokenCapSet != s.TokenCapSet || e.Roles != s.Roles || e.Billing != s.Billing:
 			updated = append(updated, s.Name)
 			rosterChanged = true
 		}
-		e.Width, e.Class, e.Mode, e.ConfigDir, e.TokenCap, e.TokenCapSet, e.Roles = s.Width, s.Class, s.Mode, s.ConfigDir, s.TokenCap, s.TokenCapSet, s.Roles
+		e.Width, e.Class, e.Mode, e.ConfigDir, e.TokenCap, e.TokenCapSet, e.Roles, e.Billing = s.Width, s.Class, s.Mode, s.ConfigDir, s.TokenCap, s.TokenCapSet, s.Roles, s.Billing
 		r[s.Name] = e
 	}
 	for n := range r {
@@ -379,6 +383,11 @@ func (st *Store) friendRows(ctx context.Context, now time.Time) ([]FriendRow, ma
 		return nil, nil, err
 	}
 	rows := map[string]FriendRow{}
+	loaded, err := st.Load(ctx, []string{sprint.Fleet}, nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	fleet := loaded.Fleet
 	status := map[string]string{}
 	whys := map[string]string{}
 	for i, n := range names {
@@ -401,7 +410,14 @@ func (st *Store) friendRows(ctx context.Context, now time.Time) ([]FriendRow, ma
 		}
 		presence := sprint.FriendPresence{Held: r[n].Held, Beat: b, Health: h, Generation: generation, Finished: fin}
 		word, evidence := sprint.FriendEvidence(presence, now)
-		row := FriendRow{Name: n, Width: r[n].Width, Status: word, Evidence: evidence, Finished: fin, Class: r[n].Class, Mode: r[n].Mode, Roles: r[n].Roles, Load: b.Load, Report: b.Friend, Beat: b.At, Proof: b.Proof}
+		row := FriendRow{Name: n, Width: r[n].Width, Status: word, Evidence: evidence, Finished: fin, Class: r[n].Class, Mode: r[n].Mode, Roles: r[n].Roles, Billing: r[n].Billing, Load: b.Load, Report: b.Friend, Beat: b.At, Proof: b.Proof}
+		if fleet != nil {
+			var cards []*sprint.Card
+			for _, col := range []string{sprint.Ready, sprint.Working, sprint.DoneOK, sprint.DoneFailed} {
+				cards = append(cards, fleet.Cell(sprint.FriendRow(n), col)...)
+			}
+			row.Tokens = sprint.FriendTokensFromCards(cards)
+		}
 		if why := sprint.FriendDownWhy(presence, now); why != "" {
 			whys[n] = why
 		}
@@ -653,7 +669,7 @@ func (st *Store) FriendSpecOf(ctx context.Context, friend string) (FriendSpec, e
 	if !ok {
 		return FriendSpec{}, noFriend(r, friend)
 	}
-	return FriendSpec{Name: friend, Width: e.Width, Class: e.Class, Mode: e.Mode, ConfigDir: e.ConfigDir, TokenCap: e.TokenCap, TokenCapSet: e.TokenCapSet, Roles: e.Roles}, nil
+	return FriendSpec{Name: friend, Width: e.Width, Class: e.Class, Mode: e.Mode, ConfigDir: e.ConfigDir, TokenCap: e.TokenCap, TokenCapSet: e.TokenCapSet, Roles: e.Roles, Billing: e.Billing}, nil
 }
 
 // FriendSessions is every friend of the roster with her session's last pong as her last

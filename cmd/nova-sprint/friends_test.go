@@ -29,9 +29,9 @@ import (
 
 // emptyFriends is the friends table with no friend: its header, one rule and
 // the footer, as every empty table is.
-const emptyFriends = "friends | ready | working | width | done | ok%  | status | active\n" +
-	"--------+-------+---------+-------+------+------+--------+-------\n" +
-	"        |     0 |       0 |     0 |    0 | 0.0% |        |"
+const emptyFriends = "friends | ready | working | width | done | ok%  | status | active | tokens\n" +
+	"--------+-------+---------+-------+------+------+--------+--------+-------\n" +
+	"        |     0 |       0 |     0 |    0 | 0.0% |        |        |      0"
 
 // friendApp is a test app with an initialised sprint whose friend sync reads the
 // friend rows of nova-config's in-memory store, each named in friends.
@@ -255,12 +255,12 @@ func TestTheFriendsTableShowsAfterMergeAndBeforeFleet(t *testing.T) {
 		{name: "the empty store", want: emptyFriends},
 		{name: "two friends, one up and one held", friends: []string{"friend-a", "friend-b"},
 			lines: []string{"friend sync", "friend beat friend-b", "friend health friend-b --state up --seen 2030-01-02T03:04:05Z --generation 1", "friend down friend-a"},
-			want: "friends  | ready | working | width | done | ok%  | status | active\n" +
-				"---------+-------+---------+-------+------+------+--------+-------\n" +
-				"friend-b |     0 |       0 |     8 |    0 | 0.0% | up     | -\n" +
-				"friend-a |     0 |       0 |     8 |    0 | 0.0% | held   | -\n" +
-				"---------+-------+---------+-------+------+------+--------+-------\n" +
-				"         |     0 |       0 |    16 |    0 | 0.0% |        |"},
+			want: "friends  | ready | working | width | done | ok%  | status | active | tokens\n" +
+				"---------+-------+---------+-------+------+------+--------+--------+-------\n" +
+				"friend-b |     0 |       0 |     8 |    0 | 0.0% | up     | -      |      0\n" +
+				"friend-a |     0 |       0 |     8 |    0 | 0.0% | held   | -      |      0\n" +
+				"---------+-------+---------+-------+------+------+--------+--------+-------\n" +
+				"         |     0 |       0 |    16 |    0 | 0.0% |        |        |      0"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()

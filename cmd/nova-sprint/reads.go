@@ -1496,9 +1496,27 @@ func (a *app) friendsTable(friends []store.FriendRow, now time.Time) ntable.Tabl
 		cells[at[sprint.DoneOK]].Count = int64(f.OK)
 		cells[at[sprint.DoneFailed]].Count = int64(f.Failed)
 		t.Rows = append(t.Rows, ntable.Row{Key: f.Name, Cells: cells,
-			Texts: map[string]string{sprint.FieldWidth: strconv.Itoa(f.Width), sprint.Status: a.statusCell(f, now), sprint.Active: activeCell(f, now)}})
+			Texts: map[string]string{sprint.FieldWidth: strconv.Itoa(f.Width), sprint.Status: a.statusCell(f, now), sprint.Active: activeCell(f, now), sprint.Tokens: friendTokenCell(f)}})
 	}
 	return t
+}
+
+func friendTokenCell(f store.FriendRow) string {
+	if f.Billing != "" && f.Billing != "subscription" {
+		return "$0.00"
+	}
+	if f.Tokens < 1000 {
+		return strconv.FormatInt(f.Tokens, 10)
+	}
+	for _, unit := range []struct {
+		size   int64
+		suffix string
+	}{{1_000_000, "M"}, {1_000, "k"}} {
+		if f.Tokens >= unit.size {
+			return strconv.FormatFloat(float64(f.Tokens)/float64(unit.size), 'g', 2, 64) + unit.suffix
+		}
+	}
+	return strconv.FormatInt(f.Tokens, 10)
 }
 
 // activeCell is the friends table's active cell: how long ago her session last wrote a file

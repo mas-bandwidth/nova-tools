@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 )
 
@@ -54,11 +55,51 @@ var AllOrder = []string{Work, Readers, Merge, Friends, Fleet}
 // her session last wrote a file (her beat's Active; "-" when none was reported). The rows are the
 // friends'; where draws them from store.FriendRows.
 func FriendsDef() ntable.Table {
-	cols, err := ntable.ParseColumns("ready,working,width:text:sum,done:sum(ok+failed),okpct:pct(ok/ok+failed):pooled:ok%,status:text,active:text,ok,failed")
+	cols, err := ntable.ParseColumns("ready,working,width:text:sum,done:sum(ok+failed),okpct:pct(ok/ok+failed):pooled:ok%,status:text,active:text,tokens:text:sum,ok,failed")
 	if err != nil {
 		panic(fmt.Sprintf("sprint table %s: %v", Friends, err))
 	}
 	return ntable.Table{Name: Friends, Columns: cols, Hidden: []string{DoneOK, DoneFailed}}
+}
+
+// ParseFriendUsage reads the compact usage line carried by a friend's RESULT.md.
+func ParseFriendUsage(line string) cardcost.Usage {
+	line = strings.TrimSpace(line)
+	if key, rest, ok := strings.Cut(line, ":"); ok && strings.EqualFold(strings.TrimSpace(key), "usage") {
+		line = rest
+	}
+	var normalized []string
+	for _, word := range strings.Fields(line) {
+		key, value, ok := strings.Cut(word, "=")
+		if !ok {
+			continue
+		}
+		switch strings.ToLower(key) {
+		case "in":
+			normalized = append(normalized, "input="+value)
+		case "out":
+			normalized = append(normalized, "output="+value)
+		case "cache":
+			normalized = append(normalized, "cache_read="+value)
+		default:
+			normalized = append(normalized, word)
+		}
+	}
+	return cardcost.ParseUsage(strings.Join(normalized, " "))
+}
+
+// FriendTokensFromCards sums input, cache and output tokens on a friend's cards.
+func FriendTokensFromCards(cards []*Card) int64 {
+	var total int64
+	for _, card := range cards {
+		u := cardcost.ParseUsage(card.F(FieldUsage))
+		for _, n := range []int64{u.Tokens.Input, u.Tokens.CacheRead, u.Tokens.CacheWrite, u.Tokens.Output} {
+			if n > 0 {
+				total += n
+			}
+		}
+	}
+	return total
 }
 
 // Readers table columns.
@@ -106,6 +147,7 @@ const (
 	DoneFailed = "failed"
 	Status     = "status"
 	Active     = "active" // friends.active: how long ago her session last wrote a file
+	Tokens     = "tokens" // friends.tokens: compact usage total
 	Load       = "load"
 	Withdrawn  = "withdrawn"
 )

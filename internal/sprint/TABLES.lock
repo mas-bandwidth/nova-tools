@@ -7,6 +7,10 @@
 # (TestSprintTablesAreLocked) renders the same text from schema.go and is red on any
 # difference. Change a table's shape only when Glenn asks for it, and then change this
 # file in the same PR so a read sees it.
+# Change, 2026-10-07, asked by the friend token card: friends.tokens is the compact sum of
+# each friend's RESULT.md input, cache and output usage, shown after active. An empty billing
+# field is subscription; a non-subscription billing field is reserved for API-priced dollars.
+# Held by TestSprintTablesAreLocked.
 #
 # Change, 2026-10-01, asked by Glenn in words: "can you please add a final column to the
 # work stream table, which is "cost". This is the sum of each landed card's total cost
@@ -193,6 +197,7 @@ friends.done sum(ok+failed) sum shown
 friends.okpct pct(ok/ok+failed) pooled shown label=ok%
 friends.status text none shown
 friends.active text none shown
+friends.tokens text sum shown
 friends.ok count sum hidden
 friends.failed count sum hidden
 view work friends fleet
