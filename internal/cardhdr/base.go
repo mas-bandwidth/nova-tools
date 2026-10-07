@@ -17,6 +17,26 @@ func Value(text, key string) (value string, ok bool) {
 	return "", false
 }
 
+// Field is Value's case-insensitive reader: the value of the first `KEY: value`
+// line whose key is key in any case (a header's key is any case; docs/SPEC-CARD-CONTRACT.md).
+// The one header grammar reads a card's tier, REPO and BASE through it, so `tier:`
+// is a header field like `REPO:` and never a word appended to another line.
+func Field(text, key string) (value string, ok bool) {
+	for _, l := range strings.Split(text, "\n") {
+		if k, v, isKV := KeyValue(l); isKV && strings.EqualFold(k, key) {
+			return v, true
+		}
+	}
+	return "", false
+}
+
+// RepoAlone says a REPO value stands alone: one word and nothing after it. A REPO
+// line with trailing words is refused by the lint, and a lander parses a repository
+// only from a value that stands alone.
+func RepoAlone(v string) bool {
+	return len(strings.Fields(strings.TrimSpace(v))) == 1
+}
+
 // sha40RE is a full commit sha as a card tree writes it.
 var sha40RE = regexp.MustCompile(`^[0-9a-f]{40}$`)
 

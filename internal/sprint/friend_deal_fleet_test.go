@@ -16,7 +16,9 @@ import (
 // friend up, tiers flash, width 32, holding 13 reads, had nothing ready for over an hour
 // while the fleet was dealt flash cards: the friend deal read an undealt card's tier as its
 // ceiling (a brief whose line 1 says tier: heavy), while the machines deal every such card
-// on flash first (startTier), and her reads counted as her lanes.
+// on flash first (startTier), and her reads counted as her lanes. Since 2026-10-07 the
+// brief's tier is its starting tier for friends and machines alike, so a heavy card is
+// neither dealt flash nor handed to a flash friend.
 
 // fleetBrief is a fleet card's brief with line 1 naming the tier given ("" names none).
 func fleetBrief(tier string) string {
@@ -93,7 +95,7 @@ func TestAFlashFriendWithRoomIsDealtFleetFlashCards(t *testing.T) {
 		fleet = append(fleet, fleetBrief(""))
 	}
 	for range 6 {
-		fleet = append(fleet, fleetBrief("heavy")) // its ceiling: the machines deal it on flash first
+		fleet = append(fleet, fleetBrief("")) // no tier: flash, as a flash brief
 	}
 	proBob := "c: a friend's card tier: pro\nREPO: mas-bandwidth/nova-tools\nWHO: friend bob\n\nThe task."
 	who := []string{proBob, proBob, proBob}
@@ -175,18 +177,20 @@ func TestAnUntieredCardIsFlashForAFriend(t *testing.T) {
 	w := friendWorld(t, fleetBrief(""), fleetBrief("heavy"), fleetBrief("pro"))
 	pr := w.s.Work.Card("s1-1")
 	assert.Equal(t, "flash", w.s.dealTierOf(pr), "no tier line: flash, as the machines deal it")
-	assert.Equal(t, "flash", w.s.dealTierOf(w.s.Work.Card("s1-2")), "a heavy ceiling starts on flash")
+	assert.Equal(t, "heavy", w.s.dealTierOf(w.s.Work.Card("s1-2")), "a brief that names heavy starts on heavy")
 	assert.Equal(t, "pro", w.s.dealTierOf(w.s.Work.Card("s1-3")), "a pro brief starts on pro")
 	amy := FriendSeat{Name: "amy", Width: 4, Status: Up, Class: "flash", Tiers: []string{"flash"}}
 	dealWith(w, amy)
-	for _, id := range []string{"s1-1", "s1-2"} {
+	for _, id := range []string{"s1-1"} {
 		wc := w.s.Fleet.Card(WorkCardID(id, 1))
 		require.NotNil(t, wc, id)
 		assert.Equal(t, FriendRow("amy"), wc.Row, "%s is a flash friend's", id)
 	}
-	wc := w.s.Fleet.Card(WorkCardID("s1-3", 1))
-	require.NotNil(t, wc)
-	assert.Contains(t, []string{"m1", "m2"}, wc.Row, "a pro card is no flash friend's")
+	for _, id := range []string{"s1-2", "s1-3"} {
+		wc := w.s.Fleet.Card(WorkCardID(id, 1))
+		require.NotNil(t, wc, id)
+		assert.Contains(t, []string{"m1", "m2"}, wc.Row, "%s is no flash friend's", id)
+	}
 }
 
 func TestAFriendReclaimsAnUntakenDealtAheadCard(t *testing.T) {
@@ -268,11 +272,11 @@ func TestTheReclaimIsBoundedAndAnUnstartedReclaimGoesBackToTheMachines(t *testin
 }
 
 // A card dealt again to a friend whose primary names no tier_now gets the tier the deal drew
-// (a heavy ceiling, dealt on flash), so its reads follow the deal tier, not the ceiling.
+// (the tier its brief names), so its reads follow the deal tier, not a stale ceiling.
 func TestARedealToAFriendWritesItsTierNow(t *testing.T) {
 	t.Parallel()
-	w := friendWorld(t, fleetBrief("heavy"))
-	bob := FriendSeat{Name: "bob", Width: 1, Status: Up, Class: "flash", Tiers: []string{"flash"}}
+	w := friendWorld(t, fleetBrief("pro"))
+	bob := FriendSeat{Name: "bob", Width: 1, Status: Up, Class: "pro", Tiers: []string{"pro"}}
 	dealWith(w, bob)
 	wc := w.s.Fleet.Card(WorkCardID("s1-1", 1))
 	require.NotNil(t, wc)
@@ -282,12 +286,12 @@ func TestARedealToAFriendWritesItsTierNow(t *testing.T) {
 	w.s.Work.Put(pr)
 	w.must(FriendTake(w.s, FriendTakeReq{Friend: "bob", IDs: []string{wc.ID}, Reason: "taken back", Who: "coordinator"}))
 	require.Equal(t, Ready, w.s.StateOf("s1-1"))
-	amy := FriendSeat{Name: "amy", Width: 1, Status: Up, Class: "flash", Tiers: []string{"flash"}}
+	amy := FriendSeat{Name: "amy", Width: 1, Status: Up, Class: "pro", Tiers: []string{"pro"}}
 	dealWith(w, amy)
 	require.Equal(t, FriendRow("amy"), w.s.Fleet.Card(wc.ID).Row)
 	now, ceiling := CardTiers(w.s.Work.Card("s1-1"))
-	assert.Equal(t, "flash", now, "the tier the deal drew")
-	assert.Equal(t, "heavy", ceiling)
+	assert.Equal(t, "pro", now, "the tier the deal drew")
+	assert.Equal(t, "pro", ceiling)
 }
 
 // where's dealt_fleet counts the work cards on her row whose primary carries no WHO line: a

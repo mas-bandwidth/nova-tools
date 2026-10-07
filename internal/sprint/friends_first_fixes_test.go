@@ -50,11 +50,16 @@ func TestACardWithTwoProviderFailuresGoesToAFriendNotAnUnfundedRoute(t *testing.
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			w := friendWorld(t, "c: work tier: heavy\n\nThe task.") // flash first, pro next
+			w := friendWorld(t, "c: work tier: pro\n\nThe task.") // ceiling pro; on flash from before the rule
 			w.s.Routes = []Route{
 				{Name: "fl", Tier: cardhdr.RouteFlash, Provider: "p", Model: "f", Enabled: true},
 				{Name: "pr", Tier: cardhdr.RoutePro, Provider: "p", Model: "m", Enabled: true},
 			}
+			// a card dealt before a brief's tier became its starting tier: it is on
+			// flash under a pro ceiling, the one case the ladder still climbs
+			before := w.s.Work.Card("s1-1")
+			before.Fields[FieldTierNow] = cardhdr.RouteFlash
+			w.s.Work.Put(before)
 			w.must(Deal(w.s, DealReq{Sel: Sel{IDs: []string{"s1-1"}}}))
 			pr := w.s.Primary("s1-1")
 			require.Equal(t, cardhdr.RouteFlash, pr.F(FieldTierNow), "flash first")

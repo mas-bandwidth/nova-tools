@@ -158,17 +158,14 @@ func decidedSets(r FinishReq, used bool, pr *Card, card, primary map[string]stri
 }
 
 // startTier is the tier a card with no tier yet (its first deal on a route) is drawn from:
-// the tier its brief's line 1 names when that is pro (the owner, 2026-10-03, after seven of
-// seven first flash attempts of pro cards died at the budget or the deadline with no result,
-// one dead attempt per card: a brief's tier is the card's starting tier, not only its
-// ceiling, and a card that says pro is never dealt below it), else flash first (cost rule 1
-// of nova-tools#5174, for briefs that say flash or say no tier). The grade (decide.go, Grade)
-// is recorded on the card and raises nothing: line 1 decides the start.
+// the tier its brief's `tier:` header field names (cardhdr.ReadModel; pro from 2026-10-03,
+// and every named tier from 2026-10-07: a card admitted with `tier: heavy` was dealt flash
+// three times that day), else flash first (cost rule 1 of nova-tools#5174, for a brief that
+// says flash or names no tier). A brief's tier is the card's starting tier, not only its
+// ceiling, so naming it sets the card's tier at admission. The grade (decide.go, Grade) is
+// recorded on the card and raises nothing: the brief's tier decides the start.
 func (s *Snapshot) startTier(c *Card, m cardhdr.Model) string {
-	if ceilingTier(c, m) == cardhdr.RoutePro {
-		return cardhdr.RoutePro
-	}
-	return cardhdr.RouteFlash
+	return ceilingTier(c, m)
 }
 
 // GradeReq is the decide lane's grades: each card's grade decision as it rides on the card.

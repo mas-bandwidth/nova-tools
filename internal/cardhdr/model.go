@@ -32,6 +32,12 @@ func ReadModel(brief string) (m Model, why string) {
 	if t := tierRE.FindStringSubmatch(first); t != nil {
 		m.Tier = t[1]
 	}
+	// `tier:` is a header field like `REPO:` (the one grammar, base.go Field): a card
+	// names its tier on a `tier: <t>` line, and that field sets it whatever line 1
+	// reads, so a tier appended to the REPO line is no tier at all.
+	if t, ok := Field(brief, "tier"); ok {
+		m.Tier = t
+	}
 	var problems []string
 	if m.Tier != "" && !IsRoute(m.Tier) {
 		problems = append(problems, "line 1 names tier "+m.Tier+"; want "+RouteList)

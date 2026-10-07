@@ -132,7 +132,9 @@ func Lint(id, brief string, o Options) []cardgen.LintFinding {
 
 // Checks are the card checks, past the add's own lint:
 //
-//   - tier-line: line 1 names a tier (`tier: flash|pro|heavy|frontier`);
+//   - tier-line: the header names a tier on a `tier: <t>` line (`tier:` is a
+//     header field like `REPO:`);
+//   - repo-line: the REPO line names one owner/name and nothing after it;
 //   - test-outside-paths: the TEST line's package is a directory PATHS names, so the
 //     test the card lands with is one it may edit;
 //   - personal-name: no name of o.Names outside a double-quoted span (the owner's
@@ -152,11 +154,17 @@ func Checks(id, brief string, o Options) []cardgen.LintFinding {
 	}
 	if paths := headerList(brief, "PATHS"); paths != nil {
 		if m, _ := cardhdr.ReadModel(brief); m.Tier == "" {
-			add("tier-line", 1, "line 1 names no tier; write tier: and one of "+cardhdr.RouteList+" on it")
+			add("tier-line", headerLine(brief, "tier"), "the header names no tier; write `tier: ` and one of "+cardhdr.RouteList+" on a line of its own")
 		}
 		if pkg := TestPackage(brief); pkg != "" && !covers(paths, pkg) {
 			add("test-outside-paths", headerLine(brief, "TEST"), "the TEST package "+pkg+" is no directory PATHS names ("+strings.Join(paths, ", ")+"); a card lands with a test it may edit")
 		}
+	}
+	// A REPO: line that names trailing words reads as one whole repository to a
+	// reader that splits nothing, and the lander parses a repository only from a
+	// value that stands alone (cardhdr.RepoAlone; fix 3 of the defects of 2026-10-07).
+	if v, ok := swarm.CardHeaderValue([]byte(brief), "REPO"); ok && !cardhdr.RepoAlone(v) {
+		add("repo-line", headerLine(brief, "REPO"), "REPO "+v+" names words after the repository; a REPO line names one owner/name, and `tier:` goes on a line of its own")
 	}
 	for i, line := range strings.Split(brief, "\n") {
 		if strings.HasPrefix(line, "WHO:") {

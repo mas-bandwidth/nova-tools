@@ -1263,6 +1263,11 @@ func (a *app) whereOf(ctx context.Context, st *store.Store, stale time.Duration,
 			// dollars per landed card, a column of the text table and a field of each row;
 			// the tiers and the spend by tier go to StreamCosts, from the tick's record (cost_view.go)
 			t = perLandedColumn(t, facts.Streams)
+			// a held stream's row is marked in the frame and where --json carries the
+			// reason (where.go): the merge row's state, where the hold lives, is hidden
+			// from the default frame, so the work row is where the coordinator sees it
+			var heldBy map[string]string
+			t, heldBy = heldColumn(t, clocks)
 			for _, r := range t.Rows {
 				// an archived stream's costs stay in stream_costs, its row or not
 				if tc, ok := facts.Streams[r.Key]; ok {
@@ -1273,6 +1278,9 @@ func (a *app) whereOf(ctx context.Context, st *store.Store, stale time.Duration,
 				}
 				if rows[r.Key] != nil {
 					rows[r.Key][perLandedField] = r.Texts[perLandedColumnName]
+					if why, ok := heldBy[r.Key]; ok {
+						rows[r.Key][heldColumnName] = why
+					}
 					// the stream's default level for cards added later, beside it (priority.go)
 					rows[r.Key][streamPriorityField] = sprint.PriorityNormal
 					if d := v.StreamPriorities[r.Key]; d != "" {

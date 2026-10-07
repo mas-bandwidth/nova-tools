@@ -40,3 +40,23 @@ func TestWhereRowsCarriesEveryPrimary(t *testing.T) {
 	assert.Equal(t, 2, code)
 	assert.Contains(t, errs, "--rows is a field of the JSON view: give --json with it")
 }
+
+// A stream the coordinator holds is marked on its work row, in the frame and in
+// where --json's table row: the fix of 2026-10-07, when a card's story said
+// "stream X is held" and where marked no stream.
+func TestWhereMarksAHeldStreamRow(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.ok("init --readers reader-a,reader-b --members m1")
+	ta.ok("add --stream a --count 2")
+	ta.ok("hold a --reason red")
+
+	out := ta.ok("where")
+	assert.Contains(t, out, "held red", "the work row carries the hold and its reason")
+
+	var v struct {
+		Tables map[string]map[string]map[string]any `json:"tables"`
+	}
+	ta.json("where", &v)
+	assert.Equal(t, "red", v.Tables["work"]["a"]["held"])
+}

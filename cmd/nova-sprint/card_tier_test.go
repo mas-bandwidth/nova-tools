@@ -78,3 +78,23 @@ func (ta *testApp) tierNow(id, tier string) {
 		Members: []ntable.BatchMemberEntry{{ID: c.ID, Expect: &ntable.MemberExpect{Revision: fmt.Sprint(c.Rev)}, Set: map[string]string{sprint.FieldTierNow: tier}}}})
 	require.NoError(ta.t, err)
 }
+
+// A brief that names its tier on a `tier:` header line is dealt that tier: the
+// fix of 2026-10-07, when a card admitted with `tier: heavy` was dealt flash and
+// the heavier work reached flash friends and the machines.
+func TestABriefThatNamesHeavyStartsOnHeavy(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct{ name, brief string }{
+		{"the field on its own line", "s1: the work (s1)\ntier: heavy"},
+		{"the field as line 1", "tier: heavy"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			ta := newTestApp(t)
+			ta.ok("init --readers reader-a,reader-b --members m1")
+			ta.ok("add --stream s1 --count 1 --one --brief-file " + writeBrief(t, c.brief))
+			out := ta.ok("card s1-1")
+			assert.Contains(t, out, " tier=heavy ceiling=heavy\n", "the tier its brief names is its from admission")
+		})
+	}
+}

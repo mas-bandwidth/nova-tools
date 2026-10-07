@@ -10,7 +10,8 @@ import (
 )
 
 // add holds every brief to the card checks nova-card generate holds it to before it
-// leaves (card.Checks): a card brief with no tier on line 1, a TEST outside its
+// leaves (card.Checks): a card brief with no tier on a `tier:` header line, a REPO
+// line with words after the repository, a TEST outside its
 // PATHS, the name of the sprint's coordinator or owner outside double-quoted words, or a
 // card dropped off the table named, is refused with the finding and nothing is written;
 // the clean brief, and the owner quoted by name, are admitted.
@@ -30,6 +31,7 @@ func TestAddHoldsABriefToTheCardChecks(t *testing.T) {
 	}
 	for _, tc := range []struct{ name, brief, check string }{
 		{"no-tier", "RESULT: c sha=0123456789ab\nPATHS: internal/x/*.go\nTEST: internal/x TestY\n\nTHE TASK. Fix x.", "check=tier-line line=1"},
+		{"repo-words", "RESULT: c sha=0123456789ab tier: pro\nREPO: o/r tier: heavy\nPATHS: internal/x/*.go\nTEST: internal/x TestY\n\nTHE TASK. Fix x.", "check=repo-line line=2"},
 		{"test-out", "RESULT: c sha=0123456789ab tier: pro\nPATHS: internal/x/*.go\nTEST: internal/other TestY\n\nTHE TASK. Fix x.", "check=test-outside-paths line=3"},
 		{"named", header + "\nTHE TASK. Fix x as ada asked.", "check=personal-name line=5"},
 		{"dropped", header + "\nTHE TASK. Finish what s0-1 began.", "check=dropped-card line=5"},
