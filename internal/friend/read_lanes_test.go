@@ -246,3 +246,16 @@ func TestParseReadSlotsAndVerdict(t *testing.T) {
 	_, err := ParseReadQueue(`{"cards":[]}`)
 	assert.Error(t, err, "a queue with no epoch is not trusted")
 }
+
+// Reader bench work uses the native owner of its remote scratch, not a
+// stable directory shared by reads or a handwritten remote removal.
+func TestReadBenchRuleUsesTheNativeOwnedScratchRunner(t *testing.T) {
+	t.Parallel()
+	text := BenchRule("reader", "read.w1")
+	assert.Contains(t, text, "nova-ci bench run --host <bench> --dir <repo dir> --with-git --")
+	assert.Contains(t, text, "flock /tmp/nova-go-gate.lock")
+	assert.Contains(t, text, "-count=1 -timeout 600s")
+	assert.NotContains(t, text, "rsync")
+	assert.NotContains(t, text, "rm -rf")
+	assert.Contains(t, text, "removes only that directory after success, failure or interruption")
+}
