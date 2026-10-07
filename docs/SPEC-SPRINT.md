@@ -6793,6 +6793,21 @@ removes every epoch's log. The log is stored beside the notifications (a
 stream of its own in the same transaction), so the inbox's reads never page
 through it.
 
+`log --since` takes a time back from now or an instant at or after which the
+lines are wanted: a Go duration (`10m`, `36h`), a whole number of days with a
+`d` suffix (`1d`, `2d`; `time.ParseDuration` has no day unit), or an instant
+in RFC 3339 or a shape a person types (`2006-01-02`, `2006-01-02 15:04`,
+`2006-01-02 15:04:05`, `01-02 15:04`, and each with a zone). A value that
+names no year is completed with the run's current year in its zone before it
+is parsed, so a yearless `02-29` is refused in a year without one; a value
+that names a year keeps it as written, the valid year `0000` included, and one
+that names no zone is read in the run's own zone. The window's instant is
+compared with a line's in UTC, so a window wider than a page returns every
+entry since that time, in one `--json` document
+(`TestLogJsonSinceWithAWindowWiderThan22HoursReturnsEveryEntry`,
+`TestLogSinceKeepsAnExplicitYearZeroCutoff`,
+`TestParseSinceHoldsAnExplicitYearAndCompletesAYearlessDate`).
+
 **The card log index** (card-read-speed.w2). A card's story is its lines of the
 log (a line is about a primary when it names the primary, one of its work or read
 cards, or, a move line, has it as its primary), and a card read takes those lines
