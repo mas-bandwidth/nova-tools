@@ -163,7 +163,7 @@ var childScans = []childScan{
 		Remedy: "no line starts a redis-server: a server a child starts belongs to nobody who will stop it, and the machine's own servers belong to whoever runs them; a test that needs one runs where the card says, never by starting it here"},
 	{Check: "step-go-clean", Needs: "no-go-clean",
 		RE:     childCmd(`go[ \t]+clean\b`),
-		Remedy: "no line runs `go clean`: a cache clean breaks every build that shares the cache; give the child a private GOCACHE (a path of its own) and let it be"},
+		Remedy: "no line runs `go clean`: a cache clean breaks every build that shares the cache; " + GoCacheLine},
 	{Check: "step-kill",
 		RE:     childCmd(`(?:kill|pkill|killall)(?:[ \t]|$)`),
 		Remedy: "no line kills a process: a child stops only a process it started itself, and says so as `kill $!` or `kill %<n>`; `pkill` and `killall` name processes by pattern and reach another child's",
