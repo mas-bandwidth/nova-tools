@@ -446,3 +446,6 @@ MCDelivery.cfg	MCDelivery.tla	pass	-	ignore-terminal	delivery	required	-
 MCDeliveryBrokenNoPresent.cfg	MCDelivery.tla	invariant	GapCarriesThePresent	ignore-terminal	delivery	required	-
 MCDeliveryBrokenReclaim.cfg	MCDelivery.tla	invariant	NoSupersededDelivered	ignore-terminal	delivery	required	-
 MCDeliveryBrokenAnswerStale.cfg	MCDelivery.tla	invariant	NoStaleNonceAnswered	ignore-terminal	delivery	required	-
+MCLandProtected.cfg	MCLand.tla	pass	-	ignore-terminal	land-protected	required	-
+MCLandProtectedBrokenEarly.cfg	MCLand.tla	invariant	LandedInBase	ignore-terminal	land-protected	required	-
+MCLandProtectedReachMerged.cfg	MCLand.tla	invariant	ReachProtectedLanded	ignore-terminal	land-protected	required	-

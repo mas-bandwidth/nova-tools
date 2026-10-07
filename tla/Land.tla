@@ -187,7 +187,10 @@ FreshAnyEpoch(b) == Len(queue) >= Len(b) /\ SubSeq(QHeads, 1, Len(b)) = b
 PushFrom == IF Broken = "reportfirst" THEN "reported" ELSE "checked"
 PushTo == IF Broken = "reportfirst" THEN "idle" ELSE "pushed"
 RebuildTo == IF Broken = "reportfirst" THEN "reported" ELSE "built"
-ReportFrom == IF Broken = "reportfirst" THEN "built" ELSE "pushed"
+ReportFrom == IF Broken = "protected-early" THEN "pr-open" ELSE IF Broken = "reportfirst" THEN "built" ELSE "pushed"
+
+\* Protected landing pushes/opens a PR; only the outside merge puts heads in base.
+Protected == Broken \in {"protected", "protected-early"}
 ReportTo == IF Broken = "reportfirst" THEN "reported" ELSE "idle"
 
 TypeOK ==
@@ -197,7 +200,7 @@ TypeOK ==
   /\ epoch \in 0..MaxEpoch
   /\ base \subseteq Heads
   /\ tip \in Nat
-  /\ lphase \in {"idle", "read", "built", "checked", "pushed", "reported", "refusing"}
+  /\ lphase \in {"idle", "read", "built", "checked", "pushed", "reported", "refusing", "pr-open"}
   /\ lep \in 0..MaxEpoch
   /\ lrep \in 0..MaxEpoch
   /\ tries \in 0..1
@@ -274,13 +277,13 @@ Push ==
                /\ UNCHANGED remote /\ UNCHANGED <<badcaller, stalepush, lpushed>>
           ELSE /\ lphase' = "idle"
                /\ UNCHANGED remote /\ UNCHANGED <<ltip, tries, badcaller, stalepush, lpushed>>
-     ELSE /\ base' = base \cup Range(lbatch)
-          /\ tip' = IF Range(lbatch) \subseteq base THEN tip ELSE tip + 1
+     ELSE /\ base' = IF Protected THEN base ELSE base \cup Range(lbatch)
+          /\ tip' = IF Protected \/ Range(lbatch) \subseteq base THEN tip ELSE tip + 1
           /\ ltip' = tip'
           /\ badcaller' = (badcaller \/ lep # lrep)
           /\ stalepush' = (stalepush \/ lep # epoch)
           /\ lpushed' = IF lep = epoch THEN lpushed \cup Range(lbatch) ELSE lpushed
-          /\ lphase' = PushTo
+          /\ lphase' = IF Protected /\ ~(Range(lbatch) \subseteq base) THEN "pr-open" ELSE PushTo
           /\ UNCHANGED tries
 
 \* Report: one store step (lander.step), fenced to the epoch held, that lands
@@ -400,12 +403,34 @@ Outside ==
   /\ (Accept \/ Return \/ Rework \/ OtherLand \/ Clear \/ MoveBase \/ Crash \/ Resume)
   /\ lpushed' = IF epoch' # epoch THEN {} ELSE lpushed
 
-Next == Land \/ Outside
+\* A forge's outside merge event, observed by the next protected poll. Waiting
+\* for approval has no fairness assumption: an unmerged PR may wait forever.
+\* This abstraction covers one batch's safety/head/epoch fences, not API retry
+\* identity; the pure remote and command tests cover durable URL reuse.
+ProtectedMerge ==
+  /\ Protected /\ lphase = "pr-open"
+  /\ base' = base \cup Range(lbatch)
+  /\ tip' = IF Range(lbatch) \subseteq base THEN tip ELSE tip + 1
+  /\ lphase' = "pushed"
+  /\ UNCHANGED store /\ UNCHANGED <<lq, lbatch, lep, lrep, ltip, tries, lref, lkind>>
+  /\ UNCHANGED events /\ UNCHANGED ghosts
+
+Next == Land \/ Outside \/ ProtectedMerge
 
 Spec == Init /\ [][Next]_vars
 
 \* The lander runs again whenever it can: the coordinator re-runs land.
 FairSpec == Spec /\ WF_vars(Land)
+
+\* Re-reading a recorded merged PR whose heads are in base needs no new approval.
+\* Once a merged PR is observed, fair landing cycles report it or a changed head/epoch
+\* refuses it. No property forces an outside approval/merge to happen.
+ProtectedFairSpec == Spec /\ WF_vars(Land)
+ProtectedMergedEventuallyLands ==
+  \A h \in Heads :
+    (Protected /\ lphase = "pushed" /\ h \in Range(lbatch) /\ Fresh(lbatch))
+    ~> (h \in landed \/ h # Current(h[1]) \/ h[1] \notin Range(queue) \/ epoch # lep)
+ReachProtectedLanded == ~(Protected /\ landed # {})
 
 \* ---- the rules ----
 
