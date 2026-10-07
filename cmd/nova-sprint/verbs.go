@@ -3327,8 +3327,10 @@ func (a *app) cmdFunded(args []string, stdout, stderr io.Writer) int {
 
 // cmdStreamSet writes the read tier or release of the streams named (sprint.Set), over the
 // sprint's, their protected-branch mark: the repositories whose protected branches the
-// lander lands their cards on, and their prose globs: the files the lander does not read
-// for a code span (docs/SPEC-SPRINT.md section 7 and section 11).
+// lander lands their cards on, their prose globs: the files the lander does not read
+// for a code span (docs/SPEC-SPRINT.md section 7 and section 11), and their base: the
+// branch to which the stream's unstarted cards' BASE lines are rewritten
+// (stream set --base, docs/SPEC-SPRINT.md section 11).
 func (a *app) cmdStreamSet(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("stream set")
 	tier := fs.String("read-tier", "", "the tier the stream's reads draw their route from when it is stronger than the card's own (flash, pro or heavy; default takes it off: the sprint's)")
@@ -3336,6 +3338,7 @@ func (a *app) cmdStreamSet(args []string, stdout, stderr io.Writer) int {
 	release := fs.String("release", "", "the release this stream belongs to (default or none clears it)")
 	prose := fs.String("prose", "", "the globs (PATHS globs, comma separated: security/**,ratings/**) of the files whose backquotes are their own, which the lander does not read for a code span; default takes them off")
 	attempts := fs.String("attempts", "", fmt.Sprintf("the stream's attempt cap, over the sprint's: how many attempts one brief may run before the card is the coordinator's as a brief defect; 1 to %d, or default (the sprint's)", sprint.AttemptsMax))
+	base := fs.String("base", "", "the branch to which the stream's unstarted cards' BASE lines are rewritten; refused when origin has no such branch or a card's PATHS are absent at its tip")
 	reason := fs.String("reason", "", "why the read tier is set, recorded on the stream row (the judgment 'raise the read tier of the stream?' names it)")
 	ans := fs.String("answers", "", "the judgment notifications this answers, comma separated")
 	promotion := fs.Bool("promotion", false, "mark the streams the promotion stream: they alone take cards cut on dev or main, and land them there (--land-protected any); --promotion=false takes the mark off (--land-protected default)")
@@ -3353,14 +3356,14 @@ func (a *app) cmdStreamSet(args []string, stdout, stderr io.Writer) int {
 		}
 		*mark = map[bool]string{true: sprint.LandProtectedAny, false: sprint.ReadTierDefault}[*promotion]
 	}
-	if len(names) == 0 || (*tier == "" && *mark == "" && *release == "" && *prose == "" && *attempts == "") {
-		return refuse(stderr, "stream set", "wants at least one stream and --read-tier <flash|pro|heavy|default>, --land-protected <owner/name,...|any|default>, --promotion[=false], --release <name>, --prose <glob,...|default> or --attempts <n|default>")
+	if len(names) == 0 || (*tier == "" && *mark == "" && *release == "" && *prose == "" && *attempts == "" && *base == "") {
+		return refuse(stderr, "stream set", "wants at least one stream and --read-tier <flash|pro|heavy|default>, --land-protected <owner/name,...|any|default>, --promotion[=false], --release <name>, --prose <glob,...|default>, --attempts <n|default> or --base <branch>")
 	}
 	st, err := a.store(*c)
 	if err != nil {
 		return refuse(stderr, "stream set", err.Error())
 	}
-	return a.runStep("stream set", *c, st, store.SetStep(sprint.SetReq{Streams: names, ReadTier: *tier, LandProtected: *mark, Release: *release, Prose: *prose, Attempts: *attempts, Reason: *reason, Answers: answers(*ans), Who: c.actor}), stdout, stderr)
+	return a.runStep("stream set", *c, st, store.SetStep(sprint.SetReq{Streams: names, ReadTier: *tier, LandProtected: *mark, Release: *release, Prose: *prose, Attempts: *attempts, Base: *base, Reason: *reason, Answers: answers(*ans), Who: c.actor}), stdout, stderr)
 }
 
 // cmdStreamRemove takes the named streams off the work and merge tables:

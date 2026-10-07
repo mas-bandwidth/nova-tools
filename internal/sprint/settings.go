@@ -249,6 +249,8 @@ type SetReq struct {
 	FriendIdle       string   `json:",omitempty"`
 	FriendStallAfter string   `json:",omitempty"`
 	FriendStallStep  string   `json:",omitempty"`
+	// Base, with Streams, re-points the stream's cards to a live base branch.
+	Base string `json:",omitempty"`
 	// Reason, with Streams and ReadTier, is why the read tier is set, recorded on the
 	// stream's control card (FieldReadTierReason); Answers the judgments this answers.
 	Reason  string   `json:",omitempty"`
@@ -399,8 +401,8 @@ func Set(s *Snapshot, r SetReq) Plan {
 			why = append(why, "--read-cards is the sprint's, not a stream's: nova-sprint set --read-cards "+r.ReadCards)
 		}
 	}
-	if r.ReadTier == "" && r.DealtMax == "" && r.LandProtected == "" && r.Release == "" && r.Prose == "" && len(alarms) == 0 && r.GoLanes == "" && r.Attempts == "" && r.FriendIdle == "" && r.FriendStallAfter == "" && r.FriendStallStep == "" && r.DriftCommits == "" && r.DriftHours == "" && r.Fleet == "" && r.Friends == "" && len(sideTiers) == 0 && r.ReadCards == "" {
-		why = append(why, "nothing to set: --read-tier, --read-cards, --prose, --dealt-max, --go-lanes, --attempts, --friend-idle, --friend-stall-after, --friend-stall-step, --drift-commits, --drift-hours, --fleet, --friends, --fleet-tiers, --friends-tiers or an --alarm-... threshold")
+	if r.ReadTier == "" && r.DealtMax == "" && r.LandProtected == "" && r.Release == "" && r.Prose == "" && len(alarms) == 0 && r.GoLanes == "" && r.Attempts == "" && r.FriendIdle == "" && r.FriendStallAfter == "" && r.FriendStallStep == "" && r.DriftCommits == "" && r.DriftHours == "" && r.Fleet == "" && r.Friends == "" && len(sideTiers) == 0 && r.ReadCards == "" && r.Base == "" {
+		why = append(why, "nothing to set: --read-tier, --read-cards, --prose, --dealt-max, --go-lanes, --attempts, --friend-idle, --friend-stall-after, --friend-stall-step, --drift-commits, --drift-hours, --fleet, --friends, --fleet-tiers, --friends-tiers, --base or an --alarm-... threshold")
 	}
 	if len(r.Streams) > 0 && r.GoLanes != "" {
 		why = append(why, "--go-lanes is the sprint's, not a stream's: nova-sprint set --go-lanes "+r.GoLanes)
@@ -462,6 +464,7 @@ func Set(s *Snapshot, r SetReq) Plan {
 				{FieldLandProtected, r.LandProtected, "land-protected", "none"},
 				{FieldRelease, r.Release, "release", "none"},
 				{FieldProse, r.Prose, "prose", "none"},
+				{FieldBase, r.Base, "base", ""},
 			} {
 				switch f.v {
 				case "":
@@ -479,6 +482,12 @@ func Set(s *Snapshot, r SetReq) Plan {
 					set[FieldAttempts] = r.Attempts
 					moved = append(moved, "attempts "+r.Attempts)
 				}
+			}
+			if r.Base != "" {
+				// Apply stream set --base to this stream
+				basePlan := StreamSetBase(s, []string{st}, r.Base, r.Who)
+				p.Units = append(p.Units, basePlan.Units...)
+				p.Refused = append(p.Refused, basePlan.Refused...)
 			}
 			p.Units = append(p.Units, Unit{Key: ctl.ID, Stream: st, Changes: []Change{change(Merge, setEntry(ctl, set, unset...))}, Moved: "stream " + st + " " + strings.Join(moved, ", "), Closes: closes})
 		}

@@ -14,6 +14,9 @@ const (
 	// separated, whose protected branches the stream is marked to land on, or
 	// LandProtectedAny for every repository; written by `stream set --land-protected`.
 	FieldLandProtected = "land_protected"
+	// FieldBase is a stream's control card's field: the branch to which the stream's
+	// unstarted cards' BASE lines are rewritten by `stream set --base`.
+	FieldBase = "base"
 	// LandProtectedAny marks a stream for the protected branches of every repository,
 	// a card naming no repository among them.
 	LandProtectedAny = "any"
