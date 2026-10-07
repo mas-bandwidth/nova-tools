@@ -301,8 +301,28 @@ func (st *Store) FriendBeatProof(ctx context.Context, friend string, rep sprint.
 	} else if len(oks) == 1 && oks[0] {
 		_ = json.Unmarshal([]byte(vals[0]), &prev) // ignored: an unreadable record holds no check and no proof
 	}
+	// A beat that does not name one of the report's counts keeps the last beat's
+	// (docs/FRIENDS.md, the beat contract): a bare keepalive never erases the running
+	// list, and a beat that names `--running ''` clears it. nil is "not named"; the
+	// empty non-nil list is "named and empty". The other report words are this beat's
+	// alone: a beat without `--until` withdraws the down word, and the activity and
+	// daemon facts are never carried.
+	if prev.Friend != nil {
+		if rep.Running == nil {
+			rep.Running = prev.Friend.Running
+		}
+		if rep.Working == nil {
+			rep.Working = prev.Friend.Working
+		}
+		if rep.Queue == nil {
+			rep.Queue = prev.Friend.Queue
+		}
+		if rep.Width == nil {
+			rep.Width = prev.Friend.Width
+		}
+	}
 	b := sprint.Beat{At: now}
-	if len(rep.Running) > 0 || rep.Working != nil || rep.Queue != nil || rep.Width != nil || !rep.Active.IsZero() {
+	if rep.Running != nil || rep.Working != nil || rep.Queue != nil || rep.Width != nil || !rep.Active.IsZero() {
 		b.Friend = &rep // a beat that reports nothing carries no report
 	}
 	if rep.Build != "" || !rep.Started.IsZero() || !rep.Present.IsZero() {

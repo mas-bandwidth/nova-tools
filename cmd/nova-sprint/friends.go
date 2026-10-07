@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -376,7 +377,16 @@ func (a *app) friendBeat(ctx context.Context, args []string, open func(common) (
 	if code != 0 {
 		return code
 	}
-	rep := sprint.FriendReport{Running: sprint.Split(*running)}
+	rep := sprint.FriendReport{}
+	if flagGiven(fs, "running") {
+		// a named --running replaces the last beat's list, and a named empty one clears
+		// it: nil is "not named", the empty non-nil list is "named and empty"
+		// (docs/FRIENDS.md, the beat contract)
+		rep.Running = sprint.Split(*running)
+		if rep.Running == nil {
+			rep.Running = []string{}
+		}
+	}
 	if b := strings.TrimSpace(*build); b != "" {
 		rep.Build = oneline.Field(b)
 	}
@@ -457,7 +467,26 @@ func (a *app) friendBeat(ctx context.Context, args []string, open func(common) (
 		fmt.Fprintf(stderr, "%s %s: %s\n", prog, name, oneline.Escape(err.Error()))
 		return 1
 	}
-	line, facts := "FRIEND-BEAT OK "+friend+" at="+b.At.Format(time.RFC3339), map[string]any{"friend": friend, "at": b.At}
+	// which of the report's counts this beat named, so a daemon sees what it changed
+	// (docs/FRIENDS.md, the beat contract)
+	set := make([]string, 0, 4)
+	if rep.Running != nil {
+		set = append(set, "running")
+	}
+	if rep.Working != nil {
+		set = append(set, "working")
+	}
+	if rep.Queue != nil {
+		set = append(set, "queue")
+	}
+	if rep.Width != nil {
+		set = append(set, "width")
+	}
+	setWord := "-"
+	if len(set) > 0 {
+		setWord = strings.Join(set, ",")
+	}
+	line, facts := "FRIEND-BEAT OK "+friend+" at="+b.At.Format(time.RFC3339)+" set="+setWord, map[string]any{"friend": friend, "at": b.At, "set": set}
 	if words.Check != "" {
 		line += " check=" + words.Check
 		facts["check"] = words.Check
@@ -537,6 +566,18 @@ func (a *app) friendBeat(ctx context.Context, args []string, open func(common) (
 	}
 	sayOK(stdout, c.json, name, line, facts)
 	return 0
+}
+
+// flagGiven says the verb's command line named the flag, so a named empty value is
+// told from an absent one (docs/FRIENDS.md, the beat contract: absent is unchanged).
+func flagGiven(fs flagSet, name string) bool {
+	given := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == name {
+			given = true
+		}
+	})
+	return given
 }
 
 // cmdFriendHold is friend down (held) and friend up (the hold released, and her width set

@@ -252,6 +252,14 @@ them; the coordinator takes the unstarted ones back with `nova-sprint friend
 take <friend> --all-unstarted` (or `friend down`), and nothing does it by
 itself.
 
+Her beat's report words are a contract: a beat that does not name `--running`,
+`--working`, `--queue` or `--width` leaves what the last beat said, so a bare
+keepalive never erases the list of cards she is running; a beat that names one
+replaces it, and a named empty `--running ''` clears it. The beat's result line
+says which it set (`FRIEND-BEAT OK <friend> at=<t> set=running,working`, or
+`set=-`), so a daemon reads what it changed. A beat without `--until` still
+withdraws the down word (docs/SPEC-SPRINT.md, `friend beat`).
+
 ## Where a job's work lives
 
 inbox/ and outbox/ hold text: the brief, the report, the evidence. A job's
