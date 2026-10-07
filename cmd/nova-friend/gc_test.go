@@ -62,7 +62,7 @@ func TestMeasurementFailureDoesNotSuppressPresence(t *testing.T) {
 	}
 	beats := 0
 	reported := false
-	w.capacityBeat = func(_ context.Context, _, _ string, _, _ time.Time, c friend.JobCapacity) (string, error) {
+	w.capacityBeat = func(_ context.Context, _, _ string, _ time.Time, _ friend.BeatWords, c friend.JobCapacity) (string, error) {
 		beats++
 		if c.Error == "measurement unavailable" {
 			reported = true

@@ -193,3 +193,26 @@ func TestAdmissionRechecksScratchGrowthInsteadOfCachedMetrics(t *testing.T) {
 	now = now.Add(3 * BeatEvery)
 	assert.ErrorContains(t, a.Check(context.Background(), Card{}), "expired")
 }
+
+// A slow walk is already stale when it completes (SPEC-FRIEND, jobs capacity).
+func TestCapacityAdmissionCountsMeasurementTime(t *testing.T) {
+	t.Parallel()
+	for _, duration := range []time.Duration{BeatEvery, 2 * BeatEvery, 3 * BeatEvery} {
+		t.Run(duration.String(), func(t *testing.T) {
+			t.Parallel()
+			now := time.Time{}
+			a := &CapacityAdmission{Cap: 20, Now: func() time.Time { return now }, Measure: func(string) (int64, error) {
+				now = now.Add(duration)
+				return 10, nil
+			}}
+			assert.ErrorContains(t, a.Check(context.Background(), Card{}), "fresh admission measurement")
+			a.Wait()
+			err := a.Check(context.Background(), Card{})
+			if duration > 2*BeatEvery {
+				assert.ErrorContains(t, err, "expired")
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}

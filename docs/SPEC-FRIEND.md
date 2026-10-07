@@ -1380,7 +1380,10 @@ stays. The next beat retries deferred work.
 creating it, serialized across repositories. A new one-shot card is refused
 after a fresh asynchronous admission measurement reaches the cap or fails; the refusal
 names the cap. Admission consumes each result once and rejects results older
-than two beat intervals; it never relies on the row’s cached below-cap sample.
+than two beat intervals measured from the start of the filesystem walk; the
+walk itself counts toward freshness. It never relies on the row’s cached
+below-cap sample. `internal/friend/tla/CapacityAdmission.tla` models the bound
+and the reversed witness that stamps only after the walk.
 The same admission applies to Claude process-per-card lanes.
 Running work is never killed to enforce the cap. The cap is an admission
 budget, not a filesystem quota: a running card can grow its own scratch.

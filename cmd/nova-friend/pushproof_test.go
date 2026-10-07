@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -114,50 +115,62 @@ func TestRunRefusesAHarnessThatCannotDeliver(t *testing.T) {
 		require.NotEmpty(t, downs, "her beat says down")
 		assert.Contains(t, downs[len(downs)-1], "push unproven: session check r4nd0m")
 	})
-	t.Run("a pong starts the daemon, and its beat carries the session's proof", func(t *testing.T) {
-		t.Parallel()
-		r := newRig(t, "ada", "bob")
-		w := r.world()
-		var cancel context.CancelFunc
-		w.signals = func(ctx context.Context) (context.Context, context.CancelFunc) {
-			ctx, cancel = context.WithCancel(ctx)
-			return ctx, cancel
-		}
-		var said []friend.BeatWords
-		w.beatDown = func(_ context.Context, _, _ string, _, _ time.Time, _ string, words friend.BeatWords) error {
-			said = append(said, words)
-			return nil
-		}
-		ups := 0
-		w.beat = func(_ context.Context, _, _ string, _ time.Time, words friend.BeatWords) (string, error) {
-			said = append(said, words)
-			if ups++; ups == 3 {
-				cancel()
+	for _, capacity := range []bool{false, true} {
+		t.Run(fmt.Sprintf("session proof with capacity=%t", capacity), func(t *testing.T) {
+			t.Parallel()
+			r := newRig(t, "ada", "bob")
+			w := r.world()
+			var cancel context.CancelFunc
+			w.signals = func(ctx context.Context) (context.Context, context.CancelFunc) {
+				ctx, cancel = context.WithCancel(ctx)
+				return ctx, cancel
 			}
-			answer := "FRIEND-BEAT OK bob at=2026-10-04T03:00:00Z row_mode=batch row_width=1"
-			if words.Pong != "" {
-				answer += " proved=" + words.Pong
+			var said []friend.BeatWords
+			w.beatDown = func(_ context.Context, _, _ string, _, _ time.Time, _ string, words friend.BeatWords) error {
+				said = append(said, words)
+				return nil
 			}
-			return answer, nil
-		}
-		var out, errb strings.Builder
-		code := run([]string{"run", "--as", "bob", "--harness", "opencode", "--dir", t.TempDir(), "--coordinator", "ada"}, strings.NewReader(""), &out, &errb, w)
-		require.Equal(t, 0, code, errb.String())
-		assert.Contains(t, out.String(), "push proof: proved: the session answered")
-		var checks, pongs []string
-		for _, w := range said {
-			if w.Check != "" {
-				checks = append(checks, w.Check)
-				assert.NotEmpty(t, w.Run, "a check is said with the daemon's run")
+			ups := 0
+			w.beat = func(_ context.Context, _, _ string, _ time.Time, words friend.BeatWords) (string, error) {
+				said = append(said, words)
+				if ups++; ups == 3 {
+					cancel()
+				}
+				answer := "FRIEND-BEAT OK bob at=2026-10-04T03:00:00Z row_mode=batch row_width=1"
+				if words.Pong != "" {
+					answer += " proved=" + words.Pong
+				}
+				return answer, nil
 			}
-			if w.Pong != "" {
-				pongs = append(pongs, w.Pong)
-				assert.NotEmpty(t, w.Run, "an answer is said with the daemon's run")
+			if capacity {
+				w.capacityBeat = func(ctx context.Context, server, name string, active time.Time, words friend.BeatWords, c friend.JobCapacity) (string, error) {
+					assert.Equal(t, "capacity measurement pending", c.Error)
+					return w.beat(ctx, server, name, active, words)
+				}
+				w.capacityDown = func(ctx context.Context, server, name string, active, until time.Time, reason string, words friend.BeatWords, c friend.JobCapacity) error {
+					assert.Equal(t, "capacity measurement pending", c.Error)
+					return w.beatDown(ctx, server, name, active, until, reason, words)
+				}
 			}
-		}
-		assert.Equal(t, []string{"r4nd0m"}, checks, "the check her daemon asked is said once")
-		assert.Equal(t, []string{"r4nd0m"}, pongs, "her session's answer names it, once")
-	})
+			var out, errb strings.Builder
+			code := run([]string{"run", "--as", "bob", "--harness", "opencode", "--dir", t.TempDir(), "--coordinator", "ada"}, strings.NewReader(""), &out, &errb, w)
+			require.Equal(t, 0, code, errb.String())
+			assert.Contains(t, out.String(), "push proof: proved: the session answered")
+			var checks, pongs []string
+			for _, w := range said {
+				if w.Check != "" {
+					checks = append(checks, w.Check)
+					assert.NotEmpty(t, w.Run, "a check is said with the daemon's run")
+				}
+				if w.Pong != "" {
+					pongs = append(pongs, w.Pong)
+					assert.NotEmpty(t, w.Run, "an answer is said with the daemon's run")
+				}
+			}
+			assert.Equal(t, []string{"r4nd0m"}, checks, "the check her daemon asked is said once")
+			assert.Equal(t, []string{"r4nd0m"}, pongs, "her session's answer names it, once")
+		})
+	}
 }
 
 // A per-card harness (claude: each card a process of its own) has no session for its

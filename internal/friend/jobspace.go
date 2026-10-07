@@ -406,7 +406,9 @@ type capacityResult struct {
 }
 
 // CapacityAdmission measures afresh for each prospective claim, asynchronously.
-// It consumes each result once and refuses old results, preserving beat liveness.
+// It consumes each result once and refuses results older than two beats from
+// the walk start, preserving beat liveness (SPEC-FRIEND, jobs capacity;
+// tla/CapacityAdmission.tla).
 type CapacityAdmission struct {
 	Dir     string
 	Cap     int64
@@ -440,11 +442,12 @@ func (a *CapacityAdmission) Check(ctx context.Context, _ Card) error {
 	}
 	a.pending = make(chan capacityResult, 1)
 	pending := a.pending
+	started := a.Now()
 	a.wg.Add(1)
 	go func() {
 		defer a.wg.Done()
 		jobs, err := a.Measure(a.Dir)
-		pending <- capacityResult{jobs: jobs, err: err, at: a.Now()}
+		pending <- capacityResult{jobs: jobs, err: err, at: started}
 	}()
 	return fmt.Errorf("jobs cap %d bytes refuses a new lane until fresh admission measurement completes", a.Cap)
 }
