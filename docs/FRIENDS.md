@@ -10,6 +10,8 @@ it is reported, where its work lives, and how the work is removed once done.
 
 ## The inbox/outbox standard
 
+For a new friend, see docs/FRIEND-ONBOARDING.md.
+
 Only the coordinator reaches out. A job is a directory:
 
 - the coordinator delivers `inbox/<job>/`, with its `BRIEF.md`; `<job>` begins
