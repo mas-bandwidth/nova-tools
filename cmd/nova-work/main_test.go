@@ -172,6 +172,34 @@ func TestImportThenVerifyIsZeroDifferences(t *testing.T) {
 	require.Regexp(t, `^IMPORT OK org=mas-bandwidth out=- .* dry_run=true\n`, res.Stdout, diag)
 }
 
+// TestImportFixtureFirstRunIsWhatTheHelpPrints: import -h prints the first
+// run that reads a directory of recorded GraphQL pages, and that command
+// runs with no gh (SPEC-WORK-V1 section 1.6).
+func TestImportFixtureFirstRunIsWhatTheHelpPrints(t *testing.T) {
+	t.Parallel()
+	help := workMain(unreachable(t)).Run("import", "-h")
+	require.Equal(t, 0, help.Code, help.Stderr)
+	const printed = "nova-work import --org $ORG --repo $ORG/$REPO --page-size 15 --fixture ./calls --dry-run"
+	require.Contains(t, help.Stdout, printed, "import -h does not print the fixture first run:\n%s", help.Stdout)
+	line := strings.TrimPrefix(printed, "nova-work ")
+	line = strings.ReplaceAll(line, "$ORG", "mas-bandwidth")
+	line = strings.ReplaceAll(line, "$REPO", "reliable")
+	line = strings.ReplaceAll(line, "./calls", recording)
+	res := workMain(unreachable(t)).Run(strings.Fields(line)...)
+	diag := res.Stdout + res.Stderr
+	require.Equal(t, 0, res.Code, diag)
+	assert.Contains(t, res.Stdout, "dry_run=true", diag)
+	assert.Contains(t, res.Stdout, "fixture="+recording, diag)
+	assert.NotContains(t, res.Stdout, " gh=", diag)
+	assert.Contains(t, res.Stdout, "IMPORT NOTE the dry run read the recorded pages in the fixture (calls=3) and wrote nothing", diag)
+
+	empty := t.TempDir()
+	bad := workMain(unreachable(t)).Run("import", "--org", "mas-bandwidth", "--repo", "mas-bandwidth/reliable", "--fixture", empty, "--dry-run")
+	assert.Equal(t, 2, bad.Code, bad.Stdout+bad.Stderr)
+	assert.Contains(t, bad.Stderr, "no call-*.json", bad.Stderr)
+	assert.Contains(t, bad.Stderr, "run: nova-work import -h", bad.Stderr)
+}
+
 // TestTheDryRunSaysWhatItReads: a dry run is not offline. It reads GitHub as
 // the import does (every call of the recording) and writes nothing, and the
 // run, the verb's help and the banner each say so, so no reader takes it for

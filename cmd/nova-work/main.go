@@ -64,7 +64,7 @@ first run: gh logged in (gh auth status); export ORG and REPO, a repository you 
 		Verbs: []tool.Verb{
 			{
 				Name: "import",
-				Usage: "import --org <org> (--out <tree.lisp> [--replace] | --dry-run) [--repo <owner/name>]... [--max-calls <n>] " +
+				Usage: "import --org <org> (--out <tree.lisp> [--replace] | --dry-run) [--repo <owner/name>]... [--fixture <dir>] [--max-calls <n>] " +
 					"[--page-size <n>] [--gh <path>] [--timeout <d>]",
 				Example: `import --org $ORG --repo $ORG/$REPO --page-size 15 --dry-run
 import --org $ORG --repo $ORG/$REPO --page-size 15 --out ./tree.lisp`,
@@ -76,6 +76,7 @@ import --org $ORG --repo $ORG/$REPO --page-size 15 --out ./tree.lisp`,
 				Flags: func(f *tool.Flags) {
 					f.Required("org", "the organization whose repositories are read, as GitHub spells it")
 					f.String("out", "", "the tree `file` to write, created, or replaced with --replace; its directory must exist; required unless --dry-run")
+					f.String("fixture", "", "a directory of recorded GraphQL pages (call-01.json, call-02.json, each with vars and reply) read instead of gh, so import can be tried with no login")
 					f.Bool("replace", false, "replace an existing --out file instead of refusing")
 					sourceFlags(f)
 					f.Check(checkImport)
@@ -127,6 +128,9 @@ is written to --out only after it has been encoded, read back and compared
 with what was fetched, with zero differences. --dry-run reads GitHub exactly
 as the import does (every issue, read-only, the calls IMPORT PLAN counts),
 checks the round trip, and writes nothing: it needs gh and the network.
+--fixture <dir> reads recorded GraphQL pages from that directory (call-01.json,
+call-02.json, each with vars and reply) instead of gh, so no login is needed.
+The first run of import is: nova-work import --org $ORG --repo $ORG/$REPO --page-size 15 --fixture ./calls --dry-run
 
 output: IMPORT OK with the counts, bytes=, the tree's sha256=, calls= (GraphQL
 calls), points= (what GitHub charged), rest=0 and gh= (the gh run); then
