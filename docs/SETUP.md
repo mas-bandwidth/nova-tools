@@ -53,6 +53,10 @@ root (`~/nova`, or `--root <dir>`). The design is [SPEC-UP.md](SPEC-UP.md).
 What `--local` never touches, and how each step decides it has nothing to do, is in
 [SPEC-UP.md](SPEC-UP.md).
 
+**Local-only mode.** A single-machine setup with no tailnet uses local-only mode, enabled by
+`nova-up --local`. This sets `NOVA_SPRINT_LOCAL=1`, allowing only loopback addresses. Tailnet
+checks are skipped in this mode.
+
 ## Checking the setup
 
 ### setup-nova-doctor-r-r5.w1: nova-doctor
