@@ -164,8 +164,9 @@ CHECK line, so nothing was hidden to make it green. A gate that cannot go red is
 either: an --out with no day file in it is CHECK FAILED, never a green over nothing.
 
 sources --unattributed prints the path stems that were SEEN and matched no rule, heaviest
-first, capped by --max. That listing is what other=<pct>% on a day line is made of, and it
-is the evidence for improving the --repos file.
+first, capped by --max, with the mentions each stem got (one per message that touched a path
+in it). That listing is what other=<pct>% on a day line is made of, and it is the evidence
+for improving the --repos file.
 
 setup:
   mkdir -p ./transcripts ./out
