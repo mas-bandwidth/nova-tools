@@ -2,80 +2,109 @@ package docs
 
 import (
 	"os"
-	"regexp"
 	"strings"
 	"testing"
 
+	"github.com/mas-bandwidth/nova-tools/internal/config"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// friend_onboarding_test.go validates docs/FRIEND-ONBOARDING.md.
-// It parses every `nova-*` command line in the guide's fenced blocks and
-// fails when a tool, verb or flag does not exist in that tool's verb table.
-// No binary is run.
+// friend_onboarding_test.go validates docs/FRIEND-ONBOARDING.md against each
+// tool's own verb and flag tables. No binary is run.
 
 const friendOnboardingPath = "../../docs/FRIEND-ONBOARDING.md"
 
-// getVerbs reads the verb table of a tool from its source.
-func getVerbs(t *testing.T, tool string) map[string]bool {
+// onboardingConfigTool models nova-config's generated friend verbs from the
+// config descriptor and its explicit command FlagSets.
+func onboardingConfigTool(t *testing.T) novaTool {
 	t.Helper()
-	verbs := map[string]bool{}
+	files := parseToolDir(t, "nova-config")
+	kind, ok := config.Lookup(config.KindFriend)
+	require.True(t, ok, "internal/config has no friend descriptor")
 
-	switch tool {
-	case "nova-sprint":
-		src, err := os.ReadFile("../../cmd/nova-sprint/verbs.go")
-		require.NoError(t, err)
-		re := regexp.MustCompile(`^\s*{"([a-z][a-z0-9- ]*)",`)
-		for _, m := range re.FindAllStringSubmatch(string(src), -1) {
-			verbs[m[1]] = true
-		}
-	case "nova-config":
-		src, err := os.ReadFile("../../cmd/nova-config/verbs.go")
-		require.NoError(t, err)
-		reKind := regexp.MustCompile(`{"([a-z]+)",\s*"([a-z]+)"`)
-		for _, m := range reKind.FindAllStringSubmatch(string(src), -1) {
-			verbs[m[1]+" "+m[2]] = true
-		}
-		reTool := regexp.MustCompile(`"([a-z]+)":\s*"[^"]*"`)
-		for _, m := range reTool.FindAllStringSubmatch(string(src), -1) {
-			verbs[m[1]] = true
-		}
-	case "nova-bus":
-		src, err := os.ReadFile("../../cmd/nova-bus/main.go")
-		require.NoError(t, err)
-		// Read verb names from Name field in Verbs table
-		re := regexp.MustCompile(`Name:\s*"?([a-z]+)"?`)
-		for _, m := range re.FindAllStringSubmatch(string(src), -1) {
-			verbs[m[1]] = true
-		}
-	case "nova-friend":
-		src, err := os.ReadFile("../../cmd/nova-friend/main.go")
-		require.NoError(t, err)
-		// Read verb names from Name field in Verbs table
-		re := regexp.MustCompile(`Name:\s*"?([a-z]+)"?`)
-		for _, m := range re.FindAllStringSubmatch(string(src), -1) {
-			verbs[m[1]] = true
-		}
-	default:
-		require.Fail(t, "unsupported tool", tool)
+	fieldFlags := map[string]bool{}
+	fieldLiterals := map[string]bool{}
+	for _, field := range kind.Fields {
+		fieldFlags[field.Name] = true
+		fieldLiterals[field.Name] = true
 	}
-	return verbs
+	base := map[string]bool{"pg": true, "file": true, "seat": true, "as": true, "json": true}
+	write := cloneFlags(base)
+	write["reason"] = true
+	write["dry-run"] = true
+	for name := range fieldFlags {
+		write[name] = true
+	}
+
+	verbs := map[string]novaVerb{
+		"migrate":        {flags: flags("pg", "file", "print", "dry-run", "json")},
+		"apply":          {flags: flags("pg", "file", "seat", "redis", "as", "kind", "check", "dry-run", "move-seat", "json")},
+		"friend add":     {flags: write},
+		"friend set":     {flags: write},
+		"friend remove":  {flags: cloneFlags(write)},
+		"friend list":    {flags: cloneFlags(base)},
+		"friend show":    {flags: cloneFlags(base)},
+		"friend history": {flags: cloneFlags(base)},
+	}
+	for name := range verbs["friend remove"].flags {
+		if fieldFlags[name] {
+			delete(verbs["friend remove"].flags, name)
+		}
+	}
+	for name := range verbs["friend list"].flags {
+		if name == "as" || name == "seat" {
+			delete(verbs["friend list"].flags, name)
+		}
+	}
+	for name := range verbs["friend show"].flags {
+		if name == "as" || name == "seat" {
+			delete(verbs["friend show"].flags, name)
+		}
+	}
+	for name := range verbs["friend history"].flags {
+		if name == "as" || name == "seat" {
+			delete(verbs["friend history"].flags, name)
+		}
+	}
+
+	literals := sourceLiterals(files)
+	for name := range fieldLiterals {
+		literals[name] = true
+	}
+	return novaTool{verbs: verbs, literals: literals}
 }
 
-// extractGuideCommands extracts all nova-* command lines from fenced code blocks.
+func flags(names ...string) map[string]bool {
+	set := make(map[string]bool, len(names))
+	for _, name := range names {
+		set[name] = true
+	}
+	return set
+}
+
+func cloneFlags(src map[string]bool) map[string]bool {
+	dst := make(map[string]bool, len(src))
+	for name := range src {
+		dst[name] = true
+	}
+	return dst
+}
+
+// extractGuideCommands extracts every nova-* command line from fenced blocks.
 func extractGuideCommands(t *testing.T, path string) []string {
 	t.Helper()
 	content, err := os.ReadFile(path)
 	require.NoError(t, err)
 
 	var commands []string
-	lines := strings.Split(string(content), "\n")
 	inBlock := false
-
-	for _, line := range lines {
+	for _, line := range strings.Split(string(content), "\n") {
 		if strings.HasPrefix(line, "```") {
 			inBlock = !inBlock
-		} else if inBlock {
+			continue
+		}
+		if inBlock {
 			trimmed := strings.TrimSpace(line)
 			if strings.HasPrefix(trimmed, "nova-") {
 				commands = append(commands, trimmed)
@@ -85,76 +114,55 @@ func extractGuideCommands(t *testing.T, path string) []string {
 	return commands
 }
 
-// validateCommand checks if a command's tool and verb exist in the verb tables.
-func validateCommand(t *testing.T, cmd string, verbs map[string]bool) []string {
-	var errors []string
-	parts := strings.Fields(cmd)
-	if len(parts) == 0 {
-		return errors
-	}
-
-	// Extract tool name
-	tool := ""
-	if strings.HasPrefix(parts[0], "nova-") {
-		tool = strings.SplitN(parts[0], " ", 2)[0]
-	}
-
-	if tool == "" {
-		return errors
-	}
-
-	// Check verb exists
-	verb := ""
-	if len(parts) > 1 {
-		verb = parts[1]
-		if len(parts) > 2 && !strings.HasPrefix(parts[2], "-") {
-			verb = verb + " " + parts[2]
-		}
-	}
-
-	if verb != "" && !verbs[verb] {
-		errors = append(errors, "unknown verb "+verb+" for tool "+tool)
-	}
-
-	return errors
+func onboardingTools(t *testing.T) map[string]novaTool {
+	t.Helper()
+	tools := readNovaTools(t)
+	tools["nova-config"] = onboardingConfigTool(t)
+	return tools
 }
 
 func TestFriendOnboardingGuideCoversJoinToFirstCard(t *testing.T) {
 	t.Parallel()
-
-	// Read guide
-	_, err := os.Stat(friendOnboardingPath)
-	if os.IsNotExist(err) {
-		t.Skip("FRIEND-ONBOARDING.md not yet created")
-	}
-	require.NoError(t, err)
-
-	// Extract commands
+	content, err := os.ReadFile(friendOnboardingPath)
+	require.NoError(t, err, "%s: %v", friendOnboardingPath, err)
 	commands := extractGuideCommands(t, friendOnboardingPath)
 	require.NotEmpty(t, commands, "No nova-* commands found in guide")
 
-	// Load verb tables for all tools
-	allVerbs := map[string]bool{}
-	tools := []string{"nova-config", "nova-sprint", "nova-bus", "nova-friend"}
-	for _, tool := range tools {
-		for verb := range getVerbs(t, tool) {
-			allVerbs[verb] = true
+	tools := onboardingTools(t)
+	var problems []string
+	for _, command := range commands {
+		checked, errs := checkCommand(tools, strings.Fields(command))
+		if !checked {
+			problems = append(problems, command+": not a parsed nova command")
 		}
+		for _, problem := range errs {
+			problems = append(problems, command+": "+problem)
+		}
+	}
+	for _, problem := range problems {
+		t.Error(problem)
 	}
 
-	// Validate each command
-	var allErrors []string
-	for _, cmd := range commands {
-		errors := validateCommand(t, cmd, allVerbs)
-		if len(errors) > 0 {
-			allErrors = append(allErrors, cmd+": "+strings.Join(errors, "; "))
-		}
-	}
+	assert.Contains(t, string(content), "NOVA_SPRINT_REDIS=mem:", "the sprint twin is NOVA_SPRINT_REDIS=mem:<file>")
+	assert.NotContains(t, string(content), "NOVA_SPRINT_TWIN", "nova-sprint does not read NOVA_SPRINT_TWIN")
+	assert.Contains(t, string(content), "nova-friend ping --as", "ping requires the coordinator identity")
 
-	if len(allErrors) > 0 {
-		t.Error("Guide contains invalid commands:")
-		for _, e := range allErrors {
-			t.Error("  " + e)
+	t.Run("negative command witnesses", func(t *testing.T) {
+		t.Parallel()
+		cases := []struct {
+			name, command, want string
+		}{
+			{"unknown tool", "nova-unknown run", "is a nova tool this test reads no verb table"},
+			{"wrong tool verb", "nova-bus status", "has no verb"},
+			{"unknown flag", "nova-bus names --invented", "has no flag --invented"},
 		}
-	}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				t.Parallel()
+				checked, errs := checkCommand(tools, strings.Fields(tc.command))
+				assert.True(t, checked)
+				assert.Contains(t, strings.Join(errs, "\n"), tc.want)
+			})
+		}
+	})
 }

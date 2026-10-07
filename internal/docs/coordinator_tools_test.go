@@ -31,7 +31,10 @@ import (
 const coordinatorToolsPath = "../../docs/COORDINATOR-TOOLS.md"
 
 // novaVerb is one verb of a tool: the flags its synopsis names.
-type novaVerb struct{ flags map[string]bool }
+type novaVerb struct {
+	flags      map[string]bool
+	registered map[string]bool
+}
 
 // novaTool is what the page's verb lines are checked against: the verbs by
 // name (one or two words), the flags every verb takes, and every string
@@ -43,10 +46,10 @@ type novaTool struct {
 }
 
 // flagNameRe is the shape of a flag's name.
-var flagNameRe = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
+var flagNameRe = regexp.MustCompile(`^[a-z][a-z0-9_-]*$`)
 
 // synopsisFlagRe reads a flag a synopsis names: `--name`, `--name=value`.
-var synopsisFlagRe = regexp.MustCompile(`--([a-z][a-z0-9-]*)`)
+var synopsisFlagRe = regexp.MustCompile(`--([a-z][a-z0-9_-]*)`)
 
 func synopsisFlags(syn string) map[string]bool {
 	flags := map[string]bool{}
@@ -221,6 +224,29 @@ func verbTableTool(t *testing.T, tool string) novaTool {
 	t.Helper()
 	files := parseToolDir(t, tool)
 	nt := novaTool{verbs: map[string]novaVerb{}, common: map[string]bool{}, literals: sourceLiterals(files)}
+	helpers := map[string]ast.Node{}
+	for _, f := range files {
+		ast.Inspect(f, func(n ast.Node) bool {
+			switch n := n.(type) {
+			case *ast.FuncDecl:
+				if n.Body != nil {
+					helpers[n.Name.Name] = n.Body
+				}
+			case *ast.AssignStmt:
+				for i, rhs := range n.Rhs {
+					if i >= len(n.Lhs) {
+						continue
+					}
+					id, ok1 := n.Lhs[i].(*ast.Ident)
+					fn, ok2 := rhs.(*ast.FuncLit)
+					if ok1 && ok2 {
+						helpers[id.Name] = fn.Body
+					}
+				}
+			}
+			return true
+		})
+	}
 	for _, f := range files {
 		ast.Inspect(f, func(n ast.Node) bool {
 			lit, ok := n.(*ast.CompositeLit)
@@ -228,6 +254,8 @@ func verbTableTool(t *testing.T, tool string) novaTool {
 				return true
 			}
 			var name, usage string
+			dryRun := false
+			var flagsFn *ast.FuncLit
 			for _, e := range lit.Elts {
 				kv, ok := e.(*ast.KeyValueExpr)
 				if !ok {
@@ -242,16 +270,71 @@ func verbTableTool(t *testing.T, tool string) novaTool {
 					name, _ = stringLit(kv.Value)
 				case "Usage":
 					usage, _ = stringLit(kv.Value)
+				case "DryRun":
+					if value, ok := kv.Value.(*ast.Ident); ok {
+						dryRun = value.Name == "true"
+					}
+				case "Flags":
+					flagsFn, _ = kv.Value.(*ast.FuncLit)
 				}
 			}
 			if name != "" && usage != "" {
-				nt.verbs[name] = novaVerb{flags: synopsisFlags(usage)}
+				v := novaVerb{flags: synopsisFlags(usage), registered: registeredFlags(flagsFn, helpers)}
+				v.registered["json"] = true
+				if dryRun {
+					v.flags["dry-run"] = true
+					v.registered["dry-run"] = true
+				}
+				nt.verbs[name] = v
 			}
 			return true
 		})
 	}
 	require.NotEmpty(t, nt.verbs, "cmd/%s: no tool.Verb with a Name and a Usage was read", tool)
 	return nt
+}
+
+// registeredFlags follows the flag-registration helpers called by one verb's
+// Flags closure, keeping flags from neighbouring verbs out of its FlagSet.
+func registeredFlags(root *ast.FuncLit, helpers map[string]ast.Node) map[string]bool {
+	registered := map[string]bool{}
+	visited := map[string]bool{}
+	var walk func(ast.Node)
+	walk = func(node ast.Node) {
+		ast.Inspect(node, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
+				if receiver, ok := sel.X.(*ast.Ident); ok && receiver.Name == "f" {
+					index := 0
+					if sel.Sel.Name == "Var" {
+						index = 1
+					}
+					if index < len(call.Args) {
+						if name, ok := stringLit(call.Args[index]); ok {
+							registered[name] = true
+						}
+					}
+				}
+				return true
+			}
+			id, ok := call.Fun.(*ast.Ident)
+			if !ok || visited[id.Name] {
+				return true
+			}
+			if helper := helpers[id.Name]; helper != nil {
+				visited[id.Name] = true
+				walk(helper)
+			}
+			return true
+		})
+	}
+	if root != nil {
+		walk(root.Body)
+	}
+	return registered
 }
 
 // readNovaTools reads every tool the page may name in a verb line. A verb line
@@ -324,7 +407,9 @@ func checkCommand(tools map[string]novaTool, words []string) (checked bool, prob
 		switch {
 		case !verb.flags[flag] && !tool.common[flag]:
 			problems = append(problems, name+" "+verbName+" has no flag --"+flag+" in its synopsis")
-		case !tool.literals[flag]:
+		case verb.registered != nil && !verb.registered[flag]:
+			problems = append(problems, name+" "+verbName+": --"+flag+" is in the synopsis and no FlagSet of cmd/"+name+" registers it")
+		case verb.registered == nil && !tool.literals[flag]:
 			problems = append(problems, name+" "+verbName+": --"+flag+" is in the synopsis and no FlagSet of cmd/"+name+" registers it")
 		}
 	}

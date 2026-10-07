@@ -12,6 +12,10 @@ it is reported, where its work lives, and how the work is removed once done.
 
 For a new friend, see docs/FRIEND-ONBOARDING.md.
 
+### tdocs-friend-onboarding-bc.w2
+
+The numbered join-to-first-card walkthrough is [Friend onboarding](FRIEND-ONBOARDING.md).
+
 Only the coordinator reaches out. A job is a directory:
 
 - the coordinator delivers `inbox/<job>/`, with its `BRIEF.md`; `<job>` begins
