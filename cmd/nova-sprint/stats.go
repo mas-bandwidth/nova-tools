@@ -79,7 +79,8 @@ func (a *app) cmdStats(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-// statsText is the four tables, seconds as "median max n=<count>".
+// statsText is the timing tables, seconds as "median max n=<count>", then the
+// epoch's complete cost: a streams table and a tiers table.
 func statsText(ps sprint.PassStats) string {
 	count := func(name string) ntable.Column {
 		return ntable.Column{Name: name, Projection: ntable.Text, Fold: ntable.Sum}
@@ -87,48 +88,84 @@ func statsText(ps sprint.PassStats) string {
 	secs := func(name string) ntable.Column {
 		return ntable.Column{Name: name, Label: name + " (median max n)", Projection: ntable.Text, Fold: ntable.None}
 	}
-	row := func(key string, texts ...string) ntable.Row {
-		r := ntable.Row{Key: key, Texts: map[string]string{}}
-		for i := 0; i+1 < len(texts); i += 2 {
-			r.Texts[texts[i]] = texts[i+1]
-		}
-		return r
-	}
 	n := strconv.Itoa
 	stages := ntable.Table{Columns: []ntable.Column{secs("seconds")}, Rows: []ntable.Row{
-		row("deal wait", "seconds", measureText(ps.Stages.DealWait)),
-		row("finish to two reads", "seconds", measureText(ps.Stages.FinishToReads)),
-		row("accept to land", "seconds", measureText(ps.Stages.AcceptToLand)),
-		row("total", "seconds", measureText(ps.Stages.Total)),
+		statsRow("deal wait", "seconds", measureText(ps.Stages.DealWait)),
+		statsRow("finish to two reads", "seconds", measureText(ps.Stages.FinishToReads)),
+		statsRow("accept to land", "seconds", measureText(ps.Stages.AcceptToLand)),
+		statsRow("total", "seconds", measureText(ps.Stages.Total)),
 	}}
 	work := ntable.Table{Columns: []ntable.Column{count("cards"), count("failed"), secs("take wait"), secs("run wall"), secs("report lag")}}
 	for _, m := range ps.Work {
-		work.Rows = append(work.Rows, row(m.Member, "cards", n(m.Cards), "failed", n(m.Failed),
+		work.Rows = append(work.Rows, statsRow(m.Member, "cards", n(m.Cards), "failed", n(m.Failed),
 			"take wait", measureText(m.TakeWait), "run wall", measureText(m.RunWall), "report lag", measureText(m.ReportLag)))
 	}
 	reads := ntable.Table{Columns: []ntable.Column{count("cards"), secs("begin wait"), secs("run wall"), secs("report lag")}}
 	for _, r := range ps.Reads {
-		reads.Rows = append(reads.Rows, row(r.Reader, "cards", n(r.Cards),
+		reads.Rows = append(reads.Rows, statsRow(r.Reader, "cards", n(r.Cards),
 			"begin wait", measureText(r.BeginWait), "run wall", measureText(r.RunWall), "report lag", measureText(r.ReportLag)))
 	}
 	routes := ntable.Table{Columns: []ntable.Column{count("takes"), count("ok"), count("failed"), count("provider"), secs("run wall")}}
 	for _, r := range ps.Routes {
-		routes.Rows = append(routes.Rows, row(r.Route, "takes", n(r.Takes), "ok", n(r.OK), "failed", n(r.Failed), "provider", n(r.Provider),
+		routes.Rows = append(routes.Rows, statsRow(r.Route, "takes", n(r.Takes), "ok", n(r.OK), "failed", n(r.Failed), "provider", n(r.Provider),
 			"run wall", measureText(r.RunWall)))
 	}
 	return ntable.Render(stages, ntable.RenderOpts{Title: "stages"}) + statsLegend["stages"] + "\n" +
 		ntable.Render(work, ntable.RenderOpts{Title: "work"}) + statsLegend["work"] + "\n" +
 		ntable.Render(reads, ntable.RenderOpts{Title: "reads"}) + statsLegend["reads"] + "\n" +
-		ntable.Render(routes, ntable.RenderOpts{Title: "routes"}) + statsLegend["routes"] + "\n"
+		ntable.Render(routes, ntable.RenderOpts{Title: "routes"}) + statsLegend["routes"] + "\n" +
+		costTables(ps)
+}
+
+// statsRow is one stats table row, cells named in pairs.
+func statsRow(key string, texts ...string) ntable.Row {
+	r := ntable.Row{Key: key, Texts: map[string]string{}}
+	for i := 0; i+1 < len(texts); i += 2 {
+		r.Texts[texts[i]] = texts[i+1]
+	}
+	return r
+}
+
+// costTables is the epoch's complete cost: each stream, then each tier the records
+// ran on, in the four parts beside the total. A part that priced nothing prints "-".
+func costTables(ps sprint.PassStats) string {
+	money := func(name string) ntable.Column {
+		return ntable.Column{Name: name, Projection: ntable.Text, Fold: ntable.None}
+	}
+	cols := []ntable.Column{money("cost_work"), money("cost_reads"), money("cost_land"), money("cost_unanswered"), money("total")}
+	dash := func(s string) string {
+		if s == "" {
+			return "-"
+		}
+		return s
+	}
+	streams := ntable.Table{Columns: append(append([]ntable.Column{}, cols...), money("per_landed"))}
+	for _, st := range ps.Streams {
+		streams.Rows = append(streams.Rows, statsRow(st.Stream,
+			"cost_work", dash(st.CostWork), "cost_reads", dash(st.CostReads),
+			"cost_land", dash(st.CostLand), "cost_unanswered", dash(st.CostUnanswered),
+			"total", dash(st.TotalCost), "per_landed", dash(st.PerLanded)))
+	}
+	tiers := ntable.Table{Columns: cols}
+	for _, tc := range ps.Tiers {
+		tiers.Rows = append(tiers.Rows, statsRow(tc.Tier,
+			"cost_work", dash(tc.CostWork), "cost_reads", dash(tc.CostReads),
+			"cost_land", dash(tc.CostLand), "cost_unanswered", dash(tc.CostUnanswered),
+			"total", dash(tc.TotalCost)))
+	}
+	return ntable.Render(streams, ntable.RenderOpts{Title: "streams"}) + statsLegend["streams"] + "\n" +
+		ntable.Render(tiers, ntable.RenderOpts{Title: "tiers"}) + statsLegend["tiers"] + "\n"
 }
 
 // statsLegend is the line under each stats table saying what its columns
 // count (sprint.Stats): a reader meets the tables cold.
 var statsLegend = map[string]string{
-	"stages": "stages: per primary, admitted to first dealt (deal wait), its last ok finish to accepted (finish to two reads), accepted to landed, admitted to landed (total); seconds as median, max, n primaries\n",
-	"work":   "work: per member, cards is its work cards (one per attempt, counted to the member it was last dealt to), failed those finished failed; take wait is dealt to taken, run wall the child's wall from its usage (a friend's card, which reports none: her take to her REPORT.md's time), report lag taken to finished less the run wall\n",
-	"reads":  "reads: per reader, cards is the read cards asked of it (retired ones too); begin wait is asked to begun, run wall the usage's wall, report lag begun to read less the run wall\n",
-	"routes": "routes: per route, takes is every take on it, work and read alike, each take of a card again counted (the cards' cost records); ok came back with its answer, provider ended by the provider or with no result, failed every other end; run wall the takes' usage walls\n",
+	"stages":  "stages: per primary, admitted to first dealt (deal wait), its last ok finish to accepted (finish to two reads), accepted to landed, admitted to landed (total); seconds as median, max, n primaries\n",
+	"work":    "work: per member, cards is its work cards (one per attempt, counted to the member it was last dealt to), failed those finished failed; take wait is dealt to taken, run wall the child's wall from its usage (a friend's card, which reports none: her take to her REPORT.md's time), report lag taken to finished less the run wall\n",
+	"reads":   "reads: per reader, cards is the read cards asked of it (retired ones too); begin wait is asked to begun, run wall the usage's wall, report lag begun to read less the run wall\n",
+	"routes":  "routes: per route, takes is every take on it, work and read alike, each take of a card again counted (the cards' cost records); ok came back with its answer, provider ended by the provider or with no result, failed every other end; run wall the takes' usage walls\n",
+	"streams": "streams: per stream, the epoch's complete recorded spend in four parts (work attempts, reads, the lander's run, a run whose end begins \"no result\") beside the total, and that total over the cards landed (per_landed); \"-\" when that part priced nothing, and for per_landed when nothing landed. The timing tables follow the last stats tidy; these two are the whole epoch\n",
+	"tiers":   "tiers: the same four parts over every stream, by the tier the record ran on; a record with no tier, and one past the list's bound, is counted with the records that name none\n",
 }
 
 // measureText is a measure as its cell prints it: the median and the max in seconds
