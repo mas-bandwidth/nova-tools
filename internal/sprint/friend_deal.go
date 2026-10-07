@@ -112,12 +112,13 @@ const friendCardWhy = "a friend's card (its brief says WHO: only friend, or a WH
 // running (FriendReport.Running: work card ids, job names or primaries), which the tick's
 // level never moves (friendStarted).
 type FriendSeat struct {
-	Name   string
-	Width  int
-	Status string
-	Class  string
-	Mode   string
-	Tiers  []string
+	Name     string
+	Width    int
+	Status   string
+	Class    string
+	Mode     string
+	Tiers    []string
+	Billing  string // "api" for API rates, "subscription" for tokens only, empty for unknown
 	// Roles is her nova-config row's roles: a read card is dealt only to a friend whose
 	// roles name reader (RoleReader, read_cards.go).
 	Roles   []string
@@ -315,25 +316,48 @@ func friendRoom(f FriendSeat) (room, width int) {
 	return DealAhead*f.Width - f.ReadsFirst, f.Width
 }
 
+// tierHeavyOrPro says the tier is heavy or pro.
+func tierHeavyOrPro(tier string) bool {
+	return tier == "pro" || tier == "heavy"
+}
+
 // preferredFriend is the friend of names a card goes to (docs/SPEC-SPRINT.md section 1,
 // friend-deal-idle-lanes-first.w1): a friend with an idle lane (lanes > 0) before every
 // friend with none, the most idle lanes first, then the most room free, then the first by
 // name; "" when names is empty. The caller gives only the friends the card may go to.
-func preferredFriend(names []string, lanes, free map[string]int) string {
+// For heavy/pro cards, subscription friends are preferred over API friends.
+func preferredFriend(names []string, lanes, free map[string]int, seats map[string]FriendSeat, tier string) string {
 	best := ""
 	for _, f := range names {
-		switch {
-		case best == "":
+		if best == "" {
 			best = f
-		case max(lanes[f], 0) != max(lanes[best], 0):
+			continue
+		}
+		// For heavy/pro cards, prefer subscription friends over api friends
+		if tierHeavyOrPro(tier) {
+			seat := seats[f]
+			bestSeat := seats[best]
+			if seat.Billing == "subscription" && bestSeat.Billing != "subscription" {
+				best = f
+				continue
+			}
+			if seat.Billing != "subscription" && bestSeat.Billing == "subscription" {
+				continue
+			}
+		}
+		if max(lanes[f], 0) != max(lanes[best], 0) {
 			if lanes[f] > lanes[best] {
 				best = f
 			}
-		case free[f] != free[best]:
+			continue
+		}
+		if free[f] != free[best] {
 			if free[f] > free[best] {
 				best = f
 			}
-		case f < best:
+			continue
+		}
+		if f < best {
 			best = f
 		}
 	}
@@ -508,7 +532,7 @@ func friendDealPass(s *Snapshot, cards []*Card, seats []FriendSeat, reclaim bool
 				}
 				left = slices.DeleteFunc(slices.Clone(left), func(f string) bool { return !slices.Contains(gone, f) })
 			}
-			name = preferredFriend(may, lanes, free)
+			name = preferredFriend(may, lanes, free, seat, tier)
 		}
 		if name == "" || slices.Contains(left, name) || free[name] <= 0 {
 			continue // no friend it may go to is up with room: the fleet's, or (only) it waits ready
@@ -680,7 +704,7 @@ func reclaimUnit(s *Snapshot, wc *Card, up []string, seat map[string]FriendSeat,
 			may = append(may, f)
 		}
 	}
-	name := preferredFriend(may, lanes, free)
+	name := preferredFriend(may, lanes, free, seat, tier)
 	if pinned, ok := FriendCard(pr); ok && pinned != "" && slices.Contains(may, pinned) {
 		name = pinned
 	}
