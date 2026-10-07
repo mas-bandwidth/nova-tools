@@ -1,7 +1,6 @@
 package secrets
 
 import (
-	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -10,21 +9,14 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/testguard"
 )
 
-func armHostGuard() {
-	os.Setenv(testguard.EnvNoHost, "1")
-	testguard.Reload()
-}
-
 // TestPlaceSSHSeamPanicsUnderTheGuard pins 47d81e9c: sshPlaceSecret calls
 // testguard.RefuseHosts before the child. Reverting place.go left
-// ./internal/secrets green because the package had no test of that seam.
+// ./internal/secrets green because the package had no test of that seam. The
+// armed guard is injected per test, so the test opens with t.Parallel and never
+// sets NOVA_TEST_NO_HOST in the process environment.
 func TestPlaceSSHSeamPanicsUnderTheGuard(t *testing.T) {
 	t.Parallel()
-	armHostGuard()
-	defer func() {
-		os.Unsetenv(testguard.EnvNoHost)
-		testguard.Reload()
-	}()
+	guard := testguard.NewGuard(true)
 	defer func() {
 		r := recover()
 		require.NotNil(t, r, "sshPlaceSecret ran a child under the guard; an unfaked seam must refuse before it reaches a host")
@@ -33,5 +25,5 @@ func TestPlaceSSHSeamPanicsUnderTheGuard(t *testing.T) {
 			assert.Contains(t, msg, want, "the panic must name %q so the reader sees the command and the remedy; got %q", want, msg)
 		}
 	}()
-	_ = sshPlaceSecret(nil, "ssh", "bench.invalid", "/tmp/secret", "value")
+	_ = sshPlaceSecret(nil, guard, "ssh", "bench.invalid", "/tmp/secret", "value")
 }
