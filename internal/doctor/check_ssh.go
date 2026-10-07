@@ -29,12 +29,12 @@ func checkSSH(ctx context.Context, env Env) Result {
 			Fix: "nova-up --local writes the seat's store and inventory"}
 	}
 
-	// Read inventory from seat's secrets store
-	invPath := strings.TrimSuffix(store, "/") + "/" + seat + "_inv.yaml"
+	// Read inventory from seat's secrets store (relative path; Env handles the root)
+	invPath := seat + "_inv.yaml"
 	invBytes, err := env.ReadFile(invPath)
 	if err != nil {
 		// Try alternate location
-		invPath = strings.TrimSuffix(store, "/") + "/" + seat + ".inv"
+		invPath = seat + ".inv"
 		invBytes, err = env.ReadFile(invPath)
 		if err != nil {
 			return Result{Status: Fail, Evidence: "cannot read inventory: " + err.Error(),

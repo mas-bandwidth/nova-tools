@@ -24,8 +24,8 @@ func runSSH(t *testing.T, r sshRig) Result {
 	root := t.TempDir()
 
 	// Write inventory file
-	// checkSSH looks for seat_inv.yaml or seat.inv in the store directory
-	invPath := root + "/seat_inv.yaml"
+	// checkSSH looks for seat_inv.yaml or seat.inv in the store directory (relative path)
+	invPath := root + "/seat.inv"
 	require.NoError(t, os.WriteFile(invPath, []byte(r.inv), 0o644))
 
 	env := fakeEnv{
