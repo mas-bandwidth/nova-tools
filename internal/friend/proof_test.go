@@ -407,8 +407,10 @@ func TestADaemonWaitsForItsProofInsteadOfExiting(t *testing.T) {
 		assert.Equal(t, sprint.Up, up, "the re-ask was said again, so the server takes its answer")
 		require.Len(t, r.lines("push proof: proved"), 1)
 		got := r.h.got()
-		require.Len(t, got, 3, "the waiting message went in once the push was proved")
-		assert.Contains(t, got[2], `subject="card dealt"`)
+		require.Len(t, got, 3, "the present went in once the push was proved")
+		assert.Contains(t, got[2], PresentTextRule)
+		assert.Contains(t, got[2], "Skipped: 1 deals")
+		assert.NotContains(t, got[2], `subject="card dealt"`, "the old deal never reaches the newly proved session")
 	})
 }
 

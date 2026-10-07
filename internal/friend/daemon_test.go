@@ -57,7 +57,7 @@ func newRig(t *testing.T) *rig {
 	r := &rig{store: bustest.NewFake(t0, "ada", "bob"), now: t0, stopAfter: 1 << 20, gate: make(chan struct{}, 1), at: map[int]func(){}}
 	r.bus = &bus.Bus{Store: r.store}
 	r.d = &Daemon{
-		Friend: "bob", Harness: "fake", Dir: t.TempDir(), Width: 4, Store: r.store,
+		Friend: "bob", Harness: "fake", Dir: t.TempDir(), Width: 4, Store: r.store, noPresent: true, // the present has its own tests (present_test.go)
 		Deliver: r,
 		Seat:    func(context.Context) (string, error) { return "ada", nil }, // the sender these rigs expect delivered plain
 		Now: func() time.Time {

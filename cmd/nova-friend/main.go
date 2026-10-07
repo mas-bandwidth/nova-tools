@@ -14,6 +14,7 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -74,6 +75,7 @@ type world struct {
 	sqlite    friend.Exec                                                                                                            // reads opencode's database (the sqlite3 CLI); nil reads none: no card cost, no token cap
 	cards     func(ctx context.Context, server string, argv []string) (string, error)                                                // the cards on her row, asked of the sprint server (friend.FriendCardsArgv); nil asks none
 	friends   func(ctx context.Context, server string) (rows []friend.WakeRow, seat string, err error)                               // the friends table and the seat's holder, from the sprint server's coordinator view (GET /api/view/coordinator?all=1)
+	holders   func(ctx context.Context, server string) (map[string]string, error)                                                    // current card holders from GET /api/view/cards; nil in a world that reads none
 	view      func(ctx context.Context, server, friend string) (string, error)                                                       // the sprint server's worker view of her (GET /api/view/worker), while friend cards is refused; nil reads none
 	stage     func(dir string) *friend.Stager                                                                                        // stages a held card's job under her working directory and prunes the finished ones (friend.Stager, with the daemon's git credentials); nil stages none (a test's)
 	tip       func(ctx context.Context, repo, branch string) (string, error)                                                         // origin's tip of a card's branch (friend.Stager.Tip, one git ls-remote): a report's LAND finishes only there; nil reads none (a test's)
@@ -181,9 +183,14 @@ const maxView = 4 << 20
 // sprintView reads the sprint server's worker view of a friend (nova-sprint serve, GET
 // /api/view/worker?as=<friend>), the JSON document whole.
 func sprintView(ctx context.Context, server, name string) (string, error) {
+	return readSprintView(ctx, server, "/api/view/worker?as="+url.QueryEscape(name))
+}
+
+// readSprintView is the bounded GET shared by the worker and holder views.
+func readSprintView(ctx context.Context, server, route string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+server+"/api/view/worker?as="+url.QueryEscape(name), nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+server+route, nil)
 	if err != nil {
 		return "", err
 	}
@@ -202,6 +209,16 @@ func sprintView(ctx context.Context, server, name string) (string, error) {
 		return "", fmt.Errorf("the sprint server at %s refused the view (%s): %s", server, resp.Status, oneline.Cap(strings.TrimSpace(string(raw)), 300))
 	}
 	return string(raw), nil
+}
+
+// sprintHolders reads current ownership from the existing cards view, without
+// asking another friend to run or answer anything.
+func sprintHolders(ctx context.Context, server string) (map[string]string, error) {
+	raw, err := readSprintView(ctx, server, "/api/view/cards")
+	if err != nil {
+		return nil, err
+	}
+	return parseHolders(raw)
 }
 
 func realWorld() world {
@@ -241,6 +258,7 @@ func realWorld() world {
 		cards:    sprintAsk,
 		view:     sprintView,
 		friends:  coordinatorFriends,
+		holders:  sprintHolders,
 		stage:    func(dir string) *friend.Stager { return &friend.Stager{Dir: dir} },
 		tip:      (&friend.Stager{}).Tip,
 		lookPath: exec.LookPath,
@@ -403,7 +421,14 @@ says it (--check <nonce> --run <run>), and the beat after the session answers na
 --run <run>): the sprint server counts only an answer to a check this run asked, once, as her session's
 evidence while her beats go on, so a check goes in every ` + friend.ProveEvery.String() + ` while she is up; a per-card harness
 (claude) says neither. While the session is down the beat says so (--until, --reason: the push unproven,
-or no session answer, with the check's nonce). Each second, when the session is free: every waiting
+or no session answer, with the check's nonce). The present comes first, the backlog never does: on the
+daemon's start (once the first beat says her row's mode), after ` + friend.StaleAfter.String() + ` with no turn taken, and when she
+sends herself a message with the subject present, the next turn is one PRESENT turn (her live queue from her
+row or inbox/QUEUE.json, each card's column and BRIEF.md, the seat, the newest coordinator note, and one line
+Skipped: n deals, n pings, n notes); every older message is acked "superseded by the present at <time>", said
+on the record and to the seat on the bus, and a PING past the ` + friend.Window.String() + ` challenge window is dropped, never
+answered. A report on a card no longer on her row is never finished; the record names who holds it now.
+Each second, when the session is free: every waiting
 message read off the stream and pushed in as ONE turn, oldest first (at most ` + fmt.Sprint(friend.MaxBatch) + `; the rest is the next
 turn), acked together when the turn ends at exit 0; a turn that fails leaves them pending, handed in
 again when their claims open, and the third failure acks a message, given_up=true on the record. A
@@ -1275,7 +1300,13 @@ func (w world) run(c *tool.Call) *tool.Out {
 		},
 		SilentStop: c.Dur("silent-stop"), BrokenAfter: c.Int("broken-after"), Coordinator: c.Str("coordinator"),
 		Mailbox: mailbox,
-		Queued:  queued,
+		Session: func() string {
+			if mailbox != nil {
+				return mailbox.Live()
+			}
+			return c.Str("session")
+		},
+		Queued: queued,
 		Activity: func() time.Time {
 			return friend.NewestWrite(os.DirFS(dir), friend.ActivityRoots, w.now, friend.DefaultActivityLimits)
 		},
@@ -1445,6 +1476,9 @@ func (w world) run(c *tool.Call) *tool.Out {
 			}
 			return fmt.Sprintf("%s pong --as %s --nonce %s --state-dir %s --redis %s --width %d --queue <tasks queued> --working <tasks working>", bin, name, nonce, state, c.Str("redis"), c.Int("width"))
 		},
+	}
+	if w.holders != nil {
+		d.Holders = func(ctx context.Context) (map[string]string, error) { return w.holders(ctx, server) }
 	}
 	if !perCard {
 		d.Proof = sc.Proof // nothing goes into the session until it answers its check
@@ -2259,4 +2293,35 @@ func (w world) host(c *tool.Call) *tool.Out {
 		return tool.Refuse("the session " + res.Session + " runs, and its state could not be saved: " + err.Error())
 	}
 	return tool.Done().Fact("session", res.Session).Fact("dir", dir).Fact("attach", tool.Text(res.Attach))
+}
+
+// parseHolders reads the server's view cards document, schema 1. Empty holders
+// mean no working fleet row holds the card; malformed or mismatched documents
+// never supply an ownership name.
+func parseHolders(out string) (map[string]string, error) {
+	var v struct {
+		View   string `json:"view"`
+		Schema int    `json:"schema"`
+		Cards  []struct {
+			ID     string `json:"id"`
+			Holder string `json:"holder"`
+		} `json:"cards"`
+	}
+	if err := json.Unmarshal([]byte(out), &v); err != nil {
+		return nil, errors.New("card holders: the view is not valid JSON")
+	}
+	if v.View != "cards" || v.Schema != 1 {
+		return nil, errors.New("card holders: expected view cards schema 1")
+	}
+	holders, seen := map[string]string{}, map[string]bool{}
+	for _, c := range v.Cards {
+		if c.ID == "" || seen[c.ID] {
+			return nil, errors.New("card holders: empty or duplicate card id")
+		}
+		seen[c.ID] = true
+		if c.Holder != "" {
+			holders[c.ID] = c.Holder
+		}
+	}
+	return holders, nil
 }
