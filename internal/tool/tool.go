@@ -576,7 +576,7 @@ func (t *Tool) call(ctx context.Context, v Verb, args []string, stdin io.Reader,
 		return t.emit(&v, Fail(err.Error()), asJSON, stdout, stderr)
 	}
 	o := v.Run(c)
-	if err := c.Ctx.Err(); err != nil {
+	if err := c.Ctx.Err(); err != nil && (o == nil || o.Exit == 0) {
 		o = Fail(err.Error())
 	} else if r := c.Refused(); r != nil && (o == nil || o.Status != Refused) {
 		o = r // a problem the verb recorded is never dropped
