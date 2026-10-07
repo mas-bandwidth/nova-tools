@@ -505,7 +505,10 @@ func TestAudit2ClosedReminderDecisionsHaveNoCommands(t *testing.T) {
 // primary was returned: the only free reader is that one, whose card id
 // exists (retired), so the create is refused by the table layer on every
 // plan and the verb ends "the sprint kept changing ... run it again", which
-// can never succeed.
+// can never succeed. Now the slow reader's card, retired by the accept with no
+// verdict, leaves it askable once more under the second identity (ReadCardForAsk):
+// --another asks it there, a create of a new record; the next --another, with no
+// reader left, is refused naming reader add.
 func TestAudit2ClosedAskAnotherHitsARetiredCard(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t) // readers a, b, c
@@ -522,6 +525,10 @@ func TestAudit2ClosedAskAnotherHitsARetiredCard(t *testing.T) {
 	h.must(AcceptStep(sprint.AcceptReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
 	h.must(ReturnStep(sprint.ReturnReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Reason: "look again"}))
 	res := h.run(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Another: true}))
+	require.Empty(t, res.Refused, "ask --another of the slow reader, under .g1: %+v", res)
+	require.Equal(t, 1, res.Attempts, "ask --another: %+v", res)
+	require.NotNil(t, h.snap().Readers.Placed(sprint.ReadCardSecondID("s1-1", 1, rc[1].Row)), "asked again of %s, under .g1", rc[1].Row)
+	res = h.run(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Another: true}))
 	require.Len(t, res.Refused, 1, "ask --another: %+v", res)
 	require.Contains(t, res.Refused[0].Why, "no read card at attempt", "ask --another: %+v", res)
 	require.Contains(t, res.Refused[0].Why, "reader add", "ask --another: %+v", res)

@@ -110,35 +110,30 @@ func TestTheLevelMovesReadsOffAReaderOverItsWidth(t *testing.T) {
 	}
 }
 
-// A pro card's reads are asked one at a time, each of a reader with room
+// A pro card's reads are asked together, each of a different reader with room
 // (ReadsWanted, askPicks): with all the free room on one reader (m1 width 2
-// and idle, m2 width 1 and full) its first read is asked of m1 alone, and once
-// that came back ok its second read, which needs a different reader, waits for
-// m2's room, due, with no judgment; the ask's refusal (NCannotAsk) is for a
-// card no readers could ever read, never for want of room. When m2's lane
-// frees, the second read is asked of m2.
+// and idle, m2 width 1 and full) its second read, which needs a different
+// reader, waits for m2's room, and the first with it, due, with no judgment;
+// the ask's refusal (NCannotAsk) is for a card no readers could ever read,
+// never for want of room. When m2's lane frees, both reads are asked, of m1
+// and m2.
 func TestAProCardsSecondReadWaitsForAnotherReaderWithRoom(t *testing.T) {
 	t.Parallel()
 	w := widthWorld(t, 2, 1, 2)
 	w.s.Work.Card("p2").Fields["brief"] = proBrief
 	w.s.Readers.Put(&Card{ID: ReadCardID("p1", 1, "reader-m2"), Row: "reader-m2", Col: Asked, Rev: 1,
 		Fields: map[string]string{"kind": "read", "primary": "p1", "stream": "s1", "attempt": "1", "reader": "reader-m2", "head": "h1"}})
-	w.part(TickAsk, TickReq{})
-	reads := readsAt(w.s, w.s.Work.Card("p2"), 1)
-	require.Len(t, reads, 1, "the pro card's first read alone")
-	assert.Equal(t, "reader-m1", reads[0].Row, "the one reader with room")
-	reads[0].Col = OK
-	w.s.Readers.cells = nil
 	p, due := TickAsk(w.s, TickReq{})
 	assert.Empty(t, p.Units, "the second read needs another reader, and m2 is at width")
 	assert.Empty(t, p.Notes, "waiting for a second reader with room is no judgment")
 	assert.Equal(t, 1, due, "the pro card is due")
+	assert.Empty(t, readsAt(w.s, w.s.Work.Card("p2"), 1), "neither read is asked alone")
 	w.s.Readers.Card(ReadCardID("p1", 1, "reader-m2")).Col = OK
 	w.s.Readers.cells = nil
 	w.part(TickAsk, TickReq{})
-	reads = readsAt(w.s, w.s.Work.Card("p2"), 1)
-	require.Len(t, reads, 2, "m2's lane freed: the second read asked")
-	assert.Equal(t, "reader-m2", reads[1].Row)
+	reads := readsAt(w.s, w.s.Work.Card("p2"), 1)
+	require.Len(t, reads, 2, "m2's lane freed: both reads asked together")
+	assert.ElementsMatch(t, []string{"reader-m1", "reader-m2"}, []string{reads[0].Row, reads[1].Row})
 }
 
 // A read its reader returned is asked again in place when no other reader has

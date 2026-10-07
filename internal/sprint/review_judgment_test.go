@@ -20,8 +20,8 @@ func finished(w *world, id string, failed bool) {
 }
 
 // readOK has every outstanding read card of the primary say ok, and, while the
-// primary wants another read (ReadsWanted: its reads are asked one at a time),
-// asks it and has that one say ok too.
+// primary wants another read (ReadsWanted: its reads are asked together, so
+// only after a read taken back), asks it and has that one say ok too.
 func readOK(w *world, id string) {
 	w.t.Helper()
 	for {
@@ -114,11 +114,10 @@ func TestReviewJudgmentRead(t *testing.T) {
 	n := len(w.notesOf(NReadyToAccept))
 	require.Equal(t, 1, n, "a third ok wrote another ready to accept: %d", n)
 	finished(w, "s1-2", false)
-	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-2"}}}))
+	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-2"}}})) // a card's reads are asked together: both in one ask
 	rcs := readsAt(w.s, w.s.Work.Card("s1-2"), 1)
+	require.Len(t, rcs, 2)
 	w.must(Read(w.s, ReadReq{Usage: "input=1000 output=100", As: rcs[0].Row, Verdict: "ok", Sel: Sel{IDs: []string{rcs[0].ID}}}))
-	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-2"}}})) // the second read, once the first came back ok
-	rcs = readsAt(w.s, w.s.Work.Card("s1-2"), 1)
 	w.must(Read(w.s, ReadReq{Usage: "input=1000 output=100", As: rcs[1].Row, Verdict: "broken", Finding: "f:1", Sel: Sel{IDs: []string{rcs[1].ID}}}))
 	p := w.do(Ack(w.s, AckReq{Notes: openIDs(w, "s1-2"), Reason: "seen"}))
 	require.Len(t, p.Refused, 1, "ack of a broken read: %+v", p)

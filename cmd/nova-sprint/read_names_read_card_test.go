@@ -19,8 +19,7 @@ func TestAReadOfAPrimaryNamesTheReadCard(t *testing.T) {
 	ta.ok("tick")
 	ta.ok("take --as m1")
 	ta.ok("finish --as m1 s1-1.w1@1 --report done")
-	ta.ok("tick")
-	ta.ok("ask s1-1 --another") // the pair: reads are asked one at a time
+	ta.ok("tick") // the pair: a card's reads are asked together
 	ta.ok("read --as reader-b --begin")
 	for _, row := range []struct{ line, reader string }{
 		{"read --as reader-a --ok s1-1", "reader-a"}, // asked

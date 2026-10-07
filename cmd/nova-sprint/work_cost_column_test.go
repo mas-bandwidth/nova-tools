@@ -21,8 +21,8 @@ import (
 // streams. internal/sprint/cost.go and steps_merge.go; internal/ntable moneyFold.
 
 // landStream plays the stream's n cards to landed: dealt, taken and finished on m1
-// (each with its usage, "" for none), read ok by reader-a and reader-b (each with its
-// usage), accepted, merged and drained by the tick.
+// (each with its usage, "" for none), read ok by the readers asked, reader-a and reader-b
+// (each with its usage), accepted, merged and drained by the tick.
 func (ta *testApp) landStream(stream string, work []string, readA, readB []string, mergeOp ...string) {
 	ta.t.Helper()
 	ta.ok("tick")
@@ -35,24 +35,24 @@ func (ta *testApp) landStream(stream string, work []string, readA, readB []strin
 		}
 		ta.ok(line)
 	}
-	// the reads are asked one at a time: each card's first read (whichever reader the
-	// round gave it) with readA's usage, then, asked again, its second with readB's
-	for round, usages := range [][]string{readA, readB} {
-		ta.ok("ask")
+	// a card's reads are asked together: every read it needs in one ask (a pro card's two, a
+	// flash card's one), reader-a's read with readA's usage and reader-b's with readB's
+	ta.ok("ask")
+	for i := range work {
+		id := stream + "-" + strconv.Itoa(i+1)
+		require.True(ta.t, slices.Contains(ta.askedOf("reader-a"), id+".r1.reader-a") || slices.Contains(ta.askedOf("reader-b"), id+".r1.reader-b"), "%s is asked its reads", id)
+	}
+	for who, usages := range map[string][]string{"reader-a": readA, "reader-b": readB} {
 		for i := range work {
 			id := stream + "-" + strconv.Itoa(i+1)
-			for _, who := range []string{"reader-a", "reader-b"} {
-				if !slices.Contains(ta.askedOf(who), id+".r1."+who) {
-					continue
-				}
-				// a read with no cost is a subscription reader's: its tokens, no dollar (a
-				// routed read with no usage is refused, sprint.ReadUsageMissing)
-				usage := cmp.Or(usages[i], "input=1 "+sprint.UsageSubscription)
-				line := "read --as " + who + " --ok " + id + ".r1." + who + " --usage '" + usage + "'"
-				ta.ok(line)
+			if !slices.Contains(ta.askedOf(who), id+".r1."+who) {
+				continue
 			}
+			// a read with no cost is a subscription reader's: its tokens, no dollar (a
+			// routed read with no usage is refused, sprint.ReadUsageMissing)
+			usage := cmp.Or(usages[i], "input=1 "+sprint.UsageSubscription)
+			ta.ok("read --as " + who + " --ok " + id + ".r1." + who + " --usage '" + usage + "'")
 		}
-		_ = round
 	}
 	ta.ok("accept --stream " + stream)
 	merge := "merge --stream " + stream
@@ -157,7 +157,6 @@ func TestALandingCountsAReadReturnedAndRetired(t *testing.T) {
 	ta.ok("take --as m1 s1-1.w1@1")
 	ta.ok("finish --as m1 s1-1.w1@1 --usage 'input=1 actual_usd=0.1 actual_by=harness'")
 	ta.ok("ask")
-	ta.ok("ask s1-1 --another") // the pair: reads are asked one at a time
 	var asked []string
 	for _, rd := range []string{"reader-a", "reader-b", "reader-c"} {
 		if code, _, _ := ta.do("read --as " + rd + " --begin s1-1.r1." + rd); code == 0 {

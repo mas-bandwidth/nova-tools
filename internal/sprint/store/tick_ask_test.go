@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
@@ -248,10 +249,11 @@ func friendReadsOf(s *sprint.Snapshot, primary string) []string {
 // row: a read a friend had closed was invisible, so the ask saw the primary
 // unread and planned her read card again, a create of a record that exists,
 // which the store refused; every try of the ask's one write was refused with
-// it. Here the machine readers are away and three friends read: after their
-// first reads close (one broken), every primary read ok is asked its second
-// read of another friend in the next tick, the broken one waits on its
-// judgment, and nothing is refused.
+// it. Here the machine readers are away and three friends read: every primary
+// is asked both its reads together, of two friends (reads are asked together,
+// sprint.ReadsWanted); after the first of each closes (one broken), the next
+// tick sees the closed read, plans no read again, and nothing is refused; the
+// second reads close and the tick after refuses nothing either.
 func TestTheFriendAskAsksEveryReviewCardAFriendMayRead(t *testing.T) {
 	t.Parallel()
 	h := inReview(t, 6)
@@ -270,13 +272,14 @@ func TestTheFriendAskAsksEveryReviewCardAFriendMayRead(t *testing.T) {
 	ids := []string{"s1-1", "s1-2", "s1-3", "s1-4", "s1-5", "s1-6"}
 	res := h.machine()
 	_, refused := askOf(res)
-	require.Empty(t, refused, "the first reads")
-	first := map[string]string{}
+	require.Empty(t, refused, "the reads")
+	both := map[string][]string{}
 	s := h.snap()
 	for _, id := range ids {
 		got := friendReadsOf(s, id)
-		require.Len(t, got, 1, "%s: its first read, of a friend", id)
-		first[id] = got[0]
+		require.Len(t, got, 2, "%s: both its reads asked together, of friends", id)
+		require.NotEqual(t, got[0], got[1], "%s: of two different friends", id)
+		both[id] = got
 	}
 	broken := ids[0]
 	for _, id := range ids {
@@ -284,7 +287,7 @@ func TestTheFriendAskAsksEveryReviewCardAFriendMayRead(t *testing.T) {
 		if id == broken {
 			report = "Verdict: HOLD\nmain.go is wrong\n"
 		}
-		h.friendRead(first[id], id, report)
+		h.friendRead(both[id][0], id, report)
 	}
 	h.tick(time.Second)
 	for _, f := range []string{"stella", "johnny", "zhi"} {
@@ -292,12 +295,22 @@ func TestTheFriendAskAsksEveryReviewCardAFriendMayRead(t *testing.T) {
 	}
 	res = h.machine()
 	asked, refused := askOf(res)
-	require.Empty(t, refused, "the second reads: asked %v", asked)
+	require.Empty(t, refused, "the closed reads are seen: asked %v", asked)
 	s = h.snap()
-	for _, id := range ids[1:] {
-		got := friendReadsOf(s, id)
-		require.Len(t, got, 1, "%s: its second read asked, of a friend (asked %v)", id, asked)
-		require.NotEqual(t, first[id], got[0], "%s: its second read is another friend's", id)
+	for _, id := range ids {
+		assert.Equal(t, both[id][1:], friendReadsOf(s, id), "%s: its other read stands and none is planned again (asked %v)", id, asked)
 	}
-	require.Empty(t, friendReadsOf(s, broken), "the broken read's primary waits on its judgment")
+	for _, id := range ids[1:] {
+		h.friendRead(both[id][1], id, "Verdict: LAND\n")
+	}
+	h.tick(time.Second)
+	for _, f := range []string{"stella", "johnny", "zhi"} {
+		h.up(f)
+	}
+	res = h.machine()
+	asked, refused = askOf(res)
+	require.Empty(t, refused, "the second reads closed: asked %v", asked)
+	for _, id := range ids[1:] {
+		assert.Empty(t, friendReadsOf(h.snap(), id), "%s: read twice ok, no read planned again", id)
+	}
 }

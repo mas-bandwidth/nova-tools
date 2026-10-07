@@ -37,8 +37,7 @@ func TestTwoReadersOksInOneReadMakeOneJudgment(t *testing.T) {
 	w.must(Deal(w.s, DealReq{Sel: Sel{Limit: 1}}))
 	w.must(Take(w.s, TakeReq{As: "m1", Sel: Sel{Limit: 1}}))
 	w.must(Finish(w.s, FinishReq{As: "m1,m2", Sel: Sel{IDs: []string{"s1-1.w1"}}, Gens: map[string]int{"s1-1.w1": 1}}))
-	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-1"}}, Who: "coordinator"}))
-	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-1"}}, Another: true, Who: "coordinator"})) // reads are asked one at a time: the second by --another
+	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-1"}}, Who: "coordinator"})) // a card's reads are asked together: both readers in one ask
 	ids := []string{ReadCardID("s1-1", 1, "reader-a"), ReadCardID("s1-1", 1, "reader-b")}
 	p := w.must(Read(w.s, ReadReq{Usage: "input=1000 output=100", As: "reader-a,reader-b", Verdict: "ok", Sel: Sel{IDs: ids}}))
 	n := 0

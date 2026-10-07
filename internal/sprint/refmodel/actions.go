@@ -430,11 +430,11 @@ func Ask(s State, p string, readers []string) (State, error) {
 	pr := s.Primaries[p]
 	live := 0
 	for _, r := range s.Readers {
-		if _, made := s.Reads[RC(p, pr.Attempt, r)]; made {
+		if _, ok := s.AskID(p, pr.Attempt, r); !ok {
 			live++
 		}
 	}
-	if len(s.Readers)-live < 2-len(s.OkReaders(p)) {
+	if len(s.Readers)-live < 2-len(s.LiveReadsOf(p)) {
 		return s, refuse("fewer than two readers free for %s", p)
 	}
 	sorted := addSorted(nil, readers...)
@@ -444,20 +444,22 @@ func Ask(s State, p string, readers []string) (State, error) {
 	}
 	n := s.Clone()
 	order := addSorted(nil, s.Readers...)
-	if !finder { // the finder's read is out of turn: the index stays where it was
-		for _, r := range next {
-			n.AskLast = roundPast(order, n.AskLast, r)
+	for i, r := range next {
+		if finder && i == 0 { // the finder's read is out of turn: the index does not move for it
+			if n.Reserved[r] > 0 {
+				n.Reserved[r]-- // placed now: its load counts it from here
+			}
+			continue
 		}
-	} else if n.Reserved[next[0]] > 0 {
-		n.Reserved[next[0]]-- // placed now: its load counts it from here
+		n.AskLast = roundPast(order, n.AskLast, r)
 	}
 	n.AskStreamLast = roundPast(s.streamOrder(pr.Stream), s.AskStreamLast, pr.Stream) // the ask's stream index moves past it
 	for _, r := range readers {
-		id := RC(p, pr.Attempt, r)
+		id, _ := s.AskID(p, pr.Attempt, r)
 		if _, made := n.Reads[id]; made {
 			return s, badChoice("%s cut a second time (NoCardLostOrTwice)", id)
 		}
-		n.Reads[id] = ReadCard{Primary: p, Attempt: pr.Attempt, Reader: r, Place: Asked, Finder: finder}
+		n.Reads[id] = ReadCard{Primary: p, Attempt: pr.Attempt, Reader: r, Place: Asked, Finder: finder && r == next[0]}
 	}
 	var pair []string
 	for _, id := range n.LiveReadsOf(p) {
@@ -484,14 +486,14 @@ func AskAnother(s State, p, r string) (State, error) {
 	pr := s.Primaries[p]
 	free := 0
 	for _, x := range s.Readers {
-		if _, made := s.Reads[RC(p, pr.Attempt, x)]; !made {
+		if _, ok := s.AskID(p, pr.Attempt, x); ok {
 			free++
 		}
 	}
 	if free == 0 {
 		return s, refuse("every reader has read %s at attempt %d", p, pr.Attempt)
 	}
-	id := RC(p, pr.Attempt, r)
+	id, _ := s.AskID(p, pr.Attempt, r)
 	if !slices.Contains(s.Readers, r) {
 		return s, badChoice("%s is not a reader", r)
 	}
@@ -1237,7 +1239,7 @@ func (n *State) levelReads() {
 				if x == hi {
 					continue
 				}
-				if _, made := n.Reads[RC(c.Primary, c.Attempt, x)]; made {
+				if _, ok := n.AskID(c.Primary, c.Attempt, x); !ok {
 					continue
 				}
 				if n.ReaderLoad(x) < mean {
@@ -1254,9 +1256,10 @@ func (n *State) levelReads() {
 			if to == "" {
 				continue
 			}
+			id, _ := n.AskID(c.Primary, c.Attempt, to)
 			c.Place = Retired
 			n.Reads[asked[i]] = c
-			n.Reads[RC(c.Primary, c.Attempt, to)] = ReadCard{Primary: c.Primary, Attempt: c.Attempt, Reader: to, Place: Asked}
+			n.Reads[id] = ReadCard{Primary: c.Primary, Attempt: c.Attempt, Reader: to, Place: Asked}
 			n.AskLast = roundPast(sorted(n.Readers), n.AskLast, to)
 			moved = true
 		}

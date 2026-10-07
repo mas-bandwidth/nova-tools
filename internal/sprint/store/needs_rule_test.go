@@ -84,7 +84,7 @@ func (h *harness) nReadAll(id, verdict string) {
 				h.nDo(ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: rc.Row, Verdict: verdict, Finding: "f:1", Sel: sprint.Sel{IDs: []string{rc.ID}}}))
 			}
 		}
-		// reads are asked one at a time: an ok leaves the next read to ask
+		// a read still wanted (one taken back) is asked again here (reads are asked together)
 		s = h.snap()
 		if pr := s.Work.Card(id); verdict != "ok" || pr.Col != sprint.Review || sprint.ReadsWanted(s, pr) == 0 {
 			return
@@ -159,11 +159,10 @@ func TestStampsOnEveryPath(t *testing.T) {
 		require.NotEmpty(t, c.F("dealt"), "level moved %s without a new dealt: %q", c.ID, c.F("dealt"))
 	}
 	require.NotEqual(t, 0, moved, "level moved nothing")
-	// read cards: ask, ask --another, report from asked, rework re-ask
+	// read cards: ask (both reads together), ask --another (a third), report from asked, rework re-ask
 	h.nDo(TakeStep(sprint.TakeReq{As: wc4.Row, Sel: sprint.Sel{IDs: []string{wc4.ID}}, Gens: map[string]int{wc4.ID: wc4.Int("gen")}}))
 	h.nDo(FinishStep(sprint.FinishReq{Sel: sprint.Sel{IDs: []string{wc4.ID}}, Gens: map[string]int{wc4.ID: wc4.Int("gen")}}))
 	h.nDo(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
-	h.nDo(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Another: true}))
 	h.nDo(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Another: true}))
 	s = h.snap()
 	rcs := s.Readers.Of("s1-1")
@@ -198,7 +197,7 @@ func TestStampsOnEveryPath(t *testing.T) {
 			}
 		}
 	}
-	require.Equal(t, 1, again, "re-asked %d (the first read alone)", again)
+	require.Equal(t, 2, again, "re-asked %d (both reads together)", again)
 }
 
 // ---- H2 -------------------------------------------------------------------
@@ -225,11 +224,12 @@ func TestReadyToAcceptOncePerAttempt(t *testing.T) {
 	require.Empty(t, h.judgmentsOn("s1-1"), "accept left open: %v", h.judgmentsOn("s1-1"))
 	h.nDo(ReturnStep(sprint.ReturnReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Reason: "look again"}))
 	t.Logf("s1-1 returned to review, open judgments: %v (ready to accept notes total %d)", h.judgmentsOn("s1-1"), len(h.nAllNotes(sprint.NReadyToAccept)))
-	// s1-2: ok, broken, another, ok -> one; rework closes; new attempt: one more
-	first := h.askedRead("s1-2")
+	// s1-2: ok, broken, another, ok -> one; rework closes; new attempt: one more (both its
+	// reads asked together)
+	both := h.outstanding("s1-2")
+	require.Len(t, both, 2, "s1-2 asked both reads together")
+	first, second := both[0], both[1]
 	h.nDo(ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: first.Row, Verdict: "ok", Sel: sprint.Sel{IDs: []string{first.ID}}}))
-	h.nDo(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-2"}}})) // the second read, the first ok
-	second := h.askedRead("s1-2")
 	h.nDo(ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: second.Row, Verdict: "broken", Finding: "b:1", Sel: sprint.Sel{IDs: []string{second.ID}}}))
 	require.Empty(t, h.nOpenOf(sprint.NReadyToAccept, "s1-2"), "ready to accept on one ok")
 	h.nDo(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-2"}}, Another: true}))

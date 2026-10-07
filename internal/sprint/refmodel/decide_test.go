@@ -305,7 +305,7 @@ func TestLevelMovesTheNewestFromTheLongestRoundTheFleet(t *testing.T) {
 	assert.Contains(t, got[1].Set, "member=m2", "a card dealt again is the next generation, of its new member: %v", got[1].Set)
 }
 
-func TestAskAsksTheFirstReaderOfAPrimaryInReview(t *testing.T) {
+func TestAskAsksTheReadersOfAPrimaryInReview(t *testing.T) {
 	t.Parallel()
 	w := sprintOf(t, "m1")
 	w.add(t, "s1", 2)
@@ -316,11 +316,12 @@ func TestAskAsksTheFirstReaderOfAPrimaryInReview(t *testing.T) {
 	w.take(t, "s1-2")
 	w.finish(t, "s1-2", true) // failed work is not read
 	got := refmodel.AskMoves(w.snapshot(w.fresh()), later(0))
-	// the first read alone: the second is asked once it comes back ok
+	// both reads at once (reads together, the interim rule of 2026-10-06)
 	expect(t, got,
-		"set work s1-1 asked=reader-a",
-		"prop readers ask_index=1",
+		"set work s1-1 asked=reader-a,reader-b",
+		"prop readers ask_index=2",
 		"create readers s1-1.r1.reader-a >reader-a:asked",
+		"create readers s1-1.r1.reader-b >reader-b:asked",
 		"prop readers stream_index_ask=1")
 }
 
@@ -429,8 +430,7 @@ func TestDeadlinesJudgeAReadCardNotBegun(t *testing.T) {
 	w := sprintOf(t, "m1")
 	w.add(t, "s1", 1)
 	w.drive(t, "s1-1", sprint.Review)
-	w.ask(t, "s1-1")
-	w.must(t, sprint.Ask(w.s, sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Another: true, Who: coordinator})) // two reads outstanding: the first and one more
+	w.ask(t, "s1-1") // two reads outstanding: both asked at once (reads together, the interim rule)
 	snap := w.snapshot(nil)
 	expect(t, refmodel.DeadlineMoves(snap, later(30*time.Minute)))
 	got := refmodel.DeadlineMoves(snap, later(30*time.Minute+time.Second))

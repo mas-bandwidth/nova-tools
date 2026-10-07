@@ -89,9 +89,10 @@ func TestAskClosesTheJudgmentForTooFewReadersWhenAReaderIsAdded(t *testing.T) {
 	// the reads it places this tick are the primary's reads (notify), and the
 	// reference says what the tick does
 	expect(t, got,
-		"set work s1-1 asked=reader-a",
-		"prop readers ask_index=1",
+		"set work s1-1 asked=reader-a,reader-b",
+		"prop readers ask_index=2",
 		"create readers s1-1.r1.reader-a >reader-a:asked",
+		"create readers s1-1.r1.reader-b >reader-b:asked",
 		"prop readers stream_index_ask=1",
 		"close cannot ask [s1-1]")
 	theClose(t, got, sprint.NCannotAsk, ids[0], "s1-1")

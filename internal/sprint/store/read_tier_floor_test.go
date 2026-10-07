@@ -49,12 +49,14 @@ func TestTheReadTierFloorIsPerAttemptAndAStreamSettingOnlyRaises(t *testing.T) {
 	h.finishAttempt("s1-1", false, "h2")
 	h.must(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
 	h.readOne(h.askedRead("s1-1"), "broken", "internal/y.go:2: wrong too")
-	// attempt 3 runs on pro: its reads are asked at pro, the stream's read tier (none: flash) no cap
+	// attempt 3 runs on pro: its reads, both asked together, are at pro, the stream's read
+	// tier (none: flash) no cap
 	h.must(ReworkStep(sprint.ReworkReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Fix: "g", Tier: "pro", Who: "tester"}))
 	h.finishAttempt("s1-1", false, "h3")
 	h.must(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
-	assert.Equal(t, []string{"pro"}, h.readTiersOf("s1-1"), "the third attempt ran on pro: pro reads")
-	// a stream read tier of heavy raises everything in it
+	assert.Equal(t, []string{"pro", "pro"}, h.readTiersOf("s1-1"), "the third attempt ran on pro: pro reads")
+	// a stream read tier of heavy raises everything in it, a heavy read drawn on pro (the
+	// interim rule, readTierOf: "let pro do it")
 	h.addReady("s1", 1, briefOf("flash", ""))
 	res := h.must(SetStep(sprint.SetReq{Streams: []string{"s1"}, ReadTier: "heavy", Reason: "audited", Who: h.st.Actor}))
 	assert.Equal(t, "stream s1 read-tier heavy", res.Moved[0])
@@ -62,7 +64,7 @@ func TestTheReadTierFloorIsPerAttemptAndAStreamSettingOnlyRaises(t *testing.T) {
 	h.must(DealStep(sprint.DealReq{Sel: sprint.Sel{IDs: []string{"s1-2"}}}))
 	h.finishAttempt("s1-2", false, "h1")
 	h.must(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-2"}}}))
-	assert.Equal(t, []string{"heavy"}, h.readTiersOf("s1-2"), "a flash attempt in a heavy-read stream is read at heavy")
+	assert.Equal(t, []string{"pro"}, h.readTiersOf("s1-2"), "a flash attempt in a heavy-read stream is read at heavy, drawn on pro")
 	// the floor: the stream's work tier is pro (s1-1 is on pro... its brief names flash; a pro
 	// brief in the stream makes the work tier pro), and a read tier below it is refused in one line
 	h.must(AddStep(sprint.AddReq{Stream: "s1", IDs: []string{"s1-p"}, Brief: briefOf("pro", "")}))

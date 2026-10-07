@@ -24,8 +24,8 @@ func flowOf(w *world, id string, f stageFlow) {
 	finishFlow(w, id, f)
 }
 
-// finishFlow is flowOf from the deal on: the work card taken and finished, read
-// twice, accepted and merged.
+// finishFlow is flowOf from the deal on: the work card taken and finished, its two
+// reads asked together and read one after the other, accepted and merged.
 func finishFlow(w *world, id string, f stageFlow) {
 	w.t.Helper()
 	sec := func(n int) { w.tick(time.Duration(n) * time.Second) }
@@ -35,14 +35,17 @@ func finishFlow(w *world, id string, f stageFlow) {
 	sec(f.work)
 	w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{card.ID}}, Gens: gensOf(w.s, card.ID)}))
 	sec(f.readWait)
+	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{id}}})) // a card's reads are asked together: both in one ask
 	for i, d := range []int{f.r1, f.r2} {
-		w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{id}}}))
 		sec(d)
+		var out []*Card
 		for _, rc := range w.s.Readers.Of(id) {
 			if rc.Col == Asked || rc.Col == Reading {
-				w.must(Read(w.s, ReadReq{Usage: "input=1000 output=100", As: rc.Row, Verdict: "ok", Sel: Sel{IDs: []string{rc.ID}}}))
+				out = append(out, rc)
 			}
 		}
+		require.Len(w.t, out, 2-i, "read %d: the reads outstanding", i+1)
+		w.must(Read(w.s, ReadReq{Usage: "input=1000 output=100", As: out[0].Row, Verdict: "ok", Sel: Sel{IDs: []string{out[0].ID}}}))
 		require.Equal(w.t, Review, w.state(id), "read %d", i+1)
 	}
 	sec(f.accept)

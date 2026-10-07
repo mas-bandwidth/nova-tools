@@ -119,10 +119,8 @@ func TestAReworkTakenBeforeTheDrainStillCarriesItsWords(t *testing.T) {
 	h.machine()
 	h.machine()
 	rc := h.snap().Readers.Of("s1-1")
-	require.Len(t, rc, 1, "the first read alone")
+	require.Len(t, rc, 2, "both reads asked together")
 	h.must(ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: rc[0].Row, Verdict: "ok", Sel: sprint.Sel{IDs: []string{rc[0].ID}}}))
-	h.machine() // asks the second read, the first ok
-	rc = append(rc, h.askedRead("s1-1"))
 	h.must(ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: rc[1].Row, Verdict: "broken", Finding: "line 1: fix correct, the required test is missing", Sel: sprint.Sel{IDs: []string{rc[1].ID}}}))
 	h.machine()
 	h.must(ReworkStep(sprint.ReworkReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Fix: "add the required test"}))

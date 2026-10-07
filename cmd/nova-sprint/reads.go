@@ -594,7 +594,12 @@ type whereView struct {
 	Epoch       uint64                `json:"epoch"`
 	Cleared     time.Time             `json:"cleared,omitempty"` // when the epoch began
 	Machine     string                `json:"machine,omitempty"`
-	Goals       []goalView            `json:"goals,omitempty"`
+	// FleetWork and FriendsWork are the work switches (nova-sprint set --fleet, --friends;
+	// sprint.PropFleet, sprint.PropFriends): on or off, always carried, so the dashboard greys
+	// a side that is off. Off, the deal hands that side no work card; reads flow.
+	FleetWork   string     `json:"fleet_work"`
+	FriendsWork string     `json:"friends_work"`
+	Goals       []goalView `json:"goals,omitempty"`
 	// Seat is the seat's last change (coordinator <name>): who gave or took
 	// it, when and why; absent while the seat has not moved since init.
 	Seat *sprint.SeatChange `json:"seat,omitempty"`
@@ -1181,8 +1186,12 @@ func (a *app) whereOf(ctx context.Context, st *store.Store, stale time.Duration,
 	if facts.Records {
 		v.Machine = st.MachineLineOf(facts.Machine, facts.Heartbeat)
 	}
+	v.FleetWork, v.FriendsWork = sprint.SwitchWord(shapes[0].Props, sprint.PropFleet), sprint.SwitchWord(shapes[0].Props, sprint.PropFriends)
 	var b strings.Builder
 	b.WriteString(a.seatTitle(v.Coordinator, v.Seat, now) + "\n\n" + whereHeader(v.Summary, v.Machine) + "\n")
+	if line := switchesLine(v.FleetWork, v.FriendsWork); line != "" {
+		b.WriteString(line + "\n")
+	}
 	// the five heaviest cards, the ones the most wait on, under the summary: the tick's where
 	// record carries them (weight.go; store.WhereRecord)
 	if v.Critical = facts.Critical; len(v.Critical) > 0 {
@@ -1684,6 +1693,19 @@ func fleetText(t ntable.Table) string {
 // and the progress line, with no machine text, when it is running; a RUNNING
 // machine whose last tick is late keeps the progress line, the machine's
 // "running (tick late 16s)" after it. Nothing else follows any of them.
+// switchesLine is the work switches that are off, one line ("fleet: off", "friends: off"),
+// or "" while both are on (where; view coordinator's summary).
+func switchesLine(fleet, friends string) string {
+	var off []string
+	if fleet == sprint.SwitchOff {
+		off = append(off, "fleet: off")
+	}
+	if friends == sprint.SwitchOff {
+		off = append(off, "friends: off")
+	}
+	return strings.Join(off, "  ")
+}
+
 func whereHeader(summary, machine string) string {
 	state := strings.TrimPrefix(machine, "machine: ")
 	switch {

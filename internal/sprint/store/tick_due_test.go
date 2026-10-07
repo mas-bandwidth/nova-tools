@@ -118,7 +118,7 @@ func TestATickThatWentStaleLeavesAFullReadDue(t *testing.T) {
 	_, hb, _ = h.st.Machine(h.ctx)
 	require.True(t, hb.Full.IsZero(), "a tick whose part lost every attempt left no full read due: %+v", hb)
 	h.tick(time.Second)
-	if res := h.machine(); res.Idle || len(h.snap().Readers.Of("s1-1")) != 1 {
+	if res := h.machine(); res.Idle || len(h.snap().Readers.Of("s1-1")) != 2 { // both reads asked together
 		require.Failf(t, "", "the next tick: idle=%v, s1-1 asked of %d", res.Idle, len(h.snap().Readers.Of("s1-1")))
 	}
 }
@@ -229,7 +229,7 @@ func TestNoPartBeginsAfterStop(t *testing.T) {
 	h.tick(time.Second)
 	h.machine()
 	s := h.snap()
-	require.Len(t, s.Readers.Of("rv"), 1, "after start: rv asked of %d, s3 %s", len(s.Readers.Of("rv")), s.StreamCtl("s3").F("state"))
+	require.Len(t, s.Readers.Of("rv"), 2, "after start: rv asked of %d (both reads together), s3 %s", len(s.Readers.Of("rv")), s.StreamCtl("s3").F("state"))
 	require.NotEqual(t, string(sprint.StreamStopped), s.StreamCtl("s3").F("state"), "after start: rv asked of %d, s3 %s", len(s.Readers.Of("rv")), s.StreamCtl("s3").F("state"))
 }
 

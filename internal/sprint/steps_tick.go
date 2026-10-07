@@ -727,6 +727,11 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 	// one deal order for friends and machines, by the ladder: a low card fills only a lane no
 	// other card ready can (ladderOrder, priority.go)
 	ready = ladderOrder(dealOrder(s, ready))
+	if s.FleetOff() {
+		// the fleet's work is off (nova-sprint set --fleet off): no card is dealt to a
+		// machine, so no member up and a short ready queue are no judgment
+		ready = nil
+	}
 	if len(up) == 0 && len(ready) > 0 {
 		c := cond{typ: NNoMember, streamLevel: true,
 			what: fmt.Sprintf("%d primaries wait to be dealt and no member is up: start nova-sprint fleet beat <member> on a machine, or release a hold with nova-sprint fleet up <member>", len(ready))}
@@ -737,7 +742,7 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 		}
 		conds = append(conds, c)
 	}
-	if sentinel := heldWave(s); sentinel != nil && len(up) > 0 {
+	if sentinel := heldWave(s); sentinel != nil && len(up) > 0 && !s.FleetOff() {
 		// ready is kept at twice the fleet's width (the owner, 2026-10-02: "Ready always
 		// full"; 2026-10-03: "BATCH EVERYTHING"): under it while a wave is held, the tick
 		// says so every tick and offers the wave, never a single card
@@ -1006,7 +1011,7 @@ func TickAsk(s *Snapshot, r TickReq) (Plan, int) {
 	for _, c := range cards {
 		attempt := c.Int("attempt")
 		// the readers it still needs, whatever their room, and the reads asked now:
-		// one at a time (ReadsWanted)
+		// together (ReadsWanted)
 		need := ReadsNeeded(c) - len(liveReadsAt(s, c, attempt))
 		want := ReadsWanted(s, c)
 		free := s.freeReaders(c, attempt)

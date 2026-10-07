@@ -139,6 +139,8 @@ func (s *Snapshot) tierServed(tier string, rested []string) (up []string, why st
 		why = "every enabled route of tier " + tier + " in its array rests (" + strings.Join(rested, "; ") + ") and no up friend serves it: the deal draws one when its rest ends; or run nova-config route add <name> --tier " + tier + " ..., bring up a friend whose row lists " + tier + ", or pin the card with a model: <provider>/<model> line"
 	}
 	switch n := len(off); {
+	case n > 0 && s.FriendsOff():
+		why += " (the friends' work is off: nova-sprint set --friends on)"
 	case n == 1:
 		why += " (" + off[0] + " serves " + tier + " but is held/down)"
 	case n > 1:
@@ -409,9 +411,12 @@ func (s *Snapshot) NextTier(c *Card) string {
 // readers being conservatively the same tier as the work being done seems
 // fine?"), raised to the read tier set for its stream or the sprint when that is
 // stronger (settings.go; nova-tools#5096 item 27), never lowered. A card that pins
-// a model and names no tier is read on flash. A heavy card is read on heavy. A frontier
+// a model and names no tier is read on flash. A heavy card is read on heavy (on pro under
+// the interim rule below: the owner, 2026-10-06 7:41 PM ET, "let pro do it"). A frontier
 // card, a tier no route serves, is read on heavy, the strongest tier a route serves: a
-// read on pro would be weaker than the writer, which item 27 refuses. The value returned
+// read on pro would be weaker than the writer, which item 27 refuses; the one weaker read is
+// the interim rule's, a pro card read on flash while no enabled route serves pro and one
+// serves flash (the owner, 2026-10-06: "let flash read pro"). The value returned
 // is that collapse: a route drawn for the card is named from it. A friend is asked the
 // tier before this collapse (friendReadTier) when her class is at or above it and she
 // has room; the tick draws this route only when no such friend has room
@@ -424,6 +429,19 @@ func (s *Snapshot) readTierOf(pr *Card) string {
 	}
 	if set := s.readTierSetting(pr.Row); set != "" {
 		t = stronger(t, set)
+	}
+	// Workaround (Rowan, 2026-10-06 7:30 PM ET; Glenn 7:11 PM: "let flash read pro"): a pro
+	// read is drawn on flash while no enabled route serves pro and one serves flash, so the
+	// fleet's flash readers read pro cards while the pro routes are off. Read cards replace
+	// this.
+	if t == cardhdr.RoutePro && len(s.Routes) > 0 && !s.tierRouted(t) && s.tierRouted(cardhdr.RouteFlash) {
+		t = cardhdr.RouteFlash
+	}
+	// Workaround (Glenn, 2026-10-06 7:41 PM ET: "let pro do it"): a heavy card is read on pro,
+	// so the fleet's pro readers are its second reader beside the heavy friend, who is asked
+	// before this collapse (friendReadTier). Read cards replace this.
+	if t == cardhdr.RouteHeavy {
+		t = cardhdr.RoutePro
 	}
 	return t
 }

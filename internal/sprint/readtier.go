@@ -89,6 +89,11 @@ func RaiseReadTier(s *Snapshot, stream string) (ReadTierRaise, bool) {
 		if next == "" || s.readTierOf(c) != at {
 			return ReadTierRaise{}, false
 		}
+		// a setting at or above next already asks it: under the interim rule a heavy read is
+		// drawn on pro (readTierOf), so a stream raised to heavy reads at pro and pro is its top
+		if set := s.readTierSetting(c.Row); set != "" && stronger(set, next) == set {
+			return ReadTierRaise{}, false
+		}
 		return ReadTierRaise{Stream: stream, Next: next, Why: why}, true
 	}
 	for _, c := range s.Work.Cell(stream, Landed) {

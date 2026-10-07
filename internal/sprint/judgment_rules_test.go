@@ -68,7 +68,9 @@ func deadlines(w *world, r TickReq) {
 	w.must(p)
 }
 
-// brokenOnce has a reader find s1-1's attempt broken with the finding.
+// brokenOnce has a reader find s1-1's attempt broken with the finding: the reader whose
+// finding the attempt answers when it is asked again (its reads are asked together, so the
+// same reader says it twice), else the last one asked.
 func brokenOnce(t *testing.T, w *world, finding string) {
 	t.Helper()
 	if w.s.Work.Card("s1-1").Col != Review {
@@ -82,7 +84,7 @@ func brokenOnce(t *testing.T, w *world, finding string) {
 	pr := w.s.Work.Card("s1-1")
 	var rc *Card
 	for _, c := range readsAt(w.s, pr, pr.Int("attempt")) {
-		if c.Col == Asked {
+		if c.Col == Asked && (rc == nil || rc.Row != pr.F(FieldFindingReader)) {
 			rc = c
 		}
 	}
@@ -115,7 +117,8 @@ func friendDealt(t *testing.T, running ...string) (*world, FriendSeat) {
 	return w, bob
 }
 
-// readLate is a world with s1-1 in review, its one read asked and past its deadline.
+// readLate is a world with s1-1 in review, its two reads asked together and both past their
+// deadline.
 func readLate(t *testing.T) *world {
 	t.Helper()
 	w := setup(t, 1)
@@ -123,7 +126,7 @@ func readLate(t *testing.T) *world {
 	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-1"}}}))
 	w.tick(DeadlineUnbegun + time.Minute)
 	deadlines(w, TickReq{})
-	require.Len(t, openOf(w, NReadLate, "s1-1"), 1, "the read is late")
+	require.Len(t, openOf(w, NReadLate, "s1-1"), 2, "both reads are late")
 	return w
 }
 
@@ -213,30 +216,44 @@ func TestAMechanicalJudgmentIsAnsweredByItsRule(t *testing.T) {
 
 	t.Run("read-late: a late read is asked of another reader, once an attempt", func(t *testing.T) {
 		t.Parallel()
-		w := readLate(t)
+		w := readLate(t) // its two reads asked together, both late
 		pr := w.s.Work.Card("s1-1")
 		late := readsAt(w.s, pr, 1)
-		require.Len(t, late, 1)
-		from := late[0].F("reader")
+		require.Len(t, late, 2)
 		a := answerOn(t, w, on(), NReadLate, "s1-1")
 		require.Equal(t, RuleReadLate, a.Rule)
 		require.Equal(t, ActAsk, a.Act, a.Why)
+		from, other := a.from, ""
+		for _, rc := range late {
+			if rc.F("reader") != from {
+				other = rc.F("reader")
+			}
+		}
 		rules(w, on())
-		assert.False(t, w.s.Readers.Card(late[0].ID).Placed(), "the late read is taken back")
-		now := readsAt(w.s, w.s.Work.Card("s1-1"), 1)
-		require.Len(t, now, 1)
-		assert.NotEqual(t, from, now[0].F("reader"), "asked of another reader")
-		assert.Empty(t, openOf(w, NReadLate, "s1-1"), "answered")
+		assert.False(t, w.s.Readers.Card(ReadCardID("s1-1", 1, from)).Placed(), "the late read is taken back")
+		var now []string
+		for _, rc := range liveReadsAt(w.s, w.s.Work.Card("s1-1"), 1) {
+			now = append(now, rc.F("reader"))
+		}
+		require.Len(t, now, 2)
+		assert.NotContains(t, now, from, "asked of another reader")
+		assert.Contains(t, now, other, "the other late read stands")
+		open := openOf(w, NReadLate, "s1-1")
+		require.Len(t, open, 1, "one answered; the other late read's judgment stays open")
+		assert.Equal(t, ActLeft, answerOn(t, w, on(), NReadLate, "s1-1").Act, "the second late read of the attempt is a mind's")
 		assert.Len(t, logged(w, RuleReadLate), 1, "logged with the rule's name")
 		assert.Equal(t, "1", w.s.Work.Card("s1-1").F(FieldRuleReread))
 
 		w.tick(DeadlineUnbegun + time.Minute)
 		deadlines(w, TickReq{})
-		require.Len(t, openOf(w, NReadLate, "s1-1"), 1, "the second read is late too")
-		a = answerOn(t, w, on(), NReadLate, "s1-1")
-		assert.Equal(t, ActLeft, a.Act, "the second late read of the attempt is a mind's: %s", a.Why)
+		require.Len(t, openOf(w, NReadLate, "s1-1"), 2, "the read asked instead is late too")
+		for _, a := range RuleAnswers(w.s, on()) {
+			if a.Subject == "s1-1" && a.Type == NReadLate {
+				assert.Equal(t, ActLeft, a.Act, "a late read after the rule asked once at the attempt is a mind's: %s", a.Why)
+			}
+		}
 		rules(w, on())
-		assert.Len(t, openOf(w, NReadLate, "s1-1"), 1)
+		assert.Len(t, openOf(w, NReadLate, "s1-1"), 2)
 		w.clean("asked another reader by rule")
 	})
 
@@ -299,7 +316,7 @@ func TestAMechanicalJudgmentIsAnsweredByItsRule(t *testing.T) {
 		r := readLate(t)
 		r.s.RulesOff = []string{RuleReadLate}
 		rules(r, on())
-		assert.Len(t, openOf(r, NReadLate, "s1-1"), 1)
+		assert.Len(t, openOf(r, NReadLate, "s1-1"), 2)
 		assert.Empty(t, logged(r, RuleReadLate))
 
 		f, bob := friendDealt(t)

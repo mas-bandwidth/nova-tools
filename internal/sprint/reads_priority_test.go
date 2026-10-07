@@ -300,7 +300,7 @@ func TestFleetReadersReadOnlyTheirTiers(t *testing.T) {
 
 // The backup state is the table's three counts: reads when review exceeds working, merges
 // when merging exceeds review and working together, none else; and the reads waiting are the
-// reads wanted now over the primaries in review.
+// reads wanted now over the primaries in review, every read a card needs at once.
 func TestBackupStateIsTheTablesThreeCounts(t *testing.T) {
 	t.Parallel()
 	assert.Equal(t, BackupNone, BackupOf(5, 5, 0))
@@ -310,7 +310,7 @@ func TestBackupStateIsTheTablesThreeCounts(t *testing.T) {
 	assert.Equal(t, BackupMerges, BackupOf(2, 9, 12), "merges names the further bottleneck")
 
 	w, _ := priorityWorld(t, 5, 3, 17, 0)
-	assert.Equal(t, 20, ReadsWaiting(w.s), "one read wanted now for each of the twenty")
+	assert.Equal(t, 3+17*2, ReadsWaiting(w.s), "every read each card needs is wanted now (reads are asked together): one for each flash card, two for each frontier card")
 	working, review, merging := PipelineCounts(w.s)
 	assert.Equal(t, [3]int{5, 20, 0}, [3]int{working, review, merging})
 }

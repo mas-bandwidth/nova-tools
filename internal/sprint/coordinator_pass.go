@@ -396,7 +396,7 @@ func emptyConds(p *Plan, s *Snapshot, r TickReq) []cond {
 	for _, name := range names {
 		f := seats[name]
 		row := FriendRow(name)
-		up := f.Status == Up && !r.Sessions[name].Held && s.MemberCtl(row).F("status") != Held
+		up := f.Status == Up && !r.Sessions[name].Held && s.MemberCtl(row).F("status") != Held && !s.FriendsOff()
 		var cards []idleWait
 		if up && friendLoad(s, name) == 0 {
 			cards = cardsWaitingFor(s, f, seats)

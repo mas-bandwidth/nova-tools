@@ -864,6 +864,12 @@ func dealPlan(s *Snapshot, r DealReq, rr *round, ri routeIndexes) (Plan, roundMo
 	}
 	chosen := pick(&p, r.Sel, eligibleTurns(s.Work.Column(Ready), ready, streamRound(s, PropStreamIndex)), rowOf, ready, s.primaryCard)
 	up := s.UpMembers()
+	if s.FleetOff() {
+		for _, c := range chosen {
+			p.refuse(c.ID, "the fleet's work is off: no card is dealt to a machine; run: nova-sprint set --fleet on")
+		}
+		return p, moves
+	}
 	if len(up) == 0 {
 		for _, c := range chosen {
 			p.refuse(c.ID, "no fleet member is up: a member is up while its machine beats; start nova-sprint fleet beat <member> on a machine, or release a hold with nova-sprint fleet up <member>")
