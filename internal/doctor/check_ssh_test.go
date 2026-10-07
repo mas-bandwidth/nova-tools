@@ -40,6 +40,7 @@ func runSSH(t *testing.T, r sshRig) Result {
 			if len(args) > 5 {
 				bench = args[5]
 			}
+			t.Logf("exec ssh: bench=%q failBench=%q", bench, r.failBench)
 			if r.failBench != "" && bench == r.failBench {
 				return "", errors.New("ssh: " + r.failReason)
 			}
