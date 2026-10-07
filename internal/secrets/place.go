@@ -302,7 +302,7 @@ func RunPlace(in PlaceInput) (string, error) {
 	}
 
 	if err := sec.Use(func(value string) error {
-		return sshPlaceSecret(run, testguard.RefuseHosts, in.SSH, machine.Target, remotePath, value)
+		return sshPlaceSecret(run, nil, in.SSH, machine.Target, remotePath, value)
 	}); err != nil {
 		return "", err
 	}
