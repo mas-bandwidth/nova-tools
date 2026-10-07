@@ -16,6 +16,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/secrets"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/sprintwire"
 )
 
 // loginApp is a test app with the seat login on, as main has it: no --redis and no
@@ -35,9 +36,33 @@ type dialedLogin struct{ addr, user, password string }
 const loginPW = "Zq7xWp4Lk9mN2vB8tY"
 
 func newLoginApp(t *testing.T, dir string) *loginApp {
+	// The test's app names no store and has the seat login on, as main has it: a bare
+	// verb's --redis default is the recorded login's address (the sentinel), and no
+	// store is opened until one is recorded (else the default local server is used).
 	la := &loginApp{testApp: newTestApp(t), env: map[string]string{"NOVA_SPRINT_ACTOR": "coordinator", "XDG_CONFIG_HOME": filepath.Join(dir, "config")}}
-	la.a.getenv = func(k string) string { return la.env[k] }
-	la.a.seatLoginOn()
+	base := func(k string) string { return la.env[k] }
+	loginPath := filepath.Join(dir, "config", "nova-sprint", "login.json")
+	la.a.loginFile = func() (string, error) { return loginPath, nil }
+	la.a.getenv = func(k string) string {
+		if k == seatLoginAddr { // as seatLoginOn: a recorded login is a bare verb's --redis default
+			if l, ok, err := la.a.recordedLogin(); err == nil && ok {
+				return l.Redis
+			}
+			if _, err := os.Stat(loginPath); err == nil {
+				return seatLoginAddr // a login file is there and is not readable as one: run here, so the refusal names it
+			}
+			return ""
+		}
+		if k == "XDG_CONFIG_HOME" { // the login the test records is the one the app reads
+			return filepath.Join(dir, "config")
+		}
+		return base(k)
+	}
+	// the default local server is not what these verbs reach: the test names no store,
+	// and a server that did not answer is what the test's app sees, as the real client would.
+	la.a.forward = func(context.Context, string, ...[]string) ([]sprintwire.Result, error) {
+		return nil, errors.New("the sprint server did not answer: connection refused")
+	}
 	la.a.backend = la.a.redisBackend
 	la.a.loginSecret = func(l secrets.Login) (secrets.Secret, error) {
 		la.reads = append(la.reads, l)
@@ -74,10 +99,11 @@ func TestABareVerbOpensTheStoreWithTheSeatLoginFromSecrets(t *testing.T) {
 		return code, out, errs
 	}
 
-	// bare, with nothing recorded: the refusal names the login as a way on
+	// bare, with nothing recorded: no store is named, so the default local server is
+	// where the verb goes (and nothing is dialled here)
 	code, _, errs := do("where")
 	assert.Equal(t, 2, code)
-	assert.Contains(t, errs, "a login recorded by nova-sprint seat login")
+	assert.Contains(t, errs, "did not answer")
 	assert.Empty(t, la.dials)
 
 	login := "seat login --store " + filepath.Join(dir, "secrets") + " --as studio --key " + filepath.Join(dir, "studio.key") +

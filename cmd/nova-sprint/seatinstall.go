@@ -81,8 +81,8 @@ func (a *app) cmdSeatInstall(args []string, stdout, stderr io.Writer) int {
 	}
 	goos := a.seatOS()
 	u := sprint.SeatUnit{OS: goos, Log: *logf}
-	if srv := a.server(fs); srv != "" {
-		u.Server = srv
+	if srv := a.server(fs); srv.addr != "" {
+		u.Server = srv.addr
 	} else {
 		u.Redis = strings.TrimSpace(c.redis)
 	}
@@ -150,10 +150,10 @@ func (a *app) recordPushTarget(fs flagSet, c common, push sprint.PushRecord, std
 	if push.Session != "" {
 		words = append(words, "--session", push.Session)
 	}
-	if srv := a.server(fs); srv != "" {
-		res, err := a.ask(context.Background(), srv, []string{"seat"}, words)
+	if srv := a.server(fs); srv.addr != "" {
+		res, err := a.ask(context.Background(), srv.addr, []string{"seat"}, words)
 		if err != nil {
-			return a.unanswered(name, srv, err, stderr)
+			return a.unanswered(name, srv.addr, srv.named, err, stderr)
 		}
 		if res.Code == 2 {
 			return refuse(stderr, name, "the server refused the push record: "+strings.TrimSpace(res.Stderr))

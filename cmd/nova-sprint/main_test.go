@@ -403,9 +403,9 @@ func TestTablesAreNamedPlainlyAndConfirmIsTheViewName(t *testing.T) {
 	code, _, errs := ta.do("where")
 	require.Equal(t, 2, code, "a set NOVA_SPRINT_PREFIX is refused: %d %q", code, errs)
 	require.Equal(t, "nova-sprint where REFUSED: NOVA_SPRINT_PREFIX is set: "+none+"; unset it; run: nova-sprint where -h\n", errs, "a set NOVA_SPRINT_PREFIX is refused: %d %q", code, errs)
-	// before the --redis check: with no store named the refusal is still this one
+	// before the --redis check: with a store named (an empty address is one) the refusal is still this one
 	ta.a.getenv = func(k string) string { return map[string]string{"NOVA_SPRINT_PREFIX": "dev-"}[k] }
-	code, _, errs = ta.do("where")
+	code, _, errs = ta.do("where --redis=")
 	require.Equal(t, 2, code, "the prefix variable is checked before --redis: %d %q", code, errs)
 	require.True(t, strings.HasPrefix(errs, "nova-sprint where REFUSED: NOVA_SPRINT_PREFIX is set: "), "the prefix variable is checked before --redis: %d %q", code, errs)
 }

@@ -20,7 +20,7 @@ func TestServerReviewTerminatorKeepsFollowingWordsLiteral(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			fs := verbFlags("add")
+			fs := verbFlags(emptyEnvApp(), "add")
 			require.NotNil(t, fs)
 			pos, err := parse(fs, tc.args)
 			require.NoError(t, err)
@@ -33,9 +33,9 @@ func TestServerReviewTerminatorKeepsFollowingWordsLiteral(t *testing.T) {
 func TestServerReviewForwardingDoesNotConsumeAFileAfterTerminator(t *testing.T) {
 	t.Parallel()
 	argv := []string{"add", "--stream", "s1", "--", "card1", "--brief-file", "brief.txt"}
-	got := absolutePaths(append([]string(nil), argv...))
+	got := absolutePaths(emptyEnvApp(), append([]string(nil), argv...))
 	assert.Equal(t, argv, got, "literal words are not paths to rewrite")
-	v := readVerb(got)
+	v := readVerb(emptyEnvApp(), got)
 	require.NoError(t, v.err)
 	require.NotNil(t, v.fs)
 	assert.Empty(t, v.fs.Lookup("brief-file").Value.String(), "the server must not read a literal word as a relative file")

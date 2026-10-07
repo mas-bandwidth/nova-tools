@@ -50,7 +50,7 @@ func TestServerReviewHelpAsAValueStillForwardsTheWrite(t *testing.T) {
 func TestServerReviewPathRewritingDoesNotConsumeAnotherFlagsValue(t *testing.T) {
 	t.Parallel()
 	argv := []string{"add", "--brief", "--rules", "--stream", "s1", "--count", "1", "--one"}
-	assert.Equal(t, argv, absolutePaths(append([]string(nil), argv...)), "the brief is the literal string --rules; --stream is not a rules path")
+	assert.Equal(t, argv, absolutePaths(emptyEnvApp(), append([]string(nil), argv...)), "the brief is the literal string --rules; --stream is not a rules path")
 }
 
 func TestServerReviewInboxCursorWriteIsForwarded(t *testing.T) {
