@@ -26,9 +26,10 @@ func TestAskInsteadTakesOneReadOffOneReaderStoppedAndRunning(t *testing.T) {
 	ta.ok("take --as m1 s1-1.w1@1")
 	ta.ok("finish --as m1 s1-1.w1@1")
 	ta.failOnce("m1", "s1-2.w1@1", "tests red")
-	ta.ok("ask s1-1")
-	ta.ok("ask s1-1 --another") // the pair: reads are asked one at a time
-	var takenBack []string      // a reader whose read was taken back is never asked the attempt again
+	ta.ok("ask s1-1") // the pair: a card's reads are asked together
+	// a reader whose read was taken back is askable once more under .g1 (the interim rule), but
+	// a reader free that holds no card of the attempt comes before it in index order here
+	var takenBack []string
 	holds := func() (held, free []string) {
 		for _, rd := range readers {
 			var q struct{ Cards []queueCard }

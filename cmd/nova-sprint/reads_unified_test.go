@@ -64,13 +64,13 @@ func TestAnyUnitWithRoomAtOrAboveTheReadTierServesARead(t *testing.T) {
 		require.NoError(t, err)
 		asked += n
 	}
-	require.Equal(t, 1, asked, "the readers table is the other view of the same ask")
+	require.Equal(t, 2, asked, "the readers table is the other view of the same ask: the pro card's two reads, asked together")
 
 	var flash, pro cardView
 	ta.json("card s1-1", &flash)
 	ta.json("card s1-2", &pro)
 	require.Empty(t, flash.Reads, "the flash read is on her fleet row, not the readers table")
-	require.Len(t, pro.Reads, 1, "no friend at or above pro has room: a paid reader has the pro read")
+	require.Len(t, pro.Reads, 2, "no friend at or above pro has room: paid readers have the pro card's two reads")
 	require.Equal(t, sprint.Asked, pro.Reads[0].Col)
 
 	out := ta.ok("friend sync --root " + root)

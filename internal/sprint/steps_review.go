@@ -87,10 +87,9 @@ func readsAt(s *Snapshot, pr *Card, attempt int) []*Card {
 
 // Ask deals every primary in review that wants a read (ReadsWanted) to as many
 // different readers up as it wants now, in work order. A card's reads are
-// asked one at a time: the first read alone, and the rest it needs
-// (ReadsNeeded: one for a flash card, two for a pro card; readers.go) once the
-// first came back ok, so a first read that finds it broken costs no second
-// read. Each read goes to a reader with room (askPicks): the finder first on a
+// asked together (the interim rule of 2026-10-06, ReadsWanted): the rest it needs
+// (ReadsNeeded: one for a flash card, two for a pro card; readers.go), none once
+// a read found it broken. Each read goes to a reader with room (askPicks): the finder first on a
 // rework's next attempt (finderFirst: the reader whose finding the fix answers,
 // when it is free and has room), and every other read to the reader with the
 // greatest share of room, its free room as a part of its width (readerRooms,
@@ -134,7 +133,7 @@ func Ask(s *Snapshot, r AskReq) Plan {
 		}
 		if !another && ReadsWanted(s, c) == 0 {
 			if len(liveReadsAt(s, c, c.Int("attempt"))) < ReadsNeeded(c) {
-				return "asked already: its reads are asked one at a time, and the next is asked when the one outstanding comes back ok"
+				return "asked already: its reads are out, or one found it broken"
 			}
 			return "asked already"
 		}
@@ -186,12 +185,13 @@ func Ask(s *Snapshot, r AskReq) Plan {
 			all = append(all, rc.F("reader"))
 			kept = append(kept, rc)
 		}
-		// a friend's ok read of the attempt stands with the machine's, so the
-		// next read is one, not the whole pair again (friendReadLive;
+		// a friend's ok read of the attempt, or her read outstanding (reads are asked
+		// together, the interim rule: ReadsWanted counts it), stands with the machine's,
+		// so the next read is one, not the whole pair again (friendReadLive;
 		// docs/SPEC-SPRINT.md, a read asked of any unit with room at or above
 		// the read tier). It is not taken back: it is not on the readers table.
-		if _, oks, _ := friendReadLive(s, c); len(oks) > 0 {
-			for _, rc := range oks {
+		if placed, oks, _ := friendReadLive(s, c); len(placed)+len(oks) > 0 {
+			for _, rc := range append(placed, oks...) {
 				rd := rc.F("reader")
 				if rd == "" || contains(all, rd) {
 					continue
@@ -202,7 +202,7 @@ func Ask(s *Snapshot, r AskReq) Plan {
 		}
 		free := s.freeReaders(c, attempt)
 		// the reads that stand, kept, say how many are asked now (readsWantedOf): the
-		// first alone, then the rest once it came back ok; a read handed back, or taken
+		// rest of those it needs, together, none once one found it broken; a read handed back, or taken
 		// back from a reader away, is not a read and is asked again whatever stands: it
 		// was wanted when it was placed (ReadsWanted)
 		want := max(readsWantedOf(c, kept), len(returned)+len(away))
@@ -804,8 +804,8 @@ func reviewJudgment(s *Snapshot, pr *Card, st reviewStep) (Note, bool) {
 	case reads == 0:
 		typ, why = NStranded, "never asked at attempt "+itoa(attempt)+" and nothing is open on it"
 	case !broken && reads < ReadsNeeded(pr):
-		// its reads are asked one at a time: the ones that stand came back ok and the
-		// next is the ask's (ReadsWanted), nothing to judge
+		// the ones that stand came back ok and the rest are the ask's (ReadsWanted),
+		// nothing to judge
 		return Note{}, false
 	default:
 		typ, why = NReadsExhausted, fmt.Sprintf("no read is outstanding and %s not said ok at %s", readersWord(ReadsNeeded(pr)), orDash(pr.F("head")))

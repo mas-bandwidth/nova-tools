@@ -56,8 +56,22 @@ var dKnown = []dKnownDiff{
 	// tier of the stream?" when two readers disagree on one attempt, or a card
 	// alternates broken and ok across attempts; the model knows no read tiers and no
 	// such judgment. The spec names it (section 6); the model is owed it.
+	// An ack of it is the engine's too: the model, which never opens it, refuses the ack.
+	// Reads asked together (the interim rule of 2026-10-06) reach two readers disagreeing
+	// on one attempt within the short seeds.
 	{"ENGINE the read tier's escalation judgment is the engine's, not the model's", func(f dFinding) bool {
+		if f.Kind == "refusal" && f.Seq[len(f.Seq)-1].Kind == "ack" && strings.Contains(f.Seq[len(f.Seq)-1].Type, "raise the read tier of the stream?") {
+			return true
+		}
 		return f.Kind == "state" && strings.Contains(f.Sig(), "open.other:raise the read tier of the stream?")
+	}},
+	// MODEL, found 2026-10-06 when reads went together (the seeds reach an accept sooner),
+	// and reachable on the code before it (replayed: CI red on a merging primary, a green
+	// landing of it, a tick): the engine's tick leaves no ci judgment open on the landed
+	// primary, the model's keeps it open. Owed: the model closes it at the landing, or the
+	// spec says the engine must keep it.
+	{"MODEL a landed primary's ci judgment stays open in the model", func(f dFinding) bool {
+		return f.Kind == "state" && f.Seq[len(f.Seq)-1].Kind == "tick" && f.Sig() == "tick: open.ci=no/yes"
 	}},
 	// ENGINE or SPEC. Section 16: a sentinel inserted in line sends the
 	// ready cards behind it back to waiting; the engine treats a ready

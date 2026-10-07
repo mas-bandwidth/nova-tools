@@ -39,8 +39,9 @@ func TestTheAskNeverAsksAReaderOutsideItsTiers(t *testing.T) {
 	plan, _ := TickAsk(both.s, TickReq{})
 	both.must(plan)
 	assert.Contains(t, []string{"reader-flash", "reader-all", "reader-all2"}, askedReader(t, both, "flash-1"))
-	assert.NotEqual(t, "reader-flash", askedReader(t, both, "pro-1"), "a pro read is not asked of the flash reader")
-	assert.Contains(t, []string{"reader-all", "reader-all2"}, askedReader(t, both, "pro-1"))
+	// a card's reads are asked together: the pro card's two at once, neither of the flash reader
+	assert.ElementsMatch(t, []string{"reader-all", "reader-all2"}, readerNames(liveReadsAt(both.s, both.s.Work.Card("pro-1"), 1)),
+		"a pro read is not asked of the flash reader")
 
 	one := newTierWorld(t, ReaderUp, ReaderAway)
 	plan, _ = TickAsk(one.s, TickReq{})
@@ -65,7 +66,7 @@ func TestTheAskNeverAsksAReaderOutsideItsTiers(t *testing.T) {
 	require.NotNil(t, old)
 	assert.False(t, old.Placed(), "a returned read is not asked again in place of a reader outside the tier")
 	assert.Equal(t, "returned", old.F("retired_by"))
-	assert.NotEqual(t, "reader-flash", askedReader(t, back, "pro-1"))
+	assert.NotContains(t, readerNames(liveReadsAt(back.s, back.s.Work.Card("pro-1"), 1)), "reader-flash")
 
 	level := newWorld(t, "reader-flash", "reader-all")
 	level.s.Readers.Texts = map[string]map[string]string{"reader-flash": {"tiers": "flash"}}

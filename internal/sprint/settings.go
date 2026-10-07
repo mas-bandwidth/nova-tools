@@ -40,10 +40,46 @@ const (
 	// separated) of the files whose backquotes are their own, which the lander does not
 	// read for a code span (land_repair.go); set by stream set --prose.
 	FieldProse = "prose"
+	// PropFleet and PropFriends are the work table's properties: the switches of the
+	// fleet's work and the friends' work (the owner, 2026-10-06: "We should be able to
+	// enable/disable fleet, enable/disable friends. default enabled."), SwitchOn or
+	// SwitchOff, on when absent. Off, the deal hands that side no work card; reads flow.
+	PropFleet   = "fleet"
+	PropFriends = "friends"
+	// SwitchOn and SwitchOff are a switch's words.
+	SwitchOn  = "on"
+	SwitchOff = "off"
 	// ReadTierDefault is the word that takes a read tier off: a stream's back to
 	// the sprint's, the sprint's back to each card's own tier.
 	ReadTierDefault = "default"
 )
+
+// FleetOff says the fleet's work is switched off (nova-sprint set --fleet off): the deal
+// hands no work card to a machine, and the fleet's idle alarms are not raised; the fleet's
+// readers still read.
+func (s *Snapshot) FleetOff() bool { return s.switchOff(PropFleet) }
+
+// FriendsOff says the friends' work is switched off (nova-sprint set --friends off): the
+// deal hands no work card to a friend (friendDealable), and her empty row is no alarm; her
+// reads still flow.
+func (s *Snapshot) FriendsOff() bool { return s.switchOff(PropFriends) }
+
+func (s *Snapshot) switchOff(prop string) bool {
+	if s == nil || s.Work == nil {
+		return false
+	}
+	v, _ := s.Work.Prop(prop)
+	return v == SwitchOff
+}
+
+// SwitchWord is a switch's word as the work table's properties hold it: SwitchOff when
+// set off, else SwitchOn (the default).
+func SwitchWord(props map[string]string, prop string) string {
+	if props[prop] == SwitchOff {
+		return SwitchOff
+	}
+	return SwitchOn
+}
 
 // DealtMaxDefault is the dealt bound when the coordinator set none: three times
 // the deadline a taken card is held to. A member holds at most DealAhead times its
@@ -173,7 +209,10 @@ type SetReq struct {
 	// whole numbers from 1, or default.
 	DriftCommits string `json:",omitempty"`
 	DriftHours   string `json:",omitempty"`
-	Who          string
+	// Fleet and Friends are the work switches (PropFleet, PropFriends): on or off.
+	Fleet   string `json:",omitempty"`
+	Friends string `json:",omitempty"`
+	Who     string
 }
 
 // Set writes the settings: refused whole, writing nothing, for an actor who is not
@@ -238,6 +277,17 @@ func Set(s *Snapshot, r SetReq) Plan {
 			why = append(why, d[0]+" is the sprint's, not a stream's: nova-sprint set "+d[0]+" "+d[1])
 		}
 	}
+	for _, sw := range [][2]string{{"--fleet", r.Fleet}, {"--friends", r.Friends}} {
+		if sw[1] == "" {
+			continue
+		}
+		if sw[1] != SwitchOn && sw[1] != SwitchOff {
+			why = append(why, sw[0]+" wants "+SwitchOn+" or "+SwitchOff+"; found "+sw[1])
+		}
+		if len(r.Streams) > 0 {
+			why = append(why, sw[0]+" is the sprint's, not a stream's: nova-sprint set "+sw[0]+" "+sw[1])
+		}
+	}
 	if r.Attempts != "" {
 		if _, err := ParseAttempts(r.Attempts); err != nil {
 			why = append(why, err.Error())
@@ -258,8 +308,8 @@ func Set(s *Snapshot, r SetReq) Plan {
 			why = append(why, "--friend-stall-step wants a duration above zero (5m, 10m), or "+ReadTierDefault+" for "+FriendStallStepDefault.String()+"; found "+r.FriendStallStep)
 		}
 	}
-	if r.ReadTier == "" && r.DealtMax == "" && r.LandProtected == "" && r.Release == "" && r.Prose == "" && len(alarms) == 0 && r.GoLanes == "" && r.Attempts == "" && r.FriendIdle == "" && r.FriendStallAfter == "" && r.FriendStallStep == "" && r.DriftCommits == "" && r.DriftHours == "" {
-		why = append(why, "nothing to set: --read-tier, --prose, --dealt-max, --go-lanes, --attempts, --friend-idle, --friend-stall-after, --friend-stall-step, --drift-commits, --drift-hours or an --alarm-... threshold")
+	if r.ReadTier == "" && r.DealtMax == "" && r.LandProtected == "" && r.Release == "" && r.Prose == "" && len(alarms) == 0 && r.GoLanes == "" && r.Attempts == "" && r.FriendIdle == "" && r.FriendStallAfter == "" && r.FriendStallStep == "" && r.DriftCommits == "" && r.DriftHours == "" && r.Fleet == "" && r.Friends == "" {
+		why = append(why, "nothing to set: --read-tier, --prose, --dealt-max, --go-lanes, --attempts, --friend-idle, --friend-stall-after, --friend-stall-step, --drift-commits, --drift-hours, --fleet, --friends or an --alarm-... threshold")
 	}
 	if len(r.Streams) > 0 && r.GoLanes != "" {
 		why = append(why, "--go-lanes is the sprint's, not a stream's: nova-sprint set --go-lanes "+r.GoLanes)
@@ -357,6 +407,8 @@ func Set(s *Snapshot, r SetReq) Plan {
 		{PropFriendStallStep, r.FriendStallStep},
 		{PropDriftCommits, r.DriftCommits},
 		{PropDriftHours, r.DriftHours},
+		{PropFleet, r.Fleet},
+		{PropFriends, r.Friends},
 	}
 	for _, a := range alarmProps {
 		kvs = append(kvs, [2]string{a.prop, alarms[a.prop]})

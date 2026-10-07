@@ -70,8 +70,7 @@ func TestTheTickClosingALateReadWritesWhatThePrimaryNeeds(t *testing.T) {
 	h.startMachine()
 	h.machine() // deals p2
 	h.takeAndFinish(false, "p2")
-	h.machine()                                                                         // asks the first reader
-	h.must(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"p2"}}, Another: true})) // and one more: two reads outstanding
+	h.machine() // asks both readers together: two reads outstanding
 	var cards []*sprint.Card
 	cards = append(cards, h.snap().Readers.Of("p2")...)
 	require.Len(t, cards, 2, "asked: %d read cards", len(cards))
@@ -112,8 +111,7 @@ func TestTheTickClosingTheOnlyLateReadWritesWhatThePrimaryNeeds(t *testing.T) {
 	h.startMachine()
 	h.machine() // deals p2
 	h.takeAndFinish(false, "p2")
-	h.machine()                                                                         // asks the first reader
-	h.must(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"p2"}}, Another: true})) // and one more: two reads outstanding
+	h.machine() // asks both readers together: two reads outstanding
 	cards := h.snap().Readers.Of("p2")
 	require.Len(t, cards, 2, "asked: %d read cards", len(cards))
 	h.must(ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: cards[0].Row, Verdict: "broken", Finding: "f:1", Sel: sprint.Sel{IDs: []string{cards[0].ID}}}))

@@ -210,23 +210,23 @@ func TestActionsCoverFinish(t *testing.T) {
 	coverRefused(t, err)
 }
 
-// TestActionsCoverAsk covers Ask (actions.go): a primary in review is asked its
-// first read alone (ReadsWanted, sequential reads); asked again while that read
-// is outstanding it wants none and is refused.
+// TestActionsCoverAsk covers Ask (actions.go): a primary in review is asked both
+// its reads at once (ReadsWanted, reads together: the interim rule of 2026-10-06);
+// asked again while they are outstanding it wants none and is refused.
 func TestActionsCoverAsk(t *testing.T) {
 	t.Parallel()
-	s := New([]string{"r1", "r2"}, nil, "c")
+	s := New([]string{"r1", "r2", "r3"}, nil, "c")
 	s.Primaries["p"] = Primary{Stream: "s", Kind: KindPrimary, State: Review, Attempt: 1}
 
-	_, err := Ask(s, "p", []string{"r1", "r2"})
-	coverBadChoice(t, err) // the pair at once: the reads are asked one at a time
+	_, err := Ask(s, "p", []string{"r1"})
+	coverBadChoice(t, err) // one read alone: the reads are asked together
 
-	n, err := Ask(s, "p", []string{"r1"})
+	n, err := Ask(s, "p", []string{"r1", "r2"})
 	require.NoError(t, err)
 	assert.Equal(t, Asked, n.Reads[RC("p", 1, "r1")].Place)
-	assert.NotContains(t, n.Reads, RC("p", 1, "r2"))
+	assert.Equal(t, Asked, n.Reads[RC("p", 1, "r2")].Place)
 
-	_, err = Ask(n, "p", []string{"r2"})
+	_, err = Ask(n, "p", []string{"r3"})
 	coverRefused(t, err)
 }
 

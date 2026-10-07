@@ -36,8 +36,7 @@ func routedReads(t *testing.T) (w *world, reads []*Card) {
 	w.must(Take(w.s, TakeReq{As: c.Row, Sel: Sel{IDs: []string{c.ID}}, Gens: gensOf(w.s, c.ID)}))
 	// the take: 1,000,000 in and 100,000 out at the route's prices is $1 + $1 = $2
 	w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{c.ID}}, Gens: gensOf(w.s, c.ID), Report: "r", Usage: "input=1000000 output=100000"}))
-	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-1"}}}))
-	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-1"}}, Another: true}))
+	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-1"}}})) // a card's reads are asked together: both in one ask
 	reads = readsAt(w.s, w.s.Work.Card("s1-1"), 1)
 	require.Len(t, reads, 2)
 	for _, rc := range reads {

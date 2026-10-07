@@ -42,7 +42,6 @@ func TestTheCardCarriesEveryConsumerWhoeverIsRemoved(t *testing.T) {
 
 	// the reads: one handed back by its reader, asked of another, then two ok
 	ta.ok("ask")
-	ta.ok("ask s1-1 --another") // the pair: reads are asked one at a time
 	var asked []string
 	for _, rd := range []string{"reader-a", "reader-b", "reader-c"} {
 		if code, _, _ := ta.do("read --as " + rd + " --begin s1-1.r2." + rd); code == 0 {

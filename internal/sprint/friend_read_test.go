@@ -34,7 +34,7 @@ func TestAFrontierCardsReadIsAskedAsAFriendCard(t *testing.T) {
 		putReview(w, "s1-1", body, 2, 1, primHead)
 		putAttemptWork(w, "s1-1", 1, "sprint/old", start, "yes")
 		putAttemptWork(w, "s1-1", 2, branch, workHead, "")
-		require.Equal(t, cardhdr.RouteHeavy, w.s.readTierOf(w.s.Work.Card("s1-1"))) // the collapse: frontier is read on heavy, the strongest tier a route serves
+		require.Equal(t, cardhdr.RoutePro, w.s.readTierOf(w.s.Work.Card("s1-1"))) // the collapse: frontier is read on heavy, the strongest tier a route serves, and heavy on pro (the interim rule); the friend is asked the tier before it
 		askReaders(t, w, []FriendSeat{frontierSeat("amy", 2, Up, dir)})
 
 		id := ReadCardID("s1-1", 2, "amy")
@@ -86,7 +86,7 @@ func TestAFrontierCardsReadIsAskedAsAFriendCard(t *testing.T) {
 		w := newWorld(t, "reader-a", "reader-b")
 		putReview(w, "s1-h", "s1-h: heavy (s1) tier: heavy\n\nAS A READ\nheavy body\n", 1, 1, primHead)
 		w.s.Work.SetProp(PropReadTier, cardhdr.RouteFrontier)
-		require.Equal(t, "heavy", w.s.readTierOf(w.s.Work.Card("s1-h")))
+		require.Equal(t, "pro", w.s.readTierOf(w.s.Work.Card("s1-h"))) // heavy is read on pro (the interim rule); the friend is asked the tier before it
 		askReaders(t, w, []FriendSeat{frontierSeat("amy", 2, Up, t.TempDir())})
 		id := ReadCardID("s1-h", 1, "amy")
 		require.NotNil(t, w.s.Fleet.Card(id))

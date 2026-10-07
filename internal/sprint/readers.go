@@ -111,7 +111,7 @@ func fewReaders(s *Snapshot) string {
 // reader per attempt: a read taken back away, levelled or returned counts), so
 // the readers left are new ones (reader add), or the next attempt (rework).
 func cannotAskWhy(s *Snapshot, pr *Card, attempt, want, free, full int) string {
-	return fmt.Sprintf("needs %d different readers and %d is free with no read card at attempt %d of %s (%d free but at width); a reader is asked an attempt once, whether it read it or its read was taken back, and a reader away or down is not asked (readers: %s); run: nova-sprint reader add <name>, nova-sprint reader up <name>, or nova-sprint rework %s --fix <text> for a new attempt every reader may read", want, free, attempt, pr.ID, full, readersText(s), pr.ID)
+	return fmt.Sprintf("needs %d different readers and %d is free with no read card at attempt %d of %s (%d free but at width); a reader is asked an attempt once, and once more when its read was taken back with no verdict, and a reader away or down is not asked (readers: %s); run: nova-sprint reader add <name>, nova-sprint reader up <name>, or nova-sprint rework %s --fix <text> for a new attempt every reader may read", want, free, attempt, pr.ID, full, readersText(s), pr.ID)
 }
 
 // NWaitingForReader is the tick's note on a primary in review whose read it
@@ -264,7 +264,9 @@ func ReadsNeeded(pr *Card) int {
 // tiers cell set and a route of the tier (or none at all) holds every reader up, as
 // it did before the column: the
 // ask may ask it (TickAsk); else it waits, judged NFewReaders. A friend is asked
-// before this (friendReadAsk), and a read she holds is not one this counts.
+// before this (friendReadAsk); under the interim rule (reads asked together) a read she
+// holds at the attempt, outstanding or ok, counts toward what it needs, so a heavy
+// friend and one fleet reader of pro are its two readers.
 func enoughReadersUp(s *Snapshot, pr *Card) bool {
 	// the fast path: no states, no tiers cell, the tier routed, and no fleet reader held to
 	// flash by its empty cell for a read above flash (fleetReadsFlashOnly)
@@ -277,7 +279,8 @@ func enoughReadersUp(s *Snapshot, pr *Card) bool {
 			n++
 		}
 	}
-	return n >= ReadsNeeded(pr)
+	placed, oks, _ := friendReadLive(s, pr)
+	return n+len(placed)+len(oks) >= ReadsNeeded(pr)
 }
 
 // ScriptReadPrefix begins the finding of an ok read a script reader gave: the reader ran
@@ -353,9 +356,9 @@ func returnedReadsAt(s *Snapshot, pr *Card, attempt int) []*Card {
 }
 
 // ReadCardForAsk returns the read card ID to use when asking a reader of a primary
-// at an attempt: plain identity if no card exists yet, or second identity if an
-// away-retired or refused card (RetiredByRefused) exists with the plain identity and no
-// second card exists yet.
+// at an attempt: plain identity if no card exists yet, or second identity if a card
+// retired without a verdict (away, refused, returned, levelled, held, taken back)
+// exists with the plain identity and no second card exists yet.
 // ok is true if the reader is eligible to be asked.
 func ReadCardForAsk(s *Snapshot, primary string, attempt int, reader string) (id string, ok bool) {
 	plain := ReadCardID(primary, attempt, reader)
@@ -363,7 +366,12 @@ func ReadCardForAsk(s *Snapshot, primary string, attempt int, reader string) (id
 	if existing == nil {
 		return plain, true
 	}
-	if by := existing.F("retired_by"); by == "away" || by == RetiredByRefused {
+	// Workaround (Rowan, 2026-10-06 7:30 PM ET, Glenn: "fix it now, to work around it"): a
+	// read card retired for any reason without a verdict (away, refused, returned,
+	// levelled, taken back by a hold or a reader restart) leaves the reader askable again
+	// under the second identity; before, only away and refused did, and tonight's reader
+	// restarts spent most readers on most cards. Read cards replace this path next.
+	if by := existing.F("retired_by"); by != "" && existing.F("verdict") == "" {
 		second := ReadCardSecondID(primary, attempt, reader)
 		if s.Readers.Card(second) == nil {
 			return second, true
@@ -375,10 +383,10 @@ func ReadCardForAsk(s *Snapshot, primary string, attempt int, reader string) (id
 // freeReaders is the readers the ask may ask the primary's attempt of: up,
 // serving the primary's tier (readerServesTier; an empty tiers cell reads every
 // tier, and a fleet reader serves only a tier it can draw a route of), with no
-// read card of it at the attempt, placed or retired (a reader with one, even
-// retired, has read it). When an away-retired card exists with
-// the plain identity and no second card exists yet, the reader is eligible to
-// be re-asked under second identity .g1. The next attempt is read on new
+// read card of it at the attempt, placed or retired with a verdict (a reader
+// with one has read it). When a card retired without a verdict exists with the
+// plain identity and no second card exists yet, the reader is eligible to be
+// re-asked under second identity .g1 (ReadCardForAsk). The next attempt is read on new
 // cards, by every reader of the tier.
 func (s *Snapshot) freeReaders(pr *Card, attempt int) []string {
 	tier := s.readTierOf(pr)
@@ -394,20 +402,18 @@ func (s *Snapshot) freeReaders(pr *Card, attempt int) []string {
 }
 
 // ReadsWanted is how many reads the ask places on the primary now, at its
-// attempt. A card's reads are asked one at a time (docs/SPEC-SPRINT.md section
-// 6, sequential reads; the owner, 2026-10-04, after a night of 4.2 reads per
-// landing against a design of 2: when the first reader finds a card broken the
-// second read, asked with it, is wasted): one while no read of the attempt
-// stands (the first read); none while a read is outstanding, or found it
-// broken (the judgment stands and a rework follows: no second read); the rest
-// it needs (ReadsNeeded) once every read that stands came back ok. A read
+// attempt. Under the interim rule of 2026-10-06 (docs/SPEC-SPRINT.md section 6;
+// the owner, 6:02 PM ET: "send out multiple consumer cards in ||") a card's reads
+// are asked together: the rest it needs (ReadsNeeded), a read outstanding counted
+// among those that stand; none once a read found it broken (the judgment stands
+// and a rework follows). The sequential rule before it (2026-10-04) asked the
+// first read alone and the rest once it came back ok. A read
 // taken back from a reader away or handed back with no verdict (liveReadsAt)
 // does not stand and is asked again whatever stands: it was wanted when it
 // was placed (a pair's second read by --another too). Each read wanted goes
 // to a reader with room (askPicks): how many are wanted is this rule, where
 // they go is the readers' room. A friend's read of the attempt stands with
-// them (friendReadLive): placed, it is outstanding, so the next is not asked
-// until it comes back; ok, it counts toward ReadsNeeded; broken, no second
+// them (friendReadLive): placed or ok, it counts toward ReadsNeeded; broken, no second
 // read is asked (docs/SPEC-SPRINT.md, a read asked of any unit with room at
 // or above the read tier).
 func ReadsWanted(s *Snapshot, pr *Card) int {
@@ -421,13 +427,14 @@ func ReadsWanted(s *Snapshot, pr *Card) int {
 
 // readsWantedOf is ReadsWanted over the reads that stand, live.
 func readsWantedOf(pr *Card, live []*Card) int {
+	// Workaround (Rowan, 2026-10-06 7:47 PM ET; Glenn 6:02 PM: "send out multiple consumer
+	// cards in ||"): a card's reads are asked together, not one after the other; a read
+	// outstanding counts toward the reads it needs, and only a broken read stops the rest.
+	// Read cards replace this.
 	for _, rc := range live {
-		if rc.Col != OK {
+		if rc.Col == Broken {
 			return 0
 		}
-	}
-	if len(live) == 0 {
-		return 1
 	}
 	return max(0, ReadsNeeded(pr)-len(live))
 }
@@ -488,7 +495,7 @@ func (s *Snapshot) askFinders(cards []*Card, another bool, room map[string]reade
 // askPicks is the readers the ask asks of the primary now, want of them, at
 // most: its finder first (askFinders, whose room the finder's read already
 // took), then the rest each the free reader with the greatest share of room
-// (round.pickByRoom), so the reads wanted one at a time (ReadsWanted) go
+// (round.pickByRoom), so the reads wanted (ReadsWanted) go
 // where the machines' widths have room (docs/SPEC-SPRINT.md section 6, the
 // reads, sequential and by room; the model is tla/ReadsByRoom.tla and the
 // reference model's AskChoice). Every read picked is taken off its reader's

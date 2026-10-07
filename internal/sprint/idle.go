@@ -252,7 +252,7 @@ func TickIdle(s *Snapshot, r TickReq) (Plan, int) {
 	}
 	working, width := FleetWorking(s)
 	waiting := len(waitingCards(s))
-	idle := width > 0 && waiting > 0 && 2*working < width
+	idle := width > 0 && waiting > 0 && 2*working < width && !s.FleetOff() // off: no work is dealt it
 	since, _ := s.Fleet.Prop(PropIdleSince)
 	said, _ := s.Fleet.Prop(PropIdleSaid)
 	write := func(name, value string) {
