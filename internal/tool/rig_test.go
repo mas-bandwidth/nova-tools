@@ -6,18 +6,38 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mas-bandwidth/nova-tools/internal/testkit"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// Rig is the test harness for tool tests. It provides helpers for parsing
-// output renderings and asserting their structure.
-type Rig struct{}
+// Rig owns the tool setup, execution and result checks (STANDARD section 8).
+type Rig struct {
+	t    *testing.T
+	tool *Tool
+}
 
-// NewRig returns a new test rig.
-func NewRig() *Rig { return &Rig{} }
+// NewRig binds a tool to its test harness (STANDARD section 8).
+func NewRig(t *testing.T, tool *Tool) *Rig {
+	t.Helper()
+	return &Rig{t: t, tool: tool}
+}
 
-// parsed is one rendering read back into the parts of Out, for comparing the
-// lines with the JSON field for field.
+// Run executes the bound tool and checks its exit code (STANDARD section 8).
+func (r *Rig) Run(want int, args ...string) testkit.Ran {
+	r.t.Helper()
+	got := r.Capture(args...)
+	assert.Equal(r.t, want, got.Code, "stdout %q stderr %q", got.Stdout, got.Stderr)
+	return got
+}
+
+// Capture executes the bound tool with captured streams (STANDARD section 8).
+func (r *Rig) Capture(args ...string) testkit.Ran {
+	r.t.Helper()
+	return testkit.Main(r.tool.Run).Do(r.t, args...)
+}
+
+// parsed is one rendering read back into the parts of Out (STANDARD section 8).
 type parsed struct {
 	Verb, Status, Remedy string
 	Exit                 int
@@ -29,9 +49,9 @@ type parsed struct {
 	Payload              string
 }
 
-// FromLines reads the text rendering into parsed.
-func (r *Rig) FromLines(t *testing.T, token, text string) parsed {
-	t.Helper()
+// FromLines reads the text rendering into parsed (STANDARD section 8).
+func (r *Rig) FromLines(token, text string) parsed {
+	r.t.Helper()
 	p := parsed{Facts: map[string]string{}}
 	for i, l := range strings.Split(strings.TrimSuffix(text, "\n"), "\n") {
 		rest, ok := strings.CutPrefix(l, token+" ")
@@ -85,7 +105,7 @@ func (r *Rig) FromLines(t *testing.T, token, text string) parsed {
 	return p
 }
 
-// tokens splits s at spaces outside a quoted value.
+// tokens splits fields at spaces outside quoted values (STANDARD section 8).
 func (r *Rig) tokens(s string) []string {
 	var out []string
 	var cur strings.Builder
@@ -113,9 +133,9 @@ func (r *Rig) tokens(s string) []string {
 	return out
 }
 
-// FromJSON reads the JSON rendering into parsed.
-func (r *Rig) FromJSON(t *testing.T, raw string) parsed {
-	t.Helper()
+// FromJSON reads the JSON rendering into parsed (STANDARD section 8).
+func (r *Rig) FromJSON(raw string) parsed {
+	r.t.Helper()
 	var j struct {
 		Result struct {
 			Verb, Status, Remedy string
@@ -136,7 +156,7 @@ func (r *Rig) FromJSON(t *testing.T, raw string) parsed {
 		Payload string
 	}
 	err := json.Unmarshal([]byte(raw), &j)
-	require.NoError(t, err, "not one JSON object: %s", raw)
+	require.NoError(r.t, err, "not one JSON object: %s", raw)
 	p := parsed{
 		Verb: j.Result.Verb, Status: j.Result.Status, Remedy: j.Result.Remedy, Exit: j.Result.Exit,
 		Why: j.Result.Why, Facts: map[string]string{}, Notes: j.Notes, Payload: j.Payload,
@@ -148,11 +168,11 @@ func (r *Rig) FromJSON(t *testing.T, raw string) parsed {
 		dec := json.NewDecoder(strings.NewReader(string(it.Fields)))
 		kv := []string{strings.ToLower(it.Kind)}
 		_, err := dec.Token()
-		require.NoError(t, err)
+		require.NoError(r.t, err)
 		for dec.More() {
 			k, _ := dec.Token()
 			var v any
-			require.NoError(t, dec.Decode(&v))
+			require.NoError(r.t, dec.Decode(&v))
 			kv = append(kv, fmt.Sprint(k)+"="+fmt.Sprint(v))
 		}
 		p.Items = append(p.Items, strings.Join(kv, " "))
