@@ -3677,6 +3677,35 @@ one line per resolved ledger, `ledger <path>: resolved as the union of removals
 (-n left, -m right)` (the batch's `NOTE`), and the card's merge card and timeline
 say the ledgers were resolved as the union of both sides' removals.
 
+**Append-only records, keyed run records and the tables lock.** More file classes never
+fail a landing (docs/SPEC-SPRINT.md section 7). Truly append-only records
+(`internal/ci/testdata/deleted-tests.txt`) only ever gain rows and keep `merge=union` in
+`.gitattributes`. After every merge that made a commit `land` checks append-only records and
+drops a row that came twice (`dedupeRows`, the first of each kept), amending the merge commit,
+and logs `record <path>: <n> repeated rows dropped after the merge`. A merge that does stop in
+one is resolved by `land` as the union of appended rows (`unionAppended`), logged as
+`record <path>: resolved as the union of appended rows (+n tip, +m card)`. A side that
+removes a row of the base is no append: the conflict stands, the merge is aborted and the
+card is stuck, its reason naming the row. The base is the merge base, and a card that
+lands on the tip it was cut from is no exception: the tip is its own merge base, and a row
+it deletes is still checked and refused. The keyed TLA+ tables (`tla/CASES.tsv` and
+`tla/RUNS.tsv`) are keyed by their config column against the merge base, never by line and
+never `merge=union` in `.gitattributes`: a config only one side changed (added, edited or
+removed) takes that side, so a row the tip already removed or edited is never charged to the
+card; a config both sides changed alike is one row; a `tla/RUNS.tsv` config both sides reran
+keeps the row with the later `started_utc`; a `tla/CASES.tsv` config both sides changed
+differently is refused with a line naming the config; no config ever ends up twice. Each is
+logged as `record <path>: resolved by config (+n tip, +m card)`. The tables lock
+`internal/sprint/TABLES.lock` is generated from `schema.go`: a conflict in it is not merged but
+regenerated (`regenTablesLock`): the tip's comment lines, the comment lines the card added,
+and a body rendered from the schema as built, logged as `generated <path>: regenerated from the
+schema at the merge`. These resolutions run first; a merge left with no other unmerged path is
+committed as `land <id> (sprint stream <s>)`, and any other unmerged path goes on to the
+shrink-only ledgers and the generated families above. The ledgers that may only shrink merge
+by intersection: a row survives only if both sides keep it (`unionRemovals`, above). Held by
+`TestAnAppendOnlyRecordConflictMergesByUnion`, `TestATablesLockConflictIsRegeneratedFromTheSchema`
+and `TestTheTablesLockRegeneratesToItself` (`cmd/nova-sprint`).
+
 **The landed score.** Once every stream of the run has landed what it could,
 `land` scores each landed card's merge diff (the diff its checks read) against
 the card's brief with nova-decide's score decision (docs/SPEC-NOVA-DECIDE.md
