@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -112,4 +113,38 @@ func TestRoutePricesRefusals(t *testing.T) {
 		assert.Contains(t, errs, tc.errs, tc.name)
 		assert.Equal(t, 1, strings.Count(errs, "\n"), "%s: one refusal line", tc.name)
 	}
+}
+
+// The reader's finding, 2026-10-06, as a test: the loop row docs/SPEC-CONFIG.md
+// gives for the daily refresh passed --provider openrouter, and a refresh given
+// the flag reads only that provider's rows (PlanPriceRefresh filters on it), so
+// the opencode rows, priced from OpenRouter's list until OpenCode publishes its
+// own, were never refreshed. The documented row passes no --provider: the
+// default refreshes every provider with a list (docs/SPEC-CONFIG.md, "route
+// prices").
+func TestRoutePricesLoopRowRefreshesEveryProviderWithAList(t *testing.T) {
+	t.Parallel()
+
+	raw, err := os.ReadFile("../../docs/SPEC-CONFIG.md")
+	require.NoError(t, err)
+	doc := string(raw)
+
+	// the row the doc gives for the daily run, up to the row's closing backtick
+	start := strings.Index(doc, "nova-config loop add route-prices")
+	require.NotEqual(t, -1, start, "the spec gives the daily loop row")
+	row := doc[start:]
+	if end := strings.Index(row, "`"); end != -1 {
+		row = row[:end]
+	}
+	_, quoted, ok := strings.Cut(row, "'")
+	require.True(t, ok, "the loop row's argv is a JSON array in quotes")
+	rawArgv, after, ok := strings.Cut(quoted, "'")
+	require.True(t, ok, "the loop row's argv closes its quote")
+	var argv []string
+	require.NoError(t, json.Unmarshal([]byte(rawArgv), &argv))
+	require.GreaterOrEqual(t, len(argv), 4, "the argv runs the refresh: %s", rawArgv)
+
+	assert.Equal(t, []string{"nova-config", "route", "prices", "--refresh"}, argv[:4], "the daily row runs the refresh")
+	assert.NotContains(t, argv, "--provider", "the daily row refreshes every provider with a list: a --provider filter reads only that provider's rows and leaves the rest stale")
+	assert.Contains(t, after, "--every 86400", "the row runs once a day")
 }

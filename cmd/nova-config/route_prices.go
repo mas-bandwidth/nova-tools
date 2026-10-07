@@ -65,10 +65,10 @@ func routePricesVerb(d deps) tool.Verb {
 }
 
 // routePricesFlags declares the verb's flags. The store flags are the tool's own
-// (writeStoreFlags, actorFlag); --dry-run is the skeleton's (Verb.DryRun).
+// (seatStoreFlags, actorFlag); --dry-run is the skeleton's (Verb.DryRun).
 func routePricesFlags(f *tool.Flags) {
 	f.Prints()
-	writeStoreFlags(f.FlagSet)
+	seatStoreFlags(f.FlagSet)
 	actorFlag(f.FlagSet)
 	f.Bool("refresh", false, "read the provider's published list and set each enabled route's price fields from it, price_as_of today and price_source the list's URL; a price that moved past 2x is a JUDGMENT line, left as it is, and the verb exits 1")
 	f.String("provider", "", "the `provider` word whose routes are refreshed: one of "+config.PriceListProviders()+"; empty (the default) is every provider with a list")
