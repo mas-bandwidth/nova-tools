@@ -148,6 +148,8 @@ and nothing sent under `--dry-run`), then one `SERVE UP` or `SERVE DOWN` line
 per state change, and `SERVE STOP interrupted` at a signal (docs/CLI.md, "The
 coordinator's ping loop").
 
+Presence on the bus store is pinned in `internal/friend` on the fake store and an injected clock: the state at ten seconds, a coordinator that writes only the proved field, and a daemon whose beat does not answer. The throwaway-redis check is behind the functional build tag and is not part of that gate.
+
 ### First run
 
 ```text

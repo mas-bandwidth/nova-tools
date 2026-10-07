@@ -87,6 +87,7 @@ func (w world) serve(c *tool.Call) *tool.Out {
 	// the stream from the store's now: no pong from before the loop answers a nonce of its own
 	cursor, failing := bus.IDAt(storeNow), ""
 	bad := false
+	provedNote := ""
 	fail := func(what string) {
 		bad = true
 		if what != failing {
@@ -118,6 +119,15 @@ func (w world) serve(c *tool.Call) *tool.Out {
 						k.Pong(m.From, nonce, now) // the sender is the message's from, never its body
 					}
 					cursor = "(" + e.Entry
+				}
+				if err := k.HealthBatch(ctx, st, friend.Authority{Name: me}); err != nil {
+					line := "proved was not written: " + err.Error()
+					if line != provedNote {
+						say("NOTE " + now.UTC().Format(time.RFC3339) + " " + oneline.Escape(line))
+						provedNote = line
+					}
+				} else {
+					provedNote = ""
 				}
 			}
 		}

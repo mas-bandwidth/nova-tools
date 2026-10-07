@@ -48,14 +48,14 @@ func TestTheWritingVerbsDryRunWritesNothing(t *testing.T) {
 	opened = 0
 
 	dir := t.TempDir()
-	cli.Do(t, "run", "--as", "bob", "--harness", "opencode", "--dir", dir, "--state-dir", state, "--dry-run").Exit(0).
+	cli.Do(t, "run", "--server", "127.0.0.1:6390", "--as", "bob", "--harness", "opencode", "--dir", dir, "--state-dir", state, "--dry-run").Exit(0).
 		Out("RUN DRY-RUN as=bob harness=opencode", "nothing was started")
 	assert.Zero(t, opened, "a dry run opens no store")
 	assert.Zero(t, beats, "and beats nothing")
 	files, err := os.ReadDir(state)
 	require.NoError(t, err)
 	assert.Empty(t, files, "and records nothing in the state directory")
-	cli.Do(t, "run", "--as", "bob", "--harness", "nope", "--dir", filepath.Join(dir, "x"), "--dry-run").Exit(2).Err("is no harness")
+	cli.Do(t, "run", "--server", "127.0.0.1:6390", "--as", "bob", "--harness", "nope", "--dir", filepath.Join(dir, "x"), "--dry-run").Exit(2).Err("is no harness")
 }
 
 // cliOf is the tool over a world a test changed.
