@@ -24,7 +24,9 @@ import (
 // reads every job in her outbox whose name parses to a card (<work>~<epoch>[.g<gen>],
 // ParseJob) and finishes it when that card is working on her row, whoever wrote its brief:
 // LAND with a full sha Head finishes with that head, HOLD and FAIL (any other verdict too)
-// finish --failed with the report's first 600 characters. A report with no Verdict line,
+// finish --failed with the report's first 600 characters; a LAND whose report does not
+// carry the key words of its brief's fix (THE ONE THING LEFT, rework.go) is a HOLD by the
+// daemon, finished --failed with its head kept and the words that say why. A report with no Verdict line,
 // and a job whose card is not working on her row, are noted once and left. The model is
 // internal/friend/tla/OutboxFinish.tla (docs/SPEC-FRIEND.md, the daemon reads every outbox
 // job).
@@ -236,6 +238,13 @@ func (l *loop) outboxStep(now time.Time) {
 			continue
 		}
 		card := Card{ID: id, Brief: filepath.Join(d.Dir, "inbox", job, "BRIEF.md"), Outbox: filepath.Join(outbox, job)}
+		written := verdict
+		if verdict == "LAND" {
+			// a LAND that does not address its brief's first line is a HOLD (rework.go)
+			if held := unaddressed(HeldByDaemon, report, jobFix(card.Brief, h.Brief)); held != "" {
+				verdict, report, written = "HOLD", held+"\n\n"+report, "LAND, "+held
+			}
+		}
 		branch := h.Branch
 		if branch == "" {
 			_, branch = PushedHead(d.Dir, card)
@@ -263,7 +272,7 @@ func (l *loop) outboxStep(now time.Time) {
 				words += " head=" + head
 			}
 		}
-		d.Record(fmt.Sprintf("%s outbox: finished card %s from outbox/%s/REPORT.md (Verdict %s, %s on her row): %s sent=server", at, id, job, verdict, h.Col, words))
+		d.Record(fmt.Sprintf("%s outbox: finished card %s from outbox/%s/REPORT.md (Verdict %s, %s on her row): %s sent=server", at, id, job, written, h.Col, words))
 	}
 }
 
