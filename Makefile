@@ -76,7 +76,7 @@ DARWIN_TIMEOUT ?= 110s
 # `?=` is what makes that environment value win.
 MERGE_TIMEOUT ?= 100s
 
-.PHONY: help build fmt vet vet-functional vet-slow vet-shippedsmoke vet-novadisk vet-laws vet-windows lint preflight test test-full test-short test-slow test-functional test-functional-container test-merge test-race test-e2e test-prewarm-done compile-lisp test-lisp check clean darwin-timeout map new-rule new-verb
+.PHONY: help build fmt vet vet-functional vet-slow vet-shippedsmoke vet-novadisk vet-laws vet-windows lint preflight test test-full test-short test-slow test-functional test-functional-container test-merge test-race test-e2e test-prewarm-done compile-lisp test-lisp check clean darwin-timeout map clidoc new-rule new-verb
 
 help:
 	@echo "make tlc         bounded Linux TLC group (TLC_JAR, TLC_OUT, TLC_GROUP)"
@@ -110,11 +110,15 @@ help:
 	@echo "make check       build, lint, test, test-e2e and test-lisp (CI's gates; the stream lander's batch test)"
 	@echo "make clean       remove ./bin and ./scratch"
 	@echo "make map         regenerate AGENTS.md and per-directory maps"
+	@echo "make clidoc      regenerate docs/CLI.md reference blocks from tool help"
 	@echo "make new-rule    scaffold a class rule skeleton (ARGS=<name>)"
 	@echo "make new-verb    scaffold a CLI verb skeleton (ARGS='<tool> <verb>')"
 
 map:
 	$(GO) run ./tools/agentsmap
+
+clidoc:
+	$(GO) run ./tools/clidoc -bin ./bin
 
 # TLC runs on Linux benches with an explicit installed jar and owned output path.
 TLC_JAR ?=
