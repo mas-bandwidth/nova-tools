@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -60,7 +61,8 @@ func TestInstallBootsOutThenBootstrapsAndIsTheSameTwice(t *testing.T) {
 		assert.Equal(t, a.PlistPath(), path)
 		assert.Equal(t, []string{"launchctl bootout gui/501/com.nova.friend-bob", "launchctl bootstrap gui/501 " + path}, commands)
 	}
-	assert.Equal(t, []string{"bootout gui/501/com.nova.friend-bob", "bootstrap gui/501 " + a.PlistPath(), "bootout gui/501/com.nova.friend-bob", "bootstrap gui/501 " + a.PlistPath()}, ran)
+	assert.Equal(t, []string{"bootout gui/501/com.nova.friend-bob", "print gui/501/com.nova.friend-bob", "bootstrap gui/501 " + a.PlistPath(),
+		"bootout gui/501/com.nova.friend-bob", "print gui/501/com.nova.friend-bob", "bootstrap gui/501 " + a.PlistPath()}, ran, "the bootstrap waits for launchd to release the label")
 	assert.Contains(t, files[a.PlistPath()], "<string>com.nova.friend-bob</string>")
 
 	ctl = func(_ context.Context, args ...string) (string, error) {
@@ -105,6 +107,88 @@ func TestInstallBootsOutThenBootstrapsAndIsTheSameTwice(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{"launchctl bootout gui/501/com.nova.friend-bob"}, commands)
 	assert.Equal(t, []string{a.PlistPath()}, removed)
+}
+
+// Three of the seat's adopt runs of 2026-10-07 rolled back: install booted the old
+// agent out and bootstrapped before launchd had removed it; a daemon that takes about 5 s
+// to exit made each of the five bootstraps, one second apart, answer "37: Operation already
+// in progress". The bootstrap now waits until `launchctl print` no longer finds the label,
+// every ReleasePoll, up to the plist's exit timeout. No real launchd and no real time.
+func TestInstallWaitsForLaunchdToReleaseTheLabelAfterTheBootout(t *testing.T) {
+	t.Parallel()
+	const target = "gui/501/com.nova.friend-bob"
+	// held answers print as launchd does: the service's block for n calls, then not found
+	held := func(n int, calls *[]string) Launchctl {
+		return func(_ context.Context, args ...string) (string, error) {
+			*calls = append(*calls, strings.Join(args, " "))
+			if args[0] != "print" {
+				return "", nil
+			}
+			if n > 0 {
+				n--
+				return target + " = {\n\tactive count = 1\n}\n", nil
+			}
+			return "Bad request.\nCould not find service \"com.nova.friend-bob\" in domain for user gui: 501\n", errors.New("exit status 113")
+		}
+	}
+
+	t.Run("the wait loop: polls until print stops finding it", func(t *testing.T) {
+		t.Parallel()
+		var calls []string
+		var slept []time.Duration
+		waited, err := WaitReleased(context.Background(), held(20, &calls), target, DefaultExitTimeout, ReleasePoll, func(d time.Duration) { slept = append(slept, d) })
+		require.NoError(t, err)
+		assert.Equal(t, 5*time.Second, waited, "20 looks found it, 250 ms apart") // wall-ok: the fake's count of polls, no clock runs
+		assert.Len(t, calls, 21, "the 21st look finds it gone")
+		assert.Len(t, slept, 20)
+		assert.Equal(t, ReleasePoll, slept[0])
+	})
+	t.Run("the wait loop: gone at once waits nothing", func(t *testing.T) {
+		t.Parallel()
+		var calls []string
+		waited, err := WaitReleased(context.Background(), held(0, &calls), target, DefaultExitTimeout, ReleasePoll, func(time.Duration) { t.Fatal("slept") })
+		require.NoError(t, err)
+		assert.Zero(t, waited)
+		assert.Equal(t, []string{"print " + target}, calls)
+	})
+	t.Run("the wait loop: past the exit timeout it refuses naming the label and the seconds", func(t *testing.T) {
+		t.Parallel()
+		var calls []string
+		_, err := WaitReleased(context.Background(), held(1000, &calls), target, 3*time.Second, ReleasePoll, func(time.Duration) {}) // wall-ok: a fake sleep, no clock runs
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "launchd still holds "+target+" 3s after its bootout")
+		assert.Len(t, calls, 13, "a look at 0, every 250 ms, and the last at 3 s")
+	})
+	t.Run("install: bootout, the wait, then one bootstrap", func(t *testing.T) {
+		t.Parallel()
+		var calls []string
+		a := agent()
+		a.LaunchdLog = t.TempDir() + "/launchd.log"
+		var slept time.Duration
+		a.Sleep = func(d time.Duration) { slept += d }
+		path, commands, err := Install(context.Background(), a, 501, held(20, &calls), recordWrite(map[string]string{}), func() { t.Fatal("a bootstrap was retried") })
+		require.NoError(t, err)
+		assert.Equal(t, 5*time.Second, slept) // wall-ok: the fake sleep's sum, no clock runs
+		assert.Equal(t, "bootstrap gui/501 "+path, calls[len(calls)-1], "the bootstrap is sent once, after launchd released the label")
+		assert.Equal(t, []string{"launchctl bootout " + target, "launchctl print " + target + " (every 250ms until launchd released it: 5s)", "launchctl bootstrap gui/501 " + path}, commands)
+	})
+	t.Run("install: a label never released is refused and nothing is bootstrapped", func(t *testing.T) {
+		t.Parallel()
+		var calls []string
+		a := agent()
+		a.LaunchdLog = t.TempDir() + "/launchd.log"
+		a.Sleep = func(time.Duration) {}
+		_, _, err := Install(context.Background(), a, 501, held(1000, &calls), recordWrite(map[string]string{}), func() {})
+		require.ErrorContains(t, err, "launchd still holds "+target+" 20s after its bootout")
+		for _, c := range calls {
+			assert.NotContains(t, c, "bootstrap")
+		}
+	})
+	t.Run("the plist's exit timeout bounds the wait", func(t *testing.T) {
+		t.Parallel()
+		assert.Equal(t, DefaultExitTimeout, ExitTimeout(agent().Plist()), "the friend's plist sets none: launchd's default")
+		assert.Equal(t, 180*time.Second, ExitTimeout("<key>ExitTimeOut</key><integer>180</integer>"))
+	})
 }
 
 // A binary under /Volumes is on the removable-volume wall: launchd starts it
