@@ -20,7 +20,7 @@ import (
 // is moving, and a model turn that is only thinking, are not this socket.
 //
 // A known failure before the provider begins the work stays on the existing
-// grace retry (ProviderLaunchFailure). stella-6b51d37c8d7d.
+// grace retry (ProviderLaunchFailure).
 
 // ProviderHeaderTimeout is written into the job config as headerTimeout, in
 // milliseconds. It is not the body-read deadline. It stays under 90s so a
