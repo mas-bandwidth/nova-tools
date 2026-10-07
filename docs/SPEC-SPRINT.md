@@ -3633,6 +3633,24 @@ not marked for promotion, its remedy the sprint branch (re-cut the card with
 `BASE: <the sprint branch>`, or `--base <the sprint branch>` for a card naming no
 `BASE:`) or, for the promotion stream, the mark (the protected branches, below).
 
+**The rebase verb.** `nova-sprint rebase --from <branch> --to <branch> [--repo-dir <clone>] [--dry-run]` moves every unlanded card whose brief's `BASE:` line names
+`--from` to `--to`, on a RUNNING machine as on a STOPPED one. It exists because a
+base branch can be merged and deleted while cards still name it: on 2026-10-04 an
+integration branch was auto-deleted with 29 cards cut on it and 118 on dev, every
+landing on it failed its fetch, and the coordinator rewrote 147 briefs by hand
+during a stopped sprint. A waiting or ready card with no work dealt has its brief
+rewritten; a dealt or merging card keeps its head, its brief's line rewritten so
+the head lands on the new base. The new base must contain the old one, checked by
+`git merge-base --is-ancestor <from> <to>` in `--repo-dir` (one check for the
+operation); a base that does not is refused, nothing changed. A card landed, a
+sentinel, and a card whose `BASE:` names another branch are left alone. Each card
+is one line in the log and one `MOVED` line, naming `BASE <from> -> <to>`. The
+preview (`--dry-run`) reports the plan without writing it. A land whose base
+branch is missing raises one judgment, `the base branch is gone`, naming every
+unlanded card on that base and the rebase line that fixes them
+(`sprint.MissingBaseJudgment`), so the incident's 29 cards are one decision rather
+than 29 hand-rewritten briefs.
+
 **The protected branches.** The lander never lands on a protected branch of a
 repository, dev or main, unless the card's stream is marked for that repository: a
 stream lands on its sprint branch, and promotion to dev is the marked stream's work

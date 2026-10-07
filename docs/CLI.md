@@ -1163,6 +1163,7 @@ nova-sprint recut <id> (--tier <flash|pro|heavy|frontier> | --brief-file <path> 
 nova-sprint move <id>... --stream <s> [--before <id> | --after <id> | --score <n>]
 nova-sprint merge --stream <s> [--batch <n>] [--landed <id>@<head>... --repo <dir> --base-ref <ref> | --conflict <id> [--conflict-kind file|ledger] [--conflict-path <p>...] | --cross <id>=<other> | --red [--suspect <id>...] | --rejected | --base-red <error>] [--note <text>]
 nova-sprint land [--stream <s>...] [--repo-dir <clone>] [--base <branch>] [--check <command>] [--dry-run]
+nova-sprint rebase --from <branch> --to <branch> [--repo-dir <clone>] [--dry-run]
 nova-sprint stream set <stream>... [--read-tier <flash|pro|heavy|default>] [--land-protected <owner/name,...|any|default>] [--release <name>] [--prose <glob,...|default>] [--attempts <n|default>] [--reason <text>] [--answers <notes>]
 nova-sprint set [--read-tier <flash|pro|default>] [--read-cards <on|off|default>] [--dealt-max <duration|default>] [--go-lanes <n|default>] [--attempts <n|default>] [--friend-idle <duration|default>] [--friend-finish <duration|default>] [--fleet <on|off>] [--friends <on|off>] [--fleet-tiers <flash,pro,heavy,frontier|all>] [--friends-tiers <flash,pro,heavy,frontier|all>]
 nova-sprint resume --stream <s> [--did <text>] [--answers <note>]

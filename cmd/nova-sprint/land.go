@@ -694,6 +694,11 @@ func (l *lander) batch(ctx context.Context, s *sprint.Snapshot, stream string, c
 		return l.baseRefused(b, stream, why)
 	}
 	if why != "" {
+		if strings.Contains(why, "couldn't find remote ref") && l.baseGone(ctx, dir, b.Base) {
+			// the base branch is gone (merged and deleted): one judgment names every
+			// card on it and the rebase line that fixes them (rebase.go)
+			return l.missingBase(b, why)
+		}
 		return refuse(why)
 	}
 	b.Scope = l.scopeOf(merged)
@@ -1009,6 +1014,31 @@ func (l *lander) greenStep(r sprint.BaseGreenReq) (store.Result, error) {
 	l.a.serial.Lock()
 	defer l.a.serial.Unlock()
 	return l.st.Run(context.Background(), step)
+}
+
+// baseGone says the build's failure is the base branch's: origin no longer
+// holds refs/heads/<base>. It asks origin once, only after a build failed.
+func (l *lander) baseGone(ctx context.Context, dir, base string) bool {
+	if base == "" {
+		return false
+	}
+	out, err := l.git(ctx, dir, "ls-remote", "--exit-code", "--heads", "origin", "refs/heads/"+base)
+	return err != nil || strings.TrimSpace(out) == ""
+}
+
+// missingBase records the one judgment of a land whose base branch is gone
+// (sprint.MergeReq.MissingBase): every unlanded card on that base and the
+// rebase line that fixes them, through the merge step; the batch is refused
+// with git's own words.
+func (l *lander) missingBase(b landBatch, why string) (bool, bool) {
+	b.Status, b.Reason = "refused", why
+	r := sprint.MergeReq{Stream: b.Stream, Base: b.Base, MissingBase: b.Base, Who: l.c.actor}
+	res, err := l.step(r, nil)
+	if code := stepExit(res, err); code != 0 {
+		b.Reason = why + "; the merge step did not record it (" + stepWhy(res, err) + "); " + againRemedy(b.Stream)
+	}
+	l.out = append(l.out, b)
+	return false, true
 }
 
 // againRemedy is the one remedy land names when a report did not go through:
