@@ -119,7 +119,7 @@ func TestDashboardRefusesBadUse(t *testing.T) {
 // through the server.
 func TestDashboardIsNotServed(t *testing.T) {
 	t.Parallel()
-	assert.Contains(t, readVerb([]string{"dashboard"}).unserved(), "dashboard is not run by the server")
+	assert.Contains(t, readVerb(emptyEnvApp(), []string{"dashboard"}).unserved(), "dashboard is not run by the server")
 	assert.Equal(t, classRead, verbClasses["dashboard"])
 }
 
