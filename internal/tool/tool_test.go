@@ -17,8 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestRender pins the encoder: each value's lines, exactly, and its lines and
-// its JSON read back to the same parts, field for field.
+// TestRender pins the encoder output and JSON round-trip.
 func TestRender(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -66,7 +65,7 @@ func TestRender(t *testing.T) {
 			assert.Equal(t, tc.lines, text.String(), "lines:\n%s\nwant:\n%s", text.String(), tc.lines)
 			assert.Equal(t, 1, strings.Count(js.String(), "\n"), "JSON is not one line: %q", js.String())
 			lines := text.String()
-			if w := tc.out.Word; w != "" { // the text spells the status as the word; the JSON carries both
+			if w := tc.out.Word; w != "" {
 				assert.Contains(t, js.String(), `"word":"`+w+`"`)
 				lines = strings.Replace(lines, "DEMO "+w+" ", "DEMO FAILED ", 1)
 			}
@@ -75,7 +74,6 @@ func TestRender(t *testing.T) {
 			got.Verb, got.Exit = want.Verb, tc.out.Exit
 			assert.True(t, want.Verb == "demo" && want.Exit == tc.out.Exit, "JSON result is %s exit %d, want demo exit %d", want.Verb, want.Exit, tc.out.Exit)
 			assert.NotContains(t, js.String(), `\`+`u003c`, "the JSON is HTML-escaped")
-			// The text escapes what JSON carries raw; compare the escaped form.
 			for i, n := range want.Notes {
 				want.Notes[i] = strings.ReplaceAll(n, "\n", `\x0a`)
 			}
@@ -93,9 +91,7 @@ func TestRender(t *testing.T) {
 	}
 }
 
-// TestTextIsTheProseTail pins free text in a line: after the typed fields,
-// quoted, its spaces kept, in an item as in the first line; JSON a string
-// under its key, in the order the verb gave.
+// TestTextIsTheProseTail pins Text in a line, in an item, and in JSON.
 func TestTextIsTheProseTail(t *testing.T) {
 	t.Parallel()
 	o := Done().Fact("why", Text("all answered")).Fact("entries", 1)
@@ -130,21 +126,13 @@ func TestAResultThatIsNoJSONIsAFail(t *testing.T) {
 	assert.Contains(t, w.String(), "LOAD FAILED: the result is no JSON")
 }
 
-// bidi spells a code point as a string, and bidiEscape its six-character JSON
-// escape text, without putting either the character or a \u sequence into this
-// file: an invisible bidi control in a source file is exactly the thing a reader
-// could not see, the spelling internal/oneline's own test uses.
+// bidiEscape is a six-character JSON escape, keeping invisible controls out of this file.
 func bidi(cp rune) string       { return string(cp) }
 func bidiEscape(cp rune) string { return fmt.Sprintf("%su%04x", backslash, cp) }
 
 const backslash = "\x5c" // one backslash
 
-// TestJSONRenderingEscapesBidiControlsInStrings pins the JSON rendering's half of
-// the one-line guarantee: the typed rendering escapes the bidi controls
-// (oneline.Escape), and --json must not hand a reader the raw runes instead. A
-// stored snippet holding U+202E, the right-to-left override, reorders the line
-// a person or terminal reads while the JSON parses to the same string, and the
-// corpus writer controls the snippet.
+// TestJSONRenderingEscapesBidiControlsInStrings pins that JSON escaping handles control characters and remains lossless.
 func TestJSONRenderingEscapesBidiControlsInStrings(t *testing.T) {
 	t.Parallel()
 	fact := "ok" + bidi(0x202e) + "hello" + bidi(0x2067) + "there"
@@ -248,8 +236,7 @@ func demo() *Tool {
 	}
 }
 
-// TestRun pins the dispatcher: the banner's sections, help, version, the
-// refusals and their streams, the standard flags, and the exit codes.
+// TestRun pins the dispatcher: banner, help, version, refusals, flags, and exits.
 func TestRun(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -397,14 +384,7 @@ func TestRun(t *testing.T) {
 	}
 }
 
-// TestEveryBadFlagValueIsNamedAtOnce pins skeleton contract 1.8 (STANDARD §2,
-// a tool refuses to guess and names every problem of one invocation at once;
-// §3 point 2) for flag values: the flag package stops at the first word a flag
-// cannot take, so the skeleton reads the rest of the words itself, collects each
-// failure as a Problem, and refuses once naming all of them. No message holds
-// the flag package's own words, and a bad value is never repeated (it may be a
-// secret), so every problem says what its flag wants and names it with two
-// dashes.
+// TestEveryBadFlagValueIsNamedAtOnce pins that every flag problem is collected at once.
 func TestEveryBadFlagValueIsNamedAtOnce(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -486,12 +466,7 @@ func TestEveryBadFlagValueIsNamedAtOnce(t *testing.T) {
 	}
 }
 
-// TestARefusalUnderJSONIsOneObjectOnStdout pins skeleton contract 1.4 and 1.6
-// (STANDARD §2, one output structure with two renderings; --json is always
-// stdout): under --json every refusal the skeleton raises is one JSON object on
-// stdout with nothing on stderr, including the refusals raised before the verb
-// and its flags are known. The result's why holds each reason alone, never the
-// whole line: the envelope is not repeated inside it.
+// TestARefusalUnderJSONIsOneObjectOnStdout pins one JSON object per refusal on stdout.
 func TestARefusalUnderJSONIsOneObjectOnStdout(t *testing.T) {
 	t.Parallel()
 	clearTool := func() *Tool { // a tool whose exit 0 means CLEAR refuses `<verb> -h` (Tool.HelpRefused)
@@ -541,9 +516,7 @@ func TestARefusalUnderJSONIsOneObjectOnStdout(t *testing.T) {
 	}
 }
 
-// TestBannerMeetsTheOnboardingStandard reads the banner the way the onboarding
-// class test does: the example block's lines are the tool's commands, with no
-// placeholder, and every usage verb answers -h at exit 0.
+// TestBannerMeetsTheOnboardingStandard reads example lines and checks verb -h.
 func TestBannerMeetsTheOnboardingStandard(t *testing.T) {
 	t.Parallel()
 	banner := demo().Banner()
@@ -559,8 +532,7 @@ func TestBannerMeetsTheOnboardingStandard(t *testing.T) {
 	}
 }
 
-// TestNamesInARefusal pins the two helpers every unknown name is answered
-// with: the nearest name within its edit bound, and a list cut to one line.
+// TestNamesInARefusal pins the two helpers for unknown names: nearest match and cut list.
 func TestNamesInARefusal(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct{ got, want string }{
@@ -587,9 +559,7 @@ func selfTalk() *Tool {
 		}}
 }
 
-// TestADefaultVerb pins the dispatch of a tool with a default verb: a verb
-// word is the verb, a flag, a path or a file that is there is the default
-// verb's, and any other word is answered as no verb and no file, with the verbs.
+// TestADefaultVerb pins dispatch of a default-verb tool: verb word, flag, or path are all routed to the default.
 func TestADefaultVerb(t *testing.T) {
 	t.Parallel()
 	file := filepath.Join(t.TempDir(), "notes.md")
@@ -624,8 +594,7 @@ func TestADefaultVerb(t *testing.T) {
 	assert.Equal(t, []string{`nova-talk: the default verb "sacn" is none of its verbs`}, broken.Problems())
 }
 
-// TestProblems holds a definition to the standard the banner cannot enforce by
-// construction: every verb's effect, and the how text's size.
+// TestProblems holds definition checks not enforced by construction: effects, how size, words.
 func TestProblems(t *testing.T) {
 	t.Parallel()
 	long := strings.Repeat("x", HowWidth+1)
@@ -676,9 +645,7 @@ func TestProblems(t *testing.T) {
 	}
 }
 
-// TestTheFailureWordIsFAILED pins the failure word across text and JSON:
-// Fail() renders as FAILED in text and failed in JSON with exit 1, and the three
-// status words and their exits do not drift (STANDARD §2).
+// TestTheFailureWordIsFAILED pins FAILED/failed across text and JSON, exit 1, with the three words.
 func TestTheFailureWordIsFAILED(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -730,9 +697,7 @@ func TestTheFailureWordIsFAILED(t *testing.T) {
 	}
 }
 
-// TestItemTextRendersPlainAndAsAField pins the prose tail: the text renders
-// plain after the row's typed fields in the line, and as the `text` field
-// beside them in the JSON, so the line and the object stay one value.
+// TestItemTextRendersPlainAndAsAField pins the prose tail: text and JSON stay one value.
 func TestItemTextRendersPlainAndAsAField(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -777,9 +742,7 @@ func TestItemTextRendersPlainAndAsAField(t *testing.T) {
 	}
 }
 
-// TestHelpRefusedAnswersDashH pins the refused help: with HelpRefused a
-// verb's -h is a refusal at exit 2 naming help, never an answer at exit 0,
-// while `help <verb>` still answers and the switch off changes nothing.
+// TestHelpRefusedAnswersDashH pins HelpRefused: -h is a refusal, help <verb> answers.
 func TestHelpRefusedAnswersDashH(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -824,8 +787,7 @@ func TestHelpRefusedAnswersDashH(t *testing.T) {
 	}
 }
 
-// hiddenTool is a tool with one shown verb and one hidden one (Verb.Hidden):
-// a probe step verb a user never types.
+// hiddenTool is a tool with one shown verb and one Verb.Hidden probe step.
 func hiddenTool() *Tool {
 	return &Tool{
 		Name: "nova-hide", What: "a tool with a hidden verb", ExitTable: "0 done, 1 said no, 2 could not run.",
@@ -838,11 +800,7 @@ func hiddenTool() *Tool {
 	}
 }
 
-// TestAHiddenVerbRunsAndNoListShowsIt pins Verb.Hidden: the hidden verb runs
-// and answers `-h` and `help <it>` at exit 0, while the banner, the usage
-// block and the verb list of every refusal leave it out (STANDARD §2: an
-// unknown name is answered with the names there are for the reader; §3: help
-// is never a refusal).
+// TestAHiddenVerbRunsAndNoListShowsIt pins Verb.Hidden: runs, answers -h, stays out of lists.
 func TestAHiddenVerbRunsAndNoListShowsIt(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -894,9 +852,7 @@ func TestAHiddenVerbRunsAndNoListShowsIt(t *testing.T) {
 	}
 }
 
-// TestAStageLineIsWhereEveryReaderMeetsTheTool: a tool's Stage is the
-// banner's line 2, the second line of every verb's -h, and an indented NOTE
-// line under a bare command's one-line refusal (STANDARD section 3 point 1); a tool without one prints none.
+// TestAStageLineIsWhereEveryReaderMeetsTheTool pins Stage in the banner, -h, and bare refusal.
 func TestAStageLineIsWhereEveryReaderMeetsTheTool(t *testing.T) {
 	t.Parallel()
 	const stage = "nova-demo is pre-alpha: not ready for production use."
@@ -922,7 +878,7 @@ func TestAStageLineIsWhereEveryReaderMeetsTheTool(t *testing.T) {
 			got := out.String()
 			if tc.stream == "err" {
 				got = errs.String()
-				assert.True(t, strings.HasSuffix(got, "\n  NOTE "+stage+"\n"), "the bare refusal has no indented NOTE stage hint:\n%s", got)
+				assert.True(t, strings.HasSuffix(got, "\n  NOTE "+stage+"\n"), "bare refusal stage hint missing:\n%s", got)
 			}
 			if tc.want == "" {
 				assert.NotContains(t, got, "pre-alpha", got)
@@ -934,9 +890,7 @@ func TestAStageLineIsWhereEveryReaderMeetsTheTool(t *testing.T) {
 	}
 }
 
-// topicsTool is a tool whose reference text lives in its help topics instead
-// of its banner (skeleton contract 2.7): the banner stays bounded and a
-// reader takes the reference text one topic at a time.
+// topicsTool is a tool whose reference text lives in help topics instead of its banner.
 func topicsTool() *Tool {
 	return &Tool{
 		Name:      "nova-demo",
@@ -955,12 +909,7 @@ func topicsTool() *Tool {
 	}
 }
 
-// TestAHelpTopicPrintsItsText pins Tool.Topics (skeleton contract 2.7):
-// `help <topic>` prints the topic's text on stdout at exit 0, the banner
-// lists the topic names on one line that names the way to read one, and a
-// name that is no verb and no topic is refused with the verbs and the topics
-// there are (STANDARD §2: an unknown name is answered with the names there
-// are; §3, help is never a refusal).
+// TestAHelpTopicPrintsItsText pins Tool.Topics: help <topic>, banner lists topics, unknown refused.
 func TestAHelpTopicPrintsItsText(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -1003,9 +952,7 @@ func TestAHelpTopicPrintsItsText(t *testing.T) {
 	}
 }
 
-// TestATopicIsNoneOfTheVerbs pins Problems' refusal of a topic named as one
-// of the tool's verbs: `help <name>` is one door, so a name is a verb's or a
-// topic's and never both (skeleton contract 2.7).
+// TestATopicIsNoneOfTheVerbs pins Problems' refusal of a topic named as one of the verbs.
 func TestATopicIsNoneOfTheVerbs(t *testing.T) {
 	t.Parallel()
 	assert.Empty(t, topicsTool().Problems())
@@ -1026,7 +973,7 @@ func TestATopicIsNoneOfTheVerbs(t *testing.T) {
 	}
 }
 
-// walkTool is a verb that prints two rows as it goes and returns the closing line.
+// walkTool is a verb that prints rows as it goes and returns the closing line.
 func walkTool(run func(c *Call) *Out) *Tool {
 	return &Tool{
 		Name: "nova-walk", What: "walks", ExitTable: "0 done, 1 said no, 2 could not run.",
@@ -1034,10 +981,7 @@ func walkTool(run func(c *Call) *Out) *Tool {
 	}
 }
 
-// Emit prints one item now, so a long-running verb shows its rows as they
-// happen (skeleton contract 2.4, STANDARD §2: one output structure, two
-// renderings). Text is one item line; --json is one {"item":{...}} line. The
-// Out the verb returns is the closing line, printed after these.
+// Emit prints one item now as a line or JSON (skeleton contract 2.4, STANDARD §2).
 func (c *Call) Emit(kind string, kv ...any) {
 	o := &Out{token: c.token}
 	o.Item(kind, kv...)
@@ -1058,9 +1002,7 @@ func (c *Call) Emit(kind string, kv ...any) {
 	fmt.Fprintln(c.Stdout, oneline.Field(c.token)+" "+oneline.Field(strings.ToUpper(it.Kind))+it.Fields.text())
 }
 
-// TestEmitPrintsItemsThenTheClosingLine pins Call.Emit (skeleton contract 2.4,
-// STANDARD §2): two items print as they go, text as item lines and --json as
-// one {"item":{...}} line each, and the Out the verb returns is the closing line.
+// TestEmitPrintsItemsThenTheClosingLine pins Call.Emit: items then closing line, text and JSON.
 func TestEmitPrintsItemsThenTheClosingLine(t *testing.T) {
 	t.Parallel()
 	run := func(c *Call) *Out {
@@ -1082,9 +1024,7 @@ func TestEmitPrintsItemsThenTheClosingLine(t *testing.T) {
 	assert.Empty(t, js.Stderr)
 }
 
-// TestACancelledContextEndsTheVerb pins RunContext (skeleton contract 2.4): a
-// cancelled context ends the verb before it runs, and the closing line says so,
-// in text and in JSON.
+// TestACancelledContextEndsTheVerb pins RunContext: cancelled context ends verb, text and JSON.
 func TestACancelledContextEndsTheVerb(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -1127,10 +1067,7 @@ func TestACancelledContextEndsTheVerb(t *testing.T) {
 	}
 }
 
-// TestProblemAsCarriesTheReason pins Call.ProblemAs (skeleton contract 2.10,
-// STANDARD §2): the refusal line carries reason=<r> before the colon, and the
-// JSON result adds "reasons" beside "why", for one reason and for two, so a
-// program reads the code and a person reads the sentence.
+// TestProblemAsCarriesTheReason pins Call.ProblemAs: reason in text and JSON.
 func TestProblemAsCarriesTheReason(t *testing.T) {
 	t.Parallel()
 	const one = "WALK REFUSED reason=home_outside: the path is outside the home; run: nova-walk help\n"
@@ -1169,9 +1106,7 @@ func TestProblemAsCarriesTheReason(t *testing.T) {
 	}
 }
 
-// TestWritingVerbUnderDryRunCarriesFactInBothRenderings pins the dry_run fact:
-// when Call.DryRun() is true, the skeleton adds dry_run=true to the result
-// (and "dry_run":true in JSON) unless the verb set it (STANDARD §2).
+// TestWritingVerbUnderDryRunCarriesFactInBothRenderings pins the dry_run fact in text and JSON.
 func TestWritingVerbUnderDryRunCarriesFactInBothRenderings(t *testing.T) {
 	t.Parallel()
 	tool := &Tool{
@@ -1245,8 +1180,7 @@ func TestWritingVerbUnderDryRunCarriesFactInBothRenderings(t *testing.T) {
 	})
 }
 
-// TestToolExistsSeam pins the filesystem seam: Tool.Exists reads the filesystem
-// through one seam, defaulting to os.Stat, and tests pass a map (skeleton contract 2.1).
+// TestToolExistsSeam pins Tool.Exists: a map seam for testing, defaulting to os.Stat.
 func TestToolExistsSeam(t *testing.T) {
 	t.Parallel()
 	files := map[string]bool{
