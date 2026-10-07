@@ -44,7 +44,7 @@ BASE: sprint/mechanical-2026-10-02
    - Expected: Build identity
    - Grade: NEXT - Standard version output
 
-9. **nova-card new test-card --repo test/repo --base main --task-file ./task.txt --paths "cmd/test/*.go" --test "cmd/test TestMain" --gate "cmd/test" --tier pro**
+9. **nova-card new test-card --repo test/repo --base main --task-file ./task.txt --paths "docs/*.md" --test "internal/docs TestDocsTreeIsConsistent" --gate "internal/docs" --tier pro**
    - Printed: CARD OK file=/tmp/new_card.md
    - Expected: New card created
    - Grade: NEXT - New verb works well for creating custom cards
