@@ -538,6 +538,24 @@ done; 1 the verb ran and said no; 2 could not run.
 
 ## nova-friend
 
+For a Codex chat whose coordinator owns card dispatch, `run --notifications-only`
+uses one filtered notification receiver and makes no sprint beat, proof, job or
+pruning changes. `--notify-kinds request,blocker,report` is the default: requests
+and blockers are immediately eligible, reports keep their payload, and plain
+transport acknowledgments and routine status are audited without model wakes.
+Card-delivery status bursts across many cards produce one global ready-queue wake
+inside `--notify-window` (30 seconds). The app queue accepts that input; acceptance
+is not evidence that the model processed it. The mode keeps its journal under
+`<state-dir>/notifications/` and uses a separate notification agent label on install.
+A coordinated handoff stops competing receivers before this mode owns the stream;
+installation and live handoff are separate from building or testing the change.
+Notification install uses a content-addressed executable separate from the native binary
+and makes no harness-setting or proof changes. Stop only its label with
+`launchctl bootout gui/<uid>/com.nova.friend-notifications-<name>` and preserve its journal;
+ordinary `uninstall --as <name>` targets the native daemon. See
+[Notifications](SPEC-FRIEND.md#notifications) for replay and failure behavior.
+
+
 What a friend runs to be part of the team: the wake loop, the beat and the
 proof of life, as one daemon. One launchd agent per friend parks on the
 friend's nova-bus stream and, whenever the session is free, pushes every

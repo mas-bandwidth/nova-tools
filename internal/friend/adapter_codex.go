@@ -34,12 +34,14 @@ import (
 // chat has it treated as one.
 type Codex struct {
 	Dir, Session string
-	Run          Exec
-	Program      string                 // "codex" when empty
-	Home         string                 // CODEX_HOME; $CODEX_HOME or ~/.codex when empty
-	Held         func(lock string) bool // whether the thread's writer lock is held; FlockHeld when nil
-	Env          func(string) string    // getenv; os.Getenv when nil
-	Out          io.Writer              // where the turn's output goes, when set: the daemon's record
+	// QueueOnly keeps notification delivery in the existing app, never a competing exec resume (SPEC-FRIEND.md, notifications).
+	QueueOnly bool
+	Run       Exec
+	Program   string                 // "codex" when empty
+	Home      string                 // CODEX_HOME; $CODEX_HOME or ~/.codex when empty
+	Held      func(lock string) bool // whether the thread's writer lock is held; FlockHeld when nil
+	Env       func(string) string    // getenv; os.Getenv when nil
+	Out       io.Writer              // where the turn's output goes, when set: the daemon's record
 	// App connects to the Codex app-server, through which the thread's queue is read and
 	// withdrawn from (DialCodexAppServer under the home when nil); Now is the clock a queued
 	// request's age is read by (time.Now when nil).
@@ -199,6 +201,21 @@ func (c *Codex) withdraw(ctx context.Context, thread string, old []superseded) i
 // it supersedes withdrawn only once it is in. The queue's length after is kept (Queued).
 func (c *Codex) queueing(ctx context.Context, thread, text string, routes [][]string) (int, error) {
 	items, ok := c.readQueue(ctx, thread)
+	key := NotificationKey(text)
+	if key != "" && !ok {
+		return 0, Deferred{Reason: "the Codex queue cannot be read; notification stays pending until its bounded retry"}
+	}
+	if key != "" {
+		for _, q := range items {
+			if NotificationKey(q.Text) == key {
+				c.mu.Lock()
+				c.queued, c.queueRead = len(items), true
+				c.mu.Unlock()
+				c.say("codex: notification %s already accepted and unread; not processed, not queued twice", key)
+				return 0, nil
+			}
+		}
+	}
 	kind, nonce, only := PongRequest(text)
 	var old []superseded
 	for _, q := range items {
@@ -294,6 +311,9 @@ func (c *Codex) Deliver(ctx context.Context, text string) (int, error) {
 	}
 	queue := []string{"queue", "--thread", session, "--message", text}
 	resume := ResumeArgs(session, text)
+	if c.QueueOnly {
+		return c.queueing(ctx, session, text, [][]string{queue})
+	}
 	if c.held()(LockPath(c.home(), session)) {
 		return c.queueing(ctx, session, text, [][]string{queue, resume})
 	}

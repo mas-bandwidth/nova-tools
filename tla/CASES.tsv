@@ -442,3 +442,7 @@ MCBusCursorBrokenAdvanceWithoutAck.cfg	MCBusCursor.tla	invariant	AdvanceOnlyPast
 MCBusCursorBrokenNearerCursorWins.cfg	MCBusCursor.tla	invariant	FurtherReadWins	ignore-terminal	buscursor	required	-
 MCBusCursorBrokenWriteWithoutAdvance.cfg	MCBusCursor.tla	invariant	NoWriteWithoutAdvance	ignore-terminal	buscursor	required	-
 MCDirtyTickRefused.cfg	MCDirtyTick.tla	pass	-	ignore-terminal	dirtytick-small	required	-
+FriendNotifications.cfg	FriendNotifications.tla	pass	-	ignore-terminal	friend-notifications	required	-
+FriendNotificationsBadAck.cfg	FriendNotifications.tla	invariant	NoLostReady	ignore-terminal	friend-notifications	required	-
+FriendNotificationsBadDuplicate.cfg	FriendNotifications.tla	invariant	ReadyQueueBounded	ignore-terminal	friend-notifications	required	-
+FriendNotificationsBadNative.cfg	FriendNotifications.tla	invariant	NativeUntouched	ignore-terminal	friend-notifications	required	-

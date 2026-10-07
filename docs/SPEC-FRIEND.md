@@ -1040,6 +1040,66 @@ where the coordinator reads it (a sprint note, like the idle alarm); and
 the model (tla/Bus2.tla gaining the owed set, with a reversed witness for
 a daemon ack that clears it).
 
+## Notifications
+
+`run --notifications-only --harness codex` selects a delivery-only receiver before
+native startup. It invokes no sprint beat, proof, row, claim, inbox, lane, stage,
+prune, finish, progress or native status hook. Its journal and audit log live in
+`<state-dir>/notifications/`; its installed label is `com.nova.friend-notifications-<name>`.
+The ordinary daemon label and presence files are separate. Installation carries the
+mode and policy flags and runs no native harness-setting plan/write or push-proof check.
+Its executable is content-addressed under `~/.nova-friend/notifications/bin/<sha256>/nova-friend`;
+previous notification versions and the ordinary `~/.nova-friend/bin/nova-friend` are retained.
+Stopping it is label-specific: `launchctl bootout gui/<uid>/com.nova.friend-notifications-<name>`.
+The ordinary `uninstall --as <name>` targets the native label and is not the notification stop
+command. Stopping the notification label preserves its journal for recovery.
+
+One receiver owns the recipient group. A deployment hands that ownership over;
+status drains and an existing bridge remain until that coordinated handoff. Two
+same-group filtered receivers are not the final notification architecture.
+
+Requests and blockers retain their complete payload and are immediately eligible.
+Reports are included by default and are delivered in a bounded full-payload batch.
+Plain transport acknowledgments and routine status retain bus/audit handling and
+produce no model wake; `--notify-kinds` opts other kinds in. Requests and blockers
+cannot be filtered out. Genuine ping/wake controls remain separate from card noise.
+
+The server's `card <id> dealt: FRIEND-CARD|FRIEND-READ DELIVERED ...` status courtesies
+set one global ready-queue bit across all cards. Each receive pass reads at most
+32 entries. `--notify-window` (30 seconds) coalesces a burst across passes; one
+constant ready-queue wake asks the coordinator to read the canonical queue. It
+claims or executes nothing. Child-finish refill belongs to the existing dispatcher.
+
+The file-synced atomic journal holds at most one immutable full batch and one ready bit.
+The state writer syncs the file, renames it, and attempts a parent-directory sync;
+its directory-sync errors are best effort. Recovery guarantees concern process
+crashes, not storage-media failure. `tla/FriendNotifications.tla` models that boundary:
+ready intent before ACK, accepted before settlement, one queued ready family, no lost
+urgent input and no native mutation. Its 100-card case uses 32-entry receive passes;
+negative controls skip durable intent, permit duplicate queue insertion, or mutate native state.
+Ready intent is saved before courtesy messages are acknowledged. Full batches are
+saved before enqueue; queue acceptance is saved before their stream acknowledgments.
+Accepted is not read or acted proof: acknowledgments leave the receipt at delivered.
+A failed enqueue never acknowledges the pending batch. One attempt per due pass
+backs off from ten seconds to at most a minute, with a bounded retry exponent;
+there is no tight retry loop or give-up acknowledgment. Recovery and long idle
+intervals retain eligible work instead of permanently suppressing it.
+
+Codex queue-only delivery opens no competing `exec resume`. A constant ready-wake
+family and an immutable message-id batch fingerprint suppress replay while the
+input remains unread in the app queue. If that queue cannot be read, notification
+enqueue defers. No old input is deleted. A queue that accepted an input and then
+consumed it before a crash preceding the journal's accepted commit can replay that
+input once: delivery is at least once, not exactly once. The stable marker makes
+that replay recognizable, and the dispatcher reconciles the canonical queue.
+
+`TestCodexNotificationsCoalesceBurstsWithoutLosingUrgentKinds` pins a 100-card burst
+across receive passes, full useful payloads and muted routine traffic.
+`TestNotificationOnlyNeverInvokesNativeMutationHooks` pins startup, failure and
+restart. Queue acceptance, bounded unread replay and new eligible work are pinned
+by `TestNotificationAcceptanceIsNotModelProcessingAndRestartDoesNotEnqueueAgain`
+and `TestCodexNotificationQueueStaysBoundedAndNewWorkAfterConsumptionCanWake`.
+
 ## The beat comes from the daemon
 
 A friend's beat is the daemon's alone: the loop above beats once a second
