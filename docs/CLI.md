@@ -1425,7 +1425,8 @@ the verb records `promoted --sha <merge>` in the store. A failed check or merge-
 raises one judgment naming the check, `JUDGMENT merge-group failed ... check=<name>`, with
 the failing log's tail. A pull request closed without a merge clears the promotion in
 flight with one judgment naming it, `JUDGMENT closed-pr ... pr=<n>`, and the next pass cuts
-afresh. Every step prints a line as it goes, and every wait names what it waits on
+afresh. The verb claims the promotion cleared only after every in-flight key is gone: a
+cleanup that fails is a refusal naming the keys that remain. Every step prints a line as it goes, and every wait names what it waits on
 (`PROMOTE WAIT ... checks pending: <names>`), looking again every `--poll` (default 1m).
 Without `--once` the verb repeats every `--every`. `--dry-run` prints the cut it would make,
 or the promotion in flight, and writes, enqueues and records nothing. The contract is

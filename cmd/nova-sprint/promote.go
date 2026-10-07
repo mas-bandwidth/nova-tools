@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os/exec"
 	"regexp"
 	"strconv"
 	"strings"
@@ -305,7 +306,7 @@ func (p *promoter) step(ctx context.Context, stdout, stderr io.Writer) (promoteO
 				return p.record(ctx, o, pr, sha, stdout, stderr)
 			}
 			if strings.EqualFold(view.State, "CLOSED") {
-				return p.closed(ctx, o, pr, stdout)
+				return p.closed(ctx, o, pr, stdout, stderr)
 			}
 			fmt.Fprintf(stdout, "PROMOTE WAIT branch=%s pr=%s judgment=already; the next cut waits for origin/%s to move past %s\n", oneline.Field(branch), pr, oneline.Field(live), tip)
 			return o, 1
@@ -525,7 +526,7 @@ func (p *promoter) watch(ctx context.Context, o promoteOutcome, number string, s
 		return p.record(ctx, o, number, sha, stdout, stderr)
 	}
 	if strings.EqualFold(view.State, "CLOSED") {
-		return p.closed(ctx, o, number, stdout)
+		return p.closed(ctx, o, number, stdout, stderr)
 	}
 	if view.ID == "" {
 		return o, p.fail(stderr, errors.New("the pull request "+number+" has no id"))
@@ -616,9 +617,14 @@ func (p *promoter) watch(ctx context.Context, o promoteOutcome, number string, s
 
 // closed ends a promotion whose pull request was closed without a merge: the
 // clone forgets the promotion in flight, so the next pass cuts afresh, and one
-// judgment names the pull request. Nothing is recorded.
-func (p *promoter) closed(ctx context.Context, o promoteOutcome, number string, stdout io.Writer) (promoteOutcome, int) {
-	p.forget(ctx)
+// judgment names the pull request. Nothing is recorded. The claim that the
+// promotion cleared is made only after every in-flight key is gone: a cleanup
+// that fails is a refusal naming the keys that remain, never a false "cuts
+// afresh".
+func (p *promoter) closed(ctx context.Context, o promoteOutcome, number string, stdout, stderr io.Writer) (promoteOutcome, int) {
+	if err := p.forget(ctx); err != nil {
+		return o, p.fail(stderr, fmt.Errorf("pull request %s of %s was closed without a merge, but the promotion in flight was not cleared: %s; the keys %s remain, so the next pass would handle it again", number, o.Branch, oneline.Err(err), strings.Join(promoteKeys, ",")))
+	}
 	fmt.Fprintf(stdout, "PROMOTE CLOSED branch=%s pr=%s; the next pass cuts afresh\n", oneline.Field(o.Branch), number)
 	o.Judgment = &promoteJudgment{
 		What:      fmt.Sprintf("pull request %s of %s was closed without a merge", number, o.Branch),
@@ -674,16 +680,17 @@ func (p *promoter) record(ctx context.Context, o promoteOutcome, number, sha str
 	if _, err := p.git(ctx, "update-ref", "refs/promoted/last", sha); err != nil {
 		return o, p.fail(stderr, err)
 	}
-	p.forget(ctx)
 	o.Promoted = sha
 	if p.recordFn == nil {
 		fmt.Fprintf(stdout, "promoted --sha %s\n", sha)
-		return o, 0
-	}
-	if err := p.recordFn(ctx, sha); err != nil {
+	} else if err := p.recordFn(ctx, sha); err != nil {
 		return o, p.fail(stderr, fmt.Errorf("the merge %s was not recorded: %s; record it: nova-sprint promoted --sha %s", sha, oneline.Err(err), sha))
+	} else {
+		fmt.Fprintf(stdout, "PROMOTE RECORDED sha=%s\n", sha)
 	}
-	fmt.Fprintf(stdout, "PROMOTE RECORDED sha=%s\n", sha)
+	if err := p.forget(ctx); err != nil {
+		return o, p.fail(stderr, fmt.Errorf("the merge %s is recorded, but the promotion in flight was not cleared: %s; the keys %s remain, so the next pass would handle pull request %s again", sha, oneline.Err(err), strings.Join(promoteKeys, ","), number))
+	}
 	return o, 0
 }
 
@@ -735,7 +742,8 @@ func (p *promoter) pending(ctx context.Context, tip string) (branch, pr string, 
 	if judged, _ := p.git(ctx, "config", "--local", "--get", "promote.judged"); judged == branch {
 		if was, _ := p.git(ctx, "config", "--local", "--get", "promote.tip"); was != tip {
 			if !p.dry {
-				p.forget(ctx)
+				// ignored: a stale record blocks nothing: the fix landed, so this pass cuts afresh
+				_ = p.forget(ctx)
 			}
 			return "", "", false
 		}
@@ -745,12 +753,25 @@ func (p *promoter) pending(ctx context.Context, tip string) (branch, pr string, 
 }
 
 // forget drops the clone's record of the promotion in flight. A key already
-// gone is no fault: an older verb set fewer.
-func (p *promoter) forget(ctx context.Context) {
+// gone is no fault: an older verb set fewer, and git config --unset answers exit
+// 5 for a key that is not set. Any other failure is returned: a key left behind
+// means the promotion is still in flight, and a caller that claimed it cleared
+// would wedge the verb.
+func (p *promoter) forget(ctx context.Context) error {
+	var errs []error
 	for _, key := range promoteKeys {
-		// ignored: git config --unset of a key that is not set exits 5, and that is the state wanted
-		_, _ = p.git(ctx, "config", "--local", "--unset", key)
+		if _, err := p.git(ctx, "config", "--local", "--unset", key); err != nil && !promoteKeyAbsent(err) {
+			errs = append(errs, fmt.Errorf("%s: %w", key, err))
+		}
 	}
+	return errors.Join(errs...)
+}
+
+// promoteKeyAbsent reports git config --unset's answer for a key that is not set
+// (exit 5): the state wanted, never a fault.
+func promoteKeyAbsent(err error) bool {
+	var ee *exec.ExitError
+	return errors.As(err, &ee) && ee.ExitCode() == 5
 }
 
 func (p *promoter) rev(ctx context.Context, rev string) (string, error) {
@@ -791,9 +812,14 @@ func (p *promoter) git(ctx context.Context, args ...string) (string, error) {
 	}
 	res, err := gitrun.Run(ctx, gitrun.Options{C: p.dir, Env: p.env, OwnRepo: p.dir != ""}, args...)
 	if err != nil {
-		// stdout stays the answer: a conflicted merge-tree prints its tree and files and exits 1
-		words := strings.TrimSpace(string(res.Stderr) + "\n" + string(res.Stdout))
-		return strings.TrimSpace(string(res.Stdout)), fmt.Errorf("git %s: %s", args[0], oneLine(words))
+		// stdout stays the answer: a conflicted merge-tree prints its tree and files and exits 1.
+		// The cause is wrapped, so a caller can tell git config --unset's absent-key answer (5)
+		// from a real failure.
+		words := oneLine(strings.TrimSpace(string(res.Stderr) + "\n" + string(res.Stdout)))
+		if words == "" {
+			return strings.TrimSpace(string(res.Stdout)), fmt.Errorf("git %s: %w", args[0], err)
+		}
+		return strings.TrimSpace(string(res.Stdout)), fmt.Errorf("git %s: %s: %w", args[0], words, err)
 	}
 	return strings.TrimSpace(string(res.Stdout)), nil
 }
