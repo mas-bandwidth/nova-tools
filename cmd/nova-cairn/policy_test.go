@@ -198,7 +198,8 @@ func TestEveryRefusalEndsAtTheCommandThatMovesTheUserOn(t *testing.T) {
 }
 
 // The remedy is a shell line that runs as printed, whatever the store path
-// holds: a space or a quote is quoted, a control byte is decoded from octal.
+// holds: a space or a quote is quoted; a path the one-line rendering cannot
+// carry is refused whole, and the refusal names the rename.
 func TestARemedyQuotesTheStorePath(t *testing.T) {
 	t.Parallel()
 
@@ -206,7 +207,7 @@ func TestARemedyQuotesTheStorePath(t *testing.T) {
 	require.NoError(t, os.Mkdir(store, 0o755))
 	r := cli.Run("index", "--store", store, "--session", "nosuch")
 	require.Equal(t, 2, r.Code, "%+v", r)
-	printed(t, r.Stderr, "; run: nova-cairn index --store '"+strings.ReplaceAll(store, "'", `'\''`)+"'\n")
+	printed(t, r.Stderr, "; run: nova-cairn index --store '"+strings.ReplaceAll(store, "'", `'"'"'`)+"'\n")
 }
 
 // --dry-run on open and append runs every check the write would, reports what

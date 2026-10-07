@@ -12,11 +12,10 @@
 package main
 
 import (
+	"cmp"
 	"errors"
 	"io"
 	"os"
-	"path/filepath"
-	"slices"
 	"strings"
 	"time"
 
@@ -229,14 +228,6 @@ func clock(c *tool.Call) time.Time {
 
 func stampOf(t time.Time) string { return t.Format(time.RFC3339Nano) }
 
-// sourceOf is a source pointer as a field: "" reads as absent, "-".
-func sourceOf(s string) string {
-	if s == "" {
-		return "-"
-	}
-	return s
-}
-
 // refusal is the result for an error from the store: a conflict ran and said
 // no (exit 1); anything else could not run (exit 2). Either names the command
 // to run next when the store knows it.
@@ -276,7 +267,7 @@ func open(c *tool.Call) *tool.Out {
 		return refusal(err)
 	}
 	shown := stamp
-	o := tool.Done().Fact("session", session).Fact("store", store).Fact("source", sourceOf(rec.Source)).
+	o := tool.Done().Fact("session", session).Fact("store", store).Fact("source", cmp.Or(rec.Source, "-")).
 		Fact("publish", publish)
 	if before.Found {
 		if !before.Opened.IsZero() {
@@ -309,7 +300,7 @@ func appendEntry(c *tool.Call) *tool.Out {
 		}
 		return o
 	}
-	return tool.Done().Fact("session", session).Fact("entry", entry).Fact("source", sourceOf(res.Source)).
+	return tool.Done().Fact("session", session).Fact("entry", entry).Fact("source", cmp.Or(res.Source, "-")).
 		Fact("persisted", res.Persisted).Fact("published", false).Fact("publish", res.Policy).
 		Fact("duplicate", res.Duplicate).Fact("stamp", stampOf(res.Stamp))
 }
@@ -324,29 +315,6 @@ func readWords(name string, stdin io.Reader) ([]byte, error) {
 	return os.ReadFile(name)
 }
 
-// sessions lists the session ids a store holds, from sessions/<id>.md and a flat
-// <store>/<id>.md, in the rule Coverage applies them: so an empty session is
-// found and named by index.
-func sessions(store string) []string {
-	var out []string
-	seen := map[string]bool{}
-	for _, dir := range [2]string{filepath.Join(store, "sessions"), store} {
-		if files, err := os.ReadDir(dir); err == nil {
-			for _, f := range files {
-				if f.IsDir() || !strings.HasSuffix(f.Name(), ".md") {
-					continue
-				}
-				if id := strings.TrimSuffix(f.Name(), ".md"); cairn.ValidID(id) && !seen[id] {
-					seen[id] = true
-					out = append(out, id)
-				}
-			}
-		}
-	}
-	slices.Sort(out)
-	return out
-}
-
 // index lists every entry; the coverage counts on its first line are the
 // selection's, so --session counts one session and the full index counts all.
 // An INDEX SESSION line is printed for every session in the selection, before
@@ -357,19 +325,13 @@ func sessions(store string) []string {
 func index(c *tool.Call) *tool.Out {
 	store := c.Str("store")
 	session := c.Str("session")
-	all, total, err := cairn.Index(store, session, 0)
+	all, names, total, err := cairn.Index(store, session)
 	if err != nil {
 		return refusal(err)
 	}
 	perSession := map[string]int{}
 	for _, r := range all {
 		perSession[r.Session]++
-	}
-	var names []string
-	if session != "" {
-		names = []string{session}
-	} else {
-		names = sessions(store)
 	}
 	o := tool.Done()
 	for _, s := range names {
@@ -381,7 +343,7 @@ func index(c *tool.Call) *tool.Out {
 	}
 	o.Fact("sessions", len(names)).Fact("entries", total)
 	for _, r := range all {
-		o.Item("entry", "session", r.Session, "entry", r.ID, "stamp", stampOf(r.Stamp), "bytes", r.Bytes, "source", sourceOf(r.Source))
+		o.Item("entry", "session", r.Session, "entry", r.ID, "stamp", stampOf(r.Stamp), "bytes", r.Bytes, "source", cmp.Or(r.Source, "-"))
 	}
 	return o
 }
@@ -410,7 +372,7 @@ func receipt(c *tool.Call) *tool.Out {
 		return refusal(err)
 	}
 	o := tool.Done().Fact("session", rc.Session).Fact("entry", rc.ID).Fact("stamp", stampOf(rc.Stamp)).
-		Fact("bytes", rc.Bytes).Fact("source", sourceOf(rc.Source)).Fact("persisted", true).
+		Fact("bytes", rc.Bytes).Fact("source", cmp.Or(rc.Source, "-")).Fact("persisted", true).
 		Fact("published", false).Fact("publish", rc.Policy)
 	if c.Bool("text") {
 		text, err := cairn.EntryText(c.Str("store"), c.Str("session"), c.Str("entry"))
