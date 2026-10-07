@@ -404,8 +404,10 @@ says it (--check <nonce> --run <run>), and the beat after the session answers na
 evidence while her beats go on, so a check goes in every ` + friend.ProveEvery.String() + ` while she is up; a per-card harness
 (claude) says neither. While the session is down the beat says so (--until, --reason: the push unproven,
 or no session answer, with the check's nonce). Each second, when the session is free: every waiting
-message read off the stream and pushed in as ONE turn, oldest first (at most ` + fmt.Sprint(friend.MaxBatch) + `; the rest is the next
-turn), acked together when the turn ends at exit 0; a turn that fails leaves them pending, handed in
+message is read off the stream and pushed in as ONE turn, one envelope, oldest first, each message under a line
+[i/n] <id> from=<f> at=<RFC3339> age=<m>m subject=<s>, capped at the harness's text limit
+(` + fmt.Sprint(friend.BatchBytes) + ` bytes unless it names its own; the first message always goes in) with the rest named under
+and <n> more: nova-bus recv --as <me> --all; exit 0 acks every message the envelope carried, a failure acks none. A turn that fails leaves them pending, handed in
 again when their claims open, and the third failure acks a message, given_up=true on the record. A
 PING is answered at once with a daemon-pong and acked, never a turn; while a challenge is open the
 pong line rides at the head of the next turn. No ping for ` + friend.Window.String() + `: "coordinator silent", and
