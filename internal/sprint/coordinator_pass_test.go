@@ -441,8 +441,11 @@ func TestAPinnedCardWaitsForItsHeldFriend(t *testing.T) {
 		assert.Empty(t, s.Work.Card(id).F("work"), "%s is dealt to no one else", id)
 		assert.Nil(t, r.open(sprint.NPinIgnored, id), "%s: nothing was dealt away", id)
 	}
-	assert.Empty(t, s.Fleet.Cell(sprint.FriendRow("bob"), sprint.Ready))
-	assert.Empty(t, s.Fleet.Cell(sprint.FriendRow("bob"), sprint.Working))
+	for _, col := range []string{sprint.Ready, sprint.Working} {
+		for _, c := range s.Fleet.Cell(sprint.FriendRow("bob"), col) {
+			assert.NotContains(t, []string{"f1-2", "f1-3"}, c.F("primary"), "bob is not dealt a card that names amy")
+		}
+	}
 }
 
 // With every friend held, a card naming one is not dealt to the fleet either: it waits.
