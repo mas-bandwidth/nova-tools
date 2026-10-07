@@ -20,13 +20,14 @@ import (
 // (a read of a group that is not there) and keeps the same idle-free claim
 // order. A test makes its own with NewFake; nothing is shared.
 type Fake struct {
-	mu      sync.Mutex
-	names   []string
-	now     time.Time
-	streams map[string][]bus.Entry
-	groups  map[string]*fakeGroup // stream + "/" + group
-	seq     int64
-	hashes  map[string]map[string]string
+	mu        sync.Mutex
+	names     []string
+	now       time.Time
+	streams   map[string][]bus.Entry
+	groups    map[string]*fakeGroup // stream + "/" + group
+	seq       int64
+	hashes    map[string]map[string]string
+	hashUntil map[string]time.Time // expiry of a hash written with a ttl; others do not expire
 	// Friends is which names of the roster are friends (the set `friends`);
 	// the rest are machines. A test sets it before the first send.
 	Friends []string
@@ -248,12 +249,63 @@ func (f *Fake) Marks(_ context.Context, keys ...string) ([]map[string]string, er
 	}
 	out := make([]map[string]string, len(keys))
 	for i, k := range keys {
+		f.dropHash(k)
 		out[i] = maps.Clone(f.hashes[k])
 		if out[i] == nil {
 			out[i] = map[string]string{}
 		}
 	}
 	return out, nil
+}
+
+// dropHash forgets key once its expiry has passed, f.mu held. A hash with no
+// expiry (a mark) stays.
+func (f *Fake) dropHash(key string) {
+	until, ok := f.hashUntil[key]
+	if !ok || f.now.Before(until) {
+		return
+	}
+	delete(f.hashes, key)
+	delete(f.hashUntil, key)
+}
+
+// PutHash is Store.PutHash. ttl above zero merges fields and sets the expiry;
+// ttl zero merges only into a live key and leaves its expiry as it was.
+func (f *Fake) PutHash(_ context.Context, key string, fields map[string]string, ttl time.Duration) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.trip(); err != nil {
+		return err
+	}
+	f.dropHash(key)
+	if ttl <= 0 && f.hashes[key] == nil {
+		return nil
+	}
+	if f.hashes == nil {
+		f.hashes = map[string]map[string]string{}
+	}
+	if f.hashes[key] == nil {
+		f.hashes[key] = map[string]string{}
+	}
+	for k, v := range fields {
+		f.hashes[key][k] = v
+	}
+	if ttl > 0 {
+		if f.hashUntil == nil {
+			f.hashUntil = map[string]time.Time{}
+		}
+		f.hashUntil[key] = f.now.Add(ttl)
+	}
+	return nil
+}
+
+// HashUntil is when key expires, after dropping it if that moment has passed.
+func (f *Fake) HashUntil(key string) (time.Time, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.dropHash(key)
+	u, ok := f.hashUntil[key]
+	return u, ok
 }
 
 func (f *Fake) Forward(_ context.Context, key, state string, ids ...string) ([]string, error) {

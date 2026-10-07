@@ -207,6 +207,11 @@ type Store interface {
 	// Marks is the whole hash at each key, in one trip (a pipeline of HGETALL);
 	// a key that is not there is an empty map.
 	Marks(ctx context.Context, keys ...string) ([]map[string]string, error)
+	// PutHash sets fields on the hash at key (HSET, leaving every other field)
+	// and, when ttl is above zero, sets the key's expiry to ttl (PEXPIRE) in
+	// the same pipeline. A ttl of zero writes only when the key is already
+	// there and does not change its expiry: a missing or expired key stays gone.
+	PutHash(ctx context.Context, key string, fields map[string]string, ttl time.Duration) error
 	// EnsureGroup makes the group on the stream from its start, making the
 	// stream when it is not there (XGROUP CREATE ... 0 MKSTREAM); a group
 	// already there is fine.
