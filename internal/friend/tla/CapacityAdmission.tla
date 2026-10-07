@@ -16,7 +16,7 @@ EndWalk == /\ phase = "walking" /\ phase' = "ready"
            /\ stampedAge' = IF StampAfterWalk THEN age ELSE 0
            /\ UNCHANGED <<age, admitted>>
 Consume == /\ phase = "ready" /\ phase' = "consumed"
-           /\ admitted' = age - stampedAge <= 2
+           /\ admitted' = (age - stampedAge <= 2)
            /\ UNCHANGED <<age, stampedAge>>
 Next == Begin \/ Beat \/ EndWalk \/ Consume
 Spec == Init /\ [][Next]_vars
