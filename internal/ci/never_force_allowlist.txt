@@ -1,0 +1,38 @@
+internal/cardcontract/openai_functional_test.go:198 test fixture documenting refused push pattern 2026-10-07
+internal/cardcontract/shims_functional_test.go:103 test fixture documenting push pattern 2026-10-07
+internal/cardcontract/shims_functional_test.go:368 test fixture documenting refused push pattern 2026-10-07
+internal/ci/ci_never_force.go:65 checker documenting patterns to refuse 2026-10-07
+internal/ci/ci_never_force.go:70 checker documenting patterns to refuse 2026-10-07
+internal/ci/never_force_class_test.go:48 test documenting force pattern 2026-10-07
+internal/ci/never_force_class_test.go:55 test documenting force pattern 2026-10-07
+internal/ci/never_force_class_test.go:56 test documenting force pattern 2026-10-07
+internal/ci/never_force_class_test.go:61 test documenting force pattern 2026-10-07
+internal/ci/never_force_class_test.go:64 test documenting force pattern 2026-10-07
+internal/ci/never_force_class_test.go:71 test documenting force pattern 2026-10-07
+internal/ci/never_force_class_test.go:72 test documenting force pattern 2026-10-07
+internal/ci/never_force_class_test.go:79 test documenting force pattern 2026-10-07
+internal/ci/never_force_class_test.go:86 test documenting force pattern 2026-10-07
+internal/ci/never_force_class_test.go:90 test documenting force pattern 2026-10-07
+internal/ci/never_force_class_test.go:93 test documenting force pattern 2026-10-07
+internal/ci/never_force_class_test.go:100 test documenting force pattern 2026-10-07
+internal/ci/never_force_class_test.go:104 test documenting force pattern 2026-10-07
+internal/ci/never_force_class_test.go:107 test documenting force pattern 2026-10-07
+internal/ci/never_force_class_test.go:114 test documenting force pattern 2026-10-07
+internal/ci/never_force_class_test.go:118 test documenting force pattern 2026-10-07
+internal/swarm/lint_patterns_block_test.go:24 test documenting patterns 2026-10-07
+internal/swarm/lint_patterns_block_test.go:47 test documenting patterns 2026-10-07
+internal/swarm/lint_patterns_block_test.go:52 test documenting patterns 2026-10-07
+internal/swarm/lintbase_test.go:84 test documenting patterns 2026-10-07
+internal/swarm/lintchild.go:37 test documenting patterns 2026-10-07
+internal/swarm/lintchild.go:177 test documenting patterns 2026-10-07
+internal/swarm/lintchild_test.go:291 test documenting patterns 2026-10-07
+internal/swarm/lintchild_test.go:292 test documenting patterns 2026-10-07
+internal/swarm/lintchild_test.go:367 test documenting patterns 2026-10-07
+internal/swarm/lintchild_test.go:383 test documenting patterns 2026-10-07
+internal/swarm/lintchild_test.go:416 test documenting patterns 2026-10-07
+cmd/nova-sprint/land_prune_test.go:80 test documenting patterns 2026-10-07
+cmd/nova-sprint/landprune.go:322 test documenting patterns 2026-10-07
+cmd/nova-sprint/lintbrief_test.go:41 test documenting patterns 2026-10-07
+cmd/nova-swarm/lintchild_test.go:111 test documenting patterns 2026-10-07
+cmd/nova-swarm/slow_test.go:4416 test documenting patterns 2026-10-07
+tools/ci/revertonred_test.go:316 test documenting patterns 2026-10-07
