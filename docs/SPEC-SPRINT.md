@@ -5761,6 +5761,19 @@ A summary line `MACHINERY OK n=<total>` or `MACHINERY DOWN n=<down> of=<total>` 
 `--json` prints one JSON object with `at`, `lines`, `down`, `exit_code`, and `measures`.
 The server is NOVA_SPRINT_SERVER, else the server `seat install` recorded in the seat (`seat.json`), so an installed seat's check measures it and never says `NOVA_SPRINT_SERVER is not set`. When the seat names a nova-config seat profile, a line `MACHINERY config OK seat=<name> dsn=<dsn> password-env=<NAME> profile=<path>` says the row `nova-config --seat <name>` reads, or `MACHINERY config DOWN` with the reason and the remedy (`nova-sprint seat install --config-seat <name> --config-dsn <dsn> --config-password-env <NAME>`) when the row is gone or unreadable. A recorded server feeds the check and the push loop's unit only: a verb is still sent to the server when NOVA_SPRINT_SERVER is set, as before.
 
+The check also reads the process table of the machine it runs on (`ps -axww -o pid=,args=`) for
+the coordinator's stopgaps (docs/STOPGAPS.md, `sprint.Stopgaps`; card the-stopgaps-retire2) and
+prints, after the `MACHINERY` lines and before the summary, one line per stopgap found alive:
+`STOPGAP <name> still running pids=<pid,...> state=<owed|landed|retired> card=<card> verb="<verb>"`.
+An owed or landed stopgap's line is a note; a retired one (its card landed and a real run of its
+verb recorded) still running is DOWN with `remedy="kill <pid> ..."`, so the check exits 1 until it
+is removed. The summary's `n` counts these lines with the checks'. The server's own check, and a
+process table that cannot be read, print no stopgap line. `--json` carries them as `stopgaps`.
+Tests: `TestEveryStopgapNamesItsVerbAndProof` (the table against `sprint.Stopgaps`, row for row,
+refusing a row with no card, verb or test, a landed row whose test is not in the tree, and a real
+run of a verb not landed), `TestTheStopgapTableRefusesARowWithNoVerbOrProof`,
+`TestTheSeatCheckPrintsEveryStopgapStillRunning`, `TestSeatCheckPrintsAStopgapStillRunning`.
+
 ### The seat's store login
 
 (the owner, 2026-10-05: "We need to get away from these one shot shell scripts"; card
