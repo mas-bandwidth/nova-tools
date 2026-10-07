@@ -57,21 +57,21 @@ func pushArmed(name string) bool {
 // through: a test's, the folder adapter for a record that names it or a
 // harness with no deliver command (nova-friend's adapter is passive), else the
 // harness's own.
-func pushDeliverer(rec sprint.PushRecord) (friend.Deliverer, error) {
+func pushDeliverer(rec sprint.PushRecord, now func() time.Time) (friend.Deliverer, error) {
 	if d, ok := pushTests.Load(rec.Name); ok {
 		if d, ok := d.(friend.Deliverer); ok {
 			return d, nil
 		}
 	}
 	if rec.Adapter == sprint.AdapterFolder {
-		return &folderAdapter{Dir: rec.Target}, nil
+		return &folderAdapter{Dir: rec.Target, Now: now}, nil
 	}
 	d, err := friend.NewDeliverer(rec.Harness, rec.Target, rec.Session, friend.RealExec, nil)
 	if err != nil {
 		return nil, err
 	}
 	if passive(d) {
-		return &folderAdapter{Dir: rec.Target}, nil
+		return &folderAdapter{Dir: rec.Target, Now: now}, nil
 	}
 	return d, nil
 }
@@ -91,17 +91,26 @@ func passive(d friend.Deliverer) bool {
 // push loop writes a judgment in. Each file is written under a dot name and
 // renamed, so a watch never sees half of one. A Dir that is not a directory is
 // a failure naming it, and nothing is made.
-type folderAdapter struct{ Dir string }
+type folderAdapter struct {
+	Dir string
+	Now func() time.Time
+}
 
 func (f *folderAdapter) Deliver(_ context.Context, text string) (int, error) {
 	if fi, err := os.Stat(f.Dir); err != nil || !fi.IsDir() {
 		return 0, fmt.Errorf("the folder adapter writes into %s, and it is not a directory: make it, or install the seat with the folder the session watches", f.Dir)
 	}
-	name := "PUSH-" + time.Now().UTC().Format("20060102T150405Z") + "-" + pushNonce()[:8] + ".md"
+	name := "PUSH-" + f.Now().UTC().Format("20060102T150405Z") + "-" + pushNonce()[:8] + ".md"
 	nonce, check := strings.CutPrefix(text, sprint.PushCheckPrefix)
 	if check {
 		nonce, _, _ = strings.Cut(nonce, "\n")
-		name = sprint.PushProofFilePrefix + strings.TrimSpace(nonce)
+		nonce = strings.TrimSpace(nonce)
+		name = sprint.PushProofFilePrefix + nonce
+		// Only the filename reveals the nonce; the body explains how to read it.
+		// An empty nonce must not be replaced: ReplaceAll("", ...) rewrites every gap.
+		if nonce != "" {
+			text = strings.ReplaceAll(text, nonce, "<nonce>")
+		}
 	}
 	tmp, err := os.CreateTemp(f.Dir, ".push-*")
 	if err != nil {
@@ -119,7 +128,7 @@ func (f *folderAdapter) Deliver(_ context.Context, text string) (int, error) {
 	}
 	if err != nil {
 		_ = os.Remove(tmp.Name()) // ignored: the write already failed, and that is the error said
-		return 0, err
+		return 0, fmt.Errorf("the folder delivery failed: %s", sprint.HidePushNonces(sprint.PushRecord{Nonce: strings.TrimSpace(nonce)}, err.Error()))
 	}
 	if check {
 		f.dropOldProofs(name)
@@ -302,6 +311,11 @@ func seatPushTarget(rec sprint.PushRecord) (sprint.PushRecord, string) {
 	if why := sprint.NotPushTarget(rec); why != "" {
 		return rec, why
 	}
+	target, err := filepath.Abs(rec.Target)
+	if err != nil {
+		return rec, "--target cannot be resolved to an absolute directory: " + err.Error() + "; give an absolute --target <dir>; nothing was written"
+	}
+	rec.Target = target
 	d, err := friend.NewDeliverer(rec.Harness, rec.Target, rec.Session, friend.RealExec, nil)
 	if err != nil {
 		return rec, err.Error()
@@ -321,7 +335,9 @@ func seatPushTarget(rec sprint.PushRecord) (sprint.PushRecord, string) {
 func (a *app) sayPush(rec sprint.PushRecord, ok bool, now time.Time, asJSON bool, stdout io.Writer) int {
 	why := sprint.PushWhy(rec.Name, rec, ok, now)
 	if asJSON {
-		b, _ := json.Marshal(map[string]any{"record": rec, "recorded": ok, "live": why == "", "why": why}) // ignored: a record of strings and times always encodes
+		proof := sprint.PushProofState(rec)
+		rec = sprint.PublicPushRecord(rec)
+		b, _ := json.Marshal(map[string]any{"record": rec, "recorded": ok, "live": why == "", "proof": proof, "why": why}) // ignored: a record of strings and times always encodes
 		fmt.Fprintln(stdout, string(b))
 	} else {
 		line := fmt.Sprintf("name=%s harness=%s target=%s adapter=%s", oneline.Field(rec.Name), oneline.Field(orDashStr(rec.Harness, "-")), oneline.Field(orDashStr(rec.Target, "-")), oneline.Field(rec.AdapterName()))
@@ -349,7 +365,7 @@ func (a *app) cmdSeatPong(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("seat")
 	pos, err := parse(fs, args)
 	if err != nil || len(pos) != 1 {
-		return refuse(stderr, name, argErr("wants one word, the nonce the push check carried, ", err, pos...))
+		return refuse(stderr, name, "wants one word, the nonce read from the delivered check; run: nova-sprint seat pong <nonce> --actor <name>")
 	}
 	if c.actor == "" {
 		return refuse(stderr, name, "seat pong wants --actor <name> (or NOVA_SPRINT_ACTOR): the seat the check was pushed to; nothing was changed")
@@ -372,8 +388,8 @@ func (a *app) cmdSeatPong(args []string, stdout, stderr io.Writer) int {
 	if err := writePush(ctx, st, next); err != nil {
 		return a.readFailed(name, err, stderr)
 	}
-	sayOK(stdout, c.json, name, fmt.Sprintf("SEAT PONG OK name=%s nonce=%s proven=%s", oneline.Field(next.Name), oneline.Field(next.PongOf), next.Proven.UTC().Format(time.RFC3339)),
-		map[string]any{"name": next.Name, "nonce": next.PongOf, "proven": next.Proven})
+	sayOK(stdout, c.json, name, fmt.Sprintf("SEAT PONG OK name=%s proven=%s", oneline.Field(next.Name), next.Proven.UTC().Format(time.RFC3339)),
+		map[string]any{"name": next.Name, "proven": next.Proven})
 	return 0
 }
 
@@ -405,11 +421,12 @@ func (s *serverSource) pushRecord(ctx context.Context, name string) (sprint.Push
 	var out struct {
 		Record   sprint.PushRecord `json:"record"`
 		Recorded bool              `json:"recorded"`
+		Proof    string            `json:"proof"`
 	}
 	if err := json.Unmarshal([]byte(res.Stdout), &out); err != nil {
 		return sprint.PushRecord{}, false, fmt.Errorf("the server's seat push is not JSON (exit %d): %s", res.Code, strings.TrimSpace(res.Stderr))
 	}
-	return out.Record, out.Recorded, nil
+	return pushScheduleRecord(out.Record, out.Proof), out.Recorded, nil
 }
 
 func (s *serverSource) pushSent(ctx context.Context, name, nonce, why string) error {
@@ -461,7 +478,7 @@ func (a *app) prove(ctx context.Context, src inboxSource, holder string, asJSON 
 // deliverPush delivers text into rec's session through its adapter, bounded by
 // sprint.PushAnswerBound: "" when it went in, else why not.
 func (a *app) deliverPush(ctx context.Context, rec sprint.PushRecord, text string) string {
-	d, err := pushDeliverer(rec)
+	d, err := pushDeliverer(rec, a.now)
 	if err != nil {
 		return err.Error()
 	}
@@ -507,21 +524,46 @@ func (a *app) pushJudgments(ctx context.Context, src inboxSource, holder string,
 }
 
 // pushSayer is how the push loop says a step of the proof: PUSH <what> name=
-// [nonce=] [why=] on a line, or one JSON object under --json.
+// [proof=pending] [why=] on a line, or one JSON object under --json. The nonce
+// is never a status field, even on delivery failure.
 func pushSayer(asJSON bool, stdout io.Writer) func(what, name, nonce, why string) {
 	return func(what, name, nonce, why string) {
+		why = sprint.HidePushNonces(sprint.PushRecord{Nonce: nonce}, why)
+		proof := ""
+		if nonce != "" {
+			proof = "pending"
+		}
 		if asJSON {
-			b, _ := json.Marshal(map[string]any{"push": strings.ToLower(what), "name": name, "nonce": nonce, "why": why}) // ignored: strings always encode
+			b, _ := json.Marshal(map[string]any{"push": strings.ToLower(what), "name": name, "proof": proof, "why": why}) // ignored: strings always encode
 			fmt.Fprintln(stdout, string(b))
 			return
 		}
 		line := "PUSH " + what + " name=" + oneline.Field(name)
 		if nonce != "" {
-			line += " nonce=" + oneline.Field(nonce)
+			line += " proof=pending"
 		}
 		if why != "" {
 			line += " why=" + oneline.Quote(why)
 		}
 		fmt.Fprintln(stdout, line)
 	}
+}
+
+// pushScheduleRecord restores only equality/presence for PushDue and PushLive from
+// the public state (SPEC-SPRINT, "The push proof"). It never restores a real nonce.
+func pushScheduleRecord(rec sprint.PushRecord, proof string) sprint.PushRecord {
+	if proof == "" { // an older server's record already carries its scheduler state
+		return rec
+	}
+	rec.Nonce, rec.PongOf = "", ""
+	if !rec.Proven.IsZero() {
+		rec.PongOf = "previous"
+	}
+	if proof != "none" {
+		rec.Nonce = "current"
+	}
+	if proof == "proven" {
+		rec.PongOf = rec.Nonce
+	}
+	return rec
 }
