@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 )
 
 // The friend's reader row (docs/SPEC-FRIEND.md, the reader row; the owner, 2026-10-05: "Make
@@ -145,7 +147,7 @@ func briefField(re *regexp.Regexp, brief string) string {
 // bench does.
 func BenchRule(friend, card string) string {
 	d := "~/nova-bench/buds/" + friend + "/reads/" + card
-	return fmt.Sprintf("BENCH RULE, over any GOCACHE or go command the brief gives: this machine (the one you are on) runs no go build, go test or go vet, ever. Read the checkout here (change nothing), then copy the tree to a Linux bench and run every go command there: ssh <bench> 'mkdir -p %s' && rsync -a --delete <your repo dir>/ <bench>:%s/repo/ && ssh <bench> 'cd %s/repo && export GOCACHE=~/nova-bench/buds/%s/cache/go-build GOFLAGS=-mod=readonly NOVA_TEST_NO_HOST=1 && nice -n 19 go ...' (<bench> is the Linux bench your AGENTS.md names; the next one it names only when that one does not answer). Re-sync after each edit. When you are done, remove that bench directory: ssh <bench> 'rm -rf %s'. Report the gate lines as the bench printed them, naming the bench.", d, d, d, friend, d)
+	return fmt.Sprintf("BENCH RULE, over any GOCACHE or go command the brief gives: this machine (the one you are on) runs no go build, go test or go vet, ever. Read the checkout here (change nothing), then copy the tree to a Linux bench and run every go command there: ssh <bench> 'mkdir -p %s' && rsync -a --delete <your repo dir>/ <bench>:%s/repo/ && ssh <bench> 'cd %s/repo && export GOCACHE=~/nova-bench/buds/%s/cache/go-build GOFLAGS=-mod=readonly NOVA_TEST_NO_HOST=1 && nice -n 19 go ...' (<bench> is the Linux bench your AGENTS.md names; the next one it names only when that one does not answer). Re-sync after each edit. When the finding is recorded, this lane removes that bench directory %s and the local checkout. Report the gate lines as the bench printed them, naming the bench.", d, d, d, friend, d)
 }
 
 // ReadText is READ.md: the read's job, as the reader loops wrote it.
@@ -352,6 +354,9 @@ func (l *loop) readDone(r readResult, now time.Time) {
 	if verdict != "" {
 		out, err := d.Sprint(l.ctx, ReadVerdictArgv(d.Friend, r.read, verdict, finding, usage))
 		d.Record(fmt.Sprintf("%s read %s: verdict=%s wall=%s: %s", at, r.read.ID, verdict, now.Sub(r.start).Round(time.Second), recorded(out, err)))
+		if err == nil {
+			l.releaseRead(r.read.ID, now)
+		}
 		return
 	}
 	why := fmt.Sprintf("no verdict from the %s run (exit %d)", d.Harness, r.turn.Exit)
@@ -370,6 +375,27 @@ func (l *loop) readDone(r readResult, now time.Time) {
 	}
 	out, err := d.Sprint(l.ctx, ReadReturnArgv(d.Friend, r.read, why, usage))
 	d.Record(fmt.Sprintf("%s read %s: returned: %s: %s", at, r.read.ID, oneLine(why, 200), recorded(out, err)))
+}
+
+// releaseRead removes the read's checkout once its finding is recorded, and the bench
+// copy under BenchRoot when that root is set. The read's own files (READ.md, the brief,
+// the worker's report, RESULT.md) stay. A path that is not there is nothing to remove.
+func (l *loop) releaseRead(id string, now time.Time) {
+	d := l.d
+	if !validJob(id) {
+		return
+	}
+	dir := filepath.Join(d.Dir, "reads", id)
+	if err := safepath.RemoveUnder(dir, filepath.Join(dir, "repo")); err != nil {
+		d.Record(fmt.Sprintf("%s read %s: not removed reads/%s/repo: %s", now.UTC().Format(time.RFC3339), id, id, oneLine(err.Error(), 200)))
+	}
+	if d.BenchRoot == "" || !validJob(d.Friend) {
+		return
+	}
+	bench := filepath.Join(d.BenchRoot, "buds", d.Friend, "reads", id)
+	if err := safepath.RemoveUnder(d.BenchRoot, bench); err != nil {
+		d.Record(fmt.Sprintf("%s read %s: not removed bench reads/%s: %s", now.UTC().Format(time.RFC3339), id, id, oneLine(err.Error(), 200)))
+	}
 }
 
 func recorded(out string, err error) string {

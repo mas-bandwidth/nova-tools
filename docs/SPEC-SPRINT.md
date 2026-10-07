@@ -2951,6 +2951,13 @@ the adoption `release.OneMachine` (internal/release/adopt_one.go). Test:
 
 ## 6. The readers
 
+A reader's checkout is scratch. The friend daemon writes the read under
+`reads/<id>/` and, once the verdict is recorded, removes `reads/<id>/repo` and
+the bench copy under `~/nova-bench/buds/<friend>/reads/<id>` when that bench
+directory is on the same machine (docs/SPEC-FRIEND.md, what is scratch). The
+read's brief, the worker's report and the finding stay. A bench on another
+machine is not removed from here.
+
 - **The interim rules of 2026-10-06, until read cards** (the owner, 7:25 PM ET: "fix it
   now, to work around it"; the read-cards change (PR 5392) replaces
   the ask, and these rules with it):
@@ -3607,6 +3614,13 @@ cards had none outstanding.
 `TestAnAskConflictIsOneCardsRefusalNotTheTicks`, `TestTheFriendAskAsksEveryReviewCardAFriendMayRead`.)
 
 ## 7. Merging
+
+The lander's scratch is the branch `land/<stream>` (and `land/base-check`) in the
+clone it keeps. Each batch cuts that branch again with `git switch --force-create`
+from origin's base. The clone stays. The lander does not add a checkout worktree
+and does not leave a job directory. A friend's `jobs/<job>/` is her daemon's
+scratch, removed when the lane ends (docs/SPEC-FRIEND.md, what is scratch), not
+the lander's.
 
 1. In work order, never random: the head of the stream's queued cell first.
 2. In batches onto the sprint branch, the branch every stream lands on; the
