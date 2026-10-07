@@ -70,7 +70,7 @@ func externalOperandForm(s string) bool {
 				hasSep = true
 			}
 		}
-		return len(timestamp) >= 20 && hasDigit && hasSep
+		return len(timestamp) >= 20
 	}
 	return false
 }
