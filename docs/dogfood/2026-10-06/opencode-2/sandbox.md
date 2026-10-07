@@ -6,8 +6,8 @@ built with `go build ./cmd/nova-sandbox` from this card's base tip
 `5844884e267c` is 579 commits behind that tip, `git rev-list --count
 5844884e267c..HEAD`), so the findings are against the tree the release is cut
 from. Run cold, from the binary's own help (`-h`, `help`, `<verb> -h`, `help
-<verb>`) and the tool's page `docs/SPEC-SANDBOX.md` only, on the vision bench
-(Linux 7.0.0-34-generic, x86-64, Landlock ABI 8). Every verb ran for real against
+<verb>`) and the tool's page `docs/SPEC-SANDBOX.md` only, on a Linux bench
+(kernel 7.0.0-34-generic, x86-64, Landlock ABI 8). Every verb ran for real against
 one scratch tree inside the job directory with `HOME` inside a `--write`: `check`
 (`--json`, a bad flag), `policy` (the caller's lists, the roots, `--json`,
 `--net-deny`, the refusals), `probe` (with and without `--secret`, `--net-deny`,
@@ -24,7 +24,7 @@ below were typed with
     NB=$B/nova-sandbox
     S=$B/scratch/store
 
-and in quoted output `$B`, `$S` and `/home/glenn` abbreviate those prefixes;
+and in quoted output `$B`, `$S` and `/home/<user>` abbreviate those prefixes;
 nothing else in a quoted line is changed.
 
 Not run: `run`'s disposable-volume body and `reap`'s real cleanup (both darwin's
