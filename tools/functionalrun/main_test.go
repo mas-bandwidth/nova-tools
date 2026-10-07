@@ -607,21 +607,18 @@ func tierFixture(t *testing.T, owner string, startCode int) (*fakeEngine, runCon
 func TestRunTierPassesTheContainersExitThroughAndChecksForLeftovers(t *testing.T) {
 	t.Parallel()
 	for _, code := range []int{0, 2} {
-		eng, c := tierFixture(t, "501", code)
-		var stdout, stderr bytes.Buffer
+		r := newRig(t, "501", code)
 		// The prefill must finish 0 for the test container to run; the fake
 		// gives both the same code, so a red run is judged at the module step.
-		got := runTierIn(t, eng, c, &stdout, &stderr)
-		calls := eng.argvs()
+		got := r.run()
+		calls := r.calls()
 		if code != 0 {
-			if got != exitCannotRun || !strings.Contains(stderr.String(), "module cache step ended finished with exit 2") {
-				t.Errorf("a failed module step: exit %d\n%s", got, stderr.String())
+			if got != exitCannotRun || !strings.Contains(r.stderr.String(), "module cache step ended finished with exit 2") {
+				t.Errorf("a failed module step: exit %d\n%s", got, r.stderr.String())
 			}
 			continue
 		}
-		if got != 0 {
-			t.Errorf("a green run exits %d\n%s", got, stderr.String())
-		}
+		r.requireExit(0)
 		var runs []string
 		for _, call := range calls {
 			if strings.HasPrefix(call, "run ") {
@@ -641,20 +638,18 @@ func TestRunTierPassesTheContainersExitThroughAndChecksForLeftovers(t *testing.T
 		if !strings.HasPrefix(last, "ps --all --filter label=nova.functional.run=") {
 			t.Errorf("the last call is not the leftover check by label: %q", last)
 		}
-		if !strings.Contains(stderr.String(), "ended=finished exit=0 ") || !strings.Contains(stderr.String(), "containers_left=0") {
-			t.Errorf("receipt line:\n%s", stderr.String())
+		if !strings.Contains(r.stderr.String(), "ended=finished exit=0 ") || !strings.Contains(r.stderr.String(), "containers_left=0") {
+			t.Errorf("receipt line:\n%s", r.stderr.String())
 		}
 	}
 }
 
 func TestRunTierRefusesAnotherUsersCache(t *testing.T) {
 	t.Parallel()
-	eng, c := tierFixture(t, "502", 0)
-	var stdout, stderr bytes.Buffer
-	if got := runTierIn(t, eng, c, &stdout, &stderr); got != exitCannotRun {
-		t.Errorf("exit %d, want %d", got, exitCannotRun)
-	}
-	for _, call := range eng.argvs() {
+	r := newRig(t, "502", 0)
+	r.run()
+	r.requireExit(exitCannotRun)
+	for _, call := range r.calls() {
 		if strings.HasPrefix(call, "run ") {
 			t.Errorf("a container ran over another user's cache: %q", call)
 		}
@@ -780,12 +775,10 @@ func TestRunTierExitCodes(t *testing.T) {
 		{124, 124, "inner-timeout"},
 		{-1, 125, "client-lost"},
 	} {
-		eng, c := tierFixture(t, "501", 0)
-		eng.startCodes = []int{0, tc.testCode}
-		var stdout, stderr bytes.Buffer
-		got := runTierIn(t, eng, c, &stdout, &stderr)
-		if got != tc.wantExit || !strings.Contains(stderr.String(), "ended="+tc.wantEnded+" exit="+strconv.Itoa(tc.wantExit)+" ") {
-			t.Errorf("test container exit %d: tool exit %d, want %d ended=%s\n%s", tc.testCode, got, tc.wantExit, tc.wantEnded, stderr.String())
+		r := newRig(t, "501", 0, tc.testCode)
+		got := r.run()
+		if got != tc.wantExit || !strings.Contains(r.stderr.String(), "ended="+tc.wantEnded+" exit="+strconv.Itoa(tc.wantExit)+" ") {
+			t.Errorf("test container exit %d: tool exit %d, want %d ended=%s\n%s", tc.testCode, got, tc.wantExit, tc.wantEnded, r.stderr.String())
 		}
 	}
 }
@@ -799,17 +792,16 @@ func TestRunTierFailsWhenAContainerIsLeft(t *testing.T) {
 		{fakeAnswer{out: "abc123\n"}, "containers_left=1"},
 		{fakeAnswer{err: fmt.Errorf("runtime gone")}, "containers_left=unknown"},
 	} {
-		eng, c := tierFixture(t, "501", 0)
-		eng.respond = func(args []string) (fakeAnswer, bool) {
+		r := newRig(t, "501", 0)
+		r.eng.respond = func(args []string) (fakeAnswer, bool) {
 			if len(args) > 3 && args[0] == "ps" && strings.HasPrefix(args[3], "label="+labelRun+"=") && !strings.HasSuffix(args[3], "-mod") {
 				return tc.answer, true
 			}
 			return fakeAnswer{}, false
 		}
-		var stdout, stderr bytes.Buffer
-		got := runTierIn(t, eng, c, &stdout, &stderr)
-		if got != exitCannotRun || !strings.Contains(stderr.String(), tc.want) {
-			t.Errorf("a green run with a leftover (%v): exit %d, want %d and %s\n%s", tc.answer, got, exitCannotRun, tc.want, stderr.String())
+		got := r.run()
+		if got != exitCannotRun || !strings.Contains(r.stderr.String(), tc.want) {
+			t.Errorf("a green run with a leftover (%v): exit %d, want %d and %s\n%s", tc.answer, got, exitCannotRun, tc.want, r.stderr.String())
 		}
 	}
 }
