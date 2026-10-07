@@ -121,6 +121,7 @@ func runKindWrite(ctx context.Context, k *config.Kind, add bool, args []string, 
 		c = seatStoreFlags(fs)
 	}
 	as := actorFlag(fs)
+	reason := fs.String("reason", "", "why this change is made: one `line`, recorded in the history row beside the actor and the time; empty (the default) records none")
 	dry := fs.Bool("dry-run", false, "print the change the write would record (CONFIG DRY-RUN, from the same checks) and write nothing; it still reads the store")
 	asJSON := jsonFlag(fs)
 	values := map[string]*string{}
@@ -156,6 +157,10 @@ func runKindWrite(ctx context.Context, k *config.Kind, add bool, args []string, 
 	dsn, err := c.dsn(d.getenv)
 	if err != nil {
 		problems = append(problems, err.Error())
+	}
+	reasonText := strings.TrimSpace(*reason)
+	if strings.ContainsAny(reasonText, "\n\r") {
+		problems = append(problems, "--reason: want one line")
 	}
 	var row config.Row
 	var changes map[string]string
@@ -215,8 +220,12 @@ func runKindWrite(ctx context.Context, k *config.Kind, add bool, args []string, 
 			return storeErr(stderr, verb, err, writeRemedy(k, add, name, err, next)+c.again())
 		}
 		plan.Actor = actor
+		plan.Reason = reasonText
 		if *asJSON {
 			o := tool.Done().Fact("dry_run", true).Fact("op", plan.Op).Fact("kind", k.Name).Fact("name", name).Fact("before", plan.Before).Fact("after", plan.After)
+			if plan.Reason != "" {
+				o.Fact("reason", plan.Reason)
+			}
 			o.Verb, o.Notes = verb, notes
 			return emit(stdout, o)
 		}
@@ -225,11 +234,11 @@ func runKindWrite(ctx context.Context, k *config.Kind, add bool, args []string, 
 		return 0
 	}
 	if add {
-		if id, err = st.Insert(ctx, k.Name, row, actor); err != nil {
+		if id, err = st.Insert(config.WithReason(ctx, reasonText), k.Name, row, actor); err != nil {
 			return storeErr(stderr, verb, err, writeRemedy(k, add, name, err, next)+c.again())
 		}
 	} else {
-		if _, id, err = st.Update(ctx, k.Name, name, changes, actor); err != nil {
+		if _, id, err = st.Update(config.WithReason(ctx, reasonText), k.Name, name, changes, actor); err != nil {
 			return storeErr(stderr, verb, err, writeRemedy(k, add, name, err, next)+c.again())
 		}
 		changed = slices.Sorted(maps.Keys(changes))
@@ -344,6 +353,7 @@ func runKindRemove(ctx context.Context, k *config.Kind, args []string, stdout, s
 	fs := verbflag.New(verb)
 	c := seatStoreFlags(fs)
 	as := actorFlag(fs)
+	reason := fs.String("reason", "", "why this change is made: one `line`, recorded in the history row beside the actor and the time; empty (the default) records none")
 	dry := fs.Bool("dry-run", false, "print the change the remove would record (CONFIG DRY-RUN, from the same checks) and write nothing; it still reads the store")
 	asJSON := jsonFlag(fs)
 	name, rest := nameAndRest(k, args)
@@ -371,6 +381,10 @@ func runKindRemove(ctx context.Context, k *config.Kind, args []string, stdout, s
 	if err != nil {
 		problems = append(problems, err.Error())
 	}
+	reasonText := strings.TrimSpace(*reason)
+	if strings.ContainsAny(reasonText, "\n\r") {
+		problems = append(problems, "--reason: want one line")
+	}
 	if len(problems) > 0 {
 		return refuse(stderr, verb, strings.Join(problems, "; "))
 	}
@@ -390,15 +404,19 @@ func runKindRemove(ctx context.Context, k *config.Kind, args []string, stdout, s
 			return storeErr(stderr, verb, err, toolName+" "+k.Name+" list"+c.again())
 		}
 		plan.Actor = actor
+		plan.Reason = reasonText
 		if *asJSON {
 			o := tool.Done().Fact("dry_run", true).Fact("op", plan.Op).Fact("kind", k.Name).Fact("name", name).Fact("before", plan.Before)
+			if plan.Reason != "" {
+				o.Fact("reason", plan.Reason)
+			}
 			o.Verb = verb
 			return emit(stdout, o)
 		}
 		fmt.Fprintln(stdout, config.PlanLine(plan))
 		return 0
 	}
-	id, err := st.Delete(ctx, k.Name, name, actor)
+	id, err := st.Delete(config.WithReason(ctx, reasonText), k.Name, name, actor)
 	if err != nil {
 		next := toolName + " " + k.Name + " list" + c.again()
 		if errors.Is(err, config.ErrReferenced) {
