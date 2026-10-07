@@ -257,7 +257,7 @@ func NoOpenJudgment(f ReleaseFacts) ReleaseResult {
 		if kind == "" {
 			kind = "judgment"
 		}
-		return acceptFail(CheckNoOpenJudgment, fmt.Sprintf("open judgment %s (%s) names stream %s; look at: nova-sprint ask --stream %s", orDash(j.ID), kind, orDash(j.Stream), orDash(j.Stream)))
+		return acceptFail(CheckNoOpenJudgment, fmt.Sprintf("open judgment %s (%s) names stream %s; look at: nova-sprint inbox --open %s", orDash(j.ID), kind, orDash(j.Stream), orDash(j.ID)))
 	}
 	return acceptOK(CheckNoOpenJudgment, "no open judgment names "+streamList(a))
 }

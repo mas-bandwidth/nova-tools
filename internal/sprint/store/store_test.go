@@ -119,7 +119,7 @@ func (h *harness) cutStep() Step {
 	step := TickPartStep("deal", func(s *sprint.Snapshot, _ sprint.TickReq) (sprint.Plan, int) {
 		return sprint.CutReadCards(s, seats), 0
 	}, sprint.TickReq{Who: sprint.MachineActor, Friends: seats}, nil, nil, &due)
-	step.Routes = true
+	step.Routes, step.Readers = true, true // the readers' states read, as the tick reads them
 	return step
 }
 

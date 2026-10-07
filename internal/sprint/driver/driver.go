@@ -113,7 +113,7 @@ const clearedMark = "the sprint was cleared at"
 // coordinatorVerbs are never run by the driver: the coordinator's, and the
 // machine's.
 var coordinatorVerbs = map[string]bool{"accept": true, "rework": true, "drop": true, "rank": true, "resume": true, "return": true,
-	"start": true, "stop": true, "tick": true, "run": true, "resolve": true, "ask": true}
+	"start": true, "stop": true, "tick": true, "run": true, "resolve": true}
 
 // DefaultWidth is the work cards a member takes a tick when the view shows no
 // width for it.

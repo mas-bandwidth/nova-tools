@@ -9,20 +9,17 @@ import (
 )
 
 // More judgments answered by rule (docs/SPEC-SPRINT.md section 8, the rules table's rows
-// friend-take, read-late and hold-need; the owner, 2026-10-05: "OK what else is like this,
+// friend-take and hold-need; the owner, 2026-10-05: "OK what else is like this,
 // saving LLM work by replacing it with checks at the right time?"). On the log of epoch 15 the
 // coordinator answered 864 reworks and 475 take-backs by hand, almost every one by one rule,
 // and a judgment waited up to four hours when the coordinator did not look. Each rule here is
 // a case of the one engine (RuleAnswers, rules.go): it decides on the judgment's own facts,
-// its tick part applies one verb the house already has (friend take, ask --instead, rework),
+// its tick part applies one verb the house already has (friend take, rework),
 // every answer is recorded "answered by rule <name>", and its name in nova-config's
 // answer_rules_off turns it off alone (RuleOff).
 
 // The fields these rules write.
 const (
-	// FieldRuleReread is the primary's attempt at which the read-late rule asked another
-	// reader: once an attempt, the second late read of the attempt is a mind's.
-	FieldRuleReread = "rule_reread"
 	// FieldRuleNeed is the card a HOLD named that the hold-need rule waits for, with the
 	// attempt that held: "<card>@<attempt>".
 	FieldRuleNeed = "rule_need"

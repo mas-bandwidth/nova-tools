@@ -3186,9 +3186,9 @@ func (a *app) cmdReaderHold(away bool, args []string, stdout, stderr io.Writer) 
 
 // cmdReaderRemove takes the named readers off the readers table (the mirror of
 // reader add), in one write: refused, exit 1 and nothing written, when a named
-// reader is no row of the table or holds a read card (asked, reading, ok or
-// broken: the row delete would take the card's place with it), naming the
-// reader and the read cards it holds. The model tla/SprintEvents.tla holds
+// reader is no row of the table or holds a read card (on the readers table, or
+// ready or working on its member's fleet row), naming the reader and the read
+// cards it holds. The model tla/SprintEvents.tla holds
 // the readers as a constant set with no add or remove action; the presence of
 // a reader is tla/DirtyTick.tla's.
 func (a *app) cmdReaderRemove(args []string, stdout, stderr io.Writer) int {
@@ -3220,12 +3220,24 @@ func (a *app) cmdReaderRemove(args []string, stdout, stderr io.Writer) int {
 		for _, x := range cs {
 			ids = append(ids, x.ID+" ("+x.Col+")")
 		}
+		// a member reader's read cards are on its fleet row (sprint read_cards.go)
+		if m, ok := sprint.ReaderMachine(n); ok {
+			fc, err := st.ReadCells(ctx, sprint.Fleet, m, sprint.Ready, sprint.Working)
+			if err != nil {
+				return a.readFailed("reader remove", err, stderr)
+			}
+			for _, x := range fc {
+				if x.F("kind") == "read" {
+					ids = append(ids, x.ID+" ("+x.Col+")")
+				}
+			}
+		}
 		if len(ids) > 0 {
 			holds = append(holds, n+" holds "+sprint.Preview(ids, ", "))
 		}
 	}
 	if len(holds) > 0 {
-		fmt.Fprintf(stderr, "%s reader remove: %s; nothing was changed; a read moves on (read --as <reader>), is sent to another reader (ask --another), or leaves with its primary (rework, drop)\n", prog, oneline.Escape(strings.Join(holds, "; ")))
+		fmt.Fprintf(stderr, "%s reader remove: %s; nothing was changed; a read moves on (read --as <reader>), is handed back to be dealt to another reader (read --as <reader> --return <read> --reason <text>), or leaves with its primary (rework, drop)\n", prog, oneline.Escape(strings.Join(holds, "; ")))
 		return 1
 	}
 	if err := st.B.RowsDel(ctx, st.Names.Table(sprint.Readers), names); err != nil {

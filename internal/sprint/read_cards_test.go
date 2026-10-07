@@ -139,7 +139,10 @@ func TestAReadCardIsDealtToAReaderOfItsTierAndNeverTheWorker(t *testing.T) {
 		require.Len(t, reads, 1, "one reader of two: the other waits")
 		require.Equal(t, "m3", reads[0].Row)
 		askReaders(t, w, nil)
-		require.Len(t, w.notesOf(NWaitingForReader), 1, "the read it lacks is said waiting")
+		// a held reader row is dealt nothing (memberReads), so it is no reader that may yet
+		// read: the read it lacks is the cannot-ask judgment, never a silent wait
+		require.Empty(t, w.notesOf(NWaitingForReader), "no reader that may read it to wait for")
+		require.Len(t, closesFor(w.s.Open, []string{NCannotAsk}, "s1-1"), 1, "the read it lacks is the cannot-ask judgment")
 	})
 	t.Run("never twice to one reader at an attempt", func(t *testing.T) {
 		t.Parallel()

@@ -543,7 +543,7 @@ func (a *app) coordinatorView(ctx context.Context, st *store.Store, all bool) (c
 		if oldest < viewBacklogAge {
 			continue
 		}
-		next := "nova-sprint ask --stream " + stream
+		next := "nova-sprint queue --stream " + stream // the review's read cards are the tick's to cut: look at what holds them
 		if col == sprint.Merging {
 			next = "nova-sprint land --stream " + stream
 		}

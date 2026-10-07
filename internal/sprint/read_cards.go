@@ -759,12 +759,6 @@ func readCardsAsks(s *Snapshot, r TickReq) (Plan, int, int) {
 	}
 	var p Plan
 	_, waits := readCardsAsk(s, seats, nil)
-	for _, c := range s.Work.Column(Review) {
-		if _, wait := waits[c.ID]; !wait && c.F(FieldWaitingReader) != "" {
-			p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.Row, Changes: []Change{change(Work, setEntry(c, nil, FieldWaitingReader))},
-				Moved: c.ID + " waits for a reader no more"})
-		}
-	}
 	// a primary no reader of its tier may ever read at its attempt (none there, or every one
 	// worked or read it) waits on no reader: it is the cannot-ask judgment's, never a silent
 	// wait (rework or drop it, or bring a reader of its tier)
@@ -773,6 +767,14 @@ func readCardsAsks(s *Snapshot, r TickReq) (Plan, int, int) {
 		if w := waits[id]; w == ReadWaitSpent || w == ReadWaitNone {
 			spent = append(spent, Refusal{Key: id, Why: w})
 			delete(waits, id)
+		}
+	}
+	// the waiting mark of a primary that waits no more, or whose wait is now the cannot-ask
+	// judgment's, is cleared: a card never shows both
+	for _, c := range s.Work.Column(Review) {
+		if _, wait := waits[c.ID]; !wait && c.F(FieldWaitingReader) != "" {
+			p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.Row, Changes: []Change{change(Work, setEntry(c, nil, FieldWaitingReader))},
+				Moved: c.ID + " waits for a reader no more"})
 		}
 	}
 	markWaiting(&p, s, map[string]int{}, waits)
@@ -787,7 +789,8 @@ func readCardsAsks(s *Snapshot, r TickReq) (Plan, int, int) {
 
 // readersOf says whether the primary has readers of its tier (tiered), and whether one of
 // them may yet be dealt its read at the attempt (possible: not its worker, holding or
-// having spent no read of it), up, down or held alike.
+// having spent no read of it): a friend whose roles name reader, up, down or held alike,
+// and a member whose reader row reads (memberReads: never one held or retired).
 func readersOf(s *Snapshot, seats []FriendSeat, pr *Card, attempt int, worker string, cards []*Card) (tiered, possible bool) {
 	var all []readUnit
 	for _, f := range seats {
@@ -796,7 +799,7 @@ func readersOf(s *Snapshot, seats []FriendSeat, pr *Card, attempt int, worker st
 		}
 	}
 	for _, m := range s.Members() {
-		if s.Readers != nil && s.Readers.HasRow(ReaderPrefix+m) {
+		if memberReads(s, m) {
 			all = append(all, readUnit{name: m, row: m})
 		}
 	}

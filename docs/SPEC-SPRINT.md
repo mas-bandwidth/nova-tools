@@ -1845,8 +1845,7 @@ re-asked at the same attempt after being taken back by the away sweep). Fields: 
 attempt, head, asked and begun (clock times), verdict, finding, usage. It takes its
 primary's score. `queue` shows each card's times. A read card
 exists because a member has one place per table and a pro card has two readers
-at once (a flash card one; section 6). While read cards are on (`set --read-cards on`;
-section 6, "A read is a consumer card") a read card is on the fleet table, on its
+at once (a flash card one; section 6). A read card is on the fleet table, on its
 reader's row (a friend's `friend.<name>`, a member's `<m>`), named `<primary>.r<attempt>.<reader>`
 and `.g1`, `.g2` for a read the machine took back and dealt again, with `tier`, `branch`,
 `start`, `read_deadline` and, on a member's row, its route: a consumer card dealt like work.
@@ -2904,552 +2903,232 @@ the adoption `release.OneMachine` (internal/release/adopt_one.go). Test:
 
 ## 6. The readers
 
-- **The interim rules of 2026-10-06, until read cards** (the owner, 7:25 PM ET: "fix it
-  now, to work around it"; the read-cards change (PR 5392) replaces
-  the ask, and these rules with it):
-  - A card's reads are asked together: the ask asks every read it still needs at once, a read
-    outstanding (a friend's too) counts among those that stand, and once a read finds it
-    broken no more is asked (the owner, 6:02 PM ET: "send out multiple consumer cards in ||").
-  - The ask picks from the free readers themselves, by room, the readers' `ask_index`
-    breaking ties, so a reader up that the index does not hold is asked as any other.
-  - A read card retired without a verdict (returned past its re-asks, levelled, held, taken
-    back, away or refused) leaves its reader askable once more at the attempt, under the
-    second identity `<primary>.r<attempt>.<reader>.g1`; a read with a verdict spends it.
-  - A pro card is read on flash while no enabled route serves pro and one serves flash (the
-    owner, 7:11 PM ET: "let flash read pro"), and a heavy card's reads are drawn on pro, a
-    heavy friend asked first at heavy and a fleet reader of pro beside her (7:41 PM ET:
-    "let pro do it").
-  - `set --fleet off` deals no work card to a machine and `set --friends off` none to a
-    friend (both default on, the work table's properties `fleet` and `friends`): reads
-    still flow on both sides, `where` and `view coordinator` say `fleet: off` or
-    `friends: off`, `where --json` carries `fleet_work` and `friends_work` (`on` or `off`),
-    and the side that is off raises no idle alarm (`the fleet is idle`, `alarm_fleet`, an up
-    friend's empty row).
+A read is a card (the owner, 2026-10-06: "reads need to become a type of card"; "send out
+multiple consumer cards in ||"; "Just remove the complexity. just deal it."). The tick's deal
+cuts every read a primary in review needs as a read card on the fleet table, the table its work
+is dealt on, and the read card is the one path (`sprint/read_cards.go`; the model is
+`tla/ReadCards.tla` and the reference model's `refmodel/reads.go`). A primary still goes
+through review, and leaves it only by the rules below.
 
-- A reader row has a state, as a fleet member has: up, away or down. The rows
-  are the coordinator's: `init --readers` and `reader add` declare them, and no
-  beat, no queue and no loop record makes one. A reader with its row says it is
-  there by asking for its own queue: `queue --as <reader>` writes its beat (a
-  record outside the tables, as a member's beat is); the queue of a name with no
-  row writes none, and its `--json` answer carries `reader: false` (`true` for a
-  row), which the reader loop prints once as `MEMBER NOT A READER <name>: ...`
-  naming `nova-sprint reader add <name>` (nova-tools#5096 item 23). It is up while its
-  last beat is within the beat bound (`ReaderBeatBound`, the fleet's 15 s),
-  away when it beat and has lapsed, down when it has never beaten; the
-  coordinator's `hold <reader> --reason <text>` holds it whatever it beats
-  (state `held`; section 11, hold), and `unhold <reader>` releases the hold;
-  `reader away <reader>` (`hold --return`) and `reader up <reader>` (`unhold`)
-  are the old words, for one release; `reader retire <reader>` holds it
-  away for good (state `retired`, its beat written no more, its row and read
-  cards kept) until `reader up`. A held reader is asked nothing, its reads
-  asked and not begun are asked of another, and its reads begun finish (with
-  `--return` they are taken back at the hold, where a reader up is free to read
-  them); a reader away or down has every read, begun or not, taken back. The readers table has no `status`
-  column and `where` shows no reader's state; the state is never stored in the
-  table. The state is read, never typed: the tick reads it once, with its first
-  read, and every part plans on that reading.
-- The readers' rebalance runs once at the start of every tick, before any
-  table's update (the owner, 2026-10-01: "just once before tick, rebalance each
-  table."): first its safety ("if ever there are cards on a held or down
-  machine, rebalance moves them away"): every read asked or reading of a reader
-  that is not up is taken back (retired by `away`) while a reader up without a
-  card at its attempt could take it, and the tick's ask asks it again; with
-  none, it stays and is judged as below. Then the level: a reader's room is
-  its width less its load (asked and reading), compared as a share of its
-  width, and asked reads (not begun) move from the reader with the least share
-  (over its width when below zero) to the reader up with the greatest share
-  that has free room, ties round the readers from the `ask_index`, while the
-  target's share after the move stays at or above the source's, so no reader
-  up has free lanes while another holds a backlog, no move fills a reader past
-  its width (a reader at width is given nothing), and the ask's placement is
-  the level's fixed point (`sprint.levelReads`, `round.levelToRoom`). A moved read is retired (by `level`) and asked of the other reader
-  at the same attempt and head, its route kept, as a fresh ask (not returned,
-  reasked 0); a pro card's two reads stay with two different readers, and no
-  reader is asked an attempt it already had. A read is moved at most once: the
-  read card a level move asks carries `leveled`, and the level moves no card
-  that carries it, so a late read is not asked afresh
-  on reader after reader (the owner, 2026-10-01: "This pesky one card that
-  doesn't clear thing... this is a failure mode we must fix. We can't get
-  stuck on the last card."). A reader is named for its machine, `reader-<m>`,
-  one reader per machine, and runs at the machine's width: `queue --as
-  reader-<m> --json` carries m's fleet row's `width` as a member's own queue
-  carries its row's, and the reader runs that many reads at once (the owner,
-  2026-10-02: "why not just have as many readers as workers per-machine"); a
-  reader named for no fleet row is handed no width and begins nothing. The
-  sprint knows a reader's width the same way, derived from its fleet row
-  (`sprint.ReaderWidth`; the readers table holds no width column, and `where`
-  shows each reader's width beside reading, "-" for a reader with no row), so
-  reads are asked and levelled by room, never by count alone (the owner,
-  2026-10-03: with widths 4/8/16/16/24, count-levelling queued seven reads on
-  the two narrow machines while 31 reader slots sat idle); a reader named for
-  no fleet row keeps unbounded room, so such readers order by load alone. No
-  reader is bounded at DealAhead times a width: its room is its width.
-- A card's reads are counted by its tier (the owner, 2026-10-02, cost rule 4,
-  nova-tools#5174: "Reads: one cold read per flash card on a flash route; two
-  per pro card; readers still equal workers per machine"): a flash card needs
-  ONE read, a pro card (or a heavy card) TWO (a frontier card is asked of one frontier friend, not drawn on a route; a friend's card, above), from two
-  different readers (`sprint.ReadsNeeded`). The tier is the card's own, the tier
-  it is on (section 5, flash first: flash at its first deal on a route, then the
-  tier it escalated to, or the tier a rework recorded; its ceiling, line 1's
-  tier, in a store with no route), never a setting, so a card in merging or landed is
-  held to the count it was accepted on; a read tier set for the stream or the
-  sprint (below) raises the route its reads are drawn on and never their
-  count. The reads per machine are unchanged: a reader still runs at its
-  machine's width.
-- A reader row carries the tiers it reads (`readers.tiers`, text, no fold;
-  an empty cell is the default: a fleet reader reads flash alone while the store
-  holds routes, and a friend's or a bud's reader, which brings its own model,
-  every tier; the owner, 2026-10-06, "I'm ok with flash readers on fleet but not
-  pro"; `sprint.fleetReadsFlashOnly`; a store with no route has every reader run
-  its own model, and an empty cell there reads every tier). `reader add <reader>...
-  [--tiers flash[,pro,heavy,frontier]|all|default]` and `reader set <reader>... --tiers
-  ...` write them; omitted and `default` store empty, and `all` stores every tier
-  by name (`flash,pro,heavy,frontier`), so a fleet row reads pro only when its row
-  names it.
-  The ask (`freeReaders`, `enoughReadersUp`, the level, and a returned read
-  asked again in place) counts a reader only for a primary whose read tier
-  (`readTierOf`) the cell names, and never asks a reader a read outside that
-  tier. A card with fewer readers of its tier up than `ReadsNeeded` raises the
-  one existing judgment `fewer than two readers up` and asks nothing of a
-  reader outside the tier. `where` and the reader verbs print the tiers
-  (`default` when the cell is empty). The readers' level plans with the routes,
-  as the ask does, so it moves no read above flash to a fleet row that names none. A table created before the column gains it
-  at `init` or at the next `reader set` (and at `reader add` when `--tiers`
-  is given). The model is `tla/ReaderTiers.tla`: no read is asked of a reader
-  outside the primary's tier. `tla/ReadsByRoom.tla` and `tla/DirtyTick.tla`
-  do not name reader tiers.
-- ask deals every primary in review that wants a read to as many different
-  readers UP as it wants now, in work order. **Reads are asked together, each
-  to a reader with room** (the interim rule above; `sprint.ReadsWanted` says
-  how many, `sprint.askFinders` and `sprint.askPicks` say where): every read
-  the card needs (ReadsNeeded: one for a flash card, TWO DIFFERENT readers for
-  a pro card) is asked at once, a read outstanding counted among them; a
-  broken read goes to its judgment and the rework with no more read asked. A
-  read taken back from a reader away or handed back with no verdict was wanted
-  when it was placed and is asked again whatever stands; `ask --another` adds
-  one more reader at any time. Each read wanted goes to the reader with the greatest share of room
-  (its free room, width less asked and reading, as a part of its width;
-  widths 4 and 24 with ten reads: the 24 takes eight) that has free room and
-  no read card at the attempt, placed or retired, ties the next round the
-  readers from the readers' `ask_index`; the reads one ask places come off the
-  room as it goes. A reader at width is given nothing, and a primary whose
-  reads wanted now find too few DIFFERENT readers with room waits for the
-  next tick, due, with no judgment. **A card in review is never silent: it is
-  asked a read in the tick it reaches review when a reader it may be asked of
-  has room, and when none has the tick records `waiting for a reader` on it**
-  (a happened note naming it and its attempt, written once an attempt, the
-  primary's `waiting_reader` field its mark) and asks it the tick one frees;
-  the ask that asks it clears the mark. The no-stall rule holds a card that
-  waits (the tick's due), so `stalled` and `stranded in review` (never asked)
-  are left for an ask refused for a reason the coordinator decides (the night
-  of 2026-10-05: three cards sat in review with no read asked and no note until
-  the coordinator ran `ask` by hand, each after a stall judgment;
-  `TestAReviewCardIsAskedAReadTheSameTick`). The ask's `cannot ask` judgment is for a
-  primary that no readers could read to the count it needs, whatever their
-  room (so not even its first read is asked when no second reader could ever
-  read it). One read card per reader. The two rules meet in one pin,
-  `TestSequentialReadsAtReaderWidthKeepThreeReadsPerLanding`: pro cards whose
-  first read fails once land on three reads each while no reader holds more
-  reads than its machine's width (with `TestAProCardsReadsAreAskedOneAtATime`
-  and the reader-width tests of cmd/nova-sprint). **The reader who found the
-  defect checks the fix** (the owner, 2026-10-04): `rework` writes on the
-  primary the reader whose finding it sends back (`finding_reader`, the first
-  broken read's reader in reader row order, the readers table's declaration
-  order and never name order, when ask --another left two broken reads of one
-  attempt: `sprint.finderOf`, refmodel `Rework`,
-  `TestTheFinderIsTheFirstBrokenReadInReaderRowOrder`; beside
-  `finding_attempt`), and the
-  next attempt's first read is asked of that reader, out of turn, when it is
-  up, has no read card at the attempt and has free room under its machine's
-  width (a reader named for no fleet row has room), so the check is against
-  the finding and not a fresh opinion (`sprint.finderFirst`); the second
-  reader stays fresh, the reader with the most room. The finder's read
-  carries `finder`, the readers' level leaves it where it is, and the
-  readers' index does not move for it; the finders' reads are placed first in
-  a step and come off their room like any read, so the room, not a turn
-  count, keeps the readers' loads even and the ask's placement stays the
-  level's fixed point
-  (`TestTheReaderWhoFoundTheDefectChecksTheFix`); a finder away or without
-  room is not preferred (`TestTheFinderIsNotPreferredWhenAwayOrWithoutRoom`).
-  Reworked work is otherwise asked by the same room: a read is a fresh child
-  on a freshly drawn route, so the readers of an earlier attempt are not
-  preferred, and a busy reader is not asked again only to have the next
-  tick's level move the read (the owner, 2026-10-01, deleting the preference
-  for the readers kept on the primary: "yes on the decision."). The model is
-  tla/ReadsByRoom.tla (one read at a time, the finder first, every read on a
-  reader with room under its machine's width, three reads for a pro card
-  found broken once) and the reference model (internal/sprint/refmodel,
-  AskChoice: the finder first, then the least loaded reader).
-  A reader away or down is never asked. A read asked, and not begun, of a
-  reader that is not up is taken back by the next ask (the tick's, in the same
-  step that asks the primary again): its read card is retired (by `away`), the
-  primary stays at its attempt, no redeal is spent and no `ask --another` is
-  owed, and the next reader up that has no read card at that attempt is asked.
-  A read begun stays with its reader, except one its reader returns with no
-  verdict (`read --as <reader> --return <card> --reason <text>`: its launch
-  did not run, or it gave no verdict). A return is not a read: the read card
-  goes back to asked on its reader's row, stamped `returned`, one happened
-  note `a reader returned a read` carries the reader, the card and the
-  reason, no finding counts against the work and no bound of the primary is
-  spent, and the next tick asks it of another reader up that has no read card
-  at the attempt (the returned card retired, by `returned`), or, when none is
-  free with room, of the same reader again, in place, which takes no room (its
-  reader holds the card already); either way on a route drawn
-  afresh as a new read's is, leaving out the route it returned on while the
-  tier has another, and drawn only when the ask is not refused, so a reader
-  whose launches failed
-  is not counted as having read the attempt (tla/DirtyTick.tla,
-  JudgedOnlyAfterTheBound). Each return counts itself on the read card (its
-  `reasked` field, moved by `read --return`, whatever the tick does and
-  however many readers are up), and a read card goes back to asked at most
-  `MaxReadReasks` (2) times at its attempt; the return after that is counted
-  as a read: the card is retired (by `returned`), and a primary no reader is
-  left to read is the ask's `cannot ask` judgment (or, with fewer than two
-  readers up, `fewer than two readers up`), for the coordinator (reader add,
-  rework, drop; tla/DirtyTick.tla, ReasksBounded and StrandingIsJudged). A
-  read refused is not a read: a return whose reason is a launch refusal
-  (`launch refused`, the member could not start it: no route, a slot it cannot
-  make) never ran, so it counts toward no bound and marks nothing against its
-  reader. It is retired off the reader (`retired_by` refused, its reason in
-  `refused_why`) and asked of another reader of its tier; the reader that refused
-  it may be asked it once more at the attempt, under the second identity, as a
-  reader whose read was taken back away may. The model carries it as the
-  refused-read transition (`tla/DirtyTick.tla`, `ReadRefuse`, `nrt`): the one
-  re-ask moves `rea` at most `MaxReasks`, so `ReasksBounded` holds, and a second
-  refusal opens the tier's judgment instead of another re-ask. When fewer readers
-  are free for it than the reads it still needs and a reader refused it for want
-  of a route, the
-  tier's one judgment holds it (`no route serves the tier`, one per tier, the
-  deal's, its text naming the refusals), the card stays in review, no `cannot ask`
-  is raised for it, and the readers stay up and are asked their next reads
-  (2026-10-06: every fleet reader was asked heavy reads with no route on the card,
-  each refusal was counted toward the bound as a read, and the readers were spent
-  at the attempt; `TestAReaderRefusedForNoRouteIsNotSweptAway`). A
-  reader is asked an attempt once, and once more when its read was retired with
-  no verdict (the interim rule above): its read card at the attempt is one read
-  per reader per attempt (`<primary>.r<attempt>.<reader>`), and a read retired
-  without a verdict (levelled, returned, held, taken back, away, refused) can be
-  asked again at the same attempt under a second identity with a generation
-  suffix (`<primary>.r<attempt>.<reader>.g1`), once; the next attempt is read on
-  new cards, by every reader; and
-  the store's per-tick record enumeration enumerates both identities without
-  extra round trips. The tick's `cannot ask` is one judgment per tick, `no
-  eligible reader for <ids>`, every such primary a subject of it (the night
-  of 2026-10-03: five cards whose reads were taken back from five readers in
-  turn, five judgments). Its
-  member does not begin a read it returned again before
-  `member.ReadStageRetry`. A return of a read the caller does not hold is
-  refused, and so is a second return of a read returned and not begun since:
-  a return is counted once. A primary that needs more readers than are up
-  is not asked (with one reader up the tick asks the flash cards and the pro
-  cards wait): the tick raises one judgment, `fewer than two readers up:
-  <readers and their states>`, for the sprint (not one for each primary),
-  closed when enough are up or no such primary waits; `reader up` and
-  `reader add` answer it.
-  The machine's tick asks for every such primary; `ask` is the coordinator's
-  own. Each read card the ask creates carries a route as a work card does
-  (`route`, `model`, `tokens`, `usd`, `deadline`), and `tier`, the tier it is drawn
-  from: the tier of the card it reads, the tier the deal draws that card's
-  work from (flash first, the tier it escalated to after; a card that pins a
-  model is read on line 1's tier, flash when it names none; a heavy card, heavy; a frontier card, a
-  tier no route serves, is asked of a frontier friend, not drawn on a route (section 1, a friend's
-  card), and a route named for it is heavy, the strongest tier a route serves (a read on pro
-  would be weaker than the writer); the owner, 2026-10-01: "i think readers being
-  conservatively the same tier as the work being done seems fine?"), raised
-  to the read tier set for its stream (`stream set <s> --read-tier <tier>`, the
-  stream's control card's `read_tier`) or else for the sprint (`set --read-tier
-  <tier>`, the work table's `read_tier` property) when that is stronger, and
-  never lowered (nova-tools#5096 item 27: a pro card's reads run on a tier at
-  least as strong as the writer's). **The floor is per attempt** (the owner,
-  2026-10-04): a flash-first card whose third attempt runs on pro gets pro
-  reads whatever its stream's read tier, which is a floor over the attempt's
-  tier and never a cap, and the default read tier is the attempt's own; a
-  stream's read tier is never set below its work tier, the strongest tier its
-  open cards' briefs name (`sprint.StreamWorkTier`): `stream set <s>
-  --read-tier <t>` raises it and refuses to lower it with one line, `<s>'s
-  work tier is pro: its read tier is never below it; run: nova-sprint stream
-  set <s> --read-tier pro`; a stream read tier of heavy raises every read in
-  the stream (`TestTheReadTierFloorIsPerAttemptAndAStreamSettingOnlyRaises`).
-  **The escalation** (readtier.go): when a stream's landed card is returned by
-  dev or an audit (`promoted --sha <sha> --returned <ids>` marks each with
-  `returned_by_dev`, the tier its reads ran on and the sha), when two readers
-  at the stream's read tier disagree on one attempt (an ok and a broken read
-  standing at it), or when a card alternates broken and ok across attempts (a
-  reader passed an earlier attempt, `passed_head`, and the current one is
-  found broken), the tick raises one judgment per stream, `raise the read tier
-  of <s> to <next>? <why>`, with the decisions raise (the default: `stream set
-  <s> --read-tier <next> --reason '<why>' --answers <note>`, which records the
-  reason on the stream's control card, `read_tier_reason`, and closes the
-  judgment) and keep (`ack`, which holds it quiet); it is one per stream
-  whatever the cards, kept in place while a cause holds, closed when the
-  stream's read tier for the card has risen, and it never lowers; at the top
-  tier nothing is asked (`TestReadersDisagreeingRaiseOneJudgmentPerStream`,
-  `TestALandedCardReturnedByDevAsksToRaiseTheReadTierAndKeepHoldsIt`,
-  `TestACardAlternatingBrokenAndOkAsksToRaiseTheReadTier`); its packet hands the reader that tier and
-  the reader's JOB.md names it. It is drawn at that tier's rolling index on the
-  fleet table, which the deal and the reads share and the ask moves once a
-  read (`internal/sprint/route.go`, readRouteOf;
-  tla/RouteIndex.tla, THE READS); its packet hands the reader that route, so a
-  reader loop needs no `--model`, and a reader started with `--model`,
-  `--tokens` and `--deadline` runs its reads on those. A store with no route
-  asks with none, and the reader runs its own. **A read needs a reader, not a
-  route** (the card pr-wire-server-restart, 2026-10-05, a heavy card stalled in
-  review under `no enabled route serves tier heavy` while the fleet's table held
-  flash and pro routes only and the friends who read heavy were up; the owner
-  chose this over a heavy fleet route, which would let the fleet be dealt heavy
-  cards it cannot run): a friend's or a bud's reader, `reader-<name>` for a
-  friend whose seat the tick reads or whose friend row the fleet table has
-  (beaten by her daemon, `internal/friend` ReaderOf), brings its own model and
-  serves every tier its tiers cell names, route or none; any other reader is the
-  fleet's, runs the route its read draws, so it serves a tier only while an
-  enabled route of the tier is in the tier's array, and is asked no read of a
-  tier it cannot draw (`sprint.readerServesTier`,
-  `internal/sprint/read_route.go`). Its read of a tier no route serves is asked
-  with no route, and its verdict records on the read card the `model` and
-  `harness` its usage line names (`model=<provider/model> ... harness=<h>`), so
-  the read says what it ran on. The deal's tick raises the tier's judgment,
-  `no route serves the tier`, at once for every primary in review whose reads
-  wait or were asked with no route only when no enabled route serves the tier
-  AND no reader up that brings its own model reads it (`route.go`,
-  readRouteMissing), closed when either serves it
-  (`TestAHeavyCardIsReadByAFriendReaderWithNoHeavyRoute`).
-  Work that came back failed is not read: it waits for the coordinator.
-  `ask --another` deals a primary already asked to one more reader, for that
-  attempt only (the primary's `asked` field still names the readers the
-  attempt was asked of, and after a rework the readers its tier needs are
-  asked round the readers);
-  before
-  the first ask of its attempt it is refused, naming `ask` and the tick as
-  what asks first.
-- **The decide read.** The first read of a flash card is a decide read (the
-  owner, 2026-10-02: "i'd really like to start using jev to do cheap
-  reads/evals/scoring of work"; "the nova-decide is both sides"). The ask writes
-  the sprint row's two bars, `decide_bounce` and `decide_review` (nova-config,
-  `sprint set --decide_bounce <p> --decide_review <p>`; 0.5 and 0.3 by default,
-  the calibration of 2026-10-02 over 234 reviewed cards, AUC 0.869), on the first
-  read card it places at a flash card's attempt (`steps_review.go`, decideFields:
-  drawn on flash, not `ask --another` or `--instead`, and no read that stays at
-  the attempt is one); the packet hands them to the reader, and a read the level
-  moves keeps them. Every other read is a strings read: a read drawn on pro
-  always is, and both bars empty in the sprint row turns the decide read off. Its reader's native, once the checkout is staged
-  and before any child, asks nova-decide's read decision (docs/SPEC-NOVA-DECIDE.md
-  section 8) over the work card's brief alone (the sprint's mechanics and the
-  worker's report cut off, the state the bars were calibrated on; the E1 rule the
-  calibration added for docs and diary cards is not sent yet) and the work's
-  diff, start..HEAD, through the Jev
-  backend with the key `JEV_API_KEY` the reader loop's nova-secrets keys hold
-  (native's own: no child is handed it), and routes the read by p(defect) alone,
-  never by the decision's verdict or its inside_paths answer:
-  - at or above `decide_bounce`: a broken read, its finding
-    `decide: p(defect)=0.xx at or above the bounce bar ...` with the files the
-    diff changes and the five answers; no child runs;
-  - below `decide_review`: an ok read, its report the same line; no child runs,
-    and the card goes on to accept as any ok read takes it;
-  - between the two: the strings read runs as before, and its verdict (ok is
-    LAND, broken is BOUNCE) is attached to the decision as its outcome.
+### How many reads, and when
 
-  Every decision is appended to the reader machine's record,
-  `<root>/decide/read.jsonl`, under the read card's id at the head it read
-  (`<card>@<head 12>`), so a read returned and asked again replays it with no
-  call; a review round's label is attached later with `nova-decide outcome`, and
-  `nova-decide calibrate` reads the bars the record supports. The record is
-  loaded whole on every read and not yet rotated: a cap or a rotation is owed
-  before it grows past the spec's thousand reads. A decide read that
-  cannot be made (no key, a backend that fails, bars it cannot read) is said on
-  one `NATIVE NOTE` line and the strings read runs.
-- A reader moves its own read cards: asked -> reading -> ok | broken, with the finding.
-  A report on a card still asked is accepted: it is the begin and the report in
-  one step, and `begun` is stamped with it.
-  A read whose stage fails (the head could not be checked out) is never a verdict: its member
-  runs the read again once, after `member.ReadStageRetry`; a second stage failure is returned
-  (`read --as <reader> --return <card> --reason <the stage's reason>`), and the next tick asks
-  it again as above.
-- The read that completes the ok reads a primary needs at its head (one
-  reader's for a flash card, two different readers' for a pro card), whoever
-  read it (a reader on the readers table, a friend on her fleet row), is no
-  judgment: the tick accepts the primary. There is no hand step between review
-  and merging (`TestTheTickAcceptsAPrimaryWhoseReadsAreAllOk`).
-- The machine's tick accepts every acceptable primary in review whose work did
-  not fail, in the pump of the first tick after its last needed read closed ok
-  (RUNNING, the next tick; STOPPED, the first tick after start): review ->
-  merging queued, the move `accept --read-ok` makes, the readers it was
-  accepted on named in its record (`readers`, `accepted`). The seat is told,
-  never asked: one notice a tick, "ready to merge", happened and addressed to
-  the coordinator, names every primary the tick accepted and each stream's
-  `land --stream <s>`; nothing in it asks for an answer
-  (`TestTheSeatIsToldWhatWasAcceptedNotAskedToAccept`). The pump holds two:
-  one whose CI is red at its head ("ci red on a primary" is the coordinator's:
-  a green at its head, or the coordinator's accept, takes it) and one the
-  coordinator returned to review at its attempt ("returned to review" decides
-  it: accept, rework, drop; its reads stand, and a rework's new attempt with
-  its own reads is the tick's to accept again). A primary held so, with no
-  open judgment on it that offers accept (its CI judgment acknowledged), is
-  told as ready to accept; accept, rework and drop close it. That is the one
-  case ready to accept is written for: the hold is a mind's. The guards of the
-  attempt stand as they are: a broken read is its judgment, the read tier and
-  the heavy read (`accept --heavy`) are unchanged. `accept --read-ok` stays,
-  for a stuck case; when no primary waits it says `nothing waits: the tick
-  accepts every primary in review whose reads are all ok and tells the seat
-  (ready to merge)`. The models are tla/DirtyTick.tla `AcceptAll` (the pump
-  takes every read card nothing holds) and `CoordAccept` (the coordinator's
-  accept, for a held one), and the reference model's `acceptNote` and
-  `tickAccept` (`TestTheModelAndTheEngineAgreeTheTickAcceptsWithNoHandStep`;
-  the read-card path, `TestTheTickAcceptsAPrimaryWhoseReadsAreAllOkOnReadCards`).
-- Check's rule 6 (section 9) counts an ok read on the fleet table (a friend's
-  on her row, a read card on a member's) that the accept recorded on the
-  primary (`readers`) when the read card, retired off its row with its
-  verdict, is not in the snapshot it judges: a sparse read loads such a read
-  by id only for a primary in review. A card that is loaded is judged as it
-  is. Before this, every primary accepted on a friend's read or a read card
-  raised a rule 6 invariant judgment at the tick's check.
-- A primary is acceptable when as many different readers as it needs have an
-  ok read card at its current attempt and head: one for a flash card, two for a
-  pro card. For a pro card one reader's ok alone is never enough, whoever the
-  reader. A reader counts once, and a read card counts only when the row it
-  occupies, the reader its id names and its reader field are one reader; a card
-  that disagrees counts for no one, and check reports it.
-- A primary in review with no read outstanding, not acceptable and no open
-  judgment is a judgment written by the step that causes it (a read, an ack
-  that closes its last judgments, all those one call closes counted together
-  and the judgment written once, or a green CI that closes its last one):
-  reads exhausted when it was asked at its attempt, else stranded in review
-  (failed work acknowledged, or never asked). An ack of that judgment itself
-  does not write it again; ask closes stranded in review.
-- A broken read names its defect (docs/SPEC-CARD-CONTRACT.md section 3, a broken
-  read): a broken verdict whose finding names no file, line or rule the work breaks
-  is no read at all, neither ok nor broken; its member hands it back as a return
-  whose reason begins `no finding:`, the primary stays in review, and the tick asks
-  another reader, so the coordinator is never asked to judge on nothing. The verb
-  itself holds the same rule: `read --broken` whose finding names none is refused,
-  the read stays the reader's, asked or reading, to report with a finding or to hand
-  back (`--return`), and no verdict, finding or judgment is written. A broken
-  read's finding is recorded, and its judgment shows it, in full: every line of the
-  reader's report and body, never its first line alone.
-- A broken read notifies the coordinator. rework sends the primary back with
-  the finding as the fix and delegates the next attempt at once (section 3);
-  the primary's read cards are retired in the same step. When the fixed work
-  returns, its finish asks no reader: the machine's ask, in the tick the
-  finish wakes, asks the readers its tier needs (one for a flash card, two
-  different readers for a pro card) round the readers, at the new head, on new read cards of the new attempt, each with the route it draws
-  (one path asks). A report against a retired
-  read card is refused, naming the retirement.
-- A rework of a primary a reader passed (an ok read at its head when it is sent
-  back) keeps that head (`passed_head`). When the next attempt's worker finds
-  nothing to do or commits nothing (its failed finish begins `nothing to do:` or
-  `no commit:`, and pushed no head), the card was right: it is no failed work and
-  no judgment; the primary goes back to review at the passed head, and the tick
-  asks the readers its tier needs at the new attempt (`TestNothingToDoAtAHeadAReaderPassedIsBackInReview`).
-  With no pass at the head it is failed work for the coordinator, as before.
+- A card's reads are counted by its tier (the owner, 2026-10-02, cost rule 4, nova-tools#5174):
+  a flash card needs ONE read, a pro or heavy card TWO, from two different readers
+  (`sprint.ReadsNeeded`). The tier is the card's own (section 5: flash at its first deal on a
+  route, then the tier it escalated to, or the tier a rework recorded; its ceiling in a store
+  with no route), never a setting, so a card in merging or landed is held to the count it was
+  accepted on.
+- The deal cuts the reads first. The tick's deal (`TickDeal`, `withReadCards`) cuts every read a
+  primary in review still needs AT ONCE, before any work card of the same deal: ReadsNeeded
+  less the reads that stand at its attempt (a read card placed, or one retired with its verdict
+  at the primary's head). None while a read stands broken (its judgment and the rework follow),
+  and none for work that came back failed, which waits for the coordinator
+  (`readCardsWanted`). `sprint.ReadsWanted` is this count.
+- A read card is `<primary>.r<attempt>.<reader>` (kind `read`, `read_card` 1), created on its
+  reader's fleet row in the step that cuts it: in ready on a member's row, in working on a
+  friend's row while she has a lane free. It carries `head`, `branch` and `start` (the attempt's
+  work head, its branch, the commit the attempt started from), `tier` (`readTierOf`; a
+  friend's, `friendReadTier`), `priority` when its inherited level is above reader
+  (`ReadPriority`), on a member's row the route drawn from its tier's index as it stands (a read
+  moves no index: the work cards move it), and on a flash card's first read of an attempt the
+  decide bars (`decideFields`, below).
 
-### A read is a consumer card
+### Who reads
 
-The owner, 2026-10-06: "reads need to become a type of card"; "These are all good reasons why
-read should have been going through consumer cards the whole time"; "send out multiple consumer
-cards in ||"; "Go wide with reads, 2X regular width"; "start with tier"; "Just remove the
-complexity. just deal it." While the sprint's setting says so (`set --read-cards on`, the work
-table's `read_cards` property; `off` or `default` is off), a read is a card on the fleet table,
-the table its work cards are dealt on, and the readers table asks nothing new
-(`sprint/read_cards.go`). The review is unchanged: a primary still goes through review, its
-reads close as `read --ok|--broken` closes them, and it leaves review only by the rules above.
+- A friend is dealt a read when she is dealable (`friendDealable`), her nova-config row's roles
+  name `reader` (`friend sync` copies them to the roster, `FriendSeat.Roles`) and one of her
+  tiers is the read's tier or above it (`friendAtOrAbove`: a heavy friend reads a flash and a pro
+  card). She brings her own model: her read draws no route.
+- A fleet member is dealt a read when it is up and its reader row, `reader-<m>` on the readers
+  table, is neither held nor retired (`memberReads`) and serves the read's tier
+  (`readerServesTier`). The row carries the tiers the member reads (`readers.tiers`; `reader
+  add|set --tiers flash[,pro,heavy,frontier]|all|default`); an empty cell is the default, which
+  reads flash alone while the store holds routes (`fleetReadsFlashOnly`; the owner, 2026-10-06:
+  "I'm ok with flash readers on fleet but not pro") and every tier in a store with no route. A
+  member's read draws the route of its tier, so it serves a tier only while an enabled route of
+  the tier is in the tier's array.
+- A reader one tier below the read's tier may take it, a friend or a member alike, never two
+  below (the owner, 2026-10-06, 7:11 PM ET "let flash read pro", 7:41 PM "let pro do it";
+  `tierBelow`). A pro card is read on flash while no enabled route serves pro and one serves
+  flash, and a heavy card's reads are drawn on pro (`readTierOf`).
+- Never the unit that worked the attempt, and never a unit that holds a read card of the
+  attempt or closed one (`readSpent`: placed, or retired with a verdict, by `read`, `returned`
+  or `late`). A read the machine took back (its reader down, away or held, a resting route, its
+  primary moved on, never started: `retired_by` `away`, `rest`, `primary`, `unstarted`) spends
+  nothing: its reader may be dealt it again, under the next generation of the id (`.g1`, `.g2`;
+  `MaxReadGen`).
+- A read goes to the cheapest reader that may take it, friends and members alike: one with an
+  idle lane before every one with none (a read waits in a ready queue only when every reader
+  that may take it is busy), then by tier distance (`readTierDistance`: the read's own tier, one
+  tier below, then the tiers above, nearest first), then the most idle lanes, then the most
+  room, then by name (`TestAReadCardGoesToTheCheapestReaderThatMayTakeIt`). There is no rolling
+  reader index and no per-reader room: a read card holds half a slot of its unit's one width.
+- A read card holds half a slot. A row's load is its work cards and half its reads, rounded up
+  (`halfLoad`), in the deal's room (`memberLoads`, `widthRoom`, `friendLoad`): a member of width
+  8, holding DealAhead (2) widths, holds 16 work cards or 32 reads or any mix. The take holds the
+  width in half slots and takes the reads first; a member of width 1 runs two reads at once
+  (`member.halves`).
+- `set --fleet off` deals no work card to a machine and `set --friends off` none to a friend
+  (both default on): read cards still flow on both sides, `where` and `view coordinator` say
+  `fleet: off` or `friends: off`, and the side that is off raises no idle alarm.
 
-- **The deal deals the reads, first.** The tick's deal (`TickDeal`, `withReadCards`) deals
-  every read a primary in review still needs AT ONCE, before any work card of the same deal
-  (blocker and critical work included: placing the reads within the ladder, after the work
-  above reader, is owed):
-  ReadsNeeded (one for a flash card, two for a pro or heavy card) less the reads that stand at
-  its attempt (a read card placed, one retired with its verdict at the primary's head, and a
-  readers-table read asked the old way and begun). None while a read stands broken (its
-  judgment and the rework follow), none for failed work. Each read is a card,
-  `<primary>.r<attempt>.<reader>` (kind `read`), created on its reader's fleet row in the step
-  that cuts it, as a work card is cut and dealt in one step: in ready on a member's row, in
-  working on a friend's row while she has a lane free. It carries `head`, `branch` and `start`
-  (the attempt's work head, its branch, the commit the attempt started from), `tier`, the
-  primary's tier (`readTierOf`; a friend's, `friendReadTier`), `priority` when its inherited
-  level is above reader (`ReadPriority`), `read_card` (1: a read card, not a read asked the
-  old way), and on a member's row the route drawn from its tier's index as
-  it stands (a read moves no index; the work cards move it) and the decide bars on a flash
-  card's first read (`decideFields`).
-- **Who reads.** The rules a work card is dealt by, and two of a read's own. A friend is dealt
-  a read when she is dealable (`friendDealable`), her nova-config row's roles name `reader`
-  (`friend sync` copies them to the roster, `FriendSeat.Roles`; on 2026-10-06 builder-only
-  friends were asked reads) and one of her tiers is the read's tier or above it (`friendAtOrAbove`: a heavy friend reads a flash and a pro card). A reader one tier below the read's tier may take it too (the owner, 2026-10-06 7:11 PM ET "let flash read pro", 7:41 PM "let pro do it"; `tierBelow`), a friend or a member alike, never two below (`TestAReaderOneTierBelowMayTakeAReadCard`). A fleet member
-  is dealt a read when it is up and its reader row, `reader-<m>` on the readers table (the
-  machine's reader identity: `reader add`), is neither held nor retired and serves the read's
-  tier (`reader set --tiers`, `readerServesTier`). Never the unit that worked the attempt, and
-  never a unit that holds a read card of the attempt or closed one (`readSpent`: placed, or
-  retired with a verdict, by `read`, `returned` or `late`), nor a machine whose reader row
-  holds a readers-table read of the attempt. A read the machine took back (its member down,
-  away or held, `hold --return`, a resting route, its primary moved: `retired_by` `away`,
-  `rest`, `primary`) spends nothing: its reader may be dealt the read again, under the next
-  generation of the id (`.g1`, `.g2`; `MaxReadGen`). A read goes to the cheapest reader
-  that may take it, friends and members alike: one with an idle lane before every one with
-  none (a read waits in a ready queue only when every reader that may take it is busy), then
-  by tier distance (`readTierDistance`, against the read's tier before `readTierOf` lowers
-  it, for friends and members alike: the read's own tier, one tier below, then the tiers
-  above, nearest first, then a member whose read is drawn two or more tiers below; a pro read
-  on a heavy reader is a waste, and the flash reader takes the flash reads), then the most idle lanes, then the most room, then by name
-  (`TestAReadCardGoesToTheCheapestReaderThatMayTakeIt`).
-  There is no finder, no rolling index and no per-reader room.
-- **Half a slot.** A read card holds half a slot of its unit's one width: a row's load is its
-  work cards and half its reads, rounded up (`halfLoad`), in the deal's room (`memberLoads`,
-  `widthRoom`, `friendLoad`), so a member of width 8, holding DealAhead (2) widths, holds 16 work
-  cards or 32 reads or any mix. The take holds the width in half slots (a read one, a work card
-  two) and takes the reads first; the member's own lanes count the same (`member.halves`): a
-  member of width 1 runs two reads at once.
-- **The member runs a read card.** A read card in a member's fleet queue is taken with its work
-  and run by the same loop as a read: its packet is a read's (`Kind: read`, the head, the work
-  branch, the worker's report), it pushes nothing, and its end is reported with the read verb as
-  the member, `read --as <m> (--ok | --broken) <card> --finding <text>` or `read --as <m>
-  --return <card> --reason <text>`, never `finish`.
-- **A friend's read card is a card.** Friend sync delivers it as her work cards: inbox/<job>/
-  BRIEF.md under the job a card of hers has (`friendJobOf`: its stored id, `.g<gen>` from 2), with
-  the bus wake, and the brief is whole for a lane that has never seen the sprint
-  (`ReadCardBrief`): the STATUS line (a read: change nothing, commit nothing, push nothing; the
-  report's path), what a read is, the repository, branch, head, base and start, how to read (the
-  clone, the checkout of the head, the diff, what to judge against: the card's HOW THIS CARD IS
-  JUDGED and AS A READ, its task, STEPS, TEST, PATHS and RULES, the tests to run), how to finish
-  (outbox/<job>/REPORT.md whose first line is `Verdict: LAND` or `Verdict: HOLD`, a HOLD naming
-  each defect), and the card under review verbatim with the worker's report. A one-shot runner
-  that runs inbox/<job>/BRIEF.md and publishes outbox/<job>/REPORT.md runs it unchanged
-  (`TestAOneShotFriendRunsAReadCardFromItsBrief`). A friend's read asked before read cards (no `read_card` field) keeps its card id
-  as its job at every epoch (`Packet.read_job`), delivered, queued and closed at inbox/<card id>
-  and outbox/<card id> as it was, so installing this build delivers no live read again
-  (`TestAReadAskedTheOldWayKeepsItsInboxPath`).
-- **The close.** `Verdict: LAND` (or `read --ok`) retires the card with verdict ok, `Verdict:
-  HOLD` with a line naming a file, a line or a rule (or `read --broken` with its finding) retires
-  it broken and raises the read-broken judgment, exactly as a readers-table read does; the usage
-  the verb carries is kept on the card. Two different readers' oks at the head make a pro card
-  acceptable, and the tick accepts it (`TestAReadCardsVerdictClosesTheRead`).
-- **Replaced.** A read card handed back (`read --return`), or taken and not closed within
-  `ReadCardDeadline` (an hour on the sprint's clock from its take; a friend's read dealt
-  working, from its deal), is retired (`returned`, `late`) and spends that reader's read; the
-  next deal deals the read to another reader. A read never started is never late: one left in
-  ready past the deal bound (`DealtMax`) is taken back (`unstarted`), spending no one, and its
-  reader may be dealt it again (`TestAReadCardsDeadlineRunsFromItsStart`). A verdict names a
-  read of the attempt under review only: one for another attempt is refused. One whose primary left review at its attempt (a rework, a brief replaced, a drop, an
-  accept) is retired by the deal (`primary`); a rework retires its read cards in its own step
-  and takes a read card's finding as its fix (`TestAReturnedReadCardIsReplacedWithAnotherReader`).
-- **Waiting.** The tick's ask asks nothing while read cards are on (`readCardsAskPart`): it marks
-  a primary that wants more reads than it holds `waiting for a reader`, once an attempt, counted
-  due so the no-stall rule holds it, clears the mark once it waits no more, and keeps the readers
-  behind and raise-the-read-tier judgments; `cannot ask` and `fewer than two readers up` close.
-- **Turning it on.** On a store with reads asked the old way, a readers-table read asked and not
-  begun is taken back (`retired_by` `read cards`) and dealt as a read card; a read begun there
-  finishes there and stands, so no primary is read twice
-  (`TestTurningReadCardsOnNeverReadsAPrimaryTwice`).
-- **Shown.** `card <id>` lists a primary's read cards on the fleet table with its readers-table
-  reads; `where` counts them in their rows' ready and working; `where --json`'s `reads_waiting`,
-  the dashboard's orange marks, is the reads wanted and not dealt plus the read cards dealt and
-  not started.
-- **Read as records.** A store's snapshot holds the placed cards and the records a step names,
-  so the steps that judge reads (the tick's parts, `accept`, `rework`) name every identity of a
-  read card of each primary in review (`ReadCardExtras`).
-- **The readers table retires.** The next release removes the readers table's ask (`Ask`,
-  `TickAsk`, the `ask` verb, the readers' level) and the setting: read cards are then the one
-  path. Owed before it: the reference model's ask and level (`refmodel`), the driver's simulated
-  readers, `tla/ReadsByRoom.tla` and `tla/DirtyTick.tla`, and the tick's pinned round trips. The
-  readers table's rows stay as the machines' reader identity and tiers. The model of read cards
-  is `tla/ReadCards.tla`.
+### The read tier
+
+- Each read card's `tier` is the tier the deal draws its card's work from, raised to the read
+  tier set for its stream (`stream set <s> --read-tier <tier>`, the stream's `read_tier`) or else
+  for the sprint (`set --read-tier <tier>`) when that is stronger, and never lowered
+  (nova-tools#5096 item 27). The floor is per attempt (the owner, 2026-10-04): a flash-first
+  card whose third attempt runs on pro gets pro reads whatever its stream's read tier. A
+  stream's read tier is never set below its work tier (`sprint.StreamWorkTier`): `stream set
+  <s> --read-tier <t>` raises it and refuses to lower it with one line
+  (`TestTheReadTierFloorIsPerAttemptAndAStreamSettingOnlyRaises`).
+- The escalation (`readtier.go`): when a stream's landed card is returned by dev or an audit
+  (`promoted --sha <sha> --returned <ids>`), when two readers at the stream's read tier disagree
+  on one attempt (an ok and a broken read card standing at it), or when a card alternates broken
+  and ok across attempts (`passed_head`), the tick raises one judgment per stream, `raise the
+  read tier of <s> to <next>? <why>`, with the decisions raise (`stream set <s> --read-tier
+  <next> --reason '<why>' --answers <note>`) and keep (`ack`); it is kept while a cause holds,
+  closed when the stream's read tier has risen, and it never lowers
+  (`TestReadersDisagreeingRaiseOneJudgmentPerStream`,
+  `TestACardAlternatingBrokenAndOkAsksToRaiseTheReadTier`).
+- A read needs a reader, not a route. A friend serves every tier her tiers name, route or none;
+  a member serves a tier only while a route of it is enabled. The deal raises the tier's
+  judgment, `no route serves the tier`, for a primary whose reads wait only when no enabled
+  route serves the tier AND no reader that brings its own model reads it (`route.go`,
+  readRouteMissing), closed when either serves it.
+
+### The decide read
+
+- The first read card of a flash card's attempt is a decide read (the owner, 2026-10-02: "i'd
+  really like to start using jev to do cheap reads/evals/scoring of work"). The cut writes the
+  sprint row's two bars, `decide_bounce` and `decide_review` (nova-config, `sprint set
+  --decide_bounce <p> --decide_review <p>`; 0.5 and 0.3 by default), on it (`decideFields`); every
+  other read is a strings read, and both bars empty turns the decide read off. Its reader's
+  native, once the checkout is staged and before any child, asks nova-decide's read decision
+  (docs/SPEC-NOVA-DECIDE.md section 8) over the brief alone and the work's diff through the Jev
+  backend (`JEV_API_KEY` from the reader loop's nova-secrets keys), and routes the read by
+  p(defect) alone:
+  - at or above `decide_bounce`: a broken read, its finding `decide: p(defect)=0.xx at or above
+    the bounce bar ...` with the files the diff changes and the five answers; no child runs;
+  - below `decide_review`: an ok read, its report the same line; no child runs;
+  - between the two: the strings read runs, and its verdict is attached to the decision as its
+    outcome.
+- Every decision is appended to the reader machine's record, `<root>/decide/read.jsonl`, under
+  the read card's id at the head it read, so a read dealt again replays it with no call. A
+  decide read that cannot be made (no key, a failing backend, unreadable bars) is said on one
+  `NATIVE NOTE` line and the strings read runs.
+
+### Running and closing a read card
+
+- A member runs a read card from its fleet queue with its work, in the same loop: its packet is
+  a read's (`Kind: read`, the head, the work branch, the worker's report), it pushes nothing,
+  and its end is the read verb as the member, `read --as <m> (--ok | --broken) <card> --finding
+  <text>` or `read --as <m> --return <card> --reason <text>`, never `finish`. A read card has no
+  begin: the take moves it to working (`read --begin` on a read card is refused naming the
+  take).
+- A friend's read card is delivered as her work cards are: inbox/<job>/BRIEF.md (`friendJobOf`),
+  with the bus wake, its brief whole for a lane that has never seen the sprint
+  (`ReadCardBrief`): what a read is, the repository, branch, head, base and start, how to read,
+  how to finish (outbox/<job>/REPORT.md whose first line is `Verdict: LAND` or `Verdict: HOLD`,
+  a HOLD naming each defect), and the card under review verbatim with the worker's report
+  (`TestAOneShotFriendRunsAReadCardFromItsBrief`).
+- The close. `Verdict: LAND` or `read --ok` retires the card with verdict ok; `Verdict: HOLD`
+  with a line naming a file, a line or a rule, or `read --broken` with its finding, retires it
+  broken and raises the read-broken judgment. The reader's finding, ok or broken, is kept on the
+  card and told by `card`'s story. The usage the verb carries is the card's cost record, a
+  consumer of its primary (cost.go), its run timed from its take, or from its cut for a read
+  dealt working. A verdict names a read of the attempt under review only: one for another
+  attempt is refused. A reader that names the primary instead of its read card is refused
+  naming the read card it holds.
+- A broken read names its defect (docs/SPEC-CARD-CONTRACT.md section 3): a broken verdict whose
+  finding names no file, line or rule the work breaks is no read; `read --broken` whose finding
+  names none is refused, the read stays the reader's to report with a finding or to hand back,
+  and no verdict, finding or judgment is written. A broken read's finding is recorded, and its
+  judgment shows it, in full.
+- Replaced. A read card handed back (`read --return`, with its usage recorded as a consumer of
+  its primary), or taken and not closed within `ReadCardDeadline` (an hour from its take; a
+  friend's read dealt working, from its deal), is retired (`returned`, `late`) and spends that
+  reader's read; the next deal cuts the read for another reader. A read never started is never
+  late: one left in ready past the deal bound (`DealtMax`) is taken back (`unstarted`), spending
+  no one (`TestAReadCardsDeadlineRunsFromItsStart`). One whose primary left review at its
+  attempt (a rework, a brief replaced, a drop, an accept) is retired by the deal (`primary`); a
+  rework retires its read cards in its own step and takes a read card's finding as its fix
+  (`TestAReturnedReadCardIsReplacedWithAnotherReader`).
+
+### Accept
+
+- A primary is acceptable when as many different readers as it needs have an ok read at its
+  current attempt and head: one for a flash card, two for a pro card. A reader counts once, and
+  a read card counts only when the row it occupied, the reader its id names and its reader field
+  are one reader; a card that disagrees counts for no one, and check reports it.
+- The machine's tick accepts every acceptable primary in review whose work did not fail, in the
+  pump of the first tick after its last needed read closed ok (RUNNING, the next tick; STOPPED,
+  the first tick after start): review -> merging queued, the readers it was accepted on named in
+  its record (`readers`, `accepted`). The seat is told, never asked: one notice a tick, "ready to
+  merge", names every primary the tick accepted and each stream's `land --stream <s>`
+  (`TestTheSeatIsToldWhatWasAcceptedNotAskedToAccept`). The pump holds two: one whose CI is red
+  at its head, and one the coordinator returned to review at its attempt. A primary held so,
+  with no open judgment on it that offers accept, is told as ready to accept; accept, rework and
+  drop close it. `accept --read-ok` stays for a stuck case. The models are tla/DirtyTick.tla
+  `AcceptAll` and `CoordAccept`, and the reference model's `acceptNote` and `tickAccept`
+  (`TestTheModelAndTheEngineAgreeTheTickAcceptsWithNoHandStep`).
+- Check's rule 6 (section 9) counts an ok read card the accept recorded on the primary
+  (`readers`) when the read card, retired off its row with its verdict, is not in the snapshot it
+  judges: a sparse read loads such a read by id only for a primary in review.
+- The coordinator records its own heavy read with the accept (`accept <id>... --heavy
+  --evidence <path> --reason <text>`, below).
+
+### A card in review is never silent
+
+- A primary that wants more reads than it was dealt, while a reader of its tier that may yet
+  read it is there (up, down or held for a friend; a member whose reader row is neither held nor
+  retired: `readersOf`), waits for that reader's room: the tick's ask part
+  (`readCardsAskPart`) records `waiting for a reader` on it (a happened note, once an attempt,
+  the primary's `waiting_reader` field its mark), counted due so the no-stall rule holds it
+  (`readWaitHeld`), and clears the mark once it waits no more.
+- A primary that no reader of its tier may ever read at its attempt (none is there, or every one
+  worked the attempt or holds or spent a read of it) is the `cannot ask` judgment, one a tick for
+  every such primary (`no eligible reader for <ids>: <why>`), never a silent wait; its waiting
+  mark is cleared with it, raised once and kept while it holds, and closed when a reader that may
+  read it comes. Its decisions are reader add, rework, drop and wait; a rework answers it
+  (`TestCannotAskIsRaisedOnceAndClearsTheWaitingMark`,
+  `TestARetiredMemberReaderLeavesTheReadToTheCannotAskJudgment`).
+- A primary in review with no read outstanding, not acceptable, no reader that may yet read it
+  and no open judgment is a judgment written by the step that causes it (a read, an ack that
+  closes its last judgments, a green CI that closes its last one): reads exhausted when a read
+  stood at its attempt, else stranded in review (failed work acknowledged). An ack of that
+  judgment itself does not write it again; the deal's cut closes stranded in review.
+- `fewer than two readers up` is no longer raised (read cards count readers by tier, and a
+  primary no reader may read is `cannot ask`); the tick closes one left open by an older build.
+
+### Rework
+
+- A broken read notifies the coordinator. rework sends the primary back with the finding as the
+  fix and delegates the next attempt at once (section 3); the primary's read cards are retired
+  in the same step. When the fixed work returns, its finish cuts no read: the deal in the tick
+  the finish wakes cuts the reads its tier needs at the new head, on new read cards of the new
+  attempt, which every reader may read.
+- A rework of a primary a reader passed (an ok read at its head when it is sent back) keeps that
+  head (`passed_head`). When the next attempt's worker finds nothing to do or commits nothing
+  (its failed finish begins `nothing to do:` or `no commit:`, and pushed no head), the card was
+  right: the primary goes back to review at the passed head, and the deal cuts its reads at the
+  new attempt (`TestNothingToDoAtAHeadAReaderPassedIsBackInReview`).
+
+### Shown
+
+- `card <id>` lists a primary's read cards and tells them in its story (cut, taken, read with its
+  verdict and finding, handed back, taken back); `where` counts them in their rows' ready and
+  working; `where --json`'s `reads_waiting`, the dashboard's orange marks, is the reads wanted and
+  not dealt plus the read cards dealt and not started; `stats` samples each reader's read cards.
+- A store's snapshot holds the placed cards and the records a step names, so the steps that judge
+  reads (the tick's parts, `read`, `accept`, `rework`, `card`, the inbox's moves due) name every
+  identity of a read card of each primary in review (`ReadCardExtras`).
+- A store that still holds the old `read_cards` setting ignores it. A read asked on the readers
+  table before read cards (and not begun) is taken back by the deal (`retired_by` `read cards`)
+  and cut as a read card; one begun there finishes there and stands, so no primary is read twice
+  (`TestTurningReadCardsOnNeverReadsAPrimaryTwice`). A server restart takes back such a
+  readers-table read whose lease has lapsed (`sprint.RestartReads`); read cards are fleet cards,
+  held across a restart as work cards are.
 
 ### reader-ignores-attribution.w5
 
@@ -3464,18 +3143,6 @@ reads close as `read --ok|--broken` closes them, and it leaves review only by th
   and nothing is written; a finding with a real defect and an attribution remark
   passes (`TestAttributionOnlyFindingsNeverBounce`).
 
-### restart-keeps-reads-r.w1
-
-- A server restart keeps every read in flight whose lease is live and only takes back
-  reads whose lease has lapsed (retired by `lapsed`: `sprint.RestartReads` / `sprint.ServerRestart`,
-  `store.ServerRestartStep`, `tla/ServerLanes.tla` Restart, `LiveLeaseNeverTakenBack`,
-  `EveryLapsedReadTakenBack`). A read asked of a reader is held by a lease: started by
-  `read --begin` (`begun` + `DefaultReadLease`, 10 minutes), and renewed by the reader's beat
-  (`queue --as <reader>`, setting `lease` to the current time + `DefaultReadLease`).
-  On server start, `store.ServerRestartStep()` is run once before the first tick in `run` and
-  in `listen` (`run --listen`), both through `serverStart`, so in-flight reads with live
-  leases survive a server restart while lapsed reads are retired and re-asked.
-
 ### accept-heavy-verdict-b.w1
 
 - The coordinator records its own heavy read with the accept:
@@ -3486,12 +3153,12 @@ reads close as `read --ok|--broken` closes them, and it leaves review only by th
   `heavy_kind` (`heavy`), `heavy_verdict` (`ok`), `heavy_evidence` (the path) and
   `heavy_evidence_sha256` (the file's sha256, read by the verb), `heavy_reason`,
   `heavy_attempt`, `heavy_head` and `heavy_at`; `card --fields` and `card --json` show it,
-  and the accept's line names it with its evidence. No read card is written for it, no
-  reader row names it, and the primary's `readers` field names the readers' oks alone. A
-  reader's broken read at the attempt stays as the reader left it, and the primary names it
-  in `heavy_overrules`: overruled by the coordinator heavy read. It is refused, nothing
-  written, without a readable evidence file or a reason, for a selection (`--stream`,
-  `--read-ok`, `--group`), and for a card not in review (`sprint.Accept`, `heavyRead`;
+  and the accept's line names it with its evidence. No read card is written for it, and the
+  primary's `readers` field names the readers' oks alone. A reader's broken read at the
+  attempt stays as the reader left it, and the primary names it in `heavy_overrules`:
+  overruled by the coordinator heavy read. It is refused, nothing written, without a readable
+  evidence file or a reason, for a selection (`--stream`, `--read-ok`, `--group`), and for a
+  card not in review (`sprint.Accept`, `heavyRead`;
   `TestAcceptHeavyRecordsTheCoordinatorsReadNotAReaders`).
 
 ### script-cards-self-verify.w1: the script read
@@ -3509,42 +3176,17 @@ read whose finding begins `script read: ` (`sprint.ScriptReadPrefix`), and `acce
 read as all the reads the card needs, a pro card's two included. Any difference, an empty diff, a
 missing commit or a failed run is no verdict: the same reader goes on to read the card as a model
 reader does, and the card needs the reads its tier needs as any card does. The head is never accepted
-on the worker's word: the reader ran the program itself. The model is the readers' (`tla/DirtyTick.tla`):
-the script read is a read, placed and counted as one, and adds no state.
+on the worker's word: the reader ran the program itself. The script read is a read, placed and
+counted as one, and adds no state.
 (`TestAScriptCardWhoseDiffMatchesItsProgramNeedsNoModelRead`.)
 
-### The tick's ask in small fenced steps
+### The reads in the tick
 
-The tick's ask (T2, section 14) writes its reads in small fenced steps, never in one write of
-the whole tick's plan. Each step plans the ask part on a fresh read, as every part does. It then
-writes the first five primaries of that plan that this tick has not yet written or given up
-(`store.AskBatch`), with the plan's judgments until a step has committed them. Each step makes
-at most three tries (`store.AskTries`, against the twelve of a whole step, `store.FenceTries`).
-A step that loses all three is tried again one primary at a time. A primary that loses its own
-three tries is refused alone, `its ask lost <n> tries this tick in a step of its own (another
-writer moved the fence, or the store refused the write as planned); nothing was written for it;
-the next tick asks it again`, and the steps go on with the rest. The steps begin no try past the
-ask's budget (`store.AskBudget`, 2 s, or half of the time the tick's context has left when that
-is less, read on the store's clock): the ask stops there with what it asked, the primaries it did
-not reach are due, and the next tick reads them. A batch that lost its tries and that the budget
-cut before it was tried again one primary at a time is due too, and leaves the ask unfinished.
-The tick's `TIMES` line prints the ask as `readers/ask=<ms>ms/<trips>t/
-<asked>asked/<refused>refused/<lost>lost`, `<lost>` the primaries of such a batch. The tick holds the server's line of control through the ask, as
-through every part (section 14, The server): the ask does not give the line up between its
-steps, and its budget is what bounds the wait of the workers' verbs behind it. On 2026-10-06,
-with 297 cards in review, the ask planned forty primaries in one write and lost all twelve tries
-on every tick ("the sprint kept changing under this step (12 attempts)"). No read was asked for
-ten minutes, and each tick held the line for up to 20 s.
-
-The tick plans on a sparse read. Its extras name, for every primary in review at its attempt,
-the retired read cards of each reader row and of each friend's fleet row (`store.tickExtras`). A friend's read that has closed ok or broken is her verdict, so
-`ReadsWanted` counts it, and the friend ask asks no friend an attempt she has already read.
-Before the friends' cards were among the extras, a read a friend had closed was invisible to the
-tick. The friend ask then planned her read card again, which is a create of a record that exists.
-The store refused that create on every try, so no friend was asked a read while 283 of 300 review
-cards had none outstanding.
-(`TestTheAskStepAsksInSmallFencedSteps`, `TestTheAskStepStopsAtItsBudget`,
-`TestAnAskConflictIsOneCardsRefusalNotTheTicks`, `TestTheFriendAskAsksEveryReviewCardAFriendMayRead`.)
+The read cards are cut by the deal in the pump's own step, with the work it deals, on the
+snapshot the deal plans on; there is no separate ask step and no reader level. The tick plans
+on a sparse read: its extras name, for every primary in review, every identity of its read
+cards (`store.tickExtras`, `ReadCardExtras`), so a read retired with its verdict stands, and the
+deal never cuts a read card whose record exists.
 
 ## 7. Merging
 
@@ -4193,7 +3835,7 @@ the tick would make, no other open judgment on it).
 |---|---|---|
 | work came back failed | rework (with a fix), drop | no |
 | a brief defect | re-cut the brief (drop, then add the re-cut card), drop | no |
-| a reader found it broken | rework (with the finding), ask --another, drop | no |
+| a reader found it broken | rework (with the finding), drop | no |
 | a card has reached its bound: the brief is wrong, not the worker | brief (a waiting card; else drop and add again), drop | no |
 | stream stopped: conflict on a card | resume (resolved), rework, drop | no |
 | stream stopped: stream branch red | return the suspect and resume, rework the suspect | no |
@@ -4204,16 +3846,15 @@ the tick would make, no other open judgment on it).
 | a primary came back a second time for the same cause | card (stop and look) | no |
 | a primary is blocked on something dropped | drop, ack (waives the dropped need), or `relink <old> <new>` answers it when the dropped card has a twin (section 2, a card replaced by its twin); the verbs refuse to open one (add refuses a need naming a dropped card, drop refuses a needed card without `--cascade`), so it answers a stored record only | yes |
 | a primary is blocked on something missing | drop, ack (waives the named missing need) | yes |
-| reads exhausted | ask --another, rework, drop | no |
+| reads exhausted | rework, drop | no |
 | ready to accept (a primary the pump holds: its CI red at its head, its CI judgment acknowledged; one nothing holds the tick accepts, section 6) | accept, rework, drop | no |
 | returned to review | rework, accept (while its reads stand at its head), drop | no |
-| stranded in review | rework, drop (and ask when never asked) | no |
+| stranded in review | rework, drop | no |
 | sentinel reached | release, add --before (do more before going on), drop | no |
 | repair skipped changes the store refused as recorded | card (look), return, drop, rework, ack | yes |
 | an operation was stuck | check, ack | yes |
 | a reminder could not be delivered | goal set (a new route), goal drop, ack | yes |
-| cannot ask (enough readers are up, and a primary has fewer readers with no read card at its attempt, placed or retired, than its tier needs: one for a flash card, two for a pro card; one judgment per tick, `no eligible reader for <ids>`, every such primary a subject of it) | reader add, rework (a new attempt every reader may read), drop, wait | no |
-| fewer than two readers up | reader up, reader add, wait | no |
+| cannot ask (no reader of a primary's tier may ever read it at its attempt: none is there, or every one worked the attempt or holds or spent a read of it; one judgment per tick, `no eligible reader for <ids>`, every such primary a subject of it; section 6) | reader add, rework (a new attempt every reader may read), drop, wait | no |
 | no fleet member is up (when every member that beats is held, it says so and offers only fleet up and wait) | fleet beat (on a machine), fleet up (releases a hold), wait | no |
 | the fleet is starving (ready, sentinels aside, is under twice the up members' width while a wave is held: `the fleet is starving: ready <n> is under twice the width <2w>; release a wave: nova-sprint release <sentinel> --reason '<why>'`, raised once and updated in place every tick while it holds, naming the first held sentinel in work order; closed when no wave is held; `TestTheTickRaisesStarvingWhileReadyIsUnderTwiceTheWidth`) | release (the wave's sentinel; never a single card), wait | no |
 | a member is overloaded (the owner, 2026-10-03: "the overload is defined as -- cards are timing out. not any CPU%": within the last 15 minutes, `sprint.OverloadWindow`, a member up has had three or more cards, `sprint.OverloadTimeouts`, end on a timeout of any kind, counted from the finishes it reported: a launch refused at staging on `stage-timeout` (the work card's staging take, on whatever row the card sits now), a failed finish `deadline: ...`, or one the budget rule ended because `the usage source stopped answering`; `sprint.TimeoutKind`, `sprint.MemberTimeouts`, `sprint.Overloaded` in internal/sprint/overload.go, one pure decision the tick and the seat check both read; no load number is in it, the beat's load stays a fact for the table): `<m> is overloaded: <k> cards ended on a timeout in the last 15m0s: <card> (<kind>), ...; halve its width: nova-sprint fleet up <m> --width <half>, or wait 15m`, one per member, updated in place every tick while it holds and closed when the window has no three (`TestTheTickRaisesOverloadedOnThreeTimeoutsInTheWindow`) | fleet up <m> --width <half of its width>, wait 15m | no |
@@ -4221,12 +3862,12 @@ the tick would make, no other open judgment on it).
 | raise the read tier of the stream? (readtier.go: a landed card of the stream returned by dev or an audit, `promoted --returned`; two readers at the stream's read tier disagreeing on one attempt; a card alternating broken and ok across attempts; one judgment per stream, `raise the read tier of <s> to <next>? <why>`, updated in place while a cause holds and closed by the raise; section 6) | raise (`stream set <s> --read-tier <next> --reason '<why>'`, the default), keep (`ack`) | no |
 | a card reached its bound (at its ceiling tier, flash first, section 5: an attempt's work card redealt MaxRedeals, 3, times after takes that ended, the provider's failures among them, and a take of it ended again; the judgment names the provider and the last error line when the provider failed that take; or the second identical failure, section 2: two takes of the card, or two attempts of its primary, failed the same way, and the judgment names the class) | rework with a fix (a new attempt, on the next tier), drop, wait (at a redeal bound, wait only when the bound was a provider failure); when the attempt before also ended at its bound on the card's tier (section 5, the bound holds across attempts): rework with a fix on a higher tier (`--tier`, when the ladder has one), drop, and wait only when the bound was a provider failure and the provider's return has not yet lifted a bound on that tier | no |
 | a work card is past its deadline | fleet down (the member, only when it has held the card its own whole deadline: never the member a late card was just redealt to, nor one it was withdrawn from), wait, drop | no |
-| a read card is past its deadline | ask --another, wait, drop | no |
+| a read card is past its deadline | wait, drop (the deal takes it back and deals the read to another reader) | no |
 | a stream has had no merge step past its deadline | merge --stream, card (look), wait | no |
 | an invariant is broken | card (look at the card), repair, wait | no |
 | a judgment has waited past its due time (overdue) | a decision of the judgment, wait | as the judgment |
 | a stream has made no progress past its deadline (stale) | where, queue (look), wait | no |
-| stalled: nothing holds a card (rule 12) | the decisions its place allows and that would be accepted (ask --another for a primary asked already, never ask), else look at the card; drop; wait | no, while the stall stands |
+| stalled: nothing holds a card (rule 12) | the decisions its place allows and that would be accepted (the deal cuts the reads of a primary in review), else look at the card; drop; wait | no, while the stall stands |
 | review above its alarm, merging above its alarm, nothing ready while cards wait, the fleet works below its alarm (the backlog alarms, below) | ack (seen: quiet until the episode ends), wait | yes |
 
 A condition the tick keeps (cannot ask, fewer than two readers up, no member up, a deadline passed, an
@@ -4328,7 +3969,7 @@ work card is its own cause, naming its card, so two late reads of one primary
 are two judgments, each closing when its own card moves). A verb discharges only the
 obligations it actually resolved: rework resolves a failure, a broken read and
 a red CI on the primaries it reworks; drop resolves everything on the primaries
-it drops, and accept every card judgment of the primaries it accepts; ask --another resolves a broken read; a green CI on the current head
+it drops, and accept every card judgment of the primaries it accepts; a green CI on the current head
 resolves a red one; return resolves a red CI on the primaries it returns, and
 answers its stream's red or rejected batch (recorded; that judgment stays open
 while the stream is stopped); resume resolves the stream's stop.
@@ -4344,8 +3985,7 @@ judgment until it is no longer stopped. `--answers <notification>` names what a
 verb answers. It is accepted for every decision the notification itself lists
 (return on a red, rejected or cross stop, since taking the suspect off is a
 return; drop on a rejected, conflict or cross stop; rank on the cross stop
-that names the card; ask --another on reads exhausted, which it closes: the
-new read outstanding is what keeps the primary from being exhausted), and
+that names the card), and
 refused for a notification the verb resolves nothing of; one refused answer
 refuses the whole step, which writes nothing (a verb refused has written
 nothing). A verb that names its cards or notes (ids, `--group`, an ack's
@@ -4866,7 +4506,6 @@ rules` prints the same answers, read-only: one `RULE` line per judgment and subj
 | `bound` | a card reached its bound (its redeal bound at its ceiling, or the second identical failure) | a new attempt one tier up, as `failed`'s climb; past heavy, a friend's card. A card every member up refused at staging, or at its brief's bound, is left |
 | `late` | a work card is past its deadline | with progress in the last 10 minutes (the work card's `progress` stamp: the server's time of its holder's last `progress` verb, which the member sends every 3 minutes while its child prints and the friend daemon while a lane's turn on the card prints; a stamp from before the card's take is another holder's and counts as none) a wait of 30 minutes, once a generation (`rule_waited`). The default is wait only: a working card whose holder has stamped no progress since its take is held 30 minutes at a time and never returned by this rule, so a member that does not stamp never loses an honest long child to it (`tla/SprintRules.tla`, `NeverStampedNeverReturned`). A card whose holder stamped and then went silent past the 10 minutes, or whose one wait is spent, is returned and dealt again once its holder has had its own whole deadline (withdrawn, the take ended: it spends a redeal, so a card late again and again reaches its bound and climbs); a card just dealt again is held until its holder's own deadline. Each answer keeps a hold on the condition until the time it names, and the tick raises it again then if it still holds. A card on a friend's row is `friend-take`'s |
 | `friend-take` | a work card is past its deadline, on a friend's row (dealt and never taken, or working and not finished) | one she has not started (no `progress` stamp, and her beat names neither the card, its job nor its primary running: `friendStarted`) is taken back to ready (`friend take`, `rule take`; `taken_from` her row) and the next tick's deal places it again, never on her. One she started stays hers (a friend keeps the cards she started); a card pinned to her alone (`WHO: only friend`), a brief defect, and a card of a friend the tick holds no seat of are left |
-| `read-late` | a read card is past its deadline (asked and not begun, or begun and not reported), of the primary's attempt in review | its reader's read taken back and asked of one other reader (`ask <card> --instead <reader>`, `rule ask`, one a tick: each ask writes the readers' round index), once an attempt (`rule_reread` on the primary); the second late read of the attempt, and one no other reader can take (the ask's refusal), are left. A read handed back with no verdict needs no rule: the ask places it again on a free reader itself (section 6) |
 | `hold-need` | work came back failed and its report says the word `HOLD` | a HOLD naming a card on the table that has not landed (the first by id; the stream controls aside) waits for it: `rule_need` (`<card>@<attempt>`) and `rule_answer` on the primary and the judgment's text prefixed `waiting on <card> by rule hold-need: `, once an attempt (`rule need`); the judgment stays open, since a primary in review has no move to waiting (section 3). Once that card lands the primary is reworked (`rule rework`), its fix `<card> has landed: do the brief again on the current tip` with the report. A HOLD naming no such card, or one dropped since, is left, and `failed` does not redeal it |
 | `conflict` | stream stopped: conflict on a card, where the lander refused a head one of three ways (`sprint.RefusalWay`): its paths that did not merge are files no generated ledger owns (`conflict_kind=file`, `conflict_paths` on the stream's control card, from `merge --conflict-kind --conflict-path`, which land reports), it fails the lander's checks (files outside its PATHS, E12, or another check), or its merged tree fails the tree gate | in one tick: the card returned to review (`rule_redo` its attempt, `rule_refused` the way, `rule_refusal` the lander's words, `tier_now=flash`), the stream resumed, so the rest of its batch lands on the next landing, and the card reworked at flash, staged on the base's tip, with the fix `redo the same change on the current tip` (a PATHS, checks or gate refusal adds `; the lander refused attempt <n>: <its words>`). The same card refused the same way as the refusal it was last returned on is a brief defect: the card marked (`brief_defect`), the judgment's text prefixed `brief defect: `, the stream left stopped for a mind. A conflict in a ledger the lander could not resolve, one whose files the lander did not say, and a head that is no commit or that origin does not hold are left |
 | `read-broken` | a reader found it broken, on a card in review below its brief's bound | the next attempt (rework) on the same tier, the findings of the attempt's broken reads its fix (as `rework <card> --answers <id>` with no `--fix`); when the findings name a file outside the brief's PATHS (`sprint.FilesOutsidePaths`: a relative path with a directory and an extension of letters, read through quotes and a line number, that no PATHS name, glob or directory covers), the card is twinned instead (`rule twin`: `add --replaces`), its brief's `PATHS:` lines widened by exactly those files and a `CARRY: <id> attempt <n> head=<sha>` line at the broken attempt's head, the findings the twin's `fix`, one card a tick. A card at its brief's bound (the same finding twice, or its attempts cap: the read raises `the brief is wrong` instead), a friend's card, a brief defect and a card whose twin ids are all taken are left; the coordinator sees only those and refusals (`TestABrokenReadIsReworkedByRuleWithItsFinding`; tla/SprintRules.tla Part `reads`: `ReadAnswersBounded`, `TwinsWiden`, `ReadAnswered`) |

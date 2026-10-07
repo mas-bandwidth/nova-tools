@@ -13,11 +13,13 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 )
 
-// The steps of review: ask and read (mechanical, and the readers' own), and
-// the coordinator's verbs accept, rework, return, drop, rank and ci.
+// The steps of review: read (the readers' own: a read card closed with its verdict or
+// handed back; the tick's deal cuts the read cards), and the coordinator's verbs accept,
+// rework, return, drop, rank and ci.
 
-// RetiredByCoordinator is a read card's retired_by when the coordinator took
-// the read back and asked another reader instead (ask --instead).
+// RetiredByCoordinator is the retired_by a readers-table read the coordinator took back
+// carries in a store's history: no step writes it now (read cards are the only ask); read
+// names it when a reader reports on such a record.
 const RetiredByCoordinator = "coordinator"
 
 // A decide read's fields on its read card: the sprint row's two bars on p(defect) it is
@@ -142,8 +144,9 @@ func Read(s *Snapshot, r ReadReq) Plan {
 		p.refuse("read", "a broken read names its defect: a finding line naming the file (file:line), the line, or the card's STEP or RULE the work breaks, and what to change: read --as <reader> --broken <card> --finding <text>; a read with no verdict is handed back: read --as <reader> --return <card> --reason <text>")
 		return p
 	}
-	// a read asked of a friend is on her fleet row, not the readers table
-	// (FriendReadAsk): the verb her packet prints closes it there
+	// a read card is on its reader's fleet row, a friend's or a member's: the verb closes
+	// it there (readCardVerb); a reader-<m> name with no read card falls through to the
+	// readers table, which holds only reads asked before read cards
 	for _, rd := range readers {
 		name, friend := FriendOfRow(rd)
 		member := !friend && s.Fleet != nil && s.Fleet.HasRow(rd) && (s.Readers == nil || !s.Readers.HasRow(rd))
@@ -244,16 +247,13 @@ func Read(s *Snapshot, r ReadReq) Plan {
 			continue
 		}
 		if r.Return {
-			// A return is not a read (tla/DirtyTick.tla, handback and
-			// JudgedOnlyAfterTheBound): the card goes back to asked on its
-			// own row, stamped returned, so its reader is not counted as
-			// having read the attempt; the next ask places it again (Ask) and
-			// no bound of the primary is spent. Once it was asked again in
-			// place MaxReadReasks times (ReasksBounded) the return is counted
-			// as a read: the card is retired, and a primary no reader is left
-			// to read is the ask's "cannot ask" judgment (StrandingIsJudged).
-			// The return counts itself (FieldReasked), here, whatever the tick
-			// does: the ask does not run while fewer than two readers are up
+			// A readers-table read (one asked before read cards) handed back is not a read
+			// (tla/DirtyTick.tla, handback and JudgedOnlyAfterTheBound): the card goes back
+			// to asked on its own row, stamped returned, so its reader is not counted as
+			// having read the attempt, and no bound of the primary is spent; the tick's
+			// read-card take-back retires it and the deal cuts the read as a read card. Once
+			// it was handed back MaxReadReasks times (ReasksBounded) the return is counted
+			// as a read and the card is retired. The return counts itself (FieldReasked)
 			n := happened(NReadReturned, c.F("stream"), s.Now, c.F("primary"))
 			n.What = c.Row + " returned " + c.ID + ": " + r.Reason
 			n.Who = r.Who
