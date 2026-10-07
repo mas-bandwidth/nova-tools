@@ -345,6 +345,9 @@ func friendAssign(s *Snapshot, r FriendTakeReq) Plan {
 		default:
 			u = friendRedealUnit(s, pr, wc, row, set)
 		}
+		if r.Reason != "" {
+			u.Moved += " (" + r.Reason + ")"
+		}
 		p.Units = append(p.Units, u)
 	}
 	if r.AllOrNothing && len(p.Refused) > 0 {
