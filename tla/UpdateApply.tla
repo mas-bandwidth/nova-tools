@@ -51,6 +51,16 @@
 \*   crashed    its process died between the write and the send
 \*   named      an apply invocation named one entry
 \*
+\* VARIABLES: installed, aside, instRead, latRead, verdictOf, installs,
+\* applyRan, afterVer, dryRun, named, phase, lockBy, stateObserved,
+\* changedSet, changedAgrees, delivered, sentOK, pending and faults.
+\* ACTIONS: OutsideChange, StartRun, Read, Verdict, WriteState, BusyRefused,
+\* Crash, DeliverOK, DeliverRefused, StartApply, InstallStarts, ApplyInstall
+\* and ApplyPlan; Spec combines them as Next with the bounded fairness duties.
+\* INVARIANTS: TypeOK, ApplyOnlyWhatIsNamed, DryRunInstallsNothing,
+\* VerdictFromReads, WriterHoldsTheLock, StateWrittenAfterRead, SentOnlyOnOK,
+\* ChangedIsAgainstState and AsideIsUnknown. Liveness is CrashedReportDelivers.
+\*
 \* An install is the world's to land, and it can die at its replace: where
 \* the host refuses to rename over a running image, the running file is
 \* moved aside and the new binary is renamed in, and a crash between the move
