@@ -1456,11 +1456,15 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 				return why
 			}
 		}
-		if !c.Placed() || c.Col != Working {
+		late := byID && lateFinish(s, c)
+		if (!c.Placed() || c.Col != Working) && !late {
 			return "not working (it is " + placeWord(c) + ")"
 		}
 		if len(members) > 0 && !contains(members, c.Row) {
 			return "dealt to " + c.Row + ", not " + r.As
+		}
+		if late {
+			return lateFinishWhy(c, r)
 		}
 		if pr := s.Work.Placed(c.F("primary")); pr == nil || pr.Col != Working || pr.F("work") != c.ID {
 			return "its primary " + c.F("primary") + " is not working on it"
@@ -1498,6 +1502,7 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 			who = r.Who
 		}
 		pr := s.Work.Placed(c.F("primary"))
+		late := c.Col == DoneFailed // a late report for the attempt a deadline failed (lateFinish)
 		// how a failed finish is routed: by the reason line's prefix, or by the take's
 		// attempt decision at or above its class's bar on the card (decide.go, finishKind)
 		kind, class, used := "", "", false
@@ -1585,6 +1590,9 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 		identical := false
 		if r.Failed && !passed && defect == "" {
 			set["failed"] = itoa(pr.Int("failed") + 1)
+			if late {
+				set["failed"] = pr.F("failed") // the attempt failed once: its late HOLD is the same failure
+			}
 			// rule 2: the attempt before failed the same way, so this is the bound's (failure.go);
 			// a decided class is the class when the decision routed the finish
 			identical = failureSet(pr, pr.Int("attempt"), r.Report, class, cardTierOf(pr), set)
@@ -1596,6 +1604,12 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 		addConsumer(pr, set, cons)
 		u := Unit{Key: c.ID, Stream: pr.Row, Changes: []Change{change(Fleet, moveEntry(c, c.Row, into, cardSet))},
 			Moved: fmt.Sprintf("%s working -> done %s; %s working -> review", c.ID, result, pr.ID)}
+		if late {
+			// the attempt's failed judgments are this report's to answer: closed, and the
+			// finish writes its own below
+			u.Closes = closesFor(s.Open, []string{NWorkFailed, NBound, NStranded}, pr.ID)
+			u.Moved = fmt.Sprintf("%s failed -> done %s (a late report for the attempt the deadline failed); %s review at attempt %d", c.ID, result, pr.ID, pr.Int("attempt"))
+		}
 		if defect != "" {
 			set[FieldBriefDefect] = defect
 			u.Moved = fmt.Sprintf("%s working -> done defect (a brief defect: %s); %s working -> review", c.ID, defect, pr.ID)
@@ -1678,10 +1692,43 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 		if j, ok := reviewJudgment(s, inReview(pr, set), reviewStep{moved: asked, writes: u.Notes, who: who}); ok {
 			u.Notes = append(u.Notes, j)
 		}
-		friendNext(s, c, &u, p.Units)
+		if !late { // a late report frees no lane: the deadline's failure freed it
+			friendNext(s, c, &u, p.Units)
+		}
 		p.Units = append(p.Units, u)
 	}
 	return p
+}
+
+// lateFinish says the finish of work card c is a late report for the attempt a deadline
+// already failed (docs/SPEC-SPRINT.md section 8, "A late report finishes the failed
+// attempt"; tla/SprintRules.tla, Part "answers", LateReportFinishes): c is done failed, and its primary is in review on it at its attempt, failed,
+// so no later attempt has started. Such a report finishes that attempt rather than be
+// refused, so the card does not go round again for work that is done.
+func lateFinish(s *Snapshot, c *Card) bool {
+	if c == nil || !c.Placed() || c.Col != DoneFailed || c.F("kind") == "read" {
+		return false
+	}
+	pr := s.Work.Placed(c.F("primary"))
+	return pr != nil && pr.Col == Review && pr.F("work") == c.ID && pr.F("result") == "failed" && pr.Int("attempt") == c.Int("attempt")
+}
+
+// lateFinishWhy is why a late report is refused: only a LAND with its head or a HOLD (a
+// failed report the finish routes as failed work) finishes a failed attempt; a provider
+// failure, a take with no result, a staging refusal and a lane cap are the deadline's
+// failure again.
+func lateFinishWhy(c *Card, r FinishReq) string {
+	if !r.Failed || r.Decided != "" {
+		if r.Decided != "" {
+			return "failed already (" + placeWord(c) + "): a late report carries no attempt decision"
+		}
+		return ""
+	}
+	_, capped := ParseLaneCap(r.Report)
+	if IsProviderFailure(r.Report) || IsNoResult(r.Report) || IsStagingRefusal(r.Report) || capped {
+		return "not working (it is " + placeWord(c) + "): its attempt failed already, and this report is no LAND or HOLD"
+	}
+	return ""
 }
 
 // friendNext is a friend's own take: her finish moves the oldest ready card on her row
