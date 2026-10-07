@@ -11,8 +11,34 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestAppendPublishThatDisagreesIsRefused pins the session's policy as a fact,
+// not a guess: an append with no --publish, or with the same one, prints it;
+// --publish that names another is refused naming both; no open session stays
+// a refusal and writes no record.
+func TestAppendPublishThatDisagreesIsRefused(t *testing.T) {
+	t.Parallel()
+
+	c := newRig(t)
+	c.ok("open", "--session", "s", "--publish", "manual", "--now", "2026-01-02T03:04:05Z")
+	printed(t, c.ok("append", "--session", "s", "--entry", "same", "--text", "w", "--publish", "manual"), " publish=manual ")
+	printed(t, c.ok("append", "--session", "s", "--entry", "carried", "--text", "w"), " publish=manual ")
+
+	r := c.run("append", "--session", "s", "--entry", "other", "--text", "w", "--publish", "never")
+	require.Equal(t, 1, r.Code, "%+v", r)
+	require.Empty(t, r.Stdout)
+	printed(t, r.Stderr, "holds publish=manual", "--publish never",
+		"; run: nova-cairn append --store "+c.store+" --session s --entry other --publish manual")
+	c.wroteNothing("s", "other")
+
+	r = c.run("append", "--session", "missing", "--entry", "e", "--text", "w", "--publish", "never")
+	require.Equal(t, 2, r.Code, "%+v", r)
+	require.Contains(t, r.Stderr, `no such session "missing"`)
+	_, err := os.Lstat(c.path("sessions", "missing.md"))
+	require.ErrorIs(t, err, os.ErrNotExist)
+}
+
 // The policy is named once, at open: an append with no --publish carries the
-// session's, an append naming one keeps its own, and a flat record, which
+// session's, an append naming another is a conflict, and a flat record, which
 // records no policy, says publish=unknown rather than inventing one.
 func TestAnAppendCarriesTheSessionsPolicy(t *testing.T) {
 	t.Parallel()
@@ -21,7 +47,9 @@ func TestAnAppendCarriesTheSessionsPolicy(t *testing.T) {
 	c.ok("open", "--session", "s", "--publish", "deferred")
 	printed(t, c.ok("append", "--session", "s", "--entry", "inherits", "--text", "w"), " publish=deferred ")
 	printed(t, c.ok("receipt", "--session", "s", "--entry", "inherits"), " publish=deferred")
-	printed(t, c.ok("append", "--session", "s", "--entry", "own", "--text", "w", "--publish", "never"), " publish=never ")
+	r := c.run("append", "--session", "s", "--entry", "own", "--text", "w", "--publish", "never")
+	require.Equal(t, 1, r.Code, "%+v", r)
+	printed(t, r.Stderr, "holds publish=deferred", "--publish never")
 
 	testkit.WriteFile(t, c.path("flat.md"), "# by hand\n")
 	printed(t, c.ok("append", "--session", "flat", "--entry", "e", "--text", "w"), " publish=unknown ")
@@ -39,6 +67,34 @@ func TestAnAppendWithNoPolicyToCarryIsRefused(t *testing.T) {
 	refused(t, r, "--publish is required")
 	c.wroteNothing("s", "e")
 	printed(t, c.ok("append", "--session", "s", "--entry", "e", "--text", "w", "--publish", "manual"), " publish=manual ")
+}
+
+// TestReopenPrintsStoredOpenedTime pins a re-open: the same policy prints
+// reopened=true and the opened time the session file stored, not the clock of
+// this call, and a different --publish is refused naming both policies.
+func TestReopenPrintsStoredOpenedTime(t *testing.T) {
+	t.Parallel()
+
+	c := newRig(t)
+	stored := "2026-01-02T14:59:58Z"
+	later := "2026-01-02T15:00:06Z"
+	c.ok("open", "--session", "s", "--publish", "manual", "--now", stored)
+
+	out := c.ok("open", "--session", "s", "--publish", "manual", "--now", later)
+	printed(t, out, "OPEN OK session=s ", " reopened=true ", " stamp="+stored)
+	require.NotContains(t, out, later)
+
+	r := c.run("open", "--session", "s", "--publish", "manual", "--now", later, "--json")
+	require.Equal(t, 0, r.Code, "%+v", r)
+	require.Contains(t, r.Stdout, `"reopened":true`)
+	require.Contains(t, r.Stdout, stored)
+	require.NotContains(t, r.Stdout, later)
+
+	r = c.run("open", "--session", "s", "--publish", "never", "--now", later)
+	require.Equal(t, 1, r.Code, "%+v", r)
+	require.Empty(t, r.Stdout)
+	printed(t, r.Stderr, "publish=manual", "--publish never",
+		"; run: nova-cairn open --store "+c.store+" --session s --publish manual")
 }
 
 // A re-open naming the recorded policy and source changes nothing; one naming
@@ -103,6 +159,40 @@ func TestAConflictOrAMissingEntryNamesTheCommandToRunNext(t *testing.T) {
 			r := c.run(tc.args[0], tc.args[1:]...)
 			assert.Equal(t, tc.code, r.Code, "%+v", r)
 			assert.Equal(t, tc.want, r.Stderr)
+		})
+	}
+}
+
+// TestEveryRefusalEndsAtTheCommandThatMovesTheUserOn pins the door of each
+// refusal kind a cold user meets (use-cairn-t, remedies): a missing flag at
+// the tool's door (docs/ONBOARDING.md point 1, #1451), an unknown flag at the
+// verb's -h (docs/CLI-STYLE.md, refusals), a conflict at the receipt --text
+// that reads what the id holds, and a missing entry at the index that lists
+// what is there. A refusal that ends anywhere else leaves the reader guessing
+// the next command.
+func TestEveryRefusalEndsAtTheCommandThatMovesTheUserOn(t *testing.T) {
+	t.Parallel()
+
+	c := newRig(t)
+	c.ok("open", "--session", "s", "--publish", "manual")
+	c.ok("append", "--session", "s", "--entry", "e", "--text", "first words")
+	for _, tc := range []struct {
+		name string
+		args []string
+		code int
+		door string
+	}{
+		{"missing flag", []string{"open", "--session", "s2"}, 2, "; run: nova-cairn help"},
+		{"unknown flag", []string{"append", "--session", "s", "--entry", "e9", "--text", "w", "--nope"}, 2, "; run: nova-cairn append -h"},
+		{"conflict", []string{"append", "--session", "s", "--entry", "e", "--text", "other words"}, 1, "; run: nova-cairn receipt --store " + c.store + " --session s --entry e --text"},
+		{"missing entry", []string{"receipt", "--session", "s", "--entry", "absent"}, 2, "; run: nova-cairn index --store " + c.store + " --session s"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r := c.run(tc.args[0], tc.args[1:]...)
+			assert.Equal(t, tc.code, r.Code, "%+v", r)
+			last := strings.TrimSuffix(r.Stderr, "\n")
+			assert.True(t, strings.HasSuffix(last, tc.door), "the refusal does not end at the command that moves the user on: %q", r.Stderr)
 		})
 	}
 }
