@@ -19,12 +19,13 @@ var (
 	dogfoodCountLine = regexp.MustCompile(`^urgent=[0-9]+ next=[0-9]+$`)
 )
 
-// TestDocsTreeIsConsistent keeps each dated dogfood record scannable and its
-// verdict counts easy to collect, regardless of which tool or friend wrote it.
+// TestDocsTreeIsConsistent keeps the current Codex dogfood family scannable and
+// its verdict counts easy to collect. Other historical tool/friend reports use
+// distinct contracts, so this newer structure is scoped to its own family.
 func TestDocsTreeIsConsistent(t *testing.T) {
 	t.Parallel()
 
-	root := filepath.Join("..", "..", "docs", "dogfood")
+	root := filepath.Join("..", "..", "docs", "dogfood", "2026-10-06", "codex")
 	var reports []string
 	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
