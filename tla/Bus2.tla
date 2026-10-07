@@ -129,6 +129,13 @@ Restart(c) ==
   /\ alive' = alive \cup {c}
   /\ UNCHANGED <<st, holder, log, to, crashes>>
 
+\* A recipient sends a reply naming m, possibly after reading only the log.
+\* The reply changes no delivery state of m; Bus2Receipts refines this step
+\* with the store's forward-only receipt mutation (SPEC-BUS.md, message-receipts).
+Reply(r, m) ==
+  /\ m \in Sent /\ r \in to[m]
+  /\ UNCHANGED vars
+
 Next ==
   \/ \E m \in Messages : Send(m)
   \/ \E r \in Recipients, c \in Consumers : Recv(r, c)
