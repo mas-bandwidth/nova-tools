@@ -5,14 +5,20 @@ import (
 	"context"
 	"io"
 	"os"
+	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strconv"
+	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/config"
 	"github.com/mas-bandwidth/nova-tools/internal/filelock"
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -219,4 +225,141 @@ func TestLoopCommandsOutliveTheSkeletonsInterruptCancellation(t *testing.T) {
 	code, err := startLoop(ctx, []string{self, "-test.run=^TestLoopRunSignalHelper$", "--", loopSignalHelperArg}, &out, &errb)
 	require.NoError(t, err, errb.String())
 	assert.Equal(t, 128+int(syscall.SIGTERM), code, errb.String())
+}
+
+// The loop's lock lives in the wrapper process (loopRunCall), so a command that
+// outlived a killed wrapper would run with no lock holder and the restarted unit's
+// second copy would start beside it. loopChildAttr ties the command's life to the
+// wrapper: this test kills the real wrapper and watches the real command die, then
+// restarts the real wrapper to show the restart clean. Both starts below are this
+// test binary's own real helper processes, so the exec path is the shipped one.
+const (
+	// loopWrapperHelperArg marks the child that runs the real loop run verb.
+	loopWrapperHelperArg = "--looprun-wrapper-helper"
+	// loopChildHelperArg marks the child that is the loop's command.
+	loopChildHelperArg = "--looprun-child-helper"
+)
+
+func TestLoopRunWrapperDeathEndsTheCommandAndTheLock(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS != "linux" {
+		t.Skip("only linux carries the parent-death signal loopChildAttr sets")
+	}
+	self, err := os.Executable()
+	require.NoError(t, err)
+	runDir := t.TempDir()
+	pidFile := filepath.Join(runDir, "command.pid")
+	wrapper := loopWrapperProcess(self, runDir, "orphan", "hold", pidFile)
+	var werr bytes.Buffer
+	wrapper.Stderr = &werr
+	require.NoError(t, wrapper.Start())
+	t.Cleanup(func() {
+		if wrapper.Process != nil {
+			_ = wrapper.Process.Kill()
+		}
+		_ = wrapper.Wait()
+	})
+	pid := waitForCommandPid(t, pidFile)
+	t.Cleanup(func() {
+		if !commandGone(pid) {
+			_ = syscall.Kill(pid, syscall.SIGKILL)
+		}
+	})
+	require.NoError(t, syscall.Kill(pid, 0), "the command did not start: %s", werr.String())
+	require.NoError(t, wrapper.Process.Kill())
+	require.Eventually(t, func() bool { return commandGone(pid) }, 10*time.Second, 20*time.Millisecond,
+		"the command (pid %d) outlived the wrapper that held its lock", pid)
+
+	// the lock is free: the restart runs a command of its own and ends
+	again := loopWrapperProcess(self, runDir, "orphan", "exit", filepath.Join(runDir, "again.pid"))
+	out, err := again.CombinedOutput()
+	require.NoError(t, err, "the restart: %s", out)
+	assert.Contains(t, string(out), "LOOP DONE name=orphan exit=0")
+}
+
+// loopWrapperProcess is one real nova-config start, as this test binary's wrapper
+// helper: -test.run reaches only the helper, and NOVA_CONFIG_TEST_HELPER keeps the
+// package's throwaway Postgres out of the helper. The depth the guard counts is
+// cleared, because the helper's own command is a second test binary and the guard
+// allows at most two in a chain.
+func loopWrapperProcess(self, runDir, name, behavior, pidFile string) *exec.Cmd {
+	cmd := exec.Command(self, "-test.run=^TestLoopRunWrapperHelper$", "--", loopWrapperHelperArg, runDir, name, behavior, pidFile)
+	depth := testbin.DepthEnv("nova-config")
+	for _, e := range os.Environ() {
+		if k, _, ok := strings.Cut(e, "="); ok && k == depth {
+			continue
+		}
+		cmd.Env = append(cmd.Env, e)
+	}
+	cmd.Env = append(cmd.Env, "NOVA_CONFIG_TEST_HELPER=1")
+	return cmd
+}
+
+// waitForCommandPid is the command's pid, from the file it writes at its start.
+func waitForCommandPid(t *testing.T, pidFile string) int {
+	t.Helper()
+	pid := 0
+	require.Eventually(t, func() bool {
+		b, err := os.ReadFile(pidFile)
+		if err != nil {
+			return false
+		}
+		n, err := strconv.Atoi(strings.TrimSpace(string(b)))
+		if err != nil || n <= 0 {
+			return false
+		}
+		pid = n
+		return true
+	}, 10*time.Second, 20*time.Millisecond, "the command never wrote its pid")
+	return pid
+}
+
+// commandGone reports whether the command process has ended: kill(pid, 0) finds no
+// process, or /proc/<pid>/stat says a process the kernel has not reaped yet is a
+// zombie. The plain signal check is not enough, because a zombie still answers it.
+func commandGone(pid int) bool {
+	if err := syscall.Kill(pid, 0); err != nil {
+		return true
+	}
+	b, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat")
+	if err != nil {
+		return true
+	}
+	i := strings.LastIndex(string(b), ")")
+	return i >= 0 && len(b) > i+2 && b[i+2] == 'Z'
+}
+
+// TestLoopRunWrapperHelper is one real `nova-config loop run <name> -- <command>`:
+// the suite's other starts skip it. The command is the child helper below.
+func TestLoopRunWrapperHelper(t *testing.T) {
+	t.Parallel()
+	i := slices.Index(os.Args, loopWrapperHelperArg)
+	if i < 0 || i+4 >= len(os.Args) {
+		t.Skip("the wrapper process only")
+	}
+	runDir, name, behavior, pidFile := os.Args[i+1], os.Args[i+2], os.Args[i+3], os.Args[i+4]
+	self, err := os.Executable()
+	require.NoError(t, err)
+	args := append([]string{"loop", "run", name, "--run-dir", runDir, "--"},
+		self, "-test.run=^TestLoopRunChildHelper$", "--", loopChildHelperArg, behavior, pidFile)
+	os.Exit(run(args, os.Stdout, os.Stderr, realDeps()))
+}
+
+// TestLoopRunChildHelper is the command the wrapper helper runs: it writes its pid
+// and, in hold, waits to be killed; in exit it returns at once, so a restart's
+// command ends by itself.
+func TestLoopRunChildHelper(t *testing.T) {
+	t.Parallel()
+	i := slices.Index(os.Args, loopChildHelperArg)
+	if i < 0 || i+2 >= len(os.Args) {
+		t.Skip("the command process only")
+	}
+	behavior, pidFile := os.Args[i+1], os.Args[i+2]
+	require.NoError(t, os.WriteFile(pidFile, []byte(strconv.Itoa(os.Getpid())), 0o644))
+	if behavior != "hold" {
+		return
+	}
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM)
+	<-sigs
 }

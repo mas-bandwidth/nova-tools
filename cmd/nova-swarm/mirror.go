@@ -127,6 +127,11 @@ func runMirror(args []string, stdout, stderr io.Writer, git mirrorGit, wait func
 		}
 		names = append(names, n)
 	}
+	// Separators alone parse to no repository: refuse before --dir is made, so a
+	// comma-only list leaves no empty mirror directory behind.
+	if len(names) == 0 && strings.TrimSpace(*repos) != "" {
+		f.add("--repos names no repository, got " + oneline.Field(*repos) + ": it wants the repository names to mirror, a,b")
+	}
 	if *every < 0 {
 		f.add("--every is 0 or a positive duration, got " + oneline.Field(every.String()))
 	}

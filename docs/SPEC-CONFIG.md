@@ -290,7 +290,10 @@ released it. Under the lock it counts the start in `<run-dir>/<name>.starts` and
 writes `nova_loop_<name>.prom` there (`nova_loop_starts_total` and `nova_loop_last_start_seconds`,
 each labelled `loop="<name>"`) for node_exporter's textfile collector. Then it runs the command,
 passes SIGINT and SIGTERM on to it, holds the lock until it ends, and exits with the command's exit
-code, or `128+N` when a signal ended it. The command is what follows `--` (the unit's own, with its
+code, or `128+N` when a signal ended it. The lock lives in this process, so the command's life is
+tied to it: on linux a wrapper killed outright ends the command with it (the kernel's
+parent-death signal, `Pdeathsig`), and the restarted unit's second copy never runs beside a
+command the first still owns. The command is what follows `--` (the unit's own, with its
 `nova-secrets exec` prefix; no store is opened), else the row's `argv` read from the store: a
 disabled row, a row with `keys` (its secrets open through the prefix the plays add, which the row
 does not carry) and a row with no command are

@@ -32,24 +32,30 @@ import (
 const loopRunEffect = "process: takes <run-dir>/<name>.lock (a second copy exits 3), counts the start in <run-dir>/<name>.starts, writes the restart metrics to --metrics when given, then runs the loop's command (its row's argv, or the command after --) and exits with the command's exit code, 128+N when a signal ended it; it opens the store only when no command follows --"
 
 // loopRunMore is loop run's own help below the effect.
-const loopRunMore = "a unit runs it in place of the bash nova-loop: ExecStart=nova-config loop run <name> -- <the unit's command>; a lock whose holder died is taken (the kernel released it); SIGINT and SIGTERM are passed to the command\nexit codes: the command's own, 128+N when a signal ended it; 1 the row is not runnable (missing, disabled, with secrets); 2 usage, or the command did not start; 3 another copy holds the lock\n"
+const loopRunMore = "a unit runs it in place of the bash nova-loop: ExecStart=nova-config loop run <name> -- <the unit's command>; a lock whose holder died is taken (the kernel released it); the lock lives in this process, so a wrapper killed outright ends the command with it on linux (the kernel's parent-death signal) and a restarted unit never runs a second command beside the first; SIGINT and SIGTERM are passed to the command\nexit codes: the command's own, 128+N when a signal ended it; 1 the row is not runnable (missing, disabled, with secrets); 2 usage, or the command did not start; 3 another copy holds the lock\n"
 
 // runLoop starts argv with this process's stdin and the given output, passes SIGINT
 // and SIGTERM on to it, and is its status once it ends.
 type runLoop func(ctx context.Context, argv []string, stdout, stderr io.Writer) (int, error)
 
 // startLoop is the real runLoop: one long-lived child that outlives the caller's
-// interrupt. internal/tool's RunContext cancels the context it hands a verb on
-// SIGINT, and loop run passes SIGINT and SIGTERM to the command instead of
-// letting that cancellation kill it, so the child runs under the context's
-// values with the cancellation removed. A signal death is env(1)'s 128+N, never
-// a made-up status: the unit and the shell around it read it as the bash
-// nova-loop wrapper's exec left it.
+// interrupt but not the caller itself. internal/tool's RunContext cancels the
+// context it hands a verb on SIGINT, and loop run passes SIGINT and SIGTERM to
+// the command instead of letting that cancellation kill it, so the child runs
+// under the context's values with the cancellation removed. The lock lives in
+// this process (loopRunCall), so a command that outlived a killed wrapper would
+// run beside the restarted wrapper's command; loopChildAttr ties the command's
+// life to this process instead, so the wrapper's death ends the command. A
+// signal death is env(1)'s 128+N, never a made-up status: the unit and the
+// shell around it read it as the bash nova-loop wrapper's exec left it.
 func startLoop(ctx context.Context, argv []string, stdout, stderr io.Writer) (int, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	cmd := subproc.Long(context.WithoutCancel(ctx), argv[0], argv[1:]...)
+	if attr := loopChildAttr(); attr != nil {
+		cmd.SysProcAttr = attr
+	}
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, stdout, stderr
 	sigs := make(chan os.Signal, 2)
 	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM)

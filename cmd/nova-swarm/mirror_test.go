@@ -78,6 +78,23 @@ func TestMirrorRefusesWhatIsNotARepositoryName(t *testing.T) {
 	}
 }
 
+// A --repos of separators alone parses to no repository; the verb refuses it before
+// --dir is made, so a refused list leaves no empty mirror directory behind.
+func TestMirrorRefusesAnEmptyRepositoryListBeforeMakingTheDirectory(t *testing.T) {
+	t.Parallel()
+	for _, list := range []string{",", " , ", ",,,"} {
+		dir := filepath.Join(t.TempDir(), "mirror")
+		g := &recordGit{}
+		var out, errb bytes.Buffer
+		code := runMirror([]string{"--dir", dir, "--repos", list, "--base", "https://example.test/o"}, &out, &errb, g.run, nil)
+		assert.Equal(t, 2, code, list)
+		assert.Contains(t, errb.String(), "names no repository", list)
+		assert.Empty(t, g.calls, "a refused list runs no git: %q", list)
+		_, err := os.Stat(dir)
+		assert.True(t, os.IsNotExist(err), "the refused list made the mirror directory: %q", list)
+	}
+}
+
 // --every runs another pass each time the wait returns true and stops when it returns
 // false; the test's wait is a fake, so nothing sleeps.
 func TestMirrorEveryRunsAgainUntilTheWaitEnds(t *testing.T) {
