@@ -24,6 +24,7 @@ func runSSH(t *testing.T, r sshRig) Result {
 	root := t.TempDir()
 
 	// Write inventory file
+	// checkSSH looks for seat_inv.yaml or seat.inv in the store directory
 	invPath := root + "/seat_inv.yaml"
 	require.NoError(t, os.WriteFile(invPath, []byte(r.inv), 0o644))
 
@@ -35,10 +36,9 @@ func runSSH(t *testing.T, r sshRig) Result {
 		if name == "ssh" {
 			// Extract bench name from args
 			var bench string
-			for i, arg := range args {
+			for _, arg := range args {
 				if arg != "-o" && arg != "BatchMode=yes" && arg != "ConnectTimeout=5" {
 					bench = arg
-					_ = i
 					break
 				}
 			}
