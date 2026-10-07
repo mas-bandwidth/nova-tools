@@ -14,8 +14,10 @@ import (
 // not require you to remember, it should just happen mechanically."). fleet level evens
 // the members' ready queues (level); friend level evens the friends', and every tick runs
 // it after its deal (TickDeal), so no verb is needed. A card moves only to a friend whose
-// tiers hold its tier (friendTakes), never by class, and never to a friend it has left
-// (friendsLeft). Every card but a hard pin (WHO: only friend, OnlyFriend) that is ready on
+// tiers hold its tier (friendTakes), and, for a card that carries a model, whose row names
+// one for its tier (friendReceives: a friend refused for want of one is named, with the tier,
+// in the card's refusal, and a moved card carries the receiver's model), never by class, and
+// never to a friend it has left (friendsLeft). Every card but a hard pin (WHO: only friend, OnlyFriend) that is ready on
 // her row behind the cards her lanes hold and that she has not started moves: a card with no WHO
 // line, WHO: friend, or one preferring her (WHO is a preference, friends first); a hard pin
 // stays hers, and a working card is hers to finish or the coordinator's to take back
@@ -105,6 +107,10 @@ func friendLevel(s *Snapshot, r FriendLevelReq, dealt, dealtWorking map[string]i
 	}
 	// to is where the card goes, "" when nowhere: below her room, of its tier, not a
 	// friend it left, and an idle lane for a giver with none or an even smaller backlog
+	// a friend who takes its tier but whose row names no model for it is refused as the
+	// friend of a card that carries one (friendReceives): noModel is each card's tier and
+	// the friends so refused
+	noModel := map[string]noModelRefusal{}
 	to := func(giver string, c *Card) string {
 		tier, left := s.DealTier(s.Work.Placed(c.F("primary"))), friendsLeft(c)
 		free, idle := map[string]int{}, map[string]int{}
@@ -115,6 +121,10 @@ func friendLevel(s *Snapshot, r FriendLevelReq, dealt, dealtWorking map[string]i
 				continue
 			}
 			if (lanes(giver) <= 0 && lanes(n) > 0) || backlog(giver)-backlog(n) > 1 {
+				if !friendReceives(f, tier, c.F(FieldModel)) {
+					noModel[c.ID] = noModel[c.ID].with(tier, n)
+					continue
+				}
 				free[n], idle[n] = room[n]-held[n], lanes(n)
 				may = append(may, n)
 			}
@@ -159,8 +169,11 @@ func friendLevel(s *Snapshot, r FriendLevelReq, dealt, dealtWorking map[string]i
 		if row := FriendRow(short); !s.Fleet.HasRow(row) && !slices.Contains(p.Rows, RowAdd{Fleet, row}) {
 			p.Rows = append(p.Rows, RowAdd{Fleet, row}) // her row, the first time a card is placed on it
 		}
-		p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{change(Fleet, moveEntry(c, FriendRow(short), col, set, unset...))},
-			Moved: fmt.Sprintf("%s %s:ready -> %s:%s gen=%d", c.ID, c.Row, FriendRow(short), col, c.Int("gen")+1)})
+		u := Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{change(Fleet, moveEntry(c, FriendRow(short), col, set, unset...))},
+			Moved: fmt.Sprintf("%s %s:ready -> %s:%s gen=%d", c.ID, c.Row, FriendRow(short), col, c.Int("gen")+1)}
+		// the receiver's model for its tier, never the giver's, rides on the moved card
+		tier := cardTierOf(s.Work.Placed(c.F("primary")))
+		p.Units = append(p.Units, withFriendModel(u, c.ID, tier, FriendModelOf(seats, short, tier)))
 	}
 	if len(p.Units) > 0 {
 		p.Units[0].Moved += fmt.Sprintf("; moved=%d to %s from %s", moved, countsByMember(got), countsByMember(gives))
@@ -177,6 +190,7 @@ func friendLevel(s *Snapshot, r FriendLevelReq, dealt, dealtWorking map[string]i
 	}
 	tp := retierTakeBacks(s, seats, r.Who, r.Started, skip)
 	p.Units, p.Refused = append(p.Units, tp.Units...), append(p.Refused, tp.Refused...)
+	p.Refused = append(p.Refused, noModelRefusals(noModel, p.Units)...)
 	return p
 }
 
