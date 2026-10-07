@@ -171,3 +171,31 @@ naming the verb or the step above: install `sops`, set the missing variable, `ch
 `chmod 700` the key, `nova-secrets keygen`, the `git clone` of the store, or `nova-secrets seal --store <store> --as <seat> --name <NAME>` for a name the loops require and the store
 does not hold. The check is fleet-scoped: `nova-doctor --local` skips it with the other fleet
 checks and says which; run `nova-doctor` plain to see it.
+### --job: one job's readiness
+
+To ask whether this machine is ready for one job, name the job:
+
+```
+nova-doctor --job local-notes
+nova-doctor --job friend --as bob --dir /Users/bob/work --config-dir /Users/bob/.claude-bob
+nova-doctor --job coordinator --as ada --json
+```
+
+The jobs are `local-notes`, `messaging`, `friend`, `worker` and `coordinator`. Each step is
+one dependency, checked in order (Redis reachable, the login, the config, the applied Redis
+state, the binaries and functions, the supervisor, the session), by the tool that owns it.
+The first step that fails is the one to fix; every step after it says `blocked`, and the last
+line is `DOCTOR job=<job> not-ready first_missing=<step> ... next: <command>`. Run that
+command, then the doctor again. Every line it prints is one the tool named accepts as printed. The friend
+job's session step is nova-friend's own verdict over `--since` (default 24h): `deaf` fails it,
+and its fix is the delivery check, `nova-friend check --as <friend> --harness <h> --dir <d>
+--redis <addr> --to <coordinator>`.
+
+A doctor local-store repair uses the Redis password login metadata, passed together as
+`--redis-secrets <dir> --redis-seat <seat> --redis-key <file> --redis-sops <path>
+--redis-secret <NAME>`. These are names and paths, never the password.
+`--redis-dir` chooses its absolute data directory; otherwise it uses
+`$HOME/nova/stores/redis`. An already injected `NOVA_REDIS_PASSWORD` needs no new metadata and is never
+printed. Missing metadata makes the doctor request these inputs
+before printing a launch command. Coordinator checks also supply their `--as` actor
+to `nova-config apply --check`; the dry run keeps the real write's actor requirement.
