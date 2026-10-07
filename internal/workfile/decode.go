@@ -217,7 +217,7 @@ func (d *decoder) tree(f worklang.Form) (*Tree, error) {
 		// The version defines the keys, so a file of a version this build
 		// does not read is refused by its version, not by one of another
 		// version's missing keys (SPEC-WORK-V1 section 1.2).
-		d.errf("(root)", "version %s is not read; this build reads %s", v, Format)
+		d.fail("(root)", "version %s is not read; this build reads %s", v, Format)
 		return d.finish(nil)
 	}
 	id, m, _ := d.record("(root)", f, "work-tree", true, []string{"source", "org", "fetched", "repos"})
