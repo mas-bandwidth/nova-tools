@@ -483,13 +483,15 @@ func askOneFriend(p *Plan, s *Snapshot, pr *Card, seats []FriendSeat, name, dir 
 // finding raises the same broken-read judgment Read raises. The readers table
 // gains no row.
 func FriendReadClose(s *Snapshot, name, primary, report string) Plan {
-	return FriendReadCloseChecked(s, name, primary, report, nil)
+	return FriendReadCloseChecked(s, name, primary, "", report, nil)
 }
 
-// FriendReadCloseChecked is FriendReadClose with the server's check of the read's branch at
-// its close (missing, as ReadReq.Missing): a broken report on a read whose branch origin does
-// not hold is retired with no verdict and asked again (read_missing.go).
-func FriendReadCloseChecked(s *Snapshot, name, primary, report string, missing map[string]MissingBranch) Plan {
+// FriendReadCloseChecked is FriendReadClose of the read card named (card, the packet's own
+// key: a re-asked read is a later identity of the plain one, ReadCardGenIDs; "" is the one of
+// her identities at the attempt that is placed), with the server's check of the read's branch
+// at its close (missing, as ReadReq.Missing): a broken report on a read whose branch origin
+// does not hold is retired with no verdict (read_missing.go).
+func FriendReadCloseChecked(s *Snapshot, name, primary, card, report string, missing map[string]MissingBranch) Plan {
 	var p Plan
 	pr := s.Work.Card(primary)
 	if pr == nil {
@@ -500,9 +502,8 @@ func FriendReadCloseChecked(s *Snapshot, name, primary, report string, missing m
 	if attempt == 0 {
 		attempt = 1
 	}
-	id := ReadCardID(primary, attempt, name)
-	rc := s.Fleet.Card(id)
-	if rc == nil || !rc.Placed() {
+	rc := friendReadCardOf(s, name, primary, attempt, card)
+	if rc == nil {
 		p.refuse(primary, "no read asked of "+name)
 		return p
 	}
@@ -520,6 +521,25 @@ func FriendReadCloseChecked(s *Snapshot, name, primary, report string, missing m
 		p.Props = append(p.Props, pw)
 	}
 	return p
+}
+
+// friendReadCardOf is the friend's placed read card of the primary at the attempt: the one
+// named (card, one of her identities, ReadCardGenIDs), or with none named the placed one of
+// them; nil when none is placed on her row.
+func friendReadCardOf(s *Snapshot, name, primary string, attempt int, card string) *Card {
+	ids := ReadCardGenIDs(primary, attempt, name)
+	if card != "" {
+		if !slices.Contains(ids, card) {
+			return nil
+		}
+		ids = []string{card}
+	}
+	for _, id := range ids {
+		if rc := s.Fleet.Card(id); rc != nil && rc.Placed() && rc.Row == FriendRow(name) {
+			return rc
+		}
+	}
+	return nil
 }
 
 // friendReadCloseUnit is the one close of a friend's read card on her fleet row,

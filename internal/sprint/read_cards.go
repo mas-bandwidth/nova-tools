@@ -340,7 +340,7 @@ func readCardsStanding(s *Snapshot, pr *Card, idx map[string][]*Card) (standing 
 // found it broken (its judgment and the rework follow), none for failed work; over a fleet
 // read index (fleetReadIndex), nil to read the table.
 func readCardsWanted(s *Snapshot, pr *Card, idx map[string][]*Card) int {
-	if pr == nil || pr.Col != Review || IsSentinel(pr) || pr.F("result") == "failed" {
+	if pr == nil || pr.Col != Review || IsSentinel(pr) || pr.F("result") == "failed" || readBranchMissingOpen(s, pr) {
 		return 0
 	}
 	standing, broken := readCardsStanding(s, pr, idx)

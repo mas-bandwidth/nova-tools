@@ -122,7 +122,7 @@ func TestBrokenReadsOutrunningOkRaiseOneNotice(t *testing.T) {
 	what := open[0].Note.What
 	assert.Contains(t, what, "broken reads outrun ok reads")
 	for rd, g := range r.gave {
-		assert.Contains(t, what, fmt.Sprintf("%s %d ok, %d broken", rd, g["ok"], g["broken"]), "it names each reader's counts")
+		assert.Contains(t, what, fmt.Sprintf("%s %d ok, %d broken", strings.TrimPrefix(rd, sprint.ReaderPrefix), g["ok"], g["broken"]), "it names each reader's counts, by machine")
 	}
 	assert.Contains(t, what, "top findings: ")
 	assert.Contains(t, what, fmt.Sprintf("%q", missingFinding[:sprint.FindingClassLen]), "the finding classes, by their first 60 characters")
@@ -178,10 +178,11 @@ func TestAReaderBreakingNearlyEverythingIsNamedOnce(t *testing.T) {
 	r.tick()
 	written, open := r.judged(sprint.NReaderBreaks)
 	require.Len(t, open, 1, "%v", r.gave)
-	assert.Equal(t, sprint.StreamSubject(sprint.ReaderSubject("reader-a")), open[0].Subject())
-	assert.Contains(t, open[0].Note.What, "reader reader-a breaks nearly everything: 20 of its last 20 verdicts broken")
-	assert.Contains(t, open[0].Note.What, "while reader-b broke 0 of")
-	assert.Equal(t, "hold reader-a", open[0].Note.Decisions[0])
+	assert.Equal(t, sprint.StreamSubject(sprint.ReaderSubject("a")), open[0].Subject(), "a reader is its machine")
+	assert.Contains(t, open[0].Note.What, "reader a breaks nearly everything: 20 of its last 20 verdicts broken,")
+	assert.Contains(t, open[0].Note.What, "while b broke 0 of its last")
+	assert.Equal(t, "hold reader-a", open[0].Note.Decisions[0], "held by the row it reads on")
+	assert.NotContains(t, open[0].Note.What, "tiers", "compared reader against reader, never by tier")
 	assert.Len(t, written, 1)
 
 	r.round()
@@ -190,7 +191,7 @@ func TestAReaderBreakingNearlyEverythingIsNamedOnce(t *testing.T) {
 	assert.Len(t, open, 1)
 	assert.Len(t, written, 1, "named once an episode")
 	for _, o := range open {
-		assert.NotContains(t, o.Note.What, "reader reader-b", "the reader that reads well is never named")
+		assert.NotContains(t, o.Note.What, "reader b ", "the reader that reads well is never named")
 	}
 
 	// reader-a reads well again: its last twenty fall under the bar and the episode closes
