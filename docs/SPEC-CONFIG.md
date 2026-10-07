@@ -281,6 +281,21 @@ A machine a loop names cannot be removed
 (`machine m1 is the --machine of loop member-m1`); `machine show <m>` names
 the machine's loops (`loops=<a,b>`, `-` for none).
 
+**`loop run`**: `nova-config loop run <name> [--run-dir <dir>] [--metrics <dir>] [-- <command> ...]`
+is a loop's single-instance wrapper, the Go verb in place of the bash `nova-loop` a coordinator's
+own `fleet/loops.yml` installed (docs/COORDINATOR-TOOLS.md). It takes `<run-dir>/<name>.lock`
+(default `~/nova-bench/run`) with internal/filelock, the kernel's lock (tla/FileLock.tla): a second
+copy is refused with exit 3 and runs nothing, and a lock whose holder died is free, since the kernel
+released it. Under the lock it counts the start in `<run-dir>/<name>.starts` and, with `--metrics`,
+writes `nova_loop_<name>.prom` there (`nova_loop_starts_total` and `nova_loop_last_start_seconds`,
+each labelled `loop="<name>"`) for node_exporter's textfile collector. Then it runs the command,
+passes SIGINT and SIGTERM on to it, holds the lock until it ends, and exits with its exit code. The
+command is what follows `--` (the unit's own, with its `nova-secrets exec` prefix; no store is
+opened), else the row's `argv` read from the store: a disabled row, a row with `keys` (its secrets
+open through the prefix the plays add, which the row does not carry) and a row with no command are
+refused with exit 1, a name with no row too. The pieces are `config.LoopRunArgv`,
+`config.NextLoopStarts` and `config.LoopMetrics` (internal/config/looprun.go).
+
 **`route`** (`config.routes`): one way to run a model tier, the provider
 and model a card of that tier runs on, its token and dollar budgets and deadline. A
 tier has several routes so the deal spreads its cards across providers and
