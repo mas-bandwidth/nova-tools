@@ -120,21 +120,24 @@ no `go` there it is ok. On a bench it fails when `go` is absent, when its versio
 `go.mod`'s toolchain version, or when `GOCACHE` is not writable, and warns when `GOFLAGS`
 does not carry `-mod=readonly`. Each fix line names the step above.
 
-### dep-tailnet-b.w4: the tailnet
+### dep-harnesses-b.w6: the friend harnesses
 
-A fleet's machines reach each other and the stores only over its tailnet (tailscale): the
-tools refuse an address that is neither loopback nor a tailnet address, so a machine with no
-tailnet cannot be named or reached by the others. A single-machine `nova-up --local` setup
-does not need one: it uses a twin store and a loopback Redis on the one machine.
+Each friend row names a harness (`claude`, `opencode`, `codex`, `grok`) and, for claude
+one-shot lanes, a config directory. The doctor check `harness` (`internal/doctor/check_harness.go`)
+checks per friend row on this machine: the harness binary is on PATH and its version is one
+the adapter supports, and the row's config directory exists (for claude one-shot lanes). It
+never runs a harness against a model.
 
-`nova-up` does not join a tailnet, because joining needs an account and a login prompt a
-person answers; a person installs tailscale and runs `tailscale up` once on each fleet
-machine, so it is logged in and named on the tailnet. On the coordinator's machine the
-inventory is then read with the seat loaded (`set -a; . ~/nova/seat.env; set +a`).
+Who needs it: any machine that runs cards with friends (a fleet member, a coordinator's
+own runs). `nova-up --local` does not set up friends: a person installs the harness binaries
+on PATH and configures friend directories via `nova-friend install` or by setting up the
+friend daemon manually. For claude friends in one-shot mode, a config directory must be
+provided via `--config-dir` (or `CLAUDE_CONFIG_DIR`).
 
-The `tailnet` check is fleet only, so `nova-doctor --local` skips it and lists it among the
-skipped checks. Without `--local` it fails when tailscale is not installed or did not answer,
-when its backend state is not `Running`, when this machine has no name on the tailnet, or when
-a machine of `nova-config machine list` is not named on the tailnet; the evidence names each
-missing machine and the fix line runs `tailscale up` on it. The check passes when tailscale is
-up, this machine is named, and every inventory machine answers on the tailnet.
+```sh
+nova-friend install --as <me> --harness claude --dir <friend dir> --config-dir <claude config dir>
+nova-friend run --as <me> --harness <h> --dir <friend dir>
+```
+
+The check is included in the default `nova-doctor` run and can be skipped with `--local`
+if the machine is only running nova tools without friends.
