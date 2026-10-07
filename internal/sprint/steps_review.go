@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
@@ -2201,4 +2202,379 @@ func RecordLanded(s *Snapshot, r LandedReq) Plan {
 		notes[pin.ID] = "recorded landed at " + r.Sha + ": " + r.Reason
 	}
 	return MergeStep(s, MergeReq{Stream: stream, Landed: r.Pins, Resolved: notes, Note: r.Reason, Who: r.Who})
+}
+
+// Review starved, and reads idle (docs/SPEC-SPRINT.md, "Review starved, and reads idle").
+// On 2026-10-07 at 5:40 PM ET the owner had 115 cards in review and no read out on any
+// friend or fleet member. The seat found it by looking. This part pushes one judgment
+// when cards in review want a read and no read is out, and one when readers are free
+// while reads still wait. Each is one episode: raised once, closed with a note when
+// the condition ends.
+//
+// The episode is a fleet-table property, so the tick's end writes it in the step that
+// sees it (a work-table property waits for the next pump). The part is installed on
+// TickEnd, before the done part, which TickEndWith keeps in its tail. It is not
+// installed on TickParts: every name there is a duty of the reference model
+// (refmodel/decide_test.go TestEveryPartOfTheTickIsADutyAndEveryDutyIsNamedInOrder),
+// and that list is not this change.
+const (
+	NReviewStarved      = "review starved"
+	NReadsIdle          = "reads idle"
+	NReviewAlarmCleared = "a review alarm cleared"
+
+	// PropReviewStarved is the work table's property: a duration, or off. Absent is
+	// reviewStarvedDefault.
+	PropReviewStarved   = "review_starved"
+	PropReviewStarvedEp = "review_starved_ep" // fleet: since\t0|1
+	PropReadsIdleEp     = "reads_idle_ep"
+
+	PartReviewStarved = "review-starved"
+
+	// reviewStarvedTick is one tick of running time. store.TickEvery is the same
+	// second; this package does not import the store.
+	reviewStarvedTick    = time.Second
+	reviewStarvedDefault = 2 * reviewStarvedTick
+
+	reviewWhyHeld   = "stream held"
+	reviewWhySpent  = "readers spent"
+	reviewWhyMax    = "dealt max"
+	reviewWhyNoUp   = "no up reader of the tier"
+	reviewClearOut  = "a read is out"
+	reviewClearNone = "no card in review wants a read"
+	reviewClearBusy = "no reader is free"
+)
+
+func init() { reviewStarvedInstall() }
+
+// reviewStarvedInstall puts the part on the tick's end, before done, so a live
+// tick (TickEndWith) runs it. TickParts was copied from TickEnd before any init
+// and is left as that copy.
+func reviewStarvedInstall() {
+	def := TickPartDef{Name: PartReviewStarved, Fn: TickReviewStarved}
+	for _, p := range TickEnd {
+		if p.Name == def.Name {
+			return
+		}
+	}
+	out := make([]TickPartDef, 0, len(TickEnd)+1)
+	for _, p := range TickEnd {
+		if p.Name == PartDone {
+			out = append(out, def)
+		}
+		out = append(out, p)
+	}
+	TickEnd = out
+}
+
+// reviewStarvedWindow is the setting: off, or a duration at least one tick.
+// Absent, empty, or not a duration is the default of two ticks.
+func (s *Snapshot) reviewStarvedWindow() (time.Duration, bool) {
+	if s == nil || s.Work == nil {
+		return reviewStarvedDefault, false
+	}
+	v, ok := s.Work.Prop(PropReviewStarved)
+	v = strings.TrimSpace(v)
+	if !ok || v == "" {
+		return reviewStarvedDefault, false
+	}
+	if v == AlarmOff {
+		return 0, true
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil || d <= 0 {
+		return reviewStarvedDefault, false
+	}
+	if d < reviewStarvedTick {
+		d = reviewStarvedTick
+	}
+	return d, false
+}
+
+// TickReviewStarved is the tick's review-starved part.
+func TickReviewStarved(s *Snapshot, r TickReq) (Plan, int) {
+	var p Plan
+	if s == nil || s.Work == nil || s.Fleet == nil {
+		return p, 0
+	}
+	window, off := s.reviewStarvedWindow()
+	if off {
+		return reviewAlarmFinish(reviewAlarmDisarm(s, p))
+	}
+	wants := reviewWantsRead(s)
+	out := readsOut(s)
+	free := reviewFreeReaders(s, reviewAlarmSeats(s, r))
+	starved := len(wants) > 0 && out == 0
+	idle := free > 0 && len(wants) > 0
+	clearStarved := reviewClearNone
+	if out > 0 {
+		clearStarved = reviewClearOut
+	}
+	clearIdle := reviewClearNone
+	if free == 0 {
+		clearIdle = reviewClearBusy
+	}
+	p = reviewAlarmStep(s, r, p, PropReviewStarvedEp, NReviewStarved, window, starved,
+		func() string { return reviewStarvedWhat(s, r, wants) }, clearStarved, len(wants), reviewAlarmFirstIDs(wants))
+	p = reviewAlarmStep(s, r, p, PropReadsIdleEp, NReadsIdle, window, idle,
+		func() string { return reviewIdleWhat(free, len(wants)) }, clearIdle, len(wants), nil)
+	return reviewAlarmFinish(p)
+}
+
+// reviewAlarmFirstIDs is the first three ids in work order, the ones the
+// starved judgment names.
+func reviewAlarmFirstIDs(wants []*Card) []string {
+	var ids []string
+	for i, c := range wants {
+		if i == 3 {
+			break
+		}
+		ids = append(ids, c.ID)
+	}
+	return ids
+}
+
+// reviewWantsRead is the cards in review whose attempt came back ok and still
+// wants a read (readCardsWanted). A failed attempt wants none.
+func reviewWantsRead(s *Snapshot) []*Card {
+	var out []*Card
+	for _, pr := range s.Work.Column(Review) {
+		if pr.F("result") != "ok" || IsSentinel(pr) {
+			continue
+		}
+		if readCardsWanted(s, pr, nil) > 0 {
+			out = append(out, pr)
+		}
+	}
+	return out
+}
+
+// readsOut is the reads in flight: a read card ready or working on any fleet
+// row, or a read asked or reading on the readers table.
+func readsOut(s *Snapshot) int {
+	n := 0
+	if s.Fleet != nil {
+		for _, c := range s.Fleet.Column(Ready, Working) {
+			if isRead(c) {
+				n++
+			}
+		}
+	}
+	if s.Readers != nil {
+		n += len(s.Readers.Column(Asked)) + len(s.Readers.Column(Reading))
+	}
+	return n
+}
+
+// reviewFreeReaders is the readers with room: a unit the read-card deal may
+// use that has a half slot free, and a reader up on the readers table under
+// its width that the units did not already count.
+func reviewFreeReaders(s *Snapshot, seats []FriendSeat) int {
+	named := map[string]bool{}
+	n := 0
+	if s.Fleet != nil {
+		for _, u := range readUnitsOf(s, seats) {
+			named[u.name] = true
+			if u.half > 0 {
+				n++
+			}
+		}
+	}
+	if s.Readers == nil {
+		return n
+	}
+	for _, rd := range s.UpReaders() {
+		m, ok := ReaderMachine(rd)
+		if ok && named[m] || !ok && named[rd] {
+			continue
+		}
+		if s.ReaderWidth(rd) > s.readerLoad(rd) {
+			n++
+		}
+	}
+	return n
+}
+
+func reviewAlarmSeats(s *Snapshot, r TickReq) []FriendSeat {
+	if r.Friends != nil {
+		return r.Friends
+	}
+	return s.Friends
+}
+
+// reviewWantWhy is why the deal left this card's read: the four clauses the
+// judgment names, the hold first, then a reader with room, then one spent,
+// else no reader up for the tier.
+func reviewWantWhy(s *Snapshot, pr *Card, seats []FriendSeat) string {
+	if StreamHeld(s, pr.Row) {
+		return reviewWhyHeld
+	}
+	if s.Fleet == nil {
+		return reviewWhyNoUp
+	}
+	units := readUnitsOf(s, seats)
+	if len(units) == 0 {
+		return reviewWhyNoUp
+	}
+	attempt := readAttempt(pr)
+	worker := attemptUnit(s, pr.ID, attempt)
+	cards := s.Fleet.Cards()
+	may, room, spent := 0, 0, 0
+	for _, u := range units {
+		why := readRefusal(s, u, pr, attempt, worker, cards)
+		if why == "" {
+			may++
+			if u.half > 0 {
+				room++
+			}
+			continue
+		}
+		if strings.HasPrefix(why, "spent(") {
+			spent++
+		}
+	}
+	switch {
+	case may > 0 && room == 0:
+		return reviewWhyMax
+	case may == 0 && spent > 0:
+		return reviewWhySpent
+	default:
+		return reviewWhyNoUp
+	}
+}
+
+func reviewStarvedWhat(s *Snapshot, r TickReq, wants []*Card) string {
+	seats := reviewAlarmSeats(s, r)
+	var bits []string
+	for i, c := range wants {
+		if i == 3 {
+			break
+		}
+		bits = append(bits, c.ID+" ("+reviewWantWhy(s, c, seats)+")")
+	}
+	return fmt.Sprintf("review starved: %d cards in review want a read and no read is out: %s", len(wants), strings.Join(bits, "; "))
+}
+
+func reviewIdleWhat(free, waiting int) string {
+	return fmt.Sprintf("reads idle: %d readers free and %d cards in review want a read", free, waiting)
+}
+
+func reviewAlarmDisarm(s *Snapshot, p Plan) Plan {
+	for _, spec := range []struct{ prop, typ string }{
+		{PropReviewStarvedEp, NReviewStarved},
+		{PropReadsIdleEp, NReadsIdle},
+	} {
+		if v, ok := s.Fleet.Prop(spec.prop); ok && v != "" {
+			reviewAlarmWrite(s, &p, spec.prop, "")
+		}
+		p.Closes = append(p.Closes, reviewAlarmOpen(s, spec.typ)...)
+	}
+	return p
+}
+
+// reviewAlarmStep advances one episode. The first tick that sees the condition
+// records when; a later tick raises once the window of running time has passed;
+// the tick that finds the condition ended closes it, with a note when one was raised.
+func reviewAlarmStep(s *Snapshot, r TickReq, p Plan, prop, typ string, window time.Duration, on bool, what func() string, clear string, count int, ids []string) Plan {
+	since, said := reviewAlarmRead(s, prop)
+	if !on {
+		if since == "" && !said {
+			return p
+		}
+		reviewAlarmWrite(s, &p, prop, "")
+		if said {
+			p.Closes = append(p.Closes, reviewAlarmOpen(s, typ)...)
+			n := happened(NReviewAlarmCleared, "", s.Now)
+			n.Who, n.To = r.who(), s.Coordinator
+			n.What = typ + ": " + clear
+			p.Notes = append(p.Notes, n)
+		}
+		return p
+	}
+	if since == "" {
+		reviewAlarmWrite(s, &p, prop, reviewAlarmEncode(s.Now, false))
+		return p
+	}
+	elapsed, ok := reviewAlarmElapsed(s.Now, since)
+	if !ok {
+		reviewAlarmWrite(s, &p, prop, reviewAlarmEncode(s.Now, false))
+		return p
+	}
+	if elapsed < window || said {
+		return p
+	}
+	n := Note{
+		Kind: Judgment, Type: typ, What: what(), Who: r.who(), At: s.Now,
+		Decisions: []string{"ack", "wait"}, SprintLevel: true, Count: count,
+		Primaries: ids,
+	}
+	p.Notes = append(p.Notes, n)
+	reviewAlarmWrite(s, &p, prop, reviewAlarmSaid(since))
+	return p
+}
+
+func reviewAlarmRead(s *Snapshot, prop string) (since string, said bool) {
+	v, ok := s.Fleet.Prop(prop)
+	if !ok || v == "" {
+		return "", false
+	}
+	since, flag, ok := strings.Cut(v, "\t")
+	if !ok || since == "" {
+		return "", false
+	}
+	return since, flag == "1"
+}
+
+func reviewAlarmEncode(since time.Time, said bool) string {
+	flag := "0"
+	if said {
+		flag = "1"
+	}
+	return since.UTC().Format(time.RFC3339Nano) + "\t" + flag
+}
+
+func reviewAlarmSaid(since string) string {
+	t, _, _ := strings.Cut(since, "\t")
+	return t + "\t1"
+}
+
+func reviewAlarmElapsed(now time.Time, since string) (time.Duration, bool) {
+	t, err := time.Parse(time.RFC3339Nano, since)
+	if err != nil {
+		return 0, false
+	}
+	if now.Before(t) {
+		return 0, true
+	}
+	return now.Sub(t), true
+}
+
+func reviewAlarmWrite(s *Snapshot, p *Plan, name, value string) {
+	was, had := s.Fleet.Prop(name)
+	if had && was == value {
+		return
+	}
+	if !had && value == "" {
+		return
+	}
+	p.Props = append(p.Props, PropWrite{Table: Fleet, Name: name, Value: value, Was: was, WasAbsent: !had})
+}
+
+func reviewAlarmOpen(s *Snapshot, typ string) []Open {
+	var out []Open
+	for _, o := range s.Open {
+		if o.Note.Kind == Judgment && o.Note.Type == typ {
+			out = append(out, o)
+		}
+	}
+	return out
+}
+
+// reviewAlarmFinish makes a property-only plan visible to the tick. The probe
+// skips a plan Empty is true of, and Empty ignores Props, so the episode would
+// never be stored. A unit with no move is not a line the quiet ticks forbid.
+func reviewAlarmFinish(p Plan) (Plan, int) {
+	if len(p.Props) > 0 && p.Empty() {
+		p.Units = append(p.Units, Unit{Key: PartReviewStarved})
+	}
+	return p, 0
 }
