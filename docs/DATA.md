@@ -30,7 +30,7 @@ on purpose.
 
 | Class | How | Every | Kept | Verified by |
 | --- | --- | --- | --- | --- |
-| configuration | `pg_dump --format=custom` of the `nova_pg_dsn` database | `nova_data_pg_every` | `nova_data_pg_keep` | `pg_restore --list` reads the dump whole |
+| configuration | `nova-config backup --pg <the fleet row's pg_dsn> --dir <backup dir>/postgres` (a `pg_dump --format=custom`), run by the loop record `data-backup-config` | `nova_data_pg_every` | `nova_data_pg_keep` | `pg_restore --list` reads the dump whole and it holds schema config's table data, then its SHA-256 |
 | messages, receipts | `nova-sprint snapshot --redis <the bus store> --dir <backup dir>/redis-bus`, run by the loop record `data-backup-bus` | `nova_data_redis_every` | `nova_data_redis_keep` | the snapshot's SHA-256, then a load into a twin |
 | runtime state | `nova-sprint snapshot --redis <the sprint store> --dir <backup dir>/redis-sprint`, run by the loop record `data-backup-sprint` | `nova_data_redis_every` | `nova_data_redis_keep` | as above |
 | code, playbooks and records | a push to the forge; every clone is a copy | each push | all of it | git's own hashes |
@@ -45,20 +45,25 @@ held in the secret `nova_data_redis_password_key` in the store machine's seat.
 A snapshot asks the store for `BGSAVE` and `CONFIG GET`, and copies the RDB from
 the store's own `--dir`, so it runs on the store machine.
 
+`nova-config backup` keeps the same law as `nova-sprint snapshot`: a dump is
+written under a temporary name, read back by `pg_restore --list`, refused
+unless it holds schema config's table data, and only then named and given its
+`.sha256`; a dump that fails a check is removed and the older ones stay; the
+oldest are pruned past the keep count only after a newer one has verified. It
+reads the password as every nova-config verb does (`NOVA_PG_PASSWORD_ENV`) and
+hands it to `pg_dump` in its environment, never on its command line. The
+loop logs in with the secret `nova_pg_password_key` in the store machine's
+seat. Take one by hand before every `nova-config migrate` as well.
+
 The backup play, `fleet/backup.yml`, sets up the backup configuration on the
 store machine. It creates the backup directories (mode 0700) and writes every
 setting on this page to `nova_data_settings_file` (JSON, mode 0600). It holds
-the two Redis backup loops against what those settings say. A loop that is
-missing, or whose argv differs, gets a `BACKUP LOOP` line carrying the
-`nova-config loop add` line that fixes it, and outside `--check` the play then
-fails. A loop record goes into PostgreSQL and is rendered by `fleet/loops.yml`,
-and the play never writes PostgreSQL itself.
-
-**Owed.** No verb takes, rotates and verifies a PostgreSQL backup yet, the way
-`nova-sprint snapshot` does for Redis. Until one exists, the play prints
-`BACKUP config OWED` and a dump is taken by hand before every `nova-config
-migrate`. The configuration class's loss budget below is not met until that
-verb exists.
+the three backup loops (`data-backup-config`, `data-backup-sprint`,
+`data-backup-bus`) against what those settings say. A loop that is missing,
+or whose argv differs, gets a `BACKUP LOOP` line carrying the `nova-config loop
+add` line that fixes it, and outside `--check` the play then fails. A loop
+record goes into PostgreSQL and is rendered by `fleet/loops.yml`, and the play
+never writes PostgreSQL itself.
 
 ## Acceptable loss, restore time and ownership
 
@@ -83,15 +88,24 @@ existed.
    come from Git.
 2. **Secrets.** Restore the nova-secrets store from its own backup
    (SPEC-SECRETS.md). Every later step logs in through it.
-3. **PostgreSQL.** Create the database, `pg_restore` the newest dump, then run
-   `nova-config migrate` and `nova-config status`.
+3. **PostgreSQL.** Check the newest dump against its sum (`sha256sum -c
+   <file>.sha256`, in the dump's directory), create an empty database, run
+   `pg_restore --no-owner --exit-on-error --dbname <dsn> <file>`, then
+   `nova-config migrate` (it applies nothing on a dump at the binary's
+   schema). `nova-config status` then refuses until step 5: the Redis copy is
+   behind.
 4. **Redis.** For each store, run `nova-sprint snapshot --restore-drill <file>`
-   on the newest snapshot. Place it as `dump.rdb` in an empty `--dir` (one with
-   no `appendonlydir`), then start `nova-redis serve` on that dir. Redis loads
-   the RDB and writes its AOF from it (Redis 7 and later; the acceptance drill
-   below is what proves it on the fleet's version). Then run `fleet/redis.yml`. The users
-   come back through `acl apply`, because `users.acl` lives beside the store and
-   is not in the snapshot. Then run `nova-redis fn load`.
+   on the newest snapshot, and place it as `dump.rdb` in an empty `--dir`.
+   **Do not start `nova-redis serve` on it yet:** a server started with its
+   AOF on, in a directory holding only an RDB, loads nothing and writes an
+   empty AOF (Redis 8 on the bench; the drill holds it as a witness). Load it in two steps: start
+   `redis-server --bind 127.0.0.1 --port <a free port> --dir <dir>
+   --dbfilename dump.rdb --appendonly no`, run `CONFIG SET appendonly yes`
+   on it, wait until `INFO persistence` says `aof_rewrite_in_progress:0` and
+   `aof_last_bgrewrite_status:ok`, then `SHUTDOWN`; now start `nova-redis
+   serve` on that dir, and it loads the AOF. Then run `fleet/redis.yml`. The
+   users come back through `acl apply`, because `users.acl` lives beside the
+   store and is not in the snapshot. Then run `nova-redis fn load`.
 5. **Apply config.** Run `nova-config apply` (PostgreSQL over the copy the
    snapshot held), then `fleet/loops.yml` and `fleet/backup.yml`.
 6. **Check.** Compare `nova-bus log --max`, `nova-bus peek --as <name>` and the
@@ -146,10 +160,27 @@ are what bound the history.
 
 ## Acceptance
 
-Restore PostgreSQL and both Redis stores onto a fresh, isolated host (bound to
+Restore PostgreSQL and the bus store onto a fresh, isolated host (bound to
 loopback, with no route to the live fleet), following the restore order above,
 then apply the configuration. Then show three things are back: the retained
 messages (`bus2:log`'s count and newest id), the receipts (each `bus2:owed`
-hash), and the pending deliveries (each group's pending list). The time must
-fall within the restore time above. **Owed:** the drill has not been run, and
-its record will go beside the other acceptance records.
+hash), and the pending deliveries (each group's pending list, each group's last
+delivered entry, and what was never delivered). The time must fall within the
+restore time above.
+
+The drill is `TestRestoreDrillOntoAFreshHost`
+(cmd/nova-config/restore_drill_functional_test.go, `go test -tags functional
+-run TestRestoreDrillOntoAFreshHost ./cmd/nova-config/`). It configures a
+fleet and uses its bus (sent, delivered, acked, pending, never delivered,
+receipted and owed), takes the bus snapshot and then the configuration dump
+the way the loops do, changes the configuration and sends a message in
+between, loses the old host (its Redis shut down unsaved, its database
+dropped), and restores onto a fresh PostgreSQL cluster and an empty Redis
+directory by steps 3 to 6. It shows the bus store back as it was at the
+snapshot, the configuration back as it was at the dump, apply replacing the
+snapshot's older copy of the configuration, the message sent after the
+snapshot gone, and the restore inside the budget. Its record is
+[acceptance/v1.0.0/data-restore-drill.md](acceptance/v1.0.0/data-restore-drill.md). What it
+does not show: a restore onto a second machine, the sprint store (restored by
+the same step 4), the secrets store (step 2), or the restore time at the
+fleet's own volume.

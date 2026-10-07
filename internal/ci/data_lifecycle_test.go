@@ -28,7 +28,13 @@ import (
 //     the one the page gives, and every nova_data_* setting there is named on
 //     the page and read by fleet/backup.yml, the play that converges them;
 //   - SPEC-BUS.md and SPEC-REDIS.md link the page and keep none of the
-//     sentences it replaced (Redis never the record, trimming a later decision).
+//     sentences it replaced (Redis never the record, trimming a later decision);
+//   - every class with a backup is scheduled by the play: the configuration
+//     by the loop record data-backup-config running nova-config backup, and
+//     no backup is OWED;
+//   - the Redis restore step loads the RDB with the AOF off first (a store
+//     started AOF-on beside only an RDB loads nothing), and the acceptance
+//     names the drill that proves the order, which is in cmd/nova-config.
 
 // dataSourceOf is the store each class must name, by the class's cell.
 var dataSourceOf = map[string]string{
@@ -70,9 +76,15 @@ var dataStale = []string{
 
 var reDataSetting = regexp.MustCompile(`\bnova_data_[a-z0-9_]+\b`)
 
+// dataDrill is the acceptance drill DATA.md must name, and the file it is in.
+const (
+	dataDrill     = "TestRestoreDrillOntoAFreshHost"
+	dataDrillFile = "cmd/nova-config/restore_drill_functional_test.go"
+)
+
 // dataTexts is what the rule reads, by role.
 type dataTexts struct {
-	data, bus, redis, groupVars, play string
+	data, bus, redis, groupVars, play, drill string
 }
 
 // mdTable is the first table after heading in md, its header and separator
@@ -197,8 +209,37 @@ func dataLifecycleProblems(src dataTexts) []string {
 			}
 		}
 	}
+	if !strings.Contains(src.play, "data-backup-config: \"{{ data_pg_login + ['nova-config', 'backup',") {
+		out = append(out, "fleet/backup.yml holds no data-backup-config loop running nova-config backup: the configuration has no scheduled backup")
+	}
+	if strings.Contains(src.play, "OWED") || strings.Contains(src.data, "BACKUP config OWED") {
+		out = append(out, "a backup is still OWED in fleet/backup.yml or DATA.md")
+	}
+	restore := dataSection(src.data, "## Restore order onto a replacement host")
+	if !strings.Contains(restore, "--appendonly no") || !strings.Contains(restore, "CONFIG SET appendonly yes") {
+		out = append(out, "DATA.md's Redis restore step does not load the RDB with the AOF off first; a store started AOF-on beside only an RDB loads nothing")
+	}
+	if !strings.Contains(dataSection(src.data, "## Acceptance"), dataDrill) {
+		out = append(out, "DATA.md's acceptance names no drill ("+dataDrill+")")
+	}
+	if !strings.Contains(src.drill, "func "+dataDrill+"(t *testing.T)") {
+		out = append(out, "the drill DATA.md names is not in "+dataDrillFile)
+	}
 	sort.Strings(out)
 	return out
+}
+
+// dataSection is md's text from heading to the next "## ".
+func dataSection(md, heading string) string {
+	i := strings.Index(md, "\n"+heading+"\n")
+	if i < 0 {
+		return ""
+	}
+	rest := md[i+len(heading)+2:]
+	if j := strings.Index(rest, "\n## "); j >= 0 {
+		return rest[:j]
+	}
+	return rest
 }
 
 func readDataTexts(t *testing.T) dataTexts {
@@ -215,6 +256,7 @@ func readDataTexts(t *testing.T) dataTexts {
 		redis:     read("docs/SPEC-REDIS.md"),
 		groupVars: read("fleet/group_vars/all.yml"),
 		play:      read("fleet/backup.yml"),
+		drill:     read(dataDrillFile),
 	}
 }
 
@@ -262,6 +304,21 @@ func TestTheSpecsAgreeOnTheSourceOfTruth(t *testing.T) {
 		{"no link", func(s *dataTexts) {
 			s.bus = strings.ReplaceAll(s.bus, "(DATA.md)", "(OTHER.md)")
 		}, "SPEC-BUS.md does not link DATA.md"},
+		{"the configuration unscheduled", func(s *dataTexts) {
+			s.play = strings.Replace(s.play, "data-backup-config: ", "data-backup-other: ", 1)
+		}, "fleet/backup.yml holds no data-backup-config loop running nova-config backup"},
+		{"a backup owed", func(s *dataTexts) {
+			s.play += "\n# BACKUP config OWED\n"
+		}, "a backup is still OWED"},
+		{"serve straight onto the RDB", func(s *dataTexts) {
+			s.data = strings.Replace(s.data, "CONFIG SET appendonly yes", "nova-redis serve", 1)
+		}, "DATA.md's Redis restore step does not load the RDB with the AOF off first"},
+		{"no drill named", func(s *dataTexts) {
+			s.data = strings.ReplaceAll(s.data, dataDrill, "TestSomethingElse")
+		}, "DATA.md's acceptance names no drill"},
+		{"the drill gone", func(s *dataTexts) {
+			s.drill = ""
+		}, "the drill DATA.md names is not in cmd/nova-config/restore_drill_functional_test.go"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

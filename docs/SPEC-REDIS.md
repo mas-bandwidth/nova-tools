@@ -92,7 +92,9 @@ instance refuses a write rather than drop a key; and no TTL policy, so store
 keys do not expire. The AOF and the RDB are on the store's own disk: they
 survive a crash and a restart, not the loss of the host, and the backups that
 do, the restore order onto a replacement host and the loss each class accepts
-are [DATA.md](DATA.md)'s. The ACL users live in `<store-dir>/users.acl`, mode 0600,
+are [DATA.md](DATA.md)'s. `serve` on a directory that holds a snapshot's RDB
+and no AOF loads nothing (the AOF is on, and there is no AOF to load), so a
+restore loads the RDB with the AOF off first, as DATA.md's restore order says. The ACL users live in `<store-dir>/users.acl`, mode 0600,
 named in the config as `aclfile`: `acl apply`'s `ACL SAVE` writes them there and
 a restart loads them. redis-server ignores `requirepass` once an ACL file is
 named and would bring the default user up with no password, so before each
