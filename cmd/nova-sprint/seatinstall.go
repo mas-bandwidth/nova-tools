@@ -79,8 +79,8 @@ func (a *app) cmdSeatInstall(args []string, stdout, stderr io.Writer) int {
 	u := sprint.SeatUnit{OS: goos, Log: *logf}
 	if srv := strings.TrimSpace(*server); srv != "" {
 		u.Server = srv
-	} else if srv := a.server(fs); srv != "" {
-		u.Server = srv
+	} else if srv := a.server(fs); srv.addr != "" {
+		u.Server = srv.addr
 	} else {
 		u.Redis = strings.TrimSpace(c.redis)
 	}
