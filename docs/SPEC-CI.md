@@ -678,6 +678,50 @@ needs the call graph and the cost of guessing wrong is a secret leak that looks
 like a flake. Full section: *The CI class test against a real network host on the
 CI path*.
 
+### `unit-sockets` — no unit test opens a socket
+
+**The rule.** A unit test opens no socket, not even the loopback (the owner's
+rule: "Never test with real sockets, otherwise the only tests you can do are by
+definition, functional tests, and those are slower"). Every `_test.go` the unit
+tier compiles — under `cmd/`, `internal/` and `tools/`, outside testdata, behind
+no `//go:build functional`, `slow`, `perf` or `nightly` constraint — is scanned,
+and a call of `net.Listen`, `net.ListenPacket`, `net.ListenTCP`,
+`net.ListenUnix`, `net.Dial` or `net.DialTimeout`, or of `httptest.NewServer`,
+`httptest.NewTLSServer` or `httptest.NewUnstartedServer`, is refused, naming
+file:line. The call is resolved through the file's imports, so an aliased
+import counts. `net.Pipe` and `httptest.NewRecorder` are the remedies and are
+never refused.
+**The mistake it prevents.** A unit test that opens a socket is by definition a
+functional test: it is slower than the unit budget allows, it needs a free
+port, and its verdict can turn on the machine's load — the test proves the
+socket, not the logic, and the tier whose whole run must answer in one minute
+cannot carry one.
+**The test.** `TestNoUnitTestOpensASocket`
+(`internal/ci/unitsockets_class_test.go`), with
+`TestUnitSocketsDetectorRefusesTheCallsAndNotTheRemedies` beside it, which pins
+the calls it refuses (through an aliased import too), the remedies it never
+refuses, and the functional-tagged file it skips whole.
+**Its ledger.** the `unit-sockets` package ledger,
+`internal/ci/testdata/unit-sockets/`, one counted shard per source package, one
+`<file>:socket <sites> <reason>` row per test file still short. The count only
+falls: a file measuring more sites than its row, a file with a site and no row,
+and a row above what the file measures are each a red run, and
+`NOVA_CI_UPDATE=1` lowers the counts and drops the rows at zero, never raises a
+count and never adds a row. The rows were seeded once, at the landing, from the
+tree's measure; every later change to them is a shrink. The merge-base ratchet
+accepts this initial seed only while no `unit-sockets` shard exists in the base;
+a later package shard remains growth.
+**Its remedy line.** `test the logic through a seam: the handler with
+httptest.NewRecorder, the client with an in-process RoundTripper, a conn with
+net.Pipe; a test whose subject is the real socket moves under //go:build
+functional`.
+**Its narrowings.** It reads calls in the test file's own syntax: a socket
+opened by a helper in another package, a call made through a variable or a
+method value, or a dot-imported `net` is not seen, and a name used as a value
+is not counted a second time. The tier decision reuses `unitTierFile`, so it
+follows the unit suite's supported build platforms and tags. The `net` class
+test beside it refuses a host a test NAMES; this one refuses a socket it OPENS.
+
 ### `goenv` — a child `go` never inherits the caller's environment
 
 **The rule.** Every `exec.Command("go", …)` in `cmd/` and `internal/`, and
