@@ -49,6 +49,17 @@ const (
 	// SwitchOn and SwitchOff are a switch's words.
 	SwitchOn  = "on"
 	SwitchOff = "off"
+	// PropFleetTiers and PropFriendsTiers are the work table's properties: the tiers each
+	// side may take (the owner, 2026-10-06: "a setting for friends, what tiers they may
+	// take, default to all. Same setting for the fleet."), comma joined in the ladder's
+	// order, or TiersAll, all when absent. The deal hands a side only cards whose tier is
+	// in its set, on top of each row's own tiers, work cards and read cards alike; a card
+	// pinned to a model is no exception (the set is the owner's switch), and a frontier card
+	// waits for the coordinator whatever the sets.
+	PropFleetTiers   = "fleet_tiers"
+	PropFriendsTiers = "friends_tiers"
+	// TiersAll is the word of a side that may take every tier, the default.
+	TiersAll = "all"
 	// ReadTierDefault is the word that takes a read tier off: a stream's back to
 	// the sprint's, the sprint's back to each card's own tier.
 	ReadTierDefault = "default"
@@ -70,6 +81,56 @@ func (s *Snapshot) switchOff(prop string) bool {
 	}
 	v, _ := s.Work.Prop(prop)
 	return v == SwitchOff
+}
+
+// FleetTakes says the deal may hand the fleet a card of the tier (set --fleet-tiers): a
+// machine's work card's tier, or a member's read card's read tier, is in the fleet's set.
+func (s *Snapshot) FleetTakes(tier string) bool { return s.sideTakes(PropFleetTiers, tier) }
+
+// FriendsTake says the deal may hand a friend a card of the tier (set --friends-tiers), as
+// FleetTakes says it of the fleet; her row's own tiers still bound what she takes.
+func (s *Snapshot) FriendsTake(tier string) bool { return s.sideTakes(PropFriendsTiers, tier) }
+
+func (s *Snapshot) sideTakes(prop, tier string) bool {
+	if s == nil || s.Work == nil {
+		return true
+	}
+	v, _ := s.Work.Prop(prop)
+	return v == "" || v == TiersAll || slices.Contains(Split(v), tier)
+}
+
+// SideTiers is a side's tiers as the work table's properties hold them (PropFleetTiers,
+// PropFriendsTiers): nil for all, the default, else the tiers in the ladder's order.
+func SideTiers(props map[string]string, prop string) []string {
+	if v := props[prop]; v != "" && v != TiersAll {
+		return Split(v)
+	}
+	return nil
+}
+
+// sideTiersWord is the value a side's tiers setting writes: TiersAll, or the tiers named in
+// the ladder's order, each once; why says what is wrong with v, naming the four tiers.
+func sideTiersWord(flag, v string) (word, why string) {
+	if v == TiersAll {
+		return TiersAll, ""
+	}
+	named := Split(v)
+	for _, t := range named {
+		if !slices.Contains(capLadder, t) {
+			named = nil
+			break
+		}
+	}
+	if len(named) == 0 {
+		return "", flag + " wants tiers of " + strings.Join(capLadder, ", ") + ", comma separated, or " + TiersAll + "; found " + v
+	}
+	var out []string
+	for _, t := range capLadder {
+		if slices.Contains(named, t) {
+			out = append(out, t)
+		}
+	}
+	return strings.Join(out, ","), ""
 }
 
 // SwitchWord is a switch's word as the work table's properties hold it: SwitchOff when
@@ -212,6 +273,10 @@ type SetReq struct {
 	// Fleet and Friends are the work switches (PropFleet, PropFriends): on or off.
 	Fleet   string `json:",omitempty"`
 	Friends string `json:",omitempty"`
+	// FleetTiers and FriendsTiers are the tiers each side may take (PropFleetTiers,
+	// PropFriendsTiers): tiers comma separated, or all.
+	FleetTiers   string `json:",omitempty"`
+	FriendsTiers string `json:",omitempty"`
 	// ReadCards turns read cards on or off (PropReadCards, read_cards.go): on, off, or
 	// default (off).
 	ReadCards string `json:",omitempty"`
@@ -221,7 +286,8 @@ type SetReq struct {
 // Set writes the settings: refused whole, writing nothing, for an actor who is not
 // the coordinator, a read tier that is not flash, pro or default, a dealt bound that
 // is not a positive duration, a mark that names no repository or is not a stream's,
-// an alarm's threshold it does not take, nothing to set, or a stream that is not a stream (docs/SPEC-SPRINT.md section 11).
+// an alarm's threshold it does not take, a side's tiers that are not of the four tiers or
+// all, nothing to set, or a stream that is not a stream (docs/SPEC-SPRINT.md section 11).
 func Set(s *Snapshot, r SetReq) Plan {
 	var p Plan
 	var why []string
@@ -291,6 +357,20 @@ func Set(s *Snapshot, r SetReq) Plan {
 			why = append(why, sw[0]+" is the sprint's, not a stream's: nova-sprint set "+sw[0]+" "+sw[1])
 		}
 	}
+	sideTiers := map[string]string{}
+	for _, st := range [][3]string{{"--fleet-tiers", r.FleetTiers, PropFleetTiers}, {"--friends-tiers", r.FriendsTiers, PropFriendsTiers}} {
+		if st[1] == "" {
+			continue
+		}
+		word, w := sideTiersWord(st[0], st[1])
+		if w != "" {
+			why = append(why, w)
+		}
+		if len(r.Streams) > 0 {
+			why = append(why, st[0]+" is the sprint's, not a stream's: nova-sprint set "+st[0]+" "+st[1])
+		}
+		sideTiers[st[2]] = word
+	}
 	if r.Attempts != "" {
 		if _, err := ParseAttempts(r.Attempts); err != nil {
 			why = append(why, err.Error())
@@ -319,8 +399,8 @@ func Set(s *Snapshot, r SetReq) Plan {
 			why = append(why, "--read-cards is the sprint's, not a stream's: nova-sprint set --read-cards "+r.ReadCards)
 		}
 	}
-	if r.ReadTier == "" && r.DealtMax == "" && r.LandProtected == "" && r.Release == "" && r.Prose == "" && len(alarms) == 0 && r.GoLanes == "" && r.Attempts == "" && r.FriendIdle == "" && r.FriendStallAfter == "" && r.FriendStallStep == "" && r.DriftCommits == "" && r.DriftHours == "" && r.Fleet == "" && r.Friends == "" && r.ReadCards == "" {
-		why = append(why, "nothing to set: --read-tier, --read-cards, --prose, --dealt-max, --go-lanes, --attempts, --friend-idle, --friend-stall-after, --friend-stall-step, --drift-commits, --drift-hours, --fleet, --friends or an --alarm-... threshold")
+	if r.ReadTier == "" && r.DealtMax == "" && r.LandProtected == "" && r.Release == "" && r.Prose == "" && len(alarms) == 0 && r.GoLanes == "" && r.Attempts == "" && r.FriendIdle == "" && r.FriendStallAfter == "" && r.FriendStallStep == "" && r.DriftCommits == "" && r.DriftHours == "" && r.Fleet == "" && r.Friends == "" && len(sideTiers) == 0 && r.ReadCards == "" {
+		why = append(why, "nothing to set: --read-tier, --read-cards, --prose, --dealt-max, --go-lanes, --attempts, --friend-idle, --friend-stall-after, --friend-stall-step, --drift-commits, --drift-hours, --fleet, --friends, --fleet-tiers, --friends-tiers or an --alarm-... threshold")
 	}
 	if len(r.Streams) > 0 && r.GoLanes != "" {
 		why = append(why, "--go-lanes is the sprint's, not a stream's: nova-sprint set --go-lanes "+r.GoLanes)
@@ -420,6 +500,8 @@ func Set(s *Snapshot, r SetReq) Plan {
 		{PropDriftHours, r.DriftHours},
 		{PropFleet, r.Fleet},
 		{PropFriends, r.Friends},
+		{PropFleetTiers, sideTiers[PropFleetTiers]},
+		{PropFriendsTiers, sideTiers[PropFriendsTiers]},
 		{PropReadCards, r.ReadCards},
 	}
 	for _, a := range alarmProps {

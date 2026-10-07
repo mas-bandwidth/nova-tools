@@ -140,14 +140,18 @@ type coordinatorView struct {
 	Push   string    `json:"push,omitempty"` // the holder's push: adapter=<a> proven=<RFC3339|->
 	// Fleet and Friends are the work switches, carried only when off (nova-sprint set
 	// --fleet off, --friends off): the deal hands that side no work card.
-	Fleet   string      `json:"fleet,omitempty"`
-	Friends string      `json:"friends,omitempty"`
-	Cursor  string      `json:"cursor"`
-	N       coordCounts `json:"n"`
-	Items   []viewItem  `json:"items"`
-	Rows    []viewRow   `json:"rows,omitempty"`
-	Same    int         `json:"same,omitempty"` // with --since: items left out, unchanged
-	Gone    int         `json:"gone,omitempty"` // with --since: items the cursor's read showed that stand no more
+	Fleet   string `json:"fleet,omitempty"`
+	Friends string `json:"friends,omitempty"`
+	// FleetTiers and FriendsTiers are the tiers each side may take, carried only when set
+	// (nova-sprint set --fleet-tiers, --friends-tiers); absent is all.
+	FleetTiers   []string    `json:"fleet_tiers,omitempty"`
+	FriendsTiers []string    `json:"friends_tiers,omitempty"`
+	Cursor       string      `json:"cursor"`
+	N            coordCounts `json:"n"`
+	Items        []viewItem  `json:"items"`
+	Rows         []viewRow   `json:"rows,omitempty"`
+	Same         int         `json:"same,omitempty"` // with --since: items left out, unchanged
+	Gone         int         `json:"gone,omitempty"` // with --since: items the cursor's read showed that stand no more
 }
 
 // workerCard is one of a worker's cards.
@@ -510,6 +514,10 @@ func (a *app) coordinatorView(ctx context.Context, st *store.Store, all bool) (c
 	if s.FriendsOff() {
 		v.Friends = sprint.SwitchOff
 	}
+	if s.Work != nil {
+		props := s.Work.Props()
+		v.FleetTiers, v.FriendsTiers = sprint.SideTiers(props, sprint.PropFleetTiers), sprint.SideTiers(props, sprint.PropFriendsTiers)
+	}
 	if running && n.Width > 0 && 2*n.Busy < n.Width && !s.FleetOff() { // off: the machines are dealt nothing
 		next := "nova-sprint where --all"
 		if n.Ready < n.Width {
@@ -685,7 +693,7 @@ func coordinatorSum(v coordinatorView, known bool, m store.Machine) string {
 	if v.Push != "" {
 		sum += " | push " + v.Push
 	}
-	if line := switchesLine(v.Fleet, v.Friends); line != "" {
+	if line := switchesLine(v.Fleet, v.Friends, v.FleetTiers, v.FriendsTiers); line != "" {
 		sum += " | " + line
 	}
 	return sum

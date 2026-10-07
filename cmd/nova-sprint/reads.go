@@ -597,9 +597,14 @@ type whereView struct {
 	// FleetWork and FriendsWork are the work switches (nova-sprint set --fleet, --friends;
 	// sprint.PropFleet, sprint.PropFriends): on or off, always carried, so the dashboard greys
 	// a side that is off. Off, the deal hands that side no work card; reads flow.
-	FleetWork   string     `json:"fleet_work"`
-	FriendsWork string     `json:"friends_work"`
-	Goals       []goalView `json:"goals,omitempty"`
+	FleetWork   string `json:"fleet_work"`
+	FriendsWork string `json:"friends_work"`
+	// FleetTiers and FriendsTiers are the tiers each side may take (nova-sprint set
+	// --fleet-tiers, --friends-tiers; sprint.PropFleetTiers, sprint.PropFriendsTiers):
+	// "all", the default, or the list, always carried.
+	FleetTiers   any        `json:"fleet_tiers"`
+	FriendsTiers any        `json:"friends_tiers"`
+	Goals        []goalView `json:"goals,omitempty"`
 	// Seat is the seat's last change (coordinator <name>): who gave or took
 	// it, when and why; absent while the seat has not moved since init.
 	Seat *sprint.SeatChange `json:"seat,omitempty"`
@@ -1192,9 +1197,11 @@ func (a *app) whereOf(ctx context.Context, st *store.Store, stale time.Duration,
 		v.Machine = st.MachineLineOf(facts.Machine, facts.Heartbeat)
 	}
 	v.FleetWork, v.FriendsWork = sprint.SwitchWord(shapes[0].Props, sprint.PropFleet), sprint.SwitchWord(shapes[0].Props, sprint.PropFriends)
+	fleetTiers, friendsTiers := sprint.SideTiers(shapes[0].Props, sprint.PropFleetTiers), sprint.SideTiers(shapes[0].Props, sprint.PropFriendsTiers)
+	v.FleetTiers, v.FriendsTiers = tiersJSON(fleetTiers), tiersJSON(friendsTiers)
 	var b strings.Builder
 	b.WriteString(a.seatTitle(v.Coordinator, v.Seat, now) + "\n\n" + whereHeader(v.Summary, v.Machine) + "\n")
-	if line := switchesLine(v.FleetWork, v.FriendsWork); line != "" {
+	if line := switchesLine(v.FleetWork, v.FriendsWork, fleetTiers, friendsTiers); line != "" {
 		b.WriteString(line + "\n")
 	}
 	// the five heaviest cards, the ones the most wait on, under the summary: the tick's where
@@ -1719,17 +1726,36 @@ func fleetText(t ntable.Table) string {
 // and the progress line, with no machine text, when it is running; a RUNNING
 // machine whose last tick is late keeps the progress line, the machine's
 // "running (tick late 16s)" after it. Nothing else follows any of them.
-// switchesLine is the work switches that are off, one line ("fleet: off", "friends: off"),
-// or "" while both are on (where; view coordinator's summary).
-func switchesLine(fleet, friends string) string {
-	var off []string
-	if fleet == sprint.SwitchOff {
-		off = append(off, "fleet: off")
+// switchesLine is the sides' settings that are not their defaults, one line: while every
+// tier is open to both sides, the work switches that are off ("fleet: off", "friends: off"),
+// nothing while both are on; while a side's tiers are set, both sides, each its switch and
+// its tiers ("fleet: on, tiers flash  friends: on, tiers all").
+func switchesLine(fleet, friends string, fleetTiers, friendsTiers []string) string {
+	if fleetTiers == nil && friendsTiers == nil {
+		var off []string
+		if fleet == sprint.SwitchOff {
+			off = append(off, "fleet: off")
+		}
+		if friends == sprint.SwitchOff {
+			off = append(off, "friends: off")
+		}
+		return strings.Join(off, "  ")
 	}
-	if friends == sprint.SwitchOff {
-		off = append(off, "friends: off")
+	side := func(name, sw string, tiers []string) string {
+		if sw != sprint.SwitchOff {
+			sw = sprint.SwitchOn
+		}
+		return name + ": " + sw + ", tiers " + cmp.Or(strings.Join(tiers, ","), sprint.TiersAll)
 	}
-	return strings.Join(off, "  ")
+	return side("fleet", fleet, fleetTiers) + "  " + side("friends", friends, friendsTiers)
+}
+
+// tiersJSON is a side's tiers as where --json carries them: "all", or the list.
+func tiersJSON(tiers []string) any {
+	if tiers == nil {
+		return sprint.TiersAll
+	}
+	return tiers
 }
 
 func whereHeader(summary, machine string) string {
