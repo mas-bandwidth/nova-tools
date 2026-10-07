@@ -58,7 +58,7 @@ func library() redisfn.Library {
 func fnLoadVerb(d deps) tool.Verb {
 	return tool.Verb{
 		Name:    "fn load",
-		Usage:   "fn load --addr <host:port> [--user <name>] [--password-env <NAME>]",
+		Usage:   "fn load --redis <host:port> [--user <name>] [--password-env <NAME>]",
 		Example: "",
 		Effect:  tool.LocalWrite,
 		Flags: func(f *tool.Flags) {
@@ -73,7 +73,7 @@ func fnLoadVerb(d deps) tool.Verb {
 func fnCheckVerb(d deps) tool.Verb {
 	return tool.Verb{
 		Name:    "fn check",
-		Usage:   "fn check --addr <host:port> [--user <name>] [--password-env <NAME>]",
+		Usage:   "fn check --redis <host:port> [--user <name>] [--password-env <NAME>]",
 		Example: "",
 		Effect:  tool.Inspection,
 		Flags: func(f *tool.Flags) {
@@ -89,6 +89,16 @@ func fnRun(c *tool.Call, d deps, sub string) *tool.Out {
 	store := loginFrom(c)
 	if err := store.check(d); err != nil {
 		return tool.Refuse(err.Error())
+	}
+	// after prints the one NOTE a run that spelled --addr carries, after the
+	// verb's own outcome line: the status word leads the line the reader acts
+	// on, and the alias note follows it as internal/tool renders its own
+	// notes. A failure is the report, and prints nothing more.
+	alias := store.aliasNote()
+	after := func() {
+		if alias != "" {
+			note(c.Stdout, alias)
+		}
 	}
 	lib := library()
 	want, err := lib.Digest()
@@ -140,6 +150,7 @@ func fnRun(c *tool.Call, d deps, sub string) *tool.Out {
 		// The receipt's own line (redisfn.Receipt.String) after its outcome word.
 		word := r.Outcome.String()
 		line(c.Stdout, word, "library", bare{strings.TrimPrefix(r.String(), word+" "), map[string]string{"name": r.Library, "sha": r.Digest, "was": r.Was, "why": r.Why}}, "store", at)
+		after()
 		return tool.Exit(0)
 	}
 
@@ -152,6 +163,7 @@ func fnRun(c *tool.Call, d deps, sub string) *tool.Out {
 	switch state {
 	case redisfn.Same:
 		line(c.Stdout, "OK "+name, "sha", want, "loaded", want, "want", want, "store", at)
+		after()
 		return tool.Exit(0)
 	case redisfn.Different, redisfn.Absent:
 		word := "STALE"
@@ -160,6 +172,7 @@ func fnRun(c *tool.Call, d deps, sub string) *tool.Out {
 		}
 		line(c.Stdout, word+" "+name, "sha", want, "loaded", loaded, "want", want, "store", at,
 			"remedy", quoted("nova-redis fn load "+store.flags()+" puts this binary's library on the store"))
+		after()
 		return tool.Exit(1)
 	}
 	return failed(err)
@@ -218,9 +231,9 @@ func remedy(sub string, err error, store login) string {
 		return "the store refused " + needs + "; read err, then nova-redis fn check " + store.flags()
 	}
 	if sub == "load" {
-		return "no answer, so the store may hold either library: check that the store at " + *store.addr + " is up and --addr is right, then nova-redis fn check " + store.flags()
+		return "no answer, so the store may hold either library: check that the store at " + *store.addr + " is up and --redis is right, then nova-redis fn check " + store.flags()
 	}
-	return "no answer: check that the store at " + *store.addr + " is up and --addr is right, then nova-redis fn check " + store.flags()
+	return "no answer: check that the store at " + *store.addr + " is up and --redis is right, then nova-redis fn check " + store.flags()
 }
 
 // line prints one typed line to w: its leading words, then key, value pairs.

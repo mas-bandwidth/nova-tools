@@ -191,7 +191,7 @@ func aclRenderVerb(d deps) tool.Verb {
 func aclCheckVerb(d deps) tool.Verb {
 	return tool.Verb{
 		Name:    "acl check",
-		Usage:   "acl check --addr <host:port> [--user <name>] [--password-env <NAME>]",
+		Usage:   "acl check --redis <host:port> [--user <name>] [--password-env <NAME>]",
 		Example: "",
 		Effect:  tool.Inspection,
 		Flags: func(f *tool.Flags) {
@@ -206,7 +206,7 @@ func aclCheckVerb(d deps) tool.Verb {
 func aclApplyVerb(d deps) tool.Verb {
 	return tool.Verb{
 		Name:    "acl apply",
-		Usage:   "acl apply --addr <host:port> [--user <name>] [--password-env <NAME>] [--password-env-for <user>=<VARIABLE>]... [--dry-run]",
+		Usage:   "acl apply --redis <host:port> [--user <name>] [--password-env <NAME>] [--password-env-for <user>=<VARIABLE>]... [--dry-run]",
 		Example: "",
 		Effect:  tool.LocalWrite,
 		DryRun:  true,
@@ -214,6 +214,8 @@ func aclApplyVerb(d deps) tool.Verb {
 			f.Prints()
 			loginFlags(f)
 			f.Var(passwordSources{}, "password-env-for", "<user>=<VARIABLE>, repeatable: the variable holding the password a user apply creates gets; a user the store lacks is created only with one")
+			f.String("rotate", "", "comma-separated ACL users whose password this run rotates: the variable --password-env-for names for the user holds the password to add beside the old one, or with --drop-old the old one to remove (neither value is printed)")
+			f.Bool("drop-old", false, "with --rotate, remove the password the variable names instead of adding it: the second half of a rotation")
 		},
 		Run: func(c *tool.Call) *tool.Out { return aclVerbRun(c, d, "apply") },
 	}
@@ -254,15 +256,33 @@ func aclVerbRun(c *tool.Call, d deps, sub string) *tool.Out {
 	if err := store.check(d); err != nil {
 		return tool.Refuse(err.Error())
 	}
+	// after prints the one NOTE a run that spelled --addr carries, after the
+	// verb's own answer line: the status word leads the line the reader acts
+	// on, and the alias note follows it as internal/tool renders its own
+	// notes. A failure is the answer, and prints nothing more.
+	alias := store.aliasNote()
+	after := func() {
+		if alias != "" {
+			note(c.Stdout, alias)
+		}
+	}
 	at := *store.addr
 	// A dry run prints the plan from this build's rendering alone and dials
 	// nothing: without a store read every rendered user is what apply would
 	// set, and the login flags are still checked above.
 	if dryRun {
+		rotate, err := rotateUsers(c.Str("rotate"))
+		if err != nil {
+			return tool.Refuse(err.Error())
+		}
 		for _, u := range users {
 			line(c.Stdout, "ACL WOULD-SET", "user", u.Name, "role", u.Role)
 		}
-		line(c.Stdout, "ACL APPLY OK", "dry-run", true, "users", len(users), "set", 0, "would", len(users), "library", digest, "store", at)
+		for _, u := range rotate {
+			line(c.Stdout, "ACL WOULD-ROTATE", "user", u, "drop-old", c.Bool("drop-old"))
+		}
+		line(c.Stdout, "ACL APPLY OK", "dry-run", true, "users", len(users), "set", 0, "would", len(users), "library", digest, "store", at, "rotated", len(rotate))
+		after()
 		return tool.Exit(0)
 	}
 	failed := func(err error) *tool.Out {
@@ -339,10 +359,12 @@ func aclVerbRun(c *tool.Call, d deps, sub string) *tool.Out {
 	if sub == "check" {
 		if len(differ) == 0 {
 			line(c.Stdout, "ACL CHECK OK", "users", len(users), "library", digest, "store", at)
+			after()
 			return tool.Exit(0)
 		}
 		line(c.Stdout, "ACL CHECK DRIFT", "users", len(users), "differ", len(differ), "library", digest, "store", at,
 			"remedy", quoted("nova-redis acl apply "+store.flags()+" sets the users that differ"))
+		after()
 		return tool.Exit(1)
 	}
 	// A user the store lacks is created only with a password from the
@@ -368,13 +390,13 @@ func aclVerbRun(c *tool.Call, d deps, sub string) *tool.Out {
 	if len(unsourced) > 0 {
 		line(c.Stdout, "ACL APPLY REFUSED", "users", len(users), "missing", free(strings.Join(unsourced, ",")),
 			"", why("a user the store lacks is created only with a password"),
-			"", next("nova-redis acl apply "+store.flags()+" --password-env-for "+unsourced[0]+"=<VARIABLE> (the variable set, under nova-secrets exec --only <VARIABLE>)"))
+			"", next("nova-redis acl apply "+store.flags()+passwordFlags(unsourced)+" (the variable set, under nova-secrets exec --only <VARIABLE>)"))
 		return tool.Exit(1)
 	}
 	if len(unsourcedNoPass) > 0 {
 		line(c.Stdout, "ACL APPLY REFUSED", "users", len(users), "nopass", free(strings.Join(unsourcedNoPass, ",")),
 			"", why("a live user that carries nopass is mended only with a password from the variable --password-env-for names"),
-			"", next("nova-redis acl apply "+store.flags()+" --password-env-for "+unsourcedNoPass[0]+"=<VARIABLE> (the variable set, under nova-secrets exec --only <VARIABLE>)"))
+			"", next("nova-redis acl apply "+store.flags()+passwordFlags(unsourcedNoPass)+" (the variable set, under nova-secrets exec --only <VARIABLE>)"))
 		return tool.Exit(1)
 	}
 	for i, u := range differ {
@@ -393,8 +415,51 @@ func aclVerbRun(c *tool.Call, d deps, sub string) *tool.Out {
 		}
 		line(c.Stdout, "ACL SET", "user", u.Name, "role", u.Role)
 	}
+	// --rotate adds one password beside a user's own (or, with --drop-old,
+	// removes the one the variable names): the value reaches the store as a
+	// rule and is never printed (nova-tools#5096 item 15).
+	rotate, err := rotateUsers(c.Str("rotate"))
+	if err != nil {
+		return tool.Refuse(err.Error())
+	}
+	dropOld := c.Bool("drop-old")
+	var unsourcedRotate, missingRotate []string
+	for _, u := range rotate {
+		if !live[u].Exists {
+			missingRotate = append(missingRotate, u)
+			continue
+		}
+		if env := sources[u]; env == "" || d.getenv(env) == "" {
+			unsourcedRotate = append(unsourcedRotate, u)
+		}
+	}
+	if len(missingRotate) > 0 {
+		line(c.Stdout, "ACL APPLY REFUSED", "users", len(users), "rotate", free(strings.Join(missingRotate, ",")),
+			"", why("a password is rotated only on a user the store already has"),
+			"", next("nova-redis acl apply "+store.flags()+" creates a missing user with --password-env-for <user>=<VARIABLE>"))
+		return tool.Exit(1)
+	}
+	if len(unsourcedRotate) > 0 {
+		line(c.Stdout, "ACL APPLY REFUSED", "users", len(users), "rotate", free(strings.Join(unsourcedRotate, ",")),
+			"", why("a rotated password is read from the variable --password-env-for names"),
+			"", next("nova-redis acl apply "+store.flags()+passwordFlags(unsourcedRotate)+" --rotate "+strings.Join(unsourcedRotate, ",")+" (the variable set, under nova-secrets exec --only <VARIABLE>)"))
+		return tool.Exit(1)
+	}
+	rotated := 0
+	for _, u := range rotate {
+		rule := ">" + d.getenv(sources[u])
+		if dropOld {
+			rule = "<" + d.getenv(sources[u])
+		}
+		if err := srv.SetUser(ctx, u, []string{rule}); err != nil {
+			line(c.Stdout, "ACL APPLY FAILED", "users", len(users), "rotate", u)
+			return failed(err)
+		}
+		line(c.Stdout, "ACL ROTATE", "user", u, "drop-old", dropOld)
+		rotated++
+	}
 	saved := "none"
-	if len(differ) > 0 {
+	if len(differ)+rotated > 0 {
 		ok, err := srv.Save(ctx)
 		if err != nil {
 			return failed(fmt.Errorf("the users are set and ACL SAVE failed, so a restart loses them: %w", err))
@@ -406,6 +471,35 @@ func aclVerbRun(c *tool.Call, d deps, sub string) *tool.Out {
 			note(c.Stdout, "ACL NOT SAVED: the store keeps no ACL file, so the users set here last until it restarts; run the store with nova-redis serve, which keeps them in <store-dir>/"+aclFileName)
 		}
 	}
-	line(c.Stdout, "ACL APPLY OK", "users", len(users), "set", len(differ), "saved", saved, "library", digest, "store", at)
+	line(c.Stdout, "ACL APPLY OK", "users", len(users), "set", len(differ), "saved", saved, "library", digest, "store", at, "rotated", rotated)
+	after()
 	return tool.Exit(0)
+}
+
+// rotateUsers parses --rotate: ACL user names, none empty, none holding
+// whitespace or a quote, comma-separated.
+func rotateUsers(text string) ([]string, error) {
+	if text == "" {
+		return nil, nil
+	}
+	var out []string
+	for _, raw := range strings.Split(text, ",") {
+		u := strings.TrimSpace(raw)
+		if u == "" || strings.ContainsAny(u, " \t\r\n\"") {
+			return nil, fmt.Errorf("--rotate %q holds an empty name or one with whitespace or a quote; name each ACL user once, comma-separated", text)
+		}
+		out = append(out, u)
+	}
+	return out, nil
+}
+
+// passwordFlags is the remedy text a refused apply carries for every user it
+// names: one --password-env-for <user>=<VARIABLE> per user, so a reader fixes
+// the whole call in one turn instead of one user per run.
+func passwordFlags(users []string) string {
+	var b strings.Builder
+	for _, u := range users {
+		b.WriteString(" --password-env-for " + u + "=<VARIABLE>")
+	}
+	return b.String()
 }
