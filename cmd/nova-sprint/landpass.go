@@ -98,6 +98,7 @@ type landJob struct {
 	// landed and ok are the batch's outcome as stream reported it before.
 	done, landed, ok bool
 	cut              landCut // the batch branch as prepare cut it: the base's tip, a cure merged first
+	gated            bool    // the tip's whole tree passed a gate with the tree tests (phase 1's one gate, or the combined gate)
 	merged           []string
 	failed           conflictCard
 	baseSha, tip     string   // the base tip the batch was cut from, and its gated tip
@@ -225,15 +226,17 @@ func (l *lander) pass(ctx context.Context, s *sprint.Snapshot, order []string) (
 				l.land(ctx, j, pushed)
 			}
 			l.take(j.f)
+			if j.b.Tip != "" && !l.dry {
+				// what this pass put on the base, a whole batch or the heads before a conflict:
+				// the files a later batch may collide with
+				pushed = append(pushed, j)
+			}
 			switch {
 			case !j.ok:
 				failed = true
 				queues[j.stream] = nil
 			case j.landed:
 				queues[j.stream] = queues[j.stream][len(j.cards):]
-				if !l.dry {
-					pushed = append(pushed, j)
-				}
 			default:
 				queues[j.stream] = nil
 			}
@@ -522,16 +525,20 @@ func (l *lander) merge(ctx context.Context, j *landJob) {
 	baseSha := j.cut.baseSha
 	merged, failed, why := l.mergeCards(ctx, dir, stream, j.cards, j.cut, b.Times, false)
 	if why == "" && j.cut.first == 0 && len(merged) > 0 {
-		// one gate on the batch's tree, the tree tests included (the tip is cached as gated
-		// with them, phase 2); red, each head is gated alone from the base again, as before,
-		// and the red one ends the batch with the finding
+		// one gate on the batch's tree, the tree tests included (a tip pushed as gated is
+		// cached, phase 2); red, each head is gated alone from the base again, as before, and
+		// the red one ends the batch with the finding (those gates run the tree tests only
+		// where a head changed what they read, so that tip is not recorded as gated)
 		start := time.Now()
 		l.stage("gate", "the batch's tree")
-		if red := l.treeGate(ctx, dir, true); red != "" {
+		red := l.treeGate(ctx, dir, true)
+		since(&b.Times.Merge, start)
+		if red == "" {
+			j.gated = true
+		} else {
 			l.ledgerLog = nil // the second build logs the same resolutions
 			merged, failed, baseSha, _, why = l.build(ctx, dir, stream, j.cards, b.Times, true)
 		}
-		since(&b.Times.Merge, start)
 	}
 	if why != "" {
 		l.buildFailed(ctx, j, why)
@@ -615,6 +622,19 @@ func (l *lander) land(ctx context.Context, j *landJob, pushed []*landJob) {
 					j.refuse(why)
 					return
 				}
+				if len(j.merged) == 0 {
+					// no head merges onto the new tip: the first met a conflict there, which
+					// ends the batch as it did before (the fact, the stream stopped); nothing is
+					// pushed, and nothing is reported as a batch of none (the merge step reads an
+					// empty batch as the whole queue)
+					if j.failed.id == "" {
+						j.refuse("no head of the batch merges onto the moved base " + b.Base + " and no card was blamed; run land again")
+						return
+					}
+					f.conflict(stream, j.failed)
+					j.ended(false, true)
+					return
+				}
 			}
 		}
 		f.stage("queue", "queue read")
@@ -634,13 +654,17 @@ func (l *lander) land(ctx context.Context, j *landJob, pushed []*landJob) {
 		since(&b.Times.Push, start)
 		if err == nil {
 			b.Tip = j.tip
-			// the tip pushed is the base's next tip: its tree passed the batch's gate, or the
-			// combined gate, or is a clean merge of disjoint files onto one that did; no batch
-			// gates it again (tla/LandPass.tla, BaseAdvancesGated)
-			l.locks().gateMu.Lock()
-			l.baseGateCache[j.tip] = ""
-			delete(l.baseGateFails, j.tip)
-			l.locks().gateMu.Unlock()
+			// the tip pushed is the base's next tip: when its whole tree passed a gate with
+			// the tree tests (the batch's own, or the combined gate), it is recorded as gated
+			// and no batch gates it again; a clean merge of disjoint files was never gated as
+			// a tree and is not recorded, so the next pass's base gate runs on it (tla/
+			// LandPass.tla, CachedIsGreen: two heads green alone can be red together)
+			if j.gated {
+				l.locks().gateMu.Lock()
+				l.baseGateCache[j.tip] = ""
+				delete(l.baseGateFails, j.tip)
+				l.locks().gateMu.Unlock()
+			}
 			if !f.landed(*b, stream, j.cards[:len(j.merged)]) {
 				j.ended(false, false)
 				return
@@ -683,7 +707,10 @@ func (l *lander) baseNow(ctx context.Context, dir, base string) (sha, why string
 // base since it was cut are disjoint and the same cards merged (needsGate); else it is
 // gated once (the tree gate with the tree tests, then --check), and a red gate is the
 // refusal, naming the batches of this pass it collided with; nothing is reported, no
-// stream stops, and the cards are landed on the next pass.
+// stream stops, and the cards are landed on the next pass. A head that no longer merges
+// ends the batch before it as the build does (merged a prefix, failed the head): the
+// prefix is gated, pushed and the conflict reported after it by land; none merged, land
+// reports the conflict and pushes nothing.
 func (l *lander) again(ctx context.Context, j *landJob, newBase string, pushed []*landJob) string {
 	b, dir := &j.b, j.dir
 	l.ledgerLog = nil
@@ -708,6 +735,7 @@ func (l *lander) again(ctx context.Context, j *landJob, newBase string, pushed [
 		return "the files landed on " + b.Base + " since the batch was cut could not be listed: " + firstLine("", err)
 	}
 	batchFiles := lines(files)
+	j.gated = false
 	if collide, gate := needsGate(j.merged, merged, batchFiles, lines(landedFiles)); gate {
 		start := time.Now()
 		l.stage("gate", "the combined tree")
@@ -722,6 +750,7 @@ func (l *lander) again(ctx context.Context, j *landJob, newBase string, pushed [
 		if red != "" {
 			return "the batch passes the gate alone and fails it merged onto " + b.Base + " as this pass moved it (" + collidedWith(pushed, collide, len(merged) != len(j.merged)) + "): " + red + "; nothing was pushed or reported, its cards stay queued, and the next pass merges it onto the new tip"
 		}
+		j.gated = true
 	}
 	j.baseSha, j.tip, j.merged, j.failed, j.files = newBase, tip, merged, failed, batchFiles
 	b.Scope = l.scopeOf(merged)

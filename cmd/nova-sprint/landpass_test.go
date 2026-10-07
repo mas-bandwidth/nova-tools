@@ -181,7 +181,9 @@ func TestLandMergesStreamsInParallelAndLandsThemOneAtATime(t *testing.T) {
 	assert.Equal(t, map[string]string{"a1": "landed/merged", "a2": "landed/merged", "b1": "landed/merged", "b2": "landed/merged"}, r.places("a1", "a2", "b1", "b2"))
 	assert.Equal(t, []string{"land b2 (sprint stream s2)", "land b1 (sprint stream s2)", "land a2 (sprint stream s1)", "land a1 (sprint stream s1)", "the module", "base"}, r.mainLog())
 	tip := r.git(r.remote, "rev-parse", "main")
-	assert.Equal(t, "", r.a.baseGateCache[tip], "the pushed tip is recorded as gated")
+	_, cached := r.a.baseGateCache[tip]
+	assert.False(t, cached, "the second batch's tip is a clean merge of disjoint files, never gated as a tree: not recorded as gated, so the next pass's base gate runs on it")
+	assert.Equal(t, "", r.a.baseGateCache[r.git(r.remote, "rev-parse", "main~2")], "the first batch's tip passed its own gate: recorded as gated")
 	root := filepath.Join(r.dir, "land")
 	for _, s := range []string{"s1", "s2"} {
 		assert.DirExists(t, worktreeDir(root, filepath.Join(root, repoDirName(r.remote)), s), "each stream's worktree is kept for the next pass")
@@ -279,5 +281,85 @@ func TestLandParallelOneAndARefusedCount(t *testing.T) {
 	assert.Contains(t, errs, "--land-parallel wants a count of one or more, not 0")
 	out := r.ok("land --land-parallel 1")
 	assert.Contains(t, out, "LAND DONE batches=2 cards=2 refused=0")
+	r.clean()
+}
+
+// A batch merged again onto the moved base may merge fewer heads than it did alone: a head
+// that conflicts with what landed ends the batch before it, as the build does. The heads
+// before it are gated once more (fewer heads: the tree is not the one gated) and pushed, and
+// the conflict is reported after them; none merged, the conflict is reported and nothing is
+// pushed: no push of the base's own tip, no report of a batch of none (the merge step reads
+// an empty batch as the whole queue), and no reach past the end of an empty batch (found by
+// the cold read of PR 5425).
+func TestLandReMergeOntoTheMovedBaseThatMergesFewerHeads(t *testing.T) {
+	t.Parallel()
+	edit := func(name string) map[string]string {
+		return map[string]string{"main.go": "package main\n\nfunc main() { " + name + "() }\n\nfunc " + name + "() {}\n"}
+	}
+	t.Run("a prefix: the heads before the conflict land, gated once more", func(t *testing.T) {
+		t.Parallel()
+		r := newLandRig(t)
+		twoStreams(t, r,
+			map[string]map[string]string{"a1": edit("a1")},
+			map[string]map[string]string{"b1": {"b1.go": "package main\n\nfunc b1() {}\n"}, "b2": edit("b2")})
+		gates := gateCount(r)
+		code, out, errs := r.do("land --land-parallel 2")
+		assert.Equal(t, 1, code, out+errs)
+		assert.Contains(t, out, "LAND OK stream=s1 cards=1 base=main")
+		assert.Contains(t, out, "LAND OK stream=s2 cards=1 base=main")
+		assert.Contains(t, errs, "ids=b2 fact=conflict reason=the head "+r.git(r.worker, "rev-parse", "sprint/b2")+" of b2 does not merge")
+		assert.Equal(t, []string{"s1+tests", "s1+tests", "s2+tests", "s2+tests"}, gates(), "the base, each batch alone, and the prefix once more on the moved base")
+		assert.Equal(t, []string{"land b1 (sprint stream s2)", "land a1 (sprint stream s1)", "the module", "base"}, r.mainLog())
+		assert.Equal(t, map[string]string{"a1": "landed/merged", "b1": "landed/merged", "b2": "merging/stuck"}, r.places("a1", "b1", "b2"))
+		assert.Equal(t, "stopped conflict", r.streamState("s2"))
+		r.clean()
+	})
+	t.Run("none: the conflict is reported and nothing is pushed", func(t *testing.T) {
+		t.Parallel()
+		r := newLandRig(t)
+		twoStreams(t, r,
+			map[string]map[string]string{"a1": edit("a1")},
+			map[string]map[string]string{"b1": edit("b1")})
+		code, out, errs := r.do("land --land-parallel 2")
+		assert.Equal(t, 1, code, out+errs)
+		assert.Contains(t, out, "LAND OK stream=s1 cards=1 base=main")
+		assert.NotContains(t, out, "LAND OK stream=s2")
+		assert.Contains(t, errs, "ids=b1 fact=conflict reason=the head "+r.git(r.worker, "rev-parse", "sprint/b1")+" of b1 does not merge")
+		assert.Equal(t, []string{"land a1 (sprint stream s1)", "the module", "base"}, r.mainLog(), "the base's own tip is not pushed again")
+		assert.Equal(t, map[string]string{"a1": "landed/merged", "b1": "merging/stuck"}, r.places("a1", "b1"))
+		assert.Equal(t, "stopped conflict", r.streamState("s2"))
+		r.clean()
+	})
+}
+
+// A clean merge of disjoint files is pushed with no gate and is not recorded as gated: two
+// heads green alone can be red together (each adds the one name in its own file), and the
+// base is then red. The next pass gates that base once, finds it red, and refuses the
+// batch under the base-gate rule (its cure looked for), blaming no head; a tip recorded as
+// gated would have skipped that gate and the pass would have blamed the next innocent head
+// (found by the cold read of PR 5425).
+func TestLandDisjointPushIsNotCachedAndTheNextPassGatesTheBase(t *testing.T) {
+	t.Parallel()
+	r := newLandRig(t)
+	twoStreams(t, r,
+		map[string]map[string]string{"a1": {"a1.go": "package main\n\nfunc helper() {}\n"}},
+		map[string]map[string]string{"b1": {"b1.go": "package main\n\nfunc helper() {}\n"}})
+	out := r.ok("land --land-parallel 2")
+	assert.Contains(t, out, "LAND OK stream=s2 cards=1 base=main")
+	tip := r.git(r.remote, "rev-parse", "main")
+	_, cached := r.a.baseGateCache[tip]
+	assert.False(t, cached, "a disjoint merge is not recorded as gated")
+	c1 := filepath.Join(t.TempDir(), "c1.md")
+	require.NoError(t, os.WriteFile(c1, []byte(passingBrief("REPO: "+r.remote+"\nBASE: main\n\nWrite c1.go.")), 0o600))
+	r.ok("add --stream s1 --one --brief-file " + c1)
+	r.queued(map[string]string{"c1": r.card("c1", map[string]string{"c1.go": "package main\n\nfunc c1() {}\n"})}, "c1")
+	gates := gateCount(r)
+	code, out, errs := r.do("land --land-parallel 2")
+	assert.Equal(t, 1, code, out+errs)
+	assert.Contains(t, errs, "reason=the base main fails the tree gate at its tip, so no head is merged onto it")
+	assert.Contains(t, errs, "redeclared")
+	assert.NotContains(t, errs, "fact=conflict", "no head is blamed for the base")
+	assert.Equal(t, []string{"s1+tests", "s1+tests"}, gates(), "the base gated once, then its cure tried once (c1 alone)")
+	assert.Equal(t, map[string]string{"c1": "merging/queued"}, r.places("c1"))
 	r.clean()
 }
