@@ -22,29 +22,31 @@ func names(text string) []string {
 	return out
 }
 
-// assertScanEmpty asserts scan reports no finding for any of ins, with format naming what the
-// inputs should have escaped. It is the loop the package's negative tables each wrote.
+// assertScanEmpty asserts scan reports no finding for each of ins, one named row per input.
 func assertScanEmpty[T any](t *testing.T, scan func(string) []T, format string, ins ...string) {
 	t.Helper()
 	for _, in := range ins {
-		got := scan(in)
-		assert.Empty(t, got, format, in, got)
+		t.Run(in, func(t *testing.T) {
+			t.Parallel()
+			got := scan(in)
+			assert.Empty(t, got, format, in, got)
+		})
 	}
 }
 
-// assertScanNonEmpty asserts scan reports a finding for each of ins, with format naming what the
-// inputs should have been caught as. It is the loop the package's positive tables each wrote.
+// assertScanNonEmpty asserts scan reports a finding for each of ins, one named row per input.
 func assertScanNonEmpty[T any](t *testing.T, scan func(string) []T, format string, ins ...string) {
 	t.Helper()
 	for _, in := range ins {
-		assert.NotEmpty(t, scan(in), format, in)
+		t.Run(in, func(t *testing.T) {
+			t.Parallel()
+			assert.NotEmpty(t, scan(in), format, in)
+		})
 	}
 }
 
 // Every row of the detector table, which is what `nova-self-talk shapes` prints, is held to its own
-// words: the sentence it says it finds is found, once, under its name, and its near miss is not
-// found at all. A row whose pattern drifts from its sentences, or a listing that claims a shape the
-// detector does not find, goes red here.
+// words: the sentence it says it finds is found, once, under its name, and its near miss is not.
 func TestEveryRuleFindsItsSentenceAndPassesItsNearMiss(t *testing.T) {
 	t.Parallel()
 
@@ -71,9 +73,8 @@ func TestEveryRuleFindsItsSentenceAndPassesItsNearMiss(t *testing.T) {
 	}
 }
 
-// The sentences raters fed the tool on 2026-09-30 and 2026-10-01 to test the shapes its help names
-// (a self-superlative, a door stated shut, a habit, and the plain "bad at" family), each missed
-// then. Each is found once, under the class the help puts it in.
+// The sentences raters fed the tool to test the shapes its help names (a self-superlative, a door
+// stated shut, a habit, and the plain "bad at" family). Each is found once, under its class.
 func TestTheShapesTheHelpNamesAreFoundInTheirPlainForms(t *testing.T) {
 	t.Parallel()
 
@@ -93,10 +94,7 @@ func TestTheShapesTheHelpNamesAreFoundInTheirPlainForms(t *testing.T) {
 		{"I never finish anything.", string(Trait)},
 		{"I never ask for help.", string(Trait)},
 	} {
-		t.Run(tc.in, func(t *testing.T) {
-			t.Parallel()
-			assert.Equal(t, []string{tc.want}, names(tc.in))
-		})
+		t.Run(tc.in, func(t *testing.T) { t.Parallel(); assert.Equal(t, []string{tc.want}, names(tc.in)) })
 	}
 }
 
@@ -123,15 +121,12 @@ func TestThePlainFormsNearMissesAreNotFound(t *testing.T) {
 		"I cannot merge without a read.",
 		"I can't merge without a read.",
 	} {
-		t.Run(in, func(t *testing.T) {
-			t.Parallel()
-			assert.Empty(t, names(in))
-		})
+		t.Run(in, func(t *testing.T) { t.Parallel(); assert.Empty(t, names(in)) })
 	}
 }
 
-// A finding carries the words that made it one, so a reader sees why it fired without reading
-// the pattern (ledger T5).
+// A finding carries the words that made it one, so a reader sees why it fired without reading the
+// pattern (ledger T5).
 func TestAFindingCarriesTheWordsThatMatched(t *testing.T) {
 	t.Parallel()
 
