@@ -30,6 +30,7 @@ package main
 // (landprune.go).
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -1645,19 +1646,24 @@ func (l *lander) runCheck(ctx context.Context, dir string) (why, out string) {
 	b := subproc.Prepare(ctx, landCheckBudget, "sh", "-c", l.check)
 	defer b.Cancel()
 	b.Cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	// Save the gate process ID so it can be killed on the next run.
+	b.Cmd.Dir, b.Cmd.Env = dir, l.a.gitEnv
+	var buf bytes.Buffer
+	b.Cmd.Stdout = &buf
+	b.Cmd.Stderr = &buf
+	if err := b.Cmd.Start(); err != nil {
+		return "the check " + l.check + " could not be started: " + oneline.Err(err), ""
+	}
 	if root, err := l.a.landRoot(); err == nil {
 		gateFile := filepath.Join(root, ".gate_pid")
 		if err := os.WriteFile(gateFile, []byte(fmt.Sprintf("%d\n", b.Cmd.Process.Pid)), 0o600); err == nil {
 			defer os.Remove(gateFile)
 		}
 	}
-	b.Cmd.Dir, b.Cmd.Env = dir, l.a.gitEnv
-	raw, err := b.Cmd.CombinedOutput()
+	err := b.Cmd.Wait()
 	if err = b.Wrap("check "+l.check, err); err != nil {
-		return "the check " + l.check + " failed: " + oneline.Err(err) + checkTail(string(raw)), string(raw)
+		return "the check " + l.check + " failed: " + oneline.Err(err) + checkTail(buf.String()), buf.String()
 	}
-	return "", string(raw)
+	return "", buf.String()
 }
 
 // checkTail is ": <the output's last line>", "" for no output.
