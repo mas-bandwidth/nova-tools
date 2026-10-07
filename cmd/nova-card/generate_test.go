@@ -236,3 +236,24 @@ func TestAGeneratedCardThatWritesAModelIsTieredFrontier(t *testing.T) {
 	assert.NotContains(t, stdout, "card=finding-tla-runs-tsv check=model-tier")
 	assert.NoDirExists(t, out2)
 }
+
+
+// TestTheUsageBannerPrintsEachExampleOnce verifies that each example line appears
+// exactly once in the help output for the generate command.
+func TestTheUsageBannerPrintsEachExampleOnce(t *testing.T) {
+	t.Parallel()
+	// Get the main help output
+	_, banner, _ := runCard("help")
+
+	// Check that concrete example paths appear exactly once in the example block
+	exampleLines := []string{
+		"./cmd/nova-card/testdata/findings.tsv",
+		"./cards/finding-internal-bus-send.md",
+		"./cards/finding-cmd-nova-bus-main.md",
+	}
+
+	for _, line := range exampleLines {
+		count := strings.Count(banner, line)
+		assert.Equal(t, 1, count, "example line should appear exactly once, found %d times: %s", count, line)
+	}
+}
