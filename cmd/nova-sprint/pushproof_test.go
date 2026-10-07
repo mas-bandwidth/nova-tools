@@ -349,6 +349,9 @@ func TestASeatOnAFolderAdapterIsProvenByItsNonceAndRefusedWithout(t *testing.T) 
 	proven := ta.a.now().UTC().Format(time.RFC3339)
 
 	// proven: the verbs run, and the status says adapter=folder proven=<time>
+	for _, source := range []string{"bus", "friends", "transitions"} {
+		require.NoError(t, st.BeatSeatPush(ctx, name, source, ""))
+	}
 	ta.ok("add --stream s1 --count 2")
 	assert.Contains(t, ta.ok("seat push"), "PUSH OK name="+name+" harness=claude target="+folder+" adapter=folder proven="+proven)
 	ta.a.outside = mockHealthyOutside()
@@ -389,6 +392,9 @@ func TestASeatOnAFolderAdapterIsProvenByItsNonceAndRefusedWithout(t *testing.T) 
 	ta.step(sprint.PushAnswerBound + time.Second)
 	ta.refusedPushDown("add --stream s2 --count 1 --one", "last pong is 15m1s old")
 	ta.ok("seat pong " + again)
+	for _, source := range []string{"bus", "friends", "transitions"} {
+		require.NoError(t, st.BeatSeatPush(ctx, name, source, ""))
+	}
 	ta.ok("add --stream s2 --count 1 --one")
 
 	// the seat goes to a name the folder reaches, and says so
