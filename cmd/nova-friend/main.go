@@ -5,8 +5,8 @@
 // coordinator's pings at once and pushes them in so the session answers as
 // its own turn, and tells the session when the coordinator goes silent; and,
 // on the coordinator's side, the ping loop that pings every friend each
-// second. The verbs are run, install, uninstall, check, status, pong, ping,
-// wait-pong, host and serve; the
+// second. The verbs are run, beat, install, uninstall, check, status, pong,
+// ping, wait-pong, host and serve; the
 // dispatch, the banner, the help, the refusals and the output envelope are
 // internal/tool's, and the rules are internal/friend's.
 package main
@@ -497,6 +497,23 @@ go and gofmt that refuse (this binary, by symlink) first on the lane's PATH; and
 					f.Prints()
 				},
 				Run: w.run,
+			},
+			{
+				Name:    "beat",
+				Usage:   "beat --as <me> [--server <addr>]",
+				Example: "", // the daemon's own act; the example block's first run has no beat line
+				Effect:  tool.Delivery + ": one beat to the sprint server, the same beat the daemon's loop sends while its session is alive",
+				Detail: `The daemon's beat on its own (docs/SPEC-FRIEND.md, the loop): one "friend beat <me>" to
+the sprint server, what keeps the friend up in the sprint's friends table. The agent install writes
+runs the daemon, and the daemon beats already while its session is alive, so the beat needs no
+agent of its own and no hand plist: this verb is the canary, run by hand. A server that does not
+answer is exit 2.
+example: nova-friend beat --as bob --server 127.0.0.1:6390`,
+				Flags: func(f *tool.Flags) {
+					f.Required("as", "your name, a nova-config friend row")
+					f.String("server", w.server(), "the sprint server, host:port (default: "+ServerEnv+", else "+DefaultServer+")")
+				},
+				Run: w.beatVerb,
 			},
 			{
 				Name:    "install",
@@ -1411,6 +1428,20 @@ func (w world) run(c *tool.Call) *tool.Out {
 		return tool.Exit(1)
 	}
 	return tool.Exit(0)
+}
+
+// beatVerb is the daemon's beat on its own: one "friend beat <me>" to the
+// sprint server, the same call world.beat makes for the daemon's loop each
+// time round (docs/SPEC-FRIEND.md, the loop). The agent install writes
+// runs the daemon, and the daemon beats already while its session is alive,
+// so no agent of the beat's own is written (the hand plists are retired);
+// the verb is the canary, and a server that does not answer is exit 2.
+func (w world) beatVerb(c *tool.Call) *tool.Out {
+	name, server := c.Str("as"), c.Str("server")
+	if _, err := w.beat(context.Background(), server, name, time.Time{}, friend.BeatWords{}); err != nil {
+		return tool.Refuse("the beat was not taken: " + err.Error())
+	}
+	return tool.Done().Fact("as", name).Fact("server", server)
 }
 
 // load1 is the machine's one-minute load, read at most every 5 seconds: /proc/loadavg, else
