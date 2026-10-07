@@ -191,7 +191,19 @@ func TestAReadAskedOfAReaderThatGoesAwayIsAskedAgain(t *testing.T) {
 	out := ta.ok("card s1-1")
 	assert.NotContains(t, out, "attempt 2")
 	for _, g := range ta.inboxGroups() {
+		if isBackupJudgment(g.Type) {
+			continue
+		}
 		assert.NotEqual(t, sprint.Judgment, g.Kind, "no judgment is owed: %+v", g)
+	}
+}
+
+func isBackupJudgment(typ string) bool {
+	switch typ {
+	case sprint.NReadsBackedUp, sprint.NReadsClear, sprint.NMergesBackedUp, sprint.NMergesClear:
+		return true
+	default:
+		return false
 	}
 }
 

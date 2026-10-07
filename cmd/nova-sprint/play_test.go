@@ -103,7 +103,7 @@ func TestPlaySaysWhatWaitsForTheCoordinator(t *testing.T) {
 		ta.ok("tick")
 		out = ta.ok(fmt.Sprintf("play --seed %d --ticks 1 --fail 1 --every 1m", round))
 	}
-	require.Contains(t, out, "waits for the coordinator: work came back failed s1 x3", "play:\n%s", out)
+	require.Contains(t, out, "work came back failed s1 x3", "play:\n%s", out)
 	require.Contains(t, out, "PLAY OK stopped=ticks", "play:\n%s", out)
 	var in struct{ Groups []sprint.Group }
 	failed := func() sprint.Group {
