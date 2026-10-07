@@ -266,7 +266,7 @@ func ReadCardExtras(s *Snapshot) []string {
 }
 
 // mayReadCard says the unit may be dealt a read of the primary at the attempt, by the rules
-// a work card is dealt by (its tier: a friend's tiers hold it, friendTakes; a member's reader
+// a work card is dealt by (its tier: a friend's tiers reach it, friendAtOrAbove; a member's reader
 // row serves it, readerServesTier) and the two of a read: it did not work the attempt, and
 // it holds no read card of the attempt and closed none (readSpent).
 func mayReadCard(s *Snapshot, u readUnit, pr *Card, attempt int, worker string, cards []*Card) bool {
@@ -275,7 +275,9 @@ func mayReadCard(s *Snapshot, u readUnit, pr *Card, attempt int, worker string, 
 		return false
 	}
 	if u.friend {
-		return friendTakes(u.seat, friendReadTier(s, pr))
+		// a friend reads her tier or any below it, as her reads always did: a heavy friend
+		// reads a flash and a pro card (friendAtOrAbove)
+		return friendAtOrAbove(u.seat, friendReadTier(s, pr))
 	}
 	// a machine whose reader row holds a read of the attempt on the readers table (asked
 	// the old way, before read cards were on) reads it there, never twice

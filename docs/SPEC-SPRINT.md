@@ -3249,7 +3249,7 @@ reads close as `read --ok|--broken` closes them, and it leaves review only by th
 - **Who reads.** The rules a work card is dealt by, and two of a read's own. A friend is dealt
   a read when she is dealable (`friendDealable`), her nova-config row's roles name `reader`
   (`friend sync` copies them to the roster, `FriendSeat.Roles`; on 2026-10-06 builder-only
-  friends were asked reads) and her tiers hold the read's tier (`friendTakes`). A fleet member
+  friends were asked reads) and one of her tiers is the read's tier or above it (`friendAtOrAbove`: a heavy friend reads a flash and a pro card). A fleet member
   is dealt a read when it is up and its reader row, `reader-<m>` on the readers table (the
   machine's reader identity: `reader add`), is neither held nor retired and serves the read's
   tier (`reader set --tiers`, `readerServesTier`). Never the unit that worked the attempt, and

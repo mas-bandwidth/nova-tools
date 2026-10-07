@@ -292,3 +292,30 @@ func TestTheWorkSwitchesStopWorkNeverReads(t *testing.T) {
 	}
 	require.ElementsMatch(t, []string{"m2", FriendRow("pat")}, rows)
 }
+
+// TestAFriendReadsEveryTierAtOrBelowHers pins the read's tier rule on a friend (the live
+// sprint of 2026-10-06 8:32 PM ET, where no read card was cut): a friend reads a card of
+// her tier or any tier below it, as the friends' reads always did (friendAtOrAbove), so a
+// heavy friend reads a flash and a pro card; a flash friend reads no pro card.
+func TestAFriendReadsEveryTierAtOrBelowHers(t *testing.T) {
+	t.Parallel()
+	w := readCardsWorld(t, 4)
+	putReviewBy(w, "s1-1", "s1-1: work (s1)\n", "fred", 1)
+	putReviewBy(w, "s1-2", "s1-2: work (s1) tier: pro\n", "fred", 2)
+	putReviewBy(w, "s1-3", "s1-3: work (s1) tier: pro\n", "zoe", 3)
+	seats := []FriendSeat{
+		readerSeat("jon", 16, []string{"heavy"}, []string{"builder", "reader"}),
+		readerSeat("fred", 32, []string{"flash"}, []string{"builder", "reader"}),
+	}
+	dealReads(t, w, seats)
+	rows := func(id string) []string {
+		var out []string
+		for _, c := range readCardsOf(w, id) {
+			out = append(out, c.Row)
+		}
+		return out
+	}
+	require.Equal(t, []string{FriendRow("jon")}, rows("s1-1"), "heavy reads flash")
+	require.Equal(t, []string{FriendRow("jon")}, rows("s1-2"), "heavy reads pro; fred worked it")
+	require.Equal(t, []string{FriendRow("jon")}, rows("s1-3"), "a flash friend reads no pro card")
+}
