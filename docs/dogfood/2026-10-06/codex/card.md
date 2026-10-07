@@ -36,8 +36,8 @@ Run: 2026-10-07. Tool: `nova-card v1.2.0-dev.7a1152a darwin/arm64 go1.26.6`. The
 
    Grade: NEXT
 
-READ 8/10: The help and CLI page explain the three input sources, output shape, and the basic flow, but the docs advertise flags this build refuses.
+READ 8/10 — The help and CLI page explain the three input sources, output shape, and the basic flow, but the docs advertise flags this build refuses.
 
-USE 7/10: Ledger, findings, and help generation plus repeated lint worked on scratch outputs, while the negative limit was accepted as an unbounded run.
+USE 7/10 — Ledger, findings, and help generation plus repeated lint worked on scratch outputs, while the negative limit was accepted as an unbounded run.
 
 urgent=1 next=1
