@@ -260,6 +260,11 @@ func (l *lander) offRules(ctx context.Context) []string {
 	if l.rulesOff != nil || l.st == nil {
 		return l.rulesOff
 	}
+	if l.a != nil {
+		// a store read, under the server's line of control as every other read of land's
+		l.a.serial.Lock()
+		defer l.a.serial.Unlock()
+	}
 	off, err := l.st.RulesOff(ctx)
 	if err != nil {
 		return nil
