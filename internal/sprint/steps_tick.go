@@ -246,7 +246,8 @@ const PartDrain = "drain"
 // TickTables is the tick's shape: each table gets one update in turn per tick,
 // work streams, then readers, merge and fleet. The work table's update is the
 // pump, run once a tick: its queue drained, then its cards advanced (a
-// waiting card to ready, a ready card to working by the deal, a card in
+// waiting card to ready, a ready card to working by the deal, a card queued behind
+// lanes that all work to an idle lane of either side by the rebalance (Rebalance), a card in
 // review with the ok reads it needs to merging); "no new work moves from waiting ->
 // ready -> working except on the FIRST PASS on the work stream table, once
 // per-tick". The readers', the merge's and the fleet's updates each write
@@ -255,7 +256,7 @@ const PartDrain = "drain"
 // none is ("the tick doesn't end until all dirty bits are cleared"). The
 // model is tla/DirtyTick.tla.
 var TickTables = []TableUpdate{
-	{Work, []TickPartDef{{PartDrain, nil}, {"resolve", TickResolve}, {PartCapDeal, TickCapDeal}, {"deal", TickDeal}, {"accept", TickAccept}}},
+	{Work, []TickPartDef{{PartDrain, nil}, {"resolve", TickResolve}, {PartCapDeal, TickCapDeal}, {"deal", TickDeal}, {PartRebalance, TickRebalance}, {"accept", TickAccept}}},
 	{Readers, []TickPartDef{{"ask", TickAsk}}},
 	{Merge, []TickPartDef{{"resume", TickResume}}},
 	{Fleet, []TickPartDef{{"presence", TickPresence}, {PartFriendStall, TickFriendStall}}},

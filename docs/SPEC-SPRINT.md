@@ -1329,6 +1329,41 @@ not level the friends":
 `TestAFriendWithAnIdleLaneIsDealtAndLevelledBeforeAFullOne`,
 `TestTwinStoreDealsIdleFriendsFirstAndLevelsEveryTick`.
 
+### The rebalance: queued work to idle lanes, across friends and fleet
+
+**The tick rebalances queued work across both sides, within the tier sets** (the owner,
+2026-10-06: "This should be a holistic rebalance, not just across friends, not just across
+tiers, but BOTH, depending on what tiers are enabled per-fleet/friends table." and "When you
+rebalance, always rebalance this way from now on."; `sprint.Rebalance`, `TickRebalance`;
+the model is tla/WhoPreference.tla `Rebalance`). The work table's update runs, in order:
+`drain`, `resolve`, `cap deal`, `deal`, `rebalance`, `accept`. The rebalance is its own part
+after the deal, so it reads the deal applied (every lane the deal could fill is filled, and
+the rows' counts are true without a second count of the plan). A work card dealt and not
+started (ready on its row: a friend has not started it, `friendStarted`; a member has not
+taken it) on a unit whose lanes all work (its working cards, reads at half a slot, at its
+width) goes to a unit of either side with an idle lane (its width less every card it holds,
+ready and working) that may take it: a friend dealable whose tiers and the friends' set hold
+the card's tier (`friendTakes`) and that it has not left (`friends_left`, `taken_from`); a
+member up, while the fleet's work is on, whose side's set holds the tier, with a route of
+the tier to draw (`routeOf`), and not one that refused it at staging; never a row it was
+rebalanced off (`rebalanced_from`). The cheapest unit first: the card's own tier (a member
+draws on its tier's routes; a friend whose highest tier is the card's), then one tier up as
+overflow, never more and never below (a pro card never reaches a flash unit); then the most
+idle lanes, then the name. Each card moves at most once a tick, in the deal's order, and the
+moves are bounded by the idle lanes. A started card, a read card, a hard pin, a pin honoured
+where it sits (its WHO names the friend it is on, or a model pin; a `WHO: friend` card on a
+friend's row goes to another friend, never a member), a bench card, a card of a
+held stream, a card a lane runs, and a card whose route rests never move. The card keeps its
+attempt and carries nothing (it never started); it moves at its next generation, so the old
+row's inbox job or queued job is stale and refused as any older generation is; onto a
+machine it draws a route of its tier, onto a friend its route comes off. No judgment is
+raised: the unit's line and a happened note (`a queued card rebalanced to an idle lane`)
+say `rebalanced <card> from <row> to <unit>`
+(`TestRebalanceMovesAFlashCardOffAFullFriendToAnIdleMember`,
+`TestRebalanceMovesAProCardToAProFriendNeverAFlashMember`,
+`TestRebalanceNeverMovesAStartedCard`, `TestRebalanceNeverMovesAPinnedCard`,
+`TestRebalanceNeverMovesACardToAUnitItLeft`, `TestRebalanceMovesOneCardPerIdleLane`).
+
 ### one-lane-per-card.w1: one lane per card
 
 **The friends' deal never places a card on a second row while a lane runs it.**

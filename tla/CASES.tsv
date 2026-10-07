@@ -425,6 +425,8 @@ MCCoordinatorPassPin.cfg	MCCoordinatorPass.tla	pass	-	ignore-terminal	coordinato
 MCCoordinatorPassBrokenPinRekey.cfg	MCCoordinatorPass.tla	invariant	OneJudgmentAnEpisode	ignore-terminal	coordinatorpass	required	-
 MCWhoPreference.cfg	MCWhoPreference.tla	pass	-	ignore-terminal	whopreference	required	-
 MCWhoPreferenceOnlyWrong.cfg	MCWhoPreference.tla	invariant	OnlyToItsFriend	ignore-terminal	whopreference	required	-
+MCWhoPreferenceRebalanceStarted.cfg	MCWhoPreference.tla	action	NoStartedCardMoves	ignore-terminal	whopreference	required	-
+MCWhoPreferenceRebalanceTiers.cfg	MCWhoPreference.tla	invariant	RebalancedAdmitted	ignore-terminal	whopreference	required	-
 MCFriendReadyTake.cfg	MCFriendReadyTake.tla	pass	-	ignore-terminal	friendreadytake	required	-
 MCFriendReadyTakeBrokenNoFill.cfg	MCFriendReadyTake.tla	action	FilledAfterTick	ignore-terminal	friendreadytake	required	-
 MCFriendReadyTakeBrokenPastWidth.cfg	MCFriendReadyTake.tla	invariant	LanesHard	ignore-terminal	friendreadytake	required	-
