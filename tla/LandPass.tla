@@ -33,7 +33,12 @@
 \*             each starts merging again
 \*   cached    the trees recorded as gated (baseGateCache): a tip whose whole tree passed
 \*             a gate with the tree tests (the batch's own, or the combined gate), never a
-\*             clean merge of disjoint files, which no gate saw as a tree
+\*             clean merge of disjoint files, which no gate saw as a tree; empty at first,
+\*             so the first pass gates the base it finds
+\* Shrinks says the outside may make a re-merge onto a moved base merge fewer heads than
+\* the batch merged alone (a head conflicting with what landed): on, in every instance
+\* but the liveness one, where a stream stopped on such a conflict is not a batch that
+\* fails to land.
 \*
 \* THE ACTIONS. Phase 1, any order, up to Width at once: StartMerge(s) cuts the batch
 \* from the base as it is; the base's own gate runs first unless the base is in the cache
@@ -66,7 +71,8 @@
 \*   CachedIsGreen: every tree recorded as gated is green: a disjoint merge is never
 \*     recorded, so the next pass's base gate runs on it and a base red from two heads green
 \*     alone is found there, blaming no head.
-\*   Lands (liveness, under fairness): when every tree is green, every batch lands.
+\*   Lands (liveness, under fairness, Shrinks off): when every tree is green, every batch
+\*     lands.
 \*
 \* Broken: "none" is the design.
 \*   "nogate"      pushes a moved batch with no combined gate whatever the files
@@ -90,13 +96,14 @@
 \* TLC, 2026-10-07, on a Linux bench, tla2tools.jar as tla/tla2tools.sha256 pins it:
 \* MCLandPass (three streams in order, two files, width 2, every oracle) passes every
 \* invariant and RefusalTouchesNoOtherStream; MCLandPassSerial (width 1) passes the same;
-\* MCLandPassLive passes Lands under fairness; the six reversed witnesses each fail the
+\* MCLandPassLive (Shrinks off) passes Lands under fairness; the six reversed witnesses each fail the
 \* property their configuration names. The records are tla/RUNS.tsv.
 EXTENDS Integers, Sequences, FiniteSets, TLC
 
-CONSTANTS Streams, Order, Files, Touches, Width, Broken
+CONSTANTS Streams, Order, Files, Touches, Width, Shrinks, Broken
 
 ASSUME Width \in Nat \ {0}
+ASSUME Shrinks \in BOOLEAN
 ASSUME Len(Order) = Cardinality(Streams) /\ {Order[i] : i \in 1..Len(Order)} = Streams
 ASSUME Touches \in [Streams -> SUBSET Files]
 
@@ -139,7 +146,7 @@ Init ==
   /\ next = 1
   /\ pushes = <<>>
   /\ collided = {}
-  /\ cached = {{}}
+  /\ cached = {}
 
 \* ---- phase 1: the merges, in parallel (landpass.go, prepare and merges) ----
 
@@ -238,7 +245,7 @@ PushCombined(s) ==
 \* and pushed when green, and the stream stops on the conflict after its push; a red gate
 \* refuses the batch as Refuse does.
 ShrinkPrefix(s) ==
-  /\ Landing(s) /\ phase[s] = "green" /\ cut[s] # base
+  /\ Shrinks /\ Landing(s) /\ phase[s] = "green" /\ cut[s] # base
   /\ Broken # "nogate"
   /\ \/ /\ Combined(s)
         /\ phase' = [phase EXCEPT ![s] = "stopped"]
@@ -252,7 +259,7 @@ ShrinkPrefix(s) ==
 \* is pushed and nothing reported as a batch, the stream stops on the conflict (pushempty:
 \* the batch is reported landed all the same, the base unchanged).
 ShrinkConflict(s) ==
-  /\ Landing(s) /\ phase[s] = "green" /\ cut[s] # base
+  /\ Shrinks /\ Landing(s) /\ phase[s] = "green" /\ cut[s] # base
   /\ phase' = [phase EXCEPT ![s] = IF Broken = "pushempty" THEN "landed" ELSE "stopped"]
   /\ next' = next + 1
   /\ UNCHANGED <<cut, base, green, running, stage, pushes, collided, cached>>
@@ -315,8 +322,8 @@ CachedIsGreen == \A T \in cached : green[T]
 RefusalTouchesNoOtherStream ==
   [][\A s \in Streams : Refuse(s) => base' = base /\ \A t \in Streams \ {s} : phase'[t] = phase[t] /\ cut'[t] = cut[t]]_vars
 
-\* Every tree green, every batch lands, under fairness (a re-merge may still stop a stream
-\* on a conflict, so ShrinkPrefix and ShrinkConflict are not fair: they are the outside).
+\* Every tree green and no re-merge dropping a head (Shrinks off), every batch lands, under
+\* fairness.
 Lands == (\A T \in Trees : green[T]) => \A s \in Streams : <>(phase[s] = "landed")
 
 =============================================================================
