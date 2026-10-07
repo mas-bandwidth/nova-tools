@@ -350,7 +350,7 @@ func sleepsSkippers(f *ast.File) []string {
 	return names
 }
 
-// TestNightlySpaceLegIsTheOnlyEnforcingLeg: a CI-SLOW line fails exactly one
+// TestNightlyIsTheOnlyEnforcingLeg: a CI-SLOW line fails exactly one
 // leg, the nightly whole-tree run on the space shards (the #4413 ruling).
 // ci.yml's `test` job runs on schedule; test-packages deals the schedule's tree
 // onto space only; the test step passes SLOWTESTS_ENFORCE=1 only from its
@@ -358,7 +358,7 @@ func sleepsSkippers(f *ast.File) []string {
 // SLOWTESTS_ENFORCE=0 (the push leg's old swallow of the CI-SLEEPS exit). The
 // Makefile reads SLOWTESTS_ENFORCE only to pass --enforce, and carries the
 // slowtests exit through whatever it says.
-func TestNightlySpaceLegIsTheOnlyEnforcingLeg(t *testing.T) {
+func TestNightlyIsTheOnlyEnforcingLeg(t *testing.T) {
 	t.Parallel()
 
 	root := repoRoot(t)
