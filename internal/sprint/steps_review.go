@@ -1177,6 +1177,12 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 				p.Notes = append(p.Notes, j)
 			}
 		}
+		if why := RepoLineWhy(c.F("brief")); why != "" {
+			// a REPO that is no owner/name is no card the friend's staging can take (brief_repo.go)
+			p.refuse(c.ID, why+"; nothing was changed")
+			stays()
+			continue
+		}
 		if one.Friend {
 			// a friend's card from this attempt on: the friends' deal, never a machine's
 			c = withField(c, FieldWho, WhoFriend)
