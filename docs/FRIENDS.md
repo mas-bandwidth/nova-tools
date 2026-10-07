@@ -252,6 +252,14 @@ them; the coordinator takes the unstarted ones back with `nova-sprint friend
 take <friend> --all-unstarted` (or `friend down`), and nothing does it by
 itself.
 
+A beat leaves a field it does not name. `--running`, `--working` and `--queue`
+absent stay as the store has them: a bare `friend beat <friend>` (the daemon's
+keepalive) does not clear her running list and does not write zero over a count.
+`--running` with a list replaces the list; `--running ''`, the flag given and
+empty, clears it. `--working` and `--queue` given, including 0, replace that
+count. The beat names the fields it set, `set=running,working` or `set=-` when it
+set none, and the result line carries that (`FRIEND-BEAT OK f=<friend> set=...`).
+
 ## Where a job's work lives
 
 inbox/ and outbox/ hold text: the brief, the report, the evidence. A job's
