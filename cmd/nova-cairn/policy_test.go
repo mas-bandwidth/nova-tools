@@ -41,6 +41,34 @@ func TestAnAppendWithNoPolicyToCarryIsRefused(t *testing.T) {
 	printed(t, c.ok("append", "--session", "s", "--entry", "e", "--text", "w", "--publish", "manual"), " publish=manual ")
 }
 
+// TestReopenPrintsStoredOpenedTime pins a re-open: the same policy prints
+// reopened=true and the opened time the session file stored, not the clock of
+// this call, and a different --publish is refused naming both policies.
+func TestReopenPrintsStoredOpenedTime(t *testing.T) {
+	t.Parallel()
+
+	c := newRig(t)
+	stored := "2026-01-02T14:59:58Z"
+	later := "2026-01-02T15:00:06Z"
+	c.ok("open", "--session", "s", "--publish", "manual", "--now", stored)
+
+	out := c.ok("open", "--session", "s", "--publish", "manual", "--now", later)
+	printed(t, out, "OPEN OK session=s ", " reopened=true ", " stamp="+stored)
+	require.NotContains(t, out, later)
+
+	r := c.run("open", "--session", "s", "--publish", "manual", "--now", later, "--json")
+	require.Equal(t, 0, r.Code, "%+v", r)
+	require.Contains(t, r.Stdout, `"reopened":true`)
+	require.Contains(t, r.Stdout, stored)
+	require.NotContains(t, r.Stdout, later)
+
+	r = c.run("open", "--session", "s", "--publish", "never", "--now", later)
+	require.Equal(t, 1, r.Code, "%+v", r)
+	require.Empty(t, r.Stdout)
+	printed(t, r.Stderr, "publish=manual", "--publish never",
+		"; run: nova-cairn open --store "+c.store+" --session s --publish manual")
+}
+
 // A re-open naming the recorded policy and source changes nothing; one naming
 // another policy or another source is a conflict at exit 1 whose remedy is the
 // open that matches, and nothing is written.
