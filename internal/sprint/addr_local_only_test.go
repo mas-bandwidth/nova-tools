@@ -1,64 +1,68 @@
 package sprint
 
 import (
-	"os"
+	"net"
+	"strconv"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
-// TestLocalOnlyModeRefusesEveryNonLoopbackAddressAndNeedsNoTailnet tests that:
-// - In local-only mode, only loopback addresses are accepted
-// - In local-only mode, tailnet addresses are refused
-// - Outside local-only mode, tailnet addresses are accepted
-func TestLocalOnlyModeRefusesEveryNonLoopbackAddressAndNeedsNoTailnet(t *testing.T) {
-	// Test 1: In local-only mode, loopback is accepted
-	os.Setenv("NOVA_SPRINT_LOCAL", "1")
-	if reason := AddrOK("127.0.0.1:7395"); reason != "" {
-		t.Errorf("local-only mode should accept loopback: %s", reason)
-	}
-
-	// Test 2: In local-only mode, tailnet is refused
-	if reason := AddrOK("100.64.0.1:7395"); reason == "" {
-		t.Error("local-only mode should refuse tailnet addresses")
-	} else if !contains(reason, "local-only mode") {
-		t.Errorf("local-only mode refusal should mention 'local-only mode': %s", reason)
-	}
-
-	// Test 3: In local-only mode, private is refused
-	if reason := AddrOK("10.0.0.1:7395"); reason == "" {
-		t.Error("local-only mode should refuse private addresses")
-	} else if !contains(reason, "local-only mode") {
-		t.Errorf("local-only mode refusal should mention 'local-only mode': %s", reason)
-	}
-
-	// Test 4: In local-only mode, public is refused
-	if reason := AddrOK("8.8.8.8:7395"); reason == "" {
-		t.Error("local-only mode should refuse public addresses")
-	} else if !contains(reason, "local-only mode") {
-		t.Errorf("local-only mode refusal should mention 'local-only mode': %s", reason)
-	}
-
-	// Test 5: Outside local-only mode, tailnet is accepted
-	os.Unsetenv("NOVA_SPRINT_LOCAL")
-	if reason := AddrOK("100.64.0.1:7395"); reason != "" {
-		t.Errorf("normal mode should accept tailnet: %s", reason)
-	}
-
-	// Test 6: Outside local-only mode, private is accepted
-	if reason := AddrOK("10.0.0.1:7395"); reason != "" {
-		t.Errorf("normal mode should accept private: %s", reason)
-	}
-
-	// Test 7: Outside local-only mode, loopback is accepted
-	if reason := AddrOK("127.0.0.1:7395"); reason != "" {
-		t.Errorf("normal mode should accept loopback: %s", reason)
-	}
+// addr4 is an address:port from its octets: the cases below are built, not
+// spelled, because nothing here is dialled and the ci net rule reads a spelled
+// host:port as a host a test could reach (internal/bus/addr_test.go).
+func addr4(a, b, c, d byte) string {
+	return net.JoinHostPort(net.IPv4(a, b, c, d).String(), strconv.Itoa(7395))
 }
 
-func contains(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
+// TestLocalOnlyModeRefusesEveryNonLoopbackAddressAndNeedsNoTailnet pins the
+// address rule (docs/SPEC-SPRINT.md, section 14, The server): in local-only
+// mode a tailnet address is refused naming the mode and a loopback one is
+// accepted, so no tailnet is needed; outside the mode both are accepted and a
+// public address is refused. It steps the pure CheckAddr, so no socket opens
+// and no environment is touched.
+func TestLocalOnlyModeRefusesEveryNonLoopbackAddressAndNeedsNoTailnet(t *testing.T) {
+	t.Parallel()
+	tailnet, private, public := addr4(100, 64, 0, 1), addr4(10, 0, 0, 1), addr4(8, 8, 8, 8)
+	t.Run("local-only mode takes loopback and refuses the rest naming the mode", func(t *testing.T) {
+		t.Parallel()
+		rows := []struct {
+			name string
+			addr string
+			want string
+		}{
+			{"loopback is accepted", "127.0.0.1:7395", ""},
+			{"a tailnet address is refused", tailnet, "local-only mode allows only loopback; " + tailnet + " is not loopback"},
+			{"a private address is refused", private, "local-only mode allows only loopback; " + private + " is not loopback"},
+			{"a public address is refused", public, "local-only mode allows only loopback; " + public + " is not loopback"},
 		}
-	}
-	return false
+		for _, row := range rows {
+			t.Run(row.name, func(t *testing.T) {
+				t.Parallel()
+				got := CheckAddr(row.addr, true)
+				assert.Equal(t, row.want, got)
+				if row.want != "" {
+					assert.Contains(t, got, "local-only mode")
+				}
+			})
+		}
+	})
+	t.Run("outside the mode loopback and tailnet pass and a public address is refused", func(t *testing.T) {
+		t.Parallel()
+		rows := []struct {
+			name string
+			addr string
+			want string
+		}{
+			{"loopback is accepted", "127.0.0.1:7395", ""},
+			{"a tailnet address is accepted", tailnet, ""},
+			{"a public address is refused", public, "address is neither loopback nor private nor tailnet (100.64.0.0/10): " + public},
+		}
+		for _, row := range rows {
+			t.Run(row.name, func(t *testing.T) {
+				t.Parallel()
+				assert.Equal(t, row.want, CheckAddr(row.addr, false))
+			})
+		}
+	})
 }

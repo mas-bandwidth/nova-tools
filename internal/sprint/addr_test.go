@@ -1,129 +1,74 @@
 package sprint
 
 import (
-	"os"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
-func TestLocalOnlyMode(t *testing.T) {
-	// Test default (no env)
-	os.Unsetenv("NOVA_SPRINT_LOCAL")
-	if LocalOnlyMode() {
-		t.Error("LocalOnlyMode() should be false when NOVA_SPRINT_LOCAL is not set")
-	}
-
-	// Test with NOVA_SPRINT_LOCAL=1
-	os.Setenv("NOVA_SPRINT_LOCAL", "1")
-	if !LocalOnlyMode() {
-		t.Error("LocalOnlyMode() should be true when NOVA_SPRINT_LOCAL=1")
-	}
-
-	// Test with NOVA_SPRINT_LOCAL=0
-	os.Setenv("NOVA_SPRINT_LOCAL", "0")
-	if LocalOnlyMode() {
-		t.Error("LocalOnlyMode() should be false when NOVA_SPRINT_LOCAL=0")
-	}
-
-	// Test with NOVA_SPRINT_LOCAL= (empty)
-	os.Setenv("NOVA_SPRINT_LOCAL", "")
-	if LocalOnlyMode() {
-		t.Error("LocalOnlyMode() should be false when NOVA_SPRINT_LOCAL is empty")
-	}
-}
-
-func TestAddrOK(t *testing.T) {
-	tests := []struct {
-		name string
-		addr string
-		want string
+// TestLocalOnlyModeFromSelectsTheMode pins that local-only mode is the
+// process setting NOVA_SPRINT_LOCAL=1, read through the caller's getenv so no
+// test touches the environment (docs/SPEC-SPRINT.md, section 14, The server).
+func TestLocalOnlyModeFromSelectsTheMode(t *testing.T) {
+	t.Parallel()
+	rows := []struct {
+		name  string
+		value string
+		want  bool
 	}{
-		{"loopback", "127.0.0.1:7395", ""},
-		{"loopback2", "127.0.0.1:0", ""},
-		{"private", "10.0.0.1:7395", ""},
-		{"private2", "192.168.1.1:7395", ""},
-		{"private3", "172.16.0.1:7395", ""},
-		{"tailnet", "100.64.0.1:7395", ""},
-		{"tailnet2", "100.127.255.255:7395", ""},
-		{"public", "8.8.8.8:7395", "address is neither loopback nor private nor tailnet: 8.8.8.8:7395"},
-		{"link-local", "169.254.1.1:7395", "address is neither loopback nor private nor tailnet: 169.254.1.1:7395"},
-		{"unspecified", "0.0.0.0:7395", "address is neither loopback nor private nor tailnet: 0.0.0.0:7395"},
+		{"unset is not the mode", "", false},
+		{"1 is the mode", "1", true},
+		{"0 is not the mode", "0", false},
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			os.Unsetenv("NOVA_SPRINT_LOCAL")
-			if got := AddrOK(tt.addr); got != tt.want {
-				t.Errorf("AddrOK(%q) = %q, want %q", tt.addr, got, tt.want)
-			}
+	for _, row := range rows {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+			getenv := func(string) string { return row.value }
+			assert.Equal(t, row.want, LocalOnlyModeFrom(getenv))
 		})
 	}
+	t.Run("a nil getenv is not the mode", func(t *testing.T) {
+		t.Parallel()
+		assert.False(t, LocalOnlyModeFrom(nil))
+	})
 }
 
-func TestAddrOKLocalOnly(t *testing.T) {
-	os.Setenv("NOVA_SPRINT_LOCAL", "1")
-	defer os.Unsetenv("NOVA_SPRINT_LOCAL")
-
-	tests := []struct {
-		name string
-		addr string
-		want string
+// TestCheckAddrHoldsTheOneAddressRule pins CheckAddr (internal/sprint/addr.go):
+// loopback, a private range or the tailnet's address passes outside the mode,
+// loopback alone passes inside it, and the refusals name the rule or the mode.
+// No socket opens and no environment is touched.
+func TestCheckAddrHoldsTheOneAddressRule(t *testing.T) {
+	t.Parallel()
+	private, tailnet, tailHigh := addr4(10, 0, 0, 1), addr4(100, 64, 0, 1), addr4(100, 127, 255, 255)
+	lan, public, every := addr4(192, 168, 1, 1), addr4(8, 8, 8, 8), addr4(0, 0, 0, 0)
+	rows := []struct {
+		name      string
+		addr      string
+		localOnly bool
+		want      string
 	}{
-		{"loopback ok", "127.0.0.1:7395", ""},
-		{"private refused", "10.0.0.1:7395", "local-only mode allows only loopback; 10.0.0.1:7395 is not loopback"},
-		{"tailnet refused", "100.64.0.1:7395", "local-only mode allows only loopback; 100.64.0.1:7395 is not loopback"},
-		{"public refused", "8.8.8.8:7395", "local-only mode allows only loopback; 8.8.8.8:7395 is not loopback"},
+		{"loopback passes", "127.0.0.1:7395", false, ""},
+		{"loopback passes in local-only mode", "127.0.0.1:7395", true, ""},
+		{"ipv6 loopback passes", "[::1]:7395", false, ""},
+		{"a private address passes", private, false, ""},
+		{"a tailnet address passes", tailHigh, false, ""},
+		{"a tailnet address is refused in local-only mode", tailnet, true, "local-only mode allows only loopback; " + tailnet + " is not loopback"},
+		{"a private address is refused in local-only mode", lan, true, "local-only mode allows only loopback; " + lan + " is not loopback"},
+		{"a public address is refused", public, false, "address is neither loopback nor private nor tailnet (100.64.0.0/10): " + public},
+		{"a public address is refused in local-only mode", public, true, "local-only mode allows only loopback; " + public + " is not loopback"},
+		{"every network is refused", every, false, "address is neither loopback nor private nor tailnet (100.64.0.0/10): " + every},
+		{"a name passes outside the mode", "store.example:6379", false, ""},
+		{"a name is refused in local-only mode", "store.example:6379", true, "local-only mode allows only loopback; store.example:6379 is not loopback: what a name would dial is unknown"},
+		{"localhost passes", "localhost:6379", false, ""},
+		{"localhost passes in local-only mode", "localhost:6379", true, ""},
+		{"a socket passes", "/tmp/redis.sock", false, ""},
+		{"a twin passes", "mem:bench", true, ""},
+		{"an address with no port is refused", "127.0.0.1", false, "address wants host:port, found 127.0.0.1"},
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := AddrOK(tt.addr); got != tt.want {
-				t.Errorf("AddrOK(%q) = %q, want %q", tt.addr, got, tt.want)
-			}
-		})
-	}
-}
-
-func TestIsLoopback(t *testing.T) {
-	tests := []struct {
-		name string
-		ip   string
-		want bool
-	}{
-		{"loopback", "127.0.0.1", true},
-		{"not loopback", "10.0.0.1", false},
-		{"nil", "", false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			ip := ParseIP(tt.ip)
-			if got := IsLoopback(ip); got != tt.want {
-				t.Errorf("IsLoopback(%q) = %v, want %v", tt.ip, got, tt.want)
-			}
-		})
-	}
-}
-
-func TestIsPrivateOrTailnet(t *testing.T) {
-	tests := []struct {
-		name string
-		ip   string
-		want bool
-	}{
-		{"private", "10.0.0.1", true},
-		{"private2", "192.168.1.1", true},
-		{"tailnet", "100.64.0.1", true},
-		{"loopback", "127.0.0.1", false},
-		{"public", "8.8.8.8", false},
-		{"nil", "", false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			ip := ParseIP(tt.ip)
-			if got := IsPrivateOrTailnet(ip); got != tt.want {
-				t.Errorf("IsPrivateOrTailnet(%q) = %v, want %v", tt.ip, got, tt.want)
-			}
+	for _, row := range rows {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, row.want, CheckAddr(row.addr, row.localOnly))
 		})
 	}
 }

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"slices"
 	"strings"
 	"time"
@@ -49,9 +48,9 @@ type tailnetNode struct {
 // single-machine setup has no fleet to reach. Local-only mode also skips it,
 // because machines in local-only mode use loopback only and need no tailnet.
 func checkTailnet(ctx context.Context, env Env) Result {
-	if localOnlyMode() {
+	if localOnlyMode(env) {
 		return Result{Status: OK,
-			Evidence: "local-only mode skips tailnet check"}
+			Evidence: "local-only mode (NOVA_SPRINT_LOCAL=1) needs no tailnet: the check is skipped"}
 	}
 	ctx, cancel := context.WithTimeout(ctx, tailnetTimeout)
 	defer cancel()
@@ -138,9 +137,11 @@ func firstLabel(s string) string {
 	return strings.ToLower(s)
 }
 
-// localOnlyMode returns true when NOVA_SPRINT_LOCAL=1 is set.
-func localOnlyMode() bool {
-	return strings.ToLower(os.Getenv("NOVA_SPRINT_LOCAL")) == "1"
+// localOnlyMode reports whether the process runs in local-only mode
+// (NOVA_SPRINT_LOCAL=1, read through the check's Env so a test names it;
+// docs/SPEC-SPRINT.md, section 14, The server): loopback only, no tailnet.
+func localOnlyMode(env Env) bool {
+	return strings.EqualFold(strings.TrimSpace(env.Getenv("NOVA_SPRINT_LOCAL")), "1")
 }
 
 // inventoryNames is the machine rows nova-config has applied, read from

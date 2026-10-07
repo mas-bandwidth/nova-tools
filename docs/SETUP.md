@@ -53,10 +53,6 @@ root (`~/nova`, or `--root <dir>`). The design is [SPEC-UP.md](SPEC-UP.md).
 What `--local` never touches, and how each step decides it has nothing to do, is in
 [SPEC-UP.md](SPEC-UP.md).
 
-**Local-only mode.** A single-machine setup with no tailnet uses local-only mode, enabled by
-`nova-up --local`. This sets `NOVA_SPRINT_LOCAL=1`, allowing only loopback addresses. Tailnet
-checks are skipped in this mode.
-
 ## Checking the setup
 
 ### setup-nova-doctor-r-r5.w1: nova-doctor
@@ -142,3 +138,11 @@ when its backend state is not `Running`, when this machine has no name on the ta
 a machine of `nova-config machine list` is not named on the tailnet; the evidence names each
 missing machine and the fix line runs `tailscale up` on it. The check passes when tailscale is
 up, this machine is named, and every inventory machine answers on the tailnet.
+
+### sprint-local-only-mode-r-bb.w2: local-only mode
+
+A single machine with no tailnet runs its first sprint in local-only mode, and nothing else
+uses it: `nova-up --local` sets `NOVA_SPRINT_LOCAL=1`, and every address must then be
+loopback. A fleet never uses it: machines that reach each other over the tailnet stay off it,
+since a tailnet address is refused under it. Under the mode nothing asks for a tailnet, and
+`nova-doctor` skips the `tailnet` check naming this mode as the reason.

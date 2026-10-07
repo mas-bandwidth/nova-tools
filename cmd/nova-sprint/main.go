@@ -483,6 +483,14 @@ func (a *app) storeCtx(ctx context.Context, c common) (*store.Store, error) {
 		// the twin is named here too, so a first run with no Redis is one turn away (tool ledger P9)
 		return nil, fmt.Errorf("--redis <addr> is required (or NOVA_SPRINT_REDIS, NOVA_REDIS_ADDR, or a login recorded by nova-sprint seat login); with no Redis, --redis mem:<file> runs it on the in-memory twin kept in that file (nova-sprint help, trying it without a Redis)")
 	}
+	if !isTwin(c.redis) && !strings.HasPrefix(strings.TrimSpace(c.redis), "/") {
+		// the one address rule (internal/sprint/addr.go CheckAddr): the store
+		// is on loopback, a private range or the tailnet, and on loopback
+		// alone in local-only mode, refused before anything is dialled.
+		if why := sprint.CheckAddr(c.redis, sprint.LocalOnlyModeFrom(a.getenv)); why != "" {
+			return nil, errors.New("--redis " + why + "; run: name a loopback or tailnet address (NOVA_SPRINT_LOCAL=1 allows loopback only)")
+		}
+	}
 	if why := needsActor(c); why != "" {
 		return nil, errors.New(why)
 	}
