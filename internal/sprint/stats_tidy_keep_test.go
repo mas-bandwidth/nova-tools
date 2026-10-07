@@ -157,11 +157,11 @@ func TestATidyKeepsTheDeadlineItsMedianGave(t *testing.T) {
 		card.Fields[FieldReported] = now.Add(-11*time.Hour + time.Duration(600+i)*time.Second).UTC().Format(time.RFC3339)
 	}
 	w.s.Fleet.cells = nil
-	fm, fn := FriendMedianWall(w.s, "carry-amy")
+	fm, fn := RowMedianWall(w.s, amy)
 	require.Equal(t, 12, fn)
 	_, p = TidyDone(w.s, []string{TidyFriends}, nil)
 	w.must(p)
-	gm, gn := FriendMedianWall(w.s, "carry-amy")
+	gm, gn := RowMedianWall(w.s, amy)
 	assert.Equal(t, fm, gm, "her median is carried through the tidy")
 	assert.Equal(t, 12, gn)
 }

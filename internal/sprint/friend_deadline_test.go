@@ -20,16 +20,16 @@ func lateCards(w *world) []string {
 	return out
 }
 
-// A friend's card's working deadline is the larger of DeadlineUnfinished and
-// FriendDeadlineK times her median run wall over her last ok attempts (her take to her
-// report), set on the card as she takes it, as nova-tools#5300 gives a machine's card its
-// member's when it is dealt.
+// A friend's card's working deadline is the one deadline rule (rowDeadline) over her row:
+// the larger of DeadlineUnfinished and DeadlineK times her median run wall over her last
+// DeadlineSamples ok attempts (her take to her report), set on the card as she takes it,
+// as the same rule gives a machine's card its member's when it is dealt.
 func TestAFriendsCardsDeadlineIsThreeTimesHerMedianWall(t *testing.T) {
 	t.Parallel()
 	w := friendWorld(t, friendBrief("friend amy"), friendBrief("friend amy"), friendBrief("friend amy"), friendBrief("friend amy"))
 	dealStarted(w, FriendSeat{Name: "amy", Width: 3, Status: Up, Class: "flash,pro"})
 	amy := FriendRow("amy")
-	_, n := FriendMedianWall(w.s, "amy")
+	_, n := RowMedianWall(w.s, amy)
 	require.Zero(t, n)
 	assert.Empty(t, w.s.Fleet.Card("s1-1.w1").F(FieldFriendDeadline), "no ok attempt yet: the fleet's")
 	assert.Equal(t, DeadlineUnfinished, unfinishedLimit(w.s.Fleet.Card("s1-1.w1")))
@@ -43,7 +43,7 @@ func TestAFriendsCardsDeadlineIsThreeTimesHerMedianWall(t *testing.T) {
 		w.s.Now = reported.Add(10 * time.Minute)
 		w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{id}}, As: amy, Gens: gensOf(w.s, id), Head: "abc", Reported: reported}))
 	}
-	median, n := FriendMedianWall(w.s, "amy")
+	median, n := RowMedianWall(w.s, amy)
 	assert.Equal(t, 3, n)
 	assert.Equal(t, 4200.0, median)
 

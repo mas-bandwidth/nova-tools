@@ -176,21 +176,15 @@ func doneWord(col string) string {
 }
 
 // PropCarriedMedian is the fleet table's property holding a row's median run wall as a
-// tidy found it: "<seconds> <samples>". The deadline rules (MemberMedianWall,
-// FriendMedianWall) use it while the row's live ok sample is smaller than its count, and
-// drop it once the live sample is at least as large, so a tidy never changes a deadline.
+// tidy found it: "<seconds> <samples>". The deadline rule (RowMedianWall) uses it while
+// the row's live ok sample is smaller than its count, and drops it once the live sample is
+// at least as large, so a tidy never changes a deadline.
 func PropCarriedMedian(row string) string { return "carried_median_" + row }
 
 // carryMedian is the property write that carries the row's median run wall through a tidy,
 // none when the row has no sample or carries the same already.
 func carryMedian(s *Snapshot, row string) []PropWrite {
-	var median float64
-	var n int
-	if f, ok := FriendOfRow(row); ok {
-		median, n = FriendMedianWall(s, f)
-	} else {
-		median, n = MemberMedianWall(s, row)
-	}
+	median, n := RowMedianWall(s, row)
 	if n == 0 {
 		return nil
 	}

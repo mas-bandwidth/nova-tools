@@ -455,14 +455,12 @@ touch a friend's row, so a friend who goes quiet keeps her card (no
 take-back by presence; the coordinator takes back what she has not started,
 below), the no-stall rule holds it as hers whatever her status, and
 the deadline rule judges it as it judges any work card, its working deadline
-by friend: the larger of 2 hours from its deal (`DeadlineUnfinished`) and
-`FriendDeadlineK` (three) times her median run wall over her last
-`FriendDeadlineSamples` (fifty) ok attempts, her run wall being her take to
+by friend: the one deadline rule of section 5 over her row, her own
+`DeadlineUnfinished` (two hours from its deal) and her run wall her take to
 her report (`sprint.RunWall`), set on the card as `friend_deadline` (seconds)
 when it goes into working on her row (her deal, her next on a finish, a level
-or a redeal), and absent while she has no ok attempt: nova-tools#5300's member
-rule, written here for friends under its own names because #5300 was not on
-dev (`TestAFriendsCardsDeadlineIsThreeTimesHerMedianWall`,
+or a redeal), and absent while she has no ok attempt
+(`TestAFriendsCardsDeadlineIsThreeTimesHerMedianWall`,
 `TestAFriendsNextCardsDeadlineFollowsHerRunWall`). The machines' `deal` verb refuses a hard pin (`WHO: only friend`), and
 `rework` of a friend's card sends its primary ready with the fix, for the tick to
 offer again. A rework keeps the WHO pin (the owner, 2026-10-05: a rework of a friend's own
@@ -2204,25 +2202,28 @@ and it is the coordinator's decision, receipted.
   It is the tier every friend deal gates on, so a friend row with a class holds only
   cards whose tier her class covers, unless the card is pinned to her by its WHO
   line (the attempt cap's friend card; `TestAFriendRowHoldsItsTiersUnlessTheCardIsPinnedToHer`):
-  a runner that hands back a tier it does not do accepts a card whose WHO names it. **The deadline is by machine** (the owner, 2026-10-04: the route's
+  a runner that hands back a tier it does not do accepts a card whose WHO names it. **One deadline rule serves the fleet and the friends** (the owner, 2026-10-04: the route's
   deadline was one number for the fleet, and a machine whose median run wall
   was twice the others' timed out twice as often, every timeout a whole
-  attempt's spend lost): the deadline a dealt card gets is the larger of the
-  card's own (its route's or its pin's, kept as `deadline_own`) and
-  `sprint.DeadlineK` (3) times the member's median run wall in seconds over its
+  attempt's spend lost): the deadline a card placed on a row gets is the larger
+  of the card's own (a member's route's or its pin's, kept as `deadline_own`) and
+  `sprint.DeadlineK` (3) times the row's median run wall in seconds over its
   last `sprint.DeadlineSamples` (50) ok attempts, the usage walls of its ok work
-  cards newest first, as `stats` measures it (`sprint.MemberMedianWall`); a card
+  cards newest first, as `stats` measures it (`sprint.RowMedianWall`; a friend's
+  run wall is her take to her report, `sprint.RunWall`, and her own is
+  `sprint.DeadlineUnfinished`, two hours); a member's card
   dealt again to another member (a member down, the level) gets that member's
-  from the same start. The fleet row may pin it: `fleet up <m> --deadline <d>`
+  from the same start. A member's fleet row may pin it: `fleet up <m> --deadline <d>`
   writes the member's control card's `deadline` in seconds and every card dealt
   to it gets that, whatever the card's; `--deadline default` takes the pin off
   (`TestADealtCardsDeadlineIsThreeTimesItsMembersMedianWall`,
   `TestARedealtCardsDeadlineIsItsNewMembersToo`,
   `TestTheMedianWallIsOverTheLastFiftyOkAttempts`). The median is measured
-  once a member for the done-ok cell the fleet table holds, and again only when
+  once a row for the done-ok cell the fleet table holds, and again only when
   a card put on the table makes a new cell, never once a card dealt: the deal
-  costs the cards it deals, not those times the member's history
-  (`TestTheMedianWallIsMeasuredOnceACellAndAgainAfterAPut`; the tick gate under
+  costs the cards it deals, not those times the row's history
+  (`TestTheMedianWallIsMeasuredOnceACellAndAgainAfterAPut`,
+  `TestOneDeadlineRuleForMembersAndFriends`; the tick gate under
   load, `TestTheTickGateHoldsUnderLoad`). A tier is served by an enabled fleet route or by a friend up (not held, not down) whose row lists it, one check for every verb that validates a tier (`tierServed`; a tier friends alone serve is the friends' deal's, and a rework at it waits ready for them, `TestReworkAcceptsATierAFriendServes`). The sides' tiers bound both ways: `set --fleet-tiers <tiers|all>` and `set --friends-tiers <tiers|all>` (the work table's properties `fleet_tiers` and `friends_tiers`, flash, pro, heavy, frontier comma separated, default all) are the tiers each side may take, on top of each row's own tiers (a member's routes and reader row, a friend's row). The deal hands a machine only a work card whose tier is in the fleet's set (`routeOf`: a tier the set leaves out draws no route), and a friend only one whose tier is in the friends' set (`friendTakes`), for every friend deal, level and move; a read card is dealt by its read tier the same way, a friend still reading her tier or any below it and the one-tier-below rule reading only inside the set (the read tier and the tier read at both in it). A card pinned to a model is no exception (the set is the owner's switch, `TestAModelPinDoesNotOverrideTheFleetsTiers`), and a frontier card waits for the coordinator whatever the sets (`TestAFrontierCardsJudgmentIsUnchangedByTheFleetsTiers`). A card no side may take is not dealt and is named in its tier's one `no route serves the tier` judgment, which says the side's tiers; a card in review whose read tier no side may read is named in the same judgment (`TestFleetTiersLimitWhatTheFleetTakes`, `TestFriendsTiersLimitWhatFriendsTake`, `TestAReadCardNoSideMayTakeRaisesTheTiersJudgment`). While a side's tiers are set, `where` and `view coordinator` say both sides (`fleet: on, tiers flash  friends: on, tiers all`), `where --json` carries `fleet_tiers` and `friends_tiers` (`"all"` or the list) always and `view coordinator --json` a side's only when set (`TestTheTierSettingsAreSaidWhereTheCoordinatorLooks`). A card of such a tier withdrawn or taken back from every friend up who serves it has no worker left: the tick names it in its tier's one `no route serves the tier` judgment (`TestACardWithdrawnFromItsLastFriendRaisesOneJudgment`). A card no route serves stays ready: the deal refuses it naming the
   tier, and the tick writes one judgment, `no route serves the tier`, per tier
   (its subject `stream:tier:<tier>`, the primaries listed), never one per
@@ -5516,11 +5517,11 @@ internal/sprint/stats_tidy.go):
   its cell; its record stays, read by id as `stats`, `card` and `log` read it, and its
   log line says `off the table (stats tidy: its record kept)`. `done` and `ok%` then count
   the cards kept and those finished since.
-- A tidy never changes a deadline: the deal's deadline is DeadlineK times the row's median
-  run wall over its done-ok cell (`sprint.MemberMedianWall`, `sprint.FriendMedianWall`),
+- A tidy never changes a deadline: the one deadline rule is DeadlineK times the row's
+  median run wall over its done-ok cell (`sprint.RowMedianWall`),
   so a tidy that moves a row's cards writes the row's median and sample count as it found
   them to the fleet table's property `carried_median_<row>` (`sprint.PropCarriedMedian`,
-  `<seconds> <samples>`), in the same step. The deadline rules use the carried median
+  `<seconds> <samples>`), in the same step. The rule uses the carried median
   while the row's live sample is smaller than the carried count, and the live one once it
   is at least as large (`TestATidyKeepsTheDeadlineItsMedianGave`: a machine with a
   20-minute median on a 30-minute route keeps its 60-minute deadline).

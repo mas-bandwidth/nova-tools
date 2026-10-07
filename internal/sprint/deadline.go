@@ -8,24 +8,22 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
 )
 
-// A card's deadline by machine (docs/SPEC-SPRINT.md section 5, the deadline; the owner,
+// A card's deadline by row (docs/SPEC-SPRINT.md section 5, the deadline; the owner,
 // 2026-10-04). The route's deadline was one number for the fleet, and a machine whose
 // median run wall was twice the others' (759 s against 380 to 435 s) timed out twice as
-// often, every timeout a whole attempt's spend lost. The deadline a dealt card
-// gets is the larger of the card's own (its route's, or its pin's) and DeadlineK times
-// the member's median run wall over its last DeadlineSamples ok attempts, as the stats
-// verb measures it (stats.go); the fleet row may pin it (fleet up <m> --deadline <d>,
-// the control card's deadline), and then the pin is the deadline whatever the card's.
+// often, every timeout a whole attempt's spend lost. One rule serves a member's deal and
+// a friend's take: the deadline a card placed on a row gets is the larger of the card's
+// own (a member's route's or its pin's) and DeadlineK times the row's median run wall
+// over its last DeadlineSamples ok attempts, as the stats verb measures it (stats.go);
+// a member's fleet row may pin it (fleet up <m> --deadline <d>, the control card's
+// deadline), and then the pin is the deadline whatever the card's.
 
 const (
-	// DeadlineK is the multiple of the member's median run wall a card's deadline is at
-	// least.
+	// DeadlineK is the multiple of a row's median run wall a card's deadline is at least.
 	DeadlineK = 3
-	// DeadlineSamples is how many of the member's latest ok attempts the median is over.
+	// DeadlineSamples is how many of the row's latest ok attempts the median is over.
 	DeadlineSamples = 50
 	// FieldMemberDeadline is the member's control card field holding its pinned deadline
 	// in seconds (fleet up --deadline), absent when none is pinned.
@@ -36,53 +34,60 @@ const (
 	FieldOwnDeadline = "deadline_own"
 )
 
-// MemberMedianWall is the member's median run wall in seconds over its last
-// DeadlineSamples ok attempts (the usage walls of its ok work cards, newest finished
-// first), and how many samples it is over; 0 and 0 with none.
+// RowMedianWall is the row's median run wall in seconds over its last DeadlineSamples ok
+// attempts (RunWall of its ok work cards, newest finished first), and how many samples it
+// is over; 0 and 0 with none. The row is a member's own or a friend's (friend.<name>): the
+// rule is one for both (docs/SPEC-SPRINT.md section 5, the deadline).
 //
 // The deal asks it for every card it deals or moves, and a plan is run more than once a
-// tick (the part's probe, then each attempt), so it is measured once a member for the
+// tick (the part's probe, then each attempt), so it is measured once a row for the
 // done-ok cell the fleet table holds (medianWalls), never once a card: a deal costs the
-// cards it deals, not those times the member's history (TestTheTickGateHoldsUnderLoad).
+// cards it deals, not those times the row's history (TestTheTickGateHoldsUnderLoad).
 //
-// A stats tidy carries the member's median through it (PropCarriedMedian): the carried
+// A stats tidy carries the row's median through it (PropCarriedMedian): the carried
 // median and count stand while the live sample is smaller than the carried count.
-func MemberMedianWall(s *Snapshot, member string) (median float64, n int) {
+func RowMedianWall(s *Snapshot, row string) (median float64, n int) {
 	if s.Fleet == nil {
 		return 0, 0
 	}
-	if cell := s.Fleet.Cell(member, DoneOK); len(cell) > 0 {
-		median, n = medianWalls.of(member, cell)
+	if cell := s.Fleet.Cell(row, DoneOK); len(cell) > 0 {
+		median, n = medianWalls.of(row, cell)
 	}
-	return withCarried(s, member, median, n)
+	return withCarried(s, row, median, n)
 }
 
-// medianWalls is each member's median run wall as last measured, with the done-ok cell
-// it was measured over.
-var medianWalls = medianMemo{byMember: map[string]medianWall{}, measured: map[string]int{}}
+// MemberMedianWall is RowMedianWall over a member's own row; it is the name the fleet's
+// store tests read a member by.
+func MemberMedianWall(s *Snapshot, member string) (median float64, n int) {
+	return RowMedianWall(s, member)
+}
 
-// MedianWallMeasures is how many times the member's median run wall has been measured
-// over a done-ok cell in this process: once a cell, so a deal over a snapshot measures
-// each member it deals to once however many cards it deals (TestTheTickGateHoldsUnderLoad).
-func MedianWallMeasures(member string) int {
+// medianWalls is each row's median run wall as last measured, with the done-ok cell it
+// was measured over.
+var medianWalls = medianMemo{byRow: map[string]medianWall{}, measured: map[string]int{}}
+
+// MedianWallMeasures is how many times the row's median run wall has been measured over a
+// done-ok cell in this process: once a cell, so a deal over a snapshot measures each row
+// it deals to once however many cards it deals (TestTheTickGateHoldsUnderLoad).
+func MedianWallMeasures(row string) int {
 	medianWalls.mu.Lock()
 	defer medianWalls.mu.Unlock()
-	return medianWalls.measured[member]
+	return medianWalls.measured[row]
 }
 
-// medianMemo is the members' median run walls, each held with the done-ok cell it was
+// medianMemo is the rows' median run walls, each held with the done-ok cell it was
 // measured over: the table builds a new cell when a card is put (Table.Put resets the
-// index), so the same cell, its first card's slot and its length, is the same cards,
-// and another is measured again. One entry a member, the latest cell's; safe for the
-// store's parts on their own goroutines.
+// index), so the same cell, its first card's slot and its length, is the same cards, and
+// another is measured again. One entry a row, the latest cell's; safe for the store's
+// parts on their own goroutines.
 type medianMemo struct {
 	mu       sync.Mutex
-	byMember map[string]medianWall
-	measured map[string]int // the cells measured, a member
+	byRow    map[string]medianWall
+	measured map[string]int // the cells measured, a row
 }
 
-// medianWall is a member's median run wall over a done-ok cell, and how many samples it
-// is over.
+// medianWall is a row's median run wall over a done-ok cell, and how many samples it is
+// over.
 type medianWall struct {
 	first  **Card
 	len    int
@@ -90,27 +95,27 @@ type medianWall struct {
 	n      int
 }
 
-// of is the member's median run wall over the cell (not empty), measured when the
-// memo holds another cell's.
-func (m *medianMemo) of(member string, cell []*Card) (float64, int) {
+// of is the row's median run wall over the cell (not empty), measured when the memo holds
+// another cell's.
+func (m *medianMemo) of(row string, cell []*Card) (float64, int) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if w, ok := m.byMember[member]; ok && w.first == &cell[0] && w.len == len(cell) {
+	if w, ok := m.byRow[row]; ok && w.first == &cell[0] && w.len == len(cell) {
 		return w.median, w.n
 	}
 	median, n := cellMedianWall(cell)
-	m.measured[member]++
-	m.byMember[member] = medianWall{first: &cell[0], len: len(cell), median: median, n: n}
+	m.measured[row]++
+	m.byRow[row] = medianWall{first: &cell[0], len: len(cell), median: median, n: n}
 	return median, n
 }
 
-// cellMedianWall is MemberMedianWall measured over the member's done-ok cell.
+// cellMedianWall is RowMedianWall measured over the row's done-ok cell.
 func cellMedianWall(cell []*Card) (median float64, n int) {
 	cards := append([]*Card(nil), cell...)
 	sort.SliceStable(cards, func(i, j int) bool { return cards[i].F("finished") > cards[j].F("finished") })
 	var walls []float64
 	for _, c := range cards {
-		if w, ok := wallSeconds(cardcost.ParseUsage(c.F(FieldUsage)).Wall); ok {
+		if w, ok := wallSeconds(RunWall(c)); ok {
 			walls = append(walls, w)
 		}
 		if len(walls) == DeadlineSamples {
@@ -121,18 +126,30 @@ func cellMedianWall(cell []*Card) (median float64, n int) {
 	return m.Median, m.N
 }
 
-// memberDeadline is the deadline in seconds a card dealt to the member gets, from the
-// card's own (the route's or the pin's): the member's pinned deadline when it has one,
-// else the larger of the card's and DeadlineK times the member's median run wall.
-func (s *Snapshot) memberDeadline(member string, own int) int {
-	if ctl := s.MemberCtl(member); ctl != nil && ctl.Int(FieldMemberDeadline) > 0 {
-		return ctl.Int(FieldMemberDeadline)
+// rowDeadline is the deadline in seconds a card placed on the row gets, the one rule for a
+// member's deal and a friend's take: the row's pinned deadline when pin is above zero (a
+// member's fleet up --deadline), else the larger of the card's own and DeadlineK times the
+// row's median run wall over its last DeadlineSamples ok attempts (RowMedianWall); own
+// when the row has no ok attempt.
+func (s *Snapshot) rowDeadline(row string, own, pin int) int {
+	if pin > 0 {
+		return pin
 	}
-	median, n := MemberMedianWall(s, member)
+	median, n := RowMedianWall(s, row)
 	if n == 0 {
 		return own
 	}
 	return max(own, int(math.Ceil(DeadlineK*median)))
+}
+
+// memberDeadline is rowDeadline over the member's row, its control card's pin when the
+// fleet row has one.
+func (s *Snapshot) memberDeadline(member string, own int) int {
+	var pin int
+	if ctl := s.MemberCtl(member); ctl != nil {
+		pin = ctl.Int(FieldMemberDeadline)
+	}
+	return s.rowDeadline(member, own, pin)
 }
 
 // dealDeadline sets the work card's deadline field for a deal to the member
