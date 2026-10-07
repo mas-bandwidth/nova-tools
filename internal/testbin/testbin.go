@@ -15,8 +15,9 @@ import (
 	"syscall"
 )
 
-// link is os.Link by default. A test swaps it to exercise the copy fallback
-// without needing a filesystem where Link fails.
+// link is os.Link, the production default Place passes as place's link seam; a
+// test exercises the copy fallback through place's linkFn parameter instead,
+// never by swapping this var a parallel test reads.
 var link = os.Link
 
 // Place puts the program at src at dst. It removes dst first, then hard-links
@@ -25,11 +26,18 @@ var link = os.Link
 // always takes the copy, because a link there needs a privilege the CI path
 // does not have.
 func Place(src, dst string) error {
+	return place(src, dst, link)
+}
+
+// place is Place with the link function as a parameter, the per-test seam:
+// Place passes link, the production default, and a test passes one that fails,
+// which reaches the copy fallback on any filesystem.
+func place(src, dst string, linkFn func(oldname, newname string) error) error {
 	if err := os.Remove(dst); err != nil && !os.IsNotExist(err) {
 		return err
 	}
 	if runtime.GOOS != "windows" {
-		if err := link(src, dst); err == nil {
+		if err := linkFn(src, dst); err == nil {
 			return nil
 		}
 	}

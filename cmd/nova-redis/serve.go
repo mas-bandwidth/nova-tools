@@ -130,6 +130,13 @@ redis-server and launches nothing.`,
 				} else if !filepath.IsAbs(c.Str("dir")) {
 					c.Problem(fmt.Sprintf("--dir %q is not absolute; name the store directory in full", c.Str("dir")))
 				}
+				// The password is one more input the real run cannot start
+				// without, so it is checked HERE with the flags: one refusal
+				// names every problem at once (STANDARD section 2, "recovery
+				// takes one turn"). A dry run reads no password or environment.
+				if !c.DryRun() && !serveLoginGiven(c) && d.getenv(PasswordEnv) == "" {
+					c.Problem(servePasswordProblem())
+				}
 			})
 		},
 		Run: func(c *tool.Call) *tool.Out { return serveRun(c, d) },
@@ -249,6 +256,19 @@ func serveRun(c *tool.Call, d deps) *tool.Out {
 	return tool.Exit(0)
 }
 
+// serveLoginGiven reports whether the line names any part of the secrets login
+// serve reads its password from: the login is all five flags or none.
+func serveLoginGiven(c *tool.Call) bool {
+	return c.Str("secrets") != "" || c.Str("as") != "" || c.Str("key") != "" || c.Str("sops") != "" || c.Str("secret") != ""
+}
+
+// servePasswordProblem is serve's refusal when the line names no login and
+// PasswordEnv is empty: it names both ways to give serve its password, so the
+// reader fixes the call in one turn.
+func servePasswordProblem() string {
+	return fmt.Sprintf("%s is empty; name the login serve reads the password from (--secrets <dir> --as <seat> --key <file> --sops <path> --secret <NAME>), or run under `nova-secrets exec --only %s -- nova-redis serve ...`; auth comes from nova-secrets at run time, never an argument", PasswordEnv, PasswordEnv)
+}
+
 // servePassword is the instance's password, read in this process: from the login
 // the flags name (--secrets, --as, --key, --sops, --secret: one name in one seat of a
 // secrets store, read through internal/secrets.ReadLogin, the path nova-secrets exec
@@ -257,11 +277,11 @@ func serveRun(c *tool.Call, d deps) *tool.Out {
 // password in the unit; the value is handed to redis-server on stdin only.
 func servePassword(c *tool.Call, d deps) (string, error) {
 	l := secrets.Login{Store: c.Str("secrets"), As: c.Str("as"), Key: c.Str("key"), Sops: c.Str("sops"), Name: c.Str("secret")}
-	given := l.Store != "" || l.As != "" || l.Key != "" || l.Sops != "" || l.Name != ""
+	given := serveLoginGiven(c)
 	if !given {
 		password := d.getenv(PasswordEnv)
 		if password == "" {
-			return "", fmt.Errorf("%s is empty; name the login serve reads the password from (--secrets <dir> --as <seat> --key <file> --sops <path> --secret <NAME>), or run under `nova-secrets exec --only %s -- nova-redis serve ...`; auth comes from nova-secrets at run time, never an argument", PasswordEnv, PasswordEnv)
+			return "", errors.New(servePasswordProblem())
 		}
 		return password, nil
 	}
