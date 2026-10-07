@@ -29,8 +29,9 @@ type rig struct {
 	cancel  context.CancelFunc
 	opened  int
 	openErr error
-	login   string // the user the store logs in as; "" is a store with no users
-	fleet   string // the applied fleet row's bus, read when nothing names the store
+	login   string    // the user the store logs in as; "" is a store with no users
+	over    bus.Store // when set, open returns this store instead of store
+	fleet   string    // the applied fleet row's bus, read when nothing names the store
 	fleetAt []string
 	names   []string  // the names newRig keeps heard
 	clock   time.Time // the store's clock as advance moved it (each trip adds a second more)
@@ -93,7 +94,11 @@ func (r *rig) world() world {
 			if r.openErr != nil {
 				return nil, "", nil, r.openErr
 			}
-			return r.store, r.login, func() {}, nil
+			st := bus.Store(r.store)
+			if r.over != nil {
+				st = r.over
+			}
+			return st, r.login, func() {}, nil
 		},
 		run: func(_ context.Context, _ string, stdin string, _, _ io.Writer) (int, error) {
 			r.execIn = append(r.execIn, stdin)
@@ -405,6 +410,77 @@ func TestAnEmptyRecvIsNoneAtExitOne(t *testing.T) {
 	cli := newRig("ada", "bob").cli()
 	cli.Do(t, "recv", "--as", "bob").Exit(1).Err("RECV NONE: nothing for bob").NotErr("REFUSED", "FAILED")
 	cli.Do(t, "recv", "--as", "bob", "--json").Exit(1).Out(`"exit":1`, `"word":"NONE"`).NotOut(`"refused"`)
+}
+
+// blockNoted is the in-memory twin that records the block a read was given.
+type blockNoted struct {
+	*bustest.Fake
+	block time.Duration
+}
+
+func (b *blockNoted) Read(ctx context.Context, stream, group, consumer string, block time.Duration, count int) ([]bus.Entry, error) {
+	b.block = block
+	return b.Fake.Read(ctx, stream, group, consumer, block, count)
+}
+
+// recvResult is the JSON result of one recv, the status and the word.
+type recvResult struct {
+	Result struct {
+		Status string   `json:"status"`
+		Exit   int      `json:"exit"`
+		Word   string   `json:"word"`
+		Why    []string `json:"why"`
+	} `json:"result"`
+}
+
+func decodeRecv(t *testing.T, stdout string) recvResult {
+	t.Helper()
+	var got recvResult
+	require.NoError(t, json.Unmarshal([]byte(strings.TrimSpace(stdout)), &got), stdout)
+	return got
+}
+
+// TestAnEmptyBlockingRecvSaysStatusNoneNotFailed pins an empty wait: recv
+// with a short block and nothing pending exits 1 with the word NONE and
+// status none, in the text and the JSON, and help recv says that exit 1
+// with NONE is the empty wait. A store that does not answer stays refused
+// (SPEC-BUS.md, the exit codes: could not run is 2), not none.
+func TestAnEmptyBlockingRecvSaysStatusNoneNotFailed(t *testing.T) {
+	t.Parallel()
+	const short = "1ms"
+
+	r := newRig("ada", "bob")
+	seen := &blockNoted{Fake: r.store}
+	r.over = seen
+	cli := r.cli()
+
+	text := cli.Do(t, "recv", "--as", "bob", "--block", short).Exit(1)
+	assert.Contains(t, text.Stderr, "RECV NONE: nothing for bob", text)
+	assert.NotContains(t, text.Stderr, "FAILED", text)
+	assert.NotContains(t, text.Stdout, "FAILED", text)
+	assert.NotContains(t, text.Stdout, "RECV", text)
+	assert.Equal(t, time.Millisecond, seen.block, "the short block is what the read waits, not a longer sleep")
+
+	js := cli.Do(t, "recv", "--as", "bob", "--block", short, "--json").Exit(1)
+	assert.Empty(t, js.Stderr, js)
+	got := decodeRecv(t, js.Stdout)
+	assert.Equal(t, "none", got.Result.Status, js)
+	assert.Equal(t, "NONE", got.Result.Word, js)
+	assert.Equal(t, 1, got.Result.Exit, js)
+	assert.Contains(t, got.Result.Why, "nothing for bob", js)
+	assert.NotContains(t, js.Stdout, `"status":"failed"`, js)
+	assert.Equal(t, time.Millisecond, seen.block)
+
+	cli.Do(t, "help", "recv").Exit(0).Out("exit 1 with NONE is the empty wait")
+
+	down := newRig("ada", "bob")
+	down.openErr = io.ErrUnexpectedEOF
+	bad := down.cli().Do(t, "recv", "--as", "bob", "--block", short, "--json").Exit(2)
+	failed := decodeRecv(t, bad.Stdout)
+	assert.Equal(t, "refused", failed.Result.Status, bad)
+	assert.NotEqual(t, "none", failed.Result.Status, bad)
+	assert.Contains(t, bad.Stdout, "unexpected EOF", bad)
+	assert.NotContains(t, bad.Stdout, `"word":"NONE"`, bad)
 }
 
 // The decision of 2026-10-04: the tailnet is the boundary, no ACLs. A store off

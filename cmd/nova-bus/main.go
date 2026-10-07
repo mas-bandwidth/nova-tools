@@ -176,7 +176,7 @@ recv --as <me> --forever --exec '<deliver-into-session>' takes each message in, 
 ack --as <me> --id <id> acks by hand; send and recv refuse a deaf name (no push proven in 10m).
 one stream per recipient (bus2:to:<name>) under a consumer group, one log (bus2:log); all or none.
 first run: a Redis naming ada and bob at --redis (else ` + RedisEnv + `); loopback or tailnet only.`,
-		ExitTable: "0 done, 1 the verb ran and said no (recv: nothing waiting; recv --exec: the command failed; wait: nothing came), 2 could not run (a flag, an input, a store that did not answer).",
+		ExitTable: "0 done, 1 the verb ran and said no (recv: nothing waiting, exit 1 with NONE is the empty wait; recv --exec: the command failed; wait: nothing came), 2 could not run (a flag, an input, a store that did not answer).",
 		Words:     []string{"NONE", "WAKE", "ARMED", "MESSAGE", "OVERDUE"},
 		Verbs: []tool.Verb{
 			{
@@ -284,22 +284,24 @@ Delivery to a reader is still at least once: a reader may be handed one message 
 			},
 			{
 				Name:    "recv",
-				Usage:   "recv [--as <me>] [--kind <k>[,<k>]] [--max <n> | --all] [--ack] [--exec <command>] [--forever --exec <command>] [--redis <addr>] [--dry-run]",
+				Usage:   "recv [--as <me>] [--block <d>] [--kind <k>[,<k>]] [--max <n> | --all] [--ack] [--exec <command>] [--forever --exec <command>] [--redis <addr>] [--dry-run]",
 				Example: "recv --as bob --exec true",
 				Effect:  tool.Delivery + ": moves one message to pending; with --exec it runs the command and acks on exit 0",
 				DryRun:  true,
 				Detail: `Prints one message: a line RECV OK id=<id> from=<name> to=<names> cc=<names> re=<id> [kind=<k>] at=<RFC3339>
 subject=<s> (login=none when the connection has no login user), a blank line, the body; or RECV
-NONE at exit 1 when nothing waits. You are the login user, as in send, and must be heard as there: a
-recv for a name with no proven push is refused (deaf: <name> ...). The oldest message a
-reader lost (delivered, not acked, idle fifteen minutes) comes first, else the oldest new one; the
-reader keeps it for fifteen minutes. --exec '<command>' runs the command with that same text on its stdin and
+NONE at exit 1 when nothing waits: exit 1 with NONE is the empty wait. You are the login user, as in send,
+and must be heard as there: a recv for a name with no proven push is refused (deaf: <name> ...). The oldest
+message a reader lost (delivered, not acked, idle fifteen minutes) comes first, else the oldest new one; the
+reader keeps it for fifteen minutes. --block <d> is how long that one read waits (a Go duration); with no
+--block a single recv answers at once. --exec '<command>' runs the command with that same text on its stdin and
 acks the message when it exits 0 (the line adds acked=true exec_exit=0); a non-zero exit leaves
 it pending and is RECV FAILED at exit 1. --max <n> takes up to n messages in order and --all every
 one waiting, each printed as its own RECV OK (or handed to --exec and acked on exit 0, stopping
 at the first command that fails); --ack acks each after a plain recv prints it. --forever loops,
 waiting for messages, and needs --exec; it stops on SIGINT or SIGTERM, or at the first command
-that fails. --dry-run moves nothing: it prints RECV OK pending=<n> new=<n> next_new=<id>, what
+that fails. --forever looks for --block (30s when it is left out). --dry-run moves nothing: it prints
+RECV OK pending=<n> new=<n> next_new=<id>, what
 waits (a pending message held past fifteen minutes comes before the oldest new one).
 --kind <k>[,<k>] takes only messages of those kinds, in --all, --max, --forever and --dry-run too: a
 message of another kind is skipped, neither acked nor held, and the next recv without the filter
@@ -307,6 +309,7 @@ gets it. kind=<k> is left off the line of a status (the default), so an absent k
 before kinds existed.`,
 				Flags: func(f *tool.Flags) {
 					f.String("as", "", "your name, the recipient: the login user when there is one (then it may be left out)")
+					f.Duration("block", ForeverBlock, "how long one read waits for a message, a Go duration; a single recv with no --block answers at once, and --forever looks again after this. 0 answers at once")
 					f.String("kind", "", "only these kinds, comma-separated, of "+strings.Join(bus.Kinds, ", ")+" (default: every kind); others are left for the next reader")
 					f.Int("max", 1, "how many messages to take, in order, each its own result; 1 is one message")
 					f.Bool("all", false, "take every message waiting, in order, each its own result")
@@ -317,6 +320,12 @@ before kinds existed.`,
 					f.Check(func(c *tool.Call) {
 						if c.Bool("forever") && c.Str("exec") == "" {
 							c.Problem("--forever wants --exec <command>: a loop that acks nothing would hand out the same message for ever")
+						}
+						if c.Given("block") && c.Dur("block") < 0 {
+							c.Problem("--block wants a Go duration of zero or more, like 30s; 0 answers at once")
+						}
+						if c.Bool("forever") && c.Dur("block") <= 0 {
+							c.Problem("--block wants a Go duration above zero when --forever waits, like 30s")
 						}
 						if c.Bool("all") && c.Given("max") {
 							c.Problem("--all takes every message and --max <n> a count; give one or the other")
@@ -618,6 +627,12 @@ func (w world) recv(c *tool.Call) *tool.Out {
 		return loginFact(tool.Done().Fact("pending", len(pending)).Fact("new", len(fresh)).Fact("next_new", next), login)
 	}
 	command := c.Str("exec")
+	// A plain recv answers at once; --block names the wait, and --forever
+	// looks for ForeverBlock when --block was left out (SPEC-BUS.md, the verbs).
+	block := time.Duration(0)
+	if c.Bool("forever") || c.Given("block") {
+		block = c.Dur("block")
+	}
 	ctx, stop := w.signals(context.Background())
 	defer stop()
 	stopped := tool.Done().Note("stopped by a signal; a message being delivered stays pending")
@@ -631,7 +646,13 @@ func (w world) recv(c *tool.Call) *tool.Out {
 			return answer(err), false
 		}
 		if !ok {
-			return tool.Fail("nothing for " + as).As("NONE"), false
+			// SPEC-BUS.md, the verbs: RECV NONE at exit 1 when nothing
+			// waits. Fail records status failed for that exit; an empty
+			// wait is status none, the word NONE, the same exit. A store
+			// that did not answer stays answer's refusal.
+			o := tool.Fail("nothing for " + as).As("NONE")
+			o.Status = "none"
+			return o, false
 		}
 		m := e.Message()
 		o := message(m, login)
@@ -663,7 +684,7 @@ func (w world) recv(c *tool.Call) *tool.Out {
 		return o.Fact("acked", acked).Fact("exec_exit", 0), true
 	}
 	if !c.Bool("forever") && !c.Bool("all") && c.Int("max") == 1 {
-		o, _ := one(0)
+		o, _ := one(block)
 		return o
 	}
 	if !c.Bool("forever") {
@@ -671,7 +692,7 @@ func (w world) recv(c *tool.Call) *tool.Out {
 		// count is met or nothing waits; none at all is the one NONE
 		limit := c.Int("max")
 		for taken := 0; c.Bool("all") || taken < limit; taken++ {
-			res, ok := one(0)
+			res, ok := one(block)
 			switch {
 			case ok:
 				res.Render(c.Stdout, c.Bool("json"))
@@ -690,7 +711,7 @@ func (w world) recv(c *tool.Call) *tool.Out {
 	// the loop: every message in turn, each a line of its own, until a signal
 	// or a command that fails; a NONE is a wait that ran out, not a line
 	for {
-		res, ok := one(ForeverBlock)
+		res, ok := one(block)
 		switch {
 		case ok:
 			res.Render(c.Stdout, c.Bool("json"))
