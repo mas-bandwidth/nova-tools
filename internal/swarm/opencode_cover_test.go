@@ -142,7 +142,7 @@ func TestOpencodeCoverQueryOpenCodeRefusals(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			db := writeDB(t, t.TempDir(), "deepseek\tdeepseek-chat\t100\t50\t\t\t\n")
-			rows, err := queryOpenCode(db+tc.suffix, tc.limit)
+			rows, err := queryOpenCode(SQLiteBinary, db+tc.suffix, tc.limit)
 			require.Error(t, err, "the query is refused: %v", err)
 			assert.Nil(t, rows, "a refusal carries no rows: %v", rows)
 			assert.ErrorContains(t, err, tc.wantErr, "the refusal says which: %v", err)
@@ -172,7 +172,7 @@ func TestOpencodeCoverQueryOpenCodeWaitingRefusesWithoutWaiting(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			rows, err := queryOpenCodeWaiting(tc.path(t))
+			rows, err := queryOpenCodeWaiting(SQLiteBinary, tc.path(t))
 			require.Error(t, err, "the read is refused: %v", err)
 			assert.Nil(t, rows, "a refusal carries no rows: %v", rows)
 			assert.ErrorContains(t, err, tc.wantErr, "the refusal says which: %v", err)

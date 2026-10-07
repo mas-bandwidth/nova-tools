@@ -70,7 +70,10 @@ func TestAddReplacesTakesOverEveryEdgeOfTheOldCard(t *testing.T) {
 func TestAddReplacesADroppedCardClosesItsBlockedJudgments(t *testing.T) {
 	t.Parallel()
 	h := twins(t)
-	h.must(DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{"old"}}, Reason: "re-cut"}))
+	// a stored dropped record: drop refuses a card a waiting card needs, so the
+	// record is seeded and the resolve opens the blocked judgments
+	seedDroppedNeedWhy(h, "old", "re-cut")
+	h.must(ResolveStep(sprint.ResolveReq{}))
 	require.Len(t, h.nOpenOf(sprint.NBlocked, ""), 3, "the drop blocks its three dependents")
 	h.must(AddStep(sprint.AddReq{Stream: "s1", IDs: []string{"old-tb"}, Replaces: []string{"old"}, Who: "tester"}))
 	assert.Empty(t, h.nOpenOf(sprint.NBlocked, ""), "the replace answers the blocked judgments")
@@ -109,7 +112,10 @@ func TestAddReplacesIsRefusedWholeWhenItCannotHold(t *testing.T) {
 func TestRelinkRepairsTheEdgesOfADropAndAnAdd(t *testing.T) {
 	t.Parallel()
 	h := twins(t)
-	h.must(DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{"old"}}, Reason: "re-cut"}))
+	// a stored dropped record: drop refuses a card a waiting card needs, so the
+	// record is seeded and the resolve opens the blocked judgments
+	seedDroppedNeedWhy(h, "old", "re-cut")
+	h.must(ResolveStep(sprint.ResolveReq{}))
 	h.must(AddStep(sprint.AddReq{Stream: "s1", IDs: []string{"old-tb"}}))
 	require.Len(t, h.nOpenOf(sprint.NBlocked, ""), 3)
 	res := h.must(RelinkStep(sprint.RelinkReq{Old: []string{"old"}, New: "old-tb", Who: "tester"}))
@@ -130,7 +136,10 @@ func TestRelinkRepairsTheEdgesOfADropAndAnAdd(t *testing.T) {
 func TestRelinkIsTheCoordinatorsAndRefusesWhatCannotHold(t *testing.T) {
 	t.Parallel()
 	h := twins(t)
-	h.must(DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{"old"}}, Reason: "re-cut"}))
+	// a stored dropped record: drop refuses a card a waiting card needs, so the
+	// record is seeded and the resolve opens the blocked judgments
+	seedDroppedNeedWhy(h, "old", "re-cut")
+	h.must(ResolveStep(sprint.ResolveReq{}))
 	h.must(AddStep(sprint.AddReq{Stream: "s1", IDs: []string{"old-tb"}, Needs: []string{"dep2"}}))
 	for _, tc := range []struct {
 		name string

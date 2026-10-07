@@ -1,3 +1,2 @@
 # no-hand-printing: hand printing in a tool package; each row's count only falls
-# ceiling: 1
-cmd/nova-check:flagset 14 fourteen verbs build their own flag set: the tool dispatches by hand and is not on internal/tool, so each verb parses its own flags until the port
+# ceiling: 0

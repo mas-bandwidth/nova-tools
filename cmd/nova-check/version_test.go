@@ -10,6 +10,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// runVersion runs the version verb of the tool stamped with ver, the way a
+// release stamps main.version, so a test holds the line to a build identity of
+// its own without writing the package variable.
+func runVersion(ver string, args []string, out, errOut *bytes.Buffer) int {
+	t := novaCheck(seams{})
+	t.Stamp = ver
+	return t.Run(append([]string{"version"}, args...), nil, out, errOut)
+}
+
 // The SHAPE, asserted field by field. `nova-check <identity> <goos>/<goarch> <go version>` is
 // what a person is asked to paste when two lines disagree about what they are running, so
 // a run of it has to be one line and four tokens -- and asserting only that the output
@@ -25,7 +34,7 @@ func TestVersionLineShape(t *testing.T) {
 	t.Parallel()
 	var out, errOut bytes.Buffer
 	{
-		code := cmdVersion(nil, &out, &errOut)
+		code := runVersion("", nil, &out, &errOut)
 		require.EqualValues(t, 0, code, "exit %d, want 0\nstderr: %s", code, errOut.String())
 	}
 	assert.EqualValues(t, 0, errOut.Len(), "wrote to stderr: %q", errOut.String())
@@ -52,7 +61,7 @@ func TestVersionLineHoldsWhateverTheStampContains(t *testing.T) {
 
 	var out, errOut bytes.Buffer
 	{
-		code := cmdVersionWith(nil, &out, &errOut, ver)
+		code := runVersion(ver, nil, &out, &errOut)
 		require.EqualValues(t, 0, code, "exit %d, want 0\nstderr: %s", code, errOut.String())
 	}
 	line := out.String()
@@ -71,7 +80,7 @@ func TestVersionIdentityIsTheStampWhenThereIsOne(t *testing.T) {
 	const ver = "v9.9.9"
 	var out, errOut bytes.Buffer
 	{
-		code := cmdVersionWith(nil, &out, &errOut, ver)
+		code := runVersion(ver, nil, &out, &errOut)
 		require.EqualValues(t, 0, code, "exit %d, want 0\nstderr: %s", code, errOut.String())
 	}
 	{
@@ -82,14 +91,21 @@ func TestVersionIdentityIsTheStampWhenThereIsOne(t *testing.T) {
 
 func TestVersionRefusesFlagsAndArguments(t *testing.T) {
 	t.Parallel()
-	for _, args := range [][]string{{"--short"}, {"extra"}, {"--dir", "."}} {
+	for _, tc := range []struct {
+		args []string
+		want string // the skeleton's sentence for this refusal
+	}{
+		{[]string{"--short"}, "unknown flag"},
+		{[]string{"extra"}, "takes no positional arguments"},
+		{[]string{"--dir", "."}, "unknown flag"},
+	} {
 		var out, errOut bytes.Buffer
 		{
-			code := cmdVersion(args, &out, &errOut)
-			assert.EqualValues(t, 2, code, "%v: exit %d, want 2", args, code)
+			code := runVersion("", tc.args, &out, &errOut)
+			assert.EqualValues(t, 2, code, "%v: exit %d, want 2", tc.args, code)
 		}
-		assert.EqualValues(t, 0, out.Len(), "%v: a refusal printed a version line anyway: %q", args, out.String())
-		assert.Contains(t, errOut.String(), "takes no flags and no arguments", "%v: refusal does not say why: %q", args, errOut.String())
+		assert.EqualValues(t, 0, out.Len(), "%v: a refusal printed a version line anyway: %q", tc.args, out.String())
+		assert.Contains(t, errOut.String(), tc.want, "%v: refusal does not say why: %q", tc.args, errOut.String())
 	}
 }
 

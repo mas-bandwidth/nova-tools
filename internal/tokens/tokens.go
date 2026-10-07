@@ -382,8 +382,12 @@ func Applies(kind, field string) bool { return applies[kind][field] }
 
 // Unreadable is a declared source the tool could not read: counted, printed on its own
 // line, and the reason the run exits 1, because a declared source is a claim that the
-// report covers it.
-type Unreadable struct{ Label, Path, Why string }
+// report covers it. Line is the 1-based first line that could not be read (a badline);
+// 0 when the failure is not a line, so a permission problem is not given a line number.
+type Unreadable struct {
+	Label, Path, Why string
+	Line             int
+}
 
 // Unparsed is a bus line, a whole bus note, or an export the parser could not read.
 type Unparsed struct {

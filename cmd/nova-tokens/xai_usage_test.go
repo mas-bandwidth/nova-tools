@@ -17,10 +17,17 @@ import (
 // *XaiUsageMissingError, and a directory is not walked. A session store
 // planted under HOME is never opened.
 func TestXaiProviderOneUsageFileFoldsRow(t *testing.T) {
+	t.Parallel()
+	if os.Getenv(childTestEnv) == "" {
+		// HOME and USERPROFILE are a process-wide environment; the body runs in a child
+		// where this test owns the process, and sets them there.
+		reenterTest(t, "TestXaiProviderOneUsageFileFoldsRow")
+		return
+	}
 	dir := t.TempDir()
 	home := filepath.Join(dir, "home")
-	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home)
+	require.NoError(t, os.Setenv("HOME", home))
+	require.NoError(t, os.Setenv("USERPROFILE", home))
 	const bait = "424242"
 	write(t, filepath.Join(home, ".grok", "sessions", "encoded-cwd", "session-id", "usage.json"), `{
   "sessionId": "bait-session",

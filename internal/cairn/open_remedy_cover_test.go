@@ -1,8 +1,8 @@
-// Unit coverage for the remedy-command helpers open_remedy.go showed at zero
-// in the per-function coverage table: octalWord, and with it the subshell
-// branch of command the unit tier never reached, plus the quoting refusals of
-// shellWord and command. Everything runs in-process on plain strings: no
-// sleeps, no real time, no network, no subprocess, no Redis or Postgres.
+// Unit coverage for the remedy-command helper open_remedy.go: command's plain
+// line, its quoting of values through oneline.ShellWord, and its refusal of a
+// value the one-line rendering cannot carry. Everything runs in-process on
+// plain strings: no sleeps, no real time, no network, no subprocess, no Redis
+// or Postgres.
 package cairn
 
 import (
@@ -20,7 +20,7 @@ func TestOpenRemedyCoverCommandPlainPath(t *testing.T) {
 		want string
 	}{
 		{
-			name: "safe values are bare words on one plain line, no subshell",
+			name: "safe values are bare words on one plain line",
 			cmd:  func() string { return command("open", "--store", "store", "--session", "s", "--publish", "never") },
 			want: "nova-cairn open --store store --session s --publish never",
 		},
@@ -36,7 +36,7 @@ func TestOpenRemedyCoverCommandPlainPath(t *testing.T) {
 			cmd: func() string {
 				return command("open", "--store", "my store's $HOME `literal`", "--session", "s'$HOME", "--publish", "never")
 			},
-			want: "nova-cairn open --store 'my store'\\''s $HOME `literal`' --session 's'\\''$HOME' --publish never",
+			want: "nova-cairn open --store 'my store'\"'\"'s $HOME `literal`' --session 's'\"'\"'$HOME' --publish never",
 		},
 	}
 	for _, row := range rows {
@@ -47,45 +47,7 @@ func TestOpenRemedyCoverCommandPlainPath(t *testing.T) {
 	}
 }
 
-func TestOpenRemedyCoverShellWord(t *testing.T) {
-	t.Parallel()
-
-	rows := []struct {
-		name, in, want string
-	}{
-		{name: "a word of bytes a shell leaves alone stands bare", in: "abc-1/x:y@%,=+", want: "abc-1/x:y@%,=+"},
-		{name: "a space forces single quotes", in: "two words", want: "'two words'"},
-		{name: "an embedded single quote closes and escapes", in: "s'$HOME", want: `'s'\''$HOME'`},
-		{name: "refusal: an empty value quotes to the empty word", in: "", want: "''"},
-		{name: "refusal: a control byte is quoted, never left raw on the line", in: "\t", want: "'\t'"},
-	}
-	for _, row := range rows {
-		t.Run(row.name, func(t *testing.T) {
-			t.Parallel()
-			assert.Equal(t, row.want, shellWord(row.in), "shellWord must return the word bare or single-quoted")
-		})
-	}
-}
-
-func TestOpenRemedyCoverOctalWord(t *testing.T) {
-	t.Parallel()
-
-	rows := []struct {
-		name, in, want string
-	}{
-		{name: "a tab becomes one octal triple under a leading zero", in: "\t", want: `'\0011'`},
-		{name: "a multi-byte rune is escaped byte by byte", in: "‮", want: `'\0342\0200\0256'`},
-		{name: "refusal: an empty value is the empty quoted word, one pair of quotes", in: "", want: "''"},
-	}
-	for _, row := range rows {
-		t.Run(row.name, func(t *testing.T) {
-			t.Parallel()
-			assert.Equal(t, row.want, octalWord(row.in), "octalWord must quote every byte as \\0NNN inside single quotes")
-		})
-	}
-}
-
-func TestOpenRemedyCoverCommandOctalSubshellPath(t *testing.T) {
+func TestOpenRemedyCoverCommandRefusesAValueItCannotPrint(t *testing.T) {
 	t.Parallel()
 
 	rows := []struct {
@@ -94,22 +56,17 @@ func TestOpenRemedyCoverCommandOctalSubshellPath(t *testing.T) {
 		want string
 	}{
 		{
-			name: "a value with control bytes is decoded from octal in a subshell with a trailing-underscore sentinel",
-			cmd: func() string {
-				return command("open", "--store", "store\t\n", "--session", "s‮end", "--publish", "never")
-			},
-			want: "(nova_cairn_store=$(printf '%b_' '\\0163\\0164\\0157\\0162\\0145\\0011\\0012'); " +
-				"nova_cairn_session=$(printf '%b_' '\\0163\\0342\\0200\\0256\\0145\\0156\\0144'); " +
-				`nova-cairn open --store "${nova_cairn_store%_}" --session "${nova_cairn_session%_}" --publish never)`,
+			name: "a store path with a control byte is refused whole, never decoded in a subshell",
+			cmd:  func() string { return command("open", "--store", "store\t\n", "--session", "s", "--publish", "never") },
+			want: "this path cannot be printed as one line; rename it",
 		},
 		{
-			name: "a value needing quoting stands on the line while an unsafe sibling goes through the subshell",
-			cmd:  func() string { return command("index", "--store", "two words", "--session", "s\t") },
-			want: "(nova_cairn_session=$(printf '%b_' '\\0163\\0011'); " +
-				`nova-cairn index --store 'two words' --session "${nova_cairn_session%_}")`,
+			name: "a session id a terminal would reorder is refused whole",
+			cmd:  func() string { return command("index", "--store", "st", "--session", "s\u202eend") },
+			want: "this path cannot be printed as one line; rename it",
 		},
 		{
-			name: "refusal: a safe value never takes the subshell route",
+			name: "a safe value stands on the line, never the refusal",
 			cmd:  func() string { return command("index", "--store", "st", "--session", "s") },
 			want: "nova-cairn index --store st --session s",
 		},
@@ -117,7 +74,7 @@ func TestOpenRemedyCoverCommandOctalSubshellPath(t *testing.T) {
 	for _, row := range rows {
 		t.Run(row.name, func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, row.want, row.cmd(), "command must wrap the subshell only around values the one-line rendering would escape")
+			assert.Equal(t, row.want, row.cmd(), "command must refuse a value the one-line rendering cannot carry")
 		})
 	}
 }

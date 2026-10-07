@@ -47,13 +47,16 @@ func (a *app) cmdHold(release bool, args []string, stdout, stderr io.Writer) int
 		fs.BoolVar(&ret, "return", false, "hand back the work begun now too: a member's working cards dealt round the fleet, a reader's reads begun asked of another, a stream's working cards withdrawn to ready (default: what is begun finishes, but a held friend keeps no begun card either way)")
 	}
 	dry := fs.Bool("dry-run", false, "check the names and the reason, print what would be held or released, and write nothing")
+	var repo listFlag
+	fs.Var(&repo, "repo", "also hold or release the streams recording this repository (owner/name), comma separated or repeated; needs --expect <n>, the number of streams it selects")
+	expect := fs.Int("expect", 0, "with --repo: the number of streams it selects, as nova-sprint streams --repo <owner/name> printed it")
 	pos, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, name, err.Error())
 	}
 	var probs []string
-	if len(pos) == 0 {
-		probs = append(probs, "wants at least one name: a fleet member, a reader, a friend or a stream")
+	if len(pos) == 0 && len(repo) == 0 {
+		probs = append(probs, "wants at least one name: a fleet member, a reader, a friend or a stream (or --repo <owner/name> with --expect)")
 	}
 	for _, n := range pos {
 		if !sprint.ValidID(n) {
@@ -63,16 +66,36 @@ func (a *app) cmdHold(release bool, args []string, stdout, stderr io.Writer) int
 	if !release && strings.TrimSpace(*reason) == "" {
 		probs = append(probs, "--reason <text> is required: why it is held, shown beside its held status and kept in the log")
 	}
+	if len(repo) > 0 && *expect == 0 {
+		probs = append(probs, "--repo wants --expect <n>, the number of streams it selects; run: nova-sprint streams --repo "+repo[0]+" to read it")
+	}
 	if len(probs) > 0 {
 		return refuse(stderr, name, strings.Join(probs, "; "))
 	}
-	if *dry {
+	if *dry && len(repo) == 0 {
 		fmt.Fprintf(stdout, "%s DRY-RUN names=%s return=%t; nothing was written\n", strings.ToUpper(name), strings.Join(pos, ","), ret)
 		return 0
 	}
 	st, err := a.store(*c)
 	if err != nil {
 		return refuse(stderr, name, err.Error())
+	}
+	if len(repo) > 0 {
+		streams, err := a.repoStreams(context.Background(), st, repo)
+		if err != nil {
+			return a.readFailed(name, err, stderr)
+		}
+		if len(streams) == 0 {
+			return refuse(stderr, name, "no stream records "+strings.Join(repo, ",")+" (read them with nova-sprint streams)")
+		}
+		if *expect != len(streams) {
+			return refuse(stderr, name, fmt.Sprintf("--expect %d was printed for another set: the repository selects %d stream(s) (%s)", *expect, len(streams), strings.Join(streams, ",")))
+		}
+		pos = append(pos, streams...)
+	}
+	if *dry {
+		fmt.Fprintf(stdout, "%s DRY-RUN names=%s return=%t; nothing was written\n", strings.ToUpper(name), strings.Join(pos, ","), ret)
+		return 0
 	}
 	return a.runHold(name, "", *c, st, sprint.HoldReq{Names: pos, Release: release, Return: ret, Reason: *reason, Who: c.actor}, nil, stdout, stderr)
 }

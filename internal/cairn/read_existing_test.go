@@ -18,7 +18,7 @@ func TestFlatReadMetadataOrderingAndNestedPrecedence(t *testing.T) {
 	require.NoError(t, Open(store, "nested", "src", now, PublishNever))
 	_, err := Append(store, "nested", "middle", "nested prose", "", now, PublishNever)
 	require.NoError(t, err)
-	rows, total, err := Index(store, "", 0)
+	rows, _, total, err := Index(store, "")
 	require.NoError(t, err, "index=%+v total=%d", rows, total)
 	require.Equal(t, 3, total, "index=%+v", rows)
 	require.Len(t, rows, 3)
@@ -35,7 +35,7 @@ func TestFlatReadMetadataOrderingAndNestedPrecedence(t *testing.T) {
 	// A flat duplicate of a nested session is not a second record and cannot
 	// replace its entry metadata, even if its own contents are malformed.
 	require.NoError(t, os.WriteFile(flatFile(store, "nested"), []byte("## 2026-99-28T01:00:00Z — bad\n"), 0600))
-	rows, total, err = Index(store, "nested", 0)
+	rows, _, total, err = Index(store, "nested")
 	require.NoError(t, err, "nested precedence=%+v total=%d", rows, total)
 	require.Equal(t, 1, total, "nested precedence=%+v", rows)
 	require.NotEmpty(t, rows, "nested precedence total=%d", total)
@@ -56,7 +56,7 @@ func TestFlatReadersRefuseCorruptAndAmbiguousHeadings(t *testing.T) {
 	} {
 		store := t.TempDir()
 		require.NoError(t, os.WriteFile(flatFile(store, "s"), []byte(raw), 0600))
-		_, _, err := Index(store, "", 0)
+		_, _, _, err := Index(store, "")
 		assert.Error(t, err, "index accepted %q", raw)
 		_, err = Receipt(store, "s", "e")
 		assert.Error(t, err, "receipt accepted %q", raw)
@@ -68,7 +68,7 @@ func TestFlatReadersKeepUnstructuredProseAndMissingEntriesDistinct(t *testing.T)
 	store := t.TempDir()
 	raw := "# My record\n\n## A manually dated note\n\nwords\n"
 	require.NoError(t, os.WriteFile(flatFile(store, "s"), []byte(raw), 0600))
-	rows, total, err := Index(store, "s", 0)
+	rows, _, total, err := Index(store, "s")
 	require.NoError(t, err, "unstructured prose")
 	require.Zero(t, total, "unstructured prose=%v", rows)
 	require.Empty(t, rows, "unstructured prose")

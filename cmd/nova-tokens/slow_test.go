@@ -63,23 +63,26 @@ func init() {
 	}
 }
 
-// fakeSqlite3Sleeping puts the sleeping sqlite3 on PATH.
-func fakeSqlite3Sleeping(t *testing.T) {
+// fakeSqlite3Sleeping puts the sleeping sqlite3 on the child's PATH and returns the
+// environment that does it.
+func fakeSqlite3Sleeping(t *testing.T) (env []string) {
 	t.Helper()
-	fakeSqlite3OnPath(t, fakeSleepMode)
+	return fakeSqlite3OnPath(t, fakeSleepMode)
 }
 
 // SLOW: 1.0 s on hetzner at dev 64b9bec48, a deadline/wedge/wall bound proved by waiting it out.
 func TestRule19ASubprocessPastTheTimeoutIsUnreadableAndTheFoldGoesOn(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	out := mkdir(t, filepath.Join(dir, "out"))
 	scratch := mkdir(t, filepath.Join(dir, "scratch"))
 	db := write(t, filepath.Join(dir, "opencode.db"), "SQLite format 3\x00\n")
-	fakeSqlite3Sleeping(t)
+	sqliteEnv := fakeSqlite3Sleeping(t)
 	tr := mkdir(t, filepath.Join(dir, "tr"))
 	write(t, filepath.Join(tr, "a.jsonl"), msg("m1", "2026-09-11T10:00:00Z", "fable", map[string]int{"input_tokens": 3}, "/x/schema/a.go")+"\n")
 
-	r := invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", reposFile(t, dir),
+	r := runToolChild(t, "", sqliteEnv, "fold", "--out", out, "--day", "2026-09-11", "--repos", reposFile(t, dir),
 		"--opencode", "bench="+db, "--scratch", scratch, "--claude", "g="+tr, "--timeout", "1")
 	wantExit(t, r, 1)
 	wantContains(t, r.stderr, "timeout after 1s")
@@ -87,5 +90,5 @@ func TestRule19ASubprocessPastTheTimeoutIsUnreadableAndTheFoldGoesOn(t *testing.
 		_, err := os.Stat(filepath.Join(out, "2026-09-11.tsv"))
 		assert.NoError(t, err, "the fold did not continue over the other sources")
 	}
-	wantExit(t, invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", reposFile(t, dir), "--claude", "g="+tr, "--timeout", "0"), 2)
+	wantExit(t, runToolChild(t, "", sqliteEnv, "fold", "--out", out, "--day", "2026-09-11", "--repos", reposFile(t, dir), "--claude", "g="+tr, "--timeout", "0"), 2)
 }

@@ -34,6 +34,6 @@ func TestNoCodeStagedDoesNotRunAProgramNamedInRepoConfig(t *testing.T) {
 
 	exit, stdout, stderr := runCheck(t, "nocode", "--staged", "--dir", dir)
 	require.EqualValues(t, 1, exit, "exit = %d, want 1; stdout:\n%s\nstderr:\n%s", exit, stdout, stderr)
-	assert.Contains(t, stderr, "NOCODE FAILED bad.py: code extension .py (floor-list)", "stderr = %q", stderr)
+	assert.Contains(t, stderr, `NOCODE FINDING subject=bad.py reason="code extension .py (floor-list)"`, "stderr = %q", stderr)
 	assert.NoFileExists(t, probe, "probe file should not exist, but core.fsmonitor script was executed")
 }

@@ -134,6 +134,31 @@ func TestTheReaderRefusesWhatTheWriterWouldNotWrite(t *testing.T) {
 	})
 }
 
+// brokenShapes is one issue with three shape problems at once: no :node-id,
+// :state a string, and :author an integer (SPEC-WORK-V1 section 1.2).
+// Each URL is workfile.Web joined with a path, so this file's literals name no host.
+const brokenShapes = `(work-tree "v1" :source "github" :org "acme" :fetched "2026-10-02T12:00:00Z"
+ :repos ((repo "acme/widgets" :url "` + workfile.Web + `acme/widgets"
+          :archived false :issues ((issue 1 :url "` + workfile.Web + `acme/widgets/issues/1"
+           :title "t" :state "closed" :state-reason :completed
+           :origin :external :author 5
+           :author-association :none :created "c" :updated "u" :closed "x"
+           :locked false :lock-reason () :labels () :assignees ()
+           :milestone () :body "" :comments () :references () :linked-prs ())))))
+`
+
+// TestTheReaderNamesEveryProblemInOneRun (SPEC-WORK-V1 section 1.2): a tree
+// file with several shape problems is refused once, and the error names every
+// problem, not only the first.
+func TestTheReaderNamesEveryProblemInOneRun(t *testing.T) {
+	t.Parallel()
+	_, err := workfile.Decode("t.lisp", []byte(brokenShapes), workfile.Limits(len(brokenShapes)+1))
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "has no :node-id")
+	assert.ErrorContains(t, err, ":state wants a keyword or ()")
+	assert.ErrorContains(t, err, ":author wants a string")
+}
+
 // TestTheReaderRefusesANonCanonicalNumberSpelling (SPEC-WORK-V1 section
 // 1.2): the file is canonical, so a number's spelling is the one
 // strconv.Itoa writes; a leading '+' or leading zeros is refused, naming the

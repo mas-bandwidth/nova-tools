@@ -99,6 +99,13 @@ type nativeRunConfig struct {
 	// bodyAfter arms that gap. Nil means the timer inside readWithinSilence.
 	// A test passes a clock it can fire so the 45s gap is an event.
 	bodyAfter func(time.Duration) <-chan time.Time
+	// deadlineFn, when set, is this one run's deadline event, in place of the
+	// package seam nativeDeadline. A test hands the wait a deadline that fires
+	// when the child it means to kill is there -- never a wall clock -- and it
+	// stays a field on this configuration rather than a package var, so the
+	// test runs in parallel with the others instead of swapping the seam under
+	// them. Nil is production's timer.
+	deadlineFn func(time.Duration) (<-chan time.Time, func() bool)
 	// headerWait is how long the proxy waits for response headers after the
 	// request is written; expiry ends the attempt UNKNOWN. Zero means
 	// ProviderHeaderTimeout (45s). Production leaves it zero.
@@ -1197,7 +1204,11 @@ func start(s *nativeRunState, attempt int, errOut io.Writer) (*nativeStarted, na
 	started := swarm.StartStamp(pgid)
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
-	deadlineC, stopDeadline := nativeDeadline(s.prep.cfg.deadline)
+	deadline := nativeDeadline
+	if s.prep.cfg.deadlineFn != nil {
+		deadline = s.prep.cfg.deadlineFn
+	}
+	deadlineC, stopDeadline := deadline(s.prep.cfg.deadline)
 	stopWatch := make(chan struct{})
 	idleC := nativeWatchIdle(swarm.IdleWatch{
 		Log: s.outLog, Job: s.prep.jobDir, Pid: pgid, Idle: s.prep.cfg.idle, Reader: s.reader,

@@ -157,7 +157,7 @@ func WallRefused(log []byte) (WallRefusal, bool) {
 			// something that is not a path -- a signal, a socket -- and is not the wall
 			// refusing a read or a write outside the write set. The same guard carries the
 			// LINUX spelling: landlock refuses with EACCES and the C library says
-			// `Permission denied`, measured inside the swarm's own wall on hulk, so before
+			// `Permission denied`, measured inside the swarm's own wall on a bench, so before
 			// this mark existed no linux refusal was classified at all -- and `Permission
 			// denied` is a sentence a card's own test output is full of, which is exactly
 			// why it counts only when the line names a path.
@@ -301,7 +301,7 @@ func gitOut(dir string, args ...string) string {
 }
 
 // A DENIAL IN THE CAPTURE IS NEVER AN OK, AND IT IS NEVER A DIAGNOSIS EITHER
-// (issue #1465, and Stella's HOLD on PR #1478, comment 5737662335).
+// (issue #1465, and a friend's HOLD on PR #1478, comment 5737662335).
 //
 // THE RUN THIS CLOSES. A `native` Go card was handed GOMODCACHE, GOCACHE and
 // GOTOOLCHAIN=local for a toolchain under a user directory that the wall admitted no root
@@ -309,11 +309,11 @@ func gitOut(dir string, args ...string) string {
 // reported `NATIVE OK ... rc=0 sandbox=landlock harness=ok`. A commit nobody had compiled
 // read as green, because the only record of the failure was one line in a log:
 //
-//	/usr/bin/bash: line 1: /home/glenn/go/bin/go: Permission denied
+//	/usr/bin/bash: line 1: /home/worker/go/bin/go: Permission denied
 //
 // WHAT THAT LINE PROVES, AND WHAT IT DOES NOT. The first version of this reader called the
 // line an EXEC refusal, named the path a program, concluded that the gate never ran and that
-// nothing had been compiled, and prescribed `read_roots`. Stella measured that none of it
+// nothing had been compiled, and prescribed `read_roots`. A friend measured that none of it
 // follows. An owned bash running `: > "$1"; printf "RECOVERED\n"` against a non-writable
 // directory prints
 //
@@ -378,7 +378,7 @@ func ShellDenied(log []byte) (ShellDenial, bool) {
 	return ShellDenial{}, false
 }
 
-// ShellDenialReader is ShellDenied asked of the bytes AS THE PARENT RECEIVES THEM (Johnny's
+// ShellDenialReader is ShellDenied asked of the bytes AS THE PARENT RECEIVES THEM (a friend's
 // hold on #1478 at 29047871, the #1892 class). The run used to ask ShellDenied of
 // `<job>/harness-output.log` by path after the child was gone -- a file inside the card's
 // own --write directory, and the card's cwd. A card could replace that name after printing
@@ -469,13 +469,13 @@ func (r *ShellDenialReader) Denied() (ShellDenial, bool) {
 // deniedPath is the grammar, and nothing outside it is this class. Five spellings are read,
 // each measured off a real log:
 //
-//	/usr/bin/bash: line 1: /home/glenn/go/bin/go: Permission denied   bash, by path
-//	bash: /home/glenn/go/bin/go: Permission denied                    bash, by name
+//	/usr/bin/bash: line 1: /home/worker/go/bin/go: Permission denied   bash, by path
+//	bash: /home/worker/go/bin/go: Permission denied                    bash, by name
 //	sh: 1: /opt/sdk/go1.26.5/bin/go: Permission denied                dash, which numbers
 //	zsh: permission denied: /opt/sdk/go1.26.5/bin/go                  zsh, path last
 //	fork/exec /opt/sdk/go1.26.5/bin/go: permission denied             Go's own os/exec
 //
-// THE PATH IS THE WHOLE SEGMENT BETWEEN THE DELIMITERS (Stella's P1). A shell delimits its
+// THE PATH IS THE WHOLE SEGMENT BETWEEN THE DELIMITERS (a friend's P1). A shell delimits its
 // fields with `: `, and everything between two delimiters is the path -- spaces, parentheses
 // and all, because those are ordinary pathname characters. The first version required a
 // token with no spaces in it, and `/opt/sdk tool/bin/go` therefore recreated the whole silent

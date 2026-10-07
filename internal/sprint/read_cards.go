@@ -244,14 +244,20 @@ func readerCardsAt(cards []*Card, primary string, attempt int, reader string) []
 }
 
 // readSpent says the reader holds or closed a read card of the attempt: one placed, or one
-// retired with a verdict or by itself (spentBy). It is never dealt that read again.
-func readSpent(cards []*Card) bool {
+// retired with a verdict or by itself (spentBy). It is never dealt that read again. A read
+// card the machine withdrew (FriendTake for a friend's hold or stall) is history and spends
+// nothing; one the seat or her runner handed back (friend take, FriendTakeReq.Spends) is
+// withdrawn with retired_by returned and spends her.
+func readSpent(cards []*Card) bool { return readSpender(cards) != nil }
+
+// readSpender is the first card that spends its reader (readSpent), nil for none.
+func readSpender(cards []*Card) *Card {
 	for _, c := range cards {
-		if c.Placed() || c.F("verdict") != "" || slices.Contains(spentBy, c.F("retired_by")) {
-			return true
+		if c.Placed() && c.Col != Withdrawn || c.F("verdict") != "" || slices.Contains(spentBy, c.F("retired_by")) {
+			return c
 		}
 	}
-	return false
+	return nil
 }
 
 // MaxReadGen is the most generations of one reader's read card at one attempt: the plain
@@ -324,40 +330,51 @@ func ReadCardExtras(s *Snapshot) []string {
 // 2026-10-06 7:11 PM ET "let flash read pro", 7:41 PM "let pro do it"), never two below;
 // the deal orders the units that may by tier distance (readTierDistance).
 func mayReadCard(s *Snapshot, u readUnit, pr *Card, attempt int, worker string, cards []*Card) bool {
+	return readRefusal(s, u, pr, attempt, worker, cards) == ""
+}
+
+// readRefusal is the clause of mayReadCard that refuses the unit the read, "" when none
+// does: worker, spent, no id, friends' set, friend tier, reader row (a readers-table read
+// of the attempt), fleet set, reader tier.
+func readRefusal(s *Snapshot, u readUnit, pr *Card, attempt int, worker string, cards []*Card) string {
 	mine := readerCardsAt(cards, pr.ID, attempt, u.name)
-	if u.name == worker || readSpent(mine) || readCardIDFor(mine, pr.ID, attempt, u.name) == "" {
-		return false
+	switch {
+	case u.name == worker:
+		return "worker"
+	case readSpent(mine):
+		c := readSpender(mine)
+		return "spent(" + c.ID[strings.LastIndex(c.ID, ".")+1:] + " col=" + c.Col + " verdict=" + c.F("verdict") + " retired_by=" + c.F("retired_by") + " head=" + c.F("head") + ")"
+	case readCardIDFor(mine, pr.ID, attempt, u.name) == "":
+		return "no id"
 	}
 	if u.friend {
 		// a friend reads her tier or any below it, as her reads always did: a heavy friend
 		// reads a flash and a pro card (friendAtOrAbove)
 		t := friendReadTier(s, pr)
 		if !s.FriendsTake(t) {
-			return false // the friends' tiers leave the read out (set --friends-tiers)
+			return "friends' set" // the friends' tiers leave the read out (set --friends-tiers)
 		}
-		if friendAtOrAbove(s, u.seat, t) {
-			return true
+		if b := tierBelow(t); friendAtOrAbove(s, u.seat, t) || b != "" && friendAtOrAbove(s, u.seat, b) {
+			return "" // inside the set: b too (friendAtOrAbove)
 		}
-		b := tierBelow(t)
-		return b != "" && friendAtOrAbove(s, u.seat, b) // inside the set: b too (friendAtOrAbove)
+		return "friend tier"
 	}
 	// a machine whose reader row holds a read of the attempt on the readers table (asked
 	// the old way, before read cards were on) reads it there, never twice
 	rd := ReaderPrefix + u.name
 	for _, id := range ReadCardIDs(pr.ID, attempt, rd) {
 		if c := s.Readers.Card(id); c.Placed() || c != nil && c.F("verdict") != "" {
-			return false
+			return "reader row"
 		}
 	}
 	t := s.readTierOf(pr)
 	if !s.FleetTakes(t) {
-		return false // the fleet's tiers leave the read out (set --fleet-tiers)
+		return "fleet set" // the fleet's tiers leave the read out (set --fleet-tiers)
 	}
-	if s.readerServesTier(rd, t) {
-		return true
+	if b := tierBelow(t); s.readerServesTier(rd, t) || b != "" && s.FleetTakes(b) && s.readerServesTier(rd, b) {
+		return "" // inside the set: b too
 	}
-	b := tierBelow(t)
-	return b != "" && s.FleetTakes(b) && s.readerServesTier(rd, b) // inside the set: b too
+	return "reader tier"
 }
 
 // readTierDistance is how far below or above the read's tier the unit reads, the cheaper
@@ -502,6 +519,28 @@ func readCardsTakeBack(s *Snapshot) map[string][]Change {
 // each primary that wants more reads than it was dealt waits. With ri nil the reads draw
 // no route (the deal's dry run: what the reads would take).
 func readCardsAsk(s *Snapshot, seats []FriendSeat, ri routeIndexes) (p Plan, waits map[string]string) {
+	return readCardsAskWhy(s, seats, ri, nil)
+}
+
+// ReadCardsWhy is tick --shadow's account of the read-card ask (readCardsAsk): first the
+// units it deals reads to, each with its half slots and idle lanes, and the reader friends
+// it leaves out; then a line per primary that waits, its read tier, the reads it wants, why
+// it waits and each unit not dealt it with the clause that refuses it (readRefusal), or
+// half<=0 for one at its room as the ask reached the primary. Nothing with read cards off.
+func ReadCardsWhy(s *Snapshot, seats []FriendSeat) []string {
+	if !s.ReadCardsOn() {
+		return nil
+	}
+	if seats == nil {
+		seats = withoutDirs(s.Friends)
+	}
+	var why []string
+	readCardsAskWhy(s, seats, nil, &why)
+	return why
+}
+
+// readCardsAskWhy is readCardsAsk, and with why non-nil, ReadCardsWhy's lines.
+func readCardsAskWhy(s *Snapshot, seats []FriendSeat, ri routeIndexes, why *[]string) (p Plan, waits map[string]string) {
 	waits = map[string]string{}
 	if s == nil || s.Work == nil || s.Fleet == nil {
 		return p, waits
@@ -526,6 +565,18 @@ func readCardsAsk(s *Snapshot, seats []FriendSeat, ri routeIndexes) (p Plan, wai
 	}
 	units := readUnitsOf(view, seats)
 	idx := fleetReadIndex(view)
+	if why != nil {
+		var us, out []string
+		for _, u := range units {
+			us = append(us, u.name+" half="+itoa(u.half)+" idle="+itoa(u.idle))
+		}
+		for _, f := range seats {
+			if slices.Contains(f.Roles, RoleReader) && !friendCanRead(view, f) {
+				out = append(out, f.Name+" ("+f.Status+")")
+			}
+		}
+		*why = append(*why, "units: "+strings.Join(us, ", ")+"; reader friends not dealable: "+strings.Join(out, ", "))
+	}
 	declared := map[string]bool{}
 	done := map[string]bool{}
 	for _, pr := range readCardsWaiting(view, idx) {
@@ -576,6 +627,19 @@ func readCardsAsk(s *Snapshot, seats []FriendSeat, ri routeIndexes) (p Plan, wai
 				waits[pr.ID] = "no reader up may read it: no friend whose tiers reach its read tier, and no member whose reader row serves its tier, besides its own worker"
 			default:
 				waits[pr.ID] = "every reader up who may read it is at its room"
+			}
+			if why != nil {
+				var refused []string
+				for i, un := range units {
+					r := readRefusal(view, un, pr, attempt, worker, cards)
+					if r == "" && un.half <= 0 {
+						r = "half<=0"
+					}
+					if r != "" && !slices.Contains(picked, i) {
+						refused = append(refused, un.name+"="+r)
+					}
+				}
+				*why = append(*why, pr.ID+" tier="+friendReadTier(view, pr)+" wants="+itoa(want)+" waits: "+waits[pr.ID]+"; refused: "+strings.Join(refused, ", "))
 			}
 		}
 		if len(picked) == 0 {

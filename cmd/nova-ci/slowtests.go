@@ -105,10 +105,13 @@ var exampleEvents string
 
 // cmdSlowtests reads the events, sums them against the budgets, and prints one
 // CI-SLOW line per package or test over its budget (or the single CI-SLOW OK
-// line), one CI-SLEEPS line per unledgered SLEEPS skip, and the CI-LOAD line.
-// Exit 1 on a CI-SLEEPS line on every leg, and on a CI-SLOW line only with
-// --enforce; 0 otherwise. A malformed line or an unusable flag is a refusal,
-// and one run names every problem with the flags and the files they name.
+// line), one CI-SLEEPS line per unledgered SLEEPS skip, one `truncated: <pkg>
+// started and never ended` line per package with a start event and no
+// package-level terminal event, and the CI-LOAD line. Exit 1 on a CI-SLEEPS
+// line or a truncated package on every leg, and on a CI-SLOW line only with
+// --enforce; 0 otherwise.
+// A malformed line or an unusable flag is a refusal, and one run names every
+// problem with the flags and the files they name.
 func cmdSlowtests(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("slowtests", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -188,8 +191,9 @@ func cmdSlowtests(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 	// The count of packages read (Verb.Looks is not on this tree; the verb
 	// applies the same rule): an empty stream is FAILED, and --allow-empty is
 	// the way out. The built-in --example stream is not this check
-	// (docs/STANDARD.md section 2, exit codes tell the truth).
-	empty := report.Packages == 0 && !*example && !*allowEmpty
+	// (docs/STANDARD.md section 2, exit codes tell the truth). A package that
+	// started and never ended is a truncated finding, not an empty stream.
+	empty := report.Packages == 0 && len(report.Truncated) == 0 && !*example && !*allowEmpty
 	if empty {
 		code = 1
 		for i, line := range lines {
@@ -281,7 +285,7 @@ func readAllowlist(path string) ([]slowtests.Row, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close() // ignored: a read-only file
+	defer func() { _ = f.Close() }() // ignored: a read-only file
 
 	sc := bufio.NewScanner(f)
 	var errs []string
@@ -371,6 +375,9 @@ func verdictJSON(r slowtests.Report, load slowtests.Load, enforce bool, code int
 		if enforce && len(r.Over)+len(r.OverTests) > 0 {
 			o.Why = append(o.Why, fmt.Sprintf("%d CI-SLOW finding(s) under --enforce", len(r.Over)+len(r.OverTests)))
 		}
+		if len(r.Truncated) > 0 {
+			o.Why = append(o.Why, fmt.Sprintf("%d package(s) started and never ended", len(r.Truncated)))
+		}
 	}
 	slowest := "none"
 	if r.Slowest.Name != "" {
@@ -395,6 +402,9 @@ func verdictJSON(r slowtests.Report, load slowtests.Load, enforce bool, code int
 	}
 	for _, s := range r.Sleepers {
 		o.Item("sleeps", "test", s.Name, "package", s.Package)
+	}
+	for _, pkg := range r.Truncated {
+		o.ItemText("truncated", "truncated: "+oneline.Field(pkg)+" started and never ended")
 	}
 	if max > 0 {
 		tally := bounded.NewTally(max)

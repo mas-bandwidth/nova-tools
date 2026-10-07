@@ -59,8 +59,31 @@ func TestDeadlineEscapedPipeGrandchildReturnsInsideBudget(t *testing.T) {
 		return ch, func() bool { return true }
 	}
 
-	started := time.Now()
-	c, out, errs := run(t, Environment{Context: ctx, DrainTimer: drainSeam}, "check", "--file", p, "--budget", "30s", "--timeout", "2s")
+	// The check blocks, so the event under test -- the call returning because
+	// the deadline closed the held pipe, rather than a drain running past the
+	// budget -- is read off a done channel, not the wall clock. A select
+	// against the generous NOVA_TEST_WAIT bound (default 30s) is the allowed
+	// poll (internal/ci/testdata/fixed-waits-allowlist.txt: "The allowed shape
+	// is a poll up to NOVA_TEST_WAIT (default 30s) or a fake clock";
+	// docs/SPEC-CI.md, waits: assert the event, not the clock).
+	type checkResult struct {
+		c    int
+		out  string
+		errs string
+	}
+	done := make(chan checkResult, 1)
+	go func() {
+		c, out, errs := run(t, Environment{Context: ctx, DrainTimer: drainSeam}, "check", "--file", p, "--budget", "30s", "--timeout", "2s")
+		done <- checkResult{c: c, out: out, errs: errs}
+	}()
+	var c int
+	var out, errs string
+	select {
+	case got := <-done:
+		c, out, errs = got.c, got.out, got.errs
+	case <-time.After(testWait()):
+		require.Failf(t, "", "the check did not return within %s; an escaped grandchild must not hold the run past the budget", testWait())
+	}
 
 	select {
 	case <-readyCh:
@@ -79,8 +102,5 @@ func TestDeadlineEscapedPipeGrandchildReturnsInsideBudget(t *testing.T) {
 
 	if c != 1 {
 		require.EqualValuesf(t, 1, c, "%d %s %s", c, out, errs)
-	}
-	if took := time.Since(started); took > 30*time.Second {
-		require.Failf(t, "", "a budget with an escaped grandchild took %s", took)
 	}
 }

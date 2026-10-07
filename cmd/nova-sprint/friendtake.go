@@ -122,7 +122,7 @@ func (a *app) cmdFriendTake(args []string, stdout, stderr io.Writer) int {
 	if *all {
 		c.says = keptSays(friend, started)
 	}
-	step := store.FriendTakeStep(sprint.FriendTakeReq{Friend: friend, IDs: ids, All: *all, AllOrNothing: *allOrNothing, Reason: *reason, Started: started, Who: c.actor})
+	step := store.FriendTakeStep(sprint.FriendTakeReq{Friend: friend, IDs: ids, All: *all, AllOrNothing: *allOrNothing, Reason: *reason, Started: started, Who: c.actor, Spends: true})
 	step.Named = false // the takeable are taken and the rest refused; sprint.FriendTake keeps --all-or-nothing itself
 	return a.runStep(name, *c, st, step, stdout, stderr)
 }

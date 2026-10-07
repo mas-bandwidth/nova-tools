@@ -52,28 +52,30 @@ func TestReleaseIsTheCoordinators(t *testing.T) {
 // sentinel set <id> --needs a,b re-points a sentinel's needs in one step (docs/SPEC-SPRINT.md
 // section 16): on 2026-10-04 the cards a release sentinel waited on were deferred, and the
 // sentinel could only be dropped and added again, which lost its place, its log and its id.
-// A sentinel needing three cards, two of them dropped, is set to the one left: its id,
-// stream, score and log stay, one log line names the needs before and after, the blocked
-// judgment the drop raised on it is answered, and it is released when that card lands. A
-// need that is no card on the table is refused naming every one, and nothing changes; so
-// is an id that is no sentinel, a cycle, and --needs "".
+// A sentinel needing two cards, with two others dropped beside them, is set to the one
+// left: its id, stream, score and log stay, and one log line names the needs before and
+// after; it is released when that card lands. (A card a waiting card needs is refused by
+// drop without --cascade, docs/SPEC-SPRINT.md section 11, so the sentinel does not wait
+// on the dropped ones; the answer of a blocked judgment by the set is pinned at the
+// store.) A need that is no card on the table is refused naming every one, and nothing
+// changes; so is an id that is no sentinel, a cycle, and --needs "".
 func TestSentinelSetNeedsRepointsInPlace(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1")
-	ta.ok("add --stream s1 --count 3 --brief-file " + proBriefFile(t))
-	ta.ok("add --stream rel --sentinel v1 --needs s1-1,s1-2,s1-3")
+	ta.ok("add --stream s1 --count 4 --brief-file " + proBriefFile(t))
+	ta.ok("add --stream rel --sentinel v1 --needs s1-3,s1-4")
 	ta.ok("add --stream rel r1 --one --brief-file " + proBriefFile(t))
 	before := ta.primary("v1")
 	ta.ok("drop s1-1 s1-2 --reason 'deferred to the next release'")
-	require.True(t, hasGroup(ta.inboxGroups(), sprint.NBlocked), "the drop blocks the sentinel")
+	require.False(t, hasGroup(ta.inboxGroups(), sprint.NBlocked), "the drop blocks nothing: no card waits on the dropped ones")
 	logBefore := ta.ok("log --card v1")
 
 	// refused, naming every need not on the table at once; nothing changes
 	code, _, errs := ta.do("sentinel set v1 --needs s1-3,nosuch,s1-1")
 	require.Equal(t, 1, code, "unknown needs: %s", errs)
 	require.Contains(t, errs, "not a card on the table: nosuch (no card), s1-1 (off the table, dropped)", "unknown needs: %s", errs)
-	require.Equal(t, "s1-1,s1-2,s1-3", ta.primary("v1").F("needs"), "a refused set changed the needs")
+	require.Equal(t, "s1-3,s1-4", ta.primary("v1").F("needs"), "a refused set changed the needs")
 	require.Equal(t, logBefore, ta.ok("log --card v1"), "a refused set wrote the log")
 	code, _, errs = ta.do("sentinel set s1-3 --needs s1-1")
 	require.Equal(t, 1, code, "not a sentinel: %s", errs)
@@ -87,10 +89,10 @@ func TestSentinelSetNeedsRepointsInPlace(t *testing.T) {
 	code, _, errs = ta.do("sentinel set v1 --needs ''")
 	require.Equal(t, 2, code, "--needs empty: %s", errs)
 	require.Contains(t, errs, "released, not emptied", "--needs empty: %s", errs)
-	require.Equal(t, "s1-1,s1-2,s1-3", ta.primary("v1").F("needs"), "a refused set changed the needs")
+	require.Equal(t, "s1-3,s1-4", ta.primary("v1").F("needs"), "a refused set changed the needs")
 
 	out := ta.ok("sentinel set v1 --needs s1-3")
-	require.Contains(t, out, "sentinel v1 needs s1-1,s1-2,s1-3 -> s1-3", "sentinel set")
+	require.Contains(t, out, "sentinel v1 needs s1-3,s1-4 -> s1-3", "sentinel set")
 	after := ta.primary("v1")
 	require.Equal(t, "s1-3", after.F("needs"))
 	require.Equal(t, before.Row, after.Row, "the stream")
@@ -100,8 +102,8 @@ func TestSentinelSetNeedsRepointsInPlace(t *testing.T) {
 	kept, _, _ := strings.Cut(logBefore, "LOG OK")
 	require.True(t, strings.HasPrefix(logAfter, kept), "the log is kept:\n%s\n---\n%s", logBefore, logAfter)
 	added, _, _ := strings.Cut(strings.TrimPrefix(logAfter, kept), "LOG OK")
-	require.Contains(t, added, "v1 changed by coordinator: needs=s1-3, needs_set=s1-1,s1-2,s1-3 -> s1-3", "one log line with the needs before and after:\n%s", added)
-	require.False(t, hasGroup(ta.inboxGroups(), sprint.NBlocked), "the blocked judgment is answered by the set")
+	require.Contains(t, added, "v1 changed by coordinator: needs=s1-3, needs_set=s1-3,s1-4 -> s1-3", "one log line with the needs before and after:\n%s", added)
+	require.False(t, hasGroup(ta.inboxGroups(), sprint.NBlocked), "the set opens no blocked judgment")
 	require.Equal(t, sprint.Waiting, ta.primary("r1").Col, "r1 still waits behind the sentinel")
 
 	// the one need left lands: the sentinel is reached and released

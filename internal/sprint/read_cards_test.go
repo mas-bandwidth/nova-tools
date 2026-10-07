@@ -462,3 +462,70 @@ func TestAReadCardGoesToTheCheapestReaderThatMayTakeIt(t *testing.T) {
 		})
 	}
 }
+
+// TestAWithdrawnReadCardSpendsNoOne pins the 2026-10-06 evening finding: a read card the
+// machine withdrew (FriendTake for a friend's hold or stall: "a read withdrawn is history",
+// check.go) spends nothing of its reader's, so the reader is dealt the read again at the
+// attempt, at the next of its identities. Counted spent, a flash friend of width 32 held 1
+// read while 15 pro reads waited on her alone.
+func TestAWithdrawnReadCardSpendsNoOne(t *testing.T) {
+	t.Parallel()
+	w := readCardsWorld(t, 4)
+	putReviewBy(w, "s1-1", "s1-1: work (s1)\n", "bob", 1)
+	seats := []FriendSeat{readerSeat("amy", 8, []string{"flash"}, []string{"builder", "reader"})}
+	id := ReadCardID("s1-1", 1, "amy")
+	w.s.Fleet.Put(&Card{ID: id, Row: FriendRow("amy"), Col: Withdrawn, Score: 1, Rev: 1, Fields: map[string]string{
+		"kind": "read", "primary": "s1-1", "stream": "s1", "reader": "amy", "attempt": "1", "head": "work-s1-1", FieldReadCard: "1"}})
+	dealReads(t, w, seats)
+	reads := readCardsOf(w, "s1-1")
+	var live []string
+	for _, c := range reads {
+		if c.Col != Withdrawn {
+			live = append(live, c.ID)
+		}
+	}
+	require.Equal(t, []string{id + ".g1"}, live, "the withdrawn read is history: its reader is dealt it again")
+}
+
+// TestReadCardsWhySaysWhichClauseRefusesEachUnit pins tick --shadow's account of the read
+// ask (ReadCardsWhy): a primary no unit may read gets a line with its tier, its wants, why it
+// waits and each unit with the clause of mayReadCard that refuses it.
+func TestReadCardsWhySaysWhichClauseRefusesEachUnit(t *testing.T) {
+	t.Parallel()
+	w := readCardsWorld(t, 4)
+	putReviewBy(w, "s1-1", "s1-1: work (s1) tier: heavy\n", "bob", 1)
+	seats := []FriendSeat{
+		readerSeat("amy", 8, []string{"flash"}, []string{"builder", "reader"}),
+		readerSeat("bob", 8, []string{"heavy"}, []string{"builder", "reader"}),
+	}
+	why := ReadCardsWhy(w.s, seats)
+	require.Len(t, why, 2, "the units, then the one primary that waits")
+	require.Contains(t, why[0], "units: amy half=")
+	require.Equal(t, "s1-1 tier=heavy wants=2 waits: no reader up may read it: no friend whose tiers reach its read tier, and no member whose reader row serves its tier, besides its own worker; refused: amy=friend tier, bob=worker", why[1])
+	w.s.Work.SetProp(PropReadCards, "off")
+	require.Empty(t, ReadCardsWhy(w.s, seats), "nothing with read cards off")
+}
+
+// TestAReadHandedBackByFriendTakeIsNotDealtToHerAgain pins PR 5407's cold read: a read card
+// the seat or her runner handed back (friend take: her runner asks it back when she judges
+// it outside her tiers) spends her, as read --return does, so the deal never re-deals her
+// the same read at the attempt; the machine's take-back (a hold) still spends nothing.
+func TestAReadHandedBackByFriendTakeIsNotDealtToHerAgain(t *testing.T) {
+	t.Parallel()
+	for _, hold := range []bool{false, true} {
+		w := readCardsWorld(t, 4)
+		putReviewBy(w, "s1-1", "s1-1: work (s1)\n", "bob", 1)
+		seats := []FriendSeat{readerSeat("amy", 8, []string{"flash"}, []string{"builder", "reader"})}
+		dealReads(t, w, seats)
+		id := ReadCardID("s1-1", 1, "amy")
+		require.NotNil(t, w.s.Fleet.Placed(id))
+		w.must(FriendTake(w.s, FriendTakeReq{Friend: "amy", IDs: []string{id}, All: hold, Hold: hold, Spends: !hold, Reason: "outside her tiers", Who: "coordinator"}))
+		require.Equal(t, Withdrawn, w.s.Fleet.Card(id).Col)
+		dealReads(t, w, seats)
+		if hold {
+			require.NotNil(t, w.s.Fleet.Placed(id+".g1"), "a hold's take-back spends nothing: dealt again")
+			continue
+		}
+		require.Nil(t, w.s.Fleet.Placed(id+".g1"), "a read she handed back is never dealt to her again at the attempt")
+	}
+}

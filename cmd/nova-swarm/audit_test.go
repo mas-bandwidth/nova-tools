@@ -334,6 +334,15 @@ var swarmAudit = audit.Config{
 		// PANIC under the test guard, which the runtime writes, in a test process, on a
 		// path this binary never takes in production.
 		`"github.com/mas-bandwidth/nova-tools/internal/testguard"`,
+		// keys.go and member.go read the unit's named secrets in this process
+		// (the seat login's keys, docs/SPEC-SECRETS.md "A tool's store login").
+		// Secret's String, GoString and Format are the word redacted; the value
+		// leaves that package only through Use, into one child environment slot,
+		// and is never an argument of a print in this package. ReadUnitKeys
+		// returns Secrets and an error; a refusal names the secret's name and
+		// the next command, never the value. The package holds no writer of
+		// this binary's stream.
+		`"github.com/mas-bandwidth/nova-tools/internal/secrets"`,
 	},
 	MinClassified: 40,
 }

@@ -162,7 +162,7 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return cmdReportStore(s, *redisAddr, *redisUser, *passwordEnv, *monthFlag, *byFlag, *max, stderr)
 	}
 	if *monthFlag != "" {
-		return (&refusals{token: "REPORT", s: s, list: []string{"--month is the store's month report; it wants --redis <host:port>"}}).print(stderr)
+		return (&refusals{token: "REPORT", s: s, list: []problem{{why: "--month is the store's month report; it wants --redis <host:port>"}}}).print(stderr)
 	}
 	r := &refusals{token: "REPORT", s: s}
 	r.required("who", *who, wantsWho)

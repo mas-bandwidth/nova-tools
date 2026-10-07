@@ -51,7 +51,7 @@ func init() {
 		{"quack", "--streams <a,b,...> --count <n> --repo <clone url> [--tiers <t,...>] [--base <branch>]", "quack --streams a,b --count 2 --repo https://example.com/quack.git", (*app).cmdQuack},
 		{"preflight", "--brief-dir <dir> [--repo-dir <dir>]", "preflight --brief-dir .", (*app).cmdPreflight},
 		{"release check", "[--json] [--streams <glob>] [--check <name>]...", "release check", (*app).cmdReleaseCheck},
-		{"release", "<sentinel or held card>... --reason <text> [--answers <note>]", "release s1-stop --reason 'the layer is green and read'", (*app).cmdRelease},
+		{"release", "(<sentinel or held card>... | <selector> [--dry-run]) --reason <text> [--answers <note>]", "release s1-stop --reason 'the layer is green and read'", (*app).cmdReleaseSel},
 		{"resolve", "[<id>...] [--stream <s>] [--max <n>]", "resolve", (*app).cmdResolve},
 		{"start", "", "start", (*app).cmdMachineStart},
 		{"stop", "--reason <text> --until <time or duration>", "stop --reason 'the bench is rebooting' --until 30m", (*app).cmdMachineStop},
@@ -69,16 +69,17 @@ func init() {
 		{"queue", "--as <reader|member> | --stream <s>", "queue --as reader-a", (*app).cmdQueue},
 		{"read", "--as <reader> (--begin | --ok | --broken) [<card>...] --epoch <n> [--max <n>] [--finding <text>] [--usage <text>] | --as <reader> --return <card> --reason <text> --epoch <n> [--usage <text>]", "read --as reader-a --ok --max 5 --epoch 0", (*app).cmdRead},
 		{"accept", "(<id>... [--heavy --evidence <path> --reason <text>] | --stream <s> | --read-ok | --group <id> [--expect <n>]) [--answers <note>]", "accept --read-ok", (*app).cmdAccept},
-		{"rework", "(<id>... | --group <id> [--expect <n>]) [--fix <text>] [--tier <tier>] [--answers <note>] [--one]", "rework s1-4 --fix 'handle the empty case'", (*app).cmdRework},
-		{"return", "(<id>... | --group <id> [--expect <n>]) [--reason <text>] [--answers <note>]", "return s1-7 --reason 'suspect of the red batch'", (*app).cmdReturn},
+		{"rework", "(<id>... | --group <id> [--expect <n>] | <selector> [--dry-run]) [--fix <text>] [--tier <tier>] [--answers <note>] [--one]", "rework s1-4 --fix 'handle the empty case'", (*app).cmdReworkSel},
+		{"return", "(<id>... | --group <id> [--expect <n>] | <selector> [--dry-run]) [--reason <text>] [--answers <note>]", "return s1-7 --reason 'suspect of the red batch'", (*app).cmdReturnSel},
 		{"redo", "<card>... [--stream <s>] [--answers <note>]", "redo s1-2", (*app).cmdRedo},
-		{"drop", "(<id>... | --stream <s> --col <state> | --group <id> [--expect <n>]) --reason <text> [--answers <note>] [--one]", "drop s1-9 --reason obsolete", (*app).cmdDrop},
+		{"drop", "(<id>... | --stream <s> --col <state> | --group <id> [--expect <n>] | <selector> [--dry-run]) --reason <text> [--answers <note>] [--one]", "drop s1-9 --reason obsolete", (*app).cmdDropSel},
 		{"priority", "<id>... | (<id>... | --stream <s>) (--blocker | --critical | --high | --normal | --low) --reason <text>", "priority s1-4 --high --reason 'the release waits on it'", (*app).cmdPriority},
 		{"unpin", "(<id>... | --stream <s>) --reason <text> [--dry-run]", "unpin s1-1 --reason available", (*app).cmdUnpin},
-		{"rank", "<id>... (--score <n> | --first | --before <id>) [--answers <note>]", "rank s2-3 --first", (*app).cmdRank},
+		{"rebase", "--from <branch> --to <branch> [--repo-dir <clone>] [--dry-run]", "rebase --from dev --to sprint/s1 --repo-dir ../name --dry-run", (*app).cmdRebase},
+		{"rank", "(<id>... | <selector> [--dry-run]) (--score <n> | --first | --before <id>) [--answers <note>]", "rank s2-3 --first", (*app).cmdRankSel},
 		{"relink", "<old-id>[,<old-id>...] <new-id> [--reason <text>]", "relink lint-pkg-cairn-t lint-pkg-cairn-tb --reason 're-cut as its twin'", (*app).cmdRelink},
-		{"recut", "<id> (--tier <flash|pro|heavy|frontier> | --brief-file <path> [--rules <file>]) [--new <id>]", "recut lint-pkg-cairn-t --tier heavy", (*app).cmdRecut},
-		{"brief", "<id> (--brief <text> | --brief-file <path>) [--rules <file>] [--answers <note>] | --dir <dir> [--rules <file>] | --group <id> [--expect <n>] (--brief-file <path> | --dir <dir>) [--answers <note>] | <id> --widen [--repo-dir <clone>] | <id> --tier <flash|pro|heavy|frontier>", "brief s1-4 --brief-file s1-4.md", (*app).cmdBrief},
+		{"recut", "<id> (--tier <flash|pro|heavy|frontier> | --brief-file <path> [--rules <file>]) [--new <id>] | <selector> (--tier <t> | --set-base <branch> | --drop-who)... [--dry-run]", "recut lint-pkg-cairn-t --tier heavy", (*app).cmdRecutSel},
+		{"brief", "<id> (--brief <text> | --brief-file <path>) [--rules <file>] [--answers <note>] | --dir <dir> [--rules <file>] | --group <id> [--expect <n>] (--brief-file <path> | --dir <dir>) [--answers <note>] | <id> --widen [--repo-dir <clone>] | <id> --tier <flash|pro|heavy|frontier> | <selector> (--set-base <branch> | --drop-who | --tier <t>)... [--dry-run]", "brief s1-4 --brief-file s1-4.md", (*app).cmdBriefSel},
 		{"move", "<id>... --stream <s> [--before <id> | --after <id> | --score <n>]", "move s1-4 s1-5 --stream s2", (*app).cmdMove},
 		{"merge", "--stream <s> [--batch <n>] [--conflict <id> [--conflict-kind file|ledger] [--conflict-path <p>...] | --cross <id>=<other> | --red [--suspect <id>...] | --rejected | --base-red <error>] [--note <text>]", "merge --stream s1 --batch 100", (*app).cmdMerge},
 		{"land", "[--stream <s>...] [--repo-dir <clone>] [--base <branch>] [--check <command>] [--dry-run]", "land --stream s1 --dry-run", (*app).cmdLand},
@@ -129,11 +130,13 @@ func init() {
 		{"cost reprice", "[--route <r>]... [--since <RFC3339>] [--dry-run] [--json]", "cost reprice --since 2026-10-01T00:00:00Z --dry-run", (*app).cmdCostReprice},
 		{"ci", "<id>... (--red | --green) --epoch <n> [--head <h>] [--run <id>] [--source <s>] [--note <text>]", "ci s1-3 --red --run 812 --source ci --epoch 0", (*app).cmdCI},
 		{"wait", "(<note>[,<note>]... | --group <id> [--expect <n>]) (--for <duration> | --until <RFC3339>)", "wait n1,n2 --for 3h", (*app).cmdWait},
+		{"remind", "(--in <duration> | --at <time>) --note <text> [--for <actor>] | --list | --cancel <id>", "remind --in 30m --note window-closes", (*app).cmdRemind},
 		{"ack", "<note>[,<note>]... --reason <text>", "ack ci-x-1.1 --reason 'a flaky runner; the rerun is green'", (*app).cmdAck},
 		{"answer", "[--dry-run] [--bar <p>] [--every <duration>] [--timeout <duration>] [--backend jev|fixed] [--answers <file>] [--record <file>]", "answer --dry-run", (*app).cmdAnswer},
 		{"inbox", "[--open <group>] [--read] [--wait [--timeout <duration>] [--push <dir> | --push seat]] [--deadline <duration>] [--stale <duration>]", "inbox --wait", (*app).cmdInbox},
 		{"card", "<id> [--brief | --fields] [--at-epoch <n>] | (--all | --stream <s>) --json: every card, one JSON object a line", "card s1-4", (*app).cmdCard},
 		{"needs", "[--stream <s>] [--roots]", "needs --stream s1", (*app).cmdNeeds},
+		{"streams", "[--repo <owner/name>] [--release <name>] [--cards]", "streams --cards", (*app).cmdStreams},
 		{"held", "[--stream <s>]", "held", (*app).cmdHeld},
 		{"sentinels", "[--stream <s>]", "sentinels", (*app).cmdSentinels},
 		{"sentinel set", "<id> --needs <a,b>", "sentinel set s1-stop --needs s1-2", (*app).cmdSentinelSet},
@@ -341,6 +344,7 @@ machine (DONE):
 one answer to each judgment (every one prints its own, filled in):
   ready to accept             accept --group <id> --expect <n> --answers <notes>
   work came back failed       rework --group <id> --expect <n> --answers <notes>  (each fix is the work's report; --fix for all)
+  a brief defect              drop <primary> --reason 'a brief defect: re-cut', then add --stream <s> '<new id>' --brief-file '<the re-cut brief>'  (never a redeal)
   a reader found it broken    rework --group <id> --expect <n> --answers <notes>  (each fix is the reader's finding)
   the brief is wrong          brief <id> --brief-file <path> (in place: its next attempt, from its last pushed head), or brief --group <id> --expect <n> --dir <dir> --answers <notes>, or drop <id>; never rework (the same finding twice, or over 5 attempts on one brief)
   conflict on a card          resume --stream <s> --did '<what you did>' --answers <note>  (land merges again, regenerating the ledgers; a conflict outside them: rework or drop)
@@ -348,6 +352,7 @@ one answer to each judgment (every one prints its own, filled in):
   needs another stream first  rank <other> --first, then resume --stream <s> once <other> has landed
   merge queue rejected        resume --stream <s> --did '<what you did>' --answers <note>
   the base fails its gate     resume --stream <s> --did '<the base is green again>' --answers <note>  (land gated it three times: at 0, 2 and 7 minutes)
+  the base branch is gone     rebase --from <the base> --to '<the branch that replaces it>'  (every unlanded card on it moves, dealt cards included)
   ci red                      rework --group <id> --expect <n> --fix '<fix>' --answers <notes>
   blocked on a dropped card   drop --group <id> --expect <n> --reason '<why>' --answers <notes>
   blocked on a missing card   drop <ids> --reason '<why>' or ack <notes> --reason '<why the named missing needs can be waived>'
@@ -362,6 +367,7 @@ one answer to each judgment (every one prints its own, filled in):
   stranded in review          rework or drop (or ask, if never asked) --group <id> --expect <n> --answers <notes>
   stalled                     card <primary> (HELD says what holds it), then the decision it prints, or ack <note> --reason '<why>'
   landed work scored low      add --stream <s> '<fix id>' --brief '<the finding>', then ack <note>; or ack <note> --reason '<why it stands>'
+  timer                       ack <note> --reason '<what you did>'  (a timer remind set: it woke its actor, there is nothing to decide)
 
 the mechanical judgments the run loop answers by rule, recorded "answered by rule <name>"
 (failed, bound, late, conflict, brief-defect, base-gate); nova-sprint rules prints what
@@ -572,6 +578,7 @@ type sel struct {
 	group       string // an inbox group's id
 	expect      int    // the group's size when it was printed; 0 is not given
 	one         bool   // rework and drop: the one card named is meant, though the inbox holds a group naming it
+	repo        listFlag
 }
 
 func (s *sel) register(fs flagSet, withCol bool) {
@@ -1235,7 +1242,7 @@ func (a *app) cmdAdd(args []string, stdout, stderr io.Writer) int {
 	}
 	var rs []sprint.AddReq
 	for _, sn := range streams {
-		r := sprint.AddReq{Stream: sn, IDs: ids, Count: *count, Needs: cardNeeds, Brief: *brief, Rules: cardRules(*brief, rs0).held, Base: swarm.ReadCardBase([]byte(*brief)).Ref, Who: c.actor,
+		r := sprint.AddReq{Stream: sn, IDs: ids, Count: *count, Needs: cardNeeds, Brief: *brief, Rules: cardRules(*brief, rs0).held, Base: swarm.ReadCardBase([]byte(*brief)).Ref, Repo: swarm.ReadCardBase([]byte(*brief)).Named, Who: c.actor,
 			Sentinel: *sentinel != "", Before: *before, After: *after, Every: *every, Last: *last, Held: *held, Replaces: sprint.Split(*replaces)}
 		if *score != "" {
 			f, err := strconv.ParseFloat(*score, 64)
@@ -1359,7 +1366,7 @@ func (a *app) cmdAddMany(stream, needs, briefDir string, briefFiles []string, se
 		if len(briefText) > store.MaxBriefBytes {
 			return refuse(stderr, "add", fmt.Sprintf("%s: the brief is %d bytes, over the %d bytes a brief may be; a brief is a child's whole brief; shorten it", path, len(briefText), store.MaxBriefBytes))
 		}
-		cards = append(cards, sprint.CardAdd{ID: id, Brief: briefText, Needs: uniquify(append(briefNeeds(briefText), extra...)), File: path, Base: swarm.ReadCardBase([]byte(briefText)).Ref})
+		cards = append(cards, sprint.CardAdd{ID: id, Brief: briefText, Needs: uniquify(append(briefNeeds(briefText), extra...)), File: path, Base: swarm.ReadCardBase([]byte(briefText)).Ref, Repo: swarm.ReadCardBase([]byte(briefText)).Named})
 	}
 	if !allowShared {
 		if why := sharedPaths(cards); why != "" {
@@ -1985,7 +1992,7 @@ func oneOfAGroupWhy(ctx context.Context, verbName string, st *store.Store, id st
 
 func (a *app) withGroup(verbName string, fs flagSet, c *common, st *store.Store, s *sel, ids []string, stdout, stderr io.Writer) ([]string, int) {
 	if s.group == "" {
-		if s.expect != 0 {
+		if s.expect != 0 && len(s.repo) == 0 {
 			return nil, refuse(stderr, verbName, "--expect goes with --group <id>")
 		}
 		return ids, 0
@@ -2047,6 +2054,12 @@ func (a *app) setVerb(verbName string, args []string, stdout, stderr io.Writer, 
 	fs, c := a.verbSetup(verbName)
 	var s sel
 	s.register(fs, withCol)
+	if verbName == "drop" {
+		// drop alone takes a repository selector: the streams recording it, read from
+		// their control cards, acted on only with --expect <n> (docs/SPEC-SPRINT.md
+		// section 11, the streams verb)
+		fs.Var(&s.repo, "repo", "only the cards of the streams recording this repository (owner/name), comma separated or repeated; needs --expect <n>, the number of streams it selects")
+	}
 	if extra != nil {
 		extra(fs)
 	}
@@ -2058,6 +2071,44 @@ func (a *app) setVerb(verbName string, args []string, stdout, stderr io.Writer, 
 	st, err := a.store(*c)
 	if err != nil {
 		return refuse(stderr, verbName, err.Error())
+	}
+	if len(s.repo) > 0 {
+		if s.group != "" || s.stream != "" {
+			return refuse(stderr, verbName, "--repo and --group or --stream select different sets: give --repo alone")
+		}
+		streams, err := a.repoStreams(context.Background(), st, s.repo)
+		if err != nil {
+			return a.readFailed(verbName, err, stderr)
+		}
+		if len(streams) == 0 {
+			return refuse(stderr, verbName, "no stream records "+strings.Join(s.repo, ",")+": nothing to select; run: nova-sprint streams")
+		}
+		if s.expect == 0 {
+			return refuse(stderr, verbName, "--repo selects "+strconv.Itoa(len(streams))+" stream(s) ("+strings.Join(streams, ",")+"): give --expect "+strconv.Itoa(len(streams))+" to act on them, so what it removes is read before it runs")
+		}
+		if s.expect != len(streams) {
+			return refuse(stderr, verbName, "--expect "+strconv.Itoa(s.expect)+" was printed for another set: the repository selects "+strconv.Itoa(len(streams))+" stream(s) ("+strings.Join(streams, ",")+")")
+		}
+		// The cards of the streams, by id, so one step acts across several streams:
+		// the open cards (a --col keeps its column), landed cards left alone.
+		s2, err := st.Load(context.Background(), []string{sprint.Work}, nil)
+		if err != nil {
+			return a.readFailed(verbName, err, stderr)
+		}
+		for _, stream := range streams {
+			for _, col := range sprint.States {
+				if !sprint.IsOpen(col) || (s.col != "" && col != s.col) {
+					continue
+				}
+				for _, c := range s2.Work.Cell(stream, col) {
+					ids = append(ids, c.ID)
+				}
+			}
+		}
+		if len(ids) == 0 {
+			// nothing open to act on: name the streams, so the step is an empty plan
+			s.stream = strings.Join(streams, ",")
+		}
 	}
 	// a judgment's alias stands for its id in --answers and --group (alias.go)
 	if err := unaliasFlag(context.Background(), st, fs, "answers"); err != nil {
@@ -2512,9 +2563,11 @@ func (a *app) cmdRedo(args []string, stdout, stderr io.Writer) int {
 
 func (a *app) cmdDrop(args []string, stdout, stderr io.Writer) int {
 	var reason, ans *string
+	var cascade *bool
 	return a.setVerb("drop", args, stdout, stderr, true, func(fs flagSet) {
 		reason = fs.String("reason", "", "why it leaves the table; kept with its record")
 		ans = fs.String("answers", "", answersWords)
+		cascade = fs.Bool("cascade", false, "drop too every waiting primary that needs a card named, and their dependants, with the same reason; without it a card another waiting primary still needs is refused, naming the dependants")
 	}, func(ids []string, s *sel) string {
 		if *reason == "" || len(ids) == 0 && s.stream == "" && s.col == "" {
 			return "wants ids (or --stream/--col, --group) and --reason <text>"
@@ -2524,7 +2577,7 @@ func (a *app) cmdDrop(args []string, stdout, stderr io.Writer) int {
 		c.after = func(ctx context.Context, st *store.Store, res store.Result) []string {
 			return a.droppedBriefs(ctx, st, res, *reason)
 		}
-		return store.DropStep(sprint.DropReq{Sel: s.sel(ids), Reason: *reason, Answers: answers(*ans), Who: c.actor})
+		return store.DropStep(sprint.DropReq{Sel: s.sel(ids), Reason: *reason, Answers: answers(*ans), Cascade: *cascade, Who: c.actor})
 	})
 }
 

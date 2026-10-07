@@ -155,6 +155,17 @@
 # within 10 minutes or a card of hers finished within 30 (sprint.FriendPongWindow,
 # sprint.FriendFinishWindow, sprint.FriendStatus), else down; a beat is never evidence,
 # and the 15 s beat rule above is gone. No column changed, so the lines below are unchanged.
+# Change, 2026-10-05, a hidden fleet column, asked by Glenn in words: "trust but VERIFY"; "I
+# want to trust the ok%"; "Mechanical. You know the drill."; "Are they actually doing the
+# work that is shown in the friend table? Really?"; "i don't want dollar amounts for friends.
+# token counts are fine." fleet.defect (hidden, after failed) holds a member's or a friend's
+# work cards that ended on a brief defect (docs/SPEC-SPRINT.md section 1, a brief defect): a
+# HOLD naming the brief, which no worker could do, counted in neither done nor ok%, so ok% on
+# the fleet and friends tables counts only work the worker could do. No shown column changes.
+# The live store takes it before the build that writes it is installed: nova-table col add
+# fleet defect --after failed, then nova-table set fleet --hide defect. Held by
+# TestSprintTablesAreLocked and
+# TestAHoldNamingABriefDefectCountsAgainstTheStreamNotTheWorker.
 work.waiting count sum shown
 work.ready count sum shown
 work.working count sum shown
@@ -185,6 +196,7 @@ fleet.load text none shown
 fleet.withdrawn count sum hidden
 fleet.ok count sum hidden
 fleet.failed count sum hidden
+fleet.defect count sum hidden
 fleet.ctl first none hidden
 friends.ready count sum shown
 friends.working count sum shown

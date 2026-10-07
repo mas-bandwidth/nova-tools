@@ -18,7 +18,7 @@ nova-cairn index example
 nova-cairn open example
 nova-cairn receipt example
 nova-cairn version example
-nova-check attest description,example
+nova-check attest example
 nova-check convergence example
 nova-check corpus example
 nova-check dogfood example
@@ -32,7 +32,7 @@ nova-check links example
 nova-check nocode example
 nova-check quickstart example
 nova-check spelling example
-nova-check version description,example
+nova-check version example
 nova-ci functional example
 nova-ci github example
 nova-ci github receipt example

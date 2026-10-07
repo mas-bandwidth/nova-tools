@@ -78,7 +78,7 @@ func TestSlowTestsEmptyInputIsOKWithZeroPackages(t *testing.T) {
 }
 
 // A line that is not a TestEvent is a refusal naming the line, never a silent
-// skip: a truncated pipe must not read as a clean run.
+// skip.
 func TestSlowTestsMalformedLineIsRefused(t *testing.T) {
 	t.Parallel()
 
@@ -88,6 +88,56 @@ this is not json
 	_, err := Parse(strings.NewReader(fixture))
 	require.Error(t, err, "a malformed line parsed without an error")
 	assert.ErrorContains(t, err, "line 2", "error = %q, want it to name line 2", err.Error())
+}
+
+// A package with a start event and no terminal event (pass, fail or skip) is a
+// finding, not a clean run: the line is
+// `truncated: <pkg> started and never ended`. A stream cut after a start names
+// the package; a complete stream is clean.
+func TestAStreamCutAfterAStartIsTruncated(t *testing.T) {
+	t.Parallel()
+	load := Load{Avg: 1, CPUs: 2, Known: true}
+	for _, c := range []struct {
+		name, stream, want string
+		code               int
+	}{
+		{
+			name:   "a stream cut after a start",
+			stream: `{"Action":"start","Package":"example.com/p"}` + "\n",
+			want:   "truncated: example.com/p started and never ended",
+			code:   1,
+		},
+		{
+			name: "a stream cut after a test passed and before the package ended",
+			stream: `{"Action":"start","Package":"example.com/p"}
+{"Action":"pass","Package":"example.com/p","Test":"TestA","Elapsed":0.1}
+`,
+			want: "truncated: example.com/p started and never ended",
+			code: 1,
+		},
+		{
+			name: "a complete stream",
+			stream: `{"Action":"start","Package":"example.com/p"}
+{"Action":"pass","Package":"example.com/p","Elapsed":0.1}
+`,
+			want: "",
+			code: 0,
+		},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			lines, code := Verdict(Judge(slowEvents(t, c.stream), Budgets{Package: slowBudget.Seconds()}), load, false, "ledger")
+			text := strings.Join(lines, "\n")
+			assert.Equal(t, c.code, code, "exit %d, want %d\n%s", code, c.code, text)
+			if c.want == "" {
+				assert.NotContains(t, text, "truncated:", "a complete stream is not truncated:\n%s", text)
+				assert.Contains(t, text, "CI-SLOW OK", "a complete stream is a clean run:\n%s", text)
+			} else {
+				assert.Contains(t, text, c.want, "lines =\n%s", text)
+				assert.NotContains(t, text, "CI-SLOW OK", "a truncated stream is not a clean run:\n%s", text)
+			}
+		})
+	}
 }
 
 // The slowest list holds the slowest few tests, sorted, and never grows past

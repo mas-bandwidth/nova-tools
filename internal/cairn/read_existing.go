@@ -12,7 +12,7 @@ import (
 // empty answer.
 func existingStore(store string) error {
 	if store == "" {
-		return fmt.Errorf("no store given; refusing to guess")
+		return errNoStore
 	}
 	info, err := os.Stat(store)
 	if err != nil {

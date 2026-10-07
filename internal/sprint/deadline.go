@@ -121,6 +121,16 @@ func cellMedianWall(cell []*Card) (median float64, n int) {
 	return m.Median, m.N
 }
 
+// Deadline is the unified deadline function for both members and friends (docs/SPEC-SPRINT.md
+// section 5, the deadline). It returns the larger of own and DeadlineK times the median
+// run wall over the last n ok attempts, when n > 0; otherwise it returns own.
+func Deadline(median float64, n int, own int) int {
+	if n == 0 {
+		return own
+	}
+	return max(own, int(math.Ceil(DeadlineK*median)))
+}
+
 // memberDeadline is the deadline in seconds a card dealt to the member gets, from the
 // card's own (the route's or the pin's): the member's pinned deadline when it has one,
 // else the larger of the card's and DeadlineK times the member's median run wall.
@@ -129,10 +139,7 @@ func (s *Snapshot) memberDeadline(member string, own int) int {
 		return ctl.Int(FieldMemberDeadline)
 	}
 	median, n := MemberMedianWall(s, member)
-	if n == 0 {
-		return own
-	}
-	return max(own, int(math.Ceil(DeadlineK*median)))
+	return Deadline(median, n, own)
 }
 
 // dealDeadline sets the work card's deadline field for a deal to the member

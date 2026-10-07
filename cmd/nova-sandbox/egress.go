@@ -55,13 +55,27 @@ type privilegedCommand interface {
 	Run(name string, args ...string) (string, error)
 }
 
-// The three seams. Each is a package-level var, and none of them is reachable from caller
-// input.
+// The three seams. Each is a package-level var holding the production default, and none of
+// them is reachable from caller input. A test builds an egressSeams of its own instead of
+// assigning them, so every egress test opens with t.Parallel() (the ledger in
+// internal/ci/testdata/serial-tests_allowlist.txt).
 var (
 	egressPriv   privilegedCommand                   = sudoCommand{}
 	egressGOOS                                       = runtime.GOOS
 	egressLookup func(at netip.Addr) sandboxResolver = benchResolver
 )
+
+// egressSeams is what one egress verb reaches the machine through.
+type egressSeams struct {
+	Priv   privilegedCommand
+	GOOS   string
+	Lookup func(at netip.Addr) sandboxResolver
+}
+
+// prodEgressSeams is the production wiring: the package-level defaults.
+func prodEgressSeams() *egressSeams {
+	return &egressSeams{Priv: egressPriv, GOOS: egressGOOS, Lookup: egressLookup}
+}
 
 // sudoCommand is the production privileged body. `sudo -n`: never a password prompt in a
 // card runner's non-interactive shell — a bench that is not set up says so immediately
@@ -148,7 +162,7 @@ func parseEgress(args []string) egressFlags {
 // egressVerb dispatches the four sub-verbs. They are not wrappers, so they use SPEC.md's
 // grammar unchanged: 0 the verb ran and passed, 1 the verb ran and said NO, 2 it could not
 // run.
-func egressVerb(args []string, stderr io.Writer) int {
+func (es *egressSeams) egressVerb(args []string, stderr io.Writer) int {
 	if len(args) == 0 {
 		return egressRefuse(stderr, []sandbox.Refusal{{Reason: "no_command",
 			Text: "egress wants one of plan, apply, check or drop"}})
@@ -156,13 +170,13 @@ func egressVerb(args []string, stderr io.Writer) int {
 	f := parseEgress(args[1:])
 	switch args[0] {
 	case "plan":
-		return egressPlanVerb(f, stderr)
+		return es.egressPlanVerb(f, stderr)
 	case "apply":
-		return egressApplyVerb(f, stderr)
+		return es.egressApplyVerb(f, stderr)
 	case "check":
-		return egressCheckVerb(f, stderr)
+		return es.egressCheckVerb(f, stderr)
 	case "drop":
-		return egressDropVerb(f, stderr)
+		return es.egressDropVerb(f, stderr)
 	}
 	return egressRefuse(stderr, []sandbox.Refusal{{Reason: "no_command",
 		Text: oneline.Escape(args[0]) + " is not an egress verb; it is one of plan, apply, check or drop"}})
@@ -190,7 +204,7 @@ func egressSaidNo(stderr io.Writer, bad []sandbox.Refusal) int {
 // egressPlanVerb resolves the allowed names ONCE, pins what they answered, renders the
 // ruleset and writes it to --out. It runs on every platform: a plan is text, and a reviewer
 // on a Mac has to be able to build and read the ruleset a bench will apply.
-func egressPlanVerb(f egressFlags, stderr io.Writer) int {
+func (es *egressSeams) egressPlanVerb(f egressFlags, stderr io.Writer) int {
 	bad := f.bad
 	if f.out == "" {
 		bad = append(bad, sandbox.Refusal{Reason: "no_command", Text: "--out wants the file the ruleset is written to: --out /run/nova/egress-<run>.nft"})
@@ -244,7 +258,7 @@ func egressPlanVerb(f egressFlags, stderr io.Writer) int {
 	if inputBad = slices.DeleteFunc(inputBad, func(r sandbox.Refusal) bool { return r.Reason == "resolve_failed" }); len(inputBad) > 0 {
 		return egressRefuse(stderr, inputBad)
 	}
-	in.Lookup = egressLookup(resolver)
+	in.Lookup = es.Lookup(resolver)
 	// The resolution is the one step of this verb that takes real time, so it says so:
 	// a reader staring at a silent terminal cannot tell a slow resolver from a hung one.
 	fmt.Fprintf(stderr, "EGRESS STEP name=resolve state=start\n")
@@ -271,7 +285,7 @@ func egressPlanVerb(f egressFlags, stderr io.Writer) int {
 
 // egressCheckVerb reads a plan back and asserts the invariants. It is the verb a reviewer
 // runs on a file, and it is what apply runs before nft ever sees one.
-func egressCheckVerb(f egressFlags, stderr io.Writer) int {
+func (es *egressSeams) egressCheckVerb(f egressFlags, stderr io.Writer) int {
 	bad := f.bad
 	if f.plan == "" {
 		bad = append(bad, sandbox.Refusal{Reason: "no_command", Text: "--plan wants the ruleset to read back: --plan /run/nova/egress-<run>.nft"})
@@ -306,7 +320,7 @@ func egressReadPlan(path string) (sandbox.EgressAudit, []sandbox.Refusal, []sand
 
 // egressApplyVerb hands ONE audited plan to nft. The order is the contract: read, audit,
 // check the table is this run's, look for nft, and only then run it.
-func egressApplyVerb(f egressFlags, stderr io.Writer) int {
+func (es *egressSeams) egressApplyVerb(f egressFlags, stderr io.Writer) int {
 	bad := f.bad
 	if f.plan == "" {
 		bad = append(bad, sandbox.Refusal{Reason: "no_command", Text: "--plan wants the ruleset to apply: --plan /run/nova/egress-<run>.nft"})
@@ -317,7 +331,7 @@ func egressApplyVerb(f egressFlags, stderr io.Writer) int {
 	if len(bad) > 0 {
 		return egressRefuse(stderr, bad)
 	}
-	if line, remedy, refused := noNftBody(egressGOOS); refused {
+	if line, remedy, refused := noNftBody(es.GOOS); refused {
 		fmt.Fprintln(stderr, line)
 		fmt.Fprintln(stderr, remedy)
 		return sandbox.ExitCannotRun
@@ -337,14 +351,14 @@ func egressApplyVerb(f egressFlags, stderr io.Writer) int {
 		return egressRefuse(stderr, []sandbox.Refusal{{Reason: "plan_mismatch",
 			Text: fmt.Sprintf("the plan holds the table %s and --run %s names %s; a run applies its OWN plan, because the drop that follows deletes one table by name and would leave the other standing", oneline.Escape(audit.Table), oneline.Escape(f.run), oneline.Escape(table))}})
 	}
-	if code := needNft(stderr); code != 0 {
+	if code := es.needNft(stderr); code != 0 {
 		return code
 	}
-	return egressRun(stderr, "apply", f.run, table, "-f", f.plan)
+	return es.egressRun(stderr, "apply", f.run, table, "-f", f.plan)
 }
 
 // egressDropVerb takes the run's wall away. It names ONE table, the one this tool made.
-func egressDropVerb(f egressFlags, stderr io.Writer) int {
+func (es *egressSeams) egressDropVerb(f egressFlags, stderr io.Writer) int {
 	bad := f.bad
 	if !okEgressRun(f.run) {
 		bad = append(bad, sandbox.Refusal{Reason: "no_name",
@@ -356,23 +370,23 @@ func egressDropVerb(f egressFlags, stderr io.Writer) int {
 	if len(bad) > 0 {
 		return egressRefuse(stderr, bad)
 	}
-	if line, remedy, refused := noNftBody(egressGOOS); refused {
+	if line, remedy, refused := noNftBody(es.GOOS); refused {
 		fmt.Fprintln(stderr, line)
 		fmt.Fprintln(stderr, remedy)
 		return sandbox.ExitCannotRun
 	}
-	if code := needNft(stderr); code != 0 {
+	if code := es.needNft(stderr); code != 0 {
 		return code
 	}
 	table := sandbox.EgressTableName(f.run)
-	return egressRun(stderr, "drop", f.run, table, "delete", "table", "inet", table)
+	return es.egressRun(stderr, "drop", f.run, table, "delete", "table", "inet", table)
 }
 
 // egressRun is the one place nft is executed, and the one place these verbs print a receipt.
-func egressRun(stderr io.Writer, verb, run, table string, args ...string) int {
+func (es *egressSeams) egressRun(stderr io.Writer, verb, run, table string, args ...string) int {
 	fmt.Fprintf(stderr, "EGRESS STEP name=%s state=start\n", oneline.Field(verb))
 	at := time.Now()
-	out, err := egressPriv.Run("nft", args...)
+	out, err := es.Priv.Run("nft", args...)
 	fmt.Fprintf(stderr, "EGRESS STEP name=%s state=done ms=%d\n", oneline.Field(verb), time.Since(at).Milliseconds())
 	if err != nil {
 		return egressSaidNo(stderr, []sandbox.Refusal{{Reason: "nft_failed",
@@ -385,8 +399,8 @@ func egressRun(stderr io.Writer, verb, run, table string, args ...string) int {
 // needNft is the refusal a bench without nftables gets, with the one line that fixes it. A
 // tool that ran `sudo nft` and let the shell's error stand would leave the operator reading
 // a message from a program they did not call.
-func needNft(stderr io.Writer) int {
-	if _, err := egressPriv.Look("nft"); err != nil {
+func (es *egressSeams) needNft(stderr io.Writer) int {
+	if _, err := es.Priv.Look("nft"); err != nil {
 		fmt.Fprintf(stderr, "EGRESS REFUSED reason=no_nft: nft is not on this bench (%s), and this wall is nftables; nothing was applied and nothing was dropped; run: nova-sandbox egress -h\n", oneline.Err(err))
 		fmt.Fprintln(stderr, nftRemedy)
 		return sandbox.ExitCannotRun

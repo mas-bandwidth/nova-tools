@@ -767,6 +767,17 @@ seal`); none is ever an empty password. `nova-sprint seat login` records one (do
 "The seat's store login"), so the sprint's verbs need no `exec` wrapper; nova-config can read its
 store login through the same helper.
 
+`secrets.ReadUnitKeys` reads every name a sprint unit needs, the decision key and each provider
+key, through the same open, in the process that uses them. `UnitKeyLogin` is that setting: the
+seat, and the list of names. It holds no secret. `RouteKey` is the one name of that list a route
+needs (`<PROVIDER>_API_KEY`, or the only listed name that is not the decision key).
+`ChildWithOneKey` appends that one name to a child's environment and leaves every other held
+secret out, including one the environment already carried. A name the seat does not hold, or holds
+empty, is a refusal naming the name and the next command (`nova-secrets names`, `nova-secrets seal`); the value is never an empty key and is never printed. `nova-sprint run --keys` and the
+`keys.json` beside the seat login name the server's list; `nova-swarm member --pass` names the
+member's, read in process when the environment does not already hold them. The unit's own
+environment carries no key value, and no `exec` wrapper is required for those names.
+
 ### Refused, by name, with where it lives
 
 One line, on stderr, naming the door — exit 2, or 125 from `exec`:
