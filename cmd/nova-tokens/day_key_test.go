@@ -32,6 +32,6 @@ func TestFoldAndSessionPrintTheDayKey(t *testing.T) {
 	session := write(t, filepath.Join(dir, "session.jsonl"), window)
 	s := invoke(t, "session", "--claude-session", session, "--out", sessionOut)
 	wantExit(t, s, 0)
-	sessionDay := lineWith(s.stdout, "TOKENS DAY ")
-	assert.Contains(t, sessionDay, "day=2026-09-11", "session's TOKENS DAY line carries the same day=")
+	sessionDay := lineWith(s.stdout, "SESSION DAY ")
+	assert.Contains(t, sessionDay, "day=2026-09-11", "session's SESSION DAY line carries the same day=")
 }

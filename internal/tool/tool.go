@@ -122,6 +122,7 @@ type Verb struct {
 	ExitTable string         // this verb's exit codes, quoted by its -h; "" quotes the tool's
 	DryRun    bool           // the verb takes --dry-run and honours it (Call.DryRun): it plans and writes nothing
 	Hidden    bool           // the verb runs and answers -h and `help <it>`, but the banner, the usage block and the verb lists a refusal names do not show it: a probe step verb a user never types (STANDARD §3, help is never a refusal; §2, a list names the verbs there are for the reader)
+	Token     string         // the first word of the verb's lines, where its spec names one; "" is the verb's name
 	Flags     func(f *Flags) // declares the verb's flags; nil declares none
 	Run       func(c *Call) *Out
 }
@@ -692,7 +693,7 @@ func (t *Tool) emit(v *Verb, o *Out, asJSON bool, stdout, stderr io.Writer) int 
 	o.token = strings.ToUpper(strings.TrimPrefix(t.Name, "nova-"))
 	if v != nil {
 		o.Verb = v.Name
-		o.token = strings.ToUpper(strings.Join(strings.Fields(v.Name), "-"))
+		o.token = cmp.Or(v.Token, strings.ToUpper(strings.Join(strings.Fields(v.Name), "-")))
 	}
 	if o.Status == Refused && o.Remedy == "" {
 		o.Remedy = t.Name + " help"

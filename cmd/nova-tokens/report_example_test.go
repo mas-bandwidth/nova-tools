@@ -31,6 +31,7 @@ func TestTheHelpReportExampleIsWhatItPrints(t *testing.T) {
 	r := invoke(t, args...)
 	wantExit(t, r, 0)
 	step := onboarding.Step{Line: "$ " + line, Want: []string{
+		`REPORT OK who=ada day=2026-09-11 rows=7 at=2026-09-11T23:55:02Z build=devel subject="tokens 2026-09-11 at=2026-09-11T23:55:02Z build=devel"`,
 		"2026-09-11\tada\tclaude-fable-5-1\tschema\tinput\t908",
 		"2026-09-11\tada\tclaude-fable-5-1\tschema\toutput\t1535",
 		"2026-09-11\tada\tclaude-fable-5-1\tschema\tcache_write\t1200",
@@ -38,9 +39,8 @@ func TestTheHelpReportExampleIsWhatItPrints(t *testing.T) {
 		"2026-09-11\tada\tclaude-fable-5-1\tserialize\tinput\t430",
 		"2026-09-11\tada\tclaude-fable-5-1\tserialize\toutput\t58",
 		"2026-09-11\tada\tclaude-fable-5-1\tserialize\tcache_read\t4000",
-		"! TOKENS AVG day=2026-09-11 model=claude-fable-5-1 tokens=250131 usd=- usd_per_mtok=- unpriced=250131",
-		"! TOKENS AVG-ALL day=2026-09-11 tokens=250131 usd=- usd_per_mtok=- unpriced=250131",
-		`! REPORT OK who=ada day=2026-09-11 rows=7 at=2026-09-11T23:55:02Z build=devel subject="tokens 2026-09-11 at=2026-09-11T23:55:02Z build=devel"`,
+		"! REPORT AVG day=2026-09-11 model=claude-fable-5-1 tokens=250131 usd=- usd_per_mtok=- unpriced=250131",
+		"! REPORT AVG-ALL day=2026-09-11 tokens=250131 usd=- usd_per_mtok=- unpriced=250131",
 	}}
 	for _, p := range onboarding.Compare(step, onboarding.Result{Code: r.exit, Stdout: r.stdout, Stderr: r.stderr}, []onboarding.Norm{onboarding.Version()}) {
 		assert.Fail(t, "onboarding example comparison failed", "%v", p)
