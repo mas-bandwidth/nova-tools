@@ -168,6 +168,18 @@ unloaded and its plist removed, as above
 loop row, wrapper or other shell loop beats for a friend. A friend with no
 daemon running has no beat, and reads down.
 
+### Per-pass wake messages
+
+When `nova-sprint friend sync` delivers cards to a friend, it sends a bus
+message to wake her daemon. For friends in **batch mode** (the default), the
+sync collapses all cards delivered in one pass into a single message with
+subject `cards dealt: N (id1, id2, ...)` (IDs beyond 10 are abbreviated as `and
+M more`). For friends in **one-shot mode**, each card delivery sends its own
+message, preserving the per-card behavior. The inbox file is the authoritative
+record of delivery; the wake message is a courtesy. A send that fails does not
+fail the delivery—it is noted once as `NFriendNotWoken` naming the pass, not
+each card.
+
 ## Where a job's work lives
 
 inbox/ and outbox/ hold text: the brief, the report, the evidence. A job's

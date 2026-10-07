@@ -304,7 +304,9 @@ func friendReadReport(dir, job string) (report, why string, at time.Time, err er
 // outbox/<job>/REPORT.md when that is there. A card whose id is not a card id, or whose
 // inbox/<job> is a symlink or no directory, is refused, a line each: nothing is written
 // outside her working directory. It says what it did, a line each, and how many it
-// delivered and finished.
+// delivered and finished. After the pass, it sends one bus message to batch-mode friends
+// who received cards (collapsing per-card wakes), while one-shot friends still get one
+// message per card.
 func (a *app) friendCardsOf(ctx context.Context, st *store.Store, name, dir string, say func(string)) (delivered, finished int, err error) {
 	// her working cards, then the ready ones dealt behind them (sprint.TickDeal): both are
 	// delivered, and her queue file says which are which
@@ -351,6 +353,9 @@ func (a *app) friendCardsOf(ctx context.Context, st *store.Store, name, dir stri
 			err = writeQueueFile(dir, states, left, packets)
 		}
 	}()
+
+	// Collect cards delivered to this friend during the pass
+	var deliveredCards []sprint.Packet
 	for i, p := range packets {
 		if p.Kind == "read" {
 			d, f, err := a.friendReadOf(ctx, st, name, dir, p, cards[i], say)
@@ -379,9 +384,7 @@ func (a *app) friendCardsOf(ctx context.Context, st *store.Store, name, dir stri
 				delivered++
 				line := fmt.Sprintf("FRIEND-CARD DELIVERED friend=%s card=%s job=%s branch=%s", name, p.Card, oneline.Field(job), p.Branch)
 				say(line)
-				if err := a.wakeFriend(ctx, st, name, p, brief, line, say); err != nil {
-					return delivered, finished, err
-				}
+				deliveredCards = append(deliveredCards, p)
 			case !errors.Is(err, fs.ErrExist):
 				return delivered, finished, err
 			}
@@ -406,6 +409,13 @@ func (a *app) friendCardsOf(ctx context.Context, st *store.Store, name, dir stri
 			finished++
 		}
 	}
+
+	// After the pass, wake the friend
+	err = a.wakeFriendAfterPass(ctx, st, name, deliveredCards, say)
+	if err != nil {
+		return delivered, finished, err
+	}
+
 	return delivered, finished, nil
 }
 
@@ -519,6 +529,80 @@ func (a *app) wakeFriend(ctx context.Context, st *store.Store, name string, p sp
 		err = errors.New(res.Refused[0].Why)
 	}
 	return err
+}
+
+// wakeFriendAfterPass wakes the friend after the sync pass has delivered all cards.
+// For batch-mode friends, it sends one collapsed message listing all card IDs.
+// For one-shot friends, it sends per-card messages (the old behavior).
+func (a *app) wakeFriendAfterPass(ctx context.Context, st *store.Store, name string, cards []sprint.Packet, say func(string)) error {
+	if len(cards) == 0 {
+		return nil // No cards delivered, no wake needed
+	}
+
+	// Read the friend's mode from the store
+	spec, err := st.FriendSpecOf(ctx, name)
+	if err != nil {
+		return err
+	}
+
+	if spec.Mode == "one-shot" {
+		// Send per-card messages (preserve old behavior)
+		for _, p := range cards {
+			brief := filepath.Join("inbox", friendJobOf(p), "BRIEF.md")
+			line := fmt.Sprintf("FRIEND-CARD DELIVERED friend=%s card=%s", name, p.Card)
+			if err := a.wakeFriend(ctx, st, name, p, brief, line, say); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	// Batch mode: send one collapsed message
+	var cardIDs []string
+	for _, p := range cards {
+		cardIDs = append(cardIDs, p.Card)
+	}
+
+	// Build subject: "cards dealt: N (id1, id2, ...)" with truncation at 10
+	subject := "cards dealt: " + strconv.Itoa(len(cardIDs)) + " (" +
+		idsWithTruncation(cardIDs, 10, "and %d more") + ")"
+
+	// Build body with inbox directory and start sentence
+	var body strings.Builder
+	for _, p := range cards {
+		brief := filepath.Join("inbox", friendJobOf(p), "BRIEF.md")
+		fmt.Fprintf(&body, "Your sprint card %s is in your inbox: %s\n", p.Card, brief)
+	}
+	fmt.Fprint(&body, "Read them and start; the STATUS line in each says where to push and where to report.")
+
+	m := bus.Message{From: st.Actor, To: []string{name}, Subject: subject, Body: body.String()}
+	err = a.bus(ctx, m, say)
+	if err == nil {
+		return nil
+	}
+
+	// Send failed: note once (NFriendNotWoken) naming the pass
+	why := oneline.Escape(err.Error())
+	say(fmt.Sprintf("FRIEND-CARD NOTE friend=%s: the bus message to her was not sent (%s); tell her by hand", name, why))
+	n := sprint.Note{Kind: sprint.Happened, Type: sprint.NFriendNotWoken, Stream: cards[0].Stream, Primaries: []string{cards[0].Primary}, Who: st.Actor, Attempt: cards[0].Attempt,
+		What: fmt.Sprintf("%s received %d cards this pass, and the bus message to her failed: %s; tell her by hand: nova-bus send --as %s --to %s --subject '%s' --body 'See inbox'", name, len(cardIDs), why, st.Actor, name, subject)}
+	res, err := st.Run(ctx, store.NoteStep("friend sync", n))
+	if err == nil && len(res.Refused) > 0 {
+		err = errors.New(res.Refused[0].Why)
+	}
+	return err
+}
+
+// idsWithTruncation returns a comma-separated list of IDs, truncating at maxCount.
+// If truncated, it appends "and M more" where M is the count of omitted IDs.
+func idsWithTruncation(ids []string, maxCount int, suffixFormat string) string {
+	if len(ids) <= maxCount {
+		return strings.Join(ids, ", ")
+	}
+	slices.Sort(ids) // Ensure consistent ordering
+	shown := ids[:maxCount]
+	rest := len(ids) - maxCount
+	return strings.Join(shown, ", ") + ", " + fmt.Sprintf(suffixFormat, rest)
 }
 
 // stallWaker is the store's WakeFriend for the machine (tick and run): the friend stall
