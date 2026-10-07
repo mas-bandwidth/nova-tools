@@ -302,7 +302,7 @@ func RunPlace(in PlaceInput) (string, error) {
 	}
 
 	if err := sec.Use(func(value string) error {
-		return sshPlaceSecret(run, in.SSH, machine.Target, remotePath, value)
+		return sshPlaceSecret(run, testguard.RefuseHosts, in.SSH, machine.Target, remotePath, value)
 	}); err != nil {
 		return "", err
 	}
@@ -405,10 +405,10 @@ func RunPlaced(in PlacedInput) (string, []string, error) {
 
 // sshPlaceSecret writes value to remotePath over ssh with mode 0600. The value travels on
 // stdin; the remote path is the only caller text in the command, shell-quoted.
-func sshPlaceSecret(run execCommand, sshPath, target, remotePath, value string) error {
+func sshPlaceSecret(run execCommand, refuseHosts func(string, ...string), sshPath, target, remotePath, value string) error {
 	remoteCmd := fmt.Sprintf("umask 077 && set -e && mkdir -p \"$(dirname %s)\" && cat > %s && chmod 600 %s",
 		shSingleQuote(remotePath), shSingleQuote(remotePath), shSingleQuote(remotePath))
-	testguard.RefuseHosts(sshPath, target, remoteCmd)
+	refuseHosts(sshPath, target, remoteCmd)
 	_, err := runOr(run)(bytes.NewReader([]byte(value)), nil, "", sshPath, target, remoteCmd)
 	if err != nil {
 		// The remote transcript is withheld; it can carry a command's own output and this
