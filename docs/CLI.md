@@ -3558,6 +3558,8 @@ plans and lints, prints the manifest and the `CARDS OK` line with
 
 ## nova-work
 
+nova-work is pre-alpha: not ready for production use.
+
 <!-- clidoc:begin nova-work -->
 ```
 nova-work import --org <org> (--out <tree.lisp> [--replace] | --dry-run) [--repo <owner/name>]... [--fixture <dir>] [--max-calls <n>] [--page-size <n>] [--gh <path>] [--timeout <d>]
@@ -3567,8 +3569,6 @@ nova-work version
 nova-work help [<verb>]
 ```
 <!-- clidoc:end nova-work -->
-
-nova-work is pre-alpha: not ready for production use.
 
 Every issue of every repository of a GitHub organization in one tree file, with
 each issue's full contents, and a check that the file holds exactly what GitHub
