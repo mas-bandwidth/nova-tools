@@ -333,8 +333,11 @@ func sessions(store string) []string {
 
 // index lists every entry; the coverage counts on its first line are the
 // selection's, so --session counts one session and the full index counts all.
-// An INDEX SESSION line is printed for every session in the selection, entries
-// or none, so an empty session is found.
+// An INDEX SESSION line is printed for every session in the selection, before
+// the entries, entries or none, so an empty session is found. The line names
+// the id, the publish policy and the opened stamp the open record stores
+// (unknown and - when it stores none, a flat file), and --max bounds the
+// lines with MORE (docs/SPEC-CAIRN.md, the index verb).
 func index(c *tool.Call) *tool.Out {
 	store := c.Str("store")
 	session := c.Str("session")
@@ -354,13 +357,35 @@ func index(c *tool.Call) *tool.Out {
 	}
 	o := tool.Done()
 	for _, s := range names {
-		o.Item("session", "session", s, "entries", perSession[s])
+		publish, opened, err := sessionFacts(store, s)
+		if err != nil {
+			return refusal(err)
+		}
+		o.Item("session", "session", s, "publish", publish, "opened", opened, "entries", perSession[s])
 	}
 	o.Fact("sessions", len(names)).Fact("entries", total)
 	for _, r := range all {
 		o.Item("entry", "session", r.Session, "entry", r.ID, "stamp", stampOf(r.Stamp), "bytes", r.Bytes, "source", sourceOf(r.Source))
 	}
 	return o
+}
+
+// sessionFacts is the policy and opened stamp index prints for one session.
+// A flat record, or an open that never reached the log, stores neither:
+// publish=unknown and opened=- (docs/SPEC-CAIRN.md, the index verb).
+func sessionFacts(store, session string) (publish, opened string, err error) {
+	rec, err := cairn.ReadOpen(store, session)
+	if err != nil {
+		return "", "", err
+	}
+	publish, opened = cairn.PublishUnknown, "-"
+	if !rec.Found || !cairn.ValidPublish(rec.Publish) {
+		return publish, opened, nil
+	}
+	if !rec.Opened.IsZero() {
+		opened = stampOf(rec.Opened)
+	}
+	return rec.Publish, opened, nil
 }
 
 func receipt(c *tool.Call) *tool.Out {
