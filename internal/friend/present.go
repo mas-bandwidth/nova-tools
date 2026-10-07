@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -85,7 +86,7 @@ func PlanPresent(friend, seat string, backlog []bus.Entry, storeNow time.Time, w
 	if seat != "" {
 		for i := len(backlog) - 1; i >= 0; i-- {
 			m := backlog[i].Message()
-			if m.From == seat && !isDeal(m) && !isChallenge(m) && !IsPresentRequest(friend, m) {
+			if backlog[i].Stage != bus.Acted && m.From == seat && !isDeal(m) && !isChallenge(m) && !IsPresentRequest(friend, m) {
 				note = i
 				break
 			}
@@ -98,7 +99,7 @@ func PlanPresent(friend, seat string, backlog []bus.Entry, storeNow time.Time, w
 		case i == note:
 			p.Note = &backlog[i]
 			continue
-		case ping && !StaleNonce(m.At, storeNow, window):
+		case e.Stage != bus.Acted && ping && !StaleNonce(m.At, storeNow, window):
 			p.Fresh = append(p.Fresh, e)
 			continue
 		case IsPresentRequest(friend, m):
@@ -164,7 +165,7 @@ func PresentText(friend, seat string, at time.Time, queue []QueueLine, skipped S
 	}
 	stamp := at.UTC().Format(time.RFC3339)
 	fmt.Fprintf(&b, "%s at %s. You are %s; the seat is %s. This is the present: it replaces everything older on your stream, and nothing older will be delivered. Work only what is below.\n\n",
-		PresentTextRule, stamp, friend, cmp.Or(seat, "unknown (no ping has named it)"))
+		PresentTextRule, stamp, friend, cmp.Or(seat, "unknown (the seat is not known)"))
 	if len(queue) == 0 {
 		b.WriteString("Your live queue is empty: no card is on your row.\n")
 	} else {
@@ -233,21 +234,35 @@ func (l *loop) startPresent(now time.Time, withTurn bool) {
 	for _, e := range backlog {
 		seen[e.Entry] = true
 	}
-	for {
-		e, ok, err := b.Recv(l.ctx, d.Friend, 0)
+	// Read a finite snapshot, including messages held by the previous run. Recv
+	// waits for ClaimAfter before handing those pending entries back, which is
+	// too late for a new session; repeatedly claiming also cycles a large backlog.
+	if err := l.presentBacklog(seen, &backlog); err != nil {
+		if l.ctx.Err() == nil {
+			d.status.StoreError = err.Error()
+			d.Record(fmt.Sprintf("%s present: not yet: the stream could not be read: %s; tried again the next step", now.UTC().Format(time.RFC3339), oneLine(err.Error(), 300)))
+		}
+		return
+	}
+	// The raw snapshot takes entries without Recv's delivery receipt. Preserve
+	// that receipt transition, and remember an already acted note so a lost ack
+	// cannot make it the newest instruction delivered a second time.
+	for i := 0; i < len(backlog); i += SupersedeChunk {
+		chunk := backlog[i:min(i+SupersedeChunk, len(backlog))]
+		ids := make([]string, len(chunk))
+		for j, e := range chunk {
+			ids[j] = e.Message().ID
+		}
+		prior, err := b.Stamp(l.ctx, d.Friend, bus.Delivered, ids...)
 		if err != nil {
-			if l.ctx.Err() == nil {
-				d.status.StoreError = err.Error()
-				d.Record(fmt.Sprintf("%s present: not yet: the stream could not be read: %s; tried again the next step", now.UTC().Format(time.RFC3339), oneLine(err.Error(), 300)))
-			}
+			d.status.StoreError = err.Error()
+			d.Record(fmt.Sprintf("%s present: not yet: delivery receipts could not be read: %s; tried again the next step", now.UTC().Format(time.RFC3339), oneLine(err.Error(), 300)))
 			return
 		}
-		if !ok {
-			break
-		}
-		if !seen[e.Entry] {
-			seen[e.Entry] = true
-			backlog = append(backlog, e)
+		for j := range chunk {
+			if prior[j] == bus.Acted || l.acted[chunk[j].Message().ID] {
+				chunk[j].Stage = bus.Acted
+			}
 		}
 	}
 	_, storeNow, err := d.Store.Roster(l.ctx)
@@ -256,8 +271,23 @@ func (l *loop) startPresent(now time.Time, withTurn bool) {
 		d.Record(fmt.Sprintf("%s present: not yet: the store's clock could not be read: %s; tried again the next step", now.UTC().Format(time.RFC3339), oneLine(err.Error(), 300)))
 		return
 	}
-	seat := cmp.Or(l.seat(now), l.coordinator())
+	// Held entries can precede this run's hand; restore stream order before
+	// choosing the newest coordinator note. Redis IDs are canonical decimals.
+	slices.SortFunc(backlog, func(a, b bus.Entry) int {
+		aTime, aSeq, _ := strings.Cut(a.Entry, "-")
+		bTime, bSeq, _ := strings.Cut(b.Entry, "-")
+		return cmp.Or(cmp.Compare(len(aTime), len(bTime)), strings.Compare(aTime, bTime),
+			cmp.Compare(len(aSeq), len(bSeq)), strings.Compare(aSeq, bSeq))
+	})
+	seat := l.seat(now)
 	plan := PlanPresent(d.Friend, seat, backlog, storeNow, d.m.Window)
+	if !withTurn && plan.Note != nil {
+		// A per-card runner has no batch session to carry the newest note.
+		// Supersede it too, so it cannot return later as an old instruction.
+		plan.Superseded = append(plan.Superseded, plan.Note.Entry)
+		plan.Skipped.Notes++
+		plan.Note = nil
+	}
 	l.busy, l.retry, l.deferrals, l.deferSaid = nil, time.Time{}, 0, time.Time{}
 	l.hand, l.presentCarry, l.presentDue, l.dealt = nil, nil, false, nil
 	for e := range seen {
@@ -323,6 +353,61 @@ func (l *loop) startPresent(now time.Time, withTurn bool) {
 	l.startTurn(t, now, l.deliverBatch(t))
 }
 
+// presentBacklog takes the group's pending entries and the fresh entries that
+// exist at this read. Every acquired entry stays in hand before another store
+// command can fail, so retrying cannot lose it behind the claim window.
+func (l *loop) presentBacklog(seen map[string]bool, backlog *[]bus.Entry) error {
+	d := l.d
+	stream := bus.StreamOf(d.Friend)
+	keep := func(entries []bus.Entry) {
+		for _, e := range entries {
+			if !seen[e.Entry] {
+				seen[e.Entry] = true
+				*backlog = append(*backlog, e)
+				l.hand = append(l.hand, e)
+				l.inHand[e.Entry] = true
+			}
+		}
+	}
+	if err := d.Store.EnsureGroup(l.ctx, stream, d.Friend); err != nil {
+		return err
+	}
+	// Store count is Redis's signed integer maximum, so the snapshot covers
+	// all entries rather than leaving an arbitrary page available for replay.
+	const allEntries = int(^uint(0) >> 1)
+	ids, err := d.Store.Pending(l.ctx, stream, d.Friend, allEntries)
+	if err != nil {
+		return err
+	}
+	for i := 0; i < len(ids); i += SupersedeChunk {
+		entries, err := d.Store.Get(l.ctx, stream, ids[i:min(i+SupersedeChunk, len(ids))])
+		if err != nil {
+			return err
+		}
+		keep(entries)
+	}
+	last, _, err := d.Store.Group(l.ctx, stream, d.Friend)
+	if err != nil {
+		return err
+	}
+	fresh, err := d.Store.Range(l.ctx, stream, "("+last, "+", allEntries)
+	if err != nil {
+		return err
+	}
+	for left := len(fresh); left > 0; {
+		entries, err := d.Store.Read(l.ctx, stream, d.Friend, bus.Consumer, 0, min(left, SupersedeChunk))
+		if err != nil {
+			return err
+		}
+		if len(entries) == 0 {
+			break
+		}
+		keep(entries)
+		left -= len(entries)
+	}
+	return nil
+}
+
 // SupersedeChunk bounds the entries one ack of the superseded carries.
 const SupersedeChunk = 256
 
@@ -352,7 +437,7 @@ func (l *loop) tellSuperseded(plan PresentPlan, backlog []bus.Entry, reason stri
 	}
 	s := plan.Skipped
 	l.tellKind(bus.KindStatus, fmt.Sprintf("friend %s: present at %s: skipped %d deals, %d pings, %d notes", l.d.Friend, storeNow.UTC().Format(time.RFC3339), s.Deals, s.Pings, s.Notes),
-		fmt.Sprintf("Every older message on her stream was acked unread, %s: %s%s\n", reason, strings.Join(ids, " "), more), now)
+		fmt.Sprintf("Every older message on her stream was marked superseded unread, %s: %s%s\n", reason, strings.Join(ids, " "), more), now)
 }
 
 // presentEnded is a present turn's end, after its settle: one that did not end at exit 0 is
@@ -370,11 +455,18 @@ func (l *loop) presentEnded(t *turn, ok bool, now time.Time) {
 
 // staleNonce says a ping read now is past the challenge window by the store's clock (its at
 // against the store's time now, one trip): dropped, never answered. A store whose time cannot
-// be read drops nothing.
+// be read leaves the ping for a present retry and answers no unverified nonce.
 func (l *loop) staleNonce(m bus.Message) bool {
 	if l.d.noPresent {
 		return false
 	}
 	_, storeNow, err := l.d.Store.Roster(l.ctx)
-	return err == nil && StaleNonce(m.At, storeNow, l.d.m.Window)
+	if err != nil {
+		// Treat it as withheld, not fresh: the read keeps it in hand because
+		// a present is now due; a successful clock read will classify it there.
+		l.presentDue = true
+		l.d.Record(fmt.Sprintf("%s ping withheld: the store's clock could not be read: %s; the present is owed", l.now.UTC().Format(time.RFC3339), oneLine(err.Error(), 200)))
+		return true
+	}
+	return StaleNonce(m.At, storeNow, l.d.m.Window)
 }

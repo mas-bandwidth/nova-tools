@@ -22,8 +22,11 @@ an enabled maximum and cannot exceed it; near is configured, never inferred.
 ## The pattern in one sentence
 
 One daemon per friend, started by launchd and never by the model, parks on the
-friend's nova-bus stream and, whenever the session is free, pushes every
-message waiting into the running session as one turn; it beats to the sprint
+friend's nova-bus stream. On a session start or a delivery after a thirty-minute gap,
+the present comes first and the backlog never does: one PRESENT turn carries her live
+queue, the seat, the newest coordinator note and the counts superseded. After that,
+whenever the session is free, it pushes current messages into the session as one turn;
+it beats to the sprint
 server while that loop runs and its session answers, and only then; it answers
 the coordinator's ping at once and never makes a turn of it, and the session's
 own answer to a nonce is the only thing that makes the friend up (Presence,
@@ -697,16 +700,17 @@ The present is owed on a session start and after any gap longer than the stale b
 
 - the daemon's start (a restart, `nova-friend install` again, a new `--session` id), once the
   first beat has said her row's mode;
-- a new session id while it runs (`Daemon.Session`, read each step; the `run` verb does not
-  read one yet, so a harness relaunched under a running daemon is caught by the stale bound or
-  by her own request);
+- a new session id while it runs (`Daemon.Session`, read each step; the `run` verb reads
+  the configured `--session`, or the mailbox's current conversation when that adapter follows
+  a new one);
 - a first delivery after `StaleAfter` (30 minutes) with no turn taken: a message waiting, a
   brief written, or a deferred turn;
 - her own request: a message from her to herself with the subject `present`
   (`nova-bus send --as <me> --to <me> --subject present --body present`).
 
 The present is one turn, and nothing older is ever delivered. Every message waiting on her
-stream is taken off it (the hand, a deferred turn's, the rest read at once) and planned
+stream is taken off it (the hand, a deferred turn's, every pending entry from the previous
+run even before its claim window opens, and a finite snapshot of fresh entries) and planned
 (`PlanPresent`): the newest message from the seat that is no deal and no ping is carried; a
 PING inside the challenge window (`Window`, three minutes, by the store's clock) is answered
 by the daemon as any ping; everything else is acked with the reason `superseded by the
@@ -718,7 +722,12 @@ and working tasks), one line `Skipped: <n> deals, <n> pings, <n> notes, all supe
 present at <time>.` (a deal is `card <id> dealt: ...`; a ping is a PING or a SESSION CHECK; a
 note is anything else; her own request counts as nothing), then the newest coordinator note as
 the session reads it under the seat's authority, or `No note from the coordinator is waiting.`
-The carried note is acked when the turn ends at exit 0, as any turn's message; a present turn
+An unknown seat carries no coordinator note; an old ping or configured coordinator name
+cannot grant instruction authority. Every entry acquired before a store read or clock error
+stays in hand for the retry, so the failed snapshot cannot leave old entries for later replay.
+The snapshot preserves the delivery receipt; a note already stamped acted is superseded,
+so a lost stream ack cannot make it an instruction twice. The carried note is acked when
+the turn ends at exit 0, as any turn's message; a present turn
 that fails is owed again after `RecheckEvery`, carrying the same note.
 
 The acks are on the record (`present at <time>: skipped ... acked=<n> reason="superseded by
@@ -730,13 +739,14 @@ subject=<s>: superseded by the present at <time>`), never delivered. The match i
 stream entry, never by the message's `at`, which is to the second: a message sent in the same
 second after the present is delivered as it comes. Outside a present, a PING read past the
 challenge window is dropped and acked, never answered (`ping <nonce> dropped: sent <at>, past
-the 3m0s challenge window; not answered`). The receipts the session owes for the superseded
+the 3m0s challenge window; not answered`). If the store's clock cannot be read, the
+nonce is withheld for a present retry and never answered on an assumed age. The receipts the session owes for the superseded
 messages (`bus2:owed:<friend>`) are not cleared: only the session gives a receipt
 (docs/SPEC-BUS.md), so the friends table's undelivered count keeps them until a session acks
 them by id.
 
 In one-shot mode there is no batch session to tell: the backlog is superseded and said the same
-way, with no turn, and the lanes hand her cards. A harness with no deliver command reads her
+way, including the newest note, with no turn, and the lanes hand her cards. A harness with no deliver command reads her
 stream itself and is owed no present.
 
 The model is `tla/Delivery.tla` (MCDelivery: three messages, the clock to three, a stale bound

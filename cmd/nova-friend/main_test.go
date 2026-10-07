@@ -925,6 +925,9 @@ func TestRunHoldsAHarnessAtItsLimitUntilItsResetThenWakesIt(t *testing.T) {
 	dir := t.TempDir()
 	state := friend.StateDirIn(dir)
 	w := r.world()
+	w.friends = func(context.Context, string) ([]friend.WakeRow, string, error) {
+		return nil, "ada", nil // the carried startup note comes from the actual seat
+	}
 	var mu sync.Mutex
 	clock := start
 	w.now = func() time.Time { mu.Lock(); defer mu.Unlock(); clock = clock.Add(time.Second); return clock }

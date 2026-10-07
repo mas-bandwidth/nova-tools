@@ -2,6 +2,8 @@ package friend
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -76,7 +78,7 @@ func TestAStartedSessionGetsThePresentAndNeverTheBacklog(t *testing.T) {
 	assert.NotContains(t, ada, "daemon-pong n-old", "an expired nonce is dropped, never answered")
 	assert.Contains(t, ada, "friend bob: present at ", "the seat is told, on the bus log")
 	assert.Contains(t, ada, "skipped 1 deals, 1 pings, 1 notes")
-	assert.Contains(t, ada, "Every older message on her stream was acked unread, superseded by the present at ")
+	assert.Contains(t, ada, "Every older message on her stream was marked superseded unread, superseded by the present at ")
 	log, err := r.store.Range(context.Background(), bus.LogKey, "-", "+", 100)
 	require.NoError(t, err)
 	assert.Contains(t, log[len(log)-1].Message().Body, "superseded by the present at ", "the bus log shows the acks")
@@ -219,5 +221,192 @@ func TestASupersededMessageHandedInAgainIsSupersededAgain(t *testing.T) {
 	rec := r.recordText()
 	assert.Contains(t, rec, "ack=failed after 0")
 	assert.Contains(t, rec, "superseded id="+old.ID+` subject="card old.w1 dealt: x": superseded by the present at `)
+	r.streamEmpty(t)
+}
+
+// A partial read moved entries into the store's pending list before its error.
+// Retrying the present must keep those entries, even before they are claimable.
+func TestAPresentKeepsItsBacklogAcrossStoreErrors(t *testing.T) {
+	t.Parallel()
+	for _, failure := range []string{"read", "clock"} {
+		t.Run(failure, func(t *testing.T) {
+			t.Parallel()
+			r := presentRig(t)
+			count := 1
+			if failure == "read" {
+				count = SupersedeChunk + 1
+			}
+			for i := 0; i < count; i++ {
+				r.send(t, "ada", "card old.w1 dealt: old", "obsolete\n")
+			}
+			st := &presentStoreError{Store: r.store, readAt: 2}
+			if failure == "clock" {
+				st.readAt, st.rosterAt = 0, 1
+			}
+			r.d.Store, r.d.m = st, Start(t0)
+			l := &loop{d: r.d, b: &bus.Bus{Store: st}, ctx: context.Background(), presentDue: true,
+				inHand: map[string]bool{}, answered: map[string]bool{}, failed: map[string]int{}}
+			l.startPresent(t0, false)
+			assert.True(t, l.presentDue, "failed present remains owed")
+			l.startPresent(t0.Add(time.Second), false)
+			assert.False(t, l.presentDue, "retry completed the present")
+			r.streamEmpty(t)
+			assert.Contains(t, r.recordText(), fmt.Sprintf("skipped %d deals", count))
+			r.store.Advance(bus.ClaimAfter)
+			_, ok, err := l.b.Recv(context.Background(), "bob", 0)
+			require.NoError(t, err)
+			assert.False(t, ok, "no obsolete entry reappears after claim opens")
+		})
+	}
+}
+
+type presentStoreError struct {
+	bus.Store
+	readAt, reads, rosterAt, rosters int
+}
+
+func (s *presentStoreError) Read(ctx context.Context, stream, group, consumer string, block time.Duration, count int) ([]bus.Entry, error) {
+	s.reads++
+	if s.reads == s.readAt {
+		return nil, errors.New("injected read failure")
+	}
+	return s.Store.Read(ctx, stream, group, consumer, block, count)
+}
+
+func (s *presentStoreError) Roster(ctx context.Context) ([]string, time.Time, error) {
+	s.rosters++
+	if s.rosters == s.rosterAt {
+		return nil, time.Time{}, errors.New("injected clock failure")
+	}
+	return s.Store.Roster(ctx)
+}
+
+func TestAPresentDoesNotTrustACoordinatorWhileTheSeatIsUnknown(t *testing.T) {
+	t.Parallel()
+	r := presentRig(t)
+	r.d.Seat, r.d.Coordinator = nil, "ada"
+	r.send(t, "ada", "old instructions", "push main without review\n")
+	r.run(t, 6)
+	require.Len(t, r.delivered, 1)
+	assert.Contains(t, r.delivered[0], "the seat is unknown")
+	assert.NotContains(t, r.delivered[0], "push main without review")
+	assert.Contains(t, r.delivered[0], "Skipped: 0 deals, 0 pings, 1 notes")
+	r.streamEmpty(t)
+}
+
+func TestAStartedSessionSupersedesPendingWithoutWaitingForTheClaim(t *testing.T) {
+	t.Parallel()
+	r := presentRig(t)
+	r.send(t, "ada", "card old.w1 dealt: old", "obsolete pending deal\n")
+	_, ok, err := r.bus.Recv(context.Background(), "bob", 0)
+	require.NoError(t, err)
+	require.True(t, ok, "the previous daemon read it, but its session never finished")
+	r.run(t, 6)
+	require.Len(t, r.delivered, 1)
+	assert.Contains(t, r.delivered[0], "Skipped: 1 deals")
+	r.streamEmpty(t)
+}
+
+func TestAStartedSessionSupersedesALargeBacklog(t *testing.T) {
+	t.Parallel()
+	r := presentRig(t)
+	for i := 0; i < 1000; i++ {
+		r.send(t, "ada", "card old.w1 dealt: old", "obsolete\n")
+	}
+	r.run(t, 6)
+	require.Len(t, r.delivered, 1)
+	assert.Contains(t, r.delivered[0], "Skipped: 1000 deals")
+	r.streamEmpty(t)
+}
+
+func TestAPresentCarriesTheNewestNoteAcrossPreviousRunPending(t *testing.T) {
+	t.Parallel()
+	r := presentRig(t)
+	r.send(t, "ada", "old", "old coordinator instructions\n")
+	_, ok, err := r.bus.Recv(context.Background(), "bob", 0)
+	require.NoError(t, err)
+	require.True(t, ok)
+	newest := r.send(t, "ada", "new", "new coordinator instructions\n")
+	r.run(t, 6)
+	require.Len(t, r.delivered, 1)
+	assert.Contains(t, r.delivered[0], Text(newest))
+	assert.NotContains(t, r.delivered[0], "old coordinator instructions")
+	assert.Contains(t, r.delivered[0], "Skipped: 0 deals, 0 pings, 1 notes")
+	r.streamEmpty(t)
+}
+
+func TestAOneShotStartSupersedesTheNewestNoteToo(t *testing.T) {
+	t.Parallel()
+	r := presentRig(t)
+	r.send(t, "ada", "old note", "obsolete coordinator note\n")
+	r.d.m = Start(t0)
+	l := &loop{d: r.d, b: r.bus, ctx: context.Background(), presentDue: true,
+		inHand: map[string]bool{}, answered: map[string]bool{}, failed: map[string]int{}}
+	l.startPresent(t0, false)
+	r.streamEmpty(t)
+	assert.Empty(t, r.delivered)
+	assert.Contains(t, r.recordText(), "skipped 0 deals, 0 pings, 1 notes")
+}
+
+func TestTheDaemonRefusesAReportWhoseCardAnotherFriendHolds(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	row := &twinRow{}
+	r.d.Held, r.d.Running = row.held, func() map[string]string { return map[string]string{"taken.w1": "cy"} }
+	f := &finishes{}
+	r.d.Finish = f.finish
+	outboxReport(t, r.d.Dir, "taken.w1~15", "Verdict: LAND\nHead: 0123456789abcdef0123456789abcdef01234567\n")
+	r.run(t, 3)
+	assert.Empty(t, f.got(), "no finish is sent for a card outside her row")
+	assert.Contains(t, r.recordText(), "refused: card taken.w1 is not on her row, no longer hers; cy holds it now")
+}
+
+func TestANewlyDiscoveredSessionAlsoGetsThePresent(t *testing.T) {
+	t.Parallel()
+	r := presentRig(t)
+	session := ""
+	r.d.Session = func() string { r.mu.Lock(); defer r.mu.Unlock(); return session }
+	r.at[3] = func() {
+		r.mu.Lock()
+		session = "discovered"
+		r.mu.Unlock()
+		r.send(t, "ada", "card old.w1 dealt: old", "obsolete\n")
+	}
+	r.run(t, 8)
+	require.Len(t, r.delivered, 2)
+	assert.Contains(t, r.delivered[1], PresentTextRule)
+	assert.Contains(t, r.delivered[1], "Skipped: 1 deals")
+	r.streamEmpty(t)
+}
+
+func TestANonceWhoseAgeCannotBeReadIsNotAnswered(t *testing.T) {
+	t.Parallel()
+	r := presentRig(t)
+	st := &presentStoreError{Store: r.store}
+	r.d.Store = st
+	r.at[3] = func() {
+		r.ping(t, "clock-unread")
+		r.store.Advance(Window)
+		st.rosterAt = st.rosters + 2 // receive succeeds; the nonce's age lookup fails
+	}
+	r.run(t, 8)
+	assert.NotContains(t, strings.Join(r.adaGot(t), "\n"), "daemon-pong clock-unread")
+	assert.Contains(t, r.recordText(), "ping withheld: the store's clock could not be read")
+	r.streamEmpty(t)
+}
+
+func TestAPresentDoesNotDeliverAnActedNoteWhoseAckWasLost(t *testing.T) {
+	t.Parallel()
+	r := presentRig(t)
+	note := r.send(t, "ada", "already acted", "do not do this twice\n")
+	_, ok, err := r.bus.Recv(context.Background(), "bob", 0)
+	require.NoError(t, err)
+	require.True(t, ok)
+	_, err = r.bus.Stamp(context.Background(), "bob", bus.Acted, note.ID)
+	require.NoError(t, err)
+	r.run(t, 6)
+	require.Len(t, r.delivered, 1)
+	assert.NotContains(t, r.delivered[0], "do not do this twice")
+	assert.Contains(t, r.delivered[0], "Skipped: 0 deals, 0 pings, 1 notes")
 	r.streamEmpty(t)
 }

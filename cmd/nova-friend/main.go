@@ -1283,10 +1283,12 @@ func (w world) run(c *tool.Call) *tool.Out {
 		SilentStop: c.Dur("silent-stop"), BrokenAfter: c.Int("broken-after"), Coordinator: c.Str("coordinator"),
 		Mailbox: mailbox,
 		Session: func() string {
-			if mailbox != nil { return mailbox.Live() }
+			if mailbox != nil {
+				return mailbox.Live()
+			}
 			return c.Str("session")
 		},
-		Queued:  queued,
+		Queued: queued,
 		Activity: func() time.Time {
 			return friend.NewestWrite(os.DirFS(dir), friend.ActivityRoots, w.now, friend.DefaultActivityLimits)
 		},

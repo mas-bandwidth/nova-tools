@@ -413,14 +413,14 @@ type loop struct {
 	reads        *readSet
 	mode         string // the mode the daemon delivers in now
 	saidNoLanes  bool
-	dealt        []string       // the inbox briefs the daemon wrote that the session has not been told of (batch mode)
-	wake         bool           // a wake check is owed: the pong line goes in as its own turn when the session is free (startWake)
-	saidRefusal  string         // the card runner's refusal last recorded, "" when it runs
-	tag          string         // this daemon's tag in its lanes' names on a lane mark (laneTag, one_lane.go)
-	following    atomic.Bool    // a Mailbox.Follow runs
-	followWG     sync.WaitGroup // it, waited for when Run ends
-	seatHolder   string         // the seat holder as last read; empty while unknown
-	seatRead     time.Time      // when it was read; zero before the first read
+	dealt        []string        // the inbox briefs the daemon wrote that the session has not been told of (batch mode)
+	wake         bool            // a wake check is owed: the pong line goes in as its own turn when the session is free (startWake)
+	saidRefusal  string          // the card runner's refusal last recorded, "" when it runs
+	tag          string          // this daemon's tag in its lanes' names on a lane mark (laneTag, one_lane.go)
+	following    atomic.Bool     // a Mailbox.Follow runs
+	followWG     sync.WaitGroup  // it, waited for when Run ends
+	seatHolder   string          // the seat holder as last read; empty while unknown
+	seatRead     time.Time       // when it was read; zero before the first read
 	presentDue   bool            // the present is owed: the session started, its id changed, or she asked (present.go)
 	presentAt    time.Time       // the store's time of the last present, named in the reason
 	lost         map[string]bool // entries the present superseded whose ack failed: superseded again when the claim hands them in
@@ -485,8 +485,8 @@ func (d *Daemon) Run(ctx context.Context) error {
 			if s := d.Session(); s != l.session {
 				if l.session != "" {
 					d.Record(fmt.Sprintf("%s session: %s, was %s: the present is owed", now.UTC().Format(time.RFC3339), s, l.session))
-					l.presentDue = true
 				}
+				l.presentDue = true
 				l.session = s
 			}
 		}
