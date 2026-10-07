@@ -568,7 +568,11 @@ func sourceLine(s *sink, token string, src *tokens.Source) string {
 }
 
 func unreadableLine(s *sink, token string, u tokens.Unreadable) string {
-	return s.line(token, "UNREADABLE", oneline.Cap(u.Why, oneline.TailBytes), "label", u.Label, "path", u.Path)
+	why := u.Why
+	if u.Line > 0 {
+		why = "line " + strconv.Itoa(u.Line) + ": " + why
+	}
+	return s.line(token, "UNREADABLE", oneline.Cap(why, oneline.TailBytes), "label", u.Label, "path", u.Path)
 }
 
 func unparsedLine(s *sink, token string, u tokens.Unparsed) string {
@@ -594,6 +598,13 @@ func checkDay(r *refusals, day string, all bool) {
 func remedy(sources []*tokens.Source, unreadable, unparsed, mixed, conflict, shrank, partial, quiet int, allowShrink, dryRun bool, out, mixedLabels, firstPartial, firstQuiet string) string {
 	switch {
 	case unreadable > 0:
+		// A line that is not JSON is not a permission problem: its remedy is the one act
+		// that clears it, naming the file and the first bad line. Every other unreadable
+		// (a file that would not open, a day file this run could not write) keeps the
+		// permission remedy SPEC-TOKENS gives.
+		if u, ok := firstBadline(sources); ok {
+			return "a declared source has a line that is not JSON (" + u.Label + ", " + u.Path + " line " + strconv.Itoa(u.Line) + "): inspect or remove that line, or drop the flag"
+		}
 		return "a declared source could not be read whole (" + firstUnreadableLabel(sources) + "): open those files to this group, or drop the flag -- a declared source is a claim that the report covers it"
 	case unparsed > 0:
 		// The advice is for the KIND that failed. Every unparsed was a bus line once, and
@@ -645,6 +656,19 @@ func firstUnreadableLabel(sources []*tokens.Source) string {
 		}
 	}
 	return "-"
+}
+
+// firstBadline is the first unreadable whose failure is a line that is not JSON, and the
+// one the NOTE's remedy names: a bad line is inspected or removed, never opened to a group.
+func firstBadline(sources []*tokens.Source) (tokens.Unreadable, bool) {
+	for _, s := range sources {
+		for _, u := range s.Unreadables {
+			if u.Line > 0 {
+				return u, true
+			}
+		}
+	}
+	return tokens.Unreadable{}, false
 }
 
 // firstUnparsed names the kind of the first source with an unparsed line and what it was
