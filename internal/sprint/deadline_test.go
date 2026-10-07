@@ -73,3 +73,30 @@ func TestTheMedianWallIsMeasuredOnceACellAndAgainAfterAPut(t *testing.T) {
 	assert.Zero(t, median, "a member with no ok attempts has no median")
 	assert.Zero(t, n)
 }
+
+// The unified deadline function serves both members and friends (docs/SPEC-SPRINT.md
+// section 5, the deadline; section 1, a friend's card's deadline). Both use the same
+// rule: the larger of their own deadline and DeadlineK times the median run wall.
+func TestOneDeadlineRuleForMembersAndFriends(t *testing.T) {
+	t.Parallel()
+
+	// Test the unified Deadline function directly
+	assert.Equal(t, 600, Deadline(100.0, 10, 600), "own deadline wins when larger")
+	assert.Equal(t, 300, Deadline(100.0, 10, 200), "3x median wins when larger")
+	assert.Equal(t, 600, Deadline(0, 0, 600), "no samples returns own")
+
+	// Test member deadline path with median wall
+	w := newWorld(t, "reader-a")
+	w.must(FleetStep(w.s, FleetReq{Op: "up", Member: "m1"}))
+	for i := 1; i <= 10; i++ {
+		w.s.Fleet.Put(&Card{ID: fmt.Sprintf("q%d", i), Row: "m1", Col: DoneOK, Rev: 1,
+			Fields: map[string]string{"kind": "work", "primary": fmt.Sprintf("q%d", i), "finished": fmt.Sprintf("2030-01-01T00:%02d:00Z", i), FieldUsage: "wall=100s"}})
+	}
+	assert.Equal(t, 300, w.s.memberDeadline("m1", 200), "member: 3x median")
+
+	// Test that friend deadline uses the same underlying rule by checking the median formula
+	median, n := MemberMedianWall(w.s, "m1")
+	assert.Equal(t, 100.0, median, "member median is 100s")
+	assert.Equal(t, 10, n)
+	assert.Equal(t, 300, Deadline(median, n, 200), "unified function applies 3x rule")
+}

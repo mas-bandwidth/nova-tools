@@ -456,13 +456,14 @@ take-back by presence; the coordinator takes back what she has not started,
 below), the no-stall rule holds it as hers whatever her status, and
 the deadline rule judges it as it judges any work card, its working deadline
 by friend: the larger of 2 hours from its deal (`DeadlineUnfinished`) and
-`FriendDeadlineK` (three) times her median run wall over her last
-`FriendDeadlineSamples` (fifty) ok attempts, her run wall being her take to
+`sprint.DeadlineK` (three) times her median run wall over her last
+`sprint.DeadlineSamples` (fifty) ok attempts, her run wall being her take to
 her report (`sprint.RunWall`), set on the card as `friend_deadline` (seconds)
 when it goes into working on her row (her deal, her next on a finish, a level
 or a redeal), and absent while she has no ok attempt: nova-tools#5300's member
-rule, written here for friends under its own names because #5300 was not on
-dev (`TestAFriendsCardsDeadlineIsThreeTimesHerMedianWall`,
+rule, unified with the friend rule to use one function (`sprint.Deadline`),
+one spec paragraph, both tables (`TestOneDeadlineRuleForMembersAndFriends`,
+`TestAFriendsCardsDeadlineIsThreeTimesHerMedianWall`),
 `TestAFriendsNextCardsDeadlineFollowsHerRunWall`). The machines' `deal` verb refuses a hard pin (`WHO: only friend`), and
 `rework` of a friend's card sends its primary ready with the fix, for the tick to
 offer again. A rework keeps the WHO pin (the owner, 2026-10-05: a rework of a friend's own

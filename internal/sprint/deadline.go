@@ -129,10 +129,7 @@ func (s *Snapshot) memberDeadline(member string, own int) int {
 		return ctl.Int(FieldMemberDeadline)
 	}
 	median, n := MemberMedianWall(s, member)
-	if n == 0 {
-		return own
-	}
-	return max(own, int(math.Ceil(DeadlineK*median)))
+	return Deadline(median, n, own)
 }
 
 // dealDeadline sets the work card's deadline field for a deal to the member
@@ -167,4 +164,20 @@ func ParseDeadline(text string) (seconds int, off bool, err error) {
 		return 0, false, fmt.Errorf("--deadline wants a duration above zero up to 24h (45m, 2700s), or %s to take the pin off; found %q", ReadTierDefault, text)
 	}
 	return int(math.Ceil(d.Seconds())), false, nil
+}
+
+// parseDeadline is used internally.
+func parseDeadline(text string) (seconds int, off bool, err error) {
+	return ParseDeadline(text)
+}
+
+// Deadline is the unified deadline function for both members and friends (docs/SPEC-SPRINT.md
+// section 5, the deadline; section 1, a friend's card's deadline). The deadline a card gets
+// is the larger of its own deadline and DeadlineK times the member/friend's median run wall
+// over the last DeadlineSamples ok attempts. The function returns the deadline in seconds.
+func Deadline(median float64, n int, own int) int {
+	if n == 0 {
+		return own
+	}
+	return max(own, int(math.Ceil(DeadlineK*median)))
 }
