@@ -601,7 +601,7 @@ func TestAckAnswersOnlyTheTypesThatListIt(t *testing.T) {
 // judgment the coordinator's answer closes is none of them.
 func TestTickKeptList(t *testing.T) {
 	t.Parallel()
-	keeps := []string{NBound, NCannotAsk, NFewReaders, NNoMember, NStarving, NOverloaded, NAdoptFailed, NReadersBehind, NDevBehind, NRaiseReadTier, NNoRoute, NProviderFunds, NProviderLow, NProviderKey, NAllOutOfCredit, NInvariant, NWorkLate, NReadLate, NMergeLate, NStalled, NRemindFailed,
+	keeps := []string{NBound, NCannotAsk, NFewReaders, NNoMember, NStarving, NOverloaded, NAdoptFailed, NReadersBehind, NDevBehind, NRaiseReadTier, NNoRoute, NBlockerWaits, NProviderFunds, NProviderLow, NProviderKey, NAllOutOfCredit, NInvariant, NWorkLate, NReadLate, NMergeLate, NStalled, NRemindFailed,
 		NAlarmReview, NAlarmMerging, NAlarmReady, NAlarmFleet, NFilesAlarm, NFriendDeaf, NFriendIdle, NCoordinatorBehind, NFriendEmpty, NPinIgnored,
 		NDriftAhead, NDriftCardBase, NDriftServer, NDriftBaseRed, NStatus}
 	got := []string{NRemindFailed}

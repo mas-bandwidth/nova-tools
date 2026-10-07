@@ -143,3 +143,47 @@ func (ta *testApp) readersReadPro() {
 		ta.ok("reader set " + strings.Join(rows, " ") + " --tiers flash,pro")
 	}
 }
+
+// The verb is a plain set (the owner, 2026-10-06: "You should be able to set the priority on a
+// card higher or lower or the same. It's just a set. That's the verb."): every level of the
+// ladder is stored and read back as set, blocker and critical included, higher, lower or the
+// same; where and card carry it; a blocker primary's read inherits blocker.
+func TestPriorityStoresEveryLevel(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.ok("init --readers reader-a,reader-b --members m1")
+	ta.ok("add --stream s1 --count 2")
+	// higher, lower and the same, in an order that climbs and falls
+	for _, level := range []string{sprint.PriorityHigh, sprint.PriorityBlocker, sprint.PriorityLow, sprint.PriorityCritical, sprint.PriorityNormal, sprint.PriorityBlocker} {
+		out := ta.ok("priority s1-1 --" + level + " --reason 'set " + level + "'")
+		assert.Contains(t, out, "-> "+level+": set "+level, "the change is said")
+		assert.Contains(t, ta.ok("priority s1-1"), "s1-1 priority="+level+" source=set", "read back as set")
+		l, src := ta.cardPriority("s1-1")
+		assert.Equal(t, [2]string{level, "set"}, [2]string{l, src}, "card --json carries it")
+		assert.Contains(t, ta.ok("card s1-1"), "priority="+level)
+		ta.ok("tick")
+		var v whereView
+		ta.json("where", &v)
+		if level == sprint.PriorityNormal {
+			assert.Empty(t, v.Priorities, "normal is the default: no priority line")
+		} else {
+			assert.Equal(t, []string{"s1-1"}, v.Priorities[level], "where --json carries it under its level")
+		}
+	}
+	assert.Contains(t, ta.ok("priority s1-1 --blocker --reason again"), "s1-1 priority blocker already; no change", "the same level is said, not changed")
+	assert.Contains(t, ta.ok("priority s1-1.r1.reader-a"), "priority=blocker source=read:inherited-from-s1-1", "a blocker primary's read is blocker")
+	// a stream default of blocker and critical is stored too
+	ta.ok("priority --stream s1 --critical --reason 'the release'")
+	var v whereView
+	ta.ok("tick")
+	ta.json("where", &v)
+	assert.Equal(t, map[string]string{"s1": sprint.PriorityCritical}, v.StreamPriorities)
+	assert.ElementsMatch(t, []string{"s1-1", "s1-2"}, v.Priorities[sprint.PriorityCritical])
+	ta.ok("priority --stream s1 --blocker --reason 'stop everything'")
+	ta.ok("tick")
+	ta.json("where", &v)
+	assert.Equal(t, map[string]string{"s1": sprint.PriorityBlocker}, v.StreamPriorities)
+	ta.ok("add --stream s1 --count 1 --one")
+	l, src := ta.cardPriority("s1-3")
+	assert.Equal(t, [2]string{sprint.PriorityBlocker, "set"}, [2]string{l, src}, "a card added later takes the blocker default")
+}

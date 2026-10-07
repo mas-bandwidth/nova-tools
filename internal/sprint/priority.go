@@ -20,8 +20,8 @@ import (
 // nothing higher can fill. The deal and the ask order their cards by the ladder, then stream
 // turns within a level (ladderOrder, readOrder); land orders the streams by their merging
 // sets' levels (LandOrder), each batch as it was. Owed with the reference model: the weight
-// within a level and the computed critical in the deal's and the ask's order. Preemption by a
-// blocker is its own card.
+// within a level and the computed critical in the deal's and the ask's order. A blocker that
+// no row has room for evicts one running card (priority_evict.go, tla/Priority.tla).
 
 // The priority ladder, highest first.
 const (

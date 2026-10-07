@@ -1330,6 +1330,11 @@ func takeOne(s *Snapshot, r TakeReq) Plan {
 			}
 			return 1
 		})
+	}
+	// then the ladder, stable: a blocker's work first, before the reads (ladderOrder: a
+	// card's level as its deal wrote it, priority_evict.go), the reads before normal work
+	ready = ladderOrder(ready)
+	if halves {
 		if !byID {
 			// a take by count takes the cards that fit, in order: a work card that does not
 			// fit is passed over for the reads after it

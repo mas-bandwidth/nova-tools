@@ -132,6 +132,7 @@ var TickDecisions = map[string][]string{
 	NRaiseReadTier: {"raise", "keep"},                            // readtier.go
 	NDevBehind:     {"promoted", "wait 30m"},                     // promotion.go
 	NNoRoute:       {"route add", "look at the card", "drop", "wait"},
+	NBlockerWaits:  {"wait", "drop"}, // every lane it could take holds a blocker (priority_evict.go)
 	// a payment and a key are the owner's: no rework is offered (provider_funds.go)
 	NProviderFunds:  {"ack", "wait"}, // and "funded <provider>", named per provider (providerConds)
 	NProviderLow:    {"ack", "wait"}, // the same
@@ -803,6 +804,23 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 		}
 	}
 	p.Units = append(reads.Units, p.Units...)
+	// a blocker placed nowhere whose rows are all at their room evicts one running card
+	// (priority_evict.go): the room it frees takes the blocker on the tick that follows
+	{
+		placed, touched := map[string]bool{}, map[string]bool{}
+		for _, u := range p.Units {
+			placed[u.Key] = true
+			for _, ch := range u.Changes {
+				if ch.Table == Fleet {
+					touched[ch.Entry.ID] = true
+				}
+			}
+		}
+		evicted, waits := blockerEvictions(s, placed, touched, up, r.who())
+		p.Units = append(p.Units, evicted...)
+		conds = append(conds, waits...)
+		due += len(evicted)
+	}
 	if len(r.Friends) > 0 {
 		// the friends level after the deal, every tick and on the tick a friend comes up, so
 		// an idle lane is filled and a backlog evens itself without the coordinator, at most
@@ -835,7 +853,7 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 	// a ready card dealt on a route that rests now is withdrawn, never taken there
 	p.Units = append(p.Units, restWithdrawals(s, r.who())...)
 	restWrites(&p, s, rests, r.who())
-	due += notify(&p, s, conds, []string{NNoMember, NStarving, NOverloaded, NAdoptFailed, NDevBehind, NBound, NNoRoute, NProviderFunds, NProviderLow, NProviderKey, NAllOutOfCredit}, r)
+	due += notify(&p, s, conds, []string{NNoMember, NStarving, NOverloaded, NAdoptFailed, NDevBehind, NBound, NNoRoute, NBlockerWaits, NProviderFunds, NProviderLow, NProviderKey, NAllOutOfCredit}, r)
 	// every provider out of credit: the binding stops the machine as the plan commits
 	p.Stop = stop
 	return p, due
