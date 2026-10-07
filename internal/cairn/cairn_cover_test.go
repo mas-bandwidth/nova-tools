@@ -149,7 +149,6 @@ func TestCairnCoverPlanAppend(t *testing.T) {
 		assert.Equal(t, PublishManual, res.Policy, "an empty publish carries the session's recorded policy")
 		assert.Equal(t, "bench-a/session-7", res.Source, "an empty source carries the session's pointer")
 		assert.False(t, res.Persisted, "words not yet stored are not persisted, got %+v", res)
-		assert.False(t, res.Published, "this package never publishes, got %+v", res)
 		assert.False(t, res.Duplicate, "a fresh plan is no duplicate, got %+v", res)
 		assert.NoFileExists(t, entryPath(store, "s", "e"), "the plan must write no entry file")
 		log, err := os.ReadFile(filepath.Join(store, "log.jsonl"))

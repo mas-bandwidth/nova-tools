@@ -75,7 +75,6 @@ func TestConcurrentAppendKeepsFirstProse(t *testing.T) {
 				continue
 			}
 			require.True(t, o.res.Persisted, "an accepted writer reports persisted, got %+v", o.res)
-			require.False(t, o.res.Published, "local persistence never implies publication, got %+v", o.res)
 			if o.res.Duplicate {
 				continue
 			}
@@ -124,7 +123,6 @@ func TestConcurrentAppendKeepsFirstProse(t *testing.T) {
 		for _, o := range outcomes {
 			require.NoError(t, o.err, "identical prose never conflicts")
 			require.True(t, o.res.Persisted, "an accepted writer reports persisted, got %+v", o.res)
-			require.False(t, o.res.Published, "local persistence never implies publication, got %+v", o.res)
 			if !o.res.Duplicate {
 				winners++
 				winnerStamp = o.res.Stamp

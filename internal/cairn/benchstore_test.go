@@ -60,7 +60,7 @@ func TestAppendLandsInTheBenchFileStore(t *testing.T) {
 
 	res, err := Append(store, session, "beat-1405", prose, "transcript#L1", now, "manual")
 	require.NoError(t, err, "Append into the bench store")
-	persistedNotPublished(t, res.Persisted, res.Published, "append must report persisted=true published=false, got %+v", res)
+	persistedDurable(t, res.Persisted, "append must report persisted=true, got %+v", res)
 
 	got := testkit.ReadFile(t, file)
 	require.True(t, strings.HasPrefix(got, string(before)), "the hand-kept record was rewritten; an append only adds to the end")
@@ -222,7 +222,7 @@ func TestABenchAppendReplacesTheFileAtomicallyAndKeepsItsMode(t *testing.T) {
 
 	res, err := Append(store, session, "beat-atomic", prose, "transcript#L1", now, "manual")
 	require.NoError(t, err, "Append into bench store")
-	persistedNotPublished(t, res.Persisted, res.Published, "append must report persisted=true published=false, got %+v", res)
+	persistedDurable(t, res.Persisted, "append must report persisted=true, got %+v", res)
 
 	infoAfter, err := os.Lstat(file)
 	require.NoError(t, err, "lstat bench store file after append")

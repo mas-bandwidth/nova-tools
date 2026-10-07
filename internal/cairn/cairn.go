@@ -48,8 +48,9 @@ import (
 )
 
 // Publish policies name who publishes a checkpoint and when. This package
-// implements no transport: every append reports Published=false and the
-// policy travels with the entry, so a later explicit act can carry it.
+// implements no transport: the tool prints published=false for every append
+// and receipt, and the policy travels with the entry, so a later explicit act
+// can carry it.
 const (
 	PublishNever     = "never"
 	PublishManual    = "manual"
@@ -120,12 +121,11 @@ func (e *NotFoundError) Error() string { return e.Msg }
 
 // AppendResult separates what this package guarantees from what it does not:
 // Persisted is true once the words are fsync-durable on this machine (false
-// only for a plan, PlanAppend, of words not yet stored); Published names the
-// remote, which this package never touches.
+// only for a plan, PlanAppend, of words not yet stored); the tool prints the
+// remote fact, published=false, apart from it.
 type AppendResult struct {
 	Stamp     time.Time // the stamp actually stored, including on a duplicate retry
 	Persisted bool
-	Published bool
 	Policy    string
 	// Source is the pointer the entry carries: its own --source, or the
 	// session's when the append named none.
@@ -134,7 +134,8 @@ type AppendResult struct {
 }
 
 // ReceiptInfo is what receipt and index read back: the stamp, the pointer,
-// the size, and the same persisted/published split the append reported.
+// the size, and the persisted fact the append reported; the tool prints
+// published=false beside it.
 type ReceiptInfo struct {
 	Session   string
 	ID        string
@@ -143,7 +144,6 @@ type ReceiptInfo struct {
 	Bytes     int
 	Policy    string
 	Persisted bool
-	Published bool
 }
 
 // IndexRow is one row of the entry index.
@@ -611,8 +611,8 @@ func ensurePointer(store, session, id string, stamp time.Time) error {
 // stamp and a source pointer. A retry of the same request succeeds with
 // Duplicate=true and no second entry; the same id with other words is a
 // conflict, never an overwrite. Offline use succeeds: the result carries
-// Persisted=true with Published=false, because local durability never waits
-// for a remote.
+// Persisted=true and the tool prints published=false, because local durability
+// never waits for a remote.
 //
 // An empty source carries the session's, and an empty publish the session's
 // recorded policy: open named where the record points back to and who
@@ -774,7 +774,7 @@ func existingAppend(store, session, id, text, final string, write bool) (AppendR
 			return res, false, err
 		}
 	}
-	return AppendResult{Stamp: prevStamp, Persisted: true, Published: false, Policy: prev.Publish, Source: prev.Source, Duplicate: true}, true, nil
+	return AppendResult{Stamp: prevStamp, Persisted: true, Policy: prev.Publish, Source: prev.Source, Duplicate: true}, true, nil
 }
 
 // readEntry loads one stored entry or explains its absence. It validates that
@@ -836,8 +836,8 @@ func EntryText(store, session, id string) (string, error) {
 }
 
 // Receipt names what was preserved for one entry: its stamp, pointers and
-// size, with the persisted/published split repeated so a reader never has to
-// infer the remote from the local.
+// size, with the persisted fact repeated and published=false printed beside
+// it, so a reader never has to infer the remote from the local.
 func Receipt(store, session, id string) (ReceiptInfo, error) {
 	var rc ReceiptInfo
 	if err := existingStore(store); err != nil {
