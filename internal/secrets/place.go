@@ -408,7 +408,11 @@ func RunPlaced(in PlacedInput) (string, []string, error) {
 func sshPlaceSecret(run execCommand, refuseHosts func(string, ...string), sshPath, target, remotePath, value string) error {
 	remoteCmd := fmt.Sprintf("umask 077 && set -e && mkdir -p \"$(dirname %s)\" && cat > %s && chmod 600 %s",
 		shSingleQuote(remotePath), shSingleQuote(remotePath), shSingleQuote(remotePath))
-	refuseHosts(sshPath, target, remoteCmd)
+	if refuseHosts == nil {
+		testguard.RefuseHosts(sshPath, target, remoteCmd)
+	} else {
+		refuseHosts(sshPath, target, remoteCmd)
+	}
 	_, err := runOr(run)(bytes.NewReader([]byte(value)), nil, "", sshPath, target, remoteCmd)
 	if err != nil {
 		// The remote transcript is withheld; it can carry a command's own output and this
