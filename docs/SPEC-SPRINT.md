@@ -690,13 +690,19 @@ has room, the read waits as a machine read waits for a reader's: due, noted
 `waiting for a reader`, no judgment. With no such friend up, the machine's ask
 stands, including the one judgment a read with fewer readers up than it needs
 already raises (`fewer than two readers up`). The ask writes
-`inbox/<read-card>/BRIEF.md` in her working directory when it knows it: the
-primary's AS A READ section through the next heading, the attempt's branch
+`inbox/<read-card>/BRIEF.md` in her working directory when it knows it: an
+`AS A READ` heading, then the primary's AS A READ section through the next
+heading when that heading is present in the stored brief, the attempt's branch
 (the work card's), its start commit and its head named separately,
 `WHO: friend <name>`, and a deadline of thirty minutes on the sprint's clock.
-A generated brief's AS A READ section (`cardgen.AsARead`) says a `By:`
-trailer is judged only for being present and true, the friend who pushed, so a
-reader never fails a head because the WHO line preferred another friend. `friend sync` writes that brief when the ask has not, and a
+`cardgen.AsARead` says a `By:`
+trailer is judged only for being present and true, the worker who pushed, so a
+reader never fails a head because the WHO line preferred another worker. That
+section rides in the long form and in the contract a brief by reference names
+(docs/SPEC-CARD-CONTRACT.md section 7). The ask copies an `AS A READ` heading
+that is present in the stored brief; it does not open the contract file, so a
+brief stored by reference yields the heading and an empty section
+(`sprint.asARead`). `friend sync` writes that brief when the ask has not, and a
 `Verdict: LAND` or a `Verdict: HOLD` with a finding that names a file, a line
 or a rule in `outbox/<read>/REPORT.md` retires that read on her fleet row
 the way a reader's verdict does (`FriendReadClose`: LAND is ok, and a HOLD
@@ -1555,6 +1561,16 @@ card's child reads. The bytes a card no longer carries are the RULES paragraph o
 `TestAddStoresTheCardTextAloneAndNamesItsRules`). **Rollout:** the members are released before the
 coordinator's `nova-sprint`: a coordinator with rules by reference stores cards without their
 rules, and a member older than it injects none, so its children would read no rules.
+
+**The contract, by reference** (docs/SPEC-CARD-CONTRACT.md section 7). A generated brief is
+its header lines and one line `Contract: docs/SPEC-CARD-CONTRACT.md <version>`. The frame
+those briefs used to repeat lives once in that file, versioned. `add` holds a brief by
+reference as the lane reads it: `lintBriefReads` puts this build's copy of the named version
+in place of the line and lints that, beside the held rules by reference, and stores the brief
+as it was given. A version this build does not hold is the finding `contract-version`. No
+contract option is passed. The nova-friend daemon leaves the line when the staged checkout
+holds the block, and puts the text in its place only when the harness cannot read the
+repository first.
 
 **Work card** (consumer). What a child with a worktree is handed: the brief and
 the place to work, and on a later attempt the fix, the finding of the broken read that
@@ -3455,7 +3471,9 @@ reads close as `read --ok|--broken` closes them, and it leaves review only by th
   (`ReadCardBrief`): the STATUS line (a read: change nothing, commit nothing, push nothing; the
   report's path), what a read is, the repository, branch, head, base and start, how to read (the
   clone, the checkout of the head, the diff, what to judge against: the card's HOW THIS CARD IS
-  JUDGED and AS A READ, its task, STEPS, TEST, PATHS and RULES, the tests to run), how to finish
+  JUDGED and AS A READ when the stored brief has them, its task, STEPS, TEST, PATHS and RULES;
+  a brief by reference keeps STEPS, RULES and AS A READ in the contract file, and this brief
+  does not open that file), how to finish
   (outbox/<job>/REPORT.md whose first line is `Verdict: LAND` or `Verdict: HOLD`, a HOLD naming
   each defect), and the card under review verbatim with the worker's report. A one-shot runner
   that runs inbox/<job>/BRIEF.md and publishes outbox/<job>/REPORT.md runs it unchanged

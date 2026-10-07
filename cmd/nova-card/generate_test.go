@@ -237,7 +237,6 @@ func TestAGeneratedCardThatWritesAModelIsTieredFrontier(t *testing.T) {
 	assert.NoDirExists(t, out2)
 }
 
-
 // TestTheUsageBannerPrintsEachExampleOnce verifies that each example line appears
 // exactly once in the help output for the generate command.
 func TestTheUsageBannerPrintsEachExampleOnce(t *testing.T) {
@@ -256,4 +255,35 @@ func TestTheUsageBannerPrintsEachExampleOnce(t *testing.T) {
 		count := strings.Count(banner, line)
 		assert.Equal(t, 1, count, "example line should appear exactly once, found %d times: %s", count, line)
 	}
+}
+
+// generate writes the brief by reference: header lines and the Contract: line last, the
+// task on STOP. --full-frame writes the long form, the frame in the brief and no Contract
+// line (docs/SPEC-CARD-CONTRACT.md section 7).
+func TestGenerateWritesTheBriefByReferenceAndTheLongFormOnItsFlag(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	findings := filepath.Join(dir, "f.tsv")
+	require.NoError(t, os.WriteFile(findings, []byte("internal/bus/send.go:12\tthe receipt is not fsynced\tcall f.Sync before close\tinternal/bus TestReceiptIsFsynced\n"), 0o644))
+	args := []string{"generate", "--from", "findings", "--file", findings, "--repo", "o/r", "--base", "dev", "--sha", strings.Repeat("ab", 20)}
+	out := filepath.Join(dir, "cards")
+	exit, _, stderr := runCard(append(args, "--out", out)...)
+	require.Equal(t, 0, exit, stderr)
+	raw, err := os.ReadFile(filepath.Join(out, "finding-internal-bus-send.md"))
+	require.NoError(t, err)
+	brief := string(raw)
+	assert.True(t, strings.HasSuffix(brief, cardgen.ContractLine()+"\n"), brief)
+	assert.Contains(t, brief, "\nSTOP: ")
+	assert.NotContains(t, brief, "\nRULES.\n")
+	assert.NotContains(t, brief, "\nAS A READ\n")
+
+	out2 := filepath.Join(dir, "long")
+	exit, _, stderr = runCard(append(args, "--out", out2, "--full-frame")...)
+	require.Equal(t, 0, exit, stderr)
+	raw, err = os.ReadFile(filepath.Join(out2, "finding-internal-bus-send.md"))
+	require.NoError(t, err)
+	long := string(raw)
+	assert.Contains(t, long, "\nRULES.\n")
+	assert.Contains(t, long, "\nAS A READ\n")
+	assert.NotContains(t, long, cardgen.ContractLine())
 }

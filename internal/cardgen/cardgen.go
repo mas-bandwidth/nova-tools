@@ -634,6 +634,10 @@ type Header struct {
 	Base    string // the branch
 	Sha     string // the base sha, 40 hex
 	Minutes int    // the deadline; 0 takes the tier's default
+	// Full renders the long form, the whole frame written into the brief, on an explicit
+	// flag (nova-card generate --full-frame); by default a brief carries the contract by
+	// reference (docs/SPEC-CARD-CONTRACT.md section 7).
+	Full bool
 }
 
 // Attribution is the line every brief carries about its commit's By: trailer. A brief
@@ -647,9 +651,11 @@ type Header struct {
 // name (check author-name).
 const Attribution = "ATTRIBUTION: By: your own name, the worker who does this attempt, on its own line at the end of every commit message; a model name is never a By:, and this brief names no author: its WHO line, if any, is a preference for who is dealt the card, never the name to sign. Below the By: line, a Claude worker adds its true Co-Authored-By trailer (Claude, its model, the noreply@anthropic.com address); any other worker adds no Co-Authored-By.\n"
 
-// AsARead is the brief's AS A READ section, the text a reader of the work is given
-// (sprint.FriendReadBrief carries it through the next heading): a By: trailer is judged
-// only for being present and true.
+// AsARead is the brief's AS A READ section, the text a reader of the work is given: a By:
+// trailer is judged only for being present and true. It rides in the long form and in the
+// contract a brief by reference names (docs/SPEC-CARD-CONTRACT.md section 7).
+// sprint.FriendReadBrief copies an AS A READ heading that is present in the stored brief
+// through the next heading; it does not open the contract file.
 const AsARead = "AS A READ\nA By: trailer is judged only for being present and true: it names the worker who pushed the branch under read, whoever was preferred for the card. A trailer naming another friend than a WHO line or an earlier brief expected is no finding, and attribution alone never decides a verdict; read the change against the task, its test and its PATHS.\n"
 
 // Deadline is the minutes a tier gets when the header names none.
@@ -679,11 +685,13 @@ func touchesModels(paths []string) bool {
 	})
 }
 
-// Render writes one brief: the header lines nova-sprint add reads, the paragraph
-// every card of the night carried, the rules verbatim from the card template, the
-// ATTRIBUTION line, the task, the steps, and the AS A READ section a reader is given.
-// It is the card template's shape with the <...> filled, so it passes the add's lint
-// and nova-swarm lint --card --child-rules by construction.
+// Render writes one brief. By default it is the brief by reference (docs/SPEC-CARD-CONTRACT.md
+// section 7): the header lines nova-sprint add reads, the task on its STOP line with what
+// done is, and the Contract: line last, which names the frame the lane reads once from the
+// repository. With h.Full it is the long form: the header lines, the paragraph every card
+// of the night carried, the rules verbatim from the card template, the ATTRIBUTION line,
+// the task, the steps, and the AS A READ section a reader is given. Either passes the
+// add's lint by construction, the brief by reference read with its contract (AsRead).
 func Render(h Header, c Card) string {
 	minutes := h.Minutes
 	if minutes == 0 {
@@ -727,7 +735,14 @@ func Render(h Header, c Card) string {
 	}
 	fmt.Fprintf(&b, "TEST: %s\n", c.Test)
 	fmt.Fprintf(&b, "START: %s, %s\n", c.File, pkg)
-	fmt.Fprintf(&b, "STOP: the test %s is red before the change and green after it, and the STEP 4 gate passes\n", testName(c.Test))
+	done := fmt.Sprintf("the test %s is red before the change and green after it, and the STEP 4 gate passes", testName(c.Test))
+	if !h.Full {
+		fmt.Fprintf(&b, "STOP: %s Done when %s.%s\n", strings.Join(strings.Fields(c.Task), " "), done, model)
+		fmt.Fprintf(&b, "Deadline: finish within %d minutes.\n", minutes)
+		b.WriteString(ContractLine() + "\n")
+		return b.String()
+	}
+	fmt.Fprintf(&b, "STOP: %s\n", done)
 	fmt.Fprintf(&b, "Deadline: finish within %d minutes.\n", minutes)
 	fmt.Fprintf(&b, "You are a child of the coordinator: one task, one staged checkout, one branch, unattended. This card is the whole task. Read $JOB/JOB.md first. Start at the current BASE tip; admission inspected exact base %s. Verify the defect still exists before editing; if already fixed report not-done with exact evidence rather than duplicate work. One change, one test that is red before and green after.\n", h.Sha)
 	b.WriteString("Libraries considered: the Go standard library and testify, already in the tree; the package's own seams and helpers; no new dependency, and no helper over thirty lines without first searching the package for one.\n\n")
@@ -762,7 +777,9 @@ var placeholderRE = regexp.MustCompile(`<[a-z][a-z0-9 -]*>`)
 // Lint holds one rendered brief to what nova-sprint add holds it to (cmd/nova-sprint
 // verbs.go lintBriefReads): the model lines of line 1, the child rules, the typed
 // header and a tree card's steps; and to the template's own placeholders, which the
-// add does not read but nova-swarm lint --card does. Empty means admitted.
+// add does not read but nova-swarm lint --card does. A brief by reference is held with
+// the contract of its version in place of the line (AsRead), and a version this build
+// does not hold is the finding contract-version. Empty means admitted.
 func Lint(id, brief string) []LintFinding {
 	var out []LintFinding
 	add := func(check string, line int, excerpt string) {
@@ -770,6 +787,15 @@ func Lint(id, brief string) []LintFinding {
 	}
 	if _, why := cardhdr.ReadModel(brief); why != "" {
 		add("model-lines", 1, why)
+	}
+	// a brief by reference is held as the lane reads it, the contract in place of its line
+	// (docs/SPEC-CARD-CONTRACT.md section 7); the placeholders are the brief's own
+	placeholders := brief
+	if read, why := AsRead(brief); why != "" {
+		_, at := ContractRef(brief)
+		add("contract-version", at, why)
+	} else {
+		brief = read
 	}
 	for _, f := range swarm.LintCardChildWith([]byte(brief), swarm.DefaultChildRules) {
 		add(f.Check, f.Line, f.Excerpt)
@@ -780,7 +806,7 @@ func Lint(id, brief string) []LintFinding {
 	for _, f := range cardtree.Lint(brief) {
 		add(f.Check, f.Line, f.Excerpt)
 	}
-	for i, line := range strings.Split(brief, "\n") {
+	for i, line := range strings.Split(placeholders, "\n") {
 		if m := placeholderRE.FindString(line); m != "" {
 			add("placeholder", i+1, m)
 		}

@@ -481,23 +481,31 @@ with no clock and no store). What it holds:
   from the checkout the source was read from, `KIND: fix-red`, `DEPENDS-ON:`,
   `PATHS:` (at most eight entries, files folded into their directory's glob
   past that), `NEW:` for a test file the card creates in a package that has
-  none, `TEST:` and the `Deadline:` line; the RULES paragraph of the general
-  child rules (`swarm.ChildRulesParagraph`, the paragraph the card template
-  carries); the `ATTRIBUTION:` line (`cardgen.Attribution`); the task from the
-  source's template with the rows substituted; the template's steps; and the
-  `AS A READ` section (`cardgen.AsARead`), the text a reader of the work is given.
+  none, `TEST:`, `START:`, `STOP:` and the `Deadline:` line. By default the
+  brief is those header lines and one last line,
+  `Contract: docs/SPEC-CARD-CONTRACT.md v1` (section 7): the task from the
+  source's template, with the rows substituted, rides on `STOP:` with what
+  done is. The frame every brief used to repeat (the child paragraph, the
+  RULES paragraph of the general child rules, the `ATTRIBUTION:` line, the
+  template's steps, and the `AS A READ` section) lives in that contract, which
+  the lane reads once. `--full-frame` writes the long form instead: the frame
+  in the brief, and no Contract line.
 - No brief names its author. A commit names the worker who did the work, and the
   deal may hand any card, a pinned one too, to any worker, a friend or a fleet
-  machine, so the brief cannot know who that is: its `ATTRIBUTION:` line reads
+  machine, so the brief cannot know who that is: the `ATTRIBUTION:` line, in the
+  contract and in the long form, reads
   `By: your own name, the worker who does this attempt`, says a model name is
   never a `By:`, and that a Claude worker adds its true `Co-Authored-By` trailer
   while any other worker adds none; a `WHO:` line stays a preference for who is
   dealt the card, never the name to sign. Neither the line nor the held rules
   (`fleet/child-rules.txt`, rule `commit-trailer`) spell a fill-in Claude trailer,
-  which a worker of another model completes with its own model's name. Its
-  `AS A READ` section says a `By:` trailer is judged only for being present and
+  which a worker of another model completes with its own model's name. The
+  `AS A READ` section, in the contract and in the long form, says a `By:` trailer
+  is judged only for being present and
   true (the worker who pushed the branch under read), and attribution alone never
-  decides a verdict. Briefs stamped `By: <friend>` from a WHO pin sent readers to
+  decides a verdict. A friend's read copies an `AS A READ` heading present in the
+  stored brief and does not open the contract file, so a brief stored by reference
+  yields that heading and an empty section. Briefs stamped `By: <friend>` from a WHO pin sent readers to
   fail landed-quality heads for that line alone, because another worker had done
   the work, and landed heads signed with the name of a friend who never ran them.
 - A card's PATHS are computed from the START line its brief carries, never
@@ -535,7 +543,9 @@ with no clock and no store). What it holds:
   so the names come from the caller: `--name` to nova-card, the store's
   coordinator, owner and friends table to the add.
 - A card whose PATHS reach a model or a configuration under `tla/` runs the
-  model in its own gate: its STEP 4 adds, on a Linux TLC bench, `make tlc` for
+  model in its own gate: the short form puts that sentence on the `STOP` line,
+  after what done is, and the long form adds it to STEP 4. On a Linux TLC bench
+  it runs `make tlc` for
   each group `tlacheck groups --stale` lists (the groups of the cases the edit
   touched) and `tlacheck merge --keep tla/RUNS.tsv` of what they wrote, and its
   PATHS line carries `tla/RUNS.tsv` so the record is committed with the change
@@ -565,3 +575,47 @@ scanned as before:
 
 `nova-sprint add` runs the same lint, so the exemption holds there. Pinned by
 `TestPatternsToRefuseBlockIsExemptForAClassTestCard` (`internal/swarm`).
+
+## 7. The contract, by reference
+
+A brief is its header lines and one last line, `Contract: docs/SPEC-CARD-CONTRACT.md <version>`. The generator writes that shape by default (`cardgen.Render`; `nova-card generate`). The long form, the frame written into the brief, is `Header.Full` and `nova-card generate --full-frame`. The frame (the child paragraph, the libraries line, the RULES, the ATTRIBUTION line, the task's shape, the six STEPs, AS A READ) lives in this file, once, versioned. A version once published keeps its text; a change is a new block beside the old, never an edit of a published block. The markers are `<!-- contract <version> -->` and `<!-- end contract <version> -->`. This build holds a copy of each published version (`internal/cardgen/contract/<version>.txt`, `cardgen.HeldContract`), equal to the block byte for byte (`TestTheHeldContractIsTheDocsBlock`).
+
+`card.Lint` and `nova-card generate` hold a brief by reference with the held copy in place of the line (`cardgen.AsRead`), and pass it with no contract option. `nova-sprint add` does the same (`lintBriefReads`, beside the held rules by reference) and stores the brief as it was given. A version this build does not hold, or a reference that is not the file and one version, is the finding `contract-version`. A `Contract:` line whose first word is not `docs/SPEC-CARD-CONTRACT.md` is the brief's own prose.
+
+The lane reads the contract from the staged checkout once. The nova-friend daemon (`friend.HandBrief`) leaves the reference when `jobs/<job>/repo/docs/SPEC-CARD-CONTRACT.md` holds the named block, and puts the text in place of the line only when that checkout cannot be read: the daemon is given the text (`Daemon.Contract`), and when nothing set it the text is this build's copy. The record of each card handed says `brief_tokens=<n> contract=checkout|prepended|unread|none`.
+
+A token is four bytes, rounded up (`card.Tokens`). A work take's cost record carries that count of the brief it was dealt (`sprint.Consumer.BriefTokens`); a read carries none.
+
+A friend's read copies an AS A READ heading that is present in the stored brief (`sprint.FriendReadBrief`). It does not open this file. A brief stored by reference yields that heading and an empty section. The section's text is the block below, and the long form.
+
+The measure of 20 briefs the generator renders (six serial-tests cards, four dead-code cards, six findings cards, four help cards), bytes and tokens of the long form against the brief by reference, and of the contract beside them:
+
+    MEASURE briefs=20 full_bytes=103291 full_tokens=25831 ref_bytes=25463 ref_tokens=6373 contract_bytes=4225 contract_tokens=1057
+
+<!-- contract v1 -->
+You are a child of the coordinator: one task, one staged checkout, one branch, unattended. The card is the whole task: its header lines above and this contract, read once. Read $JOB/JOB.md first. Start at the current BASE tip; admission inspected the base whose sha line 1 names. Verify the defect still exists before editing; if already fixed report not-done with exact evidence rather than duplicate work. One change, one test that is red before and green after.
+Libraries considered: the Go standard library and testify, already in the tree; the package's own seams and helpers; no new dependency, and no helper over thirty lines without first searching the package for one.
+
+RULES.
+Work only in the job directory this card names.
+Never force-push or rebase a shared branch.
+Never kill a process you did not start.
+Never start a server on this machine.
+No `rm -rf` outside the job directory.
+Report what was not done.
+
+ATTRIBUTION: By: your own name, the worker who does this attempt, on its own line at the end of every commit message; a model name is never a By:, and this brief names no author: its WHO line, if any, is a preference for who is dealt the card, never the name to sign. Below the By: line, a Claude worker adds its true Co-Authored-By trailer (Claude, its model, the noreply@anthropic.com address); any other worker adds no Co-Authored-By.
+
+THE TASK. The STOP line is the task and says when it is done; the work lives in the first file the START line names; the files this card may touch are its PATHS line (and the files its NEW line creates) and no other, in the staged checkout JOB.md names, on the card's own branch, from its BASE. The Deadline line is the time it has.
+
+STEP 1. Enter the staged checkout JOB.md names with cd $JOB/repo && git log --oneline -1, no clone; work only on its own branch. Export GOFLAGS=-mod=readonly NOVA_TEST_NO_HOST=1 before any go command; GOCACHE is already set to the machine's shared build cache (JOB.md names it): keep it. Scratch belongs under $JOB/scratch.
+STEP 2. Make it red first, as the task says, with the test the TEST line names: run the STEP 4 gate with -run and that test's name, and keep the failing line as evidence.
+STEP 3. Make it pass in the files this card names, and only those. Commit the draft on your own branch as soon as the test is green, before any further probe; a later commit may refine it. A change any other file needs goes in the report as a proposed diff, never a commit.
+STEP 4. Run the gate: go test -count=1 -timeout 600s on the package the TEST line names and on ./internal/ci/ (one run when they are the same), and read the last line of each. Run gofmt -l on every changed Go file; it must print nothing. Where the STOP line names a model gate, run it as part of this step. When a test fails, name its file and say whether that file was changed by your work (yours) or is unchanged (already red at BASE: run the same test on the unchanged base to say so), and report that line first.
+STEP 5. Commit on your own branch with the trailer. Nothing reaches the forge from inside the wall: in the job the git shim records a push, the pull request is the finish JOB.md names (STEP 6), and the member makes both, against the card's BASE, from outside the wall when the card finishes. The pull request body states the diff stat, what was deleted, the tests with what each pins, and what was not done.
+STEP 6. End as JOB.md says (docs/SPEC-CARD-CONTRACT.md): where JOB.md ends the card with its pull request, that is the end and there is nothing else to write, the gate's lines in the pull request body; where it asks for RESULT.md, write it in JOB.md's shape (head, branch, verdict, gate, output, report). For a friend's REPORT.md (docs/FRIENDS.md), first line exactly Verdict: LAND|HOLD|FAIL, second line exactly Head: <40-hex>; for HOLD and FAIL omit Head: and leave line 2 blank.
+
+AS A READ
+A By: trailer is judged only for being present and true: it names the worker who pushed the branch under read, whoever was preferred for the card. A trailer naming another friend than a WHO line or an earlier brief expected is no finding, and attribution alone never decides a verdict; read the change against the task, its test and its PATHS.
+
+<!-- end contract v1 -->
