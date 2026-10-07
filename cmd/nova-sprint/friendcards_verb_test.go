@@ -104,10 +104,12 @@ func TestFriendCardsServesEveryHeldCardWithItsPacket(t *testing.T) {
 	}
 
 	// a card taken back from her by the coordinator and dealt to the other friend
-	taken := held[0]
+	readyAt := slices.IndexFunc(held, func(h friend.HeldCard) bool { return h.Col == "ready" })
+	require.GreaterOrEqual(t, readyAt, 0)
+	taken := held[readyAt]
 	ta.ok("friend up friend-b")
 	ta.ok("friend beat friend-b")
-	ta.ok("friend take friend-a --all-unstarted --reason 'the other friend has room'")
+	ta.ok("friend take friend-b " + strings.TrimSuffix(taken.Card, ".w1") + " --reason 'the other friend has room'")
 	ta.ok("tick")
 	ta.ok("tick")
 	heldA := friendCardsAnswer(t, ta, "friend-a")
@@ -116,8 +118,8 @@ func TestFriendCardsServesEveryHeldCardWithItsPacket(t *testing.T) {
 	at := slices.IndexFunc(heldB, func(h friend.HeldCard) bool { return h.Card == taken.Card })
 	require.GreaterOrEqual(t, at, 0, "dealt to the other friend: %+v", heldB)
 	moved := heldB[at]
-	assert.Equal(t, 3, moved.Gen)
-	assert.Equal(t, taken.Card+".g3", moved.Job, "a card dealt again is a new job")
+	assert.Equal(t, 2, moved.Gen)
+	assert.Equal(t, taken.Card+".g2", moved.Job, "a card dealt again is a new job")
 	assert.Contains(t, moved.Brief, "push your work to the branch "+moved.Branch)
 
 	// her daemon retires its job; the other friend's writes it
