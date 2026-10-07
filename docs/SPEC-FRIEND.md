@@ -418,7 +418,7 @@ back while a newer one is owed is the one dropped.
 The adapter blocks for the whole turn; exit 0 acks every message the envelope
 carried, together, and a failure acks none of them (for Codex queue, exit 0 is
 the command accepting the input, not the turn ending). The model is
-`internal/friend/tla/Delivery.tla` (TLC on a Linux bench, four messages, a cap
+`tla/Delivery.tla` (TLC on a Linux bench, four messages, a cap
 of two, two failures): a turn takes the whole pending set up to the cap
 (`EnvelopeTakesAll`), no message is acked in a later turn than a younger one
 (`NoYoungerFirst`), only an accepted turn acks, and every message is acked in
