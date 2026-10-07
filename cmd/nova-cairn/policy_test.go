@@ -163,6 +163,40 @@ func TestAConflictOrAMissingEntryNamesTheCommandToRunNext(t *testing.T) {
 	}
 }
 
+// TestEveryRefusalEndsAtTheCommandThatMovesTheUserOn pins the door of each
+// refusal kind a cold user meets (use-cairn-t, remedies): a missing flag at
+// the tool's door (docs/ONBOARDING.md point 1, #1451), an unknown flag at the
+// verb's -h (docs/CLI-STYLE.md, refusals), a conflict at the receipt --text
+// that reads what the id holds, and a missing entry at the index that lists
+// what is there. A refusal that ends anywhere else leaves the reader guessing
+// the next command.
+func TestEveryRefusalEndsAtTheCommandThatMovesTheUserOn(t *testing.T) {
+	t.Parallel()
+
+	c := newRig(t)
+	c.ok("open", "--session", "s", "--publish", "manual")
+	c.ok("append", "--session", "s", "--entry", "e", "--text", "first words")
+	for _, tc := range []struct {
+		name string
+		args []string
+		code int
+		door string
+	}{
+		{"missing flag", []string{"open", "--session", "s2"}, 2, "; run: nova-cairn help"},
+		{"unknown flag", []string{"append", "--session", "s", "--entry", "e9", "--text", "w", "--nope"}, 2, "; run: nova-cairn append -h"},
+		{"conflict", []string{"append", "--session", "s", "--entry", "e", "--text", "other words"}, 1, "; run: nova-cairn receipt --store " + c.store + " --session s --entry e --text"},
+		{"missing entry", []string{"receipt", "--session", "s", "--entry", "absent"}, 2, "; run: nova-cairn index --store " + c.store + " --session s"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r := c.run(tc.args[0], tc.args[1:]...)
+			assert.Equal(t, tc.code, r.Code, "%+v", r)
+			last := strings.TrimSuffix(r.Stderr, "\n")
+			assert.True(t, strings.HasSuffix(last, tc.door), "the refusal does not end at the command that moves the user on: %q", r.Stderr)
+		})
+	}
+}
+
 // The remedy is a shell line that runs as printed, whatever the store path
 // holds: a space or a quote is quoted, a control byte is decoded from octal.
 func TestARemedyQuotesTheStorePath(t *testing.T) {
