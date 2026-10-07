@@ -352,8 +352,8 @@ in `internal/sprint` and `cmd/nova-sprint`.
 Push, not poll (docs/SPEC-SPRINT.md, section 8, "Push, not poll", audited 2026-10-06): the daemon's read blocks on the stream (`XREADGROUP BLOCK`, one `BeatEvery`) only while the session is free; while a turn runs, in one-shot mode, and for a passive harness it reads without blocking or peeks and then pauses a `BeatEvery`, which is a timer poll, and card friend-bus-read-blocks makes it block in every mode. Her cards (`InboxEvery`) and her reader row (`ReadAskEvery`, 10 s) are asked of the server on the daemon's step, timer polls too, until friend-cards-pushed-on-the-bus and friend-reads-pushed-on-the-bus put them on her stream. The beat is a beat, and a delivery is a turn in her session. The class test `TestEveryTimerLoopIsNamedInThePushTable` holds every timer loop of the tree to that table.
 
 Each second: the clock is stepped; when the session is free (a turn has
-ended, or none ran), every message waiting is read off the stream, up to 32
-(`MaxBatch`), and one turn is started with all of them: a message never waits
+ended, or none ran), every available pending message is read off the stream
+without a message-count cap, and one turn is started with all of them: a message never waits
 behind a turn per older message.
 
 The base, before this change: the turn was already one turn for every message
@@ -381,7 +381,11 @@ a message goes in only while the `and <n> more` line for those after it still
 fits. The messages that do not fit are named under
 `and <n> more: nova-bus recv --as <me> --all`, one line each while the limit
 allows (the count line alone when it does not), stay pending, and are the next turn. A single message with nothing else
-is its `recv` text alone. The envelope's size is on the status:
+is its `recv` text alone. Each message keeps its sender's authority label
+(`bus-authority-labels.w3`): the seat holder's message is plain, every other
+sender's metadata and body are quoted as data. The rest count includes every
+message read, including messages beyond the former 32-message hand cap.
+The envelope's size is on the status:
 `envelope` (status.json, and `envelope=` on `nova-friend status`) is how many
 messages the last envelope carried and `envelope_bytes` its text's size, at
 most the text limit unless the first message alone is larger; both are 0
@@ -393,7 +397,11 @@ work. A session proves itself by any bus line it sends after the ping (a real
 message counts; `nova-friend pong --nonce` still counts when a session runs
 it), which ends the challenge and with it the pong line at the head of its
 turns, while the daemon's own sends (`daemon-pong`, a word to the coordinator,
-a session check) prove nothing.
+a session check) prove nothing. Daemon-pong and session-check ids need no
+storage because their subjects exclude them. Other daemon sends are remembered
+only while a challenge is open, until the proof read passes their log line or
+a newer ping makes their store timestamp too old; ending the challenge clears
+the remainder. Keepalive traffic never accumulates proof ids.
 
 The supersede rule (`SupersededNotices`) acts on the daemon's own notices
 about the coordinator and nothing else: the words `coordinator silent` and

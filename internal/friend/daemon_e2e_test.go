@@ -78,13 +78,18 @@ func TestMessagesThatLandDuringATurnGoInTogetherAsTheNextTurn(t *testing.T) {
 func TestABatchIsBoundedAndTheRestGoesInTheNextTurn(t *testing.T) {
 	t.Parallel()
 	r := newRig(t)
-	for i := 0; i < MaxBatch+2; i++ {
-		r.send(t, "ada", "m", "x")
+	r.d.Deliver = limited{r, 800}
+	for i := 0; i < 3; i++ {
+		r.send(t, "ada", "m", strings.Repeat("x", 300))
 	}
-	r.run(t, 6)
-	require.Len(t, r.delivered, 2)
-	assert.Contains(t, r.delivered[0], "32 message(s) for you")
+	r.run(t, 8)
+	require.Len(t, r.delivered, 3)
+	assert.Contains(t, r.delivered[0], "3 message(s) for you")
+	assert.Contains(t, r.delivered[0], "and 2 more: nova-bus recv --as bob --all")
 	assert.Contains(t, r.delivered[1], "2 message(s) for you")
+	for _, text := range r.delivered {
+		assert.LessOrEqual(t, len(text), 800)
+	}
 	pending, fresh := r.pending(t)
 	assert.Empty(t, pending)
 	assert.Empty(t, fresh)

@@ -12,7 +12,8 @@
    every message in hand, oldest first, up to MaxBatch messages and
    BatchBytes, the rest the next turn, acked together at exit 0; at this
    grain that is Take = "oldest" with Cap = MaxBatch. The change keeps that
-   set rule and moves the cap to the deliverer's text limit (TextLimit), the
+   set rule, removes the MaxBatch read cap, and moves the turn cap to the
+   deliverer's text limit (TextLimit), the
    first message always taken (Cap >= 1), the rest named in the envelope; its
    line format (id, from, time, age, subject) is below this grain.
    Take is the rule under test: "oldest" is the daemon, before and after;
