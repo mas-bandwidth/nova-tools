@@ -497,7 +497,6 @@ func TestReceiptsAndOverdueSayWhereEachMessageIs(t *testing.T) {
 	cli.Do(t, "overdue", "--older", "-1s").Exit(2).Err("--older wants a duration of at least 0")
 }
 
-
 // The top-level help and the verb help texts (e.g., help send) must state the
 // same Redis address precedence from one shared source: NOVA_BUS_REDIS,
 // else NOVA_SPRINT_REDIS, else fleet:bus.
