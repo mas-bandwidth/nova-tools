@@ -113,8 +113,7 @@ func checkUnits(ctx context.Context, env Env) Result {
 
 // selfLoops is the records of the host this process runs on: the row named by
 // NOVA_MACHINE when the inventory has it, else the row marked
-// ansible_connection local, else the only row. ok is false when none can be
-// chosen.
+// ansible_connection local. ok is false when none can be chosen.
 func selfLoops(inv inventoryLoops, machine string) ([]loopRecord, string, bool) {
 	if hv, ok := inv.Meta.Hostvars[machine]; machine != "" && ok {
 		return hv.Loops, machine, true
@@ -128,9 +127,6 @@ func selfLoops(inv inventoryLoops, machine string) ([]loopRecord, string, bool) 
 		if inv.Meta.Hostvars[n].Connection == "local" {
 			return inv.Meta.Hostvars[n].Loops, n, true
 		}
-	}
-	if len(names) == 1 {
-		return inv.Meta.Hostvars[names[0]].Loops, names[0], true
 	}
 	return nil, "", false
 }
@@ -239,10 +235,9 @@ func compareUnits(records []loopRecord, found []unitFile) (missing, hand, differ
 }
 
 // sameCommand reports whether the unit runs the record's argv: the record's
-// words as a contiguous run of the unit's command, each compared by base name
-// (the unit runs the tool by its absolute path and may be behind the
-// nova-secrets exec wrapper, so its command carries the record's argv inside
-// it).
+// words as a contiguous run of the unit's command. The executable may be an
+// absolute path or be behind the nova-secrets exec wrapper; arguments must
+// match exactly.
 func sameCommand(record, args []string) bool {
 	if len(record) == 0 || len(args) < len(record) {
 		return false
@@ -250,7 +245,8 @@ func sameCommand(record, args []string) bool {
 	for i := 0; i+len(record) <= len(args); i++ {
 		matched := true
 		for j := range record {
-			if filepath.Base(args[i+j]) != filepath.Base(record[j]) {
+			if (j == 0 && filepath.Base(args[i+j]) != filepath.Base(record[j])) ||
+				(j > 0 && args[i+j] != record[j]) {
 				matched = false
 				break
 			}

@@ -72,8 +72,8 @@ func TestDoctorUnitsCheckFindsAHandPlistAndAMissingLoop(t *testing.T) {
 			require.NoError(t, os.WriteFile(filepath.Join(dir, "com.nova.loop.redis-local.plist"),
 				[]byte(units.LaunchdPlist("com.nova.loop.redis-local", []string{"/opt/nova/nova-redis", "serve", "--bind", "127.0.0.1"}, nil, "", 10)), 0o644))
 			// the record helper, installed running another verb: different
-			require.NoError(t, os.WriteFile(filepath.Join(dir, "com.nova.loop.helper.service"),
-				[]byte(units.SystemdUnit("nova loop helper", []string{"/opt/nova/nova-sprint", "server"}, nil, 10)), 0o644))
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "com.nova.loop.helper.plist"),
+				[]byte(units.LaunchdPlist("com.nova.loop.helper", []string{"/opt/nova/nova-sprint", "server"}, nil, "", 10)), 0o644))
 			// a hand plist no record names: a unit with no record
 			require.NoError(t, os.WriteFile(filepath.Join(dir, "com.nova.loop.orphan.plist"),
 				[]byte(units.LaunchdPlist("com.nova.loop.orphan", []string{"/bin/true"}, nil, "", 10)), 0o644))
@@ -81,7 +81,7 @@ func TestDoctorUnitsCheckFindsAHandPlistAndAMissingLoop(t *testing.T) {
 		assert.Equal(t, Fail, res.Status, res)
 		assert.Contains(t, res.Evidence, "tick", "the record without a unit is named")
 		assert.Contains(t, res.Evidence, "orphan", "the hand plist with no record is named")
-		assert.Contains(t, res.Evidence, "helper", "the unit whose command differs is named")
+		assert.Contains(t, res.Evidence, "unit whose command differs: helper", "the unit whose command differs is named")
 		assert.NotContains(t, res.Evidence, "redis-local", "the matching loop is not named")
 		assert.Contains(t, res.Fix, "nova-config apply --kind loop")
 		assert.Contains(t, res.Fix, "fleet/loops.yml")

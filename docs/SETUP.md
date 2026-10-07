@@ -130,10 +130,11 @@ The machine that runs a loop needs it: the coordinator's machine and every bench
 set up with `nova-up --local` needs only its one loop, `redis-local`, which `nova-up`
 installs itself and reads no `nova-config` for.
 
-For the fleet's units, `nova-up` applies the loop records from the sprint store:
-`nova-config apply --kind loop` reads the records, and `nova-up` installs one unit per record.
-On a machine with no fleet store (`--local`), nova-up is ok and redis-local is handled by
-the redis step.
+For the fleet's units, a person applies the loop records and installs their units with
+`nova-config apply --kind loop --as <actor>` followed by
+`ansible-playbook -i ./nova-inventory fleet/loops.yml`; `nova-up` does not perform those
+fleet writes. On a machine with no fleet store (`--local`), nova-up is ok and redis-local
+is handled by the redis step.
 
 The `units` check reads `nova-config inventory` for this machine's loop records and the
 service manager's directory (`~/Library/LaunchAgents`, or `~/.config/systemd/user`), and
