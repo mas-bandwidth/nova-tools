@@ -50,10 +50,11 @@ first run: quickstart --root on any folder of .md files, or create the small
 corpus in setup: and run the lines under example:.
 
 SEARCH CAL score=1.46 score-channel=bm25 probe=unrelated-control
-is the CAL line every retrieval run prints: the score a fixed unrelated
-probe gets here, and a hit's score= at or below it is no better than noise
-when the hit's score-channel= names the same channel. The example's search
-prints, as its rank 1 of 2:
+is the CAL line every retrieval run prints. CAL is context, not a cutoff.
+CAL is the top score of a fixed unrelated query, for scale; it does not
+prove relevance, and a hit's score= at or below it is not noise: the probe
+may be about your own notes, and a right answer can fall below it. search -h
+prints the probe's own text. The example's search prints, as its rank 1 of 2:
 SEARCH HIT rank=1 score=0.99 score-channel=bm25 fused=0.01667 class=notes name=- type=- root=./corpus: notes/lantern.md:1 "The lantern glazing needs clean cloths for brass and glass."
 class is the top-level directory ("." for root files); name/type are
 frontmatter values, with "-" meaning absent.
@@ -245,7 +246,8 @@ func refuseWith(stderr io.Writer, where, what, remedy string) int {
 }
 
 // verbHelp is the lines run adds to a verb's -h: its effect, and for a verb that
-// needs extra context (eval's gold file format, boot's pin check), that context.
+// needs extra context (eval's gold file format, boot's pin check, search's
+// calibration probe), that context.
 func verbHelp(verb string) string {
 	extra := ""
 	switch verb {
@@ -255,6 +257,8 @@ func verbHelp(verb string) string {
 			"  washing the glazing before an onshore gale\tnotes/lantern.md,log/1974-03-11.md\n"
 	case "boot":
 		extra = "checks the pin: every file present and readable, and their size\n"
+	case "search":
+		extra = "calibration probe text: " + calibrationProbe + "\n"
 	}
 	return extra + "effect: " + string(tool.Inspection) + " (the index lives in memory for the run)\n"
 }
