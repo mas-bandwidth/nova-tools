@@ -320,44 +320,73 @@ func ReadCardExtras(s *Snapshot) []string {
 // row serves it, readerServesTier) and the two of a read: it did not work the attempt, and
 // it holds no read card of the attempt and closed none (readSpent).
 //
-// below says the unit may read it only by the interim rule (the owner, 2026-10-06 7:11 PM
-// ET "let flash read pro", 7:41 PM "let pro do it"): it is one tier below the read's tier,
-// never two; the deal prefers a unit at or above the tier while one has room.
-func mayReadCard(s *Snapshot, u readUnit, pr *Card, attempt int, worker string, cards []*Card) (ok, below bool) {
+// A unit one tier below the read's tier may read it too, by the interim rule (the owner,
+// 2026-10-06 7:11 PM ET "let flash read pro", 7:41 PM "let pro do it"), never two below;
+// the deal orders the units that may by tier distance (readTierDistance).
+func mayReadCard(s *Snapshot, u readUnit, pr *Card, attempt int, worker string, cards []*Card) bool {
 	mine := readerCardsAt(cards, pr.ID, attempt, u.name)
 	if u.name == worker || readSpent(mine) || readCardIDFor(mine, pr.ID, attempt, u.name) == "" {
-		return false, false
+		return false
 	}
 	if u.friend {
 		// a friend reads her tier or any below it, as her reads always did: a heavy friend
 		// reads a flash and a pro card (friendAtOrAbove)
 		t := friendReadTier(s, pr)
 		if !s.FriendsTake(t) {
-			return false, false // the friends' tiers leave the read out (set --friends-tiers)
+			return false // the friends' tiers leave the read out (set --friends-tiers)
 		}
 		if friendAtOrAbove(s, u.seat, t) {
-			return true, false
+			return true
 		}
 		b := tierBelow(t)
-		return b != "" && friendAtOrAbove(s, u.seat, b), true // inside the set: b too (friendAtOrAbove)
+		return b != "" && friendAtOrAbove(s, u.seat, b) // inside the set: b too (friendAtOrAbove)
 	}
 	// a machine whose reader row holds a read of the attempt on the readers table (asked
 	// the old way, before read cards were on) reads it there, never twice
 	rd := ReaderPrefix + u.name
 	for _, id := range ReadCardIDs(pr.ID, attempt, rd) {
 		if c := s.Readers.Card(id); c.Placed() || c != nil && c.F("verdict") != "" {
-			return false, false
+			return false
 		}
 	}
 	t := s.readTierOf(pr)
 	if !s.FleetTakes(t) {
-		return false, false // the fleet's tiers leave the read out (set --fleet-tiers)
+		return false // the fleet's tiers leave the read out (set --fleet-tiers)
 	}
 	if s.readerServesTier(rd, t) {
-		return true, false
+		return true
 	}
 	b := tierBelow(t)
-	return b != "" && s.FleetTakes(b) && s.readerServesTier(rd, b), true // inside the set: b too
+	return b != "" && s.FleetTakes(b) && s.readerServesTier(rd, b) // inside the set: b too
+}
+
+// readTierDistance is how far the unit's tier is from the read's tier, the cheaper first:
+// 0 when the unit reads the read's own tier, 1 when it reads the tier one below
+// (mayReadCard's interim rule), 1+k when the nearest tier it reads is k above, and past
+// the ladder when it reads none of them. A friend reads her tiers (friendTiers); a member
+// the tiers its reader row serves (readerServesTier).
+func readTierDistance(s *Snapshot, u readUnit, pr *Card) int {
+	t := s.readTierOf(pr)
+	reads := func(x string) bool { return s.readerServesTier(ReaderPrefix+u.name, x) }
+	if u.friend {
+		t = friendReadTier(s, pr)
+		reads = func(x string) bool { return slices.Contains(friendTiers(u.seat), x) }
+	}
+	i := slices.Index(capLadder, t)
+	switch {
+	case i < 0:
+		return len(capLadder) + 1
+	case reads(t):
+		return 0
+	case i > 0 && reads(capLadder[i-1]):
+		return 1
+	}
+	for k := i + 1; k < len(capLadder); k++ {
+		if reads(capLadder[k]) {
+			return 1 + k - i
+		}
+	}
+	return len(capLadder) + 1
 }
 
 // tierBelow is the tier one below t on the ladder (flash, pro, heavy, frontier), "" for
@@ -458,8 +487,11 @@ func readCardsTakeBack(s *Snapshot) map[string][]Change {
 
 // readCardsAsk is the read-card ask: the cards it takes back (readCardsTakeBack), then for
 // every primary that wants reads (readCardsWaiting) every read it wants, at once, each to a
-// different unit that may read it (mayReadCard) with half a slot free, the friends first,
-// then the unit with the most idle lanes, then the most room, then by name. waits is why
+// different unit that may read it (mayReadCard) with half a slot free, the cheapest first:
+// a unit with an idle lane before every unit with none (a read waits in a ready queue only
+// when every reader that may take it is busy), then by tier distance (readTierDistance: the
+// read's own tier, one tier below, then the tiers above, nearest first), then the most idle
+// lanes, then the most room, then by name; friends and members alike. waits is why
 // each primary that wants more reads than it was dealt waits. With ri nil the reads draw
 // no route (the deal's dry run: what the reads would take).
 func readCardsAsk(s *Snapshot, seats []FriendSeat, ri routeIndexes) (p Plan, waits map[string]string) {
@@ -496,11 +528,11 @@ func readCardsAsk(s *Snapshot, seats []FriendSeat, ri routeIndexes) (p Plan, wai
 		worker := attemptUnit(view, pr.ID, attempt)
 		cards := idx[pr.ID]
 		var may []int
-		below := map[int]bool{}
+		dist := map[int]int{}
 		for i, u := range units {
-			if ok, b := mayReadCard(view, u, pr, attempt, worker, cards); ok {
+			if mayReadCard(view, u, pr, attempt, worker, cards) {
 				may = append(may, i)
-				below[i] = b
+				dist[i] = readTierDistance(view, u, pr)
 			}
 		}
 		var room []int
@@ -512,17 +544,15 @@ func readCardsAsk(s *Snapshot, seats []FriendSeat, ri routeIndexes) (p Plan, wai
 		slices.SortStableFunc(room, func(a, b int) int {
 			x, y := units[a], units[b]
 			switch {
-			case below[a] != below[b]:
-				// a reader at or above the tier first; one tier below only for the rest
-				if below[b] {
+			case (x.idle > 0) != (y.idle > 0):
+				// an idle lane first: a read is stacked on a busy reader only when every
+				// reader that may take it is busy
+				if x.idle > 0 {
 					return -1
 				}
 				return 1
-			case x.friend != y.friend:
-				if x.friend {
-					return -1
-				}
-				return 1
+			case dist[a] != dist[b]:
+				return dist[a] - dist[b]
 			case max(x.idle, 0) != max(y.idle, 0):
 				return max(y.idle, 0) - max(x.idle, 0)
 			case x.half != y.half:
