@@ -171,3 +171,11 @@ naming the verb or the step above: install `sops`, set the missing variable, `ch
 `chmod 700` the key, `nova-secrets keygen`, the `git clone` of the store, or `nova-secrets seal --store <store> --as <seat> --name <NAME>` for a name the loops require and the store
 does not hold. The check is fleet-scoped: `nova-doctor --local` skips it with the other fleet
 checks and says which; run `nova-doctor` plain to see it.
+
+## A fleet: bootstrap, then steady state
+
+The maintained Ansible path for fresh Debian or Ubuntu hosts with systemd is
+[fleet/bootstrap.yml](../fleet/bootstrap.yml). Its setup contract, owner-provided
+enrollment and secret inputs, and the hand-off to the inventory printed by
+`nova-config` are in [FLEET.md](FLEET.md#from-a-fresh-host-bootstrap-then-steady-state).
+The disposable-host acceptance is separate from configuring a live fleet.

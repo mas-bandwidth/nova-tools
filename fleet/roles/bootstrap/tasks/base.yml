@@ -1,0 +1,153 @@
+# The base of every host: a Debian-family Linux with systemd (the phase
+# refuses any other by name), the packages, the harness's npm packages, the
+# login's directories, linger for its user units, and sops and age at their
+# pinned versions in the bin directory, each download checked (sops against
+# its release's checksums file, age against the SHA-256 group_vars pins).
+- name: a Debian-family Linux with systemd
+  ansible.builtin.assert:
+    that:
+      - ansible_system == 'Linux'
+      - ansible_os_family == 'Debian'
+      - ansible_service_mgr == 'systemd'
+    fail_msg: >-
+      BOOTSTRAP REFUSED host={{ inventory_hostname }}: bootstrap.yml takes Debian or Ubuntu with systemd;
+      this host is {{ ansible_system }} {{ ansible_distribution | default('') }} with {{ ansible_service_mgr | default('') }}
+    quiet: true
+
+# Asked of the interpreter the modules run under, never a python3 on PATH.
+- name: python3-apt on the host (apt's --check needs it; a run installs it itself)
+  ansible.builtin.command: { argv: ["{{ ansible_python.executable }}", -c, "import apt"] }
+  register: bootstrap_python_apt
+  changed_when: false
+  check_mode: false
+  # ignored: its absence is what the next task reads
+  failed_when: false
+  when: ansible_check_mode
+
+- name: --check can read the packages
+  ansible.builtin.assert:
+    that: bootstrap_python_apt.rc == 0
+    fail_msg: >-
+      BOOTSTRAP REFUSED host={{ inventory_hostname }}: --check needs python3-apt on the host, which a run
+      installs itself; run without --check, or first: sudo apt-get install -y python3-apt
+    quiet: true
+  when: ansible_check_mode
+
+- name: the host's architecture, as the releases name it, and where downloads are kept
+  ansible.builtin.set_fact:
+    bootstrap_arch: "{{ {'x86_64': 'amd64', 'aarch64': 'arm64'}[ansible_architecture] | default(ansible_architecture) }}"
+    bootstrap_age_dir: "{{ nova_home }}/.cache/nova-bootstrap/age-v{{ nova_bootstrap_age_version }}"
+
+- name: the packages
+  ansible.builtin.apt:
+    name: "{{ nova_bootstrap_packages }}"
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+    install_recommends: false
+  register: bootstrap_base_packages
+  become: true
+
+- name: the harness's npm packages installed now
+  ansible.builtin.command: { argv: [npm, ls, --global, --depth=0, --json] }
+  register: bootstrap_npm
+  changed_when: false
+  check_mode: false
+  # ignored: npm ls exits 1 on an extraneous package; the list is read all the same
+  failed_when: false
+  when: nova_bootstrap_harness_npm | length > 0 and not (ansible_check_mode and bootstrap_base_packages is changed)
+
+- name: the harness's npm packages, each at its version
+  ansible.builtin.command: { argv: [npm, install, --global, "{{ item }}"] }
+  loop: "{{ nova_bootstrap_harness_npm }}"
+  when: >-
+    not (ansible_check_mode and bootstrap_base_packages is changed) and
+    ((bootstrap_npm.stdout | default('{}', true) | from_json).dependencies | default({})).get(item.rsplit('@', 1)[0], {}).get('version', '')
+    != item.rsplit('@', 1)[1]
+  changed_when: true
+  become: true
+
+- name: the login's directories
+  ansible.builtin.file: { path: "{{ item.path }}", state: directory, mode: "{{ item.mode }}" }
+  loop:
+    - { path: "{{ nova_home }}/.cache/nova-bootstrap", mode: "0755" }
+    - { path: "{{ nova_bin_dir }}", mode: "0755" }
+    - { path: "{{ nova_home }}/.config/nova", mode: "0700" }
+    - { path: "{{ nova_home }}/nova-bench", mode: "0755" }
+    - { path: "{{ nova_home }}/nova-bench/loops", mode: "0755" }
+    - { path: "{{ nova_home }}/nova-bench/run", mode: "0755" }
+
+- name: the login's linger, if it has it
+  ansible.builtin.stat: { path: "/var/lib/systemd/linger/{{ ansible_user_id }}", get_checksum: false }
+  register: bootstrap_linger
+
+- name: linger, so the login's user units run with no session
+  ansible.builtin.command: { argv: [loginctl, enable-linger, "{{ ansible_user_id }}"] }
+  when: not bootstrap_linger.stat.exists
+  changed_when: true
+  become: true
+
+# The manager the loops' user units run under (loops.yml, nova_systemd_scope
+# user). Linger starts it at boot; one that failed to start (linger enabled
+# before libpam-systemd was installed) is started here. Under --check on a
+# fresh host there is no linger yet to start it with.
+- name: the login's user manager, running
+  ansible.builtin.systemd_service: { name: "user@{{ ansible_user_uid }}.service", state: started }
+  when: not (ansible_check_mode and not bootstrap_linger.stat.exists)
+  become: true
+
+- name: the download directory, made by an earlier run (--check on a fresh host downloads nothing)
+  ansible.builtin.stat: { path: "{{ nova_home }}/.cache/nova-bootstrap", get_checksum: false }
+  register: bootstrap_cache
+
+# get_url's check mode compares against an empty source and reports false drift.
+# Read the installed version for check; a real run still verifies the checksum.
+- name: the installed sops version
+  ansible.builtin.command: { argv: ["{{ nova_bin_dir }}/sops", --version] }
+  register: bootstrap_sops_was
+  changed_when: false
+  check_mode: false
+  # ignored: an absent binary is the install's input
+  failed_when: false
+
+- name: sops at its version, checked against the release's checksums
+  when: (not ansible_check_mode or bootstrap_cache.stat.exists) and (not ansible_check_mode or not (bootstrap_sops_was.stdout | default('')).startswith('sops ' ~ nova_bootstrap_sops_version))
+  ansible.builtin.get_url:
+    url: "{{ bootstrap_sops_release }}/sops-v{{ nova_bootstrap_sops_version }}.linux.{{ bootstrap_arch }}"
+    checksum: "sha256:{{ bootstrap_sops_release }}/sops-v{{ nova_bootstrap_sops_version }}.checksums.txt"
+    dest: "{{ nova_bin_dir }}/sops"
+    mode: "0755"
+  vars:
+    bootstrap_sops_release: "https://github.com/getsops/sops/releases/download/v{{ nova_bootstrap_sops_version }}"
+
+- name: the age archive's checksum
+  ansible.builtin.stat:
+    path: "{{ bootstrap_age_dir }}.tar.gz"
+    checksum_algorithm: sha256
+  register: bootstrap_age_was
+
+- name: age's release archive, checked against its pinned SHA-256
+  when: (not ansible_check_mode or bootstrap_cache.stat.exists) and (not ansible_check_mode or bootstrap_age_was.stat.checksum | default('') != nova_bootstrap_age_sha256[bootstrap_arch])
+  ansible.builtin.get_url:
+    url: "https://github.com/FiloSottile/age/releases/download/v{{ nova_bootstrap_age_version }}/age-v{{ nova_bootstrap_age_version }}-linux-{{ bootstrap_arch }}.tar.gz"
+    checksum: "sha256:{{ nova_bootstrap_age_sha256[bootstrap_arch] }}"
+    dest: "{{ bootstrap_age_dir }}.tar.gz"
+    mode: "0644"
+
+- name: the archive unpacked
+  ansible.builtin.unarchive:
+    src: "{{ bootstrap_age_dir }}.tar.gz"
+    dest: "{{ bootstrap_age_dir | dirname }}"
+    remote_src: true
+    creates: "{{ bootstrap_age_dir }}/age-keygen"
+    extra_opts: [--transform, "s,^age,{{ bootstrap_age_dir | basename }},"]
+  when: not ansible_check_mode
+
+- name: age and age-keygen in the bin directory
+  ansible.builtin.copy:
+    src: "{{ bootstrap_age_dir }}/{{ item }}"
+    dest: "{{ nova_bin_dir }}/{{ item }}"
+    remote_src: true
+    mode: "0755"
+  loop: [age, age-keygen]
+  when: not ansible_check_mode

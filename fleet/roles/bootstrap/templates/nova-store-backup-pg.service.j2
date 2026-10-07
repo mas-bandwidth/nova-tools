@@ -1,0 +1,10 @@
+# /etc/systemd/system/nova-store-backup-pg.service: written by fleet/bootstrap.yml
+[Unit]
+Description=the configuration database's daily dump (nova-store-backup-pg.timer)
+After=postgresql.service
+
+[Service]
+Type=oneshot
+User=postgres
+ExecStart=/usr/bin/pg_dump --format=custom --dbname={{ nova_bootstrap_pg_db }} --file={{ nova_bootstrap_backup_dir }}/pg/{{ nova_bootstrap_pg_db }}.pgdump.new
+ExecStart=/usr/bin/cp --backup=numbered {{ nova_bootstrap_backup_dir }}/pg/{{ nova_bootstrap_pg_db }}.pgdump.new {{ nova_bootstrap_backup_dir }}/pg/{{ nova_bootstrap_pg_db }}.pgdump

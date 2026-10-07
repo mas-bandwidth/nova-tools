@@ -1,0 +1,62 @@
+# The fleet's Redis on the fleet_store host: redis-server from the distro
+# (the binary `nova-redis serve` launches), the distro's own service stopped
+# and masked so nothing else listens, and nova-store-redis, a system unit run
+# as the login, supervising `nova-redis serve` on loopback and the host's
+# tailnet address at nova_bootstrap_redis_port with its store in
+# nova_bootstrap_redis_dir. serve owns the persistence (appendonly with
+# appendfsync everysec, save 60 1, maxmemory-policy noeviction, the ACL file
+# in the store directory: docs/SPEC-REDIS.md); the unit only starts it, under
+# the seat that holds NOVA_REDIS_PASSWORD. A changed unit is restarted.
+- name: redis-server
+  ansible.builtin.apt: { name: redis-server, state: present, install_recommends: false }
+  register: bootstrap_redis_pkg
+  become: true
+
+# Under --check a package or unit not yet installed has no unit to manage: the
+# install or the template says so.
+- name: the distro's own redis-server, stopped and masked
+  ansible.builtin.systemd_service: { name: redis-server, enabled: false, masked: true, state: stopped }
+  when: not (ansible_check_mode and bootstrap_redis_pkg is changed)
+  become: true
+
+# The address the unit binds besides loopback is read here, not carried from
+# the tailscale part, so `--tags redis` renders the unit a whole run does. A
+# host with tailscale installed and no address is refused rather than bound
+# to loopback alone: that would cut the fleet off its store.
+- name: the host's tailnet address
+  ansible.builtin.import_tasks: tailnet.yml
+
+- name: a store host with tailscale has its tailnet address
+  ansible.builtin.assert:
+    that: nova_bootstrap_tailnet_ip != '' or not bootstrap_ts_bin.stat.exists
+    fail_msg: "BOOTSTRAP REFUSED host={{ inventory_hostname }}: tailscale is installed and the host has no tailnet IPv4 address, so the store's Redis would bind loopback alone; run tailscale status on it, or the play with --tags tailscale"
+    quiet: true
+  when: not ansible_check_mode
+
+- name: the store directory
+  ansible.builtin.file: { path: "{{ nova_bootstrap_redis_dir }}", state: directory, mode: "0700" }
+
+- name: the nova-store-redis unit, if it is written
+  ansible.builtin.stat: { path: /etc/systemd/system/nova-store-redis.service, get_checksum: false }
+  register: bootstrap_redis_unit_was
+
+- name: the nova-store-redis unit
+  ansible.builtin.template:
+    src: nova-store-redis.service.j2
+    dest: /etc/systemd/system/nova-store-redis.service
+    mode: "0644"
+  register: bootstrap_redis_unit
+  become: true
+
+- name: nova-store-redis, enabled and running (restarted when its unit changed)
+  ansible.builtin.systemd_service:
+    name: nova-store-redis
+    daemon_reload: "{{ bootstrap_redis_unit is changed }}"
+    enabled: true
+    state: "{{ 'restarted' if bootstrap_redis_unit is changed else 'started' }}"
+  when: not ansible_check_mode or bootstrap_redis_unit_was.stat.exists
+  become: true
+
+- name: the store answers on its port
+  ansible.builtin.wait_for: { host: 127.0.0.1, port: "{{ nova_bootstrap_redis_port }}", timeout: 60 }
+  when: not ansible_check_mode
