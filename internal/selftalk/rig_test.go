@@ -21,25 +21,25 @@ func Names(text string) []string {
 }
 
 // AssertEmpty asserts that the scanner found nothing.
-func AssertEmpty(t *testing.T, got []Finding, format string, args ...any) {
+func AssertEmpty(t *testing.T, got []Claim) {
 	t.Helper()
-	assert.Empty(t, got, format, args...)
+	assert.Empty(t, got)
 }
 
 // AssertEmptyInstallation asserts that the installation scanner found nothing.
-func AssertEmptyInstallation(t *testing.T, got []InstallationFinding, format string, args ...any) {
+func AssertEmptyInstallation(t *testing.T, got []Installation) {
 	t.Helper()
-	assert.Empty(t, got, format, args...)
+	assert.Empty(t, got)
 }
 
 // AssertNotEmpty asserts that the scanner found something.
-func AssertNotEmpty(t *testing.T, got []Finding, format string, args ...any) {
+func AssertNotEmpty(t *testing.T, got []Claim) {
 	t.Helper()
-	assert.NotEmpty(t, got, format, args...)
+	assert.NotEmpty(t, got)
 }
 
 // AssertNotEmptyInstallation asserts that the installation scanner found something.
-func AssertNotEmptyInstallation(t *testing.T, got []InstallationFinding, format string, args ...any) {
+func AssertNotEmptyInstallation(t *testing.T, got []Installation) {
 	t.Helper()
-	assert.NotEmpty(t, got, format, args...)
+	assert.NotEmpty(t, got)
 }
