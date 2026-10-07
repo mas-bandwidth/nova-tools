@@ -230,6 +230,9 @@ type Daemon struct {
 	// Sent is the session's proof the sprint server last took on her beat (friend
 	// beat --pong answered with it), zero before any; the status carries it.
 	Sent func() time.Time
+	// Version is this daemon's build stamp and Binary its path, written into
+	// every status (Status.DaemonVersion, Status.Binary).
+	Version, Binary string
 
 	m           *Machine
 	status      Status
@@ -450,7 +453,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 	}
 	defer d.stageWG.Wait() // a stage under way ends with ctx (its git is killed) and its result is kept for the next Run
 	defer l.followWG.Wait()
-	d.status = Status{Friend: d.Friend, Harness: d.Harness, Started: d.m.LastPing, Width: d.Width}
+	d.status = Status{Friend: d.Friend, Harness: d.Harness, Started: d.m.LastPing, Width: d.Width, DaemonVersion: d.Version, Binary: d.Binary}
 	if !l.passive {
 		d.status.Session = SessionOK
 	}
