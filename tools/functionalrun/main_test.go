@@ -547,8 +547,8 @@ func TestRunContainerRemovesAtDeadlineOrInterrupt(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			eng := &hangingEngine{killed: make(chan struct{})}
 			ctx, cancel := context.WithCancel(t.Context())
-			// Always cancel to avoid context leak
 			defer cancel()
+			if tc.cancel { cancel() }
 			_, ended := runContainer(ctx, eng, []string{"run", "x"}, "nova-functional-r", time.Now().Add(tc.deadline), io.Discard, io.Discard)
 			if ended != tc.want {
 				t.Errorf("ended %q, want %s", ended, tc.want)
@@ -654,6 +654,7 @@ func TestSetupExit(t *testing.T) {
 		t.Errorf("setupExit = %d", got)
 	}
 	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
 	defer cancel()
 	if got := setupExit(ctx); got != exitInterrupted {
 		t.Errorf("setupExit after an interrupt = %d", got)
