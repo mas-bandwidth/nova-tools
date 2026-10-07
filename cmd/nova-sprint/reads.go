@@ -1255,6 +1255,7 @@ func (a *app) whereOf(ctx context.Context, st *store.Store, stale time.Duration,
 			}
 			if logical == sprint.Fleet {
 				rowCardFields(cells, facts.RowCards[r.Key])
+				exclusionCells(cells, facts.Exclusions[r.Key])
 			}
 			rows[r.Key] = cells
 		}
@@ -1340,6 +1341,7 @@ func (a *app) whereOf(ctx context.Context, st *store.Store, stale time.Duration,
 				n = map[string]int{"reads_ready": n["reads_ready"]} // down, she works nothing
 			}
 			rowCardFields(cells, n)
+			exclusionCells(cells, facts.Exclusions[sprint.FriendRow(f.Name)])
 		}
 	}
 	// the table layer draws it as it draws the fleet: header, rule, rows, rule,
@@ -1439,6 +1441,20 @@ func perLandedColumn(t ntable.Table, streams map[string]sprint.TierCosts) ntable
 // rowCardFields writes on a row of tables its fleet row's counts (sprint.RowCardFields): its
 // working cards by level, highest first, summing to its working, and its reads ready; each
 // "0" when it has none, a count cell's text as every cell of tables is.
+// exclusionCells writes a row's refused, withdrawn and provider counts when they
+// are not zero, so a row with none keeps the cell map the tables already had.
+func exclusionCells(cells map[string]any, n sprint.ExclusionCounts) {
+	if n.Refused != 0 {
+		cells["refused"] = strconv.Itoa(n.Refused)
+	}
+	if n.Withdrawn != 0 {
+		cells["withdrawn"] = strconv.Itoa(n.Withdrawn)
+	}
+	if n.Provider != 0 {
+		cells["provider"] = strconv.Itoa(n.Provider)
+	}
+}
+
 func rowCardFields(cells map[string]any, n map[string]int) {
 	for _, k := range sprint.RowCardFields {
 		cells[k] = strconv.Itoa(n[k])

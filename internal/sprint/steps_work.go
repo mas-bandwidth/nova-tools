@@ -1504,6 +1504,7 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 		if r.Failed {
 			kind, class, used = finishKind(c, r)
 		}
+		blame, defectClass, finding, fix := ClassifyAttempt(r.Report, r.Failed)
 		// a lane ended at its tier's cap: the first cap re-deals the card one tier up before
 		// it counts as a failure (lane_cap.go)
 		lc, capped := LaneCap{}, false
@@ -1520,6 +1521,13 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 			continue
 		case cardhdr.EndStaging:
 			p.Units = append(p.Units, stagingRefused(s, c, pr, r))
+			continue
+		case cardhdr.EndLaunch:
+			p.Units = append(p.Units, launchRefused(s, c, pr, r))
+			continue
+		}
+		if r.Failed && (handedBack(strings.ToLower(r.Report)) || noLaneDeadline(c, r.Report)) {
+			p.Units = append(p.Units, excludedWithdraw(s, c, pr, r, BlameCoordinator, DefectTakeBack))
 			continue
 		}
 		head := r.Head
@@ -1545,11 +1553,25 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 		defect := ""
 		if r.Failed && kind == "" && !passed {
 			defect = BriefDefectOf(r.Report)
+			if defect == "" && coordinatorBriefClass(defectClass) {
+				defect = finding
+				if defect == "" {
+					defect = defectClass
+				}
+			}
 		}
 		if defect != "" {
 			into = DoneDefect
 		}
 		cardSet := map[string]string{"ok": okWord, "head": head, "finished": stamp(s.Now)}
+		if r.Failed {
+			attemptAccount(cardSet, blame, defectClass, finding, fix)
+		} else {
+			cardSet[FieldBlame] = BlameNone
+			if fix != "" {
+				cardSet["fix"] = fix
+			}
+		}
 		if !r.Reported.IsZero() {
 			at := r.Reported
 			if at.After(s.Now) {
@@ -1787,6 +1809,10 @@ func IsNoResult(report string) bool { return strings.HasPrefix(report, cardhdr.E
 func takeEnded(s *Snapshot, c, pr *Card, r FinishReq, kind string, decided bool) Unit {
 	set := nextGen(c, "", s.Now)
 	set["withdrawn"], set[FieldTakeEnded] = stamp(s.Now), stamp(s.Now)
+	set["report"] = r.Report
+	set[FieldBlame] = BlameProvider
+	set[FieldDefectClass] = DefectProvider
+	set["finding"] = ExtractFindingFirstLine(r.Report)
 	line := cutText(strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(r.Report, kind), ":")), MaxProviderErrorBytes)
 	why := "the provider failed the take"
 	if kind == cardhdr.EndNoResult {
@@ -1839,6 +1865,10 @@ func IsStagingRefusal(report string) bool { return strings.HasPrefix(report, car
 func stagingRefused(s *Snapshot, c, pr *Card, r FinishReq) Unit {
 	set := nextGen(c, "", s.Now)
 	set["withdrawn"] = stamp(s.Now)
+	set["report"] = r.Report
+	set[FieldBlame] = BlameCoordinator
+	set[FieldDefectClass] = DefectLaunchRefused
+	set["finding"] = ExtractFindingFirstLine(r.Report)
 	line := cutText(strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(r.Report, cardhdr.EndStaging), ":")), MaxProviderErrorBytes)
 	var notes []Note
 	if !contains(StagingRefusers(c), c.Row) {
@@ -1859,6 +1889,51 @@ func stagingRefused(s *Snapshot, c, pr *Card, r FinishReq) Unit {
 		change(Fleet, moveEntry(c, c.Row, Withdrawn, set, "taken", "dealt")),
 		change(Work, moveEntry(pr, pr.Row, Ready, prSet, "work")),
 	}, Notes: notes, Moved: fmt.Sprintf("%s working -> withdrawn gen=%d, %s refused it at staging; %s working -> ready", c.ID, c.Int("gen")+1, c.Row, pr.ID)}
+}
+
+// launchRefused is a typed launch refusal: no lane ran, so the work card is
+// withdrawn the way a staging refusal is, the attempt is not spent again, and
+// the member's failed column does not take it. The producer still records the
+// consumer, including one that reported no usage, so the card's cost line names
+// the refusal.
+func launchRefused(s *Snapshot, c, pr *Card, r FinishReq) Unit {
+	usage := r.Usage
+	r.Usage = "" // the withdrawal records no consumer; this function records the one end
+	u := excludedWithdraw(s, c, pr, r, BlameCoordinator, DefectLaunchRefused)
+	r.Usage = usage
+	dealt, taken := takeStamps(c)
+	rec := costRecord(s, usage, c.F(FieldRoute), c.F(FieldModel), false, dealt, taken)
+	for i := range u.Changes {
+		if u.Changes[i].Table == Work {
+			// excludedWithdraw records no consumer here, so its set was dropped
+			if u.Changes[i].Entry.Set == nil {
+				u.Changes[i].Entry.Set = map[string]string{}
+			}
+			addConsumer(pr, u.Changes[i].Entry.Set, workConsumer(s, c, 0, cardhdr.EndLaunch, rec))
+		}
+	}
+	u.Moved = fmt.Sprintf("%s working -> withdrawn gen=%d, %s refused its launch; %s working -> ready", c.ID, c.Int("gen")+1, c.Row, pr.ID)
+	return u
+}
+
+// excludedWithdraw withdraws a finish that is not the worker's failed work and
+// returns the primary to ready on the same attempt.
+func excludedWithdraw(s *Snapshot, c, pr *Card, r FinishReq, blame, class string) Unit {
+	set := nextGen(c, "", s.Now)
+	set["withdrawn"] = stamp(s.Now)
+	set["report"] = r.Report
+	set[FieldBlame] = blame
+	set[FieldDefectClass] = class
+	set["finding"] = ExtractFindingFirstLine(r.Report)
+	prSet := map[string]string{}
+	if r.Usage != "" {
+		dealt, taken := takeStamps(c)
+		addConsumer(pr, prSet, workConsumer(s, c, 0, class, costRecord(s, r.Usage, c.F(FieldRoute), c.F(FieldModel), false, dealt, taken)))
+	}
+	return Unit{Key: c.ID, Stream: pr.Row, Changes: []Change{
+		change(Fleet, moveEntry(c, c.Row, Withdrawn, set, "taken", "dealt")),
+		change(Work, moveEntry(pr, pr.Row, Ready, prSet, "work")),
+	}, Moved: fmt.Sprintf("%s working -> withdrawn, not failed work (%s); %s working -> ready", c.ID, class, pr.ID)}
 }
 
 // withdrawCard is the unit that withdraws work card c from its member, the one path of a

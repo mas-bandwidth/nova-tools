@@ -734,9 +734,14 @@ func TickRuleBrief(s *Snapshot, r TickReq) (Plan, int) {
 	updated := map[string]bool{}
 	for _, a := range acting(s, r, ActMark) {
 		pr := s.Work.Placed(a.Card)
-		p.Units = append(p.Units, Unit{Key: pr.ID, Stream: pr.Row,
-			Changes: []Change{change(Work, setEntry(pr, map[string]string{FieldBriefDefect: stamp(s.Now), FieldRuleAnswer: RuleBriefDefect + ": " + a.Act + " at " + stamp(s.Now)}))},
-			Moved:   pr.ID + " marked a brief defect by rule " + RuleBriefDefect})
+		mark := map[string]string{FieldBriefDefect: stamp(s.Now), FieldRuleAnswer: RuleBriefDefect + ": " + a.Act + " at " + stamp(s.Now),
+			FieldBlame: BlameCoordinator, FieldDefectClass: DefectBrief}
+		changes := []Change{change(Work, setEntry(pr, mark))}
+		if wc := s.Fleet.Placed(pr.F("work")); wc != nil && wc.F(FieldBlame) == "" {
+			changes = append(changes, change(Fleet, setEntry(wc, map[string]string{FieldBlame: BlameCoordinator, FieldDefectClass: DefectBrief})))
+		}
+		p.Units = append(p.Units, Unit{Key: pr.ID, Stream: pr.Row, Changes: changes,
+			Moved: pr.ID + " marked a brief defect by rule " + RuleBriefDefect})
 		if n := a.open.Note; !updated[n.ID] && !strings.HasPrefix(n.What, "brief defect: ") {
 			updated[n.ID] = true
 			n.What = "brief defect: " + n.What

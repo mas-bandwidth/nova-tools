@@ -119,6 +119,7 @@ func TestEveryCoordinatorVerbIsTheCoordinators(t *testing.T) {
 		"cost reconcile":    "cost reconcile",
 		"cost reprice":      "cost reprice",
 		"stats tidy":        "stats tidy --all --reason r",
+		"stats recount":     "stats recount --dry-run",
 		"wait":              "wait x --for 1m",
 		"ack":               "ack x --reason r",
 		"answer":            "answer --dry-run --record /dev/null",

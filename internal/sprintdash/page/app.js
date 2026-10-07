@@ -400,12 +400,12 @@ function fleetLike(box, table, withLoad) {
   if (!box._head) {
     box._head = pageHead(box.id);
     box._total = el("div", "row total");
-    box._total._c = [el("div", "", "Total"), el("div"), quiet(numCell()), el("div"), el("div"), quiet(numCell()), quiet(numCell())];
+    box._total._c = [el("div", "", "Total"), el("div"), quiet(numCell()), el("div"), el("div"), quiet(numCell()), quiet(numCell()), quiet(numCell()), quiet(numCell()), quiet(numCell())];
     // one more than the shared cells: the fleet's load, the friends' tokens
     box._total._c.push(el("div"));
     box._total._c.forEach(function (c) { box._total.appendChild(c); });
   }
-  var t = { ready: 0, done: 0, ok: 0, up: 0, held: 0, down: 0 };
+  var t = { ready: 0, done: 0, ok: 0, refused: 0, withdrawn: 0, provider: 0, up: 0, held: 0, down: 0 };
   var scale = Math.max(1, names.reduce(function (a, n) { return Math.max(a, int(table[n].width)); }, 0));
   // the track column is exactly the widest track, so the figure sits right after it
   var tw = (scale * (TRACK_CELL + TRACK_GAP) - TRACK_GAP).toFixed(3) + "rem";
@@ -416,7 +416,8 @@ function fleetLike(box, table, withLoad) {
     r.name = el("div", "name"); r.pill = makePill(); r.track = el("div", "cells"); r.wf = numCell("frac");
     // fleet and friends: no numeric column flashes, only the cells
     r.wf = quiet(r.wf); r.ready = quiet(numCell()); r.done = quiet(numCell()); r.ok = quiet(numCell());
-    [r.name, r.pill, r.ready, r.track, r.wf, r.done, r.ok].forEach(function (c) { r.node.appendChild(c); });
+    r.refused = quiet(numCell()); r.withdrawn = quiet(numCell()); r.provider = quiet(numCell());
+    [r.name, r.pill, r.ready, r.track, r.wf, r.done, r.ok, r.refused, r.withdrawn, r.provider].forEach(function (c) { r.node.appendChild(c); });
     if (withLoad) { r.load = quiet(numCell()); r.node.appendChild(r.load); }
     else { r.tokens = quiet(numCell()); r.node.appendChild(r.tokens); }
     return r;
@@ -424,6 +425,7 @@ function fleetLike(box, table, withLoad) {
     var m = table[k], working = int(m.working), width = int(m.width), done = int(m.done);
     var okv = m.okpct != null ? m.okpct : m["ok%"];
     t.ready += int(m.ready); t.done += done; t.ok += int(m.ok);
+    t.refused += int(m.refused); t.withdrawn += int(m.withdrawn); t.provider += int(m.provider);
     if (m.status in t) t[m.status]++;
     setText(r.name, k);
     setPill(r.pill, m.status || "-", STATUS_TONE[m.status] || "neutral");
@@ -432,6 +434,7 @@ function fleetLike(box, table, withLoad) {
     setHTML(r.wf, frac(working, width, digits) + (m.window ? "<span class=\"win\"> · " + escHTML(m.window) + "</span>" : ""));
     setNum(r.ready, int(m.ready)); setNum(r.done, done);
     setOk(r.ok, pct(okv), done);
+    setNum(r.refused, int(m.refused)); setNum(r.withdrawn, int(m.withdrawn)); setNum(r.provider, int(m.provider));
     if (r.load) { var lp = pct(m.load); setText(r.load, lp === null ? "-" : lp.toFixed(1) + "%"); setClass(r.load, "num" + (lp === null ? " zero" : "")); }
     if (r.tokens) setText(r.tokens, m.tokens || "0");
   }, box._total);
@@ -439,6 +442,9 @@ function fleetLike(box, table, withLoad) {
   setNum(c[2], t.ready);
   setNum(c[5], t.done);
   setOk(c[6], t.done ? t.ok / t.done * 100 : null, t.done);
+  setNum(c[7], t.refused);
+  setNum(c[8], t.withdrawn);
+  setNum(c[9], t.provider);
   return { t: t, n: names.length };
 }
 
