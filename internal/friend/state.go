@@ -39,6 +39,8 @@ const (
 type Status struct {
 	Friend     string    `json:"friend"`
 	Harness    string    `json:"harness"`
+	Dir        string    `json:"dir,omitempty"`    // the friend's working directory, the session's
+	Pinned     string    `json:"pinned,omitempty"` // the session the daemon delivers into (--session); empty: the harness's newest
 	Started    time.Time `json:"started"`
 	At         time.Time `json:"at"` // when this was written
 	Connection string    `json:"connection"`

@@ -298,10 +298,14 @@ func (s *laneSet) said(width int) string {
 	return strings.Join(out, " ")
 }
 
-// identity is the friend's own files a lane's session is seeded from:
-// AGENTS.md and memory/, in the working directory or in its <friend>/.
-func (d *Daemon) identity() (agents, memory string) {
-	for _, root := range []string{d.Dir, filepath.Join(d.Dir, d.Friend)} {
+// identity is the friend's own files a lane's session is seeded from.
+func (d *Daemon) identity() (agents, memory string) { return Identity(d.Dir, d.Friend) }
+
+// Identity is the friend's own files a fresh session is seeded from:
+// AGENTS.md and memory/, in the working directory or in its <friend>/;
+// empty when not there.
+func Identity(dir, friend string) (agents, memory string) {
+	for _, root := range []string{dir, filepath.Join(dir, friend)} {
 		if agents == "" && exists(filepath.Join(root, "AGENTS.md")) {
 			agents = filepath.Join(root, "AGENTS.md")
 		}
