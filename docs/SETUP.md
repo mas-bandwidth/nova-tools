@@ -171,3 +171,21 @@ naming the verb or the step above: install `sops`, set the missing variable, `ch
 `chmod 700` the key, `nova-secrets keygen`, the `git clone` of the store, or `nova-secrets seal --store <store> --as <seat> --name <NAME>` for a name the loops require and the store
 does not hold. The check is fleet-scoped: `nova-doctor --local` skips it with the other fleet
 checks and says which; run `nova-doctor` plain to see it.
+
+### sprint-dashboard-verb-r-b.w7: the sprint dashboard
+
+The sprint dashboard is `nova-sprint dashboard`, run as a loop record on the
+coordinator's machine, never a hand-written launchd or systemd unit. Add the record, apply
+it, and the fleet's loops play writes its unit:
+
+```
+nova-config loop add sprint-dashboard --machine <m> --argv '["env","NOVA_SPRINT_SERVER=127.0.0.1:6390","nova-sprint","dashboard","--logo","<home>/sprint-logo.svg"]' --keepalive true --as <name>
+```
+
+It serves the page on `127.0.0.1:7390` and reads the sprint once a second whether or not
+a page is open; `--logo` is optional. The contract is
+[SPEC-SPRINT-DASHBOARD.md](SPEC-SPRINT-DASHBOARD.md); the loop record and its play are in
+[FLEET.md](FLEET.md). `nova-doctor --check dashboard` says `ok` when the loop record's unit
+is installed and its loopback port answers, `warn` when no loop record runs the dashboard
+on this machine or a hand unit serves it, and `fail` when the unit is there and the port
+does not answer. It is a fleet check: `--local` skips it.
