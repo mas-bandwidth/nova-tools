@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/mas-bandwidth/nova-tools/internal/testgit"
 )
 
 // TestGateRefusesAStoreWithNoCommit: a store with no commit yet has no base and no head
@@ -40,13 +42,13 @@ func TestGateVerdictExitsOneAtTheProcessBoundary(t *testing.T) {
 	dir := t.TempDir()
 	git := func(args ...string) string {
 		t.Helper()
-		out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput()
+		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		cmd.Env = testgit.Environ()
+		out, err := cmd.CombinedOutput()
 		require.NoError(t, err, "git %v: %v %s", args, err, out)
 		return string(out)
 	}
 	git("init", "-q", "-b", "main")
-	git("config", "user.name", "t")
-	git("config", "user.email", "t@t")
 	git("commit", "-q", "--allow-empty", "-m", "base")
 	base := strings.TrimSpace(git("rev-parse", "HEAD"))
 
