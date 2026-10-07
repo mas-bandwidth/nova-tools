@@ -81,7 +81,8 @@ func TestModelAckOfBlockedMovesTheCard(t *testing.T) {
 	h := newHarness(t)
 	h.setup(1)
 	h.must(AddStep(sprint.AddReq{Stream: "s1", IDs: []string{"late"}, Needs: []string{"s1-1"}}))
-	h.must(DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Reason: "gone"}))
+	seedDroppedNeed(h, "s1-1")
+	h.must(ResolveStep(sprint.ResolveReq{}))
 	open := h.openOn("late")
 	require.Len(t, open, 1, "blocked: %+v", open)
 	require.Equal(t, string(sprint.NBlocked), open[0].Note.Type, "blocked: %+v", open)
@@ -256,7 +257,8 @@ func TestAnAckOfSeveralIsAllOrNothing(t *testing.T) {
 	h := newHarness(t)
 	h.setup(1)
 	h.must(AddStep(sprint.AddReq{Stream: "s1", IDs: []string{"late"}, Needs: []string{"s1-1"}}))
-	h.must(DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Reason: "gone"}))
+	seedDroppedNeed(h, "s1-1")
+	h.must(ResolveStep(sprint.ResolveReq{}))
 	open := h.openOn("late")
 	require.Len(t, open, 1, "blocked: %+v", open)
 	require.Equal(t, string(sprint.NBlocked), open[0].Note.Type, "blocked: %+v", open)
@@ -300,8 +302,10 @@ func TestTwoBlockedJudgmentsOnOneSentinelWaiveOnce(t *testing.T) {
 	h.setup(0)
 	h.must(AddStep(sprint.AddReq{Stream: "s1", IDs: []string{"a", "b"}}))
 	h.must(AddStep(sprint.AddReq{Stream: "s2", IDs: []string{"stop"}, Sentinel: true, Needs: []string{"a", "b"}}))
-	h.must(DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{"a"}}, Reason: "gone"}))
-	h.must(DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{"b"}}, Reason: "gone"}))
+	seedDroppedNeed(h, "a")
+	h.must(ResolveStep(sprint.ResolveReq{}))
+	seedDroppedNeed(h, "b")
+	h.must(ResolveStep(sprint.ResolveReq{}))
 	var ids []string
 	for _, o := range h.openOn("stop") {
 		if o.Note.Type == sprint.NBlocked {
