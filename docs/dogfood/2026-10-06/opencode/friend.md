@@ -1,6 +1,6 @@
 # nova-friend dogfood — opencode, 2026-10-06
 
-Tool: nova-friend. Build: `nova-friend v1.0.1-0.20261007212807-38890605d34d`. Run cold, from the binary's own help (`nova-friend`, `nova-friend help`, `nova-friend <verb> -h`) on a Linux bench, with every verb at least once against one scratch directory. Every command below was typed with `S=<scratch-dir>` and `HOME=$S` so `install`, `uninstall`, `ping-install` and `ping-uninstall` wrote under the scratch home.
+Tool: nova-friend. Built in the staged checkout with `go build -o $JOB/bin/nova-friend ./cmd/nova-friend` (never the installed binary), at the staged commit `0655442166834fb6daa4130634c097248d18ef56`; it printed `nova-friend v1.0.1-0.20261007213845-065544216683 linux/amd64 go1.26.6`. Run cold, from the binary's own help (`nova-friend`, `nova-friend help`, `nova-friend <verb> -h`) and its page under `docs/`, on a Linux bench, with every verb at least once against one scratch store and one scratch directory. Every command below was typed with `S=<scratch-dir>`, `R=<scratch-redis>` and `HOME=$S` so `install`, `uninstall`, `ping-install` and `ping-uninstall` wrote under the scratch home and the store verbs read the scratch store.
 
 ## Findings
 
@@ -46,12 +46,46 @@ Tool: nova-friend. Build: `nova-friend v1.0.1-0.20261007212807-38890605d34d`. Ru
    I expected the delivery check to explain clearly that opencode cannot be driven because it has no deliver command.
    Grade: NEXT
 
+6. `nova-friend run --as the-friend --harness opencode --dir $S/the-friend --dry-run`
+   Printed:
+   ```
+   RUN FAILED: --dry-run was given and the verb never read it (Call.DryRun); it may have written
+   ```
+   I expected `--dry-run` to print the daemon it would run (`RUN DRY-RUN as= ...`), because run's own help says it checks the flags and prints the daemon without opening a store.
+   Grade: URGENT
+
+7. `nova-friend uninstall --as the-friend`
+   Printed:
+   ```
+   UNINSTALL OK label=com.nova.friend-the-friend plist=<scratch-dir>/Library/LaunchAgents/com.nova.friend-the-friend.plist
+   UNINSTALL RAN command="launchctl bootout gui/1000/com.nova.friend-the-friend"
+   ```
+   I expected a line naming the missing `launchctl` or a darwin-only refusal, since the agent was not booted out and nothing fails silently.
+   Grade: NEXT
+
+8. `nova-friend ping-install --as the-friend --every 30s --redis $R`
+   Printed:
+   ```
+   PING-INSTALL REFUSED: launchctl bootstrap: exec: "launchctl": executable file not found in $PATH: ; run: nova-friend help
+   ```
+   I expected the refusal's remedy to name the missing `launchctl` or the darwin requirement, not `nova-friend help`, which does not put launchctl on the machine.
+   Grade: NEXT
+
+9. `nova-friend ping-uninstall --as the-friend`
+   Printed:
+   ```
+   PING-UNINSTALL OK label=com.nova.friend-wake-ping-the-friend plist=<scratch-dir>/Library/LaunchAgents/com.nova.friend-wake-ping-the-friend.plist
+   PING-UNINSTALL RAN command="launchctl bootout gui/1000/com.nova.friend-wake-ping-the-friend"
+   ```
+   I expected the same as `uninstall`: a line naming the missing `launchctl` or a darwin-only refusal, because the wake agent was not booted out.
+   Grade: NEXT
+
 ## What held
 
-The following verbs ran clean or were correctly refused: `version` prints the build info, `help` and `-h` for every verb exit as documented, `status` refuses without a state directory, `pong` requires the nonce flag, `wait-pong` requires from and nonce, `resume` refuses when no PAUSED marker exists, `refuse-go` refuses with exit 2 for any name given, `watch` exits after timeout.
+The following verbs ran clean or were correctly refused: `version` prints the build info, `help` and `-h` for every verb exit as documented, `status` refuses without a state directory, `pong` requires the nonce flag, `wait-pong` requires from and nonce, `resume` refuses when no PAUSED marker exists, `refuse-go` refuses with exit 2 for any name given, `watch` exits after timeout, `serve --dry-run` printed `SERVE OK friends=ada every=1s down_after=10s dry_run=true` against the scratch store once a roster row was seeded (it refused `there is no friend row but the-friend to ping` with the `nova-config friend add` remedy on an empty roster), and `beat` refused correctly and named the cause when no sprint server answered at 127.0.0.1:6390. `run`, `uninstall`, `ping-install` and `ping-uninstall` are the findings above; `run` was also started for real under `timeout` and printed its `push proof: pending` and `inbox` lines before the signal.
 
 READ 6/10 — the banner and per-verb helps answer a cold reader, but the harness refusal messages should name the supported harnesses, and the check command's handling of unknown friends is inconsistent with ping's behavior.
 
 USE 5/10 — several verbs refuse with unhelpful remedies that point to `nova-friend help` instead of naming the exact fix; the opencode harness cannot be used for session-driven verbs at all.
 
-urgent=1 next=4
+urgent=2 next=7
