@@ -147,7 +147,7 @@ func TestLoopUsageRefusalsOpenNoStore(t *testing.T) {
 		{
 			name: "a field the kind has not",
 			args: []string{"loop", "add", "l1", "--machine", "m1", "--argv", `["/bin/prog"]`, "--every", "5", "--log", "/tmp/x"},
-			errs: []string{"REFUSED: unknown flag --log", "this verb takes --argv, --as"},
+			errs: []string{"REFUSED: unknown flag --log", "this verb takes --actor, --argv, --as"},
 		},
 	}
 	for _, tc := range cases {

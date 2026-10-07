@@ -722,10 +722,10 @@ Postgres and a throwaway Redis.
 $ nova-config migrate --file try.json
 CONFIG MIGRATE file=try.json from=0 to=35 applied=35
 
-$ nova-config machine add m1 --user nova --seat s1 --slots 8 --width 4 --as a1 --file try.json
+$ nova-config machine add m1 --user nova --seat s1 --slots 8 --width 4 --actor a1 --file try.json
 CONFIG ADD kind=machine name=m1 rev=1
 
-$ nova-config machine set m1 --width 6 --as a1 --file try.json
+$ nova-config machine set m1 --width 6 --actor a1 --file try.json
 CONFIG SET kind=machine name=m1 rev=2 changed=width
 
 $ nova-config machine list --file try.json
