@@ -197,6 +197,25 @@ work card and its packet, and the member launches that program from its own PATH
 member without it refuses the launch (`staging refused`) and the sprint deals the card to
 one that has it. `native` learns the harness from the binary's name.
 
+**A member draws only routes whose harness it can launch.** A login is a machine's, and
+the machine row says which it holds: `nova-config machine set <m> --harnesses
+opencode,claude` (`opencode` alone is the default), which `nova-config apply` writes to
+`machine:<m>` with the rest of the row (docs/SPEC-CONFIG.md, machine). The rule is one set
+of pure functions in `internal/swarm/launchable.go`: `CanLaunch` (a route under harness
+`h` is launchable by a member whose machine lists `h`; a route with no harness is
+`opencode`), `Launchable` (the routes of a tier a member may draw), `Serves` and
+`MembersServing` (the members up that can launch at least one route of the tier: the deal
+and the ask skip the rest instead of dealing to them), and `Unserved` (each route no
+member up can launch, with its harness and the machines up: one judgment for the route,
+never one failure per card). On 2026-10-06 a heavy `subscription-claude` route was drawn
+by four fleet members that hold no claude login, and 73 attempts
+ended in one second `launch refused`, each a failure of the card, the member and the
+route (`TestAMemberNeverDrawsARouteWhoseHarnessItLacks`). The machine row's list and these
+functions are in place; the deal and the ask in `internal/sprint` (route.go,
+steps_work.go, steps_review.go) and `nova-sprint fleet sync`, which carries the list to
+the fleet table, are not yet wired to them, so until they are a member without the
+program still refuses the launch at staging as above.
+
 | harness | the child | the usage |
 |---|---|---|
 | `claude` | `claude -p --model <m> --output-format json --permission-mode bypassPermissions --disallowed-tools WebFetch,WebSearch -- <prompt>` | its one JSON result: `usage` (input, output, cache write, cache read), `total_cost_usd`, `modelUsage` names the model |
