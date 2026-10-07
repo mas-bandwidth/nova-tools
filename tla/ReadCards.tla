@@ -36,8 +36,10 @@ MaxAttempt == 2
 MaxGen == 1
 
 Open == {"ready", "working"}
-\* what spends a reader: a verdict, or a deadline let pass; a return only under the old rule
-Spent == IF BugReturnSpends THEN {"ok", "broken", "returned", "late"} ELSE {"ok", "broken", "late"}
+\* what spends a reader: a verdict, or a deadline let pass (Judged); a return only under
+\* the old rule
+Judged == {"ok", "broken", "late"}
+Spent == IF BugReturnSpends THEN Judged \cup {"returned"} ELSE Judged
 
 VARIABLES attempt, pstate, cards
 vars == <<attempt, pstate, cards>>
@@ -125,12 +127,13 @@ MergingOnlyOnOks == pstate = "merging" => Cardinality(OkReaders(attempt)) >= Nee
 NoOpenReadOfAnOldAttempt == \A c \in cards : c.att < attempt => c.st \notin Open
 
 \* a reader that returned a read with no verdict is dealt it again: whenever the attempt
-\* still wants a read, she holds no open card of it and has a generation left, she is
-\* eligible (the deal may pick her); only a verdict or a lapse puts her out
+\* still wants a read, she holds no open card of it, judged none (Judged, not Spent: the
+\* returned card itself must not excuse her) and has a generation left, she is eligible
+\* (the deal may pick her); only a verdict or a lapse puts her out
 ReturnedIsDealtAgain ==
   \A c \in cards :
     (/\ c.att = attempt /\ c.st = "returned" /\ pstate = "review" /\ Wanted > 0
-     /\ ~\E d \in Mine(attempt, c.rd) : d.st \in Spent \cup Open
+     /\ ~\E d \in Mine(attempt, c.rd) : d.st \in Judged \cup Open
      /\ NextGen(attempt, c.rd) <= MaxGen)
     => c.rd \in Eligible
 
