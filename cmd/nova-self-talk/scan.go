@@ -86,14 +86,22 @@ type report struct {
 }
 
 func scan(args []string, stdin io.Reader, stdout, stderr io.Writer, wd string) int {
-	asJSON := verbflag.BoolAsked(args, "json")
 	fset := verbflag.New("scan")
 	var skips, ruleDocs baseList
 	fset.Var(&skips, "skip", "basename to skip, repeatable (nothing is skipped by default)")
 	fset.Var(&ruleDocs, "rule-doc", "basename whose findings print under the rule-document banner, repeatable (empty by default)")
 	maxLines := fset.Int("max", bounded.Default, "finding lines to print per class before one MORE line stands for the rest; 0 prints all")
 	fset.Bool("json", false, "print the run as one JSON object on stdout instead of lines")
-	if err := verbflag.Parse(fset, args); err != nil {
+	// FLAGS MAY STAND BEFORE, BETWEEN OR AFTER THE FILES, as nova-memory's parse lets
+	// them and as docs/STANDARD.md section 1 wants (one shape across the set):
+	// flagsAndFiles moves them ahead of the files, so the flag package parses every
+	// one, and a `--` the caller writes ends the flags.
+	flags, files := flagsAndFiles(args, fset)
+	asJSON := verbflag.BoolAsked(flags, "json")
+	// The flags parse on their own: they are self-contained after the split (each
+	// value-taking flag holds its value), and a missing value is the flag package's
+	// own "needs an argument" rather than the next file.
+	if err := verbflag.Parse(fset, flags); err != nil {
 		hint := ""
 		for _, flagName := range []string{"skip", "rule-doc"} {
 			if strings.Contains(err.Error(), " for flag -"+flagName+":") || err.Error() == "flag needs an argument: -"+flagName {
@@ -113,12 +121,6 @@ func scan(args []string, stdin io.Reader, stdout, stderr io.Writer, wd string) i
 		// Zero already means "all", so a negative ceiling is a typo with two readings
 		// and gets neither.
 		problems = append(problems, fmt.Sprintf("--max must be a line ceiling of zero or more (got %d); 0 means print them all", *maxLines))
-	}
-	files, late := positionals(args, fset)
-	if late != "" {
-		// A flag after the files makes the file list itself ambiguous, so no file is read.
-		problems = append(problems, fmt.Sprintf("flags come before files (got %q); use -- before a filename beginning with a dash", late))
-		return refuse(stdout, stderr, asJSON, "scan", "", problems...)
 	}
 	if len(files) == 0 {
 		problems = append(problems, "no files named; refusing to guess")
@@ -225,34 +227,39 @@ func unmatched(files []string, skips, ruleDocs baseList) []string {
 	return out
 }
 
-// positionals returns the files after the flags, and the first argument that looks like a
-// flag standing after a file (a late flag), or "".
-func positionals(args []string, fset *flag.FlagSet) ([]string, string) {
-	parsed := len(args) - fset.NArg()
+// flagsAndFiles splits one scan invocation into its flags and its files. Flags
+// may stand before, between or after the files (docs/STANDARD.md section 1, one
+// shape across the set; nova-memory's parse takes them anywhere), so the flags
+// are moved ahead of the files for the one parse, and the caller joins them with
+// a `--` so a file whose name begins with a dash is a file. A `--` the caller
+// writes ends the flags; a value of a flag that takes one (--skip --) is that
+// value, never the terminator; a lone `-` is standard input, a file.
+func flagsAndFiles(args []string, fset *flag.FlagSet) (flags, files []string) {
 	literal := false
-	// Every scan flag but --json takes a value. A value spelled "--" is not the
-	// terminator; walk the parsed prefix so only the separator protects files.
-	for i := 0; i < parsed; i++ {
-		if args[i] == "--" {
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case literal:
+			files = append(files, a)
+		case a == "--":
 			literal = true
-			break
-		}
-		if !strings.Contains(args[i], "=") && strings.TrimLeft(args[i], "-") != "json" {
-			i++
+		case len(a) > 1 && strings.HasPrefix(a, "-"):
+			flags = append(flags, a)
+			name, _, inline := strings.Cut(strings.TrimLeft(a, "-"), "=")
+			f := fset.Lookup(name)
+			if f != nil && !inline {
+				if b, ok := f.Value.(interface{ IsBoolFlag() bool }); !ok || !b.IsBoolFlag() {
+					if i+1 < len(args) {
+						i++
+						flags = append(flags, args[i])
+					}
+				}
+			}
+		default:
+			files = append(files, a)
 		}
 	}
-	var files []string
-	for _, arg := range fset.Args() {
-		if !literal && arg == "--" {
-			literal = true
-			continue
-		}
-		if !literal && len(arg) > 1 && strings.HasPrefix(arg, "-") {
-			return nil, arg
-		}
-		files = append(files, arg)
-	}
-	return files, ""
+	return flags, files
 }
 
 // openPath is the path a read opens. A relative name is opened against wd, the
