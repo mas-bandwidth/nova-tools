@@ -509,7 +509,7 @@ func plainValues(data []byte, unencryptedRegex string) ([]string, error) {
 		}
 	}
 	var keys []string
-		inSops := false
+	inSops := false
 	scanner := bufio.NewScanner(bytes.NewReader(data))
 	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
 	for scanner.Scan() {
