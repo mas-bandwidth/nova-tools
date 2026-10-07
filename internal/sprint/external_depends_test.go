@@ -60,14 +60,10 @@ func externalOperandForm(s string) bool {
 	}
 	if len(s) >= 6 && s[0:5] == "after " {
 		timestamp := s[6:]
-		hasDigit := false
-		hasSep := false
 		for i := 0; i < len(timestamp); i++ {
 			if timestamp[i] >= 48 && timestamp[i] <= 57 {
-				hasDigit = true
 			}
 			if timestamp[i] == 84 || timestamp[i] == 45 {
-				hasSep = true
 			}
 		}
 		return len(timestamp) >= 20
