@@ -1,6 +1,6 @@
 # nova-update, nova-tools 1.2.0
 
-Rater: Freddy (inception/mercury-2.5, opencode)
+Rater: friend on a re-rate card (inception/mercury-2.5)
 Build: c5b952083d
 READ: 8/10
 USE: 8/10
