@@ -44,10 +44,10 @@ type decoder struct {
 	probs []error
 }
 
-func (d *decoder) errf(at, format string, a ...any) error {
-	err := fmt.Errorf("workfile: file=%s %s: %s", d.file, at, fmt.Sprintf(format, a...))
-	d.probs = append(d.probs, err)
-	return err
+// errf records a problem for finish to report together with the others; no
+// caller acts on it alone, so it returns nothing.
+func (d *decoder) errf(at, format string, a ...any) {
+	d.probs = append(d.probs, fmt.Errorf("workfile: file=%s %s: %s", d.file, at, fmt.Sprintf(format, a...)))
 }
 
 // finish returns the tree when nothing was wrong, or every problem found,
