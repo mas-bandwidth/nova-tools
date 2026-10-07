@@ -304,6 +304,41 @@ func refRemedy(k *config.Kind) string {
 	return toolName + " " + ref + " list"
 }
 
+// removeRemedy is the command a remove refusal names: a route a tier still
+// lists is taken out by that tier's set, the remaining routes read from the
+// store and filled in, so the next turn is a paste and not a search
+// (docs/STANDARD.md, section 3, point 2). Every other refusal keeps next.
+func removeRemedy(ctx context.Context, st pgStore, k *config.Kind, name, again, next string) string {
+	if k.Name != config.KindRoute {
+		return next
+	}
+	tiers, err := st.List(ctx, config.KindTier)
+	if err != nil {
+		return next
+	}
+	for _, tier := range tiers {
+		var rest []string
+		found := false
+		for _, r := range strings.Split(tier.Fields["routes"], ",") {
+			switch {
+			case r == name:
+				found = true
+			case r != "":
+				rest = append(rest, r)
+			}
+		}
+		if !found {
+			continue
+		}
+		value := strings.Join(rest, ",")
+		if value == "" {
+			value = "''" // an empty --routes: the shell word the flag takes
+		}
+		return toolName + " " + config.KindTier + " set " + tier.Name + " --routes " + value + again
+	}
+	return next
+}
+
 func runKindRemove(ctx context.Context, k *config.Kind, args []string, stdout, stderr io.Writer, d deps) int {
 	verb := k.Name + " remove"
 	fs := verbflag.New(verb)
@@ -365,7 +400,11 @@ func runKindRemove(ctx context.Context, k *config.Kind, args []string, stdout, s
 	}
 	id, err := st.Delete(ctx, k.Name, name, actor)
 	if err != nil {
-		return storeErr(stderr, verb, err, toolName+" "+k.Name+" list"+c.again())
+		next := toolName + " " + k.Name + " list" + c.again()
+		if errors.Is(err, config.ErrReferenced) {
+			next = removeRemedy(ctx, st, k, name, c.again(), next)
+		}
+		return storeErr(stderr, verb, err, next)
 	}
 	if *asJSON {
 		o := tool.Done().Fact("op", config.OpRemove).Fact("kind", k.Name).Fact("name", name).Fact("rev", id)
