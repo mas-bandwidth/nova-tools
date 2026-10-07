@@ -157,6 +157,15 @@ a machine of `nova-config machine list` is not named on the tailnet; the evidenc
 missing machine and the fix line runs `tailscale up` on it. The check passes when tailscale is
 up, this machine is named, and every inventory machine answers on the tailnet.
 
+### sprint-local-only-mode-r-bc.w8: local-only mode
+
+Use it on a single machine with no tailnet — the one-machine `nova-up --local` setup — and on
+no other machine: `nova-up --local` sets `NOVA_SPRINT_LOCAL=1`, and every address the tools
+accept must then be loopback, so the twin store and the loopback Redis of that setup are the
+whole of it. A fleet never uses it: machines that reach each other over the tailnet stay off
+the mode, since a tailnet address is refused under it. Under the mode nothing asks for a
+tailnet, and `nova-doctor` skips the `tailnet` check with this mode as the reason.
+
 ### dep-secrets-bb.w4: the secrets store and keys
 
 The secrets dependency is [nova-secrets](SPEC-SECRETS.md): a git store of sops-sealed yaml

@@ -486,6 +486,17 @@ func (a *app) storeCtx(ctx context.Context, c common) (*store.Store, error) {
 	if why := needsActor(c); why != "" {
 		return nil, errors.New(why)
 	}
+	// the one address rule (internal/sprint/addr.go CheckAddr): the store is
+	// on loopback, a private range or the tailnet, and on loopback alone in
+	// local-only mode, refused before anything is dialled.
+	localOnly := sprint.LocalOnlyModeFrom(a.getenv)
+	if why := sprint.CheckAddr(c.redis, localOnly); why != "" {
+		run := "run: name a loopback, private or tailnet address"
+		if localOnly {
+			run = "run: name a loopback address, or unset NOVA_SPRINT_LOCAL to allow a private or tailnet address"
+		}
+		return nil, errors.New("--redis " + why + "; " + run)
+	}
 	names := sprint.Names{}
 	b, err := a.backend(ctx, c.redis, names)
 	if err != nil {
