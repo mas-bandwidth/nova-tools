@@ -203,12 +203,12 @@ a clear refusal message.
 39. nova-sprint accept
     First 3 lines: nova-sprint accept REFUSED: PUSH DOWN: boss has no push target recorded
     Expected: Accept cards
-    Grade: URGENT (requires coordinator setup)
+    Grade: NEXT (requires coordinator setup; run: nova-sprint seat install --actor boss)
 
 40. nova-sprint ask
     First 3 lines: nova-sprint ask REFUSED: PUSH DOWN: boss has no push target recorded
     Expected: Ask for answers
-    Grade: URGENT (requires coordinator setup)
+    Grade: NEXT (requires coordinator setup; run: nova-sprint seat install --actor boss)
 
 41. nova-sprint ci
     First 3 lines: nova-sprint ci REFUSED: wants ids and one of --red, --green
@@ -218,7 +218,7 @@ a clear refusal message.
 42. nova-sprint collect
     First 3 lines: nova-sprint collect REFUSED: PUSH DOWN: boss has no push target recorded
     Expected: Collect friend data
-    Grade: URGENT (requires coordinator setup)
+    Grade: NEXT (requires coordinator setup; run: nova-sprint seat install --actor boss)
 
 43. nova-sprint cost
     First 3 lines: nova-sprint cost REFUSED: cost wants one of its verbs
@@ -253,7 +253,7 @@ a clear refusal message.
 49. nova-sprint resolve
     First 3 lines: nova-sprint resolve REFUSED: PUSH DOWN: boss has no push target recorded
     Expected: Resolve cards
-    Grade: URGENT (requires coordinator setup)
+    Grade: NEXT (requires coordinator setup; run: nova-sprint seat install --actor boss)
 
 50. nova-sprint wait
     First 3 lines: nova-sprint wait REFUSED: wants notification ids
@@ -333,7 +333,7 @@ a clear refusal message.
 65. nova-sprint land
     First 3 lines: nova-sprint land REFUSED: PUSH DOWN: boss has no push target recorded
     Expected: Land cards
-    Grade: URGENT (requires coordinator setup)
+    Grade: NEXT (requires coordinator setup; run: nova-sprint seat install --actor boss)
 
 66. nova-sprint verify-landed
     First 3 lines: VERIFY-UNRECORDED checked=0 unrecorded=0 unchecked=0
@@ -368,12 +368,12 @@ a clear refusal message.
 72. nova-sprint set
     First 3 lines: nova-sprint set REFUSED: PUSH DOWN: boss has no push target recorded
     Expected: Set configuration
-    Grade: URGENT (requires coordinator setup)
+    Grade: NEXT (requires coordinator setup; run: nova-sprint seat install --actor boss)
 
 73. nova-sprint start
     First 3 lines: nova-sprint start REFUSED: PUSH DOWN: boss has no push target recorded
     Expected: Start machine
-    Grade: URGENT (requires coordinator setup)
+    Grade: NEXT (requires coordinator setup; run: nova-sprint seat install --actor boss)
 
 74. nova-sprint stop
     First 3 lines: nova-sprint stop REFUSED: wants --reason <text> and --until
@@ -408,27 +408,27 @@ a clear refusal message.
 80. nova-sprint rework
     First 3 lines: nova-sprint rework REFUSED: PUSH DOWN: boss has no push target recorded
     Expected: Rework cards
-    Grade: URGENT (requires coordinator setup)
+    Grade: NEXT (requires coordinator setup; run: nova-sprint seat install --actor boss)
 
 81. nova-sprint return
     First 3 lines: nova-sprint return REFUSED: PUSH DOWN: boss has no push target recorded
     Expected: Return cards
-    Grade: URGENT (requires coordinator setup)
+    Grade: NEXT (requires coordinator setup; run: nova-sprint seat install --actor boss)
 
 82. nova-sprint redo
     First 3 lines: nova-sprint redo REFUSED: PUSH DOWN: boss has no push target recorded
     Expected: Redo card
-    Grade: URGENT (requires coordinator setup)
+    Grade: NEXT (requires coordinator setup; run: nova-sprint seat install --actor boss)
 
 83. nova-sprint drop
     First 3 lines: nova-sprint drop REFUSED: PUSH DOWN: boss has no push target recorded
     Expected: Drop cards
-    Grade: URGENT (requires coordinator setup)
+    Grade: NEXT (requires coordinator setup; run: nova-sprint seat install --actor boss)
 
 84. nova-sprint priority
     First 3 lines: nova-sprint priority REFUSED: PUSH DOWN: boss has no push target recorded
     Expected: Set priority
-    Grade: URGENT (requires coordinator setup)
+    Grade: NEXT (requires coordinator setup; run: nova-sprint seat install --actor boss)
 
 85. nova-sprint release
     First 3 lines: nova-sprint release REFUSED: wants sentinels or held cards and --reason
@@ -455,7 +455,7 @@ coordinator setup refuse with clear messages. Many commands require specific arg
 which are properly documented in help text.
 
 ## Summary
-urgent=12 next=75
+urgent=2 next=85
 
 Commands that require coordinator push setup (and refuse with clear remediation): add, set,
 start, land, accept, ask, collect, resolve, rework, return, redo, drop, priority, selftest.
