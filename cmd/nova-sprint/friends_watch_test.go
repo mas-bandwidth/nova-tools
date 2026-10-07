@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/stretchr/testify/assert"
@@ -88,6 +89,38 @@ func TestChangingVerbsAndTheOneShotWherePrintEveryPush(t *testing.T) {
 			assert.Contains(t, out, "PUSH source="+source+" status=UP last=")
 		}
 	}
+}
+
+func TestWhereWatchRendersTheSeatPushSetInItsFrame(t *testing.T) {
+	t.Parallel()
+	const name = "push-watch-frame"
+	ta, session := pushProofSprint(t, name)
+	session.beat = nil
+	ta.ok("init --readers reader-a --members m1")
+	st, err := ta.a.store(common{redis: "mem:0", actor: name})
+	require.NoError(t, err)
+	require.NoError(t, writePush(context.Background(), st, sprint.PushRecord{Name: name, Harness: "codex", Target: "job", Session: "session-a", Nonce: "n1", PongOf: "n1", Proven: ta.now}))
+	for _, source := range []string{"bus", "friends", "transitions"} {
+		require.NoError(t, st.BeatSeatPush(context.Background(), name, source, ""))
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	screen := &writeLog{after: func(n int, _ string) {
+		if n == 2 {
+			cancel()
+		}
+	}}
+	var errs bytes.Buffer
+	require.Zero(t, ta.a.whereLoop(ctx, ta.whereRun(true), screen, &errs), errs.String())
+	require.Len(t, screen.writes, 3)
+	for _, source := range []string{"judgments", "bus", "friends", "transitions"} {
+		assert.Contains(t, screen.writes[1], "PUSH source="+source+" status=UP last=")
+	}
+	code, out, stderr := ta.do("where --json")
+	require.Zero(t, code, stderr)
+	var view whereView
+	require.NoError(t, json.Unmarshal([]byte(out), &view))
+	assert.Len(t, view.Pushes, 4)
 }
 
 func TestAnObserverCannotRelabelAnOldPassAfterTheSeatChanges(t *testing.T) {

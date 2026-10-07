@@ -188,7 +188,7 @@ func init() {
 			name, run := verbs[i].name, verbs[i].run
 			verbs[i].run = func(a *app, args []string, o, e io.Writer) int { return a.withSeatPushLines(name, args, o, e, run) }
 		case "where":
-			verbs[i].run = (*app).cmdWherePushProof
+			verbs[i].run = (*app).cmdWhere
 		}
 	}
 

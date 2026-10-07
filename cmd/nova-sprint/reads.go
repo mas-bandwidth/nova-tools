@@ -551,11 +551,12 @@ func noSprintYet(err error) error {
 
 // whereView is the view, for a program.
 type whereView struct {
-	At      time.Time `json:"at"`
-	Landed  int64     `json:"landed"`
-	All     int64     `json:"all"`
-	Held    int64     `json:"held,omitempty"` // behind a sentinel not released, or admitted held: in the ETA
-	Summary string    `json:"summary"`
+	Pushes  []sprint.SeatPushLine `json:"pushes,omitempty"`
+	At      time.Time             `json:"at"`
+	Landed  int64                 `json:"landed"`
+	All     int64                 `json:"all"`
+	Held    int64                 `json:"held,omitempty"` // behind a sentinel not released, or admitted held: in the ETA
+	Summary string                `json:"summary"`
 	// ArchivedCards and ArchivedLanded are the cards of the archived streams (stream
 	// archive) and those landed, beside the headline, which counts only the streams on the
 	// table: All+ArchivedCards and Landed+ArchivedLanded are the whole epoch's.
@@ -1204,7 +1205,21 @@ func (a *app) whereOf(ctx context.Context, st *store.Store, stale time.Duration,
 	fleetTiers, friendsTiers := sprint.SideTiers(shapes[0].Props, sprint.PropFleetTiers), sprint.SideTiers(shapes[0].Props, sprint.PropFriendsTiers)
 	v.FleetTiers, v.FriendsTiers = tiersJSON(fleetTiers), tiersJSON(friendsTiers)
 	var b strings.Builder
-	b.WriteString(a.seatTitle(v.Coordinator, v.Seat, now) + "\n\n" + whereHeader(v.Summary, v.Machine) + "\n")
+	b.WriteString(a.seatTitle(v.Coordinator, v.Seat, now) + "\n")
+	if v.Coordinator != "" && pushArmed(v.Coordinator) {
+		set, ok, err := st.SeatPushes(ctx, v.Coordinator)
+		if err != nil {
+			return v, "", err
+		}
+		seat, err := st.SeatState(ctx)
+		if err != nil {
+			return v, "", err
+		}
+		set.Name = v.Coordinator
+		v.Pushes = sprint.SeatPushLines(set, ok, seat.Epoch, seat.Generation, now)
+		writeSeatPushLines(&b, v.Pushes)
+	}
+	b.WriteString("\n" + whereHeader(v.Summary, v.Machine) + "\n")
 	if line := switchesLine(v.FleetWork, v.FriendsWork, fleetTiers, friendsTiers); line != "" {
 		b.WriteString(line + "\n")
 	}

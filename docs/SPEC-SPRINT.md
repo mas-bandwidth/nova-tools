@@ -4448,9 +4448,9 @@ last=<RFC3339|-> period=<duration> command=<arm command>` line per source. JSON 
 one result object with a `pushes` array. Any down source refuses the operation before
 changing work, naming that source and its native arm command. A handover requires
 the current seat’s complete set and the next holder’s separate judgments nonce proof;
-the next holder’s observers bind to the new seat generation before any later work moves. The one-shot `where`
-shows the same lines below the seat title, or the same array under JSON. Its existing
-per-frame watch renderer requires the same hook before it can show these extra facts.
+the next holder’s observers bind to the new seat generation before any later work moves.
+Each `where` frame, including `--watch`, shows the same lines below the seat title,
+or the same array under JSON.
 
 `nova-sprint friends watch --actor <seat> [--state <file>]` checks the friends' current
 stored status, work counts and missing-evidence reasons every ten minutes.
@@ -4469,8 +4469,8 @@ The arm commands are `nova-sprint seat install --actor <seat> --harness <harness
 'nova-sprint seat deliver --actor <seat>'`, `nova-sprint friends watch --actor <seat>` and
 `nova-sprint status watch --actor <seat>`. The native `seat deliver` command reads the receiver's input and sends it to the
 current proven judgments target; a resident harness with no explicit session id is
-refused, and this transport command never mints a receiver proof. The bus receiver's completed read passes
-need its seat-receipt hook; a receiver without that hook does not arm this bus proof.
+refused, and this transport command never mints a receiver proof. The bus receiver's
+completed read passes renew its seat receipt while the receiver runs for the holder.
 The receipt API is `nova-sprint seat push --actor <seat> --beat
 bus|friends|transitions [--failed <reason>]`. `--observe bus|friends|transitions --json`
 returns the native observers' consistent source facts; neither flag proves judgments. A native observer submits the epoch, seat generation,

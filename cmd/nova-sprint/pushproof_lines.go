@@ -80,23 +80,12 @@ func (a *app) withSeatPushLines(name string, args []string, o, e io.Writer, run 
 		fmt.Fprintln(o, string(body))
 		return code
 	}
-	var frame bytes.Buffer
-	target := o
-	code := -1
-	if name == "where" {
-		code = run(a, args, &frame, e)
-		if code != 0 {
-			fmt.Fprint(o, frame.String())
-			return code
-		}
-		title, rest, found := strings.Cut(frame.String(), "\n")
-		if found {
-			fmt.Fprintln(o, title)
-			frame.Reset()
-			frame.WriteString(rest)
-		}
-		target = o
-	}
+	writeSeatPushLines(o, rows)
+	return run(a, args, o, e)
+}
+
+// writeSeatPushLines renders the same four proofs for verbs and each where frame.
+func writeSeatPushLines(target io.Writer, rows []sprint.SeatPushLine) {
 	for _, r := range rows {
 		at := "-"
 		if !r.At.IsZero() {
@@ -108,22 +97,4 @@ func (a *app) withSeatPushLines(name string, args []string, o, e io.Writer, run 
 		}
 		fmt.Fprintf(target, "PUSH source=%s status=%s last=%s period=%s command=%s\n", r.Source, status, at, r.Period, oneline.Quote(r.Command))
 	}
-	if name == "where" {
-		fmt.Fprint(o, frame.String())
-		return code
-	}
-	return run(a, args, o, e)
-}
-
-// cmdWherePushProof adds the seat's proof set to a one-shot view. The existing
-// watch renderer is preserved; its per-frame hook is outside this card's paths.
-func (a *app) cmdWherePushProof(args []string, o, e io.Writer) int {
-	if len(args) > 0 && verbflag.IsHelp(args[0]) {
-		return a.cmdWhere(args, o, e)
-	}
-	v := readVerb(append([]string{"where"}, args...))
-	if v.on("watch") {
-		return a.cmdWhere(args, o, e)
-	}
-	return a.withSeatPushLines("where", args, o, e, (*app).cmdWhere)
 }

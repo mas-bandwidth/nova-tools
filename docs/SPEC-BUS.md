@@ -503,6 +503,7 @@ bus's own deaf-name guard. A successful coordinator receiver pass reports `seat 
 --actor <seat> --beat bus` to the sprint at most once a minute; no failed read or delivery
 renews it. The sprint binds the receipt to the current seat generation, epoch and
 judgments delivery target and rejects it after three minutes without another success.
-A receiver without the seat-receipt hook has no such proof; merely starting an older
-`recv --forever` does not make the sprint move. A receiver for another name supplies no
+A `recv --forever --exec` receiver renews the receipt after completed reads, including
+an empty blocking read, at most once per minute while it belongs to the current seat.
+A receiver for another name supplies no
 seat proof. The receiver still uses `--exec` and acks a message only on its success.
