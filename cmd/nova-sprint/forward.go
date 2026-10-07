@@ -50,6 +50,7 @@ var waits = map[string]string{"where": "watch", "inbox": "wait", "lane take": "w
 // verbArgs is an argument list as its verb's own flags read it.
 type verbArgs struct {
 	name  string        // the verb; "" when the list names none
+	sub   string        // the word after the verb, for a verb whose subcommands differ (seat)
 	words int           // how many words the verb is
 	fs    *flag.FlagSet // the verb's flags, set as the list sets them; nil for no verb
 	help  bool          // the list asks for the verb's help
@@ -64,6 +65,9 @@ func readVerb(a *app, argv []string) (v verbArgs) {
 		w := strings.Fields(vb.name)
 		if len(argv) >= len(w) && slices.Equal(argv[:len(w)], w) && len(w) > v.words {
 			v.name, v.words = vb.name, len(w)
+			if len(argv) > len(w) {
+				v.sub = argv[len(w)]
+			}
 		}
 	}
 	if v.words == 0 {
@@ -123,16 +127,47 @@ func (v verbArgs) given(name string) (yes bool) {
 	return yes
 }
 
+// seatSubs are the words after `seat` that name a subcommand: the seat's push
+// proof (push, pong) is the store's and the server runs it, while login and
+// logout record and remove the login of the machine they are typed on and are
+// not the server's (notServed; docs/SPEC-SPRINT.md, "The seat's store login"
+// and "The push proof"). They are not verbs of the table, so the forwarding
+// machinery reads the word after `seat` and keeps it where cmdSeat dispatches
+// from: the client's and the server's own words go after it, never between the
+// verb and its subcommand.
+var seatSubs = []string{"login", "logout", "push", "pong"}
+
+// seatSub says word is one of the seat verb's subcommands.
+func seatSub(word string) bool { return slices.Contains(seatSubs, word) }
+
+// servedSeatSub says the list is a seat subcommand the server runs: push and
+// pong write the seat's push proof in the store (docs/SPEC-SPRINT.md, "The
+// push proof"). The server's flags go after the subcommand (serve.go), and a
+// flag only the subcommand knows (--harness) still parses there.
+func (v verbArgs) servedSeatSub() bool {
+	return v.name == "seat" && (v.sub == "push" || v.sub == "pong")
+}
+
+// notServedName is the name the not-served list is read by: the verb, or the
+// seat's subcommand, so `seat login` is not served while `seat push` is.
+func (v verbArgs) notServedName() string {
+	if v.name == "seat" && seatSub(v.sub) {
+		return "seat " + v.sub
+	}
+	return v.name
+}
+
 // unserved is why the server does not run the verb sent from this machine, "" when it
 // does: any verb of the command but the ones no one is served (notServed), one that
 // waits for the sprint to move (waits), and one naming a store (the server's is the
 // store).
 func (v verbArgs) unserved() string {
+	name := v.notServedName()
 	switch {
 	case v.words == 0:
 		return "not a verb of nova-sprint; run: nova-sprint help"
-	case slices.Contains(notServed, v.name):
-		return v.name + " is not run by the server; run it by itself"
+	case slices.Contains(notServed, name):
+		return name + " is not run by the server; run it by itself"
 	case v.given("redis"):
 		return "--redis is not given to the server: its store is the sprint's"
 	case waits[v.name] != "" && v.given(waits[v.name]) && !slices.Contains([]string{"false", "0s"}, v.fs.Lookup(waits[v.name]).Value.String()):
@@ -194,8 +229,11 @@ func (a *app) forwarded(args []string, stdout, stderr io.Writer) (code int, sent
 	srv := a.server(v.fs)
 	addr := srv.addr
 	// NOVA_SPRINT_PREFIX is refused where the verb runs, before a store or a server is
-	// reached (storeCtx); the refusal is the verb's own, so it is never sent on.
-	if addr == "" || a.getenv("NOVA_SPRINT_PREFIX") != "" || v.unserved() != "" || v.help || v.err != nil {
+	// reached (storeCtx); the refusal is the verb's own, so it is never sent on. A
+	// seat subcommand the server runs (push, pong) is sent on though the bare seat
+	// verb's flags do not parse its own (--harness): the server's seat verb refuses
+	// what it does not know, as it would where it is typed.
+	if addr == "" || a.getenv("NOVA_SPRINT_PREFIX") != "" || v.unserved() != "" || v.help || (v.err != nil && !v.servedSeatSub()) {
 		return 0, false // no server, a prefix, not served, a wait, its help, or flags it refuses: runs here
 	}
 	if !srv.named { // the server is the local default: say which was used (docs/CLI.md, "nova-sprint")
@@ -222,7 +260,9 @@ func (a *app) forwarded(args []string, stdout, stderr io.Writer) (code int, sent
 // ask sends the server one verb (its words, then what follows them) as this caller:
 // who acts is this caller's alone, said even when it is no one (the server never acts
 // as its own environment names), before the caller's own words so a --actor it gave
-// wins; each file it names is absolute.
+// wins; each file it names is absolute. The seat's subcommand stays the word after
+// the verb: the caller's --actor goes after it, so cmdSeat still dispatches from the
+// first word it reads (seatSubs).
 func (a *app) ask(ctx context.Context, addr string, verb, rest []string) (sprintwire.Result, error) {
 	send := a.forward
 	if send == nil {
@@ -230,7 +270,12 @@ func (a *app) ask(ctx context.Context, addr string, verb, rest []string) (sprint
 			return sprintwire.Client{Addr: addr}.Do(ctx, verbs...)
 		}
 	}
-	argv := absolutePaths(a, slices.Concat(verb, []string{"--actor", a.getenv("NOVA_SPRINT_ACTOR")}, rest))
+	argv := slices.Concat(verb, rest)
+	at := len(verb)
+	if at < len(argv) && argv[0] == "seat" && seatSub(argv[at]) {
+		at++
+	}
+	argv = absolutePaths(a, slices.Concat(argv[:at], []string{"--actor", a.getenv("NOVA_SPRINT_ACTOR")}, argv[at:]))
 	res, err := send(ctx, addr, argv)
 	if err != nil {
 		return sprintwire.Result{}, err

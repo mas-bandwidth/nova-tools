@@ -100,7 +100,7 @@ func TestSeatInstallVerbWritesLoadsAndRemovesTheUnit(t *testing.T) {
 	assert.Contains(t, string(b), `Environment="NOVA_SPRINT_SERVER=127.0.0.1:7480"`)
 	assert.NotContains(t, string(b), "--redis", out)
 	require.Len(t, asked, 1, "the push target goes to the server")
-	assert.Equal(t, []string{"seat", "--actor", "rowan", "push", "--actor", "rowan", "--harness", "opencode", "--target", session}, asked[0])
+	assert.Equal(t, []string{"seat", "push", "--actor", "rowan", "--actor", "rowan", "--harness", "opencode", "--target", session}, asked[0], "the seat's subcommand is the word after the verb, so cmdSeat dispatches on the server")
 
 	// the twin has no machine to wait on: refused, nothing written or loaded
 	delete(env, "NOVA_SPRINT_SERVER")

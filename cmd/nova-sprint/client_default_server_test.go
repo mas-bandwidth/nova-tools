@@ -63,3 +63,58 @@ func TestANamedServerIsUsedWithNoNote(t *testing.T) {
 	require.Equal(t, 0, code, "%s%s", out.String(), errb.String())
 	assert.Empty(t, errb.String())
 }
+
+// The seat's push proof is the store's and the server runs it, while the
+// seat's store login is the machine's and does not: seat push and seat pong
+// are sent to the local server, seat login and seat logout run where they are
+// typed. The seat verb is one verb with subcommands, so the subcommand stays
+// the word after `seat` for cmdSeat to dispatch on, and the server's own words
+// go after it.
+func TestTheSeatPushProofIsServedAndTheSeatLoginIsNot(t *testing.T) {
+	t.Parallel()
+	c := emptyEnvApp()
+	for _, tc := range []struct {
+		argv   []string
+		served bool
+	}{
+		{[]string{"seat"}, true},
+		{[]string{"seat", "--repair", "--reason", "r"}, true},
+		{[]string{"seat", "push", "--json"}, true},
+		{[]string{"seat", "pong", "0000000000000000"}, true},
+		{[]string{"seat", "login", "--check"}, false},
+		{[]string{"seat", "logout"}, false},
+		{[]string{"seat", "install", "--dry-run"}, false},
+		{[]string{"seat", "uninstall"}, false},
+	} {
+		assert.Equalf(t, tc.served, readVerb(c, tc.argv).unserved() == "", "%v", tc.argv)
+	}
+}
+
+// The seat's subcommand reaches the server where cmdSeat reads it: the
+// caller's actor goes after `seat push`, never between the verb and its
+// subcommand.
+func TestSeatPushReachesTheServerWithItsSubcommandFirst(t *testing.T) {
+	t.Parallel()
+	env := map[string]string{"XDG_CONFIG_HOME": t.TempDir(), "NOVA_SPRINT_ACTOR": "seat-a"}
+	c := newApp(func(k string) string { return env[k] })
+	t.Cleanup(c.close)
+	var sent [][]string
+	c.forward = func(_ context.Context, addr string, verbs ...[]string) ([]sprintwire.Result, error) {
+		sent = append(sent, verbs...)
+		return []sprintwire.Result{{Code: 0, Stdout: "PUSH OK\n"}}, nil
+	}
+	for _, tc := range []struct {
+		argv []string
+		want []string
+	}{
+		{[]string{"seat", "push", "--json"}, []string{"seat", "push", "--actor", "seat-a", "--json"}},
+		{[]string{"seat", "pong", "0000000000000000", "--json"}, []string{"seat", "pong", "--actor", "seat-a", "0000000000000000", "--json"}},
+	} {
+		sent = nil
+		var out, errb bytes.Buffer
+		code := c.run(tc.argv, &out, &errb)
+		require.Equal(t, 0, code, "%v: %s%s", tc.argv, out.String(), errb.String())
+		require.Len(t, sent, 1, "%v", tc.argv)
+		assert.Equal(t, tc.want, sent[0], "%v", tc.argv)
+	}
+}
