@@ -65,7 +65,7 @@ usage:
   nova-tokens ledger  --out <dir> (--day <YYYY-MM-DD> | --month <YYYY-MM>) --redis <host:port>
                       [--user <name>] [--password-env <NAME>] [--dry-run]
   nova-tokens sum     --out <dir> --month <YYYY-MM> [--max <n>]
-  nova-tokens check   --out <dir> [--strict | --no-spend <file>] [--through <YYYY-MM-DD>] [--max <n>]
+  nova-tokens check   --out <dir> [--strict | --no-spend <file>] [--through <YYYY-MM-DD>] [--allow-empty] [--max <n>]
   nova-tokens sources --repos <file> (--day <YYYY-MM-DD> | --all) [<source flags>] [--unattributed] [--max <n>]
   nova-tokens profiles --swarm-root <dir>
                       one PROFILES MODEL line per model (cards, median output, overshoot), then a PROFILES OK line with totals
