@@ -19,7 +19,11 @@ import (
 // ./cmd/nova-sprint there for every platform, stamped with the build's
 // version, instead of taking it from the nova-tools checkout's cmd/; every
 // machine then holds it in the bin directory by its name, after the release's
-// own install, and fleet/retired-tools.txt never names it.
+// own install, and fleet/retired-tools.txt never names it. The coordinator
+// installs inside the seat play's window, not the install play, so the seat
+// play's release install must be followed by the same copy: install replaces a
+// tool whose bytes differ from the release artifact (internal/release/install.go,
+// security#72 finding 2), so a copy made before that install would be undone.
 func TestToolsYmlBuildsNovaSprintFromItsOwnRepo(t *testing.T) {
 	t.Parallel()
 	var vars map[string]any
@@ -28,8 +32,10 @@ func TestToolsYmlBuildsNovaSprintFromItsOwnRepo(t *testing.T) {
 	require.NoError(t, yaml.Unmarshal(readFleetFile(t, "tools.yml"), &plays))
 	buildPlay := playNamed(t, plays, "the build, once per platform")
 	installPlay := playNamed(t, plays, "the build in ~/.local/bin on every machine")
+	seatPlay := playNamed(t, plays, "the seat adopts the build")
 	build := playTasks(t, buildPlay)
 	install := playTasks(t, installPlay)
+	seat := flattenTasks(t, playTasks(t, seatPlay))
 	installVars, _ := installPlay["vars"].(map[string]any)
 	sprintFile := str(installVars["tools_sprint_file"])
 
@@ -54,6 +60,15 @@ func TestToolsYmlBuildsNovaSprintFromItsOwnRepo(t *testing.T) {
 		return str(cp["src"]) == "{{ nova_sprint_out }}/{{ nova_platform }}/{{ tools_sprint_file }}" &&
 			str(cp["dest"]) == "{{ nova_bin_dir }}/{{ tools_sprint_file }}" && cp["mode"] == "0755"
 	})
+	seatRelease := taskIndex(seat, func(task map[string]any) bool {
+		cmd, _ := task["ansible.builtin.command"].(map[string]any)
+		return slices.Contains(stringList(cmd["argv"]), "install")
+	})
+	seatCopied := taskIndex(seat, func(task map[string]any) bool {
+		cp, _ := task["ansible.builtin.copy"].(map[string]any)
+		return str(cp["src"]) == "{{ nova_sprint_out }}/{{ nova_platform }}/{{ tools_sprint_file }}" &&
+			str(cp["dest"]) == "{{ nova_bin_dir }}/{{ tools_sprint_file }}" && cp["mode"] == "0755"
+	})
 
 	cases := []struct {
 		name string
@@ -68,6 +83,8 @@ func TestToolsYmlBuildsNovaSprintFromItsOwnRepo(t *testing.T) {
 		{"the build play builds ./cmd/nova-sprint in that checkout, after it", compile > checkout && checkout >= 0},
 		{"the install play copies nova-sprint into the bin directory by name", copied >= 0},
 		{"after the release's own install", copied > release && release >= 0},
+		{"the seat play installs through the release's own install", seatRelease >= 0},
+		{"the seat play places nova-sprint after that install", seatCopied > seatRelease && seatRelease >= 0},
 		{"fleet/retired-tools.txt never names nova-sprint", !slices.Contains(strings.Fields(string(readFleetFile(t, "retired-tools.txt"))), "nova-sprint")},
 	}
 	for _, tc := range cases {
@@ -112,6 +129,30 @@ func playTasks(t *testing.T, play map[string]any) []map[string]any {
 // taskIndex is the index of the first task match accepts, or -1.
 func taskIndex(tasks []map[string]any, match func(map[string]any) bool) int {
 	return slices.IndexFunc(tasks, match)
+}
+
+// flattenTasks splices every task's nested block in at the task's place, so
+// document order survives for tasks a play nests: the seat play's release
+// install and the nova-sprint copy that must follow it are both inside the
+// window block.
+func flattenTasks(t *testing.T, tasks []map[string]any) []map[string]any {
+	t.Helper()
+	var out []map[string]any
+	for _, task := range tasks {
+		out = append(out, task)
+		entries, ok := task["block"].([]any)
+		if !ok {
+			continue
+		}
+		var nested []map[string]any
+		for _, e := range entries {
+			m, ok := e.(map[string]any)
+			require.True(t, ok, "a nested block task is not a mapping")
+			nested = append(nested, m)
+		}
+		out = append(out, flattenTasks(t, nested)...)
+	}
+	return out
 }
 
 func stringList(v any) []string {
