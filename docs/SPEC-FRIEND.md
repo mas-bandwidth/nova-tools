@@ -1227,7 +1227,7 @@ second), both ways:
   internal/friend/lanes.go `ProgressArgv`, as `FinishArgv` does): sent bare, the
   server refused it for a card on `friend.<name>` (held by friend.<name>, not <name>).
 - A held card with no `inbox/<job>/BRIEF.md` is written, whole, never over a file there
-  (`atomicfile` NoReplace: friend sync writes the same file the same way, and whichever is
+  (`atomicfile` NoReplace: the daemon adds the current packet tier on the RESULT contract, and whichever writer is
   first writes it). The daemon logs one line per write (`inbox: wrote inbox/<job>/BRIEF.md
   (card <c>, <col> on her row)`); in batch mode the session is told of the briefs in a turn
   of their own, as friend sync's bus message would; in one-shot mode a free lane is handed

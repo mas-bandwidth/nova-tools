@@ -26,7 +26,8 @@ import (
 // her inbox both ways (SyncInbox): a held card with no inbox/<job>/BRIEF.md is written, and
 // a sprint job in her inbox whose card left her row (dropped, returned, landed) is moved to
 // inbox/retired/. Friend sync still writes the same file the same way; whichever comes
-// first writes it, and the other finds it there (docs/SPEC-FRIEND.md, the inbox).
+// first writes it, and the other finds it there; the daemon annotates its RESULT contract
+// with the packet's current tier (docs/SPEC-FRIEND.md, the inbox).
 
 // HeldCard is one card on the friend's row as the server answers it: the card, the job it
 // is delivered as (inbox/<job>), its column (ready or working) and its BRIEF.md whole, with

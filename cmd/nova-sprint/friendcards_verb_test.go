@@ -45,7 +45,7 @@ func inboxJobs(t *testing.T, root, who string) []string {
 // The server serves every card held on a friend's row with its packet (the card
 // daemon-writes-every-taken-card3): the cards the deal put there in batch mode, working and
 // ready, and a card taken back from one friend and dealt to another. Her daemon writes each
-// from the answer alone (friend.SyncInbox), the same file friend sync writes, and retires the
+// from the answer alone (friend.SyncInbox), annotates its RESULT with the packet tier, and retires the
 // job of a card that left her row; on a twin store, through the verb, the worker's POST and
 // GET /api/friend/<friend>/cards.
 func TestFriendCardsServesEveryHeldCardWithItsPacket(t *testing.T) {
@@ -91,7 +91,7 @@ func TestFriendCardsServesEveryHeldCardWithItsPacket(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, friend.InboxCounts{Held: len(held), Inbox: len(held)}, got)
 	assert.Len(t, lines, len(held), "one line a write: %v", lines)
-	// friend sync finds each there and writes none again, and renders the same file
+	// friend sync finds each there and writes none again; the daemon adds the tier contract
 	assert.NotContains(t, ta.ok("friend sync --root "+root), "FRIEND-CARD DELIVERED friend=friend-a")
 	other := t.TempDir()
 	ta.ok("friend sync --root " + other)
@@ -100,7 +100,8 @@ func TestFriendCardsServesEveryHeldCardWithItsPacket(t *testing.T) {
 		require.NoError(t, err)
 		theirs, err := os.ReadFile(filepath.Join(other, "friend-a-working", "inbox", h.Job, "BRIEF.md"))
 		require.NoError(t, err)
-		assert.Equal(t, string(theirs), string(mine), "the daemon writes friend sync's file: %s", h.Job)
+		want := strings.Replace(string(theirs), "\n\n", "\nRESULT: "+h.Card+" sha= tier: "+h.Tier+"\n\n", 1)
+		assert.Equal(t, want, string(mine), "the daemon preserves the complete brief and adds the current tier: %s", h.Job)
 	}
 
 	// a card taken back from her by the coordinator and dealt to the other friend
@@ -132,7 +133,8 @@ func TestFriendCardsServesEveryHeldCardWithItsPacket(t *testing.T) {
 	require.NoError(t, err)
 	brief, err := os.ReadFile(filepath.Join(dirB, "inbox", moved.Job, "BRIEF.md"))
 	require.NoError(t, err)
-	assert.Equal(t, moved.Brief, string(brief))
+	wantBrief := strings.Replace(moved.Brief, "\n\n", "\nRESULT: "+moved.Card+" sha= tier: "+moved.Tier+"\n\n", 1)
+	assert.Equal(t, wantBrief, string(brief))
 
 	// the server answers it to the friend herself: the worker's POST and the GET
 	ta.a.serveAddr = "mem:0"
