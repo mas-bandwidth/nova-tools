@@ -6644,3 +6644,14 @@ friend reaches that friend's inbox by the route her judgments already take: the
 push loop writes a group addressed to someone to that actor's own inbox
 directory (`pushTarget.dirOf`, `~/<actor>-working/inbox/sprint-judgments`), the
 group carrying the note's addressee (`sprint.Group.To`).
+
+## 20. Address rules
+
+nova-sprint accepts only loopback, private, or tailnet addresses for its store
+(--redis, NOVA_SPRINT_REDIS, or NOVA_REDIS_ADDR). In local-only mode
+(NOVA_SPRINT_LOCAL=1), only loopback addresses are allowed.
+
+Local-only mode (NOVA_SPRINT_LOCAL=1) is for a single machine with no tailnet.
+It narrows the address rule to loopback only, refusing a tailnet or other
+address naming the mode. nova-doctor --local skips the tailnet check under this
+mode, since there is no tailnet to check.

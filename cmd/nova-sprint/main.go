@@ -325,6 +325,9 @@ func (a *app) close() {
 // NOVA_SPRINT_REDIS_PASSWORD_ENV names, else the recorded seat login
 // (storeOptions, storelogin.go).
 func (a *app) redisBackend(ctx context.Context, addr string, names sprint.Names) (store.Backend, error) {
+	if err := sprint.AddrOK(addr); err != "" {
+		return nil, fmt.Errorf("store address refused: %s", err)
+	}
 	if isTwin(addr) {
 		return a.twinBackend(addr)
 	}

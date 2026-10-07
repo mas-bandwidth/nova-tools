@@ -45,8 +45,14 @@ type tailnetNode struct {
 // the backend is running, this machine names itself on it, and every machine of
 // the nova-config inventory is named on the tailnet so it can be reached by name
 // (docs/SPEC-DOCTOR.md, the checks). Fleet marks it: --local skips it, because a
-// single-machine setup has no fleet to reach.
+// single-machine setup has no fleet to reach. Local-only mode (NOVA_SPRINT_LOCAL=1)
+// also skips it, because a machine in local-only mode has no tailnet.
 func checkTailnet(ctx context.Context, env Env) Result {
+	// Skip under local-only mode: the process says it (docs/SPEC-SPRINT.md, section 14).
+	if strings.EqualFold(strings.TrimSpace(env.Getenv("NOVA_SPRINT_LOCAL")), "1") {
+		return Result{Status: OK,
+			Evidence: "local-only mode (NOVA_SPRINT_LOCAL=1): this machine has no tailnet"}
+	}
 	ctx, cancel := context.WithTimeout(ctx, tailnetTimeout)
 	defer cancel()
 
