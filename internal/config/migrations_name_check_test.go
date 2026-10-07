@@ -11,7 +11,7 @@ import (
 
 // TestMigrationsHoldEveryNamedTableToTheRowNamePattern asserts that the
 // migration chain is unique and consecutive, ending with
-// 0032_route_first.sql, and that migration 27 enforces the NamePattern
+// 0036_friend_billing.sql, and that migration 27 enforces the NamePattern
 // ('^[a-z0-9][a-z0-9-]*$') check constraint on each named table
 // (config.machines, config.friends, config.loops, config.routes)
 // (docs/SPEC-CONFIG.md; security#69 finding 2).
@@ -38,6 +38,12 @@ func TestMigrationsHoldEveryNamedTableToTheRowNamePattern(t *testing.T) {
 	first := all[31]
 	require.Equal(t, 32, first.Version, "route first migration version")
 	require.Equal(t, "0032_route_first.sql", first.Name, "route first migration name")
+	require.GreaterOrEqual(t, len(all), 36, "friend billing is migration 36")
+	last = all[35]
+	require.Equal(t, 36, last.Version, "friend billing migration version")
+	require.Equal(t, "0036_friend_billing.sql", last.Name, "friend billing migration name")
+	assert.Contains(t, last.SQL, "ALTER TABLE config.friends", "billing belongs to the configuration friend rows")
+	assert.Contains(t, last.SQL, "DEFAULT 'subscription'", "existing friends default to subscription billing")
 
 	// Migration 27 is the name-pattern check. 0032 adds the route's first
 	// column and does not replace that check (docs/SPEC-CONFIG.md, route).

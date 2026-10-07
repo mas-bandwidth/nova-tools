@@ -1356,6 +1356,14 @@ not level the friends":
 `TestAFriendWithAnIdleLaneIsDealtAndLevelledBeforeAFullOne`,
 `TestTwinStoreDealsIdleFriendsFirstAndLevelsEveryTick`.
 
+### deal-subscription-first-r-t-bb: heavy and pro work goes to subscription friends first
+
+For a heavy or pro card without a WHO preference, the deal first offers it to an up
+friend whose billing is `subscription`, whose tiers include the card's tier, and who has
+room under the existing friend room rule (`friendRoom`). API-billed friends and fleet
+routes receive only the work no eligible subscription friend can take. A card naming a
+WHO keeps that preference. Flash and frontier cards keep the existing deal order.
+
 ### The rebalance: queued work to idle lanes, across friends and fleet
 
 **The tick rebalances queued work across both sides, within the tier sets** (the owner,

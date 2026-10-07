@@ -488,8 +488,8 @@ func (st *Store) friendNames(ctx context.Context) []string {
 	return slices.Sorted(maps.Keys(r))
 }
 
-// FriendSeats returns every friend of the roster as a FriendSeat (with Name, Width, Status,
-// Class, Mode, and Running: the cards her last beat names running).
+// FriendSeats returns every friend of the roster as a FriendSeat (with Name, Width, Billing,
+// Status, Class, Mode, and Running: the cards her last beat names running).
 func (st *Store) FriendSeats(ctx context.Context, now time.Time) ([]sprint.FriendSeat, error) {
 	rows, whys, err := st.friendRows(ctx, now)
 	if err != nil {
@@ -497,7 +497,7 @@ func (st *Store) FriendSeats(ctx context.Context, now time.Time) ([]sprint.Frien
 	}
 	seats := make([]sprint.FriendSeat, len(rows))
 	for i, r := range rows {
-		seats[i] = sprint.FriendSeat{Name: r.Name, Width: r.Width, Status: r.Status, Class: r.Class, Mode: r.Mode, Roles: sprint.Split(r.Roles), Why: whys[r.Name], Proof: r.Proof, Finished: r.Finished}
+		seats[i] = sprint.FriendSeat{Name: r.Name, Width: r.Width, Status: r.Status, Class: r.Class, Mode: r.Mode, Billing: r.Billing, Roles: sprint.Split(r.Roles), Why: whys[r.Name], Proof: r.Proof, Finished: r.Finished}
 		if r.Reason != "" && seats[i].Why != "" {
 			seats[i].Why += ": " + r.Reason
 		}

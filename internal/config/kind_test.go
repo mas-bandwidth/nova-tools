@@ -84,8 +84,8 @@ func TestTheMachineRowIsTheDeclaredFactsSomethingReads(t *testing.T) {
 }
 
 // TestTheFriendRowIsWhatSomeoneDecidesForHer: Glenn 2026-09-27, "anything
-// that a friend would just know, is runtime redis data". Four fields:
-// slots, tiers, roles and width (2026-10-02, the jobs she works at once); no
+// that a friend would just know, is runtime redis data". Her declared fields
+// include slots, tiers, roles, width and billing; no
 // machine, harness, logins, wake or note; and no coordinator role, which is
 // the sprint row's.
 func TestTheFriendRowIsWhatSomeoneDecidesForHer(t *testing.T) {
@@ -93,7 +93,9 @@ func TestTheFriendRowIsWhatSomeoneDecidesForHer(t *testing.T) {
 
 	friend, _ := Lookup(KindFriend)
 	scopedGot97 := strings.Join(friend.FieldNames(), ",")
-	require.Equal(t, "slots,tiers,roles,width,mode,config_dir,token_cap", scopedGot97, "friend fields %s, want slots,tiers,roles,width,mode,config_dir,token_cap", scopedGot97)
+	require.Equal(t, "slots,tiers,roles,width,billing,mode,config_dir,token_cap", scopedGot97, "friend fields %s, want slots,tiers,roles,width,billing,mode,config_dir,token_cap", scopedGot97)
+	assert.Equal(t, BillingSubscription, FriendBilling(Row{}), "an absent billing field defaults to subscription")
+	assert.Equal(t, BillingAPI, FriendBilling(Row{Fields: map[string]string{"billing": BillingAPI}}))
 	for _, f := range friend.Fields {
 		scopedWant102 := f.Name == "slots" || f.Name == "tiers"
 		assert.Equal(t, scopedWant102, f.Required, "--%s required=%v, want %v", f.Name, f.Required, scopedWant102)

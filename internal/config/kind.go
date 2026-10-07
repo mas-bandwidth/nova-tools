@@ -199,6 +199,28 @@ func FriendWidth(r Row) int {
 	return r.Int("width")
 }
 
+// How a friend's work is paid (the owner, 2026-10-04 4:41 PM; docs/SPEC-CONFIG.md,
+// friend): a subscription friend's work is tokens only, the friends category, never
+// in the dollar columns; an API friend's work is at API rates, priced in dollars
+// under its model's tier as a fleet route's is (nova-sprint friend sync and the
+// deal). Migration 0036 sets every row to the default.
+const (
+	BillingAPI          = "api"
+	BillingSubscription = "subscription"
+)
+
+// FriendBillings are the words of a friend row's billing field.
+var FriendBillings = []string{BillingAPI, BillingSubscription}
+
+// FriendBilling is a friend row's billing: its billing field, BillingSubscription
+// when the row names none (docs/SPEC-CONFIG.md, friend).
+func FriendBilling(r Row) string {
+	if b := r.Fields["billing"]; b != "" {
+		return b
+	}
+	return BillingSubscription
+}
+
 // FriendModes are how a friend's daemon (nova-friend run) hands her work:
 // batch, every waiting message as one turn of her one session; one-shot,
 // width lanes, each its own session of her, handed one card per turn and
@@ -429,12 +451,13 @@ var Kinds = []*Kind{
 		// rather than stored in configuration.
 		Name:  KindFriend,
 		Table: "friends",
-		Doc:   "an AI friend: her slots, which tiers she can do, her roles, and her width, the jobs she works at once, her delivery mode, the config directory her claude lanes run with, and the per-card token cap her one-shot lanes hold a card at",
+		Doc:   "an AI friend: her slots, which tiers she can do, her roles, and her width, the jobs she works at once, her billing, her delivery mode, the config directory her claude lanes run with, and the per-card token cap her one-shot lanes hold a card at",
 		Fields: []Field{
 			{Name: "slots", Type: TypeInt, Required: true, Help: "her desired slots, under the ceiling of the machine her beat reports; no machine's width"},
 			{Name: "tiers", Type: TypeList, Enum: Tiers, Required: true, Help: "which tiers she can do: comma list of " + strings.Join(Tiers, ", ")},
 			{Name: "roles", Type: TypeList, Enum: FriendRoles, Help: "comma list of " + strings.Join(FriendRoles, ", ") + " (who coordinates is the sprint row's)"},
 			{Name: "width", Type: TypeInt, Default: strconv.Itoa(DefaultFriendWidth), Help: "the jobs she works at once, the width nova-sprint friend sync sets on her friends row; at least 1, " + strconv.Itoa(DefaultFriendWidth) + " by default"},
+			{Name: "billing", Type: TypeEnum, Enum: FriendBillings, Default: BillingSubscription, Help: "how her work is paid: subscription (the default: tokens only, never in the dollar columns) or api (at API rates: priced in dollars under its model's tier, as a fleet route's work)"},
 			{Name: "mode", Type: TypeEnum, Enum: FriendModes, Default: DefaultFriendMode, Help: "how her daemon hands her work: batch (the default: every waiting message in one turn) or one-shot (width lanes, each its own session, handed one card per turn)"},
 			{Name: "config_dir", Type: TypeText, Nullable: true, Help: "the absolute directory a claude one-shot lane runs with as CLAUDE_CONFIG_DIR, her account's login and settings; unset (the default, or --config_dir '') for any other harness; nova-friend run refuses a claude friend in one-shot mode without it"},
 			{Name: "token_cap", Type: TypeInt, Default: strconv.FormatInt(DefaultFriendTokenCap, 10), Help: "tokens one card may spend (input, cached input, output and reasoning summed) before a one-shot lane stops its own run and holds the card; " + strconv.FormatInt(DefaultFriendTokenCap, 10) + " by default, and 0 is no cap"},
