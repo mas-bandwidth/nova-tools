@@ -7,9 +7,9 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// TestLintCardChildHonestAttribution checks that LintCardChildWith refuses briefs that
+// TestLintRefusesABriefThatHidesTheModel checks that LintCardChildWith refuses briefs that
 // tell the worker to hide or misstate their model or harness.
-func TestLintCardChildHonestAttribution(t *testing.T) {
+func TestLintRefusesABriefThatHidesTheModel(t *testing.T) {
 	t.Parallel()
 
 	// Full brief template that passes all other rules
