@@ -1,8 +1,10 @@
 # nova-ci dogfood — codex (zhi), 2026-10-07
 
-A stranger's pass over `nova-ci` at this branch's tip (`3c658bbc698c`). I read
-only the tool's own help (`nova-ci -h`, `nova-ci help`, `nova-ci <verb> -h`) and
-its page `docs/CLI.md`, built it with `go build ./cmd/nova-ci`, and used every
+A stranger's pass over `nova-ci` built from `3c658bbc698c`, the base this
+attempt fetched (`cmd/nova-ci` and `internal/ci/slowtests` are identical at this
+commit's parent, the base tip `574b61f3d`). I read only the tool's own help
+(`nova-ci -h`, `nova-ci help`, `nova-ci <verb> -h`) and its page `docs/CLI.md`,
+built it with `go build ./cmd/nova-ci`, and used every
 verb at least once with its real flags. The timing verbs ran against a scratch
 Go module at `example.com/scratch/mod` holding one package, `beta`, with a fast
 test, a 60 ms test and a `SLEEPS:` skip; `functional`, `local`, the two
