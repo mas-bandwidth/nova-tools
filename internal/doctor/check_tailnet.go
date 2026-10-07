@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"slices"
 	"strings"
 	"time"
@@ -45,8 +46,13 @@ type tailnetNode struct {
 // the backend is running, this machine names itself on it, and every machine of
 // the nova-config inventory is named on the tailnet so it can be reached by name
 // (docs/SPEC-DOCTOR.md, the checks). Fleet marks it: --local skips it, because a
-// single-machine setup has no fleet to reach.
+// single-machine setup has no fleet to reach. Local-only mode also skips it,
+// because machines in local-only mode use loopback only and need no tailnet.
 func checkTailnet(ctx context.Context, env Env) Result {
+	if localOnlyMode() {
+		return Result{Status: OK,
+			Evidence: "local-only mode skips tailnet check"}
+	}
 	ctx, cancel := context.WithTimeout(ctx, tailnetTimeout)
 	defer cancel()
 
@@ -130,6 +136,11 @@ func firstLabel(s string) string {
 		s = s[:i]
 	}
 	return strings.ToLower(s)
+}
+
+// localOnlyMode returns true when NOVA_SPRINT_LOCAL=1 is set.
+func localOnlyMode() bool {
+	return strings.ToLower(os.Getenv("NOVA_SPRINT_LOCAL")) == "1"
 }
 
 // inventoryNames is the machine rows nova-config has applied, read from
