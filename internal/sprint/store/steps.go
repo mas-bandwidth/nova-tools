@@ -329,6 +329,12 @@ func FriendTakeStep(r sprint.FriendTakeReq) Step {
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.FriendTake(s, r) }}
 }
 
+// FriendGiveStep clears the take-back mark of a friend on the cards named (friend give).
+func FriendGiveStep(r sprint.FriendGiveReq) Step {
+	return Step{Args: ArgsOf(r), Verb: "friend give", Load: tables(sprint.Fleet, sprint.Work), Mirrors: true,
+		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.FriendGive(s, r) }}
+}
+
 // FriendLevelStep evens the friends' ready queues within each class (friend level).
 func FriendLevelStep(r sprint.FriendLevelReq) Step {
 	return Step{Args: ArgsOf(r), Verb: "friend level", Load: tables(sprint.Fleet, sprint.Work), Mirrors: true,

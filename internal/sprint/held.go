@@ -563,7 +563,7 @@ func (c *held) waits(pr *Card) (why, root string, ok bool) {
 			name, _ := FriendCard(pr)
 			if wc := s.Fleet.Placed(WorkCardID(pr.ID, pr.Int("attempt"))); wc != nil && wc.Col == Withdrawn {
 				if from, _ := FriendOfRow(wc.F(FieldTakenFrom)); from != "" && from == name {
-					return "waits for only friend " + name + ", and it was taken back from her: unpin it (nova-sprint unpin), brief it for another friend, or drop it", "", true
+					return "waits for only friend " + name + ", and it was taken back from her: give it back to her (nova-sprint friend give), unpin it (nova-sprint unpin), brief it for another friend, or drop it", "", true
 				}
 			}
 			return "waits for only friend " + name, "", true
