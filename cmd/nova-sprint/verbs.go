@@ -103,6 +103,7 @@ func init() {
 		{"friend down", "<friend> [--reason <text>] [--until <RFC3339>]", "friend down friend-a --reason 'opus rate limited'", func(a *app, args []string, o, e io.Writer) int { return a.cmdFriendHold(true, args, o, e) }},
 		{"friend up", "<friend> [--width <n>]", "friend up friend-a --width 4", func(a *app, args []string, o, e io.Writer) int { return a.cmdFriendHold(false, args, o, e) }},
 		{"friend cards", "<friend> [--json]", "friend cards friend-a --json", (*app).cmdFriendCards},
+		{"deliver", "<friend> [--once] [--every <duration>] [--root <dir>] [--stages daemon|runner] [--mirrors <dir>] [--dry-run]", "deliver friend-a --once --dry-run", (*app).cmdDeliver},
 		{"friend take", "<friend> (<id>... | --all-unstarted) [--reason <text>]", "friend take friend-a s1-4 --reason 'she is on another job'", (*app).cmdFriendTake},
 		{"friend level", "", "friend level", (*app).cmdFriendLevel},
 		{"friend health", "<friend> (--state up|asleep|down --seen <RFC3339> --generation <n> [--queue <n>] [--working <n>] [--width <n>] [--reason <text>] [--until <RFC3339>] | --clear)", "friend health friend-a --state up --seen 2026-10-04T15:00:00Z --generation 1", (*app).cmdFriendHealth},

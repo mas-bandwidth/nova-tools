@@ -4284,6 +4284,7 @@ The mechanisms: a **blocking read** waits in the store until the thing arrives (
 | answer pass | sprint to the coordinator seat's rule answers | timer poll | --every | card answer-runs-on-the-tick-end |
 | lane take wait | sprint to the AI asking for a lane | timer poll | the take asked every LaneAskEvery (5 s) | card lane-grant-is-a-bus-message |
 | friend sync | the friends table to this machine's friend daemons | timer poll | --every (the unit's) | card friend-sync-on-row-change |
+| deliver | the sprint's friend row to her working directory, by the coordinator's hand | timer poll | --every (15s) with no --once; --once and --dry-run are one pass | the friend's daemon delivers on its own loop; this verb is that path run by hand, and with no --once it repeats until interrupted, writing only her working directory (card deliver-is-the-daemons-duty-in-order) |
 | coordinator ping | the coordinator to every friend's stream, pongs back on its own | beat | PingEvery (1 s); the rows read again every RowsEvery (1 min) | the ping is the transport's liveness probe: its unanswered absence is the signal |
 | wake ping | the coordinator into each friend's session | beat | a pass every --every (10 min) | the probe that the session, not the daemon, hears: a deaf session is found by it |
 | wake ping pong wait | a friend's session to the coordinator | timer poll | the pong looked for every WaitPongEvery (1 s), up to --within | card pong-wait-blocks-on-the-stream |
