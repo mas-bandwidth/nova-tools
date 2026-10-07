@@ -674,6 +674,108 @@ func TickRuleResume(s *Snapshot, r TickReq) (Plan, int) {
 	return p, 0
 }
 
+// reworkCard is the rework a rule answer makes of its card: its fix and tier, the fields
+// the rule writes, and the answer the rework records on the judgments it closes.
+func (a RuleAnswer) reworkCard(s *Snapshot) ReworkCard {
+	set := map[string]string{FieldRuleAnswer: a.Rule + ": " + a.Act + " at " + stamp(s.Now)}
+	maps.Copy(set, a.set)
+	return ReworkCard{Fix: a.fix, Tier: a.Tier, Friend: a.Friend, Set: set, Rule: a.Rule, Said: a.Act + ": " + a.Why}
+}
+
+// raisedFailure is a failed finish whose primary is left in review with the judgment
+// "work came back failed" raised (Finish), and the unit that raises it.
+type raisedFailure struct {
+	unit    int // the plan's unit that finishes the work card
+	c, pr   *Card
+	set     map[string]string // the fields the finish writes on the primary
+	cardSet map[string]string // the fields the finish writes on the work card
+	who     string
+}
+
+// answerAtRaise answers by rule the failed work a finish raises, in the step that raises it
+// (docs/SPEC-SPRINT.md, judgment-answer-latencyb-t-bb.w1; tla/SprintRules.tla, RuleAnswersBounded):
+// the failed rule (ruleFailed) is read over the tables as the finish leaves them, and each
+// primary it answers is reworked in the finish's own unit, so its judgment is never open
+// and the machine does not wait for a later pass. The unit records a decided note with no
+// wait. A primary the rule leaves, or the rule is off for (RuleOff), keeps its judgment; a
+// rework the step refuses leaves every judgment of the step raised as it was.
+func answerAtRaise(s *Snapshot, p *Plan, raised []raisedFailure, who string) {
+	if len(raised) == 0 || s.RuleOff(RuleFailed) {
+		return
+	}
+	after := *s
+	after.Work, after.Fleet = s.Work.Frozen(), s.Fleet.Frozen()
+	for _, k := range raised {
+		after.Work.Put(inReview(k.pr, k.set))
+		done := *k.c
+		done.Col = DoneFailed
+		done.Fields = maps.Clone(k.c.Fields)
+		maps.Copy(done.Fields, k.cardSet)
+		after.Fleet.Put(&done)
+	}
+	per := map[string]ReworkCard{}
+	byPrimary := map[string]raisedFailure{}
+	var ids []string
+	for _, k := range raised {
+		a := RuleAnswer{Judgment: "-", Type: NWorkFailed, Subject: k.pr.ID, Waited: "0s"}
+		if ruleFailed(&after, &a); a.Answers() {
+			per[k.pr.ID] = a.reworkCard(&after)
+			byPrimary[k.pr.ID] = k
+			ids = append(ids, k.pr.ID)
+		}
+	}
+	if len(ids) == 0 {
+		return
+	}
+	q := Rework(&after, ReworkReq{Sel: Sel{Only: ids}, PerCard: per, Who: who})
+	if len(q.Refused) > 0 {
+		return
+	}
+	for _, u2 := range q.Units {
+		k, ok := byPrimary[u2.Key]
+		if !ok {
+			continue
+		}
+		u := &p.Units[k.unit]
+		var rest []Change
+		for _, ch := range u2.Changes {
+			if ch.Table != Work || ch.Entry.ID != k.pr.ID {
+				rest = append(rest, ch)
+				continue
+			}
+			for i, mine := range u.Changes {
+				if mine.Table == Work && mine.Entry.ID == k.pr.ID {
+					// the finish's own move of the primary, guarded as it read it, carries the
+					// rework: the fields of both, the rework's over the finish's
+					e := ch.Entry
+					e.Expect = mine.Entry.Expect
+					e.Set = maps.Clone(mine.Entry.Set)
+					maps.Copy(e.Set, ch.Entry.Set)
+					for _, name := range e.Unset {
+						delete(e.Set, name)
+					}
+					u.Changes[i].Entry = e
+				}
+			}
+		}
+		u.Changes = append(u.Changes, rest...)
+		u.Bumps = append(u.Bumps, u2.Bumps...)
+		u.Closes = append(u.Closes, u2.Closes...)
+		u.Notes = slices.DeleteFunc(u.Notes, func(n Note) bool { return n.Kind == Judgment })
+		u.Notes = append(u.Notes, u2.Notes...)
+		a := per[k.pr.ID]
+		u.Notes = append(u.Notes, Note{Kind: Decided, Type: NWorkFailed, Stream: k.pr.Row, Primaries: []string{k.pr.ID}, Count: 1, At: s.Now, Who: k.who,
+			What: RuleSaid(RuleFailed, "answered at raise, "+a.Said)})
+		u.Moved = fmt.Sprintf("%s working -> done failed; %s; answered at raise by rule %s", k.c.ID, strings.Replace(u2.Moved, " review -> ", " working -> ", 1), RuleFailed)
+	}
+	p.Rows = append(p.Rows, q.Rows...)
+	p.Notes = append(p.Notes, q.Notes...)
+	p.Updates = append(p.Updates, q.Updates...)
+	p.Props = append(p.Props, q.Props...)
+	p.Said = append(p.Said, q.Said...)
+	p.rounds = append(p.rounds, q.rounds...)
+}
+
 // TickRuleRework reworks every card a rule answers with a new attempt, each its own way, in
 // one step.
 func TickRuleRework(s *Snapshot, r TickReq) (Plan, int) {
@@ -683,11 +785,7 @@ func TickRuleRework(s *Snapshot, r TickReq) (Plan, int) {
 		if _, ok := per[a.Card]; ok {
 			continue
 		}
-		set := map[string]string{FieldRuleAnswer: a.Rule + ": " + a.Act + " at " + stamp(s.Now)}
-		for k, v := range a.set {
-			set[k] = v
-		}
-		per[a.Card] = ReworkCard{Fix: a.fix, Tier: a.Tier, Friend: a.Friend, Set: set, Rule: a.Rule, Said: a.Act + ": " + a.Why}
+		per[a.Card] = a.reworkCard(s)
 		ids = append(ids, a.Card)
 	}
 	if len(ids) == 0 {
