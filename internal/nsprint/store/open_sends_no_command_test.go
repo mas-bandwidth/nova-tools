@@ -12,6 +12,7 @@ import (
 // #3277: Open sends nothing; the caller's first batch is the
 // probe, so a one-operation verb pays one round trip, not two.
 func TestOpenSendsNoCommandBeforeTheCallersFirstBatch(t *testing.T) {
+	t.Parallel()
 	t.Setenv(store.UserEnv, "")
 	addr, count := testutil.CommandCounter(t)
 	for name, open := range map[string]func(context.Context, string) (*store.Store, error){"Open": store.Open} {
