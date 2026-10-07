@@ -2553,7 +2553,8 @@ exactly what merging the change deletes from dev; in the merge queue the
 same; on dev, a squash's own effect. On a promotion — dev to main or
 sprint/foundation to dev (the `pull_request` event with `GITHUB_BASE_REF` main
 and `GITHUB_HEAD_REF` dev, or `GITHUB_BASE_REF` dev and `GITHUB_HEAD_REF`
-sprint/foundation, whose payload's head repository is this repository, read by
+sprint/foundation or a `promote/<YYYY-MM-DD>-<n>` head, the legacy `promo/`
+spelling too, whose payload's head repository is this repository, read by
 `promotionSkip`) the comparison does not run and the run logs a NOTE saying why:
 the first parent is the base branch's tip, so the set would be every deletion
 the head branch accumulated since the last promotion, each declared in the
@@ -2636,6 +2637,25 @@ parent's tree whenever that commit is present, as it is at `fetch-depth: 2`),
 and the unreadable history is a finding of its own naming that fetch, so a
 landing run never passes on a history it could not read, and the verdict for
 one sha never depends on what the side branch did later.
+**Every commit since the last gated promotion.** The comparison reads a
+range, not only the tip. When `refs/promoted/last` (written by a promote pass)
+or the remote-tracking `refs/remotes/origin/promoted/last` (the ref a CI
+checkout fetches) is present and an ancestor of HEAD, every commit in
+`git rev-list --topo-order --reverse refs/promoted/last..HEAD` is compared with
+its own first parent and its own added rows, one comparison per commit, and the
+findings are their union (`readMergeDeletionsFor`); the per-commit notes are
+joined. A promotion merge is then the sum of the deletions each commit below it
+declared where it made them, so it is never refused for a deletion declared
+below it, while a deletion below the merge with no declaration in its own commit
+is still a finding. When the ref is absent, or is not an ancestor of HEAD, the
+read falls back to HEAD alone (a tip-only read): a fresh checkout has
+`refs/promoted/last` only when a promote pass ran there, and
+`origin/promoted/last` only when the fetch that brings it ran, so without either
+ref a landed promotion merge is compared as everywhere. `promote/*` is a
+promotion shape (`isPromotion`), so its pull request takes the skip above; the
+legacy `promo/` spelling is recognized too. A merge commit's subject is never
+read for this: an author chooses it, so a merge to dev titled "promote ..." is
+not a promotion and takes no skip.
 **The mistake it prevents.** A branch rebased with a stale tree that lacks
 files dev gained an hour before — a class test, its allowlist and its controls —
 undoes the fixes they held when it merges. Every check on the merge is green,
@@ -2656,12 +2676,17 @@ the list and silent for a source file, a rename not a deletion, a same-change
 row green, a row naming no deletion red, an old row declaring nothing.
 `TestGuardedByMergeRuleReadsThePath` and
 `TestDeclaredRowsAddedReadsOnlyTheAddedRows` pin the two readers;
+`TestPromotionMergeNeverRefusedForDeletionsDeclaredBelowIt` proves the range
+read over a repository it builds: a deletion declared in a commit below a
+promotion merge is green, and the same deletion left undeclared below the merge
+is red;
 `TestPromotionSkipReadsTheEvent` pins the promotion shape against its
 reversed witnesses (the same event into dev from a feature branch, a feature
 branch into main, sprint/foundation into main, another sprint branch into dev,
 dev into sprint/foundation, a fork's branch named dev or sprint/foundation, an
 absent payload, a push, a merge-queue group, no environment), so a loosened
-promotion form (any base, a `sprint/` prefix) is red;
+promotion form (any base, a `sprint/` prefix) is red, and a `promote/` or
+`promo/` head into dev is a promotion;
 `TestPromotionBaseCheckReadsTheAncestry` pins the skip's ancestry precondition
 over a merge ref built as GitHub builds it (dev's tip an ancestor of the head
 passes; a head cut from before dev moved is refused naming dev's tip; dev to

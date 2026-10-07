@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -15,6 +14,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
 
@@ -42,11 +42,12 @@ func (a *app) promoteOnTick(ctx context.Context, stdout io.Writer) {
 	promoteArmed(ctx, stdout)
 }
 
-// promoteStep cuts a frozen promo/<date>-<n> from the sprint tip and opens its
-// pull request to dev (docs/SPEC-SPRINT.md section 11, promote). The pull
+// promoteStep cuts a frozen promote/<date>-<n> (the legacy promo/ spelling
+// too) from the sprint tip and opens its pull request to dev
+// (docs/SPEC-SPRINT.md section 11, promote). The pull
 // request head is that branch, never the live sprint branch: a queued pull
 // request whose head is the live branch blocks the lander's pushes (GH006,
-// found 2026-10-04). The tree gate runs on the frozen commit before the pull
+// found 2026-10-04). The tree gate runs on the base tip before the pull
 // request. Admission to the merge queue is the enqueuePullRequest mutation,
 // which carries no merge strategy (the queue refuses one); a query of
 // mergeQueueEntry confirms the entry. gh pr merge, and a flag named auto, are
@@ -73,18 +74,27 @@ var landSubject = regexp.MustCompile(`^land (\S+) \(sprint stream [^)]+\)$`)
 // promoteEveryDefault is how often the verb looks when --every is left unset.
 const promoteEveryDefault = time.Hour
 
+// promoteCheckDefault is the whole-tree gate the verb runs when --check is
+// left unset, from the module root: the build, the vet and every package's
+// tests (the tree's own checks, internal/docs and internal/ci, among them).
+// It is a refusal, never a skip, when it cannot run: a promoter with no gate
+// at all does not promote.
+const promoteCheckDefault = "go build ./... && go vet ./... && go test ./..."
+
 // promoter is one promote schedule over one clone.
 type promoter struct {
 	dir, live, base, check string
 	now                    time.Time
 	dry                    bool
 	env                    []string
+	forge                  promoteForge
+	recorder               promoteRecorder
 	// gitRun and ghRun, when set, stand in for git and gh (a test). Nil runs
 	// the real programs.
 	gitRun func(ctx context.Context, dir string, args ...string) (string, error)
 	ghRun  func(ctx context.Context, dir string, args ...string) (string, error)
-	// gate, when set, is the tree gate (a test). Nil runs --check, or nothing
-	// when --check is empty.
+	// gate, when set, is the tree gate (a test). Nil runs --check, the
+	// whole-tree gate by default; an empty --check refuses, it never skips.
 	gate func(ctx context.Context, dir, sha string) (string, error)
 	// judged is the branch a judgment was already raised for, so a later pass
 	// does not raise a second one.
@@ -104,6 +114,42 @@ type promoter struct {
 	lastAt   time.Time
 }
 
+// promoteRecorder writes a merge to the sprint's store. said is what the store
+// answered: the promotion recorded, or recorded already.
+type promoteRecorder interface {
+	Record(ctx context.Context, sha string) (said string, err error)
+}
+
+// appRecorder is the promoted step through the app's store, the store the
+// verb's --redis names. With no --actor the step acts as the sprint's
+// coordinator seat, whose word a promotion is (sprint.Promoted).
+type appRecorder struct {
+	a *app
+	c common
+}
+
+func (r appRecorder) Record(ctx context.Context, sha string) (string, error) {
+	c, why := r.a.friendSyncActor(ctx, r.c)
+	if why != "" {
+		return "", errors.New(why)
+	}
+	st, err := r.a.store(c)
+	if err != nil {
+		return "", err
+	}
+	req := sprint.PromotedReq{Sha: sha, Who: c.actor}
+	res, err := st.Run(ctx, store.Step{
+		Args: store.ArgsOf(req),
+		Verb: "promoted",
+		Load: []string{sprint.Work},
+		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.PromotedOnce(s, req) },
+	})
+	if err != nil {
+		return "", err
+	}
+	return strings.Join(res.Said, "\n"), nil
+}
+
 // promoteJudgment is the one judgment a red run raises: the fix cards it cut,
 // and the failing tests an open card already named.
 type promoteJudgment struct {
@@ -116,7 +162,7 @@ type promoteJudgment struct {
 
 // promoteOutcome is what one pass did.
 type promoteOutcome struct {
-	Branch   string // the frozen branch, promo/<date>-<n>
+	Branch   string // the frozen branch, promote/<date>-<n>
 	Live     string // the live sprint branch, never the pull request head
 	Tip      string // the sprint tip the branch was cut from
 	Head     string // the pull request head ref
@@ -131,25 +177,42 @@ type promoteOutcome struct {
 	Dry         bool
 	Nothing     bool
 	Cut         bool // a frozen branch was cut on this pass
+	Pending     bool // the promotion is in flight on the forge
+	Waiting     string
+}
+
+// promoteCheckFlag registers promote's --check with the whole-tree gate
+// default. cmdPromote and the test that pins the default read it here, so the
+// two cannot drift.
+func promoteCheckFlag(fs flagSet) *string {
+	return fs.String("check", promoteCheckDefault, "the tree gate, a command run on the base tip before the pull request (default: go build ./... && go vet ./... && go test ./...)")
 }
 
 // cmdPromote is `nova-sprint promote`. --dry-run is one pass and changes
-// nothing. Without it the verb repeats every --every until it is interrupted.
+// nothing. --once carries one promotion to its end (recorded, a judgment,
+// nothing to promote, or a refusal) and exits. Without either the verb repeats
+// until it is interrupted: every --every, and every --poll while a promotion is
+// in flight.
 func (a *app) cmdPromote(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("promote")
 	every := fs.Duration("every", promoteEveryDefault, "how often to look, a duration (default 1h); each pass promotes when that long has passed or --landings cards have landed")
 	landings := fs.Int("landings", 0, "also promote once this many cards have landed since the last promotion (0: the clock only)")
 	dry := fs.Bool("dry-run", false, "print the branch and the landed cards and change nothing")
+	once := fs.Bool("once", false, "carry one promotion from the cut to the recorded merge (or to the judgment or refusal that stops it) and exit")
+	poll := fs.Duration("poll", time.Minute, "how often to look while a promotion is in flight, its checks or its merge queue (default 1m)")
 	branch := fs.String("branch", "", "the live sprint branch the cut is taken from (default: the checkout's current branch)")
 	repo := fs.String("repo-dir", "", "the clone the branch is cut in (default: the current directory)")
 	base := fs.String("base", "dev", "the branch the pull request targets (default dev)")
-	check := fs.String("check", "", "the tree gate, a command run on the frozen commit before the pull request (default: none)")
+	check := promoteCheckFlag(fs)
 	pos, err := parse(fs, args)
 	if err != nil || len(pos) > 0 {
 		return refuse(stderr, "promote", argErr("takes no words ", err, pos...))
 	}
 	if *every <= 0 {
 		return refuse(stderr, "promote", "--every must be above zero; run: nova-sprint promote --every 1h --dry-run")
+	}
+	if *poll <= 0 {
+		return refuse(stderr, "promote", "--poll must be above zero; run: nova-sprint promote --once --poll 1m")
 	}
 	if *landings < 0 {
 		return refuse(stderr, "promote", "--landings must be zero or more; run: nova-sprint promote --landings 1 --dry-run")
@@ -165,6 +228,7 @@ func (a *app) cmdPromote(args []string, stdout, stderr io.Writer) int {
 	}
 	if !*dry {
 		p.red = a.redCutter(*c)
+		p.recorder = appRecorder{a: a, c: *c}
 	}
 	ctx := context.Background()
 	if !*dry && a.notify != nil {
@@ -183,12 +247,15 @@ func (a *app) cmdPromote(args []string, stdout, stderr io.Writer) int {
 		if out.Cut {
 			p.lastAt = p.now
 		}
-		if *dry {
+		if *dry || (*once && !out.Pending) {
 			return code
 		}
 		wait := *every
 		if *landings > 0 && wait > time.Minute {
 			wait = time.Minute
+		}
+		if (out.Pending || *once) && wait > *poll {
+			wait = *poll
 		}
 		after := a.after
 		if after == nil {
@@ -249,14 +316,14 @@ func (p *promoter) step(ctx context.Context, stdout, stderr io.Writer) (promoteO
 		return o, 0
 	}
 	day := p.now.Format("2006-01-02")
-	listed, err := p.git(ctx, "branch", "--list", "promo/"+day+"-*")
+	listed, err := p.git(ctx, "branch", "--list", "promote/"+day+"-*", "promo/"+day+"-*")
 	if err != nil {
 		return o, p.fail(stderr, err)
 	}
 	branch := nextPromo(day, listed)
 	o.Branch, o.Head = branch, branch
 	o.Body = promoteBody(o.Cards)
-	if branch == live || !strings.HasPrefix(branch, "promo/") {
+	if branch == live || (!strings.HasPrefix(branch, "promote/") && !strings.HasPrefix(branch, "promo/")) {
 		return o, p.fail(stderr, errors.New("the pull request head would be the live sprint branch "+live))
 	}
 	if p.dry {
@@ -268,10 +335,10 @@ func (p *promoter) step(ctx context.Context, stdout, stderr io.Writer) (promoteO
 		fmt.Fprintf(stdout, "PROMOTE WAIT live=%s tip=%s cards=%d landings=%d\n", oneline.Field(live), tip, len(o.Cards), p.landings)
 		return o, 0
 	}
-	if _, err := p.git(ctx, "branch", "--no-track", branch, tip); err != nil {
+	if _, err := p.runGate(ctx, tip); err != nil {
 		return o, p.fail(stderr, err)
 	}
-	if _, err := p.runGate(ctx, tip); err != nil {
+	if _, err := p.git(ctx, "branch", "--no-track", branch, tip); err != nil {
 		return o, p.fail(stderr, err)
 	}
 	spec := "refs/heads/" + branch + ":refs/heads/" + branch
@@ -281,12 +348,9 @@ func (p *promoter) step(ctx context.Context, stdout, stderr io.Writer) (promoteO
 	if _, err := p.git(ctx, "push", "origin", spec); err != nil {
 		return o, p.fail(stderr, err)
 	}
+	f := p.forged()
 	title := "promote " + branch
-	url, err := p.gh(ctx, "pr", "create", "--base", p.base, "--head", branch, "--title", title, "--body", o.Body)
-	if err != nil {
-		return o, p.fail(stderr, err)
-	}
-	number, err := prNumber(url)
+	number, err := f.OpenPR(ctx, p.base, branch, title, o.Body)
 	if err != nil {
 		return o, p.fail(stderr, err)
 	}
@@ -325,33 +389,63 @@ func (p *promoter) due(n int) bool {
 // watch enqueues a pull request that is not merged, confirms the queue entry,
 // and either records the merge or raises the one judgment.
 func (p *promoter) watch(ctx context.Context, o promoteOutcome, number string, stdout, stderr io.Writer) (promoteOutcome, int) {
-	view, raw, err := p.prView(ctx, number)
+	f := p.forged()
+	view, err := f.View(ctx, number)
 	if err != nil {
 		return o, p.fail(stderr, err)
 	}
-	if sha := mergedSHA(view); sha != "" {
-		return p.record(ctx, o, sha, stdout, stderr)
+	if view.Merged != "" {
+		return p.record(ctx, o, view.Merged, stdout, stderr)
 	}
 	if view.ID == "" {
-		return o, p.fail(stderr, errors.New("the pull request "+number+" has no id ("+oneLine(raw)+")"))
+		return o, p.fail(stderr, errors.New("the pull request "+number+" has no id"))
 	}
-	entry, err := p.enqueue(ctx, view.ID)
-	if err != nil {
-		return o, p.fail(stderr, err)
-	}
-	confirmed, err := p.confirm(ctx, view.ID)
+	confirmed, err := f.Confirm(ctx, view.ID)
 	if err != nil {
 		return o, p.fail(stderr, err)
 	}
 	if confirmed == "" {
-		return o, p.fail(stderr, errors.New("the merge queue has no entry for pull request "+number+"; run: nova-sprint promote --dry-run"))
+		checks, err := f.Checks(ctx, number)
+		if err != nil {
+			return o, p.fail(stderr, err)
+		}
+		switch checks.State {
+		case checksFail:
+			runs, _ := f.FailedRuns(ctx, "--branch", o.Branch)
+			if p.judged == o.Branch {
+				fmt.Fprintf(stdout, "PROMOTE WAIT branch=%s judgment=already\n", oneline.Field(o.Branch))
+				return o, 1
+			}
+			p.judged = o.Branch
+			o.Judgment = p.redJudgment(ctx, runs, "a check of the pull request failed: "+checks.Name, "the pull request of "+o.Branch, promoteDecisions, stderr)
+			fmt.Fprintf(stdout, "JUDGMENT promotion red branch=%s decisions=%s cards=%s open=%s\n%s\n", oneline.Field(o.Branch), strings.Join(o.Judgment.Decisions, ","),
+				oneline.Field(dashed(strings.Join(o.Judgment.Cards, ","))), oneline.Field(dashed(strings.Join(o.Judgment.Open, ","))), o.Judgment.Tail)
+			return o, 1
+		case checksPending:
+			o.Pending = true
+			o.Waiting = "checks pending: " + checks.Name
+			fmt.Fprintf(stdout, "PROMOTE WAIT branch=%s pr=%s waiting=%s\n", oneline.Field(o.Branch), number, oneline.Field(o.Waiting))
+			return o, 0
+		case checksPass:
+			entry, err := f.Enqueue(ctx, view.ID)
+			if err != nil {
+				return o, p.fail(stderr, err)
+			}
+			confirmed, err = f.Confirm(ctx, view.ID)
+			if err != nil {
+				return o, p.fail(stderr, err)
+			}
+			if confirmed == "" && entry != "" {
+				confirmed = entry
+			}
+			if confirmed == "" {
+				return o, p.fail(stderr, errors.New("the merge queue has no entry for pull request "+number+"; run: nova-sprint promote --dry-run"))
+			}
+		}
 	}
 	o.Entry = confirmed
-	if entry != "" && entry != confirmed {
-		o.Entry = confirmed
-	}
 	fmt.Fprintf(stdout, "PROMOTE QUEUE branch=%s entry=%s\n", oneline.Field(o.Branch), oneline.Field(o.Entry))
-	runs, err := p.failedRuns(ctx, "--branch", o.Branch)
+	runs, err := f.FailedRuns(ctx, "--branch", o.Branch)
 	if err != nil {
 		return o, p.fail(stderr, err)
 	}
@@ -367,29 +461,40 @@ func (p *promoter) watch(ctx context.Context, o promoteOutcome, number string, s
 		return o, 1
 	}
 	// the queue may have merged it between the view and the run list
-	view, _, err = p.prView(ctx, number)
+	view, err = f.View(ctx, number)
 	if err != nil {
 		return o, p.fail(stderr, err)
 	}
-	if sha := mergedSHA(view); sha != "" {
-		return p.record(ctx, o, sha, stdout, stderr)
+	if view.Merged != "" {
+		return p.record(ctx, o, view.Merged, stdout, stderr)
 	}
-	fmt.Fprintf(stdout, "PROMOTE WAIT branch=%s pr=%s\n", oneline.Field(o.Branch), number)
+	o.Pending = true
+	o.Waiting = "in merge queue"
+	fmt.Fprintf(stdout, "PROMOTE WAIT branch=%s pr=%s entry=%s\n", oneline.Field(o.Branch), number, oneline.Field(o.Entry))
 	return o, 0
 }
 
 // record prints `promoted --sha` and remembers the sha so the next pass's
 // landed list starts after it.
 func (p *promoter) record(ctx context.Context, o promoteOutcome, sha string, stdout, stderr io.Writer) (promoteOutcome, int) {
+	if p.recorder != nil {
+		if _, err := p.recorder.Record(ctx, sha); err != nil {
+			return o, p.fail(stderr, err)
+		}
+	}
+	if _, err := p.git(ctx, "rev-parse", "--verify", "--quiet", "--end-of-options", sha+"^{commit}"); err != nil {
+		if _, ferr := p.git(ctx, "fetch", "origin", p.base); ferr != nil {
+			// ignored: sha may already have been fetched by base
+			_, _ = p.git(ctx, "fetch", "origin", sha)
+		}
+	}
 	if _, err := p.git(ctx, "update-ref", "refs/promoted/last", sha); err != nil {
 		return o, p.fail(stderr, err)
 	}
-	if _, err := p.git(ctx, "config", "--local", "--unset", "promote.branch"); err != nil {
-		return o, p.fail(stderr, err)
-	}
-	if _, err := p.git(ctx, "config", "--local", "--unset", "promote.pr"); err != nil {
-		return o, p.fail(stderr, err)
-	}
+	// ignored: config key may not be set
+	_, _ = p.git(ctx, "config", "--local", "--unset", "promote.branch")
+	// ignored: config key may not be set
+	_, _ = p.git(ctx, "config", "--local", "--unset", "promote.pr")
 	o.Promoted = sha
 	fmt.Fprintf(stdout, "promoted --sha %s\n", sha)
 	return o, 0
@@ -427,7 +532,7 @@ func (p *promoter) since(ctx context.Context) (string, error) {
 // number. ok is false when there is none or the tip has moved.
 func (p *promoter) pending(ctx context.Context, tip string) (branch, pr string, ok bool) {
 	branch, err := p.git(ctx, "config", "--local", "--get", "promote.branch")
-	if err != nil || branch == "" || branch == p.live || !strings.HasPrefix(branch, "promo/") {
+	if err != nil || branch == "" || branch == p.live || (!strings.HasPrefix(branch, "promote/") && !strings.HasPrefix(branch, "promo/")) {
 		return "", "", false
 	}
 	sha, err := p.rev(ctx, branch)
@@ -458,7 +563,7 @@ func (p *promoter) runGate(ctx context.Context, sha string) (string, error) {
 		return p.gate(ctx, p.dir, sha)
 	}
 	if p.check == "" {
-		return "", nil
+		return "", errors.New("no tree gate: --check is empty, and the promotion is refused rather than pushed ungated; run: nova-sprint promote --check " + strconv.Quote(promoteCheckDefault))
 	}
 	b := subproc.Prepare(ctx, landCheckBudget, "sh", "-c", p.check)
 	defer b.Cancel()
@@ -473,70 +578,6 @@ func (p *promoter) runGate(ctx context.Context, sha string) (string, error) {
 	return string(raw), nil
 }
 
-func (p *promoter) prView(ctx context.Context, number string) (prJSON, string, error) {
-	raw, err := p.gh(ctx, "pr", "view", number, "--json", "id,state,mergeCommit")
-	if err != nil {
-		return prJSON{}, raw, err
-	}
-	var v prJSON
-	if jerr := json.Unmarshal([]byte(raw), &v); jerr != nil {
-		return prJSON{}, raw, fmt.Errorf("pull request %s view: %s", number, oneLine(raw))
-	}
-	return v, raw, nil
-}
-
-func (p *promoter) enqueue(ctx context.Context, id string) (string, error) {
-	raw, err := p.gh(ctx, "api", "graphql", "-f", "query="+promoteEnqueueQuery, "-f", "id="+id)
-	if err != nil {
-		return "", err
-	}
-	var resp struct {
-		Data struct {
-			EnqueuePullRequest struct {
-				MergeQueueEntry *struct {
-					ID string `json:"id"`
-				} `json:"mergeQueueEntry"`
-			} `json:"enqueuePullRequest"`
-		} `json:"data"`
-		Errors []struct {
-			Message string `json:"message"`
-		} `json:"errors"`
-	}
-	if jerr := json.Unmarshal([]byte(raw), &resp); jerr != nil {
-		return "", fmt.Errorf("enqueue: %s", oneLine(raw))
-	}
-	if len(resp.Errors) > 0 {
-		return "", errors.New("enqueue: " + resp.Errors[0].Message)
-	}
-	if resp.Data.EnqueuePullRequest.MergeQueueEntry == nil || resp.Data.EnqueuePullRequest.MergeQueueEntry.ID == "" {
-		return "", errors.New("enqueue returned no merge queue entry")
-	}
-	return resp.Data.EnqueuePullRequest.MergeQueueEntry.ID, nil
-}
-
-func (p *promoter) confirm(ctx context.Context, id string) (string, error) {
-	raw, err := p.gh(ctx, "api", "graphql", "-f", "query="+promoteQueueQuery, "-f", "id="+id)
-	if err != nil {
-		return "", err
-	}
-	var resp struct {
-		Data struct {
-			Node struct {
-				MergeQueueEntry *struct {
-					ID string `json:"id"`
-				} `json:"mergeQueueEntry"`
-			} `json:"node"`
-		} `json:"data"`
-	}
-	if jerr := json.Unmarshal([]byte(raw), &resp); jerr != nil {
-		return "", fmt.Errorf("queue query: %s", oneLine(raw))
-	}
-	if resp.Data.Node.MergeQueueEntry == nil {
-		return "", nil
-	}
-	return resp.Data.Node.MergeQueueEntry.ID, nil
-}
-
 // ghRunRow is one run gh run list prints.
 type ghRunRow struct {
 	DatabaseID int    `json:"databaseId"`
@@ -545,26 +586,8 @@ type ghRunRow struct {
 	Name       string `json:"name"`
 }
 
-// failedRuns is the failed runs gh run list names under the filter: a
-// branch's (the pull request's checks and its merge group's), or the base's
-// at one commit.
 func (p *promoter) failedRuns(ctx context.Context, filter ...string) ([]ghRunRow, error) {
-	args := append(append([]string{"run", "list"}, filter...), "--json", "databaseId,conclusion,status,name", "--limit", "20")
-	raw, err := p.gh(ctx, args...)
-	if err != nil {
-		return nil, err
-	}
-	var runs []ghRunRow
-	if jerr := json.Unmarshal([]byte(raw), &runs); jerr != nil {
-		return nil, fmt.Errorf("runs: %s", oneLine(raw))
-	}
-	var failed []ghRunRow
-	for _, r := range runs {
-		if r.Conclusion == "failure" {
-			failed = append(failed, r)
-		}
-	}
-	return failed, nil
+	return p.forged().FailedRuns(ctx, filter...)
 }
 
 func (p *promoter) git(ctx context.Context, args ...string) (string, error) {
@@ -648,23 +671,27 @@ func prNumber(url string) (string, error) {
 	return n, nil
 }
 
-// nextPromo is promo/<day>-<n>, n one past the highest listed branch of that day.
+// nextPromo is promote/<day>-<n>, n one past the highest listed branch of that day.
 func nextPromo(day, listed string) string {
-	prefix := "promo/" + day + "-"
 	n := 0
 	for _, line := range strings.Split(listed, "\n") {
 		name := strings.TrimSpace(line)
 		name = strings.TrimPrefix(name, "*")
 		name = strings.TrimSpace(name)
-		if !strings.HasPrefix(name, prefix) {
+		var rest string
+		if strings.HasPrefix(name, "promote/"+day+"-") {
+			rest = strings.TrimPrefix(name, "promote/"+day+"-")
+		} else if strings.HasPrefix(name, "promo/"+day+"-") {
+			rest = strings.TrimPrefix(name, "promo/"+day+"-")
+		} else {
 			continue
 		}
-		k, err := strconv.Atoi(strings.TrimPrefix(name, prefix))
+		k, err := strconv.Atoi(rest)
 		if err == nil && k > n {
 			n = k
 		}
 	}
-	return prefix + strconv.Itoa(n+1)
+	return "promote/" + day + "-" + strconv.Itoa(n+1)
 }
 
 // landedCards is the card ids in landing order, oldest first.
