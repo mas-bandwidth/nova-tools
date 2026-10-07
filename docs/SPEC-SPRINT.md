@@ -6807,3 +6807,22 @@ friend reaches that friend's inbox by the route her judgments already take: the
 push loop writes a group addressed to someone to that actor's own inbox
 directory (`pushTarget.dirOf`, `~/<actor>-working/inbox/sprint-judgments`), the
 group carrying the note's addressee (`sprint.Group.To`).
+
+### Choosing the gate bench
+
+`ChooseGateBench` takes one start-time snapshot of declared benches and measured
+beats. It skips undeclared benches, missing or invalid load/core measurements,
+beats older than the member's three beat windows, future beats, and load above
+cores times the cap factor (default 1.5). Among the remaining benches it chooses
+least load per core, with machine name breaking ties. The result names the chosen
+bench, its load, cores and Go-process count, and up to eight considered benches.
+It changes no inventory or stored state.
+
+The card generator accepts this snapshot as explicit input and writes the shared
+choice as `STATUS: BENCH: <machine> (<reason>)`. It writes a refusal when supplied
+facts provide no eligible bench. This is a gate location, separate from the
+primary's execution-member `BENCH:` constraint. The live config/telemetry transport
+and the friend's work/read lane prompts do not yet supply the snapshot: the
+config beat projection drops load, the machine descriptor carries no bench role
+or cap, and the read prompt still uses the first bench named by its local rules.
+The pure chooser and the generator status do not establish live lane routing.

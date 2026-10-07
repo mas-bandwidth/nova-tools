@@ -565,3 +565,12 @@ scanned as before:
 
 `nova-sprint add` runs the same lint, so the exemption holds there. Pinned by
 `TestPatternsToRefuseBlockIsExemptForAClassTestCard` (`internal/swarm`).
+
+### Gate location in generated status
+
+When the generator receives observed bench facts, `STATUS: BENCH: <machine>
+(<reason>)` records `sprint.ChooseGateBench`'s decision and the measurements behind
+it. `STATUS: BENCH REFUSED` names missing eligible observations. A status gate
+location is separate from the execution-member restriction of a brief's `BENCH:`
+header. The config reader and lane transports do not yet populate these inputs;
+an absent status provides no chosen gate bench.

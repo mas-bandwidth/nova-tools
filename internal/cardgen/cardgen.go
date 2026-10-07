@@ -15,10 +15,12 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 	"github.com/mas-bandwidth/nova-tools/internal/cardtree"
 	"github.com/mas-bandwidth/nova-tools/internal/hygiene"
+	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 	"github.com/mas-bandwidth/nova-tools/internal/tlc"
 )
@@ -634,6 +636,10 @@ type Header struct {
 	Base    string // the branch
 	Sha     string // the base sha, 40 hex
 	Minutes int    // the deadline; 0 takes the tier's default
+	// Benches is a caller-supplied observed snapshot; nil means no bench input.
+	Benches      []sprint.GateBench
+	BenchAt      time.Time
+	BenchLoadCap float64
 }
 
 // Attribution is the line every brief carries about its commit's By: trailer. A brief
@@ -717,6 +723,14 @@ func Render(h Header, c Card) string {
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "RESULT: %s sha=%s tier: %s\n", c.ID, sha12, c.Tier)
+	if h.Benches != nil {
+		choice, err := sprint.ChooseGateBench(h.BenchAt, h.Benches, h.BenchLoadCap)
+		if err != nil {
+			fmt.Fprintf(&b, "STATUS: BENCH REFUSED: %s\n", err)
+		} else {
+			fmt.Fprintf(&b, "STATUS: BENCH: %s (%s)\n", choice.Host, choice.Reason)
+		}
+	}
 	fmt.Fprintf(&b, "REPO: %s\n", h.Repo)
 	fmt.Fprintf(&b, "BASE: %s\n", h.Base)
 	fmt.Fprintf(&b, "KIND: %s\n", c.Kind)
