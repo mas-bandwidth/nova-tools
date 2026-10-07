@@ -414,7 +414,11 @@ func friendReadAskOf(s *Snapshot, seats []FriendSeat, dir string, cards []*Card)
 				withRoom = append(withRoom, f.Name)
 			}
 		}
-		name := preferredFriend(withRoom, lanes, free)
+		seatMap := map[string]FriendSeat{}
+		for _, f := range up {
+			seatMap[f.Name] = f
+		}
+		name := preferredFriend(withRoom, lanes, free, seatMap, tier)
 		switch {
 		case name != "":
 			if err := askOneFriend(&p, s, pr, seats, name, dir, attempt, free, lanes, declared); err != nil {

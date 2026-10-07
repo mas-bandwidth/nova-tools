@@ -105,6 +105,10 @@ func friendLevel(s *Snapshot, r FriendLevelReq, dealt, dealtWorking map[string]i
 	}
 	// to is where the card goes, "" when nowhere: below her room, of its tier, not a
 	// friend it left, and an idle lane for a giver with none or an even smaller backlog
+	seatMap := map[string]FriendSeat{}
+	for _, f := range seats {
+		seatMap[f.Name] = f
+	}
 	to := func(giver string, c *Card) string {
 		tier, left := s.DealTier(s.Work.Placed(c.F("primary"))), friendsLeft(c)
 		free, idle := map[string]int{}, map[string]int{}
@@ -119,7 +123,7 @@ func friendLevel(s *Snapshot, r FriendLevelReq, dealt, dealtWorking map[string]i
 				may = append(may, n)
 			}
 		}
-		return preferredFriend(may, idle, free)
+		return preferredFriend(may, idle, free, seatMap, tier)
 	}
 	gives, got, moved := map[string]int{}, map[string]int{}, 0
 	for r.Max == 0 || moved < r.Max {

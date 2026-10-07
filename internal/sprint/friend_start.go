@@ -233,7 +233,7 @@ func friendUnstartedLevel(s *Snapshot, seats []FriendSeat, since func(string) (t
 					may = append(may, n)
 				}
 			}
-			to := preferredFriend(may, lanes, free)
+			to := preferredFriend(may, lanes, free, up, tier)
 			if to == "" {
 				continue // no friend with an idle lane may take it: it stays, and the deadline rule holds it
 			}
