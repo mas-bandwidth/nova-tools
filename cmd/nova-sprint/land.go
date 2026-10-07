@@ -636,7 +636,16 @@ func (l *lander) batch(ctx context.Context, s *sprint.Snapshot, stream string, c
 	}
 	b.Times = &landTimes{}
 	merged, failed, why := l.build(ctx, dir, stream, cards, b.Times)
-	fmt.Printf("DEBUG build returned merged=%v failed=%v\n", merged, failed)
+	// Map merged IDs back to actual cards
+	mergedCards := make([]landCard, 0, len(merged))
+	for _, id := range merged {
+		for _, c := range cards {
+			if c.id == id {
+				mergedCards = append(mergedCards, c)
+				break
+			}
+		}
+	}
 	b.Also, l.ledgerLog = append(b.Also, l.ledgerLog...), nil
 	if l.baseFix != "" {
 		b.Also, l.baseFix = append(b.Also, l.baseFix), ""
@@ -665,15 +674,15 @@ func (l *lander) batch(ctx context.Context, s *sprint.Snapshot, stream string, c
 		start := time.Now()
 		why, out := l.runCheck(ctx, dir)
 		if why != "" {
-			why = l.gateRerun(ctx, dir, stream, b.Base, tip, cards[:len(merged)], why, out)
+			why = l.gateRerun(ctx, dir, stream, b.Base, tip, mergedCards, why, out)
 		}
 		since(&b.Times.Check, start)
 		if why != "" {
-			b.Cards, b.IDs = len(merged), ids[:len(merged)]
-			return l.fact(b, sprint.MergeReq{Stream: stream, Batch: len(merged), Red: true, Note: why}, cards[:len(merged)], "red", why)
+			b.Cards, b.IDs = len(merged), mergedCards[0].id + ".." + mergedCards[len(merged)-1].id
+			return l.fact(b, sprint.MergeReq{Stream: stream, Batch: len(merged), Red: true, Note: why}, mergedCards, "red", why)
 		}
 		start = time.Now()
-		why = l.queueHead(ctx, stream, cards[:len(merged)])
+		why = l.queueHead(ctx, stream, mergedCards)
 		since(&b.Times.Queue, start)
 		if why != "" {
 			return refuse(why)
@@ -686,7 +695,7 @@ func (l *lander) batch(ctx context.Context, s *sprint.Snapshot, stream string, c
 		since(&b.Times.Push, start)
 		if err == nil {
 			b.Tip = tip
-			if !l.landed(b, stream, cards[:len(merged)]) {
+			if !l.landed(b, stream, mergedCards) {
 				return false, false
 			}
 			if len(l.conflicts) > 0 || failed.id != "" {
@@ -704,8 +713,8 @@ func (l *lander) batch(ctx context.Context, s *sprint.Snapshot, stream string, c
 			return refuse("the push to " + b.Base + " failed: " + firstLine("", err) + "; nothing was reported")
 		}
 		if attempt == 2 {
-			b.Cards, b.IDs = len(merged), ids[:len(merged)]
-			return l.fact(b, sprint.MergeReq{Stream: stream, Batch: len(merged), Rejected: true, Note: firstLine("", err)}, cards[:len(merged)], "rejected", "the push to "+b.Base+" was rejected again after a rebuild on the moved base: "+firstLine("", err))
+			b.Cards, b.IDs = len(merged), mergedCards[0].id + ".." + mergedCards[len(merged)-1].id
+			return l.fact(b, sprint.MergeReq{Stream: stream, Batch: len(merged), Rejected: true, Note: firstLine("", err)}, mergedCards, "rejected", "the push to "+b.Base+" was rejected again after a rebuild on the moved base: "+firstLine("", err))
 		}
 		merged, failed, why = l.build(ctx, dir, stream, cards, b.Times)
 		b.Also, l.ledgerLog = append(b.Also, l.ledgerLog...), nil
