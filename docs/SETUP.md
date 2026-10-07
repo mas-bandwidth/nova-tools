@@ -119,3 +119,22 @@ The `gosdk` check reads the role from the machine's seat. On the coordinator's m
 no `go` there it is ok. On a bench it fails when `go` is absent, when its version is not
 `go.mod`'s toolchain version, or when `GOCACHE` is not writable, and warns when `GOFLAGS`
 does not carry `-mod=readonly`. Each fix line names the step above.
+
+### dep-ssh-b.w6: ssh between the coordinator and the benches
+
+The coordinator and fleet members reach the benches by ssh: the bench rule, the land,
+and sandbox worktrees. The inventory (in the seat's secrets store) names each bench; for
+each one the check runs `ssh -o BatchMode=yes -o ConnectTimeout=5 <bench> true` through
+the fakeable exec and names a bench that fails with the reason (unknown host key, no key,
+timeout).
+
+Who needs it: any machine that runs cards or needs to reach benches (a fleet member, a
+coordinator's own runs). `nova-up --local` sets up the ssh step, which creates `~/.ssh`
+and an empty `known_hosts` file if absent; a person runs `ssh-keyscan <bench>` for each
+bench to populate it.
+
+The doctor check `ssh` (`internal/doctor/check_ssh.go`) reads the inventory from the
+seat's secrets store and verifies ssh connectivity to each bench. It fails when a bench
+cannot be reached and names the one fix line (add the host key or run `ssh-keyscan`).
+The check is one only a fleet needs, so `nova-doctor --local` skips it and a fleet run
+includes it.
