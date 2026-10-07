@@ -192,7 +192,7 @@ func TestTheWorkerViewOfAMember(t *testing.T) {
 	// add reads each brief at its base (the brief checks): a twin of the repository holds both files
 	remote, _ := twinRemote(t, ta, map[string]string{"cmd/nova-sprint/s1-1.go": "package main\n", "cmd/nova-sprint/s1-2.go": "package main\n"}, "sprint/s1")
 	for _, id := range []string{"s1-1", "s1-2"} {
-		brief := passingBrief(id + ": a card tier: flash\nREPO: " + remote + "\nBASE: sprint/s1\nPATHS: cmd/nova-sprint/" + id + ".go\nTEST: none a fixture of the worker view")
+		brief := passingBrief(id + ": a card tier: flash\nbase-repo: " + remote + "\nBASE: sprint/s1\nPATHS: cmd/nova-sprint/" + id + ".go\nTEST: none a fixture of the worker view")
 		require.NoError(t, os.WriteFile(filepath.Join(dir, id+".md"), []byte(brief), 0o644))
 	}
 	ta.ok("add --stream s1 --brief-dir " + dir)

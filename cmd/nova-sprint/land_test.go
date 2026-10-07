@@ -420,7 +420,7 @@ func TestLandTwoStreamsAsTheirOwnBatches(t *testing.T) {
 	briefs := t.TempDir()
 	brief := func(id, base string) string {
 		path := filepath.Join(briefs, id+".md")
-		require.NoError(t, os.WriteFile(path, []byte(passingBrief("REPO: "+r.remote+"\nBASE: "+base+"\n\nWrite "+id+".txt.")), 0o600))
+		require.NoError(t, os.WriteFile(path, []byte(passingBrief("base-repo: "+r.remote+"\nBASE: "+base+"\n\nWrite "+id+".txt.")), 0o600))
 		return path
 	}
 	r.promotionStream("s1") // its cards are cut on main, which the promotion stream alone takes
@@ -503,7 +503,7 @@ func TestLandReviewClonesOfTwoRepositoriesNeverShareADirectory(t *testing.T) {
 	r.git("", "clone", "-q", other, kept) // a kept clone at the card repository's place, of another repository
 	briefs := t.TempDir()
 	path := filepath.Join(briefs, "a.md")
-	require.NoError(t, os.WriteFile(path, []byte(passingBrief("REPO: "+r.remote+"\nBASE: main\n\nWrite a.txt.")), 0o600))
+	require.NoError(t, os.WriteFile(path, []byte(passingBrief("base-repo: "+r.remote+"\nBASE: main\n\nWrite a.txt.")), 0o600))
 	r.promotionStream("s1") // the card is cut on main, which the promotion stream alone takes
 	r.ok("add --stream s1 a --one --brief-file " + path)
 	r.queued(map[string]string{"a": r.head("a", "main", "a.txt", "a\n")}, "a")
@@ -650,7 +650,7 @@ func TestLandHoldsEveryPushURLToTheRepository(t *testing.T) {
 			}
 			briefs := t.TempDir()
 			path := filepath.Join(briefs, "a.md")
-			require.NoError(t, os.WriteFile(path, []byte(passingBrief("REPO: "+r.remote+"\nBASE: main\n\nWrite a.txt.")), 0o600))
+			require.NoError(t, os.WriteFile(path, []byte(passingBrief("base-repo: "+r.remote+"\nBASE: main\n\nWrite a.txt.")), 0o600))
 			r.promotionStream("s1") // the card is cut on main, which the promotion stream alone takes
 			r.ok("add --stream s1 a --one --brief-file " + path)
 			r.queued(map[string]string{"a": r.head("a", "main", "a.txt", "a\n")}, "a")

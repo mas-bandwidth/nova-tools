@@ -17,6 +17,22 @@ func Value(text, key string) (value string, ok bool) {
 	return "", false
 }
 
+// repoValueRE is the owner/name a REPO: line carries: one owner and one name, each starting
+// with a letter, a digit or an underscore and holding letters, digits, dots, underscores and
+// hyphens. It is the shape internal/friend/stage.go's repoRE holds staging to, so a value the
+// admission lint and recut/rework accept is one the friend's staging can take.
+var repoValueRE = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]*/[A-Za-z0-9_][A-Za-z0-9_.-]*$`)
+
+// IsRepoValue reports whether a REPO: line's value names one repository, exactly
+// `<owner>/<name>`: no other word (the tier a writer appended to the line), no clone URL, no
+// local path, no `-` and no `none`. A value that is none of those is no repository: the
+// friend's staging reads the whole value, refuses "its REPO %q is no owner/name" and leaves
+// the card unstageable (internal/friend/stage.go, brief_repo.go).
+func IsRepoValue(value string) bool {
+	v := strings.TrimSpace(value)
+	return repoValueRE.MatchString(v) && !strings.Contains(v, "..")
+}
+
 // sha40RE is a full commit sha as a card tree writes it.
 var sha40RE = regexp.MustCompile(`^[0-9a-f]{40}$`)
 
