@@ -121,7 +121,15 @@ func TestReview4456DeclaredWriterCanUseEdits(t *testing.T) {
 	require.NoError(t, ntable.Create(ctx, c, ntable.Table{Name: "demo", Columns: cols}, now))
 	_, err = ntable.RowAdd(ctx, c, "demo", "r", ntable.RowSpec{})
 	require.NoError(t, err)
-	require.NoError(t, nsstore.DeployACLs(ctx, c))
+	// ns-coordinator and ns-table carry no parenthesised selector, so a field
+	// split is the ACL SETUSER argument list. The other rules are not this test's seats.
+	for _, rule := range nsstore.ACLRules {
+		name, body, found := strings.Cut(rule, " ")
+		if !found || (name != "ns-coordinator" && name != "ns-table") {
+			continue
+		}
+		require.NoError(t, c.ACLSetUser(ctx, name, append([]string{"on"}, strings.Fields(body)...)...).Err())
+	}
 	require.NoError(t, c.ACLSetUser(ctx, "ns-coordinator", ">review-password").Err())
 	opts := *c.Options()
 	opts.Username, opts.Password = "ns-coordinator", "review-password"
