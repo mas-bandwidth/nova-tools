@@ -26,7 +26,7 @@ func TestVersionsStrayArgumentRefusalNamesTheDoor(t *testing.T) {
 	require.EqualValues(t, 2, exit, "version extra: exit %d, want 2; stderr: %q", exit, stderr)
 
 	line := strings.TrimRight(stderr, "\n")
-	assert.Contains(t, line, "takes no flags and no arguments", "refusal no longer says what the input wants: %q", line)
+	assert.Contains(t, line, "takes no positional arguments", "refusal no longer says what the input wants: %q", line)
 	assert.True(t, strings.HasSuffix(line, door), "refusal line does not END in the door: %q", line)
 	{
 		got := strings.Count(line, door)
