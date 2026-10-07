@@ -1,7 +1,6 @@
 package testguard
 
 import (
-	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
@@ -17,36 +16,29 @@ import (
 // The refusal rows reach the panic on every machine, without a subprocess.
 const coverNoProgram = "nova-testguard-cover-no-such-program"
 
+// armDefaultGuard arms the process-wide guard for one row and restores, on
+// cleanup, the state Reload reads from the environment.
+func armDefaultGuard(t *testing.T) {
+	t.Helper()
+	defaultGuard.refusing.Store(true)
+	t.Cleanup(Reload)
+}
+
 // TestTestguardCoverDefaultGuardSurface covers the package-level surface --
-// Refusing, AllowHosts, RefuseHosts -- which every guarded seam in the tree
-// calls and which delegates to the process-wide defaultGuard. The rows run
-// sequentially (no t.Parallel below) because defaultGuard is shared state:
-// each row arms and releases it, or injects its lookPath seam, inside one
-// subtest, so no row can observe another's scope. The baseline row runs first,
-// while nothing is forced.
+// RefuseHosts, which every guarded seam in the tree calls, and AllowHosts,
+// which a test opens to declare a fake the guard cannot see for itself -- both
+// delegating to the process-wide defaultGuard. The rows run sequentially
+// (no t.Parallel below) because defaultGuard is shared state: each row arms
+// the guard, or injects its lookPath seam, inside one subtest, so no row can
+// observe another's scope.
 func TestTestguardCoverDefaultGuardSurface(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
 		name string
 		run  func(*testing.T)
 	}{
-		{"RefusingReportsTheEnvironmentWhenNothingIsForced", func(t *testing.T) {
-			// The package-level accessor must equal the armed state Reload
-			// read from the environment at start; the expectation is computed
-			// from the same source so the row is green with or without the
-			// variable set.
-			assert.Equal(t, os.Getenv(EnvNoHost) == "1", Refusing(),
-				"unforced, the package-level Refusing must report the environment's answer")
-		}},
-		{"RefusingIsTrueWhileTheDefaultGuardIsForced", func(t *testing.T) {
-			disarm := defaultGuard.Arm()
-			defer disarm()
-			assert.True(t, Refusing(),
-				"Arm on the default guard must make the package-level Refusing report armed whatever the environment says")
-		}},
 		{"RefuseHostsPanicsNamingTheCommandAndTheRemedy", func(t *testing.T) {
-			disarm := defaultGuard.Arm()
-			defer disarm()
+			armDefaultGuard(t)
 			var r any
 			func() {
 				defer func() { r = recover() }()
@@ -73,14 +65,12 @@ func TestTestguardCoverDefaultGuardSurface(t *testing.T) {
 				}
 				return old(program)
 			}
-			disarm := defaultGuard.Arm()
-			defer disarm()
+			armDefaultGuard(t)
 			assert.NotPanics(t, func() { RefuseHosts("ssh", "host.invalid", "uptime") },
 				"a fake that resolves inside a temp directory is not a host, seen through the package-level seam")
 		}},
 		{"AllowHostsPassesTheSeamInsideItsScopeAndRefusesAgainAfter", func(t *testing.T) {
-			disarm := defaultGuard.Arm()
-			defer disarm()
+			armDefaultGuard(t)
 			allow := AllowHosts()
 			assert.NotPanics(t, func() { RefuseHosts(coverNoProgram, "host.invalid") },
 				"inside an AllowHosts scope the package-level seam must run")
@@ -89,8 +79,7 @@ func TestTestguardCoverDefaultGuardSurface(t *testing.T) {
 				"once the returned function closes the scope the guard must refuse again")
 		}},
 		{"AllowHostsNestsAndClosingTwiceIsNoSecondDecrement", func(t *testing.T) {
-			disarm := defaultGuard.Arm()
-			defer disarm()
+			armDefaultGuard(t)
 			outer := AllowHosts()
 			inner := AllowHosts()
 			inner()
