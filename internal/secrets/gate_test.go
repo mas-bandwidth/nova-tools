@@ -167,3 +167,143 @@ func TestGateRefusesAChangeToAnotherFile(t *testing.T) {
 	require.Contains(t, line, "GATE FAILED", "RunGate line = %q, want FAILED naming notes.txt", line)
 	require.Contains(t, line, "notes.txt", "RunGate line = %q, want FAILED naming notes.txt", line)
 }
+
+// gateRuleWith is one creation rule carrying an unencrypted_regex: "" writes none, so the
+// rule keeps every key encrypted.
+func gateRuleWith(seatFile, regex string) string {
+	r := gateRule(seatFile, gateSeatKey, gateRecoveryKey)
+	if regex != "" {
+		r += "    unencrypted_regex: " + regex + "\n"
+	}
+	return r
+}
+
+// The read of 2026-10-07: a pull request that widened a rule's unencrypted_regex to `.*`
+// and put a cleartext GH_TOKEN in the seat file was approved, because the gate judged each
+// rule in the head alone. The rule's clear keys are fixed at the base; the one sanctioned
+// change is admitting the mark key on a rule that lacked it, which seal and seat inject
+// commit beside the file they write (SPEC-SECRETS "gate", the mark). Each row is a probe
+// and the line it must print.
+func TestGateRefusesAChangedUnencryptedRegex(t *testing.T) {
+	t.Parallel()
+
+	const mark = "^NOVA_SECRETS_WRITTEN_BY$"
+	sealed := "OTHER: ENC[AES256_GCM,data:q,iv:w,tag:e,type:str]\n"
+	cases := []struct {
+		name      string
+		baseRegex string
+		headRegex string
+		extra     string
+		wantCode  int
+		want      string
+	}{
+		{"a widened regex lets a cleartext value through", mark, ".*", "GH_TOKEN: sk-live-notencrypted\n", 1,
+			`GATE FAILED rule=1 check=1 file=.sops.yaml: unencrypted_regex for rowan.yaml changes from "^NOVA_SECRETS_WRITTEN_BY$" to ".*"; a rule may not widen the keys it keeps in the clear`},
+		{"an absent regex where the base had one", mark, "", "", 1,
+			`GATE FAILED rule=1 check=1 file=.sops.yaml: unencrypted_regex for rowan.yaml changes from "^NOVA_SECRETS_WRITTEN_BY$" to ""; a rule may not widen the keys it keeps in the clear`},
+		{"another clear key where the base had none", "", "^space_user$", "space_user: rowan\n", 1,
+			`GATE FAILED rule=1 check=1 file=.sops.yaml: unencrypted_regex for rowan.yaml changes from "" to "^space_user$"; a rule may not widen the keys it keeps in the clear`},
+		{"admitting the mark on a rule that lacked it is the sanctioned change", "", mark, sealed, 0,
+			"GATE APPROVE files=2 machines=-"},
+		{"adding the mark beside an existing clear key is the sanctioned change", "^space_user$", "(?:^space_user$)|" + mark, "space_user: rowan\n" + sealed, 0,
+			"GATE APPROVE files=2 machines=-"},
+		{"the same regex is unchanged", mark, mark, sealed, 0,
+			"GATE APPROVE files=1 machines=-"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			dir := gateStart(t)
+			gateCommit(t, dir, map[string]string{
+				".sops.yaml": gateSops(gateRuleWith("rowan.yaml", c.baseRegex)),
+				"rowan.yaml": gateSealedFile(),
+			})
+			base := strings.TrimSpace(gateGit(t, dir, "rev-parse", "HEAD"))
+			head := gateCommit(t, dir, map[string]string{
+				".sops.yaml": gateSops(gateRuleWith("rowan.yaml", c.headRegex)),
+				"rowan.yaml": gateSealedFile() + c.extra,
+			})
+			line, code := RunGate(GateInput{StoreDir: dir, Base: base, Head: head})
+			assert.Equal(t, c.wantCode, code, line)
+			assert.Equal(t, c.want, line)
+		})
+	}
+}
+
+// The read of 2026-10-07: a `.yaml` under a subdirectory (`sub/evil.yaml`) passed as a seat
+// file, because isSeatYAML recognized any `*.yaml` that was not `.sops.yaml`, and its rule in
+// the unchanged .sops.yaml matched it. A seat file is a root-level `<seat>.yaml` only; a
+// nested one is no seat file, so check 3 refuses a change to it as a change outside the three
+// kinds. The base already carries the nested file and its rule, so .sops.yaml does not change
+// and check 3 is the only finding.
+func TestGateRefusesASeatFileInASubdirectory(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		file string
+		want string
+	}{
+		{"a yaml under a subdirectory", "sub/evil.yaml",
+			"GATE FAILED rule=0 check=3 file=sub/evil.yaml: only .sops.yaml, README.md and seat .yaml files may change"},
+		{"a yaml two levels down", "a/b/evil.yaml",
+			"GATE FAILED rule=0 check=3 file=a/b/evil.yaml: only .sops.yaml, README.md and seat .yaml files may change"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			dir := gateStart(t)
+			require.NoError(t, os.MkdirAll(filepath.Join(dir, filepath.Dir(c.file)), 0700))
+			gateCommit(t, dir, map[string]string{
+				".sops.yaml": gateSops(gateRule(c.file, gateSeatKey, gateRecoveryKey)),
+				c.file:       gateSealedFile(),
+			})
+			base := strings.TrimSpace(gateGit(t, dir, "rev-parse", "HEAD"))
+			head := gateCommit(t, dir, map[string]string{
+				c.file: gateSealedFile() + "OTHER: ENC[AES256_GCM,data:q,iv:w,tag:e,type:str]\n",
+			})
+			line, code := RunGate(GateInput{StoreDir: dir, Base: base, Head: head})
+			assert.Equal(t, 1, code, line)
+			assert.Equal(t, c.want, line)
+		})
+	}
+}
+
+// The read of 2026-10-07: a cleartext value nested under an indented map key passed,
+// because plainValues skipped every indented line whole. A key nested in an indented map is
+// read like a root-level key; only the indented `sops:` metadata block is skipped, because
+// its keys are the envelope's and not the seat's.
+func TestGateRefusesCleartextUnderAnIndentedMapKey(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		body string
+		want string
+	}{
+		{"a cleartext value one level down", "parent:\n  GH_TOKEN: sk-live-notencrypted\n",
+			"GATE FAILED rule=1 check=2 file=rowan.yaml: key GH_TOKEN is a plain value, not encrypted"},
+		{"a cleartext value two levels down", "parent:\n    child:\n        GH_TOKEN: sk-live-notencrypted\n",
+			"GATE FAILED rule=1 check=2 file=rowan.yaml: key GH_TOKEN is a plain value, not encrypted"},
+		{"a sealed value under an indented key is fine", "parent:\n  OTHER: ENC[AES256_GCM,data:q,iv:w,tag:e,type:str]\n",
+			"GATE APPROVE files=2 machines=-"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			dir := gateStart(t)
+			base := strings.TrimSpace(gateGit(t, dir, "rev-parse", "HEAD"))
+			head := gateCommit(t, dir, map[string]string{
+				".sops.yaml": gateGoodSops(gateSeatKey, gateRecoveryKey),
+				"rowan.yaml": gateSealedFile() + c.body,
+			})
+			line, code := RunGate(GateInput{StoreDir: dir, Base: base, Head: head})
+			wantCode := 1
+			if strings.HasPrefix(c.want, "GATE APPROVE") {
+				wantCode = 0
+			}
+			assert.Equal(t, wantCode, code, line)
+			assert.Equal(t, c.want, line)
+		})
+	}
+}

@@ -417,3 +417,47 @@ func gitCErr(t *testing.T, dir string, args ...string) (string, error) {
 	out, err := cmd.CombinedOutput()
 	return strings.TrimSpace(string(out)), err
 }
+
+// The read of 2026-10-07: `seal 1.2.<80 digits>` passed as a mark in the clear, because
+// markVersionPattern capped nothing but the rc suffix, so an arbitrary value could ride
+// under the mark key. Each version component is capped at four digits; an oversized one is
+// no mark, and the gate reads the cleartext under the mark key as a plain value. Each row
+// is a probe and the line it must print.
+func TestGateRefusesAnOversizedMarkVersion(t *testing.T) {
+	t.Parallel()
+
+	long := strings.Repeat("9", 80)
+	cases := []struct {
+		name string
+		val  string
+		ok   bool
+	}{
+		{"a release tag", "seal v1.2.3-rc1", true},
+		{"a numeric release", "seat add 1.2.3", true},
+		{"dev", "seal dev", true},
+		{"an eighty-digit patch", "seal 1.2." + long, false},
+		{"a five-digit component", "seal 12345.2.3", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, c.ok, isSeatMark(c.val), "isSeatMark(%q)", c.val)
+			dir := gateStart(t)
+			base := strings.TrimSpace(gateGit(t, dir, "rev-parse", "HEAD"))
+			body := strings.Replace(gateSealedFile(), gateMarkLine, SeatMarkKey+": "+c.val+"\n", 1)
+			head := gateCommit(t, dir, map[string]string{
+				".sops.yaml": gateSops(gateRuleWith("rowan.yaml", "^NOVA_SECRETS_WRITTEN_BY$")),
+				"rowan.yaml": body,
+			})
+			line, code := RunGate(GateInput{StoreDir: dir, Base: base, Head: head})
+			if c.ok {
+				assert.Equal(t, 0, code, line)
+				assert.Equal(t, "GATE APPROVE files=2 machines=-", line)
+				return
+			}
+			assert.Equal(t, 1, code, line)
+			assert.True(t, strings.HasPrefix(line,
+				"GATE FAILED rule=1 check=2 file=rowan.yaml: key NOVA_SECRETS_WRITTEN_BY is a plain value, not encrypted"), line)
+		})
+	}
+}

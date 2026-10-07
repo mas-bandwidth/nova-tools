@@ -106,7 +106,9 @@ func RunGate(in GateInput) (string, int) {
 	}
 
 	// Check 1: Every changed .sops.yaml rule: exactly two age recipients, one the
-	// declared recovery key, and a path_regex naming exactly one seat file.
+	// declared recovery key, a path_regex naming exactly one seat file, and an
+	// unencrypted_regex unchanged from the base rule's for that file (the mark
+	// admission aside).
 	if slices.Contains(changed, ".sops.yaml") {
 		// The recipients the store already had. A key here is not a grant this pull request
 		// makes, so resealing a seat or editing its rule asks the registry nothing.
@@ -116,6 +118,8 @@ func RunGate(in GateInput) (string, int) {
 			gateFindings = append(gateFindings, gateFinding{file: ".sops.yaml", why: err.Error()})
 			baseKeys = map[string]bool{}
 		}
+		// The rules the store already had, for the clear-key comparison below.
+		baseCfg := gateConfigAt(storeDir, base)
 		for i := range cfg.CreationRules {
 			rule := cfg.CreationRules[i]
 			ruleNum := i + 1
@@ -138,6 +142,22 @@ func RunGate(in GateInput) (string, int) {
 			if named != 1 {
 				gateFindings = append(gateFindings, gateFinding{rule: ruleNum, check: 1, file: ".sops.yaml", why: fmt.Sprintf("path_regex names %d seat files; expected exactly one", named)})
 				continue
+			}
+
+			// The rule's clear keys are fixed at the base: a rule whose unencrypted_regex
+			// differs from the base rule's for the same seat file fails closed, naming the
+			// rule, because a widened or absent regex is how a cleartext secret rides out
+			// under a rule the gate otherwise approves. The one sanctioned change is
+			// admitting the mark key, which seal and seat inject commit beside the file they
+			// write (SPEC-SECRETS "gate", the mark).
+			if baseCfg != nil {
+				if bi := matchingRuleIndex(baseCfg, seatFile); bi >= 0 {
+					baseRegex, headRegex := baseCfg.CreationRules[bi].UnencryptedRegex, rule.UnencryptedRegex
+					if ruleClearKeysChanged(baseRegex, headRegex) {
+						gateFindings = append(gateFindings, gateFinding{rule: ruleNum, check: 1, file: ".sops.yaml", why: fmt.Sprintf(
+							"unencrypted_regex for %s changes from %q to %q; a rule may not widen the keys it keeps in the clear", seatFile, baseRegex, headRegex)})
+					}
+				}
 			}
 
 			// Check 4: A recipient key this pull request introduces is a GRANT, and a seat can
@@ -301,6 +321,41 @@ func gateRecipientsAt(storeDir, ref string) (map[string]bool, error) {
 	return keys, nil
 }
 
+// gateConfigAt parses the .sops.yaml at ref, or returns nil when there is none there or it
+// does not parse: a store with no rule set at the base is the first seat of all, and an
+// unparseable base rule set is refused as a rule finding on its own.
+func gateConfigAt(storeDir, ref string) *SopsConfig {
+	data, err := gitShowFile(storeDir, ref, ".sops.yaml")
+	if err != nil {
+		return nil
+	}
+	cfg, err := parseSopsConfig(bytes.NewReader(data))
+	if err != nil {
+		return nil
+	}
+	return cfg
+}
+
+// ruleClearKeysChanged reports whether a rule's unencrypted_regex differs from the base
+// rule's for the same seat file. A change fails, because it changes the keys that stay in
+// the clear. The one sanctioned change is admitting the mark key, which seal and seat
+// inject commit beside the seat file they write (SPEC-SECRETS "gate", the mark): the mark
+// regex exactly when the base rule had none, and the base regex with the mark regex
+// appended as its own group when the base rule had one, the two spellings seatMarkRule
+// writes.
+func ruleClearKeysChanged(base, head string) bool {
+	if base == head {
+		return false
+	}
+	if markAdmitted(base) {
+		return true
+	}
+	if base == "" {
+		return head != seatMarkRegex
+	}
+	return head != "(?:"+base+")|"+seatMarkRegex
+}
+
 // gateFailed formats one verdict line: GATE FAILED rule=<n> check=<k> file=<f>: <why>
 // (SPEC-SECRETS "gate"; tla/SecretsSeat.tla on sprint/md-secrets-h.w1.g1.e15). The gate
 // ran and judged the diff, so the line leads with the FAILED status word and the verb
@@ -398,8 +453,13 @@ func gateCouldNotRunFindings(findings []gateFinding) string {
 	return gateCouldNotRun(strings.Join(whys, "; "))
 }
 
-// isSeatYAML reports whether path is a seat file: a *.yaml that is not .sops.yaml.
+// isSeatYAML reports whether path is a seat file: a root-level `<seat>.yaml`, never
+// `.sops.yaml` and never a `.yaml` under a subdirectory. A nested `.yaml` (`sub/evil.yaml`)
+// is not a seat file, so check 3 refuses a change to one as a change to an unknown file.
 func isSeatYAML(path string) bool {
+	if strings.Contains(path, "/") || strings.Contains(path, "\\") {
+		return false
+	}
 	return strings.HasSuffix(path, ".yaml") && path != ".sops.yaml"
 }
 
@@ -441,8 +501,11 @@ func firstPlainValue(data []byte, unencryptedRegex string) (string, bool, error)
 	return keys[0], true, nil
 }
 
-// plainValues returns every root-level key whose value is not encrypted and is not
-// permitted in the clear by unencryptedRegex (SPEC-SECRETS "gate").
+// plainValues returns every key whose value is not encrypted and is not permitted in the
+// clear by unencryptedRegex (SPEC-SECRETS "gate"). A key at the root and a key nested in an
+// indented map are read the same way: a cleartext value is a plain value wherever it sits.
+// The `sops:` metadata block is the one indented shape skipped whole, because its keys are
+// the envelope's and not the seat's.
 func plainValues(data []byte, unencryptedRegex string) ([]string, error) {
 	var unencRe *regexp.Regexp
 	if unencryptedRegex != "" {
@@ -453,22 +516,34 @@ func plainValues(data []byte, unencryptedRegex string) ([]string, error) {
 		}
 	}
 	var keys []string
+	inSops := false
 	scanner := bufio.NewScanner(bytes.NewReader(data))
 	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
 	for scanner.Scan() {
 		line := scanner.Text()
-		if line == "" || strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t") || strings.HasPrefix(line, "#") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
 			continue
 		}
-		key, val, found := strings.Cut(line, ":")
+		if inSops {
+			if strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t") {
+				continue
+			}
+			inSops = false
+		}
+		key, val, found := strings.Cut(trimmed, ":")
 		if !found {
 			continue
 		}
 		key, val = strings.TrimSpace(key), strings.TrimSpace(val)
-		if key == "" || val == "" || key == "sops" {
+		if key == "" {
 			continue
 		}
-		if strings.HasPrefix(val, "ENC[") {
+		if key == "sops" && !strings.HasPrefix(line, " ") && !strings.HasPrefix(line, "\t") {
+			inSops = true
+			continue
+		}
+		if val == "" || strings.HasPrefix(val, "ENC[") {
 			continue
 		}
 		// The mark key holds a verb's mark and nothing else in the clear, whatever the rule

@@ -365,13 +365,20 @@ GATE REFUSE rule=<n> check=<k> file=<f>: <why>
 
 **Gate checks (k = 1..5):**
 
-1. **Rule's recipients and path_regex**: Every changed `.sops.yaml` rule has exactly two age recipients (one the declared recovery key) and a `path_regex` naming exactly one seat file.
-2. **Seat file's encryption and its rule**: Every changed seat file `<seat>.yaml` is encrypted (with `sops:` metadata present and no plain values outside `unencrypted_regex`) and its rule exists in `.sops.yaml`.
+1. **Rule's recipients, path_regex and clear keys**: Every changed `.sops.yaml` rule has exactly two age recipients (one the declared recovery key), a `path_regex` naming exactly one seat file, and an `unencrypted_regex` identical to the base rule's (the mark admission aside). A different regex fails, naming the rule.
+2. **Seat file's encryption and its rule**: Every changed seat file `<seat>.yaml` — a root-level `.yaml`, never one under a subdirectory — is encrypted (with `sops:` metadata present and no plain values, root-level or under an indented map key, outside `unencrypted_regex`) and its rule exists in `.sops.yaml`.
 3. **No other file changes**: No files other than `.sops.yaml`, `README.md`, and seat `.yaml` files change.
 4. **New recipient needs the registry's seat** (inside check 1): A recipient key this diff introduces is permitted only when a machine in `--machines` carries this rule's seat.
 5. **Seat gone at head**: A seat file in the store at `--base` must still be in the store at `--head`; removing a seat is never part of adding one.
 
 numbers identify checks; the gate runs them in the order 3, 1, 4, 5, 2. check=0 means the gate refused before any numbered check ran.
+
+**The four checks of the read of 2026-10-07.** Each one closes a shape the gate once approved:
+
+- **The rule's clear keys are fixed at the base.** A changed rule whose `unencrypted_regex` differs from the base rule's for the same seat file is refused, except the one sanctioned change: admitting the mark key, which `seal` and `seat inject` commit beside the file they write — `^NOVA_SECRETS_WRITTEN_BY$` when the rule had no `unencrypted_regex`, and the rule's own regex with the mark regex appended as its own group when it had one. A widened (`.*`) or absent regex otherwise fails, naming the rule.
+- **A seat file is root-level.** `<seat>.yaml` at the root is a seat file; a `.yaml` under a subdirectory (`sub/evil.yaml`) is not, and a change to one is refused by check 3 as a change outside the three kinds.
+- **An indented map key is a key.** A cleartext value under an indented map key (`parent:` then `GH_TOKEN: sk-...`) is a plain value like a root-level one, refused by check 2; only the indented `sops:` metadata block is skipped whole, because its keys are the envelope's and not the seat's.
+- **The mark's version is bounded.** Each version component is at most four digits, so a long digit run (`seal 1.2.<80 digits>`) is no mark and the cleartext under the mark key is a plain value.
 
 **The store's own gate, as a verb.** What the store repo ran as a shell gate lives here in
 the tool instead, so the workflow calls this tool and the rule
@@ -441,8 +448,8 @@ committed with the seat file, so the pull request the gate reviews carries both 
 the `--dry-run` plan names it (`SECRETS <VERB> PLAN rule .sops.yaml rule for <seat>.yaml gains
 unencrypted_regex ...`). The gate cannot decrypt, so it never accepts a sealed mark instead. **The mark's
 value is pinned:** `<seal|seat add|seat inject> <version>`, the version `dev` or a release tag,
-`v?\d+\.\d+\.\d+(-rc\d{1,3})?` (a shape alone, or an unbounded suffix, let 256 bits of hex pass as a version);
-a verb whose build stamp is not of that form writes `dev`. A pinned mark is
+`v?\d{1,4}\.\d{1,4}\.\d{1,4}(-rc\d{1,3})?` (a shape alone, or an unbounded suffix, let 256 bits of hex pass as a version,
+and an unbounded numeric component let eighty digits ride in the clear); a verb whose build stamp is not of that form writes `dev`. A pinned mark is
 never a "plain value" to the gate, `check` or `seat inject`, and is a clear key to `names`; any
 other cleartext under the mark key is a plain value, refused like any other whatever the rule's
 `unencrypted_regex` admits, and is no mark to the gate. The recipient change of
