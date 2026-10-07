@@ -44,8 +44,8 @@ What keeps USE at 7. Three wall defects: --read-noexec lets the command's direct
 | earlier | now | evidence |
 |---|---|---|
 | no nova-sandbox rating at 1.1.0 | FIRST | docs/ratings/1.1.0 holds no sandbox rating |
-| 7/10 and 7/10 from Emma/Freddy ratings | SAME | this rating confirms the scores after independent read |
-| findings 1-3 from Emma/Freddy (command dir as execute root, --read-noexec overlap) | STILL HERE | findings 1 and 3 reproduce |
+| 7/10 and 7/10 from earlier 1.2.0 ratings | SAME | this rating confirms the scores after independent read |
+| findings 1-3 from earlier 1.2.0 rating (command dir as execute root, --read-noexec overlap) | STILL HERE | findings 1 and 3 reproduce |
 | help promise about --read being NOT writable | NEW | finding 1 |
 | --net-allow on Linux ignored | NEW | finding 2 |
 | unknown verb after help | NEW | finding 7 |
