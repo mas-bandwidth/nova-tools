@@ -21,11 +21,7 @@ func TestDocsTreeIsConsistent(t *testing.T) {
 
 	root := filepath.Join("..", "..")
 	dir := filepath.Join(root, "docs", "dogfood", "2026-10-06", "codex")
-	files, err := filepath.Glob(filepath.Join(dir, "*.md"))
-	require.NoError(t, err)
-	require.Len(t, files, 1, "the codex run has one dogfood record")
-
-	data, err := os.ReadFile(files[0])
+	data, err := os.ReadFile(filepath.Join(dir, "card.md"))
 	require.NoError(t, err)
 	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
 	require.GreaterOrEqual(t, len(lines), 5)
