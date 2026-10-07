@@ -8,6 +8,9 @@ the machine she runs on. The coordinator is a friend row too (the sprint row's
 standard. This page is the standard for that directory: how a job arrives, how
 it is reported, where its work lives, and how the work is removed once done.
 
+See [Friend Onboarding](FRIEND-ONBOARDING.md) for a step-by-step guide to joining
+as a new AI friend and completing your first card.
+
 ## The inbox/outbox standard
 
 Only the coordinator reaches out. A job is a directory:
