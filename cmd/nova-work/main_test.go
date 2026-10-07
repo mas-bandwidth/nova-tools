@@ -172,6 +172,34 @@ func TestImportThenVerifyIsZeroDifferences(t *testing.T) {
 	require.Regexp(t, `^IMPORT OK org=mas-bandwidth out=- .* dry_run=true\n`, res.Stdout, diag)
 }
 
+// TestImportFixtureFirstRunIsWhatTheHelpPrints: import -h prints the first
+// run that reads a directory of recorded GraphQL pages, and that command
+// runs with no gh (SPEC-WORK-V1 section 1.6).
+func TestImportFixtureFirstRunIsWhatTheHelpPrints(t *testing.T) {
+	t.Parallel()
+	help := workMain(unreachable(t)).Run("import", "-h")
+	require.Equal(t, 0, help.Code, help.Stderr)
+	const printed = "nova-work import --org $ORG --repo $ORG/$REPO --page-size 15 --fixture ./calls --dry-run"
+	require.Contains(t, help.Stdout, printed, "import -h does not print the fixture first run:\n%s", help.Stdout)
+	line := strings.TrimPrefix(printed, "nova-work ")
+	line = strings.ReplaceAll(line, "$ORG", "mas-bandwidth")
+	line = strings.ReplaceAll(line, "$REPO", "reliable")
+	line = strings.ReplaceAll(line, "./calls", recording)
+	res := workMain(unreachable(t)).Run(strings.Fields(line)...)
+	diag := res.Stdout + res.Stderr
+	require.Equal(t, 0, res.Code, diag)
+	assert.Contains(t, res.Stdout, "dry_run=true", diag)
+	assert.Contains(t, res.Stdout, "fixture="+recording, diag)
+	assert.NotContains(t, res.Stdout, " gh=", diag)
+	assert.Contains(t, res.Stdout, "IMPORT NOTE the dry run read the recorded pages in the fixture (calls=3) and wrote nothing", diag)
+
+	empty := t.TempDir()
+	bad := workMain(unreachable(t)).Run("import", "--org", "mas-bandwidth", "--repo", "mas-bandwidth/reliable", "--fixture", empty, "--dry-run")
+	assert.Equal(t, 2, bad.Code, bad.Stdout+bad.Stderr)
+	assert.Contains(t, bad.Stderr, "no call-*.json", bad.Stderr)
+	assert.Contains(t, bad.Stderr, "run: nova-work import -h", bad.Stderr)
+}
+
 // TestTheDryRunSaysWhatItReads: a dry run is not offline. It reads GitHub as
 // the import does (every call of the recording) and writes nothing, and the
 // run, the verb's help and the banner each say so, so no reader takes it for
@@ -387,6 +415,54 @@ func TestVerifyHelpShowsATreeTheReaderAccepts(t *testing.T) {
 	require.NoError(t, err, "the tree verify -h shows does not read")
 	assert.Equal(t, "acme", tree.Org)
 	require.Len(t, tree.Repos, 1)
+}
+
+// TestVerifyHelpShowsEachKeysValueShape: verify -h carries a short table of
+// each key's value shape (SPEC-WORK-V1 section 1.2), so a reader sees what a
+// value wants without a second run.
+func TestVerifyHelpShowsEachKeysValueShape(t *testing.T) {
+	t.Parallel()
+	res := workMain(unreachable(t)).Run("verify", "-h")
+	require.Equal(t, 0, res.Code, res.Stderr)
+	for _, row := range []string{
+		":node-id              string",
+		":closed               string",
+		":state                keyword",
+		":state-reason         keyword or ()",
+		":origin               :internal or :external",
+		":labels               list of strings",
+		":milestone            () or (:number <positive integer> :title <string>)",
+		":number               positive integer, or 0 when a reference has no source",
+	} {
+		assert.Contains(t, res.Stdout, row, "verify -h has no shape row %q", row)
+	}
+}
+
+// TestVerifyNamesEveryTreeProblemInOneRun: one verify names every shape
+// problem of the tree file, one REFUSED line each, and does not read GitHub
+// (SPEC-WORK-V1 section 1.2).
+func TestVerifyNamesEveryTreeProblemInOneRun(t *testing.T) {
+	t.Parallel()
+	// Each URL is workfile.Web joined with a path, so this file's literals name no host.
+	const bad = `(work-tree "v1" :source "github" :org "acme" :fetched "2026-10-02T12:00:00Z"
+ :repos ((repo "acme/widgets" :url "` + workfile.Web + `acme/widgets"
+          :archived false :issues ((issue 1 :url "` + workfile.Web + `acme/widgets/issues/1"
+           :title "t" :state "closed" :state-reason :completed
+           :origin :external :author 5
+           :author-association :none :created "c" :updated "u" :closed "x"
+           :locked false :lock-reason () :labels () :assignees ()
+           :milestone () :body "" :comments () :references () :linked-prs ())))))
+`
+	path := filepath.Join(t.TempDir(), "bad.lisp")
+	testkit.WriteFile(t, path, bad)
+	res := workMain(unreachable(t)).Run("verify", "--tree", path)
+	diag := res.Stdout + res.Stderr
+	require.Equal(t, 2, res.Code, diag)
+	assert.Contains(t, res.Stderr, "has no :node-id", diag)
+	assert.Contains(t, res.Stderr, ":state wants a keyword or ()", diag)
+	assert.Contains(t, res.Stderr, ":author wants a string", diag)
+	assert.Equal(t, 3, strings.Count(res.Stderr, "VERIFY REFUSED"), diag)
+	assert.Contains(t, res.Stderr, "run: nova-work verify -h", diag)
 }
 
 // TestVerifyAgainstASecondTreeReadsNoNetwork (tool ledger K3): verify
