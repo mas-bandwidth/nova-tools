@@ -136,7 +136,7 @@ func (a *app) serverSource(ctx context.Context, addr string, fs *flag.FlagSet, a
 func (s *serverSource) lastTickEnd(ctx context.Context) (string, error) {
 	res, err := s.a.ask(ctx, s.addr, []string{"log"}, []string{"--json", "--since", (s.timeout + tickEndPoll).String()})
 	if err != nil {
-		return "", &exitErr{s.a.unanswered("inbox --wait", s.addr, err, s.stderr)}
+		return "", &exitErr{s.a.unanswered("inbox --wait", s.addr, true, err, s.stderr)}
 	}
 	if res.Code != 0 {
 		s.a.answer(res, s.stdout, s.stderr)
@@ -179,7 +179,7 @@ func (s *serverSource) inbox(ctx context.Context, open string) (inboxLook, error
 	}
 	res, err := s.a.ask(ctx, s.addr, []string{"inbox"}, words)
 	if err != nil {
-		return inboxLook{}, &exitErr{s.a.unanswered("inbox", s.addr, err, s.stderr)}
+		return inboxLook{}, &exitErr{s.a.unanswered("inbox", s.addr, true, err, s.stderr)}
 	}
 	if res.Code == 1 && open != "" {
 		return inboxLook{}, nil // the group closed since the look that found it: nothing to read
@@ -369,7 +369,7 @@ func (a *app) inboxWaitAt(addr string, fs *flag.FlagSet, args []string, atEpoch 
 	// The wait ended: read the inbox itself.
 	res, err := a.ask(ctx, addr, []string{"inbox"}, without(fs, args, "wait", "timeout", "push"))
 	if err != nil {
-		return a.unanswered("inbox", addr, err, stderr)
+		return a.unanswered("inbox", addr, true, err, stderr)
 	}
 	var out map[string]json.RawMessage
 	if !asJSON || res.Code != 0 || json.Unmarshal([]byte(res.Stdout), &out) != nil {
