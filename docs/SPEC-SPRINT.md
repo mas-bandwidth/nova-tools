@@ -1177,8 +1177,14 @@ failed, and a hidden `defect` column that holds those that ended on a brief
 defect (section 1, a brief defect), counted in neither. `done` and `ok%` are
 the table's own formulas over the `ok` and `failed` cells,
 computed at render and never written: `done:sum(ok+failed)` and
-`okpct:pct(ok/ok+failed):pooled:ok%` (the column `okpct`, labelled `ok%`). A
-member with no finished card shows `0` and `0.0%`; the footer pools ok% over
+`okpct:pct(ok/ok+failed):pooled:ok%` (the column `okpct`, labelled `ok%`).
+ok% counts landed-or-ok results over attempts a worker actually ran to an end:
+the denominator leaves out launch refusals, withdrawn and handed-back attempts,
+coordinator take-backs, provider and route failures, and deadline kills where no
+lane started, and those counts sit beside it as refused, withdrawn and provider.
+An attempt record carries blame, one of coordinator, worker, provider or none,
+set at finish from the report's finding class and editable by the brief judgment.
+A member with no finished card shows `0` and `0.0%`; the footer pools ok% over
 the members (every ok over every finished card, never a mean of the members'
 percentages). The text cells (ci, state, since, status, load) are display
 copies of the control cards, written after each step; the control cards are

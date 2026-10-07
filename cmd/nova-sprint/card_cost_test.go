@@ -184,7 +184,7 @@ func TestAProviderFailedTakeCountsOnceAfterARedeal(t *testing.T) {
 	lines := costLines(out)
 	require.Len(t, lines, 3, out)
 	assert.Contains(t, lines[0], "COST kind=work card=s1-1.w1 attempt=1 take=1 who=m1 route=flash-a model=opencode/deepseek-v4-flash tier=flash end=provider-failure input=1000 ")
-	assert.Contains(t, lines[1], "COST kind=work card=s1-1.w1 attempt=1 who=m1 route=flash-a model=opencode/deepseek-v4-flash tier=flash end=failed input=- cache_read=- ", "the second take spent nothing it reported")
+	assert.Contains(t, lines[1], "COST kind=work card=s1-1.w1 attempt=1 who=m1 route=flash-a model=opencode/deepseek-v4-flash tier=flash end=launch-refused input=- cache_read=- ", "the second take spent nothing it reported")
 	assert.Contains(t, lines[2], "COST TOTAL consumers=2 input=1000 cache_read=2000 cache_write=- output=300 reasoning=200 requests=3 ")
 	assert.Contains(t, lines[2], "predicted_usd=0.000336 predicted_of=1/2 actual_usd=0.0005 actual_by=harness actual_of=1/2", "the first take counted once")
 }

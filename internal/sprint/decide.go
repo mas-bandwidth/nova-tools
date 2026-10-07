@@ -109,8 +109,11 @@ func decidedFor(c *Card, line string) string {
 // class `decided nothing-to-do` (FieldDecideAttemptNothingToDo). Every other class, and
 // every decision under its bar or with no bar, leaves the prefix rule standing.
 func finishKind(c *Card, r FinishReq) (kind, class string, used bool) {
+	if strings.HasPrefix(strings.TrimSpace(r.Report), cardhdr.EndLaunch) {
+		return cardhdr.EndLaunch, "", false
+	}
 	kind = prefixKind(r.Report)
-	if kind == cardhdr.EndStaging || kind == cardhdr.EndProvider || strings.HasPrefix(strings.TrimSpace(r.Report), cardhdr.EndLaunch) {
+	if kind == cardhdr.EndStaging || kind == cardhdr.EndProvider {
 		return kind, "", false
 	}
 	d, ok := decide.ParseDecided(r.Decided)

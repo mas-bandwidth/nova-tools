@@ -145,7 +145,9 @@ func StatsSince(s *Snapshot, since time.Time) PassStats {
 				case "yes":
 					lastFinished = finished
 				case "no":
-					x.failed++
+					if countsAsWorkerFailed(w) {
+						x.failed++
+					}
 				}
 				x.timed(dealt, taken, finished, RunWall(w))
 				if k == 1 {
@@ -163,7 +165,7 @@ func StatsSince(s *Snapshot, since time.Time) PassStats {
 		toLand = span(toLand, accepted, landed)
 		total = span(total, admitted, landed)
 		for _, c := range CardCostOf(p).Consumers {
-			if c.Kind == "work" && strings.HasPrefix(c.End, cardhdr.EndStaging) {
+			if c.Kind == "work" && (strings.HasPrefix(c.End, cardhdr.EndStaging) || strings.HasPrefix(c.End, cardhdr.EndLaunch)) {
 				continue // refused before any child ran: no take of the route
 			}
 			if at, err := time.Parse(time.RFC3339, c.At); !since.IsZero() && err == nil && at.Before(since) {

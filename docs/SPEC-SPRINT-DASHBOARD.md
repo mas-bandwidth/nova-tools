@@ -161,7 +161,7 @@ from the owner edits one line here and nothing else moves.
   (cmd/nova-sprint/reads.go, owed).
 
 ## Fleet (title "Fleet"; subtitle "<u> up · <h> held · <d> down")
-- Columns: machine | status | ready | working | done | ok% | load (headers exactly so, all lowercase).
+- Columns: machine | status | ready | working | done | ok% | refused | withdrawn | provider | load (headers exactly so, all lowercase).
 - Machine column capped, and the Status column takes part in the even spread like the numeric columns (as in Work
   streams); names never dimmed. Status pill: up (green), held (amber), down (red).
 - Working: a cell track, one cell per slot of the machine's width (nothing drawn beyond its width), cells 1.5x their current
@@ -173,7 +173,7 @@ from the owner edits one line here and nothing else moves.
 - Done and OK% (and the Friends table's) count from the last `nova-sprint stats tidy --fleet` (`--friends`): the tidy takes
   the history off the done cells the page's counts are read from. Not yet: "since <time>" beside OK%, as for Cost.
 
-## Friends (title "Friends"): same shape as Fleet without load (ready, working, done, ok%, status; headers lowercase); honest empty
+## Friends (title "Friends"): same shape as Fleet without load (ready, working, done, ok%, refused, withdrawn, provider, status; headers lowercase); honest empty
   state until the JSON carries tables.friends.
 
 ## Lanes (the card dash-lanes-panel.w2, 2026-10-04; the owner's line is owed)

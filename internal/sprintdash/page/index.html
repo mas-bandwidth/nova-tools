@@ -226,7 +226,7 @@ footer a:hover { color: var(--text); }
    "compact" from app.js when the full form's header row would overflow). Never squeezed,
    never scrolled. Children: Work 1 stream 2 status 3 waiting 4 ready 5 working
    6 review 7 merging 8 landed / total 9 cost; Fleet 1 name 2 status 3 ready 4 cells
-   5 working / width 6 done 7 ok% 8 load; Friends the same without load. Minimum widths
+   5 working / width 6 done 7 ok% 8 refused 9 withdrawn 10 provider 11 load; Friends the same without load. Minimum widths
    are the measured widest content of each column at the 28 px type. */
 .row > * { min-width: 0; }
 /* One right edge for the status column of Work, Fleet and Friends (docs/SPEC-SPRINT-DASHBOARD.md):
@@ -266,8 +266,8 @@ footer a:hover { color: var(--text); }
    track to the figure; cells a fixed 27 x 11 px with 4 px gaps; the bar column is the widest bar
    plus 8 px each side (the cells' padding), so the bar reads centred in its own column */
 .fleet .row, .friends .row { --pad: 2rem; --gap: 3.5rem; --S: 9.5rem; column-gap: var(--gap); padding: 0 var(--pad); }
-.fleet .row { grid-template-columns: var(--name-w) var(--status-w) minmax(4.5rem, 1fr) calc(var(--track-w, 61.75rem) + 1rem) 7.5rem minmax(3.75rem, 1fr) minmax(5.375rem, 1fr) minmax(5.375rem, 1fr); }
-.friends .row { grid-template-columns: var(--name-w) var(--status-w) minmax(4.5rem, 1fr) calc(var(--track-w, 61.75rem) + 1rem) 7.5rem minmax(3.75rem, 1fr) minmax(5.375rem, 1fr); }
+.fleet .row { grid-template-columns: var(--name-w) var(--status-w) minmax(4.5rem, 1fr) calc(var(--track-w, 61.75rem) + 1rem) 7.5rem minmax(3.75rem, 1fr) minmax(5.375rem, 1fr) minmax(5.375rem, 1fr) minmax(5.375rem, 1fr) minmax(5.375rem, 1fr) minmax(5.375rem, 1fr); }
+.friends .row { grid-template-columns: var(--name-w) var(--status-w) minmax(4.5rem, 1fr) calc(var(--track-w, 61.75rem) + 1rem) 7.5rem minmax(3.75rem, 1fr) minmax(5.375rem, 1fr) minmax(5.375rem, 1fr) minmax(5.375rem, 1fr) minmax(5.375rem, 1fr); }
 .fleet .cells, .friends .cells { gap: .25rem; grid-auto-rows: .6875rem; padding: 0 .5rem; }
 .fleet .row.head > :nth-child(4), .friends .row.head > :nth-child(4) { margin-left: .5rem; }
 
@@ -281,8 +281,8 @@ footer a:hover { color: var(--text); }
 .streams.compact .pill > span:last-child { display: none; }
 .fleet.compact .row, .friends.compact .row { grid-template-columns: var(--name-w) var(--status-w) minmax(7rem, 1fr) minmax(5.375rem, 1fr); }
 .fleet.compact .row > :nth-child(5), .friends.compact .row > :nth-child(5) { padding-left: 0; }
-.fleet.compact .row > :nth-child(3), .fleet.compact .row > :nth-child(4), .fleet.compact .row > :nth-child(6), .fleet.compact .row > :nth-child(8),
-.friends.compact .row > :nth-child(3), .friends.compact .row > :nth-child(4), .friends.compact .row > :nth-child(6) { display: none; }
+.fleet.compact .row > :nth-child(3), .fleet.compact .row > :nth-child(4), .fleet.compact .row > :nth-child(6), .fleet.compact .row > :nth-child(8), .fleet.compact .row > :nth-child(9), .fleet.compact .row > :nth-child(10), .fleet.compact .row > :nth-child(11),
+.friends.compact .row > :nth-child(3), .friends.compact .row > :nth-child(4), .friends.compact .row > :nth-child(6), .friends.compact .row > :nth-child(8), .friends.compact .row > :nth-child(9), .friends.compact .row > :nth-child(10) { display: none; }
 .fleet.compact .pill > span:last-child, .friends.compact .pill > span:last-child { display: none; }
 .fleet.compact .row.head .alt, .friends.compact .row.head .alt { display: inline; }
 @media (max-width: 600px) {
@@ -403,12 +403,12 @@ footer a:hover { color: var(--text); }
 
 <section class="panel fleet">
   <div class="panel-head"><h2>Fleet</h2><span class="muted" id="fleet-head"></span></div>
-  <div class="scroll"><div class="rows" id="fleet"><div class="row head"><div>machine</div><div>status</div><div class="num">ready</div><div>working</div><div class="frac"><span class="alt">working</span></div><div class="num">done</div><div class="num">ok%</div><div class="num">load</div></div></div></div>
+  <div class="scroll"><div class="rows" id="fleet"><div class="row head"><div>machine</div><div>status</div><div class="num">ready</div><div>working</div><div class="frac"><span class="alt">working</span></div><div class="num">done</div><div class="num">ok%</div><div class="num">refused</div><div class="num">withdrawn</div><div class="num">provider</div><div class="num">load</div></div></div></div>
 </section>
 
 <section class="panel friends">
   <div class="panel-head"><h2>Friends</h2><span class="muted" id="friends-sub"></span></div>
-  <div class="scroll"><div class="rows" id="friends"><div class="row head"><div>friend</div><div>status</div><div class="num">ready</div><div>working</div><div class="frac"><span class="alt">working</span></div><div class="num">done</div><div class="num">ok%</div></div></div></div>
+  <div class="scroll"><div class="rows" id="friends"><div class="row head"><div>friend</div><div>status</div><div class="num">ready</div><div>working</div><div class="frac"><span class="alt">working</span></div><div class="num">done</div><div class="num">ok%</div><div class="num">refused</div><div class="num">withdrawn</div><div class="num">provider</div></div></div></div>
 </section>
 
 <section class="panel lanes">
