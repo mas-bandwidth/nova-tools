@@ -49,7 +49,7 @@ func cmdSum(args []string, stdout, stderr io.Writer, now time.Time) int {
 		first, last = sm.Days[0], sm.Days[len(sm.Days)-1]
 	}
 	fmt.Fprintln(s.out(), s.line("SUM", "MONTH", "", "month", *month, "at", stamp(now), "build", buildVersion(),
-		"days", len(sm.Days), "first", first, "last", last, "missing", len(sm.Missing), "rows", sm.Rows, "turns", turns))
+		"days", len(sm.Days), "first", first, "last", last, "missing", len(sm.Missing), "rows", sm.Rows, "turns", count(turns)))
 
 	widen := "nova-tokens sum --out " + *out + " --month " + *month + " --max 0"
 	pairs := s.list(false, *max, "SUM", "pair", widen)
@@ -62,7 +62,7 @@ func cmdSum(args []string, stdout, stderr io.Writer, now time.Time) int {
 		models.Line(s.line("SUM", "MODEL", "", append(append([]any{"model", m.Model}, aggFields(m.Agg)...), "repos", m.Agg.Keys())...))
 	}
 	models.More()
-	fmt.Fprintln(s.out(), s.line("SUM", "TOTAL", "", append(aggFields(sm.Total), "turns", turns, "pairs", len(sm.Pairs), "models", len(sm.Models))...))
+	fmt.Fprintln(s.out(), s.line("SUM", "TOTAL", "", append(aggFields(sm.Total), "turns", count(turns), "pairs", len(sm.Pairs), "models", len(sm.Models))...))
 	counts := []any{"month", *month, "days", len(sm.Days), "missing", len(sm.Missing), "pairs", len(sm.Pairs), "models", len(sm.Models), "nonutc", sm.Total.NonUTC}
 	fmt.Fprintf(s.out(), "SUM OK%s\n", s.factFields(counts...))
 	return s.done(0, *max)
@@ -71,8 +71,8 @@ func cmdSum(args []string, stdout, stderr io.Writer, now time.Time) int {
 // aggFields is the five totals, the rough count, the per-column dash counts and the
 // non-UTC count: everything a reader needs to know what a total does NOT cover.
 func aggFields(a *tokens.Agg) []any {
-	return []any{"input", a.Cell(tokens.Input), "output", a.Cell(tokens.Output), "cache_write", a.Cell(tokens.CacheWrite),
-		"cache_read", a.Cell(tokens.CacheRead), "reasoning", a.Cell(tokens.Reasoning), "rough", a.Rough,
+	return []any{"input", count(a.Cell(tokens.Input)), "output", count(a.Cell(tokens.Output)), "cache_write", count(a.Cell(tokens.CacheWrite)),
+		"cache_read", count(a.Cell(tokens.CacheRead)), "reasoning", count(a.Cell(tokens.Reasoning)), "rough", a.Rough,
 		"dashes", fmt.Sprintf("%d,%d,%d,%d,%d", a.Dashes[tokens.Input], a.Dashes[tokens.Output], a.Dashes[tokens.CacheWrite],
 			a.Dashes[tokens.CacheRead], a.Dashes[tokens.Reasoning]), "nonutc", a.NonUTC}
 }
