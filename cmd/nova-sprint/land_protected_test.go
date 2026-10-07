@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -26,7 +27,7 @@ func TestLandProtectedCommandRecordsThePRThenPollsWithoutPushingAgain(t *testing
 	fake := filepath.Join(r.dir, "fake-bin")
 	require.NoError(t, os.MkdirAll(fake, 0755))
 	calls, merged := filepath.Join(r.dir, "gh-calls"), filepath.Join(r.dir, "merged")
-	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '" + calls + "'\ncase \"$*\" in\n 'pr create '*) echo https://forge.example.invalid/owner/repo/pull/1;;\n 'pr view 1 --json id') echo '{\"id\":\"PR_test\"}';;\n 'api graphql '*) echo '{}';;\n 'pr view 1 --json state,mergeCommit') if [ -f '" + merged + "' ]; then echo '{\"state\":\"MERGED\",\"mergeCommit\":{\"oid\":\"" + head + "\"}}'; else echo '{\"state\":\"OPEN\",\"mergeCommit\":null}'; fi;;\n *) echo unexpected fake forge call >&2; exit 1;;\nesac\n"
+	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> " + strconv.Quote(calls) + "\ncase \"$*\" in\n 'pr create '*) echo https://forge.example.invalid/owner/repo/pull/1;;\n 'pr view 1 --json id') echo '{\"id\":\"PR_test\"}';;\n 'api graphql '*) echo '{}';;\n 'pr view 1 --json state,mergeCommit') if [ -f " + strconv.Quote(merged) + " ]; then echo '{\"state\":\"MERGED\",\"mergeCommit\":{\"oid\":\"" + head + "\"}}'; else echo '{\"state\":\"OPEN\",\"mergeCommit\":null}'; fi;;\n *) echo unexpected fake forge call >&2; exit 1;;\nesac\n"
 	require.NoError(t, os.WriteFile(filepath.Join(fake, "gh"), []byte(script), 0755))
 	r.a.gitEnv = r.env
 	st, err := r.a.store(common{redis: "mem:0", actor: "tester"})
