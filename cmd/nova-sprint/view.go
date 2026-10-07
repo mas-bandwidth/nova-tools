@@ -100,13 +100,14 @@ type viewItem struct {
 
 // viewRow is a friend's or a machine's row, every row with --all.
 type viewRow struct {
-	K   string `json:"k"`             // f:<friend> or m:<machine>
-	St  string `json:"st"`            // up, down, held
-	R   int    `json:"r"`             // ready on the row
-	W   int    `json:"w"`             // working on the row
-	Wd  int    `json:"wd"`            // the row's width
-	F30 int    `json:"f30"`           // finished in the last 30m
-	Rep string `json:"rep,omitempty"` // how long since its last beat; "never"
+	K    string `json:"k"`              // f:<friend> or m:<machine>
+	St   string `json:"st"`             // up, down, held
+	R    int    `json:"r"`              // ready on the row
+	W    int    `json:"w"`              // working on the row
+	Wd   int    `json:"wd"`             // the row's width
+	F30  int    `json:"f30"`            // finished in the last 30m
+	Rep  string `json:"rep,omitempty"`  // how long since its last beat; "never"
+	Disk string `json:"disk,omitempty"` // the volume's free space, inode headroom, and a disk hold's reason
 }
 
 // coordCounts are the sprint's counts, always carried: the work table's primaries by state,
@@ -430,7 +431,7 @@ func (a *app) coordinatorView(ctx context.Context, st *store.Store, all bool) (c
 			since = now.Sub(b.At)
 			rep = ageWord(since)
 		}
-		rows = append(rows, viewRow{K: "m:" + m, St: cmp.Or(status, sprint.Down), R: r, W: w, Wd: width, F30: finished(m), Rep: rep})
+		rows = append(rows, viewRow{K: "m:" + m, St: cmp.Or(status, sprint.Down), R: r, W: w, Wd: width, F30: finished(m), Rep: rep, Disk: sprint.DiskFigure(ctl)})
 		if status != sprint.Up && status != sprint.Held && width > 0 {
 			v.Items = append(v.Items, viewItem{K: "m:" + m, T: itemMachine, W: "machine down", B: r + w, S: m + " is down and not held (width " + strconv.Itoa(width) + "); last beat " + rep,
 				Next: "nova-sprint log --member " + m + " --since 1h", age: since})
@@ -446,7 +447,7 @@ func (a *app) coordinatorView(ctx context.Context, st *store.Store, all bool) (c
 			since = now.Sub(f.Beat)
 			rep = ageWord(since)
 		}
-		rows = append(rows, viewRow{K: "f:" + f.Name, St: f.Status, R: r, W: w, Wd: f.Width, F30: finished(row), Rep: rep})
+		rows = append(rows, viewRow{K: "f:" + f.Name, St: f.Status, R: r, W: w, Wd: f.Width, F30: finished(row), Rep: rep, Disk: sprint.DiskFigure(s.MemberCtl(row))})
 		if r+w == 0 {
 			continue
 		}
@@ -584,6 +585,9 @@ func (a *app) coordinatorView(ctx context.Context, st *store.Store, all bool) (c
 	})
 	v.Cursor = cursorOf(itemDigests(v.Items), rowDigests(v.Rows))
 	v.Sum = coordinatorSum(v, merr == nil, machine)
+	if line := sprint.DiskHeadline(s); line != "" {
+		v.Sum += " | " + line
+	}
 	return v, nil
 }
 

@@ -1586,6 +1586,8 @@ soon as the loop sees it, at most once every ten minutes while it stays there
 `TestTheTickRunsGcHourlyAndOnAFullVolume`, `TestGcVerbReclaimsThisMachinesFinishedScratch`,
 `TestGcMachineRunsTheVerbThroughTheFleetRunner`.)
 
+gc reclaims scratch. The volume watermark (section 8) is the other half: a judgment, and a hold that starts no new lane, when the beat's reading of that volume passes its lines. gc does not hold a machine and the watermark does not delete a directory.
+
 ## 2. The cards
 
 Layer 1 of the processor, the instruction set, is [SPEC-ISA.md](SPEC-ISA.md): a
@@ -4452,6 +4454,7 @@ the tick would make, no other open judgment on it).
 | a stream has made no progress past its deadline (stale) | where, queue (look), wait | no |
 | stalled: nothing holds a card (rule 12) | the decisions its place allows and that would be accepted (ask --another for a primary asked already, never ask), else look at the card; drop; wait | no, while the stall stands |
 | review above its alarm, merging above its alarm, nothing ready while cards wait, the fleet works below its alarm (the backlog alarms, below) | ack (seen: quiet until the episode ends), wait | yes |
+| a volume is past its watermark (section 8, Disk watermark: one judgment per volume, raised again every 30 minutes while it holds) | the judgment stays until a fresh reading falls under the warn line; it is not a condition the tick keeps, because its type is not in the decisions map | no |
 
 A condition the tick keeps (cannot ask, fewer than two readers up, no member up, a deadline passed, an
 invariant broken; a failing reminder too) is answered for a while by
@@ -4776,6 +4779,16 @@ the coordinator, "an alarm cleared", whose text opens with "open files above the
 alarm:" and says the count now. Over the warn bound only, no judgment is written; the
 fleet table's load cell says it instead, the load followed by `fds <count> warn` (or
 `alarm` above the alarm bound), while the beat and its reading are fresh.
+
+### Disk watermark
+
+On 2026-10-06 the AI volume reached full with no warning: the bus store refused writes and lanes died. Every machine row and every friend row carries the free space and the inode headroom of the volume its working directory lives on. The beat measures that volume and writes it on the control card (`internal/sprint/disk.go`); the tick reads the card and does not stat the host, so a tick with no reading judges nothing and holds nobody. The fields are `disk_volume` (the volume's name), `disk_use` and `disk_inode_use` (percent full, 0 to 100), `disk_free` and `disk_inode_free` (the beat's own text for the headroom), `disk_dirs` (the largest directories under the AI root, comma joined, from a scan of at most `DiskScanBound` entries that names at most `DiskScanKeep`), and `disk_at` (RFC3339). `disk_at` absent means the fields are the beat's current word. `disk_at` older than a beat window is no reading: it does not raise a judgment and it does not clear a hold.
+
+The lines are the work table's properties `disk_warn` and `disk_full`, and the defaults `DiskWarnDefault` (80) and `DiskFullDefault` (95) when a property is absent or not a percent. The full line is never under the warn line. Use is the higher of the block percent and the inode percent. At the warn line or past it the tick writes one judgment for that volume, `a volume is past its watermark`, subject `volume:<name>`, naming the volume, each machine and friend on it, and those directories. The same judgment is updated in place when the words change and raised again every `DiskReraise` (30 minutes) of running time while it holds, with one happened note `a judgment still holds: raised again`. It closes when a fresh reading falls under the warn line. Two machines on one volume are one judgment. The type is not in the tick's decisions map (`TickDecisions` in `steps_tick.go`, which the card that added this part does not edit), so `ack` does not keep it and `wait` does not hold it; the judgment stands until the reading falls under the line.
+
+Above the full line (the line itself warns and does not yet hold) the same part holds each machine on that volume whose control card is not already held for another reason: `held`, `held_reason` `volume full: <name>`, `held_finish`, and status `held` when it was up. The part runs before the deal. The deal and the read-card placement both take `UpMembers`, which is status up, so that machine is dealt no new lane and placed no new read until a fresh reading is at the full line or under, which releases only a hold whose reason is that volume. A coordinator's hold, or an adoption's, is left as it is. A friend's seat carries the same fields (`FriendSeat.DiskVolume` and the percents). Above the full line `friendCanRead` is false, so her deal and her reads start no lane either. The held reason is on the coordinator view's first line (`DiskHeadline`) and the row's `disk` field (`DiskFigure`). The dashboard draws a `disk` string on a fleet or friends row when the row already carries one.
+
+`nova-sprint set` does not grow a flag for the two properties: the flag list is `cmd/nova-sprint/verbs.go`, outside this part. A test, or a writer of the work table, sets `disk_warn` and `disk_full` directly. The fleet beat and the friend beat are what write the control-card fields in production; until those call `MeasureVolume` and `VolumeReading.Fields`, a row stays without a figure and the tick stays quiet. `internal/friend/beat.go` `MeasureWorkingVolume` is the friend's measure, and nothing in the daemon calls it yet.
 
 ### The coordinator's pass
 
@@ -6127,7 +6140,7 @@ once (the rebalance of the fleet table and of the readers table, section 5 and
 section 6), then resolve (T1:
 every stream's waiting cards in score order; a card whose needs have all landed moves to ready; a sentinel is never
 moved, and is marked reached when all it needs has landed), resume (T7: a
-stream stopped only on a cross need whose card has landed), deal (T3), accept
+stream stopped only on a cross need whose card has landed), disk (the volume watermark, section 8, before the deal), deal (T3), accept
 (R9: every acceptable primary in review the tick does not hold, section 6,
 moves to merging and into its stream's merge queue, and the coordinator is
 told once a tick, one "ready to merge" notice naming every primary accepted;
