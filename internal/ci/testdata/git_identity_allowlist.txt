@@ -42,7 +42,6 @@ cmd/nova-swarm/slow_test.go 9 predates the rule; route its commits through testg
 cmd/nova-swarm/step_functional_test.go 1 predates the rule; route its commits through testgit.Environ
 cmd/nova-swarm/step_test.go 1 predates the rule; route its commits through testgit.Environ
 cmd/nova-tokens/boundary_functional_test.go 1 predates the rule; route its commits through testgit.Environ
-cmd/nova-tokens/boundary_test.go 1 predates the rule; route its commits through testgit.Environ
 internal/cardcontract/shims_functional_test.go 2 predates the rule; route its commits through testgit.Environ
 internal/cardcontract/shims_test.go 1 predates the rule; route its commits through testgit.Environ
 internal/ci/change_base_reads_base_list_functional_test.go 2 predates the rule; route its commits through testgit.Environ

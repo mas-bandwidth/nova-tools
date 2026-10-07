@@ -56,6 +56,14 @@ func fixtureIn(t *testing.T) string {
 		err := os.MkdirAll(filepath.Join(dst, "out"), 0o755)
 		require.NoError(t, err, err)
 	}
+	// The example bus: the fixture's one note, as a fake Redis bus the transcript's
+	// `--bus ./bus` line reaches through the file childWorld reads. The fixture's own
+	// bus/ directory is copied but read by nothing.
+	addr := busDir(t, filepath.Join(dst, "bus-addr"), "emma", "rowan")
+	busNote(t, addr, "emma", "", "01EMMA0000000000004C1F9A2B",
+		"tokens 2026-09-11 at=2026-09-11T21:30:00Z build=devel", "Fri Sep 11 21:30:00 UTC 2026",
+		"2026-09-11\temma\tgemini-2.5-pro\tschema\tinput\t123456\n2026-09-11\temma\tgemini-2.5-pro\tschema\toutput\t7890\n# repos: schema, serialize\n")
+	writeChildBus(t, dst, "./bus", addr)
 	return dst
 }
 
@@ -68,7 +76,7 @@ func TestTheExampleLinesRun(t *testing.T) {
 	dir := fixtureIn(t)
 	var banner bytes.Buffer
 	{
-		exit := run([]string{"help"}, &banner, io.Discard, firstRunStamp)
+		exit := runWith([]string{"help"}, &banner, io.Discard, firstRunStamp, testWorld)
 		require.Equal(t, 0, exit, "`nova-tokens help` exits %d, want 0", exit)
 	}
 	examples, err := onboarding.ExampleLines(banner.String(), "nova-tokens")
