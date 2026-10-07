@@ -104,6 +104,24 @@ func TestInventoryFromTheFixtureOpensNoStore(t *testing.T) {
 	assert.Equal(t, 0, h.redis.opens+h.opens)
 }
 
+// A fixture whose machines are a list is refused in the fixture's own words,
+// with the line, never the Go type the YAML reader names (docs/STANDARD.md,
+// section 3, point 2: a refusal says what the input wants).
+func TestInventoryRefusesAFixtureWithAGoType(t *testing.T) {
+	t.Parallel()
+	h := newHarness()
+	path := filepath.Join(t.TempDir(), "fx.yaml")
+	require.NoError(t, os.WriteFile(path, []byte("machines:\n  - one\n  - two\n"), 0o600))
+	code, out, errs := h.run(t, "inventory", "--fixture", path, "--list")
+	assert.Equal(t, 2, code)
+	assert.Empty(t, out)
+	assert.Contains(t, errs, "machines is a map of name to machine, got a list")
+	assert.NotContains(t, errs, "map[string]")
+	assert.NotContains(t, errs, "struct {")
+	assert.NotContains(t, errs, "yaml:")
+	assert.Zero(t, h.redis.opens+h.opens, "a fixture opens no store")
+}
+
 func TestInventoryRefusesMissingPortBeforeRewritingALegacyMember(t *testing.T) {
 	t.Parallel()
 	h := inventoryHarness(t, 1)
