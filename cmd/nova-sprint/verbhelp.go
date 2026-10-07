@@ -66,7 +66,7 @@ var verbEffect = map[string]string{
 	"seat install":      "local write: writes the push loop's unit (inbox --wait --push seat) into --dir and loads it with launchctl (macOS) or systemctl --user (Linux); --dry-run prints it and writes nothing",
 	"seat uninstall":    "local write: unloads the push loop's unit and removes its file from --dir; --dry-run names the unit and unloads and removes nothing",
 	"machinery":         "inspection: checks server, store, loop, beats, readers, dashboard, installed versions, merge queue, writes nothing",
-	"needs":             "inspection: reads the waiting cards, writes nothing",
+	"needs":             "inspection: reads the waiting cards, or one card's needs, writes nothing; with <card> --drop or --add, local write: edits that card's needs in place in the sprint's store, the coordinator's alone",
 	"streams":           "inspection: reads the work and merge tables once and prints each stream with the repositories and bases its cards record, its release, its open and landed counts, and with --cards every card's id, state, tier, title and needs; writes nothing",
 	"held":              "inspection: reads the held cards of the table, writes nothing",
 	"sentinels":         "inspection: reads the sentinels and what each waits on, writes nothing",
@@ -219,6 +219,8 @@ func verbProse(name string) string {
 		return releaseHoldWords
 	case "sentinel set":
 		return sentinelSetWords + "\n"
+	case "needs":
+		return needsWords + "\n"
 	case "friend beat", "friend down", "friend up", "friend health":
 		return friendVerbWords(name)
 	case "friend take":

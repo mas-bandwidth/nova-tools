@@ -136,7 +136,7 @@ func init() {
 		{"answer", "[--dry-run] [--bar <p>] [--every <duration>] [--timeout <duration>] [--backend jev|fixed] [--answers <file>] [--record <file>]", "answer --dry-run", (*app).cmdAnswer},
 		{"inbox", "[--open <group>] [--read] [--wait [--timeout <duration>] [--push <dir> | --push seat]] [--deadline <duration>] [--stale <duration>]", "inbox --wait", (*app).cmdInbox},
 		{"card", "<id> [--brief | --fields] [--at-epoch <n>] | (--all | --stream <s>) --json: every card, one JSON object a line", "card s1-4", (*app).cmdCard},
-		{"needs", "[--stream <s>] [--roots]", "needs --stream s1", (*app).cmdNeeds},
+		{"needs", "[--stream <s>] [--roots] | <card> [--drop <a,b>]... [--add <a,b>]... --reason <text>", "needs --stream s1", (*app).cmdNeeds},
 		{"streams", "[--repo <owner/name>] [--release <name>] [--cards]", "streams --cards", (*app).cmdStreams},
 		{"held", "[--stream <s>]", "held", (*app).cmdHeld},
 		{"sentinels", "[--stream <s>]", "sentinels", (*app).cmdSentinels},
@@ -356,7 +356,7 @@ one answer to each judgment (every one prints its own, filled in):
   the base branch is gone     rebase --from <the base> --to '<the branch that replaces it>'  (every unlanded card on it moves, dealt cards included)
   ci red                      rework --group <id> --expect <n> --fix '<fix>' --answers <notes>
   blocked on a dropped card   drop --group <id> --expect <n> --reason '<why>' --answers <notes>
-  blocked on a missing card   drop <ids> --reason '<why>' or ack <notes> --reason '<why the named missing needs can be waived>'
+  blocked on a missing card   needs <card> --drop <the missing need> --reason '<why: done elsewhere, deferred>' (the card goes ready when nothing unlanded is left), or drop <ids> --reason '<why>', or ack <notes> --reason '<why the named missing needs can be waived>'
   reads exhausted             ask --group <id> --expect <n> --another --answers <notes>
   repair skipped changes      card <primary>, then rework, return or drop --group <id> --expect <n> --answers <notes>
   an operation was stuck      check, then ack <note> --reason '<what you found>'

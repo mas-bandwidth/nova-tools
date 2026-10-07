@@ -5,16 +5,23 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"slices"
 	"sort"
 	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
 )
 
 // The needs verb is a read (docs/SPEC-SPRINT.md section 11): it changes
 // nothing and needs no actor, and it prints the dependency graph of the
-// waiting cards. The class is kept here, beside the verb, since the verb
-// table registers the verb and needs.go adds its class.
+// waiting cards, or one card's needs (`needs <card>`). Its one write,
+// `needs <card> --drop/--add --reason`, edits that card's needs in place and
+// is the coordinator's alone, gated in the verb as `inbox --read` is (the
+// owner, 2026-10-07: "If it's just dependencies, please check if the
+// dependencies are still correct"). The class is kept here, beside the verb,
+// since the verb table registers the verb and needs.go adds its class.
 func init() { verbClasses["needs"] = classRead }
 
 // needLine is one unmet need as needs prints it: the need's id and its state
@@ -76,13 +83,30 @@ func (a *app) cmdNeeds(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("needs")
 	stream := fs.String("stream", "", "the waiting cards of one stream (default: every stream)")
 	roots := fs.Bool("roots", false, "print only the roots and the width lines")
+	var drop, add stringList
+	fs.Var(&drop, "drop", "with <card>: a need to take off the card (comma separated, or given again), one it has; the card goes ready in the same step when nothing it still waits for is unlanded")
+	fs.Var(&add, "add", "with <card>: a need to put on the card (comma separated, or given again): a primary on the table, not the card itself, none it has already, none that would make a cycle; a ready card takes no need that has not landed")
+	reason := fs.String("reason", "", "why the needs change (required with --drop or --add), recorded on the card's timeline with the actor")
 	pos, err := parse(fs, args)
-	if err != nil || len(pos) > 0 {
-		return refuse(stderr, "needs", argErr("takes no words ", err, pos...))
+	if err != nil || len(pos) > 1 {
+		return refuse(stderr, "needs", argErr("takes one <card> at most ", err, pos...))
+	}
+	drops, adds := splitEach(drop), splitEach(add)
+	if len(pos) == 0 && (len(drops)+len(adds) > 0 || *reason != "") {
+		return refuse(stderr, "needs", "--drop, --add and --reason want <card>, the card whose needs change; run: nova-sprint help needs")
+	}
+	if len(pos) == 1 && (*stream != "" || *roots) {
+		return refuse(stderr, "needs", "<card> is one card's needs; --stream and --roots are the graph: not both; run: nova-sprint help needs")
 	}
 	st, err := a.store(*c)
 	if err != nil {
 		return refuse(stderr, "needs", err.Error())
+	}
+	if len(pos) == 1 {
+		if len(drops)+len(adds) == 0 {
+			return a.printCardNeeds(st, pos[0], c.json, stdout, stderr)
+		}
+		return a.editNeeds(st, c, pos[0], drops, adds, *reason, stdout, stderr)
 	}
 	// One read of the work table: the placed waiting cards and, as extras, the
 	// needs of the waiting cards that are off the table, so an absent need and a
@@ -325,3 +349,119 @@ func needsText(v needsView, rootsOnly bool) string {
 	}
 	return b.String()
 }
+
+// splitEach is the ids of a list flag, each value comma separated too, in order, each once.
+func splitEach(vals stringList) []string {
+	var out []string
+	for _, v := range vals {
+		for _, id := range sprint.Split(v) {
+			if !slices.Contains(out, id) {
+				out = append(out, id)
+			}
+		}
+	}
+	return out
+}
+
+// printCardNeeds prints one card's needs, each with its state as sprint.NeedsOf reads it
+// (a column name, dropped, absent; waived when the coordinator waived it), and what the
+// card still waits for (sprint.WaitsFor: its unlanded, unwaived needs and its place in line);
+// one read of the work table with the card's off-table needs read too. `--json` is one
+// object: card, state, needs, waits_for.
+func (a *app) printCardNeeds(st *store.Store, id string, asJSON bool, stdout, stderr io.Writer) int {
+	s, err := st.Load(context.Background(), []string{sprint.Work}, func(s *sprint.Snapshot) map[string][]string {
+		c := s.Work.Placed(id)
+		if c == nil {
+			return nil
+		}
+		return map[string][]string{sprint.Work: sprint.Split(c.F("needs"))}
+	})
+	if err != nil {
+		return a.readFailed("needs", err, stderr)
+	}
+	c := s.Work.Placed(id)
+	if c == nil {
+		fmt.Fprintf(stderr, "%s needs: no card %s on the table; run: nova-sprint card %s\n", prog, oneline.Escape(id), oneline.Escape(id))
+		return 1
+	}
+	needs, _ := sprint.NeedsOf(s, id)
+	waits := sprint.WaitsFor(s, c, nil)
+	if waits == nil {
+		waits = []string{}
+	}
+	var lines []string
+	for _, n := range needs {
+		l := "NEED " + oneline.Escape(n.ID) + " " + needWord(n.State)
+		if n.Waived {
+			l += " waived"
+		}
+		lines = append(lines, l)
+	}
+	lines = append(lines, fmt.Sprintf("NEEDS OK card=%s state=%s needs=%d waits_for=%s", oneline.Escape(id), c.Col, len(needs), orDashJoin(waits)))
+	sayOK(stdout, asJSON, "needs", strings.Join(lines, "\n"), map[string]any{"card": id, "state": c.Col, "needs": needs, "waits_for": waits})
+	return 0
+}
+
+// orDashJoin is ids comma separated, "-" for none.
+func orDashJoin(ids []string) string {
+	if len(ids) == 0 {
+		return "-"
+	}
+	return strings.Join(ids, ",")
+}
+
+// editNeeds runs the edit (sprint.EditNeeds) as the coordinator: the verb's class is
+// read, so the write is gated here as inbox --read's is, an actor required and the
+// coordinator's alone, with the seat's push proof as every coordinator verb's.
+func (a *app) editNeeds(st *store.Store, c *common, id string, drops, adds []string, reason string, stdout, stderr io.Writer) int {
+	ctx := context.Background()
+	ec := *c
+	if ec.actor == "" {
+		return refuse(stderr, "needs", "--drop and --add change the card: --actor <name> is required (or NOVA_SPRINT_ACTOR); nothing was changed")
+	}
+	if strings.TrimSpace(reason) == "" {
+		return refuse(stderr, "needs", "wants --reason <text>: why the needs change, recorded on the card's timeline; nothing was changed")
+	}
+	if why, err := coordinatorsAlone(ctx, st, ec); err != nil || why != "" {
+		if err != nil {
+			return a.readFailed("needs", err, stderr)
+		}
+		return refuse(stderr, "needs", why)
+	}
+	if why, err := seatPushed(ctx, st); err != nil || why != "" {
+		if err != nil {
+			return a.readFailed("needs", err, stderr)
+		}
+		return refuse(stderr, "needs", why)
+	}
+	return a.runStep("needs", ec, st, needsStep(sprint.NeedsReq{ID: id, Drop: drops, Add: adds, Reason: reason, Who: ec.actor}), stdout, stderr)
+}
+
+// needsStep reads the work table and the records of the card's needs and the needs
+// named, placed or not, so a refusal says what became of a need off the table.
+func needsStep(r sprint.NeedsReq) store.Step {
+	return store.Step{Named: true, Args: store.ArgsOf(r), Verb: "needs", Load: []string{sprint.Work},
+		Extras: func(s *sprint.Snapshot) map[string][]string {
+			ids := append(append([]string{r.ID}, r.Add...), r.Drop...)
+			if c := s.Work.Placed(r.ID); c != nil {
+				ids = append(ids, sprint.Split(c.F("needs"))...)
+			}
+			return map[string][]string{sprint.Work: ids}
+		},
+		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.EditNeeds(s, r) }}
+}
+
+// needsWords is the verb's -h paragraph.
+var needsWords = strings.TrimSpace(`
+needs with no card prints the dependency graph of the waiting cards. needs <card>
+prints that card's needs, each with its state, and what it still waits for.
+needs <card> --drop <id> --add <id> --reason <text> edits the card's needs in
+place: it keeps its id, stream, score, brief and log, and one log line names
+the needs before and after with who and why. A card left with nothing unlanded
+to wait for goes ready in the same step, as it would when its last need lands;
+a held card waits for release. The blocked judgment a dropped need opened is
+answered. Refused, nothing written: a need to drop the card does not have, one
+to add that is no card on the table or that it has already, the card itself, a
+cycle, a ready card given a need not landed, a landed card, a sentinel (its
+needs change with sentinel set). The edit is the coordinator's alone.
+`)

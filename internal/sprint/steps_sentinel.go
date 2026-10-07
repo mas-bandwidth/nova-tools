@@ -522,7 +522,7 @@ func SentinelSet(s *Snapshot, r SentinelSetReq) Plan {
 		p.refuse(r.ID, r.ID+" is no sentinel on the table")
 		return p
 	case !IsSentinel(c):
-		p.refuse(r.ID, r.ID+" is no sentinel: a primary's needs change with its brief's DEPENDS-ON line (nova-sprint brief)")
+		p.refuse(r.ID, r.ID+" is no sentinel: a primary's needs change with nova-sprint needs "+r.ID+" --drop <id> --add <id> --reason <text>, or its brief's DEPENDS-ON line (nova-sprint brief)")
 		return p
 	case c.Col != Waiting:
 		p.refuse(r.ID, r.ID+" is "+c.Col+": a sentinel's needs are set while it waits")

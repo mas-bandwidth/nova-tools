@@ -167,6 +167,14 @@ func unmet(u Unit, pre *Snapshot, landing map[string]bool) string {
 			}
 			pc := pre.Work.Card(e.ID)
 			needs, waived = Split(pc.F("needs")), append(Split(pc.F("waived")), Split(e.Set["waived"])...)
+			// a step that rewrites the card's needs in the same entry (needs --drop,
+			// needs_edit.go) is judged on the needs it writes, as a waiver in the entry
+			// counts: the pre-state's needs are the ones it takes off
+			if v, ok := e.Set["needs"]; ok {
+				needs = Split(v)
+			} else if contains(e.Unset, "needs") {
+				needs = nil
+			}
 			needs = append(needs, PositionWaits(pre, pc, landing)...)
 		default:
 			continue

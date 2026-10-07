@@ -1208,6 +1208,7 @@ nova-sprint answer [--dry-run] [--bar <p>] [--every <duration>] [--timeout <dura
 nova-sprint inbox [--open <group>] [--read] [--wait [--timeout <duration>]] [--deadline <duration>] [--stale <duration>]
 nova-sprint card <id> [--brief | --fields] [--json] [--at-epoch <n>]
 nova-sprint card (--all | --stream <s>) --json [--at-epoch <n>]
+nova-sprint needs [--stream <s>] [--roots] | <card> [--drop <a,b>]... [--add <a,b>]... --reason <text>
 nova-sprint streams [--repo <owner/name>] [--release <name>] [--cards]
 nova-sprint log [--card <id>] [--stream <s>] [--member <m>] [--since <10m|RFC3339>] [--at-epoch <n>]
 nova-sprint check
@@ -1335,6 +1336,19 @@ need that is no card on the table is refused, naming every one, and nothing chan
 `--needs ""` is refused, since a sentinel with nothing to wait on is released
 (`release v1 --reason '<why>'`), not emptied. The contract is
 [SPEC-SPRINT.md](SPEC-SPRINT.md) section 16.
+
+### A card whose need was dropped
+
+`nova-sprint needs <card>` prints a card's needs, each with its state (a column, `dropped`,
+`absent`), and what it still waits for. When a need was dropped off the table (deferred to a
+later release and re-added as a twin, replaced, or done on the base already), `needs <card>
+--drop <the stale need> --reason '<why>'` takes it off the card in place: the card keeps its
+id, its place in its stream, its brief and its log, the log gains one line with the needs
+before and after and who and why, and a card left with nothing unlanded to wait for goes
+ready in the same step. `--add <id>` puts a need on a card (a primary on the table; a ready
+card takes no need that has not landed; a cycle is refused). A landed card and a sentinel
+are refused (`sentinel set` is the sentinel's). The edit is the coordinator's alone. The
+contract is [SPEC-SPRINT.md](SPEC-SPRINT.md) section 11, needs.
 
 ### Role views: what a model reads instead of the dashboard
 
