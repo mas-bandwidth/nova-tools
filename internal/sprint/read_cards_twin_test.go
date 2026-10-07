@@ -18,6 +18,9 @@ import (
 // Read cards on the twin store (store.Mem): a read is a consumer card (docs/SPEC-SPRINT.md
 // section 6, "A read is a consumer card").
 
+// readCardsRouteSeconds is a route's deadline, in seconds: a route's field, never a wait.
+var readCardsRouteSeconds = 600
+
 // readCardsRig is a running sprint on the twin with read cards on: members m1..m3 (width 4),
 // each with its reader row reader-<m> reading flash and pro, a flash and a pro route, and no
 // friend.
@@ -54,8 +57,8 @@ func newReadCardsRig(t *testing.T, members ...string) *readCardsRig {
 	}
 	require.NoError(t, r.m.SetCoordinator(r.ctx, "coordinator"))
 	r.m.SetRoutes([]sprint.Route{
-		{Name: "flash-a", Tier: "flash", Provider: "prov-flash-a", Model: "model-flash-a", Tokens: 1000, Deadline: 600, Enabled: true},
-		{Name: "pro-a", Tier: "pro", Provider: "prov-pro-a", Model: "model-pro-a", Tokens: 1000, Deadline: 600, Enabled: true},
+		{Name: "flash-a", Tier: "flash", Provider: "prov-flash-a", Model: "model-flash-a", Tokens: 1000, Deadline: readCardsRouteSeconds, Enabled: true},
+		{Name: "pro-a", Tier: "pro", Provider: "prov-pro-a", Model: "model-pro-a", Tokens: 1000, Deadline: readCardsRouteSeconds, Enabled: true},
 	})
 	r.beat()
 	for _, m := range members {
