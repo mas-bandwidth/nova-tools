@@ -42,6 +42,7 @@ import (
 func init() {
 	verbClasses["view coordinator"] = classRead
 	verbClasses["view worker"] = classRead
+	registerDeliveryVerbs()
 }
 
 // viewSchema is the version of both views' JSON: a change that renames or removes a field, or
@@ -127,6 +128,12 @@ type coordCounts struct {
 	// Rules is the cards a rule answered in the last hour (sprint.RuleAnsweredWithin): the
 	// judgments the coordinator did not have to answer.
 	Rules int `json:"rules"`
+	// the delivery milestones, apart (docs/SPEC-SPRINT.md section 7, delivery milestones):
+	// staged (landed on the branch its stream lands on), verified in dev (a promotion merged
+	// it), installed (an install receipt on a target)
+	Staged    int `json:"staged"`
+	Dev       int `json:"dev"`
+	Installed int `json:"installed"`
 }
 
 // coordinatorView is view coordinator's document, schema 1.
@@ -358,6 +365,8 @@ func (a *app) coordinatorView(ctx context.Context, st *store.Store, all bool) (c
 	for _, k := range sprint.RuleAnsweredWithin(append(s.Work.Cards(), s.Fleet.Cards()...), now, time.Hour) {
 		n.Rules += k
 	}
+	delivery := sprint.Delivery(s)
+	n.Staged, n.Dev, n.Installed = delivery.Staged, delivery.Verified, delivery.Installed
 	finished := func(row string) int {
 		f := 0
 		for _, c := range append(s.Fleet.Cell(row, sprint.DoneOK), s.Fleet.Cell(row, sprint.DoneFailed)...) {
@@ -527,6 +536,12 @@ func (a *app) coordinatorView(ctx context.Context, st *store.Store, all bool) (c
 			S:    fmt.Sprintf("the machines work %d of their width %d; ready %d, waiting %d", n.Busy, n.Width, n.Ready, n.Waiting),
 			Next: next})
 	}
+	if f := delivery.Failed; f != nil {
+		// a failed promotion stands until a promotion merges after it
+		v.Items = append(v.Items, viewItem{K: "a:promotion", T: itemAlarm, W: "promotion failed", B: n.Staged - n.Dev,
+			S:    fmt.Sprintf("the promotion of %s failed: %s (%s); %d staged cards are not in dev", cmp.Or(f.From, "the sprint branch"), f.Why, cmp.Or(f.Evidence, "no evidence named"), n.Staged-n.Dev),
+			Next: "nova-sprint promote --dry-run", age: now.Sub(f.At)})
+	}
 	if n.Ready == 0 && n.Waiting > 0 {
 		v.Items = append(v.Items, viewItem{K: "a:dry", T: itemAlarm, W: "ready empty", B: n.Waiting,
 			S:    fmt.Sprintf("nothing is ready and %d cards wait (%d held)", n.Waiting, n.Held),
@@ -687,9 +702,9 @@ func coordinatorSum(v coordinatorView, known bool, m store.Machine) string {
 	default:
 		state = "STOPPED"
 	}
-	sum := fmt.Sprintf("seat=%s machine=%s j=%d(max %d behind) alarms=%d asks=%d sentinels=%d friends=%d machines=%d | landed %d/%d +%d/30m | ready %d wait %d work %d review %d merge %d | busy %d/%d | rules %d/h",
+	sum := fmt.Sprintf("seat=%s machine=%s j=%d(max %d behind) alarms=%d asks=%d sentinels=%d friends=%d machines=%d | landed %d/%d +%d/30m | ready %d wait %d work %d review %d merge %d | busy %d/%d | rules %d/h | staged %d dev %d installed %d",
 		cmp.Or(v.Seat, "-"), state, n.J, behind, types[itemAlarm], types[itemRequest], types[itemSentinel], types[itemFriend], types[itemMachine],
-		n.Landed, n.All, n.L30, n.Ready, n.Waiting, n.Working, n.Review, n.Merging, n.Busy, n.Width, n.Rules)
+		n.Landed, n.All, n.L30, n.Ready, n.Waiting, n.Working, n.Review, n.Merging, n.Busy, n.Width, n.Rules, n.Staged, n.Dev, n.Installed)
 	if v.Push != "" {
 		sum += " | push " + v.Push
 	}

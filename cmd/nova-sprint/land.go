@@ -286,6 +286,10 @@ type lander struct {
 	st                         *store.Store
 	repoDir, base, check, root string
 	dry, twin                  bool // twin: a mem twin, which has no git
+	// staged is the milestone of the batch being reported, set for that one step and
+	// cleared after it (docs/SPEC-SPRINT.md section 7, delivery milestones). Nil on a
+	// refusal, a dry run and every step that is not a pushed batch's report.
+	staged *sprint.Milestone
 	// conflictKind and conflictPaths are what the last merge that stopped on unmerged paths
 	// left (mergeHead): the conflict fact carries them (conflictCard).
 	conflictKind  string
@@ -1160,7 +1164,15 @@ func (l *lander) landed(b landBatch, stream string, pins []landCard) bool {
 	b.Cards, b.IDs = len(ids), ids
 	l.stage("report", "merge report")
 	start := time.Now()
+	// staged, and nothing past it: the batch is on the base it was pushed to, a sprint
+	// branch or a stream branch. promoted alone records it in dev.
+	evidence := "land: no --check ran; the reads accepted each card, pushed to " + b.Base
+	if l.check != "" {
+		evidence = "land: the check " + l.check + " green at " + b.Tip + ", pushed to " + b.Base
+	}
+	l.staged = &sprint.Milestone{Repo: b.Repo, Ref: b.Base, Commit: b.Tip, Evidence: evidence}
 	res, err := l.step(sprint.MergeReq{Stream: stream, Batch: len(ids), Who: l.c.actor}, pins)
+	l.staged = nil
 	if b.Times != nil {
 		since(&b.Times.Report, start)
 	}
@@ -1243,7 +1255,15 @@ func (l *lander) stepWith(r sprint.MergeReq, pins []landCard, plan func(*sprint.
 		if why := headWhy(s, r.Stream, pins); why != "" {
 			return sprint.Plan{Refused: []sprint.Refusal{{Key: r.Stream, Why: why}}}
 		}
-		return plan(s, r)
+		p := plan(s, r)
+		if l.staged == nil || len(pins) == 0 {
+			return p
+		}
+		ids := make([]string, len(pins))
+		for i, c := range pins {
+			ids[i] = c.id
+		}
+		return sprint.WithStaged(s, p, r.Stream, ids, l.staged)
 	}
 	named := make([]string, len(pins))
 	for i, c := range pins {
