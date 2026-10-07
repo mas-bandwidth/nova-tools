@@ -241,7 +241,8 @@ func TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine(t *testing.T) {
 		result := onboarding.Result{Code: code, Stdout: out.String(), Stderr: errb.String()}
 		for _, line := range strings.Split(result.Stdout+result.Stderr, "\n") {
 			if line != "" {
-				assert.Fail(t, "the documented command\n  %v prints\n  %s", s.Args, line)
+				assert.Fail(t, "the documented command\n  "+strings.Join(s.Args, " ")+
+					"\n prints\n  "+line)
 			}
 		}
 	}
