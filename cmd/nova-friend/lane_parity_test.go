@@ -98,7 +98,7 @@ func TestRunBeatsDownWhileTheLanesArePausedUntilAPersonResumes(t *testing.T) {
 		return "", 0, nil
 	}
 	out, errb := &lockedBuilder{mu: &mu}, &strings.Builder{}
-	code := run([]string{"run", "--as", "bob", "--harness", "opencode", "--session", "ses_main", "--dir", dir, "--coordinator", "ada", "--model", "inception/mercury-2.5", "--mode", "one-shot"}, strings.NewReader(""), out, errb, w)
+	code := run([]string{"run", "--server", "127.0.0.1:6390", "--as", "bob", "--harness", "opencode", "--session", "ses_main", "--dir", dir, "--coordinator", "ada", "--model", "inception/mercury-2.5", "--mode", "one-shot"}, strings.NewReader(""), out, errb, w)
 	require.Equal(t, 0, code, errb.String())
 	mu.Lock()
 	defer mu.Unlock()

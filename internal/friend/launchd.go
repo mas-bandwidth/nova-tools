@@ -67,7 +67,11 @@ func (a Agent) Args() []string {
 		}
 		args = append(args, "--")
 	}
-	args = append(args, a.Binary, "run", "--as", a.Friend, "--harness", a.Harness, "--dir", a.Dir, "--redis", a.Redis, "--server", a.Server, "--width", fmt.Sprint(a.Width))
+	args = append(args, a.Binary, "run", "--as", a.Friend, "--harness", a.Harness, "--dir", a.Dir, "--redis", a.Redis)
+	if a.Server != "" {
+		args = append(args, "--server", a.Server)
+	}
+	args = append(args, "--width", fmt.Sprint(a.Width))
 	if a.Session != "" {
 		args = append(args, "--session", a.Session)
 	}
