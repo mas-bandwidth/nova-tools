@@ -73,6 +73,7 @@ func checkSSH(ctx context.Context, env Env) Result {
 
 	var failures []string
 	for _, bench := range benches {
+		fmt.Println("DEBUG: about to exec for bench =", bench)
 		out, err := env.Exec(ctx, "ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", bench, "true")
 		if err != nil {
 			reason := "connection failed"
