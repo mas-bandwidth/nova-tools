@@ -59,7 +59,7 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 	fi, statErr := os.Stat(*out)
 	if statErr != nil || !fi.IsDir() {
 		if statErr != nil && os.IsNotExist(statErr) {
-			r.add("--out does not exist: " + *out + "; it wants " + wantsOut)
+			r.addRemedy("--out does not exist: "+*out+"; it wants "+wantsOut, "mkdir -p "+*out)
 		} else if statErr != nil {
 			r.add("--out " + *out + ": " + statErr.Error() + "; it wants " + wantsOut)
 		} else {
@@ -282,7 +282,7 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 		fmt.Fprintf(s.out(), "TOKENS OK%s\n", s.factFields(counts...))
 	}
 	note := remedy(sources, n("unreadable"), n("unparsed"), n("mixed"), n("conflict"), n("shrank"), n("partial"), quiet,
-		*allowShrink, *out, mixedLabels, firstPartial, firstQuiet)
+		*allowShrink, *dryRun, *out, mixedLabels, firstPartial, firstQuiet)
 	fmt.Fprintf(s.out(), "TOKENS NOTE %s\n", oneline.Escape(note))
 	s.note(note)
 	copyNote(s, "TOKENS", copyNotes)
@@ -344,7 +344,7 @@ func dayLine(s *sink, day string, file *tokens.DayFile, written, dryRun, wouldWr
 			nonutc++
 		}
 	}
-	kv := []any{"date", day, "rows", len(file.Rows), "models", len(models), "repos", len(repos), "turns", file.Turns,
+	kv := []any{"date", day, "rows", len(file.Rows), "models", len(models), "repos", len(repos), "turns", count(file.Turns),
 		"unknown", tokens.Percent(unknown, whole) + "%", "other", tokens.Percent(other, whole) + "%",
 		"rough", rough, "dashes", dashes, "nonutc", nonutc, "sources", strings.Join(file.Sources, ","), "written", written}
 	if dryRun {

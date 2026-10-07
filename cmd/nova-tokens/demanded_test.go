@@ -33,9 +33,9 @@ func TestRule1EveryPathIsAFlagAndNoEnvironmentIsConsulted(t *testing.T) {
 	bait := mkdir(t, filepath.Join(dir, "bait"))
 	write(t, filepath.Join(bait, "t", "a.jsonl"), msg("m1", "2026-09-11T10:00:00Z", "fable", map[string]int{"input_tokens": 5}, "/x/schema/a.go")+"\n")
 	reposFile(t, bait)
-	os.Setenv("HOME", bait)
-	os.Setenv("TMPDIR", bait)
-	os.Setenv("XDG_DATA_HOME", bait)
+	require.NoError(t, os.Setenv("HOME", bait))
+	require.NoError(t, os.Setenv("TMPDIR", bait))
+	require.NoError(t, os.Setenv("XDG_DATA_HOME", bait))
 
 	// Rule 1: "$HOME, $TMPDIR, $XDG_DATA_HOME and every other variable are ignored, and a
 	// test sets them and proves it." The proof is the count of source files this process

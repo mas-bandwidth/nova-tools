@@ -53,6 +53,9 @@ var selfTalkAudit = audit.Config{
 		// field through oneline.Field before it is returned.
 		`"github.com/mas-bandwidth/nova-tools/internal/buildinfo"`,
 		`"errors"`, `"flag"`, `"fmt"`, `"io"`, `"io/fs"`, `"os"`, `"slices"`, `"strings"`,
+		// unicode/utf8 decides whether a named page is text before the scan; it holds
+		// no writer, and the refusal it feeds is rendered through oneline.
+		`"unicode/utf8"`,
 		// bytes compares a page on disk with the one built in; embed holds the example pages;
 		// path and path/filepath join names. None of them writes to a stream.
 		`"bytes"`, `"embed"`, `"path"`, `"path/filepath"`,

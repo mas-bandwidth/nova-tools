@@ -134,6 +134,7 @@ func ReadClaude(label, dir string, fsys fs.FS, rules *Rules) *Source {
 		}
 		prev := ""
 		bad := 0
+		firstBad := 0
 		n := 0
 		sc := bufio.NewScanner(f)
 		sc.Buffer(make([]byte, 0, 256*1024), 16*1024*1024)
@@ -146,6 +147,9 @@ func ReadClaude(label, dir string, fsys fs.FS, rules *Rules) *Source {
 			var line claudeLine
 			if err := json.Unmarshal([]byte(text), &line); err != nil {
 				bad++
+				if firstBad == 0 {
+					firstBad = n
+				}
 				continue
 			}
 			if line.Message == nil || line.Message.Usage == nil {
@@ -183,7 +187,7 @@ func ReadClaude(label, dir string, fsys fs.FS, rules *Rules) *Source {
 			continue
 		}
 		if bad > 0 {
-			s.unreadable(path, fmt.Sprintf("badline=%d: lines that are not JSON; the rest of the file was read", bad))
+			s.unreadableAt(path, firstBad, fmt.Sprintf("badline=%d: lines that are not JSON; the rest of the file was read", bad))
 		}
 	}
 	s.Collapse()
@@ -193,8 +197,14 @@ func ReadClaude(label, dir string, fsys fs.FS, rules *Rules) *Source {
 // unreadable records a source this run could not read: counted, printed on its own line,
 // and the reason the run exits 1.
 func (s *Source) unreadable(path, why string) {
+	s.unreadableAt(path, 0, why)
+}
+
+// unreadableAt is unreadable for a failure at a known line -- a line that is not JSON --
+// so the refusal and the ONE remedy line can name the line to inspect or remove.
+func (s *Source) unreadableAt(path string, line int, why string) {
 	s.Stat.Unreadable++
-	s.Unreadables = append(s.Unreadables, Unreadable{Label: s.Label, Path: path, Why: why})
+	s.Unreadables = append(s.Unreadables, Unreadable{Label: s.Label, Path: path, Line: line, Why: why})
 }
 
 // DayOfStamp is the UTC day of an RFC 3339 stamp. The stamp is PARSED and converted,

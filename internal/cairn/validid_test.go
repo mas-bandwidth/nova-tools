@@ -31,7 +31,7 @@ func TestADotSessionIsRefusedBeforeAnythingIsWritten(t *testing.T) {
 	require.Error(t, Open(store, ".", "", now, PublishManual))
 	_, err := Append(store, ".", "e", "words", "", now, PublishManual)
 	require.Error(t, err)
-	_, _, err = Index(store, ".", 0)
+	_, _, _, err = Index(store, ".")
 	require.Error(t, err)
 	entries, err := os.ReadDir(store)
 	require.NoError(t, err)
