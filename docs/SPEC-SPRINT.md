@@ -1750,7 +1750,7 @@ edges: every waiting card whose needs name the old id, and did not waive it, nee
 id instead, in the same place of its needs, each id once; nothing else of it changes (its
 column, its score, its other needs, its waivers), and the card records the relink
 (`relinked`: `<old,...> -> <new> <time> by <who>`), which `card` shows with the new need.
-Three verbs make it (internal/sprint/twins.go and recut.go; the model is tla/SprintRules.tla,
+Four verbs make it (internal/sprint/twins.go, twin_verb.go and recut.go; the model is tla/SprintRules.tla,
 `TwinsInherit` and `NoDanglingNeed`):
 
 - `add ... --replaces <old-id>[,<old-id>]` admits one card, the twin, and in the same step
@@ -1787,8 +1787,9 @@ Three verbs make it (internal/sprint/twins.go and recut.go; the model is tla/Spr
   the brief pins with a tier, and any refusal of the replace
   (`TestRecutKeepsIdLineageViaReplaces`,
   `TestRecutIsRefusedWholeWhenItChangesNothingOrCannotHold`, `TestRecutFromTheCommandLine`).
+- `twin <card> [--paths <extra,...>] [--needs <card,...>] [--before <card>] [--tier <t>] [--instruction <text>] [--carry]`, the coordinator's alone, is the whole re-cut in one step (the coordinator, 2026-10-05 night: 79 twins by hand, each a drop at its bound or with a PATHS refusal, an `add --replaces`, the PATHS widened, the last attempt's branch and head named, an instruction written into THE TASK, the tier set, and `--before` a named card where the stream line would otherwise cycle). The twin's id is the card's with its trailing number raised (`cards3` -> `cards4`, `plain` -> `plain2`, the next one free). Its brief is the card's with every `PATHS:` line widened by `--paths` (each glob once) and THE TASK prefixed by the correction: with `--carry`, the latest attempt's pushed branch and head, which the brief's `CARRY:` line also holds so the first attempt starts from it; then `--instruction` verbatim (a brief with no THE TASK gets one after its header). It is `add --replaces` of the card in the card's stream, in front of it or of `--before`, with the card's needs (less those it waived) and `--needs`, held if it was held, pinned to `--tier` or the card's pin, from its first attempt: ready or waiting as a fresh card is, never in review on the carried head. Every edge follows the twin, the card is dropped `twinned as <id>`, no blocked judgment is raised, and every open judgment on the card is answered `twinned as <id>`. A merging card is returned first (`return`, after the twin is checked on the card as returned), then twinned by the same verb's next step. Refused whole, nothing written, for a card not on the table, a sentinel or landed, a tier that is no class, a `--paths` glob that climbs out with `..`, every twin id taken, a cycle the twin's needs would close (naming its edges), any refusal of the replace, and, exit 1, `--carry` when no attempt pushed a full head (internal/sprint/twin_verb.go; tla/SprintRules.tla, `Replace`; `TestTwinReplacesACardAndItsDependentsFollow`, `TestTwinOfAMergingCardIsReturnedFirst`, `TestTwinIsRefusedWholeWhenItCannotHold`, `TestTwinFromTheCommandLine`).
 
-A twin made by `add --replaces` or `recut` records the ids it replaced (`replaces`), the
+A twin made by `add --replaces`, `recut` or `twin` records the ids it replaced (`replaces`), the
 other end of the old card's reason `replaced by <new>`: the card's lineage, which `card
 <id> --fields` shows.
 
