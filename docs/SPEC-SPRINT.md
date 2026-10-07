@@ -542,12 +542,27 @@ that it has not left and who is not herself stuck so, ready on that row at its
 next generation, the friend it left added to `friends_left` so it never goes
 back to her, one line each (`... (not started 20m0s after its deal, and friend
 <name> names no job running)`; `sprint.friendUnstartedLevel`; a hard pin stays).
-A card no friend may take stays, and the deadline rule judges it once
+Once a card she started is already working on her row, the same bound sends an
+unstarted ready work card back to the pool instead: withdrawn on her row,
+taken from her (`taken_from`, so no deal places it on her again), its primary
+ready, one NOTE line each (`not started by <friend> in <window>; back to the
+pool`; `sprint.friendReturnUnit`). From that return, or from a record already
+on her row, a batch friend's lanes are the work cards she has started, at
+least one, never past her width, which stays the ceiling. Her room is those
+cards and `DealAhead` times her lanes, never past the room her width gives
+(`sprint.friendStartedLanes`, `friendLimits`). The record is `started_lanes`
+(`<friend>:<n>`) and `started_lanes_at` on the cards the deal places on her
+row and on the ones it returns; the newest stamp is hers, so the bound
+outlives the cards she finishes, and the lanes rise as she starts more
+(`TestAFriendIsDealtOnlyWhatHerSessionStarts`). A one-shot friend is unchanged.
+A reader-first friend is dealt her reads before work by the tick's ladder
+(`friendReadsFirst`). A card no friend may take stays, and the deadline rule
+judges it once
 `friend_start_max` plus `FriendReadyMax` has run (`TickDeadlines`). The level's
 own evening leaves the oldest unstarted cards that hold her free lanes to her
 start (`TestAFriendCardIsWorkingOnlyOnceTheFriendStartsIt`,
 `TestAFriendWritingWithinTheBoundKeepsHerUnstartedCards`,
-`TestAFriendRunningAJobKeepsHerUnstartedCards`,
+`TestAFriendRunningAJobReturnsHerUnstartedCards`,
 `TestTwinStoreAFriendCardIsWorkingOnlyOnceSheStartsIt`,
 `TestFriendSyncStartsACardWhoseJobSheBegan`,
 `TestFriendSyncCollectsAReportOnACardStillReady`). Not yet built: the
@@ -577,7 +592,9 @@ her bus login, no store address of hers: `workerVerb` takes `friend.<name>` as a
 worker's name beside a member's). A card on her row never sits ready with no one
 to take it: her start takes it into working (a friend's card is working once
 she starts it, above), and a card she has not started within the start bound
-is moved to a friend with an idle lane. A work card ready on a friend's row while she
+is moved to a friend with an idle lane while she runs nothing, or back to the
+pool while she is already running something, her later deals then using the
+lanes she has started. A work card ready on a friend's row while she
 has a lane free for `friend_start_max` plus `FriendReadyMax` (ten minutes) of running time is a
 judgment, a work card past its deadline (`dealt, never taken, at
 friend.<name>:ready (... ready over 30m0s while friend <name> has a lane

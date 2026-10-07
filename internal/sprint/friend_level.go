@@ -44,7 +44,8 @@ type FriendLevelReq struct {
 // FriendLevel evens the ready queues of the friends up, as level evens the members': a
 // friend's backlog is the cards on her row, ready and working, less her width (her lanes);
 // her room is DealAhead times her width (1 and 1 in one-shot mode, docs/SPEC-SPRINT.md
-// section 1, "A friend's card"). A card that may move goes, newest first, from a friend
+// section 1, "A friend's card"), and her started lanes' room while those lanes are below
+// her width (friendLimits). A card that may move goes, newest first, from a friend
 // with no idle lane to one with an idle lane, and otherwise from a larger backlog to one
 // smaller by more than one; its friend is the one preferredFriend picks among those below
 // their room that may take it, and the friends with no idle lane give first, the largest
@@ -74,19 +75,26 @@ func friendLevel(s *Snapshot, r FriendLevelReq, dealt, dealtWorking map[string]i
 	}
 	slices.SortFunc(seats, func(a, b FriendSeat) int { return cmp.Compare(a.Name, b.Name) })
 	held, width, room, queues := map[string]int{}, map[string]int{}, map[string]int{}, map[string][]*Card{}
+	record := map[string]map[string]string{}
+	back := map[string]bool{}
 	backlog := func(f string) int { return held[f] - width[f] }
 	// a lane is idle while no card on her row holds it: a card dealt to her holds a lane
 	// from its deal, started or not (friendDealUnit), as a working card did when the deal
 	// placed one straight into working
 	lanes := func(f string) int { return width[f] - held[f] }
 	for _, f := range seats {
-		room[f.Name], width[f.Name] = friendRoom(f)
+		st := friendStartedLanes(s, f)
+		room[f.Name], width[f.Name] = friendLimits(f, st)
+		record[f.Name] = startedLanesRecord(s, f.Name, st)
+		for _, c := range st.returning {
+			back[c.ID] = true // the deal returns it (friendReturnUnit); the level does not also move it
+		}
 		row := FriendRow(f.Name)
 		held[f.Name] = friendLoad(s, f.Name) + dealt[f.Name]
 		var unstarted []*Card
 		for _, c := range s.Fleet.Cell(row, Ready) {
-			if (dealtWorking[f.Name] > 0 && unitPromoted(r.Taken, c.ID)) || r.Moved[c.ID] || isRead(c) {
-				continue // started this tick (friendStartUnits), or moved already this tick
+			if (dealtWorking[f.Name] > 0 && unitPromoted(r.Taken, c.ID)) || r.Moved[c.ID] || back[c.ID] || isRead(c) {
+				continue // started this tick (friendStartUnits), returned, or moved already this tick
 			}
 			if r.Started[c.ID] == "" && !friendStarted(s, f, c) {
 				unstarted = append(unstarted, c)
@@ -94,9 +102,15 @@ func friendLevel(s *Snapshot, r FriendLevelReq, dealt, dealtWorking map[string]i
 		}
 		// the oldest unstarted cards hold her free lanes and wait for her start; the
 		// friends' level moves only the ones behind them (the start bound moves the others:
-		// friendUnstartedLevel)
+		// friendUnstartedLevel, or friendReturnUnit when she is already running something).
+		// Below her width her deal-ahead cards sit inside her started-lanes room, so that
+		// room, not the lanes she runs, is what holds them.
 		SortCards(unstarted)
-		inLanes := max(0, width[f.Name]-s.Fleet.Count(row, Working)-dealtWorking[f.Name])
+		hold := width[f.Name]
+		if st.throttled {
+			hold = max(0, room[f.Name]-len(st.returning))
+		}
+		inLanes := max(0, hold-s.Fleet.Count(row, Working)-dealtWorking[f.Name])
 		for _, c := range unstarted[min(inLanes, len(unstarted)):] {
 			if pr := s.Work.Placed(c.F("primary")); pr != nil && !OnlyFriend(pr) {
 				queues[f.Name] = append(queues[f.Name], c)
@@ -156,6 +170,7 @@ func friendLevel(s *Snapshot, r FriendLevelReq, dealt, dealtWorking map[string]i
 		col := Ready
 		set, unset := nextGen(c, FriendRow(short), s.Now), []string{FieldFriendDeadline}
 		set[FieldFriendsLeft] = strings.Join(append(friendsLeft(c), long), ",")
+		maps.Copy(set, record[short])
 		if row := FriendRow(short); !s.Fleet.HasRow(row) && !slices.Contains(p.Rows, RowAdd{Fleet, row}) {
 			p.Rows = append(p.Rows, RowAdd{Fleet, row}) // her row, the first time a card is placed on it
 		}

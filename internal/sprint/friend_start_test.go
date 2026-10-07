@@ -158,9 +158,9 @@ func TestAFriendWritingWithinTheBoundKeepsHerUnstartedCards(t *testing.T) {
 	assert.Equal(t, FriendRow("bob"), w.s.Fleet.Card("s1-1.w1").Row, "no write within the bound: it moves")
 }
 
-// A friend running a job keeps her queue: a card she has not started stays on her row past
-// the start bound while a card she started is working there, though her beat names nothing.
-func TestAFriendRunningAJobKeepsHerUnstartedCards(t *testing.T) {
+// A friend already running a job does not keep an unstarted card past the start bound.
+// It goes back to the pool, taken from her, and the card she started stays working.
+func TestAFriendRunningAJobReturnsHerUnstartedCards(t *testing.T) {
 	t.Parallel()
 	w := friendWorld(t, friendBrief("friend amy"), friendBrief("friend amy"))
 	seats := []FriendSeat{{Name: "amy", Width: 2, Status: Up, Class: "flash"}, {Name: "bob", Width: 1, Status: Up, Class: "flash"}}
@@ -170,7 +170,11 @@ func TestAFriendRunningAJobKeepsHerUnstartedCards(t *testing.T) {
 	w.s.Now = t0.Add(FriendStartMaxDefault + time.Hour)
 	p, _ := TickDeal(w.s, TickReq{Friends: seats})
 	w.must(p)
-	assert.Equal(t, FriendRow("amy"), w.s.Fleet.Card("s1-2.w1").Row, "she is running a job")
+	wc := w.s.Fleet.Card("s1-2.w1")
+	require.NotNil(t, wc)
+	assert.Equal(t, Withdrawn, wc.Col, "an unstarted card goes back to the pool while she runs a job")
+	assert.Equal(t, FriendRow("amy"), wc.F(FieldTakenFrom))
+	assert.Equal(t, "not started by amy in 20m; back to the pool", wc.F(FieldTakenBack))
 	assert.Equal(t, Working, w.s.Fleet.Card("s1-1.w1").Col, "her started card stays working")
 }
 
