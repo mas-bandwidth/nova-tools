@@ -139,10 +139,15 @@ func TestGcRemovesOnlyFinishedScratchUnderKnownRoots(t *testing.T) {
 	g.clone(filepath.Join(g.land, "wt-old"), 3*24*h)
 	g.clone(filepath.Join(g.land, "wt-new"), h)
 	g.clone(filepath.Join(g.other, "wt-outside"), 30*24*h)
-	// bench directories: runs and a bud's job copy past the max age, one young
+	// bench directories: runs and a bud's job copy past the max age, one young.
+	// a clean clone under an old run still goes; a clone with uncommitted work is kept.
 	g.file(filepath.Join(g.bench, "runs", "run.OLD00001", "repo", "go.mod"), "module x\n", 3*24*h)
 	g.age(filepath.Join(g.bench, "runs", "run.OLD00001"), 3*24*h)
 	g.file(filepath.Join(g.bench, "runs", "run.NEW00001", "repo", "go.mod"), "module x\n", h)
+	g.clone(filepath.Join(g.bench, "runs", "run.CLEAN001", "repo"), 3*24*h)
+	g.age(filepath.Join(g.bench, "runs", "run.CLEAN001"), 3*24*h)
+	dirtyBench := g.clone(filepath.Join(g.bench, "runs", "run.DIRTY001", "repo"), 3*24*h)
+	g.age(filepath.Join(g.bench, "runs", "run.DIRTY001"), 3*24*h)
 	g.file(filepath.Join(g.bench, "buds", "b1", "jobs", "j-old", "repo", "go.mod"), "module x\n", 3*24*h)
 	g.age(filepath.Join(g.bench, "buds", "b1", "jobs", "j-old"), 3*24*h)
 	// the bench's cache is a cache, never a bench directory
@@ -150,21 +155,22 @@ func TestGcRemovesOnlyFinishedScratchUnderKnownRoots(t *testing.T) {
 
 	dirty := filepath.Join(jobs("dirty"), "repo")
 	removed := []string{jobs("done"), jobs("dead"), jobs("stale"), filepath.Join(g.w, "reads", "r-done"),
-		filepath.Join(g.land, "wt-old"), filepath.Join(g.bench, "runs", "run.OLD00001"), filepath.Join(g.bench, "buds", "b1", "jobs", "j-old")}
+		filepath.Join(g.land, "wt-old"), filepath.Join(g.bench, "runs", "run.OLD00001"),
+		filepath.Join(g.bench, "runs", "run.CLEAN001"), filepath.Join(g.bench, "buds", "b1", "jobs", "j-old")}
 	kept := []string{jobs("live"), jobs("dirty"), jobs("new"), filepath.Join(g.w, "reads", "r-open"),
 		filepath.Join(g.w, "inbox", "done"), filepath.Join(g.w, "outbox", "done", "REPORT.md"),
 		filepath.Join(g.other, "jobs", "x"), filepath.Join(g.land, "wt-new"), filepath.Join(g.other, "wt-outside"),
 		filepath.Join(g.land, "github.com-o-r-0123456789abcdef"), filepath.Join(g.bench, "runs", "run.NEW00001"),
-		filepath.Join(g.bench, "cache", "go-build", "README"), filepath.Join(g.ai, "buds", "b1", "runner.log")}
+		dirtyBench, filepath.Join(g.bench, "cache", "go-build", "README"), filepath.Join(g.ai, "buds", "b1", "runner.log")}
 
 	// the dry run says what it would free and removes nothing
-	dry := GC(g.req(true, dirty))
+	dry := GC(g.req(true, dirty, dirtyBench))
 	for _, p := range append(append([]string(nil), removed...), kept...) {
 		assert.True(t, exists(p), "a dry run removed %s", p)
 	}
 	assert.Positive(t, dry.Freed)
 
-	res := GC(g.req(false, dirty))
+	res := GC(g.req(false, dirty, dirtyBench))
 	for _, p := range removed {
 		assert.False(t, exists(p), "finished scratch under a known root was left: %s", p)
 	}
@@ -187,13 +193,15 @@ func TestGcRemovesOnlyFinishedScratchUnderKnownRoots(t *testing.T) {
 	assert.Equal(t, 3, byClass[GCJobs].Count)
 	assert.Equal(t, 1, byClass[GCReads].Count)
 	assert.Equal(t, 1, byClass[GCLanders].Count)
-	assert.Equal(t, 2, byClass[GCBench].Count)
+	assert.Equal(t, 3, byClass[GCBench].Count)
+	assert.Equal(t, 1, byClass[GCBench].Kept)
 	assert.Positive(t, byClass[GCJobs].Bytes)
 
 	text := strings.Join(res.Lines(), "\n")
 	assert.Contains(t, text, "GC jobs count=3 bytes=")
 	assert.Contains(t, text, "GC cache count=0 bytes=0")
 	assert.Contains(t, text, "GC KEPT class=jobs path="+dirty+" why=1 uncommitted path")
+	assert.Contains(t, text, "GC KEPT class=bench path="+dirtyBench+" why=1 uncommitted path")
 	assert.Contains(t, text, "GC REFUSED class=jobs path="+filepath.Join(g.home, "stray-working"))
 	assert.Contains(t, text, "GC REFUSED class=landers path="+filepath.Join(g.other, "wt-outside"))
 	assert.Contains(t, text, "not under a known scratch root")
@@ -202,7 +210,7 @@ func TestGcRemovesOnlyFinishedScratchUnderKnownRoots(t *testing.T) {
 	assert.Equal(t, res.Freed, byClass[GCJobs].Bytes+byClass[GCReads].Bytes+byClass[GCLanders].Bytes+byClass[GCBench].Bytes+byClass[GCCache].Bytes)
 
 	// a second pass finds nothing left to free
-	again := GC(g.req(false, dirty))
+	again := GC(g.req(false, dirty, dirtyBench))
 	assert.Zero(t, again.Freed)
 }
 

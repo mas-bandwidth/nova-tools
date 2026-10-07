@@ -1417,6 +1417,7 @@ default) and `low` (it fills only an idle lane).
   or that names none while the store holds routes, is never asked a pro read (the owner,
   2026-10-06, "I'm ok with flash readers on fleet but not pro"); a row naming pro is; a
   friend's reader naming none reads every tier (section 6; `TestFleetReadersReadOnlyTheirTiers`).
+
 ### gc: the machinery's scratch is reclaimed by a verb
 
 On 2026-10-06 the coordinator freed 314 GiB with a hand-written `clean-jobs.py` (job
@@ -1440,7 +1441,8 @@ removes exactly the scratch the machinery made and no longer needs, class by cla
   prune`) older than `--max-age`; the clones are land's and kept;
 - `bench`: `<home>/nova-bench/runs/run.*` and `<home>/nova-bench/buds/<name>/{jobs,reads}/<x>`
   older than `--max-age` (default 2 days; `2d` or a Go duration). A bench directory is a copy
-  of a tree that lives elsewhere;
+  of a tree that lives elsewhere; a clone inside it with uncommitted work keeps the directory,
+  the same as any other removal;
 - `cache`: every Go build cache of the bench root (`cache/go-build`, `buds/<name>/cache/go-build`)
   and of each working directory (`.cache/go-build`), held under its cap (`internal/gocache`,
   20 GiB).

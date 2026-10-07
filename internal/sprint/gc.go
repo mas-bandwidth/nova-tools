@@ -34,7 +34,8 @@ import (
 //   - landers: the linked worktrees of land's clones under the land root, older than the
 //     max age; the clones themselves are land's and kept;
 //   - bench: <bench-root>/runs/run.* and <bench-root>/buds/<name>/{jobs,reads}/<x> older
-//     than the max age (a bench directory is a copy of a tree that lives elsewhere);
+//     than the max age. A bench directory is a copy of a tree that lives elsewhere; a clone
+//     inside it with uncommitted work keeps the directory, as any other removal does;
 //   - cache: every Go build cache of the bench root and of each working directory, held
 //     under its cap (gocache.Hold).
 //
@@ -454,7 +455,8 @@ func (p *gcPass) landers() {
 }
 
 // bench takes the bench root's run directories and the buds' job and read copies older
-// than the max age.
+// than the max age. A clone under one keeps that directory when Dirty says the work
+// is nowhere else, the same guard as every other removal.
 func (p *gcPass) bench() {
 	b := p.r.BenchRoot
 	if b == "" {
@@ -476,8 +478,7 @@ func (p *gcPass) bench() {
 			continue
 		}
 		if p.aged(d, p.r.MaxAge, false) {
-			// a bench directory is a copy of a tree that lives elsewhere: no clone check
-			p.remove(d, filepath.Dir(d), "a bench directory older than "+p.r.MaxAge.String(), false)
+			p.remove(d, filepath.Dir(d), "a bench directory older than "+p.r.MaxAge.String(), true)
 		}
 	}
 }
