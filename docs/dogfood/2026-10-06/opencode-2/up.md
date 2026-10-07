@@ -101,17 +101,11 @@ ten reproduce. In the quoted output `$S` is the bench scratch directory, `$JOB` 
 
    how it works: steps in order: platform, dirs, binaries, sprint, secrets, redis, seat, smoke.
    ```
-   and, lower, the usage block:
-   ```
-   usage:
-     nova-up --local [--root <dir>] [--dry-run] [--json]
-     nova-up version
-     nova-up help [<verb>]
-   ```
-   I expected the usage to name the verb the refusals name ("the verbs are up, version") and that
-   the example runs (`nova-up up -h`); `up` and `--local` are one mode, but the door's own list
-   omits `up`, so a reader cannot tell whether the tool is `nova-up --local` or `nova-up up
-   --local` (both run).
+   I expected the usage, lower in the page, to name the verb the refusals name ("the verbs are up,
+   version") and that the example runs (`nova-up up -h`); the usage block reads `nova-up --local
+   [--root <dir>] [--dry-run] [--json]`, `nova-up version`, `nova-up help [<verb>]`, so `up` and
+   `--local` are one mode but the door's own list omits `up`, and a reader cannot tell whether the
+   tool is `nova-up --local` or `nova-up up --local` (both run).
    Grade: NEXT (unclear help: the usage hides a verb the refusals name)
 
 8. `nova-up -v`
