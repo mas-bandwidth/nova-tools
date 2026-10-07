@@ -89,6 +89,12 @@ const promoteEveryDefault = time.Hour
 // flight, when --poll is left unset.
 const promotePollDefault = time.Minute
 
+// promoteCheckDefault is the whole-tree gate required before a promotion is
+// pushed (docs/SPEC-SPRINT.md, section 11). The functional tier is part of the
+// gate because a promotion must not rely on checks that do not run on sprint
+// heads.
+const promoteCheckDefault = "go build ./... && go vet ./... && go test ./... && make test-functional-container PKGS=./..."
+
 // promoter is one promote schedule over one clone.
 type promoter struct {
 	dir, live, base, check string
@@ -174,7 +180,7 @@ func (a *app) cmdPromote(args []string, stdout, stderr io.Writer) int {
 	branch := fs.String("branch", "", "the live sprint branch; the cut is taken from origin/<branch> after a fetch, never a local ref (default: the checkout's current branch)")
 	repo := fs.String("repo-dir", "", "the clone the branch is cut in (default: the current directory)")
 	base := fs.String("base", "dev", "the branch the pull request targets, fetched and merged into the cut first (default dev)")
-	check := fs.String("check", "", "the tree gate, a command run on the frozen commit before the pull request (default: none)")
+	check := fs.String("check", promoteCheckDefault, "the tree gate, a command run on the frozen commit before the pull request (default: build, vet, unit and containerized functional tests)")
 	pos, err := parse(fs, args)
 	if err != nil || len(pos) > 0 {
 		return refuse(stderr, "promote", argErr("takes no words ", err, pos...))
