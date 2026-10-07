@@ -63,6 +63,7 @@ func TestNotificationInstallPreservesNativeSettingsBinaryAndLabel(t *testing.T) 
 			r.env["CODEX_HOME"] = "/w/codex"
 			config := "/w/codex/config.toml"
 			const settings = "native settings deliberately invalid TOML ["
+			require.NoError(t, r.fs.MkdirAll(filepath.Dir(config), 0755))
 			require.NoError(t, r.fs.WriteFile(config, []byte(settings), 0600))
 			native := friend.InstalledBinary(r.home)
 			require.NoError(t, os.MkdirAll(filepath.Dir(native), 0755))
