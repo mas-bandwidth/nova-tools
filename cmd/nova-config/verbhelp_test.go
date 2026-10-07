@@ -24,7 +24,7 @@ func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 	for _, v := range []string{"version", "kinds", "migrate", "status", "apply", "inventory"} {
 		cases = append(cases, testverbhelp.Case{Verb: v})
 	}
-	for _, v := range []string{"machine", "machine list", "machine self", "machine width", "machine show", "machine history", "machine remove", "machine add", "machine set", "friend add", "fleet set", "fleet show", "sprint set"} {
+	for _, v := range []string{"machine", "machine list", "machine self", "machine width", "machine show", "machine history", "machine remove", "machine add", "machine set", "friend add", "fleet set", "fleet show", "sprint set", "loop run"} {
 		cases = append(cases, testverbhelp.Case{Verb: v})
 	}
 	cases = append(cases, testverbhelp.Case{Verb: "machine list", Flags: conn})
