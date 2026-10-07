@@ -1321,3 +1321,158 @@ func TestProblemAsCarriesTheReason(t *testing.T) {
 		})
 	}
 }
+
+// TestWritingVerbUnderDryRunCarriesFactInBothRenderings pins the dry_run fact:
+// when Call.DryRun() is true, the skeleton adds dry_run=true to the result
+// (and "dry_run":true in JSON) unless the verb set it (STANDARD §2).
+func TestWritingVerbUnderDryRunCarriesFactInBothRenderings(t *testing.T) {
+	t.Parallel()
+	tool := &Tool{
+		Name:      "nova-write",
+		What:      "writes state",
+		ExitTable: "0 done, 2 could not run.",
+		Verbs: []Verb{
+			{
+				Name:   "save",
+				Usage:  "save --file <f>",
+				Effect: LocalWrite,
+				DryRun: true,
+				Flags:  func(f *Flags) { f.Required("file", "target file") },
+				Run: func(c *Call) *Out {
+					if c.DryRun() {
+						return Done().Fact("file", c.Str("file"))
+					}
+					return Done().Fact("file", c.Str("file")).Fact("saved", true)
+				},
+			},
+			{
+				Name:   "custom",
+				Usage:  "custom",
+				Effect: LocalWrite,
+				DryRun: true,
+				Run: func(c *Call) *Out {
+					if c.DryRun() {
+						return Done().Fact("dry_run", true).Fact("explicit", true)
+					}
+					return Done()
+				},
+			},
+		},
+	}
+
+	t.Run("skeleton adds dry_run in text line and JSON", func(t *testing.T) {
+		t.Parallel()
+		rText := testkit.Main(tool.Run).Run("save", "--file", "out.txt", "--dry-run")
+		assert.Equal(t, 0, rText.Code)
+		assert.Empty(t, rText.Stderr)
+		assert.Equal(t, "SAVE OK file=out.txt dry_run=true\n", rText.Stdout)
+
+		rJSON := testkit.Main(tool.Run).Run("save", "--file", "out.txt", "--dry-run", "--json")
+		assert.Equal(t, 0, rJSON.Code)
+		assert.Empty(t, rJSON.Stderr)
+		assert.JSONEq(t, `{"result":{"verb":"save","status":"ok","exit":0},"facts":{"file":"out.txt","dry_run":true}}`, rJSON.Stdout)
+	})
+
+	t.Run("verb that sets dry_run fact is not duplicated", func(t *testing.T) {
+		t.Parallel()
+		rText := testkit.Main(tool.Run).Run("custom", "--dry-run")
+		assert.Equal(t, 0, rText.Code)
+		assert.Empty(t, rText.Stderr)
+		assert.Equal(t, "CUSTOM OK dry_run=true explicit=true\n", rText.Stdout)
+		assert.Equal(t, 1, strings.Count(rText.Stdout, "dry_run=true"))
+
+		rJSON := testkit.Main(tool.Run).Run("custom", "--dry-run", "--json")
+		assert.Equal(t, 0, rJSON.Code)
+		assert.Empty(t, rJSON.Stderr)
+		assert.JSONEq(t, `{"result":{"verb":"custom","status":"ok","exit":0},"facts":{"dry_run":true,"explicit":true}}`, rJSON.Stdout)
+		assert.Equal(t, 1, strings.Count(rJSON.Stdout, `"dry_run"`))
+	})
+
+	t.Run("real run without dry-run carries no dry_run fact", func(t *testing.T) {
+		t.Parallel()
+		rText := testkit.Main(tool.Run).Run("save", "--file", "out.txt")
+		assert.Equal(t, 0, rText.Code)
+		assert.Equal(t, "SAVE OK file=out.txt saved=true\n", rText.Stdout)
+		assert.NotContains(t, rText.Stdout, "dry_run")
+
+		rJSON := testkit.Main(tool.Run).Run("save", "--file", "out.txt", "--json")
+		assert.Equal(t, 0, rJSON.Code)
+		assert.NotContains(t, rJSON.Stdout, "dry_run")
+	})
+}
+
+// TestToolExistsSeam pins the filesystem seam: Tool.Exists reads the filesystem
+// through one seam, defaulting to os.Stat, and tests pass a map (skeleton contract 2.1).
+func TestToolExistsSeam(t *testing.T) {
+	t.Parallel()
+	files := map[string]bool{
+		"virtual.txt": true,
+		"other.log":   true,
+	}
+	tl := &Tool{
+		Name:      "nova-seam",
+		What:      "tests the exists seam",
+		ExitTable: "0 done, 2 could not run.",
+		Default:   "read",
+		Exists:    func(path string) bool { return files[path] },
+		Verbs: []Verb{
+			{
+				Name:   "read",
+				Usage:  "[read] <file>...",
+				Effect: Inspection,
+				Run: func(c *Call) *Out {
+					return Done().Fact("files", c.flags.NArg())
+				},
+			},
+			{
+				Name:   "other",
+				Usage:  "other",
+				Effect: Inspection,
+				Run:    func(*Call) *Out { return Done() },
+			},
+		},
+	}
+
+	t.Run("map answers existing file as default verb", func(t *testing.T) {
+		t.Parallel()
+		r := testkit.Main(tl.Run).Run("virtual.txt")
+		assert.Equal(t, 0, r.Code)
+		assert.Equal(t, "READ OK files=1\n", r.Stdout)
+	})
+
+	t.Run("map answers absent file with refusal naming verbs and path remedy", func(t *testing.T) {
+		t.Parallel()
+		r := testkit.Main(tl.Run).Run("missing.txt")
+		assert.Equal(t, 2, r.Code)
+		assert.Contains(t, r.Stderr, `"missing.txt" is no verb and no file; the verbs are read, other, version, and a file is given by its path (./missing.txt)`)
+	})
+
+	t.Run("nil Exists defaults to os.Stat", func(t *testing.T) {
+		t.Parallel()
+		tlDefault := &Tool{
+			Name:      "nova-stat",
+			What:      "tests default os.Stat",
+			ExitTable: "0 done, 2 could not run.",
+			Default:   "read",
+			Verbs: []Verb{
+				{
+					Name:   "read",
+					Usage:  "[read] <file>",
+					Effect: Inspection,
+					Run: func(c *Call) *Out {
+						return Done().Fact("files", c.flags.NArg())
+					},
+				},
+			},
+		}
+		// tool.go is in the package's working directory and stat sees it.
+		r := testkit.Main(tlDefault.Run).Run("tool.go")
+		assert.Equal(t, 0, r.Code)
+		assert.Equal(t, "READ OK files=1\n", r.Stdout)
+
+		// non-existent file is refused.
+		rMissing := testkit.Main(tlDefault.Run).Run("nonexistent_file_xyz_123.txt")
+		assert.Equal(t, 2, rMissing.Code)
+		assert.Contains(t, rMissing.Stderr, "is no verb and no file")
+	})
+}
