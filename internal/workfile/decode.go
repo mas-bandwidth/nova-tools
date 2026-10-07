@@ -192,7 +192,28 @@ func (d *decoder) takeStr(at, key string, m map[string]worklang.Form) (string, b
 	return s, true
 }
 
+// wrongVersion is a tree form's version when it is a string this build does
+// not read; the version is read before the root's keys, which the version
+// itself defines (SPEC-WORK-V1 section 1.2).
+func wrongVersion(f worklang.Form) (string, bool) {
+	if f.Kind != worklang.List || len(f.List) < 2 || f.List[0].Kind != worklang.Symbol || f.List[0].Value != "work-tree" {
+		return "", false
+	}
+	v := f.List[1]
+	if v.Kind != worklang.String || v.Value == Format {
+		return "", false
+	}
+	return v.Value, true
+}
+
 func (d *decoder) tree(f worklang.Form) (*Tree, error) {
+	if v, wrong := wrongVersion(f); wrong {
+		// The version defines the keys, so a file of a version this build
+		// does not read is refused by its version, not by one of another
+		// version's missing keys (SPEC-WORK-V1 section 1.2).
+		d.errf("(root)", "version %s is not read; this build reads %s", v, Format)
+		return d.finish(nil)
+	}
 	id, m, _ := d.record("(root)", f, "work-tree", true, []string{"source", "org", "fetched", "repos"})
 	if m == nil {
 		return d.finish(nil)
