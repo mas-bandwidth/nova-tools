@@ -394,7 +394,9 @@ func (a *app) nowLines(v store.CardInfo, held *sprint.Hold) []string {
 	var out []string
 	for _, o := range v.Open {
 		out = append(out, fmt.Sprintf("waits on your judgment: %s (%s)", o.Note.Type, o.Note.ID))
-		for _, c := range sprint.NoteCommands(o.Note, []string{p.ID}) {
+		// the card's own commands, as card prints them: a single card of a group keeps --one,
+		// so a rework or drop pasted from here is not refused for the group's size
+		for _, c := range cardCommands(o.Note, p.ID) {
 			for _, line := range c.Lines {
 				out = append(out, "  "+c.Decision+": "+line)
 			}
