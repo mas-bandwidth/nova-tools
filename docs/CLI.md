@@ -810,10 +810,11 @@ once the row's unit runs. What it gets wrong first: no `--redis` and no
 | `serve --as <coordinator> [--redis <addr>] [--dry-run]` | The coordinator's ping loop: a `PING` to every friend row each second, one line per friend up or down (ten seconds without a pong); until a signal |
 | `version`, `help [<verb>]` | The version line; the banner, or a verb's help |
 
-Every store verb takes `--redis <host:port>` (else `NOVA_BUS_REDIS`), the
-daemon `--server <host:port>` (else `NOVA_SPRINT_SERVER`, else
-`127.0.0.1:6390`). Exit codes: 0 done; 1 the verb ran and said no; 2 could
-not run.
+Every store verb takes `--redis <host:port>` (else `NOVA_BUS_REDIS`). The
+daemon's `--server` has no default: with none, the daemon beats nothing and
+presence is the record on the bus store. `beat`, `ping`, and `ping-install`
+still take `--server` (else the environment variable, else `127.0.0.1:6390`).
+Exit codes: 0 done; 1 the verb ran and said no; 2 could not run.
 
 ## Build
 

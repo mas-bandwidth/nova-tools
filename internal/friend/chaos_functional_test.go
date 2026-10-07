@@ -169,6 +169,13 @@ func (b *chaosBus) Get(ctx context.Context, stream string, entries []string) ([]
 	return b.Fake.Get(ctx, stream, entries)
 }
 
+func (b *chaosBus) PutHash(ctx context.Context, key string, fields map[string]string, ttl time.Duration) error {
+	if err := b.refuse(); err != nil {
+		return err
+	}
+	return b.Fake.PutHash(ctx, key, fields, ttl)
+}
+
 // The fake harness's states: open and answering, closed (the app is not
 // running), silent (the app runs, the session takes turns and says nothing),
 // limited (the provider refuses every turn until the reset).
