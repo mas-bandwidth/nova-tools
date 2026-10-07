@@ -58,7 +58,7 @@ type Worker struct {
 	// READ ROOTS: the one field the wall added (docs/SPEC-SANDBOX.md, "there is no --root
 	// flag"). Every job runs inside nova-sandbox, whose read set is the OS and toolchain
 	// roots plus what the caller names; a toolchain installed into a USER directory -- Go
-	// under ~/go, node under ~/.nvm, the Studio's /Users/<user>/toolchains -- is under no
+	// under ~/go, node under ~/.nvm, a machine's /Users/<user>/toolchains -- is under no
 	// system root, so a harness that needs one dies inside the wall and runs outside it.
 	// It is OPTIONAL, it is a list of absolute existing directories, and it is READ-ONLY:
 	// the write set is the job's own and is never configurable from a file. A worker that
@@ -248,7 +248,7 @@ func LoadWorker(path string) (Worker, []error) {
 	// into it (copyTree). A `key_file` under `worker_dir` is therefore COPIED INSIDE THE
 	// WALL by this tool, at every refresh, and the job reads the copy under a green
 	// `SANDBOX OK` and a probe that passed: the probe's own `secret_inside_allow` check is
-	// made against the PROBE's lists, never against a job's (Rowan's Fable read of #88 at
+	// made against the PROBE's lists, never against a job's (a friend's Fable read of #88 at
 	// d0c1841, M1). A `read_roots` entry holding the key is the same hole without the copy.
 	// Both are refused HERE, at the one moment a person can still move the file.
 	if key := resolvePath(w.KeyFile); key != "" {
@@ -279,7 +279,7 @@ func LoadWorker(path string) (Worker, []error) {
 		// slot -- `<worker_dir>-1/.key`, or anything beneath it such as under its `jobs/` -- is
 		// READ INSIDE THE WALL under a probe that passed, and neither check above sees it:
 		// `insideDir` treats `worker-1` as a sibling of `worker` by design, and no `read_roots`
-		// entry names it (Rowan's Fable read 2 of #88 at fc400ce, L1). It is refused HERE rather
+		// entry names it (a friend's Fable read 2 of #88 at fc400ce, L1). It is refused HERE rather
 		// than in `Run` beside the gate so that it holds for EVERY slot number, not only the ones
 		// one run happens to use, and so that `run` and `supervise` say it too.
 		//
@@ -289,7 +289,7 @@ func LoadWorker(path string) (Worker, []error) {
 		// made absolute at load, never symlink-resolved -- so with `worker_dir` a symlink
 		// `/typed/worker -> /real/worker` the slot the tool creates and hands to `--read` is
 		// `/typed/worker-1`, while the resolved sibling `/real/worker-1` is a directory nobody
-		// builds. Asking only the resolved one let a key at `/typed/worker-1/.key` pass (Rowan's
+		// builds. Asking only the resolved one let a key at `/typed/worker-1/.key` pass (a friend's
 		// Fable read 3 of #88 at 56c7dcc, L1). The typed spelling is the one the slot is built
 		// from; the resolved one stays as defence in depth. Deduped, so the ordinary case where
 		// the two coincide refuses once.
@@ -431,7 +431,7 @@ func (w Worker) DefaultDeadline() time.Duration {
 
 // validEnvName is the shape a `secret` may take: an environment variable NAME, the same
 // shape a POSIX shell would accept for one. A name with a `=` is a value dressed as a
-// name, and a name with a space or a dash is a typo the loader catches where the caller
+// name, and a name with whitespace or a dash is a typo the loader catches where the caller
 // can still fix it rather than at the first run.
 func validEnvName(name string) bool {
 	if name == "" {
@@ -495,7 +495,7 @@ func slotDirHolding(path, workerDir string) string {
 			}
 			// The FULL spellings, the candidate against the slot `SlotDir` would build for
 			// that number: where both are there the two directories answer for themselves
-			// and no fold is guessed (Stella's read of #159, comment 5648066751).
+			// and no fold is guessed (a friend's read of #159, comment 5648066751).
 			if !namesOneFile(up, name, base+"-"+digits) {
 				return "" // another worker's slot, or a neighbour that merely reads alike
 			}

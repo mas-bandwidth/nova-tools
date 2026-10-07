@@ -157,7 +157,7 @@ func TestAddAdmitsAnyProjectsBriefUnderTheDefaultRules(t *testing.T) {
 	require.Equal(t, 0, code, "a non-Go brief with the general rules: exit %d\n%s", code, errs)
 	code, _, errs = ta.do("add --stream web2 --count 1 --one --max 0 --rules " + copyRules(t) + " --brief '" + strings.ReplaceAll(brief, "'", "") + "'")
 	require.Equal(t, 2, code, "the same brief under this repository's file: exit %d\n%s", code, errs)
-	require.Contains(t, errs, "LINT DRIFT brief rule-gocache: 1: missing: Export a private GOCACHE", "the same brief under this repository's file: exit %d\n%s", code, errs)
+	require.Contains(t, errs, "LINT DRIFT brief rule-gocache: 1: missing: "+swarm.GoCacheLine, "the same brief under this repository's file: exit %d\n%s", code, errs)
 	require.Contains(t, errs, "LINT DRIFT brief rule-commit-trailer: ", "the same brief under this repository's file: exit %d\n%s", code, errs)
 }
 

@@ -127,7 +127,12 @@ func redisTool(d deps) *tool.Tool {
 spill writes a value under <owner>:<name> with a required expiry; recall reads it back.
 fn load and fn check install and verify the functions nova-table and nova-sprint call.
 The password is read from the variable NOVA_REDIS_PASSWORD_ENV names, else NOVA_REDIS_PASSWORD.
-first run: the --dry-run line needs no store; spill and recall need a Redis at 127.0.0.1:6379.`,
+first run: --dry-run needs no store; the throwaway recipe below starts a store on a socket.`,
+		UsageNote: `a throwaway store, by hand: (stop it: redis-cli -s "$d/redis.sock" shutdown nosave)
+  d=$(mktemp -d)
+  redis-server --port 0 --unixsocket "$d/redis.sock" --save '' --appendonly no --daemonize yes
+  for _ in $(seq 50); do redis-cli -s "$d/redis.sock" ping >/dev/null 2>&1 && break; sleep 0.1; done
+then run spill or recall with --redis "$d/redis.sock" (or a store you may write to).`,
 		ExitTable: "0 done (spill written, recall found, fn load done, fn check finds the library loaded, serve stopped); 1 ran and said NO (a recall of a missing, expired or unbounded key, fn check STALE or MISSING, a spill whose reply was lost, a refusal by the store, a serve that could not start); 2 could not run (a usage error, a flag refused before dialling, a store that did not answer or a login it refused).",
 		Words:     []string{"UNCONFIRMED", "MISSING", "EXPIRED", "UNBOUNDED"},
 		Verbs: append([]tool.Verb{
@@ -147,7 +152,7 @@ first run: the --dry-run line needs no store; spill and recall need a Redis at 1
 func spillVerb(d deps) tool.Verb {
 	return tool.Verb{
 		Name:    "spill",
-		Usage:   "spill --addr <host:port> [--user <name>] [--password-env <NAME>] --owner <owner> --name <name> --ttl <duration> --value <text> [--dry-run]",
+		Usage:   "spill --redis <host:port> [--user <name>] [--password-env <NAME>] --owner <owner> --name <name> --ttl <duration> --value <text> [--dry-run]",
 		Example: "spill --dry-run --addr 127.0.0.1:6379 --owner ada --name note --ttl 10m --value hi\nspill --addr 127.0.0.1:6379 --owner ada --name note --ttl 10m --value hi",
 		Effect:  tool.LocalWrite,
 		DryRun:  true,
@@ -183,7 +188,7 @@ func spillVerb(d deps) tool.Verb {
 func recallVerb(d deps) tool.Verb {
 	return tool.Verb{
 		Name:    "recall",
-		Usage:   "recall --addr <host:port> [--user <name>] [--password-env <NAME>] --owner <owner> --name <name>",
+		Usage:   "recall --redis <host:port> [--user <name>] [--password-env <NAME>] --owner <owner> --name <name>",
 		Example: "recall --addr 127.0.0.1:6379 --owner ada --name note",
 		Effect:  tool.Inspection,
 		Flags: func(f *tool.Flags) {
@@ -203,16 +208,23 @@ func recallVerb(d deps) tool.Verb {
 // spillRun is spill's body: a store write of one key, <owner>:<name>, with its
 // TTL. --dry-run checks the line and the login and prints the write, dialling
 // nothing.
-func spillRun(c *tool.Call, d deps) *tool.Out {
+func spillRun(c *tool.Call, d deps) (out *tool.Out) {
 	store := loginFrom(c)
 	ttl, _ := time.ParseDuration(cmp.Or(c.Str("ttl"), "0s"))
 	if err := store.check(d); err != nil {
 		return tool.Refuse(err.Error())
 	}
+	if alias := store.aliasNote(); alias != "" {
+		defer func() {
+			if out.Status == tool.OK {
+				out.Note(alias)
+			}
+		}()
+	}
 	expires := d.now().Add(ttl).UTC().Format(time.RFC3339)
 	if c.DryRun() {
 		return tool.Done().Fact("key", c.Str("owner")+":"+c.Str("name")).Fact("ttl", ttl.String()).
-			Fact("expires", expires).Fact("bytes", len(c.Str("value"))).Fact("store", c.Str("addr")).Fact("written", 0)
+			Fact("expires", expires).Fact("bytes", len(c.Str("value"))).Fact("store", c.Str("redis")).Fact("written", 0)
 	}
 	ctx := context.Background()
 	conn, err := connect(ctx, store, d)
@@ -237,10 +249,17 @@ func spillRun(c *tool.Call, d deps) *tool.Out {
 }
 
 // recallRun is recall's body: reads one key and writes nothing.
-func recallRun(c *tool.Call, d deps) *tool.Out {
+func recallRun(c *tool.Call, d deps) (out *tool.Out) {
 	store := loginFrom(c)
 	if err := store.check(d); err != nil {
 		return tool.Refuse(err.Error())
+	}
+	if alias := store.aliasNote(); alias != "" {
+		defer func() {
+			if out.Status == tool.OK {
+				out.Note(alias)
+			}
+		}()
 	}
 	key := c.Str("owner") + ":" + c.Str("name")
 	ctx := context.Background()
@@ -290,24 +309,40 @@ type login struct {
 	givenFn                 func(string) bool
 }
 
+// loginFlags are the flags every verb that dials a store takes. The store's
+// address is --redis, the one name the family gives it (STANDARD §2, "One
+// shape across the set"); --addr is the old spelling, bound to the same value
+// and kept for one release, and a run that spells it says so on a NOTE.
 func loginFlags(f *tool.Flags) {
-	f.String("addr", "", "the store's address as <host:port>, such as 127.0.0.1:6379 (no default)")
+	addr := f.String("redis", "", "the store's address: <host:port>, such as 127.0.0.1:6379, or the absolute path of a Unix socket (no default)")
+	f.StringVar(addr, "addr", "", "the old spelling of --redis, kept for one release; it sets the same address and prints a NOTE")
 	f.String("user", "", "the ACL user to log in as (default $"+UserEnv+"; with neither, the store's default user)")
 	f.String("password-env", "", "the NAME of the variable that holds the password, never the password itself (default: the variable $"+PasswordEnvEnv+" names, else "+PasswordEnv+")")
 	f.Check(func(c *tool.Call) {
-		if !c.Given("addr") {
+		if !c.Given("redis") && !c.Given("addr") {
+			// The wording docs/TESTS.md's first run pins: the refusal names the
+			// old spelling, which the family rename keeps working.
 			c.Problem("--addr is required: the store's address as <host:port>, such as 127.0.0.1:6379 (no default); refusing to guess")
 			return
 		}
-		if err := validAddr(c.Str("addr")); err != nil {
+		if err := validAddr(loginFlagName(c), c.Str("redis")); err != nil {
 			c.Problem(err.Error())
 		}
 	})
 }
 
+// loginFlagName is the address flag the line spelled, for the refusal that
+// quotes a bad address: "redis", or "addr" for the old spelling.
+func loginFlagName(c *tool.Call) string {
+	if c.Given("addr") {
+		return "addr"
+	}
+	return "redis"
+}
+
 // loginFrom reads the login flags from a call.
 func loginFrom(c *tool.Call) login {
-	addr := c.Str("addr")
+	addr := c.Str("redis")
 	user := c.Str("user")
 	passwordEnv := c.Str("password-env")
 	return login{addr: &addr, user: &user, passwordEnv: &passwordEnv, givenFn: c.Given}
@@ -315,6 +350,24 @@ func loginFrom(c *tool.Call) login {
 
 // given reports whether the flag was on the line, even empty.
 func (l login) given(flagName string) bool { return l.givenFn(flagName) }
+
+// flagName is the address flag the line spelled, for a bad address refusal:
+// "redis", or "addr" for the old spelling.
+func (l login) flagName() string {
+	if l.given("addr") {
+		return "addr"
+	}
+	return "redis"
+}
+
+// aliasNote is the NOTE a login prints when the line spelled --addr, the old
+// name of --redis: the spelling works for one release and says so.
+func (l login) aliasNote() string {
+	if l.given("addr") {
+		return "--addr is --redis"
+	}
+	return ""
+}
 
 // from names where a flag's value came from: the flag, or the variable that
 // is its default.
@@ -335,7 +388,7 @@ var envName = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
 // could not make. Each refusal names where the bad value came from. It is
 // the first read of the environment a verb makes.
 func (l login) check(d deps) error {
-	if err := validAddr(*l.addr); err != nil {
+	if err := validAddr(l.flagName(), *l.addr); err != nil {
 		return err
 	}
 	if !l.given("user") {
@@ -380,14 +433,14 @@ func (l login) options(d deps) redisconn.Options {
 }
 
 // flags is the login as a remedy's command line writes it, so that command
-// logs in as the verb did: --addr always; --user and --password-env when they
-// were given on the line, even empty or equal to the default (an explicit
-// flag overrides the environment, and a remedy that dropped it would log in
-// as the environment says), and when the environment set them to other than
-// the default. Every value is one POSIX shell word (oneline.ShellWord). It is
-// called after check.
+// logs in as the verb did: --redis always (the family's one name for the store
+// address); --user and --password-env when they were given on the line, even
+// empty or equal to the default (an explicit flag overrides the environment,
+// and a remedy that dropped it would log in as the environment says), and when
+// the environment set them to other than the default. Every value is one POSIX
+// shell word (oneline.ShellWord). It is called after check.
 func (l login) flags() string {
-	line := "--addr " + oneline.ShellWord(*l.addr)
+	line := "--redis " + oneline.ShellWord(*l.addr)
 	if *l.user != "" || l.given("user") {
 		line += " --user " + oneline.ShellWord(*l.user)
 	}
@@ -397,32 +450,33 @@ func (l login) flags() string {
 	return line
 }
 
-// validAddr refuses an address the tool would have to guess at. The Redis
-// client fills an empty address in as localhost:6379 and an empty host as the
-// local machine, so an address that is empty, blank, or lacks a host or a
-// numeric port is refused before anything is dialled. A Unix socket names no
-// host and no port: the absolute path is the whole address, given bare or with
-// redis-cli's unix: prefix, and is accepted as the address (connect) dials —
-// it is the shape nova-table's first-run recipe makes.
-func validAddr(addr string) error {
+// validAddr refuses an address the tool would have to guess at, naming the
+// flag the line spelled (--redis, or its old spelling --addr). The Redis client
+// fills an empty address in as localhost:6379 and an empty host as the local
+// machine, so an address that is empty, blank, or lacks a host or a numeric
+// port is refused before anything is dialled. A Unix socket names no host and
+// no port: the absolute path is the whole address, given bare or with
+// redis-cli's unix: prefix, and is accepted as the address (connect) dials — it
+// is the shape nova-table's first-run recipe makes.
+func validAddr(flag, addr string) error {
 	if strings.TrimSpace(addr) == "" {
-		return errors.New("--addr is empty; give the instance as <host:port>, refusing to guess localhost")
+		return fmt.Errorf("--%s is empty; give the instance as <host:port>, refusing to guess localhost", flag)
 	}
 	if _, ok := unixSocketPath(addr); ok {
 		return nil
 	}
 	if _, prefixed := strings.CutPrefix(addr, "unix:"); prefixed {
-		return fmt.Errorf("--addr %q is not <host:port>; after unix: give the absolute path of a Unix socket, refusing to guess", addr)
+		return fmt.Errorf("--%s %q is not <host:port>; after unix: give the absolute path of a Unix socket, refusing to guess", flag, addr)
 	}
 	host, port, err := net.SplitHostPort(addr)
 	if err != nil {
-		return fmt.Errorf("--addr %q is not <host:port>; refusing to guess", addr)
+		return fmt.Errorf("--%s %q is not <host:port>; refusing to guess", flag, addr)
 	}
 	if strings.TrimSpace(host) == "" || strings.ContainsAny(host, " \t\r\n") {
-		return fmt.Errorf("--addr %q names no host; refusing to guess localhost", addr)
+		return fmt.Errorf("--%s %q names no host; refusing to guess localhost", flag, addr)
 	}
 	if n, err := strconv.Atoi(port); err != nil || n < 1 || n > 65535 {
-		return fmt.Errorf("--addr %q needs a port from 1 to 65535; refusing to guess", addr)
+		return fmt.Errorf("--%s %q needs a port from 1 to 65535; refusing to guess", flag, addr)
 	}
 	return nil
 }
