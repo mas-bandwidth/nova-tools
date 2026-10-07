@@ -1,0 +1,49 @@
+# The names that LOOK like a path into this repository and are not one.
+#
+# One `<name> <reason>` per line. TestEveryNamedRepoPathExists checks this list in BOTH
+# directions: a name that is missing from the tree and not listed here is a red run, and a
+# listed name that nothing writes any more -- or that is IN the tree now -- is also a red
+# run. So the list only ever gets shorter, and a row parks nothing.
+#
+# There are three honest reasons to be here, and they are the three sections below. The
+# first is by far the largest, and it is the one worth reading as a list: it is every file
+# a specification has PLANNED and nobody has written yet. Shrink-only means the row is
+# deleted on the day the file appears, by the test, out loud.
+
+# --- 1. A specification's plan: a file the spec says will exist, not yet written. ---
+
+# --- 2. An invented example: a name chosen to show the SHAPE of a path. ---
+
+internal/decide/entry.go internal/swarm/lintbase.go's class-9 story: the PATHS entry card-nx-f19 named that did not exist at its base
+
+# --- 3. A path in another tree: another repository, another branch, or a retired file. ---
+
+# internal/pulse (nova-pulse's package, frozen 2026-09-23 #3439) was deleted on 2026-09-25 (#3969, the owner: "Yes it's dead. remove."); the specs cite its files at named commits as history.
+internal/pulse internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
+internal/pulse/cardheader.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
+internal/pulse/cut.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
+internal/pulse/cutkind.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
+internal/pulse/fleetstandard.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
+internal/pulse/harvest.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
+internal/pulse/harvest_working.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
+internal/pulse/kinds.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
+internal/pulse/manager.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
+internal/pulse/statushtmlrows.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
+cmd/nova-bus/broadcast_functional_test.go a file of the git bus, removed 2026-10-04; the ratings and release notes that name it are records of their day
+cmd/nova-bus/draft.go a file of the git bus, removed 2026-10-04; the ratings and release notes that name it are records of their day
+cmd/nova-bus/firstrun_functional_test.go a file of the git bus, removed 2026-10-04; the ratings and release notes that name it are records of their day
+cmd/nova-bus/verb_reply.go a file of the git bus, removed 2026-10-04; the ratings and release notes that name it are records of their day
+cmd/nova-bus/version.go a file of the git bus, removed 2026-10-04; the ratings and release notes that name it are records of their day
+cmd/nova-bus/wait_on_note_empty_tick_functional_test.go a file of the git bus, removed 2026-10-04; the ratings and release notes that name it are records of their day
+cmd/nova-bus/testdata/example-bus a file of the git bus, removed 2026-10-04; the ratings and release notes that name it are records of their day
+cmd/nova-bus/help.go a file of the git bus, removed 2026-10-04; the ratings and release notes that name it are records of their day
+cmd/nova-bus/inbox.go a file of the git bus, removed 2026-10-04; the ratings and release notes that name it are records of their day
+cmd/nova-bus/send.go a file of the git bus, removed 2026-10-04; the ratings and release notes that name it are records of their day
+cmd/nova-bus/wait.go a file of the git bus, removed 2026-10-04; the ratings and release notes that name it are records of their day
+internal/bus/draft_test.go a file of the git bus, removed 2026-10-04; the ratings and release notes that name it are records of their day
+internal/bus/git.go a file of the git bus, removed 2026-10-04; the ratings and release notes that name it are records of their day
+internal/bus/instrument.go a file of the git bus, removed 2026-10-04; the ratings and release notes that name it are records of their day
+internal/bus/note.go a file of the git bus, removed 2026-10-04; the ratings and release notes that name it are records of their day
+internal/bus/prepared.go a file of the git bus, removed 2026-10-04; the ratings and release notes that name it are records of their day
+docs/SPEC-BUS-DELIVERY.md a file of the git bus, removed 2026-10-04; the ratings and release notes that name it are records of their day
+internal/secrets/storepull.go deleted with the dead storepull.go (dead-pkg-secrets-t2b); the 1.1.0 ratings doc cites it as history

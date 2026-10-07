@@ -1,0 +1,662 @@
+package main
+
+import (
+	"bytes"
+	"encoding/json"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
+
+	"github.com/stretchr/testify/require"
+)
+
+// The reference this verb reads in the tests: the shapes docs/CLI.md holds,
+// small enough that every row below can be written out by hand.
+const dogfoodCLI = "# Command reference\n" +
+	"\n" +
+	"## nova-example\n" +
+	"\n" +
+	"```\n" +
+	"nova-example quickstart --dir <dir>\n" +
+	"nova-example links --dir <dir>\n" +
+	"nova-example nocode --dir <dir>\n" +
+	"```\n"
+
+func dogfoodRun(t *testing.T, args ...string) (code int, stdout, stderr string) {
+	t.Helper()
+	var out, errOut bytes.Buffer
+	code = run(args, &out, &errOut)
+	return code, out.String(), errOut.String()
+}
+
+func writeCLI(t *testing.T, dir string) string {
+	t.Helper()
+	path := filepath.Join(dir, "CLI.md")
+	require.NoError(t, os.WriteFile(path, []byte(dogfoodCLI), 0o644))
+	return path
+}
+
+func writeReceipt(t *testing.T, dir, name string, fields map[string]any) {
+	t.Helper()
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	line, err := json.Marshal(fields)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, name), append(line, '\n'), 0o644))
+}
+
+func writeAuthors(t *testing.T, dir, body string) string {
+	t.Helper()
+	path := filepath.Join(dir, "authors.txt")
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o644))
+	return path
+}
+
+func TestDogfoodLedgerPrintsOneRowPerVerbAndOneSummary(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	cli := writeCLI(t, dir)
+	receipts := filepath.Join(dir, "receipts")
+	writeReceipt(t, receipts, "a.json", map[string]any{
+		"tool": "nova-example", "verb": "links", "by": "Stella",
+		"at": "2026-09-18T09:00:00Z", "ok": true, "notes": "ran it over the lane's own docs", "issue": 1301,
+	})
+
+	code, stdout, stderr := dogfoodRun(t, "dogfood", "ledger", "--cli", cli, "--receipts", receipts)
+	require.EqualValues(t, 0, code, "exit %d, want 0\n%s", code, stderr)
+	lines := strings.Split(strings.TrimSuffix(stdout, "\n"), "\n")
+	want := []string{
+		"DOGFOOD tool=nova-example verb=quickstart by=nobody at=- ok=- issue=- open=0",
+		"DOGFOOD tool=nova-example verb=links by=Stella at=2026-09-18T09:00:00Z ok=yes issue=1301 open=0",
+		"DOGFOOD tool=nova-example verb=nocode by=nobody at=- ok=- issue=- open=0",
+		"DOGFOOD OK verbs=3 dogfooded=1 by-nonauthor=1 open-edges=0 unfiled=0 unmatched=0",
+	}
+	require.EqualValues(t, strings.Join(want, "\n"), strings.Join(lines, "\n"), "ledger:\n got:\n%s\nwant:\n%s", stdout, strings.Join(want, "\n"))
+}
+
+func TestDogfoodLedgerDoesNotCountAnAuthorRunningTheirOwnVerb(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	cli := writeCLI(t, dir)
+	receipts := filepath.Join(dir, "receipts")
+	writeReceipt(t, receipts, "a.json", map[string]any{
+		"tool": "nova-example", "verb": "links", "by": "Rowan",
+		"at": "2026-09-18T09:00:00Z", "ok": true, "notes": "my own verb, on real work",
+	})
+	authors := writeAuthors(t, dir, "nova-example links = Rowan\n")
+
+	code, stdout, stderr := dogfoodRun(t, "dogfood", "ledger", "--cli", cli, "--receipts", receipts, "--authors", authors)
+	require.EqualValues(t, 0, code, "exit %d, want 0\n%s", code, stderr)
+	require.Contains(t, stdout, "DOGFOOD OK verbs=3 dogfooded=1 by-nonauthor=0 open-edges=0 unfiled=0 unmatched=0", "the author's own run counted as a dogfood:\n%s", stdout)
+}
+
+func TestDogfoodLedgerCountsAnOpenEdge(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	cli := writeCLI(t, dir)
+	receipts := filepath.Join(dir, "receipts")
+	writeReceipt(t, receipts, "a.json", map[string]any{
+		"tool": "nova-example", "verb": "links", "by": "Stella",
+		"at": "2026-09-18T09:00:00Z", "ok": false, "notes": "refused a path it should have taken", "issue": 1301,
+	})
+	code, stdout, _ := dogfoodRun(t, "dogfood", "ledger", "--cli", cli, "--receipts", receipts)
+	require.EqualValues(t, 0, code, "exit %d, want 0: the ledger reports", code)
+	require.Contains(t, stdout, "by-nonauthor=0 open-edges=1", "an edge nobody has cleared is not open in the summary:\n%s", stdout)
+}
+
+func TestDogfoodLedgerNamesAReceiptItCannotReadAndPrintsNoLedger(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	cli := writeCLI(t, dir)
+	receipts := filepath.Join(dir, "receipts")
+	require.NoError(t, os.MkdirAll(receipts, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(receipts, "broken.json"), []byte("{not json}\n"), 0o644))
+	code, stdout, stderr := dogfoodRun(t, "dogfood", "ledger", "--cli", cli, "--receipts", receipts)
+	require.EqualValues(t, 1, code, "exit %d, want 1", code)
+	require.NotContains(t, stdout, "DOGFOOD OK", "a ledger was printed over records it could not read:\n%s", stdout)
+	require.True(t, strings.Contains(stderr, "DOGFOOD FAILED"), "stderr does not name the bad record:\n%s", stderr)
+	require.True(t, strings.Contains(stderr, "broken.json"), "stderr does not name the bad record:\n%s", stderr)
+}
+
+func TestDogfoodLedgerNotesAReceiptForAVerbTheReferenceDoesNotDeclare(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	cli := writeCLI(t, dir)
+	receipts := filepath.Join(dir, "receipts")
+	writeReceipt(t, receipts, "a.json", map[string]any{
+		"tool": "nova-example", "verb": "ghost", "by": "Stella",
+		"at": "2026-09-18T09:00:00Z", "ok": true, "notes": "a verb that is not in the reference",
+	})
+	code, stdout, stderr := dogfoodRun(t, "dogfood", "ledger", "--cli", cli, "--receipts", receipts)
+	require.EqualValues(t, 0, code, "exit %d, want 0\n%s", code, stderr)
+	require.Contains(t, stdout, "verbs=3 dogfooded=0", "an undeclared verb landed in the counts:\n%s", stdout)
+	require.Contains(t, stderr, "DOGFOOD NOTE", "the reference and the receipts disagree and nothing said so:\n%s", stderr)
+}
+
+func TestDogfoodRecordWritesAReceiptTheLedgerReadsBack(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	cli := writeCLI(t, dir)
+	receipts := filepath.Join(dir, "receipts")
+
+	code, stdout, stderr := dogfoodRun(t, "dogfood", "record", "--cli", cli,
+		"--tool", "nova-example", "--verb", "links", "--by", "Stella", "--ok",
+		"--notes", "ran it over the lane's own docs before the merge", "--issue", "1301",
+		"--receipts", receipts)
+	require.EqualValues(t, 0, code, "exit %d, want 0\n%s", code, stderr)
+	require.True(t, strings.HasPrefix(stdout, "DOGFOOD RECORD OK "), "record said:\n%s", stdout)
+	for _, want := range []string{"tool=nova-example", "verb=links", "by=Stella", "ok=yes", "issue=1301"} {
+		require.Contains(t, stdout, want, "the record line is missing %q:\n%s", want, stdout)
+	}
+
+	code, stdout, stderr = dogfoodRun(t, "dogfood", "ledger", "--cli", cli, "--receipts", receipts)
+	require.EqualValues(t, 0, code, "ledger exit %d\n%s", code, stderr)
+	require.True(t, strings.Contains(stdout, "verb=links by=Stella"), "the receipt record wrote did not reach the ledger:\n%s", stdout)
+	require.True(t, strings.Contains(stdout, "dogfooded=1 by-nonauthor=1"), "the receipt record wrote did not reach the ledger:\n%s", stdout)
+}
+
+func TestDogfoodRecordRefusesEveryMissingFieldWithOneRemedyEach(t *testing.T) {
+	t.Parallel()
+
+	receipts := filepath.Join(t.TempDir(), "receipts")
+	code, stdout, stderr := dogfoodRun(t, "dogfood", "record", "--receipts", receipts, "--ok")
+	require.EqualValues(t, 2, code, "exit %d, want 2", code)
+	require.EqualValues(t, "", stdout, "a refusal wrote to stdout:\n%s", stdout)
+	for _, field := range []string{"--tool", "--verb", "--by", "--notes"} {
+		require.Contains(t, stderr, field, "the refusal does not name %s:\n%s", field, stderr)
+	}
+	{
+		entries, err := os.ReadDir(receipts)
+		require.False(t, err == nil && len(entries) > 0, "a refused record still wrote %d files", len(entries))
+	}
+}
+
+func TestDogfoodRecordRefusesAVerdictItWasNotGiven(t *testing.T) {
+	t.Parallel()
+
+	receipts := filepath.Join(t.TempDir(), "receipts")
+	args := []string{"dogfood", "record", "--cli", writeCLI(t, t.TempDir()), "--tool", "nova-example", "--verb", "links",
+		"--by", "Stella", "--notes", "real work", "--receipts", receipts}
+	code, _, stderr := dogfoodRun(t, args...)
+	require.EqualValues(t, 2, code, "exit %d, want 2: a receipt with no verdict is not a receipt", code)
+	require.True(t, strings.Contains(stderr, "--ok"), "the refusal does not say how to state the verdict:\n%s", stderr)
+	require.True(t, strings.Contains(stderr, "--not-ok"), "the refusal does not say how to state the verdict:\n%s", stderr)
+	code, _, stderr = dogfoodRun(t, append(args, "--ok", "--not-ok")...)
+	require.EqualValues(t, 2, code, "exit %d, want 2: both verdicts at once is a typo with two readings", code)
+	require.Contains(t, stderr, "--ok", "the refusal does not name the flags:\n%s", stderr)
+}
+
+func TestDogfoodRecordKeepsTheReceiptOnOneLine(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	cli := writeCLI(t, dir)
+	receipts := filepath.Join(dir, "receipts")
+	code, _, stderr := dogfoodRun(t, "dogfood", "record", "--cli", cli,
+		"--tool", "nova-example", "--verb", "links", "--by", "Stella", "--not-ok",
+		"--notes", "first line\nDOGFOOD OK verbs=99 dogfooded=99 by-nonauthor=99 open-edges=0",
+		"--receipts", receipts)
+	require.EqualValues(t, 2, code, "exit %d, want 2: a receipt is one line of record", code)
+	require.EqualValues(t, 0, strings.Count(strings.TrimSuffix(stderr, "\n"), "\n"), "the refusal itself spans more than one line:\n%q", stderr)
+}
+
+func TestDogfoodGateRequireAllNamesEveryVerbNoNonAuthorHasRun(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	cli := writeCLI(t, dir)
+	receipts := filepath.Join(dir, "receipts")
+	writeReceipt(t, receipts, "a.json", map[string]any{
+		"tool": "nova-example", "verb": "links", "by": "Stella",
+		"at": "2026-09-18T09:00:00Z", "ok": true, "notes": "real work",
+	})
+	code, _, stderr := dogfoodRun(t, "dogfood", "gate", "--cli", cli, "--receipts", receipts, "--require-all")
+	require.EqualValues(t, 1, code, "exit %d, want 1", code)
+	for _, want := range []string{"verb=quickstart", "verb=nocode"} {
+		require.Contains(t, stderr, want, "the gate does not name %s:\n%s", want, stderr)
+	}
+	require.NotContains(t, stderr, "verb=links", "the gate named a verb a non-author had run:\n%s", stderr)
+	require.Contains(t, stderr, "DOGFOOD GATE FAIL verbs=3", "no count line:\n%s", stderr)
+}
+
+func TestDogfoodGateIsGreenWhenEveryVerbHasANonAuthorsPass(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	cli := writeCLI(t, dir)
+	receipts := filepath.Join(dir, "receipts")
+	for i, verb := range []string{"quickstart", "links", "nocode"} {
+		writeReceipt(t, receipts, string(rune('a'+i))+".json", map[string]any{
+			"tool": "nova-example", "verb": verb, "by": "Stella",
+			"at": "2026-09-18T09:00:00Z", "ok": true, "notes": "real work",
+		})
+	}
+	code, stdout, stderr := dogfoodRun(t, "dogfood", "gate", "--cli", cli, "--receipts", receipts, "--require-all")
+	require.EqualValues(t, 0, code, "exit %d, want 0\n%s", code, stderr)
+	require.Contains(t, stdout, "DOGFOOD GATE OK verbs=3 by-nonauthor=3 open-edges=0 unfiled=0 unmatched=0 require-all=yes", "gate line:\n%s", stdout)
+}
+
+// Without --require-all the gate still says no to an edge nobody has cleared:
+// feedback filed is not feedback applied.
+func TestDogfoodGateSaysNoToAnOpenEdgeWithoutRequireAll(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	cli := writeCLI(t, dir)
+	receipts := filepath.Join(dir, "receipts")
+	writeReceipt(t, receipts, "a.json", map[string]any{
+		"tool": "nova-example", "verb": "links", "by": "Stella",
+		"at": "2026-09-18T09:00:00Z", "ok": false, "notes": "refused a path it should have taken", "issue": 1301,
+	})
+	code, _, stderr := dogfoodRun(t, "dogfood", "gate", "--cli", cli, "--receipts", receipts)
+	require.EqualValues(t, 1, code, "exit %d, want 1", code)
+	require.Contains(t, stderr, "#1301", "the finding does not name the issue:\n%s", stderr)
+}
+
+// With --shipped the gate judges the tools under that cmd/ only: a parked
+// tool's not-ok receipt is set aside and counted, a shipped tool's edge still
+// says no.
+func TestDogfoodGateShippedJudgesOnlyTheToolsUnderCmd(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	cli := writeCLI(t, dir)
+	cmd := filepath.Join(dir, "cmd", "nova-example")
+	require.NoError(t, os.MkdirAll(cmd, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(cmd, "main.go"), []byte("package main\n"), 0o644))
+	receipts := filepath.Join(dir, "receipts")
+	writeReceipt(t, receipts, "a.json", map[string]any{
+		"tool": "nova-example", "verb": "links", "by": "Stella",
+		"at": "2026-09-18T09:00:00Z", "ok": true, "notes": "ran it on the corpus",
+	})
+	writeReceipt(t, receipts, "b.json", map[string]any{
+		"tool": "nova-parked", "verb": "fill", "by": "Stella",
+		"at": "2026-09-18T09:01:00Z", "ok": false, "notes": "parked under deprecated/",
+	})
+	shipped := filepath.Join(dir, "cmd")
+
+	{
+		code, _, _ := dogfoodRun(t, "dogfood", "gate", "--cli", cli, "--receipts", receipts)
+		require.EqualValues(t, 1, code, "without --shipped exit %d, want 1: the parked receipt is judged", code)
+	}
+	code, stdout, stderr := dogfoodRun(t, "dogfood", "gate", "--cli", cli, "--receipts", receipts, "--shipped", shipped)
+	require.EqualValues(t, 0, code, "with --shipped exit %d, want 0\nstderr:%s", code, stderr)
+	require.True(t, strings.Contains(stderr, "DOGFOOD NOTE shipped=1 outside=1"), "the scope is not said:\nstdout:%s\nstderr:%s", stdout, stderr)
+	require.True(t, strings.Contains(stdout, "DOGFOOD GATE OK"), "the scope is not said:\nstdout:%s\nstderr:%s", stdout, stderr)
+
+	writeReceipt(t, receipts, "c.json", map[string]any{
+		"tool": "nova-example", "verb": "corpus", "by": "Stella",
+		"at": "2026-09-18T09:02:00Z", "ok": false, "notes": "refused the corpus",
+	})
+	{
+		code, _, _ := dogfoodRun(t, "dogfood", "gate", "--cli", cli, "--receipts", receipts, "--shipped", shipped)
+		require.EqualValues(t, 1, code, "exit %d, want 1: a shipped tool's open edge must still say no", code)
+	}
+}
+
+func TestDogfoodGateCapsItsFindingsAndSaysHowToSeeTheRest(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	cli := writeCLI(t, dir)
+	receipts := filepath.Join(dir, "receipts")
+	require.NoError(t, os.MkdirAll(receipts, 0o755))
+	code, _, stderr := dogfoodRun(t, "dogfood", "gate", "--cli", cli, "--receipts", receipts, "--require-all", "--max", "1", "--allow-empty")
+	require.EqualValues(t, 1, code, "exit %d, want 1", code)
+	require.EqualValues(t, 1, strings.Count(stderr, "DOGFOOD GATE FAIL tool="), "the cap did not hold:\n%s", stderr)
+	require.Contains(t, stderr, "--max", "a cap with no remedy is censorship:\n%s", stderr)
+	require.Contains(t, stderr, "shown=1", "no count line:\n%s", stderr)
+	// The first run of this verb against the repository's own reference printed
+	// `DOGFOOD\x20GATE MORE`: bounded escapes the token it is given, so the token
+	// is one word.
+	require.Contains(t, stderr, "DOGFOOD MORE kind=verb", "the MORE line is not readable:\n%s", stderr)
+	require.NotContains(t, stderr, "\\x20", "an escaped space reached a printed line:\n%s", stderr)
+}
+
+func TestDogfoodRefusesAMissingPath(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	cli := writeCLI(t, dir)
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"ledger without --cli", []string{"dogfood", "ledger", "--receipts", dir}, "--cli"},
+		{"ledger without --receipts", []string{"dogfood", "ledger", "--cli", cli}, "--receipts"},
+		{"gate without --receipts", []string{"dogfood", "gate", "--cli", cli}, "--receipts"},
+		{"record without --receipts", []string{"dogfood", "record", "--tool", "t", "--verb", "v", "--by", "b", "--notes", "n", "--ok"}, "--receipts"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			code, _, stderr := dogfoodRun(t, tc.args...)
+			require.EqualValues(t, 2, code, "exit %d, want 2", code)
+			require.True(t, strings.Contains(stderr, tc.want), "refusal:\n%s", stderr)
+			require.True(t, strings.Contains(stderr, "refusing to guess"), "refusal:\n%s", stderr)
+		})
+	}
+}
+
+func TestDogfoodRefusesAnUnknownSubVerb(t *testing.T) {
+	t.Parallel()
+
+	code, _, stderr := dogfoodRun(t, "dogfood", "ledgre")
+	require.EqualValues(t, 2, code, "exit %d, want 2", code)
+	require.Contains(t, stderr, "run: nova-check help", "a typo was answered without the door:\n%s", stderr)
+	code, _, stderr = dogfoodRun(t, "dogfood")
+	require.EqualValues(t, 2, code, "exit %d, want 2", code)
+	require.Contains(t, stderr, "ledger", "the refusal does not name the sub-verbs:\n%s", stderr)
+}
+
+func TestDogfoodIsInTheUsageBanner(t *testing.T) {
+	t.Parallel()
+
+	code, stdout, _ := dogfoodRun(t, "help")
+	require.EqualValues(t, 0, code, "exit %d", code)
+	for _, want := range []string{"dogfood ledger", "dogfood record", "dogfood gate"} {
+		require.Contains(t, stdout, want, "the banner does not carry %q", want)
+	}
+}
+
+func TestDogfoodRecordUsageNamesTheVerbList(t *testing.T) {
+	t.Parallel()
+
+	code, stdout, _ := dogfoodRun(t, "help")
+	require.EqualValues(t, 0, code, "exit %d", code)
+	line := ""
+	for _, l := range strings.Split(stdout, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(l), "nova-check dogfood record ") {
+			line = l
+			break
+		}
+	}
+	require.NotEqualValues(t, "", line, "the banner has no dogfood record line")
+	for _, want := range []string{"--cli", "--tools"} {
+		require.Contains(t, line, want, "the dogfood record usage line does not name %s, so a reader pastes a line the verb refuses:\n%s", want, line)
+	}
+}
+
+// The --repo path end to end, against a git repository built here. Local only:
+// this binary's tests never touch the network.
+func TestDogfoodLedgerReadsAuthorshipFromGit(t *testing.T) {
+	t.Parallel()
+
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("no git on this machine")
+	}
+	repo := t.TempDir()
+	git := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repo
+		cmd.Env = append(os.Environ(),
+			"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
+			"GIT_AUTHOR_DATE=2026-09-18T09:00:00Z", "GIT_COMMITTER_DATE=2026-09-18T09:00:00Z",
+			// The author name is pinned beside the committer's: an ambient
+			// GIT_AUTHOR_NAME on the machine would otherwise answer the git
+			// read with a different name than the receipt carries, and the
+			// test would judge the room instead of the ledger.
+			"GIT_AUTHOR_NAME=Rowan Claude",
+			"GIT_COMMITTER_NAME=Rowan Claude", "GIT_COMMITTER_EMAIL=rowan@mas-bandwidth.com")
+		{
+			out, err := cmd.CombinedOutput()
+			require.NoError(t, err, "git %v: %v\n%s", args, err, out)
+		}
+	}
+	git("init", "-q", "-b", "main")
+	git("config", "user.name", "Rowan Claude")
+	git("config", "user.email", "rowan@mas-bandwidth.com")
+	require.NoError(t, os.MkdirAll(filepath.Join(repo, "cmd", "nova-example"), 0o755))
+	{
+		err := os.WriteFile(filepath.Join(repo, "cmd", "nova-example", "main.go"),
+			[]byte("package main\n\nvar verbs = []string{\"quickstart\", \"links\", \"nocode\"}\n"), 0o644)
+		require.NoError(t, err)
+	}
+	git("add", "-A")
+	git("commit", "-q", "-m", "the verbs arrive")
+
+	dir := t.TempDir()
+	cli := writeCLI(t, dir)
+	receipts := filepath.Join(dir, "receipts")
+	writeReceipt(t, receipts, "a.json", map[string]any{
+		"tool": "nova-example", "verb": "links", "by": "Rowan Claude",
+		"at": "2026-09-18T09:00:00Z", "ok": true, "notes": "my own verb",
+	})
+	code, stdout, stderr := dogfoodRun(t, "dogfood", "ledger", "--cli", cli, "--receipts", receipts, "--repo", repo)
+	require.EqualValues(t, 0, code, "exit %d\n%s", code, stderr)
+	require.Contains(t, stdout, "dogfooded=1 by-nonauthor=0", "git said Rowan Claude wrote the verb and the ledger counted his own run:\n%s", stdout)
+}
+
+// The 2026-09-18 dogfood pass, edge 3: the ledger said nine receipts named a
+// verb the reference does not declare and named none of them, so nine real
+// runs were invisible and nobody could tell how the verb should have been
+// spelled.
+func TestDogfoodLedgerNamesEveryStrandedReceiptAndTheNearestVerb(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	cli := writeCLI(t, dir)
+	receipts := filepath.Join(dir, "receipts")
+	writeReceipt(t, receipts, "stranded.json", map[string]any{
+		"tool": "nova-example", "verb": "lnks", "by": "Stella",
+		"at": "2026-09-18T09:00:00Z", "ok": true, "notes": "real work",
+	})
+	code, _, stderr := dogfoodRun(t, "dogfood", "ledger", "--cli", cli, "--receipts", receipts)
+	require.EqualValues(t, 0, code, "exit %d, want 0\n%s", code, stderr)
+	require.True(t, strings.Contains(stderr, "stranded"), "the stranded receipt is not named:\n%s", stderr)
+	require.True(t, strings.Contains(stderr, "stranded.json"), "the stranded receipt is not named:\n%s", stderr)
+	require.Contains(t, stderr, "verb=lnks", "the note does not say what the receipt claimed:\n%s", stderr)
+	require.Contains(t, stderr, "nova-example links", "the note does not say what it was probably meant to be:\n%s", stderr)
+}
+
+// Edge 4: the gate — the line the release lane actually calls — dropped the
+// note entirely, so a lane could pass or fail without ever learning that every
+// receipt it read had been discarded.
+func TestDogfoodGateAlsoNamesTheStrandedReceipts(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	cli := writeCLI(t, dir)
+	receipts := filepath.Join(dir, "receipts")
+	writeReceipt(t, receipts, "stranded.json", map[string]any{
+		"tool": "nova-example", "verb": "lnks", "by": "Stella",
+		"at": "2026-09-18T09:00:00Z", "ok": true, "notes": "real work",
+	})
+	code, _, stderr := dogfoodRun(t, "dogfood", "gate", "--cli", cli, "--receipts", receipts, "--require-all")
+	require.EqualValues(t, 1, code, "exit %d, want 1", code)
+	require.True(t, strings.Contains(stderr, "stranded.json"), "the gate discarded a receipt and did not say so:\n%s", stderr)
+	require.True(t, strings.Contains(stderr, "nova-example links"), "the gate discarded a receipt and did not say so:\n%s", stderr)
+	code, stdout, stderr := dogfoodRun(t, "dogfood", "gate", "--cli", cli, "--receipts", receipts)
+	require.EqualValues(t, 0, code, "exit %d, want 0 without --require-all\n%s", code, stderr)
+	require.Contains(t, stderr, "stranded.json", "a green gate said nothing about the receipt it discarded:\n%s\n%s", stdout, stderr)
+}
+
+// Edge 5: every receipt of the pass was written with --ok, because the verbs
+// worked, and the edges were in the notes where the family writes them.
+func TestDogfoodLedgerCountsAnEdgeNamedInTheNotes(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	cli := writeCLI(t, dir)
+	receipts := filepath.Join(dir, "receipts")
+	writeReceipt(t, receipts, "a.json", map[string]any{
+		"tool": "nova-example", "verb": "links", "by": "Stella",
+		"at": "2026-09-18T09:00:00Z", "ok": true,
+		"notes": "Did the job. Edges: (1) the refusal names no remedy; (2) it reads only --dir.",
+	})
+	code, stdout, stderr := dogfoodRun(t, "dogfood", "ledger", "--cli", cli, "--receipts", receipts)
+	require.EqualValues(t, 0, code, "exit %d\n%s", code, stderr)
+	require.Contains(t, stdout, "open-edges=1 unfiled=1", "the notes name an edge and the summary says none:\n%s", stdout)
+	code, _, stderr = dogfoodRun(t, "dogfood", "gate", "--cli", cli, "--receipts", receipts)
+	require.EqualValues(t, 1, code, "gate exit %d, want 1: an edge nobody filed is open\n%s", code, stderr)
+	require.Contains(t, stderr, "no issue filed", "the gate does not say the edge was never filed:\n%s", stderr)
+}
+
+// Edge 2 at the CLI: `record` had --cli available and checked nothing, so a
+// receipt for a verb spelled differently was accepted silently and discovered
+// later as a NOTE that named nothing. Nine receipts were lost that way.
+func TestDogfoodRecordRefusesAVerbTheReferenceDoesNotDeclare(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	cli := writeCLI(t, dir)
+	receipts := filepath.Join(dir, "receipts")
+	code, stdout, stderr := dogfoodRun(t, "dogfood", "record", "--cli", cli,
+		"--tool", "nova-example", "--verb", "lnks", "--by", "Stella", "--ok",
+		"--notes", "real work", "--receipts", receipts)
+	require.EqualValues(t, 2, code, "exit %d, want 2", code)
+	require.EqualValues(t, "", stdout, "a refusal wrote to stdout:\n%s", stdout)
+	require.Contains(t, stderr, "nova-example links", "the refusal does not name the nearest declared verb:\n%s", stderr)
+	{
+		entries, err := os.ReadDir(receipts)
+		require.False(t, err == nil && len(entries) > 0, "a refused record still wrote a receipt")
+	}
+}
+
+func TestDogfoodRecordAcceptsADeclaredVerb(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	cli := writeCLI(t, dir)
+	receipts := filepath.Join(dir, "receipts")
+	code, stdout, stderr := dogfoodRun(t, "dogfood", "record", "--cli", cli,
+		"--tool", "nova-example", "--verb", "links", "--by", "Stella", "--ok",
+		"--notes", "real work", "--receipts", receipts)
+	require.EqualValues(t, 0, code, "exit %d, want 0\n%s", code, stderr)
+	require.True(t, strings.HasPrefix(stdout, "DOGFOOD RECORD OK "), "record said:\n%s", stdout)
+}
+
+func TestDogfoodRecordRefusesWithNothingToCheckAgainst(t *testing.T) {
+	t.Parallel()
+
+	receipts := filepath.Join(t.TempDir(), "receipts")
+	code, _, stderr := dogfoodRun(t, "dogfood", "record",
+		"--tool", "nova-example", "--verb", "links", "--by", "Stella", "--ok",
+		"--notes", "real work", "--receipts", receipts)
+	require.EqualValues(t, 2, code, "exit %d, want 2: a receipt checked against nothing is how nine of them were stranded", code)
+	require.True(t, strings.Contains(stderr, "--cli"), "the refusal does not name either source:\n%s", stderr)
+	require.True(t, strings.Contains(stderr, "--tools"), "the refusal does not name either source:\n%s", stderr)
+}
+
+// The binaries are the authoritative list when they are to hand: a reference
+// that has gone stale strands receipts for verbs that really exist.
+func TestDogfoodReadsTheVerbsFromTheBinariesWhenToldTo(t *testing.T) {
+	t.Parallel()
+
+	if runtime.GOOS == "windows" {
+		t.Skip("the fixture is a shell script")
+	}
+	tools := t.TempDir()
+	script := "#!/bin/sh\ncat <<'EOF'\nnova-example: a fixture\n\nusage:\n  nova-example links --dir <dir>\n  nova-example ask   delivers ONE unit to the FRIEND who owns it\nEOF\n"
+	require.NoError(t, testbin.WriteExecutable(filepath.Join(tools, "nova-example"), []byte(script), 0o755))
+	dir := t.TempDir()
+	cli := writeCLI(t, dir) // declares quickstart, links, nocode — and no `ask`
+	receipts := filepath.Join(dir, "receipts")
+	writeReceipt(t, receipts, "a.json", map[string]any{
+		"tool": "nova-example", "verb": "ask", "by": "Stella",
+		"at": "2026-09-18T09:00:00Z", "ok": true, "notes": "one real ask sent",
+	})
+	code, stdout, stderr := dogfoodRun(t, "dogfood", "ledger", "--cli", cli, "--tools", tools, "--receipts", receipts)
+	require.EqualValues(t, 0, code, "exit %d\n%s", code, stderr)
+	require.Contains(t, stdout, "verb=ask by=Stella", "the binary declares `ask` and the ledger stranded the receipt:\n%s\n%s", stdout, stderr)
+	require.Contains(t, stdout, "verbs=2", "the binary answered for itself and the stale reference still filled in:\n%s", stdout)
+	// And `record` checks against the same list.
+	code, _, stderr = dogfoodRun(t, "dogfood", "record", "--tools", tools,
+		"--tool", "nova-example", "--verb", "ask", "--by", "Emma", "--ok",
+		"--notes", "another real ask", "--receipts", receipts)
+	require.EqualValues(t, 0, code, "record exit %d against the binaries' own list\n%s", code, stderr)
+}
+
+// DOGFOOD ROUND 5, EDGE 2, THROUGH THE VERB A PERSON ACTUALLY RUNS. Stella finds
+// something; somebody else's later pass does not close it; the fixer records a receipt
+// that NAMES it, and the gate goes green.
+func TestDogfoodRecordClosesTheFindingItNames(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	cli := writeCLI(t, dir)
+	receipts := filepath.Join(dir, "receipts")
+
+	code, stdout, stderr := dogfoodRun(t, "dogfood", "record", "--cli", cli,
+		"--tool", "nova-example", "--verb", "links", "--by", "Stella", "--not-ok",
+		"--notes", "ran it over the lane's own docs; it refused a relative path",
+		"--receipts", receipts)
+	require.EqualValues(t, 0, code, "record exit %d\n%s", code, stderr)
+	// The id is the eight characters ending the file the record line names, which is
+	// how a reader gets one to type into --closes.
+	file := fieldOf(t, stdout, "file=")
+	id := strings.TrimSuffix(filepath.Base(file), ".json")
+	id = id[len(id)-8:]
+
+	// Somebody else runs it later and it works for them. That is not an answer.
+	{
+		code, _, stderr = dogfoodRun(t, "dogfood", "record", "--cli", cli,
+			"--tool", "nova-example", "--verb", "links", "--by", "Johnny", "--ok",
+			"--notes", "ran it over my own tree; nothing to report",
+			"--receipts", receipts)
+		require.EqualValues(t, 0, code, "record exit %d\n%s", code, stderr)
+	}
+	code, stdout, stderr = dogfoodRun(t, "dogfood", "gate", "--cli", cli, "--receipts", receipts)
+	require.EqualValues(t, 1, code, "the gate passed over Stella's open finding: exit %d\n%s\n%s", code, stdout, stderr)
+	require.Contains(t, stderr, "receipt="+id, "the gate never named the id a closer must use (%s):\n%s", id, stderr)
+
+	// An id that names nothing closes nothing.
+	{
+		code, _, stderr = dogfoodRun(t, "dogfood", "record", "--cli", cli,
+			"--tool", "nova-example", "--verb", "links", "--by", "Rowan", "--ok",
+			"--closes", "deadbeef", "--notes", "fixed it, or so I thought",
+			"--receipts", receipts)
+		require.EqualValues(t, 0, code, "record exit %d\n%s", code, stderr)
+	}
+	{
+		code, stdout, stderr = dogfoodRun(t, "dogfood", "gate", "--cli", cli, "--receipts", receipts)
+		require.EqualValues(t, 1, code, "a --closes naming nothing closed a real finding: exit %d\n%s\n%s", code, stdout, stderr)
+	}
+
+	// Naming it closes it.
+	{
+		code, _, stderr = dogfoodRun(t, "dogfood", "record", "--cli", cli,
+			"--tool", "nova-example", "--verb", "links", "--by", "Rowan", "--ok",
+			"--closes", id, "--notes", "relative paths now taken; ran it on the same tree",
+			"--receipts", receipts)
+		require.EqualValues(t, 0, code, "record exit %d\n%s", code, stderr)
+	}
+	{
+		code, stdout, stderr = dogfoodRun(t, "dogfood", "gate", "--cli", cli, "--receipts", receipts)
+		require.EqualValues(t, 0, code, "the gate still says no over an answered finding: exit %d\n%s\n%s", code, stdout, stderr)
+	}
+}
+
+// A --closes that is not an id is refused where it is written, not stored and puzzled
+// over later.
+func TestDogfoodRecordRefusesAClosesThatIsNotAnID(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	cli := writeCLI(t, dir)
+	code, stdout, stderr := dogfoodRun(t, "dogfood", "record", "--cli", cli,
+		"--tool", "nova-example", "--verb", "links", "--by", "Rowan", "--ok",
+		"--closes", "stella's one", "--notes", "fixed it",
+		"--receipts", filepath.Join(dir, "receipts"))
+	require.EqualValues(t, 2, code, "exit %d, want 2\n%s\n%s", code, stdout, stderr)
+	require.Contains(t, stderr, "--closes", "the refusal never names the flag:\n%s", stderr)
+}
+
+// fieldOf pulls one `name=value` off a one-line record, to the end of the line.
+func fieldOf(t *testing.T, line, name string) string {
+	t.Helper()
+	_, rest, ok := strings.Cut(line, name)
+	require.True(t, ok, "no %s in:\n%s", name, line)
+	value, _, _ := strings.Cut(strings.TrimSpace(rest), "\n")
+	return strings.TrimSpace(value)
+}

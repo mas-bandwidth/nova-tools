@@ -1,0 +1,301 @@
+package main
+
+// The convergence verb at the command line: the refusals a first run hits, the
+// lines one tick prints, and the streak that is the only exit 1. The forge and
+// the checkout are fakes named by --gh and --git, so no test here touches a
+// network, and the clock is --now, so no test here waits for one.
+
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// fakeBin writes one executable fake and returns its path. Fakes are shell
+// scripts, so the tests that use one are skipped where there is no shell --
+// the verb's own machinery is covered by internal/converge either way.
+func fakeBin(t *testing.T, dir, name, body string) string {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("the forge and git fakes are shell scripts; internal/converge covers the same paths with Go fakes")
+	}
+	path := filepath.Join(dir, name)
+	require.NoError(t, testbin.WriteExecutable(path, []byte("#!/bin/sh\n"+body), 0o755))
+	return path
+}
+
+// convFixture is one whole reading's worth of sources at the command line.
+type convFixture struct {
+	dir  string
+	args []string
+}
+
+const convNow = "2026-09-18T12:00:00Z"
+const convSince = "2026-09-18T00:00:00Z"
+
+func newConvFixture(t *testing.T) *convFixture {
+	t.Helper()
+	dir := t.TempDir()
+	write := func(name, body string) string {
+		path := filepath.Join(dir, name)
+		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+		require.NoError(t, os.WriteFile(path, []byte(body), 0o644))
+		return path
+	}
+
+	ledger := write("ledger.md", "| Tool | Case | Result |\n|---|---|---|\n| a | one | PASS |\n| b | two | TODO |\n")
+	retired := write("retired.md", "Retired 2026-09-18 by Rowan.\n\n| script | what |\n| --- | --- |\n| `board.sh` | a board |\n")
+	// One open edge, found before the window opened, so EDGES reads flat and the
+	// streak test below can move one stream at a time; and one clean receipt
+	// inside the window, so there is a round to divide by.
+	write("receipts/a.json", `{"tool":"nova-check","verb":"links","by":"Stella","at":"2026-09-17T09:00:00Z","ok":true,"notes":"real work. Edges: one"}`)
+	write("receipts/b.json", `{"tool":"nova-check","verb":"kernel","by":"Rowan","at":"2026-09-18T09:00:00Z","ok":true,"notes":"real work, nothing found"}`)
+	write("bin/one.sh", "echo 1\n")
+	write("bin/two.sh", "echo 2\n")
+
+	// The fake forge: two open pull requests, one merged batch, in the shape
+	// `gh pr list --json` answers in.
+	openJSON := `[{"number":1,"title":"open one","body":"","state":"OPEN","createdAt":"2026-09-17T08:00:00Z","closedAt":"","mergedAt":""}]`
+	closedJSON := `[{"number":3,"title":"integration-11a: a batch","body":"round 2","state":"MERGED",` +
+		`"createdAt":"2026-09-18T01:00:00Z","closedAt":"2026-09-18T03:00:00Z","mergedAt":"2026-09-18T03:00:00Z"},` +
+		`{"number":5,"title":"integration-10a: before","body":"round 5","state":"MERGED",` +
+		`"createdAt":"2026-09-17T14:00:00Z","closedAt":"2026-09-17T18:00:00Z","mergedAt":"2026-09-17T18:00:00Z"}]`
+	gh := fakeBin(t, dir, "gh", `
+case "$*" in
+  *"--state open"*) cat <<'EOF'
+`+openJSON+`
+EOF
+  ;;
+  *) cat <<'EOF'
+`+closedJSON+`
+EOF
+  ;;
+esac
+`)
+
+	return &convFixture{dir: dir, args: []string{"convergence",
+		"--repo", "mas-bandwidth/nova-tools",
+		"--ledger", ledger,
+		"--receipts", filepath.Join(dir, "receipts"),
+		"--retired", retired,
+		"--bin", filepath.Join(dir, "bin"),
+		"--since", convSince,
+		"--now", convNow,
+		"--gh", gh,
+	}}
+}
+
+func (f *convFixture) run(t *testing.T, extra ...string) (int, string, string) {
+	t.Helper()
+	return runCheck(t, append(append([]string(nil), f.args...), extra...)...)
+}
+
+// 17
+func TestConvergenceRefusesAMissingFlag(t *testing.T) {
+	t.Parallel()
+
+	required := []string{"repo", "ledger", "receipts", "retired", "since"}
+	f := newConvFixture(t)
+	for _, missing := range required {
+		var args []string
+		for i := 0; i < len(f.args); i++ {
+			if f.args[i] == "--"+missing {
+				i++
+				continue
+			}
+			args = append(args, f.args[i])
+		}
+		exit, stdout, stderr := runCheck(t, args...)
+		assert.EqualValues(t, 2, exit, "--%s omitted exited %d, want 2", missing, exit)
+		assert.EqualValues(t, "", stdout, "--%s omitted printed a reading: %q", missing, stdout)
+		assert.Contains(t, stderr, "--"+missing+" is required; refusing to guess", "--%s omitted said: %q", missing, stderr)
+	}
+
+	exit, _, stderr := runCheck(t, "convergence")
+	require.EqualValues(t, 2, exit, "a bare convergence exited %d, want 2", exit)
+	for _, missing := range required {
+		assert.Contains(t, stderr, "--"+missing+" is required", "one run must name every missing flag; %s was not named:\n%s", missing, stderr)
+	}
+	// The --ledger hint is this verb's own: the pit-stop ledger, not the corpus
+	// ledger the same flag names on `corpus`.
+	assert.Contains(t, stderr, "pit-stop ledger", "the --ledger hint names the wrong document:\n%s", stderr)
+}
+
+// 18
+func TestConvergenceRefusesASinceItCannotRead(t *testing.T) {
+	t.Parallel()
+
+	for _, bad := range []string{"yesterday", "2026-13-40T00:00:00Z", "2026-09-19T00:00:00Z"} {
+		f := newConvFixture(t)
+		args := append([]string(nil), f.args...)
+		for i := range args {
+			if args[i] == convSince {
+				args[i] = bad
+			}
+		}
+		exit, stdout, stderr := runCheck(t, args...)
+		assert.EqualValues(t, 2, exit, "--since %s exited %d, want 2", bad, exit)
+		assert.NotContains(t, stdout, "CONVERGENCE", "--since %s printed a stream line: %q", bad, stdout)
+		assert.Contains(t, stderr, "--since", "--since %s said: %q", bad, stderr)
+	}
+}
+
+// One tick, end to end, through the fakes.
+func TestConvergencePrintsATickAtTheCommandLine(t *testing.T) {
+	t.Parallel()
+
+	f := newConvFixture(t)
+	exit, stdout, stderr := f.run(t)
+	require.EqualValues(t, 0, exit, "exit %d\nstdout:\n%s\nstderr:\n%s", exit, stdout, stderr)
+	lines := strings.Split(strings.TrimSpace(stdout), "\n")
+	require.EqualValues(t, 8, len(lines), "want seven stream lines and one verdict, got %d:\n%s", len(lines), stdout)
+	for _, want := range []string{"CONVERGENCE LANDING ", "CONVERGENCE SCRIPTS ", "CONVERGENCE PRS ",
+		"CONVERGENCE EDGES ", "CONVERGENCE LEDGER "} {
+		assert.Contains(t, stdout, want, "no %q in:\n%s", want, stdout)
+	}
+	// CLASSES and FLEET were given no source, so they are absent and named.
+	assert.Contains(t, stdout, "trend=absent measure=class-test-index-entries source=--repo-dir", "CLASSES was not absent:\n%s", stdout)
+	assert.Contains(t, stdout, "absent=CLASSES,FLEET", "the verdict does not name the absent streams:\n%s", stdout)
+	// One batch at two rounds now, one at five before --since.
+	assert.Contains(t, stdout, "CONVERGENCE LANDING now=2 before=5 ratio=0.40 trend=contracting", "the LANDING line is not the reading of the fixture:\n%s", stdout)
+}
+
+// --json is the same reading, and only the object.
+func TestConvergenceJSONIsTheWholeReading(t *testing.T) {
+	t.Parallel()
+
+	f := newConvFixture(t)
+	exit, stdout, stderr := f.run(t, "--json")
+	require.EqualValues(t, 0, exit, "exit %d: %s", exit, stderr)
+	require.NotContains(t, stdout, "CONVERGENCE", "--json printed a line as well as the object:\n%s", stdout)
+	var back struct {
+		Streams []struct {
+			Name  string   `json:"stream"`
+			Now   *float64 `json:"now"`
+			Trend string   `json:"trend"`
+		} `json:"streams"`
+		Verdict string   `json:"verdict"`
+		Absent  []string `json:"absent"`
+	}
+	{
+		err := json.Unmarshal([]byte(stdout), &back)
+		require.NoError(t, err, "--json did not print one JSON object: %v\n%s", err, stdout)
+	}
+	assert.EqualValues(t, 7, len(back.Streams), "the object holds %d streams, want 7", len(back.Streams))
+	assert.EqualValues(t, 2, len(back.Absent), "absent=%v, want the two streams with no source", back.Absent)
+}
+
+// 15, at the command line: the streak is the only exit 1, and it lives in --state.
+func TestConvergenceExitsOneOnTheSecondConsecutiveWidening(t *testing.T) {
+	t.Parallel()
+
+	f := newConvFixture(t)
+	state := filepath.Join(f.dir, "state.json")
+
+	// Tick one remembers the reading.
+	{
+		exit, _, stderr := f.run(t, "--state", state)
+		require.EqualValues(t, 0, exit, "the first tick exited %d: %s", exit, stderr)
+	}
+	// A row is added to the ledger and nobody has closed it: LEDGER, whose
+	// before comes from the remembered tick, widens once -- a WARN, not a red.
+	owe := func(row string) {
+		t.Helper()
+		fh, err := os.OpenFile(filepath.Join(f.dir, "ledger.md"), os.O_APPEND|os.O_WRONLY, 0o644)
+		require.NoError(t, err)
+		{
+			_, err := fh.WriteString(row)
+			require.NoError(t, err)
+		}
+		require.NoError(t, fh.Close())
+	}
+	// Each tick is a tick of the clock: the same instant read twice is one tick,
+	// so the ticks below are an hour apart.
+	owe("| c | three | TODO |\n")
+	exit, stdout, _ := f.run(t, "--state", state, "--now", "2026-09-18T13:00:00Z")
+	require.EqualValues(t, 0, exit, "one widening tick exited %d, want 0 with a WARN:\n%s", exit, stdout)
+	require.True(t, strings.Contains(stdout, "CONVERGENCE WARN"), "one widening tick did not warn:\n%s", stdout)
+	require.True(t, strings.Contains(stdout, "widening=LEDGER"), "one widening tick did not warn:\n%s", stdout)
+	// And another: the same stream widening twice running is the red.
+	owe("| d | four | TODO |\n")
+	exit, stdout, _ = f.run(t, "--state", state, "--now", "2026-09-18T14:00:00Z")
+	require.EqualValues(t, 1, exit, "two consecutive widening ticks exited %d, want 1:\n%s", exit, stdout)
+	assert.Contains(t, stdout, "widening=LEDGER", "the red does not name the stream:\n%s", stdout)
+
+	// With no --state nothing is remembered, so the same two ticks are both 0.
+	for i, when := range []string{"2026-09-18T15:00:00Z", "2026-09-18T16:00:00Z"} {
+		{
+			exit, _, _ := f.run(t, "--now", when)
+			assert.EqualValues(t, 0, exit, "tick %d with no --state exited %d", i, exit)
+		}
+	}
+
+	// And the same tick read twice is one tick: a second invocation over the
+	// same window must not turn a WARN into a red on a reading nobody took.
+	same := filepath.Join(f.dir, "same.json")
+	for i := 0; i < 3; i++ {
+		exit, stdout, _ := f.run(t, "--state", same, "--now", "2026-09-18T17:00:00Z")
+		require.EqualValues(t, 0, exit, "reading one tick %d times went red:\n%s", i+1, stdout)
+	}
+}
+
+// The CLASSES stream through a fake git.
+func TestConvergenceReadsClassesThroughAFakeGit(t *testing.T) {
+	t.Parallel()
+
+	f := newConvFixture(t)
+	repoDir := filepath.Join(f.dir, "repo")
+	spec := func(n int) string {
+		var b strings.Builder
+		b.WriteString("## The class tests\n\n")
+		for i := 0; i < n; i++ {
+			b.WriteString("### `class-" + strings.Repeat("x", i%3+1) + strings.Repeat("y", i) + "` — a rule\n\n")
+		}
+		return b.String()
+	}
+	require.NoError(t, os.MkdirAll(filepath.Join(repoDir, "docs"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(repoDir, "docs", "SPEC-CI.md"), []byte(spec(4)), 0o644))
+	older := filepath.Join(f.dir, "older-spec.md")
+	require.NoError(t, os.WriteFile(older, []byte(spec(2)), 0o644))
+	git := fakeBin(t, f.dir, "git", `
+case "$*" in
+  *rev-list*) echo abc123456789 ;;
+  *show*) cat `+older+` ;;
+esac
+`)
+	exit, stdout, stderr := f.run(t, "--repo-dir", repoDir, "--git", git)
+	require.EqualValues(t, 0, exit, "exit %d: %s", exit, stderr)
+	assert.Contains(t, stdout, "CONVERGENCE CLASSES now=4 before=2 ratio=2 trend=contracting", "the CLASSES line is not the reading of the fixture:\n%s", stdout)
+	assert.Contains(t, stdout, "rev=abc123456789", "the CLASSES line does not name the revision it read:\n%s", stdout)
+}
+
+// A forge that will not answer is exit 2 and prints no reading.
+func TestConvergenceRefusesAForgeThatWillNotAnswer(t *testing.T) {
+	t.Parallel()
+
+	f := newConvFixture(t)
+	bad := fakeBin(t, f.dir, "gh-broken", "echo 'gh: could not resolve to a Repository' 1>&2\nexit 1\n")
+	exit, stdout, stderr := f.run(t, "--gh", bad)
+	require.EqualValues(t, 2, exit, "a forge that refused exited %d, want 2", exit)
+	assert.NotContains(t, stdout, "CONVERGENCE", "a partial reading was printed:\n%s", stdout)
+	assert.False(t, !strings.Contains(stderr, "nova-check convergence REFUSED:") || !strings.Contains(stderr, "gh pr list"), "the refusal does not name the child: %q", stderr)
+}
+
+// A --timeout of zero or less is a wait with no end.
+func TestConvergenceRefusesATimeoutThatIsNotOne(t *testing.T) {
+	t.Parallel()
+
+	f := newConvFixture(t)
+	for _, bad := range []string{"0", "-5"} {
+		exit, _, stderr := f.run(t, "--timeout", bad)
+		assert.True(t, exit == 2 && strings.Contains(stderr, "--timeout"), "--timeout %s exited %d saying %q", bad, exit, stderr)
+	}
+}

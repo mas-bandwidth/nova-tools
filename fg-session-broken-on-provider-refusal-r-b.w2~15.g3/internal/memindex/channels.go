@@ -1,0 +1,348 @@
+package memindex
+
+import (
+	"container/heap"
+	"math"
+	"sort"
+)
+
+// Scored is one channel's opinion of one chunk. Rank is 0-based within the
+// channel's own ordering; Score is channel-native (BM25 is unbounded, Jaccard
+// is [0,1]) and is NEVER compared across channels — fusion is rank-only,
+// because weighted raw-score fusion of an unbounded scale against a bounded
+// one is brittle and query-dependent.
+type Scored struct {
+	Chunk int32
+	Rank  int
+	Score float64
+}
+
+// Channel is the seam. This version ships bm25 and trigram; a semantic
+// channel (flat exact cosine over local embeddings) would implement the same
+// interface and nothing upstream would change. A channel's Query MUST be
+// deterministic: ties break by chunk id.
+type Channel interface {
+	Name() string
+	Query(text string, k int) []Scored
+}
+
+// ---------------------------------------------------------------------------
+// BM25 channel
+
+// BM25 scores candidate chunks reached through posting lists — the query
+// touches only its own terms' postings, never the whole corpus, which is the
+// lookup-not-scan property expressed as a data structure.
+type BM25 struct {
+	C     *Corpus
+	K1, B float64
+}
+
+func NewBM25(c *Corpus) *BM25 { return &BM25{C: c, K1: 1.2, B: 0.75} }
+
+func (b *BM25) Name() string { return "bm25" }
+
+// idf is the Lucene-smoothed form. The classic form goes NEGATIVE for terms
+// appearing in more than half the documents — which a small, topically
+// coherent memory corpus is full of — and negative idf scrambles rankings.
+func (b *BM25) idf(term string) float64 {
+	n := float64(b.C.DF[term])
+	N := float64(len(b.C.Chunks))
+	return math.Log(1 + (N-n+0.5)/(n+0.5))
+}
+
+func (b *BM25) Query(text string, k int) []Scored {
+	qterms := Tokenize(text)
+	if len(qterms) == 0 {
+		return nil
+	}
+	// Query terms are deduplicated: a membership query is the candidate's own
+	// text, and repeating a word in the query must not double-count evidence.
+	seen := map[string]bool{}
+	scores := map[int32]float64{}
+	for _, t := range qterms {
+		if seen[t] {
+			continue
+		}
+		seen[t] = true
+		ids, ok := b.C.Post[t]
+		if !ok {
+			continue
+		}
+		idf := b.idf(t)
+		for _, id := range ids {
+			c := &b.C.Chunks[id]
+			tf := float64(c.Terms[t])
+			scores[id] += idf * tf * (b.K1 + 1) / (tf + b.K1*(1-b.B+b.B*float64(c.Len)/b.C.AvgLen))
+		}
+	}
+	return topK(scores, k)
+}
+
+// ---------------------------------------------------------------------------
+// Trigram channel
+
+// Trigram ranks by character-3-gram Jaccard similarity between the query and
+// each chunk. It buys robustness to morphology and small rewording that
+// word-token BM25 misses, at the cost of a bounded per-chunk scan — which
+// costs the CPU, not the mind, and the requirement bounds the mind's budget.
+// It is never on unless the caller names it, and the caller should name it
+// only once eval says it helps: on the corpus this was built for, eval
+// measured bm25+trigram WORSE than bm25 alone, which is why it is a channel
+// and not a default.
+type Trigram struct {
+	C    *Corpus
+	sets []map[string]struct{} // lazily built, chunk id -> trigram set
+}
+
+func NewTrigram(c *Corpus) *Trigram { return &Trigram{C: c} }
+
+func (t *Trigram) Name() string { return "trigram" }
+
+func trigrams(s string) map[string]struct{} {
+	set := map[string]struct{}{}
+	for i := 0; i+3 <= len(s); i++ {
+		set[s[i:i+3]] = struct{}{}
+	}
+	return set
+}
+
+func (t *Trigram) Query(text string, k int) []Scored {
+	if t.sets == nil {
+		t.sets = make([]map[string]struct{}, len(t.C.Chunks))
+		for i := range t.C.Chunks {
+			t.sets[i] = trigrams(t.C.Chunks[i].Text)
+		}
+	}
+	q := trigrams(Normalize(text))
+	if len(q) == 0 {
+		return nil
+	}
+	scores := map[int32]float64{}
+	for id := range t.C.Chunks {
+		set := t.sets[id]
+		inter := 0
+		// Iterate the smaller set for the intersection.
+		small, large := q, set
+		if len(set) < len(q) {
+			small, large = set, q
+		}
+		for g := range small {
+			if _, ok := large[g]; ok {
+				inter++
+			}
+		}
+		if inter == 0 {
+			continue
+		}
+		union := len(q) + len(set) - inter
+		scores[int32(id)] = float64(inter) / float64(union)
+	}
+	return topK(scores, k)
+}
+
+// scoreHeap keeps the worst retained hit at the root: lower score first,
+// then larger chunk id. The tie-break is essential even before the final
+// sort, or map iteration could change which tied chunks survive the cutoff.
+type scoreHeap []Scored
+
+func (h scoreHeap) Len() int { return len(h) }
+func (h scoreHeap) Less(i, j int) bool {
+	if h[i].Score != h[j].Score {
+		return h[i].Score < h[j].Score
+	}
+	return h[i].Chunk > h[j].Chunk
+}
+func (h scoreHeap) Swap(i, j int) { h[i], h[j] = h[j], h[i] }
+func (h *scoreHeap) Push(x any)   { *h = append(*h, x.(Scored)) }
+func (h *scoreHeap) Pop() any {
+	last := len(*h) - 1
+	x := (*h)[last]
+	*h = (*h)[:last]
+	return x
+}
+
+// topK selects scores without sorting all candidates: O(u log k + k log k)
+// time and O(k) selection storage for u scored chunks, when 0 < k < u.
+// Scoring still keeps its own O(u) map and may visit most of the corpus for
+// common terms. This changes neither retrieval semantics nor that cost.
+func topK(scores map[int32]float64, k int) []Scored {
+	if k <= 0 {
+		return []Scored{}
+	}
+	out := make([]Scored, 0, min(k, len(scores)))
+	if k >= len(scores) {
+		// When everything is requested there is nothing to discard.
+		for id, s := range scores {
+			out = append(out, Scored{Chunk: id, Score: s})
+		}
+	} else {
+		h := scoreHeap(out)
+		for id, s := range scores {
+			candidate := Scored{Chunk: id, Score: s}
+			if len(h) < k {
+				h = append(h, candidate)
+				if len(h) == k {
+					heap.Init(&h)
+				}
+			} else if s > h[0].Score || (s == h[0].Score && id < h[0].Chunk) {
+				h[0] = candidate
+				heap.Fix(&h, 0)
+			}
+		}
+		out = []Scored(h)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Score != out[j].Score {
+			return out[i].Score > out[j].Score
+		}
+		return out[i].Chunk < out[j].Chunk
+	})
+	for i := range out {
+		out[i].Rank = i
+	}
+	return out
+}
+
+// ---------------------------------------------------------------------------
+// Fusion and per-file aggregation
+
+// FileHit is what a judge sees: the best chunk of a file, with the file's
+// class and frontmatter as receipt metadata, the channel-native score of that
+// chunk for calibration, and the fused score that ordered it.
+type FileHit struct {
+	File    string
+	Root    string // the root this file came from, empty for a single-root build
+	Class   string
+	FMName  string
+	FMType  string
+	Para    int
+	Line    int
+	Snippet string
+	Fused   float64
+	// Native is the chunk's score in NativeChan, and NativeChan is the first
+	// NAMED channel that actually surfaced it — not unconditionally the first
+	// channel named. In a multi-channel run a chunk can reach the fused top-k
+	// through the second channel alone (bm25 scored it zero, or it fell off
+	// bm25's deep cutoff on a large corpus); recording only channel 0's score
+	// printed 0.00 for those, and a reader comparing 0.00 against the
+	// calibration band concludes the hit is weaker than unrelated control
+	// text when the number is an artifact of which channel surfaced it.
+	//
+	// NativeChan is "" only when no channel scored the chunk, which cannot
+	// happen for a chunk Retrieve returns; receipts print "-" for both fields
+	// rather than a fabricated zero if it ever does.
+	Native     float64
+	NativeChan string
+}
+
+// rrfK is the standard reciprocal-rank-fusion constant. Rank-only fusion
+// needs no score normalization and never has to know what a channel's numbers
+// mean.
+const rrfK = 60.0
+
+// fileKey names a chunk's file as the retrieval unit must key it: root and
+// path together. Under one root the roots are all empty and this is the path
+// alone; under several, two roots may hold the same relative path and the key
+// keeps those files distinct.
+func fileKey(c *Corpus, id int32) string {
+	return c.Chunks[id].Root + "\x00" + c.Chunks[id].File
+}
+
+// Retrieve runs every channel, fuses by reciprocal rank, aggregates per file
+// by best fused chunk, and returns the top k files. With one channel this
+// reduces to that channel's own ranking (order-preserving), so single-channel
+// output is exactly that channel's opinion.
+//
+// THE UNIT OF THE LIMIT IS FILES, NOT CHUNKS. A fixed per-channel chunk
+// headroom is not headroom at all when one document owns more matching
+// paragraphs than the cap: a 100-paragraph file filled the first 50 slots and
+// every other matching file was truncated away BEFORE aggregation, so a
+// request for the top 2 files returned 1, with nothing on the receipt saying
+// so. Raising the multiplier only moves the fixture that breaks it. So the
+// depth DOUBLES until k distinct files are in hand, the channels have no more
+// candidates to give, or the depth covers the corpus. Deepening is monotone —
+// a chunk's rank within a channel does not change when more chunks are asked
+// for, so the fused scores already computed are the same ones — and the
+// progression is fixed, so results stay deterministic.
+func Retrieve(c *Corpus, channels []Channel, text string, k int) []FileHit {
+	if len(channels) == 0 || k <= 0 {
+		return nil
+	}
+	// Fusion headroom: ask each channel for more than k, so a file's best
+	// chunk is unlikely to be truncated away before aggregation.
+	deep := max(k*10, 50)
+	// The native score is claimed by the first channel IN THE CALLER'S ORDER
+	// that surfaced the chunk, so every receipt carries a score some channel
+	// actually computed, and names which one. Channels is a slice, so which
+	// channel claims a chunk is deterministic.
+	type nativeScore struct {
+		score float64
+		chn   string
+	}
+	var fused map[int32]float64
+	var native map[int32]nativeScore
+	for {
+		// Rebuilt from scratch at each depth rather than accumulated, so the
+		// fused total is a sum over one consistent set of ranks and the native
+		// claim still goes to the first channel in the caller's order.
+		fused = map[int32]float64{}
+		native = map[int32]nativeScore{}
+		exhausted := true
+		for _, ch := range channels {
+			name := ch.Name()
+			got := ch.Query(text, deep)
+			if len(got) == deep {
+				exhausted = false // it filled the budget, so it may have more
+			}
+			for _, s := range got {
+				fused[s.Chunk] += 1.0 / (rrfK + float64(s.Rank))
+				if _, claimed := native[s.Chunk]; !claimed {
+					native[s.Chunk] = nativeScore{score: s.Score, chn: name}
+				}
+			}
+		}
+		files := map[string]bool{}
+		for id := range fused {
+			files[fileKey(c, id)] = true
+		}
+		if len(files) >= k || exhausted || deep >= len(c.Chunks) {
+			break
+		}
+		deep *= 2
+	}
+	best := map[string]FileHit{}
+	for id, f := range fused {
+		ch := &c.Chunks[id]
+		key := fileKey(c, id)
+		prev, ok := best[key]
+		if ok && (prev.Fused > f || (prev.Fused == f && prev.Para <= ch.Para)) {
+			continue
+		}
+		snip := Truncate(ch.Original, 120)
+		n := native[id]
+		best[key] = FileHit{
+			File: ch.File, Root: ch.Root, Class: ch.Class, FMName: ch.FMName, FMType: ch.FMType,
+			Para: ch.Para, Line: ch.Line, Snippet: snip, Fused: f, Native: n.score, NativeChan: n.chn,
+		}
+	}
+	hits := make([]FileHit, 0, len(best))
+	for _, h := range best {
+		hits = append(hits, h)
+	}
+	sort.Slice(hits, func(i, j int) bool {
+		if hits[i].Fused != hits[j].Fused {
+			return hits[i].Fused > hits[j].Fused
+		}
+		if hits[i].Root != hits[j].Root {
+			return hits[i].Root < hits[j].Root
+		}
+		if hits[i].File != hits[j].File {
+			return hits[i].File < hits[j].File
+		}
+		return hits[i].Para < hits[j].Para
+	})
+	if len(hits) > k {
+		hits = hits[:k]
+	}
+	return hits
+}

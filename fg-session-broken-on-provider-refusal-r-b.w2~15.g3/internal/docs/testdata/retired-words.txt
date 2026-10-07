@@ -1,0 +1,42 @@
+# Retired words (docs/TERMINOLOGY.md): `retired<TAB>word<TAB>replacement`.
+# A tracked text file uses none outside the dated records (CHANGELOG.md, RESOLUTIONS.md,
+# docs/RELEASE-NOTES-*, docs/ratings/, the ledgers under testdata/).
+# Below is the ledger of places that still use one, `allow<TAB>path<TAB>word<TAB>count`.
+# It only shrinks: a new use fails the test, and a row whose count is no longer true fails it too.
+retired	asleep	down
+retired	untiered	no tier
+retired	git bus	the Redis bus
+
+allow	.github/workflows/ci.yml	git bus	1
+allow	cmd/nova-friend/check_test.go	asleep	3
+allow	cmd/nova-friend/main.go	asleep	3
+allow	cmd/nova-sprint/friend_health_test.go	asleep	4
+allow	cmd/nova-sprint/friends.go	asleep	5
+allow	cmd/nova-sprint/seat.go	asleep	1
+allow	cmd/nova-sprint/seat_loop_test.go	asleep	1
+allow	cmd/nova-sprint/seat_test.go	asleep	2
+allow	cmd/nova-sprint/verbs.go	asleep	1
+allow	docs/CLI.md	asleep	5
+allow	docs/CLI.md	git bus	1
+allow	docs/SPEC-BUS.md	git bus	2
+allow	docs/SPEC-FRIEND.md	asleep	2
+allow	docs/SPEC-SPRINT.md	asleep	8
+allow	docs/SPEC-SPRINT.md	untiered	1
+allow	docs/SPEC-UPDATE.md	git bus	2
+allow	internal/ci/hosted_shards_class_test.go	git bus	1
+allow	internal/friend/check.go	asleep	6
+allow	internal/friend/check_test.go	asleep	7
+allow	internal/sprint/TABLES.lock	asleep	3
+allow	internal/sprint/cost_view.go	untiered	2
+allow	internal/sprint/friend_health.go	asleep	1
+allow	internal/sprint/friend_health_test.go	asleep	2
+allow	internal/sprint/seat.go	asleep	1
+allow	internal/sprint/store/defaults.go	asleep	3
+allow	internal/sprint/store/friend_health_test.go	asleep	2
+allow	internal/sprint/store/friends.go	asleep	1
+allow	internal/sprint/store/load.go	asleep	1
+allow	internal/sprint/store/retry_test.go	asleep	3
+allow	internal/sprint/store/seat_functional_test.go	asleep	3
+allow	internal/sprintdash/page/app.js	untiered	1
+allow	internal/sprintdash/tweaks_test.go	untiered	3
+allow	tla/SeatHealth.tla	asleep	3

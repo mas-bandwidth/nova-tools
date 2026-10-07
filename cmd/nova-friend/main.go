@@ -844,6 +844,23 @@ exit 1 when no daemon ever ran as --as (no status file in the state directory).`
 				Run: w.status,
 			},
 			{
+				Name:    "reset",
+				Usage:   "reset --as <me> [--dir <d>] [--state-dir <d>] [--json]",
+				Example: "reset --as bob --dir ./bob",
+				Effect:  tool.LocalWrite + ": clears a broken session state",
+				Detail: `When the session is broken (session=broken in the status file), this verb clears the broken state and allows
+the next delivery to proceed. Prints RESET OK cleared=broken with the friend and session info, or RESET OK cleared=none
+when the session is not broken. A daemon must have run as --as before (the status file must exist). After reset,
+the next delivery into the session will proceed normally.`,
+				ExitTable: "0 done, 1 the verb ran and said no (no status file), 2 could not run (the status file cannot be read or written).",
+				Flags: func(f *tool.Flags) {
+					f.Required("as", "your name")
+					f.String("dir", "", "the friend's working directory (default: found by --as)")
+					stateDir(f)
+				},
+				Run: w.reset,
+			},
+			{
 				Name:    "refuse-go",
 				Usage:   "refuse-go --name go|gofmt",
 				Example: "", // refuses, by design: the example block has no line that runs
@@ -1926,6 +1943,43 @@ func (w world) status(c *tool.Call) *tool.Out {
 		o.Fact("route", "passive").Note(friend.ClaudeWaitLine(c.Str("as"), friend.ClaudeWakePath(state, c.Str("as"))))
 	}
 	return o
+}
+
+// reset clears a broken session state and allows the next delivery to proceed.
+func (w world) reset(c *tool.Call) *tool.Out {
+	name, state := c.Str("as"), w.stateDir(c, c.Str("dir"))
+
+	s, found, err := friend.ReadStatus(state)
+	if err != nil {
+		return tool.Refuse("the status file cannot be read: " + err.Error())
+	}
+	if !found {
+		return tool.Fail("no daemon has run as " + name + " (no status file in " + state + ")").As("NONE")
+	}
+	if s.Friend != name {
+		return tool.Refuse(fmt.Sprintf("the daemon whose state is in %s runs as %s, not %s", state, s.Friend, name))
+	}
+
+	if s.Session != friend.SessionBroken {
+		// Check if there's any broken state at all
+		if s.BrokenAt.IsZero() {
+			return tool.Done().Fact("cleared", "none").Note("the session is not broken")
+		}
+		// Session might have been marked down for other reasons
+		return tool.Done().Fact("cleared", "none").Note("the session is not marked broken")
+	}
+
+	// Clear the broken state
+	s.Session = friend.SessionOK
+	s.SessionID = ""
+	s.SessionReason = ""
+	s.BrokenAt = time.Time{}
+
+	if err := friend.WriteStatus(state, s); err != nil {
+		return tool.Refuse("cannot write status file: " + err.Error())
+	}
+
+	return tool.Done().Fact("cleared", "broken").Fact("friend", s.Friend).Fact("session_id", s.SessionID).Fact("reason", tool.Text(s.SessionReason)).Note("the session is no longer broken; the next delivery will proceed")
 }
 
 // evidence is what the friend's status is decided from (docs/SPEC-FRIEND.md,

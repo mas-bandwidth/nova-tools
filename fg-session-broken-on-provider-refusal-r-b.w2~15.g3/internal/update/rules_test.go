@@ -1,0 +1,489 @@
+package update
+
+// The rules SPEC-UPDATE demands evidence for that the rest of this package's
+// tests carried only in passing: 9 (check writes nothing), 16 (bounded output at
+// the largest plausible state), 18 (every refusal names a remedy), 26 (no clock,
+// no install, no send nobody asked for), and rule 25's injected clock and a
+// reporter really killed while it writes its snapshot.
+//
+// Each test below asserts the property, not the name. The interruption witness
+// uses the production report path and the join's built CLI for recovery.
+
+import (
+	"bytes"
+	"context"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"testing/synctest"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// treeOf records every file under a directory the way a person checking "did
+// anything change" would: name, size and modification time.
+func treeOf(t *testing.T, root string) []string {
+	t.Helper()
+	var seen []string
+	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		seen = append(seen, fmt.Sprintf("%s %d %s", path, info.Size(), info.ModTime().UTC().Format(time.RFC3339Nano)))
+		return nil
+	})
+	if err != nil {
+		require.NoError(t, err, err)
+	}
+	return seen
+}
+
+// Rule 9: a verdict is not an action. check reads, prints and exits; it writes no
+// file, and the apply command of a STALE entry is never the thing it runs.
+func TestRule9CheckWritesNothingAndNeverRunsAnApply(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	installed := printer(t, "1.0.0")
+	latest := printer(t, "2.0.0")
+	witness := filepath.Join(dir, "the-apply-ran")
+	calls := filepath.Join(dir, "calls")
+	env := Environment{Env: append(os.Environ(), "NOVA_UPDATE_CALLS="+calls)}
+	// The apply column is a command that would leave a file behind if it ran.
+	p := manifest(t, row("x", "tool", installed, "local:"+latest, command(t, "write", witness, "installed")))
+	before := treeOf(t, filepath.Dir(p))
+	c, out, errs := run(t, env, "check", "--file", p)
+	if c != 1 {
+		require.EqualValuesf(t, 1, c, "%d %s %s", c, out, errs)
+	}
+	need(t, errs, "CHECK STALE name=x")
+	if _, err := os.Stat(witness); err == nil {
+		require.Error(t, err, "check ran the apply command")
+	}
+	if after := treeOf(t, filepath.Dir(p)); strings.Join(before, "\n") != strings.Join(after, "\n") {
+		require.Failf(t, "", "check wrote to the manifest's directory:\nbefore %v\nafter  %v", before, after)
+	}
+	log, err := os.ReadFile(calls)
+	if err != nil {
+		require.NoError(t, err, err)
+	}
+	for _, line := range strings.Split(strings.TrimSpace(string(log)), "\n") {
+		if line != "" && !strings.HasPrefix(line, "print ") {
+			require.Failf(t, "", "check ran something that is not a version read: %q", line)
+		}
+	}
+	if n := strings.Count(string(log), "\n"); n != 2 {
+		require.EqualValuesf(t, 2, n, "want exactly the installed and latest reads, got %d calls", n)
+	}
+}
+
+// Rule 16: the output is bounded at the largest state a person will plausibly
+// have, --max 0 is the explicit way to ask for all of it, and a negative cap is a
+// refusal rather than a silent interpretation.
+func TestRule16OutputIsBoundedAtTheLargestPlausibleState(t *testing.T) {
+	t.Parallel()
+
+	const many = 500
+	rows := make([]string, 0, many)
+	for i := 0; i < many; i++ {
+		// Neither side resolves, so this reads 500 entries with no process and
+		// no network: the size of the state, not the cost of it, is the point.
+		rows = append(rows, row(fmt.Sprint(i), "tool", "nova-no-such-tool-exists", "local:nova-no-such-tool-exists", "none"))
+	}
+	p := manifest(t, rows...)
+	c, out, errs := run(t, Environment{}, "check", "--file", p, "--max", "3")
+	if c != 1 {
+		require.EqualValuesf(t, 1, c, "%d %s %s", c, out, errs)
+	}
+	lines := strings.Count(strings.TrimSpace(out+errs), "\n") + 1
+	if lines > 12 {
+		require.LessOrEqualf(t, lines, 12, "a 500-entry run printed %d lines", lines)
+	}
+	need(t, errs, "entries=500", "CHECK MORE kind=unknown shown=3 total=500")
+	c, out, all := run(t, Environment{}, "check", "--file", p, "--max", "0")
+	if c != 1 {
+		require.EqualValuesf(t, 1, c, "%d %s %s", c, out, all)
+	}
+	if shown := strings.Count(all, "CHECK UNKNOWN "); shown != many {
+		require.EqualValuesf(t, many, shown, "--max 0 showed %d of %d", shown, many)
+	}
+	if strings.Contains(all, "CHECK MORE") {
+		require.Fail(t, fmt.Sprintln("--max 0 still elided something"))
+	}
+	if c, _, errs = run(t, Environment{}, "check", "--file", p, "--max", "-1"); c != 2 {
+		require.EqualValuesf(t, 2, c, "--max -1 was not refused: %d %s", c, errs)
+	}
+}
+
+// Rule 18: a refusal a person cannot act on is not a refusal. Every one of them
+// names a remedy, and the shape is the grammar's: REFUSED: <reason>; run: <command>.
+func TestRule18EveryRefusalNamesARemedy(t *testing.T) {
+	t.Parallel()
+
+	good := row("x", "tool", printer(t, "1.0.0"), "npm:unused", "none")
+	p := manifest(t, good)
+	bad := manifest(t, strings.Replace(good, "tool", "weights", 1))
+	for name, args := range map[string][]string{
+		"no verb":                {},
+		"no file":                {"check"},
+		"a kind nobody has":      {"check", "--file", bad},
+		"apply with no name":     {"apply", "--file", p},
+		"apply two names":        {"apply", "--file", p, "x", "y"},
+		"apply an unknown":       {"apply", "--file", p, "nobody"},
+		"a negative cap":         {"check", "--file", p, "--max", "-1"},
+		"send with no flags":     {"report", "--file", p, "--send"},
+		"help with an argument":  {"help", "please"},
+		"an unknown kind filter": {"check", "--file", p, "--kind", "weights"},
+	} {
+		var out, errs bytes.Buffer
+		if c := Run("nova-update", args, "", &out, &errs, Environment{}); c != 2 {
+			assert.EqualValuesf(t, 2, c, "%s: exit %d, not a refusal: %s%s", name, c, out.String(), errs.String())
+			continue
+		}
+		said := strings.TrimSpace(errs.String())
+		if said == "" {
+			assert.NotEqualValuesf(t, "", said, "%s: refused in silence", name)
+			continue
+		}
+		first := firstLine(said)
+		if !strings.Contains(first, "REFUSED") {
+			assert.Containsf(t, first, "REFUSED", "%s: not a REFUSED line: %q", name, first)
+		}
+		if _, run, ok := strings.Cut(first, "; run: nova-update "); !ok || run == "" {
+			assert.Failf(t, "", "%s: no command to run: %q", name, first)
+		}
+	}
+}
+
+// Rule 26: the tool has no clock and no appetite. Every stamp it prints comes
+// from the clock it was handed, a report with recipients named but no --send
+// starts no bus, and a run whose children hang still ends inside its budget.
+func TestRule26NoClockOfItsOwnNoInstallNoSendNobodyAsked(t *testing.T) {
+	t.Parallel()
+	fixed := time.Date(2026, 9, 9, 12, 34, 56, 0, time.UTC)
+	env := Environment{Now: func() time.Time { return fixed }}
+	snapshot := filepath.Join(t.TempDir(), "s.json")
+	rig := fakeBusPath(t)
+	log := rig.log
+	p := manifest(t, row("x", "tool", printer(t, "v1.2.3"), "npm:unused", "none"))
+	c, out, errs := run(t, rig.with(env), "report", "--file", p, "--as", "fixture", "--to", "integrator", "--snapshot", snapshot)
+	if c != 0 {
+		require.EqualValuesf(t, 0, c, "%d %s %s", c, out, errs)
+	}
+	if !strings.Contains(firstLine(out), " at="+fixed.Format(time.RFC3339)) || !strings.Contains(firstLine(out), " took=0s") {
+		require.Failf(t, "", "the printed stamp is not the injected clock's: %s", firstLine(out))
+	}
+	if strings.Contains(out, "REPORT SENT") {
+		require.Fail(t, fmt.Sprintln("a report with recipients sent without --send"))
+	}
+	// A missing call log is the strongest form of the answer: the fake bus never
+	// ran at all, so it never even opened the file it logs to.
+	if _, err := os.Stat(log); err == nil {
+		if nsend := calls(t, log); nsend != 0 {
+			require.Failf(t, "", "a plain report invoked the bus: %d sends", nsend)
+		}
+	} else if !os.IsNotExist(err) {
+		require.Fail(t, fmt.Sprintln(err))
+	}
+	// Rule 25's injected clock: the snapshot's own stamps are that clock too, so
+	// two runs of one fixture are byte-identical and a diff means a change.
+	state, err := readSnapshot(snapshot)
+	if err != nil {
+		require.NoError(t, err, err)
+	}
+	for name, o := range state.Observed {
+		if o.At != fixed.Format(time.RFC3339) {
+			require.Failf(t, "", "%s was stamped %q, not by the injected clock", name, o.At)
+		}
+	}
+	// A strict child fake waits only on the propagated deadline; virtual time
+	// proves the caller's budget without starting a real child.
+	synctest.Test(t, func(t *testing.T) {
+		hanging := manifest(t, row("h", "tool", "fake-version", "npm:unused", "none"))
+		fakeEnv := env
+		fakeEnv.Client = &http.Client{Transport: transportFunc(func(req *http.Request) (*http.Response, error) {
+			assert.Equal(t, "registry.npmjs.org", req.URL.Host)
+			return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"version":"1.0.0"}`))}, nil
+		})}
+		fakeEnv.Process = func(ctx context.Context, args []string, input io.Reader, cap int) ProcessResult {
+			assert.Equal(t, []string{"fake-version", "version"}, args)
+			deadline, ok := ctx.Deadline()
+			if !assert.True(t, ok) || !assert.Equal(t, 20*time.Millisecond, time.Until(deadline)) {
+				return ProcessResult{Reason: "invalid child deadline"}
+			}
+			<-ctx.Done()
+			return ProcessResult{Reason: "timeout"}
+		}
+		if c, _, _ = run(t, fakeEnv, "check", "--file", hanging, "--budget", "50ms", "--timeout", "20ms"); c != 1 {
+			require.EqualValuesf(t, 1, c, "a hanging read was not a finding: %d", c)
+		}
+	})
+}
+
+func TestHelpIsTheSpecsVerbsBlock(t *testing.T) {
+	t.Parallel()
+
+	doc, err := os.ReadFile(filepath.Join("..", "..", "docs", "SPEC-UPDATE.md"))
+	if err != nil {
+		require.NoError(t, err, err)
+	}
+	// The block is the first fenced code block after the "## The verbs" heading.
+	_, after, ok := strings.Cut(string(doc), "\n## The verbs\n")
+	if !ok {
+		require.Fail(t, fmt.Sprintln("the spec has no verbs section"))
+	}
+	_, after, ok = strings.Cut(after, "```\n")
+	if !ok {
+		require.Fail(t, fmt.Sprintln("the verbs section has no block"))
+	}
+	block, _, ok := strings.Cut(after, "```")
+	if !ok {
+		require.Fail(t, fmt.Sprintln("the verbs block does not close"))
+	}
+	if want, got := strings.TrimRight(block, "\n"), updateVerbs; want != got {
+		require.EqualValuesf(t, want, got, "help has drifted from the spec's verbs block:\nspec:\n%s\nhelp:\n%s", want, got)
+	}
+	var printed bytes.Buffer
+	help("nova-update", &printed)
+	// The banner opens with its three answers (ONBOARDING.md point 6), and the
+	// verbs block follows them whole.
+	if !strings.HasPrefix(printed.String(), updateOpening+"\n\n"+updateVerbs+"\n") {
+		require.Failf(t, "", "help does not open with its opening and then the verbs block:\n%s", printed.String())
+	}
+	printed.Reset()
+	printed.WriteString(VersionTool("", Environment{}).Banner())
+	// nova-version's usage lines are its verbs' own (versiontool.go): the
+	// banner lists them under usage:, after what the tool is and how it works.
+	lines := map[string]string{}
+	for _, l := range strings.Split(printed.String(), "\n") {
+		if f := strings.Fields(l); len(f) > 1 && f[0] == "nova-version" {
+			lines[f[1]] += l + "\n"
+		}
+	}
+	// The spec says nova-version's lines are the report line's flags under that
+	// name, so every flag the report line offers a plain report must appear.
+	for _, flag := range []string{"--file <manifest>", "--host <label>", "--snapshot <path>", "--max <n>", "--timeout <d>", "--budget <d>", "--kind <k>"} {
+		if !strings.Contains(lines["report"], flag) {
+			assert.Failf(t, "", "nova-version's report line does not carry %s", flag)
+		}
+	}
+	for _, flag := range []string{"--as <friend>", "--to <who,who>"} {
+		if !strings.Contains(lines["send"], flag) {
+			assert.Failf(t, "", "nova-version's send line does not carry %s", flag)
+		}
+	}
+}
+
+// #592: the snapshot verb is callable, yet help never printed it. Its whole
+// usage line belongs beside report so a reader discovers the inventory verb,
+// distinguishable from report's unrelated --snapshot <path> option by the verb
+// spelling and its --bin/--out flags (docs/SPEC-VERSION.md).
+func TestHelpNamesTheSnapshotVerb(t *testing.T) {
+	t.Parallel()
+
+	var printed bytes.Buffer
+	printed.WriteString(VersionTool("", Environment{}).Banner())
+	if !strings.Contains(printed.String(), "nova-version snapshot --bin <dir> --out <file.tsv>") {
+		require.Failf(t, "", "nova-version help omits the snapshot verb:\n%s", printed.String())
+	}
+	if !strings.Contains(printed.String(), "nova-version diff --from <a.tsv> --to <b.tsv>") {
+		require.Failf(t, "", "nova-version help omits the diff verb:\n%s", printed.String())
+	}
+}
+
+// #406 item 2: the usage line says what --file is and its shape, so a reader of
+// the help is told the file is a manifest (one line per tool, six tab-separated
+// fields) before a run, and the missing-file refusal says the same sentence.
+func TestUsageAndRefusalSayWhatTheFileIs(t *testing.T) {
+	t.Parallel()
+
+	var printed bytes.Buffer
+	printed.WriteString(VersionTool("", Environment{}).Banner())
+	if !strings.Contains(printed.String(), manifestShape) {
+		require.Failf(t, "", "nova-version's help does not carry the shape sentence:\n%s", printed.String())
+	}
+	var out, err bytes.Buffer
+	c := Main("nova-version", []string{"report", "--file", filepath.Join(t.TempDir(), "missing.tsv")}, "", &out, &err)
+	if c != 2 {
+		require.EqualValuesf(t, 2, c, "missing file exit = %d, want 2", c)
+	}
+	if !strings.Contains(err.String(), manifestShape) {
+		require.Failf(t, "", "missing-file refusal does not carry the shape sentence:\n%s", err.String())
+	}
+}
+
+// SPEC-UPDATE's first-run block names ./cmd/nova-update/testdata/versions.tsv and
+// apply.tsv, and its "The versions file" section prints the five entries the
+// first of those holds. Both files now exist; this reads them the way the tool
+// does, so a fixture the spec points a stranger at cannot rot unnoticed. It
+// executes nothing: no version command runs, no installer runs, no GET is made.
+func TestTheSpecsNamedFixturesLoad(t *testing.T) {
+	t.Parallel()
+
+	for _, dir := range []string{"nova-update", "nova-version"} {
+		for _, name := range []string{"versions.tsv", "apply.tsv", "example.tsv", "nova.tsv"} {
+			path := filepath.Join("..", "..", "cmd", dir, "testdata", name)
+			b, err := os.ReadFile(path)
+			if err != nil {
+				assert.NoErrorf(t, err, "%s: %v", path, err)
+				continue
+			}
+			entries, err := Load(strings.NewReader(string(b)))
+			if err != nil {
+				assert.NoErrorf(t, err, "%s does not load: %v", path, err)
+				continue
+			}
+			if len(entries) == 0 {
+				assert.NotEqualValuesf(t, 0, len(entries), "%s carries no entry", path)
+			}
+			for _, e := range entries {
+				if e.Name == "" || e.Kind == "" || e.Owner == "" || len(e.Installed) == 0 {
+					assert.Failf(t, "", "%s: an entry is missing a field: %+v", path, e)
+				}
+			}
+		}
+	}
+	// The versions fixture is the spec's own four entries, in its order, then one pin entry.
+	entries, err := Load(strings.NewReader(readFixture(t, "versions.tsv")))
+	if err != nil {
+		require.NoError(t, err, err)
+	}
+	want := []struct{ name, kind, owner string }{
+		{"gh", "tool", "ada"},
+		{"sops", "tool", "ada"},
+		{"opencode", "harness", "lin"},
+		{"qwen3-coder:30b", "model", "kit"},
+		{"nova-wake-pin-nova-bus", "pin", "ada"},
+	}
+	if len(entries) != len(want) {
+		require.Lenf(t, entries, len(want), "the fixture should carry %d entries, it carries %d", len(want), len(entries))
+	}
+	for i, w := range want {
+		if entries[i].Name != w.name || entries[i].Kind != w.kind || entries[i].Owner != w.owner {
+			assert.Failf(t, "", "entry %d is %s/%s/%s, the spec says %s/%s/%s", i, entries[i].Name, entries[i].Kind, entries[i].Owner, w.name, w.kind, w.owner)
+		}
+	}
+}
+func readFixture(t *testing.T, name string) string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join("..", "..", "cmd", "nova-update", "testdata", name))
+	if err != nil {
+		require.NoError(t, err, err)
+	}
+	return string(b)
+}
+
+// The tripwires SPEC-UPDATE's rule list ends on, asserted rather than grepped by
+// hand: this tool has no cwd, no home directory, no shell, no hostname of its
+// own, no hard-coded model port, and it reads exactly one environment variable.
+// A tripwire measured by a person is a tripwire that goes quiet the first busy
+// week; this one fails a build.
+func TestTripwiresStayOutOfShippingCode(t *testing.T) {
+	t.Parallel()
+
+	shipping := map[string]string{}
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		require.NoError(t, err, err)
+	}
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		b, err := os.ReadFile(name)
+		if err != nil {
+			require.NoError(t, err, err)
+		}
+		shipping[name] = string(b)
+	}
+	if len(shipping) < 8 {
+		require.GreaterOrEqualf(t, len(shipping), 8, "only %d shipping files were read; the sweep is not sweeping", len(shipping))
+	}
+	for _, forbidden := range []string{"os.Getwd", "os.UserHomeDir", "os.Hostname", "11434", `"sh"`, `"bash"`, `"cmd.exe"`, "os/user", "time.Ticker", "time.Tick(", "http.DefaultClient"} {
+		for name, body := range shipping {
+			if strings.Contains(body, forbidden) {
+				assert.NotContainsf(t, body, forbidden, "%s carries %s, which rule 26 and the tripwire list keep out of this tool", name, forbidden)
+			}
+		}
+	}
+	// The two hosts this tool may name live in one file, so a third one added
+	// anywhere else is a diff somebody reads.
+	for name, body := range shipping {
+		for _, host := range []string{"api.github.com", "ollama.com", "registry.npmjs.org"} {
+			if strings.Contains(body, host) && name != "latest.go" {
+				assert.Failf(t, "", "%s names the host %s; the sources belong in latest.go alone", name, host)
+			}
+		}
+	}
+	// One environment read, and it is PATH inside a remedy, never a setting.
+	reads := 0
+	for name, body := range shipping {
+		n := strings.Count(body, "os.Getenv")
+		reads += n
+		if n > 0 && name != "read.go" {
+			assert.Failf(t, "", "%s reads the environment; a path comes from a flag (rule 1)", name)
+		}
+		if n > 0 && !strings.Contains(body, `os.Getenv("PATH")`) {
+			assert.Failf(t, "", "%s reads an environment variable that is not PATH", name)
+		}
+	}
+	if reads != 1 {
+		assert.EqualValuesf(t, 1, reads, "shipping code reads the environment %d times, want exactly the one PATH in a remedy", reads)
+	}
+	if strings.Count(strings.Join(valuesOf(shipping), "\n"), "NOVA_UPDATE_") != 0 {
+		assert.Fail(t, fmt.Sprintln("shipping code reads a NOVA_UPDATE_ variable; the test seams are not settings"))
+	}
+}
+func valuesOf(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for _, v := range m {
+		out = append(out, v)
+	}
+	return out
+}
+
+// `nova-update check --help` answered `flag: help requested` -- the flag
+// package's own sentinel, shown to somebody who asked for help (darwin dogfood,
+// 2026-09-18). Asking is not an error: the usage is printed and the exit is 0.
+func TestVerbHelpPrintsUsageRatherThanTheFlagSentinel(t *testing.T) {
+	t.Parallel()
+
+	for _, verb := range []string{"check", "apply", "report"} {
+		for _, spelling := range []string{"--help", "-h"} {
+			var out, errs bytes.Buffer
+			code := Main("nova-update", []string{verb, spelling}, "test", &out, &errs)
+			if code != 0 {
+				assert.EqualValuesf(t, 0, code, "%s %s: code=%d errs=%s", verb, spelling, code, errs.String())
+				continue
+			}
+			if strings.Contains(out.String()+errs.String(), "help requested") {
+				assert.Failf(t, "", "%s %s leaked the flag sentinel: %s%s", verb, spelling, out.String(), errs.String())
+			}
+			if !strings.Contains(out.String(), "nova-update "+verb+" ") {
+				assert.Failf(t, "", "%s %s did not print the usage:\n%s", verb, spelling, out.String())
+			}
+		}
+	}
+}
+
+// nova-version's definition meets the standard its banner and help cannot
+// hold by construction: every verb's effect, and a how text of five short lines.
+func TestVersionToolMeetsTheStandard(t *testing.T) {
+	t.Parallel()
+	for _, p := range VersionTool("", Environment{}).Problems() {
+		assert.Fail(t, fmt.Sprintln(p))
+	}
+}

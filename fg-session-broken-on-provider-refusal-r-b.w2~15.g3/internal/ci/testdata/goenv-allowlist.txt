@@ -1,0 +1,15 @@
+# goenv-allowlist.txt -- existing offenders of the `goenv` class test: a child
+# `go` command that inherits the caller's environment. One row:
+# file:line kind date reason.
+#
+# The file only shrinks. An entry that names no offender on the tree is refused
+# (`delete the stale row; the allowlist only shrinks`), so fixing a site means
+# deleting its row in the same change, and a new row parks nothing. A row
+# allows ONE offender of its kind in its file and is matched by file and kind,
+# never by line, so a merge that shifts lines in a listed file does not turn
+# dev red.
+#
+# It is empty, and that is the point: every site in the tree was fixed when the
+# rule landed (2026-09-18, after GOFLAGS=-json made `nova-review mutate` report
+# red=2 green=0 on a range that is red=1 green=1). The allowed shape is
+# cmd.Env = goenv.Clean(os.Environ()).

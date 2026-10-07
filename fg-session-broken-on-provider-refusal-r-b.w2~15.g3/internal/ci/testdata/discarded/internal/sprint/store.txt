@@ -1,0 +1,4 @@
+# Migrated counted package ledger; original row keys preserved.
+# ceiling: 2
+internal/sprint/store/presence.go:Store.strangers:blank 1 an unreadable strangers record is read as no strangers, with no error; the teardown then counts nobody from it as beating
+internal/sprint/store/teardown.go:Store.Teardown:blank 1 a view that cannot be deleted is left behind while the teardown reports success

@@ -1,0 +1,385 @@
+package slowtests
+
+import (
+	"fmt"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// slowtests_test.go is the red-test contract of the `slowtests` verb the CI
+// test step runs (docs/SPEC-CI.md, "The per-package test time budget"). Every
+// case below feeds canned `go test -json` TestEvent lines through Parse and
+// Judge; no test here runs `go test`, touches the network, or reads a real
+// timing. The fixtures use fractional seconds so the rendering is pinned down
+// to the printed shape.
+
+// slowBudget is the budget every case below is judged against, the same sixty
+// the workflow passes; a case may pass its own to pin a boundary.
+const slowBudget = 60 * time.Second
+
+// slowEvents parses a fixture and fails the test on a parse error, so each
+// summing case reads as events in, verdict out.
+func slowEvents(t *testing.T, fixture string) []Event {
+	t.Helper()
+	events, err := Parse(strings.NewReader(fixture))
+	require.NoError(t, err, "Parse(%q): %v", fixture, err)
+	return events
+}
+
+// A package under budget is a green with the single slowest package named.
+func TestSlowTestsUnderBudgetIsOK(t *testing.T) {
+	t.Parallel()
+
+	fixture := `{"Action":"run","Package":"example.com/pkg","Test":"TestA"}
+{"Action":"pass","Package":"example.com/pkg","Test":"TestA","Elapsed":3.2}
+{"Action":"pass","Package":"example.com/pkg","Elapsed":3.2}
+`
+	report := Judge(slowEvents(t, fixture), Budgets{Package: slowBudget.Seconds()})
+	assert.Equal(t, 0, len(report.Over), "Over = %d packages, want %d", len(report.Over), 0)
+	want := "CI-SLOW OK packages=1 slowest=example.com/pkg:3.2s"
+	{
+		got := report.OKLine()
+		assert.Equal(t, want, got, "OKLine = %q, want %q", got, want)
+	}
+}
+
+// A package over budget is one finding naming the package, its total, the
+// budget and its slowest tests, worst first.
+func TestSlowTestsOverBudgetNamesThePackageAndSlowestTests(t *testing.T) {
+	t.Parallel()
+
+	fixture := `{"Action":"pass","Package":"example.com/pkg","Test":"TestB","Elapsed":2.9}
+{"Action":"pass","Package":"example.com/pkg","Test":"TestA","Elapsed":3.2}
+{"Action":"pass","Package":"example.com/pkg","Elapsed":75.3}
+`
+	report := Judge(slowEvents(t, fixture), Budgets{Package: slowBudget.Seconds()})
+	lines := report.OverLines()
+	require.Len(t, lines, 1, "OverLines = %d lines, want 1: %v", len(lines), lines)
+	want := "CI-SLOW package=example.com/pkg seconds=75.3s budget=60s slowest=TestA:3.2s,TestB:2.9s"
+	assert.Equal(t, want, lines[0], "OverLines[0] = %q, want %q", lines[0], want)
+}
+
+// An empty stdin is not a package over budget; it is zero packages, and the
+// OK line says so rather than leaving the slowest slot empty.
+func TestSlowTestsEmptyInputIsOKWithZeroPackages(t *testing.T) {
+	t.Parallel()
+
+	report := Judge(nil, Budgets{Package: slowBudget.Seconds()})
+	assert.Equal(t, 0, report.Packages, "Packages = %d, want 0", report.Packages)
+	want := "CI-SLOW OK packages=0 slowest=none"
+	{
+		got := report.OKLine()
+		assert.Equal(t, want, got, "OKLine = %q, want %q", got, want)
+	}
+}
+
+// A line that is not a TestEvent is a refusal naming the line, never a silent
+// skip: a truncated pipe must not read as a clean run.
+func TestSlowTestsMalformedLineIsRefused(t *testing.T) {
+	t.Parallel()
+
+	fixture := `{"Action":"pass","Package":"example.com/pkg","Elapsed":3.2}
+this is not json
+`
+	_, err := Parse(strings.NewReader(fixture))
+	require.Error(t, err, "a malformed line parsed without an error")
+	assert.ErrorContains(t, err, "line 2", "error = %q, want it to name line 2", err.Error())
+}
+
+// The slowest list holds the slowest few tests, sorted, and never grows past
+// the cap; the package total is what decides over budget, not the test rows.
+func TestSlowTestsSlowestListIsSortedAndCapped(t *testing.T) {
+	t.Parallel()
+
+	fixture := `{"Action":"pass","Package":"example.com/pkg","Test":"TestD","Elapsed":1.0}
+{"Action":"pass","Package":"example.com/pkg","Test":"TestC","Elapsed":1.5}
+{"Action":"pass","Package":"example.com/pkg","Test":"TestB","Elapsed":2.0}
+{"Action":"pass","Package":"example.com/pkg","Test":"TestA","Elapsed":9.0}
+{"Action":"pass","Package":"example.com/pkg","Elapsed":70.0}
+`
+	report := Judge(slowEvents(t, fixture), Budgets{Package: slowBudget.Seconds()})
+	require.Len(t, report.Over, 1, "Over = %d packages, want 1", len(report.Over))
+	slowest := report.Over[0].Slowest
+	require.Len(t, slowest, 3, "slowest tests kept = %d, want the cap of 3: %v", len(slowest), slowest)
+	got := report.OverLines()[0]
+	want := "CI-SLOW package=example.com/pkg seconds=70.0s budget=60s slowest=TestA:9.0s,TestB:2.0s,TestC:1.5s"
+	assert.Equal(t, want, got, "OverLines[0] = %q, want %q", got, want)
+}
+
+// More than one package over budget prints one line each, worst first, and the
+// order does not depend on map iteration.
+func TestSlowTestsOverPackagesAreOrderedWorstFirst(t *testing.T) {
+	t.Parallel()
+
+	fixture := `{"Action":"pass","Package":"example.com/small","Elapsed":61.0}
+{"Action":"pass","Package":"example.com/big","Elapsed":90.0}
+{"Action":"pass","Package":"example.com/under","Elapsed":5.0}
+`
+	report := Judge(slowEvents(t, fixture), Budgets{Package: slowBudget.Seconds()})
+	lines := report.OverLines()
+	require.Len(t, lines, 2, "OverLines = %d lines, want 2: %v", len(lines), lines)
+	assert.Contains(t, lines[0], "package=example.com/big", "first over line = %q, want the worst package first", lines[0])
+	assert.Contains(t, lines[1], "package=example.com/small", "second over line = %q, want the smaller offender second", lines[1])
+}
+
+// The unit tier's budgets (Glenn 2026-09-26 11:20 AM ET: "unit tests be < 2s
+// (ideally <1)"): a package over two seconds and a top-level test over one are
+// each a finding, and an allowlist row raises exactly the budget it names.
+func TestSlowTestsJudgesPackagesAndTestsAgainstTheirRows(t *testing.T) {
+	t.Parallel()
+
+	rows, err := ParseAllowlist(strings.NewReader("# pkg\ttest\tseconds\tmeasured\n\ninternal/ci\t-\t17.1\t11.4s@run1\ninternal/ci\tTestBig\t11.1\t7.4s@run1\n"))
+	require.NoError(t, err)
+	fixture := `{"Action":"pass","Package":"example.com/m/internal/ci","Test":"TestBig","Elapsed":7.4}
+{"Action":"pass","Package":"example.com/m/internal/ci","Test":"TestSmall","Elapsed":1.2}
+{"Action":"pass","Package":"example.com/m/internal/ci","Test":"TestSmall/sub","Elapsed":1.1}
+{"Action":"pass","Package":"example.com/m/internal/ci","Elapsed":11.4}
+{"Action":"pass","Package":"example.com/m/cmd/fast","Test":"TestA","Elapsed":0.4}
+{"Action":"pass","Package":"example.com/m/cmd/fast","Elapsed":2.5}
+`
+	report := Judge(slowEvents(t, fixture), Budgets{Package: 2, Test: 1, Rows: rows})
+	want := []string{
+		"CI-SLOW package=example.com/m/cmd/fast seconds=2.5s budget=2s slowest=TestA:0.4s",
+		"CI-SLOW test=TestSmall package=example.com/m/internal/ci seconds=1.2s budget=1s",
+	}
+	if got := report.OverLines(); strings.Join(got, "\n") != strings.Join(want, "\n") {
+		assert.Failf(t, "assertion failed", "OverLines =\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+}
+
+// A malformed allowlist row, a budget that is not positive, and a row written
+// twice are refused with the line named, never read as "no budget".
+func TestSlowTestsAllowlistRefusesABadRow(t *testing.T) {
+	t.Parallel()
+
+	for _, text := range []string{
+		"internal/ci TestA 2 1.5s@run1\n",
+		"internal/ci\tTestA\t0\t1.5s@run1\n",
+		"internal/ci\tTestA\tfast\t1.5s@run1\n",
+		"internal/ci\tTestA\t2\t1.5s@run1\ninternal/ci\tTestA\t3\t1.5s@run1\n",
+	} {
+		_, err := ParseAllowlist(strings.NewReader(text))
+		assert.ErrorContains(t, err, "line ", "ParseAllowlist(%q) = %v, want an error naming the line", text, err)
+	}
+}
+
+// PROBE 4: a row that does not name its measurement -- the three-column shape
+// the list had before, a time with no place, a place with no time, a time that
+// is not a number -- is refused with its line, and so is a budget under its own
+// measurement or more than MaxHeadroom times it. A measured row is read with
+// both halves kept.
+func TestSlowTestsAllowlistRefusesARowWithoutItsMeasurement(t *testing.T) {
+	t.Parallel()
+
+	for _, text := range []string{
+		"internal/ci\tTestA\t2\n",
+		"internal/ci\tTestA\t2\t1.5s\n",
+		"internal/ci\tTestA\t2\t@run1\n",
+		"internal/ci\tTestA\t2\t1.5@run1\n",
+		"internal/ci\tTestA\t2\tfasts@run1\n",
+		"internal/ci\tTestA\t2\t0s@run1\n",
+		"internal/ci\tTestA\t1.4\t1.5s@run1\n",
+		"internal/ci\tTestA\t4.6\t1.5s@run1\n",
+	} {
+		_, err := ParseAllowlist(strings.NewReader(text))
+		assert.ErrorContains(t, err, "line 1", "ParseAllowlist(%q) = %v, want a refusal naming line 1", text, err)
+	}
+	rows, err := ParseAllowlist(strings.NewReader("internal/ci\tTestA\t1.5\t0.99s@space\n"))
+	require.NoError(t, err)
+	if assert.Len(t, rows, 1, "rows = %+v, want one row: budget 1.5, measured 0.99 at space", rows) {
+		assert.Equal(t, 1.5, rows[0].Seconds, "rows = %+v, want one row: budget 1.5, measured 0.99 at space", rows)
+		assert.Equal(t, 0.99, rows[0].Measured, "rows = %+v, want one row: budget 1.5, measured 0.99 at space", rows)
+		assert.Equal(t, "space", rows[0].Where, "rows = %+v, want one row: budget 1.5, measured 0.99 at space", rows)
+	}
+}
+
+// PROBE 4 of the #4413 ruling: where a row was measured is a CI run
+// (`run<id>`) or a bench, never free text. `2s@guess` is refused, and so are a
+// run with no id or a non-numeric one and a bench name with a suffix;
+// `2s@run36264290984` and `2s@space` are read.
+func TestSlowTestsMeasuredWhereIsARunOrABench(t *testing.T) {
+	t.Parallel()
+
+	for _, where := range []string{"guess", "run", "runabc", "run36264290984x", "idle-2026-09-26", "studio-load12-2026-09-26", "Space"} {
+		text := "internal/ci\tTestA\t2\t2s@" + where + "\n"
+		_, err := ParseAllowlist(strings.NewReader(text))
+		assert.ErrorContains(t, err, "neither run<id>", "ParseAllowlist(%q) = %v, want a refusal: %q is neither a run nor a bench", text, err, where)
+	}
+	for _, where := range []string{"run36264290984", "space", "studio"} {
+		text := "internal/ci\tTestA\t2\t2s@" + where + "\n"
+		rows, err := ParseAllowlist(strings.NewReader(text))
+		assert.NoError(t, err, "ParseAllowlist(%q) = %+v, %v; want one row measured at %s", text, rows, err, where)
+		if assert.Len(t, rows, 1, "ParseAllowlist(%q) = %+v, %v; want one row measured at %s", text, rows, err, where) {
+			assert.Equal(t, where, rows[0].Where, "ParseAllowlist(%q) = %+v, %v; want one row measured at %s", text, rows, err, where)
+		}
+	}
+}
+
+// The labels a row may name as where it was measured come from ci.yml alone,
+// never from a list kept beside the reader (docs/STANDARD.md section 4):
+// Benches reads the machine label of every self-hosted runs-on list and every
+// runner group a step names, once each and in the file's order, and a row
+// measured on a label the file does not name is refused with a remedy naming
+// the file.
+func TestBenchesComeFromCIYML(t *testing.T) {
+	t.Parallel()
+
+	const fixture = `jobs:
+  list:
+    runs-on: [self-hosted, linux, x64, bench-one]
+    steps:
+      - run: ci test-matrix --linux-group bench-one --macos-group bench-two
+  leg:
+    runs-on: [self-hosted, "${{ matrix.entry.os }}", "${{ matrix.entry.group }}"]
+  hosted:
+    runs-on: ubuntu-latest
+`
+	benches, err := Benches([]byte(fixture))
+	require.NoErrorf(t, err, "Benches(fixture): %v", err)
+	assert.Equalf(t, []string{"bench-one", "bench-two"}, benches, "Benches(fixture) = %v, want the two groups the fixture names, in its order", benches)
+
+	rows, err := parseAllowlist(strings.NewReader("internal/ci\tTestA\t2\t2s@bench-two\n"), benches)
+	require.NoErrorf(t, err, "parseAllowlist(2s@bench-two) = %v, want a row measured on a label the fixture names", err)
+	if assert.Lenf(t, rows, 1, "parseAllowlist(2s@bench-two) = %+v, %v, want one row", rows, err) {
+		assert.Equalf(t, "bench-two", rows[0].Where, "parseAllowlist(2s@bench-two) = %+v, want the label kept as where", rows)
+	}
+
+	_, err = parseAllowlist(strings.NewReader("internal/ci\tTestA\t2\t2s@bench-three\n"), benches)
+	assert.ErrorContainsf(t, err, ciYMLPath, "parseAllowlist(2s@bench-three) = %v, want a refusal naming %s, the file the labels come from", err, ciYMLPath)
+}
+
+// PROBE 6: a package over its budget whose every test is under its own (many
+// small tests, the shape of cmd/nova-swarm's 245) is one package line naming
+// its top three tests by time, and no test line.
+func TestSlowTestsManySmallTestsNameThePackageAndItsTopThree(t *testing.T) {
+	t.Parallel()
+
+	var b strings.Builder
+	for i := 0; i < 30; i++ {
+		fmt.Fprintf(&b, "{\"Action\":\"pass\",\"Package\":\"example.com/m/cmd/many\",\"Test\":\"TestN%02d\",\"Elapsed\":0.%02d}\n", i, 10+i)
+	}
+	b.WriteString(`{"Action":"pass","Package":"example.com/m/cmd/many","Elapsed":3.1}` + "\n")
+	report := Judge(slowEvents(t, b.String()), Budgets{Package: 2, Test: 1})
+	want := "CI-SLOW package=example.com/m/cmd/many seconds=3.1s budget=2s slowest=TestN29:0.4s,TestN28:0.4s,TestN27:0.4s"
+	got := report.OverLines()
+	if assert.Len(t, got, 1, "OverLines = %q, want only %q", got, want) {
+		assert.Equal(t, want, got[0], "OverLines = %q, want only %q", got, want)
+	}
+}
+
+// PROBE 1 and 6 at the verdict (the #4413 ruling: a budget verdict is the
+// same on any machine). The same go test -json fixture -- a 1.4 s test, and
+// cmd/nova-bus at 58.8 s as a package with no row (its darwin time in run
+// 36264290984) -- gives the same exit at load 2 and at load 20: on a pull
+// request or self-hosted leg (enforce false) every CI-SLOW line and the CI-LOAD
+// line are printed and the exit is 0; on the nightly leg (enforce true) the
+// 1.4 s test is red over its row (0.4 s measured, 1.2 s budget, three times
+// it) and cmd/nova-bus is red at the 2 s default. An unledgered SLEEPS skip is
+// red on both legs at both loads.
+func TestSlowTestsVerdictIsTheSameAtAnyLoad(t *testing.T) {
+	t.Parallel()
+
+	rows, err := ParseAllowlist(strings.NewReader("internal/busy\tTestSlow\t1.2\t0.4s@run36264290984\n"))
+	require.NoError(t, err)
+	b := Budgets{Package: 2, Test: 1, Rows: rows}
+	timeOnly := `{"Action":"pass","Package":"example.com/m/internal/busy","Test":"TestSlow","Elapsed":1.4}
+{"Action":"pass","Package":"example.com/m/internal/busy","Elapsed":1.5}
+{"Action":"pass","Package":"github.com/mas-bandwidth/nova-tools/cmd/nova-bus","Test":"TestWait","Elapsed":0.9}
+{"Action":"pass","Package":"github.com/mas-bandwidth/nova-tools/cmd/nova-bus","Elapsed":58.8}
+`
+	sleeps := `{"Action":"output","Package":"example.com/m/internal/busy","Test":"TestSleeps","Output":"    x_test.go:3: SLEEPS: needs a mocked clock\n"}
+{"Action":"skip","Package":"example.com/m/internal/busy","Test":"TestSleeps","Elapsed":0}
+{"Action":"pass","Package":"example.com/m/internal/busy","Elapsed":0.1}
+`
+	slowLines := []string{
+		"CI-SLOW package=github.com/mas-bandwidth/nova-tools/cmd/nova-bus seconds=58.8s budget=2s slowest=TestWait:0.9s",
+		"CI-SLOW test=TestSlow package=example.com/m/internal/busy seconds=1.4s budget=1.2s",
+	}
+	const sleepsLine = "CI-SLEEPS test=TestSleeps package=example.com/m/internal/busy: skipped for a wall-clock wait and not on ledger.txt; inject a clock or tag it //go:build functional"
+	loads := map[string]Load{
+		"load 2":  {Avg: 2, CPUs: 32, Known: true},
+		"load 20": {Avg: 20, CPUs: 32, Known: true},
+		"unread":  {CPUs: 32, Why: "sysctl -n vm.loadavg: executable file not found in $PATH"},
+	}
+	for name, load := range loads {
+		for _, leg := range []struct {
+			name    string
+			enforce bool
+			code    int
+		}{{"pull request", false, 0}, {"nightly", true, 1}} {
+			lines, code := Verdict(Judge(slowEvents(t, timeOnly), b), load, leg.enforce, "ledger.txt")
+			want := append(append([]string{}, slowLines...), load.LoadLine())
+			assert.Equal(t, leg.code, code, "%s, %s leg: exit %d lines\n%s\nwant exit %d lines\n%s", name, leg.name, code, strings.Join(lines, "\n"), leg.code, strings.Join(want, "\n"))
+			assert.Equal(t, strings.Join(want, "\n"), strings.Join(lines, "\n"), "%s, %s leg: exit %d lines\n%s\nwant exit %d lines\n%s", name, leg.name, code, strings.Join(lines, "\n"), leg.code, strings.Join(want, "\n"))
+			lines, code = Verdict(Judge(slowEvents(t, sleeps), b), load, leg.enforce, "ledger.txt")
+			assert.Equal(t, 1, code, "%s, %s leg, a SLEEPS skip: exit %d lines\n%s\nwant exit 1 with %q", name, leg.name, code, strings.Join(lines, "\n"), sleepsLine)
+			assert.Contains(t, strings.Join(lines, "\n"), sleepsLine, "%s, %s leg, a SLEEPS skip: exit %d lines\n%s\nwant exit 1 with %q", name, leg.name, code, strings.Join(lines, "\n"), sleepsLine)
+		}
+	}
+	got20 := loads["load 20"].LoadLine()
+	const want20 = "CI-LOAD load=20.00 cpus=32 per-cpu=0.62: measured, not a verdict"
+	assert.Equal(t, want20, got20, "LoadLine = %q, want %q", got20, want20)
+	gotUnread := loads["unread"].LoadLine()
+	const wantUnread = "CI-LOAD load=unknown cpus=32: measured, not a verdict (the load could not be read: sysctl -n vm.loadavg: executable file not found in $PATH)"
+	assert.Equal(t, wantUnread, gotUnread, "LoadLine = %q, want %q", gotUnread, wantUnread)
+}
+
+// A SLEEPS skip the ledger names is not a finding; a subtest's SLEEPS skip is
+// its top-level test's, reported once; a test that prints the marker and
+// passes is not a skip.
+func TestSlowTestsSleepsLedgerExemptsItsRowsOnly(t *testing.T) {
+	t.Parallel()
+
+	ledger, err := ParseSleeps(strings.NewReader("# pkg\ttest\twhere\ninternal/known\tTestKnown\t#4221\n"))
+	require.NoError(t, err)
+	fixture := `{"Action":"output","Package":"example.com/m/internal/known","Test":"TestKnown","Output":"SLEEPS: x\n"}
+{"Action":"skip","Package":"example.com/m/internal/known","Test":"TestKnown","Elapsed":0}
+{"Action":"output","Package":"example.com/m/new","Test":"TestNew/a","Output":"SLEEPS: x\n"}
+{"Action":"skip","Package":"example.com/m/new","Test":"TestNew/a","Elapsed":0}
+{"Action":"output","Package":"example.com/m/new","Test":"TestNew/b","Output":"SLEEPS: x\n"}
+{"Action":"skip","Package":"example.com/m/new","Test":"TestNew/b","Elapsed":0}
+{"Action":"output","Package":"example.com/m/new","Test":"TestSaysIt","Output":"SLEEPS: printed, not skipped\n"}
+{"Action":"pass","Package":"example.com/m/new","Test":"TestSaysIt","Elapsed":0.1}
+`
+	report := Judge(slowEvents(t, fixture), Budgets{Package: 2, Test: 1, Sleeps: ledger})
+	if assert.Len(t, report.Sleepers, 1, "Sleepers = %+v, want only example.com/m/new TestNew", report.Sleepers) {
+		assert.Equal(t, Sleeper{Package: "example.com/m/new", Name: "TestNew"}, report.Sleepers[0], "Sleepers = %+v, want only example.com/m/new TestNew", report.Sleepers)
+	}
+	for _, bad := range []string{"internal/m\tTestA\n", "internal/m\tTestA/sub\twhere\n", "internal/m\tTestA\tw\ninternal/m\tTestA\tw\n"} {
+		_, err := ParseSleeps(strings.NewReader(bad))
+		assert.ErrorContains(t, err, "line ", "ParseSleeps(%q) = %v, want an error naming the line", bad, err)
+	}
+}
+
+// A package column that is not the full module-relative path is refused on
+// its line. matches still compares by trailing elements, so a column of just
+// auditpoc would raise the budget of every import path that ends in /auditpoc
+// (docs/SPEC-CI.md, "The unit tier's budgets": a row names exactly that
+// package). internal/auditpoc is that path and parses.
+func TestSlowTestsAllowlistRefusesAPackageThatIsNotAModuleRelativePath(t *testing.T) {
+	t.Parallel()
+
+	_, err := ParseAllowlist(strings.NewReader("auditpoc\t-\t1.5\t1s@run1\n"))
+	assert.ErrorContains(t, err, "line 1", "ParseAllowlist(auditpoc) = %v, want an error naming line 1", err)
+	assert.ErrorContains(t, err, "must be the full module-relative path", "ParseAllowlist(auditpoc) = %v, want the full module-relative path", err)
+
+	rows, err := ParseAllowlist(strings.NewReader("internal/auditpoc\t-\t1.5\t1s@run1\n"))
+	require.NoError(t, err, "ParseAllowlist(internal/auditpoc) = %v, want one row", err)
+	if assert.Len(t, rows, 1, "ParseAllowlist(internal/auditpoc) = %+v, want one row", rows) {
+		assert.Equal(t, "internal/auditpoc", rows[0].Package, "ParseAllowlist(internal/auditpoc) = %+v, want the module-relative path kept", rows)
+	}
+
+	_, err = ParseSleeps(strings.NewReader("auditpoc\tTestA\t#1\n"))
+	assert.ErrorContains(t, err, "line 1", "ParseSleeps(auditpoc) = %v, want an error naming line 1", err)
+	assert.ErrorContains(t, err, "must be the full module-relative path", "ParseSleeps(auditpoc) = %v, want the full module-relative path", err)
+
+	sleeps, err := ParseSleeps(strings.NewReader("internal/auditpoc\tTestA\t#1\n"))
+	require.NoError(t, err, "ParseSleeps(internal/auditpoc) = %v, want one row", err)
+	if assert.Len(t, sleeps, 1, "ParseSleeps(internal/auditpoc) = %+v, want one row", sleeps) {
+		assert.Equal(t, "internal/auditpoc", sleeps[0].Package, "ParseSleeps(internal/auditpoc) = %+v, want the module-relative path kept", sleeps)
+	}
+}

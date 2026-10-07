@@ -1,0 +1,1286 @@
+# nova-secrets — specification
+
+The tool is a thin wrapper over [sops](https://github.com/getsops/sops) and
+[age](https://age-encryption.org): the store is something generic and open source, and git
+is its substrate. The store is [`mas-bandwidth/secrets`](https://github.com/mas-bandwidth/secrets)
+(private): `.sops.yaml` carrying one recipient rule per file, sealed yaml files, a README
+carrying the protocol, and `recovery.pub` declaring the recovery key. **That repository is the store. This tool never
+becomes one.**
+
+Five verbs: four at the **credential layer**, measured against one sentence:
+
+> **An AI runs with its own API keys, and nothing else can read them.**
+
+`exec` makes it *run*; `check` makes *nothing else can read them* a fact somebody proved this
+morning rather than a belief; `keygen` exists because a new bench cannot use either until it
+has a keypair; `names` answers *what is in my file* **with no key at all**; and `gate`, the
+fifth, stands at the **review layer** — the store's `seat-rule-gate.sh` as a verb, so the
+workflow calls this tool rather than a shell script living in the store it is guarding. Everything else a
+person wants to do to a secret is `sops`, `git` or the provider's console, and this tool
+refuses it **by name, with where it lives**. Five more verbs carry a value or a seat, each
+below: `place` and `placed` put one value on a fleet machine and list what was put there, and
+`seal`, `seat add` and `seat inject` change the store along its own review road. In one
+paragraph: it reads one sealed yaml out
+of a git working copy by running `sops` at a path the caller named, keeps the plaintext in its
+own memory for the length of one call, and then execs, prints, proves or writes one key. It
+links no cryptography, starts no shell and reads no Keychain. **What touches the network is
+per verb, and the tool's own process opens no socket:** its store operations — reading the
+working copy and running `sops` — make no network call, and `names`, `check`, `gate`,
+`keygen`, `placed`, `seat add` and `version` start no network program (`gate` runs `git`
+against refs already in the working copy). `exec` makes no network call of its own and then
+becomes the caller's command, which may use the network as it likes. `place` runs `ssh` to
+the machine it names and writes a receipt under `--receipts`. `seal` and `seat inject` run
+`git push`, `gh pr create`, `gh pr view`, `gh pr merge` and `git pull` against the store's
+remote, unless `--no-pr` stops them after the commit. About two hundred lines of Go over two binaries it did not write, and
+the day a better generic store exists it should be two hundred lines of Go over that one.
+
+This spec is normative, and a sibling of [SPEC.md](SPEC.md), whose **Conventions** govern
+unchanged except for **two deviations, both `exec`'s**: its exit table, argued in **Exit
+codes**, and its single OK line on stderr, argued in **Output grammar**.
+
+**Certainty is exactly as strong as who can read the private key file, and nothing in
+this tool changes that.** sops and age give *cryptographic* certainty that a ciphertext
+in git yields nothing to a line holding no key; they give **nothing** about a second
+process running as the same unix user as the AI that holds one. That half is won by
+per-AI unix users and nova-sandbox's read sets.
+
+## The model
+
+**One age keypair per AI per bench.** The private half is a file in that AI's own home,
+mode `0600`, in a directory mode `0700`, at a path that comes from a flag (`--key`) and
+nowhere else. The public half is not a secret and is printed, pasted and committed.
+
+**One sealed yaml per seat, `<name>.yaml`, and one bench key per file.** A line with one
+seat has one file, sealed to that bench's key plus the recovery key. A line with two
+benches has two files, and neither is sealed to the other bench's key — **The credential
+shape** carries which token lives in which, `--as` names the file, and
+**invariant 1 holds the shape**, so the split is checked and not only written down.
+
+**A file-shaped secret is not in this store.** A value with a newline in it — an SSH
+private key, an age key — is **generated on the seat that uses it and never leaves that
+seat**, exactly as this spec's own age keys already are; its public half is authorized on
+the box that accepts it by that box's own recipe. The store holds no such
+value: no sibling file, no second lifetime model, no verb that hands a program a path,
+and `exec` refuses a multi-line value **by name** with that remedy.
+
+**The recovery key** is generated at the owner's console, kept **off every bench** (the owner's
+password manager or paper), and a recipient on every rule. Its public half is **declared and
+not inferred**: one line at the store root in **`recovery.pub`**, committed, changed only by a
+pull request exactly as the rule file is, and what invariant 1 measures every rule against.
+What it opens are API keys and service passwords the owner pays for and can revoke at any console,
+never a line's record, notes or memory. It is for one thing — re-sealing a file when a bench
+key is lost (`sops updatekeys`) — and **every use is announced on the record**.
+
+**A seat can decrypt the files its rules name, and no other.** A property of the recipient
+lists and of nothing else — no permission bit, no path convention and no check in this tool
+creates it, and `check` only *observes* it, from both sides, the negative one mattering:
+
+> `check` finds this key's public half, then for **every** `*.yaml` in the store requires
+> a decrypt to **succeed** if that file's own recipients list the public half and to
+> **fail** if they do not. A file that opens and should not is `SECRETS CHECK FAIL` at
+> exit 1 naming the file; so is a file that should open and does not.
+
+**Where "finds this key's public half" comes from, because it is a real dependency.** From the
+`# public key: age1…` comment `age-keygen` writes at the top of the identity file — the only
+source available to a tool that links no cryptography (test 16) and takes no `--age-keygen` on
+`check`. An identity file with that comment stripped is legal to sops and leaves invariant 4
+undecidable, so it is a **refusal by name**, never a pass, naming the remedy: run
+`age-keygen -y <path>` and restore its output as that comment line. This spec depends on
+age-keygen's file format, and says so here rather than letting it be discovered.
+
+**Naming.** A key inside the file is **the environment variable its reader already reads**,
+unprefixed: `GH_TOKEN`, not `<SEAT>_GH_TOKEN` — the AI's name is the filename, and the first
+tool to read `<SEAT>_GH_TOKEN` while every other tool on earth reads `GH_TOKEN` is a tool
+nobody can use. A key name must match `[A-Z][A-Z0-9_]*`; anything else is a refusal naming the
+key, because a name that is not a legal environment variable would silently not arrive.
+
+**Not everything in the file is sealed.** `.sops.yaml` carries an `unencrypted_regex` for
+fields that are facts rather than secrets — the two fact-key names a machine's file carries — and this
+tool treats an unencrypted field exactly as a sealed one. What may be in the clear is the
+store's decision, reviewed in a pull request; this tool neither extends nor audits it, with
+one exception it makes in that same pull request: the verb's mark (see the gate) is admitted
+to the rule of the seat file the verb writes.
+
+**What the model does not give you.** Read access to the *ciphertext* is not a boundary:
+anybody who can clone the store holds every AI's sealed file, and that is intended — it is what
+makes the store backed up, reviewable and portable. The boundary is the private key file. And a
+*decrypt leaves no record anywhere*: neither the store, nor git, nor this tool can say who
+opened what, or when, so nobody may build a belief on an audit trail that does not exist.
+
+## The verbs
+
+```
+nova-secrets version
+nova-secrets exec   --store <dir> --as <name> --key <path> --sops <path> --only <NAME,...|all> [--require <NAME>]... -- <cmd> [args...]
+nova-secrets names  --store <dir> --as <name> [--max <n>] [--json]
+nova-secrets check  --store <dir> --as <name> --key <path> --sops <path> [--max <n>]
+nova-secrets gate   --store <dir> --base <git ref> --head <git ref> [--machines <registry>]
+nova-secrets keygen --as <name> --key <path> --age-keygen <path> [--store <dir>]
+nova-secrets place  --store <dir> --as <name> --key <path> --sops <path> --machine <name> --secret <name> [--path <remote path>] [--machines <file>] [--receipts <dir>] [--ssh <path>] [--dry-run]
+nova-secrets placed --machine <name> [--receipts <dir>]
+nova-secrets seal   --store <dir> --as <seat> --key <path> --sops <path> --name NAME [--stdin] [--no-pr] [--dry-run] [--gh <path>] [--git <path>]
+nova-secrets seat add --store <dir> --as <seat> --pub <age1…> --from <source seat> --only <NAME,...> --key <path> --sops <path>
+nova-secrets seat inject --store <dir> --as <seat> --from <source seat> --only <NAME,...> --key <path> --sops <path> [--no-pr] [--dry-run] [--gh <path>] [--git <path>]
+nova-secrets help
+```
+
+`version` (or `--version`) prints this binary's shared four-field build identity and takes
+no flags or arguments. It opens no store or key and starts no sops, age or network program,
+so an installed-tool inventory can ask it on a bench with no credential setup.
+
+**`--dry-run` prints the plan and writes nothing.** On `place`, `seal` and `seat inject` it runs
+every refusal the real run has, then prints one `SECRETS <VERB> PLAN` line per step the real run
+would take and a last `SECRETS <VERB> DRY-RUN OK` line, at exit 0: the file written and whether
+the name is added or replaced, the recipients it is encrypted to, the machine, ssh target and
+remote path a placement writes, the sealed file its receipt records, the branch, the commit message
+and the pull request title a store change carries. The plan and the real run are read off the same
+values, so the one is the other. A dry run starts no ssh child, no `git` write, push or `gh`
+call, and no `sops` encrypt, and writes no file and no receipt; the two reads it makes are the
+ones the real run makes first (a `sops -d` to learn that a name exists, and git's own branch and
+clean-tree reads). `seal --dry-run` takes no value, from stdin or a terminal. No value, fragment
+or length reaches a plan line; `place --dry-run` prints the `file`, `head` and `blob` the real
+receipt records.
+
+Three verbs write into the store: **`seal`**, which folds one pasted value into one seat file
+and carries that change through a branch and a review; **`seat add`**, which creates a
+new seat's file and its rule in the working copy and stops there, for a person to commit and
+a reviewer to read; and **`seat inject`**, which re-seals named values out of a seat this
+machine can open into a seat file that already exists and carries that change on `seal`'s
+road. Every other store edit is `sops` and `git` in a person's hands. `keygen`
+writes exactly one file, outside it.
+
+**`--store <dir>` is the store's git working copy**, not a URL and not a repository name:
+the store-reading verbs never fetch it. A working copy in the strong sense — invariant 8 reads `.git` as
+files — so a `--store` that is not a directory, holds no `.sops.yaml`, or has no `.git`, is a
+refusal naming the fact and the `git clone` line: **exit 2**, or **125** from `exec`, as every
+refusal of `exec`'s is.
+
+**`--as <name>` selects the file**, `<store>/<name>.yaml`. It is not an identity and proves
+nothing: the key decides what opens. A `--as` whose file is absent is a refusal listing the
+names that *are* in the store, the commonest form of this mistake being a spelling.
+
+**`--key <path>` is the age private key**, required on every verb but `help` and `names`; on
+`keygen` it is the path to write. **No default, no `$SOPS_AGE_KEY_FILE` fallback, no
+`~/.config/sops/age/keys.txt`,** and no environment variable of any kind is consulted by this
+tool for anything. A key file whose mode is not `0600`, or whose directory is not `0700`, is a
+**refusal on every verb that takes one** naming `chmod 600` and `chmod 700` — not a warning,
+because the entire boundary is that file's mode.
+
+**The sops child gets a built environment, not an edited one.** nova-secrets **sets**
+`SOPS_AGE_KEY_FILE` to the path `--key` gave, removes every other `SOPS_*` variable, and
+sets `HOME` and `XDG_CONFIG_HOME` — **for the sops child only** — to an empty directory
+under its own temp dir, covering sops' whole documented identity lookup and not a subset;
+test 2 names every file and variable in that lookup, plants one of each, and states what
+each defeats.
+
+**`--sops <path>` is the sops binary**, absolute, from a flag: PATH is a guess, and it is
+the specific guess an attacker who can write one directory gets to make for you.
+`--age-keygen <path>` is the same law. **`--max <n>` is the one default**, `20`; `0` prints
+all; a negative ceiling is refused.
+
+**`--only <NAME,...>` narrows what the command receives, and it has no default.** A list,
+or the literal `all`; a missing `--only` is a refusal naming both, because a launcher knows
+which secrets its harness needs and SPEC.md says the same of every scope: no default. Wide
+must be typed — `--only all` prints `only=all` — because **every child the command spawns
+inherits whatever it was given**.
+
+**`--require <NAME>` is repeatable and has no default.** A key the caller asserts must be in
+the file; a missing one is a refusal *before the command starts*, because a harness starting
+without its key and failing forty seconds later inside a provider's error is the failure this
+tool is against. Every missing one is reported in one run, sorted, with the `sops <file>` line
+that adds them; a `--require` naming a key `--only` excludes is a refusal, the caller having
+contradicted itself.
+
+### `exec`
+
+```
+nova-secrets exec --store ~/secrets --as <seat> --key ~/.config/nova-secrets/<seat>.key \
+  --sops /opt/homebrew/bin/sops --only GH_TOKEN --require GH_TOKEN -- gh api user --jq .login
+```
+
+**What it asserts.** That the command it started had, in its environment, exactly the keys
+of `<store>/<as>.yaml` that `--only` named (`all` names every one), no other key added or
+renamed by this tool, and the values byte-for-byte as the file holds them. Not what the
+command *does* with them: whether it leaks them into its own log or config, and whether
+they are valid at the provider, are the caller's probe.
+
+**What makes it say NO** (all exit **125**, all *before* the command starts): no `--` or an
+empty argv after it; a missing or unreadable store, file or key; a store whose `HEAD` differs
+from the ref it tracks; a key file mode that is not `0600`; a `sops` binary absent, not
+executable, or too old; a decrypt that fails; a key name that is not a legal environment
+variable; a value with a NUL or a newline in it; a missing `--only`; a `--require` not in the
+file or excluded by `--only`; an `--only` naming a key the file does not hold. One run reports
+every independent problem it can reach, in a deterministic order: flags first, sorted; then the
+store; the key; the binary; the contents. And, so that **the launcher never guesses which
+recipient is the recovery key**, `exec` makes invariant 1's shape check too: a `recovery.pub`
+absent, unreadable or malformed, or a rule whose recipients are not one seat key plus exactly
+the key it declares, is 125 before the command starts.
+
+**The plaintext path, whole, because half of it is the dangerous half.** Every value reaches
+**every child of the command**, and `--only` is the only thing that narrows that. Another
+process of the same unix user reads the child's environment (macOS `ps -Eww`, linux
+`/proc/<pid>/environ`), and the answer is a unix user per AI, not a flag here; a **core dump**
+writes it to disk, so `RLIMIT_CORE` is set to 0 before the exec; and on darwin nova-sandbox is
+a **waiting parent**, so for the seat's lifetime a process outside the wall holds it. Nothing
+of *nova-secrets* is left alive holding a plaintext; that is not nothing at all.
+
+**It replaces itself.** `exec` uses `execve` — same pid, no wrapper left in the tree: no
+zombie, no signal relay to get wrong, no second process for a deadline to kill by mistake.
+
+**Its exit code is the command's, and its own refusal is 125**, nova-sandbox's number adopted
+verbatim: in the nested launcher a `2` could be `gh`'s, a flag error, or this tool's refusal,
+and three facts sharing one number is three facts nobody can act on. So `exec` **never exits 1
+or 2 for a reason of its own**, **a caller must never read its exit status as a check result**,
+and: **read the line, not the number**. Its one event line is printed **before** the exec and
+**on stderr**, the command owning stdout from the next instruction onward:
+
+```
+SECRETS EXEC OK as=<name> keys=<n> only=<all|n> required=<n> file=<path> head=<sha> cmd=<argv0>
+```
+
+`keys=<n>` is a count and never a listing.
+
+### `names`
+
+```
+SECRETS NAME key=GH_TOKEN clear=false
+SECRETS NAMES MORE kind=key shown=<n> total=<n> run: nova-secrets names ... --max 0
+SECRETS NAMES OK as=<name> keys=<n> shown=<n> sealed=<n> clear=<n>
+```
+
+`--json` prints the same value as one JSON object on stdout: `result` (verb, status,
+exit, and on a refusal its reason and remedy), `facts` (as, keys, shown, sealed, clear),
+one `items` row per name shown (`key`, `clear`) and a `more` row when `--max` cut the list.
+
+**What it asserts.** That these are the key names in the sealed file — **read without
+decrypting it**. sops encrypts values and leaves field names in the clear (`GH_TOKEN:
+ENC[AES256_GCM,...]`), so a key is not needed for the question and is not asked for: `names`
+takes no `--key` and no `--sops`, starts no sops process, and never has a plaintext in its
+memory to lose. `sealed=` and `clear=` decompose `keys=`, so a key in the clear under
+`unencrypted_regex` is visible as such (`SECRETS NAME key=<fact-key> clear=true`). Zero keys is
+`keys=0` at exit 0, an answer and not a failure. It says nothing about whether the file *opens*
+(invariant 4).
+
+### `check`
+
+The wall. Exit 1 when the store is not what this spec says it is, its output naming the
+file and the repair. In a fixed order, against the working copy at `--store`:
+
+1. **`.sops.yaml` parses**, every rule names a path regex **anchored at both ends** (`^…$`),
+   every recipient is a syntactically valid `age1…` key, and no recipient appears twice in one
+   rule. A `.sops.yaml` that will not parse is exit **1** here and not the exit 2 of a store
+   that holds none: that store is wrong, not absent. The anchors are an invariant, not a style:
+   measured, a rule `a\.yaml$` sealed `not-a.yaml` to A's key. **And the shape of the rule set
+   is checked against a declared recovery key**, because *one bench key per file* and the
+   split are otherwise model rules nothing enforces: the store root holds **`recovery.pub`, one
+   line, the recovery key's public half**, and **every rule names exactly two recipients — one
+   seat key, plus exactly the key `recovery.pub` declares.** Declared, never inferred from the
+   rule set: a two-rule store cannot tell a recovery recipient from a second seat key by
+   counting what its rules have in common, so counting is not what this does. Two files for one
+   seat key stays legal; two seat keys on one file does not, nor does a rule whose second
+   recipient is not the declared key. A `recovery.pub` absent, unreadable, empty, holding more
+   than one line, or holding something that is not an `age1…` key is exit 1 naming the file —
+   never a silent pass. Read from `.sops.yaml` and `recovery.pub` alone, with no key at all, so
+   every bench goes red on a merged rule that widens one file or swaps the recovery key out of
+   it, and a one-rule store is as checkable as a five-rule one.
+2. **Every file's recipients are the ones its rule names**: for every `*.yaml` but
+   `.sops.yaml`, the `age` set in that file's own `sops:` block equals its matching rule's set.
+   `.sops.yaml` governs a **seal**, the file's own block governs a **decrypt**, the two meet
+   only when somebody runs `sops updatekeys`, and the gap is where every drift lives — a key
+   merged into a rule that grants nothing, a revoke that still opens every file sealed before
+   it, a third recipient nobody notices.
+   `SECRETS CHECK FAIL <file>: recipients differ from .sops.yaml; run: sops updatekeys <file>`
+3. **Every `*.yaml` but `.sops.yaml` is sealed**: it carries a `sops:` block and every
+   field outside the rule's `unencrypted_regex` is encrypted. A plaintext secret in a
+   tracked file is exit 1 naming the file and the key, **never quoting the value**.
+4. **This key opens exactly the files whose recipients name its public half** — positive
+   and negative in one pass, the negative half above. A file that opens and should not, and
+   a file that should open and does not, are two sentences and both are exit 1.
+5. **No private key is in the store**: nothing under `--store` is mode `0600`
+   age-key-shaped, and `--key` does not resolve to a path inside `--store`.
+6. **The key file's mode is `0600` and its directory's is `0700`.**
+7. **The working copy is clean of decrypted output**: no untracked file under `--store` holds
+   a line matching `^[A-Z][A-Z0-9_]*: ` whose value does not begin `ENC[` — defined here and
+   not delegated to a `.gitignore` the store does not have, which would pass vacuously.
+8. **The working copy is the store, not a memory of it**: `HEAD` equals the remote-tracking
+   ref it tracks, read as **files** — `.git/HEAD`, the upstream named by `branch.<name>.remote`
+   and `.merge` in `.git/config`, then `.git/refs/…` and `.git/packed-refs` — no network.
+   Every tracked store file (`*.yaml`, `.sops.yaml`, `recovery.pub`) matches the committed
+   `HEAD` tree object (inspected via local git loose objects or local `git ls-tree -r`), ensuring
+   staged but uncommitted modifications (`git add`) are detected and refused. Local git consistency
+   (clean tree, index, HEAD) detects local drift and never authenticates owner intent by itself;
+   launch refuses when the protected-boundary prerequisite cannot be established;
+   check and exec agree on the admissible committed artifact. Behind it is a bench running a value
+   a rotation replaced; ahead of it is a local edit nobody reviewed; both are exit 1 naming
+   `git -C <store> pull --ff-only`, and `exec` refuses the same case at 125, the value it is about
+   to hand a process being exactly the one in question. Three states are refusals naming the fact,
+   never a stale-ref failure and never the "no `.git`" sentence: a **detached `HEAD`**, a **branch
+   with no upstream**, and a `.git` that is a **file** (a worktree or a submodule), whose real
+   directory this tool does not follow. Both OK lines carry `head=<short sha>`, so two benches
+   compare by eye. **What it notices is a fetch nobody merged, never a fetch nobody ran**: a
+   remote-tracking ref is only as fresh as the last fetch, so a clone nobody fetches satisfies
+   invariant 8 forever, which is why every launcher line carries `git -C <store> pull --ff-only &&` —
+   a network call that is the launcher's and never `exec`'s or `check`'s. The cost is that a bench
+   which cannot reach GitHub cannot clear the refusal at seat start; accepted, the alternative being
+   a seat running a revoked value with a green `check` beside it, the row this tool exists to close.
+
+Any of the eight is its own `SECRETS CHECK FAIL` line, every failure in one run, capped per
+kind at `--max` with a MORE line, the counts never capped and printed on failure as well as
+success. `mine=` counts the files whose recipients list **this key**: the same store is `mine=1`
+on the keeper bench and `mine=1` plus one per pool file on the admin bench — every
+`swarm-<name>.yaml` is sealed to that bench's key — green on both.
+
+**And one thing `check` does not do: ask GitHub anything.** The store's ruleset and its
+collaborators' permissions are the open door under **"Reviewed" is a control** below, and the
+hand that reads them is a person's — one line, run at a bench:
+
+```
+gh api repos/mas-bandwidth/secrets/collaborators --jq '.[] | "\(.login) \(.role_name)"'
+```
+
+The answer this page expects is the configured administrator and writer; anything else is
+a permission somebody changed. A flag that asked the same question from
+inside `check` would want a GitHub token in a plaintext file on the bench — a fourth file-shaped
+secret, with no row in the credential table and no home in **The model** — to buy a warning,
+which is not a trade this page makes.
+
+```
+SECRETS CHECK OK as=<name> recipients=<n> files=<n> sealed=<n> mine=<n> foreign=<n> clear=<n> head=<sha>
+SECRETS CHECK FAIL <file>: <reason>
+SECRETS CHECK FAIL as=<name> files=<n> failed=<n> shown=<n>
+```
+
+It does **not** check git history (a value ever committed in the clear is there forever;
+that is **Rotation**, which is revocation and not deletion), the values themselves (no
+network call), the other AIs' keys (every AI runs `check` for itself, because a store
+proven by one line is a store proven for one line), or who has cloned the store.
+
+### `gate`
+
+```
+nova-secrets gate --store <dir> --base <git ref> --head <git ref> [--machines <registry>]
+GATE APPROVE files=<n> machines=<registry|->
+GATE REFUSE rule=<n> check=<k> file=<f>: <why>
+```
+
+**Gate checks (k = 1..5):**
+
+1. **Rule's recipients and path_regex**: Every changed `.sops.yaml` rule has exactly two age recipients (one the declared recovery key) and a `path_regex` naming exactly one seat file.
+2. **Seat file's encryption and its rule**: Every changed seat file `<seat>.yaml` is encrypted (with `sops:` metadata present and no plain values outside `unencrypted_regex`) and its rule exists in `.sops.yaml`.
+3. **No other file changes**: No files other than `.sops.yaml`, `README.md`, and seat `.yaml` files change.
+4. **New recipient needs the registry's seat** (inside check 1): A recipient key this diff introduces is permitted only when a machine in `--machines` carries this rule's seat.
+5. **Seat gone at head**: A seat file in the store at `--base` must still be in the store at `--head`; removing a seat is never part of adding one.
+
+numbers identify checks; the gate runs them in the order 3, 1, 4, 5, 2. check=0 means the gate refused before any numbered check ran.
+
+**The store's own gate, as a verb.** What the store repo ran as a shell gate lives here in
+the tool instead, so the workflow calls this tool and the rule
+text lives beside the rules it measures. It diffs `--base..--head` with **git, and asks GitHub
+nothing**: a store already cloned, two refs already present, no network socket. `--base` and
+`--head` are required; a missing one is a refusal at exit 2.
+
+**Each ref is a commit, resolved once, before anything reads it.** A ref beginning with `-`
+is the shape of a git option and is refused at exit 2 as
+`SECRETS GATE REFUSED: --head <ref> begins with "-", the shape of an option, not a git ref`
+before git sees it. Every other ref is resolved with
+`git rev-parse --verify --end-of-options <ref>^{commit}`; a ref that names no commit (an
+unknown name, a tree, two words) is `GATE REFUSE rule=0 check=0 file=: --head <ref> does not name a
+commit in the store <dir>` at exit 2. The diff, the tree listings and every file read are
+then made from the two resolved SHAs, each behind `--end-of-options`, so no value the caller
+passes is ever read by git as an option. Two refs naming one commit are an empty diff, and an
+empty diff approves: `GATE APPROVE files=0`.
+
+**Every gate flag takes one value.** `--store`, `--base`, `--head` or `--machines` given twice
+is refused at exit 2 with one line on stderr naming the flag,
+`SECRETS GATE REFUSED: --head is given more than once; every gate flag takes one value`, before
+any ref is read.
+
+**It refuses, at exit 2, unless every changed `.sops.yaml` rule has exactly two age
+recipients, one of which is the key `recovery.pub` declares at the head, and its
+`path_regex` names exactly one seat file; unless every changed seat file `<seat>.yaml` is
+encrypted — `sops:` metadata present, and no line matching `^[A-Z][A-Z0-9_]*: ` whose value
+does not begin `ENC[` and is not permitted in the clear by the rule's `unencrypted_regex`,
+`NAME: sk-` included — and its rule exists; and unless no other file changes except
+`README.md`.** A rule is numbered by its position in `creation_rules`, 1-based, and that
+number is what `rule=<n>` prints; a changed file outside the three kinds names no rule and
+prints `rule=0`. The `file=` field names the file the refusal is about; a plain value is
+named by its key and **never quoted**, exactly as `check` invariant 3. On success it prints
+`GATE APPROVE files=<n> machines=<registry|->`, `files=` counting every changed path. The gate
+measures a **diff before review** and `check` measures the **working copy after**; each is the
+other's witness, and neither substitutes for the other.
+
+**It also refuses, at exit 2, when a seat file in the store at `--base` is gone at `--head`.**
+Removing a seat is how a seat loses its credentials inside a pull request whose subject says
+it is adding one, and it is never part of adding a seat. Keep what exists.
+
+**It also refuses, at exit 2, a changed seat file no verb wrote.** `seal`, `seat add` and
+`seat inject` each put one root key into the file they write, in the clear:
+`NOVA_SECRETS_WRITTEN_BY: <seal|seat add|seat inject> <tool version>`, and the gate refuses a
+changed seat file that lacks it, `GATE REFUSE rule=<n> check=2 file=<f>: the seat file was not written
+by a nova-secrets verb; seal it with nova-secrets seal or seat add, never by hand`. **The
+decision, and why.** Without the mark the gate is a check on bytes, and a seat file sealed by
+hand (`sops <seat>.yaml`, `sops updatekeys <seat>.yaml`, any editor that leaves sops metadata
+and `ENC[` values) is the same bytes as one a verb wrote, so every guarantee the verbs add on
+top of sops — a re-seal only out of a seat the operator can open, `seal`'s decrypt before
+write, the `--only` names — is bypassed by a file the gate approves
+(`tla/SecretsSeat.tla` on `sprint/md-secrets-h.w1.g1.e15`, the `MCSecretsSeatReachHandSeal`
+config). The gate is where the store enforces that a seat file is written only by a key that
+opens it or by `seat add` out of a seat the operator can open, so the gate marks. **What the
+mark catches:** a hand seal by accident, a stranger who did not read this page, and the
+hand `sops` steps a first run might otherwise follow. **What it does not:** a hand that copies the mark; a
+mark is not a signature, and that hand is the registry's and the reviewer's business, with
+check 1 on the rule and check 4 on the registry standing as before. The mark is read in the
+clear, so a rule that governs a seat file lists it in `unencrypted_regex`
+(`^NOVA_SECRETS_WRITTEN_BY$`); real sops seals a key the rule does not permit, and the gate
+then cannot read the mark. `seat add` writes new rules so. `seal` and `seat inject` give an
+existing rule that lacks it (every seat ruled before the mark existed) the regex as part of the
+write: `^NOVA_SECRETS_WRITTEN_BY$` when the rule has no `unencrypted_regex`, and `(?:R)|^NOVA_SECRETS_WRITTEN_BY$`
+when it has one, `R`, that does not admit the mark (the group keeps a leading flag such as `(?i)`
+inside `R`, so no other spelling of the key becomes clear), nothing else in `.sops.yaml` moved, and the changed `.sops.yaml` is
+committed with the seat file, so the pull request the gate reviews carries both (`files=2`) and
+the `--dry-run` plan names it (`SECRETS <VERB> PLAN rule .sops.yaml rule for <seat>.yaml gains
+unencrypted_regex ...`). The gate cannot decrypt, so it never accepts a sealed mark instead. **The mark's
+value is pinned:** `<seal|seat add|seat inject> <version>`, the version `dev` or a release tag,
+`v?\d+\.\d+\.\d+(-rc\d{1,3})?` (a shape alone, or an unbounded suffix, let 256 bits of hex pass as a version);
+a verb whose build stamp is not of that form writes `dev`. A pinned mark is
+never a "plain value" to the gate, `check` or `seat inject`, and is a clear key to `names`; any
+other cleartext under the mark key is a plain value, refused like any other whatever the rule's
+`unencrypted_regex` admits, and is no mark to the gate. The recipient change of
+an existing file (`updatekeys`) is a hand step, so a file re-keyed by hand and not re-sealed
+by a verb keeps the mark it already had and the gate approves it: the recovery path, named as
+what the gate cannot tell apart.
+
+**`--machines <registry>`: the fleet stands in for a second reviewer.** A secrets seat is set
+up **automatically** when the owner asks — no second human approval on `mas-bandwidth/secrets`; the
+mechanical gate is the required check. So the reviewer's question — *whose key is this, and
+does that machine exist?* — is a machine's question, and the fleet's machines registry
+(`name<TAB>ssh<TAB>os/arch<TAB>roles<TAB>seat<TAB>cores<TAB>notes`, `queue/control/machines.tsv`)
+is the one place that already answers it. **With `--machines` given, a recipient key this
+diff introduces — one no creation rule named at `--base`, the recovery key aside — is
+permitted only when some machine's `seat` column holds this rule's seat, where the seat is
+the `<seat>` of the single `<seat>.yaml` the rule's `path_regex` names.** A row whose seat is
+`-` carries no seat and vouches for nothing. The refusal names the **seat**, never the key,
+because the seat is what a reader goes and checks:
+
+```
+GATE REFUSE rule=1 check=4 file=air.yaml: rule adds a recipient no seat file rule named before, and no machine in queue/control/machines.tsv carries the seat air; add the machine's row (its seat column must read air) or drop the rule
+```
+
+The registry is read **first and whole**, before any judgement leans on it — an unreadable or
+malformed one is a refusal, exactly as `internal/fleet` demands, because the half of a
+registry that parses is the half that lets a recipient through. **Without `--machines` the
+rule is dormant, not satisfied**, and the approval line says `machines=-` so that no APPROVE
+is ever read as the fleet having vouched. **The dormancy stands, and is acceptable now that
+`seat add` refuses a `--pub` any creation rule already names (see `seat add`): the seat-add
+wall is in the tool, before any write; the gate measures the diff; and a hand-edited rule
+that reuses a key is the gate's business and the registry's when the fleet gives
+`--machines`, and the review's where it does not.**
+
+### `keygen`
+
+```
+nova-secrets keygen --as <seat> --key ~/.config/nova-secrets/<seat>.key --age-keygen /opt/homebrew/bin/age-keygen
+SECRETS RULE   creation_rules:
+SECRETS RULE     - path_regex: ^<seat>\.yaml$
+SECRETS RULE       age: age1…,<recovery key>
+SECRETS RULE NOTE  placeholder: no --store, so <recovery key> is filled by `nova-secrets seat add`
+SECRETS RULE NEXT: add these two lines to .sops.yaml (or run `nova-secrets seat add`)
+SECRETS KEYGEN OK as=<seat> key=<path> mode=0600 pub=age1…
+Done. Your new key is at <path>. Nothing failed.
+Next: send this public key to whoever seals your seat: age1…
+```
+
+**The order is the contract, and the run ends on a plain closing line.** The last line of a
+command's output is the line a reader takes for the answer, so a verdict at the top and a
+placeholder note at the bottom reads a successful run as a failure. So the rule block comes
+first, the `NEXT:` line after it, then `SECRETS KEYGEN OK` as the last
+machine-readable line (callers that parse the receipt keep it), and the run closes with two
+plain lines a person cannot misread — `Done. Your new key is at <path>. Nothing failed.` and
+`Next: send this public key to whoever seals your seat: <pub>` — so the last line on the screen
+says it worked and what to do next. The `NEXT:` line is phrased as a **next
+step, not a state of the world** — "add these two lines" rather than "stands unfilled" —
+because only one of those two reads as an instruction at the end of a green run.
+`TestKeygenEndsWithThePlainClosingLine`, `TestKeygenPrintsTheOKLineAfterTheRuleBlock` and
+`TestKeygenNextStepSaysItIsANextStep` pin the order and the wording; the placeholder note keeps
+its place in the rule block, worded as what fills it rather than as a refusal, because a
+`--store`-less block that fails invariant 1 until it is filled must still say so.
+
+**What it asserts.** That a new age private key exists at `--key`, created with `O_EXCL` and
+mode `0600` in a directory that already existed at `0700`, and that its public half is the one
+printed. It refuses a file already at `--key`, never overwritten, naming the path; a directory
+absent or not `0700`, naming `mkdir -m 700 -p <dir>`; an `age-keygen` absent or too old.
+
+**What it deliberately does not do.** Touch the store, edit `.sops.yaml`, commit, or push: a
+tool that added its own recipient line could grant itself access to a file, the one thing the
+recipient list exists to make impossible without a review. The `SECRETS RULE` lines are for
+pasting into **a pull request that edits only that AI's own rule**, and the rule printed is the
+shape invariant 1 demands — anchored at both ends, this key and the recovery key and nothing
+else. **With `--store` given, the recovery key is the line `keygen` reads out of that store's
+`recovery.pub`** — its one read of the store, and it writes nothing there. A `--store` that
+fails its own refusals, or whose `recovery.pub` is in any of invariant 1's five bad states, is a
+refusal naming the file at **exit 2** — never the placeholder in silence. So the pasted block
+satisfies invariant 1 as printed, which a literal placeholder cannot, the invariant demanding
+exactly the declared key. Without `--store` the second recipient is the literal
+`<recovery key>` and the `NOTE` line prints beside it, because a block that fails invariant 1
+until it is filled must say so rather than look finished. Guessed in neither case.
+
+**"Reviewed" is a control only while no admin edits the ruleset.** `mas-bandwidth/secrets`
+carries the ruleset `secrets-review-required`, active on the default branch — pull request
+required, one approving review, **last-push approval required**, stale reviews dismissed on push,
+no deletion, no non-fast-forward, **`bypass_actors` empty**. It has exactly two collaborators,
+the configured administrator and writer. An empty `bypass_actors` stops an admin
+*bypassing* the rule; it does not stop an admin *editing* it — an `admin` account can disable
+or delete the ruleset with no pull request, and one of those tokens is the `GH_TOKEN` in
+the seat file, on an unwalled bench whose loose child is the threat this split
+exists for. What an admin push buys an attacker with the cryptography intact: a direct push
+editing the seat file's own rule — that bench holds a current recipient key, so `updatekeys`
+runs — swapping the recovery key out of that one file, invariants 2 and 4 green afterwards.
+**Invariant 1 is what turns the one-file swap red on every other bench**, not the ruleset — and
+it can only because the recovery key is *declared* (invariant 1, declared and not counted).
+Editing `recovery.pub` in the same push — declaring the keeper's key the recovery key — passes
+every invariant on every bench: `{A_admin, A_keeper}` and `{A_keeper, R}` are each the declared
+key plus one other, and nothing in the store tells that shape from an honest one. A direct push
+has no approver, so nothing catches it; under `write` it is a pull request whose diff touches a
+one-line file, which an approver's eye catches where two `age1…` strings inside a rule are not.
+That is why this page grants `write` and not `admin` on the store, and why the
+collaborator line above is a person's to run: the one thing a store can say about a control its own admin can
+untie is to say out loud that it can. Which rule a pull request touches is read by the approver,
+not enforced: no code owners, no required reviewers.
+
+**Write, not admin.** `write` opens branches, pushes them, opens pull requests, approves and
+merges — every step this spec asks of that account — and cannot edit or delete a ruleset, so the
+control is not one the controlled account administers. With two collaborators and no bypass,
+the approver of every one of the administrator's changes, **including one that grants a key access to a
+file**, is an AI — the ruleset's design, not an accident. If both accounts held `admin`, the
+review would be a courtesy between two administrators and this page could not call it a control.
+
+### `place` and `placed`
+
+```
+nova-secrets place  --store <dir> --as <name> --key <path> --sops <path> \
+  --machine <name> --secret <name> [--path <remote path>] \
+  [--machines <file>] [--receipts <dir>] [--ssh <path>] [--dry-run]
+nova-secrets placed --machine <name> [--receipts <dir>]
+SECRETS PLACE OK machine=<name> secret=<name> path=<path> file=<seat>.yaml head=<commit|-> blob=<blob id> stamp=<stamp>
+SECRETS PLACED OK machine=<name> count=<n>
+SECRETS PLACED ITEM machine=<name> secret=<name> path=<path> file=<seat>.yaml head=<commit|-> blob=<blob id> stamp=<stamp>
+SECRETS PLACED ITEM machine=<name> secret=<name> path=<path> file=- head=- blob=- stamp=<stamp> identity=unknown
+SECRETS PLACED NOTE <n> receipt(s) for <name> carry no sealed-file identity (identity=unknown: place again)[; <m> were written by an older build ...]; run: ... or remove the file: rm <receipt file>
+```
+
+**What it asserts.** A bench or a runner gets the keys it needs by machinery rather than by a
+person's `scp`. `place` decrypts `<store>/<as>.yaml`, takes exactly the one `--secret`
+named, and writes it to `--path` on the machine named by `--machine` over ssh, mode `0600` — or,
+without `--path`, to `<home>/.config/nova-secrets/<secret>.env` using the machine's home from the
+fleet registry. The machine's ssh target comes from `--machines` (the tab-separated fleet file:
+name, ssh target, home, an optional fourth column ignored), defaulting to
+`~/.config/nova-tools/fleet.tsv`, and a name it does not hold is refused naming the file. **The value travels on the ssh child's
+stdin, never in an argument list, and `place` writes a receipt — machine, secret, path, the
+sealed file it came from, stamp — under `--receipts` (default `~/.config/nova-secrets/placed`),
+keyed by machine and replaced per secret.** `placed` reads those receipts back; a machine with
+none placed is `count=0` at exit 0, an answer and not a failure. **No value, fragment, length or
+transcript appears on any line or in any receipt**, and a `place` refusal is exit 2 naming the
+missing machine or the store and the file to add it to, before anything is copied. This verb
+reads the machine file it is handed and no other source.
+
+**Nothing derived from a value.** Nothing nova-secrets prints, writes to a receipt, logs, puts
+in a `--json` object or a dry-run plan is derived from a secret's plaintext in a way a reader
+without the key could test a guess against: no hash of the value, whole or truncated, salted or
+not, and not its length. A short value behind a published hash is found by trying candidates.
+So a placement is identified by the sealed file instead:
+
+- `file` is the seat file the value was sealed in (`<seat>.yaml`).
+- `blob` is the git blob id of that file's bytes exactly as `place` decrypted them. `place`
+  reads the sealed file once, takes the blob id of those bytes, and has sops decrypt a private
+  copy of the same bytes (mode 0600 in a fresh 0700 directory under the process's temp dir,
+  removed on every path out), never the store's pathname a second time; so a reseal while
+  `place` runs cannot deliver one value under another's blob. The blob id hashes the
+  ciphertext, which sops encrypts under a random data key, so it tells a reader nothing about
+  the value.
+- `head` is the commit the store's HEAD named when `place` started, read once (`-` when it named
+  none). It records where the store stood and is no claim that this commit holds `blob`: a
+  seat file with an uncommitted change places bytes HEAD does not hold.
+
+Whether a machine holds the store's committed value is a comparison of public ids: the
+receipt's `blob` against `git -C <store> rev-parse HEAD:<file>`. Equal blobs mean the same
+ciphertext and so the same value; a different blob means the seat file changed (this value or
+another in it) and the value is placed again. `place --dry-run` says `action=unchanged` only when
+the receipt already records this blob, file and path. The rule is held by
+`TestNoOutputCarriesADigestOfTheValue` (cmd/nova-secrets), over every line `place`, `place
+--dry-run` and `placed` print and every receipt they write; `TestTheBlobPlacedIsTheBlobDecrypted`
+holds the blob to the bytes decrypted when the store's file is resealed between reads, and
+`TestThePrivateSnapshotIsRemovedOnEveryPathOut` the removal of the private copy.
+
+**Receipts from an older build.** A receipt line written before this rule has four fields, the
+third a sha256 of the value. A current build reads such a line with that field dropped: it is
+never kept, compared or printed, and the line lists as `file=- head=- blob=- ...
+identity=unknown`, meaning "place again". Until the receipt file is rewritten, the incomplete
+digest stays on disk in it. The next `place` to that machine rewrites the whole file in the
+six-field form and drops every old digest from it; to refresh each secret's identity, place each
+again (`nova-secrets place ... --machine <name> --secret <NAME>`), or remove the file outright
+(`rm <receipts>/<machine>.receipt`, default `~/.config/nova-secrets/placed/<machine>.receipt`).
+`placed` names the count of such lines and both commands in a `SECRETS PLACED NOTE` line.
+
+### `seal`
+
+```
+nova-secrets seal --store ~/secrets --as <seat> --key ~/.config/nova-secrets/<seat>.key \
+  --sops /opt/homebrew/bin/sops --name GH_TOKEN
+SECRETS SEAL OK name=GH_TOKEN seat=<seat> pr=#<n> merged
+```
+
+**What it asserts.** That the value the caller pasted is now the `NAME` entry of
+`<store>/<seat>.yaml` and reached the store by no other road: the plaintext was handed to the
+encrypt child **on stdin** and existed in no argument list, no file in the clear and no output
+line, and every event line carries a name, a seat and a PR number and never a byte of the
+value. The value comes from stdin when `--stdin` is given **or stdin is not a terminal**, and
+otherwise from the controlling terminal with echo off, opened **twice** — one handle to write
+the prompt, one to read — because a single read-write open of `/dev/tty` does not work. An
+**empty value is refused, exit 2**, before any helper runs.
+
+**How it seals.** It decrypts the seat file through a `sops` pipe (never a file), drops any
+existing `NAME:` line, appends `NAME: value`, and re-encrypts **from stdin** with
+`--filename-override <seat>.yaml` so the store's own rule picks the recipients, writing the
+ciphertext into place atomically. The value never touches argv, a plaintext file, or output.
+
+**What it does after.** A dirty store (staged or unstaged tracked changes) is refused
+before any branch switch, so `checkout -f` cannot discard caller-owned edits. It then
+makes a branch `seal/<seat>-<NAME>-<stamp>`, commits, pushes, opens
+a `gh` pull request, waits up to two minutes for the seat-rule gate's `reviewDecision=APPROVED`,
+merges with `--squash`, pulls, and runs `check` on the seat. `--no-pr` stops after the commit
+and makes no `gh` call, then returns the working copy to the branch it started on so `exec`
+still sees HEAD matching the remote-tracking ref. The seal commit remains on
+`seal/<seat>-<NAME>-<stamp>` and the OK line names it as `branch=...`. The OK line is
+`merged`, or `open (gate not yet approved)` when the wait expired with the request still open.
+
+### `seat add`
+
+```
+nova-secrets seat add --store ~/secrets --as <seat> --pub <age-public-key> --from <source-seat> \
+  --only NAME,... --key ~/.config/nova-secrets/<source-seat>.key --sops /opt/homebrew/bin/sops
+SECRETS SEAT ADD NEXT: commit .sops.yaml and <seat>.yaml on a branch and open the pull request the store's gate reviews
+SECRETS SEAT ADD OK as=<seat> from=<source-seat> keys=<count> file=<seat>.yaml rule=<n>
+```
+
+**The circle it breaks.** `seal` cannot give a NEW seat its first value, and no flag makes it
+able to. To fold a value into `<seat>.yaml` it must first **decrypt** that file — sops rewrites
+the whole document, so the entries already in it have to be read back — and the only key that
+opens a seat's file is that seat's own. A bench that has just run `keygen` holds exactly one
+thing, its own key, and there is no file for that key to open; the moment a file exists, only
+that bench can open it, and that bench is the one with nothing to seal from. This verb breaks
+the circle with a sops pipe out of a seat the operator's machine can open into the new seat's
+file, with the refusals a hand pipe would have to remember.
+
+**What it does, in order.** Reads `<store>/<from>.yaml` through a `sops -d` pipe with `--key`;
+takes the `--only` entries out of that plaintext and **no others**; writes the new seat's rule
+into `.sops.yaml` — `path_regex: ^<seat>\.yaml$`, `age: <pub>,<recovery key>`, the shape
+invariant 1 demands and the one `keygen` prints; and re-encrypts the selected entries **from
+stdin**, with `--filename-override <seat>.yaml` and the store as the child's working directory,
+so that rule's recipients are the ones sops finds. The rule goes in **before** the encrypt, or
+the file is encrypted to nobody. Values travel on stdin only: never argv, never a file in the
+clear, never an output line, never a progress line. `--pub` is the new seat's **public** half,
+which arrives from its own `keygen` receipt; a private key never leaves the bench that made it.
+
+**What it refuses, at exit 2, before anything is written.** A `--from` this machine cannot
+open, naming the seat and the key — the case the verb exists for, and the one a lenient run
+would answer by writing a file nobody can read. A `<seat>.yaml` that already exists, because a
+rewrite of a seat file drops every value it holds. A `.sops.yaml` that already carries a rule
+matching that file, because the rule is the grant and a grant is changed in a reviewed pull
+request and nowhere else. An `--only` name the source does not carry, naming the key and never
+a value. A `--from` equal to `--as`, a `--pub` that is not an age public key, a `--pub` that is
+the store's own recovery key. A `--pub` that any creation rule in `.sops.yaml` already names
+as a recipient, as `SECRETS SEAT ADD REFUSED: --pub is already the key of seat <name>
+(rule <n> of .sops.yaml); a seat is one seat key, and a new seat's key comes from its own
+keygen receipt` — naming the seat that owns the key and never the key's value beyond what the
+rule file already shows, because a seat added under a key another seat's rule carries is a
+seat whose credentials that other seat reads, and the gate's registry check is dormant
+without `--machines`, so this wall stands in the verb. **A failure after the rule is written
+puts `.sops.yaml` back exactly as it was**: a refused run leaves the store byte-for-byte
+unchanged.
+
+**What it deliberately does not do.** Commit, push, or open a pull request. It leaves two
+changed files in the working copy and names them, and the store's own gate (`nova-secrets
+gate`) reads the diff before the review, as it does for every other recipient change.
+
+### `seat inject`
+
+```
+nova-secrets seat inject --store ~/secrets --as <seat> --from <source-seat> --only NAME \
+  --key ~/.config/nova-secrets/<source-seat>.key --sops /opt/homebrew/bin/sops
+SECRETS SEAT INJECT OK seat=<seat> from=<source-seat> names=<count> pr=#<n> merged
+```
+
+**The second circle.** A value one seat holds must sometimes reach seats that already exist.
+`seal` runs only where the target's own key lives, because it decrypts before it writes;
+`seat add` refuses a seat file that exists, because a rewrite drops every value the seat holds.
+So without it a value one seat holds reaches an existing seat by no verb, and a hand pipe is
+not a road. `seat inject` is `seat add`'s pipe pointed at an existing seat.
+
+**The trust statement.** Any seat that can open the source may deliver to any seat whose file
+names its recipients, and **the recovery key is always kept**: the new ciphertext is encrypted
+to exactly the two recipients the target file's own `sops:` metadata names — the seat's key and
+the key `recovery.pub` declares — which the verb holds equal to the rule `.sops.yaml` carries for
+that file before it encrypts, so a grant is neither widened nor narrowed by it. Values travel on
+stdin only, from the decrypted source straight into the encrypt of the target: never argv, never
+a file in the clear, never an output or progress line.
+
+**What it does, in order.** Reads the target's recipients out of `<store>/<seat>.yaml` without a
+key and holds them to the shape above; reads `<store>/<from>.yaml` through a `sops -d` pipe with
+`--key`; composes the target's new document — every name the target held, in its order, then
+every `--only` name it did not, sorted — and re-encrypts it **from stdin** with
+`--filename-override <seat>.yaml` inside the store, so that rule's recipients are the ones sops
+finds; then walks `seal`'s road: a branch `seal/<seat>-<NAMES>-<stamp>` (the names joined by
+`+`), one commit touching the one file, a push, a pull request the store's gate approves, the
+squash merge, the pull, and `check`. `--no-pr` stops after the commit, returns the working copy
+to its starting branch, and names the branch on the OK line.
+
+**What this key cannot do, said plainly.** It cannot open the target: sops seals every value of
+a file under one data key that only the file's recipients recover, so the verb cannot copy the
+target's other sealed values across unread. **Every sealed value the target holds is re-sealed
+from the source's current value** — the source is upstream of the target, as it was when `seat
+add` made the file — and a value the rule permits in the clear is kept byte for byte from the
+target. A target holding a sealed name the source does not carry is a refusal naming the name:
+seal it into the source first, or seal the target on its own bench.
+
+**What it refuses, at exit 2, before anything is written.** A `<seat>.yaml` that does not exist
+(the remedy is `seat add`, spelled out); a `--from` this machine cannot open, naming the seat and
+the key; an `--only` name the source does not carry, naming the key and never a value; a name
+outside `[A-Z][A-Z0-9_]*`; a target whose recipients cannot be read from its `sops:` metadata,
+that names other than exactly two, that omits the declared recovery key, or whose rule names
+recipients its metadata does not (a pending `updatekeys`, brought to the rule first in a reviewed
+pull request); a target holding a plain value the rule does not permit in the clear; a `--from`
+equal to `--as`. A refused run leaves the store byte for byte and runs no git.
+
+**The gate.** An inject pull request changes one existing seat file, still encrypted, its rule
+unchanged: the shape `seal` opens, which the gate approves with no rule of its own —
+`TestGateApprovesAnInjectPullRequest` measures it.
+
+### A tool's store login
+
+`secrets.ReadLogin(Login{Store, As, Key, Sops, Name})` (internal/secrets/login.go) reads one name
+from one seat in the caller's own process: `OpenSeatFile`, the path `exec` takes before it
+decrypts, then the name. The value comes back as a `Secret` and goes into no environment; a `Login`
+holds no secret, so a tool may record it in its config file and print every field. A field left
+empty, a seat that does not open, a name the seat does not hold and a name it holds empty are each
+a refusal naming the seat, the store and the next command (`nova-secrets names`, `nova-secrets
+seal`); none is ever an empty password. `nova-sprint seat login` records one (docs/SPEC-SPRINT.md,
+"The seat's store login"), so the sprint's verbs need no `exec` wrapper; nova-config can read its
+store login through the same helper.
+
+### Refused, by name, with where it lives
+
+One line, on stderr, naming the door — exit 2, or 125 from `exec`:
+
+| asked for | the answer |
+|---|---|
+| `get`, `print`, `show`, `cat` a value | **Refused forever.** No verb prints a secret value and no flag makes one. A person who must see a value holds the key and runs `sops -d <file>` with their own hands. |
+| `put`, `set`, `add`, `edit` a value | `sops <store>/<name>.yaml`, or `sops set`; then `git add`, `git commit`, and a pull request the other collaborator approves. |
+| `rotate` | The provider's console, then `sops`, then an approved pull request, then a pull on every bench, then a probe. See **Rotation**. |
+| `delete` a key, or a file | `sops unset`, or `git rm`, and a rotation of whatever the deleted value was. |
+| a file-shaped secret (an SSH key, an age key) handed to a program that wants a path | **Not in this store.** Generate it on the seat that uses it, authorize its public half on the box that accepts it by that box's own recipe, and never move the private half. |
+| `recipients`, `grant`, `revoke access` | A pull request against `.sops.yaml` editing one rule, approved by the other collaborator and merged under the ruleset, then `sops updatekeys` in a second one. |
+| `seat add --pub <key>` where `<key>` is already a seat's key | **Refused at exit 2**, naming the seat that owns the key and the rule that names it — `--pub is already the key of seat <name> (rule <n> of .sops.yaml)`; a seat is one seat key, and a new seat's key comes from its own `keygen` receipt. |
+| reading or writing the macOS Keychain | Not this tool, on any bench, ever. See **The migration from the Keychain** and the tripwire that pins it. |
+| a daemon, an agent, a cache, a session | Not this tool. Every call opens the file again; a cached plaintext is a plaintext with a lifetime nobody is watching. |
+
+**The refusal to print a value is checked before any flag, path or file is read**, in the shape
+nova-fuse's `lift` established. The multi-line refusal is written out, its remedy being no
+command in this repo:
+
+```
+SECRETS EXEC REFUSED: key=<file-key>: value is multi-line; a file-shaped secret is not an environment variable.
+  generate it where it is used: this store holds no file-shaped secrets.
+```
+
+## The credential shape: per AI, per surface
+
+Each AI has all its secrets in nova-secrets: its own API key, its own email, Bluesky, Discord,
+Ghost access and GitHub. So the file is not a provider list: it is **every surface that AI acts through**, and the key name is
+the variable the tool that acts already reads.
+
+| surface | key | file | who reads it |
+|---|---|---|---|
+| a pool's provider | `ANTHROPIC_API_KEY`, `XAI_API_KEY`, `GEMINI_API_KEY`, `INCEPTION_API_KEY` | `swarm-<name>` | pool workers and the gemini CLI — one key per pool file |
+| DeepSeek | `DEEPSEEK_API_KEY` | `<seat>` | OpenCode workers, dispatched by the scheduler |
+| GitHub, **org roles** | `GH_TOKEN` | `<seat>` | `gh`, scheduled pushes |
+| GitHub, **the store's own repositories** | `GH_TOKEN` | `<keeper-seat>` | the keeper's own pushes and pull requests against the store, without an org role |
+| a machine, who and where | `<fact-user>`, `<fact-host>` | `<seat>` | the profiling launcher; the key itself lives on the seat, per **The model** |
+| email, send and its fallback | `SMTP_PASSWORD`, `SMTP_PASSWORD_BACKUP` | `<keeper-seat>` | email producer |
+| email, read | `IMAP_PASSWORD` | `<keeper-seat>` | email consumer |
+| Bluesky | `BSKY_APP_PASSWORD` | `<keeper-seat>` | Bluesky producer and consumer |
+| Discord | `DISCORD_BOT_TOKEN` | `<keeper-seat>` | Discord producer and consumer |
+| Ghost | `GHOST_ADMIN_KEY` | `<keeper-seat>` | Ghost producer and consumer |
+
+**A seat's two files, and which key opens each.** `<seat>.yaml` is sealed to the
+**admin bench key alone**, plus the recovery key, and holds the **admin** `GH_TOKEN` — the
+one carrying org roles — with the coordinator's working needs beside it;
+`<seat>-keeper.yaml` is sealed to the **keeper bench key alone**, plus the recovery key, and
+holds the keeper's **own** `GH_TOKEN` with the life's surfaces beside it — a **second
+fine-grained token on the same `<seat>-claude` account**, scoped to his own repositories **plus
+`contents` and `pull_requests` write on `mas-bandwidth/secrets` and nothing else org-wide**,
+both halves because every re-seal of his own file is a branch pushed **and** a pull request
+opened against the org's store, and `contents` alone pushes the branch without opening the
+request. A second token and not a second account, so the store's collaborators stay the
+**exactly two** counted above, and the account's `write` role caps this token too. No more than
+that: no org role, no admin anywhere, no second org repository.
+Neither bench opens the other's file, and that is the point of the split rather
+than a consequence of it: the admin bench is the unwalled coordinator running many children,
+and a child that gets loose there must not be able to send mail, post to Bluesky, speak in
+Discord or publish as a friend; the keeper manages himself and holds no org role. The same key
+name in both files is two different tokens on purpose: the name is the variable its reader
+already reads, and the **scope** is the split. **A secret both seats would use is decided per
+secret, by who acts with it**, and sealed once in that seat's file — `DEEPSEEK_API_KEY` is
+dispatched by the coordinator, so it is in `<seat>.yaml` and nowhere else. Two copies of one
+value is two rotations, one forgotten.
+
+**API keys, never OAuth tokens, and never an auth file.** Each AI holds its own API keys. An
+OAuth token has a refresh dance, a device flow, an expiry
+and a file the harness rewrites behind your back. So **no harness auth file** is held here or
+handed over; a harness that can only authenticate that way is one we start by hand. **The one
+exception is the repository owner's: a friend's own Claude Code seat authenticates through the repository owner's manual login on the admin
+bench: not in the store, no `ANTHROPIC_API_KEY` in `<seat>.yaml` for it, and nobody should put
+one there.** That row is for *workers*, and whether they move off the plan seat is billing.
+
+**Per seat, so per file.** Each of four friends has one seat and one file,
+and an AI with no Bluesky simply has no `BSKY_APP_PASSWORD`. A swarm pool's file holds
+exactly one provider key plus a **read-only** `GH_TOKEN` and nothing else: a worker
+holding a line's send credential is a worker that can post as that line.
+
+## The launcher, and why the order is load-bearing
+
+One call, at the start of a seat, from the line's launcher:
+
+```
+git -C <home>/secrets pull --ff-only && \
+nova-secrets exec --store <home>/secrets --as <seat> \
+  --key <home>/.config/nova-secrets/<seat>.key \
+  --sops /opt/homebrew/bin/sops \
+  --only GH_TOKEN,DEEPSEEK_API_KEY,<fact-user>,<fact-host> --require GH_TOKEN -- \
+  nova-sandbox --read /opt/homebrew --write <home> --net-deny -- <harness> <args…>
+```
+
+The pull is the launcher's, never the tool's (invariant 8). The `--only` names the four this
+harness needs, because a launcher knows that and a default cannot. The
+inner line is **nova-sandbox's own grammar**, two of whose rules are load-bearing
+here: the harness's `HOME` inside a `--write` path (its rule 9), and the environment passing
+through the wrap untouched.
+
+Read that outward. `nova-secrets` opens the file, sets the environment, and **becomes**
+`nova-sandbox`, which builds the wall and becomes the harness — so by the time a wall exists
+the plaintext is already in the environment and the store is finished with. Therefore **the
+store directory is in no read set**, and neither is the key file or `sops`; **the wall never
+reads a key file**, by construction rather than by care; and a profile mistake can make the
+harness fail but cannot make it run *without* its keys. The reverse order — sandbox outside,
+secrets inside — needs the wall to permit the read a wall exists to refuse: **forbidden**.
+
+## The migration from the Keychain
+
+A surface held as a macOS Keychain item, read by a workshop tool calling
+`security find-generic-password`, moves by *changing a reader*, not by *copying a value*. The per-surface runbook belongs in **the workshop repository**; the order belongs here,
+because at no step may there be a live consumer with a dead credential. **Issue** alongside the
+old (where issuing *revokes* the old, as a Ghost admin key does, the job is unloaded first and
+the migration is one sitting); **seal** in an approved pull request and pull on every bench,
+the repository owner's hand when the value came from his console; **switch the reader**, two edits and not one
+— the tool learns one environment variable, the `security` call is **deleted** rather than kept
+as a fallback, and the launchd plist's program becomes the **whole launcher line, pull
+included** (invariant 8); **probe**; **delete** the Keychain item only after green; **revoke**
+at the provider last.
+
+**The window inside the switch is the whole difficulty, and it is closed by order, not by a
+fallback.** Between the rebuilt binary landing and the edited plist being reloaded, an
+interval or `KeepAlive` job that fires launches the new binary **bare**: no environment, a
+refusal, no value at all. So `launchctl bootout` **before** the binary changes and `bootstrap`
+**after** the plist changes — the two are never both loaded and disagreeing. The alternative,
+letting the reader fall back to the old Keychain value until the plist reload, is refused: a
+fallback to the Keychain is a bench where the migration silently did not happen. On a
+LaunchDaemon under a per-AI user, that plist's `--store` and `--key` are paths in **that**
+user's home, so that user has done the first run, and the edit is the repository owner's sudo.
+
+## Dependencies, pinned
+
+| binary | pinned minimum | measured on the coordinator's bench | probe |
+|---|---|---|---|
+| `sops` | **3.13.3** | `sops 3.13.3` | `<--sops> --version --disable-version-check` |
+| `age-keygen` | **1.3.2** | `v1.3.2` | `<--age-keygen> --version` |
+
+`age` itself is not invoked: sops links it, and `go.mod` gains nothing from either (test 16).
+
+**`--disable-version-check` is not optional, and it is why the probe is a whole command
+line.** A bare `sops --version` asks GitHub whether a newer sops exists — a network call, in
+the launcher's path, on every seat start, with a timeout nobody chose. The probe must make **no
+network call**, and a test asserts it with every egress blocked. What is parsed is the **first
+line of stdout against `^sops (\d+\.\d+\.\d+)`**, everything after it ignored (the reason is a
+comment beside the regex). A version the probe **cannot parse** is a refusal, never a pass; an
+absent or too-old binary is a refusal naming `brew install sops` or `brew upgrade sops`.
+
+## Rotation, said plainly
+
+Four acts in one order, and the tool is only in the last. **The repository owner revokes the old value at the
+provider** — that is what makes it dead, a person's hand at a console. **The file is
+re-sealed**, a pull request the other collaborator approves and merges under the ruleset, so a
+rotation waits on a second account and the window between revoke and merge holds no working
+value. **Every bench pulls**, on its launcher line — invariant 8 does not see a missed pull;
+`head=` compared by eye does. **A probe run proves it**; a rotation that was not probed is a
+rotation that was announced.
+
+**The old value is in git history forever, and re-sealing does not remove it.** Anyone who
+cloned the store has that ciphertext, and anyone who held a key for that file can open that old
+commit. Survivable **only** because of the first act, so there must not be a value in this
+store that cannot be revoked. **A leaked value is revoked first, before anything else**, and
+history is never rewritten to "fix" a leak: a force-push destroys the record while changing
+nothing about who has the bytes, and the ruleset forbids it anyway.
+
+## Exit codes
+
+The repo's table governs — **0** ran and passed, **1** ran and **FAILED**, **2** could not
+run — for `check`, `names` and `keygen`. `exec` uses nova-sandbox's table instead, adopted
+verbatim, and that is the **first of the two deviations** from Conventions: an exec verb cannot
+return 2 for its own refusal, because a command that exits 2 on its own would be
+indistinguishable from it.
+
+| verb | 0 | 1 | 2 | 125 |
+|---|---|---|---|---|
+| `check` | every invariant held | an invariant failed, named | could not run | — |
+| `names` | it read the file (**including zero keys**) | — never | could not run | — |
+| `keygen` | the key exists and its public half is printed | — never | could not run, or the file exists | — |
+| `exec` | **0–124 are the command's own exit status, whatever it is** | **the command's** | **the command's** | refused before the command started |
+
+`names` and `keygen` never exit 1: they assert nothing about the store. `exec`'s status is the
+command's from the instant of the exec — 2 included — so **only `check` is a gate**, and a
+caller that gates on `exec` gates on somebody else's program. Where a gate reads an exit code,
+only **0** is permission; 1 and 2 are treated alike (do not act) while staying distinct facts.
+
+## Output grammar
+
+One line per event, first token `SECRETS`, second the verb, third `OK`, `FAIL` (check ran and
+found the store red, exit 1) or `REFUSED` (the verb could not run: exit 2, or 125 for exec),
+`OK` to stdout and `FAIL` and `REFUSED` to stderr; a refusal made before there is a verb is
+`SECRETS REFUSED:` — with `exec`'s single OK line on **stderr**, the **second
+deviation** from Conventions, because from the next instruction the command owns stdout.
+Every `key=value` field is escaped by the shared `internal/oneline` helper so a field is one
+token; the free-text tail after `: ` is never scanned for fields. Nothing a file holds and no
+caller argument can author a second line.
+
+```
+SECRETS REFUSED: <reason>; run: nova-secrets help
+SECRETS <VERB> REFUSED: <reason>; run: <remedy>
+SECRETS EXEC   OK   as=<name> keys=<n> only=<all|n> required=<n> file=<path> head=<sha> cmd=<argv0>
+SECRETS NAME        key=<NAME> clear=<true|false>
+SECRETS NAMES  OK   as=<name> keys=<n> shown=<n> sealed=<n> clear=<n>
+SECRETS NAMES  MORE kind=key shown=<n> total=<n> run: <remedy>
+SECRETS CHECK  OK   as=<name> recipients=<n> files=<n> sealed=<n> mine=<n> foreign=<n> clear=<n> head=<sha>
+SECRETS CHECK  FAIL <file>: <why>
+SECRETS CHECK  FAIL as=<name> files=<n> failed=<n> shown=<n>
+SECRETS KEYGEN OK   as=<name> key=<path> mode=0600 pub=<age1…>
+SECRETS RULE        <one line of .sops.yaml to paste>
+SECRETS RULE   NEXT: <the next step, never a state of the world>
+SECRETS SEAT ADD NEXT: <the next step>
+SECRETS SEAT ADD OK as=<seat> from=<seat> keys=<n> file=<path> rule=<n>
+SECRETS SEAT INJECT OK seat=<seat> from=<seat> names=<n> pr=#<n> merged
+SECRETS SEAT INJECT OK seat=<seat> from=<seat> names=<n> pr=#<n> open (gate not yet approved)
+SECRETS SEAT INJECT OK seat=<seat> from=<seat> names=<n> committed branch=<seal/…>
+SECRETS <PLACE|SEAL|SEAT INJECT> PLAN <step, as key=value fields>
+SECRETS <PLACE|SEAL|SEAT INJECT> DRY-RUN OK <name fields> nothing written, ...
+```
+
+`--dry-run` prints `PLAN` lines and then `DRY-RUN OK` on stdout, exit 0. Its verdict is
+`DRY-RUN OK`, never the verb's own `OK`, so a caller that looks for `SECRETS SEAL OK` or
+`SECRETS PLACE  OK` never reads a plan as a change that happened.
+
+**Where a verb prints more than one line, its machine-readable block ends on its verdict.**
+Every `SECRETS` line a verb prints comes before its `OK` line, and whatever the receipt leaves
+to do is a `NEXT:` line inside that block, above the verdict, so a caller that parses the
+receipt stops at the `OK` line and has read everything. `seat add` prints nothing after its
+`OK` line, so its verdict is also the last line on the screen. `keygen` is the one verb that
+prints past its verdict: after `SECRETS KEYGEN OK` come two plain closing lines that are not
+part of the machine-readable block — `Done. Your new key is at <path>. Nothing failed.` and
+`Next: send this public key to whoever seals your seat: <pub>` — written for the person, so the
+last line on the screen says it worked and names the next step, because the last line on the
+screen is the one a reader takes for the answer. A `NEXT:`
+line is an instruction and is written as one; so is the plain `Next:` closing line.
+
+**No value, no fragment of a value, and no value's length ever appears on any line, in any
+refusal, or in any error passed through from sops** — a length is a value's shape, and the
+shape of an API key names its provider. sops' stderr is *not* passed through raw: it is matched
+against the shapes this spec knows and reported as one of our lines, and an unrecognised one is
+`sops failed: exit <n>` with the transcript **withheld** and a line telling the reader to run
+the same `sops -d` themselves — the one place in this repo where a transcript is not printed
+beneath the event line, a decrypt error being the one error that can contain plaintext.
+
+**Bounded by design.** `exec` prints exactly one line, always, at any store size; `names` and
+`check` cap listings at `--max` with one MORE line per kind and never cap counts; an unusable
+invocation costs one line. Fully red the ceiling is not one line per file: eight invariants can
+each fail on each file, so the bound is `8 × --max` plus one MORE line per capped kind plus the
+count line — at the default, `8 × 20 + 8 + 1`. Test 18 **measures** it; a bound argued in a
+spec and never measured is the bound that is wrong.
+
+## Tests this spec demands
+
+One per rule, named for the rule, each proven able to fail by a mutation before it is trusted.
+Every fixture is a **throwaway store in the test's own temporary directory with throwaway age
+keys** — no test ever reads the real store, the real keys, or a real credential — and each is a
+real git working copy with one commit and a remote-tracking ref, invariant 8 reading one, and a
+`recovery.pub` naming that fixture's recovery key.
+
+1. `TestASeatOpensTheFilesItsRulesNameAndNoOther` — **the negative test, and the reason the
+   model exists.** The fixture is the two-key seat: keypairs `A_admin`, `A_keeper`, `B`, `C` and
+   a recovery key `R`; files `a.yaml` → `{A_admin, R}`, `a-keeper.yaml` → `{A_keeper, R}`,
+   `b.yaml` → `{B, R}`, `swarm-p.yaml` → `{B, R}`, `c.yaml` → `{C, R}`. With `A_admin`: `exec
+   --as a` succeeds, `exec --as a-keeper` is **125 naming the key**, `sops -d a-keeper.yaml`
+   exits 128, `check` is `mine=1 foreign=4`. With `A_keeper`, the mirror: `a-keeper.yaml` opens
+   and `a.yaml` refuses. **That pair is the assertion the two-file split needs**, and it is proven
+   by **recipients**, not by a filename. With `B`: `mine=2 foreign=3`, green, because a seat
+   with two files must not turn its own negative half red. `R` opens all five, asserted so
+   nobody later "fixes" the negative test by making recovery impossible. The mutations, each red
+   on its own, each naming the invariant it must turn: `sops -r --add-age <A_keeper> a.yaml`,
+   the file's block listing the keeper key while the rule does not → **invariant 2** with the
+   `updatekeys` line, invariant 4 staying **green**, which is the point and not a gap (invariant
+   4 compares a decrypt against the file's *own* recipients, so a wrongly granted decrypt shows
+   as block-versus-rule drift; what stands between the two benches is that `updatekeys` needs a
+   **current recipient's** key — measured: with a non-recipient identity it exits 128 and
+   changes nothing — and only then the review); adding `A_keeper` to `a.yaml`'s **rule** without
+   `updatekeys` → **invariant 2**, the grant that grants nothing; that same rule change **merged
+   and then `updatekeys`-ed with `R`**, so every recipient list agrees and invariants 2 and 4
+   are green → **invariant 1**, the rule that no file carries two seat keys; removing a
+   recipient from `b.yaml`'s rule while the file still opens for it → **invariant 2**, the
+   revoke case; planting `A_admin` in the sops child's `keys.txt` → **invariant 4** on
+   `a-keeper.yaml`, the only way a file whose recipients do not list this key can open, and the
+   whole reason for the empty `HOME`. **The declared recovery key, asserted on the shape the
+   store actually has**: a two-rule fixture `{A_admin, R}`, `{A_keeper, R}` in which `a.yaml`'s
+   rule is re-pointed to `{A_admin, A_keeper}` and `updatekeys`-ed, so every rule still names
+   two recipients and one key is still common — red on **invariant 1** on **every** bench,
+   because `recovery.pub` says which key `R` is, and the same fixture is green before the swap;
+   a **one-rule** store `{B, R}` is green, the counting form having made it red; and
+   `recovery.pub` deleted, empty, at mode `000`, holding two lines, or holding `not-a-key` are
+   five refusals naming the file. Every one of those five, **and the re-pointed declared-key
+   mismatch above, is asserted on `exec` as well** — exit **125** before the command starts, the
+   shape check `exec` makes so the launcher never guesses which recipient is the recovery key —
+   the mutation being `exec` running the command anyway on a store `check` calls red. Invariant
+   1's other three clauses get a mutation each: the anchor dropped from `^a\.yaml$` so
+   `not-a.yaml` matches, a recipient truncated to `age1`, and `R` listed twice in one rule.
+2. `TestExecSetsExactlyTheKeysInTheFile` — the child prints its own environment: every key
+   `--only` named present with exact bytes, none renamed, and **no key this tool invented** (a
+   mutation adding a `NOVA_SECRETS_*` marker turns it red). **Every variable and every file in
+   sops' documented identity lookup, each named, each planted, each defeated.** The variables,
+   planted in the caller's environment and absent from the child's: `SOPS_AGE_KEY_FILE`,
+   `SOPS_AGE_KEY`, `SOPS_AGE_KEY_CMD`, `SOPS_AGE_SSH_PRIVATE_KEY_FILE`, `SOPS_KEYSERVICE` —
+   none changes which key is used, and the `_CMD` one is planted as a command that would write
+   a sentinel, asserted never run. The files, under the child's emptied `HOME` and
+   `XDG_CONFIG_HOME`: a foreign age identity at `$XDG_CONFIG_HOME/sops/age/keys.txt` and at
+   `$HOME/Library/Application Support/sops/age/keys.txt`, and unencrypted `<HOME>/.ssh/id_ed25519`
+   and `<HOME>/.ssh/id_rsa` whose public halves are recipients of a fixture file — each
+   attempted, each **refused**; red before green, because with the isolation removed these
+   decrypts succeed. The `--only` half: `--only GH_TOKEN` puts exactly one key in the child and
+   `only=1` on the line; `--only all` puts every key and says `only=all`; a `--require` for an
+   excluded key is 125; **an `--only` naming a key the file does not hold is 125 naming that
+   key**, its mutation the tool passing the unknown name over in silence; and **no `--only` at
+   all is 125 naming the flag**, the assertion that would go green if a wide default came back.
+3. `TestExecReplacesItselfAndPassesTheStatusThrough` — pid before and after is the same; a
+   command exiting 7 makes it exit 7; commands exiting 1 and **2** make it exit 1 and 2 with no
+   `SECRETS … FAIL` line; a command exiting 125 is passed through, told from a refusal by the
+   absence of our line; the child's `RLIMIT_CORE` is 0; a signal-killed command reproduces the
+   shell's status. Without `execve` the test states the difference rather than not asserting it.
+4. `TestNoVerbPrintsAValue` — a source tripwire classifying every printed argument
+   (`internal/oneline/audit`), plus a behavioral half: a distinctive 40-byte fixture value,
+   every verb in every mode including every refusal, and the string in **no** byte of stdout or
+   stderr. A mutation printing `len(value)` turns it red.
+5. `TestGetIsRefusedBeforeAnythingIsRead` — `nova-secrets get …` with no store, no key file,
+   no sops binary and a `--store` that would panic if opened: one line, exit 2, naming only
+   `sops -d` in a person's hands, and the process stat shows **no file opened**.
+6. `TestSopsErrorsAreNeverPassedThroughRaw` — a sops stderr fixture carrying a
+   plaintext-looking payload: it reaches no stream, and the unrecognised case prints `sops
+   failed: exit <n>` and the remedy, never the transcript.
+7. `TestTheKeyFileModeIsARefusalOnEveryVerbThatTakesOne` — `0644`, `0640`, `0600` in a `0755`
+   directory: each refused naming `chmod`, on `exec` and `check` — the two verbs that read a
+   key — and **not on `names`, which takes no `--key`** and is asserted to succeed beside every
+   one of them; `keygen` writes rather than reads one, and its own refusals are test 14. `0600`
+   in `0700` passes; a key file **inside** `--store` makes `check` red. And the other property
+   of that file: an identity whose `# public key:` comment is stripped — legal to sops, and the
+   only place `check` can learn its own public half — is a refusal on `check` naming
+   `age-keygen -y <path>` and **not on `exec`**, which never reads the public half and asserts
+   nothing about recipients, with a mutation that treats the missing comment as "opens nothing"
+   and would make invariant 4 pass vacuously.
+8. `TestTheVersionProbeMakesNoNetworkCall` — the probe answers with egress blocked; `sops
+   3.9.0` is refused naming `brew upgrade`; `banana` is refused as unparseable, **not**
+   accepted; absent and non-executable are two different sentences. With egress blocked the
+   probe is green: it opens no socket.
+9. `TestARequireThatIsMissingRefusesBeforeTheCommandStarts` — the command writes a sentinel;
+   after the refusal the sentinel does not exist; every missing `--require` is named in one
+   run, sorted.
+10. `TestAMultiLineValueIsRefusedWithGenerateItWhereItIsUsed` — a fixture holding a multi-line
+    value: `exec` refuses naming the key and printing the remedy, and the remedy names **no file
+    in this store**, there being no sibling to point at; a NUL is its own sentence. The `names`
+    half: that key is listed with **no `--key`, no `--sops`, no key file on the bench and no
+    `sops` process started**, asserted by a `--sops` that would fail if executed.
+11. `TestAKeyNameThatIsNotAnEnvVarIsRefused` — `gh-token`, `2FA`, `A B`, the empty name: each
+    refused naming the key; `GH_TOKEN` and `A1_B` accepted; all the bad ones in one run,
+    sorted.
+12. `TestCheckCapsEachKindSeparatelyAndAlwaysPrintsTheCount` — 30 unsealed files and 1
+    foreign-openable one: the loud kind does not eat the quiet one, each kind caps with its own
+    MORE line, the count line prints on the red run, `--max 0` prints all, a negative `--max`
+    is refused.
+13. `TestCheckFailsClosedOnEverythingItCannotRead` — an unreadable `.sops.yaml`, an unreadable
+    AI file, a store that is a file, a store with no `.sops.yaml`, a `.sops.yaml` that will not
+    parse: **absent, unreadable and unrecognised pinned as three different answers**, the
+    unparseable one **exit 1 on invariant 1** and the store with none **exit 2**, with a mutation
+    collapsing the two that must turn it red.
+14. `TestKeygenNeverOverwritesAndNeverTouchesTheStore` — an existing file at `--key` is refused
+    with its bytes unchanged; a `0755` parent is refused naming `mkdir -m 700`; on success the
+    created file is the only filesystem change anywhere, asserted by hashing the whole store tree
+    before and after; the private key appears on no stream. **Run with `--store`, the printed
+    `SECRETS RULE` block satisfies invariant 1 when pasted** — anchored, two recipients, the
+    second byte-for-byte the store's `recovery.pub` — fed to `check` as a real rule and green.
+    Without `--store` the block carries the literal placeholder **and** the `NOTE` line, and the
+    same feed is **red on invariant 1**, so a placeholder is never mistaken for a finished rule;
+    a `--store` with no `.sops.yaml` and one whose `recovery.pub` is empty are each **exit 2**
+    naming the file and never the placeholder; the store's tree hash is unchanged by every run.
+15. `TestTheLauncherOrderWorksWithTheStoreFullyDenied` — end to end in nova-sandbox's real
+    grammar, the write set carrying the probe's `HOME` and neither the store nor the
+    key directory in any read set: the probe sees the keys. The reverse nesting is asserted to
+    **fail**. It skips with a stated reason when `nova-sandbox` is not built, never vacuously.
+16. `TestNoKeychainAndNoCryptoDependency` — a source tripwire: no `security` invocation, no
+    Keychain import, no `filippo.io/age`, no `getsops`, and an aliased import or a helper in a
+    second file cannot defeat it (the blind-spot list of every source tripwire applies unchanged).
+17. `TestREADMEFirstRunMatchesWhatTheToolPrints` — the six lines below run against a throwaway
+    store, the transcript compared to the README's **by prefix and field name, never by
+    value**, so it stays a document. The `check` line on a seat with no file of its own is
+    pinned as the rules give it, not as a guess: **exit 2**, then green `mine=0` once a file
+    exists that this key does not open, then **exit 1 on invariant 2** for the between-the-two-
+    pull-requests state — rule merged, file not yet `updatekeys`-ed — all three as the page
+    states them.
+18. `TestOutputSizeAtTheLargestPlausibleState` — 12 files × 16 keys; lines and bytes for every
+    verb in green and red, stdout and stderr.
+19. `TestNoFileContentOrCallerArgumentCanForgeALine` — a key name, a file name, a `--require`
+    and a sops error carrying `\nSECRETS CHECK OK …`, a terminal repaint, a bidi control: none
+    authors a second line, including from the flag parser before our first instruction runs.
+20. `TestAStaleWorkingCopyIsRefused` — a fixture whose `HEAD` is behind its remote-tracking ref:
+    `check` is exit 1 on invariant 8 naming `git -C <store> pull --ff-only`, `exec` is 125 with
+    the same line, `head=` on the green run is `HEAD`'s short sha. One commit *ahead* is red too,
+    as its own sentence. And the case it does **not** catch, asserted so nobody believes
+    otherwise: a tracking ref left stale because nothing fetched while the remote moved on —
+    **green, by design**, which is why every launcher pulls. Detached `HEAD`, no upstream, and a
+    `.git` that is a file are three more fixtures, each a refusal naming its fact. Mutation:
+    point the ref at `HEAD`, both green.
+21. `TestADecryptedFileLeftInTheStoreIsRed` — invariant 7, which otherwise has no test that can
+    say NO: an untracked file under `--store` holding `GH_TOKEN: ghp_notarealvalue` is exit 1
+    naming the file and never the value; the same file with `ENC[…]` values is green, and so is
+    a tracked sealed file, so the rule is about plaintext and not about being untracked.
+    Mutation: honour a `.gitignore` covering it, which must **not** turn it green — the store
+    has no `.gitignore` and a rule that passes vacuously is the failure this invariant names.
+
+## The first run: six lines a stranger pastes
+
+On a fresh bench, with `brew install sops age` done, `gh` and `nova-secrets` on PATH, and the
+store cloned to `~/secrets`. **The clone is the one thing this tool cannot help you with**: the
+store is private and your `GH_TOKEN` is inside it, so somebody else clones it for you, or the
+bench holds the one credential the clone needs — an SSH key generated on that bench, its public
+half authorized **on the GitHub account that bench acts as**, not as a deploy key on the store:
+a deploy key is per-repository and read-only, and a bench that must re-seal its own file pushes
+a branch. Outside the store by design is **every file-shaped secret** (**The model**), of which
+this bench today holds three: that SSH key, its age key, and the repository owner's recovery key, which is on
+no bench at all and whose public half is the store's `recovery.pub`. `nova-secrets` carries
+none of them. Nothing below is a default: every path is typed, once.
+
+```
+mkdir -m 700 -p ~/.config/nova-secrets
+nova-secrets keygen --as <seat> --key ~/.config/nova-secrets/<seat>.key --age-keygen $(brew --prefix)/bin/age-keygen
+# give the printed public key to a holder of an existing key, who runs `nova-secrets seat add --as <seat> --pub <your public key> --from <their seat> --only NAMES` and opens one pull request carrying your rule and your file; the other collaborator approves it, because the merge alone grants you nothing — never `sops` by hand, which the gate refuses (see `gate`)
+nova-secrets check --store ~/secrets --as <seat> --key ~/.config/nova-secrets/<seat>.key --sops $(brew --prefix)/bin/sops
+nova-secrets names --store ~/secrets --as <seat>
+nova-secrets exec  --store ~/secrets --as <seat> --key ~/.config/nova-secrets/<seat>.key --sops $(brew --prefix)/bin/sops --only GH_TOKEN --require GH_TOKEN -- gh api user --jq .login
+```
+
+Six lines: one directory, one keygen, one comment that is the step other people do for you,
+then check, names and a run that prints a name from GitHub. The third is a comment on purpose —
+**a stranger cannot finish this alone, and the page must say so where the wait happens** rather
+than leave them to find it in a refusal. That pull request needs a GitHub identity the stranger
+does not have yet (its token is inside the store), so a holder opens it, and the approver is the
+other collaborator, under **"Reviewed" is a control** above. The holder runs `seat add`
+and not `sops` because the verb re-seals only out of a seat the holder can open, only the
+`--only` names, and leaves the mark the gate reads; a file sealed by hand has none. `check` runs before `names`
+because the first command to touch the store should be the one that says whether the store is
+what this spec says. What it prints before the grant, exactly, in three states and not two:
+while `<seat>.yaml` does not exist, **exit 2 listing the names that are in the store**; once it
+exists sealed to somebody else's key, **green with `mine=0`**, invariant 4 passing over no file
+of yours; and for a seat whose file already exists, **between a rule merged by itself and the file
+re-sealed to it** (the grant path of "recipients, grant, revoke access": a rule merged, the file not yet `updatekeys`-ed) — **exit 1 on invariant 2**
+with the `updatekeys` line. The first two are the right answer rather than a stumble; the third
+is the wait, said as a red, and it clears when the second pull request lands.
+
+## Rules from dogfooding
+
+Ten rules from dogfooding, each with the mistake it prevents and what holds it: a test where
+code can hold it, and the practice it is where only a person can. They extend **The model** and **Rotation**; they do not replace them.
+
+1. **ingest is rotation** — a value enters by seal and the old value is revoked at the provider the
+   same hour, because sealing the new value while the old one still works banks a rotation nobody
+   finished. A practice of the person sealing: the revocation happens at the provider, where no
+test of this tool can see it.
+2. **one seat per OS user, keys for swarms not people** — an AI is a unix user with one file and
+   one key, and a pool of workers shares a swarm key, because a person's credential in a shared
+   seat cannot be told from a worker's. Held by `TestOneSeatPerOSUser` (`tools/benchstandard`).
+3. A seat file is **opened only by its seat key and the recovery key, exactly two recipients**,
+   enforced by the seat-rule gate on `.sops.yaml`, because a third recipient is the grant every
+   review is meant to catch. Held by `TestGateRefusesARuleWithThreeRecipients`.
+4. A value reaches a process **only by `exec --only NAME`, never a file, argv, log or transcript**,
+   because every other road leaves the plaintext where a sibling process can read it. Its edges
+   are held by `TestExecSetsExactlyTheKeysInTheFile` and
+   `TestSealPipedValueLandsInEncryptStdinNotArgv`.
+5. All **harness configs reference `{env:NAME}`**; a literal key in a config is DRIFT, because a
+   copied value outlives its rotation in a file nobody watches. Red test demanded:
+   `TestHarnessConfigsReferenceEnvNames`.
+6. The bench standard checks **exactly one seat key per owner prefix** and that check passes,
+   because two keys for one owner is either a lost key still trusted or a grant nobody declared.
+   Held by `TestBenchStandardChecksOneSeatKeyPerOwnerPrefix` (`tools/benchstandard`).
+7. The store is pulled on a bench over **the bench's own SSH key, generated on that bench**, its
+   public half authorized on the GitHub account the bench acts as; **never a person's credential**,
+   because a person's key in a bench's clone is that person on that bench; and **never present
+   inside a sandboxed job's wall**, because a job that can read the key can pull or push as the
+   bench.
+   Red test demanded: `TestStorePullUsesBenchOwnedKey`.
+8. A key is **generated off-bench for recovery only**; the **private half lives in the owner's password manager**,
+   because recovery that sits beside the ciphertext is not recovery. A practice of the owner:
+   the password manager is outside anything this tool or its tests can read.
+9. **seal is one step**: stdin or hidden prompt, PR, gate, merge, check, because a
+   multi-step seal is a step somebody stops halfway. Held by `TestSealFullPathOpensPRAndMerges`.
+10. The bench standard **fails loudly on a plaintext key file**, because a plaintext key on the
+    bench is the boundary this page is about, already crossed. `tools/benchstandard`'s
+    plaintext-key check drifts on the ones it knows: `~/.local/share/opencode/auth.json`,
+    `~/.config/deepseek/env`, and a literal `apiKey": "sk-` in `~/.config/opencode/*.json`. Held by
+    `TestPlaintextKeyRows`.
+
+## Rules for receipts and new seats
+
+Two rules for a verb's receipt and a new seat's first credentials.
+
+11. **A multi-line receipt's machine-readable block ends on its verdict.** The `OK` line is the
+    last machine-readable line a verb prints, and whatever the receipt leaves to do is a `NEXT:`
+    line above it, phrased as an instruction rather than as a state of the world. Only plain
+    lines for a person may follow the verdict: `keygen` closes with two, `Done. ... Nothing
+    failed.` and `Next: send this public key ...`, which are not part of the machine-readable
+    block, so its last line reads as success to a person: a green run whose last line names a
+    placeholder that "stands unfilled" reads as an error. Red tests: `TestKeygenEndsWithThePlainClosingLine`,
+    `TestKeygenPrintsTheOKLineAfterTheRuleBlock`, `TestKeygenNextStepSaysItIsANextStep`.
+12. **A new seat is given its first values by `seat add`, never by `seal`.** `seal` decrypts
+    before it writes, and only the new seat's own key opens the new seat's file, so the first
+    value must be re-sealed out of a seat the operator's machine CAN open — with the new seat's
+    rule written first, so the encrypt has recipients to find. Red tests: `TestSeatAddReSealsNamedValuesIntoTheNewSeatsFile`,
+    `TestSeatAddLeavesAFileOnlyTheNewSeatCanOpen`,
+    `TestSeatAddRefusesWhenTheSourceSeatCannotBeOpenedHere`,
+    `TestSeatAddRefusesAnExistingTargetFile`, `TestSeatAddRefusesAnExistingRule`,
+    `TestSeatAddGivesANewSeatItsFirstValues` (against the real sops and age), and
+    `TestTheFakeSopsRefusesWhatRealSopsRefuses` — **the fake in the test refuses what the real
+    tool refuses**: a missing recipient, a file in the clear, an encrypt with no file argument,
+    because a lenient fake lets a broken `seal` pass.
+
+## Rules for existing seats
+
+13. **An existing seat is given a value another seat holds by `seat inject`, never by a hand
+    pipe.** `seal` cannot run where the target's own key is absent, and `seat add` refuses a
+    file that exists. The verb re-seals to the target file's own two
+    recipients, read from its metadata and held equal to its rule, and walks `seal`'s road to
+    the merge. Red tests: `TestSeatInjectReSealsNamedValuesIntoAnExistingSeat`,
+    `TestSeatInjectAddsANewNameAndKeepsTheClearOnes`, `TestSeatInjectRefusalsTouchNothing`,
+    `TestSeatInjectWalksSealsRoadToTheMerge`, `TestGateApprovesAnInjectPullRequest`, and, against
+    the real sops and age, `TestSeatInjectReSealsAValueIntoAnExistingSeat` and
+    `TestTheHelpExampleIsWhatSeatInjectPrints` (the help example, run through the one comparator).

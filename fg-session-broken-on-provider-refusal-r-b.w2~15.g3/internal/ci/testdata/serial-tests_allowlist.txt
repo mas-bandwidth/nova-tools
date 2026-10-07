@@ -1,0 +1,183 @@
+# The tests that do not open with t.Parallel(), one `path:TestName serial: <reason>`
+# per line (internal/ci/parallel_class_test.go, Glenn 2026-09-25: Go tests always
+# run in parallel). The reasons are what makes a test unsafe beside another:
+#   t.Setenv, t.Chdir     panic under t.Parallel (the testing package refuses both)
+#   os.Setenv, os.Chdir   change the whole process under every other test
+#   swaps package var X   the test (or a helper it calls) assigns a package-level
+#                         seam, which races every parallel test reading it
+# The way off this list is a per-test seam: cmd.Env for a child, a field on the
+# value under test for a clock or a dialer, t.TempDir for a path. The list only
+# shrinks: a test that opens with t.Parallel() while listed, or a listed test
+# that is gone, is a red run, and the ceiling line below caps the count.
+#
+# The ceiling is the row count; it only comes down. NOVA_CI_UPDATE=1 drops the
+# stale rows and lowers it in the same write, and never raises it (#4339).
+# History: 877 on the day the rule landed; 2026-09-25 evening it rose by nine for
+# tests the fleet, redis, nova-sprint and swarm streams landed after the
+# measurement with t.Setenv or a package-var seam (card_moves TestCardSessionCLI
+# and TestCardMovesCLI, fleet_build TestFleetBuildCompileVerb and
+# ...ExecGivesGoItsOwnCaches, jev TestJevMechRefusals, lander_unit
+# TestLanderLoadsMembersFromUnitRecords, line TestLineVerbPostListImport,
+# task_card TestTaskMoveRefusesAPrimaryUnread, card
+# TestReadCopyDealtToBenchRendersALintedCard), then by nine more from the redis
+# stream (seat and #3277 tests on t.Setenv); each owes a per-test seam. Moved
+# from the serialTestsCeiling constant into this file at 876, the count that day.
+# nova-check: TestTESTSFirstRunIsWhatTheToolPrints, TestIssue2296, TestNoCodeStagedRefusals removed (ceiling 226 in abb4e02a3, 207 on current base)
+# ceiling: 207
+cmd/nova-sandbox/denied_test.go:TestTheDenialReaderUsesPosixPathsOnEveryPlatform serial: swaps package var main.denialStat
+cmd/nova-sandbox/denied_test.go:TestTheDeniedLineNamesThePathTheOpAndTheRemedy serial: swaps package var main.denialStat
+cmd/nova-sandbox/egress_test.go:TestEgressApplyAndDropRefuseOffLinux serial: swaps package var main.egressGOOS, swaps package var main.egressLookup, swaps package var main.egressPriv
+cmd/nova-sandbox/egress_test.go:TestEgressApplyHandsTheAuditedPlanToNft serial: swaps package var main.egressGOOS, swaps package var main.egressLookup, swaps package var main.egressPriv
+cmd/nova-sandbox/egress_test.go:TestEgressApplyRefusesAPlanFromAnotherRun serial: swaps package var main.egressGOOS, swaps package var main.egressLookup, swaps package var main.egressPriv
+cmd/nova-sandbox/egress_test.go:TestEgressApplyRefusesAPlanItCannotAudit serial: swaps package var main.egressGOOS, swaps package var main.egressLookup, swaps package var main.egressPriv
+cmd/nova-sandbox/egress_test.go:TestEgressCheckGoesRedOnABrokenPlan serial: swaps package var main.egressGOOS, swaps package var main.egressLookup, swaps package var main.egressPriv
+cmd/nova-sandbox/egress_test.go:TestEgressDropDeletesExactlyTheRunsTable serial: swaps package var main.egressGOOS, swaps package var main.egressLookup, swaps package var main.egressPriv
+cmd/nova-sandbox/egress_test.go:TestEgressDropRefusesARunIdThatIsNotATableName serial: swaps package var main.egressGOOS, swaps package var main.egressLookup, swaps package var main.egressPriv
+cmd/nova-sandbox/egress_test.go:TestEgressPlanAndCheckRunOffLinux serial: swaps package var main.egressGOOS, swaps package var main.egressLookup, swaps package var main.egressPriv
+cmd/nova-sandbox/egress_test.go:TestEgressPlanNeedsASelector serial: swaps package var main.egressGOOS, swaps package var main.egressLookup, swaps package var main.egressPriv
+cmd/nova-sandbox/egress_test.go:TestEgressPlanRefusesTheInputsThatWouldWidenTheWall serial: swaps package var main.egressGOOS, swaps package var main.egressLookup, swaps package var main.egressPriv
+cmd/nova-sandbox/egress_test.go:TestEgressPlanWritesARulesetAndPrintsItsReceipt serial: swaps package var main.egressGOOS, swaps package var main.egressLookup, swaps package var main.egressPriv
+cmd/nova-sandbox/egress_test.go:TestEgressRefusesWhenNftIsNotOnTheBench serial: swaps package var main.egressGOOS, swaps package var main.egressLookup, swaps package var main.egressPriv
+cmd/nova-sandbox/handoff_test.go:TestRunCopiesTheArtifactsOutBeforeTheVolumeIsDeleted serial: swaps package var main.runExec, swaps package var main.runSignals, swaps package var main.runVolumes
+cmd/nova-sandbox/handoff_test.go:TestRunRefusesWhenTheHandoffFailsAfterACleanCommand serial: swaps package var main.runExec, swaps package var main.runSignals, swaps package var main.runVolumes
+cmd/nova-sandbox/reapverb_test.go:TestAnUnreadableMarkerIsAnOrphan serial: swaps package var main.reapAlive, swaps package var main.reapGraceSleep, swaps package var main.reapProcStart, swaps package var main.reapProcs, swaps package var main.reapSignal, swaps package var main.runVolumes
+cmd/nova-sandbox/reapverb_test.go:TestReapDryRunTouchesNothing serial: swaps package var main.reapAlive, swaps package var main.reapGraceSleep, swaps package var main.reapProcStart, swaps package var main.reapProcs, swaps package var main.reapSignal, swaps package var main.runVolumes
+cmd/nova-sandbox/reapverb_test.go:TestReapExitsThreeWhenAVolumeRemains serial: swaps package var main.reapAlive, swaps package var main.reapGraceSleep, swaps package var main.reapProcStart, swaps package var main.reapProcs, swaps package var main.reapSignal, swaps package var main.runVolumes
+cmd/nova-sandbox/reapverb_test.go:TestReapKillsWhatHeldAnOrphanedVolumeAndDeletesIt serial: swaps package var main.reapAlive, swaps package var main.reapGraceSleep, swaps package var main.reapProcStart, swaps package var main.reapProcs, swaps package var main.reapSignal, swaps package var main.runVolumes
+cmd/nova-sandbox/reapverb_test.go:TestReapNeverTakesAVolumeFromALiveRun serial: swaps package var main.reapAlive, swaps package var main.reapGraceSleep, swaps package var main.reapProcStart, swaps package var main.reapProcs, swaps package var main.reapSignal, swaps package var main.runVolumes
+cmd/nova-sandbox/reapverb_test.go:TestReapOnACleanMachineIsExitZero serial: swaps package var main.reapAlive, swaps package var main.reapGraceSleep, swaps package var main.reapProcStart, swaps package var main.reapProcs, swaps package var main.reapSignal, swaps package var main.runVolumes
+cmd/nova-sandbox/reapverb_test.go:TestReapReadsTheStartTimeAndNotJustThePid serial: swaps package var main.reapAlive, swaps package var main.reapGraceSleep, swaps package var main.reapProcStart, swaps package var main.reapProcs, swaps package var main.reapSignal, swaps package var main.runVolumes
+cmd/nova-sandbox/reapverb_test.go:TestTheRunVerbWritesAnOwnerMarkerAtTheVolumeRoot serial: swaps package var main.runExec, swaps package var main.runSignals, swaps package var main.runVolumes
+cmd/nova-sandbox/run_test.go:TestACleanRunNeverAsksWhatWasDenied serial: swaps package var main.runDenials, swaps package var main.runExec, swaps package var main.runSignals, swaps package var main.runVolumes
+cmd/nova-sandbox/run_test.go:TestAFailedRunIsToldWhatTheWallDenied serial: swaps package var main.denialStat, swaps package var main.runDenials, swaps package var main.runExec, swaps package var main.runSignals, swaps package var main.runVolumes
+cmd/nova-sandbox/run_test.go:TestATimeoutNeverAsksWhatWasDeniedAndSaysItTimedOut serial: swaps package var main.runDenials, swaps package var main.runExec, swaps package var main.runSignals, swaps package var main.runVolumes
+cmd/nova-sandbox/run_test.go:TestGoAddsTheToolchainRootAndTheModuleCache serial: swaps package var main.runGoEnv
+cmd/nova-sandbox/run_test.go:TestGoRefusesWhenThereIsNoGoToAsk serial: swaps package var main.runGoEnv
+cmd/nova-sandbox/run_test.go:TestGoSkipsAToolchainPathThatIsNotThere serial: swaps package var main.runGoEnv
+cmd/nova-sandbox/run_test.go:TestRunCreatesTheVolumeRunsAndAlwaysDeletesIt serial: swaps package var main.runExec, swaps package var main.runSignals, swaps package var main.runVolumes
+cmd/nova-sandbox/run_test.go:TestRunDeletesTheVolumeWhenTheWallItselfRefuses serial: swaps package var main.runExec, swaps package var main.runSignals, swaps package var main.runVolumes
+cmd/nova-sandbox/run_test.go:TestRunNamesTheContainerWhenTheCreateItselfFails serial: swaps package var main.runExec, swaps package var main.runSignals, swaps package var main.runVolumes
+cmd/nova-sandbox/run_test.go:TestRunRefusesAVolumeNameThatIsAlreadyThere serial: swaps package var main.runExec, swaps package var main.runSignals, swaps package var main.runVolumes
+cmd/nova-sandbox/run_test.go:TestRunRefusesWhenTheContainerCannotBeRead serial: swaps package var main.runExec, swaps package var main.runSignals, swaps package var main.runVolumes
+cmd/nova-sandbox/run_test.go:TestRunReportsALeakAndPaysForItWithTheExitCode serial: swaps package var main.runExec, swaps package var main.runSignals, swaps package var main.runVolumes
+cmd/nova-sandbox/run_test.go:TestRunSaysTheMountWasDeniedRatherThanTheCreateFailed serial: swaps package var main.runExec, swaps package var main.runSignals, swaps package var main.runVolumes
+cmd/nova-sandbox/run_test.go:TestTheTempDirectoryIsOnTheVolume serial: swaps package var main.runExec, swaps package var main.runSignals, swaps package var main.runVolumes
+cmd/nova-sandbox/runwin_test.go:TestASecondWSBRunRefusesRatherThanQueues serial: swaps package var main.runGOOS, swaps package var main.runSignals, swaps package var main.runWinPlace, swaps package var main.runWinWall
+cmd/nova-sandbox/runwin_test.go:TestAWSBRunReadsTheGuestsStatusOutOfTheScratch serial: swaps package var main.runGOOS, swaps package var main.runSignals, swaps package var main.runWinPlace, swaps package var main.runWinReadExit, swaps package var main.runWinWall
+cmd/nova-sandbox/runwin_test.go:TestAWSBRunWithNoStatusFileTimesOutAt124 serial: swaps package var main.runGOOS, swaps package var main.runSignals, swaps package var main.runWinPlace, swaps package var main.runWinPoll, swaps package var main.runWinWall
+cmd/nova-sandbox/runwin_test.go:TestTheWindowsReceiptIsTheSameGrammarAsDarwins serial: swaps package var main.runGOOS, swaps package var main.runSignals, swaps package var main.runWinPlace, swaps package var main.runWinWall
+cmd/nova-sandbox/runwin_test.go:TestWSBRefusesARunWithNoTimeout serial: swaps package var main.runGOOS, swaps package var main.runSignals, swaps package var main.runWinPlace, swaps package var main.runWinWall
+cmd/nova-sandbox/runwin_test.go:TestWSBRefusesOnAnEditionThatHasNoWindowsSandbox serial: swaps package var main.runGOOS, swaps package var main.runSignals, swaps package var main.runWinPlace, swaps package var main.runWinWall
+cmd/nova-sandbox/runwin_test.go:TestWindowsAJobThatFailsUnmakesTheScratchBesideIt serial: swaps package var main.runGOOS, swaps package var main.runSignals, swaps package var main.runWinPlace, swaps package var main.runWinWall
+cmd/nova-sandbox/runwin_test.go:TestWindowsALeakExitsThreeAndNamesTheOneCommand serial: swaps package var main.runGOOS, swaps package var main.runSignals, swaps package var main.runWinPlace, swaps package var main.runWinWall
+cmd/nova-sandbox/runwin_test.go:TestWindowsATimeoutClosesTheJobAndExits124 serial: swaps package var main.runGOOS, swaps package var main.runSignals, swaps package var main.runWinPlace, swaps package var main.runWinWall
+cmd/nova-sandbox/runwin_test.go:TestWindowsAnExistingScratchIsRefusedNotJoined serial: swaps package var main.runGOOS, swaps package var main.runSignals, swaps package var main.runWinPlace, swaps package var main.runWinWall
+cmd/nova-sandbox/runwin_test.go:TestWindowsHasNo128PlusN serial: swaps package var main.runGOOS, swaps package var main.runSignals, swaps package var main.runWinPlace, swaps package var main.runWinWall
+cmd/nova-sandbox/runwin_test.go:TestWindowsMemoryAndCPUReachTheJob serial: swaps package var main.runGOOS, swaps package var main.runSignals, swaps package var main.runWinPlace, swaps package var main.runWinWall
+cmd/nova-sandbox/runwin_test.go:TestWindowsRefusesWhileTheWallIsNotBuilt serial: swaps package var main.runGOOS, swaps package var main.runSignals, swaps package var main.runWinPlace, swaps package var main.runWinWall
+cmd/nova-sandbox/runwin_test.go:TestWindowsRunCreatesJobAndScratchRunsAndAlwaysDeletes serial: swaps package var main.runGOOS, swaps package var main.runSignals, swaps package var main.runWinPlace, swaps package var main.runWinWall
+cmd/nova-sandbox/runwin_test.go:TestWindowsSizeIsRefusedNotApproximated serial: swaps package var main.runGOOS, swaps package var main.runSignals, swaps package var main.runWinPlace, swaps package var main.runWinWall
+cmd/nova-sandbox/runwin_test.go:TestWindowsTheJobIsClosedBeforeTheScratchIsRemoved serial: swaps package var main.runGOOS, swaps package var main.runSignals, swaps package var main.runWinPlace, swaps package var main.runWinWall
+cmd/nova-sandbox/runwin_test.go:TestWindowsTheRemovalIsGivenARetryWindow serial: swaps package var main.runGOOS, swaps package var main.runSignals, swaps package var main.runWinPlace, swaps package var main.runWinWall
+cmd/nova-sandbox/runwin_test.go:TestWindowsTheScratchIsTheOnlyWrite serial: swaps package var main.runGOOS, swaps package var main.runSignals, swaps package var main.runWinPlace, swaps package var main.runWinWall
+cmd/nova-sandbox/volumes_darwin_test.go:TestConcurrentCreatesAreSerialized serial: swaps package var main.diskutilRun, swaps package var main.volumeLockPath, swaps package var main.volumeRootUsable
+cmd/nova-sandbox/volumes_darwin_test.go:TestCreateRefusesAVolumeThatNeverBecomesWritable serial: swaps package var main.diskutilRun, swaps package var main.volumeLockPath, swaps package var main.volumeRootUsable
+cmd/nova-sandbox/volumes_darwin_test.go:TestCreateRemakesAVolumeWhoseRootIsNotTheCallers serial: swaps package var main.diskutilRun, swaps package var main.volumeLockPath, swaps package var main.volumeRootUsable
+cmd/nova-sandbox/volumes_darwin_test.go:TestCreateSaysTheVolumeWasMadeAndTheMountDenied serial: swaps package var main.diskutilRun, swaps package var main.volumeLockPath, swaps package var main.volumeRootUsable
+cmd/nova-sandbox/volumes_darwin_test.go:TestListNeverReturnsAVolumeThisToolDidNotName serial: swaps package var main.diskutilRun
+cmd/nova-sandbox/volumes_darwin_test.go:TestListReadsTheRealDiskutilTree serial: swaps package var main.diskutilRun
+cmd/nova-sandbox/volumes_darwin_test.go:TestRunSaysWhoDeniedTheDiskServiceInsteadOfNamingTheContainerFlag serial: swaps package var main.diskutilRun, swaps package var main.runVolumes, swaps package var main.volumeLockPath, swaps package var main.volumeRootUsable
+cmd/nova-sandbox/volumes_darwin_test.go:TestRunSaysWhoDeniedTheDiskServiceWhenTheListingFails serial: swaps package var main.diskutilRun, swaps package var main.runVolumes, swaps package var main.volumeLockPath, swaps package var main.volumeRootUsable
+cmd/nova-sandbox/volumes_darwin_test.go:TestTheCreateLockIsAnExclusiveFlock serial: swaps package var main.volumeLockPath
+cmd/nova-sandbox/volumes_darwin_test.go:TestTheSandboxedCallerSentenceIsWrittenOnce serial: swaps package var main.diskutilRun, swaps package var main.runVolumes, swaps package var main.volumeLockPath, swaps package var main.volumeRootUsable
+cmd/nova-sandbox/worktree_test.go:TestGhForgeBadOriginIsNotAnOutage serial: swaps package var main.worktreeGit
+cmd/nova-sandbox/worktree_test.go:TestWorktreeDeletedTreeIsRebuilt serial: swaps package var main.worktreeForgeFactory, swaps package var main.worktreeGit
+cmd/nova-sandbox/worktree_test.go:TestWorktreeForgeRefusalsSayWhichFailureItWas serial: swaps package var main.worktreeForgeFactory, swaps package var main.worktreeGit
+cmd/nova-sandbox/worktree_test.go:TestWorktreeMaterialisesThePRHead serial: swaps package var main.worktreeForgeFactory, swaps package var main.worktreeGit
+cmd/nova-sandbox/worktree_test.go:TestWorktreeNeverPrintsTheToken serial: swaps package var main.worktreeForgeFactory, swaps package var main.worktreeGit
+cmd/nova-sandbox/worktree_test.go:TestWorktreePruneEmptyScratchExitsZero serial: swaps package var main.worktreeForgeFactory, swaps package var main.worktreeGit
+cmd/nova-sandbox/worktree_test.go:TestWorktreePruneKeptOpenExitsZero serial: swaps package var main.worktreeForgeFactory, swaps package var main.worktreeGit
+cmd/nova-sandbox/worktree_test.go:TestWorktreePruneLeavesTheHandMadeWorktree serial: swaps package var main.worktreeForgeFactory, swaps package var main.worktreeGit
+cmd/nova-sandbox/worktree_test.go:TestWorktreePruneRemovesMergedAndClosedAndKeepsOpen serial: swaps package var main.worktreeForgeFactory, swaps package var main.worktreeGit
+cmd/nova-sandbox/worktree_test.go:TestWorktreePruneStaleUsesTheClockAndTheProbe serial: swaps package var main.worktreeForgeFactory, swaps package var main.worktreeGit, swaps package var main.worktreeInUse, swaps package var main.worktreeNow
+cmd/nova-sandbox/worktree_test.go:TestWorktreeRefusals serial: swaps package var main.worktreeForgeFactory, swaps package var main.worktreeGit
+cmd/nova-sandbox/worktree_test.go:TestWorktreeSecondCallReusesTheTree serial: swaps package var main.worktreeForgeFactory, swaps package var main.worktreeGit
+cmd/nova-tokens/boundary_test.go:TestNoVerbTouchesACheckoutOrItsRemote serial: t.Setenv
+cmd/nova-tokens/contract_test.go:TestEachDeclaredFileIsOpenedOncePerRun serial: counts the process-wide tokens.Opens(), which every parallel fold adds to
+cmd/nova-tokens/demanded_test.go:TestRule16And19TheDatabaseIsCopiedAndQueriedReadOnlyUnderATimeout serial: t.Setenv
+cmd/nova-tokens/demanded_test.go:TestRule17AZonedStampFoldsOnItsUTCDayAndAnUnreadableStampIsCounted serial: t.Setenv
+cmd/nova-tokens/demanded_test.go:TestRule1EveryPathIsAFlagAndNoEnvironmentIsConsulted serial: t.Setenv
+cmd/nova-tokens/determinism_test.go:TestNothingAboutTheCheckoutDecidesWhichNoteIsTheDay serial: t.Setenv
+cmd/nova-tokens/firstrun_test.go:TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine serial: t.Chdir
+cmd/nova-tokens/firstrun_test.go:TestTheExampleLinesRun serial: t.Chdir
+cmd/nova-tokens/firstrun_test.go:TestTheTranscriptIsWhatTheToolPrints serial: t.Chdir
+cmd/nova-tokens/gen_transcript_test.go:TestGenerateTranscript serial: t.Chdir
+cmd/nova-tokens/slow_test.go:TestRule19ASubprocessPastTheTimeoutIsUnreadableAndTheFoldGoesOn serial: t.Setenv
+cmd/nova-tokens/token_ledger_test.go:TestLedgerReadsThePasswordFromTheVariableItIsToldToOnly serial: t.Setenv
+cmd/nova-tokens/xai_usage_test.go:TestXaiProviderOneUsageFileFoldsRow serial: t.Setenv
+internal/nsprint/store/store_test.go:TestOpenAuthenticatesFromEnv serial: t.Setenv
+internal/secrets/place_test.go:TestPlaceSSHSeamPanicsUnderTheGuard serial: os.Unsetenv, t.Setenv
+internal/swarm/hostguard_test.go:TestHostGuardCleanupRestoresCachedState serial: t.Setenv
+internal/swarm/launchfail_test.go:TestProviderRetryDelayBands serial: os.Unsetenv
+internal/swarm/opencode_numeric_functional_test.go:TestOpenCodeInvalidNumericUsageIsAReadFailure serial: t.Setenv
+internal/swarm/opencode_numeric_functional_test.go:TestOpenCodeNumericBoundsPreserveZeroAndAbsence serial: t.Setenv
+internal/swarm/opencode_functional_test.go:TestAnAbsentOpenCodeDatabaseIsNotAnError serial: t.Setenv
+internal/swarm/opencode_functional_test.go:TestAnUnreadableOpenCodeDatabaseIsAnError serial: t.Setenv
+internal/swarm/opencode_test.go:TestNoSQLiteOnPathIsAnError serial: t.Setenv
+internal/swarm/opencode_functional_test.go:TestOpenCodeSourceFindsTheLocalShareStore serial: t.Setenv
+internal/swarm/opencode_functional_test.go:TestOpenCodeSourceWaitsOutAWriteAheadLog serial: t.Setenv
+internal/swarm/opencode_test.go:TestOpenCodeSourceWithoutSQLiteIsANamedRefusal serial: t.Setenv
+internal/swarm/opencode_functional_test.go:TestTheOpenCodeSourceSumsTheMessageRows serial: t.Setenv
+internal/swarm/result_collision_test.go:TestTheCollisionSeamCountsOnlyReadsOfThePathItArmed serial: swaps package var swarm.forceTransientIO
+internal/swarm/stage_functional_test.go:TestStageUsesTheBenchMirrorAndTimesOut serial: t.Setenv
+internal/swarm/toolchain_test.go:TestToolchainVersionDirReadsTheVersionOffTheLauncher serial: t.Setenv
+internal/testbin/testbin_test.go:TestPlaceFallsBackToCopyWhenLinkFails serial: swaps package var testbin.link
+cmd/nova-tokens/token_ledger_test.go:TestLedgerAndReportDialAsTheAclUser serial: t.Setenv
+internal/nsprint/store/open_sends_no_command_test.go:TestOpenSendsNoCommandBeforeTheCallersFirstBatch serial: t.Setenv
+cmd/nova-swarm/doctor_test.go:TestDoctorVerbIsReachableFromTheDispatch serial: swaps package var main.doctorHomeDir, swaps package var main.doctorLookPath, swaps package var main.doctorReadVersion
+cmd/nova-swarm/firstrun_test.go:TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine serial: t.Chdir
+cmd/nova-swarm/native_budget_sample_test.go:TestLiveSamplerCountsAFailedReadAndAnAnswerResetsIt serial: t.Setenv
+cmd/nova-swarm/native_budget_stop_test.go:TestNativeAFastLaunchAtTheBudgetIsNotRelaunchedBeforeAnySample serial: t.Setenv
+cmd/nova-swarm/native_budget_stop_test.go:TestNativeALaunchThatReachedTheBudgetAloneIsNeverLaunchedAgain serial: t.Setenv
+cmd/nova-swarm/native_budget_stop_test.go:TestNativeCardBudgetStopsAndPrintsThePromptDefect serial: t.Setenv
+cmd/nova-swarm/native_budget_stop_test.go:TestNativeTwoLaunchAccounting serial: t.Setenv
+cmd/nova-swarm/native_deadline_test.go:TestNativeDeadlineControlALeaderOnlyKillLeavesTheGrandchild serial: swaps package var main.nativeDeadline, swaps package var main.nativeKillGroup
+cmd/nova-swarm/native_deadline_test.go:TestNativeDeadlineKillsTheWholeTree serial: swaps package var main.nativeDeadline
+cmd/nova-swarm/native_idle_test.go:TestNativeIdleIsDecidedByTheWatchsEventNotByAClock serial: swaps package var main.nativeKillGroup, swaps package var main.nativeReap, swaps package var main.nativeWatchIdle
+cmd/nova-swarm/native_idle_test.go:TestNativeIdleReapsTheCardInsteadOfShootingIt serial: swaps package var main.nativeKillGroup, swaps package var main.nativeReap, swaps package var main.nativeWatchIdle
+cmd/nova-swarm/native_idle_test.go:TestNativeIdleSaysACardThatSimplyWentStillWentStill serial: swaps package var main.nativeKillGroup, swaps package var main.nativeReap, swaps package var main.nativeWatchIdle
+cmd/nova-swarm/native_stage_test.go:TestStageFailLinePrintsOnStagingFailure serial: swaps package var os.Stdout
+cmd/nova-swarm/native_stage_test.go:TestStageNamedRepoNotStagedIsRefused serial: swaps package var os.Stdout
+cmd/nova-swarm/native_stage_test.go:TestStageOKLinePrintsOnSuccessfulStage serial: swaps package var os.Stdout
+cmd/nova-swarm/native_stage_test.go:TestStagePushedHeaderStagesRepoBeforeTheModel serial: swaps package var os.Stdout
+cmd/nova-swarm/shellshim_test.go:TestTheChildEnvIsUnchangedWithoutAShim serial: t.Setenv
+cmd/nova-swarm/slow_test.go:TestFriendSequenceLocalModelCard serial: t.Setenv
+cmd/nova-swarm/slow_test.go:TestNativeAllowsProviderLoopback serial: t.Setenv
+cmd/nova-swarm/slow_test.go:TestNativeChildCwdIsJobDirFromForeignCwd serial: os.Chdir, t.Setenv
+cmd/nova-swarm/slow_test.go:TestNativeChildCwdIsJobDirUnwalled serial: os.Chdir, t.Setenv
+cmd/nova-swarm/slow_test.go:TestNativeDrainDeliversPoolIdentityToChild serial: os.Setenv, os.Unsetenv
+cmd/nova-swarm/slow_test.go:TestNativeEnvIsCleanAndInsideTheWall serial: os.Chdir, t.Setenv
+cmd/nova-swarm/slow_test.go:TestNativeFailedReadsEndNothingByThemselves serial: t.Setenv
+cmd/nova-swarm/slow_test.go:TestNativeLaunchGoesThroughTheOneLauncher serial: swaps package var main.launchArgvFor
+cmd/nova-swarm/slow_test.go:TestNativeNoSharedCachesRestoresHomeCaches serial: t.Setenv
+cmd/nova-swarm/slow_test.go:TestNativeNoWallWritesHarnessLog serial: t.Setenv
+cmd/nova-swarm/slow_test.go:TestNativeOKNamesTheWall serial: t.Setenv
+cmd/nova-swarm/slow_test.go:TestNativeRefusesABudgetNothingCanObserve serial: t.Setenv
+cmd/nova-swarm/slow_test.go:TestNativeRefusesMalformedPoolIdentityBeforeHarness serial: os.Setenv, os.Unsetenv
+cmd/nova-swarm/slow_test.go:TestNativeRefusesMissingPoolIdentityBeforeHarness serial: os.Setenv, os.Unsetenv
+cmd/nova-swarm/slow_test.go:TestNativeRefusesWhenWallCannotExpressRule serial: t.Setenv
+cmd/nova-swarm/slow_test.go:TestNativeRefusesWithoutWallUnlessFlagged serial: t.Setenv
+cmd/nova-swarm/slow_test.go:TestNativeRelativeSlotIsAbsolutized serial: os.Chdir, t.Setenv
+cmd/nova-swarm/slow_test.go:TestNativeRunDeniesBusInsideWall serial: t.Setenv
+cmd/nova-swarm/slow_test.go:TestNativeRunPassesRepoAllowRule serial: t.Setenv
+cmd/nova-swarm/slow_test.go:TestNativeRunsWalledWithoutHostRulesWhenNoRepos serial: t.Setenv
+cmd/nova-swarm/slow_test.go:TestNativeRunsWithNoSlotsStore serial: t.Setenv
+cmd/nova-swarm/slow_test.go:TestNativeSamplerNeverOverlapsAndNeverDelaysTheDeadline serial: t.Setenv
+cmd/nova-swarm/slow_test.go:TestNativeSecretWorkerWritesNoAuthFileAndTheHarnessSeesName serial: t.Setenv
+cmd/nova-swarm/slow_test.go:TestNativeSharedGoCaches serial: t.Setenv
+cmd/nova-swarm/slow_test.go:TestNativeSilentHarnessIsNotOK serial: t.Setenv
+cmd/nova-swarm/slow_test.go:TestNativeWalledJobPathWithSpace serial: t.Setenv
+cmd/nova-swarm/slow_test.go:TestNativeWalledJobPathWithSpacesCompletes serial: t.Setenv
+cmd/nova-swarm/slow_test.go:TestNativeWorkerModelGateComparesQualifiedName serial: t.Setenv
+cmd/nova-swarm/slow_test.go:TestUnrecordedUnknownIsStillAHarvestHold serial: swaps package var main.persistUnknownFn
+cmd/nova-swarm/workercheck_test.go:TestWorkerCheckAnAbsentSecretWithEnvNamesTheVariableNotTheValue serial: t.Setenv

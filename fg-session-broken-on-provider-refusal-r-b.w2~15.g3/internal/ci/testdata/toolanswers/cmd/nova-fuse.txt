@@ -1,0 +1,3 @@
+# tool-answers: the mistakes this tool does not yet answer with the way forward; each row's count only falls
+# ceiling: 1
+cmd/nova-fuse:group-help 1 lift refuses -h by design, as every fuse verb does; `nova-fuse help lift` is its route (tool ledger X11, F1)

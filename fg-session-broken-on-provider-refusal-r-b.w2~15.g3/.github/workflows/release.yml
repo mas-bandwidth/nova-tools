@@ -1,0 +1,218 @@
+# Releases for nova-tools: a tag becomes binaries somebody else can run.
+#
+# Why this exists: `go install` is a fine way to get these tools and it is the first way
+# the README offers, but it needs a Go toolchain, and the people most likely to be handed
+# `nova-check` or `nova-bus` are being handed them to run against their own repository
+# rather than to build. Until now there was nothing to hand them: the only artifact of a
+# release was a tag, and a tag is a claim about source.
+#
+# A GREEN CERTIFICATION RUN ON THE TAGGED COMMIT COMES FIRST AND THE RELEASE JOB NEEDS IT. A
+# tag can be pushed to any commit, including one no CI run ever saw and one that never passed
+# on Windows -- and ci.yml's own opening argument is that a claim of tested is what stops
+# anyone checking. So the first job asks whether certification.yml (the whole-tree race run,
+# the per-package Windows tests, the three-OS smoke, the release dry-run) has completed on this
+# exact commit and whether its NEWEST completed run is green, and refuses the release
+# otherwise: no release at all rather than a release nobody vouched for, and no release on a
+# red either. Nothing certifies a commit on its own (certification.yml runs daily and on
+# dispatch), so cutting a release means dispatching certification on the tag's ref first; the
+# refusal says exactly that. Until v0.15.0 this file ran its own copy of those tests, serially,
+# and the Windows leg outgrew its cap; the certified job below says why it stopped.
+#
+# ONE LEG PER PLATFORM BUILDS, AND ONE MACHINE SUMS THE WHOLE SET. The `build` matrix runs
+# `go run ./tools/ghrelease build` once per shipped platform (tools/ghrelease/release-targets),
+# in parallel, each leg under the two-minute cap, and uploads that platform's binaries as an
+# artifact. The `release` job downloads every artifact into one directory, asserts the stamp,
+# and in the step that attaches the set to the release checks it is exactly the shipped set and
+# computes SHA256SUMS over the whole of it (`ghrelease sums`). So the checksum
+# file is computed on the one machine that holds every artifact, over the bytes it attaches,
+# never assembled from per-platform pieces. One runner cross-building all five platforms does
+# not fit the cap: certification's dry run of it was cancelled inside the build.
+#
+# The dry run of this same build is certification.yml's release-build, release-dry-run and
+# release-checks, running the same scripts, so a target that stops compiling is a red
+# certification rather than a red tag -- a tag being the one thing here that cannot be quietly
+# amended and pushed again.
+
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # NOT cancel-in-progress: a cancelled release leaves a tag with a partial set of binaries
+  # attached, which is the one state worse than no release. Two tags are two groups.
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  certified:
+    # THE RELEASE NEEDS A GREEN CERTIFICATION RUN ON THIS EXACT COMMIT, AND ASKS FOR ONE
+    # rather than running the tests again here. Until v0.15.0 this file ran its own
+    # `go test -race ./...` on three operating systems, serially, inside a 15-minute job;
+    # certification.yml runs the same tests fanned out per package, and the Windows leg
+    # here outgrew its cap (run 34775563018: cancelled with packages still to run, the
+    # release job skipped, no release object, while certification had passed the same
+    # commit in six minutes). Two copies of one test set drift, and the copy that ran here
+    # was the slower and the older one. So this job is one question to the API, answered from
+    # one snapshot, and asked again at the start of the release job: of every certification.yml
+    # run on the commit this run is building, is any still unfinished (then wait), and did the
+    # most recently updated one succeed (then release)? A commit no certification run vouches for, or whose latest evidence is red,
+    # gets no release, and the refusal names the remedy.
+    # It is the tag-only-a-certified-commit practice made into something that can say no.
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      # Listing workflow runs is an Actions read; the file-level grant is contents only, and a
+      # job that asks the API with a token that cannot read Actions would refuse every
+      # release with a 403 that looks like "no certification run". Scoped to this job; contents
+      # read as well, because a job that names any permission gets none it does not name, and
+      # the checkout of the ask script needs it.
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 2  # the classtests rule reads what HEAD deleted from its first parent
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: certification.yml vouches for this commit
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA: ${{ github.sha }}
+          REF: ${{ github.ref_name }}
+        shell: bash
+        # The whole ask lives in `ghrelease certified`, so its unit tests drive it with a fake
+        # gh and so the release job below can ask it again.
+        run: go run ./tools/ghrelease certified
+  build:
+    # One leg per shipped platform, the matrix of certification.yml's release-build: the list
+    # in tools/ghrelease/release-targets, written out because a matrix cannot read a file
+    # (internal/ci's TestReleaseMatricesAreTheTargetsFile holds the three equal). The only
+    # compile in this workflow is `ghrelease build`, the verb the dry run runs.
+    #
+    # THE BUILD CACHE IS RESTORED, NEVER SAVED, here: the entry is the one certification's
+    # release-build saved for this platform (the standard library and module packages; the
+    # tree's own packages compile in the leg), and a release writes nothing but its own
+    # release.
+    needs: certified
+    name: build (${{ matrix.goos }}, ${{ matrix.goarch }})
+    strategy:
+      # Any leg failing means no release, so the rest stop.
+      fail-fast: true
+      matrix:
+        include:
+          - {goos: linux, goarch: amd64}
+          - {goos: linux, goarch: arm64}
+          - {goos: darwin, goarch: arm64}
+          - {goos: darwin, goarch: amd64}
+          - {goos: windows, goarch: amd64}
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    env:
+      # Read once, from the ref that triggered the run, and passed to every step as an
+      # environment variable rather than interpolated into a shell line (see the release job).
+      TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 2  # the classtests rule reads what HEAD deleted from its first parent
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: restore the release build cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: release-${{ matrix.goos }}-${{ matrix.goarch }}-${{ hashFiles('go.mod', 'go.sum') }}
+          restore-keys: |
+            release-${{ matrix.goos }}-${{ matrix.goarch }}-
+
+      - name: every shipped tool for ${{ matrix.goos }}/${{ matrix.goarch }}
+        # `ghrelease build` with --require-v-tag refuses a stamp that is not v-prefixed,
+        # composes the ldflags that refuse an empty or malformed stamp before anything
+        # compiles, and names every artifact <tool>_<stamp>_<goos>_<goarch>[.exe].
+        shell: bash
+        run: go run ./tools/ghrelease build --require-v-tag "$TAG" "${{ matrix.goos }}" "${{ matrix.goarch }}" dist
+
+      - name: upload this platform's binaries
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/
+          retention-days: 1
+          if-no-files-found: error
+
+  release:
+    needs: [certified, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      # The only job in this repository that writes anything. It is scoped to this job
+      # rather than the file, so the certified job above, which asks the API and runs none
+      # of the tagged tree's code beyond the ask script, has read only. Actions read is
+      # here too because this job asks the same question again before it builds.
+      contents: write
+      actions: read
+    env:
+      # Read once, from the ref that triggered the run, and passed to every step as an
+      # environment variable rather than interpolated into a shell line: a `${{ }}` inside
+      # a run block is pasted into the script before bash sees it, so a ref carrying shell
+      # syntax would be executed rather than quoted.
+      TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 2  # the classtests rule reads what HEAD deleted from its first parent
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: certification.yml still vouches for this commit
+        # ASKED AGAIN HERE, after the certified job, the build and the queue waits between
+        # them: one snapshot cannot see a run created after it was taken, and a red that starts
+        # after the first ask and finishes before the binaries are attached must still stop the
+        # release.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA: ${{ github.sha }}
+          REF: ${{ github.ref_name }}
+        shell: bash
+        run: go run ./tools/ghrelease certified
+
+      - name: download every platform's binaries into one directory
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: dist
+
+      - name: every shipped binary reports the tag it was built from
+        # This runner is linux/amd64, so one artifact per tool is directly runnable here. The
+        # stamp is the whole check on the -X flag, which the linker ignores in silence when the
+        # symbol is missing or renamed; `ghrelease stamp` requires the tag from every tool the
+        # build legs shipped, and certification.yml's release-checks shows it red on a binary
+        # that lacks the stamp (`ghrelease controls`).
+        shell: bash
+        run: |
+          # An artifact does not keep the executable bit.
+          chmod +x dist/*_"${TAG}"_linux_amd64
+          go run ./tools/ghrelease stamp "$TAG" "dist/%s_${TAG}_linux_amd64"
+
+      - name: SHA256SUMS over the whole shipped set, attached to the release draft, never to a published release
+        # The tag checks (the notes file, the tag exists, the tag is this tree's), the sums over
+        # the bytes on this disk and the draft/published boundary are `ghrelease attach`.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: go run ./tools/ghrelease attach

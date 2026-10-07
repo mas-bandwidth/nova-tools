@@ -1,0 +1,389 @@
+package memindex
+
+import (
+	"fmt"
+	"io/fs"
+	"maps"
+	"path"
+	"regexp"
+	"slices"
+	"sort"
+	"strings"
+)
+
+// verify.go mechanizes the coverage passes a consolidation ritual otherwise
+// does by hand — the O(m) reads that make every roll-up cost a scan of the
+// whole self. Three checks, all OVER-REPORTING by design: an over-reporting
+// loss check is the only kind worth having, because it finds and the author
+// decides.
+//
+// Which findings gate is NOT decided here. The caller states it per run —
+// see nova-memory's --links flag and SPEC.md. The port from which this came
+// had unresolved wikilinks demoted to informational by a default flag, while
+// its own spec promised a nonzero exit on findings; a script trusting the
+// spec passed dangling links silently for weeks. Nothing here has a default
+// about what counts.
+
+// Finding is one verify observation. Kind is one of "coverage", "backlink",
+// "frontmatter", "wikilink".
+type Finding struct {
+	Kind   string
+	Detail string
+}
+
+// wikilinkRe matches the whole body of a [[...]], aliases and headings
+// included; wikilinkTarget below reduces the body to the half that has to
+// resolve. The regex this replaced excluded '|' and '#' from the body, so
+// `[[target|alias]]` and `[[target#section]]` were never SCANNED — a caller
+// who chose --links=gate as a wall got a whole common link class waved
+// through silently, which is the exact wave-through this file argues against.
+var wikilinkRe = regexp.MustCompile(`\[\[([^\[\]]+?)\]\]`)
+
+// fenceRe matches an opening or closing code fence: three or more backticks or
+// tildes, at the start of a line, indented no more than three spaces. ANCHORED
+// ON PURPOSE — see maskCode.
+var fenceRe = regexp.MustCompile("^[ \t]{0,3}(`{3,}|~{3,})")
+
+// quotedWikilinkRe matches a backtick span whose CONTENT IS the wikilink and
+// nothing else — the exact shape of a quoted specimen, `[[name]]`. Deliberately
+// not "any inline code span": see maskCode.
+var quotedWikilinkRe = regexp.MustCompile("`[ \t]*\\[\\[[^\\[\\]]+?\\]\\][ \t]*`")
+
+// maskCode blanks code so that a wikilink inside it is not read as a citation.
+// A `[[wikilink]]` in inline code or a fenced block is a QUOTED SPECIMEN — prose
+// ABOUT wikilinks — not a reference to a file.
+//
+// Why this matters: `--links` can be run as a GATE, where a false positive is
+// not clutter but a wall in front of a correct document; and even in report mode
+// a list that is half specimens is a list a reader stops reading, so a genuinely
+// dangling pointer hides in plain sight.
+//
+// IT MASKS THE NARROWEST THING THAT WORKS, and both narrowings were bought by a
+// reproduction. A first attempt masked "any fenced block or any inline code
+// span" with one whole-file regexp, and it silently HID real dangling links —
+// the one direction a link checker must never fail in:
+//
+//	A fence opens with ``` in markdown.   <- a lone run in ordinary prose
+//	See [[really-missing]].               <- swallowed: paired with the NEXT fence
+//	it`s a shame [[also-hidden]] but it`s fine   <- swallowed between stray ticks
+//
+// So, two rules. A FENCE IS ONLY RECOGNIZED AT THE START OF A LINE, never from a
+// mid-line run, and fence state is tracked line by line. AND AN INLINE SPAN IS
+// MASKED ONLY WHEN THE SPAN *IS* THE LINK — content `[[name]]` and nothing else,
+// which is exactly what a quoted specimen looks like.
+//
+// A backtick-parity guard was tried instead of that second rule and is NOT
+// enough: the stray-tick line above has EVEN parity, so parity would still eat
+// it. Requiring the span to be the whole link cannot, because a clause of prose
+// is not a wikilink.
+//
+// Everything else over-reports on purpose, which is this file's declared
+// posture: indented (four-column) code blocks, and a wikilink merely NEAR
+// backticks rather than wrapped by them, are both still reported.
+func maskCode(s string) string {
+	lines := strings.Split(s, "\n")
+	fence := ""
+	for i, ln := range lines {
+		if m := fenceRe.FindString(ln); m != "" {
+			mk := strings.TrimLeft(m, " \t")
+			if fence == "" {
+				fence = mk
+			} else if mk[0] == fence[0] && len(mk) >= len(fence) {
+				fence = ""
+			}
+			lines[i] = ""
+			continue
+		}
+		if fence != "" {
+			lines[i] = ""
+			continue
+		}
+		lines[i] = quotedWikilinkRe.ReplaceAllString(ln, " ")
+	}
+	return strings.Join(lines, "\n")
+}
+
+// mdLinkRe matches the general inline-link destination `](dest)`; linkTarget
+// below decides what is in scope. The regex this replaced was
+// `\]\(([^)#?:]+\.md)\)`, whose character class excluded '#' and '?' from the
+// WHOLE target — so `](gone.md#top)` never matched at all and a dangling
+// anchored link passed the coverage wall green, exit 0, on a planted fault.
+// Newlines stay excluded because a link destination never spans a line, and
+// allowing them lets a stray `](` in prose swallow paragraphs.
+var mdLinkRe = regexp.MustCompile(`\]\(([^)\n]+)\)`)
+
+// schemeRe recognizes an absolute URI scheme, the same shape
+// internal/check/links.go uses. Kept here rather than shared because
+// memindex does no I/O beyond the fs.FS it is handed and depends on nothing.
+var schemeRe = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9+.\-]*:`)
+
+// linkTarget reduces one inline-link destination to the relative .md path
+// that must resolve, or reports that the link is out of scope. It follows
+// internal/check/links.go:247-250: fragment-only, protocol-relative, and
+// scheme-carrying targets are skipped, and the anchor is cut before the path
+// is tested. Absolute ('/'-rooted) targets are skipped too — the spec bullet
+// promises every RELATIVE .md link resolves, and resolving a repo-root-
+// relative path against a corpus root the caller may have pointed anywhere
+// below the repo would gate on false positives.
+func linkTarget(dest string) (string, bool) {
+	t := strings.TrimSpace(dest)
+	// `](<dest with spaces>)` is the angle-bracket form; `](dest "title")`
+	// puts a title after the destination. Neither is part of the path.
+	if strings.HasPrefix(t, "<") {
+		if end := strings.IndexByte(t, '>'); end >= 0 {
+			t = t[1:end]
+		}
+	} else if i := strings.IndexAny(t, " \t"); i >= 0 {
+		t = t[:i]
+	}
+	if t == "" || strings.HasPrefix(t, "#") || strings.HasPrefix(t, "//") ||
+		strings.HasPrefix(t, "/") || schemeRe.MatchString(t) {
+		return "", false
+	}
+	if i := strings.IndexAny(t, "#?"); i >= 0 {
+		t = t[:i]
+	}
+	if !strings.HasSuffix(t, ".md") {
+		return "", false
+	}
+	return t, true
+}
+
+// wikilinkTarget is the half of a wikilink body that has to resolve:
+// everything before the first '|' (an alias) or '#' (a heading). A body that
+// is only a heading (`[[#section]]`) reduces to nothing and is not a corpus
+// reference at all.
+func wikilinkTarget(body string) string {
+	if i := strings.IndexAny(body, "|#"); i >= 0 {
+		body = body[:i]
+	}
+	return strings.TrimSpace(body)
+}
+
+// identByte reports whether b can be part of a filename stem or an index
+// identifier; every other byte is a boundary. Non-ASCII bytes count as
+// identifier bytes on purpose — a stem butted against a letter in another
+// script is not a bounded mention, and under-matching here only ever
+// over-reports, which is this file's declared posture.
+func identByte(b byte) bool {
+	switch {
+	case b >= 'a' && b <= 'z', b >= 'A' && b <= 'Z', b >= '0' && b <= '9':
+		return true
+	case b == '-', b == '_', b >= 0x80:
+		return true
+	}
+	return false
+}
+
+// containsBounded reports whether needle occurs in hay with a non-identifier
+// byte (or an end of string) on each side. A bare strings.Contains lets one
+// filename's substring supply another filename's membership: an index naming
+// only foobar.md silently covered foo.md, so an unindexed note passed the
+// loss check and the run exited 0 on a real loss. A checker that declares
+// itself over-reporting must still never accept an unrelated entry as
+// evidence — under-reporting is the one failure it has no defence against.
+func containsBounded(hay, needle string) bool {
+	if needle == "" {
+		return false
+	}
+	for i := 0; i+len(needle) <= len(hay); {
+		j := strings.Index(hay[i:], needle)
+		if j < 0 {
+			return false
+		}
+		s, e := i+j, i+j+len(needle)
+		if (s == 0 || !identByte(hay[s-1])) && (e == len(hay) || !identByte(hay[e])) {
+			return true
+		}
+		i = s + 1
+	}
+	return false
+}
+
+// Coverage checks one A:B pair — every file matching glob A must be named in
+// at least one file matching glob B, and every relative .md link inside the B
+// files must point at a file that exists. That is the generic form of "every
+// memory file has an index line, and every index line points at a real file";
+// the globs carry the layout, so the tool assumes none.
+//
+// "Named" means one of two things, and both are bounded: a relative .md link
+// in a B file that RESOLVES to the A file, or the A file's stem appearing in
+// B as a whole identifier. Substring membership is not membership.
+//
+// An empty side is an error, never a pass: a coverage check whose A side
+// matched nothing has not verified anything.
+func Coverage(fsys fs.FS, globA, globB string) ([]Finding, error) {
+	aFiles, err := fs.Glob(fsys, globA)
+	if err != nil {
+		return nil, fmt.Errorf("bad glob %q: %w", globA, err)
+	}
+	bFiles, err := fs.Glob(fsys, globB)
+	if err != nil {
+		return nil, fmt.Errorf("bad glob %q: %w", globB, err)
+	}
+	if len(aFiles) == 0 || len(bFiles) == 0 {
+		return nil, fmt.Errorf("coverage %s:%s matched %d and %d files — an empty side is a broken check, not a pass",
+			globA, globB, len(aFiles), len(bFiles))
+	}
+	sort.Strings(aFiles)
+	sort.Strings(bFiles)
+
+	// The B side, read once: concatenated text for bounded stem matching, and
+	// the set of paths its relative .md links actually resolve to. The link
+	// set is the strong evidence — a resolved link names the file itself,
+	// where a stem is only a name that happens to appear.
+	var bContent strings.Builder
+	bSet := map[string]bool{}
+	linked := map[string]bool{}
+	for _, b := range bFiles {
+		raw, err := readCapped(fsys, b)
+		if err != nil {
+			return nil, err
+		}
+		// The concatenation is bounded like a Build: each file by readCapped,
+		// the whole by MaxCorpusBytes (security#76 finding 3).
+		if bContent.Len()+len(raw) > MaxCorpusBytes {
+			return nil, fmt.Errorf("coverage side %s passes the %d-byte corpus cap at %s", globB, MaxCorpusBytes, b)
+		}
+		bContent.WriteString(string(raw))
+		bContent.WriteByte('\n')
+		bSet[b] = true
+		dir := path.Dir(b)
+		for _, m := range mdLinkRe.FindAllStringSubmatch(string(raw), -1) {
+			target, ok := linkTarget(m[1])
+			if !ok {
+				continue
+			}
+			linked[path.Clean(path.Join(dir, target))] = true
+		}
+	}
+	bAll := bContent.String()
+
+	var out []Finding
+	for _, a := range aFiles {
+		if bSet[a] {
+			continue // an index file need not index itself
+		}
+		stem := strings.TrimSuffix(path.Base(a), ".md")
+		if linked[path.Clean(a)] || containsBounded(bAll, stem) {
+			continue
+		}
+		out = append(out, Finding{Kind: "coverage",
+			Detail: fmt.Sprintf("%s: stem %q appears in no file matching %s", a, stem, globB)})
+	}
+	// Backward: every relative .md link in B resolves.
+	for _, b := range bFiles {
+		raw, err := readCapped(fsys, b)
+		if err != nil {
+			return nil, err
+		}
+		dir := path.Dir(b)
+		for _, m := range mdLinkRe.FindAllStringSubmatch(string(raw), -1) {
+			target, ok := linkTarget(m[1])
+			if !ok {
+				continue
+			}
+			resolved := path.Clean(path.Join(dir, target))
+			if _, err := fs.Stat(fsys, resolved); err != nil {
+				// The destination is quoted AS WRITTEN so the reader can find
+				// the line; resolved names what was actually stat'd.
+				out = append(out, Finding{Kind: "backlink",
+					Detail: fmt.Sprintf("%s links %s which does not exist (resolved %s)", b, strings.TrimSpace(m[1]), resolved)})
+			}
+		}
+	}
+	return out, nil
+}
+
+// Wikilinks reports every [[stem]] in the corpus that resolves to neither a
+// file stem nor a frontmatter name. The aliased form [[stem|shown text]] and
+// the heading form [[stem#section]] are scanned by their target half — a link
+// whose alias is what the reader sees is still a link, and skipping the two
+// commonest shapes made --links=gate a wall with a hole in it.
+// Both resolution targets matter: a corpus
+// that names files after their frontmatter slug has nothing enforcing it, and
+// a link that reaches the content either way is not broken.
+//
+// Whether these findings gate is the caller's statement, never a default
+// here: some corpora hold links open on purpose — a [[name]] that matches
+// nothing yet marks something worth writing — and a gate at a high
+// false-positive rate trains a reader to wave findings through.
+func Wikilinks(fsys fs.FS, c *Corpus) ([]Finding, error) {
+	stems := map[string]bool{}
+	for _, f := range c.Files {
+		stems[strings.TrimSuffix(path.Base(f), ".md")] = true
+	}
+	for i := range c.Chunks {
+		if n := c.Chunks[i].FMName; n != "" {
+			stems[n] = true
+		}
+	}
+	unresolved := map[string][]string{} // stem -> referencing files
+	for _, f := range c.Files {
+		raw, err := readCapped(fsys, f)
+		if err != nil {
+			return nil, err
+		}
+		prose := maskCode(string(raw))
+		for _, m := range wikilinkRe.FindAllStringSubmatch(prose, -1) {
+			stem := wikilinkTarget(m[1])
+			if stem == "" {
+				continue
+			}
+			if !stems[stem] {
+				refs := unresolved[stem]
+				if len(refs) < 3 { // cap the listing; the count stays honest via the corpus
+					unresolved[stem] = append(refs, f)
+				}
+			}
+		}
+	}
+	var out []Finding
+	for _, k := range slices.Sorted(maps.Keys(unresolved)) {
+		out = append(out, Finding{Kind: "wikilink",
+			Detail: fmt.Sprintf("[[%s]] resolves to no file (e.g. from %s)", k, strings.Join(unresolved[k], ", "))})
+	}
+	return out, nil
+}
+
+// FrontmatterPresent reports files matching the glob whose frontmatter is
+// missing a name:. exempt holds basename PREFIXES the caller declares are
+// listings rather than entries — an index page is not an entry and would
+// otherwise fire forever, and a gate that fires forever on known-good files
+// trains wave-through.
+//
+// Nothing is exempt by default: a built-in prefix would be a guess about someone
+// else's layout, so the prefix is the caller's, stated per run.
+func FrontmatterPresent(fsys fs.FS, glob string, exempt []string) ([]Finding, error) {
+	files, err := fs.Glob(fsys, glob)
+	if err != nil {
+		return nil, fmt.Errorf("bad glob %q: %w", glob, err)
+	}
+	if len(files) == 0 {
+		return nil, fmt.Errorf("frontmatter glob %s matched nothing — a broken check, not a pass", glob)
+	}
+	sort.Strings(files)
+	var out []Finding
+	for _, f := range files {
+		base := path.Base(f)
+		skip := false
+		for _, e := range exempt {
+			if strings.HasPrefix(base, e) {
+				skip = true
+				break
+			}
+		}
+		if skip {
+			continue
+		}
+		raw, err := readCapped(fsys, f)
+		if err != nil {
+			return nil, err
+		}
+		if name, _ := frontmatter(string(raw)); name == "" {
+			out = append(out, Finding{Kind: "frontmatter",
+				Detail: fmt.Sprintf("%s: no name: in frontmatter", f)})
+		}
+	}
+	return out, nil
+}

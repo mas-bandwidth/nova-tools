@@ -1,0 +1,568 @@
+package swarm
+
+import (
+	"fmt"
+	"sort"
+	"strings"
+)
+
+// THE TEMPLATES ARE THE SINGLE HIGHEST-VALUE THING IN THIS SPEC.
+//
+// A task is a text, and a bare text produces a bare answer. The conditions below are what
+// turned one worker from 62 of 67 accurate with 5 wrong and 25 duplicate (batch 1) into 17
+// of 17 with 0 wrong and 0 duplicate (batch 2), and a file budget turned 0 of 3 complete
+// into 2 of 3 (batch 3). In the prototype they lived in a task text a person retyped, which
+// means they were sometimes retyped and sometimes forgotten. Here they are text in the
+// binary, printable, and a caller may write their own file instead: the tool has no list of
+// blessed task shapes.
+//
+// A TEMPLATE IS TEXT AND NOTHING ELSE. It is not code, it does not execute, and nothing in
+// this package reads a worker's RESULT.md and acts on it.
+
+const templateReadPR = `read-pr — read one pull request against the rules
+
+1. READ THE PR BODY'S OWED LIST FIRST, before reading any code, and for every
+   finding you report, say whether it is already on that list. A finding that
+   is already owed is marked ` + "`dup:`" + ` and is not a new finding.
+   [batch 1: 25 of 67 findings were duplicates of the owed list]
+2. QUOTE EVERY RULE VERBATIM, with ` + "`file:line`" + `. Never paraphrase a rule from
+   memory, and never assert a rule you did not open.
+   [batch 1: 5 of 67 findings were wrong, each a paraphrase]
+3. APPEND EACH FINDING TO RESULT.md THE MOMENT IT EXISTS. Not at the end.
+   You may be killed at your deadline; what is on disk is what you found.
+4. A FILE BUDGET: read at most <n> files (the limit stated in the card). When the budget
+   is spent, write what you have and stop. Say in RESULT.md which files you
+   did not open.
+   [batch 3: with a budget, 2 of 3 tasks complete; without, 0 of 3]
+5. A RESULT.md CONTAINING ONLY A PLAN IS A FAILED TASK. The plan belongs at
+   the top, before the work; the findings are the work. A finished read that
+   found nothing is NOT a failed task: write the ` + "`## Head`" + ` with ` + "`findings: 0`" + `.
+   Never report a finding to have something to report.
+6. If a board was supplied, check it before reporting: a card that already names
+   this is a ` + "`dup:`" + `. Do not search for an unspecified board.
+7. A SEVERITY FLOOR: emit only findings at or above ` + "`HIGH`" + `. A finding below the
+   floor is not emitted at all. State the floor in RESULT.md's ` + "`## Head`" + `
+   paragraph as ` + "`floor: HIGH`" + `, and mark each emitted finding with its
+   severity. The floor decides which findings are emitted, not how they are
+   written: every emitted finding still quotes its rule verbatim with ` + "`file:line`" + `.
+
+Keep RESULT.md concise: omit progress narration, praise, repeated task text, and a
+separate summary. Each finding keeps its proof in compact form: severity, ` + "`file:line`" + `,
+the exact quoted rule, the fix, and ` + "`dup:`" + ` status when applicable. Retain every valid
+finding, its context and evidence, and any coverage limitation; do not drop context or
+evidence by default. Brevity is a soft target: never hard-truncate findings or proof; if
+the report overflows, preserve the proof and say so. Preserve the complete RESULT.md
+shape and its mandatory ` + "`## Head`" + `, ` + "`## Findings`" + `, ` + "`## Per item`" + `, ` + "`## Gates`" + `,
+` + "`## Left owed`" + `, and ` + "`## One line`" + ` sections.
+In Gates, distinguish source checks from tests and report-writing commands.
+Mark only checks actually performed as pass; no tests run does not mean no commands run.
+
+BOUND THE REPORT: findings only. No narration of the clone, no restated
+task, no praise, no summary. One line per finding: ` + "`file:line`" + `, the rule
+quoted verbatim in at most twelve words (a longer rule by the twelve of its
+own words the finding rests on, never a paraphrase: rule 2 holds), the
+severity, and the fix in one clause. Keep RESULT.md under 40 lines and
+every line under 300 characters, and no pipe inside backticks: a ` + "`|`" + ` in a
+quote breaks the report's table grammar, so quote the rule without it. Put
+the verdict line last. When there is nothing to report, write ` + "`findings: 0`" + `.
+`
+
+const templateProbeRow = `probe-row — make one claim true or false
+
+1. Name the claim in one sentence at the top of RESULT.md before probing it.
+2. The probe is a command, a file:line, or a measurement — never an opinion.
+   Paste the command and its tail into RESULT.md.
+3. Append the result the moment you have it.
+4. A file budget: read at most <n> files (the limit stated in the card). When the budget
+   is spent, write what you have and stop.
+5. A probe that could not be run is a RESULT with ` + "`not done`" + ` and the reason.
+   That is a complete task; a guess is not.
+`
+
+const templateFixCard = `fix-card — take one card and land the fix
+
+1. Read the card, and the board, before touching anything: a card already taken
+   is a ` + "`dup:`" + ` and you stop.
+2. Work only inside the job directory. The clone is yours; nothing outside it
+   is yours.
+3. Quote the rule the fix serves, verbatim, with file:line.
+4. Write the gate you ran and its result into RESULT.md's Gates table. A fix
+   with no gate is ` + "`not done`" + `.
+5. A file budget: read at most <n> files (the limit stated in the card). When the budget
+   is spent, write what you have and stop.
+6. Leave what you did not do under ` + "`Left owed`" + `, named so the next worker can
+   pick it up with no other context.
+`
+
+// GateNamesWhoseFile is the sentence the gate step of a card ends with (docs/SPEC-CARD-CONTRACT.md,
+// the card's steps): a red gate line names its file and says whether the file is the child's own
+// (yours) or is unchanged from BASE, so the child neither fixes a file it may not touch nor
+// reports a failure that is not its own. templateCard and cardgen.Render share it.
+const GateNamesWhoseFile = "When a test fails, name its file and say whether that file was changed by your work (yours) or is unchanged (already red at BASE: run the same test on the unchanged base to say so), and report that line first."
+
+// templateCard is the card the coordinator starts from: the contract line, the RULES
+// paragraph with every general rule of DefaultChildRules quoted verbatim (lintchild.go), the task,
+// and the steps. It passes `nova-swarm lint --card --child-rules` as printed; under a rules file
+// carrying [libraries-considered] its Libraries considered placeholder line is the one finding until
+// the writer fills it. It is what `nova-sprint add` holds every brief to under the general rules: a
+// card without the paragraph is refused
+// before anything is written. The <angle> words are the writer's to fill.
+var templateCard = "RESULT: <label> sha=<sha12>\n" +
+	"REPO: <owner>/<name>\n" +
+	"BASE: <branch>\n" +
+	"The REPO: and BASE: lines are the repository and the branch the work starts from and lands on: the member stages REPO: at BASE:, and nova-sprint land merges the card's head onto BASE: (land --base stands in for a card naming no BASE:, land --repo-dir for one naming no REPO:).\n" +
+	"You are a child of the coordinator: one task, one worktree, one branch, unattended. This card is the whole of the task and it stands alone in front of a stranger; nothing outside it is owed to you.\n" +
+	"Deadline: finish within <n> minutes.\n" +
+	"\n" +
+	ChildRulesParagraph() +
+	"\n" +
+	"THE TASK. <What is wrong or wanted, in a paragraph a stranger can act on, and the file or package the work lives in: internal/<package>/<file>.go. Name the worktree path, the branch, the base branch, and every file you may touch.>\n" +
+	"Libraries considered: <what the standard library and the adopted modules offer for this work, and why each is used or not; the search comes before any helper of more than about thirty lines is written>\n" +
+	"\n" +
+	"STEP 1. Enter your worktree with cd <worktree path> && git log --oneline -1; it is a NEW worktree on the branch this card names. Export GOFLAGS=-mod=readonly NOVA_TEST_NO_HOST=1 before any go command; GOCACHE is already set to the machine's shared build cache (JOB.md names it): keep it.\n" +
+	"STEP 2. Write the red test first, named TestSomething, in <file>_test.go, opening with t.Parallel(). Run go test -count=1 -timeout 600s ./internal/<package>/ -run TestSomething and keep the failing line.\n" +
+	"STEP 3. Make it pass in the files this card names, and only those. Cite the model or the design section from each function that implements a rule.\n" +
+	"STEP 4. Run the gate: go test -count=1 -timeout 600s ./internal/<package>/ ./internal/ci/ and read the last line of each. " + GateNamesWhoseFile + "\n" +
+	"STEP 5. Commit on your own branch with the trailer. Nothing reaches the forge from inside the wall: in the job the git shim records a push, the pull request is the finish JOB.md names (STEP 6), and the member makes both, against <base>, from outside the wall when the card finishes. The pull request body states the diff stat, what was deleted, the tests with what each pins, and what was not done.\n" +
+	"STEP 6. End as JOB.md says (docs/SPEC-CARD-CONTRACT.md): where JOB.md ends the card with its pull request, that is the end and there is nothing else to write, the gate's lines in the pull request body; where it asks for RESULT.md, write it in JOB.md's shape (head, branch, verdict, gate, output, report).\n"
+
+// templateResult is the ONE shape a report has, so the fold is mechanical and a person
+// reads counts. The parser in result.go parses exactly this and nothing else.
+const templateResult = "# <task>\n" + `
+## Head
+findings: <n>
+notes read: <n>
+repo: <owner>/<name>
+rev: <sha>
+<one paragraph: what was asked, what the state is now, and the single most
+important fact.>
+
+## Findings
+- <one finding, appended the moment it exists: what was found, the rule it rests
+  on quoted verbatim between backticks, and the file:line it is beside. A finding
+  already on the owed list begins ` + "`dup:`" + `.>
+
+## Per item
+| item | state | evidence |
+| --- | --- | --- |
+| <the item as it was handed to me> | red / green / not done | <file:line, gate name, PR #, or the command and its tail> |
+
+## Gates
+| name | result | seconds |
+| --- | --- | --- |
+| <gate or command> | pass / fail / not run | <n> |
+
+## Left owed
+- <the item nobody did, named so the next worker can pick it up with no other
+  context.>
+
+## One line
+<one sentence a coordinator can paste into the board.>
+`
+
+// templateWorker is the ONE FILE A FIRST RUN CANNOT START WITHOUT: a first run
+// without it learns the schema the hard way, guessing a field name and reading
+// the fields out of a refusal. Every value in angle brackets
+// is a thing only the caller knows; everything else is the shape this tool reads.
+const templateWorker = `{
+  "name": "<what this worker is called on a RUN POOL line>",
+  "provider": "<the provider id the harness config declares, such as deepseek>",
+  "model": "<the model id>",
+  "env_var": "<the NAME of the variable the provider reads>",
+  "key_file": "<the path of a file holding one line, mode 0600, OUTSIDE worker_dir>",
+  "usage": "opencode",
+  "class": "paid",
+  "harness": "<the harness command on PATH>",
+  "harness_args": ["run", "--model", "{model}", "--", "{prompt}"],
+  "worker_dir": "<the home copy of this worker's own directory>",
+  "deadline": "20m",
+  "board": "<owner/repo#issue, or omit>"
+}
+`
+
+// templateSetup is the PER-FRIEND SAFETY-SETUP AGREEMENT: one form per friend,
+// reviewed and agreed BEFORE any staged security implementation is built, because a
+// blanket restrictive setup prevents useful work and ignores each friend's chosen harness,
+// while a blanket permissive one hands every friend every other friend's secrets. It is
+// the issue's near-term endpoint and nothing beyond it: the generic configuration examples
+// and the agreement/evidence template, published with placeholder values only. No secret,
+// no private path and no live bench layout is in it -- the private configuration it stands
+// for stays on the friend's own bench -- and an agreed form supplies no account access.
+// It is a document and not a task's conditions, so WrapTemplate refuses it as it refuses
+// `result`.
+const templateSetup = `setup — one friend's safety setup, proposed, reviewed, agreed (#184)
+
+One form per friend, agreed before it is enforced, because a blanket restrictive
+setup prevents useful work and ignores each friend's chosen harness, while a
+blanket permissive one hands every friend every other friend's secrets. Print
+it, fill it with the friend who would run under it, and paste the FILLED form
+where the review happened; the private configuration it describes is never
+pasted anywhere. Names, models, harnesses and bench layouts are not constants
+of this form: every value below is a placeholder, and a friend's own choices
+fill their own copy. A friend may propose an alternative, decline, or stay
+silent, and missing feedback is pending, never assent. An agreed form is an
+agreement and nothing more: it supplies no account access, and implementation,
+credential migration and deployment are separate staged work with their own
+authorization.
+
+## The proposal (written with the friend)
+
+friend: <name>
+bench: <the machine or hosted runner this friend works on>
+harness: <the harness this friend chose, and its version>
+model: <the model this friend chose; never this form's business>
+proposal by: <who wrote this form, and where the review is recorded>
+reviewed with: <the friend's own read of this form, or pending>
+
+read scope: <the shared inputs this friend needs to read, named once>
+write scope: <this friend's own directories, and nothing above them>
+execution boundaries: <one task, one process tree, one deadline, or the
+  friend's own boundary and who holds it>
+secret use: <the ONE seat file that holds this friend's keys, and the ONE
+  variable name the harness reads; a value is never written here>
+destructive controls: <what a delete, a force-push or a repository
+  destruction must be unable to reach, and which ruleset forbids it>
+recoverability: <what is pushed where on every exit, so a delete is a
+  re-clone>
+unresolved concerns: <what this friend has not agreed to, in their own words>
+
+## The agreement (the friend's own half)
+
+status: agree | alternative | decline | pending
+alternative proposed: <the friend's own setup, in their own words, or ->
+declined because: <the reason, kept honestly, or ->
+pending since: <the date feedback was asked for>
+
+## The guarantee table (filled together, one row per guarantee)
+
+| guarantee | who enforces it | supported here | evidence |
+| --- | --- | --- | --- |
+| a read outside the named lists is denied | the OS wall | yes / no | nova-sandbox probe |
+| a write outside the write set is denied | the OS wall | yes / no | probe step write_outside |
+| no credential file is readable inside the wall | the OS wall and the caller's placement | yes / no | probe --secret <path> |
+| no agent socket or agent address reaches the child | the OS wall and the environment scrub | yes / no | SPEC-SANDBOX rules 7 and 9 |
+| a push from inside the job fails | the OS wall | yes / no | the four mechanisms of SPEC-SANDBOX test 27 |
+| the harness asks before an outside path | a cooperating harness | yes / no / unproven | the fence example below |
+| the friend's work survives a delete | the launcher, outside the wall | yes / no | the push on exit, a re-clone recovers |
+| the friend's secrets stay the friend's | the seat file's own recipients | yes / no | nova-secrets check |
+
+A row the OS wall enforces is a fact the kernel keeps on the machine this form
+names. A row a cooperating harness enforces is a row the wall must not be
+asked to prove: mark it unproven until the friend's harness build is shown to
+honour it, and call a row supported only on the machine and the build this
+form names.
+
+## The generic examples (placeholder values only, never a private one)
+
+the wall, one job, its lists written down in one place and never guessed:
+  HOME=<data home> nova-sandbox --read <the shared reference checkout>
+    --read <the worker home> --write <the job directory>
+    --write <the data home> -- <the friend's harness> <args...>
+
+the fence, the harness's own permission block, allow or deny, never ask:
+  {"permission": {"external_directory": "deny", "webfetch": "<the friend's choice>"}}
+
+the seat, one file per friend, sealed to that friend's bench key alone:
+  nova-secrets exec --store <the store's working copy> --as <this friend>
+    --key <the key path> --sops <the sops binary>
+    --only <ONE variable name> --require <ONE variable name> -- <launcher>
+
+the launcher, outside the wall, the friend's own lists:
+  sets HOME inside a --write, passes the credential by environment read as
+  data before the wrap, and pushes the friend's directories to their remote
+  on every exit, clean or not.
+
+## What is never in this form
+
+No secret, no key, no token and no private path is ever written into this
+form, a task card, a bus note, an issue or a token ledger: a name or a path
+is not a secret, but a value is, and this form carries values for nobody.
+Before any staged implementation is built on an agreed form, validate it on
+synthetic secrets and disposable repositories and record both runs:
+a denied destructive operation and successful permitted work.
+`
+
+// templateCapacity is the OFFERED-CAPACITY AND ROUTING-LOG FORM: a manual
+// census of one friend's bounded, expiring capacity offer, plus the coordinator's
+// manual routing log that matches dependency-ready work to compatible offers
+// without double-counting shared pools. It is the issue's near-term endpoint and
+// nothing beyond it: a form a friend and a coordinator fill together, reviewed
+// before any automatic scheduler is built. Five capability kinds are kept apart
+// (coordinator, direct worker, one-shot, swarm and local) because model slots
+// are not interchangeable throughput units. The offer's named fields (friend,
+// instance, bench, model identity and basis, harness, supported task types,
+// demonstrated strengths and limits, permitted scope, current availability,
+// concurrency, expected queue/latency and shared-limit pool references) are
+// placeholders, never a friend's own live values, and an expiry bounds the offer.
+// The routing log names the four acceptance rows the issue asks for, in words:
+// an idle compatible pool receiving ready work, an incompatible offer being
+// skipped, shared capacity counted once, and a stale offer excluded. Missing
+// contact is unknown; stale capacity is not proof of failure and not proof of
+// consent. No key, no token, and no private host detail is ever written here --
+// credentials stay on the friend's own bench -- and a form is a form, never a
+// task's conditions, so WrapTemplate refuses it the way `result` and `setup`
+// are refused.
+const templateCapacity = `capacity — one friend's offered capacity and the manual routing log (#176)
+
+One offer per friend, bounded and expiring, published before any automatic
+scheduler is built, because an idle pool receiving ready work, an incompatible
+offer being skipped, shared capacity counted once, and a stale offer excluded
+are four separate things a coordinator has to do by hand first, in a form a
+friend fills and a coordinator reads. Print the offer half, fill it with the
+friend whose capacity is being advertised, and paste the FILLED offer where the
+review happened; the private configuration it stands for stays on the friend's
+own bench. Print the routing log half, fill it with the ready work and the
+offers considered, and record the matching decision in writing so the next
+review can compare the count against the offers' own quotas. Names, instances,
+benches, models, harnesses and pool layouts are not constants of this form:
+every value below is a placeholder, and a friend's own choices fill their own
+copy. A friend may propose an alternative, decline, or stay silent, and missing
+feedback is pending, never consent. A filled form supplies no account access,
+and an automatic scheduler is separate staged work with its own authorization.
+A form carries one capacity kind at a time from the five the SPEC-WORK friend
+section distinguishes — coordinator, direct worker, one-shot, swarm and local —
+because model slots are not interchangeable throughput units and a swarm
+worker, a one-shot, and a local model run on different evidence and different
+shared-limit pools.
+
+## The offer (the friend's own half)
+
+offered by: <who wrote this offer, and where the review is recorded>
+reviewed with: <the friend and a coordinator, or pending>
+expires: <the stamp this offer stops being an offer, never blank>
+
+friend: <name>
+instance: <the worker home or container this friend runs under>
+bench: <the machine or hosted runner this friend works on>
+model identity: <the provider's id and the resolved model id>
+basis: <the per-token cost class — zero|flat|metered — and its pricing reference, or local>
+harness: <the harness this friend chose, and its version>
+supported task types: <read, text, code, replay; one or more, a comma list>
+demonstrated strengths: <what the friend has been shown to do well, never an inferred claim>
+demonstrated limits: <what the friend has been shown unable to do, never an inferred claim>
+permitted scope: <the repositories and paths this offer may read and write>
+current availability: <awake | resting | credit-limited | rate-limited | unknown — never idle because a recent message did not arrive>
+concurrency: <the maximum parallel slots this offer reserves>
+expected queue/latency: <the queue depth and the latency a scheduler can expect, bounded>
+shared-limit pools: <the named pools whose quota this offer shares, or ` + "`[]`" + ` for none>
+
+## The routing log (the coordinator's half)
+
+ready work: <the dependency-ready task list being matched this cycle>
+compatible offers: <the offers whose supported task types and permitted scope admit the ready work>
+incompatible offers: <the offers skipped this cycle, with one reason each — wrong task type, scope mismatch, basis mismatch, capacity kind, anything but a name>
+shared pool share: <the share of the named shared-limit pools, counted ONCE per pool across all offers naming it>
+stale offers excluded: <the offers whose expires stamp has passed or whose contact stamp is past the silent-ping window, named and never counted>
+utilization denominator: <the explicit pool-specific denominator this cycle's utilization would be reported against — a coordinator, direct worker, one-shot, swarm and local each have their own>
+
+## The four rows acceptance evidence demands (one row each, when they occurred this cycle)
+
+| observed | row to write |
+| --- | --- |
+| an idle compatible pool receiving ready work | offer=<name> task=<id> routed=true admit-gate=<gates that passed> |
+| an incompatible offer being skipped | offer=<name> task=<id> reason=<what rules it out> |
+| shared capacity counted once | pooled-as=<pool> reservations=<n> offers-with-that-pool=<n> shared-share=<n> |
+| a stale offer excluded | offer=<name> expires=<stamp> contact=<stamp or NONE> reason=<expired or unconfirmed> |
+
+missing contact is unknown; **stale capacity is not proof of failure and not proof of consent**, so an offer nobody answered since the silent-ping
+window is excluded, not favoured and not penalised, and reported as
+` + "`reason=unconfirmed`" + ` alongside any expired offer reported as
+` + "`reason=expired`" + `. Each capacity kind from the SPEC-WORK friend section
+gets its own row when the offer names it — **coordinator capacity** is its
+own row, **direct worker capacity** is its own row, **one-shot capacity** is
+its own row, **swarm capacity** is its own row, and **local capacity** is its
+own row — because model slots are not interchangeable throughput units, and
+sharing a quota across those kinds is the double-count the form exists to
+prevent.
+
+## What is never in this form
+
+no key, no token, and no private host detail is ever written here, a task
+card, a bus note, an issue or a token ledger: a name or a path is not a
+secret, but a value is, and this form carries values for nobody. A shared
+account limit is named by its pool, never by the credential that holds it.
+An offered capacity is not a purchase, a permission, or a promise to run;
+it is the standing under which a coordinator may propose ready work, and a
+friend chooses offers, reserves, and rest, not a scheduler that maximises
+occupation beyond that offer.
+`
+
+// THE PULSE CARD TEMPLATES. nova-pulse `cut` reads a templates
+// directory holding read.md, fix.md, text.md, replay.md, drift.md, tone.md and models.tsv,
+// and renders one card per pool candidate from the template the candidate names. Every
+// card is a constant here and `template --name <kind>` prints it, so a templates dir can
+// be built from the tool. A text-only card (read, text, tone) carries the no-build line,
+// and a writing card (fix, replay, drift) carries the red-then-green row.
+// STEP 1 clones with the bench mirror as --reference-if-able: the card names the
+// mirror's directory under $HOME (a member rewrites that prefix to its bench home when it
+// writes the card, PointCardAtMirrors), and a bench with no mirror gets a plain clone of the remote. GitHub is a
+// git remote only, and a brief never carries gh; internal/ci refuses a brief clone without
+// --reference.
+
+const pulseRead = `RESULT <label> sha=<sha12>
+You are a worker. The deadline is the machinery's.
+You are unattended; never ask a question; decide and record the decision in RESULT.md.
+Do not run go build, go test or any toolchain; read and write only.
+STEP 1. mkdir -p scratch && git clone -q --reference-if-able "$HOME/nova-bench/mirror/$(basename <source>).git" https://github.com/<source>.git . && git checkout -b <branch>
+   check: git rev-parse HEAD prints a head.
+STEP 2. Read the named files and write notes.txt in the repo directory.
+STEP last. Write RESULT.md with line 1 equal to this card's line 1.
+`
+
+const pulseFix = `RESULT <label> sha=<sha12>
+You are a worker. The deadline is the machinery's.
+You are unattended; never ask a question; decide and record the decision in RESULT.md.
+STEP 1. mkdir -p scratch && git clone -q --reference-if-able "$HOME/nova-bench/mirror/$(basename <source>).git" https://github.com/<source>.git . && git checkout -b <branch>
+   check: git rev-parse HEAD prints a head.
+STEP 2. Make the fix; report the red line and then the green line, one row per item.
+STEP last. Write RESULT.md with line 1 equal to this card's line 1.
+`
+
+const pulseText = `RESULT <label> sha=<sha12>
+You are a worker. The deadline is the machinery's.
+You are unattended; never ask a question; decide and record the decision in RESULT.md.
+Do not run go build, go test or any toolchain; read and write only.
+STEP 1. mkdir -p scratch && git clone -q --reference-if-able "$HOME/nova-bench/mirror/$(basename <source>).git" https://github.com/<source>.git . && git checkout -b <branch>
+   check: git rev-parse HEAD prints a head.
+STEP 2. Make the text change and write notes.txt in the repo directory.
+STEP last. Write RESULT.md with line 1 equal to this card's line 1.
+`
+
+const pulseReplay = `RESULT <label> sha=<sha12>
+You are a worker. The deadline is the machinery's.
+You are unattended; never ask a question; decide and record the decision in RESULT.md.
+STEP 1. mkdir -p scratch && git clone -q --reference-if-able "$HOME/nova-bench/mirror/$(basename <source>).git" https://github.com/<source>.git . && git checkout -b <branch>
+   check: git rev-parse HEAD prints a head.
+STEP 2. Replay the rule; report the red line and then the green line, one row per item.
+STEP last. Write RESULT.md with line 1 equal to this card's line 1.
+`
+
+const pulseDrift = `RESULT <label> sha=<sha12>
+You are a worker. The deadline is the machinery's.
+You are unattended; never ask a question; decide and record the decision in RESULT.md.
+STEP 1. mkdir -p scratch && git clone -q --reference-if-able "$HOME/nova-bench/mirror/$(basename <source>).git" https://github.com/<source>.git . && git checkout -b <branch>
+   check: git rev-parse HEAD prints a head.
+STEP 2. Close the drift; report the red line and then the green line, one row per item.
+STEP last. Write RESULT.md with line 1 equal to this card's line 1.
+`
+
+const pulseTone = `RESULT <label> sha=<sha12>
+You are a worker. The deadline is the machinery's.
+You are unattended; never ask a question; decide and record the decision in RESULT.md.
+Do not run go build, go test or any toolchain; read and write only.
+STEP 1. mkdir -p scratch && git clone -q --reference-if-able "$HOME/nova-bench/mirror/$(basename <source>).git" https://github.com/<source>.git . && git checkout -b <branch>
+   check: git rev-parse HEAD prints a head.
+STEP 2. Fix the tone of the named page and write notes.txt in the repo directory.
+STEP last. Write RESULT.md with line 1 equal to this card's line 1.
+`
+
+// pulseModels is the cost table nova-pulse reads beside the .md templates when no
+// benches.tsv or routes.tsv sits there: one line `flash <id>` and/or one line `pro <id>`.
+const pulseModels = `flash opencode/deepseek-v4-flash
+pro opencode/deepseek-v4-pro
+`
+
+// IsPulseTemplate reports whether name is one of the pulse card templates or the cost table
+// nova-pulse `cut` reads. They are cards cut renders, never task
+// templates to wrap.
+func IsPulseTemplate(name string) bool {
+	switch name {
+	case "read", "fix", "text", "replay", "drift", "tone", "models.tsv":
+		return true
+	}
+	return false
+}
+
+// Template returns one template by name.
+func Template(name string) (string, error) {
+	switch name {
+	case "read-pr":
+		return templateReadPR, nil
+	case "probe-row":
+		return templateProbeRow, nil
+	case "fix-card":
+		return templateFixCard, nil
+	case "result":
+		return templateResult, nil
+	case "worker":
+		return templateWorker, nil
+	case "setup":
+		return templateSetup, nil
+	case "capacity":
+		return templateCapacity, nil
+	case "card":
+		return templateCard, nil
+	case "read":
+		return pulseRead, nil
+	case "fix":
+		return pulseFix, nil
+	case "text":
+		return pulseText, nil
+	case "replay":
+		return pulseReplay, nil
+	case "drift":
+		return pulseDrift, nil
+	case "tone":
+		return pulseTone, nil
+	case "models.tsv":
+		return pulseModels, nil
+	}
+	return "", fmt.Errorf("--name wants one of %s, got %q", strings.Join(TemplateNames(), ", "), name)
+}
+
+// TemplateNames is every name Template answers to, in a fixed order.
+func TemplateNames() []string {
+	names := []string{"read-pr", "probe-row", "fix-card", "result", "worker", "setup", "capacity", "card",
+		"read", "fix", "text", "replay", "drift", "tone", "models.tsv"}
+	sort.Strings(names)
+	return names
+}
+
+// IsCardTemplate reports whether name is one of the task templates a card is built from
+// (read-pr, probe-row, fix-card). The other names Template answers to -- result, worker,
+// setup, capacity, and the pulse card templates -- are not cards:
+// result is the report's shape, worker is a JSON worker description, setup and capacity
+// are forms, and the pulse names are the cards nova-pulse `cut` renders, all printed
+// verbatim for their own purpose.
+func IsCardTemplate(name string) bool {
+	switch name {
+	case "read-pr", "probe-row", "fix-card":
+		return true
+	}
+	return false
+}
+
+// WrapTemplate puts a task's own text under its template's conditions, with the file budget
+// written into the condition that names it, so the number in the prompt is the number the
+// machinery will hold the worker to.
+func WrapTemplate(name string, files int, text []byte) ([]byte, error) {
+	body, err := Template(name)
+	if err != nil {
+		return nil, err
+	}
+	if name == "result" {
+		return nil, fmt.Errorf("--template wants a task template (read-pr, probe-row, fix-card); `result` is the report's shape, printed by `template --name result`")
+	}
+	if name == "setup" {
+		return nil, fmt.Errorf("--template wants a task template (read-pr, probe-row, fix-card); `setup` is the per-friend agreement form of issue #184, printed by `template --name setup`")
+	}
+	if name == "capacity" {
+		return nil, fmt.Errorf("--template wants a task template (read-pr, probe-row, fix-card); `capacity` is the per-friend offer and routing-log form of issue #176, printed by `template --name capacity`")
+	}
+	if name == "card" {
+		return nil, fmt.Errorf("--template wants a task template (read-pr, probe-row, fix-card); `card` is a whole card with its RULES paragraph, printed by `template --name card`, the shape the coordinator starts from")
+	}
+	if IsPulseTemplate(name) {
+		return nil, fmt.Errorf("--template wants a task template (read-pr, probe-row, fix-card); `%s` is a nova-pulse card template of SPEC-PULSE rule 4, printed by `template --name %s`, not a task template", name, name)
+	}
+	body = strings.ReplaceAll(body, "<n> files", fmt.Sprintf("%d files", files))
+	var b strings.Builder
+	b.WriteString("## The conditions (they are worth more than the model)\n\n")
+	b.WriteString(body)
+	b.WriteString("\n## The task\n\n")
+	b.Write(text)
+	if len(text) > 0 && text[len(text)-1] != '\n' {
+		b.WriteString("\n")
+	}
+	return []byte(b.String()), nil
+}

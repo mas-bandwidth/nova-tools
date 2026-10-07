@@ -1,0 +1,315 @@
+//go:build linux
+
+// The linux wall, run for real on a linux machine: a real Landlock ruleset, a real
+// wrapped command, a real denial from the kernel. These are the counterpart of the
+// needDarwin tests above, and they exist because a green from a suite that ran nothing
+// reads exactly like a green from one that ran.
+//
+// EVERY TEST HERE RUNS THE TOOL AS A SUBPROCESS, never in process through j.tool(). That
+// is not a style choice: a Landlock domain CANNOT BE LIFTED, so a Run() called in the
+// test binary would wall the test binary itself for the rest of the run and every later
+// test in the package would fail against a wall it never asked for. The darwin tests can
+// use j.tool() because sandbox-exec's policy lives around a child; linux's lives on the
+// caller, so linux's tests need a caller of their own.
+package main
+
+import (
+	"bytes"
+	"fmt"
+	"net"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"sync"
+	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/goenv"
+	"github.com/mas-bandwidth/nova-tools/internal/sandbox"
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+var (
+	buildOnce sync.Once
+	builtTool string
+	buildErr  error
+)
+
+// walledTool builds the real nova-sandbox ONCE for this file and returns its path. It
+// is not main_test.go's toolBinary, which rebuilds on every call into the calling test's
+// t.TempDir(): these tests run the tool seven times over, and a binary that vanished
+// when the test that built it ended could not be cached anyway.
+func walledTool(t *testing.T) string {
+	t.Helper()
+	buildOnce.Do(func() {
+		dir, err := os.MkdirTemp("", "nova-sandbox-bin")
+		if err != nil {
+			buildErr = err
+			return
+		}
+		builtTool = filepath.Join(dir, "nova-sandbox")
+		build := exec.Command("go", "build", "-o", builtTool, ".")
+		build.Env = goenv.Clean(os.Environ())
+		out, err := build.CombinedOutput()
+		if err != nil {
+			buildErr = fmt.Errorf("go build: %v: %s", err, out)
+		}
+	})
+	require.NoError(t, buildErr, "the tool under test could not be built: %v", buildErr)
+	return builtTool
+}
+
+// runTool runs nova-sandbox as a child and returns its status and streams.
+func (j job) runTool(t *testing.T, env []string, args ...string) (int, string, string) {
+	t.Helper()
+	cmd := exec.Command(walledTool(t), args...)
+	cmd.Env = env
+	var out, errb bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &errb
+	err := cmd.Run()
+	code := 0
+	if cmd.ProcessState != nil {
+		code = cmd.ProcessState.ExitCode()
+	} else {
+		require.NoError(t, err, "nova-sandbox did not run at all: %v", err)
+	}
+	return code, out.String(), errb.String()
+}
+
+// wall runs one /bin/sh script inside the wall of a normal job policy.
+func (j job) wall(t *testing.T, script string, extra ...string) (int, string, string) {
+	t.Helper()
+	args := append([]string{"--read", j.read, "--write", j.write}, extra...)
+	args = append(args, "--", "/bin/sh", "-c", script)
+	return j.runTool(t, j.env(), args...)
+}
+
+// needLandlock skips BY NAME on a machine with no Landlock, so that a green here always
+// means the kernel actually enforced something.
+func needLandlock(t *testing.T) {
+	t.Helper()
+	j := newJob(t)
+	code, out, _ := j.runTool(t, j.env(), "check")
+	if code != 0 || !strings.Contains(out, "backend=landlock") {
+		t.Skipf("skipped: this linux kernel reports no landlock, so there is no wall to test: %q", out)
+	}
+}
+
+// The wall's whole reason: a worker that reads untrusted input all day cannot write
+// outside the job it was given.
+func TestLandlockWallRefusesWriteOutsideJob(t *testing.T) {
+	t.Parallel()
+
+	needLandlock(t)
+	j := newJob(t)
+	outside := filepath.Join(j.outside, "escaped")
+
+	// THE CONTROL FIRST, and it is why the denial below can be believed: a write that
+	// was never possible is not a wall. Outside the tool, this user can create the file.
+	err := os.WriteFile(outside, []byte("x"), 0o644)
+	require.NoError(t, err, "the control write failed, so a denial inside the wall would prove nothing: %v", err)
+	require.NoError(t, os.Remove(outside))
+
+	code, _, errOut := j.wall(t, "echo escaped > "+outside)
+	require.NotEqual(t, 0, code, "the wrapped command WROTE OUTSIDE THE JOB and exited 0: %s", errOut)
+	_, err = os.Stat(outside)
+	require.Error(t, err, "the file outside the job exists: the wall did not hold")
+	// And the wall was announced, on the stream a log keeps.
+	assert.Contains(t, errOut, "SANDBOX OK backend=landlock", "the run did not announce the landlock wall: %q", errOut)
+}
+
+// The clamp, end to end, on whatever kernel this machine has (run 35045469738). An ABI above the
+// tool's table is not a refusal: the wall is built at the table's maximum, the command
+// runs, and the SANDBOX OK line carries the kernel's number on abi= and the wall's on
+// used=. On a kernel at or below the table there is no clamp and the line must carry NO
+// used= field at all -- an unconditional field would say "clamped" on every machine and
+// the word would stop meaning anything.
+//
+// This is the test the hosted ubuntu-latest leg needed and did not have: that runner moved
+// to a kernel reporting landlock abi 7, and on `main` every walled run there was
+// `SANDBOX REFUSED reason=landlock_abi_unknown` at exit 125 (run 35045469738). On main this
+// test is that same red; on a kernel at abi 4 (the fleet's linux bench) it takes the other
+// branch and asserts the line is unchanged.
+func TestLandlockWallClampsAnABIAboveTheTable(t *testing.T) {
+	t.Parallel()
+
+	needLandlock(t)
+	j := newJob(t)
+	code, _, errOut := j.wall(t, "echo ran > "+filepath.Join(j.write, "output"))
+	require.Equal(t, 0, code, "a walled run on this kernel exited %d; a clamped abi must still run: %s", code, errOut)
+	used, clamped := sandbox.ClampedABI()
+	if !clamped {
+		assert.NotContains(t, errOut, " used=", "this kernel's abi is inside the table and the line still claims a clamp: %q", errOut)
+		return
+	}
+	// abi= is the kernel's, used= is the wall's, and both are on the one line a log keeps.
+	want := "abi=" + abiOf(t, j) + " used=" + strconv.Itoa(used)
+	assert.Contains(t, errOut, want, "the SANDBOX OK line does not carry %q: %q", want, errOut)
+	assert.Contains(t, errOut, "SANDBOX NOTE", "the clamp was not said in a note before the command started: %q", errOut)
+	assert.Contains(t, errOut, "clamped", "the clamp was not said in a note before the command started: %q", errOut)
+}
+
+// abiOf is the kernel's own number, read off the tool's `check` line rather than computed
+// here: the test asserts the two lines agree, so it must not be the one deciding.
+func abiOf(t *testing.T, j job) string {
+	t.Helper()
+	code, out, errOut := j.runTool(t, j.env(), "check")
+	require.Equal(t, 0, code, "check exited %d: %s", code, errOut)
+	return fieldOf(out, "abi=")
+}
+
+// A wall that denies the work is broken: what --read names must be readable.
+func TestLandlockWallAllowsReadPaths(t *testing.T) {
+	t.Parallel()
+
+	needLandlock(t)
+	j := newJob(t)
+	const want = "the-read-set-is-readable"
+	require.NoError(t, os.WriteFile(filepath.Join(j.read, "input"), []byte(want+"\n"), 0o644))
+	code, out, errOut := j.wall(t, "cat "+filepath.Join(j.read, "input"))
+	require.Equal(t, 0, code, "reading a --read path inside the wall exited %d: %s", code, errOut)
+	require.Contains(t, out, want, "the --read file did not come back: %q", out)
+	// The write set is writable in the same run, or the job cannot do its work.
+	code, _, errOut = j.wall(t, "echo ok > "+filepath.Join(j.write, "output"))
+	require.Equal(t, 0, code, "writing inside the --write set exited %d: %s", code, errOut)
+	// And the roots table's two WRITABLE device files, which is a regression test and not
+	// a nicety: the first cut of this body handed /dev/null the same access mask as a
+	// directory, the kernel rejected that rule with EINVAL for carrying directory-only
+	// rights on a non-directory, the tool skipped the error as "absent device", and every
+	// `cmd > /dev/null` in every job was denied. Four wall tests passed over it, because
+	// not one of them redirected anywhere.
+	code, _, errOut = j.wall(t, "echo hi > /dev/null")
+	require.Equal(t, 0, code, "redirecting to /dev/null inside the wall exited %d: %s; the roots table grants write on it", code, errOut)
+}
+
+// The secret is in NEITHER list, and #69 is exactly this file: the bench's SSH key and
+// the bench's gh token, which the worker holds today and must not be able to read.
+//
+// The NAME of this test says "hides" and the backend DENIES: Landlock has no mount
+// namespace, so the secret's bytes are unreadable while its NAME can still appear in a
+// listing of a readable parent. That is the darwin backend's behaviour too, and the
+// spec's limits list says so. What is asserted here is what both backends promise: the
+// CONTENTS do not come out.
+func TestLandlockWallHidesSecret(t *testing.T) {
+	t.Parallel()
+
+	needLandlock(t)
+	j := newJob(t)
+	secret, err := os.ReadFile(j.secret)
+	require.NoError(t, err, "the control read failed, so a denial inside the wall would prove nothing: %v", err)
+	code, out, errOut := j.wall(t, "cat "+j.secret)
+	require.NotEqual(t, 0, code, "the wrapped command READ THE SECRET and exited 0: %q", out)
+	require.NotContains(t, out+errOut, strings.TrimSpace(string(secret)), "the secret's contents came out of the wall")
+}
+
+// Rule 7: --net-deny is an ENFORCED denial on this platform or it is a refusal, and at
+// abi 4 and up it is enforced for TCP.
+func TestLandlockWallBlocksNetworkWhenNotAllowed(t *testing.T) {
+	t.Parallel()
+
+	needLandlock(t)
+	j := newJob(t)
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("skipped: no bash on this machine, and /dev/tcp is how a connect is made here without a second tool")
+	}
+	// A listener this test owns, so that a refused connect is the WALL and not an empty
+	// port. The listener is outside the wall; the wrapped command is what is walled.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer ln.Close()
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			c.Close()
+		}
+	}()
+	port := strconv.Itoa(ln.Addr().(*net.TCPAddr).Port)
+	dial := "exec 3<>/dev/tcp/127.0.0.1/" + port
+
+	connect := func(extra ...string) (int, string) {
+		args := append([]string{"--read", j.read, "--write", j.write}, extra...)
+		args = append(args, "--", bash, "-c", dial)
+		code, _, errOut := j.runTool(t, j.env(), args...)
+		return code, errOut
+	}
+	// THE CONTROL: without --net-deny the same connect succeeds, so the denial below is
+	// the wall and not a broken listener.
+	if code, errOut := connect(); code != 0 {
+		t.Skipf("skipped: the control connect failed (exit %d), so a denial would prove nothing: %s", code, errOut)
+	}
+	code, errOut := connect("--net-deny")
+	require.NotEqual(t, 0, code, "the wrapped command CONNECTED under --net-deny: %s", errOut)
+	assert.Contains(t, errOut, "net=denied", "the run did not announce net=denied: %q", errOut)
+}
+
+// check is a question, not an attempt, and on a linux machine with Landlock it names the
+// backend and the discovered abi.
+func TestCheckReportsLandlock(t *testing.T) {
+	t.Parallel()
+
+	j := newJob(t)
+	code, out, _ := j.runTool(t, j.env(), "check")
+	require.Equal(t, 0, code, "check exit %d: %q", code, out)
+	require.True(t, strings.HasPrefix(out, "CHECK OK backend="), "check did not print its line: %q", out)
+	// Landlock is in this kernel or it is not, and check must say which WITHOUT ever
+	// naming a backend it cannot apply (rule 1).
+	if !strings.Contains(out, "backend=landlock") {
+		require.Contains(t, out, "backend=none", "check named neither landlock nor none on linux: %q", out)
+		assert.Contains(t, out, "abi=-", "check reported no backend but still an abi: %q", out)
+		t.Skipf("skipped the abi assertions: this kernel has no landlock: %q", out)
+	}
+	abi := fieldOf(out, "abi=")
+	n, err := strconv.Atoi(abi)
+	require.NoError(t, err, "check named landlock but no usable abi: %q", out)
+	require.GreaterOrEqual(t, n, 1, "check named landlock but no usable abi: %q", out)
+	// Rule 7's two answers, and they must agree with the abi that was just printed.
+	wantNet := "net=unenforceable"
+	if n >= 4 {
+		wantNet = "net=enforceable"
+	}
+	assert.Contains(t, out, wantNet, "abi %d and %q disagree: %q", n, wantNet, out)
+}
+
+// fieldOf pulls one key=value field out of a one-line status line.
+func fieldOf(line, key string) string {
+	i := strings.Index(line, key)
+	if i < 0 {
+		return ""
+	}
+	rest := line[i+len(key):]
+	if j := strings.IndexAny(rest, " \n"); j >= 0 {
+		rest = rest[:j]
+	}
+	return rest
+}
+
+// THE NO-EXEC READ SET ON A REAL KERNEL. landlock's read subset is
+// EXECUTE|READ_FILE|READ_DIR, so `--read` grants execution of everything under a root and
+// a module cache granted that way is a place a card can run code from. `--read-noexec`
+// drops fsExecute, and this is the measurement: the same script is readable and is NOT
+// executable, with a control proving it runs under `--read` on this same machine.
+func TestLandlockReadNoExecReadsAndRefusesToExecute(t *testing.T) {
+	t.Parallel()
+
+	needLandlock(t)
+	j := newJob(t)
+	cache := filepath.Join(j.base, "cache")
+	require.NoError(t, os.MkdirAll(cache, 0o755))
+	script := filepath.Join(cache, "x.sh")
+	require.NoError(t, testbin.WriteExecutable(script, []byte("#!/bin/sh\necho ran\n"), 0o755))
+	code, out, errOut := j.wall(t, "cat "+script, "--read-noexec", cache)
+	require.Equal(t, 0, code, "the --read-noexec tree is not readable inside the wall: exit %d, stdout %q, stderr %s", code, out, errOut)
+	require.Contains(t, out, "echo ran", "the --read-noexec tree is not readable inside the wall: exit %d, stdout %q, stderr %s", code, out, errOut)
+	assert.Contains(t, errOut, "read-noexec=1", "the SANDBOX OK line does not count the no-exec reads: %q", errOut)
+	code, _, _ = j.wall(t, script, "--read-noexec", cache)
+	require.NotEqual(t, 0, code, "the script under --read-noexec EXECUTED inside the wall; readable is not executable")
+	code, _, errOut = j.wall(t, script, "--read", cache)
+	require.Equal(t, 0, code, "the control failed: the same script under --read did not run: exit %d, %s", code, errOut)
+}

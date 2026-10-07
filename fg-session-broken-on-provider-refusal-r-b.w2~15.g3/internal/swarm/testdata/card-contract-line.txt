@@ -1,0 +1,1 @@
+RESULT: <label> sha=<sha12>

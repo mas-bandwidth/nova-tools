@@ -1,0 +1,25 @@
+package fixture
+
+import (
+	"os"
+	"testing"
+	"time"
+)
+
+func TestFixturePollsForTheEvent(t *testing.T) {
+	wait := 30 * time.Second
+	if v := os.Getenv("NOVA_TEST_WAIT"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			wait = d
+		}
+	}
+	deadline := time.After(wait)
+	for {
+		select {
+		case <-deadline:
+			t.Fatal("the event never arrived")
+		case <-fakeNetwork():
+			return
+		}
+	}
+}

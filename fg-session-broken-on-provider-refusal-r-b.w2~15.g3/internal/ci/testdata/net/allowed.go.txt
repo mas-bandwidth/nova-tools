@@ -1,0 +1,12 @@
+package fixture
+
+import "testing"
+
+func TestFixtureAllowedHosts(t *testing.T) {
+	_ = "http://localhost:11434/v1"
+	_ = "http://127.0.0.1:8080/"
+	_ = "http://[::1]:8080/"
+	_ = "https://example.com/x"
+	_ = "https://go.example.invalid"
+	_ = "https://service.example.test/x"
+}

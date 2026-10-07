@@ -1,0 +1,4 @@
+# Migrated counted package ledger; original row keys preserved.
+# ceiling: 2
+cmd/nova-fuse/main.go:cmdLift:refuse-print 1 the remedy for a blown fuse is a live conversation with the person, by design (see the comment above the print); no command lifts a lockdown
+cmd/nova-fuse/main.go:cmdLockdown:refuse-print 1 the line says stop by hand and tell the person, by design: a lockdown that cannot be written is not a thing a command fixes

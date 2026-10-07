@@ -1,0 +1,7 @@
+# The fixture the tla play's functional test runs against: the machine running
+# the test, named localhost, is a TLC record machine (tla: true) and nothing
+# else: no store, no coordinator, no loops. The test points the play at a jar
+# directory, a sum file and a java of its own under its temp dir.
+machines:
+  localhost: {user: nova, seat: seat-local, slots: 1, tla: true}
+fleet: {store: "", coordinator: "", redis_port: 6380, pg_dsn: postgres://nova_config@localhost:5432/nova}

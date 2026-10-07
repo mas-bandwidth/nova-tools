@@ -1,0 +1,906 @@
+package main
+
+import (
+	"bytes"
+	"io"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strconv"
+	"strings"
+	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// A first run by someone who has never seen this tool hits three refusals in a
+// row — a directory name passed as --channels, then a missing --k, then a
+// missing --root — and the no-guessing law says every one of them must stay a
+// refusal. What it does not say is that a refusal may only name what was
+// wrong. These tests pin the sentence each one now ends with, because guidance
+// nothing checks rots into a claim about a message that has since moved.
+
+const firstRunDraft = "The lantern glazing is cleaned with two cloths, one for the brass and one for the glass, before the fog signal is tested.\n"
+
+func TestARefusalSaysWhatTheFlagWants(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name, want string
+		args       []string
+	}{
+		{
+			name: "a directory name passed as a channel",
+			args: []string{"search", "--root", corpus, "--channels", "journal", "--k", "3", "x"},
+			want: `unknown channel "journal": --channels names a retrieval method, not a directory; the channels are bm25 and trigram, and bm25 alone is the usual start`,
+		},
+		{
+			name: "search without k",
+			args: []string{"search", "--root", corpus, "--channels", "bm25", "x"},
+			want: "--k is the number of hits to return and is required (search: 3 to 5; check: 2 or 3 per paragraph)",
+		},
+		{
+			name: "search without root",
+			args: []string{"search", "--channels", "bm25", "--k", "3", "x"},
+			want: "--root <dir> is your corpus directory, the tree to index; it is never guessed from the working directory or the environment, so write it out every run",
+		},
+		// The hint belongs to the flag, not to the verb that happened to want
+		// it: a first run of check must not be told less than a first run of
+		// search.
+		{
+			name: "check without k",
+			args: []string{"check", "--root", corpus, "--channels", "bm25", "-"},
+			want: "--k is the number of hits to return and is required",
+		},
+		{
+			name: "check without channels",
+			args: []string{"check", "--root", corpus, "--k", "3", "-"},
+			want: "--channels names a retrieval method, not a directory",
+		},
+		{
+			name: "an empty channel list",
+			args: []string{"search", "--root", corpus, "--channels", "", "--k", "3", "x"},
+			want: "--channels names a retrieval method, not a directory",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			exit, stdout, stderr := runCLI(t, "", tc.args...)
+			require.Equalf(t, 2, exit, "exit = %d, want 2 — guidance must not soften the refusal; stderr: %s", exit, stderr)
+			assert.Containsf(t, stderr, tc.want, "stderr = %q,\nwant it to contain %q", stderr, tc.want)
+			assert.Equalf(t, "", stdout, "a refusal must print nothing on stdout, got %q", stdout)
+		})
+	}
+}
+
+// The usage banner ends in the quickstart line and one example per retrieval
+// verb, and the examples are RUN here rather than read: an example that has
+// drifted out of the flag set teaches the wrong invocation to exactly the
+// reader who cannot tell. The quickstart line comes first because it is the
+// one a reader with nothing but a directory can type.
+func TestUsageBannerExamplesRun(t *testing.T) {
+	t.Parallel()
+
+	examples := usageExamples(t)
+	require.Lenf(t, examples, 4, "want quickstart, search, check and verify examples under `example:`, got %d: %q", len(examples), examples)
+	assert.Truef(t, strings.HasPrefix(examples[0], "nova-memory quickstart "), "the first example is not the quickstart: %q", examples[0])
+	assert.Truef(t, strings.HasPrefix(examples[1], "nova-memory search "), "the second example is not a search: %q", examples[1])
+	assert.Truef(t, strings.HasPrefix(examples[2], "nova-memory check "), "the third example is not a check: %q", examples[2])
+	assert.Truef(t, strings.HasPrefix(examples[3], "nova-memory verify "), "the fourth example is not a verify: %q", examples[3])
+	draft := writeDraft(t)
+	for _, ex := range examples {
+		exit, stdout, stderr := runCLI(t, "", localize(strings.Fields(ex)[1:], draft)...)
+		require.Equalf(t, 0, exit, "the usage example %q does not run: exit %d, stderr: %s", ex, exit, stderr)
+		assert.NotEqualf(t, "", stdout, "the usage example %q printed nothing", ex)
+	}
+}
+
+// usageExamples returns the command lines under the banner's `example:` heading.
+//
+// It asks for the banner, because a bare invocation no longer IS one: a refusal now costs
+// one line and names the door (`run: nova-memory help`), and this reads what is behind
+// that door -- which is also a test that the door opens.
+func usageExamples(t *testing.T) []string {
+	t.Helper()
+	exit, stdout, stderr := runCLI(t, "", "help")
+	require.Equalf(t, 0, exit, "`nova-memory help` must be exit 0, got %d; stderr: %s", exit, stderr)
+	_, tail, found := strings.Cut(stdout, "\nexample:\n")
+	require.Truef(t, found, "the usage banner has no `example:` section:\n%s", stdout)
+	var out []string
+	for _, line := range strings.Split(tail, "\n") {
+		if line = strings.TrimSpace(line); strings.HasPrefix(line, "nova-memory ") {
+			out = append(out, strings.Join(strings.Fields(line), " "))
+		}
+	}
+	return out
+}
+
+// ---------------------------------------------------------------------------
+// The README's First run block, checked against the tool
+
+// The transcript in docs/TESTS.md `## nova-memory` is the first thing a stranger
+// copies, so it is not written by hand and left alone: the commands in it are
+// run here against the fixture corpus, and each command's block is compared
+// with what that command printed AS A SEQUENCE — the same event lines, in the
+// same order, and the same number of them. Scores, counts, paths and snippets
+// are a run's own business and are deliberately NOT compared: pinning those
+// would make the document a fixture instead of a document.
+//
+// IT USED TO BE A SET, and an abridged transcript satisfied it perfectly. This
+// block claimed `files=1268 chunks=33161` for a fixture corpus that measures
+// `files=6 chunks=23` — it had been recorded against somebody's real corpus —
+// and it dropped the `SEARCH NOTE` line and two of the three `MEMORY HIT` lines
+// and all three `MEMORY NOTE` lines. Every one of those is a line the tool
+// prints and the document did not show, which a set comparison cannot see. The
+// 2026-09-19 two-bench dogfood run compared line for line: one bench read
+// DEFECT on steps 2 and 3 and the other read CLEAN, and the tool was right both
+// times (nova-tools#1547).
+func TestREADMEFirstRunMatchesWhatTheToolPrints(t *testing.T) {
+	t.Parallel()
+
+	blocks := readmeFirstRun(t)
+	lines := blocks[len(blocks)-1]
+	draft := writeDraft(t)
+
+	var command string
+	var want, got []string
+	seen := map[string]int{}
+	ran := 0
+	compare := func() {
+		if command == "" {
+			return
+		}
+		ran++
+		for i := 0; i < len(want) || i < len(got); i++ {
+			switch {
+			case i >= len(want):
+				assert.Failf(t, "extra transcript line", "%q printed a line docs/TESTS.md does not show, at position %d:\n  %s\nThe document abridges what the tool said. Re-run the command and paste ALL of it.", command, i+1, got[i])
+			case i >= len(got):
+				assert.Failf(t, "missing transcript line", "%q printed only %d lines and docs/TESTS.md shows %d; the document's line %d, %q, was never printed.", command, len(got), len(want), i+1, want[i])
+			case want[i] != got[i]:
+				assert.Failf(t, "transcript shape mismatch", "docs/TESTS.md line %d under %q has shape\n  %s\nand the tool printed\n  %s\nRe-run the command and paste what it said.", i+1, command, want[i], got[i])
+			}
+		}
+		for _, s := range want {
+			seen[strings.Join(strings.Fields(s)[:2], " ")]++
+		}
+	}
+
+	for _, line := range lines {
+		if cmd, ok := strings.CutPrefix(line, "$ nova-memory "); ok {
+			compare()
+			exit, stdout, stderr := runCLI(t, "", localize(strings.Fields(cmd), draft)...)
+			require.Equalf(t, 0, exit, "the transcript command %q does not run: exit %d, stderr: %s", line, exit, stderr)
+			command, want, got = line, nil, shapesOf(stdout)
+			continue
+		}
+		s := shape(line)
+		if s == "" {
+			continue
+		}
+		require.NotEqualf(t, "", command, "transcript line before any command: %q", line)
+		want = append(want, s)
+	}
+	compare()
+
+	require.NotEqual(t, 0, ran, "the block holds no nova-memory command; this test passed by running nothing")
+	// The counts stay although the walk above is now complete, and they guard a
+	// different thing: deleting a whole `$ ` step from the document deletes BOTH
+	// sides of the comparison, so an ordered walk cannot notice.
+	for prefix, want := range map[string]int{
+		"SEARCH OK": 1, "SEARCH CAL": 1, "SEARCH HIT": 3, "SEARCH NOTE": 1,
+		"MEMORY OK": 1, "MEMORY CAL": 1, "MEMORY CAND": 1, "MEMORY HIT": 3, "MEMORY NOTE": 3,
+	} {
+		assert.Equalf(t, want, seen[prefix], "the docs/TESTS.md block shows %d %s lines, want %d", seen[prefix], prefix, want)
+	}
+}
+
+// shapesOf reduces one stream to the shapes of its event lines, in the order the
+// tool printed them. Order is half of what a transcript promises: a reader runs
+// the command and reads down the screen.
+func shapesOf(stream string) []string {
+	var out []string
+	for _, line := range strings.Split(stream, "\n") {
+		if s := shape(line); s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// shape reduces an output line to the part the README promises: the two-token
+// event prefix, then the field names in order. Everything after the ": " that
+// closes the fields is the tail the grammar says is never scanned, and is not
+// compared here either.
+func shape(line string) string {
+	head := line
+	if i := strings.Index(line, ": "); i >= 0 {
+		head = line[:i]
+	}
+	toks := strings.Fields(head)
+	if len(toks) < 2 || strings.ToUpper(toks[0]) != toks[0] {
+		return ""
+	}
+	out := []string{toks[0], toks[1]}
+	for _, tok := range toks[2:] {
+		if k, _, ok := strings.Cut(tok, "="); ok {
+			out = append(out, k+"=")
+		}
+	}
+	return strings.Join(out, " ")
+}
+
+// readmeFirstRun returns the fenced transcripts under `### First run`, one
+// slice of lines per block: the quickstart block first, the two-verb block
+// last. They are checked separately because they are two different promises —
+// one run that printed everything, and two runs a reader types themselves.
+func readmeFirstRun(t *testing.T) [][]string {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "TESTS.md"))
+	require.NoError(t, err)
+	// Scoped to THIS tool's section first: every command in this repo now carries
+	// a `### First run` (ONBOARDING.md), so cutting on the first one in the file
+	// would hand this test another binary's transcript to run.
+	_, section, found := strings.Cut(string(raw), "\n## nova-memory\n")
+	require.True(t, found, "docs/TESTS.md has no `## nova-memory` section")
+	_, tail, found := strings.Cut(section, "\n### First run\n")
+	require.True(t, found, "docs/TESTS.md `## nova-memory` has no `### First run` section; it is what a stranger reads before anything else here")
+	body, _, found := strings.Cut(tail, "\n## ")
+	if !found {
+		body = tail
+	}
+	var blocks [][]string
+	var lines []string
+	fenced := false
+	for _, line := range strings.Split(body, "\n") {
+		if strings.HasPrefix(line, "```") {
+			if fenced && len(lines) > 0 {
+				blocks = append(blocks, lines)
+				lines = nil
+			}
+			fenced = !fenced
+			continue
+		}
+		if fenced {
+			lines = append(lines, line)
+		}
+	}
+	require.GreaterOrEqualf(t, len(blocks), 2, "`### First run` must hold a quickstart transcript and the two-verb transcript, got %d fenced blocks", len(blocks))
+	return blocks
+}
+
+// localize points an example or README command at the fixture corpus and at a
+// real candidate file, so the command's SHAPE is what is under test and not
+// the reader's directory layout.
+func localize(args []string, draft string) []string {
+	out := append([]string(nil), args...)
+	for i := 0; i < len(out)-1; i++ {
+		if out[i] == "--root" {
+			out[i+1] = corpus
+		}
+	}
+	if len(out) > 0 && strings.HasSuffix(out[len(out)-1], "draft.md") {
+		out[len(out)-1] = draft
+	}
+	return out
+}
+
+func writeDraft(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "draft.md")
+	require.NoError(t, os.WriteFile(path, []byte(firstRunDraft), 0o644))
+	return path
+}
+
+// ---------------------------------------------------------------------------
+// quickstart — the first run, and what it promises in print
+
+// The three steps, in order, with the flags each one is echoed with. The
+// promise quickstart makes is that the line above an output IS the line that
+// produced it, so the echoes are checked as text and not as shapes: a
+// demonstration whose printed command differs from the command it ran teaches
+// an invocation that does not work.
+func TestQuickstartEchoesEveryCommandItRuns(t *testing.T) {
+	t.Parallel()
+
+	exit, stdout, stderr := runCLI(t, "", "quickstart", "--root", corpus)
+	require.Equalf(t, 0, exit, "exit = %d, want 0; stderr: %s", exit, stderr)
+	lines := strings.Split(strings.TrimRight(stdout, "\n"), "\n")
+
+	require.Truef(t, strings.HasPrefix(lines[0], "QUICKSTART RUN root="), "the first line does not say what this run chose: %q", lines[0])
+	// The words are quoted free text at the end of the line, their spaces kept.
+	i := strings.Index(lines[0], " words=")
+	require.GreaterOrEqualf(t, i, 0, "the first line names no words: %q", lines[0])
+	words, err := strconv.Unquote(lines[0][i+len(" words="):])
+	require.NoErrorf(t, err, "the words are not one quoted value: %q", lines[0])
+	{
+		got := field(t, lines[0], "words-source")
+		assert.Equalf(t, "corpus-top-terms", got, "words-source = %q, want corpus-top-terms when --words was not given", got)
+	}
+	for _, w := range strings.Split(words, " ") {
+		assert.Falsef(t, quickstartFunctionWords[w], "the demonstration query offers %q, a function word, as one of this corpus's own terms", w)
+	}
+	assert.Equalf(t, "QUICKSTART OK done=3", lines[len(lines)-2], "the line before NOTE is\n  %s\nwant\n  %s", lines[len(lines)-2], "QUICKSTART OK done=3")
+	{
+		want := "QUICKSTART NOTE " + quickstartChoiceNote
+		assert.Equalf(t, want, lines[len(lines)-1], "the last line is\n  %s\nwant\n  %s", lines[len(lines)-1], want)
+	}
+
+	// Each echo, and the token the output under it must open with. The k
+	// values are the ones the closing note names, so a change to one that
+	// forgets the other fails here.
+	steps := []struct{ echo, token string }{
+		{"$ nova-memory stats --root " + corpus, "STATS"},
+		{"$ nova-memory search --root " + corpus + " --channels bm25 --k 3 " + words, "SEARCH"},
+		{"$ nova-memory check --root " + corpus + " --channels bm25 --k 2 -", "MEMORY"},
+	}
+	at := 0
+	for _, st := range steps {
+		i := indexOf(lines, st.echo)
+		require.GreaterOrEqualf(t, i, 0, "quickstart never printed the command line\n  %s\ngot:\n%s", st.echo, stdout)
+		assert.GreaterOrEqualf(t, i, at, "the steps are out of order: %q came before the step above it", st.echo)
+		if assert.Lessf(t, i+1, len(lines), "no output under %q: %q", st.echo, lines) {
+			assert.Truef(t, strings.HasPrefix(lines[i+1], st.token+" "), "the line under %q is not that command's output: %q", st.echo, lines[i+1])
+		}
+		at = i
+	}
+	// The candidate is named before the check that reads it, because a
+	// paragraph arriving on stdin is the one thing in the transcript a reader
+	// cannot see the source of.
+	demo := -1
+	for i, line := range lines {
+		if strings.HasPrefix(line, "QUICKSTART DEMO ") {
+			demo = i
+		}
+	}
+	assert.GreaterOrEqualf(t, demo, 0, "no QUICKSTART DEMO line above the check step:\n%s", stdout)
+	assert.Lessf(t, demo, indexOf(lines, steps[2].echo), "no QUICKSTART DEMO line above the check step:\n%s", stdout)
+	assert.Contains(t, quickstartChoiceNote, "not defaults", "the closing note no longer says the choices are not defaults, which is the whole point of the verb")
+}
+
+// --words and --draft are the caller's, and they must reach the echoed line:
+// a flag that changed the run without changing the printed command would make
+// the transcript a decoration.
+func TestQuickstartRunsTheWordsAndDraftItWasGiven(t *testing.T) {
+	t.Parallel()
+
+	draft := writeDraft(t)
+	exit, stdout, stderr := runCLI(t, "", "quickstart", "--root", corpus, "--words", "glazing", "--words", "brass", "--draft", draft)
+	require.Equalf(t, 0, exit, "exit = %d, want 0; stderr: %s", exit, stderr)
+	lines := strings.Split(strings.TrimRight(stdout, "\n"), "\n")
+	{
+		got := field(t, lines[0], "words-source")
+		assert.Equalf(t, "given", got, "words-source = %q, want given", got)
+	}
+	want := "$ nova-memory search --root " + corpus + " --channels bm25 --k 3 glazing brass"
+	assert.GreaterOrEqualf(t, indexOf(lines, want), 0, "quickstart never printed\n  %s\ngot:\n%s", want, stdout)
+	{
+		want := "$ nova-memory check --root " + corpus + " --channels bm25 --k 2 " + draft
+		assert.GreaterOrEqualf(t, indexOf(lines, want), 0, "quickstart never printed\n  %s\ngot:\n%s", want, stdout)
+	}
+	assert.NotContains(t, stdout, "QUICKSTART DEMO", "a run given its own --draft must not announce the corpus's first paragraph")
+}
+
+// Exit 0 means all three ran. A step that could not run ends the demonstration
+// there, and the closing note — the sentence a reader is meant to leave with —
+// is not printed over a run that did not finish.
+func TestQuickstartExitsTwoWhenAStepCouldNotRun(t *testing.T) {
+	t.Parallel()
+
+	empty := filepath.Join(t.TempDir(), "empty.md")
+	require.NoError(t, os.WriteFile(empty, []byte("ok\n"), 0o644))
+	exit, stdout, stderr := runCLI(t, "", "quickstart", "--root", corpus, "--draft", empty)
+	require.Equalf(t, 2, exit, "exit = %d, want 2; stderr: %s", exit, stderr)
+	assert.Containsf(t, stderr, "the check step could not run", "stderr does not name the step that failed: %q", stderr)
+	assert.NotContains(t, stdout, quickstartChoiceNote, "a quickstart that did not finish printed its closing note anyway")
+	assert.Containsf(t, stdout, "SEARCH OK", "the steps that did run must still be on the page: %q", stdout)
+	assert.NotContainsf(t, stdout, "QUICKSTART OK", "a quickstart that failed printed QUICKSTART OK:\n%s", stdout)
+}
+
+// A quickstart given a missing draft file refuses and exits 2, and must NOT
+// print QUICKSTART OK before or after the failure.
+func TestQuickstartWithMissingDraftDoesNotPrintOK(t *testing.T) {
+	t.Parallel()
+
+	missing := filepath.Join(t.TempDir(), "missing-draft.md")
+	exit, stdout, stderr := runCLI(t, "", "quickstart", "--root", corpus, "--draft", missing)
+	require.Equalf(t, 2, exit, "exit = %d, want 2; stderr: %s", exit, stderr)
+	assert.NotContainsf(t, stdout, "QUICKSTART OK", "quickstart with missing draft printed QUICKSTART OK:\n%s", stdout)
+	assert.Containsf(t, stderr, "the check step could not run", "stderr does not name the step that failed: %q", stderr)
+}
+
+// The README's quickstart transcript, held to the tool: the first line is RUN,
+// and every line under it must be a line that run printed. The echoed command
+// lines are compared as text, with the root normalized because the README
+// shows a reader's corpus and the test has its own; everything else is
+// compared by shape, so the fixture's scores stay the fixture's business.
+func TestREADMEFirstRunQuickstartBlockMatchesWhatTheToolPrints(t *testing.T) {
+	t.Parallel()
+
+	lines := readmeFirstRun(t)[0]
+	cmd, ok := strings.CutPrefix(lines[0], "$ nova-memory quickstart ")
+	require.Truef(t, ok, "`### First run` must open on the quickstart command, got %q", lines[0])
+	exit, stdout, stderr := runCLI(t, "", localize(append([]string{"quickstart"}, strings.Fields(cmd)...), "")...)
+	require.Equalf(t, 0, exit, "the README quickstart does not run: exit %d, stderr: %s", exit, stderr)
+	printedShape, printedEcho := map[string]bool{}, map[string]bool{}
+	for _, out := range strings.Split(stdout, "\n") {
+		if strings.HasPrefix(out, "$ nova-memory ") {
+			printedEcho[rootless(out)] = true
+			continue
+		}
+		if s := shape(out); s != "" {
+			printedShape[s] = true
+		}
+	}
+	seen := map[string]int{}
+	for _, line := range lines[1:] {
+		if strings.HasPrefix(line, "$ nova-memory ") {
+			assert.Truef(t, printedEcho[rootless(line)], "README shows the command line\n  %s\nwhich this quickstart never printed. Re-run it and paste what it said.", line)
+			seen["$ nova-memory"]++
+			continue
+		}
+		s := shape(line)
+		if s == "" {
+			continue
+		}
+		assert.Truef(t, printedShape[s], "README line\n  %s\nhas shape %q, which this tool never prints. Re-run the command and paste what it said.", line, s)
+		seen[strings.Join(strings.Fields(s)[:2], " ")]++
+	}
+	for prefix, want := range map[string]int{
+		"$ nova-memory": 3, "QUICKSTART DEMO": 1, "QUICKSTART NOTE": 1,
+		"SEARCH OK": 1, "SEARCH CAL": 1, "SEARCH HIT": 3,
+		"MEMORY OK": 1, "MEMORY CAL": 1, "MEMORY CAND": 1, "MEMORY HIT": 2,
+	} {
+		assert.Equalf(t, want, seen[prefix], "the README quickstart transcript shows %d %s lines, want %d", seen[prefix], prefix, want)
+	}
+	assert.Truef(t, strings.HasSuffix(strings.TrimSpace(lines[len(lines)-1]), quickstartChoiceNote), "the transcript does not end on the sentence the verb exists for: %q", lines[len(lines)-1])
+}
+
+// rootless replaces the argument of --root, so a command line the README shows
+// against a reader's corpus can be compared with the same line run against the
+// fixture.
+func rootless(line string) string {
+	toks := strings.Fields(line)
+	for i := 0; i < len(toks)-1; i++ {
+		if toks[i] == "--root" {
+			toks[i+1] = "<root>"
+		}
+	}
+	return strings.Join(toks, " ")
+}
+
+func indexOf(lines []string, want string) int {
+	for i, line := range lines {
+		if line == want {
+			return i
+		}
+	}
+	return -1
+}
+
+// field reads one key=value field off an event line.
+func field(t *testing.T, line, key string) string {
+	t.Helper()
+	for _, tok := range strings.Fields(line) {
+		if k, v, ok := strings.Cut(tok, "="); ok && k == key {
+			return v
+		}
+	}
+	require.FailNowf(t, "missing expected field", "no %s= field on %q", key, line)
+	return ""
+}
+
+// ---------------------------------------------------------------------------
+// One run, every reason
+
+// A first run is usually wrong about more than one thing, and the tool that
+// answers one refusal at a time turns that into a guessing game played one
+// round per invocation. Every reason a run cannot start is reported by the run
+// that could not start.
+func TestARefusalReportsEveryReasonAtOnce(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		args []string
+		want []string
+	}{
+		{
+			name: "search missing both channels and k",
+			args: []string{"search", "--root", corpus, "x"},
+			want: []string{
+				"--channels is required", channelsHint,
+				"--k is required", kHint,
+			},
+		},
+		{
+			name: "search with a bad channel and a bad k, and no query",
+			args: []string{"search", "--root", corpus, "--channels", "journal", "--k", "0"},
+			want: []string{
+				`unknown channel "journal"`,
+				"--k must be a positive receipt budget",
+				"no query words given",
+			},
+		},
+		{
+			name: "check missing everything but the verb",
+			args: []string{"check"},
+			want: []string{
+				"--channels is required", channelsHint,
+				"--k is required", kHint,
+				"--root is required", rootHint,
+				"exactly one candidate file",
+			},
+		},
+		{
+			name: "eval with a bad channel, a bad k and a bad floor",
+			args: []string{"eval", "--root", corpus, "--channels", "journal", "--k", "-1", "--floor", "2", exampleGold},
+			want: []string{
+				`unknown channel "journal"`,
+				"--k must be a positive receipt budget",
+				"--floor must be in (0,1]",
+			},
+		},
+		// A missing flag says one thing, not two: the value of a flag nobody
+		// gave is not a second mistake the caller made.
+		{
+			name: "a missing channels flag does not also complain about its empty value",
+			args: []string{"search", "--root", corpus, "--k", "3", "x"},
+			want: []string{"--channels is required"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			exit, stdout, stderr := runCLI(t, "", tc.args...)
+			require.Equalf(t, 2, exit, "exit = %d, want 2; stderr: %s", exit, stderr)
+			assert.Equalf(t, "", stdout, "a refusal must print nothing on stdout, got %q", stdout)
+			for _, w := range tc.want {
+				assert.Containsf(t, stderr, w, "stderr does not report %q; one run must report them all, got:\n%s", w, stderr)
+			}
+			if strings.Contains(stderr, "--channels is required") {
+				assert.NotContainsf(t, stderr, "named no channels", "a missing --channels was reported twice, once as missing and once as empty:\n%s", stderr)
+			}
+		})
+	}
+}
+
+// The echoed step is a line the reader is meant to PASTE, and the shell they
+// paste it into is the one on their own machine. The specimen is the Windows
+// path: rendered as a Go string literal every separator doubled, so the echo
+// named C:\\Users\\... — a path that does not exist, printed by the one verb
+// whose whole job is to be copied. Both platforms' rules are pinned here
+// rather than on the platform that happens to be running.
+func TestTheEchoedStepPastesBackIntoThatPlatformsShell(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name    string
+		windows bool
+		argv    []string
+		want    string
+	}{
+		{
+			name:    "a windows path is echoed verbatim, separators and all",
+			windows: true,
+			argv:    []string{"check", "--root", "corpus", `C:\Users\RUNNER~1\AppData\Local\Temp\Test1\001\draft.md`},
+			want:    `check --root corpus C:\Users\RUNNER~1\AppData\Local\Temp\Test1\001\draft.md`,
+		},
+		{
+			name:    "a windows path holding a space is double-quoted, which that shell takes literally",
+			windows: true,
+			argv:    []string{"check", `C:\Program Files\notes\draft.md`},
+			want:    `check "C:\Program Files\notes\draft.md"`,
+		},
+		{
+			name: "a posix path is echoed verbatim",
+			argv: []string{"check", "--root", "corpus", "/var/folders/t7/Test1/001/draft.md"},
+			want: "check --root corpus /var/folders/t7/Test1/001/draft.md",
+		},
+		{
+			name: "a posix argument holding a space is single-quoted, and keeps every character",
+			argv: []string{"search", "salt haze"},
+			want: `search 'salt haze'`,
+		},
+		{
+			name: "a posix argument the shell would act on is quoted rather than handed over",
+			argv: []string{"search", "$HOME", "a'b", `back\slash`},
+			want: `search '$HOME' 'a'"'"'b' 'back\slash'`,
+		},
+		{
+			name:    "an empty argument is still a word on both shells",
+			windows: true,
+			argv:    []string{"search", ""},
+			want:    `search ""`,
+		},
+		{
+			name: "a newline in an argument cannot break the echo in two",
+			argv: []string{"search", "one\ntwo"},
+			want: `search 'one\x0atwo'`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			{
+				got := commandLineFor(tc.argv, tc.windows)
+				assert.Equalf(t, tc.want, got, "commandLineFor(%q, windows=%v) =\n  %s\nwant\n  %s", tc.argv, tc.windows, got, tc.want)
+			}
+			assert.NotContains(t, commandLineFor(tc.argv, tc.windows), "\n", "the echoed line is more than one line")
+		})
+	}
+}
+
+// Every flag defined by any subcommand must have a flag entry in the usage banner (F5-7).
+func TestEveryDefinedFlagAppearsInTheUsageBanner(t *testing.T) {
+	t.Parallel()
+
+	exit, stdout, _ := runCLI(t, "", "help")
+	require.Equalf(t, 0, exit, "help failed: %d", exit)
+	// All flags supported by nova-memory subcommands.
+	flags := []string{
+		"root", "channels", "k", "exclude", "floor", "links",
+		"coverage", "frontmatter", "exempt", "fail-max", "words", "draft", "pin", "json",
+	}
+	for _, f := range flags {
+		target := "  --" + f + " "
+		assert.Containsf(t, stdout, target, "flag --%s has no entry in the usage banner flags list:\n%s", f, stdout)
+	}
+	// Assert --fail-max default is not welded onto words.
+	welded := "cannot bury the one frontmatter finding. the words the demonstration search runs."
+	assert.NotContainsf(t, stdout, welded, "the --fail-max and --words help text are still welded together:\n%s", stdout)
+}
+
+func TestQuickstartRunsWithDashLeadingWords(t *testing.T) {
+	t.Parallel()
+
+	exit, stdout, stderr := runCLI(t, "", "quickstart", "--root", corpus, "--words", "-glazing")
+	require.Equalf(t, 0, exit, "quickstart with dash-leading word failed: exit %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
+	assert.Containsf(t, stdout, "$ nova-memory search ", "quickstart did not complete search step with dash-leading word:\n%s", stdout)
+	assert.Containsf(t, stdout, `query="-glazing"`, "quickstart did not complete search step with dash-leading word:\n%s", stdout)
+}
+
+// TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine runs the whole
+// `## nova-memory` `### First run` section and compares every command's output
+// with the block written under it: same number of lines, same lines, same
+// order. It is the comparator cmd/nova-ci already uses, applied to a section
+// the set-of-shapes test above only compares by event shape.
+//
+// THE SECTION IS TWO BLOCKS, and they are two different promises:
+//
+//   - The first block is the whole stdout of `nova-memory quickstart`, which
+//     ECHOES the three commands it runs as `$ nova-memory ...` lines and prints
+//     each one's output beneath. onboarding.Steps cannot cut this block, because
+//     it would read every echoed `$` line as a command of the sitting. So the
+//     block is executed as the single command it is -- its first `$` line --
+//     with every following line, echoes included, as that command's output.
+//   - The second block is a genuine two-command sitting (a `search`, then a
+//     `check` of a draft on disk) and is handed to onboarding.Steps whole.
+//
+// THREE NORMS ARE DECLARED, and they are the only values in the section the
+// document cannot pin: the `build=<duration>` field on the STATS line is the index build
+// time of the run, not a fact about the transcript. The document was recorded
+// at build=384.875µs and a fresh run prints a different duration, so
+// buildTimeNorm elides exactly that field. And the two paths the sitting
+// resolves -- the corpus copy and the draft beside it -- are printed by the
+// tool as the paths it was handed, so each is reduced to the spelling the
+// document writes. Every other value -- the six files,
+// the scores, the snippets, the ids -- reproduces and is compared as written.
+func TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine(t *testing.T) {
+	t.Parallel()
+
+	// Resolve the document and the checkout root from the package directory:
+	// the document is a fixed file, while the commands run against the sitting
+	// copy whose documented paths resolve as written.
+	blocks := readmeFirstRun(t)
+	root := repoRoot(t)
+
+	// Prove this file and onboarding.FirstRun read the same section: the blocks
+	// flattened are the lines FirstRun returns, in the same order. If they ever
+	// disagree, the section is being read two ways and one reader drifts
+	// unwatched.
+	raw, err := os.ReadFile(filepath.Join(root, "docs", "TESTS.md"))
+	require.NoError(t, err)
+	firstRun, err := onboarding.FirstRun(string(raw), "nova-memory")
+	require.NoError(t, err)
+	var flat []string
+	for _, b := range blocks {
+		flat = append(flat, b...)
+	}
+	require.Equalf(t, strings.Join(firstRun, "\n"), strings.Join(flat, "\n"), "the two readers of `### First run` disagree:\nblocks:\n%s\nFirstRun:\n%s",
+		strings.Join(flat, "\n"), strings.Join(firstRun, "\n"))
+
+	// docs/CLI.md shows the same first run, and it is this one: the command reference's
+	// transcript is the executed one, line for line, so it cannot drift from the tool.
+	cli, err := os.ReadFile(filepath.Join(root, "docs", "CLI.md"))
+	require.NoError(t, err)
+	cliRun, err := onboarding.FirstRun(string(cli), "nova-memory")
+	require.NoError(t, err)
+	assert.Equal(t, firstRun, cliRun, "CLI.md's `### First run` for nova-memory is not the transcript this test executes")
+	// And the help's search and check examples are the sitting's two commands.
+	helpExamples, err := onboarding.ExampleLines(usage, "nova-memory")
+	require.NoError(t, err)
+	var examples []string
+	for _, ex := range helpExamples {
+		examples = append(examples, strings.Join(strings.Fields(ex), " "))
+	}
+	for _, ex := range []string{
+		"nova-memory search --root ./corpus --channels bm25 --k 3 lantern glazing brass",
+		"nova-memory check --root ./corpus --channels bm25 --k 3 draft.md",
+	} {
+		assert.Contains(t, examples, ex, "the help's example block does not hold %q", ex)
+		assert.Contains(t, flat, "$ "+ex, "the sitting does not run %q", ex)
+	}
+
+	require.Lenf(t, blocks, 2, "`### First run` holds %d fenced blocks, want 2: the quickstart transcript and the two-verb sitting", len(blocks))
+	require.Truef(t, strings.HasPrefix(blocks[0][0], "$ nova-memory quickstart "), "the first `### First run` block does not open on the quickstart command: %q", blocks[0][0])
+
+	// The transcript WRITES a draft beside the corpus, so it runs against a
+	// copy of the fixture in t.TempDir(), never against what ships. The runner
+	// resolves the documented paths (`--root ./corpus`, `draft.md`) against the
+	// copy -- the work a reader's current directory does -- and the two are
+	// declared norms, because the tool prints the paths it was handed.
+	sit := firstRunSitting(t)
+	run := runDocumented(t, sit)
+	norms := append([]onboarding.Norm{buildTimeNorm(t)}, sittingNorms(t, sit)...)
+
+	var problems []onboarding.Problem
+
+	// The first block: one command, all of its output.
+	quickstart, err := onboarding.Steps("nova-memory", blocks[0][:1])
+	require.NoError(t, err)
+	quickstart[0].Want = blocks[0][1:]
+	problems = append(problems, onboarding.Execute(quickstart, run, norms...)...)
+
+	// The second block: every `$` line is a command.
+	steps, err := onboarding.Steps("nova-memory", blocks[1])
+	require.NoError(t, err)
+	assert.Lenf(t, steps, 2, "the second `### First run` block runs %d commands, want 2: a search and a check of the draft", len(steps))
+	problems = append(problems, onboarding.Execute(steps, run, norms...)...)
+
+	for _, p := range problems {
+		assert.Fail(t, p.String())
+	}
+}
+
+// buildTimeNorm elides the one run-owned value in the section: the
+// `build=<duration>` field the STATS line prints for the index build of THIS
+// run. The pattern matches only a Go duration, so a STATS line that stopped
+// printing one is left on the line and compared.
+func buildTimeNorm(t *testing.T) onboarding.Norm {
+	t.Helper()
+	n, err := onboarding.Elide(
+		"build= (the index build time of this run)",
+		`build=[0-9]+(?:\.[0-9]+)?(?:ns|µs|ms|s)\b`,
+		"build=<the index build time of this run>",
+	)
+	require.NoError(t, err)
+	return n
+}
+
+// firstRunSitting materializes the directory the documented commands are typed
+// in: `corpus/` is a writable copy of the fixture, so the sitting never touches
+// what ships, and `draft.md` is the candidate paragraph the second block checks.
+func firstRunSitting(t *testing.T) string {
+	t.Helper()
+	sit := t.TempDir()
+	dst := filepath.Join(sit, "corpus")
+	src := filepath.Join("..", "..", "cmd", "nova-memory", "testdata", "corpus")
+	err := filepath.Walk(src, func(p string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(src, p)
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			return os.MkdirAll(filepath.Join(dst, rel), 0o755)
+		}
+		b, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(filepath.Join(dst, rel), b, 0o644)
+	})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(sit, "draft.md"), []byte(firstRunDraft), 0o644))
+	return sit
+}
+
+// sittingNorms declares the two documented paths that resolve inside the
+// sitting: the corpus copy and the draft beside it. The runner hands the tool
+// the sitting's absolute paths, so every line holding one is reduced back to
+// the spelling the document writes, on both sides of the comparison.
+func sittingNorms(t *testing.T, sit string) []onboarding.Norm {
+	t.Helper()
+	corpus, err := onboarding.Elide(
+		"./corpus (the sitting's copy of the fixture corpus)",
+		regexp.QuoteMeta(filepath.Join(sit, "corpus")),
+		"./corpus",
+	)
+	require.NoError(t, err)
+	draft, err := onboarding.Elide(
+		"draft.md (the sitting's candidate file)",
+		regexp.QuoteMeta(filepath.Join(sit, "draft.md")),
+		"draft.md",
+	)
+	require.NoError(t, err)
+	return []onboarding.Norm{corpus, draft}
+}
+
+// inSitting resolves the paths of a documented command against the sitting
+// directory, which is what a reader's current directory does for the paths
+// they type: the value of every --root is the sitting's copy of the corpus,
+// and a positional naming a file the sitting holds is that file. A word that
+// names nothing there -- a query word -- is not a path and stays as written.
+func inSitting(sit string, args []string) []string {
+	out := make([]string, len(args))
+	root := false
+	for i, a := range args {
+		out[i] = a
+		switch {
+		case a == "--root":
+			root = true
+		case root:
+			out[i] = filepath.Join(sit, a)
+			root = false
+		case strings.HasPrefix(a, "-"):
+		default:
+			if _, err := os.Stat(filepath.Join(sit, a)); err == nil {
+				out[i] = filepath.Join(sit, a)
+			}
+		}
+	}
+	return out
+}
+
+func runDocumented(t *testing.T, sit string) onboarding.Runner {
+	t.Helper()
+	return func(s onboarding.Step) (onboarding.Result, error) {
+		stdin := io.Reader(strings.NewReader(""))
+		if s.Stdin != "" {
+			f, err := os.Open(s.Stdin)
+			if err != nil {
+				return onboarding.Result{}, err
+			}
+			defer f.Close()
+			stdin = f
+		}
+		var out, errb bytes.Buffer
+		code := run(inSitting(sit, s.Args), stdin, &out, &errb)
+		return onboarding.Result{Code: code, Stdout: out.String(), Stderr: errb.String()}, nil
+	}
+}
+
+func repoRoot(t *testing.T) string {
+	t.Helper()
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	require.NoError(t, err)
+	{
+		_, err := os.Stat(filepath.Join(root, "docs", "TESTS.md"))
+		require.NoErrorf(t, err, "docs/TESTS.md is not under %s: %v", root, err)
+	}
+	return root
+}
+
+func TestVerifyHelpExampleMatchesWhatTheToolPrints(t *testing.T) {
+	t.Parallel()
+	found := false
+	for _, line := range usageExamples(t) {
+		if !strings.HasPrefix(line, "nova-memory verify ") {
+			continue
+		}
+		found = true
+		code, out, errOut := runCLI(t, "", localize(strings.Fields(line)[1:], "")...)
+		require.Equalf(t, 0, code, "example exit %d: %s", code, errOut)
+		want := onboarding.Step{Line: line, Want: []string{
+			"VERIFY INFO wikilink: [[storm-glass]] resolves to no file (e.g. from log/1974-03-11.md)",
+			"VERIFY OK gating=0 info=1 shown=1 coverage=0 frontmatter=0 links=info",
+		}}
+		for _, problem := range onboarding.CompareTranscript([]onboarding.Step{want}, []onboarding.Result{{Code: code, Stdout: out, Stderr: errOut}}, nil) {
+			assert.Fail(t, problem.String())
+		}
+	}
+	require.True(t, found, "help has no nova-memory verify example")
+}

@@ -1,0 +1,10 @@
+# The relative output paths this repository still permits, one `file:function` per
+# line, each with a reason. A relative path given to an output flag in a test is
+# written into the package directory, which leaves a file in the tree: the rule is
+# to name it inside t.TempDir(). This list is checked in BOTH directions by
+# testoutpath_class_test.go -- an unlisted finding is a red run, and a listed entry
+# that no longer names one is also a red run -- so it can only ever shrink.
+#
+# It is EMPTY, and that is the point: the one offender the rule found when it
+# landed (cmd/nova-review/main_test.go, a refusal test naming --out p.md) was
+# fixed rather than listed.

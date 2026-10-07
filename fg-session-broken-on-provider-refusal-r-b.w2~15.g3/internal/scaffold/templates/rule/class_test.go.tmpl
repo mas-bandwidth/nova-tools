@@ -1,0 +1,26 @@
+package ci
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// TestNo[[ .CamelName ]]Violations is the class rule for [[ .Name ]].
+// It asserts repository invariants for [[ .Name ]].
+func TestNo[[ .CamelName ]]Violations(t *testing.T) {
+	t.Parallel()
+
+	root := repoRoot(t)
+	fixturePath := filepath.Join(root, "internal", "ci", "testdata", "[[ .Name ]]", "fixture.txt")
+	data, err := os.ReadFile(fixturePath)
+	if err != nil {
+		t.Fatalf("%s: missing passing fixture: %v", fixturePath, err)
+	}
+
+	content := strings.TrimSpace(string(data))
+	if content == "" {
+		t.Fatalf("%s: fixture is empty", fixturePath)
+	}
+}

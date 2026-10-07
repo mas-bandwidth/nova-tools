@@ -1,0 +1,863 @@
+# Certification: the slower tier that cannot fit the two-minute per-CL budget.
+#
+# Every job that leaves ci.yml's CL tier appears here under the same name, so a
+# change's ordinary feedback path stays under two minutes while nothing is
+# deleted: the whole-tree `-race` run, Windows build/vet and per-package tests,
+# the three-OS smoke of the shipped binary, the release dry-run, and the nightly
+# perf wall clock all still run — on a daily schedule and on demand.
+#
+# A RED run here is a blocker for the next release, never for a CL. See
+# docs/CONTRIBUTING.md, "Two tiers of CI".
+
+name: certification
+
+on:
+  schedule:
+    - cron: "17 7 * * *"
+  workflow_dispatch:
+  push:
+    branches: [dev]
+
+
+permissions:
+  contents: read
+
+env:
+  # NOVA_CI is the fail-closed switch: test and perf jobs install redis-server before they
+  # run the suite.
+  NOVA_CI: "1"
+
+concurrency:
+  group: certification-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+jobs:
+  race-cache:
+    # PRIMES THE RACE CACHE ONCE PER OS, before the test legs start. Every test leg
+    # restores the `<os>-gorace-` entry, and on a miss every leg builds the same race
+    # dependencies itself: 31-54 s each on ubuntu-latest in run 36377073595, which put two
+    # cold legs over the cap. This job asks for the exact entry without downloading it
+    # (lookup-only) and, only on a miss, builds and saves it, so a cold run's test legs start
+    # warm. On a hit it does nothing else. The paths and key are the test job's, byte for byte.
+    name: race-cache (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 2  # the classtests rule reads what HEAD deleted from its first parent
+      - name: name the Go toolchain's tool-cache directory
+        shell: bash
+        run: echo "GO_TOOL_DIR=${RUNNER_TOOL_CACHE}/go/$(sed -n 's/^go \([0-9.]*\)$/\1/p' go.mod)" >> "$GITHUB_ENV"
+
+      - name: is the race cache entry there
+        id: probe
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          lookup-only: true
+          path: |
+            ${{ runner.os == 'macOS' && '~/Library/Caches/go-build' || '~/.cache/go-build' }}
+            ~/go/pkg/mod
+            ${{ env.GO_TOOL_DIR }}
+          key: ${{ runner.os }}-gorace-${{ hashFiles('go.mod') }}
+
+      - name: restore the nearest race cache entry
+        if: steps.probe.outputs.cache-hit != 'true'
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ${{ runner.os == 'macOS' && '~/Library/Caches/go-build' || '~/.cache/go-build' }}
+            ~/go/pkg/mod
+            ${{ env.GO_TOOL_DIR }}
+          key: ${{ runner.os }}-gorace-${{ hashFiles('go.mod') }}
+          restore-keys: |
+            ${{ runner.os }}-gorace-
+
+      - if: steps.probe.outputs.cache-hit != 'true'
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: build the ci runner
+        if: steps.probe.outputs.cache-hit != 'true'
+        # tools/ci is built once in this job and every later step runs the binary; `go run` would
+        # compile it again in each step. (`go run ./tools/ci help` lists its verbs.)
+        shell: bash
+        run: go build -o "$RUNNER_TEMP/ci" ./tools/ci
+
+      - name: build the race-instrumented dependencies
+        if: steps.probe.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          "$RUNNER_TEMP/ci" race-deps
+
+      - name: save the race build cache
+        if: steps.probe.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ${{ runner.os == 'macOS' && '~/Library/Caches/go-build' || '~/.cache/go-build' }}
+            ~/go/pkg/mod
+            ${{ env.GO_TOOL_DIR }}
+          key: ${{ runner.os }}-gorace-${{ hashFiles('go.mod') }}
+
+  test:
+    # THE WHOLE-TREE RACE RUN, on a clean GitHub-hosted image, linux/amd64 and darwin/arm64:
+    # every live package under `go test -race`, full (no -short), and the one place either of
+    # those runs. ci.yml's CL tier runs the same tests without -race, and its hosted legs run
+    # -short.
+    #
+    # The job is sharded by package because one runner cannot finish the whole-tree race
+    # build, vet and test under the two-minute cap: `ubuntu-latest` reached the test step
+    # 97-119 s into the job (setup-go 8-10 s, build 52-67 s cold, vet 16-22 s, redis 11-18 s)
+    # and was cancelled in it every time, at most two packages reported, in runs
+    # 36355661583, 36356115183, 36357522017, 36357749379 and 36360296846; `macos-latest`
+    # reached it at 78-128 s in three runs and was cancelled in build or vet in the other two.
+    # A green whole-tree race run took 421 s of test step on `ubuntu-latest` and 497 s on
+    # `macos-latest` under a 15-minute cap in run 36137551959. The cap stays two minutes;
+    # the legs meet it by shard count, with the deal of ci.yml's test-hosted (heavy packages
+    # first, one per shard, then round-robin) over the live packages only (internal/pkgselect/DEPRECATED:
+    # deprecated packages are never tested).
+    #
+    # THE HEAVY LIST is measured, not named: the per-package times this job's own legs report
+    # (`ok <pkg> <seconds>`), the larger of ubuntu-latest and macos-latest, in the cold run
+    # 36375296705 at 3314df055 plus this change: internal/ci 49.3 s, cmd/nova-tokens 46.4,
+    # cmd/nova-sandbox 34.2, cmd/nova-self-talk 21.3, internal/update 19.1, cmd/nova-secrets 16.7,
+    # internal/bus 16.6. Run 37158353472 also shows cmd/nova-sprint reaching the 75 s test
+    # timeout alongside internal/ci on macOS. Run 37159703304 puts internal/sprint/store
+    # (65.470 s on Linux) alongside cmd/nova-sandbox on a capped leg. Run 37165758129
+    # caps Linux shard 1 with internal/ci 67.708 s, internal/sprint/refmodel 60.236,
+    # cmd/nova-swarm 44.763 and internal/docs 18.834 together. Its completed legs also
+    # measure internal/sprint 15.951 s, internal/redisconn 18.169, internal/config 17.741
+    # and internal/secrets 15.577. Sixteen measured heavy packages each have a shard;
+    # the other live packages are dealt round-robin.
+    #
+    # BUILD AND VET ARE NOT HERE ANY MORE. They are ci.yml's: its lint job runs `make build` and
+    # `make vet` on every event (Linux), and its test-hosted legs run `make build` and
+    # `make vet PKGS=<shard>` on ubuntu-latest and macos-latest on every push to dev and main.
+    # Each shard's `go test -race` still compiles every package it tests, so the union of the
+    # shards compiles the whole live tree for both platforms. gofmt stays, on one leg.
+    #
+    # The race build cache is Go's own cache path per OS, restored first and saved before the
+    # tests because actions/cache's post-step save does not run when the cap cancels the job.
+    # What is saved is the race-instrumented build of every external module package the live
+    # tree's tests import (139 packages): measured cold on a macOS runner at -p 4, 18.3 s and
+    # 384 MB, then 0.2 s warm. Every shard builds the same external list, so the first shard
+    # to save stores the entry every shard needs; the tree's own packages compile per shard in
+    # the test step (the whole live tree's race test binaries, compiled and linked with warm
+    # dependencies: 24.1 s at -p 4 on a macOS runner, about an eighth of that a shard). The key
+    # says `gorace`, so it is never ci.yml's non-race entry (whose restore prefix is `<os>-go-`,
+    # which this key does not start with).
+    name: test (${{ matrix.os }}, ${{ matrix.shard }})
+    needs: race-cache
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+        include:
+          - os: ubuntu-latest
+            shards: 16
+          - os: macos-latest
+            shards: 16
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 2  # the classtests rule reads what HEAD deleted from its first parent
+      - name: name the Go toolchain's tool-cache directory
+        # The toolchain rides in the race cache entry below. setup-go downloads, extracts and
+        # then copies it into the runner's tool cache: 26-27 s on macos-latest, 16 s of it the
+        # copy (run 36376038363). Restored into the tool cache first, setup-go finds it there
+        # and does neither. The version is go.mod's, which the cache key already hashes.
+        shell: bash
+        run: echo "GO_TOOL_DIR=${RUNNER_TOOL_CACHE}/go/$(sed -n 's/^go \([0-9.]*\)$/\1/p' go.mod)" >> "$GITHUB_ENV"
+
+      - name: restore the race build cache
+        id: gocache
+        if: runner.environment == 'github-hosted'
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ${{ runner.os == 'macOS' && '~/Library/Caches/go-build' || '~/.cache/go-build' }}
+            ~/go/pkg/mod
+            ${{ env.GO_TOOL_DIR }}
+          key: ${{ runner.os }}-gorace-${{ hashFiles('go.mod') }}
+          restore-keys: |
+            ${{ runner.os }}-gorace-
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          # This job manages its cache above and below; setup-go's own saves in a post step,
+          # which a cancelled job never reaches.
+          cache: false
+
+      - name: build tools/ci once
+        # The verbs are built ONCE here and every later step calls the binary: `go run` compiles
+        # and links the tool again on every step that names it. internal/ci: TestToolsCIIsBuiltOnceAndNeverRun.
+        shell: bash
+        run: go build -o "$RUNNER_TEMP/ci" ./tools/ci
+
+      - name: start installing redis-server in the background
+        # The install is 3-45 s of apt or brew on a hosted runner (45 s on ubuntu-latest shard 3
+        # of run 36377703562, the leg's longest step). Started here, it overlaps the gofmt, the
+        # deal and the race-instrumented dependency build; the `install redis-server` step below
+        # runs the same verb, which waits on the first one's lock, finds the binary and publishes
+        # its directory to PATH for the steps after it. The runner reaps the process at job end.
+        shell: bash
+        run: nohup "$RUNNER_TEMP/ci" install-redis-server > "${RUNNER_TEMP}/redis-install.log" 2>&1 &
+
+      - name: gofmt
+        # gofmt -l prints unformatted files and exits 0 either way, so the exit
+        # code is not the product here — the output is, and `ci gofmt` turns it
+        # into the exit. Checked on one leg: formatting is a property of the
+        # source, not of the platform or the shard.
+        if: matrix.os == 'ubuntu-latest' && matrix.shard == 1
+        shell: bash
+        run: |
+          "$RUNNER_TEMP/ci" gofmt
+
+      - name: deal this shard's packages
+        # ci.yml test-hosted's deal, with this job's measured heavy list: the heavy
+        # packages first, one per shard, then every other live package round-robin in go list
+        # order. One line of space-separated packages. `go run ./tools/ci help deal`;
+        # internal/ci: TestCertificationRaceShardsPartitionTheLiveTree (certRaceHeavy).
+        shell: bash
+        run: |
+          "$RUNNER_TEMP/ci" deal --shards ${{ matrix.shards }} --shard ${{ matrix.shard }} --heavy "internal/ci cmd/nova-tokens cmd/nova-sandbox cmd/nova-self-talk internal/update cmd/nova-secrets cmd/nova-sprint internal/sprint/store cmd/nova-swarm internal/sprint/refmodel internal/docs internal/sprint internal/redisconn internal/config internal/secrets"
+
+      - name: fetch origin/dev for the deprecated-imports ratchet
+        # internal/ci's TestDeprecatedImportsAllowlistOnlyShrinksAgainstMergeBase compares the
+        # allowlist against the merge base with refs/remotes/origin/dev and refuses when that
+        # ref is missing. actions/checkout creates it only on a run of dev itself; a dispatch
+        # on a tag, on main or on a branch has no such ref. One commit is enough: with no
+        # shared history in the shallow clone the test compares against HEAD's first parent.
+        if: contains(format(' {0} ', env.HOSTED_PKGS), '/internal/ci ')
+        shell: bash
+        run: git fetch --no-tags --depth=1 origin +dev:refs/remotes/origin/dev
+
+      - name: fetch dev's ancestry for a main run
+        # On main (the default branch) at a merge commit, the landed promotion,
+        # the classtests rule excuses a deletion only when the second parent's
+        # ancestry shows dev deleting it; a shallow ancestry is a red run naming
+        # this fetch. blob:none brings commits and trees only; --unshallow
+        # completes them, after the depth-1 fetch above as well as instead of it
+        # (`go run ./tools/ci help fetch-ancestry`).
+        if: github.ref_name == github.event.repository.default_branch
+        shell: bash
+        run: |
+          "$RUNNER_TEMP/ci" fetch-ancestry dev
+      - name: fetch sprint/foundation's ancestry for a promotion
+        # The classtests rule reads a promotion from git: on the promotion pull request
+        # (sprint/foundation into dev) dev's tip must be an ancestor of the head, and on a
+        # dev run at a merge commit (a merge-queue group, a push to dev) the second parent
+        # must be sprint/foundation's and its history excuses what it deleted. A shallow
+        # ancestry is a red run naming this fetch (internal/ci foundationHistoryFetch).
+        # A one-parent commit on a dev run has no promotion to read, so nothing is fetched.
+        # Nor is anything when origin has no sprint/foundation: dev is the integration branch and
+        # that branch lives only while a promotion is in flight; the step says so and the dev run
+        # excuses nothing (the merge is compared as everywhere), as a one-parent commit's is.
+        if: (github.event_name == 'push' && github.ref_name == 'dev')
+        shell: bash
+        run: |
+          "$RUNNER_TEMP/ci" fetch-ancestry --promotion sprint/foundation
+
+      - name: build the race-instrumented dependencies
+        # Every external package the live tree's tests import, -race, whatever this shard
+        # holds: the same list on every shard, so the entry saved next serves them all.
+        shell: bash
+        run: |
+          "$RUNNER_TEMP/ci" race-deps
+
+      - name: save the race build cache
+        # On a miss or a restore-keys fallback only: an exact hit is already the entry. Shards
+        # race for the key; the first reserves it and the rest log a warning and go on.
+        if: runner.environment == 'github-hosted' && steps.gocache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ${{ runner.os == 'macOS' && '~/Library/Caches/go-build' || '~/.cache/go-build' }}
+            ~/go/pkg/mod
+            ${{ env.GO_TOOL_DIR }}
+          key: ${{ steps.gocache.outputs.cache-primary-key }}
+
+      - name: install redis-server
+        # This job is the hosted full suite on `ubuntu-latest` and `macos-latest`. The controls
+        # spawn redis-server; they do not dial a bench. Finishes (or waits on) the background
+        # install started earlier in the job.
+        shell: bash
+        run: |
+          "$RUNNER_TEMP/ci" install-redis-server || { cat "${RUNNER_TEMP}/redis-install.log"; exit 1; }
+
+      - name: test (shard ${{ matrix.shard }} of ${{ matrix.shards }})
+        # -count=1: the restored cache must never answer for a test. -timeout 75s: this step
+        # starts 35-50 s into the job, so a package still running at 75 s would be cancelled
+        # by the cap anyway; Go's timeout fires first and names the test with a stack.
+        shell: bash
+        run: go test -race -count=1 -timeout 75s $HOSTED_PKGS
+
+  smoke:
+    needs: release-dry-run
+    # Exercises the BUILT BINARY. `go test` covers the packages; nothing else
+    # covered the executable a user actually runs, and what a release ships is
+    # the executable.
+    #
+    # HONEST SCOPE, because this job's own argument is that unstated coverage
+    # is a lie — and an enumerating sentence that omits items reads worse than
+    # a general one, so this says what IS smoked and stops.
+    #
+    # Smoked here: `nova-check nocode`, plus one property of `nova-check links`
+    # — that a symlinked `--dir` is resolved rather than passed over — and only
+    # the properties asserted in the steps below. Everything else in this
+    # repository — every other `nocode` flag and refusal path, every other
+    # `links` property, every other `nova-check` subcommand, and the
+    # `nova-fuse`, `nova-memory` and `nova-self-talk`
+    # commands — is covered by package tests and by nothing else.
+    #
+    # WINDOWS. The portable steps run there too. An earlier revision excluded
+    # the whole job on the grounds that its fixtures need an executable bit,
+    # chmod refusing a read, mkfifo or symlinks — true of four steps and false
+    # of the other three, which meant the binary was never smoked on the one
+    # platform whose defects this branch exists to have found. The steps that
+    # genuinely cannot run there are marked individually.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 2
+    env:
+      # Go appends .exe on Windows, so the name has to carry it or every step
+      # below looks for a binary that is not there. Keyed off matrix.os and NOT
+      # runner.os: the runner context is not available to a job-level env, and
+      # using it there does not warn — it invalidates the whole workflow file,
+      # which fails the run before a single step executes.
+      BIN: ${{ github.workspace }}/nova-check${{ startsWith(matrix.os, 'windows') && '.exe' || '' }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 2  # the classtests rule reads what HEAD deleted from its first parent
+
+      - name: download this runner's platform from the release build
+        id: download
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ${{ startsWith(matrix.os, 'ubuntu') && 'release-linux-amd64' || startsWith(matrix.os, 'macos') && 'release-darwin-arm64' || 'release-windows-amd64' }}
+          path: dist
+
+      - name: set up Go, to run the smoke assertions
+        id: setup_go
+        # The assertions are a Go test against the shipped executable
+        # (internal/shippedsmoke), whose one dependency beyond the standard library is testify; the
+        # binary under test is the artifact's, never one this toolchain builds.
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: name the Go caches under the runner's temp directory
+        # One spelling on all three operating systems (Windows keeps Go's cache under
+        # %LocalAppData%, the others under ~/.cache or ~/Library/Caches), so the cache steps
+        # below take one path. The value is the runner's own temp path, as bash prints it.
+        shell: bash
+        run: |
+          echo "GOCACHE=${RUNNER_TEMP}/gocache" >> "$GITHUB_ENV"
+          echo "GOMODCACHE=${RUNNER_TEMP}/gomodcache" >> "$GITHUB_ENV"
+
+      - name: restore the go build and module cache
+        id: gocache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ${{ env.GOCACHE }}
+            ${{ env.GOMODCACHE }}
+          key: ${{ runner.os }}-gosmoke-${{ hashFiles('go.mod') }}
+          restore-keys: |
+            ${{ runner.os }}-gosmoke-
+
+      - name: build tools/ci once
+        id: build_ci
+        # The verbs are built ONCE here and every later step calls the binary: `go run` compiles
+        # and links the tool again on every step that names it. internal/ci: TestToolsCIIsBuiltOnceAndNeverRun.
+        shell: bash
+        run: go build -o "$RUNNER_TEMP/ci${{ runner.os == 'Windows' && '.exe' || '' }}" ./tools/ci
+
+      - name: save the go build and module cache
+        # On a miss or a restore-keys fallback only, and before the tests, as ci.yml's
+        # test-hosted does: a cancelled job never reaches a post-step save.
+        if: steps.gocache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ${{ env.GOCACHE }}
+            ${{ env.GOMODCACHE }}
+          key: ${{ steps.gocache.outputs.cache-primary-key }}
+
+      - name: take this runner's shipped binary
+        id: take_binary
+        # THE BINARY THAT WOULD SHIP, not one built here: a binary built in this job is a
+        # different binary from the released one (different flags, no -trimpath, CGO as the
+        # host has it), and this job's whole argument is that what a release ships is the
+        # executable. If it is not in the artifact the verb lists the artifact and fails.
+        shell: bash
+        run: |
+          "$RUNNER_TEMP/ci${{ runner.os == 'Windows' && '.exe' || '' }}" take-shipped --os "${{ matrix.os }}" --tool nova-check --stamp v0.0.0-dry-run --dist dist --out "$BIN"
+
+      - name: smoke the shipped binary
+        id: smoke_test
+        # Seven assertions, each a subtest, so every one runs and reports even when an earlier
+        # one fails. The four that need an executable bit, chmod refusing a read, mkfifo or
+        # symlinks skip on Windows; the other three run there. `!cancelled()`: a red
+        # prerequisite must not hide what the assertions say, and a real cancellation still
+        # stops the job.
+        if: ${{ !cancelled() }}
+        shell: bash
+        env:
+          NOVA_SHIPPED_BIN: ${{ env.BIN }}
+        run: go test -tags shippedsmoke -count=1 -v -timeout 90s ./internal/shippedsmoke
+
+      - name: every assertion above reported
+        # THE GATE: where the job's verdict is stated in one place, naming every outcome and
+        # not only the first bad one. A step that fails stops the ones after it from running
+        # by default, so the steps that can run after a failure carry `if: ${{ !cancelled() }}`
+        # (and keep honouring a real cancellation), and this step names each outcome. The
+        # prerequisites are in the list as well as the assertions' test: a gate that states
+        # every outcome and omits the steps that produce the binary has a blind spot exactly
+        # where a green would be most misleading.
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          "$RUNNER_TEMP/ci${{ runner.os == 'Windows' && '.exe' || '' }}" aggregate --skip-ok '*' --what "smoke assertion(s) failed" \
+            "download the shipped binaries=${{ steps.download.outcome }}" "set up Go=${{ steps.setup_go.outcome }}" "build tools/ci=${{ steps.build_ci.outcome }}" \
+            "take this runner's binary=${{ steps.take_binary.outcome }}" "smoke the shipped binary=${{ steps.smoke_test.outcome }}"
+
+  release-build:
+    # THE RELEASE BUILD, run on every certification with nothing attached to a release. It
+    # exists because release.yml's first run is triggered by a TAG, and a tag is the one thing
+    # in this repository that cannot be quietly amended: a target that stopped compiling would
+    # be found by the release itself, with the tag already pushed. Here it is a red run
+    # before a release, not after a tag.
+    #
+    # THE SAME BUILD AS release.yml's `build` job, step for step: one leg per shipped
+    # platform, each running `go run ./tools/ghrelease build` (every cmd/*/ tool, -trimpath,
+    # CGO_ENABLED=0, the ldflags `ghrelease ldflags` composes) and uploading its binaries as
+    # the artifact `release-<goos>-<goarch>`. The matrix is the list in
+    # tools/ghrelease/release-targets, written out because a matrix cannot read a file;
+    # internal/ci's TestReleaseMatricesAreTheTargetsFile holds this matrix, release.yml's
+    # and the file equal. The one difference from the release is the stamp, v0.0.0-dry-run.
+    #
+    # ONE LEG PER PLATFORM, in parallel, under the two-minute cap. One runner cross-building
+    # all five platforms cold was cancelled by the cap inside the build (run 36357749379,
+    # about 146 s into the step). A leg compiles one platform: 45 s of CPU for the fifteen
+    # tools and their dependencies cold on a macOS runner, 1.2 s warm.
+    #
+    # THE GO BUILD CACHE, per platform, restored first and SAVED right after the build,
+    # before the upload, for the reason the test job gives: a post-step save never runs in a
+    # job the cap cancels. The key is the platform and go.mod/go.sum, so the entry holds the
+    # standard library and every module package compiled for that platform, and the tree's
+    # own packages compile in the leg. release-checks restores the linux-amd64 entry.
+    #
+    # Every action in this file is pinned by SHA. A mutable tag cannot change the action
+    # implementation underneath a previously reviewed workflow.
+    name: release-build (${{ matrix.goos }}, ${{ matrix.goarch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {goos: linux, goarch: amd64}
+          - {goos: linux, goarch: arm64}
+          - {goos: darwin, goarch: arm64}
+          - {goos: darwin, goarch: amd64}
+          - {goos: windows, goarch: amd64}
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 2  # the classtests rule reads what HEAD deleted from its first parent
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          # This job manages its cache below; setup-go's own saves in a post step.
+          cache: false
+
+      - name: restore the release build cache
+        id: gocache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: release-${{ matrix.goos }}-${{ matrix.goarch }}-${{ hashFiles('go.mod', 'go.sum') }}
+          restore-keys: |
+            release-${{ matrix.goos }}-${{ matrix.goarch }}-
+
+      - name: every shipped tool compiles for ${{ matrix.goos }}/${{ matrix.goarch }}
+        shell: bash
+        run: go run ./tools/ghrelease build --require-v-tag v0.0.0-dry-run "${{ matrix.goos }}" "${{ matrix.goarch }}" dist
+
+      - name: save the release build cache
+        # On a miss or a restore-keys fallback only: an exact hit is already the entry.
+        if: steps.gocache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ steps.gocache.outputs.cache-primary-key }}
+
+      - name: upload this platform's binaries
+        # So that release-dry-run sums the set this would ship and the smoke job runs THE
+        # BINARY THIS WOULD SHIP rather than one it builds itself with different flags.
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/
+          retention-days: 1
+          if-no-files-found: error
+
+  release-dry-run:
+    # release.yml's final job over the dry-run set, on one machine: every platform's
+    # artifact downloaded into one directory, every linux/amd64 binary asked for the stamp it
+    # was built from (`ghrelease stamp`, the runner is linux/amd64), then `ghrelease sums`,
+    # which refuses a directory that is not exactly the shipped set (every cmd/*/ tool for
+    # every platform in release-targets, nothing else) and writes and verifies SHA256SUMS over
+    # the whole of it. The release runs the same two verbs in the same order before it
+    # attaches the set. Nothing is built here, so nothing here can paper over a leg that did
+    # not build; the Go toolchain only runs the two verbs.
+    needs: release-build
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 2  # the classtests rule reads what HEAD deleted from its first parent
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: download every platform's binaries into one directory
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: dist
+
+      - name: every shipped binary reports the tag it was built from
+        shell: bash
+        run: |
+          # An artifact does not keep the executable bit.
+          chmod +x dist/*_v0.0.0-dry-run_linux_amd64
+          go run ./tools/ghrelease stamp v0.0.0-dry-run "dist/%s_v0.0.0-dry-run_linux_amd64"
+
+      - name: SHA256SUMS over the whole shipped set
+        shell: bash
+        run: go run ./tools/ghrelease sums v0.0.0-dry-run dist
+
+  release-checks:
+    # THE NEGATIVE CONTROLS OF THE STAMP ASSERTION, on this tree's real binaries: binaries
+    # built with no stamp fail it by name, the same tree stamped the way release.yml stamps
+    # passes, and one required tool that loses its stamp (the version symbol renamed, then
+    # removed) fails by name while the others are still asserted. A tag is the one thing here
+    # that cannot be quietly amended, and an assertion nothing has seen fail is a belief, so
+    # both outcomes are shown on every certification rather than first on a tag.
+    #
+    # What needs no binary is a unit test of tools/ghrelease and runs on every commit: the
+    # stamp refusals and the tag alphabet (`%`, `=`, white space), the usage errors, the stale
+    # exemption, the certified gate (newer failure after older success, a run in flight, one
+    # green) and the draft/publication boundary of the upload, each through a fake gh.
+    #
+    # The controls build the tools for this runner, linux/amd64, with the release's -trimpath
+    # and CGO_ENABLED=0, so the compiles are the ones release-build's linux-amd64 leg saved to
+    # its cache; it needs that leg for the entry, and each build here is a link. The binaries
+    # built here are fixtures and are never shipped or summed.
+    needs: release-build
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    env:
+      GOFLAGS: -trimpath
+      CGO_ENABLED: "0"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 2  # the classtests rule reads what HEAD deleted from its first parent
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: restore the linux-amd64 release build cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: release-linux-amd64-${{ hashFiles('go.mod', 'go.sum') }}
+          restore-keys: |
+            release-linux-amd64-
+
+      - name: the stamp assertion is red on an unstamped or mutated tool and green on the release's stamp
+        shell: bash
+        run: go run ./tools/ghrelease controls
+
+  perf-plan:
+    # Discovery compiles both test lists for every perf package. Run 37159703304 spends
+    # 70 s here, leaving only time for the first package before the two-minute cap.
+    # Discover once, vet every selected package, and save the compiled cache before
+    # handing every package and its exact test regexp to a separate Linux runner.
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      matrix: ${{ steps.discover.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 2  # the classtests rule reads what HEAD deleted from its first parent
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          # This job manages its cache below; setup-go's own saves in a post step.
+          cache: false
+
+      - name: restore the perf build cache
+        id: gocache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: perf-${{ hashFiles('go.mod', 'go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            perf-${{ hashFiles('go.mod', 'go.sum') }}-
+            perf-
+
+      - name: build tools/ci once
+        # The verbs are built ONCE here and every later step calls the binary: `go run` compiles
+        # and links the tool again on every step that names it. internal/ci: TestToolsCIIsBuiltOnceAndNeverRun.
+        shell: bash
+        run: go build -o "$RUNNER_TEMP/ci" ./tools/ci
+
+      - name: find the perf-tagged tests
+        id: discover
+        # An empty discovery is red; selection remains the live tree's tagged-minus-base
+        # test list, so new perf tests join without a workflow edit.
+        shell: bash
+        run: |
+          "$RUNNER_TEMP/ci" perf-tests
+
+      - name: vet the perf-tagged tests
+        run: go vet -tags perf $PERF_PKGS
+
+      - name: save the perf build cache
+        # On a miss or a restore-keys fallback only; before the tests, for the reason the test
+        # job gives.
+        if: steps.gocache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ steps.gocache.outputs.cache-primary-key }}
+
+  perf:
+    # One discovered package per runner; its tests remain serial and non-race on Linux.
+    # Each leg keeps the same test and job caps. fail-fast:false collects every result.
+    needs: perf-plan
+    strategy:
+      fail-fast: false
+      matrix:
+        run: ${{ fromJSON(needs.perf-plan.outputs.matrix) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    env:
+      PERF_PACKAGE: ${{ matrix.run.Package }}
+      PERF_RUN: ${{ matrix.run.Run }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 2  # the classtests rule reads what HEAD deleted from its first parent
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          # This job manages its cache below; setup-go's own saves in a post step.
+          cache: false
+
+      - name: restore the perf build cache
+        id: gocache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: perf-${{ hashFiles('go.mod', 'go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            perf-${{ hashFiles('go.mod', 'go.sum') }}-
+            perf-
+
+      - name: build tools/ci once
+        # The verbs are built ONCE here and every later step calls the binary: `go run` compiles
+        # and links the tool again on every step that names it. internal/ci: TestToolsCIIsBuiltOnceAndNeverRun.
+        shell: bash
+        run: go build -o "$RUNNER_TEMP/ci" ./tools/ci
+
+      - name: save the perf build cache
+        # On a miss or a restore-keys fallback only; before the tests, for the reason the test
+        # job gives.
+        if: steps.gocache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ steps.gocache.outputs.cache-primary-key }}
+
+      - name: install redis-server
+        # NOVA_CI fails a control that wants redis-server and cannot find it. The binary is
+        # not the fleet store.
+        run: |
+          "$RUNNER_TEMP/ci" install-redis-server
+
+      - name: the wall-clock tests, one at a time
+        # Discovery already compiles the selected test binaries and vets their files.
+        # Matrix values enter the shell through quoted environment variables.
+        shell: bash
+        run: go test -tags perf -count=1 -v -p 1 -parallel 1 -timeout 60s -run "$PERF_RUN" "$PERF_PACKAGE"
+
+  tick-gate:
+    # This job is the tick's wall clock: cmd/nova-sprint's TestTheDirtyTickDriveOnAStore drives
+    # 3 x 1000 cards over 8 members of width 64 against a redis-server with the world played
+    # every 10 ms, and asserts every tick under MaxTickWall (1 s) only when
+    # NOVA_SPRINT_GATE_STORE=1. In the functional tier (ci.yml's functional job, the
+    # container) the same drive asserts its invariants and prints the bound, because two
+    # cores shared by the store, the loop and the world driver holding the fence are not the
+    # store the bound is about.
+    #
+    # ON A BENCH, as ci.yml's functional legs run, with the machine's cores and not a
+    # leg's share: a wall clock measured on two cores of eight shared runners measures the
+    # neighbours. The drive takes about 25 s and its build under a minute warm, inside the
+    # two-minute cap; a cold cache that puts it over is read in the morning, not a CL gate.
+    # The bench is configuration, not a name in the tree: the coordinator sets the
+    # repository variable TICK_GATE_RUNS_ON to a JSON array of runner labels. Unset,
+    # the job does not run on a guess and certification-ok reports it not-configured.
+    if: vars.TICK_GATE_RUNS_ON != ''
+    runs-on: ${{ fromJSON(vars.TICK_GATE_RUNS_ON) }}
+    timeout-minutes: 2
+    steps:
+      - name: remove stale build dirs from the shared runner
+        shell: bash
+        run: |
+          [ -n "${GITHUB_WORKSPACE}" ] || exit 1
+          [ -d "${GITHUB_WORKSPACE}" ] || exit 0
+          [ -d "${GITHUB_WORKSPACE}/.git" ] || exit 0
+          if git -C "${GITHUB_WORKSPACE}" reset -q --hard && git -C "${GITHUB_WORKSPACE}" clean -ffdxq; then
+            exit 0
+          fi
+          find "${GITHUB_WORKSPACE}" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null || true
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: use the installed Go toolchain
+        # ci.yml's toolchain pick for the benches: the toolchain go.mod names under
+        # ~/sdk, else ~/go/bin.
+        shell: bash
+        run: |
+          set -euo pipefail
+          want=$(sed -n 's/^toolchain \(go[0-9][0-9a-z.]*\)$/\1/p' go.mod 2>/dev/null | head -1 || true)
+          [ -n "$want" ] || want=$(sed -n 's/^go \([0-9][0-9a-z.]*\)$/go\1/p' go.mod 2>/dev/null | head -1 || true)
+          sdk=
+          if [ -n "$want" ] && [ -x "$HOME/sdk/$want/bin/go" ]; then sdk="$HOME/sdk/$want/bin"; fi
+          for d in "$sdk" "$HOME/go/bin" /usr/local/go/bin; do
+            [ -n "$d" ] && [ -x "$d/go" ] && { echo "$d" >> "$GITHUB_PATH"; export PATH="$d:$PATH"; break; }
+          done
+          command -v go >/dev/null 2>&1 || { echo "no Go toolchain on PATH"; exit 1; }
+          go version
+
+      - name: cache Go on a hosted tick runner
+        if: runner.environment == 'github-hosted'
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ${{ runner.os == 'macOS' && '~/Library/Caches/go-build' || '~/.cache/go-build' }}
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-${{ runner.arch }}-tick-go-${{ hashFiles('go.mod') }}
+
+      - name: build the ci runner
+        run: go build -o "$RUNNER_TEMP/ci" ./tools/ci
+
+      - name: install redis-server
+        # The drive spawns a throwaway redis-server on loopback; it does not dial the
+        # fleet store.
+        run: '"$RUNNER_TEMP/ci" install-redis-server'
+
+      - name: the tick gate, against the bench's store
+        env:
+          NOVA_SPRINT_GATE_STORE: "1"
+        run: go test -tags functional -count=1 -timeout 100s -run '^TestTheDirtyTickDriveOnAStore$' ./cmd/nova-sprint
+
+  certification-ok:
+    # THE ONE CHECK THAT SAYS A RELEASE IS READY, and the reason it exists rather than a
+    # list of check names in a branch ruleset. It aggregates EXACTLY the jobs of this file
+    # — the certification tier — and `needs` on a matrix job is success only when EVERY leg
+    # succeeded, so a leg renamed out of existence shows up here as a missing success and
+    # not as silence. A red certification is a blocker for the next release, never for a
+    # CL, whose gate is ci-ok in ci.yml.
+    needs: [race-cache, test, smoke, release-build, release-dry-run, release-checks, perf-plan, perf, tick-gate]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      # The verdict runs from this tree's own Go, so the job checks the tree out and sets Go up
+      # first. A checkout or setup that fails fails the job before any verdict is stated (fail
+      # closed: certification-ok is red), and the verdict step is always() so a red need is
+      # named even when an earlier step went wrong.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: restore the go build and module cache
+        id: gocache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-gotools-${{ hashFiles('go.mod') }}
+          restore-keys: |
+            ${{ runner.os }}-gotools-
+
+      - name: build tools/ci once
+        # The verbs are built ONCE here and every later step calls the binary: `go run` compiles
+        # and links the tool again on every step that names it. internal/ci: TestToolsCIIsBuiltOnceAndNeverRun.
+        shell: bash
+        run: go build -o "$RUNNER_TEMP/ci" ./tools/ci
+
+      - name: save the go build and module cache
+        if: steps.gocache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ steps.gocache.outputs.cache-primary-key }}
+
+      - name: every job succeeded
+        if: always()
+        shell: bash
+        run: |
+          "$RUNNER_TEMP/ci" aggregate --skip-ok tick-gate \
+            race-cache=${{ needs.race-cache.result }} test=${{ needs.test.result }} smoke=${{ needs.smoke.result }} \
+            release-build=${{ needs.release-build.result }} release-dry-run=${{ needs.release-dry-run.result }} \
+            release-checks=${{ needs.release-checks.result }} perf-plan=${{ needs.perf-plan.result }} perf=${{ needs.perf.result }} \
+            tick-gate=${{ needs.tick-gate.result }}

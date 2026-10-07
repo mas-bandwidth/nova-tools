@@ -1,0 +1,1191 @@
+// Package sandbox is the wall of docs/SPEC-SANDBOX.md: one command run with its
+// filesystem reach cut down by the operating system. This file is the
+// platform-independent half: the Policy, path resolution and refusal of invalid paths,
+// per-platform root tables as data, and the temporary directory. The three
+// bodies that apply a policy live behind build tags beside it, and on a platform whose
+// backend is not built the body refuses: there is no fallback, no degraded
+// mode, and no partial wall.
+package sandbox
+
+import (
+	"fmt"
+	"maps"
+	"net"
+	"os"
+	"os/exec"
+	"os/user"
+	"path"
+	"path/filepath"
+	"runtime"
+	"slices"
+	"sort"
+	"strings"
+	"sync"
+	"time"
+)
+
+// Exit codes. The exec path uses the env(1)/timeout(1) convention rather than SPEC.md's
+// 0/1/2, because its status belongs to the wrapped command; the departure and its reason
+// are in the spec's exit-codes section.
+const (
+	ExitRefused     = 125 // nova-sandbox itself said NO before the command ran
+	ExitNotExecuted = 126 // the command could not be executed and the tool was still there
+	ExitNotFound    = 127 // the command could not be resolved on the caller's PATH
+	ExitRunaway     = 137 // the tree passed a process or memory cap and was killed by its group
+	ExitProbeFailed = 1   // probe/check grammar: the verb ran and said NO
+	ExitCannotRun   = 2   // probe/check grammar: the verb could not run
+	tmpDirName      = ".nova-sandbox-tmp"
+	// profileFilePrefx is the name NO file carries: the darwin body passes the profile
+	// inline with -p, and wrap_darwin_test.go asserts that nothing with this prefix is
+	// ever written. The companion profileFilePerm went with the file it was for.
+	profileFilePrefx = ".nova-sandbox-"
+)
+
+// Refusal is one independent problem, named by the flag it is about. A refusal
+// says what the input wants and every independent problem is reported at once, so the
+// callers below collect these rather than returning the first.
+type Refusal struct {
+	Reason string // the reason= token of the SANDBOX REFUSED line
+	Text   string // what was wrong and what the flag wants, never a file's contents
+}
+
+func (r Refusal) Error() string { return r.Reason + ": " + r.Text }
+
+// Code is the exit status this refusal costs. Every refusal of the tool's own is 125
+// except the one about a command that is not on the PATH at all.
+func (r Refusal) Code() int {
+	if r.Reason == "not_found" {
+		return ExitNotFound
+	}
+	return ExitRefused
+}
+
+func refuse(reason, format string, a ...any) Refusal {
+	return Refusal{Reason: reason, Text: fmt.Sprintf(format, a...)}
+}
+
+// Input is the argv as the caller typed it, before any resolution. Everything here is a
+// claim about this job; Build turns it into a Policy or into refusals.
+type Input struct {
+	Reads []string
+	// ReadsNoExec is --read-noexec: readable, recursively, and NOT EXECUTABLE. It exists
+	// because a --read root carries EXECUTE on both bodies -- landlock's read subset is
+	// EXECUTE|READ_FILE|READ_DIR and the darwin profile grants process-exec* globally --
+	// so naming a directory the job's own user can write to (a GOPATH/bin, a
+	// node_modules/.bin, a pip --user bin) lets the job RUN whatever is in it. A cache or
+	// a data tree wants reading without execution, and this form makes that distinction
+	// explicit so a cache cannot become executable merely because it is readable.
+	ReadsNoExec []string
+	Writes      []string
+	Cwd         string // empty: the first --write supplies the working directory
+	Tmp         string // empty: <first --write>/.nova-sandbox-tmp
+	Name        string // windows container name; accepted and ignored elsewhere
+	NetDeny     bool
+	NetListen   bool
+	NetAllow    []string // host:port the profile opens back up by name
+	// NetPorts is the TCP ports a --net-deny wall opens outbound, to any host, with the
+	// name resolver: a lane's wall profile (profile.go) names 443 and 22. Only with
+	// NetDeny; the darwin profile grants them, and on linux they are not granted (Landlock
+	// here handles no port rule), so there the denial is whole: fail closed.
+	NetPorts []int
+	// Deny is the paths no write of this wall may reach (a lane's wall profile: the
+	// coordinator's self). Every --write, the --cwd, the --tmp and HOME is refused when it
+	// is inside one or holds one, so the wall denies them by having no grant there.
+	Deny        []string
+	GPU         string   // --gpu none|metal; empty means none
+	Argv        []string // the command and its arguments, everything after --
+	Home        string   // the HOME value the child receives
+	LookAt      string   // PATH to resolve the command on; empty means the process's own
+	CallerHomes []string // homes to check against; empty uses callerHomes()
+	MaxProcs    int      // the tree's process cap; 0 is DefaultMaxProcs
+	MaxMem      int64    // the tree's resident-memory cap in bytes; 0 is DefaultMaxMem
+}
+
+// Policy is one run's wall: resolved, absolute, existing paths and nothing guessed. The
+// two named exceptions to "never guessed" are the Cwd and the Tmp, and both are recorded here as
+// the caller's own first --write.
+type Policy struct {
+	Reads       []string // resolved, read-only, recursive; carries EXECUTE
+	ReadsNoExec []string // resolved, read-only, recursive, and NOT executable
+	Writes      []string // resolved, read+write, recursive; the first is load-bearing
+	// LinkSpellings is the caller's cleaned absolute spelling of a --read, --read-noexec or
+	// --write whose resolved path differs from it (rule 5): following a symlink needs read
+	// on the link itself, which the resolved READn/WRITEn grants do not name.
+	LinkSpellings []string
+	OptRoots      []string // the platform's optional roots that EXIST on this machine
+	PathDirs      []string // existing directories from PATH granted file-read-metadata
+	Cwd           string
+	Tmp           string
+	Home          string
+	Name          string
+	NetDeny       bool
+	NetListen     bool
+	NetAllow      []string // host:port the profile opens back up by name
+	NetPorts      []int    // TCP ports a --net-deny wall opens outbound (Input.NetPorts)
+	Deny          []string // resolved paths no write reaches (Input.Deny)
+	GPUMode       GPUMode
+	MaxProcs      int      // the tree's process cap, set by Build; 0 on a hand-built policy is unbounded
+	MaxMem        int64    // the tree's resident-memory cap in bytes, set by Build; 0 is unbounded
+	Command       string   // the resolved absolute path of the executable
+	Argv          []string // Command followed by its arguments, verbatim
+
+	// Available is an optional seam for tests checking refusal when the backend is absent.
+	// When nil, package Available() is called.
+	Available func() (string, bool)
+
+	// Tick is an optional seam for tests of the caps: the channel a count of the tree
+	// waits on. When nil the tree is counted every second.
+	Tick <-chan time.Time
+
+	// LandlockABI is an optional seam for tests checking Linux Landlock ABI behavior.
+	// When nil, package landlockABI is called.
+	LandlockABI func() (int, bool)
+
+	// Extra is the file descriptors the child gets ABOVE stdin/stdout/stderr, in order,
+	// starting at fd 3. It is never built from caller input: Build leaves it nil and the
+	// only writer is the probe, which hands its child one end of a pipe carrying the
+	// one-time value that makes the child the probe's own (cmd/nova-sandbox/main.go).
+	// A descriptor cannot be forged by a caller who merely knows an argument, which is
+	// why the probe's guard stands on one.
+	Extra []*os.File
+}
+
+// Net is the value put on the SANDBOX OK line. There is no net=unenforced: a
+// denial that cannot be enforced is a refusal, not a word in a line.
+func (p *Policy) Net() string {
+	if p.NetDeny {
+		return "denied"
+	}
+	return "nopromise"
+}
+
+// CmdName is the base name of the executable, and it is the ONLY thing about the argv
+// that is ever printed: arguments carry task text and task text carries quoted rules.
+func (p *Policy) CmdName() string { return filepath.Base(p.Command) }
+
+// ancestorPaths is the set of paths whose proper ancestors the darwin profile grants
+// file-read-metadata on: every --read and --write, the --cwd, the temp directory — and
+// every OPTIONAL ROOT.
+//
+// A missing optional root was measured dogfooding
+// `nova-sandbox run` on a real card step: a `go build` inside the wall died with Go's own
+// message and nothing else — `go: cannot find GOROOT directory: 'go' binary is trimmed and
+// GOROOT is not set`. The profile granted `(allow file-read* (subpath "/opt/homebrew"))`,
+// so every FILE of the toolchain was readable; what was not readable was `/opt`. Homebrew
+// builds `go` with -trimpath, so it finds GOROOT by resolving its own executable, and
+// `/opt/homebrew/bin/go` is a symlink into `../Cellar/...`: resolving it lstats every
+// leading component and the lstat of `/opt` was denied. A wall that grants a directory and
+// denies the path TO it has granted nothing that a symlink must be followed to reach.
+//
+// The card worked around it with `--read /opt/homebrew/Cellar/go/1.27.1`, which looks like
+// a read grant and is really an ancestor grant — naming ANY path under /opt is what put
+// /opt in the literals. That is a workaround every caller would have to carry, for a root
+// the TOOL added and the caller never named, so it belongs here. The grant stays
+// file-read-metadata, which is stat and not a listing: /opt does not become readable, only
+// traversable, which is exactly what resolving a path through it needs.
+func (p *Policy) ancestorPaths() []string {
+	paths := append(append([]string{}, p.Reads...), p.ReadsNoExec...)
+	paths = append(paths, p.Writes...)
+	paths = append(paths, p.OptRoots...)
+	paths = append(paths, p.PathDirs...)
+	return append(paths, p.Cwd, p.Tmp)
+}
+
+// AncestorCount is how many file-read-metadata ancestor literals the darwin profile emits
+// for this policy: one per proper ancestor of every --read, --write, --cwd, --tmp path and
+// optional root, "/" excluded. It is the ancestors=<n> number on the SANDBOX OK line.
+func (p *Policy) AncestorCount() int {
+	return len(Ancestors(p.ancestorPaths()...))
+}
+
+// darwinOptRoots is the per-platform optional root table, as DATA and in one place
+// (spec: "they are data, not code"). The fixed darwin roots — /, /etc, /tmp, /var as
+// literals on the symlinks, the xcode_select_link literals, /System, /usr,
+// /bin, /sbin, /Library, /private/etc, /private/var/select, /dev, and write on
+// /dev/null and /dev/tty — are in profiles/darwin.sb.tmpl verbatim, because two
+// copies of a profile is one copy too many. What varies per machine is here. A
+// root is SKIPPED if it is absent; only a caller's path is refused for absence.
+// The directory /var/db/xcode_select_link points at is discovered
+// below, not listed here: CommandLineTools is already under /Library, and
+// Xcode.app/Contents is not (Contents, not Developer: the shims read
+// Info.plist and SharedFrameworks next to Developer).
+var darwinOptRoots = []string{"/opt/homebrew", "/opt/local"}
+
+// xcodeSelectLinks are the two spellings of the symlink the Xcode shims read.
+// OptionalRoots follows them outside the wall so the developer dir can be a
+// skip-if-absent root; the profile's own grant of the link is the template's.
+var xcodeSelectLinks = []string{"/var/db/xcode_select_link", "/private/var/db/xcode_select_link"}
+
+// fixedDarwinPrefixes are the roots the template already grants as subpaths. An optional
+// root under one of them is dropped rather than emitted twice.
+var fixedDarwinPrefixes = []string{"/usr", "/bin", "/sbin", "/System", "/Library", "/private/etc", "/private/var/select", "/dev"}
+
+// OptionalRoots is the machine's answer to the table above plus the directory of the
+// resolved command, which is a root for exactly this run (the spec's roots table names
+// it on all three platforms), plus the directory /var/db/xcode_select_link points at
+// when that directory is not already a fixed root.
+func OptionalRoots(command string) []string {
+	var out []string
+	seen := map[string]bool{}
+	candidates := append([]string{}, darwinOptRoots...)
+	candidates = append(candidates, xcodeSelectDeveloperDirs()...)
+	if command != "" {
+		candidates = append(candidates, filepath.Dir(command))
+	}
+	for _, r := range candidates {
+		if r == "" || r == "/" || seen[r] {
+			continue
+		}
+		if underAny(r, fixedDarwinPrefixes) {
+			continue
+		}
+		if fi, err := os.Stat(r); err != nil || !fi.IsDir() {
+			continue // skip-if-absent: /opt/local exists on a Mac with MacPorts and no other
+		}
+		seen[r] = true
+		out = append(out, r)
+	}
+	return out
+}
+
+// underAny reports whether path is one of the prefixes or lies beneath one.
+func underAny(path string, prefixes []string) bool {
+	return slices.ContainsFunc(prefixes, func(p string) bool {
+		return path == p || strings.HasPrefix(path, p+string(os.PathSeparator))
+	})
+}
+
+// xcodeSelectDeveloperDirs is the directory /var/db/xcode_select_link points at,
+// asked of the host the way --go asks go env and never guessed. Both
+// spellings of the link are read because /var is a symlink to /private/var.
+// An absent link is skip-if-absent, like /opt/local. The target is not yet
+// filtered against fixedDarwinPrefixes; OptionalRoots drops one that already
+// sits under /Library (CommandLineTools) so the profile does not grant it twice.
+//
+// xcode-select -p prints .../Contents/Developer. The shims also stat Info.plist
+// and load SharedFrameworks next to Developer, so the grant is Contents, not
+// Developer: measured, Developer alone is "couldn't stat Xcode's Info.plist"
+// and a dyld deny on DVTSystemPrerequisites.
+func xcodeSelectDeveloperDirs() []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, link := range xcodeSelectLinks {
+		target, err := os.Readlink(link)
+		if err != nil || target == "" {
+			continue
+		}
+		if !filepath.IsAbs(target) {
+			target = filepath.Join(filepath.Dir(link), target)
+		}
+		if got, err := filepath.EvalSymlinks(target); err == nil {
+			target = got
+		}
+		if strings.HasSuffix(target, filepath.FromSlash("/Contents/Developer")) {
+			target = filepath.Dir(target) // .../Contents, which holds Info.plist and SharedFrameworks
+		}
+		if seen[target] {
+			continue
+		}
+		seen[target] = true
+		out = append(out, target)
+	}
+	return out
+}
+
+// callerHomes is every directory that is a HOME of the person running the tool: the
+// passwd home and $HOME as THIS PROCESS inherited it.
+func callerHomes() []string {
+	return defaultCallerHomes()
+}
+
+func defaultCallerHomes() []string {
+	var out []string
+	add := func(path string) {
+		if strings.TrimSpace(path) == "" {
+			return
+		}
+		if got, err := filepath.EvalSymlinks(path); err == nil {
+			path = got
+		}
+		if got, err := filepath.Abs(path); err == nil {
+			path = got
+		}
+		for _, h := range out {
+			if h == path {
+				return
+			}
+		}
+		out = append(out, path)
+	}
+	if u, err := user.Current(); err == nil {
+		add(u.HomeDir)
+	}
+	add(os.Getenv("HOME"))
+	return out
+}
+
+// commandDirRefusal is the home guard on the roots table's "the directory of the resolved
+// command". That entry is in the spec for all three platforms and it stays, because a
+// command cannot be exec'd from a directory the wall denies — but it is a root the CALLER
+// never typed, and OptionalRoots granted it with no guard at all. A command placed at
+// ~/x.sh therefore handed the profile (allow file-read* (subpath "/Users/<user>")) — the
+// whole of .ssh, .config/gh and the login keychain — while the SANDBOX OK line said
+// read=0. Measured at 1922f9d with a key planted beside the command: the key printed.
+//
+// The roots section says "The home directory is never a root", so the guard is a refusal
+// rather than a silent drop: dropping it would leave a command that cannot be read and a
+// run that dies at exec with no reason given. A directory the caller already named in
+// --read or --write is not refused: the caller has explicitly granted it, so nothing new
+// is granted there.
+func commandDirRefusal(command string, named []string, homes []string) *Refusal {
+	dir := filepath.Dir(command)
+	if got, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = got
+	}
+	if insideAny(dir, named) {
+		return nil
+	}
+	for _, home := range homes {
+		// A home the caller pointed INTO the job is not the home this guard is about:
+		// The tool's own $HOME is the job's data home, which is inside a
+		// --write by construction, so guarding it would refuse every command installed
+		// anywhere above the job directory — the tool's own binary included. Measured
+		// while writing this: `nova-sandbox probe --write <job>` refused itself.
+		if insideAny(home, named) {
+			continue
+		}
+		if dir != home && !Inside(home, dir) {
+			continue
+		}
+		r := refuse("bad_read",
+			"the directory of %s is %s, a home directory, and the home directory is never a root: the directory of the resolved command IS a read root, so wrapping a command that lives there would make the whole of %s readable inside the wall. Install the command in a directory of its own, or name the directory in the caller's own --read",
+			command, dir, home)
+		return &r
+	}
+	return nil
+}
+
+// Inside reports whether path is dir or lies beneath it. Both are expected resolved.
+//
+// AND "BENEATH" IS A QUESTION FOR THE FILESYSTEM, NOT FOR A STRING PREFIX. This was
+// `strings.HasPrefix`, a case-SENSITIVE comparison, and APFS is case-INsensitive by default
+// (NTFS too): a `--secret` spelled in another case than the `--read` it actually sits inside
+// passed the secret-inside-allow check and the probe reported a pass, and a `HOME`
+// inside a `--write` under a spelling the filesystem folds was refused `home_outside` -- the
+// same fold, read the other way about, refusing a configuration that is sound.
+// `filepath.EvalSymlinks` does not fold case on darwin, so a resolved path does not close it,
+// and lowercasing is not the repair: on a case-SENSITIVE filesystem `/x/Read` and `/x/read` are
+// two directories and folding them would answer a neighbour wrong.
+//
+// So the answers, in order:
+//   - `path == dir` is inside, which is this function's own contract and the swarm's
+//     `insideDir` differs from it deliberately;
+//   - the string prefix stays as the CHEAP first answer, where it says yes it is right;
+//   - where it says no and dir EXISTS, `os.SameFile` against path and each of its ancestors
+//     that exists -- device and inode is the question the filesystem itself answers, so it
+//     holds for a case fold, for one directory mounted at two names and for a hard-linked
+//     directory. The walk starts at PATH, not its parent, because a path that IS dir under
+//     another spelling is inside it by the contract above. When dir exists this walk is the
+//     whole answer: an ancestor of path at dir's own depth either is dir or is not;
+//   - where dir is NOT there, nothing has an inode and the name is all there is: the prefix
+//     again, case-insensitively, and only where the filesystem is MEASURED to fold
+//     (dirFoldsCase, not a platform assumption). Every caller path of this package exists,
+//     so this last answer is defence in depth.
+//
+// This runs while the policy is built, never per operation inside the wall.
+func Inside(path, dir string) bool {
+	if path == dir {
+		return true
+	}
+	under := strings.TrimSuffix(dir, string(os.PathSeparator)) + string(os.PathSeparator)
+	if strings.HasPrefix(path, under) {
+		return true
+	}
+	if target, err := os.Stat(dir); err == nil {
+		for at := path; ; {
+			if fi, err := os.Stat(at); err == nil && os.SameFile(fi, target) {
+				return true
+			}
+			up := filepath.Dir(at)
+			if up == at {
+				return false // the root is its own parent: the walk is over
+			}
+			at = up
+		}
+	}
+	return len(path) > len(under) && strings.EqualFold(path[:len(under)], under) && dirFoldsCase(dir)
+}
+
+// insideAny is Inside over a list, and it is what rules 9 and 13 ask of HOME and --cwd.
+func insideAny(path string, dirs []string) bool {
+	return slices.ContainsFunc(dirs, func(d string) bool { return Inside(path, d) })
+}
+
+// DeletesIn reports whether the wall lets the command delete beneath dir: unlink, rmdir
+// and rename-away. Every --write root qualifies, the data home included: what the command
+// may create there it may remove, and a database commits by unlinking its rollback journal.
+// The temp directory and the working directory are inside the write set, so they qualify
+// by lying under a --write. A path outside every --write does not (docs/SPEC-SANDBOX.md,
+// "deletes-in-every-write-root").
+func (p *Policy) DeletesIn(dir string) bool {
+	if p == nil || dir == "" || len(p.Writes) == 0 {
+		return false
+	}
+	return insideAny(dir, p.Writes)
+}
+
+// DeleteRoots is the --write roots the wall lets the command delete beneath, in the order
+// they were given: the set the SANDBOX OK line names on deletes= (docs/SPEC-SANDBOX.md,
+// "deletes-in-every-write-root"). It is read off DeletesIn, so the line says what the
+// rule grants and not what a second list believes it grants.
+func (p *Policy) DeleteRoots() []string {
+	if p == nil {
+		return nil
+	}
+	roots := make([]string, 0, len(p.Writes))
+	for _, w := range p.Writes {
+		if p.DeletesIn(w) {
+			roots = append(roots, w)
+		}
+	}
+	return roots
+}
+
+// sbplMetacharacters are the characters a path may not carry ON DARWIN. The ancestor
+// literals of the darwin profile put a path INTO the profile text (the -D parameters do
+// not), so a path holding a quote, a backslash or a paren could rewrite the policy — and a
+// measured run with a path holding a blank and a paren aborted at exit 134 (spec, "to
+// verify at build" item 2). The decision taken here is the first of the two the spec
+// offered: the tool REFUSES such a path, naming the flag, rather than trying to quote it.
+const sbplMetacharacters = "\"\\()"
+
+// loopbackHostText reports whether host names the machine's own loopback: the literal
+// "localhost" (case-insensitively) or a numeric address in 127.0.0.0/8 or ::1. It is
+// deliberately narrower than "resolves to loopback": --net-allow opens a
+// single named port back up for a local-model provider, never a promise a DNS answer
+// could widen.
+func loopbackHostText(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+func badPathText(path string) string { return badPathTextFor(runtime.GOOS, path) }
+
+// badPathTextFor is badPathText with the platform named, so that a test on one machine can
+// ask what the tool would say on another.
+//
+// The metacharacter set is DARWIN'S, and applying it everywhere was the windows failure of
+// run 34663812025: a backslash is windows's path separator, so every absolute windows path
+// carried one and every --write was SANDBOX REFUSED reason=bad_write before the run reached
+// the refusal it was about. `%ProgramFiles(x86)%` is in the spec's own windows root table,
+// parens and all. Neither the Landlock body nor the AppContainer one writes a path into a
+// policy TEXT — they pass file descriptors and ACEs — so neither has this hazard. A control
+// character is refused on every platform: no caller means one, and a path holding one
+// corrupts any line that prints it.
+func badPathTextFor(goos, path string) string {
+	if i := strings.IndexAny(path, sbplMetacharacters); goos == "darwin" && i >= 0 {
+		return fmt.Sprintf("holds %q, which the generated policy cannot carry", string(path[i]))
+	}
+	for _, r := range path {
+		if r < 0x20 || r == 0x7f {
+			return "holds a control character, which the generated policy cannot carry"
+		}
+	}
+	return ""
+}
+
+// noteSpelling records the caller's cleaned absolute spelling of a granted path when it is not
+// the resolved path (rule 5), so DarwinProfile can grant read on the link itself: following a
+// symlink needs read on the link, and the READn/WRITEn grants name only the resolved
+// directory (security#67 finding 1). The spelling goes into the profile text, so it is
+// checked with badPathText like any other path that does.
+func (p *Policy) noteSpelling(bad []Refusal, reason, flag, raw, resolved string) []Refusal {
+	spelling := filepath.Clean(raw)
+	if spelling == resolved || slices.Contains(p.LinkSpellings, spelling) {
+		return bad
+	}
+	if text := badPathText(spelling); text != "" {
+		return append(bad, refuse(reason, "%s %s %s", flag, spelling, text))
+	}
+	p.LinkSpellings = append(p.LinkSpellings, spelling)
+	return bad
+}
+
+// resolvePath validates one caller path as absolute and existing, with symlinks resolved. A
+// relative path is refused with the absolute form it WOULD have taken, so the refusal is
+// a line the caller can edit rather than a complaint.
+func resolvePath(reason, flag, raw string) (string, *Refusal) {
+	if strings.TrimSpace(raw) == "" {
+		r := refuse(reason, "%s wants an absolute directory path: %s <dir>", flag, flag)
+		return "", &r
+	}
+	if !filepath.IsAbs(raw) {
+		abs, err := filepath.Abs(raw)
+		if err != nil {
+			abs = raw
+		}
+		r := refuse(reason, "%s %s is relative; %s wants an absolute path, which here would be %s", flag, raw, flag, abs)
+		return "", &r
+	}
+	fi, err := os.Stat(raw)
+	if err != nil {
+		r := refuse(reason, "%s %s does not exist; every path is named by the caller and none is created", flag, raw)
+		return "", &r
+	}
+	if !fi.IsDir() {
+		r := refuse(reason, "%s %s is not a directory; %s wants a directory", flag, raw, flag)
+		return "", &r
+	}
+	resolved, err := filepath.EvalSymlinks(raw)
+	if err != nil {
+		r := refuse(reason, "%s %s could not be resolved: %v", flag, raw, err)
+		return "", &r
+	}
+	resolved, err = filepath.Abs(resolved)
+	if err != nil {
+		r := refuse(reason, "%s %s could not be made absolute: %v", flag, raw, err)
+		return "", &r
+	}
+	if bad := badPathText(resolved); bad != "" {
+		r := refuse(reason, "%s %s %s", flag, resolved, bad)
+		return "", &r
+	}
+	return resolved, nil
+}
+
+// ResolveCallerFile validates a caller path that names a FILE rather than a
+// directory: --secret is the only one, and before this it was the one caller path the
+// tool never resolved and never metacharacter-checked. It is absolute, it exists, it is
+// not a directory, its symlinks are followed, and it carries nothing the generated policy
+// cannot. A path that does not exist is a refusal, because a probe that "could not read"
+// a file that was never there is a pass about nothing.
+func ResolveCallerFile(flag, raw string) (string, *Refusal) {
+	if strings.TrimSpace(raw) == "" {
+		r := refuse("bad_read", "%s wants a path to the file this probe proves it cannot read: %s <path>", flag, flag)
+		return "", &r
+	}
+	if !filepath.IsAbs(raw) {
+		abs, err := filepath.Abs(raw)
+		if err != nil {
+			abs = raw
+		}
+		r := refuse("bad_read", "%s %s is relative; %s wants an absolute path, which here would be %s", flag, raw, flag, abs)
+		return "", &r
+	}
+	fi, err := os.Stat(raw)
+	if err != nil {
+		r := refuse("bad_read", "%s %s does not exist; a probe against a file that is not there proves nothing", flag, raw)
+		return "", &r
+	}
+	if fi.IsDir() {
+		r := refuse("bad_read", "%s %s is a directory; %s wants the credential file itself", flag, raw, flag)
+		return "", &r
+	}
+	resolved, err := filepath.EvalSymlinks(raw)
+	if err != nil {
+		r := refuse("bad_read", "%s %s could not be resolved: %v", flag, raw, err)
+		return "", &r
+	}
+	resolved, err = filepath.Abs(resolved)
+	if err != nil {
+		r := refuse("bad_read", "%s %s could not be made absolute: %v", flag, raw, err)
+		return "", &r
+	}
+	if bad := badPathText(resolved); bad != "" {
+		r := refuse("bad_read", "%s %s %s", flag, resolved, bad)
+		return "", &r
+	}
+	return resolved, nil
+}
+
+// Build turns an Input into a Policy, or into every independent refusal it holds. It
+// creates exactly one directory, and only when the rest of the input is sound.
+func Build(in Input) (*Policy, []Refusal) {
+	return build(in, callerHomes)
+}
+
+func build(in Input, homesFn func() []string) (*Policy, []Refusal) {
+	var bad []Refusal
+	p := &Policy{NetDeny: in.NetDeny, NetListen: in.NetListen, Name: in.Name, MaxProcs: in.MaxProcs, MaxMem: in.MaxMem}
+	if p.MaxProcs <= 0 {
+		p.MaxProcs = DefaultMaxProcs
+	}
+	if p.MaxMem <= 0 {
+		p.MaxMem = DefaultMaxMem
+	}
+
+	// The local GPU capability is explicit and bounded. The default
+	// is none; metal records intent without widening mach-lookup or granting
+	// blanket device access, whose minimum mechanisms are still unmeasured.
+	if mode, r := ParseGPUMode(in.GPU); r != nil {
+		bad = append(bad, *r)
+	} else {
+		p.GPUMode = mode
+	}
+
+	// --net-deny and --net-listen ask for opposite things, and a tool that picked one
+	// would be deciding which of the two the caller meant.
+	if in.NetDeny && in.NetListen {
+		bad = append(bad, refuse("bad_net", "--net-deny and --net-listen together: one asks for an enforced denial and the other for an inbound grant; pass at most one"))
+	}
+
+	// --net-allow names one host:port the wall opens back up: a keyless
+	// local-model provider on its own loopback port, never a wider promise. An entry that
+	// does not split into host and port, or whose host is not the machine's own loopback,
+	// is refused rather than carried into a profile that would grant more than a loopback
+	// address, or that sandbox-exec would reject outright: measured on darwin, the SBPL
+	// form only accepts a literal "localhost" or "*" for host, never a numeric address
+	// (`sandbox-exec: host must be * or localhost in network address`), so this is also
+	// where a caller's numeric loopback (127.0.0.1, ::1) is confirmed loopback and DarwinProfile
+	// is freed to emit the one literal darwin's compiler accepts.
+	for _, hp := range in.NetAllow {
+		host, port, err := net.SplitHostPort(hp)
+		if err != nil || host == "" || port == "" {
+			bad = append(bad, refuse("bad_net", "--net-allow wants host:port and got %s: --net-allow <host:port>", hp))
+			continue
+		}
+		if badPathText(host) != "" || badPathText(port) != "" {
+			bad = append(bad, refuse("bad_net", "--net-allow host:port %s carries a character the generated policy cannot", hp))
+			continue
+		}
+		if !loopbackHostText(host) {
+			bad = append(bad, refuse("bad_net", "--net-allow %s names a host that is not the machine's own loopback (localhost, 127.0.0.0/8 or ::1); --net-allow opens a local provider's port back up, never a remote address", hp))
+			continue
+		}
+		p.NetAllow = append(p.NetAllow, net.JoinHostPort(host, port))
+	}
+	if len(in.NetPorts) > 0 && !in.NetDeny {
+		bad = append(bad, refuse("bad_net", "TCP ports %v were named without --net-deny: the ports are what a denied network opens, and an open network has nothing to open", in.NetPorts))
+	}
+	for _, port := range in.NetPorts {
+		if port < 1 || port > 65535 {
+			bad = append(bad, refuse("bad_net", "TCP port %d is no port: it wants 1 to 65535", port))
+			continue
+		}
+		p.NetPorts = append(p.NetPorts, port)
+	}
+	for _, raw := range in.Deny {
+		p.Deny = append(p.Deny, denyPath(raw))
+	}
+
+	if len(in.Argv) == 0 {
+		bad = append(bad, refuse("no_command", "nothing after --; usage: nova-sandbox --read <dir>... --write <dir>... -- <command> <args...>"))
+	}
+	if len(in.Writes) == 0 {
+		bad = append(bad, refuse("bad_write", "--write is required and has no default: refusing to guess which directory this job may write. Name it: --write <dir>"))
+	}
+
+	for _, raw := range in.Reads {
+		got, r := resolvePath("bad_read", "--read", raw)
+		if r != nil {
+			bad = append(bad, *r)
+			continue
+		}
+		p.Reads = append(p.Reads, got)
+		bad = p.noteSpelling(bad, "bad_read", "--read", raw, got)
+	}
+	for _, raw := range in.ReadsNoExec {
+		got, r := resolvePath("bad_read", "--read-noexec", raw)
+		if r != nil {
+			bad = append(bad, *r)
+			continue
+		}
+		p.ReadsNoExec = append(p.ReadsNoExec, got)
+		bad = p.noteSpelling(bad, "bad_read", "--read-noexec", raw, got)
+	}
+	for _, raw := range in.Writes {
+		got, r := resolvePath("bad_write", "--write", raw)
+		if r != nil {
+			bad = append(bad, *r)
+			continue
+		}
+		p.Writes = append(p.Writes, got)
+		bad = p.noteSpelling(bad, "bad_write", "--write", raw, got)
+	}
+	// A path given to both lists is a refusal naming both flags, never a silent merge
+	// The caller asked for two different things about one directory.
+	for _, r := range p.Reads {
+		for _, w := range p.Writes {
+			if r == w {
+				bad = append(bad, refuse("bad_read", "%s is in both --read and --write; name it once, and --write already carries read", r))
+			}
+		}
+	}
+	// The same rule for the no-exec list, and for the two read lists against each other.
+	// A path in both --read and --read-noexec asks for execute and for no execute at
+	// once, and a tool that picked one would be deciding which the caller meant; a path in
+	// --read-noexec and --write is the same contradiction, because --write carries execute
+	// on both bodies.
+	for _, n := range p.ReadsNoExec {
+		for _, r := range p.Reads {
+			if n == r {
+				bad = append(bad, refuse("bad_read", "%s is in both --read and --read-noexec; one carries execute and the other takes it away, so name it once", n))
+			}
+		}
+		for _, w := range p.Writes {
+			if n == w {
+				bad = append(bad, refuse("bad_read", "%s is in both --read-noexec and --write; --write carries read AND execute, so the no-exec grant would buy nothing. Name it once", n))
+			}
+		}
+	}
+	if len(p.Writes) == 0 {
+		return nil, bad // everything below is about the first --write
+	}
+	first := p.Writes[0]
+
+	// The cwd defaults to the first --write and must resolve inside the write set.
+	p.Cwd = first
+	if in.Cwd != "" {
+		got, r := resolvePath("bad_cwd", "--cwd", in.Cwd)
+		switch {
+		case r != nil:
+			bad = append(bad, *r)
+		case !insideAny(got, p.Writes):
+			bad = append(bad, refuse("bad_cwd", "--cwd %s is outside every --write; the working directory is inside the wall, and its default is the first --write (%s)", got, first))
+		default:
+			p.Cwd = got
+		}
+	}
+
+	// Temp is inside the wall, and this is the one directory the tool creates.
+	if in.Tmp != "" {
+		got, r := resolvePath("bad_write", "--tmp", in.Tmp)
+		switch {
+		case r != nil:
+			bad = append(bad, *r)
+		case !insideAny(got, p.Writes):
+			bad = append(bad, refuse("bad_write", "--tmp %s is outside every --write; the temp directory is inside the wall", got))
+		default:
+			p.Tmp = got
+		}
+	}
+	// The default temp directory is created at the BOTTOM of this function, after the
+	// command has been resolved, because this comment's own promise — "only when the rest
+	// of the input is sound" — was false for a run refused at not_found or not_executable:
+	// a refused `nova-sandbox --write <fresh> -- no-such-cmd` left .nova-sandbox-tmp in a
+	// directory it never ran in. A refusal makes nothing.
+	makeTmp := in.Tmp == ""
+
+	// The caller points the child's HOME into the write set, and a HOME outside
+	// every --write is a refusal BEFORE the command runs. A wall that lets the job start
+	// and then kills its first git command is the silent sandbox this refusal exists to prevent.
+	home := in.Home
+	if strings.TrimSpace(home) == "" {
+		bad = append(bad, refuse("home_outside", "HOME is unset; rule 9 wants HOME set to a data home inside a --write, because almost every tool a worker runs derives a path from it"))
+	} else {
+		got, err := filepath.EvalSymlinks(home)
+		if err != nil {
+			bad = append(bad, refuse("home_outside", "HOME %s does not resolve: %v; rule 9 wants HOME set to an existing directory inside a --write", home, err))
+		} else if got, _ = filepath.Abs(got); !insideAny(got, p.Writes) {
+			bad = append(bad, refuse("home_outside", "HOME %s is outside every --write; set HOME to a per-job data home inside one (a --read is not enough: the first config write dies there)", got))
+		} else if m := badPathText(got); m != "" {
+			bad = append(bad, refuse("home_outside", "HOME %s %s; set HOME to a data home inside a --write whose path the generated profile can carry", got, m))
+		} else {
+			p.Home = got
+		}
+	}
+
+	homes := in.CallerHomes
+	if len(homes) == 0 && homesFn != nil {
+		homes = homesFn()
+	}
+
+	// The command is resolved on the caller's PATH, outside the wall.
+	if len(in.Argv) > 0 {
+		cmd, r := resolveCommand(in.Argv[0], in.LookAt)
+		if r != nil {
+			bad = append(bad, *r)
+		} else {
+			p.Command = cmd
+			p.Argv = append([]string{cmd}, in.Argv[1:]...)
+			if hr := commandDirRefusal(cmd, append(append([]string{}, p.Reads...), p.Writes...), homes); hr != nil {
+				bad = append(bad, *hr)
+			}
+		}
+	}
+	// The deny list (buds-in-the-wall-r.w5): no write may reach a denied path, from
+	// above it or from inside it. The wall grants writing only where it is told to, so a
+	// denied path no grant covers is denied on both bodies; this is the refusal that keeps
+	// a grant from covering one.
+	bad = append(bad, deniedWrites(p)...)
+	if len(bad) > 0 {
+		return nil, bad
+	}
+	// The linux system read roots are not a field here and
+	// not a caller switch. The linux backend's linuxReadRoots is the one policy, applied
+	// by addRules: a harness that cannot resolve a name inside the sandbox is a
+	// sandbox bug, not a network one.
+	// After all policy checks pass, the tool creates only the child temporary directory.
+	if makeTmp {
+		tmp := filepath.Join(first, tmpDirName)
+		if err := os.MkdirAll(tmp, 0o700); err != nil {
+			return nil, []Refusal{refuse("bad_write", "could not create %s, the one directory this tool makes: %v", tmp, err)}
+		}
+		if got, err := filepath.EvalSymlinks(tmp); err == nil {
+			p.Tmp = got
+		} else {
+			p.Tmp = tmp
+		}
+	}
+	p.OptRoots = OptionalRoots(p.Command)
+	lookIn := in.LookAt
+	if lookIn == "" {
+		lookIn = os.Getenv("PATH")
+	}
+	p.PathDirs = PathDirectoriesWith(lookIn, p.Reads, p.Writes, p.OptRoots, homes)
+	return p, nil
+}
+
+// denyPath is a denied path as the checks compare it: resolved through its symlinks
+// when it is there, else made absolute and clean. A denied path that is not on this
+// machine is still compared by its name, so a write cannot be granted above it before it
+// is made.
+func denyPath(raw string) string {
+	if got, err := filepath.EvalSymlinks(raw); err == nil {
+		raw = got
+	}
+	if abs, err := filepath.Abs(raw); err == nil {
+		raw = abs
+	}
+	return filepath.Clean(raw)
+}
+
+// deniedWrites is a refusal for every write of p (each --write, the --cwd, the --tmp and
+// HOME) that is a denied path, lies inside one, or holds one.
+func deniedWrites(p *Policy) []Refusal {
+	var bad []Refusal
+	writes := append([]string{}, p.Writes...)
+	for _, extra := range []string{p.Cwd, p.Tmp, p.Home} {
+		if extra != "" && !slices.Contains(writes, extra) {
+			writes = append(writes, extra)
+		}
+	}
+	for _, d := range p.Deny {
+		for _, w := range writes {
+			if Inside(w, d) || Inside(d, w) {
+				bad = append(bad, refuse("denied_write", "%s is a write of this wall and %s is denied to it (the profile's deny list): no write may be a denied path, lie inside one or hold one", w, d))
+			}
+		}
+	}
+	return bad
+}
+
+// PathDirectoriesWith extracts existing directories from lookIn (PATH) that are not already
+// covered by fixed prefixes, optional roots, or the caller's reads/writes, skipping the
+// given homes.
+// On darwin, these directories receive file-read-metadata so that commands installed
+// on PATH (e.g. ~/.local/bin) can be resolved and executed by name, while keeping
+// their file contents unreadable.
+func PathDirectoriesWith(lookIn string, reads, writes, optRoots, homes []string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, raw := range filepath.SplitList(lookIn) {
+		raw = strings.TrimSpace(raw)
+		if raw == "" || raw == "." {
+			continue
+		}
+		abs, err := filepath.Abs(raw)
+		if err != nil {
+			continue
+		}
+		fi, err := os.Stat(abs)
+		if err != nil || !fi.IsDir() {
+			continue
+		}
+		resolved, err := filepath.EvalSymlinks(abs)
+		if err != nil {
+			resolved = abs
+		}
+		// Skip if it is a caller home directory itself
+		isHome := false
+		for _, h := range homes {
+			if resolved == h || abs == h {
+				isHome = true
+				break
+			}
+		}
+		if isHome {
+			continue
+		}
+		for _, d := range []string{abs, resolved} {
+			if d == "" || d == "/" || seen[d] {
+				continue
+			}
+			if runtime.GOOS == "darwin" && underAny(d, fixedDarwinPrefixes) {
+				continue
+			}
+			if underAny(d, optRoots) || underAny(d, reads) || underAny(d, writes) {
+				continue
+			}
+			seen[d] = true
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
+// resolveCommand is the PATH lookup and the pre-flight of the exit-codes section. The
+// executability check happens HERE, outside the wall and before any profile exists,
+// because on darwin sandbox-exec's own exec failure is an exit 71 the tool cannot see.
+func resolveCommand(name, path string) (string, *Refusal) {
+	var (
+		found string
+		err   error
+	)
+	if strings.ContainsRune(name, os.PathSeparator) {
+		found, err = filepath.Abs(name)
+		if err != nil {
+			r := refuse("not_found", "%s could not be made absolute: %v", name, err)
+			return "", &r
+		}
+	} else {
+		lookIn := path
+		if lookIn == "" {
+			lookIn = os.Getenv("PATH")
+		}
+		found, err = lookPathIn(name, lookIn)
+		if err != nil {
+			r := refuse("not_found", "%s is on no PATH entry; name the command or give its absolute path", name)
+			return "", &r
+		}
+	}
+	fi, statErr := os.Stat(found)
+	switch {
+	case statErr != nil:
+		r := refuse("not_executable", "%s cannot be run: %v", found, statErr)
+		return "", &r
+	case fi.IsDir():
+		r := refuse("not_executable", "%s is a directory, not a command", found)
+		return "", &r
+	case runtime.GOOS != "windows" && fi.Mode().Perm()&0o111 == 0:
+		r := refuse("not_executable", "%s carries no executable bit for this user", found)
+		return "", &r
+	}
+	if resolved, err := filepath.EvalSymlinks(found); err == nil {
+		found = resolved
+	}
+	return found, nil
+}
+
+// lookPathIn is exec.LookPath against a NAMED path rather than the process's own, so a
+// test can pin the lookup without writing the environment of a running binary.
+func lookPathIn(name, path string) (string, error) {
+	if path == os.Getenv("PATH") {
+		return exec.LookPath(name)
+	}
+	for _, dir := range filepath.SplitList(path) {
+		if dir == "" {
+			continue
+		}
+		candidate := filepath.Join(dir, name)
+		if fi, err := os.Stat(candidate); err == nil && !fi.IsDir() && fi.Mode().Perm()&0o111 != 0 {
+			return candidate, nil
+		}
+	}
+	return "", fmt.Errorf("%s: not found in %s", name, path)
+}
+
+// ChildEnv keeps the caller's environment unchanged except for the temporary-directory
+// variables it sets to the sandbox path and the agent socket variables it removes. TMPPREFIX
+// is zsh's independent temporary-file prefix on macOS, so it must be inside the same wall
+// even though other shells ignore it. It is not
+// a secrets tool: the credential the caller deliberately passed by environment must
+// arrive, and every other variable passes through untouched.
+//
+// The agent variables are the exception, and they are a fix this build made to the spec
+// rather than something the spec asked for. SSH_AUTH_SOCK names a unix-domain socket
+// that speaks for a private key without ever revealing it: a wall that denies ~/.ssh but
+// leaves the agent reachable has not stopped the thing ~/.ssh was about. The profile
+// denies unix sockets outside the write set, which is the wall; unsetting the variables
+// is the fence beside it, so that an honest program does not try and a log does not have
+// to be read to see that it could not.
+func ChildEnv(env []string, tmp string) []string {
+	out := make([]string, 0, len(env)+4)
+	for _, kv := range env {
+		name, _, _ := strings.Cut(kv, "=")
+		switch {
+		case name == "TMPDIR", name == "TMP", name == "TEMP", name == "TMPPREFIX":
+			continue
+		case isAgentVar(name):
+			continue
+		}
+		out = append(out, kv)
+	}
+	// TMPPREFIX is a path THE CHILD SHELL READS, not a path this process opens, so it is
+	// joined with `path` and never with `filepath`: the separator belongs to the shell
+	// inside the wall, which is a unix one, and filepath.Join would spell it with the
+	// HOST's separator. On the windows leg that wrote TMPPREFIX=\w\.nova-sandbox-tmp\zsh
+	// for the value /w/.nova-sandbox-tmp/zsh -- a name no zsh would ever open.
+	return append(out, "TMPDIR="+tmp, "TMP="+tmp, "TEMP="+tmp, "TMPPREFIX="+path.Join(tmp, "zsh"))
+}
+
+// isAgentVar excludes agent-related variables by exact name, so unrelated variables pass; it uses the
+// set exactly: SSH_AUTH_SOCK, SSH_AGENT_*, GPG_AGENT_INFO and any *_AGENT_PID/INFO/SOCK. The wall denies the agent's
+// socket and the scrub removes its address; a command that would otherwise sign a push
+// with a key it cannot read has neither half. Everything else passes through untouched,
+// because the caller's credential still needs to reach the child.
+//
+// The previous "name contains AGENT" width dropped AI_AGENT and CLAUDE_AGENT_SDK_VERSION,
+// which are names that say what is RUNNING the job and address nothing. Under the set
+// above both pass through, and the SANDBOX NOTE line is true as it is written.
+func isAgentVar(name string) bool {
+	switch name {
+	case "SSH_AUTH_SOCK", "GPG_AGENT_INFO":
+		return true
+	}
+	if strings.HasPrefix(name, "SSH_AGENT_") {
+		return true
+	}
+	// *_AGENT_PID / *_AGENT_INFO / *_AGENT_SOCK: an agent's pid, address or socket under
+	// whatever prefix the next agent invents. AI_AGENT and CLAUDE_AGENT_SDK_VERSION end
+	// in none of these and pass through, which is what makes the NOTE line true.
+	for _, suffix := range []string{"_AGENT_PID", "_AGENT_INFO", "_AGENT_SOCK"} {
+		if strings.HasSuffix(name, suffix) {
+			return true
+		}
+	}
+	return false
+}
+
+// DroppedEnv names the variables ChildEnv removes that are not the three temp ones, for
+// the one NOTE line the tool prints before the command starts. A reader of a log should
+// not have to diff two environments to learn that the agent was taken away.
+func DroppedEnv(env []string) []string {
+	var out []string
+	for _, kv := range env {
+		name, _, _ := strings.Cut(kv, "=")
+		switch {
+		case isAgentVar(name):
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// Ancestors is every proper ancestor of the given paths, "/" excluded, sorted and
+// unique. It is what the darwin profile's file-read-metadata literals are built from,
+// and it is here rather than in the darwin body so that a test on any platform can
+// assert its shape.
+func Ancestors(paths ...string) []string { return ancestors(filepath.Dir, paths...) }
+
+// ancestors is Ancestors with the parent function named, so that a test on one platform can
+// walk the other's paths: filepath.Dir's answer at the top of the tree differs per platform
+// and the stop condition is the whole of this function's correctness.
+func ancestors(dir func(string) string, paths ...string) []string {
+	seen := map[string]bool{}
+	for _, p := range paths {
+		if p == "" {
+			continue
+		}
+		// The stop is "d is its own parent", not the literal "/": on windows the top of
+		// the tree is `C:\` (and filepath.Dir(`C:\`) is `C:\`), so a loop that waited for
+		// "/" spun on the volume root forever — the 600s timeout of run 34663812025. Asking the
+		// parent function where IT stops is the one form that is right on every platform.
+		//
+		// A path with a trailing separator is its own first "ancestor": Dir("/a/b/") is
+		// "/a/b", so Ancestors("/a/b/") returned "/a /a/b" against this function's own
+		// word "every PROPER ancestor" — and "/a/b" then got a file-read-metadata literal
+		// it already holds by its own subpath rule. Skipping the cleaned path itself is
+		// the whole repair; the loop still walks from there upwards.
+		self := filepath.Clean(p)
+		for d := dir(p); d != "." && d != "" && dir(d) != d; d = dir(d) {
+			if d == self {
+				continue
+			}
+			seen[d] = true
+		}
+	}
+	return slices.Sorted(maps.Keys(seen))
+}
+
+// The wall's caps on the tree it runs, docs/SPEC-SANDBOX.md "wall-caps-processes.w1". The
+// tree is the process group the wrapped command leads: past either cap the whole group is
+// killed by its group id and the run ends reporting runaway.
+const (
+	DefaultMaxProcs       = 256
+	DefaultMaxMem   int64 = 8 << 30
+	// watchEvery is how often a running tree is counted.
+	watchEvery = time.Second
+)
+
+// Usage is what one count of the tree found: its live processes and their resident bytes.
+type Usage struct {
+	Procs int
+	RSS   int64
+}
+
+// Over says whether u is past a cap, and the runaway line when it is. A cap of zero is
+// not set: a policy Build made always carries both.
+func (p *Policy) Over(u Usage) (string, bool) {
+	if p.MaxProcs > 0 && u.Procs > p.MaxProcs {
+		return fmt.Sprintf("runaway: %d processes (cap %d)", u.Procs, p.MaxProcs), true
+	}
+	if p.MaxMem > 0 && u.RSS > p.MaxMem {
+		return fmt.Sprintf("runaway: %d bytes of memory (cap %d)", u.RSS, p.MaxMem), true
+	}
+	return "", false
+}
+
+// Watch counts the tree on every tick (every second when tick is nil) and, the first time
+// it is past a cap, calls kill and stops. It returns stop, which ends the watch with one
+// last count and answers the runaway line, or "" when the tree never passed a cap. The
+// last count is for a tree whose leader exited between two ticks and left its children:
+// a fork bomb refused by RLIMIT_NPROC ends its own shell, and the children are still the
+// group. A count that fails is skipped: a watch that cannot look must not kill what it
+// cannot see.
+func (p *Policy) Watch(tick <-chan time.Time, usage func() (Usage, error), kill func()) (stop func() string) {
+	release := func() {}
+	if tick == nil {
+		t := time.NewTicker(watchEvery)
+		tick, release = t.C, t.Stop
+	}
+	return p.watch(tick, usage, kill, release)
+}
+
+func (p *Policy) watch(tick <-chan time.Time, usage func() (Usage, error), kill func(), release func()) func() string {
+	quit := make(chan struct{})
+	var line string
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-quit:
+				return
+			case <-tick:
+				u, err := usage()
+				if err != nil {
+					continue
+				}
+				if l, hit := p.Over(u); hit {
+					line = l
+					kill()
+					return
+				}
+			}
+		}
+	}()
+	var once sync.Once
+	return func() string {
+		once.Do(func() {
+			close(quit)
+			wg.Wait()
+			release()
+			if line != "" {
+				return
+			}
+			if u, err := usage(); err == nil {
+				if l, hit := p.Over(u); hit {
+					line = l
+					kill()
+				}
+			}
+		})
+		return line
+	}
+}

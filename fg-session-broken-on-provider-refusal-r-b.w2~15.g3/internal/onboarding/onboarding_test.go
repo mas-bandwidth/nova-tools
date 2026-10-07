@@ -1,0 +1,100 @@
+package onboarding
+
+import (
+	"testing"
+
+	"github.com/stretchr/testify/require"
+)
+
+// The document this package parses is docs/TESTS.md, and the failure that put
+// these tests here was not a parse error: it was a lookup that could not fail.
+// docs/TESTS.md carried `## nova-work` twice; Section cut to the first match, so
+// cmd/nova-work/firstrun_test.go executed the first section and the second one --
+// which held a refusal sentence the binary had stopped printing and an events
+// line that reached the real forge -- was read by no test at all for as long as
+// it took two benches to find it by hand.
+
+const twoSections = `# doc
+
+## nova-alpha
+
+### First run
+
+` + "```text" + `
+$ nova-alpha go
+ALPHA OK n=1
+` + "```" + `
+
+### Refusals
+
+` + "```text" + `
+$ nova-alpha
+nova-alpha: no verb given; run: nova-alpha help
+` + "```" + `
+
+## nova-beta
+
+### First run
+
+` + "```text" + `
+$ nova-beta go
+BETA OK n=1
+` + "```" + `
+
+## nova-alpha
+
+### First run
+
+` + "```text" + `
+$ nova-alpha stale
+ALPHA STALE
+` + "```" + `
+`
+
+func TestSectionNamesKeepsOrderAndRepeats(t *testing.T) {
+	t.Parallel()
+
+	got := SectionNames(twoSections)
+	want := []string{"nova-alpha", "nova-beta", "nova-alpha"}
+	require.Equal(t, len(want), len(got), "SectionNames = %q, want %q", got, want)
+	for i := range want {
+		require.Equal(t, want[i], got[i], "SectionNames = %q, want %q", got, want)
+	}
+}
+
+func TestRepeatedSectionsNamesTheOneWrittenTwice(t *testing.T) {
+	t.Parallel()
+
+	got := RepeatedSections(twoSections)
+	require.Equal(t, []string{"nova-alpha"}, got, "RepeatedSections = %q, want [nova-alpha]", got)
+	none := RepeatedSections("## a\n\n## b\n")
+	require.Empty(t, none, "RepeatedSections of a healthy document = %q, want none", none)
+}
+
+// A repeated name is invisible to Section, which is the whole danger: it answers
+// happily and names the first half. This pins that reading so the next person to
+// wonder why a section drifted unwatched finds the answer in a test.
+func TestSectionReadsOnlyTheFirstOfTwo(t *testing.T) {
+	t.Parallel()
+
+	body, ok := Section(twoSections, "nova-alpha")
+	require.True(t, ok, "Section did not find nova-alpha")
+	lines, err := FirstRun(twoSections, "nova-alpha")
+	require.NoError(t, err)
+	require.True(t, len(lines) == 2, "FirstRun read %q; it reads the FIRST `## nova-alpha`, and the second is read by nobody", lines)
+	require.True(t, lines[0] == "$ nova-alpha go", "FirstRun read %q; it reads the FIRST `## nova-alpha`, and the second is read by nobody", lines)
+	require.NotContains(t, body, "ALPHA STALE", "Section reached into the second `## nova-alpha`; this test's premise is gone")
+}
+
+func TestTranscriptReadsANamedSubsection(t *testing.T) {
+	t.Parallel()
+
+	lines, err := Transcript(twoSections, "nova-alpha", "Refusals")
+	require.NoError(t, err)
+	require.True(t, len(lines) == 2, "Transcript(Refusals) = %q", lines)
+	require.True(t, lines[0] == "$ nova-alpha", "Transcript(Refusals) = %q", lines)
+	_, err = Transcript(twoSections, "nova-beta", "Refusals")
+	require.Error(t, err, "Transcript found a `### Refusals` that nova-beta does not have")
+	_, err = Transcript(twoSections, "nova-gamma", "First run")
+	require.Error(t, err, "Transcript found a section for a tool the document does not name")
+}

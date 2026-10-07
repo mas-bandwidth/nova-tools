@@ -1,0 +1,27 @@
+package fixture
+
+import (
+	"os"
+	"testing"
+)
+
+// One test copies a built binary through a variable named raw; another, in a
+// separate function, declares its own raw holding a shell script and writes it
+// 0o755. The spelling is shared, the variable is not: only the copy is the
+// offender, and the script is exempt as it is anywhere else.
+func TestFixtureCopiesABuiltBinary(t *testing.T) {
+	raw, err := os.ReadFile("built")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile("placed", raw, 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestFixtureWritesAShellScriptUnderTheSameName(t *testing.T) {
+	raw := []byte("#!/bin/sh\nexit 0\n")
+	if err := os.WriteFile("tool", raw, 0o755); err != nil {
+		t.Fatal(err)
+	}
+}

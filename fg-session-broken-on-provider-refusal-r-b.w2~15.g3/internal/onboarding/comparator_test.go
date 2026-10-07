@@ -1,0 +1,379 @@
+package onboarding
+
+import (
+	"fmt"
+	"strings"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// The comparator is the thing every transcript test is judged by, so it is seen
+// red three ways before it is trusted: a line dropped, a value altered, a line
+// moved. Each seed is ONE edit to a copy of the document -- the same three edits
+// the `transcript-test` kind's control applies to a copy of a tool's real
+// section -- and the run it is compared against does not change. A comparator
+// that stayed green under any of them would let an abridged, a reordered or a
+// silently-changed transcript pass, which is the whole failure this exists to
+// close.
+
+// documented is the transcript a reader is shown: two commands, and under each
+// one every line the document says it prints.
+var documented = []string{
+	`$ nova-bus post --topic pit --text "the wall is up"`,
+	"BUS POST id=3f2a1b at=2026-09-19T11:02:03Z topic=pit",
+	"",
+	"$ nova-bus read --topic pit",
+	"BUS READ topic=pit n=1",
+	"  3f2a1b the wall is up",
+	"BUS OK n=1",
+}
+
+// theRun is what the tool printed when a reader typed those two lines: exactly
+// what the document says, so that every red below is the seed and nothing else.
+func theRun() []Result {
+	return []Result{
+		{Code: 0, Stdout: "BUS POST id=3f2a1b at=2026-09-19T11:02:03Z topic=pit\n"},
+		{Code: 0, Stdout: "BUS READ topic=pit n=1\n  3f2a1b the wall is up\nBUS OK n=1\n"},
+	}
+}
+
+// parse cuts a copy of the document into steps, failing the test rather than the
+// comparator when the copy is not a transcript at all.
+func parse(t *testing.T, lines []string) []Step {
+	t.Helper()
+	steps, err := Steps("nova-bus", lines)
+	require.NoError(t, err, "the seeded document is not a transcript: %v", err)
+	return steps
+}
+
+// copyWith returns a copy of the document with one edit applied, so the seeds
+// cannot leak into each other.
+func copyWith(edit func(lines []string) []string) []string {
+	lines := make([]string, len(documented))
+	copy(lines, documented)
+	return edit(lines)
+}
+
+// compare runs the comparison every test here is built on -- parse the
+// document, compare it against the run -- and fails the test unless exactly
+// want problems come back, in the caller's words and naming every problem
+// drawn. It returns the problems so a caller can check their wording beside
+// the count.
+func compare(t *testing.T, what string, doc []string, run []Result, fields []Field, want int) []Problem {
+	t.Helper()
+	problems := CompareTranscript(parse(t, doc), run, fields)
+	if len(problems) != want {
+		require.FailNowf(t, "assertion failed", "%s drew %d problem(s), want %d:\n%s", what, len(problems), want, joinProblems(problems))
+	}
+	return problems
+}
+
+// The unseeded document and the run agree, line for line, in order. Without this
+// every red below would prove nothing: a comparator that failed everything would
+// pass all three seeds.
+func TestCompareAcceptsTheDocumentTheToolPrints(t *testing.T) {
+	t.Parallel()
+
+	compare(t, "the document the tool printed", documented, theRun(), nil, 0)
+}
+
+// SEED 1, one edit: a line the tool prints is dropped from the document. A
+// comparator that asks only whether each documented line was printed stays green
+// here, which is exactly how an abridged transcript survived.
+func TestCompareRejectsADroppedLine(t *testing.T) {
+	t.Parallel()
+
+	seeded := copyWith(func(lines []string) []string { return append(lines[:6:6], lines[6+1:]...) })
+	problems := compare(t, "a line dropped from the document; an abridged transcript passes", seeded, theRun(), nil, 1)
+	assert.Contains(t, problems[0].Message, "prints 3 line(s) and the document shows 2", "the dropped line's problem does not count the lines:\n%s", problems[0].Message)
+}
+
+// SEED 2, one edit: a value on a documented line is altered. Every value is
+// compared as written unless it is named from the Volatile table, so this is red
+// with no normalisation declared.
+func TestCompareRejectsAnAlteredValue(t *testing.T) {
+	t.Parallel()
+
+	seeded := copyWith(func(lines []string) []string {
+		lines[4] = "BUS READ topic=pit n=2"
+		return lines
+	})
+	problems := compare(t, "an altered value", seeded, theRun(), nil, 1)
+	assert.True(t, strings.Contains(problems[0].Message, "n=2") && strings.Contains(problems[0].Message, "n=1"), "the altered value's problem shows neither side of the difference:\n%s", problems[0].Message)
+}
+
+// SEED 3, one edit: two lines of one command's output change places. The set of
+// lines is unchanged and the count is unchanged, so this is the seed that a
+// `printed map[string]bool` cannot see.
+func TestCompareRejectsAMovedLine(t *testing.T) {
+	t.Parallel()
+
+	seeded := copyWith(func(lines []string) []string {
+		lines[5], lines[6] = lines[6], lines[5]
+		return lines
+	})
+	problems := compare(t, "a moved line (the two lines that changed places)", seeded, theRun(), nil, 2)
+	for _, p := range problems {
+		assert.Contains(t, p.Message, "the document's line", "a moved line's problem does not name the line:\n%s", p.Message)
+	}
+}
+
+// A run-owned value is matched by shape only when the transcript names it from
+// the shared table, and a name the table does not hold is REFUSED rather than
+// quietly applied or quietly ignored. A test that could invent a normalisation
+// could make any red green by widening one pattern.
+func TestVolatileFieldOutsideTheTableIsRefused(t *testing.T) {
+	t.Parallel()
+
+	problems := compare(t, "an invented volatile field", documented, theRun(), []Field{{Name: "elapsed"}}, 1)
+	msg := problems[0].Message
+	assert.Contains(t, msg, "elapsed", "the refusal does not name the invented field:\n%s", msg)
+	assert.Contains(t, msg, "onboarding.Volatile", "the refusal does not name the table:\n%s", msg)
+	for _, name := range VolatileNames() {
+		assert.Contains(t, msg, name, "the refusal does not show the table's %q entry, so a reader cannot see what they may name:\n%s", name, msg)
+	}
+}
+
+// The table holds the run-owned values SPEC-TOOLWORK.md documents rule 2 names, and is the
+// only place they are named. A field that leaves the table without a reading is
+// a widening nobody read.
+func TestTheVolatileTableHoldsTheNamedRunOwnedValues(t *testing.T) {
+	t.Parallel()
+
+	// `branch` joined on 2026-09-27 with `nova-secrets seat inject`, whose OK line
+	// names the seal branch it committed on, stamped with the run's instant
+	// (SPEC-TOOLWORK.md documents rule 2 names it with the other five).
+	// `recorded` joined on 2026-09-30 with nova-work's first run, which runs
+	// against a recording of a public repository and whose document writes the
+	// reader's $ORG and $REPO where the recording's names are printed.
+	// `id` joined on 2026-10-03 with nova-bus's first run: a message's id is
+	// a ULID made from the store's time, so it belongs to the run.
+	// `commit` joined on 2026-10-06 with nova-check's CLI examples: a hygiene
+	// finding names a commit of the repository the reader builds at their own
+	// instant.
+	want := []string{"at", "took", "created", "tmpdir", "id", "sha", "recorded", "branch", "commit"}
+	got := VolatileNames()
+	require.Equal(t, len(want), len(got), "onboarding.Volatile holds %v, want %v", got, want)
+	for i := range want {
+		assert.Equal(t, want[i], got[i], "onboarding.Volatile entry %d is %q, want %q", i, got[i], want[i])
+	}
+	for _, f := range Volatile {
+		assert.NotEmpty(t, strings.TrimSpace(f.What), "the %q entry says nothing about what it is; What is what a reader of a failing test is told is not compared", f.Name)
+	}
+}
+
+// A field named from the table IS matched by shape, on both sides, so a
+// transcript whose instant belongs to the run is green -- and the failure
+// message still says what was not compared.
+func TestAVolatileFieldFromTheTableIsMatchedByShape(t *testing.T) {
+	t.Parallel()
+
+	run := theRun()
+	run[0].Stdout = "BUS POST id=3f2a1b at=2026-09-19T14:55:01Z topic=pit\n"
+
+	compare(t, "an instant that belongs to the run with nothing declared", documented, run, nil, 1)
+	compare(t, "`at` named from the table", documented, run, []Field{{Name: "at"}}, 0)
+	// Naming `at` normalises `at=` and NOTHING else: the id beside it on the
+	// same line is still compared as written.
+	run[0].Stdout = "BUS POST id=000000 at=2026-09-19T14:55:01Z topic=pit\n"
+	compare(t, "a norm declared for `at` swallowing the id beside it", documented, run, []Field{{Name: "at"}}, 1)
+}
+
+// The one table entry a pattern cannot match is a path this run made: the test
+// supplies both spellings, and a missing one is refused rather than applied as a
+// pattern that would match every path in the transcript.
+func TestTheRunsTemporaryDirectoryIsNamedWithBothItsSpellings(t *testing.T) {
+	t.Parallel()
+
+	doc := []string{
+		"$ nova-bus read --root /tmp/nova-bus-1",
+		"BUS READ root=/tmp/nova-bus-1 n=0",
+	}
+	run := []Result{{Code: 0, Stdout: "BUS READ root=/var/folders/q5/T/nova-bus-9f3 n=0\n"}}
+
+	compare(t, "the run's directory named with both spellings", doc, run, []Field{{Name: "tmpdir", Doc: "/tmp/nova-bus-1", Run: "/var/folders/q5/T/nova-bus-9f3"}}, 0)
+	problems := compare(t, "`tmpdir` named with no path", doc, run, []Field{{Name: "tmpdir"}}, 1)
+	assert.Contains(t, problems[0].Message, "tmpdir", "the refusal does not name the field:\n%s", problems[0].Message)
+}
+
+// A shape field carries no path, and handing it one is refused: it would mean
+// the test believes the table entry is something other than what it is.
+func TestAShapeFieldGivenAPathIsRefused(t *testing.T) {
+	t.Parallel()
+
+	compare(t, "a shape field handed a path", documented, theRun(), []Field{{Name: "at", Doc: "/tmp/x", Run: "/tmp/y"}}, 1)
+}
+
+// A comparison over no command passes by comparing nothing, so it is a problem
+// and not a green.
+func TestCompareRefusesATranscriptWithNoCommand(t *testing.T) {
+	t.Parallel()
+
+	problems := CompareTranscript(nil, nil, nil)
+	require.Len(t, problems, 1, "an empty transcript drew %d problem(s), want 1", len(problems))
+}
+
+// A run that produced fewer results than the document has commands is a sitting
+// that stopped, and is reported as that rather than compared pairwise until the
+// slice runs out.
+func TestCompareRefusesARunThatIsShorterThanTheDocument(t *testing.T) {
+	t.Parallel()
+
+	problems := compare(t, "a short run", documented, theRun()[:1], nil, 1)
+	assert.Contains(t, problems[0].Message, "2 command(s)", "the short run's problem does not count the commands:\n%s", problems[0].Message)
+}
+
+func joinProblems(problems []Problem) string {
+	var b strings.Builder
+	for _, p := range problems {
+		b.WriteString(p.Message)
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
+// THE DEFECT THIS GUARDS IS ONE THIS TABLE ALREADY SHIPPED ONCE. #1629's own
+// ROW 1, repaired at 4f2d552b, was a norm whose pattern ran over the WHOLE line
+// instead of the token it names, so a norm declared for one field quietly ate a
+// neighbour's value. Two of the five entries here were built as plain patterns
+// and reintroduced it in the table every transcript test is judged by: naming
+// `sha` also normalised `base_sha=`, and naming `took` also normalised
+// `last_took=`.
+//
+// So every entry is checked the same way, by the shape of the mistake rather
+// than by the entry: a line carrying the field AND a neighbour whose name ENDS
+// in that field's name, with only the neighbour moving between the document and
+// the run. That has to be red. A future sixth entry that forgets to anchor is
+// caught here by adding one row.
+func TestAVolatileEntryNeverSwallowsANeighbouringFieldsValue(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct{ name, field, docValue, runValue, mine string }{
+		{name: "at", field: "at", docValue: "2026-09-19T11:02:03Z", runValue: "2026-09-19T14:55:01Z", mine: "2026-09-19T11:02:03Z"},
+		{name: "took", field: "took", docValue: "5ms", runValue: "9h", mine: "8ms"},
+		{name: "created", field: "created", docValue: "2026-09-16T08:22:37Z", runValue: "2026-09-16T09:00:00Z", mine: "2026-09-16T08:22:37Z"},
+		{name: "sha", field: "sha", docValue: "abc1234", runValue: "0000000", mine: "def5678"},
+		{name: "commit", field: "at", docValue: "0a19082d2973:", runValue: "5be0c1d2e3f4:", mine: "7c1e2d3f4a5b:"},
+		{name: "branch", field: "branch", docValue: "seal/air-GH_TOKEN-20260927-013000", runValue: "seal/air-GH_TOKEN-20260927-020000", mine: "seal/air-GH_TOKEN-20260926-120000"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// `last_` and `base_` are how a neighbour's name ends in this
+			// field's: the token is `last_took=5ms`, not `took=5ms`.
+			neighbour := "base_" + tc.field
+			doc := []string{
+				"$ nova-bus read",
+				fmt.Sprintf("BUS READ %s=%s %s=%s", neighbour, tc.docValue, tc.field, tc.mine),
+			}
+			run := []Result{{Stdout: fmt.Sprintf("BUS READ %s=%s %s=%s\n", neighbour, tc.runValue, tc.field, tc.mine)}}
+
+			compare(t, fmt.Sprintf("declaring %q normalised %s= as well: the entry's pattern is running over the whole line instead of the token it names -- this is #1629's ROW 1 defect (4f2d552b) in the Volatile table", tc.name, neighbour), doc, run, []Field{{Name: tc.name}}, 1)
+			// And the entry still does its own job on its own token.
+			runOwn := []Result{{Stdout: fmt.Sprintf("BUS READ %s=%s %s=%s\n", neighbour, tc.docValue, tc.field, tc.runValue)}}
+			compare(t, fmt.Sprintf("declaring %q did not normalise its own %s=", tc.name, tc.field), doc, runOwn, []Field{{Name: tc.name}}, 0)
+		})
+	}
+}
+
+// `tmpdir` is the one entry that is NOT token-anchored, and this says why rather
+// than leaving a reader to wonder. Its pattern is the run's own directory, a
+// literal absolute path this run made: it names no field because a path on a
+// line carries none, and it cannot swallow a neighbour's value because nothing
+// else on the line is that string. The test is the property that makes it safe:
+// another path, and a field whose value merely CONTAINS the run's directory as a
+// prefix of a longer one, are both left alone.
+func TestTheDirectoryEntryTouchesNothingButThatDirectory(t *testing.T) {
+	t.Parallel()
+
+	doc := []string{
+		"$ nova-bus read --root /tmp/nova-bus-1",
+		"BUS READ root=/tmp/nova-bus-1 home=/tmp/nova-bus-1x/cache n=0",
+	}
+	run := []Result{{Stdout: "BUS READ root=/run/T/nova-bus-9f3 home=/tmp/nova-bus-1x/cache n=0\n"}}
+	field := Field{Name: "tmpdir", Doc: "/tmp/nova-bus-1", Run: "/run/T/nova-bus-9f3"}
+
+	compare(t, "the run's directory was not normalised", doc, run, []Field{field}, 0)
+	moved := []Result{{Stdout: "BUS READ root=/run/T/nova-bus-9f3 home=/run/T/nova-bus-9f3x/cache n=0\n"}}
+	compare(t, "a longer neighbouring path with the run directory as its prefix was swallowed", doc, moved, []Field{field}, 1)
+	descendantDoc := []string{
+		"$ nova-bus read --root /tmp/nova-bus-1",
+		"BUS READ root=/tmp/nova-bus-1/cache n=0",
+	}
+	descendantRun := []Result{{Stdout: "BUS READ root=/run/T/nova-bus-9f3/cache n=0\n"}}
+	compare(t, "a descendant of the run's directory was not normalised", descendantDoc, descendantRun, []Field{field}, 0)
+}
+
+// A value that is not what the entry says it is stays on the line and is
+// compared, the property 4f2d552b gave Instant: a normalisation that erases an
+// impossible value erases the finding with it. `took=` is a duration, so a
+// `took=` that is not one is the tool disagreeing with the document.
+func TestAVolatileEntryLeavesAnInvalidValueOnTheLine(t *testing.T) {
+	t.Parallel()
+
+	doc := []string{"$ nova-bus read", "BUS READ took=5ms"}
+	run := []Result{{Stdout: "BUS READ took=soon\n"}}
+	compare(t, "`took=soon` was normalised as a duration", doc, run, []Field{{Name: "took"}}, 1)
+}
+
+func TestTookAcceptsEveryGoDuration(t *testing.T) {
+	t.Parallel()
+
+	doc := []string{"$ nova-bus read", "BUS READ took=5ms"}
+	for _, duration := range []string{"1h3m1ns", "1h3m1us", "1h3m1µs"} {
+		t.Run(duration, func(t *testing.T) {
+			run := []Result{{Stdout: "BUS READ took=" + duration + "\n"}}
+			compare(t, "a duration accepted by time.ParseDuration", doc, run, []Field{{Name: "took"}}, 0)
+		})
+	}
+}
+
+// `recorded` replaces the recorded name whole and nothing longer, needs both
+// spellings, and may be named once per recorded name -- a recording carries an
+// organization and a repository -- but never twice for one.
+func TestTheRecordedEntryReplacesTheWholeNameOnly(t *testing.T) {
+	t.Parallel()
+
+	doc := []string{
+		"$ nova-bus read --org $ORG --repo $ORG/$REPO",
+		"REPO OK org=$ORG repo=$ORG/$REPO other=widgets",
+	}
+	fields := []Field{{Name: "recorded", Doc: "$ORG", Run: "acme"}, {Name: "recorded", Doc: "$REPO", Run: "widget"}}
+	run := []Result{{Stdout: "REPO OK org=acme repo=acme/widget other=widgets\n"}}
+	compare(t, "the recorded names were not written as the reader's variables", doc, run, fields, 0)
+	longer := []Result{{Stdout: "REPO OK org=acme repo=acme/widget other=widgetz\n"}}
+	compare(t, "a longer name containing the recorded one was swallowed", doc, longer, fields, 1)
+	problems := compare(t, "a recorded name without its run spelling", doc, run, []Field{{Name: "recorded", Doc: "$ORG"}}, 1)
+	require.Contains(t, problems[0].Message, "BOTH spellings", "a recorded name without its run spelling was not refused: %s", joinProblems(problems))
+}
+
+// A `recorded` declaration that could turn a failing run green is refused, each
+// way the cold read found: a Doc that is not a shell variable (the pair that
+// made IMPORT FAIL issues=19 read as IMPORT OK issues=20), a recorded name the
+// document also prints as written, a name declared twice, and a variable no
+// documented command types.
+func TestTheRecordedEntryRefusesADeclarationThatRewritesTheDocument(t *testing.T) {
+	t.Parallel()
+
+	doc := []string{
+		"$ nova-bus read --org $ORG --repo $ORG/$REPO",
+		"IMPORT OK org=$ORG repo=$ORG/$REPO issues=20 state=open",
+	}
+	failing := []Result{{Stdout: "IMPORT FAIL org=acme repo=acme/open issues=19 state=open\n"}}
+	for _, tc := range []struct {
+		name   string
+		fields []Field
+		want   string
+	}{
+		{"a Doc that is not a shell variable", []Field{{Name: "recorded", Doc: "OK", Run: "FAIL"}, {Name: "recorded", Doc: "20", Run: "19"}}, "shell variable"},
+		{"a recorded name the document prints as written", []Field{{Name: "recorded", Doc: "$ORG", Run: "acme"}, {Name: "recorded", Doc: "$REPO", Run: "open"}}, "appears in the document as written"},
+		{"one recorded name under two variables", []Field{{Name: "recorded", Doc: "$ORG", Run: "acme"}, {Name: "recorded", Doc: "$REPO", Run: "acme"}}, "twice"},
+		{"one variable declared twice", []Field{{Name: "recorded", Doc: "$ORG", Run: "acme"}, {Name: "recorded", Doc: "$ORG", Run: "other"}}, "twice"},
+		{"a variable no command types", []Field{{Name: "recorded", Doc: "$TEAM", Run: "acme"}}, "no documented command types"},
+	} {
+		problems := CompareTranscript(parse(t, doc), failing, tc.fields)
+		if len(problems) == 0 || !strings.Contains(joinProblems(problems), tc.want) {
+			assert.Failf(t, "assertion failed", "%s: want a refusal saying %q, got:\n%s", tc.name, tc.want, joinProblems(problems))
+		}
+	}
+}
