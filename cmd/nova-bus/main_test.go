@@ -163,6 +163,22 @@ func TestBareCommandNamesTheDoor(t *testing.T) {
 	newRig().cli().Do(t).Exit(2).Err("BUS REFUSED", "nova-bus help")
 }
 
+// TestTopLevelHelpNamesTheSameRedisAddressPrecedenceAsHelpSend verifies that the top-level help
+// and the send verb help use the same Redis address precedence string, naming all three sources
+// (--redis/NOVA_BUS_REDIS, NOVA_SPRINT_REDIS, fleet:bus) in the order the code applies them.
+func TestTopLevelHelpNamesTheSameRedisAddressPrecedenceAsHelpSend(t *testing.T) {
+	t.Parallel()
+	cli := newRig("ada", "bob").cli()
+
+	topHelp := cli.Do(t, "help").Exit(0).Stdout
+	sendHelp := cli.Do(t, "help", "send").Exit(0).Stdout
+
+	// Both should name the three sources in the same order
+	const precedence = "NOVA_BUS_REDIS, else NOVA_SPRINT_REDIS, else fleet:bus"
+	require.Contains(t, topHelp, precedence)
+	require.Contains(t, sendHelp, precedence)
+}
+
 func TestSendRefusesNamingEveryProblem(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -496,3 +512,5 @@ func TestReceiptsAndOverdueSayWhereEachMessageIs(t *testing.T) {
 	cli.Do(t, "receipts", "--as", "bob", "--id", mid).Exit(0).Out("state=acted")
 	cli.Do(t, "overdue", "--older", "-1s").Exit(2).Err("--older wants a duration of at least 0")
 }
+
+
