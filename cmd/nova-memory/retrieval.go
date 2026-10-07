@@ -62,7 +62,17 @@ func (r retrievalResult) render(w io.Writer, asJSON bool) {
 				out.Item("miss", "candidate", i+1, "reason", "every query term is out of vocabulary for this corpus")
 			}
 			for j, h := range cand.Hits {
-				fields := []any{"candidate", i + 1, "rank", j + 1, "score", h.Native, "score-channel", h.NativeChan, "fused", h.Fused, "class", h.Class, "name", h.FMName, "type", h.FMType, "root", h.Root, "file", h.File, "line", h.Line, "paragraph", h.Para, "snippet", h.Snippet}
+				// Absent frontmatter is null in JSON, never "": a name that is
+				// the empty string is not the same fact as no name at all, and
+				// the typed line prints `-` for the absent one.
+				name, typ := any(h.FMName), any(h.FMType)
+				if h.FMName == "" {
+					name = nil
+				}
+				if h.FMType == "" {
+					typ = nil
+				}
+				fields := []any{"candidate", i + 1, "rank", j + 1, "score", h.Native, "score-channel", h.NativeChan, "fused", h.Fused, "class", h.Class, "name", name, "type", typ, "root", h.Root, "file", h.File, "line", h.Line, "paragraph", h.Para, "snippet", h.Snippet}
 				if r.Whole {
 					fields = append(fields, "whole", wholePassage(h.Whole))
 				}
