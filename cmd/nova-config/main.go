@@ -91,6 +91,8 @@ usage:
   nova-config <kind> history <name> [--json]
   nova-config machine width <name> [--json]
   nova-config machine self [--check] [--json]
+  nova-config loop run <name> [--run-dir <dir>] [--metrics <dir>] [-- <command> ...]
+                    the loop's command under its one lock: a second copy exits 3
   nova-config login --store <dir> --as <seat> --key <file> --secret <NAME>
                     --dsn <dsn> --actor <name> [--sops <path>]
                     records the DSN and where the password is; never the password
@@ -254,6 +256,8 @@ type deps struct {
 	// loop add and set refuse, and status names, a loop whose verb is gone. Nil
 	// asks nothing.
 	probe config.VerbProbe
+	// runLoop runs loop run's command (startLoop); nil runs none.
+	runLoop runLoop
 }
 
 type redisApplier struct {
@@ -283,6 +287,7 @@ func realDeps() deps {
 		hostname:  os.Hostname,
 		tailscale: config.TailscaleStatus,
 		probe:     config.HelpProbe,
+		runLoop:   startLoop,
 	}
 }
 
