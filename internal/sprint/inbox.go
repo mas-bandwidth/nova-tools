@@ -569,6 +569,9 @@ func commands(g Group, first Note, prefix string) []Command {
 		case strings.HasPrefix(d, "merge --stream "):
 			// a merge step is a report: it names its epoch, the judgment's
 			add(d, cmd+d+" --epoch "+strconv.FormatUint(IDEpoch(g.ID), 10))
+		case strings.HasPrefix(d, "land --stream "):
+			// landing is the act that advances a queued stream, not its report
+			add(d, cmd+"land --stream "+s+" --epoch "+strconv.FormatUint(IDEpoch(g.ID), 10))
 		case strings.HasPrefix(d, "friend take "):
 			add(d, cmd+d+" --reason "+whyText)
 		case strings.HasPrefix(d, "fleet down ") || strings.HasPrefix(d, "fleet up ") || strings.HasPrefix(d, "reader up ") || strings.HasPrefix(d, "goal "):
