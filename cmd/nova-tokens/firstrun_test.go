@@ -235,43 +235,17 @@ func TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine(t *testing.T) {
 	// The fold WRITES, so it runs against a copy of the fixture in t.TempDir()
 	// and the test moves into it; the documented paths are relative to here.
 	fixture := fixtureIn(t)
-	// normalizePath strips the fixture directory prefix from paths in output lines
-	normalizePath := func(line string) string {
-		return strings.ReplaceAll(line, fixture, ".")
-	}
-	for _, s := range steps {
-		if s.Stdin != "" {
-			assert.Fail(t, "the documented command reads from %q, and nova-tokens takes no stdin", s.Stdin)
-			continue
-		}
-		// Convert relative fixture paths to absolute paths
-		args := make([]string, len(s.Args))
-		copy(args, s.Args)
-		for i, arg := range args {
-			if strings.HasPrefix(arg, "./") {
-				args[i] = filepath.Join(fixture, arg[2:])
-			} else if strings.HasPrefix(arg, "bench=./") {
-				// Handle bench=./path style arguments
-				args[i] = strings.TrimPrefix(arg, "bench=./")
-				args[i] = "bench=" + filepath.Join(fixture, args[i])
-			}
-		}
-		var out, errb bytes.Buffer
-		code := run(args, &out, &errb, firstRunStamp)
-		result := onboarding.Result{Code: code, Stdout: out.String(), Stderr: errb.String()}
-		// Normalize paths in output for comparison
-		normalized := normalizePath(result.Stdout + result.Stderr)
-		for _, line := range strings.Split(normalized, "\n") {
-			if line != "" {
-				assert.Fail(t, "the documented command\n  "+strings.Join(s.Args, " ")+
-					"\n prints\n  "+line)
-			}
-		}
+	for _, p := range onboarding.Execute(steps, runDocumented(fixture)) {
+		assert.Fail(t, "%v", p)
 	}
 }
 
 // runDocumented returns a runner that converts relative fixture paths to absolute paths
 func runDocumented(fixture string) onboarding.Runner {
+	// normalizePath strips the fixture directory prefix from paths in output lines
+	normalizePath := func(line string) string {
+		return strings.ReplaceAll(line, fixture, ".")
+	}
 	return func(s onboarding.Step) (onboarding.Result, error) {
 		if s.Stdin != "" {
 			return onboarding.Result{}, fmt.Errorf("the documented command reads from %q, and nova-tokens takes no stdin", s.Stdin)
@@ -290,7 +264,10 @@ func runDocumented(fixture string) onboarding.Runner {
 		}
 		var out, errb bytes.Buffer
 		code := run(args, &out, &errb, firstRunStamp)
-		return onboarding.Result{Code: code, Stdout: out.String(), Stderr: errb.String()}, nil
+		// Normalize paths in output for comparison
+		return onboarding.Result{
+			Code: code, Stdout: normalizePath(out.String()), Stderr: normalizePath(errb.String())
+		}, nil
 	}
 }
 
