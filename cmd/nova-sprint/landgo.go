@@ -40,6 +40,9 @@ const landGoBudget = 15 * time.Minute
 // the gate when a head changes a .md or a _test.go file; one the clone lacks is not run.
 var treeTests = []string{"internal/docs", "internal/ci"}
 
+// functionalTestRegex is the regex for functional tests that the gate runs.
+const functionalTestRegex = "^(TestUncheckedErrors|TestStaticcheckFindings|TestDeadCode|TestEveryCommandMeetsTheOnboardingStandard)$"
+
 // goRun runs one go command (run) in the clone, in the lander's environment with
 // GOFLAGS=-mod=readonly (caller flags preserved) and set (NAME=value each); its combined output.
 func (l *lander) goRun(ctx context.Context, dir string, run []string, set ...string) (string, error) {
@@ -109,8 +112,9 @@ func treeTested(p string) bool {
 }
 
 // gateRuns is the tree gate's runs, in order: the build and the vet of the module, then
-// the tree tests (have: the ones the clone holds) when tests is asked.
-func gateRuns(tests bool, have []string) [][]string {
+// the tree tests (have: the ones the clone holds), then the functional tests when functional
+// is true.
+func gateRuns(tests bool, have []string, functional bool) [][]string {
 	runs := [][]string{{"go", "build", "./..."}, {"go", "vet", "./..."}}
 	if tests && len(have) > 0 {
 		run := []string{"go", "test"}
@@ -118,6 +122,9 @@ func gateRuns(tests bool, have []string) [][]string {
 			run = append(run, "./"+p+"/")
 		}
 		runs = append(runs, run)
+	}
+	if functional {
+		runs = append(runs, []string{"go", "test", "-tags", "functional", "-run", functionalTestRegex, "./internal/ci/"})
 	}
 	return runs
 }
@@ -246,12 +253,23 @@ func (l *lander) treeGate(ctx context.Context, dir string, tests bool) string {
 	if _, err := os.Stat(filepath.Join(dir, "go.mod")); err != nil {
 		return ""
 	}
-	for _, run := range gateRuns(tests, treePackages(dir)) {
+	pkgs := treePackages(dir)
+	functional := tests && hasFunctionalTests(dir)
+	for _, run := range gateRuns(tests, pkgs, functional) {
 		if out, err := l.goRun(ctx, dir, run); err != nil {
 			return gateWhy(run, err, out)
 		}
 	}
 	return ""
+}
+
+// hasFunctionalTests checks if internal/ci has the functional test files.
+func hasFunctionalTests(dir string) bool {
+	path := filepath.Join(dir, "internal", "ci", "onboarding_functional_test.go")
+	if _, err := os.Stat(path); err == nil {
+		return true
+	}
+	return false
 }
 
 // gateCard is the tree gate on one card merged onto the batch branch at before: red, the
