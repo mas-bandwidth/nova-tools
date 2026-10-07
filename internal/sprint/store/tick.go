@@ -146,6 +146,15 @@ type Heartbeat struct {
 	// Looked is when a tick last read the machine's state, RUNNING or
 	// STOPPED: a run loop is alive while it is recent, whatever the state.
 	Looked time.Time `json:"looked,omitempty"`
+	// Quiet is the judgments the last tick's lane check kept from rising
+	// (sprint.LaneChecked): a friend's lane live inside its cap, readers busy,
+	// a read tier question the rule answered. Its length is the count the
+	// coordinator reads beside the judgments that rose.
+	Quiet []sprint.Quiet `json:"quiet,omitempty"`
+	// Suppressed is the count of the judgments the lane check kept from
+	// rising since the epoch began, by cause (sprint.Suppressed.Counted):
+	// what view coordinator prints as suppressed.
+	Suppressed sprint.Suppressed `json:"suppressed,omitzero"`
 }
 
 // Alive is the last clock reading a tick was seen at, ticking or looking.
@@ -476,6 +485,9 @@ type TickResult struct {
 	Stale    string         `json:"stale,omitempty"`
 	Halted   string         `json:"halted,omitempty"`
 	Due      int            `json:"due,omitempty"`
+	// Quiet is the judgments the tick's lane check kept from rising, each
+	// once (sprint.LaneChecked), kept on the heartbeat (Heartbeat.Quiet).
+	Quiet []sprint.Quiet `json:"quiet,omitempty"`
 	// Tables is each of the four tables, in the store's order, with the rows
 	// the tick's parts changed in it: every tick reads and plans every table,
 	// each table updated at least once per tick, and a table with nothing to
@@ -830,7 +842,7 @@ func (st *Store) Tick(ctx context.Context) (res TickResult, err error) {
 	defer func(mt meter) { res.Times = append(res.Times, mt.part("", "heartbeat")) }(st.meter())
 	now := st.now()
 	if err == nil && res.Idle && res.Halted == "" && len(res.Parts) == 0 && hb.Error == "" && now.Sub(hb.At) < HeartbeatIdleEvery && !hb.At.Before(m.Since) &&
-		seen.Revisions == hb.Revisions && slices.Equal(seen.Fresh, hb.Fresh) {
+		seen.Revisions == hb.Revisions && slices.Equal(seen.Fresh, hb.Fresh) && slices.Equal(res.Quiet, hb.Quiet) {
 		return res, nil
 	}
 	failingSame := hb.Error != "" && !hb.At.Before(m.Since)
@@ -851,7 +863,8 @@ func (st *Store) Tick(ctx context.Context) (res TickResult, err error) {
 	} else {
 		hb.Error, hb.Failures = "", 0
 		hb.Revisions, hb.Landed, hb.All, hb.Full, hb.Fresh = seen.Revisions, seen.Landed, seen.All, seen.Full, seen.Fresh
-		hb.Due = res.Due
+		hb.Suppressed = hb.Suppressed.Counted(st.epoch, hb.Quiet, res.Quiet)
+		hb.Due, hb.Quiet = res.Due, res.Quiet
 	}
 	if werr := st.putJSON(ctx, keyHeartbeat, hb); werr != nil && err == nil {
 		err = werr
@@ -1278,7 +1291,9 @@ func (t *tickRun) parts(table string, parts []sprint.TickPartDef) tickOutcome {
 				// a plan made to see whether the part has work wakes no one
 				probe := t.req
 				probe.WakeFriend = nil
-				if p, due := part.Fn(view, probe); p.Empty() && due == 0 {
+				p, due := part.Fn(view, probe)
+				p = t.laneChecked(view, probe, part.Name, p)
+				if p.Empty() && due == 0 {
 					// a part that brings the display cells up to date after
 					// it leaves them to the tick's end (tickRun.display)
 					t.unshown = t.unshown || t.ran && mirrors(part.Name)
@@ -1312,6 +1327,8 @@ func (t *tickRun) parts(table string, parts []sprint.TickPartDef) tickOutcome {
 				}
 			}
 			p, d := part.Fn(s, r)
+			// a judgment checks the lane before it rises (sprint.LaneChecked)
+			p = t.laneChecked(s, r, part.Name, p)
 			planned = p
 			stop = p.Stop
 			if part.Name == sprint.PartDone {
@@ -1441,6 +1458,18 @@ func (t *tickRun) parts(table string, parts []sprint.TickPartDef) tickOutcome {
 		}
 	}
 	return tickOn
+}
+
+// laneChecked is the part's plan with what the lane check keeps from rising
+// taken out (sprint.LaneChecked), each quiet put on the tick's result once.
+func (t *tickRun) laneChecked(s *sprint.Snapshot, r sprint.TickReq, part string, p sprint.Plan) sprint.Plan {
+	p, quiet := sprint.LaneChecked(s, r, part, p)
+	for _, q := range quiet {
+		if !slices.ContainsFunc(t.res.Quiet, func(x sprint.Quiet) bool { return x.Type == q.Type && x.Subject == q.Subject }) {
+			t.res.Quiet = append(t.res.Quiet, q)
+		}
+	}
+	return p
 }
 
 // stallWake is one wake of the friend stall ladder a part's plan made (rung 1 or 2).
