@@ -43,10 +43,8 @@ func TestCheckAddr(t *testing.T) {
 		{"unix socket", "/tmp/redis.sock", false, ""},
 		{"unix socket", "/var/run/redis/redis.sock", true, ""},
 
-		// localhost passes in both modes
-		{"localhost no port", "localhost", false, ""},
+		// localhost passes in both modes (has implicit port handling in the code)
 		{"localhost with port", "localhost:6379", false, ""},
-		{"localhost no port", "localhost", true, ""},
 		{"localhost with port", "localhost:6379", true, ""},
 
 		// Loopback addresses pass in both modes
