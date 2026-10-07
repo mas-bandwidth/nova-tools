@@ -554,7 +554,7 @@ func (l *lander) merge(ctx context.Context, j *landJob) {
 	start := time.Now()
 	why, out := l.runCheck(ctx, dir)
 	if why != "" {
-		why = l.gateRerun(ctx, dir, stream, b.Base, tip, j.cards[:len(merged)], why, out)
+		why = l.checkDecided(ctx, dir, stream, b.Base, tip, j.cards[:len(merged)], why, out)
 	}
 	since(&b.Times.Check, start)
 	if why != "" {
@@ -568,6 +568,16 @@ func (l *lander) merge(ctx context.Context, j *landJob) {
 		return
 	}
 	j.merged, j.failed, j.baseSha, j.tip, j.files = merged, failed, baseSha, tip, lines(files)
+}
+
+// checkDecided is a red --check's gate decision (gateRerun), one stream at a time: the
+// decision appends to one record under the land root, and the streams merge beside each
+// other.
+func (l *lander) checkDecided(ctx context.Context, dir, stream, base, tip string, cards []landCard, why, out string) string {
+	s := l.locks()
+	s.checkMu.Lock()
+	defer s.checkMu.Unlock()
+	return l.gateRerun(ctx, dir, stream, base, tip, cards, why, out)
 }
 
 // lines is out split into its non-empty lines.
@@ -704,7 +714,7 @@ func (l *lander) again(ctx context.Context, j *landJob, newBase string, pushed [
 		if red == "" {
 			var out string
 			if red, out = l.runCheck(ctx, dir); red != "" {
-				red = l.gateRerun(ctx, dir, j.stream, b.Base, tip, j.cards[:len(merged)], red, out)
+				red = l.checkDecided(ctx, dir, j.stream, b.Base, tip, j.cards[:len(merged)], red, out)
 			}
 		}
 		since(&b.Times.Check, start)
