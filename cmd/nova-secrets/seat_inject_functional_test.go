@@ -71,13 +71,18 @@ func TestSeatInjectReSealsAValueIntoAnExistingSeat(t *testing.T) {
 		"--store", s.storeDir, "--as", "bo", "--from", "ada", "--only", "NOVA_REDIS_BENCH_PASSWORD",
 		"--key", s.ada.privPath, "--sops", sopsPath, "--no-pr")
 	require.Equal(t, 0, code, "seat inject exited %d: %s", code, errOut)
-	line := strings.TrimSpace(out)
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	require.Len(t, lines, 2, "a --no-pr seat inject prints the OK line and the next step it names:\n%s", out)
+	line := lines[0]
 	assert.True(t, strings.HasPrefix(line, "SECRETS SEAT INJECT OK seat=bo from=ada names=1 committed branch=seal/bo-NOVA_REDIS_BENCH_PASSWORD-"), "unexpected OK line: %s", line)
+	assert.True(t, strings.HasPrefix(lines[1], "SECRETS SEAT INJECT NOTE exec and check read the store's own branch, which does not hold this value yet; next: git -C "),
+		"the OK line does not name the step that pushes the branch: %s", lines[1])
 	for _, v := range injectValues {
 		assert.NotContains(t, out, v, "a value reached a stream:\nstdout:\n%s\nstderr:\n%s", out, errOut)
 		assert.NotContains(t, errOut, v, "a value reached a stream:\nstdout:\n%s\nstderr:\n%s", out, errOut)
 	}
 	branch := strings.TrimPrefix(line[strings.LastIndex(line, " ")+1:], "branch=")
+	assert.Contains(t, lines[1], "push -u origin "+branch+", then open and merge its pull request", "the next step does not push the branch the OK line names: %s", lines[1])
 
 	// The store is back where it was: on main, clean, so exec is not refused later.
 	got := strings.TrimSpace(runCmd(t, s.storeDir, "git", "rev-parse", "--abbrev-ref", "HEAD"))
@@ -155,6 +160,7 @@ func TestTheHelpExampleIsWhatSeatInjectPrints(t *testing.T) {
 		"! seat inject: encrypting 1 value(s) to bo.yaml's own recipients",
 		"! seat inject: returning the store to its branch",
 		"SECRETS SEAT INJECT OK seat=bo from=ada names=1 committed branch=seal/bo-NOVA_REDIS_BENCH_PASSWORD-20260927-013000",
+		"SECRETS SEAT INJECT NOTE exec and check read the store's own branch, which does not hold this value yet; next: git -C ./secrets push -u origin seal/bo-NOVA_REDIS_BENCH_PASSWORD-20260927-013000, then open and merge its pull request",
 	}
 
 	sopsPath := findSops(t)

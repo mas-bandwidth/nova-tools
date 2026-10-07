@@ -178,7 +178,11 @@ func RunSeatInject(opts SeatInjectOptions) (string, error) {
 		oneline.Field(opts.AsName), oneline.Field(opts.From), len(names))
 	switch {
 	case opts.NoPR:
-		return fmt.Sprintf("%s committed branch=%s", head, oneline.Field(branch)), nil
+		// The value is committed on a seal/ branch, not on the store's own branch, so
+		// it is not what exec reads: the same NOTE a --no-pr seal prints says so, with
+		// the next command, so nobody takes the OK for a delivered value.
+		return fmt.Sprintf("%s committed branch=%s\nSECRETS SEAT INJECT NOTE exec and check read the store's own branch, which does not hold this value yet; next: git -C %s push -u origin %s, then open and merge its pull request",
+			head, oneline.Field(branch), oneline.Field(opts.StoreDir), oneline.Field(branch)), nil
 	case !merged:
 		return fmt.Sprintf("%s pr=#%s open (gate not yet approved)", head, prNum), nil
 	}
