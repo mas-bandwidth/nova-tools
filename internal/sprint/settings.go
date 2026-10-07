@@ -53,7 +53,9 @@ const (
 	// side may take (the owner, 2026-10-06: "a setting for friends, what tiers they may
 	// take, default to all. Same setting for the fleet."), comma joined in the ladder's
 	// order, or TiersAll, all when absent. The deal hands a side only cards whose tier is
-	// in its set, on top of each row's own tiers, work cards and read cards alike.
+	// in its set, on top of each row's own tiers, work cards and read cards alike; a card
+	// pinned to a model is no exception (the set is the owner's switch), and a frontier card
+	// waits for the coordinator whatever the sets.
 	PropFleetTiers   = "fleet_tiers"
 	PropFriendsTiers = "friends_tiers"
 	// TiersAll is the word of a side that may take every tier, the default.

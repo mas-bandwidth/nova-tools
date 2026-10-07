@@ -247,20 +247,21 @@ func (s *Snapshot) routeOf(c, wc *Card, ri routeIndexes) (set map[string]string,
 		// names (an unknown word too), else flash's
 		return nil, tier, "its brief's model lines: " + bad, false
 	}
-	if m.Pin != "" {
-		return map[string]string{FieldRoute: RoutePin, FieldModel: m.Pin, FieldTokens: m.Tokens, FieldUSD: "", FieldDeadline: strconv.Itoa(m.Deadline)}, "", "", false
+	if tier == cardhdr.RouteFrontier && m.Pin == "" && len(s.Routes) > 0 {
+		return nil, tier, "a frontier card waits for the coordinator: run it, or pin it with a model: <provider>/<model> line", false
 	}
 	if !s.FleetTakes(tier) {
 		// the fleet's tiers leave it out (set --fleet-tiers): no machine draws it, whatever
-		// its routes; the friends' deal deals it when a friend up serves it
+		// its routes or a model pin (the set is the owner's switch); the friends' deal deals
+		// it when a friend up serves it
 		up, why := s.tierServed(tier, nil)
 		return nil, tier, why, len(up) > 0
 	}
+	if m.Pin != "" {
+		return map[string]string{FieldRoute: RoutePin, FieldModel: m.Pin, FieldTokens: m.Tokens, FieldUSD: "", FieldDeadline: strconv.Itoa(m.Deadline)}, "", "", false
+	}
 	if len(s.Routes) == 0 {
 		return nil, "", "", false
-	}
-	if tier == cardhdr.RouteFrontier {
-		return nil, tier, "a frontier card waits for the coordinator: run it, or pin it with a model: <provider>/<model> line", false
 	}
 	// a resting route (rule 3, route_rest.go) serves no work card until its rest ends
 	served := map[string]Route{}
@@ -514,11 +515,15 @@ func (s *Snapshot) readRouteOf(ri routeIndexes, pr *Card, avoid []string) map[st
 // no reader can read it: "" when the store holds no route at all (reads run on the
 // reader's own model), an enabled route of the tier is in its array, or a reader up
 // that brings its own model (a friend's or a bud's, read_route.go) reads the tier:
-// a read needs a reader, not a route. The deal's tick raises the tier's judgment for
-// the reads waiting (TickDeal, NNoRoute) only when neither serves it.
+// a read needs a reader, not a route; the member's side only while the fleet's tiers hold
+// the read tier, a friend only while the friends' tiers do (set --fleet-tiers,
+// --friends-tiers). The deal's tick raises the tier's judgment for the reads waiting
+// (TickDeal, NNoRoute) only when neither serves it.
 func (s *Snapshot) readRouteMissing(pr *Card) (tier, why string) {
 	tier = s.readTierOf(pr)
-	if s.tierRouted(tier) || s.ownModelReaderUp(tier) {
+	// a member reads only a read tier the fleet's tiers hold (set --fleet-tiers); a friend
+	// only one the friends' tiers hold (tierServed, friendTakes)
+	if s.FleetTakes(tier) && (s.tierRouted(tier) || s.ownModelReaderUp(tier)) {
 		return tier, ""
 	}
 	up, why := s.tierServed(tier, nil)

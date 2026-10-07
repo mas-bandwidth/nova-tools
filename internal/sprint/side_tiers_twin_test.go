@@ -80,3 +80,46 @@ func TestFriendsTiersLimitWhatFriendsTake(t *testing.T) {
 	assert.False(t, s.FriendsTake("pro"))
 	assert.True(t, s.FleetTakes("pro"))
 }
+
+// A read card no side may take raises its read tier's one "no route serves the tier"
+// judgment, as a work card does: a pro card in review under --fleet-tiers flash, with no
+// friend, is read by no member (not by the one-tier-below rule either) and the judgment
+// names it and the fleet's tiers; --fleet-tiers all deals its reads and closes it.
+func TestAReadCardNoSideMayTakeRaisesTheTiersJudgment(t *testing.T) {
+	t.Parallel()
+	r := newReadCardsRig(t)
+	r.must(store.AddStep(sprint.AddReq{Stream: "s1", Cards: []sprint.CardAdd{{ID: "s1-1", Brief: proBrief}}}))
+	r.tick()
+	s := r.snap()
+	wc := s.Fleet.Card(s.Work.Card("s1-1").F("work"))
+	require.NotNil(t, wc, "dealt")
+	r.must(store.TakeStep(sprint.TakeReq{As: wc.Row, Sel: sprint.Sel{IDs: []string{wc.ID}}, Gens: map[string]int{wc.ID: wc.Int("gen")}, Who: wc.Row}))
+	r.must(store.SetStep(sprint.SetReq{FleetTiers: "flash", Who: "coordinator"}))
+	wc = r.snap().Fleet.Card(wc.ID)
+	r.must(store.FinishStep(sprint.FinishReq{As: wc.Row, Head: "0000000000000000000000000000000000000001", Branch: "sprint/s1-1", Report: "done", Sel: sprint.Sel{IDs: []string{wc.ID}}, Gens: map[string]int{wc.ID: wc.Int("gen")}, Who: wc.Row}))
+	r.tick()
+	s = r.snap()
+	require.Equal(t, sprint.Review, s.Work.Card("s1-1").Col)
+	assert.Empty(t, r.readCards("s1-1"), "no member reads a pro card the fleet's tiers leave out")
+	judged := func(s *sprint.Snapshot) []sprint.Open {
+		var out []sprint.Open
+		for _, o := range s.Open {
+			if o.Subject() == sprint.StreamSubject(sprint.TierSubject("pro")) {
+				out = append(out, o)
+			}
+		}
+		return out
+	}
+	open := judged(s)
+	require.Len(t, open, 1, "the tier's one judgment")
+	assert.Equal(t, sprint.NNoRoute, open[0].Note.Type)
+	assert.Contains(t, open[0].Note.Primaries, "s1-1")
+	assert.Contains(t, open[0].Note.What, "--fleet-tiers")
+
+	r.must(store.SetStep(sprint.SetReq{FleetTiers: sprint.TiersAll, Who: "coordinator"}))
+	r.tick()
+	r.tick()
+	s = r.snap()
+	assert.Len(t, r.readCards("s1-1"), 2, "all: its reads are dealt")
+	assert.Empty(t, judged(s), "and the judgment closes")
+}
