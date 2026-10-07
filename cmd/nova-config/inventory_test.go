@@ -288,7 +288,7 @@ func TestInventoryHelpAndDocsReachAWorkingRun(t *testing.T) {
 	for _, w := range []string{
 		"--list", "--host", "--redis", "--fixture", "--timeout",
 		"NOVA_SPRINT_REDIS", "NOVA_MACHINE",
-		"first run", "nova-config inventory --fixture fleet/testdata/inventory-fixture.yml",
+		"first run", "nova-config inventory --example > inv.yml; nova-config inventory --fixture inv.yml",
 		"-i wants an executable", "column one", "ANSIBLE_INVENTORY_UNPARSED_FAILED=true ansible-inventory -i ./nova-inventory --list", "a failed inventory is an empty inventory", "unparsed_is_failed = True",
 		"_meta.hostvars", "ansible never calls --host", "the default when neither --list nor --host is given",
 		"store_deployer", "nova_loops", "nova_os", "nova_redis_port", "nova_redis_addr", "nova_pg_dsn", "never Postgres",
