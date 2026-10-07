@@ -95,13 +95,14 @@ func verifyAgainst(c *tool.Call, path string, tree *workfile.Tree, data []byte, 
 		}
 	}
 	diffs := workfile.Diff(tree, fresh, scope)
-	cnt := fresh.Count()
+	cnt, treeCnt := fresh.Count(), tree.Count()
 	o := tool.Done()
 	if len(diffs) > 0 {
 		o = tool.Fail()
 	}
 	o.Fact("tree", path).Fact("sha256", sum(data)).Fact("against", against).Fact("against_sha256", sum(otherData)).
-		Fact("repos", cnt.Repos).Fact("issues", cnt.Issues).Fact("comments", cnt.Comments).
+		Fact("repos", cnt.Repos).Fact("issues", cnt.Issues).Fact("tree_issues", treeCnt.Issues).
+		Fact("against_issues", cnt.Issues).Fact("comments", cnt.Comments).
 		Fact("seconds", fmt.Sprintf("%.1f", g.now().Sub(start).Seconds()))
 	return differences(o, diffs)
 }

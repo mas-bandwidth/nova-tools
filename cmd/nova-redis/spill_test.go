@@ -87,13 +87,13 @@ func pipeStore(t *testing.T) (*miniredis.Miniredis, *redis.Client) {
 	return mr, client
 }
 
-// run drives run() with --addr pointed at the fake instance.
+// run drives run() with --redis pointed at the fake instance.
 func (h *harness) run(args ...string) (int, string, string) {
-	full := append([]string{args[0], "--addr", h.mr.Addr()}, args[1:]...)
+	full := append([]string{args[0], "--redis", h.mr.Addr()}, args[1:]...)
 	return h.runBare(full...)
 }
 
-// runBare drives run() with exactly the arguments given: no --addr is added,
+// runBare drives run() with exactly the arguments given: no address is added,
 // so a test can prove what a missing or empty address does.
 func (h *harness) runBare(args ...string) (int, string, string) {
 	var out, errb bytes.Buffer
@@ -153,14 +153,15 @@ func TestAddrRefusedWhenMissingOrEmpty(t *testing.T) {
 	}
 }
 
-// TestAddrAcceptsAUnixSocketPath: --addr takes a Unix socket, the address
-// shape nova-table's first-run recipe makes (redis-server --port 0
-// --unixsocket "$d/redis.sock"): an absolute path, bare or with redis-cli's
-// unix: prefix. A socket names no host and no port, so there is nothing to
-// guess, and redisconn dials an absolute path as a Unix socket already. It is
-// accepted everywhere --addr is read: the flag and login checks (validAddr),
-// the dry run of spill that dials nothing, and the address handed to redisconn
-// (login.options). A host:port address goes through unchanged.
+// TestAddrAcceptsAUnixSocketPath: --redis (and its old spelling --addr) takes a
+// Unix socket, the address shape nova-table's first-run recipe makes
+// (redis-server --port 0 --unixsocket "$d/redis.sock"): an absolute path, bare
+// or with redis-cli's unix: prefix. A socket names no host and no port, so
+// there is nothing to guess, and redisconn dials an absolute path as a Unix
+// socket already. It is accepted everywhere the address is read: the flag and
+// login checks (validAddr), the dry run of spill that dials nothing, and the
+// address handed to redisconn (login.options). A host:port address goes through
+// unchanged.
 func TestAddrAcceptsAUnixSocketPath(t *testing.T) {
 	t.Parallel()
 
@@ -177,14 +178,14 @@ func TestAddrAcceptsAUnixSocketPath(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			require.NoError(t, validAddr(tc.addr), "--addr %q is refused before anything is dialled", tc.addr)
+			require.NoError(t, validAddr("redis", tc.addr), "--redis %q is refused before anything is dialled", tc.addr)
 
 			var out, errb bytes.Buffer
 			d := deps{
 				now:    func() time.Time { return time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC) },
 				getenv: func(string) string { return "" },
 			}
-			code := run([]string{"spill", "--dry-run", "--addr", tc.addr, "--owner", "ada", "--name", "note", "--ttl", "10m", "--value", "hi"}, &out, &errb, d)
+			code := run([]string{"spill", "--dry-run", "--redis", tc.addr, "--owner", "ada", "--name", "note", "--ttl", "10m", "--value", "hi"}, &out, &errb, d)
 			assert.Zero(t, code, "stdout=%q stderr=%q; a socket address passes the checks and dials nothing", out.String(), errb.String())
 			assert.Contains(t, out.String(), "SPILL OK")
 			assert.Contains(t, out.String(), "store="+tc.addr)

@@ -220,7 +220,7 @@ func TestFnRemedyRoundTripsTheLogin(t *testing.T) {
 				code := run(args, &out, &errb, d)
 				return code, out.String(), errb.String()
 			}
-			check := append([]string{"fn", "check", "--addr", addr}, c.flags...)
+			check := append([]string{"fn", "check", "--redis", addr}, c.flags...)
 			code, out, errOut := fnRun(check)
 			require.Equal(t, 1, code, "fn check %q: exit %d %q %q; want MISSING", check, code, out, errOut)
 			require.True(t, strings.HasPrefix(out, "MISSING "), "fn check %q: exit %d %q %q; want MISSING", check, code, out, errOut)

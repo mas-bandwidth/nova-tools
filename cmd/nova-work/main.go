@@ -114,6 +114,15 @@ import --org $ORG --repo $ORG/$REPO --page-size 15 --out ./tree.lisp`,
 				},
 				Run: gh.verifyTree,
 			},
+			{
+				// help is the door every tool has; declaring it puts it in the
+				// skeleton's verb list, which an unknown-verb refusal names
+				// (STANDARD section 2, the names there are). It carries no
+				// usage line: the banner prints its own `help [<verb>]` line.
+				Name:   "help",
+				Effect: tool.Inspection,
+				Run:    func(*tool.Call) *tool.Out { return tool.Done() },
+			},
 		},
 	}
 }
