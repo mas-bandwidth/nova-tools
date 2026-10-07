@@ -148,11 +148,31 @@ func TestSeatInjectReSealsNamedValuesIntoAnExistingSeat(t *testing.T) {
 	if strings.Contains(git, "push") || readMaybe(t, f.ghArgs) != "" {
 		assert.Fail(t, fmt.Sprintf("--no-pr pushed or called gh:\ngit:\n%s\ngh:\n%s", git, readMaybe(t, f.ghArgs)))
 	}
+	lines := strings.Split(line, "\n")
+	require.Len(t, lines, 2, "the OK line, then its NOTE: %q", line)
 	want := "SECRETS SEAT INJECT OK seat=air from=rowan names=1 committed branch=seal/air-NOVA_REDIS_BENCH_PASSWORD-20260927-013000"
-	assert.Equal(t, want, line, "OK line:\n got %s\nwant %s", line, want)
-	assertNoValue(t, "the OK line", line)
+	assert.Equal(t, want, lines[0], "OK line:\n got %s\nwant %s", lines[0], want)
+	assertNoValue(t, "the OK line", lines[0])
 	assertNoValue(t, "sops argv", readMaybe(t, f.sopsArgs))
 	assertNoValue(t, "git argv", git)
+}
+
+// TestASeatInjectNotYetInTheStoreSaysSoAndWhatIsNext: a --no-pr seat inject, whose
+// value is not on the store's own branch, prints a NOTE saying exec does not read
+// it yet, with the next command, exactly as a --no-pr seal does, and the value is
+// on no line.
+func TestASeatInjectNotYetInTheStoreSaysSoAndWhatIsNext(t *testing.T) {
+	t.Parallel()
+
+	f := newInjectFixture(t)
+	out, err := RunSeatInject(f.options("NOVA_REDIS_BENCH_PASSWORD", true))
+	require.NoError(t, err, "RunSeatInject: %v", err)
+	lines := strings.Split(out, "\n")
+	require.Len(t, lines, 2, "the OK line, then its NOTE: %q", out)
+	assert.Equal(t, "SECRETS SEAT INJECT OK seat=air from=rowan names=1 committed branch=seal/air-NOVA_REDIS_BENCH_PASSWORD-20260927-013000", lines[0], "OK line")
+	assert.Equal(t, "SECRETS SEAT INJECT NOTE exec and check read the store's own branch, which does not hold this value yet; next: git -C "+
+		f.storeDir+" push -u origin seal/air-NOVA_REDIS_BENCH_PASSWORD-20260927-013000, then open and merge its pull request", lines[1], "NOTE line")
+	assertNoValue(t, "the seat inject result", out)
 }
 
 // TestSeatInjectAddsANewNameAndKeepsTheClearOnes: a name the target never held is
