@@ -1497,9 +1497,15 @@ default) and `low` (it fills only an idle lane).
   review and working together (it names the further bottleneck when both hold), `none` else
   (`sprint.BackupOf`). `where --json` carries `backup`, from the count cells, and
   `reads_waiting`, the reads wanted now and not asked over the primaries in review, from the
-  tick's where record; `where` prints `backup: reads (review 279 > working 77, merging 44),
-  250 reads waiting` under the summary while the state is not none
-  (`TestWhereShowsTheBackupState`). The one judgment at each edge is card
+  tick's where record, and `review_waits`, what the primaries in review wait on, each counted
+  once (`sprint.ReviewWaitsOf`: reads out, a reader wanted, found broken, failed, acceptable,
+  with the brief defects among the broken and the failed); `where` prints `backup: reads
+  (review 279 > working 77, merging 44), 250 reads waiting; review 279: 9 reads out, 250 want
+  a reader, 20 found broken (16 brief defects), 0 failed (0 brief defects), 0 acceptable`
+  under the summary while the state is not none (`TestWhereShowsTheBackupState`), so a
+  review count is never read as reads to do (the owner, 2026-10-07: 87 in review, 0 reads
+  waiting, 57 of them failed work and 20 a broken read standing). `tick --shadow` ends its
+  reads account with the same line. The one judgment at each edge is card
   a-backup-transition-pushes-one-judgment-b's; the state alone is exposed here.
 - **The fleet readers read their row's tiers.** A fleet reader row whose tiers are `flash`,
   or that names none while the store holds routes, is never asked a pro read (the owner,
@@ -3425,11 +3431,15 @@ reads close as `read --ok|--broken` closes them, and it leaves review only by th
   machine's reader identity: `reader add`), is neither held nor retired and serves the read's
   tier (`reader set --tiers`, `readerServesTier`). Never the unit that worked the attempt, and
   never a unit that holds a read card of the attempt or closed one (`readSpent`: placed, or
-  retired with a verdict, by `read`, `returned` or `late`), nor a machine whose reader row
-  holds a readers-table read of the attempt. A read the machine took back (its member down,
-  away or held, `hold --return`, a resting route, its primary moved: `retired_by` `away`,
-  `rest`, `primary`) spends nothing: its reader may be dealt the read again, under the next
-  generation of the id (`.g1`, `.g2`; `MaxReadGen`). A read goes to the cheapest reader
+  retired with a verdict, by `read`, `declined` (`friend take` for her, `FriendTakeReq.Spends`:
+  she judged it outside her tiers) or `late`), nor a machine whose reader row holds a
+  readers-table read of the attempt. Only a verdict spends a reader (the owner, 2026-10-07):
+  a read the machine took back (its member down, away or held, `hold --return`, a resting
+  route, its primary moved: `retired_by` `away`, `rest`, `primary`) and one its reader handed
+  back with no verdict (`read --return`, `returned`: today a fetch that failed, never a
+  judgment) spend nothing: its reader may be dealt the read again, under the next generation
+  of the id (`.g1`, `.g2`; `MaxReadGen`; `TestAReturnedReadSpendsNoReader`; tla/ReadCards.tla
+  `ReturnedIsDealtAgain`). A read goes to the cheapest reader
   that may take it, friends and members alike: one with an idle lane before every one with
   none (a read waits in a ready queue only when every reader that may take it is busy), then
   by tier distance (`readTierDistance`, against the read's tier before `readTierOf` lowers

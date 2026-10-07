@@ -1360,6 +1360,10 @@ func takeOne(s *Snapshot, r TakeReq) Plan {
 		}
 		if byID {
 			if room < cost(c) {
+				if halves {
+					ww, wr := rowWorking(s, r.As)
+					return fmt.Sprintf("%s %s is at its width (%d work and %d reads working of %d, a read half a slot): a card is taken when one is reported", worker, r.As, ww, wr, width)
+				}
 				return fmt.Sprintf("%s %s is at its width (%d working of %d): a card is taken when one is reported", worker, r.As, len(s.Fleet.Cell(r.As, Working)), width)
 			}
 			room -= cost(c)

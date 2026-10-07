@@ -161,8 +161,8 @@ func TestAReadCardIsDealtToAReaderOfItsTierAndNeverTheWorker(t *testing.T) {
 		putReviewBy(w, "s1-1", "s1-1: work (s1)\n", "m1", 1)
 		dealReads(t, w, nil)
 		first := readCardsOf(w, "s1-1")[0]
-		// it hands the read back: spent, so the next goes to the other reader
-		first.Fields["retired_by"] = RetiredByReturned
+		// it let the read pass its deadline: spent, so the next goes to the other reader
+		first.Fields["retired_by"] = RetiredByLate
 		w.place(w.s.Fleet, first.ID, "", "")
 		dealReads(t, w, nil)
 		next := readCardsOf(w, "s1-1")
@@ -500,17 +500,19 @@ func TestReadCardsWhySaysWhichClauseRefusesEachUnit(t *testing.T) {
 		readerSeat("bob", 8, []string{"heavy"}, []string{"builder", "reader"}),
 	}
 	why := ReadCardsWhy(w.s, seats)
-	require.Len(t, why, 2, "the units, then the one primary that waits")
+	require.Len(t, why, 3, "the units, the one primary that waits, then what review waits on")
 	require.Contains(t, why[0], "units: amy half=")
 	require.Equal(t, "s1-1 tier=heavy wants=2 waits: no reader up may read it: no friend whose tiers reach its read tier, and no member whose reader row serves its tier, besides its own worker; refused: amy=friend tier, bob=worker", why[1])
+	require.Equal(t, "review 1: 0 reads out, 1 want a reader, 0 found broken (0 brief defects), 0 failed (0 brief defects), 0 acceptable", why[2])
 	w.s.Work.SetProp(PropReadCards, "off")
 	require.Empty(t, ReadCardsWhy(w.s, seats), "nothing with read cards off")
 }
 
 // TestAReadHandedBackByFriendTakeIsNotDealtToHerAgain pins PR 5407's cold read: a read card
 // the seat or her runner handed back (friend take: her runner asks it back when she judges
-// it outside her tiers) spends her, as read --return does, so the deal never re-deals her
-// the same read at the attempt; the machine's take-back (a hold) still spends nothing.
+// it outside her tiers) spends her (retired_by declined), so the deal never re-deals her
+// the same read at the attempt; the machine's take-back (a hold) still spends nothing, and
+// neither does her own read --return (TestAReturnedReadSpendsNoReader).
 func TestAReadHandedBackByFriendTakeIsNotDealtToHerAgain(t *testing.T) {
 	t.Parallel()
 	for _, hold := range []bool{false, true} {
@@ -522,6 +524,9 @@ func TestAReadHandedBackByFriendTakeIsNotDealtToHerAgain(t *testing.T) {
 		require.NotNil(t, w.s.Fleet.Placed(id))
 		w.must(FriendTake(w.s, FriendTakeReq{Friend: "amy", IDs: []string{id}, All: hold, Hold: hold, Spends: !hold, Reason: "outside her tiers", Who: "coordinator"}))
 		require.Equal(t, Withdrawn, w.s.Fleet.Card(id).Col)
+		if !hold {
+			require.Equal(t, RetiredByDeclined, w.s.Fleet.Card(id).F("retired_by"), "declined for her, not returned by her")
+		}
 		dealReads(t, w, seats)
 		if hold {
 			require.NotNil(t, w.s.Fleet.Placed(id+".g1"), "a hold's take-back spends nothing: dealt again")
@@ -606,4 +611,70 @@ func TestAReadNoUnitMayTakeIsCannotAskOnce(t *testing.T) {
 	for _, n := range p.Notes {
 		require.NotEqual(t, NCannotAsk, n.Type, "raised once: it stays open")
 	}
+}
+
+// TestAReturnedReadSpendsNoReader pins the owner's rule of 2026-10-07 (only a verdict spends a
+// reader): a read card its reader handed back with no verdict (read --return, retired_by
+// returned: today a fetch that failed, not a judgment) spends nothing of hers, so the deal
+// deals her the read again under the next generation of the id, MaxReadGen times, and the
+// bound holds: past it she is refused with no id. On 2026-10-07 the seat found two primaries
+// whose every pro reader was spent by a return or a withdrawal and none by a verdict ("reads
+// exhausted"), while those readers sat idle.
+func TestAReturnedReadSpendsNoReader(t *testing.T) {
+	t.Parallel()
+	w := readCardsWorld(t, 4, "m1", "m2")
+	putReviewBy(w, "s1-1", "s1-1: work (s1)\n", "m1", 1)
+	id := ReadCardID("s1-1", 1, "m2")
+	for n, want := range []string{id, id + ".g1", id + ".g2"} {
+		dealReads(t, w, nil)
+		reads := readCardsOf(w, "s1-1")
+		require.Len(t, reads, 1, "return %d: dealt again", n)
+		require.Equal(t, want, reads[0].ID, "to the same reader, under the next generation")
+		w.must(Read(w.s, ReadReq{As: "m2", Sel: Sel{IDs: []string{reads[0].ID}}, Return: true, Reason: "fetch failed", Who: "m2"}))
+		require.Equal(t, RetiredByReturned, w.s.Fleet.Card(reads[0].ID).F("retired_by"))
+	}
+	dealReads(t, w, nil)
+	require.Empty(t, readCardsOf(w, "s1-1"), "every identity used: the bound holds")
+	why := ReadCardsWhy(w.s, nil)
+	require.Contains(t, strings.Join(why, "\n"), "m2=no id")
+}
+
+// TestATakeAdmitsTwelveWorkAndOneReadOnSixteen pins the one width in half slots at the take
+// (the coordinator, 2026-10-07 2:20 PM ET: a friend with 12 work cards and 1 read running,
+// 12.5 of 16 weighted slots, was refused a take as full at a raw 16/16): the take's room is
+// twice the width less twice the work and the reads working, over the cards placed working
+// on her row, withdrawn and ready cards aside, as the deal's units count it (readUnitsOf,
+// friendLoad), and a refusal past it says the work and the reads.
+func TestATakeAdmitsTwelveWorkAndOneReadOnSixteen(t *testing.T) {
+	t.Parallel()
+	w := readCardsWorld(t, 16, "m1")
+	seat := readerSeat("amy", 16, []string{"flash"}, []string{"builder", "reader"})
+	w.s.Friends = []FriendSeat{seat}
+	row := FriendRow("amy")
+	busyFriend(w, "amy", 12)
+	w.s.Fleet.Put(&Card{ID: "p0.r1.amy", Row: row, Col: Working, Score: 1, Rev: 1, Fields: map[string]string{"kind": "read", "primary": "p0", "stream": "s9", "attempt": "1", "reader": "amy", FieldReadCard: "1"}})
+	w.s.Fleet.Put(&Card{ID: "gone.w1", Row: "", Col: Withdrawn, Score: 1, Rev: 1, Fields: map[string]string{"kind": "work", "primary": "gone", "stream": "s9", "attempt": "1", "retired_by": RetiredByAway}})
+	for i := 0; i < 4; i++ {
+		id := "next-" + itoa(i)
+		w.s.Fleet.Put(&Card{ID: id + ".w1", Row: row, Col: Ready, Score: float64(10 + i), Rev: 1, Fields: map[string]string{"kind": "work", "primary": id, "stream": "s9", "attempt": "1", "gen": "1"}})
+	}
+	ww, wr := rowWorking(w.s, row)
+	require.Equal(t, 12, ww)
+	require.Equal(t, 1, wr)
+	require.Equal(t, 17, friendLoad(w.s, "amy"), "the deal's load over her ready and working: 16 work and half a read, rounded up; the withdrawn card counts nowhere")
+	p := Take(w.s, TakeReq{As: row, Sel: Sel{IDs: []string{"next-0.w1"}}, Gens: map[string]int{"next-0.w1": 1}, Who: row})
+	require.Empty(t, p.Refused, "12 work and 1 read on 16 leave room: the take is admitted")
+	w.must(p)
+	require.Equal(t, Working, w.s.Fleet.Card("next-0.w1").Col)
+	// a take by count takes what fits: two more work cards (15 work and a read, 31 of 32 half
+	// slots), and the next by id is refused in half slots, naming the work and the reads
+	w.must(Take(w.s, TakeReq{As: row, Sel: Sel{Limit: 10}, Who: row}))
+	ww, wr = rowWorking(w.s, row)
+	require.Equal(t, 15, ww)
+	require.Equal(t, 1, wr)
+	last := w.s.Fleet.Cell(row, Ready)
+	require.Len(t, last, 1)
+	p = Take(w.s, TakeReq{As: row, Sel: Sel{IDs: []string{last[0].ID}}, Gens: map[string]int{last[0].ID: 1}, Who: row})
+	require.Len(t, p.Refused, 1)
+	require.Contains(t, p.Refused[0].Why, "15 work and 1 reads working of 16, a read half a slot")
 }

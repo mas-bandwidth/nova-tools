@@ -35,5 +35,6 @@ func TestWhereShowsTheBackupState(t *testing.T) {
 	ta.json("where", &v)
 	assert.Equal(t, sprint.BackupReads, v.Backup, "three in review above none working")
 	assert.Equal(t, 3, v.ReadsWaiting)
-	assert.Contains(t, ta.ok("where"), "backup: reads (review 3 > working 0, merging 0), 3 reads waiting")
+	assert.Equal(t, sprint.ReviewWaits{Review: 3, Wanting: 3}, v.ReviewWaits, "what review waits on, each primary once")
+	assert.Contains(t, ta.ok("where"), "backup: reads (review 3 > working 0, merging 0), 3 reads waiting; review 3: 0 reads out, 3 want a reader, 0 found broken (0 brief defects), 0 failed (0 brief defects), 0 acceptable")
 }

@@ -652,6 +652,11 @@ type whereView struct {
 	// tick's where record (sprint.ReadsWaiting).
 	Backup       string `json:"backup"`
 	ReadsWaiting int    `json:"reads_waiting"`
+	// ReviewWaits is what the primaries in review wait on, each counted once, from the
+	// tick's where record (sprint.ReviewWaitsOf): the backup line names them, so a review
+	// count never reads as reads to do (the owner, 2026-10-07, 87 in review and 0 reads
+	// waiting: 57 had failed work and 20 a broken read standing, most of them brief defects).
+	ReviewWaits sprint.ReviewWaits `json:"review_waits,omitzero"`
 	// ReadCards is the epoch's read cards ready, working and done, and each fleet and friends
 	// row of tables carries its cards by level and its reads (rowCardFields), from the tick's
 	// where record (sprint.RowCardCounts).
@@ -1172,7 +1177,7 @@ func (a *app) whereOf(ctx context.Context, st *store.Store, stale time.Duration,
 	v.Ready = readyPrimaries(shapes[0])
 	working, review, merging := pipelineCounts(shapes[0])
 	v.Backup = sprint.BackupOf(int(working), int(review), int(merging))
-	v.ReadsWaiting, v.Priorities, v.StreamPriorities = facts.ReadsWaiting, facts.Priorities, facts.StreamPriorities
+	v.ReadsWaiting, v.Priorities, v.StreamPriorities, v.ReviewWaits = facts.ReadsWaiting, facts.Priorities, facts.StreamPriorities, facts.ReviewWaits
 	v.ReadCards = facts.ReadCards
 	v.Width = upWidth(shapes[3])
 	v.Buffer = fmt.Sprintf("%d/%d", v.Ready, 2*v.Width)
@@ -1223,7 +1228,7 @@ func (a *app) whereOf(ctx context.Context, st *store.Store, stale time.Duration,
 	if line := sprint.PriorityLine(v.Priorities, v.StreamPriorities); line != "" {
 		b.WriteString(line + "\n")
 	}
-	if line := backupLine(v.Backup, working, review, merging, v.ReadsWaiting); line != "" {
+	if line := backupLine(v.Backup, working, review, merging, v.ReadsWaiting, v.ReviewWaits); line != "" {
 		b.WriteString(line + "\n")
 	}
 	// the day's read spend per route, from the same record (cost_view.go)

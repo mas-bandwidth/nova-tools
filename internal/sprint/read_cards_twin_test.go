@@ -234,10 +234,11 @@ func TestAReadCardsVerdictClosesTheRead(t *testing.T) {
 }
 
 // TestAReturnedReadCardIsReplacedWithAnotherReader pins the replacement: a read card its
-// reader hands back with no verdict (read --return) is retired, spends that reader's read of
-// the attempt, and the next deal deals the read to another reader; a read the machine takes
-// back (its member held) spends nothing, and its reader is dealt it again once back, under
-// the next generation of the card's id.
+// reader hands back with no verdict (read --return) is retired and spends nothing of that
+// reader's (the owner, 2026-10-07: only a verdict spends a reader), so the next deal deals
+// the read again, to the cheapest reader that may take it, the one that returned it among
+// them, under the next generation of the card's id; a read the machine takes back (its
+// member held) spends nothing either, and its reader is dealt it again once back.
 func TestAReturnedReadCardIsReplacedWithAnotherReader(t *testing.T) {
 	t.Parallel()
 	r := newReadCardsRig(t)
@@ -251,8 +252,10 @@ func TestAReturnedReadCardIsReplacedWithAnotherReader(t *testing.T) {
 	reads = r.readCards("s1-1")
 	require.Len(t, reads, 1, "dealt again")
 	second := reads[0]
-	require.NotEqual(t, first.Row, second.Row, "to another reader")
 	require.NotEqual(t, worker, second.Row, "never the worker")
+	if second.Row == first.Row {
+		require.Equal(t, first.ID+".g1", second.ID, "the same reader, under the next generation: the return spent nothing")
+	}
 
 	// the machine takes it back: its member held; the only reader left is it
 	res, err := r.st.Hold(r.ctx, sprint.HoldReq{Names: []string{second.Row}, Reason: "a test", Return: true, Who: "coordinator"})
