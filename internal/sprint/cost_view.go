@@ -44,7 +44,7 @@ type TierCosts struct {
 	// landed cell, which is the work written at land.
 	PerLanded string `json:"per_landed"`
 	// CostByTier is the stream's spend by the tier each attempt and read ran on, dollars
-	// and cents rounded up, over every card of the stream; a record with no tier is
+	// and cents allocated from the rounded total, over every card of the stream; a record with no tier is
 	// "untiered".
 	CostByTier map[string]string `json:"cost_by_tier,omitempty"`
 	// TotalCost is the stream's complete recorded spend: every take and read of every card
@@ -54,7 +54,7 @@ type TierCosts struct {
 	TotalCost string `json:"total_cost,omitempty"`
 	// WorkCost and ReadCost split TotalCost by kind: every take's charged figure and every
 	// read's, dollars and cents rounded up; "" when nothing of that kind was priced. A
-	// no-result run and a lander's run stay in this legacy WorkCost alias.
+	// non-read no-result run and a lander's run stay in this legacy WorkCost alias.
 	// The dashboard shows the reads as their own number beside the work.
 	WorkCost string `json:"work_cost,omitempty"`
 	ReadCost string `json:"read_cost,omitempty"`
@@ -119,7 +119,7 @@ func StreamTierCosts(s *Snapshot) map[string]TierCosts {
 
 // CostSplits is each stream's TierCosts and, beside it, the same four-part spend
 // gathered by the tier the record ran on (every stream together). A record with
-// no tier is untiered; lost tier detail is a separate unattributed bucket.
+// no tier has its own bucket; lost tier detail is separately unattributed.
 func CostSplits(s *Snapshot) (map[string]TierCosts, map[string]CostParts) {
 	streams := map[string]TierCosts{}
 	tiers := map[string]*partSums{}

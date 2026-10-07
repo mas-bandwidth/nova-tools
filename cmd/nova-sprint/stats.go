@@ -167,7 +167,7 @@ var statsLegend = map[string]string{
 	"reads":   "reads: per reader, cards is the read cards asked of it (retired ones too); begin wait is asked to begun, run wall the usage's wall, report lag begun to read less the run wall\n",
 	"routes":  "routes: per route, takes is every take on it, work and read alike, each take of a card again counted (the cards' cost records); ok came back with its answer, provider ended by the provider or with no result, failed every other end; run wall the takes' usage walls\n",
 	"streams": "streams: per stream, the epoch's complete recorded spend in four parts (work attempts, reads, the lander's run, a run whose end begins \"no result\") beside the total, and that total over the cards landed (per_landed); \"-\" when that part priced nothing, and for per_landed when nothing landed. The timing tables follow the last stats tidy; these two are the whole epoch; lost kind detail is explicit as cost_unattributed\n",
-	"tiers":   "tiers: the same four parts over every stream, by the tier the record ran on; a record with no tier is untiered; lost kind/tier detail is explicit as cost_unattributed, never relabelled work\n",
+	"tiers":   "tiers: the same four parts over every stream, by the tier the record ran on; records with no tier have their own bucket; lost kind/tier detail is explicit as cost_unattributed, never relabelled work\n",
 }
 
 // measureText is a measure as its cell prints it: the median and the max in seconds

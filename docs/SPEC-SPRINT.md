@@ -1912,8 +1912,8 @@ kind; each other `work`, `read` or `land` record is counted in its own field.
 A record is charged once in that partition. Subscription tokens and unpriced
 runs remain explicit in their existing fields rather than becoming dollar
 zeros. Stream and tier cost projections (`sprint.CostSplits`) use the same
-classification, grouping tiers by the record's tier, with `untiered` for a
-retained record that names none. The streams and tiers tables in `stats` cover
+classification, grouping tiers by the record's tier, with a no-tier bucket for
+a retained record that names none. The streams and tiers tables in `stats` cover
 the whole epoch, independently of the timing tables' tidy window.
 
 The scalar charged total includes records beyond `MaxCostRecords`, but those
