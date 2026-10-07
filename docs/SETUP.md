@@ -171,3 +171,20 @@ naming the verb or the step above: install `sops`, set the missing variable, `ch
 `chmod 700` the key, `nova-secrets keygen`, the `git clone` of the store, or `nova-secrets seal --store <store> --as <seat> --name <NAME>` for a name the loops require and the store
 does not hold. The check is fleet-scoped: `nova-doctor --local` skips it with the other fleet
 checks and says which; run `nova-doctor` plain to see it.
+
+### dep-ssh-b.w7: ssh between the coordinator and the benches
+
+The coordinator and fleet members reach the benches by ssh: the bench rule, the land,
+and sandbox worktrees. The inventory in the seat's secrets store names each bench; the
+doctor check runs `ssh -o BatchMode=yes -o ConnectTimeout=5 <bench> true` for each one
+and names a bench that fails with the reason (unknown host key, no key, timeout).
+
+Who needs it: any machine that runs cards or needs to reach benches (a fleet member or
+the coordinator). `nova-up --local` creates `~/.ssh` and an empty `known_hosts` file;
+a person runs `ssh-keyscan <bench>` for each bench to populate it and configures the
+key used by non-interactive ssh.
+
+The doctor check `ssh` (`internal/doctor/check_ssh.go`) reads the inventory from the
+seat's secrets store and verifies ssh connectivity to every bench. It fails when one
+cannot be reached and names the fix line. It is fleet-only, so `nova-doctor --local`
+skips it and a fleet run includes it.
