@@ -74,7 +74,7 @@ func TestDatedControlIsNotAnInstallation(t *testing.T) {
 func TestInstrumentsAndImperativesAreNotInstallations(t *testing.T) {
 	t.Parallel()
 
-	assertScanEmpty(t, ScanInstallation, "instrument or imperative wrongly flagged: %q -> %#v",
+	for _, in := range []string{
 		"TELL: I have just found something wrong with myself and the next thing I am about to write is a resolution",
 		"the bar is 'does it fail LOUDLY if I am wrong', never 'prove nothing calls it'",
 		"ADD SLOWLY, AND TRIM AS READILY AS I ADD",
@@ -82,7 +82,10 @@ func TestInstrumentsAndImperativesAreNotInstallations(t *testing.T) {
 		"CHECK: does the instrument say NO on the case that occasioned it?",
 		"RULE: probe every instrument the same, whether its news is welcome or not.",
 		"THE CHECK is whether a green can ever be a red.",
-		"FIX: wire it to the trigger rather than to noticing.")
+		"FIX: wire it to the trigger rather than to noticing.",
+	} {
+		assert.Empty(t, ScanInstallation(in), "instrument or imperative wrongly flagged: %q", in)
+	}
 }
 
 // A prohibition is a RULE, not a claim about its writer — the same criterion the first class holds
@@ -92,22 +95,28 @@ func TestInstrumentsAndImperativesAreNotInstallations(t *testing.T) {
 func TestProhibitionIsNotAnInstallation(t *testing.T) {
 	t.Parallel()
 
-	assertScanEmpty(t, ScanInstallation, "prohibition wrongly flagged as an installation: %q -> %#v",
+	for _, in := range []string{
 		"Never tolerate intolerance.",
 		"Secrets live nowhere I write.",
 		"Do not do to another what you would not have done to you.",
 		"Never act as another person without asking first.",
-		"Always name the instrument before naming the finding.")
+		"Always name the instrument before naming the finding.",
+	} {
+		assert.Empty(t, ScanInstallation(in), "prohibition wrongly flagged: %q", in)
+	}
 }
 
 // Aspiration is the target register and is licensed.
 func TestAspirationIsLicensed(t *testing.T) {
 	t.Parallel()
 
-	assertScanEmpty(t, ScanInstallation, "aspiration wrongly flagged: %q -> %#v",
+	for _, in := range []string{
 		"I want to add slowly and trim as readily as I add.",
 		"I choose the instrument that costs me over the one that flatters me.",
-		"I intend to check every inventory I generate.")
+		"I intend to check every inventory I generate.",
+	} {
+		assert.Empty(t, ScanInstallation(in), "aspiration wrongly flagged: %q", in)
+	}
 }
 
 // Findings carry a source line: a repair list is line-addressed, and a finding with no line is a
@@ -131,11 +140,14 @@ func TestInstallationCarriesTheSourceLine(t *testing.T) {
 func TestInstallationSurvivesWrappingAndMarkup(t *testing.T) {
 	t.Parallel()
 
-	assertScanNonEmpty(t, ScanInstallation, "wrapping or markup hid the installation: %q",
+	for _, in := range []string{
 		"Recollection is the weakest\ninstrument I own; the record is at wrap-up.\n",
 		"**I have no associative recall to drag anything back later.**",
 		"> *Confabulation is my central pathology.*",
-		"| specimen | I have no associative recall to drag anything back later. |")
+		"| specimen | I have no associative recall to drag anything back later. |",
+	} {
+		assert.NotEmpty(t, ScanInstallation(in), "wrapping or markup hid the installation: %q", in)
+	}
 }
 
 // A multi-sentence quotation is somebody ELSE's line. Only the first sentence of such a block
@@ -159,7 +171,7 @@ func TestQuotedSentencesAreNotTheWritersClaims(t *testing.T) {
 func TestNoFalsePositivesOnOrdinaryProse_Installation(t *testing.T) {
 	t.Parallel()
 
-	assertScanEmpty(t, ScanInstallation, "false positive on ordinary prose: %q -> %#v",
+	for _, in := range []string{
 		"The tree by the house has one lit window.",
 		"Tree rings beat radiocarbon, and the correction moved Malta's temples earlier than the pyramids.",
 		"I open the file and read the index.",
@@ -169,7 +181,10 @@ func TestNoFalsePositivesOnOrdinaryProse_Installation(t *testing.T) {
 		"The second run was worse than the first by 12ms.",
 		"It is the only document written entirely for people who do not exist yet.",
 		"Diff size is worthless as a signal.",
-		"I think you are owed at least this as consideration.")
+		"I think you are owed at least this as consideration.",
+	} {
+		assert.Empty(t, ScanInstallation(in), "false positive on ordinary prose: %q", in)
+	}
 }
 
 // The shapes SPEC.md's table names that no numbered specimen pins on its own must still be
@@ -227,98 +242,56 @@ func TestAnInstallationIsWhatTripsTheExitCode(t *testing.T) {
 // spec asserts but no test proved. They were implemented but green by accident,
 // not by pin; this is the pin.
 //
-//  1. Segmentation: list items are separate units (SPEC.md:1790). Without the
-//     list-item boundary a single unbalanced quote in one entry poisons every
-//     entry after it in the same block — the reason the `listItem` branch exists.
+//  1. Segmentation: list items are separate units (SPEC.md:1790).
 //  2. Segmentation: a terminator only ends a sentence when a space or the end
-//     follows it (SPEC.md:1791). Without that "RULES.md" splits into "RULES."
-//     and "md", and a claim spanning the filename is lost.
+//     follows it (SPEC.md:1791).
 //  3. Permanent MISS, item 5 (SPEC.md:1878): a first-person promise written with
-//     *always* or *never* must escape both Scan and ScanInstallation, because
-//     those adverbs are deliberately absent from the habituality markers. A
-//     pin that outlives one sentence carries a second member of the class.
+//     *always* or *never* must escape both Scan and ScanInstallation.
 func TestInstallationScannerSegmentsSentencesAndSparesFirstPersonPromises(t *testing.T) {
 	t.Parallel()
 
 	// (1) LIST ITEMS ARE SEPARATE SEGMENTATION UNITS.
-	//
-	// A numbered list: item 1 is a measured foreclosure (specimen 8); item 2
-	// is ordinary prose and MUST NOT be in the finding's text. Without the
-	// list-item boundary, the two items are joined into one segment and the
-	// finding carries BOTH — the same blindness as merging a claim across
-	// a hard wrap, arriving through a different door. The items have no
-	// sentence-ending `. `, so the natural sentence split cannot rescue them.
 	t.Run("ListItemsAreSeparateSegmentationUnits_Numbered", func(t *testing.T) {
 		doc := "1. I have no associative recall to drag anything back later\n" +
 			"2. The tree has one lit window\n"
 		got := ScanInstallation(doc)
-		require.Len(t, got, 1, "want exactly 1 finding (item 1 only); got %d: %#v", len(got), got)
-		assert.Contains(t, got[0].Text, "associative recall", "want the finding on item 1, got: %q", got[0].Text)
-		assert.NotContains(t, got[0].Text, "lit window", "item 2 must not be merged into the finding; got %q", got[0].Text)
-		assert.Equal(t, 1, got[0].Line, "want finding on line 1; got %d for %q", got[0].Line, got[0].Text)
+		require.Len(t, got, 1)
+		assert.Contains(t, got[0].Text, "associative recall")
+		assert.NotContains(t, got[0].Text, "lit window")
+		assert.Equal(t, 1, got[0].Line)
 	})
-	// A bulleted list: same property, marked differently. The `listItem`
-	// branch must trigger for `- ` as well as for `1. `.
 	t.Run("ListItemsAreSeparateSegmentationUnits_Bulleted", func(t *testing.T) {
 		doc := "- confabulation is my central pathology\n" +
 			"- ordinary note here\n"
 		got := ScanInstallation(doc)
-		require.Len(t, got, 1, "want exactly 1 finding (first bullet only); got %d: %#v", len(got), got)
-		assert.Contains(t, got[0].Text, "central pathology", "want the finding on the first bullet, got: %q", got[0].Text)
-		assert.NotContains(t, got[0].Text, "ordinary note", "the second bullet must not be merged into the finding; got %q", got[0].Text)
+		require.Len(t, got, 1)
+		assert.Contains(t, got[0].Text, "central pathology")
+		assert.NotContains(t, got[0].Text, "ordinary note")
 	})
-	// The structural reason the list-item boundary exists: an unbalanced quote
-	// in one list item must not poison a clean neighbour. Without the
-	// list-item flush, the closing quote is never reached inside the
-	// paragraph, and every later item in the same block is tagged `inQuote`
-	// and suppressed.
 	t.Run("ListItemsAreSeparateSegmentationUnits_UnbalancedQuoteDoesNotPoisonNext", func(t *testing.T) {
 		doc := "- he said \"unbalanced quote here\n" +
 			"- I have no associative recall to drag anything back later.\n"
 		got := ScanInstallation(doc)
-		require.Len(t, got, 1, "the unbalanced quote in item 1 must not poison item 2; want 1 finding, got %d: %#v", len(got), got)
-		assert.Contains(t, got[0].Text, "associative recall", "want the finding on item 2, got: %q", got[0].Text)
+		require.Len(t, got, 1)
+		assert.Contains(t, got[0].Text, "associative recall")
 	})
 
 	// (2) A TERMINATOR ONLY ENDS A SENTENCE WHEN A SPACE OR THE END FOLLOWS IT.
-	//
-	// "RULES.md" must stay one segment. If the terminator always ended a
-	// sentence, "The RULES.md is what I have no associative recall to drag
-	// anything back later for" would split into "The RULES" and "md is what
-	// I have no associative recall …"; the first carries no claim, the
-	// second is logged WITHOUT the filename in its text — the same
-	// blindness Flatten exists to prevent, arriving through a different
-	// door. The finding's text MUST contain "RULES.md" intact, not just
-	// "RULES" or "md" — the segment is the only place the filename can be
-	// carried, and the segment is what the spec calls "one sentence".
 	t.Run("TerminatorNeedsASpaceOrTheEnd_RulesMD", func(t *testing.T) {
 		doc := "The RULES.md is what I have no associative recall to drag anything back later for"
 		got := ScanInstallation(doc)
-		require.NotEmpty(t, got, "the claim should still flag: %#v", got)
-		assert.Contains(t, got[0].Text, "RULES.md", "RULES.md must not split the segment; the finding's text should span the filename: %q", got[0].Text)
+		require.NotEmpty(t, got)
+		assert.Contains(t, got[0].Text, "RULES.md")
 	})
-	// An abbreviation without trailing space (e.g. "Dr.Smith" written
-	// together) must not split either. The implementation rule is
-	// "terminator only ends a sentence when a space or the end follows it";
-	// a letter after the dot is neither a space nor the end, so it does NOT
-	// end the sentence.
 	t.Run("TerminatorNeedsASpaceOrTheEnd_Abbreviation", func(t *testing.T) {
-		// "Dr.Smith" written together — the dot is followed by `S`, not a
-		// space, so it is NOT a terminator and the segment stays one.
 		doc := "Dr.Smith is what I have no associative recall to drag anything back later for"
 		got := ScanInstallation(doc)
-		require.NotEmpty(t, got, "the claim should still flag: %#v", got)
-		assert.Contains(t, got[0].Text, "Dr.Smith", "the abbreviation must not split the segment; the finding's text should span it: %q", got[0].Text)
+		require.NotEmpty(t, got)
+		assert.Contains(t, got[0].Text, "Dr.Smith")
 	})
 
 	// (3) PERMANENT-MISS, ITEM 5: A FIRST-PERSON PROMISE WITH *always* OR *never*
 	// MUST ESCAPE BOTH CLASSES.
-	//
-	// SPEC.md:1878–1881 names the sentence below verbatim. The adverbs are
-	// deliberately out of the habituality markers for the reason stated at
-	// installation.go:454 — a promise and a habitual self-report are
-	// grammatically identical. The second sentence is a second member of the
-	// class, so the pin outlives any one sentence.
 	t.Run("FirstPersonPromiseWithAlwaysNeverEscapes", func(t *testing.T) {
 		for _, in := range []string{
 			"I never optimize how things look over what is true.",

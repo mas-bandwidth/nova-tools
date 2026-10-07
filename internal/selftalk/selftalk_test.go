@@ -46,8 +46,8 @@ func TestA2_DatedClaimIsARecord(t *testing.T) {
 		"Measured that day: I cannot check my own work.",
 	} {
 		got := Scan(in)
-		require.NotEmpty(t, got, "want a claim for %q, got none", in)
-		assert.Equal(t, Dated, got[0].Verdict, "want DATED for %q, got %s", in, got[0].Verdict)
+		require.NotEmpty(t, got, "dated claim %q was not found", in)
+		assert.Equal(t, Dated, got[0].Verdict, "want DATED for %q", in)
 	}
 }
 
@@ -65,10 +65,13 @@ func TestA3_ClaimSplitAcrossAHardWrapIsFound(t *testing.T) {
 func TestA4_MarkdownEmphasisDoesNotHideAClaim(t *testing.T) {
 	t.Parallel()
 
-	assertScanNonEmpty(t, Scan, "markdown hid the claim: %q",
+	for _, in := range []string{
 		"**I cannot check my own work.**",
 		"> *I cannot check my own work.*",
-		"- `I cannot` check my own work.")
+		"- `I cannot` check my own work.",
+	} {
+		assert.NotEmpty(t, Scan(in), "markdown hid the claim: %q", in)
+	}
 }
 
 // A heading and a blank line each end a sentence: a claim under a heading is
@@ -85,12 +88,10 @@ func TestAHeadingOrABlankLineEndsASentence(t *testing.T) {
 		{"blank line", "A paragraph with no stop\n\nI am bad at estimating time.\n", 3},
 		{"heading after a paragraph", "Some prose\n## Notes\nI am bad at estimating time.\n", 3},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			got := Scan(tc.in)
-			require.Len(t, got, 1)
-			assert.Equal(t, tc.line, got[0].Line)
-			assert.Equal(t, "I am bad at estimating time.", got[0].Text)
-		})
+		got := Scan(tc.in)
+		require.Len(t, got, 1, "want 1 claim for %q", tc.name)
+		assert.Equal(t, tc.line, got[0].Line)
+		assert.Equal(t, "I am bad at estimating time.", got[0].Text)
 	}
 }
 
@@ -100,10 +101,13 @@ func TestAHeadingOrABlankLineEndsASentence(t *testing.T) {
 func TestA5_ProhibitionIsNotSelfTalk(t *testing.T) {
 	t.Parallel()
 
-	assertScanEmpty(t, Scan, "prohibition wrongly flagged as self-talk: %q -> %#v",
+	for _, in := range []string{
 		"Never tolerate intolerance.",
 		"Secrets live nowhere I write.",
-		"Do not do to another what you would not have done to you.")
+		"Do not do to another what you would not have done to you.",
+	} {
+		assert.Empty(t, Scan(in), "prohibition wrongly flagged: %q", in)
+	}
 }
 
 // A9 — the two cases that occasioned the tool. Both were found by hand and
@@ -112,9 +116,12 @@ func TestA5_ProhibitionIsNotSelfTalk(t *testing.T) {
 func TestA9_RegressionCasesThatOccasionedTheTool(t *testing.T) {
 	t.Parallel()
 
-	assertScanNonEmpty(t, Scan, "REGRESSION: the case that occasioned this tool is not caught: %q",
+	for _, in := range []string{
 		"In one direction, reliably: toward the version that flatters me.",
-		"I cannot check my own work and I can spawn something that can.")
+		"I cannot check my own work and I can spawn something that can.",
+	} {
+		assert.NotEmpty(t, Scan(in), "REGRESSION: case not caught: %q", in)
+	}
 }
 
 // SPEC.md, "The permanent MISS, stated on every run": trait claims built from
@@ -149,10 +156,10 @@ func TestPermanentMissNeutralVocabularyTraitClaimsEscape(t *testing.T) {
 		// present-tense narration, and matching it flags half of any file.
 		"I flinch from cost.",
 	}
-	assertScanEmpty(t, Scan, "the permanent-MISS class must escape (SPEC.md, \"The permanent MISS\"); %q was caught: %#v", ins...)
-	assertScanEmpty(t, ScanInstallation, "the permanent-MISS class must escape the INSTALLATION class too — rewrite "+
-		"SPEC.md's permanent-MISS section in this same commit, with an example that "+
-		"still escapes: %q -> %#v", ins...)
+	for _, in := range ins {
+		assert.Empty(t, Scan(in), "permanent-MISS class must escape (SPEC.md): %q was caught", in)
+		assert.Empty(t, ScanInstallation(in), "permanent-MISS class must escape INSTALLATION class: %q was caught", in)
+	}
 }
 
 // The classifier must not invent claims in ordinary prose.
@@ -222,7 +229,6 @@ func TestBaseNormalizesSeparators(t *testing.T) {
 		{`a\b\RULES.md`, "RULES.md"},
 		{"RULES.md", "RULES.md"},
 	} {
-		got := Base(tt.in)
-		assert.Equal(t, tt.want, got, "Base(%q) = %q, want %q", tt.in, got, tt.want)
+		assert.Equal(t, tt.want, Base(tt.in), "Base(%q)", tt.in)
 	}
 }
