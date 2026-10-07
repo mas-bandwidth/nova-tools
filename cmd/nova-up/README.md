@@ -27,7 +27,7 @@ $ nova-up version
 
 ## Verbs
 
-The reference for its verbs is [docs/SPEC-UP.md](../../docs/SPEC-UP.md).
+The [nova-up section of the command reference](../../docs/CLI.md#nova-up) documents every verb's flags, effect and exit codes.
 
 - `version`
 - `help`
