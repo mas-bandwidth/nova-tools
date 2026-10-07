@@ -4,7 +4,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"maps"
 	"path/filepath"
 	"slices"
@@ -111,104 +110,70 @@ func runReportStore(c *tool.Call) *tool.Out {
 	passwordEnv := c.Str("password-env")
 	month := c.Str("month")
 	by := c.Str("by")
-	maxRows := c.Int("max")
-	asJSON := c.Bool("json")
 
 	failed := func(err error) *tool.Out {
-		if !asJSON {
-			fmt.Fprintf(c.Stderr, "REPORT FAILED store=redis err=%s\n", oneline.Err(err))
-			return tool.Exit(1)
-		}
-		o := tool.Fail(err.Error())
-		o.Fact("month", month)
-		o.Fact("source", "redis")
+		o := tool.Fail()
+		o.Fact("store", "redis")
+		o.Fact("err", tool.Text(err.Error()))
 		return o
 	}
 	ls, err := openLedger(addr, user, passwordEnv)
 	if err != nil {
 		return failed(err)
 	}
+	// ignored: a deferred close on a read-only store: every read already carried its answer to the printed report
 	defer func() { _ = ls.Close() }()
 	totals, indexed, missing, err := ls.LedgerReport(context.Background(), month, by)
 	if err != nil {
 		return failed(err)
 	}
+	o := tool.Done()
 	rows := 0
-	var o *tool.Out
-	if asJSON {
-		o = tool.Done()
-	}
-	for i, t := range totals {
+	for _, t := range totals {
 		rows += t.Rows
-		if maxRows != 0 && i >= maxRows {
-			continue
-		}
-		var keys []string
 		var kv []any
 		for _, col := range record.LedgerGroupings[by] {
 			switch col {
 			case "day":
-				keys, kv = append(keys, "day="+oneline.Field(t.Day)), append(kv, "day", t.Day)
+				kv = append(kv, "day", t.Day)
 			case "model":
-				keys, kv = append(keys, "model="+oneline.Field(t.Model)), append(kv, "model", t.Model)
+				kv = append(kv, "model", t.Model)
 			case "repo":
-				keys, kv = append(keys, "repo="+oneline.Field(t.Repo)), append(kv, "repo", t.Repo)
+				kv = append(kv, "repo", t.Repo)
 			}
 		}
-		line := "REPORT " + strings.Join(keys, " ") + fmt.Sprintf(" rows=%d", t.Rows)
 		kv = append(kv, "rows", t.Rows)
 		for i, name := range record.LedgerTypes {
 			cell := tokens.Dash
 			if t.Known[i] {
 				cell = strconv.FormatInt(t.Tokens[i], 10)
 			}
-			line += " " + name + "=" + cell
 			kv = append(kv, name, cell)
 		}
-		if asJSON {
-			o.Item("group", kv...)
-		} else {
-			fmt.Fprintln(c.Stdout, line)
-		}
-	}
-	if maxRows != 0 && len(totals) > maxRows {
-		if asJSON {
-			o.More = append(o.More, tool.More{Kind: "group", Shown: maxRows, Total: len(totals), Remedy: tool.MaxRemedy})
-		} else {
-			fmt.Fprintf(c.Stdout, "REPORT MORE shown=%d of=%d; raise --max (0 = all)\n", maxRows, len(totals))
-		}
+		o.Item("group", kv...)
 	}
 	if indexed == 0 {
-		if asJSON {
-			o = tool.Fail()
-			o.Fact("month", month)
-			o.Fact("source", "redis")
-			o.Fact("indexed", 0)
-			return o
-		}
-		fmt.Fprintf(c.Stdout, "REPORT FAILED month=%s source=redis indexed=0\n", oneline.Field(month))
-		return tool.Exit(1)
-	}
-	if asJSON {
+		o.Status = tool.Failed
+		o.Exit = 1
 		o.Fact("month", month)
 		o.Fact("source", "redis")
-		o.Fact("groups", len(totals))
-		o.Fact("rows", rows)
-		o.Fact("indexed", indexed)
-		o.Fact("missing", missing)
+		o.Fact("indexed", 0)
 		return o
 	}
-	fmt.Fprintf(c.Stdout, "REPORT OK month=%s source=redis groups=%d rows=%d indexed=%d missing=%d\n", oneline.Field(month), len(totals), rows, indexed, missing)
-	return tool.Exit(0)
+	o.Fact("month", month).
+		Fact("source", "redis").
+		Fact("groups", len(totals)).
+		Fact("rows", rows).
+		Fact("indexed", indexed).
+		Fact("missing", missing)
+	return o
 }
 
 func runReportLocal(c *tool.Call, sf sourceFlags, supersedes []string, now time.Time) *tool.Out {
 	who := c.Str("who")
 	day := c.Str("day")
 	notePath := c.Str("note")
-	maxRows := c.Int("max")
 	dryRun := c.DryRun()
-	asJSON := c.Bool("json")
 
 	rules, err := tokens.LoadRules(sf.repos)
 	if err != nil {
@@ -223,48 +188,32 @@ func runReportLocal(c *tool.Call, sf sourceFlags, supersedes []string, now time.
 		}
 	}
 
+	o := tool.Done()
+	o.Findings("unreadable", "unparsed", "mixed", "avg", "avg-all")
+
 	unreadable, unparsed := 0, 0
 	for _, src := range sources {
 		for _, u := range src.Unreadables {
-			if !asJSON {
-				fmt.Fprintln(c.Stderr, formatLine("TOKENS", "UNREADABLE", oneline.Cap(u.Why, oneline.TailBytes), "label", u.Label, "path", u.Path))
-			}
+			o.ItemText("unreadable", oneline.Cap(u.Why, oneline.TailBytes), "label", u.Label, "path", u.Path)
 			unreadable++
 		}
 	}
 	for _, src := range sources {
 		for _, u := range src.Unparseds {
-			if !asJSON {
-				fmt.Fprintln(c.Stderr, formatLine("TOKENS", "UNPARSED", oneline.Cap(u.Text, oneline.TailBytes), "label", u.Label, "note", u.Note, "line", u.Line))
-			}
+			o.ItemText("unparsed", oneline.Cap(u.Text, oneline.TailBytes), "label", u.Label, "note", u.Note, "line", u.Line)
 			unparsed++
 		}
 	}
 
-	var o *tool.Out
-	if asJSON {
-		o = tool.Done()
-	}
-
 	if dropped := noidAndDup(sources); dropped != "" {
-		if !asJSON {
-			fmt.Fprintf(c.Stderr, "TOKENS NOTE %s\n", oneline.Escape(dropped))
-		} else {
-			o.Note(dropped)
-		}
+		o.Note(dropped)
 	}
-	if !asJSON {
-		copyNotesWriter(c.Stderr, "TOKENS", copyNotesList)
-	} else {
-		copyNotes(o, copyNotesList)
-	}
+	copyNotes(o, copyNotesList)
 
 	rows, mixed := folder.DayRows(day)
 	for _, m := range mixed {
-		if !asJSON {
-			fmt.Fprintln(c.Stderr, formatLine("TOKENS", "MIXED", "two day bases on one row; declare one export for that day",
-				"date", m.Day, "model", m.Model, "repo", m.Repo, "bases", strings.Join(m.Bases, ",")))
-		}
+		o.ItemText("mixed", "two day bases on one row; declare one export for that day",
+			"date", m.Day, "model", m.Model, "repo", m.Repo, "bases", strings.Join(m.Bases, ","))
 	}
 
 	var rendered []string
@@ -282,31 +231,16 @@ func runReportLocal(c *tool.Call, sf sourceFlags, supersedes []string, now time.
 	if lines > 0 {
 		body = strings.Join(rendered, "\n") + "\n"
 	}
-
-	if asJSON {
-		o.Payload = body
-		o.Fact("who", who)
-		o.Fact("day", day)
-		o.Fact("rows", lines)
-	}
+	o.Payload = body
+	o.Fact("who", who)
+	o.Fact("day", day)
+	o.Fact("rows", lines)
 
 	if lines == 0 || len(mixed) > 0 {
-		if !asJSON {
-			if lines > 0 {
-				fmt.Fprint(c.Stdout, body)
-			}
-			fmt.Fprintf(c.Stderr, "REPORT FAILED who=%s day=%s rows=%d unreadable=%d\n",
-				oneline.Field(who), oneline.Field(day), lines, unreadable)
-			return tool.Exit(1)
-		}
 		o.Status = tool.Failed
 		o.Exit = 1
 		o.Fact("unreadable", unreadable)
 		return o
-	}
-
-	if !asJSON {
-		fmt.Fprint(c.Stdout, body)
 	}
 
 	if notePath != "" {
@@ -354,64 +288,34 @@ func runReportLocal(c *tool.Call, sf sourceFlags, supersedes []string, now time.
 
 	var allTokens, allPricedTokens, allUsd int64
 	allPriced := false
-	for i, a := range sortedAvg {
+	for _, a := range sortedAvg {
 		allTokens += a.tokens
 		allPricedTokens += a.pricedTokens
 		allUsd += a.usd
 		allPriced = allPriced || a.priced
-		kv := []any{"day", day, "model", a.name, "tokens", a.tokens,
+		o.Item("avg", "day", day, "model", a.name, "tokens", a.tokens,
 			"usd", usdCell(a.usd, a.priced), "usd_per_mtok", usdPerMtokCell(a.usd, a.pricedTokens, a.priced),
-			"unpriced", a.tokens - a.pricedTokens}
-		if asJSON {
-			o.Item("avg", kv...)
-		} else if maxRows == 0 || i < maxRows {
-			fmt.Fprintln(c.Stderr, formatLine("TOKENS", "AVG", "", kv...))
-		}
+			"unpriced", a.tokens-a.pricedTokens)
 	}
-	if !asJSON && maxRows != 0 && len(sortedAvg) > maxRows {
-		fmt.Fprintf(c.Stderr, "TOKENS MORE shown=%d of=%d; raise --max (0 = all)\n", maxRows, len(sortedAvg))
-	} else if asJSON && maxRows != 0 && len(sortedAvg) > maxRows {
-		o.More = append(o.More, tool.More{Kind: "avg", Shown: maxRows, Total: len(sortedAvg), Remedy: maxRemedy("report")})
-	}
-
-	avgAllKV := []any{"day", day, "tokens", allTokens,
+	o.Item("avg-all", "day", day, "tokens", allTokens,
 		"usd", usdCell(allUsd, allPriced), "usd_per_mtok", usdPerMtokCell(allUsd, allPricedTokens, allPriced),
-		"unpriced", allTokens - allPricedTokens}
-	if asJSON {
-		o.Item("avg-all", avgAllKV...)
-	} else {
-		fmt.Fprintln(c.Stderr, formatLine("TOKENS", "AVG-ALL", "", avgAllKV...))
-	}
+		"unpriced", allTokens-allPricedTokens)
 
 	subject := tokens.Subject(day, stamp(now), buildVersion(), sorted)
-
-	if asJSON {
-		o.Fact("at", stamp(now))
-		o.Fact("build", buildVersion())
-		if dryRun {
-			o.Fact("dry_run", true)
-			if notePath != "" {
-				o.Fact("note", notePath)
-			}
+	o.Fact("at", stamp(now)).
+		Fact("build", buildVersion())
+	if dryRun {
+		o.Fact("dry_run", true)
+		if notePath != "" {
+			o.Fact("note", notePath)
 		}
-		o.Fact("subject", tool.Text(subject))
-		if unreadable > 0 || unparsed > 0 {
-			o.Status = tool.Failed
-			o.Exit = 1
-		}
-		return o
 	}
-
+	o.Fact("subject", tool.Text(subject))
 	if unreadable > 0 || unparsed > 0 {
-		fmt.Fprintf(c.Stderr, "REPORT FAILED who=%s day=%s rows=%d at=%s build=%s%s subject=%s\n",
-			oneline.Field(who), oneline.Field(day), lines, oneline.Field(stamp(now)),
-			oneline.Field(buildVersion()), dryRunFields(dryRun, "note", notePath), oneline.Quote(subject))
-		return tool.Exit(1)
+		o.Status = tool.Failed
+		o.Exit = 1
 	}
-	fmt.Fprintf(c.Stderr, "REPORT OK who=%s day=%s rows=%d at=%s build=%s%s subject=%s\n",
-		oneline.Field(who), oneline.Field(day), lines, oneline.Field(stamp(now)),
-		oneline.Field(buildVersion()), dryRunFields(dryRun, "note", notePath), oneline.Quote(subject))
-	return tool.Exit(0)
+	return o
 }
 
 func avgRate(usdMicro, tokens int64, priced bool) float64 {

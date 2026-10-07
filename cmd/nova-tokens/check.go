@@ -3,11 +3,9 @@
 package main
 
 import (
-	"fmt"
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/bounded"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/tokens"
 	"github.com/mas-bandwidth/nova-tools/internal/tool"
@@ -66,62 +64,8 @@ func runCheck(c *tool.Call, now time.Time) *tool.Out {
 		return tool.Refuse(err.Error())
 	}
 
-	asJSON := c.Bool("json")
-	max := c.Int("max")
-
-	if !asJSON {
-		remedyLine := "nova-tokens check --out " + outDir + " --max 0"
-		files := bounded.Capped(c.Stderr, max, "CHECK", "file", remedyLine)
-		rowsList := bounded.Capped(c.Stderr, max, "CHECK", "row", remedyLine)
-		missing := bounded.Capped(c.Stderr, max, "CHECK", "missing", remedyLine)
-		strays := bounded.Capped(c.Stderr, max, "CHECK", "stray", remedyLine)
-		for _, f := range res.Findings {
-			reason := oneline.Cap(f.Reason, oneline.TailBytes)
-			line := fmt.Sprintf("CHECK FAILED %s: %s", oneline.Escape(f.Path), oneline.Escape(reason))
-			if f.Line > 0 {
-				line = fmt.Sprintf("CHECK FAILED %s:%d: %s", oneline.Escape(f.Path), f.Line, oneline.Escape(reason))
-			}
-			if f.Line > 2 {
-				rowsList.Line(line)
-			} else {
-				files.Line(line)
-			}
-		}
-		files.More()
-		rowsList.More()
-		for _, d := range res.Missing {
-			missing.Line("CHECK MISSING date=" + oneline.Field(d))
-		}
-		missing.More()
-		for _, p := range res.Strays {
-			strays.Line("CHECK STRAY " + oneline.Escape(p))
-		}
-		strays.More()
-
-		first, last := tokens.Dash, tokens.Dash
-		if res.First != "" {
-			first, last = res.First, res.Last
-		}
-		if res.Stale {
-			fmt.Fprintf(c.Stderr, "CHECK FAILED stale last=%s through=%s\n", oneline.Field(last), oneline.Field(through))
-		}
-		empty := res.Files == 0 && !c.Bool("allow-empty")
-		if empty {
-			why := "looked at nothing: --out " + outDir + " holds no day file; fold one first, or run: nova-tokens check --out " + outDir + " --allow-empty"
-			fmt.Fprintf(c.Stderr, "CHECK FAILED %s\n", oneline.Escape(why))
-		}
-		bad := files.Total() + rowsList.Total()
-		if bad > 0 || len(res.Missing) > 0 || len(res.Strays) > 0 || res.Stale || empty {
-			fmt.Fprintf(c.Stderr, "CHECK FAILED files=%d rows=%d first=%s last=%s bad=%d missing=%d stray=%d gap=%d notes=%d\n",
-				res.Files, res.Rows, oneline.Field(first), oneline.Field(last), bad, len(res.Missing), len(res.Strays), len(res.Gaps), len(res.Notes))
-			return tool.Exit(1)
-		}
-		fmt.Fprintf(c.Stdout, "CHECK OK at=%s build=%s files=%d rows=%d first=%s last=%s missing=0 stray=0 gap=%d notes=%d\n",
-			oneline.Field(stamp(now)), oneline.Field(buildVersion()), res.Files, res.Rows, oneline.Field(first), oneline.Field(last), len(res.Gaps), len(res.Notes))
-		return tool.Exit(0)
-	}
-
 	o := tool.Done()
+	o.Findings("file", "row", "missing", "stray", "stale")
 
 	filesBad, rowsBad := 0, 0
 	for _, f := range res.Findings {

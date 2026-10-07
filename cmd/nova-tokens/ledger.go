@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"maps"
 	"os"
 	"path/filepath"
@@ -11,7 +10,6 @@ import (
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/redisauth"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/record"
 	"github.com/mas-bandwidth/nova-tools/internal/tokens"
 	"github.com/mas-bandwidth/nova-tools/internal/tool"
@@ -131,21 +129,17 @@ func runLedger(c *tool.Call) *tool.Out {
 		sort.Strings(paths)
 	}
 
-	asJSON := c.Bool("json")
-
+	o := tool.Done()
 	seatUser, password, err := redisauth.Auth(user, passwordEnv)
 	if err != nil {
-		if !asJSON {
-			fmt.Fprintf(c.Stderr, "LEDGER FAILED store=redis err=%s\n", oneline.Err(err))
-			return tool.Exit(1)
-		}
-		o := tool.Fail(err.Error())
-		o.Fact("store", "redis")
-		return o
+		f := tool.Fail(err.Error())
+		f.Fact("store", "redis")
+		return f
 	}
 	var ls record.LedgerStore
 	if !dryRun {
 		ls = record.DialLedger(addr, seatUser, password)
+		// ignored: a deferred close of a store whose batch was applied in one answered round trip: the close holds nothing the answer has not already reported
 		defer func() { _ = ls.Close() }()
 	}
 	days, rows, bad := 0, 0, 0
@@ -182,46 +176,16 @@ func runLedger(c *tool.Call) *tool.Out {
 	}
 	if len(batch) > 0 && !dryRun {
 		if err := ls.ReplaceLedgerDays(context.Background(), batch); err != nil {
-			if !asJSON {
-				key, value := "store", "redis"
-				if day != "" {
-					key, value = "day", day
-				}
-				fmt.Fprintf(c.Stderr, "LEDGER FAILED %s=%s err=%s\n", oneline.Field(key), oneline.Field(value), oneline.Err(err))
-				return tool.Exit(1)
-			}
-			o := tool.Fail(err.Error())
+			f := tool.Fail(err.Error())
 			if day != "" {
-				o.Fact("day", day)
+				f.Fact("day", day)
 			} else {
-				o.Fact("store", "redis")
+				f.Fact("store", "redis")
 			}
-			return o
+			return f
 		}
 	}
 
-	if !asJSON {
-		for _, res := range results {
-			if res.bad {
-				fmt.Fprintf(c.Stdout, "LEDGER FAILED day=%s why=%s\n", oneline.Field(res.day), oneline.Escape(res.why))
-			} else {
-				fmt.Fprintf(c.Stdout, "LEDGER day=%s rows=%d\n", oneline.Field(res.day), res.rows)
-			}
-		}
-		verdict, code := "OK", 0
-		if bad > 0 || days == 0 {
-			verdict, code = "FAILED", 1
-		}
-		scope, value := "day", day
-		if day == "" {
-			scope, value = "month", month
-		}
-		fmt.Fprintf(c.Stdout, "LEDGER %s%s%s\n", oneline.Field(verdict),
-			formatFields(scope, value, "days", days, "rows", rows, "bad", bad), dryRunFields(dryRun))
-		return tool.Exit(code)
-	}
-
-	o := tool.Done()
 	if bad > 0 || days == 0 {
 		o.Status = tool.Failed
 		o.Exit = 1
@@ -241,5 +205,8 @@ func runLedger(c *tool.Call) *tool.Out {
 		Fact("days", days).
 		Fact("rows", rows).
 		Fact("bad", bad)
+	if dryRun {
+		o.Fact("dry_run", true)
+	}
 	return o
 }

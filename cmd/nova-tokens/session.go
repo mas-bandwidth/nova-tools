@@ -12,6 +12,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -23,29 +24,29 @@ import (
 )
 
 // mkdirAllRefuses is the refusal os.MkdirAll(path) would give before it makes anything:
-// path, or the nearest ancestor it would stop at, exists and is no directory. It walks
-// the path the way MkdirAll does (trailing separators, then the parent's prefix), so the
-// error is MkdirAll's own, word for word. What only making the directory can find (a
-// parent that is read-only) is not known without making it.
-func mkdirAllRefuses(path string) error {
-	if fi, err := os.Stat(path); err == nil {
+// path, or the nearest ancestor that exists, is not a directory. wouldMkdir says whether
+// MkdirAll would have made the directory, so a dry run reports the plan. What only making
+// the directory can find (a read-only parent) is not known without making it, and a stat
+// that cannot see is no refusal.
+func mkdirAllRefuses(path string) (wouldMkdir bool, err error) {
+	if fi, statErr := os.Stat(path); statErr == nil {
 		if fi.IsDir() {
-			return nil
+			return false, nil
 		}
-		return &os.PathError{Op: "mkdir", Path: path, Err: syscall.ENOTDIR}
+		return false, &os.PathError{Op: "mkdir", Path: path, Err: syscall.ENOTDIR}
 	}
-	i := len(path)
-	for i > 0 && os.IsPathSeparator(path[i-1]) {
-		i--
+	for p := filepath.Dir(path); ; p = filepath.Dir(p) {
+		fi, statErr := os.Stat(p)
+		if statErr == nil {
+			if fi.IsDir() {
+				return true, nil
+			}
+			return false, &os.PathError{Op: "mkdir", Path: p, Err: syscall.ENOTDIR}
+		}
+		if p == filepath.Dir(p) {
+			return true, nil
+		}
 	}
-	j := i
-	for j > 0 && !os.IsPathSeparator(path[j-1]) {
-		j--
-	}
-	if j > 1 {
-		return mkdirAllRefuses(path[:j-1])
-	}
-	return nil
 }
 
 func sessionVerb(now time.Time) tool.Verb {
@@ -86,7 +87,6 @@ func runSession(c *tool.Call, now time.Time) *tool.Out {
 	role := c.Str("role")
 	weights := c.Str("weights")
 	dryRun := c.DryRun()
-	asJSON := c.Bool("json")
 
 	w, _ := tokens.ParseWeights(weights)
 	sum, err := tokens.ReadClaudeSession(sessionPath)
@@ -94,32 +94,20 @@ func runSession(c *tool.Call, now time.Time) *tool.Out {
 		return tool.Refuse(fmt.Sprintf("cannot read %s: %s", oneline.Field(sessionPath), oneline.Err(err)))
 	}
 
-	var o *tool.Out
-	if asJSON {
-		o = tool.Done()
-		o.Fact("turns", sum.Turns)
-		o.Fact("input", sum.Input)
-		o.Fact("cache_write", sum.CacheWrite)
-		o.Fact("cache_read", sum.CacheRead)
-		o.Fact("output", sum.Output)
-		o.Fact("weighted", sum.Weighted(w))
-		o.Fact("avg_context", sum.AvgContext())
-	} else {
-		fmt.Fprintln(c.Stdout, oneline.Escape(sum.Line(w)))
-	}
+	o := tool.Done()
+	o.Findings("refused", "partial")
+	o.Fact("turns", sum.Turns).
+		Fact("input", sum.Input).
+		Fact("cache_write", sum.CacheWrite).
+		Fact("cache_read", sum.CacheRead).
+		Fact("output", sum.Output).
+		Fact("weighted", sum.Weighted(w)).
+		Fact("avg_context", sum.AvgContext())
 	if sum.Unstamped > 0 {
-		note := fmt.Sprintf("unstamped=%d turns are in the totals and in no day; they are not dated by a guess", sum.Unstamped)
-		if asJSON {
-			o.Note(note)
-		} else {
-			fmt.Fprintf(c.Stdout, "SESSION NOTE %s\n", oneline.Escape(note))
-		}
+		o.Note(fmt.Sprintf("unstamped=%d turns are in the totals and in no day; they are not dated by a guess", sum.Unstamped))
 	}
 	if outDir == "" {
-		if asJSON {
-			return o
-		}
-		return tool.Exit(0)
+		return o
 	}
 
 	if why := sum.UnbookableReason(); why != "" {
@@ -127,11 +115,19 @@ func runSession(c *tool.Call, now time.Time) *tool.Out {
 	}
 
 	mkdir := func() error { return os.MkdirAll(outDir, 0o755) }
+	wouldMkdir := false
 	if dryRun {
-		mkdir = func() error { return mkdirAllRefuses(outDir) }
+		mkdir = func() error {
+			var err error
+			wouldMkdir, err = mkdirAllRefuses(outDir)
+			return err
+		}
 	}
 	if err := mkdir(); err != nil {
 		return tool.Refuse(fmt.Sprintf("cannot open --out: %s", oneline.Err(err)))
+	}
+	if dryRun {
+		o.Fact("dry_run", true).Fact("would_mkdir", wouldMkdir)
 	}
 	if !dryRun {
 		release, err := tokens.TakeFoldLock(outDir, tokens.LockWait)
@@ -146,17 +142,10 @@ func runSession(c *tool.Call, now time.Time) *tool.Out {
 		days = []string{day}
 	}
 	if len(days) == 0 {
-		if asJSON {
-			o.Status = tool.Failed
-			o.Exit = 1
-			o.Why = append(o.Why, "no turn in this session carries a day")
-			return o
-		}
-		fmt.Fprintln(c.Stdout, "SESSION DAY day=- written=false rows=0 (no turn in this session carries a day)")
-		return tool.Exit(1)
-	}
-	if dryRun && asJSON {
-		o.Fact("dry_run", true)
+		o.Status = tool.Failed
+		o.Exit = 1
+		o.Why = append(o.Why, "no turn in this session carries a day")
+		return o
 	}
 
 	exit := 0
@@ -170,23 +159,13 @@ func runSession(c *tool.Call, now time.Time) *tool.Out {
 		prior, findings, err := tokens.ReadDayFile(tokens.Path(outDir, d))
 		if err != nil {
 			if !os.IsNotExist(err) {
-				if asJSON {
-					o.Item("refused", "day", d, "why", tool.Text("cannot read "+tokens.Path(outDir, d)+": "+err.Error()))
-				} else {
-					fmt.Fprintf(c.Stderr, "SESSION REFUSED: cannot read %s: %s\n",
-						oneline.Field(tokens.Path(outDir, d)), oneline.WithRemedy(oneline.Err(err), "nova-tokens session -h"))
-				}
+				o.Item("refused", "day", d, "why", tool.Text("cannot read "+tokens.Path(outDir, d)+": "+err.Error()))
 				exit = 1
 				continue
 			}
 		} else {
 			if len(findings) > 0 {
-				if asJSON {
-					o.Item("refused", "day", d, "findings", len(findings), "why", tool.Text("the day file has findings; the repair is nova-tokens check --out "+outDir))
-				} else {
-					fmt.Fprintf(c.Stderr, "SESSION REFUSED: the day file %s has %d findings; the repair is nova-tokens check --out %s\n",
-						oneline.Field(tokens.Path(outDir, d)), len(findings), oneline.Field(outDir))
-				}
+				o.Item("refused", "day", d, "findings", len(findings), "why", tool.Text("the day file has findings; the repair is nova-tokens check --out "+outDir))
 				exit = 1
 				continue
 			}
@@ -194,11 +173,7 @@ func runSession(c *tool.Call, now time.Time) *tool.Out {
 		}
 		rows, retained, partials := tokens.MergeDay(old, fresh, []string{tokens.SessionLabel})
 		if len(partials) > 0 {
-			if asJSON {
-				o.Item("partial", "day", d, "rows", len(partials), "why", tool.Text("a row already summed over this source and another cannot be taken apart; nothing written; run: nova-tokens fold -h, and fold that day whole"))
-			} else {
-				fmt.Fprintln(c.Stderr, formatLine("SESSION", "PARTIAL", "a row already summed over this source and another cannot be taken apart; nothing written; run: nova-tokens fold -h, and fold that day whole", "day", d, "rows", len(partials)))
-			}
+			o.Item("partial", "day", d, "rows", len(partials), "why", tool.Text("a row already summed over this source and another cannot be taken apart; nothing written; run: nova-tokens fold -h, and fold that day whole"))
 			exit = 1
 			continue
 		}
@@ -210,11 +185,7 @@ func runSession(c *tool.Call, now time.Time) *tool.Out {
 		written := false
 		if !dryRun {
 			if err := f.Save(outDir); err != nil {
-				if asJSON {
-					o.Item("refused", "day", d, "why", tool.Text("cannot write "+tokens.Path(outDir, d)+": "+err.Error()))
-				} else {
-					fmt.Fprintf(c.Stderr, "SESSION REFUSED: cannot write %s: %s\n", oneline.Field(tokens.Path(outDir, d)), oneline.WithRemedy(oneline.Err(err), "nova-tokens session -h"))
-				}
+				o.Item("refused", "day", d, "why", tool.Text("cannot write "+tokens.Path(outDir, d)+": "+err.Error()))
 				exit = 1
 				continue
 			}
@@ -224,22 +195,11 @@ func runSession(c *tool.Call, now time.Time) *tool.Out {
 		for _, r := range fresh {
 			booked = append(booked, r.Model)
 		}
-		kv := []any{"day", d, "written", written, "rows", len(rows), "retained", retained, "model", strings.Join(booked, ","), "weighted", part.Weighted(w)}
-		if dryRun {
-			kv = append(kv, "dry_run", true)
-		}
-		if asJSON {
-			o.Item("day", kv...)
-		} else {
-			fmt.Fprintln(c.Stdout, formatLine("SESSION", "DAY", "", kv...))
-		}
+		o.Item("day", "day", d, "written", written, "rows", len(rows), "retained", retained, "model", strings.Join(booked, ","), "weighted", part.Weighted(w))
 	}
-	if asJSON {
-		o.Exit = exit
-		if exit != 0 {
-			o.Status = tool.Failed
-		}
-		return o
+	o.Exit = exit
+	if exit != 0 {
+		o.Status = tool.Failed
 	}
-	return tool.Exit(exit)
+	return o
 }

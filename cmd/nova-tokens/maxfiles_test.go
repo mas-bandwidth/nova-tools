@@ -30,7 +30,7 @@ func TestFoldRefusesATreeOverMaxFilesBeforeReadingIt(t *testing.T) {
 	wantContains(t, r.stderr, "2 transcript files")
 	wantContains(t, r.stderr, "over the --max-files ceiling of 1")
 	wantContains(t, r.stderr, "--exclude")
-	wantContains(t, r.stderr, "TOKENS FAILED")
+	wantContains(t, r.stdout, "FOLD FAILED")
 
 	// The temporary tree is what put the source over the ceiling, and --exclude is the
 	// remedy the refusal names: the same call admits the real transcript.
@@ -38,7 +38,7 @@ func TestFoldRefusesATreeOverMaxFilesBeforeReadingIt(t *testing.T) {
 	r = invoke(t, "fold", "--out", clean, "--day", "2026-09-11", "--repos", repos,
 		"--claude", "bench="+tr, "--max-files", "1", "--exclude", "tmp")
 	wantExit(t, r, 0)
-	wantContains(t, r.stdout, "TOKENS OK")
+	wantContains(t, r.stdout, "FOLD OK")
 }
 
 // TestMaxFilesDefaultIsStatedInFoldHelp: the generated help names the flag and its default,

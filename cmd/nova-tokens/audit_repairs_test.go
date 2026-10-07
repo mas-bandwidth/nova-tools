@@ -62,7 +62,7 @@ func TestCheckThroughFlag(t *testing.T) {
 	// Last folded day (2026-09-18) is older than through (2026-09-20) -> exit 1 with stale message
 	r = invoke(t, "check", "--out", out, "--through", "2026-09-20")
 	wantExit(t, r, 1)
-	wantContains(t, r.stderr, "CHECK FAILED stale last=2026-09-18 through=2026-09-20")
+	wantContains(t, r.stderr, "CHECK STALE last=2026-09-18 through=2026-09-20")
 
 	// Last folded day (2026-09-18) matches through (2026-09-18) -> exit 0
 	r = invoke(t, "check", "--out", out, "--through", "2026-09-18")

@@ -301,7 +301,7 @@ func TestStatusGrammar(t *testing.T) {
 		{
 			"fold failed",
 			func(t *testing.T) []string { return statusFoldArgs(t, true) },
-			"FOLD", "FAILED", 1, "stderr",
+			"FOLD", "FAILED", 1, "stdout",
 		},
 		{
 			"check ok",
@@ -318,7 +318,7 @@ func TestStatusGrammar(t *testing.T) {
 			func(t *testing.T) []string {
 				return []string{"check", "--out", mkdir(t, filepath.Join(t.TempDir(), "out"))}
 			},
-			"CHECK", "FAILED", 1, "stderr",
+			"CHECK", "FAILED", 1, "stdout",
 		},
 		{
 			"sources ok",
@@ -351,7 +351,7 @@ func TestStatusGrammar(t *testing.T) {
 				empty := mkdir(t, filepath.Join(t.TempDir(), "out"))
 				return []string{"ledger", "--out", empty, "--day", "2026-09-11", "--redis", "127.0.0.1:0", "--dry-run"}
 			},
-			"LEDGER", "FAILED", 1, "stdout",
+			"LEDGER", "FAILED", 1, "stderr",
 		},
 		{
 			"report ok",
@@ -359,7 +359,7 @@ func TestStatusGrammar(t *testing.T) {
 				dir, tr := statusTranscriptDir(t, false)
 				return []string{"report", "--who", "ada", "--day", "2026-09-11", "--repos", reposFile(t, dir), "--claude", "bench=" + tr}
 			},
-			"REPORT", "OK", 0, "stderr",
+			"REPORT", "OK", 0, "stdout",
 		},
 		{
 			"report refused",
@@ -377,7 +377,7 @@ func TestStatusGrammar(t *testing.T) {
 				dir, tr := statusTranscriptDir(t, true)
 				return []string{"report", "--who", "ada", "--day", "2026-09-11", "--repos", reposFile(t, dir), "--claude", "bench=" + tr}
 			},
-			"REPORT", "FAILED", 1, "stderr",
+			"REPORT", "FAILED", 1, "stdout",
 		},
 		{
 			"sum ok",

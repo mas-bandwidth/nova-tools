@@ -252,6 +252,8 @@ type sourceFlags struct {
 	scratch  string
 	timeout  int
 	repos    string
+	maxFiles int
+	exclude  stringList
 }
 
 func (s *sourceFlags) declare(fs *flag.FlagSet, withSwarmAndBus bool) {
@@ -265,6 +267,8 @@ func (s *sourceFlags) declare(fs *flag.FlagSet, withSwarmAndBus bool) {
 	}
 	fs.StringVar(&s.scratch, "scratch", "", "directory the OpenCode database is copied into: opencode-<label>/ in it, replaced and left by a run that writes; a new directory removed before exit by a dry run or sources")
 	fs.StringVar(&s.repos, "repos", "", "tab-separated repo names and path regular expressions")
+	fs.IntVar(&s.maxFiles, "max-files", tokens.DefaultMaxClaudeFiles, "ceiling on the transcript files one --claude tree holds (default 20000); the whole tree is walked and counted before any file is opened, and a tree over the ceiling is refused naming the files and bytes it found; 0 is no ceiling")
+	fs.Var(&s.exclude, "exclude", "path or glob kept out of a recursive source tree (--claude), repeatable (nothing is excluded by default)")
 	fs.IntVar(&s.timeout, "timeout", int(tokens.DefaultTimeout/time.Second), "seconds to wait for the OpenCode sqlite3 reader")
 }
 
@@ -369,7 +373,8 @@ func (s *sourceFlags) check(c *tool.Call) {
 // read reads every declared source, in declaration order, through the one reader per kind.
 func (s *sourceFlags) read(rules *tokens.Rules, now time.Time, private bool) (out []*tokens.Source, notes []string) {
 	for _, it := range s.claude.items {
-		out = append(out, tokens.ReadClaude(it.label, it.value, os.DirFS(it.value), rules))
+		out = append(out, tokens.ReadClaude(it.label, it.value, os.DirFS(it.value), rules,
+			tokens.ClaudeBound{MaxFiles: s.maxFiles, Exclude: []string(s.exclude)}))
 	}
 	scratch := s.scratch
 	if private && len(s.opencode.items) > 0 {
@@ -420,9 +425,6 @@ func (s *sourceFlags) read(rules *tokens.Rules, now time.Time, private bool) (ou
 // flag sets it.
 func stamp(now time.Time) string { return now.UTC().Format(time.RFC3339) }
 
-// maxRemedy is the flag that lifts a listing's ceiling, written the way it would be typed.
-func maxRemedy(verb string) string { return "nova-tokens " + verb + " ... --max 0" }
-
 // checkDay enforces the one-of rule on --day and --all.
 func checkDay(c *tool.Call, day string, all bool) {
 	switch {
@@ -433,33 +435,6 @@ func checkDay(c *tool.Call, day string, all bool) {
 	case day != "" && !tokens.ValidDay(day):
 		c.Problem("--day is not a day: " + day + "; it wants " + wantsDay)
 	}
-}
-
-// formatFields is key=value pairs as a line carries them.
-func formatFields(kv ...any) string {
-	text := ""
-	for i := 0; i+1 < len(kv); i += 2 {
-		text += " " + oneline.Field(kv[i].(string)) + "=" + oneline.Field(fmt.Sprint(kv[i+1]))
-	}
-	return text
-}
-
-// formatLine formats a typed line with fields and optional free text tail.
-func formatLine(token, kind, tail string, kv ...any) string {
-	text := oneline.Field(token) + " " + oneline.Field(kind) + formatFields(kv...)
-	if tail != "" {
-		text += ": " + oneline.Escape(tail)
-	}
-	return text
-}
-
-// dryRunFields is " dry_run=true" and the pairs after it on a write verb's last line under
-// --dry-run, and "" otherwise.
-func dryRunFields(on bool, kv ...any) string {
-	if !on {
-		return ""
-	}
-	return formatFields(append([]any{"dry_run", true}, kv...)...)
 }
 
 func addSourceItem(o *tool.Out, src *tokens.Source) {
@@ -480,26 +455,6 @@ func addUnreadableItem(o *tool.Out, u tokens.Unreadable) {
 
 func addUnparsedItem(o *tool.Out, u tokens.Unparsed) {
 	o.ItemText("unparsed", oneline.Cap(u.Text, oneline.TailBytes), "label", u.Label, "note", u.Note, "line", u.Line)
-}
-
-func sourceLine(token string, src *tokens.Source) string {
-	kv := []any{"label", src.Label, "kind", src.Kind, "path", src.Path, "reports", src.ReportsList(), "day_basis", src.Basis}
-	for _, f := range []string{"files", "unreadable", "messages", "dup", "noid", "nousage", "unparsed", "comments", "redated", "superseded", "rows"} {
-		kv = append(kv, f, src.StatField(f))
-	}
-	return formatLine(token, "SOURCE", "", kv...)
-}
-
-func unreadableLine(token string, u tokens.Unreadable) string {
-	why := u.Why
-	if u.Line > 0 {
-		why = "line " + strconv.Itoa(u.Line) + ": " + why
-	}
-	return formatLine(token, "UNREADABLE", oneline.Cap(why, oneline.TailBytes), "label", u.Label, "path", u.Path)
-}
-
-func unparsedLine(token string, u tokens.Unparsed) string {
-	return formatLine(token, "UNPARSED", oneline.Cap(u.Text, oneline.TailBytes), "label", u.Label, "note", u.Note, "line", u.Line)
 }
 
 func countItems(o *tool.Out, kind string) int {

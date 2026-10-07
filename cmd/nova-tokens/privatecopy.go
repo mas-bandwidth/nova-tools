@@ -6,12 +6,9 @@ package main
 // and no other).
 
 import (
-	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/tool"
 )
 
@@ -19,13 +16,6 @@ import (
 func copyNotes(o *tool.Out, notes []string) {
 	for _, n := range notes {
 		o.Note(n)
-	}
-}
-
-// copyNotesWriter prints each private copy a read could not remove, as a NOTE on w.
-func copyNotesWriter(w io.Writer, token string, notes []string) {
-	for _, n := range notes {
-		fmt.Fprintf(w, "%s NOTE %s\n", oneline.Field(token), oneline.Escape(n))
 	}
 }
 
