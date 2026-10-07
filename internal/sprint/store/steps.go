@@ -192,7 +192,12 @@ func RankStep(r sprint.RankReq) Step {
 // MergeStep is one mechanical merge step of a stream.
 func MergeStep(r sprint.MergeReq) Step {
 	// a landing takes each card's total from the card itself (sprint's cost.go)
-	return Step{Args: ArgsOf(r), Verb: "merge", Load: tables(sprint.Merge, sprint.Work), Mirrors: true,
+	load := tables(sprint.Merge, sprint.Work)
+	if r.Conflict != "" {
+		// a conflict reworks the card at the tip: its read cards retire (sprint's landRefused)
+		load = tables(sprint.Merge, sprint.Work, sprint.Readers)
+	}
+	return Step{Args: ArgsOf(r), Verb: "merge", Load: load, Mirrors: true,
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.MergeStep(s, r) }}
 }
 

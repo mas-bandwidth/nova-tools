@@ -114,7 +114,7 @@ func TestAnAppendOnlyRecordConflictMergesByUnion(t *testing.T) {
 				if tc.errSubstr != "" {
 					assert.Contains(t, errs, tc.errSubstr)
 				}
-				assert.Equal(t, map[string]string{"s1-1": "landed/merged", "s1-2": "merging/stuck"}, r.places("s1-1", "s1-2"))
+				assert.Equal(t, map[string]string{"s1-1": "landed/merged", "s1-2": "ready/returned"}, r.places("s1-1", "s1-2"))
 				assert.Empty(t, r.git(r.clone, "status", "--porcelain", "--untracked-files=all"), "the refused merge is aborted")
 				return
 			}
@@ -154,7 +154,7 @@ func TestAnAppendOnlyRecordConflictMergesByUnion(t *testing.T) {
 		code, out, errs := r.do("land --repo-dir " + r.clone + " --base main")
 		assert.Equal(t, 1, code, out+errs)
 		assert.Contains(t, errs, "is not an append: the right side removes a row")
-		assert.Equal(t, map[string]string{"s1-1": "merging/stuck"}, r.places("s1-1"))
+		assert.Equal(t, map[string]string{"s1-1": "ready/returned"}, r.places("s1-1"))
 		assert.Equal(t, "a one\na two\n", r.git(r.remote, "show", "main:"+deleted)+"\n", "the row is not dropped")
 	})
 }

@@ -195,6 +195,19 @@ func TestRuleConflictReturnsReworksOnTheTipAndResumes(t *testing.T) {
 			h.nToMerging("s1-1")
 			h.must(MergeStep(sprint.MergeReq{Stream: "s1", Batch: 1, Conflict: "s1-1", Note: "the head h of s1-1 does not merge: CONFLICT (content) in internal/x.go",
 				ConflictKind: tc.kind, ConflictPaths: []string{"internal/x.go"}}))
+			if tc.answered {
+				// a file conflict in the card's own head is reworked by the merge step itself: no
+				// stop, no rule needed (sprint's landRefused)
+				require.NotEqual(t, sprint.StreamStopped, h.snap().StreamCtl("s1").F("state"))
+				h.startMachine()
+				h.machine()
+				pr := h.snap().Work.Card("s1-1")
+				assert.Equal(t, 2, pr.Int("attempt"), "redone as a new attempt")
+				assert.Contains(t, pr.F("fix"), "the landing refused this head: ")
+				assert.Empty(t, h.nOpenOf(sprint.NConflict, ""))
+				h.clean("reworked at the tip")
+				return
+			}
 			require.Equal(t, sprint.StreamStopped, h.snap().StreamCtl("s1").F("state"))
 			h.startMachine()
 			h.machine()

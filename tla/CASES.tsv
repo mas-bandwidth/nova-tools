@@ -305,6 +305,10 @@ MCLandReachStranded.cfg	MCLand.tla	invariant	ReachStranded	ignore-terminal	land	
 MCLandBrokenIdGuard.cfg	MCLand.tla	invariant	LandedInBase	ignore-terminal	land	required	-
 MCLandReachStalePush.cfg	MCLand.tla	invariant	ReachStalePush	ignore-terminal	land	required	-
 MCLandBrokenNoEpoch.cfg	MCLand.tla	invariant	ReportHoldsTheEpoch	ignore-terminal	land	required	-
+MCLandBrokenOwnStops.cfg	MCLand.tla	invariant	NeverStoppedByOwn	ignore-terminal	land	required	-
+MCLandBrokenNoCarry.cfg	MCLand.tla	invariant	CarriedHead	ignore-terminal	land	required	-
+MCLandReachLandsOn.cfg	MCLand.tla	invariant	ReachLandsOn	ignore-terminal	land	required	-
+MCLandReachReview.cfg	MCLand.tla	invariant	ReachReview	ignore-terminal	land	required	-
 MCSprintEventsC30.cfg	MCSprintEvents.tla	pass	-	ignore-terminal	sprintevents-controls-b	required	-
 MCSprintEventsW30.cfg	MCSprintEvents.tla	action	NextNotReached	ignore-terminal	sprintevents-witnesses-b	required	-
 MCLevel.cfg	MCLevel.tla	pass	-	ignore-terminal	level	required	-
