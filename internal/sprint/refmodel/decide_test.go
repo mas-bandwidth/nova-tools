@@ -457,7 +457,7 @@ func TestDeadlinesJudgeAStreamWithNoMergeStep(t *testing.T) {
 	expect(t, refmodel.DeadlineMoves(snap, later(30*time.Minute)))
 	got := refmodel.DeadlineMoves(snap, later(30*time.Minute+time.Second))
 	expect(t, got, "open a stream has had no merge step past its deadline [stream:s1]")
-	want := []string{"land --stream s1", "look", "wait"}
+	want := []string{"merge --stream s1", "look", "wait"}
 	assert.Equal(t, want, got[0].Decisions, "the decisions offered: %q, want %q", got[0].Decisions, want)
 }
 

@@ -46,7 +46,7 @@ func TestShadowReadRound(t *testing.T) {
 	ta.ok("add --stream s1 s1-1 --one --brief-file " + proBriefFile(t))
 	ta.deal(1)
 	ta.ok("take --as m1")
-	head := "head-s1-1"
+	head := "0123456789abcdef0123456789abcdef01234567"
 	ta.ok("finish --as m1 s1-1.w1@1 --head " + head)
 
 	// s1-1 is now in Review
@@ -109,7 +109,7 @@ func TestShadowReadRound(t *testing.T) {
 	ta.ok("add --stream s1 s1-2 --one --brief-file " + proBriefFile(t))
 	ta.deal(1)
 	ta.ok("take --as m1")
-	head2 := "head-s1-2"
+	head2 := "fedcba9876543210fedcba9876543210fedcba98"
 	ta.ok("finish --as m1 s1-2.w1@1 --head " + head2)
 
 	var buf bytes.Buffer
