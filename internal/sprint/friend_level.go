@@ -84,7 +84,7 @@ func friendLevel(s *Snapshot, r FriendLevelReq, dealt, dealtWorking map[string]i
 		held[f.Name] = friendLoad(s, f.Name) + dealt[f.Name]
 		var unstarted []*Card
 		for _, c := range s.Fleet.Cell(row, Ready) {
-			if (dealtWorking[f.Name] > 0 && unitPromoted(r.Taken, c.ID)) || r.Moved[c.ID] {
+			if (dealtWorking[f.Name] > 0 && unitPromoted(r.Taken, c.ID)) || r.Moved[c.ID] || isRead(c) {
 				continue // started this tick (friendStartUnits), or moved already this tick
 			}
 			if r.Started[c.ID] == "" && !friendStarted(s, f, c) {

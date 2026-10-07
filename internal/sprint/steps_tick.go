@@ -586,6 +586,9 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 		n.Friends = r.Friends // the friends a tier is served by (tierServed)
 		s = &n
 	}
+	// reads before work (reads are a card priority): while read cards are on, this deal
+	// deals the read cards first, and its work in the room they leave (read_cards.go)
+	s, reads := s.withReadCards(r.Friends)
 	var p Plan
 	due := 0
 	var ready []*Card
@@ -773,6 +776,12 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 		}
 	}
 	p.Rows, p.Units, p.Refused = append(p.Rows, fp.Rows...), append(p.Units, fp.Units...), append(p.Refused, fp.Refused...)
+	for _, row := range reads.Rows {
+		if !slices.Contains(p.Rows, row) {
+			p.Rows = append(p.Rows, row)
+		}
+	}
+	p.Units = append(reads.Units, p.Units...)
 	if len(r.Friends) > 0 {
 		// the friends level after the deal, every tick and on the tick a friend comes up, so
 		// an idle lane is filled and a backlog evens itself without the coordinator, at most

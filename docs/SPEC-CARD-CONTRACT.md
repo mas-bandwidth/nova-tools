@@ -252,6 +252,13 @@ with a `report:` line beginning `script read: ` (what was run, at which start co
 head, and the bytes compared). A script reader that found a difference reports nothing of its own: it
 reads the card as a model reader and gives that read's verdict (docs/SPEC-SPRINT.md section 6, the script read).
 
+A read card dealt to a friend (docs/SPEC-SPRINT.md section 6, "A read is a consumer card")
+is a card of hers: its BRIEF.md (sprint `ReadCardBrief`) says what a read is, the head to check
+out, how to read it and how to finish, and its end is outbox/<job>/REPORT.md whose first line is
+`Verdict: LAND` (an ok read) or `Verdict: HOLD` (a broken read, each defect on a line naming the
+file, line or rule it breaks); a read commits nothing and pushes nothing. A read card dealt to a
+member is run as a reader's read is, its verdict reported with `read --as <member>`.
+
 ## 4. The finish
 
 A work card's finish is judged in one place, `member.Judge`, cited from the model's `Finish`:

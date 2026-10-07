@@ -112,12 +112,15 @@ const friendCardWhy = "a friend's card (its brief says WHO: only friend, or a WH
 // running (FriendReport.Running: work card ids, job names or primaries), which the tick's
 // level never moves (friendStarted).
 type FriendSeat struct {
-	Name    string
-	Width   int
-	Status  string
-	Class   string
-	Mode    string
-	Tiers   []string
+	Name   string
+	Width  int
+	Status string
+	Class  string
+	Mode   string
+	Tiers  []string
+	// Roles is her nova-config row's roles: a read card is dealt only to a friend whose
+	// roles name reader (RoleReader, read_cards.go).
+	Roles   []string
 	Dir     string
 	Running []string
 	// Why is why her Status is not up, as FriendDownWhy says it (held, or the session
@@ -179,7 +182,14 @@ func friendTiers(f FriendSeat) []string {
 // twice; a row that cannot work is filled by no deal. While the friends' work is off
 // (FriendsOff, nova-sprint set --friends off) no friend's row is.
 func friendDealable(s *Snapshot, f FriendSeat) bool {
-	if f.Status != Up || s.FriendsOff() {
+	return !s.FriendsOff() && friendCanRead(s, f)
+}
+
+// friendCanRead says the friend's row may be dealt a read card: friendDealable but for the
+// friends' work switch, which stops her work and never her reads (set --friends off: "her
+// reads still flow"; read_cards.go).
+func friendCanRead(s *Snapshot, f FriendSeat) bool {
+	if f.Status != Up {
 		return false
 	}
 	if s == nil || s.Fleet == nil {
@@ -361,8 +371,14 @@ func (s *Snapshot) Members() []string {
 // her reads together. One width bounds her row (docs/SPEC-SPRINT.md section 1, a friend's
 // card; the owner's rule): her reads hold her lanes and her room as her work does, and a
 // one-shot friend holds one card at a time, read or work.
+//
+// While read cards are on (read_cards.go) a read holds half a slot of her width, as a
+// member's does (halfLoad): her row holds her width of work or twice it of reads.
 func friendLoad(s *Snapshot, name string) int {
 	row := FriendRow(name)
+	if s.ReadCardsOn() {
+		return halfLoad(rowLoad(s, row))
+	}
 	return s.Fleet.Count(row, Ready) + s.Fleet.Count(row, Working)
 }
 
