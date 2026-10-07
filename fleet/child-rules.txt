@@ -7,7 +7,7 @@
 
 [worktree] Work only in the staged checkout JOB.md names; do not clone.
 [own-branch] Commit on the checkout's own branch, as usual; touch no other branch.
-[gocache] Export a private GOCACHE (the path this card names) and GOFLAGS=-mod=readonly NOVA_TEST_NO_HOST=1 before any go command.
+[gocache] GOCACHE is already set to the machine's shared build cache (JOB.md names it): keep it; export GOFLAGS=-mod=readonly NOVA_TEST_NO_HOST=1 before any go command.
 [no-go-clean] Never `go clean`, and never clean a shared cache.
 [no-redis-server] NEVER start a redis-server on this machine.
 [no-kill] Never kill a process you did not start.

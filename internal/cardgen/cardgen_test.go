@@ -356,3 +356,37 @@ func TestACardThatTouchesAModelRunsItInItsGate(t *testing.T) {
 	assert.NotContains(t, plain, "make tlc")
 	assert.NotContains(t, plain, "tla/RUNS.tsv")
 }
+
+func TestAGeneratedCardNamesNoStaleGoCacheLine(t *testing.T) {
+	t.Parallel()
+	gocacheLine := "GOCACHE is already set to the machine's shared build cache (JOB.md names it): keep it"
+	staleGocacheLine := "Export a private GOCACHE"
+	
+	// Test generated cards from ledger
+	rows, _ := ParseLedger(Ledgers["generality-fixtures"], "a/one.md recorded\nb/two.md recorded\n")
+	p := PlanLedger(Ledgers["generality-fixtures"], rows, "", "", 0)
+	for _, c := range p.Cards {
+		brief := Render(header, c)
+		assert.Contains(t, brief, gocacheLine, c.ID)
+		assert.NotContains(t, brief, staleGocacheLine, c.ID)
+	}
+	
+	// Test findings cards
+	fs, _ := ParseFindings("internal/x/x.go:1\twrong\tfix\tx TestX\n")
+	fc := PlanFindings(fs, "", "", 0).Cards[0]
+	fbrief := Render(header, fc)
+	assert.Contains(t, fbrief, gocacheLine, fc.ID)
+	assert.NotContains(t, fbrief, staleGocacheLine, fc.ID)
+	
+	// Test help cards
+	hc := PlanHelp("nova-x", "x\n", "", "", "")
+	hbrief := Render(header, hc)
+	assert.Contains(t, hbrief, gocacheLine, hc.ID)
+	assert.NotContains(t, hbrief, staleGocacheLine, hc.ID)
+	
+	// Test template
+	tmpl, err := swarm.Template("card")
+	require.NoError(t, err)
+	assert.Contains(t, tmpl, gocacheLine)
+	assert.NotContains(t, tmpl, staleGocacheLine)
+}
