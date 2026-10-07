@@ -6123,6 +6123,18 @@ mode as the reason. The address rule lives in one function, `CheckAddr` in
 `internal/sprint/addr.go`, which every caller cites: outside the mode loopback, a private
 range or the tailnet's address passes and anything else is refused before a socket opens.
 
+#### sprint-local-only-mode-r-bc.w2: the addresses nova-sprint binds cite the same one rule
+
+The server's `--listen` and the dashboard's `--listen` and `--pull` judge their addresses by
+the same rule as the store's, kept in one place: the bind decision is the function
+`ListenRefused` in `internal/sprint/addr.go`, and the mode's narrowing to loopback is the one
+sentence `LocalOnlyRefusal`, each cited from every caller. Outside the mode a listener binds
+loopback, a private range or this machine's tailnet address, and a name, every network, a
+link-local address and a public address are refused before a socket opens. In local-only mode
+a listener binds loopback alone (and `localhost`, which is loopback): a tailnet or other
+address is refused naming the mode, so one machine runs `run --listen 127.0.0.1:<port>`, the
+page and the pull routes with no tailnet at all.
+
 A worker whose answer was lost sends the verb again with the same operation id (`--op`): a
 committed operation returns its recorded result and changes nothing twice; a refusal, or a take
 that found nothing, left no operation and is run again. A server that does not answer is, to the

@@ -345,7 +345,9 @@ func takesGzip(accept string) bool {
 }
 
 // listenRefused is why host is not an address the server binds, "" when it is.
-// The decision is listenable's, so the server and the dashboard refuse the same
+// The decision is the one listen rule, cited through listenable from
+// internal/sprint/addr.go (ListenRefused), so the server and the dashboard
+// refuse the same
 // addresses: a name, a public address, a link-local address and an unspecified
 // address. Loopback, a private address and the tailnet stay. docs/SPEC-SPRINT.md
 // section 14, The server. The caller returns this before net.Listen.
@@ -364,7 +366,9 @@ func listenRefused(host string) string {
 // of its access control, so an address every network can reach is refused
 // (docs/SPEC-SPRINT.md section 14, The server). The refusal is returned before
 // a socket is opened. The coordinator's verbs stay on loopback; a private or
-// tailnet address is the workers' listener beside that loopback listener.
+// tailnet address is the workers' listener beside that loopback listener. In
+// local-only mode the address is loopback alone and a tailnet or other address
+// is refused naming the mode.
 func (a *app) listen(addr, redis string, stdout io.Writer) error {
 	host, _, err := net.SplitHostPort(addr)
 	if err != nil {
@@ -372,6 +376,16 @@ func (a *app) listen(addr, redis string, stdout io.Writer) error {
 	}
 	if why := listenRefused(host); why != "" {
 		return errors.New(why)
+	}
+	if sprint.LocalOnlyModeFrom(a.getenv) {
+		// the one rule narrowed by local-only mode (internal/sprint/addr.go
+		// LocalOnlyRefusal): under the mode the server binds loopback alone,
+		// and a tailnet or other address is refused naming the mode, so one
+		// machine runs a sprint with no tailnet at all
+		// (docs/SPEC-SPRINT.md, section 14, The server).
+		if why := sprint.LocalOnlyRefusal(net.ParseIP(host), addr); why != "" {
+			return errors.New("--listen " + why)
+		}
 	}
 	// the fleet's listener takes the workers' verbs; the loopback one, on the same port,
 	// takes the coordinator's (any verb the server runs). An address that is loopback

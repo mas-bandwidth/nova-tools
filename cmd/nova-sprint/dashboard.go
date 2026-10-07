@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprintdash"
 )
 
@@ -28,10 +29,6 @@ const (
 
 // noListener is the --listen or --pull word that serves nothing there.
 const noListener = "none"
-
-// tailnetRange is the addresses a tailnet hands out (100.64.0.0/10, the shared range):
-// with the private and loopback ranges, the only ones the dashboard listens on.
-var tailnetRange = &net.IPNet{IP: net.IPv4(100, 64, 0, 0), Mask: net.CIDRMask(10, 32)}
 
 // cmdDashboard serves the sprint dashboard (docs/SPEC-SPRINT-DASHBOARD.md) until it is
 // interrupted: the page from the files embedded in the binary, and /api/sprint, the
@@ -69,6 +66,19 @@ func (a *app) cmdDashboard(args []string, stdout, stderr io.Writer) int {
 	}
 	if len(pages)+len(pulls) == 0 {
 		return refuse(stderr, "dashboard", "--listen none and --pull none serve nothing: name an address:port for one of them")
+	}
+	if sprint.LocalOnlyModeFrom(a.getenv) {
+		// the one rule narrowed by local-only mode (internal/sprint/addr.go
+		// LocalOnlyRefusal): under the mode the page and the pull routes bind
+		// loopback alone, and a tailnet or other address is refused naming it
+		// (docs/SPEC-SPRINT.md, section 14, The server). localhost already
+		// binds loopback.
+		for _, at := range slices.Concat(pages, pulls) {
+			host, _, _ := net.SplitHostPort(at) // dashboardAddrs accepted each once
+			if why := sprint.LocalOnlyRefusal(net.ParseIP(host), at); why != "" {
+				return refuse(stderr, "dashboard", why)
+			}
+		}
 	}
 	if *logo != "" {
 		if fi, err := os.Stat(*logo); err != nil || fi.IsDir() {
@@ -203,20 +213,12 @@ func dashboardAddrs(flag, list string) ([]string, error) {
 	return out, nil
 }
 
-// listenable is why the dashboard does not listen on ip, "" when it does: loopback, a
-// private range or the tailnet's, never every network and never a public address.
+// listenable is why the dashboard does not listen on ip, "" when it does: it is
+// the one listen rule, kept in internal/sprint/addr.go (ListenRefused) and
+// cited here; local-only mode narrows it to loopback in cmdDashboard, naming
+// the mode.
 func listenable(ip net.IP) string {
-	switch {
-	case ip == nil:
-		return "the address is an IP address of this machine (loopback, or its address on the fleet's private network), never a name"
-	case ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast():
-		return "a link-local address; the page checks no credential, so it listens on loopback or the fleet's private network (the tailnet) only"
-	case ip.IsUnspecified():
-		return "the page shows the sprint and checks no credential, so it does not listen on every network; name loopback or this machine's tailnet address"
-	case !ip.IsLoopback() && !ip.IsPrivate() && !tailnetRange.Contains(ip):
-		return "a public address; the page shows the sprint and checks no credential, so it listens on loopback or the fleet's private network (the tailnet) only"
-	}
-	return ""
+	return sprint.ListenRefused(ip)
 }
 
 // listener is an address the dashboard listens on (and the flag that named it), the handler it serves there (the page
