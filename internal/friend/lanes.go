@@ -47,11 +47,28 @@ type LaneState struct {
 }
 
 // Card is one card a lane hands: its id (the queue file's), its brief, and
-// the outbox directory its REPORT.md and RESULT.md go to.
+// the outbox directory its REPORT.md and RESULT.md go to. Fix is the fix of a
+// rework staged in the last worktree (KeptFix), handed as the card's first line.
 type Card struct {
 	ID     string `json:"id"`
 	Brief  string `json:"brief"`
 	Outbox string `json:"outbox"`
+	Fix    string `json:"fix,omitempty"`
+}
+
+// FixLine is the first line a lane hands a rework staged in the last worktree: the fix, and
+// that the tree it needs is the one it is in.
+func (c Card) FixLine() string {
+	if c.Fix == "" {
+		return ""
+	}
+	return "The fix, first: " + c.Fix + " (a rework in the last attempt's worktree, kept: its JOB.md names it; make the fix there and push, nothing to re-learn)\n"
+}
+
+// LanePrompt is the text a one-shot run is handed for a card: its brief, after the fix line
+// of a rework staged in the last worktree.
+func LanePrompt(c Card, brief string) string {
+	return c.FixLine() + brief
 }
 
 // Epoch is the sprint epoch alone, without the job's generation (docs/FRIENDS.md).
@@ -327,14 +344,16 @@ func LaneSeed(friend string, n, width int, agents, memory string) string {
 	return b.String()
 }
 
-// CardText is one lane turn: the card and its three steps, then what else
-// rides along (the pong line first, the word about the coordinator, the bus
+// CardText is one lane turn: the card and its three steps (after the pong
+// line, and the fix of a rework staged in the last worktree first: FixLine),
+// then what else rides along (the word about the coordinator, the bus
 // messages waiting, each labelled by its sender's authority against seat).
 func CardText(c Card, n, width int, sendLine, pong, notice string, seat string, msgs []bus.Message) string {
 	var b strings.Builder
 	if pong != "" {
 		b.WriteString("Run this now, first, exactly as written: " + pong + "\nThen read on.\n\n")
 	}
+	b.WriteString(c.FixLine())
 	fmt.Fprintf(&b, "nova-friend: lane %d of %d: one card this turn, %s. Do exactly these three things, then stop.\n", n, width, c.ID)
 	fmt.Fprintf(&b, "1. Do the card. Its brief is %s; work as it says, only where it says.\n", c.Brief)
 	fmt.Fprintf(&b, "2. Write %s/REPORT.md and %s/RESULT.md as the brief's END step says.\n", c.Outbox, c.Outbox)
