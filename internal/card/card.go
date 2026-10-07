@@ -172,7 +172,7 @@ func Checks(id, brief string, o Options) []cardgen.LintFinding {
 			}
 		}
 		if n := authorName(line, o.Names); n != "" {
-			add("author-name", i+1, "names "+n+" as the author on a By: line; a commit names the friend who did the work, so write By: your own name, the friend doing this work")
+			add("author-name", i+1, "names "+n+" as the author on a By: line; a commit names the worker who did the work, so write By: your own name, the worker who does this attempt")
 		}
 		for _, d := range o.Dropped {
 			if d != "" && d != id && hasWord(line, d) {

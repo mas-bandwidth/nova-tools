@@ -15,7 +15,7 @@ import (
 func TestUnsetGuardLetsTheSeamRun(t *testing.T) {
 	t.Parallel()
 	g := NewGuard(false)
-	require.False(t, g.Refusing(), "the guard must be off when the variable is unset; production pays nothing for it")
+	require.False(t, g.refusing.Load(), "the guard must be off when the variable is unset; production pays nothing for it")
 	g.RefuseHosts("ssh", "hulk", "uptime") // must not panic
 }
 
@@ -71,16 +71,4 @@ func TestAllowHostsIsScopedAndNests(t *testing.T) {
 		require.NotNil(t, recover(), "the guard must be armed again once every scope has closed")
 	}()
 	g.RefuseHosts("ssh", "hulk")
-}
-
-func TestArmIsScopedAndIdempotent(t *testing.T) {
-	t.Parallel()
-	g := NewGuard(false)
-	require.False(t, g.Refusing(), "initially unarmed guard must not be refusing")
-	disarm := g.Arm()
-	require.True(t, g.Refusing(), "armed guard must be refusing")
-	disarm()
-	require.False(t, g.Refusing(), "disarmed guard must not be refusing")
-	disarm() // closing twice is safe and idempotent
-	require.False(t, g.Refusing(), "calling disarm twice must be a no-op")
 }

@@ -192,7 +192,12 @@ func RankStep(r sprint.RankReq) Step {
 // MergeStep is one mechanical merge step of a stream.
 func MergeStep(r sprint.MergeReq) Step {
 	// a landing takes each card's total from the card itself (sprint's cost.go)
-	return Step{Args: ArgsOf(r), Verb: "merge", Load: tables(sprint.Merge, sprint.Work), Mirrors: true,
+	load := tables(sprint.Merge, sprint.Work)
+	if r.Conflict != "" {
+		// a conflict reworks the card at the tip: its read cards retire (sprint's landRefused)
+		load = tables(sprint.Merge, sprint.Work, sprint.Readers)
+	}
+	return Step{Args: ArgsOf(r), Verb: "merge", Load: load, Mirrors: true,
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.MergeStep(s, r) }}
 }
 
@@ -327,6 +332,12 @@ func FriendTakeStep(r sprint.FriendTakeReq) Step {
 	}
 	return Step{Named: len(r.IDs) > 0, Args: ArgsOf(r), Verb: verb, Load: tables(sprint.Fleet, sprint.Work), Mirrors: true,
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.FriendTake(s, r) }}
+}
+
+// FriendGiveStep clears the take-back mark of a friend on the cards named (friend give).
+func FriendGiveStep(r sprint.FriendGiveReq) Step {
+	return Step{Args: ArgsOf(r), Verb: "friend give", Load: tables(sprint.Fleet, sprint.Work), Mirrors: true,
+		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.FriendGive(s, r) }}
 }
 
 // FriendLevelStep evens the friends' ready queues within each class (friend level).
