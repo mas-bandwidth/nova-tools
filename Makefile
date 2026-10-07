@@ -407,6 +407,13 @@ compile-lisp:
 # functional tier too (#4328). Over the whole tree the times are printed
 # against the old 60 s package budget and a SLEEPS skip off the ledger is red;
 # the target variables ride into `test` as its prerequisite.
+docs-check:
+	# Docs CI: internal/docs tests, nova-check links, generated CLI check, terminology lint
+	$(GO) test -count=1 ./internal/docs
+	$(GO) run ./cmd/nova-check links --dir .
+	$(GO) test -count=1 ./cmd/nova-sprint -run TestGeneratedCLIAreUpToDate
+	$(GO) test -count=1 ./internal/docs -run TestTerminologyLint
+
 check: SLOWTESTS_FLAGS := --budget 60 --sleeps internal/ci/sleeps-skips_allowlist.txt
 check: build lint test test-functional test-e2e test-lisp
 

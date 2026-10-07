@@ -1,0 +1,67 @@
+# Docs CI: runs docs gates on every change that touches docs or help
+#
+# Why this exists: documentation is a first-class artifact that must be
+# validated on every change. This workflow ensures that docs/**, READMEs,
+# verb help files, and generated CLI docs are tested before a change lands.
+
+name: docs-check
+
+on:
+  pull_request:
+    paths:
+      - 'docs/**'
+      - '**/README.md'
+      - 'cmd/*/verbhelp.go'
+      - 'tools/clidoc/**'
+  push:
+    paths:
+      - 'docs/**'
+      - '**/README.md'
+      - 'cmd/*/verbhelp.go'
+      - 'tools/clidoc/**'
+    branches: [main, dev]
+
+jobs:
+  docs:
+    runs-on: [self-hosted, linux, x64, space]
+    timeout-minutes: 2
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - name: borrow objects from the bench mirror
+        shell: bash
+        run: |
+          m="$HOME/nova-bench/mirror/nova-tools.git"
+          w="${GITHUB_WORKSPACE:?}"
+          [ -d "$m/objects" ] || { echo "no bench mirror at $m: checkout fetches from GitHub"; exit 0; }
+          mkdir -p "$w"
+          [ -z "$(ls -A "$w")" ] || { echo "workspace not empty: left to actions/checkout"; exit 0; }
+          seed() {
+            tip=$(git --git-dir="$m" rev-parse --verify -q 'HEAD^{commit}') || return 1
+            git init -q "$w" &&
+              git -C "$w" remote add origin "${{ github.server_url }}/${{ github.repository }}" &&
+              echo "$m/objects" > "$w/.git/objects/info/alternates" &&
+              git -C "$w" -c advice.detachedHead=false checkout -q --detach "$tip" &&
+              echo "workspace borrows $m, detached at its HEAD $tip"
+          }
+          seed || { echo "seeding from $m failed: left to actions/checkout"; rm -rf -- "$w/.git"; }
+
+      - name: checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: use the installed Go toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          want=$(sed -n 's/^toolchain \(go[0-9][0-9a-z.]*\)$/\1/p' go.mod 2>/dev/null | head -1 || true)
+          [ -n "$want" ] || want=$(sed -n 's/^go \([0-9][0-9a-z.]*\)$/go\1/p' go.mod 2>/dev/null | head -1 || true)
+          sdk=
+          if [ -n "$want" ] && [ -x "$HOME/sdk/$want/bin/go" ]; then sdk="$HOME/sdk/$want/bin"; fi
+          [ -n "$sdk" ] || sdk=$(ls -d "$HOME"/sdk/go*/bin 2>/dev/null | sort -V | tail -1 || true)
+          for d in "$sdk" "$HOME/go/bin" /usr/local/go/bin /opt/homebrew/bin; do
+            [ -n "$d" ] && [ -x "$d/go" ] && { echo "$d" >> "$GITHUB_PATH"; export PATH="$d:$PATH"; break; }
+          done
+          command -v go >/dev/null 2>&1 || { echo "no Go toolchain on PATH"; exit 1; }
+          go version
+
+      - name: docs-check
+        run: make docs-check
