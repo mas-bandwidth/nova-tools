@@ -395,8 +395,10 @@ var errNotAnAddedRow = errors.New("a line that is not an added row")
 
 // unionCatalogRows is the catalog at a merge whose both sides only add rows: the base,
 // plus every row either side added, the tip's (ours) before the card's where they add at
-// the same place, and how many rows each side contributed. A line that is not an added
-// row is an error.
+// the same place, and how many rows each side contributed. A directory is named once: a
+// row of the card's for a directory the base or the tip already names is the tip's row
+// alone (two cards that each add docs/dogfood with their own words named it twice, and
+// the map's generator refused the catalog). A line that is not an added row is an error.
 func unionCatalogRows(base, ours, theirs []byte) ([]byte, [2]int, error) {
 	bLines, _ := unionLines(base)
 	oLines, oTrail := unionLines(ours)
@@ -409,15 +411,23 @@ func unionCatalogRows(base, ours, theirs []byte) ([]byte, [2]int, error) {
 	if !ok {
 		return nil, [2]int{}, errNotAnAddedRow
 	}
-	seen := map[string]bool{}
+	seen, named := map[string]bool{}, map[string]bool{}
 	for _, l := range bLines {
 		seen[l] = true
+		if d := catalogRowDir(l); d != "" {
+			named[d] = true
+		}
+	}
+	for _, rows := range oAt {
+		for _, l := range rows {
+			named[catalogRowDir(l)] = true
+		}
 	}
 	var out []string
 	added := [2]int{}
 	take := func(side int, lines []string) {
 		for _, l := range lines {
-			if seen[l] {
+			if seen[l] || side == 1 && named[catalogRowDir(l)] {
 				continue
 			}
 			seen[l] = true
@@ -474,8 +484,133 @@ func catalogInserts(base, side []string) (map[int][]string, bool) {
 	return at, true
 }
 
+// catalogRowDir is the directory a catalog row names (its first quoted string), "" for a
+// line that is no row.
+func catalogRowDir(line string) string {
+	if !addedCatalogRow(line) {
+		return ""
+	}
+	_, rest, _ := strings.Cut(line, `"`)
+	dir, _, _ := strings.Cut(rest, `"`)
+	return dir
+}
+
 // addedCatalogRow says a line is a catalog row (E or Page), not a change of one.
 func addedCatalogRow(line string) bool {
 	t := strings.TrimSpace(line)
 	return (strings.HasPrefix(t, "E(") || strings.HasPrefix(t, "Page(")) && strings.Contains(t, `"`)
+}
+
+// mapInput says a merge's change to p is one the agents map is generated from or is: the
+// catalog, or a map page.
+func mapInput(p string) bool { return p == diffcheck.CatalogFile || diffcheck.AgentsMap(p) }
+
+// remap regenerates the agents maps on a plain merge of c, the batch branch's tip,
+// when both sides changed the catalog or a map since their merge base: each card ran the
+// map's generator at its own base, so the two merged in turn can name a directory twice or
+// leave a map stale for the tree gate, though git merged them without a conflict. First a
+// row the card repeats for a directory the tip's catalog already names is dropped (the
+// tip's row is kept, as the catalog's union keeps it at a conflict), then the map family's
+// run regenerates the maps, and what it wrote is amended into the merge commit. note is the
+// card's note ("map regenerated ..."), "" when nothing changed. A run that fails, or writes
+// a file outside the map family and the catalog, is undone and leaves the merge as git made
+// it, for the tree gate to judge; env is a git failure that is not the card's, and a failure
+// after the catalog's fix or the run wrote (listing, staging or amending) undoes what was
+// written too, so the clone is left clean as the merge left it (restore).
+func (l *lander) remap(ctx context.Context, dir string, c landCard) (note, env string) {
+	i := slices.IndexFunc(l.ledgers(), func(f landLedger) bool { return f.owns("AGENTS.md") })
+	if i < 0 {
+		return "", ""
+	}
+	family := l.ledgers()[i]
+	// the tip's side (before, the merge's first parent) and the card's, each since the base
+	// they share; a merge that made no commit has no second parent and nothing to do
+	for _, side := range []string{"HEAD^2...HEAD^1", "HEAD^1...HEAD^2"} {
+		changed, err := l.git(ctx, dir, "diff", "--name-only", side)
+		if err != nil || !slices.ContainsFunc(strings.Split(changed, "\n"), mapInput) {
+			return "", ""
+		}
+	}
+	known, err := l.git(ctx, dir, "ls-files", "--others", "--exclude-standard", "-z")
+	if err != nil {
+		return "", "the clone's untracked files could not be listed: " + firstLine("", err)
+	}
+	// undo leaves the clone as the merge made it: the checkout reset, and what the
+	// regeneration added removed (restore); env, "" for a run the tree gate judges, is kept
+	undo := func(env string) (string, string) {
+		return "", l.restore(ctx, dir, strings.Split(known, "\x00"), env)
+	}
+	var dropped []string
+	if tip, err := gitrun.Run(ctx, gitrun.Options{C: dir, Env: l.a.gitEnv, OwnRepo: true}, "show", "HEAD^1:"+diffcheck.CatalogFile); err == nil {
+		path := filepath.Join(dir, filepath.FromSlash(diffcheck.CatalogFile))
+		if merged, err := os.ReadFile(path); err == nil {
+			var fixed []byte
+			if fixed, dropped = dropRepeatedRows(tip.Stdout, merged); len(dropped) > 0 {
+				if err := os.WriteFile(path, fixed, 0o644); err != nil {
+					return undo("the catalog " + diffcheck.CatalogFile + " could not be written: " + err.Error())
+				}
+			}
+		}
+	}
+	if _, err := l.regen(ctx, dir, family.run); err != nil {
+		return undo("")
+	}
+	status, err := l.git(ctx, dir, "status", "--porcelain=v1", "-z", "--untracked-files=all")
+	if err != nil {
+		return undo("what the map's regeneration changed could not be listed: " + firstLine("", err))
+	}
+	written := updateWrote(status)
+	for _, p := range written {
+		if !family.owns(p) && p != diffcheck.CatalogFile {
+			return undo("")
+		}
+	}
+	if len(written) == 0 {
+		return "", ""
+	}
+	if _, err := l.git(ctx, dir, append([]string{"add", "--"}, written...)...); err != nil {
+		return undo("the regenerated map could not be staged: " + firstLine("", err))
+	}
+	if _, err := l.git(ctx, dir, "commit", "-q", "--amend", "--no-edit"); err != nil {
+		return undo("the merge of " + c.id + " could not be amended with its regenerated map: " + firstLine("", err))
+	}
+	note = "map regenerated at the merge by " + family.tests + ": " + sprint.Preview(written, ", ")
+	if len(dropped) > 0 {
+		note += "; the card's repeated catalog row for " + strings.Join(dropped, ", ") + " dropped, the tip's kept"
+	}
+	return note, ""
+}
+
+// dropRepeatedRows is the merged catalog without the rows that repeat a directory the tip's
+// catalog names, the tip's own row kept, and the directories whose repeats were dropped.
+func dropRepeatedRows(tip, merged []byte) ([]byte, []string) {
+	tipRow := map[string]string{}
+	for _, l := range strings.Split(string(tip), "\n") {
+		if d := catalogRowDir(l); d != "" {
+			tipRow[d] = l
+		}
+	}
+	lines := strings.Split(string(merged), "\n")
+	n := map[string]int{}
+	for _, l := range lines {
+		n[catalogRowDir(l)]++
+	}
+	var out, dropped []string
+	kept := map[string]bool{}
+	for _, l := range lines {
+		d := catalogRowDir(l)
+		if d == "" || n[d] < 2 || tipRow[d] == "" {
+			out = append(out, l)
+			continue
+		}
+		if l == tipRow[d] && !kept[d] {
+			kept[d] = true
+			out = append(out, l)
+			continue
+		}
+		if !slices.Contains(dropped, d) {
+			dropped = append(dropped, d)
+		}
+	}
+	return []byte(strings.Join(out, "\n")), dropped
 }

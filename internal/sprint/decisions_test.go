@@ -80,7 +80,7 @@ func TestReworkDelegatesAtOnce(t *testing.T) {
 	require.Empty(t, readsAt(w.s, w.s.Work.Card("s1-1"), 2), "the finish asked readers itself")
 	w.must(Ask(w.s, AskReq{}))
 	again := readsAt(w.s, w.s.Work.Card("s1-1"), 2)
-	require.Len(t, again, 1, "not asked again (the first read alone: reads are asked one at a time)")
+	require.Len(t, again, 2, "not asked again (both reads asked together)")
 	for _, rc := range again {
 		assert.Equal(t, "h2", rc.F("head"), "not asked again at the new head: %s", rc.ID)
 	}
@@ -397,8 +397,7 @@ func TestG3ReadsExhaustedIsAJudgment(t *testing.T) {
 	// s1-1: both broken; ask another closes both; the third says ok.
 	r1 := readsAt(w.s, w.s.Work.Card("s1-1"), 1)
 	w.must(Read(w.s, ReadReq{Usage: "input=1000 output=100", As: r1[0].F("reader"), Verdict: "broken", Finding: "f:1", Sel: Sel{IDs: []string{r1[0].ID}}}))
-	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-1"}}, Another: true})) // the first read broken: no second read but by --another
-	second := askedRead(w, "s1-1")
+	second := askedRead(w, "s1-1") // the second read was asked with the first
 	w.must(Read(w.s, ReadReq{Usage: "input=1000 output=100", As: second.F("reader"), Verdict: "broken", Finding: "f:1", Sel: Sel{IDs: []string{second.ID}}}))
 	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-1"}}, Another: true}))
 	third := askedRead(w, "s1-1")
@@ -411,8 +410,7 @@ func TestG3ReadsExhaustedIsAJudgment(t *testing.T) {
 	// and the broken judgment stays open.
 	r2 := readsAt(w.s, w.s.Work.Card("s1-2"), 1)
 	w.must(Read(w.s, ReadReq{Usage: "input=1000 output=100", As: r2[0].F("reader"), Verdict: "ok", Sel: Sel{IDs: []string{r2[0].ID}}}))
-	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-2"}}})) // the second read, once the first came back ok
-	next := askedRead(w, "s1-2")
+	next := askedRead(w, "s1-2") // the second read, asked with the first
 	w.must(Read(w.s, ReadReq{Usage: "input=1000 output=100", As: next.F("reader"), Verdict: "broken", Finding: "f:1", Sel: Sel{IDs: []string{next.ID}}}))
 	broken := w.openOn("s1-2")[0].Note.ID
 	p := w.do(Ack(w.s, AckReq{Notes: []string{broken}, Reason: "not a defect"}))
@@ -580,7 +578,7 @@ func TestAckAnswersOnlyTheTypesThatListIt(t *testing.T) {
 	}
 	all[NRemindFailed] = []string{"goal set friend-a --to <route>", "goal drop friend-a", "ack"}
 	ackable := map[string]bool{NBlocked: true, NMissingNeed: true, NCIRed: true, NRepairSkipped: true, NOpStuck: true, NRemindFailed: true, NProviderFunds: true, NProviderLow: true, NProviderKey: true, NAllOutOfCredit: true, NScoredLow: true, NRaiseReadTier: true,
-		NAlarmReview: true, NAlarmMerging: true, NAlarmReady: true, NAlarmFleet: true, NFilesAlarm: true, NFriendDeaf: true, NFriendIdle: true, NFriendEmpty: true, NPinIgnored: true}
+		NAlarmReview: true, NAlarmMerging: true, NAlarmReady: true, NAlarmFleet: true, NFilesAlarm: true, NFriendDeaf: true, NFriendIdle: true, NFriendEmpty: true, NPinIgnored: true, NStatus: true}
 	for typ, ds := range all {
 		w := setup(t, 1)
 		n := Note{ID: "n-x.1", Kind: Judgment, Type: typ, Stream: "s1", Primaries: []string{"s1-1"}, Count: 1, Decisions: ds, At: w.s.Now}
@@ -603,9 +601,9 @@ func TestAckAnswersOnlyTheTypesThatListIt(t *testing.T) {
 // judgment the coordinator's answer closes is none of them.
 func TestTickKeptList(t *testing.T) {
 	t.Parallel()
-	keeps := []string{NBound, NCannotAsk, NFewReaders, NNoMember, NStarving, NOverloaded, NReadersBehind, NDevBehind, NRaiseReadTier, NNoRoute, NProviderFunds, NProviderLow, NProviderKey, NAllOutOfCredit, NInvariant, NWorkLate, NReadLate, NMergeLate, NStalled, NRemindFailed,
+	keeps := []string{NBound, NCannotAsk, NFewReaders, NNoMember, NStarving, NOverloaded, NAdoptFailed, NReadersBehind, NDevBehind, NRaiseReadTier, NNoRoute, NProviderFunds, NProviderLow, NProviderKey, NAllOutOfCredit, NInvariant, NWorkLate, NReadLate, NMergeLate, NStalled, NRemindFailed,
 		NAlarmReview, NAlarmMerging, NAlarmReady, NAlarmFleet, NFilesAlarm, NFriendDeaf, NFriendIdle, NCoordinatorBehind, NFriendEmpty, NPinIgnored,
-		NDriftAhead, NDriftCardBase, NDriftServer, NDriftBaseRed}
+		NDriftAhead, NDriftCardBase, NDriftServer, NDriftBaseRed, NStatus}
 	got := []string{NRemindFailed}
 	for typ := range TickDecisions {
 		got = append(got, typ)

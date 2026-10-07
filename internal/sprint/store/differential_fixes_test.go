@@ -92,7 +92,7 @@ func TestASecondCIRedOnACardWritesNoSecondJudgment(t *testing.T) {
 
 // 5. ask --another's reader is for that attempt only: it leaves the primary's
 // asked field as the two of the attempt, and after rework attempt 2 is asked
-// of two different readers, and no third.
+// of two different readers together (reads are asked together), and no third.
 func TestAskAnotherIsForItsAttemptOnly(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
@@ -116,7 +116,8 @@ func TestAskAnotherIsForItsAttemptOnly(t *testing.T) {
 			asked = append(asked, rc.F("reader"))
 		}
 	}
-	require.Len(t, asked, 1, "readers asked at attempt 2: the first read, and no other")
+	require.Len(t, asked, 2, "readers asked at attempt 2: both reads together, and no third")
+	require.NotEqual(t, asked[0], asked[1], "two different readers")
 	h.clean("asked again")
 }
 
@@ -296,10 +297,10 @@ func TestTheDealAndTheAskGoRoundAsTheModelDoes(t *testing.T) {
 		}
 	}
 	slices.Sort(readers)
-	want := []string{"r2"}
-	require.True(t, slices.Equal(readers, want), "a2 was asked of %v, want %v: past r1, round the readers", readers, want)
-	require.Equal(t, "m2", indexPast(s.Order, s.DealLast), "the store's indexes are past %q and %q, want m2 and r2", s.DealLast, s.AskLast)
-	require.Equal(t, "r2", indexPast(s.Readers, s.AskLast), "the store's indexes are past %q and %q, want m2 and r2", s.DealLast, s.AskLast)
+	want := []string{"r1", "r3"} // both reads together (reads are asked together): r3 and r1, past r2
+	require.True(t, slices.Equal(readers, want), "a2 was asked of %v, want %v: past r2, round the readers", readers, want)
+	require.Equal(t, "m2", indexPast(s.Order, s.DealLast), "the store's indexes are past %q and %q, want m2 and r1", s.DealLast, s.AskLast)
+	require.Equal(t, "r1", indexPast(s.Readers, s.AskLast), "the store's indexes are past %q and %q, want m2 and r1", s.DealLast, s.AskLast)
 }
 
 // Every placement of a card on a member goes round the fleet and moves the

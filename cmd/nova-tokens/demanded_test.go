@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -20,14 +21,21 @@ import (
 // ---------------------------------------------------------------- rule 1: every path is a flag
 
 func TestRule1EveryPathIsAFlagAndNoEnvironmentIsConsulted(t *testing.T) {
+	t.Parallel()
+	if os.Getenv(childTestEnv) == "" {
+		// The bait is a process-wide environment, which t.Parallel forbids in a shared
+		// process; the body runs in a child of this binary where it owns the process.
+		reenterTest(t, "TestRule1EveryPathIsAFlagAndNoEnvironmentIsConsulted")
+		return
+	}
 	dir := t.TempDir()
 	// A complete, valid set of sources sitting under every variable a tool might reach for.
 	bait := mkdir(t, filepath.Join(dir, "bait"))
 	write(t, filepath.Join(bait, "t", "a.jsonl"), msg("m1", "2026-09-11T10:00:00Z", "fable", map[string]int{"input_tokens": 5}, "/x/schema/a.go")+"\n")
 	reposFile(t, bait)
-	t.Setenv("HOME", bait)
-	t.Setenv("TMPDIR", bait)
-	t.Setenv("XDG_DATA_HOME", bait)
+	os.Setenv("HOME", bait)
+	os.Setenv("TMPDIR", bait)
+	os.Setenv("XDG_DATA_HOME", bait)
 
 	// Rule 1: "$HOME, $TMPDIR, $XDG_DATA_HOME and every other variable are ignored, and a
 	// test sets them and proves it." The proof is the count of source files this process
@@ -1266,12 +1274,14 @@ func TestRule15AMixedRowSumsPerTypeOverTheSourcesThatReportedIt(t *testing.T) {
 // ---------------------------------------------------------------- rule 16 and 19: sources are read-only, one subprocess
 
 func TestRule16And19TheDatabaseIsCopiedAndQueriedReadOnlyUnderATimeout(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	out := mkdir(t, filepath.Join(dir, "out"))
 	scratch := mkdir(t, filepath.Join(dir, "scratch"))
 	db := write(t, filepath.Join(dir, "opencode.db"), "SQLite format 3\x00 not really\n")
 	write(t, db+"-wal", "wal\n")
-	logPath := fakeSqlite3(t,
+	logPath, sqliteEnv := fakeSqlite3(t,
 		ocRows(ocSession("s1", "", "/x/schema")),
 		ocRows(ocMessage("msg1", "s1", "2026-09-11T10:00:00Z", "anthropic", "mercury-2.5", "10", "20", "30", "40", "50", "/x/schema")),
 		ocRows(
@@ -1291,7 +1301,7 @@ func TestRule16And19TheDatabaseIsCopiedAndQueriedReadOnlyUnderATimeout(t *testin
 		{"sources", "--day", "2026-09-11", "--repos", repos, "--opencode", "bench=" + db, "--scratch", scratch},
 	} {
 		tree := treeOf(t, dir)
-		r := invoke(t, args...)
+		r := runToolChild(t, "", sqliteEnv, args...)
 		wantExit(t, r, 0)
 		switch args[0] {
 		case "sources":
@@ -1310,7 +1320,7 @@ func TestRule16And19TheDatabaseIsCopiedAndQueriedReadOnlyUnderATimeout(t *testin
 
 	before, err := os.Stat(db)
 	require.NoError(t, err, err)
-	r := invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", repos,
+	r := runToolChild(t, "", sqliteEnv, "fold", "--out", out, "--day", "2026-09-11", "--repos", repos,
 		"--opencode", "bench="+db, "--scratch", scratch)
 	wantExit(t, r, 0)
 	wantContains(t, read(t, filepath.Join(out, "2026-09-11.tsv")), "mercury-2.5\tschema\t10\t20\t30\t40\t50\t")
@@ -1335,10 +1345,10 @@ func TestRule16And19TheDatabaseIsCopiedAndQueriedReadOnlyUnderATimeout(t *testin
 	require.NoError(t, err, err)
 	assert.True(t, after.ModTime().Equal(before.ModTime()) && after.Size() == before.Size(), "the live database changed")
 	// --scratch is required with --opencode and refused without it.
-	wantExit(t, invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", reposFile(t, dir), "--opencode", "bench="+db), 2)
+	wantExit(t, runToolChild(t, "", sqliteEnv, "fold", "--out", out, "--day", "2026-09-11", "--repos", reposFile(t, dir), "--opencode", "bench="+db), 2)
 	tr := mkdir(t, filepath.Join(dir, "tr"))
 	write(t, filepath.Join(tr, "a.jsonl"), msg("m", "2026-09-11T10:00:00Z", "f", map[string]int{"input_tokens": 1})+"\n")
-	wantExit(t, invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", reposFile(t, dir), "--claude", "g="+tr, "--scratch", scratch), 2)
+	wantExit(t, runToolChild(t, "", sqliteEnv, "fold", "--out", out, "--day", "2026-09-11", "--repos", reposFile(t, dir), "--claude", "g="+tr, "--scratch", scratch), 2)
 }
 
 // ---------------------------------------------------------------- rule 17: a day is a UTC day
@@ -1370,6 +1380,8 @@ func TestRule17TheDayComesFromTheMessageStamp(t *testing.T) {
 // and it landed in 2026-09-11.tsv with day_basis=utc. A stamp this tool cannot read is
 // rule 3's business: counted and printed, never skipped silently -- it vanished.
 func TestRule17AZonedStampFoldsOnItsUTCDayAndAnUnreadableStampIsCounted(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	out := mkdir(t, filepath.Join(dir, "out"))
 	tr := mkdir(t, filepath.Join(dir, "tr"))
@@ -1379,7 +1391,7 @@ func TestRule17AZonedStampFoldsOnItsUTCDayAndAnUnreadableStampIsCounted(t *testi
 		`{"type":"assistant","timestamp":"the eleventh","message":{"id":"m3","model":"f","usage":{"input_tokens":9}}}`,
 	}, "\n")+"\n")
 
-	r := invoke(t, "fold", "--out", out, "--all", "--repos", reposFile(t, dir), "--claude", "g="+tr)
+	r := runToolChild(t, "", nil, "fold", "--out", out, "--all", "--repos", reposFile(t, dir), "--claude", "g="+tr)
 	wantExit(t, r, 1)
 	// 20:30 on the 11th at -07:00 is 03:30Z on the TWELFTH.
 	wantContains(t, read(t, filepath.Join(out, "2026-09-12.tsv")), "f\tschema\t7\t")
@@ -1402,14 +1414,14 @@ func TestRule17AZonedStampFoldsOnItsUTCDayAndAnUnreadableStampIsCounted(t *testi
 	// The same, for the OpenCode reader.
 	scratch := mkdir(t, filepath.Join(dir, "scratch"))
 	db := write(t, filepath.Join(dir, "opencode.db"), "SQLite format 3\x00\n")
-	fakeSqlite3(t,
+	_, sqliteEnv := fakeSqlite3(t,
 		ocRows(ocSession("s1", "", "/x/schema")),
 		ocRows(
 			ocMessage("k1", "s1", "2026-09-11T20:30:00-07:00", "p", "m", "3", "", "", "", "", "/x/schema"),
 			ocMessage("k2", "s1", "", "p", "m", "4", "", "", "", "", "/x/schema")),
 		ocRows(ocPart("k1", "s1", "", "/x/schema/a.go", "", "")))
 	out2 := mkdir(t, filepath.Join(dir, "out2"))
-	r = invoke(t, "fold", "--out", out2, "--all", "--repos", reposFile(t, dir), "--opencode", "b="+db, "--scratch", scratch)
+	r = runToolChild(t, "", sqliteEnv, "fold", "--out", out2, "--all", "--repos", reposFile(t, dir), "--opencode", "b="+db, "--scratch", scratch)
 	wantExit(t, r, 1)
 	wantContains(t, read(t, filepath.Join(out2, "2026-09-12.tsv")), "m\tschema\t3\t")
 	wantContains(t, lineWith(r.stdout, "TOKENS SOURCE"), "unparsed=-")
@@ -1484,14 +1496,13 @@ func TestRule20ReportPrintsTheBodyAndNothingElse(t *testing.T) {
 	wantContains(t, r.stdout, "2026-09-11\temma\tgemini\tschema\tinput\t100")
 	wantContains(t, r.stdout, "2026-09-11\temma\tgemini\tschema\tcache_write\t0")
 	wantContains(t, r.stderr, "REPORT OK who=emma day=2026-09-11")
-	wantContains(t, r.stderr, "subject=tokens 2026-09-11 at=2026-09-11T23:55:02Z build=")
+	wantContains(t, r.stderr, `subject="tokens 2026-09-11 at=2026-09-11T23:55:02Z build=`)
 	assert.Equal(t, r.stdout, read(t, note), "--note is not exactly the stdout bytes")
 
 	// The note folds back as the same rows, through the bus, with one hand-added comment.
 	out := mkdir(t, filepath.Join(dir, "out"))
 	bus := busDir(t, mkdir(t, filepath.Join(dir, "bus")), "emma")
-	subject := strings.TrimPrefix(lineWith(r.stderr, "REPORT OK"), "")
-	subject = subject[strings.Index(subject, "subject=")+len("subject="):]
+	subject := subjectOf(t, r)
 	busNote(t, bus, "emma", "n.md", "emma-000000000001", subject, busDate, r.stdout+"# repos: schema\n")
 	f := invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", repos, "--bus", bus)
 	wantExit(t, f, 0)
@@ -1578,13 +1589,16 @@ func TestRule20ReportRefusesAndSupersedes(t *testing.T) {
 	wantContains(t, lineWith(f.stdout, "TOKENS SOURCE"), "superseded=1")
 }
 
-// subjectOf is the subject a `report` says it built, as REPORT OK prints it.
+// subjectOf is the subject a `report` says it built, as REPORT OK prints it: one quoted
+// value, returned unquoted so a test can put it on a note's Subject header.
 func subjectOf(t *testing.T, r result) string {
 	t.Helper()
 	line := lineWith(r.stderr, "REPORT OK")
 	i := strings.Index(line, "subject=")
 	require.GreaterOrEqual(t, i, 0, "no subject= on %q", line)
-	return line[i+len("subject="):]
+	subject, err := strconv.Unquote(line[i+len("subject="):])
+	require.NoError(t, err, "subject= is not one quoted value on %q", line)
+	return subject
 }
 
 // ---------------------------------------------------------------- rule 21: the provider export
@@ -1779,9 +1793,9 @@ func TestReportCountsAndPrintsEverythingItDropped(t *testing.T) {
 	wantExit(t, r, 1)
 	wantContains(t, r.stderr, "TOKENS UNPARSED label=claude:g")
 	wantContains(t, r.stderr, "yesterday")
-	// The OK line is the grammar's, so what says the day is short is the line above it,
-	// the note, and the exit code -- and the body still printed.
-	wantContains(t, r.stderr, "REPORT OK who=emma day=2026-09-11 rows=1")
+	// The status word follows the exit, so what says the day is short is the line above
+	// it, the note, and the FAILED word -- and the body still printed.
+	wantContains(t, r.stderr, "REPORT FAILED who=emma day=2026-09-11 rows=1")
 	{
 		n := strings.Count(r.stderr, "TOKENS UNPARSED")
 		assert.Equal(t, 1, n, "%d TOKENS UNPARSED lines, want 1:\n%s", n, r.stderr)

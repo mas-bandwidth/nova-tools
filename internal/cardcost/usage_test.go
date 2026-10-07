@@ -233,3 +233,41 @@ func TestSumUsageTotalsOverWhatWasReported(t *testing.T) {
 	require.Equal(t, "", empty.Predicted)
 	assert.Equal(t, Unreported, empty.Wait)
 }
+
+// A total repriced by one record moves its predicted and charged sums by the record's
+// difference, exactly, and nothing else: a record the harness priced keeps its actual as
+// its charged figure, a record priced for the first time is counted, one priced no longer
+// is taken out, and a total that never counted the record is left as it is.
+func TestATotalRepricedMovesOnlyItsPricesByTheDifference(t *testing.T) {
+	t.Parallel()
+	a := ParseUsage("input=1000000 predicted_usd=0.03")
+	b := ParseUsage("input=1000000 predicted_usd=0.5 actual_usd=0.25 actual_by=harness")
+	tot := SumUsage([]Usage{a, b})
+	require.Equal(t, "0.53", tot.Predicted)
+	require.Equal(t, "0.28", tot.Charged)
+
+	a2, b2 := a, b
+	a2.Predicted, b2.Predicted = "0.3", "1"
+	got := tot.Repriced(a, a2).Repriced(b, b2)
+	assert.Equal(t, "1.3", got.Predicted)
+	assert.Equal(t, 2, got.PredOf)
+	assert.Equal(t, "0.55", got.Charged, "the harness's 0.25 stays b's charged figure")
+	assert.Equal(t, 2, got.ChargedOf)
+	assert.Equal(t, tot.Tokens, got.Tokens)
+	assert.Equal(t, tot.Records, got.Records)
+
+	none := a
+	none.Predicted = ""
+	gone := tot.Repriced(a, none)
+	assert.Equal(t, "0.5", gone.Predicted)
+	assert.Equal(t, 1, gone.PredOf)
+	assert.Equal(t, "0.25", gone.Charged)
+	assert.Equal(t, 1, gone.ChargedOf)
+	assert.Equal(t, "", gone.Repriced(b, none).Predicted, "no record left priced: no sum")
+	assert.Equal(t, 2, gone.Repriced(none, a).PredOf, "priced for the first time: counted")
+
+	assert.Equal(t, NoTotal(), NoTotal().Repriced(a, a2), "a total that never counted it cannot go below zero")
+	bad := tot
+	bad.Predicted = "x"
+	assert.Equal(t, "x", bad.Repriced(a, a2).Predicted, "a sum that does not read is left")
+}

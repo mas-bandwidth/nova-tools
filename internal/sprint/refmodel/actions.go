@@ -430,11 +430,11 @@ func Ask(s State, p string, readers []string) (State, error) {
 	pr := s.Primaries[p]
 	live := 0
 	for _, r := range s.Readers {
-		if _, made := s.Reads[RC(p, pr.Attempt, r)]; made {
+		if _, ok := s.AskID(p, pr.Attempt, r); !ok {
 			live++
 		}
 	}
-	if len(s.Readers)-live < 2-len(s.OkReaders(p)) {
+	if len(s.Readers)-live < 2-len(s.LiveReadsOf(p)) {
 		return s, refuse("fewer than two readers free for %s", p)
 	}
 	sorted := addSorted(nil, readers...)
@@ -444,20 +444,22 @@ func Ask(s State, p string, readers []string) (State, error) {
 	}
 	n := s.Clone()
 	order := addSorted(nil, s.Readers...)
-	if !finder { // the finder's read is out of turn: the index stays where it was
-		for _, r := range next {
-			n.AskLast = roundPast(order, n.AskLast, r)
+	for i, r := range next {
+		if finder && i == 0 { // the finder's read is out of turn: the index does not move for it
+			if n.Reserved[r] > 0 {
+				n.Reserved[r]-- // placed now: its load counts it from here
+			}
+			continue
 		}
-	} else if n.Reserved[next[0]] > 0 {
-		n.Reserved[next[0]]-- // placed now: its load counts it from here
+		n.AskLast = roundPast(order, n.AskLast, r)
 	}
 	n.AskStreamLast = roundPast(s.streamOrder(pr.Stream), s.AskStreamLast, pr.Stream) // the ask's stream index moves past it
 	for _, r := range readers {
-		id := RC(p, pr.Attempt, r)
+		id, _ := s.AskID(p, pr.Attempt, r)
 		if _, made := n.Reads[id]; made {
 			return s, badChoice("%s cut a second time (NoCardLostOrTwice)", id)
 		}
-		n.Reads[id] = ReadCard{Primary: p, Attempt: pr.Attempt, Reader: r, Place: Asked, Finder: finder}
+		n.Reads[id] = ReadCard{Primary: p, Attempt: pr.Attempt, Reader: r, Place: Asked, Finder: finder && r == next[0]}
 	}
 	var pair []string
 	for _, id := range n.LiveReadsOf(p) {
@@ -484,14 +486,14 @@ func AskAnother(s State, p, r string) (State, error) {
 	pr := s.Primaries[p]
 	free := 0
 	for _, x := range s.Readers {
-		if _, made := s.Reads[RC(p, pr.Attempt, x)]; !made {
+		if _, ok := s.AskID(p, pr.Attempt, x); ok {
 			free++
 		}
 	}
 	if free == 0 {
 		return s, refuse("every reader has read %s at attempt %d", p, pr.Attempt)
 	}
-	id := RC(p, pr.Attempt, r)
+	id, _ := s.AskID(p, pr.Attempt, r)
 	if !slices.Contains(s.Readers, r) {
 		return s, badChoice("%s is not a reader", r)
 	}
@@ -527,8 +529,9 @@ func ReadStart(s State, r, c string) (State, error) {
 // broken judgment; the read that leaves the reads exhausted opens reads
 // exhausted (G3). A report on a card still asked is the begin and the report
 // in one step, and the read that completes two different readers' ok at the
-// head opens ready to accept while the machine is STOPPED (a RUNNING
-// machine's pump accepts it): both the spec's (section 6), not the model's.
+// head opens ready to accept only for a primary the pump holds (AcceptHeld);
+// the tick accepts the rest, RUNNING or STOPPED (at the first pump after
+// start): both the spec's (section 6), not the model's.
 func Read(s State, r, c string, ok bool) (State, error) {
 	if err := free(s); err != nil {
 		return s, err
@@ -549,8 +552,7 @@ func Read(s State, r, c string, ok bool) (State, error) {
 	if !ok {
 		n.open(JBroken, p)
 	} else if before < 2 {
-		// a RUNNING machine's pump accepts it unless it holds it: "accept is
-		// mechanical"
+		// the tick's pump accepts it unless it holds it: "accept is mechanical"
 		n.acceptNote(p)
 	}
 	n.exhaust(p)
@@ -688,16 +690,24 @@ func Rework(s State, p, m string) (State, error) {
 // Drop is SprintTables.tla Drop(p) (line 478): off the table. Its
 // unfinished work card is withdrawn, its outstanding read cards retire, its
 // merge place goes (the returned place too, spec section 7); work last. A
-// waiting primary that needs it is blocked. Every judgment on it closes. A
-// sprint it finishes, by dropping the last open card, is found done by the
-// tick's judgment tickDone: with nothing open and a card dropped, the sprint
-// is done.
+// waiting primary that needs it makes the drop refused, naming the
+// dependants: the real Drop without Cascade refuses for that card, and this
+// model matches it (docs/SPEC-SPRINT.md section 11). Every judgment on it
+// closes. A sprint it finishes, by dropping the last open card, is found done
+// by the tick's judgment tickDone: with nothing open and a card dropped, the
+// sprint is done.
 func Drop(s State, p string) (State, error) {
 	if err := free(s); err != nil {
 		return s, err
 	}
 	if !s.Placedp(p) || s.InWork(p, Landed) {
 		return s, refuse("%s is not an open primary on the table", p)
+	}
+	for _, q := range Keys(s.Primaries) {
+		qp := s.Primaries[q]
+		if qp.State == Waiting && slices.Contains(qp.Needs, p) {
+			return s, refuse("%s is needed by %s; drop them too with --cascade", p, q)
+		}
 	}
 	n := s.Clone()
 	st := n.Primaries[p].Stream
@@ -1237,7 +1247,7 @@ func (n *State) levelReads() {
 				if x == hi {
 					continue
 				}
-				if _, made := n.Reads[RC(c.Primary, c.Attempt, x)]; made {
+				if _, ok := n.AskID(c.Primary, c.Attempt, x); !ok {
 					continue
 				}
 				if n.ReaderLoad(x) < mean {
@@ -1254,9 +1264,10 @@ func (n *State) levelReads() {
 			if to == "" {
 				continue
 			}
+			id, _ := n.AskID(c.Primary, c.Attempt, to)
 			c.Place = Retired
 			n.Reads[asked[i]] = c
-			n.Reads[RC(c.Primary, c.Attempt, to)] = ReadCard{Primary: c.Primary, Attempt: c.Attempt, Reader: to, Place: Asked}
+			n.Reads[id] = ReadCard{Primary: c.Primary, Attempt: c.Attempt, Reader: to, Place: Asked}
 			n.AskLast = roundPast(sorted(n.Readers), n.AskLast, to)
 			moved = true
 		}

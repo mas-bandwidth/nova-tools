@@ -25,7 +25,7 @@ nova-check convergence --repo <owner/name> --ledger <md> --receipts <dir> --reti
 nova-check spelling (--dir <dir> | --file <path> | --path <pattern>) [--ignore <word|@file>] [--write] [--dry-run] [--exclude <prefix>] [--max <n>]   # check markdown or prose for misspellings; fenced code blocks and inline code spans are blanked so code is not prose; --write fixes misspellings in place
 ```
 
-Most verbs only read. Three write, each only when asked and each with `--dry-run`, which makes every check and writes nothing: `dogfood record` appends a receipt, `spelling --write` edits files in place, `convergence --state` stores its two-tick streak. `convergence` also reads the forge through `gh`, over the network. A refusal is one line, `nova-check[ <verb>] REFUSED: <why>; run: nova-check help`; `<verb> -h` ends in the verb's `effect:` line.
+Most verbs only read. Three write, each only when asked and each with `--dry-run`, which makes every check and writes nothing: `dogfood record` appends a receipt, `spelling --write` edits files in place, `convergence --state` stores its two-tick streak. `convergence` also reads the forge through `gh`, over the network. A refusal is one line, `<VERB> REFUSED: <why>; run: <door>`, where the door is `nova-check help`, or `nova-check <verb> -h` after a flag the verb does not take; `<verb> -h` ends in the verb's `effect:` line.
 
 ### First run
 
@@ -34,17 +34,17 @@ Most verbs only read. Three write, each only when asked and each with `--dry-run
 ```
 $ nova-check quickstart --dir ./self
 QUICKSTART RUN dir=./self checks=2: links, then nocode
-LINKS OK files=4 links=3 excluded=0
-NOCODE OK files=5 clean deny-list=floor-list
+LINKS OK dir=./self files=4 links=3 excluded=0 broken=0
+NOCODE OK dir=./self files=5 deny-list=floor-list findings=0
 QUICKSTART OK done=2 worst-exit=0 next=kernel,attest,floors,corpus (kernel wants a size budget, attest a manifest of what a full boot reads, floors a derived copy and its source, corpus a ledger of protected lines: nova-check help)
 
 $ nova-check kernel --file ./self/docs/SEED-CORE.md --max-bytes 4000
-KERNEL OK bytes=771 budget=4000
+KERNEL OK file=./self/docs/SEED-CORE.md bytes=771 budget=4000 findings=0
 ```
 
-**Reading it.** Every line is `<CHECK> OK` or `<CHECK> FAILED`; FAILED lines go to stderr with the subject named. `worst-exit=` is the run's exit code. A failing run is bounded: `attest`, `links`, `nocode`, `corpus` and `quickstart` print at most `--max` FAILED lines (default 20, `0` for all), then one `MORE` line naming the flag that shows the rest, then a count line that prints on success too. The four verbs `quickstart` names at the end each want something only you have: a size budget, a boot manifest, a seed to compare against, a ledger of what you have chosen never to lose.
+**Reading it.** The first line of a check is `<CHECK> OK`, `<CHECK> FAILED` or `<CHECK> REFUSED` and the run's facts as `key=value`; the findings of a failing run are typed lines under it, such as `LINKS BROKEN file=... line=... target=... reason=...`, and a failing run writes all of it to stderr with the subject named. `worst-exit=` is the run's exit code. A failing run is bounded: `attest`, `links`, `nocode`, `corpus` and `quickstart` print at most `--max` finding lines (default 20, `0` for all), then one `MORE` line naming the flag that shows the rest; the status line before them carries the count and prints on success too. The four verbs `quickstart` names at the end each want something only you have: a size budget, a boot manifest, a seed to compare against, a ledger of what you have chosen never to lose.
 
-**What the flags want.** `--dir`, `--home` and `--root` are directories you write out, never the working directory. `--file` is one file to measure, with exactly one of `--max-bytes <n>` or `--max-tokens <n> --bytes-per-token <r>`; the divisor is one you measured on your own writing, because one the tool supplied would make the answer a guess that looked like an instrument. `--manifest` is a text file of paths relative to `--home`; `--ledger` is your markdown ledger of protected material and `--min-anchors <n>` its row floor. A run missing several flags names all of them at once. A typo or an unknown verb is one line that names the door (`run: nova-check help`), never the whole banner.
+**What the flags want.** `--dir`, `--home` and `--root` are directories you write out, never the working directory. `--file` is one file to measure, with exactly one of `--max-bytes <n>` or `--max-tokens <n> --bytes-per-token <r>`; the divisor is one you measured on your own writing, because one the tool supplied would make the answer a guess that looked like an instrument. `--manifest` is a text file of paths relative to `--home`; `--ledger` is your markdown ledger of protected material and `--min-anchors <n>` its row floor. A run missing several flags names all of them at once. A typo or an unknown verb is one line that names the door (`run: nova-check help`, or `run: nova-check <verb> -h` after a flag the verb does not take), never the whole banner.
 
 **`corpus` is the odd one out.** Every other check finds something present: a broken link names its target. A sentence that has been dropped names nothing, and a rewrite, a move or a restore can drop something that was given to you once, with nothing going red, because the record and the evidence about the record are the same files. So `corpus` reads a ledger you wrote in advance, the statements you intend never to lose without deciding to and where each lives, and asserts they are still there. Changing them is allowed; changing them silently is not, because the repair for a real change is to move the ledger row in the same commit.
 
@@ -173,7 +173,7 @@ refused by name, listing the kinds there are:
 
 ```
 $ nova-check hygiene --repo . --base main --head card --identity "Ada <ada@example.com>" --kind fix-with-red-test
-nova-check hygiene REFUSED: --kind "fix-with-red-test" is not a kind this tool declares; one of: fix-red, transcript-test, rebase, sweep, mutation-kill, guard, read, probe, text, tone, report; run: nova-check help
+HYGIENE REFUSED: --kind "fix-with-red-test" is not a kind this tool declares; one of: fix-red, transcript-test, rebase, sweep, mutation-kill, guard, read, probe, text, tone, report; run: nova-check help
 ```
 
 ```
@@ -191,10 +191,10 @@ can be pasted:
 
 ```
 $ nova-check hygiene --repo . --base main --head card --identity "Ada <ada@example.com>" --paths "sign/**" --max 2
+HYGIENE FAILED base=main head=card paths=sign/** findings=4
 HYGIENE FINDING reason=identity at=0a19082d2973: author someone@elsewhere.example and committer someone@elsewhere.example are not the pool's identity
 HYGIENE FINDING reason=out-of-path at=elsewhere.go: this path matches none of the card's declared PATHS: sign/**
 HYGIENE MORE kind=finding shown=2 total=4 nova-check hygiene --repo "." --base "main" --head "card" --identity "Ada <ada@example.com>" --paths "sign/**" --max 0
-HYGIENE FAILED base=main head=card paths=sign/** findings=4
 ```
 
 ### Are we converging
@@ -352,7 +352,7 @@ nova-memory verify --root <dir> --links <gate|info> [--coverage <A:B>]... [--fro
 nova-memory eval   --root <dir>... --channels <list> --k <n> --floor <f> [--exclude <glob>]... [--fail-max <n>] [--json] <gold.tsv>
                                                                         known-answer harness: recall@k and MRR, fails below the floor
 nova-memory boot   --root <dir> --pin <file> [--json]
-                                                                        the session loads exactly the pinned memories, never walks the directory
+                                                                        the pin check: every pinned memory present and readable, and their size; never walks the directory
 ```
 
 ### First run
@@ -421,7 +421,7 @@ MEMORY NOTE a hit in a dated log class is evidence the event was recorded, not t
 
 **`verify` and `eval` are bounded**, per kind: at most `--fail-max` findings per kind, one `MORE` line per kind that elided anything, then the count line. On a 5,000-entry corpus `verify` used to print 10,000 lines and no total. `eval` lists misses only; a passing row is a number, not a line.
 
-**`boot` loads a pin, not a directory.** The pin file names the few memories a session loads — one slash path per line relative to `--root`, `#` comments and blank lines ignored, order = boot order — and boot reads exactly those files, reporting `BOOT OK files=<n> bytes=<n>`. It never walks the directory: search answers the rest from the index. A boot that cannot name a memory (missing file, empty file, non-canonical path) is a refusal, because a self that loaded less than it thinks is the failure this verb exists to remove.
+**`boot` checks a pin, not a directory.** The pin file names the few memories a session loads — one slash path per line relative to `--root`, `#` comments and blank lines ignored, order = boot order — and boot checks every named file is present and readable, and their size, reading exactly those files and reporting `BOOT OK files=<n> bytes=<n>`. It never walks the directory: search answers the rest from the index. A boot that cannot name a memory (missing file, empty file, non-canonical path) is a refusal, because a self that loaded less than it thinks it loaded is the failure this verb exists to remove.
 
 **Why it exists.** A mind that keeps its memory as markdown answers "do I already know this?" by re-reading everything it is: n new learnings against m existing ones is O(n·m), m grows every day, and the failure is silent. This makes membership a lookup: a BM25 index, optionally with character trigrams, rebuilt in memory from your tree on every run, so the judgment budget per new learning is k receipts, a constant. No database, no cache, nothing to sync; the tree is the store and the index stops existing when the process exits. It never writes your corpus and never replaces the linear read: query for work, traverse for self. `eval` is the point of shipping it: the tool is run-proven on one line and value-unproven in general, so build a gold set from your own record (`cmd/nova-memory/testdata/example-gold.tsv` is the form), run it before and after any change, and measure instead of believing.
 
@@ -724,8 +724,8 @@ The health check: is each friend's row true. The friends are the arguments, else
 state directory under ~/.nova-friend (or --state-dir) or on the bus. Everything is judged over the --since
 window (default 24h): deliveries, deferrals, real messages and the session pong. Per friend, five lines in
 this order:
-CHECK DAEMON friend=<f> agent=<loaded|not-loaded|none> pid=<n|-> status=<ok|stale|none> connection=<..> challenge=<..> pong_age=<age|-> presence=<up|asleep|down> seen_age=<age|->
-CHECK HARNESS friend=<f> harness=<h> route=<push|defer|passive> last=<RFC3339|-> last_exit=<n|-> failed_of_last20=<n> deferred=<n> broken=<RFC3339|-> reason=<line|->
+CHECK DAEMON friend=<f> agent=<loaded|not-loaded|none> pid=<n|-> status=<ok|stale|none> connection=<..> challenge=<..> pong_age=<age|-> presence=<up|asleep|down> seen_age=<age|-> proof=<pending|sent|none> proof_age=<age|->
+CHECK HARNESS friend=<f> harness=<h> route=<push|mailbox|queue|passive> last=<RFC3339|-> last_exit=<n|-> failed_of_last20=<n> deferred=<n> broken=<RFC3339|-> reason=<line|-> session_live=<conversation|-> queued=<n|->
 CHECK BUS friend=<f> real_since=<n> last_real=<RFC3339|->   (real: not ping, pong, daemon-pong or keepalive)
 CHECK WORK friend=<f> inbox=<n> outbox=<n> newest_outbox=<name|-> newest_at=<RFC3339|->   (under the friend's directory)
 CHECK VERDICT friend=<f> verdict=<ok|broken|silent|deaf|down|untrue> shown=<state/working|-> why=<one line>
@@ -738,9 +738,9 @@ consumer shows of each friend, JSON {"<friend>":{"state":"up|asleep|down","worki
 - for stdin; when it says up or working and the verdict is not ok, the verdict stays and the why leads
 with "untrue: shown <state>/<working>, ", and when the facts are ok but the friend is asleep or its agent
 is not loaded the verdict is untrue. --json prints one object instead of the lines: friends[] each with
-friend and daemon{friend, agent, pid, status, connection, challenge, pong_age, presence, seen_age},
+friend and daemon{friend, agent, pid, status, connection, challenge, pong_age, presence, seen_age, proof, proof_age},
 harness{friend, harness, route, last, last_exit, failed_of_last20, deferred, delivered, failed, broken,
-reason}, bus{friend, real_since, last_real}, work{friend, inbox, outbox, newest_outbox, newest_at},
+reason, session_live, queued}, bus{friend, real_since, last_real}, work{friend, inbox, outbox, newest_outbox, newest_at},
 verdict{friend, verdict, shown, why}, and summary{friends, ok, broken, deaf, silent, down, untrue}.
 Exit 0 when every verdict is ok, 1 when any is not (the check found something), 2 when it could not run
 (a refused flag, an unreadable --shown).
@@ -893,7 +893,11 @@ usage:
                         (docs/SPEC-SPRINT.md section 5, the gate verdict).
                         The member pushes the child's commit and opens its requested PR outside the wall, never force-pushing.
                         Each finish is judged ok, failed or reaped (docs/SPEC-CARD-CONTRACT.md).
-                        --pass names environment secrets to hand to children; a harness that needs one must receive it.
+                        --pass names secrets to hand to children. A name already in the environment is handed as it is;
+                        a name absent from it is read in the member's process from the seat (NOVA_SEAT, or the file
+                        NOVA_SWARM_KEYS names) and the member's environment does not carry the value. The child receives
+                        the decision key, when it is named, and the one key its route needs, never the whole set.
+                        A named secret that cannot be read refuses at start. A harness that needs a key must receive it.
                         --identity names the pool's commit identity; otherwise the pool's identity.tsv supplies it.
                         Completed launches leave no checkout; each pool keeps its newest five failed launches.
                         No card starts below --disk-floor GiB free (default 10); --stage-wall bounds staging (default 120s).
@@ -1146,18 +1150,20 @@ nova-sprint progress --as <worker> <card>[@<gen>]... --epoch <n>
 nova-sprint ask [<id>... | --group <id> [--expect <n>]] [--stream <s>] [--limit <n>] [--another] [--answers <note>]
 nova-sprint queue --as <reader|member> | --stream <s>
 nova-sprint read --as <reader> (--begin | --ok | --broken) [<card>...] --epoch <n> [--limit <n>] [--finding <text>] [--usage <text>] | --as <reader> --return <card> --reason <text> --epoch <n> [--usage <text>]
-nova-sprint accept (<id>... | --stream <s> | --read-ok | --group <id> [--expect <n>]) [--answers <note>]
+nova-sprint accept (<id>... | --stream <s> | --read-ok | --group <id> [--expect <n>]) [--answers <note>]   # the tick accepts every primary whose reads are all ok and tells the seat (ready to merge); accept is for a held primary or a stuck case, and accept --read-ok with nothing eligible says "nothing waits: the tick accepts"
 nova-sprint rework (<id>... | --group <id> [--expect <n>]) [--fix <text>] [--answers <note>]
 nova-sprint return (<id>... | --group <id> [--expect <n>]) [--reason <text>] [--answers <note>]
-nova-sprint drop (<id>... | --stream <s> --col <state> | --group <id> [--expect <n>]) --reason <text> [--answers <note>]
+nova-sprint drop (<id>... | --stream <s> --col <state> | --repo <owner/name>... --expect <n> | --group <id> [--expect <n>]) --reason <text> [--answers <note>]
 nova-sprint rank <id>... (--score <n> | --first) [--answers <note>]
+nova-sprint priority <id>... | (<id>... | --stream <s>) (--blocker | --critical | --high | --normal | --low) --reason <text>
 nova-sprint relink <old-id>[,<old-id>...] <new-id> [--reason <text>]
 nova-sprint sentinel set <id> --needs <a,b>
-nova-sprint brief <id> (--brief <text> | --brief-file <path>) [--rules <file>] | <id> --tier <flash|pro|heavy|frontier>
+nova-sprint brief <id> (--brief <text> | --brief-file <path>) [--rules <file>] [--answers <note>] | --dir <dir> [--rules <file>] | --group <id> [--expect <n>] (--brief-file <path> | --dir <dir>) [--answers <note>] | <id> --widen [--repo-dir <clone>] | <id> --tier <flash|pro|heavy|frontier>
 nova-sprint move <id>... --stream <s> [--before <id> | --after <id> | --score <n>]
 nova-sprint merge --stream <s> [--batch <n>] [--conflict <id> [--conflict-kind file|ledger] [--conflict-path <p>...] | --cross <id>=<other> | --red [--suspect <id>...] | --rejected | --base-red <error>] [--note <text>]
 nova-sprint land [--stream <s>...] [--repo-dir <clone>] [--base <branch>] [--check <command>] [--dry-run]
 nova-sprint stream set <stream>... [--read-tier <flash|pro|heavy|default>] [--land-protected <owner/name,...|any|default>] [--release <name>] [--prose <glob,...|default>] [--attempts <n|default>] [--reason <text>] [--answers <notes>]
+nova-sprint set [--read-tier <flash|pro|default>] [--read-cards <on|off|default>] [--dealt-max <duration|default>] [--go-lanes <n|default>] [--attempts <n|default>] [--friend-idle <duration|default>] [--friend-finish <duration|default>] [--fleet <on|off>] [--friends <on|off>] [--fleet-tiers <flash,pro,heavy,frontier|all>] [--friends-tiers <flash,pro,heavy,frontier|all>]
 nova-sprint resume --stream <s> [--did <text>] [--answers <note>]
 nova-sprint backup (--out <dir> [--part-bytes <n>] [--secrets-store <dir> --secrets-as <seat> --secrets-key <path> --sops <path>] | --file <path> [--dry-run])
 nova-sprint demo load <backup.xz part>... [--sha256 <hex>] [--dir <dir>] [--xz <path>] [--redis-server <path>]
@@ -1197,11 +1203,13 @@ nova-sprint wait <note> (--for <duration> | --until <RFC3339>)
 nova-sprint ack <note>... --reason <text>
 nova-sprint answer [--dry-run] [--bar <p>] [--every <duration>] [--timeout <duration>] [--backend jev|fixed] [--answers <file>] [--record <file>]
 nova-sprint inbox [--open <group>] [--read] [--wait [--timeout <duration>]] [--deadline <duration>] [--stale <duration>]
-nova-sprint card <id>
+nova-sprint card <id> [--brief | --fields] [--json] [--at-epoch <n>]
+nova-sprint card (--all | --stream <s>) --json [--at-epoch <n>]
+nova-sprint streams [--repo <owner/name>] [--release <name>] [--cards]
 nova-sprint log [--card <id>] [--stream <s>] [--member <m>] [--since <10m|RFC3339>] [--at-epoch <n>]
 nova-sprint check
 nova-sprint repair
-nova-sprint where [--watch] [--every <duration>] [--all] [--json [--cards] [--rows] [--archived]]
+nova-sprint where [--watch] [--every <duration>] [--all] [--json [--cards] [--rows] [--archived] [--stale <duration>] [--at-epoch <n>]: includes landedSeries] [--release [<name>]]
 nova-sprint view coordinator [--all] [--since <cursor>] [--json]
 nova-sprint view cards [--col <c>] [--stream <s>] [--holder <member>] [--by tier|stream|col|holder] [--json]
 nova-sprint view worker --as <member|friend> [--since <cursor>] [--json]
@@ -1212,16 +1220,26 @@ nova-sprint seat login --check
 nova-sprint seat logout
 nova-sprint seat push [--harness <name> --target <dir> [--session <id>]] [--json]
 nova-sprint seat pong <nonce>
+nova-sprint seat install --harness <name> --target <dir> [--session <id>] [--server <host:port>] [--config-seat <name> --config-dsn <dsn> --config-password-env <NAME>] [--dry-run]
+nova-sprint seat check
 nova-sprint routes
 nova-sprint rules
 nova-sprint funded <provider> --reason <text>
 nova-sprint cost reconcile [--dry-run] [--json]
+nova-sprint cost reprice [--route <r>]... [--since <RFC3339>] [--dry-run] [--json]
 nova-sprint stats [--routes [--since <10m|RFC3339>]]
 nova-sprint stats tidy (--friends | --fleet | --routes | --streams | --all)... --reason <text> [--dry-run]
 nova-sprint play [--simulation] [--seed <n>] [--every <duration>] [--broken <p>] [--fail <p>] [--stuck <p>] [--cross <p>] [--down <p>] [--up <p>] [--red <p>] [--flap <p>] [--batch <n>] [--hold] [--silent <member>@<from>+<for>]... [--ticks <n>]
 nova-sprint clear --confirm sprint
 nova-sprint teardown --confirm sprint
 ```
+
+`card <id> --json` reads that card: its lines of the log from the card log index the
+tick keeps (and the tail it has not indexed yet), never the whole log, and its own
+records, its needs, its place in line and its hold from one read of the tables
+(docs/SPEC-SPRINT.md section 17, the card log index). `card --all --json` prints every card on the table in one call,
+one JSON object a line: `id`, `stream`, `column`, `score`, `needs`, `brief_len` and
+the other fields (the brief's text is `card <id> --brief`); `card --stream <s> --json` prints one stream's.
 
 `friend sync` wakes a friend through the bus store at `NOVA_BUS_REDIS` after
 delivering her card. Its bus login reads `NOVA_BUS_REDIS_USER` and the password
@@ -1244,11 +1262,36 @@ which refuses a group that has changed. `nova-sprint help <verb>` (or
 `<verb> -h`) prints one verb's usage, flags and exit codes; `nova-sprint help
 <group>` (fleet, friend, reader, goal, stream) prints one group's.
 
+### A card's priority
+
+Every card carries a level of the ladder blocker, critical, high, reader, normal, low; a
+read card is reader or its primary's higher level, a primary normal unless its brief's `PRIORITY: <level>` line, its
+stream's default or `priority` sets it. `priority s1-4 --high --reason '<why>'` sets one card,
+`priority --stream s2 --low --reason '<why>'` sets, in one call, every card now in the stream
+(its own level overwritten) and the stream's default for cards added later, and `priority s1-4` prints the level and where it comes from;
+each change is on the card's timeline (`log --card`) with the actor and the reason. Every
+deal places the cards above reader first, then the reads, then normal and low work in the
+room the reads leave; `where` prints the levels beside the critical list and the backup
+state (`backup: reads (review ... > working ...)`) while there is one
+(docs/SPEC-SPRINT.md section 1, "Priority").
+
 ### The seat's store login
 
-`nova-sprint seat login --store <secrets dir> --as <seat> --key <keyfile> --secret <NAME> --user <redis user> --redis <addr>` records the store login in `~/.config/nova-sprint/login.json` (or under `$XDG_CONFIG_HOME`), mode 0600: the address, the user and where the password is in nova-secrets, never the password, and only once the secret resolves. After it, `nova-sprint <verb>` typed bare reaches that store as that user, the password read in the verb's own process through nova-secrets' checks, with no `nova-secrets exec` wrapper; `--redis`, `NOVA_SPRINT_REDIS`/`NOVA_REDIS_ADDR` and `NOVA_SPRINT_REDIS_USER` still win. `seat login --check` prints `SEAT LOGIN file=… redis=… user=… … resolves=yes|no` (exit 1 on no), the password never shown; `seat logout` removes the record. A recorded secret that does not resolve is refused naming the file and the remedy, never dialed without a password. The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md#the-seats-store-login).
+`nova-sprint seat login --store <secrets dir> --as <seat> --key <keyfile> --secret <NAME> --user <redis user> --redis <addr>` records the store login in `~/.config/nova-sprint/login.json` (or under `$XDG_CONFIG_HOME`), mode 0600: the address, the user and where the password is in nova-secrets, never the password, and only once the secret resolves. After it, `nova-sprint <verb>` typed bare reaches that store as that user, the password read in the verb's own process through nova-secrets' checks, with no `nova-secrets exec` wrapper; `--redis`, `NOVA_SPRINT_REDIS`/`NOVA_REDIS_ADDR` and `NOVA_SPRINT_REDIS_USER` still win. `seat login --check` prints `SEAT LOGIN file=… redis=… user=… … resolves=yes|no` (exit 1 on no), the password never shown; `seat logout` removes the record. A recorded secret that does not resolve is refused naming the file and the remedy, never dialed without a password. `nova-sprint run --keys <NAME,...>` records the decision key and each provider key in `keys.json` beside that login (names only, never a value) and the run process reads each one from the seat; a name that cannot be read refuses at start, naming the name. The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md#the-seats-store-login) and [SPEC-SECRETS.md](SPEC-SECRETS.md) ("A tool's store login").
 
 The seat is held only by a session the push loop reaches ([SPEC-SPRINT.md](SPEC-SPRINT.md#the-push-proof)). `nova-sprint seat install --actor <seat> --harness <harness> --target <session dir>` records the seat's push target and installs the push loop; the loop delivers `NOVA SPRINT PUSH CHECK <nonce>` into the session through the harness's nova-friend adapter, and the session answers with `nova-sprint seat pong <nonce> --actor <seat>`. Until that pong is in, and again whenever it is older than 15 minutes (the loop asks every 10), every coordinator verb is refused with one line, `PUSH DOWN: <why>; ... run: nova-sprint seat install ...`, and `coordinator <name>` refuses a name with no live proof. `seat push` prints `PUSH OK` or `PUSH DOWN` with why and the remedy (exit 1). A harness whose adapter is still the Stub (Claude Code, until fg-claude-open-chatb-r lands) is refused at install.
+
+`nova-sprint seat install --server <host:port> --config-seat <name> --config-dsn <dsn> --config-password-env <NAME>` (beside the push loop's unit) records the sprint's server in `seat.json` beside that login and writes the nova-config seat profile, the row `<name>\t<dsn>\t<NAME>` of `~/.config/nova-config/seats.tsv`. After it, `nova-sprint seat check` measures the recorded server when `NOVA_SPRINT_SERVER` is not set and prints `MACHINERY config OK seat=<name> …` (or DOWN with the remedy), and `nova-config <verb> --seat <name>` (or `NOVA_SEAT`) reaches the config store with no `nova-secrets exec`: the password is read in process from the store login's nova-secrets seat under `<NAME>` when that variable is not set and `NOVA_PG_PASSWORD_ENV` is not given (`NOVA_PG_PASSWORD_ENV` given still wins). The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md#handing-over-the-seat) and [SPEC-CONFIG.md](SPEC-CONFIG.md#connecting).
+
+A fleet member back from down adopts the latest before it is dealt when the
+coordinator's machine sets `NOVA_SPRINT_ADOPT_FLAGS` to `nova-update release adopt`'s
+flags less `--machines`, `--version` and `--dry-run` (blank-separated: `--ssh`, `--from`,
+`--bin`, `--dest`, the stage's digest, `--no-certify` or the certification's three) and
+`nova-sprint` was built with a release stamp: the tick holds a member whose beat
+returns after it was down (the fleet table's status `adopting`, reason `adopting <release>: back from down`), adopts the release this `nova-sprint` runs onto that machine alone, reads its
+installed version back, and brings it up at its width with one note `<m> is back: <old> -> <new>`; a failed adoption keeps it held with the failure as its reason and
+one judgment (`fleet up <m>` brings it up as it is). Unset, a member back is up at
+once (docs/SPEC-SPRINT.md section 5, "Back from down: adopt the latest").
 
 ### Every unit a sprint needs, installed by a verb
 
@@ -1326,7 +1369,7 @@ the cards she holds; `/api/team`, `/api/friend/<name>`,
 `/events/machine/<name>` push each new copy as server-sent events. All of it is read-only,
 no-store, carries the copy's time in `Sprint-At`, and comes from one copy of `where --json
 --cards` read at most once a second however many pull. An unknown name is a 404 of one
-line. The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md), the dashboard.
+line; `where --json` also carries `landedSeries` (cards landed per 10-minute bucket over 24 hours, split between friends and fleet). The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md), the dashboard.
 
 ### A provider out of funds
 
@@ -1373,7 +1416,7 @@ them; once an episode, and `the fleet is working again` when it recovers. `run
 
 `nova-sprint answer` answers the routine judgments (a reader found it
 broken, work came back failed, blocked on something dropped, stalled, a conflict,
-past its deadline, cannot ask, ready to accept, a card at its bound) by
+past its deadline, cannot ask, ready to accept for a held primary, a card at its bound) by
 nova-decide's judgment decision, card by card: it applies the verb chosen when
 its probability is at or above `decide_judgment_bar` (nova-config's sprint row,
 empty by default: with no bar it applies nothing, records every decision and lists
@@ -1428,21 +1471,45 @@ the old server running, when the shadow exits non-zero, panics, misses `--tick-d
 at `<target>.shadow.json`, beside the switch record. The contract is
 [SPEC-SPRINT.md](SPEC-SPRINT.md) section 14, "install-canary-shadow-tick-r.w1".
 
-### adoption-is-a-pipeline-b.w2: nova-sprint adopt
+### Adopting a build: nova-sprint live and nova-sprint adopt
 
-The pass is `(*app).cmdAdopt` (`cmd/nova-sprint/adopt.go`). It is not dispatched: the verb table is assigned in `cmd/nova-sprint/verbs.go`'s `init`, which runs after `adopt.go`, and `cmd/nova-sprint/run.go`'s tick does not call the pass. The command below is the pass's usage once that table names it.
+`nova-sprint live [--bin-dir <dir>] [--agents-dir <dir>] [--launchctl <path>] [--dashboard <link>]... [--json]`
+prints the manifest of this host and changes nothing: `LIVE SERVER binary= inode= version=
+revision=`, `LIVE LIBRARY state= loaded= want= match=` (the installed nova-redis's `fn check`
+against `--redis`, logged in as `NOVA_SPRINT_REDIS_USER`), one `LIVE DASHBOARD link= target=
+current=` per `--dashboard`, and one line per `com.nova.*` launchd agent of `--agents-dir` (else
+`NOVA_LAUNCH_AGENTS`, else `~/Library/LaunchAgents`): `LIVE SERVER` for `nova-sprint run`,
+`LIVE FRIEND` for `nova-friend run` with its last beat and its lanes with a card in hand, else
+`LIVE AGENT`, each with its pid and, for a nova tool, `loaded= stale= fresh= installed=
+args_took= binary=` and the `why=` of a stale one; `--json` also lists the host's nova
+processes, `holds` on this bin directory's nova-sprint and nova-swarm members. Exit 0 whatever it finds, 1 when the
+installed nova-sprint or the agents directory cannot be read, 2 usage.
 
-`nova-sprint adopt [--state <file>] --repo-dir <clone> --base <branch> --server-bin <path> [--daemon <path>...]
---bench <host> --bench-src <dir> --bench-out <dir> --out <dir> --release <vX.Y.Z> --machines <file>
-[--adopt-args <flags>] [--stream <s>] [--judgment-to <file>] [--tick-every <d>] [--missed <n>] [--watch <n>]`
-runs one pass of the adoption pipeline: when the base tip is not the live server's build it builds on the
-bench, runs the canary and the shadow tick, adds the cold-read card, and raises one judgment (`JUDGMENT adopt
-<tip12> ...`); after a yes it keeps rollback copies, switches the server and daemons, pushes to every machine
-row and reads each version back, and rolls back by itself on missed ticks. `nova-sprint adopt --answer
-yes|no --judgment <tip12> --reason <text>` answers the judgment and runs nothing; `--show` prints the record.
-Exit 0 for any pass that ran (its lines say the stage), 1 when the base, the live build or the record does not
-read or an answer is refused, 2 usage. The runbook is
-[SPRINT-COORDINATOR.md](SPRINT-COORDINATOR.md) section 7, "Adoption is a pipeline".
+`nova-sprint adopt <version|path> --source <checkout> --inventory <file> --reason <text>
+[--limit <host>] [--receipts <dir>] [--dry-run]` runs `<checkout>/fleet/tools.yml` for the
+seat, as a window: the new build's checks first (its shadow tick on the store, its `nova-friend
+install --dry-run` against every friend daemon's flags); then, when the build replaces a tool or
+the library, the old server, member and every nova agent but the friends are booted out and ps
+is waited on to show no old nova-sprint or member; the configuration store is migrated, the
+library loaded and the tools installed; every agent the window stopped and every stale one is
+bootstrapped and proved; the dashboard links point at the installed nova-sprint; and each stale
+friend daemon is reinstalled after its lanes put their cards down. A refusal once the window
+opened puts the tools of before back, loads and reads back their library and starts the stopped
+agents on them before it is said. It prints
+one `ADOPT step=<store|server|dashboard|friends> host= before= after=` line per step and `ADOPT
+ADOPTED version= hosts= steps=`; with `--dry-run` (the play's `--check`) `ADOPT WOULD-ADOPT`, and
+a machine with neither the candidate staged nor built prints `ADOPT step=seat host=<h>
+after=<version> WOULD-ADOPT` in place of the steps. Exit 0 adopted (or, with `--dry-run`, said
+what it would change); 1 refused, `ADOPT REFUSED step=<step>` said verbatim, when the play stops
+or ends without a step's line (the steps before it are done; a refusal once the seat play's
+window opened is said with what the rollback did and names those steps rolled back; the same
+command again finishes it), or when `--source` holds no
+`fleet/tools.yml`; 2 usage. The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md) section 14,
+"Adopting a build".
+
+The adoption pipeline (`(*app).cmdAdopt`, `cmd/nova-sprint/adopt.go`; the runbook is
+[SPRINT-COORDINATOR.md](SPRINT-COORDINATOR.md) section 7, "Adoption is a pipeline") is in no
+verb table and the tick does not call its pass.
 
 ### Exit codes
 
@@ -1456,8 +1523,9 @@ read or an answer is refused, 2 usage. The runbook is
 ### What it does not prove
 
 A landed card records a completed flow: the worker reports done, two different
-readers pass that head, the tick (or the coordinator's `accept`) queues it for
-merging, and the landing is reported. These are recorded judgments, not a
+readers pass that head, the tick queues it for merging and tells the seat
+("ready to merge", a notice; the coordinator's `accept` is for a primary the
+tick holds), and the landing is reported. These are recorded judgments, not a
 proof that the work is correct. A twin exercises that flow one command at a
 time. It has no beats or ticks between commands, so it does not test fleet
 timing, the `run` loop, `inbox --wait` or liveness. `finish` without `--head`,

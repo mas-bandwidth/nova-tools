@@ -31,7 +31,6 @@ func TestNothingToDoAtAHeadAReaderPassedIsBackInReview(t *testing.T) {
 			ta.ok("finish --as m1 s1-1.w1@1 --head " + head + " --branch sprint/s1-1.w1")
 			ta.ok("ask")
 			ta.ok("read --as reader-a --ok s1-1.r1.reader-a --finding 'the renames are right'")
-			ta.ok("ask") // the second read, the first ok
 			ta.ok("read --as reader-b --broken s1-1.r1.reader-b --finding 'internal/ci/testdata/deleted-tests.txt:12 names the old file'")
 			ta.ok("rework s1-1")
 			ta.deal(1)
@@ -49,7 +48,7 @@ func TestNothingToDoAtAHeadAReaderPassedIsBackInReview(t *testing.T) {
 			for _, rd := range []string{"reader-a", "reader-b", "reader-c"} {
 				asked = append(asked, ta.askedOf(rd)...)
 			}
-			assert.Len(t, asked, 1, "the first read asked at the new attempt: %v", asked)
+			assert.Len(t, asked, 2, "both reads asked together at the new attempt: %v", asked)
 			for _, id := range asked {
 				assert.Contains(t, id, "s1-1.r2.", "read at attempt 2")
 			}
@@ -70,7 +69,6 @@ func TestNothingToDoWithNoPassedHeadIsFailedWork(t *testing.T) {
 	ta.ok("finish --as m1 s1-1.w1@1 --head " + head + " --branch sprint/s1-1.w1")
 	ta.ok("ask")
 	ta.ok("read --as reader-a --broken s1-1.r1.reader-a --finding 'main.go:3 is wrong'")
-	ta.ok("ask s1-1 --another") // reads are asked one at a time: a second reader by --another
 	ta.ok("read --as reader-b --broken s1-1.r1.reader-b --finding 'main.go:4 is wrong'")
 	ta.ok("rework s1-1")
 	ta.deal(1)

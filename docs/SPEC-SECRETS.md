@@ -97,7 +97,9 @@ key, because a name that is not a legal environment variable would silently not 
 **Not everything in the file is sealed.** `.sops.yaml` carries an `unencrypted_regex` for
 fields that are facts rather than secrets — the two fact-key names a machine's file carries — and this
 tool treats an unencrypted field exactly as a sealed one. What may be in the clear is the
-store's decision, reviewed in a pull request; this tool neither extends nor audits it.
+store's decision, reviewed in a pull request; this tool neither extends nor audits it, with
+one exception it makes in that same pull request: the verb's mark (see the gate) is admitted
+to the rule of the seat file the verb writes.
 
 **What the model does not give you.** Read access to the *ciphertext* is not a boundary:
 anybody who can clone the store holds every AI's sealed file, and that is intended — it is what
@@ -429,9 +431,21 @@ hand `sops` steps a first run might otherwise follow. **What it does not:** a ha
 mark is not a signature, and that hand is the registry's and the reviewer's business, with
 check 1 on the rule and check 4 on the registry standing as before. The mark is read in the
 clear, so a rule that governs a seat file lists it in `unencrypted_regex`
-(`^NOVA_SECRETS_WRITTEN_BY$`; `seat add` writes new rules so); real sops seals a key the rule
-does not permit, and the gate then cannot read the mark. The mark key is never a "plain value"
-to the gate, `check` or `seat inject`, and is a clear key to `names`. The recipient change of
+(`^NOVA_SECRETS_WRITTEN_BY$`); real sops seals a key the rule does not permit, and the gate
+then cannot read the mark. `seat add` writes new rules so. `seal` and `seat inject` give an
+existing rule that lacks it (every seat ruled before the mark existed) the regex as part of the
+write: `^NOVA_SECRETS_WRITTEN_BY$` when the rule has no `unencrypted_regex`, and `(?:R)|^NOVA_SECRETS_WRITTEN_BY$`
+when it has one, `R`, that does not admit the mark (the group keeps a leading flag such as `(?i)`
+inside `R`, so no other spelling of the key becomes clear), nothing else in `.sops.yaml` moved, and the changed `.sops.yaml` is
+committed with the seat file, so the pull request the gate reviews carries both (`files=2`) and
+the `--dry-run` plan names it (`SECRETS <VERB> PLAN rule .sops.yaml rule for <seat>.yaml gains
+unencrypted_regex ...`). The gate cannot decrypt, so it never accepts a sealed mark instead. **The mark's
+value is pinned:** `<seal|seat add|seat inject> <version>`, the version `dev` or a release tag,
+`v?\d+\.\d+\.\d+(-rc\d{1,3})?` (a shape alone, or an unbounded suffix, let 256 bits of hex pass as a version);
+a verb whose build stamp is not of that form writes `dev`. A pinned mark is
+never a "plain value" to the gate, `check` or `seat inject`, and is a clear key to `names`; any
+other cleartext under the mark key is a plain value, refused like any other whatever the rule's
+`unencrypted_regex` admits, and is no mark to the gate. The recipient change of
 an existing file (`updatekeys`) is a hand step, so a file re-keyed by hand and not re-sealed
 by a verb keeps the mark it already had and the gate approves it: the recovery path, named as
 what the gate cannot tell apart.
@@ -752,6 +766,17 @@ a refusal naming the seat, the store and the next command (`nova-secrets names`,
 seal`); none is ever an empty password. `nova-sprint seat login` records one (docs/SPEC-SPRINT.md,
 "The seat's store login"), so the sprint's verbs need no `exec` wrapper; nova-config can read its
 store login through the same helper.
+
+`secrets.ReadUnitKeys` reads every name a sprint unit needs, the decision key and each provider
+key, through the same open, in the process that uses them. `UnitKeyLogin` is that setting: the
+seat, and the list of names. It holds no secret. `RouteKey` is the one name of that list a route
+needs (`<PROVIDER>_API_KEY`, or the only listed name that is not the decision key).
+`ChildWithOneKey` appends that one name to a child's environment and leaves every other held
+secret out, including one the environment already carried. A name the seat does not hold, or holds
+empty, is a refusal naming the name and the next command (`nova-secrets names`, `nova-secrets seal`); the value is never an empty key and is never printed. `nova-sprint run --keys` and the
+`keys.json` beside the seat login name the server's list; `nova-swarm member --pass` names the
+member's, read in process when the environment does not already hold them. The unit's own
+environment carries no key value, and no `exec` wrapper is required for those names.
 
 ### Refused, by name, with where it lives
 

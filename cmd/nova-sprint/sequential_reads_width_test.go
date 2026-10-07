@@ -10,14 +10,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Sequential reads at reader width (docs/SPEC-SPRINT.md section 6, the reads,
-// sequential and by room; sprint.ReadsWanted and sprint.askPicks; the model is
-// tla/ReadsByRoom.tla). The spending rules of 2026-10-04 ask a card's reads one
-// at a time, the finder first on a rework; the readers' rules of 2026-10-03 ask
-// each read of the reader with the most room under its machine's width. Both
-// measured outcomes hold together: a pro card whose first read finds it broken
-// lands on three reads, where the pair asked four, and no reader ever holds
-// more reads than its machine's width, a read with no room waiting for it.
+// Reads at reader width (docs/SPEC-SPRINT.md section 6, the reads, by room;
+// sprint.ReadsWanted and sprint.askPicks; the model is tla/ReadsByRoom.tla). Under
+// the interim rule of 2026-10-06 a card's reads are asked together, every read it
+// needs at once (the owner, 6:02 PM ET: "send out multiple consumer cards in ||");
+// the readers' rules of 2026-10-03 ask each read of the reader with the most room
+// under its machine's width. Both hold together: a pro card whose two reads at its
+// first attempt find it broken lands on four reads, two an attempt, and no reader
+// ever holds more reads than its machine's width, a card's reads waiting together
+// for room.
 
 // readsRig is the readers' side of a sprint on the server rig: every read card
 // each reader was asked, by primary, and the widths of their machines.
@@ -28,9 +29,9 @@ type readsRig struct {
 }
 
 // look reads every reader's queue once: each reader holds no more reads,
-// asked and reading, than its machine's width, and no primary has two reads
-// outstanding at once (the second read is asked only after the first came
-// back ok). It records every read asked and returns the asked ones by reader.
+// asked and reading, than its machine's width, and every primary with a read
+// outstanding has both its reads outstanding (a card's reads are asked
+// together). It records every read asked and returns the asked ones by reader.
 func (r *readsRig) look() map[string][]string {
 	r.t.Helper()
 	out := map[string][]string{}
@@ -49,7 +50,7 @@ func (r *readsRig) look() map[string][]string {
 		out[rd] = q["asked"]
 	}
 	for pr, n := range outstanding {
-		assert.Equal(r.t, 1, n, "%s has %d reads outstanding: its reads are asked one at a time", pr, n)
+		assert.Equal(r.t, 2, n, "%s has %d reads outstanding: its reads are asked together", pr, n)
 	}
 	return out
 }
@@ -85,7 +86,7 @@ func (r *readsRig) work(n int) {
 	require.Equal(r.t, n, done, "every card's attempt finished")
 }
 
-func TestSequentialReadsAtReaderWidthKeepThreeReadsPerLanding(t *testing.T) {
+func TestReadsTogetherAtReaderWidthTakeFourReadsPerLanding(t *testing.T) {
 	t.Parallel()
 	r := &readsRig{
 		serverRig: newServerRig(t,
@@ -101,53 +102,47 @@ func TestSequentialReadsAtReaderWidthKeepThreeReadsPerLanding(t *testing.T) {
 	r.queue("reader-m1") // a reader's queue is its beat: a reader that never beat is asked nothing
 	r.queue("reader-m2")
 
-	// attempt 1: each card's first read alone, by room (the three fill both readers to
-	// their widths); each reader finds its reads broken, and no second read is asked
-	r.work(3)
-	first := r.look()
-	require.Len(t, first["reader-m1"], 2, "reader-m1, width 2, takes two first reads")
-	require.Len(t, first["reader-m2"], 1, "reader-m2, width 1, takes one")
-	finder := map[string]string{}
-	for rd, ids := range first {
-		for _, id := range ids {
-			pr, _, _ := strings.Cut(id, ".r")
-			finder[pr] = rd
+	// readRound reads every read asked with the verdict, a tick between, until no read is
+	// asked: reader-m2's width of 1 lets one card's pair out at a time, the next card's
+	// pair waiting for its room
+	readRound := func(verdict ...string) {
+		t.Helper()
+		for i := 0; i < 8; i++ {
+			asked := r.look()
+			if len(asked["reader-m1"])+len(asked["reader-m2"]) == 0 {
+				return
+			}
+			require.Len(t, asked["reader-m2"], 1, "reader-m2, width 1, holds one card's read")
+			r.readAll(asked, verdict...)
+			r.boss("nova-sprint tick")
 		}
+		t.Fatalf("reads still asked after eight rounds")
 	}
-	r.readAll(first, "--broken", "--finding", "internal/x.go:3: wrong; return the error")
-	r.boss("nova-sprint tick")
-	assert.Empty(t, r.look()["reader-m1"], "a broken first read costs no second read")
-	cards := make([]string, 0, len(finder))
-	for pr := range finder {
+
+	// attempt 1: each card's two reads asked together, by room; both find it broken
+	r.work(3)
+	readRound("--broken", "--finding", "internal/x.go:3: wrong; return the error")
+	cards := make([]string, 0, len(r.asked))
+	for pr := range r.asked {
 		cards = append(cards, pr)
 	}
 	sort.Strings(cards)
 	require.Len(t, cards, 3)
+	for _, pr := range cards {
+		require.Len(t, r.asked[pr], 2, "%s: both reads of attempt 1 asked together: %v", pr, r.asked[pr])
+	}
 	r.boss("nova-sprint rework " + strings.Join(cards, " ") + " --fix 'answer the finding'")
 
-	// attempt 2: the first read of each card goes to the reader who found it broken
-	// (each has room: its reads of attempt 1 are done), then the second to the
-	// other reader once the first came back ok, while that reader has room
+	// attempt 2: each card's two reads asked together again, by room; both ok
 	r.work(3)
-	checks := r.look()
-	for rd, ids := range checks {
-		for _, id := range ids {
-			pr, _, _ := strings.Cut(id, ".r")
-			assert.Equal(t, finder[pr], rd, "%s: the reader who found attempt 1 broken checks the fix", pr)
-		}
-	}
-	for i := 0; i < 6; i++ {
-		asked := r.look()
-		r.readAll(asked, "--ok")
-		r.boss("nova-sprint tick")
-	}
+	readRound("--ok")
 	r.look()
 
-	// the measure: reads asked per landing on a card that failed its first read once
+	// the measure: reads asked per landing on a card whose first attempt was found broken
 	var w whereView
 	require.NoError(t, json.Unmarshal([]byte(r.boss("nova-sprint where --json")), &w))
 	for _, pr := range cards {
-		assert.Len(t, r.asked[pr], 3, "%s: three reads to land, where the pair asked four: %v", pr, r.asked[pr])
+		assert.Len(t, r.asked[pr], 4, "%s: four reads to land, two an attempt, asked together: %v", pr, r.asked[pr])
 	}
 	assert.Equal(t, "3", cellText(w.Tables["work"]["s1"]["merging"]), "every card accepted, in merging: %v", w.Tables["work"]["s1"])
 }

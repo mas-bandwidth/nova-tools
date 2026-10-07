@@ -47,6 +47,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/decide"
 	"github.com/mas-bandwidth/nova-tools/internal/diffcheck"
+	"github.com/mas-bandwidth/nova-tools/internal/filelock"
 	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
@@ -275,6 +276,10 @@ type lander struct {
 	// ledgerLog is the land log's lines for the shrink-only ledgers the batch's merges
 	// resolved (ledgerunion.go), reported with the batch (NOTE) and then cleared.
 	ledgerLog []string
+	// recLog and recNote are the lines and the note of the records a merge
+	// resolved (landappend.go), taken by mergeHead when the merge lands
+	recLog  []string
+	recNote string
 	// gate is the gate decision's backend, clock, bars and record for a red batch gate
 	// (landgate.go), nil when none is made; gateNote says why none is, once.
 	gate          *landGate
@@ -297,8 +302,12 @@ type lander struct {
 	// process, which a hand land starts empty every run and the server every start
 	baseCount bool
 	baseWhy   string
-	now       func() time.Time
-	rulesOff  []string
+	// baseNotes is what the pass's re-check of the bases that stopped streams did (baseRecheck)
+	baseNotes []string
+	// held is each clone's land lock this land holds (hold), released as it ends
+	held     map[string]*filelock.FileLock
+	now      func() time.Time
+	rulesOff []string
 }
 
 func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
@@ -351,6 +360,7 @@ func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
 		a.baseGateFails = map[string]*baseGateFail{}
 	}
 	l := &lander{a: a, c: *c, st: st, repoDir: *repoDir, base: *base, check: *check, dry: *dry, twin: a.twinOpen(c.redis), epoch: st.PinnedEpoch(), diffs: map[string]string{}, scope: map[string][]string{}, prose: map[string][]string{}, baseGateCache: a.baseGateCache, baseGateFails: a.baseGateFails}
+	defer l.release()
 	if *check != "" && !*dry {
 		a.serial.Lock()
 		l.gate, l.gateNote = a.landGate(context.Background(), st)
@@ -382,6 +392,12 @@ func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
 			order = append(order, name)
 		}
 	}
+	// the bases that stopped streams, re-checked once each before the streams land
+	l.baseRecheck(ctx, s)
+	// by priority (sprint.LandOrder): the stream whose merging set holds the highest level
+	// first, then the most cards behind, then stream order; a named stream that is no stream
+	// keeps its place last
+	order = sprint.LandOrder(s, order)
 	failed := false
 	for _, name := range order {
 		if !l.stream(ctx, s, name) {
@@ -435,8 +451,12 @@ func (l *lander) report(failed bool, pruned []pruneResult, stdout, stderr io.Wri
 			pruned = []pruneResult{}
 		}
 		// ignored: a map of strings, numbers and plain structs of strings always encodes
+		notes := l.baseNotes
+		if notes == nil {
+			notes = []string{}
+		}
 		b, _ := json.Marshal(map[string]any{"verb": "land", "status": status, "exit": code, "batches": batches, "cards": cards,
-			"refused": refused, "dry_run": l.dry, "items": out, "prune": pruned})
+			"refused": refused, "dry_run": l.dry, "items": out, "prune": pruned, "base_checks": notes})
 		fmt.Fprintln(stdout, string(b))
 		return code
 	}
@@ -475,6 +495,9 @@ func (l *lander) report(failed bool, pruned []pruneResult, stdout, stderr io.Wri
 	}
 	for _, p := range pruned {
 		fmt.Fprintln(stdout, p.line(true))
+	}
+	for _, n := range l.baseNotes {
+		fmt.Fprintf(stdout, "NOTE %s\n", oneline.Escape(n))
 	}
 	dry := ""
 	if l.dry {
@@ -595,6 +618,9 @@ func (l *lander) batch(ctx context.Context, s *sprint.Snapshot, stream string, c
 	b.Dir = dir
 	if l.dry {
 		return l.dryBatch(b, cards)
+	}
+	if why := l.hold(ctx, dir); why != "" {
+		return refuse(why)
 	}
 	if out, err := l.git(ctx, dir, "status", "--porcelain", "--untracked-files=no"); err != nil || out != "" || l.repoDir == "" && l.merging(ctx, dir) {
 		if err != nil || l.repoDir != "" {
@@ -802,14 +828,15 @@ func (l *lander) fact(b landBatch, r sprint.MergeReq, pins []landCard, fact, why
 
 // baseRefused counts a refusal on the base's gate through the merge step
 // (sprint.MergeReq.BaseRefused) and refuses the batch with it: the fact is base when the
-// count stopped the stream.
+// count stopped the stream. The base's one judgment is sprint.LandBaseRefused's: a base whose
+// red already stopped another stream refuses this one under that judgment, never stopping it.
 func (l *lander) baseRefused(b landBatch, stream, why string) (bool, bool) {
 	r := sprint.MergeReq{Stream: stream, Base: b.Base, BaseRefused: l.baseWhy, Who: l.c.actor}
 	if l.baseStop {
 		r.BaseRed = l.baseWhy
 	}
 	b.Status, b.Reason = "refused", why
-	res, err := l.step(r, nil)
+	res, err := l.stepWith(r, nil, sprint.LandBaseRefused)
 	switch {
 	case stepExit(res, err) != 0:
 		b.Reason = why + "; the merge step did not count it (" + stepWhy(res, err) + "); " + againRemedy(stream)
@@ -818,6 +845,120 @@ func (l *lander) baseRefused(b landBatch, stream, why string) (bool, bool) {
 	}
 	l.out = append(l.out, b)
 	return false, true
+}
+
+// baseRecheck is each land pass's re-check of the bases that stopped streams
+// (docs/SPEC-SPRINT.md section 8, v11-base-red-auto-resume-now; internal/sprint, land_base.go):
+// a stream stopped on its base's red gets no pass of its own, so the pass gates the tip of
+// each such base, once a base, even when every stream is stopped, and a green tip is recorded
+// (sprint.BaseGreen); the tick's base-gate rule then resumes every stream stopped on it. A red tip is gated again no sooner than the base-gate rule's last wait
+// (sprint.BaseGateRetries); a dry run, a twin (no git) and the rule turned off re-check
+// nothing. What it did is NOTE lines (baseNotes); it changes no exit.
+func (l *lander) baseRecheck(ctx context.Context, s *sprint.Snapshot) {
+	if l.dry || l.twin || slices.Contains(l.offRules(ctx), sprint.RuleBaseGate) {
+		return
+	}
+	type site struct{ repo, base string }
+	var sites []site
+	first := map[site]string{}
+	for _, st := range sprint.BaseRedStreams(s) {
+		ctl := s.StreamCtl(st)
+		at := site{base: l.base}
+		for _, c := range s.Merge.Cell(st, sprint.Queued) {
+			if pr := s.Work.Placed(c.ID); pr != nil {
+				cb := swarm.ReadCardBase([]byte(pr.F("brief")))
+				at.repo = cb.Repo
+				if cb.Ref != "" {
+					at.base = cb.Ref
+				}
+				break
+			}
+		}
+		if b := ctl.F(sprint.FieldBaseGateBase); b != "" {
+			at.base = b
+		}
+		if at.base == "" {
+			continue
+		}
+		if _, ok := first[at]; !ok {
+			first[at] = st
+			sites = append(sites, at)
+		}
+	}
+	for _, at := range sites {
+		sha, why := l.baseTip(ctx, at.repo, at.base)
+		if why != "" {
+			l.baseNotes = append(l.baseNotes, "the base "+at.base+" was not re-checked: "+why)
+			continue
+		}
+		if f := l.baseGateFails[sha]; f != nil && l.clock().Before(f.next) {
+			continue
+		}
+		red, cached := l.baseGateCache[sha]
+		if !cached || red != "" {
+			dir, _ := l.clone(ctx, at.repo)
+			red = l.treeGate(ctx, dir, true)
+		}
+		if red != "" {
+			f := l.baseGateFails[sha]
+			if f == nil {
+				f = &baseGateFail{}
+				l.baseGateFails[sha] = f
+			}
+			f.n, f.why, f.next = f.n+1, red, l.clock().Add(sprint.BaseGateRetries[len(sprint.BaseGateRetries)-1])
+			l.baseNotes = append(l.baseNotes, "the base "+at.base+" still fails its tree gate at "+shortSha(sha)+"; re-checked again at "+f.next.UTC().Format("15:04:05 MST"))
+			continue
+		}
+		l.baseGateCache[sha] = ""
+		delete(l.baseGateFails, sha)
+		res, err := l.greenStep(sprint.BaseGreenReq{Stream: first[at], Base: at.base, Sha: sha, Who: l.c.actor})
+		if code := stepExit(res, err); code != 0 {
+			l.baseNotes = append(l.baseNotes, "the base "+at.base+" passes its tree gate again at "+shortSha(sha)+"; the store did not record it ("+stepWhy(res, err)+")")
+			continue
+		}
+		l.baseNotes = append(l.baseNotes, "the base "+at.base+" passes its tree gate again at "+shortSha(sha)+"; its streams resume by rule at the next tick")
+	}
+}
+
+// baseTip cuts the clone of repo at the tip of base fetched from origin: the tip's commit, or
+// why it could not.
+func (l *lander) baseTip(ctx context.Context, repo, base string) (sha, why string) {
+	dir, why := l.clone(ctx, repo)
+	if why == "" {
+		why = l.hold(ctx, dir)
+	}
+	if why != "" {
+		return "", why
+	}
+	if out, err := l.git(ctx, dir, "status", "--porcelain", "--untracked-files=no"); err != nil || out != "" || l.merging(ctx, dir) {
+		return "", "the clone " + dir + " is not clean (" + firstLine(out, err) + ")"
+	}
+	if _, err := l.git(ctx, dir, "fetch", "--no-tags", "origin", "+refs/heads/"+base+":refs/remotes/origin/"+base); err != nil {
+		return "", "the fetch of " + base + " in " + dir + " failed: " + firstLine("", err)
+	}
+	if _, err := l.git(ctx, dir, "switch", "--no-track", "--force-create", "land/base-check", "refs/remotes/origin/"+base); err != nil {
+		return "", "the base " + base + " could not be cut in " + dir + ": " + firstLine("", err)
+	}
+	sha, err := l.git(ctx, dir, "rev-parse", "--verify", "HEAD^{commit}")
+	if err != nil {
+		return "", "the base " + base + " has no tip in " + dir + ": " + firstLine("", err)
+	}
+	return sha, ""
+}
+
+// greenStep records a green base (sprint.BaseGreen) fenced to the epoch land read: its own
+// step, as a stopped stream refuses the merge step, and a green base is the fact for it.
+func (l *lander) greenStep(r sprint.BaseGreenReq) (store.Result, error) {
+	step := store.Step{Verb: "merge base-green", Args: store.ArgsOf(r), Load: []string{sprint.Merge, sprint.Work},
+		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.BaseGreen(s, r) }}
+	epoch := l.epoch
+	step.Epoch = &epoch
+	if l.c.op != "" {
+		step.CallerOp = l.c.op + "." + r.Stream + "." + step.Args
+	}
+	l.a.serial.Lock()
+	defer l.a.serial.Unlock()
+	return l.st.Run(context.Background(), step)
 }
 
 // againRemedy is the one remedy land names when a report did not go through:
@@ -898,6 +1039,12 @@ func movedExactly(moved, ids []string) bool {
 // the step's arguments, and under the caller's --op its op id is the op and
 // those arguments, so a replay returns only the receipt of this very batch.
 func (l *lander) step(r sprint.MergeReq, pins []landCard) (store.Result, error) {
+	return l.stepWith(r, pins, sprint.MergeStep)
+}
+
+// stepWith is step with the merge step's plan given: sprint.MergeStep, or
+// sprint.LandBaseRefused for a refusal on a red base.
+func (l *lander) stepWith(r sprint.MergeReq, pins []landCard, plan func(*sprint.Snapshot, sprint.MergeReq) sprint.Plan) (store.Result, error) {
 	// the batch is the pinned cards by name, never the first n of the queue, each with
 	// what its landing did past a merge of its head
 	r.Cards = make([]string, len(pins))
@@ -911,12 +1058,11 @@ func (l *lander) step(r sprint.MergeReq, pins []landCard) (store.Result, error) 
 		}
 	}
 	step := store.MergeStep(r)
-	plan := step.Plan
 	step.Plan = func(s *sprint.Snapshot) sprint.Plan {
 		if why := headWhy(s, r.Stream, pins); why != "" {
 			return sprint.Plan{Refused: []sprint.Refusal{{Key: r.Stream, Why: why}}}
 		}
-		return plan(s)
+		return plan(s, r)
 	}
 	named := make([]string, len(pins))
 	for i, c := range pins {
@@ -1074,6 +1220,14 @@ func (l *lander) build(ctx context.Context, dir, stream string, cards []landCard
 		var card, env string
 		l.conflictKind, l.conflictPaths = "", nil // the merge below says, when it stops on unmerged paths
 		card, env, c.resolved = l.mergeHead(ctx, dir, stream, *c)
+		if card == "" && env == "" && c.resolved == "" {
+			// a plain merge of two sides that each regenerated the map (remap)
+			var remapped string
+			if remapped, env = l.remap(ctx, dir, *c); remapped != "" {
+				c.resolved = remapped
+				l.ledgerLog = append(l.ledgerLog, c.id+": "+remapped)
+			}
+		}
 		if card == "" && env == "" {
 			var repaired string
 			if card, env, repaired = l.checkCard(ctx, dir, stream, *c, before); repaired != "" {
@@ -1109,7 +1263,38 @@ var notOnOrigin = []string{"not our ref", "couldn't find remote ref", "no such r
 // (ledgerunion.go, unionLedgers), and the agents maps plus a catalog that both
 // sides only add rows to as the union of those rows then the map family
 // (landledger.go, stageCatalogUnion). note is what the card's timeline says of it.
+// mergeHead merges the recorded head of c into the checkout at dir (a plain git
+// merge, which takes merge=union for the files .gitattributes marks), deduplicating
+// append-only records after the merge and resolving keyed tables, the tables lock,
+// and shrink-only ledgers.
 func (l *lander) mergeHead(ctx context.Context, dir, stream string, c landCard) (card, env, note string) {
+	before, _ := l.git(ctx, dir, "rev-parse", "--verify", "HEAD^{commit}")
+	l.recLog, l.recNote = nil, ""
+	card, env, note = l.mergeHeadLedgers(ctx, dir, stream, c)
+	if card != "" || env != "" {
+		return card, env, note
+	}
+	if head, _ := l.git(ctx, dir, "rev-parse", "--verify", "HEAD^{commit}"); before == "" || head == before {
+		return "", "", note
+	}
+	lines, dcard, derr := l.dedupeMerge(ctx, dir, before, c)
+	if derr != "" {
+		return "", derr, ""
+	}
+	if dcard != "" {
+		l.git(ctx, dir, "reset", "--hard", before)
+		return dcard, "", ""
+	}
+	l.ledgerLog = append(l.ledgerLog, append(l.recLog, lines...)...)
+	if l.recNote != "" {
+		note = strings.TrimPrefix(l.recNote+"; "+note, "; ")
+		note = strings.TrimSuffix(note, "; ")
+	}
+	return "", "", note
+}
+
+// mergeHeadLedgers is mergeHead before the append-only records are deduplicated.
+func (l *lander) mergeHeadLedgers(ctx context.Context, dir, stream string, c landCard) (card, env, note string) {
 	if why := headNotCommit(stream, c); why != "" {
 		return why, "", ""
 	}
@@ -1148,6 +1333,33 @@ func (l *lander) mergeHead(ctx context.Context, dir, stream string, c landCard) 
 	if conflict && inMerge == nil {
 		paths, ours := unmergedPaths(unmerged)
 		l.conflictPaths, l.conflictKind = paths, "file"
+		// the append-only records, keyed tables and the tables lock first (landappend.go):
+		// resolved and staged; what is left goes on as before, and a merge left with
+		// nothing is committed
+		var rlines []string
+		var rnote, rwhy, renv string
+		paths, rlines, rnote, rwhy, renv = l.resolveRecords(ctx, dir, paths)
+		switch {
+		case renv != "":
+			env = renv
+			paths = nil
+		case rwhy != "":
+			why = "; " + rwhy
+			paths = nil
+		case len(rlines) > 0 && len(paths) == 0:
+			msg := []string{"land " + c.id + " (sprint stream " + stream + ")", "The records and the tables lock conflicted and were resolved: " + strings.Join(rlines, "; ") + "."}
+			if _, err := l.git(ctx, dir, "commit", "-q", "-m", msg[0], "-m", msg[1]); err != nil {
+				env = "the resolved merge of " + c.id + " could not be committed: " + firstLine("", err)
+				break
+			}
+			l.recLog, l.recNote = rlines, rnote
+			return "", "", ""
+		case len(rlines) > 0:
+			l.recLog, l.recNote = rlines, rnote
+		}
+		if len(paths) == 0 {
+			goto abort
+		}
 		if allLedgers(paths, l.ledgers()) {
 			l.conflictKind = "ledger"
 		}
@@ -1200,6 +1412,7 @@ func (l *lander) mergeHead(ctx context.Context, dir, stream string, c landCard) 
 			}
 		}
 	}
+abort:
 	if inMerge == nil {
 		if _, aerr := l.git(ctx, dir, "merge", "--abort"); aerr != nil {
 			return "", "git merge --abort failed after the merge of " + c.id + " stopped: " + firstLine("", aerr), ""
@@ -1364,6 +1577,48 @@ func (l *lander) clone(ctx context.Context, repo string) (dir, why string) {
 	}
 	return dir, ""
 }
+
+// hold takes the clone's land lock (landLockName in its git directory) for the rest of
+// this land, once per clone, before a batch or a base check changes its checkout (add's
+// brief lint only fetches into its own refs and reads, and takes none): one land at a time
+// works in a clone, so no merge, reset or
+// branch of another land's lands in the middle of this one's batch (two landers sharing a
+// clone left the server's merge to find the other's MERGE_HEAD, 2026-10-06). A clone
+// another land holds is refused before any git changes it, naming the holder; its cards
+// stay queued for the next land. release lets every lock go as land ends.
+func (l *lander) hold(ctx context.Context, dir string) string {
+	if l.held[dir] != nil {
+		return ""
+	}
+	gitDir, err := l.git(ctx, dir, "rev-parse", "--absolute-git-dir")
+	if err != nil {
+		return "the clone " + dir + " has no git directory: " + firstLine("", err)
+	}
+	lock, err := filelock.TryLock(filepath.Join(gitDir, landLockName), "nova-sprint land")
+	if h, ok := filelock.AsHeldError(err); ok {
+		return "the clone " + dir + " is in use by another land (" + h.Holder.String() + "); nothing was merged, pushed or reported, and its cards stay queued for the next land"
+	}
+	if err != nil {
+		return "the land lock of the clone " + dir + " could not be taken: " + oneline.Err(err)
+	}
+	if l.held == nil {
+		l.held = map[string]*filelock.FileLock{}
+	}
+	l.held[dir] = lock
+	return ""
+}
+
+// release lets go of every clone's land lock this land took (hold).
+func (l *lander) release() {
+	for dir, lock := range l.held {
+		// ignored: an unlock that fails leaves nothing held, the kernel lets go as the process ends
+		_ = lock.Unlock()
+		delete(l.held, dir)
+	}
+}
+
+// landLockName is the land lock's file in a clone's git directory (holdClone).
+const landLockName = "nova-sprint-land.lock"
 
 // merging says a merge is in progress in the clone: a pass cut short between a merge and
 // its commit or abort.

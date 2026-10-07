@@ -198,20 +198,19 @@ func TestDSHDefersASessionUnderAPresetTheOneShotRunnerDoesNotCompose(t *testing.
 	assert.Equal(t, 1, exit)
 }
 
-func TestDSHRouteIsDeferWithTheBusReadTheSessionRuns(t *testing.T) {
+func TestDSHRouteIsPushByAHeadlessTurn(t *testing.T) {
 	t.Parallel()
 	d := &DSH{Dir: "/w/zhi", Session: "session-zhi", Program: "dsh"}
 	route, line, err := d.Route(context.Background())
 	require.NoError(t, err)
-	assert.Equal(t, "defer", route, "no push into the open desktop session was found")
-	assert.Contains(t, line, "nova-bus wait", "the session reads the bus itself")
+	assert.Equal(t, "push", route, "every delivery is a headless turn into her session")
+	assert.Equal(t, "dsh headless --session-id session-zhi -", line)
 }
 
 func TestDSHDeliversIntoTheOpenDesktopSession(t *testing.T) {
 	t.Parallel()
 	// Verifies that delivery into an open desktop session (which runs under an agent preset
-	// such as "minimal") is Deferred rather than failed, and that Route reports defer with
-	// the bus wait command.
+	// such as "minimal") is Deferred rather than failed; Route says push, the headless turn.
 	refusal := `dsh: session "session-zhi" runs under agent preset "minimal", which the one-shot runner does not compose` + "\n"
 	var turn strings.Builder
 	fe := &fakeStdinExec{exit: 1, out: refusal}
@@ -225,6 +224,6 @@ func TestDSHDeliversIntoTheOpenDesktopSession(t *testing.T) {
 
 	route, line, err := d.Route(context.Background())
 	require.NoError(t, err)
-	assert.Equal(t, "defer", route)
-	assert.Contains(t, line, "nova-bus wait --as <friend>")
+	assert.Equal(t, "push", route)
+	assert.Contains(t, line, "dsh headless --session-id session-zhi")
 }

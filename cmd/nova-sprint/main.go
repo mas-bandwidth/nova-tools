@@ -147,6 +147,9 @@ type app struct {
 	// serveAddr is the store the server runs the workers' verbs on.
 	serial    controlLine
 	serveAddr string
+	// serveStarted is when this server started serving (serve.go), zero for a verb run
+	// alone: a beat's old --pong <time> counts for sprint.LegacyPongGrace after it.
+	serveStarted time.Time
 	// serving says the verb running is one a worker sent to the server (set and
 	// cleared under serial): its step names the epoch its worker holds, or is
 	// refused (runStep).

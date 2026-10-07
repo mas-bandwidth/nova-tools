@@ -88,13 +88,36 @@ const messagesSQL = `SELECT ` +
 	`json_extract(data, '$.cost') ` +
 	`FROM message WHERE json_extract(data, '$.tokens') IS NOT NULL`
 
+// openCodeReader is the value under test: the store's locations, the one program that
+// reads them, and how that program is found. A nil lookPath is the production default,
+// exec.LookPath on the process's PATH; a test carries its own lookup naming the fake it
+// built, or one that finds nothing -- the per-test seam the serial-tests ledger names
+// ("a field on the value under test"), in place of a fake on the process's PATH.
+type openCodeReader struct {
+	lookPath func(name string) (string, error)
+}
+
+// binary resolves the one program this source runs: the reader's own lookup, else the
+// process's PATH.
+func (r openCodeReader) binary() (string, error) {
+	if r.lookPath != nil {
+		return r.lookPath(SQLiteBinary)
+	}
+	return exec.LookPath(SQLiteBinary)
+}
+
 // readOpenCodeUsage reads one job's accounting out of its own database.
+func readOpenCodeUsage(dataHome string) (ProviderUsage, error) {
+	return openCodeReader{}.read(dataHome)
+}
+
+// read is readOpenCodeUsage on the reader's own lookup.
 //
 // A DATABASE THAT IS NOT THERE IS NOT AN ERROR: it is the harness having reported nothing
 // yet. A database that is there and cannot be read IS one, and rule 13 ends the job
 // BUDGET-UNVERIFIABLE on the third such sample, because a numeric budget the tool has
 // stopped being able to see is a budget the caller believes is enforced and is not.
-func readOpenCodeUsage(dataHome string) (ProviderUsage, error) {
+func (r openCodeReader) read(dataHome string) (ProviderUsage, error) {
 	path, err := findOpenCodeStore(dataHome)
 	if err != nil {
 		return ProviderUsage{}, err
@@ -104,11 +127,12 @@ func readOpenCodeUsage(dataHome string) (ProviderUsage, error) {
 		// reported nothing, which is an absence and not a failure.
 		return ProviderUsage{Values: map[string]string{}}, nil
 	}
-	if _, err := exec.LookPath(SQLiteBinary); err != nil {
+	bin, err := r.binary()
+	if err != nil {
 		return ProviderUsage{}, fmt.Errorf("%w: the usage source %s could not be read: %s is not on PATH, and `usage: opencode` reads that database with `%s -readonly`",
 			ErrNoSQLite, path, SQLiteBinary, SQLiteBinary)
 	}
-	rows, err := queryOpenCodeWaiting(path)
+	rows, err := queryOpenCodeWaiting(bin, path)
 	if err != nil {
 		return ProviderUsage{}, err
 	}
@@ -153,11 +177,12 @@ func ReadJobUsageLiveWithin(dataHome string, limit time.Duration) (ProviderUsage
 	if path == "" {
 		return ProviderUsage{Values: map[string]string{}}, nil
 	}
-	if _, err := exec.LookPath(SQLiteBinary); err != nil {
+	bin, err := (openCodeReader{}).binary()
+	if err != nil {
 		return ProviderUsage{}, fmt.Errorf("%w: the usage source %s could not be read: %s is not on PATH, and `usage: opencode` reads that database with `%s -readonly`",
 			ErrNoSQLite, path, SQLiteBinary, SQLiteBinary)
 	}
-	rows, err := queryOpenCode(path, limit)
+	rows, err := queryOpenCode(bin, path, limit)
 	if err != nil {
 		return ProviderUsage{}, err
 	}
@@ -191,14 +216,16 @@ func findOpenCodeStore(dataHome string) (string, error) {
 // in the window between the harness spending and its connection closing, when the `-wal` is
 // present and `sqlite3 -readonly` answers `database is locked`; recording a dash for that
 // window loses tokens the harness really spent.
-func queryOpenCodeWaiting(path string) ([][]string, error) {
+func queryOpenCodeWaiting(bin, path string) ([][]string, error) {
 	return walWait{
 		first:  usageTimeout,
 		settle: usageSettleWait,
 		pause:  usageSettlePause,
-		query:  queryOpenCode,
-		now:    time.Now,
-		sleep:  time.Sleep,
+		query: func(path string, limit time.Duration) ([][]string, error) {
+			return queryOpenCode(bin, path, limit)
+		},
+		now:   time.Now,
+		sleep: time.Sleep,
 	}.read(path)
 }
 
@@ -283,13 +310,14 @@ func walPending(path string) bool {
 	return err == nil
 }
 
-// queryOpenCode runs the one statement, read-only, under the timeout. The database is the
-// job's own and this tool never writes it: `-readonly` is that promise kept by the program
-// that opens it, and `-tabs` is the shape the rows come back in.
-func queryOpenCode(path string, limit time.Duration) ([][]string, error) {
+// queryOpenCode runs the one statement, read-only, under the timeout, through the resolved
+// `sqlite3` the caller names. The database is the job's own and this tool never writes it:
+// `-readonly` is that promise kept by the program that opens it, and `-tabs` is the shape
+// the rows come back in.
+func queryOpenCode(bin, path string, limit time.Duration) ([][]string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), limit)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, SQLiteBinary, "-readonly", "-tabs", path, messagesSQL)
+	cmd := exec.CommandContext(ctx, bin, "-readonly", "-tabs", path, messagesSQL)
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
 	cmd.WaitDelay = usageWaitDelay

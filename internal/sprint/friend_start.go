@@ -200,7 +200,7 @@ func friendUnstartedLevel(s *Snapshot, seats []FriendSeat, since func(string) (t
 		}
 		for _, c := range s.Fleet.Cell(FriendRow(n), Ready) {
 			pr := s.Work.Placed(c.F("primary"))
-			if skip[c.ID] || pr == nil || OnlyFriend(pr) || friendStarted(s, f, c) {
+			if skip[c.ID] || pr == nil || OnlyFriend(pr) || friendStarted(s, f, c) || isRead(c) {
 				continue
 			}
 			// its deal onto her row (WorkDeadline: a ready card's own stamp), or its return to
@@ -229,7 +229,7 @@ func friendUnstartedLevel(s *Snapshot, seats []FriendSeat, since func(string) (t
 			tier, left := cardTierOf(s.Work.Placed(c.F("primary"))), friendsLeft(c)
 			var may []string
 			for _, n := range names {
-				if n != giver && len(stale[n]) == 0 && lanes[n] > 0 && free[n] > 0 && !slices.Contains(left, n) && friendTakes(up[n], tier) {
+				if n != giver && len(stale[n]) == 0 && lanes[n] > 0 && free[n] > 0 && !slices.Contains(left, n) && friendTakes(s, up[n], tier) {
 					may = append(may, n)
 				}
 			}

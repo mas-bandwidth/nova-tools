@@ -15,8 +15,8 @@ import (
 // read "tier -" and handed back its own pinned cards for an hour, and the dealer rotated them
 // to subscription friends). On the twin store with no route, where no deal draws a tier onto
 // the work card: a machine's card and a friend's card each carry the tier they are on (the
-// tier pinned, else the brief's line 1, else flash), and a friend of one class is dealt only
-// the cards her class covers.
+// tier pinned, else the tier the deal drew: flash first, pro for a brief whose line 1 says
+// pro), and a friend of one class is dealt only the cards her class covers.
 func TestADealtPacketAlwaysNamesItsTier(t *testing.T) {
 	t.Parallel()
 	r := newHoldRig(t, 0, 0)
@@ -62,7 +62,7 @@ func TestADealtPacketAlwaysNamesItsTier(t *testing.T) {
 		assert.Equal(t, now, p.Tier, "the packet of %s names the tier its card is on", p.Card)
 	}
 	assert.Equal(t, map[string]string{
-		"s1-1": "heavy", // the brief's line 1
+		"s1-1": "flash", // the brief's line 1 is its ceiling: dealt on flash first, to the flash friend
 		"s1-2": "flash", // no tier: the default
 		"s1-3": "pro",   // brief --tier pins it over line 1
 		"f1-1": "flash", // a friend's card with no tier: the default, on the flash friend

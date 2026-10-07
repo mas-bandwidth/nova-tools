@@ -19,9 +19,9 @@ func askedWithRoute(t *testing.T) (w *world, held []string, free string) {
 	t.Helper()
 	w = setup(t, 2)
 	finished(w, "s1-1", false)
-	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-1"}}}))
-	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-1"}}, Another: true})) // reads are asked one at a time: a second reader by --another
+	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-1"}}})) // a card's reads are asked together: both readers in one ask
 	w.s.Routes = []Route{{Name: "pro-a", Tier: cardhdr.RoutePro, Provider: "p", Model: "m", Enabled: true}}
+	readersReadEveryTier(w) // a fleet row reads flash unless it says more (fleetReadsFlashOnly)
 	for _, rc := range readsAt(w.s, w.s.Work.Card("s1-1"), 1) {
 		held = append(held, rc.Row)
 	}
@@ -77,7 +77,8 @@ func TestAskInsteadLeavesTwoDifferentReadersHoldingTheAttemptsReads(t *testing.T
 	}
 	assert.ElementsMatch(t, []string{held[0], free}, readers)
 	readOK(w, "s1-1")
-	assert.Equal(t, NReadyToAccept, openTypes(w, "s1-1"))
+	assert.Empty(t, openTypes(w, "s1-1"), "the tick's to accept, no judgment")
+	assert.True(t, tickTakes(w, "s1-1"), "the tick accepts it on the two readers' oks")
 }
 
 func TestAskInsteadTakesBackARead(t *testing.T) {

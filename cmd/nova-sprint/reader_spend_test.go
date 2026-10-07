@@ -24,7 +24,6 @@ func TestWhereReadersCarryEachReadersSpend(t *testing.T) {
 	ta.ok("take --as m1 s1-1.w1@1")
 	ta.ok("finish --as m1 s1-1.w1@1 --usage 'input=1 actual_usd=0.1 actual_by=harness'")
 	ta.ok("ask")
-	ta.ok("ask s1-1 --another")
 	var asked []string
 	for _, rd := range []string{"reader-a", "reader-b", "reader-c"} {
 		if code, _, _ := ta.do("read --as " + rd + " --begin s1-1.r1." + rd); code == 0 {

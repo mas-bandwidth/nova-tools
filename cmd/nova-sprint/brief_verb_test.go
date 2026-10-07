@@ -30,7 +30,7 @@ func (ta *testApp) primary(id string) *sprint.Card {
 // manually hopping in and working around it and doing manual stuff."): a brief
 // that fails the card lint refused with nothing changed, replaced on a STOPPED
 // machine with the card's id, stream, score and needs kept, and refused once
-// the card is dealt.
+// the card is working.
 func TestBriefReplacesAnUnstartedPrimarysBriefOnAStoppedSprint(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
@@ -67,10 +67,10 @@ func TestBriefReplacesAnUnstartedPrimarysBriefOnAStoppedSprint(t *testing.T) {
 	ta.deal(1)
 	code, _, errs = ta.do("brief a-1 --brief-file " + good)
 	assert.Equal(t, 1, code)
-	assert.Contains(t, errs, "a-1 is working: a card dealt, working, in review, merging or landed keeps its brief")
+	assert.Contains(t, errs, "a-1 is working: a card working, merging or landed keeps its brief")
 	// the refusal says what changes a working card instead, whether the machine
 	// runs or not: stopping it would not let the brief be replaced
-	remedy := "run: nova-sprint drop a-1 --reason '<why>', then nova-sprint add --stream a <new id> --brief-file <path>, or once it finishes (review), nova-sprint rework a-1 --fix '<what changes>'"
+	remedy := "run: nova-sprint drop a-1 --reason '<why>', then nova-sprint add --stream a <new id> --brief-file <path>, or once it finishes (review), nova-sprint brief a-1 --brief-file <path> (in place, its next attempt)"
 	assert.Contains(t, errs, remedy)
 	ta.ok("start")
 	code, _, errs = ta.do("brief a-1 --brief-file " + good)
@@ -128,13 +128,13 @@ func TestBriefReplacesWaitingBriefsWhileRunningAndByDir(t *testing.T) {
 	assert.Equal(t, text("the newer second"), ta.primary("a-2").F("brief"))
 	assert.Equal(t, text("the new third"), ta.primary("a-3").F("brief"))
 
-	// a dealt card keeps its brief: the call that names one writes nothing
+	// a working card keeps its brief: the call that names one writes nothing
 	writeNeedsBrief(t, dir, "a-1", "the new work", "")
 	writeNeedsBrief(t, dir, "a-2", "the newest second", "")
 	applies := ta.applies()
 	code, _, errs := ta.do("brief --dir " + dir)
 	assert.Equal(t, 1, code)
-	assert.Contains(t, errs, "a-1 is working: a card dealt, working, in review, merging or landed keeps its brief")
+	assert.Contains(t, errs, "a-1 is working: a card working, merging or landed keeps its brief")
 	assert.Equal(t, applies, ta.applies(), "a refused --dir wrote")
 	assert.Equal(t, text("the newer second"), ta.primary("a-2").F("brief"))
 

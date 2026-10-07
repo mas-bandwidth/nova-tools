@@ -156,14 +156,14 @@ func dealRingAcrossTicks(t *testing.T, h *harness) {
 		for _, m := range r.deals {
 			h.work(m)
 		}
-		h.readOutstanding() // the next tick asks the next reads
+		h.readOutstanding() // both reads asked this tick come back ok
 		h.tick(time.Second)
 	}
 	want := append(append([]string(nil), ringMembers...), ringMembers...)
 	require.True(t, slices.Equal(deals, want), "deals across ticks %v, want %v: each tick's deal starts past the member the last one dealt to", deals, want)
 	readers := []string{"reader-a", "reader-b", "reader-c"}
 	for i, a := range asks {
-		w := []string{readers[i%3]} // one read an ask: the first read alone
+		w := []string{readers[(2*i)%3], readers[(2*i+1)%3]} // two reads an ask: both together
 		require.True(t, slices.Equal(a, w), "ask %d of %v asked %v, want %v: each tick's ask starts past the reader the last one asked", i+1, asks, a, w)
 	}
 	require.GreaterOrEqual(t, len(asks), 2*len(ringMembers)-1, "asks %v: want one a tick", asks)

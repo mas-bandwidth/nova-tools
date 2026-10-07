@@ -14,7 +14,10 @@ func TestParseReaderTiersStoresTheLadderAndRefusesARepeat(t *testing.T) {
 	assert.Equal(t, "flash,pro", got)
 	got, err = ParseReaderTiers("all")
 	require.NoError(t, err)
-	assert.Equal(t, "", got)
+	assert.Equal(t, "flash,pro,heavy,frontier", got, "all names every tier")
+	got, err = ParseReaderTiers("default")
+	require.NoError(t, err)
+	assert.Equal(t, "", got, "default is the empty cell: flash on a fleet reader, every tier on a friend's")
 	_, err = ParseReaderTiers("flash,flash")
 	assert.Error(t, err)
 	_, err = ParseReaderTiers("nope")
@@ -22,7 +25,7 @@ func TestParseReaderTiersStoresTheLadderAndRefusesARepeat(t *testing.T) {
 }
 
 // The ask never asks a reader a read outside the tiers its row names. An empty
-// tiers cell is every tier. A pro card with one reader of its tier up raises
+// tiers cell is every tier with no route in the store (a fleet reader's is flash with one). A pro card with one reader of its tier up raises
 // the existing few-readers judgment and nothing is asked of a flash reader.
 func TestTheAskNeverAsksAReaderOutsideItsTiers(t *testing.T) {
 	t.Parallel()
@@ -36,8 +39,9 @@ func TestTheAskNeverAsksAReaderOutsideItsTiers(t *testing.T) {
 	plan, _ := TickAsk(both.s, TickReq{})
 	both.must(plan)
 	assert.Contains(t, []string{"reader-flash", "reader-all", "reader-all2"}, askedReader(t, both, "flash-1"))
-	assert.NotEqual(t, "reader-flash", askedReader(t, both, "pro-1"), "a pro read is not asked of the flash reader")
-	assert.Contains(t, []string{"reader-all", "reader-all2"}, askedReader(t, both, "pro-1"))
+	// a card's reads are asked together: the pro card's two at once, neither of the flash reader
+	assert.ElementsMatch(t, []string{"reader-all", "reader-all2"}, readerNames(liveReadsAt(both.s, both.s.Work.Card("pro-1"), 1)),
+		"a pro read is not asked of the flash reader")
 
 	one := newTierWorld(t, ReaderUp, ReaderAway)
 	plan, _ = TickAsk(one.s, TickReq{})
@@ -62,7 +66,7 @@ func TestTheAskNeverAsksAReaderOutsideItsTiers(t *testing.T) {
 	require.NotNil(t, old)
 	assert.False(t, old.Placed(), "a returned read is not asked again in place of a reader outside the tier")
 	assert.Equal(t, "returned", old.F("retired_by"))
-	assert.NotEqual(t, "reader-flash", askedReader(t, back, "pro-1"))
+	assert.NotContains(t, readerNames(liveReadsAt(back.s, back.s.Work.Card("pro-1"), 1)), "reader-flash")
 
 	level := newWorld(t, "reader-flash", "reader-all")
 	level.s.Readers.Texts = map[string]map[string]string{"reader-flash": {"tiers": "flash"}}

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
@@ -30,6 +31,10 @@ import (
 // working, width, done, ok%, status that we have for machines, but no load").
 
 const keyFriends = "friends"
+
+// currentBuild is the build this process runs (buildinfo.Version): the build a friend's
+// daemon is compared with when she comes up (sprint.FriendSeat.Current).
+var currentBuild = buildinfo.Version("")
 
 func friendBeatKey(friend string) string { return "friend-beat:" + friend }
 
@@ -53,6 +58,15 @@ type friendEntry struct {
 	// ConfigDir is her row's config_dir, the directory a claude one-shot lane
 	// runs with as CLAUDE_CONFIG_DIR, which her beat answers (row_config_dir=).
 	ConfigDir string `json:"config_dir,omitempty"`
+	// TokenCap is her row's per-card token cap. TokenCapSet is whether friend
+	// sync wrote one: a roster from before the field is unset, and her beat
+	// answers the default. An explicit 0 is no cap; omitempty would drop that
+	// 0, so the bool is the record that it was set.
+	TokenCap    int64 `json:"token_cap,omitempty"`
+	TokenCapSet bool  `json:"token_cap_set,omitempty"`
+	// Roles is her row's roles, comma joined (builder, may-hold, reader): a read card is
+	// dealt only to a friend whose roles name reader (sprint read_cards.go).
+	Roles string `json:"roles,omitempty"`
 	// Reason and Until are the hold's (friend down --reason --until, hold <friend>
 	// --reason): why, and when the coordinator expects her back. Return is whether
 	// the hold took her cards back (hold.go).
@@ -70,6 +84,13 @@ type FriendSpec struct {
 	Mode  string // her delivery mode, config.FriendMode of her row
 	// ConfigDir is her row's config_dir ("" when it names none).
 	ConfigDir string
+	// TokenCap is her row's per-card token cap. TokenCapSet is false for a
+	// spec built before the field: her beat then answers the default, and an
+	// explicit 0 (no cap) is TokenCapSet with TokenCap 0.
+	TokenCap    int64
+	TokenCapSet bool
+	// Roles is her row's roles, comma joined: reader is the read cards'.
+	Roles string
 }
 
 // FriendRow is one row of the friends table as where draws it: the counts of
@@ -79,12 +100,17 @@ type FriendRow struct {
 	Name    string `json:"name"`
 	Ready   int    `json:"ready"`
 	Working int    `json:"working"`
-	Width   int    `json:"width"`
-	OK      int    `json:"ok"`
-	Failed  int    `json:"failed"`
-	Status  string `json:"status"`
-	Class   string `json:"class,omitempty"`
-	Mode    string `json:"mode,omitempty"`
+	// DealtFleet is the fleet's cards among them: work cards whose primary carries no
+	// WHO line (sprint.FriendsDealtFleet, from the tick's where record, up to a tick behind).
+	DealtFleet int    `json:"dealt_fleet"`
+	Width      int    `json:"width"`
+	OK         int    `json:"ok"`
+	Failed     int    `json:"failed"`
+	Status     string `json:"status"`
+	Class      string `json:"class,omitempty"`
+	Mode       string `json:"mode,omitempty"`
+	// Roles is her row's roles, comma joined (reader: she is dealt read cards).
+	Roles string `json:"roles,omitempty"`
 	// Load and Report are what her last beat reported (friend beat --load, and
 	// sprint.FriendReport), absent when it reported none.
 	Load   float64              `json:"load,omitempty"`
@@ -168,11 +194,11 @@ func (st *Store) SyncFriends(ctx context.Context, specs []FriendSpec) (added, re
 		case !had:
 			added = append(added, s.Name)
 			rosterChanged = true
-		case e.Width != s.Width || e.Class != s.Class || e.Mode != s.Mode || e.ConfigDir != s.ConfigDir:
+		case e.Width != s.Width || e.Class != s.Class || e.Mode != s.Mode || e.ConfigDir != s.ConfigDir || e.TokenCap != s.TokenCap || e.TokenCapSet != s.TokenCapSet || e.Roles != s.Roles:
 			updated = append(updated, s.Name)
 			rosterChanged = true
 		}
-		e.Width, e.Class, e.Mode, e.ConfigDir = s.Width, s.Class, s.Mode, s.ConfigDir
+		e.Width, e.Class, e.Mode, e.ConfigDir, e.TokenCap, e.TokenCapSet, e.Roles = s.Width, s.Class, s.Mode, s.ConfigDir, s.TokenCap, s.TokenCapSet, s.Roles
 		r[s.Name] = e
 	}
 	for n := range r {
@@ -215,44 +241,79 @@ func (st *Store) FriendBeat(ctx context.Context, friend string) (sprint.Beat, er
 // down keep with her, and her own counts) and her load (nil: none), kept on the
 // beat until the next replaces it.
 func (st *Store) FriendBeatReport(ctx context.Context, friend string, rep sprint.FriendReport, load *float64) (sprint.Beat, error) {
-	return st.FriendBeatPong(ctx, friend, rep, load, time.Time{})
+	b, _, err := st.FriendBeatProof(ctx, friend, rep, load, sprint.BeatWords{})
+	return b, err
 }
 
-// friendBeatRecord is a friend's beat as kept: the beat, and her session's last pong as
-// her daemon reports it (friend beat --pong; zero: none reported), which the coordinator's
-// pass reads (sprint.TickCoordinatorPass). A reader of the beat alone reads the record as
-// a sprint.Beat and never sees the pong.
+// friendBeatRecord is a friend's beat as kept: the beat; her session's last proof, the
+// server's time of the last answer that named a check her daemon asked (sprint.ProveBeat;
+// zero: none), which the friends' rule and the coordinator's pass read; the checks still
+// answerable; and the last beat with no proof, and why. A reader of the beat alone reads
+// the record as a sprint.Beat, its Proof the record's pong.
 type friendBeatRecord struct {
 	sprint.Beat
-	Pong time.Time `json:"pong,omitzero"`
+	Pong    time.Time           `json:"pong,omitzero"`
+	Asked   []sprint.AskedCheck `json:"asked,omitempty"`
+	NoProof string              `json:"no_proof,omitempty"`
 }
 
-// FriendBeatPong is FriendBeatReport with her session's last pong kept on the beat (zero:
-// none), until the next beat replaces it.
-func (st *Store) FriendBeatPong(ctx context.Context, friend string, rep sprint.FriendReport, load *float64, pong time.Time) (sprint.Beat, error) {
+// BeatProof is what one beat's proof words came to: proved (her session answered a check
+// her daemon asked) or why it proved nothing, and the proof the record keeps after it.
+type BeatProof struct {
+	Proved  bool
+	NoProof string
+	Proof   time.Time
+}
+
+// FriendBeatProof is FriendBeatReport with the beat's proof words (sprint.BeatWords: the
+// check her daemon asked, the check her session answered, the daemon's run): the record's
+// checks and proof are carried from the last beat and stepped by sprint.ProveBeat at the
+// store's clock, so only an answer to a check asked proves, once.
+func (st *Store) FriendBeatProof(ctx context.Context, friend string, rep sprint.FriendReport, load *float64, w sprint.BeatWords) (sprint.Beat, BeatProof, error) {
 	r, kv, err := st.roster(ctx)
 	if err != nil {
-		return sprint.Beat{}, err
+		return sprint.Beat{}, BeatProof{}, err
 	}
 	if _, ok := r[friend]; !ok {
-		return sprint.Beat{}, noFriend(r, friend)
+		return sprint.Beat{}, BeatProof{}, noFriend(r, friend)
 	}
-	b := sprint.Beat{At: st.now().UTC().Truncate(time.Second)}
+	now := st.now().UTC().Truncate(time.Second)
+	var prev friendBeatRecord
+	if vals, oks, err := getKeys(ctx, kv, []string{friendBeatKey(friend)}); err != nil {
+		return sprint.Beat{}, BeatProof{}, err
+	} else if len(oks) == 1 && oks[0] {
+		_ = json.Unmarshal([]byte(vals[0]), &prev) // ignored: an unreadable record holds no check and no proof
+	}
+	b := sprint.Beat{At: now}
 	if len(rep.Running) > 0 || rep.Working != nil || rep.Queue != nil || rep.Width != nil || !rep.Active.IsZero() {
 		b.Friend = &rep // a beat that reports nothing carries no report
+	}
+	if rep.Build != "" || !rep.Started.IsZero() || !rep.Present.IsZero() {
+		b.Friend = &rep // her daemon's own facts are a report (sprint.StatusTransitions reads them)
 	}
 	if load != nil {
 		b.Load, b.How = *load, sprint.HowGiven
 	}
-	rec := friendBeatRecord{Beat: b}
-	if !pong.IsZero() {
-		rec.Pong = pong.UTC().Truncate(time.Second)
+	rec := friendBeatRecord{Beat: b, Pong: prev.Pong, NoProof: prev.NoProof}
+	asked, proved, why := sprint.ProveBeat(prev.Asked, w, now)
+	rec.Asked = asked
+	if proved {
+		rec.Pong, rec.NoProof = now, ""
 	}
+	if why != "" {
+		rec.NoProof = why
+	}
+	if legacy := w.Legacy.UTC().Truncate(time.Second); !legacy.IsZero() && !legacy.After(now) && legacy.After(rec.Pong) {
+		// a daemon from before the nonces, within the server's grace (sprint.LegacyPongGrace)
+		rec.Pong, rec.NoProof, proved = legacy, "", true
+	}
+	rec.Beat.Proof = rec.Pong
 	out, err := json.Marshal(rec)
 	if err != nil {
-		return b, err
+		return b, BeatProof{}, err
 	}
-	return b, kv.SetKey(ctx, friendBeatKey(friend), string(out))
+	b.Proof = rec.Pong
+	return b, BeatProof{Proved: proved, NoProof: why, Proof: rec.Pong}, kv.SetKey(ctx, friendBeatKey(friend), string(out))
 }
 
 // SetFriendHeld holds the friend (friend down, with why and until when the
@@ -340,7 +401,7 @@ func (st *Store) friendRows(ctx context.Context, now time.Time) ([]FriendRow, ma
 		}
 		presence := sprint.FriendPresence{Held: r[n].Held, Beat: b, Health: h, Generation: generation, Finished: fin}
 		word, evidence := sprint.FriendEvidence(presence, now)
-		row := FriendRow{Name: n, Width: r[n].Width, Status: word, Evidence: evidence, Finished: fin, Class: r[n].Class, Mode: r[n].Mode, Load: b.Load, Report: b.Friend, Beat: b.At, Proof: b.Proof}
+		row := FriendRow{Name: n, Width: r[n].Width, Status: word, Evidence: evidence, Finished: fin, Class: r[n].Class, Mode: r[n].Mode, Roles: r[n].Roles, Load: b.Load, Report: b.Friend, Beat: b.At, Proof: b.Proof}
 		if why := sprint.FriendDownWhy(presence, now); why != "" {
 			whys[n] = why
 		}
@@ -387,7 +448,7 @@ func (st *Store) FriendSeats(ctx context.Context, now time.Time) ([]sprint.Frien
 	}
 	seats := make([]sprint.FriendSeat, len(rows))
 	for i, r := range rows {
-		seats[i] = sprint.FriendSeat{Name: r.Name, Width: r.Width, Status: r.Status, Class: r.Class, Mode: r.Mode, Why: whys[r.Name], Proof: r.Proof, Finished: r.Finished}
+		seats[i] = sprint.FriendSeat{Name: r.Name, Width: r.Width, Status: r.Status, Class: r.Class, Mode: r.Mode, Roles: sprint.Split(r.Roles), Why: whys[r.Name], Proof: r.Proof, Finished: r.Finished}
 		if r.Reason != "" && seats[i].Why != "" {
 			seats[i].Why += ": " + r.Reason
 		}
@@ -397,6 +458,11 @@ func (st *Store) FriendSeats(ctx context.Context, now time.Time) ([]sprint.Frien
 		if r.Health != nil && r.Health.State == sprint.Up {
 			seats[i].Answered = r.Health.Seen
 		}
+		// what the status transitions read (sprint.StatusTransitions): her beat, her evidence,
+		// whether she is down on her daemon's pong alone, and the build this server runs
+		seats[i].Beat = sprint.Beat{At: r.Beat, Friend: r.Report, Proof: r.Proof, Load: r.Load}
+		seats[i].Evidence, seats[i].Current = r.Evidence, currentBuild
+		seats[i].DaemonOnly = r.Status == sprint.Down && r.Health != nil && r.Health.State == sprint.DaemonPong
 	}
 	return seats, nil
 }
@@ -587,7 +653,7 @@ func (st *Store) FriendSpecOf(ctx context.Context, friend string) (FriendSpec, e
 	if !ok {
 		return FriendSpec{}, noFriend(r, friend)
 	}
-	return FriendSpec{Name: friend, Width: e.Width, Class: e.Class, Mode: e.Mode, ConfigDir: e.ConfigDir}, nil
+	return FriendSpec{Name: friend, Width: e.Width, Class: e.Class, Mode: e.Mode, ConfigDir: e.ConfigDir, TokenCap: e.TokenCap, TokenCapSet: e.TokenCapSet, Roles: e.Roles}, nil
 }
 
 // FriendSessions is every friend of the roster with her session's last pong as her last

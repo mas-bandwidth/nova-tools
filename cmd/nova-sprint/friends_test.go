@@ -111,7 +111,7 @@ func TestTheFriendsTableCountsTheFriendsSprintCards(t *testing.T) {
 	amy := func() map[string]any {
 		var w whereView
 		ta.json("where", &w)
-		return w.Tables[sprint.Friends]["amy"]
+		return withoutRowCards(w.Tables[sprint.Friends]["amy"])
 	}
 	// dealt, not started: ready, and none working (docs/SPEC-SPRINT.md section 1, a friend's
 	// card is working once she starts it)
@@ -131,8 +131,8 @@ func TestTheFriendsTableCountsTheFriendsSprintCards(t *testing.T) {
 
 	var w whereView
 	ta.json("where", &w)
-	assert.Equal(t, map[string]any{"ready": "0", "working": "0", "width": "8", "done": "0", "okpct": "0.0%", "status": "up", "active": "-", "ok": "0", "failed": "0"}, w.Tables[sprint.Friends]["bob"], "bob has no card")
-	assert.Equal(t, map[string]any{"ready": "0", "working": "0", "width": "8", "done": "0", "okpct": "0.0%", "status": "up", "active": "-", "ok": "0", "failed": "0"}, w.Tables[sprint.Friends]["cat"], "cat has no card")
+	assert.Equal(t, map[string]any{"ready": "0", "working": "0", "width": "8", "done": "0", "okpct": "0.0%", "status": "up", "active": "-", "ok": "0", "failed": "0"}, withoutRowCards(w.Tables[sprint.Friends]["bob"]), "bob has no card")
+	assert.Equal(t, map[string]any{"ready": "0", "working": "0", "width": "8", "done": "0", "okpct": "0.0%", "status": "up", "active": "-", "ok": "0", "failed": "0"}, withoutRowCards(w.Tables[sprint.Friends]["cat"]), "cat has no card")
 }
 
 // A friend's width is her friend row's (the owner, 2026-10-02: "6/1 seems a bit
@@ -506,9 +506,11 @@ func TestAFriendsBeatAnswersHerRowsModeAndWidth(t *testing.T) {
 	res := r.one("friend", "beat", "amy")
 	require.Equal(t, 0, res.Code, res.Stderr)
 	assert.Contains(t, res.Stdout, " row_mode=batch row_width=8")
+	assert.Contains(t, res.Stdout, " row_token_cap=6000000")
 	mode, width = "one-shot", "1"
 	r.boss("nova-sprint friend sync --root " + root)
 	res = r.one("friend", "beat", "amy")
 	require.Equal(t, 0, res.Code, res.Stderr)
 	assert.Contains(t, res.Stdout, " row_mode=one-shot row_width=1")
+	assert.Contains(t, res.Stdout, " row_token_cap=6000000")
 }

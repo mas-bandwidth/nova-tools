@@ -22,7 +22,7 @@ import (
 // waits, through a need or its place in line, on a sentinel not released or a
 // card admitted held, so one release or one need frees or holds a chain. The
 // tick counts it whole (sprint.HeldBack) from its twin, which holds every card,
-// whenever the work table has moved since the record was counted.
+// whenever the work table or the fleet table has moved since the record was counted.
 
 // keyWhere is the where record's key, under the deployment's prefix.
 const keyWhere = "where" // STRING, the where record (JSON)
@@ -45,6 +45,22 @@ type WhereRecord struct {
 	// StageTimes is the median and p90 of each stage over the cards landed in the last day
 	// (sprint.CycleTimes, docs/SPEC-SPRINT.md, cycle-time-breakdownb.w1), as of the count.
 	StageTimes sprint.StageTimes `json:"stage_times,omitzero"`
+	// DealtFleet is each friend's count of the fleet's cards on her row
+	// (sprint.FriendsDealtFleet), where --json's dealt_fleet.
+	DealtFleet map[string]int `json:"dealt_fleet,omitempty"`
+	// ReadsWaiting is the reads wanted now and not asked over the primaries in review
+	// (sprint.ReadsWaiting), Priorities every open primary whose level is not normal, by
+	// level (sprint.PriorityCounts), and StreamPriorities each stream's default level that
+	// is not normal (sprint.StreamPriorities), as of the count.
+	ReadsWaiting     int                 `json:"reads_waiting,omitempty"`
+	Priorities       map[string][]string `json:"priorities,omitempty"`
+	StreamPriorities map[string]string   `json:"stream_priorities,omitempty"`
+	// FleetRev is the fleet table's revision at the count: a take moves the fleet alone.
+	// RowCards is each fleet row's cards by level and its reads, ReadCards the epoch's read
+	// cards (sprint.RowCardCounts), the dashboard's rows and read_cards.
+	FleetRev  uint64                    `json:"fleet_rev,omitempty"`
+	RowCards  map[string]map[string]int `json:"row_cards,omitempty"`
+	ReadCards sprint.ReadCardCounts     `json:"read_cards"`
 }
 
 // whereOf is the where record of a snapshot holding every card of the work
@@ -57,7 +73,12 @@ func whereOf(s *sprint.Snapshot, m Machine, now time.Time) WhereRecord {
 		}
 	}
 	r := WhereRecord{Epoch: s.Epoch, Rev: s.Work.Revision, Held: sprint.HeldBack(s), Critical: sprint.Critical(s, 5),
-		Tiers: sprint.TierCounts(s), Streams: sprint.StreamTierCosts(s), StageTimes: sprint.CycleTimes(s, now)}
+		Tiers: sprint.TierCounts(s), Streams: sprint.StreamTierCosts(s), StageTimes: sprint.CycleTimes(s, now), DealtFleet: sprint.FriendsDealtFleet(s),
+		ReadsWaiting: sprint.ReadsWaiting(s), Priorities: sprint.PriorityCounts(s), StreamPriorities: sprint.StreamPriorities(s)}
+	if s.Fleet != nil {
+		r.FleetRev = s.Fleet.Revision
+	}
+	r.RowCards, r.ReadCards = sprint.RowCardCounts(s)
 	for _, at := range sprint.RecentLandings(landed, m.Spans, m.FirstStart(s.Cleared), now) {
 		r.Landings = append(r.Landings, at.Unix())
 	}
@@ -75,16 +96,23 @@ func readWhere(raw string, ok bool) (WhereRecord, bool) {
 }
 
 // keepWhere is the tick's count of the where record: nothing when the record
-// is of this epoch at the work table's revision (an idle tick reads the
-// shape and the record, two exchanges); else the sprint from the twin, brought
+// is of this epoch at the work and fleet tables' revisions (an idle tick reads the
+// shapes and the record, two exchanges); else the sprint from the twin, brought
 // up to date, and the record written. A twin held by another step of this
 // process, or a clear under the read, leaves it to the next tick.
+//
+// First, every tick, the card log index takes the log's new lines
+// (keepLogIndex, load.go): the cursor read and the lines after it, two
+// exchanges, and their entries written in one more when there are any.
 func (st *Store) keepWhere(ctx context.Context, m Machine) error {
 	kv, err := st.kv()
 	if err != nil {
 		return nil // a store that keeps no records: where counts the cards
 	}
-	shapes, err := st.B.Shapes(ctx, []string{st.Names.Table(sprint.Work)})
+	if err := st.keepLogIndex(ctx); err != nil {
+		return fmt.Errorf("the card log index: %w", err)
+	}
+	shapes, err := st.B.Shapes(ctx, []string{st.Names.Table(sprint.Work), st.Names.Table(sprint.Fleet)})
 	if err != nil {
 		return err
 	}
@@ -93,7 +121,7 @@ func (st *Store) keepWhere(ctx context.Context, m Machine) error {
 	if err != nil {
 		return err
 	}
-	if r, ok := readWhere(vals[0], oks[0]); ok && r.Epoch == st.epoch && r.Rev == shapes[0].Revision {
+	if r, ok := readWhere(vals[0], oks[0]); ok && r.Epoch == st.epoch && r.Rev == shapes[0].Revision && r.FleetRev == shapes[1].Revision {
 		return nil
 	}
 	stats := st.statsRecordOf(vals[1], oks[1]) // permissive: an unreadable one is no tidy
@@ -255,6 +283,17 @@ type WhereFacts struct {
 	Streams map[string]sprint.TierCosts
 	// StageTimes is the record's stage times (sprint.CycleTimes); empty without the record.
 	StageTimes sprint.StageTimes
+	// DealtFleet is the record's count of the fleet's cards on each friend's row
+	// (sprint.FriendsDealtFleet); nil without the record.
+	DealtFleet map[string]int
+	// RowCards and ReadCards are the record's (sprint.RowCardCounts); nil and zero without it.
+	RowCards  map[string]map[string]int
+	ReadCards sprint.ReadCardCounts
+	// ReadsWaiting, Priorities and StreamPriorities are the record's (WhereRecord); zero
+	// without the record.
+	ReadsWaiting     int
+	Priorities       map[string][]string
+	StreamPriorities map[string]string
 	// HasStoreRTT is set when the server's store round trip record has a sample
 	// within StoreRTTWindow; StoreRTTP50MS and StoreRTTP99MS are its p50 and p99.
 	HasStoreRTT   bool
@@ -303,7 +342,9 @@ func (st *Store) WhereFacts(ctx context.Context, workRev uint64) (WhereFacts, er
 			f.HasStoreRTT, f.StoreRTTP50MS, f.StoreRTTP99MS = true, r.P50MS, r.P99MS
 		}
 		if r, ok := readWhere(vals[2], oks[2]); ok && r.Epoch == st.epoch && (r.Rev == workRev || st.keptBy(r, f.Machine, f.Heartbeat)) {
-			f.Held, f.Critical, f.Tiers, f.Streams, f.StageTimes = r.Held, r.Critical, r.Tiers, r.Streams, r.StageTimes
+			f.Held, f.Critical, f.Tiers, f.Streams, f.StageTimes, f.DealtFleet = r.Held, r.Critical, r.Tiers, r.Streams, r.StageTimes, r.DealtFleet
+			f.ReadsWaiting, f.Priorities, f.StreamPriorities = r.ReadsWaiting, r.Priorities, r.StreamPriorities
+			f.RowCards, f.ReadCards = r.RowCards, r.ReadCards
 			for _, s := range r.Landings {
 				f.Landed = append(f.Landed, time.Unix(s, 0).UTC())
 			}

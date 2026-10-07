@@ -33,6 +33,11 @@ func newHeavyRig(t *testing.T) *conflictRig {
 		Sleep: func(time.Duration) {}}
 	require.NoError(t, r.st.Init(r.ctx))
 	require.NoError(t, r.m.RowsAdd(r.ctx, "t-readers", []string{"reader-a", "reader-b", "reader-c"}))
+	// the rows read pro: a fleet row that names no tier reads flash alone while routes are held
+	require.NoError(t, r.st.EnsureReaderTiers(r.ctx))
+	for _, rd := range []string{"reader-a", "reader-b", "reader-c"} {
+		require.NoError(t, r.m.RowSet(r.ctx, "t-readers", rd, map[string]string{sprint.ReaderTiers: "flash,pro"}))
+	}
 	require.NoError(t, r.m.SetCoordinator(r.ctx, "coordinator"))
 	r.m.SetRoutes([]sprint.Route{
 		{Name: "flash-a", Tier: "flash", Provider: "prov-flash-a", Model: "model-flash-a", Tokens: 1000, Deadline: conflictRouteSeconds, Enabled: true},
@@ -47,8 +52,8 @@ func newHeavyRig(t *testing.T) *conflictRig {
 	return r
 }
 
-// toSplitReads drives the primary through work to review, then asks its two reads one at a
-// time: the first comes back ok, the second broken.
+// toSplitReads drives the primary through work to review, then asks its two reads together
+// (a card's reads are asked at once): the first comes back ok, the second broken.
 func (r *conflictRig) toSplitReads(id string) (ok, broken *sprint.Card) {
 	r.t.Helper()
 	r.must(dealStep(sprint.DealReq{Sel: sprint.Sel{IDs: []string{id}}}))
@@ -59,17 +64,20 @@ func (r *conflictRig) toSplitReads(id string) (ok, broken *sprint.Card) {
 	wc = r.snap().Fleet.Card(wc.ID)
 	r.must(store.FinishStep(sprint.FinishReq{Sel: sprint.Sel{IDs: []string{wc.ID}}, Gens: map[string]int{wc.ID: wc.Int("gen")}}))
 	require.Equal(r.t, 2, sprint.ReadsNeeded(r.snap().Work.Card(id)), "a pro card needs two reads")
-	for _, verdict := range []string{"ok", "broken"} {
-		r.must(store.AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{id}}}))
-		for _, rc := range r.snap().Readers.Of(id) {
-			if rc.Col == sprint.Asked || rc.Col == sprint.Reading {
-				r.must(store.ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: rc.Row, Verdict: verdict, Finding: "f:1 the model trailer is wrong", Sel: sprint.Sel{IDs: []string{rc.ID}}}))
-				if verdict == "ok" {
-					ok = r.snap().Readers.Card(rc.ID)
-				} else {
-					broken = r.snap().Readers.Card(rc.ID)
-				}
-			}
+	r.must(store.AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{id}}}))
+	verdicts := []string{"ok", "broken"}
+	for _, rc := range r.snap().Readers.Of(id) {
+		if rc.Col != sprint.Asked && rc.Col != sprint.Reading {
+			continue
+		}
+		require.NotEmpty(r.t, verdicts, "two reads asked, no more")
+		verdict := verdicts[0]
+		verdicts = verdicts[1:]
+		r.must(store.ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: rc.Row, Verdict: verdict, Finding: "f:1 the model trailer is wrong", Sel: sprint.Sel{IDs: []string{rc.ID}}}))
+		if verdict == "ok" {
+			ok = r.snap().Readers.Card(rc.ID)
+		} else {
+			broken = r.snap().Readers.Card(rc.ID)
 		}
 	}
 	require.NotNil(r.t, ok)

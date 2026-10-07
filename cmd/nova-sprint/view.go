@@ -131,19 +131,27 @@ type coordCounts struct {
 
 // coordinatorView is view coordinator's document, schema 1.
 type coordinatorView struct {
-	View   string      `json:"view"`
-	Schema int         `json:"schema"`
-	Sum    string      `json:"sum"`
-	At     time.Time   `json:"at"`
-	Epoch  uint64      `json:"epoch"`
-	Seat   string      `json:"seat,omitempty"`
-	Push   string      `json:"push,omitempty"` // the holder's push: adapter=<a> proven=<RFC3339|->
-	Cursor string      `json:"cursor"`
-	N      coordCounts `json:"n"`
-	Items  []viewItem  `json:"items"`
-	Rows   []viewRow   `json:"rows,omitempty"`
-	Same   int         `json:"same,omitempty"` // with --since: items left out, unchanged
-	Gone   int         `json:"gone,omitempty"` // with --since: items the cursor's read showed that stand no more
+	View   string    `json:"view"`
+	Schema int       `json:"schema"`
+	Sum    string    `json:"sum"`
+	At     time.Time `json:"at"`
+	Epoch  uint64    `json:"epoch"`
+	Seat   string    `json:"seat,omitempty"`
+	Push   string    `json:"push,omitempty"` // the holder's push: adapter=<a> proven=<RFC3339|->
+	// Fleet and Friends are the work switches, carried only when off (nova-sprint set
+	// --fleet off, --friends off): the deal hands that side no work card.
+	Fleet   string `json:"fleet,omitempty"`
+	Friends string `json:"friends,omitempty"`
+	// FleetTiers and FriendsTiers are the tiers each side may take, carried only when set
+	// (nova-sprint set --fleet-tiers, --friends-tiers); absent is all.
+	FleetTiers   []string    `json:"fleet_tiers,omitempty"`
+	FriendsTiers []string    `json:"friends_tiers,omitempty"`
+	Cursor       string      `json:"cursor"`
+	N            coordCounts `json:"n"`
+	Items        []viewItem  `json:"items"`
+	Rows         []viewRow   `json:"rows,omitempty"`
+	Same         int         `json:"same,omitempty"` // with --since: items left out, unchanged
+	Gone         int         `json:"gone,omitempty"` // with --since: items the cursor's read showed that stand no more
 }
 
 // workerCard is one of a worker's cards.
@@ -500,7 +508,17 @@ func (a *app) coordinatorView(ctx context.Context, st *store.Store, all bool) (c
 		v.Items = append(v.Items, viewItem{K: "a:stopped", T: itemAlarm, W: "machine stopped", B: n.All - n.Landed, S: what + ") with " + strconv.Itoa(n.All-n.Landed) + " cards not landed",
 			Next: "nova-sprint start", age: now.Sub(machine.Since)})
 	}
-	if running && n.Width > 0 && 2*n.Busy < n.Width {
+	if s.FleetOff() {
+		v.Fleet = sprint.SwitchOff
+	}
+	if s.FriendsOff() {
+		v.Friends = sprint.SwitchOff
+	}
+	if s.Work != nil {
+		props := s.Work.Props()
+		v.FleetTiers, v.FriendsTiers = sprint.SideTiers(props, sprint.PropFleetTiers), sprint.SideTiers(props, sprint.PropFriendsTiers)
+	}
+	if running && n.Width > 0 && 2*n.Busy < n.Width && !s.FleetOff() { // off: the machines are dealt nothing
 		next := "nova-sprint where --all"
 		if n.Ready < n.Width {
 			next = release("nova-sprint needs --roots")
@@ -674,6 +692,9 @@ func coordinatorSum(v coordinatorView, known bool, m store.Machine) string {
 		n.Landed, n.All, n.L30, n.Ready, n.Waiting, n.Working, n.Review, n.Merging, n.Busy, n.Width, n.Rules)
 	if v.Push != "" {
 		sum += " | push " + v.Push
+	}
+	if line := switchesLine(v.Fleet, v.Friends, v.FleetTiers, v.FriendsTiers); line != "" {
+		sum += " | " + line
 	}
 	return sum
 }
@@ -849,6 +870,9 @@ func (a *app) workerView(ctx context.Context, st *store.Store, as string) (worke
 func workerNext(v workerView, c *sprint.Card, p sprint.Packet) string {
 	at := c.ID + "@" + strconv.Itoa(p.Gen) + " --epoch " + strconv.FormatUint(v.Epoch, 10)
 	switch {
+	case v.Kind == "friend" && p.Kind == "read":
+		// a read on her row is returned, never finished (sprint.FriendReadOutboxLine)
+		return "read " + c.ID + ": write ~/" + v.As + "-working/outbox/" + friendJobOf(p) + "/REPORT.md with Verdict: LAND, or Verdict: HOLD and a line naming the file:line or rule and what to change"
 	case v.Kind == "friend" && c.Col == sprint.Working:
 		return "finish " + c.ID + ": push to " + p.Branch + ", then write ~/" + v.As + "-working/outbox/" + friendJobOf(p) + "/REPORT.md with Verdict: LAND|HOLD|FAIL and Head: <sha>"
 	case v.Kind == "friend":

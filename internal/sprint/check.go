@@ -105,9 +105,10 @@ func Check(s *Snapshot, pending *Pending) []Violation {
 	}
 	if quiet {
 		out = append(out, diff(2, working, dealt, "work working", "fleet ready+working")...)
-		// A primary whose card was withdrawn is ready, not working.
+		// A primary whose work card was withdrawn is ready, not working. A read
+		// withdrawn is history: its primary stays in review and is asked again.
 		for _, c := range s.Fleet.Column(Withdrawn) {
-			if st := s.StateOf(c.F("primary")); st != Ready {
+			if st := s.StateOf(c.F("primary")); c.F("kind") != "read" && st != Ready {
 				out = append(out, Violation{2, fmt.Sprintf("%s is withdrawn and its primary %s is %s, not ready", c.ID, c.F("primary"), orDash(st))})
 			}
 		}
@@ -173,6 +174,18 @@ func Check(s *Snapshot, pending *Pending) []Violation {
 		readers := map[string]bool{}
 		for _, rc := range okReaders(s, c) {
 			readers[rc.F("reader")] = true
+		}
+		// a read on the fleet table (a friend's on her row, a read card on a member's,
+		// read_cards.go) is retired off its row with its verdict: a sparse read loads
+		// it by id only for a primary in review (tickExtras), so past review the reader
+		// the accept recorded on the primary stands for the card this read did not
+		// load; a card that is loaded is judged as it is
+		for _, name := range Split(c.F("readers")) {
+			id := ReadCardID(c.ID, max(c.Int("attempt"), 1), name)
+			onFleet := s.Fleet != nil && (s.Fleet.HasRow(FriendRow(name)) || s.Fleet.HasRow(name))
+			if onFleet && s.Fleet.Card(id) == nil && (s.Readers == nil || s.Readers.Card(id) == nil) {
+				readers[name] = true
+			}
 		}
 		if len(readers) < ReadsNeeded(c) {
 			out = append(out, Violation{6, fmt.Sprintf("%s is %s with ok reads at head %s from %d reader(s)", c.ID, c.Col, orDash(c.F("head")), len(readers))})

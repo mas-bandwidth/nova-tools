@@ -1018,11 +1018,12 @@ func TestStateCoverAcceptHeld(t *testing.T) {
 	}
 }
 
-// TestStateCoverAcceptNote covers acceptNote (state.go:841): a step that
-// leaves an acceptable primary in review opens the ready to accept judgment
-// when the machine is stopped, or holds it. The refusals are a running
-// machine that takes it, a primary not in review or not acceptable, and the
-// returned judgment already open on it.
+// TestStateCoverAcceptNote covers acceptNote (state.go): a step that leaves
+// an acceptable primary in review opens the ready to accept judgment only
+// when the pump holds it (AcceptHeld). The refusals are a machine, RUNNING or
+// STOPPED, whose tick takes it (since 2026-10-06: the tick accepts, no hand
+// step), a primary not in review or not acceptable, and the returned judgment
+// already open on it.
 func TestStateCoverAcceptNote(t *testing.T) {
 	t.Parallel()
 	acceptableReview := func(s *State) {
@@ -1034,9 +1035,17 @@ func TestStateCoverAcceptNote(t *testing.T) {
 		build func(s *State)
 		want  []Judgment
 	}{
-		"a stopped machine notes it": {
+		"a stopped machine whose tick takes it is refused": {
 			build: acceptableReview,
-			want:  []Judgment{{JAccept, "p"}},
+		},
+		"a stopped machine holding it notes it": {
+			build: func(s *State) {
+				acceptableReview(s)
+				pr := s.Primaries["p"]
+				pr.CI, pr.CIHead = "red", pr.Head
+				s.Primaries["p"] = pr
+			},
+			want: []Judgment{{JAccept, "p"}},
 		},
 		"a running machine holding it notes it": {
 			build: func(s *State) {

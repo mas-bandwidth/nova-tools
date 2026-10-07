@@ -41,6 +41,8 @@ cmd/nova-secrets/
 infra/image/
 internal/sandbox/
 internal/secrets/
+profiles/
+tools/sandboxcheck/
 ```
 
 **The list lives in `internal/release/sensitive.go`, and this block is the same list in the same order.**
@@ -576,6 +578,20 @@ version read back, and a rollback from kept copies on missed ticks. The runbook 
 | `no-stuck-friend` | no friend was stuck at any moment of the last 4 hours: stuck is a working card held past its deadline (her `friend_deadline`, else 2 hours, from its first take), or a card dealt to her and not taken past the dealt bound; read from the store's log, a spell that has ended counting while it overlaps the window; a fail names the friend, the card and the moment |
 
 Each later card of stream sprint-v1-release adds its row here with its check.
+
+## 17. Adopting one machine
+
+`release.OneMachine` is adopt for one machine at a time, as a library: the sprint's
+tick adopts the release the coordinator's machine runs onto a fleet member back from
+down (SPEC-SPRINT.md section 5, "Back from down: adopt the latest"). It runs adopt
+itself three times with a machine list naming the one machine: `--dry-run`, whose
+`RELEASE WOULD ADOPT ... installed=` is the version before; the adopt, which must
+print `RELEASE ADOPTED machine=<m>`; and `--dry-run` again, the version read back.
+The flags are the coordinator's (everything but `--machines`, `--version` and
+`--dry-run`), so the certification rule, the stage's digest and every refusal of this
+file apply unchanged. A machine has at most one adoption in flight, and an episode is
+adopted once. Tests: `TestOneMachineAdoptsOneAtATime`,
+`TestOneMachineRefusesANameAdoptRefuses`.
 
 ## What this file does not cover
 

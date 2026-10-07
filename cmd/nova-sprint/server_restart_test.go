@@ -25,9 +25,9 @@ func TestAServerRestartKeepsReadsWithLiveLeases(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b,reader-c --members m1")
-	ta.inReview(2)
-	ta.ok("ask")
-	lapsed, live := "s1-1.r1.reader-a", "s1-2.r1.reader-b"
+	ta.inReview(1)
+	ta.ok("ask") // the pair: a card's reads are asked together, of reader-a and reader-b
+	lapsed, live := "s1-1.r1.reader-a", "s1-1.r1.reader-b"
 	require.Equal(t, []string{lapsed}, ta.askedOf("reader-a"))
 	require.Equal(t, []string{live}, ta.askedOf("reader-b"))
 

@@ -119,6 +119,14 @@ from the owner edits one line here and nothing else moves.
 ## Progress bar: "ALL CARDS BY STATE" with the legend (landed, merging, review, working, ready, waiting) and counts;
   one cell per card (per N cards when they would be under 4 px; no "1 cell = N" label); working cells pulse steadily
   (2 s); other cells still.
+- Priority (the card reads-are-a-card-priority-b, 2026-10-06; the owner's line is quoted under LOCK 2): under
+  the bar, one row of marks, hidden while it holds none: a mark for each open card whose level is
+  not normal (`where --json`'s `priorities`) and one for each read waiting (`reads_waiting`), in the ladder's
+  order (blocker, critical, high, reader, low), at most 40 a level, the last saying how many more in its title.
+  A blocker's mark is bright red (`--p-blocker` #ff1a1a), a critical's dark red (`--p-critical` #9b1c1c), a
+  read's the orange of the robot logo's shoes (`--p-reader` #fb8321, the modal shoe pixel of
+  logo-robot-384.png), and every work card's blue (`--p-work`, the working colour) whatever its level.
+  `TestPriorityMarksShowTheThreeColours` draws it.
 
 ## Merge (title "Merge"; the card v11-merge-row-on-dashboard-b, 2026-10-06; the owner's line is quoted under LOCK 2)
 - One dark row under the progress bar, the house style: a label over each figure, side by side, wrapping at a narrow
@@ -196,6 +204,9 @@ This specification is locked. No line changes without his words, quoted here wit
 "Can we horizontally ALIGN the status columns across the three tables pls: work, fleet, friends" / "so they scan nicely as the eye goes top to bottom scrolling down." / "aligned on the right align (column right side)". The status column of Work, Fleet and Friends shares one right edge (one grid template or one fixed column width and offset for all three tables, so the pills line up as the page scrolls). Nothing else changes.
 
 ## LOCK 2 (the owner, 7:40 PM): "ok this is perfect. lock this in." The page as checked at this time (landed header centred, one status right edge across the three tables, the Fleet width column at 8rem) is the page. No change without a quoted line from him.
+- 2026-10-06 ~5:30 PM ET, the owner (relayed by the seat), a quoted change after the lock: "The dashboard
+  shows priority by colour on the card marks: a blocker card bright red, a critical card dark red, a reader
+  card the orange of the robot's shoes ..., work cards blue whatever their priority." The Priority row under the progress bar.
 - 2026-10-03 11:30 AM, the owner, a quoted change after the lock: "nova sprint website is not updating once
   per-second. something is chug." The page's refresh is the event stream, the timer's poll its fallback (the
   Refresh line above); nothing else moves.

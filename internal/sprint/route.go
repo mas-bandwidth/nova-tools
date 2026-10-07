@@ -102,11 +102,57 @@ const NNoRoute = "no route serves the tier"
 // a colon, so it is never a stream's.
 func TierSubject(tier string) string { return "tier:" + tier }
 
-// noRoute is why a primary has no route: "" when it has one (or the store has no
-// route at all), else the tier it is judged under and the sentence. It moves no index.
+// noRoute is why a primary's tier is not served: "" when a route serves it (or the store
+// has no route at all) or a friend up does (tierServed), else the tier it is judged under
+// and the sentence. It moves no index.
 func (s *Snapshot) noRoute(c *Card) (tier, why string) {
-	_, tier, why = s.routeOf(c, nil, nil)
+	_, tier, why, byFriend := s.routeOf(c, nil, nil)
+	if byFriend {
+		return tier, ""
+	}
 	return tier, why
+}
+
+// tierServed is the one check of every verb that validates a tier, asked once no enabled
+// route of it can be drawn (rested: the tier's routes resting, said first). A tier is
+// served by an enabled fleet route or by a friend up (friendDealable: not held, not down)
+// whose row lists it (friendTakes; the owner, 2026-10-04: "Fleet flash only; pro to
+// friends"). up is the friends up who serve it: its cards are then the friends' deal's,
+// never a machine's, and why says so to a machine's deal. With none, why is the refusal,
+// naming both ways and the friends whose row lists the tier but who are held or down.
+func (s *Snapshot) tierServed(tier string, rested []string) (up []string, why string) {
+	var off []string
+	for _, f := range s.Friends {
+		switch {
+		case !friendTakes(s, f, tier):
+		case friendDealable(s, f):
+			up = append(up, f.Name)
+		default:
+			off = append(off, f.Name)
+		}
+	}
+	if len(up) > 0 {
+		return up, "no enabled route serves tier " + tier + " on a machine; a friend up serves it (" + strings.Join(up, ", ") + "): the friends' deal deals it"
+	}
+	why = "no enabled route and no up friend serves tier " + tier + ": enable a route (nova-config route add <name> --tier " + tier + " ..., name it in nova-config tier set " + tier + " --routes <name,...>, then nova-config apply) or bring up a friend whose row lists " + tier + "; or pin the card with a model: <provider>/<model> line"
+	if len(rested) > 0 {
+		why = "every enabled route of tier " + tier + " in its array rests (" + strings.Join(rested, "; ") + ") and no up friend serves it: the deal draws one when its rest ends; or run nova-config route add <name> --tier " + tier + " ..., bring up a friend whose row lists " + tier + ", or pin the card with a model: <provider>/<model> line"
+	}
+	for _, side := range [][3]string{{PropFleetTiers, "the fleet's", "--fleet-tiers"}, {PropFriendsTiers, "the friends'", "--friends-tiers"}} {
+		if !s.sideTakes(side[0], tier) {
+			v, _ := s.Work.Prop(side[0])
+			why += " (" + side[1] + " tiers are " + v + ": nova-sprint set " + side[2] + " all, or a list with " + tier + ")"
+		}
+	}
+	switch n := len(off); {
+	case n > 0 && s.FriendsOff():
+		why += " (the friends' work is off: nova-sprint set --friends on)"
+	case n == 1:
+		why += " (" + off[0] + " serves " + tier + " but is held/down)"
+	case n > 1:
+		why += " (" + strings.Join(off[:n-1], ", ") + " and " + off[n-1] + " serve " + tier + " but are held/down)"
+	}
+	return nil, why
 }
 
 // tierArray is the tier's route array as the deal reads it: the tier kind's list
@@ -189,7 +235,7 @@ func preferFirst(arr []string, served map[string]Route, skip []string, hold bool
 // c's unit; nil reads the index and moves nothing (tla/RouteIndex.tla: Deal, Redeal, Pin).
 // An entry that names no enabled route of the tier (a route disabled or removed since
 // the array was set) is skipped as an excluded one is.
-func (s *Snapshot) routeOf(c, wc *Card, ri routeIndexes) (set map[string]string, tier, why string) {
+func (s *Snapshot) routeOf(c, wc *Card, ri routeIndexes) (set map[string]string, tier, why string, byFriend bool) {
 	m, bad := cardhdr.ReadModel(c.F("brief"))
 	tier = drawTier(c, m)
 	if tier == "" {
@@ -199,16 +245,23 @@ func (s *Snapshot) routeOf(c, wc *Card, ri routeIndexes) (set map[string]string,
 		tier = ceilingTier(c, m)
 		// a card admitted before the lint read its lines: judged under the tier it
 		// names (an unknown word too), else flash's
-		return nil, tier, "its brief's model lines: " + bad
+		return nil, tier, "its brief's model lines: " + bad, false
+	}
+	if tier == cardhdr.RouteFrontier && m.Pin == "" && len(s.Routes) > 0 {
+		return nil, tier, "a frontier card waits for the coordinator: run it, or pin it with a model: <provider>/<model> line", false
+	}
+	if !s.FleetTakes(tier) {
+		// the fleet's tiers leave it out (set --fleet-tiers): no machine draws it, whatever
+		// its routes or a model pin (the set is the owner's switch); the friends' deal deals
+		// it when a friend up serves it
+		up, why := s.tierServed(tier, nil)
+		return nil, tier, why, len(up) > 0
 	}
 	if m.Pin != "" {
-		return map[string]string{FieldRoute: RoutePin, FieldModel: m.Pin, FieldTokens: m.Tokens, FieldUSD: "", FieldDeadline: strconv.Itoa(m.Deadline)}, "", ""
+		return map[string]string{FieldRoute: RoutePin, FieldModel: m.Pin, FieldTokens: m.Tokens, FieldUSD: "", FieldDeadline: strconv.Itoa(m.Deadline)}, "", "", false
 	}
 	if len(s.Routes) == 0 {
-		return nil, "", ""
-	}
-	if tier == cardhdr.RouteFrontier {
-		return nil, tier, "a frontier card waits for the coordinator: run it, or pin it with a model: <provider>/<model> line"
+		return nil, "", "", false
 	}
 	// a resting route (rule 3, route_rest.go) serves no work card until its rest ends
 	served := map[string]Route{}
@@ -252,12 +305,10 @@ func (s *Snapshot) routeOf(c, wc *Card, ri routeIndexes) (set map[string]string,
 		if !pinnedTier(c, m) {
 			set[FieldTierNow] = tier // the primary is on the tier drawn (cardTier)
 		}
-		return set, tier, ""
+		return set, tier, "", false
 	}
-	if len(rested) > 0 {
-		return nil, tier, "every enabled route of tier " + tier + " in its array rests (" + strings.Join(rested, "; ") + "): the deal draws one when its rest ends; or run nova-config route add <name> --tier " + tier + " ..., or pin the card with a model: <provider>/<model> line"
-	}
-	return nil, tier, "no enabled route serves tier " + tier + ": run nova-config route add <name> --tier " + tier + " ..., name it in nova-config tier set " + tier + " --routes <name,...>, then nova-config apply; or pin the card with a model: <provider>/<model> line"
+	up, why := s.tierServed(tier, rested)
+	return nil, tier, why, len(up) > 0
 }
 
 // Flash first on every card (the owner, 2026-10-02, cost rule 1 of nova-tools#5174,
@@ -330,6 +381,39 @@ func cardTierOf(c *Card) string {
 	return now
 }
 
+// DealTier is the one tier resolution of a card every friend decision reads
+// (docs/SPEC-SPRINT.md section 1, "One tier for every friend decision",
+// friend-deal-one-tier-bb.w2): the friends' deal, the level, the take back of a re-tiered
+// card (retierTakeBacks) and the packet's tier (DealtTier, through the primary's tier
+// field) all call it, so no two of them can disagree about a card. It is the tier a deal
+// draws (dealTierOf), and the dealer's default, flash, when there is no primary.
+func (s *Snapshot) DealTier(c *Card) string {
+	if c == nil {
+		return cardhdr.RouteFlash
+	}
+	return s.dealTierOf(c)
+}
+
+// dealTierOf is the tier a deal of the primary c draws, as the machines' deal draws it
+// (routeOf): the tier it is on once a deal drew one (drawTier), its ceiling when its tier
+// is pinned, and before its first deal its start tier (startTier: flash first, pro for a
+// brief that says pro), never its ceiling; a brief whose model lines cannot be read is
+// judged under its ceiling. A card with no tier line is flash. The friends' deal and
+// level gate on it (friendTakes), so a card a machine would be dealt on flash is a
+// flash friend's too (docs/SPEC-SPRINT.md section 1, a friend's card; 2026-10-06: a
+// friend of tier flash sat empty for an hour while every brief whose line 1 said
+// tier: heavy was read as heavy for her and dealt on flash to the machines).
+func (s *Snapshot) dealTierOf(c *Card) string {
+	m, bad := cardhdr.ReadModel(c.F("brief"))
+	if bad != "" {
+		return ceilingTier(c, m)
+	}
+	if t := drawTier(c, m); t != "" {
+		return t
+	}
+	return s.startTier(c, m)
+}
+
 // NextTier is the tier the primary c escalates to when it reaches its bound: the next tier
 // of the ladder above the one it is on, up to its ceiling; "" at its ceiling (a pinned
 // model or tier is on its ceiling, cardTier), for brief lines that cannot be read, and in
@@ -353,13 +437,16 @@ func (s *Snapshot) NextTier(c *Card) string {
 // readers being conservatively the same tier as the work being done seems
 // fine?"), raised to the read tier set for its stream or the sprint when that is
 // stronger (settings.go; nova-tools#5096 item 27), never lowered. A card that pins
-// a model and names no tier is read on flash. A heavy card is read on heavy. A frontier
+// a model and names no tier is read on flash. A heavy card is read on heavy (on pro under
+// the interim rule below: the owner, 2026-10-06 7:41 PM ET, "let pro do it"). A frontier
 // card, a tier no route serves, is read on heavy, the strongest tier a route serves: a
-// read on pro would be weaker than the writer, which item 27 refuses. The value returned
-// is that collapse: a route drawn for the card is named from it. A friend is asked the
-// tier before this collapse (friendReadTier) when her class is at or above it and she
-// has room; the tick draws this route only when no such friend has room
-// (docs/SPEC-SPRINT.md, a read asked of any unit with room at or above the read tier).
+// read on pro would be weaker than the writer, which item 27 refuses; the one weaker read is
+// the interim rule's, a pro card read on flash while no enabled route serves pro and one
+// serves flash (the owner, 2026-10-06: "let flash read pro"). The value returned
+// is that collapse: a route drawn for the card is named from it. The deal measures every
+// reader, friend or member, against the tier before this collapse (friendReadTier,
+// readTierDistance), so a member whose read is drawn lower ranks by how far below it
+// really reads (docs/SPEC-SPRINT.md section 6, who reads).
 func (s *Snapshot) readTierOf(pr *Card) string {
 	m, _ := cardhdr.ReadModel(pr.F("brief"))
 	t := cardTier(pr, m)
@@ -368,6 +455,19 @@ func (s *Snapshot) readTierOf(pr *Card) string {
 	}
 	if set := s.readTierSetting(pr.Row); set != "" {
 		t = stronger(t, set)
+	}
+	// Workaround (the coordinator, 2026-10-06 7:30 PM ET; the owner: 7:11 PM: "let flash read pro"): a pro
+	// read is drawn on flash while no enabled route serves pro and one serves flash, so the
+	// fleet's flash readers read pro cards while the pro routes are off. Read cards replace
+	// this.
+	if t == cardhdr.RoutePro && len(s.Routes) > 0 && !s.tierRouted(t) && s.tierRouted(cardhdr.RouteFlash) {
+		t = cardhdr.RouteFlash
+	}
+	// Workaround (the owner, 2026-10-06 7:41 PM ET: "let pro do it"): a heavy card is read on pro,
+	// so the fleet's pro readers are its second reader beside the heavy friend, who is asked
+	// before this collapse (friendReadTier). Read cards replace this.
+	if t == cardhdr.RouteHeavy {
+		t = cardhdr.RoutePro
 	}
 	return t
 }
@@ -415,14 +515,22 @@ func (s *Snapshot) readRouteOf(ri routeIndexes, pr *Card, avoid []string) map[st
 // no reader can read it: "" when the store holds no route at all (reads run on the
 // reader's own model), an enabled route of the tier is in its array, or a reader up
 // that brings its own model (a friend's or a bud's, read_route.go) reads the tier:
-// a read needs a reader, not a route. The deal's tick raises the tier's judgment for
-// the reads waiting (TickDeal, NNoRoute) only when neither serves it.
+// a read needs a reader, not a route; the member's side only while the fleet's tiers hold
+// the read tier, a friend only while the friends' tiers do (set --fleet-tiers,
+// --friends-tiers). The deal's tick raises the tier's judgment for the reads waiting
+// (TickDeal, NNoRoute) only when neither serves it.
 func (s *Snapshot) readRouteMissing(pr *Card) (tier, why string) {
 	tier = s.readTierOf(pr)
-	if s.tierRouted(tier) || s.ownModelReaderUp(tier) {
+	// a member reads only a read tier the fleet's tiers hold (set --fleet-tiers); a friend
+	// only one the friends' tiers hold (tierServed, friendTakes)
+	if s.FleetTakes(tier) && (s.tierRouted(tier) || s.ownModelReaderUp(tier)) {
 		return tier, ""
 	}
-	return tier, "no enabled route serves tier " + tier + ", the tier of the work its reads read, and no reader up that brings its own model reads it, so its reads have no reader: start a friend's or a bud's reader of tier " + tier + ", or run nova-config route add <name> --tier " + tier + " ..., name it in nova-config tier set " + tier + " --routes <name,...>, then nova-config apply"
+	up, why := s.tierServed(tier, nil)
+	if len(up) > 0 {
+		return tier, ""
+	}
+	return tier, why + "; " + tier + " is the tier of the work its reads read, and no reader up that brings its own model reads it, so its reads have no reader: or start a friend's or a bud's reader of tier " + tier
 }
 
 // tokensWord is a route's budget as native's --tokens takes it.

@@ -152,6 +152,16 @@ func StaleGroupID(stream string, epoch uint64) string {
 	return fmt.Sprintf("stale:%s~%d", stream, epoch)
 }
 
+// waitIDs is what a wait command names: every note of the group, comma
+// separated as ack names them, or the group's own id when it has no note
+// (a stalled stream). One note stays the one id the command already printed.
+func waitIDs(g Group, first Note) string {
+	if len(g.Notes) > 0 {
+		return strings.Join(g.Notes, ",")
+	}
+	return cmp.Or(first.ID, g.ID)
+}
+
 // StaleStream is the stream a stalled stream's group id names, and whether id is one.
 func StaleStream(id string) (string, bool) {
 	rest, ok := strings.CutPrefix(id, "stale:")
@@ -420,11 +430,11 @@ func commands(g Group, first Note, prefix string) []Command {
 		case d == RepeatDecision:
 			add(d, look()...)
 		case d == "act" && first.StreamLevel:
-			add(d, cmd+"wait "+first.ID+" --for 30m")
+			add(d, cmd+"wait "+waitIDs(g, first)+" --for 30m")
 		case d == "act" && contains(g.Decisions, "ack"):
-			add(d, cmd+"ack "+strings.Join(g.Notes, ",")+" --reason "+noneText, cmd+"wait "+g.ID+" --for 30m")
+			add(d, cmd+"ack "+strings.Join(g.Notes, ",")+" --reason "+noneText, cmd+"wait "+waitIDs(g, first)+" --for 30m")
 		case d == "act":
-			add(d, cmd+"wait "+g.ID+" --for 30m")
+			add(d, cmd+"wait "+waitIDs(g, first)+" --for 30m")
 		case g.Type == NSprintDone:
 			switch d {
 			case "clear":
@@ -473,7 +483,7 @@ func commands(g Group, first Note, prefix string) []Command {
 			case "rank that card first":
 				add(d, cmd+"rank "+other+" --first"+ans)
 			case "wait":
-				add(d, cmd+"wait "+first.ID+" --for 30m")
+				add(d, cmd+"wait "+waitIDs(g, first)+" --for 30m")
 			case "look at both":
 				add(d, cmd+"card "+card, cmd+"card "+other)
 			case "return":
@@ -486,7 +496,7 @@ func commands(g Group, first Note, prefix string) []Command {
 			case "resume":
 				add(d, resume("'<the base passes its tree gate again>'"))
 			case "wait":
-				add(d, cmd+"wait "+first.ID+" --for 30m")
+				add(d, cmd+"wait "+waitIDs(g, first)+" --for 30m")
 			}
 		case g.Type == NRejected:
 			switch d {
@@ -510,9 +520,14 @@ func commands(g Group, first Note, prefix string) []Command {
 		case d == "ask another reader":
 			add(d, cmd+"ask"+subj+" --another"+subjAns)
 		case d == "brief":
-			// the brief is wrong, not the worker (brief_bound.go): replaced while the card waits,
-			// else dropped and added again corrected; the placeholder keeps it the coordinator's
-			add(d, cmd+"brief"+subj+" --brief-file '<the corrected brief>'"+subjAns)
+			// the brief is wrong, not the worker (brief_bound.go): corrected in place, the card's
+			// next attempt; one card takes one file, a group of several one file a card under a
+			// directory (brief --group --dir); the placeholder keeps it the coordinator's
+			if subj == grp && g.Size > 1 {
+				add(d, cmd+"brief"+grp+" --dir '<a directory of the corrected briefs, <id>.md a card>'"+ans)
+			} else {
+				add(d, cmd+"brief"+subj+" --brief-file '<the corrected brief>'"+subjAns)
+			}
 		case d == "drop":
 			add(d, cmd+"drop"+subj+" --reason "+whyText+subjAns)
 		case d == "return":
@@ -522,7 +537,7 @@ func commands(g Group, first Note, prefix string) []Command {
 		case d == "check":
 			add(d, cmd+"check")
 		case d == "wait":
-			add(d, cmd+"wait "+cmp.Or(first.ID, g.ID)+" --for 30m") // a stale stream's group has no note: its id
+			add(d, cmd+"wait "+waitIDs(g, first)+" --for 30m") // a stalled stream's group has no note: its id
 		case d == "look at the card":
 			add(d, look()...)
 		case d == "repair":
@@ -553,7 +568,7 @@ func commands(g Group, first Note, prefix string) []Command {
 		case d == "promoted":
 			add(d, cmd+"promoted --sha '<merge sha>'"+ans)
 		case d == "wait 15m" || d == "wait 10m" || d == "wait 30m":
-			add(d, cmd+"wait "+cmp.Or(first.ID, g.ID)+" --for "+strings.TrimPrefix(d, "wait "))
+			add(d, cmd+"wait "+waitIDs(g, first)+" --for "+strings.TrimPrefix(d, "wait "))
 		case strings.HasPrefix(d, "restart "):
 			// a reader reading under its width: its loop unit is nova-config's record of
 			// the reader's name; restarted, it reads its machine's width (readers_behind.go)

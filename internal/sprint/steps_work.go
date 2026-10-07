@@ -36,6 +36,9 @@ type CardAdd struct {
 	// Base is the branch the brief names on its BASE: line (swarm.ReadCardBase), "" for
 	// none: add admits a card based on dev only into the promotion stream (SprintBranchWhy).
 	Base string
+	// Repo is the repository the brief names on its REPO: line (swarm.ReadCardBase),
+	// recorded on its stream's control card as the stream's repository (FieldRepo).
+	Repo string
 	// Sentinel marks this card a sentinel (a stop), not a primary: the
 	// many-brief form's --sentinel <id>, admitted after the brief cards.
 	Sentinel bool
@@ -51,6 +54,8 @@ type AddReq struct {
 	Rules  string // the held rules file of every card the add admits with Brief (FieldRules)
 	// Base is the branch Brief names on its BASE: line, as CardAdd.Base.
 	Base string
+	// Repo is the repository Brief names on its REPO: line, as CardAdd.Repo.
+	Repo string
 	// Cards, when set, is the many-brief form: one card per entry, in order,
 	// each with its own brief and needs (a need names a primary already on
 	// the table or one of this add). IDs, Count, Brief and Needs are then
@@ -220,6 +225,12 @@ func Add(s *Snapshot, r AddReq) Plan {
 		}
 		return r.Base
 	}
+	repoOf := func(i int) string {
+		if len(r.Cards) > 0 {
+			return r.Cards[i].Repo
+		}
+		return r.Repo
+	}
 	// isSent says the i'th card admitted is a sentinel: the one --sentinel form,
 	// or a card of the many-brief form marked one (its --sentinel <id>).
 	isSent := func(i int) bool {
@@ -237,6 +248,8 @@ func Add(s *Snapshot, r AddReq) Plan {
 		model  string // the words of a card add tiered frontier (ModelTier)
 		rules  string // FieldRules
 		bench  string // FieldBench: the members its brief's BENCH line names (bench_deal.go)
+		repo   string // the repository its brief's REPO: line names (FieldRepo)
+		base   string // the base its brief's BASE: line names (FieldBase)
 		behind string // the sentinel it waits behind by position
 		gate   bool   // a stop of --sentinel-every
 		sent   bool   // a stop: --sentinel or a many-brief card marked one
@@ -246,12 +259,22 @@ func Add(s *Snapshot, r AddReq) Plan {
 	seen := map[string]bool{}
 	for i, id := range ids {
 		needs := append([]string(nil), needsOf(i)...)
-		// missing is the needs that name no primary they may name: one on the
-		// table or one of this add (a cycle is refused below).
-		var missing []string
+		// A need names a primary that can still land: one on the table
+		// (waiting, ready, working, review, merging or landed), a sentinel, or
+		// one of this add. missing is the needs that name no record at all;
+		// off is the needs that name a kept record off the table (a dropped
+		// card), whose outcome the refusal names.
+		var missing, off []string
 		for _, n := range needs {
-			if s.Work.Card(n) == nil && !adding[n] {
+			if adding[n] {
+				continue
+			}
+			c := s.Work.Card(n)
+			switch {
+			case c == nil:
 				missing = append(missing, n)
+			case !c.Placed() && !IsSentinel(c):
+				off = append(off, n)
 			}
 		}
 		// bench is the members its brief's BENCH line names: every placement of its work
@@ -264,6 +287,7 @@ func Add(s *Snapshot, r AddReq) Plan {
 		devWhy := SprintBranchWhy(s, r.Stream, baseOf(i), id)
 		// a card whose PATHS name TLA+ model work is tiered frontier (tier_model.go)
 		brief, modelSaid, modelWhy := ModelTier(briefOf(i))
+		_, priorityWhy := PriorityOfBrief(briefOf(i)) // a PRIORITY line naming no level (priority.go)
 		switch {
 		case seen[id]:
 			p.refuse(id, "named twice")
@@ -277,12 +301,19 @@ func Add(s *Snapshot, r AddReq) Plan {
 		case devWhy != "": // a card cut on dev, outside the promotion stream (docs/SPEC-SPRINT.md section 7)
 			p.refuse(id, devWhy)
 			continue
-		case len(missing) > 0:
-			if len(r.Cards) > 0 {
-				p.refuse(id, fmt.Sprintf("%s: needs %s, which is no primary on the table or in this add", r.Cards[i].File, strings.Join(missing, ",")))
-			} else {
-				p.refuse(id, "needs "+strings.Join(missing, ",")+", which is no primary on the table or in this add")
+		case len(missing) > 0 || len(off) > 0:
+			var why []string
+			if len(missing) > 0 {
+				why = append(why, "needs "+strings.Join(missing, ",")+", which is no primary on the table or in this add")
 			}
+			for _, n := range off {
+				why = append(why, "needs "+n+", which was "+orDash(s.Work.Card(n).F("outcome")))
+			}
+			msg := strings.Join(why, "; ")
+			if len(r.Cards) > 0 {
+				msg = r.Cards[i].File + ": " + msg
+			}
+			p.refuse(id, msg)
 			continue
 		case benchWhy != "":
 			p.refuse(id, benchWhy)
@@ -290,9 +321,12 @@ func Add(s *Snapshot, r AddReq) Plan {
 		case modelWhy != "":
 			p.refuse(id, modelWhy)
 			continue
+		case priorityWhy != "":
+			p.refuse(id, priorityWhy)
+			continue
 		}
 		seen[id] = true
-		a := admit{id: id, score: scores[i], needs: needs, brief: brief, model: modelSaid, rules: rulesOf(i), bench: strings.Join(bench, ","), gate: r.IsGate(id), sent: isSent(i)}
+		a := admit{id: id, score: scores[i], needs: needs, brief: brief, model: modelSaid, rules: rulesOf(i), bench: strings.Join(bench, ","), repo: repoOf(i), base: baseOf(i), gate: r.IsGate(id), sent: isSent(i)}
 		if st := sentinelBefore(s, r.Stream, a.score); st != nil && !a.sent {
 			a.behind = st.ID // it waits behind the stop by its place; nothing is written of it
 		}
@@ -304,6 +338,64 @@ func Add(s *Snapshot, r AddReq) Plan {
 			lastGate = id
 		}
 		in = append(in, a)
+	}
+	// Every card admitted records its repository and base on its stream's control
+	// card: the union of what the stream already records and this add's briefs, so a
+	// stream whose cards name more than one repository keeps them all (FieldRepo,
+	// FieldBase; docs/SPEC-SPRINT.md section 11, the streams verb).
+	{
+		var repos, bases []string
+		if ctl != nil {
+			repos, bases = Split(ctl.F(FieldRepo)), Split(ctl.F(FieldBase))
+		}
+		for _, a := range in {
+			if a.repo != "" && !contains(repos, a.repo) {
+				repos = append(repos, a.repo)
+			}
+			if a.base != "" && !contains(bases, a.base) {
+				bases = append(bases, a.base)
+			}
+		}
+		if len(repos) > 0 || len(bases) > 0 {
+			set := map[string]string{}
+			if len(repos) > 0 {
+				sort.Strings(repos)
+				set[FieldRepo] = strings.Join(repos, ",")
+			}
+			if len(bases) > 0 {
+				sort.Strings(bases)
+				set[FieldBase] = strings.Join(bases, ",")
+			}
+			if ctl == nil {
+				for i := range head {
+					e := &head[i].Entry
+					if e.ID == CtlID(r.Stream) && e.Create != nil {
+						if e.Set == nil {
+							e.Set = map[string]string{}
+						}
+						maps.Copy(e.Set, set)
+					}
+				}
+			} else {
+				// one change of the control card a step: a state change already in
+				// head is merged into, never changed twice (setStream's rule)
+				merged := false
+				for i := range head {
+					e := &head[i].Entry
+					if e.ID == CtlID(r.Stream) {
+						if e.Set == nil {
+							e.Set = map[string]string{}
+						}
+						maps.Copy(e.Set, set)
+						merged = true
+						break
+					}
+				}
+				if !merged {
+					head = append(head, change(Merge, setEntry(ctl, set)))
+				}
+			}
+		}
 	}
 	// What the admitted change in the cards already in line.
 	mods := map[string]*mod{}
@@ -438,6 +530,11 @@ func Add(s *Snapshot, r AddReq) Plan {
 				set, said := gateTier(walls, a.brief)
 				maps.Copy(fields, set)
 				gateSaid = said
+			}
+		}
+		if kind == "primary" {
+			if lvl := seedPriority(ctl, a.brief); lvl != "" {
+				fields[FieldPriority] = lvl // its brief's PRIORITY line, else its stream's default (priority.go)
 			}
 		}
 		if len(a.needs) > 0 {
@@ -855,6 +952,12 @@ func dealPlan(s *Snapshot, r DealReq, rr *round, ri routeIndexes) (Plan, roundMo
 	}
 	chosen := pick(&p, r.Sel, eligibleTurns(s.Work.Column(Ready), ready, streamRound(s, PropStreamIndex)), rowOf, ready, s.primaryCard)
 	up := s.UpMembers()
+	if s.FleetOff() {
+		for _, c := range chosen {
+			p.refuse(c.ID, "the fleet's work is off: no card is dealt to a machine; run: nova-sprint set --fleet on")
+		}
+		return p, moves
+	}
 	if len(up) == 0 {
 		for _, c := range chosen {
 			p.refuse(c.ID, "no fleet member is up: a member is up while its machine beats; start nova-sprint fleet beat <member> on a machine, or release a hold with nova-sprint fleet up <member>")
@@ -912,8 +1015,8 @@ func dealPlan(s *Snapshot, r DealReq, rr *round, ri routeIndexes) (Plan, roundMo
 				p.Units = append(p.Units, u)
 				continue
 			}
-			if _, why := s.noRoute(c); why != "" {
-				p.refuse(c.ID, why)
+			if _, _, why, _ := s.routeOf(c, nil, nil); why != "" {
+				p.refuse(c.ID, why) // a machine draws a route: a tier friends alone serve is theirs
 				continue
 			}
 			// a member that refused it at staging is not dealt it again (StagingRefusers)
@@ -940,8 +1043,8 @@ func dealPlan(s *Snapshot, r DealReq, rr *round, ri routeIndexes) (Plan, roundMo
 			p.Units = append(p.Units, u)
 			continue
 		}
-		if _, why := s.noRoute(c); why != "" {
-			p.refuse(c.ID, why)
+		if _, _, why, _ := s.routeOf(c, nil, nil); why != "" {
+			p.refuse(c.ID, why) // a machine draws a route: a tier friends alone serve is theirs
 			continue
 		}
 		m := next()
@@ -972,7 +1075,7 @@ func deal(s *Snapshot, c *Card, fix, m string, q map[string]int, ri routeIndexes
 	if s.Fleet.Card(card) != nil {
 		return Unit{}, "work card " + card + " exists already"
 	}
-	route, _, why := s.routeOf(c, nil, ri)
+	route, _, why, _ := s.routeOf(c, nil, ri)
 	if why != "" {
 		return Unit{}, why
 	}
@@ -982,6 +1085,7 @@ func deal(s *Snapshot, c *Card, fix, m string, q map[string]int, ri routeIndexes
 	if fix != "" {
 		fields["fix"] = fix
 	}
+	priorityOnWork(fields, c)
 	// the attempt decision's bars, which its failed finish is routed by (decide.go)
 	bars, _ := s.attemptBars()
 	maps.Copy(fields, bars)
@@ -1039,7 +1143,7 @@ func escalate(s *Snapshot, c, prev *Card, tier, why, m string, q map[string]int,
 // (tla/DirtyTick.tla DealOne). Its route is the next at its tier's index that the
 // card was not dealt on (ri, moved past it and the entries skipped: route.go).
 func redeal(s *Snapshot, c, wc *Card, m string, q map[string]int, ri routeIndexes) (Unit, string) {
-	route, _, why := s.routeOf(c, wc, ri)
+	route, _, why, _ := s.routeOf(c, wc, ri)
 	if why != "" {
 		return Unit{}, why
 	}
@@ -1186,8 +1290,22 @@ func takeOne(s *Snapshot, r TakeReq) Plan {
 	byID := named(sel)
 	// THE WIDTH IS HARD: a member's working cards never pass its width, held here, at the
 	// sprint's one writer, whatever the member asks. A take by
-	// count is cut to the room; a take by id past it is refused.
+	// count is cut to the room; a take by id past it is refused. While read cards are on a
+	// read working holds half a slot (read_cards.go): the room is counted in half slots,
+	// twice the width less twice the work and the reads working, a read taking one and a
+	// work card two.
+	halves := s.ReadCardsOn()
 	room := max(width-len(s.Fleet.Cell(r.As, Working)), 0)
+	if halves {
+		ww, wr := rowWorking(s, r.As)
+		room = max(2*width-2*ww-wr, 0)
+	}
+	cost := func(c *Card) int {
+		if halves && !isRead(c) {
+			return 2
+		}
+		return 1
+	}
 	if !byID {
 		if room == 0 {
 			return p
@@ -1199,8 +1317,34 @@ func takeOne(s *Snapshot, r TakeReq) Plan {
 	}
 	// the member's ready cards in stream turns (takeTurns), as the deal dealt
 	// them: a member holding DealAhead times its width takes its width of them
-	// from every stream alike, never one stream's lowest scores first.
-	chosen := pick(&p, sel, takeTurns(s.Fleet.Cell(r.As, Ready), slices.Index(s.Members(), r.As)), fieldStream, func(c *Card) string {
+	// from every stream alike, never one stream's lowest scores first. Its reads are taken
+	// before its work, a read being at reader priority (priority.go).
+	ready := takeTurns(s.Fleet.Cell(r.As, Ready), slices.Index(s.Members(), r.As))
+	if halves {
+		slices.SortStableFunc(ready, func(a, b *Card) int {
+			if isRead(a) == isRead(b) {
+				return 0
+			}
+			if isRead(a) {
+				return -1
+			}
+			return 1
+		})
+		if !byID {
+			// a take by count takes the cards that fit, in order: a work card that does not
+			// fit is passed over for the reads after it
+			var fit []*Card
+			left := room
+			for _, c := range ready {
+				if cost(c) <= left {
+					fit = append(fit, c)
+					left -= cost(c)
+				}
+			}
+			ready = fit
+		}
+	}
+	chosen := pick(&p, sel, ready, fieldStream, func(c *Card) string {
 		if byID {
 			if why := liveGen("take", c, r.Gens); why != "" {
 				return why
@@ -1215,10 +1359,10 @@ func takeOne(s *Snapshot, r TakeReq) Plan {
 			return "its route " + c.F(FieldRoute) + " rests until " + rest.UntilSaid() + " (" + rest.Said() + "): the tick withdraws it and deals it again on a route that serves"
 		}
 		if byID {
-			if room == 0 {
+			if room < cost(c) {
 				return fmt.Sprintf("%s %s is at its width (%d working of %d): a card is taken when one is reported", worker, r.As, len(s.Fleet.Cell(r.As, Working)), width)
 			}
-			room--
+			room -= cost(c)
 		}
 		return ""
 	}, s.Fleet.Card)
@@ -1296,6 +1440,10 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 	}
 	byID := named(r.Sel)
 	picked := pick(&p, r.Sel, all, fieldStream, func(c *Card) string {
+		if c.F("kind") == "read" {
+			// a read on a friend's row is no work: it is returned, never finished
+			return "a read, not work: finish does not return it; " + FriendReadOutboxLine(c.Row, c.ID, s.Epoch)
+		}
 		if byID {
 			if why := liveGen("finish", c, r.Gens); why != "" {
 				return why
@@ -2003,6 +2151,18 @@ func downPlan(s *Snapshot, r FleetReq, up []string, rr *round, moves roundMoves,
 	}
 	cards = slices.DeleteFunc(cards, func(c *Card) bool { return r.keep[c.F("stream")] })
 	SortCards(cards)
+	// a read card is its reader's: taken back off a member going down or held, by the
+	// machine, which spends nothing of the reader's (read_cards.go, spentBy), and the
+	// read-card deal deals it again
+	cards = slices.DeleteFunc(cards, func(c *Card) bool {
+		if !isRead(c) {
+			return false
+		}
+		p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.F("stream"),
+			Changes: []Change{change(Fleet, removeEntry(c, map[string]string{"retired": stamp(s.Now), "retired_by": RetiredByAway}))},
+			Moved:   c.ID + " taken back: " + r.Member + " is " + r.Op})
+		return true
+	})
 	withdrew := 0
 	for _, c := range cards {
 		taken := c.Col == Working
@@ -2139,7 +2299,8 @@ func levelWith(s *Snapshot, p *Plan, up []string, rr *round, moves roundMoves, h
 	}
 	widths := memberWidths(s, up)
 	for _, m := range up {
-		queues[m] = append([]*Card{}, s.Fleet.Cell(m, Ready)...)
+		// a read card is its reader's: the level moves work cards alone (read_cards.go)
+		queues[m] = slices.DeleteFunc(append([]*Card{}, s.Fleet.Cell(m, Ready)...), isRead)
 	}
 	for {
 		long, short := "", ""

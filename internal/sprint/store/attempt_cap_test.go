@@ -56,7 +56,7 @@ func TestTheAttemptCapIsOneJudgmentWithEveryFindingAndTheSpend(t *testing.T) {
 	refused := rework()
 	require.Len(t, refused, 1, "rework refuses a card at the cap")
 	assert.True(t, strings.HasPrefix(refused[0].Why, "s1-1: brief defect after 4 attempts, $3.00 spent; the brief is wrong, not the worker; findings: attempt 1:"), refused[0].Why)
-	assert.True(t, strings.HasSuffix(refused[0].Why, "run: nova-sprint brief s1-1 --brief-file <path> (a waiting card) or drop s1-1 and add it again with the brief corrected"), refused[0].Why)
+	assert.True(t, strings.HasSuffix(refused[0].Why, "run: nova-sprint brief s1-1 --brief-file <path> (the brief corrected in place, its next attempt from its last pushed head), or nova-sprint drop s1-1 --reason '<why>'"), refused[0].Why)
 	assert.Equal(t, sprint.Review, h.snap().Work.Card("s1-1").Col, "not dealt again")
 	for _, c := range h.commandsOf(sprint.NBriefWrong) {
 		assert.Contains(t, []string{"brief", "drop"}, c.Decision)

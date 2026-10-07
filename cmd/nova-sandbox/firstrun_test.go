@@ -247,9 +247,12 @@ func TestTheCommandReferenceExamplesAreWhatTheToolPrints(t *testing.T) {
 
 	j := newWJob(t)
 	g := newFakeGit(j.repo)
-	useFakeGit(t, g)
+	oldGit, oldFactory := worktreeGit, worktreeForgeFactory
+	t.Cleanup(func() { worktreeGit, worktreeForgeFactory = oldGit, oldFactory })
+	worktreeGit = g.run
 	sha := "0123456789abcdef0123456789abcdef01234567"
-	useForge(t, &fakeForge{byID: map[int]worktreePR{123: {Head: sha, Base: "main", State: "open"}}})
+	forge := &fakeForge{byID: map[int]worktreePR{123: {Head: sha, Base: "main", State: "open"}}}
+	worktreeForgeFactory = func(repo string, env []string) worktreeForge { return forge }
 
 	oldGUID := worktreeGUID
 	worktreeGUID = func() string { return "1f450ab70c635e66f675ff8a4e395760" }

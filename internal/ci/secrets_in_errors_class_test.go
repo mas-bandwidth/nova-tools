@@ -360,6 +360,7 @@ var secretExempt = map[string]string{
 	"internal/hostload.ParseProcLoadavg":       "built on linux only, so a test binary on another platform cannot name it",
 	"internal/cairn.Open":                      "writes a session record under the store directory its first string names; driving it would write into the working tree",
 	"internal/nsprint/testutil.NewLocalRemote": "takes a *testing.T and builds a git remote on disk; it is a test fixture, not an opener of a secret",
+	"internal/friend.DialCodexAppServer":       "takes the Codex home, a directory path, never a secret; it dials the app-server socket under it",
 }
 
 // secretLeakAllowlist are the functions known to carry a secret-shaped string

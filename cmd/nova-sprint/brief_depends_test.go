@@ -63,5 +63,5 @@ func TestBriefDependsOnOnlyChangeIsTakenInAnyState(t *testing.T) {
 	assert.Equal(t, "working", ta.primary("a-1").Col)
 	code, _, errs := ta.do("brief a-1 --brief-file " + writeHeaderBrief(t, t.TempDir(), "a-1", "a-3", "internal/other.go"))
 	assert.Equal(t, 1, code)
-	assert.Contains(t, errs, "a-1 is working: a card dealt, working, in review, merging or landed keeps its brief")
+	assert.Contains(t, errs, "a-1 is working: a card working, merging or landed keeps its brief")
 }

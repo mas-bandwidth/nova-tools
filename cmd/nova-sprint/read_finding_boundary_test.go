@@ -33,7 +33,6 @@ func TestAuthoritativeBrokenReadFindingBoundary(t *testing.T) {
 			ta.ok("reader away reader-c")
 			ta.inReview(1)
 			ta.ok("ask")
-			ta.ok("ask s1-1 --another") // the pair: reads are asked one at a time
 			ta.ok("reader up reader-c")
 			const original = "s1-1.r1.reader-a"
 			ta.ok("read --as reader-a --begin " + original)

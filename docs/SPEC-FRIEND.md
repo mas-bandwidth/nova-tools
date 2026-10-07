@@ -162,7 +162,8 @@ Presence is therefore the session's, never the daemon's:
   check went in.
 - No answer within five minutes (`SessionBound`) and the friend is down, with
   the reason `no session answer`; a check turn still running then is stopped,
-  and a fresh check goes in ten minutes after the last. The next answer, to the
+  and a fresh check goes in ten minutes after the last once the session has
+  read it (an hour after, while it has not). The next answer, to the
   latest nonce, late or not, brings the friend back up, and so does any other
   message the session writes on the bus (`presence: up: the session wrote on
   the bus`): a session that speaks is alive, whatever process is or is not
@@ -172,17 +173,62 @@ Presence is therefore the session's, never the daemon's:
   the harness check reads it by its own turns, never by an app (The harness
   check, below).
 - A daemon that starts is down, `no session answer yet`, with a check owed at
-  once: coming up proves nothing about the session.
-- While down, no beat goes to the sprint server: her beat never makes her up
-  there (only her session's evidence does, "Presence is her session's
-  evidence" below), and a daemon whose session is down holds it back (the
-  status says `not beating: the session is down (<reason>)`). The friend row's
-  mode and width arrive with the beat's answer, so while down the daemon
-  delivers by the row it last read (batch at `--width` before any).
+  once: coming up proves nothing about the session. A check the session has not
+  read is never asked again before `ReaskAfter` (an hour): a queueing harness
+  (codex's queue, a tmux prompt) keeps every copy, so a closed night would pile
+  them up. A check is read when the adapter's delivery returns only once the
+  session took it (`ReadOnReturn`: a headless turn that ran, dsh, gemini,
+  opencode run; antigravity's read.json marking it read); a read check
+  unanswered is asked again on the cadence (`SessionQuiet` while down). With
+  one unanswered while the session spoke, silence for `SessionQuiet` plus
+  `SessionBound` is down all the same. Until the session answers
+  a check (or writes on the bus) the push is unproven and the daemon delivers
+  nothing into the session (The push proof, below).
+- The daemon is the one that proves its session to the sprint server, by
+  nonces only: the beat after a check goes in says it, `friend beat --check
+  <nonce> --run <run>`, and the beat after the session answers it names it,
+  `--pong <nonce> --run <run>` (`SessionCheck.Words`, said once each, `Said`
+  once the server took the beat; `--run` is this daemon's run, its
+  generation). The server counts the answer only when it names a check that
+  run asked, once, within fifteen minutes of the ask, and only while her beats
+  go on ("Presence is her session's evidence" below); a bus message from the
+  session keeps the daemon's presence up and proves nothing to the server. So
+  while she is up a check goes in `ProveEvery` (eight minutes) after the last
+  check went in, timed from the ask and never from the answer, whatever she
+  says on the bus: the slowest answer the daemon takes comes `SessionBound`
+  (five minutes) after its ask, so her proof is never older than thirteen
+  minutes, inside the server's fifteen (`FriendProofLive`;
+  `TestASlowAnswerNeverLeavesAGap`, `TestTheProofCycleFitsTheEvidenceWindow`). A per-card harness (claude:
+  a process per card) has no session for its daemon to check: its beat says no
+  check and no answer, ever, and her evidence is a card of hers finished. The
+  status file's `proof_sent` is when the server last took an answer as proof,
+  and `check` prints it (`proof=sent proof_age=`). While down, her beat says so:
+  `friend beat --until <t> --reason <why>` (`SessionCheck.BeatOr`), the until
+  the open check's bound or the next check's, the reason `push unproven:
+  session check <nonce> ...` before the first answer and `no session answer to
+  session check <nonce> within 5m0s` after one, so the server reads her down
+  with the daemon's reason at once; a beat can say down, never up. The friend
+  row's mode and width arrive with an up beat's answer, so while down the
+  daemon delivers by the row it last read (batch at `--width` before any).
+- On a headless harness (dsh, gemini: each turn a one-shot process into the
+  session) the check goes in as a turn of its own as soon as no turn runs. A
+  turn runs from the moment it comes to the gate (`SessionCheck.Gate`), before
+  any wait under it (the limit gate's), to its end, and while the adapter's own
+  turn record (`TurnRecord`: a process begun and not ended) says one runs; the
+  turn lock is a second word, never the judge: held for `StaleTurnLock` (one
+  minute) with nothing at the gate and the record saying no turn runs, it is no
+  turn, and the check goes in by the record (`presence: session check <nonce> into the session, owed
+  since <t> as a turn of its own ...`). The log says when the check went in and
+  when it was answered (`presence: up: the session answered <nonce>`). A check
+  owed one check period (`SessionQuiet`) that has not gone in, on any harness, is
+  one line, `presence: REFUSED: a session check owed since <t> has not gone in
+  for <d>: <why>`.
 - The state is in `presence.json` in the state directory, one writer, the
   daemon; `status` prints `presence=up|down`, `last_session=`, and, when down,
   `presence_reason=` (`no session answer`, `no session answer yet`, or
-  `no daemon` when the status file is stale).
+  `no daemon` when the status file is stale). Tests:
+  `TestAnAnsweredCheckIsProvedToTheServerByTheDaemon`,
+  `TestAHeadlessDaemonSendsItsCheckWhenNoTurnRuns`.
 
 ### The model (tla/FriendPresence.tla)
 
@@ -225,6 +271,16 @@ seen holds the beat back and no check goes in); a card taken back is dealt
 to another friend, assuming disruptions are finite, every recovery comes
 (the app reopens, the session answers again, the limit resets, the hold is
 released) and the checks keep going in.
+
+Owed (the cold reader's hold of 2026-10-06): the proof in the model. The server
+counts an answer only to a check her daemon's run asked, once, while her daemon
+beats, and a daemon that starts again delivers nothing until its session
+answers; the extension that models it (`asked`, `beats`, `pushProven`,
+`delivered`; `UpOnAnAskedAnswer`, `DeliveredOnlyProven`, with reversed
+witnesses `forged`, `replay`, `deadproof`, `unproven`) is on a side branch
+the pull request that landed this names, not here: its design case exceeds
+TLC's 110 s budget at the current instance on a record machine, so its records
+cannot be written until the instance is cut down.
 
 "A friend shown up has a running harness", read at every state, cannot hold:
 the table cannot see the app close, only the answers stop, so for up to the
@@ -509,7 +565,7 @@ beats sent: plain, then down with the reset and the reason, then plain again; `T
 The sprint server's beat lane takes the down beat: `friendBeatFlags`
 (`cmd/nova-sprint/serve.go`) names `--until` (an RFC3339 time) and `--reason` (not
 empty, one line, no control character) beside `--running --working --queue --width
---load --active --pong`, each once with its value; any other shape is refused, exit 2,
+--load --active --pong --check --run`, each once with its value; any other shape is refused, exit 2,
 nothing changed (`TestTheServerTakesAFriendsDownBeat`). Before this (r7.w1) the lane
 refused the down beat and her row read down only by the lapse.
 The table's status cell shows reason and until for a hold and an observation only
@@ -528,9 +584,16 @@ rule it read it by (`alive=session|app`):
   session ended exit 0 within `AliveWithin` (`SessionQuiet` plus
   `SessionBound`, fifteen minutes: a quiet session is sent a check every
   quiet spell). The adapter keeps its own last turn (`SessionTurns`: when it
-  ended, into which session, its exit), on the daemon's clock; a turn that
-  failed, or a session that refused it, is not alive; a deferred turn ran
-  nothing and moves nothing; before the first turn it cannot tell. DSH
+  ended, into which session, its exit, and the turns begun and not ended), on
+  the daemon's clock; a turn running is alive, `a turn is running in the
+  <harness> session since <t>`; a turn that failed, or a session that refused
+  it, is not alive; a deferred turn ran nothing and moves nothing; before the
+  first turn it cannot tell, and past `AliveWithin` with no turn it cannot tell
+  either, `quiet: ... delivering is the check`: a one-shot harness is seen only
+  by its turns, so a quiet session is never "not seen", and nothing it reads
+  ever holds a delivery (`TestAQuietDshSessionStillGetsTheNextDelivery`; the
+  finding of 2026-10-06). `check` says `route=push` for dsh: each delivery is
+  a headless turn. DSH
   (`dsh headless --session-id`), Codex (`codex exec resume`, `codex queue`),
   OpenCode (a batch turn, a lane's open and its turns) and Gemini
   (`gemini --resume`) read so, and no desktop app is read for them: a
@@ -694,6 +757,70 @@ such flag; ordinary-launch and idle-session behavior remain separate live
 checks. A later end-to-end check was sent at 17:11:00 and answered by the
 session at 17:11:10, but its transport was not independently identified.
 
+**A delivery during a turn is queued, never steered.** The Codex app holds
+what is queued until the turn under way ends, and shows each queued message
+under its composer with a "Steer" control. That control is not reachable from
+outside: the open chat's turn runs in the app's own app-server, and the local
+app-server daemon the adapter can reach (`codex app-server`, a WebSocket on
+`<CODEX_HOME>/app-server-control/app-server-control.sock` speaking JSON-RPC)
+does not have the thread loaded. `turn/steer` there for the friend's thread
+answers `thread not found`, because steering needs the active turn's id on
+the server that runs it. The `codex` CLI has no steer verb, and its `steer`
+feature flag reads "removed". Measured 2026-10-06 with codex 0.153.4, against
+the friend's thread mid-turn: `thread/loaded/list` was empty, `turn/steer`
+answered `thread not found`, `thread/queue/list` returned her three queued
+pong requests, and `thread/queue/delete` answered `{"deleted": false}` for an
+id not on the queue.
+
+So the queue holds one request for a pong of each kind at a time
+(`Codex.queueing`, `PongRequest`). A request for a pong is a delivery that asks
+for the pong and nothing else. There are two kinds, each its own series of
+nonces:
+
+- a session check (`SESSION CHECK <nonce>`, the presence's nonce);
+- a wake (a wake turn or an idle wake, the coordinator's challenge nonce).
+
+A request of one kind never withdraws one of the other
+(`TestAWakeNeverWithdrawsASessionCheck`). Before such a delivery is queued,
+the adapter reads the thread's queue (`thread/queue/list`) and acts on each
+queued request of the same kind:
+
+- The same request still unread, queued less than `CodexCheckRequeue` ago,
+  stands for the new one, which is not queued twice: one line, and the
+  delivery answers 0.
+- Otherwise the new request is queued first. Only once it is in is every
+  request of its kind it supersedes withdrawn (`thread/queue/delete`), one
+  line each: a request for an older nonce, or the same request queued
+  `CodexCheckRequeue` ago or more (judged by the queued id's UUIDv7 time).
+  So a `codex queue` that fails leaves the old request standing
+  (`TestAFailedCodexQueueLeavesTheOldRequestStanding`).
+- A withdrawal the app refuses is one line, marked superseded. One the
+  session took first is one line saying so.
+- A queued message that carries anything else (a bus message, a card dealt)
+  is never withdrawn.
+
+`CodexCheckRequeue` is the session check's re-ask age (`ReaskAfter`, an hour) less one
+recheck (`RecheckEvery`). The re-ask at the hour therefore always finds the
+old request past its age and queues it afresh, so the check is never held two
+hours: unread at 59 minutes the check stands, at 61 the re-ask queues it
+again. So one session check is in flight: asked again while it stands unread,
+it goes in again only once the session has taken it, or at the re-ask.
+
+The queue's length after the last delivery is on the status (`queued`) and on
+the check's harness line, `route=queue queued=<n>`. When the queue cannot be
+read, its length is not known and the line says `queued=-`, never a stale
+number. That happens with no app-server socket, or an app-server that does
+not answer (said once while it stands). The delivery is queued as it comes
+either way (`TestACodexQueueNotReadIsNotKnown`).
+
+A delivery is known as a request by its text's shape. A person who types the
+exact shape of a session check or a wake turn into her chat has it treated
+as one, and it may be withdrawn as superseded. That is accepted: the shapes
+carry the daemon's pong command line, which no one types by hand.
+`TestACodexDeliveryDuringATurnIsNotQueuedTwice`,
+`TestOneSessionCheckInFlightForCodex`,
+`TestTheCodexAppServerClientSpeaksJSONRPCOverAWebSocket`.
+
 ### Hosted in tmux
 
 A terminal harness (OpenCode, Grok, Aider, any TUI) started by `nova-friend host` runs in a detached
@@ -756,33 +883,96 @@ again: the server's pid and CSRF token off `ps -axo user=,pid=,args=` for the da
 `language_server` with `--override_ide_name antigravity` and its
 `--csrf_token`), its listening ports from `lsof -Fn`, and the port that
 answers `get-conversation-metadata` for the conversation (the other is TLS).
-Without `--session`, the conversation is the newest root conversation whose
-workspace is the friend's directory (or its real path), from the harness's
-`conversation_summaries.db`, read immutable through `sqlite3 -json`; that
-table is written when a turn ends, so it names the session and never the
-turn. The command runs through `/usr/bin/env` with
-`ANTIGRAVITY_LS_ADDRESS` and `ANTIGRAVITY_CSRF_TOKEN` set, the text an
-argument; the token is already on the server's own command line, readable
-by every process of the login, so the delivery exposes nothing the harness
-does not. The app needs no special launch (no wrapper, no custom flags).
-When the app is not running (no language server in `ps` for the daemon's
-user), the delivery returns `Deferred` (`no antigravity language server is
-running: is Antigravity open?`), so the message stays pending in the daemon's
-hand, retried every ten seconds (`RecheckEvery`) and never counted toward
-failure attempts or acked.
+The conversation is the live one (below), else the one `--session` names,
+else the newest root conversation whose workspace is the friend's directory
+(or its real path), from the harness's `conversation_summaries.db`, read
+immutable through `sqlite3 -json`; that table is written when a turn ends, so
+it names the session and never the turn. The command runs through
+`/usr/bin/env` with `ANTIGRAVITY_LS_ADDRESS` and `ANTIGRAVITY_CSRF_TOKEN` set,
+the text an argument; the token is already on the server's own command line,
+readable by every process of the login, so the delivery exposes nothing the
+harness does not. The app needs no special launch (no wrapper, no custom
+flags).
 
-The ack: `agentapi` exits 0 on an error too (a wrong conversation, a missing
-token print `"error"` in its JSON), so the JSON is read and its exit code is
-not. The delivery is exit 0 once a new message titled exactly `nova-friend` has appeared in the mailbox
-and `read.json` marks it read, polled every half second for two minutes; past
-that it is exit 1 with the message id, the message still in the mailbox for
-the session's next turn, and the daemon redelivers (a duplicate, never a
-loss). The turn the message starts runs on after the ack: a second message
-queues in the mailbox rather than waiting for the turn, which is the
-harness's own order for its agents. The mailbox and `agentapi` are the
-harness's internals for its subagents and scheduled tasks, not a documented
-API; a release that moves them breaks this adapter, and the functional test
-(`NOVA_FRIEND_ANTIGRAVITY_DIR`) says so.
+The Antigravity row: **mailbox delivery, no deferral, no delivery lost,
+delivery waits while the session reads nothing, the live conversation follows
+the reader, the outbox finished by the daemon.**
+
+- **Mailbox delivery, no deferral.** The mailbox queues: a turn the message
+  starts runs on, and a second message waits in the mailbox for it, the
+  harness's own order for its agents. So the delivery is exit 0 once
+  `agentapi send-message` has taken the message, and the read is never
+  waited for: the daemon delivers at once, every time, whatever turn is under
+  way, and never defers for one (the finding of 2026-10-05 and 06: a delivery
+  that waited two minutes for the read held every other message and the
+  session check behind it while the friend worked through long tool
+  sequences, and three such waits gave up a message already in her mailbox).
+  The message's id is the new message titled exactly `nova-friend` in the
+  conversation's mailbox (polled every half second for thirty seconds,
+  `AntigravityLandBudget`); one that lands later is still delivered to that
+  conversation, kept in the ledger with no id until the daemon reads it off
+  the mailbox, and never sent a second time
+  (`TestAMessageThatLandsLateIsDeliveredOnce`). `agentapi` exits 0 on an
+  error too (a wrong conversation, a missing token print `"error"` in its
+  JSON), so the JSON is read and its exit code is not. What the harness
+  refuses (no language server for the daemon's user, `no antigravity
+  language server is running: is Antigravity open?`; a server without a
+  token; no conversation with the directory open; no port that answers for
+  the conversation; no mailbox; an `"error"` from `send-message`) is a
+  `SessionRefused` naming why, and never a `Deferred`: the daemon marks the
+  session broken with the reason, said once on the record and once to the
+  seat, every message pending on the bus and tried again every ten seconds
+  (`RecheckEvery`), and the first delivery taken clears it ("A turn the
+  session cannot take"). So `nova-friend check` reads `route=mailbox` for
+  her and counts no deferral for her harness: the `deferred=` it counts is
+  only the limit gate's (`Limits.Gate`).
+  `TestAntigravityDeliversIntoTheMailboxWithoutDeferring`.
+- **A delivered message is never lost: the ledger.** Every delivery is kept
+  in the daemon's state directory (`antigravity-ledger.json`): its message
+  id, its conversation, when it went in, when the daemon saw it read (from
+  the conversation's `read.json`, each read said once, `antigravity: message
+  <id> read by conversation <id>`), and its text until it is read or sent
+  again. A delivery not read is never dropped; the newest 64 read or sent
+  again are kept (`AntigravityKeptRead`).
+- **While the session reads nothing, delivery waits.** A delivery unread past
+  the check period (`AntigravityReadBound`, the session check's five
+  minutes) with nothing delivered read since is a session down: the next
+  delivery is refused, `the session is down: conversation <id> has read
+  nothing delivered since <t> (<n> unread, the check period is 5m0s)`, so
+  the daemon says `session=broken` with that reason and every message stays
+  pending on the bus until a delivery is read (the finding of 2026-10-06:
+  after the first proof, a closed window took every message sent while it was
+  down). `TestASessionThatReadsNothingKeepsMessagesPending`.
+- **The live conversation follows the reader.** The daemon hands the adapter
+  its clock each step, off the loop (`Daemon.Mailbox`, `Antigravity.Follow`,
+  at most every ten seconds). A conversation that has left three deliveries
+  unread past the check period (`AntigravityStopped`) and read nothing since
+  the oldest of them has stopped reading; delivery moves to a conversation
+  the daemon delivered to that has read one of its deliveries since then (the
+  one that read last), never to a conversation nothing was delivered to (so
+  never to another person's conversation in the same workspace), and never
+  again within ten minutes of the last move (`AntigravitySwitchHold`), so two
+  conversations idle in turn do not bounce it. The move is said once
+  (`antigravity: live conversation is now <id> (the named one stopped
+  reading)`), kept in the ledger for the session it was made from (a restart
+  keeps it; a daemon named to another session is not moved), and shown on the
+  status (`session_live`) and on the check's harness line
+  (`session_live=<id>`). Every delivery the old conversation left unread is
+  sent again into the new one, once, its first line `re-sent: <id> was
+  delivered to <old conversation> at <t> and not read`; one whose send fails
+  is sent again at the next look. The finding of 2026-10-06: deliveries went
+  to the conversation `--session` named while a second conversation had
+  taken 161 of them earlier in the day, and nothing said which one was live.
+  `TestTheLiveConversationFollowsWhoReads`.
+- **The outbox finished by the daemon.** Her `outbox/<job>/REPORT.md` is
+  finished by the daemon's outbox pass ("the daemon reads every outbox job"),
+  which runs each reconcile beside whatever turn is under way and never
+  inside one, so a session that is never free still has its reports
+  finished. `TestAnAntigravityReportIsFinishedWhileTheSessionIsBusy`.
+
+The mailbox and `agentapi` are the harness's internals for its subagents and
+scheduled tasks, not a documented API; a release that moves them breaks this
+adapter, and the functional test (`NOVA_FRIEND_ANTIGRAVITY_DIR`) says so.
 
 Grok, the Grok Build TUI (xAI's `grok`), is another real adapter, by the
 only door the open window has. The harness has no deliver verb, no leader
@@ -857,8 +1047,9 @@ while it runs, and nothing else beats for her (the owner, 2026-10-04: "Golang
 nova-tools and nova-sprint verbs only"; "Make the ping loop mechanical!!!!").
 The per-friend shell loops that beat for a friend every second whether or not
 her session was there are retired with no replacement (docs/FRIENDS.md, "The
-beat loops are retired, with no replacement"). The beat proves the daemon and
-nothing more: it is recorded and shown, and it never makes her up (below).
+beat loops are retired, with no replacement"). The beat itself proves the daemon and
+nothing more: it is recorded and shown, and it never makes her up (below); the
+session's answer it carries (`--pong`) is her session's evidence.
 
 ## Presence is her session's evidence (internal/sprint/presence.go)
 
@@ -879,18 +1070,40 @@ own session, within its window:
   (session-pong.w1), her session runs it, and the coordinator writes what it
   saw as `friend health <friend> --state up --seen <t>`, fenced by the seat's
   generation; or
+- her session's answer to a check her daemon asked, under `FriendProofLive`
+  (fifteen minutes) old while her beat is fresh
+  (`BeatDeadline`): her daemon's beat says `--check <nonce> --run <run>` when it
+  asks and `--pong <nonce> --run <run>` when her session answers, and the
+  server (`sprint.ProveBeat`) keeps the checks asked on her beat record and
+  takes an answer as proof only when it names a check that run asked, once,
+  within `CheckAnswerWithin` (fifteen minutes) of the ask; the proof is the
+  server's time of that answer (`Beat.Proof`). A bare time, a nonce never
+  asked, another run's, one answered already or one asked too long ago is a
+  beat with no proof, said on the beat's line (`no_proof=`) and never
+  evidence; when her beats stop, her proof stops with them
+  (`TestABareTimeOrAnUnaskedNonceNeverProves`). The beat verb trusts its
+  caller's actor (a worker verb runs as the friend it names,
+  cmd/nova-sprint/coordinator.go `orActor`), so a caller that beats as her can
+  ask a check and answer it in one beat, and that proves her
+  (`TestTheBeatTrustsItsCallersActor`): the nonce rule keeps a bare time and an
+  answer to nothing asked out, never a caller who speaks as her. For
+  `LegacyPongGrace` (an hour) after the sprint server starts, the old form
+  `--pong <time>` still counts as before, the time her proof
+  (`TestAnOldPongCountsForAnHourAfterTheServerStarts`); or
 - a card of hers finished (working to done, ok or failed) under
   `FriendFinishWindow` (thirty minutes) old: friend sync's collect of the
   `REPORT.md` her session wrote records it (`friend-finish:<friend>`,
   `store.FriendFinished`).
 
-Else she is `down`. Nothing else is evidence: not her beat, whoever sends it
-(her daemon, or any loop that beats for her), not `daemon-pong` (her daemon's own
-answer, shown as down), not a hold released (`friend up`), not a
+Else she is `down`. Nothing else is evidence: not her beat itself, whoever
+sends it (her daemon, or any loop that beats for her; only the session's answer
+it carries counts), not `daemon-pong` (her daemon's own answer, shown as down), not a hold released (`friend up`), not a
 coordinator's down. Her row names the evidence and its age (`where --json`,
 `friends[].evidence`: `session pong 3m0s ago`, `finish 12m0s ago`) or, down,
 what is missing and the age of the last of each, with her beat's age said to be
-no evidence. A friend down keeps the cards dealt to her row (the deadline judges
+no evidence; a beat that says down (her daemon's `--until`/`--reason`: her
+harness at its limit, her push unproven, no session answer) is down with its
+reason whatever else stands. A friend down keeps the cards dealt to her row (the deadline judges
 them, docs/SPEC-SPRINT.md section 1): going down takes nothing back. Her
 unstarted cards return to ready only when the coordinator takes them
 (`friend take --all-unstarted`, or `friend down`); nothing returns them on her
@@ -923,36 +1136,57 @@ log line:
   card: give internal/friend a deliver command for <harness> (NewDeliverer),
   or run the friend under a harness that has one: <the harnesses with one>`.
   `--dry-run` refuses it too.
-- `run` then proves the push with the first SESSION CHECK round trip
-  (`friend.PushProof` over `Conformance`, the same check `nova-friend check`
-  runs) once the store answers and before the loop: the check goes in through
-  the adapter, and a pong with its nonce from the friend must reach the bus
-  within `ProofWithin`, the session bound, five minutes. None, and run exits 2
-  and the daemon does not start: `RUN REFUSED: no push proof: CHECK FAIL ...;
-  run: <remedy>`. An adapter that answers the check with a `Deferred`
-  carrying a `Remedy` cannot drive the session at all, and that remedy is
-  printed: dsh, a session under an agent preset, `start a session in <dir>
-  with no agent preset and name it with --session <id>`. Any other failure
-  names the session to open and `nova-friend check` to prove it. A pass is
-  one RUN line, `push proof: CHECK OK harness= took=`.
-- `install` runs the same check after loading the agent: a session the
+- `run` never waits on the proof and never exits for want of it: the start
+  check is a state (the finding of 2026-10-06: a session in long turns never
+  answered inside five minutes, run exited 2, launchd restarted it into the
+  same wait, and the daemon never ran). The daemon starts with its push
+  unproven (`push proof: pending: ...`), its presence's first SESSION CHECK
+  going in through the adapter at once, and it delivers nothing into the
+  session until the session answers it, or writes on the bus
+  (`Daemon.Proof`, `SessionCheck.Proof`): no batch turn, no dealt brief, no
+  wake, no idle wake, no lane, no read; it beats (down, `push unproven:
+  session check <nonce> ...`), answers pings and keeps every message pending.
+  The status file says `push=unproven`, `push_nonce=` and `push_since=`, and
+  `check` says `proof=pending proof_age=<age>`. Unanswered within the bound,
+  one line names the nonce: `push proof: unproven: session check <nonce> went
+  into the session at <t> and has no answer within 5m0s; ...`. The check is
+  asked again with the same nonce, never a new one per try: on the check
+  cadence (`SessionQuiet`) once the session has read the last, else after
+  `ReaskAfter` (an hour), so a session in a long turn holds one copy, not one
+  every ten minutes; and a check the last run queued and never saw answered
+  (the presence file's `nonce`) keeps its nonce across a restart
+  (`SessionCheck.Keep`), so the session's late answer to the check already
+  queued in it proves the push. Once the session answers, `push proof:
+  proved: ...` and the daemon delivers from that step, with no restart. An
+  adapter that answers the check with a `Deferred` carrying a `Remedy` cannot
+  drive the session at all, and that is one line with the remedy, `presence:
+  REFUSED: session check <nonce> cannot go into the session: <why>; run:
+  <remedy>` (dsh, a session under an agent preset: `start a session in <dir>
+  with no agent preset and name it with --session <id>`). Test:
+  `TestADaemonWaitsForItsProofInsteadOfExiting`.
+- `install` runs the round trip (`friend.PushProof` over `Conformance`, the
+  same check `nova-friend check` runs) after loading the agent: a session the
   adapter cannot drive is refused (exit 2, the remedy above) and the agent is
-  booted out and its plist removed, since it would refuse at every start; any
-  other failure is a NOTE, as before.
-- Every beat carries the session's last proof, `friend beat --pong <RFC3339>`:
-  the presence file's `last_heard`, the session's last answer or its own bus
-  message. The sprint reads it as the beat's `Proof` (the friend beat record's
-  `pong`). It is shown, never evidence: her status is her session's evidence
-  alone ("Presence is her session's evidence" below), so a beat, with a proof
-  or without, never makes her up. The coordinator's pass raises one `friend
-  deaf` judgment when the proof is older than `FriendProofLive` (fifteen
-  minutes: the daemon asks after `SessionQuiet` and waits `SessionBound`;
-  internal/sprint/coordinator_pass.go).
+  booted out and its plist removed, since it could never be proved; any other
+  failure is a NOTE, and the daemon goes on waiting for its proof.
+- Her beats say the checks her daemon asks and the ones her session answers
+  (`--check`, `--pong`, `--run`, Presence above); the server keeps the proof
+  (the friend beat record's `pong`, the server's time of the last answer to a
+  check asked, `Beat.Proof`), her session's evidence for `FriendProofLive`
+  while her beats go on ("Presence is her session's evidence" below). The
+  coordinator's pass raises one `friend deaf` judgment when the proof is older
+  than that (internal/sprint/coordinator_pass.go).
+- The deploy order: the sprint server first, then every daemon within
+  `LegacyPongGrace` (an hour) of the server's start. A daemon of this build
+  against an older server fails every beat (that server refuses `--check` and
+  `--run` as unknown flags); a daemon from before the nonces against this
+  server sends `--pong <time>`, which counts for the server's first hour and is
+  a beat with no proof after it, so that friend reads down, and deaf on the
+  coordinator's pass fifteen minutes on, until her daemon is rebuilt.
 
 The proof is the presence model's Ask then Answer within the bound
-(tla/FriendPresence.tla), asked once before the loop. The daemon's own
-presence still starts down with a check owed, so a session is asked twice at
-a start: the proof, then the daemon's first check.
+(tla/FriendPresence.tla); `install` alone asks it before anything runs, and
+`run`'s proof is the daemon's own first check.
 
 ## The daemon writes every card she holds (internal/friend/inbox.go)
 
@@ -1334,7 +1568,7 @@ and the daemon's wiring in
 
 Not here, owed: (1) cost and utilization on her beat and row: the sprint
 server's `friend beat` accepts only `--running --working --queue --width
---load --active --pong` (`friendBeatFlags`, `cmd/nova-sprint/serve.go`) and
+--load --active --pong --check --run --until --reason` (`friendBeatFlags`, `cmd/nova-sprint/serve.go`) and
 refuses any other flag, so a cost or a utilization flag sent from here would
 fail every beat; until the server takes them they are on the daemon's record
 only. (2) No live `claude` or `opencode` run checks these shapes: the tests use
@@ -1766,6 +2000,10 @@ coordinator acts on the request (a served `friend give <friend> <card> --reason`
 (width 8 after a clean load for 10 minutes, with a config-row write) is the lane governor's measured raise, not
 ported; the invoice-effective price beside the card price is not ported.
 
+### friend-token-cap-bb.w2
+
+The per-card token cap is the friend row's `token_cap` (`nova-config friend set <f> --token_cap <n>`, migration 0035), 6000000 by default and 0 none. Friend sync writes it on her roster and her beat answers `row_token_cap=<n>` always, including 0 (a missing word is the default, not none). Every one-shot lane counts the card's tokens as it runs, from the harness's own usage record behind `CardUsage` (a test hands a fake): a claude run's stream-json assistant usage, one count per message id (input, cache creation, cache read, output, and reasoning when the line carries it), and an opencode turn's session export, the session's growth since the read before the turn, polled every `TokenPoll` (15s) on an injected clock in the test. Input, cache read, cache write, output and reasoning are summed, across every run the lane gives the card. When the sum reaches the cap the lane cancels that run's own context, which signals that run's process group and no other, and holds the card with the reason `token cap <cap> reached at <n> tokens` plus the usage so far. A report already in the outbox is left as it stands. The card's end is a finish, and the friend's next card proceeds. An export with no token shape runs uncapped and its price is unchanged. The loop's `capStep` remains the opencode sqlite watch (`TokenCapReport` in lane_parity.go); a claude lane has no sqlite totals, so this count is the one that holds it. Once the beat prints a positive `row_token_cap`, both watches can stop an opencode card; the lane's own report is the one this card's test holds.
+
 ### friend-lanes-read-c-r2.w1 — the friend's reader row is served by her lane daemon (internal/friend/read_lanes.go)
 
 The owner, 2026-10-05: "We need to get away from these one shot shell scripts", "Reading should
@@ -1917,12 +2155,15 @@ the log file, the bus store, the directory listing) so the verdict is a function
 1. Daemon: the launchd agent (`loaded`, `not-loaded`, `none`) and its pid, the status file's freshness
    (`ok` within `DaemonStale`, `stale`, `none`), connection, challenge, the session pong's age, presence
    and its seen age.
-2. Harness: the route (`push`, `defer`, `passive`) and, from the daemon's log, the deliveries (`exit=`
+2. Harness: the route (`push`, `mailbox` for antigravity, `queue` for codex, or `passive` for a harness nothing pushes into; dsh is `push`, each
+   delivery a headless turn) and, from the daemon's log, the deliveries (`exit=`
    lines) and deferrals stamped at or after the window start; a line with no stamp is outside every
    window. `last` and `last_exit` are the newest delivery in the window, `failed_of_last20` the failures
    among the newest twenty in the window. `delivered` and `failed` (JSON only) are the window's whole
    counts: the verdict reads them. And the session mark: `broken` and its `reason` when the status says
-   the session is broken.
+   the session is broken; `session_live`, the conversation a mailbox harness delivers into as the
+   status says it (`-` for every other harness); and `queued`, her harness's own queue not yet taken
+   as the status says it (codex; `-` for every other harness).
 3. Bus: `real_since`, the messages from the friend in the window that are real (not ping, pong,
    daemon-pong or keepalive), and `last_real`.
 4. Work: the entries in the friend's `inbox/` (not dotfiles or `QUEUE.json`) and `outbox/`, and the
@@ -2277,10 +2518,11 @@ exits 1 immediately with `dsh: session "session-e9b0dc0e-b03d-4516-b40e-6a0287ca
 before any write; transcript `session.v4.jsonl.zstd` hash and timestamp are
 unchanged, `deliver.log` records 1339+ consecutive deferred attempts with this
 exact refusal, and DeepSeek Harness exposes no local listening socket or IPC
-into the open session. No push route into the open desktop session exists, so the
-route is defer: `DSH.Route` answers `defer` with the line the session runs
-(`nova-bus wait --as <friend>`), and each refused delivery is a deliver-log
-`deferred=` line. `nova-friend status` prints route only for grok, so presence
+into the open session. No route reaches the open desktop app, and none is
+needed: every delivery goes into her session as a headless turn, so the route is
+push: `DSH.Route` answers `push` with that turn's command (`dsh headless
+--session-id <id> -`), and `check` says `route=push`; a refused delivery is a
+deliver-log `deferred=` line. `nova-friend status` prints route only for grok, so presence
 carries no route for dsh until that wiring (cmd/nova-friend, outside this card's
 paths) lands.
 A session that has selected an agent preset is refused by the one-shot runner

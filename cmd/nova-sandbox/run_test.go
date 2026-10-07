@@ -83,6 +83,7 @@ func (f *fakeVolumes) Delete(disk string) error {
 // runBench stands the three seams up around one temporary directory that plays the
 // mounted volume, and puts them all back afterwards.
 type runBench struct {
+	rs     *runSeams
 	vols   *fakeVolumes
 	killed []syscall.Signal
 	sigs   chan os.Signal
@@ -96,12 +97,10 @@ func newRunBench(t *testing.T, code int) *runBench {
 	}
 	b := &runBench{vols: &fakeVolumes{mount: mount, used: 4096}, sigs: make(chan os.Signal)}
 
-	oldVols, oldExec, oldSigs := runVolumes, runExec, runSignals
-	t.Cleanup(func() { runVolumes, runExec, runSignals = oldVols, oldExec, oldSigs })
-
-	runVolumes = b.vols
-	runSignals = func() (<-chan os.Signal, func()) { return b.sigs, func() {} }
-	runExec = func(p *sandbox.Policy, env []string, stdin io.Reader, stdout, stderr io.Writer) (startedRun, error) {
+	b.rs = prodRunSeams()
+	b.rs.Volumes = b.vols
+	b.rs.Signals = func() (<-chan os.Signal, func()) { return b.sigs, func() {} }
+	b.rs.Exec = func(p *sandbox.Policy, env []string, stdin io.Reader, stdout, stderr io.Writer) (startedRun, error) {
 		done := make(chan int, 1)
 		done <- code
 		return startedRun{
@@ -132,12 +131,14 @@ func runOnce(t *testing.T, b *runBench, args ...string) (int, string) {
 	t.Helper()
 	var out, errb bytes.Buffer
 	f := parseRun(args)
-	code := runDisposable(f, 0, nil, &out, &errb, []string{"PATH=" + os.Getenv("PATH")})
+	code := b.rs.runDisposable(f, 0, nil, &out, &errb, []string{"PATH=" + os.Getenv("PATH")})
 	return code, errb.String()
 }
 
 // The contract in one line: whatever the command did, the place it did it in is gone.
 func TestRunCreatesTheVolumeRunsAndAlwaysDeletesIt(t *testing.T) {
+	t.Parallel()
+
 	for _, code := range []int{0, 7, 137} {
 		b := newRunBench(t, code)
 		got, errOut := runOnce(t, b, runFlagsFor(t)...)
@@ -154,6 +155,8 @@ func TestRunCreatesTheVolumeRunsAndAlwaysDeletesIt(t *testing.T) {
 // A refusal AFTER the volume exists still deletes it. This is the path a cleanup step
 // would forget: the tool said no, so nothing ran, so nothing looks like it needs undoing.
 func TestRunDeletesTheVolumeWhenTheWallItselfRefuses(t *testing.T) {
+	t.Parallel()
+
 	b := newRunBench(t, 0)
 	args := []string{"--name", "j1", "--size", "64m", "--read", "/no/such/directory", "--"}
 	args = append(args, shellOf(t)...)
@@ -166,6 +169,8 @@ func TestRunDeletesTheVolumeWhenTheWallItselfRefuses(t *testing.T) {
 // A name already on the machine is refused BEFORE anything is made: a run never joins a
 // place it did not create, because it would delete that place on the way out.
 func TestRunRefusesAVolumeNameThatIsAlreadyThere(t *testing.T) {
+	t.Parallel()
+
 	b := newRunBench(t, 0)
 	b.vols.exists = true
 	code, errOut := runOnce(t, b, runFlagsFor(t)...)
@@ -179,6 +184,8 @@ func TestRunRefusesAVolumeNameThatIsAlreadyThere(t *testing.T) {
 
 // The one failure the verb cannot repair is the one it must never hide.
 func TestRunReportsALeakAndPaysForItWithTheExitCode(t *testing.T) {
+	t.Parallel()
+
 	b := newRunBench(t, 0)
 	b.vols.deleteErr = errors.New("Unable to unmount volume for deletion")
 	code, errOut := runOnce(t, b, runFlagsFor(t)...)
@@ -193,6 +200,8 @@ func TestRunReportsALeakAndPaysForItWithTheExitCode(t *testing.T) {
 // in neither. The words come from the manager, which is the half that knows which of the
 // two happened.
 func TestRunSaysTheMountWasDeniedRatherThanTheCreateFailed(t *testing.T) {
+	t.Parallel()
+
 	b := newRunBench(t, 0)
 	b.vols.createErr = fmt.Errorf("%w: the volume disk3s7 was created in disk3 and is not mounted under /Volumes", errVolumeNotMounted)
 	code, errOut := runOnce(t, b, runFlagsFor(t)...)
@@ -206,6 +215,8 @@ func TestRunSaysTheMountWasDeniedRatherThanTheCreateFailed(t *testing.T) {
 // Every other create failure keeps the verb's own prefix: the container is where the
 // volume would have been made, and a reader of that line needs to know which one.
 func TestRunNamesTheContainerWhenTheCreateItselfFails(t *testing.T) {
+	t.Parallel()
+
 	b := newRunBench(t, 0)
 	b.vols.createErr = errors.New("diskutil apfs addVolume: exit status 1: quota too small")
 	code, errOut := runOnce(t, b, runFlagsFor(t)...)
@@ -216,6 +227,8 @@ func TestRunNamesTheContainerWhenTheCreateItselfFails(t *testing.T) {
 
 // A container that cannot be read is a refusal with a remedy, and nothing is made.
 func TestRunRefusesWhenTheContainerCannotBeRead(t *testing.T) {
+	t.Parallel()
+
 	b := newRunBench(t, 0)
 	b.vols.containerErr = errors.New("no such thing")
 	code, errOut := runOnce(t, b, runFlagsFor(t)...)
@@ -260,7 +273,7 @@ func TestRunNamesEveryBadFlagAtOnce(t *testing.T) {
 	// 125, and the remedy line is that platform's own — a windows reader handed the darwin
 	// argv would type the very flag the next line refuses.
 	var out, errb bytes.Buffer
-	code := runVerb(badArgv, nil, &out, &errb, []string{"PATH=" + os.Getenv("PATH")})
+	code := prodRunSeams().runVerb(badArgv, nil, &out, &errb, []string{"PATH=" + os.Getenv("PATH")})
 	require.Equal(t, 125, code, "bad flags are the tool's own refusal, 125, and got %d\n%s", code, errb.String())
 	for _, want := range []string{"reason=no_name", "reason=bad_timeout", "reason=no_container", "reason=no_command"} {
 		assert.Contains(t, errb.String(), want, "the refusal does not carry %s, which every platform shares:\n%s", want, errb.String())
@@ -422,6 +435,8 @@ func TestTheChildsHomeIsTheOneOnTheVolume(t *testing.T) {
 // is the whole reason there is no cleanup step: the temp files are not on the boot disk to
 // begin with.
 func TestTheTempDirectoryIsOnTheVolume(t *testing.T) {
+	t.Parallel()
+
 	b := newRunBench(t, 0)
 	_, errOut := runOnce(t, b, runFlagsFor(t)...)
 	require.Contains(t, errOut, "SANDBOX OK", "no wall was reported:\n%s", errOut)
@@ -440,7 +455,7 @@ func TestRunAnswersHelpWithItsUsage(t *testing.T) {
 
 	for _, flag := range []string{"--help", "-h", "help"} {
 		var out, errb bytes.Buffer
-		code := runVerb([]string{flag}, nil, &out, &errb, []string{"PATH=" + os.Getenv("PATH")})
+		code := prodRunSeams().runVerb([]string{flag}, nil, &out, &errb, []string{"PATH=" + os.Getenv("PATH")})
 		assert.Equal(t, 0, code, "`run %s` exited %d, want 0: asking how to use a verb is not a mistake\nstderr:\n%s", flag, code, errb.String())
 		assert.NotContains(t, errb.String(), "REFUSED", "`run %s` refused instead of answering:\n%s", flag, errb.String())
 		assert.Contains(t, out.String(), "nova-sandbox run", "`run %s` did not print the verb's usage on stdout:\n%s", flag, out.String())
@@ -452,14 +467,15 @@ func TestRunAnswersHelpWithItsUsage(t *testing.T) {
 // toolchain root and the module cache, and naming them by hand in every argv is a step
 // that will be forgotten.
 func TestGoAddsTheToolchainRootAndTheModuleCache(t *testing.T) {
+	t.Parallel()
+
 	root, mod := t.TempDir(), t.TempDir()
-	old := runGoEnv
-	t.Cleanup(func() { runGoEnv = old })
-	runGoEnv = func() (goDirs, error) { return goDirs{Root: root, ModCache: mod}, nil }
+	rs := prodRunSeams()
+	rs.GoEnv = func() (goDirs, error) { return goDirs{Root: root, ModCache: mod}, nil }
 
 	f := runFlags{useGo: true, reads: []string{"/usr"}}
 	var errb bytes.Buffer
-	r := applyGoReads(&f, &errb)
+	r := rs.applyGoReads(&f, &errb)
 	if r != nil {
 		require.Nil(t, r, "--go refused with a real toolchain: %s", r.Text)
 	}
@@ -473,15 +489,16 @@ func TestGoAddsTheToolchainRootAndTheModuleCache(t *testing.T) {
 // derived, not one the caller named, and rule 5's refusal-for-absence is about the
 // caller's own paths.
 func TestGoSkipsAToolchainPathThatIsNotThere(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
-	old := runGoEnv
-	t.Cleanup(func() { runGoEnv = old })
-	runGoEnv = func() (goDirs, error) {
+	rs := prodRunSeams()
+	rs.GoEnv = func() (goDirs, error) {
 		return goDirs{Root: root, ModCache: filepath.Join(root, "not", "there")}, nil
 	}
 	f := runFlags{useGo: true}
 	var errb bytes.Buffer
-	r := applyGoReads(&f, &errb)
+	r := rs.applyGoReads(&f, &errb)
 	if r != nil {
 		require.Nil(t, r, "--go refused because a derived path was absent: %s", r.Text)
 	}
@@ -492,14 +509,15 @@ func TestGoSkipsAToolchainPathThatIsNotThere(t *testing.T) {
 // No go on the PATH is a refusal naming the flag, not a run that fails later inside the
 // wall for a reason nothing explains.
 func TestGoRefusesWhenThereIsNoGoToAsk(t *testing.T) {
-	old := runGoEnv
-	t.Cleanup(func() { runGoEnv = old })
-	runGoEnv = func() (goDirs, error) {
+	t.Parallel()
+
+	rs := prodRunSeams()
+	rs.GoEnv = func() (goDirs, error) {
 		return goDirs{}, errors.New("exec: \"go\": executable file not found in $PATH")
 	}
 	f := runFlags{useGo: true}
 	var errb bytes.Buffer
-	r := applyGoReads(&f, &errb)
+	r := rs.applyGoReads(&f, &errb)
 	require.NotNil(t, r, "--go with no go on the PATH did not refuse")
 	assert.Equal(t, "bad_read", r.Reason, "the refusal does not name the flag: %+v", r)
 	assert.Contains(t, r.Text, "--go", "the refusal does not name the flag: %+v", r)
@@ -507,13 +525,13 @@ func TestGoRefusesWhenThereIsNoGoToAsk(t *testing.T) {
 
 // The whole point of the line: a command that failed is told what the wall refused.
 func TestAFailedRunIsToldWhatTheWallDenied(t *testing.T) {
+	t.Parallel()
+
 	b := newRunBench(t, 2)
 	// /opt is a directory of the machine the DENIAL came from, not of the machine reading
 	// this test: the windows leg has none and the remedy came out as `--read \` there.
-	posixDirs(t, "/opt")
-	oldDenials := runDenials
-	t.Cleanup(func() { runDenials = oldDenials })
-	runDenials = func(int, int) []deniedPath {
+	b.rs.Stat = posixDirs("/opt")
+	b.rs.Denials = func(int, int) []deniedPath {
 		return []deniedPath{{Path: "/opt", Op: "read", PID: 999}}
 	}
 	code, errOut := runOnce(t, b, runFlagsFor(t)...)
@@ -531,17 +549,17 @@ func TestAFailedRunIsToldWhatTheWallDenied(t *testing.T) {
 // deadline passed, and a hint pointing at the read set sends the reader to widen a wall
 // that was never in the way. The probe is skipped and the one true sentence is printed.
 func TestATimeoutNeverAsksWhatWasDeniedAndSaysItTimedOut(t *testing.T) {
-	newRunBenchNeverFinishes(t, 137)
-	oldDenials := runDenials
-	t.Cleanup(func() { runDenials = oldDenials })
+	t.Parallel()
+
+	b := newRunBenchNeverFinishes(t, 137)
 	asked := false
-	runDenials = func(int, int) []deniedPath { asked = true; return nil }
+	b.rs.Denials = func(int, int) []deniedPath { asked = true; return nil }
 
 	var out, errb bytes.Buffer
 	f := parseRun(runFlagsFor(t, "--timeout", "1ns"))
 	// The deadline this verb was given, in the units the verb takes it. The command
 	// under it never finishes, so the deadline is the only thing that can end this run.
-	code := runDisposable(f, time.Nanosecond, nil, &out, &errb, []string{"PATH=" + os.Getenv("PATH")})
+	code := b.rs.runDisposable(f, time.Nanosecond, nil, &out, &errb, []string{"PATH=" + os.Getenv("PATH")})
 	errOut := errb.String()
 
 	require.Equal(t, exitTimeout, code, "a run that passed its deadline is exit %d: got %d\n%s", exitTimeout, code, errOut)
@@ -557,7 +575,7 @@ func TestATimeoutNeverAsksWhatWasDeniedAndSaysItTimedOut(t *testing.T) {
 func newRunBenchNeverFinishes(t *testing.T, code int) *runBench {
 	t.Helper()
 	b := newRunBench(t, code)
-	runExec = func(p *sandbox.Policy, env []string, stdin io.Reader, stdout, stderr io.Writer) (startedRun, error) {
+	b.rs.Exec = func(p *sandbox.Policy, env []string, stdin io.Reader, stdout, stderr io.Writer) (startedRun, error) {
 		done := make(chan int, 1)
 		return startedRun{
 			done: done,
@@ -577,11 +595,11 @@ func newRunBenchNeverFinishes(t *testing.T, code int) *runBench {
 // A run that SUCCEEDED asks the OS nothing: the reader costs a process, and a clean run
 // has no question to answer.
 func TestACleanRunNeverAsksWhatWasDenied(t *testing.T) {
+	t.Parallel()
+
 	b := newRunBench(t, 0)
-	oldDenials := runDenials
-	t.Cleanup(func() { runDenials = oldDenials })
 	asked := false
-	runDenials = func(int, int) []deniedPath { asked = true; return nil }
+	b.rs.Denials = func(int, int) []deniedPath { asked = true; return nil }
 	_, errOut := runOnce(t, b, runFlagsFor(t)...)
 	assert.NotContains(t, errOut, "SANDBOX DENIED", "a clean run printed a denial:\n%s", errOut)
 	assert.False(t, asked, "a clean run asked the operating system what it had denied; that is a process spent on a question nobody has")

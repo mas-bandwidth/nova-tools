@@ -3,6 +3,7 @@ package swarm
 import (
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"testing"
@@ -20,8 +21,9 @@ import (
 // own data home, `opencode/opencode.db`, read through `sqlite3` READ-ONLY, the five token
 // types summed across the message rows, a column no message reported left a dash.
 
-// fakeSQLite3 builds the stand-in sqlite3 and puts it first on PATH. It returns the bin
-// directory so a test can take the program away again.
+// fakeSQLite3 builds the stand-in sqlite3 in a temp directory of its own and returns the
+// program's path: the reader names it through its own lookup field (the serial-tests
+// ledger's way off, "a field on the value under test"), so no PATH changes.
 // fakeFlushMarker is FlushMarker in testdata/fakesqlite/main.go, repeated here because a
 // testdata `package main` cannot be imported. The two are pinned together by
 // TestFakeSQLite3FlushMarkerMatchesTheFake.
@@ -38,13 +40,16 @@ func writeDB(t *testing.T, dataHome, body string) string {
 }
 
 // The one program this source runs is `sqlite3`, and its absence is a source that cannot be
-// read -- never a source that quietly reports nothing.
+// read -- never a source that quietly reports nothing. The lookup that finds the program is
+// the reader's own field (the serial-tests ledger's way off: "a field on the value under
+// test"), so a lookup that finds nothing is the empty PATH, and the test runs in parallel.
 func TestNoSQLiteOnPathIsAnError(t *testing.T) {
+	t.Parallel()
+
 	dataHome := t.TempDir()
 	writeDB(t, dataHome, "deepseek\tdeepseek-chat\t1\t1\t\t\t\n")
-	t.Setenv("PATH", t.TempDir())
 
-	_, err := ReadProviderUsage(UsageOpenCode, dataHome)
+	_, err := openCodeReader{lookPath: lookFindsNothing}.read(dataHome)
 	require.Error(t, err, "no sqlite3 on PATH is a usage source that cannot be read")
 	assert.Contains(t, err.Error(), SQLiteBinary, "the refusal names the program it needs: %v", err)
 }
@@ -56,14 +61,19 @@ func TestNoSQLiteOnPathIsAnError(t *testing.T) {
 // program the read needed. The refusal carries the literal line
 // `USAGE REFUSED reason=no_sqlite` so the missing reader is a fact on the record.
 func TestOpenCodeSourceWithoutSQLiteIsANamedRefusal(t *testing.T) {
+	t.Parallel()
+
 	dataHome := t.TempDir()
 	writeDB(t, dataHome, "deepseek\tdeepseek-chat\t100\t50\t\t\t\n")
-	t.Setenv("PATH", t.TempDir())
 
-	_, err := ReadProviderUsage(UsageOpenCode, dataHome)
+	_, err := openCodeReader{lookPath: lookFindsNothing}.read(dataHome)
 	require.Error(t, err, "no sqlite3 on PATH is a usage source that cannot be read")
 	assert.Contains(t, err.Error(), "USAGE REFUSED reason=no_sqlite", "the refusal names the missing reader: %v", err)
 }
+
+// lookFindsNothing is the reader seam's empty PATH: a lookup that answers like
+// exec.LookPath on a PATH that holds no sqlite3.
+func lookFindsNothing(string) (string, error) { return "", exec.ErrNotFound }
 
 // `usage: none` reports nothing and is never an error: only `--tokens unmetered` tasks run
 // under it, and that refusal is made before the first worker.

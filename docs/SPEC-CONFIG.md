@@ -47,7 +47,7 @@ Where each field of this cut sits:
 | --- | --- |
 | machine (varies per machine) | `user`, `seat`, `slots`, `runners`, `width`, `tla`, `note` |
 | fleet (one value for the whole fleet) | `store`, `coordinator` (both machines), `redis_port`, `pg_dsn` |
-| friend (decided for her) | `slots`, `tiers`, `roles`, `width`, `mode`, `config_dir` |
+| friend (decided for her) | `slots`, `tiers`, `roles`, `width`, `mode`, `config_dir`, `token_cap` |
 | sprint (one value for the whole sprint) | `coordinator` (a friend), `decide_bounce`, `decide_review`, `decide_score_bar`, `decide_attempt_no_result`, `decide_attempt_nothing_to_do`, `decide_grade`, `decide_gate_flaky`, `decide_gate_preexisting`, `decide_judgment_bar`, `decide_brief_bar`, `answer_rules_off` |
 | loop (decided per supervised process) | `machine`, `argv`, `seat`, `keys`, `every`, `keepalive`, `width`, `enabled` |
 | route (decided per way to run a tier) | `tier`, `provider`, `model`, `harness`, `tokens`, `deadline`, `enabled`, and the price sheet: `price_input`, `price_cache_read`, `price_cache_write`, `price_output`, `reasoning_as_output`, `long_context`, `price_input_long`, `price_output_long`, `price_request`, `billing`, `gateway_percent`, `price_source`, `price_as_of`, `note` |
@@ -225,6 +225,7 @@ configuration. Who coordinates is not her field either: it is the sprint's.
 | `width` | int, at least 1, default 8 | | nova-sprint friend sync: the jobs she works at once, her friends-table width (the owner, 2026-10-02: "6/1 seems a bit wrong -- need to setup width for friends? Start at 8 for each?") | `friend:<f>:desired` width |
 | `mode` | enum: batch, one-shot; default batch | | nova-sprint friend sync, onto her friends row; her beat answers it (`row_mode=`), and nova-friend run delivers by it: batch, every waiting message as one turn, or one-shot, `width` lanes each its own session, one card a turn (docs/SPEC-FRIEND.md, one-shot lanes). Migration 0030 gives every row before it batch | `friend:<f>:desired` mode |
 | `config_dir` | text, an absolute path; unset (NULL) by default, and `--config_dir ''` clears it | | nova-friend run, for a claude friend in one-shot mode: the directory each lane runs `claude -p` with as `CLAUDE_CONFIG_DIR`, her account's login and settings (docs/SPEC-FRIEND.md, one-shot lanes); her beat answers it as `row_config_dir=`. A claude row in one-shot mode without one runs no lane: nova-friend refuses it on the record with the remedy (the row names no harness, so the refusal is the daemon's). Migration 0034 adds the column; every row before it has none | `friend:<f>:desired` config_dir |
+| `token_cap` | int, at least 0, default 6000000 | | nova-sprint friend sync, onto her friends row; her beat answers it as `row_token_cap=`, and a one-shot lane holds a card when the card's tokens (input, cached input, output and reasoning) reach it (docs/SPEC-FRIEND.md, friend-token-cap-bb.w2). 0 is no cap. Migration 0035 adds the column; every row before it is 6000000 | `friend:<f>:desired` token_cap |
 
 **`sprint`** (`config.sprint`, singleton): the one row of sprint-global
 facts.
@@ -562,6 +563,8 @@ registry member, the desired and roles hashes are removed in one
 transaction, with a `config-remove` receipt in `cap:log`; her beat, logins
 and wake path stay, they are hers.
 
+Her token cap is `HSET friend:<f>:desired token_cap <n>` the same way (6000000 when the row names none, 0 for no cap).
+
 **sprint:** a plain `SET sprint:<field>` for each field (`sprint:coordinator
 <friend>`), `DEL` when empty — except the seat: the coordinator is written
 only when `sprint:coordinator` is absent (a first apply) or already equal to
@@ -662,10 +665,32 @@ anywhere connects with none (a throwaway database trusts).
 `--seat <name>` (env `NOVA_SEAT`) supplies the PostgreSQL DSN and the name
 of the password environment variable from the seat's profile row in
 `seats.tsv` (`$XDG_CONFIG_HOME/nova-config/seats.tsv`, else
-`~/.config/nova-config/seats.tsv`), exclusive with `--file`. Writes accept
+`~/.config/nova-config/seats.tsv`), exclusive with `--file`. Writes and reads
+(`<kind> list|show`, `machine width`, `machine self --check`, `status`) accept
 `--seat <name>` so that commands like `nova-config machine set m1 --width 8 --seat <name>`
-need no explicit DSN or secrets wrapper; an unknown seat is a one-line
-refusal naming the known seats.
+or `nova-config tier list --seat <name>` need no explicit DSN or secrets
+wrapper; `machine add` and `loop add` take `NOVA_SEAT` alone, their rows'
+own `--seat` being a field. An unknown seat is a one-line refusal naming the
+known seats. `nova-sprint seat install --config-seat <name> --config-dsn <dsn> --config-password-env <NAME>` writes the row (in place of the seat's row,
+every other line kept, mode 0600, read back as nova-config reads it before it
+replaces the file; docs/SPEC-SPRINT.md, "Handing over the seat").
+
+When `NOVA_PG_PASSWORD_ENV` is not given and the row's password variable is
+not set (a coordinator typing the verb bare, with no `nova-secrets exec`
+around it), the password is read in this process from the nova-secrets seat
+the machine's store login names (`nova-sprint seat login`:
+`$XDG_CONFIG_HOME/nova-sprint/login.json`, else
+`~/.config/nova-sprint/login.json`; its store, seat, key and sops), under the
+row's variable name as the key, through the same `secrets.ReadLogin` path, and
+is never printed or put in an environment. The row's variable set wins over
+that read; `NOVA_PG_PASSWORD_ENV` given wins over the row's variable and the
+store login is not read for it, so a coordinator that carries its own password
+needs no store login. No store login, or a seat that does not hold the key, is
+a refusal naming the seat, the file and the remedy (`nova-sprint seat login`,
+or `nova-secrets seal --as <seat> --name <NAME>`), and no store is opened
+(`cmd/nova-config/seat_secret.go`,
+`TestSeatOnAReadVerbReadsThePasswordThroughTheStoreLogin`,
+`TestSeatPasswordEnvStillWinsOverTheSeatRow`).
 
 `--redis <addr>` is the flag, else `NOVA_SPRINT_REDIS`, else
 `NOVA_REDIS_ADDR`, else the selected seat's address; the Redis login is the

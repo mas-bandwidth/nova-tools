@@ -88,7 +88,7 @@ func alarmFacts(s *Snapshot) map[string]string {
 	if _, on := s.alarmSetting(PropAlarmReady); on && ready == 0 && waiting > 0 {
 		out[NAlarmReady] = fmt.Sprintf("0 primaries ready and %d waiting: the deal has nothing to feed the fleet; run: nova-sprint where --all", waiting)
 	}
-	if pct, on := s.alarmSetting(PropAlarmFleet); on && ready+waiting > 0 {
+	if pct, on := s.alarmSetting(PropAlarmFleet); on && ready+waiting > 0 && !s.FleetOff() {
 		working, width := 0, 0
 		for _, m := range s.UpMembers() {
 			working += s.Fleet.Count(m, Working)

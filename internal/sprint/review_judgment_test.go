@@ -20,8 +20,8 @@ func finished(w *world, id string, failed bool) {
 }
 
 // readOK has every outstanding read card of the primary say ok, and, while the
-// primary wants another read (ReadsWanted: its reads are asked one at a time),
-// asks it and has that one say ok too.
+// primary wants another read (ReadsWanted: its reads are asked together, so
+// only after a read taken back), asks it and has that one say ok too.
 func readOK(w *world, id string) {
 	w.t.Helper()
 	for {
@@ -99,8 +99,17 @@ func TestReviewJudgmentFinish(t *testing.T) {
 	w.clean("finished")
 }
 
-// Read: the second different ok is ready to accept; a third ok while one is
-// open writes none; reads done without two oks are reads exhausted.
+// tickTakes says the tick's accept part takes the primary (TickAccept), on the
+// world as it stands: the plan is not applied.
+func tickTakes(w *world, id string) bool {
+	w.t.Helper()
+	p, _ := TickAccept(w.s, TickReq{})
+	return slices.ContainsFunc(p.Units, func(u Unit) bool { return u.Key == id })
+}
+
+// Read: the second different ok is no judgment, the tick accepts it (since
+// 2026-10-06, no hand step: it was ready to accept on a STOPPED machine); a
+// third ok writes none either; reads done without two oks are reads exhausted.
 func TestReviewJudgmentRead(t *testing.T) {
 	t.Parallel()
 	w := setup(t, 2)
@@ -108,17 +117,17 @@ func TestReviewJudgmentRead(t *testing.T) {
 	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-1"}}}))
 	readOK(w, "s1-1")
 	got := openTypes(w, "s1-1")
-	require.Equal(t, NReadyToAccept, got, "two oks: %q", got)
+	require.Empty(t, got, "two oks: %q", got)
+	require.True(t, tickTakes(w, "s1-1"), "two oks: the tick accepts it")
 	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-1"}}, Another: true}))
 	readOK(w, "s1-1")
 	n := len(w.notesOf(NReadyToAccept))
-	require.Equal(t, 1, n, "a third ok wrote another ready to accept: %d", n)
+	require.Zero(t, n, "an ok wrote ready to accept: %d", n)
 	finished(w, "s1-2", false)
-	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-2"}}}))
+	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-2"}}})) // a card's reads are asked together: both in one ask
 	rcs := readsAt(w.s, w.s.Work.Card("s1-2"), 1)
+	require.Len(t, rcs, 2)
 	w.must(Read(w.s, ReadReq{Usage: "input=1000 output=100", As: rcs[0].Row, Verdict: "ok", Sel: Sel{IDs: []string{rcs[0].ID}}}))
-	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-2"}}})) // the second read, once the first came back ok
-	rcs = readsAt(w.s, w.s.Work.Card("s1-2"), 1)
 	w.must(Read(w.s, ReadReq{Usage: "input=1000 output=100", As: rcs[1].Row, Verdict: "broken", Finding: "f:1", Sel: Sel{IDs: []string{rcs[1].ID}}}))
 	p := w.do(Ack(w.s, AckReq{Notes: openIDs(w, "s1-2"), Reason: "seen"}))
 	require.Len(t, p.Refused, 1, "ack of a broken read: %+v", p)
@@ -150,22 +159,24 @@ func TestReviewJudgmentReturnAndAck(t *testing.T) {
 	w.clean("returned")
 }
 
-// Ask: one more reader for an acceptable primary keeps the one ready to
-// accept judgment; its ack stays refused.
+// Ask: one more reader for an acceptable primary writes no judgment; the tick
+// accepts it all the same.
 func TestReviewJudgmentAsk(t *testing.T) {
 	t.Parallel()
 	w := setup(t, 1)
 	finished(w, "s1-1", false)
 	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-1"}}}))
 	readOK(w, "s1-1")
-	ackRefused(w, "s1-1")
+	require.Empty(t, openTypes(w, "s1-1"), "two oks: the tick's")
 	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-1"}}, Another: true}))
 	got := openTypes(w, "s1-1")
-	require.Equal(t, NReadyToAccept, got, "asked of another: %q", got)
+	require.Empty(t, got, "asked of another: %q", got)
+	require.True(t, tickTakes(w, "s1-1"), "asked of another: the tick accepts it")
 	w.clean("asked")
 }
 
-// A refused rework leaves the primary in review with the judgment it needs.
+// A refused rework leaves the primary in review as it found it: an acceptable
+// primary is the tick's to accept, no judgment.
 func TestReviewJudgmentRefusedRework(t *testing.T) {
 	t.Parallel()
 	w := setup(t, 1)
@@ -176,7 +187,8 @@ func TestReviewJudgmentRefusedRework(t *testing.T) {
 	require.Len(t, p.Refused, 1, "rework with no fix: %+v", p)
 	require.Equal(t, Review, w.state("s1-1"), "rework with no fix: %+v", p)
 	got := openTypes(w, "s1-1")
-	require.Equal(t, NReadyToAccept, got, "refused rework: %q", got)
+	require.Empty(t, got, "refused rework: %q", got)
+	require.True(t, tickTakes(w, "s1-1"), "refused rework: the tick accepts it")
 	w.clean("refused")
 }
 

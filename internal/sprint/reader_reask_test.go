@@ -11,8 +11,9 @@ import (
 // TestAReadTakenBackByTheAwaySweepCanBeAskedAgainAtTheSameAttempt pins that
 // when a reader's read card is taken back by sweepReads (retired_by away),
 // and the reader comes back up, ticking the ask path (Ask / TickAsk) asks the
-// read of it again at the same attempt using a second identity (generation suffix .g1),
-// while reads retired for other reasons (e.g. level) or already active are not re-asked.
+// read of it again at the same attempt using a second identity (generation suffix .g1).
+// Under the interim rule (ReadCardForAsk) a read retired by the level, with no verdict,
+// leaves its reader askable under .g1 too; a reader away is not asked.
 func TestAReadTakenBackByTheAwaySweepCanBeAskedAgainAtTheSameAttempt(t *testing.T) {
 	t.Parallel()
 	w := setup(t, 1)
@@ -23,17 +24,19 @@ func TestAReadTakenBackByTheAwaySweepCanBeAskedAgainAtTheSameAttempt(t *testing.
 		w.s.ReaderStates[rd] = ReaderUp
 	}
 	toReview(w, "s1-1")
-	// reads are asked one at a time (ReadsWanted): the first alone
+	// a card's reads are asked together (ReadsWanted): both in one ask, and the
+	// second comes back ok
 	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-1"}}}))
 	firstReads := readsAt(w.s, w.s.Work.Card("s1-1"), 1)
-	require.Len(t, firstReads, 1)
-	r1 := firstReads[0].F("reader")
+	require.Len(t, firstReads, 2)
+	r1, okReader := firstReads[0].F("reader"), firstReads[1].F("reader")
+	w.must(Read(w.s, ReadReq{Usage: "input=1000 output=100", As: okReader, Verdict: "ok", Sel: Sel{IDs: []string{firstReads[1].ID}}}))
 
 	// another reader holds a read of the attempt retired by the level, not by
-	// the away sweep: it is not asked again.
+	// the away sweep: askable again under .g1 (the interim rule), but away below.
 	otherReader := ""
 	for _, rd := range rows {
-		if rd != r1 {
+		if rd != r1 && rd != okReader {
 			otherReader = rd
 			break
 		}
@@ -59,26 +62,12 @@ func TestAReadTakenBackByTheAwaySweepCanBeAskedAgainAtTheSameAttempt(t *testing.
 	assert.False(t, oldCard.Placed())
 	assert.Equal(t, "away", oldCard.F("retired_by"))
 
-	// A pro card needs two different readers: reader-c has read it ok, so the
-	// next read is wanted (ReadsWanted). The rest go away, so r1 is the one
+	// A pro card needs two different readers: okReader has read it ok, so one
+	// more read is wanted (ReadsWanted). The rest go away, so r1 is the one
 	// reader the re-ask can go to; bring r1 back up.
-	okReader := ""
 	for _, rd := range rows {
-		if rd != r1 && rd != otherReader {
-			okReader = rd
-			break
-		}
-	}
-	w.s.Readers.Put(&Card{
-		ID:     ReadCardID("s1-1", 1, okReader),
-		Rev:    1,
-		Row:    okReader,
-		Col:    OK,
-		Fields: map[string]string{"kind": "read", "primary": "s1-1", "attempt": "1", "reader": okReader, "stream": "s1", "head": w.s.Work.Card("s1-1").F("head"), "asked": stamp(w.s.Now)},
-	})
-	for _, rd := range rows {
-		if rd != r1 && rd != otherReader {
-			w.s.ReaderStates[rd] = ReaderAway
+		if rd != r1 {
+			w.s.ReaderStates[rd] = ReaderAway // otherReader too: askable under .g1, but away
 		}
 	}
 	w.s.ReaderStates[r1] = ReaderUp
@@ -97,7 +86,7 @@ func TestAReadTakenBackByTheAwaySweepCanBeAskedAgainAtTheSameAttempt(t *testing.
 					assert.Equal(t, r1, ch.Entry.Create.Row)
 				}
 			}
-			assert.NotEqual(t, levelCardID, ch.Entry.ID, "otherReader retired by level must not be re-asked")
+			assert.NotEqual(t, levelCardID, ch.Entry.ID, "otherReader, away, is not asked")
 			assert.NotEqual(t, ReadCardSecondID("s1-1", 1, otherReader), ch.Entry.ID)
 		}
 	}
@@ -112,10 +101,11 @@ func TestAReadTakenBackByTheAwaySweepCanBeAskedAgainAtTheSameAttempt(t *testing.
 	assert.Equal(t, r1, reaskCard.Row)
 	assert.True(t, strings.HasSuffix(reaskCard.ID, ".g1"))
 
-	// otherReader retired by level was not asked and is not eligible.
+	// otherReader, retired by level with no verdict, was not asked (away) and is eligible
+	// under the second identity (the interim rule).
 	otherID, otherOK := ReadCardForAsk(w.s, "s1-1", 1, otherReader)
-	assert.False(t, otherOK, "otherReader retired by level must not be re-asked at the same attempt")
-	assert.Equal(t, ReadCardID("s1-1", 1, otherReader), otherID)
+	assert.True(t, otherOK, "otherReader's levelled read has no verdict: askable again under .g1")
+	assert.Equal(t, ReadCardSecondID("s1-1", 1, otherReader), otherID)
 
 	// the primary now has the ok read and the re-asked read, the second identity.
 	live := liveReadsAt(w.s, w.s.Work.Card("s1-1"), 1)
@@ -165,7 +155,7 @@ func TestAskDoesNotOveraskBesideALiveG1Read(t *testing.T) {
 		ID:     ReadCardSecondID("s1-1", 1, "reader-a"),
 		Rev:    1,
 		Row:    "reader-a",
-		Col:    OK, // reads are asked one at a time: the next is wanted once this one is ok
+		Col:    OK, // a live read, ok: it counts toward the two the card needs
 		Fields: map[string]string{"kind": "read", "primary": "s1-1", "attempt": "1", "reader": "reader-a", "stream": "s1", "head": "h1", "asked": stamp(w.s.Now)},
 	})
 
@@ -299,8 +289,10 @@ func TestReviewJudgmentSeesG1ReadAndAvoidsSpuriousReadsExhausted(t *testing.T) {
 	readPlan2 := Read(w.s, ReadReq{As: "reader-a", Verdict: "ok", Sel: Sel{IDs: []string{ReadCardSecondID("s1-1", 1, "reader-a")}}})
 	w.must(readPlan2)
 
-	// Both readers have said ok: ready to accept should be emitted
-	assert.NotEmpty(t, w.notesOf(NReadyToAccept), "ready to accept must be emitted after both readers (including .g1) say ok")
+	// Both readers have said ok: the tick accepts it (since 2026-10-06 no ready to
+	// accept judgment, no hand step)
+	assert.Empty(t, w.notesOf(NReadyToAccept), "no ready to accept judgment for a primary the tick accepts")
+	assert.True(t, tickTakes(w, "s1-1"), "the tick accepts it after both readers (including .g1) say ok")
 }
 
 // TestTickLevelReadsCanMoveToReturnedReaderWithSecondIdentity pins that
@@ -324,7 +316,9 @@ func TestTickLevelReadsCanMoveToReturnedReaderWithSecondIdentity(t *testing.T) {
 		Col:    "",
 		Fields: map[string]string{"kind": "read", "primary": "s1-1", "attempt": "1", "reader": "reader-a", "stream": "s1", "retired": stamp(w.s.Now), "retired_by": "away"},
 	})
-	// reader-a has a level-retired card for s1-2 at attempt 1 (cannot be moved to reader-a)
+	// reader-a has a level-retired card for s1-2 at attempt 1, and (below) its second
+	// identity spent too, so s1-2 cannot be moved to reader-a (the interim rule,
+	// ReadCardForAsk: a read retired with no verdict leaves its reader askable once more)
 	w.s.Readers.Put(&Card{
 		ID:     ReadCardID("s1-2", 1, "reader-a"),
 		Rev:    1,
@@ -334,6 +328,7 @@ func TestTickLevelReadsCanMoveToReturnedReaderWithSecondIdentity(t *testing.T) {
 	})
 
 	toReview(w, "s1-1", "s1-2", "s1-3", "s1-4")
+	spendSecond(w, "s1-2", 1, "reader-a")
 
 	// reader-b holds both s1-1 and s1-2 in Asked (held=2), while reader-a holds 0 (held=0).
 	// reader-c also holds 2 cards so it is not the recipient of the level.

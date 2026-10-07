@@ -9,27 +9,31 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
-// A friend's beat carries her session's last pong (friend beat --pong), the server takes it
-// as a beat's flag, and the tick's coordinator's pass judges her session deaf from it: the
-// judgment is in the coordinator's inbox (docs/SPEC-SPRINT.md section 8, "The coordinator's
-// pass").
+// A friend's beat carries her session's answer to a check her daemon asked (friend beat
+// --check, then --pong naming it), the server takes them as a beat's flags, and the tick's
+// coordinator's pass judges her session deaf from the last proof: the judgment is in the
+// coordinator's inbox (docs/SPEC-SPRINT.md section 8, "The coordinator's pass").
 func TestFriendBeatCarriesTheSessionPongAndTheTickJudgesADeafSession(t *testing.T) {
 	t.Parallel()
 	ta, _ := friendCardApp(t, "friend amy", "amy")
-	pong := ta.a.now().Add(-sprint.FriendDeafAfter - time.Minute).UTC().Format(time.RFC3339)
-	out := ta.ok("friend beat amy --pong " + pong)
-	assert.Contains(t, out, " pong="+pong)
+	back := sprint.FriendDeafAfter + time.Minute
+	ta.step(-back)
+	ta.ok("friend beat amy --check n1 --run r1")
+	out := ta.ok("friend beat amy --pong n1 --run r1")
+	assert.Contains(t, out, " proved=n1 pong=")
+	ta.step(back)
+	ta.ok("friend beat amy")
 	ta.ok("tick")
 	in := ta.ok("inbox")
 	assert.Contains(t, in, sprint.NFriendDeaf)
 	assert.Contains(t, in, "friend amy")
 
-	code, _, errs := ta.do("friend beat amy --pong yesterday")
+	code, _, errs := ta.do("friend beat amy --check a:b")
 	assert.Equal(t, 2, code)
-	assert.Contains(t, errs, "--pong wants an RFC3339 time")
+	assert.Contains(t, errs, "--check wants a nonce")
 
-	assert.Empty(t, friendBeatReport([]string{"--pong", pong, "--active", pong}), "the server takes both as a beat's flags")
-	assert.NotEmpty(t, friendBeatReport([]string{"--pong", "yesterday"}))
+	assert.Empty(t, friendBeatReport([]string{"--check", "n2", "--run", "r1", "--pong", "n1", "--active", "2030-01-02T03:04:05Z"}), "the server takes them as a beat's flags")
+	assert.NotEmpty(t, friendBeatReport([]string{"--check", "a b"}))
 }
 
 // set --friend-finish is the friend-finish window the pass judges an idle friend by.

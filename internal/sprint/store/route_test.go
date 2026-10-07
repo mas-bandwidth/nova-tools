@@ -35,6 +35,10 @@ func routeHarness(t *testing.T, routes ...sprint.Route) *harness {
 	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m1", Width: sprint.MaxWidth}))
 	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m2", Width: sprint.MaxWidth}))
 	h.m.SetRoutes(routes)
+	// the readers' rows name every tier, as reader set --tiers all writes them: a fleet row
+	// that names no tier reads flash alone while the store holds routes (sprint
+	// fleetReadsFlashOnly), and these tests read every tier their routes serve
+	h.readersRead("flash,pro,heavy,frontier")
 	return h
 }
 
@@ -149,7 +153,7 @@ func TestACardWithNoRouteIsNotDealtAndJudgedOncePerTier(t *testing.T) {
 	h.addReady("s4", 1, briefOf("frontier", "model: anthropic/claude-frontier\ntokens: unmetered\ndeadline: 3600"))
 	res := h.run(DealStep(sprint.DealReq{}))
 	refused := fmt.Sprint(res.Refused)
-	assert.Contains(t, refused, "no enabled route serves tier pro")
+	assert.Contains(t, refused, "no enabled route and no up friend serves tier pro")
 	assert.Contains(t, refused, "a frontier card waits for the coordinator")
 	cards := h.workCards()
 	assert.Contains(t, cards, "s2-1.w1", "the flash card is dealt")
@@ -517,8 +521,8 @@ func TestAReadRunsOnItsCardsTierAtThatTiersIndex(t *testing.T) {
 		routes []string
 		index  string
 	}{
-		"s1-1": {"pro", []string{"pro-b"}, "2"},     // the deal took pro-a: the first read takes entry 1 (the second is asked once it comes back ok)
-		"s2-1": {"flash", []string{"flash-b"}, "2"}, // the deal took flash-a: the one read takes entry 1
+		"s1-1": {"pro", []string{"pro-b", "pro-a"}, "3"}, // the deal took pro-a: the two reads, asked together, take entries 1 and 0
+		"s2-1": {"flash", []string{"flash-b"}, "2"},      // the deal took flash-a: the one read takes entry 1
 	} {
 		tier := want.tier
 		reads := s.Readers.Of(id)
@@ -547,11 +551,13 @@ func TestAReadRunsOnItsCardsTierAtThatTiersIndex(t *testing.T) {
 // A primary in review waiting for reads while no enabled route serves its tier
 // is held by the tier's "no route serves the tier" judgment at once, the deal's
 // own (route.go, readRouteMissing; TickDeal), not at the unreported deadline; a
-// route of the tier closes it. The card pins its model, so its work is dealt on
-// the pin while its reads, on its tier, pro, have no route.
+// route that can read it closes it. The card pins its model, so its work is dealt on
+// the pin while its reads, on its tier, pro, have no route: the store's one route is
+// heavy, and a pro read is drawn on flash only while a flash route is enabled (the
+// interim rule, readTierOf), so adding a flash route closes it.
 func TestReadsTheirCardsTierCannotServeAreJudgedAtOnce(t *testing.T) {
 	t.Parallel()
-	h := routeHarness(t, route("flash-a", "flash"))
+	h := routeHarness(t, route("heavy-a", "heavy"))
 	require.NoError(t, h.st.BeatReaders(h.ctx))
 	h.addReady("s1", 1, briefOf("pro", "model: x/y\ntokens: 100\ndeadline: 60"))
 	h.startMachine()
@@ -567,14 +573,14 @@ func TestReadsTheirCardsTierCannotServeAreJudgedAtOnce(t *testing.T) {
 	h.machine()
 	assert.Len(t, h.a2Open(sprint.NNoRoute), 1, "written once, not every tick")
 	assert.Equal(t, 1, h.notesOf(sprint.NNoRoute))
-	h.m.SetRoutes([]sprint.Route{route("flash-a", "flash"), route("pro-a", "pro")})
+	h.m.SetRoutes([]sprint.Route{route("heavy-a", "heavy"), route("flash-a", "flash")})
 	h.machine()
-	assert.Empty(t, h.a2Open(sprint.NNoRoute), "a route of the card's tier closes it")
+	assert.Empty(t, h.a2Open(sprint.NNoRoute), "a flash route, which reads a pro card while no pro route is enabled, closes it")
 }
 
 // One path asks (commit 255180e2; fleet pass 7, 2026-10-01): the finish of reworked work
 // asks no reader; the machine's ask, in the tick the finish wakes, asks two different
-// readers round the readers (a pro card's two reads), each read with the route it draws.
+// readers round the readers (a pro card's two reads, together), each read with the route it draws.
 // A read the finish asked itself carried no route, and no reader could start it.
 func TestAReadOfReworkedWorkCarriesARoute(t *testing.T) {
 	t.Parallel()
@@ -587,11 +593,9 @@ func TestAReadOfReworkedWorkCarriesARoute(t *testing.T) {
 	h.finishAttempt("s1-1", false, pushedA)
 	h.machine()
 	first := h.snap().Readers.Of("s1-1")
-	require.Len(t, first, 1, "attempt 1 asked its first read")
+	require.Len(t, first, 2, "attempt 1 asked both its reads together")
 	h.must(ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: first[0].Row, Verdict: "ok", Sel: sprint.Sel{IDs: []string{first[0].ID}}}))
-	h.machine() // the second read, the first ok
-	second := h.askedRead("s1-1")
-	h.must(ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: second.Row, Verdict: "broken", Finding: "f:1", Sel: sprint.Sel{IDs: []string{second.ID}}}))
+	h.must(ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: first[1].Row, Verdict: "broken", Finding: "f:1", Sel: sprint.Sel{IDs: []string{first[1].ID}}}))
 	h.must(ReworkStep(sprint.ReworkReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Fix: "fix"}))
 	h.finishAttempt("s1-1", false, pushedB)
 	pr := h.snap().Work.Card("s1-1")
@@ -599,11 +603,7 @@ func TestAReadOfReworkedWorkCarriesARoute(t *testing.T) {
 	assert.Empty(t, readsAt(h.snap(), pr), "the finish asks no reader")
 	h.machine()
 	reads := readsAt(h.snap(), h.snap().Work.Card("s1-1"))
-	require.Len(t, reads, 1, "attempt 2 asked its first read by the machine's ask")
-	h.must(ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: reads[0].Row, Verdict: "ok", Sel: sprint.Sel{IDs: []string{reads[0].ID}}}))
-	h.machine() // and the second, the first ok
-	reads = readsAt(h.snap(), h.snap().Work.Card("s1-1"))
-	require.Len(t, reads, 2, "attempt 2 asked of two readers, one at a time")
+	require.Len(t, reads, 2, "attempt 2 asked of two readers together, by the machine's ask")
 	var who []string
 	for _, rc := range reads {
 		who = append(who, rc.F("reader"))

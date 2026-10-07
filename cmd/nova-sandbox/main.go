@@ -262,12 +262,12 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, env []string)
 		helpIfAsked(args[1:], "check")
 		return checkVerb(args[1:], stdout, stderr)
 	case "run":
-		return runVerb(args[1:], stdin, stdout, stderr, env)
+		return prodRunSeams().runVerb(args[1:], stdin, stdout, stderr, env)
 	case "reap":
 		return reapVerb(args[1:], stdout, stderr)
 	case "worktree":
 		helpIfAsked(args[1:], "worktree")
-		return worktreeVerb(args[1:], stdout, stderr, env)
+		return prodWorktreeSeams().worktreeVerb(args[1:], stdout, stderr, env)
 	case "egress":
 		if len(args) > 1 {
 			if egressVerbs[args[1]] {
@@ -275,7 +275,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, env []string)
 			}
 			helpIfAsked(args[1:2], "egress")
 		}
-		return egressVerb(args[1:], stderr)
+		return prodEgressSeams().egressVerb(args[1:], stderr)
 	case "policy":
 		helpIfAsked(args[1:], "policy")
 		return policyVerb(args[1:], stdout, stderr, env)

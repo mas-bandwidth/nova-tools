@@ -80,6 +80,7 @@ func TestEveryCoordinatorVerbIsTheCoordinators(t *testing.T) {
 		"redo":              "redo s1-2",
 		"drop":              "drop s1-1 --reason r",
 		"unpin":             "unpin s1-1 --reason shared",
+		"priority":          "priority s1-1 --high --reason urgent",
 		"rank":              "rank s1-1 --first",
 		"relink":            "relink s1-1 s1-2",
 		"sentinel set":      "sentinel set s1-stop --needs s1-2",
@@ -114,6 +115,7 @@ func TestEveryCoordinatorVerbIsTheCoordinators(t *testing.T) {
 		"promoted":          "promoted --sha 0123abc",
 		"funded":            "funded openrouter --reason paid",
 		"cost reconcile":    "cost reconcile",
+		"cost reprice":      "cost reprice",
 		"stats tidy":        "stats tidy --all --reason r",
 		"wait":              "wait x --for 1m",
 		"ack":               "ack x --reason r",
@@ -126,6 +128,7 @@ func TestEveryCoordinatorVerbIsTheCoordinators(t *testing.T) {
 		"play":              "play --ticks 1",
 		"init":              "init",
 		"merge-window open": "merge-window open --for 1m --reason r",
+		"landed":            "landed s1-1 --sha 0123abc --reason r",
 		// the friends' directories are read only after the store refuses the intruder
 		"friend reconcile": "friend reconcile friend-a",
 		"collect":          "collect",

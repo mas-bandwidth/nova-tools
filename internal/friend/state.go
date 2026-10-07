@@ -57,6 +57,16 @@ type Status struct {
 	Beats          int       `json:"beats"`
 	LastBeat       time.Time `json:"last_beat"`
 	BeatError      string    `json:"beat_error,omitempty"`
+	// Push is the push proof this run (PushProved, or PushUnproven while the
+	// session has not answered its check: nothing is delivered), PushNonce the
+	// check's nonce and PushSince when the daemon started waiting, while unproven;
+	// empty for a harness with no session to prove. ProofSent is the session's
+	// proof (the presence file's last_heard) the sprint server last took on her
+	// beat, zero before any (docs/SPEC-FRIEND.md, The push proof).
+	Push      string    `json:"push,omitempty"`
+	PushNonce string    `json:"push_nonce,omitempty"`
+	PushSince time.Time `json:"push_since,omitzero"`
+	ProofSent time.Time `json:"proof_sent,omitzero"`
 	// HarnessSeen is what the harness check last read (HarnessRunning,
 	// HarnessNotSeen, or empty: cannot tell). Advisory: it
 	// never makes the friend down (alive.go, HarnessWatch).
@@ -69,10 +79,17 @@ type Status struct {
 	Width        int    `json:"width"`
 	// Session is SessionOK, or SessionBroken once the provider refused BrokenAfter
 	// turns in a row the same way; empty for a passive harness.
-	Session       string    `json:"session,omitempty"`
-	SessionID     string    `json:"session_id,omitempty"`
-	SessionReason string    `json:"session_reason,omitempty"`
-	BrokenAt      time.Time `json:"broken_at,omitempty"`
+	Session       string `json:"session,omitempty"`
+	SessionID     string `json:"session_id,omitempty"`
+	SessionReason string `json:"session_reason,omitempty"`
+	// SessionLive is the conversation a mailbox harness delivers into (Daemon.Mailbox):
+	// the one that reads, as the daemon last followed it; empty for every other harness.
+	SessionLive string `json:"session_live,omitempty"`
+	// Queued is her harness's own queue of deliveries not yet taken, as the last delivery
+	// read it (codex: the open chat's queue), when QueueKnown.
+	Queued     int       `json:"queued,omitempty"`
+	QueueKnown bool      `json:"queue_known,omitempty"`
+	BrokenAt   time.Time `json:"broken_at,omitempty"`
 	// While the harness is at its usage limit or out of credits Session is
 	// SessionLimited, LimitKind says which (KindLimit or KindCredits) and
 	// LimitUntil is the reset (docs/SPEC-FRIEND.md, limits-mean-down-w-r.w1~15).

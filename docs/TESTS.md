@@ -66,6 +66,16 @@ A test binary that runs itself (`os.Executable()` or `os.Args[0]`) with words it
 
 `TestEveryReexecOfTheTestBinaryHasTheGuard` (`internal/ci/reexec_guard_class_test.go`, docs/SPEC-CI.md) refuses a `_test.go` under `cmd/` that runs its own binary in a package with no such call, naming the file and the line. The guard itself is proved by `TestDecideRunsTheSuiteHandlesItsOwnWordsOrRefuses` and `TestEnterRefusesARecursionAndAChainTooDeepInAChild` (`internal/testbin`).
 
+### The CL shards fit two minutes
+
+A CI shard of the CL tier is cancelled at two minutes (`timeout-minutes: 2` in `.github/workflows/ci.yml`), and the Makefile's `test` target stops a package at 110 s (`GOTEST_TIMEOUT`). The cap stays; the tests fit it. A unit test takes under a minute, ideally far under, and a CL package takes at most 60 s.
+
+`internal/ci/testdata/shard-walls.tsv` records each CL package's wall: the package-level `Elapsed` of `go test -json` on the last green run that ran it uncached, with where it was measured (`@run<id>` for the GitHub Actions run whose log holds it, `@local` for a local run on a bench machine, one package at a time) and the runner class that measured it, read from the run's job that logged the package (`self-hosted` for the fleet's own runners, else the hosted label, `macos-latest` or `ubuntu-latest`; `-` where it is not known), since one run's jobs mix classes. `TestEveryCLPackageFitsItsShardWall` (`internal/ci/shard_walls_test.go`) refuses a row over 60 s, a live package with tests and no row, and a row for a package the tree no longer holds; `TestTheShardWallRuleRefusesGrowthAndGaps` holds the rule's reversed witnesses. A package that grows past 60 s is made to fit, or its slow tests move behind the `slow` build tag, which `.github/workflows/nightly-slow.yml` runs; then its row records the wall it has. A row is never raised past the cap.
+
+TODO: the ledger's walls are typed numbers that the test checks and never measures; a measured wall (each CL package timed on a named runner class, compared with its row) is owed.
+
+The ledger ratchet (`TestClassRuleLedgersOnlyShrinkAgainstMergeBase`, `internal/ci/ledger_ratchet_test.go`) reads the merge base once: one `git ls-tree -r -z` over `internal/ci/testdata` and the two slowtests ledgers, and one `git cat-file --batch` over the `.txt` files it names (`readMergeBase`). It used to start two git processes per file, some 1,200 a run; on a self-hosted runner's reused workspace that was 1m37s to 1m42s and a cancelled shard on every pull request. `TestTheLedgerTestReadsTheBaseOnce` counts the git processes through a fake runner and allows two; `TestTheSinglePassReadsWhatTheTwoCallPathRead` holds the single pass to `ListAtCommit`'s answer, path by path, on a fixture repository, and to the same shard list and findings.
+
 ## nova-bus
 
 Run by `cmd/nova-bus/firstrun_test.go` on a throwaway redis-server whose
@@ -272,12 +282,12 @@ Fixture: `cmd/nova-check/testdata/example-self`.
 ```
 $ nova-check quickstart --dir ./self
 QUICKSTART RUN dir=./self checks=2: links, then nocode
-LINKS OK files=4 links=3 excluded=0
-NOCODE OK files=5 clean deny-list=floor-list
+LINKS OK dir=./self files=4 links=3 excluded=0 broken=0
+NOCODE OK dir=./self files=5 deny-list=floor-list findings=0
 QUICKSTART OK done=2 worst-exit=0 next=kernel,attest,floors,corpus (kernel wants a size budget, attest a manifest of what a full boot reads, floors a derived copy and its source, corpus a ledger of protected lines: nova-check help)
 
 $ nova-check kernel --file ./self/docs/SEED-CORE.md --max-bytes 4000
-KERNEL OK bytes=771 budget=4000
+KERNEL OK file=./self/docs/SEED-CORE.md bytes=771 budget=4000 findings=0
 ```
 
 The included `example-self` fixture has `SEED-CORE.md` but no `SEED.md`, so it
@@ -293,13 +303,13 @@ that also strays outside the card's paths.
 
 ```
 $ nova-check hygiene --repo . --base main --head card --identity "Ada <ada@example.com>" --paths "sign/**"
-HYGIENE OK base=main head=card paths=sign/** findings=0
+HYGIENE OK repo=. base=main head=card paths=sign/** findings=0
 
 $ nova-check hygiene --repo . --base main --head card --identity "Ada <ada@example.com>" --paths "sign/**" --max 2
-HYGIENE FINDING reason=identity at=0a19082d2973: author someone@elsewhere.example and committer someone@elsewhere.example are not the pool's identity
-HYGIENE FINDING reason=out-of-path at=elsewhere.go: this path matches none of the card's declared PATHS: sign/**
+HYGIENE FAILED repo=. base=main head=card paths=sign/** findings=4
+HYGIENE FINDING reason=identity at=0a19082d2973 why="author someone@elsewhere.example and committer someone@elsewhere.example are not the pool's identity"
+HYGIENE FINDING reason=out-of-path at=elsewhere.go why="this path matches none of the card's declared PATHS: sign/**"
 HYGIENE MORE kind=finding shown=2 total=4 nova-check hygiene --repo "." --base "main" --head "card" --identity "Ada <ada@example.com>" --paths "sign/**" --max 0
-HYGIENE FAILED base=main head=card paths=sign/** findings=4
 ```
 
 The `MORE` line is the same run with the cap lifted, quoted so it can be pasted
@@ -308,11 +318,11 @@ back — it is the command that prints the rest, and it carries the
 
 ```
 $ nova-check hygiene --repo "." --base "main" --head "card" --identity "Ada <ada@example.com>" --paths "sign/**" --max 0
-HYGIENE FINDING reason=identity at=0a19082d2973: author someone@elsewhere.example and committer someone@elsewhere.example are not the pool's identity
-HYGIENE FINDING reason=out-of-path at=elsewhere.go: this path matches none of the card's declared PATHS: sign/**
-HYGIENE FINDING reason=out-of-path at=elsewhere/x.go: this path matches none of the card's declared PATHS: sign/**
-HYGIENE FINDING reason=stray-file at=sign/RESULT.md: an added file matching the stray list's RESULT.md
-HYGIENE FAILED base=main head=card paths=sign/** findings=4
+HYGIENE FAILED repo=. base=main head=card paths=sign/** findings=4
+HYGIENE FINDING reason=identity at=0a19082d2973 why="author someone@elsewhere.example and committer someone@elsewhere.example are not the pool's identity"
+HYGIENE FINDING reason=out-of-path at=elsewhere.go why="this path matches none of the card's declared PATHS: sign/**"
+HYGIENE FINDING reason=out-of-path at=elsewhere/x.go why="this path matches none of the card's declared PATHS: sign/**"
+HYGIENE FINDING reason=stray-file at=sign/RESULT.md why="an added file matching the stray list's RESULT.md"
 ```
 
 `--identity` takes one pair of angle brackets. A second pair is refused rather
@@ -320,7 +330,7 @@ than matched against nobody:
 
 ```
 $ nova-check hygiene --repo . --base main --head card --identity "Ada <<ada@example.com>>"
-nova-check hygiene REFUSED: --identity "Ada <<ada@example.com>>": the email carries an angle bracket; want `Name <email>`, one pair; run: nova-check help
+HYGIENE REFUSED: --identity "Ada <<ada@example.com>>": the email carries an angle bracket; want `Name <email>`, one pair; run: nova-check help
 ```
 
 `--kind` is a card kind the toolchain declares, and there is no default one. One
@@ -328,7 +338,7 @@ it does not hold is refused by name rather than left to unlock nothing:
 
 ```
 $ nova-check hygiene --repo . --base main --head card --identity "Ada <ada@example.com>" --kind fix-with-red-test
-nova-check hygiene REFUSED: --kind "fix-with-red-test" is not a kind this tool declares; one of: fix-red, transcript-test, rebase, sweep, mutation-kill, guard, read, probe, text, tone, report; run: nova-check help
+HYGIENE REFUSED: --kind "fix-with-red-test" is not a kind this tool declares; one of: fix-red, transcript-test, rebase, sweep, mutation-kill, guard, read, probe, text, tone, report; run: nova-check help
 ```
 
 ## nova-self-talk
@@ -710,7 +720,7 @@ Postgres and a throwaway Redis.
 
 ```text
 $ nova-config migrate --file try.json
-CONFIG MIGRATE file=try.json from=0 to=34 applied=34
+CONFIG MIGRATE file=try.json from=0 to=35 applied=35
 
 $ nova-config machine add m1 --user nova --seat s1 --slots 8 --width 4 --as a1 --file try.json
 CONFIG ADD kind=machine name=m1 rev=1
@@ -1039,8 +1049,9 @@ nothing is ticking between commands in a twin: tick by hand: nova-sprint tick
 
 $ nova-sprint tick
 MOVED presence: m1 up
+MOVED presence: status seen: m1 up
 TABLES rows changed: work=0 readers=0 merge=0 fleet=1
-TICK OK state=RUNNING idle=no moved=1 notes=2
+TICK OK state=RUNNING idle=no moved=2 notes=2
 0/1 0.0% -> ETA -  machine: running
 
 $ nova-sprint tick
@@ -1137,8 +1148,9 @@ nothing is ticking between commands in a twin: tick by hand: nova-sprint tick
 
 $ nova-sprint tick
 MOVED presence: m1 up
+MOVED presence: status seen: m1 up
 TABLES rows changed: work=0 readers=0 merge=0 fleet=1
-TICK OK state=RUNNING idle=no moved=1 notes=2
+TICK OK state=RUNNING idle=no moved=2 notes=2
 0/2 0.0% -> ETA -  machine: running
 
 $ nova-sprint tick

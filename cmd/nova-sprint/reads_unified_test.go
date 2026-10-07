@@ -64,13 +64,14 @@ func TestAnyUnitWithRoomAtOrAboveTheReadTierServesARead(t *testing.T) {
 		require.NoError(t, err)
 		asked += n
 	}
-	require.Equal(t, 1, asked, "the readers table is the other view of the same ask")
+	require.Equal(t, 2, asked, "the readers table is the other view of the same ask: the pro card's two reads, asked together")
 
 	var flash, pro cardView
 	ta.json("card s1-1", &flash)
 	ta.json("card s1-2", &pro)
-	require.Empty(t, flash.Reads, "the flash read is on her fleet row, not the readers table")
-	require.Len(t, pro.Reads, 1, "no friend at or above pro has room: a paid reader has the pro read")
+	require.Len(t, flash.Reads, 1, "the flash read is on her fleet row, not the readers table")
+	require.Equal(t, sprint.FriendRow("amy"), flash.Reads[0].Row)
+	require.Len(t, pro.Reads, 2, "no friend at or above pro has room: paid readers have the pro card's two reads")
 	require.Equal(t, sprint.Asked, pro.Reads[0].Col)
 
 	out := ta.ok("friend sync --root " + root)
@@ -88,9 +89,9 @@ func TestAnyUnitWithRoomAtOrAboveTheReadTierServesARead(t *testing.T) {
 	text, err := os.ReadFile(filepath.Join(inbox, readID, "BRIEF.md"))
 	require.NoError(t, err)
 	require.Contains(t, string(text), "WHO: friend amy\n")
+	// a read asked the old way (read cards off) keeps the old brief and its inbox path
 	deadline := ta.now.Add(sprint.FriendReadDeadline).UTC().Format(time.RFC3339)
 	require.Contains(t, string(text), "deadline: "+deadline+"\n")
-	require.Equal(t, 30*time.Minute, sprint.FriendReadDeadline)
 
 	outboxReport(t, root, "amy", readID, "Verdict: LAND\n")
 	out = ta.ok("friend sync --root " + root)

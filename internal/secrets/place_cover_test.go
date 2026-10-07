@@ -135,6 +135,19 @@ func TestPlaceCoverReadFleetMachinesParsesRegistry(t *testing.T) {
 	}
 }
 
+func TestPlaceMachinesRefusesGateRegistryFormat(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "machines.tsv")
+	body := "node\tnode\tlinux/x64\tbench\tseat\t8\t-\n"
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+
+	_, err := ReadFleetMachines(path)
+	require.Error(t, err, "place must refuse the gate registry instead of treating os/arch as a home directory")
+	assert.Contains(t, err.Error(), "place machines file", "refusal = %q, want the place table format", err)
+	assert.Contains(t, err.Error(), "name, ssh target, home", "refusal = %q, want the fields place needs", err)
+}
+
 // TestPlaceCoverReceiptPathNamesTheMachineFile pins receiptPath: one machine's
 // receipt file lives at <dir>/<machine>.receipt.
 func TestPlaceCoverReceiptPathNamesTheMachineFile(t *testing.T) {

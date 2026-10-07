@@ -37,6 +37,10 @@ func TestAReadNeverMovedIsNotTakenForLevelledByAStampItShares(t *testing.T) {
 		c := putRead(w, p, 1, "reader-b", Reading)
 		c.Fields["asked"], c.Fields["begun"] = stamp(t0), stamp(t0)
 	}
+	// reader-a, whose read the level moved, has read nothing: under the interim rule
+	// (ReadCardForAsk) it is askable once more, under the second identity; spent here, so
+	// the level's one reader free is reader-d
+	spendSecond(w, "s1-1", 1, "reader-a")
 	w.tick(time.Second)
 	p, _ := TickLevelReads(w.s, TickReq{})
 	w.must(p)
@@ -60,6 +64,7 @@ func TestARefusedReturnedReadMovesNoRouteTheNextPrimaryDraws(t *testing.T) {
 		r.Deadline = 600 // seconds, as the route row holds it
 		w.s.Routes = append(w.s.Routes, r)
 	}
+	readersReadEveryTier(w) // a fleet row reads flash unless it says more (fleetReadsFlashOnly)
 	for _, id := range []string{"s1-1", "s1-2"} {
 		w.s.Work.Card(id).Fields[FieldTierNow] = "pro" // pro cards on pro (flash first: escalated)
 	}
@@ -73,6 +78,10 @@ func TestARefusedReturnedReadMovesNoRouteTheNextPrimaryDraws(t *testing.T) {
 	back.Fields["asked"], back.Fields[FieldRoute], back.Fields["retired"], back.Fields["retired_by"] = stamp(t0), "pro-c", stamp(t0), "returned"
 	old := putRead(w, "s1-1", 1, "reader-c", "")
 	old.Fields["retired"], old.Fields["retired_by"] = stamp(t0), "returned"
+	// a read retired with no verdict leaves its reader askable once more, under the second
+	// identity (ReadCardForAsk, the interim rule): reader-b and reader-c spent that too
+	spendSecond(w, "s1-1", 1, "reader-b")
+	spendSecond(w, "s1-1", 1, "reader-c")
 	w.s.ReaderStates = map[string]string{"reader-a": ReaderAway, "reader-b": ReaderUp, "reader-c": ReaderUp}
 	p := Ask(w.s, AskReq{})
 	require.Len(t, p.Refused, 1, "s1-1 has no reader free")
@@ -82,7 +91,7 @@ func TestARefusedReturnedReadMovesNoRouteTheNextPrimaryDraws(t *testing.T) {
 	for _, rc := range liveReadsAt(w.s, w.s.Work.Card("s1-2"), 1) {
 		drawn = append(drawn, rc.F(FieldRoute))
 	}
-	require.Len(t, drawn, 1, "s1-2 asked its first read")
+	require.Len(t, drawn, 2, "s1-2 asked its two reads together")
 	v, _ := w.s.Fleet.Prop(PropRouteIndex("pro"))
 	arr := w.s.tierArray("pro")
 	n := roundCount(nil, v)

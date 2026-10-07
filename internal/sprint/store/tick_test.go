@@ -74,8 +74,8 @@ func (h *harness) readAll() {
 		for _, r := range []string{"reader-a", "reader-b", "reader-c"} {
 			h.run(ReadStep(sprint.ReadReq{Usage: "input=1000 output=100", As: r, Verdict: "ok", Sel: sprint.Sel{Limit: 100}, Who: r}))
 		}
-		// reads are asked one at a time (sprint.ReadsWanted): the next read of each
-		// card whose first came back ok is asked here, as the tick's ask would
+		// a read still wanted (one taken back, or a reader freed) is asked here, as
+		// the tick's ask would (reads are asked together, sprint.ReadsWanted)
 		s := h.snap()
 		var want []string
 		for _, c := range s.Work.Column(sprint.Review) {
@@ -101,13 +101,12 @@ func (h *harness) readOutstanding() {
 	}
 }
 
-// pairAsked asks the primary its first read and, by --another, a second: two reads
-// outstanding at once, for a test of two verdicts on one attempt (the ask alone
-// places one read at a time, sprint.ReadsWanted). It returns the two read cards.
+// pairAsked asks the primary its reads: two reads outstanding at once, for a test of
+// two verdicts on one attempt (reads are asked together, sprint.ReadsWanted). It
+// returns the two read cards.
 func (h *harness) pairAsked(id string) []*sprint.Card {
 	h.t.Helper()
 	h.must(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{id}}}))
-	h.must(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{id}}, Another: true}))
 	rc := h.snap().Readers.Of(id)
 	require.Len(h.t, rc, 2, "%s asked of two readers", id)
 	return rc
@@ -705,8 +704,7 @@ func TestTwoLateReadsOfOnePrimaryAreTwoJudgments(t *testing.T) {
 	h.startMachine()
 	h.machine()
 	h.takeAndFinish(false, "p")
-	h.machine()                                                                        // asks the first reader
-	h.must(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"p"}}, Another: true})) // and one more: two reads outstanding
+	h.machine() // asks both readers together: two reads outstanding
 	cards := h.snap().Readers.Of("p")
 	require.Len(t, cards, 2, "asked: %d", len(cards))
 	h.must(ReadStep(sprint.ReadReq{As: cards[0].Row, Begin: true, Sel: sprint.Sel{IDs: []string{cards[0].ID}}}))

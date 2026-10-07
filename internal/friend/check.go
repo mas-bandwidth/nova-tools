@@ -36,6 +36,11 @@ type DaemonFacts struct {
 	PongAge    string `json:"pong_age"`   // e.g. "4s" or "-"
 	Presence   string `json:"presence"`   // up, asleep, down
 	SeenAge    string `json:"seen_age"`   // e.g. "4s" or "-"
+	// Proof is the session's proof as the server has it from her daemon: pending
+	// while the push is unproven (ProofAge since the daemon started waiting), sent
+	// once the server took one on her beat (ProofAge the proof's age), none before.
+	Proof    string `json:"proof"`     // pending, sent, none
+	ProofAge string `json:"proof_age"` // e.g. "4s" or "-"
 }
 
 // HarnessFacts carries facts about the harness, deliveries and breaks: every
@@ -43,15 +48,17 @@ type DaemonFacts struct {
 type HarnessFacts struct {
 	Friend         string `json:"friend"`
 	Harness        string `json:"harness"`
-	Route          string `json:"route"` // push, defer, passive
+	Route          string `json:"route"` // push, mailbox, queue or passive
 	Last           string `json:"last"`  // RFC3339 or "-"
 	LastExit       string `json:"last_exit"`
 	FailedOfLast20 int    `json:"failed_of_last20"`
 	Deferred       int    `json:"deferred"`
-	Delivered      int    `json:"delivered"` // deliveries in the window (JSON only)
-	Failed         int    `json:"failed"`    // of those, the ones that failed (JSON only)
-	Broken         string `json:"broken"`    // RFC3339 or "-"
-	Reason         string `json:"reason"`    // one line or "-"
+	Delivered      int    `json:"delivered"`    // deliveries in the window (JSON only)
+	Failed         int    `json:"failed"`       // of those, the ones that failed (JSON only)
+	Broken         string `json:"broken"`       // RFC3339 or "-"
+	Reason         string `json:"reason"`       // one line or "-"
+	SessionLive    string `json:"session_live"` // the conversation a mailbox harness delivers into, or "-"
+	Queued         string `json:"queued"`       // the harness's own queue not yet taken (codex), or "-"
 }
 
 // BusFacts carries facts about real messages on the bus.
@@ -325,6 +332,8 @@ func CheckFriend(ctx context.Context, friendName string, seams CheckSeams, since
 		PongAge:    "-",
 		Presence:   "down",
 		SeenAge:    "-",
+		Proof:      "none",
+		ProofAge:   "-",
 	}
 
 	if seams.Launchctl != nil {
@@ -365,6 +374,15 @@ func CheckFriend(ctx context.Context, friendName string, seams CheckSeams, since
 		df.Challenge = dash(st.Challenge)
 		if (harness == "" || harness == "unknown") && st.Harness != "" {
 			harness = st.Harness
+		}
+		switch {
+		case st.Push == PushUnproven:
+			df.Proof = "pending"
+			if !st.PushSince.IsZero() {
+				df.ProofAge = AgeString(now.Sub(st.PushSince))
+			}
+		case !st.ProofSent.IsZero():
+			df.Proof, df.ProofAge = "sent", AgeString(now.Sub(st.ProofSent))
 		}
 	}
 
@@ -420,21 +438,28 @@ func CheckFriend(ctx context.Context, friendName string, seams CheckSeams, since
 	}
 
 	// Harness facts
-	route := "push"
+	route := "push" // dsh included: each delivery is a headless turn into her session, never a deferral
 	if harness == "claude" || slices.Contains(RefusedHarnesses, harness) {
 		route = "passive"
-	} else if harness == "dsh" {
-		route = "defer"
+	} else if harness == "antigravity" {
+		route = "mailbox" // delivered into the conversation's mailbox at once, never deferred for a turn
+	} else if harness == "codex" {
+		route = "queue" // the open chat's queue: a turn under way is never steered from outside (Codex)
 	}
 
 	hf := HarnessFacts{
-		Friend:   friendName,
-		Harness:  harness,
-		Route:    route,
-		Last:     "-",
-		LastExit: "-",
-		Broken:   "-",
-		Reason:   "-",
+		Friend:      friendName,
+		Harness:     harness,
+		Route:       route,
+		Last:        "-",
+		LastExit:    "-",
+		Broken:      "-",
+		Reason:      "-",
+		SessionLive: dash(st.SessionLive),
+		Queued:      "-",
+	}
+	if st.QueueKnown {
+		hf.Queued = strconv.Itoa(st.Queued)
 	}
 
 	if seams.ReadLog != nil {
@@ -564,14 +589,18 @@ func BusLogEntries(ctx context.Context, st bus.Store, friend string, since time.
 
 // Line renders the CHECK DAEMON line.
 func (df DaemonFacts) Line() string {
-	return fmt.Sprintf("CHECK DAEMON friend=%s agent=%s pid=%s status=%s connection=%s challenge=%s pong_age=%s presence=%s seen_age=%s",
-		df.Friend, df.Agent, df.PID, df.Status, df.Connection, df.Challenge, df.PongAge, df.Presence, df.SeenAge)
+	proof, age := df.Proof, df.ProofAge
+	if proof == "" {
+		proof, age = "none", "-"
+	}
+	return fmt.Sprintf("CHECK DAEMON friend=%s agent=%s pid=%s status=%s connection=%s challenge=%s pong_age=%s presence=%s seen_age=%s proof=%s proof_age=%s",
+		df.Friend, df.Agent, df.PID, df.Status, df.Connection, df.Challenge, df.PongAge, df.Presence, df.SeenAge, proof, dash(age))
 }
 
 // Line renders the CHECK HARNESS line.
 func (hf HarnessFacts) Line() string {
-	return fmt.Sprintf("CHECK HARNESS friend=%s harness=%s route=%s last=%s last_exit=%s failed_of_last20=%d deferred=%d broken=%s reason=%s",
-		hf.Friend, hf.Harness, hf.Route, hf.Last, hf.LastExit, hf.FailedOfLast20, hf.Deferred, hf.Broken, QuoteWhy(hf.Reason))
+	return fmt.Sprintf("CHECK HARNESS friend=%s harness=%s route=%s last=%s last_exit=%s failed_of_last20=%d deferred=%d broken=%s reason=%s session_live=%s queued=%s",
+		hf.Friend, hf.Harness, hf.Route, hf.Last, hf.LastExit, hf.FailedOfLast20, hf.Deferred, hf.Broken, QuoteWhy(hf.Reason), dash(hf.SessionLive), dash(hf.Queued))
 }
 
 // Line renders the CHECK BUS line.

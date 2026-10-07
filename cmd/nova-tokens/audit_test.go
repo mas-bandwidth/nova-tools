@@ -25,8 +25,10 @@ var tokensAudit = audit.Config{
 	// s.line, s.factFields and s.dryRunFields (out.go) build a typed line from key=value
 	// pairs, every key and value through oneline.Field and a tail through oneline.Escape;
 	// fields is the loop they share, and its one Sprint site is exempt below for that
-	// reason.
-	Escapers: []string{"sourceLine", "unreadableLine", "unparsedLine", "dayLine", "s.line", "s.factFields", "s.dryRunFields"},
+	// reason. oneline.Quote is oneline's third rendering: a double-quoted Go string
+	// literal, so the report's subject is one value and the at= and build= it repeats
+	// inside itself are not printed as keys of the line.
+	Escapers: []string{"sourceLine", "unreadableLine", "unparsedLine", "dayLine", "s.line", "s.factFields", "s.dryRunFields", "oneline.Quote"},
 	// One entry per site, keyed by file, function and source text; each is a claim a
 	// reader can check.
 	Exempt: map[string]string{

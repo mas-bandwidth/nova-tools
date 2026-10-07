@@ -21,8 +21,10 @@ func TestAckOfTwoBlockedJudgmentsOnOnePrimaryWaivesBoth(t *testing.T) {
 	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m1"}))
 	h.must(AddStep(sprint.AddReq{Stream: "s1", IDs: []string{"p3", "p4"}}))
 	h.must(AddStep(sprint.AddReq{Stream: "s3", IDs: []string{"p5"}, Needs: []string{"p3", "p4"}}))
-	h.must(DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{"p3"}}, Reason: "why"}))
-	h.must(DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{"p4"}}, Reason: "why"}))
+	seedDroppedNeed(h, "p3")
+	h.must(ResolveStep(sprint.ResolveReq{}))
+	seedDroppedNeed(h, "p4")
+	h.must(ResolveStep(sprint.ResolveReq{}))
 	var notes []string
 	for _, o := range h.openOf(sprint.NBlocked) {
 		notes = append(notes, o.Note.ID)

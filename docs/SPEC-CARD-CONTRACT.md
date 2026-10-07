@@ -252,6 +252,13 @@ with a `report:` line beginning `script read: ` (what was run, at which start co
 head, and the bytes compared). A script reader that found a difference reports nothing of its own: it
 reads the card as a model reader and gives that read's verdict (docs/SPEC-SPRINT.md section 6, the script read).
 
+A read card dealt to a friend (docs/SPEC-SPRINT.md section 6, "A read is a consumer card")
+is a card of hers: its BRIEF.md (sprint `ReadCardBrief`) says what a read is, the head to check
+out, how to read it and how to finish, and its end is outbox/<job>/REPORT.md whose first line is
+`Verdict: LAND` (an ok read) or `Verdict: HOLD` (a broken read, each defect on a line naming the
+file, line or rule it breaks); a read commits nothing and pushes nothing. A read card dealt to a
+member is run as a reader's read is, its verdict reported with `read --as <member>`.
+
 ## 4. The finish
 
 A work card's finish is judged in one place, `member.Judge`, cited from the model's `Finish`:
@@ -389,11 +396,12 @@ relative to the repository root, never climbing out with `..`, each naming a fil
 base or one its pushed head creates. The child still pushes what it did and reports its head.
 The member keeps that line at the end of the finish's report, inside the 500-byte cut
 (`member.CarryProposed`), and friend sync keeps it on a friend's HOLD, with the HOLD's `Head`
-when it is origin's tip of the card's branch; so the line is on the card, and `nova-sprint recut
-<id> --widen` reads it there (docs/SPEC-SPRINT.md section 2). The twin's brief carries a header
-line `CARRY: <old id> attempt <n> head=<sha>`, and the member stages the twin's first attempt
-at that head as it stages a rework at its last pushed head (`member.Carried`), as does a friend's
-brief (`TestRecutWidenAppliesPathsProposed`).
+when it is origin's tip of the card's branch; so the line is on the card, and `nova-sprint brief
+<id> --widen` reads it there, the paths alone before any prose on the line, and widens the card
+in place, the same id (docs/SPEC-SPRINT.md section 2). The widened brief carries a header line
+`CARRY: <id> attempt <n> head=<sha>`, and the member stages the card's next attempt at that
+head as it stages a rework at its last pushed head (`member.Carried`), as does a friend's brief
+(`TestBriefWidenKeepsTheId`).
 
 ## 5. Profiles
 

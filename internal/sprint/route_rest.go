@@ -454,6 +454,9 @@ func cardRest(s *Snapshot, c *Card) (RouteRest, bool) {
 func restWithdrawals(s *Snapshot, who string) []Unit {
 	var out []Unit
 	for _, c := range s.Fleet.Column(Ready) {
+		if isRead(c) {
+			continue // a read card is its reader's: the read-card deal draws a read off a resting route
+		}
 		if rest, ok := cardRest(s, c); ok {
 			out = append(out, withdrawCard(s, c, false, NRestWithdrawn, who, "taken back: its route "+c.F(FieldRoute)+" rests ("+rest.Said()+")"))
 		}
