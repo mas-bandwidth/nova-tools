@@ -1,6 +1,6 @@
 # nova-up dogfood, 2026-10-06 (opencode-2)
 
-Tool: nova-up. Build: `nova-up v1.0.1-0.20261006183932-5844884e267c linux/amd64 go1.26.6`.
+Tool: nova-up. Build: `nova-up v1.0.1-0.20261007161649-992a0122daac linux/amd64 go1.26.6`.
 Run cold, from the binary's own help (`nova-up -h`, `nova-up help`, `nova-up <verb> -h`) and its
 page under `docs/` (`docs/SPEC-UP.md`) only, with every verb (`up`, `version`, `help`) at least
 once with its real flags against scratch roots under one temporary directory, the refusals
@@ -8,8 +8,9 @@ included. No engine or service was started: this card's rules forbid it ("Never 
 this machine"), so the full apply of `up --local` (which installs one service-manager unit and
 starts the loopback Redis) was not run. The real applies below stop before any write, at a missing
 program or at a root the plan cannot make; the applied success path (`UP UNCHANGED`, a second run
-all `ok`, `seat.env`, the smoke card landed) is reported not done. The card names the base
-`5844884e267c`, and that is the checkout these findings were recorded at.
+all `ok`, `seat.env`, the smoke card landed) is reported not done. These findings were recorded at
+`sprint/mechanical-2026-10-02`'s tip `2bf2be83e5c2`, the base this card starts from; the carried
+attempt-1 commit `41ad1b2c` was re-verified there.
 
 Commands were typed with
 
@@ -199,16 +200,14 @@ NEXT.
 
 **Command:**
 
-    grep -n '^#\{2,3\} .*up' docs/CLI.md
+    grep -n '^## nova-up' docs/CLI.md
 
-**Printed:**
-
-    1801:## nova-update
+**Printed:** no lines (exit 1); the nearest section the file has is `1924:## nova-update`.
 
 and `docs/SPEC-UP.md` (the tool's page under `docs/`) contains no `### First run`. **Expected:** the
-command reference's first section for the tool is the first run, with the transcript a stranger
-prints; here the only first run is the banner's `example:` block, and the page under `docs/` opens
-with the design. Grade: NEXT.
+command reference's section for the tool is the first run, with the transcript a stranger prints;
+here the only first runs are the banner's `example:` block and the `## First run` the tool's own
+`cmd/nova-up/README.md` grew, and the page under `docs/` opens with the design. Grade: NEXT.
 
 ## Ratings
 
