@@ -130,6 +130,9 @@ func Recut(s *Snapshot, r RecutReq) Plan {
 				}
 				if level != "" {
 					u.Changes[j].Entry.Set[FieldPriority] = level
+					if by := c.F(FieldPriorityBy); by != "" {
+						u.Changes[j].Entry.Set[FieldPriorityBy] = by // whose it was: the rule's may still drop back
+					}
 					u.Moved += "; priority " + level
 				}
 			}

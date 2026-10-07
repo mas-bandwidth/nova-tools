@@ -295,6 +295,16 @@ func (a *app) printStory(w io.Writer, v store.CardInfo, events []storyLine, text
 	if place != "" && !ended {
 		head += "   " + place
 	}
+	// its level when it is not normal: "priority high (rule: behind=12)" for one the
+	// blocking-rises rule raised, "priority high (set)" for a person's
+	if level, source := sprint.CardPriority(p); level != sprint.PriorityNormal && !ended {
+		head += "   priority " + level
+		if source == "rule" {
+			head += fmt.Sprintf(" (rule: behind=%d)", p.Int(sprint.FieldBehind))
+		} else {
+			head += " (" + source + ")"
+		}
+	}
 	fmt.Fprintln(w, oneline.Escape(head))
 	if !ended {
 		fmt.Fprintln(w, "\nnow:")

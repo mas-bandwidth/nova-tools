@@ -150,6 +150,11 @@ func Add(s *Snapshot, r AddReq) Plan {
 	}
 	var p Plan
 	p.on(s)
+	// the many-brief form's cards in work order by their dependents, each as early as its
+	// own needs allow (admissionOrder, blocking_rises.go); the simple forms as given
+	if len(r.Cards) > 0 && r.Only == nil {
+		r.Cards = admissionOrder(s, r.Cards)
+	}
 	ids := AddIDs(s, r)
 	refuseAll := func(why string) Plan {
 		var q Plan
@@ -534,7 +539,8 @@ func Add(s *Snapshot, r AddReq) Plan {
 		}
 		if kind == "primary" {
 			if lvl := seedPriority(ctl, a.brief); lvl != "" {
-				fields[FieldPriority] = lvl // its brief's PRIORITY line, else its stream's default (priority.go)
+				fields[FieldPriority] = lvl                    // its brief's PRIORITY line, else its stream's default (priority.go)
+				fields[FieldPriorityBy] = priorityActor(r.Who) // a person's: the blocking-rises rule never changes it
 			}
 		}
 		if len(a.needs) > 0 {

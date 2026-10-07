@@ -661,9 +661,12 @@ type whereView struct {
 	// record (sprint.PriorityCounts, sprint.StreamPriorities); absent when every card is normal.
 	Priorities       map[string][]string `json:"priorities,omitempty"`
 	StreamPriorities map[string]string   `json:"stream_priorities,omitempty"`
-	Width            int                 `json:"width"`
-	Buffer           string              `json:"buffer"`
-	Low              bool                `json:"low"`
+	// RuleRaised is each card the blocking-rises rule holds at high, with the cards behind
+	// it, from the same record (sprint.RuleRaised); absent when none.
+	RuleRaised map[string]int `json:"rule_raised,omitempty"`
+	Width      int            `json:"width"`
+	Buffer     string         `json:"buffer"`
+	Low        bool           `json:"low"`
 	// MergeRow is the merge state, the dashboard's Merge row (docs/SPEC-SPRINT-DASHBOARD.md,
 	// "Merge"): the cards in merging and review, landed per 30 minutes, the oldest merging
 	// card's age (with --cards or --rows), the base's gate and its failing test, the drift
@@ -1220,7 +1223,8 @@ func (a *app) whereOf(ctx context.Context, st *store.Store, stale time.Duration,
 	}
 	// beside it, the cards whose level is not normal and the streams' defaults (priority.go),
 	// and the backup state while there is one
-	if line := sprint.PriorityLine(v.Priorities, v.StreamPriorities); line != "" {
+	v.RuleRaised = facts.RuleRaised
+	if line := sprint.PriorityLine(v.Priorities, v.StreamPriorities, v.RuleRaised); line != "" {
 		b.WriteString(line + "\n")
 	}
 	if line := backupLine(v.Backup, working, review, merging, v.ReadsWaiting); line != "" {
@@ -2336,10 +2340,16 @@ func whoWord(pr *sprint.Card) string {
 	return ""
 }
 
-// priorityWord is the CARD OK line's priority (sprint.CardPriority), always printed.
+// priorityWord is the CARD OK line's priority (sprint.CardPriority), always printed; a level
+// the blocking-rises rule set says so, with the cards behind the card: "priority=high
+// priority_by=rule behind=12".
 func priorityWord(pr *sprint.Card) string {
-	l, _ := sprint.CardPriority(pr)
-	return " priority=" + l
+	l, src := sprint.CardPriority(pr)
+	out := " priority=" + l
+	if src == "rule" {
+		out += fmt.Sprintf(" priority_by=%s behind=%d", sprint.PriorityByRule, pr.Int(sprint.FieldBehind))
+	}
+	return out
 }
 
 // queuePriority is a queue card's level: a primary's own (sprint.CardPriority), a work or a

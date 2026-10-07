@@ -303,7 +303,10 @@ type SetReq struct {
 	// Reads is the reads every card in review needs (PropReadsNeeded): 0, 1, 2, or
 	// default (each card's own rule, ReadsNeeded).
 	Reads string `json:",omitempty"`
-	Who   string
+	// BlockingHigh is the blocking-rises rule's threshold (PropBlockingHigh,
+	// blocking_rises.go): a whole number from 1, or default (BlockingHighDefault).
+	BlockingHigh string `json:",omitempty"`
+	Who          string
 }
 
 // Set writes the settings: refused whole, writing nothing, for an actor who is not
@@ -430,8 +433,16 @@ func Set(s *Snapshot, r SetReq) Plan {
 			why = append(why, "--reads is the sprint's, not a stream's: nova-sprint set --reads "+r.Reads)
 		}
 	}
-	if r.ReadTier == "" && r.DealtMax == "" && r.LandProtected == "" && r.Release == "" && r.Prose == "" && len(alarms) == 0 && r.GoLanes == "" && r.Attempts == "" && r.FriendIdle == "" && r.FriendStallAfter == "" && r.FriendStallStep == "" && r.DriftCommits == "" && r.DriftHours == "" && r.Fleet == "" && r.Friends == "" && len(sideTiers) == 0 && r.ReadCards == "" && r.Reads == "" {
-		why = append(why, "nothing to set: --read-tier, --read-cards, --reads, --prose, --dealt-max, --go-lanes, --attempts, --friend-idle, --friend-stall-after, --friend-stall-step, --drift-commits, --drift-hours, --fleet, --friends, --fleet-tiers, --friends-tiers or an --alarm-... threshold")
+	if r.BlockingHigh != "" {
+		if !blockingHighValid(r.BlockingHigh) {
+			why = append(why, "--blocking-high wants a whole number from 1, the cards behind a card at and above which it rises to high, or "+ReadTierDefault+" for "+strconv.Itoa(BlockingHighDefault)+"; found "+r.BlockingHigh)
+		}
+		if len(r.Streams) > 0 {
+			why = append(why, "--blocking-high is the sprint's, not a stream's: nova-sprint set --blocking-high "+r.BlockingHigh)
+		}
+	}
+	if r.ReadTier == "" && r.DealtMax == "" && r.LandProtected == "" && r.Release == "" && r.Prose == "" && len(alarms) == 0 && r.GoLanes == "" && r.Attempts == "" && r.FriendIdle == "" && r.FriendStallAfter == "" && r.FriendStallStep == "" && r.DriftCommits == "" && r.DriftHours == "" && r.Fleet == "" && r.Friends == "" && len(sideTiers) == 0 && r.ReadCards == "" && r.Reads == "" && r.BlockingHigh == "" {
+		why = append(why, "nothing to set: --read-tier, --read-cards, --reads, --blocking-high, --prose, --dealt-max, --go-lanes, --attempts, --friend-idle, --friend-stall-after, --friend-stall-step, --drift-commits, --drift-hours, --fleet, --friends, --fleet-tiers, --friends-tiers or an --alarm-... threshold")
 	}
 	if len(r.Streams) > 0 && r.GoLanes != "" {
 		why = append(why, "--go-lanes is the sprint's, not a stream's: nova-sprint set --go-lanes "+r.GoLanes)
@@ -535,6 +546,7 @@ func Set(s *Snapshot, r SetReq) Plan {
 		{PropFriendsTiers, sideTiers[PropFriendsTiers]},
 		{PropReadCards, r.ReadCards},
 		{PropReadsNeeded, r.Reads},
+		{PropBlockingHigh, r.BlockingHigh},
 	}
 	for _, a := range alarmProps {
 		kvs = append(kvs, [2]string{a.prop, alarms[a.prop]})
@@ -576,6 +588,8 @@ func orDefault(v, name string) string {
 		return "default (off: the readers table asks)"
 	case name == PropReadsNeeded:
 		return "default (one for a flash card, two above)"
+	case name == PropBlockingHigh:
+		return fmt.Sprintf("default (%d behind)", BlockingHighDefault)
 	}
 	return "default (each card's own tier)"
 }

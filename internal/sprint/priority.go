@@ -98,6 +98,9 @@ func CardPriority(c *Card) (level, source string) {
 		return PriorityReader, "read"
 	}
 	if v := c.F(FieldPriority); v != "" {
+		if c.F(FieldPriorityBy) == PriorityByRule {
+			return v, "rule" // the blocking-rises rule's (blocking_rises.go)
+		}
 		return v, "set"
 	}
 	if IsCritical(c) {
@@ -302,17 +305,27 @@ func SetPriority(s *Snapshot, r PriorityReq) Plan {
 			continue
 		}
 		was, _ := CardPriority(c)
-		if c.F(FieldPriority) == r.Level {
+		if c.F(FieldPriority) == r.Level && c.F(FieldPriorityBy) != PriorityByRule {
 			p.Said = append(p.Said, id+" priority "+r.Level+" already; no change")
 			continue
 		}
 		n := happened(NPrioritySet, c.Row, s.Now, c.ID)
 		n.Who, n.What = r.Who, fmt.Sprintf("%s priority %s -> %s%s", c.ID, was, r.Level, why)
+		// a person's level, marked so (FieldPriorityBy): the blocking-rises rule never changes it
 		p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.Row,
-			Changes: []Change{change(Work, setEntry(c, map[string]string{FieldPriority: r.Level}))}, Notes: []Note{n},
+			Changes: []Change{change(Work, setEntry(c, map[string]string{FieldPriority: r.Level, FieldPriorityBy: priorityActor(r.Who)}))}, Notes: []Note{n},
 			Moved: n.What})
 	}
 	return p
+}
+
+// priorityActor is FieldPriorityBy's word for a level a person set: the actor, or "hand"
+// for an unnamed one; never the rule's word.
+func priorityActor(who string) string {
+	if who == "" || who == PriorityByRule {
+		return "hand"
+	}
+	return who
 }
 
 // CriticalByWeight is the key and the words where and the dashboard show a computed critical
@@ -357,10 +370,11 @@ func StreamPriorities(s *Snapshot) map[string]string {
 	return out
 }
 
-// PriorityLine is where's line beside the critical list: "priority: blocker s1-4; low s2-1,
-// s2-2 (+3)", the levels high to low, at most five cards a level; "" when every card is
-// normal.
-func PriorityLine(counts map[string][]string, streams map[string]string) string {
+// PriorityLine is where's line beside the critical list: "priority: blocker s1-4; high s3-2
+// (behind=12); low s2-1, s2-2 (+3)", the levels high to low, at most five cards a level, a
+// card the blocking-rises rule raised with the cards behind it (raised, RuleRaised); ""
+// when every card is normal.
+func PriorityLine(counts map[string][]string, streams map[string]string, raised map[string]int) string {
 	var parts []string
 	ladder := slices.Insert(slices.Clone(PriorityLadder), 2, CriticalByWeight)
 	for _, l := range ladder {
@@ -368,7 +382,12 @@ func PriorityLine(counts map[string][]string, streams map[string]string) string 
 		if len(ids) == 0 {
 			continue
 		}
-		shown := ids[:min(5, len(ids))]
+		shown := slices.Clone(ids[:min(5, len(ids))])
+		for i, id := range shown {
+			if n, ok := raised[id]; ok {
+				shown[i] = fmt.Sprintf("%s (behind=%d)", id, n)
+			}
+		}
 		part := l + " " + strings.Join(shown, ", ")
 		if len(ids) > len(shown) {
 			part += fmt.Sprintf(" (+%d)", len(ids)-len(shown))

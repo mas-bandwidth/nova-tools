@@ -46,7 +46,7 @@ func TestAComputedCriticalIsShownNotYetOrdered(t *testing.T) {
 	assert.Equal(t, []*Card{plain, heavy}, ladderOrder([]*Card{plain, heavy}), "not yet ordered: the given order stands")
 	set := &Card{ID: "s1-3", Fields: map[string]string{"kind": "primary", FieldPriority: PriorityCritical}}
 	assert.Equal(t, []*Card{set, plain, heavy}, ladderOrder([]*Card{plain, heavy, set}), "a critical set by hand is ordered")
-	line := PriorityLine(map[string][]string{CriticalByWeight: {"s1-2"}, PriorityCritical: {"s1-3"}}, nil)
+	line := PriorityLine(map[string][]string{CriticalByWeight: {"s1-2"}, PriorityCritical: {"s1-3"}}, nil, nil)
 	assert.Equal(t, "priority: critical s1-3; critical (by weight, not yet ordered) s1-2", line)
 }
 
