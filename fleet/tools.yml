@@ -413,21 +413,27 @@
     # tool only when its bytes are already the artifact's (internal/release/
     # install.go, security#72 finding 2), so a copy made before that install
     # would be replaced; the copy changes nothing on a machine whose bytes are
-    # already these.
+    # already these. The coordinator is left out for the same reason the
+    # release install above is (the `when` below is that task's, with check
+    # mode): it installs inside the seat play's window, where the same copy
+    # follows that install, so every mutation of its nova-sprint is inside the
+    # window and never before a rollback snapshot or a refused candidate.
     - name: nova-sprint, built from its own repository, into the bin directory by its name
       ansible.builtin.copy:
         src: "{{ nova_sprint_out }}/{{ nova_platform }}/{{ tools_sprint_file }}"
         dest: "{{ nova_bin_dir }}/{{ tools_sprint_file }}"
         mode: "0755"
       register: tools_sprint
-      when: not ansible_check_mode
+      when: not ansible_check_mode and inventory_hostname not in (groups['coordinator'] | default([]))
 
     - name: the nova-sprint receipt
       ansible.builtin.debug:
         msg: >-
           SPRINT host={{ inventory_hostname }} platform={{ nova_platform }} version={{ nova_version }}
           repo={{ nova_sprint_repo }} ref={{ nova_sprint_ref }}
-          {{ 'WOULD-COPY' if ansible_check_mode else ('INSTALLED' if tools_sprint.changed else 'UP-TO-DATE') }}
+          {{ 'WOULD-COPY' if ansible_check_mode
+             else 'SEAT-WINDOW (the seat play installs it, its old server and member stopped)' if tools_sprint is skipped
+             else ('INSTALLED' if tools_sprint.changed else 'UP-TO-DATE') }}
 
     - name: the retired tools in the bin directory, by exact name (one listing)
       ansible.builtin.find: { paths: "{{ nova_bin_dir }}", patterns: "{{ hostvars['localhost'].tools_retired }}", file_type: any, hidden: true }
