@@ -109,8 +109,7 @@ func runInventory(ctx context.Context, args []string, stdout, stderr io.Writer, 
 		// fail is a store failure: the deadline, or the store's own words.
 		fail := func(err error) int {
 			if ctx.Err() != nil {
-				fmt.Fprintf(stderr, "%s %s REFUSED: timed out after %s waiting for the store at %s while %s; check that Redis answers there; run: %s\n", toolName, verb, *timeout, addr, stage, again("--timeout", (*timeout*3).String()))
-				return 2
+				return refuseLine(stderr, verb, fmt.Sprintf("timed out after %s waiting for the store at %s while %s; check that Redis answers there; run: %s", *timeout, addr, stage, again("--timeout", (*timeout*3).String())), 2)
 			}
 			return refuse(stderr, verb, err.Error())
 		}
