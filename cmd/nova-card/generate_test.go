@@ -203,6 +203,24 @@ func TestGenerateRefusesABriefWithTheCardChecksFinding(t *testing.T) {
 	assert.Contains(t, stdout, "check=dropped-card")
 }
 
+// The usage banner and verb help print each example line once, with no duplicate line.
+func TestTheUsageBannerPrintsEachExampleOnce(t *testing.T) {
+	t.Parallel()
+	for _, args := range [][]string{{"help"}, {"generate", "-h"}, {"help", "generate"}} {
+		exit, stdout, stderr := runCard(args...)
+		require.Equal(t, 0, exit, "args %v: %s", args, stderr)
+		seen := make(map[string]int)
+		for _, line := range strings.Split(stdout, "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+			seen[line]++
+			assert.Equalf(t, 1, seen[line], "banner %v duplicates line: %s", args, line)
+		}
+	}
+}
+
 // A card whose PATHS name TLA+ model work is generated frontier, as nova-sprint add tiers it
 // (sprint.ModelTier; docs/SPEC-SPRINT.md, the card decides its model): the source's own tier
 // gives way, a card on the run records alone keeps it, and an explicit --tier below frontier
