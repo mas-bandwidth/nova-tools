@@ -220,3 +220,33 @@ func friendLaneIdle(s *Snapshot, seats []FriendSeat, c *Card) (friend string, id
 	}
 	return friend, false
 }
+
+// FriendTransitionTakeBackFromTick takes back all unstarted cards from friends whose status
+// is not Up (docs/SPEC-SPRINT.md section 1, a friend's card taken back; the owner,
+// 2026-10-06: "a friend held (out of credits) still showed 13 cards ready on her row").
+// When a friend transitions away from up (held, down), every card dealt to her
+// and not started (ready on her row) is withdrawn on her row, its primary put back to ready,
+// and offered to the deal again. Started cards stay with her and finish. This runs in the
+// same tick as the status transition.
+func FriendTransitionTakeBackFromTick(s *Snapshot, seats []FriendSeat, now time.Time) Plan {
+	var p Plan
+	for _, f := range seats {
+		// Only take back cards from friends whose status is not Up
+		if f.Status == Up {
+			continue
+		}
+		row := FriendRow(f.Name)
+		// Take back all ready cards (unstarted)
+		for _, c := range s.Fleet.Cell(row, Ready) {
+			if c.F("kind") != "work" {
+				continue
+			}
+			why := fmt.Sprintf("taken back by the status transition: friend %s is %s", f.Name, f.Status)
+			set, unset := map[string]string{FieldTakenBack: why, "untaken_since": stamp(now)}, []string{"first_taken"}
+			what := why + " from friend " + f.Name
+			u := withdrawUnit(s, c, set, unset, NTakenBack, "status transition", what)
+			p.Units = append(p.Units, u)
+		}
+	}
+	return p
+}

@@ -451,3 +451,82 @@ func TestAFriendUpWhoseControlCardIsHeldOrDownIsNotDealt(t *testing.T) {
 	}
 	assert.Equal(t, 3, w.s.Fleet.Count(FriendRow("dan"), Ready)+w.s.Fleet.Count(FriendRow("dan"), Working), "a friend up whose control card is not held or down is dealt")
 }
+
+// When a friend transitions away from up (held, down), every card dealt to her
+// and not started (ready on her row) is taken back and offered to the deal again
+// (docs/SPEC-SPRINT.md section 1, a friend's card taken back).
+func TestAHeldFriendKeepsNoReadyCards(t *testing.T) {
+	t.Parallel()
+	w := friendWorld(t, friendBrief("friend amy"), friendBrief("friend amy"), friendBrief("friend"))
+	seats := []FriendSeat{{Name: "amy", Width: 2, Status: Up, Class: "flash,pro"}}
+	dealStarted(w, seats...)
+
+	// Amy now has cards on her row: 2 working, 1 ready
+	amy := FriendRow("amy")
+	assert.Equal(t, 2, w.s.Fleet.Count(amy, Working))
+	assert.Equal(t, 1, w.s.Fleet.Count(amy, Ready))
+
+	// Friend becomes held - all ready cards should be taken back
+	heldSeats := []FriendSeat{{Name: "amy", Width: 2, Status: Held, Class: "flash,pro"}}
+	tp := FriendTransitionTakeBackFromTick(w.s, heldSeats, w.s.Now)
+	w.must(tp)
+
+	// No ready cards should remain on amy's row
+	assert.Equal(t, 0, w.s.Fleet.Count(amy, Ready))
+	// Started cards (working) stay with her
+	assert.Equal(t, 2, w.s.Fleet.Count(amy, Working))
+	// The taken card is withdrawn
+	assert.Equal(t, 1, w.s.Fleet.Count(amy, Withdrawn))
+	// Primary card goes back to ready
+	assert.Equal(t, 1, w.s.Work.Count("s1", Ready))
+}
+
+func TestAFriendGoingDownKeepsNoReadyCards(t *testing.T) {
+	t.Parallel()
+	w := friendWorld(t, friendBrief("friend amy"), friendBrief("friend amy"), friendBrief("friend"))
+	seats := []FriendSeat{{Name: "amy", Width: 2, Status: Up, Class: "flash,pro"}}
+	dealStarted(w, seats...)
+
+	// Amy now has cards on her row: 2 working, 1 ready
+	amy := FriendRow("amy")
+	assert.Equal(t, 2, w.s.Fleet.Count(amy, Working))
+	assert.Equal(t, 1, w.s.Fleet.Count(amy, Ready))
+
+	// Friend goes down - all ready cards should be taken back
+	downSeats := []FriendSeat{{Name: "amy", Width: 2, Status: Down, Class: "flash,pro"}}
+	tp := FriendTransitionTakeBackFromTick(w.s, downSeats, w.s.Now)
+	w.must(tp)
+
+	// No ready cards should remain on amy's row
+	assert.Equal(t, 0, w.s.Fleet.Count(amy, Ready))
+	// Started cards (working) stay with her
+	assert.Equal(t, 2, w.s.Fleet.Count(amy, Working))
+	// The taken card is withdrawn
+	assert.Equal(t, 1, w.s.Fleet.Count(amy, Withdrawn))
+	// Primary card goes back to ready
+	assert.Equal(t, 1, w.s.Work.Count("s1", Ready))
+}
+
+// A card a friend has started stays with her through status transitions
+// (docs/SPEC-SPRINT.md section 1, a friend's card taken back).
+func TestAStartedCardStaysThroughTheTransition(t *testing.T) {
+	t.Parallel()
+	w := friendWorld(t, friendBrief("friend amy"), friendBrief("friend amy"))
+	seats := []FriendSeat{{Name: "amy", Width: 2, Status: Up, Class: "flash,pro"}}
+
+	// Deal and start the cards
+	dealStarted(w, seats...)
+	amy := FriendRow("amy")
+
+	// Amy now has cards working on her row (started)
+	assert.Equal(t, 2, w.s.Fleet.Count(amy, Working))
+
+	// Friend becomes held - started cards should stay with her
+	heldSeats := []FriendSeat{{Name: "amy", Width: 2, Status: Held, Class: "flash,pro"}}
+	tp := FriendTransitionTakeBackFromTick(w.s, heldSeats, w.s.Now)
+	w.must(tp)
+
+	// Started cards (working) stay with her through the transition
+	assert.Equal(t, 2, w.s.Fleet.Count(amy, Working))
+	assert.Equal(t, 0, w.s.Fleet.Count(amy, Withdrawn))
+}
