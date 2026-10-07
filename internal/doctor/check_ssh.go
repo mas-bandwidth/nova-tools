@@ -2,7 +2,6 @@ package doctor
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"time"
 )
@@ -62,18 +61,12 @@ func checkSSH(ctx context.Context, env Env) Result {
 		}
 	}
 
-	// DEBUG: print benches found
-	if len(benches) > 0 {
-		fmt.Println("DEBUG: benches =", benches)
-	}
-
 	if len(benches) == 0 {
 		return Result{Status: OK, Evidence: "no benches in inventory"}
 	}
 
 	var failures []string
 	for _, bench := range benches {
-		fmt.Println("DEBUG: about to exec for bench =", bench)
 		out, err := env.Exec(ctx, "ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", bench, "true")
 		if err != nil {
 			reason := "connection failed"
