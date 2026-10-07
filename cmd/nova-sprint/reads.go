@@ -602,9 +602,13 @@ type whereView struct {
 	// FleetTiers and FriendsTiers are the tiers each side may take (nova-sprint set
 	// --fleet-tiers, --friends-tiers; sprint.PropFleetTiers, sprint.PropFriendsTiers):
 	// "all", the default, or the list, always carried.
-	FleetTiers   any        `json:"fleet_tiers"`
-	FriendsTiers any        `json:"friends_tiers"`
-	Goals        []goalView `json:"goals,omitempty"`
+	FleetTiers   any `json:"fleet_tiers"`
+	FriendsTiers any `json:"friends_tiers"`
+	// ReadsNeeded is the reads every card in review needs (nova-sprint set --reads;
+	// sprint.PropReadsNeeded): the count while one is set, else "default" (each card's own
+	// rule), always carried.
+	ReadsNeeded any        `json:"reads_needed"`
+	Goals       []goalView `json:"goals,omitempty"`
 	// Seat is the seat's last change (coordinator <name>): who gave or took
 	// it, when and why; absent while the seat has not moved since init.
 	Seat *sprint.SeatChange `json:"seat,omitempty"`
@@ -1203,6 +1207,11 @@ func (a *app) whereOf(ctx context.Context, st *store.Store, stale time.Duration,
 	b.WriteString(a.seatTitle(v.Coordinator, v.Seat, now) + "\n\n" + whereHeader(v.Summary, v.Machine) + "\n")
 	if line := switchesLine(v.FleetWork, v.FriendsWork, fleetTiers, friendsTiers); line != "" {
 		b.WriteString(line + "\n")
+	}
+	v.ReadsNeeded = sprint.ReadTierDefault
+	if n, ok := sprint.ReadsSetting(shapes[0].Props); ok {
+		v.ReadsNeeded = n
+		fmt.Fprintf(&b, "reads: %d\n", n)
 	}
 	// the five heaviest cards, the ones the most wait on, under the summary: the tick's where
 	// record carries them (weight.go; store.WhereRecord)

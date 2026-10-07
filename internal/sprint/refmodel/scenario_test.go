@@ -25,7 +25,7 @@ const (
 func scenarios() []sample {
 	var out []sample
 	for seed := uint64(0); seed < scenarioSeeds; seed++ {
-		for _, run := range []func(*walk) []sample{stoppedOnALandedCard, unevenQueues, unevenReads, aLateCardRedealt, lanesFreedBesideABacklog, aFriendStalls, aCardPastItsCap, aMemberWithFreeLanes} {
+		for _, run := range []func(*walk) []sample{stoppedOnALandedCard, unevenQueues, unevenReads, aLateCardRedealt, lanesFreedBesideABacklog, aFriendStalls, aCardPastItsCap, aMemberWithFreeLanes, aQueuedCardOnAFullFriend} {
 			out = append(out, run(newWalk(scenarioBase+seed))...)
 		}
 	}
@@ -257,6 +257,33 @@ func aCardPastItsCap(k *walk) []sample {
 		k.try(sprint.FleetStep(k.s, sprint.FleetReq{Op: "hold", Member: m, Who: coordinator}))
 	}
 	if k.s.StateOf(id) != sprint.Ready {
+		return nil
+	}
+	return []sample{k.sample()}
+}
+
+// aQueuedCardOnAFullFriend deals a friend of width one two cards and has her take one:
+// her lane works, the other card waits behind it, and the members' lanes are idle beside
+// it: the rebalance's case (sprint.Rebalance; the walks give no friend).
+func aQueuedCardOnAFullFriend(k *walk) []sample {
+	k.friends = []sprint.FriendSeat{{Name: "flo", Width: 1, Status: sprint.Up, Tiers: []string{cardhdr.RouteFlash, cardhdr.RoutePro}}}
+	for range 2 {
+		if k.addTo(k.streams[0]) == "" {
+			return nil
+		}
+	}
+	if !k.runPart("deal") {
+		return nil
+	}
+	row := sprint.FriendRow("flo")
+	if k.s.Fleet.Count(row, sprint.Ready) < 2 {
+		return nil
+	}
+	wc := k.s.Fleet.Cell(row, sprint.Ready)[0]
+	k.s.Friends = k.friends // her take reads the roster
+	took := k.try(sprint.Take(k.s, sprint.TakeReq{As: row, Sel: sprint.Sel{IDs: []string{wc.ID}}, Gens: map[string]int{wc.ID: wc.Int("gen")}, Who: row}))
+	k.s.Friends = nil
+	if !took {
 		return nil
 	}
 	return []sample{k.sample()}

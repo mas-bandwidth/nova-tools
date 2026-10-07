@@ -664,6 +664,9 @@ func Rework(s State, p, m string) (State, error) {
 			break
 		}
 	}
+	if len(broken) > 0 {
+		pr.Refused = "" // its broken reads' finding replaces the landing's (sprint.Rework)
+	}
 	pr.Attempt++
 	if len(up) > 0 {
 		if m != choice {
@@ -924,6 +927,65 @@ func MergeStop(s State, stream string, batch int, p, cause, q string) (State, er
 	n.Merge[p] = MergeCard{Place: Stuck, Need: q}
 	n.Streams[stream] = Stream{State: SStopped, Cause: cause}
 	n.open(note, StreamSubject(stream))
+	return n, nil
+}
+
+// MergeRefused is a conflict fact on card p of the batch (the first n queued), the landing's
+// refusal of its head the way way (sprint.RefusalWay, sprint's landRefused). A way the lander
+// could not place ("") is its own failure and stops the stream (MergeStop). Any other is the
+// card's own and never stops the stream: the card leaves merge, returned at its attempt, every
+// judgment on it closing, and the stream's state follows (G4). Files outside its PATHS
+// (RefusedPaths) go back to review under returned to review, for the widen rule; at its
+// brief's bound (AtBriefBound) the card goes back to review with the bound's judgment; else its
+// read cards retire and its next attempt waits ready, the way its finding.
+func MergeRefused(s State, stream string, batch int, p, way string) (State, error) {
+	if way == "" {
+		return MergeStop(s, stream, batch, p, CConflict, "")
+	}
+	if err := free(s); err != nil {
+		return s, err
+	}
+	if s.Streams[stream].State != SMerging {
+		return s, refuse("stream %s is not merging", stream)
+	}
+	queued := s.MergeCell(stream, Queued)
+	batch = min(batch, len(queued))
+	if !slices.Contains(queued[:batch], p) {
+		return s, refuse("%s is not in the batch %v", p, queued[:batch])
+	}
+	if !s.InWork(p, Merging) {
+		return s, refuse("%s is not merging", p)
+	}
+	n := s.Clone()
+	n.Merge[p] = MergeCard{Place: Returned}
+	x := n.Streams[stream]
+	x.State = n.streamAfter(stream, x.State, nil, nil)
+	n.Streams[stream] = x
+	n.closeOn(p)
+	pr := n.Primaries[p]
+	pr.ReturnedAt = pr.Attempt
+	switch {
+	case way == RefusedPaths:
+		pr.State = Review
+		n.Primaries[p] = pr
+		n.open(JReturned, p)
+		return n, nil
+	case s.AtBriefBound(p, way):
+		pr.State = Review
+		n.Primaries[p] = pr
+		n.open(JBriefWrong, p)
+		n.acceptNote(p)
+		return n, nil
+	}
+	for _, id := range n.LiveReadsOf(p) {
+		rc := n.Reads[id]
+		rc.Place = Retired
+		n.Reads[id] = rc
+	}
+	pr.Finder, pr.FindingAttempt, pr.Refused = "", pr.Attempt, way
+	pr.Attempt++
+	pr.State = Ready
+	n.Primaries[p] = pr
 	return n, nil
 }
 

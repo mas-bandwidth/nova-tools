@@ -45,6 +45,10 @@ const (
 	NStagingRefused = "a member refused a card at staging"    // dealt to another member
 	NRestWithdrawn  = "a card withdrawn from a resting route" // dealt again on one that serves
 	NFriendReturned = "a friend's card returned to ready"     // by friend reconcile: no report, and her queue says done or does not hold it
+	// The landing refused a card's head (it does not merge on the base's tip, or fails the tree
+	// gate the base passes): the card was reworked at the tip and its stream landed on
+	// (landRefused, redo.go). Addressed to the coordinator; nothing to answer.
+	NLandRefused = "the landing refused a card's head: reworked at the tip"
 	// The coordinator held a fleet member, a reader, a friend or a stream, or released
 	// its hold (hold, unhold: hold.go), the reason in the note.
 	NHeld   = "held by the coordinator"

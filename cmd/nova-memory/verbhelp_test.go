@@ -67,16 +67,16 @@ func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 	})
 
 	// The CAL sentence names the line a reader can find, pasted byte for byte
-	// as the example's search prints it, and in the same sentence says which
-	// score= compares with it.
+	// as the example's search prints it, and calls CAL the probe's scale rather
+	// than a cutoff a hit at or below it fails.
 	t.Run("the CAL line the help shows is the line the tool prints", func(t *testing.T) {
 		sit := exampleSitting(t)
 		code, stdout, stderr := runExampleLine(t, sit, usageExamples(t)[1])
 		require.Equalf(t, 0, code, "the example's search answered %d: %s%s", code, stdout, stderr)
 		assert.Equalf(t, theLine(t, stdout, "SEARCH CAL "), helpLine(t, "SEARCH CAL "),
 			"the CAL line the help shows is not the line the example's search prints")
-		assert.Containsf(t, flat(t, usage), "the score a fixed unrelated probe gets here, and a hit's score= at or below it is no better than noise when the hit's score-channel= names the same channel",
-			"the CAL sentence no longer names what the line is or which score= compares with it:\n%s", usage)
+		assert.Containsf(t, flat(t, usage), "CAL is the top score of a fixed unrelated query, for scale; it does not prove relevance",
+			"the CAL sentence no longer says CAL is the probe's scale rather than a cutoff:\n%s", usage)
 	})
 
 	// The receipt is pasted once, as the example's search prints it, and the
@@ -214,6 +214,34 @@ func TestEvalHelpShowsGoldFileFormatAndTwoLineExample(t *testing.T) {
 	exit, stdoutHelp, stderr := runCLI(t, "", "help", "eval")
 	require.Equalf(t, 0, exit, "help eval must exit 0: stderr = %q", stderr)
 	assert.Equal(t, stdout, stdoutHelp, "`help eval` and `eval -h` must match")
+}
+
+// TestSearchHelpCallsCalibrationScaleNotACutoff pins that the banner and
+// `search -h` describe CAL as the scale of a fixed unrelated probe rather than
+// a cutoff that labels a hit noise, and that `search -h` prints the probe's own
+// text: the probe may be about the caller's notes, and the example's own right
+// answer scores below it, so the reader must be able to judge what was scored.
+func TestSearchHelpCallsCalibrationScaleNotACutoff(t *testing.T) {
+	t.Parallel()
+
+	exit, banner, stderr := runCLI(t, "", "help")
+	require.Equalf(t, 0, exit, "help must exit 0: stderr = %q", stderr)
+	said := flat(t, banner)
+	assert.Containsf(t, said, "CAL is the top score of a fixed unrelated query, for scale; it does not prove relevance",
+		"the banner no longer says CAL is the probe's scale rather than a cutoff:\n%s", banner)
+	assert.NotContainsf(t, said, "no better than noise",
+		"the banner still calls a hit at or below CAL noise:\n%s", banner)
+
+	exit, searchHelp, stderr := runCLI(t, "", "search", "-h")
+	require.Equalf(t, 0, exit, "search -h must exit 0: stderr = %q", stderr)
+	assert.Containsf(t, searchHelp, calibrationProbe,
+		"search -h does not print the fixed probe's text, so the reader cannot judge what was scored:\n%s", searchHelp)
+
+	exit, helpSearch, stderr := runCLI(t, "", "help", "search")
+	require.Equalf(t, 0, exit, "help search must exit 0: stderr = %q", stderr)
+	assert.Equalf(t, searchHelp, helpSearch, "`help search` and `search -h` must match")
+	assert.Containsf(t, helpSearch, calibrationProbe,
+		"`help search` does not print the fixed probe's text:\n%s", helpSearch)
 }
 
 // TestBootHelpStatesItChecksThePin pins that boot's help says what the verb

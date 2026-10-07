@@ -379,3 +379,73 @@ func TestTheRedealsAndTheLevelGoRoundAsTheModelDoes(t *testing.T) {
 		})
 	}
 }
+
+// The model's brief bound is the engine's (sprint.AtBriefBound): the stream's attempt cap, else
+// the sprint's, counted from the attempt its brief was last replaced at, and the same landing
+// refusal twice. A model with the default cap of 4 counted from attempt 0 reworked the card the
+// engine stops at its second attempt under a stream cap of 2, and stopped the card the engine
+// reworks at its third attempt, one attempt after a brief replaced at its second.
+func TestTheModelsBriefBoundIsTheEngines(t *testing.T) {
+	t.Parallel()
+	h := newDHarness(t)
+	do := func(a dAction) {
+		t.Helper()
+		h.do(a)
+		require.Empty(t, h.findings, "the engine and the model differ after %+v", a)
+	}
+	run := func(step Step) {
+		t.Helper()
+		res, err := h.st.Run(h.ctx, step)
+		require.NoError(t, err)
+		require.Empty(t, res.Refused, step.Verb)
+		h.model = h.observe()
+	}
+	for _, a := range []dAction{{Kind: "fleet", Op: "up", Member: "m1"}, {Kind: "start"}, {Kind: "add", Stream: "s1", IDs: []string{"x"}}} {
+		do(a)
+	}
+	run(SetStep(sprint.SetReq{Streams: []string{"s1"}, Attempts: "2", Who: dCoordinator}))
+	require.Equal(t, 2, h.model.AttemptsCap("s1"))
+	toMerging := func() {
+		t.Helper()
+		do(dAction{Kind: "tick"})
+		w := refmodel.WC("x", h.model.Primaries["x"].Attempt)
+		do(dAction{Kind: "take", Member: "m1", Card: w, Gen: h.model.Work[w].Gen})
+		do(dAction{Kind: "finish", Member: "m1", Card: w, Gen: h.model.Work[w].Gen, OK: true})
+		for range 4 {
+			do(dAction{Kind: "tick"})
+			if h.model.Primaries["x"].State == refmodel.Merging {
+				return
+			}
+			for _, id := range refmodel.Keys(h.model.Reads) {
+				if rc := h.model.Reads[id]; rc.Primary == "x" && rc.Place == refmodel.Asked {
+					do(dAction{Kind: "read", Reader: rc.Reader, Card: id, OK: true})
+				}
+			}
+		}
+		require.Equal(t, refmodel.Merging, h.model.Primaries["x"].State)
+	}
+	refused := func(way string) refmodel.Primary {
+		t.Helper()
+		do(dAction{Kind: "merge", Stream: "s1", Batch: 1, Fact: "conflict", IDs: []string{"x"}, Way: way})
+		return h.model.Primaries["x"]
+	}
+
+	toMerging()
+	require.Equal(t, refmodel.Ready, refused(refmodel.RefusedGate).State, "attempt 1 of 2: reworked")
+	toMerging()
+	p := refused(refmodel.RefusedConflict)
+	require.Equal(t, refmodel.Review, p.State, "attempt 2 of 2: at the stream's cap")
+	require.True(t, h.model.Open[refmodel.Judgment{Type: refmodel.JBriefWrong, Subject: "x"}])
+	require.Less(t, p.Attempt, refmodel.AttemptsDefault, "a model with the default cap would have reworked it")
+
+	// a new brief at attempt 2: the cap counts from it
+	snap, err := h.st.Load(h.ctx, []string{sprint.Work}, nil)
+	require.NoError(t, err)
+	run(BriefStep(sprint.BriefReq{ID: "x", Brief: snap.Work.Card("x").F("brief") + "\nThe brief, replaced.\n", Who: dCoordinator}))
+	require.Equal(t, 2, h.model.Primaries["x"].BriefAt)
+	do(dAction{Kind: "rework", IDs: []string{"x"}})
+	toMerging()
+	p = refused(refmodel.RefusedGate)
+	require.Equal(t, refmodel.Ready, p.State, "attempt 3, one since its brief: reworked")
+	require.GreaterOrEqual(t, p.Attempt-1, 2, "a cap counted from attempt 0 would have stopped it")
+}

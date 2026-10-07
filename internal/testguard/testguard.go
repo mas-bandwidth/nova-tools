@@ -50,7 +50,6 @@ const EnvNoHost = "NOVA_TEST_NO_HOST"
 // Guard holds the state and seams for refusing host calls in tests.
 type Guard struct {
 	refusing  atomic.Bool
-	forced    atomic.Int64
 	allowed   atomic.Int64
 	lookPath  func(string) (string, error)
 	tempRoots func() []string
@@ -77,20 +76,8 @@ func init() { Reload() }
 // path needs it.
 func Reload() { defaultGuard.refusing.Store(os.Getenv(EnvNoHost) == "1") }
 
-// Refusing reports whether the guard is armed. It exists so a test can say
-// what it is testing without reading the environment itself.
-func Refusing() bool { return defaultGuard.Refusing() }
-
-// Refusing reports whether the guard is armed. It exists so a test can say
-// what it is testing without reading the environment itself.
-func (g *Guard) Refusing() bool { return g.refusing.Load() || g.forced.Load() > 0 }
-
-// Arm forces the guard to refuse host access until the returned function is called.
-func (g *Guard) Arm() func() {
-	g.forced.Add(1)
-	var once sync.Once
-	return func() { once.Do(func() { g.forced.Add(-1) }) }
-}
+// Refusing reports whether the process-wide guard is armed.
+func Refusing() bool { return defaultGuard.refusing.Load() }
 
 // AllowHosts opens a scope in which a seam may run a child, and returns the
 // function that closes it. The one honest use is a test that has installed its
@@ -137,7 +124,7 @@ func RefuseHosts(program string, args ...string) {
 // panic names the test, the seam and the command in one stack, which is the
 // cheapest possible read of the hurt above.
 func (g *Guard) RefuseHosts(program string, args ...string) {
-	if (!g.refusing.Load() && g.forced.Load() <= 0) || g.allowed.Load() > 0 {
+	if !g.refusing.Load() || g.allowed.Load() > 0 {
 		return
 	}
 	if g.isFakeProgram(program) {

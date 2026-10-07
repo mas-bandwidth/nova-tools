@@ -83,9 +83,9 @@ func (r *conflictRig) widenNotes() []sprint.Note {
 	return out
 }
 
-func TestACardHeldOnlyForAdjacentPathsIsTwinnedWider(t *testing.T) {
+func TestACardHeldOnlyForAdjacentPathsIsWidenedInPlace(t *testing.T) {
 	t.Parallel()
-	t.Run("a HOLD naming a test file and a ledger: twinned wider, one note", func(t *testing.T) {
+	t.Run("a HOLD naming a test file and a ledger: widened in place, one note", func(t *testing.T) {
 		t.Parallel()
 		r := newConflictRig(t)
 		r.widenCard()
@@ -94,31 +94,28 @@ func TestACardHeldOnlyForAdjacentPathsIsTwinnedWider(t *testing.T) {
 		r.tick()
 
 		s := r.snap()
-		old := s.Work.Card("w-1")
-		require.NotNil(t, old)
-		assert.False(t, old.Placed(), "the card is replaced")
-		assert.Contains(t, old.F("reason"), "replaced by w-1b")
-		twin := s.Work.Placed("w-1b")
-		require.NotNil(t, twin, "the twin is on the table")
-		assert.Equal(t, "w-1", twin.F(sprint.FieldReplaces), "add --replaces")
-		brief := twin.F("brief")
+		assert.Nil(t, s.Work.Card("w-1b"), "no twin")
+		pr := s.Work.Placed("w-1")
+		require.NotNil(t, pr, "the same card, on the table")
+		assert.NotEqual(t, sprint.Review, pr.Col, "its next attempt is opened")
+		assert.Equal(t, "1", pr.F(sprint.FieldBriefAttempt), "its brief's bound counts again from attempt 1: no attempt charged")
+		brief := pr.F("brief")
 		assert.Contains(t, brief, "\nPATHS: internal/x/a.go,internal/x/a_test.go,internal/ci/testdata/testify/internal_x.txt\n", "PATHS widened by exactly the files")
 		assert.Contains(t, brief, "\nSHARED: internal/x/a.go,internal/x/a_test.go,internal/ci/testdata/testify/internal_x.txt\n", "SHARED widened too")
-		assert.Contains(t, brief, "CARRY: w-1 attempt 1 head="+readHead, "the twin starts from the finished head")
-		assert.True(t, strings.HasPrefix(twin.F("fix"), "start from head "+readHead), "the fix names the head: %q", twin.F("fix"))
-		assert.True(t, strings.HasPrefix(twin.F("note"), "answered by rule "+sprint.RuleWiden+": "), "a note on the twin names the rule: %q", twin.F("note"))
+		assert.Contains(t, brief, "CARRY: w-1 attempt 1 head="+readHead, "its next attempt starts from the finished head")
+		assert.True(t, strings.HasPrefix(pr.F("fix"), "start from head "+readHead), "the fix names the head: %q", pr.F("fix"))
+		assert.True(t, strings.HasPrefix(pr.F("note"), "answered by rule "+sprint.RuleWiden+": "), "a note on the card names the rule: %q", pr.F("note"))
 		assert.Empty(t, r.openOnCard(sprint.NWorkFailed, "w-1"), "the judgment is answered")
 		require.Len(t, r.answeredBy(sprint.RuleWiden), 1)
 		notes := r.widenNotes()
 		require.Len(t, notes, 1, "the coordinator gets one note")
 		assert.Contains(t, notes[0].What, "internal/x/a_test.go ("+sprint.AdjTests+")")
 		assert.Contains(t, notes[0].What, "internal/ci/testdata/testify/internal_x.txt ("+sprint.AdjLedger+")")
-		assert.Equal(t, []string{"w-1b"}, notes[0].Primaries)
+		assert.Equal(t, []string{"w-1"}, notes[0].Primaries)
 
 		r.tick()
-		assert.Nil(t, r.snap().Work.Card("w-1c"), "twinned once")
-		assert.Len(t, r.widenNotes(), 1, "noted once")
-		r.clean("twinned wider by rule")
+		assert.Len(t, r.widenNotes(), 1, "widened once, noted once")
+		r.clean("widened in place by rule")
 	})
 	t.Run("a HOLD naming an unrelated package: stays a judgment naming it", func(t *testing.T) {
 		t.Parallel()
@@ -139,7 +136,7 @@ func TestACardHeldOnlyForAdjacentPathsIsTwinnedWider(t *testing.T) {
 		assert.Empty(t, r.widenNotes())
 		assert.Empty(t, r.answeredBy(sprint.RuleWiden))
 	})
-	t.Run("an E12 refusal naming the package's test: twinned wider", func(t *testing.T) {
+	t.Run("an E12 refusal naming the package's test: widened in place", func(t *testing.T) {
 		t.Parallel()
 		r := newConflictRig(t)
 		r.widenCard()
@@ -147,13 +144,15 @@ func TestACardHeldOnlyForAdjacentPathsIsTwinnedWider(t *testing.T) {
 		r.tick()
 
 		s := r.snap()
-		twin := s.Work.Placed("w-1b")
-		require.NotNil(t, twin, "the returned card is twinned")
-		assert.Contains(t, twin.F("brief"), "\nPATHS: internal/x/a.go,internal/x/a_test.go\n")
-		assert.Contains(t, twin.F("brief"), "CARRY: w-1 attempt 1 head="+readHead)
+		assert.Nil(t, s.Work.Card("w-1b"), "no twin")
+		pr := s.Work.Placed("w-1")
+		require.NotNil(t, pr, "the same card, on the table")
+		assert.Contains(t, pr.F("brief"), "\nPATHS: internal/x/a.go,internal/x/a_test.go\n")
+		assert.Contains(t, pr.F("brief"), "CARRY: w-1 attempt 1 head="+readHead)
+		assert.Equal(t, "1", pr.F(sprint.FieldBriefAttempt), "no attempt charged")
 		assert.Empty(t, r.openOnCard(sprint.NReturned, "w-1"))
 		require.Len(t, r.widenNotes(), 1)
-		r.clean("an E12 refusal twinned wider")
+		r.clean("an E12 refusal widened in place")
 	})
 	t.Run("an E12 refusal naming an unrelated package: redone inside its PATHS", func(t *testing.T) {
 		t.Parallel()

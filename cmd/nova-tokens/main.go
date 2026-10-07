@@ -65,7 +65,7 @@ usage:
   nova-tokens ledger  --out <dir> (--day <YYYY-MM-DD> | --month <YYYY-MM>) --redis <host:port>
                       [--user <name>] [--password-env <NAME>] [--dry-run]
   nova-tokens sum     --out <dir> --month <YYYY-MM> [--max <n>]
-  nova-tokens check   --out <dir> [--strict | --no-spend <file>] [--through <YYYY-MM-DD>] [--max <n>]
+  nova-tokens check   --out <dir> [--strict | --no-spend <file>] [--through <YYYY-MM-DD>] [--allow-empty] [--max <n>]
   nova-tokens sources --repos <file> (--day <YYYY-MM-DD> | --all) [<source flags>] [--unattributed] [--max <n>]
   nova-tokens profiles --swarm-root <dir>
                       one PROFILES MODEL line per model (cards, median output, overshoot), then a PROFILES OK line with totals
@@ -147,8 +147,8 @@ symlinks.
 
 fold and session hold --out/fold.lock while they write, so two folds of one --out never
 write the same day at once; the second waits, then refuses naming the holder. The lock
-file is empty and stays in --out after the run (it is never data); check counts it as
-neither a day file nor a stray.
+file holds the folding process's id and stays in --out between runs (it is never data);
+check counts it as neither a day file nor a stray.
 
 This tool removes nothing it was given. There is no month file, sum writes nothing, check
 names a stray and leaves it, and no verb deletes, truncates or trims a file it did not make:

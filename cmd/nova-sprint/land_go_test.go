@@ -190,7 +190,7 @@ func TestLandGatesEveryTipOfTheBatchBranch(t *testing.T) {
 					log = []string{"land s1-1 (sprint stream s1)", "the base's change", "the module", "base"}
 				}
 				assert.Equal(t, log, r.mainLog())
-				assert.Equal(t, map[string]string{"s1-1": "landed/merged", "s1-2": "merging/stuck"}, r.places("s1-1", "s1-2"))
+				assert.Equal(t, map[string]string{"s1-1": "landed/merged", "s1-2": "ready/returned"}, r.places("s1-1", "s1-2"))
 				assert.Equal(t, "", r.git(r.remote, "ls-tree", "main", "bad.go"), "the red head is off the batch branch")
 				assert.Empty(t, r.git(r.clone, "status", "--porcelain", "--untracked-files=all"), "the clone is clean")
 			default:
