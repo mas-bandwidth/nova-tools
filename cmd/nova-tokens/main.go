@@ -588,8 +588,10 @@ func checkDay(r *refusals, day string, all bool) {
 }
 
 // remedy is the ONE line TOKENS NOTE carries. It names the label and the act, in the order
-// a reader would act on them, and when nothing was wrong it names the gate.
-func remedy(sources []*tokens.Source, unreadable, unparsed, mixed, conflict, shrank, partial, quiet int, allowShrink bool, out, mixedLabels, firstPartial, firstQuiet string) string {
+// a reader would act on them, and when nothing was wrong it names the gate. SPEC-TOKENS:
+// "TOKENS NOTE is exactly one remedy line." dryRun is the plan the run would take, so a
+// day --allow-shrink would write is reported as it would be, never as it was.
+func remedy(sources []*tokens.Source, unreadable, unparsed, mixed, conflict, shrank, partial, quiet int, allowShrink, dryRun bool, out, mixedLabels, firstPartial, firstQuiet string) string {
 	switch {
 	case unreadable > 0:
 		return "a declared source could not be read whole (" + firstUnreadableLabel(sources) + "): open those files to this group, or drop the flag -- a declared source is a claim that the report covers it"
@@ -622,6 +624,8 @@ func remedy(sources []*tokens.Source, unreadable, unparsed, mixed, conflict, shr
 		return "a row of the day file was written by sources this fold did not declare (" + firstPartial + "): declare every source in that file's sources= line, or fold this day into its own --out -- --allow-shrink does not write it"
 	case shrank > 0 && !allowShrink:
 		return "a day would have gone backwards and was left as it was: --allow-shrink writes it anyway, and it is a person's act"
+	case shrank > 0 && dryRun:
+		return "a day would be written smaller at your word (--allow-shrink); nova-tokens check --out " + out + " is the gate"
 	case shrank > 0:
 		return "a day was written smaller at your word (--allow-shrink); nova-tokens check --out " + out + " is the gate"
 	case quiet > 0:
