@@ -58,7 +58,9 @@ func runFold(c *tool.Call, sf sourceFlags, now time.Time) *tool.Out {
 	fi, statErr := os.Stat(outDir)
 	if statErr != nil || !fi.IsDir() {
 		if statErr != nil && os.IsNotExist(statErr) {
-			return tool.Refuse("--out does not exist: " + outDir + "; it wants " + wantsOut)
+			ref := tool.Refuse("--out does not exist: " + outDir + "; it wants " + wantsOut)
+			ref.Remedy = "mkdir -p " + outDir
+			return ref
 		} else if statErr != nil {
 			return tool.Refuse("--out " + outDir + ": " + statErr.Error() + "; it wants " + wantsOut)
 		}
@@ -242,7 +244,6 @@ func runFold(c *tool.Call, sf sourceFlags, now time.Time) *tool.Out {
 		o.Why = append(o.Why, fmt.Sprintf("dropped=%d of %d: %s", dropped, of, allDroppedWhy))
 		o.Remedy = "nova-tokens sources"
 	}
-
 	o.Fact("days", daysWritten).
 		Fact("rows", rowsWritten).
 		Fact("sources", len(sources)).
@@ -255,7 +256,7 @@ func runFold(c *tool.Call, sf sourceFlags, now time.Time) *tool.Out {
 		Fact("quiet", quiet)
 
 	note := remedy(sources, unreadableTotal, unparsedTotal, mixedTotal, conflictTotal, shrankTotal, partialTotal, quiet,
-		allowShrink, outDir, mixedLabels, firstPartial, firstQuiet)
+		allowShrink, dryRun, outDir, mixedLabels, firstPartial, firstQuiet)
 	o.Note(note)
 	copyNotes(o, copyNotesList)
 	return o
@@ -313,7 +314,7 @@ func addDayItem(o *tool.Out, day string, file *tokens.DayFile, written, dryRun, 
 			nonutc++
 		}
 	}
-	kv := []any{"date", day, "rows", len(file.Rows), "models", len(models), "repos", len(repos), "turns", file.Turns,
+	kv := []any{"day", day, "rows", len(file.Rows), "models", len(models), "repos", len(repos), "turns", count(file.Turns),
 		"unknown", tokens.Percent(unknown, whole) + "%", "other", tokens.Percent(other, whole) + "%",
 		"rough", rough, "dashes", dashes, "nonutc", nonutc, "sources", strings.Join(file.Sources, ","), "written", written}
 	if dryRun {

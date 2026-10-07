@@ -209,7 +209,7 @@ func TestCheckOverAnOutWithNoDayFileSaysNo(t *testing.T) {
 	r := invoke(t, "check", "--out", out)
 	wantExit(t, r, 1)
 	assert.Empty(t, r.stdout)
-	assert.Contains(t, r.stderr, "CHECK FAILED --out "+out+" holds no day file, so there is nothing to check; fold one first: nova-tokens fold --out "+out)
+	assert.Contains(t, r.stderr, "CHECK FAILED looked at nothing: --out "+out+" holds no day file; fold one first, or run: nova-tokens check --out "+out+" --allow-empty")
 	assert.Contains(t, r.stderr, "CHECK FAILED files=0 rows=0 first=- last=- bad=0 missing=0 stray=0 gap=0 notes=0\n")
 }
 

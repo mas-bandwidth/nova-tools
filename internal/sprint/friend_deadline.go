@@ -14,8 +14,6 @@ import (
 // (FieldFriendDeadline) as it goes into working on her row, so a friend whose cards
 // take long is not judged late on the fleet's number.
 
-
-
 // FriendMedianWall is the friend's median run wall in seconds over her last
 // DeadlineSamples ok attempts (RunWall of the ok work cards on her row, newest
 // finished first), and how many samples it is over; 0 and 0 with none. A stats tidy

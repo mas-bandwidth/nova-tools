@@ -48,7 +48,8 @@ The operands and results, field by field, are today's card lines:
 ## The one wait kind
 
 The one `wait` kind is one path in the code, `WaitOf`
-(`internal/sprint/held.go`): admitted held (`add --held`), a sentinel (`add --sentinel`), the wave behind a held sentinel and `DEPENDS-ON` between cards
+(`internal/sprint/held.go`): admitted held (`add --held`), a sentinel (`add
+--sentinel`), the wave behind a held sentinel and `DEPENDS-ON` between cards
 are one wait, read once. The operand is the
 `DEPENDS-ON` line the brief already carries, read in four forms:
 

@@ -24,6 +24,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	stdflag "flag"
@@ -81,7 +82,7 @@ usage:
   nova-config apply [--pg <dsn> | --file <path>] [--redis <addr>] [--as <name>]
                     [--kind <kind>] [--dry-run] [--json]
   nova-config inventory [--redis <addr> | --fixture <file>] [--list | --host <name>]
-                        [--timeout <duration>]
+                        [--timeout <duration>] [--example]
   nova-config <kind> add <name> --<field> <value> ... --as <name> [--dry-run] [--json]
   nova-config <kind> set <name> --<field> <value> ... --as <name> [--dry-run] [--json]
   nova-config <kind> remove <name> --as <name> [--dry-run] [--json]
@@ -285,7 +286,56 @@ func realDeps() deps {
 	}
 }
 
-func run(args []string, stdout, stderr io.Writer, d deps) (code int) {
+// run is the entry: a verb asked for --json goes through runJSON, so a refusal
+// is the one object on stdout (jsonRefusals); every other run prints the
+// refusal to stderr (docs/STANDARD.md, "One output structure, two renderings").
+func run(args []string, stdout, stderr io.Writer, d deps) int {
+	if verbflag.BoolAsked(args, "json") {
+		return runJSON(args, stdout, stderr, d)
+	}
+	return dispatch(args, stdout, stderr, d)
+}
+
+// runJSON runs a verb that asked for --json: a refusal the verb recorded is
+// rendered as the one object on stdout at the exit the refusal carried, and a
+// result the verb rendered itself (a FAILED status, help) is left as it stands.
+func runJSON(args []string, stdout, stderr io.Writer, d deps) int {
+	j := &jsonRefusals{}
+	w := &written{w: stdout}
+	code := dispatch(args, w, j, d)
+	if code == 0 || w.n > 0 {
+		// ignored: the result is already on stdout, so a note that did not reach stderr changes nothing
+		_, _ = stderr.Write(j.said.Bytes())
+		return code
+	}
+	j.out.Exit = code
+	if j.out.Status == "" {
+		j.out.Status = tool.Refused
+	}
+	for _, line := range strings.Split(strings.TrimSpace(j.said.String()), "\n") {
+		if line != "" {
+			j.out.Notes = append(j.out.Notes, line)
+		}
+	}
+	j.out.Render(stdout, true)
+	return code
+}
+
+// written counts what a verb wrote to stdout: runJSON leaves a result the verb
+// rendered itself alone, and renders only a refusal nothing else printed.
+type written struct {
+	w io.Writer
+	n int
+}
+
+func (c *written) Write(p []byte) (int, error) {
+	n, err := c.w.Write(p)
+	c.n += n
+	return n, err
+}
+
+// dispatch is the verb walk, with every stream the caller handed in.
+func dispatch(args []string, stdout, stderr io.Writer, d deps) (code int) {
 	// `<verb> -h` and `help <verb>` print that verb's help on stdout at exit 0,
 	// before anything is dialed or written (the CLI style's rule (b)),
 	// with the verb's effect and worked example (verbExtra).
@@ -345,16 +395,46 @@ func refuse(stderr io.Writer, verb, what string) int {
 	if strings.Contains(what, "; run: ") {
 		next = "" // the reason names its own next command (a --file migrate has not made)
 	}
-	fmt.Fprintf(stderr, "%s REFUSED: %s%s\n", strings.TrimSpace(toolName+" "+verb), plain(what), next)
-	return 2
+	return refuseLine(stderr, verb, plain(what)+next, 2)
 }
 
 // refused is the exit 1 line: the verb ran and the store or Redis said no.
 // next names the command that resolves it.
 func refused(stderr io.Writer, verb, what, next string) int {
-	fmt.Fprintf(stderr, "%s %s REFUSED: %s; run: %s\n", toolName, verb, plain(what), next)
-	return 1
+	return refuseLine(stderr, verb, plain(what)+"; run: "+next, 1)
 }
+
+// refuseLine is one refusal whose text is already the part after "REFUSED: ":
+// it prints on stderr, or, under --json, becomes the one result object every
+// verb's --json is (jsonRefusals; docs/STANDARD.md, "One output structure, two
+// renderings"). code is the run's exit.
+func refuseLine(stderr io.Writer, verb, line string, code int) int {
+	if j, ok := stderr.(*jsonRefusals); ok {
+		why, remedy := line, ""
+		if i := strings.LastIndex(line, "; run: "); i >= 0 {
+			why, remedy = line[:i], line[i+len("; run: "):]
+		}
+		j.out.Verb = verb
+		j.out.Status = tool.Refused
+		j.out.Exit = code
+		j.out.Why = append(j.out.Why, why)
+		if j.out.Remedy == "" {
+			j.out.Remedy = remedy
+		}
+		return code
+	}
+	fmt.Fprintf(stderr, "%s REFUSED: %s\n", strings.TrimSpace(toolName+" "+verb), line)
+	return code
+}
+
+// jsonRefusals stands in for stderr while a verb asked for --json runs: the
+// refusals go into out, and anything else written to stderr into said.
+type jsonRefusals struct {
+	out  tool.Out
+	said bytes.Buffer
+}
+
+func (j *jsonRefusals) Write(p []byte) (int, error) { return j.said.Write(p) }
 
 // helpFor is the door a usage refusal names: the verb's own help, else the
 // tool's.

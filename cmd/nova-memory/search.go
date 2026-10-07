@@ -13,6 +13,7 @@ import (
 func cmdSearch(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("search", flag.ContinueOnError)
 	asJSON := fs.Bool("json", false, "render the retrieval result as JSON")
+	whole := fs.Bool("whole", false, "print each hit's whole paragraph instead of its 120-byte snippet, capped and marked when cut")
 	rf := addRootFlags(fs)
 	channels := fs.String("channels", "", "comma-separated retrieval channels (required)")
 	k := fs.Int("k", 0, "receipts per query, positive (required)")
@@ -45,8 +46,8 @@ func cmdSearch(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	chans := newChannels(c, names)
-	hits := memindex.Retrieve(c, chans, query, *k)
-	result := retrievalResult{Verb: "search", Query: query, K: *k, Channels: chanNames(chans), Files: len(c.Files), Chunks: len(c.Chunks), Calibration: calibrationHits(c, chans), Candidates: []retrievalCandidate{{Hits: hits}}, Notes: []string{noteLexical}}
+	hits := receiptHits(memindex.Retrieve(c, chans, query, *k))
+	result := retrievalResult{Verb: "search", Query: query, K: *k, Channels: chanNames(chans), Files: len(c.Files), Chunks: len(c.Chunks), Whole: *whole, Calibration: calibrationHits(c, chans), Candidates: []retrievalCandidate{{Hits: hits}}, Notes: []string{noteLexical}}
 	result.render(stdout, *asJSON)
 	return 0
 }

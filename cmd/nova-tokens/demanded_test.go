@@ -33,9 +33,9 @@ func TestRule1EveryPathIsAFlagAndNoEnvironmentIsConsulted(t *testing.T) {
 	bait := mkdir(t, filepath.Join(dir, "bait"))
 	write(t, filepath.Join(bait, "t", "a.jsonl"), msg("m1", "2026-09-11T10:00:00Z", "fable", map[string]int{"input_tokens": 5}, "/x/schema/a.go")+"\n")
 	reposFile(t, bait)
-	os.Setenv("HOME", bait)
-	os.Setenv("TMPDIR", bait)
-	os.Setenv("XDG_DATA_HOME", bait)
+	require.NoError(t, os.Setenv("HOME", bait))
+	require.NoError(t, os.Setenv("TMPDIR", bait))
+	require.NoError(t, os.Setenv("XDG_DATA_HOME", bait))
 
 	// Rule 1: "$HOME, $TMPDIR, $XDG_DATA_HOME and every other variable are ignored, and a
 	// test sets them and proves it." The proof is the count of source files this process
@@ -979,7 +979,7 @@ func TestExplicitDayQuietSourceDetectedAndRefused(t *testing.T) {
 	r = invoke(t, "fold", "--out", out, "--day", "2026-09-14", "--repos", repos, "--swarm", "freddy="+pool, "--allow-shrink")
 	wantExit(t, r, 0)
 	wantContains(t, r.stderr, "FOLD SHRANK date=2026-09-14 type=input file=100 now=- written=false")
-	wantContains(t, r.stdout, "FOLD DAY date=2026-09-14")
+	wantContains(t, r.stdout, "FOLD DAY day=2026-09-14")
 	wantContains(t, r.stdout, "written=false")
 	assert.Equal(t, before, read(t, day), "an empty day write modified the existing day file")
 }
@@ -1014,7 +1014,7 @@ func TestExplicitDayQuietSourcePreservesOtherSources(t *testing.T) {
 		"--swarm", "glenn="+poolA, "--swarm", "freddy="+poolB, "--allow-shrink")
 	wantExit(t, r, 0)
 	wantContains(t, r.stderr, "FOLD SHRANK date=2026-09-14 type=input file=2410 now=2000 written=true")
-	wantContains(t, r.stdout, "FOLD DAY date=2026-09-14")
+	wantContains(t, r.stdout, "FOLD DAY day=2026-09-14")
 	wantContains(t, r.stdout, "written=true")
 	got := read(t, day)
 	wantNotContains(t, got, "claude-x")

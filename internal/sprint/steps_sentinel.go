@@ -26,7 +26,7 @@ const FieldHeld = "held"
 // wave through; nil when none is held.
 func heldWave(s *Snapshot) *Card {
 	for _, c := range s.Work.Column(Waiting) {
-		if IsSentinel(c) && WaitOf(s, c).Operand == WaitOnRelease {
+		if w := WaitOf(s, c); IsSentinel(c) && w.Operand == WaitOnRelease && len(w.On) == 0 {
 			return c
 		}
 	}
@@ -350,7 +350,7 @@ func Release(s *Snapshot, r ReleaseReq) Plan {
 		case c.Col != Waiting:
 			p.refuse(id, "is "+c.Col+", not a sentinel waiting to be released")
 			continue
-		case w.Operand == WaitOnRelease:
+		case !IsSentinel(c):
 			unheld[id] = true
 			p.Units = append(p.Units, releaseHeld(s, c, r))
 			continue

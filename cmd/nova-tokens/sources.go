@@ -21,7 +21,7 @@ func sourcesVerb(now time.Time) tool.Verb {
 		Flags: func(f *tool.Flags) {
 			f.String("day", "", "one UTC day to inspect as YYYY-MM-DD")
 			f.Bool("all", false, "inspect every day named by the sources")
-			f.Bool("unattributed", false, "list seen paths that matched no repo rule")
+			f.Bool("unattributed", false, "list seen paths that matched no repo rule, with the mentions each got (one per message that touched it)")
 			f.Max()
 			sf.declare(f.FlagSet, true)
 			f.Check(func(c *tool.Call) {
@@ -101,12 +101,12 @@ func runSources(c *tool.Call, sf sourceFlags, now time.Time) *tool.Out {
 	// The listing that says WHICH paths `other` is made of. Without it a person reads
 	// `other=81%` on a day line and has nowhere to go but grep; with it the top stems ARE
 	// the rules the file is missing, written in the shape a rule matches.
-	unattributedField := tokens.Dash
+	unattributedField := count(tokens.Dash)
 	if unattributed {
 		for _, u := range rules.Unattributed() {
-			o.Item("unattributed", "stem", u.Stem, "tokens", u.Count)
+			o.Item("unattributed", "stem", u.Stem, "mentions", u.Count)
 		}
-		unattributedField = strconv.Itoa(rules.TotalUnattributed())
+		unattributedField = count(strconv.Itoa(rules.TotalUnattributed()))
 	}
 
 	unreadableTotal := countItems(o, "unreadable")

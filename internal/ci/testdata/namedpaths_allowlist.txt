@@ -14,7 +14,7 @@
 
 # --- 2. An invented example: a name chosen to show the SHAPE of a path. ---
 
-internal/decide/entry.go internal/swarm/lintbase.go's class-9 story: the PATHS entry card-nx-f19 named that did not exist at its base
+internal/bus/send.go nova-card's findings fixture (cmd/nova-card/testdata/findings.tsv): an invented finding, quoted by docs/dogfood/2026-10-06/antigravity/card.md's recorded output
 
 # --- 3. A path in another tree: another repository, another branch, or a retired file. ---
 

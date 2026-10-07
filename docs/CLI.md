@@ -1140,6 +1140,7 @@ nova-sprint start
 nova-sprint stop
 nova-sprint run [--answer-rules=false] [--idle-alarm=false]
 nova-sprint tick [--answer-rules] [--idle-alarm]
+nova-sprint promote [--once] [--poll <duration>] [--every <duration>] [--landings <n>] [--branch <name>] [--repo-dir <clone>] [--base <branch>] [--check <command>] [--dry-run]
 nova-sprint selftest [--dir <d>] [--keep]
 nova-sprint goal set <name> [--file <path>] [--to file:<path>]
 nova-sprint goal show [<name>]
@@ -1163,8 +1164,9 @@ nova-sprint recut <id> (--tier <flash|pro|heavy|frontier> | --brief-file <path> 
 nova-sprint move <id>... --stream <s> [--before <id> | --after <id> | --score <n>]
 nova-sprint merge --stream <s> [--batch <n>] [--conflict <id> [--conflict-kind file|ledger] [--conflict-path <p>...] | --cross <id>=<other> | --red [--suspect <id>...] | --rejected | --base-red <error>] [--note <text>]
 nova-sprint land [--stream <s>...] [--repo-dir <clone>] [--base <branch>] [--check <command>] [--dry-run]
+nova-sprint rebase --from <branch> --to <branch> [--repo-dir <clone>] [--dry-run]
 nova-sprint stream set <stream>... [--read-tier <flash|pro|heavy|default>] [--land-protected <owner/name,...|any|default>] [--release <name>] [--prose <glob,...|default>] [--attempts <n|default>] [--reason <text>] [--answers <notes>]
-nova-sprint set [--read-tier <flash|pro|default>] [--read-cards <on|off|default>] [--dealt-max <duration|default>] [--go-lanes <n|default>] [--attempts <n|default>] [--friend-idle <duration|default>] [--friend-finish <duration|default>] [--fleet <on|off>] [--friends <on|off>] [--fleet-tiers <flash,pro,heavy,frontier|all>] [--friends-tiers <flash,pro,heavy,frontier|all>]
+nova-sprint set [--read-tier <flash|pro|default>] [--read-cards <on|off|default>] [--dealt-max <duration|default>] [--go-lanes <n|default>] [--attempts <n|default>] [--friend-idle <duration|default>] [--friend-finish <duration|default>] [--fleet <on|off>] [--friends <on|off>] [--fleet-tiers <flash,pro,heavy,frontier|all>] [--friends-tiers <flash,pro,heavy,frontier|all>] [--reads <0|1|2|default>]
 nova-sprint resume --stream <s> [--did <text>] [--answers <note>]
 nova-sprint backup (--out <dir> [--part-bytes <n>] [--secrets-store <dir> --secrets-as <seat> --secrets-key <path> --sops <path>] | --file <path> [--dry-run])
 nova-sprint demo load <backup.xz part>... [--sha256 <hex>] [--dir <dir>] [--xz <path>] [--redis-server <path>]
@@ -1189,6 +1191,7 @@ nova-sprint friend down <friend> [--reason <text>] [--until <RFC3339>]
 nova-sprint friend up <friend> [--width <n>]
 nova-sprint friend cards <friend> [--json]
 nova-sprint friend take <friend> (<id>... | --all-unstarted) [--reason <text>]
+nova-sprint friend give <friend> <id>... [--reason <text>]
 nova-sprint friend level
 nova-sprint friend health <friend> (--state up|asleep|down --seen <RFC3339> --generation <n> [--queue <n>] [--working <n>] [--width <n>] [--reason <text>] [--until <RFC3339>] | --clear)
 nova-sprint reader add <reader>... [--tiers <flash[,pro,heavy,frontier]|all|default>]
@@ -1409,6 +1412,26 @@ Xoff, and nova-config's sprint row turns single ones off: `nova-config sprint se
 --answer_rules_off late,conflict`, then `nova-config apply`. The contract is
 [SPEC-SPRINT.md section 8](SPEC-SPRINT.md#answered-by-rule).
 
+### Promoting the sprint branch into dev
+
+`nova-sprint promote --once --branch <sprint branch> --repo-dir <clone>` carries one
+promotion from the cut to the recorded merge with no hand steps. It fetches origin and cuts
+`promo/<date>-<n>` from `origin/<sprint branch>`, never the clone's local ref, and refuses a
+cut that is not ahead of `origin/dev`. It merges `origin/dev` into the cut without a checkout.
+If that merge conflicts, it raises one judgment naming the files, `JUDGMENT promote conflict ... files=<a,b>`, and stops; nothing is cut or pushed, and the tool resolves nothing. A clean
+cut is gated (`--check`), pushed, and its pull request opened. The verb waits on the pull
+request's checks, queues it once they pass, and watches the queue. When the queue merges it,
+the verb records `promoted --sha <merge>` in the store. A failed check or merge-group run
+raises one judgment naming the check, `JUDGMENT merge-group failed ... check=<name>`, with
+the failing log's tail. A pull request closed without a merge clears the promotion in
+flight with one judgment naming it, `JUDGMENT closed-pr ... pr=<n>`, and the next pass cuts
+afresh. The verb claims the promotion cleared only after every in-flight key is gone: a
+cleanup that fails is a refusal naming the keys that remain. Every step prints a line as it goes, and every wait names what it waits on
+(`PROMOTE WAIT ... checks pending: <names>`), looking again every `--poll` (default 1m).
+Without `--once` the verb repeats every `--every`. `--dry-run` prints the cut it would make,
+or the promotion in flight, and writes, enqueues and records nothing. The contract is
+[SPEC-SPRINT.md section 11](SPEC-SPRINT.md), promote.
+
 ### The fleet is idle
 
 When the fleet works under half its width for 5 minutes while cards wait, the run loop's
@@ -1539,6 +1562,23 @@ then `merge`, records a landing without a push. The work table's cost column
 is, per stream, the sum of its landed cards' total cost in US dollars — each
 card's actual cost where one was priced, else its predicted one, `-` when
 none was — so a total is a ledger of recorded spend, not a proof of it.
+
+### release-check-acceptance-r-b.w3: the acceptance sentinel's six checks
+
+`nova-sprint release check` runs the acceptance sentinel's six checks beside
+`no-stuck-friend`, source: the coordinator's answer over the bus, 2026-10-06
+12:50 ET. Each prints one `RELEASE CHECK <name> ok|fail <evidence>`
+line, and the release refuses on any fail: `cards-settled` (every card of the
+stream landed or dropped with a reason), `base-gate-green` (the unit and
+functional classes and `./internal/docs` and `./internal/ci` green on the base
+at the stream's last landing), `two-ok-reads` (every landed card has the ok
+reads its tier needs at its final head), `prose-true` (`nova-check links` and
+`nocode` clean on the stream's specs and help), `landings-promoted` (the
+landings are in dev or a promotion carries them) and `no-open-judgment` (no
+open judgment names the stream). One check alone: `release check --check cards-settled`; one stream's facts: `release check --streams 's1*'`. With no
+stream named there is no acceptance to check, so each passes and says so. The
+contract is [SPEC-RELEASE.md](SPEC-RELEASE.md) section 16, subsection
+release-check-acceptance-r-b.w3.
 
 ## nova-sandbox
 
@@ -2472,6 +2512,7 @@ nova-config loop add <name> --machine <m> --argv '["/path/prog","--flag","v"]' (
 nova-config loop set|remove|list|show|history                             # the one grammar, as for every kind; the argv is the words the unit runs; machine show <m> names the machine's loops (loops=<a,b>)
 nova-config route add <name> --tier flash|pro|heavy --provider <p> --model <m> [--harness opencode|claude|codex|grok] --deadline <seconds> [--tokens <n>] [--usd <dollars>] [--enabled false] --as <friend>   # one way to run a model tier: the harness runs <provider>/<model>, (a headless --harness claude, codex or grok takes --provider subscription-<harness>) stopped at its token budget or its dollar budget (the harness's reported cost), whichever comes first; frontier cards escalate to the coordinator and are never dealt from routes
 nova-config route set <name> --price_input <usd> --price_cache_read <usd> --price_cache_write <usd> --price_output <usd> [--reasoning_as_output false] [--long_context <tokens> --price_input_long <usd> --price_output_long <usd>] [--price_request <usd>] [--billing metered|plan] [--gateway_percent <pct>] [--price_source <text>] [--price_as_of YYYY-MM-DD] --as <friend>   # the route's price sheet, optional: USD per million tokens of each class, each a decimal kept exactly; a route with none prices no card
+nova-config route prices --refresh [--provider openrouter|opencode] [--from <path>] [--dry-run] --as <name>   # set each enabled route's prices from its provider's published list (OpenRouter's models endpoint; opencode rows assumed from it, a NOTE says so), price_as_of today and price_source the URL; a price that moved past 2x is a JUDGMENT line, left as it is, exit 1; a row more than 10 percent off the list is named STALE
 nova-config tier set flash|pro --routes <route,route,...> --as <friend>   # the tier's route array: the deal takes routes[index mod len] for each card of the tier, the index a uint64 counter on the fleet table; a route named twice takes two turns
 nova-config route set|remove|list|show|history                            # the one grammar, as for every kind
 ```

@@ -486,14 +486,20 @@ with no clock and no store). What it holds:
   carries); the `ATTRIBUTION:` line (`cardgen.Attribution`); the task from the
   source's template with the rows substituted; the template's steps; and the
   `AS A READ` section (`cardgen.AsARead`), the text a reader of the work is given.
-- No brief names its author. A commit names the friend who did the work, and the
-  brief cannot know who that is, so its `ATTRIBUTION:` line reads `By: your own
-  name, the friend doing this work`; a `WHO:` line stays a preference for who is
-  dealt the card, never the name to sign. Its `AS A READ` section says a `By:`
-  trailer is judged only for being present and true (the friend who pushed the
-  branch under read), and attribution alone never decides a verdict. Briefs
-  stamped `By: <friend>` from a WHO pin sent readers to fail landed-quality heads
-  for that line alone, because another friend had done the work.
+- No brief names its author. A commit names the worker who did the work, and the
+  deal may hand any card, a pinned one too, to any worker, a friend or a fleet
+  machine, so the brief cannot know who that is: its `ATTRIBUTION:` line reads
+  `By: your own name, the worker who does this attempt`, says a model name is
+  never a `By:`, and that a Claude worker adds its true `Co-Authored-By` trailer
+  while any other worker adds none; a `WHO:` line stays a preference for who is
+  dealt the card, never the name to sign. Neither the line nor the held rules
+  (`fleet/child-rules.txt`, rule `commit-trailer`) spell a fill-in Claude trailer,
+  which a worker of another model completes with its own model's name. Its
+  `AS A READ` section says a `By:` trailer is judged only for being present and
+  true (the worker who pushed the branch under read), and attribution alone never
+  decides a verdict. Briefs stamped `By: <friend>` from a WHO pin sent readers to
+  fail landed-quality heads for that line alone, because another worker had done
+  the work, and landed heads signed with the name of a friend who never ran them.
 - A card's PATHS are computed from the START line its brief carries, never
   typed (`card.Paths`, over `card.PackagePaths`): every directory a START file
   lives in, as its Go files and its tests (`<dir>/*.go`, `<dir>/*_test.go`),

@@ -637,16 +637,20 @@ type Header struct {
 }
 
 // Attribution is the line every brief carries about its commit's By: trailer. A brief
-// never names its author: the friend (or machine) who does the work names itself, and
-// the WHO line stays a preference, never an author (the owner's rule: a commit names
-// the friend who did the work). internal/card refuses a brief that writes By: and a
-// configured name (check author-name).
-const Attribution = "ATTRIBUTION: By: your own name, the friend doing this work, on the line above the Co-Authored-By trailer of every commit; this brief names no author, and its WHO line, if any, is a preference for who is dealt the card, never the name to sign.\n"
+// never names its author: the deal may hand any card, a pinned one too, to any worker, a
+// friend or a fleet machine, so the worker who does the attempt names itself, and the WHO
+// line stays a preference, never an author (the coordinator's rule: a commit names the
+// worker who did the work, never a model and never someone who did not). A model name is
+// never a By:. Only a Claude worker writes a Co-Authored-By trailer, its true one; the
+// line spells no fill-in template of it, which a worker of another model completes with
+// its own model's name. internal/card refuses a brief that writes By: and a configured
+// name (check author-name).
+const Attribution = "ATTRIBUTION: By: your own name, the worker who does this attempt, on its own line at the end of every commit message; a model name is never a By:, and this brief names no author: its WHO line, if any, is a preference for who is dealt the card, never the name to sign. Below the By: line, a Claude worker adds its true Co-Authored-By trailer (Claude, its model, the noreply@anthropic.com address); any other worker adds no Co-Authored-By.\n"
 
 // AsARead is the brief's AS A READ section, the text a reader of the work is given
 // (sprint.FriendReadBrief carries it through the next heading): a By: trailer is judged
 // only for being present and true.
-const AsARead = "AS A READ\nA By: trailer is judged only for being present and true: it names the friend who pushed the branch under read, whoever was preferred for the card. A trailer naming another friend than a WHO line or an earlier brief expected is no finding, and attribution alone never decides a verdict; read the change against the task, its test and its PATHS.\n"
+const AsARead = "AS A READ\nA By: trailer is judged only for being present and true: it names the worker who pushed the branch under read, whoever was preferred for the card. A trailer naming another friend than a WHO line or an earlier brief expected is no finding, and attribution alone never decides a verdict; read the change against the task, its test and its PATHS.\n"
 
 // Deadline is the minutes a tier gets when the header names none.
 func Deadline(tier string) int {
@@ -731,7 +735,7 @@ func Render(h Header, c Card) string {
 	b.WriteString("\n")
 	b.WriteString(Attribution + "\n")
 	fmt.Fprintf(&b, "THE TASK. %s The work lives in %s; the files this card may touch are its PATHS line and no other, in the staged checkout JOB.md names, on the card's own branch, from BASE %s.\n\n", c.Task, c.File, h.Base)
-	b.WriteString("STEP 1. Enter the staged checkout JOB.md names with cd $JOB/repo && git log --oneline -1, no clone; work only on its own branch. Export GOFLAGS=-mod=readonly NOVA_TEST_NO_HOST=1 before any go command; GOCACHE is already set to the machine's shared build cache (JOB.md names it): keep it. Scratch belongs under $JOB/scratch.\n")
+	b.WriteString("STEP 1. Enter the staged checkout JOB.md names with cd $JOB/repo && git log --oneline -1, no clone; work only on its own branch. Export GOFLAGS=-mod=readonly NOVA_TEST_NO_HOST=1 before any go command; " + swarm.GoCacheLine + " Scratch belongs under $JOB/scratch.\n")
 	fmt.Fprintf(&b, "STEP 2. Make it red first, as the task says, with the test %s: run %s -run %s and keep the failing line as evidence.\n", testName(c.Test), gate, testName(c.Test))
 	b.WriteString("STEP 3. Make it pass in the files this card names, and only those. Commit the draft on your own branch as soon as the test is green, before any further probe; a later commit may refine it. A change any other file needs goes in the report as a proposed diff, never a commit.\n")
 	fmt.Fprintf(&b, "STEP 4. Run the gate: %s and read the last line of each. Run gofmt -l on every changed Go file; it must print nothing.%s %s\n", gate, model, swarm.GateNamesWhoseFile)

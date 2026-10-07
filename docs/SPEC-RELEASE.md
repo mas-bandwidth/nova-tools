@@ -579,6 +579,30 @@ version read back, and a rollback from kept copies on missed ticks. The runbook 
 
 Each later card of stream sprint-v1-release adds its row here with its check.
 
+### release-check-acceptance-r-b.w3
+
+The release check runs the acceptance sentinel's six checks as well, source: the
+coordinator's answer over the bus, 2026-10-06 12:50 ET (message
+`01M48ZHQ5ZNWYV5FAKBRTTW038`). They are the checks the coordinator runs by hand
+before releasing a stream's acceptance sentinel; each is a pure function over
+`sprint.Acceptance` (the stream's rows and log and the git facts), so its unit
+tests build a twin of the facts and open no socket. The six are:
+
+| check | the bar |
+|---|---|
+| `cards-settled` | every card of the stream is landed or dropped with a reason: none is ready, waiting, working, review or merging; a fail names the first card and its state, or the dropped card with no reason |
+| `base-gate-green` | the tree gate is green on the base at the stream's last landing: the unit class and the functional class of the packages the cards name, plus `./internal/docs` and `./internal/ci`, each its own recorded result; a fail names the class and the base, or the class with no result recorded |
+| `two-ok-reads` | every landed card has the ok reads its tier needs at its final head, one for a flash card and two different readers for a heavier one, none accepted on the coordinator's word alone; a fail names the card, its head, the ok reads it has and what its tier needs |
+| `prose-true` | the stream's spec sections and help text are true to the code: `nova-check links` and `nova-check nocode` clean, present tense, no names of people or machines; a fail names the check and the path, or the check with no result recorded |
+| `landings-promoted` | the stream's landings are in dev, or a promotion carrying them is queued since its last landing; a fail names the landings with no promotion, or the promotion older than the last landing |
+| `no-open-judgment` | no open judgment names the stream: no stale, no brief-defect, no conflict, no returned-to-review; a fail names the judgment, its type and the stream |
+
+Each prints one `RELEASE CHECK <name> ok|fail <evidence>` line and the release
+refuses on any fail. With no stream named there is no acceptance to check, so
+each passes and says so. Test:
+`TestReleaseCheckRunsTheAcceptanceSentinelsSixChecks`.
+
+
 ## 17. Adopting one machine
 
 `release.OneMachine` is adopt for one machine at a time, as a library: the sprint's

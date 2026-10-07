@@ -48,6 +48,10 @@ type MergeReq struct {
 	// naming the base, the gate and the first refusal. No card moves.
 	BaseRefused string `json:",omitempty"`
 	Base        string `json:",omitempty"`
+	// MissingBase is a land whose base branch is gone: the merge step raises one
+	// judgment naming every unlanded card on that base and the rebase line that
+	// fixes them (rebase.go). No card moves.
+	MissingBase string `json:",omitempty"`
 	Note        string
 	Who         string
 	// Resolved is, by card, what its landing did beyond merging its head (docs/SPEC-SPRINT.md
@@ -145,6 +149,21 @@ func baseGateStep(p Plan, s *Snapshot, ctl *Card, r MergeReq) Plan {
 	return p
 }
 
+// missingBaseStep raises the one judgment of a land whose base branch is gone:
+// every unlanded card on that base, and the rebase line that fixes them
+// (rebase.go). No card moves and the stream is not stopped: the cards are still
+// landable once their brief names a base that exists.
+func missingBaseStep(p Plan, s *Snapshot, r MergeReq) Plan {
+	cards := MissingBaseCards(s, r.MissingBase)
+	j := MissingBaseJudgment(r.MissingBase, cards)
+	j.Who, j.At = r.Who, s.Now
+	if len(cards) == 0 {
+		return p
+	}
+	p.Notes = append(p.Notes, j)
+	return p
+}
+
 // streamDone says every primary of the stream on the table has landed, given
 // the ones about to land, and at least one has.
 func streamDone(s *Snapshot, stream string, landing int) bool {
@@ -189,7 +208,10 @@ func span(ids []string) string {
 
 // MergeStep merges the head of the stream's queue, in work order, as one
 // batch; or, given a fact that stops the stream, stops it and tells the
-// coordinator why. A stopped stream moves only after resume.
+// coordinator why. A stopped stream moves only after resume. A conflict fact
+// on the card's own head (RefusalWay) stops nothing: the card is reworked at
+// the tip, or returned for the widen rule, and the stream goes on
+// (landRefused).
 func MergeStep(s *Snapshot, r MergeReq) Plan { return Lawful(mergeStep(s, r)) }
 
 func mergeStep(s *Snapshot, r MergeReq) Plan {
@@ -211,6 +233,9 @@ func mergeStep(s *Snapshot, r MergeReq) Plan {
 	}
 	if r.BaseRed != "" || r.BaseRefused != "" {
 		return baseGateStep(p, s, ctl, r)
+	}
+	if r.MissingBase != "" {
+		return missingBaseStep(p, s, r)
 	}
 	// A stuck card is a barrier: the step never passes an earlier stuck card.
 	queued := s.Merge.Cell(r.Stream, Queued)
@@ -302,6 +327,19 @@ func mergeStep(s *Snapshot, r MergeReq) Plan {
 			return p
 		}
 		pr := s.Work.Placed(r.Conflict)
+		if way := RefusalWay(r.ConflictKind, r.Note); way != "" {
+			// a refusal of the card's own head never stops the stream: the card is reworked at
+			// the tip, or returned for the widen rule, and the stream lands on (redo.go)
+			if pr == nil || pr.Col != Merging {
+				p.refuse(r.Conflict, "queued in merge but not merging in work ("+placeWord(orEmpty(pr, r.Conflict))+"); run: nova-sprint check")
+				return p
+			}
+			p.Units = append(p.Units, landRefused(s, r, way, state, ctl, ctlSet, notes, pr, m))
+			break
+		}
+		// the lander's own failure (a generated ledger it could not resolve, a head that is no
+		// commit or that origin does not hold, a conflict it did not place): a mind's, the
+		// stream stopped
 		ctlSet["card"] = r.Conflict
 		if r.ConflictKind != "" {
 			ctlSet[FieldConflictKind] = r.ConflictKind

@@ -95,3 +95,120 @@ func TestAbsentCalibrationIsNotAMeasuredZero(t *testing.T) {
 	}
 	assert.Equal(t, 1, calibration)
 }
+
+// The snippet is the paragraph's first 120 bytes, so the words a reader
+// searched for can sit just past the cut and never print, in either rendering.
+// --whole prints the whole paragraph of each hit instead, bounded by a byte cap
+// that says how many bytes it dropped.
+func TestWholePrintsThePassageTheSnippetCut(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	// "zebra" is the query term and sits past the 120-byte snippet cut.
+	paragraph := strings.Repeat("alpha ", 30) + "zebra"
+	require.NoError(t, os.WriteFile(filepath.Join(root, "long.md"), []byte(paragraph+"\n"), 0o600))
+
+	for _, verb := range []string{"search", "check"} {
+		t.Run(verb, func(t *testing.T) {
+			t.Parallel()
+			token, operand, stdin := "SEARCH", "zebra", ""
+			if verb == "check" {
+				token, operand, stdin = "MEMORY", "-", "zebra alpha alpha"
+			}
+			base := []string{verb, "--root", root, "--channels", "bm25", "--k", "1"}
+
+			code, text, stderr := runCLI(t, stdin, append(append([]string{}, base...), operand)...)
+			require.Equalf(t, 0, code, "%s answered %d: %s", verb, code, stderr)
+			cut := theLine(t, text, token+" HIT ")
+			assert.Containsf(t, cut, "alpha alpha", "the snippet no longer starts the paragraph:\n%s", text)
+			assert.NotContainsf(t, cut, "zebra", "the 120-byte snippet now holds the query term, so the cut this pins is gone:\n%s", text)
+
+			code, text, stderr = runCLI(t, stdin, append(append([]string{}, base...), "--whole", operand)...)
+			require.Equalf(t, 0, code, "%s --whole answered %d: %s", verb, code, stderr)
+			assert.Containsf(t, theLine(t, text, token+" HIT "), "zebra",
+				"--whole did not print the whole paragraph the snippet cut:\n%s", text)
+
+			code, raw, stderr := runCLI(t, stdin, append(append([]string{}, base...), "--json", "--whole", operand)...)
+			require.Equalf(t, 0, code, "%s --json --whole answered %d: %s", verb, code, stderr)
+			var out struct {
+				Items []struct {
+					Kind   string
+					Fields map[string]any
+				}
+			}
+			require.NoError(t, json.Unmarshal([]byte(raw), &out))
+			whole := ""
+			for _, item := range out.Items {
+				if item.Kind == "hit" {
+					whole, _ = item.Fields["whole"].(string)
+				}
+			}
+			assert.Containsf(t, whole, "zebra", "--json did not carry the whole paragraph under --whole:\n%s", raw)
+		})
+	}
+
+	// A paragraph past the byte cap is bounded, and the cap says what it dropped.
+	capRoot := t.TempDir()
+	long := strings.Repeat("beta ", 2000) + "zebra"
+	require.NoError(t, os.WriteFile(filepath.Join(capRoot, "huge.md"), []byte(long+"\n"), 0o600))
+	code, text, stderr := runCLI(t, "", "search", "--root", capRoot, "--channels", "bm25", "--k", "1", "--whole", "zebra")
+	require.Equalf(t, 0, code, "search --whole on a long paragraph answered %d: %s", code, stderr)
+	assert.Regexpf(t, `\.\.\.\+\d+B"`, theLine(t, text, "SEARCH HIT "),
+		"a paragraph past the byte cap did not carry the cap's note:\n%s", text)
+}
+
+// Absent frontmatter is null in JSON, never an empty string: `""` is a name
+// that is empty, while null is no name, and the typed line already prints `-`
+// for it (docs/STANDARD.md: absent is null, `-` in text). A frontmatter block
+// that is present keeps its string.
+func TestAbsentFrontmatterIsNullInJSON(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	body := "The brass lantern needs clean glazing cloths for the brass and the glass.\n"
+	require.NoError(t, os.WriteFile(filepath.Join(root, "plain.md"), []byte(body), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "named.md"), []byte("---\nname: lantern-care\ntype: measured\n---\n\n"+body), 0o600))
+
+	args := []string{"search", "--root", root, "--channels", "bm25", "--k", "2", "brass", "lantern", "glazing", "cloths"}
+	code, raw, stderr := runCLI(t, "", append(args, "--json")...)
+	require.Equal(t, 0, code, stderr)
+	var out struct {
+		Items []struct {
+			Kind   string
+			Fields map[string]any
+		}
+	}
+	require.NoError(t, json.Unmarshal([]byte(raw), &out))
+	files := map[string]map[string]any{}
+	for _, item := range out.Items {
+		if item.Kind == "hit" {
+			file, _ := item.Fields["file"].(string)
+			files[file] = item.Fields
+		}
+	}
+	require.Len(t, files, 2, "the query did not surface both files:\n%s", raw)
+	plain := files["plain.md"]
+	require.NotNil(t, plain, "no hit for plain.md:\n%s", raw)
+	assert.Nilf(t, plain["name"], "an absent name is not null in JSON: %v", plain["name"])
+	assert.Nilf(t, plain["type"], "an absent type is not null in JSON: %v", plain["type"])
+	named := files["named.md"]
+	require.NotNil(t, named, "no hit for named.md:\n%s", raw)
+	assert.Equalf(t, "lantern-care", named["name"], "a present name did not survive: %v", named["name"])
+	assert.Equalf(t, "measured", named["type"], "a present type did not survive: %v", named["type"])
+
+	code, text, stderr := runCLI(t, "", args...)
+	require.Equal(t, 0, code, stderr)
+	plainLine, namedLine := "", ""
+	for _, line := range strings.Split(text, "\n") {
+		if strings.Contains(line, ": plain.md:") {
+			plainLine = line
+		}
+		if strings.Contains(line, ": named.md:") {
+			namedLine = line
+		}
+	}
+	assert.Containsf(t, plainLine, "name=- type=-",
+		"an absent name no longer prints `-` in the typed line:\n%s", text)
+	assert.Containsf(t, namedLine, "name=lantern-care type=measured",
+		"a present name no longer prints in the typed line:\n%s", text)
+}

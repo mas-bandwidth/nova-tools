@@ -55,7 +55,7 @@ func WaitOf(s *Snapshot, c *Card) CardWait {
 	case c == nil:
 		return CardWait{}
 	case IsHeld(c):
-		return CardWait{Card: c.ID, Operand: WaitOnRelease, Why: "the coordinator's release"}
+		return CardWait{Card: c.ID, Operand: WaitOnRelease, On: WaitsFor(s, c, nil), Why: "the coordinator's release, and the cards it names"}
 	case IsSentinel(c):
 		return CardWait{Card: c.ID, Operand: WaitOnLine, On: WaitsFor(s, c, nil), Why: "the line before it, and the coordinator's release"}
 	default:
@@ -563,7 +563,7 @@ func (c *held) waits(pr *Card) (why, root string, ok bool) {
 			name, _ := FriendCard(pr)
 			if wc := s.Fleet.Placed(WorkCardID(pr.ID, pr.Int("attempt"))); wc != nil && wc.Col == Withdrawn {
 				if from, _ := FriendOfRow(wc.F(FieldTakenFrom)); from != "" && from == name {
-					return "waits for only friend " + name + ", and it was taken back from her: unpin it (nova-sprint unpin), brief it for another friend, or drop it", "", true
+					return "waits for only friend " + name + ", and it was taken back from her: give it back to her (nova-sprint friend give), unpin it (nova-sprint unpin), brief it for another friend, or drop it", "", true
 				}
 			}
 			return "waits for only friend " + name, "", true
@@ -605,7 +605,7 @@ func (c *held) waits(pr *Card) (why, root string, ok bool) {
 	case Review:
 		switch {
 		case acceptable(s, pr):
-			return "acceptable (" + readersWord(ReadsNeeded(pr)) + " said ok at its head), and no judgment is open on it", "", false
+			return "acceptable (" + readersWord(ReadsNeededIn(s, pr)) + " said ok at its head), and no judgment is open on it", "", false
 		case pr.F("result") == "failed":
 			return "its work came back failed, and no judgment is open on it", "", false
 		}

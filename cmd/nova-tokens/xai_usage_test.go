@@ -26,8 +26,8 @@ func TestXaiProviderOneUsageFileFoldsRow(t *testing.T) {
 	}
 	dir := t.TempDir()
 	home := filepath.Join(dir, "home")
-	os.Setenv("HOME", home)
-	os.Setenv("USERPROFILE", home)
+	require.NoError(t, os.Setenv("HOME", home))
+	require.NoError(t, os.Setenv("USERPROFILE", home))
 	const bait = "424242"
 	write(t, filepath.Join(home, ".grok", "sessions", "encoded-cwd", "session-id", "usage.json"), `{
   "sessionId": "bait-session",
@@ -77,7 +77,7 @@ func TestXaiProviderOneUsageFileFoldsRow(t *testing.T) {
 		opened := tokens.Opens() - before
 		assert.Equal(t, int64(1), opened, "opened %d source files, want the one usage.json the flag names", opened)
 	}
-	wantContains(t, r.stdout, "FOLD DAY date=2026-09-12 rows=1 ")
+	wantContains(t, r.stdout, "FOLD DAY day=2026-09-12 rows=1 ")
 	body := read(t, filepath.Join(out, "2026-09-12.tsv"))
 	const wantRow = "2026-09-12\tgrok-model-example\tunattributed\t1000\t100\t-\t-\t-\t0\tutc\txai:johnny"
 	var data []string

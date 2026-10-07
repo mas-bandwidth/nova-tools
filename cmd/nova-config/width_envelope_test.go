@@ -109,8 +109,8 @@ func TestMachineWidthUsesResultEnvelope(t *testing.T) {
 	require.Equal(t, 0, code, "width --file json: %d %q %q", code, out, errs)
 	assert.JSONEq(t, `{"result":{"verb":"machine width","status":"ok","exit":0},"facts":{"machine":"mf","width":4,"member":true}}`, out, "width --file json")
 	assert.Equal(t, 0, fh.redis.opens, "width --file opened Redis")
-	// A name with no row is refused at exit 1 in both forms, stdout empty,
-	// with the remedy.
+	// A name with no row is refused at exit 1 in both forms: the line to
+	// stderr, the --json object to stdout, both with the remedy.
 	code, out, errs = h.run(t, "machine", "width", "m9", "--pg", dsn)
 	require.Equal(t, 1, code, "no row: %d %q %q", code, out, errs)
 	assert.Equal(t, "", out, "no row: stdout")
@@ -118,7 +118,9 @@ func TestMachineWidthUsesResultEnvelope(t *testing.T) {
 	assert.Contains(t, errs, "run: nova-config machine list", "no row: %q", errs)
 	code, out, errs = h.run(t, "machine", "width", "m9", "--pg", dsn, "--json")
 	require.Equal(t, 1, code, "no row json: %d %q %q", code, out, errs)
-	assert.Equal(t, "", out, "no row json: stdout")
+	assert.Contains(t, out, `"status":"refused"`, "no row json: stdout is the refusal object: %q", out)
+	assert.Contains(t, out, "machine m9 not found", "no row json: %q", out)
+	assert.Contains(t, out, `"remedy":"nova-config machine list`, "no row json: %q", out)
 	// -h answers on stdout at exit 0 and opens neither store.
 	hh := newHarness()
 	code, out, errs = hh.run(t, "machine", "width", "-h")

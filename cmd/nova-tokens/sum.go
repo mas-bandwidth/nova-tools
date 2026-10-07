@@ -57,10 +57,9 @@ func runSum(c *tool.Call, now time.Time) *tool.Out {
 	if len(sm.Days) > 0 {
 		first, last = sm.Days[0], sm.Days[len(sm.Days)-1]
 	}
-
 	o := tool.Done()
 	o.Item("month", "month", month, "at", stamp(now), "build", buildVersion(),
-		"days", len(sm.Days), "first", first, "last", last, "missing", len(sm.Missing), "rows", sm.Rows, "turns", turns)
+		"days", len(sm.Days), "first", first, "last", last, "missing", len(sm.Missing), "rows", sm.Rows, "turns", count(turns))
 
 	for _, p := range sm.Pairs {
 		o.Item("pair", append(append([]any{"model", p.Model, "repo", p.Repo}, aggFields(p.Agg)...), "days", p.Agg.Days())...)
@@ -68,7 +67,7 @@ func runSum(c *tool.Call, now time.Time) *tool.Out {
 	for _, m := range sm.Models {
 		o.Item("model", append(append([]any{"model", m.Model}, aggFields(m.Agg)...), "repos", m.Agg.Keys())...)
 	}
-	o.Item("total", append(aggFields(sm.Total), "turns", turns, "pairs", len(sm.Pairs), "models", len(sm.Models))...)
+	o.Item("total", append(aggFields(sm.Total), "turns", count(turns), "pairs", len(sm.Pairs), "models", len(sm.Models))...)
 
 	o.Fact("month", month).
 		Fact("days", len(sm.Days)).
@@ -83,8 +82,8 @@ func runSum(c *tool.Call, now time.Time) *tool.Out {
 // aggFields is the five totals, the rough count, the per-column dash counts and the
 // non-UTC count: everything a reader needs to know what a total does NOT cover.
 func aggFields(a *tokens.Agg) []any {
-	return []any{"input", a.Cell(tokens.Input), "output", a.Cell(tokens.Output), "cache_write", a.Cell(tokens.CacheWrite),
-		"cache_read", a.Cell(tokens.CacheRead), "reasoning", a.Cell(tokens.Reasoning), "rough", a.Rough,
+	return []any{"input", count(a.Cell(tokens.Input)), "output", count(a.Cell(tokens.Output)), "cache_write", count(a.Cell(tokens.CacheWrite)),
+		"cache_read", count(a.Cell(tokens.CacheRead)), "reasoning", count(a.Cell(tokens.Reasoning)), "rough", a.Rough,
 		"dashes", fmt.Sprintf("%d,%d,%d,%d,%d", a.Dashes[tokens.Input], a.Dashes[tokens.Output], a.Dashes[tokens.CacheWrite],
 			a.Dashes[tokens.CacheRead], a.Dashes[tokens.Reasoning]), "nonutc", a.NonUTC}
 }

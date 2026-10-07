@@ -49,8 +49,37 @@ func tokensTool(now time.Time) *tool.Tool {
 databases, swarm pools, bus notes) and writes one day file per day into --out,
 one row per (day, model, repo). The repo comes from the --repos file: lines of
 <name><TAB><regexp>, and the first match on a session's path wins. check, sum
+<<<<<<< HEAD
 and report read the day files back; a count a source never gave prints as -.`,
 		UsageNote: `  the local mode is selected by --who and --day; the store mode by --redis and --month; giving both --who and --redis selects the store mode (--redis wins); a mix of --who and --redis prints the store summary
+=======
+and report read the day files back; a count a source never gave prints as -.
+first run: create a tiny transcript and rules file with the lines under setup:
+above example:, then run the lines under example: in order.
+
+usage:
+  nova-tokens fold    --out <dir> (--day <YYYY-MM-DD> | --all) --repos <file>
+                      [--claude <label>=<dir>]... [--opencode <label>=<file>]... [--swarm <label>=<pool>]... [--bus <dir>]
+                      [--provider <kind>:<label>=<file>]... [--scratch <dir>] [--timeout <seconds>] [--allow-shrink] [--max <n>] [--dry-run]
+  nova-tokens report (local mode) --who <name> --day <YYYY-MM-DD> --repos <file>
+                      mode: local note body, printed as the tokens note artifact
+                      [--claude <label>=<dir>]... [--opencode <label>=<file>]... [--provider <kind>:<label>=<file>]...
+                      [--supersedes <note-id>]... [--note <path>] [--scratch <dir>] [--timeout <seconds>] [--dry-run]
+  nova-tokens report (store mode) --redis <host:port> --month <YYYY-MM> [--by model|repo|day|tuple] [--max <n>]
+                      mode: Redis month summary
+                      [--user <name>] [--password-env <NAME>]
+  the local mode is selected by --who and --day; the store mode by --redis and --month; giving both --who and --redis selects the store mode (--redis wins); a mix of --who and --redis prints the store summary
+  nova-tokens ledger  --out <dir> (--day <YYYY-MM-DD> | --month <YYYY-MM>) --redis <host:port>
+                      [--user <name>] [--password-env <NAME>] [--dry-run]
+  nova-tokens sum     --out <dir> --month <YYYY-MM> [--max <n>]
+  nova-tokens check   --out <dir> [--strict | --no-spend <file>] [--through <YYYY-MM-DD>] [--allow-empty] [--max <n>]
+  nova-tokens sources --repos <file> (--day <YYYY-MM-DD> | --all) [<source flags>] [--unattributed] [--max <n>]
+  nova-tokens profiles --swarm-root <dir>
+                      one PROFILES MODEL line per model (cards, median output, overshoot), then a PROFILES OK line with totals
+  nova-tokens session --claude-session <jsonl> [--out <dir>] [--day <YYYY-MM-DD>] [--dry-run]
+                      [--role <name>] [--weights <in,cw,cr,out>]
+  nova-tokens version
+>>>>>>> origin/sprint/mechanical-2026-10-02
 
 Every verb but version takes --json: the same result as one JSON object on stdout, a
 refusal included. A verb that writes takes --dry-run: it is the real run's own plan --
@@ -125,8 +154,8 @@ symlinks.
 
 fold and session hold --out/fold.lock while they write, so two folds of one --out never
 write the same day at once; the second waits, then refuses naming the holder. The lock
-file is empty and stays in --out after the run (it is never data); check counts it as
-neither a day file nor a stray.
+file holds the folding process's id and stays in --out between runs (it is never data);
+check counts it as neither a day file nor a stray.
 
 This tool removes nothing it was given. There is no month file, sum writes nothing, check
 names a stray and leaves it, and no verb deletes, truncates or trims a file it did not make:
@@ -142,8 +171,9 @@ CHECK line, so nothing was hidden to make it green. A gate that cannot go red is
 either: an --out with no day file in it is CHECK FAILED, never a green over nothing.
 
 sources --unattributed prints the path stems that were SEEN and matched no rule, heaviest
-first, capped by --max. That listing is what other=<pct>% on a day line is made of, and it
-is the evidence for improving the --repos file.
+first, capped by --max, with the mentions each stem got (one per message that touched a path
+in it). That listing is what other=<pct>% on a day line is made of, and it is the evidence
+for improving the --repos file.
 
 setup:
   mkdir -p ./transcripts ./out
@@ -464,13 +494,17 @@ func dryRunFields(on bool, kv ...any) string {
 func addSourceItem(o *tool.Out, src *tokens.Source) {
 	kv := []any{"label", src.Label, "kind", src.Kind, "path", src.Path, "reports", src.ReportsList(), "day_basis", src.Basis}
 	for _, f := range []string{"files", "unreadable", "messages", "dup", "noid", "nousage", "unparsed", "comments", "redated", "superseded", "rows"} {
-		kv = append(kv, f, src.StatField(f))
+		kv = append(kv, f, count(src.StatField(f)))
 	}
 	o.Item("source", kv...)
 }
 
 func addUnreadableItem(o *tool.Out, u tokens.Unreadable) {
-	o.ItemText("unreadable", oneline.Cap(u.Why, oneline.TailBytes), "label", u.Label, "path", u.Path)
+	why := u.Why
+	if u.Line > 0 {
+		why = "line " + strconv.Itoa(u.Line) + ": " + why
+	}
+	o.ItemText("unreadable", oneline.Cap(why, oneline.TailBytes), "label", u.Label, "path", u.Path)
 }
 
 func addUnparsedItem(o *tool.Out, u tokens.Unparsed) {
@@ -487,10 +521,25 @@ func countItems(o *tool.Out, kind string) int {
 	return n
 }
 
+<<<<<<< HEAD
 // remedy is the ONE line TOKENS NOTE carries.
 func remedy(sources []*tokens.Source, unreadable, unparsed, mixed, conflict, shrank, partial, quiet int, allowShrink bool, out, mixedLabels, firstPartial, firstQuiet string) string {
+=======
+// remedy is the ONE line TOKENS NOTE carries. It names the label and the act, in the order
+// a reader would act on them, and when nothing was wrong it names the gate. SPEC-TOKENS:
+// "TOKENS NOTE is exactly one remedy line." dryRun is the plan the run would take, so a
+// day --allow-shrink would write is reported as it would be, never as it was.
+func remedy(sources []*tokens.Source, unreadable, unparsed, mixed, conflict, shrank, partial, quiet int, allowShrink, dryRun bool, out, mixedLabels, firstPartial, firstQuiet string) string {
+>>>>>>> origin/sprint/mechanical-2026-10-02
 	switch {
 	case unreadable > 0:
+		// A line that is not JSON is not a permission problem: its remedy is the one act
+		// that clears it, naming the file and the first bad line. Every other unreadable
+		// (a file that would not open, a day file this run could not write) keeps the
+		// permission remedy SPEC-TOKENS gives.
+		if u, ok := firstBadline(sources); ok {
+			return "a declared source has a line that is not JSON (" + u.Label + ", " + u.Path + " line " + strconv.Itoa(u.Line) + "): inspect or remove that line, or drop the flag"
+		}
 		return "a declared source could not be read whole (" + firstUnreadableLabel(sources) + "): open those files to this group, or drop the flag -- a declared source is a claim that the report covers it"
 	case unparsed > 0:
 		kind, note, own := firstUnparsed(sources)
@@ -514,6 +563,8 @@ func remedy(sources []*tokens.Source, unreadable, unparsed, mixed, conflict, shr
 		return "a row of the day file was written by sources this fold did not declare (" + firstPartial + "): declare every source in that file's sources= line, or fold this day into its own --out -- --allow-shrink does not write it"
 	case shrank > 0 && !allowShrink:
 		return "a day would have gone backwards and was left as it was: --allow-shrink writes it anyway, and it is a person's act"
+	case shrank > 0 && dryRun:
+		return "a day would be written smaller at your word (--allow-shrink); nova-tokens check --out " + out + " is the gate"
 	case shrank > 0:
 		return "a day was written smaller at your word (--allow-shrink); nova-tokens check --out " + out + " is the gate"
 	case quiet > 0:
@@ -533,6 +584,28 @@ func firstUnreadableLabel(sources []*tokens.Source) string {
 	return "-"
 }
 
+<<<<<<< HEAD
+=======
+// firstBadline is the first unreadable whose failure is a line that is not JSON, and the
+// one the NOTE's remedy names: a bad line is inspected or removed, never opened to a group.
+func firstBadline(sources []*tokens.Source) (tokens.Unreadable, bool) {
+	for _, s := range sources {
+		for _, u := range s.Unreadables {
+			if u.Line > 0 {
+				return u, true
+			}
+		}
+	}
+	return tokens.Unreadable{}, false
+}
+
+// firstUnparsed names the kind of the first source with an unparsed line and what it was
+// reading, so that the one remedy line is the remedy for the thing that failed.
+// noidAndDup is the sentence for spend that was read and then dropped: a message with no
+// id is not folded (rule 4) and a repeated id is counted once. Both are numbers on a green
+// TOKENS SOURCE line and nowhere else, and 100% of a file's usage can be a message with no
+// id (a number is not a sentence).
+>>>>>>> origin/sprint/mechanical-2026-10-02
 func noidAndDup(sources []*tokens.Source) string {
 	noid, dup, label := 0, 0, "-"
 	for _, s := range sources {

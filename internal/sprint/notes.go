@@ -45,6 +45,10 @@ const (
 	NStagingRefused = "a member refused a card at staging"    // dealt to another member
 	NRestWithdrawn  = "a card withdrawn from a resting route" // dealt again on one that serves
 	NFriendReturned = "a friend's card returned to ready"     // by friend reconcile: no report, and her queue says done or does not hold it
+	// The landing refused a card's head (it does not merge on the base's tip, or fails the tree
+	// gate the base passes): the card was reworked at the tip and its stream landed on
+	// (landRefused, redo.go). Addressed to the coordinator; nothing to answer.
+	NLandRefused = "the landing refused a card's head: reworked at the tip"
 	// The coordinator held a fleet member, a reader, a friend or a stream, or released
 	// its hold (hold, unhold: hold.go), the reason in the note.
 	NHeld   = "held by the coordinator"
@@ -86,6 +90,7 @@ const (
 	NCross           = "stream stopped: needs a card of another stream first"
 	NRejected        = "stream stopped: the merge queue rejected"
 	NBaseRed         = "stream stopped: the base fails its tree gate" // the base-gate rule's third failure (rules.go)
+	NMissingBase     = "the base branch is gone"                      // a land whose base branch is missing (rebase.go)
 	NBlocked         = "a primary is blocked on something dropped"
 	NMissingNeed     = "a primary is blocked on something missing"
 	NCIRed           = "ci red"
@@ -113,6 +118,7 @@ var Decisions = map[string][]string{
 	NCross:           {"rank that card first", "wait", "look at both", "return", "drop"},
 	NRejected:        {"resume", "return", "drop"},
 	NBaseRed:         {"resume", "wait"},
+	NMissingBase:     {"rebase", "wait", "drop"},
 	NBlocked:         {"drop", "ack"},
 	NMissingNeed:     {"drop", "ack"},
 	NCIRed:           {"rework with a fix", "return", "drop", "look", "ack"},

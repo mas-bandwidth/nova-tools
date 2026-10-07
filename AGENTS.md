@@ -48,7 +48,7 @@ These hold for every worker, AI or person. A card is the whole brief one worker 
 - Never force-push, never rebase, do not use git stash (the stash list is shared by every worktree), never merge: finish as `JOB.md` says, with `gh pr create` against the base the card names.
 - Touch only the files the card names, and keep the diff minimal: every added line traceable to one sentence of the card. A fix that needs another file goes into the report as a proposed diff, not a commit.
 - No names of people, machines or friends in code, comments or docs; docs and comments in the present tense. Cite the model or the design section from every function that implements a rule.
-- Commit messages end with `Co-Authored-By: Claude <your model> <noreply@anthropic.com>`; PR bodies end with `🤖 Generated with [Claude Code](https://claude.com/claude-code)`, state the diff stat and what was deleted, and list the tests, each with what it pins, and every local helper added.
+- Commits end with `By: your own name`, never a model; only a Claude worker adds Co-Authored-By. PR bodies end with `🤖 Generated with [Claude Code](https://claude.com/claude-code)`, state the diff stat and what was deleted, and list the tests, each with what it pins, and every local helper added.
 - The report is the pull request: its title is the one-line report, its body every test package line and what you could not do and why. "Not done" is a welcome report; a green claim you did not run is not.
 - A new verb or class rule starts from its scaffold: `nova-ci new-verb <tool> <verb>` or `nova-ci new-rule <name>` lays down the file, test, fixture and make target.
 
