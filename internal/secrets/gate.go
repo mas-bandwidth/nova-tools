@@ -27,8 +27,11 @@ type GateInput struct {
 // RunGate is the seat-rule gate as a verb: the store's shell gate, called by the
 // workflow. It diffs --base..--head with git (no GitHub) and either prints
 // "GATE APPROVE files=<n> machines=<registry|->" at exit 0 or
-// "GATE REFUSE rule=<n> check=<k> file=<f>: <why>" at exit 2. Independent inputs and
-// findings are reported together in the check order (SPEC-SECRETS "gate").
+// "GATE FAILED rule=<n> check=<k> file=<f>: <why>" at exit 1; a gate that could not run
+// prints "SECRETS GATE REFUSED: <why>; run: nova-secrets gate -h" at exit 2, so a CI
+// step reads a broken change apart from a gate that never ran (skeleton contract 1.2).
+// Independent inputs and findings are reported together in the check order
+// (SPEC-SECRETS "gate").
 func RunGate(in GateInput) (string, int) {
 	storeDir := in.StoreDir
 	base, head, fleetSeats, findings, legacy := gateInputFindings(in)
@@ -36,12 +39,12 @@ func RunGate(in GateInput) (string, int) {
 		if len(findings) == 1 {
 			return legacy, 2
 		}
-		return gateRefuseFindings(findings), 2
+		return gateCouldNotRunFindings(findings), 2
 	}
 	// The two refs are resolved to commits before any diff or tree read (SPEC-SECRETS "gate").
 	changed, err := gitChangedFiles(storeDir, base, head)
 	if err != nil {
-		return gateRefuse(0, 0, "", err.Error()), 2
+		return gateCouldNotRun(err.Error()), 2
 	}
 	if len(changed) == 0 {
 		return gateApprove(0, in.MachinesPath), 0
@@ -99,7 +102,7 @@ func RunGate(in GateInput) (string, int) {
 				}
 			}
 		}
-		return gateRefuseFindings(gateFindings), 2
+		return gateFailedFindings(gateFindings), 1
 	}
 
 	// Check 1: Every changed .sops.yaml rule: exactly two age recipients, one the
@@ -228,7 +231,7 @@ func RunGate(in GateInput) (string, int) {
 		}
 	}
 	if len(gateFindings) > 0 {
-		return gateRefuseFindings(gateFindings), 2
+		return gateFailedFindings(gateFindings), 1
 	}
 
 	return gateApprove(len(changed), in.MachinesPath), 0
@@ -298,12 +301,21 @@ func gateRecipientsAt(storeDir, ref string) (map[string]bool, error) {
 	return keys, nil
 }
 
-// gateRefuse formats one refusal line: GATE REFUSE rule=<n> check=<k> file=<f>: <why>
-// (SPEC-SECRETS "gate"; tla/SecretsSeat.tla on sprint/md-secrets-h.w1.g1.e15).
+// gateFailed formats one verdict line: GATE FAILED rule=<n> check=<k> file=<f>: <why>
+// (SPEC-SECRETS "gate"; tla/SecretsSeat.tla on sprint/md-secrets-h.w1.g1.e15). The gate
+// ran and judged the diff, so the line leads with the FAILED status word and the verb
+// exits 1 (skeleton contract 1.2, STANDARD §2).
 // The check is the gate check that failed (1-5, defined in SPEC-SECRETS.md gate section;
 // check=0 means the gate refused before any numbered check ran).
-func gateRefuse(ruleNum, checkNum int, file, why string) string {
-	return fmt.Sprintf("GATE REFUSE rule=%d check=%d file=%s: %s", ruleNum, checkNum, oneline.Field(file), oneline.Escape(why))
+func gateFailed(ruleNum, checkNum int, file, why string) string {
+	return fmt.Sprintf("GATE FAILED rule=%d check=%d file=%s: %s", ruleNum, checkNum, oneline.Field(file), oneline.Escape(why))
+}
+
+// gateCouldNotRun formats one setup line: SECRETS GATE REFUSED: <why>; run: nova-secrets
+// gate -h. The gate did not run -- a missing flag, a ref that names no commit, an
+// unreadable registry or a git failure -- and exits 2 (skeleton contract 1.2).
+func gateCouldNotRun(why string) string {
+	return "SECRETS GATE REFUSED: " + oneline.WithRemedy(why, "nova-secrets gate -h")
 }
 
 type gateFinding struct {
@@ -313,13 +325,13 @@ type gateFinding struct {
 
 // gateInputFindings validates independent gate inputs once and returns the resolved refs
 // and parsed registry used by the checks. Ref and registry reads are single snapshots
-// (SPEC-SECRETS "gate").
+// (SPEC-SECRETS "gate"). Every input problem is a gate that could not run: exit 2.
 func gateInputFindings(in GateInput) (base, head string, fleetSeats map[string]bool, findings []gateFinding, legacy string) {
 	storeDir, base, head := in.StoreDir, in.Base, in.Head
 	missing := preflight("", need{storeDir, "--store <dir>", false}, need{base, "--base <git ref>", false}, need{head, "--head <git ref>", false})
 	if missing != nil {
 		findings = append(findings, gateFinding{why: missing.Error()})
-		legacy = "SECRETS GATE REFUSED: " + oneline.WithRemedy(missing.Error(), "nova-secrets gate -h")
+		legacy = gateCouldNotRun(missing.Error())
 	}
 	optionShapedRef := false
 	for _, r := range []struct{ flag, ref string }{{"--base", base}, {"--head", head}} {
@@ -341,7 +353,7 @@ func gateInputFindings(in GateInput) (base, head string, fleetSeats map[string]b
 		resolved, err := gateResolveCommit(storeDir, flagName, ref)
 		if err != nil {
 			findings = append(findings, gateFinding{why: err.Error()})
-			legacy = gateRefuse(0, 0, "", err.Error())
+			legacy = gateCouldNotRun(err.Error())
 			return ""
 		}
 		return resolved
@@ -353,18 +365,18 @@ func gateInputFindings(in GateInput) (base, head string, fleetSeats map[string]b
 		fleetSeats, err = gateFleetSeats(in.MachinesPath)
 		if err != nil {
 			findings = append(findings, gateFinding{file: in.MachinesPath, why: err.Error()})
-			legacy = gateRefuse(0, 0, in.MachinesPath, err.Error())
+			legacy = gateCouldNotRun(err.Error())
 		}
 	}
 	return base, head, fleetSeats, findings, legacy
 }
 
-// gateRefuseFindings keeps the established line for one finding and lists every additional
+// gateFailedFindings keeps the established line for one finding and lists every additional
 // independent finding in order for one combined verdict (SPEC-SECRETS "gate").
-func gateRefuseFindings(findings []gateFinding) string {
+func gateFailedFindings(findings []gateFinding) string {
 	if len(findings) == 1 {
 		f := findings[0]
-		return gateRefuse(f.rule, f.check, f.file, f.why)
+		return gateFailed(f.rule, f.check, f.file, f.why)
 	}
 	first := findings[0]
 	items := make([]string, 0, len(findings)-1)
@@ -372,7 +384,18 @@ func gateRefuseFindings(findings []gateFinding) string {
 		items = append(items, fmt.Sprintf("rule=%d check=%d file=%s: %s", f.rule, f.check, oneline.Field(f.file), f.why))
 	}
 	why := fmt.Sprintf("%s; additional findings=%d: %s", first.why, len(items), strings.Join(items, "; "))
-	return gateRefuse(first.rule, first.check, first.file, why)
+	return gateFailed(first.rule, first.check, first.file, why)
+}
+
+// gateCouldNotRunFindings joins every independent input problem on one SECRETS GATE
+// REFUSED line with the gate's help as the remedy, for the one-invocation, all-problems
+// rule (ONBOARDING point 2) while the exit stays 2.
+func gateCouldNotRunFindings(findings []gateFinding) string {
+	whys := make([]string, 0, len(findings))
+	for _, f := range findings {
+		whys = append(whys, f.why)
+	}
+	return gateCouldNotRun(strings.Join(whys, "; "))
 }
 
 // isSeatYAML reports whether path is a seat file: a *.yaml that is not .sops.yaml.
