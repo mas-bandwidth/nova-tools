@@ -13,6 +13,7 @@ import (
 type retrievalResult struct {
 	Verb, Query, Source, Channels string
 	K, Files, Chunks              int
+	Whole                         bool
 	Calibration                   memindex.FileHit
 	Candidates                    []retrievalCandidate
 	Notes                         []string
@@ -60,7 +61,11 @@ func (r retrievalResult) render(w io.Writer, asJSON bool) {
 				out.Item("miss", "candidate", i+1, "reason", "every query term is out of vocabulary for this corpus")
 			}
 			for j, h := range cand.Hits {
-				out.Item("hit", "candidate", i+1, "rank", j+1, "score", h.Native, "score-channel", h.NativeChan, "fused", h.Fused, "class", h.Class, "name", h.FMName, "type", h.FMType, "root", h.Root, "file", h.File, "line", h.Line, "paragraph", h.Para, "snippet", h.Snippet)
+				fields := []any{"candidate", i + 1, "rank", j + 1, "score", h.Native, "score-channel", h.NativeChan, "fused", h.Fused, "class", h.Class, "name", h.FMName, "type", h.FMType, "root", h.Root, "file", h.File, "line", h.Line, "paragraph", h.Para, "snippet", h.Snippet}
+				if r.Whole {
+					fields = append(fields, "whole", wholePassage(h.Whole))
+				}
+				out.Item("hit", fields...)
 			}
 		}
 		out.Notes = r.Notes
@@ -83,7 +88,7 @@ func (r retrievalResult) render(w io.Writer, asJSON bool) {
 			fmt.Fprintf(w, "%s MISS %severy query term is out of vocabulary for this corpus\n", oneline.Field(token), oneline.Escape(prefix))
 		}
 		for j, h := range cand.Hits {
-			fmt.Fprint(w, hitLine(token, prefix, j+1, h))
+			fmt.Fprint(w, hitLine(token, prefix, j+1, h, r.Whole))
 		}
 	}
 	for _, note := range r.Notes {

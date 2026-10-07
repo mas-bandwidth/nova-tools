@@ -63,8 +63,8 @@ usage:
   nova-memory version    print this build identity (--version also accepted)
   nova-memory quickstart --root <dir>... [--words <w>]... [--draft <file>] [--exclude <glob>]... [--json]
   nova-memory stats  --root <dir>... [--exclude <glob>]... [--json]
-  nova-memory search --root <dir>... --channels <list> --k <n> [--exclude <glob>]... [--json] <words>...
-  nova-memory check  --root <dir>... --channels <list> --k <n> [--exclude <glob>]... [--json] <file|->
+  nova-memory search --root <dir>... --channels <list> --k <n> [--exclude <glob>]... [--whole] [--json] <words>...
+  nova-memory check  --root <dir>... --channels <list> --k <n> [--exclude <glob>]... [--whole] [--json] <file|->
   nova-memory verify --root <dir> --links <gate|info> [--coverage <A:B>]...
                      [--frontmatter <glob>]... [--exempt <prefix>]... [--exclude <glob>]...
                      [--fail-max <n>] [--json]
@@ -102,6 +102,11 @@ flags:
   --exclude <glob>      path or glob to skip, repeatable. Nothing is excluded
                         by default except .git; every exclusion is yours,
                         stated this run.
+  --whole               search and check: print each hit's whole paragraph in
+                        place of its 120-byte snippet, so a word just past that
+                        cut still prints. A paragraph past the byte cap is cut
+                        at the cap and the dropped bytes are counted in the
+                        value (...+<n>B), so the cut is never silent.
   --floor <f>           eval only: minimum recall@k, in (0,1]. Required — a
                         harness with no floor cannot fail, so its green is
                         worth nothing.
@@ -525,12 +530,24 @@ func scoreFields(score float64, chn string) string {
 	return fmt.Sprintf("score=%.2f score-channel=%s", score, chn)
 }
 
+// wholeCap bounds a --whole paragraph. The snippet cuts at 120 bytes and the
+// words searched for can sit just past that cut; --whole prints the whole
+// paragraph up to this cap, and oneline.Cap counts the bytes it dropped, so
+// the cut is never silent. The cap keeps one pathological paragraph from being
+// the whole of a reader's context.
+const wholeCap = 4096
+
+// wholePassage is the paragraph --whole prints: the whole original text,
+// bounded by wholeCap with oneline.Cap's `...+<n>B` note when it had to cut.
+func wholePassage(s string) string { return oneline.Cap(s, wholeCap) }
+
 // hitLine renders one receipt as a single machine-scannable line. Absent
 // frontmatter prints as "-" so the field count never changes. The class, the
 // name and the type are the corpus's own text and are fields, so each is one
-// token; the file is a positional slot and keeps its spaces; the snippet is
-// Go-quoted, which is one line in a different escape form.
-func hitLine(token, prefix string, rank int, h memindex.FileHit) string {
+// token; the file is a positional slot and keeps its spaces; the passage is
+// Go-quoted, which is one line in a different escape form. whole swaps the
+// 120-byte snippet for the whole paragraph (capped, and marked when cut).
+func hitLine(token, prefix string, rank int, h memindex.FileHit, whole bool) string {
 	name, typ := h.FMName, h.FMType
 	if name == "" {
 		name = "-"
@@ -542,8 +559,12 @@ func hitLine(token, prefix string, rank int, h memindex.FileHit) string {
 	if root == "" {
 		root = "-"
 	}
+	passage := h.Snippet
+	if whole {
+		passage = wholePassage(h.Whole)
+	}
 	return fmt.Sprintf("%s HIT %srank=%d %s fused=%.5f class=%s name=%s type=%s root=%s: %s:%d %q\n",
-		token, prefix, rank, scoreFields(h.Native, h.NativeChan), h.Fused, oneline.Field(h.Class), oneline.Field(name), oneline.Field(typ), oneline.Field(root), oneline.Escape(h.File), h.Line, h.Snippet)
+		token, prefix, rank, scoreFields(h.Native, h.NativeChan), h.Fused, oneline.Field(h.Class), oneline.Field(name), oneline.Field(typ), oneline.Field(root), oneline.Escape(h.File), h.Line, passage)
 }
 
 // ---------------------------------------------------------------------------

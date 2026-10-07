@@ -640,7 +640,7 @@ func TestEveryDefinedFlagAppearsInTheUsageBanner(t *testing.T) {
 	// All flags supported by nova-memory subcommands.
 	flags := []string{
 		"root", "channels", "k", "exclude", "floor", "links",
-		"coverage", "frontmatter", "exempt", "fail-max", "words", "draft", "pin", "json",
+		"coverage", "frontmatter", "exempt", "fail-max", "words", "draft", "pin", "json", "whole",
 	}
 	for _, f := range flags {
 		target := "  --" + f + " "
