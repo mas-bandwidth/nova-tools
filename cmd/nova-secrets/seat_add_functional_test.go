@@ -88,7 +88,10 @@ func TestSeatAddGivesANewSeatItsFirstValues(t *testing.T) {
 	require.Equal(t, 0, code, "names on the new seat exited %d", code)
 	assert.Contains(t, out, "key=GH_TOKEN", "the new seat does not list the carried keys:\n%s", out)
 	assert.Contains(t, out, "key=DEEPSEEK_API_KEY", "the new seat does not list the carried keys:\n%s", out)
-	assert.NotContains(t, out, "clear=true", "the new seat carries a value in the clear:\n%s", out)
+	// The one key in the clear is the verb's mark, which the gate reads (SPEC-SECRETS
+	// "gate"); every value is sealed.
+	assert.Contains(t, out, "key=NOVA_SECRETS_WRITTEN_BY clear=true", "the new seat does not carry the verb's mark in the clear:\n%s", out)
+	assert.Contains(t, out, " sealed=2 clear=1", "the new seat carries a value in the clear:\n%s", out)
 }
 
 // TestSeatAddRefusesASecondTimeOnTheSameSeat: run twice, and the second run must find

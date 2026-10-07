@@ -77,6 +77,7 @@ func newSealFixture(t *testing.T, decryptOut string) *sealFixture {
 		"for last; do :; done\n" +
 		"if [ \"$last\" != \"/dev/stdin\" ]; then exit 100; fi\n" +
 		"pwd -P > \"$ARGS.cwd\"\n" +
+		"cp .sops.yaml \"$ARGS.cfg\" 2>/dev/null\n" +
 		"cat > \"$STDIN\"\n" +
 		"echo \"ENC[marker]\"\n"
 	f.sopsPath = f.writeScript(t, "sops", sopsBody)
@@ -145,9 +146,13 @@ func TestSealPipedValueLandsInEncryptStdinNotArgv(t *testing.T) {
 	assert.Contains(t, argv, "--filename-override", "encrypt did not use --filename-override rowan.yaml:\n%s", argv)
 	assert.Contains(t, argv, "rowan.yaml", "encrypt did not use --filename-override rowan.yaml:\n%s", argv)
 	assert.True(t, strings.HasSuffix(strings.TrimSpace(argv), "/dev/stdin"), "encrypt argv must end with the /dev/stdin file argument (real sops exits 100 without it):\n%s", argv)
-	wantCwd, _ := filepath.EvalSymlinks(f.storeDir)
-	got := strings.TrimSpace(readMaybe(t, f.sopsArgs+".cwd"))
-	assert.Equal(t, wantCwd, got, "encrypt ran in %q, want the store %q (sops finds .sops.yaml from its cwd)", got, wantCwd)
+	// sops finds .sops.yaml from its cwd. The fixture's rule predates the mark, so the
+	// config it found there is the store's with the mark admitted to rowan.yaml's rule,
+	// and that is the .sops.yaml the commit carries beside the file.
+	wantCfg := "creation_rules:\n  - path_regex: ^rowan\\.yaml$\n    unencrypted_regex: ^NOVA_SECRETS_WRITTEN_BY$\n    age: age1abc\n"
+	gotCfg := readMaybe(t, f.sopsArgs+".cfg")
+	assert.Equal(t, wantCfg, gotCfg, "encrypt did not find the store's rule with the mark admitted in its cwd")
+	assert.Contains(t, readMaybe(t, f.gitArgs), "add\n.sops.yaml\n", "the rule that admits the mark was not committed beside the file")
 	assert.NotContains(t, line, "newsecretvalue", "value leaked into the OK line: %s", line)
 	assert.Contains(t, line, "SEAL OK", "unexpected OK line: %s", line)
 	assert.Contains(t, line, "name=TARGET", "unexpected OK line: %s", line)
@@ -368,7 +373,7 @@ func TestSealEncryptTakesValueOnStdin(t *testing.T) {
 
 	const value = "newsecretvalue"
 	plaintext := []byte("TARGET: " + value + "\n")
-	out, err := sealEncrypt(run, "sops", "/nonexistent/rowan.key", "/the/store", "rowan.yaml", "seal", plaintext)
+	out, _, err := sealEncrypt(run, "sops", "/nonexistent/rowan.key", "/the/store", "rowan.yaml", "seal", plaintext)
 	require.NoError(t, err, "sealEncrypt: %v", err)
 	assert.Contains(t, gotStdin, "TARGET: "+value, "encrypt stdin missing the pasted value; got:\n%s", gotStdin)
 	n := strings.Count(gotStdin, "TARGET:")

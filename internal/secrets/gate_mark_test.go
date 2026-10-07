@@ -28,7 +28,7 @@ func TestGateTellsAVerbMadeSealFromAHandSeal(t *testing.T) {
 	mustWrite(t, filepath.Join(storeDir, ".sops.yaml"), gateSops(rule), 0644)
 	sopsPath := filepath.Join(t.TempDir(), "sops")
 	require.NoError(t, os.Symlink(sharedFakeSops, sopsPath))
-	sealed, err := sealEncrypt(realExecCommand, sopsPath, "", storeDir, "rowan.yaml", "seal",
+	sealed, _, err := sealEncrypt(realExecCommand, sopsPath, "", storeDir, "rowan.yaml", "seal",
 		[]byte("GH_TOKEN: ENC[AES256_GCM,data:xyz,iv:abc,tag:def,type:str]\n"))
 	require.NoError(t, err, "the seal path refused the fixture")
 	verbMade := string(sealed)

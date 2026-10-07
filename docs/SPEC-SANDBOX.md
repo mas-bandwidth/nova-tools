@@ -520,23 +520,46 @@ The wall bounds the process count and the resident memory of the tree it runs, s
 runaway command cannot take the machine (289 test processes ran unbounded under one
 `go test`). Defaults: **256 processes** and **8 GiB**.
 
-- **The tree is a process group.** When the command's stdin is not a terminal, the wall
-  starts it as the leader of a process group of its own; the group is counted and the
-  group is killed by its id, never by a pattern. A terminal stdin keeps the caller's
-  group (a child in a background group is stopped by SIGTTIN when it reads the keyboard)
-  and has no caps. A process that leaves the group (`setsid`) leaves the count; the
-  Landlock and seatbelt walls still bound what it can touch.
-- **The count.** Every second the tool counts the live processes of the group (zombies
-  are dead and not counted) and sums their resident bytes: `/proc` on linux, no fork;
-  one `ps -A -o pgid=,rss=,stat=` on macOS. A count that fails is skipped. The group is
-  counted once more when the command exits: a leader that exits between two counts (a
-  fork bomb refused by `RLIMIT_NPROC` ends its own shell) leaves its children in the
-  group, and past a cap they are killed like a tree seen on a tick.
+- **The tree is counted by parent pid, never made a group.** Rule 12 stands: the bare
+  form creates no process group of its own, whatever its stdin, and the tree stays in the
+  caller's group so that the caller's group kill at its deadline reaches all of it (the
+  caps card once gave a non-terminal run a group of its own, and a supervisor's group
+  kill then killed only the tool while the walled tree ran on: the security read of
+  2026-10-06). The tree is the command and its live descendants, found by parent pid at
+  every count, plus any process already seen in the tree that has since been reparented
+  to pid 1 and is still in the caller's group. On linux the tool is a child subreaper
+  (`PR_SET_CHILD_SUBREAPER`), so an orphan is reparented to the tool and stays in the
+  tree; the tool collects those orphans' zombies at each count. On macOS there is no
+  subreaper: **any process orphaned between two counts was never seen and escapes the
+  count** (measured: a leader alive for 4 s whose 300 `sh -c "sleep &"` grandchildren were
+  orphaned between counts ran uncounted, exit 0), as one that calls `setsid` does on both
+  platforms. What reaches such a process is rule 12: it is still in the caller's group,
+  and the caller's group kill at its deadline ends it. The Landlock and seatbelt walls
+  bound what any of them can touch. Once the command's own pid is reaped it is no longer
+  the top of the tree, so a reused pid is never counted or killed. Only the `run` verb makes a group of
+  its own (its rule 4), because there the tool is the supervisor.
+- **The count.** Every second the tool counts the tree's live processes (zombies are dead
+  and not counted) and sums their resident bytes: `/proc` on linux, no fork; one
+  `ps -A -o pid=,ppid=,pgid=,rss=,stat=` on macOS. A count that fails is skipped. The tree
+  is counted once more when the command exits: a leader that exits between two counts (a
+  fork bomb refused by `RLIMIT_NPROC` ends its own shell) leaves its children in the tree
+  (on linux all of them, the tool being their subreaper; on macOS only those a count had
+  already seen), and past a cap they are killed like a tree seen on a tick. A count is read
+  against the top it was taken under, so a reap that lands between a listing and its
+  reading drops none of the children it listed.
 - **Past a cap.** More processes than the cap, or more resident bytes than the cap: the
-  tool sends SIGKILL to the group, waits (bounded) until no live process of it remains,
-  prints `SANDBOX RUNAWAY runaway: <n> processes (cap <c>); the process group was killed`
-  (or `runaway: <n> bytes of memory (cap <c>)`) and exits **137**. Signals the tool
-  receives (SIGINT, SIGTERM) go to the whole group.
+  tool **freezes** the tree, then kills it, always **by pid** (never by pattern, and never
+  to `-pgid`: the group is the caller's). Freeze: SIGSTOP to every member, re-listed until
+  no member is new or still running (a stopped parent forks nothing, and its children stay
+  its descendants); a kill from one listing missed the children forked after it, which
+  outlived their killed parent as orphans (the second read of 2026-10-06: 35-39 of a
+  forking loop alive after "killed"). Kill: SIGKILL to every member, repeated until a count
+  finds none (bounded). It prints `SANDBOX RUNAWAY runaway: <n> processes (cap <c>); the
+  process tree was killed` (or `runaway: <n> bytes of memory (cap <c>)`) **only when that
+  final count is 0**; otherwise the line ends `the process tree was sent SIGKILL and <k> of
+  its processes are still running` (or `... and could not be counted after`). It exits
+  **137** either way. Signals the
+  tool receives (SIGINT, SIGTERM) go to the child, as rule 12 says.
 - **Linux, as well.** `RLIMIT_NPROC` is per user, not per tree, so it is a floor under the
   line and not the line: while the child is forked it is set to the machine's task total
   plus twice the cap, so a bomb is stopped between two counts, and the tool's own limit is
@@ -546,9 +569,15 @@ runaway command cannot take the machine (289 test processes ran unbounded under 
   enforced where the tool can count); the bare form carries the defaults. The flags on the
   bare form are owed in `cmd/nova-sandbox/main.go`, which this card does not edit.
 - **Checked by** `TestWallCapsAForkBomb` (a shell loop that forks until refused, itself
-  capped at 1,000, ends `runaway: <n> processes` with `n` over 256 and no live process of
-  its group), `TestWallCapsLeaveANormalRunAlone` and `TestPolicyOverNamesTheCapPast`
-  (`cmd/nova-sandbox/nproc_cap_test.go`).
+  capped at 1,000, run by the tool in a group of the test's making, ends `runaway: <n>
+  processes` with `n` over 256 and no live process of that group),
+  `TestWallCapsATreeWhoseLeaderExits`, `TestWallCapsLeaveANormalRunAlone` and
+  `TestPolicyOverNamesTheCapPast` (`cmd/nova-sandbox/nproc_cap_test.go`), the tree's
+  membership by `TestTree*` (`internal/sandbox/tree_test.go`), and rule 12's group by
+  `TestTheBareFormKeepsTheCallersGroup` (`cmd/nova-sandbox/reap_darwin_test.go`, default
+  build) and `TestAForkedChildIsReapedWithTheCallersGroup` (its functional twin), and the
+  freeze by `TestARunawayIsFrozenBeforeItIsKilled` (darwin, functional: a loop forking 1,500
+  sleeps leaves no live process in the caller's group the moment the tool exits).
 
 ## The run verb — a disposable place, on darwin
 

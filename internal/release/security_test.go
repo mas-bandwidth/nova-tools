@@ -139,6 +139,12 @@ func TestSensitiveClassifiesByPrefixAndNothingElse(t *testing.T) {
 		{"internal/release/cut.go", false},
 		{"a/internal/secrets/x.go", false},
 		{"infra/images/x", false},
+		// The darwin wall's own text and the check that measures it (the security read of
+		// 2026-10-06: a trustd grant in profiles/ shipped unclassified).
+		{"profiles/darwin.sb.tmpl", true},
+		{"tools/sandboxcheck/main.go", true},
+		{"tools/sandboxchecker/main.go", false},
+		{"internal/profiles/x.go", false},
 	} {
 		got := Sensitive([]string{tc.path})
 		if (len(got) == 1) != tc.hit {

@@ -234,20 +234,14 @@ func RunGate(in GateInput) (string, int) {
 	return gateApprove(len(changed), in.MachinesPath), 0
 }
 
-// gateHasMark reports whether the file carries a root key SeatMarkKey in the clear, naming a
-// verb that writes seat files. The mark is not a signature: a hand can copy it, and the
-// spec says so; it catches the seal made by accident, not the forger.
+// gateHasMark reports whether the file carries a root key SeatMarkKey in the clear whose
+// value is a verb's mark, `<seal|seat add|seat inject> <version>` (isSeatMark). The mark is
+// not a signature: a hand can copy it, and the spec says so; it catches the seal made by
+// accident, not the forger.
 func gateHasMark(data []byte) bool {
 	for _, line := range strings.Split(string(data), "\n") {
-		val, ok := strings.CutPrefix(line, SeatMarkKey+":")
-		if !ok {
-			continue
-		}
-		val = strings.TrimSpace(val)
-		for _, verb := range []string{"seal ", "seat add ", "seat inject "} {
-			if strings.HasPrefix(val, verb) {
-				return true
-			}
+		if val, ok := strings.CutPrefix(line, SeatMarkKey+":"); ok && isSeatMark(val) {
+			return true
 		}
 	}
 	return false
@@ -448,10 +442,18 @@ func plainValues(data []byte, unencryptedRegex string) ([]string, error) {
 			continue
 		}
 		key, val = strings.TrimSpace(key), strings.TrimSpace(val)
-		if key == "" || val == "" || key == "sops" || key == SeatMarkKey {
+		if key == "" || val == "" || key == "sops" {
 			continue
 		}
 		if strings.HasPrefix(val, "ENC[") {
+			continue
+		}
+		// The mark key holds a verb's mark and nothing else in the clear, whatever the rule
+		// admits: other cleartext under it is a plain value.
+		if key == SeatMarkKey {
+			if !isSeatMark(val) {
+				keys = append(keys, key)
+			}
 			continue
 		}
 		if unencRe != nil && unencRe.MatchString(key) {
