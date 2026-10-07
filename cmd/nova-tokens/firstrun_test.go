@@ -162,7 +162,7 @@ func TestTheTranscriptIsWhatTheToolPrints(t *testing.T) {
 	}
 	// normalizePath strips the fixture directory prefix from paths in output lines
 	normalizePath := func(line string) string {
-		return strings.ReplaceAll(line, fixture, ".")
+		return strings.ReplaceAll(line, fixture, "./")
 	}
 	for _, line := range lines {
 		if args, ok := strings.CutPrefix(line, "$ nova-tokens "); ok {
@@ -244,7 +244,9 @@ func TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine(t *testing.T) {
 func runDocumented(fixture string) onboarding.Runner {
 	// normalizePath strips the fixture directory prefix from paths in output lines
 	normalizePath := func(line string) string {
-		return strings.ReplaceAll(line, fixture, ".")
+		// Replace fixture path with ./ to match relative paths in transcript
+		line = strings.ReplaceAll(line, fixture, "./")
+		return line
 	}
 	return func(s onboarding.Step) (onboarding.Result, error) {
 		if s.Stdin != "" {
