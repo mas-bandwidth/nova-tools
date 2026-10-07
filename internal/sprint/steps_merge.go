@@ -48,6 +48,10 @@ type MergeReq struct {
 	// naming the base, the gate and the first refusal. No card moves.
 	BaseRefused string `json:",omitempty"`
 	Base        string `json:",omitempty"`
+	// MissingBase is a land whose base branch is gone: the merge step raises one
+	// judgment naming every unlanded card on that base and the rebase line that
+	// fixes them (rebase.go). No card moves.
+	MissingBase string `json:",omitempty"`
 	Note        string
 	Who         string
 	// Resolved is, by card, what its landing did beyond merging its head (docs/SPEC-SPRINT.md
@@ -145,6 +149,21 @@ func baseGateStep(p Plan, s *Snapshot, ctl *Card, r MergeReq) Plan {
 	return p
 }
 
+// missingBaseStep raises the one judgment of a land whose base branch is gone:
+// every unlanded card on that base, and the rebase line that fixes them
+// (rebase.go). No card moves and the stream is not stopped: the cards are still
+// landable once their brief names a base that exists.
+func missingBaseStep(p Plan, s *Snapshot, r MergeReq) Plan {
+	cards := MissingBaseCards(s, r.MissingBase)
+	j := MissingBaseJudgment(r.MissingBase, cards)
+	j.Who, j.At = r.Who, s.Now
+	if len(cards) == 0 {
+		return p
+	}
+	p.Notes = append(p.Notes, j)
+	return p
+}
+
 // streamDone says every primary of the stream on the table has landed, given
 // the ones about to land, and at least one has.
 func streamDone(s *Snapshot, stream string, landing int) bool {
@@ -211,6 +230,9 @@ func mergeStep(s *Snapshot, r MergeReq) Plan {
 	}
 	if r.BaseRed != "" || r.BaseRefused != "" {
 		return baseGateStep(p, s, ctl, r)
+	}
+	if r.MissingBase != "" {
+		return missingBaseStep(p, s, r)
 	}
 	// A stuck card is a barrier: the step never passes an earlier stuck card.
 	queued := s.Merge.Cell(r.Stream, Queued)
