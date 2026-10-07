@@ -561,7 +561,7 @@ func maxRemedy(verb string) string { return "nova-tokens " + verb + " ... --max 
 func sourceLine(s *sink, token string, src *tokens.Source) string {
 	kv := []any{"label", src.Label, "kind", src.Kind, "path", src.Path, "reports", src.ReportsList(), "day_basis", src.Basis}
 	for _, f := range []string{"files", "unreadable", "messages", "dup", "noid", "nousage", "unparsed", "comments", "redated", "superseded", "rows"} {
-		kv = append(kv, f, src.StatField(f))
+		kv = append(kv, f, count(src.StatField(f)))
 	}
 	return s.line(token, "SOURCE", "", kv...)
 }
