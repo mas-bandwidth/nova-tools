@@ -486,6 +486,14 @@ func (a *app) storeCtx(ctx context.Context, c common) (*store.Store, error) {
 	if why := needsActor(c); why != "" {
 		return nil, errors.New(why)
 	}
+	// the one address rule (internal/sprint/addr.go CheckAddr): the store
+	// is on loopback, a private range or the tailnet, and on loopback
+	// alone in local-only mode, refused before anything is dialled.
+	if !strings.HasPrefix(strings.TrimSpace(c.redis), "mem:") && !strings.HasPrefix(strings.TrimSpace(c.redis), "/") {
+		if why := sprint.CheckAddr(c.redis, sprint.LocalOnlyModeFrom(a.getenv)); why != "" {
+			return nil, errors.New("--redis " + why + "; run: name a loopback or tailnet address (NOVA_SPRINT_LOCAL=1 allows loopback only)")
+		}
+	}
 	names := sprint.Names{}
 	b, err := a.backend(ctx, c.redis, names)
 	if err != nil {

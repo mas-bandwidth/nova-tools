@@ -6150,6 +6150,17 @@ the same port. The server checks no credential (the owner: "I am OK
 with relying on tailnet as secure"): what can reach the address can run a worker's verb as any
 worker, and nothing else.
 
+#### sprint-local-only-mode-r-bc.w5: local-only mode
+
+A stranger on one machine has no tailnet, and that machine runs in local-only mode: every
+address must be loopback, and a tailnet or other address is refused naming the mode. The mode
+is a process setting, `NOVA_SPRINT_LOCAL=1`, not a sprint row: a row needs a store to be read,
+and the single machine may have no store yet, so the process says it. `nova-up --local` sets
+it. Nothing asks for a tailnet under it: `nova-doctor`'s tailnet check is skipped with this
+mode as the reason. The address rule lives in one function, `CheckAddr` in
+`internal/sprint/addr.go`, which every caller cites: outside the mode loopback, a private
+range or the tailnet's address passes and anything else is refused before a socket opens.
+
 A worker whose answer was lost sends the verb again with the same operation id (`--op`): a
 committed operation returns its recorded result and changes nothing twice; a refusal, or a take
 that found nothing, left no operation and is run again. A server that does not answer is, to the
