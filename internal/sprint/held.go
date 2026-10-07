@@ -34,10 +34,13 @@ const NStalled = "stalled"
 
 // The one wait (docs/SPEC-ISA.md): a held card waits for release, a sentinel
 // for its line, and the wave behind it for the release through its card operand.
+// External operands (pr merged, branch contains, after timestamp) are also
+// wait operands that get checked on each tick.
 const (
 	WaitOnCards   = "card"
 	WaitOnLine    = "line"
 	WaitOnRelease = "release"
+	WaitOnExternal = "external"
 )
 
 // CardWait is one card's wait operand and why.
@@ -48,8 +51,100 @@ type CardWait struct {
 	Why     string   `json:"why"`
 }
 
+// ExternalOperands returns the external operands from a card's DEPENDS-ON line.
+func ExternalOperands(c *Card) []string {
+	if c == nil {
+		return nil
+	}
+	depends := c.F("depends_on")
+	if depends == "" {
+		return nil
+	}
+	var ext []string
+	for _, id := range splitDepends(depends) {
+		if isExternalOperand(id) {
+			ext = append(ext, id)
+		}
+	}
+	return ext
+}
+
+// isExternalOperand checks if a DEPENDS-ON entry is an external operand.
+func isExternalOperand(id string) bool {
+	if id == "" {
+		return false
+	}
+	// pr <repo>#<n> merged
+	if len(id) >= 4 && id[:3] == "pr " {
+		rest := id[3:]
+		if idx := findAfter(rest, " merged"); idx > 0 {
+			before := rest[:idx]
+			slash := 0
+			hash := 0
+			for _, c := range before {
+				if c == '/' {
+					slash++
+				} else if c == '#' {
+					hash++
+				}
+			}
+			if slash == 1 && hash == 1 {
+				return true
+			}
+		}
+	}
+	// <branch> contains <sha>
+	if idx := findAfter(id, " contains "); idx > 0 {
+		branch := id[:idx]
+		sha := id[idx+8:]
+		if branch != "" && sha != "" {
+			return true
+		}
+	}
+	// after <RFC3339>
+	if len(id) >= 6 && id[:5] == "after " {
+		timestamp := id[6:]
+		if len(timestamp) >= 20 {
+			valid := true
+			for _, c := range timestamp {
+				if !((c >= '0' && c <= '9') || c == 'T' || c == '-' || c == ':' || c == 'Z' || c == '+' || c == '-') {
+					valid = false
+					break
+				}
+			}
+			if valid {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// findAfter returns the index of substr in s, or -1 if not found.
+func findAfter(s, substr string) int {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return i
+		}
+	}
+	return -1
+}
+
+// splitDepends splits a DEPENDS-ON value by commas.
+func splitDepends(value string) []string {
+	var ids []string
+	for _, p := range strings.Split(value, ",") {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			ids = append(ids, p)
+		}
+	}
+	return ids
+}
+
 // WaitOf is the one reading of why a card is not moving: release, its line, or
-// the cards it names and its place in line.
+// the cards it names and its place in line. External operands are also returned
+// and are checked on each tick.
 func WaitOf(s *Snapshot, c *Card) CardWait {
 	switch {
 	case c == nil:
@@ -59,6 +154,11 @@ func WaitOf(s *Snapshot, c *Card) CardWait {
 	case IsSentinel(c):
 		return CardWait{Card: c.ID, Operand: WaitOnLine, On: WaitsFor(s, c, nil), Why: "the line before it, and the coordinator's release"}
 	default:
+		// Check if there are external operands
+		ext := ExternalOperands(c)
+		if len(ext) > 0 {
+			return CardWait{Card: c.ID, Operand: WaitOnExternal, On: ext, Why: "external conditions"}
+		}
 		return CardWait{Card: c.ID, Operand: WaitOnCards, On: WaitsFor(s, c, nil), Why: "the cards it names and its place in line"}
 	}
 }

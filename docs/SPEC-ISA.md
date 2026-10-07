@@ -50,12 +50,15 @@ The operands and results, field by field, are today's card lines:
 The one `wait` kind is one path in the code, `WaitOf`
 (`internal/sprint/held.go`): admitted held (`add --held`), a sentinel (`add --sentinel`), the wave behind a held sentinel and `DEPENDS-ON` between cards
 are one wait, read once. The operand is the
-`DEPENDS-ON` line the brief already carries, read in four forms:
+`DEPENDS-ON` line the brief already carries, read in five forms:
 
 - `DEPENDS-ON: <card id>` waits for that card to land. Today's `needs`.
 - `DEPENDS-ON: release` waits for the coordinator's release. Today's held.
 - `DEPENDS-ON: line` waits for every primary of its stream that sorts before it. Today's sentinel.
-- `DEPENDS-ON: external:<condition>` waits for an external condition. The proposed external wait.
+- `DEPENDS-ON: external:<condition>` waits for an external condition. The external wait (layer 3):
+  - `pr <repo>#<n> merged` waits for a PR to merge
+  - `<branch> contains <sha>` waits for a branch to contain a commit
+  - `after <RFC3339>` waits for a timestamp to pass
 
 | today | the one `wait` kind |
 |---|---|

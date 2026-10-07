@@ -100,6 +100,10 @@ func LintCardDepends(raw []byte, lineup Lineup) []CardHeaderFinding {
 		if dependsReferenceRE.MatchString(id) {
 			continue
 		}
+		// External operands are also valid DEPENDS-ON values.
+		if isExternalOperand(id) {
+			continue
+		}
 		if !oneCardID(id) {
 			bad = append(bad, id)
 			continue
@@ -109,7 +113,7 @@ func LintCardDepends(raw []byte, lineup Lineup) []CardHeaderFinding {
 		}
 	}
 	if len(bad) > 0 {
-		add(f.line, fmt.Sprintf("DEPENDS-ON: %s is not a card id or an owner/repo#n reference", quoteDepends(bad)))
+		add(f.line, fmt.Sprintf("DEPENDS-ON: %s is not a card id, an owner/repo#n reference, or an external operand (pr merged, branch contains, after timestamp)", quoteDepends(bad)))
 	}
 	if len(selfs) > 0 {
 		add(f.line, fmt.Sprintf("DEPENDS-ON: %s names this card's own id", strings.Join(selfs, ", ")))
@@ -150,10 +154,22 @@ func firstLine(raw []byte) string {
 // `nova-tools#2550` does not (no slash). `a/b/c#1` does not (two slashes).
 var dependsReferenceRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*#[0-9]+$`)
 
+// externalOperandRE matches external operand forms:
+// - pr <repo>#<n> merged
+// - <branch> contains <sha>
+// - after <RFC3339>
+var externalOperandRE = regexp.MustCompile(`^pr\s+[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*#[0-9]+\s+merged$|^(\S+)\s+contains\s+(\S+)$|^after\s+\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(Z|[+-]\d{2}:\d{2})$`)
+
 // oneCardID is one dependency token. `-` is the whole-line declaration, never an
 // entry in the list. An entry with whitespace is two words, not an id.
 func oneCardID(id string) bool {
 	return id != "-" && len(strings.Fields(id)) == 1
+}
+
+// isExternalOperand returns true if the DEPENDS-ON entry is one of the three external
+// operand forms: pr <repo>#<n> merged, <branch> contains <sha>, or after <RFC3339>.
+func isExternalOperand(id string) bool {
+	return externalOperandRE.MatchString(id)
 }
 
 // quoteDepends names each refused entry, so the drift says which token it refused.

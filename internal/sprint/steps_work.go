@@ -861,6 +861,13 @@ func resolvePlan(s *Snapshot, r ResolveReq) Plan {
 			}
 			continue
 		}
+		// Check external operands - if any hold, the card can be released
+		if !ExternalOperandHolds(c) {
+			if len(r.IDs) > 0 {
+				p.refuse(c.ID, "waits for "+ExternalOperandWaitInfo(c))
+			}
+			continue
+		}
 		if IsHeld(c) { // held, never reached or ready: the coordinator releases it
 			if len(r.IDs) > 0 {
 				p.refuse(c.ID, "held (add --held): the coordinator releases it: nova-sprint release "+c.ID+" --reason <text>")
