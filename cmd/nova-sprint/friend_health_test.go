@@ -139,9 +139,10 @@ func TestTheFriendsTableShowsUpHeldOrDownWithTheReason(t *testing.T) {
 	assert.Contains(t, tableOf(ta.frame(), sprint.Friends), "| up")
 }
 
-// A friend-card delivery wakes the friend: one bus message from the coordinator to her
-// per card delivered, naming the card and its inbox path; a send that fails never fails
-// the delivery, is said on sync's line and written on the card's story.
+// A batch friend (the default) is told once for the pass, even of one card: one bus
+// message from the coordinator, kind status, naming the count, the id and her inbox
+// directory. A send that fails never fails the delivery, is said once on sync's line
+// and written once on the card's story.
 func TestFriendSyncWakesTheFriendWithOneBusMessagePerDelivery(t *testing.T) {
 	t.Parallel()
 	ta, root := friendCardApp(t, "friend amy", "amy")
@@ -150,12 +151,13 @@ func TestFriendSyncWakesTheFriendWithOneBusMessagePerDelivery(t *testing.T) {
 	ta.mu.Lock()
 	sent := append([]bus.Message(nil), ta.sent...)
 	ta.mu.Unlock()
-	require.Len(t, sent, 1, "one message per delivery")
+	require.Len(t, sent, 1, "one message for the pass")
 	m := sent[0]
 	assert.Equal(t, "coordinator", m.From)
 	assert.Equal(t, []string{"amy"}, m.To)
-	assert.Equal(t, "card s1-1.w1 dealt: FRIEND-CARD DELIVERED friend=amy card=s1-1.w1 job=s1-1.w1 branch=sprint/s1-1.w1.g1.e0", m.Subject)
-	assert.Contains(t, m.Body, filepath.Join(root, "amy-working", "inbox", "s1-1.w1", "BRIEF.md"))
+	assert.Equal(t, bus.KindStatus, m.Kind)
+	assert.Equal(t, "cards dealt: 1 (s1-1.w1)", m.Subject)
+	assert.Equal(t, filepath.Join(root, "amy-working", "inbox")+"\n"+friendWakeWork, m.Body)
 	assert.Empty(t, m.Re)
 	ta.ok("friend sync --root " + root)
 	ta.mu.Lock()
@@ -171,7 +173,8 @@ func TestFriendSyncWakesTheFriendWithOneBusMessagePerDelivery(t *testing.T) {
 	ta2.ok("tick")
 	out := ta2.ok("friend sync --root " + root2)
 	assert.Contains(t, out, "FRIEND-CARD DELIVERED friend=amy card=s1-1.w1")
-	assert.Contains(t, out, "FRIEND-CARD NOTE friend=amy card=s1-1.w1: the bus message to her was not sent (dial tcp: connection refused); the inbox file stands, tell her by hand")
+	assert.Contains(t, out, "FRIEND-CARD NOTE friend=amy pass=1(s1-1.w1): the bus message to her was not sent (dial tcp: connection refused); the inbox files stand, tell her by hand")
+	assert.Equal(t, 1, strings.Count(out, "FRIEND-CARD NOTE"), "one line for the pass, not one per card")
 	_, err := os.Stat(filepath.Join(root2, "amy-working", "inbox", "s1-1.w1", "BRIEF.md"))
 	require.NoError(t, err, "the inbox file is the record")
 	story := ta2.ok("card s1-1")
