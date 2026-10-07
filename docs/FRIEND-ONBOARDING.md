@@ -275,11 +275,18 @@ not paste a placeholder unchanged.
     nova-sprint friend cards <friend> --json
     ```
 
+    Before moving on, verify the assignment is still visible:
+
+    ```sh
+    nova-sprint friend cards <friend> --json
+    ```
+
 11. **Try a first card on an isolated twin.** This is a local learning store,
     not the fleet's Redis or a real assignment. It has no machine running
     between commands; the friend runs each tick by hand. In one shell:
 
     ```sh
+    nova-sprint where
     export NOVA_SPRINT_REDIS=mem:sprint.twin NOVA_SPRINT_ACTOR=<your-actor>
     nova-sprint init --readers <reader-one>,<reader-two> --members <worker>
     nova-sprint add --stream practice --count 1 --one
