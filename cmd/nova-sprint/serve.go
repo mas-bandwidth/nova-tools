@@ -165,12 +165,14 @@ func flagWord(words []string, name string) (value string, ok bool) {
 // work for seconds or minutes outside the store (land's git, the driver), fleet sync and
 // friend sync, which read the config store with their caller's own credentials, friend
 // clean and friend reconcile, which work on the directories of the machine they run on, and dashboard, which
-// serves a page until it is interrupted and reads through the server, seat login and seat
-// logout, which record and remove the login of the machine they are typed on, and seat
-// install and seat uninstall, which install the push loop as a service of the machine they are
-// typed on. The rest of the seat verb is served: its read, its --repair, and seat push and
-// seat pong, whose push proof is the store's (seatSubs; docs/SPEC-SPRINT.md, "The push proof").
-var notServed = []string{"run", "tick", "land", "play", "fleet sync", "friend sync", "friend reconcile", "friend clean", "dashboard", "answer", "seat login", "seat logout", "seat install", "seat uninstall", "selftest land", "server switch"}
+// serves a page until it is interrupted and reads through the server, and the seat verb
+// itself: its read and its --repair are the coordinator's own look at the seat and its
+// repair, seat login and seat logout record and remove the login of the machine they are
+// typed on, and seat install and seat uninstall install the push loop as a service of the
+// machine they are typed on. seat push and seat pong are the seat verb's one served part:
+// their push proof is the store's and the server runs it (seatSubs; docs/SPEC-SPRINT.md,
+// "The push proof").
+var notServed = []string{"run", "tick", "land", "play", "fleet sync", "friend sync", "friend reconcile", "friend clean", "dashboard", "answer", "seat", "seat login", "seat logout", "seat install", "seat uninstall", "selftest land", "server switch"}
 
 // serveCtx is the server's one step: the batch's verbs run in order, each through
 // the verb's own code with its worker as the actor, and each answered. The

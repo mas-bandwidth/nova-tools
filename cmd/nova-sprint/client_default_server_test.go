@@ -64,12 +64,12 @@ func TestANamedServerIsUsedWithNoNote(t *testing.T) {
 	assert.Empty(t, errb.String())
 }
 
-// The seat's push proof is the store's and the server runs it, while the
-// seat's store login is the machine's and does not: seat push and seat pong
-// are sent to the local server, seat login and seat logout run where they are
-// typed. The seat verb is one verb with subcommands, so the subcommand stays
-// the word after `seat` for cmdSeat to dispatch on, and the server's own words
-// go after it.
+// The seat's push proof is the store's and the server runs it, while the seat
+// verb itself is the machine's and does not: seat push and seat pong are sent
+// to the local server, while the seat read, seat --repair, seat login, seat
+// logout, seat install and seat uninstall run where they are typed. The seat
+// verb is one verb with subcommands, so the subcommand stays the word after
+// `seat` for cmdSeat to dispatch on, and the server's own words go after it.
 func TestTheSeatPushProofIsServedAndTheSeatLoginIsNot(t *testing.T) {
 	t.Parallel()
 	c := emptyEnvApp()
@@ -77,8 +77,8 @@ func TestTheSeatPushProofIsServedAndTheSeatLoginIsNot(t *testing.T) {
 		argv   []string
 		served bool
 	}{
-		{[]string{"seat"}, true},
-		{[]string{"seat", "--repair", "--reason", "r"}, true},
+		{[]string{"seat"}, false},
+		{[]string{"seat", "--repair", "--reason", "r"}, false},
 		{[]string{"seat", "push", "--json"}, true},
 		{[]string{"seat", "pong", "0000000000000000"}, true},
 		{[]string{"seat", "login", "--check"}, false},
