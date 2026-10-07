@@ -146,7 +146,8 @@ new-verb:
 	$(GO) run ./tools/newverb $(ARGS)
 
 clidoc:
-	$(GO) run ./tools/clidoc --bin ./bin
+	$(GO) build -o ./bin/ $(shell sed -n 's/^<!-- clidoc:begin \(nova-[a-z0-9-]*\) -->$$/\1/p' docs/CLI.md | sort -u | sed 's|^|./cmd/|') ./tools/clidoc
+	./bin/clidoc --bin ./bin
 
 
 build:
