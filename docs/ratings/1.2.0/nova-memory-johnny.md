@@ -5,7 +5,7 @@ Build: c76fcb249cc1
 READ: 9/10
 USE: 10/10
 
-This rates nova-memory at the head of branch sprint/rerate-johnny-memory-b.w1.g11.e15. Built and run on a Linux bench machine, in a scratch directory made for the trial: a small corpus of .md files in two roots, with a draft, a link and a coverage requirement. No live store, no server.
+This rates nova-memory at the head of branch sprint/rerate-memory-b.w1.g11.e15. Built and run on a Linux bench machine, in a scratch directory made for the trial: a small corpus of .md files in two roots, with a draft, a link and a coverage requirement. No live store, no server.
 
 ## Reasons
 
