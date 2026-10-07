@@ -61,6 +61,9 @@ type outside struct {
 	devMergeQueue func(ctx context.Context) (sprint.QueueM, error)
 	// machineVersions is each machine's installed version against dev (fp-mach-01).
 	machineVersions func(ctx context.Context, machines []string) (sprint.VersionsM, error)
+	// processes is this machine's process table, read for the stopgaps
+	// (docs/STOPGAPS.md); nil reads none.
+	processes func(ctx context.Context) ([]sprint.Proc, error)
 }
 
 // realOutside is the check as it runs on a machine.
@@ -129,6 +132,15 @@ func (a *app) realOutside() outside {
 		hostname: func() string {
 			h, _ := os.Hostname()
 			return strings.SplitN(h, ".", 2)[0]
+		},
+		processes: func(ctx context.Context) ([]sprint.Proc, error) {
+			cmd, cancel := subproc.Command(ctx, subproc.Tool, "ps", "-axww", "-o", "pid=,args=")
+			defer cancel()
+			out, err := cmd.Output()
+			if err != nil {
+				return nil, err
+			}
+			return sprint.ProcsFromPS(string(out)), nil
 		},
 	}
 }
@@ -317,6 +329,16 @@ func (a *app) seatCheck(ctx context.Context, st *store.Store, redisAddr string) 
 			m.Errs[sprint.SeatCheckPush] = err.Error()
 		}
 		m.Push = sprint.PushM{Measured: true, Holder: holder, Record: rec, Recorded: ok}
+	}
+
+	// 13. the stopgaps alive on this machine (docs/STOPGAPS.md); the server
+	// never forks ps in its step, and a ps that fails prints no stopgap line
+	if o.processes != nil && !self {
+		if ps, err := o.processes(ctx); err != nil {
+			m.Stopgaps = sprint.StopgapsM{Err: err.Error()}
+		} else {
+			m.Stopgaps = sprint.StopgapsM{Measured: true, Running: sprint.StopgapsAlive(sprint.Stopgaps, ps)}
+		}
 	}
 
 	return sprint.JudgeSeatCheck(m, now)
