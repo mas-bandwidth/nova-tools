@@ -21,14 +21,20 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
-// coldRun is run() with no store behind any address and an empty environment
-// that fails the test when it is read: a refusal comes before the login.
+// coldRun is run() with no store behind any address and an environment that
+// fails the test when a login is read: a refusal comes before the login. serve
+// is the one exception: it checks NOVA_REDIS_PASSWORD with its flags, because
+// the password is one more input the real run cannot start without, so that one
+// name is answered empty here.
 func coldRun(t *testing.T, args ...string) (int, string, string) {
 	t.Helper()
 	var out, errb bytes.Buffer
 	d := deps{
 		now: func() time.Time { return time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC) },
 		getenv: func(k string) string {
+			if k == PasswordEnv {
+				return ""
+			}
 			assert.Failf(t, "", "%q read %s; a refusal or help reads no login", args, k)
 			return ""
 		},
@@ -57,9 +63,9 @@ func TestARefusalNamesEveryProblemInTheOneGrammar(t *testing.T) {
 		{"recall's missing owner beside a bad address", []string{"recall", "--addr", ":6379", "--name", "n"},
 			[]string{`--addr ":6379" names no host`, "--owner is required"}},
 		{"serve's bad bind and bad port at once", []string{"serve", "--bind", "0.0.0.0", "--port", "0", "--dir", "relative"},
-			[]string{`--bind "0.0.0.0" binds every interface`, `--port "0" needs a port`, `--dir "relative" is not absolute`}},
+			[]string{`--bind "0.0.0.0" binds every interface`, `--port "0" needs a port`, `--dir "relative" is not absolute`, PasswordEnv + " is empty"}},
 		{"a misspelled flag lists the verb's flags", []string{"spill", "--zzz"},
-			[]string{"SPILL REFUSED: unknown flag --zzz; the flags of spill are --addr, --dry-run, --json, --name, --owner, --password-env, --ttl, --user, --value; run: nova-redis spill -h"}},
+			[]string{"SPILL REFUSED: unknown flag --zzz; the flags of spill are --addr, --dry-run, --json, --name, --owner, --password-env, --redis, --ttl, --user, --value; run: nova-redis spill -h"}},
 		{"an unknown verb lists the verbs", []string{"zzz"},
 			[]string{`REDIS REFUSED: unknown verb "zzz"; the verbs are serve, spill, recall, fn load, fn check, acl render, acl check, acl apply, install store, install bus, uninstall store, uninstall bus, version; run: nova-redis help`}},
 		{"an unknown fn subverb points at the group's help", []string{"fn", "deploy"},

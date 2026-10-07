@@ -82,7 +82,7 @@ usage:
   nova-config apply [--pg <dsn> | --file <path>] [--redis <addr>] [--as <name>]
                     [--kind <kind>] [--dry-run] [--json]
   nova-config inventory [--redis <addr> | --fixture <file>] [--list | --host <name>]
-                        [--timeout <duration>]
+                        [--timeout <duration>] [--example]
   nova-config <kind> add <name> --<field> <value> ... --as <name> [--dry-run] [--json]
   nova-config <kind> set <name> --<field> <value> ... --as <name> [--dry-run] [--json]
   nova-config <kind> remove <name> --as <name> [--dry-run] [--json]

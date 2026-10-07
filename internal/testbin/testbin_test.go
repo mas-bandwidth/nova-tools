@@ -67,19 +67,18 @@ func TestPlaceHardLinksInTheSameDirectory(t *testing.T) {
 
 // TestPlaceFallsBackToCopyWhenLinkFails: a destination on another filesystem
 // cannot be linked, so Place must copy the bytes -- executable -- rather than
-// fail. The link function is injected so the fallback is exercised on any
-// filesystem.
+// fail. The link function is place's linkFn parameter, the per-test seam, so
+// the fallback is exercised on any filesystem.
 func TestPlaceFallsBackToCopyWhenLinkFails(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	src := filepath.Join(dir, "src")
 	dst := filepath.Join(dir, "dst")
 	raw := []byte("built\n")
 	require.NoError(t, os.WriteFile(src, raw, 0o755))
-	orig := link
-	link = func(oldname, newname string) error { return os.ErrInvalid }
-	defer func() { link = orig }()
-	err := Place(src, dst)
-	require.NoError(t, err, "Place with a failing link: %v", err)
+	err := place(src, dst, func(oldname, newname string) error { return os.ErrInvalid })
+	require.NoError(t, err, "place with a failing link: %v", err)
 	got, err := os.ReadFile(dst)
 	require.NoError(t, err)
 	assert.Equal(t, string(raw), string(got), "copied content = %q, want %q", got, raw)

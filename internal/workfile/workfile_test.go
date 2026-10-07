@@ -96,7 +96,7 @@ func TestTheReaderRefusesWhatTheWriterWouldNotWrite(t *testing.T) {
 		{"evaluating", `:locked true`, `:locked #.true`, "byte="},
 		{"bad enum", `:state :open`, `:state :Open`, "outside [a-z-]"},
 		{"wrong kind", `:author ""`, `:author 5`, ":author wants a string"},
-		{"format", `(work-tree "v1"`, `(work-tree "v2"`, `format "v2"`},
+		{"format", `(work-tree "v1"`, `(work-tree "v2"`, `version v2 is not read`},
 		{"repos order", `(repo "o/a"`, `(repo "o/c"`, "out of order or repeated"},
 		{"origin", `:origin :internal`, `:origin :elsewhere`, ":origin wants"},
 		{"boolean", `:archived true`, `:archived yes`, ":archived wants true or false"},
