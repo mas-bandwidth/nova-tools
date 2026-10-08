@@ -124,12 +124,27 @@ func FriendTake(s *Snapshot, r FriendTakeReq) Plan {
 			}
 		}
 	}
+	var onto []Unit
 	for _, id := range r.IDs {
 		c := s.Fleet.Placed(id)
+		pr := s.Work.Placed(id)
 		if c == nil || c.F("kind") != "work" {
-			if pr := s.Work.Placed(id); pr != nil {
+			// a read card (kind read) is named by its own id: keep it; a primary's id
+			// resolves to its current attempt's work card
+			if pr != nil {
 				c = s.Fleet.Placed(WorkCardID(pr.ID, pr.Int("attempt")))
 			}
+		} else {
+			pr = s.Work.Placed(c.F("primary"))
+		}
+		if !r.Hold && (c == nil || c.Row != row) && pr != nil {
+			// a card that sits anywhere but her row: moved onto it (friendTakeOnto)
+			if u, why := friendTakeOnto(s, pr, c, row, r.Started); why != "" {
+				p.refuse(id, why)
+			} else if !slices.ContainsFunc(onto, func(x Unit) bool { return x.Key == u.Key }) {
+				onto = append(onto, u)
+			}
+			continue
 		}
 		switch {
 		case c == nil:
@@ -149,8 +164,15 @@ func FriendTake(s *Snapshot, r FriendTakeReq) Plan {
 		for _, c := range take {
 			p.refuse(c.ID, fmt.Sprintf("not taken: --all-or-nothing, and %d of the cards named %s refused", n, map[bool]string{true: "was", false: "were"}[n == 1]))
 		}
+		for _, u := range onto {
+			p.refuse(u.Key, fmt.Sprintf("not taken: --all-or-nothing, and %d of the cards named %s refused", n, map[bool]string{true: "was", false: "were"}[n == 1]))
+		}
 		return p
 	}
+	if len(onto) > 0 && !s.Fleet.HasRow(row) {
+		p.Rows = append(p.Rows, RowAdd{Fleet, row})
+	}
+	p.Units = append(p.Units, onto...)
 	// her ready cards not taken, oldest first: each working card taken frees a lane one fills
 	var next []*Card
 	for _, c := range mine {
@@ -194,6 +216,72 @@ func FriendTake(s *Snapshot, r FriendTakeReq) Plan {
 		p.Units = append(p.Units, u)
 	}
 	return p
+}
+
+// friendTakeOnto is friend take of a card that is not on her row (docs/SPEC-SPRINT.md
+// section 1, a friend's card; the card the-dealer-honors-who.w1): the coordinator's word
+// that it is hers, wherever it sits. A primary ready (never dealt, or withdrawn) is dealt
+// onto her row; a work card dealt and not taken (ready on a machine's or another friend's
+// row) moves onto her row at its next generation, its own branch and job. Either is placed
+// ready: the tick's deal takes it into a free lane of hers (friendDeal), as it takes any
+// ready card of hers. A taken card (working on another row) is refused naming its lane, a
+// finished one naming where it is, and one whose WHO line names another friend naming her. She leaves the friends it has left (FieldFriendsLeft),
+// and a card taken back from her (FieldTakenFrom) may go back to her by this word.
+func friendTakeOnto(s *Snapshot, pr, wc *Card, row string, started map[string]string) (Unit, string) {
+	name, _ := FriendOfRow(row)
+	switch {
+	case IsSentinel(pr):
+		return Unit{}, pr.ID + " is a sentinel: no friend takes it"
+	case PinnedFriend(pr) != "" && PinnedFriend(pr) != name:
+		// a card is never on a friend's row other than the one its WHO line names (WhoIsHonored)
+		return Unit{}, fmt.Sprintf("%s: its WHO line names friend %s, not %s: nova-sprint unpin it, or brief it for %s, first", pr.ID, PinnedFriend(pr), name, name)
+	case wc != nil && (wc.Col == Working || started[wc.ID] != ""):
+		// she has started it (working, or a push on its branch while still ready on her
+		// row): it stays in her lane and finishes, never moved onto another friend
+		return Unit{}, fmt.Sprintf("%s is taken: it works in the lane at %s:working; it stays there and finishes", wc.ID, wc.Row)
+	case wc != nil && wc.Col == Ready && pr.Col == Working:
+		set, unset := nextGen(wc, row, s.Now), []string{FieldTakenBack, FieldTakenFrom, FieldRoute, FieldModel, FieldTokens, FieldUSD,
+			FieldHarness, FieldDeadline, FieldFriendDeadline}
+		set["untaken_since"] = stamp(s.Now)
+		if left := slices.DeleteFunc(friendsLeft(wc), func(f string) bool { return f == name }); len(left) > 0 {
+			set[FieldFriendsLeft] = strings.Join(left, ",")
+		} else {
+			unset = append(unset, FieldFriendsLeft)
+		}
+		return Unit{Key: pr.ID, Stream: pr.Row, Changes: []Change{change(Fleet, moveEntry(wc, row, Ready, set, unset...))},
+			Moved: fmt.Sprintf("%s %s -> %s:ready gen=%d (friend take: its friend is %s; the tick's deal takes it into her lane)", wc.ID, placeOf(wc), row, wc.Int("gen")+1, name)}, ""
+	case pr.Col != Ready || (wc != nil && wc.Col != Withdrawn):
+		where := "its primary is " + pr.Col
+		if wc != nil {
+			where = "it is at " + placeOf(wc)
+		}
+		return Unit{}, fmt.Sprintf("%s is neither ready nor dealt and not taken: %s", pr.ID, where)
+	case AtRedealBound(s, pr) != nil || (wc != nil && redealBound(wc)):
+		return Unit{}, pr.ID + " is at its redeal bound: its judgment, or the tick's escalation, decides it first"
+	}
+	if wc == nil {
+		u := friendDealUnit(s, pr, WorkCardID(pr.ID, pr.Int("attempt")+1), row, Ready, nil)
+		u.Moved += " (friend take)"
+		return u, ""
+	}
+	u := friendRedealUnit(s, pr, wc, row, nil)
+	// she may have it back: the coordinator names her
+	for i, ch := range u.Changes {
+		if ch.Table != Fleet || ch.Entry.Set == nil {
+			continue
+		}
+		e := ch.Entry
+		left := slices.DeleteFunc(Split(e.Set[FieldFriendsLeft]), func(f string) bool { return f == name })
+		if len(left) > 0 {
+			e.Set[FieldFriendsLeft] = strings.Join(left, ",")
+		} else if _, ok := e.Set[FieldFriendsLeft]; ok {
+			delete(e.Set, FieldFriendsLeft)
+			e.Unset = append(e.Unset, unsetPresent(wc, []string{FieldFriendsLeft})...)
+		}
+		u.Changes[i].Entry = e
+	}
+	u.Moved += " (friend take)"
+	return u, ""
 }
 
 // FriendReadyMax is how long a work card may sit ready on a friend's row while she has a

@@ -344,3 +344,33 @@ func TestTheCardsDealtAreReadAfterAClear(t *testing.T) {
 	require.Len(t, v.Cards, 2, "%+v", v)
 	assert.Equal(t, "nova-sprint take --as m1 s1-1.w1@1 --epoch 1", v.Next)
 }
+
+// A card whose WHO line names a friend who is not up waits ready for her alone: the
+// coordinator's view names her and the cards, card --json says why it is held, and friend
+// take moves it onto her row (the card the-dealer-honors-who.w1).
+func TestTheCoordinatorViewNamesCardsWaitingForTheirFriend(t *testing.T) {
+	t.Parallel()
+	ta, _ := friendCardApp(t, "friend amy", "bob", "amy")
+	ta.ok("friend down amy")
+	ta.ok("tick")
+	var c cardView
+	ta.json("card s1-1", &c)
+	assert.Empty(t, c.Work, "never dealt to bob, nor to a machine")
+	require.NotNil(t, c.Held)
+	assert.Contains(t, c.Held.Why, "waits for friend amy")
+	it, ok := item(ta.coordView(""), "w:amy")
+	require.True(t, ok, "%+v", ta.coordView("").Items)
+	assert.Equal(t, itemFriend, it.T)
+	assert.Equal(t, 1, it.B)
+	assert.Contains(t, it.S, "1 ready cards wait for friend amy")
+	assert.Contains(t, it.S, "s1-1")
+
+	out := ta.ok("friend take amy s1-1 --reason she-was-asked")
+	ta.ok("tick")
+	ta.json("card s1-1", &c)
+	require.Len(t, c.Work, 1, "%s", out)
+	require.Len(t, c.Work, 1)
+	assert.Equal(t, sprint.FriendRow("amy"), c.Work[0].Row)
+	_, ok = item(ta.coordView(""), "w:amy")
+	assert.False(t, ok, "no longer ready")
+}

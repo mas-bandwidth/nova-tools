@@ -7,6 +7,10 @@ EXTENDS Naturals, FiniteSets, TLC
 \* free lane. The rebalance moves a card dealt and not started, queued on a
 \* worker whose lane works, to a worker up with an idle lane (no card held)
 \* whose tier set admits the card's tier and that the card has not left.
+\* "preferred" is WHO: friend a and "only" is WHO: only friend a: both are a
+\* true-ownership pin to a (the-dealer-honors-whob.w1, 2026-10-07; Deal.tla,
+\* WhoIsHonored). BadOnly is the reversed witness: the old fallback of a
+\* named card to another friend and then the fleet.
 \* The model checks selection, not transport, route rotation or retry bounds.
 \* BadRebalance is the reversed witness: "started" lets the rebalance move a
 \* started card (NoStartedCardMoves breaks), "tiers" lets it ignore the tier
@@ -30,13 +34,17 @@ Init == /\ owner = [c \in Cards |-> "none"]
 Held(w) == {c \in Cards : owner[c] = w}
 Room(w) == w \in up /\ Cardinality(Held(w)) < 2
 Admits(w, t) == IF w = "fleet" THEN t \in fleetTiers ELSE t \in FriendTiers[w]
-\* Both friends cover the example pro tier; fleet is the final fallback.
-Candidate(c) ==
- IF pin[c] # "none" /\ Room("a") THEN {"a"}
- ELSE IF pin[c] = "only" /\ ~BadOnly THEN {}
- ELSE IF Room("a") THEN {"a"}
+\* Both friends cover the example pro tier; fleet is an unpinned card's final
+\* fallback. A pinned card goes to a alone and waits while a has no room.
+Unpinned ==
+ IF Room("a") THEN {"a"}
  ELSE IF Room("b") THEN {"b"}
  ELSE IF Room("fleet") THEN {"fleet"}
+ ELSE {}
+Candidate(c) ==
+ IF pin[c] = "none" THEN Unpinned
+ ELSE IF Room("a") THEN {"a"}
+ ELSE IF BadOnly THEN Unpinned
  ELSE {}
 Deal(c,w) == /\ owner[c] = "none" /\ w \in Candidate(c)
              /\ owner' = [owner EXCEPT ![c] = w]
@@ -57,14 +65,13 @@ Unpin(c) == /\ owner[c] = "none" /\ c \notin started /\ pin[c] # "none"
             /\ UNCHANGED <<owner,up,started,fleetTiers,left,rebalanced>>
 \* the rebalance (internal/sprint/rebalance.go Rebalance): a queued card on a
 \* worker whose lane works goes to a worker up with an idle lane that may take
-\* it; never a started card, never a hard pin, never a worker it left. The code
-\* also keeps a preference on the friend it names; the model lets it move, a
-\* superset of the code's moves, so what holds here holds of the code.
+\* it; never a started card, never a named pin, never a worker it left. A bare
+\* WHO: friend card on a friend's row may move to another friend.
 Rebalance(c, w) ==
   LET g == owner[c] IN
   /\ g \in Workers /\ w \in up /\ w # g
   /\ (c \notin started \/ BadRebalance = "started")
-  /\ pin[c] # "only"
+  /\ pin[c] = "none"
   /\ LaneBusy(g)
   /\ Held(w) = {}
   /\ (Admits(w, CardTier[c]) \/ BadRebalance = "tiers")
@@ -77,7 +84,7 @@ Presence == /\ up' \in SUBSET Workers /\ UNCHANGED <<owner,pin,started,fleetTier
 Next == (\E c \in Cards, w \in Workers : Deal(c,w) \/ Rebalance(c,w))
         \/ (\E c \in Cards : Start(c) \/ TakeBack(c) \/ Unpin(c)) \/ Presence
 Spec == Init /\ [][Next]_vars
-OnlyToItsFriend == \A c \in Cards : pin[c] = "only" => owner[c] \in {"none","a"}
+OnlyToItsFriend == \A c \in Cards : pin[c] # "none" => owner[c] \in {"none","a"}
 \* room: DealAhead (two) times a width of one
 WidthRespected == \A w \in Workers : Cardinality(Held(w)) <= 2
 LanesRespected == \A w \in Workers : Cardinality({c \in started : owner[c] = w}) <= 1

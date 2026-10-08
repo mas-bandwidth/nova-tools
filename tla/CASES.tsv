@@ -455,3 +455,6 @@ MCLandPassBrokenStopCollide.cfg	MCLandPass.tla	invariant	RefusedStaysMerging	ign
 MCLandPassBrokenRevert.cfg	MCLandPass.tla	action	RefusalTouchesNoOtherStream	ignore-terminal	landpass	required	-
 MCLandPassBrokenCacheDisjoint.cfg	MCLandPass.tla	invariant	CachedIsGreen	ignore-terminal	landpass	required	-
 MCLandPassBrokenPushEmpty.cfg	MCLandPass.tla	invariant	BaseKeepsLandings	ignore-terminal	landpass	required	-
+MCDeal.cfg	MCDeal.tla	pass	-	ignore-terminal	deal	required	-
+MCDealBrokenFallback.cfg	MCDeal.tla	invariant	WhoIsHonored	ignore-terminal	deal	required	-
+MCDealBrokenTakeOnto.cfg	MCDeal.tla	invariant	WhoIsHonored	ignore-terminal	deal	required	-

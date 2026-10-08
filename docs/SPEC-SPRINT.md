@@ -356,10 +356,21 @@ down` by the seat alone, lifted by `friend up`. The model is
 
 **A friend's card** (the owner, 2026-10-03: "Could we try expressing the work
 left for nova-tools-1.1.0 into cards, and doing it via the sprint, but doing
-parts on friends where we would normally do friend work."). WHO is a preference (docs/SPEC-CARD-CONTRACT.md, the WHO line; `cardhdr.ReadWho`
-is the one parser). A card with no WHO line, or `WHO: -`, is unpinned. `WHO: friend`
-is any friend. `WHO: friend <name>` prefers that friend while she is up with room.
-`WHO: only friend <name>` is the one hard pin and waits for her alone. `add` and
+parts on friends where we would normally do friend work."). The WHO line (docs/SPEC-CARD-CONTRACT.md, the WHO line; `cardhdr.ReadWho`
+is the one parser) is read once, by the card lint at `add` and `brief`, and stored on
+the card. A card with no WHO line, or `WHO: -`, is unpinned. `WHO: friend`
+is any friend, a preference among the friends. `WHO: friend <name>` is a
+true-ownership pin (the card the-dealer-honors-who.w1, 2026-10-06: a card naming one
+friend was dealt to another friend twice while she was up with queue 0 and width 8,
+and the coordinator could not move it): the dealer deals it to her row alone, at the
+next tick once she is up with room, and while she is not it waits ready, held as
+`waits for friend <name>` (`card` and `card --json` `held`; `view coordinator` names
+her and the cards waiting for her, one item a friend not up), never dealt to another
+friend or a machine (`sprint.PinnedFriend`; `tla/Deal.tla`, `WhoIsHonored`, a card with
+who is never on another friend's row, with two reversed witnesses: the old fallback
+to another friend, and a take onto another friend's row;
+`TestACardWithWhoIsDealtOnlyToThatFriend`). `WHO: only friend <name>` is the same pin
+under its older spelling, kept apart only in what `unpin` records. `add` and
 `brief` refuse any other WHO value, a name that is no row of the friends table, and
 `WHO: friend` while the table has no row (exit 2, nothing written). The primary's
 field `who` is `friend`, `friend.<name>`, or `only.friend.<name>`, written with its
@@ -372,8 +383,9 @@ is redealt at its next generation. It changes no brief bytes. Each unpin records
 actor, time, reason and removed WHO line. An already-unpinned card is a reported
 no-op. `--dry-run` reports the plan without writing it; any refusal, including a
 mixed preview, has status `refused` and exit 1 in text and JSON. `WhoPreference.tla`
-checks the selection and the hard pin; the reversed only witness permits fallback
-and violates `OnlyToItsFriend`. The tick reads the friends' roster before each pump,
+checks the selection and unpin, a named card waiting for its friend alone
+(`OnlyToItsFriend`); `Deal.tla` checks that a named card is never on another
+friend's row (`WhoIsHonored`). The tick reads the friends' roster before each pump,
 because a queued change can make work ready in the same tick. The tick's deal offers
 ready work, in the deal order (below), to a
 friend up (the friends' rule: not held, with evidence from her own session) below her room,
@@ -402,10 +414,12 @@ waiting is 8 working and 8 ready, and a 17th on a landing). In one-shot mode
 the next only after the last one finished
 (item 22 of tmp/manual-to-verbs-2026-10-04.md;
 `TestDealingRespectsAFriendDeliveryMode`). For either mode, the deal (friends
-first, before the machines' deal) offers every ready card to its named friend
-whose tiers hold its tier first, then to the friends up whose tiers hold its
-tier, an idle lane first,
+first, before the machines' deal) offers a ready card that names a friend to her
+alone, when her tiers hold its tier, and every other ready card to the friends up
+whose tiers hold its tier, an idle lane first,
 then the most room free, the first by name among equals, then to the fleet.
+A card naming a friend that she does not take stays ready for her, dealt to no
+one else.
 The fleet's cards are hers as much as a machine's (2026-10-06: a friend up, tiers flash, width 32, holding 13 reads, had
 nothing ready for over an hour while the machines were dealt flash cards):
 - The tier a friend's tiers must hold is the tier the deal draws (`sprint.dealTierOf`),
@@ -433,13 +447,13 @@ nothing ready for over an hour while the machines were dealt flash cards):
   cards it reclaims: a work card the machines' deal placed ready on a machine row
   ahead of its lanes, which no lane has taken, goes to a friend up with an idle lane
   and room whose tiers hold the tier it was dealt on, never one it has left, chosen as
-  the deal chooses (the friend its WHO line names first), at its next generation, the
+  the deal chooses, at its next generation, the
   fleet route off, `ready` on her row until she starts it, its primary working on it
   as before (the tier it was dealt on written as `tier_now` when it names none); a
   machine's take of the old generation is refused. It is bounded each tick: a friend
   reclaims at most her idle lanes, and a machine gives at most half its dealt-ahead
   queue (rounded down), the machines taking turns in row order. A held stream, a bench
-  card, a hard pin and a card whose route rests (the same tick withdraws it, and a card
+  card, a card whose WHO line names a friend, and a card whose route rests (the same tick withdraws it, and a card
   moved to two places would refuse the whole tick) are not reclaimed. A reclaimed card
   she does not start goes as any card of hers does: the start bound's level to another
   friend, or a take-back, after which the machines' deal places it again, never back
@@ -456,16 +470,16 @@ nothing ready for over an hour while the machines were dealt flash cards):
   it lags the table by up to one tick, and is 0 before the first tick of the epoch
   (`TestDealtFleetCountsOnlyCardsWithNoWhoLine`).
 
-A named pin (`WHO: friend <name>`, not `only`) placed on another row is a judgment
-in that step (`a pinned card was dealt away from its friend`): why she did not
-take it (held, not up, the card has left her, her tiers do not hold the tier, or
-she has no room), and whose row and column hold the card now. The pass keeps
-that one judgment, and raises it when the card is already sitting off her row,
-until it is back on her row or leaves ready and working. A hard pin is not
-rotated and is not this judgment. A
-hard pin (`WHO: only friend <name>`) with no room waits ready, held by the
+A card whose WHO line names a friend and that already sits on another row (placed
+before the dealer honored WHO, or by hand) is a judgment of the pass (`a pinned
+card was dealt away from its friend`): why she did not take it (held, not up, the
+card has left her, her tiers do not hold the tier, or she has no room), whose row
+and column hold the card now, and `friend take <name> <card>` to move it to her.
+The deal itself writes no such note. The pass keeps that one judgment until it is
+back on her row or leaves ready and working. A card naming a friend
+with no room waits ready, held by the
 no-stall rule as waiting for her (`sprint.TickDeal`, `sprint.FriendDeal`,
-`sprint.OnlyFriend`); a card a friend takes is never held for want of a machine
+`sprint.PinnedFriend`); a card a friend takes is never held for want of a machine
 route of its tier (`TestAReadyCardGoesToAFriendWhenNoMachineRouteServesItsTier`).
 The tick reads the friends' records every tick while the roster has a friend.
 Its work card, `<primary>.w<attempt>`, is placed on
@@ -487,15 +501,16 @@ her report (`sprint.RunWall`), computed by the unified `sprint.Deadline`
 function (docs/SPEC-SPRINT.md section 5, the deadline), set on the card as
 `friend_deadline` (seconds) when it goes into working on her row (her deal,
 her next on a finish, a level or a redeal), and absent while she has no ok
-attempt: `TestOneDeadlineRuleForMembersAndFriends`), The machines' `deal` verb refuses a hard pin (`WHO: only friend`), and
+attempt: `TestOneDeadlineRuleForMembersAndFriends`). The machines' `deal` verb refuses a card whose WHO line names a friend, and
 `rework` of a friend's card sends its primary ready with the fix, for the tick to
 offer again. A rework keeps the WHO pin (the owner, 2026-10-05: a rework of a friend's own
 rating, `WHO: friend <name>`, was dealt to another worker): a `WHO: friend <name>` card
 come back by a rework, a return or a redo (its `reworks` or `returns` counted;
-`sprint.ReworkPinned`) is the hard pin `OnlyFriend`, dealt only to her as on its first
-deal, and while she is down, held or without room it waits ready, held as a hard pin is,
-dealt to no other friend and no machine (`TestAReworkKeepsTheWhoPin`); a take-back alone
-(`friend take`) counts neither, so a preference taken back from her is still offered on.
+`sprint.ReworkPinned`) is the hard pin `OnlyFriend` for unpin and the take-back rule.
+The deal treats every named friend alike (`sprint.PinnedFriend`): dealt only to her,
+and while she is down, held or without room it waits ready, dealt to no other friend
+and no machine (`TestAReworkKeepsTheWhoPin`); a take-back alone (`friend take`) counts
+neither as a rework, and the card still names her, so it waits ready for her.
 
 **A friend's card is working once she starts it** (the owner, 2026-10-05: "They
 are not working unless work turns from working to done."; the friends table had
@@ -541,7 +556,7 @@ cards on her row, ready and working), below her room, whose tiers hold its tier,
 that it has not left and who is not herself stuck so, ready on that row at its
 next generation, the friend it left added to `friends_left` so it never goes
 back to her, one line each (`... (not started 20m0s after its deal, and friend
-<name> names no job running)`; `sprint.friendUnstartedLevel`; a hard pin stays).
+<name> names no job running)`; `sprint.friendUnstartedLevel`; a card whose WHO line names a friend stays).
 A card no friend may take stays, and the deadline rule judges it once
 `friend_start_max` plus `FriendReadyMax` has run (`TickDeadlines`). The level's
 own evening leaves the oldest unstarted cards that hold her free lanes to her
@@ -577,12 +592,12 @@ her bus login, no store address of hers: `workerVerb` takes `friend.<name>` as a
 worker's name beside a member's). A card on her row never sits ready with no one
 to take it: her start takes it into working (a friend's card is working once
 she starts it, above), and a card she has not started within the start bound
-is moved to a friend with an idle lane. A work card ready on a friend's row while she
+is moved to a friend with an idle lane, except a card whose WHO line names a friend, which stays. A work card ready on a friend's row while she
 has a lane free for `friend_start_max` plus `FriendReadyMax` (ten minutes) of running time is a
 judgment, a work card past its deadline (`dealt, never taken, at
 friend.<name>:ready (... ready over 30m0s while friend <name> has a lane
-free)`), answered by `friend take <name> <card>` (the deal places it again on a
-friend who takes) or a wait; a card ready behind her lanes, all of them
+free)`), answered by `friend take <name> <card>` (an unpinned card is placed again on a
+friend who takes; a card whose WHO line names a friend waits for her) or a wait; a card ready behind her lanes, all of them
 working, is her queue, held to the dealt bound as a member's is
 (`friendLaneIdle`, `TickDeadlines`). The model is `tla/FriendReadyTake.tla`
 (`LanesHard`, `OnlyHerTake`, `NeverStrandedSilently`, `FilledAfterTick`, each
@@ -607,6 +622,16 @@ last beat naming it running (`friend beat --running`, by its work card id, its
 job or its primary), or finished (in review or later, no longer on her row's
 ready or working). A card not dealt to her is refused naming where it is. The
 refusals are one line each and, with ids named, all or none.
+A card named that sits anywhere but her row is moved onto it, whatever its place
+(the card the-dealer-honors-who.w1; `sprint.friendTakeOnto`): a ready primary (never
+dealt, or withdrawn, including one taken back from her) is dealt to her row, and a
+work card dealt and not taken (ready on a machine's or another friend's row) moves
+to her row at its next generation, its own branch and job; either is placed ready,
+and the tick's deal takes it into her free lane. A taken card (working on another
+row) is refused naming its lane (`<card> is taken: it works in the lane at
+<row>:working; it stays there and finishes`), and a card whose WHO line names
+another friend is refused naming her (`WhoIsHonored`;
+`TestFriendTakeMovesAReadyCardOntoTheNamedFriendsRow`).
 `--all-unstarted` takes every card of hers she has not started and says each
 one she keeps on a NOTE line. A working card taken frees her lane: her oldest
 ready card not taken goes into working in the same unit, as her finish takes
@@ -614,10 +639,11 @@ it. The friends' deal places the same work card again (`friendRedealUnit`): to
 the friend up with room its WHO line allows, never the friend it was taken
 from, at its next generation, so on its own branch, and as its own job
 (`<card>.g<gen>` from the second generation: a card dealt back to the same
-friend after a hold is a new job whose brief names its branch); a hard pin taken
-back from the only friend it names waits ready until `friend give` gives it back
-to her, or until `unpin` releases it. A preference taken back from her is offered to another
-eligible friend, then to the fleet. While the machine runs, the take's work-table change waits
+friend after a hold is a new job whose brief names its branch); a card whose WHO
+line names a friend, taken back from her, waits ready until `friend give` gives it
+back to her, or `nova-sprint friend take <name> <id>` places it on her row, or
+`unpin` releases it. A bare `WHO: friend` card taken back from her is offered to
+another friend up with room, then to the fleet, never back to her. While the machine runs, the take's work-table change waits
 for the pump (section 4), so the tick after the next deals it. `friend sync`
 writes a card taken back as `taken` in her queue file, so her daemon starts
 none of them. `friend down <friend>` and `hold <friend>` (with `--return` or
@@ -682,13 +708,14 @@ when there is no primary. The friend deal, the friend level, the take back below
 and the packet's `tier` (`sprint.DealtTier`, through the primary's tier field,
 never empty) all read it, so no two of them can disagree: a friend takes a card
 when the tier is one of her tiers (`friendTakes`), never her class as a whole,
-and a named friend (`WHO: friend <name>`) who does not serve the tier is a
-preference skipped for another friend that does (`pin ignored`), never a pin past
-the tier. A card re-tiered after it was dealt to a friend whose tiers do not hold
+and a named friend (`WHO: friend <name>`) who does not serve the tier waits
+ready for her, dealt to no one else, never skipped for another friend (the deal
+writes no `pin ignored` note). A card re-tiered after it was dealt to a friend whose tiers do not hold
 the new tier, ready or working and not started (no push, not named running by her
 beat), is taken back by the tick's friend level (and by `friend level`) as
-`friend take` takes it (`taken_back` says "re-tiered"), its primary ready, and
-dealt again by the next deal to a friend that serves the tier
+`friend take` takes it (`taken_back` says "re-tiered"), its primary ready. An
+unpinned card is dealt again by the next deal to a friend that serves the tier;
+a card whose WHO line names a friend waits ready for her
 (`retierTakeBacks`, friend_tier.go, called at the end of `friendLevel`); a
 started card stays and finishes, and a card the attempt cap's default answer
 pinned to its holder (`AttemptCapDeal`) is the one placement outside her tiers
@@ -1319,11 +1346,12 @@ not level the friends":
   with no tier is the dealer's default, flash (`cardTierOf`), and a withdrawn
   attempt at its redeal bound below its ceiling is offered at the tier it
   escalates to (`escalating`), a new attempt on that tier. A friend whose row
-  names no tier takes none; a named friend without the tier is passed over for
-  another friend with it, and a hard pin to her waits
+  names no tier takes none; a card naming a friend without the tier waits for
+  her, dealt to no one else
   (`TestAFrontierCardGoesOnlyToAFriendWithFrontier`,
-  `TestACardWithTwoProviderFailuresGoesToAFriendNotAnUnfundedRoute`). A card no
-  friend up may take is the fleet's (WHO is a preference); a hard pin waits ready.
+  `TestACardWithTwoProviderFailuresGoesToAFriendNotAnUnfundedRoute`). A card with
+  no WHO line, or `WHO: friend`, that no friend up may take is the fleet's; a card
+  naming a friend waits ready.
 - **Idle lanes first.** Among the friends it may go to, a friend with an idle
   lane (width - working > 0) is preferred over every friend with none, the most
   idle lanes first, then the most room (DealAhead x width - working - ready),
@@ -1343,8 +1371,8 @@ not level the friends":
 - **The level runs inside every tick, after the deal.** The tick reads the
   friends' records whenever the roster has a friend, not only when a friend's
   card is ready, so a friend coming up (friend up, or a hold released) is
-  levelled on the same tick. An unstarted ready card that is not a hard pin (no
-  WHO line, `WHO: friend`, or one preferring a friend; never `WHO: only friend`,
+  levelled on the same tick. An unstarted ready card that names no friend (no
+  WHO line, or `WHO: friend`; never `WHO: friend <name>` or `WHO: only friend`,
   `TestTheLevelMovesUnpinnedCardsToAnIdleFriend`) on a friend
   with no idle lane moves to a friend it may go to with an idle lane, into
   working; then backlogs even as before (a card moves from a backlog to one
@@ -1414,9 +1442,9 @@ holds the same rule for her lanes (docs/SPEC-FRIEND.md, one lane per card).
 
 Not done here: the machines' deal (`TickDeal` in steps_tick.go, outside this
 card's paths) still offers a card the friends' deal passed over to the fleet, so
-a card whose WHO line is a preference can still reach a machine while a friend's
-lane runs it. A card whose WHO line is a hard pin (`only friend`) never reaches a
-machine.
+a card with no WHO line, or `WHO: friend`, can still reach a machine while a friend's
+lane runs it. A card whose WHO line names a friend never reaches a machine
+(the-dealer-honors-who.w1).
 
 ### cycle-time-breakdownb.w1: where a card's wall time goes
 
@@ -4891,10 +4919,10 @@ hours. The tick's overdue part runs the pass (internal/sprint coordinator_pass.g
   nothing she could do is waiting, so time down or held does not count.
 - **a pinned card was dealt away from its friend** (`a pinned card was dealt away
   from its friend`), one on each named pin whose work card is ready or working off
-  her row, including on a machine. The deal writes it on the unit that places the
-  card on another friend; the pass writes it when the card is already there, keeps
-  the one note, and closes it when the card is back on her row or leaves ready and
-  working. A hard pin is not one of these.
+  her row, including on a machine: the deal never places one there (`WhoIsHonored`),
+  so this is a card placed before the dealer honored WHO. The pass writes it, offers
+  `friend take <name> <card>`, keeps the one note, and closes it when the card is
+  back on her row or leaves ready and working.
 
 Each is an episode, keyed by its type and subject: written once when its condition
 starts, raised again in place every 10 minutes of running time while it holds

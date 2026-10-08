@@ -190,8 +190,8 @@ func TestACardOffAHeldFriendGoesBackToAFriendTheLevelMovedItOff(t *testing.T) {
 		t.Parallel()
 		// the coordinator takes bob's cards back (taken_from=bob) while amy is held: bob,
 		// up, is the friend each was taken from and amy the one each left, so no friend
-		// is dealt one; WHO is a preference, so each is the fleet's (docs/SPEC-SPRINT.md,
-		// WHO preference)
+		// is dealt one; each is WHO: friend, which names no one friend, so each is the
+		// fleet's (docs/SPEC-SPRINT.md section 1, a friend's card)
 		w := fullWorld(t, "friend", "", 0)
 		dealStarted(w, running, bobUp)
 		taken := w.must(FriendTake(w.s, FriendTakeReq{Friend: "bob", All: true, Reason: "slow", Who: "coordinator"}))

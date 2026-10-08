@@ -23,16 +23,24 @@ import (
 // is a function of the tables and that set.
 
 // friendTakeWords is what friend take says on -h.
-const friendTakeWords = "friend take takes back cards dealt to the friend that she has not started: each goes back to ready, withdrawn from her row (no failure, no bound spent: the card records \"taken back by the coordinator: <reason>\"), and the next tick deals the same card at its next generation to another friend up with room, never back to her (a friend's card is never a machine's); a card whose WHO line pins her waits until it is given back to her (friend give), briefed for another friend or dropped. A card is refused, one REFUSED line each, when it is not dealt to that friend or when she has started it: a push on its branch, her beat naming it running (friend beat --running), or finished (in review or later); the others named are taken, and the exit is 1 when any is refused. --all-or-nothing takes none when one is refused. --all-unstarted takes every card of hers she has not started and says the ones she keeps. A working card taken frees her lane, and her oldest ready card is taken into working at once. friend sync marks a card taken back as taken in her queue file.\n"
+const friendTakeWords = "friend take takes back cards dealt to the friend that she has not started: each goes back to ready, withdrawn from her row (no failure, no bound spent: the card records \"taken back by the coordinator: <reason>\"), and the next tick deals the same card at its next generation to another friend up with room, never back to her (a friend's card is never a machine's); a card whose WHO line names her waits until it is given back to her (friend give), briefed for another friend or dropped, or taken onto her row again. A card named that sits anywhere but her row is moved onto it, ready, for her lane to take at the tick: a ready card (never dealt, or taken back) is dealt to her, and one dealt and not taken (ready on a machine's or another friend's row) moves to her row at its next generation; a taken one (working elsewhere) is refused naming its lane. A card whose WHO line names another friend is refused naming her. A card is refused, one REFUSED line each, when it is taken elsewhere or when she has started it: a push on its branch, her beat naming it running (friend beat --running), or finished (in review or later); the others named are taken, and the exit is 1 when any is refused. --all-or-nothing takes none when one is refused. --all-unstarted takes every card of hers she has not started and says the ones she keeps. A working card taken frees her lane, and her oldest ready card is taken into working at once. friend sync marks a card taken back as taken in her queue file.\n"
 
 // friendStarted is the friend's cards she has started, each with its why: every work card
 // ready or working on her row that her last beat names running (by its id, its job or its
 // primary), or whose branch origin holds (a push on it), or whose push cannot be read (the
-// card stays with her rather than be taken from under her).
-func (a *app) friendStarted(ctx context.Context, st *store.Store, friend string) (map[string]string, error) {
+// card stays with her rather than be taken from under her). When ids are given, only the
+// cards those ids name (by work card id or primary) are read: friend take wants the
+// evidence of the holder of each named card.
+func (a *app) friendStarted(ctx context.Context, st *store.Store, friend string, ids ...string) (map[string]string, error) {
 	cards, err := st.ReadCells(ctx, sprint.Fleet, sprint.FriendRow(friend), sprint.Working, sprint.Ready)
 	if err != nil || len(cards) == 0 {
 		return nil, err
+	}
+	if len(ids) > 0 {
+		cards = slices.DeleteFunc(cards, func(c *sprint.Card) bool { return !slices.Contains(ids, c.ID) && !slices.Contains(ids, c.F("primary")) })
+		if len(cards) == 0 {
+			return nil, nil
+		}
 	}
 	b, err := st.FriendBeatOf(ctx, friend)
 	if err != nil {
@@ -111,7 +119,25 @@ func (a *app) cmdFriendTake(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s %s: no friend %s on the friends table (friends: %s); run: nova-sprint friend sync\n", prog, name, friend, orDashStr(strings.Join(names, ","), "none"))
 		return 1
 	}
-	started, err := a.friendStarted(ctx, st, friend)
+	started, err := a.friendStarted(ctx, st, friend, ids...)
+	if err == nil && !*all {
+		// a named card may sit on another friend's row: her started evidence refuses a
+		// move onto this friend (the card the-dealer-honors-who.w1)
+		for _, other := range names {
+			if other == friend {
+				continue
+			}
+			more, e := a.friendStarted(ctx, st, other, ids...)
+			if e != nil {
+				err = e
+				break
+			}
+			if started == nil {
+				started = map[string]string{}
+			}
+			maps.Copy(started, more)
+		}
+	}
 	if err != nil {
 		return a.readFailed(name, err, stderr)
 	}
