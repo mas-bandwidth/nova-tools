@@ -41,23 +41,17 @@ func migrationOwed(out, said string) (have, want int, ok bool) {
 	return have, want, want > have
 }
 
-// emptyConfigFix records the store login from named secret metadata. No password
-// value is printed or passed on argv.
+// emptyConfigFix previews the seat profile from named secret metadata, without
+// recording a login or installing the seat (docs/SPEC-DOCTOR.md, "Coordinator preflight").
 func (r *jobRun) emptyConfigFix() string {
 	actor := r.applyActor()
 	dsn := r.env.Getenv("NOVA_PG_DSN")
 	pass := r.env.Getenv("NOVA_PG_PASSWORD_ENV")
-	login := r.in.RedisLogin
-	if actor == "" || dsn == "" || pass == "" || login.Store == "" || login.As == "" || login.Key == "" {
-		return r.again(" --as <actor> --redis-secrets <dir> --redis-seat <seat> --redis-key <file> --redis-sops <path> --redis-secret <NAME>")
+	if actor == "" || dsn == "" || pass == "" {
+		return r.again(" --as <actor>")
 	}
-	fix := fmt.Sprintf("nova-config login --store %s --as %s --key %s --secret %s --dsn %s --actor %s",
-		oneline.ShellWord(login.Store), oneline.ShellWord(login.As), oneline.ShellWord(login.Key),
-		oneline.ShellWord(pass), oneline.ShellWord(dsn), oneline.ShellWord(actor))
-	if login.Sops != "" {
-		fix += " --sops " + oneline.ShellWord(login.Sops)
-	}
-	return fix
+	return fmt.Sprintf("%s --dry-run --config-seat %s --config-dsn %s --config-password-env %s",
+		r.seatInstall(), oneline.ShellWord(actor), oneline.ShellWord(dsn), oneline.ShellWord(pass))
 }
 
 func (r *jobRun) actor() string {
