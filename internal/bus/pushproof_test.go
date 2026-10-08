@@ -12,8 +12,9 @@ import (
 
 // A proof's state at the store's now: none with no proof, down whatever its
 // age when its daemon says the session did not answer, stale at PushFresh,
-// proven below; the deaf line names the name, its age and the remedy, and is
-// empty for a proven one (SPEC-BUS.md, bus-requires-inbox-push-proof).
+// proven below; the unheard line names the state, the name, its age and what
+// would prove one, and is empty for a proven one (SPEC-BUS.md,
+// bus-requires-inbox-push-proof).
 func TestAProofIsProvenUpAndYoungerThanTenMinutes(t *testing.T) {
 	t.Parallel()
 	at := time.Date(2026, 10, 5, 18, 0, 0, 0, time.UTC)
@@ -37,15 +38,16 @@ func TestAProofIsProvenUpAndYoungerThanTenMinutes(t *testing.T) {
 		assert.Equal(t, c.state, c.p.State(now), "%+v at +%s", c.p, c.after)
 		assert.Equal(t, c.age, c.p.AgeWord(now))
 		if c.state == PushProven {
-			assert.Empty(t, c.p.Deaf(now))
+			assert.Empty(t, c.p.Unheard(now))
 			continue
 		}
-		assert.Contains(t, c.p.Deaf(now), "deaf: bob has no proven push since "+c.age+": ")
-		assert.Contains(t, c.p.Deaf(now), "nova-friend install --as bob --harness <h> --dir <d>")
+		assert.Contains(t, c.p.Unheard(now), "push="+c.state+" for bob: no proven push since "+c.age+": ")
+		assert.Contains(t, c.p.Unheard(now), "waits on its stream until something reads it (nova-bus recv --as bob)")
+		assert.Contains(t, c.p.Unheard(now), "nova-friend install --as bob --harness <h> --dir <d>")
 	}
-	assert.Contains(t, down.Deaf(at), "(no session answer)")
-	assert.Contains(t, up.Deaf(at.Add(time.Hour)), "its daemon (claude) last renewed it 1h0m0s ago")
-	assert.Contains(t, none.Deaf(at), "no daemon has recorded one")
+	assert.Contains(t, down.Unheard(at), "(no session answer)")
+	assert.Contains(t, up.Unheard(at.Add(time.Hour)), "its daemon (claude) last renewed it 1h0m0s ago")
+	assert.Contains(t, none.Unheard(at), "no daemon has recorded one")
 }
 
 // ProvePush stamps the proof with the store's time and writes it in one
@@ -79,59 +81,56 @@ func TestProvePushWritesAndPushProofsReads(t *testing.T) {
 	assert.EqualError(t, err, "down")
 }
 
-// Hearing is the gate a nova-bus Bus opens over: Send checks the message
-// first and refuses a deaf sender, recipient or cc after, all at once and
-// writing nothing; Recv refuses a deaf recipient and never makes its group;
-// the bare store (the daemon's) is not gated; peek, ack and log pass.
-func TestHearingGatesSendAndRecvAndNothingElse(t *testing.T) {
+// The push proof advises and never gates (the finding of 2026-10-08, issue
+// #5450: a claude friend and a machine with no daemon could never be written
+// to or read as): Send lands a message whoever is unheard, Recv reads for an
+// unheard name and makes its group, and Unheard is the lines a verb prints
+// beside its result, one per unheard name in order, deduplicated, empty once
+// every name is proven; the message's own problems are still refused first.
+func TestThePushProofAdvisesAndNeverRefuses(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	f := NewFake(time.Date(2026, 10, 5, 18, 0, 0, 0, time.UTC), "ada", "bob", "cy")
-	gated, bare := &Bus{Store: Hearing(f)}, &Bus{Store: f}
+	b := &Bus{Store: f}
 	m := Message{From: "ada", To: []string{"bob"}, CC: []string{"cy"}, Subject: "s", Body: "x"}
 
-	_, err := gated.Send(ctx, Message{From: "ada", To: []string{"zed"}, Subject: "s", Body: "x"})
-	assert.ErrorContains(t, err, "zed is no known name")
-	assert.NotContains(t, err.Error(), "deaf", "the message's own problems first")
-	_, err = gated.Send(ctx, m)
-	var r *Refusal
-	require.ErrorAs(t, err, &r)
-	assert.Len(t, r.Problems, 3, "ada, bob and cy, at once: %v", r.Problems)
-	assert.Equal(t, 0, f.Len(LogKey))
-	_, _, err = gated.Recv(ctx, "bob", 0)
-	assert.ErrorContains(t, err, "deaf: bob")
+	_, err := b.Send(ctx, Message{From: "ada", To: []string{"zed"}, Subject: "s", Body: "x"})
+	assert.ErrorContains(t, err, "zed is no known name", "the message's own problems are refused")
+	sent, err := b.Send(ctx, m)
+	require.NoError(t, err, "a message to names nothing proven hears lands")
+	assert.Equal(t, 1, f.Len(LogKey))
+	lines, err := b.Unheard(ctx, "ada", "bob", "cy", "ada")
+	require.NoError(t, err)
+	require.Len(t, lines, 3, "ada, bob and cy, once each, in order: %v", lines)
+	assert.Contains(t, lines[0], "push=none for ada: no proven push since never")
+	assert.Contains(t, lines[2], "push=none for cy")
+
+	e, ok, err := b.Recv(ctx, "bob", 0)
+	require.NoError(t, err, "an unheard name reads")
+	require.True(t, ok)
+	assert.Equal(t, sent.ID, e.Message().ID)
 	_, exists, err := f.Group(ctx, StreamOf("bob"), "bob")
 	require.NoError(t, err)
-	assert.False(t, exists, "a deaf recv makes no group")
-	assert.ErrorContains(t, gated.Heard(ctx, "ada"), "deaf: ada")
-
-	_, err = bare.Send(ctx, m)
-	require.NoError(t, err, "the daemon's own sends are not gated")
+	assert.True(t, exists, "and has its group")
 
 	for _, n := range []string{"ada", "bob", "cy"} {
-		_, err := bare.ProvePush(ctx, PushProof{Name: n, Harness: "claude", Up: true})
+		_, err := b.ProvePush(ctx, PushProof{Name: n, Harness: "codex", Nonce: "n", Up: true})
 		require.NoError(t, err)
 	}
-	sent, err := gated.Send(ctx, m)
+	lines, err = b.Unheard(ctx, "ada", "bob", "cy")
 	require.NoError(t, err)
-	e, ok, err := gated.Recv(ctx, "bob", 0)
-	require.NoError(t, err)
-	require.True(t, ok)
-	require.NoError(t, gated.Heard(ctx, "ada", "bob", "cy"))
+	assert.Empty(t, lines, "every name proven: nothing to say")
 
 	f.Advance(PushFresh)
-	_, err = gated.Send(ctx, m)
-	assert.ErrorContains(t, err, "deaf: ada has no proven push since 10m")
-	_, _, err = gated.Recv(ctx, "bob", 0)
-	assert.ErrorContains(t, err, "deaf: bob")
-	pending, _, err := gated.Peek(ctx, "bob")
+	lines, err = b.Unheard(ctx, "ada", "bob")
 	require.NoError(t, err)
-	assert.Len(t, pending, 1, "a deaf name may still peek")
-	acked, err := gated.Ack(ctx, "bob", []string{e.Message().ID})
-	require.NoError(t, err)
-	assert.True(t, acked[e.Message().ID], "and ack")
-	got, err := gated.Log(ctx, "-")
-	require.NoError(t, err)
-	assert.Len(t, got, 2, "and read the log")
-	assert.Equal(t, sent.ID, got[1].Message().ID)
+	require.Len(t, lines, 2)
+	assert.Contains(t, lines[0], "push=stale for ada: no proven push since 10m")
+	_, err = b.Send(ctx, m)
+	require.NoError(t, err, "stale is advice too")
+	assert.Equal(t, 2, f.Len(LogKey))
+
+	f.Fail = errors.New("down")
+	_, err = b.Unheard(ctx, "ada")
+	assert.EqualError(t, err, "down")
 }

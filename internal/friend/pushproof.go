@@ -19,13 +19,14 @@ const (
 
 // PushProver records the friend's inbox push proof on the bus (bus.PushKey;
 // docs/SPEC-BUS.md, bus-requires-inbox-push-proof) from the daemon's
-// presence, as the SessionCheck saves it: nova-bus send and recv refuse a
-// name without one. The proof is the SESSION CHECK round trip: the check
+// presence, as the SessionCheck saves it: nova-bus names shows it, and send
+// and recv say it as a NOTE beside a message to or from a name without one,
+// never a refusal. The proof is the SESSION CHECK round trip: the check
 // carried into the session by the deliver adapter and the session's pong
 // carrying its nonce (SessionCheck, presence.go). While the presence is up
 // the proof is up and renewed every PushRenewEvery; when the presence is
 // down (a check unanswered within its bound, or a daemon that has not yet
-// been answered) the proof is written down at once, so a sender is refused
+// been answered) the proof is written down at once, so a sender is told
 // the moment the daemon knows. A passive harness (no deliver command: the
 // check only goes on the stream) pushes nothing into the session and is
 // written down whatever its pongs say.
@@ -110,7 +111,7 @@ func (p *PushProver) Step(s PresenceStatus) {
 	case up:
 		p.record(now, "push proof: up: the session answered "+proof.Nonce+" through "+p.Harness+"'s deliver adapter; nova-bus hears "+p.Friend)
 	default:
-		p.record(now, "push proof: down: "+reason+"; nova-bus refuses "+p.Friend+" as deaf")
+		p.record(now, "push proof: down: "+reason+"; nova-bus names shows "+p.Friend+" push=down and a sender is told")
 	}
 }
 
