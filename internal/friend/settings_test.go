@@ -4,7 +4,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -12,12 +11,13 @@ import (
 )
 
 // fakeHome is a friend's home in the in-memory twin: her working
-// directory, and the DeepSeek Harness desktop profile the app makes.
+// directory, and an already initialized DeepSeek Harness headless profile.
 func fakeHome(t *testing.T) (*MemFS, HarnessSettings) {
 	t.Helper()
 	m := NewMemFS()
 	require.NoError(t, m.MkdirAll("/home/zoe/zoe-working", 0o755))
-	require.NoError(t, m.MkdirAll("/home/zoe/.dsh/profiles/desktop", 0o700))
+	require.NoError(t, m.MkdirAll("/home/zoe/.dsh/profiles/headless", 0o700))
+	require.NoError(t, m.WriteFile("/home/zoe/.dsh/profiles/headless/package.json", []byte(dshHeadlessManifest), 0o600))
 	return m, HarnessSettings{Friend: "zoe", Dir: "/home/zoe/zoe-working", Home: "/home/zoe", FS: m}
 }
 
@@ -43,7 +43,6 @@ func TestInstallWritesTheHarnessSettingsAFriendNeeds(t *testing.T) {
 			holds   []string
 		}{
 			{"codex", nil, "/home/zoe/.codex/config.toml", []string{"[sandbox_workspace_write]", `writable_roots = ["/home/zoe/zoe-working"]`}},
-			{"dsh", nil, "/home/zoe/.dsh/profiles/desktop/cordis.patch.yml", []string{"id: agent-preset-registry", "selectedDefault: standard", "default: standard"}},
 			{"grok", nil, "/home/zoe/.nova-friend/zoe/zoe.wake", nil},
 			{"claude", func(h *HarnessSettings) { h.ConfigDir = "/home/zoe/.claude-zoe" }, "", nil},
 			{"opencode", func(h *HarnessSettings) { h.Model = "deepseek/deepseek-v4" }, "/home/zoe/zoe-working/opencode.json", []string{`"model": "deepseek/deepseek-v4"`, `"/home/zoe/zoe-working/**": "allow"`}},
@@ -105,7 +104,7 @@ func TestInstallWritesTheHarnessSettingsAFriendNeeds(t *testing.T) {
 			{"opencode", "/home/zoe/zoe-working", nil, "/home/zoe/zoe-working/opencode.json"},
 			{"claude", "/home/zoe/.claude-zoe", func(h *HarnessSettings) { h.ConfigDir = "/home/zoe/.claude-zoe" }, ""},
 			{"grok", "/home/zoe/wakes", func(h *HarnessSettings) { h.Wake = "/home/zoe/wakes/zoe.wake" }, "/home/zoe/wakes/zoe.wake"},
-			{"dsh", "/home/zoe/.dsh/profiles/desktop", nil, "/home/zoe/.dsh/profiles/desktop/cordis.patch.yml"},
+			{"dsh", "/home/zoe/.dsh/profiles/headless", nil, "/home/zoe/.dsh/profiles/headless/untouched.yml"},
 		} {
 			t.Run(tc.harness, func(t *testing.T) {
 				t.Parallel()
@@ -135,30 +134,24 @@ func TestInstallWritesTheHarnessSettingsAFriendNeeds(t *testing.T) {
 		}
 	})
 
-	t.Run("a dsh home with no desktop profile is refused, never invented", func(t *testing.T) {
+	t.Run("a dsh home with no headless profile is refused, never invented", func(t *testing.T) {
 		t.Parallel()
 		m := NewMemFS()
 		require.NoError(t, m.MkdirAll("/home/zoe/zoe-working", 0o755))
 		h := HarnessSettings{Harness: "dsh", Friend: "zoe", Dir: "/home/zoe/zoe-working", Home: "/home/zoe", FS: m}
 		_, err := h.Write()
 		require.ErrorIs(t, err, ErrNotRealDir)
-		assert.Contains(t, err.Error(), "desktop-profile")
+		assert.Contains(t, err.Error(), "dsh-home")
 	})
 
-	t.Run("check names a drifted setting", func(t *testing.T) {
+	t.Run("check refuses a dsh composition missing headless", func(t *testing.T) {
 		t.Parallel()
 		m, h := fakeHome(t)
 		h.Harness = "dsh"
-		_, err := h.Write()
-		require.NoError(t, err)
-		file := "/home/zoe/.dsh/profiles/desktop/cordis.patch.yml"
-		require.NoError(t, m.WriteFile(file, []byte(strings.Replace(readFake(t, m, file), "selectedDefault: standard", "selectedDefault: minimal", 1)), 0o600))
-		all, err := h.Check()
-		require.NoError(t, err)
-		drift := Drift(all)
-		require.Len(t, drift, 1)
-		assert.Equal(t, Setting{Harness: "dsh", File: file, Name: "agent-preset-registry.config.selectedDefault", Want: "standard", Have: "minimal"}, drift[0])
-		assert.Equal(t, `harness=dsh file=`+file+` name=agent-preset-registry.config.selectedDefault want="standard" have="minimal"`, drift[0].Line())
+		file := "/home/zoe/.dsh/profiles/headless/package.json"
+		require.NoError(t, m.WriteFile(file, []byte(`{"dsh":{"profile":{"bundles":["@deepseek-ai/dsh-base"]}}}`), 0o600))
+		_, err := h.Check()
+		require.ErrorContains(t, err, "wants base and headless bundles in an initialized headless profile")
 	})
 
 	t.Run("a config file that is a symlink is refused, never replaced", func(t *testing.T) {
@@ -245,32 +238,4 @@ func TestCodexWritableRootsAreMergedByLine(t *testing.T) {
 	}
 	_, _, err := CodexRoots("[sandbox_workspace_write]\nwritable_roots = [\n\"/w/a\",\n")
 	assert.ErrorContains(t, err, "no closing ]")
-}
-
-func TestDSHPresetKeepsTheRestOfThePatchFile(t *testing.T) {
-	t.Parallel()
-	m, h := fakeHome(t)
-	h.Harness = "dsh"
-	file := "/home/zoe/.dsh/profiles/desktop/cordis.patch.yml"
-	require.NoError(t, m.WriteFile(file, []byte(`# Your patch layer for this dsh profile
-- id: agent-default-model
-  name: "@deepseek-ai/dsh-agent-default-model"
-  config:
-    model: deepseek-v4-pro
-- id: agent-preset-registry
-  name: "@deepseek-ai/dsh-agent-preset-registry"
-  config:
-    default: standard
-    selectedDefault: minimal
-`), 0o600))
-	wrote, err := h.Write()
-	require.NoError(t, err)
-	require.Len(t, wrote, 1)
-	assert.Equal(t, "agent-preset-registry.config.selectedDefault", wrote[0].Name)
-	text := readFake(t, m, file)
-	assert.Contains(t, text, "# Your patch layer for this dsh profile")
-	assert.Contains(t, text, `name: "@deepseek-ai/dsh-agent-default-model"`)
-	assert.Contains(t, text, "model: deepseek-v4-pro")
-	assert.Contains(t, text, "selectedDefault: standard")
-	assert.NotContains(t, text, "minimal")
 }

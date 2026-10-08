@@ -577,9 +577,9 @@ example: nova-friend beat --as bob --server 127.0.0.1:6390`,
 				Effect:  tool.LocalWrite + ": writes the harness's settings and the launchd agent com.nova.friend-<me>, and loads it",
 				Detail: `First writes the settings the friend's harness needs in its own config (docs/SPEC-FRIEND.md, Harness
 settings), each merged into what the file holds and read back, one INSTALL WROTE line each: codex,
-the friend's directory in CODEX_HOME/config.toml [sandbox_workspace_write] writable_roots; dsh, the
-agent preset registry's default and selectedDefault "` + friend.DSHPreset + `" in DSH_HOME/profiles/desktop/cordis.patch.yml
-(a session keeps the preset it was opened under); grok, the wake file (--session, else
+the friend's directory in CODEX_HOME/config.toml [sandbox_workspace_write] writable_roots; dsh, an
+already initialized DSH_HOME/profiles/headless with base and headless bundles, and valid optional
+YAML patch lists (checked only, never initialized or edited; use a session with no preset); grok, the wake file (--session, else
 ~/.nova-friend/<me>/<me>.wake), made empty, and named in the agent; claude, --config-dir (default
 CLAUDE_CONFIG_DIR) made private and named in the agent; opencode, the friend's directory allowed in
 <dir>/opencode.json and --model there when given. The friend's directory, the writable root, the wake

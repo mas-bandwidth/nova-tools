@@ -41,7 +41,9 @@ func TestRunRefusesAHarnessThatCannotDeliver(t *testing.T) {
 	t.Run("a dsh session under an agent preset", func(t *testing.T) {
 		t.Parallel()
 		r := newRig(t, "ada", "bob")
-		require.NoError(t, r.fs.MkdirAll(filepath.Join(r.home, ".dsh", "profiles", "desktop"), 0o755))
+		profile := filepath.Join(r.home, ".dsh", "profiles", "headless")
+		require.NoError(t, r.fs.MkdirAll(profile, 0o755))
+		require.NoError(t, r.fs.WriteFile(filepath.Join(profile, "package.json"), []byte(`{"dsh":{"profile":{"bundles":["@deepseek-ai/dsh-base","@deepseek-ai/dsh-headless"]}}}`), 0o600))
 		w := r.world()
 		w.exec = func(context.Context, string, string, []string, string) (string, int, error) {
 			return `dsh: session "session-z" runs under agent preset "minimal", which the one-shot runner does not compose` + "\n", 1, nil

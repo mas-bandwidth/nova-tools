@@ -2582,14 +2582,14 @@ through one list, so check reports exactly what install writes.
 |---|---|---|
 | every one | `--dir` | a real directory (never made, never a symlink) |
 | codex | `$CODEX_HOME/config.toml` (else `~/.codex`) | `[sandbox_workspace_write] writable_roots` holds `--dir`, added to the roots there; edited by line, so comments and other keys stay |
-| dsh | `$DSH_HOME/profiles/desktop/cordis.patch.yml` (else `~/.dsh`) | the patch entry `agent-preset-registry`, `config.default` and `config.selectedDefault` = `standard`; the desktop profile must exist (the app makes it); edited as a YAML node tree |
+| dsh | `$DSH_HOME/profiles/headless/package.json` (else `~/.dsh`), optional profile/home `cordis.patch.yml` | read-only prerequisites: real home/profile directories, an existing JSON manifest composing base and headless bundles, and optional YAML patch lists; no profile, preset, model or credentials are written |
 | grok | the wake file, `--session`, else `~/.nova-friend/<me>/<me>.wake` | its directory a real directory (made), the file a file (made empty); the agent's `--session` names it, and the NOTE's monitor line names it |
 | claude | `--config-dir` (default `CLAUDE_CONFIG_DIR`) | a real directory, made private; the agent's `run --config-dir` names it; install refuses claude without one |
 | opencode | `<dir>/opencode.json` | `permission.external_directory["<dir>/**"] = allow` (as `AllowDirs` writes before each turn), and `model` when `--model` names one |
 
 **Rules.** Every path is read first. A symlink where a directory belongs, a
 directory that is a file, a missing directory install does not make (the friend's
-directory, the DSH desktop profile), or a config file that is a symlink is
+directory, the DSH headless profile), or a config file that is a symlink is
 refused (`ErrNotRealDir`, exit 2): nothing is written and no agent is loaded.
 The refusal names the path and its target. Install never replaces a symlink,
 because an atomic write over a dotfile repository's link would cut it. A setting
@@ -2608,11 +2608,21 @@ drift=0`, or `CHECK DRIFT harness= settings=<n> drift=<n>` at exit 1 with one
 NOTE with the install line that writes them. A symlink is
 `have="symlink to <target>"`.
 
-**What is not measured.** The DSH preset value `standard` is the owner's hand
-fix of 2026-10-04, written into the same key; whether the headless runner
-composes a `standard` session was not measured here (the runner refused a
-`minimal` one). A session keeps the preset it was opened under, so the friend
-opens a new session after install. The Codex key is the documented
+**DSH prerequisites.** The adapter always runs headless and refuses a session
+under any agent preset. Install therefore checks an already initialized
+`profiles/headless` manifest composing `@deepseek-ai/dsh-base` and
+`@deepseek-ai/dsh-headless`, as the official rc.2 template does. A desktop
+profile alone does not satisfy it. Only the owner's DSH initializes the profile;
+this settings phase launches no harness or provider, while the later install
+retains its native delivery proof. Optional profile
+and home patch lists are parsed without evaluating expressions or rewriting
+bytes; malformed JSON/YAML, symlinked config paths and missing prerequisites
+are refused before the agent is loaded. Existing unrelated fields and comments
+remain unchanged. These checks do not prove package resolution, credentials,
+model readiness or native session delivery; use an actual no-preset session
+and independently verify its control turn.
+
+**What is not measured.** The Codex key is the documented
 `sandbox_workspace_write.writable_roots`; it takes effect only under
 `sandbox_mode = "workspace-write"`, which install leaves alone. The health check
 (`check` with no `--harness`) does not yet carry settings drift: run
