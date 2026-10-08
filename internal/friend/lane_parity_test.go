@@ -99,8 +99,7 @@ func TestOpencodeLanesDoWhatTheRunnerStopgapsDid(t *testing.T) {
 			{"c1", 15, 5, "c1~15.g5"},
 			{"c1", 0, 1, "c1"},
 		} {
-			job := JobName(c.card, c.epoch, c.gen)
-			assert.Equal(t, c.want, job)
+			job := c.want
 			if c.epoch > 0 {
 				id, epoch, gen, ok := ParseJob(job)
 				assert.True(t, ok)

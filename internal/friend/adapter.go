@@ -122,20 +122,14 @@ func Printed(ctx context.Context, p []byte) {
 	}
 }
 
-// seenWriter is a Builder that says each write to the context's watch and tail.
+// seenWriter is a Builder that says each write to the context's watch and tail (Printed).
 type seenWriter struct {
-	b    strings.Builder
-	seen func()
-	tail func([]byte)
+	b   strings.Builder
+	ctx context.Context
 }
 
 func (w *seenWriter) Write(p []byte) (int, error) {
-	if len(p) > 0 && w.seen != nil {
-		w.seen()
-	}
-	if len(p) > 0 && w.tail != nil {
-		w.tail(p)
-	}
+	Printed(w.ctx, p)
 	return w.b.Write(p)
 }
 
@@ -155,14 +149,12 @@ func RealExec(ctx context.Context, dir, name string, args []string, stdin string
 }
 
 func realExec(ctx context.Context, killDelay time.Duration, dir, name string, args []string, stdin string) (string, int, error) {
-	seen, _ := ctx.Value(outputKey{}).(func())
-	tail, _ := ctx.Value(tailKey{}).(func([]byte))
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
 	if stdin != "" {
 		cmd.Stdin = strings.NewReader(stdin)
 	} // else /dev/null: a headless opencode run with stdin left open hangs at init (measured 2026-10-04)
-	out, stderr := &seenWriter{seen: seen, tail: tail}, &seenWriter{seen: seen, tail: tail}
+	out, stderr := &seenWriter{ctx: ctx}, &seenWriter{ctx: ctx}
 	cmd.Stdout = out
 	cmd.Stderr = stderr
 	ownGroup(cmd)

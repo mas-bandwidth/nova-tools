@@ -14,7 +14,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
 	"github.com/mas-bandwidth/nova-tools/internal/provbalance"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
@@ -60,14 +59,14 @@ func spendStore(t *testing.T) *sprint.Snapshot {
 	s.Work.SetRows([]string{"s1"})
 	pr := &sprint.Card{ID: "s1-1", Row: "s1", Col: sprint.Working, Fields: map[string]string{}}
 	in, before := "2026-09-17T18:00:00Z", "2026-09-16T18:00:00Z"
-	for _, c := range []sprint.Consumer{
-		{Kind: "work", Card: "s1-1", Key: "a", Route: "pro-or", End: "ok", At: in, Usage: cardcost.ParseUsage("input=10 actual_usd=500 actual_by=harness")},
-		{Kind: "work", Card: "s1-1", Key: "b", Route: "pro-or", End: "no result", At: in, Usage: cardcost.ParseUsage("input=10 actual_usd=300 actual_by=harness")},
-		{Kind: "read", Card: "s1-1.r1", Key: "c", Model: "openrouter/m", End: "ok", At: in, Usage: cardcost.ParseUsage("input=10 predicted_usd=36")},
-		{Kind: "work", Card: "s1-1", Key: "d", Route: "pro-or", End: "failed", At: before, Usage: cardcost.ParseUsage("input=10 actual_usd=50 actual_by=harness")},
-		{Kind: "read", Card: "s1-1.r2", Key: "e", Who: "alex", End: "ok", At: in, Usage: cardcost.ParseUsage("input=600 output=400 " + sprint.UsageSubscription)},
+	for _, record := range []struct{ key, line string }{
+		{"a", "kind=work card=s1-1 attempt=0 take=0 gen=0 who=- on_route=pro-or on_model=- on_tier=- end=ok at=" + in + " input=10 actual_usd=500 actual_by=harness"},
+		{"b", "kind=work card=s1-1 attempt=0 take=0 gen=0 who=- on_route=pro-or on_model=- on_tier=- end=no-result at=" + in + " input=10 actual_usd=300 actual_by=harness"},
+		{"c", "kind=read card=s1-1.r1 attempt=0 take=0 gen=0 who=- on_route=- on_model=openrouter/m on_tier=- end=ok at=" + in + " input=10 predicted_usd=36"},
+		{"d", "kind=work card=s1-1 attempt=0 take=0 gen=0 who=- on_route=pro-or on_model=- on_tier=- end=failed at=" + before + " input=10 actual_usd=50 actual_by=harness"},
+		{"e", "kind=read card=s1-1.r2 attempt=0 take=0 gen=0 who=alex on_route=- on_model=- on_tier=- end=ok at=" + in + " input=600 output=400 " + sprint.UsageSubscription},
 	} {
-		sprint.RecordConsumer(pr, c)
+		pr.Fields[sprint.FieldCostRecord+record.key] = record.line
 	}
 	s.Work.Put(pr)
 	return s

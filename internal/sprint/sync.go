@@ -23,6 +23,8 @@ import (
 // dashboard's merge row), and on a conflict every stream stopped with ONE judgment naming
 // the files, while they are few. The two halves are apart because a step's plan is a pure
 // function of the snapshot, run again on a retry; git runs once, outside it.
+// nova-sprint land runs that cycle only when --dev-sync is set, and the flag is off
+// by default; a dry run never runs it (cmd/nova-sprint/land.go, before the first batch).
 
 // The merge table's properties of the dev sync: the last sync (when, and the base's sha
 // after it) and the drift the last cycle measured.

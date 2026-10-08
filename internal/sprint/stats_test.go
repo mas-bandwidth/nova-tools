@@ -79,7 +79,7 @@ func TestStatsRecordsNameEveryAttemptsWorkAndReadCards(t *testing.T) {
 
 func TestStatsArePassNumbersFromTheCards(t *testing.T) {
 	t.Parallel()
-	ps := Stats(statsSnapshot())
+	ps := StatsSince(statsSnapshot(), time.Time{})
 	m := func(med, max float64, n int) Measure { return Measure{Median: med, Max: max, N: n} }
 	assert.Equal(t, uint64(7), ps.Epoch)
 	assert.Equal(t, 2, ps.Primaries, "a sentinel is no primary of the pass")
@@ -109,7 +109,7 @@ func TestStatsArePassNumbersFromTheCards(t *testing.T) {
 func TestStatsOfNothingAreEmptyNeverNil(t *testing.T) {
 	t.Parallel()
 	s := &Snapshot{Work: NewTable(Work), Fleet: NewTable(Fleet), Readers: NewTable(Readers)}
-	ps := Stats(s)
+	ps := StatsSince(s, time.Time{})
 	require.NotNil(t, ps.Work)
 	require.NotNil(t, ps.Reads)
 	require.NotNil(t, ps.Routes)

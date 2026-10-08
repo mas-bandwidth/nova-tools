@@ -76,6 +76,23 @@ type backRig struct {
 	adopts *fakeAdopter
 }
 
+// fleetBackTables is the tick's table updates with the presence part
+// FleetBackPresence(a), as the store's Updates: the fake adopter's step, without
+// InstallFleetBack's write to the package's globals (the tests here run in parallel).
+func fleetBackTables(a sprint.Adopter) []sprint.TableUpdate {
+	fn := sprint.FleetBackPresence(a)
+	out := make([]sprint.TableUpdate, len(sprint.TickTables))
+	for i, u := range sprint.TickTables {
+		out[i] = sprint.TableUpdate{Table: u.Table, Parts: append([]sprint.TickPartDef(nil), u.Parts...)}
+		for j := range out[i].Parts {
+			if out[i].Parts[j].Name == "presence" {
+				out[i].Parts[j].Fn = fn
+			}
+		}
+	}
+	return out
+}
+
 func newBackRig(t *testing.T, cards int) *backRig {
 	t.Helper()
 	m := store.NewMem()
@@ -85,7 +102,7 @@ func newBackRig(t *testing.T, cards int) *backRig {
 		Now:     func() time.Time { r.mu.Lock(); defer r.mu.Unlock(); return r.now },
 		NewID:   func() string { r.mu.Lock(); defer r.mu.Unlock(); n++; return fmt.Sprint(n) },
 		Sleep:   func(time.Duration) {},
-		Updates: sprint.FleetBackTables(r.adopts)}
+		Updates: fleetBackTables(r.adopts)}
 	require.NoError(t, r.st.Init(r.ctx))
 	require.NoError(t, m.RowsAdd(r.ctx, "t-readers", []string{"reader-a", "reader-b", "reader-c"}))
 	require.NoError(t, m.SetCoordinator(r.ctx, "coordinator"))

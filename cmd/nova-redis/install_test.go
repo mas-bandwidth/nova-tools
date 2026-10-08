@@ -12,6 +12,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/secrets"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	unitspkg "github.com/mas-bandwidth/nova-tools/internal/units"
 )
 
 // install store and install bus write a unit that runs nova-redis serve itself, with
@@ -48,7 +49,7 @@ func TestInstallStoreAndBusWriteAUnitThatRunsServeWithItsLogin(t *testing.T) {
 				assert.Contains(t, out, "INSTALL "+strings.ToUpper(tc.kind)+" OK unit="+path+" written=true loaded=true")
 				b, err := os.ReadFile(path)
 				require.NoError(t, err)
-				args, err := sprint.UnitArgs(goos, b)
+				args, err := unitspkg.UnitArgs(goos, b)
 				require.NoError(t, err)
 				assert.Equal(t, append([]string{"/opt/nova/bin/nova-redis", "serve", "--bind", "127.0.0.1", "--port", tc.port,
 					"--dir", filepath.Join(home, "nova-bench", "redis", tc.kind)}, login...), args)

@@ -30,9 +30,6 @@ func CheckUnits(dir, goos string, kinds []UnitKind) ([]UnitState, error) {
 	return units.CheckUnits(dir, goos, kinds)
 }
 
-// UnitArgs is the command line a unit file runs.
-func UnitArgs(goos string, b []byte) ([]string, error) { return units.UnitArgs(goos, b) }
-
 func (in SeatInstaller) installer() units.Installer {
 	return units.Installer{Dir: in.Dir, Load: in.Load, Unload: in.Unload}
 }

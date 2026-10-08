@@ -110,7 +110,7 @@ func TestReadsOutrankNormalWork(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			w, amy := priorityWorld(t, 5, tc.reads, tc.backed, 10)
-			require.Equal(t, tc.backup, Backup(w.s))
+			require.Equal(t, tc.backup, BackupOf(pipelineCounts(w.s)))
 			r, _ := friendRoom(amy)
 			require.Equal(t, 3, r-friendLoad(w.s, "amy"), "her room is three")
 
@@ -311,8 +311,30 @@ func TestBackupStateIsTheTablesThreeCounts(t *testing.T) {
 
 	w, _ := priorityWorld(t, 5, 3, 17, 0)
 	assert.Equal(t, 3+17*2, ReadsWaiting(w.s), "every read each card needs is wanted now (reads are asked together): one for each flash card, two for each frontier card")
-	working, review, merging := PipelineCounts(w.s)
+	working, review, merging := pipelineCounts(w.s)
 	assert.Equal(t, [3]int{5, 20, 0}, [3]int{working, review, merging})
+}
+
+// pipelineCounts is the work table's primaries working, in review and merging, sentinels
+// aside, over the streams on the table (the live path reads them in the store's where).
+func pipelineCounts(s *Snapshot) (working, review, merging int) {
+	if s == nil || s.Work == nil {
+		return 0, 0, 0
+	}
+	for _, c := range s.Work.Column(Working, Review, Merging) {
+		if IsSentinel(c) {
+			continue
+		}
+		switch c.Col {
+		case Working:
+			working++
+		case Review:
+			review++
+		case Merging:
+			merging++
+		}
+	}
+	return working, review, merging
 }
 
 // readersReadEveryTier names every tier on each reader row of the world, as reader set

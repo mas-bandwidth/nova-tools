@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/units"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -63,7 +64,7 @@ func TestEveryUnitASprintNeedsIsInstalledByAVerb(t *testing.T) {
 				assert.Equal(t, SeatResult{Path: filepath.Join(dir, k.File(goos)), Changed: true}, r)
 				b, err := os.ReadFile(r.Path)
 				require.NoError(t, err)
-				args, err := UnitArgs(goos, b)
+				args, err := units.UnitArgs(goos, b)
 				require.NoError(t, err)
 				assert.Equal(t, u.Args, args, "the unit runs exactly the verb's line:\n%s", b)
 				assert.NotContains(t, string(b), "nova-secrets", "no unit runs under nova-secrets exec")

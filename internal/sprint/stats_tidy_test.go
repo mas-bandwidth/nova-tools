@@ -214,7 +214,7 @@ func TestStatsTidyZeroesCountersAndKeepsTheWork(t *testing.T) {
 	assert.Zero(t, ps.Primaries)
 	assert.Empty(t, ps.Work)
 	assert.Empty(t, ps.Routes)
-	assert.Equal(t, 18, sprint.Stats(s).Primaries)
+	assert.Equal(t, 18, sprint.StatsSince(s, time.Time{}).Primaries)
 
 	// an unreadable stats record is no tidy: the tick and the mirrors run on
 	require.NoError(t, r.m.SetKey(r.ctx, "stats", "{not json"))

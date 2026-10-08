@@ -29,7 +29,7 @@ import (
 //       first activity after it. The release clears the stall props and removes the
 //       coordinator's observation of her (Plan.HealthClear), writing none: an observation
 //       written by the tick would stand for FriendPongWindow and read as evidence her
-//       session never gave (ObservedStatus); with it
+//       session never gave (FriendStatus); with it
 //       removed her status is her session's evidence alone (FriendStatus).
 //
 // Every rung emits a happened note (Kind: Happened), which says what the rung did: the
@@ -446,18 +446,6 @@ var futureEvidenceOnce sync.Map
 
 func futureEvidenceKey(friend string, stamped time.Time) string {
 	return friend + "\x00" + stamped.UTC().Format(time.RFC3339Nano)
-}
-
-// futureEvidenceLogCount is how many times friend f's evidence stamped at
-// stamped was logged for being after the server's clock. The stall ladder
-// logs each such stamp once.
-func futureEvidenceLogCount(friend string, stamped time.Time) int {
-	v, ok := futureEvidenceOnce.Load(futureEvidenceKey(friend, stamped))
-	if !ok {
-		return 0
-	}
-	n, _ := v.(int)
-	return n
 }
 
 // noteFutureEvidence counts a future stamp as the server's now and logs that

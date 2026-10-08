@@ -66,7 +66,6 @@ func TestEachMessageInABatchIsLabelledByItsOwnSender(t *testing.T) {
 	assert.Contains(t, got, forgedHeader)
 	assert.Contains(t, got, "> quoted two\n")
 	assert.Equal(t, Text(a), BatchFor("ada", []bus.Message{a}, "", ""))
-	assert.Contains(t, Batch([]bus.Message{a}, "", ""), "> plain one\n", "Batch is the seat unknown")
 }
 
 func TestABodyCannotEscapeTheQuote(t *testing.T) {

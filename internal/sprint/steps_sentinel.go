@@ -278,20 +278,6 @@ func reachUnit(s *Snapshot, c *Card, landing map[string]bool, who string) Unit {
 		Notes: []Note{reachedNote(s, c, landing, 0, who)}, Moved: "sentinel " + c.ID + " reached"}
 }
 
-// SentinelsDue marks reached every sentinel whose waits have all landed (or
-// were waived) and that is not reached yet: the backstop of the steps that
-// land. It never lands a sentinel; only release does.
-func SentinelsDue(s *Snapshot, who string) Plan {
-	var p Plan
-	p.on(s)
-	for _, c := range s.Work.Column(Waiting) {
-		if w := WaitOf(s, c); w.Operand == WaitOnLine && c.F("reached") == "" && len(w.On) == 0 && Reachable(s, c, nil) {
-			p.Units = append(p.Units, reachUnit(s, c, nil, who))
-		}
-	}
-	return Lawful(p)
-}
-
 // ReleaseReq is the coordinator releasing reached sentinels, with what it
 // looked at and found. Coordinator is the sprint's coordinator: release is
 // refused for any other actor.

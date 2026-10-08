@@ -1,6 +1,7 @@
 package sprint
 
 import (
+	"maps"
 	"math/big"
 	"testing"
 	"time"
@@ -10,6 +11,16 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
 )
+
+// recordConsumer adds one completed run to a test card.
+func recordConsumer(pr *Card, c Consumer) {
+	if pr.Fields == nil {
+		pr.Fields = map[string]string{}
+	}
+	set := map[string]string{}
+	addConsumer(pr, set, c)
+	maps.Copy(pr.Fields, set)
+}
 
 // A run with no recorded tier is counted under its route's tier: the route row's, else the
 // route name's prefix, else the card attempt's; "no tier" only when none of these names
@@ -22,13 +33,13 @@ func TestCostByTierTakesTheRouteTierWhenTheRunRecordsNone(t *testing.T) {
 	w.s.Work.SetRows([]string{"s1"})
 	at := stamp(w.s.Now.Add(-time.Hour))
 	pr := &Card{ID: "s1-1", Row: "s1", Col: Working, Fields: map[string]string{FieldTier: "flash"}}
-	RecordConsumer(pr, Consumer{Kind: "work", Card: "s1-1", Key: "a", Tier: "frontier", Route: "or-big", End: "ok", At: at, Usage: cardcost.ParseUsage("input=1 actual_usd=1 actual_by=harness")})
-	RecordConsumer(pr, Consumer{Kind: "work", Card: "s1-1", Key: "b", Route: "or-big", End: "no result", At: at, Usage: cardcost.ParseUsage("input=1 actual_usd=2 actual_by=harness")})
-	RecordConsumer(pr, Consumer{Kind: "read", Card: "s1-1.r1", Key: "c", Route: "pro-x", End: "ok", At: at, Usage: cardcost.ParseUsage("input=1 predicted_usd=4")})
-	RecordConsumer(pr, Consumer{Kind: "work", Card: "s1-1", Key: "d", End: "failed", At: at, Usage: cardcost.ParseUsage("input=1 actual_usd=8 actual_by=harness")})
+	recordConsumer(pr, Consumer{Kind: "work", Card: "s1-1", Key: "a", Tier: "frontier", Route: "or-big", End: "ok", At: at, Usage: cardcost.ParseUsage("input=1 actual_usd=1 actual_by=harness")})
+	recordConsumer(pr, Consumer{Kind: "work", Card: "s1-1", Key: "b", Route: "or-big", End: "no result", At: at, Usage: cardcost.ParseUsage("input=1 actual_usd=2 actual_by=harness")})
+	recordConsumer(pr, Consumer{Kind: "read", Card: "s1-1.r1", Key: "c", Route: "pro-x", End: "ok", At: at, Usage: cardcost.ParseUsage("input=1 predicted_usd=4")})
+	recordConsumer(pr, Consumer{Kind: "work", Card: "s1-1", Key: "d", End: "failed", At: at, Usage: cardcost.ParseUsage("input=1 actual_usd=8 actual_by=harness")})
 	w.s.Work.Put(pr)
 	bare := &Card{ID: "s1-2", Row: "s1", Col: Working, Fields: map[string]string{}}
-	RecordConsumer(bare, Consumer{Kind: "work", Card: "s1-2", Key: "e", Route: "odd", End: "ok", At: at, Usage: cardcost.ParseUsage("input=1 actual_usd=16 actual_by=harness")})
+	recordConsumer(bare, Consumer{Kind: "work", Card: "s1-2", Key: "e", Route: "odd", End: "ok", At: at, Usage: cardcost.ParseUsage("input=1 actual_usd=16 actual_by=harness")})
 	w.s.Work.Put(bare)
 
 	tc := StreamTierCosts(w.s)["s1"]
@@ -44,7 +55,7 @@ func TestCostByTierTakesTheRouteTierWhenTheRunRecordsNone(t *testing.T) {
 	// past the list's bound: the records the total holds and the list does not take the card's tier
 	many := &Card{ID: "s1-3", Row: "s1", Col: Working, Fields: map[string]string{FieldTier: "pro"}}
 	for i := range MaxCostRecords + 3 {
-		RecordConsumer(many, Consumer{Kind: "work", Card: "s1-3", Key: "k" + itoa(i), End: "ok", At: at, Tier: "flash", Usage: cardcost.ParseUsage("input=1 actual_usd=1 actual_by=harness")})
+		recordConsumer(many, Consumer{Kind: "work", Card: "s1-3", Key: "k" + itoa(i), End: "ok", At: at, Tier: "flash", Usage: cardcost.ParseUsage("input=1 actual_usd=1 actual_by=harness")})
 	}
 	w.s.Work.Put(many)
 	tc = StreamTierCosts(w.s)["s1"]
@@ -83,7 +94,7 @@ func TestCostByTierAllocatesFractionalCentsWithoutChangingTheTotal(t *testing.T)
 			w.s.Work.SetRows([]string{"s1"})
 			pr := &Card{ID: "s1-1", Row: "s1", Col: Working, Fields: map[string]string{}}
 			for tier, amount := range tt.amounts {
-				RecordConsumer(pr, Consumer{Kind: "work", Card: pr.ID, Key: tier, Tier: tier, End: "ok", At: stamp(w.s.Now), Usage: cardcost.ParseUsage("input=1 actual_usd=" + amount + " actual_by=harness")})
+				recordConsumer(pr, Consumer{Kind: "work", Card: pr.ID, Key: tier, Tier: tier, End: "ok", At: stamp(w.s.Now), Usage: cardcost.ParseUsage("input=1 actual_usd=" + amount + " actual_by=harness")})
 			}
 			w.s.Work.Put(pr)
 			tc := StreamTierCosts(w.s)["s1"]
