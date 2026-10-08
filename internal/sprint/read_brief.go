@@ -59,6 +59,9 @@ func ReadCardBrief(name, job string, p Packet, start string, deadline time.Time)
 	fmt.Fprintf(&b, "2. The change under review is exactly %s. What landed on the base since is not the work's and is never a finding.\n", diff)
 	b.WriteString("3. Judge the change against the card below: its HOW THIS CARD IS JUDGED and AS A READ sections when it has them, then its task, STEPS, TEST, PATHS and RULES. Does the change do the task; touch only the PATHS; add or keep green the tests the card names; keep its rules; is the new behaviour reached by a command or a caller?\n")
 	b.WriteString("4. Run the tests the card names and the packages the change touches, where your own rules let you run them, and note each command and how it ended.\n")
+	if note := FormReadNote(p.Brief); note != "" {
+		b.WriteString(note + "\n")
+	}
 	b.WriteString("Attribution (a By: line, a Co-Authored-By trailer, the model or harness a worker names) is never a finding.\n")
 	b.WriteString("\n## How to finish\n\n")
 	fmt.Fprintf(&b, "Write outbox/%s/REPORT.md:\n", job)
