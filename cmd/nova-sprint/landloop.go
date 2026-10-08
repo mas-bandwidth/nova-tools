@@ -31,8 +31,8 @@ const LandEvery = 2 * time.Second
 // finished in under eight minutes; the gate's own budget stays landGoBudget.
 const LandDeadline = 10 * time.Minute
 
-// landLaneWho is the holder the lander records on a bench's Go lane.
-const landLaneWho = "lander"
+// landLaneWho names one gate's holder on a bench's Go lane.
+func landLaneWho(stream string) string { return "lander/" + stream }
 
 // landLoop runs one land cycle every LandEvery until ctx ends. Each cycle writes
 // one line: LAND OK, LAND REFUSED, or LAND IDLE. A landing runs beside the loop,

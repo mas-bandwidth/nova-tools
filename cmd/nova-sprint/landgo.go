@@ -210,7 +210,7 @@ func (l *lander) treeGateBase(ctx context.Context, dir, baseSha string) (why str
 	case f != nil && now.Before(f.next):
 		return f.said(), false
 	}
-	why = l.treeGate(ctx, dir, true)
+	why = l.treeGateStream(ctx, dir, true)
 	if why == "" || slices.Contains(l.offRules(ctx), sprint.RuleBaseGate) {
 		l.baseGateCache[baseSha] = why
 		delete(l.baseGateFails, baseSha)
@@ -294,6 +294,15 @@ func treePackages(dir string) []string {
 // cannot be reached runs it here instead, and never blames the card. Otherwise, and for a
 // land command on its own, it runs here (goRun). The ledgers' update runs stay here.
 func (l *lander) treeGate(ctx context.Context, dir string, tests bool) string {
+	return l.treeGateWithHolder(ctx, dir, tests, landLaneWho("base"))
+}
+
+// treeGateStream gates one fork under its stream's own lane holder.
+func (l *lander) treeGateStream(ctx context.Context, dir string, tests bool) string {
+	return l.treeGateWithHolder(ctx, dir, tests, landLaneWho(l.gateKey))
+}
+
+func (l *lander) treeGateWithHolder(ctx context.Context, dir string, tests bool, holder string) string {
 	if _, err := os.Stat(filepath.Join(dir, "go.mod")); err != nil {
 		return ""
 	}
@@ -303,7 +312,7 @@ func (l *lander) treeGate(ctx context.Context, dir string, tests bool) string {
 	runs := gateRuns(tests, treePackages(dir))
 	hosts, inLoop := l.gateBenches(ctx)
 	if len(hosts) > 0 {
-		if why, ran := l.benchGate(ctx, hosts, dir, runs, tests); ran {
+		if why, ran := l.benchGate(ctx, hosts, dir, runs, tests, holder); ran {
 			return why
 		}
 	}
@@ -330,13 +339,13 @@ func (l *lander) treeGate(ctx context.Context, dir string, tests bool) string {
 // ctx ended, the bench not answering, the copy failing): the caller runs it here, and that
 // bench's failure is nobody's finding. A gate that ran records the ring's size and the
 // slot for the batch's LAND line (gateRing, gateSlot).
-func (l *lander) benchGate(ctx context.Context, hosts []string, dir string, runs [][]string, tests bool) (why string, ran bool) {
-	host, err := l.takeGateLane(ctx, benchRing(l.gateKey, hosts))
+func (l *lander) benchGate(ctx context.Context, hosts []string, dir string, runs [][]string, tests bool, holder string) (why string, ran bool) {
+	host, err := l.takeGateLane(ctx, benchRing(l.gateKey, hosts), holder)
 	if err != nil {
 		return "", false
 	}
-	defer l.giveGateLane(host)
-	l.stage("gate", "bench "+host+": "+strings.Join(runs[0], " "))
+	defer l.giveGateLane(host, holder)
+	l.stage("gate", "bench "+host+" as "+holder+": "+strings.Join(runs[0], " "))
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(len(runs))*landGoBudget)
 	defer cancel()
 	start := l.clock()
@@ -429,50 +438,63 @@ func (l *lander) gateBenches(ctx context.Context) (hosts []string, inLoop bool) 
 // to) and gives back the rest, and the ring is asked again from that host on the next
 // land-loop cycle (waitLaneAsk): that loop is the clock, so this ask adds no timer of its
 // own, and the beat keeps printing. The stage names the lane it waits on.
-func (l *lander) takeGateLane(ctx context.Context, hosts []string) (string, error) {
+func (l *lander) takeGateLane(ctx context.Context, hosts []string, holder string) (string, error) {
 	if len(hosts) == 0 {
 		return "", fmt.Errorf("no bench to take a Go lane on")
 	}
-	proc := "lane take go --machine " + hosts[0] + " --as " + landLaneWho
+	proc := "lane take go --machine " + hosts[0] + " --as " + holder
 	asked := map[string]bool{}
 	for {
 		if err := ctx.Err(); err != nil {
 			for h := range asked {
-				l.giveGateLane(h)
+				l.giveGateLane(h, holder)
 			}
 			return "", err
 		}
-		for _, h := range hosts {
+		host := askGateRing(hosts, holder, asked, func(h, who string) (sprint.LaneAnswer, error) {
 			l.a.serial.Lock()
-			ans, err := l.st.LaneStep(ctx, sprint.LaneGo, h, landLaneWho, false)
+			ans, err := l.st.LaneStep(ctx, sprint.LaneGo, h, who, false)
 			l.a.serial.Unlock()
-			if err != nil {
-				continue // this lane cannot be read now; the next may grant
-			}
-			asked[h] = true
-			if ans.Granted {
-				for o := range asked {
-					if o != h {
-						l.giveGateLane(o)
-					}
+			return ans, err
+		})
+		if host != "" {
+			for o := range asked {
+				if o != host {
+					l.giveGateLane(o, holder)
 				}
-				return h, nil
 			}
+			return host, nil
 		}
 		for h := range asked {
 			if h != hosts[0] {
-				l.giveGateLane(h) // the wait is on the batch's own slot alone
+				l.giveGateLane(h, holder) // the wait is on the batch's own slot alone
 				delete(asked, h)
 			}
 		}
 		l.stage("lane", proc)
 		if err := l.waitLaneAsk(ctx); err != nil {
 			for h := range asked {
-				l.giveGateLane(h)
+				l.giveGateLane(h, holder)
 			}
 			return "", err
 		}
 	}
+}
+
+// askGateRing asks each bench in order, stepping past held or unreadable lanes.
+// asked keeps the places the caller must give back after a grant or cancellation.
+func askGateRing(hosts []string, holder string, asked map[string]bool, take func(string, string) (sprint.LaneAnswer, error)) string {
+	for _, h := range hosts {
+		ans, err := take(h, holder)
+		if err != nil {
+			continue
+		}
+		asked[h] = true
+		if ans.Granted {
+			return h
+		}
+	}
+	return ""
 }
 
 // waitLaneAsk blocks until the land loop's next cycle, or until ctx ends. The
@@ -496,12 +518,12 @@ func (l *lander) waitLaneAsk(ctx context.Context) error {
 
 // giveGateLane returns the Go lane, or the place in its queue. A cancelled landing still
 // gives it back; the hold expires at LaneHoldFor when the give does not land.
-func (l *lander) giveGateLane(machine string) {
+func (l *lander) giveGateLane(machine, holder string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	l.a.serial.Lock()
 	defer l.a.serial.Unlock()
-	_, _ = l.st.LaneStep(ctx, sprint.LaneGo, machine, landLaneWho, true) // ignored: the hold expires at LaneHoldFor when this give does not land
+	_, _ = l.st.LaneStep(ctx, sprint.LaneGo, machine, holder, true) // ignored: the hold expires at LaneHoldFor when this give does not land
 }
 
 // runOnBench runs the gate's runs on host (gateScript) in a copy of dir, with its .git
@@ -539,7 +561,7 @@ func (l *lander) gateCard(ctx context.Context, dir string, c landCard, before st
 	if err != nil {
 		return "", "the files the merge of " + c.id + " changed could not be listed: " + firstLine("", err)
 	}
-	why := l.treeGate(ctx, dir, slices.ContainsFunc(strings.Split(changed, "\n"), treeTested))
+	why := l.treeGateStream(ctx, dir, slices.ContainsFunc(strings.Split(changed, "\n"), treeTested))
 	if why == "" {
 		return "", ""
 	}
@@ -581,7 +603,7 @@ func (l *lander) cureBase(ctx context.Context, dir, stream string, cards []landC
 			notes[h.ID] = note
 			return card, env
 		},
-		Gate:  func(ctx context.Context, dir string) string { return l.treeGate(ctx, dir, true) },
+		Gate:  func(ctx context.Context, dir string) string { return l.treeGateStream(ctx, dir, true) },
 		Tried: func(h sprint.CureHead) bool { return l.cureTried[tried(h)] },
 	})
 	l.conflictKind, l.conflictPaths = "", nil // a try's conflict is no card's stop

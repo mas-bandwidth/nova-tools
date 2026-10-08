@@ -570,7 +570,7 @@ func (l *lander) merge(ctx context.Context, j *landJob) {
 		// where a head changed what they read, so that tip is not recorded as gated)
 		start := time.Now()
 		l.stage("gate", "the batch's tree")
-		red := l.treeGate(ctx, dir, true)
+		red := l.treeGateStream(ctx, dir, true)
 		since(&b.Times.Merge, start)
 		if red == "" {
 			j.gated = true
@@ -778,7 +778,7 @@ func (l *lander) again(ctx context.Context, j *landJob, newBase string, pushed [
 	if collide, gate := needsGate(j.merged, merged, batchFiles, lines(landedFiles)); gate {
 		start := time.Now()
 		l.stage("gate", "the combined tree")
-		red := l.treeGate(ctx, dir, true)
+		red := l.treeGateStream(ctx, dir, true)
 		if red == "" {
 			var out string
 			if red, out = l.runCheck(ctx, dir); red != "" {

@@ -4092,6 +4092,10 @@ loop. The same ring and the same key serve the parallel pass: each stream's job
 hashes its own stream name, so the batches merging beside each other start on
 different benches instead of all on the first up member (the owner, 2026-10-07:
 "we do the uint64 and it is modulo % n", "even when we have parallel land"). A
+fork holds and waits for a Go lane as `lander/<stream>`, so a sibling on the same
+slot sees the held lane and steps round the ring; its give releases only its own
+hold or wait. A base recheck uses `lander/base`. The lane stage and stuck
+judgment name the holder whose gate is waiting or running. A
 batch's `LAND` line adds `ring=<n> slot=<h % n>` after `bench=` when a bench ran
 a gate. The ring's model in TLA+ is its own card.
 `--check` is the caller's own command on top, once a batch, as before.
