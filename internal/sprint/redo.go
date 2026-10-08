@@ -6,6 +6,103 @@ import (
 	"strings"
 )
 
+// LandRefusedFix is the fix of a card whose head the landing refused (landRefused): why, in
+// the lander's words, and what the next attempt does about it.
+func LandRefusedFix(why string) string {
+	return cutText("the landing refused this head: "+why+"; rebase on the base tip, resolve, make the tree gate pass", MaxCardTextBytes)
+}
+
+// LandRefusedFinding begins the finding a landing refusal leaves on its card, the way of it
+// after (RefusalWay): two refusals the same way are the same finding, and the brief's bound
+// (AtBriefBound) stops the card at the second.
+const LandRefusedFinding = "the landing refused its head: "
+
+// landRefused is the merge step's answer to a conflict fact on the card's own head: the
+// landing refused the head of pr, a card of the batch queued (m), one of the ways of
+// RefusalWay (way). It never stops the stream: the card leaves merge (returned), and the
+// stream stays merging while it has cards to land, so the lander lands them in the same pass.
+//
+// Files outside its PATHS (RefusedPaths) go back to review marked as the conflict rule marks
+// them (FieldRuleRedo, FieldRuleRefused, FieldRuleRefusal), under the returned judgment: the
+// widen rule twins it wider from its finished head, or the conflict rule's redo reworks it
+// (widen.go, rules.go). Any other way is reworked at once: its next attempt waits ready with
+// the refusal as its fix, its finished head the base staging carries onto the tip (BaseOf),
+// its read cards retired, the way kept as its finding (LandRefusedFinding), and the seat told
+// once (NLandRefused, nothing to answer). A card at its brief's bound (AtBriefBound: the same
+// refusal twice, or the attempt cap) is not reworked: it goes back to review with the bound's
+// judgment (NBriefWrong). state, ctlSet and notes are the merge step's for the stream.
+func landRefused(s *Snapshot, r MergeReq, way, state string, ctl *Card, ctlSet map[string]string, notes []Note, pr, m *Card) Unit {
+	id, attempt, now := pr.ID, pr.F("attempt"), stamp(s.Now)
+	refusal := "the landing refused attempt " + attempt + "'s head: " + orDash(r.Note)
+	u := Unit{Key: id, Stream: r.Stream}
+	// the stream after the card leaves: merging while it has cards to land, else waiting
+	if s.Merge.Count(r.Stream, Queued)+s.Merge.Count(r.Stream, Stuck) == 1 {
+		if state == StreamWaiting {
+			delete(ctlSet, "state")
+			delete(ctlSet, "since")
+			notes = nil
+		} else {
+			ctlSet["state"], ctlSet["since"] = StreamWaiting, now
+		}
+	}
+	// a refusal of the card's own: the base passed its gate, and its count starts again
+	u.Changes = append(u.Changes, change(Merge, setEntry(ctl, ctlSet, baseGateCount...)))
+	u.Notes = notes
+	u.Changes = append(u.Changes, change(Merge, moveEntry(m, r.Stream, Returned, nil, "need_card", "need_stream")))
+	set := map[string]string{"returns": itoa(pr.Int("returns") + 1), "return_reason": "conflict", FieldReturnedAttempt: attempt}
+	review := func(j Note) Unit {
+		u.Changes = append(u.Changes, change(Work, moveEntry(pr, r.Stream, Review, set)))
+		u.Notes = append(u.Notes, j)
+		u.Closes = closesFor(s.Open, ReturnResolves, id)
+		if ra, ok := reviewJudgment(s, inReview(pr, set), reviewStep{closing: noteIDs(u.Closes), writes: u.Notes, who: r.Who}); ok {
+			u.Notes = append(u.Notes, ra)
+		}
+		return u
+	}
+	if way == RefusedPaths {
+		set[FieldRuleRedo], set[FieldRuleRefused], set[FieldRuleRefusal] = attempt, way, cutText(orDash(r.Note), MaxCardTextBytes)
+		j := judgment(NReturned, r.Stream, s.Now, pr.Int("returns"), id)
+		j.Who, j.Attempt, j.What = r.Who, pr.Int("attempt"), cutText(refusal, MaxCardTextBytes)
+		if !acceptable(s, pr) {
+			j.Decisions = removeDecision(j.Decisions, "accept")
+		}
+		u.Moved = fmt.Sprintf("%s merging -> review (the landing refused its head: files outside its PATHS; off merge %s)", id, m.Col)
+		return review(j)
+	}
+	finding := LandRefusedFinding + way
+	if bb, ok := AtBriefBound(pr, finding, s.AttemptsCap(pr.Row)); ok {
+		j := judgment(NBriefWrong, r.Stream, s.Now, 0, id) // its decisions alone: it is the repeat
+		j.Who, j.Card, j.Attempt, j.What = r.Who, id, pr.Int("attempt"), cutText(bb.String()+"; "+refusal, MaxCardTextBytes)
+		u.Moved = fmt.Sprintf("%s merging -> review (the landing refused its head at its brief's bound; off merge %s)", id, m.Col)
+		return review(j)
+	}
+	broken := 0
+	if s.Readers != nil {
+		for _, rc := range s.Readers.Of(id) {
+			if rc.Col == Broken {
+				broken++
+			}
+			u.Changes = append(u.Changes, change(Readers, removeEntry(rc, map[string]string{"retired": now, "retired_by": "rework"})))
+		}
+	}
+	reworkPriority(s, pr, set)
+	set["fix"], set["why"], set["finding"] = LandRefusedFix(orDash(r.Note)), refusal, finding
+	set["reworks"], set["broken_reads"] = itoa(pr.Int("reworks")+1), itoa(pr.Int("broken_reads")+broken)
+	set[FieldFindingAttempt] = attempt
+	if lines := findingsOf(pr, pr.Int("attempt"), finding+": "+orDash(r.Note)); len(lines) > 0 {
+		set[FieldFindings] = findingsLine(lines)
+	}
+	// it is no passed head (FieldPassedHead): the landing refused it, so an attempt that finds
+	// nothing new at it has not answered the fix
+	u.Changes = append(u.Changes, change(Work, moveEntry(pr, r.Stream, Ready, set, "readers", "result", FieldFindingReader, FieldPassedHead)))
+	n := happened(NLandRefused, r.Stream, s.Now, id)
+	n.Who, n.To, n.Card, n.Attempt, n.What = r.Who, s.Coordinator, id, pr.Int("attempt"), cutText(orDash(r.Note), MaxCardTextBytes)
+	u.Notes = append(u.Notes, n)
+	u.Closes = closesFor(s.Open, append(ReworkResolves, ReturnResolves...), id)
+	u.Moved = fmt.Sprintf("%s merging -> ready (the landing refused its head: reworked at the tip; off merge %s)", id, m.Col)
+	return u
+}
+
 // RedoFixText is the fix every redo applies to the conflicted attempt.
 const RedoFixText = "redo the same change on the current tip"
 
@@ -98,6 +195,7 @@ func Redo(s *Snapshot, r RedoReq) Plan {
 			FieldReturnedAttempt: itoa(c.Int("attempt")),
 			"broken_reads":       itoa(c.Int("broken_reads") + broken),
 		}
+		c = reworkPriority(s, c, set)
 		unset := []string{"readers"}
 		if len(okReaders(s, c)) > 0 && c.F("result") != "failed" {
 			set[FieldPassedHead] = c.F("head")

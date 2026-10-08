@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	nsstore "github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
+	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -41,7 +41,7 @@ func TestTableEditsPreserveEpochHistoryAndRenameLedger(t *testing.T) {
 	require.NoError(t, c.HSet(ctx, tb.EpochKey, "n", 1).Err())
 	var receipt ntable.Receipt
 	opts := ntable.WriteOptions{Epoch: 1, Actor: "edit-test", Fence: "f7", Idem: "i9", Receipt: &receipt}
-	trips := nsstore.New(c).CountTrips()
+	trips := redisconn.CountTrips(c)
 	one := func(name, table string, call func() error) {
 		t.Helper()
 		before := c.XLen(ctx, ntable.ChangesKey(table)).Val()

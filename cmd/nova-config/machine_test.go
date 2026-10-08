@@ -158,10 +158,10 @@ func TestMachineSelfCheckIsThreeWhenTheRowCannotBeRead(t *testing.T) {
 func TestAMachineAddedWithNoWidthIsToldItIsTheDefault(t *testing.T) {
 	t.Parallel()
 	h := newHarness()
-	code, out, errs := h.run(t, "machine", "add", "m1", "--user", "u", "--seat", "s", "--slots", "8", "--pg", dsn, "--as", "a1")
+	code, out, errs := h.run(t, "machine", "add", "m1", "--user", "u", "--seat", "s", "--slots", "8", "--pg", dsn, "--actor", "a1")
 	require.Equal(t, 0, code, errs)
-	assert.Equal(t, "CONFIG ADD kind=machine name=m1 rev=1\nNOTE machine=m1 width=default: a sprint member at half its cores, as nova-sprint fleet sync reads them from its beat; its width is set apart from its slots; run: nova-config machine set m1 --width <n> (0: no member) --as a1 --pg "+dsn+"\n", out)
-	code, out, errs = h.run(t, "machine", "add", "m2", "--user", "u", "--seat", "s", "--slots", "8", "--width", "4", "--pg", dsn, "--as", "a1")
+	assert.Equal(t, "CONFIG ADD kind=machine name=m1 rev=1\nNOTE machine=m1 width=default: a sprint member at half its cores, as nova-sprint fleet sync reads them from its beat; its width is set apart from its slots; run: nova-config machine set m1 --width <n> (0: no member) --actor a1 --pg "+dsn+"\n", out)
+	code, out, errs = h.run(t, "machine", "add", "m2", "--user", "u", "--seat", "s", "--slots", "8", "--width", "4", "--pg", dsn, "--actor", "a1")
 	require.Equal(t, 0, code, errs)
 	assert.Equal(t, "CONFIG ADD kind=machine name=m2 rev=2\n", out)
 }

@@ -218,7 +218,11 @@ type FileHit struct {
 	Para    int
 	Line    int
 	Snippet string
-	Fused   float64
+	// Whole is the hit chunk's paragraph, untruncated. Snippet cuts the same
+	// paragraph at 120 bytes, so the words a reader searched for can sit just
+	// past the cut; --whole prints this instead, and the caller bounds it.
+	Whole string
+	Fused float64
 	// Native is the chunk's score in NativeChan, and NativeChan is the first
 	// NAMED channel that actually surfaced it — not unconditionally the first
 	// channel named. In a multi-channel run a chunk can reach the fused top-k
@@ -322,7 +326,7 @@ func Retrieve(c *Corpus, channels []Channel, text string, k int) []FileHit {
 		n := native[id]
 		best[key] = FileHit{
 			File: ch.File, Root: ch.Root, Class: ch.Class, FMName: ch.FMName, FMType: ch.FMType,
-			Para: ch.Para, Line: ch.Line, Snippet: snip, Fused: f, Native: n.score, NativeChan: n.chn,
+			Para: ch.Para, Line: ch.Line, Snippet: snip, Whole: ch.Original, Fused: f, Native: n.score, NativeChan: n.chn,
 		}
 	}
 	hits := make([]FileHit, 0, len(best))

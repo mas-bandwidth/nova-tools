@@ -23,7 +23,7 @@ import (
 // is a function of the tables and that set.
 
 // friendTakeWords is what friend take says on -h.
-const friendTakeWords = "friend take takes back cards dealt to the friend that she has not started: each goes back to ready, withdrawn from her row (no failure, no bound spent: the card records \"taken back by the coordinator: <reason>\"), and the next tick deals the same card at its next generation to another friend up with room, never back to her (a friend's card is never a machine's); a card whose WHO line names her waits until it is briefed for another friend or dropped. A card is refused, one REFUSED line each, when it is not dealt to that friend or when she has started it: a push on its branch, her beat naming it running (friend beat --running), or finished (in review or later); the others named are taken, and the exit is 1 when any is refused. --all-or-nothing takes none when one is refused. --all-unstarted takes every card of hers she has not started and says the ones she keeps. A working card taken frees her lane, and her oldest ready card is taken into working at once. friend sync marks a card taken back as taken in her queue file.\n"
+const friendTakeWords = "friend take takes back cards dealt to the friend that she has not started: each goes back to ready, withdrawn from her row (no failure, no bound spent: the card records \"taken back by the coordinator: <reason>\"), and the next tick deals the same card at its next generation to another friend up with room, never back to her (a friend's card is never a machine's); a card whose WHO line pins her waits until it is given back to her (friend give), briefed for another friend or dropped. A card is refused, one REFUSED line each, when it is not dealt to that friend or when she has started it: a push on its branch, her beat naming it running (friend beat --running), or finished (in review or later); the others named are taken, and the exit is 1 when any is refused. --all-or-nothing takes none when one is refused. --all-unstarted takes every card of hers she has not started and says the ones she keeps. A working card taken frees her lane, and her oldest ready card is taken into working at once. friend sync marks a card taken back as taken in her queue file.\n"
 
 // friendStarted is the friend's cards she has started, each with its why: every work card
 // ready or working on her row that her last beat names running (by its id, its job or its
@@ -124,6 +124,41 @@ func (a *app) cmdFriendTake(args []string, stdout, stderr io.Writer) int {
 	}
 	step := store.FriendTakeStep(sprint.FriendTakeReq{Friend: friend, IDs: ids, All: *all, AllOrNothing: *allOrNothing, Reason: *reason, Started: started, Who: c.actor, Spends: true})
 	step.Named = false // the takeable are taken and the rest refused; sprint.FriendTake keeps --all-or-nothing itself
+	return a.runStep(name, *c, st, step, stdout, stderr)
+}
+
+// friendGiveWords is what friend give says on -h.
+const friendGiveWords = "friend give is the undo of friend take: on each card named, ready or waiting, it clears the mark of the friend the card was taken back from, so the next deal may deal it to her again; a card whose WHO line pins her, which waits for no one else, is dealt to her. A card not ready or waiting, or never taken back from that friend, is refused, one REFUSED line each; the others named are given, and the exit is 1 when any is refused. Each card given says MOVED <card> may be dealt to <friend> again (<reason>).\n"
+
+func (a *app) cmdFriendGive(args []string, stdout, stderr io.Writer) int {
+	const name = "friend give"
+	fs, c := a.verbSetup(name)
+	reason := fs.String("reason", "", "why the cards are given back, kept on the note (default: given back by the coordinator)")
+	pos, err := parse(fs, args)
+	if err != nil {
+		return refuse(stderr, name, err.Error())
+	}
+	switch {
+	case len(pos) < 2:
+		return refuse(stderr, name, "wants a friend, then the cards to give back")
+	case !sprint.ValidID(pos[0]):
+		return refuse(stderr, name, "a friend name wants letters, digits, _ and -: "+pos[0])
+	}
+	friend := pos[0]
+	st, err := a.store(*c)
+	if err != nil {
+		return refuse(stderr, name, err.Error())
+	}
+	names, err := st.FriendNames(context.Background())
+	if err != nil {
+		return a.readFailed(name, err, stderr)
+	}
+	if !slices.Contains(names, friend) {
+		fmt.Fprintf(stderr, "%s %s: no friend %s on the friends table (friends: %s); run: nova-sprint friend sync\n", prog, name, friend, orDashStr(strings.Join(names, ","), "none"))
+		return 1
+	}
+	step := store.FriendGiveStep(sprint.FriendGiveReq{Friend: friend, IDs: pos[1:], Reason: *reason, Who: c.actor})
+	step.Named = false // the givable are given and the rest refused
 	return a.runStep(name, *c, st, step, stdout, stderr)
 }
 

@@ -30,8 +30,8 @@ func laneWhy(kind, machine, who string) string {
 	if !sprint.ValidID(machine) {
 		why = append(why, "a machine name wants letters, digits, _ and -: "+machine)
 	}
-	if !sprint.ValidID(who) {
-		why = append(why, "a worker name wants letters, digits, _ and -: "+who)
+	if !sprint.ValidLaneWho(who) {
+		why = append(why, "a worker name wants letters, digits, _ and -, or two such joined by one / (lander/<stream>): "+who)
 	}
 	return strings.Join(why, "; ")
 }

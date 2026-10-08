@@ -30,6 +30,7 @@ func cmdCheck(args []string, stdout, stderr io.Writer, now time.Time) int {
 	strict := fs.Bool("strict", false, "treat every gap and note as a finding")
 	noSpend := fs.String("no-spend", "", "file listing UTC dates with no spend, one per line")
 	through := fs.String("through", "", "require coverage through this UTC day, YYYY-MM-DD")
+	allowEmpty := fs.Bool("allow-empty", false, "answer OK on an --out holding no day file; without it files=0 is FAILED, never a green over nothing")
 	s, code, ok := start(fs, args, "CHECK", stdout, stderr)
 	if !ok {
 		return code
@@ -101,14 +102,16 @@ func cmdCheck(args []string, stdout, stderr io.Writer, now time.Time) int {
 		fmt.Fprintf(s.err(), "CHECK FAILED stale last=%s through=%s\n", oneline.Field(last), oneline.Field(*through))
 		s.item("stale", "last", last, "through", *through)
 	}
-	// A GATE THAT CANNOT GO RED IS NO GATE. An --out holding no day file has nothing in it
-	// to pass, and a green over nothing reads exactly like a green over a month: it is a
-	// finding, with the fold that makes the first file as its remedy.
-	empty := res.Files == 0
+	// A GATE THAT CANNOT GO RED IS NO GATE. The standard's Verb.Looks rule (files read):
+	// check reads day files, so an --out holding none has nothing to pass, and a green
+	// over nothing reads exactly like a green over a month. Without --allow-empty it is a
+	// finding; --allow-empty is the one word that says the empty --out is deliberate.
+	empty := res.Files == 0 && !*allowEmpty
 	if empty {
-		why := "--out " + *out + " holds no day file, so there is nothing to check; fold one first: nova-tokens fold --out " + *out + " --day <YYYY-MM-DD> --repos <file> <source flags>"
+		why := "looked at nothing: --out " + *out + " holds no day file; fold one first, or run: nova-tokens check --out " + *out + " --allow-empty"
 		fmt.Fprintf(s.err(), "CHECK FAILED %s\n", oneline.Escape(why))
 		s.o.Why = append(s.o.Why, why)
+		s.o.Remedy = "nova-tokens check --out " + *out + " --allow-empty"
 	}
 	bad := files.Total() + rowsList.Total()
 	counts := []any{"files", res.Files, "rows", res.Rows, "first", first, "last", last}
