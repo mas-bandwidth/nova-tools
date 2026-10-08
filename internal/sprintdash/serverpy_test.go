@@ -177,4 +177,18 @@ func TestDashboardServesWhatServerPyServedFromOnePoller(t *testing.T) {
 		}
 		assert.Equal(t, http.StatusNotFound, get(r.s, "/favicon.svg").Code, "a raster logo has no svg favicon")
 	})
+
+	t.Run("a raster logo's magic bytes name its type, not its extension", func(t *testing.T) {
+		t.Parallel()
+		r := newRig(t)
+		r.s.Logo = filepath.Join(t.TempDir(), "logo.png")
+		webp := []byte("RIFF\x00\x00\x00\x00WEBPVP")
+		require.NoError(t, os.WriteFile(r.s.Logo, webp, 0o600))
+		for _, path := range []string{"/logo", "/logo.png", "/favicon.png"} {
+			w := get(r.s, path)
+			assert.Equal(t, http.StatusOK, w.Code, path)
+			assert.Equal(t, "image/webp", w.Header().Get("Content-Type"), "%s: a webp file named .png is served as webp", path)
+			assert.Equal(t, webp, w.Body.Bytes(), path)
+		}
+	})
 }

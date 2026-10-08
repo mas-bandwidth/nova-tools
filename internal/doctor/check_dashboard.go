@@ -34,8 +34,9 @@ func init() {
 // nova-loop-<name>.service, in the user's place or the system's) and dials the first
 // loopback address of its --listen. ok when the unit is there and the port answers; a
 // warn when no unit runs the dashboard on this machine, or a hand unit serves it in
-// place of a loop record; a fail when the unit is there and the port does not answer
-// (docs/SETUP.md, "The sprint dashboard").
+// place of a loop record; a fail when the unit is there and the port does not answer,
+// or its --listen names no loopback address and so serves no page the check can reach
+// on loopback (docs/SETUP.md, "The sprint dashboard").
 func checkDashboard(ctx context.Context, env Env) Result {
 	home := env.Getenv("HOME")
 	unit, body, hand := dashboardUnit(env, home)
@@ -49,7 +50,10 @@ func checkDashboard(ctx context.Context, env Env) Result {
 	}
 	addr := dashboardLoopback(body)
 	if addr == "" {
-		return Result{Status: OK, Evidence: fmt.Sprintf("%s runs nova-sprint dashboard and serves no page on loopback", unit)}
+		name := loopName(unit)
+		return Result{Status: Fail,
+			Evidence: fmt.Sprintf("%s runs nova-sprint dashboard but its --listen names no loopback address, so no page is served on loopback", unit),
+			Fix:      fmt.Sprintf("nova-config loop show %s, add a loopback address to --listen (for example 127.0.0.1:7390), then nova-config apply and the fleet/loops.yml play", name)}
 	}
 	dctx, cancel := context.WithTimeout(ctx, dashboardTimeout)
 	defer cancel()

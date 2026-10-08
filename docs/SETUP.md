@@ -234,3 +234,10 @@ a page is open; `--logo` is optional. The contract is
 is installed and its loopback port answers, `warn` when no loop record runs the dashboard
 on this machine or a hand unit serves it, and `fail` when the unit is there and the port
 does not answer. It is a fleet check: `--local` skips it.
+
+### sprint-dashboard-verb-r-b.w8: the dashboard's loopback check and logo type
+
+`nova-doctor --check dashboard` fails, not passes, when the loop record runs
+`nova-sprint dashboard` but its `--listen` names no loopback address: the fix line names
+the loop record and a loopback address to add. The logo routes type the image by its magic
+bytes before its file name, so a WebP image named `logo.png` is served as `image/webp`.

@@ -163,3 +163,12 @@ outside program, so the image `--logo` names is served as given at every logo ro
 prepared once by hand; and it filtered the `SECRETS` line of a wrapper script, where the
 verb reads the sprint in its own process and has no wrapper. The doctor's `dashboard` check
 holds that the dashboard runs as a loop record and answers on loopback (docs/SETUP.md).
+
+### sprint-dashboard-verb-r-b.w8
+
+The doctor's `dashboard` check fails, not passes, when the loop record's `--listen` names
+no loopback address: a unit that serves no page on loopback is a fault the check can see,
+and its fix line names the loop record and a loopback address to add. The logo routes type
+the image by its magic bytes before its file name, so a WebP image named `logo.png` is
+served `image/webp`. Tests: `TestDashboardCheck` (internal/doctor) and
+`TestDashboardServesWhatServerPyServedFromOnePoller` (internal/sprintdash).

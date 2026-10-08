@@ -96,12 +96,13 @@ func TestDashboardCheck(t *testing.T) {
 		assert.Equal(t, Warn, r.Status, r)
 		assert.Equal(t, "unload and remove home/"+hand+": the dashboard runs as its loop record alone", r.Fix)
 	})
-	t.Run("a page on no loopback address is ok with nothing to dial", func(t *testing.T) {
+	t.Run("a unit whose --listen names no loopback address is a fail with the listen fix", func(t *testing.T) {
 		t.Parallel()
 		unit := `<!-- written by fleet/loops.yml from the loop record d --><string>nova-sprint</string><string>dashboard</string><string>--listen</string><string>none</string>`
 		r := run(dashboardRig(t, map[string]string{launchd: unit}))
-		assert.Equal(t, OK, r.Status, r)
-		assert.Contains(t, r.Evidence, "serves no page on loopback")
+		assert.Equal(t, Fail, r.Status, r)
+		assert.Contains(t, r.Evidence, "home/"+launchd+" runs nova-sprint dashboard but its --listen names no loopback address")
+		assert.Contains(t, r.Fix, "nova-config loop show sprint-dashboard")
 	})
 	t.Run("only a fleet needs it", func(t *testing.T) {
 		t.Parallel()

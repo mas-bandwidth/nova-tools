@@ -467,8 +467,12 @@ func (s *Server) logo() ([]byte, error) {
 	return os.ReadFile(s.Logo)
 }
 
-// logoType is the logo's media type: by its name's extension, else by its bytes.
+// logoType is the logo's media type: a raster image's own magic bytes decide first (a
+// webp named .png is image/webp), else its name's extension, else the bytes' own answer.
 func logoType(name string, body []byte) string {
+	if t := http.DetectContentType(body); strings.HasPrefix(t, "image/") {
+		return t
+	}
 	if t := mime.TypeByExtension(strings.ToLower(filepath.Ext(name))); strings.HasPrefix(t, "image/") {
 		return t
 	}
