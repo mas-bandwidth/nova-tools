@@ -10,9 +10,12 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -77,4 +80,85 @@ func runIn(t *testing.T, bin string, args ...string) (code int, stdout, stderr s
 		require.Fail(t, fmt.Sprintf("running %s %s: %v", bin, strings.Join(args, " "), err))
 	}
 	return code, out.String(), errb.String()
+}
+
+// toolAnswersLedgerPath is the shrink-only ledger of the tools that do not yet
+// answer every mistake: one shard per tool, `cmd/<tool>:<kind> <count> <why>`,
+// the count the verbs (or groups) short of the rule.
+const toolAnswersLedgerPath = "testdata/toolanswers"
+
+// The kinds of answer the walk asks of every tool.
+const (
+	answerBare  = "bare"         // a bare command is refused with the REFUSED word
+	answerVerb  = "unknown-verb" // an unknown verb is answered with the tool's verbs
+	answerFlag  = "unknown-flag" // an unknown flag is answered with the verb's flags
+	answerGroup = "group-help"   // a verb group's -h is help at exit 0
+	answerDry   = "dry-run"      // a verb's -h states its effect, and a verb that writes takes --dry-run
+)
+
+// toolAnswersRemedy is, for each kind, what a tool's author does to clear it;
+// on internal/tool every one of them holds by construction.
+var toolAnswersRemedy = map[string]string{
+	answerBare: "a bare `<tool>` prints `<TOOL> REFUSED: no verb given; the verbs are ...; run: <tool> help` on stderr at exit 2 " +
+		"(internal/tool's Run does it)",
+	answerVerb: "an unknown verb is refused at exit 2 in one line naming the tool's verbs, as `<TOOL> REFUSED: unknown verb \"x\"; " +
+		"the verbs are ...; run: <tool> help` (internal/tool's Run does it)",
+	answerFlag: "an unknown flag is refused naming the verb's flags (and the nearest), never the flag package's " +
+		"`flag provided but not defined` line (internal/tool does it; a tool not on it prints verbflag.Explain)",
+	answerGroup: "`<tool> <group> -h` names the group's verbs on stdout at exit 0, as `usage: <tool> <group> <a|b> [flags]` (a two-word " +
+		"Verb.Name on internal/tool; verbflag.Print reads the group from the banner's usage lines)",
+	answerDry: "a verb's -h says `effect: inspection|local write|delivery`, and a verb that writes takes --dry-run that writes " +
+		"nothing (Verb.Effect and Verb.DryRun with Call.DryRun on internal/tool)",
+}
+
+// The arguments the walk hands a tool: names no tool has.
+const (
+	noSuchVerb = "zz-no-such-verb"
+	noSuchFlag = "--zz-no-such-flag"
+)
+
+// toolAnswers is one walk's measure against the ledger, shared by the walk's
+// parallel subtests and checked once they have all finished.
+type toolAnswers struct {
+	mu             sync.Mutex
+	ledger         *siteLedger
+	begun, settled int
+}
+
+func newToolAnswers(t *testing.T) *toolAnswers {
+	t.Helper()
+	allow, err := allowlist.LoadPackages(toolAnswersLedgerPath, allowlist.Options{Ceiling: true, Counted: true, PackageKeys: true})
+	require.NoError(t, err)
+	requireReasons(t, allow)
+	return &toolAnswers{ledger: &siteLedger{path: toolAnswersLedgerPath, allow: allow, sites: map[string][]string{}}}
+}
+
+// begin is called as each tool's subtest starts; settle when its measure is
+// complete (or the tool is not measured at all).
+func (a *toolAnswers) begin() { a.mu.Lock(); a.begun++; a.mu.Unlock() }
+
+func (a *toolAnswers) settle() { a.mu.Lock(); a.settled++; a.mu.Unlock() }
+
+// short records one way tool falls short of kind; "" records nothing.
+func (a *toolAnswers) short(tool, kind, where, problem string) {
+	if problem == "" {
+		return
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.ledger.add("cmd/"+tool+":"+kind, where+": "+problem+"; to clear it: "+toolAnswersRemedy[kind])
+}
+
+// check holds the measure to the ledger, once every one of the tools ran:
+// a run of some of them (-run, or a subtest that stopped early) cannot tell a
+// fixed tool from one it did not reach, so it says so and checks nothing.
+func (a *toolAnswers) check(t *testing.T, tools int) {
+	t.Helper()
+	if a.begun != tools || a.settled != tools {
+		t.Logf("tool-answers: %d of %d tools measured; the ledger is checked only when every tool is", a.settled, tools)
+		return
+	}
+	for _, v := range a.ledger.violations(t, "a tool answers every mistake with the way forward; on internal/tool it does by construction (a row's count only falls)") {
+		assert.Fail(t, v)
+	}
 }
