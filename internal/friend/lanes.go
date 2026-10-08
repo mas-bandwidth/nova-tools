@@ -680,9 +680,8 @@ func (l *loop) limitedTurn(r laneResult, now time.Time) {
 	for _, e := range t.entries {
 		delete(l.inHand, e) // pending: the claim hands them in again
 	}
-	if t.notice != nil && l.notice == nil {
-		l.notice = t.notice
-		l.saidSilent = t.notice.Subject != "coordinator silent"
+	if t.notice != nil {
+		l.owedAgain(t.notice, now)
 	}
 	d.Record(line + fmt.Sprintf(" card=kept turn=%d/%d", ln.attempts, CardTurns))
 	l.providerLimit(r.err, t.started, now)
