@@ -331,9 +331,10 @@ func treePackages(dir string) []string {
 // is green or the clone has no module, else the finding (gateWhy). In the server's land
 // loop with a fleet member other than this machine up, the gate goes to the first such
 // member that grants its Go lane, asked in the ring's order from the slot the batch's
-// stream hashes to (benchRing, landring.go), as one bench run (benchGate); a bench that
-// cannot be reached runs it here instead, and never blames the card. Otherwise, and for a
-// land command on its own, it runs here (goRun). The ledgers' update runs stay here.
+// stream hashes to (benchRing, landring.go), as one bench run (benchGate). A configured
+// remote bench that cannot run the gate refuses it; it does not run Go on this machine.
+// A land command on its own, or a loop with no remote bench configured, runs here
+// (goRun). The ledgers' update runs stay here.
 func (l *lander) treeGate(ctx context.Context, dir string, tests bool) string {
 	if _, err := os.Stat(filepath.Join(dir, "go.mod")); err != nil {
 		return ""
@@ -342,7 +343,7 @@ func (l *lander) treeGate(ctx context.Context, dir string, tests bool) string {
 		l.a.gateRan(dir, tests)
 	}
 	runs := gateRuns(tests, treePackages(dir))
-	hosts, inLoop := l.gateBenches(ctx)
+	hosts, inLoop, remote := l.gateBenches(ctx)
 	// A test's gateBench seam stands in for the bench when no fleet member is up
 	// (the class-gate regression: a fake runner, no socket, no beat to keep fresh).
 	if len(hosts) == 0 && l.a != nil {
@@ -360,6 +361,10 @@ func (l *lander) treeGate(ctx context.Context, dir string, tests bool) string {
 		if why, ran := l.benchGate(ctx, hosts, dir, runs, tests); ran {
 			return why
 		}
+	}
+	if remote {
+		l.stage("gate", "remote bench unavailable")
+		return "the configured remote bench did not run the tree gate; restore a bench and run land again"
 	}
 	start := l.clock()
 	defer func() {
@@ -588,13 +593,14 @@ func redRun(runs [][]string, out string) []string {
 }
 
 // gateBenches is the up fleet members other than this machine that bench.CheckHost
-// accepts, in the fleet's order, and inLoop when the land running is the server's land
+// accepts, in the fleet's order. remote says the loop has another fleet member configured,
+// even when it is down or the fleet could not be read. inLoop says land is the server's land
 // loop's. Only the loop sends the gate out: a land command on its own (a hand land, the
 // install walkthrough) keeps it in this process. A unit test under the host guard with no
 // bench seam keeps it here too, so a member brought up in a test is not sshed to.
-func (l *lander) gateBenches(ctx context.Context) (hosts []string, inLoop bool) {
+func (l *lander) gateBenches(ctx context.Context) (hosts []string, inLoop, remote bool) {
 	if l == nil || l.a == nil || l.st == nil {
-		return nil, false
+		return nil, false, false
 	}
 	b := l.a.landState()
 	b.mu.Lock()
@@ -602,15 +608,21 @@ func (l *lander) gateBenches(ctx context.Context) (hosts []string, inLoop bool) 
 	seam := b.gateBench
 	b.mu.Unlock()
 	if !inLoop || (testguard.Refusing() && seam == nil) {
-		return nil, inLoop
+		return nil, inLoop, false
 	}
 	l.a.serial.Lock()
 	s, err := l.st.Load(ctx, []string{sprint.Fleet}, nil)
 	l.a.serial.Unlock()
 	if err != nil || s == nil {
-		return nil, inLoop
+		return nil, inLoop, true
 	}
 	self := l.a.machineName()
+	for _, m := range s.Members() {
+		if self == "" || !strings.EqualFold(m, self) {
+			remote = true
+			break
+		}
+	}
 	for _, m := range s.UpMembers() {
 		if self != "" && strings.EqualFold(m, self) {
 			continue
@@ -620,7 +632,7 @@ func (l *lander) gateBenches(ctx context.Context) (hosts []string, inLoop bool) 
 		}
 		hosts = append(hosts, m)
 	}
-	return hosts, inLoop
+	return hosts, inLoop, remote
 }
 
 // takeGateLane asks hosts (a ring: benchRing's order) for a Go lane one host at a time
