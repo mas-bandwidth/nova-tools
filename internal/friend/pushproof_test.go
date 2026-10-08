@@ -2,6 +2,7 @@ package friend
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -43,7 +44,7 @@ func (r *proverRig) proof(t *testing.T) (bus.PushProof, time.Time) {
 // TestTheSessionChecksPongIsThePushProof: the friend daemon's SESSION CHECK
 // round trip (the check carried in by the deliver adapter, the session's
 // pong carrying its nonce) is what nova-bus reads as bob's inbox push. A
-// daemon that started proves nothing (down, deaf); the answer writes the
+// daemon that started proves nothing (down, unheard); the answer writes the
 // proof up with the nonce and the harness; while the session stays up the
 // daemon renews it every PushRenewEvery, so it never reads stale; a check
 // unanswered within its bound writes it down at once; and a daemon that
@@ -52,7 +53,14 @@ func TestTheSessionChecksPongIsThePushProof(t *testing.T) {
 	t.Parallel()
 	r := newProverRig(t, nil)
 	ctx := context.Background()
-	heard := func() error { return (&bus.Bus{Store: r.store}).Heard(ctx, "bob") }
+	heard := func() error { // the advisory line as one error, "" as nil: what nova-bus says beside a message
+		lines, err := (&bus.Bus{Store: r.store}).Unheard(ctx, "bob")
+		require.NoError(t, err)
+		if len(lines) == 0 {
+			return nil
+		}
+		return errors.New(lines[0])
+	}
 
 	p, now := r.proof(t)
 	assert.Equal(t, bus.PushNone, p.State(now), "no daemon has written one")
@@ -61,7 +69,7 @@ func TestTheSessionChecksPongIsThePushProof(t *testing.T) {
 	assert.Equal(t, bus.PushDown, p.State(now), "a daemon that started proves nothing about the session")
 	assert.Equal(t, NotYetAnswered, p.Reason)
 	require.Error(t, heard())
-	assert.Contains(t, heard().Error(), "deaf: bob has no proven push since")
+	assert.Contains(t, heard().Error(), "push=down for bob: no proven push since")
 
 	r.send(t, r.daemon, "bob", DaemonPongSubject, "daemon-pong n1\n")
 	r.step(t, BeatEvery)

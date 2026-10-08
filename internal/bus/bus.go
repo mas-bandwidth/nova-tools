@@ -233,6 +233,9 @@ type Store interface {
 	// Range is the entries of the stream from from to to, up to count
 	// (XRANGE; "-", "+" and the exclusive "(<id>" as Redis reads them).
 	Range(ctx context.Context, stream, from, to string, count int) ([]Entry, error)
+	// Newest is the last count entries of the stream, newest first (XREVRANGE
+	// + - COUNT): the end of a log longer than one Range window.
+	Newest(ctx context.Context, stream string, count int) ([]Entry, error)
 	// Get is the named entries of the stream, in one trip (a pipeline of XRANGE
 	// id id); an id that is not there is left out.
 	Get(ctx context.Context, stream string, entries []string) ([]Entry, error)
@@ -262,13 +265,7 @@ type Waiter interface {
 
 // Waiter is the Store's wait reads, or the refusal of a Store that has none.
 func (b *Bus) Waiter() (Waiter, error) {
-	st := b.Store
-	if h, ok := st.(*hearing); ok {
-		// A wait takes nothing, as peek takes nothing: the hearing check guards
-		// the sends and recvs that move messages, so the wait reads the store under it.
-		st = h.Store
-	}
-	w, ok := st.(Waiter)
+	w, ok := b.Store.(Waiter)
 	if !ok {
 		return nil, errors.New("this store cannot wait")
 	}
@@ -674,6 +671,14 @@ func (b *Bus) WaitArm(ctx context.Context, as, after string) (string, error) {
 // with LogForward.
 func (b *Bus) Log(ctx context.Context, from string) ([]Entry, error) {
 	return b.Store.Range(ctx, LogKey, from, "+", logLimit)
+}
+
+// LogNewest is the log's newest logLimit messages, newest first (one
+// XREVRANGE): what `log --newest` prints, so the latest message is reachable
+// however long the log (the finding of 2026-10-08, issue #5450: the oldest
+// window of a log past logLimit never held today's).
+func (b *Bus) LogNewest(ctx context.Context) ([]Entry, error) {
+	return b.Store.Newest(ctx, LogKey, logLimit)
 }
 
 // LogCursor is the log's tail, the cursor a reader arms at so LogForward

@@ -54,7 +54,10 @@ no agent preset and name it with --session <id>`. `run` delivers one SESSION
 CHECK before its loop and exits 2 when no pong comes back within five
 minutes. Her beat carries her session's last proof, and the sprint deals
 nothing to a friend whose proof is older than fifteen minutes
-(docs/SPEC-FRIEND.md, "The push proof").
+(docs/SPEC-FRIEND.md, "The push proof"). The bus never refuses a message on
+the proof: `nova-bus send` and `recv` print `push=<state> for <name>` as a
+NOTE and deliver all the same (docs/SPEC-BUS.md,
+bus-requires-inbox-push-proof).
 
 A dsh session that cannot take a turn defers its messages and never loses
 one, but it does not read up: a headless turn whose output carries the agent

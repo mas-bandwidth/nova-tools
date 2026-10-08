@@ -173,7 +173,7 @@ func busTool(w world) *tool.Tool {
 		Stamp: version,
 		How: `the loop: send --as <me> --to <friend> --subject <s> --body <text> sends;
 recv --as <me> --forever --exec '<deliver-into-session>' takes each message in, acked on exit 0;
-ack --as <me> --id <id> acks by hand; send and recv refuse a deaf name (no push proven in 10m).
+ack --as <me> --id <id> acks by hand; a name with no push proven in 10m is a NOTE, never a refusal.
 one stream per recipient (bus2:to:<name>) under a consumer group, one log (bus2:log); all or none.
 first run: a Redis at --redis (else NOVA_BUS_REDIS, else fleet:bus); loopback/tailnet only.`,
 		ExitTable: "0 done, 1 the verb ran and said no (recv: nothing waiting; recv --exec: the command failed; wait: nothing came), 2 could not run (a flag, an input, a store that did not answer).",
@@ -232,11 +232,13 @@ message's for ever, and the byte count and digest are the body's as the store ho
 can check a --stdin or shell-built body arrived whole (a shell's $(cat f) drops the trailing newline).
 You are the user the connection logged in as (NOVA_SPRINT_REDIS_USER): --as may name it or be left
 out, and another name is refused. With no login (a store with no users) --as is your word for who you
-are, and the line says login=none. The sender and every recipient must be heard: a name whose friend
-daemon proved its inbox push (a SESSION CHECK carried in by its harness's deliver adapter and answered
-by the session) under ten minutes ago; any other is refused with deaf: <name> has no proven push since
-<age> and the remedy, and nothing is written (nova-bus names shows each name's push). --dry-run checks
-the message as send does (every problem named) and prints the line with no id, writing nothing.
+are, and the line says login=none. The message lands whoever is listening: for the sender and each
+recipient whose friend daemon has not proved its inbox push (a SESSION CHECK carried in by its
+harness's deliver adapter and answered by the session, or a per-card harness's daemon up) under ten
+minutes ago, one SEND NOTE push=<none|down|stale> for <name> line follows, saying the message waits
+on its stream and what would prove the push; nothing is refused on it (nova-bus names shows each
+name's push). --dry-run checks the message as send does (every problem named) and prints the line
+with no id and the same NOTE lines, writing nothing.
 --token <t> makes the send safe to retry: the same token and the same arguments within --token-life
 (default 24h) print the first send's SEND OK line again (its id and at) and write nothing, so a send
 whose answer was lost after the store took it is retried without a second message; the same token with
@@ -294,8 +296,9 @@ Delivery to a reader is still at least once: a reader may be handed one message 
 				DryRun:  true,
 				Detail: `Prints one message: a line RECV OK id=<id> from=<name> to=<names> cc=<names> re=<id> [kind=<k>] at=<RFC3339>
 subject=<s> (login=none when the connection has no login user), a blank line, the body; or RECV
-NONE at exit 1 when nothing waits. You are the login user, as in send, and must be heard as there: a
-recv for a name with no proven push is refused (deaf: <name> ...). The oldest message a
+NONE at exit 1 when nothing waits. You are the login user, as in send; a name with no proven push
+reads all the same, with one RECV NOTE push=<none|down|stale> for <name> line on its first result
+(--dry-run, --max, --all and --forever alike). The oldest message a
 reader lost (delivered, not acked, idle fifteen minutes) comes first, else the oldest new one; the
 reader keeps it for fifteen minutes. --exec '<command>' runs the command with that same text on its stdin and
 acks the message when it exits 0 (the line adds acked=true exec_exit=0); a non-zero exit leaves
@@ -409,13 +412,27 @@ example: nova-bus overdue --older 10m`,
 			},
 			{
 				Name:    "log",
-				Usage:   "log [--bodies] [--max <n>] [--timeout <duration>] [--redis <addr>]",
+				Usage:   "log [--bodies] [--after <id> | --newest] [--max <n>] [--timeout <duration>] [--redis <addr>]",
 				Example: "log --max 5",
 				Effect:  tool.Inspection,
 				Detail: `Prints LOG OK total=<n>, then one LOG MESSAGE id=<id> from=<name> to=<names> cc=<names> re=<id>
-[kind=<k>] at=<RFC3339> subject=<s> line per message of the log, oldest first, with body=<text> too under --bodies.`,
+[kind=<k>] at=<RFC3339> entry=<ms>-<seq> subject=<s> line per message of the log, oldest first, with
+body=<text> too under --bodies; entry is the message's place on the log stream. One read holds at most
+10000 messages, so on a log longer than that the plain listing ends before today: --after <entry> lists
+the messages after that entry (oldest first), and --newest lists the last 10000 newest first, so
+--newest --max 5 is the latest five. Give one or the other.`,
 				Flags: func(f *tool.Flags) {
 					f.Bool("bodies", false, "print each message's body as well")
+					f.String("after", "", "list the messages after this log entry, <ms>-<seq> as LOG MESSAGE prints entry=")
+					f.Bool("newest", false, "list newest first, from the log's end")
+					f.Check(func(c *tool.Call) {
+						if v := c.Str("after"); v != "" && !streamID(v) {
+							c.Problem(fmt.Sprintf("--after wants a log entry id, <ms>-<seq> as LOG MESSAGE prints entry=; %q is not one", v))
+						}
+						if c.Str("after") != "" && c.Bool("newest") {
+							c.Problem("--after lists forward from an id and --newest backward from the end; give one or the other")
+						}
+					})
 					f.Max()
 					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else NOVA_SPRINT_REDIS, else fleet:bus)")
 					callTimeoutFlag(f)
@@ -430,9 +447,10 @@ example: nova-bus overdue --older 10m`,
 				Effect:  tool.Inspection,
 				Detail: `Prints NAMES OK count=<n> proven=<n>, then one NAMES NAME name=<name> push=<state> age=<age>
 harness=<h> line per known name (nova-config's friend and machine rows). push is proven (its friend
-daemon proved and renewed its inbox push under ten minutes ago: send and recv take it), stale (the
-daemon stopped renewing), down (its session did not answer the daemon's SESSION CHECK) or none (no
-daemon ever recorded one); age is how long ago the daemon wrote it, never when there is none.`,
+daemon proved and renewed its inbox push under ten minutes ago), stale (the daemon stopped
+renewing), down (its session did not answer the daemon's SESSION CHECK) or none (no daemon ever
+recorded one); age is how long ago the daemon wrote it, never when there is none. The push is the
+seat's liveness rule and a sender's advice: send and recv say it as a NOTE, never refuse on it.`,
 				Flags: func(f *tool.Flags) {
 					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else NOVA_SPRINT_REDIS, else fleet:bus)")
 					callTimeoutFlag(f)
@@ -485,7 +503,7 @@ func (w world) bus(c *tool.Call, timeout time.Duration) (*bus.Bus, string, func(
 		r.Timeout = timeout
 		st = r
 	}
-	return &bus.Bus{Store: bus.Hearing(st)}, login, closeStore, nil
+	return &bus.Bus{Store: st}, login, closeStore, nil
 }
 
 // identity is who the verb acts as: the user the connection logged in as,
@@ -562,24 +580,27 @@ func (w world) send(c *tool.Call) *tool.Out {
 	b.TokenLife, b.TokenCleanup = c.Dur("token-life"), c.Dur("token-cleanup")
 	send := b.Send
 	if c.DryRun() {
-		// the message as it would be sent, with no id: nothing is written, and the
-		// push gate the write would meet is asked for by name
-		send = func(ctx context.Context, m bus.Message) (bus.Message, error) {
-			m, err := b.Check(ctx, m)
-			if err != nil {
-				return m, err
-			}
-			return m, b.Heard(ctx, slices.Concat([]string{m.From}, m.To, m.CC)...)
-		}
+		send = b.Check // the message as it would be sent, with no id: nothing is written
 	}
 	m, err := send(context.Background(), draft)
 	if err != nil {
 		return answer(err)
 	}
+	// the push proof is advice, never a gate: the message landed (or would), and a
+	// name nothing proven is pushing into is one NOTE each (SPEC-BUS.md,
+	// bus-requires-inbox-push-proof)
+	unheard, err := b.UnheardAt(context.Background(), m.At, slices.Concat([]string{m.From}, m.To, m.CC)...)
+	if err != nil {
+		return answer(err)
+	}
 	sum := sha256.Sum256([]byte(m.Body))
 	o := tool.Done().Fact("id", m.ID).Fact("to", strings.Join(m.To, ",")).Fact("cc", strings.Join(m.CC, ","))
-	return loginFact(kindFact(o, m).Fact("at", m.At.Format(time.RFC3339)).
+	o = loginFact(kindFact(o, m).Fact("at", m.At.Format(time.RFC3339)).
 		Fact("bytes", len(m.Body)).Fact("sha256", hex.EncodeToString(sum[:])), login)
+	for _, line := range unheard {
+		o.Note(line)
+	}
+	return o
 }
 
 // kindFact adds kind=<k> to a result when the message is not a status: a
@@ -638,13 +659,26 @@ func (w world) recv(c *tool.Call) *tool.Out {
 	if p := bus.CheckKinds(kinds...); p != "" {
 		return tool.Refuse(p)
 	}
+	// the push proof is advice, never a gate: a name nothing proven is pushing
+	// into reads all the same, with one NOTE on its first result (SPEC-BUS.md,
+	// bus-requires-inbox-push-proof)
+	unheard, err := b.Unheard(context.Background(), as)
+	if err != nil {
+		return answer(err)
+	}
+	noted := false
+	note := func(o *tool.Out) *tool.Out {
+		if !noted {
+			noted = true
+			for _, line := range unheard {
+				o.Note(line)
+			}
+		}
+		return o
+	}
 	if c.DryRun() {
 		// what waits, read only: the next delivered is a pending one held past fifteen
-		// minutes when there is one, else the oldest new one; a deaf name is refused
-		// as the recv itself would be
-		if err := b.Heard(context.Background(), as); err != nil {
-			return answer(err)
-		}
+		// minutes when there is one, else the oldest new one
 		pending, fresh, err := b.Peek(context.Background(), as)
 		if err != nil {
 			return answer(err)
@@ -654,7 +688,7 @@ func (w world) recv(c *tool.Call) *tool.Out {
 		if len(fresh) > 0 {
 			next = fresh[0].Message().ID
 		}
-		return loginFact(tool.Done().Fact("pending", len(pending)).Fact("new", len(fresh)).Fact("next_new", next), login)
+		return note(loginFact(tool.Done().Fact("pending", len(pending)).Fact("new", len(fresh)).Fact("next_new", next), login))
 	}
 	command := c.Str("exec")
 	ctx, stop := w.signals(context.Background())
@@ -670,10 +704,10 @@ func (w world) recv(c *tool.Call) *tool.Out {
 			return answer(err), false
 		}
 		if !ok {
-			return tool.Fail("nothing for " + as).As("NONE"), false
+			return note(tool.Fail("nothing for " + as).As("NONE")), false
 		}
 		m := e.Message()
-		o := message(m, login)
+		o := note(message(m, login))
 		if command == "" {
 			o.Payload = "\n" + m.Body
 			if c.Bool("ack") {
@@ -814,14 +848,23 @@ func (w world) log(c *tool.Call) *tool.Out {
 		return refused
 	}
 	defer closeStore()
-	got, err := b.Log(context.Background(), "-")
+	var got []bus.Entry
+	var err error
+	switch {
+	case c.Bool("newest"):
+		got, err = b.LogNewest(context.Background())
+	case c.Str("after") != "":
+		got, err = b.Log(context.Background(), "("+c.Str("after"))
+	default:
+		got, err = b.Log(context.Background(), "-")
+	}
 	if err != nil {
 		return answer(err)
 	}
 	o := tool.Done().Fact("total", len(got))
 	for _, e := range got {
 		m := e.Message()
-		kv := slices.Concat([]any{"id", m.ID, "from", m.From, "to", strings.Join(m.To, ","), "cc", strings.Join(m.CC, ","), "re", m.Re}, kindItem(m), []any{"at", m.At.Format(time.RFC3339), "subject", tool.Text(m.Subject)})
+		kv := slices.Concat([]any{"id", m.ID, "from", m.From, "to", strings.Join(m.To, ","), "cc", strings.Join(m.CC, ","), "re", m.Re}, kindItem(m), []any{"at", m.At.Format(time.RFC3339), "entry", e.Entry, "subject", tool.Text(m.Subject)})
 		if c.Bool("bodies") {
 			kv = append(kv, "body", tool.Text(m.Body))
 		}

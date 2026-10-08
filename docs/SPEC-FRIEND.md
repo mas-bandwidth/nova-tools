@@ -186,7 +186,9 @@ Presence is therefore the session's, never the daemon's:
   one unanswered while the session spoke, silence for `SessionQuiet` plus
   `SessionBound` is down all the same. Until the session answers
   a check (or writes on the bus) the push is unproven and the daemon delivers
-  nothing into the session (The push proof, below).
+  nothing into the session (The push proof, below); nova-bus itself refuses
+  nothing on it, it says `push=<state>` as a NOTE beside a message
+  (SPEC-BUS.md, bus-requires-inbox-push-proof).
 - The daemon is the one that proves its session to the sprint server, by
   nonces only: the beat after a check goes in says it, `friend beat --check
   <nonce> --run <run>`, and the beat after the session answers it names it,
@@ -1275,7 +1277,12 @@ loop"; cmd/nova-sprint/friend_loop.go).
 A friend nothing pushes into is deaf, and the bus waits on her unread (the
 owner, 2026-10-05: "Your inbox MUST push to you."; "It must be mandatory and
 enforced"). So the push is proved before the daemon starts, never left to a
-log line:
+log line. The proof is the daemon's to make and the bus's to show: nova-bus
+`send` and `recv` never refuse a name on it (the owner, 2026-10-08, issue
+#5450: "it is important that we can talk to friends, if you can't that's
+totally a bug"); they print `push=<none|down|stale> for <name>` as a NOTE
+beside a message that landed or was read, and `names` shows every name's
+state (SPEC-BUS.md, bus-requires-inbox-push-proof).
 
 - `nova-friend install` and `run` refuse, before anything is written, loaded
   or delivered, a harness whose adapter has no deliver command (a `Stub`:

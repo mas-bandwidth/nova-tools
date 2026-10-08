@@ -82,7 +82,7 @@ Run by `cmd/nova-bus/firstrun_test.go` on a throwaway redis-server whose
 `friends` set names ada and bob (what `nova-config apply` writes for two friend
 rows), each with a proven inbox push on `bus2:push` (what each one's friend
 daemon writes when its session answers the SESSION CHECK; without it every send
-and recv is refused as deaf), its address in `NOVA_BUS_REDIS`, so the lines
+and recv carries a `push=none` NOTE and lands all the same), its address in `NOVA_BUS_REDIS`, so the lines
 read as a reader types them.
 The sitting is the loop: bob first waits on his own empty stream and, nothing
 coming within the second he gave it, is told `WAIT NONE` at exit 1 (the wait
@@ -91,7 +91,7 @@ message; bob peeks (new, not yet
 delivered), receives it through `--exec` (the header line and the body go to the
 command, acked when it exits 0), acks an id that is not pending (false, exit 0: ack is idempotent), reads the
 log, and lists the names. The run-owned values are the message's `id=` (a ULID
-from the store's time) and its `at=`. The throwaway store has no users, so every
+from the store's time), its `at=` and its `entry=` (its place on the log stream). The throwaway store has no users, so every
 write says `login=none`: on the fleet's store the identity is the login user and
 `--as` may be left out.
 
@@ -118,7 +118,7 @@ ACK ID id=01ARZ3NDEKTSV4RRFFQ69G5FAV acked=false
 
 $ nova-bus log --max 5
 LOG OK total=1
-LOG MESSAGE id=01M42BA18Y1K3SE57HE26SY8T0 from=ada to=bob cc=- re=- at=2026-10-04T02:18:54Z subject="hello"
+LOG MESSAGE id=01M42BA18Y1K3SE57HE26SY8T0 from=ada to=bob cc=- re=- at=2026-10-04T02:18:54Z entry=1759544334115-0 subject="hello"
 
 $ nova-bus names
 NAMES OK count=2 proven=2
