@@ -84,9 +84,12 @@ type Span = sprint.Span
 // the total time STOPPED before the current span, and the STOPPED spans.
 // No record is STOPPED.
 type Machine struct {
-	State      string        `json:"state"`
-	Since      time.Time     `json:"since"`
-	Who        string        `json:"who,omitempty"`
+	State string    `json:"state"`
+	Since time.Time `json:"since"`
+	Who   string    `json:"who,omitempty"`
+	// RunSeq identifies each explicit START, including two at the same clock
+	// reading. A delayed tick may stop only the run it observed.
+	RunSeq     uint64        `json:"run_seq,omitempty"`
 	StoppedFor time.Duration `json:"stopped_ns"`
 	Spans      []Span        `json:"spans,omitempty"`
 	// Cause is why a STOPPED machine stopped when it stopped itself:
@@ -718,10 +721,10 @@ func (st *Store) Tick(ctx context.Context) (res TickResult, err error) {
 		res.BusyRetries++
 		seen, err = st.tick(ctx, m, hb, &res)
 	}
-	if err == nil && res.Halted == "" && res.Done == "" {
+	if err == nil && res.Stale == "" && res.Halted == "" && res.Done == "" {
 		// The reminder duty is a part too: it begins only while RUNNING.
 		mt := st.meter()
-		if halted, herr := st.halted(ctx, &res, "remind"); herr != nil {
+		if halted, herr := st.halted(ctx, &res, "remind", m.RunSeq); herr != nil {
 			err = herr
 		} else if !halted {
 			if rerr := st.remind(ctx, m, &res); rerr != nil {
@@ -730,11 +733,11 @@ func (st *Store) Tick(ctx context.Context) (res TickResult, err error) {
 		}
 		res.Times = append(res.Times, mt.part("", "remind"))
 	}
-	if err == nil && res.Halted == "" && res.Done == "" {
+	if err == nil && res.Stale == "" && res.Halted == "" && res.Done == "" {
 		// The timer duty is a part too: it begins only while RUNNING, and a
 		// timer counts running time (timers.go).
 		mt := st.meter()
-		if halted, herr := st.halted(ctx, &res, "timers"); herr != nil {
+		if halted, herr := st.halted(ctx, &res, "timers", m.RunSeq); herr != nil {
 			err = herr
 		} else if !halted {
 			if terr := st.timers(ctx, m, &res); terr != nil {
@@ -835,10 +838,15 @@ func (st *Store) tellTick(ctx context.Context, verb, typ, what, hint string) err
 
 // halted reads the machine's state before a part of a tick begins: STOPPED
 // halts the tick there, and says so on the result.
-func (st *Store) halted(ctx context.Context, res *TickResult, part string) (bool, error) {
+func (st *Store) halted(ctx context.Context, res *TickResult, part string, runSeq uint64) (bool, error) {
 	var m Machine
 	if err := st.getJSON(ctx, keyMachine, &m); err != nil {
 		return false, err
+	}
+	if m.RunSeq != runSeq {
+		res.State = m.StateWord()
+		res.Stale = "the machine restarted during the tick: the old " + part + " duty did not begin"
+		return true, nil
 	}
 	if m.Running() {
 		return false, nil
@@ -919,7 +927,7 @@ func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickR
 	if _, ok, err := st.stuck(ctx); err != nil {
 		return last, err
 	} else if ok {
-		if halted, err := st.halted(ctx, res, "stuck"); err != nil || halted {
+		if halted, err := st.halted(ctx, res, "stuck", m.RunSeq); err != nil || halted {
 			return last, err
 		}
 		// A stuck operation repaired since: its judgment, once, by a step
@@ -1030,7 +1038,7 @@ func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickR
 	if req.Sessions, err = pinned.FriendSessions(ctx); err != nil {
 		return last, err
 	}
-	t := &tickRun{st: st, ctx: ctx, res: res, req: req, at: at, snap: &first, queues: map[string]int{}, twin: twin, readers: first.ReaderStates}
+	t := &tickRun{st: st, ctx: ctx, res: res, req: req, at: at, runSeq: m.RunSeq, snap: &first, queues: map[string]int{}, twin: twin, readers: first.ReaderStates}
 	defer func() { res.RouteTrips = t.routes.Trips }()
 	updates := st.Updates
 	if updates == nil {
@@ -1151,6 +1159,7 @@ type tickRun struct {
 	res     *TickResult
 	req     sprint.TickReq
 	at      uint64
+	runSeq  uint64           // START generation observed before this tick began
 	snap    *sprint.Snapshot // the tick's first read
 	twin    *Twin            // the tick's twin: every part's read
 	ran     bool             // a part ran: every later part plans on a fresh read
@@ -1274,6 +1283,7 @@ func (t *tickRun) parts(table string, parts []sprint.TickPartDef) tickOutcome {
 			return p, d
 		}
 		step := TickPartStep(part.Name, fn, t.req, &t.at, nil, &due)
+		step.TickRunSeq = &t.runSeq
 		step.Pump, step.Drain, step.Twin = table == sprint.Work, drain, t.twin
 		// the deal and the ask draw from the routes (a read card's route,
 		// route.go readRouteOf), and the check asks what the next deal does
@@ -1294,6 +1304,14 @@ func (t *tickRun) parts(table string, parts []sprint.TickPartDef) tickOutcome {
 			asked = &tally
 		} else {
 			r, err = t.st.Run(t.ctx, step)
+		}
+		if err == nil && r.StaleRun {
+			t.res.Stale = "the machine restarted during the tick: the part " + part.Name + " did not begin"
+			t.res.State = Running
+			if r.Halted {
+				t.res.State = Stopped
+			}
+			return tickStale
 		}
 		if err == nil && r.Halted {
 			t.res.State = Stopped
@@ -1368,7 +1386,7 @@ func (t *tickRun) parts(table string, parts []sprint.TickPartDef) tickOutcome {
 		if stop != "" && !r.Lost {
 			// Every provider is out of credit: the machine stops itself as the part's step
 			// commits, with the cause, and the tick ends here (nova-tools#5199).
-			if err := t.st.stopFor(t.ctx, sprint.FundsCause, stop, t.res); err != nil {
+			if err := t.st.stopFor(t.ctx, sprint.FundsCause, stop, t.runSeq, t.res); err != nil {
 				t.err = fmt.Errorf("tick %s: stopping the machine: %w", part.Name, err)
 				return tickFailed
 			}
@@ -1377,7 +1395,7 @@ func (t *tickRun) parts(table string, parts []sprint.TickPartDef) tickOutcome {
 		if done != nil && r.Notes > 0 && !r.Lost {
 			// The sprint is done: the machine stops itself as the part's step
 			// commits, and the tick ends here.
-			if err := t.st.stopDone(t.ctx, *done, t.res); err != nil {
+			if err := t.st.stopDone(t.ctx, *done, t.runSeq, t.res); err != nil {
 				t.err = fmt.Errorf("tick %s: stopping the machine: %w", part.Name, err)
 				return tickFailed
 			}
@@ -1596,48 +1614,43 @@ func (st *Store) clearedUnder(ctx context.Context, res *TickResult) bool {
 // DONE, in one write; then the coordinator's goal route, when the coordinator
 // has a goal, is pushed the note, once. The tick's result says it. A record
 // written by a stop or a clear since the tick read it is left as it is.
-func (st *Store) stopDone(ctx context.Context, n sprint.Note, res *TickResult) error {
-	m, _, err := st.Machine(ctx)
+func (st *Store) stopDone(ctx context.Context, n sprint.Note, runSeq uint64, res *TickResult) error {
+	_, after, changed, err := st.stopWithCause(ctx, sprint.DoneCause, runSeq)
 	if err != nil {
 		return err
 	}
-	res.State, res.Done, res.Hint = Stopped, n.What, n.Hint
-	if !m.Running() {
+	if !changed {
+		res.State = after.StateWord()
+		if after.Running() {
+			res.Stale = "the machine restarted during the tick: the old DONE judgment did not stop the new run"
+		} else {
+			res.Halted = "the machine was stopped during the tick: the old DONE judgment did not replace its stop"
+		}
 		return nil
 	}
-	now := st.now()
-	after := m
-	after.Spans = append(append([]Span(nil), m.Spans...), Span{From: now})
-	if len(after.Spans) > MaxStopSpans {
-		after.Spans = after.Spans[len(after.Spans)-MaxStopSpans:]
-	}
-	after.State, after.Since, after.Who, after.Cause = Stopped, now, sprint.MachineActor, sprint.DoneCause
-	if err := st.putMachine(ctx, after); err != nil {
-		return err
-	}
+	res.State, res.Done, res.Hint = Stopped, n.What, n.Hint
 	return st.pushDone(ctx, n, res)
 }
 
 // stopFor stops the machine as the tick's step commits, its record STOPPED with the cause
 // and a STOPPED span opened (the done part's stop, stopDone, is the other): the tick's
 // result says why. A machine STOPPED already is left as it is.
-func (st *Store) stopFor(ctx context.Context, cause, why string, res *TickResult) error {
-	m, _, err := st.Machine(ctx)
+func (st *Store) stopFor(ctx context.Context, cause, why string, runSeq uint64, res *TickResult) error {
+	_, after, changed, err := st.stopWithCause(ctx, cause, runSeq)
 	if err != nil {
 		return err
 	}
-	res.State, res.Halted = Stopped, why
-	if !m.Running() {
+	if !changed {
+		res.State = after.StateWord()
+		if after.Running() {
+			res.Stale = "the machine restarted during the tick: the old " + cause + " judgment did not stop the new run"
+		} else {
+			res.Halted = "the machine was stopped during the tick: the old " + cause + " judgment did not replace its stop"
+		}
 		return nil
 	}
-	now := st.now()
-	after := m
-	after.Spans = append(append([]Span(nil), m.Spans...), Span{From: now})
-	if len(after.Spans) > MaxStopSpans {
-		after.Spans = after.Spans[len(after.Spans)-MaxStopSpans:]
-	}
-	after.State, after.Since, after.Who, after.Cause = Stopped, now, sprint.MachineActor, cause
-	return st.putMachine(ctx, after)
+	res.State, res.Halted = Stopped, why
+	return nil
 }
 
 // pushDone delivers "the sprint is done" down the route of the goal of the
@@ -1720,12 +1733,7 @@ func (st *Store) undone(ctx context.Context) error {
 	if _, ok := st.B.(KV); !ok {
 		return nil
 	}
-	m, _, err := st.Machine(ctx)
-	if err != nil || !m.Done() {
-		return err
-	}
-	m.Cause = ""
-	return st.putMachine(ctx, m)
+	return st.clearDoneCause(ctx)
 }
 
 // ErrReadOnly is the refusal of every write a read-only store is asked for

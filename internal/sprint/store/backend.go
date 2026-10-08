@@ -173,6 +173,9 @@ type Fence struct {
 	// of the work table's queue: while either holds, a step other than the
 	// pump queues its work-table changes (queue.go).
 	Running bool
+	// RunSeq identifies the explicit START whose state was read with this
+	// fence. An older tick part must not cross a STOP and restart.
+	RunSeq uint64
 	// StoppedByHand distinguishes an explicit STOP from an epoch's initial
 	// stopped setup state. Only the former revokes worker starts.
 	StoppedByHand bool

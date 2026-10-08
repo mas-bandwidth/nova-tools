@@ -6353,6 +6353,11 @@ refuses old finish and read reports. STOP and START acquire the same operation
 fence as takes and read begins; a worker plan made before STOP must re-read
 the changed generation before it can commit. The store trusts the owner runner's
 cancellation acknowledgement; it does not kill or inspect that process itself.
+The tick's DONE and funds stops, and its post-add DONE cleanup, take that
+same fence. Each tick part carries the explicit START generation it read;
+after STOP and a later restart, an old part cannot commit with old timing
+inputs, nor can its delayed DONE or funds judgment stop the new run or replace
+the operator's STOP reason.
 `start` refuses until all Fleet Working and Readers Reading cards have been
 returned, and names the active owner and card IDs. `inbox` says `machine:
 running`, `machine: STOPPED` or `machine: DONE`,

@@ -145,9 +145,13 @@ type Step struct {
 	// Halts, when set (a part of the tick), makes the step begin nothing when
 	// (tla/DirtyTickRead.tla, Begin and BeganRunning)
 	// the machine's state, read with its first fence, is STOPPED: its result
-	// says Halted, and it writes nothing (the stop's rule: the part in flight
-	// finishes, and no part begins after the flag says STOPPED).
+	// says Halted, and it writes nothing. TickRunSeq also refuses a retry in
+	// a later explicit START generation.
 	Halts bool
+	// TickRunSeq is the explicit START generation a tick saw before it built
+	// this part's request. A retry after STOP and START must not commit it in
+	// the new run, even though the machine is RUNNING again.
+	TickRunSeq *uint64
 	// StartsWork refuses a new worker lease after STOP, including an explicit
 	// take, a friend's start receipt, and a reader's begin. ReportsWork refuses
 	// a late finish or verdict once STOP has committed. RequiresStopped is the
@@ -276,6 +280,8 @@ type Result struct {
 	// Halted says a step that Halts found the machine STOPPED as it read the
 	// sprint, and began nothing.
 	Halted bool `json:"-"`
+	// StaleRun says a tick part read a different explicit START generation.
+	StaleRun bool `json:"-"`
 }
 
 // ErrUnknown is a write the store did not confirm: changed=unknown.
@@ -549,6 +555,13 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 			if r, done, err := st.callerOp(ctx, step, res); done || err != nil {
 				return r, err
 			}
+		}
+		if step.Halts && step.TickRunSeq != nil && fence.RunSeq != *step.TickRunSeq {
+			res.Moved, res.Op, res.Notes = nil, "", 0
+			res.Tables = nil
+			res.StaleRun = true
+			res.Halted = !fence.Running
+			return res, nil
 		}
 		if step.Halts && !fence.Running && res.Attempts == 1 {
 			// a part that began (its first read found the machine RUNNING)

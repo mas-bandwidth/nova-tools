@@ -5,16 +5,18 @@
 \* ready until the owner confirms that its process group stopped.
 EXTENDS Naturals, FiniteSets
 
-CONSTANTS Work, Read, Owner, Branch, MaxGen, BadPrematureReady, BadLateRead, BadUnfencedStop
+CONSTANTS Work, Read, Owner, Branch, MaxGen, MaxRunSeq, BadPrematureReady, BadLateRead, BadUnfencedStop, BadStaleTickStop, BadStaleTickPart
 Cards == {Work, Read}
 ReadyOf(c) == IF c = Work THEN "ready" ELSE "asked"
 ActiveOf(c) == IF c = Work THEN "working" ELSE "reading"
 DoneOf(c) == IF c = Work THEN "review" ELSE "read-done"
 
 VARIABLES machine, place, row, branch, gen, child, childGen,
-          cancel, ack, returned, staged, planned, staleCommitted, accepted
+          cancel, ack, returned, staged, planned, staleCommitted, accepted,
+          runSeq, tickObserved, causePending, staleCauseCommitted, tickPartPending, stalePartCommitted
 vars == <<machine, place, row, branch, gen, child, childGen,
-          cancel, ack, returned, staged, planned, staleCommitted, accepted>>
+          cancel, ack, returned, staged, planned, staleCommitted, accepted,
+          runSeq, tickObserved, causePending, staleCauseCommitted, tickPartPending, stalePartCommitted>>
 
 Init ==
   /\ machine = "running"
@@ -31,13 +33,19 @@ Init ==
   /\ planned = [c \in Cards |-> FALSE]
   /\ staleCommitted = FALSE
   /\ accepted = [c \in Cards |-> 0]
+  /\ runSeq = 1
+  /\ tickObserved = 1
+  /\ causePending = TRUE
+  /\ staleCauseCommitted = FALSE
+  /\ tickPartPending = TRUE
+  /\ stalePartCommitted = FALSE
 
 Stop ==
   /\ machine = "running"
   /\ machine' = "stopped"
   /\ cancel' = [c \in Cards |-> child[c]]
   /\ staged' = [c \in Cards |-> FALSE]
-  /\ UNCHANGED <<place, row, branch, gen, child, childGen, ack, returned, planned, staleCommitted, accepted>>
+  /\ UNCHANGED <<place, row, branch, gen, child, childGen, ack, returned, planned, staleCommitted, accepted, runSeq, tickObserved, causePending, staleCauseCommitted, tickPartPending, stalePartCommitted>>
 
 StopAgain ==
   /\ machine = "stopped"
@@ -47,7 +55,7 @@ CancelAck(c) ==
   /\ machine = "stopped" /\ cancel[c] /\ child[c]
   /\ child' = [child EXCEPT ![c] = FALSE]
   /\ ack' = [ack EXCEPT ![c] = TRUE]
-  /\ UNCHANGED <<machine, place, row, branch, gen, childGen, cancel, returned, staged, planned, staleCommitted, accepted>>
+  /\ UNCHANGED <<machine, place, row, branch, gen, childGen, cancel, returned, staged, planned, staleCommitted, accepted, runSeq, tickObserved, causePending, staleCauseCommitted, tickPartPending, stalePartCommitted>>
 
 Return(c) ==
   /\ machine = "stopped" /\ place[c] = ActiveOf(c) /\ gen[c] < MaxGen
@@ -55,18 +63,41 @@ Return(c) ==
   /\ place' = [place EXCEPT ![c] = ReadyOf(c)]
   /\ gen' = [gen EXCEPT ![c] = @ + 1]
   /\ returned' = [returned EXCEPT ![c] = TRUE]
-  /\ UNCHANGED <<machine, row, branch, child, childGen, cancel, ack, staged, planned, staleCommitted, accepted>>
+  /\ UNCHANGED <<machine, row, branch, child, childGen, cancel, ack, staged, planned, staleCommitted, accepted, runSeq, tickObserved, causePending, staleCauseCommitted, tickPartPending, stalePartCommitted>>
 
 ExplicitStart ==
   /\ machine = "stopped"
+  /\ runSeq < MaxRunSeq
   /\ \A c \in Cards : cancel[c] => ack[c] /\ returned[c]
   /\ machine' = "running"
-  /\ UNCHANGED <<place, row, branch, gen, child, childGen, cancel, ack, returned, staged, planned, staleCommitted, accepted>>
+  /\ runSeq' = runSeq + 1
+  /\ UNCHANGED <<place, row, branch, gen, child, childGen, cancel, ack, returned, staged, planned, staleCommitted, accepted, tickObserved, causePending, staleCauseCommitted, tickPartPending, stalePartCommitted>>
+
+\* A delayed DONE/funds judgment may stop only the run its tick observed.
+TickCauseStop ==
+  /\ machine = "running" /\ causePending
+  /\ (runSeq = tickObserved \/ BadStaleTickStop)
+  /\ machine' = "stopped"
+  /\ cancel' = [c \in Cards |-> child[c]]
+  /\ staged' = [c \in Cards |-> FALSE]
+  /\ causePending' = FALSE
+  /\ staleCauseCommitted' = (runSeq # tickObserved)
+  /\ UNCHANGED <<place, row, branch, gen, child, childGen, ack, returned, planned, staleCommitted, accepted, runSeq, tickObserved, tickPartPending, stalePartCommitted>>
+
+\* A tick part planned before STOP cannot commit with old timing inputs after
+\* a new explicit START, even when its first store attempt must retry.
+TickPartCommit ==
+  /\ machine = "running" /\ tickPartPending
+  /\ (runSeq = tickObserved \/ BadStaleTickPart)
+  /\ tickPartPending' = FALSE
+  /\ stalePartCommitted' = (runSeq # tickObserved)
+  /\ UNCHANGED <<machine, place, row, branch, gen, child, childGen, cancel, ack, returned, staged,
+                 planned, staleCommitted, accepted, runSeq, tickObserved, causePending, staleCauseCommitted>>
 
 Stage(c) ==
   /\ machine = "running" /\ place[c] = ReadyOf(c) /\ ~staged[c]
   /\ staged' = [staged EXCEPT ![c] = TRUE]
-  /\ UNCHANGED <<machine, place, row, branch, gen, child, childGen, cancel, ack, returned, planned, staleCommitted, accepted>>
+  /\ UNCHANGED <<machine, place, row, branch, gen, child, childGen, cancel, ack, returned, planned, staleCommitted, accepted, runSeq, tickObserved, causePending, staleCauseCommitted, tickPartPending, stalePartCommitted>>
 
 \* A worker can read RUNNING and prepare its launch before STOP. Acquiring the
 \* store fence at commit time either sees the old generation while STOP waits,
@@ -75,7 +106,7 @@ Stage(c) ==
 PlanLaunch(c) ==
   /\ machine = "running" /\ place[c] = ReadyOf(c) /\ staged[c] /\ ~child[c] /\ ~planned[c]
   /\ planned' = [planned EXCEPT ![c] = TRUE]
-  /\ UNCHANGED <<machine, place, row, branch, gen, child, childGen, cancel, ack, returned, staged, staleCommitted, accepted>>
+  /\ UNCHANGED <<machine, place, row, branch, gen, child, childGen, cancel, ack, returned, staged, staleCommitted, accepted, runSeq, tickObserved, causePending, staleCauseCommitted, tickPartPending, stalePartCommitted>>
 
 Launch(c) ==
   /\ place[c] = ReadyOf(c) /\ planned[c] /\ ~child[c]
@@ -88,7 +119,7 @@ Launch(c) ==
   /\ returned' = [returned EXCEPT ![c] = FALSE]
   /\ planned' = [planned EXCEPT ![c] = FALSE]
   /\ staleCommitted' = (staleCommitted \/ machine = "stopped")
-  /\ UNCHANGED <<machine, row, branch, gen, staged, accepted>>
+  /\ UNCHANGED <<machine, row, branch, gen, staged, accepted, runSeq, tickObserved, causePending, staleCauseCommitted, tickPartPending, stalePartCommitted>>
 
 \* A delayed report is delivered using the generation its child held. A read
 \* in the broken variant ignores the fence, reproducing the old read API.
@@ -97,9 +128,9 @@ Report(c) ==
       ELSE machine = "running" /\ place[c] = ActiveOf(c) /\ childGen[c] = gen[c])
   /\ place' = [place EXCEPT ![c] = DoneOf(c)]
   /\ accepted' = [accepted EXCEPT ![c] = childGen[c]]
-  /\ UNCHANGED <<machine, row, branch, gen, child, childGen, cancel, ack, returned, staged, planned, staleCommitted>>
+  /\ UNCHANGED <<machine, row, branch, gen, child, childGen, cancel, ack, returned, staged, planned, staleCommitted, runSeq, tickObserved, causePending, staleCauseCommitted, tickPartPending, stalePartCommitted>>
 
-Next == Stop \/ StopAgain \/ ExplicitStart
+Next == Stop \/ StopAgain \/ ExplicitStart \/ TickCauseStop \/ TickPartCommit
         \/ \E c \in Cards : CancelAck(c) \/ Return(c) \/ Stage(c) \/ PlanLaunch(c) \/ Launch(c) \/ Report(c)
 Spec == Init /\ [][Next]_vars
 
@@ -118,8 +149,11 @@ NoReadyBeforeAck == \A c \in Cards : returned[c] => ack[c] /\ ~child[c]
 NoStaleAcceptance == \A c \in Cards : accepted[c] = 0 \/ accepted[c] = gen[c]
 NoActiveLaunchOnStop == machine = "stopped" => \A c \in Cards : ~staged[c]
 NoLaunchCommittedOnStop == ~staleCommitted
+NoStaleTickStop == ~staleCauseCommitted
+NoStaleTickPart == ~stalePartCommitted
 NoRestartBeforeReturn == machine = "running" => \A c \in Cards : cancel[c] => returned[c]
 TypeOK ==
   /\ machine \in {"running", "stopped"}
+  /\ runSeq \in Nat /\ tickObserved \in Nat
   /\ \A c \in Cards : gen[c] \in Nat /\ place[c] \in {ReadyOf(c), ActiveOf(c), DoneOf(c)}
 =============================================================================

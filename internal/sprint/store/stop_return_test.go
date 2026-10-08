@@ -14,12 +14,13 @@ import (
 type pausedTakeAcquire struct {
 	*Mem
 	once    sync.Once
+	verb    string
 	entered chan struct{}
 	release chan struct{}
 }
 
 func (b *pausedTakeAcquire) Acquire(ctx context.Context, gen uint64, op OpRecord) (bool, error) {
-	if op.Verb == "take" {
+	if op.Verb == b.verb {
 		b.once.Do(func() {
 			close(b.entered)
 			<-b.release
@@ -36,7 +37,7 @@ func TestStopFencesATakeThatReadRunningBeforeStop(t *testing.T) {
 	s := h.snap()
 	wc := s.Fleet.Card(s.Work.Card("s1-1").F("work"))
 	require.NotNil(t, wc)
-	b := &pausedTakeAcquire{Mem: h.m, entered: make(chan struct{}), release: make(chan struct{})}
+	b := &pausedTakeAcquire{Mem: h.m, verb: "take", entered: make(chan struct{}), release: make(chan struct{})}
 	h.st.B = b
 	type done struct {
 		res Result
@@ -64,6 +65,167 @@ func TestStopFencesATakeThatReadRunningBeforeStop(t *testing.T) {
 	}
 	assert.Equal(t, sprint.Ready, h.snap().Fleet.Card(wc.ID).Col)
 	h.clean("stop fenced stale take")
+}
+
+func TestOldTickPartCannotCommitAcrossStopAndRestart(t *testing.T) {
+	h := newHarness(t)
+	h.startMachine()
+	observed, _, err := h.st.Machine(h.ctx)
+	require.NoError(t, err)
+	b := &pausedTakeAcquire{Mem: h.m, verb: "tick stale run", entered: make(chan struct{}), release: make(chan struct{})}
+	h.st.B = b
+	step := Step{Verb: "tick stale run", Halts: true, TickRunSeq: &observed.RunSeq,
+		Plan: func(s *sprint.Snapshot) sprint.Plan {
+			return sprint.Plan{Notes: []sprint.Note{{Kind: sprint.Happened, Type: "tick-stale-probe", Who: sprint.MachineActor, At: s.Now, What: "old tick note"}}}
+		}}
+	type done struct {
+		res Result
+		err error
+	}
+	finished := make(chan done, 1)
+	go func() {
+		res, err := h.st.Run(h.ctx, step)
+		finished <- done{res, err}
+	}()
+	select {
+	case <-b.entered:
+	case got := <-finished:
+		t.Fatalf("old tick part finished before acquire: result=%+v err=%v", got.res, got.err)
+	case <-time.After(3 * time.Second):
+		t.Fatal("old tick part did not reach the paused acquire")
+	}
+	_, _, _, err = h.st.StopUntil(h.ctx, "operator cancellation", h.now.Add(time.Hour))
+	require.NoError(t, err)
+	_, restarted, _, err := h.st.SetMachine(h.ctx, true)
+	require.NoError(t, err)
+	require.Greater(t, restarted.RunSeq, observed.RunSeq)
+	close(b.release)
+	select {
+	case got := <-finished:
+		require.NoError(t, got.err)
+		assert.True(t, got.res.StaleRun)
+		assert.Zero(t, got.res.Notes, "the old tick part cannot commit in the new run")
+	case <-time.After(3 * time.Second):
+		t.Fatal("old tick part did not finish")
+	}
+}
+
+func TestManualStopWinsAnOlderTickCauseStop(t *testing.T) {
+	h := newHarness(t)
+	h.startMachine()
+	observed, _, err := h.st.Machine(h.ctx)
+	require.NoError(t, err)
+	b := &pausedTakeAcquire{Mem: h.m, verb: "machine cause lock", entered: make(chan struct{}), release: make(chan struct{})}
+	h.st.B = b
+	type done struct {
+		changed bool
+		err     error
+	}
+	finished := make(chan done, 1)
+	go func() {
+		_, _, changed, err := h.st.stopWithCause(h.ctx, sprint.DoneCause, observed.RunSeq)
+		finished <- done{changed, err}
+	}()
+	select {
+	case <-b.entered: // tick saw RUNNING but has not acquired the shared fence
+	case <-time.After(3 * time.Second):
+		t.Fatal("tick stop did not reach the paused acquire")
+	}
+	_, _, _, err = h.st.StopUntil(h.ctx, "operator cancellation", h.now.Add(time.Hour))
+	require.NoError(t, err)
+	close(b.release)
+	select {
+	case got := <-finished:
+		require.NoError(t, got.err)
+		assert.False(t, got.changed, "an old tick may not replace the explicit stop")
+	case <-time.After(3 * time.Second):
+		t.Fatal("tick stop did not finish")
+	}
+	m, _, err := h.st.Machine(h.ctx)
+	require.NoError(t, err)
+	assert.Equal(t, "operator cancellation", m.Reason)
+	assert.Empty(t, m.Cause)
+}
+
+func TestOldTickCannotStopAnExplicitlyRestartedRun(t *testing.T) {
+	h := newHarness(t)
+	h.startMachine()
+	observed, _, err := h.st.Machine(h.ctx)
+	require.NoError(t, err)
+	b := &pausedTakeAcquire{Mem: h.m, verb: "machine cause lock", entered: make(chan struct{}), release: make(chan struct{})}
+	h.st.B = b
+	type done struct {
+		changed bool
+		err     error
+	}
+	finished := make(chan done, 1)
+	go func() {
+		_, _, changed, err := h.st.stopWithCause(h.ctx, sprint.DoneCause, observed.RunSeq)
+		finished <- done{changed, err}
+	}()
+	select {
+	case <-b.entered:
+	case <-time.After(3 * time.Second):
+		t.Fatal("old tick did not reach the paused acquire")
+	}
+	_, _, _, err = h.st.StopUntil(h.ctx, "operator cancellation", h.now.Add(time.Hour))
+	require.NoError(t, err)
+	_, restarted, _, err := h.st.SetMachine(h.ctx, true)
+	require.NoError(t, err)
+	require.Greater(t, restarted.RunSeq, observed.RunSeq)
+	close(b.release)
+	select {
+	case got := <-finished:
+		require.NoError(t, got.err)
+		assert.False(t, got.changed, "old tick cannot stop the new run")
+	case <-time.After(3 * time.Second):
+		t.Fatal("old tick did not finish")
+	}
+	m, _, err := h.st.Machine(h.ctx)
+	require.NoError(t, err)
+	assert.True(t, m.Running())
+	assert.Equal(t, restarted.RunSeq, m.RunSeq)
+	var doneRes, fundsRes TickResult
+	require.NoError(t, h.st.stopDone(h.ctx, sprint.Note{What: "old done"}, observed.RunSeq, &doneRes))
+	require.NoError(t, h.st.stopFor(h.ctx, sprint.FundsCause, "old funds stop", observed.RunSeq, &fundsRes))
+	assert.Equal(t, Running, doneRes.State)
+	assert.Empty(t, doneRes.Done)
+	assert.NotEmpty(t, doneRes.Stale)
+	assert.Equal(t, Running, fundsRes.State)
+	assert.Empty(t, fundsRes.Halted)
+	assert.NotEmpty(t, fundsRes.Stale)
+}
+
+func TestManualStopWinsAnOlderPostAddUndone(t *testing.T) {
+	h := newHarness(t)
+	h.startMachine()
+	observed, _, err := h.st.Machine(h.ctx)
+	require.NoError(t, err)
+	_, _, changed, err := h.st.stopWithCause(h.ctx, sprint.DoneCause, observed.RunSeq)
+	require.NoError(t, err)
+	require.True(t, changed)
+	b := &pausedTakeAcquire{Mem: h.m, verb: "machine undone lock", entered: make(chan struct{}), release: make(chan struct{})}
+	h.st.B = b
+	finished := make(chan error, 1)
+	go func() { finished <- h.st.undone(h.ctx) }()
+	select {
+	case <-b.entered: // post-add cleanup saw DONE but has not acquired the fence
+	case <-time.After(3 * time.Second):
+		t.Fatal("post-add cleanup did not reach the paused acquire")
+	}
+	_, _, _, err = h.st.StopUntil(h.ctx, "operator cancellation", h.now.Add(time.Hour))
+	require.NoError(t, err)
+	close(b.release)
+	select {
+	case err := <-finished:
+		require.NoError(t, err)
+	case <-time.After(3 * time.Second):
+		t.Fatal("post-add cleanup did not finish")
+	}
+	m, _, err := h.st.Machine(h.ctx)
+	require.NoError(t, err)
+	assert.Equal(t, "operator cancellation", m.Reason)
+	assert.Empty(t, m.Cause)
 }
 
 func TestStopReturnKeepsOwnedWorkReadyAndFencesOldFinish(t *testing.T) {

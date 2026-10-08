@@ -80,6 +80,10 @@ func (st *Store) machineRecord(ctx context.Context, before Machine, s *sprint.Sn
 	after = before
 	after.Spans = append([]Span(nil), before.Spans...)
 	if running {
+		if after.RunSeq == ^uint64(0) {
+			return before, false, errors.New("machine start generation is exhausted; nothing was changed")
+		}
+		after.RunSeq++
 		if n := len(after.Spans); n > 0 && after.Spans[n-1].To.IsZero() {
 			after.Spans[n-1].To = now
 			after.StoppedFor += now.Sub(after.Spans[n-1].From)
@@ -119,4 +123,93 @@ func stopActiveJobs(s *sprint.Snapshot) error {
 		shown = shown[:8]
 	}
 	return fmt.Errorf("%d STOP-owned work/read jobs still active (%s): cancel their child processes, then stop-return each on its same owner row before start", len(active), strings.Join(shown, ", "))
+}
+
+// stopWithCause serializes the tick's DONE and funds stops with a manual STOP.
+// A tick that observed RUNNING before an operator's STOP re-reads it after the
+// operator's fenced write, leaving that later explicit reason intact. Its
+// observed START generation also prevents it from stopping a later restart.
+func (st *Store) stopWithCause(ctx context.Context, cause string, runSeq uint64) (before, after Machine, changed bool, err error) {
+	pinned, err := st.pin(ctx)
+	if err != nil {
+		return before, after, false, err
+	}
+	r := pinned.retry(ctx)
+	for r.next(pinned.attempts()) {
+		_, gen, ferr := pinned.Fenced(ctx, nil, nil, nil)
+		if ferr != nil {
+			return before, after, false, ferr
+		}
+		var nonce [16]byte
+		if _, err := rand.Read(nonce[:]); err != nil {
+			return before, after, false, err
+		}
+		lock := OpRecord{ID: "machine-cause-" + hex.EncodeToString(nonce[:]) + "-lock", Verb: "machine cause lock", At: pinned.now(), Lock: true}
+		ok, aerr := pinned.B.Acquire(ctx, gen, lock)
+		if aerr != nil {
+			return before, after, false, aerr
+		}
+		if !ok {
+			continue
+		}
+		before, _, err = pinned.Machine(ctx)
+		if err == nil {
+			if !before.Running() || before.RunSeq != runSeq {
+				after = before
+			} else {
+				now := pinned.now()
+				after = before
+				after.Spans = append(append([]Span(nil), before.Spans...), Span{From: now})
+				if len(after.Spans) > MaxStopSpans {
+					after.Spans = after.Spans[len(after.Spans)-MaxStopSpans:]
+				}
+				after.State, after.Since, after.Who, after.Cause = Stopped, now, sprint.MachineActor, cause
+				err = pinned.putMachine(ctx, after)
+				changed = err == nil
+			}
+		}
+		err = errors.Join(err, pinned.B.Release(context.WithoutCancel(ctx), lock, false))
+		if err != nil {
+			return before, before, false, err
+		}
+		return before, after, changed, nil
+	}
+	return before, after, false, fmt.Errorf("machine cause: the sprint kept changing under it (%d tries); nothing was changed; run it again", r.tries)
+}
+
+// clearDoneCause is the post-add counterpart to stopWithCause. The add has
+// committed, but a later operator STOP must not be replaced by an old DONE
+// record that the post-add hook observed before acquiring the machine fence.
+func (st *Store) clearDoneCause(ctx context.Context) error {
+	pinned, err := st.pin(ctx)
+	if err != nil {
+		return err
+	}
+	r := pinned.retry(ctx)
+	for r.next(pinned.attempts()) {
+		_, gen, err := pinned.Fenced(ctx, nil, nil, nil)
+		if err != nil {
+			return err
+		}
+		var nonce [16]byte
+		if _, err := rand.Read(nonce[:]); err != nil {
+			return err
+		}
+		lock := OpRecord{ID: "machine-undone-" + hex.EncodeToString(nonce[:]) + "-lock", Verb: "machine undone lock", At: pinned.now(), Lock: true}
+		ok, err := pinned.B.Acquire(ctx, gen, lock)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			continue
+		}
+		m, _, err := pinned.Machine(ctx)
+		if err == nil && m.Done() {
+			m.Cause = ""
+			err = pinned.putMachine(ctx, m)
+		}
+		err = errors.Join(err, pinned.B.Release(context.WithoutCancel(ctx), lock, false))
+		return err
+	}
+	return fmt.Errorf("machine undone: the sprint kept changing under it (%d tries); nothing was changed; run it again", r.tries)
 }
