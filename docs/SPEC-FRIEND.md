@@ -1926,12 +1926,27 @@ whoever wrote the brief:
   markdown trimmed, the verdict upper case, the head lower case). `LAND` with a
   full sha head is `finish --as friend.<name> <card>@<gen> --epoch <n> --head
   <sha> --branch <b> --report "friend <name> LAND: <first paragraph>"`; `HOLD`,
-  `FAIL` and any other verdict, and a `LAND` with no full sha head, are
-  `--failed`, a full sha head kept, the report `friend <name> <verdict>: ` and
-  the report's first 600 characters on one line. The branch is the row's, else
-  the brief's STATUS line. One line on the record per finish (`outbox: finished
-  card <c> from outbox/<job>/REPORT.md (Verdict <v>, working on her row):
-  finish=ok|failed head=<sha> sent=server`).
+  `FAIL`, and a `LAND` with no full sha head, are `--failed`, a full sha head
+  kept, the report `friend <name> <verdict>: ` and the report's first 600
+  characters on one line. The branch is the row's, else the brief's STATUS
+  line. One line on the record per finish (`outbox: finished card <c> from
+  outbox/<job>/REPORT.md (Verdict <v>, working on her row): finish=ok|failed
+  head=<sha> sent=server sha256=<hex>`). The sha256 is the bytes collected.
+  A report that changes after that line is ignored: the collection is one event.
+- A report is final when `Final` says so: the first line is `Verdict: LAND`,
+  `Verdict: HOLD` or `Verdict: FAIL` (any case) and the second line is
+  `Head: <40-hex>` or `Head: -`. A session writes the whole report once, at the
+  end, under a temporary name, then renames it onto `REPORT.md`. A verdict word
+  already read as `HOLD` or `FAIL` (a markdown verdict line, a `FAIL`
+  whose second line is blank) is collected as before while those writers still
+  emit that shape. A `LAND` with a missing or partial Head, and any other word
+  including `pending`, is not final: the file is left, noted once
+  (`report not final yet: <card>: <first line>`), and read again next pass.
+  Past the card's deadline it is collected as `FAIL` with the reason
+  `report never became final: first line <text>`. The deadline is the brief's
+  `DEADLINE:` line (an absolute time, or a duration from the first pass that
+  saw the report) and two hours when the brief names none.
+  `TestFinal` and `TestAReportThatIsNotFinalIsLeftUntilTheCardsDeadline`.
 - A finish is sent once: a job finished is never sent again, nor noted when its
   card leaves her row. One the server did not answer or refused is said once
   and sent again after `OutboxRetry` (a minute); friend sync may finish it

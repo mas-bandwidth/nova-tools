@@ -43,7 +43,7 @@ func TestTheDaemonFinishesAReportItDidNotStage(t *testing.T) {
 	outboxReport(t, dir, land.Job, "Verdict: LAND\nHead: "+head+"\n\nThe card is done.\n")
 	outboxReport(t, dir, hold.Job, "Verdict: HOLD\nHead: "+head+"\n\nno push\n")
 	outboxReport(t, dir, fail.Job, "Verdict: FAIL\n\n"+long)
-	outboxReport(t, dir, gen.Job, "**Verdict:** land\nHead: "+strings.ToUpper(head)+"\n\nthird time.\n")
+	outboxReport(t, dir, gen.Job, "Verdict: land\nHead: "+strings.ToUpper(head)+"\n\nthird time.\n")
 	outboxReport(t, dir, silent.Job, "I am still working on it.\n")
 	outboxReport(t, dir, ready.Job, "Verdict: LAND\nHead: "+head+"\n")
 	outboxReport(t, dir, "gone.w1~15", "Verdict: LAND\nHead: "+head+"\n") // its card is not on her row
