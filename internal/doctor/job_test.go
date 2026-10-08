@@ -649,7 +649,7 @@ func TestDoctorNamesTheFirstMissingDependencyAndItsFix(t *testing.T) {
 
 	// Coordinator preflight (Glenn, 2026-10-08). Each case is the same doctor: one next
 	// command, fake clock and servers, no live service. The cold reader is the world's run.
-	t.Run("empty config names a secret-backed login and doctor writes nothing", func(t *testing.T) {
+	t.Run("empty config names a secret-backed dry run and leaves login unrecorded", func(t *testing.T) {
 		t.Parallel()
 		w := healthyWorld(t)
 		w.configEmpty = true
@@ -660,7 +660,7 @@ func TestDoctorNamesTheFirstMissingDependencyAndItsFix(t *testing.T) {
 		_, next, ok := strings.Cut(summary, " next: ")
 		require.True(t, ok, summary)
 		assert.Equal(t, 1, strings.Count(strings.Join(lines, "\n"), " next: "))
-		want := "nova-config login --store /secrets --as store-seat --key /keys/store --secret NOVA_PG_CONFIG_PASSWORD --dsn postgres://nova_config@127.0.0.1:5432/nova --actor ada --sops /bin/sops"
+		want := "nova-sprint seat install --harness grok --target /home/ada/session --actor ada --redis 127.0.0.1:6390 --dry-run --config-seat ada --config-dsn postgres://nova_config@127.0.0.1:5432/nova --config-password-env NOVA_PG_CONFIG_PASSWORD"
 		assert.Equal(t, want, next)
 		_, refused := parseArgv(next)
 		assert.Empty(t, refused, next)
@@ -670,8 +670,10 @@ func TestDoctorNamesTheFirstMissingDependencyAndItsFix(t *testing.T) {
 		assert.True(t, w.schema)
 		w.run(next)
 		code, lines = w.doctor(jobArgs["coordinator"]...)
-		assert.Equal(t, 0, code, lines)
-		assert.False(t, w.configEmpty)
+		assert.Equal(t, 2, code, lines)
+		assert.True(t, w.configEmpty)
+		assert.Equal(t, 0, w.installs)
+		assert.Contains(t, lines[len(lines)-1], "first_missing=store-login ")
 	})
 
 	t.Run("schema 35 and binary 36 migrate before a binary switch", func(t *testing.T) {
