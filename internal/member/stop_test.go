@@ -27,6 +27,13 @@ type stopChild struct {
 	pid     int
 }
 
+type proofStopChild struct {
+	stopChild
+	confirmed bool
+}
+
+func (c *proofStopChild) StopConfirmed() bool { return c.confirmed }
+
 func (c *stopChild) Stop() int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -56,6 +63,12 @@ func (r *stopRunner) Start(p Packet) (Child, error) {
 	c := &stopChild{pid: 4000 + len(r.children)}
 	r.children[p.Card] = c
 	return c, nil
+}
+
+func (r *stopRunner) RecoverStopped(Packet) Child {
+	c := &stopChild{}
+	c.end(Result{}) // the fake's old run has ended before recovery
+	return c
 }
 
 func (r *stopRunner) child(card string) *stopChild {
@@ -142,6 +155,38 @@ func TestStoppedTakesAndRecoversNothing(t *testing.T) {
 	assert.Empty(t, s.lines("take"), "no take while STOPPED")
 	assert.Empty(t, r.started(), "no recovery while STOPPED")
 	assert.Equal(t, 0, m.Running())
+}
+
+func TestStoppedParentExitKeepsReturnOwedUntilGroupProof(t *testing.T) {
+	t.Parallel()
+	m, s, _, _ := stopRig(Config{As: "m", Width: 1})
+	p := pk("c1")
+	c := &proofStopChild{}
+	c.end(Result{}) // parent exit alone is insufficient
+	m.running["c1"] = launch{child: c, gen: 1, epoch: 7, packet: p, stopped: true}
+	s.set("queue", 0, queueWith(t, "STOPPED", 7, working("c1", 1, &p)))
+	_, err := m.Tick(time.Unix(10, 0))
+	require.NoError(t, err)
+	assert.Empty(t, s.lines("stop-return"))
+	assert.Equal(t, 1, m.OwedStopReturns())
+	c.confirmed = true
+	_, err = m.Tick(time.Unix(11, 0))
+	require.NoError(t, err)
+	assert.Len(t, s.lines("stop-return"), 1)
+}
+
+func TestReturnedReadBeginsAtQueuedGeneration(t *testing.T) {
+	t.Parallel()
+	m, s, _, _ := stopRig(Config{As: "r", Width: 1, Reader: true})
+	p := pk("r1")
+	p.Kind, p.Attempt, p.Gen = "read", 1, 0 // old packet omits the new generation
+	c := asked("r1", &p)
+	c.Gen = 2 // stop-return raised the stored generation
+	s.set("queue", 0, queueWith(t, "RUNNING", 7, c))
+	_, err := m.Tick(time.Unix(10, 0))
+	require.NoError(t, err)
+	assert.Equal(t, []string{"read --as r --begin r1@2 --epoch 7"}, s.lines("begin"))
+	assert.Equal(t, 2, m.running["r1"].gen)
 }
 
 // A stop-return the server refuses is said once while its text stands and tried again after
@@ -256,7 +301,7 @@ func TestAMemberRestartedMidStopHandsBackItsWorkingCards(t *testing.T) {
 	assert.Equal(t, []string{"stop-return --as m c2@3 --epoch 7 --reason owned process stopped"}, s.lines("stop-return"))
 	assert.Empty(t, s.lines("take"))
 	assert.Empty(t, r.started(), "no recovery launch while STOPPED")
-	assert.Contains(t, out.String(), "STOP-RETURN OK card=c2 gen=3 epoch=7 pid=0: handed back to m ready by the machine's stop (no child of this member runs it")
+	assert.Contains(t, out.String(), "STOP-RETURN OK card=c2 gen=3 epoch=7 pid=0: handed back to m ready by the machine's stop")
 	// a refusal is tried again after StopReturnRetry, not every pass
 	s.set("stop-return", 2, "the machine is RUNNING")
 	for i := range 3 {

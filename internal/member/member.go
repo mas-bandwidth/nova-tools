@@ -94,6 +94,13 @@ type Stopper interface {
 	Stop() (pid int)
 }
 
+// StopProver confirms that the native run reaped its harness group. A dead parent
+// alone does not prove that its child process group ended.
+type StopProver interface{ StopConfirmed() bool }
+
+// StopRecoverer attaches to an earlier member's launch without starting a new one.
+type StopRecoverer interface{ RecoverStopped(Packet) Child }
+
 // ProgressEvery is how often the member stamps progress on a card whose child prints: the
 // sprint's own number (internal/sprint ProgressEvery, inside its RuleProgressWindow of ten
 // minutes with room for a stamp that is late or lost; docs/SPEC-SPRINT.md section 8, the
@@ -1197,7 +1204,7 @@ func (m *Member) take(q queueOut, held []string, now time.Time, launch func(Pack
 	if m.cfg.Reader {
 		// the reads begun are named: the first n asked in queue order, so what
 		// is started is exactly what was claimed
-		var ids []string
+		var ids, begins []string
 		for _, c := range q.Cards {
 			if _, ours := m.running[c.ID]; ours {
 				continue // begun earlier in this pass
@@ -1207,7 +1214,10 @@ func (m *Member) take(q queueOut, held []string, now time.Time, launch func(Pack
 			}
 			if c.Col == "asked" && c.Packet != nil && len(ids) < room {
 				ids = append(ids, c.ID)
-				packets = append(packets, *c.Packet)
+				begins = append(begins, c.ID+"@"+strconv.Itoa(max(c.Gen, 1)))
+				p := *c.Packet
+				p.Gen = max(c.Gen, 1)
+				packets = append(packets, p)
 			}
 		}
 		for id := range m.returnedAt {
@@ -1218,7 +1228,7 @@ func (m *Member) take(q queueOut, held []string, now time.Time, launch func(Pack
 		if len(ids) == 0 {
 			return 0, nil
 		}
-		args := append(append([]string{"read", "--as", m.cfg.As, "--begin"}, ids...), held...)
+		args := append(append([]string{"read", "--as", m.cfg.As, "--begin"}, begins...), held...)
 		code, out := m.run(args...)
 		if code == 2 {
 			return 0, orWords(out)
@@ -1301,7 +1311,11 @@ func (m *Member) recoverWorking(ids []string, byID map[string]queueCard, wasOurs
 			fmt.Fprintf(m.out, "recover %s deferred: width %d full\n", id, m.width)
 			continue
 		}
-		if launch(*c.Packet) {
+		p := *c.Packet
+		if m.cfg.Reader {
+			p.Gen = max(c.Gen, 1)
+		}
+		if launch(p) {
 			acted++
 		}
 	}
@@ -1311,6 +1325,9 @@ func (m *Member) recoverWorking(ids []string, byID map[string]queueCard, wasOurs
 // start runs a packet as a child, unless one is already running for it or width is full.
 func (m *Member) start(p Packet) bool {
 	p = Carried(p)
+	if p.Kind == "read" {
+		p.Gen = max(p.Gen, 1)
+	}
 	if _, ok := m.running[p.Card]; ok {
 		fmt.Fprintf(m.out, "start %s: already running\n", p.Card)
 		return false
@@ -1508,8 +1525,7 @@ func (m *Member) machineStop(q queueOut, byID map[string]queueCard, now time.Tim
 			m.running[id] = l
 			fmt.Fprintf(m.out, "LANE CANCELLED BY STOP card=%s gen=%d epoch=%d pid=%d: the child was told to stop; its working tree and log are kept\n", id, l.gen, l.epoch, l.stopPid)
 		}
-		// a card working under this row with no child of ours: its run is gone with the
-		// member that ran it (a restart mid-stop), and the queue is the record
+		// A prior member may have died while its native child kept running.
 		for _, id := range slices.Sorted(maps.Keys(byID)) {
 			c := byID[id]
 			if _, ours := m.running[id]; ours || (c.Col != "working" && c.Col != "reading") {
@@ -1517,10 +1533,26 @@ func (m *Member) machineStop(q queueOut, byID map[string]queueCard, now time.Tim
 			}
 			epoch, gen, attempt := m.claim(c)
 			if m.cfg.Reader {
-				gen = attempt
+				gen = max(c.Gen, 1)
 			}
-			if m.stopReturn(id, gen, epoch, 0, now, "no child of this member runs it: the run is gone with the member that ran it") {
-				acted++
+			p := Packet{Card: id, Gen: c.Gen, Attempt: c.Attempt, Epoch: epoch}
+			if m.cfg.Reader {
+				p.Kind = "read"
+				p.Gen = max(c.Gen, 1)
+			}
+			if c.Packet != nil {
+				p = *c.Packet
+				if m.cfg.Reader {
+					p.Gen = max(c.Gen, 1)
+				}
+			}
+			if r, ok := m.runner.(StopRecoverer); ok {
+				child := r.RecoverStopped(p)
+				l := launch{child: child, gen: gen, attempt: attempt, epoch: epoch, packet: p, stopped: true, stopAt: now}
+				if s, ok := child.(Stopper); ok {
+					l.stopPid = s.Stop()
+				}
+				m.running[id] = l
 			}
 		}
 	}
@@ -1528,6 +1560,9 @@ func (m *Member) machineStop(q queueOut, byID map[string]queueCard, now time.Tim
 	for _, id := range slices.Sorted(maps.Keys(m.running)) {
 		l := m.running[id]
 		if !l.stopped || l.busy || l.child == nil || !l.child.Done() {
+			continue
+		}
+		if proof, ok := l.child.(StopProver); ok && !proof.StopConfirmed() {
 			continue
 		}
 		if !m.stopped {
@@ -1674,13 +1709,19 @@ func (m *Member) returnUnstarted(p Packet, why error) {
 // when it carries one: the queue hands packets only for the cards asked (queueArgs).
 func (m *Member) moved(l launch, c queueCard) bool {
 	epoch, gen, attempt := m.claim(c)
-	return l.epoch != epoch || (!m.cfg.Reader && l.gen != gen) || (m.cfg.Reader && l.attempt != attempt)
+	return l.epoch != epoch || l.gen != gen || (m.cfg.Reader && l.attempt != attempt)
 }
 
 // claim is the queue's card's claim: its packet's, when it carries one, else the card's own.
 func (m *Member) claim(c queueCard) (epoch uint64, gen, attempt int) {
 	if p := c.Packet; p != nil {
+		if m.cfg.Reader {
+			return p.Epoch, max(c.Gen, 1), p.Attempt
+		}
 		return p.Epoch, p.Gen, p.Attempt
+	}
+	if m.cfg.Reader {
+		return m.epoch, max(c.Gen, 1), c.Attempt
 	}
 	return m.epoch, c.Gen, c.Attempt
 }

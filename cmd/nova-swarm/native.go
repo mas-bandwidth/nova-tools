@@ -1175,14 +1175,27 @@ func initRunState(p *nativePrepared, w *nativeWalled, errOut io.Writer) (*native
 }
 
 // start launches a child process attempt, establishing process groups and wait channels.
+const nativeGroupReceiptName = ".native-group"
+const nativeGroupQuiescedName = ".native-group-reaped"
+
+func writeNativeGroupReceipt(slot string, pid int, stamp string) error {
+	if pid <= 0 || stamp == "" {
+		return fmt.Errorf("the group has no birth identity")
+	}
+	return atomicfile.Write(filepath.Join(slot, nativeGroupReceiptName), []byte(strconv.Itoa(pid)+" "+stamp+"\n"), 0o600)
+}
+
 func start(s *nativeRunState, attempt int, errOut io.Writer) (*nativeStarted, nativeRunResult, int) {
 	if s.prep.cfg.onPhase != nil {
 		s.prep.cfg.onPhase("start")
 	}
 	before := fileSize(s.outLog)
 	providerBefore := fileSize(filepath.Join(s.prep.dataHome, filepath.FromSlash(harnessLogFile)))
-	cmd := subproc.Long(s.runCtx, s.wal.runPath, s.wal.runArgv...)
-	ownChildGroup(cmd)
+	cmd, releaseGate, abortGate, gateErr := nativeGroupCommand(s.runCtx, s.wal.runPath, s.wal.runArgv...)
+	if gateErr != nil {
+		refuseNative(errOut, fmt.Sprintf("the child gate could not be made: %s", oneline.Escape(gateErr.Error())))
+		return nil, nativeRunResult{}, 2
+	}
 	cmd.Env = s.childEnv
 	cmd.Dir = s.prep.jobDir
 	cmd.Stdin = s.devNull
@@ -1190,18 +1203,32 @@ func start(s *nativeRunState, attempt int, errOut io.Writer) (*nativeStarted, na
 	cmd.Stderr = io.MultiWriter(s.capture, &s.wallOut)
 	attemptStart := time.Now()
 	if err := cmd.Start(); err != nil {
+		abortGate()
 		s.log.Close()
 		s.harnessOut.Close()
 		refuseNative(errOut, fmt.Sprintf("the child could not be started: %s", oneline.Escape(err.Error())))
 		return nil, nativeRunResult{}, 2
 	}
 	pgid := cmd.Process.Pid
+	started := swarm.StartStamp(pgid)
+	if err := writeNativeGroupReceipt(s.prep.cfg.slotDir, pgid, started); err != nil {
+		abortGate()
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		refuseNative(errOut, fmt.Sprintf("the child group could not be recorded: %s", oneline.Escape(err.Error())))
+		return nil, nativeRunResult{}, 2
+	}
+	if err := releaseGate(); err != nil {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		refuseNative(errOut, fmt.Sprintf("the child gate could not be released: %s", oneline.Escape(err.Error())))
+		return nil, nativeRunResult{}, 2
+	}
 	if s.wal.niced {
 		if err := lowerChildPriority(pgid); err != nil {
 			fmt.Fprintf(errOut, "NATIVE NOTE: the child's priority could not be lowered: %s\n", oneline.Err(err))
 		}
 	}
-	started := swarm.StartStamp(pgid)
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
 	deadline := nativeDeadline
