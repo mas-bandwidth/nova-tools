@@ -537,6 +537,7 @@ func TestParseReadSlotsAndVerdict(t *testing.T) {
 // Holding the actual harness turns makes an extra child visible rather than
 // merely checking table occupancy. Either admission order must share width.
 func TestOneShotWorkAndNativeReadsShareConfiguredChildren(t *testing.T) {
+	t.Parallel()
 	for _, readFirst := range []bool{false, true} {
 		t.Run(fmt.Sprintf("read-first-%t", readFirst), func(t *testing.T) {
 			t.Parallel()
