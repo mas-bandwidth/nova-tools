@@ -82,11 +82,25 @@ func TestFriendBeatTakesHerCountsAndLoadAsFleetBeatTakesALoad(t *testing.T) {
 	assert.Equal(t, 8, f.Width, "her width is the roster's, not her word")
 	assert.Equal(t, sprint.Up, f.Status, "on her session's pong, never on the beat")
 
-	// a beat with none reports none: the last one's counts are not kept
-	ta.beatUp("amy")
+	// a bare beat leaves the running list and the counts it does not name (docs/FRIENDS.md,
+	// a beat leaves a field it does not name); her width word and her load are this beat's own
+	out = ta.ok("friend beat amy")
+	assert.Contains(t, out, " set=-")
+	ta.pong("amy")
 	f = whereFriends(ta)["amy"]
-	assert.Nil(t, f.Report)
+	require.NotNil(t, f.Report)
+	assert.Equal(t, 2, *f.Report.Working)
+	assert.Equal(t, 3, *f.Report.Queue)
+	assert.Equal(t, []string{"s1-1.w1", "s1-2.w1"}, f.Report.Running)
+	assert.Nil(t, f.Report.Width)
 	assert.Zero(t, f.Load)
+	// --running '' names the list and clears it
+	out = ta.ok("friend beat amy --running ''")
+	assert.Contains(t, out, " set=running")
+	f = whereFriends(ta)["amy"]
+	require.NotNil(t, f.Report)
+	assert.Empty(t, f.Report.Running)
+	assert.Equal(t, 2, *f.Report.Working)
 
 	for _, bad := range []string{"--working -1", "--queue x", "--width 0", "--load lots"} {
 		code, _, errs := ta.do("friend beat amy " + bad)
