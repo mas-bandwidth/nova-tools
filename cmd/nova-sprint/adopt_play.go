@@ -32,8 +32,8 @@ import (
 // refusal naming the step, and running it again finishes it (the play is
 // idempotent). The verb has no flag that runs a step alone.
 //
-// The adoption pipeline of adopt.go (cmdAdopt) is not this verb and is not in
-// the verb table.
+// The hand adoption pipeline of aeb316dea is gone; this play is the seat's
+// adoption.
 func init() {
 	verbClasses["adopt"] = classMachine
 	verbExit["adopt"] = "exit codes: 0 every step of the seat adopted the build (or, with --dry-run, said what it would change), 1 the play stopped or left a step without its line (ADOPT REFUSED step=<step>, with what the rollback did when the window had opened: the steps before it are done, or rolled back, and the play runs again to finish), 2 usage"

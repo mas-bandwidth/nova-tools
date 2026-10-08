@@ -296,7 +296,6 @@ var secretOpeners = map[string]any{
 	"internal/friend.ParseJob":                         friend.ParseJob,
 	"internal/friend.ParseLaneCaps":                    friend.ParseLaneCaps,
 	"internal/friend.ParseLimit":                       friend.ParseLimit,
-	"internal/friend.ParsePacing":                      friend.ParsePacing,
 	"internal/friend.ParsePing":                        friend.ParsePing,
 	"internal/friend.ParsePong":                        friend.ParsePong,
 	"internal/friend.ParseProfile":                     friend.ParseProfile,

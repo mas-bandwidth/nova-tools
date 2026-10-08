@@ -111,11 +111,8 @@ func statsPrimaries(s *Snapshot) []*Card {
 	return out
 }
 
-// Stats is the pass's numbers over the snapshot's work, fleet and readers tables
-// (loaded with StatsRecords).
-func Stats(s *Snapshot) PassStats { return StatsSince(s, time.Time{}) }
-
-// StatsSince is Stats from since on (the last stats tidy; zero is the whole epoch): a
+// StatsSince is the pass's numbers over the snapshot's work, fleet and readers tables
+// (loaded with StatsRecords) from since on (the last stats tidy; zero is the whole epoch): a
 // stage counts when it ended at or after since, a work card when its last stamp
 // (finished, else taken, else dealt) is, a read card likewise (read, begun, asked), a
 // route's take when its record's end is, and a primary when any of its samples counts.

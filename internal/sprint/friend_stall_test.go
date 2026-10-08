@@ -352,17 +352,17 @@ func TestFutureDatedEvidenceCountsAsNow(t *testing.T) {
 	at, what := FriendWorked(w.s, "amy", friendWorkOf(TickReq{Beats: map[string]Beat{"amy": {Proof: past}}}, "amy"))
 	assert.True(t, at.Equal(past), "a proof before now is that time, got %s", at)
 	assert.Equal(t, "session proof", what)
-	assert.Equal(t, 0, futureEvidenceLogCount("amy", past))
+	assert.Equal(t, 0, futureLogged("amy", past))
 
 	at, what = FriendWorked(w.s, "amy", friendWorkOf(TickReq{Beats: map[string]Beat{"amy": {Proof: future}}}, "amy"))
 	assert.True(t, at.Equal(now), "a future proof counts as the server's now, got %s", at)
 	assert.Equal(t, "session proof", what)
-	assert.Equal(t, 1, futureEvidenceLogCount("amy", future), "the future stamp is logged once")
+	assert.Equal(t, 1, futureLogged("amy", future), "the future stamp is logged once")
 
 	at, what = FriendWorked(w.s, "amy", friendWorkOf(TickReq{Beats: map[string]Beat{"amy": {Proof: future}}}, "amy"))
 	assert.True(t, at.Equal(now), "a future proof still counts as now")
 	assert.Equal(t, "session proof", what)
-	assert.Equal(t, 1, futureEvidenceLogCount("amy", future), "the same future stamp is not logged again")
+	assert.Equal(t, 1, futureLogged("amy", future), "the same future stamp is not logged again")
 
 	row := FriendRow("amy")
 	w.s.Fleet.Put(&Card{
@@ -373,8 +373,19 @@ func TestFutureDatedEvidenceCountsAsNow(t *testing.T) {
 	at, what = FriendWorked(w.s, "amy", FriendWork{})
 	assert.True(t, at.Equal(now), "a future report counts as the server's now, got %s", at)
 	assert.Equal(t, "report", what)
-	assert.Equal(t, 1, futureEvidenceLogCount("amy", reportAt), "the future report is logged once")
+	assert.Equal(t, 1, futureLogged("amy", reportAt), "the future report is logged once")
 	at, _ = FriendWorked(w.s, "amy", FriendWork{})
 	assert.True(t, at.Equal(now))
-	assert.Equal(t, 1, futureEvidenceLogCount("amy", reportAt), "the same future report is not logged again")
+	assert.Equal(t, 1, futureLogged("amy", reportAt), "the same future report is not logged again")
+}
+
+// futureLogged is how many times friend's evidence stamped at stamped was logged for
+// being after the server's clock (futureEvidenceOnce, noteFutureEvidence).
+func futureLogged(friend string, stamped time.Time) int {
+	v, ok := futureEvidenceOnce.Load(futureEvidenceKey(friend, stamped))
+	if !ok {
+		return 0
+	}
+	n, _ := v.(int)
+	return n
 }
