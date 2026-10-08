@@ -241,7 +241,7 @@ shown: `names` reads it, the coordinator's view reads it, and `send` and
 `recv` say it beside what they did. And the finding of 2026-10-08 (issue
 #5450; the owner: "it is important that we can talk to friends, if you can't
 that's totally a bug"): v1.1.0 refused `send` and `recv` for every name
-without a proof, a claude friend's daemon never wrote one (no session to
+without a proof, a claude friend's daemon then wrote none (no session to
 push into), and a new machine with no daemon could neither read the keeper's
 notes nor answer them. So the proof advises and never refuses: a message to
 an unheard name lands and waits on its stream, a recv by an unheard name

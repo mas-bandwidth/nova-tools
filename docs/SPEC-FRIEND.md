@@ -1287,10 +1287,33 @@ state (SPEC-BUS.md, bus-requires-inbox-push-proof).
 - `nova-friend install` and `run` refuse, before anything is written, loaded
   or delivered, a harness whose adapter has no deliver command (a `Stub`:
   every surveyed harness; not claude, which runs each card as a process of its
-  own, below, and owes neither this refusal nor the proof), exit 2, with the remedy `the adapter
+  own, below, and owes no refusal: its check goes in by the folder), exit 2, with the remedy `the adapter
   card: give internal/friend a deliver command for <harness> (NewDeliverer),
   or run the friend under a harness that has one: <the harnesses with one>`.
   `--dry-run` refuses it too.
+- A claude friend proves by the folder (`friend.FolderCheck`,
+  internal/friend/adapter_claude_folder.go; the owner, 2026-10-08: "why not,
+  can we fix the harness to do this?"). Claude Code has no command that puts
+  a turn into a running session, and her cards run as processes of their
+  own, so the daemon's SESSION CHECK is written as one file,
+  `<dir>/inbox/SESSION-CHECK-<nonce>`, holding the check's text (the pong
+  command: `nova-friend pong --as <me> --nonce <nonce> --state-dir <state>`);
+  the next check replaces it, so one stands at a time. `run` and `install`
+  say so (`push proof: owed by the folder: ...`, and install's NOTE naming
+  the path). A live session watches that folder (a Monitor, as the seat's own
+  folder adapter has it: SPEC-SPRINT.md, "The push proof") and answers the
+  file it shows; the pong on the bus brings the presence up, the proof on
+  `bus2:push` follows with the nonce and `harness=claude`, and the next beat
+  carries `--check` and `--pong` as any session's does (`SessionCheck.Words`),
+  so the server records the session proof natively. Her beat is never held
+  back on the answer (`SessionCheck.BeatAlways`): with no live session
+  (per-card lanes only, mode batch) she answers nothing, reads down with the
+  check's nonce, and her cards' finishes stand for her at the server, as the
+  one-shot lanes have it below; nothing refuses a message to her on it
+  (SPEC-BUS.md, bus-requires-inbox-push-proof). Tests:
+  `TestAClaudeFriendsCheckGoesInByTheFolder` (internal/friend),
+  `TestAClaudeDaemonsCheckGoesInByTheFolderAndItsBeatCarriesThePong`
+  (cmd/nova-friend).
 - `run` never waits on the proof and never exits for want of it: the start
   check is a state (the finding of 2026-10-06: a session in long turns never
   answered inside five minutes, run exited 2, launchd restarted it into the
@@ -1616,10 +1639,12 @@ A claude lane's run is a lane's (`LaneContext`), so it runs inside the lane
 wall like every lane child, never outside it; the wall's `--config-dir` is
 `run --config-dir`, else the row's `config_dir` as the last beat answered it
 (`row_config_dir=`), else `CLAUDE_CONFIG_DIR`. A claude friend has no session
-to push into, so `run` owes no push proof and holds no beat for a session
-check: her presence is her cards finished (a finish within `FriendFinishWindow`),
-never her daemon's beat, and a card whose outbox lacks its result is the failure
-that shows.
+to push a turn into, so her session check goes in by the folder
+(`<dir>/inbox/SESSION-CHECK-<nonce>`, The push proof above) and `run` holds
+no beat for its answer: her presence at the server is her cards finished (a
+finish within `FriendFinishWindow`), never her daemon's beat, and a card whose
+outbox lacks its result is the failure that shows; a live session that answers
+the check adds the session proof on top.
 
 A claude friend's open session, where she keeps one (the desktop app or a
 terminal), is reached through its own blocking read; the lanes above are

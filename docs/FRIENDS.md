@@ -47,7 +47,7 @@ hours). Name the real path with `--dir`.
 ## Her inbox pushes to her: the push proof
 
 `nova-friend install` and `run` refuse a harness nothing pushes into: one
-with no deliver command (every surveyed harness; not claude, which runs each card as a process of its own and has no session to push into) is refused
+with no deliver command (every surveyed harness; not claude, which runs each card as a process of its own and proves by the folder: its check is written as `<dir>/inbox/SESSION-CHECK-<nonce>` for a live session to answer) is refused
 before anything is written, with the adapter card as the remedy; a dsh
 session under an agent preset is refused with `start a session in <dir> with
 no agent preset and name it with --session <id>`. `run` delivers one SESSION

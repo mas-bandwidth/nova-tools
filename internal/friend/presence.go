@@ -409,6 +409,19 @@ func (s *SessionCheck) BeatOr(beat func(ctx context.Context) error, down func(ct
 	}
 }
 
+// BeatAlways is beat with the check stepped first and never held back: a
+// claude friend's (docs/SPEC-FRIEND.md, The push proof), whose cards run as
+// processes of their own and whose presence at the server is their finishes;
+// her session check goes in by the folder (FolderCheck) and its answer rides
+// the beat (Words), so a live session proves the push and no session refuses
+// nothing.
+func (s *SessionCheck) BeatAlways(beat func(ctx context.Context) error) func(ctx context.Context) error {
+	return func(ctx context.Context) error {
+		s.Step(ctx)
+		return beat(ctx)
+	}
+}
+
 // downBeat is the down beat's until and reason at now: an open check's bound,
 // else the next check's bound (SessionQuiet after the last, or now when one is
 // owed), and the reason naming the check's nonce.
