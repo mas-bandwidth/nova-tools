@@ -1338,7 +1338,7 @@ func (l *lander) gateBase(ctx context.Context, dir, stream string, cards []landC
 	if f := l.baseGateFails[baseSha]; f != nil {
 		was = f.n
 	}
-	red, stop := l.treeGateBase(ctx, dir, baseSha)
+	red, stop := l.treeGateBase(ctx, dir, baseSha, base)
 	if red == "" {
 		return nil, 0, "", ""
 	}
