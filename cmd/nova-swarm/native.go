@@ -1243,7 +1243,7 @@ func start(s *nativeRunState, attempt int, errOut io.Writer) (*nativeStarted, na
 	}
 	if err := releaseGate(); err != nil {
 		if !procgroup.ReapVerified(context.Background(), pgid, started, filepath.Join(s.prep.cfg.slotDir, nativeAnchorReceiptName), swarm.TerminateGrace) {
-			fmt.Fprintf(errOut, "NATIVE NOTE: a refused harness gate left a group whose exit is unproven; keep its slot until STOP recovery\n")
+			fmt.Fprintf(errOut, "NATIVE NOTE: a refused harness gate left a group whose exit is unproven; remedy: keep the slot and restart its member to complete STOP recovery\n")
 		}
 		// ignored: no successful gate release; kill is cleanup for refusal.
 		_ = cmd.Process.Kill()

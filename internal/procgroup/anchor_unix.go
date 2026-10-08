@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
@@ -38,6 +39,7 @@ func StartAnchor(pgid int, receiptPath string) error {
 		return err
 	}
 	cmd := exec.CommandContext(context.Background(), "/bin/sh", "-c", `IFS= read -r gate <&3 || exit 125; exec 3<&-; [ "$gate" = go ] || exit 125; trap '' TERM; printf ready >&4; exec 4>&-; while :; do sleep 60; done`)
+	cmd.WaitDelay = subproc.WaitDelay
 	cmd.ExtraFiles = []*os.File{rd, ackWr}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Pgid: pgid}
 	if err := cmd.Start(); err != nil {
