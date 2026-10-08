@@ -186,9 +186,10 @@ func TestATwiceRefusedBenchIsPassedOverForThePass(t *testing.T) {
 	r.clean()
 }
 
-// A gate ref that origin refuses to delete keeps the gate red through benchGate,
-// even when no bench ran and the caller would otherwise try the tree locally.
-func TestAFailedGateRefDeleteCannotPassTheGate(t *testing.T) {
+// A gate ref that origin refuses to delete is said on the ledger and is not the gate's
+// finding. With no bench, ran stays false so the caller still runs the tree in the clone,
+// and an empty why is not replaced by the cleanup refusal.
+func TestAFailedGateRefDeleteDoesNotFailTheGate(t *testing.T) {
 	t.Parallel()
 	r := newLandRig(t)
 	hook := "#!/bin/sh\nwhile read old new ref; do\n" +
@@ -200,8 +201,8 @@ func TestAFailedGateRefDeleteCannotPassTheGate(t *testing.T) {
 	l := &lander{a: r.a, gateKey: "s1"}
 
 	why, ran := l.benchGate(context.Background(), nil, r.clone, gateRuns(false, nil), false)
-	require.True(t, ran, "a failed cleanup must prevent the caller from running a green local fallback")
-	assert.Contains(t, why, "deleting the gate's ref "+ref)
+	assert.False(t, ran, "a refused delete does not by itself set ran; with no bench the gate runs in the clone")
+	assert.Empty(t, why, "a refused delete does not replace an empty why")
 	assert.Contains(t, strings.Join(l.ledgerLog, "\n"), "deleting the gate's ref "+ref)
 	assert.Equal(t, head, r.git(r.remote, "rev-parse", ref), "the refusal left the temporary ref on origin")
 	r.git(r.remote, "update-ref", "-d", ref)
