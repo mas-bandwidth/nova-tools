@@ -92,7 +92,7 @@ cd repo
 ### 2. Set Up Your Environment
 
 ```
-export GOCACHE=~/freddy-working/.cache/go-build
+export GOCACHE=~/<friend>-working/.cache/go-build
 export GOFLAGS=-mod=readonly
 export NOVA_TEST_NO_HOST=1
 ```

@@ -25,8 +25,6 @@ var codeBlockRe = regexp.MustCompile("(?s)```[a-z]*\n(.*?)```")
 // novaCmdRe reads nova-* command lines from text.
 var novaCmdRe = regexp.MustCompile(`(?:^|\s)(nova-[a-z0-9_-]+)\s+([a-z0-9_\s-]+)`)
 
-
-
 // TestFriendOnboardingGuideCoversJoinToFirstCard parses every nova-* command line
 // in docs/FRIEND-ONBOARDING.md and checks that each tool, verb and flag exists.
 func TestFriendOnboardingGuideCoversJoinToFirstCard(t *testing.T) {
