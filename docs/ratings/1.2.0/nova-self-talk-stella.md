@@ -1,6 +1,6 @@
 # nova-self-talk READ and USE rating, nova-tools 1.2.0
 
-Rater: Stella, gpt-5.6-terra via Codex harness
+Rater: gpt-5.6-terra via Codex CLI
 Build: 0d56536c3d61
 READ: 8/10
 USE: 8/10
