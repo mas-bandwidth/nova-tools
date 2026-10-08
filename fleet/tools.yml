@@ -23,8 +23,8 @@
 # a removal that fails never fails the play (internal/release/prune.go). On
 # the coordinator (the store_deployer machine) the new build's checks run
 # first and change nothing; then the seat play's window stops its old server
-# and member, migrates the configuration store (`nova-config migrate`, the
-# one step that cannot be undone), loads the library (`nova-redis fn load`,
+# and member, migrates the configuration store (`nova-config migrate --window`
+# as its owning role, nova_pg_owner; the one step that cannot be undone), loads the library (`nova-redis fn load`,
 # under the seat that holds the deploy user's password), installs the tools
 # and starts them again; --check runs `nova-redis fn check` there and builds
 # and installs nothing. `--tags seat` runs only what adopts the seat: the
@@ -258,51 +258,73 @@
             quiet: true
           when: seat_cand != ''
 
-        # The configuration store's migration runs in the window as the seat's
-        # DSN role (nova_pg_dsn). On 2026-10-08 a build carrying schema 36 ran
-        # against a store at 35 for 7h45m: the migrate had been attempted as a
-        # role that did not own schema config and was refused. The candidate's
-        # own dry run says, before the window opens and with nothing changed,
-        # whether the role the window migrates as can apply what is pending,
-        # and names the owner when it cannot; it reads only, so --check runs it
-        # too and says what the window would migrate.
-        - name: "server: the candidate's nova-config migrate --dry-run, as the role the window migrates as (read-only)"
+        # The configuration store's migration runs inside the window below, as
+        # nova_pg_owner, the role that owns schema config whole (group_vars:
+        # nova_pg_owner_dsn, its password under nova_pg_password_key), after the
+        # old server and member are stopped. On 2026-10-08 a build carrying
+        # schema 36 ran against a store at 35 for 7h45m: the migrate had been
+        # attempted as a role that did not own schema config and was refused.
+        # Before the window opens the candidate's own nova-config reads the store
+        # as the owner and changes nothing: the migrations pending, the role that
+        # owns the schema and every table (owner=), the sessions that hold the
+        # database. A store not owned whole by nova_pg_owner is a refusal naming
+        # the tables and their owners, and the window never opens: no migration
+        # is run by hand before the window, as any role. The dry run reads
+        # only, so --check runs it too and says what the window would migrate.
+        - name: "server: the candidate's nova-config migrate --dry-run as the owner, nova_pg_owner (read-only)"
           ansible.builtin.command:
             argv: >-
               {{ [nova_bin_dir ~ '/nova-secrets', 'exec', '--store', nova_secrets_store, '--as', nova_seat,
                   '--key', nova_secrets_key_dir ~ '/' ~ nova_seat ~ '.key', '--sops', nova_sops | default(''),
                   '--only', nova_pg_password_key, '--require=' ~ nova_pg_password_key, '--',
-                  seat_cand ~ '/nova-config', 'migrate', '--dry-run', '--json', '--pg', nova_pg_dsn] }}
+                  seat_cand ~ '/nova-config', 'migrate', '--dry-run', '--window', '--json', '--pg', nova_pg_owner_dsn] }}
           environment: { NOVA_PG_PASSWORD_ENV: "{{ nova_pg_password_key }}" }
           register: seat_migrate_dry
           changed_when: false
-          # ignored: read by the assert below, which names the step and the owner
+          # ignored: read by the assert below, which names the step, the owner and the tables
           failed_when: false
           check_mode: false
           when: seat_cand != ''
 
-        - name: "server: the window's role can apply the candidate's schema"
+        - name: "server: the store is owned whole by the owner, and the owner can apply the candidate's schema"
           ansible.builtin.assert:
             that:
-              - (seat_migrate_dry.stdout | default('') | trim) is match('[{]')
-              - ((seat_migrate_dry.stdout | default('{}') | from_json).facts | default({})).ready | default('') == 'yes'
+              - seat_dry_json
+              - seat_dry.facts.role | default('') == nova_pg_owner
+              - seat_dry.facts.owner | default('') in [nova_pg_owner, 'none']
+              - seat_dry.facts.ready | default('') == 'yes'
             fail_msg: >-
-              ADOPT REFUSED step=server host={{ inventory_hostname }}: the candidate's nova-config migrate would refuse as role
-              {{ ((seat_migrate_dry.stdout | default('{}') | from_json).facts | default({})).role | default('?') if (seat_migrate_dry.stdout | default('') | trim) is match('[{]') else '?' }}
-              ({{ (((seat_migrate_dry.stdout | default('{}') | from_json).result | default({})).why | default([]) | join('; ')) if (seat_migrate_dry.stdout | default('') | trim) is match('[{]') else (seat_migrate_dry.stderr | default('') | truncate(300)) }});
-              nothing was stopped, migrated, installed or loaded; run it as the owner first:
-              {{ (((seat_migrate_dry.stdout | default('{}') | from_json).result | default({})).remedy | default('nova-config migrate --dry-run')) if (seat_migrate_dry.stdout | default('') | trim) is match('[{]') else 'nova-config migrate --dry-run' }}
+              ADOPT REFUSED step=server host={{ inventory_hostname }}:
+              {{ ('the candidate\'s nova-config migrate --dry-run as ' ~ nova_pg_owner ~ ' did not answer (' ~ ((seat_migrate_dry.stderr | default('')) or (seat_migrate_dry.stdout | default(''))) | truncate(300) ~ ')')
+                 if not seat_dry_json
+                 else ('the store answered as role ' ~ (seat_dry.facts.role | default('?')) ~ ', not the owner ' ~ nova_pg_owner ~ ' (nova_pg_owner_dsn=' ~ nova_pg_owner_dsn ~ ')')
+                 if seat_dry.facts.role | default('') != nova_pg_owner
+                 else ('schema config is not owned whole by ' ~ nova_pg_owner ~ ' (owner=' ~ (seat_dry.facts.owner | default('?')) ~ '): '
+                       ~ (seat_dry['items'] | default([]) | selectattr('kind', 'equalto', 'not_owned') | map(attribute='fields')
+                          | map(attribute='table') | zip(seat_dry['items'] | default([]) | selectattr('kind', 'equalto', 'not_owned')
+                                                          | map(attribute='fields') | map(attribute='owner'))
+                          | map('join', ' owned by ') | join(', ')))
+                 if seat_dry.facts.owner | default('') not in [nova_pg_owner, 'none']
+                 else ('the owner ' ~ nova_pg_owner ~ ' cannot apply the candidate\'s schema: ' ~ (seat_dry.result.why | default([]) | join('; '))) }};
+              nothing was stopped, migrated, installed or loaded; the window migrates only a store the owner owns whole,
+              inside the window, as the owner; a person with the owners' rights runs, in psql:
+              {{ seat_dry.result.remedy | default('ALTER TABLE config.<table> OWNER TO ' ~ nova_pg_owner ~ ';') if seat_dry_json else 'nova-config migrate --dry-run --json --pg ' ~ nova_pg_owner_dsn }}
             quiet: true
+          vars:
+            seat_dry_json: "{{ (seat_migrate_dry.stdout | default('') | trim) is match('[{]') }}"
+            seat_dry: "{{ (seat_migrate_dry.stdout | from_json) if seat_dry_json else {} }}"
           when: seat_cand != ''
 
-        - name: "server: what the window migrates (the same in --check: the dry run reads only)"
+        - name: "server: what the window migrates, as the owner (the same in --check: the dry run reads only)"
           ansible.builtin.debug:
             msg: >-
               {{ 'WOULD-' if ansible_check_mode else '' }}MIGRATE host={{ inventory_hostname }}
               role={{ ((seat_migrate_dry.stdout | from_json).facts | default({})).role | default('?') }}
+              owner={{ ((seat_migrate_dry.stdout | from_json).facts | default({})).owner | default('?') }}
               from={{ ((seat_migrate_dry.stdout | from_json).facts | default({})).from | default('?') }}
               to={{ ((seat_migrate_dry.stdout | from_json).facts | default({})).to | default('?') }}
               pending={{ ((seat_migrate_dry.stdout | from_json).facts | default({})).pending | default('?') }}
+              sessions={{ ((seat_migrate_dry.stdout | from_json).facts | default({})).sessions | default('?') }}
               ready={{ ((seat_migrate_dry.stdout | from_json).facts | default({})).ready | default('?') }}
           when: seat_cand != ''
 
@@ -498,10 +520,10 @@
     # inside the seat play's window, with the library load, after both are
     # stopped. This play runs them only on a store_deployer machine that is
     # not the coordinator, and fn check under --check.
-    - name: nova-config migrate (the schema the build's kinds need)
+    - name: nova-config migrate as the owner (the schema the build's kinds need)
       ansible.builtin.command:
         argv: "{{ tools_seat + ['--only', nova_pg_password_key, '--require=' ~ nova_pg_password_key, '--',
-                                nova_bin_dir ~ '/nova-config', 'migrate', '--pg', nova_pg_dsn] }}"
+                                nova_bin_dir ~ '/nova-config', 'migrate', '--pg', nova_pg_owner_dsn] }}"
       environment: { NOVA_PG_PASSWORD_ENV: "{{ nova_pg_password_key }}" }
       register: tools_migrate
       changed_when: tools_migrate.stdout is search('applied=[1-9]|MIGRATE APPLIED')
@@ -509,7 +531,7 @@
       tags: [seat]
 
     - name: what --check would migrate
-      ansible.builtin.debug: { msg: "WOULD-MIGRATE {{ nova_pg_dsn }} with {{ nova_bin_dir }}/nova-config {{ nova_version }}" }
+      ansible.builtin.debug: { msg: "WOULD-MIGRATE {{ nova_pg_owner_dsn }} as {{ nova_pg_owner }} with {{ nova_bin_dir }}/nova-config {{ nova_version }}" }
       when: ansible_check_mode
       tags: [seat]
 
@@ -542,8 +564,8 @@
 #   waited on to hold none of them (nova_member_stop_timeout and 30 s more);
 #   ps then shows no nova-sprint and no nova-swarm member left, waited on
 #   for nova_seat_quiet seconds: nothing migrates while one runs;
-#   the configuration store is migrated (the candidate's nova-config
-#   migrate), the library loaded (its nova-redis fn load), the tools
+#   the configuration store is migrated as its owner (the candidate's
+#   nova-config migrate --window --pg nova_pg_owner_dsn), the library loaded (its nova-redis fn load), the tools
 #   installed (its nova-update release install, fresh inodes);
 #   the installed nova-sprint live says what is stale (every agent the window
 #   stopped, one launchd does not hold, one that runs a replaced binary or
@@ -695,11 +717,17 @@
                      | zip(((seat_quiet.stdout | from_json).processes if seat_quiet.stdout is match('[{]') else [])
                            | selectattr('holds') | map(attribute='args')) | map('join', ' ') | list }}
 
-            - name: "window: the configuration store is migrated (the candidate's nova-config)"
+            # As the owner (nova_pg_owner, its DSN and password key from group_vars),
+            # inside the window: --window makes the candidate's nova-config refuse,
+            # applying nothing, while any other nova session still holds the
+            # database, so a server or member that ps missed cannot run under a
+            # migration it does not tolerate; a refusal here is rescued like any
+            # other (the schema is unchanged, nothing was installed).
+            - name: "window: the configuration store is migrated as the owner (the candidate's nova-config, --window)"
               ansible.builtin.command:
                 argv: >-
                   {{ seat_wrap_as + ['--only', nova_pg_password_key, '--require=' ~ nova_pg_password_key, '--',
-                     seat_stage ~ '/nova-config', 'migrate', '--pg', nova_pg_dsn] }}
+                     seat_stage ~ '/nova-config', 'migrate', '--window', '--pg', nova_pg_owner_dsn] }}
               environment: { NOVA_PG_PASSWORD_ENV: "{{ nova_pg_password_key }}" }
               register: seat_migrate
               changed_when: seat_migrate.stdout is search('applied=[1-9]|MIGRATE APPLIED')

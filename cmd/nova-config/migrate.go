@@ -22,6 +22,7 @@ func runMigrate(ctx context.Context, args []string, stdout, stderr io.Writer, d 
 	c := storeFlags(fs)
 	print := fs.Bool("print", false, "list the migrations this binary carries and connect to nothing")
 	max := fs.Int("max", bounded.Default, "SQL lines to print under each MIGRATION line before one MORE line stands for the rest; 0 prints each migration whole")
+	window := fs.Bool("window", false, "the stopped window of the seat play: refuse, applying nothing, while any other nova role's session holds the database (the old server or member still runs); --dry-run reports the sessions and refuses nothing")
 	dry := fs.Bool("dry-run", false, "read the ledger (config.schema_migrations) and print every migration applied, pending (migrate applies it) or missing (below the greatest recorded, which migrate will not apply), and every table of schema config the role does not own, applying none; exit 0 when migrate would apply (ready=yes), 1 when it would refuse (ready=no)")
 	asJSON := jsonFlag(fs)
 	if code, ok := parse(fs, args, stderr, verb); !ok {
@@ -78,12 +79,19 @@ func runMigrate(ctx context.Context, args []string, stdout, stderr io.Writer, d 
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
+	held, err := st.Sessions(ctx)
+	if err != nil {
+		return refuse(stderr, verb, err.Error())
+	}
 	if *dry {
-		return migrateDryRun(ctx, st, all, owners, stdout, stderr, key, value, dsn, *asJSON)
+		return migrateDryRun(ctx, st, all, owners, held, stdout, stderr, key, value, dsn, *asJSON)
 	}
 	gaps := config.MigrateGaps(owners, config.Pending(all, have))
 	if len(gaps) > 0 {
 		return refused(stderr, verb, ownershipWhy(owners, config.Pending(all, have), gaps), ownershipRemedy(owners, gaps, dsn))
+	}
+	if *window && len(held) > 0 && len(config.Pending(all, have)) > 0 {
+		return refused(stderr, verb, windowWhy(owners.Role, held), windowRemedy)
 	}
 	from, to, applied, err := st.Migrate(ctx)
 	if err != nil {
@@ -126,7 +134,7 @@ func shownSQL(sql []string, max int) []string {
 // refusal it would print. It exits 0 when migrate would apply (ready=yes)
 // and 1 when it would refuse (ready=no), so a play or script gating on the
 // dry run stops on it; nothing was attempted, so it prints no refusal line.
-func migrateDryRun(ctx context.Context, st pgStore, all []config.Migration, owners config.Ownership, stdout, stderr io.Writer, key, value, dsn string, asJSON bool) int {
+func migrateDryRun(ctx context.Context, st pgStore, all []config.Migration, owners config.Ownership, held []config.Session, stdout, stderr io.Writer, key, value, dsn string, asJSON bool) int {
 	const verb = "migrate"
 	ledger, err := st.Applied(ctx)
 	if err != nil {
@@ -161,6 +169,10 @@ func migrateDryRun(ctx context.Context, st pgStore, all []config.Migration, owne
 		o.Item("not_owned", "table", gapName(g), "owner", g.Owner, "role", owners.Role)
 		lines = append(lines, fmt.Sprintf("MIGRATE NOT-OWNED table=%s owner=%s role=%s", config.Value(gapName(g)), config.Value(g.Owner), config.Value(owners.Role)))
 	}
+	for _, h := range held {
+		o.Item("session", "role", h.Role, "pid", h.PID, "app", h.Application)
+		lines = append(lines, fmt.Sprintf("MIGRATE SESSION role=%s pid=%d app=%s", config.Value(h.Role), h.PID, config.Value(h.Application)))
+	}
 	// Readiness uses the same ledger as the rendered pending rows: another
 	// migrate may advance it after Version (docs/SPEC-CONFIG.md, "The schema").
 	gaps := config.MigrateGaps(owners, pending)
@@ -171,7 +183,7 @@ func migrateDryRun(ctx context.Context, st pgStore, all []config.Migration, owne
 		o.Status, o.Exit, o.Why, o.Remedy = tool.Failed, 1, []string{why}, remedy
 		lines = append(lines, "MIGRATE WOULD-REFUSE "+plain(why)+"; run: "+remedy)
 	}
-	o.Fact(key, value).Fact("from", have).Fact("to", len(all)).Fact("applied", 0).Fact("dry_run", true).Fact("pending", len(pending)).Fact("missing", len(missing)).Fact("role", owners.Role).Fact("ready", ready)
+	o.Fact(key, value).Fact("from", have).Fact("to", len(all)).Fact("applied", 0).Fact("dry_run", true).Fact("pending", len(pending)).Fact("missing", len(missing)).Fact("role", owners.Role).Fact("ready", ready).Fact("owner", wholeOwner(owners)).Fact("sessions", len(held))
 	if len(missing) > 0 {
 		o.Note(fmt.Sprintf("version(s) %s are not in the ledger and are below %d, the greatest recorded: migrate applies only versions above it, so it will not apply them", strings.Join(missing, ","), have))
 	}
@@ -181,10 +193,37 @@ func migrateDryRun(ctx context.Context, st pgStore, all []config.Migration, owne
 	for _, l := range lines {
 		fmt.Fprintln(stdout, l)
 	}
-	fmt.Fprintf(stdout, "CONFIG MIGRATE %s=%s from=%d to=%d applied=0 dry_run=true pending=%d missing=%d role=%s ready=%s\n", key, config.Value(value), have, len(all), len(pending), len(missing), config.Value(owners.Role), ready)
+	fmt.Fprintf(stdout, "CONFIG MIGRATE %s=%s from=%d to=%d applied=0 dry_run=true pending=%d missing=%d role=%s ready=%s owner=%s sessions=%d\n", key, config.Value(value), have, len(all), len(pending), len(missing), config.Value(owners.Role), ready, config.Value(wholeOwner(owners)), len(held))
 	printNotes(stdout, o.Notes)
 	return o.Exit
 }
+
+// wholeOwner is the owner= fact: the one role that owns schema config and
+// every table in it (config.WholeOwner), "none" before the first migration
+// makes the schema, "mixed" when the tables have more than one owner. The seat
+// play reads it before its window and refuses a store that is not owned whole
+// by the role it migrates as.
+func wholeOwner(o config.Ownership) string {
+	if owner, ok := config.WholeOwner(o); ok {
+		return owner
+	}
+	if o.SchemaOwner == "" {
+		return "none"
+	}
+	return "mixed"
+}
+
+// windowWhy is why migrate --window refuses: the sessions that hold the
+// database, each named, so the person sees what still runs.
+func windowWhy(role string, held []config.Session) string {
+	names := make([]string, len(held))
+	for i, h := range held {
+		names[i] = h.String()
+	}
+	return fmt.Sprintf("role %s applied none: --window says the old server and member are stopped, and %d other nova session(s) hold the database: %s", role, len(held), oneline.Escape(strings.Join(names, ", ")))
+}
+
+const windowRemedy = "stop what holds the database (the seat play's window stops the old server and member and waits for ps to show none), then run the same migrate again; nova-config migrate --dry-run --json names the sessions (sessions=, one session item each) without refusing"
 
 // gapName is the gap's object as the lines name it.
 func gapName(g config.Gap) string {

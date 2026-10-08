@@ -18,7 +18,6 @@ import (
 // verbAdoptFake is the verb's steps, faked: the base is ahead of the live
 // build, the cold read comes back ok, and every machine reads back the build.
 type verbAdoptFake struct {
-	migrated bool
 	switched bool
 	pushed   []string
 }
@@ -43,10 +42,6 @@ func (f *verbAdoptFake) ColdRead(context.Context, string) (sprint.AdoptRead, err
 	return sprint.AdoptRead{Done: true, OK: true}, nil
 }
 func (f *verbAdoptFake) Ask(context.Context, sprint.AdoptJudgment) error { return nil }
-func (f *verbAdoptFake) Migrate(context.Context, sprint.AdoptBuild) (string, error) {
-	f.migrated = true
-	return "role=nova_config from=35 to=36 applied=1", nil
-}
 func (f *verbAdoptFake) KeepRollback(context.Context) ([]string, error) {
 	return []string{"/srv/nova-sprint.adopt-prev"}, nil
 }
@@ -102,8 +97,6 @@ func TestAdoptVerbAsksOneJudgmentAndActsOnTheAnswer(t *testing.T) {
 
 	code, out, errs = run()
 	require.Equal(t, 0, code, errs)
-	assert.True(t, f.migrated, "the config store is migrated before the switch")
-	assert.Contains(t, out, "ADOPT MIGRATED tip=111111111111 role=nova_config from=35 to=36 applied=1")
 	assert.True(t, f.switched)
 	assert.Equal(t, []string{"m1", "m2"}, f.pushed)
 	assert.Contains(t, out, "ADOPT FLEET version=v1.0.0-adopt.111111111111 machines=2 read_back=2")

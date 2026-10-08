@@ -157,7 +157,7 @@ func TestMigrateDryRunPrintsTheOwnershipFindingAndExitsOneWhenNotReady(t *testin
 		"MIGRATE NOT-OWNED table=config.schema_migrations owner=nova_admin role=nova_config",
 		"MIGRATE NOT-OWNED table=config.sprint owner=nova_admin role=nova_config",
 		"MIGRATE WOULD-REFUSE " + mixedWhy + "; run: " + mixedRemedy,
-		fmt.Sprintf("CONFIG MIGRATE pg=nova_config@127.0.0.1:5432/nova from=%d to=%d applied=0 dry_run=true pending=1 missing=0 role=nova_config ready=no", n-1, n),
+		fmt.Sprintf("CONFIG MIGRATE pg=nova_config@127.0.0.1:5432/nova from=%d to=%d applied=0 dry_run=true pending=1 missing=0 role=nova_config ready=no owner=mixed sessions=0", n-1, n),
 	}, lines[n:])
 	assert.Equal(t, n-1, h.store.version, "the dry run applied a migration")
 
@@ -172,7 +172,7 @@ func TestMigrateDryRunPrintsTheOwnershipFindingAndExitsOneWhenNotReady(t *testin
 	}
 	code, out, errs = h.run(t, "migrate", "--dry-run")
 	require.Equal(t, 0, code, "dry-run ready=yes: stdout %q stderr %q", out, errs)
-	assert.True(t, strings.HasSuffix(out, fmt.Sprintf(" from=%d to=%d applied=0 dry_run=true pending=1 missing=0 role=nova_config ready=yes\n", n-1, n)), out)
+	assert.True(t, strings.HasSuffix(out, fmt.Sprintf(" from=%d to=%d applied=0 dry_run=true pending=1 missing=0 role=nova_config ready=yes owner=mixed sessions=0\n", n-1, n)), out)
 	assert.NotContains(t, out, "MIGRATE NOT-OWNED")
 	assert.NotContains(t, out, "WOULD-REFUSE")
 }
@@ -189,9 +189,9 @@ func TestMigratePreflightPassesWhatTheRuleAllows(t *testing.T) {
 	}{
 		{"nothing pending, mixed owners", n, mixedCatalog(),
 			"MIGRATE NOT-OWNED table=config.sprint owner=nova_admin role=nova_config\n" +
-				fmt.Sprintf("CONFIG MIGRATE pg=nova_config@127.0.0.1:5432/nova from=%d to=%d applied=0 dry_run=true pending=0 missing=0 role=nova_config ready=yes\n", n, n)},
+				fmt.Sprintf("CONFIG MIGRATE pg=nova_config@127.0.0.1:5432/nova from=%d to=%d applied=0 dry_run=true pending=0 missing=0 role=nova_config ready=yes owner=mixed sessions=0\n", n, n)},
 		{"a fresh empty database", 0, config.Ownership{Role: "nova_config", Tables: map[string]string{}},
-			fmt.Sprintf("CONFIG MIGRATE pg=nova_config@127.0.0.1:5432/nova from=0 to=%d applied=0 dry_run=true pending=%d missing=0 role=nova_config ready=yes\n", n, n)},
+			fmt.Sprintf("CONFIG MIGRATE pg=nova_config@127.0.0.1:5432/nova from=0 to=%d applied=0 dry_run=true pending=%d missing=0 role=nova_config ready=yes owner=none sessions=0\n", n, n)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -347,4 +347,119 @@ func TestMigrateRefusalNamesTheOwningRoleAndItsCommand(t *testing.T) {
 	code, out, errs = h.run(t, "migrate")
 	require.Equal(t, 0, code, "as the owner: stdout %q stderr %q", out, errs)
 	assert.Equal(t, fmt.Sprintf("CONFIG MIGRATE pg=nova_config@127.0.0.1:5432/nova from=%d to=%d applied=1\n", currentSchema()-1, currentSchema()), out)
+}
+
+// The seat play migrates inside its stopped window, as the owner, and asks
+// migrate to refuse while anything else holds the database (--window): a
+// server or member that ps missed must never run under a migration it does
+// not tolerate. Without the flag migrate is as before (the bootstrap, the
+// store_deployer path), and the dry run names the sessions without refusing.
+func TestMigrateWindowRefusesWhileAnotherNovaSessionHoldsTheDatabase(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness()
+	h.env["NOVA_PG_DSN"] = dsn
+	h.store.version = currentSchema() - 1
+	h.store.Held = []config.Session{{Role: "nova_admin", PID: 4242, Application: "nova-sprint"}, {Role: "nova_admin", PID: 4243}}
+
+	code, out, errs := h.run(t, "migrate", "--window")
+	require.Equal(t, 1, code, "stdout %q stderr %q", out, errs)
+	assert.Equal(t, "", out)
+	assert.Equal(t, "nova-config migrate REFUSED: role nova_config applied none: --window says the old server and member are stopped, "+
+		"and 2 other nova session(s) hold the database: nova_admin pid=4242 app=nova-sprint, nova_admin pid=4243; run: "+windowRemedy+"\n", errs)
+	assert.Equal(t, currentSchema()-1, h.store.version, "the refusal applied a migration")
+
+	// the dry run says who holds the database and refuses nothing
+	code, out, errs = h.run(t, "migrate", "--dry-run", "--window")
+	require.Equal(t, 0, code, "dry-run: stdout %q stderr %q", out, errs)
+	assert.Contains(t, out, "MIGRATE SESSION role=nova_admin pid=4242 app=nova-sprint\n")
+	assert.Contains(t, out, "MIGRATE SESSION role=nova_admin pid=4243 app=-\n")
+	assert.True(t, strings.HasSuffix(out, fmt.Sprintf(" from=%d to=%d applied=0 dry_run=true pending=1 missing=0 role=nova_config ready=yes owner=nova_config sessions=2\n", currentSchema()-1, currentSchema())), out)
+	assert.NotContains(t, out, "WOULD-REFUSE")
+	code, out, errs = h.run(t, "migrate", "--dry-run", "--json")
+	require.Equal(t, 0, code, "dry-run --json: stdout %q stderr %q", out, errs)
+	assert.Contains(t, out, `"kind":"session"`)
+	assert.Contains(t, out, `"sessions":2`)
+	assert.Equal(t, currentSchema()-1, h.store.version, "the dry run applied a migration")
+
+	// the window is open: the same migrate applies
+	h.store.Held = nil
+	code, out, errs = h.run(t, "migrate", "--window")
+	require.Equal(t, 0, code, "window open: stdout %q stderr %q", out, errs)
+	assert.Equal(t, fmt.Sprintf("CONFIG MIGRATE pg=nova_config@127.0.0.1:5432/nova from=%d to=%d applied=1\n", currentSchema()-1, currentSchema()), out)
+
+	// without --window a held database does not gate (the bootstrap path is as before)
+	h2 := newHarness()
+	h2.env["NOVA_PG_DSN"] = dsn
+	h2.store.version = currentSchema() - 1
+	h2.store.Held = []config.Session{{Role: "nova_admin", PID: 7}}
+	code, out, errs = h2.run(t, "migrate")
+	require.Equal(t, 0, code, "no --window: stdout %q stderr %q", out, errs)
+	assert.Equal(t, currentSchema(), h2.store.version)
+
+	// nothing pending under --window with a held database: nothing to refuse, applied=0
+	h3 := newHarness()
+	h3.env["NOVA_PG_DSN"] = dsn
+	h3.store.Held = []config.Session{{Role: "nova_admin", PID: 7}}
+	code, out, errs = h3.run(t, "migrate", "--window")
+	require.Equal(t, 0, code, "nothing pending: stdout %q stderr %q", out, errs)
+	assert.Contains(t, out, " applied=0\n")
+}
+
+// The seat play's preflight runs as the owner and reads owner= back: a store
+// whose tables have more than one owner is owner=mixed, the dry run names each
+// table with its owner and would refuse with one ALTER OWNER per table, and
+// migrate as the owner refuses before applying any; a store owned whole by the
+// role says owner=<role>; a database before its first migration says owner=none.
+func TestMigrateNamesTheWholeOwnerAndRefusesMixedOwnership(t *testing.T) {
+	t.Parallel()
+
+	n := currentSchema()
+	h := newHarness()
+	h.env["NOVA_PG_DSN"] = dsn
+	h.store.version = n - 1
+	o := config.Ownership{Role: "nova_config", SchemaOwner: "nova_config", Create: true, Tables: map[string]string{}}
+	for tb := range mixedCatalog().Tables {
+		o.Tables[tb] = "nova_config"
+	}
+	o.Tables["sprint"] = "nova_admin"
+	h.store.Catalog = o
+
+	why := fmt.Sprintf("role nova_config cannot apply migration %d and applied none: the role that runs migrate must own every table in schema config "+
+		"and be able to create in it, and nova_admin owns config.sprint, so a role with the owners' rights runs this once, in psql", n)
+	remedy := `ALTER TABLE config."sprint" OWNER TO "nova_config";`
+
+	code, out, errs := h.run(t, "migrate", "--dry-run", "--json", "--window")
+	require.Equal(t, 1, code, "dry-run --json mixed: stdout %q stderr %q", out, errs)
+	assert.Contains(t, out, `"owner":"mixed"`)
+	assert.Contains(t, out, `"ready":"no"`)
+	assert.Contains(t, out, `"kind":"not_owned","fields":{"table":"config.sprint","owner":"nova_admin","role":"nova_config"}`)
+	code, out, errs = h.run(t, "migrate", "--dry-run")
+	require.Equal(t, 1, code, "dry-run mixed: stdout %q stderr %q", out, errs)
+	assert.Contains(t, out, "MIGRATE NOT-OWNED table=config.sprint owner=nova_admin role=nova_config\n")
+	assert.Contains(t, out, "MIGRATE WOULD-REFUSE "+why+"; run: "+remedy+"\n")
+	assert.True(t, strings.HasSuffix(out, " pending=1 missing=0 role=nova_config ready=no owner=mixed sessions=0\n"), out)
+
+	code, out, errs = h.run(t, "migrate", "--window")
+	require.Equal(t, 1, code, "mixed: stdout %q stderr %q", out, errs)
+	assert.Equal(t, "nova-config migrate REFUSED: "+why+"; run: "+remedy+"\n", errs)
+	assert.Equal(t, n-1, h.store.version, "the refusal applied a migration")
+
+	// owned whole by the role: owner=<role>, and the migrate applies
+	h.store.Catalog.Tables["sprint"] = "nova_config"
+	code, out, errs = h.run(t, "migrate", "--dry-run", "--window")
+	require.Equal(t, 0, code, "dry-run whole: stdout %q stderr %q", out, errs)
+	assert.True(t, strings.HasSuffix(out, " pending=1 missing=0 role=nova_config ready=yes owner=nova_config sessions=0\n"), out)
+	code, out, errs = h.run(t, "migrate", "--window")
+	require.Equal(t, 0, code, "whole: stdout %q stderr %q", out, errs)
+	assert.Equal(t, n, h.store.version)
+
+	// before the first migration there is no schema and no owner yet
+	h4 := newHarness()
+	h4.env["NOVA_PG_DSN"] = dsn
+	h4.store.version = 0
+	h4.store.Catalog = config.Ownership{Role: "nova_config", Tables: map[string]string{}}
+	code, out, errs = h4.run(t, "migrate", "--dry-run", "--window")
+	require.Equal(t, 0, code, "fresh: stdout %q stderr %q", out, errs)
+	assert.Contains(t, out, " ready=yes owner=none sessions=0\n")
 }

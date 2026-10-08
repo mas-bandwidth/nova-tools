@@ -4,6 +4,7 @@ import (
 	"maps"
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -157,4 +158,44 @@ func PasswordEnvFor(role string) string {
 		return '_'
 	}, name)
 	return "NOVA_PG_" + name + "_PASSWORD"
+}
+
+// WholeOwner is the one role that owns schema config and every table in it,
+// whichever role is connected: the owner the seat play migrates as, and the
+// check that the store is owned whole before any window opens. ok is false
+// when the schema does not exist yet or the tables have more than one owner
+// (mixed ownership: migrate as any role refuses, and the remedy is one ALTER
+// OWNER per table, run by a person).
+func WholeOwner(o Ownership) (owner string, ok bool) {
+	if o.SchemaOwner == "" {
+		return "", false
+	}
+	for _, r := range o.Tables {
+		if r != o.SchemaOwner {
+			return "", false
+		}
+	}
+	return o.SchemaOwner, true
+}
+
+// Session is another backend holding the store's database, as the catalog
+// (pg_stat_activity) shows it to the connected role: the role, the client's
+// application name when it set one, and the backend's pid. migrate --window
+// refuses while any nova role but its own session holds the database: the
+// window of the seat play (fleet/tools.yml) has the old server and member
+// stopped, and a migration that is not an addition the old build tolerates
+// must never run under one.
+type Session struct {
+	Role        string
+	Application string
+	PID         int
+}
+
+// String is the session as a refusal names it.
+func (s Session) String() string {
+	out := s.Role + " pid=" + strconv.Itoa(s.PID)
+	if s.Application != "" {
+		out += " app=" + s.Application
+	}
+	return out
 }
