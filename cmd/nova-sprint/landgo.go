@@ -341,11 +341,17 @@ func treePackages(dir string) []string {
 // A land command on its own, or a loop with no remote bench configured, runs here
 // (goRun). The ledgers' update runs stay here.
 func (l *lander) treeGate(ctx context.Context, dir string, tests bool) string {
+	if err := ctx.Err(); err != nil {
+		return err.Error()
+	}
 	if _, err := os.Stat(filepath.Join(dir, "go.mod")); err != nil {
 		return ""
 	}
 	if l.a != nil && l.a.gateRan != nil {
 		l.a.gateRan(dir, tests)
+	}
+	if err := ctx.Err(); err != nil {
+		return err.Error()
 	}
 	runs := gateRuns(tests, treePackages(dir))
 	hosts, inLoop, remote := l.gateBenches(ctx)
@@ -800,6 +806,9 @@ func (l *lander) gateCard(ctx context.Context, dir string, c landCard, before st
 		return "", "the files the merge of " + c.id + " changed could not be listed: " + firstLine("", err)
 	}
 	why := l.treeGate(ctx, dir, slices.ContainsFunc(strings.Split(changed, "\n"), treeTested))
+	if wait := gateWaitWhy(ctx); wait != "" {
+		return "", wait // cancellation says nothing about the card
+	}
 	if why == "" {
 		return "", ""
 	}

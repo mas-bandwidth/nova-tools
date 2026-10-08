@@ -774,6 +774,10 @@ func (l *lander) land(ctx context.Context, j *landJob, pushed []*landJob) {
 	f, b, stream := j.f, &j.b, j.stream
 	moved := slices.ContainsFunc(pushed, func(p *landJob) bool { return p.clone == j.clone && p.b.Base == b.Base })
 	for attempt := 1; ; attempt++ {
+		if why := gateWaitWhy(ctx); why != "" {
+			j.refuse(why)
+			return
+		}
 		if moved || attempt > 1 {
 			start := time.Now()
 			newBase, why := f.baseNow(ctx, j.dir, b.Base)
@@ -877,10 +881,16 @@ func (l *lander) baseNow(ctx context.Context, dir, base string) (sha, why string
 // prefix is gated, pushed and the conflict reported after it by land; none merged, land
 // reports the conflict and pushes nothing.
 func (l *lander) again(ctx context.Context, j *landJob, newBase string, pushed []*landJob) string {
+	if why := gateWaitWhy(ctx); why != "" {
+		return why
+	}
 	b, dir := &j.b, j.dir
 	l.ledgerLog = nil
 	merged, failed, baseSha, _, why := l.build(ctx, dir, j.stream, j.cards, b.Times, false)
 	b.Also, l.ledgerLog = append(b.Also, l.ledgerLog...), nil
+	if wait := gateWaitWhy(ctx); wait != "" {
+		return wait
+	}
 	if why != "" {
 		return why
 	}
@@ -905,14 +915,24 @@ func (l *lander) again(ctx context.Context, j *landJob, newBase string, pushed [
 		start := time.Now()
 		l.stage("gate", "the combined tree")
 		red := l.treeGate(ctx, dir, true)
+		if wait := gateWaitWhy(ctx); wait != "" {
+			return wait
+		}
 		if red == benchGateUnavailableWhy {
 			return red + "; no card is blamed and nothing was pushed or reported"
 		}
 		if red == "" {
 			var out string
-			if red, out = l.runCheck(ctx, dir); red != "" {
+			red, out = l.runCheck(ctx, dir)
+			if wait := gateWaitWhy(ctx); wait != "" {
+				return wait
+			}
+			if red != "" {
 				red = l.checkDecided(ctx, dir, j.stream, b.Base, tip, j.cards[:len(merged)], red, out)
 			}
+		}
+		if wait := gateWaitWhy(ctx); wait != "" {
+			return wait
 		}
 		since(&b.Times.Check, start)
 		if red != "" {

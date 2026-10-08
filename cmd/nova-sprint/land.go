@@ -465,9 +465,13 @@ func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
 		baseGateCache: a.baseGateCache, baseGateFails: a.baseGateFails, cureTried: map[string]bool{}, parallel: *parallel}
 	l.locks()
 	defer l.release()
+	ctx := a.landCtx
+	if ctx == nil {
+		ctx = context.Background() // a direct land command has no loop caller
+	}
 	if *check != "" && !*dry {
 		a.serial.Lock()
-		l.gate, l.gateNote = a.landGate(context.Background(), st)
+		l.gate, l.gateNote = a.landGate(ctx, st)
 		a.serial.Unlock()
 	}
 	if *repoDir != "" {
@@ -475,7 +479,6 @@ func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
 			l.repoDir = abs
 		}
 	}
-	ctx := context.Background()
 	a.serial.Lock()
 	s, err := st.Load(ctx, []string{sprint.Work, sprint.Merge, sprint.Fleet}, nil)
 	a.serial.Unlock()
@@ -880,6 +883,9 @@ func (l *lander) baseRecheck(ctx context.Context, s *sprint.Snapshot) {
 		}
 	}
 	for _, at := range sites {
+		if ctx.Err() != nil {
+			return
+		}
 		sha, why := l.baseTip(ctx, at.repo, at.base)
 		if why != "" {
 			l.baseNotes = append(l.baseNotes, "the base "+at.base+" was not re-checked: "+why)
@@ -893,6 +899,9 @@ func (l *lander) baseRecheck(ctx context.Context, s *sprint.Snapshot) {
 			dir, _ := l.clone(ctx, at.repo)
 			l.gatesBase(at.base)
 			red = l.treeGate(ctx, dir, true)
+		}
+		if ctx.Err() != nil {
+			return // an interrupted re-check is no evidence about the base
 		}
 		if red == benchGateUnavailableWhy {
 			l.baseNotes = append(l.baseNotes, "the base "+at.base+" was not re-checked: "+red)

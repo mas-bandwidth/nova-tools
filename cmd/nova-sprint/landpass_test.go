@@ -1,11 +1,13 @@
 package main
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -214,6 +216,52 @@ func TestLandGatesTheCombinedTreeOnceWhenFilesCollide(t *testing.T) {
 	assert.Contains(t, out, "LAND OK stream=s2 cards=1 base=main")
 	assert.Equal(t, []string{"s1+tests", "s1+tests", "s2+tests", "s2+tests"}, gates(), "the base, each batch, and the second batch's combined tree")
 	assert.Equal(t, "b1 first\n\nfine\n\nand a1\n", r.git(r.remote, "show", "main:NOTES.md")+"\n")
+	r.clean()
+}
+
+// A canceled loop caller interrupts the serial combined gate after the first batch
+// landed. The pending batch remains queued, and cancellation is not red evidence.
+func TestLandCallerCancelDuringCombinedGateLeavesSecondBatchQueued(t *testing.T) {
+	t.Parallel()
+	r := newLandRig(t)
+	twoStreams(t, r,
+		map[string]map[string]string{"a1": {"NOTES.md": "fine\n\nand a1\n"}},
+		map[string]map[string]string{"b1": {"NOTES.md": "b1 first\n\nfine\n"}})
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	r.a.landCtx = ctx
+	var gates atomic.Int32
+	r.a.gateRan = func(string, bool) {
+		if gates.Add(1) == 4 { // base, both batches, then the combined tree
+			cancel()
+		}
+	}
+	code, out, errs := r.do("land --land-parallel 2")
+	r.a.landCtx = nil
+	assert.Equal(t, 1, code, out+errs)
+	assert.EqualValues(t, 4, gates.Load())
+	assert.Contains(t, out, "LAND OK stream=s1 cards=1 base=main")
+	assert.Contains(t, errs, "the gate of this batch was canceled; no card was blamed or pushed; run land again")
+	assert.NotContains(t, errs, "fails it merged onto")
+	assert.Equal(t, map[string]string{"a1": "landed/merged", "b1": "merging/queued"}, r.places("a1", "b1"))
+	assert.Equal(t, "merging", r.streamState("s2"))
+	assert.Equal(t, []string{"land a1 (sprint stream s1)", "the module", "base"}, r.mainLog())
+	r.clean()
+}
+
+func TestTreeGateDoesNotStartAfterCallerCanceled(t *testing.T) {
+	t.Parallel()
+	r := newLandRig(t)
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/canceled\n\ngo 1.22\n"), 0o600))
+	var gates atomic.Int32
+	r.a.gateRan = func(string, bool) { gates.Add(1) }
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	l := &lander{a: r.a}
+	assert.ErrorIs(t, ctx.Err(), context.Canceled)
+	assert.Equal(t, context.Canceled.Error(), l.treeGate(ctx, dir, true))
+	assert.Zero(t, gates.Load(), "an already-canceled caller starts no gate")
 	r.clean()
 }
 
