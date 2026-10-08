@@ -117,7 +117,7 @@ func TestMigrateTwiceThenTheSixVerbs(t *testing.T) {
 	// The fleet row: there since migrate, set without a name, a machine it
 	// names cannot be removed.
 	out, _ = r.run(t, 0, "fleet", "show")
-	require.True(t, strings.HasPrefix(out, "FLEET name=fleet store=- coordinator=- redis_port=- pg_dsn=- bus=- created="), "fleet show: %q", out)
+	require.True(t, strings.HasPrefix(out, "FLEET name=fleet store=- coordinator=- redis_port=- pg_dsn=- bus=- loops_dir=~/nova-bench/loops created="), "fleet show: %q", out)
 	_, errs = r.run(t, 1, "fleet", "set", "--store", "space")
 	require.Equal(t, "nova-config fleet set REFUSED: --store space names no machine row; run: nova-config machine list\n", errs, "fleet set naming no machine: %q", errs)
 	out, _ = r.run(t, 0, "fleet", "set", "--coordinator", "studio")
@@ -181,14 +181,14 @@ func TestApplyEndToEnd(t *testing.T) {
 
 	// --check prints the plan and writes nothing but that beat.
 	out, _ := r.run(t, 0, "apply", "--check")
-	want := "CHECK ADD kind=machine name=hulk\nCHECK ADD kind=machine name=studio\nCONFIG CHECK kind=machine add=2 set=0 remove=0 rev=2 applied=0\nCHECK SET kind=fleet name=fleet changed=store,coordinator,redis_port,pg_dsn\nCONFIG CHECK kind=fleet add=0 set=1 remove=0 rev=5 applied=0\nCHECK ADD kind=friend name=rowan\nCHECK ADD kind=friend name=stella\nCONFIG CHECK kind=friend add=2 set=0 remove=0 rev=4 applied=0\nCHECK SET kind=sprint name=sprint changed=coordinator,decide_bounce,decide_review\nCONFIG CHECK kind=sprint add=0 set=1 remove=0 rev=6 applied=0\nCONFIG CHECK kind=loop add=0 set=0 remove=0 rev=0 applied=0\nCONFIG CHECK kind=route add=0 set=0 remove=0 rev=0 applied=0\nCHECK ADD kind=tier name=flash\nCHECK ADD kind=tier name=heavy\nCHECK ADD kind=tier name=pro\nCONFIG CHECK kind=tier add=3 set=0 remove=0 rev=0 applied=0\n"
+	want := "CHECK ADD kind=machine name=hulk\nCHECK ADD kind=machine name=studio\nCONFIG CHECK kind=machine add=2 set=0 remove=0 rev=2 applied=0\nCHECK SET kind=fleet name=fleet changed=store,coordinator,redis_port,pg_dsn,loops_dir\nCONFIG CHECK kind=fleet add=0 set=1 remove=0 rev=5 applied=0\nCHECK ADD kind=friend name=rowan\nCHECK ADD kind=friend name=stella\nCONFIG CHECK kind=friend add=2 set=0 remove=0 rev=4 applied=0\nCHECK SET kind=sprint name=sprint changed=coordinator,decide_bounce,decide_review\nCONFIG CHECK kind=sprint add=0 set=1 remove=0 rev=6 applied=0\nCONFIG CHECK kind=loop add=0 set=0 remove=0 rev=0 applied=0\nCONFIG CHECK kind=route add=0 set=0 remove=0 rev=0 applied=0\nCHECK ADD kind=tier name=flash\nCHECK ADD kind=tier name=heavy\nCHECK ADD kind=tier name=pro\nCONFIG CHECK kind=tier add=3 set=0 remove=0 rev=0 applied=0\n"
 	require.Equal(t, want, out, "apply --check:\n%s\nwant:\n%s", out, want)
 	nCheck221, _ := r.client.DBSize(ctx).Result()
 	require.Equal(t, int64(1), nCheck221, "--check wrote %d keys (the beat is the one)", nCheck221-1)
 
 	// apply writes everything, one CONFIG APPLY line per kind.
 	out, _ = r.run(t, 0, "apply")
-	for _, want := range []string{"APPLY ADD kind=machine name=studio\n", "CONFIG APPLY kind=machine add=2 set=0 remove=0 rev=2 ms=", "APPLY SET kind=fleet name=fleet changed=store,coordinator,redis_port,pg_dsn\nCONFIG APPLY kind=fleet add=0 set=1 remove=0 rev=5 ms=", "APPLY ADD kind=friend name=rowan\nAPPLY ADD kind=friend name=stella\nCONFIG APPLY kind=friend add=2 set=0 remove=0 rev=4 ms=", "APPLY SET kind=sprint name=sprint changed=coordinator,decide_bounce,decide_review\nCONFIG APPLY kind=sprint add=0 set=1 remove=0 rev=6 ms="} {
+	for _, want := range []string{"APPLY ADD kind=machine name=studio\n", "CONFIG APPLY kind=machine add=2 set=0 remove=0 rev=2 ms=", "APPLY SET kind=fleet name=fleet changed=store,coordinator,redis_port,pg_dsn,loops_dir\nCONFIG APPLY kind=fleet add=0 set=1 remove=0 rev=5 ms=", "APPLY ADD kind=friend name=rowan\nAPPLY ADD kind=friend name=stella\nCONFIG APPLY kind=friend add=2 set=0 remove=0 rev=4 ms=", "APPLY SET kind=sprint name=sprint changed=coordinator,decide_bounce,decide_review\nCONFIG APPLY kind=sprint add=0 set=1 remove=0 rev=6 ms="} {
 		require.Contains(t, out, want, "apply output lacks %q:\n%s", want, out)
 	}
 	gotCheck232 := r.client.HGetAll(ctx, "friend:rowan:desired").Val()
@@ -244,10 +244,10 @@ func TestApplyEndToEnd(t *testing.T) {
 	out, _ = r.run(t, 0, "apply", "--kind", "friend")
 	require.True(t, strings.HasPrefix(out, "CONFIG APPLY kind=friend add=0 set=0 remove=0 rev=4 ms="), "second apply: %q", out)
 
-	// The handover: sprint set names stella; the next apply writes her
+	// The handover: sprint set names stella; an explicit seat move writes her
 	// roles with the coordinator role first, then rowan's without it.
 	r.run(t, 0, "sprint", "set", "--coordinator", "stella")
-	out, _ = r.run(t, 0, "apply")
+	out, _ = r.run(t, 0, "apply", "--move-seat")
 	require.Contains(t, out, "APPLY SET kind=friend name=stella changed=roles\nAPPLY SET kind=friend name=rowan changed=roles\nCONFIG APPLY kind=friend add=0 set=2 remove=0 rev=4 ms=", "handover apply:\n%s", out)
 	require.Contains(t, out, "APPLY SET kind=sprint name=sprint changed=coordinator\n", "handover apply:\n%s", out)
 	gotCheck299 := r.client.HGet(ctx, "friend:stella:roles", "roles").Val()
@@ -258,7 +258,7 @@ func TestApplyEndToEnd(t *testing.T) {
 	require.Equal(t, "stella", gotCheck305, "sprint:coordinator after the handover %q", gotCheck305)
 	r.env["NOVA_FRIEND"] = "stella"
 	r.run(t, 0, "sprint", "set", "--coordinator", "rowan")
-	r.run(t, 0, "apply")
+	r.run(t, 0, "apply", "--move-seat")
 
 	// Removing a friend goes through and takes what apply wrote.
 	r.run(t, 0, "friend", "remove", "stella")
