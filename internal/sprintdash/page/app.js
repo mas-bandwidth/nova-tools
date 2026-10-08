@@ -850,6 +850,7 @@ function setCount(box, n, make) {
 // says how many more.
 var MARK_LEVELS = ["blocker", "critical", "critical (by weight, not yet ordered)", "fix", "high", "reader", "low"];
 var MARKS_MAX = 40;
+var priorityScope = "all";
 function priorityClass(level) {
   if (level === "fix") return "p-fix"; // a card awaiting rework, purple
   if (level.indexOf("critical") === 0) return "p-critical"; // a computed critical too, its title says so
@@ -867,6 +868,22 @@ function renderPriorityMarks(d) {
     });
   });
   box.hidden = marks.length === 0;
+  // The priority list and reads_waiting are sprint-wide in where's cached copy.
+  // A selected release filters Work rows, but has no per-release read count or
+  // primary-to-stream map for undealt cards. Name this scope instead of making
+  // the marks look like counts for the selected release.
+  var scoped = priorityScope !== "all";
+  if (scoped && !box._scopeLabel) {
+    box._scopeLabel = quiet(el("span", "muted"));
+    box._scopeLabel.style.display = "block";
+    box._scopeLabel.style.marginTop = "1rem";
+    box.parentNode.insertBefore(box._scopeLabel, box);
+  }
+  if (box._scopeLabel) {
+    box._scopeLabel.hidden = !scoped || marks.length === 0;
+    if (scoped) setText(box._scopeLabel, "Priorities and waiting reads across all releases");
+    box.style.marginTop = scoped ? ".25rem" : "";
+  }
   setCount(box, marks.length, function () { return el("span", "mark"); });
   marks.forEach(function (m, i) {
     var k = box.children[i];
@@ -1000,6 +1017,7 @@ function accept(j) {
   var at = Date.parse(d.at);
   if (isNaN(at) || at <= shownAt) return;
   shownAt = at;
+  priorityScope = j.release || "all";
   if ("throughput" in j) { throughput = j.throughput == null ? null : j.throughput; throughputMinutes = j.throughputMinutes || 0; }
   renderRelease(j);
   try { render(d); } catch (e) { console.error(e); }

@@ -262,6 +262,8 @@ The owner uses one live dashboard. The packaged page is the source of that page,
 
 The plain `where --json` response carries cached fix counts without requiring `--cards`: ready and working primaries with explicit fix priority, and review primaries whose work result failed, are counted under fix. Blocker and critical retain their priority; a successful repair awaiting an independent read stays in review. JSON Work counts partition these cards into fix rather than counting them twice; the text table schema is unchanged. The cache is computed with the tick snapshot, not a separate dashboard scan.
 
+Priority marks report the configured priority, whereas the Work state counts report whether a card is awaiting repair. A failed attempt or brief defect can await repair before its next attempt receives rework priority; its purple Work count does not rewrite its configured priority mark. A successful repair awaiting a read remains in review even when its priority mark is purple. When a release is selected, priority marks and waiting-read counts are explicitly labelled as spanning all releases; release totals include only that release's cards, including fix.
+
 The following historical live-page decisions remain recorded; the deployment contract above and later dated decisions supersede earlier contradictory wording.
 
 ### Live-page decisions carried into the canonical source

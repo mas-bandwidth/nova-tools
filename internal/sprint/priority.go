@@ -456,7 +456,7 @@ func FixStateCounts(s *Snapshot) map[string]map[string]int {
 				if s.Fleet != nil {
 					work = s.Fleet.Card(c.F("work"))
 				}
-				repair = work != nil && work.Col == DoneFailed
+				repair = work != nil && (work.Col == DoneFailed || work.Col == DoneDefect)
 			}
 			if !repair {
 				continue
