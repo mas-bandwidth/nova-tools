@@ -3042,8 +3042,8 @@ rule is `internal/sprint/fleet_quiet.go`; the twin test is
 
 A reader's checkout is scratch, staged as a detached clone with hardlinked objects from the machine's shared bare mirror. Creator and recorded-finding receipts permit bounded recovery after a daemon crash. Work cleanup is asynchronous with reservations; a job cannot be handed to another lane until its cleanup receipt is consumed. The friend daemon writes the read under
 `reads/<id>/` and, once the verdict is recorded, removes `reads/<id>/repo` and
-the bench copy under `~/nova-bench/buds/<friend>/reads/<id>` when that bench
-directory is on the same machine (docs/SPEC-FRIEND.md, what is scratch). The
+a legacy bench copy under `~/nova-bench/buds/<friend>/reads/<id>` only when its
+`.nova-read-owner` receipt matches that friend/read and the bench directory is on the same machine (docs/SPEC-FRIEND.md, what is scratch). The
 read's brief, the worker's report and the finding stay. A bench on another
 machine is not removed from here.
 

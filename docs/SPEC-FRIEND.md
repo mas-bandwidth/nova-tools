@@ -1373,7 +1373,7 @@ write or friend sync's) and whose `jobs/<job>/JOB.md` is not, the daemon stages 
   stage nothing here. A packet git could misread (a repository that is no `owner/name`, a base
   or branch that is no ref name, a job that is no single path element) is refused before any
   git runs.
-- One full bare mirror per repository, `mirrors/<owner>/<name>.git`, made the first time
+- One full bare mirror per repository and OS account, `~/.cache/nova/mirrors/<owner>/<name>.git`, shared by friends on the machine and made the first time
   (`git init --bare` and a whole fetch with her account's git credentials: the daemon's
   environment, `GIT_TERMINAL_PROMPT=0`; never shallow and never blob-less, which broke clones
   with "pack has unresolved deltas"), fetched before a stage unless fetched within
