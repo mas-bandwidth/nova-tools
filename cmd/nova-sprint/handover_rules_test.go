@@ -65,3 +65,14 @@ func TestHandoverTextPrintsEachRuleByNumber(t *testing.T) {
 	}
 	assert.Equal(t, len(lines), strings.Count(out, "\nRULE R"), out)
 }
+
+// handoverRuleLines is each rule as its RULE line carries it: "R<n>. <sentence>".
+// It is the test's, not the binary's: handover's own view builds the lines from
+// coordinatorRules (seat.go).
+func handoverRuleLines() []string {
+	lines := make([]string, len(coordinatorRules))
+	for i, r := range coordinatorRules {
+		lines[i] = "R" + strconv.Itoa(i+1) + ". " + r
+	}
+	return lines
+}

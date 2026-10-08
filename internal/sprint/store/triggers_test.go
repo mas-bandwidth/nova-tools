@@ -91,7 +91,7 @@ func TestTheEngineRefusesASentinelLandedByAnotherStep(t *testing.T) {
 	h.setup(0)
 	h.must(AddStep(sprint.AddReq{Stream: "s1", IDs: []string{"stop"}, Sentinel: true}))
 	mutant := Step{Verb: "mutant", Load: []string{sprint.Work}, Plan: func(s *sprint.Snapshot) sprint.Plan {
-		p := sprint.SentinelsDue(s, "")
+		p := sprint.Plan{}
 		c := s.Work.Card("stop")
 		p.Units = append(p.Units, sprint.Unit{Key: c.ID, Stream: c.Row, Changes: []sprint.Change{{Table: sprint.Work, Entry: ntable.BatchMemberEntry{ID: c.ID,
 			Expect: &ntable.MemberExpect{Revision: fmt.Sprint(c.Rev), Place: &ntable.PlaceExpect{Row: c.Row, Col: c.Col}},

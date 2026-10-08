@@ -201,22 +201,6 @@ func adoptConds(s *Snapshot) []cond {
 	return out
 }
 
-// FleetBackTables is the tick's table updates with the presence part
-// FleetBackPresence(a): a store's Updates.
-func FleetBackTables(a Adopter) []TableUpdate {
-	fn := FleetBackPresence(a)
-	out := make([]TableUpdate, len(TickTables))
-	for i, u := range TickTables {
-		out[i] = TableUpdate{Table: u.Table, Parts: append([]TickPartDef(nil), u.Parts...)}
-		for j := range out[i].Parts {
-			if out[i].Parts[j].Name == "presence" {
-				out[i].Parts[j].Fn = fn
-			}
-		}
-	}
-	return out
-}
-
 // InstallFleetBack makes FleetBackPresence(a) the presence part the machine
 // runs (TickTables and TickParts), as friend_read.go installs the friend ask:
 // the binary that knows the release it runs installs it at its start, before

@@ -335,7 +335,7 @@ the word, `seen`, `generation`, the counts, the reason and the until; `where
 [replayed=true]`, `--json` `{friend, state, seen, generation, queue, working,
 width, status, replayed}`.
 
-The table's word from an observation (`sprint.ObservedStatus`): `up` only when
+The table's word from an observation (`sprint.FriendStatus`, from `sprint.FriendEvidence`): `up` only when
 the observation says `up` (her session answered a wake ping), under the seat's
 generation now, with its proof under `FriendPongWindow` (10 minutes) old and
 not dated after now (a negative age is no proof); `down` otherwise, at exactly
@@ -471,7 +471,7 @@ that one judgment, and raises it when the card is already sitting off her row,
 until it is back on her row or leaves ready and working. A hard pin is not
 rotated and is not this judgment. A
 hard pin (`WHO: only friend <name>`) with no room waits ready, held by the
-no-stall rule as waiting for her (`sprint.TickDeal`, `sprint.FriendDeal`,
+no-stall rule as waiting for her (`sprint.TickDeal`, `friendDealPass`,
 `sprint.OnlyFriend`); a card a friend takes is never held for want of a machine
 route of its tier (`TestAReadyCardGoesToAFriendWhenNoMachineRouteServesItsTier`).
 The tick reads the friends' records every tick while the roster has a friend.
@@ -702,7 +702,7 @@ pinned to its holder (`AttemptCapDeal`) is the one placement outside her tiers
 and stays (`TestEveryFriendDecisionReadsTheOneTierOfTheCard`).
 
 A read at any tier is asked of any unit with room at or above that tier, a
-fleet reader or a friend, by the one ask (`FriendReadAsk` before the machine's
+fleet reader or a friend, by the one ask (`friendReadAsk` before the machine's
 `Ask`). The tier a friend is matched on is the tier before a frontier card is
 collapsed onto the tier a route serves (`friendReadTier`): a frontier card, or
 a heavy card whose read tier is the one above, stays frontier, and only a
@@ -3934,9 +3934,10 @@ the files while they are few (`sprint.NDevSyncConflict`); each cycle tries again
 bringing its text up to date and raising no second one; the cycle that finds the base holding dev
 (merged by hand, or cleanly) closes it and resumes only the streams it stopped; `sprint.CanLand`
 is false meanwhile (`TestTheBaseTakesTheDevelopmentBranchEveryCycle`, on the twin store and a twin
-repository; `TestADevSyncConflictStopsEveryStreamWithOneJudgment`). Owed, outside this card's
-paths: the call in the land round itself (`nova-sprint land`, before its first batch, with the
-round's tree gate as `Check`), and the drift on `where --json`.
+repository; `TestADevSyncConflictStopsEveryStreamWithOneJudgment`). `nova-sprint land` makes that
+call before its first batch, with the round's tree gate as `Check`, only when `--dev-sync` is
+set. The flag is off by default: without it, land does not sync, and `--dry-run` never does.
+`land -h` and docs/CLI.md say so (`TestLandDevSyncIsOffUnlessAskedAndThenUsesTheTreeGate`).
 
 **The lander's checks.** Each head `land` merges is checked by script, no model,
 before the batch's check runs (`internal/diffcheck`), the two checks the decide
@@ -4858,7 +4859,7 @@ dev. The owner, 2026-10-05: "How can we ensure that you ALWAYS do the merging pr
 now on, vs. drifting and forgetting?" and "Prevention is better than cure". So every drift is
 a fact the machine raises (internal/sprint drift.go, `TickDrift`, in the deadlines part with
 the backlog alarms). Four judgments, judged on the facts the binding reads for the tick
-(`TickReq.Drift`, `sprint.DriftFacts`: `ReadDrift` over a clone with dev and the base
+(`TickReq.Drift`, `sprint.DriftFacts`: the commits the base is ahead, read over a clone with dev and the base
 fetched, through the tree's git runner, and the last gate run at the base):
 
 - **the base is ahead of dev past its drift** (`the base is ahead of dev past its drift`),
@@ -4901,7 +4902,7 @@ and a fake clock), the wait included.
 **Not yet live:** the store's tick (internal/sprint/store tick.go) does not yet set
 `TickReq.Drift`, and no `set` flag reaches `drift_commits` or `drift_hours` from the command
 line (cmd/nova-sprint), so on the running machine no drift judgment is raised until a
-follow-up card has the binding read `ReadDrift` beside the ticks (never in one: a fetch never
+follow-up card has the binding read that drift beside the ticks (never in one: a fetch never
 holds a tick) and record the whole-tree gate's last run at the base.
 
 ### Open files
@@ -5628,7 +5629,7 @@ command that loads it.
 | move | moves primaries that have not started to another stream (the owner, 2026-10-01: "What other things should you be able to do to mutate a stopped sprint" / "Are there other verbs you need as you work with sprints?" / "I don't want you manually hopping in and working around it and doing manual stuff."): `move <id>... --stream <s> [--before <id> \| --after <id> \| --score <n>]`, one step, all or none for the ids named; refused (exit 1, nothing written) on a RUNNING machine (`nova-sprint stop` first), for a card that is no primary or has started (only a primary waiting or ready with no work card ever dealt moves; a card dealt, working, in review, merging or landed keeps its stream, its state named), and for a card of the destination already (`rank` changes a place in line). The destination is placed exactly as `add` places cards (the same plan, on the sprint without the moved cards): a stream new to the sprint is made as `add --stream` makes one, the cards go in line by `--before`/`--after`/`--score`, else at the end in the order named, waiting or ready by their needs and the stream's sentinels, a reached sentinel behind them no longer reached, a cycle of needs refused naming it, and a ready card the destination would put behind a sentinel refused by the lifecycle (ready -> waiting is only the effect of inserting a sentinel; `--before` the sentinel moves it). The card is the same card moved: its id, brief, needs and admission stay, and a need naming it still holds (a need is by id) (`sprint.MoveCards`) |
 | merge | one mechanical merge step for a stream, a store write: the record of a landing by name, `--landed <id>@<head>... --repo <dir> --base-ref <ref>` (each card merging in the stream at that head, the head an ancestor of the base tip, else all refused and nothing written); `--batch n` selects the batch a fact is about; `--red [--suspect <id>...]` |
 | land | the coordinator's landing step as one command, an external delivery (a git push) and a store write (the merge step): for each stream named (`--stream`, again for more; default every stream with cards queued and not stopped), in stream order, the merge queue up to its first stuck card, in work order, cut into batches of consecutive cards whose briefs name one repository and one base (`REPO:` and `BASE:`, read as staging reads them; `--base` for a card naming none); each batch's heads merged `--no-ff` with the message `land <id> (sprint stream <s>)` onto a branch cut from the base's tip on origin, in a clone (`--repo-dir`, else a clone kept under the directory each line names, its name the readable repository and a hash of it; every clone reused has its origin's fetch URL and its one push URL held to the repository the cards name before any git, the host compared without case and the path with it); a caller's `--epoch` the sprint has left refused before any git; `--check <command>` run once per batch in the clone before the push; the queue head, its heads and attempts, and the epoch read again just before each push; the push plain, never forced, and on a rejection the base fetched and the batch rebuilt on its new tip once; the streams' batches merged beside each other, up to `--land-parallel` at once (default 4), each in its own worktree of the clone and gated once as a whole, then landed one at a time in priority order, a batch whose base a landing before it moved merged again onto the new tip and gated once more only where their files meet (section 7, the pass); then the batch reported by the merge step `merge --stream s --batch n` runs, fenced to the epoch land read and guarded in the same store step to plan only while the queue still starts with the batch's cards at the heads and attempts land read and pushed (a rework keeps a card's id and epoch, not its head); the pins are the step's arguments, so an `--op` replay returns only that batch's receipt. A head that is not a commit on origin or whose merge stops on unmerged paths (unless every one is a generated ledger, which land regenerates, or a shrink-only ledger, which land resolves as the union of both sides' removals, section 7) ends its batch before it, the cards before it land, and it is reported with `--conflict` and git's words as the note, which reworks the card at the tip and stops nothing, so the stream's cards after it land in the same pass (section 7, a card's own refusal); git failing for any other reason (an identity, a hook, the disk, the network) blames no card: nothing is pushed or reported and the batch is refused; a head whose merged tree fails the tree gate (`go build ./...`, `go vet ./...`, and the tree's own test packages when it changes a document or a test file; section 7) ends its batch before it as a conflict, the run's output the note, and a base whose tip fails it refuses the batch before any merge; a check that fails, with `--red`, nothing pushed; a second rejected push, with `--rejected`. A push that landed and a report that did not (a clear, a card accepted ahead of the batch, a return, between the two) is `LAND FAILED`, exit 2, and the one remedy named is to run land again, which rereads the queue and lets its own checks decide: a card as it was is recorded with no new push (its merges and push are no-ops), a card reworked since is merged at its new head or meets a real conflict, and after a clear there is nothing to report (tla/Land.tla). A bare `merge --batch n` is never offered: after a rework the queue starts with the same ids at a head the base does not hold, and the merge step alone would record it. One line per batch, `LAND OK|REFUSED|FAILED stream= cards= base= tip= ids=<first>..<last>` (a batch whose git ran also says each step's seconds, `fetch= merge= check= queue= push= report=`, and its `--json` item `times`),
- then `LAND DONE batches= cards= refused=`; `--dry-run` reads the store only and changes nothing, and refuses what land refuses before its git, in land's words: a batch whose card names no base (and no `--base`) or no repository (and no `--repo-dir`) is refused, land and dry run alike, naming every problem at once, each cause on its own line with its one next command (the
+ then `LAND DONE batches= cards= refused=`; `--dev-sync`, off by default, merges the development branch into the base in the round's clone before the first batch, through the round's tree gate (section 7, Dev sync every cycle); without the flag, and on `--dry-run`, land does not sync; `--dry-run` reads the store only and changes nothing, and refuses what land refuses before its git, in land's words: a batch whose card names no base (and no `--base`) or no repository (and no `--repo-dir`) is refused, land and dry run alike, naming every problem at once, each cause on its own line with its one next command (the
 first on the `LAND REFUSED` line, each other on a `NOTE` line and in the `--json` item's
 `also`: each head of the batch that is not a commit id, with its return), and on a twin,
 which has no git, a `NOTE` that `merge --stream <s> --batch <n>` records the landing in

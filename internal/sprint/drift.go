@@ -41,9 +41,9 @@ const (
 	DriftHoursDefault   = 2
 )
 
-// DriftFacts is what the binding read of the repository for a tick (ReadDrift; the gate's
-// record beside it). Base empty, or a fact nil, is no fact this tick: the judgments it
-// would judge are neither raised nor closed.
+// DriftFacts is what the binding read of the repository for a tick (over a clone with
+// dev and the base fetched; the gate's record beside it). Base empty, or a fact nil,
+// is no fact this tick: the judgments it would judge are neither raised nor closed.
 type DriftFacts struct {
 	Repo   string       // the repository, owner/name; a card naming another REPO: is not judged
 	Base   string       // the sprint base, the branch every stream lands on

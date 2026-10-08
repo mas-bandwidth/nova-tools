@@ -352,7 +352,7 @@ func seatDir(seats []FriendSeat, name, fallback string) string {
 	return fallback
 }
 
-// FriendReadAsk asks each read in review of a friend with room at or above its
+// friendReadAsk asks each read in review of a friend with room at or above its
 // read tier, the same chooser as friendDeal (preferredFriend: an idle lane,
 // then the most room, then by name), and decrements that free width as
 // friendDeal does (docs/SPEC-SPRINT.md, a read asked of any unit with room at
@@ -361,15 +361,10 @@ func seatDir(seats []FriendSeat, name, fallback string) string {
 // the attempt was taken back is not asked it again; another friend is. A paid
 // reader is left the read when no such friend has room. When every such friend
 // is at her room and no paid reader has room, the read waits for a reader.
-func FriendReadAsk(s *Snapshot, seats []FriendSeat, dir string) (Plan, error) {
-	p, _, err := friendReadAsk(s, seats, dir)
-	return p, err
-}
-
-// friendReadAsk is FriendReadAsk with the primaries it left waiting: a friend
-// at or above the read tier is up who may read the attempt, every such friend
-// is at her room, and no paid reader has room. The tick's ask records those as
-// waiting for a reader and counts them due (friendAskPart).
+// It also returns the primaries it left waiting: a friend at or above the read
+// tier is up who may read the attempt, every such friend is at her room, and no
+// paid reader has room. The tick's ask records those as waiting for a reader and
+// counts them due (friendAskPart).
 func friendReadAsk(s *Snapshot, seats []FriendSeat, dir string) (p Plan, waits []*Card, err error) {
 	if s == nil || s.Work == nil || s.Fleet == nil {
 		return p, nil, nil

@@ -2344,6 +2344,10 @@ refusals with reasons (`REFUSED`, on stderr), and the sprint's summary
 
 `where --json` carries `landedSeries`: cards landed per 10 minutes over the last 24 hours, 144 buckets, split `friends` and `fleet`. A landing is a work-table move to `<stream>:landed` from any state but waiting. A sentinel's release is not work. Each card counts once, the first landing. The worker is the last `<who>:ok` of the card's work attempt (`<card>.wN`): `friend.<name>` is a friend and anything else is a fleet machine. The lander is not the worker. `where -h` states it. The text frame does not carry the series. `dashboard` reads one `where --json` and the series is on that object, so the page does not loop the log. The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md), the `where` frame.
 
+### Land dev sync
+
+`nova-sprint land --dev-sync` is off by default. With it, before the first batch, land merges the development branch (`dev`) into the base in the round's clone and pushes that merge like a batch, through the round's own tree gate. Without the flag, land does not sync. `--dry-run` never syncs. A red gate or a refused push pushes nothing and no batch starts. A conflict stops every stream with one judgment until the base takes dev cleanly. `land -h` says the same. The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md), "Dev sync every cycle".
+
 ### Verbs
 
 ```
@@ -2381,7 +2385,7 @@ nova-sprint recut <id> (--tier <flash|pro|heavy|frontier> | --brief-file <path> 
 nova-sprint twin <card> [--paths <extra,...>] [--needs <card,...>] [--before <card>] [--tier <t>] [--instruction <text>] [--carry]
 nova-sprint move <id>... --stream <s> [--before <id> | --after <id> | --score <n>]
 nova-sprint merge --stream <s> [--batch <n>] [--conflict <id> [--conflict-kind file|ledger] [--conflict-path <p>...] | --cross <id>=<other> | --red [--suspect <id>...] | --rejected | --base-red <error>] [--note <text>]
-nova-sprint land [--stream <s>...] [--repo-dir <clone>] [--base <branch>] [--check <command>] [--dry-run]
+nova-sprint land [--stream <s>...] [--repo-dir <clone>] [--base <branch>] [--check <command>] [--dev-sync] [--dry-run]
 nova-sprint rebase --from <branch> --to <branch> [--repo-dir <clone>] [--dry-run]
 nova-sprint stream set <stream>... [--read-tier <flash|pro|heavy|default>] [--land-protected <owner/name,...|any|default>] [--release <name>] [--prose <glob,...|default>] [--attempts <n|default>] [--base <branch>] [--reason <text>] [--answers <notes>]
 nova-sprint set [--read-tier <flash|pro|default>] [--read-cards <on|off|default>] [--dealt-max <duration|default>] [--go-lanes <n|default>] [--attempts <n|default>] [--friend-idle <duration|default>] [--friend-finish <duration|default>] [--fleet <on|off>] [--friends <on|off>] [--fleet-tiers <flash,pro,heavy,frontier|all>] [--friends-tiers <flash,pro,heavy,frontier|all>] [--reads <0|1|2|default>]
@@ -2788,10 +2792,6 @@ window opened is said with what the rollback did and names those steps rolled ba
 command again finishes it), or when `--source` holds no
 `fleet/tools.yml`; 2 usage. The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md) section 14,
 "Adopting a build".
-
-The adoption pipeline (`(*app).cmdAdopt`, `cmd/nova-sprint/adopt.go`; the runbook is
-[SPRINT-COORDINATOR.md](SPRINT-COORDINATOR.md) section 7, "Adoption is a pipeline") is in no
-verb table and the tick does not call its pass.
 
 ### Exit codes
 

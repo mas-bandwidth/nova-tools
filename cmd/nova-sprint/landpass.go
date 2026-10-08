@@ -156,6 +156,8 @@ func (l *lander) openStream(s *sprint.Snapshot, stream string) ([]landCard, bool
 		return refused("no such stream; run: nova-sprint where")
 	case ctl.F("state") == sprint.StreamStopped:
 		return refused("stopped (" + ctl.F("cause") + "); run: nova-sprint resume --stream " + stream)
+	case l.devSync && !sprint.CanLand(s, stream):
+		return refused("a dev sync conflict is open; merge the development branch into the base by hand and push, then run land again")
 	}
 	if l.prose == nil {
 		l.prose = map[string][]string{}

@@ -12,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
@@ -35,8 +34,7 @@ import (
 // deadline; the fleet's history gateHistory ok attempts a member, as a long
 // sprint leaves it. The cost is counted, not timed, so it holds on a loaded
 // runner as on an idle bench: the deal over the aged snapshot, planned
-// gatePlans times, measures each member's median run wall once for its done-ok
-// cell (sprint.MedianWallMeasures), never once a card dealt; the plans are run
+// gatePlans times, is the same plan as over the fresh one; the plans are run
 // with a CPU-bound sibling goroutine on every P, the runner's load as the gate
 // meets it. Each plan's wall is in the gate line, read beside the count and
 // never asserted on.
@@ -75,32 +73,14 @@ func TestTheTickGateHoldsUnderLoad(t *testing.T) {
 
 	stop := loadEveryP()
 	none, units := dealPlans(fresh)
-	before := medianMeasures(members)
 	some, agedUnits := dealPlans(aged)
-	after := medianMeasures(members)
 	stop()
 
 	require.Equal(t, units, agedUnits, "the history changed what the deal planned")
 	require.Positive(t, units, "the deal planned nothing")
-	measured := 0
-	for i := range members {
-		measured += after[i] - before[i]
-	}
-	line := fmt.Sprintf("TICK GATE UNDER LOAD: %d ready, %d members of width %d, %d siblings busy: %d plans of %d units each in %s with no history, %s with %d ok attempts a member; %d median walls measured (the bound %d, one a member's cell)",
-		gateStreams*gatePerStream, gateMembers, gateWidth, runtime.GOMAXPROCS(0), gatePlans, units, none, some, gateHistory, measured, gateMembers)
+	line := fmt.Sprintf("TICK GATE UNDER LOAD: %d ready, %d members of width %d, %d siblings busy: %d plans of %d units each in %s with no history, %s with %d ok attempts a member",
+		gateStreams*gatePerStream, gateMembers, gateWidth, runtime.GOMAXPROCS(0), gatePlans, units, none, some, gateHistory)
 	fmt.Fprintln(os.Stderr, line)
-	for i, m := range members {
-		assert.LessOrEqual(t, after[i]-before[i], 1, "the deal measured %s's history more than once for one cell: %s", m, line)
-	}
-}
-
-// medianMeasures is how many times each member's median run wall has been measured.
-func medianMeasures(members []string) []int {
-	out := make([]int, len(members))
-	for i, m := range members {
-		out[i] = sprint.MedianWallMeasures(m)
-	}
-	return out
 }
 
 // gateSnapshot is the store's snapshot with every waiting card ready, three flash

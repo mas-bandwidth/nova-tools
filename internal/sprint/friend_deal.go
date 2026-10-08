@@ -429,13 +429,10 @@ func friendLoad(s *Snapshot, name string) int {
 // unit (pinIgnoredNote): why she did not take it, and whose row holds the card.
 // The pass keeps that judgment (pinConds) until the card is back on her row or
 // leaves ready and working.
-func friendDeal(s *Snapshot, cards []*Card, seats []FriendSeat) (p Plan, dealt, dealtWorking map[string]int) {
-	return friendDealPass(s, cards, seats, true)
-}
-
-// friendDealPass is friendDeal, with the reclaim of the fleet's dealt-ahead cards
+// friendDealPass is the tick's friend deal, with the reclaim of the fleet's dealt-ahead cards
 // (friendReclaim) when reclaim is set: a deal in passes (a pass of the cards above reads,
-// then the reads, then the rest) reclaims once, in its last pass, after the reads.
+// then the reads, then the rest) reclaims once, in its last pass, after the reads. The
+// comment above describes the pass.
 func friendDealPass(s *Snapshot, cards []*Card, seats []FriendSeat, reclaim bool) (p Plan, dealt, dealtWorking map[string]int) {
 	free, lanes, seat := map[string]int{}, map[string]int{}, map[string]FriendSeat{}
 	dealt, dealtWorking = map[string]int{}, map[string]int{}
@@ -723,13 +720,6 @@ func friendEscalateUnit(s *Snapshot, c, prev *Card, card, row, tier string) Unit
 	u.Changes = append([]Change{change(Fleet, removeEntry(prev, map[string]string{"retired": stamp(s.Now), "retired_by": "escalation"}))}, u.Changes...)
 	u.Moved += fmt.Sprintf("; escalated %s -> %s: %s at its redeal bound", from, tier, prev.ID)
 	return u
-}
-
-// FriendDeal is the tick's friend deal alone (friendDeal), its plan without the counts
-// the level reads.
-func FriendDeal(s *Snapshot, cards []*Card, seats []FriendSeat) Plan {
-	p, _, _ := friendDeal(s, cards, seats)
-	return p
 }
 
 // friendWithFree is the up friend of one of the classes with the most free width in
