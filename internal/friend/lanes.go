@@ -534,7 +534,7 @@ func (l *loop) laneStep(now time.Time, width int) {
 			continue
 		}
 		t := &turn{}
-		if !l.messageInFlight() {
+		if l.owedMessage == nil && !l.messageInFlight() {
 			t.entries, t.msgs = l.take()
 		}
 		var subjects []string

@@ -365,6 +365,46 @@ func TestTwoLanesRetryOneOwedMessageTurnAtATime(t *testing.T) {
 	})
 }
 
+// A card already held by another lane may need another turn while a message
+// turn is owed. It can keep working on its card, but a newer bus message cannot
+// ride with it ahead of the older deferred message.
+func TestACardRetryCannotCarryANewerMessagePastAnOwedTurn(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		dir := cardDirFixture(t, [][2]string{{"c1", "queued"}}, []string{"c1"}, nil)
+		h := &lanesHarness{dir: dir, finish: map[string]bool{}, active: map[string]int{}, block: make(chan struct{}), refuse: []error{Deferred{Reason: "the app is busy"}}}
+		r, _ := laneRig(t, h, 2)
+		var older, newer bus.Message
+		r.at[5] = func() { older = r.send(t, "ada", "older", "the older message") }
+		r.at[8] = func() { newer = r.send(t, "ada", "newer", "the newer message") }
+		r.at[10] = func() { close(h.block) }
+		r.run(t, 13)
+		turns, texts, _ := h.got()
+		require.GreaterOrEqual(t, len(turns), 3, "the card began a second turn while the older message was owed: %v", turns)
+		require.NotEmpty(t, turns)
+		require.NotEmpty(t, older.ID)
+		require.NotEmpty(t, newer.ID)
+		firstOwed := -1
+		for i, text := range texts {
+			if strings.Contains(text, Text(older)) {
+				firstOwed = i
+				break
+			}
+		}
+		require.NotEqual(t, -1, firstOwed, "the older message entered a cardless turn: %v", turns)
+		assert.Contains(t, turns[firstOwed], ": -", "the older message was handed as a message turn")
+		for i, text := range texts {
+			if i <= firstOwed || !strings.Contains(text, "one card this turn, c1.") {
+				continue
+			}
+			assert.NotContains(t, text, Text(newer), "an existing card's retry must not carry a newer message past the owed turn")
+		}
+		pending, fresh := r.pending(t)
+		assert.Equal(t, 2, len(pending)+len(fresh), "the owed and newer messages are still unread")
+		assert.Equal(t, 0, r.last().Delivered)
+	})
+}
+
 // A one-shot friend's push is proved from a lane: while unproven, the lane opens its
 // session and hands the push check's own pong line as a message turn; the session's run of
 // it is the proof, and only then does a card go in. The daemon writes no pong for it.
