@@ -22,9 +22,18 @@ const tickSlack = 10
 
 // Run reads the sprint on each tick, whoever is looking, so the copy is never older than
 // a tick and each new one is pushed to the /events clients as it is read, then checks the
-// copy's freshness (Tick); it returns when ctx is done. tick is the clock's ticker
+// copy's freshness (Tick); it returns when ctx is done. While it runs it is the one
+// reader: a request (Refresh) answers from the copy and never reads. tick is the clock's ticker
 // (time.Ticker's channel, every Every); a test hands it a channel of its own.
 func (s *Server) Run(ctx context.Context, tick <-chan time.Time) {
+	s.mu.Lock()
+	s.polling = true // the poller is the one reader: requests answer from the copy
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		s.polling = false
+		s.mu.Unlock()
+	}()
 	for {
 		select {
 		case <-ctx.Done():

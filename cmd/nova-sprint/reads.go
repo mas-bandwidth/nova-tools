@@ -656,6 +656,7 @@ type whereView struct {
 	// row of tables carries its cards by level and its reads (rowCardFields), from the tick's
 	// where record (sprint.RowCardCounts).
 	ReadCards sprint.ReadCardCounts `json:"read_cards"`
+	Fix       int                   `json:"fix,omitempty"`
 	// Priorities is every open primary whose level is not normal, by level, and
 	// StreamPriorities each stream's default level that is not normal, from the tick's where
 	// record (sprint.PriorityCounts, sprint.StreamPriorities); absent when every card is normal.
@@ -763,6 +764,7 @@ type dealtCard struct {
 	Since    time.Time `json:"since,omitzero"`
 	Deadline time.Time `json:"deadline,omitzero"`
 	Branch   string    `json:"branch"`
+	Priority string    `json:"priority,omitempty"`
 	Tier     string    `json:"tier,omitempty"` // the tier its route was drawn from (sprint.FieldTier)
 }
 
@@ -860,7 +862,7 @@ func dealtView(d store.Dealt, prefix string, epoch uint64) ([]dealtCard, []judgm
 			continue
 		}
 		v := dealtCard{ID: c.ID, Primary: c.F(sprint.PrimaryField), Stream: c.F("stream"), Member: c.Row, State: c.Col,
-			Branch: cmp.Or(c.F("branch"), sprint.BranchOf(prefix, epoch, c.ID, c.Int("gen"))), Tier: c.F(sprint.FieldTier)}
+			Branch: cmp.Or(c.F("branch"), sprint.BranchOf(prefix, epoch, c.ID, c.Int("gen"))), Tier: c.F(sprint.FieldTier), Priority: queuePriority(c)}
 		own := "dealt"
 		if c.Col == string(sprint.Working) {
 			own = "taken"
@@ -1386,6 +1388,24 @@ func (a *app) whereOf(ctx context.Context, st *store.Store, stale time.Duration,
 		}
 	}
 	v.Releases = sprint.WhereReleasesCountCardsLeft(clocks, streamLeft)
+	for stream, cols := range facts.FixStates {
+		row := v.Tables[sprint.Work][stream]
+		if row == nil {
+			continue
+		}
+		n := 0
+		for col, count := range cols {
+			existing, _ := strconv.Atoi(fmt.Sprint(row[col])) // ignored: absent column is zero
+			count = min(count, existing)
+			row[col] = strconv.Itoa(existing - count)
+			n += count
+		}
+		if n > 0 {
+			row["fix"] = strconv.Itoa(n)
+			v.Fix += n
+		}
+	}
+
 	return v, b.String(), nil
 }
 

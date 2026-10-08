@@ -12,7 +12,7 @@ import (
 )
 
 // cmdPriority sets or prints a card's priority (docs/SPEC-SPRINT.md section 1, "Priority";
-// sprint.SetPriority): with a level (--blocker, --critical, --high, --normal, --low) it sets
+// sprint.SetPriority): with a level (--blocker, --critical, --fix, --high, --normal, --low) it sets
 // each primary named, or in one call every card now in --stream (its own level overwritten)
 // and the stream's default for cards added later, each change on the card's timeline (the
 // default's on the stream's) with the actor and the required reason; with

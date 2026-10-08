@@ -175,14 +175,22 @@ func (l *lander) openStream(s *sprint.Snapshot, stream string) ([]landCard, bool
 		return refused("nothing queued to merge in stream " + stream + "; run: nova-sprint queue --stream " + stream)
 	}
 	var cards []landCard
+	// a card held on a dead base is skipped, and a card that needs one, until its judgment
+	// is answered or its base is re-pointed (sprint.DeadBaseHeld): the refusal was said once
+	held := map[string]bool{}
 	for _, c := range queue {
 		lc := landCard{id: c.ID, base: l.base}
-		if pr := s.Work.Placed(c.ID); pr != nil {
+		pr := s.Work.Placed(c.ID)
+		if pr != nil {
 			lc.head, lc.attempt, lc.primary = pr.F("head"), pr.F("attempt"), pr
 			cb := swarm.ReadCardBase([]byte(pr.F("brief")))
 			lc.repo, lc.paths, lc.brief = cb.Repo, swarm.CardPaths([]byte(pr.F("brief"))), pr.F("brief")
 			if cb.Ref != "" {
 				lc.base = cb.Ref
+			}
+			if sprint.DeadBaseHeld(s, pr, lc.base) || slices.ContainsFunc(sprint.Split(pr.F("needs")), func(n string) bool { return held[n] }) {
+				held[c.ID] = true
+				continue
 			}
 			if s.Fleet != nil {
 				lc.result = claimText(s.Fleet.Card(sprint.WorkCardID(pr.ID, pr.Int("attempt"))))
@@ -394,6 +402,12 @@ func (l *lander) buildFailed(ctx context.Context, j *landJob, why string) {
 	l.buildNotes(j)
 	if l.deferral != nil {
 		j.deferred(why)
+		return
+	}
+	if l.baseAbsent {
+		// the base is not on origin: one fact, recorded once, and the stream goes on
+		past, on, ok := l.deadBaseRefused(j.b, j.stream, j.cards)
+		j.ended(past, on, ok)
 		return
 	}
 	if l.baseCount {

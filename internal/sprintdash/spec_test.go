@@ -182,7 +182,7 @@ func counted(cols []string, fractions map[string]bool) func(string) bool {
 // ruleSections are the spec's sections that are rules over the page or notes on serving
 // it; every other section is a part of the page, in order from the top. A new section is
 // one of the two, or the test below is red until it is classified here.
-var ruleSections = []string{"Serving and publishing", "The specification", "Page", "Responsive", "LOCKED", "Column alignment across the three tables", "LOCK 2"}
+var ruleSections = []string{"Serving and publishing", "The specification", "Page", "Responsive", "LOCKED", "Column alignment across the three tables", "LOCK 2", "Live deployment contract", "Freshness"}
 
 // TestDashboardPageIsTheSpec is the drift check (docs/SPEC-SPRINT-DASHBOARD.md): the
 // page's markup says what the specification says, string for string. A change to the
@@ -237,15 +237,10 @@ func TestDashboardPageIsTheSpec(t *testing.T) {
 
 	work := splitList(match(t, `(?m)^- Columns: ([^(\n]+)\(headers exactly so`, sp.section(t, "Work"), "Work's columns"), "|")
 	fleet := splitList(match(t, `(?m)^- Columns: ([^(\n]+)\(headers exactly so`, sp.section(t, "Fleet"), "Fleet's columns"), "|")
-	// Friends: "same shape as Fleet without load": its row names a friend, not a machine.
+	// The owner's live page keeps the same columns as Fleet, with a friend name.
 	friendsSec := sp.section(t, "Friends")
-	assert.Contains(t, friendsSec, "same shape as Fleet without load")
-	friends := append([]string{"friend"}, slices.DeleteFunc(slices.Clone(fleet[1:]), func(c string) bool { return c == "load" })...)
-	// the tokens column is the friends table's alone (docs/SPEC-SPRINT.md, the friends table)
-	friends = append(friends, "tokens")
-	for _, c := range splitList(match(t, `same shape as Fleet without load \(([^;)]+)`, friendsSec, "Friends' columns"), ",") {
-		assert.Contains(t, friends, c, "Friends names column %q, which the shape of Fleet without load has not", c)
-	}
+	assert.Contains(t, friendsSec, "same eight-column shape as the live Fleet table, including load")
+	friends := append([]string{"friend"}, slices.Clone(fleet[1:])...)
 	// A fraction column ("n / total", "n / width") and the status pill are not numbers;
 	// the first column is the row's name; every other column is a number, right-aligned.
 	fractionsOf := func(section string) map[string]bool {
@@ -258,9 +253,6 @@ func TestDashboardPageIsTheSpec(t *testing.T) {
 	workFractions, fleetFractions := fractionsOf("Work"), fractionsOf("Fleet")
 	assert.Equal(t, map[string]bool{"landed": true}, workFractions, "Work's fraction columns in the spec")
 	assert.Equal(t, map[string]bool{"working": true}, fleetFractions, "Fleet's fraction columns in the spec")
-	lanesSec := sp.section(t, "Lanes")
-	lanes := splitList(match(t, `(?m)^- Columns: ([^(\n]+)\(headers exactly so`, lanesSec, "Lanes' columns"), "|")
-	lanesNumber := match(t, `\(headers exactly so, all lowercase\); (\w+) alone\s+is a number`, lanesSec, "Lanes' numeric column")
 	for _, tc := range []struct {
 		id      string
 		cols    []string
@@ -269,9 +261,6 @@ func TestDashboardPageIsTheSpec(t *testing.T) {
 		{"streams", work, counted(work, workFractions)},
 		{"fleet", fleet, counted(fleet, fleetFractions)},
 		{"friends", friends, counted(friends, fleetFractions)},
-		// Lanes names its one number instead: its other columns are names, not counts, so
-		// "every column but the first is a number" does not fit it.
-		{"lanes", lanes, func(name string) bool { return name == lanesNumber }},
 	} {
 		head := body.one(t, "#"+tc.id, byID(tc.id)).one(t, "a header row in #"+tc.id, byClass("head"))
 		var names []string
@@ -330,15 +319,14 @@ func TestDashboardPageIsTheSpec(t *testing.T) {
 	}
 	assert.Equal(t, pills, chips, "the header's pills, in order")
 
-	// The footer: one line, the name in bold, then "from <link>".
+	// The live page's single repository link is also the complete footer label.
 	foot := sp.section(t, "Footer")
-	name := match(t, `^## Footer: one line, "([^"]+)" bold`, foot, "the footer's name")
-	from := match(t, `then "(from [^"]+)" \(link\)`, foot, "the footer's link")
+	url := match(t, `^## Footer: one link, "([^"]+)"`, foot, "the footer's link")
 	footer := body.one(t, "a footer", func(n *node) bool { return n.name == "footer" })
-	assert.Equal(t, name, textOf(footer.one(t, "the footer's name", byClass("fname"))))
-	assert.Equal(t, name+" "+from, textOf(footer), "the footer's line")
 	link := footer.one(t, "the footer's link", func(n *node) bool { return n.name == "a" })
-	assert.Equal(t, strings.TrimPrefix(from, "from "), link.attr["href"])
+	assert.Equal(t, url, textOf(footer))
+	assert.Equal(t, url, link.attr["href"])
+
 }
 
 // The page loads nothing from anywhere else: its face is the embedded one.

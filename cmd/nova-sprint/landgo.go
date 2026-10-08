@@ -9,17 +9,18 @@ package main
 // card's finding.
 //
 // The tree gate is what every tip of the batch branch passes before the next head is
-// merged: the module builds and vets (`go build ./...`, `go vet ./...`), its functional
-// tier's files are vetted too (`go vet -tags functional ./...`, the Makefile's
-// vet-functional: a plain vet compiles no `//go:build functional` file, so a redeclaration
-// behind that tag landed on a base whose lint was red, PR 5435), and when a
-// head changes a Go file, a document, or testdata (.go, .md, testdata/), the packages
-// that test the tree itself (treeTests, where the clone has them) pass. The base's tip
-// is gated once a batch before any head is merged, so a base that is red refuses the
-// batch and blames no card, unless a head of the batch cures it (cureBase): that head lands
-// first as the base fix. A head whose merged tree is red is taken off the batch branch
-// and ends the batch as a head that does not merge does, the gate's run and output its
-// finding. A clone with no go.mod has no module and no gate.
+// merged: the module builds, formats and vets (`go build ./...`, `gofmt -l .`,
+// `go vet ./...`), its functional tier's files are vetted too (`go vet -tags functional ./...`,
+// the Makefile's vet-functional: a plain vet compiles no `//go:build functional` file, so a
+// redeclaration behind that tag landed on a base whose lint was red, PR 5435), and when a
+// head changes a Go file, a document, or testdata (.go, .md, testdata/), the analyzer
+// classes and the packages that test the tree itself (treeTests, where the clone has them)
+// pass. sprint.BaseClasses is that suite. The base's tip is gated once a batch before any
+// head is merged, so a base that is red refuses the batch and blames no card, unless a head
+// of the batch cures it (cureBase): that head lands first as the base fix. A head whose
+// merged tree is red is taken off the batch branch and ends the batch as a head that does
+// not merge does, the gate's run and output its finding. A clone with no go.mod has no
+// module and no gate.
 
 import (
 	"bytes"
@@ -159,21 +160,26 @@ func treeTested(p string) bool {
 	return strings.HasSuffix(p, ".go") || strings.HasSuffix(p, ".md") || strings.Contains(p, "testdata/")
 }
 
-// gateRuns is the tree gate's runs, in order: the build, the vet of the module and the vet
-// of its functional-tier files (`-tags functional`, the Makefile's vet-functional), then
-// the tree tests (have: the ones the clone holds) when tests is asked.
+// gateRuns is SPEC-SPRINT's base class suite (sprint.BaseClasses), preserving the build
+// first, then formatting, vet and the functional-tier vet. Analyzer classes and the tree
+// tests need their packages (have: the ones the clone holds) and run only when tests is asked.
 func gateRuns(tests bool, have []string) [][]string {
-	runs := [][]string{
-		{"go", "build", "./..."},
-		{"go", "vet", "./..."},
-		{"go", "vet", "-tags", "functional", "./..."},
-	}
-	if tests && len(have) > 0 {
-		run := []string{"go", "test"}
-		for _, p := range have {
-			run = append(run, "./"+p+"/")
+	var runs [][]string
+	for _, class := range sprint.BaseClasses {
+		if class.Name == "class-tests" {
+			if tests && len(have) > 0 {
+				run := slices.Clone(class.Run)
+				for _, p := range have {
+					run = append(run, "./"+p+"/")
+				}
+				runs = append(runs, run)
+			}
+			continue
 		}
-		runs = append(runs, run)
+		if len(class.Needs) > 0 && (!tests || slices.ContainsFunc(class.Needs, func(p string) bool { return !slices.Contains(have, p) })) {
+			continue
+		}
+		runs = append(runs, slices.Clone(class.Run))
 	}
 	return runs
 }
@@ -207,7 +213,7 @@ type baseGateFail struct {
 // lands on it (stop), each with the error, the coordinator's judgment. With the rule off
 // (nova-config's sprint row answer_rules_off), a red base is cached for its commit as a
 // green one is, as before the rule: every landing on it refused until the base moves.
-func (l *lander) treeGateBase(ctx context.Context, dir, baseSha string) (why string, stop bool) {
+func (l *lander) treeGateBase(ctx context.Context, dir, baseSha string, branch ...string) (why string, stop bool) {
 	if l.baseGateCache == nil {
 		l.baseGateCache = map[string]string{}
 	}
@@ -229,6 +235,16 @@ func (l *lander) treeGateBase(ctx context.Context, dir, baseSha string) (why str
 	if l.deferral != nil {
 		// every bench faulted: no verdict on the base, so nothing cached or counted
 		return why, false
+	}
+	if why != "" {
+		base := l.base
+		if len(branch) > 0 {
+			base = branch[0]
+		}
+		if base == "" {
+			base = baseSha
+		}
+		why = sprint.ClassGateWhy(dir, base, baseSha, why)
 	}
 	if why == "" || slices.Contains(l.offRules(ctx), sprint.RuleBaseGate) {
 		l.baseGateCache[baseSha] = why
@@ -330,6 +346,19 @@ func (l *lander) treeGate(ctx context.Context, dir string, tests bool) string {
 	if len(hosts) == 0 && len(marked) > 0 {
 		return l.deferGate(marked)
 	}
+	// A test's gateBench seam stands in for the bench when no fleet member is up
+	// (the class-gate regression: a fake runner, no socket, no beat to keep fresh).
+	if len(hosts) == 0 && l.a != nil {
+		if gate := l.a.landState().gate(); gate != nil {
+			out, code, err := gate(ctx, "seam", dir, runs, tests)
+			if err == nil && code != bench.NoAnswer {
+				if code == 0 {
+					return ""
+				}
+				return gateWhy(redRun(runs, out), fmt.Errorf("exit status %d on the bench seam", code), out)
+			}
+		}
+	}
 	if len(hosts) > 0 {
 		why, ran, faults := l.ringGateFaults(ctx, hosts, dir, runs, tests)
 		if ran {
@@ -347,11 +376,22 @@ func (l *lander) treeGate(ctx context.Context, dir string, tests bool) string {
 	}()
 	for _, run := range runs {
 		l.stage("gate", strings.Join(run, " "))
-		if out, err := l.goRun(ctx, dir, run); err != nil {
+		out, err := l.goRun(ctx, dir, run)
+		if err = gateRunError(run, out, err); err != nil {
 			return gateWhy(run, err, out)
 		}
 	}
 	return ""
+}
+
+// gateRunError enforces the formatter's silent success (SPEC-SPRINT, the base's class
+// gate); the other classes report failure by their exit status. A gofmt that exits zero
+// and lists files is red.
+func gateRunError(run []string, out string, err error) error {
+	if err == nil && len(run) > 0 && run[0] == "gofmt" && strings.TrimSpace(out) != "" {
+		return fmt.Errorf("gofmt listed files that need formatting")
+	}
+	return err
 }
 
 // benchGate runs the gate's runs on a bench: the first host of the ring whose Go lane is
@@ -672,7 +712,11 @@ func gateScript(runs [][]string) string {
 		for i, w := range run {
 			words[i] = bench.Quote(w)
 		}
-		parts = append(parts, "echo "+bench.Quote(gateMark+strings.Join(run, " ")), strings.Join(words, " "))
+		command := strings.Join(words, " ")
+		if len(run) > 0 && run[0] == "gofmt" {
+			command = "gate_format=$(" + command + "); printf '%s\\n' \"$gate_format\"; test -z \"$gate_format\""
+		}
+		parts = append(parts, "echo "+bench.Quote(gateMark+strings.Join(run, " ")), command)
 	}
 	return strings.Join(parts, "; ")
 }
