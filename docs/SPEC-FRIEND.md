@@ -1614,14 +1614,18 @@ write or friend sync's) and whose `jobs/<job>/JOB.md` is not, the daemon stages 
   mirror, where `PushedHead` reads it through the worktree's `.git` file. `JOB.md` is
   written last (`JobText`, the card-contract shape of docs/SPEC-CARD-CONTRACT.md: `# JOB: work
   <card>, attempt <n>`, the checkout, the repository, base and commit, the branch and its push,
-  the outbox `REPORT.md` and `RESULT.md`, and the `no push` HOLD). A job with a `JOB.md` is
-  never staged again, and is never written over.
+  the outbox `REPORT.md` and `RESULT.md`, and the `no push` HOLD). A job with a complete stage record,
+  readable brief and validated checkout is never staged again, and is never written over.
 - Each stage runs on a goroutine of its own, so the loop beats on while a mirror is fetched
   (`MirrorCloneBudget`, 30 minutes, bounds a fetch; the first is the slow one); a repository's
   fetch, its worktrees added and its worktrees pruned run one at a time. A stage the daemon's stop ends is said nowhere and runs again on
   the next start.
 - No lane is handed a card whose job the daemon stages until its `JOB.md` is there, and in
   batch mode the session is told of such a brief once its job is staged.
+- Every retry revalidates the files named by the stage record. A surviving `JOB.md`
+  does not suppress a retry for a missing brief or checkout. Staging restores a missing
+  recorded brief from the canonical inbox copy, and recreates a missing checkout on its
+  existing branch without resetting work; a successful retry clears the lane's failure count.
 - **The stage contract** (`internal/friend/lanes.go`, `StageGate`): a lane starts only once
   the stage has written all three of a readable regular brief (a directory is not a brief),
   the job's `JOB.md`, and a validated checkout (a git checkout, not a path that merely
@@ -1656,8 +1660,9 @@ unstaged cards are handed to no lane, and later loops stage nothing again.
 `TestAStageEndedByTheDaemonsStopIsStagedAgain` and `TestPacketOfAndItsRefusals` pin the rest.
 `TestAStageMissingItsBriefStartsNoLaneAndRaisesOneJudgment`,
 `TestThreeStageFailuresFinishTheCardFailWithItsReason`,
-`TestAPromptNamingABriefThatIsNotThereIsRefused` and
-`TestAGoGateOnAHostWithNoGoIsRefusedAtStage` (internal/friend/lanes_stage_test.go) pin the
+`TestAPromptNamingABriefThatIsNotThereIsRefused`,
+`TestAGoGateOnAHostWithNoGoIsRefusedAtStage` and
+`TestAPartialStagedJobIsRepairedAcrossPasses` (internal/friend/lanes_stage_test.go) pin the
 stage contract above.
 The machine is modelled in `tla/FriendStage.tla` (`MCFriendStage*`): a lane is handed a card
 only once its `JOB.md` is there, one judgment per repository or card while it stands, a stop
