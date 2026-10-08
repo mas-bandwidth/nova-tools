@@ -1487,11 +1487,9 @@ exit codes: 0 done, 1 the verb ran and said no (wait-pong: no pong in time; stat
 example:
   nova-friend install --as bob --harness opencode --dir ./bob --dry-run
   nova-friend uninstall --as bob --dry-run
-  nova-friend host --as bob --harness aider --dir ./bob --dry-run -- aider
   nova-friend ping --as ada --to bob --nonce abc123
   nova-friend pong --as bob --nonce abc123 --to ada --queue 2 --working 1 --width 4
   nova-friend wait-pong --from bob --nonce abc123 --timeout 2s
-  nova-friend watch --as ada --timeout 10m
   nova-friend status --as bob --dir ./bob
 ```
 
@@ -1641,7 +1639,6 @@ effect: delivery: sends beyond this machine: without --harness it only reads (th
 usage: nova-friend host [flags]
 from `nova-friend help`:
   nova-friend host --as <me> --harness <h> --dir <d> [--prompt <regexp>] [--state-dir <d>] [--dry-run] [--json] -- <launch command...>
-  nova-friend host --as bob --harness aider --dir ./bob --dry-run -- aider
 flags:
   --as <string>  your name, a nova-config friend row (required)
   --dir <string>  the friend's working directory: the TUI's, and where the state files live (required)
@@ -1731,8 +1728,6 @@ effect: delivery: sends beyond this machine: the session's answer to a PING, one
 usage: nova-friend watch [flags]
 from `nova-friend help`:
   nova-friend watch --as <coordinator> [--timeout <duration>] [--state-dir <d>] [--redis <addr>] [--json]
-  nova-friend watch --as ada --timeout 10m
-example: nova-friend watch --as ada --timeout 10m
 flags:
   --as <string>  your name, the coordinator whose stream and wake file are watched (required)
   --json  print the result as one JSON object instead of lines
