@@ -277,7 +277,7 @@ facts.
 | `critical_behind` | text: a whole number from 1 to 1000 (cards behind); default empty, the sprint's 10 | | the cards waiting on a primary that make it critical: it starts on pro and the inbox marks its judgments CRITICAL | `sprint:critical_behind` |
 
 **The sprint's policy numbers** (internal/config/policy.go, `SprintPolicies`; migration
-0036; the owner, 2026-10-02: "i just want to set numbers as I see fit directly in
+0037; the owner, 2026-10-02: "i just want to set numbers as I see fit directly in
 nova-config"). Each is a text field of the sprint row, empty by default, and empty is the
 sprint's compiled default, today's value (`sprint.PolicyDefaults`, held equal to the
 table by TestEveryPolicyNumberIsASettingWithItsDefault). A value outside the number's
@@ -559,7 +559,7 @@ config.sprint            (name PK = 'sprint', coordinator -> friends.name,
                           answer_rules_off added by 0031, text NOT NULL
                           DEFAULT '', a list of rule names; the policy
                           numbers deal_ahead ... critical_behind added
-                          by 0035, text NOT NULL DEFAULT '' each, a
+                          by 0037, text NOT NULL DEFAULT '' each, a
                           number or a duration in its range, or '')
 config.loops             (name PK, machine -> machines.name, argv, seat, keys,
                           every, keepalive boolean, width, enabled boolean,
