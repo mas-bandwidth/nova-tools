@@ -239,17 +239,20 @@ func TestLandRefusesARedCombinedTreeForThePassAndStopsNoStream(t *testing.T) {
 	assert.Equal(t, map[string]string{"a1": "landed/merged", "b1": "merging/queued"}, r.places("a1", "b1"))
 	assert.Equal(t, "merging", r.streamState("s2"), "no stream stops for a collision")
 	assert.Equal(t, []string{"land a1 (sprint stream s1)", "the module", "base"}, r.mainLog())
-	// the next pass: the head alone fails the gate on the new tip, the card's own finding
+	// the next pass: the head alone fails the gate on the new tip, the card's own finding,
+	// which reworks it at the tip and stops nothing (a card's own refusal, land.go)
 	code, _, errs = r.do("land --land-parallel 2")
 	assert.Equal(t, 1, code)
 	assert.Contains(t, errs, "ids=b1 fact=conflict reason=the head "+r.git(r.worker, "rev-parse", "sprint/b1")+" of b1 fails the tree gate: go build ./...")
-	assert.Equal(t, map[string]string{"b1": "merging/stuck"}, r.places("b1"))
+	assert.Equal(t, map[string]string{"b1": "ready/returned"}, r.places("b1"))
+	assert.Equal(t, "waiting", r.streamState("s2"), "no stop: its one open card is reworked")
 	r.clean()
 }
 
 // A red batch gate names the head: the batch's tree is gated once and, red, each head is
 // gated alone from the base again, the red one ending the batch as before (the heads before it
-// land); the green one-gate path never changes a refusal's words.
+// land, the red head is reworked at the tip, and the stream's cards after it land in the same
+// pass, a card's own refusal); the green one-gate path never changes a refusal's words.
 func TestLandBlamesTheHeadWhenTheBatchsOneGateIsRed(t *testing.T) {
 	t.Parallel()
 	r := newLandRig(t)
@@ -261,10 +264,13 @@ func TestLandBlamesTheHeadWhenTheBatchsOneGateIsRed(t *testing.T) {
 	assert.Equal(t, 1, code, out+errs)
 	assert.Contains(t, out, "LAND OK stream=s1 cards=1 base=main")
 	assert.Contains(t, errs, "ids=a2 fact=conflict reason=the head "+r.git(r.worker, "rev-parse", "sprint/a2")+" of a2 fails the tree gate: go vet ./...")
-	assert.Equal(t, map[string]string{"a1": "landed/merged", "a2": "merging/stuck", "a3": "merging/queued"}, r.places("a1", "a2", "a3"))
-	// the base, the batch's tree (red), then a1 alone (green) and a2 alone (red): a3 is never
-	// merged after a2 ended the batch
-	assert.Len(t, gates(), 4)
+	assert.Contains(t, errs, "NOTE the card is reworked at the tip and stream s1 goes on; the seat is told")
+	assert.Equal(t, map[string]string{"a1": "landed/merged", "a2": "ready/returned", "a3": "landed/merged"}, r.places("a1", "a2", "a3"))
+	assert.Equal(t, []string{"land a3 (sprint stream s1)", "land a1 (sprint stream s1)", "the module", "base"}, r.mainLog(), "a3 lands in the same pass")
+	// the base, the batch's tree (red), then a1 alone (green) and a2 alone (red); the next
+	// round, a3's batch: the base once more (a1's tip was gated alone without the tree tests,
+	// so it is not recorded as gated) and a3's tree
+	assert.Len(t, gates(), 6)
 	r.clean()
 }
 
@@ -310,8 +316,8 @@ func TestLandReMergeOntoTheMovedBaseThatMergesFewerHeads(t *testing.T) {
 		assert.Contains(t, errs, "ids=b2 fact=conflict reason=the head "+r.git(r.worker, "rev-parse", "sprint/b2")+" of b2 does not merge")
 		assert.Equal(t, []string{"s1+tests", "s1+tests", "s2+tests", "s2+tests"}, gates(), "the base, each batch alone, and the prefix once more on the moved base")
 		assert.Equal(t, []string{"land b1 (sprint stream s2)", "land a1 (sprint stream s1)", "the module", "base"}, r.mainLog())
-		assert.Equal(t, map[string]string{"a1": "landed/merged", "b1": "landed/merged", "b2": "merging/stuck"}, r.places("a1", "b1", "b2"))
-		assert.Equal(t, "stopped conflict", r.streamState("s2"))
+		assert.Equal(t, map[string]string{"a1": "landed/merged", "b1": "landed/merged", "b2": "ready/returned"}, r.places("a1", "b1", "b2"))
+		assert.Equal(t, "waiting", r.streamState("s2"), "no stop: b2 is reworked at the tip (a card's own refusal)")
 		r.clean()
 	})
 	t.Run("none: the conflict is reported and nothing is pushed", func(t *testing.T) {
@@ -326,8 +332,8 @@ func TestLandReMergeOntoTheMovedBaseThatMergesFewerHeads(t *testing.T) {
 		assert.NotContains(t, out, "LAND OK stream=s2")
 		assert.Contains(t, errs, "ids=b1 fact=conflict reason=the head "+r.git(r.worker, "rev-parse", "sprint/b1")+" of b1 does not merge")
 		assert.Equal(t, []string{"land a1 (sprint stream s1)", "the module", "base"}, r.mainLog(), "the base's own tip is not pushed again")
-		assert.Equal(t, map[string]string{"a1": "landed/merged", "b1": "merging/stuck"}, r.places("a1", "b1"))
-		assert.Equal(t, "stopped conflict", r.streamState("s2"))
+		assert.Equal(t, map[string]string{"a1": "landed/merged", "b1": "ready/returned"}, r.places("a1", "b1"))
+		assert.Equal(t, "waiting", r.streamState("s2"), "no stop: b1 is reworked at the tip (a card's own refusal)")
 		r.clean()
 	})
 }
