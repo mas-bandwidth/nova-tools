@@ -1478,8 +1478,10 @@ default) and `low` (it fills only an idle lane).
   brief that names its own `PRIORITY:` line gives the twin that (`TestARecutKeepsTheCardsPriority`).
 - **Rework priority.** `set --rework-priority fix|high|keep` controls the level of a
   normal or low primary when its next attempt opens (default `fix`). Failed work,
-  broken reads, conflicts, harness faults and the seat's `rework` use the same policy;
-  a corrected brief marked as a brief defect uses it too. Existing high, fix, critical
+  broken reads, conflicts, harness faults that open a new attempt, and the seat's
+  `rework` use the same policy; a corrected brief marked as a brief defect uses it
+  too. A friend's no-report runner fault returns the same attempt at a fresh generation,
+  so it does not change priority. Existing high, fix, critical
   and blocker levels stay unchanged. `keep` retains the card's level. The primary
   and its newly dealt work carry the level, and subsequent reads inherit it.
   Within a stream, landing selects eligible cards by priority, preserving named and
