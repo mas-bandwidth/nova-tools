@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/bench"
 )
 
 // sshTimeout bounds one ssh probe the check runs, and the inventory read before
@@ -28,13 +30,16 @@ func init() {
 // checkBenchReach covers the ssh a fleet machine needs to reach the benches: the
 // land, the sandbox worktrees and the bench rule all start `ssh <bench>` on a
 // machine that must answer without a prompt (docs/SPEC-DOCTOR.md, the checks).
-// It reads the inventory (`nova-config machine list`, with the seat loaded) and
-// runs `ssh -o BatchMode=yes -o ConnectTimeout=5 <bench> true` for each machine,
-// naming each one that fails and the reason (unknown host key, no key, timeout).
-// The fix line is the documented step; the check never copies a key. It is
-// fleet-only: a single-machine setup has no other machine to reach. The child
-// goes through Env.Exec, whose real seam (OSEnv.Exec) is the one place a host is
-// reached, so this function is not itself a host seam.
+// It reads the inventory (`nova-config machine list`, with the seat loaded),
+// refuses a name that is not a host name before any ssh (bench.CheckHost), and
+// runs `ssh -o BatchMode=yes -o ConnectTimeout=5 -- <bench> true` for each
+// machine, naming each one that fails and the reason (unknown host key, no key,
+// timeout). The `--` ends option parsing, so a name is a host and never a flag.
+// A name that fails the check is a finding line, never an ssh. The fix line is
+// the documented step; the check never copies a key. It is fleet-only: a
+// single-machine setup has no other machine to reach. The child goes through
+// Env.Exec, whose real seam (OSEnv.Exec) is the one place a host is reached, so
+// this function is not itself a host seam.
 func checkBenchReach(ctx context.Context, env Env) Result {
 	cctx, cancel := context.WithTimeout(ctx, sshTimeout)
 	defer cancel()
@@ -49,17 +54,23 @@ func checkBenchReach(ctx context.Context, env Env) Result {
 	}
 
 	var failures []string
-	for _, bench := range benches {
+	for _, host := range benches {
+		// A name ssh could read as an option or as more than one host is a
+		// finding, not a probe: it is never passed to ssh.
+		if err := bench.CheckHost(host); err != nil {
+			failures = append(failures, fmt.Sprintf("%s: %s", host, err))
+			continue
+		}
 		pctx, pcancel := context.WithTimeout(ctx, sshTimeout)
-		out, err := env.Exec(pctx, "ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", bench, "true")
+		out, err := env.Exec(pctx, "ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "--", host, "true")
 		pcancel()
 		if err == nil {
 			continue
 		}
-		failures = append(failures, fmt.Sprintf("%s: %s", bench, reachReason(err, out)))
+		failures = append(failures, fmt.Sprintf("%s: %s", host, reachReason(err, out)))
 	}
 	if len(failures) == 0 {
-		return Result{Status: OK, Evidence: fmt.Sprintf("all %d bench(es) answer `ssh -o BatchMode=yes <bench> true`", len(benches))}
+		return Result{Status: OK, Evidence: fmt.Sprintf("all %d bench(es) answer `ssh -o BatchMode=yes -- <bench> true`", len(benches))}
 	}
 	return Result{
 		Status:   Fail,
