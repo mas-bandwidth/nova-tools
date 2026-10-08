@@ -59,17 +59,23 @@ func (h HarnessSettings) dshBundles(file string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	var manifest *struct {
-		DSH struct {
-			Profile struct {
-				Bundles []string `json:"bundles"`
-			} `json:"profile"`
-		} `json:"dsh"`
+	// DSH reads JavaScript properties by exact name; tagged Go structs would
+	// also accept case aliases that the native profile loader ignores.
+	var profile map[string]json.RawMessage
+	for _, key := range []string{"dsh", "profile"} {
+		if err := json.Unmarshal(raw, &profile); err != nil || profile == nil {
+			return "", fmt.Errorf("%s wants a JSON profile manifest", file)
+		}
+		raw = profile[key]
+		profile = nil
 	}
-	if err := json.Unmarshal(raw, &manifest); err != nil || manifest == nil {
+	if err := json.Unmarshal(raw, &profile); err != nil || profile == nil {
 		return "", fmt.Errorf("%s wants a JSON profile manifest", file)
 	}
-	bundles := manifest.DSH.Profile.Bundles
+	var bundles []string
+	if err := json.Unmarshal(profile["bundles"], &bundles); err != nil {
+		return "", fmt.Errorf("%s wants a JSON profile manifest", file)
+	}
 	if !slices.Contains(bundles, "@deepseek-ai/dsh-base") || !slices.Contains(bundles, "@deepseek-ai/dsh-headless") {
 		return "", fmt.Errorf("%s wants base and headless bundles in an initialized headless profile", file)
 	}
