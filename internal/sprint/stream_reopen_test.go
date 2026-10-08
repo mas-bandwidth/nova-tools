@@ -99,7 +99,8 @@ func TestMergeRecordsALandingTheStreamDealt(t *testing.T) {
 	pr.Fields["head"] = "abc1234"
 	pr.Fields["attempt"] = "1"
 	w.s.Work.Put(pr)
-	w.s.Merge.Put(&Card{ID: "s1-1", Row: "s1", Col: Queued, Score: 1, Fields: map[string]string{FieldPushedUnreported: "abc1234"}})
+	w.s.Merge.Put(&Card{ID: "s1-1", Row: "s1", Col: Queued, Score: 1})
+	w.must(MarkPushedUnreported(w.s, "s1", "abc1234", []PushedPin{{ID: "s1-1", Head: "abc1234", Attempt: "1"}}))
 	w.s.StreamCtl("s1").Fields["state"] = StreamLanded
 	require.True(t, StreamOwesLanding(w.s, "s1"))
 	require.Equal(t, []string{"s1-1"}, PushedUnreportedIDs(w.s, "s1"))
@@ -141,9 +142,12 @@ func TestPushedUnreportedMarkAndReportReason(t *testing.T) {
 	w.must(Add(w.s, AddReq{Stream: "s1", IDs: []string{"s1-1"}, Who: "coordinator"}))
 	pr := w.s.Work.Placed("s1-1")
 	pr.Col = Merging
+	pr.Fields["head"] = "head-a"
+	pr.Fields["attempt"] = "1"
 	w.s.Work.Put(pr)
 	w.s.Merge.Put(&Card{ID: "s1-1", Row: "s1", Col: Queued, Score: 1})
-	p := w.must(MarkPushedUnreported(w.s, "s1", "abc1234", []string{"s1-1"}))
+	pin := []PushedPin{{ID: "s1-1", Head: "head-a", Attempt: "1"}}
+	p := w.must(MarkPushedUnreported(w.s, "s1", "abc1234", pin))
 	assert.Equal(t, "abc1234", w.s.Work.Placed("s1-1").F(FieldPushedUnreported))
 	assert.Equal(t, "abc1234", w.s.Merge.Placed("s1-1").F(FieldPushedUnreported))
 	require.NotEmpty(t, p.Units)
@@ -151,12 +155,33 @@ func TestPushedUnreportedMarkAndReportReason(t *testing.T) {
 	assert.Equal(t, PushedUnreportedMark("abc1234"), p.Units[0].Notes[0].Type)
 	assert.Empty(t, p.Units[0].Notes[0].What)
 	assert.Contains(t, p.Units[0].Notes[0].Primaries, "s1-1")
-	again := MarkPushedUnreported(w.s, "s1", "abc1234", []string{"s1-1"})
+	again := MarkPushedUnreported(w.s, "s1", "abc1234", pin)
 	assert.Empty(t, again.Units, "the same sha is not marked twice")
 	why := ReportRefusedReason("sprint/base", "abc1234", "s1: landed")
 	assert.Contains(t, why, "s1: landed")
 	assert.Contains(t, why, "pushed-unreported abc1234")
 	assert.Contains(t, why, "sprint/base")
+}
+
+func TestPushedReceiptCannotFollowAReworkedCard(t *testing.T) {
+	t.Parallel()
+	w := newWorld(t)
+	w.must(Add(w.s, AddReq{Stream: "s1", IDs: []string{"s1-1"}, Who: "coordinator"}))
+	pr := w.s.Work.Placed("s1-1")
+	pr.Col = Merging
+	pr.Fields["head"], pr.Fields["attempt"] = "head-a", "1"
+	w.s.Work.Put(pr)
+	w.s.Merge.Put(&Card{ID: "s1-1", Row: "s1", Col: Queued, Score: 1})
+	old := []PushedPin{{ID: "s1-1", Head: "head-a", Attempt: "1"}}
+	w.must(MarkPushedUnreported(w.s, "s1", "merge-a", old))
+	require.Equal(t, []string{"s1-1"}, PushedUnreportedIDs(w.s, "s1"))
+	pr = w.s.Work.Placed("s1-1")
+	pr.Fields["head"], pr.Fields["attempt"] = "head-b", "2"
+	w.s.Work.Put(pr)
+	assert.Empty(t, PushedUnreportedIDs(w.s, "s1"), "the old receipt must not recover the new head")
+	assert.Empty(t, MarkPushedUnreported(w.s, "s1", "merge-a", old).Units, "obsolete head cannot receive a new receipt")
+	w.must(ClearObsoletePushedUnreported(w.s, "s1"))
+	assert.Empty(t, PushedUnreportedSHA(w.s, "s1-1"))
 }
 
 func TestShownStreamStateIsClosedWhileACardIsOpen(t *testing.T) {

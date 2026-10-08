@@ -21,7 +21,12 @@ const (
 	// work card and on the merge card (the merge card is written at once; a work
 	// field waits for the pump while the machine runs).
 	FieldPushedUnreported = "pushed_unreported"
+	FieldPushedHead       = "pushed_head"
+	FieldPushedAttempt    = "pushed_attempt"
 )
+
+// PushedPin identifies the exact card revision contained in a pushed batch.
+type PushedPin struct{ ID, Head, Attempt string }
 
 const noteStreamReopened = "stream-reopened"
 
@@ -131,6 +136,22 @@ func PushedUnreportedSHA(s *Snapshot, id string) string {
 	return ""
 }
 
+// PushedUnreportedMatches fences recovery to the revision that was pushed.
+func PushedUnreportedMatches(s *Snapshot, id string) bool {
+	if s == nil || s.Work == nil || s.Merge == nil {
+		return false
+	}
+	pr, m := s.Work.Placed(id), s.Merge.Placed(id)
+	if pr == nil || m == nil || pr.Col != Merging || m.Col != Queued {
+		return false
+	}
+	sha := m.F(FieldPushedUnreported)
+	return sha != "" && pr.F(FieldPushedUnreported) == sha &&
+		m.F(FieldPushedHead) != "" && m.F(FieldPushedAttempt) != "" &&
+		pr.F(FieldPushedHead) == m.F(FieldPushedHead) && pr.F(FieldPushedAttempt) == m.F(FieldPushedAttempt) &&
+		pr.F("head") == m.F(FieldPushedHead) && pr.F("attempt") == m.F(FieldPushedAttempt)
+}
+
 // PushedUnreportedIDs are the stream's queued cards marked pushed and not
 // reported, whose work card is missing or still merging.
 func PushedUnreportedIDs(s *Snapshot, stream string) []string {
@@ -139,7 +160,7 @@ func PushedUnreportedIDs(s *Snapshot, stream string) []string {
 	}
 	var ids []string
 	for _, c := range s.Merge.Cell(stream, Queued) {
-		if PushedUnreportedSHA(s, c.ID) == "" {
+		if !PushedUnreportedMatches(s, c.ID) {
 			continue
 		}
 		pr := s.Work.Placed(c.ID)
@@ -150,25 +171,52 @@ func PushedUnreportedIDs(s *Snapshot, stream string) []string {
 	return ids
 }
 
+// ClearObsoletePushedUnreported removes receipts whose card revision changed.
+func ClearObsoletePushedUnreported(s *Snapshot, stream string) Plan {
+	var p Plan
+	if s == nil || s.Merge == nil || s.Work == nil {
+		return p
+	}
+	p.on(s)
+	for _, m := range s.Merge.Cards() {
+		if m.Row != stream || m.F(FieldPushedUnreported) == "" || PushedUnreportedMatches(s, m.ID) {
+			continue
+		}
+		changes := []Change{change(Merge, setEntry(m, nil, FieldPushedUnreported, FieldPushedHead, FieldPushedAttempt))}
+		if pr := s.Work.Card(m.ID); pr != nil && pr.F(FieldPushedUnreported) != "" {
+			changes = append(changes, change(Work, setEntry(pr, nil, FieldPushedUnreported, FieldPushedHead, FieldPushedAttempt)))
+		}
+		p.Units = append(p.Units, Unit{Key: m.ID, Stream: stream, Changes: changes, Moved: "obsolete pushed-unreported " + m.ID + " cleared"})
+	}
+	return p
+}
+
 // MarkPushedUnreported sets pushed_unreported on the work card and the merge
 // card and writes the timeline line. A card already marked with that sha is
 // left as it is. The plan sets fields only, so it lands while the stream is landed.
-func MarkPushedUnreported(s *Snapshot, stream, sha string, ids []string) Plan {
+func MarkPushedUnreported(s *Snapshot, stream, sha string, pins []PushedPin) Plan {
 	var p Plan
-	if s == nil || sha == "" || len(ids) == 0 {
+	if s == nil || sha == "" || len(pins) == 0 {
 		return p
 	}
 	p.on(s)
 	var changes []Change
 	var marked []string
-	for _, id := range ids {
+	for _, pin := range pins {
+		id := pin.ID
+		pr, m := s.Work.Placed(id), s.Merge.Placed(id)
+		if pr == nil || m == nil || pr.Col != Merging || m.Col != Queued || pr.Row != stream || m.Row != stream ||
+			pin.Head == "" || pin.Attempt == "" || pr.F("head") != pin.Head || pr.F("attempt") != pin.Attempt {
+			continue
+		}
+		fields := map[string]string{FieldPushedUnreported: sha, FieldPushedHead: pin.Head, FieldPushedAttempt: pin.Attempt}
 		wrote := false
-		if pr := s.Work.Placed(id); pr != nil && pr.F(FieldPushedUnreported) != sha {
-			changes = append(changes, change(Work, setEntry(pr, map[string]string{FieldPushedUnreported: sha})))
+		if pr.F(FieldPushedUnreported) != sha || pr.F(FieldPushedHead) != pin.Head || pr.F(FieldPushedAttempt) != pin.Attempt {
+			changes = append(changes, change(Work, setEntry(pr, fields)))
 			wrote = true
 		}
-		if m := s.Merge.Placed(id); m != nil && m.F(FieldPushedUnreported) != sha {
-			changes = append(changes, change(Merge, setEntry(m, map[string]string{FieldPushedUnreported: sha})))
+		if m.F(FieldPushedUnreported) != sha || m.F(FieldPushedHead) != pin.Head || m.F(FieldPushedAttempt) != pin.Attempt {
+			changes = append(changes, change(Merge, setEntry(m, fields)))
 			wrote = true
 		}
 		if wrote {

@@ -348,7 +348,7 @@ func TestLandSaysLoudlyWhenAPushedBatchIsNotReported(t *testing.T) {
 	assert.Equal(t, 2, code)
 	tip := r.git(r.remote, "rev-parse", "main")
 	assert.Contains(t, errs, "LAND FAILED stream=s1 cards=2 base=main tip="+tip+" ids=s1-1..s1-2")
-	assert.Contains(t, errs, "and NOT reported (s1: the merge queue of s1 no longer holds s1-1 (landed, stuck or returned since it was read)")
+	assert.Contains(t, errs, "and NOT reported: s1: the merge queue of s1 no longer holds s1-1 (landed, stuck or returned since it was read)")
 	assert.Contains(t, errs, "run land again, which rereads the queue and lets its checks decide")
 	assert.Contains(t, errs, ": nova-sprint land --stream s1\n")
 	assert.NotContains(t, errs, "merge --stream", "a bare merge step would pass the head guard")
@@ -599,9 +599,14 @@ func TestLandRefusesAReworkedHeadAndLandsItOnTheNextRun(t *testing.T) {
 	assert.NotContains(t, errs, "merge --stream")
 	assert.Equal(t, "attempt 1\n", r.git(r.remote, "show", "main:a.txt")+"\n")
 	assert.Equal(t, map[string]string{"s1-1": "merging/queued"}, r.places("s1-1"))
+	oldTip := r.git(r.remote, "rev-parse", "main")
+	var before cardView
+	r.json("card s1-1", &before)
+	assert.Empty(t, before.Primary.F(sprint.FieldPushedUnreported), "the old push cannot mark the replacement head")
 	r.a.beforePush = nil
 	out := r.ok("land --repo-dir " + r.clone + " --base main")
 	assert.Contains(t, out, "LAND OK stream=s1 cards=1")
+	assert.NotEqual(t, oldTip, r.git(r.remote, "rev-parse", "main"), "recovery must push the replacement")
 	assert.Equal(t, "landed/merged", r.places("s1-1")["s1-1"])
 	assert.Equal(t, "attempt 2", r.git(r.remote, "show", "main:b.txt"), "the landed attempt is the one the base holds")
 	r.clean()
