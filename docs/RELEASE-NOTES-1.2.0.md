@@ -20,10 +20,11 @@ candidate source description, not an install or publication instruction.
 - The functional image contains `xz` and the full-size sprint functional drive
   is restored.
 
-STOP cancellation/return, adoption migration, friend redeal, adapter and
-lander follow-ups are separate source selections. They will be added here only
-after their reviewed implementations are reconciled and tested on the same
-assembly head. The present full functional tier is red; certification, paired
-tools/sprint installation, dev ancestry, dogfood and release publication are
-still required. No fleet reinstall, Redis function load, or sprint resume is
-authorized by these notes.
+STOP cancellation/return, adoption migration, friend redeal, bus push advice,
+Claude folder proof, and the OpenCode adapter are selected in the assembly
+branch. Their combined behavior still needs review and Linux gates. Final
+friend runner, read settlement, native adapters, Emma, and lander revisions
+remain pending imports. The present full functional tier is red; certification,
+paired tools and sprint installation, dev ancestry, dogfood and release
+publication are still required. No fleet reinstall, Redis function load, or
+sprint resume is authorized by these notes.
