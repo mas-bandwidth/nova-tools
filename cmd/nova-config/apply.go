@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	stdflag "flag"
 	"fmt"
 	"io"
 	"strings"
@@ -15,7 +16,19 @@ import (
 
 func runApply(ctx context.Context, args []string, stdout, stderr io.Writer, d deps) int {
 	const verb = "apply"
-	fs := verbflag.New(verb)
+	// install and uninstall are words, not flags: they write the apply loop's
+	// service (docs/SPEC-CONFIG.md, "Apply"). A flag still parses below.
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		switch args[0] {
+		case "install":
+			return runApplyInstall(ctx, args[1:], stdout, stderr, d, realApplyHost())
+		case "uninstall":
+			return runApplyUninstall(ctx, args[1:], stdout, stderr, d, realApplyHost())
+		default:
+			return refuse(stderr, verb, "apply takes no arguments; flags only")
+		}
+	}
+	fs := applyFlagSet(verb)
 	c := seatStoreFlags(fs)
 	redisFlag := fs.String("redis", "", "the Redis `host:port` to write (env NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the seat's address)")
 	as := actorFlag(fs)
@@ -23,6 +36,7 @@ func runApply(ctx context.Context, args []string, stdout, stderr io.Writer, d de
 	check := fs.Bool("check", false, "the same as --dry-run")
 	dry := fs.Bool("dry-run", false, "print the ADD, SET and REMOVE lines (CHECK ...) and write nothing; it still reads the store and Redis")
 	moveSeat := fs.Bool("move-seat", false, "write the sprint row's coordinator over a live seat that differs (the owner's word); without it apply holds the live seat, writes every other field and prints one APPLY HELD line")
+	every := fs.Duration("every", 0, "apply again each time this passes, until interrupted; omit it for one pass (apply install uses 5s when --every is omitted)")
 	asJSON := jsonFlag(fs)
 	if code, ok := parse(fs, args, stderr, verb); !ok {
 		return code
@@ -59,8 +73,26 @@ func runApply(ctx context.Context, args []string, stdout, stderr io.Writer, d de
 	if err != nil {
 		problems = append(problems, err.Error())
 	}
+	// --every is the loop (docs/SPEC-CONFIG.md, "Apply"). Unset is the one
+	// recovery pass. Zero is not a period, and a dry run stays one pass.
+	everySet := false
+	fs.Visit(func(f *stdflag.Flag) {
+		if f.Name == "every" {
+			everySet = true
+		}
+	})
+	if everySet && *every <= 0 {
+		problems = append(problems, "--every wants a duration above zero, or omit it for one pass (apply install uses 5s)")
+	}
+	if everySet && *check {
+		problems = append(problems, "--every applies each pass; a dry run is one pass without --every")
+	}
 	if len(problems) > 0 {
 		return refuse(stderr, verb, strings.Join(problems, "; "))
+	}
+	note := actorAliasNote(fs)
+	if everySet {
+		return runApplyLoop(ctx, *every, stdout, stderr, d, c, actor, dsn, addr, kinds, *moveSeat, *asJSON, note, nil)
 	}
 	st, err := d.openStore(ctx, dsn)
 	if err != nil {
@@ -122,7 +154,6 @@ func runApply(ctx context.Context, args []string, stdout, stderr io.Writer, d de
 		}
 		fmt.Fprintf(stdout, "CONFIG APPLY kind=%s add=%d set=%d remove=%d rev=%d ms=%d\n", kn, res.Add, res.Set, res.Remove, res.Rev, d.now().Sub(start).Milliseconds())
 	}
-	note := actorAliasNote(fs)
 	if note != "" {
 		o.Note(note)
 	}
@@ -134,3 +165,7 @@ func runApply(ctx context.Context, args []string, stdout, stderr io.Writer, d de
 	}
 	return 0
 }
+
+// applyFlagSet keeps the apply family at the existing parser seam. Install
+// and uninstall share it rather than adding new flag constructors.
+func applyFlagSet(verb string) *stdflag.FlagSet { return verbflag.New(verb) }
