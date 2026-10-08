@@ -261,3 +261,22 @@ func TestMemberDownSettingControlsTickPresence(t *testing.T) {
 		})
 	}
 }
+
+func TestFriendHealthClearReportsTheConfiguredFinishWindow(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	m := store.NewMem()
+	now := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
+	st := &store.Store{B: m, Names: sprint.Names{Prefix: "p-"}, Actor: "coordinator",
+		Now: func() time.Time { return now }, NewID: func() string { return "1" }, Sleep: func(time.Duration) {}}
+	require.NoError(t, st.Init(ctx))
+	require.NoError(t, m.SetCoordinator(ctx, "coordinator"))
+	_, _, _, err := st.SyncFriends(ctx, []store.FriendSpec{{Name: "amy", Width: 1}})
+	require.NoError(t, err)
+	require.NoError(t, st.FriendFinished(ctx, "amy", now))
+	m.SetPolicy("friend_finish_window", "1h")
+	now = now.Add(45 * time.Minute)
+	_, _, status, err := st.FriendHealthClear(ctx, "amy", "coordinator", false, "clear-policy-test")
+	require.NoError(t, err)
+	assert.Equal(t, sprint.Up, status, "a finish inside the configured hour still keeps her up")
+}
