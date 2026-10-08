@@ -4122,7 +4122,8 @@ Every stage is said. The loop's idle line carries it as the step, `LAND IDLE
 ... step=gate copy <host> <n>MB <t>s via mirror since=...` (the bytes are what
 left this machine; for a mirror stage, the line), or `step=gate copy refused:
 <why>`, and the batch's report carries it as a `NOTE tree gate: ...` line under
-its `LAND` line. A refusal names the host, the wall time, the step that refused,
+its `LAND` line (in the `--json` items' `also`; the loop relays a batch's NOTE
+lines when the batch is refused, and only its `LAND` lines when it lands). A refusal names the host, the wall time, the step that refused,
 its exit and the tail of its stderr (for the tar copy `nova-ci bench run` still
 makes: WriteTree's own refusal of a socket or a device, else the bench tar's
 exit). A refused stage is never retried on the same bench within the gate: the
