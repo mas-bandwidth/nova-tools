@@ -282,4 +282,5 @@ the secret source by name, schema before any binary switch, the seat's generatio
 bus answer and a sprint push answer, each friend's push beside a held friend's reduced
 capacity, width beside the jobs actually running, and the review and lander only as a
 runtime warning. `release check` staying red does not make this walk fail. The walk writes
-nothing; an empty config's first repair command records a login from a named secret source.
+nothing; an empty config's first command previews a seat profile from a named secret source with
+`nova-sprint seat install --dry-run`; it leaves the login unrecorded.
