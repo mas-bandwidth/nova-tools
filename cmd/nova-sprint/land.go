@@ -15,7 +15,7 @@ package main
 // is reported with the merge step's conflict fact; a check that fails, with
 // its red fact; a push the remote rejected because the base moved is fetched
 // and rebuilt up to the bound and never stops the stream; a push rejected for
-// any other reason is the rejected fact, and the next land resumes it. The verb keeps no state of its own: the store
+// any other reason is the rejected fact and stays stopped until hand resume. The verb keeps no state of its own: the store
 // changes only through those merge steps, and git and the check run as
 // programs in the caller's environment.
 //
@@ -129,8 +129,8 @@ Landing, the coordinator's: an external delivery (git pushes the base) and a sto
     rebuilt up to the bound; past it nothing is pushed or lost and the cards
     stay queued for the next pass (base moving: N rebuilds), and the stream
     is not stopped. A stream stopped because a push was rejected for another
-    reason is resumed by the next land, which retries the push; resume stays
-    the hand for a gate or a protected base (nova-sprint resume --stream s1).
+    reason stays stopped until hand resume; land resumes only transient push
+    stops. Resume stays the hand for auth, protection, a gate or a protected base (nova-sprint resume --stream s1).
   nova-sprint merge-window open --for 10m --reason 'the release merges by hand'
     pauses every landing for 10 minutes, its reason on each batch it pauses;
     land pauses a batch too while the merge queue of the branch it lands onto
@@ -499,7 +499,7 @@ func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
 		named := slices.Contains(streams, name)
 		ctl := s.StreamCtl(name)
 		stopped := ctl != nil && ctl.F("state") == sprint.StreamStopped
-		// a bare land resumes a stream a rejected push stopped; a dry run and
+		// a bare land resumes a stream a transient push stopped; a dry run and
 		// every other stop stay out of the default order, as before
 		resumable := false
 		if ctl != nil && !l.dry && stopped {

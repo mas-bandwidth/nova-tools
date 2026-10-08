@@ -3813,8 +3813,9 @@ a push rejected for a reason other than fetch-first (auth, a protected ref).
 At the moment it stops, one judgment is pushed to the seat, not only recorded:
 `stream <s> stopped: <reason>; run: nova-sprint resume --stream <s>`. The
 batch's note is `stopped: <reason>`. The stream's stored state stays `stopped`.
-`land` on a stream stopped for a rejected push resumes it and retries; `resume`
-stays the hand for a gate (`base`, `red`) and for a protected base.
+`land` resumes only a transient `push` stop and retries. A `rejected` stop
+(auth or a protected ref) stays stopped until a hand runs `resume`, as do a
+gate (`base`, `red`) and a protected base.
 
 **A card's own refusal.** The conflict fact (`merge --conflict <card> --note
 <the lander's words> [--conflict-kind file|ledger]`, which land reports) is read

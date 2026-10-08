@@ -8,10 +8,10 @@ import "strings"
 // resumes one by itself.
 
 // LandResumes says the next land resumes a stream stopped for this cause and
-// retries the push. A gate (base, red) or a protected base stays for
+// retries the push. A rejected push (auth or protection), a gate (base, red), or a protected base stays for
 // nova-sprint resume.
 func LandResumes(cause string) bool {
-	return cause == "rejected" || cause == "push"
+	return cause == "push"
 }
 
 // StopJudgment is the one judgment pushed to the seat when a stream stops,

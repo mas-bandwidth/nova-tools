@@ -155,7 +155,7 @@ func TestARejectedPushOtherThanFetchFirstStopsOnce(t *testing.T) {
 	t.Parallel()
 	for _, msg := range []string{
 		"[remote rejected] main (protected branch hook declined)",
-		"authentication failed for https://github.com/mas-bandwidth/nova-tools",
+		"authentication failed for https://remote.invalid/repo",
 		"GH006: protected branch hook declined",
 	} {
 		t.Run(msg, func(t *testing.T) {
@@ -168,14 +168,16 @@ func TestARejectedPushOtherThanFetchFirstStopsOnce(t *testing.T) {
 			assert.Equal(t, []string{"t0"}, f.pushes, "a non-fetch-first rejection does not rebuild")
 			assert.Empty(t, f.left)
 			assert.Equal(t, 0, f.rebuilds)
-			assert.True(t, sprint.LandResumes("rejected"), "the next land resumes a push stop")
+			choice := sprint.ChoosePush(1, 5, msg)
+			assert.Equal(t, "rejected", choice.Cause)
+			assert.False(t, sprint.LandResumes(choice.Cause), "auth and protection stay stopped until hand resume")
 		})
 	}
 }
 
 func TestLandResumesOnlyAPushStop(t *testing.T) {
 	t.Parallel()
-	assert.True(t, sprint.LandResumes("rejected"))
+	assert.False(t, sprint.LandResumes("rejected"))
 	assert.True(t, sprint.LandResumes("push"))
 	assert.False(t, sprint.LandResumes("base"))
 	assert.False(t, sprint.LandResumes("red"))

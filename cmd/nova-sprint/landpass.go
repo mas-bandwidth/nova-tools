@@ -157,7 +157,7 @@ func (l *lander) openStream(s *sprint.Snapshot, stream string) ([]landCard, bool
 	case ctl == nil:
 		return refused("no such stream; run: nova-sprint where")
 	case ctl.F("state") == sprint.StreamStopped:
-		// a push the remote rejected is a fact the next land can change: land
+		// a transient push stop is a fact the next land can change: land
 		// resumes it and retries. A gate or a protected base stays for resume.
 		cause := ctl.F("cause")
 		if l.dry || !sprint.LandResumes(cause) || !l.resumePush(stream) {
@@ -831,7 +831,7 @@ func (p *landPushRepo) EndedNoMerge() {
 	j.ended(1, j.f.ownRefusal(j.stream, j.failed), true)
 }
 
-// resumePush moves a stream stopped on a rejected push back to merging, so this
+// resumePush moves a stream stopped on a transient push back to merging, so this
 // pass can retry it. The snapshot openStream read is stale; the queue it already
 // holds is still the queued cards, and the push reads the store again.
 func (l *lander) resumePush(stream string) bool {
