@@ -3,7 +3,9 @@
 This is the sprint dashboard: a page that is a second view of `nova-sprint where --json`,
 served by `nova-sprint dashboard`. The terminal table that `where` draws stays the
 canonical view, and its output is locked (internal/sprint/TABLES.lock); the page reads
-the same JSON and adds nothing to the sprint. The page's files live in
+the same JSON and adds nothing to the sprint. The one thing the served copy carries beyond
+where's own is the fix marks (Progress bar, "Fix"), each absent when it is zero, so a copy with
+no card awaiting rework is served exactly as where prints it. The page's files live in
 `internal/sprintdash/page/` and are embedded in the binary, the wordmark's face
 (Nunito 800, SIL Open Font License, its licence beside it) included, so the page loads
 nothing from anywhere else.
@@ -116,7 +118,7 @@ from the owner edits one line here and nothing else moves.
    A lone tile on its row spans the width with its figure centered.
 - No FLEET tile. Flash on change: LANDED only; the others never.
 
-## Progress bar: "ALL CARDS BY STATE" with the legend (landed, merging, review, working, ready, waiting) and counts;
+## Progress bar: "ALL CARDS BY STATE" with the legend (landed, merging, fix, review, working, ready, waiting) and counts;
   one cell per card (per N cards when they would be under 4 px; no "1 cell = N" label); working cells pulse steadily
   (2 s); other cells still.
 - Priority (the card reads-are-a-card-priority-b, 2026-10-06; the owner's line is quoted under LOCK 2): under
@@ -126,7 +128,25 @@ from the owner edits one line here and nothing else moves.
   A blocker's mark is bright red (`--p-blocker` #ff1a1a), a critical's dark red (`--p-critical` #9b1c1c), a
   read's the orange of the robot logo's shoes (`--p-reader` #fb8321, the modal shoe pixel of
   logo-robot-384.png), and every work card's blue (`--p-work`, the working colour) whatever its level.
-  `TestPriorityMarksShowTheThreeColours` draws it.
+  A card awaiting rework (`priorities.fix`, Fix below) is purple (`--p-fix`, the fix state's `--s-fix`), its
+  marks after the reds and before high. `TestPriorityMarksShowTheThreeColours` draws it.
+- Fix (the owner, 2026-10-07; his lines are quoted under LOCK 2): a card awaiting
+  rework is one purple, `--s-fix` (#8b5cf6 on this dark page; #7c3aed on a light one), everywhere a state is
+  drawn: the progress bar and its legend carry `fix <n>` between review and merging (in the bar's order,
+  landed, merging, fix, review), a Work row's `fix` column, a fleet or friends row's track, and its mark. The
+  view (dashboard.go) marks the copy it serves: a dealt card is at fix when its level is `fix` (the fix
+  level, card a-rework-is-priority-fix-bb), or, until where prints that level, when it is an attempt after
+  the first (its `attempt`, else its id's `.w<n>`) and not blocker or critical, which keep their red; such a
+  card carries `fix: true`; a fleet or friends row's `fix` is its fix cards working (where's `fix_working`
+  once it prints one); a Work row's `fix` is its primaries at fix, taken off its `working`, where a primary
+  sent out again sits (review -> working on rework), unless where prints the row's `fix` itself; the copy's
+  `fix` is the Work rows' summed; and `priorities.fix` lists those primaries, off high and low. A track's lit
+  cells run in the ladder, highest on the left: blocker (`--p-blocker`), critical (`--p-critical`), fix
+  (purple), reads (orange, one cell per two reads, a lone read a whole cell), then the working blue; the
+  Total row says "<n> fix" under the tracks when any row has one. The In flight tile counts a card at fix as
+  working. Owed from where: a primary in review awaiting the coordinator's rework, and one parked on a brief
+  defect, carry no dealt card, so the view cannot see them until where prints the Work row's `fix`.
+  `TestFixView*` and `TestFixPage*` (internal/sprintdash/view_fix_test.go) hold it.
 
 ## Merge (title "Merge"; the card v11-merge-row-on-dashboard-b, 2026-10-06; the owner's line is quoted under LOCK 2)
 - One dark row under the progress bar, the house style: a label over each figure, side by side, wrapping at a narrow
@@ -147,7 +167,7 @@ from the owner edits one line here and nothing else moves.
   sprint that runs; a drift alarm that the base is red while no stream is stopped is in the inbox, not this row.
 
 ## Work (title exactly "Work"; subtitle "<n> streams · <l> landed · <h> held")
-- Columns: stream | status | waiting | ready | working | review | merging | landed | cost (headers exactly so, all lowercase). The "landed" header is centred over its "n / total" cell (the owner, 7:34 PM: "Landed column in work stream table, please horizontal center align the column header"); every other numeric header stays right-aligned. The status column with its pills stays (the owner, after the lock, 7:32 PM: "we just lost the nice state tabs in the workstream table. undo pls."); the sort by status stays; a thin rule separates the groups (landed, working, stopped, held).
+- Columns: stream | status | waiting | ready | working | review | fix | merging | landed | cost (headers exactly so, all lowercase). The "landed" header is centred over its "n / total" cell (the owner, 7:34 PM: "Landed column in work stream table, please horizontal center align the column header"); every other numeric header stays right-aligned. The status column with its pills stays (the owner, after the lock, 7:32 PM: "we just lost the nice state tabs in the workstream table. undo pls."); the sort by status stays; a thin rule separates the groups (landed, working, stopped, held).
 - Stream column capped (~220 px) and the Status column takes part in the even spread like the count columns, so the gap between the name and Status is as generous as the gap between any two count columns; names in full-strength text always (a label, never dimmed); the remaining width is
   spread evenly across the count columns (fixed table layout); Landed and Cost a little wider; gutters at least 40 px.
 - Rows sorted by status like the fleet table: landed first, then working, then stopped, then held; within a group by stream name. A row moves when its status changes (no animation).
@@ -165,7 +185,7 @@ from the owner edits one line here and nothing else moves.
 - Machine column capped, and the Status column takes part in the even spread like the numeric columns (as in Work
   streams); names never dimmed. Status pill: up (green), held (amber), down (red).
 - Working: a cell track, one cell per slot of the machine's width (nothing drawn beyond its width), cells 1.5x their current
-  width (~27 px wide, height unchanged) with a 4 px gap, so the Working column is about 1.5x as wide, lit blue for working, dark fill for free, aligned on one grid down
+  width (~27 px wide, height unchanged) with a 4 px gap, so the Working column is about 1.5x as wide, lit by level for working (blocker, critical, fix purple, reads, then blue: the Fix line under the progress bar), dark fill for free, aligned on one grid down
   the column; then the "n / width" figure right after the track. Gaps: Ready to track and track to figure equal and
   wide (double the first attempt, ~64 px); every column gutter ~56 px.
 - Cells: no steady pulse; a cell flashes once when it lights or unlights. No numeric column in Fleet ever flashes.
@@ -225,6 +245,12 @@ This specification is locked. No line changes without his words, quoted here wit
   the throughput samples the epoch's landed cards (`landed + archived_landed`, `landed` alone when
   `done`), so an archive does not start it again and a finish does not spike it. Nothing
   else moves.
+- 2026-10-07 5:58-6:01 PM ET, the owner, a quoted change after the lock: "I would like the cards that are
+  awaiting rework to be purple. and the state of the cards to be purple in the total card segmented graph,
+  and the segmented graph for fleet[/]friends." / "they should be shown to the left of read cards, and to the
+  right of critical cards in ordering." / "And should show up as 'fix' state here", "between review and
+  merging". The Fix line under the progress bar, the legend's `fix`, Work's `fix` column and the tracks'
+  order. Nothing else moves.
 - 2026-10-04, the owner, a quoted change after the lock, asking after the merge backlog:
   "Is this progress visible in the sprint dashboard yet?" The page shows one Merge row under the progress bar (the Merge section
   above), read from `where --json`'s `merge_row`. Nothing else moves.
