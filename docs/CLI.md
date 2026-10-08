@@ -1639,6 +1639,7 @@ effect: delivery: sends beyond this machine: without --harness it only reads (th
 usage: nova-friend host [flags]
 from `nova-friend help`:
   nova-friend host --as <me> --harness <h> --dir <d> [--prompt <regexp>] [--state-dir <d>] [--dry-run] [--json] -- <launch command...>
+example: nova-friend host --as bob --harness aider --dir ./bob --dry-run -- aider
 flags:
   --as <string>  your name, a nova-config friend row (required)
   --dir <string>  the friend's working directory: the TUI's, and where the state files live (required)
@@ -1728,6 +1729,7 @@ effect: delivery: sends beyond this machine: the session's answer to a PING, one
 usage: nova-friend watch [flags]
 from `nova-friend help`:
   nova-friend watch --as <coordinator> [--timeout <duration>] [--state-dir <d>] [--redis <addr>] [--json]
+example: nova-friend watch --as ada --timeout 10m
 flags:
   --as <string>  your name, the coordinator whose stream and wake file are watched (required)
   --json  print the result as one JSON object instead of lines
