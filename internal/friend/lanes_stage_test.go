@@ -9,6 +9,7 @@ import (
 	"testing"
 	"testing/synctest"
 
+	"github.com/mas-bandwidth/nova-tools/internal/testkit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -195,4 +196,70 @@ func TestAGoGateOnAHostWithNoGoIsRefusedAtStage(t *testing.T) {
 	assert.Equal(t, "stage failed for c1: go is not on this host; the card's gates run on a bench", f.Error())
 	_, refused = StageGate(dir, c, job, brief, func() bool { return true })
 	assert.False(t, refused, "a host with go hands the card over")
+}
+
+// A JOB.md that names neither a brief nor a checkout is the older record: its presence
+// is the stage, so a later pass does not treat it as a missing file.
+func TestAJobFileThatNamesNothingStaysStaged(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	job := "a.w1~15"
+	require.NoError(t, os.MkdirAll(JobDir(dir, job), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(JobDir(dir, job), JobFile), []byte("# JOB: work a.w1, attempt 1\n"), 0o644))
+	assert.True(t, Staged(dir, job))
+}
+
+// JOB.md alone must not suppress a retry after its brief or checkout disappeared.
+func TestAPartialStagedJobIsRepairedAcrossPasses(t *testing.T) {
+	t.Parallel()
+	for _, missing := range []string{"brief", "checkout"} {
+		t.Run(missing, func(t *testing.T) {
+			t.Parallel()
+			g := testkit.Git(t, 1)
+			g.Commit(g.Clones[0], map[string]string{"README.md": "the tools\n"})
+			env := stageEnv(t)
+			gitIn(t, env, g.Clones[0], "push", "-q", g.Remote, "HEAD:refs/heads/dev")
+			r, l := stageLoop(t)
+			h := stagedCard("c1", "working", "o/r", "dev")
+			p, ok := PacketOf(h)
+			require.True(t, ok)
+			inbox := filepath.Join(r.d.Dir, "inbox", h.Job, "BRIEF.md")
+			require.NoError(t, os.MkdirAll(filepath.Dir(inbox), 0o755))
+			require.NoError(t, os.WriteFile(inbox, []byte(h.Brief), 0o644))
+			stager := &Stager{Dir: r.d.Dir, Env: env, URL: func(string) string { return g.Remote }}
+			_, err := stager.Stage(context.Background(), p)
+			require.NoError(t, err)
+			assert.True(t, Staged(r.d.Dir, h.Job))
+			checkout := filepath.Join(JobDir(r.d.Dir, h.Job), "repo")
+			// A recorded brief outside the inbox reproduces a partially written stage.
+			brief := filepath.Join(JobDir(r.d.Dir, h.Job), "BRIEF.md")
+			require.NoError(t, os.WriteFile(brief, []byte(h.Brief), 0o644))
+			require.NoError(t, os.WriteFile(filepath.Join(JobDir(r.d.Dir, h.Job), JobFile), []byte(stageRecordText(checkout, brief)), 0o644))
+			if missing == "brief" {
+				require.NoError(t, os.Remove(brief))
+			} else {
+				require.NoError(t, os.RemoveAll(checkout))
+			}
+			assert.False(t, Staged(r.d.Dir, h.Job))
+			r.d.heldCards = []HeldCard{h}
+			calls := 0
+			r.d.Stage = func(ctx context.Context, p Packet) (string, error) {
+				calls++
+				return stager.Stage(ctx, p)
+			}
+			l.stageLaneStep(t0) // no lane; one failure, one judgment, retry next pass
+			assert.Equal(t, 1, l.lanes.stageFails[h.Job])
+			assert.False(t, l.lanes.given[h.Job])
+			l.stageStep([]HeldCard{h}, t0.Add(StageRetryEvery))
+			r.d.stageWG.Wait()
+			l.stageStep([]HeldCard{h}, t0.Add(2*StageRetryEvery))
+			l.stageLaneStep(t0.Add(2 * StageRetryEvery))
+			assert.Equal(t, 1, calls, "the incomplete record retries exactly once")
+			assert.True(t, Staged(r.d.Dir, h.Job))
+			assert.Empty(t, l.lanes.stageFails)
+			assert.False(t, l.lanes.given[h.Job], "repaired job is not failed")
+			assert.NoFileExists(t, filepath.Join(r.d.Dir, "outbox", h.Job, "REPORT.md"))
+			assert.Len(t, r.adaGot(t), 1, "the missing file raises one judgment")
+		})
+	}
 }
