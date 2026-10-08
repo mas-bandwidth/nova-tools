@@ -157,7 +157,7 @@ func TestWhereCardsIsWhatThePullRoutesRead(t *testing.T) {
 	require.Len(t, v.Cards, 1, out)
 	c := v.Cards[0]
 	assert.Equal(t, dealtCard{ID: "s1-1.w1", Primary: "s1-1", Stream: "s1", Member: "friend.amy", State: "working",
-		Since: c.Since, Deadline: c.Since.Add(2 * time.Hour), Branch: "sprint/s1-1.w1.g1.e0"}, c)
+		Since: c.Since, Deadline: c.Since.Add(2 * time.Hour), Branch: "sprint/s1-1.w1.g1.e0", Priority: "normal"}, c)
 	assert.False(t, c.Since.IsZero())
 
 	srv := &sprintdash.Server{Read: func() ([]byte, error) { return ta.a.whereJSON("", false) }, Now: ta.a.now, Every: time.Second}

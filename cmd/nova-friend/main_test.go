@@ -78,7 +78,9 @@ func newRig(t *testing.T, names ...string) *rig {
 
 func (r *rig) world() world {
 	return world{
-		getenv: func(k string) string { return r.env[k] },
+		stepBeat: true,
+		checkGo: func(f func()) { f() }, // fake-clock checks complete before the clock advances again
+		getenv:   func(k string) string { return r.env[k] },
 		open: func(context.Context, string) (bus.Store, func(), error) {
 			if r.store.Fail != nil {
 				return nil, nil, r.store.Fail
@@ -925,6 +927,15 @@ func TestRunHoldsAHarnessAtItsLimitUntilItsResetThenWakesIt(t *testing.T) {
 	dir := t.TempDir()
 	state := friend.StateDirIn(dir)
 	w := r.world()
+	checksStarted := 0
+	w.checkGo = func(f func()) {
+		checksStarted++
+		if checksStarted == 1 { // establish initial proof before the fake clock jumps; later turns remain asynchronous
+			f()
+			return
+		}
+		go f()
+	}
 	w.friends = func(context.Context, string) ([]friend.WakeRow, string, error) {
 		return nil, "ada", nil // the carried startup note comes from the actual seat
 	}
@@ -1023,16 +1034,24 @@ func TestRunHoldsAHarnessAtItsLimitUntilItsResetThenWakesIt(t *testing.T) {
 		"no up beat while she is down (%s to %s): %v", downAt, turns[1].at, beats)
 	// her beat says down instead, with the until and the reason (limits-mean-down-w-r5.w1~15)
 	require.NotEmpty(t, downBeats, "she beats down while limited")
+	limitBeats := 0
 	for _, b := range downBeats {
 		if strings.HasPrefix(b.reason, "push unproven: ") {
 			// the daemon's start, before its first check is answered: its own word, down
 			assert.True(t, b.at.Before(turns[0].at), "a push-unproven down beat only at the start: %s", b.at)
 			continue
 		}
+		if strings.HasPrefix(b.reason, "no session answer to session check ") {
+			// The fake clock may outrun an asynchronous check turn. Its unanswered
+			// nonce must still beat down, never manufacture an up session.
+			continue
+		}
+		limitBeats++
 		assert.False(t, b.at.Before(turns[0].at) || b.at.After(turns[2].at), "a down beat only while limited, the wake turn's answer ending it: %s", b.at)
 		assert.False(t, b.until.Before(turns[0].at.Add(10*time.Minute)), "until the reset the text named: %s", b.until)
 		assert.Equal(t, "harness limit: Insufficient AI Credits. Your credits will refresh in 10 minutes.", b.reason)
 	}
+	assert.Positive(t, limitBeats, "the harness limit itself must be reported down")
 	got, err := r.store.Range(context.Background(), bus.StreamOf("ada"), "-", "+", 0)
 	require.NoError(t, err)
 	var told []string
@@ -1228,7 +1247,7 @@ func TestCheckSaysOKOrTheStageThatFailed(t *testing.T) {
 	// the plan, from the same pong line, with nothing delivered and no store opened
 	r.store.Fail = errors.New("store down")
 	cli.Do(t, "check", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--state-dir", state, "--to", "ada", "--dry-run").Exit(0).
-		Out("CHECK OK harness=opencode dir=/w/bob within=5m0s", "CHECK PLAN command=\"/opt/nova/bin/nova-friend pong --as bob --nonce r4nd0m --state-dir "+state+" --redis store.test:6379 --to ada\"", "NOTE nothing was delivered")
+		Out("CHECK OK harness=opencode dir=/w/bob within=5m0s", "CHECK PLAN command=\"/opt/nova/bin/nova-friend pong --as bob --nonce r4nd0m --state-dir "+state+" --redis store.test:6379 --dir /w/bob --to ada\"", "NOTE nothing was delivered")
 	cli.Do(t, "check", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--state-dir", state).Exit(2).Err("CHECK REFUSED: the store did not answer: store down")
 
 	// install: the check's fail is a NOTE, the agent stays loaded
