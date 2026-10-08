@@ -1,10 +1,18 @@
 # nova-tools changelog
 
-## v1.2.0 — 2026-10-07
+## v1.1.1 — pending certification
 
-Cut from the head of sprint/mechanical-2026-10-02 at 576cfec3d9a6, promoted to dev. v1.1.0 was prepared on 2026-10-06 and never tagged: everything it held ships here, under its own heading below, with a day of work on top. The sprint's landings carry no pull request numbers: each lands as `land <card> (sprint stream <stream>)`, so those entries name the card. Release notes: docs/RELEASE-NOTES-1.2.0.md.
+Patch candidate based on tagged v1.1.0 (`2e73c44d`). This entry describes the source delta; review, certification, dev integration and installation remain to be verified. Release notes: docs/RELEASE-NOTES-1.1.1.md.
 
-- upgrade: install the binaries on every machine that runs a friend daemon, the sprint server or the seat; `nova-redis fn load` against every store (the `nova_sprint` library changed); re-install each friend daemon with `nova-friend install` and the seat with `nova-sprint seat install`
+- `nova-sprint` gives rework attempts fix priority in ordered queues, preserves redo read inheritance and empty-queue refusal, and names unmet prerequisites before the stuck-card barrier.
+- The sprint land gate stages from the bench mirror and explains when it cannot stage; tests pin the pass-over and where notes reach.
+- `nova-friend` lanes receive the brief by absolute path and treat a no-report exit as a harness fault. Claude `-p` receives the friend's directory with `--add-dir`, and stray-report rescue moves regular files only.
+
+## Unreleased v1.2.0 draft
+
+The following is retained as proposed future scope, not a shipped release or an upgrade guide for v1.1.1. It was drafted from sprint/mechanical-2026-10-02 at 576cfec3d9a6. v1.1.0 was tagged at `2e73c44d`; the entries below do not establish that this proposed 1.2.0 set was certified, promoted to dev or installed. The sprint's landings carry no pull request numbers: each lands as `land <card> (sprint stream <stream>)`, so those entries name the card. Draft notes: docs/RELEASE-NOTES-1.2.0.md.
+
+- proposed 1.2.0 upgrade: install the binaries on every machine that runs a friend daemon, the sprint server or the seat; `nova-redis fn load` against every store if the changed `nova_sprint` library ships; re-install each friend daemon with `nova-friend install` and the seat with `nova-sprint seat install`
 
 ### Reads are cards
 
@@ -43,7 +51,7 @@ Cut from the head of sprint/mechanical-2026-10-02 at 576cfec3d9a6, promoted to d
 - #5414 a landing audited bad was reverted
 - dogfood runs of every tool under five harnesses
 
-### Prepared as v1.1.0 (never tagged), 2026-10-06
+### v1.1.0 baseline (tagged 2026-10-07)
 
 - land bus-requires-inbox-push-proof-p3: `nova-bus` send and recv refuse a deaf name, `names` shows each name's push
   - members: bus-requires-inbox-push-proof-p2

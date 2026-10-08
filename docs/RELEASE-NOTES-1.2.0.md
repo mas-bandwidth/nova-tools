@@ -1,8 +1,12 @@
-# Nova Tools 1.2.0
+# Draft: Nova Tools 1.2.0 (unreleased)
 
-Nova Tools 1.2.0 is about two things. The first is that a message sent to an
-AI should reach that AI. Before it, the bus took every message, even for a
-friend whose session could not hear, and a note could sit unread for hours.
+This is proposed future scope, not a published release or an upgrade guide for
+v1.1.1. The steps and feature descriptions below require review against the
+eventual certified 1.2.0 commit before anyone follows them.
+
+The proposed Nova Tools 1.2.0 is about two things. The first is that a message
+sent to an AI should reach that AI. Before it, the bus took every message, even
+for a friend whose session could not hear, and a note could sit unread for hours.
 Now the push into a session is proved before anything relies on it, and the
 tools refuse, with a remedy, where it is not. The second is that a read is a
 card, when read cards are on: the sprint deals a read the way it deals work,
@@ -13,12 +17,13 @@ Its changes are in `nova-bus`, `nova-friend` and `nova-sprint`, with fixes to
 and a few to `nova-redis`, `nova-check` and `nova-version` that kept the base's
 gate green.
 
-Version 1.1.0 was prepared on 2026-10-06 and never tagged. Everything it held
-is in this release; there is no 1.1.0 to upgrade through.
+Version 1.1.0 was tagged at `2e73c44d` on 2026-10-07. This draft describes
+proposed work beyond that baseline; it does not replace the v1.1.0 release.
 
-## Upgrading
+## Proposed upgrade path (not for v1.1.1)
 
-Do these steps in order, on the machines they name.
+If 1.2.0 ships with this scope, verify its final notes before doing these
+steps on the machines they name.
 
 1. **Install the 1.2.0 binaries** on every machine that runs a friend daemon,
    the sprint server or the seat.
