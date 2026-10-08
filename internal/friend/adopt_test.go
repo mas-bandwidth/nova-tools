@@ -32,7 +32,7 @@ func TestARestartedDaemonAdoptsALiveLaneRunAndFinishesItsCard(t *testing.T) {
 		*state = LaneState{Sessions: map[int]string{1: "ses_1", 2: "ses_2"}, Started: map[string]Started{"c1~15": {Lane: 1, Card: c1, At: t0.Add(-time.Minute), RunID: "old-run", Owner: oldOwner}}}
 		require.NoError(t, os.MkdirAll(filepath.Join(dir, "jobs", "c1~15"), 0o755))
 		require.NoError(t, writeRunReceipt(dir, "c1~15", runReceipt{RunID: "old-run", PID: 4242, Identity: "birth-1"}))
-		require.NoError(t, os.WriteFile(laneMarkPath(dir, "c1~15"), []byte(LaneMarkRunning(oldOwner, t0)), 0o644))
+		require.NoError(t, os.WriteFile(laneMarkPath(dir, "c1~15"), []byte(LaneMarkRunningRun(oldOwner, t0, "old-run")), 0o644))
 		var mu sync.Mutex
 		alive := true
 		r.d.ProcessAlive = func(pid int) bool { mu.Lock(); defer mu.Unlock(); return pid == 4242 && alive }
@@ -145,11 +145,75 @@ func TestAReusedPIDCannotAdoptAnotherRun(t *testing.T) {
 		*state = LaneState{Sessions: map[int]string{1: "ses_1"}, Started: map[string]Started{"c1~15": {Lane: 1, Card: card, At: t0.Add(-time.Minute), RunID: "run-1", Owner: "old"}}}
 		require.NoError(t, os.MkdirAll(filepath.Join(dir, "jobs", "c1~15"), 0o755))
 		require.NoError(t, writeRunReceipt(dir, "c1~15", runReceipt{RunID: "run-1", PID: 9999999, Identity: "old-birth"}))
-		require.NoError(t, os.WriteFile(laneMarkPath(dir, "c1~15"), []byte(LaneMarkRunning("old", t0)), 0o644))
+		require.NoError(t, os.WriteFile(laneMarkPath(dir, "c1~15"), []byte(LaneMarkRunningRun("old", t0, "run-1")), 0o644))
 		r.d.ProcessIdentity = func(pid int) string { require.Equal(t, 9999999, pid); return "new-birth" }
 		r.run(t, 3)
 		assert.Contains(t, strings.Join(r.records, "\n"), "its run is gone: finish=failed")
 		assert.FileExists(t, card.Report())
 		assert.Empty(t, state.Started)
+	})
+}
+
+func TestASecondRestartTransfersTheSameRunAgain(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		dir := cardDirFixture(t, [][2]string{{"c1", "working"}}, []string{"c1"}, nil)
+		job, oldOwner := "c1~15", "bob lane 1 (daemon first)"
+		card := Card{ID: "c1", Brief: filepath.Join(dir, "inbox", job, "BRIEF.md"), Outbox: filepath.Join(dir, "outbox", job)}
+		require.NoError(t, os.MkdirAll(filepath.Join(dir, "jobs", job), 0o755))
+		require.NoError(t, writeRunReceipt(dir, job, runReceipt{RunID: "same-run", PID: 9999999, Identity: "birth"}))
+		require.NoError(t, os.WriteFile(laneMarkPath(dir, job), []byte(LaneMarkRunningRun(oldOwner, t0, "same-run")), 0o644))
+		h := &lanesHarness{dir: dir, active: map[string]int{}}
+		state := LaneState{Sessions: map[int]string{1: "ses_1"}, Started: map[string]Started{job: {Lane: 1, Card: card, At: t0.Add(-time.Minute), RunID: "same-run", Owner: oldOwner}}}
+		var owners []string
+		for i := 0; i < 2; i++ {
+			r, saved := laneRig(t, h, 1)
+			*saved = state
+			r.d.ProcessIdentity = func(int) string { return "birth" }
+			r.d.WaitProcess = func(ctx context.Context, _ int) bool { <-ctx.Done(); return false }
+			r.run(t, 3)
+			state = *saved
+			mark, ok := ReadLaneMark(dir, job)
+			require.True(t, ok)
+			assert.Equal(t, "same-run", mark.RunID)
+			assert.False(t, mark.Ended)
+			owners = append(owners, mark.Who)
+			assert.NoFileExists(t, card.Report())
+		}
+		assert.NotEqual(t, oldOwner, owners[0])
+		assert.NotEqual(t, owners[0], owners[1])
+		assert.Contains(t, state.Started, job)
+	})
+}
+
+func TestRecoveryCannotTakeAMissingLaneMark(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	holder, err := transferLane(dir, "c1~15", "same-run", "new", t0)
+	require.ErrorContains(t, err, "lane mark missing")
+	assert.Empty(t, holder)
+	assert.NoFileExists(t, laneMarkPath(dir, "c1~15"))
+}
+
+func TestOlderStartedStateCannotFailAVerifiedForeignRun(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		dir := cardDirFixture(t, [][2]string{{"c1", "working"}}, []string{"c1"}, nil)
+		job, owner := "c1~15", "bob lane 1 (daemon new)"
+		card := Card{ID: "c1", Brief: filepath.Join(dir, "inbox", job, "BRIEF.md"), Outbox: filepath.Join(dir, "outbox", job)}
+		require.NoError(t, os.MkdirAll(filepath.Join(dir, "jobs", job), 0o755))
+		require.NoError(t, writeRunReceipt(dir, job, runReceipt{RunID: "new-run", PID: 9999999, Identity: "new-birth"}))
+		require.NoError(t, os.WriteFile(laneMarkPath(dir, job), []byte(LaneMarkRunningRun(owner, t0, "new-run")), 0o644))
+		h := &lanesHarness{dir: dir, active: map[string]int{}}
+		r, state := laneRig(t, h, 1)
+		*state = LaneState{Sessions: map[int]string{1: "ses_1"}, Started: map[string]Started{job: {Lane: 1, Card: card, At: t0.Add(-time.Minute), RunID: "old-run", Owner: "old"}}}
+		r.d.ProcessIdentity = func(int) string { return "new-birth" }
+		r.run(t, 3)
+		assert.NoFileExists(t, card.Report())
+		assert.Equal(t, "new-run", state.Started[job].RunID)
+		mark, found := ReadLaneMark(dir, job)
+		require.True(t, found)
+		assert.Equal(t, owner, mark.Who)
+		assert.False(t, mark.Ended)
 	})
 }

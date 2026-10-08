@@ -2328,7 +2328,11 @@ for nothing. A card now has one live lane:
   writing `jobs/<job>/LANE` (`ClaimLane`). The write succeeds only where there is
   no mark yet, by an exclusive hard link, so of two lanes asking at once only one
   wins. Stale takeovers, refreshes and recovery transfers serialize on a per-job
-  file lock. The mark reads `running: <friend> lane <n> (daemon <pid>.<run>) at <t>`.
+  file lock. Once a turn is durably started, the mark reads
+  `running: <friend> lane <n> (daemon <pid>.<run>) at <t> run <run-id>`.
+  Its immutable run ID permits a second restart to transfer the same live run
+  even if the previous owner update was interrupted. A stale mark does not
+  admit a new run while its matching receipt still identifies a live group.
   The daemon tag tells apart two daemons on one working directory. The lane
   rewrites the mark every `LaneMarkEvery` (30 s) while it holds the card. A mark
   that has not been rewritten for `LaneMarkStale` (2 m 30 s) belongs to a lane

@@ -53,11 +53,16 @@ type LaneMark struct {
 	Who   string
 	At    time.Time
 	Ended bool
+	RunID string
 }
 
 // LaneMarkRunning is the mark of a running lane: "running: <who> at <RFC3339>".
 func LaneMarkRunning(who string, at time.Time) string {
 	return laneRunning + who + " at " + at.UTC().Format(time.RFC3339) + "\n"
+}
+
+func LaneMarkRunningRun(who string, at time.Time, runID string) string {
+	return laneRunning + who + " at " + at.UTC().Format(time.RFC3339) + " run " + runID + "\n"
 }
 
 // LaneMarkEnded is the mark of a finished card: "ended: card finished by <who>".
@@ -87,11 +92,25 @@ func ReadLaneMark(dir, job string) (m LaneMark, found bool) {
 	if i < 0 {
 		return LaneMark{Who: rest}, true
 	}
-	at, err := time.Parse(time.RFC3339, rest[i+4:])
+	atText, runID, _ := strings.Cut(rest[i+4:], " run ")
+	at, err := time.Parse(time.RFC3339, atText)
 	if err != nil {
 		return LaneMark{Who: rest}, true
 	}
-	return LaneMark{Who: rest[:i], At: at}, true
+	return LaneMark{Who: rest[:i], At: at, RunID: runID}, true
+}
+
+// bindRunLane records the immutable run ID before the child may execute.
+func bindRunLane(dir, job, who, runID string, now time.Time) error {
+	path := laneMarkPath(dir, job)
+	_, err := withLaneLock(path, func() (string, error) {
+		m, ok := ReadLaneMark(dir, job)
+		if !ok || m.Ended || m.Who != who || (m.RunID != "" && m.RunID != runID) {
+			return "", fmt.Errorf("lane owner changed before launch")
+		}
+		return "", atomicfile.WriteFile(path, []byte(LaneMarkRunningRun(who, now, runID)), 0o644)
+	})
+	return err
 }
 
 // heldBy is who the mark says holds the card against a lane who at now: the lane that ended
@@ -130,22 +149,31 @@ func claimLaneLocked(dir, job, who string, now time.Time) (holder string, err er
 	if h := m.heldBy(who, now); h != "" {
 		return h, nil
 	}
+	if m.RunID != "" {
+		if receipt, err := readRunReceipt(dir, job); err == nil && receipt.RunID == m.RunID &&
+			runStillAlive(receipt.PID, receipt.Identity) {
+			return m.Who, nil // stale daemon mark, but its run remains alive
+		}
+	}
 	return "", atomicfile.WriteFile(path, mark, 0o644)
 }
 
 // transferLane gives a verified surviving run's old mark to the new daemon.
 // A changed, ended, or foreign mark is never overwritten.
-func transferLane(dir, job, oldWho, newWho string, now time.Time) (string, error) {
+func transferLane(dir, job, runID, newWho string, now time.Time) (string, error) {
 	path := laneMarkPath(dir, job)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return "", err
 	}
 	return withLaneLock(path, func() (string, error) {
 		m, ok := ReadLaneMark(dir, job)
-		if !ok || m.Ended || oldWho == "" || m.Who != oldWho {
+		if !ok {
+			return "", fmt.Errorf("lane mark missing")
+		}
+		if m.Ended || runID == "" || m.RunID != runID {
 			return m.Who, nil
 		}
-		return "", atomicfile.WriteFile(path, []byte(LaneMarkRunning(newWho, now)), 0o644)
+		return "", atomicfile.WriteFile(path, []byte(LaneMarkRunningRun(newWho, now, runID)), 0o644)
 	})
 }
 
@@ -161,6 +189,9 @@ func refreshLane(dir, job, who string, now time.Time, write bool) (string, error
 		}
 		if !write {
 			return "", nil
+		}
+		if m.RunID != "" {
+			return "", atomicfile.WriteFile(path, []byte(LaneMarkRunningRun(who, now, m.RunID)), 0o644)
 		}
 		return "", atomicfile.WriteFile(path, []byte(LaneMarkRunning(who, now)), 0o644)
 	})
@@ -342,6 +373,17 @@ func (l *loop) endOtherLane(ln *lane, who string, now time.Time) {
 	ln.ended = who
 	words := ""
 	job := filepath.Base(c.Outbox)
+	if ln.t != nil && ln.t.adopted {
+		st := l.lanes.state.Started[job]
+		m, ok := ReadLaneMark(d.Dir, job)
+		if ok && m.RunID == st.RunID && m.Who == who && !m.Ended {
+			ln.t.cancel()
+			d.Record(fmt.Sprintf("%s lane %d: card %s: tracking handed to %s for the same live run", now.UTC().Format(time.RFC3339), ln.n, c.ID, who))
+			return
+		}
+		d.Record(fmt.Sprintf("%s lane %d: card %s: lane mark changed to %s; adopted run remains under watch until its group exits", now.UTC().Format(time.RFC3339), ln.n, c.ID, who))
+		return
+	}
 	if err := endOtherMark(d.Dir, job, l.laneWho(ln.n), who); err != nil {
 		words = fmt.Sprintf(" mark_error=%q", oneLine(err.Error(), 300))
 	}
