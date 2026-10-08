@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
+	"github.com/mas-bandwidth/nova-tools/internal/procgroup"
 )
 
 // A lane's end is a finish (the owner, 2026-10-05: "Now let's look at friends. Are they
@@ -37,8 +39,9 @@ type Started struct {
 	// before. A daemon starting up adopts a run whose process is alive (adopt.go).
 	Pid int `json:"pid,omitempty"`
 	// RunID binds a durable launch receipt to this particular card turn.
-	RunID string `json:"run_id,omitempty"`
-	Owner string `json:"owner,omitempty"`
+	RunID      string `json:"run_id,omitempty"`
+	Owner      string `json:"owner,omitempty"`
+	LaunchHeld bool   `json:"launch_held,omitempty"`
 }
 
 // LaneEnd is how a card's last run in a lane ended, as its finish says it.
@@ -300,6 +303,71 @@ func (l *loop) endStarted(now time.Time) {
 			continue // STOP debt, never a restart FAIL
 		}
 		receipt, receiptErr := readRunReceipt(d.Dir, job)
+		heldReservation := st.RunID != "" && (d.machinePaused() || st.LaunchHeld) && !exists(st.Card.Report()) && !exists(st.Card.Result())
+		if heldReservation {
+			l.markLaunchHeld(job, now)
+			st = s.state.Started[job]
+		}
+		noLaunch := errors.Is(receiptErr, os.ErrNotExist) && st.Pid == 0
+		priorTurnGone := receiptErr == nil && receipt.RunID == st.RunID && receipt.PID > 0 && receipt.Identity != "" && d.ProcessIdentity != nil && d.ProcessIdentity(receipt.PID) == "" && !procgroup.GroupRunnable(receipt.PID)
+		if heldReservation && (noLaunch || priorTurnGone) {
+			mark, known := ReadLaneMark(d.Dir, job)
+			if !known || mark.Ended || mark.RunID != st.RunID {
+				s.recoveryPending = true
+				continue
+			}
+			st.LaunchHeld = true
+			s.state.Started[job] = st
+			if !d.machineMayLaunch() {
+				s.recoveryPending = true
+				continue
+			}
+			if st.Lane < 1 {
+				s.recoveryPending = true
+				continue
+			}
+			who := l.laneWho(st.Lane)
+			if mark.Who != who {
+				holder, err := transferLane(d.Dir, job, st.RunID, who, now, d.ProcessIdentity, d.ProcessAlive)
+				if err != nil || holder != "" {
+					s.recoveryPending = true
+					continue
+				}
+			}
+			for len(s.lanes) < st.Lane {
+				s.lanes = append(s.lanes, &lane{n: len(s.lanes) + 1, session: s.state.Sessions[len(s.lanes)+1]})
+			}
+			ln := s.lanes[st.Lane-1]
+			if ln.card != nil || ln.t != nil {
+				s.recoveryPending = true
+				continue
+			}
+			prepared, err := LaneJobOf(d.Dir, st.Card, filepath.Abs)
+			if err != nil {
+				d.Record("lanes: held reservation recovery: " + err.Error())
+				s.recoveryPending = true
+				continue
+			}
+			raw, err := os.ReadFile(prepared.Card.Brief)
+			if err != nil {
+				d.Record("lanes: held reservation brief: " + err.Error())
+				s.recoveryPending = true
+				continue
+			}
+			prepared.Brief = string(raw)
+			ln.card, ln.job, ln.marked = &st.Card, prepared, now
+			ln.tier, ln.cap = d.cardTier(st.Card), d.laneCap(d.cardTier(st.Card))
+			st.Owner = who
+			st.LaunchHeld = true
+			s.state.Started[job] = st
+			continue
+		}
+		if heldReservation && receiptErr != nil {
+			st.LaunchHeld = true
+			s.state.Started[job] = st
+			s.recoveryPending = true
+			continue // missing/malformed positive-PID proof cannot discard a held retry
+		}
 		if mark, ok := ReadLaneMark(d.Dir, job); ok && !mark.Ended && mark.RunID != "" &&
 			mark.RunID != st.RunID && receiptErr == nil &&
 			receipt.RunID == mark.RunID && d.ProcessIdentity != nil && d.ProcessIdentity(receipt.PID) == receipt.Identity {
@@ -325,6 +393,12 @@ func (l *loop) endStarted(now time.Time) {
 			// Keep the card owed until the group goes, without adopting a PID reused by another process.
 			s.adopt = append(s.adopt, st)
 			continue
+		}
+		if heldReservation {
+			st.LaunchHeld = true
+			s.state.Started[job] = st
+			s.recoveryPending = true
+			continue // binding/identity/exit is unproved; never replace the held claim with FAIL
 		}
 		words := l.endCard(st.Lane, st.Card, LaneEnd{Restart: now, Started: st.At}, now)
 		if !s.given[job] {

@@ -4559,3 +4559,18 @@ Reads the tree and GitHub again and writes nothing: zero differences is
 `VERIFY OK ... differences=0`, the receipt that the tree holds what GitHub
 holds. `--against <tree>` puts a second tree file where GitHub stands and reads
 no network at all.
+
+
+### Sprint pause and unpause
+
+`nova-sprint pause` and `nova-sprint unpause` are coordinator store writes. Pause
+holds new work, reviews and landing batches while current jobs finish and control
+communications continue. Queued assignments and reservations stay in place.
+Unpause resumes those admissions; it cannot restart STOPPED. Neither verb changes
+the sprint epoch or run generation. Both are idempotent.
+
+```sh
+nova-sprint pause
+nova-sprint where
+nova-sprint unpause
+```

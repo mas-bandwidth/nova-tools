@@ -113,12 +113,20 @@ func (d *Daemon) machineStopped() bool {
 	return d.MachineStopped != nil && d.MachineStopped()
 }
 
+// machinePaused is SprintPause.tla Pause: an admission hold, never STOP cancellation.
+func (d *Daemon) machinePaused() bool {
+	return d.MachinePaused != nil && d.MachinePaused()
+}
+
 func (d *Daemon) machineKnown() bool {
 	return d.MachineKnown == nil || d.MachineKnown()
 }
 
 func (d *Daemon) machineMayLaunch() bool {
-	return d.machineKnown() && !d.machineStopped()
+	if d.LaunchAllowed != nil {
+		return d.LaunchAllowed()
+	}
+	return d.machineKnown() && !d.machineStopped() && !d.machinePaused()
 }
 
 // owed counts the stop-returns not yet taken.
@@ -483,3 +491,11 @@ func (l *loop) releaseHeld(ln *lane, now time.Time) {
 // stopReturnCtx is the context a stop-return is sent under when the loop's own has ended: the
 // ack is owed whatever stops the daemon.
 func stopReturnCtx(ctx context.Context) context.Context { return context.WithoutCancel(ctx) }
+
+// admitLaunch checks the final server admission; cached beats only guide polling.
+func (d *Daemon) admitLaunch(ctx context.Context) bool {
+	if d.AdmitLaunch != nil {
+		return d.AdmitLaunch(ctx)
+	}
+	return d.machineMayLaunch()
+}

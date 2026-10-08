@@ -273,9 +273,11 @@ const readActiveFile = "ACTIVE.json"
 const readStopNoLaunchFile = "STOP-NO-LAUNCH.json"
 
 type readActive struct {
-	Read     AskedRead `json:"read"`
-	PID      int       `json:"pid"`
-	Identity string    `json:"identity"`
+	// LaunchHeld is a durable admission reservation, not a verdict or cancellation.
+	LaunchHeld bool      `json:"launch_held,omitempty"`
+	Read       AskedRead `json:"read"`
+	PID        int       `json:"pid"`
+	Identity   string    `json:"identity"`
 }
 
 func readActivePath(dir string) string       { return filepath.Join(dir, readActiveFile) }
@@ -310,7 +312,7 @@ func sameReadLease(a, b AskedRead) bool {
 }
 
 func saveReadActive(dir string, a readActive) error {
-	if a.PID <= 0 || a.Identity == "" {
+	if (a.PID <= 0 || a.Identity == "") && !(a.LaunchHeld && a.PID == 0 && a.Identity == "") {
 		return errors.New("read process identity unavailable")
 	}
 	b, err := json.Marshal(a)
@@ -332,7 +334,7 @@ func loadReadActive(dir string) (readActive, bool, error) {
 	if err := json.Unmarshal(b, &a); err != nil {
 		return a, false, err
 	}
-	if a.Read.ID == "" || a.Read.Epoch == "" || a.PID <= 0 || a.Identity == "" {
+	if a.Read.ID == "" || a.Read.Epoch == "" || ((a.PID <= 0 || a.Identity == "") && !(a.LaunchHeld && a.PID == 0 && a.Identity == "")) {
 		return a, false, errors.New("incomplete active read identity")
 	}
 	return a, true, nil
@@ -489,6 +491,15 @@ func (l *loop) readStep(now time.Time) {
 				d.Record(fmt.Sprintf("%s read %s: active identity differs from queue; held", at, r.ID))
 				continue
 			}
+			if active.LaunchHeld && active.PID == 0 || active.LaunchHeld && l.readGroupQuiescent(dir, active) {
+				// The begin already reserved this exact lease. Retrying its
+				// no-launch gate does not consume another physical child slot.
+				if d.machineMayLaunch() && d.readSlots() > len(s.running) && !l.lanes.envHeld && l.lanes.gov.Held() == "" && !l.lanes.gov.Paused(now) && l.childRoom(l.lanes.width+1) {
+					s.running[r.ID], s.begun[r.ID] = true, true
+					l.startRead(r, now)
+				}
+				continue
+			}
 			if !l.readGroupQuiescent(dir, active) {
 				d.Record(fmt.Sprintf("%s read %s: active process group still alive; held", at, r.ID))
 				continue
@@ -583,6 +594,7 @@ func (l *loop) readStep(now time.Time) {
 			s.begun[r.ID] = true // not begun again by this daemon until the queue stops asking it
 			continue
 		}
+		r.Col = "reading"
 		s.running[r.ID], s.begun[r.ID] = true, true
 		occupied++
 		l.startRead(r, now)
@@ -709,11 +721,26 @@ func (l *loop) startRead(r AskedRead, now time.Time) {
 				return
 			}
 		}
+		if res.err = saveReadActive(dir, readActive{Read: r, LaunchHeld: true}); res.err != nil {
+			res.err = errors.Join(errMachineLaunchHeld, res.err)
+			return
+		}
+		if !d.machineMayLaunch() {
+			res.err = errMachineLaunchHeld
+			return
+		}
 		ctx, prompt := LaneContext(rctx), ReadPrompt(d.Friend, dir)
 		ctx = WithProcessGroupAnchor(ctx, readAnchorPath(dir))
 		ctx = WithProcessStarted(ctx, func(pid int) error {
 			res.gateCalled = true
-			return saveReadActive(dir, readActive{Read: r, PID: pid, Identity: ProcessIdentity(pid)})
+			held := !d.admitLaunch(rctx)
+			if err := saveReadActive(dir, readActive{Read: r, PID: pid, Identity: ProcessIdentity(pid), LaunchHeld: held}); err != nil {
+				return errors.Join(errMachineLaunchHeld, err)
+			}
+			if held {
+				return errMachineLaunchHeld
+			}
+			return nil
 		})
 		switch h := d.Deliver.(type) {
 		case ReadHarness:
@@ -731,6 +758,17 @@ func (l *loop) startRead(r AskedRead, now time.Time) {
 // does (providerLimit), and a read cut off by the daemon stopping is left begun.
 func (l *loop) readDone(r readResult, now time.Time) {
 	d, s := l.d, l.reads
+	if errors.Is(r.err, errMachineLaunchHeld) && d.machineStopped() {
+		l.stopStep(now)
+	}
+	if errors.Is(r.err, errMachineLaunchHeld) && !s.stopped[r.read.ID] && !d.machineStopped() {
+		delete(s.running, r.read.ID)
+		delete(s.cancel, r.read.ID)
+		delete(s.active, r.read.ID)
+		s.begun[r.read.ID] = true
+		d.Record(fmt.Sprintf("%s read %s: lease kept without a model launch until a fresh RUNNING word", now.UTC().Format(time.RFC3339), r.read.ID))
+		return
+	}
 	delete(s.running, r.read.ID)
 	delete(s.begun, r.read.ID) // the next ask says whether it is asked again; the one in hand is stale
 	delete(s.cancel, r.read.ID)
@@ -848,6 +886,9 @@ func (l *loop) readStopDebtQuiescent(debt StopReturn, now time.Time) bool {
 }
 
 func (l *loop) readGroupQuiescent(dir string, a readActive) bool {
+	if a.LaunchHeld && a.PID == 0 {
+		return true
+	} // startup gate never opened
 	if current := ProcessIdentity(a.PID); current != "" && current != a.Identity {
 		return false // a reused leader is not authority over the saved read
 	}

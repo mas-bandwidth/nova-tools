@@ -260,6 +260,7 @@ type laneSet struct {
 	given           map[string]bool
 	state           LaneState
 	loaded          bool
+	heldDirty       bool // admission marker awaits a successful durable state save
 	stateUnknown    bool // failed durable state read holds new shared admission
 	results         chan laneResult
 	refused         map[string]string // each job a lane was refused, and who held it, said once while it stands
@@ -467,12 +468,12 @@ func (l *loop) laneStep(now time.Time, width int) {
 		s.recoveryPending = len(s.state.Started) > 0
 	}
 	if s.recoveryPending && d.machineKnown() {
+		s.recoveryPending = false
 		if d.machineStopped() {
 			l.stopPersistedStarted(now)
 		} else {
 			l.endStarted(now)
 		}
-		s.recoveryPending = false
 	}
 	l.stopStep(now) // STOP retains session control turns while holding card work.
 	for len(s.lanes) < width {
@@ -518,6 +519,11 @@ func (l *loop) laneStep(now time.Time, width int) {
 		}
 		if ln.t != nil || ln.opening {
 			continue
+		}
+		if d.machinePaused() && ln.card != nil {
+			job := filepath.Base(ln.card.Outbox)
+			l.markLaunchHeld(job, now)
+			continue // retain between-turn reservations while pause holds their next launch
 		}
 		if ln.n > limit {
 			if ln.card != nil { // between turns: hand back only after the previous child is proved gone
@@ -703,7 +709,7 @@ func (l *loop) pidSink(job string) func(pid int) error {
 	s := l.lanes
 	runID := s.state.Started[job].RunID
 	return func(pid int) error {
-		if !l.d.machineMayLaunch() {
+		if !l.d.admitLaunch(l.ctx) {
 			return errMachineLaunchHeld
 		}
 		if !ProcessIdentitySupported {
@@ -1073,6 +1079,8 @@ func (l *loop) laneDone(r laneResult, now time.Time) {
 		return
 	}
 	if errors.Is(r.err, errMachineLaunchHeld) && ln.card != nil {
+		job := filepath.Base(ln.card.Outbox)
+		l.markLaunchHeld(job, now)
 		for _, e := range t.entries {
 			delete(l.inHand, e)
 		}
@@ -1404,13 +1412,33 @@ func (l *loop) providerLimit(err error, started, now time.Time) bool {
 	return false
 }
 
+// markLaunchHeld preserves the admission marker in memory and retries a failed
+// durable save. Any successful whole-state save contains every pending marker.
+func (l *loop) markLaunchHeld(job string, now time.Time) {
+	s := l.lanes
+	st, found := s.state.Started[job]
+	if !found {
+		return
+	}
+	if !st.LaunchHeld {
+		st.LaunchHeld = true
+		s.state.Started[job] = st
+		s.heldDirty = true
+	}
+	if s.heldDirty {
+		l.saveLanes(now)
+	}
+}
+
 func (l *loop) saveLanes(now time.Time) {
 	if l.d.SaveLanes == nil {
 		return
 	}
 	if err := l.d.SaveLanes(l.lanes.state); err != nil {
 		l.d.Record(now.UTC().Format(time.RFC3339) + " lanes: the lane state cannot be written: " + err.Error())
+		return
 	}
+	l.lanes.heldDirty = false
 }
 
 // ReadLanes is the lanes' state in stateDir; none is an empty state.

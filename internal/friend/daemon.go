@@ -117,6 +117,12 @@ type Daemon struct {
 	// answer (ParseMachine), is STOPPED: the lanes cancel what runs, owe and send
 	// stop-returns, and start nothing (stop.go). nil: never stopped.
 	MachineStopped func() bool
+	// MachinePaused closes new work/read turns without cancelling in-flight jobs.
+	MachinePaused func() bool
+	// LaunchAllowed reads production authorization from one atomic machine snapshot.
+	LaunchAllowed func() bool
+	// AdmitLaunch freshly reads the server word immediately before a native child gate.
+	AdmitLaunch func(context.Context) bool
 	// MachineKnown is true only after a successful beat supplied a recognized
 	// machine word. Production launch admission closes while that word is unknown.
 	MachineKnown func() bool

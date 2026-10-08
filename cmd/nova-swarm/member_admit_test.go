@@ -21,6 +21,7 @@ func TestAdmitMemberLaunchRequiresFreshRunningClaim(t *testing.T) {
 		code int
 		body string
 	}{
+		{"paused", 0, `{"epoch":7,"machine":"PAUSED","cards":[{"id":"c1","col":"working","gen":2}]}`},
 		{"stopped", 0, `{"epoch":7,"machine":"STOPPED","cards":[{"id":"c1","col":"working","gen":2}]}`},
 		{"disconnected", 2, "server unavailable"},
 		{"old-protocol", 0, `{"epoch":7,"cards":[{"id":"c1","col":"working","gen":2}]}`},

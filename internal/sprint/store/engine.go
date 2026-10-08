@@ -157,6 +157,10 @@ type Step struct {
 	// a late finish or verdict once STOP has committed. RequiresStopped is the
 	// complementary fence on an acknowledged stop-return.
 	StartsWork, ReportsWork, RequiresStopped bool
+	// HoldsOnPause skips an automatic assignment part without halting settlement.
+	HoldsOnPause bool
+	// RequiresUnpaused fences coordinator assignments without changing STOP policy.
+	RequiresUnpaused bool
 	// Twin, when set, is the tick's twin (twin.go): a step that loads the four
 	// tables plans on it while the fence is at its generation, instead of
 	// reading them, and applies its receipts to it when it commits.
@@ -358,7 +362,7 @@ func (st *Store) fenced(ctx context.Context, tables []string, extras func(*sprin
 	if err != nil {
 		return snap, Fence{Gen: gen}, err
 	}
-	snap.QueueLen, snap.Running = f2.Queued, f2.Running
+	snap.QueueLen, snap.Running, snap.Paused = f2.Queued, f2.Running, f2.Paused
 	f2.Gen = gen
 	return snap, f2, nil
 }
@@ -567,6 +571,13 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 			// a part that began (its first read found the machine RUNNING)
 			// finishes: only its first read halts it
 			res.Halted = true
+			return res, nil
+		}
+		if fence.Paused && step.HoldsOnPause {
+			return res, nil // SprintPause.tla: no automatic admission or claim replacement
+		}
+		if fence.Paused && (step.StartsWork || step.RequiresUnpaused) {
+			res.Refused = []sprint.Refusal{{Key: step.Verb, Why: "the machine is PAUSED: new jobs are held; run: nova-sprint unpause"}}
 			return res, nil
 		}
 		if step.StartsWork && fence.StopRevoked {

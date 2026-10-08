@@ -60,7 +60,7 @@ func TestALandPassFindsTheBaseGreenAndItsStreamResumesByRule(t *testing.T) {
 	out = land()
 	assert.Contains(t, out, "the base main passes its tree gate again at")
 	assert.Contains(t, out, "LAND OK stream=s2 cards=1 base=main")
-	assert.Equal(t, map[string]string{"s2-1": "merging/merged"}, r.places("s2-1"), out)
+	assert.Equal(t, map[string]string{"s2-1": "landed/merged"}, r.places("s2-1"), out)
 	assert.Equal(t, "stopped base", r.streamState("s1"), "the rule resumes it, at the tick")
 
 	r.ok("tick --answer-rules")
@@ -68,7 +68,7 @@ func TestALandPassFindsTheBaseGreenAndItsStreamResumesByRule(t *testing.T) {
 	assert.Contains(t, r.ok("log"), "answered by rule base-gate: the base main passes its tree gate again at")
 	out = land()
 	assert.Contains(t, out, "LAND OK stream=s1 cards=1 base=main")
-	assert.Equal(t, map[string]string{"s1-1": "merging/merged"}, r.places("s1-1"), out)
+	assert.Equal(t, map[string]string{"s1-1": "landed/merged"}, r.places("s1-1"), out)
 }
 
 // A pass with every stream stopped still re-checks the base (the coordinator, 2026-10-05: a

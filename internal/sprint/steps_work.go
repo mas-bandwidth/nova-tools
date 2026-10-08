@@ -1719,6 +1719,9 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 // work is preserved, and queued promotion fills a free configured slot after counting
 // shared work/read occupancy on her row. A machine's finish does nothing of the kind: the member takes.
 func friendNext(s *Snapshot, c *Card, u *Unit, prior []Unit) {
+	if s.Paused {
+		return // SprintPause.tla Complete: settle only this job, preserve queued claims
+	}
 	if !IsFriendRow(c.Row) {
 		return
 	}

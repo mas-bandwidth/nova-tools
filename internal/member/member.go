@@ -457,6 +457,7 @@ type launch struct {
 	// told to stop (stopPid, 0 when unknown), and once it has ended the card is handed back
 	// with stop-return, never finished; stopAt is when.
 	stopped bool
+
 	// admissionDenied means no child was created after the fresh queue refused
 	// a delayed launch. STOP may return this claim without process debt.
 	admissionDenied bool
@@ -476,6 +477,8 @@ type Member struct {
 	// every lane was told to stop and nothing is taken, started or recovered until a
 	// queue says it runs again (machineStop; tla/StopCancels.tla).
 	stopped bool
+	// paused holds admission only; completion and control traffic continue.
+	paused bool
 	// stopRetry is when each card's refused stop-return is tried again (StopReturnRetry),
 	// and stopRefused the refusal last said for it, said once while its text stands.
 	stopRetry   map[string]time.Time
@@ -1000,7 +1003,7 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 		noAnswer("progress", out)
 	}
 	m.spent.Report += since()
-	if m.drain {
+	if m.drain || m.paused {
 		return acted, nil
 	}
 	// every card this tick would start is started, or, when Config.Room says no, finished as
@@ -1063,7 +1066,7 @@ func (m *Member) reportOne(id string, l launch, now time.Time, qPacket *Packet, 
 			if now.Before(l.retryAt) {
 				return false
 			}
-			if qPacket == nil {
+			if qPacket == nil || m.paused {
 				return false // suppress new starts from an unknown queue state
 			}
 			// the retry is owed once per card: it is remembered across a start that fails and
@@ -1339,6 +1342,9 @@ func (m *Member) recoverWorking(ids []string, byID map[string]queueCard, wasOurs
 
 // start runs a packet as a child, unless one is already running for it or width is full.
 func (m *Member) start(p Packet) bool {
+	if m.paused {
+		return false // preserve the current claim while new child starts are held
+	}
 	p = Carried(p)
 	if p.Kind == "read" {
 		p.Gen = max(p.Gen, 1)
@@ -1391,7 +1397,13 @@ func (m *Member) start(p Packet) bool {
 			if !m.stopPending && m.stopVersion == version {
 				m.staggerStart()
 			}
-			err = m.admitStart(p, version)
+			if ch == nil {
+				err = m.admitStart(p, version)
+			} else if m.stopPending || m.stopVersion != version {
+				err = fmt.Errorf("machine STOPPED before verifier result settlement")
+			}
+			// A script review already under way may finish during pause. Only
+			// its model fallback creates new work and needs another admission.
 			admissionErr = err != nil
 			if err == nil && ch == nil {
 				ch, err = m.runner.Start(p)
@@ -1428,7 +1440,7 @@ func (m *Member) clearVerifyCancel(card string, entry *verifyCancel) {
 // starts. A STOP/START observed during a long verification invalidates its
 // captured version even if the machine is RUNNING again by the final check.
 func (m *Member) admitStart(p Packet, version uint64) error {
-	if m.stopPending || m.stopVersion != version {
+	if m.stopPending || m.paused || m.stopVersion != version {
 		return fmt.Errorf("machine STOPPED before child start")
 	}
 	if m.cfg.Admit != nil {
@@ -1591,6 +1603,7 @@ func (m *Member) OwedStopReturns() int {
 func (m *Member) machineStop(q queueOut, byID map[string]queueCard, now time.Time) (acted int) {
 	if q.Machine != "" {
 		m.startMu.Lock()
+		m.paused = q.Machine == "PAUSED"
 		stopping := q.Machine == "STOPPED"
 		if stopping && !m.stopPending {
 			m.stopVersion++
@@ -1617,7 +1630,11 @@ func (m *Member) machineStop(q queueOut, byID map[string]queueCard, now time.Tim
 	case q.Machine != "":
 		if m.stopped {
 			m.stopped = false
-			fmt.Fprintf(m.out, "MEMBER START machine %s: taking cards again\n", q.Machine)
+			if q.Machine == "PAUSED" {
+				fmt.Fprintln(m.out, "MEMBER PAUSED: current jobs settle; new starts remain held")
+			} else {
+				fmt.Fprintf(m.out, "MEMBER START machine %s: taking cards again\n", q.Machine)
+			}
 		}
 	}
 	if m.stopped {
@@ -1669,7 +1686,7 @@ func (m *Member) machineStop(q queueOut, byID map[string]queueCard, now time.Tim
 			}
 		}
 	}
-	if !m.stopped {
+	if !m.stopped && !m.paused {
 		for id, l := range m.running {
 			if l.admissionDenied && !l.stopped {
 				delete(m.running, id) // the live queue can supply the current claim next pass

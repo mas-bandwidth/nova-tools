@@ -2914,3 +2914,20 @@ the message stays pending, never given up, the session reads broken with the
 reason until a turn succeeds, and the detail tells the friend to start a session
 without a preset or read the bus with `nova-bus recv` ("A turn the session
 cannot take").
+
+
+### Sprint admission pause
+
+A beat carrying `machine=PAUSED` holds new card turns and native read starts.
+It does not enter the STOP cancellation path: current card turns and native
+reads finish, their reports and verdicts settle, and durable reservations and
+queued assignments remain. Between-turn work, fresh takes, recovery launches
+and retries wait for RUNNING. Control messages, pings and session proofs remain
+available through the control lane. A STOPPED word while paused uses the normal
+hard-stop path. Cached `Daemon.machineMayLaunch` guides polling. The final work/read native
+process hook freshly reads `queue --as reader-<friend> --json --packets 0`; only
+RUNNING opens that gate. One request-ordered atomic snapshot publishes the word:
+a delayed response cannot erase a newer STOP or PAUSE, and failed/unknown reads
+hold authorization while retaining the last control word. A refused native read
+keeps its begun lease and durable ACTIVE reservation through daemon restart. The admission/completion distinction is modelled in
+`tla/SprintPause.tla` and pinned by the mixed work/read pause test.

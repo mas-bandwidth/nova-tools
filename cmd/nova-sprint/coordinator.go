@@ -35,7 +35,7 @@ const (
 
 var verbClasses = map[string]string{
 	"init": classCoordinator, "add": classCoordinator, "quack": classCoordinator, "release": classCoordinator, "resolve": classCoordinator,
-	"start": classCoordinator, "stop": classCoordinator, "ask": classCoordinator, "accept": classCoordinator,
+	"start": classCoordinator, "stop": classCoordinator, "pause": classCoordinator, "unpause": classCoordinator, "ask": classCoordinator, "accept": classCoordinator,
 	"rework": classCoordinator, "return": classCoordinator, "redo": classCoordinator, "drop": classCoordinator, "unpin": classCoordinator, "priority": classCoordinator, "rank": classCoordinator, "relink": classCoordinator, "recut": classCoordinator, "brief": classCoordinator, "move": classCoordinator,
 	"resume": classCoordinator, "land": classCoordinator, "fleet up": classCoordinator, "fleet down": classCoordinator, "hold": classCoordinator, "unhold": classCoordinator,
 	"fleet level": classCoordinator, "fleet quiet": classCoordinator, "fleet sync": classCoordinator, "friend sync": classCoordinator, "friend reconcile": classCoordinator, "friend down": classCoordinator, "friend up": classCoordinator, "friend take": classCoordinator, "friend give": classCoordinator, "friend level": classCoordinator, "friend health": classCoordinator, "reader add": classCoordinator, "reader set": classCoordinator, "reader away": classCoordinator, "reader up": classCoordinator, "reader remove": classCoordinator, "reader retire": classCoordinator, "stream remove": classCoordinator, "stream set": classCoordinator, "set": classCoordinator, "promoted": classCoordinator, "funded": classCoordinator, "cost reconcile": classCoordinator, "cost reprice": classCoordinator, "wait": classCoordinator,

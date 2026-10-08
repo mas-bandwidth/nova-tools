@@ -1360,17 +1360,23 @@ func (w world) run(c *tool.Call) *tool.Out {
 	stager := w.stager(dir)
 	// the machine's word, read off each beat's answer (friend.ParseMachine), and the
 	// stop-returns the lanes owe, carried on each beat (stop.go)
-	var machineStopped atomic.Bool
-	var machineKnown atomic.Bool
-	var machineAt atomic.Int64
+	var machine machineWords
+	machineFresh := func(m *sprintMachine) bool {
+		if m == nil {
+			return false
+		}
+		age := time.Since(m.at)
+		return age >= 0 && age <= 3*friend.BeatEvery
+	}
+	admitLaunch := func(ctx context.Context) bool { return admitMachineLaunch(ctx, &machine, name, w.sprintAsk(server)) }
 	owedStopReturns := func() int { return 0 }
 	d := &friend.Daemon{
 		Friend: name, Harness: c.Str("harness"), Dir: dir, Width: c.Int("width"),
-		MachineStopped: machineStopped.Load,
-		MachineKnown: func() bool {
-			age := time.Since(time.Unix(0, machineAt.Load()))
-			return machineKnown.Load() && age >= 0 && age <= 3*friend.BeatEvery
-		},
+		MachineStopped: func() bool { m := machine.Load(); return m != nil && m.state == friend.MachineStoppedWord },
+		MachinePaused:  func() bool { m := machine.Load(); return m != nil && m.state == "PAUSED" },
+		MachineKnown:   func() bool { return machineFresh(machine.Load()) },
+		AdmitLaunch:    admitLaunch,
+		LaunchAllowed:  func() bool { m := machine.Load(); return machineFresh(m) && m.state == "RUNNING" },
 		StopReturn: func(ctx context.Context, argv []string) error {
 			if w.finish == nil {
 				return errors.New("this world sends no stop-return")
@@ -1418,6 +1424,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 			up := func(ctx context.Context) error {
 				said := words()
 				said.StopReturns = owedStopReturns()
+				machineRequest := machine.begin()
 				answer, err := w.beat(ctx, server, name, active, said)
 				if err == nil {
 					sc.Said(said)
@@ -1426,12 +1433,10 @@ func (w world) run(c *tool.Call) *tool.Out {
 						sent.Store(&at) // the server took her session's answer as its proof
 					}
 				}
-				if st, ok := friend.ParseMachine(answer); err == nil && ok && (st == friend.MachineStoppedWord || st == "RUNNING") {
-					machineStopped.Store(st == friend.MachineStoppedWord)
-					machineAt.Store(time.Now().UnixNano())
-					machineKnown.Store(true)
+				if st, ok := friend.ParseMachine(answer); err == nil && ok && (st == friend.MachineStoppedWord || st == "RUNNING" || st == "PAUSED") {
+					machine.publish(machineRequest, &sprintMachine{state: st, at: time.Now()})
 				} else {
-					machineKnown.Store(false) // a stale RUNNING word cannot authorize a launch
+					machine.publish(machineRequest, nil) // authorization fails closed while STOP remains latched
 				}
 				if m, wd, ok := friend.ParseRow(answer); err == nil && ok {
 					rowMode, rowWidth = m, wd

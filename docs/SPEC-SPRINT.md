@@ -6266,6 +6266,41 @@ before, and the sprint line.
 
 ## 14. The machine
 
+### Pause and unpause: admission only
+
+`nova-sprint pause` is a coordinator store write that sets the running machine's
+persisted `paused` flag. Its public word is PAUSED. It holds every new work job,
+review and landing; current work, reviews and landing batches continue to their
+ordinary completion, including pushes, verdicts and result settlement. Control
+communications, beats, pings, notifications and proofs continue. Pause does not
+cancel children, return or delete assignments, release reservations, replace
+claims, bump the epoch or advance the run generation. Queued work and read
+assignments stay where they are. Automatic refill, new reader begins, recovery
+launches, model fallback after a script review and later landing batches wait.
+The tick drains queued completion changes and accepts completed reviews, but
+holds assignment/reassignment, deadline returns, rework and automatic DONE.
+
+`nova-sprint unpause` removes that admission hold. Both verbs are idempotent,
+use the existing operation fence, and refuse STOPPED; unpause cannot restart a
+stopped machine or bypass its cancellation receipts. `start` on PAUSED keeps
+it paused. `stop` while PAUSED retains the existing hard-stop contract and clears
+the admission flag. The machine remains RUNNING internally while paused so its
+reports and completion queue continue. Its fence carries `paused` alongside the
+operation generation: a stale new take or read begin retries against PAUSED and
+refuses. An in-flight landing is not cancelled at its push or report gate; the
+next batch freshly checks after forge admission and before any new git work.
+New native landing preparation is held under STOPPED too: stop cannot bypass a
+pause by enabling a manual land. Existing pushed receipts may still settle. An unreadable launch authorization
+holds new launches as before.
+
+The model is `tla/SprintPause.tla`: Pause and Unpause preserve
+queues, active claims, completed results, epoch and run generation; Admit is held
+while paused, Complete remains enabled, and Stop cannot be undone by Unpause.
+Its reachable witness requires a completion while paused with pending work,
+then an admission after unpause. Existing STOP cancellation and return proof
+remain modelled by StopReturn and StopCancels.
+
+
 The machine has two states, RUNNING and STOPPED, held in one record in the
 store; a new sprint is STOPPED. `start` sets RUNNING, `stop` sets STOPPED;
 setting the state it has changes nothing and says so; each change is a
