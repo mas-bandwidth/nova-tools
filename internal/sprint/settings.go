@@ -58,6 +58,14 @@ const (
 	// waits for the coordinator whatever the sets.
 	PropFleetTiers   = "fleet_tiers"
 	PropFriendsTiers = "friends_tiers"
+	// PropReadsNeeded is the work table's property: how many readers' ok reads at its
+	// head every card in review needs, whatever its tier (nova-sprint set --reads): "0",
+	// "1" or "2"; absent or default, each card's own rule (ReadsNeeded). 0 asks no read:
+	// a primary whose work finished LAND at its head is accepted on its own work.
+	PropReadsNeeded = "reads_needed"
+	// PropReworkPriority controls priority on the next attempt: fix (default), high or keep.
+	PropReworkPriority = "rework_priority"
+	ReworkKeep         = "keep"
 	// TiersAll is the word of a side that may take every tier, the default.
 	TiersAll = "all"
 	// ReadTierDefault is the word that takes a read tier off: a stream's back to
@@ -97,6 +105,21 @@ func (s *Snapshot) sideTakes(prop, tier string) bool {
 	}
 	v, _ := s.Work.Prop(prop)
 	return v == "" || v == TiersAll || slices.Contains(Split(v), tier)
+}
+
+// readsWords is the counts set --reads takes (PropReadsNeeded).
+var readsWords = []string{"0", "1", "2"}
+
+// ReadsSetting is the reads every card in review needs as the work table's properties
+// hold them (PropReadsNeeded): 0, 1 or 2, and ok false while none is set (default: each
+// card's own rule, ReadsNeeded).
+func ReadsSetting(props map[string]string) (n int, ok bool) {
+	v := props[PropReadsNeeded]
+	if !slices.Contains(readsWords, v) {
+		return 0, false
+	}
+	n, _ = strconv.Atoi(v)
+	return n, true
 }
 
 // SideTiers is a side's tiers as the work table's properties hold them (PropFleetTiers,
@@ -242,6 +265,7 @@ func stronger(a, b string) string {
 // bound, read tier and attempt cap (brief_bound.go, AttemptsCap). An empty value
 // leaves that setting as it is; ReadTierDefault takes one off.
 type SetReq struct {
+	ReworkPriority   string   `json:",omitempty"`
 	Streams          []string `json:",omitempty"`
 	ReadTier         string   `json:",omitempty"`
 	DealtMax         string   `json:",omitempty"`
@@ -280,7 +304,20 @@ type SetReq struct {
 	// ReadCards turns read cards on or off (PropReadCards, read_cards.go): on, off, or
 	// default (off).
 	ReadCards string `json:",omitempty"`
-	Who       string
+	// Reads is the reads every card in review needs (PropReadsNeeded): 0, 1, 2, or
+	// default (each card's own rule, ReadsNeeded).
+	Reads string `json:",omitempty"`
+	// Base, with Streams, re-points the stream's cards that are not yet dealt and
+	// those queued to merge to another base branch (stream set --base).
+	Base string `json:",omitempty"`
+	// BaseChecked is the cards Base re-points, as the verb read and checked them
+	// at the base (StreamSetBaseChecks): Set re-points exactly these and refuses
+	// whole, nothing written, when the snapshot it reads holds other cards or
+	// briefs, so no brief is rewritten without its PATHS held to the base. It is
+	// no part of the verb's arguments (its value changes as the stream does): the
+	// store's operation id digests the caller's words alone.
+	BaseChecked []StreamSetBaseCheck `json:"-"`
+	Who         string
 }
 
 // Set writes the settings: refused whole, writing nothing, for an actor who is not
@@ -399,8 +436,27 @@ func Set(s *Snapshot, r SetReq) Plan {
 			why = append(why, "--read-cards is the sprint's, not a stream's: nova-sprint set --read-cards "+r.ReadCards)
 		}
 	}
-	if r.ReadTier == "" && r.DealtMax == "" && r.LandProtected == "" && r.Release == "" && r.Prose == "" && len(alarms) == 0 && r.GoLanes == "" && r.Attempts == "" && r.FriendIdle == "" && r.FriendStallAfter == "" && r.FriendStallStep == "" && r.DriftCommits == "" && r.DriftHours == "" && r.Fleet == "" && r.Friends == "" && len(sideTiers) == 0 && r.ReadCards == "" {
-		why = append(why, "nothing to set: --read-tier, --read-cards, --prose, --dealt-max, --go-lanes, --attempts, --friend-idle, --friend-stall-after, --friend-stall-step, --drift-commits, --drift-hours, --fleet, --friends, --fleet-tiers, --friends-tiers or an --alarm-... threshold")
+	if r.ReworkPriority != "" {
+		if !slices.Contains([]string{PriorityFix, PriorityHigh, ReworkKeep}, r.ReworkPriority) {
+			why = append(why, "--rework-priority wants fix, high or keep; found "+r.ReworkPriority)
+		}
+		if len(r.Streams) > 0 {
+			why = append(why, "--rework-priority is the sprint's, not a stream's: nova-sprint set --rework-priority "+r.ReworkPriority)
+		}
+	}
+	if r.Reads != "" {
+		if r.Reads != ReadTierDefault && !slices.Contains(readsWords, r.Reads) {
+			why = append(why, "--reads wants 0, 1, 2 or "+ReadTierDefault+" (one for a flash card, two above); found "+r.Reads)
+		}
+		if len(r.Streams) > 0 {
+			why = append(why, "--reads is the sprint's, not a stream's: nova-sprint set --reads "+r.Reads)
+		}
+	}
+	if r.Base != "" && len(r.Streams) == 0 {
+		why = append(why, "--base is a stream's, not the sprint's: nova-sprint stream set <s> --base <branch>")
+	}
+	if r.ReadTier == "" && r.DealtMax == "" && r.LandProtected == "" && r.Release == "" && r.Prose == "" && r.Base == "" && len(alarms) == 0 && r.GoLanes == "" && r.Attempts == "" && r.FriendIdle == "" && r.FriendStallAfter == "" && r.FriendStallStep == "" && r.DriftCommits == "" && r.DriftHours == "" && r.Fleet == "" && r.Friends == "" && len(sideTiers) == 0 && r.ReadCards == "" && r.Reads == "" && r.ReworkPriority == "" {
+		why = append(why, "nothing to set: --rework-priority, --read-tier, --read-cards, --reads, --prose, --base, --dealt-max, --go-lanes, --attempts, --friend-idle, --friend-stall-after, --friend-stall-step, --drift-commits, --drift-hours, --fleet, --friends, --fleet-tiers, --friends-tiers or an --alarm-... threshold")
 	}
 	if len(r.Streams) > 0 && r.GoLanes != "" {
 		why = append(why, "--go-lanes is the sprint's, not a stream's: nova-sprint set --go-lanes "+r.GoLanes)
@@ -433,6 +489,18 @@ func Set(s *Snapshot, r SetReq) Plan {
 	if len(why) > 0 {
 		p.refuse("set", strings.Join(why, "; "))
 		return p
+	}
+	// stream set --base holds each rewritten brief to the check add runs at the
+	// new base before its step (cmd/nova-sprint's holdBriefBase), and the step
+	// plans over a snapshot of its own: bind the write to the candidates the check
+	// read. A card added to the stream, dealt, or revised between the check and
+	// the step is refused whole, nothing written, never rewritten with its PATHS
+	// unchecked (docs/SPEC-SPRINT.md section 11, stream set --base).
+	if r.Base != "" && len(r.Streams) > 0 {
+		if why := baseChecksHeld(s, r.Streams, r.Base, r.BaseChecked); why != "" {
+			p.refuse("set", why)
+			return p
+		}
 	}
 	if len(r.Streams) > 0 {
 		for _, st := range r.Streams {
@@ -480,6 +548,25 @@ func Set(s *Snapshot, r SetReq) Plan {
 					moved = append(moved, "attempts "+r.Attempts)
 				}
 			}
+			// stream set --base rewrites the BASE line of every card of the stream not
+			// yet dealt and of every card queued to merge, each a change of the work
+			// table the store writes, with the brief revision the replacement is
+			// (brief_attempt, as brief records one); a card dealt and working keeps
+			// its base and is listed (docs/SPEC-SPRINT.md section 11, stream set
+			// --base).
+			if r.Base != "" {
+				repoint, keep := streamSetBaseCards(s, st)
+				moved = append(moved, "base "+r.Base)
+				for _, c := range keep {
+					moved = append(moved, fmt.Sprintf("%s keeps its base %s (%s)", c.ID, orDash(baseOfBrief(c.F("brief"))), c.Col))
+				}
+				for _, c := range repoint {
+					next := briefOnBase(c.F("brief"), r.Base)
+					p.Units = append(p.Units, Unit{Key: c.ID, Stream: st,
+						Changes: []Change{change(Work, setEntry(c, map[string]string{"brief": next, FieldBriefAttempt: c.F("attempt")}))},
+						Moved:   fmt.Sprintf("%s base %s -> %s (%s)", c.ID, orDash(baseOfBrief(c.F("brief"))), r.Base, c.Col)})
+				}
+			}
 			p.Units = append(p.Units, Unit{Key: ctl.ID, Stream: st, Changes: []Change{change(Merge, setEntry(ctl, set, unset...))}, Moved: "stream " + st + " " + strings.Join(moved, ", "), Closes: closes})
 		}
 		answered(&p, s, r.Answers, r.Who)
@@ -503,6 +590,8 @@ func Set(s *Snapshot, r SetReq) Plan {
 		{PropFleetTiers, sideTiers[PropFleetTiers]},
 		{PropFriendsTiers, sideTiers[PropFriendsTiers]},
 		{PropReadCards, r.ReadCards},
+		{PropReadsNeeded, r.Reads},
+		{PropReworkPriority, r.ReworkPriority},
 	}
 	for _, a := range alarmProps {
 		kvs = append(kvs, [2]string{a.prop, alarms[a.prop]})
@@ -542,6 +631,8 @@ func orDefault(v, name string) string {
 		return fmt.Sprintf("default (%d hours)", DriftHoursDefault)
 	case name == PropReadCards:
 		return "default (off: the readers table asks)"
+	case name == PropReadsNeeded:
+		return "default (one for a flash card, two above)"
 	}
 	return "default (each card's own tier)"
 }

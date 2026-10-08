@@ -19,9 +19,11 @@ import (
 
 // propSamples is how many snapshots the property tests read, and deepSamples
 // how many the ones that do more than decide once read: the tests of a
-// clone's hold on its own state and of the planners run one by one.
+// clone's hold on its own state and of the planners run one by one. The
+// scenarios' samples come first and the walks fill the rest: 1016 keeps the
+// walks' thousand-odd as they were before the rebalance's scenario (16 samples).
 const (
-	propSamples = 1000
+	propSamples = 1016
 	deepSamples = 250
 )
 

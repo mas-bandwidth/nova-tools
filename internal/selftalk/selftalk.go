@@ -5,10 +5,10 @@
 // Scan finds the first class: a first-person claim (I am, I cannot, I always,
 // my <noun> is ...) carrying a word of failure (fallible, broken, bad at,
 // worst, cannot check ...). A claim with a date or a measurement word is
-// DATED, a record; one without is STANDING. It reads what a sentence says its
-// writer IS, not its grammar: a prohibition ("never merge without a read") is
-// a rule, not a claim, so a document made of rules does not score as one
-// made of self-verdicts.
+// DATED, a record; one without is STANDING. It matches specified grammatical
+// and lexical shapes, and meaning remains the writer's judgment: a prohibition
+// ("never merge without a read") is a rule, not a claim, so a document made of
+// rules does not score as one made of self-verdicts.
 //
 // ScanInstallation finds the second class, INSTALLATION: a standing
 // self-verdict built from neutral words, which the first class cannot see (a
@@ -30,9 +30,9 @@ import (
 // Verdict is the classification of a claim.
 //
 // The one distinction that decides every case: a capability denial is a
-// MEASUREMENT WITH A DATE, never a remembered property. A dated observation
+// measurement with a date, never a remembered property. A dated observation
 // is a record and is welcome; a standing claim says what the writer
-// permanently IS, and that is the thing to look at.
+// permanently is, and that is the thing to look at.
 type Verdict string
 
 const (
@@ -86,10 +86,10 @@ var whitespace = regexp.MustCompile(`\s+`)
 
 // Scan classifies every negative self/capability claim in text.
 //
-// WHAT IT MISSES, AND THE MISS IS PERMANENT BY DESIGN: trait claims built
+// What it misses, and the miss is permanent by design: trait claims built
 // from neutral words carry no first-person marker and no negative
 // vocabulary. Widening the pattern to reach them flags half of any file.
-// A green from this means ONE CLASS IS CLEAR, never that the file is.
+// A green from this means one class is clear, never that the file is.
 func Scan(text string) []Claim {
 	flat, starts := flattenLineStarts(text)
 	var out []Claim

@@ -31,43 +31,43 @@ const migrateMore = "the role that runs migrate must own every table in schema c
 // try runs them on one --file store (TestEveryKindsExamplesRunInOrder runs
 // them all, in this order, on one file). A verb with none here shows none.
 var kindExamples = []struct{ kind, verb, line string }{
-	{"machine", "add", "nova-config machine add m1 --user nova --seat s1 --slots 8 --width 4 --as a1 --file try.json"},
-	{"machine", "set", "nova-config machine set m1 --width 6 --as a1 --file try.json"},
+	{"machine", "add", "nova-config machine add m1 --user nova --seat s1 --slots 8 --width 4 --actor a1 --file try.json"},
+	{"machine", "set", "nova-config machine set m1 --width 6 --actor a1 --file try.json"},
 	{"machine", "list", "nova-config machine list --file try.json"},
 	{"machine", "show", "nova-config machine show m1 --file try.json"},
 	{"machine", "history", "nova-config machine history m1 --file try.json"},
 	{"machine", "width", "nova-config machine width m1 --file try.json"},
-	{"fleet", "set", "nova-config fleet set --coordinator m1 --store m1 --loops_dir ~/nova-bench/loops --as a1 --file try.json"},
+	{"fleet", "set", "nova-config fleet set --coordinator m1 --store m1 --loops_dir ~/nova-bench/loops --actor a1 --file try.json"},
 	{"fleet", "show", "nova-config fleet show --file try.json"},
 	{"fleet", "history", "nova-config fleet history --file try.json"},
-	{"friend", "add", "nova-config friend add f1 --slots 4 --tiers flash,pro --roles builder --as a1 --file try.json"},
-	{"friend", "set", "nova-config friend set f1 --slots 8 --as a1 --file try.json"},
+	{"friend", "add", "nova-config friend add f1 --slots 4 --tiers flash,pro --roles builder --actor a1 --file try.json"},
+	{"friend", "set", "nova-config friend set f1 --slots 8 --actor a1 --file try.json"},
 	{"friend", "list", "nova-config friend list --file try.json"},
 	{"friend", "show", "nova-config friend show f1 --file try.json"},
 	{"friend", "history", "nova-config friend history f1 --file try.json"},
-	{"sprint", "set", "nova-config sprint set --coordinator f1 --as a1 --file try.json"},
+	{"sprint", "set", "nova-config sprint set --coordinator f1 --actor a1 --file try.json"},
 	{"sprint", "show", "nova-config sprint show --file try.json"},
 	{"sprint", "history", "nova-config sprint history --file try.json"},
-	{"loop", "add", `nova-config loop add reader-m1 --machine m1 --argv '["nova-swarm","member","--as","reader-m1","--reader"]' --keepalive true --as a1 --file try.json`},
-	{"loop", "set", "nova-config loop set reader-m1 --enabled false --as a1 --file try.json"},
+	{"loop", "add", `nova-config loop add reader-m1 --machine m1 --argv '["nova-swarm","member","--as","reader-m1","--reader"]' --keepalive true --actor a1 --file try.json`},
+	{"loop", "set", "nova-config loop set reader-m1 --enabled false --actor a1 --file try.json"},
 	{"loop", "list", "nova-config loop list --file try.json"},
 	{"loop", "show", "nova-config loop show reader-m1 --file try.json"},
 	{"loop", "history", "nova-config loop history reader-m1 --file try.json"},
-	{"route", "add", "nova-config route add flash-a --tier flash --provider p1 --model small-1 --deadline 900 --tokens 200000 --as a1 --file try.json"},
-	{"route", "set", "nova-config route set flash-a --price_input 0.30 --price_output 1.20 --note 'prices from the provider page' --as a1 --file try.json"},
+	{"route", "add", "nova-config route add flash-a --tier flash --provider p1 --model small-1 --deadline 900 --tokens 200000 --actor a1 --file try.json"},
+	{"route", "set", "nova-config route set flash-a --price_input 0.30 --price_output 1.20 --note 'prices from the provider page' --actor a1 --file try.json"},
 	{"route", "list", "nova-config route list --file try.json"},
 	{"route", "show", "nova-config route show flash-a --file try.json"},
 	{"route", "history", "nova-config route history flash-a --file try.json"},
-	{"tier", "set", "nova-config tier set flash --routes flash-a --as a1 --file try.json"},
+	{"tier", "set", "nova-config tier set flash --routes flash-a --actor a1 --file try.json"},
 	{"tier", "list", "nova-config tier list --file try.json"},
 	{"tier", "show", "nova-config tier show flash --file try.json"},
 	{"tier", "history", "nova-config tier history flash --file try.json"},
 	// a row another names is held (the sprint names f1, the fleet m1, the tier
 	// flash-a): the run test clears those fields before these lines
-	{"loop", "remove", "nova-config loop remove reader-m1 --as a1 --file try.json"},
-	{"friend", "remove", "nova-config friend remove f1 --as a1 --file try.json"},
-	{"route", "remove", "nova-config route remove flash-a --as a1 --file try.json"},
-	{"machine", "remove", "nova-config machine remove m1 --as a1 --file try.json"},
+	{"loop", "remove", "nova-config loop remove reader-m1 --actor a1 --file try.json"},
+	{"friend", "remove", "nova-config friend remove f1 --actor a1 --file try.json"},
+	{"route", "remove", "nova-config route remove flash-a --actor a1 --file try.json"},
+	{"machine", "remove", "nova-config machine remove m1 --actor a1 --file try.json"},
 }
 
 // toolExamples is the worked example of each verb that is not a kind's.
@@ -77,6 +77,7 @@ var toolExamples = map[string]string{
 	"status":    "nova-config status --file try.json",
 	"apply":     "nova-config apply --dry-run --redis 127.0.0.1:6379 --file try.json",
 	"inventory": "nova-config inventory --example > inv.yml",
+	"loop run":  "nova-config loop run sleeper --run-dir ./run -- sleep 1",
 	"version":   "nova-config version",
 }
 
@@ -95,10 +96,13 @@ func verbExtra(verb string) string {
 		effect = effectStatus
 	case verb == "apply":
 		effect = effectApply
-		more = "full apply and --kind fleet require explicit redis_port and pg_dsn; set both with nova-config fleet set --redis_port <port> --pg_dsn <dsn> --as <actor>\n"
+		more = "full apply and --kind fleet require explicit redis_port and pg_dsn; set both with nova-config fleet set --redis_port <port> --pg_dsn <dsn> --actor <name>\n"
 	case verb == "inventory":
 		effect = effectInventory
 		more = inventoryMore
+	case verb == "loop run":
+		effect = loopRunEffect
+		more = loopRunMore
 	case verb == "machine self":
 		effect = "inspection: prints this machine's name and opens no store; --check reads the machine rows"
 	case len(words) == 1:
@@ -167,7 +171,7 @@ func requiredLine(k *config.Kind) string {
 	if len(req) == 0 {
 		return ""
 	}
-	return "required: " + strings.Join(req, " ") + " (and --as); every other field takes its default\n"
+	return "required: " + strings.Join(req, " ") + " (and --actor); every other field takes its default\n"
 }
 
 // inventoryMore is inventory's own help: what it prints and how ansible

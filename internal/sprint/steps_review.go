@@ -6,6 +6,7 @@ import (
 	"maps"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -132,7 +133,7 @@ func Ask(s *Snapshot, r AskReq) Plan {
 			return "not asked yet at attempt " + itoa(c.Int("attempt")) + ": the machine's tick asks it, or run: nova-sprint ask " + c.ID + "; --another adds a reader to one already asked"
 		}
 		if !another && ReadsWanted(s, c) == 0 {
-			if len(liveReadsAt(s, c, c.Int("attempt"))) < ReadsNeeded(c) {
+			if len(liveReadsAt(s, c, c.Int("attempt"))) < ReadsNeededIn(s, c) {
 				return "asked already: its reads are out, or one found it broken"
 			}
 			return "asked already"
@@ -205,13 +206,13 @@ func Ask(s *Snapshot, r AskReq) Plan {
 		// rest of those it needs, together, none once one found it broken; a read handed back, or taken
 		// back from a reader away, is not a read and is asked again whatever stands: it
 		// was wanted when it was placed (ReadsWanted)
-		want := max(readsWantedOf(c, kept), len(returned)+len(away))
+		want := max(readsWantedOf(s, c, kept), len(returned)+len(away))
 		if another {
 			want = 1
 		}
-		if !another && len(all)+len(free)+len(returned) < ReadsNeeded(c) {
+		if !another && len(all)+len(free)+len(returned) < ReadsNeededIn(s, c) {
 			// not even its first read is asked when no reader could ever read the rest
-			want = ReadsNeeded(c) - len(all)
+			want = ReadsNeededIn(s, c) - len(all)
 		}
 		// each read to a free reader with room, the finder's first (askPicks)
 		finder := finders[c.ID]
@@ -799,7 +800,7 @@ func reviewJudgment(s *Snapshot, pr *Card, st reviewStep) (Note, bool) {
 	}
 	var typ, why string
 	switch {
-	case len(oks) >= ReadsNeeded(pr):
+	case len(oks) >= ReadsNeededIn(s, pr):
 		if offers || AcceptHeld(pr) == "" {
 			// the tick's pump accepts it, RUNNING or STOPPED (at the first pump after
 			// start): "accept is mechanical", and a hand step is a missing instruction
@@ -822,12 +823,12 @@ func reviewJudgment(s *Snapshot, pr *Card, st reviewStep) (Note, bool) {
 		return Note{}, false
 	case reads == 0:
 		typ, why = NStranded, "never asked at attempt "+itoa(attempt)+" and nothing is open on it"
-	case !broken && reads < ReadsNeeded(pr):
+	case !broken && reads < ReadsNeededIn(s, pr):
 		// the ones that stand came back ok and the rest are the ask's (ReadsWanted),
 		// nothing to judge
 		return Note{}, false
 	default:
-		typ, why = NReadsExhausted, fmt.Sprintf("no read is outstanding and %s not said ok at %s", readersWord(ReadsNeeded(pr)), orDash(pr.F("head")))
+		typ, why = NReadsExhausted, fmt.Sprintf("no read is outstanding and %s not said ok at %s", readersWord(ReadsNeededIn(s, pr)), orDash(pr.F("head")))
 	}
 	if contains(st.acked, typ) {
 		return Note{}, false
@@ -867,7 +868,7 @@ const NothingWaits = "nothing waits: the tick accepts every primary in review wh
 func okReaders(s *Snapshot, pr *Card) []*Card {
 	var out []*Card
 	seen := map[string]bool{}
-	need := ReadsNeeded(pr)
+	need := ReadsNeededIn(s, pr)
 	for _, c := range readsAt(s, pr, pr.Int("attempt")) {
 		r := c.F("reader")
 		if c.Col == OK && c.F("head") == pr.F("head") && ReadCardAgrees(c) && !seen[r] && len(out) < need {
@@ -895,9 +896,12 @@ func okReaders(s *Snapshot, pr *Card) []*Card {
 	return out
 }
 
-// readersWord names the readers a primary needs (ReadsNeeded, one or two):
+// readersWord names the readers a primary needs (ReadsNeededIn, none, one or two):
 // "one reader" for a flash card, "two different readers" for a pro card.
 func readersWord(n int) string {
+	if n == 0 {
+		return "no reader"
+	}
 	if n == 1 {
 		return "one reader"
 	}
@@ -914,8 +918,8 @@ func ReadCardAgrees(c *Card) bool {
 
 // Accept moves review -> merging and places the primary in merge queued with
 // its score. It is refused without ok reads from as many different readers at
-// the primary's head as it needs (ReadsNeeded: one for a flash card, two for a
-// pro card), whoever the readers; with Heavy, the coordinator's heavy read
+// the primary's head as it needs (ReadsNeededIn: one for a flash card, two for a
+// pro card, or the sprint's count, set --reads, recorded on it), whoever the readers; with Heavy, the coordinator's heavy read
 // counts as one of them, recorded on the primary and never as a reader's
 // (heavyRead; docs/SPEC-SPRINT.md section 6, accept-heavy-verdict-b.w1). The primary's read cards still asked
 // or reading are retired in the same step, marked retired by accept, so no
@@ -942,12 +946,12 @@ func Accept(s *Snapshot, r AcceptReq) Plan {
 				return why
 			}
 		}
-		if oks := okReaders(s, c); len(oks)+heavyReads < ReadsNeeded(c) {
+		if oks := okReaders(s, c); len(oks)+heavyReads < ReadsNeededIn(s, c) {
 			var names []string
 			for _, o := range oks {
 				names = append(names, o.F("reader"))
 			}
-			return fmt.Sprintf("needs ok from %s at head %s; has ok from %d (%s)", readersWord(ReadsNeeded(c)), orDash(c.F("head")), len(oks)+heavyReads, orDash(strings.Join(names, ",")))
+			return fmt.Sprintf("needs ok from %s at head %s; has ok from %d (%s)", readersWord(ReadsNeededIn(s, c)), orDash(c.F("head")), len(oks)+heavyReads, orDash(strings.Join(names, ",")))
 		}
 		if m := s.Merge.Card(c.ID); m != nil && (!m.Placed() || m.Col != Returned) {
 			return "its merge record is " + placeWord(m)
@@ -1016,7 +1020,15 @@ func Accept(s *Snapshot, r AcceptReq) Plan {
 				heavyText += "; overrules " + strings.ReplaceAll(fields[FieldHeavyOverrules], ",", ", ")
 			}
 		}
-		u.Changes = append(u.Changes, change(Work, moveEntry(c, c.Row, Merging, set)))
+		// accepted on the sprint's count, not its tier's rule: the count it was accepted on
+		// stays with it past review (ReadsNeededIn)
+		var unset []string
+		if n := ReadsNeededIn(s, c); n != ReadsNeeded(c) {
+			set[FieldReadsNeeded] = strconv.Itoa(n)
+		} else if c.F(FieldReadsNeeded) != "" {
+			unset = append(unset, FieldReadsNeeded)
+		}
+		u.Changes = append(u.Changes, change(Work, moveEntry(c, c.Row, Merging, set, unset...)))
 		u.Moved = fmt.Sprintf("%s review -> merging queued (ok from %s%s)", c.ID, strings.ReplaceAll(orDash(readers), ",", ", "), heavyText)
 		if retired > 0 {
 			u.Moved += fmt.Sprintf("; %d outstanding read cards retired", retired)
@@ -1294,6 +1306,7 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 			set[FieldWho] = WhoFriend
 		}
 		maps.Copy(set, one.Set)
+		c = reworkPriority(s, c, set)
 		// the head a reader passed: a next attempt that finds nothing to do at it goes back to
 		// review there, not to the coordinator as failed work (FieldPassedHead, Finish)
 		if len(okReaders(s, c)) > 0 && c.F("result") != "failed" {

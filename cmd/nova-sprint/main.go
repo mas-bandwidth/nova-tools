@@ -130,6 +130,9 @@ type app struct {
 	// beforePush, when set (a test), runs before each push land makes, with
 	// the attempt (1, then 2 after the base moved).
 	beforePush func(attempt int)
+	// gateRan, when set (a test), runs before each tree gate land runs, with the directory
+	// gated and whether the tree tests run: the count of gates a pass makes (landpass.go).
+	gateRan func(dir string, tests bool)
 	// ledgers, when set (a test), is the generated ledgers land regenerates at a merge
 	// (landledger.go); nil is landLedgers.
 	ledgers []landLedger
@@ -185,6 +188,10 @@ type app struct {
 	// baseGateFails is the base-gate rule's record of base commits that failed their tree
 	// gate (landgo.go, treeGateBase), kept across rounds as the cache is.
 	baseGateFails map[string]*baseGateFail
+	// goCachePath is the build cache the lander's go runs share (landgo.go, goCache),
+	// resolved once a process under goCacheOnce.
+	goCacheOnce sync.Once
+	goCachePath string
 	// tickDeadline is the least time the run loop waits for one tick (run
 	// --tick-deadline, stretched by the walls of the last ticks; 0, a test's
 	// loop, waits for ever); after is the clock it waits on (time.After unless a

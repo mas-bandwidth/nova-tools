@@ -24,9 +24,10 @@ import (
 //
 // The far side's shell is Emma's decision, not a guess: docs/BENCH-WINDOWS.md
 // names it as Git Bash (`C:\Program Files\Git\bin\bash.exe`), or native
-// OpenSSH with Bash in sshd_config, and internal/pulse/fleetstandard.go's
-// windows probes are POSIX shell that reach for `powershell.exe -NoProfile
-// -Command '...'` only for the Windows-specific questions. So the far side
+// OpenSSH with Bash in sshd_config, and the windows probes in
+// pulse/fleetstandard.go at 39e472aa0 are POSIX shell that reach for
+// `powershell.exe -NoProfile -Command '...'` only for the Windows-specific
+// questions. So the far side
 // parses a POSIX command line -- which is exactly why a backslash may not
 // reach it: in that shell `C:\Users\nova` is `C:Usersnova`, silently, and the
 // machine then refuses about a path nobody typed.

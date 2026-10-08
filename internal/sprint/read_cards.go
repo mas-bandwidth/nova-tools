@@ -105,7 +105,7 @@ type ReadCardCounts struct {
 }
 
 // RowCardFields is the fields of a row's counts (RowCardCounts), highest level first.
-var RowCardFields = []string{"blocker_working", "critical_working", "high_working", "reads_working", "normal_working", "low_working", "reads_ready"}
+var RowCardFields = []string{"blocker_working", "critical_working", "fix_working", "high_working", "reads_working", "normal_working", "low_working", "reads_ready"}
 
 // RowCardCounts is each fleet row's cards as the dashboard's segmented bar draws them,
 // highest on the left: its working cards by level, a read card as reads whatever level it
@@ -445,7 +445,7 @@ func readCardsStanding(s *Snapshot, pr *Card, idx map[string][]*Card) (standing 
 }
 
 // readCardsWanted is how many read cards the deal cuts for the primary now: every read its
-// attempt still needs (ReadsNeeded less the reads that stand), at once; none once a read
+// attempt still needs (ReadsNeededIn less the reads that stand), at once; none once a read
 // found it broken (its judgment and the rework follow), none for failed work; over a fleet
 // read index (fleetReadIndex), nil to read the table.
 func readCardsWanted(s *Snapshot, pr *Card, idx map[string][]*Card) int {
@@ -456,7 +456,7 @@ func readCardsWanted(s *Snapshot, pr *Card, idx map[string][]*Card) int {
 	if broken {
 		return 0
 	}
-	return max(0, ReadsNeeded(pr)-standing)
+	return max(0, ReadsNeededIn(s, pr)-standing)
 }
 
 // readCardsWaiting is every primary in review that wants read cards now, by the level of

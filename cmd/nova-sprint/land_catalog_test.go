@@ -75,7 +75,8 @@ func packageCard(r *landRig, id, dir string, catalog, agents string) string {
 // PATHS names only the package. Two such cards in one batch both land, the map family
 // regenerates once, and the catalog is the union of both sides' rows, the tip's first,
 // told on the card's timeline and the land log's line. An edit of an existing catalog
-// row, or a map change from a card that adds no directory, is still E12.
+// row, or a map change from a card that adds no directory, lands too: the catalog and
+// every AGENTS.md map are inside every card's PATHS (cardgen.AlwaysInPathsRule).
 func TestLandExemptsTheCatalogRowAndMapOfANewPackage(t *testing.T) {
 	t.Parallel()
 	t.Run("a card adding a package with its catalog row and map lands", func(t *testing.T) {
@@ -125,7 +126,7 @@ func TestLandExemptsTheCatalogRowAndMapOfANewPackage(t *testing.T) {
 		assert.Contains(t, mapText, "internal/otherpkg")
 		r.clean()
 	})
-	t.Run("an edit of an existing catalog row is still E12", func(t *testing.T) {
+	t.Run("an edit of an existing catalog row lands by rule", func(t *testing.T) {
 		t.Parallel()
 		r := catalogRig(t, filepath.Join(t.TempDir(), "runs"))
 		brief := writeNeedsBrief(t, t.TempDir(), "s1-1", "Fix s1-1. tier: flash\nPATHS: internal/newpkg/newpkg.go", "")
@@ -133,16 +134,14 @@ func TestLandExemptsTheCatalogRowAndMapOfANewPackage(t *testing.T) {
 		edited := strings.Replace(withCatalogRow("internal/newpkg"), `"docs"`, `"edited"`, 1)
 		head := packageCard(r, "s1-1", "newpkg", edited, mapOf("internal/docs", "internal/newpkg"))
 		r.queued(map[string]string{"s1-1": head}, "s1-1")
-		before := r.git(r.remote, "rev-parse", "main")
 		code, out, errs := r.do("land --repo-dir " + r.clone + " --base main")
-		assert.Equal(t, 1, code, out+errs)
-		assert.Contains(t, errs, "it changes files outside its PATHS (E12): internal/docs/catalog.go")
-		assert.NotContains(t, errs, "AGENTS.md")
-		assert.Equal(t, map[string]string{"s1-1": "merging/stuck"}, r.places("s1-1"))
-		assert.Equal(t, before, r.git(r.remote, "rev-parse", "main"))
+		assert.Equal(t, 0, code, out+errs)
+		assert.NotContains(t, errs, "(E12)")
+		assert.Equal(t, map[string]string{"s1-1": "landed/merged"}, r.places("s1-1"))
+		assert.Contains(t, r.git(r.remote, "show", "main:internal/docs/catalog.go"), `"edited"`)
 		r.clean()
 	})
-	t.Run("a map change without a new directory is still E12", func(t *testing.T) {
+	t.Run("a map change without a new directory lands by rule", func(t *testing.T) {
 		t.Parallel()
 		r := catalogRig(t, filepath.Join(t.TempDir(), "runs"))
 		brief := writeNeedsBrief(t, t.TempDir(), "s1-1", "Fix s1-1. tier: flash\nPATHS: internal/docs/docs.go", "")
@@ -152,12 +151,10 @@ func TestLandExemptsTheCatalogRowAndMapOfANewPackage(t *testing.T) {
 			"AGENTS.md":             mapOf("internal/docs", "touched"),
 		})
 		r.queued(map[string]string{"s1-1": head}, "s1-1")
-		before := r.git(r.remote, "rev-parse", "main")
 		code, out, errs := r.do("land --repo-dir " + r.clone + " --base main")
-		assert.Equal(t, 1, code, out+errs)
-		assert.Contains(t, errs, "it changes files outside its PATHS (E12): AGENTS.md")
-		assert.Equal(t, map[string]string{"s1-1": "merging/stuck"}, r.places("s1-1"))
-		assert.Equal(t, before, r.git(r.remote, "rev-parse", "main"))
+		assert.Equal(t, 0, code, out+errs)
+		assert.NotContains(t, errs, "(E12)")
+		assert.Equal(t, map[string]string{"s1-1": "landed/merged"}, r.places("s1-1"))
 		r.clean()
 	})
 }
