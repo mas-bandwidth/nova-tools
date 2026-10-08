@@ -220,11 +220,12 @@ func TestTheCoordinatorViewCountsTheJudgmentsTheLaneCheckSuppressed(t *testing.T
 	}
 	assert.Regexp(t, `^running [0-9]+m of [0-9]+m$`, row.Run, "her row says her run: %+v", row)
 
-	// her beat stops naming it: her finishes none rises (her running beat a minute ago is
-	// still activity to the stall ladder, so it is not a stall), and what was kept quiet
-	// stays counted
+	// her beat stops naming it, --running '' given and empty (a bare beat leaves the list as
+	// the store has it): her finishes none rises (her running beat a minute ago is still
+	// activity to the stall ladder, so it is not a stall), and what was kept quiet stays
+	// counted
 	ta.a.sleep(time.Minute)
-	ta.ok("friend beat amy")
+	ta.ok("friend beat amy --running ''")
 	ta.pong("amy")
 	ta.ok("tick")
 	idle := groupsOf(ta, sprint.NFriendIdle)
