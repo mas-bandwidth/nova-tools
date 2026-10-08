@@ -1324,7 +1324,7 @@ $ nova-doctor run --check harness --json
 {"exit":0,"results":[{"check":"harness","dependency":"the friend harnesses","status":"ok","evidence":"no friend rows at /home/you/.nova/friends"}]}
 
 $ nova-doctor run --check nosuch
-! RUN REFUSED: no check named "nosuch"; the checks are gosdk, harness, providers, secrets, self, ssh, tailnet; run: nova-doctor help
+! RUN REFUSED: no check named "nosuch"; the checks are dashboard, gosdk, harness, providers, secrets, self, ssh, tailnet; run: nova-doctor help
 ```
 
 ## One-shot lanes at parity (internal/friend/lane_parity_test.go, cmd/nova-friend/lane_parity_test.go)
