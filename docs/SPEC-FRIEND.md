@@ -21,6 +21,36 @@ an enabled maximum and cannot exceed it; near is configured, never inferred.
 
 ## The pattern in one sentence
 
+### Explicit watched-folder delivery for Codex
+
+A Codex session that watches an existing folder can run the native daemon with
+`--harness codex --session <real-session-id> --adapter folder --delivery-dir <existing-watched-folder>`.
+`install` persists those flags in the launchd agent; `run` and the delivery
+form of `check` choose the same route. The friend name, harness, session and
+working directory remain the native daemon's identities. Without `--adapter
+folder`, Codex retains its queue/exec-resume route.
+
+The folder route writes each complete native prompt atomically as
+`FRIEND-CHECK-<nonce>.md`, `FRIEND-WAKE-<nonce>.md`, or
+`FRIEND-PUSH-<UTC>-<random>.md`. It writes `<payload>.meta.json` first with
+`friend`, `harness`, `session`, `work_dir`, `delivery_dir`, `kind`, `nonce` when
+applicable, and the payload's `sha256`. A watcher forwards the literal prompt
+to the named live session. A file write proves only delivery to the folder:
+the native nonce is proven solely by `nova-friend pong` from that session.
+The daemon does not create the target folder, pong on behalf of the session,
+or delete unacknowledged files. A repeated check or wake with the same nonce
+and text reuses its file instead of adding another request.
+
+The folder watcher is a separate receiver owned by the Codex session. It must
+stay running or restart with that session, scan complete `.md` payloads after a
+restart, associate and verify their sidecars, forward each prompt into the
+actual named session once, and report its own termination. `nova-friend`
+cannot infer a live receiver merely from an existing directory; install's
+delivery check succeeds only after the real session sends the matching pong.
+Teams may use any receiver that meets this file contract. Its lifecycle and
+last receipt must be monitored alongside the daemon; a file creation or a
+watcher process alone is no proof of session presence.
+
 One daemon per friend, started by launchd and never by the model, parks on the
 friend's nova-bus stream. On a session start or a delivery after a thirty-minute gap,
 the present comes first and the backlog never does: one PRESENT turn carries her live

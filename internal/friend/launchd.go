@@ -18,6 +18,7 @@ import (
 // never started by the model (SPEC-FRIEND.md, the daemon).
 type Agent struct {
 	Friend, Harness, Dir, Session string
+	Adapter, DeliveryDir          string // explicit Codex folder route; session remains the real harness session
 	StateDir                      string // the daemon's state files, when not the default under Home
 	Width                         int
 	Binary                        string   // this tool, by absolute path
@@ -90,6 +91,9 @@ func (a Agent) Args() []string {
 	}
 	if a.Session != "" {
 		args = append(args, "--session", a.Session)
+	}
+	if a.Adapter != "" {
+		args = append(args, "--adapter", a.Adapter, "--delivery-dir", a.DeliveryDir)
 	}
 	if a.StateDir != "" {
 		args = append(args, "--state-dir", a.StateDir)
