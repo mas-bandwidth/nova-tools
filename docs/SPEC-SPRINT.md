@@ -5298,6 +5298,21 @@ flag itself: `run --answer-rules` then a failed finish raises no judgment, and
 (`TestTheFinishVerbAnswersAFailedFinishAtRaiseWhenTheRunAnswersByRule`,
 cmd/nova-sprint/judgment_answer_verb_test.go).
 
+#### judgment-answer-latencyb-t-bb.w3
+
+The window read of the answer waits (the reader's finding on
+`judgment-answer-latencyb-t-bb.w1`): `AnswerWaits` (internal/sprint/store/ops.go) read every
+page of the note log from an empty cursor on every `where` frame, so a frame's work grew with
+the store's whole history though the result uses only the last 24 h. The read now starts at
+the inbox's tail and stops at the window's start: a backend that can read its notes from the
+tail (`NotesBack`, implemented by the Redis and Mem stores, unwrapped through a read-only
+one) hands back the notes at or after `now-window`, newest first, `logPage` at a time, and the
+first note before the window ends the read, so the work is the window's notes, not the
+history's. A backend with no tail read keeps the whole-stream read as before.
+`TestWhereReadsOnlyTheAnswerWaitWindow` (cmd/nova-sprint/judgment_answer_read_test.go) seeds a
+day of old notes and the window's answers on the twin, counts the notes each read hands back,
+and holds that `AnswerWaits` reads no more than the window's notes.
+
 ### wait-many-notes-b.w2
 
 **wait takes several notes, and a group** (the coordinator waited judgments one at a time in a loop, `wait <id> --for 3h` per note). `wait <note>[,<note>]... (--for <duration> | --until <RFC3339>)` sets each named note, and `wait --group <id> [--expect <n>] (--for <duration> | --until <RFC3339>)` sets every note of that inbox group (a stalled stream's group, which has no note, is its own id), as `ack` takes `<note>[,<note>]...` and a verb given `--group` takes the group. Each note is set or refused on its own line (`WAIT OK note=<id> ...`, or `WAIT REFUSED note=<id>: <why>`). `--group` with a size other than `--expect` is refused and nothing changes. A group of one note keeps the one-id command the inbox already prints; a group of several names every note, comma separated (`TestWaitTakesSeveralNotes`).
