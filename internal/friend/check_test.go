@@ -1,6 +1,7 @@
 package friend
 
 import (
+	"context"
 	"strconv"
 	"testing"
 	"time"
@@ -38,6 +39,7 @@ func TestDecideVerdictPure(t *testing.T) {
 		{"a pong in the window answers", withPong(up, "4s"), hf(1, 0), bob, nil, VerdictOK, "live"},
 		{"silent: no delivery was due", up, hf(0, 0), bob, nil, VerdictSilent, "no delivery was due and nothing came back in the window"},
 		{"down by presence", DaemonFacts{Friend: "bob", Presence: "down", Agent: "loaded", Status: "ok", PongAge: "-"}, hf(1, 0), BusFacts{RealSince: 2}, nil, VerdictDown, "down by presence"},
+		{"stale status cannot be live despite fresh presence", DaemonFacts{Friend: "bob", Presence: "up", Agent: "loaded", Status: "stale", PongAge: "4s"}, hf(1, 0), BusFacts{RealSince: 1}, nil, VerdictDown, "stale daemon status"},
 		{"shown up, broken: why leads with untrue", up, HarnessFacts{Friend: "bob", Broken: "2026-10-05T10:00:00Z", Reason: "quota"}, bob, claim, VerdictBroken, "untrue: shown up/2, session broken: quota"},
 		{"shown up, deaf: why leads with untrue", up, hf(2, 0), bob, claim, VerdictDeaf, "untrue: shown up/2, deliveries succeed but no session pong or real message came back in the window"},
 		{"shown up, silent: why leads with untrue", up, hf(0, 0), bob, claim, VerdictSilent, "untrue: shown up/2, no delivery was due and nothing came back in the window"},
@@ -53,6 +55,44 @@ func TestDecideVerdictPure(t *testing.T) {
 			vf := DecideVerdict(c.df, c.hf, c.bf, wk, c.shown, window)
 			assert.Equal(t, c.verdict, vf.Verdict)
 			assert.Equal(t, c.why, vf.Why)
+		})
+	}
+}
+
+func TestCheckFriendDaemonFreshnessMatchesStatusBoundary(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 10, 8, 23, 0, 0, 0, time.UTC)
+	for _, row := range []struct {
+		name     string
+		age      time.Duration
+		status   string
+		presence string
+		verdict  string
+	}{
+		{"before boundary", DaemonStale - time.Nanosecond, "ok", PresenceUp, VerdictOK},
+		{"at boundary", DaemonStale, "stale", PresenceDown, VerdictDown},
+		{"after boundary", DaemonStale + time.Nanosecond, "stale", PresenceDown, VerdictDown},
+		{"old status with recent session presence", time.Minute, "stale", PresenceDown, VerdictDown},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+			st := Status{Friend: "bob", At: now.Add(-row.age)}
+			pr := PresenceStatus{Friend: "bob", Presence: PresenceUp, LastHeard: now.Add(-time.Second)}
+			fc := CheckFriend(context.Background(), "bob", CheckSeams{
+				Now:          func() time.Time { return now },
+				Launchctl:    func(context.Context, ...string) (string, error) { return "123 0 com.nova.friend-bob", nil },
+				ReadStatus:   func(string) (Status, bool, error) { return st, true, nil },
+				ReadPresence: func(string) (PresenceStatus, bool, error) { return pr, true, nil },
+				ReadPong:     func(string) (Pong, bool, error) { return Pong{At: now.Add(-time.Second)}, true, nil },
+				HarnessDir:   func(string) (string, string, error) { return "opencode", "", nil },
+			}, time.Hour, &ShownEntry{State: PresenceUp, Working: 2})
+			assert.Equal(t, row.status, fc.Daemon.Status)
+			assert.Equal(t, row.presence, fc.Daemon.Presence)
+			assert.Equal(t, "1s", fc.Daemon.SeenAge, "recent session evidence is still shown")
+			assert.Equal(t, row.verdict, fc.Verdict.Verdict)
+			if row.status == "stale" {
+				assert.Contains(t, fc.Verdict.Why, "untrue: shown up/2, stale daemon status")
+			}
 		})
 	}
 }

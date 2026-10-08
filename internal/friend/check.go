@@ -297,6 +297,8 @@ func factsVerdict(df DaemonFacts, hf HarnessFacts, bf BusFacts, wf WorkFacts, wi
 		return VerdictBroken, fmt.Sprintf("every delivery in the window failed (%d of %d)", hf.Failed, hf.Delivered)
 	case hf.Delivered > hf.Failed && !cameBack:
 		return VerdictDeaf, "deliveries succeed but no session pong or real message came back in the window"
+	case df.Status == "stale":
+		return VerdictDown, "stale daemon status"
 	case hf.Delivered == 0 && hf.Deferred == 0 && wf.Inbox == 0 && !cameBack && df.Presence != PresenceDown:
 		return VerdictSilent, "no delivery was due and nothing came back in the window"
 	case df.Presence == PresenceDown || df.Agent == "none" || (df.Agent == "not-loaded" && df.Status == "none"):
@@ -365,7 +367,7 @@ func CheckFriend(ctx context.Context, friendName string, seams CheckSeams, since
 
 	st, stFound, _ := seams.ReadStatus(friendName)
 	if stFound {
-		if now.Sub(st.At) <= DaemonStale {
+		if now.Sub(st.At) < DaemonStale {
 			df.Status = "ok"
 		} else {
 			df.Status = "stale"
@@ -395,7 +397,7 @@ func CheckFriend(ctx context.Context, friendName string, seams CheckSeams, since
 
 	pr, prFound, _ := seams.ReadPresence(friendName)
 	if prFound {
-		if pr.Presence == PresenceUp {
+		if pr.Presence == PresenceUp && df.Status == "ok" {
 			df.Presence = PresenceUp
 			if !pr.LastHeard.IsZero() {
 				df.SeenAge = AgeString(now.Sub(pr.LastHeard))
