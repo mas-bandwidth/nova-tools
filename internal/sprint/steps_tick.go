@@ -1657,6 +1657,16 @@ func WorkDeadline(s *Snapshot, c *Card) (field string, limit time.Duration, word
 	case c.Col == Working:
 		return first("first_taken", "taken"), unfinishedLimit(c), "not finished", own
 	case c.F("untaken_since") != "":
+		if IsFriendRow(c.Row) && c.F("dealt") > c.F("untaken_since") {
+			// a friend's card dealt again after a take-back is measured from her own deal, as
+			// the start bound measures it (friendUnstartedLevel): the take-back stamps
+			// untaken_since and the deal to the next friend keeps it (friendRedealUnit,
+			// nextGen), and measured from it the next friend's card was late the second she
+			// got it, so rule friend-take took it back from her too and the card bounced
+			// between friends (2026-10-08: one card, seven generations in thirty minutes,
+			// started by no one). A machine's queue keeps the clock of the take before.
+			return "dealt", s.DealtMax(), WordNeverTaken, own
+		}
 		return "untaken_since", s.DealtMax(), WordNeverTaken, own
 	case c.F("first_taken") != "":
 		return "first_taken", unfinishedLimit(c), "not finished", own
