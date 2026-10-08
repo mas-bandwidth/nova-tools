@@ -8,9 +8,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/mas-bandwidth/nova-tools/internal/tool"
 	"io"
 	"os"
+
+	"github.com/mas-bandwidth/nova-tools/internal/tool"
 )
 
 // wakeCursor is caller-owned read progress, not a receipt (SPEC-BUS, wait;
@@ -57,6 +58,11 @@ func parseWakeCursor(token string) (wakeCursor, error) {
 // wakeFile refuses pipes before open, and binds the handle to the path across
 // opening. A disappeared previously bound file is a visible rotation failure.
 func wakeFile(path string, c wakeCursor) (*os.File, os.FileInfo, error) {
+	return wakeFileWithOpen(path, c, openSafeWake)
+}
+
+// wakeFileWithOpen exposes the stat/open race to a deterministic test.
+func wakeFileWithOpen(path string, c wakeCursor, open func(string) (*os.File, error)) (*os.File, os.FileInfo, error) {
 	fi, err := os.Stat(path)
 	if errors.Is(err, os.ErrNotExist) && c.Identity == "" {
 		return nil, nil, nil
@@ -67,11 +73,14 @@ func wakeFile(path string, c wakeCursor) (*os.File, os.FileInfo, error) {
 	if !fi.Mode().IsRegular() {
 		return nil, nil, fmt.Errorf("wake file wants a seekable regular file, not mode %s", fi.Mode())
 	}
-	f, err := os.Open(path)
+	f, err := open(path)
 	if err != nil {
 		return nil, nil, err
 	}
 	opened, err := f.Stat()
+	if err == nil && !opened.Mode().IsRegular() {
+		err = fmt.Errorf("wake file wants a seekable regular file after open, not mode %s", opened.Mode())
+	}
 	if err == nil && !os.SameFile(fi, opened) {
 		err = fmt.Errorf("wake file replaced while opening")
 	}
@@ -86,9 +95,9 @@ func wakeFile(path string, c wakeCursor) (*os.File, os.FileInfo, error) {
 		err = fmt.Errorf("wake file truncated below saved byte offset %d", c.Offset)
 	}
 	if err != nil {
-		_ = f.Close()
+		_ = f.Close() // ignored: read-only handle, the validation error is the result
 		return nil, nil, err
-	} // ignored: read-only handle, the validation error is the result
+	}
 	return f, opened, nil
 }
 
