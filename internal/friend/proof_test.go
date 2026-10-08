@@ -366,6 +366,8 @@ func TestAStalledFinishDoesNotHoldTheNativeBeat(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				r := newProofRig(t, false)
 				r.d.StepBeatForTests = false
+				watch := WatchHarness(r.d, Stub{Harness: "fake"}) // production wrapper used by the CLI: advisory status must not race the loop
+				watch.Now = r.clock                               // observe the rig's clock without advancing a step
 				r.h.set(answers)
 				row := &twinRow{}
 				r.d.Held = row.held

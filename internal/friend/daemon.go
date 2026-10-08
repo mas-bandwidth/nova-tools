@@ -98,6 +98,7 @@ type Daemon struct {
 	Deliver              Deliverer
 	Beat                 func(ctx context.Context, active time.Time) error // one beat to the sprint server, carrying the session's last activity (zero: none known)
 	StepBeatForTests     bool                                              // deterministic fake-clock seam; production has one independent beat caller
+	HarnessStatus        func() (seen, rule string)                        // the beat worker's advisory harness observation; only the loop writes Status
 	// Activity is the newest write of the session's files and Cards the ids of
 	// the cards she holds, oldest first (nil: the queue file's queued and working
 	// tasks under Dir). Activity is read by the independent beat cadence at
@@ -759,6 +760,9 @@ func (d *Daemon) Run(ctx context.Context) error {
 			}
 		} else {
 			d.active, d.status.LastBeat, d.status.Beats, d.status.BeatError = beats.snapshot()
+		}
+		if d.HarnessStatus != nil {
+			d.status.HarnessSeen, d.status.HarnessAlive = d.HarnessStatus()
 		}
 		if d.Activity != nil && l.mode == ModeBatch && !l.broken && l.busy == nil && proven {
 			if d.walked.IsZero() || now.Sub(d.walked) >= IdleWalkEvery {
