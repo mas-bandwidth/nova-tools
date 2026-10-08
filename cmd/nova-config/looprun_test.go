@@ -186,9 +186,6 @@ func TestLoopRunSignalHelper(t *testing.T) {
 	if !slices.Contains(os.Args, loopSignalHelperArg) {
 		t.Skip("the helper process only")
 	}
-	if runtime.GOOS == "windows" {
-		t.Skip("windows has no signals")
-	}
 	p, err := os.FindProcess(os.Getpid())
 	require.NoError(t, err)
 	require.NoError(t, p.Signal(syscall.SIGTERM))
@@ -199,9 +196,6 @@ func TestLoopRunSignalHelper(t *testing.T) {
 // nova-loop wrapper's exec left it.
 func TestLoopRunsRealRunnerReportsASignalDeathAsItsStatus(t *testing.T) {
 	t.Parallel()
-	if runtime.GOOS == "windows" {
-		t.Skip("windows has no signals")
-	}
 	self, err := os.Executable()
 	require.NoError(t, err)
 	var out, errb bytes.Buffer
@@ -216,9 +210,6 @@ func TestLoopRunsRealRunnerReportsASignalDeathAsItsStatus(t *testing.T) {
 // the command to its own end.
 func TestLoopCommandsOutliveTheSkeletonsInterruptCancellation(t *testing.T) {
 	t.Parallel()
-	if runtime.GOOS == "windows" {
-		t.Skip("windows has no signals")
-	}
 	self, err := os.Executable()
 	require.NoError(t, err)
 	ctx, cancel := context.WithCancel(context.Background())
