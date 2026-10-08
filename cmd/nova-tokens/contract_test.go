@@ -544,7 +544,7 @@ func TestMessagesWithNoIDReachTheRemedyLine(t *testing.T) {
 	wantNotContains(t, note, "nothing was wrong")
 }
 
-// TestSumPrintsADashWhereNoRowReportedTheType: help says a dash is "NEVER 0 ... a zero
+// TestSumPrintsADashWhereNoRowReportedTheType: `help rules` says a dash is "NEVER 0 ... a zero
 // meaning 'not measured' would sum into a month claiming to be complete", and SUM PAIR
 // printed reasoning=0 for a month whose every row had a dash there.
 func TestSumPrintsADashWhereNoRowReportedTheType(t *testing.T) {

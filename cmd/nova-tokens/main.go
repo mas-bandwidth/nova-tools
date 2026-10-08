@@ -58,15 +58,19 @@ no store). The one difference: a dry fold or session takes no fold.lock, so it n
 refuses on a fold holding one. --opencode under --dry-run (and under sources) still reads a
 copy of the database, made in a new directory of the run's own under --scratch
 (.nova-tokens-dry-run-*) and removed before it exits: --scratch is left as it was. ` + "`<verb> -h`" + ` lists a verb's flags and states its effect.`,
+		// ExitTable is the codes only. internal/tool prints it under `exit codes:`
+		// on every verb's -h, so the design prose is the rules topic and the
+		// setup block is Setup (STANDARD §2).
 		ExitTable: `0 the verb ran and passed; 1 the verb ran and said FAILED -- an unreadable
 source, an unparsed bus line or note, a row of two day bases, a lane-day with competing
 reports, a day that would shrink, a fold whose every message had no id and so folded nothing,
 a check finding (an --out holding no day file is one), a report with nothing to show; 2 could
 not run: a missing flag, a bad flag value, a duplicate label, two sources of one
 provider sharing message ids, sqlite3 absent when
---opencode is given, a second fold holding the lock.
-
-EXIT 1 STILL WRITES. A fold with one unreadable file writes every day it could compute
+--opencode is given, a second fold holding the lock.`,
+		Topics: []tool.Topic{{
+			Name: "rules",
+			Text: `EXIT 1 STILL WRITES. A fold with one unreadable file writes every day it could compute
 and exits 1: the exit code is about the claim -- a declared source is a claim that the
 report covers it -- and written=true on the TOKENS DAY line is about the files.
 
@@ -142,9 +146,9 @@ either: an --out with no day file in it is CHECK FAILED, never a green over noth
 sources --unattributed prints the path stems that were SEEN and matched no rule, heaviest
 first, capped by --max, with the mentions each stem got (one per message that touched a path
 in it). That listing is what other=<pct>% on a day line is made of, and it is the evidence
-for improving the --repos file.
-
-setup:
+for improving the --repos file.`,
+		}},
+		Setup: `setup:
   mkdir -p ./transcripts ./out
   printf '%s' '{"type":"assistant","timestamp":"2026-09-11T09:12:' > ./transcripts/window.jsonl
   printf '%s' '00Z","message":{"id":"example-1","model":"claude-' >> ./transcripts/window.jsonl

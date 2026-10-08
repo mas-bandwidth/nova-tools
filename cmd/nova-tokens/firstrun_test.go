@@ -114,7 +114,7 @@ func TestEveryRefusalSaysWhatTheInputWantsAndOneRunNamesEveryProblem(t *testing.
 	// An unknown verb, and a bare invocation, name the verbs there are and the door.
 	r = invoke(t, "collate")
 	wantExit(t, r, 2)
-	assert.Equal(t, `TOKENS REFUSED: unknown verb "collate"; the verbs are fold, report, ledger, sum, check, sources, profiles, session, version; run: nova-tokens help`+"\n", r.stderr)
+	assert.Equal(t, `TOKENS REFUSED: unknown verb "collate"; the verbs are fold, report, ledger, sum, check, sources, profiles, session, version, and the help topics are rules; run: nova-tokens help`+"\n", r.stderr)
 	r = invoke(t)
 	wantExit(t, r, 2)
 	assert.Equal(t, "TOKENS REFUSED: no verb given; the verbs are fold, report, ledger, sum, check, sources, profiles, session, version; run: nova-tokens help\n", r.stderr)
