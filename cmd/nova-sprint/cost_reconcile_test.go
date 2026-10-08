@@ -72,3 +72,25 @@ func TestCostReconcileSetsEachProvidersDayBesideTheRecords(t *testing.T) {
 	bare.ok("init --readers reader-a --members m1")
 	assert.Equal(t, "COST RECONCILE OK providers=0 notes=0: the routes name no provider (nova-sprint routes)\n", bare.ok("cost reconcile"))
 }
+
+func TestCostReconcileMissingKeyNamesTheExactSecretsCommand(t *testing.T) {
+	t.Parallel()
+	for _, suffix := range []string{"", " --dry-run", " --json"} {
+		t.Run(suffix, func(t *testing.T) {
+			t.Parallel()
+			ta, fake, _ := balanceApp(t, sprint.Route{Name: "route-a", Provider: "openrouter", Model: "vendor/m"})
+			base := ta.a.getenv
+			ta.a.getenv = func(k string) string {
+				if k == "OPENROUTER_API_KEY" {
+					return ""
+				}
+				return base(k)
+			}
+			code, out, errOut := ta.do("cost reconcile" + suffix)
+			assert.Equal(t, 2, code)
+			assert.Empty(t, out)
+			assert.Contains(t, errOut, "nova-secrets exec --only OPENROUTER_API_KEY -- nova-sprint cost reconcile")
+			assert.Empty(t, fake.keys, "no provider request is sent with an absent key")
+		})
+	}
+}

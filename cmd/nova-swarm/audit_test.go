@@ -109,6 +109,15 @@ var swarmAudit = audit.Config{
 		"l.Line",
 	},
 	Imports: []string{
+		// The terminal generation recovery chooses a model with cmp.Or (no writer).
+		`"cmp"`,
+		// The fixed provider GET uses net/http's injected client and a bounded response
+		// body. It never writes this binary's stdout/stderr; failures return generic
+		// errors, not provider bodies or credentials. The result is typed usage data.
+		`"net/http"`,
+		// readregular bounds reads of this launch's durable prompt/capture and returns
+		// bytes or an error; it holds no output writer and prints nothing.
+		`"github.com/mas-bandwidth/nova-tools/internal/readregular"`,
 		// the verb-help seam (the CLI style's rule (b), #4505): on -h it prints only flag names,
 		// their usage literals and lines of this package's own usage const, to the stdout run
 		// hands it; it never prints an argument, so nothing it writes can carry a newline in.
