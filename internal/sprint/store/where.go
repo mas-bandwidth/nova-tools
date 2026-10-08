@@ -124,7 +124,7 @@ func (st *Store) keepWhere(ctx context.Context, m Machine) error {
 	if r, ok := readWhere(vals[0], oks[0]); ok && r.Epoch == st.epoch && r.Rev == shapes[0].Revision && r.FleetRev == shapes[1].Revision {
 		return nil
 	}
-	stats := st.statsRecordOf(vals[1], oks[1]) // permissive: an unreadable one is no tidy
+	_ = st.statsRecordOf(vals[1], oks[1]) // ignored: the permissive read records an unreadable stats note; this headline uses the snapshot
 	tw := st.twin()
 	if !tw.mu.TryLock() {
 		return nil
@@ -138,23 +138,6 @@ func (st *Store) keepWhere(ctx context.Context, m Machine) error {
 		return err
 	}
 	r := whereOf(snap, m, st.now())
-	// per landed since the last tidy of the streams (stats tidy, sprint.PerLandedSince)
-	var bases map[string]sprint.StreamBase
-	if stats.Epoch == st.epoch {
-		bases = stats.Streams
-	}
-	for stream, b := range bases {
-		tc, ok := r.Streams[stream]
-		if !ok {
-			continue
-		}
-		cost := ""
-		if ctl := snap.StreamCtl(stream); ctl != nil {
-			cost = ctl.F(sprint.FieldCost)
-		}
-		tc.PerLanded = sprint.PerLandedSince(cost, snap.Work.Count(stream, sprint.Landed), b)
-		r.Streams[stream] = tc
-	}
 	b, err := json.Marshal(r)
 	if err != nil {
 		return err

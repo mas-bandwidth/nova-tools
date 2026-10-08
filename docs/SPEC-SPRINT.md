@@ -101,13 +101,11 @@ the snapshot still holds, so the spend is once. The day's read line names a
 route's reads that were charged no dollar (`(N unpriced)`), so that route's
 dollars are not read as every read's; a subscription route stays `tokens`. All
 of it is counted by the tick from the sprint it reads anyway and kept in the
-where record (store.WhereRecord), never read card by card at `where`. After a
-`stats tidy --streams`, the next tick replaces that record's `per_landed` alone
-with `sprint.PerLandedSince` (Statistics, below): the landed cost since the tidy
-over every card landed since, priced and unpriced together, so that one
-published cell can still read cheaper when a landing since the tidy is
-unpriced. The other headlines on the record are not replaced. `view
-coordinator` reads `sprint.SprintTierCosts` itself, not that replaced cell.
+where record (store.WhereRecord), never read card by card at `where`. A
+`stats tidy --streams` changes the work table's cost cell, but the tick keeps
+the record's `per_landed` over the epoch's landed cards priced whole. Its
+`landed` and `landed_priced` denominators therefore still describe that
+published figure. `view coordinator` reads `sprint.SprintTierCosts` itself.
 Before the first tick of an epoch `tiers` and `cost_by_tier` are absent and
 `per_landed` is from the cells (`TestTheWhereRecordCountsTiersAndCostsByTier`,
 `TestWhereCarriesTiersAndPerLandedCost`,
@@ -6203,10 +6201,9 @@ internal/sprint/stats_tidy.go):
 - `--streams` takes each stream's landed cost and landed count as its base
   (`sprint.StreamBases`): the work table's `cost` cell is the control card's cost less
   the base's (`sprint.StreamCostSince`, `-` when nothing priced landed since; the control
-  card keeps the epoch's figure) and `per landed` is that over the cards landed since
-  (`sprint.PerLandedSince`, counted by the next tick's where record, priced and unpriced
-  landings together, so that published cell can still be depressed by an unpriced landing;
-  `view coordinator` does not read it).
+  card keeps the epoch's figure). The tick's `per landed` headline keeps its
+  epoch scope and priced-card denominator; it is not divided by the tidy's
+  all-landings count.
 - `--all` is the four. `stats` counts from the last tidy of any kind.
 
 The archive record, `stats:archive:<RFC3339Nano>-<nonce>` (the tidy's time to the
