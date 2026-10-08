@@ -47,7 +47,7 @@ Where each field of this cut sits:
 | --- | --- |
 | machine (varies per machine) | `user`, `seat`, `slots`, `runners`, `width`, `tla`, `note` |
 | fleet (one value for the whole fleet) | `store`, `coordinator` (both machines), `redis_port`, `pg_dsn` |
-| friend (decided for her) | `slots`, `tiers`, `roles`, `width`, `mode`, `config_dir`, `token_cap` |
+| friend (decided for her) | `slots`, `tiers`, `roles`, `width`, `mode`, `config_dir`, `token_cap`, `streams`, `kinds` |
 | sprint (one value for the whole sprint) | `coordinator` (a friend), `decide_bounce`, `decide_review`, `decide_score_bar`, `decide_attempt_no_result`, `decide_attempt_nothing_to_do`, `decide_grade`, `decide_gate_flaky`, `decide_gate_preexisting`, `decide_judgment_bar`, `decide_brief_bar`, `answer_rules_off` |
 | loop (decided per supervised process) | `machine`, `argv`, `seat`, `keys`, `every`, `keepalive`, `width`, `enabled` |
 | route (decided per way to run a tier) | `tier`, `provider`, `model`, `harness`, `tokens`, `deadline`, `enabled`, and the price sheet: `price_input`, `price_cache_read`, `price_cache_write`, `price_output`, `reasoning_as_output`, `long_context`, `price_input_long`, `price_output_long`, `price_request`, `billing`, `gateway_percent`, `price_source`, `price_as_of`, `note` |
@@ -226,6 +226,15 @@ configuration. Who coordinates is not her field either: it is the sprint's.
 | `mode` | enum: batch, one-shot; default batch | | nova-sprint friend sync, onto her friends row; her beat answers it (`row_mode=`), and nova-friend run delivers by it: batch, every waiting message as one turn, or one-shot, `width` lanes each its own session, one card a turn (docs/SPEC-FRIEND.md, one-shot lanes). Migration 0030 gives every row before it batch | `friend:<f>:desired` mode |
 | `config_dir` | text, an absolute path; unset (NULL) by default, and `--config_dir ''` clears it | | nova-friend run, for a claude friend in one-shot mode: the directory each lane runs `claude -p` with as `CLAUDE_CONFIG_DIR`, her account's login and settings (docs/SPEC-FRIEND.md, one-shot lanes); her beat answers it as `row_config_dir=`. A claude row in one-shot mode without one runs no lane: nova-friend refuses it on the record with the remedy (the row names no harness, so the refusal is the daemon's). Migration 0034 adds the column; every row before it has none | `friend:<f>:desired` config_dir |
 | `token_cap` | int, at least 0, default 6000000 | | nova-sprint friend sync, onto her friends row; her beat answers it as `row_token_cap=`, and a one-shot lane holds a card when the card's tokens (input, cached input, output and reasoning) reach it (docs/SPEC-FRIEND.md, friend-token-cap-bb.w2). 0 is no cap. Migration 0035 adds the column; every row before it is 6000000 | `friend:<f>:desired` token_cap |
+| `streams` | text, comma-separated glob patterns; empty by default | | nova-sprint friend sync, onto her friends row: the deal hands her only a card whose stream matches one of these patterns, and `add` and `brief` refuse a card naming her whose stream matches none; an empty list is any stream. Migration 0036 adds the column; every row before it is empty | `friend:<f>:desired` streams |
+| `kinds` | list of card KIND values; empty by default | | nova-sprint friend sync, onto her friends row: the deal hands her only a card whose `KIND:` is one of these, and `add` and `brief` refuse a card naming her whose `KIND:` is none of them; an empty list is any kind. Migration 0036 adds the column; every row before it is empty | `friend:<f>:desired` kinds |
+
+A friend row may restrict the work the sprint deals her: `streams` is a
+comma-separated list of glob patterns over stream names, and `kinds` is a
+comma-separated list of card `KIND:` values. Each empty list is no restriction,
+today's behavior; `nova-sprint friend sync` carries both into her friends
+record, `add` and `brief` refuse a named friend card outside her restriction
+with the restriction named, and the tick's deal hands her none.
 
 **`sprint`** (`config.sprint`, singleton): the one row of sprint-global
 facts.
@@ -280,6 +289,25 @@ fleet row that carries none, naming `nova-config fleet set --loops_dir <path>`.
 A machine a loop names cannot be removed
 (`machine m1 is the --machine of loop member-m1`); `machine show <m>` names
 the machine's loops (`loops=<a,b>`, `-` for none).
+
+**`loop run`**: `nova-config loop run <name> [--run-dir <dir>] [--metrics <dir>] [-- <command> ...]`
+is a loop's single-instance wrapper, the Go verb in place of the bash `nova-loop` a coordinator's
+own `fleet/loops.yml` installed (docs/COORDINATOR-TOOLS.md). It takes `<run-dir>/<name>.lock`
+(default `~/nova-bench/run`) with internal/filelock, the kernel's lock (tla/FileLock.tla): a second
+copy is refused with exit 3 and runs nothing, and a lock whose holder died is free, since the kernel
+released it. Under the lock it counts the start in `<run-dir>/<name>.starts` and, with `--metrics`,
+writes `nova_loop_<name>.prom` there (`nova_loop_starts_total` and `nova_loop_last_start_seconds`,
+each labelled `loop="<name>"`) for node_exporter's textfile collector. Then it runs the command,
+passes SIGINT and SIGTERM on to it, holds the lock until it ends, and exits with the command's exit
+code, or `128+N` when a signal ended it. The lock lives in this process, so the command's life is
+tied to it: on linux a wrapper killed outright ends the command with it (the kernel's
+parent-death signal, `Pdeathsig`), and the restarted unit's second copy never runs beside a
+command the first still owns. The command is what follows `--` (the unit's own, with its
+`nova-secrets exec` prefix; no store is opened), else the row's `argv` read from the store: a
+disabled row, a row with `keys` (its secrets open through the prefix the plays add, which the row
+does not carry) and a row with no command are
+refused with exit 1, a name with no row too. The pieces are `config.LoopRunArgv`,
+`config.NextLoopStarts` and `config.LoopMetrics` (internal/config/looprun.go).
 
 **`route`** (`config.routes`): one way to run a model tier, the provider
 and model a card of that tier runs on, its token and dollar budgets and deadline. A

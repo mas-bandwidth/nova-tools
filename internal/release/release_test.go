@@ -304,7 +304,7 @@ func greenRuns() []CheckRun {
 
 func cutDeps(t *testing.T, f Forge) Deps {
 	t.Helper()
-	return Deps{Forge: f, Now: func() time.Time { return at(t) }}
+	return Deps{Forge: f, Now: func() time.Time { return at(t) }, Spend: noSpend()}
 }
 
 // ---------------------------------------------------------------------------

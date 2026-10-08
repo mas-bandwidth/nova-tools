@@ -351,6 +351,8 @@ type sourceFlags struct {
 	scratch  string
 	timeout  int
 	repos    string
+	maxFiles int
+	exclude  stringList
 }
 
 func (s *sourceFlags) declare(fs *flag.FlagSet, withSwarmAndBus bool) {
@@ -364,6 +366,8 @@ func (s *sourceFlags) declare(fs *flag.FlagSet, withSwarmAndBus bool) {
 	}
 	fs.StringVar(&s.scratch, "scratch", "", "directory the OpenCode database is copied into: opencode-<label>/ in it, replaced and left by a run that writes; a new directory removed before exit by a dry run or sources")
 	fs.StringVar(&s.repos, "repos", "", "tab-separated repo names and path regular expressions")
+	fs.IntVar(&s.maxFiles, "max-files", tokens.DefaultMaxClaudeFiles, "ceiling on the transcript files one --claude tree holds (default 20000); the whole tree is walked and counted before any file is opened, and a tree over the ceiling is refused naming the files and bytes it found; 0 is no ceiling")
+	fs.Var(&s.exclude, "exclude", "path or glob kept out of a recursive source tree (--claude), repeatable (nothing is excluded by default)")
 	fs.IntVar(&s.timeout, "timeout", int(tokens.DefaultTimeout/time.Second), "seconds to wait for the OpenCode sqlite3 reader")
 }
 
@@ -408,38 +412,20 @@ func (s *sourceFlags) check(r *refusals) {
 			}
 			switch l.kind {
 			case "claude":
-				if fi, err := os.Stat(it.value); err != nil || !fi.IsDir() {
-					if err != nil && os.IsNotExist(err) {
-						r.add("--claude " + it.label + "=" + it.value + " does not exist; it wants the directory the transcripts live under")
-					} else if err != nil {
-						r.add("--claude " + it.label + "=" + it.value + ": " + err.Error() + "; it wants the directory the transcripts live under")
-					} else {
-						r.add("--claude " + it.label + "=" + it.value + " is not a directory; it wants the directory the transcripts live under")
-					}
+				if why := notADir("claude "+it.label+"="+it.value, it.value, "the directory the transcripts live under"); why != "" {
+					r.add(why)
 				}
 			case "swarm":
-				if fi, err := os.Stat(it.value); err != nil || !fi.IsDir() {
-					if err != nil && os.IsNotExist(err) {
-						r.add("--swarm " + it.label + "=" + it.value + " does not exist; it wants the swarm pool directory")
-					} else if err != nil {
-						r.add("--swarm " + it.label + "=" + it.value + ": " + err.Error() + "; it wants the swarm pool directory")
-					} else {
-						r.add("--swarm " + it.label + "=" + it.value + " is not a directory; it wants the swarm pool directory")
-					}
+				if why := notADir("swarm "+it.label+"="+it.value, it.value, "the swarm pool directory"); why != "" {
+					r.add(why)
 				}
 			}
 		}
 	}
 	if s.bus != "" {
 		any = true
-		if fi, err := os.Stat(s.bus); err != nil || !fi.IsDir() {
-			if err != nil && os.IsNotExist(err) {
-				r.add("--bus does not exist: " + s.bus + "; it wants the bus directory")
-			} else if err != nil {
-				r.add("--bus " + s.bus + ": " + err.Error() + "; it wants the bus directory")
-			} else {
-				r.add("--bus is not a directory: " + s.bus + "; it wants the bus directory")
-			}
+		if why := notADir("bus", s.bus, "the bus directory"); why != "" {
+			r.add(why)
 		}
 	}
 	if !any {
@@ -448,14 +434,8 @@ func (s *sourceFlags) check(r *refusals) {
 	if len(s.opencode.items) > 0 {
 		if strings.TrimSpace(s.scratch) == "" {
 			r.required("scratch", "", wantsScratch)
-		} else if fi, err := os.Stat(s.scratch); err != nil || !fi.IsDir() {
-			if err != nil && os.IsNotExist(err) {
-				r.add("--scratch does not exist: " + s.scratch + "; it wants " + wantsScratch)
-			} else if err != nil {
-				r.add("--scratch " + s.scratch + ": " + err.Error() + "; it wants " + wantsScratch)
-			} else {
-				r.add("--scratch is not a directory: " + s.scratch + "; it wants " + wantsScratch)
-			}
+		} else if why := notADir("scratch", s.scratch, wantsScratch); why != "" {
+			r.add(why)
 		}
 		if err := tokens.HaveSQLite(); err != nil {
 			r.add(err.Error())
@@ -481,7 +461,8 @@ func (s *sourceFlags) check(r *refusals) {
 // is named in the returned notes.
 func (s *sourceFlags) read(rules *tokens.Rules, now time.Time, private bool) (out []*tokens.Source, notes []string) {
 	for _, it := range s.claude.items {
-		out = append(out, tokens.ReadClaude(it.label, it.value, os.DirFS(it.value), rules))
+		out = append(out, tokens.ReadClaude(it.label, it.value, os.DirFS(it.value), rules,
+			tokens.ClaudeBound{MaxFiles: s.maxFiles, Exclude: []string(s.exclude)}))
 	}
 	scratch := s.scratch
 	if private && len(s.opencode.items) > 0 {
@@ -591,25 +572,69 @@ func checkDay(r *refusals, day string, all bool) {
 	}
 }
 
+// notADir is the refusal for a flag whose value must be a directory that is there, or "".
+// A label source types its path into the flag itself (--claude <label>=<path>, and so
+// --swarm), so that path is already in flag and is not named twice; every other flag names
+// the directory after the flag name (--bus <path>). The three sentences are "does not
+// exist", the stat error, and "is not a directory".
+func notADir(flag, path, wants string) string {
+	fi, err := os.Stat(path)
+	// A label source is the one flag shaped <label>=<path>: its path is already typed.
+	named := strings.Contains(flag, "=")
+	pathAt, pathMid := ": "+path, " "+path
+	if named {
+		pathAt, pathMid = "", ""
+	}
+	switch {
+	case err != nil && os.IsNotExist(err):
+		return "--" + flag + " does not exist" + pathAt + "; it wants " + wants
+	case err != nil:
+		return "--" + flag + pathMid + ": " + err.Error() + "; it wants " + wants
+	case !fi.IsDir():
+		return "--" + flag + " is not a directory" + pathAt + "; it wants " + wants
+	}
+	return ""
+}
+
+// foldFindings is everything the one remedy line reads: the counts, the flags, the output
+// directory and the first label each branch names, so the call names its fields instead of
+// passing fourteen positional arguments.
+type foldFindings struct {
+	sources      []*tokens.Source
+	unreadable   int
+	unparsed     int
+	mixed        int
+	conflict     int
+	shrank       int
+	partial      int
+	quiet        int
+	allowShrink  bool
+	dryRun       bool
+	out          string
+	mixedLabels  string
+	firstPartial string
+	firstQuiet   string
+}
+
 // remedy is the ONE line TOKENS NOTE carries. It names the label and the act, in the order
 // a reader would act on them, and when nothing was wrong it names the gate. SPEC-TOKENS:
 // "TOKENS NOTE is exactly one remedy line." dryRun is the plan the run would take, so a
 // day --allow-shrink would write is reported as it would be, never as it was.
-func remedy(sources []*tokens.Source, unreadable, unparsed, mixed, conflict, shrank, partial, quiet int, allowShrink, dryRun bool, out, mixedLabels, firstPartial, firstQuiet string) string {
+func remedy(f foldFindings) string {
 	switch {
-	case unreadable > 0:
+	case f.unreadable > 0:
 		// A line that is not JSON is not a permission problem: its remedy is the one act
 		// that clears it, naming the file and the first bad line. Every other unreadable
 		// (a file that would not open, a day file this run could not write) keeps the
 		// permission remedy SPEC-TOKENS gives.
-		if u, ok := firstBadline(sources); ok {
+		if u, ok := firstBadline(f.sources); ok {
 			return "a declared source has a line that is not JSON (" + u.Label + ", " + u.Path + " line " + strconv.Itoa(u.Line) + "): inspect or remove that line, or drop the flag"
 		}
-		return "a declared source could not be read whole (" + firstUnreadableLabel(sources) + "): open those files to this group, or drop the flag -- a declared source is a claim that the report covers it"
-	case unparsed > 0:
+		return "a declared source could not be read whole (" + firstUnreadableLabel(f.sources) + "): open those files to this group, or drop the flag -- a declared source is a claim that the report covers it"
+	case f.unparsed > 0:
 		// The advice is for the KIND that failed. Every unparsed was a bus line once, and
 		// a swarm usage file refused by its header was told the shape of a bus body line.
-		kind, note, own := firstUnparsed(sources)
+		kind, note, own := firstUnparsed(f.sources)
 		if own != "" {
 			return own
 		}
@@ -622,31 +647,31 @@ func remedy(sources []*tokens.Source, unreadable, unparsed, mixed, conflict, shr
 			return "a message's stamp did not parse (" + note + "): a day comes from the message's own RFC 3339 stamp, and this tool dates nothing by a guess"
 		}
 		return "a bus line or note did not parse (" + note + "): a body line is date<TAB>who<TAB>model<TAB>repo<TAB>type<TAB>count, with an optional day_basis=<zone>"
-	case conflict > 0:
-		return "a lane-day has competing reports (" + firstConflictLabel(sources) + "): one note whose subject carries supersedes=<every tip, sorted> is the replacement snapshot that clears it"
-	case mixed > 0:
+	case f.conflict > 0:
+		return "a lane-day has competing reports (" + firstConflictLabel(f.sources) + "): one note whose subject carries supersedes=<every tip, sorted> is the replacement snapshot that clears it"
+	case f.mixed > 0:
 		// The two labels, because "declare one export for that day" is not an act until
 		// the caller knows which two are competing. Every other branch of this switch
 		// names a label, a note or a lane; this one named nothing.
-		return "a row was fed by two day bases (" + mixedLabels + "): declare one of those two for that day, not both"
-	case partial > 0:
+		return "a row was fed by two day bases (" + f.mixedLabels + "): declare one of those two for that day, not both"
+	case f.partial > 0:
 		// Above the shrank branches: a row this fold cannot compute is not a day going
 		// backwards, and --allow-shrink is not the act that clears it.
-		return "a row of the day file was written by sources this fold did not declare (" + firstPartial + "): declare every source in that file's sources= line, or fold this day into its own --out -- --allow-shrink does not write it"
-	case shrank > 0 && !allowShrink:
+		return "a row of the day file was written by sources this fold did not declare (" + f.firstPartial + "): declare every source in that file's sources= line, or fold this day into its own --out -- --allow-shrink does not write it"
+	case f.shrank > 0 && !f.allowShrink:
 		return "a day would have gone backwards and was left as it was: --allow-shrink writes it anyway, and it is a person's act"
-	case shrank > 0 && dryRun:
-		return "a day would be written smaller at your word (--allow-shrink); nova-tokens check --out " + out + " is the gate"
-	case shrank > 0:
-		return "a day was written smaller at your word (--allow-shrink); nova-tokens check --out " + out + " is the gate"
-	case quiet > 0:
+	case f.shrank > 0 && f.dryRun:
+		return "a day would be written smaller at your word (--allow-shrink); nova-tokens check --out " + f.out + " is the gate"
+	case f.shrank > 0:
+		return "a day was written smaller at your word (--allow-shrink); nova-tokens check --out " + f.out + " is the gate"
+	case f.quiet > 0:
 		// A quiet source is not a failure, and it is not "nothing was wrong" either: the
 		// day file names a source this run declared and read nothing from for that day.
-		return "a declared source fed no message for a day its file names (" + firstQuiet + "): its rows there were recomputed from nothing; if it did spend that day, its files are not under the path you declared"
-	case noidAndDup(sources) != "":
-		return noidAndDup(sources) + "; those messages are NOT in any row"
+		return "a declared source fed no message for a day its file names (" + f.firstQuiet + "): its rows there were recomputed from nothing; if it did spend that day, its files are not under the path you declared"
+	case noidAndDup(f.sources) != "":
+		return noidAndDup(f.sources) + "; those messages are NOT in any row"
 	}
-	return "nothing was wrong; nova-tokens check --out " + out + " is the gate"
+	return "nothing was wrong; nova-tokens check --out " + f.out + " is the gate"
 }
 
 func firstUnreadableLabel(sources []*tokens.Source) string {

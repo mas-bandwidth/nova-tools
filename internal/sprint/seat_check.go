@@ -225,6 +225,8 @@ func (r SeatCheckReport) Summary() string {
 
 // JSON is the report as --json prints it.
 func (r SeatCheckReport) JSON() string {
+	// Measurements are public too; only the folder reveals the proof nonce.
+	r.Measures.Push.Record = PublicPushRecord(r.Measures.Push.Record)
 	if r.Lines == nil {
 		r.Lines = []SeatCheckLine{}
 	}
@@ -548,7 +550,11 @@ func JudgeSeatCheck(m SeatCheckMeasures, now time.Time) SeatCheckReport {
 	if p := m.Push; p.Measured && !failed(SeatCheckPush) {
 		facts := []string{"holder=" + orDash(p.Holder), "harness=" + orDash(p.Record.Harness), "adapter=" + p.Record.AdapterName()}
 		if why := PushWhy(p.Holder, p.Record, p.Recorded, now); why != "" {
-			add(SeatCheckLine{Thing: SeatCheckPush, Facts: append(facts, "why="+quoteSeatCheck(why)), Remedy: PushSetup(p.Holder, p.Record, p.Recorded)})
+			remedy := PushSetup(p.Holder, p.Record, p.Recorded)
+			if p.Recorded && p.Record.Adapter == AdapterFolder {
+				remedy += "; then, " + FolderSteps(p.Record)
+			}
+			add(SeatCheckLine{Thing: SeatCheckPush, Facts: append(facts, "proven=-", "why="+quoteSeatCheck(why)), Remedy: remedy})
 		} else {
 			add(SeatCheckLine{Thing: SeatCheckPush, Up: true, Facts: append(facts, "proven="+formatAge(now.Sub(p.Record.Proven))+" ago")})
 		}

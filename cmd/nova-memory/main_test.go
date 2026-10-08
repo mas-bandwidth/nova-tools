@@ -339,6 +339,28 @@ func TestReceiptsNameTheChannelTheScoreCameFrom(t *testing.T) {
 	assert.Containsf(t, stdout, "score-channel=bm25 probe=unrelated-control", "the calibration line does not name its own channel: %q", stdout)
 }
 
+// A hit whose score prints as 0.00 is the same text an absent score would
+// give, so the receipt list stops at the last hit above zero. A common query
+// word surfaces the one chunk that really carries it through bm25 and, through
+// trigram, the chunks that only share three characters; those trailing
+// receipts print score=0.00 and a reader cannot tell them from no evidence.
+// The budget stays k -- only the receipts above zero print.
+func TestSearchReceiptsStopAtTheLastHitAboveZero(t *testing.T) {
+	t.Parallel()
+
+	exit, stdout, stderr := runCLI(t, "", "search", "--root", corpus, "--channels", "bm25,trigram", "--k", "3", "about")
+	require.Equalf(t, 0, exit, "exit = %d, want 0; stderr: %s", exit, stderr)
+	assert.Containsf(t, stdout, "hits=1 k=3", "the run did not stop at the last hit above zero: %q", stdout)
+	assert.NotContainsf(t, stdout, "score=0.00", "a receipt whose score prints as zero survived: %q", stdout)
+	hits := 0
+	for _, line := range strings.Split(stdout, "\n") {
+		if strings.HasPrefix(line, "SEARCH HIT ") {
+			hits++
+		}
+	}
+	assert.Equalf(t, 1, hits, "want one receipt above zero, got %d: %q", hits, stdout)
+}
+
 // Free text sits after the field boundary so query text cannot forge metadata.
 func TestACallersQueryCannotPoseAsAField(t *testing.T) {
 	t.Parallel()

@@ -8,29 +8,16 @@ import (
 	"time"
 )
 
-// The no-stall rule: every primary
-// that has not landed and is on the table is held by something that will move
-// it or tell the coordinator about it. Exactly what holds it is one of:
-//
-//	(a) an outside actor, before its deadline: a live work card in an up
-//	    member's ready or working cell; a read card asked or reading; its
-//	    merge card queued in a stream that merges;
-//	(b) the next tick: a part of the tick, called on the state, moves it or
-//	    writes a judgment naming it;
-//	(c) an open judgment names it (or its stream, when the stream is stopped
-//	    or it is merging there), or the coordinator acknowledged the tick's
-//	    judgment that names it;
-//	(d) it waits on something that is itself held, followed through the chain
-//	    (a need not landed, a sentinel not released, a place in the ready
-//	    queues); a chain that ends in nothing, or in a cycle, holds nothing;
-//	(e) the machine is STOPPED and the next tick would move it: (b), and what
-//	    is visible is that the sprint is stopped.
-//
-// Anything else is stalled, and so is a judgment past its due time that no
-// tick marks overdue, a stopped stream with no open judgment, and an
-// operation pending past its grace that a tick since has not finished. The
-// tick's check part writes one judgment for each stall ("stalled"), so a stall
-// the design missed raises its own interrupt.
+// The no-stall rule: every primary not landed and on the table is held by
+// something that will move it or tell the coordinator about it. What holds it
+// is one of: (a) an outside actor before its deadline; (b) the next tick; (c)
+// an open judgment or the coordinator's acknowledgement; (d) another wait,
+// followed through the chain (the one wait below); (e) the machine STOPPED,
+// which the next tick would move. Anything else is stalled, and so are a
+// judgment past its due time no tick marks, a stopped stream with no open
+// judgment, and an operation pending past its grace. The tick's check part
+// writes one judgment for each stall ("stalled"), so a stall the design missed
+// raises its own interrupt.
 
 // The holders, as Holder names them.
 const (
@@ -44,6 +31,37 @@ const (
 
 // NStalled is the judgment of a stall: something nothing holds.
 const NStalled = "stalled"
+
+// The one wait (docs/SPEC-ISA.md): a held card waits for release, a sentinel
+// for its line, and the wave behind it for the release through its card operand.
+const (
+	WaitOnCards   = "card"
+	WaitOnLine    = "line"
+	WaitOnRelease = "release"
+)
+
+// CardWait is one card's wait operand and why.
+type CardWait struct {
+	Card    string   `json:"card"`
+	Operand string   `json:"operand"`
+	On      []string `json:"on,omitempty"`
+	Why     string   `json:"why"`
+}
+
+// WaitOf is the one reading of why a card is not moving: release, its line, or
+// the cards it names and its place in line.
+func WaitOf(s *Snapshot, c *Card) CardWait {
+	switch {
+	case c == nil:
+		return CardWait{}
+	case IsHeld(c):
+		return CardWait{Card: c.ID, Operand: WaitOnRelease, On: WaitsFor(s, c, nil), Why: "the coordinator's release, and the cards it names"}
+	case IsSentinel(c):
+		return CardWait{Card: c.ID, Operand: WaitOnLine, On: WaitsFor(s, c, nil), Why: "the line before it, and the coordinator's release"}
+	default:
+		return CardWait{Card: c.ID, Operand: WaitOnCards, On: WaitsFor(s, c, nil), Why: "the cards it names and its place in line"}
+	}
+}
 
 // PendingOp is the operation the sprint's fence holds, as the no-stall rule
 // reads it.
@@ -485,7 +503,7 @@ func (c *held) waits(pr *Card) (why, root string, ok bool) {
 	s := c.s
 	switch pr.Col {
 	case Waiting:
-		w := WaitsFor(s, pr, nil)
+		w := WaitOf(s, pr).On
 		if len(w) == 0 {
 			if IsSentinel(pr) && pr.F("reached") != "" {
 				return "reached, and no judgment is open on it", "", false
@@ -550,7 +568,12 @@ func (c *held) waits(pr *Card) (why, root string, ok bool) {
 			}
 			return "waits for only friend " + name, "", true
 		}
-		up := s.UpMembers()
+		// a quiet member has no free place for it until its quiet ends (fleet_quiet.go)
+		all := s.UpMembers()
+		up := notQuiet(s, all)
+		if quiet := quietWhy(s, all); quiet != "" && len(up) == 0 {
+			return "waits for a member up that is not quiet (" + quiet + "): the deal resumes by itself at that time", "", true
+		}
 		if b := Bench(pr); len(b) > 0 && len(onlyBench(up, b)) == 0 {
 			// a bench card waits for a member of its bench up (bench_deal.go): no placement
 			// deals it to another member, so what holds it is its bench's beat and hold

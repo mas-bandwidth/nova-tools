@@ -80,8 +80,10 @@ func (a *app) cmdDashboard(args []string, stdout, stderr io.Writer) int {
 	srv := a.dashboardServer(c.redis, redis, from, *every, *logo, stdout)
 	ctx, stop := a.notify(context.Background())
 	defer stop()
-	// the sprint is read each --every whoever is looking, each new copy pushed to the
-	// /events clients as it is read, and its freshness checked
+	// one poller: the first read before any listener opens, then one each --every whoever
+	// is looking (back to back when a read takes longer), each new copy pushed to the
+	// /events clients as it is read and its freshness checked; a page reads the copy only
+	srv.Tick()
 	tick := time.NewTicker(*every)
 	defer tick.Stop()
 	runCtx, endRun := context.WithCancel(ctx)
@@ -162,11 +164,9 @@ func (a *app) whereJSON(addr string, given bool) ([]byte, error) {
 	}
 	var out, errb bytes.Buffer
 	if code := a.run(argv, &out, &errb); code != 0 {
-		why := fmt.Sprintf("where exited %d", code)
-		if line, _, _ := strings.Cut(strings.TrimSpace(errb.String()), "\n"); line != "" {
-			why += ": " + line
-		}
-		return nil, errors.New(why)
+		// the page is shown the exit alone; where's own line goes to the log
+		line, _, _ := strings.Cut(strings.TrimSpace(errb.String()), "\n")
+		return nil, &sprintdash.ReadError{Why: fmt.Sprintf("where exited %d", code), Detail: line}
 	}
 	return out.Bytes(), nil
 }

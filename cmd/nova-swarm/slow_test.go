@@ -941,7 +941,7 @@ func TestAPushTheRemoteRejectedIsSentAgain(t *testing.T) {
 	head3 := b3.commit(t, "the work\n")
 	waits = nil
 	g3 := b3.pusher()
-	rec := &recordGit{refusePush: "!\t0123:refs/heads/sprint/c1\t[rejected] (non-fast-forward)"}
+	rec := &recordGitRun{refusePush: "!\t0123:refs/heads/sprint/c1\t[rejected] (non-fast-forward)"}
 	g3.git, g3.sleep = rec.run, func(d time.Duration) { waits = append(waits, d) }
 	got = g3.Push(b3.p, member.Result{Head: head3})
 	assert.Contains(t, got.Refused, "[rejected]")
@@ -4236,7 +4236,7 @@ func TestReviewARefusedFallbackPushDoesNotClaimItWasPushed(t *testing.T) {
 	b := newPushBench(t)
 	head := b.commit(t, "the work\n")
 	g := b.pusher()
-	g.git = (&recordGit{refusePush: "fatal: injected credential failure"}).run
+	g.git = (&recordGitRun{refusePush: "fatal: injected credential failure"}).run
 	var notes strings.Builder
 	g.notes = &notes
 
@@ -4397,7 +4397,7 @@ func TestThePushArgvIsUnforcedAndBehindTheSeparator(t *testing.T) {
 	t.Parallel()
 	b := newPushBench(t)
 	head := b.commit(t, "the work\n")
-	rec := &recordGit{}
+	rec := &recordGitRun{}
 	g := b.pusher()
 	g.git = rec.run
 	require.Equal(t, member.Push{Sha: head}, g.Push(b.p, member.Result{Head: head}))
@@ -4426,7 +4426,7 @@ func TestAGitThatRefusesThePushIsRefused(t *testing.T) {
 	head := b.commit(t, "the work\n")
 	line := "fatal: could not read Username for the origin: terminal prompts disabled"
 	g := b.pusher()
-	g.git = (&recordGit{refusePush: line}).run
+	g.git = (&recordGitRun{refusePush: line}).run
 	assert.Equal(t, member.Push{Refused: line}, g.Push(b.p, member.Result{Head: head}))
 	assert.Empty(t, b.originHas(t, "sprint/c1"))
 }

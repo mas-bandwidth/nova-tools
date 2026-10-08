@@ -7,6 +7,7 @@
   "machine": "machine: running",
   "coordinator": "coordinator",
   "epoch": 15,
+  "priorities": {"high": ["ci-03"]},
   "tables": {
     "work": {"ci": {"cost": "$2.15", "landed": "3", "merging": "1", "ready": "1", "review": "0", "waiting": "9", "working": "2"}},
     "fleet": {

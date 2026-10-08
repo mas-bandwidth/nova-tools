@@ -100,12 +100,12 @@ func (c *Claude) RunCard(ctx context.Context, card Card) (LaneTurn, error) {
 	if err != nil {
 		return LaneTurn{}, fmt.Errorf("the card's brief: %w", err)
 	}
-	args := append([]string{"CLAUDE_CONFIG_DIR=" + c.configDir(), c.program(), "-p", string(brief), "--output-format", "stream-json", "--verbose"}, ClaudeTrim...)
+	args := append([]string{"CLAUDE_CONFIG_DIR=" + c.configDir(), c.program(), "-p", string(brief), "--add-dir", c.Dir, "--output-format", "stream-json", "--verbose"}, ClaudeTrim...)
 	// the run's stream-json usage counted as it prints, and the run stopped at the card's cap (tokencap.go)
 	limit := tokenCap(c.TokenCap)
 	run, watch, stop := watchClaude(ctx, limit, c.cards.prior(card.Outbox))
 	defer stop()
-	out, exit, err := c.Run(run, c.Dir, "env", args, "")
+	out, exit, err := c.Run(run, LaneDirOf(ctx, c.Dir), "env", args, "") // in the card's job directory when its lane names one
 	if c.Out != nil && out != "" {
 		fmt.Fprintln(c.Out, strings.TrimRight(Head(out, OutputKept), "\n"))
 	}
@@ -134,7 +134,7 @@ func (c *Claude) RunCard(ctx context.Context, card Card) (LaneTurn, error) {
 		}
 	}
 	if len(missing) > 0 {
-		return LaneTurn{Exit: exit}, fmt.Errorf("claude -p exited %d and %s holds no %s", exit, card.Outbox, strings.Join(missing, " and no "))
+		return LaneTurn{Exit: exit, FirstError: HarnessFirstError(out)}, NoReport{Run: "claude -p", Exit: exit, Outbox: card.Outbox, Lacks: missing}
 	}
 	return LaneTurn{Exit: exit}, nil
 }

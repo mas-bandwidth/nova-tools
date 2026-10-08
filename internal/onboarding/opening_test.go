@@ -8,10 +8,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// The three readers of a banner's opening (ONBOARDING.md point 6), each with
-// the banner that passes and the banners that must not. The banners are stood
-// by the rig in rig_test.go; the checks that repeat live there too.
-
 func TestOpeningSentenceIsOneSentenceNamingTheTool(t *testing.T) {
 	t.Parallel()
 	r := newRig(t)
@@ -35,8 +31,7 @@ func TestOpeningSentenceIsOneSentenceNamingTheTool(t *testing.T) {
 func TestHowItWorksOpensNearTheTop(t *testing.T) {
 	t.Parallel()
 	r := newRig(t)
-	got := HowItWorksLine(r.banner("nova-foo: does a thing well", "", "how it works: a box is a file.", "first run: init.", "", "usage:"))
-	require.Equal(t, 3, got, "HowItWorksLine = %d, want 3", got)
+	require.Equal(t, 3, HowItWorksLine(r.banner("nova-foo: does a thing well", "", "how it works: a box is a file.", "first run: init.", "", "usage:")))
 	r.foundAt(r.banner("nova-foo: does a thing well", "", "usage:", strings.Repeat("  nova-foo x\n", 14)+"how it works: too late"), 0)
 	r.foundAt(r.banner("nova-foo: does a thing well", "", "How it works is below."), 0)
 }

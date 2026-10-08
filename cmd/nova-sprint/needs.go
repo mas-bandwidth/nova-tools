@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/bench"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
@@ -24,22 +25,24 @@ import (
 // since the verb table registers the verb and needs.go adds its class.
 func init() { verbClasses["needs"] = classRead }
 
-// needLine is one unmet need as needs prints it: the need's id and its state
-// (a column name, dropped for a kept record with outcome dropped, or absent
-// for no record at all).
+// needLine is one unmet need with its own column, distinct from the waiting
+// card's column (docs/SPEC-SPRINT.md section 11). Off-table needs name their
+// outcome, or absent when no record exists.
 type needLine struct {
-	ID    string `json:"id"`
-	State string `json:"state"`
+	ID     string `json:"id"`
+	Column string `json:"column"`
 }
 
 // needsCard is one waiting card in the graph: its stream, its depth, whether
 // it is a root, and its unmet needs.
 type needsCard struct {
 	ID     string     `json:"id"`
+	Column string     `json:"column"`
 	Stream string     `json:"stream"`
 	Depth  int        `json:"depth"`
 	Root   bool       `json:"root"`
 	Needs  []needLine `json:"needs"`
+	More   *needsMore `json:"more,omitempty"`
 }
 
 // needsWidth is the number of a stream's waiting cards at one depth.
@@ -60,7 +63,10 @@ type needsStream struct {
 	Orphans int          `json:"dropped_or_absent"`
 	// Cycle names the cards whose needs make a cycle in this stream, so the
 	// graph prints the cycle instead of being followed around it.
-	Cycle []string `json:"cycle,omitempty"`
+	Cycle     []string   `json:"cycle,omitempty"`
+	More      *needsMore `json:"more,omitempty"`
+	WidthMore *needsMore `json:"width_more,omitempty"`
+	CycleMore *needsMore `json:"cycle_more,omitempty"`
 }
 
 // needsView is the whole graph: a stream a section, and the sprint's totals.
@@ -68,6 +74,7 @@ type needsView struct {
 	Streams []needsStream `json:"streams"`
 	Cards   int           `json:"cards"`
 	Orphans int           `json:"dropped_or_absent"`
+	More    *needsMore    `json:"more,omitempty"`
 }
 
 // cmdNeeds prints the dependency graph of the waiting cards: for each stream
@@ -118,7 +125,7 @@ func (a *app) cmdNeeds(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return a.readFailed("needs", err, stderr)
 	}
-	v := sprintNeeds(s, *stream, *roots)
+	v := limitNeeds(sprintNeeds(s, *stream, *roots), c.max, *roots, c.json)
 	if c.json {
 		b, _ := json.Marshal(v)
 		fmt.Fprintln(stdout, string(b))
@@ -189,7 +196,7 @@ func sprintNeeds(s *sprint.Snapshot, only string, rootsOnly bool) needsView {
 		}
 		st := &v.Streams[i]
 		st.Total++
-		card := needsCard{ID: c.ID, Stream: c.Row, Depth: depth[c.ID]}
+		card := needsCard{ID: c.ID, Column: c.Col, Stream: c.Row, Depth: depth[c.ID]}
 		// orphan is whether this card's needs name a dropped or absent id:
 		// the closing count counts cards, one card once however many of its
 		// needs name one (docs/SPEC-SPRINT.md section 11).
@@ -199,7 +206,7 @@ func sprintNeeds(s *sprint.Snapshot, only string, rootsOnly bool) needsView {
 			if n.Waived || word == sprint.Landed {
 				continue
 			}
-			card.Needs = append(card.Needs, needLine{ID: n.ID, State: word})
+			card.Needs = append(card.Needs, needLine{ID: n.ID, Column: word})
 			if word == droppedWord || word == absentWord {
 				orphan = true
 			}
@@ -232,6 +239,68 @@ func sprintNeeds(s *sprint.Snapshot, only string, rootsOnly bool) needsView {
 		}
 		v.Cards += st.Total
 		v.Orphans += st.Orphans
+	}
+	return v
+}
+
+// needsMore names a cut list without changing its complete graph facts
+// (docs/SPEC-SPRINT.md section 11). FirstHidden identifies its boundary.
+type needsMore struct {
+	Shown       int    `json:"shown"`
+	Total       int    `json:"total"`
+	Omitted     int    `json:"omitted"`
+	FirstHidden string `json:"first_hidden"`
+	Command     string `json:"command"`
+}
+
+// needsSlice spends one item-kind budget, keeping the first hidden identity
+// and a command that reveals the whole list (SPEC-SPRINT section 11).
+func needsSlice[T any](items []T, left *int, command string, id func(T) string) ([]T, *needsMore) {
+	shown := min(len(items), *left)
+	*left -= shown
+	if shown == len(items) {
+		return items, nil
+	}
+	return items[:shown], &needsMore{Shown: shown, Total: len(items), Omitted: len(items) - shown,
+		FirstHidden: id(items[shown]), Command: command}
+}
+
+// limitNeeds bounds each item kind across one answer after the full graph is
+// calculated, preserving totals, depths and dependency boundaries (SPEC-SPRINT
+// section 11). Only displayed stream/card records are copied; the input is kept.
+func limitNeeds(v needsView, max int, rootsOnly, jsonOut bool) needsView {
+	if max <= 0 {
+		return v
+	}
+	suffix := ""
+	if rootsOnly {
+		suffix += " --roots"
+	}
+	if jsonOut {
+		suffix += " --json"
+	}
+	streams, cards, needs, widths, cycles := max, max, max, max, max
+	v.Streams, v.More = needsSlice(v.Streams, &streams, "nova-sprint needs --max 0"+suffix, func(st needsStream) string {
+		if len(st.Cards) > 0 {
+			return st.Cards[0].ID
+		}
+		if len(st.Cycle) > 0 {
+			return st.Cycle[0]
+		}
+		return st.Stream
+	})
+	v.Streams = slices.Clone(v.Streams)
+	for i := range v.Streams {
+		st := &v.Streams[i]
+		command := "nova-sprint needs --stream " + bench.Quote(st.Stream) + " --max 0" + suffix
+		st.Cards, st.More = needsSlice(st.Cards, &cards, command, func(c needsCard) string { return c.ID })
+		st.Widths, st.WidthMore = needsSlice(st.Widths, &widths, command, func(w needsWidth) string { return fmt.Sprint(w.Depth) })
+		st.Cycle, st.CycleMore = needsSlice(st.Cycle, &cycles, command, func(id string) string { return id })
+		st.Cards = slices.Clone(st.Cards)
+		for j := range st.Cards {
+			c := &st.Cards[j]
+			c.Needs, c.More = needsSlice(c.Needs, &needs, command, func(n needLine) string { return n.ID })
+		}
 	}
 	return v
 }
@@ -312,8 +381,10 @@ func needsText(v needsView, rootsOnly bool) string {
 			if c.Root {
 				root = " ROOT"
 			}
-			fmt.Fprintf(&b, "NEEDS stream=%s depth=%d%s %s", st.Stream, c.Depth, root, c.ID)
-			if len(c.Needs) == 0 {
+			fmt.Fprintf(&b, "NEEDS stream=%s depth=%d%s card %s column %s", st.Stream, c.Depth, root, c.ID, c.Column)
+			if len(c.Needs) == 0 && c.More != nil {
+				b.WriteString(" needs shown=0")
+			} else if len(c.Needs) == 0 {
 				b.WriteString(" needs none")
 			} else {
 				b.WriteString(" needs ")
@@ -321,11 +392,13 @@ func needsText(v needsView, rootsOnly bool) string {
 					if i > 0 {
 						b.WriteString(", ")
 					}
-					fmt.Fprintf(&b, "%s %s", n.ID, n.State)
+					fmt.Fprintf(&b, "need %s column %s", n.ID, n.Column)
 				}
 			}
 			b.WriteString("\n")
+			needsMoreText(&b, "needs", " card="+oneline.Field(c.ID), c.More)
 		}
+		needsMoreText(&b, "cards", " stream="+oneline.Field(st.Stream), st.More)
 		b.WriteString("WIDTH stream=" + st.Stream)
 		for i, w := range st.Widths {
 			if i == 0 {
@@ -336,14 +409,21 @@ func needsText(v needsView, rootsOnly bool) string {
 			fmt.Fprintf(&b, "depth %d: %d", w.Depth, w.Width)
 		}
 		b.WriteString("\n")
-		if len(st.Cycle) > 0 {
-			fmt.Fprintf(&b, "CYCLE stream=%s its needs make a cycle through %s\n", st.Stream, strings.Join(st.Cycle, ", "))
+		needsMoreText(&b, "width", " stream="+oneline.Field(st.Stream), st.WidthMore)
+		if len(st.Cycle) > 0 || st.CycleMore != nil {
+			fmt.Fprintf(&b, "CYCLE stream=%s its needs make a cycle", st.Stream)
+			if len(st.Cycle) > 0 {
+				b.WriteString(" through " + strings.Join(st.Cycle, ", "))
+			}
+			b.WriteString("\n")
+			needsMoreText(&b, "cycle", " stream="+oneline.Field(st.Stream), st.CycleMore)
 		}
 		if rootsOnly {
 			continue
 		}
 		fmt.Fprintf(&b, "NEEDS stream=%s cards=%d dropped-or-absent=%d\n", st.Stream, st.Total, st.Orphans)
 	}
+	needsMoreText(&b, "streams", "", v.More)
 	if !rootsOnly {
 		fmt.Fprintf(&b, "NEEDS OK cards=%d dropped-or-absent=%d\n", v.Cards, v.Orphans)
 	}
@@ -465,3 +545,12 @@ to add that is no card on the table or that it has already, the card itself, a
 cycle, a ready card given a need not landed, a landed card, a sentinel (its
 needs change with sentinel set). The edit is the coordinator's alone.
 `)
+
+// needsMoreText renders the JSON truncation facts on the text path too
+// (docs/SPEC-SPRINT.md section 11): no cut list is silently complete.
+func needsMoreText(b *strings.Builder, kind, scope string, more *needsMore) {
+	if more != nil {
+		fmt.Fprintf(b, "MORE kind=%s%s shown=%d total=%d omitted=%d first_hidden=%s run: %s\n",
+			kind, scope, more.Shown, more.Total, more.Omitted, oneline.Field(more.FirstHidden), more.Command)
+	}
+}

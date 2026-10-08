@@ -106,12 +106,13 @@ func friendLevel(s *Snapshot, r FriendLevelReq, dealt, dealtWorking map[string]i
 	// to is where the card goes, "" when nowhere: below her room, of its tier, not a
 	// friend it left, and an idle lane for a giver with none or an even smaller backlog
 	to := func(giver string, c *Card) string {
-		tier, left := s.DealTier(s.Work.Placed(c.F("primary"))), friendsLeft(c)
+		pr := s.Work.Placed(c.F("primary"))
+		tier, left := s.DealTier(pr), friendsLeft(c)
 		free, idle := map[string]int{}, map[string]int{}
 		var may []string
 		for _, f := range seats {
 			n := f.Name
-			if n == giver || held[n] >= room[n] || slices.Contains(left, n) || !friendTakes(s, f, tier) {
+			if n == giver || held[n] >= room[n] || slices.Contains(left, n) || !friendTakes(s, f, tier) || !friendRestrictionAllows(f, pr) {
 				continue
 			}
 			if (lanes(giver) <= 0 && lanes(n) > 0) || backlog(giver)-backlog(n) > 1 {
