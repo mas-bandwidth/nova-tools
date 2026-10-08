@@ -3,7 +3,9 @@ package main
 import (
 	"bytes"
 	"context"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"runtime"
 	"strings"
@@ -263,10 +265,8 @@ func TestTheLandLoopBeatsAndRaisesAStuckLanding(t *testing.T) {
 	r.clean()
 }
 
-// A bench that does not answer is nobody's finding: the loop's gate runs here instead,
-// so the red base is found by this machine's own build, and the LAND line says the gate
-// ran here, not on the bench.
-func TestTheLandLoopGatesHereWhenTheBenchDoesNotAnswer(t *testing.T) {
+// A configured remote bench that does not answer refuses the gate without running Go here.
+func TestTheLandLoopRefusesWhenTheBenchDoesNotAnswer(t *testing.T) {
 	t.Parallel()
 	r := newLandRig(t)
 	r.git(r.worker, "switch", "-q", "--detach", "origin/main")
@@ -277,6 +277,10 @@ func TestTheLandLoopGatesHereWhenTheBenchDoesNotAnswer(t *testing.T) {
 	r.ok("add --stream s1 --count 1 --one")
 	heads := map[string]string{"s1-1": r.card("s1-1", map[string]string{"ok.go": "package main\n\nfunc ok() {}\n"})}
 	r.queued(heads, "s1-1")
+	bin := t.TempDir()
+	marker := filepath.Join(bin, "local-go-ran")
+	require.NoError(t, os.WriteFile(filepath.Join(bin, "go"), []byte("#!/bin/sh\nprintf ran > \"$GATE_MARKER\"\nexit 1\n"), 0o755))
+	r.a.gitEnv = append(r.env, "PATH="+bin+":"+os.Getenv("PATH"), "GATE_MARKER="+marker, "GOCACHE="+t.TempDir())
 	r.ok("fleet beat vision --load 1 --cores 8")
 	r.ok("fleet up vision")
 	var w whereView
@@ -335,14 +339,15 @@ func TestTheLandLoopGatesHereWhenTheBenchDoesNotAnswer(t *testing.T) {
 	asked.Lock()
 	got := append([]string(nil), benches...)
 	asked.Unlock()
-	// the base's gate, then the cure search's gate of the head on that base: each asks
-	// the bench first
 	assert.NotEmpty(t, got, "the gate asked the bench first:\n%s", text)
 	for _, h := range got {
 		assert.Equal(t, "vision", h, "the only bench up: %v", got)
 	}
-	assert.Regexp(t, regexp.MustCompile(`LAND REFUSED stream=s1 .* bench=here wall=\d+\.\ds reason=.*go build \./\.\.\.: exit status 1`), text)
+	assert.Contains(t, text, "the configured remote bench did not run the tree gate")
+	assert.NotContains(t, text, "bench=here", "the gate must not run on this host:\n%s", text)
 	assert.NotContains(t, text, "bench=vision", "a bench that did not answer ran nothing:\n%s", text)
+	_, err := os.Stat(marker)
+	assert.True(t, os.IsNotExist(err), "local Go executed after the remote bench refused: %v", err)
 	assert.NotContains(t, r.ok("lane list"), "lander", "the lane was given back")
 	r.clean()
 }
