@@ -276,7 +276,7 @@
             fail_msg: >-
               ADOPT REFUSED step=friends host={{ inventory_hostname }}: the candidate's nova-friend install --dry-run refuses the flags of
               {{ ((seat_planned | default({})).results | default([]) | rejectattr('rc', 'equalto', 0) | map(attribute='item.friend') | join(', ')) }}
-              ({{ (((((seat_planned | default({})).results | default([]) | rejectattr('rc', 'equalto', 0) | first) | default({})).stderr | default('')) | truncate(300) }}); nothing was installed or loaded
+              ({{ ((seat_planned | default({})).results | default([]) | rejectattr('rc', 'equalto', 0) | first | default({})).stderr | default('') | truncate(300) }}); nothing was installed or loaded
             quiet: true
 
         # Every check passed. What the window changes is measured (a stage
@@ -558,9 +558,18 @@
          | rejectattr('role', 'equalto', 'friend') | rejectattr('label', 'in', nova_seat_hold)
          | rejectattr('label', 'in', seat_stopped_labels if seat_window | default(false) else []) | list }}
     seat_restart_labels: "{{ seat_restart | map(attribute='label') | list }}"
+    # In --check the manifest still sees the installed nova-friend. Predict
+    # the daemon reload when the staged install changes that binary; in real
+    # mode the post-install manifest's stale flags remain authoritative.
     seat_friends: >-
-      {{ (seat_cur | default(dict(agents=[]))).agents | selectattr('stale') | selectattr('role', 'equalto', 'friend')
-         | rejectattr('label', 'in', nova_seat_hold) | list }}
+      {{ (
+           (seat_cur | default(dict(agents=[]))).agents | selectattr('stale') | selectattr('role', 'equalto', 'friend')
+           | rejectattr('label', 'in', nova_seat_hold) | list
+           + ((seat_was | default(dict(agents=[]))).agents | selectattr('loaded') | rejectattr('disabled')
+              | selectattr('role', 'equalto', 'friend') | rejectattr('label', 'in', nova_seat_hold)
+              | map('combine', {'why': 'the candidate replaces nova-friend'}) | list
+              if ansible_check_mode and (seat_window | default(false)) and 'nova-friend' in (seat_replaces | default([])) else [])
+         ) | unique(attribute='label') | list }}
   tasks:
     - name: "seat: what --check says with no candidate on this machine"
       ansible.builtin.debug:
