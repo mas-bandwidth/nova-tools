@@ -19,9 +19,6 @@ import (
 // the third miss finishes the attempt FAIL.
 const FormRefusalsField = "form_refusals"
 
-// FormMissesToFail is the number of misses on one attempt that finishes it FAIL.
-const FormMissesToFail = 3
-
 // formPath is the report file a brief's FORM: line names, "" when the brief carries none.
 // The full grammar is swarm.ReadForm's; this reads only the one header line the read-side
 // helpers need, so internal/sprint does not depend on a worker's package.
