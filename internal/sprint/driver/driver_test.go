@@ -71,7 +71,7 @@ func TestTheLoopPlaysTheWorldThroughVerbsOnly(t *testing.T) {
 	}
 	all := strings.Join(lines, "\n")
 	for _, want := range []string{"finish --as m1 --epoch 0 s1-1.w2@3 --redis 127.0.0.1:1", "take --as m1 --limit 64 --epoch 0 --redis 127.0.0.1:1",
-		"read --as reader-a --ok --epoch 0 s1-5.r1.reader-a --redis", "read --as reader-a --begin --epoch 0 s1-2.r1.reader-a --redis",
+		"read --as reader-a --ok --epoch 0 --usage " + ReadUsage + " s1-5.r1.reader-a --redis", "read --as reader-a --begin --epoch 0 s1-2.r1.reader-a --redis",
 		"merge --stream s1 --batch 5"} {
 		assert.Contains(t, all, want, "no %q in\n%s", want, all)
 	}
