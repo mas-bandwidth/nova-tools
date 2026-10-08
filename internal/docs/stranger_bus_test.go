@@ -99,6 +99,33 @@ func strangerBusHostProblems(transcript string) []string {
 	return problems
 }
 
+// strangerBusReadLogRecords are the earlier records under docs/stranger/ a run's
+// Setup read log may speak of. The run reads README and help first, and anything
+// else only after a stumble, named with the stumble it answered, so a record the
+// Setup claims to have read must be named there (the reader's finding: "the two
+// earlier records in docs/stranger/" named no file).
+var strangerBusReadLogRecords = []string{
+	"docs/stranger/friend-fake-harness.md",
+	"docs/stranger/three-card-sprint.md",
+}
+
+// strangerBusReadLogProblems is every earlier record the Setup read log speaks
+// of without naming. A Setup that names no earlier record has no problem; one
+// that does must name each record and the stumble it followed.
+func strangerBusReadLogProblems(setup []string) []string {
+	text := strings.Join(setup, "\n")
+	var problems []string
+	if !strings.Contains(text, "earlier records") {
+		return problems
+	}
+	for _, record := range strangerBusReadLogRecords {
+		if !strings.Contains(text, record) {
+			problems = append(problems, "the Setup read log speaks of earlier records without naming "+record)
+		}
+	}
+	return problems
+}
+
 // TestStrangerRunBusTwoNamesIsRecorded holds docs/stranger/bus-two-names.md,
 // the cold run of nova-bus between two names on a throwaway Redis, to its
 // shape: the four sections, a transcript of real commands, and a proposed card
@@ -113,6 +140,7 @@ func TestStrangerRunBusTwoNamesIsRecorded(t *testing.T) {
 		"## Stumbles\n\n### 1. one\n\n- card: a-card\n\n### 2. two\n\ncard: b-card\n\n## Verdict\n\nyes\n"
 	require.Empty(t, strangerBusProblems(good), "the fake good record")
 	require.Empty(t, strangerBusHostProblems(strings.Join(strangerBusSectionBodies(good)["Transcript"], "\n")), "the fake good record's host commands")
+	require.Empty(t, strangerBusReadLogProblems(strangerBusSectionBodies(good)["Setup"]), "the fake good record's Setup read log")
 
 	for name, c := range map[string]struct{ text, want string }{
 		"no Verdict":      {strings.Replace(good, "## Verdict", "## Ending", 1), "no ## Verdict section"},
@@ -121,9 +149,11 @@ func TestStrangerRunBusTwoNamesIsRecorded(t *testing.T) {
 		"uncarded":        {strings.Replace(good, "card: b-card", "a card is owed", 1), `stumble "2. two" has no proposed card line`},
 		"empty card":      {strings.Replace(good, "- card: a-card", "- card: ", 1), `stumble "1. one" has no proposed card line`},
 		"no host command": {strings.Replace(good, "$ podman --cgroup-manager=cgroupfs run -d --rm --name trial image sleep 1\ncontainer\n", "", 1), "the transcript does not show the host-side command `podman --cgroup-manager=cgroupfs run -d`"},
+		"unnamed record":  {strings.Replace(good, "bench\n", "bench\nthe two earlier records in docs/stranger/ name the same walls\n", 1), "the Setup read log speaks of earlier records without naming docs/stranger/friend-fake-harness.md"},
 	} {
 		transcript := strings.Join(strangerBusSectionBodies(c.text)["Transcript"], "\n")
-		got := strings.Join(append(strangerBusProblems(c.text), strangerBusHostProblems(transcript)...), "\n")
+		setup := strangerBusSectionBodies(c.text)["Setup"]
+		got := strings.Join(append(append(strangerBusProblems(c.text), strangerBusHostProblems(transcript)...), strangerBusReadLogProblems(setup)...), "\n")
 		require.Contains(t, got, c.want, "%s: the fake must be refused", name)
 	}
 
@@ -142,4 +172,12 @@ func TestStrangerRunBusTwoNamesIsRecorded(t *testing.T) {
 	require.Contains(t, transcript, "PONG REFUSED: --to is required: no ping has named a seat yet",
 		"the refused pong invocation and its line must stand in the transcript of %s", strangerBusPath)
 	require.Empty(t, strangerBusHostProblems(transcript), "%s", strangerBusPath)
+
+	// The correction this attempt carries: the Setup read log names every read
+	// past README and help with the stumble it followed. A claim that two
+	// earlier records under docs/stranger/ were read must name
+	// docs/stranger/friend-fake-harness.md and docs/stranger/three-card-sprint.md
+	// and the stumble each followed, instead of the bare "earlier records" the
+	// reader found.
+	require.Empty(t, strangerBusReadLogProblems(strangerBusSectionBodies(text)["Setup"]), "%s", strangerBusPath)
 }
