@@ -30,6 +30,7 @@ func (b *pausedTakeAcquire) Acquire(ctx context.Context, gen uint64, op OpRecord
 }
 
 func TestStopFencesATakeThatReadRunningBeforeStop(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t)
 	h.setup(1)
 	h.startMachine()
@@ -68,6 +69,7 @@ func TestStopFencesATakeThatReadRunningBeforeStop(t *testing.T) {
 }
 
 func TestOldTickPartCannotCommitAcrossStopAndRestart(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t)
 	h.startMachine()
 	observed, _, err := h.st.Machine(h.ctx)
@@ -111,6 +113,7 @@ func TestOldTickPartCannotCommitAcrossStopAndRestart(t *testing.T) {
 }
 
 func TestManualStopWinsAnOlderTickCauseStop(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t)
 	h.startMachine()
 	observed, _, err := h.st.Machine(h.ctx)
@@ -148,6 +151,7 @@ func TestManualStopWinsAnOlderTickCauseStop(t *testing.T) {
 }
 
 func TestOldTickCannotStopAnExplicitlyRestartedRun(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t)
 	h.startMachine()
 	observed, _, err := h.st.Machine(h.ctx)
@@ -197,6 +201,7 @@ func TestOldTickCannotStopAnExplicitlyRestartedRun(t *testing.T) {
 }
 
 func TestManualStopWinsAnOlderPostAddUndone(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t)
 	h.startMachine()
 	observed, _, err := h.st.Machine(h.ctx)
