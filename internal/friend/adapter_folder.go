@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -57,7 +58,7 @@ func SelectDeliverer(friendName, harness, dir, session, adapter, deliveryDir str
 	return NewDeliverer(harness, dir, session, run, out)
 }
 
-func (f *Folder) Deliver(ctx context.Context, text string) (int, error) {
+func (f *Folder) Deliver(ctx context.Context, text string) (exit int, retErr error) {
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
@@ -69,7 +70,11 @@ func (f *Folder) Deliver(ctx context.Context, text string) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("the folder adapter cannot reserve %q: %w", f.Dir, err)
 	}
-	defer lock.Unlock()
+	defer func() {
+		if err := lock.Unlock(); err != nil {
+			retErr = errors.Join(retErr, fmt.Errorf("the folder adapter cannot release %q: %w", f.Dir, err))
+		}
+	}()
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
@@ -135,12 +140,18 @@ func (f *Folder) Deliver(ctx context.Context, text string) (int, error) {
 	return 0, nil
 }
 
-func folderAtomic(dir, name, text string) error {
+func folderAtomic(dir, name, text string) (retErr error) {
 	tmp, err := os.CreateTemp(dir, ".friend-push-*")
 	if err != nil {
 		return err
 	}
-	defer os.Remove(tmp.Name())
+	defer func() {
+		if retErr != nil {
+			if err := os.Remove(tmp.Name()); err != nil && !os.IsNotExist(err) {
+				retErr = errors.Join(retErr, fmt.Errorf("remove the unfinished folder delivery %q: %w", tmp.Name(), err))
+			}
+		}
+	}()
 	if _, err = tmp.WriteString(text); err == nil {
 		err = tmp.Sync()
 	}
