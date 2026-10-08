@@ -852,7 +852,8 @@ removes its plist.`,
 				Effect:  tool.Delivery + ": the session's answer to a PING, one note on the bus to the coordinator, and the pong file",
 				DryRun:  true,
 				Detail: `What the session runs when a PING <nonce> arrives, first and before anything else: sends
-"pong <nonce> queue=<n> working=<n> width=<n>" to the coordinator (--to, else the seat the last
+"pong <nonce> queue=<n> working=<n> width=<n>" when the current assignment counts are known,
+or "pong <nonce>" when they are not, to the coordinator (--to, else the seat the last
 ping named, read from the status file) and records it in the state directory (--state-dir, as the
 check's line names the daemon's; else ~/.nova-friend/<me>), where the daemon reads it. The note on
 the bus is the answer: a pong file that cannot be written is said and the answer stands. The name is the daemon's: a
@@ -862,7 +863,7 @@ the line it would send; nothing is sent and no pong file is written.`,
 					f.Required("as", "your name, the friend the daemon in --dir runs as")
 					f.Required("nonce", "the nonce the PING carried")
 					f.String("to", "", "the coordinator (default: the seat the last ping named)")
-					f.String("dir", "", "the friend's working directory; when given, omitted queue and working counts are read from its inbox/QUEUE.json")
+					f.String("dir", "", "the friend's working directory; omitted counts require its versioned current assignment snapshot in inbox/QUEUE.json")
 					f.Int("queue", 0, "tasks queued, from your own task list")
 					f.Int("working", 0, "tasks working, from your own task list")
 					f.Int("width", 0, "your width, from the nova-config friend row")
@@ -938,6 +939,7 @@ last_pong= session_pong_age= daemon_pong_age= pongs= queue= working= width= beat
 (once a daemon has written it; last_session=, and when down presence_reason=, "no session answer" or "no daemon") (broken: session_id= broken_at= reason=; one-shot: lanes=)
 status=<up|down> why= evidence=, and for harness grok route=<push|defer>, for harness claude route=passive,
 from the daemon's status file (up while it is under ` + friend.DaemonStale.String() + ` old), the session's pong file and the queue file;
+queue and working are - until the coordinator writes a versioned current assignment snapshot; historical tasks are not counted.
 session_pong_age is the session's own pong (the pong file), daemon_pong_age the daemon's answer to the last ping (status.json
 last_daemon_pong), two facts: a daemon that pongs says nothing of the session
 (<dir>/inbox/QUEUE.json). route=push when a tail of a .wake file runs under the open window's pid; route=defer, with a NOTE of
@@ -2350,8 +2352,12 @@ func (w world) waitPong(c *tool.Call) *tool.Out {
 				daemon = true
 			}
 			if n, q, wk, wd, ok := friend.ParsePong(strings.TrimSpace(m.Body)); ok && n == nonce {
+				queueFact, workingFact, widthFact := any(q), any(wk), any(wd)
+				if !strings.Contains(m.Body, " queue=") || !strings.Contains(m.Body, " working=") || !strings.Contains(m.Body, " width=") {
+					queueFact, workingFact, widthFact = "-", "-", "-"
+				}
 				return tool.Done().Fact("nonce", nonce).Fact("from", from).Fact("at", m.At.Format(time.RFC3339)).Fact("took", w.now().Sub(start).Round(time.Millisecond).String()).
-					Fact("queue", q).Fact("working", wk).Fact("width", wd).Fact("daemon", daemon)
+					Fact("queue", queueFact).Fact("working", workingFact).Fact("width", widthFact).Fact("daemon", daemon)
 			}
 		}
 		if w.now().Sub(start) >= timeout {

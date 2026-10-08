@@ -39,6 +39,8 @@ func TestPongOmittedCountsPreserveKnownWorkAndWidth(t *testing.T) {
 	require.True(t, found)
 	assert.False(t, p.CountsKnown, "an unversioned queue cannot report historical work as current")
 	assert.Equal(t, [2]int{0, 0}, [2]int{p.Queue, p.Working})
+	cli.Do(t, "wait-pong", "--from", "bob", "--nonce", "legacy", "--timeout", "2s").Exit(0).
+		Out("WAIT-PONG OK nonce=legacy", "queue=- working=- width=-")
 }
 
 func TestGeneratedPongCommandQuotesSpacedWorkingDirectory(t *testing.T) {
