@@ -1322,23 +1322,29 @@ func (l *lander) mergeCards(ctx context.Context, dir, stream string, cards []lan
 	return merged, failed, ""
 }
 
-// gateBase is the build's gate of the base's tip, serial across the pass's streams (the
-// pass's gateMu: the base is gated once a commit and its record has one writer): "" and
+// gateBase is the build's gate of the base's tip, serial for the same commit across the
+// pass's streams (the pass's baseGate lock: a commit is gated once): "" and
 // first = 0 when the base is green; else its cure looked for among the batch's cards
 // (cureBase), the cure merged and gated alone on the batch branch, merged = its id and
 // first = 1 so the build goes on after it; why is the base's refusal with no cure, env a
 // failure that is not a card's.
 func (l *lander) gateBase(ctx context.Context, dir, stream string, cards []landCard, baseSha string) (merged []string, first int, env, why string) {
 	s := l.locks()
-	s.gateMu.Lock()
-	defer s.gateMu.Unlock()
+	gate := s.baseGate(baseSha)
+	gate.Lock()
+	defer gate.Unlock()
 	base := cards[0].base
 	l.baseStop, l.baseCount, l.baseWhy = false, false, ""
 	was := 0
+	s.gateMu.Lock()
 	if f := l.baseGateFails[baseSha]; f != nil {
 		was = f.n
 	}
+	s.gateMu.Unlock()
 	red, stop := l.treeGateBase(ctx, dir, baseSha, base)
+	if err := ctx.Err(); err != nil {
+		return nil, 0, err.Error(), "" // no cure or base failure for an abandoned gate
+	}
 	if red == "" {
 		return nil, 0, "", ""
 	}
@@ -1351,8 +1357,10 @@ func (l *lander) gateBase(ctx context.Context, dir, stream string, cards []landC
 	if cured < 0 {
 		// counted when the gate ran red here (or this process's record stops the stream); a
 		// refusal inside a retry's wait, or with the rule off, is not
+		s.gateMu.Lock()
 		f := l.baseGateFails[baseSha]
 		l.baseStop, l.baseCount, l.baseWhy = stop, stop || f != nil && f.n != was, red
+		s.gateMu.Unlock()
 		return nil, 0, "", "the base " + base + " fails the tree gate at its tip, so no head is merged onto it; fix the base, then run land again: " + red
 	}
 	cure := cards[cured]

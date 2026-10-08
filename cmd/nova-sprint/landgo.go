@@ -212,6 +212,8 @@ type baseGateFail struct {
 // (nova-config's sprint row answer_rules_off), a red base is cached for its commit as a
 // green one is, as before the rule: every landing on it refused until the base moves.
 func (l *lander) treeGateBase(ctx context.Context, dir, baseSha string, branch ...string) (why string, stop bool) {
+	s := l.locks()
+	s.gateMu.Lock()
 	if l.baseGateCache == nil {
 		l.baseGateCache = map[string]string{}
 	}
@@ -219,17 +221,24 @@ func (l *lander) treeGateBase(ctx context.Context, dir, baseSha string, branch .
 		l.baseGateFails = map[string]*baseGateFail{}
 	}
 	if why, cached := l.baseGateCache[baseSha]; cached {
+		s.gateMu.Unlock()
 		return why, false
 	}
 	now := l.clock()
 	f := l.baseGateFails[baseSha]
 	switch {
 	case f != nil && f.n > len(sprint.BaseGateRetries):
+		s.gateMu.Unlock()
 		return f.why, true
 	case f != nil && now.Before(f.next):
+		s.gateMu.Unlock()
 		return f.said(), false
 	}
+	s.gateMu.Unlock()
 	why = l.treeGate(ctx, dir, true)
+	if err := ctx.Err(); err != nil {
+		return err.Error(), false // an abandoned gate never counts as a red base
+	}
 	if why != "" {
 		base := l.base
 		if len(branch) > 0 {
@@ -240,7 +249,10 @@ func (l *lander) treeGateBase(ctx context.Context, dir, baseSha string, branch .
 		}
 		why = sprint.ClassGateWhy(dir, base, baseSha, why)
 	}
-	if why == "" || slices.Contains(l.offRules(ctx), sprint.RuleBaseGate) {
+	off := why != "" && slices.Contains(l.offRules(ctx), sprint.RuleBaseGate)
+	s.gateMu.Lock()
+	defer s.gateMu.Unlock()
+	if why == "" || off {
 		l.baseGateCache[baseSha] = why
 		delete(l.baseGateFails, baseSha)
 		return why, false
@@ -788,9 +800,12 @@ func (l *lander) gateCard(ctx context.Context, dir string, c landCard, before st
 // A head found no cure on this base is not tried on it again. env is a failure that is not a
 // card's.
 func (l *lander) cureBase(ctx context.Context, dir, stream string, cards []landCard, baseSha, why string) (cured int, env string) {
+	s := l.locks()
+	s.gateMu.Lock()
 	if l.cureTried == nil {
 		l.cureTried = map[string]bool{}
 	}
+	s.gateMu.Unlock()
 	tried := func(h sprint.CureHead) string { return baseSha + " " + h.ID + "@" + h.Head }
 	heads := make([]sprint.CureHead, len(cards))
 	at := map[string]int{}
@@ -812,13 +827,19 @@ func (l *lander) cureBase(ctx context.Context, dir, stream string, cards []landC
 			notes[h.ID] = note
 			return card, env
 		},
-		Gate:  func(ctx context.Context, dir string) string { return l.treeGate(ctx, dir, true) },
-		Tried: func(h sprint.CureHead) bool { return l.cureTried[tried(h)] },
+		Gate: func(ctx context.Context, dir string) string { return l.treeGate(ctx, dir, true) },
+		Tried: func(h sprint.CureHead) bool {
+			s.gateMu.Lock()
+			defer s.gateMu.Unlock()
+			return l.cureTried[tried(h)]
+		},
 	})
 	l.conflictKind, l.conflictPaths = "", nil // a try's conflict is no card's stop
+	s.gateMu.Lock()
 	for _, t := range cure.Tried {
 		l.cureTried[tried(t.CureHead)] = true
 	}
+	s.gateMu.Unlock()
 	if err != nil {
 		return -1, "the search for a fix of the red base " + shortSha(baseSha) + " failed: " + oneline.Err(err)
 	}
