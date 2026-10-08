@@ -127,7 +127,7 @@ func (s *Stager) mirrorRoot() string {
 
 // A kernel lock complements the per-Stager mutex: friends are separate processes.
 func (s *Stager) lockMirror(repo string, try bool) (*filelock.FileLock, error) {
-	path := filepath.Join(s.mirrorRoot(), ".locks", repo+".lock")
+	path := filepath.Join(s.mirrorRoot()+".locks", repo+".lock")
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return nil, err
 	}

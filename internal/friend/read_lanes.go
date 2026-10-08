@@ -361,7 +361,9 @@ func (l *loop) readDone(r readResult, now time.Time) {
 		out, err := d.Sprint(l.ctx, ReadVerdictArgv(d.Friend, r.read, verdict, finding, usage))
 		d.Record(fmt.Sprintf("%s read %s: verdict=%s wall=%s: %s", at, r.read.ID, verdict, now.Sub(r.start).Round(time.Second), recorded(out, err)))
 		if err == nil {
-			_ = os.WriteFile(filepath.Join(r.dir, ".finding-recorded"), []byte("recorded\n"), 0600)
+			if receiptErr := os.WriteFile(filepath.Join(r.dir, ".finding-recorded"), []byte("recorded\n"), 0600); receiptErr != nil {
+				d.Record(fmt.Sprintf("%s read %s: finding recorded but cleanup receipt could not be saved: %s; checkout cleanup still requested, finding retained in RESULT.md", at, r.read.ID, oneLine(receiptErr.Error(), 200)))
+			}
 			l.releaseRead(r.read.ID, now)
 		}
 		return
@@ -442,7 +444,11 @@ func (l *loop) sweepReads(queue string, now time.Time) {
 		live[c.ID] = true
 	}
 	entries, err := os.ReadDir(filepath.Join(l.d.Dir, "reads"))
+	if errors.Is(err, os.ErrNotExist) {
+		return
+	} // ignored: no reader scratch exists to sweep
 	if err != nil {
+		l.d.Record(fmt.Sprintf("%s reads: scratch could not be listed: %s; retry next successful queue", now.UTC().Format(time.RFC3339), oneLine(err.Error(), 200)))
 		return
 	}
 	removed := 0
