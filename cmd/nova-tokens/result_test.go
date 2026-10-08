@@ -231,14 +231,17 @@ func TestAQuietSourceIsTheNoteNotTheAllClear(t *testing.T) {
 	assert.Contains(t, r.stdout, "TOKENS NOTE a declared source fed no message for a day its file names (swarm:ada on 2026-09-14)")
 }
 
-// The banner's word on the environment is the code's: the Redis verbs read the seat from
-// the variables redisauth names, and every other verb reads none (T-6).
+// help rules carries the environment sentence: the Redis verbs read the seat from the
+// variables redisauth names, and every other verb reads none (T-6). The paragraph is the
+// rules topic, where those lines moved, not the banner.
 func TestTheBannerNamesTheEnvironmentTheRedisVerbsRead(t *testing.T) {
 	t.Parallel()
 
-	assert.NotContains(t, usage, "no environment variable is consulted")
+	r := invoke(t, "help", "rules")
+	wantExit(t, r, 0)
+	assert.NotContains(t, r.stdout, "no environment variable is consulted")
 	for _, name := range []string{redisauth.UserEnv, redisauth.PasswordEnvEnv, redisauth.DefaultPasswordEnv, "$PATH", tokens.LockName} {
-		assert.Contains(t, usage, name)
+		assert.Contains(t, r.stdout, name)
 	}
 }
 
