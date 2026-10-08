@@ -464,6 +464,12 @@ func (l *loop) laneStep(now time.Time, width int) {
 			continue
 		}
 		if ln.card == nil {
+			if l.owedMessage != nil && !perCard && lh != nil {
+				// The oldest message turn stays ahead of new cards and messages while
+				// its session cannot take it or its retry is still running.
+				l.messageTurn(ln, lh, width, now)
+				continue
+			}
 			asking = ln.n
 			var c Card
 			var found bool
@@ -528,7 +534,9 @@ func (l *loop) laneStep(now time.Time, width int) {
 			continue
 		}
 		t := &turn{}
-		t.entries, t.msgs = l.take()
+		if l.owedMessage == nil && !l.messageInFlight() {
+			t.entries, t.msgs = l.take()
+		}
 		var subjects []string
 		for _, m := range t.msgs {
 			subjects = append(subjects, m.Subject)
@@ -555,6 +563,18 @@ func (l *loop) laneStep(now time.Time, width int) {
 // session that did not run the line is asked once a check period, never once a step.
 const MessageTurnEvery = SessionQuiet
 
+// messageInFlight is the one cardless turn a lane currently owns. Serializing
+// these turns keeps a retry's entries and mutable turn state in one lane and
+// lets an owed older turn finish before newer messages ride with a card.
+func (l *loop) messageInFlight() bool {
+	for _, ln := range l.lanes.lanes {
+		if ln.card == nil && ln.t != nil {
+			return true
+		}
+	}
+	return false
+}
+
 // messageTurn hands a free lane what waits with no card to ride with, as one turn of its
 // own in the friend's directory: the pong line of an open challenge (a wake ping, which a
 // lane friend with no card could not answer before), the push check's pong line while the
@@ -564,6 +584,9 @@ const MessageTurnEvery = SessionQuiet
 // and the session's own run of it is the answer (docs/SPEC-FRIEND.md, one-shot lanes).
 func (l *loop) messageTurn(ln *lane, lh LaneHarness, width int, now time.Time) bool {
 	d := l.d
+	if l.messageInFlight() {
+		return false // another lane owns the turn until its result is taken
+	}
 	if l.wake && (d.m.Challenge == Quiet || d.PongCommand == nil) {
 		l.wake = false // answered already, or no line to hand: nothing owed
 	}
@@ -574,6 +597,9 @@ func (l *loop) messageTurn(ln *lane, lh LaneHarness, width int, now time.Time) b
 			return false
 		}
 		t := l.owedMessage
+		if t.running {
+			return false // the same pointer, text and entries must never run twice
+		}
 		ln.t = t
 		l.startTurn(t, now, func(ctx context.Context) laneResult {
 			lt, err := lh.DeliverTo(WithLaneDir(LaneContext(ctx), d.Dir), ln.session, t.text)
@@ -669,7 +695,9 @@ func (l *loop) messageDone(r laneResult, now time.Time) {
 		}
 		return
 	}
-	l.owedMessage, l.messageSaid, l.messageTries = nil, "", 0
+	if l.owedMessage == t {
+		l.owedMessage, l.messageSaid, l.messageTries = nil, "", 0
+	}
 	if t.stopped {
 		line += fmt.Sprintf(" stopped=%q", "no output for "+l.silentStop.String())
 	}

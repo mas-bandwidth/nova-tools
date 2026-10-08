@@ -187,13 +187,23 @@ func TestOneShotLanesHandOneCardPerTurnEachInItsOwnSession(t *testing.T) {
 		}
 		c2Lane := map[string]string{"1": "2", "2": "1"}[c1Lane]
 		assert.Equal(t, 1, h.maxBusy, "a lane never runs two turns at once")
-		first := texts[0]
+		first := ""
+		for _, text := range texts {
+			if strings.Contains(text, "one card this turn, c1.") {
+				first = text
+				break
+			}
+		}
+		require.NotEmpty(t, first)
 		assert.Contains(t, first, "lane "+c1Lane+" of 2: one card this turn, c1.")
 		assert.Contains(t, first, "Its brief is "+filepath.Join(dir, "inbox", "c1~15", "BRIEF.md"))
 		assert.Contains(t, first, "2. Write "+filepath.Join(dir, "outbox", "c1~15")+"/REPORT.md and "+filepath.Join(dir, "outbox", "c1~15")+"/RESULT.md")
 		assert.Contains(t, first, "3. Send one bus line: nova-bus send --as bob --to ada --subject 'card c1 done'")
 		assert.Contains(t, first, Text(hello), "the waiting message rides with the first card")
-		for _, text := range texts[1:] {
+		for _, text := range texts {
+			if text == first {
+				continue
+			}
 			assert.NotContains(t, text, "for whichever lane is next", "and only with it")
 		}
 		last := texts[len(texts)-1]
@@ -306,6 +316,92 @@ func TestAMessageTurnTheSessionCannotTakeStaysOwedAndIsNeverAckedUnread(t *testi
 		assert.Contains(t, records, `tries=2 session=refused reason="no provider key"`)
 		assert.NotContains(t, records, "given_up=true", "a message never delivered is never given up")
 		assert.Equal(t, 2, strings.Count(records, " acked=true"), "the turn that succeeded is acked once, and the second message's once: %s", records)
+	})
+}
+
+// Two free lanes must not run the same owed turn together. A deferred or refused
+// turn still owns its messages while it waits, including while its successful
+// retry is running; a newer message cannot pass it or be acked first.
+func TestTwoLanesRetryOneOwedMessageTurnAtATime(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		dir := cardDirFixture(t, nil, nil, nil)
+		h := &lanesHarness{dir: dir, finish: map[string]bool{}, active: map[string]int{}, block: make(chan struct{})}
+		h.refuse = []error{
+			Deferred{Reason: "the app is busy"},
+			SessionRefused{Session: "ses_1", Reason: "no provider key", Detail: "seal it", Remedy: "seal it"},
+			Deferred{Reason: "the app is busy"},
+		}
+		r, _ := laneRig(t, h, 2)
+		first := r.send(t, "ada", "first", "the older message")
+		var beforeTurns, beforeTexts []string
+		var before Status
+		var beforePending int
+		r.at[15] = func() { r.send(t, "ada", "second", "the newer message") }
+		r.at[45] = func() {
+			beforeTurns, beforeTexts, _ = h.got()
+			before = r.last()
+			pending, fresh := r.pending(t)
+			beforePending = len(pending) + len(fresh)
+			close(h.block)
+		}
+		r.run(t, 60)
+		require.Len(t, beforeTurns, 4, "three refused/deferred attempts and one blocked retry, never two lanes running the same turn: %v", beforeTurns)
+		for _, text := range beforeTexts {
+			assert.Contains(t, text, Text(first), "the owed message stays first")
+			assert.NotContains(t, text, "the newer message", "a newer message waits behind the owed retry")
+		}
+		assert.Equal(t, 2, beforePending, "neither message was acked while the owed retry was blocked")
+		assert.Equal(t, 0, before.Delivered)
+		turns, texts, _ := h.got()
+		require.Len(t, turns, 5, "one later turn delivers the newer message: %v", turns)
+		assert.Contains(t, texts[4], "the newer message")
+		assert.NotContains(t, texts[4], Text(first), "the older message was acked once")
+		pending, fresh := r.pending(t)
+		assert.Empty(t, pending)
+		assert.Empty(t, fresh)
+		assert.Equal(t, 2, r.last().Delivered)
+		assert.Equal(t, 2, strings.Count(strings.Join(r.records, "\n"), " acked=true"), "one ack for each message")
+	})
+}
+
+// A card already held by another lane may need another turn while a message
+// turn is owed. It can keep working on its card, but a newer bus message cannot
+// ride with it ahead of the older deferred message.
+func TestACardRetryCannotCarryANewerMessagePastAnOwedTurn(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		dir := cardDirFixture(t, [][2]string{{"c1", "queued"}}, []string{"c1"}, nil)
+		h := &lanesHarness{dir: dir, finish: map[string]bool{}, active: map[string]int{}, block: make(chan struct{}), refuse: []error{Deferred{Reason: "the app is busy"}}}
+		r, _ := laneRig(t, h, 2)
+		var older, newer bus.Message
+		r.at[5] = func() { older = r.send(t, "ada", "older", "the older message") }
+		r.at[8] = func() { newer = r.send(t, "ada", "newer", "the newer message") }
+		r.at[10] = func() { close(h.block) }
+		r.run(t, 13)
+		turns, texts, _ := h.got()
+		require.GreaterOrEqual(t, len(turns), 3, "the card began a second turn while the older message was owed: %v", turns)
+		require.NotEmpty(t, turns)
+		require.NotEmpty(t, older.ID)
+		require.NotEmpty(t, newer.ID)
+		firstOwed := -1
+		for i, text := range texts {
+			if strings.Contains(text, Text(older)) {
+				firstOwed = i
+				break
+			}
+		}
+		require.NotEqual(t, -1, firstOwed, "the older message entered a cardless turn: %v", turns)
+		assert.Contains(t, turns[firstOwed], ": -", "the older message was handed as a message turn")
+		for i, text := range texts {
+			if i <= firstOwed || !strings.Contains(text, "one card this turn, c1.") {
+				continue
+			}
+			assert.NotContains(t, text, Text(newer), "an existing card's retry must not carry a newer message past the owed turn")
+		}
+		pending, fresh := r.pending(t)
+		assert.Equal(t, 2, len(pending)+len(fresh), "the owed and newer messages are still unread")
+		assert.Equal(t, 0, r.last().Delivered)
 	})
 }
 
