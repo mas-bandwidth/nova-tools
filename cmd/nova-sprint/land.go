@@ -1488,12 +1488,9 @@ func (l *lander) cut(ctx context.Context, dir, stream string, cards []landCard, 
 	l.stage("merge", "git merge")
 	start = time.Now()
 	defer since(&t.Merge, start)
-	if _, err := l.git(ctx, dir, "switch", "--no-track", "--force-create", "land/"+stream, "refs/remotes/origin/"+base); err != nil {
-		return landCut{}, "the base " + base + " could not be cut from origin in " + dir + ": " + firstLine("", err)
-	}
-	baseSha, err := l.git(ctx, dir, "rev-parse", "--verify", "HEAD^{commit}")
-	if err != nil {
-		return landCut{}, "the base " + base + " has no tip in " + dir + ": " + firstLine("", err)
+	baseSha, why := l.cutBranch(ctx, dir, stream, base)
+	if why != "" {
+		return landCut{}, why
 	}
 	merged, first, env, why := l.gateBase(ctx, dir, stream, cards, baseSha)
 	switch {
@@ -1503,6 +1500,24 @@ func (l *lander) cut(ctx context.Context, dir, stream string, cards []landCard, 
 		return landCut{baseSha: baseSha}, why
 	}
 	return landCut{baseSha: baseSha, merged: merged, first: first}, ""
+}
+
+// cutBranch pins the fetched base before changing branches: a push can move the
+// remote-tracking ref while another stream cuts. A same-branch -C can also move
+// HEAD without replacing the old branch's index and worktree; reset makes the
+// branch's three views agree before any card head is merged.
+func (l *lander) cutBranch(ctx context.Context, dir, stream, base string) (string, string) {
+	sha, err := l.git(ctx, dir, "rev-parse", "--verify", "refs/remotes/origin/"+base+"^{commit}")
+	if err != nil {
+		return "", "the base " + base + " has no tip in " + dir + ": " + firstLine("", err)
+	}
+	if _, err := l.git(ctx, dir, "switch", "--no-track", "--force-create", "land/"+stream, sha); err != nil {
+		return "", "the base " + base + " could not be cut from origin in " + dir + ": " + firstLine("", err)
+	}
+	if _, err := l.git(ctx, dir, "reset", "--hard", sha); err != nil {
+		return "", "the branch " + stream + " could not be reset to the base " + base + " in " + dir + ": " + firstLine("", err)
+	}
+	return sha, ""
 }
 
 // mergeCards merges the cards' heads onto the batch branch cut (cut), from the first after

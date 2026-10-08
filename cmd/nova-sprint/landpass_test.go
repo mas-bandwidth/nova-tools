@@ -9,6 +9,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -335,6 +336,66 @@ func TestLandParallelOneAndARefusedCount(t *testing.T) {
 	assert.Contains(t, errs, "--land-parallel wants a count of one or more, not 0")
 	out := r.ok("land --land-parallel 1")
 	assert.Contains(t, out, "LAND DONE batches=2 cards=2 refused=0")
+	r.clean()
+}
+
+// The second stream has built its old-base batch when the first stream pushes.
+// Rebuilding on the moved base must reset the branch's index and worktree as
+// well as HEAD; otherwise a1.go looks like a local deletion and b1 cannot merge.
+func TestLandRebuildOfTheSameBranchResetsItsTree(t *testing.T) {
+	t.Parallel()
+	r := newLandRig(t)
+	twoStreams(t, r,
+		map[string]map[string]string{"a1": {"a1.go": "package main\n\nfunc a1() {}\n"}},
+		map[string]map[string]string{"b1": {"b1.go": "package main\n\nfunc b1() {}\n"}})
+	built, pushed := make(chan struct{}), make(chan struct{})
+	var firstPush, secondGate sync.Once
+	r.a.gateRan = func(dir string, _ bool) {
+		if !strings.HasSuffix(dir, "@s2") || !strings.Contains(r.git(dir, "log", "-1", "--format=%s"), "land b1") {
+			return
+		}
+		secondGate.Do(func() {
+			close(built)
+			<-pushed
+		})
+	}
+	r.a.beforePush = func(int) {
+		firstPush.Do(func() {
+			select {
+			case <-built:
+			case <-time.After(10 * time.Second):
+				t.Error("second batch did not reach its tree gate")
+				close(pushed)
+				return
+			}
+			root := filepath.Join(r.dir, "land")
+			s1 := worktreeDir(root, filepath.Join(root, repoDirName(r.remote)), "s1")
+			r.git(s1, "push", "origin", "HEAD:refs/heads/main")
+			close(pushed)
+		})
+	}
+	code, out, errs := r.do("land --land-parallel 1")
+	assert.Equal(t, 0, code, out+errs)
+	assert.Contains(t, out, "LAND DONE batches=2 cards=2 refused=0")
+	assert.Equal(t, map[string]string{"a1": "landed/merged", "b1": "landed/merged"}, r.places("a1", "b1"))
+	r.clean()
+}
+
+func TestCutBranchClearsStagedDeletionOnTheSameBranch(t *testing.T) {
+	t.Parallel()
+	r := newLandRig(t)
+	r.moveBase("main", "a1.go")
+	r.git(r.clone, "fetch", "-q", "origin")
+	r.git(r.clone, "switch", "-q", "-C", "land/s2", "refs/remotes/origin/main")
+	r.git(r.clone, "rm", "-q", "a1.go") // the mismatched index seen in a failed parallel land
+	assert.Contains(t, r.git(r.clone, "status", "--porcelain"), "D  a1.go")
+	l := &lander{a: r.a}
+	sha, why := l.cutBranch(t.Context(), r.clone, "s2", "main")
+	require.Empty(t, why)
+	assert.Equal(t, r.git(r.clone, "rev-parse", "refs/remotes/origin/main"), sha)
+	assert.Equal(t, sha, r.git(r.clone, "rev-parse", "HEAD"))
+	assert.Empty(t, r.git(r.clone, "status", "--porcelain"), "the new branch must have the base's index and worktree")
+	assert.Equal(t, "moved", strings.TrimSpace(func() string { b, _ := os.ReadFile(filepath.Join(r.clone, "a1.go")); return string(b) }()))
 	r.clean()
 }
 
