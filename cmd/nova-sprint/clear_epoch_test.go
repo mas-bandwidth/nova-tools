@@ -134,6 +134,7 @@ func (ta *testApp) epochImage(e uint64) string {
 func TestEveryVerbAfterAClearLeavesTheOldEpochAlone(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
+	ta.homeOfItsOwn() // gc's example walks the home
 	ta.ok("init --readers reader-a,reader-b,reader-c --members m1,m2")
 	ta.ok("add --stream s1 --count 9")
 	ta.ok("add --stream s2 --count 3")
