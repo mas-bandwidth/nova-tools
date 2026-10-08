@@ -384,6 +384,41 @@ func Install(ctx context.Context, a Agent, uid int, run Launchctl, write func(pa
 	}
 }
 
+// Load boots out whatever label runs now (nothing loaded is fine), waits until
+// launchd no longer holds it (WaitReleased), and bootstraps the plist at path
+// into the user's domain, sent again after wait() while launchd answers EIO
+// or is still removing the old service. It answers the commands it ran.
+// nova-friend rebind calls it: the plist is already written, and the agent
+// must come back on the new session. The wait between release polls is
+// time.Sleep; Install keeps the agent's own Sleep.
+func Load(ctx context.Context, label, path string, uid int, run Launchctl, wait func()) (ran []string, err error) {
+	domain := fmt.Sprintf("gui/%d", uid)
+	bootout := []string{"bootout", domain + "/" + label}
+	ran = append(ran, "launchctl "+strings.Join(bootout, " "))
+	_, _ = run(ctx, bootout...) // ignored: a label that is not loaded answers an error, and that is the state wanted
+	target := domain + "/" + label
+	plist, _ := os.ReadFile(path) // a missing plist waits the default exit timeout
+	waited, err := WaitReleased(ctx, run, target, ExitTimeout(string(plist)), ReleasePoll, time.Sleep)
+	if waited > 0 {
+		ran = append(ran, fmt.Sprintf("launchctl print %s (every %s until launchd released it: %s)", target, ReleasePoll, waited))
+	}
+	if err != nil {
+		return ran, err
+	}
+	bootstrap := []string{"bootstrap", domain, path}
+	for try := 1; ; try++ {
+		ran = append(ran, "launchctl "+strings.Join(bootstrap, " "))
+		out, err := run(ctx, bootstrap...)
+		if err == nil {
+			return ran, nil
+		}
+		if try == BootstrapTries || !(strings.Contains(out, "Input/output error") || strings.Contains(out, "Operation already in progress")) {
+			return ran, fmt.Errorf("launchctl bootstrap: %v: %s", err, strings.TrimSpace(out))
+		}
+		wait()
+	}
+}
+
 // Uninstall boots the agent out and removes its plist; an agent that is
 // not there is fine.
 func Uninstall(ctx context.Context, a Agent, uid int, run Launchctl, remove func(path string) error) (ran []string, err error) {

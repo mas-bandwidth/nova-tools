@@ -672,6 +672,14 @@ func (s *SessionCheck) ask(ctx context.Context, now time.Time) {
 		if locked {
 			defer s.turn.Unlock()
 		}
+		if err := Gone(cctx, s.deliverer()); err != nil { // nothing goes into a session that is gone
+			cancel()
+			s.record(now, "presence: session check "+nonce+" not delivered: "+err.Error()+"; the bound runs")
+			s.mu.Lock()
+			s.cancel = nil
+			s.mu.Unlock()
+			return
+		}
 		exit, err := s.deliverer().Deliver(cctx, s.Text(nonce))
 		cancel()
 		if err == nil && exit == 0 && under(s.Deliver, func(a Deliverer) bool { _, ok := a.(ReadOnReturn); return ok }) {
