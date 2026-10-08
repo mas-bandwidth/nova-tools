@@ -75,6 +75,7 @@ type ReadPacket struct {
 type AskedRead struct {
 	ID     string
 	Epoch  string
+	Gen    int // the read card's generation as the queue carries it (0: a queue before it); a stop-return names it
 	Packet ReadPacket
 }
 
@@ -86,6 +87,7 @@ func ParseReadQueue(out string) ([]AskedRead, error) {
 		Cards []struct {
 			ID     string     `json:"id"`
 			Col    string     `json:"col"`
+			Gen    int        `json:"gen"`
 			Packet ReadPacket `json:"packet"`
 		} `json:"cards"`
 	}
@@ -105,7 +107,7 @@ func ParseReadQueue(out string) ([]AskedRead, error) {
 	var asked []AskedRead
 	for _, c := range q.Cards {
 		if c.Col == "asked" {
-			asked = append(asked, AskedRead{ID: c.ID, Epoch: epoch, Packet: c.Packet})
+			asked = append(asked, AskedRead{ID: c.ID, Epoch: epoch, Gen: c.Gen, Packet: c.Packet})
 		}
 	}
 	return asked, nil
@@ -223,10 +225,12 @@ type readSet struct {
 	begun   map[string]bool // asked reads this daemon began: the queue shows them asked until the verdict lands
 	asked   []AskedRead
 	askedAt time.Time
+	cancel  map[string]context.CancelFunc // each read under way: the machine's stop ends it (stop.go)
+	stopped map[string]bool               // reads the stop cancelled: no verdict, a stop-return
 }
 
 func newReadSet() *readSet {
-	return &readSet{results: make(chan readResult, 64), running: map[string]bool{}, begun: map[string]bool{}}
+	return &readSet{results: make(chan readResult, 64), running: map[string]bool{}, begun: map[string]bool{}, cancel: map[string]context.CancelFunc{}, stopped: map[string]bool{}}
 }
 
 func (d *Daemon) readSlots() int {
@@ -262,14 +266,14 @@ func (l *loop) readStep(now time.Time) {
 			d.Record(fmt.Sprintf("%s reads: %s", at, err))
 		}
 	}
-	if l.lanes.gov.Held() != "" || l.lanes.gov.Paused(now) {
-		return
+	if l.lanes.gov.Held() != "" || l.lanes.gov.Paused(now) || d.machineStopped() {
+		return // nothing begins while STOPPED (NoLaunchAfterStop)
 	}
 	for _, r := range s.asked {
 		if len(s.running) >= d.readSlots() {
 			return
 		}
-		if s.running[r.ID] || s.begun[r.ID] {
+		if s.running[r.ID] || s.begun[r.ID] || d.machineStopped() {
 			continue
 		}
 		out, err := d.Sprint(l.ctx, ReadBeginArgv(d.Friend, r))
@@ -309,7 +313,10 @@ func (l *loop) startRead(r AskedRead, now time.Time) {
 	dir := filepath.Join(d.Dir, "reads", r.ID)
 	model := d.readModel(r.Packet.Tier)
 	d.Record(fmt.Sprintf("%s read %s: begun tier=%s model=%s", now.UTC().Format(time.RFC3339), r.ID, dash(r.Packet.Tier), dash(model)))
+	rctx, cancel := context.WithCancel(l.ctx)
+	s.cancel[r.ID] = cancel
 	go func() {
+		defer cancel()
 		res := readResult{read: r, model: model, dir: dir, start: now}
 		defer func() { s.results <- res }()
 		_ = os.Remove(filepath.Join(dir, "RESULT.md")) // ignored: a result of an earlier attempt is not this read's
@@ -321,7 +328,7 @@ func (l *loop) startRead(r AskedRead, now time.Time) {
 				return
 			}
 		}
-		ctx, prompt := LaneContext(l.ctx), ReadPrompt(d.Friend, dir)
+		ctx, prompt := LaneContext(rctx), ReadPrompt(d.Friend, dir)
 		switch h := d.Deliver.(type) {
 		case ReadHarness:
 			res.turn, res.err = h.RunRead(ctx, model, prompt)
@@ -340,7 +347,13 @@ func (l *loop) readDone(r readResult, now time.Time) {
 	d, s := l.d, l.reads
 	delete(s.running, r.read.ID)
 	delete(s.begun, r.read.ID) // the next ask says whether it is asked again; the one in hand is stale
+	delete(s.cancel, r.read.ID)
 	s.asked = slices.DeleteFunc(s.asked, func(a AskedRead) bool { return a.ID == r.read.ID })
+	if s.stopped[r.read.ID] {
+		delete(s.stopped, r.read.ID)
+		l.stopReadDone(r, now) // cancelled by the machine's stop: no verdict, a stop-return
+		return
+	}
 	if l.ctx.Err() != nil {
 		d.Record(fmt.Sprintf("%s read %s: left begun: the daemon stopped", now.UTC().Format(time.RFC3339), r.read.ID))
 		return

@@ -44,6 +44,9 @@ type LaneState struct {
 	Sessions map[int]string     `json:"sessions"`
 	GivenUp  []string           `json:"given_up,omitempty"`
 	Started  map[string]Started `json:"started,omitempty"`
+	// StopReturns is every card the machine's stop took out of a lane and the stop-return
+	// owed or taken for it (stop.go): a daemon starting up sends what is owed first.
+	StopReturns []StopReturn `json:"stop_returns,omitempty"`
 }
 
 // Card is one card a lane hands: its id (the queue file's), its brief, and
@@ -243,6 +246,7 @@ type laneResult struct {
 // laneSet is the daemon's lanes in one-shot mode.
 type laneSet struct {
 	lanes   []*lane
+	stopped bool // the machine's word is STOPPED (stopStep): said once each way
 	given   map[string]bool
 	state   LaneState
 	loaded  bool
@@ -396,12 +400,24 @@ func (l *loop) laneStep(now time.Time, width int) {
 		for _, id := range s.state.GivenUp {
 			s.given[id] = true
 		}
-		if len(s.state.Started) > 0 {
-			l.endStarted(now)
-		}
 		if s.state.Started == nil {
 			s.state.Started = map[string]Started{}
 		}
+		for i, r := range s.state.StopReturns {
+			// a run the stop cancelled before this daemon started is gone with it: its
+			// stop-return is owed first, never a FAIL (StopReturnsSurviveRestart)
+			delete(s.state.Started, r.Job)
+			if r.Owed() && !r.Ended {
+				s.state.StopReturns[i].Ended, s.state.StopReturns[i].Exit = true, -1
+			}
+		}
+		d.owed.Store(int64(s.state.owed()))
+		if len(s.state.Started) > 0 {
+			l.endStarted(now)
+		}
+	}
+	if l.stopStep(now) {
+		paused = true // NoLaunchAfterStop: no open, no turn, no card taken while STOPPED
 	}
 	for len(s.lanes) < width {
 		n := len(s.lanes) + 1
@@ -510,6 +526,9 @@ func (l *loop) laneStep(now time.Time, width int) {
 			s.state.Started[filepath.Base(c.Outbox)] = Started{Lane: ln.n, Card: c, At: now}
 			l.saveLanes(now)
 		}
+		if d.machineStopped() {
+			continue // the word read again right before the start (NoLaunchAfterStop)
+		}
 		if perCard { // the brief alone: no message, pong or notice rides with it
 			t, c, dir := &turn{subjects: fmt.Sprintf("%q", "card "+ln.card.ID)}, ln.job.Card, ln.job.Dir
 			ln.t = t
@@ -568,6 +587,10 @@ func (l *loop) laneDone(r laneResult, now time.Time) {
 	t := r.t
 	t.running = false
 	ln.t = nil
+	if t.byStop && ln.card != nil {
+		l.stopDone(ln, t, r, now) // cancelled by the machine's stop: never finished
+		return
+	}
 	if ln.ended != "" {
 		// another lane finished the card: its messages go back pending, counted toward nothing
 		for _, e := range t.entries {

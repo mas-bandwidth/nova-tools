@@ -116,6 +116,15 @@ type Daemon struct {
 	// while a delivery runs and the loop only peeks.
 	Pause  func(ctx context.Context, d time.Duration)
 	Record func(line string) // one line per delivery, to the daemon's log
+	// MachineStopped says the machine's word, as the owner last read it off the beat's
+	// answer (ParseMachine), is STOPPED: the lanes cancel what runs, owe and send
+	// stop-returns, and start nothing (stop.go). nil: never stopped.
+	MachineStopped func() bool
+	// StopReturn sends one stop-return (StopReturnArgv) to the sprint server; nil sends it
+	// through Sprint.
+	StopReturn func(ctx context.Context, argv []string) error
+	// owed is how many stop-returns the lanes owe now (OwedStopReturns): the beat carries it.
+	owed atomic.Int64
 	// Pong is the session's recorded answer, read each step while a
 	// challenge is open (ReadPong over the state files).
 	Pong func() (Pong, bool, error)
@@ -308,6 +317,7 @@ type turn struct {
 	stopped  bool      // the daemon stopped it: silent past SilentStop
 	capped   bool      // the daemon ended it: its card's wall reached its lane's cap (lane_cap.go)
 	held     bool      // the daemon ended it: a provider failure stopped every lane (lane_parity.go)
+	byStop   bool      // the daemon ended it: the machine's stop cancelled every lane (stop.go)
 	tail     *outputTail
 	stamped  time.Time // when the daemon last stamped progress on the turn's card (stampProgress)
 	subjects string
@@ -734,9 +744,9 @@ func (d *Daemon) Run(ctx context.Context) error {
 			l.startPresent(now, true)
 		case l.busy == nil && len(l.hand) > 0:
 			l.startBatch(now)
-		case l.busy == nil && len(l.dealt) > 0:
+		case l.busy == nil && len(l.dealt) > 0 && !d.machineStopped(): // NoNudgeWhileStopped
 			l.startDealt(now)
-		case l.busy == nil && l.wake && drained:
+		case l.busy == nil && l.wake && drained && !d.machineStopped():
 			l.startWake(now)
 		case l.busy != nil && !l.busy.running && !l.retry.IsZero() && !now.Before(l.retry):
 			l.retry = time.Time{}
@@ -764,7 +774,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 		if d.HarnessStatus != nil {
 			d.status.HarnessSeen, d.status.HarnessAlive = d.HarnessStatus()
 		}
-		if d.Activity != nil && l.mode == ModeBatch && !l.broken && l.busy == nil && proven {
+		if d.Activity != nil && l.mode == ModeBatch && !l.broken && l.busy == nil && proven && !d.machineStopped() { // no idle wake while STOPPED
 			if d.walked.IsZero() || now.Sub(d.walked) >= IdleWalkEvery {
 				if d.StepBeatForTests {
 					d.active = d.Activity()

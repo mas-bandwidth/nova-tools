@@ -99,6 +99,10 @@ type FriendReport struct {
 	Working *int     `json:"working,omitempty"`
 	Queue   *int     `json:"queue,omitempty"`
 	Width   *int     `json:"width,omitempty"`
+	// StopReturns is how many stop-returns her lanes still owe after the machine's stop
+	// (friend beat --stop-returns; docs/SPEC-SPRINT.md section 14, stop cancels jobs):
+	// start waits for zero. Absent when not reported.
+	StopReturns *int `json:"stop_returns,omitempty"`
 	// Active is the newest write under her working directory and outbox as her daemon
 	// last walked them (friend beat --active), zero when it reported none: the signal that
 	// her session moves, which a daemon pong does not say (docs/SPEC-FRIEND.md, last

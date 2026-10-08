@@ -2489,7 +2489,7 @@ nova-sprint install table --out <file> [--every <duration>] [--redis <addr>] [--
 nova-sprint uninstall server|member|seat-push|friend-sync|table [--dir <dir>] [--dry-run]
 nova-sprint units --check [--dir <dir>]
 nova-sprint gc [--machine <m>] [--dry-run] [--max-age <d>] [--ai-root <dir>]
-nova-sprint friend beat <friend> [--working <n>] [--queue <n>] [--width <n>] [--running <id>,...] [--load <percent>]
+nova-sprint friend beat <friend> [--working <n>] [--queue <n>] [--width <n>] [--running <id>,...] [--load <percent>] [--stop-returns <n>]
 nova-sprint friend down <friend> [--reason <text>] [--until <RFC3339>]
 nova-sprint friend up <friend> [--width <n>]
 nova-sprint friend cards <friend> [--json]

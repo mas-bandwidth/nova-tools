@@ -398,6 +398,9 @@ func (a *app) cmdQueue(args []string, stdout, stderr io.Writer) int {
 		if width >= 0 {
 			out["width"] = width // the worker runs this many: the fleet row is the truth
 		}
+		if word := machineWord(ctx, st); word != "" {
+			out["machine"] = word // STOPPED: the worker cancels its lanes and takes nothing (internal/member machineStop)
+		}
 		if *as != "" {
 			out["reader"] = isReader // --as is a row of the readers table
 		}
