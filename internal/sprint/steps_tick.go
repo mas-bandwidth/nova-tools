@@ -630,6 +630,12 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 		}
 		offer = append(offer, c)
 	}
+	// Take back unstarted cards from friends whose status is not Up (docs/SPEC-SPRINT.md
+	// section 1, a friend's card taken back): when a friend transitions away from up
+	// (held, down, or asleep), all unstarted cards on her row are taken back in the same tick.
+	// This must happen before friendDeal runs.
+	tp := FriendTransitionTakeBackFromTick(s, r.Friends, s.Now)
+	p.Units = append(p.Units, tp.Units...)
 	// the ladder (priority.go, reads_priority.go): the cards above reader, then the friends'
 	// reads, asked and placed in this plan, then normal and low work in the room they leave
 	fp, seats, dealt, dealtWorking := friendDealByLadder(s, dealOrder(s, offer), r.Friends)
