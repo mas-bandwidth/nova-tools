@@ -3789,6 +3789,25 @@ primary of it left on the table has landed. A stopped stream stays stopped
 until it resumes. accept closes the open card judgments of the primaries it
 accepts.
 
+A stream whose stop sentinel has landed is not given another card in silence.
+A card admitted after that stop reopens the stream: add places a new sentinel
+`<stream>-stop-<n>` that needs the new card and every other open card of the
+stream, the stream's state is `working`, and the step says `STREAM REOPENED
+<stream> stop=<id>`. An add that names its own sentinel reopens on that
+sentinel and does not place a second one. A landed stream with no stop still
+comes back `waiting`.
+
+A stream never refuses a landing it dealt. The merge step of a stream marked
+`landed` still records a queued card that is merging in work. When the lander's
+report does not go through after the push, the loop line names the store's
+reason and the timeline is marked `pushed-unreported <sha>`. The next land
+records that card through the merge step before any new merge, and does not
+merge it again.
+
+`where --json` and `streams` say `closed` when the control card says landed and
+a card of the stream is still open, and `landed` when none is. A STREAM line
+ends with `state=`.
+
 `since` is the clock time the state last changed. The merge step is mechanical
 and is given its facts by the caller (what merged, what conflicted, ci result);
 it never decides. Causes of a stop: a conflict on a card the lander could not

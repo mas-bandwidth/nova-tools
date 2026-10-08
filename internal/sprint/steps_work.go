@@ -186,10 +186,15 @@ func Add(s *Snapshot, r AddReq) Plan {
 		p.Places = append(p.Places, pl)
 	}
 	var head []Change
+	reopen := false
 	switch {
 	case ctl == nil:
 		head = append(head, change(Merge, createEntry(CtlID(r.Stream), r.Stream, Ctl, 0,
 			map[string]string{"kind": "stream", "state": StreamWaiting, "since": stamp(s.Now)})))
+	case ctl.F("state") == StreamLanded && StopHasLanded(s, r.Stream):
+		// a card past a landed stop reopens the stream; no stop, and it comes back waiting
+		reopen = true
+		head = append(head, change(Merge, setEntry(ctl, map[string]string{"state": StreamWorking, "since": stamp(s.Now)})))
 	case ctl.F("state") == StreamLanded:
 		head = append(head, change(Merge, setEntry(ctl, map[string]string{"state": StreamWaiting, "since": stamp(s.Now)})))
 	}
@@ -619,6 +624,24 @@ func Add(s *Snapshot, r AddReq) Plan {
 	}
 	// More work: the sprint is not done. An add that only opens a stream
 	// admits no card, and leaves it done.
+	if reopen && admits(p) {
+		var stopID string
+		var admitted, extra []string
+		var got []float64
+		for _, a := range in {
+			extra = append(extra, a.id)
+			if !planCreates(p, a.id) {
+				continue
+			}
+			got = append(got, a.score)
+			if a.sent || a.gate {
+				stopID = a.id
+				continue
+			}
+			admitted = append(admitted, a.id)
+		}
+		p = reopenAdd(p, s, r.Stream, r.Who, stopID, admitted, got, extra)
+	}
 	if admits(p) {
 		for _, o := range s.Open {
 			if o.Note.Type == NSprintDone {
