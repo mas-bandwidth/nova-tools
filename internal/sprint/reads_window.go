@@ -73,8 +73,8 @@ func (v ReadVerdict) line() string {
 	return strings.Join([]string{stamp(v.At), clean(v.Reader), v.Verdict, clean(v.Tier), findingClass(v.Finding)}, "\t")
 }
 
-// ParseReadsWindow is a ledger's verdicts, oldest first; a line that does not read is skipped.
-func ParseReadsWindow(raw string) []ReadVerdict {
+// parseReadsWindow is a ledger's verdicts, oldest first; a line that does not read is skipped.
+func parseReadsWindow(raw string) []ReadVerdict {
 	var out []ReadVerdict
 	for l := range strings.SplitSeq(raw, "\n") {
 		f := strings.SplitN(l, "\t", 5)
@@ -152,7 +152,7 @@ func readsLedger(s *Snapshot) []ReadVerdict {
 			continue
 		}
 		if raw, ok := t.Prop(PropReadsWindow); ok {
-			out = append(out, ParseReadsWindow(raw)...)
+			out = append(out, parseReadsWindow(raw)...)
 		}
 	}
 	slices.SortStableFunc(out, func(a, b ReadVerdict) int { return a.At.Compare(b.At) })
