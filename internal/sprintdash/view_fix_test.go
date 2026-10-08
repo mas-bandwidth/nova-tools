@@ -133,12 +133,11 @@ func TestFixPageConstants(t *testing.T) {
 	assert.Contains(t, page, `<div class="num">review</div><div class="num">fix</div><div class="num">merging</div>`, "Work's fix column between review and merging")
 	assert.Contains(t, js, `var STATES = ["landed", "merging", "fix", "review", "working", "ready", "waiting"];`)
 	assert.Contains(t, js, `var FLOW = ["waiting", "ready", "working", "review", "fix", "merging", "landed"];`)
-	assert.Contains(t, js, `if (level === "fix") return "p-fix";`)
 }
 
 // fixDriver draws a copy with app.js on the scroll test's DOM shim and reads back the state
 // legend, the progress bar, Work's ci row and total, a fleet and a friends track, the friends
-// total, the in-flight tooltip and the priority marks.
+// total and the in-flight tooltip.
 const fixDriver = `
 context.render(input.data);
 const kids = id => doc.getElementById(id).children;
@@ -155,13 +154,12 @@ process.stdout.write(JSON.stringify({
   amy: row('friends', 'amy').children[3].children.map(cls),
   friendsTotal: total('friends').children[3].textContent,
   inflight: doc.getElementById('inflight-sub').title,
-  marks: kids('priority-marks').map(k => cls(k).replace('mark ', '') + ' ' + k.title),
 }));
 `
 
 // The page draws fix purple in the right place: the legend and the bar carry fix between review
 // and merging, Work's row and total its fix column between them, a track's lit cells run
-// blocker, critical, fix, reads, working, and the mark is purple after the reds.
+// blocker, critical, fix, reads and working.
 func TestFixPageDrawsFixBetweenReviewAndMerging(t *testing.T) {
 	t.Parallel()
 	nodePath, err := exec.LookPath("node")
@@ -190,8 +188,8 @@ func TestFixPageDrawsFixBetweenReviewAndMerging(t *testing.T) {
 	require.NoError(t, cmd.Run(), "node runner failed: %s", errBuf.String())
 	require.Empty(t, errBuf.String(), "app.js threw while drawing")
 	var res struct {
-		Legend, Bar, CI, WorkTotal, Bench, Amy, Marks []string
-		BenchTitle, FriendsTotal, Inflight            string
+		Legend, Bar, CI, WorkTotal, Bench, Amy []string
+		BenchTitle, FriendsTotal, Inflight     string
 	}
 	require.NoError(t, json.Unmarshal(outBuf.Bytes(), &res), outBuf.String())
 
@@ -212,5 +210,4 @@ func TestFixPageDrawsFixBetweenReviewAndMerging(t *testing.T) {
 	assert.Equal(t, []string{"p-fix", "", "", "", "", "", "", ""}, res.Amy, "amy's second attempt is her purple cell")
 	assert.Equal(t, "1 fix", res.FriendsTotal, "the fix figure under the bars")
 	assert.Equal(t, "2 working (1 fix), 0 review, 1 merging", res.Inflight)
-	assert.Equal(t, []string{"p-blocker blocker: ci-09", "p-fix fix: ci-03"}, res.Marks, "the fix mark purple, after the reds")
 }

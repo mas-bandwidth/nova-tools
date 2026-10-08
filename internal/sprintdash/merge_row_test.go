@@ -9,11 +9,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestTheMergeRowCarriesTheBaseGateAndTheDrift pins the merge row (docs/SPEC-SPRINT-DASHBOARD.md,
-// "Merge"; the owner, 2026-10-04: "Is this progress visible in the sprint dashboard yet?"): the
-// row where --json carries as merge_row and the page draws under the progress bar, with the
-// base's gate (red naming the failing test, green, or not known) and the drift between the
-// base and the development branch.
+// TestTheMergeRowCarriesTheBaseGateAndTheDrift pins the API's merge_row data
+// while the dashboard omits its former visible panel.
 func TestTheMergeRowCarriesTheBaseGateAndTheDrift(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC)
@@ -64,36 +61,15 @@ func TestTheMergeRowCarriesTheBaseGateAndTheDrift(t *testing.T) {
 	// merging cards read and none merging: no oldest, still not 0
 	assert.Nil(t, MergeRowOf(MergeFacts{Now: now, MergingRead: true}).OldestMergingMin)
 
-	// the JSON is where --json's merge_row, the keys the page reads
+	// The API retains every merge fact even though the dashboard omits the panel.
 	b, err := json.Marshal(red)
 	require.NoError(t, err)
 	var keys map[string]any
 	require.NoError(t, json.Unmarshal(b, &keys))
-	js := string(file("app.js"))
 	for _, k := range []string{"merging", "review", "landed_per_30m", "oldest_merging_min", "base_gate", "failing_test", "base_lacks", "dev_lacks", "sync_minutes", "promotion_minutes"} {
-		assert.Contains(t, keys, k, "merge_row carries %s", k)
-		assert.Contains(t, js, "m."+k, "the page reads merge_row.%s", k)
+		assert.Contains(t, keys, k)
 	}
-	assert.Len(t, keys, 10, "merge_row carries the spec's fields and nothing else: %v", keys)
-	assert.Contains(t, js, "d.merge_row")
-	assert.Contains(t, js, "renderMerge(d);")
-
-	// the page: one panel titled "Merge" right under the progress bar, a cell per field, shown
-	doc := parsePage(t, file("index.html"))
-	panel := doc.one(t, "the merge row", byID("merge-row"))
-	_, hidden := panel.attr["hidden"]
-	assert.False(t, hidden, "the merge row shows by default")
-	assert.Equal(t, "Merge", textOf(panel.one(t, "the merge row's title", func(n *node) bool { return n.name == "h2" })))
-	for _, id := range []string{"mr-merging", "mr-review", "mr-landed", "mr-oldest", "mr-gate", "mr-drift", "mr-sync", "mr-promoted"} {
-		panel.one(t, "the merge row's #"+id, byID(id))
-	}
-
-	// the spec says so, with the owner's line quoted after the lock
-	sp := readSpec(t)
-	sec := sp.section(t, "Merge")
-	for _, s := range []string{"merge_row", "base_gate", "failing_test", "base lacks", "dev lacks", "landed per 30 minutes"} {
-		assert.Contains(t, sec, s)
-	}
-	assert.Contains(t, sp.section(t, "LOCK 2"), "Is this progress visible in the sprint dashboard yet?")
-	assert.Contains(t, sp.section(t, "Page"), "progress bar, Merge, Work")
+	assert.Len(t, keys, 10)
+	assert.NotContains(t, string(file("index.html")), `id="merge-row"`)
+	assert.NotContains(t, string(file("app.js")), "renderMerge")
 }

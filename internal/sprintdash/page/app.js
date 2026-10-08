@@ -68,7 +68,7 @@ function el(tag, cls, text) {
 // (.fv) inside the node, so the tint hugs the digits, not the cell. A track
 // cell flashes only when it goes lit <-> unlit. The clock never flashes
 // (setLiveHTML does not use these helpers).
-["all", "all2", "pct", "eta", "eta-at", "cost", "cost-per", "cost-unreconciled", "inflight", "inflight-sub", "tput", "coord", "epoch", "machine",
+["all", "all2", "pct", "eta", "eta-at", "cost", "cost-per", "inflight", "inflight-sub", "tput", "coord", "epoch", "machine",
  "streams-sub", "fleet-head", "friends-sub", "readers-sub"].forEach(function (id) { var e = document.getElementById(id); if (e) quiet(e); });
 function valEl(e) {
   if (!e._fv) {
@@ -142,11 +142,11 @@ function syncRows(box, header, keys, build, update, total) {
   map.forEach(function (r, k) { if (!seen.has(k)) { r.node.remove(); map.delete(k); } });
   if (total && prev.nextSibling !== total) box.insertBefore(total, prev.nextSibling);
 }
-// The header rows of Work, Fleet, Friends and Lanes are the page's own markup (index.html), the
+// The header rows of Work, Fleet and Friends are the page's own markup (index.html), the
 // strings of docs/SPEC-SPRINT-DASHBOARD.md, which a test holds equal: each table's header is
 // a clone of the row the page carries.
 var HEADS = {};
-["streams", "fleet", "friends", "lanes"].forEach(function (id) {
+["streams", "fleet", "friends"].forEach(function (id) {
   var h = document.getElementById(id).querySelector(".row.head");
   if (h) { h.remove(); HEADS[id] = h; }
 });
@@ -254,26 +254,11 @@ function streamStatus(state, c, total) {
   return [state || "idle", "neutral"];
 }
 
-// The archived streams (stream archive; the owner, 2026-10-05: "I would like you to remove all
-// the already landed work streams"): off the table by default, one line saying how many, the
-// cards landed in them and their cost, which shows them or hides them again when clicked. The
-// total row, the progress bar and the hero count only the streams on the table, shown or not
-// (the owner, 2026-10-06: "I really don't think we have 2.8k cards post-archive..."); the
-// archived line carries theirs.
-var showArchived = false, lastStreams = null;
+// Archived streams stay off the Work table. The total row and progress bar count
+// the live streams; a completed sprint's cost tile covers the full epoch.
 function archivedSet(d) { var a = {}; ((d.archived || {}).streams || []).forEach(function (s) { a[s] = 1; }); return a; }
-function renderArchived(d) {
-  var b = $("streams-archived"), a = d.archived;
-  if (!b._on) { b._on = 1; b.addEventListener("click", function () { showArchived = !showArchived; if (lastStreams) render(lastStreams); }); }
-  b.hidden = !a;
-  if (!a) return;
-  var n = a.streams.length;
-  setText(b, n + " archived stream" + (n === 1 ? "" : "s") + ", " + a.landed + " card" + (a.landed === 1 ? "" : "s") + " landed, " + a.cost + " · " + (showArchived ? "hide" : "show"));
-}
 
 function renderStreams(d) {
-  lastStreams = d;
-  renderArchived(d);
   var box = $("streams"), work = d.tables.work || {}, merge = d.tables.merge || {}, arch = archivedSet(d);
   var states = {}; (d.streams || []).forEach(function (s) { states[s.Stream] = s; });
   // children: 1 stream, 2 status, 3 waiting, 4 ready, 5 working, 6 review, 7 fix, 8 merging, 9 landed, 10 cost
@@ -295,8 +280,8 @@ function renderStreams(d) {
     statusOf[k] = streamStatus((states[k] || {}).State, c, total)[0];
   });
   var rank = function (k) { return RANK[statusOf[k]] == null ? 3.5 : RANK[statusOf[k]]; };
-  var keys = streamOrder(d).filter(function (k) { return showArchived || !arch[k]; }).sort(function (a, b) { return rank(a) - rank(b) || (a < b ? -1 : a > b ? 1 : 0); });
-  var sum = { cost: 0, totalCost: 0, workCost: 0, readCost: 0, unreconciled: 0, unpriced: 0 }, held = 0, landedStreams = 0, prevRank = null;
+  var keys = streamOrder(d).filter(function (k) { return !arch[k]; }).sort(function (a, b) { return rank(a) - rank(b) || (a < b ? -1 : a > b ? 1 : 0); });
+  var sum = { cost: 0, totalCost: 0, workCost: 0, readCost: 0, unpriced: 0 }, held = 0, landedStreams = 0, prevRank = null;
   // the epoch's spend, every stream's, the archived ones' too: the cost tile's scope once the
   // sprint is done (where --json's done), when the table's streams are all archived
   var epoch = { totalCost: 0, workCost: 0, readCost: 0, unpriced: 0 };
@@ -323,17 +308,13 @@ function renderStreams(d) {
     var w = work[k], m = merge[k] || {}, s = states[k] || {}, c = {}, total = 0;
     FLOW.forEach(function (st) { c[st] = int(w[st]); total += c[st]; });
     var ct = cents(w.cost);
-    // an archived stream shown is drawn, and counted only on its archived line
-    if (!arch[k]) {
-      FLOW.forEach(function (st) { sum[st] += c[st]; });
-      if (ct) sum.cost += ct;
-      var sc = (d.stream_costs || {})[k] || {};
-      var tc = cents(sc.total_cost); if (tc) sum.totalCost += tc;
-      // the reads beside the work: the same total split by kind (sprint.TierCosts)
-      var wc = cents(sc.work_cost); if (wc) sum.workCost += wc;
-      var rc = cents(sc.read_cost); if (rc) sum.readCost += rc;
-      sum.unpriced += int(sc.unpriced_runs);
-    }
+    FLOW.forEach(function (st) { sum[st] += c[st]; });
+    if (ct) sum.cost += ct;
+    var sc = (d.stream_costs || {})[k] || {};
+    var tc = cents(sc.total_cost); if (tc) sum.totalCost += tc;
+    var wc = cents(sc.work_cost); if (wc) sum.workCost += wc;
+    var rc = cents(sc.read_cost); if (rc) sum.readCost += rc;
+    sum.unpriced += int(sc.unpriced_runs);
     var status = statusOf[k];
     if (status === "held") held++;
     if (status === "landed") landedStreams++;
@@ -343,18 +324,12 @@ function renderStreams(d) {
     setText(r.nameT, k);
     var tone = { landed: "done", working: "active", held: "warning", stopped: "critical" }[status] || "neutral";
     setPill(r.pill, status, tone, status + (s.State ? " · stream " + s.State + (s.Since ? " since " + clockShort(new Date(s.Since)) : "") : ""));
-    // an archived stream shown is marked: the total row leaves it out
-    var tags = arch[k] ? ["archived"] : []; if (int(m.stuck) > 0) tags.push(m.stuck + " stuck"); if (m.ci === "red") tags.push("ci red");
+    var tags = []; if (int(m.stuck) > 0) tags.push(m.stuck + " stuck"); if (m.ci === "red") tags.push("ci red");
     setText(r.tag, tags.join(" · "));
     FLOW.forEach(function (st) { if (st !== "landed") setNum(r.n[st], c[st]); });
     setHTML(r.n.landed, frac(c.landed, total, digits));
     setText(r.cost, ct === null ? "-" : money(ct)); setClass(r.cost, "num" + (ct === null ? " zero" : ""));
   }, box._total);
-  // the sprint's unreconciled spend rides on every stream's record, an archived one's too:
-  // read once, never summed
-  Object.keys(d.stream_costs || {}).forEach(function (k) {
-    var uc = cents(d.stream_costs[k].unreconciled); if (uc) sum.unreconciled = Math.max(sum.unreconciled, uc);
-  });
   var tc = box._total._c, all = 0;
   FLOW.forEach(function (st, i) { all += sum[st]; if (st !== "landed") setNum(tc[2 + i], sum[st]); });
   setHTML(tc[LANDED_AT], frac(sum.landed, all, digits));
@@ -490,40 +465,6 @@ function renderFriends(d) {
   setText($("friends-sub"), r.n + " friends");
 }
 
-// Lanes (docs/SPEC-SPRINT-DASHBOARD.md, "Lanes"): each machine's lane of a kind, the
-// friends or machines that hold it, and those that wait, from where --json --cards's
-// lanes array (verb-lane-take-give). One row a machine, by machine then kind.
-function nameList(v) { return (v && v.length) ? v.join(", ") : "-"; }
-function renderLanes(d) {
-  var box = $("lanes"), lanes = Array.isArray(d.lanes) ? d.lanes.slice() : [];
-  lanes.sort(function (a, b) { return String(a.machine).localeCompare(String(b.machine)) || String(a.kind).localeCompare(String(b.kind)); });
-  if (!lanes.length) {
-    if (!box._empty) {
-      box._map = null; box._head = null; box.textContent = "";
-      var e = el("div", "empty");
-      e.innerHTML = "No lanes in the sprint data. This panel fills itself when <code>where --json --cards</code> carries <code>lanes</code>.";
-      box.appendChild(e); box._empty = true;
-    }
-    setText($("lanes-sub"), "");
-    return;
-  }
-  if (box._empty) { box.textContent = ""; box._empty = false; }
-  if (!box._head) { box._head = pageHead("lanes"); }
-  var byKey = {};
-  lanes.forEach(function (l) { byKey[l.machine + "/" + l.kind] = l; });
-  syncRows(box, box._head, lanes.map(function (l) { return l.machine + "/" + l.kind; }), function () {
-    var r = { node: el("div", "row") };
-    r.machine = el("div", "name"); r.kind = el("div"); r.width = numCell(); r.held = el("div"); r.waiting = el("div");
-    [r.machine, r.kind, r.width, r.held, r.waiting].forEach(function (c) { r.node.appendChild(c); });
-    return r;
-  }, function (r, k) {
-    var l = byKey[k];
-    setText(r.machine, l.machine); setText(r.kind, l.kind); setNum(r.width, int(l.width));
-    setText(r.held, nameList(l.held)); setText(r.waiting, nameList(l.waiting));
-  });
-  setText($("lanes-sub"), lanes.length + (lanes.length === 1 ? " lane" : " lanes"));
-}
-
 function renderReaders(d) {
   var box = $("readers"), table = d.tables.readers || {}, names = Object.keys(table).sort();
   var F = ["asked", "reading", "ok", "broken"];
@@ -593,23 +534,14 @@ function renderHero(d, s) {
     if (ms != null && !isNaN(at)) { etaAtLast = [etaAt, ms]; fitEtaAt(); } else { etaAtLast = null; setText($("eta-at"), "\u00a0"); }
   } else if ((all && landed >= all) || / done$/.test(String(d.summary || ""))) { setText($("eta"), "done"); setText($("eta-at"), " "); }
   else { setText($("eta"), "-"); setText($("eta-at"), "not in the summary"); }
-  // the cost tile and its tooltip cover one scope (docs/SPEC-SPRINT.md, the summary line): the
+  // the cost tile covers one scope (docs/SPEC-SPRINT.md, the summary line): the
   // streams on the table, or, the sprint done, the epoch's every stream, as the hero's count
   // is. The cost is every recorded take and read of their cards in any column; the cost per
   // card is that over the cards that landed
   var c = d.done ? s.sum.epoch : s.sum, recorded = c.totalCost;
   setText($("cost"), money(recorded));
-  // the reads are their own number beside the work, with their share of the two:
-  // "$0.42 per card · $310 work · $96 reads (24%)"
-  var both = c.workCost + c.readCost;
-  var split = both ? money(c.workCost) + " work \u00b7 " + money(c.readCost) + " reads (" + Math.round(100 * c.readCost / both) + "%)" : "";
   var per = landed ? money(Math.ceil(recorded / landed)) + " per card" : "";
-  var unpriced = c.unpriced ? c.unpriced + " runs unpriced" : "";
-  setHTML($("cost-per"), [per, split, unpriced].filter(Boolean).join(" \u00b7 ") || " ");
-  setTitle($("cost-per"), readerSpendTitle(d, d.done ? null : archivedSet(d)));
-  // what the providers counted beyond the records is the epoch's (sprint.UnreconciledSpend,
-  // every day since the epoch began), never added into the tile: its own line, its scope named
-  setText($("cost-unreconciled"), money(s.sum.unreconciled) + " unreconciled since " + epochStart(d));
+  setText($("cost-per"), per || " ");
   setText($("inflight"), s.sum.working + (s.sum.fix || 0) + s.sum.review + s.sum.merging);
   inflightLast = s.sum; renderInflight(s.sum);
   // throughput: cards landed per hour over the last hour, from the server's samples
@@ -617,32 +549,6 @@ function renderHero(d, s) {
   setTitle($("tput"), throughput == null ? "needs ten minutes of samples" : "over the last " + Math.round(throughputMinutes) + " min");
   setText($("coord"), d.coordinator || "-"); setText($("epoch"), d.epoch != null ? d.epoch : "-");
   setMachine(d.machine);
-}
-
-// readerSpendTitle is the cost tile's tooltip: each reader's spend, all time and the last hour,
-// summed over every stream's where record (stream_costs[s].readers, sprint.ReaderSpend: exact
-// dollars), most first; "" with no reader priced
-// epochStart is the day the epoch began, UTC as the providers' days are, from where --json's
-// cleared; "the epoch began" when it is not known.
-function epochStart(d) {
-  var t = new Date(d.cleared || "");
-  return isNaN(t) || t.getUTCFullYear() < 2000 ? "the epoch began" : t.toISOString().slice(0, 10);
-}
-
-// readerSpendTitle is each reader's spend over the streams but those in skip (null skips none).
-function readerSpendTitle(d, skip) {
-  var by = {}, sc = d.stream_costs || {};
-  Object.keys(sc).forEach(function (k) {
-    if (skip && skip[k]) return;
-    var rs = sc[k].readers || {};
-    Object.keys(rs).forEach(function (r) {
-      var b = by[r] || (by[r] = { usd: 0, hour: 0 });
-      b.usd += parseFloat(rs[r].usd) || 0; b.hour += parseFloat(rs[r].hour_usd) || 0;
-    });
-  });
-  var names = Object.keys(by).filter(function (r) { return by[r].usd > 0; });
-  names.sort(function (a, b) { return by[b].usd - by[a].usd || (a < b ? -1 : 1); });
-  return names.map(function (r) { return r + " " + money(cents(by[r].usd)) + " (" + money(cents(by[r].hour)) + " last hour)"; }).join("\n");
 }
 
 // the In flight tile's subline: one line, two parts,
@@ -848,70 +754,14 @@ function renderTopStreams(d) {
   }
 }
 
-// Merge (docs/SPEC-SPRINT-DASHBOARD.md, "Merge"): where --json's merge_row, one row under the
-// progress bar; a minute or a gate not known is "-". Nothing in it flashes.
-function renderMerge(d) {
-  var m = d.merge_row || {};
-  var mins = function (n, suffix) { return n == null ? "-" : n + "m" + (suffix || ""); };
-  var count = function (n) { return n == null ? "-" : String(n); };
-  [["mr-merging", count(m.merging)], ["mr-review", count(m.review)], ["mr-landed", count(m.landed_per_30m)],
-   ["mr-oldest", mins(m.oldest_merging_min)],
-   ["mr-drift", m.base_lacks == null ? "-" : "base lacks " + m.base_lacks + " · dev lacks " + m.dev_lacks],
-   ["mr-sync", mins(m.sync_minutes, " ago")], ["mr-promoted", mins(m.promotion_minutes, " ago")]].forEach(function (f) {
-    var e = $(f[0]); e._quiet = true; setText(e, f[1]);
-  });
-  var g = $("mr-gate");
-  if (!g._pill) { g._pill = makePill(); g.appendChild(g._pill); }
-  var gate = m.base_gate || "-", tone = gate === "red" ? "critical" : gate === "green" ? "good" : "neutral";
-  setPill(g._pill, gate + (m.failing_test ? " · " + m.failing_test : ""), tone,
-    gate === "-" ? "the base's gate is not known" : "the base's gate is " + gate + (m.failing_test ? ": " + m.failing_test : ""));
-}
-
-// ---------- priority marks ----------
-// A card's priority by colour (docs/SPEC-SPRINT-DASHBOARD.md, "Priority"): one mark a card
-// whose level is not normal (where --json's priorities) and one a read waiting (reads_waiting),
-// in the ladder's order; a blocker bright red, a critical dark red, a card awaiting rework (fix,
-// the view's priorities.fix) purple right of the reds, a read the orange of the robot's shoes,
-// and every work card blue whatever its level (high, low). At most MARKS_MAX a level; the last
-// says how many more.
-var MARK_LEVELS = ["blocker", "critical", "critical (by weight, not yet ordered)", "fix", "high", "reader", "low"];
-var MARKS_MAX = 40;
-function priorityClass(level) {
-  if (level === "fix") return "p-fix"; // a card awaiting rework, purple
-  if (level.indexOf("critical") === 0) return "p-critical"; // a computed critical too, its title says so
-  return level === "blocker" || level === "reader" ? "p-" + level : "p-work";
-}
-function renderPriorityMarks(d) {
-  var box = $("priority-marks"); if (!box) return;
-  var marks = [];
-  MARK_LEVELS.forEach(function (l) {
-    var ids = l === "reader" ? [] : ((d.priorities || {})[l] || []).slice();
-    if (l === "reader") for (var i = 0; i < int(d.reads_waiting); i++) ids.push("a read waiting");
-    ids.slice(0, MARKS_MAX).forEach(function (id, i) {
-      var more = i === MARKS_MAX - 1 && ids.length > MARKS_MAX ? " (+" + (ids.length - MARKS_MAX) + " more)" : "";
-      marks.push([l, id + more]);
-    });
-  });
-  box.hidden = marks.length === 0;
-  setCount(box, marks.length, function () { return el("span", "mark"); });
-  marks.forEach(function (m, i) {
-    var k = box.children[i];
-    setClass(k, "mark " + priorityClass(m[0]));
-    setTitle(k, m[0] + ": " + m[1]);
-  });
-}
-
 function render(d) {
   var s = renderStreams(d);
   renderOverall(s.sum, s.all);
-  renderPriorityMarks(d);
   renderPie(d);
   renderTopStreams(d);
-  renderMerge(d);
   renderFleet(d);
   renderFriends(d);
   renderWall(d);
-  renderLanes(d);
   if (SHOW_ALL) renderReaders(d);
   renderHero(d, s);
   fitTables();

@@ -164,8 +164,6 @@ img#logo.logo-tile { width: 6rem; height: 6rem; flex: none; }
 .p-blocker { background: var(--p-blocker); } .p-critical { background: var(--p-critical); }
 .p-reader { background: var(--p-reader); } .p-work { background: var(--p-work); }
 .p-fix { background: var(--p-fix); }
-.marks { display: flex; flex-wrap: wrap; gap: 0.25rem; margin-top: 0.75rem; }
-.mark { width: 1rem; height: 1rem; border-radius: 2px; }
 
 /* panels */
 .panel { background: var(--surface); border: 1px solid var(--border); border-radius: 1.5rem; min-width: 0; overflow: hidden; }
@@ -173,11 +171,6 @@ img#logo.logo-tile { width: 6rem; height: 6rem; flex: none; }
 .panel-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 0.5rem 2rem; padding: 2rem 3rem 1rem; }
 .panel-head h2 { margin: 0; font-size: 2rem; line-height: 3rem; font-weight: 600; }
 .panel-head .muted { font-size: 1.625rem; }
-.panel-head .archived { background: none; border: 0; padding: 0; font: inherit; font-size: 1.625rem; cursor: pointer; text-decoration: underline dotted; }
-/* Merge (docs/SPEC-SPRINT-DASHBOARD.md, "Merge"): one row of the merge state, label over figure. */
-.merge-facts { display: flex; flex-wrap: wrap; gap: 1.5rem 4rem; padding: 0.5rem 3rem 2.5rem; }
-.merge-facts .label { display: block; color: var(--text-2); font-size: 1.5rem; }
-.merge-facts .num { font-family: var(--mono); font-size: 2rem; }
 .empty { padding: 1rem 3rem 3rem; color: var(--text-2); font-size: 1.625rem; }
 .empty code { font: 1.5rem ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--text); }
 
@@ -248,9 +241,6 @@ footer a:hover { color: var(--text); }
 .name { overflow: hidden; text-overflow: ellipsis; }
 .alt { display: none; }
 .readers .row { grid-template-columns: minmax(10rem, 1fr) repeat(4, 7.5rem); }
-/* Lanes: five tracks, one a column, width the one number (right-aligned by .num). Every
-   track is flexible, so a row is never squeezed and the panel never scrolls sideways. */
-.lanes .row { grid-template-columns: minmax(10rem, 1fr) minmax(6rem, .6fr) 6rem minmax(10rem, 1.4fr) minmax(10rem, 1.4fr); }
 
 /* Work, full: stream capped at ~220 px; status (pills), the counts, landed and cost share
    the spare width evenly, every content right-aligned, so the space before each is a gutter
@@ -351,7 +341,6 @@ footer a:hover { color: var(--text); }
     <div class="label">Cost</div>
     <div class="big" id="cost">-</div>
     <div class="sub" id="cost-per">&nbsp;</div>
-    <div class="sub" id="cost-unreconciled">&nbsp;</div>
   </div>
   <div class="tile">
     <div class="label">In flight</div>
@@ -379,25 +368,10 @@ footer a:hover { color: var(--text); }
     <div class="legend" id="legend"></div>
   </div>
   <div class="cells thick" id="overall"></div>
-  <div class="marks" id="priority-marks" hidden></div>
-</section>
-
-<section class="panel merge" id="merge-row">
-  <div class="panel-head"><h2>Merge</h2></div>
-  <div class="merge-facts">
-    <div><span class="label">merging</span><span class="num" id="mr-merging">-</span></div>
-    <div><span class="label">review</span><span class="num" id="mr-review">-</span></div>
-    <div><span class="label">landed / 30m</span><span class="num" id="mr-landed">-</span></div>
-    <div><span class="label">oldest merging</span><span class="num" id="mr-oldest">-</span></div>
-    <div><span class="label">base gate</span><span id="mr-gate"></span></div>
-    <div><span class="label">drift</span><span class="num" id="mr-drift">-</span></div>
-    <div><span class="label">since sync</span><span class="num" id="mr-sync">-</span></div>
-    <div><span class="label">since promotion</span><span class="num" id="mr-promoted">-</span></div>
-  </div>
 </section>
 
 <section class="panel streams">
-  <div class="panel-head"><h2>Work</h2><span class="muted" id="streams-sub"></span><button type="button" class="muted archived" id="streams-archived" hidden></button></div>
+  <div class="panel-head"><h2>Work</h2><span class="muted" id="streams-sub"></span></div>
   <div class="scroll"><div class="rows" id="streams"><div class="row head"><div>stream</div><div>status</div><div class="num">waiting</div><div class="num">ready</div><div class="num">working</div><div class="num">review</div><div class="num">fix</div><div class="num">merging</div><div class="frac">landed</div><div class="num">cost</div></div></div></div>
 </section>
 
@@ -415,11 +389,6 @@ footer a:hover { color: var(--text); }
 <section class="panel friends">
   <div class="panel-head"><h2>Friends</h2><span class="muted" id="friends-sub"></span></div>
   <div class="scroll"><div class="rows" id="friends"><div class="row head"><div>friend</div><div>status</div><div class="num">ready</div><div>working</div><div class="frac"><span class="alt">working</span></div><div class="num">done</div><div class="num">ok%</div><div class="num">tokens</div></div></div></div>
-</section>
-
-<section class="panel lanes">
-  <div class="panel-head"><h2>Lanes</h2><span class="muted" id="lanes-sub"></span></div>
-  <div class="scroll"><div class="rows" id="lanes"><div class="row head"><div>machine</div><div>kind</div><div class="num">width</div><div>held</div><div>waiting</div></div></div></div>
 </section>
 
 <section class="panel readers" id="readers-panel" hidden>
