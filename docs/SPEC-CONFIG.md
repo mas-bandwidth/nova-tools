@@ -306,7 +306,10 @@ command the first still owns. The command is what follows `--` (the unit's own, 
 `nova-secrets exec` prefix; no store is opened), else the row's `argv` read from the store: a
 disabled row, a row with `keys` (its secrets open through the prefix the plays add, which the row
 does not carry) and a row with no command are
-refused with exit 1, a name with no row too. The pieces are `config.LoopRunArgv`,
+refused with exit 1, a name with no row too. `--dry-run` resolves the command the same way (the
+row is read when no command follows `--`) and the start count, prints the `LOOP RUN` line the run
+would print with `dry_run=true`, and takes no lock, writes nothing and runs nothing; a row the run
+refuses it refuses the same. The pieces are `config.LoopRunArgv`,
 `config.NextLoopStarts` and `config.LoopMetrics` (internal/config/looprun.go).
 
 **`route`** (`config.routes`): one way to run a model tier, the provider
@@ -821,7 +824,10 @@ login, is a refusal naming the file and the remedy (`nova-config login
 `login --check` prints the recorded login, which environment source would win
 (`dsn-wins=env:…`, `password-wins=env:…`, `friend-wins=env:…`), and
 `resolves=yes|no` (exit 1 on no). The password is never shown. `logout`
-removes the file (`was=recorded|none`). The code is `cmd/nova-config/login.go`;
+removes the file (`was=recorded|none`). `login --dry-run` makes every check
+`login` makes, the secret resolved and dropped, and prints `LOGIN DRY-RUN ...
+resolves=yes dry_run=true` without recording; `logout --dry-run` says
+`was=recorded|none dry_run=true` and removes nothing. The code is `cmd/nova-config/login.go`;
 `TestABareVerbConnectsWithTheRecordedLogin` measures it on the fake store with
 a fake secrets reader.
 
