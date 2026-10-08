@@ -1821,7 +1821,14 @@ kickstart` keeps what launchd loaded): run `install` again.
 nova-friend install --as <me> --harness opencode --dir <my working directory> --width <n>
 nova-friend install --as <me> --harness dsh --dir <d> --width <n> --secrets DEEPSEEK_API_KEY --seat <seat>
 nova-friend status --as <me> --dir <my working directory>
+nova-friend whoami --as <me> --dir <my working directory>
 ```
+
+`whoami` prints her nova-config friend row as friend sync last wrote it into her queue file:
+the tiers she serves, the model per tier (`nova-config friend set <me> --model
+heavy=<m>,...`), how she runs a card on it (lane, child or session), her abilities
+(`--children`, `--child_model`), her directory and her delivery session (docs/SPEC-FRIEND.md,
+a friend's models).
 
 A harness that needs a secret in its environment gets it through `--secrets
 NAME[,NAME]` with the machine's nova-secrets `--seat`: the agent runs
