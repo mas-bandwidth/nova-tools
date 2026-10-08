@@ -1,12 +1,8 @@
 package main
 
 import (
-	"context"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -44,7 +40,7 @@ func classifyOutput(out string) (red bool, faultKind string, what string) {
 
 // ringFault tracks which ring slots have faulted.
 type ringFault struct {
-	slots    map[string]bool
+	slots    map[int]bool
 	faults   []string
 	nextIdx  int
 	rounds   int
@@ -102,7 +98,7 @@ func TestGateClassifiesFaultsVsRedTests(t *testing.T) {
 // TestRingStepsOnFault tests that the ring steps to the next slot on fault.
 func TestRingStepsOnFault(t *testing.T) {
 	t.Parallel()
-	r := &ringFault{slots: map[string]bool{0: false, 1: false, 2: false}, nextIdx: 0}
+	r := &ringFault{slots: map[int]bool{0: false, 1: false, 2: false}, nextIdx: 0}
 	assert.False(t, r.allFaulted())
 	r.fault("git")
 	assert.True(t, r.slots[0])
@@ -119,7 +115,7 @@ func TestRingStepsOnFault(t *testing.T) {
 // TestDeferOnAllFaulted tests that landing is deferred when all slots faulted.
 func TestDeferOnAllFaulted(t *testing.T) {
 	t.Parallel()
-	r := &ringFault{slots: map[string]bool{0: false, 1: false}, nextIdx: 0}
+	r := &ringFault{slots: map[int]bool{0: false, 1: false}, nextIdx: 0}
 	assert.False(t, r.allFaulted())
 	r.fault("git")
 	r.fault("disk")
@@ -144,7 +140,7 @@ func TestTestFaultNeverMarkRed(t *testing.T) {
 // TestFaultedBenchIsSkipped tests that a faulted bench is tracked.
 func TestFaultedBenchIsSkipped(t *testing.T) {
 	t.Parallel()
-	r := &ringFault{slots: map[string]bool{0: false}, nextIdx: 0}
+	r := &ringFault{slots: map[int]bool{0: false}, nextIdx: 0}
 	r.fault("git")
 	assert.True(t, r.slots[0])
 }
@@ -152,7 +148,7 @@ func TestFaultedBenchIsSkipped(t *testing.T) {
 // TestAllSlotsFaultDeferred tests all slots faulting defers landing.
 func TestAllSlotsFaultDeferred(t *testing.T) {
 	t.Parallel()
-	r := &ringFault{slots: map[string]bool{0: false, 1: false}, nextIdx: 0}
+	r := &ringFault{slots: map[int]bool{0: false, 1: false}, nextIdx: 0}
 	r.fault("git")
 	r.fault("disk")
 	assert.True(t, r.allFaulted())
@@ -162,7 +158,7 @@ func TestAllSlotsFaultDeferred(t *testing.T) {
 // TestFaultKindInJudgment tests that fault kinds are tracked.
 func TestFaultKindInJudgment(t *testing.T) {
 	t.Parallel()
-	r := &ringFault{slots: map[string]bool{0: false, 1: false, 2: false}, nextIdx: 0}
+	r := &ringFault{slots: map[int]bool{0: false, 1: false, 2: false}, nextIdx: 0}
 	r.fault("git")
 	r.fault("disk")
 	r.fault("ssh")
