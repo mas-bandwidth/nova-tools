@@ -209,9 +209,12 @@ gone session target") her row reads `target-invalid`, not `down`, because the
 remedy is hers (`nova-friend rebind`) and not a wait. It is not `up`, so
 nothing is dealt to her; `held` comes first; a beat without the flag clears it
 (`TestAGoneTargetReadsTargetInvalidOnHerRow`). A rebind that changes a session
-already set on her roster (friend sync) drops that session proof, so the old
-answer is not evidence and her row is not up on it before a check through the
-new session (`TestAReboundSessionDropsTheOldProofUntilANewCheck`). Her beat also answers her row's
+already set on her roster (friend sync) drops every presence signal of that
+session: the beat's proof, the friend-health session pong, and the finish.
+FriendEvidence reads the pong or the finish as up inside its window, so leaving
+either would keep her row up and eligible before the new session answers a
+check (`TestAReboundSessionDropsTheOldProofUntilANewCheck`,
+`TestAReboundDropsTheHealthPongAndTheFinish`). Her beat also answers her row's
 `session` as `row_session=<id>`, beside `row_mode` and `row_width`. A
 friend held or down with a reason shows it in her status cell, `down (opus
 rate limited, until 6:00 PM)`: `friend down <friend> [--reason <text>]

@@ -228,7 +228,7 @@ func (st *Store) SyncFriends(ctx context.Context, specs []FriendSpec) (added, re
 		return nil, nil, nil, err
 	}
 	want := map[string]FriendSpec{}
-	rebound := map[string]string{} // a session that was already set and changed: the old proof is not evidence
+	rebound := map[string]string{} // a session that was already set and changed: the old presence is not evidence
 	rosterChanged := false
 	for _, s := range specs {
 		want[s.Name] = s
@@ -280,11 +280,21 @@ func (st *Store) SyncFriends(ctx context.Context, specs []FriendSpec) (added, re
 	return added, removed, updated, nil
 }
 
-// dropReboundProof clears the session proof on a friend's beat after her roster
-// session changed (nova-friend rebind, carried by friend sync). The old answer
-// is not evidence for the new target, so her row is not up before a check
-// through that session. A record that cannot be read holds no proof.
+// dropReboundProof clears every presence signal of a friend after her roster
+// session changed (nova-friend rebind, carried by friend sync). The beat
+// record's pong, the friend-health session pong, and the friend-finish time
+// are the old session's. FriendEvidence reads the pong or the finish as up
+// inside its window, so leaving either would keep her eligible before a
+// check through the new session. A record that cannot be read holds no proof.
 func (st *Store) dropReboundProof(ctx context.Context, kv KV, friend, session string) error {
+	// Health and finish have no session of their own. Drop them even when she
+	// has no beat: a health pong or a finish alone reads up.
+	if _, err := st.B.DeleteKeys(ctx, []string{
+		st.Names.Key(friendHealthKey(friend)),
+		st.Names.Key(friendFinishKey(friend)),
+	}); err != nil {
+		return err
+	}
 	raw, ok, err := kv.GetKey(ctx, friendBeatKey(friend))
 	if err != nil || !ok {
 		return err
