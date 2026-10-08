@@ -404,10 +404,10 @@ func briefWithGate(brief, host string) string {
 	return strings.Join(lines, "\n")
 }
 
-// holdFixReady is the unit of a finish whose fix lines apply and send the card back to
+// holdFixReadyUnit is the unit of a finish whose fix lines apply and send the card back to
 // ready: the work card ends failed, the primary keeps its id, and one happened note
 // tells the coordinator what was applied. No failed-work judgment is written.
-func holdFixReady(s *Snapshot, c, pr *Card, r FinishReq, who, head string, fx holdFix) Unit {
+func holdFixReadyUnit(s *Snapshot, c, pr *Card, r FinishReq, who, head string, fx holdFix) Unit {
 	cardSet := map[string]string{"ok": "no", "head": head, "finished": stamp(s.Now)}
 	if r.Report != "" {
 		cardSet["report"] = r.Report

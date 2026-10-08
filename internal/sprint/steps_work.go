@@ -1557,7 +1557,7 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 			held = readHoldFix(s, pr, r.Report, head)
 			switch held.act {
 			case holdFixReady:
-				u := holdFixReady(s, c, pr, r, who, head, held)
+				u := holdFixReadyUnit(s, c, pr, r, who, head, held)
 				friendNext(s, c, &u, p.Units)
 				p.Units = append(p.Units, u)
 				continue
