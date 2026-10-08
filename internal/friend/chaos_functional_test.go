@@ -217,26 +217,26 @@ func (h *fakeHarness) Deliver(ctx context.Context, text string) (int, error) {
 // fake harness, and amy beating beside him. Every use of the twin store goes
 // through mu: the daemon's beat runs on its own goroutine.
 type chaosRig struct {
-	t       *testing.T
-	ctx     context.Context
-	fake    *bustest.Fake
-	bobBus  *chaosBus
-	coord   *bus.Bus // the coordinator's credential
-	session *bus.Bus // the session's credential
-	harness *fakeHarness
-	mu      sync.Mutex
-	st      *store.Store
-	mem     *store.Mem
-	pongMu  sync.Mutex
-	pong    Pong
-	pongSet bool
-	answer  time.Time // when bob's session last said anything on the bus
-	status  []Status
-	nonce   int
-	cards   int
-	amyBeat *time.Ticker // amy's machinery: one beat each FriendBeatEvery
-	amyPong time.Time    // when the coordinator last saw amy's session answer
-	done    chan struct{}
+	t        *testing.T
+	ctx      context.Context
+	fake     *bustest.Fake
+	bobBus   *chaosBus
+	coord    *bus.Bus // the coordinator's credential
+	session  *bus.Bus // the session's credential
+	harness  *fakeHarness
+	mu       sync.Mutex
+	st       *store.Store
+	mem      *store.Mem
+	pongMu   sync.Mutex
+	pong     Pong
+	pongSet  bool
+	answer   time.Time // when bob's session last said anything on the bus
+	status   []Status
+	nonce    int
+	cards    int
+	amyBeat  *time.Ticker // amy's machinery: one beat each FriendBeatEvery
+	amyBeats int          // amy's beats since the coordinator last saw her session answer
+	done     chan struct{}
 }
 
 // newChaosRig starts the world: the twin with friends amy and bob (width 2,
@@ -301,7 +301,7 @@ func newChaosRig(t *testing.T) *chaosRig {
 	r.mu.Lock()
 	require.NoError(t, r.answered("amy"))
 	require.NoError(t, r.answered("bob"))
-	r.amyPong = time.Now()
+	r.amyBeats = 0
 	r.mu.Unlock()
 	r.addCards(4)
 	r.step(2 * time.Second)
@@ -390,9 +390,12 @@ func (r *chaosRig) step(d time.Duration) {
 		r.mu.Lock()
 		_, err := r.st.FriendBeat(r.ctx, "amy")
 		require.NoError(r.t, err)
-		if time.Since(r.amyPong) >= time.Minute {
+		// A minute of beats since her last answer is a minute of the bubble's
+		// clock: the beats are counted, never the clock read (the waits check).
+		r.amyBeats++
+		if time.Duration(r.amyBeats)*sprint.FriendBeatEvery >= time.Minute {
 			require.NoError(r.t, r.answered("amy"))
-			r.amyPong = time.Now()
+			r.amyBeats = 0
 		}
 		_, err = r.st.Tick(r.ctx)
 		r.mu.Unlock()
