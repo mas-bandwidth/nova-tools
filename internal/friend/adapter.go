@@ -299,12 +299,29 @@ type session struct {
 	Updated   int64  `json:"updated"`
 }
 
-// NewestSession picks the most recently updated session of dir from the
-// listing's JSON.
-func NewestSession(listing, dir string) (string, error) {
+// decodeSessions reads the listing's JSON. A fresh opencode with no session
+// yet prints nothing at all (opencode 1.18.20 on mini-m5, 2026-10-08 17:20Z,
+// zero bytes), so an empty or whitespace-only listing is an empty list: no
+// session is the friend's state, never a broken harness. Anything else that
+// is not a JSON list is refused with its first line quoted.
+func decodeSessions(listing string) ([]session, error) {
+	if strings.TrimSpace(listing) == "" {
+		return nil, nil
+	}
 	var rows []session
 	if err := json.Unmarshal([]byte(listing), &rows); err != nil {
-		return "", fmt.Errorf("opencode session list: not a JSON list: %v", err)
+		first, _, _ := strings.Cut(strings.TrimSpace(listing), "\n")
+		return nil, fmt.Errorf("opencode session list: not a JSON list: %v; its first line: %q", err, first)
+	}
+	return rows, nil
+}
+
+// NewestSession picks the most recently updated session of dir from the
+// listing's JSON; an empty listing has none.
+func NewestSession(listing, dir string) (string, error) {
+	rows, err := decodeSessions(listing)
+	if err != nil {
+		return "", err
 	}
 	best := session{}
 	for _, r := range rows {
