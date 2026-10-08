@@ -21,8 +21,8 @@ type failingCopy struct{ lines []string }
 
 func (f *failingCopy) Shell(_ context.Context, _, line string, stdout, _ io.Writer) (int, error) {
 	f.lines = append(f.lines, line)
-	if line == MakeLine(DefaultRoot) {
-		_, _ = io.WriteString(stdout, DefaultRoot+"/run.AbCd1234\n")
+	if line == MakeLine(DefaultRoot, "gate", "test123") {
+		_, _ = io.WriteString(stdout, DefaultRoot+"/gate-test123\n")
 	}
 	return 0, nil
 }
@@ -40,12 +40,12 @@ func TestRunRemovesTheRunDirectoryWhenTheCopyFails(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "tar on the bench exit 2")
 	assert.True(t, res.Removed)
-	assert.Equal(t, []string{MakeLine(DefaultRoot), RemoveLine(DefaultRoot + "/run.AbCd1234")}, f.lines)
+	assert.Equal(t, []string{MakeLine(DefaultRoot, "gate", "test123"), RemoveLine(DefaultRoot + "/gate-test123")}, f.lines)
 }
 
 func TestLinesQuoteEveryWord(t *testing.T) {
 	t.Parallel()
-	assert.Equal(t, `cd '/r/run.x/repo' && GOCACHE='/c' GOFLAGS=-mod=readonly NOVA_TEST_NO_HOST=1 nice -n 19 'go' 'test' '-run' 'A B'\''C'`,
+	assert.Equal(t, `cd '/r/run.x' && TMPDIR='/r/run.x/tmp' GOTMPDIR='/r/run.x/tmp' GOCACHE='/c' GOFLAGS=-mod=readonly NOVA_TEST_NO_HOST=1 nice -n 19 'go' 'test' '-run' 'A B'\''C'`,
 		ExecLine("/r/run.x", "/c", []string{"go", "test", "-run", "A B'C"}))
 	assert.Equal(t, "rm -rf -- 'r/run.x'", RemoveLine("r/run.x"))
 }
@@ -85,5 +85,5 @@ func TestWriteTreeLeavesGitOutUnlessAsked(t *testing.T) {
 
 func TestCopyLineUnpacksIntoTheRunDirectory(t *testing.T) {
 	t.Parallel()
-	assert.Equal(t, "mkdir -p 'r/run.x/repo' && tar -C 'r/run.x/repo' -xf -", CopyLine("r/run.x/repo"))
+	assert.Equal(t, "mkdir -p 'r/run.x' && tar -C 'r/run.x' -xf -", CopyLine("r/run.x"))
 }

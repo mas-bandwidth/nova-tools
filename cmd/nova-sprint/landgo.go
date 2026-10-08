@@ -700,9 +700,13 @@ func (l *lander) runOnBench(ctx context.Context, host, dir string, runs [][]stri
 		return "", 0, fmt.Errorf("no mirror stage for %s: the gate runs here", dir)
 	}
 	var buf bytes.Buffer
+	// Use head as unique ID for this gate run
+	runID := fmt.Sprintf("%d", time.Now().UnixNano())
 	res, err := bench.Run(ctx, bench.Exec{}, bench.Options{
 		Hosts:  []string{host},
 		Stage:  st,
+		Kind:   "gate",
+		ID:     runID,
 		Argv:   []string{"sh", "-c", gateScript(runs)},
 		Stdout: &buf,
 		Stderr: &buf,
