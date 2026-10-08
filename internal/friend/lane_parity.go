@@ -746,7 +746,7 @@ func RescueStray(job LaneJob) []string {
 	var moved []string
 	for _, f := range []string{"REPORT.md", "RESULT.md"} {
 		from, to := filepath.Join(stray, f), filepath.Join(job.Card.Outbox, f)
-		if !exists(from) || exists(to) {
+		if fi, err := os.Lstat(from); err != nil || !fi.Mode().IsRegular() || exists(to) {
 			continue
 		}
 		if err := os.MkdirAll(job.Card.Outbox, 0o755); err != nil {
