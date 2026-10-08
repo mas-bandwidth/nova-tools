@@ -693,7 +693,7 @@ func (l *loop) adoptRuns(now time.Time) {
 			waiting = append(waiting, st)
 			continue
 		}
-		holder, err := transferLane(d.Dir, jobName, st.RunID, l.laneWho(ln.n), now)
+		holder, err := transferLane(d.Dir, jobName, st.RunID, l.laneWho(ln.n), now, d.ProcessIdentity, d.ProcessAlive)
 		if err != nil || holder != "" {
 			waiting = append(waiting, st)
 			d.Record(fmt.Sprintf("%s lane %d: card %s adoption waits for its lane mark: holder=%q error=%v", now.UTC().Format(time.RFC3339), ln.n, st.Card.ID, holder, err))
