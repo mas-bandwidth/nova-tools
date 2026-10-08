@@ -87,6 +87,11 @@ func workerVerb(argv []string) (as string, words int, why string) {
 				return "", 0, "a beat sent to the server is `fleet beat <member> [--load <percent>] [--disk <json>]` and nothing more: the server cannot measure the worker's machine"
 			}
 		}
+		if !seen["--load"] {
+			// the worker's own measure: the server cannot measure another machine, and
+			// would record its own
+			return "", 0, "a beat sent to the server names its load (`fleet beat <member> --load <percent> [--disk <json>]`): the server cannot measure the worker's machine"
+		}
 		return rest[0], 2, ""
 	}
 	if len(argv) >= 2 && argv[0] == "friend" && argv[1] == "beat" {

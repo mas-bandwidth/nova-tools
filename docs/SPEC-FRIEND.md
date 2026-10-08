@@ -376,7 +376,7 @@ While a turn runs: one peek, so a ping that lands during a long turn is still
 answered at once by the daemon; never a second turn. Then the worker's result;
 one beat to the sprint server (`friend beat <friend>`, a plain beat: the queue,
 working and width flags are owed on the server's side); the pong file, while a
-challenge is open; the status file. The beat also carries the free space and the
+challenge is open; the status file. The beat also carries the free bytes and the
 inode headroom of the volume her working directory lives on (`friend beat
 --disk <json>`, a `sprint.DiskReading`), measured by the daemon because the sprint
 server cannot read another machine's files: the sprint keeps it on her beat record
