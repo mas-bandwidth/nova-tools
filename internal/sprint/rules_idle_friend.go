@@ -95,7 +95,7 @@ func ruleFriendIdle(friends []FriendSeat, row string, fleet *Table, now time.Tim
 
 // WidthGoalText returns the width goal message text.
 func WidthGoalText(friendName string, takenReads, takenWork, width int, idleMinutes int64) string {
-	return fmt.Sprintf("Width goal for %s: you are holding %d reads and %d work cards (width %d). You have been idle for %d minutes. Please focus on your assigned tasks.",
+	return fmt.Sprintf("Width goal for %s: you are holding %d reads and %d work cards (width %d). You have been idle for %d minutes.",
 		friendName, takenReads, takenWork, width, idleMinutes)
 }
 
