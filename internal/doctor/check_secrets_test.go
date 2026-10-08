@@ -2,6 +2,7 @@ package doctor
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -19,6 +20,7 @@ import (
 type secretsRig struct {
 	keyMode    os.FileMode // the key file's mode; 0 makes no key file
 	keyComment bool        // the key carries the `# public key:` line
+	keyVar     string      // when set, the raw NOVA_SECRETS_KEY value instead of the key path
 	dirMode    os.FileMode // the key file's directory mode
 	sops       bool        // a fake sops is on PATH
 	git        bool        // the store is a git working copy
@@ -62,10 +64,14 @@ func runSecrets(t *testing.T, rig secretsRig) Result {
 	}
 
 	const seat = "coordinator"
+	keyValue := keyPath
+	if rig.keyVar != "" {
+		keyValue = rig.keyVar
+	}
 	env := fakeEnv{
 		env: map[string]string{
 			"PATH":               bin,
-			"NOVA_SECRETS_KEY":   keyPath,
+			"NOVA_SECRETS_KEY":   keyValue,
 			"NOVA_SECRETS_STORE": store,
 			"NOVA_SECRETS_SEAT":  seat,
 		},
@@ -158,6 +164,20 @@ func TestDoctorSecretsCheckFindsAKeyTheSeatNeeds(t *testing.T) {
 		assert.Equal(t, Fail, r.Status, r)
 		assert.Contains(t, r.Evidence, "not readable")
 		assert.Contains(t, r.Fix, "nova-secrets keygen")
+	})
+
+	t.Run("key material in the variable is refused and never printed", func(t *testing.T) {
+		t.Parallel()
+		const material = "AGE-SECRET-KEY-1QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ"
+		rig := right()
+		rig.keyVar = material
+		r := runSecrets(t, rig)
+		require.Equal(t, Fail, r.Status, r)
+		assert.Contains(t, r.Evidence, "NOVA_SECRETS_KEY holds key material, not a path")
+		assert.NotContains(t, r.Line(), material, "the value is not in the printed line")
+		b, err := json.Marshal(r)
+		require.NoError(t, err)
+		assert.NotContains(t, string(b), material, "the value is not in the --json object")
 	})
 
 	t.Run("fail when the key carries no public half", func(t *testing.T) {
