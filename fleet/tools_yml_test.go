@@ -54,6 +54,12 @@ func TestToolsYmlBuildsNovaSprintFromItsOwnRepo(t *testing.T) {
 		git, _ := task["ansible.builtin.git"].(map[string]any)
 		return git["repo"] == "{{ nova_sprint_repo }}" && git["version"] == "{{ nova_sprint_ref }}" && git["dest"] == "{{ nova_sprint_src }}"
 	})
+	// The build writes one binary per platform; its output directory has to
+	// exist before Go can create that binary (docs/FLEET.md, fleet/tools.yml row).
+	sprintOutDir := taskIndex(build, func(task map[string]any) bool {
+		f, _ := task["ansible.builtin.file"].(map[string]any)
+		return str(f["path"]) == "{{ nova_sprint_out }}/{{ item }}" && f["state"] == "directory"
+	})
 	compile := taskIndex(build, func(task map[string]any) bool {
 		cmd, _ := task["ansible.builtin.command"].(map[string]any)
 		argv := strings.Join(stringList(cmd["argv"]), " ")
@@ -190,6 +196,7 @@ func TestToolsYmlBuildsNovaSprintFromItsOwnRepo(t *testing.T) {
 		{"the split stage is its own directory under nova_release_dir, apart from the release stage", sprintStage == "{{ nova_release_dir }}/{{ nova_version }}/{{ nova_platform }}-nova-sprint"},
 		{"the seat play names the same split stage", str(seatVars["tools_sprint_stage"]) == sprintStage},
 		{"the build play checks out the nova-sprint repository", checkout >= 0},
+		{"the per-platform build output directory exists before compilation", sprintOutDir >= 0 && compile > sprintOutDir},
 		{"the build play builds ./cmd/nova-sprint in that checkout, after it", compile > checkout && checkout >= 0},
 		{"the build play hashes each platform's split build", hashed >= 0 && hashedFile >= 0},
 		{"the release stage never receives the split artifact", overlaid == -1},
