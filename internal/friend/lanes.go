@@ -488,6 +488,7 @@ func (l *loop) laneStep(now time.Time, width int) {
 			// directory; a path that cannot be made absolute refuses the lane (lane_parity.go)
 			job, err := LaneJobOf(d.Dir, c, filepath.Abs)
 			if err == nil {
+				d.hand(c, fmt.Sprintf("lane %d", ln.n), now)
 				var raw []byte
 				if raw, err = os.ReadFile(job.Card.Brief); err == nil {
 					job.Brief = string(raw)
@@ -508,7 +509,6 @@ func (l *loop) laneStep(now time.Time, width int) {
 			ln.capped = false
 			ln.base, ln.baseOK = l.tokens(ln.session)
 			s.state.Started[filepath.Base(c.Outbox)] = Started{Lane: ln.n, Card: c, At: now}
-			d.hand(c, fmt.Sprintf("lane %d", ln.n), now)
 			l.saveLanes(now)
 		}
 		if perCard { // the brief alone: no message, pong or notice rides with it

@@ -14,6 +14,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/mas-bandwidth/nova-tools/internal/cardgen"
 )
 
 // The one-shot lanes (the owner, 2026-10-04: "we could have one shot
@@ -127,6 +129,33 @@ func laneRig(t *testing.T, h *lanesHarness, width int) (*rig, *LaneState) {
 	r.d.LoadLanes = func() (LaneState, error) { return *state, nil }
 	r.d.SaveLanes = func(s LaneState) error { *state = s; return nil }
 	return r, state
+}
+
+// A lane's inline prompt carries the complete validated contract when the staged
+// checkout has a truncated block of the same version.
+func TestALanePromptIncludesTheValidatedContractAfterHandoff(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		dir := cardDirFixture(t, [][2]string{{"c1", "queued"}}, []string{"c1"}, nil)
+		brief := strings.Replace(briefByRef, "RESULT: c ", "RESULT: c1 ", 1)
+		path := filepath.Join(dir, "inbox", "c1~15", "BRIEF.md")
+		require.NoError(t, os.WriteFile(path, []byte(brief), 0o644))
+		checkout := filepath.Join(JobDir(dir, "c1~15"), "repo", filepath.FromSlash(cardgen.ContractPath))
+		require.NoError(t, os.MkdirAll(filepath.Dir(checkout), 0o755))
+		require.NoError(t, os.WriteFile(checkout, []byte("<!-- contract v1 -->\nRULES.\n<!-- end contract v1 -->\n"), 0o644))
+		h := &lanesHarness{dir: dir, finish: map[string]bool{"c1": true}, active: map[string]int{}}
+		r, _ := laneRig(t, h, 1)
+		const held = "RULES.\nReport what was not done."
+		r.d.Contract = func(version string) (string, bool) { return held, version == "v1" }
+		r.run(t, 8)
+		_, texts, _ := h.got()
+		require.Len(t, texts, 1)
+		assert.Contains(t, texts[0], held, "DeliverTo receives the complete validated contract")
+		assert.NotContains(t, texts[0], "Contract: ", "the short reference is replaced")
+		written, err := os.ReadFile(path)
+		require.NoError(t, err)
+		assert.Equal(t, cardgen.WithContract(brief, held), string(written))
+	})
 }
 
 // Two lanes, each its own session seeded from the friend's own files, each
