@@ -1,8 +1,8 @@
 # Nova Tools 1.2.0 reliability candidate — unaccepted
 
-This source assembly starts from tagged v1.1.0 (`2e73c44d`). The current
-checkpoint contains only the reviewed minimal reliability candidate that was
-formerly proposed as v1.1.1. The accepted scope exception is **purplefix**:
+This source assembly starts from tagged v1.1.0 (`2e73c44d`). Its first
+checkpoint was the reviewed minimal reliability candidate formerly proposed
+as v1.1.1; later selected sources are listed below. The accepted scope exception is **purplefix**:
 rework attempts receive fix priority in ordered sprint queues. This is a
 candidate source description, not an install or publication instruction.
 
@@ -23,8 +23,8 @@ candidate source description, not an install or publication instruction.
 STOP cancellation/return, adoption migration, friend redeal, bus push advice,
 Claude folder proof, and the OpenCode adapter are selected in the assembly
 branch. Their combined behavior still needs review and Linux gates. Final
-friend runner, read settlement, native adapters, delegated close, and lander revisions
-remain pending imports. The present full functional tier is red; certification,
+friend runner, read settlement, native adapters, delegated close, and lander
+revisions remain pending imports. The present full functional tier is red; certification,
 paired tools and sprint installation, dev ancestry, dogfood and release
 publication are still required. No fleet reinstall, Redis function load, or
 sprint resume is authorized by these notes.
