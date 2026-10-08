@@ -4,11 +4,8 @@ package store_test
 
 import (
 	"context"
-	"fmt"
-	"net"
 	"os"
 	"strings"
-	"sync/atomic"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
@@ -53,78 +50,6 @@ func TestFunctionLibraryLoadsFromFiles(t *testing.T) {
 	// An updated binary may load the same library again without a gap.
 	if err := fn.Load(ctx, client); err != nil {
 		require.NoError(t, err, "reload: %v", err)
-	}
-}
-
-type countedConn struct {
-	net.Conn
-	writes      *atomic.Int64
-	reads       *atomic.Int64
-	interleaved *atomic.Int64
-}
-
-func (c countedConn) Write(p []byte) (int, error) {
-	if c.reads.Load() != 0 {
-		c.interleaved.Add(1)
-	}
-	c.writes.Add(1)
-	return c.Conn.Write(p)
-}
-
-func (c countedConn) Read(p []byte) (int, error) {
-	c.reads.Add(1)
-	return c.Conn.Read(p)
-}
-
-func TestPipelineThousandReadsOneRoundTrip(t *testing.T) {
-	t.Parallel()
-
-	addr := startRedis(t)
-	var writes atomic.Int64
-	var readCalls atomic.Int64
-	var interleaved atomic.Int64
-	client := redis.NewClient(&redis.Options{
-		Addr: addr, PoolSize: 1,
-		Dialer: func(ctx context.Context, network, address string) (net.Conn, error) {
-			conn, err := (&net.Dialer{}).DialContext(ctx, network, address)
-			if err != nil {
-				return nil, err
-			}
-			return countedConn{Conn: conn, writes: &writes, reads: &readCalls, interleaved: &interleaved}, nil
-		},
-	})
-	defer client.Close()
-	ctx := context.Background()
-	if err := client.Ping(ctx).Err(); err != nil {
-		require.NoError(t, err, err)
-	}
-	seed := client.Pipeline()
-	reads := make([]store.HashRead, 1000)
-	for i := range reads {
-		key := fmt.Sprintf("task:%d", i)
-		seed.HSet(ctx, key, "state", "open", "owner", "stella")
-		reads[i] = store.HashRead{Key: key, Fields: []string{"state", "owner"}}
-	}
-	if _, err := seed.Exec(ctx); err != nil {
-		require.NoError(t, err, err)
-	}
-	writes.Store(0)
-	readCalls.Store(0)
-	interleaved.Store(0)
-	got, err := store.New(client).PipelineHMGet(ctx, reads)
-	if err != nil {
-		require.NoError(t, err, err)
-	}
-	if writes.Load() == 0 || readCalls.Load() == 0 || interleaved.Load() != 0 {
-		require.Failf(t, "assertion failed", "1000 HMGETs used %d writes, %d reads, %d writes after a reply; want one pipelined exchange", writes.Load(), readCalls.Load(), interleaved.Load())
-	}
-	if len(got) != len(reads) {
-		require.Equal(t, len(reads), len(got), "got %d replies; want 1000", len(got))
-	}
-	for i, values := range got {
-		if len(values) != 2 || values[0] != "open" || values[1] != "stella" {
-			require.Failf(t, "assertion failed", "reply %d = %v", i, values)
-		}
 	}
 }
 

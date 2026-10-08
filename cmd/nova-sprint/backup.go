@@ -91,7 +91,7 @@ func (a *app) cmdBackup(args []string, stdout, stderr io.Writer) int {
 	case *store.Redis:
 		src = &redisSource{b: b}
 	case *store.Mem:
-		src, twin = store.MemSource{M: b}, store.MemTwin{}
+		src, twin = store.MemSource{M: b, Names: st.Names}, store.MemTwin{Names: st.Names}
 	default:
 		return backupFailed(stderr, "this store has no backup; run: nova-sprint backup --redis <a Redis address> --file "+*file)
 	}
@@ -122,7 +122,7 @@ func (a *app) backupOut(c *common, b *backupOut, redisServer string, stdout, std
 	switch be := st.B.(type) {
 	case *store.Mem:
 		b.src = memBackup{st: st}
-		b.twin = func(context.Context, string) (backupTwin, error) { return &memTwin{}, nil }
+		b.twin = func(context.Context, string) (backupTwin, error) { return &memTwin{names: st.Names}, nil }
 		b.load = "-h <host> -p <port>"
 	case *store.Redis:
 		b.src = redisBackup{b: be, names: st.Names}
@@ -153,42 +153,34 @@ func backupFailed(stderr io.Writer, what string) int {
 
 // runBackup is the verb's law (the store-snapshot model's checks, over one
 // file): write, read back against the checksum, restore into the twin and
-// compare counts and (a document) the restored store's own document, scan for
-// secrets. A file that fails any step is removed, so the path holds only a
-// verified, secret-free backup. The one line it prints says what was proved.
+// compare counts and, on a twin store, the restored store's sprint state with
+// the store's part for part (store.SemanticRestore) and its own document, scan
+// for secrets. A file that fails any step is removed, so the path holds only a
+// verified, secret-free backup. The one line it prints says what was proved:
+// restore=semantic, or restore=integrity (the RDB's header, version and
+// checksum alone), which is never reported as a semantic restore.
 func runBackup(ctx context.Context, src store.SnapshotSource, twin store.SnapshotTwin, path string, dry bool, out io.Writer) error {
 	rdb, live, err := src.Save(ctx)
 	if err != nil {
 		return fmt.Errorf("the store gave no backup: %w; run: nova-sprint backup --file "+path, err)
 	}
+	level := store.RestoreLevel(src, twin)
+	var state store.SprintState
+	if level == store.RestoreSemantic {
+		if state, err = src.(store.StateSource).State(ctx); err != nil {
+			return fmt.Errorf("the store's sprint state at the backup cannot be read: %v; nothing was written; run: nova-sprint backup --file %s", err, path)
+		}
+	}
+	sum := sha256.Sum256(rdb)
 	if dry {
-		sum := sha256.Sum256(rdb)
-		got, err := twin.Load(rdb)
+		got, compared, err := verifyBackup(ctx, twin, level, live, state, rdb)
 		if err != nil {
-			return fmt.Errorf("the backup %s does not restore into a twin: %v", path, err)
-		}
-		if why := backupCountsDiffer(live, got); why != "" {
-			return fmt.Errorf("the backup %s restored with other counts than the store held (%s)", path, why)
-		}
-		compared := "counts"
-		if _, ok := twin.(store.MemTwin); ok {
-			once, err := backupRoundTrip(rdb)
-			if err == nil {
-				var twice []byte
-				twice, err = backupRoundTrip(once)
-				if err == nil && string(twice) != string(once) {
-					err = errors.New("the restored store writes a different document when restored again")
-				}
-			}
-			if err != nil {
-				return fmt.Errorf("the backup %s does not restore into a twin that holds what it holds: %v", path, err)
-			}
-			compared = "document+counts"
+			return fmt.Errorf("the backup %s %v", path, err)
 		}
 		if lines := secretLines(rdb); len(lines) > 0 {
 			return fmt.Errorf("the backup %s holds secret-shaped text on line %s (the value is not shown); find the card or key that holds it and remove it; run: nova-sprint backup --file %s", path, joinInts(lines), path)
 		}
-		fmt.Fprintf(out, "BACKUP DRY-RUN file=%s sha256=%s bytes=%d %s restored=twin compared=%s secrets=none; nothing was written\n", path, hex.EncodeToString(sum[:]), len(rdb), countsText(got), compared)
+		fmt.Fprintf(out, "BACKUP DRY-RUN file=%s sha256=%s bytes=%d %s restore=%s compared=%s secrets=none%s; nothing was written\n", path, hex.EncodeToString(sum[:]), len(rdb), countsText(got), level, compared, integrityOnly(level))
 		return nil
 	}
 	if err := writeAtomic(path, rdb); err != nil {
@@ -202,24 +194,44 @@ func runBackup(ctx context.Context, src store.SnapshotSource, twin store.Snapsho
 	if err != nil {
 		return fail(fmt.Errorf("the backup %s cannot be read back: %v; it was removed", path, err))
 	}
-	sum := sha256.Sum256(rdb)
 	if sha256.Sum256(copied) != sum {
 		return fail(fmt.Errorf("the backup %s does not match its checksum on reading it back; it was removed", path))
 	}
-	got, err := twin.Load(copied)
+	got, compared, err := verifyBackup(ctx, twin, level, live, state, copied)
 	if err != nil {
-		return fail(fmt.Errorf("the backup %s does not restore into a twin: %v; it was removed", path, err))
+		return fail(fmt.Errorf("the backup %s %v; it was removed", path, err))
+	}
+	if lines := secretLines(copied); len(lines) > 0 {
+		return fail(fmt.Errorf("the backup %s holds secret-shaped text on line %s (the value is not shown); it was removed; find the card or key that holds it and remove it; run: nova-sprint backup --file %s", path, joinInts(lines), path))
+	}
+	fmt.Fprintf(out, "BACKUP OK file=%s sha256=%s bytes=%d %s restore=%s compared=%s secrets=none%s\n", path, hex.EncodeToString(sum[:]), len(rdb), countsText(got), level, compared, integrityOnly(level))
+	return nil
+}
+
+// verifyBackup restores the bytes into the twin and compares them with the
+// store's: the counts, and at the semantic level the sprint state and the
+// document. It returns the counts and what was compared, or the step that
+// failed, worded to follow "the backup <path>".
+func verifyBackup(ctx context.Context, twin store.SnapshotTwin, level string, live store.SnapshotCounts, state store.SprintState, b []byte) (store.SnapshotCounts, string, error) {
+	got, err := twin.Load(b)
+	if err != nil {
+		return got, "", fmt.Errorf("does not restore into a twin: %v", err)
 	}
 	if why := backupCountsDiffer(live, got); why != "" {
-		return fail(fmt.Errorf("the backup %s restored with other counts than the store held (%s); it was removed", path, why))
+		return got, "", fmt.Errorf("restored with other counts than the store held (%s)", why)
 	}
-	compared := "counts"
+	if level != store.RestoreSemantic {
+		return got, "header+checksum", nil
+	}
+	if err := store.SemanticRestore(ctx, state, twin.(store.StateTwin), b); err != nil {
+		return got, "", fmt.Errorf("does not restore the sprint the store held: %v", err)
+	}
 	if _, ok := twin.(store.MemTwin); ok {
 		// a document is restored into a store and written again; that document
 		// restored and written once more is the same one, so the restore
 		// loses nothing the document holds (a first write may differ from a
 		// store's own, which writes an absent field as null)
-		once, err := backupRoundTrip(copied)
+		once, err := backupRoundTrip(b)
 		if err == nil {
 			var twice []byte
 			twice, err = backupRoundTrip(once)
@@ -228,15 +240,20 @@ func runBackup(ctx context.Context, src store.SnapshotSource, twin store.Snapsho
 			}
 		}
 		if err != nil {
-			return fail(fmt.Errorf("the backup %s does not restore into a twin that holds what it holds: %v; it was removed", path, err))
+			return got, "", fmt.Errorf("does not restore into a twin that holds what it holds: %v", err)
 		}
-		compared = "document+counts"
+		return got, "state+document+counts", nil
 	}
-	if lines := secretLines(copied); len(lines) > 0 {
-		return fail(fmt.Errorf("the backup %s holds secret-shaped text on line %s (the value is not shown); it was removed; find the card or key that holds it and remove it; run: nova-sprint backup --file %s", path, joinInts(lines), path))
+	return got, "state+counts", nil
+}
+
+// integrityOnly is what a success line says after it when the restore was
+// proved at the integrity level: that it is not a semantic restore.
+func integrityOnly(level string) string {
+	if level == store.RestoreSemantic {
+		return ""
 	}
-	fmt.Fprintf(out, "BACKUP OK file=%s sha256=%s bytes=%d %s restored=twin compared=%s secrets=none\n", path, hex.EncodeToString(sum[:]), len(rdb), countsText(got), compared)
-	return nil
+	return "; integrity only, not a semantic restore: the sprint's state was not loaded and compared"
 }
 
 // backupRoundTrip restores a document into a fresh store and writes it again.

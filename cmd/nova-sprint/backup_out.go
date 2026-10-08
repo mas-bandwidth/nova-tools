@@ -33,7 +33,9 @@ import (
 // compressed with xz -9 and split into parts under --part-bytes; the sums of
 // the text and of the xz are recorded; the parts are put together again,
 // checked against both sums and restored into a throwaway store holding this
-// build's function library, and its counts compared with the store's; the
+// build's function library. A twin's restore is compared as sprint state
+// (restore=semantic). A Redis's restore compares the same sprint state and the
+// keys and column counts, under this build's function library. The
 // dump and the restored values are scanned for every nova-secrets value by a
 // child of nova-secrets exec, the one way a value reaches a process, which
 // prints counts only; and the README says what the files are and how to load
@@ -48,6 +50,17 @@ const backupPartBytes = 95_000_000
 // that epoch and the shared ones, and the cards of its work table by column.
 type backupSource interface {
 	Take(ctx context.Context) (epoch uint64, keys []store.DumpKey, cols map[string]int, err error)
+}
+
+// stateSource is a backup source whose sprint state can be read, so the
+// restore can be proved semantic rather than by counts.
+type stateSource interface {
+	State(ctx context.Context) (store.SprintState, error)
+}
+
+// stateTwin is a throwaway whose restored sprint state can be read.
+type stateTwin interface {
+	State(ctx context.Context) (store.SprintState, error)
 }
 
 // backupTwin is the throwaway store a dump is restored into.
@@ -115,6 +128,14 @@ func (b *backupOut) run(ctx context.Context) (backupResult, error) {
 	epoch, keys, cols, err := b.src.Take(ctx)
 	if err != nil {
 		return res, fmt.Errorf("the store gave no dump: %w", err)
+	}
+	var want store.SprintState
+	semantic := false
+	if src, ok := b.src.(stateSource); ok {
+		if want, err = src.State(ctx); err != nil {
+			return res, fmt.Errorf("the store's sprint state at the backup cannot be read: %v", err)
+		}
+		semantic = true
 	}
 	live := store.BackupCounts{Keys: len(keys), Columns: cols}
 	base := fmt.Sprintf("sprint-epoch%d.restore.txt", epoch)
@@ -213,6 +234,17 @@ func (b *backupOut) run(ctx context.Context) (backupResult, error) {
 	if why := live.Differ(got); why != "" {
 		return res, fmt.Errorf("the dump restored with other counts than the store held (%s); run the backup again when the sprint is quiet", why)
 	}
+	level, compared := store.RestoreIntegrity, "counts"
+	if st, ok := twin.(stateTwin); semantic && ok {
+		gotState, err := st.State(ctx)
+		if err != nil {
+			return res, fmt.Errorf("the dump does not restore into a store whose sprint can be read: %v", err)
+		}
+		if why := sprintStateDiff(want, gotState); why != "" {
+			return res, fmt.Errorf("the dump does not restore the sprint the store held (%s)", why)
+		}
+		level, compared = store.RestoreSemantic, "state+counts"
+	}
 
 	// 6. the scan for every nova-secrets value, counts only
 	names, matched, err := b.scan.sealedNames(ctx, func(w io.Writer) error {
@@ -232,7 +264,7 @@ func (b *backupOut) run(ctx context.Context) (backupResult, error) {
 	}
 
 	// 7. the README section
-	readme := backupReadme(epoch, base, parts, textSum, xzSum, partSums, live, twin.Library(), b.load)
+	readme := backupReadme(epoch, base, parts, textSum, xzSum, partSums, live, twin.Library(), b.load, level)
 	if err := os.WriteFile(filepath.Join(final, "README.md"), []byte(readme), 0o644); err != nil {
 		return res, err
 	}
@@ -258,9 +290,24 @@ func (b *backupOut) run(ctx context.Context) (backupResult, error) {
 		}
 		res.files = append(res.files, fmt.Sprintf("BACKUP FILE %s bytes=%d sha256=%s", e.Name(), fi.Size(), s))
 	}
-	res.line = fmt.Sprintf("BACKUP OK out=%s epoch=%d %s restored=%s %s parts=%d text_sha256=%s xz_sha256=%s secrets=%d matched=0",
-		b.out, epoch, live.Text(), twin.Library(), got.Text(), len(parts), textSum, xzSum, names)
+	res.line = fmt.Sprintf("BACKUP OK out=%s epoch=%d %s restored=%s %s parts=%d text_sha256=%s xz_sha256=%s secrets=%d matched=0 restore=%s compared=%s%s",
+		b.out, epoch, live.Text(), twin.Library(), got.Text(), len(parts), textSum, xzSum, names, level, compared, integrityOnly(level))
 	return res, nil
+}
+
+// sprintStateDiff names the parts where the restored sprint is not the source,
+// or "" when they are the same. A count match is not this.
+func sprintStateDiff(want, got store.SprintState) string {
+	d := want.Diff(got)
+	if len(d) == 0 {
+		return ""
+	}
+	names := d
+	more := ""
+	if len(names) > 8 {
+		names, more = names[:8], fmt.Sprintf(" and %d more", len(d)-8)
+	}
+	return fmt.Sprintf("%d part(s): %s%s", len(d), strings.Join(names, ", "), more)
 }
 
 // secretsFound is a backup whose dump holds nova-secrets values: the count of
@@ -307,14 +354,18 @@ func fileSum(path string) (string, error) {
 
 // backupReadme is the README section: what the files are, their order, the
 // sums, and the load command.
-func backupReadme(epoch uint64, base string, parts []string, textSum, xzSum string, partSums []string, c store.BackupCounts, library, load string) string {
+func backupReadme(epoch uint64, base string, parts []string, textSum, xzSum string, partSums []string, c store.BackupCounts, library, load, level string) string {
 	var b strings.Builder
 	names := make([]string, len(parts))
 	for i, p := range parts {
 		names[i] = filepath.Base(p)
 	}
 	fmt.Fprintf(&b, "## Sprint backup, epoch %d\n\n", epoch)
-	fmt.Fprintf(&b, "Written by `nova-sprint backup --out`: the sprint store's keys of epoch %d and the keys every epoch shares, one `RESTORE <key> <ttl ms> <payload>` line a key (`%s`), compressed with `xz -9` (`%s.xz`) and split into %d parts under 100 MB. It holds %s; it was restored into a throwaway store under %s with the same counts, and scanned for every nova-secrets value with no match.\n\n", epoch, base, base, len(parts), c.Text(), library)
+	proved := "with the same counts; the counts are not a semantic restore, the sprint's state was not compared"
+	if level == store.RestoreSemantic {
+		proved = "with the same counts and the same sprint state"
+	}
+	fmt.Fprintf(&b, "Written by `nova-sprint backup --out`: the sprint store's keys of epoch %d and the keys every epoch shares, one `RESTORE <key> <ttl ms> <payload>` line a key (`%s`), compressed with `xz -9` (`%s.xz`) and split into %d parts under 100 MB. It holds %s; it was restored into a throwaway store under %s %s, and scanned for every nova-secrets value with no match.\n\n", epoch, base, base, len(parts), c.Text(), library, proved)
 	b.WriteString("| order | file | sha256 |\n|---|---|---|\n")
 	for i, n := range names {
 		fmt.Fprintf(&b, "| %d | `%s` | `%s` |\n", i+1, n, partSums[i])
@@ -466,6 +517,7 @@ func (m memBackup) Take(ctx context.Context) (uint64, []store.DumpKey, map[strin
 type memTwin struct {
 	m     *store.Mem
 	epoch uint64
+	names sprint.Names
 }
 
 func (t *memTwin) Restore(ctx context.Context, keys []store.DumpKey) (store.BackupCounts, error) {
@@ -482,8 +534,19 @@ func (t *memTwin) Restore(ctx context.Context, keys []store.DumpKey) (store.Back
 	if err != nil {
 		return store.BackupCounts{}, err
 	}
-	cols, err := store.CardsByColumn(ctx, m, sprint.Names{})
+	cols, err := store.CardsByColumn(ctx, m, t.names)
 	return store.BackupCounts{Keys: len(again), Columns: cols}, err
+}
+
+func (m memBackup) State(ctx context.Context) (store.SprintState, error) {
+	return store.ReadState(ctx, m.st.B, m.st.Names)
+}
+
+func (t *memTwin) State(ctx context.Context) (store.SprintState, error) {
+	if t.m == nil {
+		return store.SprintState{}, errors.New("the twin holds no restored sprint")
+	}
+	return store.ReadState(ctx, t.m, t.names)
 }
 
 func (t *memTwin) Values(_ context.Context, w io.Writer) error {
@@ -578,6 +641,11 @@ func compactStrings(s []string) []string {
 	return out
 }
 
+// State is the Redis backup source's logical sprint at the save (store.ReadState).
+func (r redisBackup) State(ctx context.Context) (store.SprintState, error) {
+	return store.ReadState(ctx, r.b, r.names)
+}
+
 // dumpKeys is DUMP and PTTL of each key, a pipeline of 500; a key gone
 // between the SCAN and its DUMP is left out (the counts then differ, and the
 // backup fails as a sprint that moved while it was read).
@@ -669,6 +737,11 @@ func (t *serverTwin) Restore(ctx context.Context, keys []store.DumpKey) (store.B
 	}
 	cols, err := store.CardsByColumn(ctx, &store.Redis{C: t.c, Names: t.names}, t.names)
 	return store.BackupCounts{Keys: int(n), Columns: cols}, err
+}
+
+// State reads the restored Redis sprint through this build's function library.
+func (t *serverTwin) State(ctx context.Context) (store.SprintState, error) {
+	return store.ReadState(ctx, &store.Redis{C: t.c, Names: t.names, Now: time.Now}, t.names)
 }
 
 func (t *serverTwin) Values(ctx context.Context, w io.Writer) error {
