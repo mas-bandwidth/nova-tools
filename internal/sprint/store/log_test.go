@@ -109,8 +109,8 @@ func TestAClearKeepsTheOldEpochsLog(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	h.setup(2)
-	before := len(h.lines())
-	require.NotEqual(t, 0, before, "no lines before the clear")
+	before := h.lines()
+	require.NotEmpty(t, before, "no lines before the clear")
 	_, err := h.st.Clear(h.ctx)
 	require.NoError(t, err)
 	st, err := h.st.Pinned(h.ctx)
@@ -121,8 +121,11 @@ func TestAClearKeepsTheOldEpochsLog(t *testing.T) {
 		require.False(t, l.Kind == sprint.LineMove && !strings.HasSuffix(l.To, ":"+sprint.Ctl), "the new epoch's log has a move line: %+v", l)
 	}
 	old, err := st.At(0).Log(h.ctx)
-	require.NoError(t, err, "the old epoch's log: %d lines, want %d (%v)", len(old), before, err)
-	require.Len(t, old, before, "the old epoch's log: %d lines, want %d (%v)", len(old), before, err)
+	require.NoError(t, err, "the old epoch's log: %d lines, want %d plus STOP (%v)", len(old), len(before), err)
+	require.Len(t, old, len(before)+1, "clear records STOP in the old epoch before advancing it")
+	require.Equal(t, before, old[:len(before)], "clear cannot rewrite the old epoch's existing log")
+	require.NotNil(t, old[len(before)].Note, "STOP must be recorded in the old epoch")
+	require.Equal(t, sprint.NMachineStopped, old[len(before)].Note.Type)
 }
 
 // The flapping judgment: a lateness raised on an attempt stays raised
