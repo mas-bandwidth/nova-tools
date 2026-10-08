@@ -111,12 +111,12 @@ func largestFoldState(t *testing.T) (tmp, out string, args []string) {
 	line := func(d string) string { return d + "\temma\tbusmodel\trepo1\tinput\t5\n" }
 	for i := range overflow {
 		d := day(i)
-		busNote(t, bus, "emma", fmt.Sprintf("a%02d.md", i), fmt.Sprintf("emma-0000000%05d", i), "tokens "+d, busDate, line(d))
-		busNote(t, bus, "emma", fmt.Sprintf("b%02d.md", i), fmt.Sprintf("emma-1000000%05d", i), "tokens "+d, busDate, line(d))
+		busNote(t, bus, "emma", fmt.Sprintf("a%02d.md", i), fmt.Sprintf("01EMMA%020d", i), "tokens "+d, busDate, line(d))
+		busNote(t, bus, "emma", fmt.Sprintf("b%02d.md", i), fmt.Sprintf("01EMMB%020d", i), "tokens "+d, busDate, line(d))
 	}
 	prev := ""
 	for i := range overflow + 1 {
-		id := fmt.Sprintf("bo-0000000%05d", i)
+		id := fmt.Sprintf("01B000%020d", i)
 		subject := "tokens 2026-09-01"
 		if prev != "" {
 			subject = "tokens 2026-09-01 at=2026-09-11T20:00:00Z build=b supersedes=" + prev
@@ -126,7 +126,7 @@ func largestFoldState(t *testing.T) (tmp, out string, args []string) {
 	}
 	for i := range overflow {
 		d := day(i)
-		busNote(t, bus, "cyd", fmt.Sprintf("d%02d.md", i), fmt.Sprintf("cyd-0000000%05d", i), "tokens "+d, busDate,
+		busNote(t, bus, "cyd", fmt.Sprintf("d%02d.md", i), fmt.Sprintf("01CYD0%020d", i), "tokens "+d, busDate,
 			line(d)+"# repos: schema, serialize\nthis line is prose and is not a body line\n")
 	}
 

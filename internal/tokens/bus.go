@@ -1,12 +1,9 @@
 package tokens
 
 import (
-	"encoding/json"
-	"errors"
-	"fmt"
-	"io/fs"
+	"context"
 	"maps"
-	"path/filepath"
+	pathpkg "path"
 	"regexp"
 	"slices"
 	"sort"
@@ -14,23 +11,22 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/bus"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
-// --bus <dir>: friends' self-reports.
+// --bus <host:port>: friends' self-reports, read from the Redis bus's log (docs/SPEC-TOKENS.md rule 6 and docs/SPEC-BUS.md:
+// bus2:log holds every message once, with its sender, subject and body).
 //
-// The tool reads the checkout AS FILES. It never pulls, fetches, pushes, runs git, or
-// talks to a network: a fold whose numbers depended on a network call would be a fold
-// nobody could reproduce, and the order of two competing notes is now in the notes
-// themselves (`supersedes=`) rather than in a commit history, which is a fact about a
-// checkout and not about which number the friend meant.
+// The tool reads the log and nothing else. It sends nothing, acks nothing, creates no group
+// and writes no key: a fold whose numbers depended on anything but the messages themselves
+// would be a fold nobody could reproduce, and the order of two competing notes is in the
+// notes themselves (`supersedes=`), not in the log's order, which is a fact about when the
+// store took a message and not about which number the friend meant.
 //
 // THE PARSER BELOW IS THE SERIALIZER `report` WRITES WITH. They live in one file so that
 // one grammar cannot become two, which is exactly how the prototype ended up accepting
 // two body shapes and telling them apart by whether the fifth field was a word.
-
-// BusDateLayout is how nova-bus writes a note's Date line.
-const BusDateLayout = "Mon Jan  2 15:04:05 UTC 2006"
 
 // SubjectPrefix opens every tokens note's subject, exactly: lower case, one blank.
 const SubjectPrefix = "tokens "
@@ -38,14 +34,15 @@ const SubjectPrefix = "tokens "
 // reposComment is the one comment shape a body may carry meaning, and it carries no number.
 var reposComment = regexp.MustCompile(`^# repos: ([a-z0-9._-]+(?:,[ ]*[a-z0-9._-]+)*)[ ]*$`)
 
-// noteIDShape is what an id looks like: nova-bus's <sender>-<12 hex>.
-var noteIDShape = regexp.MustCompile(`^[a-z0-9-]+-[0-9a-f]{12}$`)
+// noteIDShape is what an id looks like: the bus's ULID, 26 characters of Crockford base32
+// (docs/SPEC-BUS.md, the data).
+var noteIDShape = regexp.MustCompile(`^[0-9A-HJKMNP-TV-Z]{26}$`)
 
 // countShape is a body line's count: a decimal integer, with the person's optional rough mark.
 var countShape = regexp.MustCompile(`^~?[0-9]+$`)
 
-// ValidNoteID reports whether an id has the shape nova-bus assigns. `report --supersedes`
-// checks the shape and nothing else, because the lane is not on that machine.
+// ValidNoteID reports whether an id has the shape the bus assigns (a ULID). `report --supersedes`
+// checks the shape and nothing else, because the log is not read by a local report.
 func ValidNoteID(id string) bool { return noteIDShape.MatchString(id) }
 
 // Subject renders a tokens note's subject: the date, and the tool's one trailer, which is
@@ -127,7 +124,7 @@ func ParseSubject(subject string) (parsedSubject, bool) {
 			seen := map[string]bool{}
 			for i, id := range ids {
 				if !ValidNoteID(id) {
-					p.badSet = "the predecessor " + id + " is not <sender>-<12 hex>"
+					p.badSet = "the predecessor " + id + " is not a bus id (a 26-character ULID)"
 				} else if seen[id] {
 					p.badSet = "the predecessor set names " + id + " twice; it is a set, sorted ascending, with no duplicate"
 				} else if i > 0 && ids[i-1] > id {
@@ -163,232 +160,156 @@ func nearMissSubject(subject string) (string, bool) {
 
 // note is one tokens note on the way to being folded.
 type note struct {
-	lane, path, id string
-	// subjectLine is where the Subject: header is IN THE FILE. A refusal of the whole
-	// note is a refusal of that line, and printing line=1 for it while the same run
-	// numbered a prose body line correctly is the grammar's line= meaning two things.
-	subjectLine int
-	subject     parsedSubject
-	dateLine    int
-	dead        *Unparsed // the whole note is refused; no line of it folds
-	lineErrs    []Unparsed
-	msgs        []Message
-	rough       int
-	comments    int
-	redated     int
-	touched     []string
-	zones       map[string]bool
+	lane, id string
+	subject  parsedSubject
+	dead     *Unparsed // the whole note is refused; no line of it folds
+	lineErrs []Unparsed
+	msgs     []Message
+	rough    int
+	comments int
+	redated  int
+	touched  []string
+	zones    map[string]bool
 }
 
-// clean is a note validated WHOLE — header, Date:, every body line — which is what a
+// noteKey binds an id to its lane so another sender cannot plant an id that changes the
+// owner's correction chain (security#75 finding 3).
+type noteKey struct{ lane, id string }
+
+// clean is a note validated WHOLE — subject, at, every body line — which is what a
 // predecessor must be and what a successor must be before it replaces anything.
 func (n *note) clean() bool { return n.dead == nil && len(n.lineErrs) == 0 }
 
-// noteKey is where a note lives in the bus's index: the lane it was read from and the id
-// its own lane gave it. The id is the lane owner's choice, so two lanes can carry the same
-// one, and a note another lane holds under a borrowed id must not win the slot in this
-// lane's chain (security#75 finding 3).
-type noteKey struct {
-	lane, id string
-}
+// logPage is the most one read of the log asks for; the log is read in pages from the
+// entry after the last one seen, so no message is dropped for the log being long.
+const logPage = 10000
 
-// ReadBus reads every lane the roster names and returns ONE source per lane, because the
-// label of a self-report is the lane owner's name whatever the `who` field of a line
-// inside it says. The lanes are read through the caller's fs.FS, rooted at dir
-// (os.DirFS(dir) in main, fstest.MapFS in a test), and dir is the path the report names.
-func ReadBus(dir string, fsys fs.FS, rules *Rules, at time.Time) []*Source {
-	roster, err := laneNames(fsys)
-	if err != nil {
-		s := &Source{Label: KindBus, Kind: KindBus, Path: dir, Reports: nil, Basis: UTC}
-		s.Stat.Files = 0
-		s.unreadable(filepath.Join(dir, "participants.json"), err.Error())
+// ReadBus reads the bus's log through b and returns ONE source per lane, because the label
+// of a self-report is the sender's name whatever the `who` field of a line inside it says.
+// A store that does not answer is one unreadable source, never a short log. path is the
+// store's address, shown as the sources' path (SPEC-TOKENS.md rule 6).
+func ReadBus(ctx context.Context, b *bus.Bus, path string, rules *Rules, at time.Time) []*Source {
+	fail := func(err error) []*Source {
+		s := &Source{Label: KindBus, Kind: KindBus, Path: path, Reports: nil, Basis: UTC}
+		s.unreadable(path+"/"+bus.LogKey, err.Error())
 		return []*Source{s}
 	}
+	roster, err := b.Names(ctx)
+	if err != nil {
+		return fail(err)
+	}
+	var entries []bus.Entry
+	for from := "-"; ; {
+		page, err := b.Log(ctx, from)
+		if err != nil {
+			return fail(err)
+		}
+		if len(page) == 0 {
+			break
+		}
+		entries = append(entries, page...)
+		from = "(" + page[len(page)-1].Entry
+	}
+	return FoldBus(path, roster, entries, rules, at)
+}
 
+// FoldBus is the fold over the log's entries, apart from the store that holds them (SPEC-TOKENS.md rule 6). The
+// lanes are the roster's names and every sender the log shows, sorted, each one source.
+func FoldBus(path string, roster []string, entries []bus.Entry, rules *Rules, at time.Time) []*Source {
 	// Every tokens note on the bus, first, because a successor may name a note in
 	// another lane or for another day and the refusal has to be able to say which.
+	names := map[string]bool{}
+	for _, name := range roster {
+		names[name] = true
+	}
+	for _, e := range entries {
+		if from := e.Message().From; from != "" {
+			names[from] = true
+		}
+	}
+	lanes := slices.Sorted(maps.Keys(names))
 	all := map[noteKey]*note{}
 	byLane := map[string][]*note{}
 	sources := map[string]*Source{}
-	for _, name := range roster {
-		laneDir := "from-" + name
-		s := &Source{Label: Label(KindBus, name), Kind: KindBus, Path: filepath.Join(dir, laneDir), Basis: UTC}
-		sources[name] = s
-		ents, err := fs.ReadDir(fsys, laneDir)
-		if err != nil {
-			if !errors.Is(err, fs.ErrNotExist) {
-				s.unreadable(s.Path, err.Error())
-			}
+	for _, name := range lanes {
+		sources[name] = &Source{Label: Label(KindBus, name), Kind: KindBus, Path: pathpkg.Join(path, "from-"+name), Basis: UTC}
+	}
+	for _, e := range entries {
+		m := e.Message()
+		if m.From == "" {
 			continue
 		}
-		var files []string
-		for _, e := range ents {
-			if !e.IsDir() && strings.HasSuffix(e.Name(), ".md") {
-				files = append(files, filepath.Join(laneDir, e.Name()))
-			}
+		// files= is what this lane OPENED, tokens note or not: a lane of near-miss
+		// subjects printed byte-identical output to a lane holding nothing at all
+		// (lesson 30). The near miss itself comes back from readNote as a dead note
+		// and is counted and printed like any other unparsed one; a message that is
+		// simply another piece of the lane's traffic is nil here and is only counted.
+		sources[m.From].Stat.Files++
+		n := readNote(m.From, e.Entry, m, rules, at)
+		if n == nil {
+			continue
 		}
-		sort.Strings(files)
-		for _, fname := range files {
-			path := filepath.Join(dir, fname)
-			raw, err := readSourceFS(fsys, fname)
-			if err != nil {
-				s.unreadable(path, err.Error())
-				continue
-			}
-			// files= is what this lane OPENED, tokens note or not: a lane of near-miss
-			// subjects printed byte-identical output to a lane holding nothing at all
-			// (lesson 30). The near miss itself comes back from readNote as a dead note
-			// and is counted and printed like any other unparsed one; a file that is
-			// simply another piece of the lane's traffic is nil here and is only a file.
-			s.Stat.Files++
-			n := readNote(name, path, string(raw), rules, at)
-			if n == nil {
-				continue
-			}
-			all[noteKey{name, n.id}] = n
-			byLane[name] = append(byLane[name], n)
-		}
+		all[noteKey{lane: m.From, id: n.id}] = n
+		byLane[m.From] = append(byLane[m.From], n)
 	}
 
-	for _, name := range roster {
+	for _, name := range lanes {
 		foldLane(sources[name], name, byLane[name], all)
 	}
 
-	out := make([]*Source, 0, len(roster))
-	for _, name := range roster {
+	out := make([]*Source, 0, len(lanes))
+	for _, name := range lanes {
 		out = append(out, sources[name])
 	}
 	return out
 }
 
-// laneNames reads the roster and returns the lane owners' slugs, sorted.
-func laneNames(fsys fs.FS) ([]string, error) {
-	raw, err := fs.ReadFile(fsys, "participants.json")
-	if err != nil {
-		return nil, err
-	}
-	var c struct {
-		Participants []struct {
-			Name string `json:"name"`
-			Lane string `json:"lane"`
-		} `json:"participants"`
-	}
-	if err := json.Unmarshal(raw, &c); err != nil {
-		return nil, err
-	}
-	var out []string
-	for _, p := range c.Participants {
-		if slug, ok := strings.CutPrefix(p.Lane, "from-"); ok && slug != "" {
-			out = append(out, slug)
-		}
-	}
-	if len(out) == 0 {
-		return nil, fmt.Errorf(`participants.json names no lane; it wants {"participants":[{"name":"Ada","lane":"from-ada"}]} -- one entry per friend, each lane "from-<slug>", and every <slug>/*.md whose Subject: is exactly "tokens YYYY-MM-DD" is read`)
-	}
-	sort.Strings(out)
-	return out, nil
-}
-
-// readNote parses one file. It returns nil when the file is not a tokens note at all —
+// readNote parses one message. It returns nil when the message is not a tokens note at all —
 // the subject is the whole test, exact, because the prototype's case-insensitive match
-// with any text after the date folded notes nobody meant as a report.
-func readNote(lane, path, text string, rules *Rules, at time.Time) *note {
-	header, body, headerLines, bodyStart := splitNote(text)
-	subject, ok := ParseSubject(header["Subject"])
+// with any text after the date folded notes nobody meant as a report. entry is the message's
+// id in the log stream, which names it when its own id field is empty.
+func readNote(lane, entry string, m bus.Message, rules *Rules, at time.Time) *note {
+	subject, ok := ParseSubject(m.Subject)
 	label := Label(KindBus, lane)
+	id := m.ID
+	if id == "" {
+		id = entry
+	}
 	if !ok {
-		why, near := nearMissSubject(header["Subject"])
+		why, near := nearMissSubject(m.Subject)
 		if !near {
 			return nil
 		}
-		// A NEAR MISS is not an ordinary note of the lane: it names tokens and a day, so
+		// A NEAR MISS is not an ordinary message of the lane: it names tokens and a day, so
 		// a friend meant it as a report. Counting it silently made the lane print the
 		// same bytes as a lane holding nothing at all (lesson 30), so it is an unparsed
 		// note with its id -- counted, printed, exit 1 -- and it still folds nothing.
-		n := &note{lane: lane, path: path, id: header["Id"], zones: map[string]bool{}}
-		if n.id == "" {
-			n.id = filepath.Base(path)
-		}
-		n.dead = &Unparsed{Label: label, Note: n.id, Line: headerLines["Subject"], Text: why,
+		n := &note{lane: lane, id: id, zones: map[string]bool{}}
+		n.dead = &Unparsed{Label: label, Note: n.id, Line: 0, Text: why,
 			Remedy: "a note's subject named tokens and a day but is not the exact shape (" + n.id +
 				"): it is `" + SubjectPrefix + "YYYY-MM-DD`, with nothing after it or with `at=<RFC 3339 UTC> build=<id>` -- " +
 				"nova-tokens report --who <you> --day <day> --note <file> writes one"}
 		return n
 	}
-	n := &note{lane: lane, path: path, id: header["Id"], subject: subject, zones: map[string]bool{},
-		subjectLine: headerLines["Subject"]}
-	if n.id == "" {
-		n.id = filepath.Base(path)
-	}
-	n.dateLine = headerLines["Date"]
+	n := &note{lane: lane, id: id, subject: subject, zones: map[string]bool{}}
 
-	// The Date: is validated and never used for order. A correction with a bad date is
-	// refused whole rather than half-read.
-	switch date, has := header["Date"]; {
-	case !has:
-		n.dead = &Unparsed{Label: label, Note: n.id, Line: 0, Text: "no Date: header; a tokens note wants one nova-bus wrote"}
-	default:
-		t, err := time.Parse(BusDateLayout, date)
-		if err != nil {
-			n.dead = &Unparsed{Label: label, Note: n.id, Line: n.dateLine, Text: "the Date: is not a date nova-bus writes (" + BusDateLayout + "): " + date}
-		} else if t.After(at) {
-			n.dead = &Unparsed{Label: label, Note: n.id, Line: n.dateLine, Text: "the Date: is later than this fold's own at= stamp: " + date}
-		}
+	// The message's at (the store's time, to the second) is validated and never used for
+	// order. A correction with a bad stamp is refused whole rather than half-read.
+	switch {
+	case m.At.IsZero():
+		n.dead = &Unparsed{Label: label, Note: n.id, Line: 0, Text: "no at stamp; a tokens note wants the RFC 3339 instant the bus wrote"}
+	case m.At.After(at):
+		n.dead = &Unparsed{Label: label, Note: n.id, Line: 0, Text: "the message's at is later than this fold's own at= stamp: " + m.At.UTC().Format(time.RFC3339)}
 	}
 	if subject.badSet != "" && n.dead == nil {
-		n.dead = &Unparsed{Label: label, Note: n.id, Line: n.subjectLine, Text: subject.badSet + "; send a correction whose subject carries supersedes=<id>"}
+		n.dead = &Unparsed{Label: label, Note: n.id, Line: 0, Text: subject.badSet + "; send a correction whose subject carries supersedes=<id>"}
 	}
 	if n.dead != nil {
 		return n
 	}
-	parseBody(n, label, body, bodyStart, rules)
+	// The body's lines are numbered from 1; a refusal of the whole note is line 0.
+	parseBody(n, label, strings.Split(strings.ReplaceAll(strings.TrimPrefix(m.Body, "\ufeff"), "\r\n", "\n"), "\n"), 0, rules)
 	return n
-}
-
-// splitNote reads the header — every line before the first blank line, `Key: value`, with
-// nova-bus's two presentation tolerances: a markdown heading above it and a bullet on
-// each line.
-func splitNote(text string) (map[string]string, []string, map[string]int, int) {
-	text = strings.TrimPrefix(text, "\ufeff")
-	lines := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
-	header := map[string]string{}
-	at := map[string]int{}
-	first := 0
-	if len(lines) > 0 && strings.HasPrefix(lines[0], "# ") {
-		first = 1
-		for first < len(lines) && strings.TrimSpace(lines[first]) == "" {
-			first++
-		}
-	}
-	end := len(lines)
-	for i := first; i < len(lines); i++ {
-		line := lines[i]
-		if strings.TrimSpace(line) == "" {
-			end = i
-			break
-		}
-		if rest, cut := strings.CutPrefix(line, "- "); cut {
-			line = rest
-		}
-		key, value, ok := strings.Cut(line, ":")
-		if !ok || key == "" || strings.TrimSpace(key) != key {
-			continue
-		}
-		if _, dup := header[key]; !dup {
-			header[key] = strings.TrimSpace(value)
-			at[key] = i + 1
-		}
-	}
-	var body []string
-	if end < len(lines) {
-		body = lines[end+1:]
-	}
-	// bodyStart is the 0-based index of the first body line, which is the 1-based line
-	// BEFORE it: an UNPARSED line's line= is the line in the FILE. Counting the parsed
-	// header KEYS instead was right only for a note with no heading and no repeated or
-	// malformed header line -- which is every fixture and no real note with a `# heading`
-	// above it, where every body line was reported one line early.
-	return header, body, at, end + 1
 }
 
 // parseBody reads the note's lines: six tab-separated fields with an optional seventh, a
@@ -468,21 +389,19 @@ func foldLane(s *Source, lane string, notes []*note, all map[noteKey]*note) {
 				continue
 			}
 			if why := badPredecessors(n, all); why != "" {
-				n.dead = &Unparsed{Label: label, Note: n.id, Line: n.subjectLine, Text: why + "; send a correction whose subject carries supersedes=<id>"}
+				n.dead = &Unparsed{Label: label, Note: n.id, Line: 0, Text: why + "; send a correction whose subject carries supersedes=<id>"}
 				again = true
 			}
 		}
 	}
-	// A cycle at any length refuses every note on it. The walk follows the lane's own
-	// chain: a clean note's predecessors all resolved in this lane (badPredecessors), so
-	// the notes here, keyed by id, are the whole graph the walk can reach.
+	// A cycle at any length, through any member, refuses every note on it.
 	laneAll := map[string]*note{}
 	for _, n := range notes {
 		laneAll[n.id] = n
 	}
 	for _, n := range notes {
 		if n.dead == nil && onCycle(n, laneAll, map[string]bool{}) {
-			n.dead = &Unparsed{Label: label, Note: n.id, Line: n.subjectLine,
+			n.dead = &Unparsed{Label: label, Note: n.id, Line: 0,
 				Text: "a cycle: this note's predecessor set reaches itself; send a correction whose subject carries supersedes=<id>"}
 		}
 	}
@@ -575,27 +494,23 @@ func laneBasis(zones map[string]bool) string {
 }
 
 // badPredecessors names why a successor's predecessor set is refused, or returns the empty
-// string. Every member is checked before anything is replaced. A predecessor is looked up
-// in the successor's own lane first: the id is the lane owner's choice, so a note another
-// lane holds under the same id must not refuse the owner's correction (security#75 finding
-// 3). Only when the own lane has no such note is the bus scanned, the last roster lane to
-// claim the id being the one an id-only slot would have kept, so the refusal still names
-// the lane it found.
+// string. Every member is checked before anything is replaced.
 func badPredecessors(n *note, all map[noteKey]*note) string {
 	for _, id := range n.subject.supersedes {
-		p, ok := all[noteKey{n.lane, id}]
-		if !ok {
-			for k, q := range all {
-				if k.id == id && k.lane != n.lane && (p == nil || k.lane > p.lane) {
-					p, ok = q, true
+		p, ok := all[noteKey{lane: n.lane, id: id}]
+		switch {
+		case !ok:
+			var otherLanes []string
+			for key, candidate := range all {
+				if key.id == id && candidate.lane != n.lane {
+					otherLanes = append(otherLanes, candidate.lane)
 				}
 			}
-			if !ok {
-				return "no such note in this lane for this day: " + id
+			if len(otherLanes) > 0 {
+				sort.Strings(otherLanes)
+				return "the predecessor " + id + " is a note of another lane (from-" + otherLanes[0] + ")"
 			}
-			return "the predecessor " + id + " is a note of another lane (from-" + p.lane + ")"
-		}
-		switch {
+			return "no such note in this lane for this day: " + id
 		case p.subject.day != n.subject.day:
 			return "the predecessor " + id + " is a note for another day (" + p.subject.day + ")"
 		case !p.clean():

@@ -207,7 +207,7 @@ func TestTheOutputGrammarAdmitsTheLinesTheToolPrints(t *testing.T) {
 	dir2 := t.TempDir()
 	out2 := mkdir(t, filepath.Join(dir2, "out"))
 	bus := busDir(t, mkdir(t, filepath.Join(dir2, "bus")), "emma")
-	busNote(t, bus, "emma", "a.md", "emma-000000000001", "tokens 2026-09-11", busDate, strings.Join([]string{
+	busNote(t, bus, "emma", "a.md", "01EMMA00000000000000000001", "tokens 2026-09-11", busDate, strings.Join([]string{
 		"2026-09-11\temma\tutcmodel\tschema\tinput\t100",
 		"2026-09-11\temma\tzonemodel\tschema\tinput\t5\tday_basis=America/Los_Angeles",
 		"",

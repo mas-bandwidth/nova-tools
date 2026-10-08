@@ -2,11 +2,10 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"golang.org/x/text/cases"
-	"golang.org/x/text/language"
 	"io"
 	"os"
 	"os/exec"
@@ -14,9 +13,12 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	busapi "github.com/mas-bandwidth/nova-tools/internal/bus"
+	"github.com/mas-bandwidth/nova-tools/internal/bus/bustest"
 	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
@@ -41,7 +43,7 @@ func invoke(t *testing.T, args ...string) result {
 func invokeAt(t *testing.T, now time.Time, args ...string) result {
 	t.Helper()
 	var out, errb bytes.Buffer
-	exit := run(args, &out, &errb, now)
+	exit := runWith(args, &out, &errb, now, testWorld)
 	return result{exit: exit, stdout: out.String(), stderr: errb.String()}
 }
 
@@ -184,8 +186,9 @@ func fakeSqlite3(t *testing.T, sessions, messages, parts string) (logPath string
 // the test binary is a real executable on all three, and the behaviour is written once, in
 // Go, rather than twice in two shell dialects.
 const (
-	fakeSqlite3Env = "NOVA_TOKENS_FAKE_SQLITE3"
-	fakeArgvLog    = "argv.log"
+	fakeSqlite3Env       = "NOVA_TOKENS_FAKE_SQLITE3"
+	fakeArgvLog          = "argv.log"
+	documentedBusTestEnv = "NOVA_TOKENS_DOCUMENTED_BUS_TEST"
 )
 
 // fakeModes are the fake's modes beyond answering from files, registered by the tier
@@ -285,12 +288,62 @@ func runToolChild(t *testing.T, dir string, env []string, args ...string) result
 func TestMain(m *testing.M) {
 	if os.Getenv(asToolEnv) != "" {
 		_ = os.Unsetenv(asToolEnv)
+		if os.Getenv(documentedBusTestEnv) != "" {
+			if err := seedDocumentedBus(); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(2)
+			}
+			os.Exit(runWith(os.Args[1:], os.Stdout, os.Stderr, foldStamp, testWorld))
+		}
 		os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, foldStamp))
 	}
 	if mode := os.Getenv(fakeSqlite3Env); mode != "" {
 		os.Exit(fakeSqlite3Main(mode, os.Args[1:], os.Stdout))
 	}
 	os.Exit(m.Run())
+}
+
+// seedDocumentedBus adapts the copied note fixture into a fake Redis log for the
+// onboarding child. It is test harness input; the product never reads the note directory.
+func seedDocumentedBus() error {
+	notes, err := filepath.Glob(filepath.Join("bus", "from-emma", "*.md"))
+	if err != nil {
+		return err
+	}
+	if len(notes) != 1 {
+		return fmt.Errorf("documented bus fixture has %d Emma notes, want 1", len(notes))
+	}
+	raw, err := os.ReadFile(notes[0])
+	if err != nil {
+		return err
+	}
+	head, body, ok := strings.Cut(string(raw), "\n\n")
+	if !ok {
+		return fmt.Errorf("documented bus note has no header/body separator")
+	}
+	var subject string
+	at := foldStamp
+	for _, line := range strings.Split(head, "\n") {
+		if value, found := strings.CutPrefix(line, "Subject: "); found {
+			subject = value
+		}
+		if value, found := strings.CutPrefix(line, "Date: "); found {
+			at, err = time.Parse("Mon Jan 2 15:04:05 MST 2006", value)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	if subject == "" {
+		return fmt.Errorf("documented bus note has no Subject")
+	}
+	fake := bustest.NewFake(foldStamp, "emma", "rowan")
+	m := busapi.Message{ID: "01EMMA00000000000000000001", From: "emma", To: []string{"rowan"}, Subject: subject, At: at.UTC(), Body: body}
+	if err := fake.AddAll(context.Background(), []string{busapi.LogKey}, m.Fields()); err != nil {
+		return err
+	}
+	testBuses.Store("./bus", fake)
+	return nil
 }
 
 // fakeSqlite3Main records the invocation and answers the last argument, which is the SQL.
@@ -416,23 +469,44 @@ func swarmUsage(t *testing.T, pool, job string, row string) {
 	write(t, filepath.Join(pool, "usage", job+".tsv"), strings.Join(swarmHeader, "\t")+"\n"+row+"\n")
 }
 
-// busLane writes a roster and returns the bus directory.
+// busDir registers a fake Redis bus and returns the address used by --bus.
+var testBuses sync.Map    // address -> *bustest.Fake
+var testBusNames sync.Map // address -> []string
+
+var testWorld = world{openBus: func(_ context.Context, addr string) (busapi.Store, func(), error) {
+	f, ok := testBuses.Load(addr)
+	if !ok {
+		return nil, nil, fmt.Errorf("dial tcp %s: connect: connection refused", addr)
+	}
+	return f.(*bustest.Fake), func() {}, nil
+}}
+
 func busDir(t *testing.T, dir string, names ...string) string {
 	t.Helper()
-	var ps []string
-	for _, n := range names {
-		ps = append(ps, fmt.Sprintf(`{"name":%q,"lane":"from-%s","git_email":"%s@example.com"}`, cases.Title(language.Und, cases.NoLower).String(n), n, n))
-	}
-	write(t, filepath.Join(dir, "participants.json"), "{\"participants\":["+strings.Join(ps, ",")+"]}\n")
+	testBuses.Store(dir, bustest.NewFake(time.Date(2026, 9, 11, 21, 0, 0, 0, time.UTC), names...))
+	testBusNames.Store(dir, names)
 	return dir
 }
 
-// busNote writes one note into a lane and returns its id.
+// busNote appends one message to the fake Redis bus log and returns its id.
 func busNote(t *testing.T, bus, lane, file, id, subject, date, body string) string {
 	t.Helper()
-	header := fmt.Sprintf("From: %s\nTo: Rowan\nDate: %s\nId: %s\nSubject: %s\n\n", cases.Title(language.Und, cases.NoLower).String(lane), date, id, subject)
-	write(t, filepath.Join(bus, "from-"+lane, file), header+body)
+	f, ok := testBuses.Load(bus)
+	require.True(t, ok, "no fake bus at %s", bus)
+	at, err := time.Parse("Mon Jan  2 15:04:05 UTC 2006", date)
+	if err != nil {
+		at = time.Time{}
+	}
+	m := busapi.Message{ID: id, From: lane, To: []string{"rowan"}, Subject: subject, At: at, Body: body}
+	require.NoError(t, f.(*bustest.Fake).AddAll(context.Background(), []string{busapi.LogKey}, m.Fields()))
 	return id
 }
 
 const busDate = "Fri Sep 11 20:00:00 UTC 2026"
+
+func busClear(t *testing.T, addr string) {
+	t.Helper()
+	names, ok := testBusNames.Load(addr)
+	require.True(t, ok, "no fake bus at %s", addr)
+	testBuses.Store(addr, bustest.NewFake(time.Date(2026, 9, 11, 21, 0, 0, 0, time.UTC), names.([]string)...))
+}

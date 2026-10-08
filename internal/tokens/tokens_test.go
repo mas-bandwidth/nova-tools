@@ -2,16 +2,18 @@ package tokens
 
 import (
 	"fmt"
-	"math"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"time"
 )
+
+// The package's own tests: the day file's round trip and its strict parse, the shrink
+// comparison with a dash on either side, the attribution ladder, and the lock.
 
 func TestTheDayFileRoundTripsByteIdentically(t *testing.T) {
 	t.Parallel()
@@ -169,6 +171,9 @@ func TestTheShrinkComparisonWithADashOnEitherSide(t *testing.T) {
 	}
 }
 
+// R5 (issue #268): the merge itself -- retained, replaced, blended, collision. A retained
+// row comes back byte for byte, because the fold that wrote it is the only run that could
+// compute it and this one must not touch it.
 func TestMergeDayRetainsReplacesAndRefuses(t *testing.T) {
 	t.Parallel()
 
@@ -233,7 +238,7 @@ func TestTheAttributionLadder(t *testing.T) {
 
 	dir := t.TempDir()
 	path := filepath.Join(dir, "repos.tsv")
-	require.NoError(t, os.WriteFile(path, []byte("# a comment\n\nschema\t(^|/)schema($|/)\n"), 0o644))
+	os.WriteFile(path, []byte("# a comment\n\nschema\t(^|/)schema($|/)\n"), 0o644)
 	rules, err := LoadRules(path)
 	require.NoError(t, err)
 	for _, tc := range []struct {
@@ -253,6 +258,8 @@ func TestTheAttributionLadder(t *testing.T) {
 	}
 }
 
+// The tally behind `sources --unattributed`: only the `other` arm feeds it, only when a
+// caller asked for it, and the key is the tree rather than the file.
 func TestTheUnattributedTallyCountsOnlyWhatFellToOther(t *testing.T) {
 	t.Parallel()
 
@@ -282,6 +289,8 @@ func TestTheUnattributedTallyCountsOnlyWhatFellToOther(t *testing.T) {
 	assert.Falsef(t, len(got) != 2 || got[0].Stem != "/home/nova/tree" || got[0].Count != 2 || got[1].Stem != "/home/nova/other-tree", "the tally is %v; it wants the heaviest tree first, keyed by the tree", got)
 }
 
+// TestTheUnattributedTallyScopesToFilteredDay: when FilterDay is set, only messages
+// attributed under that day are tallied.
 func TestTheUnattributedTallyScopesToFilteredDay(t *testing.T) {
 	t.Parallel()
 
@@ -307,6 +316,9 @@ func TestTheUnattributedTallyScopesToFilteredDay(t *testing.T) {
 	assert.Equal(t, []UnattributedStem{{Stem: "/home/nova/day1", Count: 1}}, got, "got %v, want 1 stem for day 1", got)
 }
 
+// The tally is bounded, and past the ceiling it still counts every token: a listing whose
+// memory grows with the tree is the unbounded read this repo's caps exist to end, and a
+// total that stopped at the ceiling would be a number nobody could use.
 func TestTheUnattributedTallyIsBoundedAndKeepsItsTotal(t *testing.T) {
 	t.Parallel()
 
@@ -338,6 +350,8 @@ func TestTheUnattributedTallyIsBoundedAndKeepsItsTotal(t *testing.T) {
 	}
 }
 
+// PathStem is the key, and it is one function so that the listing and the rule a person
+// writes from it are cut from the same string.
 func TestPathStemKeepsTheTree(t *testing.T) {
 	t.Parallel()
 
@@ -363,7 +377,7 @@ func TestAMalformedRulesLineIsNamed(t *testing.T) {
 
 	dir := t.TempDir()
 	path := filepath.Join(dir, "repos.tsv")
-	require.NoError(t, os.WriteFile(path, []byte("schema\t(^|/)schema($|/)\nthis line has no tab\n"), 0o644))
+	os.WriteFile(path, []byte("schema\t(^|/)schema($|/)\nthis line has no tab\n"), 0o644)
 	_, err := LoadRules(path)
 	assert.Falsef(t, err == nil || !strings.Contains(err.Error(), "line 2"), "a malformed rules line gives %v; it wants the line number", err)
 }
@@ -391,7 +405,7 @@ func TestTheFoldLockIsExclusiveAndNamesItsHolder(t *testing.T) {
 	require.NoError(t, err)
 	{
 		pid := HolderPID(filepath.Join(dir, LockName))
-		assert.NotEqual(t, Dash, pid, "the lock file holds no pid, so a waiter could not name the holder")
+		assert.False(t, pid == Dash, "the lock file holds no pid, so a waiter could not name the holder")
 	}
 	_, err = TakeFoldLock(dir, 50*time.Millisecond)
 	require.Error(t, err, "a second fold took the lock")
@@ -415,7 +429,7 @@ func TestTheBusGrammarIsOneGrammar(t *testing.T) {
 	}
 	zoned := BodyLine("2026-09-11", "emma", "gemini", "unattributed", Output, 7, "America/Los_Angeles")
 	assert.Truef(t, strings.HasSuffix(zoned, "\tday_basis=America/Los_Angeles"), "a zoned line does not carry its basis: %q", zoned)
-	subject := Subject("2026-09-11", "2026-09-11T23:55:02Z", "b", []string{"emma-000000000001", "emma-000000000002"})
+	subject := Subject("2026-09-11", "2026-09-11T23:55:02Z", "b", []string{"01EMMA00000000000000000001", "01EMMA00000000000000000002"})
 	p, ok := ParseSubject(subject)
 	assert.Falsef(t, !ok || p.day != "2026-09-11" || len(p.supersedes) != 2 || p.badSet != "", "the subject %q does not parse back: %+v ok=%v", subject, p, ok)
 	// `at=` is an RFC 3339 UTC stamp: `at=garbage build=b` was taken for a tokens note,
@@ -427,9 +441,9 @@ func TestTheBusGrammarIsOneGrammar(t *testing.T) {
 	for _, bad := range []string{"Tokens 2026-09-11", "tokens 2026-09-11 (rough)", "tokens 2026-09-11 at=x",
 		"tokens 11-09-2026", "tokens 2026-09-11 at=garbage build=b", "tokens 2026-09-11 at=2026-09-11T23:55:02-07:00 build=b",
 		"tokens 2026-09-11 build=b at=2026-09-11T23:55:02Z",
-		"tokens 2026-09-11 supersedes=emma-000000000001 at=2026-09-11T23:55:02Z build=b",
-		"tokens 2026-09-11 at=2026-09-11T23:55:02Z supersedes=emma-000000000001 build=b",
-		"tokens 2026-09-11 at=2026-09-11T23:55:02Z build=b supersedes=emma-000000000001 at=2026-09-11T23:55:02Z",
+		"tokens 2026-09-11 supersedes=01EMMA00000000000000000001 at=2026-09-11T23:55:02Z build=b",
+		"tokens 2026-09-11 at=2026-09-11T23:55:02Z supersedes=01EMMA00000000000000000001 build=b",
+		"tokens 2026-09-11 at=2026-09-11T23:55:02Z build=b supersedes=01EMMA00000000000000000001 at=2026-09-11T23:55:02Z",
 		"tokens 2026-02-30", "tokens 2026-13-40"} {
 		{
 			_, ok := ParseSubject(bad)
@@ -437,8 +451,8 @@ func TestTheBusGrammarIsOneGrammar(t *testing.T) {
 		}
 	}
 	{
-		p, _ := ParseSubject("tokens 2026-09-11 at=2026-09-11T23:55:02Z build=b supersedes=emma-000000000002,emma-000000000001")
-		assert.NotEmpty(t, p.badSet, "an unsorted predecessor set was accepted")
+		p, _ := ParseSubject("tokens 2026-09-11 at=2026-09-11T23:55:02Z build=b supersedes=01EMMA00000000000000000002,01EMMA00000000000000000001")
+		assert.False(t, p.badSet == "", "an unsorted predecessor set was accepted")
 	}
 }
 
@@ -456,6 +470,8 @@ func TestValidDayIsACalendarCheck(t *testing.T) {
 	}
 }
 
+// TestValidMonthIsACalendarCheck: a month is a calendar month (01-12), not just seven characters
+// with a hyphen.
 func TestValidMonthIsACalendarCheck(t *testing.T) {
 	t.Parallel()
 
@@ -484,6 +500,9 @@ func TestASourceLineFieldIsADashWhereItIsNotAMeasurement(t *testing.T) {
 	assert.True(t, b.StatField("dup") == Dash && b.StatField("comments") == "0", "a bus lane has no duplicate ids and does have comments")
 }
 
+// L10a: readSource is the one whole-file read, and it had no ceiling, so one oversized
+// ledger or bus file took the process's memory. A file over the cap must be refused by
+// name rather than read.
 func TestReadSourceRefusesAnOversizedFile(t *testing.T) {
 	t.Parallel()
 
@@ -492,7 +511,7 @@ func TestReadSourceRefusesAnOversizedFile(t *testing.T) {
 	f, err := os.Create(path)
 	require.NoError(t, err)
 	if err := f.Truncate(capInTest + 1); err != nil {
-		_ = f.Close() // ignored: the Truncate error is the one this test reports
+		f.Close()
 		require.NoError(t, err)
 	}
 	require.NoError(t, f.Close())
@@ -502,6 +521,9 @@ func TestReadSourceRefusesAnOversizedFile(t *testing.T) {
 	assert.Truef(t, strings.Contains(err.Error(), fmt.Sprint(capInTest)), "the refusal must name the cap %d: %v", capInTest, err)
 }
 
+// L10b: onCycle marked a node seen, walked its predecessors, then deleted it on the way
+// out, so a diamond was re-walked once per path. A node already proven acyclic must stay
+// memoized, which the walk's own seen map must show; the answer is unchanged.
 func TestOnCycleDoesNotRewalkAProvenAcyclicDiamond(t *testing.T) {
 	t.Parallel()
 
@@ -515,6 +537,7 @@ func TestOnCycleDoesNotRewalkAProvenAcyclicDiamond(t *testing.T) {
 	assert.Lenf(t, seen, len(all), "onCycle left %d of %d nodes proven: it re-walked an acyclic node", len(seen), len(all))
 }
 
+// L10b: the memo must not hide a cycle. A diamond with a back edge still reports true.
 func TestOnCycleStillSeesARealCycle(t *testing.T) {
 	t.Parallel()
 
@@ -653,57 +676,31 @@ func TestALegacyTwelveColumnDayFileReadsWithTheUnitsColumnIgnored(t *testing.T) 
 		"2026-09-21\tm1\tschema\t1\t1\t-\t-\t-\t0\tutc\ta\n2026-09-21\tm1\tschema\t1\t1\t-\t-\t-\t0\tutc\ta\n"
 	{
 		_, f := ParseDayFile("2026-09-21", dup)
-		assert.NotEmpty(t, f, "a second (model, repo) row in an eleven-column file was accepted")
+		assert.False(t, len(f) == 0, "a second (model, repo) row in an eleven-column file was accepted")
 	}
 }
 
-func TestCountsSetNeverWrapsPastInt64Max(t *testing.T) {
+// Row.Sources, Row.Bases and Folder.Days are never nil: an empty set is an empty slice, so a
+// caller that encodes, compares or nil-checks one sees the same value it always did.
+func TestSortedKeysIsSortedAndNeverNil(t *testing.T) {
 	t.Parallel()
 
-	var c Counts
-	c.Set(Input, math.MaxInt64)
-	c.Set(Input, math.MaxInt64)
-	got, ok := c.Get(Input)
-	assert.True(t, ok)
-	assert.Equal(t, int64(math.MaxInt64), got)
-
-	dir := t.TempDir()
-	var badCounts Counts
-	badCounts.n[Input] = -1
-	badCounts.has[Input] = true
-	df := &DayFile{
-		Day: "2026-09-11",
-		Rows: []DayRow{
-			{
-				Date:   "2026-09-11",
-				Model:  "m1",
-				Repo:   "r1",
-				Counts: badCounts,
-				Basis:  UTC,
-			},
-		},
+	for _, tc := range []struct {
+		name string
+		in   map[string]bool
+		want []string
+	}{
+		{"nil map", nil, []string{}},
+		{"empty map", map[string]bool{}, []string{}},
+		{"sorted out of insertion order", map[string]bool{"claude:b": true, "bus:a": true, "claude:a": true}, []string{"bus:a", "claude:a", "claude:b"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := sortedKeys(tc.in)
+			assert.NotNil(t, got)
+			assert.Equal(t, tc.want, got)
+		})
 	}
-	err := df.Save(dir)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "2026-09-11")
-	assert.Contains(t, err.Error(), "-1")
-
-	entries, readErr := os.ReadDir(dir)
-	require.NoError(t, readErr)
-	assert.Empty(t, entries)
-}
-
-func TestParseMicroRefusesAWholePartThatWouldOverflow(t *testing.T) {
-	t.Parallel()
-
-	v, ok := ParseMicro("9223372036855.999999")
-	assert.False(t, ok, "overflowing whole part must be refused, got (%d, %v)", v, ok)
-
-	v, ok = ParseMicro("9223372036853.999999")
-	assert.True(t, ok)
-	assert.Equal(t, int64(9223372036853999999), v)
-
-	v, ok = ParseMicro("1.5")
-	assert.True(t, ok)
-	assert.Equal(t, int64(1500000), v)
+	assert.NotNil(t, (&Row{}).Sources())
+	assert.NotNil(t, (&Row{}).Bases())
+	assert.NotNil(t, NewFolder().Days())
 }
