@@ -1,5 +1,9 @@
 # nova-tools changelog
 
+## v1.2.0 — unreleased
+
+- docs: `nova-secrets gate`'s exit contract matches the binary — a verdict prints `GATE FAILED` at exit 1, and a gate that could not run prints `SECRETS GATE REFUSED` at exit 2 (docs/CLI.md, docs/SPEC-SECRETS.md)
+
 ## v1.1.0 — 2026-10-08
 
 Cut from 2e73c44df778b66adf141a67a0b3f6e30b43a0e8. 190 pull requests since v1.0.0.

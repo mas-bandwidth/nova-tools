@@ -56,19 +56,30 @@ func readersBehind(h *harness, open func(string) []sprint.Open, written func(str
 	require.Len(t, cmds, 2)
 	assert.Contains(t, cmds[0].Lines[0], "nova-config loop show reader-m1")
 	assert.Equal(t, "nova-sprint wait "+behind[0].Note.ID+" --for 10m", cmds[1].Lines[0])
-	// the machine is narrowed to two: the reader reads its width, and the machine is the bound
+	// the machine is narrowed to two: the reader reads its whole width, busy and not behind
+	// (a-judgment-checks-the-lane-before-it-rises.w1): the judgment closes, and the tick
+	// counts it quiet on its heartbeat
 	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m1", Width: 2}))
 	h.machine()
-	behind = open(sprint.NReadersBehind)
-	require.Len(t, behind, 1, "updated in place")
-	assert.Equal(t, 1, written(sprint.NReadersBehind))
-	assert.Equal(t, "the readers are behind: review 6, reads asked and not begun past 10m0s; the readers read 2 of width 2 (reader-m1 reads 2 of width 2, 4 waiting past the window)", behind[0].Note.What)
-	assert.Equal(t, []string{"wait 10m"}, behind[0].Note.Decisions, "at its width: nothing to restart")
+	assert.Empty(t, open(sprint.NReadersBehind), "a reader reading its whole width is busy, not behind")
+	assert.Equal(t, 1, written(sprint.NReadersBehind), "written once, before the narrowing")
+	_, late := sprint.ReadersBehind(h.snap())
+	assert.False(t, late)
+	why, full := sprint.ReadersFull(h.snap())
+	require.True(t, full)
+	assert.Equal(t, "4 reads asked past 10m0s wait on readers reading their whole width (reader-m1 reads 2 of width 2): busy, not behind", why)
+	_, hb, err := h.st.Machine(h.ctx)
+	require.NoError(t, err)
+	assert.Contains(t, hb.Quiet, sprint.LaneQuiet{Type: sprint.NReadersBehind, Subject: sprint.SprintSubject, Why: why}, "the heartbeat counts it")
+	// widened again with the reads still waiting: a reader with room did not begin, and it rises
+	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m1", Width: 6}))
+	h.machine()
+	require.Len(t, open(sprint.NReadersBehind), 1, "room and not begun: behind again")
 	// the reader begins the rest: the readers are not behind
 	h.must(ReadStep(sprint.ReadReq{As: "reader-m1", Begin: true, Sel: sprint.Sel{Limit: 4}, Who: "reader-m1"}))
 	h.machine()
 	assert.Empty(t, open(sprint.NReadersBehind))
-	_, late := sprint.ReadersBehind(h.snap())
+	_, late = sprint.ReadersBehind(h.snap())
 	assert.False(t, late)
 	h.clean("the readers caught up")
 }

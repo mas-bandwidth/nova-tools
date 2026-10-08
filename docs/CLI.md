@@ -1430,6 +1430,23 @@ done; 1 the verb ran and said no; 2 could not run.
 
 ## nova-friend
 
+For a Codex chat whose coordinator owns card dispatch, `run --notifications-only`
+uses one filtered notification receiver and makes no sprint beat, proof, job or
+pruning changes. `--notify-kinds request,blocker,report` is the default: requests
+and blockers are immediately eligible, reports keep their payload, and plain
+transport acknowledgments and routine status are audited without model wakes.
+Card-delivery status bursts across many cards produce one global ready-queue wake
+inside `--notify-window` (30 seconds). The app queue accepts that input; acceptance
+is not evidence that the model processed it. The mode keeps its journal under
+`<state-dir>/notifications/` and uses a separate notification agent label on install.
+A coordinated handoff stops competing receivers before this mode owns the stream;
+installation and live handoff are separate from building or testing the change.
+Notification install uses a content-addressed executable separate from the native binary
+and makes no harness-setting or proof changes. Stop only its label with
+`launchctl bootout gui/<uid>/com.nova.friend-notifications-<name>` and preserve its journal;
+ordinary `uninstall --as <name>` targets the native daemon. See
+[Notifications](SPEC-FRIEND.md#notifications) for replay and failure behavior.
+
 <!-- clidoc:begin nova-friend -->
 `nova-friend help`:
 
@@ -1443,16 +1460,17 @@ coordinator PING at once (daemon-pong); presence is the session's word on the bu
 state: <dir>/.nova-friend/ (--state-dir moves it), the queue: <dir>/inbox/QUEUE.json.
 
 usage:
-  nova-friend run --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--profile <p>] [--config-dir <d>] [--deny-self <d,...>] [--wall-jobs <d,...>] [--wall-reads <d,...>] [--model <provider/model>] [--db <opencode.db>] [--lane-tiers <t,...>] [--lane-streams <p,...>] [--token-cap <n>] [--load-max <n>] [--load-width <n>] [--pause-on funds|any] [--refuse-go] [--dry-run]
+  nova-friend run --as <me> --harness <h> --dir <d> [--session <id>] [--adapter folder --delivery-dir <watched-dir>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--profile <p>] [--config-dir <d>] [--deny-self <d,...>] [--wall-jobs <d,...>] [--wall-reads <d,...>] [--model <provider/model>] [--db <opencode.db>] [--lane-tiers <t,...>] [--lane-streams <p,...>] [--token-cap <n>] [--load-max <n>] [--load-width <n>] [--pause-on funds|any] [--refuse-go] [--dry-run]
   nova-friend beat --as <me> [--server <addr>]
-  nova-friend install --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--config-dir <d>] [--model <provider/model>] [--secrets NAME[,NAME] --seat <seat>] [--launchd-log <file>] [--dry-run]
+  nova-friend install --as <me> --harness <h> --dir <d> [--session <id>] [--adapter folder --delivery-dir <watched-dir>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--config-dir <d>] [--model <provider/model>] [--secrets NAME[,NAME] --seat <seat>] [--launchd-log <file>] [--dry-run]
   nova-friend uninstall --as <me> [--dry-run]
-  nova-friend check [--as <coordinator>] [<friend>...] [--since <duration>] [--shown <file|->] [--json]
+  nova-friend check [--as <coordinator>] [<friend>...] [--since <duration>] [--shown <file|->] [--harness codex --dir <d> --session <id> --adapter folder --delivery-dir <watched-dir>] [--json]
   nova-friend host --as <me> --harness <h> --dir <d> [--prompt <regexp>] [--state-dir <d>] [--dry-run] [--json] -- <launch command...>
+  nova-friend reach --as <coordinator> --to <friend> [--step-timeout <duration>] [--from <bus|push|window>] [--harness <h>] [--dir <d>] [--session <id>] [--state-dir <d>] [--redis <addr>] [--dry-run]
   nova-friend ping --as <coordinator> (--to <friend> | --wake --to-friends [--every <d>] [--within <d>] [--never-wake <f,...>] [--server <addr>]) [--nonce <n>] [--since <RFC3339>] [--redis <addr>] [--dry-run]
   nova-friend ping-install --as <coordinator> --every <d> [--within <d>] [--never-wake <f,...>] [--server <addr>] [--redis <addr>] [--launchd-log <file>] [--dry-run]
   nova-friend ping-uninstall --as <coordinator> [--dry-run]
-  nova-friend pong --as <me> --nonce <n> [--to <coordinator>] [--queue <n>] [--working <n>] [--width <n>] [--state-dir <d>] [--redis <addr>] [--dry-run]
+  nova-friend pong --as <me> --nonce <n> [--to <coordinator>] [--dir <work-dir>] [--queue <n>] [--working <n>] [--width <n>] [--state-dir <d>] [--redis <addr>] [--dry-run]
   nova-friend wait-pong --from <friend> --nonce <n> [--timeout <d>] [--redis <addr>]
   nova-friend watch --as <coordinator> [--timeout <duration>] [--state-dir <d>] [--redis <addr>] [--json]
   nova-friend status --as <me> --dir <d> [--state-dir <d>]
@@ -1482,13 +1500,15 @@ example:
 ```
 usage: nova-friend run [flags]
 from `nova-friend help`:
-  nova-friend run --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--profile <p>] [--config-dir <d>] [--deny-self <d,...>] [--wall-jobs <d,...>] [--wall-reads <d,...>] [--model <provider/model>] [--db <opencode.db>] [--lane-tiers <t,...>] [--lane-streams <p,...>] [--token-cap <n>] [--load-max <n>] [--load-width <n>] [--pause-on funds|any] [--refuse-go] [--dry-run]
+  nova-friend run --as <me> --harness <h> --dir <d> [--session <id>] [--adapter folder --delivery-dir <watched-dir>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--profile <p>] [--config-dir <d>] [--deny-self <d,...>] [--wall-jobs <d,...>] [--wall-reads <d,...>] [--model <provider/model>] [--db <opencode.db>] [--lane-tiers <t,...>] [--lane-streams <p,...>] [--token-cap <n>] [--load-max <n>] [--load-width <n>] [--pause-on funds|any] [--refuse-go] [--dry-run]
 flags:
+  --adapter <string>  delivery route: folder for an existing watched Codex session (default: the harness adapter)
   --as <string>  your name, a nova-config friend row (required)
   --broken-after <int>  turns in a row the provider refuses the same way before the session is broken
   --config-dir <string>  the friend's config directory, writable inside the lane's wall and its HOME there, and a claude one-shot lane's CLAUDE_CONFIG_DIR, an absolute path (default: the row's config_dir, read from each beat as row_config_dir=, else CLAUDE_CONFIG_DIR)
   --coordinator <string>  who is told of a broken session when no ping has named the seat
   --db <string>  opencode's own database, where a card's tokens are read
+  --delivery-dir <string>  existing folder watched by that Codex session when --adapter folder
   --deny-self <string>  the coordinator's self, never written inside a lane's wall, comma-separated; ~/ is the wall's HOME; a lane wall with none is refused (default: NOVA_FRIEND_DENY_SELF)
   --dir <string>  the friend's working directory: the session's, and where the state files live (required)
   --dry-run  print what the verb would write and write nothing
@@ -1500,6 +1520,9 @@ flags:
   --load-width <int>  the lanes that run while the load is above --load-max
   --mode <string>  override the friend row's delivery mode, batch or one-shot, for a test (default: the row's, read from each beat)
   --model <string>  the friend's model as provider/model, to price a card by the store's route row (default: none, cards are unpriced)
+  --notifications-only  deliver filtered notifications through one receiver; no sprint beats, proof, claims, jobs, staging, pruning or finishes
+  --notify-kinds <string>  message kinds that wake the model, comma-separated; requests/blockers always retained; ack/status are audited by default
+  --notify-window <duration>  global card-delivery burst window and minimum wake interval; urgent messages bypass it
   --pause-on <string>  funds or any: any holds the lanes and the friend down on a rate limit too (default: funds, a rate limit backs off)
   --profile <string>  the wall profile every lane child runs inside when the friend row names none (row_profile=): friend
   --redis <string>  the bus store's Redis address, host:port (default: NOVA_BUS_REDIS)
@@ -1536,13 +1559,15 @@ effect: delivery: sends beyond this machine: one beat to the sprint server, the 
 ```
 usage: nova-friend install [flags]
 from `nova-friend help`:
-  nova-friend install --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--config-dir <d>] [--model <provider/model>] [--secrets NAME[,NAME] --seat <seat>] [--launchd-log <file>] [--dry-run]
+  nova-friend install --as <me> --harness <h> --dir <d> [--session <id>] [--adapter folder --delivery-dir <watched-dir>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--config-dir <d>] [--model <provider/model>] [--secrets NAME[,NAME] --seat <seat>] [--launchd-log <file>] [--dry-run]
   nova-friend install --as bob --harness opencode --dir ./bob --dry-run
 flags:
+  --adapter <string>  delivery route: folder for an existing watched Codex session (default: the harness adapter)
   --as <string>  your name, a nova-config friend row (required)
   --broken-after <int>  turns in a row the provider refuses the same way before the session is broken
   --config-dir <string>  harness claude: the friend's own config directory, made and named in the agent (default: CLAUDE_CONFIG_DIR)
   --coordinator <string>  who is told of a broken session when no ping has named the seat
+  --delivery-dir <string>  existing folder watched by that Codex session when --adapter folder
   --dir <string>  the friend's working directory: the session's, and where the state files live (required)
   --dry-run  print what the verb would write and write nothing
   --harness <string>  the harness the session runs in: opencode, codex, claude, antigravity, dsh, gemini, grok, tmux, copilot, cursor, amp, goose, kiro, cline, aider, roo, windsurf, zed, warp (required)
@@ -1550,6 +1575,9 @@ flags:
   --launchd-log <string>  launchd's stdout and stderr file (default: ~/Library/Logs/nova-friend-<me>.log)
   --limit-rest <duration>  how long the friend is down when its harness's usage limit or empty balance names no reset
   --model <string>  harness opencode: the model, provider/model, written into <dir>/opencode.json (default: left as it is)
+  --notifications-only  deliver filtered notifications through one receiver; no sprint beats, proof, claims, jobs, staging, pruning or finishes
+  --notify-kinds <string>  message kinds that wake the model, comma-separated; requests/blockers always retained; ack/status are audited by default
+  --notify-window <duration>  global card-delivery burst window and minimum wake interval; urgent messages bypass it
   --redis <string>  the bus store's Redis address, host:port (default: NOVA_BUS_REDIS)
   --seat <string>  the machine's nova-secrets seat the secrets are opened as (nova-config machine show <self>: seat); wanted with --secrets
   --secrets <string>  the names of the secrets the session needs, comma-separated (never values); wraps the daemon in nova-secrets exec
@@ -1583,11 +1611,13 @@ effect: local write: writes files on this machine: boots the agent out and remov
 ```
 usage: nova-friend check [flags]
 from `nova-friend help`:
-  nova-friend check [--as <coordinator>] [<friend>...] [--since <duration>] [--shown <file|->] [--json]
+  nova-friend check [--as <coordinator>] [<friend>...] [--since <duration>] [--shown <file|->] [--harness codex --dir <d> --session <id> --adapter folder --delivery-dir <watched-dir>] [--json]
 example: nova-friend check --as ada bob
 flags:
+  --adapter <string>  delivery route: folder for an existing watched Codex session
   --as <string>  your name, the coordinator (the health check); the friend itself with --harness
   --config-dir <string>  harness claude: the friend's own config directory, made and named in the agent (default: CLAUDE_CONFIG_DIR)
+  --delivery-dir <string>  existing folder watched by that Codex session when --adapter folder
   --dir <string>  the friend's working directory
   --dry-run  print what the verb would write and write nothing
   --harness <string>  the harness the session runs in (delivery check): opencode, codex, claude, antigravity, dsh, gemini, grok, tmux, copilot, cursor, amp, goose, kiro, cline, aider, roo, windsurf, zed, warp
@@ -1624,6 +1654,29 @@ exit codes: 0 done, 1 the verb ran and said no (wait-pong: no pong in time; stat
 effect: local write: writes files on this machine: starts the launch command in a new detached tmux session friend-<me> and saves the session and prompt in the state directory
 ```
 
+`nova-friend reach -h`:
+
+```
+usage: nova-friend reach [flags]
+from `nova-friend help`:
+  nova-friend reach --as <coordinator> --to <friend> [--step-timeout <duration>] [--from <bus|push|window>] [--harness <h>] [--dir <d>] [--session <id>] [--state-dir <d>] [--redis <addr>] [--dry-run]
+example: nova-friend reach --as ada --to bob --dry-run
+flags:
+  --as <string>  your name, the coordinator (required)
+  --dir <string>  the friend's working directory
+  --dry-run  print what the verb would write and write nothing
+  --from <string>  the step to start at: bus, push or window (default bus)
+  --harness <string>  the harness the push and the window use (default: the one the daemon's status names)
+  --json  print the result as one JSON object instead of lines
+  --redis <string>  the bus store's Redis address, host:port (default: NOVA_BUS_REDIS)
+  --session <string>  the session to type into (default: the one host saved, else friend-<friend>; harness tmux)
+  --state-dir <string>  where the friend's state files live (default: <dir>/.nova-friend where the daemon wrote there, else ~/.nova-friend/<friend>)
+  --step-timeout <duration>  how long each step waits for a proof (default 60s)
+  --to <string>  the friend to reach (required)
+exit codes: 0 a proof, 1 no proof, 2 could not run.
+effect: delivery: sends beyond this machine: a bus message, then a push into the session, then the friend's window, stopping at the first proof
+```
+
 `nova-friend ping -h`:
 
 ```
@@ -1654,10 +1707,11 @@ effect: delivery: sends beyond this machine: one PING on the friend's stream, as
 ```
 usage: nova-friend pong [flags]
 from `nova-friend help`:
-  nova-friend pong --as <me> --nonce <n> [--to <coordinator>] [--queue <n>] [--working <n>] [--width <n>] [--state-dir <d>] [--redis <addr>] [--dry-run]
+  nova-friend pong --as <me> --nonce <n> [--to <coordinator>] [--dir <work-dir>] [--queue <n>] [--working <n>] [--width <n>] [--state-dir <d>] [--redis <addr>] [--dry-run]
   nova-friend pong --as bob --nonce abc123 --to ada --queue 2 --working 1 --width 4
 flags:
   --as <string>  your name, the friend the daemon in --dir runs as (required)
+  --dir <string>  the friend's working directory; when given, omitted queue and working counts are read from its inbox/QUEUE.json
   --dry-run  print what the verb would write and write nothing
   --json  print the result as one JSON object instead of lines
   --nonce <string>  the nonce the PING carried (required)
@@ -1753,10 +1807,14 @@ What a friend runs to be part of the team: the wake loop, the beat and the
 proof of life, as one daemon. One launchd agent per friend parks on the
 friend's nova-bus stream and, whenever the session is free, pushes every
 waiting message into the running session as one turn through the harness's
-deliver command, beats to the sprint server while the loop runs, answers the
+deliver command (one envelope, oldest first, each message under a line
+`[i/n] <id> from=<f> at=<RFC3339> age=<m>m subject=<s>`, capped at the
+harness's text limit with the rest named under `and <n> more: nova-bus recv --as <me> --all`; exit 0 acks every message it carried, a failure none; of the
+daemon's own coordinator notices not yet in a turn, only the newest goes in,
+each older one dropped with `superseded=<newer id>` on the daemon's record), beats to the sprint server while the loop runs, answers the
 coordinator's `PING` at once (`daemon-pong`) and never makes a turn of it; the
-session's own `pong --nonce`, its line at the head of the next turn, alone
-makes the friend up. No ping for a window and the session is told the
+session's own `pong --nonce`, its line at the head of the next turn, or any
+other bus line the session sends after the ping, makes the friend up. No ping for a window and the session is told the
 coordinator is silent, once, inside a turn that carries messages. A turn runs as
 long as it prints (`--silent-stop`, twenty minutes of silence, stops it); the
 same provider refusal three turns in a row (`--broken-after`) marks the session
@@ -1926,6 +1984,36 @@ JSON fields: session, dir, attach (command on a dry run)
 Exit 0 started, 1 refused, 2 could not run (no launch command, no prompt pattern for the harness, tmux missing or failing)
 ```
 
+### Reach a silent friend
+
+`nova-friend reach` climbs a ladder until one proof: a bus message, then a push into the session, then the friend's window. It stops at the first proof. The friend is `--to`. A verb other than the default takes no bare word.
+
+```sh
+nova-friend reach --as ada --to bob --dry-run
+```
+
+`reach --as <coordinator> --to <friend> [--step-timeout <duration>] [--from <bus|push|window>] [--harness <h>] [--dir <d>] [--session <id>] [--state-dir <d>] [--redis <addr>] [--dry-run] [--json]`
+
+This verb is reach. see also: nova-friend ping --wake is the coordinator's periodic wake check; reach is this escalation ladder.
+
+Each step has one `--step-timeout` budget (default 60s), including delivery and waiting for a proof. A proof is a pong for the nonce the step carries, or any other message from the friend. A daemon-pong is not a proof. The bus step's line is `REACH STEP step=bus sent=<id> nonce=<n>`. The status file is read when the push begins, and the push is skipped when the daemon is down: `REACH NONE step=push waited=0s: daemon down: <reason>`. The window of a GUI harness needs the accessibility permission a person grants to this binary. When it is absent the step is refused and the tool does not ask: grant Accessibility to this binary in System Settings, Privacy and Security, Accessibility; nova-friend does not ask.
+
+The help of `nova-friend reach -h` says, and this is the same text:
+
+```
+REACH STEP step=bus sent=<id> nonce=<n>
+REACH NONE step=push waited=0s
+REACH PROOF step=<s> after=<duration> by=<pong|message>
+REACH OK friend=<f> step=<s>
+REACH FAILED friend=<f> tried=<steps>
+REACH DRY-RUN
+Exit 0 a proof. Exit 1 no proof. Exit 2 could not run (a flag, a store that did not answer, or the window step without the accessibility permission).
+--as --to --step-timeout --from --harness --dir --session --state-dir --redis --dry-run --json
+example: nova-friend reach --as ada --to bob --dry-run
+```
+
+The result line is first, then one line per step in the order it happened. `--json` carries facts `friend`, `step` (on OK), `tried` (on FAILED), `from` and `step_timeout` (on a dry run), `dry_run`, and items `STEP`, `PROOF` and `NONE`.
+
 ### The friend health check
 
 The help of `nova-friend check -h` says, and this is the same text:
@@ -2017,7 +2105,7 @@ once the row's unit runs. What it gets wrong first: no `--redis` and no
 | `ping-install --as <coordinator> --every <d> [...]` / `ping-uninstall --as <coordinator>` | Installs the wake loop as the launchd agent `com.nova.friend-wake-ping-<as>`; removes it |
 | `wait-pong --from <friend> --nonce <n> [--timeout <d>]` | Waits for the pong on the log, from the friend's own stream |
 | `watch --as <coordinator> [--timeout <duration>] [--state-dir <d>] [--redis <addr>] [--json]` | The coordinator's wake: waits on its stream, its wake file and events (subject `event:`), prints one line per wake, then `WATCH OK after=<cursor>` (exit 1 `WATCH NONE` past `--timeout`); the cursor is saved in the state directory |
-| `status --as <me> --dir <d> [--state-dir <d>]` | The daemon's state, the last pong, the queue file's counts |
+| `status --as <me> --dir <d> [--state-dir <d>]` | The daemon's state, the last pong, the queue file's counts, and the envelope size: `envelope=<n>` messages the last turn's envelope carried and `envelope_bytes=<b>` its size (at most the harness's text limit, 262144 bytes unless it names its own; the first message always goes in; 0 before the first) |
 | `serve --as <coordinator> [--redis <addr>] [--dry-run]` | The coordinator's ping loop: a `PING` to every friend row each second, one line per friend up or down (ten seconds without a pong); until a signal |
 | `version`, `help [<verb>]` | The version line; the banner, or a verb's help |
 
@@ -2374,6 +2462,7 @@ nova-sprint relink <old-id>[,<old-id>...] <new-id> [--reason <text>]
 nova-sprint sentinel set <id> --needs <a,b>
 nova-sprint brief <id> (--brief <text> | --brief-file <path>) [--rules <file>] [--answers <note>] | --dir <dir> [--rules <file>] | --group <id> [--expect <n>] (--brief-file <path> | --dir <dir>) [--answers <note>] | <id> --widen [--repo-dir <clone>] | <id> --tier <flash|pro|heavy|frontier> | <selector> (--set-base <branch> | --drop-who | --tier <t>)... [--dry-run]
 nova-sprint recut <id> (--tier <flash|pro|heavy|frontier> | --brief-file <path> [--rules <file>]) [--new <id>] | <selector> (--tier <t> | --set-base <branch> | --drop-who)... [--dry-run]
+nova-sprint twin <card> [--paths <extra,...>] [--needs <card,...>] [--before <card>] [--tier <t>] [--instruction <text>] [--carry]
 nova-sprint move <id>... --stream <s> [--before <id> | --after <id> | --score <n>]
 nova-sprint merge --stream <s> [--batch <n>] [--conflict <id> [--conflict-kind file|ledger] [--conflict-path <p>...] | --cross <id>=<other> | --red [--suspect <id>...] | --rejected | --base-red <error>] [--note <text>]
 nova-sprint land [--stream <s>...] [--repo-dir <clone>] [--base <branch>] [--check <command>] [--dry-run]
@@ -2423,6 +2512,7 @@ nova-sprint answer [--dry-run] [--bar <p>] [--every <duration>] [--timeout <dura
 nova-sprint inbox [--open <group>] [--read] [--wait [--timeout <duration>]] [--deadline <duration>] [--stale <duration>]
 nova-sprint card <id> [--brief | --fields] [--json] [--at-epoch <n>]
 nova-sprint card (--all | --stream <s>) --json [--at-epoch <n>]
+nova-sprint card base <id> <branch> [--repo-dir <clone>]
 nova-sprint streams [--repo <owner/name>] [--release <name>] [--cards]
 nova-sprint log [--card <id>] [--stream <s>] [--member <m>] [--since <10m|RFC3339>] [--at-epoch <n>]
 nova-sprint check
@@ -2438,6 +2528,7 @@ nova-sprint seat login --check
 nova-sprint seat logout
 nova-sprint seat push [--harness <name> --target <dir> [--session <id>]] [--json]
 nova-sprint seat pong <nonce>
+nova-sprint seat watch <dir> [--json]
 nova-sprint seat install --harness <name> --target <dir> [--session <id>] [--server <host:port>] [--config-seat <name> --config-dsn <dsn> --config-password-env <NAME>] [--dry-run]
 nova-sprint seat check
 nova-sprint routes
@@ -2518,7 +2609,7 @@ state (`backup: reads (review ... > working ...)`) while there is one
 
 `nova-sprint seat login --store <secrets dir> --as <seat> --key <keyfile> --secret <NAME> --user <redis user> --redis <addr>` records the store login in `~/.config/nova-sprint/login.json` (or under `$XDG_CONFIG_HOME`), mode 0600: the address, the user and where the password is in nova-secrets, never the password, and only once the secret resolves. After it, `nova-sprint <verb>` typed bare reaches that store as that user, the password read in the verb's own process through nova-secrets' checks, with no `nova-secrets exec` wrapper; `--redis`, `NOVA_SPRINT_REDIS`/`NOVA_REDIS_ADDR` and `NOVA_SPRINT_REDIS_USER` still win. `seat login --check` prints `SEAT LOGIN file=… redis=… user=… … resolves=yes|no` (exit 1 on no), the password never shown; `seat logout` removes the record. A recorded secret that does not resolve is refused naming the file and the remedy, never dialed without a password. `nova-sprint run --keys <NAME,...>` records the decision key and each provider key in `keys.json` beside that login (names only, never a value) and the run process reads each one from the seat; a name that cannot be read refuses at start, naming the name. The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md#the-seats-store-login) and [SPEC-SECRETS.md](SPEC-SECRETS.md) ("A tool's store login").
 
-The seat is held only by a session the push loop reaches ([SPEC-SPRINT.md](SPEC-SPRINT.md#the-push-proof)). `nova-sprint seat install --actor <seat> --harness <harness> --target <session dir>` records the seat's push target and installs the push loop; the loop delivers `NOVA SPRINT PUSH CHECK <nonce>` into the session through the harness's nova-friend adapter, and the session answers with `nova-sprint seat pong <nonce> --actor <seat>`. Until that pong is in, and again whenever it is older than 15 minutes (the loop asks every 10), every coordinator verb is refused with one line, `PUSH DOWN: <why>; ... run: nova-sprint seat install ...`, and `coordinator <name>` refuses a name with no live proof. `seat push` prints `PUSH OK` or `PUSH DOWN` with why and the remedy (exit 1). A harness whose adapter is still the Stub (Claude Code, until fg-claude-open-chatb-r lands) is refused at install.
+The seat is held only by a session the push loop reaches ([SPEC-SPRINT.md](SPEC-SPRINT.md#the-push-proof)). `nova-sprint seat install --actor <seat> --harness <harness> --target <session dir>` records the seat's push target and installs the push loop; the loop delivers `NOVA SPRINT PUSH CHECK <nonce>` into the session through the harness's nova-friend adapter, and the session answers with `nova-sprint seat pong <nonce> --actor <seat>`. Until that pong is in, and again whenever it is older than 15 minutes (the loop asks every 10), every coordinator verb is refused with one line, `PUSH DOWN: <why>; ... run: nova-sprint seat install ...`, and `coordinator <name>` refuses a name with no live proof. `seat push` prints `PUSH OK` or `PUSH DOWN` with why and the remedy (exit 1). A harness with no deliver command uses the folder adapter: install resolves `--target` to an absolute existing directory, and the push loop writes `PROOF-<nonce>` there. The actual nonce appears only in that filename; status, refusals, errors, and pong responses never reveal it. `seat push --json` reports `proof=none|pending|proven` without `nonce` or `pong_of`; `live` separately reports whether the proof is still valid. Run the printed Monitor command, `nova-sprint seat watch <dir>`, from inside the session, then answer each proof filename with `seat pong`. The native Monitor prints complete regular files already present and each new file every second, one flushed path per line (`--json`: one object with `path` per file); it skips dot files and directories, prints a removed name again when it reappears, writes nothing, runs locally, and stops on an interrupt. `seat check` prints `proven=<age> ago` on OK and `proven=-` plus both commands on DOWN.
 
 `nova-sprint seat install --server <host:port> --config-seat <name> --config-dsn <dsn> --config-password-env <NAME>` (beside the push loop's unit) records the sprint's server in `seat.json` beside that login and writes the nova-config seat profile, the row `<name>\t<dsn>\t<NAME>` of `~/.config/nova-config/seats.tsv`. After it, `nova-sprint seat check` measures the recorded server when `NOVA_SPRINT_SERVER` is not set and prints `MACHINERY config OK seat=<name> …` (or DOWN with the remedy), and `nova-config <verb> --seat <name>` (or `NOVA_SEAT`) reaches the config store with no `nova-secrets exec`: the password is read in process from the store login's nova-secrets seat under `<NAME>` when that variable is not set and `NOVA_PG_PASSWORD_ENV` is not given (`NOVA_PG_PASSWORD_ENV` given still wins). The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md#handing-over-the-seat) and [SPEC-CONFIG.md](SPEC-CONFIG.md#connecting).
 
@@ -2571,6 +2662,18 @@ need that is no card on the table is refused, naming every one, and nothing chan
 (`release v1 --reason '<why>'`), not emptied. The contract is
 [SPEC-SPRINT.md](SPEC-SPRINT.md) section 16.
 
+### A merging card whose base is gone
+
+When a merging card's `BASE:` branch is deleted from origin, the lander refuses it once,
+`LAND REFUSED ... reason=card <id> names BASE <b>, which is not on origin`, raises one
+judgment for it, and lands the rest of its stream; it does not try the card again while
+that judgment is open. `card base <id> <branch>` re-points it: the branch is asked of the
+card's origin first and one not there is refused, nothing changed; else the brief's
+`BASE:` line names the new branch, the judgment is answered, the card's work and reads are
+kept, the log gains one line, `<id> BASE <old> -> <new>`, and the next land pass tries the
+card once. `ack` of the judgment has the next pass try the card once on its old base. The
+contract is [SPEC-SPRINT.md](SPEC-SPRINT.md) section 7, a dead base.
+
 ### Role views: what a model reads instead of the dashboard
 
 The owner, 2026-10-04: "i'd rather you hit this vs. hitting my dashboard which is for human
@@ -2600,6 +2703,10 @@ her as a worker's verb and at `GET /api/friend/<friend>/cards`. The contract is 
 "Role views".
 
 ### A worker's own view: the dashboard's pull routes
+
+| command | what it does |
+| --- | --- |
+| `dashboard [--listen <address:port>[,...] \| none] [--pull <address:port>[,...] \| none] [--logo <file>] [--every <duration>]` | Serves the page and its cached copy of `where --json`; one poller runs the read, back to back with `--every` as its floor, and every page is answered from the cache |
 
 `dashboard` serves the page on `--listen` (default `127.0.0.1:7390`) and, on listeners of
 their own, the pull routes on `--pull` (default `127.0.0.1:7395`; `none` for either serves
@@ -3497,11 +3604,11 @@ secrets store checkout, `--base` and `--head` are the pull request's two shas, a
 The store's own review, as a verb: run it in CI on every pull request against the
 secrets store. It diffs the two refs with git and asks GitHub nothing. It prints
 `GATE APPROVE files=<n> machines=<registry|->` at exit 0, or one
-`GATE REFUSE rule=<n> check=<k> file=<f>: <why>` line at exit 2.
+`GATE FAILED rule=<n> check=<k> file=<f>: <why>` line at exit 1.
 
 `--base` and `--head` each name one commit. A ref beginning with `-`, a ref that
-names no commit, and any gate flag given twice are each refused at exit 2 with one
-line naming the flag, before anything is judged.
+names no commit, and any gate flag given twice are each a gate that could not run,
+one `SECRETS GATE REFUSED` line at exit 2 naming the flag, before anything is judged.
 
 `--machines` is the fleet's machines registry, and its `seat` column is what
 vouches for a recipient key the diff introduces: a new key is permitted only for
