@@ -25,13 +25,13 @@ func TestFolderRouteRequiresRealCodexSessionAndWatchedDirectory(t *testing.T) {
 		{"codex", "real", "folder", "relative", "absolute path"},
 		{"codex", "real", "folder", filepath.Join(dir, "missing"), "not an existing directory"},
 	} {
-		_, err := NewRoutedDeliverer("bob", tc.harness, "/work", tc.session, tc.adapter, tc.target, nil, nil)
+		_, err := SelectDeliverer("bob", tc.harness, "/work", tc.session, tc.adapter, tc.target, nil, nil)
 		require.ErrorContains(t, err, tc.why)
 	}
-	d, err := NewRoutedDeliverer("bob", "codex", "/work", "real-thread", "folder", dir, nil, nil)
+	d, err := SelectDeliverer("bob", "codex", "/work", "real-thread", "folder", dir, nil, nil)
 	require.NoError(t, err)
 	assert.IsType(t, &Folder{}, d)
-	defaultRoute, err := NewRoutedDeliverer("bob", "codex", "/work", "real-thread", "", "", nil, nil)
+	defaultRoute, err := SelectDeliverer("bob", "codex", "/work", "real-thread", "", "", nil, nil)
 	require.NoError(t, err)
 	assert.IsType(t, &Codex{}, defaultRoute)
 }

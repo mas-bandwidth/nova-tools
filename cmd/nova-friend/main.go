@@ -1159,7 +1159,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 		}
 		return out, exit, err
 	}
-	deliver, err := friend.NewRoutedDeliverer(name, c.Str("harness"), dir, c.Str("session"), c.Str("adapter"), c.Str("delivery-dir"), watched, c.Stdout)
+	deliver, err := friend.SelectDeliverer(name, c.Str("harness"), dir, c.Str("session"), c.Str("adapter"), c.Str("delivery-dir"), watched, c.Stdout)
 	if err == nil {
 		err = friend.TmuxFor(deliver, name, state) // harness tmux: the session and prompt host saved
 	}
@@ -1919,7 +1919,7 @@ func (w world) deliveryCheck(c *tool.Call, name, harness, dir, session, state, t
 			session = name
 		}
 	}
-	deliver, err := friend.NewRoutedDeliverer(name, harness, dir, session, c.Str("adapter"), c.Str("delivery-dir"), w.exec, nil)
+	deliver, err := friend.SelectDeliverer(name, harness, dir, session, c.Str("adapter"), c.Str("delivery-dir"), w.exec, nil)
 	if err == nil {
 		err = friend.TmuxFor(deliver, name, state) // harness tmux: the session and prompt host saved
 	}

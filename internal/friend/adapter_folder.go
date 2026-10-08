@@ -45,9 +45,9 @@ func CheckFolderRoute(harness, session, adapter, deliveryDir string) error {
 	return nil
 }
 
-// NewRoutedDeliverer chooses the explicit folder route, or the harness's
+// SelectDeliverer chooses the explicit folder route, or the harness's
 // existing adapter. Default Codex queue and exec-resume behavior is unchanged.
-func NewRoutedDeliverer(friendName, harness, dir, session, adapter, deliveryDir string, run Exec, out io.Writer) (Deliverer, error) {
+func SelectDeliverer(friendName, harness, dir, session, adapter, deliveryDir string, run Exec, out io.Writer) (Deliverer, error) {
 	if err := CheckFolderRoute(harness, session, adapter, deliveryDir); err != nil {
 		return nil, err
 	}

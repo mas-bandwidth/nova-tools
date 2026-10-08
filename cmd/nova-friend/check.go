@@ -35,7 +35,7 @@ func (w world) deliveryCheckVerb(c *tool.Call) *tool.Out {
 	name, harness, dir := c.Str("as"), c.Str("harness"), c.Str("dir")
 	state := w.stateDir(c, dir)
 	if c.DryRun() {
-		if _, err := friend.NewRoutedDeliverer(name, harness, dir, c.Str("session"), c.Str("adapter"), c.Str("delivery-dir"), w.exec, nil); err != nil {
+		if _, err := friend.SelectDeliverer(name, harness, dir, c.Str("session"), c.Str("adapter"), c.Str("delivery-dir"), w.exec, nil); err != nil {
 			return tool.Refuse(err.Error())
 		}
 		nonce := w.random()
