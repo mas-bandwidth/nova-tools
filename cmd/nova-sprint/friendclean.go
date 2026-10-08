@@ -91,7 +91,7 @@ func (a *app) cmdFriendClean(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup(name)
 	pg := fs.String("pg", "", "the config store whose friend rows are the roster, Postgres postgres://user@host:port/db with no password (else NOVA_PG_DSN; the password from the variable NOVA_PG_PASSWORD_ENV names), as nova-config takes it")
 	file := fs.String("file", "", "a nova-config store file in PostgreSQL's place (nova-config --file), for trying it with no database")
-	root := fs.String("root", "", "the directory holding each friend's <name>-working (else HOME, else the user's home)")
+	root := fs.String("root", "", "the directory holding <root>/<name>-working for a friend whose nova-config row has no dir (else HOME, else the user's home); a row's dir is cleaned where it says")
 	days := fs.Int("days", cleanDays, "a done job's clean clones and build output are removed once its REPORT.md is this many days old")
 	dry := fs.Bool("dry-run", false, "print every removal and listing with the bytes it would free, and remove nothing")
 	pos, err := parse(fs, args)
@@ -112,9 +112,6 @@ func (a *app) cmdFriendClean(args []string, stdout, stderr io.Writer) int {
 		// ignored: no home is the refusal below, naming the empty --root
 		*root, _ = os.UserHomeDir()
 	}
-	if fi, err := os.Stat(*root); *root == "" || err != nil || !fi.IsDir() {
-		return refuse(stderr, name, "--root wants the directory holding each friend's <name>-working, and "+oneline.Escape(*root)+" is not one")
-	}
 	read := a.friends
 	if *file != "" {
 		read = fileFriends(*file)
@@ -123,6 +120,15 @@ func (a *app) cmdFriendClean(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		fmt.Fprintf(stderr, "%s %s: the config cannot be read: %s; nothing was removed\n", prog, name, oneline.WithRemedy(err.Error(), "nova-config friend list"))
 		return exitCannotRead
+	}
+	needsRoot := len(rows) == 0
+	for _, row := range rows {
+		needsRoot = needsRoot || config.FriendDir(row) == ""
+	}
+	if needsRoot {
+		if fi, err := os.Stat(*root); *root == "" || err != nil || !fi.IsDir() {
+			return refuse(stderr, name, "--root wants the directory holding each friend's <name>-working, and "+oneline.Escape(*root)+" is not one")
+		}
 	}
 	if len(rows) == 0 {
 		fmt.Fprintf(stderr, "%s %s: the config holds no friend row; is this the fleet's config? run: nova-config friend list; nothing was removed\n", prog, name)
@@ -140,8 +146,15 @@ func (a *app) cmdFriendClean(args []string, stdout, stderr io.Writer) int {
 	}
 	cl := &friendClean{root: *root, days: *days, dry: *dry, now: a.now(),
 		cache: gocache.Bounds{Limit: gocache.Limit, Slack: gocache.Slack, Remove: math.MaxInt}}
-	for _, n := range names {
-		cl.friend(n)
+	// a fallback's note is one of the run's lines, on stdout with the rest (or in --json's)
+	var notes strings.Builder
+	for _, r := range rows {
+		w := a.friendDir(r.Name, config.FriendDir(r), cl.root, &notes)
+		if notes.Len() > 0 {
+			cl.lines = append(cl.lines, strings.TrimSuffix(notes.String(), "\n"))
+			notes.Reset()
+		}
+		cl.friend(r.Name, w)
 	}
 	return cl.report(stdout, c.json)
 }
@@ -191,9 +204,9 @@ func (cl *friendClean) say(format string, args ...any) {
 	cl.lines = append(cl.lines, fmt.Sprintf(format, args...))
 }
 
-// friend applies the rule to one friend's directory, and says what it found on one line.
-func (cl *friendClean) friend(name string) {
-	w := filepath.Join(cl.root, name+"-working")
+// friend applies the rule to one friend's working directory, w (frienddir.go), and says
+// what it found on one line.
+func (cl *friendClean) friend(name, w string) {
 	if fi, err := os.Lstat(w); err != nil || !fi.IsDir() {
 		cl.say("FRIENDS-CLEAN FRIEND %s dir=%s absent: no working directory on this machine", oneline.Escape(name), oneline.Escape(w))
 		return

@@ -44,6 +44,10 @@ func friendCardsOf(ctx context.Context, st *store.Store, name string) ([]friend.
 	if err != nil {
 		return nil, err
 	}
+	dirs, err := st.FriendDirs(ctx) // her row's dir names her working directory in the brief
+	if err != nil {
+		return nil, err
+	}
 	out := make([]friend.HeldCard, 0, len(packets))
 	for i, p := range packets {
 		h := friend.HeldCard{Card: p.Card, Col: string(cards[i].Col), Kind: cmp.Or(p.Kind, "work"), Branch: p.Branch, Attempt: p.Attempt, Gen: p.Gen, Epoch: p.Epoch}
@@ -51,9 +55,9 @@ func friendCardsOf(ctx context.Context, st *store.Store, name string) ([]friend.
 		h.Tier = cmp.Or(p.Tier, m.Tier, cardhdr.RouteFlash)
 		if p.Kind == "read" {
 			// a read card's job is a card's (friendJobOf), the path friend sync writes (friendReadOf)
-			h.Job, h.Branch, h.Brief = friendJobOf(p), cmp.Or(p.WorkBranch, cards[i].F("branch")), friendReadText(st, name, p, cards[i])
+			h.Job, h.Branch, h.Brief = friendJobOf(p), cmp.Or(p.WorkBranch, cards[i].F("branch")), friendReadTextAtDir(st, name, dirs[name], p, cards[i])
 		} else {
-			h.Job, h.Brief = friendJobOf(p), friendBrief(name, p)
+			h.Job, h.Brief = friendJobOf(p), friendBriefAtDir(name, dirs[name], p)
 		}
 		out = append(out, h)
 	}
