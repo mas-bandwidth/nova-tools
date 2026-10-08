@@ -178,13 +178,20 @@ func briefKept(s *Snapshot, id string) string {
 // cuts the next attempt instead of dealing the last again. The next attempt is staged
 // from the last pushed head, as a rework's (BaseOf over the card's attempts); the bound
 // is reset, since it counts attempts under one brief (FieldBriefAttempt, in set); the
-// rework's fix is the old brief's and is dropped; and the record, the next attempt's
-// why, says who edited it, at which attempt, and what changed (briefChange).
+// rework's fix is the old brief's and is dropped; the record, the next attempt's why,
+// says who edited it, at which attempt, and what changed (briefChange); and, as a rework's,
+// a normal or low card is raised to the sprint's rework priority, fix by default
+// (reworkRaise), so a card re-briefed from the defect column goes before fresh work.
 func briefInPlace(s *Snapshot, c *Card, brief string, set map[string]string, unset []string, who string) (u Unit, orphan bool) {
 	n := c.Int("attempt")
 	said := fmt.Sprintf("brief edited in place by %s at attempt %d: %s", orDash(who), n, briefChange(c.F("brief"), brief))
 	set["why"] = cutText(said, MaxCardTextBytes)
 	unset = append(unset, "fix", "finding", FieldFindingAttempt)
+	var notes []Note
+	if to := reworkRaise(s, c); to != "" {
+		notes = append(notes, reworkRaised(s, c, to, who, fmt.Sprintf("its brief edited at attempt %d, its next attempt goes before fresh work", n)))
+		set[FieldPriority] = to
+	}
 	var changes []Change
 	retire := func(table string, x *Card) {
 		changes = append(changes, change(table, removeEntry(x, map[string]string{"retired": stamp(s.Now), "retired_by": "brief"})))
@@ -222,8 +229,11 @@ func briefInPlace(s *Snapshot, c *Card, brief string, set map[string]string, uns
 	} else {
 		changes = append(changes, change(Work, setEntry(c, set, unset...)))
 	}
-	u = Unit{Key: c.ID, Stream: c.Row, Changes: changes, Closes: closesFor(s.Open, ReworkResolves, c.ID),
+	u = Unit{Key: c.ID, Stream: c.Row, Changes: changes, Closes: closesFor(s.Open, ReworkResolves, c.ID), Notes: notes,
 		Moved: fmt.Sprintf("%s %s; %s -> %s, attempt %d next, from its last pushed head; %d cards retired", c.ID, said, c.Col, to, n+1, len(changes)-1)}
+	if l := set[FieldPriority]; l != "" {
+		u.Moved += "; priority " + l
+	}
 	if orphan {
 		u.Moved += "; its orphan merge card off " + s.Merge.Placed(c.ID).Col
 	}

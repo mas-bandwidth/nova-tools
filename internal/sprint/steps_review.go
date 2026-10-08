@@ -1302,6 +1302,16 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 			set[FieldWho] = WhoFriend
 		}
 		maps.Copy(set, one.Set)
+		// a reworked card goes before fresh work: a normal or low card is raised to the
+		// sprint's rework priority, fix by default, its work card and its reads inheriting it
+		// (reworkRaise); a card at high or above keeps its level
+		var raised *Note
+		if to := reworkRaise(s, c); to != "" {
+			n := reworkRaised(s, c, to, r.Who, "reworked at attempt "+c.F("attempt")+", its next attempt goes before fresh work")
+			raised = &n
+			set[FieldPriority] = to
+			c = withField(c, FieldPriority, to)
+		}
 		// the head a reader passed: a next attempt that finds nothing to do at it goes back to
 		// review there, not to the coordinator as failed work (FieldPassedHead, Finish)
 		if len(okReaders(s, c)) > 0 && c.F("result") != "failed" {
@@ -1355,6 +1365,10 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 			u.Moved += "; a friend's card"
 		}
 		u.Moved += fmt.Sprintf("; %d read cards retired", len(retire))
+		if raised != nil {
+			u.Notes = append(u.Notes, *raised)
+			u.Moved += "; priority " + c.F(FieldPriority)
+		}
 		if m := orphanMerge(s, c); m != nil {
 			u.Changes = append(u.Changes, change(Merge, moveEntry(m, c.Row, Returned, nil, "need_card", "need_stream")))
 			u.Moved += "; its orphan merge card off " + m.Col

@@ -2369,7 +2369,7 @@ nova-sprint rework (<id>... | --group <id> [--expect <n>] | <selector> [--dry-ru
 nova-sprint return (<id>... | --group <id> [--expect <n>] | <selector> [--dry-run]) [--reason <text>] [--answers <note>]
 nova-sprint drop (<id>... | --stream <s> --col <state> | --repo <owner/name>... --expect <n> | --group <id> [--expect <n>] | <selector> [--dry-run]) --reason <text> [--answers <note>]
 nova-sprint rank (<id>... | <selector> [--dry-run]) (--score <n> | --first) [--answers <note>]
-nova-sprint priority <id>... | (<id>... | --stream <s>) (--blocker | --critical | --high | --normal | --low) --reason <text>
+nova-sprint priority <id>... | (<id>... | --stream <s>) (--blocker | --critical | --fix | --high | --normal | --low) --reason <text>
 nova-sprint relink <old-id>[,<old-id>...] <new-id> [--reason <text>]
 nova-sprint sentinel set <id> --needs <a,b>
 nova-sprint brief <id> (--brief <text> | --brief-file <path>) [--rules <file>] [--answers <note>] | --dir <dir> [--rules <file>] | --group <id> [--expect <n>] (--brief-file <path> | --dir <dir>) [--answers <note>] | <id> --widen [--repo-dir <clone>] | <id> --tier <flash|pro|heavy|frontier> | <selector> (--set-base <branch> | --drop-who | --tier <t>)... [--dry-run]
@@ -2379,7 +2379,7 @@ nova-sprint merge --stream <s> [--batch <n>] [--conflict <id> [--conflict-kind f
 nova-sprint land [--stream <s>...] [--repo-dir <clone>] [--base <branch>] [--check <command>] [--dry-run]
 nova-sprint rebase --from <branch> --to <branch> [--repo-dir <clone>] [--dry-run]
 nova-sprint stream set <stream>... [--read-tier <flash|pro|heavy|default>] [--land-protected <owner/name,...|any|default>] [--release <name>] [--prose <glob,...|default>] [--attempts <n|default>] [--base <branch>] [--reason <text>] [--answers <notes>]
-nova-sprint set [--read-tier <flash|pro|default>] [--read-cards <on|off|default>] [--dealt-max <duration|default>] [--go-lanes <n|default>] [--attempts <n|default>] [--friend-idle <duration|default>] [--friend-finish <duration|default>] [--fleet <on|off>] [--friends <on|off>] [--fleet-tiers <flash,pro,heavy,frontier|all>] [--friends-tiers <flash,pro,heavy,frontier|all>] [--reads <0|1|2|default>]
+nova-sprint set [--read-tier <flash|pro|default>] [--read-cards <on|off|default>] [--dealt-max <duration|default>] [--go-lanes <n|default>] [--attempts <n|default>] [--friend-idle <duration|default>] [--friend-finish <duration|default>] [--fleet <on|off>] [--friends <on|off>] [--fleet-tiers <flash,pro,heavy,frontier|all>] [--friends-tiers <flash,pro,heavy,frontier|all>] [--reads <0|1|2|default>] [--rework-priority <fix|high|keep|default>]
 nova-sprint resume --stream <s> [--did <text>] [--answers <note>]
 nova-sprint backup (--out <dir> [--part-bytes <n>] [--secrets-store <dir> --secrets-as <seat> --secrets-key <path> --sops <path>] | --file <path> [--dry-run])
 nova-sprint demo load <backup.xz part>... [--sha256 <hex>] [--dir <dir>] [--xz <path>] [--redis-server <path>]
@@ -2503,9 +2503,12 @@ which refuses a group that has changed. `nova-sprint help <verb>` (or
 
 ### A card's priority
 
-Every card carries a level of the ladder blocker, critical, high, reader, normal, low; a
+Every card carries a level of the ladder blocker, critical, fix, high, reader, normal, low; a
 read card is reader or its primary's higher level, a primary normal unless its brief's `PRIORITY: <level>` line, its
-stream's default or `priority` sets it. `priority s1-4 --high --reason '<why>'` sets one card,
+stream's default or `priority` sets it. A rework raises a normal or low card to fix when it
+opens the next attempt (the rules' reworks and a brief edited in place too; a card at high or
+above keeps its level), so reworked cards go before fresh work; `set --rework-priority
+<fix|high|keep>` turns it (default fix). `priority s1-4 --high --reason '<why>'` sets one card,
 `priority --stream s2 --low --reason '<why>'` sets, in one call, every card now in the stream
 (its own level overwritten) and the stream's default for cards added later, and `priority s1-4` prints the level and where it comes from;
 each change is on the card's timeline (`log --card`) with the actor and the reason. Every

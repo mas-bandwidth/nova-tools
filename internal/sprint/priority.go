@@ -1,6 +1,7 @@
 package sprint
 
 import (
+	"cmp"
 	"fmt"
 	"maps"
 	"slices"
@@ -9,14 +10,17 @@ import (
 )
 
 // A card's priority (docs/SPEC-SPRINT.md section 1, "Priority"; the owner, 2026-10-06): every
-// card carries one level of the ladder blocker, critical, high, reader, normal, low. A read card
-// is reader, or its primary's level when that is higher (ReadPriority), and never set by
+// card carries one level of the ladder blocker, critical, fix, high, reader, normal, low. A read
+// card is reader, or its primary's level when that is higher (ReadPriority), and never set by
 // hand: every deal places, level by level, the reads of a level and then its work
 // (reads_priority.go), and land takes the stream with the highest merging level first. A
 // primary is normal unless a level is set on it: by its brief's line `PRIORITY: <level>` at
 // admission, else by its stream's default at admission, or by the verb `priority`, each change
 // on its timeline with the actor and the reason. Critical is computed too (CriticalBehind or
-// more cards behind it, weight.go) unless a level is set by hand. Low is dealt only to a lane
+// more cards behind it, weight.go) unless a level is set by hand. Fix is the level of a card
+// reworked (the owner, 2026-10-07: "maybe it's even a new priority level 'fix', below
+// critical, but above everything else"): the next attempt a rework opens raises a normal or low
+// card to it (reworkRaise; set --rework-priority turns it). Low is dealt only to a lane
 // nothing higher can fill. The deal and the ask order their cards by the ladder, then stream
 // turns within a level (ladderOrder, readOrder); land orders the streams by their merging
 // sets' levels (LandOrder), each batch as it was. Owed with the reference model: the weight
@@ -27,6 +31,7 @@ import (
 const (
 	PriorityBlocker  = "blocker"
 	PriorityCritical = "critical"
+	PriorityFix      = "fix"
 	PriorityHigh     = "high"
 	PriorityReader   = "reader"
 	PriorityNormal   = "normal"
@@ -34,10 +39,10 @@ const (
 )
 
 // PriorityLadder is the levels, highest first.
-var PriorityLadder = []string{PriorityBlocker, PriorityCritical, PriorityHigh, PriorityReader, PriorityNormal, PriorityLow}
+var PriorityLadder = []string{PriorityBlocker, PriorityCritical, PriorityFix, PriorityHigh, PriorityReader, PriorityNormal, PriorityLow}
 
 // PrioritySettable is the levels a primary may be given (reader is a read card's alone).
-var PrioritySettable = []string{PriorityBlocker, PriorityCritical, PriorityHigh, PriorityNormal, PriorityLow}
+var PrioritySettable = []string{PriorityBlocker, PriorityCritical, PriorityFix, PriorityHigh, PriorityNormal, PriorityLow}
 
 // FieldPriority is a primary's priority as set (by its brief's PRIORITY line or its stream's
 // default at admission, or by the verb priority); absent is normal, or critical by weight.
@@ -61,7 +66,7 @@ const priorityLine = "PRIORITY:"
 
 // PriorityOfBrief is the level the brief's header line `PRIORITY: <level>` names, "" when its
 // header names none; why says a line that names no settable level, with the level found and
-// the six of the ladder (reader is a read card's alone). Add and Recut refuse a brief with why
+// the seven of the ladder (reader is a read card's alone). Add and Recut refuse a brief with why
 // set, so a misspelled level is never admitted at normal or the stream's default.
 func PriorityOfBrief(brief string) (level, why string) {
 	started := false
@@ -166,7 +171,7 @@ func ladderOrder(cards []*Card) []*Card {
 }
 
 // readRank is the place on the ladder of the primary's read: the higher of reader and its
-// primary's own level (cardRank), so the reads of a blocker, critical or high primary go to
+// primary's own level (cardRank), so the reads of a blocker, critical, fix or high primary go to
 // the front of the read queue, and a normal or low primary's read is reader (the owner,
 // 2026-10-06: "that work stream jumps to the front of the reader and merge queue").
 func readRank(pr *Card) int { return min(cardRank(pr), priorityRank(PriorityReader)) }
@@ -315,6 +320,51 @@ func SetPriority(s *Snapshot, r PriorityReq) Plan {
 	return p
 }
 
+// ReworkPriorityKeep is set --rework-priority's word that leaves a reworked card at its level.
+const ReworkPriorityKeep = "keep"
+
+// reworkPriorityWords is the levels set --rework-priority takes (PropReworkPriority), with
+// ReworkPriorityKeep; default is fix.
+var reworkPriorityWords = []string{PriorityFix, PriorityHigh, ReworkPriorityKeep}
+
+// ReworkPriority is the level a rework raises a normal or low card to (set
+// --rework-priority, PropReworkPriority): fix, the default; high; or keep, which raises none.
+func (s *Snapshot) ReworkPriority() string {
+	if s != nil && s.Work != nil {
+		if v, _ := s.Work.Prop(PropReworkPriority); v == PriorityHigh || v == ReworkPriorityKeep {
+			return v
+		}
+	}
+	return PriorityFix
+}
+
+// reworkRaise is the level the next attempt a rework opens raises the primary to (the owner,
+// 2026-10-07 5:52 PM ET: "if we increased the priority to high for the reworks ... they would
+// now go in before regular work"): the sprint's rework priority (ReworkPriority, fix by
+// default) for a card at normal or low, its weight's computed critical included, which orders
+// nothing; "" for a card at high, fix, critical or blocker, which keeps its level, and while
+// the setting is keep. A reworked card has spent attempts and reads already: finishing it first
+// drains review and frees readers, so it goes before fresh work, never before a blocker or a
+// critical. Its reads inherit the level as every read does (ReadPriority), and its work card
+// carries it (priorityOnWork). Every next attempt opens through it: the seat's rework, the
+// rules' (failed, bound, read-broken, hold-need, the conflict's redo: TickRuleRework), and a
+// brief edited in place, a brief defect's included (briefInPlace).
+func reworkRaise(s *Snapshot, c *Card) string {
+	to := s.ReworkPriority()
+	if to == ReworkPriorityKeep || cardRank(c) < priorityRank(PriorityNormal) {
+		return ""
+	}
+	return to
+}
+
+// reworkRaised is the happened note of a rework's raise (reworkRaise) on the card's timeline
+// (log --card), as the verb priority writes its own: the actor, and why.
+func reworkRaised(s *Snapshot, c *Card, to, who, why string) Note {
+	n := happened(NPrioritySet, c.Row, s.Now, c.ID)
+	n.Who, n.What = who, fmt.Sprintf("%s priority %s -> %s: %s", c.ID, cmp.Or(c.F(FieldPriority), PriorityNormal), to, why)
+	return n
+}
+
 // CriticalByWeight is the key and the words where and the dashboard show a computed critical
 // under (CriticalBehind or more cards behind it, no level set): it is shown and orders nothing
 // yet, owed with the reference model (a level ordered by weight made the slow differential tier
@@ -362,7 +412,7 @@ func StreamPriorities(s *Snapshot) map[string]string {
 // normal.
 func PriorityLine(counts map[string][]string, streams map[string]string) string {
 	var parts []string
-	ladder := slices.Insert(slices.Clone(PriorityLadder), 2, CriticalByWeight)
+	ladder := slices.Insert(slices.Clone(PriorityLadder), slices.Index(PriorityLadder, PriorityCritical)+1, CriticalByWeight)
 	for _, l := range ladder {
 		ids := counts[l]
 		if len(ids) == 0 {

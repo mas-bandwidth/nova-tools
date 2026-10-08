@@ -63,6 +63,10 @@ const (
 	// "1" or "2"; absent or default, each card's own rule (ReadsNeeded). 0 asks no read:
 	// a primary whose work finished LAND at its head is accepted on its own work.
 	PropReadsNeeded = "reads_needed"
+	// PropReworkPriority is the work table's property: the level the next attempt a rework
+	// opens raises a normal or low card to (nova-sprint set --rework-priority, ReworkPriority):
+	// fix, high or keep; absent or default, fix.
+	PropReworkPriority = "rework_priority"
 	// TiersAll is the word of a side that may take every tier, the default.
 	TiersAll = "all"
 	// ReadTierDefault is the word that takes a read tier off: a stream's back to
@@ -303,6 +307,9 @@ type SetReq struct {
 	// Reads is the reads every card in review needs (PropReadsNeeded): 0, 1, 2, or
 	// default (each card's own rule, ReadsNeeded).
 	Reads string `json:",omitempty"`
+	// ReworkPriority is the level a rework raises a normal or low card to
+	// (PropReworkPriority): fix, high, keep, or default (fix).
+	ReworkPriority string `json:",omitempty"`
 	// Base, with Streams, re-points the stream's cards that are not yet dealt and
 	// those queued to merge to another base branch (stream set --base).
 	Base string `json:",omitempty"`
@@ -440,11 +447,19 @@ func Set(s *Snapshot, r SetReq) Plan {
 			why = append(why, "--reads is the sprint's, not a stream's: nova-sprint set --reads "+r.Reads)
 		}
 	}
+	if r.ReworkPriority != "" {
+		if r.ReworkPriority != ReadTierDefault && !slices.Contains(reworkPriorityWords, r.ReworkPriority) {
+			why = append(why, "--rework-priority wants "+strings.Join(reworkPriorityWords, ", ")+" or "+ReadTierDefault+" ("+PriorityFix+"); found "+r.ReworkPriority)
+		}
+		if len(r.Streams) > 0 {
+			why = append(why, "--rework-priority is the sprint's, not a stream's: nova-sprint set --rework-priority "+r.ReworkPriority)
+		}
+	}
 	if r.Base != "" && len(r.Streams) == 0 {
 		why = append(why, "--base is a stream's, not the sprint's: nova-sprint stream set <s> --base <branch>")
 	}
-	if r.ReadTier == "" && r.DealtMax == "" && r.LandProtected == "" && r.Release == "" && r.Prose == "" && r.Base == "" && len(alarms) == 0 && r.GoLanes == "" && r.Attempts == "" && r.FriendIdle == "" && r.FriendStallAfter == "" && r.FriendStallStep == "" && r.DriftCommits == "" && r.DriftHours == "" && r.Fleet == "" && r.Friends == "" && len(sideTiers) == 0 && r.ReadCards == "" && r.Reads == "" {
-		why = append(why, "nothing to set: --read-tier, --read-cards, --reads, --prose, --base, --dealt-max, --go-lanes, --attempts, --friend-idle, --friend-stall-after, --friend-stall-step, --drift-commits, --drift-hours, --fleet, --friends, --fleet-tiers, --friends-tiers or an --alarm-... threshold")
+	if r.ReadTier == "" && r.DealtMax == "" && r.LandProtected == "" && r.Release == "" && r.Prose == "" && r.Base == "" && len(alarms) == 0 && r.GoLanes == "" && r.Attempts == "" && r.FriendIdle == "" && r.FriendStallAfter == "" && r.FriendStallStep == "" && r.DriftCommits == "" && r.DriftHours == "" && r.Fleet == "" && r.Friends == "" && len(sideTiers) == 0 && r.ReadCards == "" && r.Reads == "" && r.ReworkPriority == "" {
+		why = append(why, "nothing to set: --read-tier, --read-cards, --reads, --rework-priority, --prose, --base, --dealt-max, --go-lanes, --attempts, --friend-idle, --friend-stall-after, --friend-stall-step, --drift-commits, --drift-hours, --fleet, --friends, --fleet-tiers, --friends-tiers or an --alarm-... threshold")
 	}
 	if len(r.Streams) > 0 && r.GoLanes != "" {
 		why = append(why, "--go-lanes is the sprint's, not a stream's: nova-sprint set --go-lanes "+r.GoLanes)
@@ -579,6 +594,7 @@ func Set(s *Snapshot, r SetReq) Plan {
 		{PropFriendsTiers, sideTiers[PropFriendsTiers]},
 		{PropReadCards, r.ReadCards},
 		{PropReadsNeeded, r.Reads},
+		{PropReworkPriority, r.ReworkPriority},
 	}
 	for _, a := range alarmProps {
 		kvs = append(kvs, [2]string{a.prop, alarms[a.prop]})
@@ -620,6 +636,8 @@ func orDefault(v, name string) string {
 		return "default (off: the readers table asks)"
 	case name == PropReadsNeeded:
 		return "default (one for a flash card, two above)"
+	case name == PropReworkPriority:
+		return "default (" + PriorityFix + ": a reworked normal or low card goes before fresh work)"
 	}
 	return "default (each card's own tier)"
 }
