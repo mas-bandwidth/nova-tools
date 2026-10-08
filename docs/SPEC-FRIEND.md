@@ -1533,6 +1533,14 @@ raised, every lane within it refills on the step after (tla/FriendLanes.tla:
 `MCFriendLanesBrokenStartBeyondWidth.cfg`; `EveryCardEnds`;
 `TestAWidthChangeOnTheBeatAnswerIsTheLaneLimitOnTheNextStep`).
 
+Cardless lane session opens and message turns use the native launch gate and
+birth-verified process-group anchor as card turns do. Their `control-*` job
+receipts are distinct for each opening or delivery attempt. Ordinary completion
+and cancellation reap the group before the adapter returns, and daemon shutdown
+waits for these adapters to finish cleanup before `Run` returns. This wait does
+not depend on space in the result channel. These control receipts do not adopt
+cardless work after an abrupt daemon death.
+
 In one-shot mode the daemon runs `width` lanes. Each lane is its own session
 of the friend in the same harness and directory, opened by the daemon when
 the lane starts, seeded from her own identity files (`AGENTS.md` and

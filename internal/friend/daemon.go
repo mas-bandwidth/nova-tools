@@ -471,6 +471,8 @@ type loop struct {
 	messageSaid   string
 	messageTries  int
 	messageSaidAt time.Time
+	controlWG     sync.WaitGroup  // cardless adapters finish native cleanup before Run returns
+	controlRun    uint64          // unique native receipt for each session open or message turn
 	saidRefusal   string          // the card runner's refusal last recorded, "" when it runs
 	tag           string          // this daemon's tag in its lanes' names on a lane mark (laneTag, one_lane.go)
 	following     atomic.Bool     // a Mailbox.Follow runs
@@ -520,6 +522,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 	}
 	defer d.stageWG.Wait() // a stage under way ends with ctx (its git is killed) and its result is kept for the next Run
 	defer l.followWG.Wait()
+	defer l.controlWG.Wait()
 	d.status = Status{Friend: d.Friend, Harness: d.Harness, Started: d.m.LastPing, Width: d.Width}
 	if !l.passive {
 		d.status.Session = SessionOK

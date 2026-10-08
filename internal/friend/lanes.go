@@ -539,9 +539,15 @@ func (l *loop) laneStep(now time.Time, width int) {
 			ln.opening, ln.openFrom = true, now
 			agents, memory := d.identity()
 			seed := LaneSeed(d.Friend, ln.n, width, agents, memory)
+			ctx := l.controlContext(l.ctx, "open", ln.n)
+			l.controlWG.Add(1)
 			go func(ln *lane) {
-				id, err := lh.OpenSession(LaneContext(l.ctx), seed)
-				s.results <- laneResult{ln: ln, open: true, session: id, err: err}
+				defer l.controlWG.Done()
+				id, err := lh.OpenSession(ctx, seed)
+				select {
+				case s.results <- laneResult{ln: ln, open: true, session: id, err: err}:
+				case <-l.ctx.Done():
+				}
 			}(ln)
 			continue
 		}
@@ -878,7 +884,11 @@ func (l *loop) messageTurn(ln *lane, lh LaneHarness, width int, now time.Time) b
 			return false // the same pointer, text and entries must never run twice
 		}
 		ln.t = t
+		control := l.controlContext(l.ctx, "message", ln.n)
+		l.controlWG.Add(1)
 		l.startTurn(t, now, func(ctx context.Context) laneResult {
+			defer l.controlWG.Done() // before startTurn publishes to a possibly full result channel
+			ctx = WithProcessGroupAnchor(WithProcessStarted(ctx, processStarted(control)), processGroupAnchor(control))
 			lt, err := lh.DeliverTo(WithLaneDir(LaneContext(ctx), d.Dir), ln.session, t.text)
 			return laneResult{ln: ln, turn: lt, err: err, t: t}
 		})
@@ -911,11 +921,31 @@ func (l *loop) messageTurn(ln *lane, lh LaneHarness, width int, now time.Time) b
 	t.subjects = fmt.Sprintf("%q", strings.Join(subjects, " | "))
 	t.text = MessageText(d.Friend, ln.n, width, pong, check, notice, l.seat(now), t.msgs)
 	ln.t = t
+	control := l.controlContext(l.ctx, "message", ln.n)
+	l.controlWG.Add(1)
 	l.startTurn(t, now, func(ctx context.Context) laneResult {
+		defer l.controlWG.Done() // cleanup is complete before result publication
+		ctx = WithProcessGroupAnchor(WithProcessStarted(ctx, processStarted(control)), processGroupAnchor(control))
 		lt, err := lh.DeliverTo(WithLaneDir(LaneContext(ctx), d.Dir), ln.session, t.text)
 		return laneResult{ln: ln, turn: lt, err: err, t: t}
 	})
 	return true
+}
+
+// controlContext binds the cardless control runs of SPEC-FRIEND's one-shot
+// lanes to the same native launch gate and verified group cleanup as cards.
+// Each retry owns a new receipt; an unverified earlier group is never replaced.
+func (l *loop) controlContext(ctx context.Context, kind string, lane int) context.Context {
+	l.controlRun++
+	job := fmt.Sprintf("control-%s-%s-%d-%d", l.tag, kind, lane, l.controlRun)
+	path := runReceiptPath(l.d.Dir, job)
+	started := func(pid int) error {
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			return err
+		}
+		return writeRunReceipt(l.d.Dir, job, runReceipt{RunID: job, PID: pid, Identity: ProcessIdentity(pid)})
+	}
+	return WithProcessGroupAnchor(WithProcessStarted(LaneContext(ctx), started), path+".anchor")
 }
 
 // MessageText is a lane's turn with no card: the pong lines first (the challenge's, then
