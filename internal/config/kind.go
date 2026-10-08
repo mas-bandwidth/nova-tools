@@ -510,6 +510,7 @@ var Kinds = []*Kind{
 			{Name: "deadline", Type: TypeInt, Required: true, Help: "the seconds a card on this route may run, above 0"},
 			{Name: "enabled", Type: TypeBool, Default: "true", Help: "false takes it out of the deal and needs --note, the measured reason (a disabled route carries its reason); true (the default) keeps it in and needs none"},
 			{Name: "first", Type: TypeBool, Default: "false", Help: "true deals this route before the others of its tier (the walk from the tier's index prefers it); false (the default) leaves the walk as it is"},
+			{Name: "lanes", Type: TypeInt, Help: "the most lanes in flight on this route at once: the deal skips it while that many cards or reads run on it and takes the next route of the tier; a provider rate limit halves it for ten minutes; 0 (the default) is unlimited"},
 			// The price sheet: optional, so a card's predicted cost can be worked
 			// out from its tokens using the pricing configuration saved per route tuple.
 			// Prices are USD per million tokens.
@@ -637,6 +638,10 @@ func checkRoute(r Row) error {
 	}
 	if _, ok := r.Fields["deadline"]; ok && r.Int("deadline") <= 0 {
 		problems = append(problems, fmt.Sprintf("route %s has --deadline 0; want the seconds a card on it may run, above 0", r.Name))
+	}
+	// a lane cap is a count of lanes at or above 0: 0 is unlimited, never a refusal
+	if v, ok := r.Fields["lanes"]; ok && r.Int("lanes") < 0 {
+		problems = append(problems, fmt.Sprintf("route %s has --lanes %s; want the most lanes in flight on it at once, 0 (the default) for unlimited", r.Name, v))
 	}
 	// a dollar budget is above 0: empty is no cap, and a 0 would be dealt onto every card
 	// and refused by native at every launch (nova-tools #5094)

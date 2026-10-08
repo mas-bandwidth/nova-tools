@@ -2481,8 +2481,14 @@ func (a *app) cmdRoutes(args []string, stdout, stderr io.Writer) int {
 		} else if r.Tier == "" {
 			how = "gone" // a route the cards name that the store no longer holds
 		}
-		fmt.Fprintf(stdout, "ROUTE %s model=%s %s attempts=%d ok=%d failed=%d provider_failures=%d mean_wall=%s rested_until=%s balance=%s\n",
+		line := fmt.Sprintf("ROUTE %s model=%s %s attempts=%d ok=%d failed=%d provider_failures=%d mean_wall=%s rested_until=%s balance=%s",
 			oneline.Field(r.Name), oneline.Field(model), how, x.Attempts, x.OK, x.Failed, x.Provider, x.MeanWall, orDashStr(x.RestedUntil, "-"), oneline.Field(orDashStr(x.Balance, "-")))
+		if x.RateLimited != "" {
+			// the route's last provider rate limit, whose window halves its lane cap
+			// (route.go, the deal); absent when it never took one
+			line += " rate_limited=" + x.RateLimited
+		}
+		fmt.Fprintln(stdout, line)
 	}
 	fmt.Fprintf(stdout, "ROUTES OK routes=%d\n", len(stats))
 	return 0

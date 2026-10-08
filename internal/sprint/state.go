@@ -377,6 +377,13 @@ type Snapshot struct {
 	// rests is the routes resting at Now, settled once by a step that deals
 	// (withRests, route_rest.go); nil is not yet settled.
 	rests map[string]RouteRest
+	// lanePlan, when set, is the lanes in flight on each route at the start of a
+	// dealing plan, with each draw added as the plan is built (route.go): a plan
+	// that deals several cards of one tier never overshoots a route's lane cap.
+	// laneCaps is each route's effective cap beside it (0 unlimited), settled once
+	// with it. nil reads the fleet table (laneBase, laneCap).
+	lanePlan map[string]int
+	laneCaps map[string]int
 	// restScans, when set, counts withRests' scans of the fleet table: the tick's
 	// cost gate (TestTheTicksCheckSettlesTheRestsOnceAtScale) holds them to one a part.
 	restScans *int

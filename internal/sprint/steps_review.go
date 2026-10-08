@@ -108,6 +108,9 @@ func readsAt(s *Snapshot, pr *Card, attempt int) []*Card {
 // one more reader, the next round the readers.
 func Ask(s *Snapshot, r AskReq) Plan {
 	var p Plan
+	// the routes' lane counts and caps, settled once for the whole ask (route.go):
+	// a read draws no route at its cap, and the ask never scans the fleet per read
+	s = s.withLanePlan()
 	// in stream turns from the ask's stream index on the work table
 	// (streamTurns), so a limit asks of every stream alike, and the index moves
 	// past the stream of the last primary asked

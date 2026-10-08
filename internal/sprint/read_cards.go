@@ -564,6 +564,9 @@ func readCardsAskWhy(s *Snapshot, seats []FriendSeat, ri routeIndexes, why *[]st
 		view = &v
 	}
 	units := readUnitsOf(view, seats)
+	// the routes' lane counts and caps, settled once for the whole ask (route.go):
+	// each read this ask draws adds its route's lane, so the ask never overshoots
+	view = view.withLanePlan()
 	idx := fleetReadIndex(view)
 	if why != nil {
 		var us, out []string
