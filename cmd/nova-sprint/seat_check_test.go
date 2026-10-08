@@ -142,3 +142,52 @@ func TestRealOutsideQueueAndVersionsOmitted(t *testing.T) {
 	assert.Contains(t, out, `MACHINERY versions OK note="not measured: probe not configured"`)
 	assert.NotContains(t, out, "machines=0")
 }
+
+// The seat check reads this machine's process table and prints a STOPGAP line
+// for every stopgap alive (docs/STOPGAPS.md); the server's own check reads none.
+func TestSeatCheckPrintsAStopgapStillRunning(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.ok("init --readers reader-a --members m1")
+	ta.ok("start")
+	ta.ok("tick")
+	o := mockHealthyOutside()
+	o.processes = func(ctx context.Context) ([]sprint.Proc, error) {
+		return sprint.ProcsFromPS(" 501 /bin/zsh /buds/rowan-space/runner.zsh\n 502 python3 /scratch/finish-loop.py\n 503 /bin/ps -axww\n"), nil
+	}
+	ta.a.outside = o
+
+	out := ta.ok("seat check")
+	assert.Contains(t, out, "\nSTOPGAP runner.zsh still running pids=501 state=landed card=claude-oneshot-lanes ")
+	assert.Contains(t, out, "\nSTOPGAP finish-loop.py still running pids=502 state=landed card=collect-is-a-verb-and-the-daemons-duty ")
+	assert.Contains(t, ta.ok("seat check --json"), `"stopgaps":[{"stopgap":{"name":"runner.zsh"`)
+
+	o.serverAddr = func() (string, bool) { return "127.0.0.1:7399", true }
+	o.processes = func(ctx context.Context) ([]sprint.Proc, error) {
+		t.Error("the server's own check read the process table")
+		return nil, nil
+	}
+	ta.a.outside = o
+	assert.NotContains(t, ta.ok("seat check"), sprint.StopgapToken)
+}
+
+func TestSeatCheckReportsFailedStopgapProcessScan(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.ok("init --readers reader-a --members m1")
+	ta.ok("start")
+	ta.ok("tick")
+	o := mockHealthyOutside()
+	o.processes = func(context.Context) ([]sprint.Proc, error) {
+		return nil, fmt.Errorf("ps unavailable")
+	}
+	ta.a.outside = o
+	code, out, errs := ta.do("seat check")
+	require.Equal(t, 1, code, errs)
+	assert.Contains(t, out, `MACHINERY stopgaps DOWN why="process scan failed: ps unavailable" remedy="ps -axww -o pid=,args="`)
+	assert.Contains(t, out, "MACHINERY DOWN")
+	code, out, errs = ta.do("seat check --json")
+	require.Equal(t, 1, code, errs)
+	assert.Contains(t, out, `"exit_code":1`)
+	assert.Contains(t, out, `"thing":"stopgaps"`)
+}
