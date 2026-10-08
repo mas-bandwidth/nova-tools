@@ -185,6 +185,23 @@ func TestMissingKeyHoldsReadLaunch(t *testing.T) {
 	})
 }
 
+func TestReadResultForAnotherHeadCannotCloseTheRead(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		dir := cardDirFixture(t, nil, nil, nil)
+		h := &readHarness{lanesHarness: &lanesHarness{dir: dir, active: map[string]int{}}, verdicts: map[string]string{"a.w1": strings.Replace(okResult, "head: aaa", "head: different", 1)}}
+		sp := &readSprint{queue: askedQueue}
+		r := readRig(t, h, sp, 1)
+		r.run(t, 20)
+		assert.Empty(t, sp.verbs("--ok"))
+		var returnedA bool
+		for _, a := range sp.verbs("--return") {
+			returnedA = returnedA || a[4] == "a.w1"
+		}
+		assert.True(t, returnedA, "the wrong-head result is returned without a verdict")
+	})
+}
+
 func (s *readSprint) verbs(flag string) [][]string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
