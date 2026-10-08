@@ -54,6 +54,7 @@ import (
 // said once, and keeps every message pending on the bus.
 type Antigravity struct {
 	Dir, Session string
+	target       sessionTarget
 	Run          Exec
 	Out          io.Writer                  // the daemon's record, when set
 	Home         string                     // the user's home ($HOME when empty): app data under Home/.gemini/antigravity
@@ -177,6 +178,9 @@ func (a *Antigravity) refuse(session, reason string) (int, error) {
 // delivery to, else the one named by Session, else the newest root
 // conversation of the workspace. refused is set when the harness names none.
 func (a *Antigravity) conversation(ctx context.Context) (session string, refused bool, err error) {
+	if pinned := a.target.pin.Load(); pinned != nil {
+		return *pinned, false, nil
+	}
 	session = a.following()
 	if session == "" {
 		session = a.Session
@@ -229,6 +233,7 @@ func (a *Antigravity) Deliver(ctx context.Context, text string) (int, error) {
 	case err != nil:
 		return 1, err
 	}
+	a.target.saw(session)
 	now := a.now()
 	a.observe(now)
 	if why := a.down(session, now); why != "" {

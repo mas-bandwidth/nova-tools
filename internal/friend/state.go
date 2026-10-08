@@ -79,9 +79,12 @@ type Status struct {
 	Width        int    `json:"width"`
 	// Session is SessionOK, or SessionBroken once the provider refused BrokenAfter
 	// turns in a row the same way; empty for a passive harness.
-	Session       string `json:"session,omitempty"`
-	SessionID     string `json:"session_id,omitempty"`
-	SessionReason string `json:"session_reason,omitempty"`
+	Session         string `json:"session,omitempty"`
+	SessionID       string `json:"session_id,omitempty"`
+	SessionTarget   string `json:"session_target,omitempty"`
+	SessionObserved string `json:"session_observed,omitempty"`
+	SessionProof    string `json:"session_proof,omitempty"`
+	SessionReason   string `json:"session_reason,omitempty"`
 	// SessionLive is the conversation a mailbox harness delivers into (Daemon.Mailbox):
 	// the one that reads, as the daemon last followed it; empty for every other harness.
 	SessionLive string `json:"session_live,omitempty"`
@@ -123,12 +126,13 @@ type Status struct {
 // Pong is the session's last answer, as the pong verb records it beside
 // sending it: the proof the daemon forwards.
 type Pong struct {
-	Nonce   string    `json:"nonce"`
-	At      time.Time `json:"at"`
-	To      string    `json:"to"`
-	Queue   int       `json:"queue"`
-	Working int       `json:"working"`
-	Width   int       `json:"width"`
+	Nonce     string    `json:"nonce"`
+	SessionID string    `json:"session_id,omitempty"`
+	At        time.Time `json:"at"`
+	To        string    `json:"to"`
+	Queue     int       `json:"queue"`
+	Working   int       `json:"working"`
+	Width     int       `json:"width"`
 }
 
 // Queue is the friend's queue file: one record per task; the coordinator

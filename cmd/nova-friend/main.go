@@ -413,7 +413,7 @@ state: <dir>/.nova-friend/ (--state-dir moves it), the queue: <dir>/inbox/QUEUE.
 				Detail: `The loop launchd runs (install writes it). A harness with no deliver command (the surveyed ones) is
 refused at once, exit 2, the adapter card its remedy. Otherwise the daemon starts with its push unproven
 (status push=unproven, check proof=pending): its first SESSION CHECK goes in through the harness at once,
-and it delivers nothing into the session until the session answers it (or writes on the bus), then turns
+and it delivers nothing into the session until that conversation answers it with its own session id, then turns
 live without a restart; unanswered within ` + friend.SessionBound.String() + `, one "push proof: unproven" line names the check's nonce, and
 the check is asked again with the same nonce, every ` + friend.SessionQuiet.String() + ` once the session has read the last, else after
 ` + friend.ReaskAfter.String() + ` (a check the last run queued and never saw answered keeps its nonce). A session the adapter
@@ -625,7 +625,7 @@ is refused at exit 2 with its remedy and the agent booted out again. A harness w
 state directory under ~/.nova-friend (or --state-dir) or on the bus. Everything is judged over the --since
 window (default 24h): deliveries, deferrals, real messages and the session pong. Per friend, five lines in
 this order:
-CHECK DAEMON friend=<f> agent=<loaded|not-loaded|none> pid=<n|-> status=<ok|stale|none> connection=<..> challenge=<..> pong_age=<age|-> presence=<up|asleep|down> seen_age=<age|-> proof=<pending|sent|none> proof_age=<age|->
+CHECK DAEMON friend=<f> agent=<loaded|not-loaded|none> pid=<n|-> status=<ok|stale|none> connection=<..> challenge=<..> pong_age=<age|-> presence=<up|asleep|down> seen_age=<age|-> proof=<pending|sent|none> proof_age=<age|-> session_id=<id|-> session_proof=<proven|unproven|mismatch|-> session_observed=<id|-> session_target=<id|->
 CHECK HARNESS friend=<f> harness=<h> route=<push|mailbox|queue|passive> last=<RFC3339|-> last_exit=<n|-> failed_of_last20=<n> deferred=<n> broken=<RFC3339|-> reason=<line|-> session_live=<conversation|-> queued=<n|->
 CHECK BUS friend=<f> real_since=<n> last_real=<RFC3339|->   (real: not ping, pong, daemon-pong or keepalive)
 CHECK WORK friend=<f> inbox=<n> outbox=<n> newest_outbox=<name|-> newest_at=<RFC3339|->   (under the friend's directory)
@@ -814,7 +814,7 @@ removes its plist.`,
 			},
 			{
 				Name:    "pong",
-				Usage:   "pong --as <me> --nonce <n> [--to <coordinator>] [--queue <n>] [--working <n>] [--width <n>] [--state-dir <d>] [--redis <addr>] [--dry-run]",
+				Usage:   "pong --as <me> --nonce <n> [--to <coordinator>] [--queue <n>] [--working <n>] [--width <n>] [--session <id>] [--state-dir <d>] [--redis <addr>] [--dry-run]",
 				Example: "pong --as bob --nonce abc123 --to ada --queue 2 --working 1 --width 4",
 				Effect:  tool.Delivery + ": the session's answer to a PING, one note on the bus to the coordinator, and the pong file",
 				DryRun:  true,
@@ -824,10 +824,13 @@ ping named, read from the status file) and records it in the state directory (--
 check's line names the daemon's; else ~/.nova-friend/<me>), where the daemon reads it. The note on
 the bus is the answer: a pong file that cannot be written is said and the answer stands. The name is the daemon's: a
 --as that is not the friend whose state is there is refused. --dry-run checks the note as send checks it and prints
-the line it would send; nothing is sent and no pong file is written.`,
+the line it would send; nothing is sent and no pong file is written.
+--session reports the answering conversation (or the harness runtime id), never an assumed daemon target.
+A bound SESSION CHECK needs its current nonce and this identifier; a different conversation is a mismatch.`,
 				Flags: func(f *tool.Flags) {
 					f.Required("as", "your name, the friend the daemon in --dir runs as")
 					f.Required("nonce", "the nonce the PING carried")
+					f.String("session", "", "the id of the conversation answering this nonce (default the harness runtime session id); never the daemon target assumed from its plist")
 					f.String("to", "", "the coordinator (default: the seat the last ping named)")
 					f.Int("queue", 0, "tasks queued, from your own task list")
 					f.Int("working", 0, "tasks working, from your own task list")
@@ -1119,7 +1122,15 @@ func (w world) run(c *tool.Call) *tool.Out {
 		}
 		return out, exit, err
 	}
-	deliver, err := friend.NewDeliverer(c.Str("harness"), dir, c.Str("session"), watched, c.Stdout)
+	// the delivery target: the installed --session, else the session the last status recorded
+	// (the friend's own proof persists it); a switch request changes it, never a reinstall
+	deliverySession := c.Str("session")
+	if deliverySession == "" {
+		if old, found, err := friend.ReadStatus(state); err == nil && found && old.Friend == name {
+			deliverySession = old.SessionID
+		}
+	}
+	deliver, err := friend.NewDeliverer(c.Str("harness"), dir, deliverySession, watched, c.Stdout)
 	if err == nil {
 		err = friend.TmuxFor(deliver, name, state) // harness tmux: the session and prompt host saved
 	}
@@ -1280,6 +1291,20 @@ func (w world) run(c *tool.Call) *tool.Out {
 	}
 	sc := &friend.SessionCheck{
 		Friend: name, Store: st, Now: w.now, Nonce: w.random, Record: record, Keep: keep,
+		RequireSession:  !perCard,
+		JoinFrom:        answerTo,
+		SessionQuestion: "nova-bus send --as " + oneline.ShellWord(name) + " --to " + oneline.ShellWord(name) + " --redis " + oneline.ShellWord(c.Str("redis")) + " --kind request --subject 'session <live-session-id>' --body 'prove this session'",
+		PersistSession: func(id string) error {
+			plist := friend.Agent{Friend: name, Home: w.home}.PlistPath()
+			if _, err := os.Stat(plist); err == nil {
+				if err := friend.RenewSessionPlist(plist, id); err != nil {
+					return err
+				}
+			} else if !os.IsNotExist(err) {
+				return err
+			}
+			return nil
+		},
 		Run:  fmt.Sprintf("r%d", w.now().Unix()), // this run, its generation: an answer proves only to the run that asked
 		Save: prover.Save(writePresence),
 		Text: func(nonce string) string {
@@ -1518,6 +1543,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 	}
 	if !perCard {
 		d.Proof = sc.Proof // nothing goes into the session until it answers its check
+		d.SessionInfo, d.SessionRequest = sc.SessionInfo, sc.SessionRequest
 	}
 	if c.Str("harness") == "opencode" {
 		db := c.Str("db")
@@ -1991,7 +2017,8 @@ func (w world) status(c *tool.Call) *tool.Out {
 	o := tool.Done().Fact("daemon", daemon).Fact("harness", s.Harness).Fact("status_age", age(now, s.At)).
 		Fact("connection", s.Connection).Fact("seat", dash(s.Seat)).Fact("last_ping", stamp(s.LastPing)).Fact("ping_age", age(now, s.LastPing)).
 		Fact("challenge", s.Challenge).Fact("nonce", dash(s.Nonce)).Fact("last_pong", stamp(p.At)).Fact("session_pong_age", age(now, p.At)).Fact("daemon_pong_age", age(now, s.LastDaemonPong)).Fact("pongs", s.Pongs).
-		Fact("queue", queue).Fact("working", working).Fact("width", width).Fact("beats", s.Beats).Fact("last_beat", stamp(s.LastBeat)).Fact("delivered", s.Delivered).Fact("session", dash(s.Session)).Fact("mode", dash(s.Mode))
+		Fact("queue", queue).Fact("working", working).Fact("width", width).Fact("beats", s.Beats).Fact("last_beat", stamp(s.LastBeat)).Fact("delivered", s.Delivered).Fact("session", dash(s.Session)).Fact("mode", dash(s.Mode)).
+		Fact("session_id", dash(s.SessionID)).Fact("session_target", dash(s.SessionTarget)).Fact("session_observed", dash(s.SessionObserved)).Fact("session_proof", dash(s.SessionProof))
 	if s.Lanes != "" {
 		o.Fact("lanes", tool.Text(s.Lanes))
 	}
@@ -2013,8 +2040,11 @@ func (w world) status(c *tool.Call) *tool.Out {
 		route, routeLine, routeErr = (&friend.Grok{Dir: dir, Run: w.exec, Home: filepath.Join(w.home, ".grok")}).Route(context.Background())
 	}
 	v := friend.FriendStatus(w.evidence(c, s, p, now, daemon == "up", route, o), now, friend.AnswerBound, time.Local)
+	if (s.SessionProof != "proven" || s.SessionID == "") && s.Harness != "claude" {
+		v.Status, v.Reason = "down", "session unproven: "+dash(s.SessionID)+" proof="+s.SessionProof+" observed="+dash(s.SessionObserved)
+	}
 	if s.Session == friend.SessionBroken {
-		o.Fact("session_id", dash(s.SessionID)).Fact("reason", tool.Text(s.SessionReason)).Fact("broken_at", stamp(s.BrokenAt))
+		o.Fact("reason", tool.Text(s.SessionReason)).Fact("broken_at", stamp(s.BrokenAt))
 		o.Note("the session is broken: the provider refused the same way turn after turn; the daemon delivers nothing into it, every message stays pending; renew the session, then restart the daemon (install again)")
 	}
 	pr, prFound, prErr := friend.ReadPresence(state)
@@ -2146,7 +2176,20 @@ func (w world) pong(c *tool.Call) *tool.Out {
 		return refused
 	}
 	defer closeStore()
+	sessionID := c.Str("session")
+	for _, key := range []string{"CODEX_THREAD_ID", "OPENCODE_SESSION_ID", "DSH_SESSION_ID", "GEMINI_SESSION_ID", "GROK_SESSION_ID", "NOVA_SESSION_ID"} {
+		if id := w.getenv(key); id != "" {
+			if sessionID != "" && sessionID != id {
+				return tool.Refuse("--session disagrees with the harness runtime session id; run pong from the named live conversation")
+			}
+			sessionID = id
+			break
+		}
+	}
 	line := friend.PongLine(nonce, c.Int("queue"), c.Int("working"), c.Int("width"))
+	if sessionID != "" {
+		line += "\nsession_id=" + sessionID
+	}
 	pong := bus.Message{From: name, To: []string{to}, Subject: friend.PongSubject, Body: line + "\n"}
 	if c.DryRun() {
 		// the note checked as send checks it; nothing sent, no pong file
@@ -2159,7 +2202,7 @@ func (w world) pong(c *tool.Call) *tool.Out {
 	if err != nil {
 		return answer(err)
 	}
-	p := friend.Pong{Nonce: nonce, At: m.At, To: to, Queue: c.Int("queue"), Working: c.Int("working"), Width: c.Int("width")}
+	p := friend.Pong{Nonce: nonce, SessionID: sessionID, At: m.At, To: to, Queue: c.Int("queue"), Working: c.Int("working"), Width: c.Int("width")}
 	if err := friend.WritePong(state, p); err != nil {
 		return tool.Fail("sent, but the pong file was not written: "+err.Error()).Fact("id", m.ID)
 	}

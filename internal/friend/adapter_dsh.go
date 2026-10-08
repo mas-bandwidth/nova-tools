@@ -37,6 +37,7 @@ const DSHProgram = "/Applications/DeepSeek Harness.app/Contents/Resources/runtim
 // bus itself with nova-bus wait or nova-bus recv.
 type DSH struct {
 	Dir, Session string
+	target       sessionTarget
 	Run          Exec
 	Program      string    // DSHProgram when empty
 	Sessions     string    // the sessions root; DSH_HOME/sessions, else ~/.dsh/sessions, when empty
@@ -90,7 +91,7 @@ func NewestDSHSession(sessions, dir string) (string, error) {
 func (d *DSH) Deliver(ctx context.Context, text string) (int, error) {
 	d.turns.begin()
 	defer d.turns.end()
-	id := d.Session
+	id := d.target.get(d.Session)
 	if id == "" {
 		root := d.Sessions
 		if root == "" {
@@ -101,6 +102,7 @@ func (d *DSH) Deliver(ctx context.Context, text string) (int, error) {
 			return 0, err
 		}
 	}
+	d.target.saw(id)
 	program := d.Program
 	if program == "" {
 		program = DSHProgram
@@ -125,7 +127,7 @@ func (d *DSH) Deliver(ctx context.Context, text string) (int, error) {
 // check included; none waits on the open desktop app, which no route reaches
 // (docs/SPEC-FRIEND.md, the dsh row). line is that turn's command.
 func (d *DSH) Route(ctx context.Context) (route, line string, err error) {
-	session := d.Session
+	session := d.target.get(d.Session)
 	if session == "" {
 		session = "<her newest session>"
 	}

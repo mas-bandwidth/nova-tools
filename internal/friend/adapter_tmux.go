@@ -94,6 +94,7 @@ func ReadHost(stateDir string) (h Hosted, found bool, err error) {
 // second turn lands beside one. A missing session is Deferred with the host
 // line, never a failure.
 type Tmux struct {
+	target  sessionTarget
 	Dir     string         // the friend's directory, the working directory of each tmux call
 	Session string         // the tmux session, friend-<name>
 	Prompt  *regexp.Regexp // the idle prompt, matched against the last non-empty line
@@ -133,7 +134,7 @@ var errNoSession = errors.New("no tmux session")
 
 // capture is the pane's screen as text (SPEC-FRIEND.md, "Hosted in tmux").
 func (t *Tmux) capture(ctx context.Context) (string, error) {
-	out, exit, err := t.Run(ctx, t.Dir, "tmux", []string{"capture-pane", "-p", "-t", t.Session}, "")
+	out, exit, err := t.Run(ctx, t.Dir, "tmux", []string{"capture-pane", "-p", "-t", t.target.get(t.Session)}, "")
 	if err != nil {
 		return "", fmt.Errorf("tmux capture-pane: %w", err)
 	}
@@ -156,7 +157,7 @@ func (t *Tmux) idle(screen string) bool {
 
 // HostLine is the line a person runs to host the friend again.
 func (t *Tmux) hostLine() string {
-	return fmt.Sprintf("nova-friend host --as %s --harness <h> --dir %s -- <launch command...>", strings.TrimPrefix(t.Session, TmuxPrefix), t.Dir)
+	return fmt.Sprintf("nova-friend host --as %s --harness <h> --dir %s -- <launch command...>", strings.TrimPrefix(t.target.get(t.Session), TmuxPrefix), t.Dir)
 }
 
 // Busy says whether a turn runs in the pane now: the session exists and its
@@ -179,15 +180,15 @@ func (t *Tmux) Busy(ctx context.Context) (bool, error) {
 func (t *Tmux) Deliver(ctx context.Context, text string) (int, error) {
 	screen, err := t.capture(ctx)
 	if errors.Is(err, errNoSession) {
-		return 0, Deferred{Reason: fmt.Sprintf("the tmux session %s is not running; run: %s", t.Session, t.hostLine())}
+		return 0, Deferred{Reason: fmt.Sprintf("the tmux session %s is not running; run: %s", t.target.get(t.Session), t.hostLine())}
 	}
 	if err != nil {
 		return 0, err
 	}
 	if !t.idle(screen) {
-		return 0, Deferred{Reason: fmt.Sprintf("a turn runs in %s: its prompt is not shown", t.Session)}
+		return 0, Deferred{Reason: fmt.Sprintf("a turn runs in %s: its prompt is not shown", t.target.get(t.Session))}
 	}
-	for _, keys := range [][]string{{"send-keys", "-t", t.Session, "-l", TypedLine(text)}, {"send-keys", "-t", t.Session, "Enter"}} {
+	for _, keys := range [][]string{{"send-keys", "-t", t.target.get(t.Session), "-l", TypedLine(text)}, {"send-keys", "-t", t.target.get(t.Session), "Enter"}} {
 		out, exit, err := t.Run(ctx, t.Dir, "tmux", keys, "")
 		if err != nil {
 			return 0, fmt.Errorf("tmux send-keys: %w", err)
@@ -204,12 +205,12 @@ func (t *Tmux) Deliver(ctx context.Context, text string) (int, error) {
 		}
 		if !t.idle(screen) {
 			if t.Out != nil {
-				fmt.Fprintln(t.Out, "typed into "+t.Session+"; the turn runs after this")
+				fmt.Fprintln(t.Out, "typed into "+t.target.get(t.Session)+"; the turn runs after this")
 			}
 			return 0, nil
 		}
 		if !t.now().Before(deadline) || ctx.Err() != nil {
-			return 0, fmt.Errorf("typed into %s and its prompt is still shown after %s: no turn started", t.Session, TmuxAcceptWithin)
+			return 0, fmt.Errorf("typed into %s and its prompt is still shown after %s: no turn started", t.target.get(t.Session), TmuxAcceptWithin)
 		}
 		t.sleep(ctx, TmuxPoll)
 	}
@@ -234,7 +235,7 @@ func TmuxFor(d Deliverer, name, stateDir string) error {
 	if err != nil {
 		return err
 	}
-	if t.Session == "" {
+	if t.target.get(t.Session) == "" {
 		t.Session = TmuxSession(name)
 		if found && h.Session != "" {
 			t.Session = h.Session
@@ -298,14 +299,14 @@ func (t *Tmux) Alive(ctx context.Context) Liveness {
 	if t.Run == nil {
 		return cannotTell("tmux: no runner")
 	}
-	out, exit, err := t.Run(ctx, t.Dir, "tmux", []string{"has-session", "-t", t.Session}, "")
+	out, exit, err := t.Run(ctx, t.Dir, "tmux", []string{"has-session", "-t", t.target.get(t.Session)}, "")
 	switch {
 	case err != nil:
 		return cannotTell("tmux has-session: " + err.Error())
 	case exit == 0:
-		return running("the tmux session " + t.Session + " runs")
+		return running("the tmux session " + t.target.get(t.Session) + " runs")
 	case strings.Contains(strings.ToLower(out), "can't find") || strings.Contains(strings.ToLower(out), "no server"):
-		return notRunning("the tmux session " + t.Session + " is not running")
+		return notRunning("the tmux session " + t.target.get(t.Session) + " is not running")
 	}
 	return cannotTell(fmt.Sprintf("tmux has-session exited %d", exit))
 }
