@@ -498,7 +498,7 @@ func (a *Antigravity) reconcile(session, text string, incomingIDs []string, hasS
 
 	for i := len(l.Deliveries) - 1; i >= 0; i-- {
 		d := &l.Deliveries[i]
-		if d.Conversation != session {
+		if d.Conversation != session || d.ResentTo != "" {
 			continue
 		}
 
@@ -559,7 +559,7 @@ func (a *Antigravity) reconcile(session, text string, incomingIDs []string, hasS
 				a.say("antigravity: message %s already consumed by conversation %s; reconciled without duplicate send", dash(d.ID), session)
 				return true, 0, nil
 			}
-			if d.State == DeliveryLanded || (d.ID != "" && slices.Contains(inBox, d.ID)) {
+			if d.ID != "" && slices.Contains(inBox, d.ID) {
 				a.say("antigravity: message %s already in the mailbox of conversation %s from prior accepted send; reconciled without duplicate send", dash(d.ID), session)
 				return true, 0, nil
 			}

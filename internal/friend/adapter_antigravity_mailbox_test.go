@@ -649,6 +649,53 @@ func TestSameSessionRestartReplaysUnreadDelivery(t *testing.T) {
 		assert.Empty(t, l.Deliveries[0].Text)
 	})
 
+	t.Run("replays unread delivery with structured IDs when mailbox receipt is missing", func(t *testing.T) {
+		t.Parallel()
+		h := newAgHarness(t0, "A")
+		var out strings.Builder
+		state := t.TempDir()
+		now := t0
+		clock := func() time.Time { return now }
+		a := h.adapter("A", state, &out, clock)
+
+		ctx := WithDeliveryIDs(context.Background(), []string{"01M4_REPLAY_A"})
+		exit, err := a.Deliver(ctx, "payload of A")
+		require.NoError(t, err)
+		assert.Equal(t, 0, exit)
+		assert.Equal(t, []string{"A"}, h.sentTo)
+
+		// Simulate message missing from mailbox (e.g. wiped or lost across restart before reading)
+		h.fs.mu.Lock()
+		delete(h.fs.m, agBox("A")+"/A-1.json")
+		h.fs.mu.Unlock()
+
+		// Daemon restarts with --session A
+		restarted := h.adapter("A", state, &out, clock)
+		now = t0.Add(time.Minute)
+		restarted.Follow(context.Background(), now)
+
+		// Must replay via agentapi send-message into the session
+		assert.Equal(t, []string{"A", "A"}, h.sentTo, "unread delivery with structured IDs replayed on restart")
+		got := h.got("A")
+		require.Len(t, got, 2)
+		assert.Contains(t, got[1], "re-sent: A-1 was delivered to A")
+		assert.Contains(t, got[1], "payload of A")
+
+		var l AntigravityLedger
+		_, err = read(filepath.Join(state, AntigravityLedgerFile), &l)
+		require.NoError(t, err)
+		require.Len(t, l.Deliveries, 2)
+		assert.Equal(t, "A", l.Deliveries[0].ResentTo)
+		assert.Empty(t, l.Deliveries[0].Text)
+		assert.Equal(t, "A-2", l.Deliveries[1].ID)
+		assert.Equal(t, DeliveryLanded, l.Deliveries[1].State)
+		assert.Equal(t, []string{"01M4_REPLAY_A"}, l.Deliveries[1].BusIDs)
+
+		// Second follow when A-2 is present in mailbox must NOT duplicate
+		restarted.Follow(context.Background(), now.Add(time.Minute))
+		assert.Equal(t, []string{"A", "A"}, h.sentTo, "replayed delivery confirmed in mailbox; not resent again")
+	})
+
 	t.Run("does not duplicate unread delivery when mailbox receipt is present", func(t *testing.T) {
 		t.Parallel()
 		h := newAgHarness(t0, "A")
