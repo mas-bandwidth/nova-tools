@@ -1711,7 +1711,7 @@ from `nova-friend help`:
   nova-friend pong --as bob --nonce abc123 --to ada --queue 2 --working 1 --width 4
 flags:
   --as <string>  your name, the friend the daemon in --dir runs as (required)
-  --dir <string>  the friend's working directory; when given, omitted queue and working counts are read from its inbox/QUEUE.json
+  --dir <string>  the friend's working directory; omitted counts require its versioned current assignment snapshot in inbox/QUEUE.json
   --dry-run  print what the verb would write and write nothing
   --json  print the result as one JSON object instead of lines
   --nonce <string>  the nonce the PING carried (required)
