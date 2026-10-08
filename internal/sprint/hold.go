@@ -306,9 +306,12 @@ func returnReads(s *Snapshot, reader, who string) (Plan, string) {
 			continue
 		}
 		back = append(back, c.ID)
-		p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.F("stream"),
+		u := Unit{Key: c.ID, Stream: c.F("stream"),
 			Changes: []Change{change(Readers, removeEntry(c, map[string]string{"retired": stamp(s.Now), "retired_by": RetiredByHold}))},
-			Moved:   fmt.Sprintf("%s %s:%s -> taken back (%s is held); the ask asks it of a reader up", c.ID, reader, c.Col, reader)})
+			Moved:   fmt.Sprintf("%s %s:%s -> taken back (%s is held); the ask asks it of a reader up", c.ID, reader, c.Col, reader)}
+		// a begun read keeps its cost; an ask not begun adds none
+		u.Changes = retiredReadCosts(s, u.Changes)
+		p.Units = append(p.Units, u)
 	}
 	var parts []string
 	if len(back) > 0 {

@@ -506,6 +506,9 @@ func readCardsTakeBack(s *Snapshot) map[string][]Change {
 		}
 		out[c.F("primary")] = append(out[c.F("primary")], change(Fleet, removeEntry(c, map[string]string{"retired": stamp(s.Now), "retired_by": by})))
 	}
+	for id, changes := range out {
+		out[id] = retiredReadCosts(s, changes)
+	}
 	return out
 }
 
@@ -553,6 +556,9 @@ func readCardsAskWhy(s *Snapshot, seats []FriendSeat, ri routeIndexes, why *[]st
 		v.Fleet, v.Readers = s.Fleet.Frozen(), s.Readers.Frozen()
 		for _, chs := range back {
 			for _, ch := range chs {
+				if !ch.Entry.Remove {
+					continue
+				}
 				tb := v.T(ch.Table)
 				c := *tb.Card(ch.Entry.ID)
 				c.Row, c.Col = "", ""

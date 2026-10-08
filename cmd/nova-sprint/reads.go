@@ -576,6 +576,9 @@ type whereView struct {
 	// StreamCosts is each stream's cards by their briefs' tier (`tiers`, counts) and its
 	// spend by the tier each attempt and read ran on (`cost_by_tier`, money strings), from
 	// the tick's where record (sprint.TierCosts); absent before the first tick of an epoch.
+	// A stream's complete cost (`total_cost`, and `per_landed` on its work row) includes
+	// its reads. The reads are also on their own: `cost_reads` (the same dollars as
+	// `read_cost`) and `reads_unpriced` (finished reads with no dollar figure).
 	StreamCosts map[string]sprint.TierCosts `json:"stream_costs,omitempty"`
 	// ReadSpend is the day's read spend per route, one line under the summary
 	// (sprint.ReadSpendLine), from the tick's where record; absent when no read ended today.
@@ -1226,7 +1229,9 @@ func (a *app) whereOf(ctx context.Context, st *store.Store, stale time.Duration,
 	if line := backupLine(v.Backup, working, review, merging, v.ReadsWaiting); line != "" {
 		b.WriteString(line + "\n")
 	}
-	// the day's read spend per route, from the same record (cost_view.go)
+	// the day's read spend per route, from the same record (cost_view.go). A reader's
+	// own sum, the median per read and the unpriced count are the stats reads table
+	// (sprint.ReaderStat); a stream's reads are cost_reads and reads_unpriced here.
 	if v.ReadSpend = sprint.ReadSpendLine(facts.Streams); v.ReadSpend != "" {
 		b.WriteString(v.ReadSpend + "\n")
 	}

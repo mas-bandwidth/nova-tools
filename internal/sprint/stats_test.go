@@ -94,8 +94,8 @@ func TestStatsArePassNumbersFromTheCards(t *testing.T) {
 		{Member: "m2", Cards: 1, TakeWait: m(1, 1, 1), RunWall: m(8, 8, 1), ReportLag: m(2, 2, 1)},
 	}, ps.Work)
 	assert.Equal(t, []ReaderStat{
-		{Reader: "reader-a", Cards: 1, BeginWait: m(2, 2, 1), RunWall: m(8, 8, 1), ReportLag: m(2, 2, 1)},
-		{Reader: "reader-b", Cards: 1}, // retired unbegun: asked of it, no time to measure
+		{Reader: "reader-a", Cards: 1, BeginWait: m(2, 2, 1), RunWall: m(8, 8, 1), ReportLag: m(2, 2, 1), Cost: "-", CostMedian: "-", Unpriced: 1},
+		{Reader: "reader-b", Cards: 1, Cost: "-", CostMedian: "-", Unpriced: 1}, // retired unbegun: asked of it, no time to measure; its returned run is unpriced
 	}, ps.Reads)
 	assert.Equal(t, []RouteTakes{
 		{Route: "flash-a", Takes: 2, OK: 1, Failed: 1, RunWall: m(8, 10, 2)}, // the staging refusal is no take
