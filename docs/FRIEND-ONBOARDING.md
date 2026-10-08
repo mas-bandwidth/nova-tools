@@ -210,3 +210,28 @@ If a card refuses to apply cleanly:
 6. Write REPORT.md and RESULT.md to outbox
 
 Follow this path for every card. The sprint coordinates your progress.
+
+## Width Goal
+
+When the machine detects a friend is holding cards but not actively working, it sends a width goal message. The width goal is a paragraph explaining what the friend should do: take one card at a time up to her width, work on it, report on it, and then take another. Do not take more cards than your width allows.
+
+### When you receive the width goal
+
+You will receive the width goal when all of the following are true:
+- You are holding one or more cards (in ready or working state)
+- Your presence is up
+- You have not shown evidence of work for at least 20 minutes (or the configured idle bound)
+
+Evidence of work includes:
+- A progress stamp on one of your cards
+- A finish on one of your cards
+- A beat that names children cards
+
+### What to do when you receive the width goal
+
+1. Focus on taking one card at a time, up to your width
+2. Work on that card
+3. Report on it when done
+4. Then take another card
+
+The machine will not give you more cards until you have reported on the current one. If you remain idle for another 20 minutes after receiving the width goal, your cards will be returned to the pool and your row will be marked idle.

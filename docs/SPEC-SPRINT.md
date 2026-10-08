@@ -7171,3 +7171,38 @@ friend reaches that friend's inbox by the route her judgments already take: the
 push loop writes a group addressed to someone to that actor's own inbox
 directory (`pushTarget.dirOf`, `~/<actor>-working/inbox/sprint-judgments`), the
 group carrying the note's addressee (`sprint.Group.To`).
+
+## 20. Idle-loaded friends
+
+A friend who is loaded but idle is detected by the machine and sent the width goal, then relieved of the cards if she remains idle.
+
+### The setting
+
+```
+nova-sprint set --friend-idle <duration>
+```
+
+Default is 20 minutes. The setting controls how long a friend may hold cards without evidence of work before she is considered idle-loaded.
+
+### Evidence of work
+
+A friend shows evidence of work if any of the following is newer than the idle bound:
+
+- A progress stamp on one of her cards (FieldProgress)
+- A finish on one of her cards (FieldDone)
+- A beat that names children cards (beat_children)
+
+### Rule friend-idle
+
+The first time a friend row turns idle-loaded (has taken cards, presence is up, and newest evidence is older than the idle bound), rule `friend-idle` sends her one bus message (nova-bus, subject "WIDTH: your row is loaded and idle") whose body is the width goal. The seat's inbox feed receives one judgment-free line: `friend <f> idle-loaded <n>m: width goal sent`.
+
+### Rule friend-idle-return
+
+If the row is still idle-loaded one idle bound later (30 minutes from when it became idle-loaded), rule `friend-idle-return` hands her idle cards back to the pool (reads to review, work to ready), marks her row `idle` (not down: presence is true) with reason and since, and the seat's inbox gets one judgment for the row. The next card she takes clears the idle mark.
+
+### Model
+
+The model is tla/FriendIdle.tla. Invariants:
+- NoCardHeldByIdleLoadedFriend: an idle-loaded friend holds cards no longer than 2 * friend_idle
+- CardsReturnedToPool: when friend-idle-return fires, cards go to review or ready
+- PresenceRemainsUp: idle row stays up, not down

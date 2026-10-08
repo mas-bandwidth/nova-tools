@@ -31,6 +31,8 @@ const (
 	RuleBriefDefect = "brief-defect" // the same finding twice: the card marked a brief defect, held
 	RuleConflict    = "conflict"     // a head the lander refused (a file conflict, its PATHS, the tree gate): returned, redone on the tip at flash, resumed; the same refusal twice a brief defect
 	RuleFailed      = "failed"       // work came back failed or with no result: redealt, then a tier up
+	RuleFriendIdle  = "friend-idle"  // friend row is loaded but idle: sent width goal (rules_idle_friend.go)
+	RuleFriendIdleReturn = "friend-idle-return" // friend still idle: cards returned to pool (rules_idle_friend.go)
 	RuleFriendTake  = "friend-take"  // a friend's work card past its bound that she has not started: taken back, dealt again (judgment_rules.go)
 	RuleHoldNeed    = "hold-need"    // failed work whose report HOLDs naming a card that has not landed: waits for it, reworked once it lands (judgment_rules.go)
 	RuleLate        = "late"         // a work card past its deadline: a wait once with progress; returned and redealt only once its holder stamped and went silent
@@ -44,7 +46,7 @@ const (
 )
 
 // RuleNames is every rule nova-config's answer_rules_off names, in name order.
-var RuleNames = []string{RuleBaseGate, RuleBound, RuleBriefDefect, RuleConflict, RuleFailed, RuleFriendTake, RuleHoldNeed, RuleLate, RuleReadBroken, RuleReadLate}
+var RuleNames = []string{RuleBaseGate, RuleBound, RuleBriefDefect, RuleConflict, RuleFailed, RuleFriendIdle, RuleFriendIdleReturn, RuleFriendTake, RuleHoldNeed, RuleLate, RuleReadBroken, RuleReadLate}
 
 // The fields the rules write.
 const (
