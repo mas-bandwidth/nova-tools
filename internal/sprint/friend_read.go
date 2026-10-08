@@ -222,17 +222,24 @@ func friendReadLive(s *Snapshot, pr *Card) (placed, okCards, broken []*Card) {
 	if s == nil || s.Fleet == nil || pr == nil {
 		return nil, nil, nil
 	}
-	return fleetReadLiveOf(s, pr, s.Fleet.Cards())
+	// only the cards whose id is a read of this attempt: the table is walked by
+	// id, never copied and sorted whole for each primary a step asks of
+	return fleetReadLiveOf(s, pr, s.Fleet.WithPrefix(attemptReadPrefix(pr)))
+}
+
+// attemptReadPrefix is the id prefix of every read card of the primary's attempt.
+func attemptReadPrefix(pr *Card) string {
+	attempt := pr.Int("attempt")
+	if attempt == 0 {
+		attempt = 1
+	}
+	return pr.ID + ".r" + itoa(attempt) + "."
 }
 
 // fleetReadLiveOf is friendReadLive over the fleet cards given (every card of the table,
 // or those of the primary a caller indexed once: fleetReadIndex).
 func fleetReadLiveOf(s *Snapshot, pr *Card, cards []*Card) (placed, okCards, broken []*Card) {
-	attempt := pr.Int("attempt")
-	if attempt == 0 {
-		attempt = 1
-	}
-	prefix := pr.ID + ".r" + itoa(attempt) + "."
+	prefix := attemptReadPrefix(pr)
 	for _, c := range cards {
 		if c == nil || c.F("kind") != "read" || !strings.HasPrefix(c.ID, prefix) || c.Col == Withdrawn {
 			continue
