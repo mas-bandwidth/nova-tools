@@ -93,6 +93,10 @@ var driftAllowlist = []allowlistEntry{
 		reason: "the line number of a brief's PATHS: header for the lint's refusal, through cardhdr.KeyValue; not a RESULT parser"},
 	{file: "internal/sprint/brief_defect.go", fn: "briefDefectReasons", record: "finding", since: "231f2f64c",
 		reason: "the words of a worker's hold note (PATHS do not hold) the brief-defect classifier matches as plain text; not a RESULT parser"},
+	{file: "internal/sprint/brief_defect.go", fn: "BriefDefectOf", record: "finding", since: "231f2f64c",
+		reason: "the PATHS-PROPOSED line of a worker's hold note, read as the hold's own fix; not a RESULT parser"},
+	{file: "internal/sprint/brief_defect.go", fn: "pathsFixLine", record: "finding", since: "231f2f64c",
+		reason: "the PATHS-PROPOSED line of a worker's hold note, split on its colon; not a RESULT parser"},
 }
 
 var allowlist = append(append([]allowlistEntry{}, specAllowlist...), driftAllowlist...)
