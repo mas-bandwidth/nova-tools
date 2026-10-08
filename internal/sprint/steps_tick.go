@@ -197,6 +197,9 @@ type TickReq struct {
 	// the deadlines part keeps a judgment for each drift. nil is none read, and no drift
 	// judgment is raised or closed.
 	Drift *DriftFacts
+	// External is the tick's answers to the external operands of DEPENDS-ON, each asked
+	// once a tick by resolve (tick_external.go); nil asks nothing, and only `after` holds.
+	External *ExternalAnswers
 }
 
 func (r TickReq) who() string {
@@ -501,7 +504,7 @@ func TickResolve(s *Snapshot, r TickReq) (Plan, int) {
 	}
 	var p Plan
 	if len(ids) > 0 {
-		p = Resolve(s, ResolveReq{Sel: Sel{Only: ids}, Who: r.who()})
+		p = Resolve(s, ResolveReq{Sel: Sel{Only: ids}, Who: r.who(), External: r.External})
 	}
 	return bound(p)
 }

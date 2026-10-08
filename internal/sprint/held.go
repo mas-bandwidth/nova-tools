@@ -442,6 +442,14 @@ func (c *held) tickOn(pr *Card) string {
 	if c.fewReaders && c.waitsToBeAsked(pr) && !enoughReadersUp(c.s, pr) {
 		return "writes " + NFewReaders
 	}
+	if ext := ExternalWaits(pr); pr.Col == Waiting && len(ext) > 0 {
+		// an external wait: the tick asks its operands each tick and releases it (tick_external.go)
+		w := "waits for " + strings.Join(ext, ", ")
+		if why := pr.F(FieldExternalAsk); why != "" {
+			w += "; the last ask failed: " + why
+		}
+		return w
+	}
 	if c.due > 0 && pr.Col != Merging {
 		return fmt.Sprintf("%d moves and judgments are due past its bounds", c.due)
 	}
