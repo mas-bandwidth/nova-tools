@@ -130,7 +130,7 @@ func (st *Store) keepWhere(ctx context.Context, m Machine) error {
 	// The cost cell is the tidy window (sprint.StreamCostSince, the mirror sync);
 	// sprint.PerLandedSince stays the window over that cell and is not written onto the where
 	// record.
-	_ = st.statsRecordOf(vals[1], oks[1])
+	_ = st.statsRecordOf(vals[1], oks[1]) // ignored: the permissive read records an unreadable stats note; this headline uses the snapshot
 	tw := st.twin()
 	if !tw.mu.TryLock() {
 		return nil

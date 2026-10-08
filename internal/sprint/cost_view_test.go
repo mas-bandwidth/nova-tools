@@ -121,7 +121,7 @@ func TestADroppedCardsSpendStaysInTheStream(t *testing.T) {
 	assert.Equal(t, before.Coverage, after.Coverage)
 	assert.Equal(t, DroppedSpend{Cards: 1, Cost: "8", Coverage: Coverage{Records: 2, Actual: 1, Estimated: 1}}, after.Dropped)
 	assert.Equal(t, "$9.00", after.CostWork, "a dropped card's spend keeps no run kind: counted with the work, so the four parts stay the total")
-	assert.Equal(t, map[string]string{"flash": "$1.00", "lineage": "$8.00"}, after.CostByTier)
+	assert.Equal(t, map[string]string{"no tier": "$1.00", "lineage": "$8.00"}, after.CostByTier, "the dropped spend on the tier lineage; the landed card's take recorded no tier")
 
 	// a second drop adds to the first, exactly
 	unpriced := &Card{ID: "s1-3", Fields: map[string]string{}}
