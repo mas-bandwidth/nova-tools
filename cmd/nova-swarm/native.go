@@ -1194,6 +1194,13 @@ func start(s *nativeRunState, attempt int, errOut io.Writer) (*nativeStarted, na
 	if s.prep.cfg.onPhase != nil {
 		s.prep.cfg.onPhase("start")
 	}
+	// A previous attempt or invocation may have exited without proving its
+	// descendants gone. Never replace the only durable group identity while
+	// that group number still has runnable members.
+	if old := groupNumber(s.prep.cfg.slotDir); old > 0 && procgroup.GroupRunnable(old) {
+		refuseNative(errOut, "the previous native harness group is still running; keep its STOP debt")
+		return nil, nativeRunResult{}, 2
+	}
 	before := fileSize(s.outLog)
 	providerBefore := fileSize(filepath.Join(s.prep.dataHome, filepath.FromSlash(harnessLogFile)))
 	cmd, releaseGate, abortGate, gateErr := nativeGroupCommand(s.runCtx, s.wal.runPath, s.wal.runArgv...)
@@ -1374,6 +1381,13 @@ func collect(s *nativeRunState, st *nativeStarted, wat *nativeWatched, attempt i
 	}
 	if launchUsage.Observed {
 		s.launchSpends = append(s.launchSpends, launchSpend(launchUsage.Values))
+	}
+	// The normal-completion cleanup can fail closed when both the original
+	// leader and durable anchor are gone. Even a catalog/provider start error
+	// must not retry into this slot and overwrite that group's only receipt.
+	if procgroup.GroupRunnable(st.pgid) {
+		s.res.survivors = strconv.Itoa(st.pgid) + ":alive"
+		return &nativeCollected{retry: false}
 	}
 	if s.res.terminated {
 		return &nativeCollected{retry: false}
