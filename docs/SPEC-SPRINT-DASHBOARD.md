@@ -253,9 +253,9 @@ This specification is locked. No line changes without his words, quoted here wit
   the streams on the table, an archived one shown or not (the owner, 2026-10-06 2:43 PM ET: "I really
   don't think we have 2.8k cards post-archive..."), and the archived line carries the archived ones;
   an archived row shown carries the tag "archived", so a reader sees why the rows do not add up to the
-  total; the cost tile and its tooltip cover the same streams, a sprint done (`done`) every stream of
-  the epoch as the hero's count does, and the unreconciled spend, the epoch's, is never in the tile but
-  on its own line, "$X unreconciled since <the epoch's first day>";
+  total; the cost tile covers the same streams, a sprint done (`done`) every stream of
+  the epoch as the hero's count does. Its subtitle shows only the amount per landed card;
+  work/read breakdowns, unpriced counts and unreconciled spend are not shown in the tile;
   the throughput samples the epoch's landed cards (`landed + archived_landed`, `landed` alone when
   `done`), so an archive does not start it again and a finish does not spike it. Nothing
   else moves.

@@ -612,17 +612,8 @@ function renderHero(d, s, ft) {
   // card is that over the cards that landed
   var c = d.done ? s.sum.epoch : s.sum, recorded = c.totalCost;
   setText($("cost"), money(recorded));
-  // the reads are their own number beside the work, with their share of the two:
-  // "$0.42 per card · $310 work · $96 reads (24%)"
-  var both = c.workCost + c.readCost;
-  var split = both ? money(c.workCost) + " work \u00b7 " + money(c.readCost) + " reads (" + Math.round(100 * c.readCost / both) + "%)" : "";
   var per = landed ? money(Math.ceil(recorded / landed)) + " per card" : "";
-  var unpriced = c.unpriced ? c.unpriced + " runs unpriced" : "";
-  setHTML($("cost-per"), [per, split, unpriced].filter(Boolean).join(" \u00b7 ") || " ");
-  setTitle($("cost-per"), readerSpendTitle(d, d.done ? null : archivedSet(d)));
-  // what the providers counted beyond the records is the epoch's (sprint.UnreconciledSpend,
-  // every day since the epoch began), never added into the tile: its own line, its scope named
-  setText($("cost-unreconciled"), money(s.sum.unreconciled) + " unreconciled since " + epochStart(d));
+  setText($("cost-per"), per || " ");
   setText($("inflight"), s.sum.working + (s.sum.fix || 0) + s.sum.review + s.sum.merging);
   inflightLast = s.sum; renderInflight(s.sum);
   // throughput: cards landed per hour over the last hour, from the server's samples
@@ -912,26 +903,6 @@ function putKid(box, i, cls, text) {
   if (!c._quiet) quiet(c);
   setText(c, text); setClass(c, cls);
   return c;
-}
-
-function epochStart(d) {
-  var t = new Date(d.cleared || "");
-  return isNaN(t) || t.getUTCFullYear() < 2000 ? "the epoch began" : t.toISOString().slice(0, 10);
-}
-
-function readerSpendTitle(d, skip) {
-  var by = {}, sc = d.stream_costs || {};
-  Object.keys(sc).forEach(function (k) {
-    if (skip && skip[k]) return;
-    var rs = sc[k].readers || {};
-    Object.keys(rs).forEach(function (r) {
-      var b = by[r] || (by[r] = { usd: 0, hour: 0 });
-      b.usd += parseFloat(rs[r].usd) || 0; b.hour += parseFloat(rs[r].hour_usd) || 0;
-    });
-  });
-  var names = Object.keys(by).filter(function (r) { return by[r].usd > 0; });
-  names.sort(function (a, b) { return by[b].usd - by[a].usd || (a < b ? -1 : 1); });
-  return names.map(function (r) { return r + " " + money(cents(by[r].usd)) + " (" + money(cents(by[r].hour)) + " last hour)"; }).join("\n");
 }
 
 function nameList(v) { return (v && v.length) ? v.join(", ") : "-"; }
