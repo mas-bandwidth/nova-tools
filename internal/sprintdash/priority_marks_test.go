@@ -22,7 +22,7 @@ process.stdout.write(JSON.stringify({ hidden: !!box.hidden, marks: box.children.
 `
 
 // A card's priority shows by colour on its mark (docs/SPEC-SPRINT-DASHBOARD.md, "Priority";
-// the owner, 2026-10-06): a blocker bright red, a critical dark red, a read the orange of the
+// the owner, 2026-10-07): a blocker and a critical the same bright red, a read the orange of the
 // robot's shoes, and work blue whatever its level.
 func TestPriorityMarksShowTheThreeColours(t *testing.T) {
 	t.Parallel()
@@ -82,7 +82,7 @@ func TestPriorityMarksShowTheThreeColours(t *testing.T) {
 func TestPriorityColoursAreThePagesConstants(t *testing.T) {
 	t.Parallel()
 	page := string(file("index.html"))
-	for name, want := range map[string]string{"--p-blocker": "#ff1a1a", "--p-critical": "#9b1c1c", "--p-reader": "#fb8321", "--p-work": "var(--s-working)"} {
+	for name, want := range map[string]string{"--p-blocker": "#ff1a1a", "--p-critical": "#ff1a1a", "--p-reader": "#fb8321", "--p-work": "var(--s-working)"} {
 		m := regexp.MustCompile(regexp.QuoteMeta(name) + `:\s*([^;]+);`).FindStringSubmatch(page)
 		require.NotNil(t, m, "the page defines %s", name)
 		assert.Equal(t, want, strings.TrimSpace(m[1]), name)
@@ -91,7 +91,7 @@ func TestPriorityColoursAreThePagesConstants(t *testing.T) {
 		assert.Contains(t, page, rule, "the mark class takes its colour")
 	}
 	js := string(file("app.js"))
-	assert.Contains(t, js, `if (level.indexOf("critical") === 0) return "p-critical";`, "a critical mark, set or by weight, is dark red")
+	assert.Contains(t, js, `if (level.indexOf("critical") === 0) return "p-critical";`, "a critical mark, set or by weight, uses the shared red")
 	assert.Contains(t, js, `return level === "blocker" || level === "reader" ? "p-" + level : "p-work";`, "a blocker red, a read orange, every work card blue")
 	assert.Contains(t, js, "renderPriorityMarks(d)", "render() draws the marks")
 }
