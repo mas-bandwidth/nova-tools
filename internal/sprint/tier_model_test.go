@@ -93,3 +93,30 @@ func TestModelPathsNameModulesAndConfigsNotRunRecords(t *testing.T) {
 		assert.Equal(t, want, len(ModelPaths([]string{entry})) == 1, entry)
 	}
 }
+
+func TestModelTierKeepsStructuredHeaderLinesIntact(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, brief, want string
+	}{
+		{
+			name:  "repo-first",
+			brief: "REPO: mas-bandwidth/nova-tools\nBASE: sprint/mechanical-2026-10-02\nPATHS: internal/sprint/tla/Model.tla\n\nThe task.",
+			want:  "tier: frontier\nREPO: mas-bandwidth/nova-tools\nBASE: sprint/mechanical-2026-10-02\nPATHS: internal/sprint/tla/Model.tla\n\nThe task.",
+		},
+		{
+			name:  "structured-header",
+			brief: "CARRY: old attempt 2 head=0123456789abcdef0123456789abcdef01234567\nREPO: mas-bandwidth/nova-tools\nBASE: sprint/mechanical-2026-10-02\nPATHS: tla/Model.tla\n\nThe task.",
+			want:  "tier: frontier\nCARRY: old attempt 2 head=0123456789abcdef0123456789abcdef01234567\nREPO: mas-bandwidth/nova-tools\nBASE: sprint/mechanical-2026-10-02\nPATHS: tla/Model.tla\n\nThe task.",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, said, why := ModelTier(tc.brief)
+			require.Empty(t, why)
+			assert.Equal(t, tc.want, got)
+			assert.Equal(t, cardhdr.RouteFrontier, func() string { m, _ := cardhdr.ReadModel(got); return m.Tier }())
+			require.NotEmpty(t, said)
+		})
+	}
+}

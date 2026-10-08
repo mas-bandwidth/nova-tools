@@ -41,7 +41,8 @@ func ModelPaths(paths []string) []string {
 }
 
 // ModelTier is the brief add admits for a card whose PATHS name model work (ModelPaths):
-// with tier: frontier on its line 1 when it names no tier, and said the words the add's
+// with tier: frontier on its line 1 when it names no tier (before a structured header,
+// after a title), and said the words the add's
 // unit carries; the brief as given, said "", when it names frontier or names no model
 // work; why the refusal when line 1 names a lower tier. A brief whose model lines do not
 // read is the model-lines check's to refuse, and is given back as it is.
@@ -60,6 +61,11 @@ func ModelTier(brief string) (out, said, why string) {
 			": write tier: frontier on line 1, or take the model out of PATHS (tla/RUNS.tsv and tla/CASES.tsv alone are run records, any tier)"
 	}
 	first, rest, nl := strings.Cut(brief, "\n")
+	if key, _, ok := cardhdr.KeyValue(first); ok && key == strings.ToUpper(key) {
+		// A structured header line is a value, not a title: keep it intact and
+		// put the tier before it so REPO, CARRY and other values stay parseable.
+		return "tier: " + cardhdr.RouteFrontier + "\n" + brief, "tiered frontier: " + work, ""
+	}
 	out = strings.TrimRight(first, " \t") + " tier: " + cardhdr.RouteFrontier
 	if nl {
 		out += "\n" + rest
