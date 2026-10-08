@@ -23,7 +23,7 @@
 # stream (seat and #3277 tests on t.Setenv); each owes a per-test seam. Moved
 # from the serialTestsCeiling constant into this file at 876, the count that day.
 # nova-check: TestTESTSFirstRunIsWhatTheToolPrints, TestIssue2296, TestNoCodeStagedRefusals removed (ceiling 226 in abb4e02a3, 207 on current base)
-# ceiling: 206
+# ceiling: 47
 cmd/nova-swarm/doctor_test.go:TestDoctorVerbIsReachableFromTheDispatch serial: swaps package var main.doctorHomeDir, swaps package var main.doctorLookPath, swaps package var main.doctorReadVersion
 cmd/nova-swarm/firstrun_test.go:TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine serial: t.Chdir
 cmd/nova-swarm/native_budget_sample_test.go:TestLiveSamplerCountsAFailedReadAndAnAnswerResetsIt serial: t.Setenv
