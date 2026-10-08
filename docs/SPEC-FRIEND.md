@@ -477,7 +477,13 @@ an ack: the turn stays in the daemon's hand, tried again every ten seconds,
 `RecheckEvery`, and counted toward nothing, so a chat open all day loses no
 message, and the record says so at the first deferral and once a minute after.
 While a turn runs: one peek, so a ping that lands during a long turn is still
-answered at once by the daemon; never a second turn. Then the worker's result;
+answered at once by the daemon; never a second turn. Then every result that is
+ready, the batch turn's, each lane's and each read's, until none waits
+(`takeResults`; one a step left a freed lane idle a step per other lane that
+ended with it, eight lanes ending together refilling over eight seconds, so the
+bound is the model's `StepLeavesNoLaneBehind`, tla/FriendLanes.tla, its reversed
+witness `MCFriendLanesBrokenOneResultPerStep.cfg` the loop before, and the trace
+`TestEveryFreedLaneRefillsOnTheSameStep`);
 one beat to the sprint server (`friend beat <friend>`, a plain beat: the queue,
 working and width flags are owed on the server's side); the pong file, while a
 challenge is open; the status file.
@@ -1645,7 +1651,17 @@ her sprint roster row, and her beat answers them (`FRIEND-BEAT OK ...
 row_mode=<mode> row_width=<n>`), so the daemon reads her row every second
 from the beat it already sends and a change takes effect without a restart
 (the change of mode waits for the other mode's turns to end). `run --mode`
-overrides the row, for a test.
+overrides the row, for a test. The status file says the width the daemon runs
+at and where it came from, `row_width` (the last beat answer's `row_width=`, 0
+while none has carried one) and `width_source` (`row`, or `flag` while the run
+flag's width stands in), so a width the beat never carried is read off the file
+and never mistaken for the row's (`TestStatusNamesTheWidthSource`). A width
+lowered on the beat is the lane limit on the next step: a lane beyond it
+finishes the turn under way and takes no other (`retired` on the status), and
+raised, every lane within it refills on the step after (tla/FriendLanes.tla:
+`StartsWithinWidth`, no lane starts beyond the step's width, its reversed witness
+`MCFriendLanesBrokenStartBeyondWidth.cfg`; `EveryCardEnds`;
+`TestAWidthChangeOnTheBeatAnswerIsTheLaneLimitOnTheNextStep`).
 
 In one-shot mode the daemon runs `width` lanes. Each lane is its own session
 of the friend in the same harness and directory, opened by the daemon when

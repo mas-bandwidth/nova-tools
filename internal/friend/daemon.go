@@ -691,15 +691,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 		}
 		l.capWatch(now)
 		l.stampProgress(now)
-		select {
-		case r := <-l.results:
-			l.batchDone(r, now)
-		case r := <-l.lanes.results:
-			l.laneDone(r, now)
-		case r := <-l.reads.results:
-			l.readDone(r, now)
-		default:
-		}
+		l.takeResults(now)
 		if d.Mailbox != nil {
 			// off the loop: a move sends the old conversation's unread deliveries again, and the
 			// beat never waits for it
@@ -889,6 +881,14 @@ func (l *loop) row(now time.Time) (mode string, width int) {
 		width = 1
 	}
 	d.status.Width = width
+	// the status says where the width came from, so a row the beat never carried
+	// (the flag's width standing in) is read off the file, never guessed
+	d.status.RowWidth, d.status.WidthSource = 0, WidthFromFlag
+	if d.Row != nil {
+		if _, w := d.Row(); w > 0 {
+			d.status.RowWidth, d.status.WidthSource = w, WidthFromRow
+		}
+	}
 	if runner, ok := d.Deliver.(CardRunner); ok && mode == ModeOneShot {
 		// a lane per card process: refused, with its remedy, until it can run one
 		why := runner.Refusal()
@@ -910,6 +910,27 @@ func (l *loop) row(now time.Time) (mode string, width int) {
 		}
 	}
 	return mode, width
+}
+
+// takeResults takes every result that is ready this step: the batch turn's, each
+// lane's and each read's, until none waits. Taking one a step left a freed lane
+// idle a step per other lane that ended with it (eight lanes ending together
+// refilled over eight seconds), so every lane whose turn ended refills on the
+// step after it (tla/FriendLanes.tla, StepLeavesNoLaneBehind; the reversed
+// witness MCFriendLanesBrokenOneResultPerStep is the loop before this).
+func (l *loop) takeResults(now time.Time) {
+	for {
+		select {
+		case r := <-l.results:
+			l.batchDone(r, now)
+		case r := <-l.lanes.results:
+			l.laneDone(r, now)
+		case r := <-l.reads.results:
+			l.readDone(r, now)
+		default:
+			return
+		}
+	}
 }
 
 // turns is every turn running now: the batch turn and the lanes'.

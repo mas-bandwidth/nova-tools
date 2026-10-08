@@ -476,3 +476,6 @@ MCFriendBrokenFixedKill.cfg	MCFriend.tla	invariant	StopOnlyWhenSilent	ignore-ter
 MCFriendBrokenAsideEarly.cfg	MCFriend.tla	invariant	SetAsideAfterCardTurns	ignore-terminal	friend	required	-
 MCReach.cfg	MCReach.tla	pass	-	ignore-terminal	reach	required	-
 MCReachBrokenStepAfterProof.cfg	MCReach.tla	invariant	NoStepAfterProof	ignore-terminal	reach	required	-
+MCFriendLanes.cfg	MCFriendLanes.tla	pass	-	ignore-terminal	friendlanes	required	-
+MCFriendLanesBrokenOneResultPerStep.cfg	MCFriendLanes.tla	action	StepLeavesNoLaneBehind	ignore-terminal	friendlanes	required	-
+MCFriendLanesBrokenStartBeyondWidth.cfg	MCFriendLanes.tla	action	StartsWithinWidth	ignore-terminal	friendlanes	required	-

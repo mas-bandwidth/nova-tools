@@ -200,6 +200,105 @@ func TestOneShotLanesHandOneCardPerTurnEachInItsOwnSession(t *testing.T) {
 	})
 }
 
+// Every lane whose turn ended refills on the step after it, all of them together:
+// four lanes held in their first cards and released at once each take their next card
+// on one step, never one lane a step (the loop took one result a step; the reversed
+// witness tla/MCFriendLanesBrokenOneResultPerStep.cfg is that loop, and this test is its
+// trace: four turns end in one step, and a step later every lane is busy again).
+func TestEveryFreedLaneRefillsOnTheSameStep(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		ids := []string{"c1", "c2", "c3", "c4", "c5", "c6", "c7", "c8"}
+		var tasks [][2]string
+		finish := map[string]bool{}
+		for _, id := range ids {
+			tasks = append(tasks, [2]string{id, "queued"})
+			finish[id] = true
+		}
+		dir := cardDirFixture(t, tasks, ids, nil)
+		h := &lanesHarness{dir: dir, finish: finish, active: map[string]int{}, block: make(chan struct{})}
+		r, _ := laneRig(t, h, 4)
+		var held, refilled Status
+		r.at[9] = func() { held = r.last() }
+		r.at[10] = func() { close(h.block) }      // every first card ends on the same step
+		r.at[12] = func() { refilled = r.last() } // the status the step after the release wrote
+		r.run(t, 20)
+		turns, _, _ := h.got()
+		require.Len(t, turns, 8, "every card ran: %v", turns)
+		assert.Equal(t, "1:ses_1:c1/1 2:ses_2:c2/1 3:ses_3:c3/1 4:ses_4:c4/1", held.Lanes, "the four lanes took their first cards together")
+		assert.Equal(t, "1:ses_1:c5/1 2:ses_2:c6/1 3:ses_3:c7/1 4:ses_4:c8/1", refilled.Lanes, "and their next cards on the one step after their turns ended, not one lane a step")
+		assert.Equal(t, 1, h.maxBusy, "a lane never runs two turns at once")
+	})
+}
+
+// The width is the friend row's as the beat answers it, read every step: lowered
+// from three to one, the lanes beyond it finish the turn under way and take no
+// other (said retired on the status, their cards handed back); raised again, they
+// refill on the next step. The status names the row's width and its source.
+func TestAWidthChangeOnTheBeatAnswerIsTheLaneLimitOnTheNextStep(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		ids := []string{"c1", "c2", "c3", "c4", "c5", "c6"}
+		var tasks [][2]string
+		finish := map[string]bool{}
+		for _, id := range ids {
+			tasks = append(tasks, [2]string{id, "queued"})
+			finish[id] = true
+		}
+		dir := cardDirFixture(t, tasks, ids, nil)
+		h := &lanesHarness{dir: dir, finish: finish, active: map[string]int{}, block: make(chan struct{})}
+		r, _ := laneRig(t, h, 3)
+		var mu sync.Mutex
+		width := 3
+		r.d.Row = func() (string, int) { mu.Lock(); defer mu.Unlock(); return ModeOneShot, width }
+		var lowered, narrowed, raised Status
+		release := func() { // every turn under way ends; the turns after it hold again
+			h.mu.Lock()
+			old := h.block
+			h.block = make(chan struct{})
+			h.mu.Unlock()
+			close(old)
+		}
+		r.at[8] = func() { mu.Lock(); width = 1; mu.Unlock() }
+		r.at[11] = func() { lowered = r.last() }
+		r.at[12] = release // the three first cards end; only lane 1 is within the width
+		r.at[18] = func() { narrowed = r.last(); mu.Lock(); width = 3; mu.Unlock() }
+		r.at[20] = func() { raised = r.last() } // the status the step after the raise wrote
+		r.at[22] = release
+		r.run(t, 26)
+		turns, _, _ := h.got()
+		require.Len(t, turns, 6, "every card ran in the end: %v", turns)
+		assert.Equal(t, 1, lowered.Width)
+		assert.Equal(t, 1, lowered.RowWidth)
+		assert.Equal(t, WidthFromRow, lowered.WidthSource)
+		assert.Equal(t, "1:ses_1:c1/1 2:ses_2:c2/1:retired 3:ses_3:c3/1:retired", lowered.Lanes, "lanes 2 and 3 finish the turn under way, beyond the width")
+		assert.Equal(t, "ses_1: c4", turns[3], "while the width is one, only lane 1 takes a card: %v", turns)
+		assert.Equal(t, "1:ses_1:c4/1 2:ses_2:-:retired 3:ses_3:-:retired", narrowed.Lanes, "the lanes beyond the width hold no card")
+		assert.Equal(t, "1:ses_1:c4/1 2:ses_2:c5/1 3:ses_3:c6/1", raised.Lanes, "raised to three, lanes 2 and 3 refill on the step after the beat that carried it")
+		assert.Equal(t, 3, r.last().Width)
+		assert.Equal(t, 3, r.last().RowWidth)
+	})
+}
+
+// A daemon whose beat answer carries no row width runs at the flag's, and the status
+// says so (width_source=flag, row_width=0), so a row the beat never carried is read off
+// the file and never mistaken for the row's.
+func TestStatusNamesTheWidthSource(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	r.d.Row = nil
+	r.run(t, 3)
+	assert.Equal(t, 4, r.last().Width, "the flag's width")
+	assert.Equal(t, 0, r.last().RowWidth)
+	assert.Equal(t, WidthFromFlag, r.last().WidthSource)
+	r2 := newRig(t)
+	r2.d.Row = func() (string, int) { return ModeBatch, 7 }
+	r2.run(t, 3)
+	assert.Equal(t, 7, r2.last().Width, "the row's width")
+	assert.Equal(t, 7, r2.last().RowWidth)
+	assert.Equal(t, WidthFromRow, r2.last().WidthSource)
+}
+
 // One lane waits for its card's turn to end before the next card: with the
 // turn held, the second card is not handed; released, it is.
 func TestALaneHandsItsNextCardOnlyWhenTheTurnEnds(t *testing.T) {
