@@ -374,14 +374,19 @@ func (st *Store) twinView(ctx context.Context, tw *Twin, load []string, v View, 
 		t.Epoch = shape.Epoch
 		t.SetProps(shape.Props)
 		rows := make([]string, 0, len(shape.Rows))
+		var hidden []string
 		texts := map[string]map[string]string{}
 		for _, r := range shape.Rows {
 			rows = append(rows, r.Key)
+			if r.Hidden {
+				hidden = append(hidden, r.Key)
+			}
 			if len(r.Texts) > 0 {
 				texts[r.Key] = r.Texts
 			}
 		}
 		t.SetRows(rows)
+		t.SetHiddenRows(hidden)
 		t.Texts = texts
 	}
 	for _, name := range load {

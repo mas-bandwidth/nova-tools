@@ -71,7 +71,7 @@ func TestTheLoopPlaysTheWorldThroughVerbsOnly(t *testing.T) {
 	}
 	all := strings.Join(lines, "\n")
 	for _, want := range []string{"finish --as m1 --epoch 0 s1-1.w2@3 --redis 127.0.0.1:1", "take --as m1 --limit 64 --epoch 0 --redis 127.0.0.1:1",
-		"read --as reader-a --ok --epoch 0 s1-5.r1.reader-a --redis", "read --as reader-a --begin --epoch 0 s1-2.r1.reader-a --redis",
+		"read --as reader-a --ok --usage unpriced=no-tokens --epoch 0 s1-5.r1.reader-a --redis", "read --as reader-a --begin --epoch 0 s1-2.r1.reader-a --redis",
 		"merge --stream s1 --batch 5"} {
 		assert.Contains(t, all, want, "no %q in\n%s", want, all)
 	}
@@ -448,7 +448,7 @@ func TestEveryMachineMovesItsCardsInOneBatchATick(t *testing.T) {
 	// one finish of every member's cards (the failed in a second call), one
 	// take for each width, one of each read: every member's row in one step
 	for _, verb := range []string{"take --as m1 --limit 128", "take --as m2 --limit 64", "finish --as m1,m2", "finish --as m1,m2 --failed",
-		"read --as reader-a --begin --epoch", "read --as reader-a --ok --epoch", "read --as reader-a --broken --finding"} {
+		"read --as reader-a --begin --epoch", "read --as reader-a --ok --usage", "read --as reader-a --broken --finding"} {
 		assert.Equal(t, 1, calls[verb], "%q ran %d times in a tick, want once", verb, calls[verb])
 	}
 	assert.Len(t, calls, 7, "the calls of a tick: %v", calls)

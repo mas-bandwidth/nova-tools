@@ -508,9 +508,12 @@ func (d *Driver) tick(tick int, c Config, w where) {
 			beginners = append(beginners, r)
 		}
 	}
-	d.batches(append([]string{"read", "--as", strings.Join(reporters, ","), "--ok"}, held...), ok)
+	// The simulated reader ran no model. A routed read still needs an explicit
+	// usage report; the sprint records this one as unpriced for no tokens.
+	usage := []string{"--usage", "unpriced=no-tokens"}
+	d.batches(append(append([]string{"read", "--as", strings.Join(reporters, ","), "--ok"}, usage...), held...), ok)
 	for _, f := range slices.Sorted(maps.Keys(broken)) {
-		d.batches(append([]string{"read", "--as", strings.Join(reporters, ","), "--broken", "--finding", f}, held...), broken[f])
+		d.batches(append(append([]string{"read", "--as", strings.Join(reporters, ","), "--broken", "--finding", f}, usage...), held...), broken[f])
 	}
 	d.batches(append([]string{"read", "--as", strings.Join(beginners, ","), "--begin"}, held...), begin)
 	// Each stream's merge step, with its facts. A stream's queue is read just

@@ -84,10 +84,11 @@ type Table struct {
 	// tables, the archived streams (stream archive).
 	hidden map[string]bool
 
-	cells     map[[2]string][]*Card // built on first use; Put resets it
-	byPrimary map[string][]*Card
-	lines     map[string][]*Card // each row's cards not landed, in score order; built with cells
-	stops     map[string][]int   // each line's last sentinel at or before each place (lineStops); built with lines
+	cells         map[[2]string][]*Card // built on first use; Put resets it
+	byPrimary     map[string][]*Card
+	readByPrimary map[string][]*Card // placed and kept read records, in id order
+	lines         map[string][]*Card // each row's cards not landed, in score order; built with cells
+	stops         map[string][]int   // each line's last sentinel at or before each place (lineStops); built with lines
 }
 
 // Put adds or replaces a card.
@@ -96,7 +97,7 @@ func (t *Table) Put(c *Card) {
 		c.Fields = map[string]string{}
 	}
 	t.cards[c.ID] = c
-	t.cells, t.byPrimary = nil, nil
+	t.cells, t.byPrimary, t.readByPrimary = nil, nil, nil
 }
 
 // Frozen is a copy of the table as it is now that later changes to the
@@ -116,7 +117,7 @@ func (t *Table) Frozen() *Table {
 	c.Texts = make(map[string]map[string]string, len(t.Texts))
 	maps.Copy(c.Texts, t.Texts)
 	c.rows = append([]string(nil), t.rows...)
-	c.cells, c.byPrimary, c.lines, c.stops = nil, nil, nil, nil
+	c.cells, c.byPrimary, c.readByPrimary, c.lines, c.stops = nil, nil, nil, nil, nil
 	return &c
 }
 
@@ -127,7 +128,7 @@ func (t *Table) Drop(id string) {
 		return
 	}
 	delete(t.cards, id)
-	t.cells, t.byPrimary = nil, nil
+	t.cells, t.byPrimary, t.readByPrimary = nil, nil, nil
 }
 
 // SetProp sets one of the table's properties as a write left it (a batch's
@@ -221,6 +222,14 @@ func (t *Table) SetHidden(row string) {
 	t.hidden[row] = true
 }
 
+// SetHiddenRows replaces the hidden rows with those in a newly read shape.
+func (t *Table) SetHiddenRows(rows []string) {
+	t.hidden = make(map[string]bool, len(rows))
+	for _, row := range rows {
+		t.hidden[row] = true
+	}
+}
+
 // Card is the card with the id, nil when the table has none.
 func (t *Table) Card(id string) *Card {
 	if t == nil {
@@ -282,6 +291,27 @@ func (t *Table) Count(row, col string) int {
 func (t *Table) Of(p string) []*Card {
 	t.index()
 	return t.byPrimary[p]
+}
+
+// ReadByPrimary includes kept records as well as placed read cards. Read
+// verdicts remain useful after their fleet cards leave a row.
+func (t *Table) ReadByPrimary() map[string][]*Card {
+	if t == nil {
+		return nil
+	}
+	if t.readByPrimary == nil {
+		idx := make(map[string][]*Card)
+		for _, c := range t.cards {
+			if p := c.F(PrimaryField); p != "" && c.F("kind") == "read" {
+				idx[p] = append(idx[p], c)
+			}
+		}
+		for _, cs := range idx {
+			sort.Slice(cs, func(i, j int) bool { return cs[i].ID < cs[j].ID })
+		}
+		t.readByPrimary = idx
+	}
+	return t.readByPrimary
 }
 
 // SortCards orders cards by score, then by id: work order.

@@ -1001,7 +1001,7 @@ const changePage = 64
 // twinVerbs are the table writes whose events name every record they changed
 // (a batch's account names each of its entries; a row's texts and rows name
 // none): any other write in the span makes the twin read the table whole.
-var twinVerbs = map[string]bool{"apply": true, "row_set": true, "rows_add": true, "row_add": true}
+var twinVerbs = map[string]bool{"apply": true, "row_set": true, "rows_add": true, "row_add": true, "rows_hide": true, "rows_show": true}
 
 // TableChanges reads the table's change stream from its newest event back to
 // the one that left revision from, and says the records the writes between

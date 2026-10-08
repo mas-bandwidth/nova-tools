@@ -222,7 +222,7 @@ func friendReadLive(s *Snapshot, pr *Card) (placed, okCards, broken []*Card) {
 	if s == nil || s.Fleet == nil || pr == nil {
 		return nil, nil, nil
 	}
-	return fleetReadLiveOf(s, pr, s.Fleet.Cards())
+	return fleetReadLiveOf(s, pr, s.Fleet.ReadByPrimary()[pr.ID])
 }
 
 // fleetReadLiveOf is friendReadLive over the fleet cards given (every card of the table,
@@ -267,16 +267,10 @@ func fleetReadLiveOf(s *Snapshot, pr *Card, cards []*Card) (placed, okCards, bro
 // fleetReadIndex is the fleet table's read cards, placed or kept, by their primary field,
 // in id order: read once for a step that asks of many primaries.
 func fleetReadIndex(s *Snapshot) map[string][]*Card {
-	out := map[string][]*Card{}
 	if s == nil || s.Fleet == nil {
-		return out
+		return map[string][]*Card{}
 	}
-	for _, c := range s.Fleet.Cards() {
-		if c != nil && c.F("kind") == "read" {
-			out[c.F("primary")] = append(out[c.F("primary")], c)
-		}
-	}
-	return out
+	return s.Fleet.ReadByPrimary()
 }
 
 // machineReaderHasRoom says a paid reader of the primary's collapsed read tier

@@ -52,3 +52,41 @@ func TestRedisAnOrderOnlySetNamesNoRecordsAndLeavesNoGap(t *testing.T) {
 	require.ErrorAs(t, err, &gap)
 	assert.Contains(t, gap.Why, `a write "set"`)
 }
+
+// Hiding and showing a row changes its shape, not its cards. The twin uses
+// that shape without reading all of the table's records again.
+func TestRedisRowVisibilityCatchUpKeepsTheTwin(t *testing.T) {
+	t.Parallel()
+	h, _ := liveHarness(t)
+	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m1", Width: 2}))
+	pinned, err := h.st.Pinned(h.ctx)
+	require.NoError(t, err)
+	pinned.Stats = &Stats{}
+	r := pinned.B.(*Redis)
+	fleet := h.st.Names.Table(sprint.Fleet)
+	tw := NewTwin()
+	snap, _, err := pinned.twinRead(h.ctx, tw, []string{sprint.Fleet}, nil, nil)
+	require.NoError(t, err)
+	require.False(t, snap.Fleet.Hidden("m1"))
+	require.Equal(t, int64(1), pinned.stats().reads.Load())
+	for _, change := range []struct {
+		hide bool
+		want bool
+	}{
+		{hide: true, want: true},
+		{hide: false, want: false},
+	} {
+		before := snap.Fleet.Revision
+		if change.hide {
+			err = r.RowsHide(h.ctx, fleet, []string{"m1"})
+		} else {
+			err = r.RowsShow(h.ctx, fleet, []string{"m1"})
+		}
+		require.NoError(t, err)
+		snap, _, err = pinned.twinRead(h.ctx, tw, []string{sprint.Fleet}, nil, nil)
+		require.NoError(t, err)
+		assert.Equal(t, change.want, snap.Fleet.Hidden("m1"))
+		assert.Greater(t, snap.Fleet.Revision, before)
+		assert.Equal(t, int64(1), pinned.stats().reads.Load(), "row visibility alone should not reload records")
+	}
+}
