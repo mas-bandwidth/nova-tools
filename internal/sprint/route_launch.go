@@ -113,6 +113,34 @@ func (s *Snapshot) readerCanLaunchRoute(reader string, r Route) bool {
 	return s.memberCanLaunch(member, r)
 }
 
+// upHarnesses is every member up and the harness list its machine row carries
+// (config.HarnessesOf; opencode alone for an absent list): what the route judgment reads.
+func (s *Snapshot) upHarnesses() map[string][]string {
+	out := map[string][]string{}
+	for _, m := range s.UpMembers() {
+		out[m] = config.HarnessesOf(s.MemberCtl(m).F(FieldHarnesses))
+	}
+	return out
+}
+
+// routeUnserved is the enabled routes no member up can launch, in store order
+// (swarm.Unserved): each is one persistent judgment naming the route and its machines,
+// never one failure per card (docs/SPEC-SWARM, "A member draws only routes whose harness
+// it can launch"). A store with no route has every member run its own model, so none is
+// unserved.
+func (s *Snapshot) routeUnserved() []swarm.UnservedRoute {
+	if len(s.Routes) == 0 {
+		return nil
+	}
+	routes := make([]swarm.LaunchRoute, 0, len(s.Routes))
+	for _, r := range s.Routes {
+		if r.Enabled {
+			routes = append(routes, swarm.LaunchRoute{Name: r.Name, Harness: r.Harness})
+		}
+	}
+	return swarm.Unserved(routes, s.upHarnesses())
+}
+
 // membersForExisting keeps a queued card on machines that can launch its route
 // during down and level moves (SPEC-SPRINT, machine harnesses).
 func (s *Snapshot) membersForExisting(c *Card, members []string) []string {

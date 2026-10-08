@@ -52,14 +52,17 @@ func (s *Snapshot) tierRouted(tier string) bool {
 
 // readerServesTier says the reader may be asked a read of tier: its tiers cell names
 // the tier (readerReadsTier), and it brings its own model or a route of the tier is
-// there to draw (tierRouted). A fleet reader whose row names no tier reads flash alone
-// (fleetReadsFlashOnly): the owner, 2026-10-06, "I'm ok with flash readers on fleet but
-// not pro"; its row names pro or above (reader set --tiers) to read them.
+// there for it to draw (readerCanLaunch: the member's machine lists the route's harness,
+// docs/SPEC-SWARM "A member draws only routes whose harness it can launch"). A fleet
+// reader whose row names no tier reads flash alone (fleetReadsFlashOnly): the owner,
+// 2026-10-06, "I'm ok with flash readers on fleet but not pro"; its row names pro or
+// above (reader set --tiers) to read them. A store with no route (the no-route twin)
+// has every reader run its own model, so every tier it names is served.
 func (s *Snapshot) readerServesTier(reader, tier string) bool {
 	if tier != cardhdr.RouteFlash && s.fleetReadsFlashOnly(reader) {
 		return false
 	}
-	return s.readerReadsTier(reader, tier) && (s.ownModelReader(reader) || s.tierRouted(tier))
+	return s.readerReadsTier(reader, tier) && s.readerCanLaunch(reader, tier)
 }
 
 // fleetReadsFlashOnly says the reader is the fleet's (it brings no model of its own and

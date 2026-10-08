@@ -213,9 +213,11 @@ ended in one second `launch refused`, each a failure of the card, the member and
 route (`TestAMemberNeverDrawsARouteWhoseHarnessItLacks`). Fleet sync carries the machine list to its fleet control card. The deal and ask
 filter target machines and route entries through `CanLaunch`; down and level
 moves keep an existing route on a capable machine. The shared reader eligibility
-and tick's route-level capability judgment are not wired: their existing tier
-checks can still count incapable readers, and `Unserved` does not yet become a
-persistent route judgment in the tick.
+(`readerServesTier`, `internal/sprint/read_route.go`) counts a fleet reader for a tier only
+while a route of it is one its machine lists, and the tick's route-level judgment
+(`TickDeal`, `internal/sprint/steps_tick.go`, `routeUnserved`) raises one persistent
+judgment per enabled route no member up can launch, naming the route and its machines,
+closed when a capable machine is up or the route is disabled.
 
 | harness | the child | the usage |
 |---|---|---|

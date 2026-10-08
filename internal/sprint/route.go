@@ -93,14 +93,21 @@ const (
 // (round.go, roundWrites).
 func PropRouteIndex(tier string) string { return "route_index_" + tier }
 
-// NNoRoute is the tick's judgment of a tier no route serves, once per tier (its
-// subject is the tier's, StreamSubject(TierSubject(tier))), closed when the tier is
-// served or no card of it waits.
+// NNoRoute is the tick's judgment of a route no up capable machine can launch, and of
+// a tier no route serves. A route's subject is its own (StreamSubject(RouteSubject(name))),
+// closed when a capable machine is up or the route is disabled; a tier's is the tier's
+// (StreamSubject(TierSubject(tier))), closed when the tier is served or no card of it
+// waits.
 const NNoRoute = "no route serves the tier"
 
 // TierSubject is the stream word a tier's judgment is filed under: no stream id has
 // a colon, so it is never a stream's.
 func TierSubject(tier string) string { return "tier:" + tier }
+
+// RouteSubject is the stream word a route's judgment is filed under: the route no up
+// capable machine can launch (swarm.Unserved, TickDeal). No stream id has a colon, so it
+// is never a stream's.
+func RouteSubject(route string) string { return "route:" + route }
 
 // noRoute is why a primary's tier is not served: "" when a route serves it (or the store
 // has no route at all) or a friend up does (tierServed), else the tier it is judged under

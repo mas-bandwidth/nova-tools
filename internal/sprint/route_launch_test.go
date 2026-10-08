@@ -1,10 +1,32 @@
 package sprint
 
 import (
+	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"testing"
 )
+
+// A fleet reader serves a tier only while a route of it is one the reader's machine can
+// launch (readerServesTier, readerCanLaunch): a reader on a machine with no claude login
+// does not serve a tier whose only route runs under claude, so the ask never counts it as
+// eligible (docs/SPEC-SWARM, "A member draws only routes whose harness it can launch").
+// A friend's reader brings its own model, and a store with no route has every reader run
+// its own: both still serve the tier.
+func TestAFleetReaderServesOnlyTiersItsMachineCanLaunch(t *testing.T) {
+	t.Parallel()
+	w := fleetWorld(t, 1, 2, "m1", "m2")
+	w.s.Routes = []Route{{Name: "sub", Tier: cardhdr.RouteFlash, Harness: "claude", Provider: "subscription-claude", Model: "m", Enabled: true, First: true}}
+	w.s.MemberCtl("m2").Fields[FieldHarnesses] = "opencode,claude"
+	require.False(t, w.s.readerServesTier("reader-m1", cardhdr.RouteFlash), "m1 holds no claude login and serves no tier whose route it cannot launch")
+	require.True(t, w.s.readerServesTier("reader-m2", cardhdr.RouteFlash), "m2 lists claude")
+	w.s.Friends = []FriendSeat{{Name: "amy", Width: 1, Status: Up, Tiers: []string{cardhdr.RouteFlash}}}
+	require.True(t, w.s.readerServesTier("reader-amy", cardhdr.RouteFlash), "a friend's reader brings her own model")
+
+	twin := fleetWorld(t, 0, 0, "m1")
+	require.True(t, twin.s.readerServesTier("reader-m1", cardhdr.RouteHeavy), "a store with no route: every reader runs its own model")
+}
 
 func TestRouteDrawAndSyncRespectMachineHarnesses(t *testing.T) {
 	t.Parallel()

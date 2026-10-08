@@ -84,4 +84,26 @@ func TestAMemberNeverDrawsARouteWhoseHarnessItLacks(t *testing.T) {
 		require.True(t, strings.Contains(j, want), "judgment %q names %q", j, want)
 	}
 	require.Contains(t, swarm.Unserved(heavy, nil)[0].Judgment(), "no member is up")
+
+	// the tick: one persistent judgment per enabled route no member up can launch,
+	// naming the route and its machines, never one per card (docs/SPEC-SWARM).
+	t.Run("the tick raises one route judgment", func(t *testing.T) {
+		s := &sprint.Snapshot{Now: time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC), Work: sprint.NewTable(sprint.Work), Fleet: sprint.NewTable(sprint.Fleet), Readers: sprint.NewTable(sprint.Readers), Merge: sprint.NewTable(sprint.Merge)}
+		s.Work.SetRows([]string{"s1"})
+		s.Fleet.SetRows([]string{"m1"})
+		s.Fleet.Put(&sprint.Card{ID: sprint.CtlID("m1"), Row: "m1", Col: sprint.Ctl, Rev: 1, Fields: map[string]string{"kind": "member", "status": sprint.Up, "width": "2"}})
+		s.Routes = []sprint.Route{{Name: "heavy-claude", Tier: "heavy", Provider: "subscription-claude", Model: "model", Harness: "claude", Enabled: true, First: true}, {Name: "heavy-or", Tier: "heavy", Provider: "p", Model: "model", Enabled: true}}
+		p, _ := sprint.TickDeal(s, sprint.TickReq{})
+		var what []string
+		for _, n := range p.Notes {
+			require.NotEqual(t, sprint.RouteSubject("heavy-or"), n.Stream, "the opencode route a member up can launch raises nothing: %+v", n)
+			if n.Type == sprint.NNoRoute && n.Stream == sprint.RouteSubject("heavy-claude") {
+				what = append(what, n.What)
+			}
+		}
+		require.Len(t, what, 1, "one judgment for the route, not one per card: %+v", p.Notes)
+		for _, want := range []string{"heavy-claude", "claude", "m1"} {
+			require.Contains(t, what[0], want, "judgment %q names %q", what[0], want)
+		}
+	})
 }
