@@ -89,10 +89,20 @@ func TestAGeneratedDirectoryIsAdmittedWholeAndItsWavesHold(t *testing.T) {
 	home := t.TempDir()
 	pushDir := filepath.Join(home, actor+"-working", "inbox", "sprint-judgments")
 	require.NoError(t, os.MkdirAll(pushDir, 0o755))
-	env := append(goenv.Clean(os.Environ()), "HOME="+home, "NOVA_SPRINT_REDIS="+addr, "NOVA_SPRINT_ACTOR="+actor)
+	var env []string
+	for _, entry := range goenv.Clean(os.Environ()) {
+		name, _, _ := strings.Cut(entry, "=")
+		switch strings.ToUpper(name) {
+		case "HOME", "NOVA_SPRINT_SERVER", "NOVA_SPRINT_REDIS", "NOVA_REDIS_ADDR", "NOVA_SPRINT_ACTOR":
+			continue
+		}
+		env = append(env, entry)
+	}
+	// The poisoned server proves every subprocess stays on the fixture Redis.
+	env = append(env, "HOME="+home, "NOVA_SPRINT_REDIS="+addr, "NOVA_SPRINT_ACTOR="+actor, "NOVA_SPRINT_SERVER=127.0.0.1:0")
 	sprintRun := func(args ...string) (int, string) {
 		t.Helper()
-		cmd := exec.Command(sprint, args...)
+		cmd := exec.Command(sprint, append(args, "--redis", addr)...)
 		cmd.Env = env
 		var b bytes.Buffer
 		cmd.Stdout, cmd.Stderr = &b, &b
@@ -110,7 +120,7 @@ func TestAGeneratedDirectoryIsAdmittedWholeAndItsWavesHold(t *testing.T) {
 	// the push loop. Use a throwaway folder as this test's session.
 	code, text = sprintRun("seat", "push", "--harness", "claude", "--target", pushDir)
 	require.Equal(t, 1, code, text) // recorded, but no check has been answered yet
-	loop := exec.Command(sprint, "inbox", "--wait", "--push", "seat", "--timeout", "100ms")
+	loop := exec.Command(sprint, "inbox", "--wait", "--push", "seat", "--timeout", "100ms", "--redis", addr)
 	loop.Env = env
 	require.NoError(t, loop.Start())
 	defer func() {
