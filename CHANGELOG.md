@@ -6,7 +6,7 @@ Patch candidate based on tagged v1.1.0 (`2e73c44d`). This entry describes the so
 
 - `nova-sprint` gives rework attempts fix priority in ordered queues, preserves redo read inheritance and empty-queue refusal, and names unmet prerequisites before the stuck-card barrier.
 - The sprint land gate stages from the bench mirror and explains when it cannot stage; tests pin the pass-over and where notes reach.
-- `nova-friend` lanes receive the brief by absolute path and treat a no-report exit as a harness fault. Claude `-p` receives the friend's directory with `--add-dir`, and stray-report rescue moves regular files only.
+- `nova-friend` lanes receive the brief by absolute path. A runner END with no report is a harness fault: the same work-card attempt returns at a fresh generation only while that END remains the runner's latest event; an authored `FAIL` or `HOLD` still fails the attempt. Claude `-p` receives the friend's directory with `--add-dir`, and stray-report rescue moves regular files only.
 
 ## Unreleased v1.2.0 draft
 
@@ -1002,4 +1002,3 @@ Cut from 52046bd9a0ebf726b40617a81e678d2855047a60. 663 pull requests since v0.16
 - #4559 release: read complete bounded local diff lists
 - #4560 nova-tools 1.0.0: promote dev to main, second promotion
   - members: #4559
-
