@@ -187,3 +187,22 @@ func TestFixWorkingCountsArePublished(t *testing.T) {
 	}
 	assert.Equal(t, 1, visible["fix_working"], "the row fields published by where retain a manually set fix")
 }
+
+func TestFixPrioritySurvivesRedoAndSubsequentRead(t *testing.T) {
+	t.Parallel()
+	w := stoppedForConflict(t)
+	w.must(Redo(w.s, RedoReq{Sel: Sel{IDs: []string{"s1-2"}}, Who: "coordinator"}))
+	pr := w.s.Work.Card("s1-2")
+	assert.Equal(t, PriorityFix, pr.F(FieldPriority))
+	wc := w.s.Fleet.Card(pr.F("work"))
+	require.NotNil(t, wc)
+	assert.Equal(t, PriorityFix, QueuePriority(wc))
+	w.must(Take(w.s, TakeReq{As: wc.Row, Sel: Sel{IDs: []string{wc.ID}}, Gens: gensOf(w.s, wc.ID)}))
+	w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{wc.ID}}, Gens: gensOf(w.s, wc.ID), Report: "the conflict is resolved"}))
+	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{pr.ID}}}))
+	reads := readsAt(w.s, w.s.Work.Card(pr.ID), pr.Int("attempt"))
+	require.NotEmpty(t, reads)
+	for _, rc := range reads {
+		assert.Equal(t, PriorityFix, QueuePriority(rc))
+	}
+}
