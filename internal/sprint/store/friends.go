@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
+	"github.com/mas-bandwidth/nova-tools/internal/config"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
@@ -20,11 +21,14 @@ import (
 // is the roster, every friend of nova-config's friend rows (friend sync) with
 // the coordinator's hold of each (friend down; friend up releases it) and her
 // width; friend-beat:<f> is the friend's last beat (friend beat), written by
-// her daemon, shown and never evidence; friend-finish:<f> is when a card of
+// her daemon, shown and never evidence, stamped with her row's mode as it stood
+// (sprint.Beat.RowMode); friend-finish:<f> is when a card of
 // hers last finished (FriendFinished). A friend's status is derived when it is
 // shown, never stored, by the friends' rule (sprint.FriendStatus): held, else
 // up only on her session's evidence within its window (a wake ping her session
-// answered, friend health; a card of hers finished), else down. Her
+// answered, friend health; a card of hers finished), else down; a batch friend
+// whose beat is her engine's is up on that beat alone while it is fresh
+// (sprint.Beat.EnginePresence, docs/SPEC-FRIEND.md "Presence per mode"). Her
 // counts are her sprint cards' (the cards dealt to her fleet row friend.<name>,
 // read from the fleet table by where, never stored as a record here):
 // (the owner, 2026-10-02: "give friends in the friends table the same ready,
@@ -311,7 +315,8 @@ func (st *Store) FriendBeatProof(ctx context.Context, friend string, rep sprint.
 	if err != nil {
 		return sprint.Beat{}, BeatProof{}, err
 	}
-	if _, ok := r[friend]; !ok {
+	e, ok := r[friend]
+	if !ok {
 		return sprint.Beat{}, BeatProof{}, noFriend(r, friend)
 	}
 	now := st.now().UTC().Truncate(time.Second)
@@ -321,7 +326,14 @@ func (st *Store) FriendBeatProof(ctx context.Context, friend string, rep sprint.
 	} else if len(oks) == 1 && oks[0] {
 		_ = json.Unmarshal([]byte(vals[0]), &prev) // ignored: an unreadable record holds no check and no proof
 	}
-	b := sprint.Beat{At: now}
+	// her row's mode as it stands at this beat (the beat verb answers it as row_mode=; a
+	// roster entry from before the field is batch, the row's default): the friends' rule
+	// reads the beat under the mode it was taken in, so a change of mode on the row takes
+	// effect on her next beat (sprint.Beat.RowMode)
+	b := sprint.Beat{At: now, RowMode: e.Mode}
+	if b.RowMode == "" {
+		b.RowMode = config.DefaultFriendMode
+	}
 	if len(rep.Running) > 0 || rep.Working != nil || rep.Queue != nil || rep.Width != nil || !rep.Active.IsZero() {
 		b.Friend = &rep // a beat that reports nothing carries no report
 	}

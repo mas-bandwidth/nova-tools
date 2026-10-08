@@ -203,7 +203,10 @@ Presence is therefore the session's, never the daemon's:
   minutes, inside the server's fifteen (`FriendProofLive`;
   `TestASlowAnswerNeverLeavesAGap`, `TestTheProofCycleFitsTheEvidenceWindow`). A per-card harness (claude:
   a process per card) has no session for its daemon to check: its beat says no
-  check and no answer, ever, and her evidence is a card of hers finished. The
+  check and no answer, ever, and her evidence is a card of hers finished. A
+  batch friend with no session at all, whose engine is a runner of headless
+  turns beating her lanes, is up on her engine's beat and is asked no check
+  ("Presence per mode", below). The
   status file's `proof_sent` is when the server last took an answer as proof,
   and `check` prints it (`proof=sent proof_age=`). While down, her beat says so:
   `friend beat --until <t> --reason <why>` (`SessionCheck.BeatOr`), the until
@@ -1256,6 +1259,64 @@ them, docs/SPEC-SPRINT.md section 1): going down takes nothing back. Her
 unstarted cards return to ready only when the coordinator takes them
 (`friend take --all-unstarted`, or `friend down`); nothing returns them on her
 going down by itself.
+
+### Presence per mode: a batch friend's presence is her engine's beat
+
+Found dogfooding the v1.2 candidate (v1.2.0-dev.0d56536c), 2026-10-07 and 08:
+a friend with no session (her row `mode=batch`, no daemon; her engine a runner
+of headless turns beating `friend beat --working --width --running` every five
+seconds) read down twelve hours, "no session evidence: no wake ping answered
+by her session within 10m0s, no session proof on her beat within 15m0s, no
+card finished within 30m0s; her beat 3s ago is not evidence", and the deal
+skips a friend down, so she was dealt nothing: a self-starving loop (no deal,
+no finish, down, no deal). The owner, 9:20 PM ET: "Anything that we discover
+running the v1.2 candidate (dogfooding it), we have to stop and fix as critical
+and get into v1.2."
+
+The rule above has one exception, read off her beat
+(`sprint.Beat.EnginePresence`, internal/sprint/presence.go):
+
+- Her beat record carries her row's delivery mode as it stood when she beat
+  (`row_mode`, `sprint.Beat.RowMode`, stamped by the store from friend sync's
+  roster, `store.FriendBeatProof`; the beat verb answers the same word as
+  `row_mode=`). A change of mode on the row takes effect on her next beat: no
+  reinstall, no restart. A record from before the field reads as batch, the
+  row's default.
+- A beat is her engine's (`sprint.Beat.FromEngine`) when it carries her lanes'
+  report: `--width`, `--working`, `--queue` or `--running` (a runner's beat, or
+  a daemon's lanes). A daemon's bare beat, its `--check`, its `--pong`,
+  `--active`, `--build`, `--started` and `--present` carry none, and are no
+  engine's.
+- In batch mode a friend is one session her daemon pushes turns into, whose
+  beat carries no lanes, or one engine with no session, whose beat carries
+  them; the report tells the two apart. A batch friend whose beat is her
+  engine's is `up` while that beat is younger than `FriendEngineSilent`
+  (twenty minutes, the daemon's silent-stop bound, `nova-friend
+  --silent-stop`, `friend.DefaultSilentStop`: an engine that prints nothing
+  for that long is stopped, so one that beats nothing for that long is gone),
+  her evidence `engine beat 5s ago`; past it she is `down`, `engine silent for
+  <t>`, and a take refused for her says so. No session check is asked of her,
+  and no pong, proof or finish counts: her engine beating is her presence and
+  her engine silent is her absence. Held comes first, and a beat that says
+  down (`--until`, `--reason`) is down first, whatever else it carries.
+- In one-shot mode her daemon's lanes answer the session check it pushes into
+  them, and her rule stays the session's until her daemon's beat carries the
+  lanes' report; a session friend in batch mode is unchanged, her daemon's
+  beat carrying no lanes and being no evidence.
+- The row's `batch` is the daemon's delivery word (one session, every waiting
+  message in one turn) and `one-shot` its lanes; the seat's "batch friend" (an
+  engine, no session) is the first kind with a runner in the session's place.
+  The row has no presence word, so the beat's report stands for it; one
+  vocabulary for the two is owed.
+
+Tests, pure, with a fake clock and a fake row
+(internal/friend/presence_batch_test.go):
+`TestABatchFriendIsUpOnHerEnginesFreshBeat`,
+`TestABatchFriendIsDownWhenHerEngineIsSilent`,
+`TestABatchFriendIsNeverAskedASessionAnswer` (and the bound is the daemon's
+silent-stop), `TestASessionFriendsRuleIsUnchanged`,
+`TestAModeFlipTakesEffectOnTheNextBeat` (the rule, then the twin store's beat
+record carrying the mode through a flip and back, and her engine stopping).
 
 What stays: the daemon as the mailman (bus messages and dealt cards pushed
 into her session as turns), the session-answered wake ping, `HarnessWatch`

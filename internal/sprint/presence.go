@@ -5,6 +5,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/config"
 	"github.com/mas-bandwidth/nova-tools/internal/hostload"
 )
 
@@ -53,6 +54,17 @@ const (
 	// while their sessions took no turn.
 	FriendPongWindow   = 10 * time.Minute
 	FriendFinishWindow = 30 * time.Minute
+	// FriendEngineSilent is how long a batch friend's engine may beat nothing while she
+	// is up (docs/SPEC-FRIEND.md, "Presence per mode"): a friend whose row's mode is batch
+	// and whose beat is her engine's (Beat.FromEngine: it carries her lanes' report) is up
+	// while that beat is younger than this and down with "engine silent for <t>" past it,
+	// and no session answer is asked of her. It is the daemon's silent-stop bound
+	// (nova-friend --silent-stop, friend.DefaultSilentStop; a test there pins the two
+	// equal): an engine that prints nothing for that long is stopped, so one that beats
+	// nothing for that long is gone. Found dogfooding v1.2 on 2026-10-07: a friend with no
+	// session, her runner beating every five seconds with her lanes, read down "no session
+	// evidence" for twelve hours, and the deal skips a friend down, so she starved.
+	FriendEngineSilent = 20 * time.Minute
 )
 
 // Held is the status of a member the coordinator holds down.
@@ -86,6 +98,13 @@ type Beat struct {
 	// --pong: her session's answer to a SESSION CHECK, or its own bus message), zero
 	// when her beat carried none; the friend beat record keeps it under "pong".
 	Proof time.Time `json:"pong,omitzero"`
+	// RowMode is a friend's row's delivery mode as it stood when she beat (friend sync's
+	// roster entry, config.FriendMode: batch or one-shot; the beat verb answers the same
+	// as row_mode=), stamped by the store on her beat record; empty on a machine's beat
+	// and on a friend's beat from before the field, which reads as batch, the row's
+	// default. The friends' rule reads it with the beat (FriendEvidence): a change of mode
+	// on the row takes effect on her next beat.
+	RowMode string `json:"row_mode,omitempty"`
 }
 
 // FriendReport is what a friend's machinery reports with her beat, as a machine's beat
@@ -127,6 +146,28 @@ type FriendReport struct {
 // SaysDown says the beat is her daemon's word that she is down (FriendReport.Until):
 // however fresh, it never makes her up.
 func (b Beat) SaysDown() bool { return b.Friend != nil && !b.Friend.Until.IsZero() }
+
+// FromEngine says the beat is her engine's: it carries the engine's report of her
+// lanes (friend beat --width, --working, --queue or --running: a runner's beat, or a
+// daemon's lanes), which a daemon's bare beat, its check, its pong and its own facts
+// (--active, --build, --started, --present) never carry. A beat that says down carries
+// a count too (the verb writes working 0 with it) and is read as down first
+// (SaysDown), never as an engine's.
+func (b Beat) FromEngine() bool {
+	return b.Friend != nil && (b.Friend.Width != nil || b.Friend.Working != nil || b.Friend.Queue != nil || len(b.Friend.Running) > 0)
+}
+
+// EnginePresence says her presence is her engine's beat, not a session's answer
+// (docs/SPEC-FRIEND.md, "Presence per mode"): her row's mode is batch (RowMode; empty
+// is the row's default, batch) and her last beat is her engine's (FromEngine). In batch
+// mode a friend is one session her daemon pushes into, whose beat carries no lanes, or
+// one engine (a runner of headless turns, no daemon, no session) whose beat carries
+// them; the report tells the two apart. In one-shot mode her daemon's lanes answer the
+// session check it pushes into them, and her rule stays the session's until her
+// daemon's beat carries the lanes' report.
+func (b Beat) EnginePresence() bool {
+	return (b.RowMode == "" || b.RowMode == config.FriendModeBatch) && b.FromEngine()
+}
 
 // Beaten says the member has beaten at least once.
 func (b Beat) Beaten() bool { return !b.At.IsZero() }
@@ -205,7 +246,10 @@ func PresenceStatus(held bool, b Beat, now time.Time) string {
 // else down. Her beat itself, whoever sends it, is never evidence: a daemon or a
 // loop beating for her says an app is open, not that her session can work; only
 // the session's answer it carries is. Releasing a hold (friend up) is no
-// evidence either.
+// evidence either. The one exception is a batch friend whose beat is her
+// engine's (Beat.EnginePresence): she has no session to answer, and she is up
+// while her engine's beat is younger than FriendEngineSilent, else down with
+// "engine silent for <t>".
 func FriendStatus(f FriendPresence, now time.Time) string {
 	status, _ := FriendEvidence(f, now)
 	return status
@@ -223,6 +267,9 @@ func FriendEvidence(f FriendPresence, now time.Time) (string, string) {
 	}
 	if f.Beat.SaysDown() {
 		return Down, beatSaysDownWhy(f.Beat)
+	}
+	if f.Beat.EnginePresence() {
+		return engineEvidence(f.Beat, now)
 	}
 	pong := !f.Health.Seen.IsZero() && f.Health.State == Up && f.Health.Generation == f.Generation
 	if age := now.Sub(f.Health.Seen); pong && age >= 0 && age < FriendPongWindow {
@@ -257,6 +304,22 @@ func FriendEvidence(f FriendPresence, now time.Time) (string, string) {
 		why += "; her beat " + ago(now.Sub(f.Beat.At)) + " is not evidence"
 	}
 	return Down, why
+}
+
+// engineEvidence is the batch friend's rule over her engine's beat (Beat.EnginePresence):
+// up on the beat under FriendEngineSilent old, "engine beat 5s ago"; else down,
+// "engine silent for <t>", t the beat's age. No session answer, pong or finish is
+// asked of her: her engine beating is her presence, and her engine silent is her
+// absence. A beat dated after now is no evidence.
+func engineEvidence(b Beat, now time.Time) (string, string) {
+	age := now.Sub(b.At)
+	switch {
+	case age < 0:
+		return Down, "engine beat " + ago(age)
+	case age < FriendEngineSilent:
+		return Up, "engine beat " + ago(age)
+	}
+	return Down, "engine silent for " + age.Truncate(time.Second).String()
 }
 
 // beatSaysDownWhy is why a beat that says down puts her down (SaysDown): until
@@ -404,7 +467,8 @@ func StrangerNotes(s *Snapshot, names []string) Plan {
 
 // FriendDownWhy is why FriendStatus does not say up at now, in the words a take refused
 // for her names (takeOne): held by the coordinator; her beat says down, until when and why; or the session evidence she lacks as
-// FriendEvidence names it (her beat is never evidence). "" while she is up.
+// FriendEvidence names it (her beat is never evidence), or her engine silent (a batch
+// friend's, Beat.EnginePresence). "" while she is up.
 func FriendDownWhy(f FriendPresence, now time.Time) string {
 	if f.Held {
 		return "held by the coordinator (friend down)"
