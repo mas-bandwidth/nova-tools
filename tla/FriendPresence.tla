@@ -64,6 +64,26 @@
 \*                   her row never carries (only a machine's does): her
 \*                   ready card is never taken while she is up,
 \*                   ReadyTakenWhileUp
+\*   "enginesession" an engine friend is judged by the session's rule: a
+\*                   check is asked of a friend with no session, nothing
+\*                   answers, and she reads down while her engine beats (the
+\*                   finding of 2026-10-07): EngineUpOnHerBeat
+\*   "enginenostop"  an engine friend is up on her row's word alone, her
+\*                   engine silent or never beating: EngineSilentIsDown
+\*
+\* Engines (docs/SPEC-FRIEND.md, "Presence per mode", 2026-10-08): the friends
+\* whose presence is their engine's beat, not a session's answer. Such a
+\* friend has no session: a runner of headless turns beats for her, every few
+\* seconds, carrying her lanes (friend beat --working --width --running;
+\* sprint.Beat.FromEngine), and the table reads her up while that beat is
+\* younger than the bound and down, "engine silent for <t>", past it
+\* (internal/sprint/presence.go, FriendEngineSilent). No check is ever asked
+\* of her (Ping and Answer skip Engines). Per engine friend the world holds
+\* engine (running, stopped: her runner alive or gone) and beatAge (her beat's
+\* age, Bound before the first); a friend outside Engines has beatAge fixed at
+\* Bound and engine running, both unread, so the cases without engines keep
+\* their state spaces. Her harness, session and limit still move in the world
+\* and are unread by her rule, as the app is by every rule.
 \*
 \* The take (internal/sprint/steps_work.go takeSeat; the card
 \* take-by-id-reads-the-friends-presence.w1): a card on a friend's row is
@@ -76,15 +96,15 @@
 
 EXTENDS Naturals, FiniteSets
 
-CONSTANTS Friends, Cards, Bound, MaxEvents, Broken, Watched
+CONSTANTS Friends, Cards, Bound, MaxEvents, Broken, Watched, Engines
 
-ASSUME Bound >= 1 /\ MaxEvents \in Nat /\ Watched \subseteq Friends
+ASSUME Bound >= 1 /\ MaxEvents \in Nat /\ Watched \subseteq Friends /\ Engines \subseteq Friends
 
-VARIABLES harness, closedAge, session, limit, daemon, app,
+VARIABLES harness, closedAge, session, limit, daemon, app, engine, beatAge,
           held, answered, answerAge, pending, holder, takenFrom, taken, events
-vars == <<harness, closedAge, session, limit, daemon, app,
+vars == <<harness, closedAge, session, limit, daemon, app, engine, beatAge,
           held, answered, answerAge, pending, holder, takenFrom, taken, events>>
-world == <<harness, closedAge, session, limit, daemon, app>>
+world == <<harness, closedAge, session, limit, daemon, app, engine, beatAge>>
 
 Pool == "pool"
 NoOne == "none"
@@ -96,6 +116,8 @@ TypeOK ==
   /\ limit \in [Friends -> {"none", "limited"}]
   /\ daemon \in [Friends -> {"beating"}]
   /\ app \in [Friends -> {"seen", "notseen"}]
+  /\ engine \in [Friends -> {"running", "stopped"}]
+  /\ beatAge \in [Friends -> 0..Bound]
   /\ held \in [Friends -> BOOLEAN]
   /\ answered \in [Friends -> BOOLEAN]
   /\ answerAge \in [Friends -> 0..Bound]
@@ -105,17 +127,24 @@ TypeOK ==
   /\ taken \in [Cards -> BOOLEAN]
   /\ events \in 0..MaxEvents
 
-\* The table's word over any held/answered/answerAge, so a step can read the
-\* word its own result shows. The witnesses let the beat or a stale answer
-\* say up.
-UpIn(f, ans, age) ==
-  CASE Broken = "beatup"   -> daemon[f] = "beating"
-    [] Broken = "appup"    -> app[f] = "seen"
-    [] Broken = "noexpiry" -> ans[f]
-    [] OTHER               -> ans[f] /\ age[f] < Bound
-StatusIn(f, hd, ans, age) ==
-  IF hd[f] THEN "held" ELSE IF UpIn(f, ans, age) THEN "up" ELSE "down"
-Status(f) == StatusIn(f, held, answered, answerAge)
+\* The table's word over any held/answered/answerAge/beatAge, so a step can
+\* read the word its own result shows. The witnesses let the beat or a stale
+\* answer say up. An engine friend's word is her engine's beat under the
+\* bound (the design); the witnesses judge her by the session's rule, or by
+\* her row's word alone.
+UpIn(f, ans, age, bage) ==
+  IF f \in Engines THEN
+    CASE Broken = "enginesession" -> ans[f] /\ age[f] < Bound
+      [] Broken = "enginenostop"  -> TRUE
+      [] OTHER                    -> bage[f] < Bound
+  ELSE
+    CASE Broken = "beatup"   -> daemon[f] = "beating"
+      [] Broken = "appup"    -> app[f] = "seen"
+      [] Broken = "noexpiry" -> ans[f]
+      [] OTHER               -> ans[f] /\ age[f] < Bound
+StatusIn(f, hd, ans, age, bage) ==
+  IF hd[f] THEN "held" ELSE IF UpIn(f, ans, age, bage) THEN "up" ELSE "down"
+Status(f) == StatusIn(f, held, answered, answerAge, beatAge)
 
 CardsOf(f) == {c \in Cards : holder[c] = f}
 
@@ -123,15 +152,15 @@ CardsOf(f) == {c \in Cards : holder[c] = f}
 \* withdrawal and the tick's rebalance. The witness "lazywithdraw" takes back
 \* nothing here.
 Lazy == Broken = "lazywithdraw"
-TakeBack(hd, ans, age) ==
+TakeBack(hd, ans, age, bage) ==
   /\ holder' = [c \in Cards |->
-                  IF ~Lazy /\ holder[c] \in Friends /\ StatusIn(holder[c], hd, ans, age) # "up"
+                  IF ~Lazy /\ holder[c] \in Friends /\ StatusIn(holder[c], hd, ans, age, bage) # "up"
                     THEN Pool ELSE holder[c]]
   /\ takenFrom' = [c \in Cards |->
-                     IF ~Lazy /\ holder[c] \in Friends /\ StatusIn(holder[c], hd, ans, age) # "up"
+                     IF ~Lazy /\ holder[c] \in Friends /\ StatusIn(holder[c], hd, ans, age, bage) # "up"
                        THEN holder[c] ELSE takenFrom[c]]
   /\ taken' = [c \in Cards |->
-                 IF ~Lazy /\ holder[c] \in Friends /\ StatusIn(holder[c], hd, ans, age) # "up"
+                 IF ~Lazy /\ holder[c] \in Friends /\ StatusIn(holder[c], hd, ans, age, bage) # "up"
                    THEN FALSE ELSE taken[c]]
 
 Init ==
@@ -141,6 +170,8 @@ Init ==
   /\ limit = [f \in Friends |-> "none"]
   /\ daemon = [f \in Friends |-> "beating"]
   /\ app \in {a \in [Friends -> {"seen", "notseen"}] : \A f \in Friends \ Watched : a[f] = "notseen"}
+  /\ engine = [f \in Friends |-> "running"]
+  /\ beatAge = [f \in Friends |-> Bound]
   /\ held = [f \in Friends |-> FALSE]
   /\ answered = [f \in Friends |-> FALSE]
   /\ answerAge = [f \in Friends |-> Bound]
@@ -161,23 +192,23 @@ Close(f) ==
   /\ harness' = [harness EXCEPT ![f] = "closed"]
   /\ closedAge' = [closedAge EXCEPT ![f] = 0]
   /\ events' = events + 1
-  /\ UNCHANGED <<session, limit, daemon, app, held, answered, answerAge, pending, holder, takenFrom, taken>>
+  /\ UNCHANGED <<session, limit, daemon, app, engine, beatAge, held, answered, answerAge, pending, holder, takenFrom, taken>>
 Open(f) ==
   /\ harness[f] = "closed"
   /\ harness' = [harness EXCEPT ![f] = "running"]
   /\ closedAge' = [closedAge EXCEPT ![f] = 0]
-  /\ UNCHANGED <<session, limit, daemon, app, held, answered, answerAge, pending, holder, takenFrom, taken, events>>
+  /\ UNCHANGED <<session, limit, daemon, app, engine, beatAge, held, answered, answerAge, pending, holder, takenFrom, taken, events>>
 
 \* The session goes silent, or takes turns again.
 Silence(f) ==
   /\ session[f] = "answering" /\ events < MaxEvents
   /\ session' = [session EXCEPT ![f] = "silent"]
   /\ events' = events + 1
-  /\ UNCHANGED <<harness, closedAge, limit, daemon, app, held, answered, answerAge, pending, holder, takenFrom, taken>>
+  /\ UNCHANGED <<harness, closedAge, limit, daemon, app, engine, beatAge, held, answered, answerAge, pending, holder, takenFrom, taken>>
 Resume(f) ==
   /\ session[f] = "silent"
   /\ session' = [session EXCEPT ![f] = "answering"]
-  /\ UNCHANGED <<harness, closedAge, limit, daemon, app, held, answered, answerAge, pending, holder, takenFrom, taken, events>>
+  /\ UNCHANGED <<harness, closedAge, limit, daemon, app, engine, beatAge, held, answered, answerAge, pending, holder, takenFrom, taken, events>>
 
 \* The process-table look moves on its own: an app opens or closes with no
 \* tie to the session (a headless run, an app left open). Neither a
@@ -185,36 +216,39 @@ Resume(f) ==
 AppMoves(f) ==
   /\ f \in Watched
   /\ app' = [app EXCEPT ![f] = IF app[f] = "seen" THEN "notseen" ELSE "seen"]
-  /\ UNCHANGED <<harness, closedAge, session, limit, daemon, held, answered, answerAge, pending, holder, takenFrom, taken, events>>
+  /\ UNCHANGED <<harness, closedAge, session, limit, daemon, engine, beatAge, held, answered, answerAge, pending, holder, takenFrom, taken, events>>
 
 \* The provider's limit hits, and later resets.
 LimitHit(f) ==
   /\ limit[f] = "none" /\ events < MaxEvents
   /\ limit' = [limit EXCEPT ![f] = "limited"]
   /\ events' = events + 1
-  /\ UNCHANGED <<harness, closedAge, session, daemon, app, held, answered, answerAge, pending, holder, takenFrom, taken>>
+  /\ UNCHANGED <<harness, closedAge, session, daemon, app, engine, beatAge, held, answered, answerAge, pending, holder, takenFrom, taken>>
 LimitReset(f) ==
   /\ limit[f] = "limited"
   /\ limit' = [limit EXCEPT ![f] = "none"]
-  /\ UNCHANGED <<harness, closedAge, session, daemon, app, held, answered, answerAge, pending, holder, takenFrom, taken, events>>
+  /\ UNCHANGED <<harness, closedAge, session, daemon, app, engine, beatAge, held, answered, answerAge, pending, holder, takenFrom, taken, events>>
 
 \* ------------------------------------------------------------- the table
 
 \* The coordinator pings: a fresh nonce is open for the friend
 \* (the daemon's session check, docs/SPEC-FRIEND.md "Presence").
 \* The process table is never read here; the witness "appholds" lets the
-\* app not seen hold the beat, and with it the check, back.
+\* app not seen hold the beat, and with it the check, back. An engine friend
+\* has no session and is never asked; the witness "enginesession" asks her.
 Ping(f) ==
   /\ ~pending[f]
+  /\ f \notin Engines \/ Broken = "enginesession"
   /\ Broken # "appholds" \/ app[f] = "seen"
   /\ pending' = [pending EXCEPT ![f] = TRUE]
-  /\ UNCHANGED <<harness, closedAge, session, limit, daemon, app, held, answered, answerAge, holder, takenFrom, taken, events>>
+  /\ UNCHANGED <<harness, closedAge, session, limit, daemon, app, engine, beatAge, held, answered, answerAge, holder, takenFrom, taken, events>>
 
 \* The session answers the open nonce: only a running harness, a session
 \* that takes turns and a provider not limiting it can (the witness
 \* "closedanswers" counts an answer from a closed harness). The answer's age
 \* starts again.
 CanAnswer(f) ==
+  /\ f \notin Engines
   /\ harness[f] = "running" \/ Broken = "closedanswers"
   /\ session[f] = "answering"
   /\ limit[f] = "none"
@@ -223,28 +257,54 @@ Answer(f) ==
   /\ pending' = [pending EXCEPT ![f] = FALSE]
   /\ answered' = [answered EXCEPT ![f] = TRUE]
   /\ answerAge' = [answerAge EXCEPT ![f] = 0]
-  /\ UNCHANGED <<harness, closedAge, session, limit, daemon, app, held, holder, takenFrom, taken, events>>
+  /\ UNCHANGED <<harness, closedAge, session, limit, daemon, app, engine, beatAge, held, holder, takenFrom, taken, events>>
 
 \* The coordinator holds a friend, and the hold takes back the friend's cards
 \* in the same step; or releases the friend.
 Hold(f) ==
   /\ ~held[f] /\ events < MaxEvents
   /\ held' = [held EXCEPT ![f] = TRUE]
-  /\ TakeBack(held', answered, answerAge)
+  /\ TakeBack(held', answered, answerAge, beatAge)
   /\ events' = events + 1
-  /\ UNCHANGED <<harness, closedAge, session, limit, daemon, app, answered, answerAge, pending>>
+  /\ UNCHANGED <<harness, closedAge, session, limit, daemon, app, engine, beatAge, answered, answerAge, pending>>
 Release(f) ==
   /\ held[f]
   /\ held' = [held EXCEPT ![f] = FALSE]
-  /\ UNCHANGED <<harness, closedAge, session, limit, daemon, app, answered, answerAge, pending, holder, takenFrom, taken, events>>
+  /\ UNCHANGED <<harness, closedAge, session, limit, daemon, app, engine, beatAge, answered, answerAge, pending, holder, takenFrom, taken, events>>
 
-\* Time passes: every age one older, and the tick's rebalance takes back the
-\* cards of every friend no longer up, in the same step.
+\* Time passes: every age one older (an engine friend's beat too), and the
+\* tick's rebalance takes back the cards of every friend no longer up, in the
+\* same step.
 Tick ==
   /\ answerAge' = [f \in Friends |-> Up1(answerAge[f])]
   /\ closedAge' = [f \in Friends |-> IF harness[f] = "closed" THEN Up1(closedAge[f]) ELSE 0]
-  /\ TakeBack(held, answered, answerAge')
-  /\ UNCHANGED <<harness, session, limit, daemon, app, held, answered, pending, events>>
+  /\ beatAge' = [f \in Friends |-> IF f \in Engines THEN Up1(beatAge[f]) ELSE beatAge[f]]
+  /\ TakeBack(held, answered, answerAge', beatAge')
+  /\ UNCHANGED <<harness, session, limit, daemon, app, engine, held, answered, pending, events>>
+
+\* ------------------------------------------------------------- the engine
+
+\* An engine friend's engine beats (her runner's friend beat, carrying her
+\* lanes), while it runs: her beat's age starts again, and the table reads
+\* her up on it. Only Engines have one.
+EngineBeats(f) ==
+  /\ f \in Engines /\ engine[f] = "running"
+  /\ beatAge' = [beatAge EXCEPT ![f] = 0]
+  /\ UNCHANGED <<harness, closedAge, session, limit, daemon, app, engine, held, answered, answerAge, pending, holder, takenFrom, taken, events>>
+
+\* Her engine stops (a disruption) and beats no more; later it starts again.
+\* Nothing but the ticks moves her word: she is down once her beat is Bound
+\* old (EngineSilentIsDown), never at the stop itself, which the table cannot
+\* see.
+EngineStop(f) ==
+  /\ f \in Engines /\ engine[f] = "running" /\ events < MaxEvents
+  /\ engine' = [engine EXCEPT ![f] = "stopped"]
+  /\ events' = events + 1
+  /\ UNCHANGED <<harness, closedAge, session, limit, daemon, app, beatAge, held, answered, answerAge, pending, holder, takenFrom, taken>>
+EngineStart(f) ==
+  /\ f \in Engines /\ engine[f] = "stopped"
+  /\ engine' = [engine EXCEPT ![f] = "running"]
+  /\ UNCHANGED <<harness, closedAge, session, limit, daemon, app, beatAge, held, answered, answerAge, pending, holder, takenFrom, taken, events>>
 
 \* The dealer deals a card from the pool to a friend up, never back to the
 \* friend it was last taken from. The witnesses deal to any friend not held,
@@ -256,7 +316,7 @@ Dealable(c, g) ==
 Deal(c, g) ==
   /\ Dealable(c, g)
   /\ holder' = [holder EXCEPT ![c] = g]
-  /\ UNCHANGED <<harness, closedAge, session, limit, daemon, app, held, answered, answerAge, pending, takenFrom, taken, events>>
+  /\ UNCHANGED <<harness, closedAge, session, limit, daemon, app, engine, beatAge, held, answered, answerAge, pending, takenFrom, taken, events>>
 
 \* A card ready on a friend's row is taken into working: her take, or the
 \* daemon's through the server. Admitted by Status alone; the witness reads a
@@ -266,7 +326,7 @@ Take(c) ==
   /\ holder[c] \in Friends /\ ~taken[c]
   /\ TakeAdmits(holder[c])
   /\ taken' = [taken EXCEPT ![c] = TRUE]
-  /\ UNCHANGED <<harness, closedAge, session, limit, daemon, app, held, answered, answerAge, pending, holder, takenFrom, events>>
+  /\ UNCHANGED <<harness, closedAge, session, limit, daemon, app, engine, beatAge, held, answered, answerAge, pending, holder, takenFrom, events>>
 
 \* Only under "lazywithdraw": the take-back as a step of its own, after the
 \* hold or the tick that made the friend not up.
@@ -276,13 +336,14 @@ Withdraw(f) ==
   /\ holder' = [c \in Cards |-> IF holder[c] = f THEN Pool ELSE holder[c]]
   /\ takenFrom' = [c \in Cards |-> IF holder[c] = f THEN f ELSE takenFrom[c]]
   /\ taken' = [c \in Cards |-> IF holder[c] = f THEN FALSE ELSE taken[c]]
-  /\ UNCHANGED <<harness, closedAge, session, limit, daemon, app, held, answered, answerAge, pending, events>>
+  /\ UNCHANGED <<harness, closedAge, session, limit, daemon, app, engine, beatAge, held, answered, answerAge, pending, events>>
 
 Next ==
   \/ Tick
   \/ \E f \in Friends :
        \/ Close(f) \/ Open(f) \/ AppMoves(f) \/ Silence(f) \/ Resume(f) \/ LimitHit(f) \/ LimitReset(f)
        \/ Ping(f) \/ Answer(f) \/ Hold(f) \/ Release(f) \/ Withdraw(f)
+       \/ EngineBeats(f) \/ EngineStop(f) \/ EngineStart(f)
   \/ \E c \in Cards, g \in Friends : Deal(c, g)
   \/ \E c \in Cards : Take(c)
 
@@ -304,39 +365,44 @@ SpecLive ==
   /\ \A f \in Friends :
        /\ WF_vars(Open(f)) /\ WF_vars(Resume(f)) /\ WF_vars(LimitReset(f)) /\ WF_vars(Release(f))
        /\ WF_vars(Ping(f)) /\ WF_vars(Answer(f))
+       /\ WF_vars(EngineBeats(f)) /\ WF_vars(EngineStart(f))
   /\ \A c \in Cards : SF_vars(\E g \in Friends : Deal(c, g)) /\ WF_vars(Take(c))
 
 \* ---------------------------------------------------------------- the rules
 
-\* A friend shown up has a session answer younger than the bound.
-UpHasFreshAnswer == \A f \in Friends : Status(f) = "up" => answered[f] /\ answerAge[f] < Bound
+\* A friend shown up has a session answer younger than the bound. The rules
+\* of the session's evidence read Friends \ Engines: an engine friend has no
+\* session, and her rules follow at the end.
+UpHasFreshAnswer == \A f \in Friends \ Engines : Status(f) = "up" => answered[f] /\ answerAge[f] < Bound
 
 \* A friend shown up has a running harness, or one closed less than the bound
 \* ago: the table cannot see the app close, only the answers stop, so this
 \* is the most a table can promise (UpHasRunningHarnessNow, the rule read
 \* literally, fails: the finding case MCFriendPresenceFindingRunningNow).
-UpHasRunningHarness == \A f \in Friends : Status(f) = "up" => harness[f] = "running" \/ closedAge[f] < Bound
-UpHasRunningHarnessNow == \A f \in Friends : Status(f) = "up" => harness[f] = "running"
+UpHasRunningHarness == \A f \in Friends \ Engines : Status(f) = "up" => harness[f] = "running" \/ closedAge[f] < Bound
+UpHasRunningHarnessNow == \A f \in Friends \ Engines : Status(f) = "up" => harness[f] = "running"
 
 \* A closed harness is shown down within the bound: the bounded form of
 \* ClosedShownDown, a state invariant on the ages.
-ClosedDownWithinBound == \A f \in Friends : harness[f] = "closed" /\ closedAge[f] = Bound => Status(f) # "up"
+ClosedDownWithinBound == \A f \in Friends \ Engines : harness[f] = "closed" /\ closedAge[f] = Bound => Status(f) # "up"
 
 \* A held or down friend holds no card.
 NoCardOffUp == \A f \in Friends : Status(f) # "up" => CardsOf(f) = {}
 
 \* The daemon's beat alone never makes a friend up: a friend whose session
-\* never answered is not up, however the daemon beats.
-BeatAloneNeverUp == \A f \in Friends : ~answered[f] => Status(f) # "up"
+\* never answered is not up, however the daemon beats. An engine friend is
+\* the one exception, and her beat is her engine's, not a daemon's
+\* (EngineUpOnHerBeat).
+BeatAloneNeverUp == \A f \in Friends \ Engines : ~answered[f] => Status(f) # "up"
 
 \* The liveness. A closed harness is shown down (or opens again) on a clock
 \* that keeps ticking (SpecClosed or SpecLive).
-ClosedShownDown == \A f \in Friends : harness[f] = "closed" ~> (Status(f) # "up" \/ harness[f] = "running")
+ClosedShownDown == \A f \in Friends \ Engines : harness[f] = "closed" ~> (Status(f) # "up" \/ harness[f] = "running")
 
 \* A session that answers is shown up again and again, whatever the process
 \* table says: the app may stay unseen for ever (AppMoves has no fairness; a friend outside Watched never has it)
 \* and the friend still comes up on her session's answers (SpecLive).
-SessionShownUp == \A f \in Friends : []<>(Status(f) = "up")
+SessionShownUp == \A f \in Friends \ Engines : []<>(Status(f) = "up")
 
 \* A card is taken into working only for a friend up: never held, never
 \* down (the take's admission is Status, the friends' rule).
@@ -353,5 +419,27 @@ ReadyTakenWhileUp ==
 HeldCardDealtElsewhere ==
   \A c \in Cards, f \in Friends :
     (holder[c] = Pool /\ takenFrom[c] = f) ~> (holder[c] \in Friends \ {f})
+
+\* ------------------------------------------------ the engine friends' rules
+
+\* An engine friend not held is up on her engine's beat younger than the
+\* bound: no session answer is asked of her (the witness "enginesession"
+\* judges her by one, and she reads down while her engine beats).
+EngineUpOnHerBeat == \A f \in Engines : ~held[f] /\ beatAge[f] < Bound => Status(f) = "up"
+
+\* An engine friend whose engine has been silent for the bound, or never
+\* beat, is not up (the witness "enginenostop" reads her row's word alone).
+EngineSilentIsDown == \A f \in Engines : beatAge[f] = Bound => Status(f) # "up"
+
+\* No session check is ever open for an engine friend.
+EngineNeverAsked == \A f \in Engines : ~pending[f]
+
+\* The liveness. An engine that runs is shown up again and again (SpecLive:
+\* the engine beats, the hold is released, a stopped engine starts again).
+EngineShownUp == \A f \in Engines : []<>(Status(f) = "up")
+
+\* A stopped engine is shown down, or starts again, on a clock that keeps
+\* ticking (SpecClosed or SpecLive).
+EngineStoppedShownDown == \A f \in Engines : engine[f] = "stopped" ~> (Status(f) # "up" \/ engine[f] = "running")
 
 =============================================================================
