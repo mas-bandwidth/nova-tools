@@ -443,7 +443,7 @@ func (l *lander) gateStage(ctx context.Context, dir string) (*bench.MirrorStage,
 	if err != nil {
 		return nil, err
 	}
-	dirty, err := l.git(ctx, dir, "status", "--porcelain")
+	dirty, err := l.git(ctx, dir, "status", "--porcelain", "--untracked-files=no")
 	if err != nil {
 		return nil, err
 	}
