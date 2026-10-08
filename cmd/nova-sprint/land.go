@@ -1011,6 +1011,20 @@ func againRemedy(stream string) string {
 	return "run land again, which rereads the queue and lets its checks decide (where the cards are as they were, their merges and push are no-ops and the report records them; a card reworked since is merged at its new head, or meets a real conflict): nova-sprint land --stream " + stream
 }
 
+// stagedParent is the first parent of the pushed tip, the link tipCarried walks.
+// A root commit, or a tip git cannot resolve, has none: only that tip is then
+// known to be carried, never an earlier landing whose commit is not linked.
+func stagedParent(l *lander, b landBatch) string {
+	if l == nil || b.Dir == "" || b.Tip == "" {
+		return ""
+	}
+	out, err := l.git(context.Background(), b.Dir, "rev-parse", "--verify", b.Tip+"^")
+	if err != nil {
+		return ""
+	}
+	return out
+}
+
 // landed reports a pushed batch through the merge step; false (and the line
 // FAILED, with land again as the remedy) when the store did not take it.
 func (l *lander) landed(b landBatch, stream string, pins []landCard) bool {
@@ -1027,7 +1041,9 @@ func (l *lander) landed(b landBatch, stream string, pins []landCard) bool {
 	if l.check != "" {
 		evidence = "land: the check " + l.check + " green at " + b.Tip + ", pushed to " + b.Base
 	}
-	l.staged = &sprint.Milestone{Repo: b.Repo, Ref: b.Base, Commit: b.Tip, Evidence: evidence}
+	// Parent is the pushed tip's first parent. tipCarried walks that link and does
+	// not treat an earlier landing stamp as ancestry.
+	l.staged = &sprint.Milestone{Repo: b.Repo, Ref: b.Base, Commit: b.Tip, Parent: stagedParent(l, b), Evidence: evidence}
 	res, err := l.step(sprint.MergeReq{Stream: stream, Batch: len(ids), Who: l.c.actor}, pins)
 	l.staged = nil
 	if b.Times != nil {

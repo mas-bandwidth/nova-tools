@@ -32,6 +32,7 @@ const (
 	FieldStagedRepo     = "staged_repo"
 	FieldStagedRef      = "staged_ref"
 	FieldStagedCommit   = "staged_commit"
+	FieldStagedParent   = "staged_parent"
 	FieldStagedEvidence = "staged_evidence"
 
 	FieldVerified         = "verified"
@@ -69,12 +70,14 @@ const (
 // DefaultDevRef is the ref a promotion targets when it names none.
 const DefaultDevRef = "dev"
 
-// Milestone is one delivery record: the repository, the target ref, the commit and the gate or
-// review evidence. Empty fields are not known to the caller.
+// Milestone is one delivery record: the repository, the target ref, the commit, that commit's
+// first parent (Parent: the ancestry tipCarried walks, because the store holds no git) and the
+// gate or review evidence. Empty fields are not known to the caller.
 type Milestone struct {
 	Repo     string `json:",omitempty"`
 	Ref      string `json:",omitempty"`
 	Commit   string `json:",omitempty"`
+	Parent   string `json:",omitempty"`
 	Evidence string `json:",omitempty"`
 }
 
@@ -84,7 +87,7 @@ func stagedSet(c *Card, m *Milestone) map[string]string {
 	out := map[string]string{}
 	ref := c.F("base")
 	if m != nil {
-		out[FieldStagedRepo], out[FieldStagedCommit], out[FieldStagedEvidence] = m.Repo, m.Commit, m.Evidence
+		out[FieldStagedRepo], out[FieldStagedCommit], out[FieldStagedParent], out[FieldStagedEvidence] = m.Repo, m.Commit, m.Parent, m.Evidence
 		if m.Ref != "" {
 			ref = m.Ref
 		}
@@ -339,34 +342,37 @@ func promotedCards(s *Snapshot, r PromotedReq) ([]*Card, string, string) {
 }
 
 // tipCarried is the landed primaries not yet verified that the commit tip of branch carries,
-// oldest landing first: the cards staged on branch whose landing is the one that staged tip
-// (its staged_commit) or landed before it. The store holds no git, so the landing that pushed
-// tip is the bound: a card the lander pushed after the promotion froze its tip (promote cuts
-// promo/<date>-<n> there, then waits on the queue) landed after that landing and is not
-// carried. No branch, no tip, or a tip no landing on branch staged: none, since nothing says
-// which landings reached dev (tipUnknown says why). A landing in the same second as tip's from
-// another batch is left for the next promotion, never counted early. tla/PromoteDelivery.tla's
+// oldest landing first. A card counts only when its staged commit is tip, or an ancestor of
+// tip by the staged_parent links the landings recorded (the first parent of each staged
+// commit). The store holds no git, so the branch name and the landing stamp are not ancestry:
+// a card staged on the branch whose commit is not in that chain is not carried, even when it
+// landed before the tip, and a card pushed after the promotion froze its tip (promote cuts
+// promo/<date>-<n> there, then waits on the queue) is a descendant or a side commit and is
+// not carried either. No branch, no tip, or a tip no landing on branch staged: none, since
+// nothing says which landings reached dev (tipUnknown says why). tla/PromoteDelivery.tla's
 // IgnoreTip witness is the fallback without that bound: VerifiedInDev fails.
 func tipCarried(s *Snapshot, branch, tip string) []*Card {
 	if branch == "" || tip == "" {
 		return nil
 	}
-	same := sameCommit
-	var cutoff string
+	var on []*Card
+	stagedTip := false
 	for _, c := range s.Work.Column(Landed) {
-		if !IsSentinel(c) && StagedRef(c) == branch && same(c.F(FieldStagedCommit), tip) && c.F("landed") > cutoff {
-			cutoff = c.F("landed")
-		}
-	}
-	if cutoff == "" {
-		return nil
-	}
-	var out []*Card
-	for _, c := range s.Work.Column(Landed) {
-		if IsSentinel(c) || c.F(FieldVerified) != "" || StagedRef(c) != branch {
+		if IsSentinel(c) || StagedRef(c) != branch {
 			continue
 		}
-		if l := c.F("landed"); l > cutoff || (l == cutoff && !same(c.F(FieldStagedCommit), tip)) {
+		on = append(on, c)
+		if sameCommit(c.F(FieldStagedCommit), tip) {
+			stagedTip = true
+		}
+	}
+	if !stagedTip {
+		return nil
+	}
+	anc := ancestorCommits(on, tip)
+	var out []*Card
+	for _, c := range on {
+		if c.F(FieldVerified) != "" || !commitAmong(c.F(FieldStagedCommit), anc) {
 			continue
 		}
 		if t, err := time.Parse(time.RFC3339, c.F("landed")); err != nil || t.After(s.Now) {
@@ -376,6 +382,75 @@ func tipCarried(s *Snapshot, branch, tip string) []*Card {
 	}
 	slices.SortStableFunc(out, func(a, b *Card) int { return strings.Compare(a.F("landed"), b.F("landed")) })
 	return out
+}
+
+// ancestorCommits is tip and every commit reached by walking staged_parent from it across
+// the cards. A prefix and its full sha are one commit (sameCommit). A parent that no card
+// staged ends the walk: the store has no further link.
+func ancestorCommits(cards []*Card, tip string) []string {
+	parents := map[int][]string{}
+	var names []string
+	index := func(commit string) int {
+		for i, name := range names {
+			if sameCommit(name, commit) {
+				return i
+			}
+		}
+		return -1
+	}
+	for _, c := range cards {
+		commit := c.F(FieldStagedCommit)
+		if commit == "" {
+			continue
+		}
+		i := index(commit)
+		if i < 0 {
+			names = append(names, commit)
+			i = len(names) - 1
+		}
+		if p := c.F(FieldStagedParent); p != "" {
+			have := false
+			for _, old := range parents[i] {
+				if sameCommit(old, p) {
+					have = true
+					break
+				}
+			}
+			if !have {
+				parents[i] = append(parents[i], p)
+			}
+		}
+	}
+	var anc []string
+	var walk func(string)
+	walk = func(commit string) {
+		if commit == "" {
+			return
+		}
+		for _, have := range anc {
+			if sameCommit(have, commit) {
+				return
+			}
+		}
+		anc = append(anc, commit)
+		if i := index(commit); i >= 0 {
+			for _, p := range parents[i] {
+				walk(p)
+			}
+		}
+	}
+	walk(tip)
+	return anc
+}
+
+// commitAmong says commit names one of anc.
+func commitAmong(commit string, anc []string) bool {
+	for _, a := range anc {
+		if sameCommit(commit, a) {
+			return true
+		}
+	}
+	return false
 }
 
 // sameCommit says a and b name one commit: both given, either a prefix of the other.

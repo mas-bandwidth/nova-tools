@@ -160,7 +160,7 @@ type PromotedReq struct {
 	Evidence string `json:",omitempty"`
 	// Cards is the landed cards the promoted range carried (the caller's fact: their land
 	// commits are between the last promotion and the tip). Without them, the cards Tip carried
-	// on Branch are verified (tipCarried: the landing that staged Tip and those before it); with
+	// on Branch are verified (tipCarried: a staged commit that is Tip or an ancestor of it); with
 	// no Branch or no Tip, none is.
 	Cards []string `json:",omitempty"`
 	// Failed is why the promotion failed: recorded on the work table, verifying nothing, and

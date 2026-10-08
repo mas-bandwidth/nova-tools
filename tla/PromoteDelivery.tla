@@ -28,8 +28,8 @@
 \* landing on the live branch while the queue runs); merge the frozen tip into
 \* dev, the record naming the cards it carried (--cards: the range's land
 \* commits, the cards on the frozen tip not yet in dev), the branch and its tip
-\* (--branch --tip: the cards staged on it at or before the landing that staged
-\* the tip), or neither; a promotion that fails; install dev's content on a
+\* (--branch --tip: the cards staged on it whose staged commit is an ancestor
+\* of the tip), or neither; a promotion that fails; install dev's content on a
 \* target.
 \*
 \* THE BROKEN SWITCHES. VerifyAllLanded is the old count (every card landed

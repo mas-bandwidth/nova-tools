@@ -67,9 +67,9 @@ func (a *app) promoteOnTick(ctx context.Context, stdout io.Writer) {
 // promotion's merge does the same. A merge records `promoted --sha` with the
 // live branch and the frozen tip (`promote.tip`, not a later origin tip) and
 // not `--cards`: `--cards` would verify that list and skip the tip bound, so
-// the store verifies in dev only the cards that frozen tip carried
-// (docs/SPEC-SPRINT.md section 7, delivery milestones). Every forge call goes
-// through promoteForge (promote_forge.go).
+// the store verifies in dev only the cards whose staged commit is that frozen
+// tip or an ancestor of it (docs/SPEC-SPRINT.md section 7, delivery milestones).
+// Every forge call goes through promoteForge (promote_forge.go).
 
 // promoteDecisions are the one judgment a failed merge-group run raises.
 var promoteDecisions = []string{"fix-and-recut", "skip"}
@@ -1108,8 +1108,8 @@ func (a *app) cmdPromotedDelivery(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("promoted")
 	sha := fs.String("sha", "", "the merged result on the target, as the merge names it (the merge commit, or the squash or rebase commit), 7 to 40 hex digits; required unless --failed")
 	failed := fs.String("failed", "", "the promotion did not merge: why (the failing check, the queue's refusal); recorded, no card is verified, and it stands until a promotion merges")
-	branch := fs.String("branch", "", "the branch promoted, the sprint branch: with --tip, the cards staged on it at or before the landing that staged the tip are verified in dev")
-	tip := fs.String("tip", "", "the commit of --branch that was promoted (the frozen tip): it bounds the cards --branch verifies; without it --branch verifies none")
+	branch := fs.String("branch", "", "the branch promoted, the sprint branch: with --tip, the cards whose staged commit is the tip or an ancestor of it are verified in dev")
+	tip := fs.String("tip", "", "the commit of --branch that was promoted (the frozen tip): --branch verifies a card only when its staged commit is this tip or an ancestor of it; without it --branch verifies none")
 	target := fs.String("target", "", "the ref the promotion merged into (default dev)")
 	repo := fs.String("repo", "", "the repository, owner/name")
 	evidence := fs.String("evidence", "", "the gate's or the review's evidence: the pull request, the merge-queue entry, the run")
