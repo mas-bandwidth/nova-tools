@@ -160,7 +160,9 @@ func TestAStreamsTotalIsEveryRecordOfEveryCard(t *testing.T) {
 	tc := StreamTierCosts(s)["s1"]
 	assert.Equal(t, "$8.50", tc.TotalCost)
 	assert.Equal(t, 1, tc.UnpricedRuns)
-	assert.Equal(t, "$5.00", tc.PerLanded)
+	assert.Equal(t, CostUnknown, tc.PerLanded, "a record unpriced: the complete spend is unknown, never the priced $8.50 over the one landed card")
+	assert.Equal(t, "$5.00", tc.CostWork)
+	assert.Equal(t, "$3.50", tc.CostUnanswered)
 	assert.Empty(t, tc.Unreconciled)
 }
 

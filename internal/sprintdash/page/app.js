@@ -296,15 +296,24 @@ function renderStreams(d) {
   });
   var rank = function (k) { return RANK[statusOf[k]] == null ? 3.5 : RANK[statusOf[k]]; };
   var keys = streamOrder(d).filter(function (k) { return showArchived || !arch[k]; }).sort(function (a, b) { return rank(a) - rank(b) || (a < b ? -1 : a > b ? 1 : 0); });
-  var sum = { cost: 0, totalCost: 0, workCost: 0, readCost: 0, unreconciled: 0, unpriced: 0, actual: 0, estimated: 0, tokens: 0, coverUnpriced: 0, coverRecords: 0, dropped: 0, coverageKnown: false }, held = 0, landedStreams = 0, prevRank = null;
+  var sum = { cost: 0, totalCost: 0, workCost: 0, readCost: 0, costWork: 0, costReads: 0, costLand: 0, costUnanswered: 0, sawParts: false, unreconciled: 0, unpriced: 0, actual: 0, estimated: 0, tokens: 0, coverUnpriced: 0, coverRecords: 0, dropped: 0, coverageKnown: false }, held = 0, landedStreams = 0, prevRank = null;
   // the epoch's spend, every stream's, the archived ones' too: the cost tile's scope once the
   // sprint is done (where --json's done), when the table's streams are all archived
-  var epoch = { totalCost: 0, workCost: 0, readCost: 0, unpriced: 0, actual: 0, estimated: 0, tokens: 0, coverUnpriced: 0, coverRecords: 0, dropped: 0, coverageKnown: false };
+  var epoch = { totalCost: 0, workCost: 0, readCost: 0, costWork: 0, costReads: 0, costLand: 0, costUnanswered: 0, sawParts: false, unpriced: 0, actual: 0, estimated: 0, tokens: 0, coverUnpriced: 0, coverRecords: 0, dropped: 0, coverageKnown: false };
+  // the four parts of the complete spend, beside total_cost (cost_work, cost_reads,
+  // cost_land, cost_unanswered). Absent on a record that has not been counted yet.
+  var takeParts = function (into, sc) {
+    [["costWork", "cost_work"], ["costReads", "cost_reads"], ["costLand", "cost_land"], ["costUnanswered", "cost_unanswered"]].forEach(function (p) {
+      if (sc[p[1]]) into.sawParts = true;
+      var n = cents(sc[p[1]]); if (n) into[p[0]] += n;
+    });
+  };
   streamOrder(d).forEach(function (k) {
     var sc = (d.stream_costs || {})[k] || {};
     var tc = cents(sc.total_cost); if (tc) epoch.totalCost += tc;
     var wc = cents(sc.work_cost); if (wc) epoch.workCost += wc;
     var rc = cents(sc.read_cost); if (rc) epoch.readCost += rc;
+    takeParts(epoch, sc);
     epoch.unpriced += int(sc.unpriced_runs);
     addCoverage(epoch, sc);
   });
@@ -333,6 +342,7 @@ function renderStreams(d) {
       // the reads beside the work: the same total split by kind (sprint.TierCosts)
       var wc = cents(sc.work_cost); if (wc) sum.workCost += wc;
       var rc = cents(sc.read_cost); if (rc) sum.readCost += rc;
+      takeParts(sum, sc);
       sum.unpriced += int(sc.unpriced_runs);
       addCoverage(sum, sc);
     }
@@ -644,7 +654,9 @@ function renderHero(d, s) {
   var split = both ? money(c.workCost) + " work \u00b7 " + money(c.readCost) + " reads (" + Math.round(100 * c.readCost / both) + "%)" : "";
   var per = !landed ? "" : c.unpriced ? "per card unknown" : money(Math.ceil(recorded / landed)) + " per card";
   var unpriced = c.unpriced ? c.unpriced + " runs unpriced" : "";
-  setHTML($("cost-per"), [per, split, unpriced].filter(Boolean).join(" \u00b7 ") || " ");
+  // the four parts beside total_cost, when the where record carries them
+  var four = c.sawParts ? [money(c.costWork) + " cost_work", money(c.costReads) + " cost_reads", money(c.costLand) + " cost_land", money(c.costUnanswered) + " cost_unanswered"].join(" \u00b7 ") : "";
+  setHTML($("cost-per"), [per, split, four, unpriced].filter(Boolean).join(" \u00b7 ") || " ");
   setTitle($("cost-per"), readerSpendTitle(d, d.done ? null : archivedSet(d)));
   // what the providers counted beyond the records is the epoch's (sprint.UnreconciledSpend,
   // every day since the epoch began), never added into the tile: its own line, its scope named.

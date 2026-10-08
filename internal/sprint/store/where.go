@@ -124,7 +124,13 @@ func (st *Store) keepWhere(ctx context.Context, m Machine) error {
 	if r, ok := readWhere(vals[0], oks[0]); ok && r.Epoch == st.epoch && r.Rev == shapes[0].Revision && r.FleetRev == shapes[1].Revision {
 		return nil
 	}
-	_ = st.statsRecordOf(vals[1], oks[1]) // ignored: the permissive read records an unreadable stats note; this headline uses the snapshot
+	// The stats record is read in this exchange with the where record, permissively: an
+	// unreadable one records its note. A streams tidy does not replace per_landed: the record
+	// keeps the complete spend over the epoch's landed cards (sprint.StreamTierCosts, whereOf).
+	// The cost cell is the tidy window (sprint.StreamCostSince, the mirror sync);
+	// sprint.PerLandedSince stays the window over that cell and is not written onto the where
+	// record.
+	_ = st.statsRecordOf(vals[1], oks[1])
 	tw := st.twin()
 	if !tw.mu.TryLock() {
 		return nil

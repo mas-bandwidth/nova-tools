@@ -17,39 +17,42 @@ import (
 // what the sprint spends by tier and per landed card, counted by the tick from the
 // sprint it reads anyway (the where record, store/where.go) and never from per-card
 // reads at `where`: the cards' tiers from their briefs' tier lines, each stream's
-// dollars per landed card, and each stream's spend split by the tier its attempts ran
-// on (the cost records' tier, not the card's ceiling: a flash card escalated to pro
-// shows both).
+// complete dollars per landed card, and each stream's spend split by the tier its
+// attempts ran on (the cost records' tier, not the card's ceiling: a flash card
+// escalated to pro shows both).
+
+// CostParts is the complete recorded spend in four parts, dollars and cents rounded
+// up (cardcost.Cents): work attempts, reads, the lander's run, and runs that ended
+// with no result. A part that priced nothing is "". TotalCost is those four summed
+// exactly, then rounded.
+type CostParts struct {
+	CostWork       string `json:"cost_work,omitempty"`
+	CostReads      string `json:"cost_reads,omitempty"`
+	CostLand       string `json:"cost_land,omitempty"`
+	CostUnanswered string `json:"cost_unanswered,omitempty"`
+	TotalCost      string `json:"total_cost,omitempty"`
+}
 
 // TierCosts is one stream's tiers and spend as the where view carries them.
 type TierCosts struct {
 	// Tiers counts the stream's cards by the tier their briefs name (TierWord).
 	Tiers map[string]int `json:"tiers,omitempty"`
-	// PerLanded is the stream's cost per landed card priced whole (LandedPriced: a landed
-	// card with records, every one priced), their landed costs summed over their count,
-	// dollars and cents rounded up (MoneyText). A landed card with any record unpriced is in
-	// neither the sum nor the count, so an unpriced completion cannot make the stream read
-	// cheaper. "-" with nothing landed, CostUnknown when cards landed and none was priced
-	// whole. Its scope is PerLandedScope.
+	// PerLanded is the stream's complete recorded spend per landed card (a card landed:
+	// read, accepted and merged), in PerLandedScope: TotalCost, every recorded take, read,
+	// landing and unanswered run of every card of the stream in any column with the cards
+	// it dropped or re-cut (Dropped), over Landed, dollars and cents rounded up. It is not
+	// the landed cell, which is the work written at land. CostUnknown while any of those
+	// records is unpriced (Coverage.Unpriced): an unpriced run would read as free, and the
+	// figure would read smaller than the spend; "-" with nothing landed or no record at all.
 	PerLanded string `json:"per_landed"`
-	// Landed and LandedPriced are PerLanded's denominators: every landed card of the stream,
-	// and those of them priced whole. LandedCoverage is how the landed cards' records were
-	// priced.
-	Landed         int      `json:"landed"`
-	LandedPriced   int      `json:"landed_priced"`
-	LandedCoverage Coverage `json:"landed_coverage"`
-	// SpendPerLanded is the stream's spend per verified dev outcome (a card landed: read,
-	// accepted and merged), in SpendPerLandedScope: TotalCost, every recorded take and read
-	// of every card of the stream in any column with the cards it dropped or re-cut
-	// (Dropped), over Landed. CostUnknown while any of those records is unpriced
-	// (Coverage.Unpriced), for an unpriced run would read as free; "-" with nothing landed.
-	SpendPerLanded string `json:"spend_per_landed"`
+	// Landed is PerLanded's denominator: every landed card of the stream.
+	Landed int `json:"landed"`
 	// Coverage is how every record behind TotalCost was priced, the dropped cards' included:
 	// what TotalCost holds (actual, estimated), what bills tokens and no dollar
 	// (subscription reads), and what it cannot hold (unpriced, the unknown spend).
 	Coverage Coverage `json:"coverage"`
 	// Dropped is the spend of the stream's cards taken off the table (dropped, or re-cut and
-	// so replaced by a twin): in TotalCost, Coverage and SpendPerLanded, so that hiding a
+	// so replaced by a twin): in TotalCost, Coverage and PerLanded, so that hiding a
 	// card's spend never improves the stream's figures. It is the control card's record
 	// (DroppedSpendFields) once that record names any card, and otherwise the cards the
 	// snapshot still holds off the table, attributed by the stream field. The two are never
@@ -74,10 +77,21 @@ type TierCosts struct {
 	// rest is unknown.
 	TotalCost string `json:"total_cost,omitempty"`
 	// WorkCost and ReadCost split TotalCost by kind: every take's charged figure and every
-	// read's, dollars and cents rounded up; "" when nothing of that kind was priced. The
-	// dashboard shows the reads as their own number beside the work.
+	// read's, dollars and cents rounded up; "" when nothing of that kind was priced. A
+	// no-result run and a lander's run stay in WorkCost, because their kind is not read.
+	// The dashboard shows the reads as their own number beside the work.
 	WorkCost string `json:"work_cost,omitempty"`
 	ReadCost string `json:"read_cost,omitempty"`
+	// CostWork, CostReads, CostLand and CostUnanswered are the complete spend in four
+	// parts (CostParts): a read, a lander's run (kind land), a run whose end begins
+	// "no result", and every other priced run. A record past the list's bound stays in
+	// TotalCost and is counted with CostWork, on the card attempt's tier, and so is the
+	// dropped cards' spend (Dropped), which keeps no run of its own: the four parts sum to
+	// TotalCost. "" when that part priced nothing.
+	CostWork       string `json:"cost_work,omitempty"`
+	CostReads      string `json:"cost_reads,omitempty"`
+	CostLand       string `json:"cost_land,omitempty"`
+	CostUnanswered string `json:"cost_unanswered,omitempty"`
 	// ReadTokens is the tokens of the stream's subscription reads (WhySubscription), the
 	// reads whose cost is their tokens; 0 when none.
 	ReadTokens int64 `json:"read_tokens,omitempty"`
@@ -110,13 +124,10 @@ type TierCosts struct {
 // unknown, never as the figure an unpriced run made smaller.
 const CostUnknown = "unknown"
 
-// The scopes of the two per-card figures. Each names the delivery stage it counts (a card
-// landed) and the spend it holds; a figure is compared only with the same figure of another
-// stream or of the sprint, never with the other one.
-const (
-	PerLandedScope      = "landed cards priced whole: each one's own takes and reads, over their count"
-	SpendPerLandedScope = "every recorded take and read of the stream's cards, any column, dropped and re-cut ones included, over its landed cards"
-)
+// PerLandedScope is the one per-card figure's scope: the delivery stage it counts (a card
+// landed) and the spend it holds (the complete spend, TotalCost's). It is not the landed
+// cell over the landed count (PerLandedOf), which is the work written at land.
+const PerLandedScope = "every recorded take, read, landing and unanswered run of the stream's cards, any column, dropped and re-cut ones included, over its landed cards"
 
 // Coverage is how a cost headline's records were priced: every record behind it (Records),
 // those charged at a cost the harness reported (Actual), at their tokens times the route's
@@ -261,24 +272,38 @@ func TierCounts(s *Snapshot) map[string]int {
 
 // StreamTierCosts is each stream's TierCosts, by stream, over the work table's rows.
 func StreamTierCosts(s *Snapshot) map[string]TierCosts {
-	out := map[string]TierCosts{}
+	streams, _ := CostSplits(s)
+	return streams
+}
+
+// CostSplits is each stream's TierCosts and, beside it, the same four-part spend
+// gathered by the tier the record ran on (every stream together). A record past the
+// list's bound counts with the work, on the card attempt's tier; a dropped card's spend
+// with the work, on the tier "lineage".
+func CostSplits(s *Snapshot) (map[string]TierCosts, map[string]CostParts) {
+	streams, out := map[string]TierCosts{}, map[string]CostParts{}
 	if s == nil || s.Work == nil {
-		return out
+		return streams, out
 	}
+	fold := &costFold{tiers: map[string]*partSums{}}
 	for _, st := range s.Work.Rows() {
-		out[st] = streamTierCosts(s, st)
+		streams[st] = streamTierCosts(s, fold, st)
 	}
-	return out
+	for name, p := range fold.tiers {
+		out[name] = p.parts()
+	}
+	return streams, out
 }
 
 // SprintTierCosts is the sprint's TierCosts: every stream of the work table counted as one,
 // so its sums and its denominators are exact, never added up from rounded cells, and its
-// figures are at the stages and in the scopes a stream's are.
+// figures (the four parts, the total, per landed) are at the stages and in the scopes a
+// stream's are.
 func SprintTierCosts(s *Snapshot) TierCosts {
 	if s == nil || s.Work == nil {
-		return streamTierCosts(nil)
+		return streamTierCosts(nil, nil)
 	}
-	return streamTierCosts(s, s.Work.Rows()...)
+	return streamTierCosts(s, nil, s.Work.Rows()...)
 }
 
 // unplacedSpend is the spend of the stream's cards the snapshot still holds off the table,
@@ -325,8 +350,10 @@ func perCard(usd []string, n int) string {
 	return cardcost.Cents(total.Quo(total, big.NewRat(int64(n), 1)))
 }
 
-func streamTierCosts(s *Snapshot, streams ...string) TierCosts {
-	t := TierCosts{Tiers: map[string]int{}, PerLanded: "-", SpendPerLanded: "-", CostByTier: map[string]string{},
+// streamTierCosts counts the streams as one TierCosts; fold, when not nil, gathers the four
+// parts by tier across the calls (CostSplits).
+func streamTierCosts(s *Snapshot, fold *costFold, streams ...string) TierCosts {
+	t := TierCosts{Tiers: map[string]int{}, PerLanded: "-", CostByTier: map[string]string{},
 		UnpricedByTier: map[string]int{}, ReadsToday: map[string]ReadDay{}, Readers: map[string]ReaderSpend{}}
 	if s == nil || s.Work == nil {
 		return t
@@ -334,12 +361,12 @@ func streamTierCosts(s *Snapshot, streams ...string) TierCosts {
 	byTier := map[string]*big.Rat{}
 	workCost, readCost := new(big.Rat), new(big.Rat)
 	pricedWork, pricedRead := false, false
+	parts := newPartSums()
 	day := s.Now.UTC().Format(time.DateOnly)
 	routes := map[string]Route{}
 	for _, r := range s.Routes {
 		routes[r.Name] = r
 	}
-	var landedCost []string
 	var allCost []string
 	for _, stream := range streams {
 		// off the table, still the stream's: the control card once it names any card, else
@@ -359,9 +386,12 @@ func streamTierCosts(s *Snapshot, streams ...string) TierCosts {
 			}
 			allCost = append(allCost, d.Cost)
 			// no run tier remains once the card has left: the tier "lineage", so the displayed
-			// tiers still sum to TotalCost. Work and read stay the on-table listed consumers.
+			// tiers still sum to TotalCost, and no run kind: the four parts count it with the
+			// work, so they sum to TotalCost too. Work and read stay the on-table listed consumers.
 			if usd, err := amountOf(d.Cost); err == nil && usd != nil {
 				addTier(byTier, "lineage", usd)
+				parts.add(0, usd)
+				fold.addPart("lineage", 0, usd)
 			}
 		}
 		for _, col := range States {
@@ -377,12 +407,6 @@ func streamTierCosts(s *Snapshot, streams ...string) TierCosts {
 				t.Coverage = t.Coverage.Add(cover)
 				if col == Landed {
 					t.Landed++
-					t.LandedCoverage = t.LandedCoverage.Add(cover)
-					// priced whole, or in neither the sum nor the count of PerLanded
-					if v := c.F(FieldCost); v != "" && cover.Records > 0 && cover.Unpriced == 0 {
-						t.LandedPriced++
-						landedCost = append(landedCost, v)
-					}
 				}
 				if tot.Charged != "" {
 					allCost = append(allCost, tot.Charged)
@@ -424,34 +448,39 @@ func streamTierCosts(s *Snapshot, streams ...string) TierCosts {
 					}
 					listed.Add(listed, usd)
 					addTier(byTier, tier, usd)
+					part := costPart(con)
+					parts.add(part, usd)
+					fold.addPart(tier, part, usd)
 				}
 				// the records past the list's bound: in the card's total and in no record of its
-				// list, so on the card's own tier, that the tiers sum to the total
+				// list, so on the card's own tier, that the tiers sum to the total. The four
+				// parts count that remainder with the work.
 				if all, err := amountOf(tot.Charged); err == nil && all != nil && all.Cmp(listed) > 0 {
-					addTier(byTier, attemptTier(c), new(big.Rat).Sub(all, listed))
+					rem := new(big.Rat).Sub(all, listed)
+					addTier(byTier, attemptTier(c), rem)
+					parts.add(0, rem)
+					fold.addPart(attemptTier(c), 0, rem)
 				}
 			}
 		}
 	}
 	t.Coverage = t.Coverage.Add(t.Dropped.Coverage)
 	t.UnpricedRuns = t.Coverage.Unpriced
+	// the complete spend over the landed cards: unknown while any record is unpriced, "-"
+	// with nothing landed or no record priced
 	switch {
-	case t.LandedPriced > 0:
-		t.PerLanded = perCard(landedCost, t.LandedPriced)
-	case t.Landed > 0:
+	case t.Landed == 0:
+	case t.Coverage.Unpriced > 0:
 		t.PerLanded = CostUnknown
-	}
-	switch {
-	case t.Landed > 0 && t.Coverage.Unpriced > 0:
-		t.SpendPerLanded = CostUnknown
-	case t.Landed > 0:
-		t.SpendPerLanded = perCard(allCost, t.Landed)
+	case len(allCost) > 0:
+		t.PerLanded = perCard(allCost, t.Landed)
 	}
 	if sum, ok := cardcost.Sum(allCost...); ok && len(allCost) > 0 {
 		if total, err := amountOf(sum); err == nil && total != nil {
 			t.TotalCost = cardcost.Cents(total)
 		}
 	}
+	t.CostWork, t.CostReads, t.CostLand, t.CostUnanswered = parts.money()
 	if pricedWork {
 		t.WorkCost = cardcost.Cents(workCost)
 	}
@@ -473,6 +502,90 @@ func streamTierCosts(s *Snapshot, streams ...string) TierCosts {
 	}
 	t.Reconciles = LatestReconciles(s)
 	return t
+}
+
+// costFold gathers the four-part spend by tier across streams while each is counted.
+type costFold struct {
+	tiers map[string]*partSums
+}
+
+// addPart adds usd to the tier's part; a nil fold gathers nothing.
+func (f *costFold) addPart(tier string, part int, usd *big.Rat) {
+	if f == nil {
+		return
+	}
+	p := f.tiers[tier]
+	if p == nil {
+		p = newPartSums()
+		f.tiers[tier] = p
+	}
+	p.add(part, usd)
+}
+
+// partSums is one complete cost in four parts, exact, before the cent rounding.
+// 0 is work, 1 reads, 2 the lander's run, 3 a run that ended with no result.
+type partSums struct {
+	r   [4]*big.Rat
+	saw [4]bool
+}
+
+func newPartSums() *partSums {
+	p := &partSums{}
+	for i := range p.r {
+		p.r[i] = new(big.Rat)
+	}
+	return p
+}
+
+// costPart is which of the four parts a consumer's charged figure belongs to.
+// A read is reads, a lander's run is landing, an end that begins "no result" is
+// unanswered, and every other priced run is work. Kind wins over the end, so a
+// read or a landing that ended with no result stays in its own part.
+func costPart(con Consumer) int {
+	switch {
+	case con.Kind == "read":
+		return 1
+	case con.Kind == "land":
+		return 2
+	case strings.HasPrefix(con.End, cardhdr.EndNoResult):
+		return 3
+	default:
+		return 0
+	}
+}
+
+func (p *partSums) add(part int, usd *big.Rat) {
+	p.r[part].Add(p.r[part], usd)
+	p.saw[part] = true
+}
+
+// money is the four parts as the table shows them; a part that priced nothing is "".
+func (p *partSums) money() (work, reads, land, unanswered string) {
+	out := [4]string{}
+	for i := range p.r {
+		if p.saw[i] {
+			out[i] = cardcost.Cents(p.r[i])
+		}
+	}
+	return out[0], out[1], out[2], out[3]
+}
+
+// parts is the four parts and their exact sum, rounded up to the cent.
+func (p *partSums) parts() CostParts {
+	w, r, l, u := p.money()
+	sum := new(big.Rat)
+	any := false
+	for i := range p.r {
+		if p.saw[i] {
+			any = true
+			sum.Add(sum, p.r[i])
+		}
+	}
+	total := ""
+	if any {
+		total = cardcost.Cents(sum)
+	}
+	return CostParts{CostWork: w, CostReads: r, CostLand: l, CostUnanswered: u, TotalCost: total}
 }
 
 // tierCostCents partitions the rounded-up stream total into displayed tier cents.

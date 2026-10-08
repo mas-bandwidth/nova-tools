@@ -775,7 +775,7 @@ R57. **Priced cost is optimised, not token counts.**
     Why: token counts misranked the levers.
     Done by: `nova-sprint cost reconcile`.
 
-R58. **Cost per landed card (work, reads, landing) is measured every cadence, and launching stops when it beats
+R58. **Cost per landed card (work, reads, landing, unanswered) is measured every cadence, and launching stops when it beats
 no alternative or the merge queue backs up.**
     Why: cost grew unmeasured.
     Done by: `nova-sprint where`; `nova-sprint stop --reason <text> --until <time>`.

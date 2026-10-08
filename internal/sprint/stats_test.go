@@ -113,6 +113,8 @@ func TestStatsOfNothingAreEmptyNeverNil(t *testing.T) {
 	require.NotNil(t, ps.Work)
 	require.NotNil(t, ps.Reads)
 	require.NotNil(t, ps.Routes)
+	require.NotNil(t, ps.Streams)
+	require.NotNil(t, ps.Tiers)
 	assert.Equal(t, Stages{}, ps.Stages)
 	assert.Empty(t, StatsRecords(s)[Fleet])
 }

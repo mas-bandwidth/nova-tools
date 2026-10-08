@@ -154,16 +154,19 @@ type coordETA struct {
 }
 
 // coordCost is the sprint's cost headlines (docs/SPEC-SPRINT.md section 1, cost visibility;
-// sprint.SprintTierCosts, every stream counted as one), each with its denominators,
-// coverage and scope. A figure an unpriced record would lower reads "unknown".
+// sprint.SprintTierCosts, every stream counted as one): the complete recorded spend in its
+// four parts beside the total, how its records were priced, and the spend per landed card
+// with its denominator. A figure an unpriced record would lower reads "unknown".
 type coordCost struct {
 	Total          string          `json:"total"` // the priced spend, money; "-" when nothing is priced
+	CostWork       string          `json:"cost_work,omitempty"`
+	CostReads      string          `json:"cost_reads,omitempty"`
+	CostLand       string          `json:"cost_land,omitempty"`
+	CostUnanswered string          `json:"cost_unanswered,omitempty"`
 	Coverage       sprint.Coverage `json:"coverage"`
 	Dropped        int             `json:"dropped,omitempty"` // cards whose spend Total holds after they left the table
 	PerLanded      string          `json:"per_landed"`
 	Landed         int             `json:"landed"`
-	LandedPriced   int             `json:"landed_priced"`
-	SpendPerLanded string          `json:"spend_per_landed"`
 }
 
 // coordinatorView is view coordinator's document, schema 1.
@@ -407,8 +410,8 @@ func (a *app) coordinatorView(ctx context.Context, st *store.Store, all bool) (c
 		v.ETA.Rate = sprint.LandingRateBasis(landedAt, int64(n.Landed), machine.Spans, machine.FirstStart(s.Cleared), now)
 	}
 	tc := sprint.SprintTierCosts(s)
-	v.Cost = coordCost{Total: cmp.Or(tc.TotalCost, "-"), Coverage: tc.Coverage, Dropped: tc.Dropped.Cards, PerLanded: tc.PerLanded,
-		Landed: tc.Landed, LandedPriced: tc.LandedPriced, SpendPerLanded: tc.SpendPerLanded}
+	v.Cost = coordCost{Total: cmp.Or(tc.TotalCost, "-"), CostWork: tc.CostWork, CostReads: tc.CostReads, CostLand: tc.CostLand,
+		CostUnanswered: tc.CostUnanswered, Coverage: tc.Coverage, Dropped: tc.Dropped.Cards, PerLanded: tc.PerLanded, Landed: tc.Landed}
 	for _, k := range sprint.RuleAnsweredWithin(append(s.Work.Cards(), s.Fleet.Cards()...), now, time.Hour) {
 		n.Rules += k
 	}
@@ -764,13 +767,17 @@ func coordinatorSum(v coordinatorView, known bool, m store.Machine) string {
 	return sum
 }
 
-// costText is the cost headlines in the summary, each with its denominators and coverage.
-// A total with a record unpriced is a floor, prefixed so it is not read as the whole spend.
+// costText is the cost headlines in the summary: the total with its coverage, its four parts
+// (a part that priced nothing is "-"), and the spend per landed card with its denominator. A
+// total with a record unpriced is a floor, prefixed so it is not read as the whole spend.
 func costText(c coordCost) string {
-	total := c.Total
-	if total == "" {
-		total = "-"
+	dash := func(s string) string {
+		if s == "" {
+			return "-"
+		}
+		return s
 	}
+	total := dash(c.Total)
 	if c.Coverage.Unpriced > 0 && total != "-" {
 		total = "≥" + total
 	}
@@ -778,8 +785,8 @@ func costText(c coordCost) string {
 	if c.Dropped > 0 {
 		dropped = fmt.Sprintf(", %d dropped", c.Dropped)
 	}
-	return fmt.Sprintf("cost %s (%s%s) · per landed %s of %d priced of %d landed · spend per landed %s",
-		total, c.Coverage.Text(), dropped, c.PerLanded, c.LandedPriced, c.Landed, c.SpendPerLanded)
+	return fmt.Sprintf("cost %s (%s%s) · work %s reads %s land %s unanswered %s · per landed %s over %d landed",
+		total, c.Coverage.Text(), dropped, dash(c.CostWork), dash(c.CostReads), dash(c.CostLand), dash(c.CostUnanswered), dash(c.PerLanded), c.Landed)
 }
 
 // coordinatorText is the view in at most viewTextLines lines: the summary, then an item a

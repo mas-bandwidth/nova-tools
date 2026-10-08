@@ -47,14 +47,20 @@ from the cards, never added to: a replayed merge writes the same, and `clear`
 empties it with the tables.
 
 After `cost` the text table draws `per landed` (the owner, 2026-10-04: cost
-visibility): the stream's cost per landed card priced whole, rounded up to the
-cent (`sprint.TierCosts.PerLanded`, cost_view.go). A landed card is priced whole
-when it has records and every one of them is priced (`FieldCost` set and
-`coverage.unpriced` zero). A landed card with any record unpriced is in neither
-the sum nor the count, so an unpriced completion cannot make the stream read
-cheaper. With cards landed and none priced whole the cell is `unknown`, never a
-smaller number; `-` with nothing landed. When the tick's record is not there,
-the cell is the row's cost cell over its landed count (`sprint.PerLandedOf`).
+visibility, and the same day: the complete cost, not the work attempt alone):
+the stream's complete recorded spend per landed card, rounded up to the cent
+(`sprint.TierCosts.PerLanded`, cost_view.go; its scope `sprint.PerLandedScope`).
+The complete spend is every priced record on every card of the stream, landed
+or not: work attempts, reads, the lander's run (a consumer whose kind is
+`land`), runs whose end begins `no result` (unanswered), and the spend of the
+cards it dropped or re-cut (`dropped`, below). It is not the landed cell. The
+cell stays what the merge writes, the charged total of the cards that landed.
+While any record of that scope is unpriced the figure is `unknown`, never a
+smaller number: an unpriced run would read as free, and missing prices would
+make the stream read cheaper (`TestAnUnpricedLandingCannotLowerPerLanded`); `-`
+with nothing landed or no record priced. When the tick's record is not there,
+the cell is the row's cost cell over its landed count (`sprint.PerLandedOf`),
+which is only that cell.
 The footer's per-landed cell is blank (the sprint's figure is the dashboard's,
 and `view coordinator`'s). `where --json` carries, additively: `tiers` at the
 top, every card counted by the tier its brief names (flash when it names none;
@@ -76,22 +82,32 @@ go to the largest fractional remainders, ties in alphabetical tier order. Thus
 displayed tier amounts sum exactly to `total_cost`, including fractional-cent
 records (`TestCostByTierAllocatesFractionalCentsWithoutChangingTheTotal`). The
 record also carries `unpriced_by_tier` (the runs that tier's dollars cannot
-hold, counted by `runTier`, a subscription read's tokens aside), `landed` and
-`landed_priced` (PerLanded's denominators), `landed_coverage` and `coverage`
-(how the records were priced: `records`, `actual`, `estimated`, `tokens`,
-`unpriced`), `spend_per_landed`, `dropped`, and `reconciles`, each provider's
+hold, counted by `runTier`, a subscription read's tokens aside), `landed`
+(PerLanded's denominator), `coverage` (how the records were priced: `records`,
+`actual`, `estimated`, `tokens`, `unpriced`), `dropped`, and `reconciles`, each provider's
 latest cost reconciliation (the sprint's, the same on every stream: its day,
 the provider's figure, the records', the gap), money strings as the cost column
-shows them. Spend per landed is every recorded take and read of every card of
-the stream in any column, plus the spend of cards taken off the table, over the
-landed cards; `unknown` while any of those records is unpriced, `-` with
-nothing landed. The two per-card figures are different scopes
-(`sprint.PerLandedScope`, `sprint.SpendPerLandedScope`) and a figure is compared
-only with the same figure. `total_cost` is the same spend, a floor while
+shows them. `total_cost` is the same spend as `per_landed` holds, a floor while
 `coverage.unpriced` is above zero: unknown spend is shown as unknown, not as a
-smaller number. `work_cost` and `read_cost` stay the on-table listed consumers;
-a drop's dollars are in `total_cost` and in the tier `lineage`, not in those
-two. A stream's spend includes every card of it the snapshot holds off the
+smaller number. Each stream's record also holds the four parts of `total_cost`:
+`cost_work`, `cost_reads`, `cost_land`, `cost_unanswered`. A read is
+`cost_reads`, a lander's run is `cost_land`, an end that begins `no result` is
+`cost_unanswered`, and every other priced run is `cost_work`. Kind wins over
+the end. A record past the list's bound stays in `total_cost` and is counted
+with `cost_work`, on the card attempt's tier, and so is a dropped card's spend
+(which keeps no run of its own), on the tier `lineage`, so the four parts are
+the total; each part is rounded up on its own, and so is the total. `work_cost`
+and `read_cost` stay the on-table listed consumers split by kind, so a
+no-result run and a lander's run remain in `work_cost` (their kind is not
+read); a drop's dollars are in `total_cost` and in the tier `lineage`, not in
+those two. The dashboard's tile draws that kind split, the per-card figure
+(`unknown` while a run of its scope is unpriced), and beside `total_cost` the
+four parts when the record carries them. `nova-sprint stats` prints the same
+four parts on a streams table (with `per_landed`) and a tiers table (the tier
+the record ran on, every stream together; `sprint.CostSplits`). The coordinator
+view carries the same four parts, the total with its coverage, and `per_landed`
+with its `landed` denominator, every stream counted as one
+(`sprint.SprintTierCosts`). A stream's spend includes every card of it the snapshot holds off the
 table (attributed by the stream field) while the control card records no
 dropped card. `drop` writes that spend on the stream's control card as the
 card leaves (`dropped_cost`, `dropped_cover`, `dropped_cards`,
@@ -103,12 +119,13 @@ dollars are not read as every read's; a subscription route stays `tokens`. All
 of it is counted by the tick from the sprint it reads anyway and kept in the
 where record (store.WhereRecord), never read card by card at `where`. A
 `stats tidy --streams` changes the work table's cost cell, but the tick keeps
-the record's `per_landed` over the epoch's landed cards priced whole. Its
-`landed` and `landed_priced` denominators therefore still describe that
+the record's `per_landed` in the complete scope over the epoch's landed cards
+(`store.keepWhere`). Its `landed` denominator therefore still describes that
 published figure. `view coordinator` reads `sprint.SprintTierCosts` itself.
 Before the first tick of an epoch `tiers` and `cost_by_tier` are absent and
 `per_landed` is from the cells (`TestTheWhereRecordCountsTiersAndCostsByTier`,
 `TestWhereCarriesTiersAndPerLandedCost`,
+`TestPerLandedIsWorkPlusReadsPlusLandingPlusUnanswered`,
 `TestAnUnpricedLandingCannotLowerPerLanded`).
 
 Each reader's spend (the owner, 2026-10-05, before funding a provider for reads: "I would ask
@@ -2135,8 +2152,10 @@ until that lane reads its harness's own report (opencode's store for the run, as
 on its own plan, which bills no dollar per token) adds `billing=subscription` to its usage:
 its tokens are kept, the harness's notional cost dropped, `unpriced=subscription`, and its
 COST line says `cost=tokens`. A read with no route at all (a store with no routes) is taken
-with or without usage, as before. The where record splits each stream's complete cost by
-kind (`work_cost`, `read_cost`, beside `total_cost`), carries its subscription reads' tokens
+with or without usage, as before. The where record splits each stream's complete cost into the four parts
+(`cost_work`, `cost_reads`, `cost_land`, `cost_unanswered`, beside `total_cost`;
+section 1 is the definition) and, as it did, by kind (`work_cost`, `read_cost`),
+and carries its subscription reads' tokens
 (`read_tokens`) and its reads that ended on the tick's UTC day by route (`reads_today`); the
 where view prints the day's read spend per route on one line under the summary
 (`reads today: pro-a $1.24 12 reads 3456789 tokens · subscription tokens 3 reads 120000
@@ -2228,8 +2247,9 @@ the same streams. What is unreconciled is never added into the tile: it is the e
 has a line of its own, `$X unreconciled since <the epoch's first day>`. Unreconciled is, over
 the days since the epoch began, each day's last provider figure beyond the sprint's records of
 that day, summed over the providers (`unreconciled`, the sprint's, the same on every stream's
-record). The cost per card is that recorded total over the cards landed, so every attempt and
-read behind them counts, those of cards not landed included.
+record). The cost per card is that recorded total over the cards landed (section 1:
+work, reads, landing and unanswered, including the cards not landed), which is
+`per_landed` on the where record and the figure `nova-sprint stats` prints.
 
 **A card is a tree of steps** (`internal/cardtree`; nova-tools#5174 rule 7). The owner,
 2026-10-02: "any card can be a tree"; "a batch card is just nomenclature"; a script step is "a
@@ -5886,9 +5906,9 @@ rising since the epoch began, and `by`, its causes `lane`, `readers` and `tier`,
 judgment checks the lane before it rises), `eta` (`rate`: `window`, `landings`, `hours`,
 `per_hour`; `work`: `left`, `held`, `executing`, `queued`; `sprint.LandingRateBasis` and
 `sprint.ETAWork`; the window is `none` when the machine record is not read) and `cost`
-(`total`, `coverage`, `dropped`, `per_landed`, `landed`, `landed_priced`, `spend_per_landed`;
-`sprint.SprintTierCosts`, every stream counted as one; a figure an unpriced record would lower
-is `unknown`) and `items`, ranked by the cards behind each (`b`), then by type in the order
+(`total`, `cost_work`, `cost_reads`, `cost_land`, `cost_unanswered`, `coverage`, `dropped`,
+`per_landed`, `landed`; `sprint.SprintTierCosts`, every stream counted as one; a figure an
+unpriced record would lower is `unknown`) and `items`, ranked by the cards behind each (`b`), then by type in the order
 below, then oldest first. An item is `k` (its key, stable while it stands), `t` (its type, one
 letter), `w` (what kind), `b`, `n` (the cards a judgment names), `age`, `od` (overdue), `d` (a
 judgment's decisions, `|` separated), `s` (one line, at most 160 bytes) and `next`, the exact
@@ -6166,8 +6186,9 @@ omits BASE, is not read against a tree. The test is
 The counters the tables show grow for the whole epoch: a fleet row's or a friend's row's
 `done` and `ok%` are the table's formulas over its hidden `ok` and `failed` cells, every
 work card it ever finished; the routes' attempts, ok and failed are counted over the fleet
-table's cards (`sprint.RouteStats`); a stream's `cost` and `per landed` are over every card
-it landed. `clear --confirm sprint` empties them by emptying the sprint. `stats tidy`
+table's cards (`sprint.RouteStats`); a stream's `cost` cell is the sum of its landed
+cards, and `per landed` on the where record is the complete spend of section 1.
+`clear --confirm sprint` empties them by emptying the sprint. `stats tidy`
 starts them afresh without touching the work (`store.TidyStats`, `sprint.TidyDone`,
 internal/sprint/stats_tidy.go):
 
@@ -6201,9 +6222,11 @@ internal/sprint/stats_tidy.go):
 - `--streams` takes each stream's landed cost and landed count as its base
   (`sprint.StreamBases`): the work table's `cost` cell is the control card's cost less
   the base's (`sprint.StreamCostSince`, `-` when nothing priced landed since; the control
-  card keeps the epoch's figure). The tick's `per landed` headline keeps its
-  epoch scope and priced-card denominator; it is not divided by the tidy's
-  all-landings count.
+  card keeps the epoch's figure). The where record's `per_landed` stays the complete
+  spend of section 1 over the epoch's landed cards: the next tick recounts it
+  (`sprint.StreamTierCosts`) and does not write `sprint.PerLandedSince` over it; it is
+  not divided by the tidy's all-landings count. `PerLandedSince` remains the window over
+  the cost cell, for a reader of the cell; it is not the figure on the where record.
 - `--all` is the four. `stats` counts from the last tidy of any kind.
 
 The archive record, `stats:archive:<RFC3339Nano>-<nonce>` (the tidy's time to the
@@ -6236,8 +6259,9 @@ coordinator view's sum line say nothing of the tidy: `since <time>` beside `ok%`
 stream costs, and `stats_since=` on the sum, are owed in cmd/nova-sprint/reads.go
 (`whereOf`), view.go and dashboard.go; the counts they show are the tidied ones already.
 `cost reconcile` recounts the whole day, not the window since the tidy. A stream's
-`total_cost`, `cost_by_tier`, `work_cost` and `read_cost` in `where --json` stay the
-epoch's.
+`total_cost`, `cost_by_tier`, `work_cost`, `read_cost`, `cost_work`, `cost_reads`,
+`cost_land`, `cost_unanswered` and `per_landed` in `where --json` stay the epoch's
+complete spend. A streams tidy windows the cost cell only.
 
 ### release-check-frame
 

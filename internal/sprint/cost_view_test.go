@@ -9,8 +9,9 @@ import (
 )
 
 // Cost headlines carry their completeness (docs/SPEC-SPRINT.md section 1, cost visibility;
-// the 2026-10-06 nova-sprint review, item 6). An unpriced landing is not in the per-landed
-// ratio, and a card taken off the table keeps its spend in the stream.
+// the 2026-10-06 nova-sprint review, item 6). The per-landed figure is the complete spend
+// over the landed cards; an unpriced record leaves it unknown, never smaller, and a card
+// taken off the table keeps its spend in the stream.
 
 // landedWith is a landed primary of stream s1 carrying the usages as its takes, its cost
 // field the charged figure as landing writes it.
@@ -40,16 +41,24 @@ func TestAnUnpricedLandingCannotLowerPerLanded(t *testing.T) {
 	before := StreamTierCosts(costWorld(priced))["s1"]
 	assert.Equal(t, "$4.00", before.PerLanded)
 
-	// a landing with no cost at all, and one priced in part: neither may make the stream read cheaper
+	// a landing with no cost at all, and one priced in part: the old figure divided the priced
+	// $4.10 by the three landed cards and read $1.37, cheaper for the prices it was missing
 	unpriced := landedWith("s1-2", "unpriced=no-tokens")
 	partial := landedWith("s1-3", "input=1 actual_usd=0.10 actual_by=harness", "unpriced=no-tokens")
 	after := StreamTierCosts(costWorld(priced, unpriced, partial))["s1"]
-	assert.Equal(t, "$4.00", after.PerLanded, "the per-landed figure is over the cards priced whole, never lowered by an unpriced one")
+	assert.Equal(t, CostUnknown, after.PerLanded, "a figure an unpriced record would lower reads unknown, never a smaller number")
+	assert.Equal(t, 3, after.Landed)
+	assert.Equal(t, 2, after.Coverage.Unpriced)
+	assert.Equal(t, "$4.10", after.TotalCost, "the priced spend, a floor")
+
+	// every record priced again: the complete spend over every landed card
+	whole := landedWith("s1-3", "input=1 actual_usd=0.10 actual_by=harness")
+	assert.Equal(t, "$2.05", StreamTierCosts(costWorld(priced, whole))["s1"].PerLanded)
 }
 
-// Every headline carries its denominators and coverage, and the figure an unpriced record
-// would make smaller reads unknown: the per-landed cost when no landed card is priced whole,
-// the spend per landed card while any record is unpriced.
+// Every headline carries its denominator and coverage, and the figure an unpriced record
+// would make smaller reads unknown: the per-landed cost while any record of the stream is
+// unpriced; the total stays the priced spend, a floor, with its four parts.
 func TestCostHeadlinesCarryTheirDenominatorsAndCoverage(t *testing.T) {
 	t.Parallel()
 	priced := landedWith("s1-1", "input=1 actual_usd=4 actual_by=harness", "input=10 predicted_usd=1")
@@ -58,27 +67,25 @@ func TestCostHeadlinesCarryTheirDenominatorsAndCoverage(t *testing.T) {
 	book(working, Consumer{Kind: "work", Card: "s1-3", Key: "s1-3#g1", End: "no result", At: stamp(t0), Usage: cardcost.ParseUsage("input=10 predicted_usd=2")})
 	tc := StreamTierCosts(costWorld(priced, unpriced, working))["s1"]
 	assert.Equal(t, 2, tc.Landed)
-	assert.Equal(t, 1, tc.LandedPriced)
-	assert.Equal(t, "$5.00", tc.PerLanded)
-	assert.Equal(t, Coverage{Records: 3, Actual: 1, Estimated: 1, Unpriced: 1}, tc.LandedCoverage)
 	assert.Equal(t, Coverage{Records: 4, Actual: 1, Estimated: 2, Unpriced: 1}, tc.Coverage)
 	assert.Equal(t, 1, tc.UnpricedRuns)
 	assert.Equal(t, "$7.00", tc.TotalCost, "the priced spend: a floor while a record is unpriced")
-	assert.Equal(t, CostUnknown, tc.SpendPerLanded, "unknown spend is shown as unknown")
+	assert.Equal(t, "$5.00", tc.CostWork)
+	assert.Equal(t, "$2.00", tc.CostUnanswered, "the open card's no-result run")
+	assert.Equal(t, CostUnknown, tc.PerLanded, "unknown spend is shown as unknown")
 	assert.Equal(t, "1 actual · 2 estimated · 0 tokens · 1 unpriced of 4 records", tc.Coverage.Text())
 
-	// nothing priced whole: unknown, never a number
+	// nothing priced: unknown, never a number, and no total
 	tc = StreamTierCosts(costWorld(unpriced))["s1"]
 	assert.Equal(t, CostUnknown, tc.PerLanded)
-	assert.Equal(t, CostUnknown, tc.SpendPerLanded)
-	// every record priced: the spend per landed card is every record's over the landed cards
+	assert.Equal(t, "", tc.TotalCost)
+	// every record priced: the complete spend over the landed cards, the open card's run included
 	tc = StreamTierCosts(costWorld(priced, working))["s1"]
-	assert.Equal(t, "$5.00", tc.PerLanded, "the landed card's own records")
-	assert.Equal(t, "$7.00", tc.SpendPerLanded, "every record of the stream over its one landed card")
+	assert.Equal(t, "$7.00", tc.PerLanded, "every record of the stream over its one landed card")
 	// nothing landed
 	tc = StreamTierCosts(costWorld(working))["s1"]
 	assert.Equal(t, "-", tc.PerLanded)
-	assert.Equal(t, "-", tc.SpendPerLanded)
+	assert.Equal(t, "$2.00", tc.TotalCost)
 }
 
 // Dropping or re-cutting a card keeps its spend in the stream's lineage (DroppedSpendFields
@@ -98,7 +105,7 @@ func TestADroppedCardsSpendStaysInTheStream(t *testing.T) {
 	ctl := &Card{ID: CtlID("s1"), Row: "s1", Col: "control", Fields: map[string]string{}}
 	s.Merge.Put(ctl)
 	before := StreamTierCosts(s)["s1"]
-	assert.Equal(t, "$9.00", before.SpendPerLanded)
+	assert.Equal(t, "$9.00", before.PerLanded)
 
 	// the drop: the card leaves the table, its spend lands on the control card
 	set := DroppedSpendFields(ctl, []*Card{costly, {ID: "s1-9", Fields: map[string]string{}}})
@@ -109,11 +116,12 @@ func TestADroppedCardsSpendStaysInTheStream(t *testing.T) {
 	}
 	s.Work.Drop("s1-2")
 	after := StreamTierCosts(s)["s1"]
-	assert.Equal(t, before.SpendPerLanded, after.SpendPerLanded, "dropping the costly card does not make the stream read cheaper")
+	assert.Equal(t, before.PerLanded, after.PerLanded, "dropping the costly card does not make the stream read cheaper")
 	assert.Equal(t, before.TotalCost, after.TotalCost)
 	assert.Equal(t, before.Coverage, after.Coverage)
 	assert.Equal(t, DroppedSpend{Cards: 1, Cost: "8", Coverage: Coverage{Records: 2, Actual: 1, Estimated: 1}}, after.Dropped)
-	assert.Equal(t, "$1.00", after.PerLanded, "the landed card's own cost, in its own scope")
+	assert.Equal(t, "$9.00", after.CostWork, "a dropped card's spend keeps no run kind: counted with the work, so the four parts stay the total")
+	assert.Equal(t, map[string]string{"flash": "$1.00", "lineage": "$8.00"}, after.CostByTier)
 
 	// a second drop adds to the first, exactly
 	unpriced := &Card{ID: "s1-3", Fields: map[string]string{}}
@@ -122,7 +130,7 @@ func TestADroppedCardsSpendStaysInTheStream(t *testing.T) {
 		ctl.Fields[k] = v
 	}
 	again := StreamTierCosts(s)["s1"]
-	assert.Equal(t, CostUnknown, again.SpendPerLanded, "a dropped card's unpriced run is unknown spend still")
+	assert.Equal(t, CostUnknown, again.PerLanded, "a dropped card's unpriced run is unknown spend still")
 	assert.Equal(t, 1, again.UnpricedRuns)
 	assert.Equal(t, 2, again.Dropped.Cards)
 	assert.Equal(t, "$9.00", again.TotalCost)
@@ -139,10 +147,9 @@ func TestTheSprintsHeadlinesCountEveryStreamAsOne(t *testing.T) {
 	s.Work.SetRows([]string{"s1", "s2"})
 	tc := SprintTierCosts(s)
 	assert.Equal(t, 2, tc.Landed)
-	assert.Equal(t, 2, tc.LandedPriced)
 	assert.Equal(t, "$1.50", tc.PerLanded)
-	assert.Equal(t, "$1.50", tc.SpendPerLanded)
 	assert.Equal(t, "$3.00", tc.TotalCost)
+	assert.Equal(t, "$3.00", tc.CostWork)
 }
 
 // A route's or a tier's dollars say how many of its runs no dollar was charged for.
@@ -179,7 +186,6 @@ func TestACardKeptOffTheTableStaysInTheStream(t *testing.T) {
 	s.Work.Put(costly)
 	after := StreamTierCosts(s)["s1"]
 	assert.Equal(t, before.TotalCost, after.TotalCost, "taking the card off the table does not drop its spend")
-	assert.Equal(t, before.SpendPerLanded, after.SpendPerLanded)
 	assert.Equal(t, before.Coverage, after.Coverage)
 	assert.Equal(t, before.PerLanded, after.PerLanded)
 	assert.Equal(t, DroppedSpend{Cards: 1, Cost: "6", Coverage: Coverage{Records: 1, Actual: 1}}, after.Dropped, "a card with no record adds nothing")
