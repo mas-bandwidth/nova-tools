@@ -706,7 +706,11 @@ func (st *Store) FriendHealthClear(ctx context.Context, friend, who string, dry 
 			return prev, had, "", errors.New(res.Refused[0].Why)
 		}
 	}
-	status, err = st.friendStatusAfter(ctx, friend, sprint.FriendPresence{Held: e.Held})
+	policy, err := st.Policy(ctx)
+	if err != nil {
+		return prev, had, "", err
+	}
+	status, err = st.friendStatusAfter(ctx, friend, sprint.FriendPresence{Held: e.Held, Windows: (&sprint.Snapshot{Policy: policy}).PresenceWindows()})
 	return prev, had, status, err
 }
 
