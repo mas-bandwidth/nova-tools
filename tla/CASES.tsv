@@ -455,3 +455,5 @@ MCLandPassBrokenStopCollide.cfg	MCLandPass.tla	invariant	RefusedStaysMerging	ign
 MCLandPassBrokenRevert.cfg	MCLandPass.tla	action	RefusalTouchesNoOtherStream	ignore-terminal	landpass	required	-
 MCLandPassBrokenCacheDisjoint.cfg	MCLandPass.tla	invariant	CachedIsGreen	ignore-terminal	landpass	required	-
 MCLandPassBrokenPushEmpty.cfg	MCLandPass.tla	invariant	BaseKeepsLandings	ignore-terminal	landpass	required	-
+MCBus2BrokenEarlyRead.cfg	MCBus2Receipts.tla	invariant	ReadOnlyAfterAcceptance	ignore-terminal	bus2	required	-
+MCBus2BrokenReplyUndelivered.cfg	MCBus2Receipts.tla	invariant	ActedImpliesDelivered	ignore-terminal	bus2	required	-
