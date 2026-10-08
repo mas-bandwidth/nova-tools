@@ -1,12 +1,57 @@
 # nova-tools changelog
 
-## v1.2.0 — unreleased
+## v1.1.1 — unreleased
 
-- docs: `nova-secrets gate`'s exit contract matches the binary — a verdict prints `GATE FAILED` at exit 1, and a gate that could not run prints `SECRETS GATE REFUSED` at exit 2 (docs/CLI.md, docs/SPEC-SECRETS.md)
+- sprint: the priority ladder includes `fix` between `critical` and `high`; rework raises normal and low cards according to `set --rework-priority fix|high|keep`, reads inherit, and merge batches honor priority within dependency order.
+- sprint: bench gates stage from the mirror, remove their temporary remote ref, report staging failures, and skip a bench after two staging failures in a pass.
+- friend: lane prompts name an absolute brief path.
+- ci: refusal-grammar command-walk helpers compile only with the functional tier that uses them.
+- docs: `nova-secrets gate` distinguishes a failed verdict at exit 1 from a refused check at exit 2.
 
-## v1.1.0 — 2026-10-06
+## v1.1.0 — 2026-10-08
 
-Cut from the head of sprint/mechanical-2026-10-02, promoted to dev and main. The sprint's landings carry no pull request numbers: each lands as `land <card> (sprint stream <stream>)`, so the entries below name the card.
+Published tag `v1.1.0` names commit `2e73c44df778b66adf141a67a0b3f6e30b43a0e8`. The entries below describe that baseline; publication does not establish promotion to dev or main. Sprint landings are named by card.
+
+- upgrade: install the binaries on every machine that runs a friend daemon, the sprint server or the seat; `nova-redis fn load` against every store (the `nova_sprint` library changed); re-install each friend daemon with `nova-friend install` and the seat with `nova-sprint seat install`
+
+### Reads are cards
+
+- #5392 a read is a consumer card, dealt like work at half a slot, in parallel, at the card's tier
+- #5398 a friend reads her tier or any below it; the read cards' twin names its route deadline
+- #5400 a reader one tier below may take a read card, at or above first
+- #5404 a read card goes to the cheapest reader that may take it
+- #5399 the tick accepts a primary whose reads are all ok and tells the seat; no hand step
+- #5409 `set --reads 1` waives the second read
+- #5407 `tick --shadow` says why each read waits
+- #5402 dashboard rows say how many of their cards are reads
+- #5395 the ask picks from the free readers; a retired read spends no one; fleet work has a switch
+- #5411 no coverage floor for the old read path's level-reads step while read cards are on
+
+### The deal and the lander
+
+- #5413 the deal rebalances queued work to idle lanes across friends and fleet within the tier sets
+- #5403 `fleet-tiers` and `friends-tiers` settings say which tiers each side may take, default all
+- #5406 a card's landing refusal reworks the card at the tip and the stream lands on
+- #5386 `brief` edits a card in place, answers the bound as inbox prints it, and widens without a twin
+- #5415 `friend give` undoes a take-back so the card may be dealt again
+- #5417 a generated brief signs the worker's own name, never a pinned friend's or a model's
+- #5418 a held sentinel wave releases again; a held card follows its chain
+- land a-lane-is-capped-by-its-tier, one-lane-per-card, the-bound-is-two-identical-findings, a-broken-read-reworks-by-rule, a-finished-card-is-always-asked-a-read, judgments-answered-by-ruleb-b, paths-widen-by-rule-b, drift-alarms, backup-verb, staging-uses-one-mirror-and-worktrees, card-state-is-one-field-b2, lander-empty-commit-b1-bb, promote-end-to-end-t-bb, release-check-spend-reconciledb-b2b
+
+### Security and the sensitive paths
+
+- #5397 `nova-sandbox`: the bare form keeps the caller's process group, so a caller's group kill reaches the walled tree; a runaway tree is frozen before it is killed. `nova-secrets`: a reseal passes the gate; the written-by mark is pinned to a version shape. `profiles/` and `tools/sandboxcheck/` are on the sensitive path list
+- `nova-secrets`: an in-process login for a seat's keys (seat-secrets-for-every-key-bb), secrets never in errors, the gate names the check and marks the files a verb made, and the host guard on the ssh placement
+- `nova-sandbox`: per-test seams so its serial tests run in parallel (fix-serial-nova-sandboxb-b)
+
+### Tests, lint and the release gate
+
+- the release gate refuses missing recovery evidence (the-release-gate-refuses-missing-recovery-evidence) and reconciles spend (release-check-spend-reconciledb-b2b)
+- #5424 errcheck on the base; serial tests opened with `t.Parallel()` across the tree; slow tests moved to their tier
+- #5414 a landing audited bad was reverted
+- dogfood runs of every tool under five harnesses
+
+### Earlier changes included in v1.1.0
 
 - land bus-requires-inbox-push-proof-p3: `nova-bus` send and recv refuse a deaf name, `names` shows each name's push
   - members: bus-requires-inbox-push-proof-p2
@@ -28,7 +73,6 @@ Cut from the head of sprint/mechanical-2026-10-02, promoted to dev and main. The
 - land pr-fix-redis-serve-prints-the-secret: `redis serve` is pinned to print no secret
 - land pr-fix-snapshot-symlink-note-linux-c: exec stubs are written under ForkLock
 - land pr-fix-friend-unchecked-errors, pr-fix-staticcheck-findings-2026-10-05b, pr-fix-nova-tools-is-every-command: the promotion's lint and class reds
-- upgrade: `nova-redis fn load` against every store (the `nova_sprint` library changed); re-install each friend daemon with `nova-friend install` and the seat with `nova-sprint seat install`
 
 ## v1.0.0 — 2026-09-28
 

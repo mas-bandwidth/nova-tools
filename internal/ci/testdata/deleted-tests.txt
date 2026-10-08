@@ -1466,6 +1466,7 @@ tools/citiming/main_test.go the one-base merge of 2026-10-04 took dev's tree for
 internal/nsprint/fn/rig_test.go the one-base merge of 2026-10-04 took dev's tree for this package (both lines had built in it); the sprint card that added this test is listed in tmp/onebase-dropped for re-landing on the one base
 tools/tlacheck/rig_test.go the one-base merge of 2026-10-04 took dev's tree for this package (both lines had built in it); the sprint card is listed in tmp/onebase-dropped for re-landing
 internal/tool/usage_test.go internal/tool returns to the green one-base gate (37e9e9fa2e): the toolkit changes landed after it broke cmd/nova-bus and cmd/nova-cairn (a nil help panic, the value quoting); they are redone as cards gated on every command's tests
+cmd/nova-sprint/recut_widen_test.go renamed to brief_widen_test.go (#5386): brief <id> --widen replaces recut --widen, and its tests moved with it
 internal/nsprint/store/acl_cover_test.go its tests drove only DeployACLs and aclArgs, which no command calls; both functions go, and ACLRules stays for the tests that apply the rules themselves
 internal/docs/cli_dogfood_gate_flags_test.go the reference line it hand-held is generated now: the clidoc block pastes `nova-check dogfood gate -h`, and TestCLIReferenceIsGeneratedFromHelp fails when docs/CLI.md drifts from it
 internal/docs/cli_links_flags_test.go the reference line it hand-held is generated now: the clidoc block pastes `nova-check links -h`, and TestCLIReferenceIsGeneratedFromHelp fails when docs/CLI.md drifts from it
