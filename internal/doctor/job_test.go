@@ -319,7 +319,8 @@ func (w *world) seatText() (string, error) {
 }
 
 func (w *world) pushText() (string, error) {
-	status := map[string]any{"recorded": w.pushInstalled, "live": w.sprintProven && w.busProven, "proof": "none", "why": ""}
+	status := map[string]any{"record": map[string]any{"name": "ada", "harness": "claude", "adapter": "folder", "target": testHome + "/session"},
+		"recorded": w.pushInstalled, "live": w.sprintProven && w.busProven, "proof": "none", "why": ""}
 	if !w.pushInstalled {
 		status["why"] = "ada has no push target recorded"
 		b, _ := json.Marshal(status)
@@ -506,13 +507,15 @@ func (w *world) run(cmd string) {
 		if f["harness"] != "claude" || f["target"] != testHome+"/session" || f["actor"] != "ada" || f["redis"] != testRedis {
 			w.t.Fatalf("seat install is not the seat's own: %q", cmd)
 		}
-		if !w.pushInstalled {
-			w.installs++
-		}
+		w.installs++
 		w.pushInstalled = true
-		if w.pushNonce == "" {
-			w.pushNonce = "check-1"
-			w.noncesIssued++
+		w.noncesIssued++
+		w.pushNonce = fmt.Sprintf("check-%d", w.noncesIssued)
+		w.ponged = ""
+		w.sprintProven, w.busProven = false, false
+	case a.verb == "nova-sprint seat watch":
+		if len(a.args) != 1 || a.args[0] != testHome+"/session" {
+			w.t.Fatalf("the watch is not the recorded session folder: %q", cmd)
 		}
 	case a.verb == "nova-sprint seat pong":
 		if f["actor"] != "ada" || f["redis"] != testRedis || len(a.args) != 1 || a.args[0] == "" || a.args[0] != w.pushNonce {
@@ -770,10 +773,11 @@ func TestDoctorNamesTheFirstMissingDependencyAndItsFix(t *testing.T) {
 		assert.Contains(t, out, "DOCTOR push-roundtrip fail pending: no root bus and sprint answer")
 		_, next, ok := strings.Cut(lines[len(lines)-1], " next: ")
 		require.True(t, ok, lines[len(lines)-1])
-		assert.Contains(t, next, "nova-sprint seat install --harness claude ")
+		assert.Equal(t, "nova-sprint seat watch '/home/ada/session'", next)
 		w.run(next)
 		assert.False(t, w.busProven)
 		assert.False(t, w.sprintProven)
+		assert.Zero(t, w.installs)
 		code, lines = w.doctor(jobArgs["coordinator"]...)
 		assert.Equal(t, 2, code, lines)
 		assert.Contains(t, lines[len(lines)-1], "first_missing=push-roundtrip ")
@@ -826,7 +830,7 @@ func TestDoctorNamesTheFirstMissingDependencyAndItsFix(t *testing.T) {
 		assert.Contains(t, lines[len(lines)-1], "first_missing=push-roundtrip ")
 		_, next, ok = strings.Cut(lines[len(lines)-1], " next: ")
 		require.True(t, ok)
-		assert.Equal(t, "nova-sprint seat install --harness claude --target /home/ada/session --actor ada --redis "+testRedis, next)
+		assert.Equal(t, "nova-sprint seat watch '/home/ada/session'", next)
 		assert.NotContains(t, next, "--sent")
 		assert.NotContains(t, next, "check-1")
 		w.run(next)
