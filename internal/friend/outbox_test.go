@@ -2,10 +2,12 @@ package friend
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -60,13 +62,13 @@ func TestTheDaemonFinishesAReportItDidNotStage(t *testing.T) {
 		got[argv[3]] = argv
 	}
 	require.Len(t, got, 4, "one finish per working card with a verdict, sent once over three loops: %v", f.got())
-	assert.Equal(t, []string{"finish", "--as", "friend.bob", "landed.w1@1", "--epoch", "15", "--head", head, "--branch", "sprint/landed.w1.g1.e15", "--report", "friend bob LAND: The card is done."}, got["landed.w1@1"])
-	assert.Equal(t, []string{"finish", "--as", "friend.bob", "again.w1@3", "--epoch", "15", "--head", head, "--branch", "sprint/again.w1.g1.e15", "--report", "friend bob LAND: third time."}, got["again.w1@3"], "a job's generation is its finish's; a sha is read in lower case")
-	assert.Equal(t, []string{"finish", "--as", "friend.bob", "held.w1@1", "--epoch", "15", "--failed", "--head", head, "--branch", "sprint/held.w1.g1.e15", "--report", "friend bob HOLD: Verdict: HOLD Head: " + head + " no push"}, got["held.w1@1"])
+	assert.Equal(t, []string{"finish", "--as", "friend.bob", "landed.w1@1", "--epoch", "15", "--head", head, "--branch", "sprint/landed.w1.g1.e15", "--op", flagValue(got["landed.w1@1"], "--op"), "--report", "friend bob LAND: The card is done."}, got["landed.w1@1"])
+	assert.Equal(t, []string{"finish", "--as", "friend.bob", "again.w1@3", "--epoch", "15", "--head", head, "--branch", "sprint/again.w1.g1.e15", "--op", flagValue(got["again.w1@3"], "--op"), "--report", "friend bob LAND: third time."}, got["again.w1@3"], "a job's generation is its finish's; a sha is read in lower case")
+	assert.Equal(t, []string{"finish", "--as", "friend.bob", "held.w1@1", "--epoch", "15", "--failed", "--head", head, "--branch", "sprint/held.w1.g1.e15", "--op", flagValue(got["held.w1@1"], "--op"), "--report", "friend bob HOLD: Verdict: HOLD Head: " + head + " no push"}, got["held.w1@1"])
 	failed := got["failed.w1@1"]
-	require.Len(t, failed, 11)
-	assert.Equal(t, []string{"finish", "--as", "friend.bob", "failed.w1@1", "--epoch", "15", "--failed", "--branch", "sprint/failed.w1.g1.e15", "--report"}, failed[:10])
-	assert.Equal(t, "friend bob FAIL: "+oneLine(("Verdict: FAIL\n\n" + long)[:600], 600), failed[10], "a failed finish carries the report's first 600 characters")
+	require.Len(t, failed, 13)
+	assert.Equal(t, []string{"finish", "--as", "friend.bob", "failed.w1@1", "--epoch", "15", "--failed", "--branch", "sprint/failed.w1.g1.e15", "--op", flagValue(failed, "--op"), "--report"}, failed[:12])
+	assert.Equal(t, "friend bob FAIL: "+oneLine(("Verdict: FAIL\n\n" + long)[:600], 600), failed[12], "a failed finish carries the report's first 600 characters")
 	gotReport, err := os.ReadFile(filepath.Join(dir, "outbox", fail.Job, "REPORT.md"))
 	require.NoError(t, err)
 	assert.Equal(t, "Verdict: FAIL\n\n"+long, string(gotReport), "the no-report marker never replaces a worker report")
@@ -157,11 +159,11 @@ func TestTheDaemonFinishesADeadLaneAndALandOnlyAtOriginsTip(t *testing.T) {
 		got[argv[3]] = argv
 	}
 	require.Len(t, got, 2, "the LAND on origin's tip and the dead lane, once each: %v", f.got())
-	assert.Equal(t, []string{"finish", "--as", "friend.bob", "on.w1@1", "--epoch", "15", "--head", head, "--branch", "sprint/on.w1.g1.e15", "--report", "friend bob LAND: On the tip."}, got["on.w1@1"])
+	assert.Equal(t, []string{"finish", "--as", "friend.bob", "on.w1@1", "--epoch", "15", "--head", head, "--branch", "sprint/on.w1.g1.e15", "--op", flagValue(got["on.w1@1"], "--op"), "--report", "friend bob LAND: On the tip."}, got["on.w1@1"])
 	d := got["dead.w1@1"]
-	require.Len(t, d, 9)
-	assert.Equal(t, []string{"finish", "--as", "friend.bob", "dead.w1@1", "--epoch", "15", "--harness-fault", "--report"}, d[:8])
-	assert.Contains(t, d[8], "harness-fault: no report; Verdict: HARNESS-FAULT Runner-END: "+end)
+	require.Len(t, d, 11)
+	assert.Equal(t, []string{"finish", "--as", "friend.bob", "dead.w1@1", "--epoch", "15", "--harness-fault", "--op", flagValue(d, "--op"), "--report"}, d[:10])
+	assert.Contains(t, d[10], "harness-fault: no report; Verdict: HARNESS-FAULT Runner-END: "+end)
 	report, err := os.ReadFile(filepath.Join(dir, "outbox", dead.Job, "REPORT.md"))
 	require.NoError(t, err)
 	assert.Equal(t, DeadLaneReport("bob", dead.Job, end), string(report))
@@ -207,4 +209,110 @@ func TestRunnerEndedReadsTheJobsLastEventAsCollectDoes(t *testing.T) {
 		_, dead := RunnerEnded(log, "j~1")
 		assert.Equal(t, want, dead, "%q", log)
 	}
+}
+
+func TestOutboxFinishRetriesWithBoundedBackoff(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	card := workCard("retry.w1", "working")
+	const report = "Verdict: FAIL\n\nThe report stays durable.\n"
+	inboxJob(t, r.d.Dir, card.Job, card.Brief)
+	outboxReport(t, r.d.Dir, card.Job, report)
+	r.d.heldCards = []HeldCard{card}
+	l := &loop{d: r.d, ctx: context.Background(), lanes: &laneSet{}}
+	var attempts [][]string
+	recovered := false
+	r.d.Finish = func(_ context.Context, argv []string) error {
+		attempts = append(attempts, append([]string(nil), argv...))
+		if !recovered {
+			return errors.New("the server is unavailable")
+		}
+		return nil
+	}
+	now := t0
+	l.outboxStep(now)
+	require.Len(t, attempts, 1)
+	for i, delay := range []time.Duration{BeatEvery, 2 * BeatEvery, 4 * BeatEvery, 8 * BeatEvery, 16 * BeatEvery, 32 * BeatEvery, OutboxRetry, OutboxRetry} {
+		assert.Equal(t, delay, r.d.outbox.tried[card.Job].delay)
+		l.outboxStep(now.Add(delay - time.Nanosecond))
+		assert.Len(t, attempts, i+1, "no retry before its bound")
+		assert.False(t, r.d.outbox.finished[card.Job], "failure never acknowledges completion")
+		assert.Equal(t, "working", r.d.heldCards[0].Col, "canonical ownership remains held")
+		now = now.Add(delay)
+		l.outboxStep(now)
+		require.Len(t, attempts, i+2)
+		assert.Equal(t, attempts[0], attempts[i+1], "every retry carries the exact payload and operation ID")
+	}
+	recovered = true
+	l.outboxStep(now.Add(OutboxRetry))
+	require.Len(t, attempts, 10)
+	assert.True(t, r.d.outbox.finished[card.Job])
+	assert.Empty(t, r.d.outbox.tried)
+	l.outboxStep(now.Add(2 * OutboxRetry))
+	assert.Len(t, attempts, 10, "an acknowledged finish is never sent twice")
+	got, there, err := readReport(filepath.Join(r.d.Dir, "outbox"), card.Job)
+	require.NoError(t, err)
+	assert.True(t, there)
+	assert.Equal(t, report, got)
+}
+
+func TestOutboxFinishReplaysALostAnswerAcrossRestart(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	card := workCard("replay.w1", "working")
+	const report = "Verdict: FAIL\n\nA finish with a lost answer.\n"
+	inboxJob(t, r.d.Dir, card.Job, card.Brief)
+	outboxReport(t, r.d.Dir, card.Job, report)
+	r.d.heldCards = []HeldCard{card}
+	l := &loop{d: r.d, ctx: context.Background(), lanes: &laneSet{}}
+	operations := map[string][]string{}
+	applied, attempts := 0, 0
+	r.d.Finish = func(_ context.Context, argv []string) error {
+		attempts++
+		op := flagValue(argv, "--op")
+		require.NotEmpty(t, op)
+		if prior, ok := operations[op]; ok {
+			assert.Equal(t, prior, argv, "the server replays exactly the operation that applied")
+			return nil
+		}
+		operations[op] = append([]string(nil), argv...)
+		applied++
+		return errors.New("the answer was lost after apply")
+	}
+	l.outboxStep(t0)
+	assert.False(t, r.d.outbox.finished[card.Job])
+	assert.NotContains(t, strings.Join(r.records, "\n"), "outbox: finished card")
+	assert.NotContains(t, strings.Join(r.records, "\n"), "finish was not taken")
+	assert.Contains(t, strings.Join(r.records, "\n"), "finish result is not confirmed")
+	// The report is durable; a fresh daemon can reset the volatile retry delay.
+	r.d.outbox = outboxState{}
+	l.outboxStep(t0.Add(BeatEvery))
+	assert.Equal(t, 2, attempts)
+	assert.Equal(t, 1, applied, "restart cannot apply completion twice")
+	assert.True(t, r.d.outbox.finished[card.Job])
+	l.outboxStep(t0.Add(2 * BeatEvery))
+	assert.Equal(t, 2, attempts)
+	argv := OutboxFinishArgv(r.d.Friend, Card{ID: card.Card, Outbox: filepath.Join(r.d.Dir, "outbox", card.Job)}, "FAIL", "", card.Branch, report)
+	changed := OutboxFinishArgv(r.d.Friend, Card{ID: card.Card, Outbox: filepath.Join(r.d.Dir, "outbox", card.Job)}, "FAIL", "", card.Branch, report+"Corrected.\n")
+	assert.NotEqual(t, flagValue(argv, "--op"), flagValue(changed, "--op"), "a corrected payload cannot replay the old finish")
+}
+
+func TestOutboxFinishRetryRechecksCanonicalOwnership(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	card := workCard("taken.w1", "working")
+	inboxJob(t, r.d.Dir, card.Job, card.Brief)
+	outboxReport(t, r.d.Dir, card.Job, "Verdict: FAIL\n\nStill durable.\n")
+	r.d.heldCards = []HeldCard{card}
+	l := &loop{d: r.d, ctx: context.Background(), lanes: &laneSet{}}
+	attempts := 0
+	r.d.Finish = func(context.Context, []string) error {
+		attempts++
+		return errors.New("server unavailable")
+	}
+	l.outboxStep(t0)
+	r.d.heldCards = nil
+	l.outboxStep(t0.Add(BeatEvery))
+	assert.Equal(t, 1, attempts, "a report cannot finish a card after it leaves her row")
+	assert.False(t, r.d.outbox.finished[card.Job])
 }

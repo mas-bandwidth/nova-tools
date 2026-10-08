@@ -815,7 +815,7 @@ func TestAnAntigravityReportIsFinishedWhileTheSessionIsBusy(t *testing.T) {
 	assert.Equal(t, 1, delivered, "one turn, still under way")
 	got := f.got()
 	require.Len(t, got, 1, "%v", r.records)
-	assert.Equal(t, []string{"finish", "--as", "friend.bob", "emma-land.w1@1", "--epoch", "15", "--head", head, "--branch", "sprint/emma-land.w1.g1.e15", "--report", "friend bob LAND: Done while busy."}, got[0])
+	assert.Equal(t, []string{"finish", "--as", "friend.bob", "emma-land.w1@1", "--epoch", "15", "--head", head, "--branch", "sprint/emma-land.w1.g1.e15", "--op", flagValue(got[0], "--op"), "--report", "friend bob LAND: Done while busy."}, got[0])
 }
 
 // A partially overlapping incoming batch (e.g. [A, B] followed by [B, C]) must NOT

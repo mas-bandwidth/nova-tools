@@ -3,6 +3,9 @@ package friend
 import (
 	"cmp"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -31,8 +34,9 @@ import (
 // internal/friend/tla/OutboxFinish.tla (docs/SPEC-FRIEND.md, the daemon reads every outbox
 // job).
 
-// OutboxRetry is how long a finish the server did not answer, or refused, waits before it
-// is sent again; the report stays where it is, and friend sync may finish it first.
+// OutboxRetry caps the backoff of a finish the server did not answer or refused.
+// Tries start one BeatEvery apart and double to this bound; a restart resets the
+// backoff, while REPORT.md retains the finish and its deterministic operation ID.
 const OutboxRetry = time.Minute
 
 // HoldersBudget bounds the current ownership view asked for an old report.
@@ -50,8 +54,13 @@ const ReportChars = 600
 // server did not take and when, and the notes said while they stand.
 type outboxState struct {
 	finished map[string]bool
-	tried    map[string]time.Time
+	tried    map[string]outboxAttempt
 	said     map[string]bool
+}
+
+type outboxAttempt struct {
+	at    time.Time
+	delay time.Duration
 }
 
 // reportVerdict is a report's verdict (the first word of its first Verdict: line, upper
@@ -135,7 +144,12 @@ func OutboxFinishArgv(friend string, c Card, verdict, head, branch, report strin
 	if branch != "" && !slices.Contains(argv, "--harness-fault") {
 		argv = append(argv, "--branch", branch)
 	}
-	return append(argv, "--report", words)
+	argv = append(argv, "--report", words)
+	// OutboxFinish: replay the exact payload after a lost answer, including after
+	// restart; a corrected report is a different operation on the same lease.
+	raw, _ := json.Marshal(argv) // ignored: a string slice always encodes
+	sum := sha256.Sum256(raw)
+	return append(argv[:len(argv)-2], "--op", "friend-finish-"+hex.EncodeToString(sum[:16]), "--report", words)
 }
 
 // readReport is the job's REPORT.md under outbox: ok false when there is none, or it is no
@@ -161,7 +175,7 @@ func readReport(outbox, job string) (string, bool, error) {
 // outboxStep is the daemon's outbox pass, after each reconcile the server answered: every
 // job in her outbox named <work>~<epoch>[.g<gen>] with a REPORT.md is finished when its card
 // is working on her row (a work card, never a read), the job no lane is running; the finish
-// is sent once, and one the server did not take is sent again after OutboxRetry. A report
+// is sent once, and one the server did not take is retried with bounded backoff. A report
 // with no Verdict line, one that cannot be read, and a job whose card is not working on her
 // row are said once while they stand, and left.
 func (l *loop) outboxStep(now time.Time) {
@@ -171,7 +185,7 @@ func (l *loop) outboxStep(now time.Time) {
 	}
 	o := &d.outbox
 	if o.finished == nil {
-		o.finished, o.tried, o.said = map[string]bool{}, map[string]time.Time{}, map[string]bool{}
+		o.finished, o.tried, o.said = map[string]bool{}, map[string]outboxAttempt{}, map[string]bool{}
 	}
 	at := now.UTC().Format(time.RFC3339)
 	said := map[string]bool{}
@@ -268,7 +282,7 @@ func (l *loop) outboxStep(now time.Time) {
 				continue
 			}
 		}
-		if t, ok := o.tried[job]; ok && now.Sub(t) < OutboxRetry {
+		if t, ok := o.tried[job]; ok && now.Sub(t.at) < t.delay {
 			continue
 		}
 		card := Card{ID: id, Brief: filepath.Join(d.Dir, "inbox", job, "BRIEF.md"), Outbox: filepath.Join(outbox, job)}
@@ -284,7 +298,7 @@ func (l *loop) outboxStep(now time.Time) {
 			_, branch = PushedHead(d.Dir, card)
 		}
 		if why := l.offTip(*h, verdict, head, branch); why != "" {
-			o.tried[job] = now
+			o.tried[job] = outboxAttempt{at: now, delay: OutboxRetry}
 			note(job, why+"; read again in "+OutboxRetry.String())
 			continue
 		}
@@ -293,8 +307,9 @@ func (l *loop) outboxStep(now time.Time) {
 		err = d.Finish(ctx, argv)
 		cancel()
 		if err != nil {
-			o.tried[job] = now
-			note(job, "its finish was not taken, sent again in "+OutboxRetry.String()+": "+oneLine(err.Error(), 300))
+			delay := min(OutboxRetry, max(BeatEvery, 2*o.tried[job].delay))
+			o.tried[job] = outboxAttempt{at: now, delay: delay}
+			note(job, "its finish result is not confirmed, sent again in "+delay.String()+": "+oneLine(err.Error(), 300))
 			continue
 		}
 		delete(o.tried, job)
