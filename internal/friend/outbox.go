@@ -257,6 +257,17 @@ func (l *loop) outboxStep(now time.Time) {
 			note(job, "it has no Verdict line")
 			continue
 		}
+		if verdict == "HARNESS-FAULT" && strings.Contains(report, "\nRunner-END: ") {
+			if _, ended := RunnerEnded(RunnerLog(d.Dir), job); !ended {
+				note(job, "its harness-fault marker is stale: the runner no longer ends with report=no")
+				continue
+			}
+			current, there, err := readReport(outbox, job)
+			if err != nil || !there || current != report {
+				note(job, "its report changed after the harness-fault marker was read")
+				continue
+			}
+		}
 		if t, ok := o.tried[job]; ok && now.Sub(t) < OutboxRetry {
 			continue
 		}

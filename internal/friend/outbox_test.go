@@ -172,6 +172,28 @@ func TestTheDaemonFinishesADeadLaneAndALandOnlyAtOriginsTip(t *testing.T) {
 	assert.Contains(t, said, "outbox: left outbox/off.w1~15/REPORT.md: Head "+head+" is not origin's tip of sprint/off.w1.g1.e15, "+other)
 }
 
+func TestTheDaemonLeavesAStaleHarnessFaultMarkerForARestartedRunner(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	dir := r.d.Dir
+	row := &twinRow{}
+	r.d.Held = row.held
+	f := &finishes{}
+	r.d.Finish = f.finish
+	card := workCard("restart.w1", "working")
+	inboxJob(t, dir, card.Job, card.Brief)
+	row.set(card)
+	outboxReport(t, dir, card.Job, DeadLaneReport("bob", card.Job, "t END "+card.Job+" exit=0 report=no"))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "runner.log"), []byte("t START "+card.Job+" tier=heavy\nt END "+card.Job+" exit=0 report=no\nt START "+card.Job+" tier=heavy\n"), 0o644))
+	r.run(t, 2)
+	assert.Empty(t, f.got(), "a persisted marker cannot return a restarted job")
+	assert.Contains(t, strings.Join(r.records, "\n"), "harness-fault marker is stale")
+	outboxReport(t, dir, card.Job, "Verdict: FAIL\n\nThe worker reported a failure.\n")
+	r.run(t, 2)
+	require.Len(t, f.got(), 1)
+	assert.Contains(t, f.got()[0], "--failed", "the worker's report keeps its failed disposition")
+}
+
 func TestRunnerEndedReadsTheJobsLastEventAsCollectDoes(t *testing.T) {
 	t.Parallel()
 	for log, want := range map[string]bool{

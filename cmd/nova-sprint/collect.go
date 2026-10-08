@@ -191,10 +191,8 @@ func (a *app) cmdCollect(args []string, stdout, stderr io.Writer) int {
 						break
 					}
 				}
-				if x.From == "" {
-					if _, ended := sprint.RunnerEnded(runnerLog(*root, filepath.Join(*root, x.Friend+"-working")), x.Job); !ended {
-						changed = true
-					}
+				if _, ended := sprint.RunnerEnded(runnerLog(*root, filepath.Join(*root, x.Friend+"-working")), x.Job); !ended {
+					changed = true
 				}
 				if changed {
 					left++

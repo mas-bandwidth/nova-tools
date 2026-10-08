@@ -885,6 +885,9 @@ event, `END <job> ... report=no` with no `LIMIT` after its `START` (`sprint.Runn
 a run stopped at its usage limit is run again) is a `harness-fault: no report`:
 the same work card is withdrawn through `FriendReturn` for a fresh generation and its
 primary goes ready without advancing its attempt or recording a failed-work judgment.
+Before the return, collect rechecks every outbox and the owning runner's latest job event;
+a persisted marker after a new `START`, or a marker in another friend's tree, leaves the
+card working for the next pass.
 An explicit `HOLD` or `FAIL` report still finishes failed. A finish taken moves
 the card off working, so a report finished once is never finished twice (a card dealt
 again is another job, `.g<gen>`). One line per card, `COLLECT <card> LAND <head>`,

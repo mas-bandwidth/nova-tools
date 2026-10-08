@@ -98,6 +98,8 @@ func Collect(cards []CollectCard, trees []CollectTree, deadLanes bool) []Collect
 // with the report's first paragraph; a LAND with no full sha Head, HOLD, FAIL and any other
 // verdict failed, a HOLD's or FAIL's full sha Head kept, with the report's first
 // CollectReportChars characters; no Verdict line leaves the card, for she may be writing it.
+// A harness-fault marker is accepted only from the owning friend's tree; the caller
+// checks her runner's latest event again before returning the card.
 func collectReport(c CollectCard, from, report string) Collected {
 	verdict, head := CollectVerdict(report)
 	r := Collected{CollectCard: c, From: from, Verdict: verdict}
@@ -105,6 +107,8 @@ func collectReport(c CollectCard, from, report string) Collected {
 	switch {
 	case verdict == "":
 		r.Left = "outbox/" + c.Job + "/REPORT.md of " + from + " has no Verdict line"
+	case verdict == "HARNESS-FAULT" && from != c.Friend:
+		r.Left = "outbox/" + c.Job + "/REPORT.md of " + from + " is another friend's harness-fault marker"
 	case verdict == "HARNESS-FAULT" && strings.Contains(report, "\nRunner-END: "):
 		r.Dead = true
 		r.Report = "harness-fault: no report; " + collectChars(report, CollectReportChars)

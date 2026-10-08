@@ -1977,7 +1977,11 @@ outbox pass keeps the same rule for her own tree on every sync:
   the record (`outbox: dead lane <job>: ...`), and the same pass returns the same
   work card for a fresh generation without advancing its primary attempt. A worker's
   `FAIL` or `HOLD` report still finishes failed. Repeated no-report faults feed the
-  row's existing `FaultWatch` hold.
+  row's existing `FaultWatch` hold. A persisted marker is not enough to return a card:
+  the owning runner's latest event must still be `END ... report=no`; a later `START`
+  leaves the card working, and a subsequent worker report takes its own verdict. The
+  daemon sends `finish --harness-fault` as its assertion after these checks; that finish
+  flag does not independently read the runner log.
 
 The model is `internal/friend/tla/Collect.tla`, both hands (the coordinator's verb over
 every tree, the daemon over hers) resolving reports or dead lanes from their snapshots

@@ -75,6 +75,35 @@ func TestCollectFailsAReportedHoldAndReturnsANoReportHarnessFault(t *testing.T) 
 	assert.NotContains(t, ta2.ok("collect --dead-lanes --root "+root2), "RETURNED", "the retired job's END cannot return its next generation")
 }
 
+func TestCollectLeavesAStaleOrForeignHarnessFaultMarker(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ name, markerFriend, log string }{
+		{"restarted runner", "amy", "t START s1-1.w1 tier=heavy\nt END s1-1.w1 exit=0 report=no\nt START s1-1.w1 tier=heavy\n"},
+		{"other friend's marker", "bob", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ta, root := friendCardApp(t, "friend amy", "amy", "bob")
+			ta.ok("tick")
+			ta.startFriend("amy", 1)
+			outboxReport(t, root, tc.markerFriend, "s1-1.w1", "Verdict: HARNESS-FAULT\nRunner-END: t END s1-1.w1 exit=0 report=no\n")
+			if tc.log != "" {
+				dir := filepath.Join(root, "amy-working")
+				require.NoError(t, os.WriteFile(filepath.Join(dir, "runner.log"), []byte(tc.log), 0o644))
+			}
+			withoutDead := ta.ok("collect --root " + root)
+			assert.Contains(t, withoutDead, "COLLECT s1-1.w1 LEFT", "a marker is checked even without --dead-lanes")
+			out := ta.ok("collect --dead-lanes --root " + root)
+			assert.Contains(t, out, "COLLECT s1-1.w1 LEFT")
+			assert.Contains(t, out, "returned=0")
+			var c cardView
+			ta.json("card s1-1", &c)
+			assert.Equal(t, sprint.Working, c.Primary.Col, "a marker cannot return live or foreign work")
+			ta.clean()
+		})
+	}
+}
+
 func TestCollectRefusesAHeadNotOnOrigin(t *testing.T) {
 	t.Parallel()
 	ta, root := friendCardApp(t, "friend amy", "amy")
