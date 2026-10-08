@@ -533,15 +533,17 @@ func friendReadCloseUnit(s *Snapshot, name string, pr, rc *Card, verdict, findin
 		notes = append(notes, j)
 	}
 	changes := []Change{change(Fleet, removeEntry(rc, set))}
+	// the terminal record is unconditional: an outbox report carries no usage, and
+	// that run is unpriced with the reason, never omitted (cost.go)
+	rec := readCostRecord(s, rc, usage, rc.F("asked"), cmp.Or(rc.F("begun"), stamp(s.Now)))
 	if strings.TrimSpace(usage) != "" {
-		rec := readCostRecord(s, rc, usage, rc.F("asked"), cmp.Or(rc.F("begun"), stamp(s.Now)))
 		set[FieldUsage] = rec
 		maps.Copy(set, readUsageFields(rc, usage))
-		if pr.Placed() {
-			costs := map[string]string{}
-			addConsumer(pr, costs, readConsumer(s, rc, 0, verdict, rec))
-			changes = append(changes, change(Work, setEntry(pr, costs)))
-		}
+	}
+	if pr.Placed() {
+		costs := map[string]string{}
+		addConsumer(pr, costs, readConsumer(s, rc, 0, verdict, rec))
+		changes = append(changes, change(Work, setEntry(pr, costs)))
 	}
 	return Unit{Key: pr.ID, Stream: pr.Row, Changes: changes, Moved: rc.ID + " retired " + verdict, Notes: notes}
 }
@@ -602,12 +604,22 @@ func readCardVerb(s *Snapshot, r ReadReq, row, name string) Plan {
 		pr := s.Work.Card(c.F("primary"))
 		if r.Return {
 			set := map[string]string{"retired": stamp(s.Now), "retired_by": RetiredByReturned, "reason": cutText(r.Reason, MaxCardTextBytes)}
-			if r.Usage != "" {
+			changes := []Change{change(Fleet, removeEntry(c, set))}
+			if c.Col == Working {
+				rec := readCostRecord(s, c, r.Usage, c.F("asked"), stamp(readStart(c)))
+				if r.Usage != "" {
+					set[FieldUsage] = rec
+					maps.Copy(set, readUsageFields(c, r.Usage))
+				}
+				costs := map[string]string{}
+				addConsumer(pr, costs, readConsumer(s, c, 0, "retired returned", rec))
+				changes = append(changes, change(Work, setEntry(pr, costs)))
+			} else if r.Usage != "" {
 				set["usage"] = r.Usage
 			}
 			n := happened(NReadReturned, pr.Row, s.Now, pr.ID)
 			n.Who, n.Attempt, n.What = name, c.Int("attempt"), name+" returned "+c.ID+": "+r.Reason
-			p.Units = append(p.Units, Unit{Key: pr.ID, Stream: pr.Row, Changes: []Change{change(Fleet, removeEntry(c, set))},
+			p.Units = append(p.Units, Unit{Key: pr.ID, Stream: pr.Row, Changes: changes,
 				Moved: c.ID + " " + c.Col + " -> returned (retired: " + name + " gave no verdict)", Notes: []Note{n}})
 			continue
 		}

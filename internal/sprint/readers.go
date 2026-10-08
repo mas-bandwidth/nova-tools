@@ -2,6 +2,7 @@ package sprint
 
 import (
 	"fmt"
+	"maps"
 	"math"
 	"slices"
 	"sort"
@@ -563,6 +564,7 @@ func askPicks(rr *round, finder string, want int, free []string, room map[string
 // back (read_return_test.go). A snapshot with no reader states holds every
 // reader up: nothing moves.
 func sweepReads(s *Snapshot, p *Plan) {
+	var ended Plan
 	up := s.UpReaders()
 	if s.ReaderStates == nil || len(up) == 0 {
 		return
@@ -597,11 +599,12 @@ func sweepReads(s *Snapshot, p *Plan) {
 			if !taker(c) {
 				continue
 			}
-			p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.F("stream"),
+			ended.Units = append(ended.Units, Unit{Key: c.ID, Stream: c.F("stream"),
 				Changes: []Change{change(Readers, removeEntry(c, map[string]string{"retired": stamp(s.Now), "retired_by": "away"}))},
 				Moved:   fmt.Sprintf("%s %s:%s -> taken back (%s is %s); the ask asks it of a reader up", c.ID, rd, c.Col, rd, orDash(s.ReaderStates[rd]))})
 		}
 	}
+	p.Units = append(p.Units, readRetirementUnits(s, ended.Units)...)
 }
 
 // RetiredByLevel is a read card's retired_by when the tick's level moved its
@@ -853,6 +856,7 @@ func RestartReads(s *Snapshot) Plan {
 			})
 		}
 	}
+	p.Units = readRetirementUnits(s, p.Units)
 	return p
 }
 
@@ -949,4 +953,70 @@ func heavyRead(s *Snapshot, pr *Card, r AcceptReq) (fields map[string]string, ov
 		FieldHeavyAttempt: pr.F("attempt"), FieldHeavyHead: pr.F("head"), FieldHeavyAt: stamp(s.Now),
 		FieldHeavyOverrules: strings.Join(ids, ","),
 	}, overruled
+}
+
+// readRetirementUnits groups read retirements by primary, so a primary's cost
+// and every ended run apply in one unit (docs/SPEC-SPRINT.md, What a card cost).
+func readRetirementUnits(s *Snapshot, units []Unit) []Unit {
+	grouped := map[string]int{}
+	var out []Unit
+	for _, u := range units {
+		id := s.Readers.Card(u.Key).F("primary")
+		if i, ok := grouped[id]; ok {
+			out[i].Changes = append(out[i].Changes, u.Changes...)
+			out[i].Moved += "; " + u.Moved
+		} else {
+			grouped[id] = len(out)
+			out = append(out, u)
+		}
+	}
+	for i := range out {
+		out[i].Changes = retiredReadCosts(s, out[i].Changes)
+	}
+	return out
+}
+
+// retiredReadCosts preserves a begun run before removal. Unbegun asks incur no
+// run; missing harness usage is explicitly unpriced, never a zero-dollar read
+// (docs/SPEC-SPRINT.md, What a card cost). All changes belong to one primary.
+// The primary's record is merged into the change of that primary already in
+// the unit, so the step writes the card once.
+func retiredReadCosts(s *Snapshot, changes []Change) []Change {
+	costs := map[string]string{}
+	var primary *Card
+	for i := range changes {
+		ch := &changes[i]
+		c := s.T(ch.Table).Card(ch.Entry.ID)
+		if !ch.Entry.Remove || c == nil || (ch.Table == Readers && c.Col != Reading) || (ch.Table == Fleet && (!isRead(c) || c.Col != Working)) {
+			continue
+		}
+		pr := s.Work.Placed(c.F("primary"))
+		if pr == nil {
+			continue
+		}
+		began := c.F("begun")
+		if ch.Table == Fleet {
+			began = stamp(readStart(c))
+		}
+		rec := readCostRecord(s, c, c.F(FieldUsage), c.F("asked"), began)
+		if ch.Entry.Set == nil {
+			ch.Entry.Set = map[string]string{}
+		}
+		ch.Entry.Set[FieldUsage] = rec
+		addConsumer(pr, costs, readConsumer(s, c, 0, "retired-"+ch.Entry.Set["retired_by"], rec))
+		primary = pr
+	}
+	if primary == nil || len(costs) == 0 {
+		return changes
+	}
+	for i := range changes {
+		if changes[i].Table == Work && changes[i].Entry.ID == primary.ID {
+			if changes[i].Entry.Set == nil {
+				changes[i].Entry.Set = map[string]string{}
+			}
+			maps.Copy(changes[i].Entry.Set, costs)
+			return changes
+		}
+	}
+	return append(changes, change(Work, setEntry(primary, costs)))
 }

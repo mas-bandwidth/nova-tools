@@ -324,6 +324,9 @@ func Ask(s *Snapshot, r AskReq) Plan {
 		if j, ok := reviewJudgment(s, c, reviewStep{moved: asked, closing: noteIDs(u.Closes), who: r.Who}); ok {
 			u.Notes = append(u.Notes, j)
 		}
+		// --instead of a reading card, and only that: an away take-back is still
+		// asked, and an unbegun ask adds no cost (retiredReadCosts)
+		u.Changes = retiredReadCosts(s, u.Changes)
 		p.Units = append(p.Units, u)
 	}
 	roundWrites(&p, rr, moves)
@@ -1030,6 +1033,9 @@ func Accept(s *Snapshot, r AcceptReq) Plan {
 			u.Moved += fmt.Sprintf("; %d outstanding read cards retired", retired)
 		}
 		u.Closes = closesFor(s.Open, nil, c.ID)
+		// a reading card retired by accept keeps its ended run; an ask still
+		// unbegun adds none (retiredReadCosts)
+		u.Changes = retiredReadCosts(s, u.Changes)
 		p.Units = append(p.Units, u)
 	}
 	// A waiting stream with something queued is merging.
@@ -1360,6 +1366,9 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 			u.Moved += "; its orphan merge card off " + m.Col
 			orphans[c.ID] = true
 		}
+		// a reading card, or a working read card, retired by rework keeps its ended
+		// run on the primary this unit already writes; an unbegun ask adds none
+		u.Changes = retiredReadCosts(s, u.Changes)
 		u.Closes = closesFor(s.Open, ReworkResolves, c.ID)
 		if one.Rule != "" {
 			// the rule's answer is the decided note of every judgment the rework closes
