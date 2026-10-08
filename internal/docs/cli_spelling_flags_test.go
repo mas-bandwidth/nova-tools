@@ -83,33 +83,10 @@ func TestTheCLIReferenceNamesEverySpellingFlag(t *testing.T) {
 
 	cli, err := os.ReadFile("../../docs/CLI.md")
 	require.NoError(t, err, "docs/CLI.md: %v", err)
-	ref := ""
-	seen := 0
-	inEntry := false
-	for _, line := range strings.Split(string(cli), "\n") {
-		if strings.HasPrefix(line, "nova-check spelling ") {
-			seen++
-			ref = line
-			inEntry = true
-		} else if inEntry && (strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t")) {
-			ref += "\n" + line
-		} else {
-			inEntry = false
-		}
-	}
-	require.NotZero(t, seen, "docs/CLI.md: no line begins `nova-check spelling `")
-	require.LessOrEqual(t, seen, 1, "docs/CLI.md: %d lines begin `nova-check spelling `, want exactly one", seen)
-
-	usageLines := strings.Split(ref, "\n")
-	for i, line := range usageLines {
-		if j := strings.Index(line, "#"); j >= 0 {
-			usageLines[i] = line[:j]
-		}
-	}
-	usage := strings.Join(usageLines, "\n")
+	usage := generatedVerbEntry(t, string(cli), "nova-check", "spelling")
 
 	for _, reg := range regs {
-		assert.Contains(t, usage, "--"+reg.name, "docs/CLI.md reference line does not name --%s, registered at cmd/nova-check/spelling.go:%d",
+		assert.Contains(t, usage, "--"+reg.name, "docs/CLI.md generated spelling entry does not name --%s, registered at cmd/nova-check/spelling.go:%d",
 			reg.name, reg.line)
 	}
 }

@@ -898,12 +898,18 @@ lanes), so the verb is the coordinator's hand and the daemon's duty. The model i
 "Are they actually doing the work that is shown in the friend table? Really?"). A worker's
 failed finish (a friend's `Verdict: HOLD` or `FAIL`, by its first paragraph, or a member's
 failed report) whose reason names a brief defect is the brief's, never the worker's: no
-worker could do the card as cut (`sprint.BriefDefectOf`). Each of the three reasons alone
+worker could do the card as cut (`sprint.BriefDefectOf`). Each of the four reasons alone
 names one, with no label needed, the earliest in the report being the one recorded: the
-base lacks a PATHS file (`the base lacks`, `not on the base`, `missing from the base`, `does not exist on the base`), a duplicate of landed work (`duplicate of landed work`), and a
-decision delivered (`decision delivered`, `decision already delivered`). The label `brief defect` (two words) with none of the three names one in the worker's own words. A
-negated reason or label ("not a duplicate of landed work", "no brief defect") names none,
-and a hyphenated token, such as a card id `hold-is-a-brief-defect`, is no label. The finish
+base lacks a PATHS file (`the base lacks`, `not on the base`, `missing from the base`, `does not exist on the base`), a duplicate of landed work (`duplicate of landed work`), a
+decision delivered (`decision delivered`, `decision already delivered`), and PATHS do not
+hold what the brief names (`PATHS do not hold`). That last reason is raised on the first
+such failed finish, not at the attempt cap and not at the second identical failure: the
+finish is the brief-defect judgment, and when the report carries `PATHS-PROPOSED:` (or a
+line that starts `PATHS:`) the reason recorded is `PATHS do not hold what the brief names; PATHS: <globs>`,
+the worker's proposed PATHS as the one-line fix. A report that only proposes PATHS, without
+those words, stays the worker's failed work, so the paths rule can widen it. The label `brief defect` (two words) with none of the four names one in the worker's own words. A
+negated reason or label ("not a duplicate of landed work", "no brief defect", "not PATHS do not hold") names none,
+and a hyphenated token, such as a card id `hold-is-a-brief-defect` or `paths-do-not-hold`, is no label. The finish
 moves the work card to the member's hidden `defect` cell, never `ok` or `failed`, so `done`
 and `ok%` on the fleet and friends tables count only work the worker could do; the card and
 its primary carry `brief_defect` (the reason); the primary goes to review with result
@@ -5860,6 +5866,25 @@ refuses the whole call. The code is `swarm.LintBrief` (internal/swarm/lintpaths.
 brief per token that fails it and one that passes, and the corrections applied passing) and
 `TestAddRunsTheBriefChecksAtTheBase` (cmd/nova-sprint, add against a twin repository).
 
+add (both forms), brief (one brief, `--dir`, and `--widen`) and recut `--brief-file` also hold
+the brief to `sprint.PathsAdmission` after those checks on add and after the card lint on brief
+and recut (`cmd/nova-sprint/add.go`, `holdPathsAdmit`; the tree is the same lander's clone and
+the same fetch into `refs/nova-add/<base>`, cached per tip for the call). A literal PATHS entry
+must be a file or a directory at the tip, a glob must match one file (`hygiene.MatchGlob`), and
+every func, type or verb STOP or START names in the same clause as a repository path, and a
+TEST name the tree already holds, must occur inside a file PATHS covers, by a plain grep.
+Markdown code-span delimiters are not part of the name or the path, and a qualified name is
+its last component (`sprint.AdmissionTree` is `AdmissionTree`; `file.go` is not a qualified
+name). A TEST name the tree does not hold is the new red test and is not a miss. A new
+`_test` file and an entry a `NEW:` line names may be absent. A brief whose header carries
+`CARRY:` with `head=` (a widen) skips the existence check, because a path it adds may exist
+only at that head, and still checks identifiers. Each miss is one `LINT DRIFT` line,
+`check=paths-hold-named`, naming the nearest file that holds the identifier, then one
+refusal, nothing written. No tree is one `MISSING` line, not a pass, and so is a named
+`REPO:` that no clone can be made of. A brief with no PATHS, or that omits REPO, or that
+omits BASE, is not read against a tree. The test is
+`TestAdmissionRefusesABriefWhosePathsDoNotHoldWhatItNames`.
+
 ### Statistics
 
 The counters the tables show grow for the whole epoch: a fleet row's or a friend's row's
@@ -5963,6 +5988,25 @@ check, so each passes and says so; the bars are in
 [docs/SPEC-RELEASE.md](SPEC-RELEASE.md) section 16, subsection
 release-check-acceptance-r-b.w3. Test:
 `TestReleaseCheckRunsTheAcceptanceSentinelsSixChecks`.
+
+### release-check-merge-queue-p90-b.w7
+
+`release check` also runs `merge-queue-p90`, the merge queue's age check (the
+owner, 2026-10-04: "We cannot let merges get behind like this"): its flags are
+`--window` (how far back a card's merging counts; default 24 h) and
+`--merge-p90` (the bar; default 30 m, because a card's merge is a push and a
+green gate and a longer wait is the queue, not the card). It is the pure
+function `sprint.MergeQueueP90` over `sprint.ReleaseFacts`: from the log's
+work-table moves it takes the time each card spent in the `merging` column,
+from entering it to landing or to leaving it, with a card still merging
+counting with its age now and a card counting when any of its merging
+overlapped the window; it takes the p90 of those ages by the nearest rank
+(`sprint.PercentileNearestRank`) and fails above the bar, its evidence naming
+the p90, the number of cards and the oldest card still merging, or passes
+saying n=0 when no card merged in the window. The verb binds the window and
+the bar with the rest of the facts, so a unit test fakes them and opens no
+socket. Tests: `TestReleaseCheckFailsWhenTheMergeQueueAgeP90IsOverTheBar`,
+`TestPercentileNearestRankIsTheValueAtItsRank`.
 
 ## 12. The driver
 

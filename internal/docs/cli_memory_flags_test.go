@@ -35,31 +35,17 @@ func TestTheCLIReferenceNamesEveryMemoryFlag(t *testing.T) {
 	helper := helperFlagsRead(t, lines)
 	verbs := cmdVerbsRead(t, lines, helper)
 
-	doc := readTextLines(t, cliDocPath)
-	refLine := make(map[string]int, len(verbs))
-	for _, v := range verbs {
-		prefix := "nova-memory " + v.name + " "
-		found := -1
-		for i, line := range doc {
-			if !strings.HasPrefix(line, prefix) {
-				continue
-			}
-			require.Less(t, found, 0, "docs/CLI.md carries more than one line beginning %q", prefix)
-			found = i
-		}
-		require.GreaterOrEqual(t, found, 0, "docs/CLI.md carries no line beginning %q, but cmd/nova-memory/main.go defines the %s verb", prefix, v.name)
-		refLine[v.name] = found
-	}
+	doc := strings.Join(readTextLines(t, cliDocPath), "\n")
 
 	for _, v := range verbs {
-		line := doc[refLine[v.name]]
+		entry := generatedVerbEntry(t, doc, "nova-memory", v.name)
 		names := make([]string, 0, len(v.flags))
 		for name := range v.flags {
 			names = append(names, name)
 		}
 		sort.Strings(names)
 		for _, name := range names {
-			if strings.Contains(line, "--"+name) {
+			if strings.Contains(entry, "--"+name) {
 				continue
 			}
 			t.Errorf("docs/CLI.md does not name --%s for nova-memory %s, but cmd/nova-memory/main.go:%d registers it; the reference is where a person looks",

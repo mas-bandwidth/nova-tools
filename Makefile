@@ -112,7 +112,7 @@ help:
 	@echo "make map         regenerate AGENTS.md and per-directory maps"
 	@echo "make new-rule    scaffold a class rule skeleton (ARGS=<name>)"
 	@echo "make new-verb    scaffold a CLI verb skeleton (ARGS='<tool> <verb>')"
-	@echo "make clidoc      regenerate docs/CLI.md from tool help output"
+	@echo "make clidoc      regenerate CLI.md reference blocks from tool help"
 
 map:
 	$(GO) run ./tools/agentsmap
@@ -146,8 +146,9 @@ new-verb:
 	$(GO) run ./tools/newverb $(ARGS)
 
 clidoc:
-	$(GO) build -o bin/ ./cmd/...
-	$(GO) run ./tools/clidoc --bin bin/
+	$(GO) build -o ./bin/ $(shell sed -n 's/^<!-- clidoc:begin \(nova-[a-z0-9-]*\) -->$$/\1/p' docs/CLI.md | sort -u | sed 's|^|./cmd/|') ./tools/clidoc
+	./bin/clidoc --bin ./bin
+
 
 build:
 	$(GO) build ./...

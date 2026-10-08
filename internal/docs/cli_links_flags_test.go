@@ -88,30 +88,11 @@ func TestTheCLIReferenceNamesEveryLinksFlag(t *testing.T) {
 
 	cli, err := os.ReadFile("../../docs/CLI.md")
 	require.NoError(t, err, "docs/CLI.md: %v", err)
-	ref := ""
-	refLine := 0
-	seen := 0
-	for i, line := range strings.Split(string(cli), "\n") {
-		if strings.HasPrefix(line, "nova-check links ") {
-			seen++
-			ref = line
-			refLine = i + 1
-		}
-	}
-	require.NotZero(t, seen, "docs/CLI.md: no line begins `nova-check links `")
-	require.LessOrEqual(t, seen, 1, "docs/CLI.md: %d lines begin `nova-check links `, want exactly one", seen)
-
-	// The trailing `#` column explains the flags; it is not where a reader
-	// finds them. Strip it, as internal/ci does, so prose that names a flag is
-	// not read as the flag's declaration.
-	usage := ref
-	if j := strings.Index(usage, "#"); j >= 0 {
-		usage = usage[:j]
-	}
+	usage := generatedVerbEntry(t, string(cli), "nova-check", "links")
 
 	for _, reg := range regs {
-		assert.Contains(t, usage, "--"+reg.name, "docs/CLI.md:%d reference line %q does not name --%s, registered at cmd/nova-check/main.go:%d as %s; the reference is where a person looks for it",
-			refLine, ref, reg.name, reg.line, reg.form)
+		assert.Contains(t, usage, "--"+reg.name, "docs/CLI.md generated links entry does not name --%s, registered at cmd/nova-check/main.go:%d as %s",
+			reg.name, reg.line, reg.form)
 	}
 }
 

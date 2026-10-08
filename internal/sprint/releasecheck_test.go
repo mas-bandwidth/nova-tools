@@ -13,16 +13,34 @@ import (
 // fakeRelease is the release check's snapshot as a test builds it: a clock, a log
 // and the acceptance sentinel's facts.
 type fakeRelease struct {
-	now      time.Time
-	lines    []Line
-	dealtMax time.Duration
-	accept   Acceptance
+	now         time.Time
+	lines       []Line
+	dealtMax    time.Duration
+	accept      Acceptance
+	mergeWindow time.Duration
+	mergeP90    time.Duration
 }
 
 func (f fakeRelease) Now() time.Time          { return f.now }
 func (f fakeRelease) Log() []Line             { return f.lines }
 func (f fakeRelease) DealtMax() time.Duration { return f.dealtMax }
 func (f fakeRelease) Acceptance() Acceptance  { return f.accept }
+
+// MergeWindow and MergeP90 fall back to the defaults so a twin built for
+// another check still answers the merge queue's check.
+func (f fakeRelease) MergeWindow() time.Duration {
+	if f.mergeWindow == 0 {
+		return MergeQueueWindowDefault
+	}
+	return f.mergeWindow
+}
+
+func (f fakeRelease) MergeP90() time.Duration {
+	if f.mergeP90 == 0 {
+		return MergeQueueP90Default
+	}
+	return f.mergeP90
+}
 
 func fleetMove(at time.Time, card, from, to string, set map[string]string) Line {
 	return Line{Kind: LineMove, At: at, Table: Fleet, Card: card, Stream: "s1", From: from, To: to, Set: set}

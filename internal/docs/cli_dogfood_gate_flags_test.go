@@ -52,17 +52,9 @@ func TestTheCLIReferenceNamesEveryDogfoodGateFlag(t *testing.T) {
 
 	reference, err := os.ReadFile("../../docs/CLI.md")
 	require.NoError(t, err, "docs/CLI.md: %v; it is the command reference a person reads to find a verb's flags", err)
-	usage, found := "", 0
-	for _, line := range strings.Split(string(reference), "\n") {
-		if strings.HasPrefix(line, "nova-check dogfood gate ") {
-			usage = line
-			found++
-		}
-	}
-	require.NotZero(t, found, "docs/CLI.md has no line beginning %q; the command reference must document this verb", "nova-check dogfood gate ")
-	require.LessOrEqual(t, found, 1, "docs/CLI.md has %d lines beginning %q; the reference must name the verb exactly once", found, "nova-check dogfood gate ")
+	usage := generatedVerbEntry(t, string(reference), "nova-check", "dogfood gate")
 
 	for _, f := range flags {
-		assert.Contains(t, usage, "--"+f.name, "docs/CLI.md's line for `nova-check dogfood gate` does not name --%s, registered at cmd/nova-check/dogfood.go:%d; docs/CLI.md is the command reference and the list `nova-check dogfood ledger` reads, so a flag it does not name is a flag a person cannot find", f.name, f.line)
+		assert.Contains(t, usage, "--"+f.name, "docs/CLI.md's generated entry for `nova-check dogfood gate` does not name --%s, registered at cmd/nova-check/dogfood.go:%d", f.name, f.line)
 	}
 }
