@@ -5830,7 +5830,7 @@ land's place; a head that is not a commit id stops the dry run where land stops,
 | streams | every stream with the repositories and bases its cards record, a read (needs no actor, writes nothing): `add` records each card's brief `REPO:` and `BASE:` on its stream's control card (fields `repo` and `base`, the union over its cards, sorted, so a stream whose cards name more than one repository or base keeps them all and is named as a finding), and one call lists every stream (`STREAM <s> repos=... bases=... release=... open=<n> landed=<n>`, open the cards not landed, landed the rest) with `--cards` every card in state order (`CARD <id> stream= state= tier= title= needs=`, the title the first sentence of the brief's `THE TASK`); `--repo <owner/name>` keeps only the streams recording a repository (a mixed stream is listed by each; the repositories are compared by owner/name) and `--release <name>` only the streams of a release, from one snapshot of the work and merge tables; a stream whose cards name more than one repository prints a `NOTE stream <s> names more than one repository (...)` line; `--json` one object (`streams`, each row with `repos`, `bases`, `release`, `open`, `landed` and, with `--cards`, `cards`; `mixed`), the whole listing one read of the work and merge tables as one snapshot (batched, no card-by-card call) |
 | held | the held cards and what each waits on, a read (needs no actor, writes nothing): every waiting primary admitted held (`add --held`, until `release`) or behind a sentinel by its place in line (the cards `where`'s held count counts), one line a card, `HELD <id> stream= held=yes|- behind=<sentinel,...|-> needs=<needs not landed|->`, then `HELD OK cards= held= behind=`, from one read of the work table; `--stream <s>` keeps one stream's; `--json` one object, `cards` (the comfort list of 2026-10-03, item 1) |
 | sentinels | the sentinels on the table and what each gates, a read (needs no actor, writes nothing): every sentinel not landed, one line each, `SENTINEL <id> stream= reached=yes|- behind=<n> needs=<needs not landed|->`, behind the waiting cards its release lets go (section 16), then `SENTINELS OK sentinels=`, from one read of the work table; `--stream <s>` keeps one stream's; `--json` one object, `sentinels` |
-| view | the role views, reads for a model: `view coordinator` (what needs the seat, ranked by the cards behind each, each with its command) and `view worker --as <member\|friend>` (its cards, its next step, its results not landed); `--json` (schema 1), `--since <cursor>`, `--all` (below, "Role views") |
+| view | the role views, reads for a model: `view coordinator` (what needs the seat, ranked by the cards behind each, each with its command) `view worker --as <member\|friend>` (its cards, its next step, its results not landed) and `view seat` (the coordinator's model, the dashboard's own snapshot); `--json` (schema 1), `--since <cursor>`, `--all` (below, "Role views") |
 | queue --as, take | a member's or a reader's cards (a reader's `queue --as` is its beat), each with its packet: what it is handed so that it needs no other read to learn its task (the card, its epoch and generation, the brief, this attempt's fix, the notes on it, for a rework the finding of the read that found the attempt before broken and why that attempt ended (the work card's own words: the primary's are written at the next tick's drain, after a member may have taken the card), and for a work card the branch to work on, `sprint/<card>.g<gen>.e<epoch>` (the epoch makes it one per epoch, a card id coming back after a clear, and the generation one per launch, a card dealt again within an epoch, withdrawn from a member or redealt after a staging or provider failure, being another launch whose push must not meet the first's), and the one to start from, the attempt before's branch for a rework, with `base_head`, the head that attempt finished ok at, the work a rework carries (docs/SPEC-CARD-CONTRACT.md: never a branch name alone, which may never have reached origin): a rework is staged at the tip of its base branch on origin when the member stages it, with that head's work carried on top as one commit where it applies cleanly, and the bare tip where it does not, its JOB.md then saying the work must be redone; the finish counts the child's commits from that staged commit, and its report says it (`stage: staged=<sha> tip=<sha> of <base> carry=<carried|held|conflict|none>`); for a read card the work it reads: the worker, its head, branch and base, and the worker's report), and the command that reports it (a work card's names `--head <commit>`: a finish without `--head` records the card's id as its head, which `land` refuses as not a commit id); `queue --as <w> --packets <n> [--have <id,...>]` hands only the packets the worker asks for: the first n cards it may start (asked, ready) and every card in flight (reading, working), each not named in `--have`; every other card is listed with its id, column, attempt and gen, and the answer's epoch, which are its claim, and no packet (a reader of width 8 holding 150 asked reads with 2.5 KB briefs: 445,525 bytes without the flag, 51,623 asking for 8; a recorded fleet load test measured 579,181 bytes a pass); without `--packets` every card carries its packet; take prints the packets of the cards it took, `--json` as `packets`; finish takes `--branch` and `--base`, which the work card keeps and the reader's packet and card show; a fleet member (`nova-swarm member`) pushes the child's commit to origin's `sprint/<card>.g<gen>.e<epoch>` before its finish, so the finish's `--head` is the pushed sha the merge queue carries and the merge reads the work from origin; a finish is ok only with the result's shape, its verdict ok and a pushed commit, and every other is a `--failed` finish naming no head and no branch, its report starting with the reason (`no RESULT.md shape`, `nothing to do: <why>`, `verdict <word>`, `no commit: <why>`, `push refused: <git's line>`), so it opens the failed-work judgment and never goes to review with nothing to read (docs/SPEC-CARD-CONTRACT.md section 4) |
 | log | the epoch's log, every line in order: --card (a primary with its work, read and merge cards; a set move the card is in is printed as the card's own line with the set's size, `(in a set of n)`, never the first card's words with the rest listed; `--json` keeps the set line whole), --stream, --member, --since, --at-epoch, --json (section 17); a line's words are printed under it, a brief by its size and the card that shows it (`card <id>`), never whole (`--json` carries it) |
 | check, repair | section 9 and section 10 |
@@ -6057,6 +6057,47 @@ line 1, flash when it names none. The JSON (schema 1) carries `view` ("cards"), 
 no holder) or `cards`, each with `id`, `stream`, `col`, `tier` and `holder`. The text is one
 `key=count` line per key then `total=<n>`, or one line per card. The server serves it at
 `GET /api/view/cards[?col=][&stream=][&holder=][&by=]` (no `since`).
+
+#### view seat
+
+The owner, 2026-10-05: "you should always query your own version of the dashboard, maybe
+json"; "If you have an out of date model of what is going on, you are going to make incorrect
+decisions." `nova-sprint view seat [--dashboard <address:port | http(s) URL>] [--json]` is the
+coordinator's whole model in one compact object, cheap enough to run before every decision
+(cmd/nova-sprint/view_seat.go, `modelOf`). It is one GET of the dashboard's
+`/api/sprint?release=all` (`--dashboard`, else `NOVA_SPRINT_DASHBOARD`, else
+`127.0.0.1:7390`), the snapshot the page draws, decoded as the `where --json --cards` object
+it carries; nothing else is read, so the seat and the page cannot disagree. The server never
+runs it: it reads the dashboard where it is typed. Every age in it is at the snapshot's
+`fetchedAt`.
+
+The JSON is `view` `seat`, `schema` 1, `server` (the URL read), `fetchedAt`, `age` (at the
+read), `sum` (the snapshot's summary), `machine`; `friends` and `fleet`, a row each (`n`,
+`st`, `r` ready, `w` working, `wd` width; a friend's `beat`, how long before `fetchedAt` she
+last beat or `never`; a machine's `load`, present while its beat is fresh: the snapshot keeps
+no machine's beat time); `streams`, every stream with cards not all landed (`n`, `st` the
+merge table's state or `held` while every card waits, and its `wait`, `ready`, `work`,
+`review`, `merge`, `landed` and `all`); `j`, the open judgments the snapshot carries (those
+naming a dealt card) by kind with counts; `ready` (the ready pool) and `width` (the up
+machines'); `gates`, what waits behind which gate (`g`, `k`: a held stream with its waiting
+cards and reason, each of where's heaviest open cards with `b` the cards behind it and its
+state, each hold in force with its reason); and `out`, the five things most out of place,
+`nout` counting all. A thing out of place is `k`, `s` one line, and `next` the command that
+answers it, listed in this order, within a kind the largest first: a stream stopped (`resume
+--stream <s>`), a card past its deadline at `fetchedAt` (`log --card <primary> --since 1h`),
+an up friend of width above 0 holding nothing while the ready pool is not empty (`friend
+level`), a reader with cards asked and none reading (`queue --as <reader>`), and a friend
+holding cards whose last beat is older than 15 minutes or never came (`friend take <friend>
+--all-unstarted`). The text is `VIEW seat fetchedAt=<t> age=<a> server=<url>`, the summary,
+then a line a row, stream, the counts, a gate and `OUT <kind>: <line>; run: <next>`, and
+`out=<n> shown=<n>`.
+
+A snapshot older than 30 s at the read, a dashboard that does not answer or answers no
+snapshot of the sprint, and a `--dashboard` that is no address:port or http(s) URL are
+refused, exit 2, naming the dashboard, with `nova-sprint seat check` as the remedy. Tests:
+`cmd/nova-sprint/view_seat_test.go`, `TestViewSeatIsTheDashboardsOwnSnapshot` (the dashboard
+served on the twin with no socket: one GET, the rows and counts the snapshot's, a store change
+unseen until the dashboard reads again, 31 s refused) and `TestViewSeatNamesWhatIsOutOfPlace`.
 
 #### view-coordinator-needs.w1
 
