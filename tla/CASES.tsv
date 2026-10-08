@@ -484,3 +484,5 @@ MCStopReturnUnfenced.cfg	MCStopReturn.tla	invariant	NoLaunchCommittedOnStop	igno
 MCStopReturnOrphan.cfg	MCStopReturn.tla	invariant	NoOrphanDebt	ignore-terminal	stopreturn	required	-
 MCStopReturnStaleTick.cfg	MCStopReturnStaleTick.tla	invariant	NoStaleTickStop	ignore-terminal	stopreturn	required	-
 MCStopReturnStalePart.cfg	MCStopReturnStalePart.tla	invariant	NoStaleTickPart	ignore-terminal	stopreturn	required	-
+MCWakeCursor.cfg	MCWakeCursor.tla	pass	-	ignore-terminal	wakecursor	required	-
+MCWakeCursorBrokenRearm.cfg	MCWakeCursor.tla	invariant	NoSkipped	ignore-terminal	wakecursor	required	-

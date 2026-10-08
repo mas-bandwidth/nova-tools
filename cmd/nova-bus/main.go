@@ -9,7 +9,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -17,7 +16,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"net"
 	"net/netip"
 	"os"
@@ -78,17 +76,14 @@ type world struct {
 	fleetBus func(ctx context.Context, addr string) (string, error)
 	// now is the clock a wait reads: the real one, or a test's.
 	now func() time.Time
-	// fileSize is a wake file's end when a wait arms (0 when the file is not
-	// there): the offset a later line must lie past.
-	fileSize func(path string) (int64, error)
-	// fileLine reads a wake file from an offset, answering its first line
-	// past it and the offset past everything read ("" when nothing new).
-	fileLine func(path string, from int64) (line string, end int64, err error)
+	// wakeArm binds a caller-owned cursor; wakeLine validates it and reads one record.
+	wakeArm  func(path, token string) (wakeCursor, error)
+	wakeLine func(path string, cursor wakeCursor) (string, wakeCursor, error)
 }
 
 func realWorld() world {
 	w := world{getenv: os.Getenv, run: runShell, now: time.Now,
-		fileSize: realFileSize, fileLine: realFileLine,
+		wakeArm: realWakeArm, wakeLine: realWakeLine,
 		lookup: func(ctx context.Context, host string) ([]netip.Addr, error) {
 			return net.DefaultResolver.LookupNetIP(ctx, "ip", host)
 		},
@@ -181,7 +176,7 @@ first run: a Redis at --redis (else NOVA_BUS_REDIS, else fleet:bus); loopback/ta
 		Verbs: []tool.Verb{
 			{
 				Name:    "wait",
-				Usage:   "wait [--as <me>] [--after <id>] [--timeout <duration>] [--skip-subject <prefix,...>] [--wake-file <path>] [--redis <addr>]",
+				Usage:   "wait [--as <me>] [--after <id>] [--timeout <duration>] [--skip-subject <prefix,...>] [--wake-file <path>] [--wake-after <cursor>] [--redis <addr>]",
 				Example: "wait --as bob --timeout 1s",
 				Effect:  tool.Inspection,
 				ExitTable: "0 the wait ended: WAIT OK, entries that counted, or WAIT WAKE, a line on the wake file; 1 WAIT NONE, the timeout ran out; " +
@@ -195,11 +190,15 @@ that are not from you and whose subject starts with none of --skip-subject's pre
 without case; default PING,PONG): one WAIT MESSAGE id=<id> from=<name> subject=<s> bytes=<n> line
 each, at most 5, then WAIT OK after=<last id seen> at exit 0. Skipped entries move the cursor and
 are not printed. --wake-file <path> also ends the wait when a line is appended to the file after the
-start (a harness's deliver adapter appends one per message): WAIT WAKE file=<path> line=<first line>
+start (a harness's deliver adapter appends one per message). Save the returned wake-after cursor
+and re-arm with --wake-after <cursor> as well as --after <id>; wake-offset is the ending byte offset.
+The cursor binds file identity and consumed prefix; replacement, truncation or rewriting refuses
+with a reconciliation remedy. Without --wake-after the file starts at its current end. A missing
+new file binds when it first appears; pipes and other nonregular files are refused: WAIT WAKE file=<path> line=<first line>
 at exit 0. Past --timeout <duration> (a Go duration; 0, the default, is for ever) it is WAIT NONE
 after=<cursor> waited=<duration> on standard error at exit 1. --json prints one object when the
 wait ends: {"status":"ok","word":"OK|NONE|WAKE","after":<id>,"messages":[{"id":<id>,"from":<name>,
-"subject":<s>,"bytes":<n>}],"wake":{"file":<path>,"line":<text>}} (messages is empty and wake left
+"subject":<s>,"bytes":<n>}],"wake":{"file":<path>,"line":<text>},"wake_after":<cursor>,"wake_offset":<bytes>} (messages is empty and wake left
 out when they hold nothing; the ARMED line is the text form's). Exit 2 when a flag is wrong, the
 name is not on the roster, or the store does not answer.
 example: nova-bus wait --as bob --timeout 1s`,
@@ -208,11 +207,20 @@ example: nova-bus wait --as bob --timeout 1s`,
 					f.String("after", "", "the stream entry id <ms>-<seq> to wait past; default: the stream's last id read once at start, as WAIT ARMED prints it")
 					f.Duration("timeout", 0, "how long to wait before WAIT NONE, a Go duration (1s, 2m); 0 is for ever")
 					f.String("skip-subject", "PING,PONG", "subjects starting with one of these prefixes, comma-separated, are skipped; matched without case")
+					f.String("wake-after", "", "the complete wake-after cursor returned by wait; requires --wake-file; preserves unread bytes across rearm and restart")
 					f.String("wake-file", "", "a file whose lines, appended after the start, also end the wait (one line per message)")
 					f.String("redis", w.getenv(RedisEnv), "the Redis address, host:port (default: "+RedisEnv+", else NOVA_SPRINT_REDIS, else fleet:bus)")
 					f.Check(func(c *tool.Call) {
 						if v := c.Str("after"); v != "" && !streamID(v) {
 							c.Problem(fmt.Sprintf("--after wants a stream entry id, <ms>-<seq> as WAIT ARMED and WAIT OK print it; %q is not one", v))
+						}
+						if v := c.Str("wake-after"); v != "" {
+							if c.Str("wake-file") == "" {
+								c.Problem("--wake-after wants --wake-file, the same append-only regular file")
+							}
+							if _, err := parseWakeCursor(v); err != nil {
+								c.Problem(err.Error())
+							}
 						}
 						if c.Dur("timeout") < 0 {
 							c.Problem("--timeout wants a duration of at least 0, 0 for ever (a negative wait is no wait)")
@@ -973,50 +981,13 @@ type waitWake struct {
 // line are oneline-escaped, so nothing they hold can reorder the line a
 // reader reads.
 type waitJSON struct {
-	Status   string        `json:"status"`
-	Word     string        `json:"word"`
-	After    string        `json:"after"`
-	Messages []waitMessage `json:"messages"`
-	Wake     *waitWake     `json:"wake,omitempty"`
-}
-
-// realFileSize is a wake file's end when the wait arms: 0 when the file is
-// not there yet, so its first line, whenever it appears, is past the start.
-func realFileSize(path string) (int64, error) {
-	st, err := os.Stat(path)
-	if errors.Is(err, fs.ErrNotExist) {
-		return 0, nil
-	}
-	if err != nil {
-		return 0, err
-	}
-	return st.Size(), nil
-}
-
-// realFileLine reads a wake file from an offset, answering its first line
-// past the offset and the offset just past that line's newline: "" and the
-// same offset when no newline is there yet (a fragment is not a line). A
-// file that is not there is no wake yet, never an error.
-func realFileLine(path string, from int64) (string, int64, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return "", from, nil
-		}
-		return "", 0, err
-	}
-	defer f.Close() // ignored: read-only, nothing to flush
-	if _, err := f.Seek(from, io.SeekStart); err != nil {
-		return "", 0, err
-	}
-	raw, err := io.ReadAll(io.LimitReader(f, wakeLineMax))
-	if err != nil {
-		return "", 0, err
-	}
-	if i := bytes.IndexByte(raw, '\n'); i >= 0 {
-		return string(raw[:i]), from + int64(i) + 1, nil
-	}
-	return "", from, nil
+	Status     string        `json:"status"`
+	Word       string        `json:"word"`
+	After      string        `json:"after"`
+	Messages   []waitMessage `json:"messages"`
+	Wake       *waitWake     `json:"wake,omitempty"`
+	WakeAfter  string        `json:"wake_after,omitempty"`
+	WakeOffset *int64        `json:"wake_offset,omitempty"`
 }
 
 // streamID is whether s is a stream entry id (<ms>-<seq>, both numbers): the
@@ -1077,17 +1048,16 @@ func (w world) wait(c *tool.Call) *tool.Out {
 		return answer(err)
 	}
 	jsonOut := c.Bool("json")
-	if !jsonOut {
-		waitLine(c, tool.Done().As("ARMED").Fact("after", cursor))
-	}
 	wakePath := c.Str("wake-file")
-	var offset int64
+	var wake wakeCursor
 	if wakePath != "" {
-		size, err := w.fileSize(wakePath)
+		wake, err = w.wakeArm(wakePath, c.Str("wake-after"))
 		if err != nil {
-			return tool.Refuse("the wake file cannot be read: " + err.Error())
+			return wakeRefusal(err)
 		}
-		offset = size
+	}
+	if !jsonOut {
+		waitLine(c, wakeFacts(tool.Done().As("ARMED").Fact("after", cursor), wakePath, wake))
 	}
 	// --skip-subject is a comma list of prefixes, empty words dropped; the
 	// match without case is WaitPick's, the one place the rule lives
@@ -1097,17 +1067,17 @@ func (w world) wait(c *tool.Call) *tool.Out {
 	timeout := c.Dur("timeout")
 	for {
 		if wakePath != "" {
-			text, end, err := w.fileLine(wakePath, offset)
+			text, next, err := w.wakeLine(wakePath, wake)
 			if err != nil {
-				return tool.Refuse("the wake file cannot be read: " + err.Error())
+				return wakeRefusal(err)
 			}
-			offset = end
+			wake = next
 			if text != "" {
 				if jsonOut {
 					return waitObject(c, waitJSON{Status: "ok", Word: "WAKE", After: cursor,
-						Messages: []waitMessage{}, Wake: &waitWake{File: wakePath, Line: oneline.Escape(text)}}, 0)
+						Messages: []waitMessage{}, Wake: &waitWake{File: wakePath, Line: oneline.Escape(text)}, WakeAfter: wake.token(), WakeOffset: &wake.Offset}, 0)
 				}
-				waitLine(c, tool.Done().As("WAKE").Fact("file", wakePath).Fact("line", tool.Text(text)))
+				waitLine(c, wakeFacts(tool.Done().As("WAKE").Fact("file", wakePath).Fact("line", tool.Text(text)), wakePath, wake))
 				return tool.Exit(0)
 			}
 		}
@@ -1119,9 +1089,9 @@ func (w world) wait(c *tool.Call) *tool.Out {
 			left := timeout - w.now().Sub(start)
 			if left <= 0 {
 				if jsonOut {
-					return waitObject(c, waitJSON{Status: "ok", Word: "NONE", After: cursor, Messages: []waitMessage{}}, 1)
+					return waitObject(c, waitJSON{Status: "ok", Word: "NONE", After: cursor, Messages: []waitMessage{}, WakeAfter: wakeToken(wakePath, wake), WakeOffset: wakeOffset(wakePath, wake)}, 1)
 				}
-				o := tool.Fail().As("NONE").Fact("after", cursor).Fact("waited", timeout.String())
+				o := wakeFacts(tool.Fail().As("NONE").Fact("after", cursor).Fact("waited", timeout.String()), wakePath, wake)
 				o.Verb = "wait"
 				o.Render(c.Stderr, false)
 				return tool.Exit(1)
@@ -1147,13 +1117,13 @@ func (w world) wait(c *tool.Call) *tool.Out {
 				m := e.Message()
 				msgs = append(msgs, waitMessage{ID: m.ID, From: m.From, Subject: oneline.Escape(m.Subject), Bytes: len(m.Body)})
 			}
-			return waitObject(c, waitJSON{Status: "ok", Word: "OK", After: cursor, Messages: msgs}, 0)
+			return waitObject(c, waitJSON{Status: "ok", Word: "OK", After: cursor, Messages: msgs, WakeAfter: wakeToken(wakePath, wake), WakeOffset: wakeOffset(wakePath, wake)}, 0)
 		}
 		for _, e := range kept {
 			m := e.Message()
 			waitLine(c, tool.Done().As("MESSAGE").Fact("id", m.ID).Fact("from", m.From).Fact("subject", m.Subject).Fact("bytes", len(m.Body)))
 		}
-		waitLine(c, tool.Done().Fact("after", cursor))
+		waitLine(c, wakeFacts(tool.Done().Fact("after", cursor), wakePath, wake))
 		return tool.Exit(0)
 	}
 }
