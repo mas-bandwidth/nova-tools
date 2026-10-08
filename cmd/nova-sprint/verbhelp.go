@@ -111,6 +111,10 @@ var verbEffect = map[string]string{
 	"resume":   "local write: resumes each named stopped stream in the sprint's store, with what was done; --dry-run writes nothing",
 	"set":      "local write: sets the sprint's settings named in the sprint's store; --dry-run writes nothing",
 	"twin":     "local write: replaces the card by its twin in the sprint's store (a merging card is returned first, then twinned; its dry run plans the return alone); --dry-run writes nothing",
+
+	// card base (the base's 5a9340a155) writes through one store step too; its --dry-run is stepdry.go's
+	"card base": "local write: re-points the merging card's BASE to the branch in the sprint's store, after asking origin (a read) whether it holds that branch; --dry-run asks origin the same and writes nothing",
+
 	// verbs that read and write nothing
 	"goal show": "inspection: reads the goals in the sprint's store, writes nothing",
 	"fsck seat": "inspection: reads the coordinator key, the seat record and the server's actor from the sprint's store and the sprint row's coordinator from nova-config's store, writes nothing",
