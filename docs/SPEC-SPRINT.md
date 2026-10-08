@@ -3339,16 +3339,19 @@ rule is `internal/sprint/fleet_quiet.go`; the twin test is
   at the stream's read tier disagree on one attempt (an ok and a broken read
   standing at it), or when a card alternates broken and ok across attempts (a
   reader passed an earlier attempt, `passed_head`, and the current one is
-  found broken), the tick raises one judgment per stream, `raise the read tier
-  of <s> to <next>? <why>`, with the decisions raise (the default: `stream set
-  <s> --read-tier <next> --reason '<why>' --answers <note>`, which records the
-  reason on the stream's control card, `read_tier_reason`, and closes the
-  judgment) and keep (`ack`, which holds it quiet); it is one per stream
-  whatever the cards, kept in place while a cause holds, closed when the
-  stream's read tier for the card has risen, and it never lowers; at the top
-  tier nothing is asked (`TestReadersDisagreeingRaiseOneJudgmentPerStream`,
-  `TestALandedCardReturnedByDevAsksToRaiseTheReadTierAndKeepHoldsIt`,
-  `TestACardAlternatingBrokenAndOkAsksToRaiseTheReadTier`); its packet hands the reader that tier and
+  found broken), the stream has the question `raise the read tier of <s> to <next>? <why>`, one per stream whatever the cards. The question is answered
+  by the rule and never asked (`sprint.ReadTierRule`, the rule `read-tier`;
+  a-judgment-checks-the-lane-before-it-rises.w1): the read tier is kept unless
+  two substantive findings disagree, a reader's ok and another's broken with a
+  finding on one attempt of a card in review at the stream's read tier; then
+  the tick raises it, writing `read_tier` and `read_tier_reason` (`answered by rule read-tier: raised to <next>: two substantive findings disagree on <card> attempt <n> (<readers> ok, <readers> broken with a finding)`) on the stream's
+  control card with a note `answered by rule`. A kept question is counted with
+  the tick's quiet judgments (section 8, a judgment checks the lane before it
+  rises). A sprint row whose `answer_rules_off` names `read-tier` asks it again
+  as a judgment, decisions raise (`stream set <s> --read-tier <next> --reason '<why>' --answers <note>`) and keep (`ack`). It never lowers, and at the top
+  tier nothing is asked (`TestReadersDisagreeingRaiseTheReadTierByRule`,
+  `TestALandedCardReturnedByDevKeepsTheReadTierByRule`,
+  `TestACardAlternatingBrokenAndOkKeepsTheReadTierByRule`); its packet hands the reader that tier and
   the reader's JOB.md names it. It is drawn at that tier's rolling index on the
   fleet table, which the deal and the reads share and the ask moves once a
   read (`internal/sprint/route.go`, readRouteOf;
@@ -4557,8 +4560,8 @@ the tick would make, no other open judgment on it).
 | no fleet member is up (when every member that beats is held, it says so and offers only fleet up and wait) | fleet beat (on a machine), fleet up (releases a hold), wait | no |
 | the fleet is starving (ready, sentinels aside, is under twice the up members' width while a wave is held: `the fleet is starving: ready <n> is under twice the width <2w>; release a wave: nova-sprint release <sentinel> --reason '<why>'`, raised once and updated in place every tick while it holds, naming the first held sentinel in work order; closed when no wave is held; `TestTheTickRaisesStarvingWhileReadyIsUnderTwiceTheWidth`) | release (the wave's sentinel; never a single card), wait | no |
 | a member is overloaded (the owner, 2026-10-03: "the overload is defined as -- cards are timing out. not any CPU%": within the last 15 minutes, `sprint.OverloadWindow`, a member up has had three or more cards, `sprint.OverloadTimeouts`, end on a timeout of any kind, counted from the finishes it reported: a launch refused at staging on `stage-timeout` (the work card's staging take, on whatever row the card sits now), a failed finish `deadline: ...`, or one the budget rule ended because `the usage source stopped answering`; `sprint.TimeoutKind`, `sprint.MemberTimeouts`, `sprint.Overloaded` in internal/sprint/overload.go, one pure decision the tick and the seat check both read; no load number is in it, the beat's load stays a fact for the table): `<m> is overloaded: <k> cards ended on a timeout in the last 15m0s: <card> (<kind>), ...; halve its width: nova-sprint fleet up <m> --width <half>, or wait 15m`, one per member, updated in place every tick while it holds and closed when the window has no three (`TestTheTickRaisesOverloadedOnThreeTimeoutsInTheWindow`) | fleet up <m> --width <half of its width>, wait 15m | no |
-| the readers are behind (the owner, 2026-10-03: "This is another type of thing that should be escalated to you mechanically"; one night review held 75 cards while five readers read 44, their widths kept from before their machines were widened): a read has sat asked and not begun on a reader up for `sprint.ReadersWindow`, 10 minutes (`sprint.ReadersBehind` in internal/sprint/readers_behind.go, one pure decision beside `Overloaded`; a reader's width is its machine row's, `Snapshot.ReaderWidth`, 0 for a reader named for no row): `the readers are behind: review <n>, reads asked and not begun past 10m0s; the readers read <k> of width <w> (<reader> reads <k> of width <w>, <a> waiting past the window[: it reads under its width, restart its loop (nova-config loop show <reader>)][: away, run: nova-sprint reader up <reader>]; ...)`, one for the sprint, updated in place every tick while it holds and closed when no read has waited the window (`TestTheTickRaisesReadersBehindWhenReadsWaitTheWindow`) | reader up <r> (a reader not up holding reads), restart <r> (it reads under its width while reads wait: the loop record of its name in nova-config), wait 10m | no |
-| raise the read tier of the stream? (readtier.go: a landed card of the stream returned by dev or an audit, `promoted --returned`; two readers at the stream's read tier disagreeing on one attempt; a card alternating broken and ok across attempts; one judgment per stream, `raise the read tier of <s> to <next>? <why>`, updated in place while a cause holds and closed by the raise; section 6) | raise (`stream set <s> --read-tier <next> --reason '<why>'`, the default), keep (`ack`) | no |
+| the readers are behind (the owner, 2026-10-03: "This is another type of thing that should be escalated to you mechanically"; one night review held 75 cards while five readers read 44, their widths kept from before their machines were widened): a read has sat asked and not begun for `sprint.ReadersWindow`, 10 minutes, on a reader up with room for it: it reads under its width, or its width is not known (`ReaderLoad.Room`). A reader reading its whole width is busy, not behind: the reads waiting on it raise nothing, and the tick counts them quiet (`sprint.ReadersFull`; on the night of 2026-10-05 the judgment rose while every reader was busy) (`sprint.ReadersBehind` in internal/sprint/readers_behind.go, one pure decision beside `Overloaded`; a reader's width is its machine row's, `Snapshot.ReaderWidth`, 0 for a reader named for no row): `the readers are behind: review <n>, reads asked and not begun past 10m0s; the readers read <k> of width <w> (<reader> reads <k> of width <w>, <a> waiting past the window[: it reads under its width, restart its loop (nova-config loop show <reader>)][: away, run: nova-sprint reader up <reader>]; ...)`, one for the sprint, updated in place every tick while it holds and closed when no read has waited the window (`TestTheTickRaisesReadersBehindWhenReadsWaitTheWindow`) | reader up <r> (a reader not up holding reads), restart <r> (it reads under its width while reads wait: the loop record of its name in nova-config), wait 10m | no |
+| raise the read tier of the stream? (asked only while the rule `read-tier` is off: the rule answers it, section 6; readtier.go: a landed card of the stream returned by dev or an audit, `promoted --returned`; two readers at the stream's read tier disagreeing on one attempt; a card alternating broken and ok across attempts; one judgment per stream, `raise the read tier of <s> to <next>? <why>`, updated in place while a cause holds and closed by the raise; section 6) | raise (`stream set <s> --read-tier <next> --reason '<why>'`, the default), keep (`ack`) | no |
 | a card reached its bound (at its ceiling tier, flash first, section 5: an attempt's work card redealt MaxRedeals, 3, times after takes that ended, the provider's failures among them, and a take of it ended again; the judgment names the provider and the last error line when the provider failed that take; or the second identical failure, section 2: two takes of the card, or two attempts of its primary, failed the same way, and the judgment names the class) | rework with a fix (a new attempt, on the next tier), drop, wait (at a redeal bound, wait only when the bound was a provider failure); when the attempt before also ended at its bound on the card's tier (section 5, the bound holds across attempts): rework with a fix on a higher tier (`--tier`, when the ladder has one), drop, and wait only when the bound was a provider failure and the provider's return has not yet lifted a bound on that tier | no |
 | a work card is past its deadline | fleet down (the member, only when it has held the card its own whole deadline: never the member a late card was just redealt to, nor one it was withdrawn from), wait, drop | no |
 | a read card is past its deadline | ask --another, wait, drop | no |
@@ -4916,7 +4919,8 @@ hours. The tick's overdue part runs the pass (internal/sprint coordinator_pass.g
   her oldest working card's take is within the friend-finish window (`set
   --friend-finish <duration|default>`, the work table's property `friend_finish`, default
   30m); it names her cards and the age of her last finish. Only her work cards count: a
-  read is not card work.
+  read is not card work. A friend with a live lane inside its cap raises nothing (a
+  judgment checks the lane before it rises, below).
 - **judgments wait on the coordinator past their deadline** (`judgments wait on the
   coordinator past their deadline`), one about the sprint while any open judgment is
   overdue (its review time, else `DeadlineJudgment`, as the overdue line has it) and its
@@ -5077,6 +5081,58 @@ Her daemon's facts come on her beat: `friend beat <f> --build <build> --started 
 `TestAFleetMemberGoingDownNamesItsLastBeat`, `TestARestartDoesNotReplayTransitions` and
 `TestAStatusJudgmentWhoseStepsAreDoneIsAnsweredByRule` on the twin store with a fake clock,
 and `TestATickCutBetweenTheStatusRecordAndItsJudgmentFinishesWhole` on the store.
+### A judgment checks the lane before it rises
+
+On the night of 2026-10-05 about 250 judgments reached the coordinator, each a coordinator
+turn to read and acknowledge. Most were a stall, a deadline or "finishes none" for a friend
+whose lane was live and inside its normal run time; "the readers are behind" while every
+reader was busy; and read tier questions that closed themselves. Before a judgment rises,
+the tick passes each part's plan through the lane check (`sprint.LaneChecked`, called by
+the store's tick on every part, its probe included; a-judgment-checks-the-lane-before-it-rises.w1):
+
+- **A live lane.** A friend's card is on a live lane (`sprint.LiveLane`) when it is on her
+  row, ready or working, and either her beat no older than `sprint.FriendLaneLive` (2
+  minutes) names it running (the card, its job or its primary), or her daemon's lane holds
+  it (her seat's running, as the tick reads it). A stored beat on that seat satisfies the
+  same freshness check; an old or future beat cannot revive a lane. It must also have run, in running time
+  from `WorkDeadline`'s stamp, less than its cap (`unfinishedLimit`: her friend's deadline,
+  else `DeadlineUnfinished`). A lateness of that card (`a work card is past its deadline`),
+  her stall (`stalled` on her name), and "finishes none" on her row (`a friend holds working cards and finishes none`) raise nothing while one of her cards is on a live lane. Its row
+  says `running 32m of 90m`: the quiet carries her name and that run (`Quiet.Friend`,
+  `Quiet.Run`), and her row in `view coordinator` carries the last tick's as `run`. Past its cap, or once no beat names it, the judgment rises as
+  before.
+- **Readers busy.** `the readers are behind` rises only when a reader with room did not
+  begin (`ReaderLoad.Room`); reads waiting on readers reading their whole width are quiet
+  (`sprint.ReadersFull`).
+- **A tier question.** `raise the read tier of the stream?` is answered by the rule
+  (`sprint.ReadTierRule`, section 6): kept unless two substantive findings disagree, and
+  never asked.
+
+The lane and the count are owed a model, `tla/LaneCheck.tla`: no judgment rises over a live
+lane (`NoRiseOverLiveLane`), the count is once per span of ticks that keep it quiet
+(`CountedOncePerSpan`), and past the cap or with no beat it rises (`NoMissedRise`), each
+with a reversed witness; the module and its TLC records are owed. Readers busy and the tier
+rule are not modelled.
+
+Only a judgment being raised is checked. One already open stays the coordinator's, and the
+deadlines and the pass close it when their own condition ends. Each judgment the check
+kept quiet is on the tick's result and on its heartbeat (`TickResult.Quiet`,
+`Heartbeat.Quiet`: type, subject and why, each once a tick). The heartbeat also keeps the
+count of the judgments suppressed since the epoch began (`Heartbeat.Suppressed`,
+`sprint.Suppressed.Counted`; a-judgment-checks-the-lane-before-it-rises.w2): each quiet once,
+when a tick keeps it quiet and the tick before did not (the same type and subject still quiet
+on the next tick is the same judgment and is not counted again; one kept quiet anew after it
+rose is counted again), with its three causes beside the number: `lane` (a lateness, a stall
+or finishes none over a live lane), `readers` (readers behind while every reader is busy) and
+`tier` (a read tier question the rule answered). A successful tick adds to it; a failed tick
+leaves it. The first tick of another epoch (after a clear) starts it from none, and the
+coordinator view reads it only when it is the view's epoch's. `view coordinator` prints it,
+beside the judgments that rose: its summary line ends `| suppressed <n> (lane <a> readers <b> tier <c>)`, and its counts carry `suppressed` and `by` (`lane`, `readers`, `tier`) (Role views,
+section 11; `TestNoStallRisesOverALiveLane`, `TestTheSuppressedCountCountsEachJudgmentOnceByItsCause`,
+`TestTheCoordinatorViewCountsTheJudgmentsTheLaneCheckSuppressed`,
+`TestALiveLaneIsLiveInsideItsCapAndOnAFreshBeat`,
+`TestAStoredFriendSeatCannotReviveAStaleLane`,
+`TestTheTickRaisesReadersBehindWhenReadsWaitTheWindow`).
 
 ### Answered by nova-decide
 
@@ -5742,10 +5798,13 @@ the seat, from one read of the work, merge and fleet tables, the inbox, the frie
 machines' beats and the machine's record, at one epoch. Its fields: `sum` (one line: the seat,
 the machine, the open judgments and the heaviest's cards behind, the count of each item type,
 landed of all and landed in the last 30 minutes, the work table's counts, the up machines'
-cards working of their width), `at`, `epoch`, `seat`, `cursor`, `n` (the counts: `landed`,
+cards working of their width, the cards a rule answered in the last hour, and the judgments
+suppressed since the epoch began with their causes), `at`, `epoch`, `seat`, `cursor`, `n` (the counts: `landed`,
 `l30`, `all`, `wait`, `ready`, `work`, `review`, `merge` of the primaries, sentinels aside;
 `held`; `width` and `busy`, the up machines' width and their cards working; `j`, the open
-judgments) and `items`, ranked by the cards behind each (`b`), then by type in the order
+judgments; `rules`, section 8; `suppressed`, the judgments the tick's lane check kept from
+rising since the epoch began, and `by`, its causes `lane`, `readers` and `tier`, section 8, a
+judgment checks the lane before it rises) and `items`, ranked by the cards behind each (`b`), then by type in the order
 below, then oldest first. An item is `k` (its key, stable while it stands), `t` (its type, one
 letter), `w` (what kind), `b`, `n` (the cards a judgment names), `age`, `od` (overdue), `d` (a
 judgment's decisions, `|` separated), `s` (one line, at most 160 bytes) and `next`, the exact
@@ -5763,7 +5822,7 @@ command that acts on it:
 A silent run loop, failing ticks and a stalled stream are the inbox's judgments already and
 come as `j` items. With `--all`, `rows` carries every machine's and friend's row: `k`
 (`m:<machine>`, `f:<friend>`), `st`, `r` and `w` (ready and working on the row), `wd` (its
-width), `f30` (finished in the last 30 minutes) and `rep` (since its last beat, or `never`).
+width), `f30` (finished in the last 30 minutes), `rep` (since its last beat, or `never`) and, on a friend's row whose live lane kept a judgment quiet on the last tick, `run` (`running 32m of 90m`).
 The text form prints `VIEW coordinator <sum>`, then an item a line (`<T> <b> <age> <k>: <s> ->
 <next>`), at most 20 lines with a `+<n> more` line when there are more, then `cursor=`.
 
