@@ -202,11 +202,11 @@ func (o *OpenCode) sessions(ctx context.Context) ([]session, error) {
 	if exit != 0 {
 		return nil, fmt.Errorf("opencode session list exited %d", exit)
 	}
-	var rows []session
-	if err := json.Unmarshal([]byte(listing), &rows); err != nil {
-		return nil, fmt.Errorf("opencode session list: not a JSON list: %v", err)
+	rows, err := decodeSessions(listing)
+	if err != nil {
+		recordListing(o.Out, listing)
 	}
-	return rows, nil
+	return rows, err
 }
 
 // DeliverTo is one card's turn in a lane's session: `opencode run --session
