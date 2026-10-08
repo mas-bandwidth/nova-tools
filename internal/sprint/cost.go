@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/card"
 	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
 )
 
@@ -191,6 +192,11 @@ type Consumer struct {
 	// for a take no cap ended.
 	Cap     string `json:"cap,omitempty"`
 	Overrun string `json:"overrun,omitempty"`
+	// BriefTokens is the token count (card.Tokens) of the brief a take was dealt, the
+	// primary's brief as the table holds it: a brief by reference weighs its header lines
+	// and its Contract: line, the long form its whole frame (docs/SPEC-CARD-CONTRACT.md
+	// section 7). 0 for a read, and for a record written before it was kept.
+	BriefTokens int `json:"brief_tokens,omitempty"`
 }
 
 // line is the record as the primary keeps it: the consumer's words, then its usage.
@@ -199,6 +205,9 @@ func (c Consumer) line() string {
 		"who=" + orDash(c.Who), "on_route=" + orDash(c.Route), "on_model=" + orDash(c.Model), "on_tier=" + orDash(c.Tier), "end=" + orDash(strings.ReplaceAll(c.End, " ", "-")), "at=" + orDash(c.At)}
 	if c.Cap != "" {
 		w = append(w, "lane_cap="+c.Cap, "lane_overrun="+orDash(c.Overrun))
+	}
+	if c.BriefTokens > 0 {
+		w = append(w, "brief_tokens="+itoa(c.BriefTokens))
 	}
 	return strings.Join(w, " ") + " " + c.Usage.String()
 }
@@ -242,6 +251,8 @@ func parseConsumer(key, line string) Consumer {
 			c.Cap = undash(v)
 		case "lane_overrun":
 			c.Overrun = undash(v)
+		case "brief_tokens":
+			c.BriefTokens, _ = strconv.Atoi(v)
 		default:
 			rest = append(rest, w)
 		}
@@ -252,11 +263,15 @@ func parseConsumer(key, line string) Consumer {
 
 // addConsumer adds the consumer's record to the primary's changes (set, the fields the
 // step writes on it), and the record to the primary's total: once per key, whatever is
-// already on the card or in set, so a step planned again never counts it twice.
+// already on the card or in set, so a step planned again never counts it twice. A take's
+// record carries the token count of the brief it was dealt, the primary's (BriefTokens).
 func addConsumer(pr *Card, set map[string]string, c Consumer) {
 	key := FieldCostRecord + c.Key
 	if pr.F(key) != "" || set[key] != "" {
 		return
+	}
+	if c.Kind == "work" && c.BriefTokens == 0 {
+		c.BriefTokens = card.Tokens(pr.F("brief"))
 	}
 	total := cardcost.ParseTotal(cmp.Or(set[FieldCostTotal], pr.F(FieldCostTotal)))
 	set[FieldCostTotal] = total.Add(c.Usage).String()

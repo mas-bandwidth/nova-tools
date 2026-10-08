@@ -410,6 +410,11 @@ func (l *loop) startDealt(now time.Time) {
 		d.Record(fmt.Sprintf("%s not delivered: %s has no deliver command: %d card(s) dealt into her inbox", now.UTC().Format(time.RFC3339), d.Harness, len(lines)))
 		return
 	}
+	for _, line := range lines {
+		if c, ok := dealtCard(d.Dir, line); ok {
+			d.hand(c, "batch", now) // a batch session reads its briefs straight from the inbox
+		}
+	}
 	t := &turn{subjects: fmt.Sprintf("%q", fmt.Sprintf("%d card(s) dealt", len(lines)))}
 	if d.m.Challenge != Quiet && d.PongCommand != nil {
 		t.text = "Run this now, first, exactly as written: " + d.PongCommand(d.m.Nonce) + "\nThen read on.\n\n"
