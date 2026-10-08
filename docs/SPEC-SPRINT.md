@@ -2303,7 +2303,11 @@ as it refuses a `PATHS:` line: a missing or empty path, an unknown rule, a bad l
 regular expression, an empty item field, a bad noun, and a `count:` that is not
 `<min>..<max>` with min at most max.
 
-`nova-sprint finish` reads the named file at the finish's head and checks every rule. A miss
+`nova-sprint finish` reads the named file at the finish's head and checks every rule. The
+file is the blob `<head>:<path>` in the repository the brief's REPO names, read from land's
+clone of it (the finish's branch is fetched when that commit is not in the clone yet). It
+is not a file in the finish process's working directory: a friend's finish arrives as an
+argv on the sprint server, and a missing file there is not the report. A miss
 refuses the finish, one line per miss at most ten,
 `FORM: <file>:<line>: <rule> (<what was found>)`; the refusal spends no attempt and asks no
 read, and the lane fixes the report and finishes again. The work card counts the refusals of
