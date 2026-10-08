@@ -735,6 +735,47 @@ function tierCounts(obj) { // {flash: "12", pro: 3} -> [[tier, n], ...] sorted b
   return out;
 }
 
+// tokenText is a cost row's token counts (where JSON's cost_by_tier at the top).
+function tokenText(t) {
+  if (!t) return "0 tokens";
+  var n = t.total || 0, parts = [];
+  ["input", "cache_read", "cache_write", "output", "reasoning"].forEach(function (k) {
+    if (t[k] != null) parts.push(k.replace("_", " ") + " " + t[k]);
+  });
+  return n + " tokens" + (parts.length ? " (" + parts.join(", ") + ")" : "");
+}
+// dollarText is a machine tier's charged dollars, the exact decimal. Never a friends row.
+function dollarText(usd) { return "$" + usd; }
+// costShown is one row of the Cost breakdown (docs/SPEC-SPRINT.md, the friends
+// category). A friends row is token counts only: no dollar field is shown.
+function costShown(row) {
+  if (row.tier === "friends") {
+    return tokenText(row.tokens);
+  }
+  return tokenText(row.tokens) + (row.usd ? " \u00b7 " + dollarText(row.usd) : "");
+}
+// The Cost breakdown's rows: the same cost_by_tier the where record holds at the
+// top, the friends row as token counts and not as dollars (the owner, 2026-10-04:
+// "i don't want dollar amounts for friends. token counts are fine.").
+function renderCostBreakdown(d) {
+  var box = $("cost-by-tier");
+  if (!box) return;
+  var rows = d.cost_by_tier;
+  // a stream's cost_by_tier is a map of dollar strings; the category's rows are an array
+  if (!Array.isArray(rows)) rows = [];
+  box.textContent = "";
+  if (!rows.length) {
+    box.appendChild(el("div", "cost-line faint", "\u2014"));
+    return;
+  }
+  rows.forEach(function (row) {
+    var line = el("div", "cost-line");
+    line.appendChild(el("div", "", row.tier || ""));
+    line.appendChild(el("div", "num", costShown(row)));
+    box.appendChild(line);
+  });
+}
+
 // The Cost breakdown: the pie is the spend by tier and the
 // tier line in the panel's header is its legend, open or folded. The spend per tier is summed
 // over every stream (tables.work[s].cost_by_tier); a tier at $0 is left out of the pie, the
@@ -907,6 +948,7 @@ function render(d) {
   renderPriorityMarks(d);
   renderPie(d);
   renderTopStreams(d);
+  renderCostBreakdown(d);
   renderMerge(d);
   renderFleet(d);
   renderFriends(d);

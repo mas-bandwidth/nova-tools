@@ -92,6 +92,13 @@ body {
 .toprows .tiers { color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .toprows .tiers i { font-style: normal; display: inline-block; width: .6em; height: .6em; border-radius: 2px; margin: 0 .35em 0 .75em; vertical-align: -.02em; }
 .toprows .tiers i:first-child { margin-left: 0; }
+/* the Cost breakdown's rows (where JSON's cost_by_tier at the top): one line per tier, the tier
+   on the left and its tokens and dollars on the right; the friends row is token counts only,
+   never a dollar (docs/SPEC-SPRINT.md, the friends category) */
+.cost-lines { grid-column: 1 / -1; border-top: 1px solid var(--border); padding: 0.5rem 1rem 0.75rem; }
+.cost-head { color: var(--text-3); font-size: 0.875rem; margin-bottom: 0.25rem; }
+.cost-line { display: flex; justify-content: space-between; gap: 1.5rem; padding: 0.1rem 0; }
+.cost-line .num { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
 
 /* top bar */
 .top { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; margin-bottom: 2rem; }
@@ -370,6 +377,10 @@ footer a:hover { color: var(--text); }
   <div class="scroll spend-body">
     <div class="pie-wrap"><svg class="pie" id="pie" viewBox="0 0 100 100" aria-label="spend by tier"></svg></div>
     <div class="rows toprows" id="top-streams"></div>
+    <div class="cost-lines" id="cost-breakdown">
+      <div class="cost-head">by tier</div>
+      <div id="cost-by-tier"></div>
+    </div>
   </div>
 </section>
 

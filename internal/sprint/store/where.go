@@ -42,6 +42,12 @@ type WhereRecord struct {
 	// counted here from the cards the tick reads, never by where from per-card reads.
 	Tiers   map[string]int              `json:"tiers,omitempty"`
 	Streams map[string]sprint.TierCosts `json:"streams,omitempty"`
+	// CostByTier is the friends cost category's rows (sprint.CostCategories, cost_tier.go;
+	// docs/SPEC-SPRINT.md section 2): one per machine tier that spent and then a friends
+	// row, token counts on both, dollars on a machine tier alone, counted here from the
+	// twin this tick already holds, so where reads no card for them. The friends row
+	// carries no dollar field. `tiers` above stays the brief counts.
+	CostByTier []sprint.CostCategory `json:"cost_by_tier,omitempty"`
 	// StageTimes is the median and p90 of each stage over the cards landed in the last day
 	// (sprint.CycleTimes, docs/SPEC-SPRINT.md, cycle-time-breakdownb.w1), as of the count.
 	StageTimes sprint.StageTimes `json:"stage_times,omitzero"`
@@ -73,7 +79,7 @@ func whereOf(s *sprint.Snapshot, m Machine, now time.Time) WhereRecord {
 		}
 	}
 	r := WhereRecord{Epoch: s.Epoch, Rev: s.Work.Revision, Held: sprint.HeldBack(s), Critical: sprint.Critical(s, 5),
-		Tiers: sprint.TierCounts(s), Streams: sprint.StreamTierCosts(s), StageTimes: sprint.CycleTimes(s, now), DealtFleet: sprint.FriendsDealtFleet(s),
+		Tiers: sprint.TierCounts(s), Streams: sprint.StreamTierCosts(s), CostByTier: sprint.CostCategories(s), StageTimes: sprint.CycleTimes(s, now), DealtFleet: sprint.FriendsDealtFleet(s),
 		ReadsWaiting: sprint.ReadsWaiting(s), Priorities: sprint.PriorityCounts(s), StreamPriorities: sprint.StreamPriorities(s)}
 	if s.Fleet != nil {
 		r.FleetRev = s.Fleet.Revision
@@ -278,9 +284,11 @@ type WhereFacts struct {
 	Landed    []time.Time
 	Critical  []sprint.CriticalCard // the five heaviest, from the record (weight.go)
 	// Tiers and Streams are the record's counts and costs by tier (cost_view.go); nil
-	// without the record.
-	Tiers   map[string]int
-	Streams map[string]sprint.TierCosts
+	// without the record. CostByTier is the record's friends cost category rows
+	// (cost_tier.go); nil without the record.
+	Tiers      map[string]int
+	Streams    map[string]sprint.TierCosts
+	CostByTier []sprint.CostCategory
 	// StageTimes is the record's stage times (sprint.CycleTimes); empty without the record.
 	StageTimes sprint.StageTimes
 	// DealtFleet is the record's count of the fleet's cards on each friend's row
@@ -342,7 +350,7 @@ func (st *Store) WhereFacts(ctx context.Context, workRev uint64) (WhereFacts, er
 			f.HasStoreRTT, f.StoreRTTP50MS, f.StoreRTTP99MS = true, r.P50MS, r.P99MS
 		}
 		if r, ok := readWhere(vals[2], oks[2]); ok && r.Epoch == st.epoch && (r.Rev == workRev || st.keptBy(r, f.Machine, f.Heartbeat)) {
-			f.Held, f.Critical, f.Tiers, f.Streams, f.StageTimes, f.DealtFleet = r.Held, r.Critical, r.Tiers, r.Streams, r.StageTimes, r.DealtFleet
+			f.Held, f.Critical, f.Tiers, f.Streams, f.CostByTier, f.StageTimes, f.DealtFleet = r.Held, r.Critical, r.Tiers, r.Streams, r.CostByTier, r.StageTimes, r.DealtFleet
 			f.ReadsWaiting, f.Priorities, f.StreamPriorities = r.ReadsWaiting, r.Priorities, r.StreamPriorities
 			f.RowCards, f.ReadCards = r.RowCards, r.ReadCards
 			for _, s := range r.Landings {

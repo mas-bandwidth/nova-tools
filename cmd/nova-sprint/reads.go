@@ -577,6 +577,14 @@ type whereView struct {
 	// spend by the tier each attempt and read ran on (`cost_by_tier`, money strings), from
 	// the tick's where record (sprint.TierCosts); absent before the first tick of an epoch.
 	StreamCosts map[string]sprint.TierCosts `json:"stream_costs,omitempty"`
+	// CostByTier is the friends cost category (docs/SPEC-SPRINT.md section 2, the friends
+	// category): one row per machine tier that spent and then a friends row, token counts
+	// on both, dollars on a machine tier alone, from the tick's where record
+	// (sprint.CostCategories, cost_tier.go); absent before the first tick of an epoch. On
+	// this tree `tiers` at the top is every card by its brief's tier and each stream's
+	// `cost_by_tier` is in stream_costs, so the category's rows are `cost_by_tier` at the
+	// top; the friends row carries token counts and no dollar field.
+	CostByTier []sprint.CostCategory `json:"cost_by_tier,omitempty"`
 	// ReadSpend is the day's read spend per route, one line under the summary
 	// (sprint.ReadSpendLine), from the tick's where record; absent when no read ended today.
 	ReadSpend string               `json:"read_spend,omitempty"`
@@ -1178,6 +1186,7 @@ func (a *app) whereOf(ctx context.Context, st *store.Store, stale time.Duration,
 	v.Buffer = fmt.Sprintf("%d/%d", v.Ready, 2*v.Width)
 	v.Low = v.Ready < int64(v.Width)
 	v.Tiers = facts.Tiers
+	v.CostByTier = facts.CostByTier
 	if len(facts.StageTimes.All) > 0 {
 		v.StageTimes = &facts.StageTimes
 	}

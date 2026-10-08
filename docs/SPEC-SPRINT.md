@@ -75,7 +75,11 @@ by the tick from the sprint it reads anyway and kept in the where record
 (store.WhereRecord), never read card by card at `where`; before the first tick
 of an epoch `tiers` and `cost_by_tier` are absent and `per_landed` is from the
 cells (`TestTheWhereRecordCountsTiersAndCostsByTier`,
-`TestWhereCarriesTiersAndPerLandedCost`).
+`TestWhereCarriesTiersAndPerLandedCost`). `cost_by_tier` at the top, beside
+`tiers`, is also the friends cost category (section 2): one row per machine tier
+that spent, then a friends row of token counts and no dollar field
+(`sprint.CostCategories`). The stream maps above are unchanged. Before the first
+tick of an epoch those rows are absent too (`TestFriendsCostIsTokenCountsOnly`).
 
 Each reader's spend (the owner, 2026-10-05, before funding a provider for reads: "I would ask
 that you need to track spend on readers, can you do this before we start?"; the coordinator had
@@ -2187,6 +2191,26 @@ the days since the epoch began, each day's last provider figure beyond the sprin
 that day, summed over the providers (`unreconciled`, the sprint's, the same on every stream's
 record). The cost per card is that recorded total over the cards landed, so every attempt and
 read behind them counts, those of cards not landed included.
+
+**The friends cost category.** The owner, 2026-10-04: "i don't want dollar
+amounts for friends. token counts are fine." The rows `where --json` carries as
+`cost_by_tier` at the top (`sprint.CostCategories`, internal/sprint/cost_tier.go)
+are the sprint's cost categories, counted by the tick into the where record from
+the twin it already holds (section 1), so where reads no card for them: one row
+per machine tier that spent (flash, pro, heavy, frontier, then any other tier by
+name) and then a friends row. A consumer whose who is a friend's row is that
+friends row: the token counts reported, by class, a class not reported left out,
+and no dollar field, not on the row and not moved onto a machine tier. A dollar
+the friend reported is dropped. Every other consumer is its tier (the tier on its
+record, else its route's) and that tier's charged dollars, actual where one was
+reported, else predicted, the exact decimal. A category with nothing reported is
+left out. Until the where record is taken the rows are absent: where does not scan
+cards to build them. On this tree `tiers` at the top stays every card by its
+brief's tier and each stream's spend by tier stays in `stream_costs`, so the
+category's rows are `cost_by_tier` at the top. The dashboard's Cost breakdown
+shows the same rows, the friends row as token counts and not as dollars. The
+words that asked for the category are the lock amendment
+(internal/sprint/TABLES.lock).
 
 **A card is a tree of steps** (`internal/cardtree`; nova-tools#5174 rule 7). The owner,
 2026-10-02: "any card can be a tree"; "a batch card is just nomenclature"; a script step is "a

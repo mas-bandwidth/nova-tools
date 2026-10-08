@@ -181,6 +181,14 @@
 # added and the friends table's shape stands. Held by
 # TestDealerNeverDealsAFriendOutsideHerStreams and
 # TestAddAndBriefRefuseNamedFriendOutsideRestrictions.
+#
+# Change, 2026-10-04, a cost category, not a column of the tables below. Glenn,
+# in words: "trust but VERIFY"; "I want to trust the ok%"; "Mechanical. You know
+# the drill."; "Are they actually doing the work that is shown in the friend
+# table? Really?"; "i don't want dollar amounts for friends. token counts are
+# fine." The friends row of tiers and of cost_by_tier carries token counts and
+# no dollar field (docs/SPEC-SPRINT.md, the friends category). No column, fold
+# or row of the tables below changes. Held by TestFriendsCostIsTokenCountsOnly.
 work.waiting count sum shown
 work.ready count sum shown
 work.working count sum shown
