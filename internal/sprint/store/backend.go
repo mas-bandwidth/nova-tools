@@ -173,7 +173,10 @@ type Fence struct {
 	// of the work table's queue: while either holds, a step other than the
 	// pump queues its work-table changes (queue.go).
 	Running bool
-	Queued  int
+	// StoppedByHand distinguishes an explicit STOP from an epoch's initial
+	// stopped setup state. Only the former revokes worker starts.
+	StoppedByHand bool
+	Queued        int
 	// Stuck is the stuck record (stuck.go) as it was read with the fence, ""
 	// for none: the step that writes next carries its judgment, and reads no
 	// record of its own for it.

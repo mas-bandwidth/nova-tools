@@ -56,6 +56,7 @@ func init() {
 		{"resolve", "[<id>...] [--stream <s>] [--max <n>]", "resolve", (*app).cmdResolve},
 		{"start", "", "start", (*app).cmdMachineStart},
 		{"stop", "--reason <text> --until <time or duration>", "stop --reason 'the bench is rebooting' --until 30m", (*app).cmdMachineStop},
+		{"stop-return", "--as <owner-row> <card>@<gen>... --epoch <n> --reason <cancel acknowledgement>", "stop-return --as friend.stella s1-1.w1@1 --epoch 15 --reason 'owned process stopped'", (*app).cmdStopReturn},
 		{"run", "[--answer-rules=false] [--idle-alarm=false] [--listen <address:port>] [--land] [--decide <dir>]", "run", (*app).cmdRunGC},
 		{"tick", "[--answer-rules] [--idle-alarm] [--shadow]", "tick", (*app).cmdTick},
 		{"selftest land", "[--binary <path>] [--scratch-dir <dir>]", "selftest land", (*app).cmdSelftestLand},
@@ -732,7 +733,7 @@ const (
 // the step's own fenced read of the epoch: with no --epoch the step runs at
 // the epoch it finds (a clear between the read and the write is read again),
 // so the coordinator needs no epoch to name.
-var epochVerbs = map[string]bool{"finish": true, "progress": true, "read": true, "merge": true, "ci": true, "take by id": true}
+var epochVerbs = map[string]bool{"finish": true, "progress": true, "read": true, "stop-return": true, "merge": true, "ci": true, "take by id": true}
 
 // needsEpoch is whether the verb must be given --epoch: the verbs of
 // epochVerbs, except a merge run by the sprint's coordinator, which merges
@@ -2463,6 +2464,10 @@ func (a *app) cmdRead(args []string, stdout, stderr io.Writer) int {
 		ids = []string{*ret}
 		c.actor = *as // the returner is the reader, whoever runs the verb
 	}
+	ids, gens, err := cardGens(ids)
+	if err != nil {
+		return refuse(stderr, "read", err.Error())
+	}
 	verdict := "ok"
 	if *broken {
 		verdict = "broken"
@@ -2481,7 +2486,7 @@ func (a *app) cmdRead(args []string, stdout, stderr io.Writer) int {
 			return readShort(ctx, st, res, sprint.Split(*as), col)
 		}
 	}
-	return a.runStep("read", *c, st, store.ReadStep(sprint.ReadReq{Sel: sprint.Sel{IDs: ids, Limit: limit}, As: *as, Begin: *begin,
+	return a.runStep("read", *c, st, store.ReadStep(sprint.ReadReq{Sel: sprint.Sel{IDs: ids, Limit: limit}, As: *as, Gens: gens, Begin: *begin,
 		Verdict: verdict, Finding: *finding, Return: *ret != "", Reason: *reason, Usage: *usage, Who: *as}), stdout, stderr)
 }
 

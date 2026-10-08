@@ -148,6 +148,11 @@ type Step struct {
 	// says Halted, and it writes nothing (the stop's rule: the part in flight
 	// finishes, and no part begins after the flag says STOPPED).
 	Halts bool
+	// StartsWork refuses a new worker lease after STOP, including an explicit
+	// take, a friend's start receipt, and a reader's begin. ReportsWork refuses
+	// a late finish or verdict once STOP has committed. RequiresStopped is the
+	// complementary fence on an acknowledged stop-return.
+	StartsWork, ReportsWork, RequiresStopped bool
 	// Twin, when set, is the tick's twin (twin.go): a step that loads the four
 	// tables plans on it while the fence is at its generation, instead of
 	// reading them, and applies its receipts to it when it commits.
@@ -549,6 +554,18 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 			// a part that began (its first read found the machine RUNNING)
 			// finishes: only its first read halts it
 			res.Halted = true
+			return res, nil
+		}
+		if step.StartsWork && fence.StoppedByHand {
+			res.Refused = []sprint.Refusal{{Key: step.Verb, Why: "the machine is STOPPED: no new work or read may start"}}
+			return res, nil
+		}
+		if step.ReportsWork && fence.StoppedByHand {
+			res.Refused = []sprint.Refusal{{Key: step.Verb, Why: "the machine is STOPPED: a late work or read report cannot finish"}}
+			return res, nil
+		}
+		if step.RequiresStopped && !fence.StoppedByHand {
+			res.Refused = []sprint.Refusal{{Key: step.Verb, Why: "the machine has no explicit STOP: stop-return follows cancellation during STOP"}}
 			return res, nil
 		}
 		if fence.Queued > 0 && !step.Pump && !fence.Running && drains < MaxDrains {

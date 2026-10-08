@@ -476,3 +476,7 @@ MCFriendBrokenFixedKill.cfg	MCFriend.tla	invariant	StopOnlyWhenSilent	ignore-ter
 MCFriendBrokenAsideEarly.cfg	MCFriend.tla	invariant	SetAsideAfterCardTurns	ignore-terminal	friend	required	-
 MCReach.cfg	MCReach.tla	pass	-	ignore-terminal	reach	required	-
 MCReachBrokenStepAfterProof.cfg	MCReach.tla	invariant	NoStepAfterProof	ignore-terminal	reach	required	-
+MCStopReturn.cfg	MCStopReturn.tla	pass	-	ignore-terminal	stopreturn	required	-
+MCStopReturnFair.cfg	MCStopReturn.tla	pass	-	ignore-terminal	stopreturn	required	-
+MCStopReturnPremature.cfg	MCStopReturn.tla	invariant	NoReadyBeforeAck	ignore-terminal	stopreturn	required	-
+MCStopReturnLateRead.cfg	MCStopReturn.tla	invariant	NoStaleAcceptance	ignore-terminal	stopreturn	required	-

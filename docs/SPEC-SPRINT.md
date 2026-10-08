@@ -6343,8 +6343,17 @@ up, start) is ticked on at most TickFloor (100 ms) after the tick before
 began; a quiet log ticks it TickEvery (1 s) after the tick before began. It
 moves nothing while STOPPED; `tick` is one tick by hand. The state
 is read at the start of each tick and before each of its parts: after `stop`
-returns STOPPED no part begins, and the part in flight finishes. Every verb works in both states; only the tick's duties
-wait. `inbox` says `machine: running`, `machine: STOPPED` or `machine: DONE`,
+returns STOPPED no part begins. An explicit STOP also refuses new takes, read
+begins, friend start receipts, and late finish or read verdicts. An owner runner
+cancels each child process, then records the observed exit with `stop-return
+--as <owner-row> <card>@<gen> --reason <cancellation acknowledgement>`; the card
+returns to Ready on that same fleet row, or Asked on that same reader row, at a
+new generation. Its attempt, branch, and progress are retained. The generation
+refuses old finish and read reports. The store trusts the owner runner's
+cancellation acknowledgement; it does not kill or inspect that process itself.
+`start` refuses until all Fleet Working and Readers Reading cards have been
+returned, and names the active owner and card IDs. `inbox` says `machine:
+running`, `machine: STOPPED` or `machine: DONE`,
 and nothing after the word but a late tick or a STOPPED machine's why (below): when the state is RUNNING and
 nothing has ticked for 15 s (MachineSilence), on a store a run loop ticks, it
 says `machine: running (tick late 16s)`, the whole seconds since the last
@@ -6373,12 +6382,11 @@ after now (`sprint.StopArgs`). The record keeps the stop's actor, reason and
 time, and the machine line says them: `machine: STOPPED by <actor>: <reason>,
 back by 2:04 PM` (a time on another day with its date), in `inbox`, the header
 of `where`, its JSON (the dashboard's machine line) and every verb's sprint
-line (`sprint.StoppedText`). At `--until` the next tick starts the machine
-itself, recorded as the machine's start with the stop it ends, and runs it
-(`store.backAt`); a stop of the STOPPED machine before then replaces the reason
-and the time, and the span goes on; a clear takes them off, so nothing starts
-a cleared sprint; when every provider is out of credit at `--until` the
-machine stays STOPPED for that cause, as a start is refused then. The
+line (`sprint.StoppedText`). `--until` is display metadata for the intended
+pause; it never restarts a stopped machine. Only an explicit `start` resumes
+it after the owned jobs have been returned. A stop of the STOPPED machine
+before then replaces the reason and time, and the span goes on; a clear takes
+them off. A start is also refused when every provider is out of credit. The
 machine's own stops carry their cause instead (below).
 
 The machine stops itself when the sprint is done (section 8): the tick's last

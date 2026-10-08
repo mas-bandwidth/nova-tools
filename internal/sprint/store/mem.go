@@ -940,7 +940,10 @@ func (m *Mem) ReadFence(context.Context) (Fence, error) {
 	f := Fence{Gen: l.gen, Queued: len(l.queue)}
 	if raw, ok := m.kv[keyMachine]; ok {
 		var mc Machine
-		f.Running = json.Unmarshal([]byte(raw), &mc) == nil && mc.Running()
+		if json.Unmarshal([]byte(raw), &mc) == nil {
+			f.Running = mc.Running()
+			f.StoppedByHand = !mc.Running() && mc.Reason != ""
+		}
 	}
 	f.Stuck = m.kv[keyStuck]
 	if l.fence != nil {

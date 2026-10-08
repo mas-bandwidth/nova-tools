@@ -416,7 +416,12 @@ func (st *Store) setMachine(ctx context.Context, running bool, who, reason strin
 		after.State = Stopped
 	}
 	after.Since, after.Who, after.Cause, after.Reason, after.Until = now, who, "", reason, until
-	if err := st.putMachine(ctx, after); err != nil {
+	if running && before.Reason != "" {
+		err = st.startAfterQuiescence(ctx, after)
+	} else {
+		err = st.putMachine(ctx, after)
+	}
+	if err != nil {
 		return before, before, res, err
 	}
 	what := fmt.Sprintf("%s -> %s by %s", before.StateWord(), after.StateWord(), who)
@@ -431,35 +436,10 @@ func (st *Store) setMachine(ctx context.Context, running bool, who, reason strin
 	return before, after, res, err
 }
 
-// backAt is the tick's start of a machine stopped by hand once the stop's
-// --until has come (docs/SPEC-SPRINT.md section 14), as the machine: a stop
-// again before it moved the time, and a clear took it off. While every
-// provider is out of credit the machine stays STOPPED for that cause instead,
-// as a start is refused then. It returns the record after.
-func (st *Store) backAt(ctx context.Context, m Machine, res *TickResult) (Machine, error) {
-	if m.Running() || m.Cause != "" || m.Reason == "" || m.Until.IsZero() || st.now().Before(m.Until) {
-		return m, nil
-	}
-	why, err := st.OutOfCredit(ctx)
-	if err != nil {
-		return m, err
-	}
-	part := PartResult{Name: "back", Result: Result{Verb: "tick back"}}
-	if why != "" {
-		after := m
-		after.Cause, after.Reason, after.Until = sprint.FundsCause, "", time.Time{}
-		part.Refused = append(part.Refused, sprint.Refusal{Key: "machine", Why: "back by " + m.Until.UTC().Format(time.RFC3339) + " and not started: " + why})
-		res.Parts = append(res.Parts, part)
-		return after, st.putMachine(ctx, after)
-	}
-	_, after, r, err := st.setMachine(ctx, true, sprint.MachineActor, "", time.Time{})
-	if err != nil {
-		return m, err
-	}
-	part.Result = r
-	part.Moved = []string{fmt.Sprintf("machine STOPPED -> RUNNING at the back-by time of the stop by %s: %s", m.Who, m.Reason)}
-	res.Parts = append(res.Parts, part)
-	return after, nil
+// backAt keeps the old tick hook inert: an official STOP's --until is display
+// metadata, never permission to restart children without an explicit start.
+func (st *Store) backAt(_ context.Context, m Machine, _ *TickResult) (Machine, error) {
+	return m, nil
 }
 
 // PartResult is what one part of a tick did.
