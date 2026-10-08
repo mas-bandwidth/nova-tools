@@ -557,15 +557,15 @@ for an unkept promise, not for evidence about something else: evidence that does
 *Tests: `TestTheGateRefusesAPromisedJourneyWithoutEvidence`, `TestThePromisedJourneysAreTheChaosSuitesSubtests`,
 `TestTheJourneyGateIsInTheReleaseSpec`.*
 
-## 15. The adoption after a landing is a pipeline
+## 15. The seat adopts an approved build through its tools play
 
-`(*app).cmdAdopt` is sections 8 and 13's order as one pass, meant to run unattended whenever the sprint base moves past the live
-build. Nothing in the tick calls it yet (`cmd/nova-sprint/run.go`, `internal/sprint/store/tick.go`): a tick part is also the shadow tick's planner, and the verb table that would name `nova-sprint adopt` is `cmd/nova-sprint/verbs.go`. The pass itself is: build on a bench, verify, canary and shadow, a cold read, one judgment to the coordinator, then on yes
-the switch and, through **the build's own** `nova-update release adopt`, one push per machine row with the
-version read back, and a rollback from kept copies on missed ticks. The runbook is
-[SPRINT-COORDINATOR.md](SPRINT-COORDINATOR.md) section 7, "Adoption is a pipeline".
+`nova-sprint adopt` runs `fleet/tools.yml` for the seat. Its checks precede the installation window; the
+configuration store migrates as its owning role, and a refusal in the window restores the previous tools
+and function library while leaving the migration in place. The command is not called by the sprint tick.
+The contract is [SPEC-SPRINT.md](SPEC-SPRINT.md), "Adopting a build"; the coordinator procedure is in
+[SPRINT-COORDINATOR.md](SPRINT-COORDINATOR.md), "Adopting the seat build".
 
-*Test: `TestAdoptionRunsWhenTheBaseMovesAndAsksOneJudgment`.*
+*Test: `TestAdoptRunsThePlayAndRefusesAHalfMove`.*
 
 ## 16. `release check` is the gate, and a release ships when it says OK
 
