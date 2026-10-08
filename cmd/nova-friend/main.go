@@ -725,7 +725,7 @@ HOST REFUSED: friend-<name> runs already; run: tmux attach -t friend-<name>; --d
 HOST DRY-RUN session= dir= command= (the tmux command) and starts and saves nothing. JSON fields:
 session, dir, attach (command on a dry run). Exit 0 started, 1 refused, 2 could not run (no launch
 command, no prompt pattern for the harness, tmux missing or failing).
-For a safe dry run, use nova-friend host --as bob --harness aider --dir ./bob --dry-run -- aider.`,
+example: nova-friend host --as bob --harness aider --dir ./bob --dry-run -- aider`,
 				Flags: func(f *tool.Flags) {
 					f.Required("as", "your name, a nova-config friend row")
 					f.Required("harness", "the harness the TUI is, for its idle prompt pattern: "+strings.Join(hostHarnesses(), ", ")+" (other: name --prompt)")
@@ -880,7 +880,7 @@ object when the watch ends: {"status":"ok","word":"OK|NONE","after":<cursor>,"wa
 "wakes":[{"kind":"MESSAGE|EVENT|WAKE","id":<id>,"from":<name>,"subject":<s>,"line":<text>}]} (id, from and
 subject are left out of a WAKE, line out of the others). Exit 2 when a flag is wrong, the name is not on the
 roster, or the store does not answer.
-For a bounded wait, use nova-friend watch --as ada --timeout 10m.`,
+example: nova-friend watch --as ada --timeout 10m`,
 				Flags: func(f *tool.Flags) {
 					f.Required("as", "your name, the coordinator whose stream and wake file are watched")
 					f.Duration("timeout", 0, "how long to wait before WATCH NONE, a Go duration (1s, 10m); 0 is for ever")
