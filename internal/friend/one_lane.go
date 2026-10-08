@@ -184,7 +184,7 @@ func refreshLane(dir, job, who string, now time.Time, write bool) (string, error
 		if !ok {
 			return "", fmt.Errorf("lane mark missing")
 		}
-		if m.Ended || (m.Who != who && m.heldBy(who, now) != "") {
+		if m.Ended || m.Who != who {
 			return m.Who, nil
 		}
 		if !write {
@@ -215,14 +215,14 @@ func endLaneMark(dir, job, who string) error {
 
 // endOwnedLaneMark ends only this lane's mark. In particular, startup recovery
 // must not overwrite a newer claimant's running mark while failing an old run.
-func endOwnedLaneMark(dir, job, who string, now time.Time) error {
+func endOwnedLaneMark(dir, job, who string) error {
 	path := laneMarkPath(dir, job)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
 	_, err := withLaneLock(path, func() (string, error) {
 		m, ok := ReadLaneMark(dir, job)
-		if ok && (m.Ended || (m.Who != who && m.heldBy(who, now) != "")) {
+		if ok && (m.Ended || m.Who != who) {
 			return "", nil
 		}
 		return "", atomicfile.WriteFile(path, []byte(LaneMarkEnded(who)), 0o644)

@@ -257,7 +257,7 @@ func (l *loop) endCard(lane int, card Card, end LaneEnd, now time.Time) string {
 	delete(s.state.Started, filepath.Base(card.Outbox))
 	defer l.saveLanes(now)
 	mark := ""
-	if err := endOwnedLaneMark(d.Dir, filepath.Base(card.Outbox), l.laneWho(lane), now); err != nil {
+	if err := endOwnedLaneMark(d.Dir, filepath.Base(card.Outbox), l.laneWho(lane)); err != nil {
 		mark = fmt.Sprintf(" mark_error=%q", oneLine(err.Error(), 300)) // its other lanes end by her row alone
 	}
 	if exists(card.Report()) {
@@ -298,7 +298,7 @@ func (l *loop) endStarted(now time.Time) {
 	for job, st := range s.state.Started {
 		receipt, receiptErr := readRunReceipt(d.Dir, job)
 		if mark, ok := ReadLaneMark(d.Dir, job); ok && !mark.Ended && mark.RunID != "" &&
-			mark.RunID != st.RunID && mark.heldBy("", now) != "" && receiptErr == nil &&
+			mark.RunID != st.RunID && receiptErr == nil &&
 			receipt.RunID == mark.RunID && d.ProcessIdentity != nil && d.ProcessIdentity(receipt.PID) == receipt.Identity {
 			// A newer verified run took this job. Preserve its binding instead
 			// of writing a failed report over a still-working card.

@@ -657,7 +657,7 @@ func (l *loop) adoptRuns(now time.Time) {
 		receipt, receiptErr := readRunReceipt(d.Dir, jobName)
 		if receiptErr == nil && receipt.RunID != st.RunID {
 			if mark, ok := ReadLaneMark(d.Dir, jobName); ok && !mark.Ended && mark.RunID == receipt.RunID &&
-				mark.heldBy("", now) != "" && d.ProcessIdentity != nil && receipt.Identity != "" &&
+				d.ProcessIdentity != nil && receipt.Identity != "" &&
 				d.ProcessIdentity(receipt.PID) == receipt.Identity {
 				st.RunID, st.Pid, st.Owner = receipt.RunID, receipt.PID, mark.Who
 				s.state.Started[jobName] = st

@@ -212,3 +212,21 @@ func TestTwoContendersCannotBothTakeOneStaleLane(t *testing.T) {
 	assert.False(t, mark.Ended)
 	assert.Contains(t, []string{"new-a", "new-b"}, mark.Who)
 }
+
+func TestAnOldOwnerCannotRefreshOrEndAStaleTransferredRun(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	now := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
+	job := "c1~15"
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "jobs", job), 0o755))
+	require.NoError(t, os.WriteFile(laneMarkPath(dir, job), []byte(LaneMarkRunningRun("new-owner", now.Add(-LaneMarkStale-time.Second), "live-run")), 0o644))
+	holder, err := refreshLane(dir, job, "old-owner", now, true)
+	require.NoError(t, err)
+	assert.Equal(t, "new-owner", holder)
+	require.NoError(t, endOwnedLaneMark(dir, job, "old-owner"))
+	mark, found := ReadLaneMark(dir, job)
+	require.True(t, found)
+	assert.Equal(t, "new-owner", mark.Who)
+	assert.Equal(t, "live-run", mark.RunID)
+	assert.False(t, mark.Ended)
+}

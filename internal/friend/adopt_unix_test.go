@@ -107,6 +107,32 @@ func TestStaleMarkCannotBeClaimedOverItsLiveRealRun(t *testing.T) {
 	assert.Empty(t, holder, "the live process has a different birth and cannot hold an old run")
 }
 
+func TestOlderStartedCannotFailAStaleMarkedLiveForeignRun(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		dir := cardDirFixture(t, [][2]string{{"c1", "working"}}, []string{"c1"}, nil)
+		job, owner := "c1~15", "new-owner"
+		cmd := exec.CommandContext(context.Background(), "/bin/sleep", "10")
+		ownGroup(cmd)
+		require.NoError(t, cmd.Start())
+		defer func() { killGroup(cmd.Process.Pid); _ = cmd.Wait() }()
+		identity := ProcessIdentity(cmd.Process.Pid)
+		require.NotEmpty(t, identity)
+		card := Card{ID: "c1", Brief: filepath.Join(dir, "inbox", job, "BRIEF.md"), Outbox: filepath.Join(dir, "outbox", job)}
+		require.NoError(t, os.MkdirAll(filepath.Join(dir, "jobs", job), 0o755))
+		require.NoError(t, writeRunReceipt(dir, job, runReceipt{RunID: "new-run", PID: cmd.Process.Pid, Identity: identity}))
+		require.NoError(t, os.WriteFile(laneMarkPath(dir, job), []byte(LaneMarkRunningRun(owner, t0.Add(-LaneMarkStale-time.Second), "new-run")), 0o644))
+		h := &lanesHarness{dir: dir, active: map[string]int{}}
+		r, state := laneRig(t, h, 1)
+		*state = LaneState{Sessions: map[int]string{1: "ses_1"}, Started: map[string]Started{job: {Lane: 1, Card: card, At: t0.Add(-time.Minute), RunID: "old-run", Owner: "old-owner"}}}
+		r.d.ProcessIdentity = ProcessIdentity
+		r.run(t, 3)
+		assert.NoFileExists(t, card.Report())
+		assert.Equal(t, "new-run", state.Started[job].RunID)
+		assert.Equal(t, identity, ProcessIdentity(cmd.Process.Pid))
+	})
+}
+
 func TestStopVerifiedRunRefusesAReusedPID(t *testing.T) {
 	t.Parallel()
 	runCtx, runCancel := context.WithCancel(context.Background())
