@@ -344,11 +344,68 @@ func TestTheLandLoopRefusesWhenTheBenchDoesNotAnswer(t *testing.T) {
 		assert.Equal(t, "vision", h, "the only bench up: %v", got)
 	}
 	assert.Contains(t, text, "the configured remote bench did not run the tree gate")
+	assert.Contains(t, text, "no card is blamed and nothing was pushed or reported")
+	assert.NotContains(t, text, "fails the tree gate at its tip", "bench infrastructure is not a red base:\n%s", text)
 	assert.NotContains(t, text, "bench=here", "the gate must not run on this host:\n%s", text)
 	assert.NotContains(t, text, "bench=vision", "a bench that did not answer ran nothing:\n%s", text)
 	_, err := os.Stat(marker)
 	assert.True(t, os.IsNotExist(err), "local Go executed after the remote bench refused: %v", err)
 	assert.NotContains(t, r.ok("lane list"), "lander", "the lane was given back")
+	r.clean()
+}
+
+// A bench refusal is not cached as a class failure: the next pass can gate that base.
+func TestUnavailableBenchLeavesTheBaseGateRetryOpen(t *testing.T) {
+	t.Parallel()
+	r := newLandRig(t)
+	for file, content := range goModule {
+		path := filepath.Join(r.clone, file)
+		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+		require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
+	}
+	r.ok("fleet beat vision --load 1 --cores 8")
+	r.ok("fleet up vision")
+	var w whereView
+	r.json("where", &w)
+	for name, row := range w.Tables["fleet"] {
+		if name != "vision" && row["status"] == sprint.Up {
+			r.ok("fleet down " + name)
+		}
+	}
+	b := r.a.landState()
+	b.mu.Lock()
+	b.flight = &landFlight{}
+	b.hostName = func() (string, error) { return "coordinator.local", nil }
+	b.gateBench = func(context.Context, string, string, [][]string, bool) (string, int, error) {
+		return "", 0, bench.ErrNoBench
+	}
+	b.mu.Unlock()
+	st, err := r.a.store(common{redis: "mem:0", actor: "tester"})
+	require.NoError(t, err)
+	l := &lander{a: r.a, st: st, gateKey: "s1", base: "main"}
+	var why string
+	var stop bool
+	for range 2 {
+		why, stop = l.treeGateBase(t.Context(), r.clone, "base-1")
+		assert.Equal(t, benchGateUnavailableWhy, why)
+		assert.False(t, stop)
+	}
+	assert.Empty(t, l.baseGateFails, "bench refusal must not spend a red-base retry")
+	assert.Empty(t, l.baseGateCache, "bench refusal must not be cached")
+	_, _, env, why := l.gateBase(t.Context(), r.clone, "s1", []landCard{{base: "main"}}, "base-1")
+	assert.Equal(t, benchGateUnavailableWhy, env)
+	assert.Empty(t, why)
+	assert.Empty(t, l.baseGateFails)
+	b.mu.Lock()
+	b.gateBench = func(context.Context, string, string, [][]string, bool) (string, int, error) {
+		return "build failed", 1, nil
+	}
+	b.mu.Unlock()
+	why, stop = l.treeGateBase(t.Context(), r.clone, "base-1")
+	assert.Contains(t, why, "build failed")
+	assert.False(t, stop)
+	require.NotNil(t, l.baseGateFails["base-1"])
+	assert.Equal(t, 1, l.baseGateFails["base-1"].n, "the first real red gate starts the retry count")
 	r.clean()
 }
 
