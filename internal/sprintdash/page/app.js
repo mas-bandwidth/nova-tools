@@ -5,10 +5,14 @@
 // data and says nothing.
 "use strict";
 
-// Left to right in the bars: done first, so the bar fills like progress.
-var STATES = ["landed", "merging", "review", "working", "ready", "waiting"];
+// Left to right in the bars: done first, so the bar fills like progress. fix is the cards awaiting
+// rework, purple, between review and merging (docs/SPEC-SPRINT-DASHBOARD.md, "Fix"; the owner,
+// 2026-10-07: "between review and merging"); the view (dashboard.go) counts it on the copy.
+var STATES = ["landed", "merging", "fix", "review", "working", "ready", "waiting"];
 // Columns of the streams table, in flow order.
-var FLOW = ["waiting", "ready", "working", "review", "merging", "landed"];
+var FLOW = ["waiting", "ready", "working", "review", "fix", "merging", "landed"];
+// A Work row's children: stream, status, then FLOW's counts, then cost.
+var LANDED_AT = 2 + FLOW.indexOf("landed"), COST_AT = 2 + FLOW.length;
 var POLL_MS = 1000;
 var MIN_CELL = 4;  // px: a cell never gets narrower; cards per cell grows instead
 var GAP = 2;       // px between cells
@@ -195,12 +199,31 @@ function allocate(counts, total, n) {
 
 // VU meter track: exactly `slots` cells (the machine's width), on a grid of
 // `scale` columns (the widest member's width) so the cells line up down the
-// column; the first `value` are lit, the rest dark; nothing past the width.
-function setTrack(box, value, slots, scale) {
-  var classes = [];
-  for (var i = 0; i < slots; i++) classes.push(i < value ? "working" : "");
+// column; the lit cells first, the rest dark; nothing past the width. The lit cells run in the
+// priority ladder, highest on the left (docs/SPEC-SPRINT-DASHBOARD.md, "Fix"; the owner,
+// 2026-10-07: "to the left of read cards, and to the right of critical cards"): blocker,
+// critical, fix (purple), reads (one orange cell per two reads, a lone read a whole cell), then
+// the working blue; a row's counts are where's <level>_working and the view's fix.
+var TRACK_LEVELS = [["blocker_working", "p-blocker", "blocker"], ["critical_working", "p-critical", "critical"], ["fix", "p-fix", "fix"]];
+function trackSegs(m) {
+  var working = int(m.working), segs = [], words = [], cards = 0;
+  TRACK_LEVELS.forEach(function (l) {
+    var n = int(m[l[0]]); cards += n;
+    for (var j = 0; j < n; j++) segs.push(l[1]);
+    if (n) words.push(n + " " + l[2]);
+  });
+  var reads = int(m.reads_working); cards += reads;
+  for (var j = 0; j < Math.ceil(reads / 2); j++) segs.push("p-reader");
+  if (reads) words.push(reads + " read" + (reads === 1 ? "" : "s"));
+  for (var k = cards; k < working; k++) segs.push("working");
+  return { segs: segs, words: words };
+}
+function setTrack(box, value, slots, scale, m) {
+  var t = m ? trackSegs(m) : { segs: [], words: [] }, classes = [];
+  if (!m) for (var j = 0; j < value; j++) t.segs.push("working");
+  for (var i = 0; i < slots; i++) classes.push(t.segs[i] || "");
   setCells(box, classes, scale, TRACK_CELL);
-  setTitle(box, value + " working of " + slots);
+  setTitle(box, value + " working of " + slots + (t.words.length ? ": " + t.words.join(", ") : ""));
 }
 // "a / b" as a block of fixed width: a right-aligned in `digits` character widths, b
 // left-aligned in as many, so the slash of every row in a column sits on one vertical line
@@ -226,7 +249,7 @@ function streamStatus(state, c, total) {
   if (total > 0 && c.landed === total) return ["landed", "done"];
   if (state === "stopped") return ["stopped", "critical"];
   if (total > 0 && c.waiting === total) return ["held", "warning"];
-  if (c.ready + c.working + c.review + c.merging > 0) return ["working", "active"];
+  if (c.ready + c.working + c.review + (c.fix || 0) + c.merging > 0) return ["working", "active"];
   if (state === "landed") return ["landed", "done"];
   return [state || "idle", "neutral"];
 }
@@ -253,7 +276,7 @@ function renderStreams(d) {
   renderArchived(d);
   var box = $("streams"), work = d.tables.work || {}, merge = d.tables.merge || {}, arch = archivedSet(d);
   var states = {}; (d.streams || []).forEach(function (s) { states[s.Stream] = s; });
-  // children: 1 stream, 2 status, 3 waiting, 4 ready, 5 working, 6 review, 7 merging, 8 landed, 9 cost
+  // children: 1 stream, 2 status, 3 waiting, 4 ready, 5 working, 6 review, 7 fix, 8 merging, 9 landed, 10 cost
   if (!box._head) {
     box._head = pageHead("streams");
     box._total = el("div", "row total");
@@ -334,12 +357,12 @@ function renderStreams(d) {
   });
   var tc = box._total._c, all = 0;
   FLOW.forEach(function (st, i) { all += sum[st]; if (st !== "landed") setNum(tc[2 + i], sum[st]); });
-  setHTML(tc[7], frac(sum.landed, all, digits));
-  setText(tc[8], money(sum.cost));
+  setHTML(tc[LANDED_AT], frac(sum.landed, all, digits));
+  setText(tc[COST_AT], money(sum.cost));
   setText($("streams-sub"), keys.length + " streams · " + landedStreams + " landed · " + held + " held");
   // the "landed" header is centred over its n / total cell: same width as the cell, text centred
-  var lw = tc[7].offsetWidth ? tc[7].offsetWidth + "px" : "";
-  if (lw && box._head.children[7].style.width !== lw) box._head.children[7].style.width = lw;
+  var lw = tc[LANDED_AT].offsetWidth ? tc[LANDED_AT].offsetWidth + "px" : "";
+  if (lw && box._head.children[LANDED_AT].style.width !== lw) box._head.children[LANDED_AT].style.width = lw;
   return { sum: sum, all: all };
 }
 
@@ -400,12 +423,12 @@ function fleetLike(box, table, withLoad) {
   if (!box._head) {
     box._head = pageHead(box.id);
     box._total = el("div", "row total");
-    box._total._c = [el("div", "", "Total"), el("div"), quiet(numCell()), el("div"), el("div"), quiet(numCell()), quiet(numCell())];
+    box._total._c = [el("div", "", "Total"), el("div"), quiet(numCell()), quiet(el("div")), el("div"), quiet(numCell()), quiet(numCell())];
     // one more than the shared cells: the fleet's load, the friends' tokens
     box._total._c.push(el("div"));
     box._total._c.forEach(function (c) { box._total.appendChild(c); });
   }
-  var t = { ready: 0, done: 0, ok: 0, up: 0, held: 0, down: 0 };
+  var t = { ready: 0, done: 0, ok: 0, up: 0, held: 0, down: 0, fix: 0 };
   var scale = Math.max(1, names.reduce(function (a, n) { return Math.max(a, int(table[n].width)); }, 0));
   // the track column is exactly the widest track, so the figure sits right after it
   var tw = (scale * (TRACK_CELL + TRACK_GAP) - TRACK_GAP).toFixed(3) + "rem";
@@ -427,7 +450,8 @@ function fleetLike(box, table, withLoad) {
     if (m.status in t) t[m.status]++;
     setText(r.name, k);
     setPill(r.pill, m.status || "-", STATUS_TONE[m.status] || "neutral");
-    setTrack(r.track, working, width, scale);
+    setTrack(r.track, working, width, scale, m);
+    t.fix += int(m.fix);
     // a subscription friend's window use beside her width (docs/SPEC-SPRINT.md, the friends table)
     setHTML(r.wf, frac(working, width, digits) + (m.window ? "<span class=\"win\"> · " + escHTML(m.window) + "</span>" : ""));
     setNum(r.ready, int(m.ready)); setNum(r.done, done);
@@ -437,6 +461,8 @@ function fleetLike(box, table, withLoad) {
   }, box._total);
   var c = box._total._c;
   setNum(c[2], t.ready);
+  // the fix figure under the bars: the rows' fix cells summed, said only when there are any
+  setText(c[3], t.fix ? t.fix + " fix" : ""); setClass(c[3], "num" + (t.fix ? "" : " zero"));
   setNum(c[5], t.done);
   setOk(c[6], t.done ? t.ok / t.done * 100 : null, t.done);
   return { t: t, n: names.length };
@@ -584,7 +610,7 @@ function renderHero(d, s) {
   // what the providers counted beyond the records is the epoch's (sprint.UnreconciledSpend,
   // every day since the epoch began), never added into the tile: its own line, its scope named
   setText($("cost-unreconciled"), money(s.sum.unreconciled) + " unreconciled since " + epochStart(d));
-  setText($("inflight"), s.sum.working + s.sum.review + s.sum.merging);
+  setText($("inflight"), s.sum.working + (s.sum.fix || 0) + s.sum.review + s.sum.merging);
   inflightLast = s.sum; renderInflight(s.sum);
   // throughput: cards landed per hour over the last hour, from the server's samples
   setText($("tput"), throughput == null ? "\u2014" : String(Math.round(throughput)));
@@ -627,8 +653,10 @@ function renderInflight(sum) {
   var box = $("inflight-sub"); if (!box) return;
   // the words shorten in turn when the line does not fit the tile (a phone)
   var forms = [["working", "review + merge"], ["work", "review + merge"], ["work", "rev + merge"], ["work", "rev+mrg"], ["wk", "r+m"]];
+  // a card at fix is being worked again: it counts as working here, and the tooltip names it
+  var fx = sum.fix || 0;
   var draw = function (w) {
-    var parts = [[sum.working, w[0]], [sum.review + sum.merging, w[1]]].filter(function (p) { return p[0] > 0; });
+    var parts = [[sum.working + fx, w[0]], [sum.review + sum.merging, w[1]]].filter(function (p) { return p[0] > 0; });
     var kids = [];
     if (!parts.length) kids.push(["pw", "nothing in flight"]);
     parts.forEach(function (p, i) {
@@ -639,7 +667,7 @@ function renderInflight(sum) {
     kids.forEach(function (k, i) { putKid(box, i, k[0], k[1]); });
   };
   for (var i = 0; i < forms.length; i++) { draw(forms[i]); if (fits(box)) break; }
-  setTitle(box, sum.working + " working, " + sum.review + " review, " + sum.merging + " merging");
+  setTitle(box, (sum.working + fx) + " working" + (fx ? " (" + fx + " fix)" : "") + ", " + sum.review + " review, " + sum.merging + " merging");
 }
 window.addEventListener("resize", function () { if (inflightLast) renderInflight(inflightLast); fitEtaAt(); });
 
@@ -766,7 +794,7 @@ function renderTopStreams(d) {
   var sp = tierSpend(d), byTier = sp.byTier, order = sp.order, fmt = sp.fmt;
   Object.keys(work).forEach(function (k) {
     var w = work[k], ct = cents(w.cost); if (!ct) return;
-    var n = {}; ["waiting", "ready", "working", "review", "merging", "landed"].forEach(function (c) { n[c] = parseInt(w[c], 10) || 0; });
+    var n = {}; FLOW.forEach(function (c) { n[c] = parseInt(w[c], 10) || 0; });
     rows.push({ name: k, cost: ct, n: n, per: n.landed ? Math.ceil(ct / n.landed) : null, tiers: tierCounts(w.tiers), byTier: w.cost_by_tier || null });
   });
   rows.sort(function (a, b) { return b.cost - a.cost; });
@@ -842,12 +870,14 @@ function renderMerge(d) {
 // ---------- priority marks ----------
 // A card's priority by colour (docs/SPEC-SPRINT-DASHBOARD.md, "Priority"): one mark a card
 // whose level is not normal (where --json's priorities) and one a read waiting (reads_waiting),
-// in the ladder's order; a blocker bright red, a critical dark red, a read the orange of the
-// robot's shoes, and every work card blue whatever its level (high, low). At most MARKS_MAX a
-// level; the last says how many more.
-var MARK_LEVELS = ["blocker", "critical", "critical (by weight, not yet ordered)", "high", "reader", "low"];
+// in the ladder's order; a blocker bright red, a critical dark red, a card awaiting rework (fix,
+// the view's priorities.fix) purple right of the reds, a read the orange of the robot's shoes,
+// and every work card blue whatever its level (high, low). At most MARKS_MAX a level; the last
+// says how many more.
+var MARK_LEVELS = ["blocker", "critical", "critical (by weight, not yet ordered)", "fix", "high", "reader", "low"];
 var MARKS_MAX = 40;
 function priorityClass(level) {
+  if (level === "fix") return "p-fix"; // a card awaiting rework, purple
   if (level.indexOf("critical") === 0) return "p-critical"; // a computed critical too, its title says so
   return level === "blocker" || level === "reader" ? "p-" + level : "p-work";
 }

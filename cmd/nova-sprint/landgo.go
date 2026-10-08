@@ -404,7 +404,7 @@ func (l *lander) ringGate(ctx context.Context, hosts []string, dir string, runs 
 // ("" green) and ran, or the stage's refusal when the tree never reached the bench.
 func (l *lander) gateOn(ctx context.Context, host, dir string, runs [][]string, tests bool, st *bench.MirrorStage) (why string, ran bool, refused *bench.StageError) {
 	defer l.giveGateLane(host)
-	l.stage("gate", "bench "+host+": "+strings.Join(runs[0], " "))
+	l.stage("gate", "bench "+host+" held by "+l.laneWho()+" ("+l.gateWhose()+"): "+strings.Join(runs[0], " "))
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(len(runs))*landGoBudget)
 	defer cancel()
 	start := l.clock()
@@ -426,7 +426,7 @@ func (l *lander) gateOn(ctx context.Context, host, dir string, runs [][]string, 
 // copySaid says one stage line: the loop's idle line carries it as the step, and the
 // batch's report as a NOTE ("tree gate: <line>", the batch's also).
 func (l *lander) copySaid(line string) {
-	l.stage("gate "+line, "the tree gate's stage")
+	l.stage("gate "+line, l.gateWhose())
 	l.ledgerLog = append(l.ledgerLog, "tree gate: "+line)
 }
 
@@ -565,12 +565,15 @@ func (l *lander) gateBenches(ctx context.Context) (hosts []string, inLoop bool) 
 // the lander keeps its place on the ring's first host alone (the slot the batch hashes
 // to) and gives back the rest, and the ring is asked again from that host on the next
 // land-loop cycle (waitLaneAsk): that loop is the clock, so this ask adds no timer of its
-// own, and the beat keeps printing. The stage names the lane it waits on.
+// own, and the beat keeps printing. The lander asks under its own name (laneWho), so a
+// sibling fork's held lane is held to it too and it steps past it. The stage names the
+// lane it waits on and whose gate waits (the stuck judgment carries it).
 func (l *lander) takeGateLane(ctx context.Context, hosts []string) (string, error) {
 	if len(hosts) == 0 {
 		return "", fmt.Errorf("no bench to take a Go lane on")
 	}
-	proc := "lane take go --machine " + hosts[0] + " --as " + landLaneWho
+	who := l.laneWho()
+	proc := "lane take go --machine " + hosts[0] + " --as " + who + " (" + l.gateWhose() + ")"
 	asked := map[string]bool{}
 	for {
 		if err := ctx.Err(); err != nil {
@@ -581,7 +584,7 @@ func (l *lander) takeGateLane(ctx context.Context, hosts []string) (string, erro
 		}
 		for _, h := range hosts {
 			l.a.serial.Lock()
-			ans, err := l.st.LaneStep(ctx, sprint.LaneGo, h, landLaneWho, false)
+			ans, err := l.st.LaneStep(ctx, sprint.LaneGo, h, who, false)
 			l.a.serial.Unlock()
 			if err != nil {
 				continue // this lane cannot be read now; the next may grant
@@ -631,14 +634,42 @@ func (l *lander) waitLaneAsk(ctx context.Context) error {
 	}
 }
 
-// giveGateLane returns the Go lane, or the place in its queue. A cancelled landing still
+// giveGateLane returns this lander's Go lane, or its place in the queue, under its own name
+// (laneWho): a sibling's hold or place on the same bench stays. A cancelled landing still
 // gives it back; the hold expires at LaneHoldFor when the give does not land.
 func (l *lander) giveGateLane(machine string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	l.a.serial.Lock()
 	defer l.a.serial.Unlock()
-	_, _ = l.st.LaneStep(ctx, sprint.LaneGo, machine, landLaneWho, true) // ignored: the hold expires at LaneHoldFor when this give does not land
+	_, _ = l.st.LaneStep(ctx, sprint.LaneGo, machine, l.laneWho(), true) // ignored: the hold expires at LaneHoldFor when this give does not land
+}
+
+// gatesBase makes the lander's next gate the base re-check's (baseRecheck): no batch, so the
+// base re-checked is the ring's key, and the gate holds a bench's lane as landLaneBase.
+func (l *lander) gatesBase(base string) {
+	l.gateKey, l.laneAs = base, landLaneBase
+}
+
+// laneWho is the holder this lander's gate records on a bench's Go lane: lander/<stream> in
+// a stream's fork, landLaneBase in the base re-check, landLaneWho otherwise.
+func (l *lander) laneWho() string {
+	if l.laneAs != "" {
+		return l.laneAs
+	}
+	return landLaneWho
+}
+
+// gateWhose names whose gate holds or waits on a bench's lane, for the stage and so the
+// stuck judgment: the stream's, or the base's in the base re-check.
+func (l *lander) gateWhose() string {
+	switch {
+	case l.laneAs == landLaneBase:
+		return "the gate of the base " + l.gateKey
+	case l.gateKey != "":
+		return "the gate of stream " + l.gateKey
+	}
+	return "the lander's gate"
 }
 
 // runOnBench runs the gate's runs on host (gateScript) in the tree st stages from the

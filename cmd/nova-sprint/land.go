@@ -360,6 +360,9 @@ type lander struct {
 	gateKey  string
 	gateRing int
 	gateSlot int
+	// laneAs is the holder this lander's gate records on a bench's Go lane: lander/<stream>
+	// in a stream's fork, landLaneBase in the base re-check (laneWho).
+	laneAs string
 	// parallel is how many streams merge at once in the pass's first phase (--land-parallel;
 	// landpass.go), and shared the locks and records the pass's streams share.
 	parallel int
@@ -873,7 +876,7 @@ func (l *lander) baseRecheck(ctx context.Context, s *sprint.Snapshot) {
 		red, cached := l.baseGateCache[sha]
 		if !cached || red != "" {
 			dir, _ := l.clone(ctx, at.repo)
-			l.gateKey = at.base // no batch: the base re-checked is the ring's key
+			l.gatesBase(at.base)
 			red = l.treeGate(ctx, dir, true)
 		}
 		if red != "" {

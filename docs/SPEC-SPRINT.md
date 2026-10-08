@@ -4095,6 +4095,22 @@ different benches instead of all on the first up member (the owner, 2026-10-07:
 batch's `LAND` line adds `ring=<n> slot=<h % n>` after `bench=` when a bench ran
 a gate. The ring's model in TLA+ is its own card.
 
+**Each stream's gate holds its lane under its own name.** The lander records a
+bench's Go lane as `lander/<stream>` for a stream's gate (the stream's fork in the
+parallel pass) and as `lander/base` for the base re-check, never as one `lander`
+for all of them: a take renews a holder by its name, so under one shared name a
+sibling fork asking a bench another fork held was granted at once, and a give took
+back every holder and waiter of that name, so the first fork to finish freed the
+bench while its sibling's gate still ran. Under its own name a fork asking a bench
+a sibling holds is queued there, and the ring's step-while-held moves it to the next
+slot like any other held lane; its give (`Lanes.Give`) takes back its own hold or
+place alone, never another's. A lane name is one worker word, or two joined by one
+`/` (`sprint.ValidLaneWho`), so `lane list` shows `held=lander/<stream>` and the
+stage the land loop's beat names (and so the stuck judgment) reads `lane take go
+--machine <m> --as lander/<stream> (the gate of stream <stream>)` while a gate
+waits, and `bench <m> held by lander/<stream> (the gate of stream <stream>)` while
+it runs (`landlane_holder_test.go`).
+
 **How a gate reaches a bench.** Never as a copy of the lander's clone: until
 2026-10-07 the gate's tree went as a tar stream of the clone on ssh's stdin,
 about 180 MB a batch and 60 to 90 s over the tailnet when it completed, and when
@@ -4123,8 +4139,9 @@ Every stage is said. The loop's idle line carries it as the step, `LAND IDLE
 left this machine; for a mirror stage, the line), or `step=gate copy refused:
 <why>`, and the batch's report carries it as a `NOTE tree gate: ...` line under
 its `LAND` line (in the `--json` items' `also`; the loop relays a batch's NOTE
-lines when the batch is refused, and only its `LAND` lines when it lands). A refusal names the host, the wall time, the step that refused,
-its exit and the tail of its stderr (for the tar copy `nova-ci bench run` still
+lines when the batch is refused, and only its `LAND` lines when it lands). A
+refusal names the host, the wall time, the step that refused, its exit and the
+tail of its stderr (for the tar copy `nova-ci bench run` still
 makes: WriteTree's own refusal of a socket or a device, else the bench tar's
 exit). A refused stage is never retried on the same bench within the gate: the
 ring's next slot is asked; a bench whose stage is refused twice in one land pass
