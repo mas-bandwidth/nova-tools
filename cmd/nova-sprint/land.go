@@ -1262,7 +1262,7 @@ func (l *lander) mergeCards(ctx context.Context, dir, stream string, cards []lan
 		case env != "":
 			return nil, failed, env + "; no card is blamed and nothing was pushed or reported"
 		case refused != "":
-			return merged, conflictCard{landCard: *card, why: refused, kind: l.conflictKind, paths: l.conflictPaths}, ""
+			return merged, conflictCard{landCard: *card, why: refused, kind: l.conflictKind, paths: l.conflictPaths, emptyCommit: refused == emptyCommitFinding}, ""
 		}
 		merged = append(merged, card.id)
 	}

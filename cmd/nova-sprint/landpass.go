@@ -95,14 +95,20 @@ type landJob struct {
 	clone  string // the repository's clone: the fetch and push hub, the land lock's home
 	dir    string // the stream's worktree of it, where the batch is built
 	// done says phase 1 ended the batch (refused, or reported with a fact): nothing to land;
-	// landed and ok are the batch's outcome as stream reported it before.
-	done, landed, ok bool
-	cut              landCut // the batch branch as prepare cut it: the base's tip, a cure merged first
-	gated            bool    // the tip's whole tree passed a gate with the tree tests (phase 1's one gate, or the combined gate)
-	merged           []string
-	failed           conflictCard
-	baseSha, tip     string   // the base tip the batch was cut from, and its gated tip
-	files            []string // what the tip changes against that base
+	// past, on and ok are the batch's outcome as batch reported it before (land.go until
+	// 2026-10-07): the stream goes on past its first past cards when on (every card of the
+	// batch landed, or the cards before a card whose own refusal was recorded and that card,
+	// reworked at the tip or returned to review; build puts a base's cure first, so they are
+	// the first past of cards as it leaves them), and ok is false when a push landed and its
+	// report did not.
+	done, on, ok bool
+	past         int
+	cut          landCut // the batch branch as prepare cut it: the base's tip, a cure merged first
+	gated        bool    // the tip's whole tree passed a gate with the tree tests (phase 1's one gate, or the combined gate)
+	merged       []string
+	failed       conflictCard
+	baseSha, tip string   // the base tip the batch was cut from, and its gated tip
+	files        []string // what the tip changes against that base
 }
 
 // fork is the lander one stream's batch runs in: the pass's settings, store, caches and
@@ -165,6 +171,20 @@ func (l *lander) openStream(s *sprint.Snapshot, stream string) ([]landCard, bool
 			if cb.Ref != "" {
 				lc.base = cb.Ref
 			}
+			if s.Fleet != nil {
+				lc.result = claimText(s.Fleet.Card(sprint.WorkCardID(pr.ID, pr.Int("attempt"))))
+				if pr.Int("attempt") > 1 {
+					var earlier []*sprint.Card
+					for k := 1; k < pr.Int("attempt"); k++ {
+						if w := s.Fleet.Card(sprint.WorkCardID(pr.ID, k)); w != nil {
+							earlier = append(earlier, w)
+						}
+					}
+					if b := sprint.BaseOf(earlier); b.Head != "" {
+						lc.start = b.Head
+					}
+				}
+			}
 		}
 		if lc.protected = sprint.ProtectedLandWhy(s, stream, lc.repo, lc.base, c.ID); lc.protected != "" {
 			// the refusal names the promotion flag beside the mark (docs/SPEC-SPRINT.md
@@ -188,8 +208,10 @@ func batchOf(cards []landCard) int {
 
 // pass lands every stream of order: round after round, each stream's next batch merged
 // beside the others' (phase 1, merges), then the green ones landed one at a time in order
-// (phase 2, land), a stream going on to its next batch only when the one before it landed
-// whole, as stream did. failed says a push landed and its report did not.
+// (phase 2, land), a stream going on past the cards its batch landed and past a card whose
+// own refusal was recorded (reworked at the tip, or returned to review: the stream's other
+// cards land in the same pass), and ending at the lander's own failure, as stream did.
+// failed says a push landed and its report did not.
 func (l *lander) pass(ctx context.Context, s *sprint.Snapshot, order []string) (failed bool) {
 	queues := map[string][]landCard{}
 	var streams []string
@@ -235,8 +257,8 @@ func (l *lander) pass(ctx context.Context, s *sprint.Snapshot, order []string) (
 			case !j.ok:
 				failed = true
 				queues[j.stream] = nil
-			case j.landed:
-				queues[j.stream] = queues[j.stream][len(j.cards):]
+			case j.on:
+				queues[j.stream] = queues[j.stream][j.past:]
 			default:
 				queues[j.stream] = nil
 			}
@@ -248,11 +270,24 @@ func (l *lander) pass(ctx context.Context, s *sprint.Snapshot, order []string) (
 func (j *landJob) refuse(why string) {
 	j.b.Reason = why
 	j.f.keep(j.b)
-	j.done, j.landed, j.ok = true, false, true
+	j.done, j.past, j.on, j.ok = true, 0, false, true
 }
 
-// ended ends the job with the outcome a fact's report gave it.
-func (j *landJob) ended(landed, ok bool) { j.done, j.landed, j.ok = true, landed, ok }
+// ended ends the job with the outcome a report gave it: the cards the stream goes past, whether
+// it goes on, and whether a push landed was reported (batch's done, on, ok).
+func (j *landJob) ended(past int, on, ok bool) { j.done, j.past, j.on, j.ok = true, past, on, ok }
+
+// ownRefusal reports the card that ended its batch with its own refusal, as batch did: an
+// empty commit whose result claims changes returns the card to review (returnCard); any other
+// refusal is the conflict fact (conflict), which reworks the card at the tip and stops
+// nothing, or stops the stream for the lander's own failure (a ledger it could not resolve, a
+// head origin does not hold). true when the stream goes on.
+func (l *lander) ownRefusal(stream string, f conflictCard) bool {
+	if f.emptyCommit {
+		return l.returnCard(stream, f)
+	}
+	return l.conflict(stream, f)
+}
 
 // prepare is the batch before any merge, serial across the streams in their order: the
 // refusals before git (placeWhy, pause), the clone and its lock, the clone restored when a
@@ -280,8 +315,7 @@ func (l *lander) prepare(ctx context.Context, s *sprint.Snapshot, j *landJob) {
 	}
 	j.clone, b.Dir = clone, clone
 	if l.dry {
-		landed, ok := j.f.dryBatch(*b, j.cards)
-		j.ended(landed, ok)
+		j.ended(j.f.dryBatch(*b, j.cards))
 		return
 	}
 	if why := l.hold(ctx, clone); why != "" {
@@ -335,13 +369,15 @@ func (l *lander) buildFailed(ctx context.Context, j *landJob, why string) {
 	if l.baseCount {
 		// the base-gate rule: the refusal counted per stream and base in the store, its third
 		// (or this process's third failure) stopping the stream with the coordinator's judgment
-		j.ended(l.baseRefused(j.b, j.stream, why))
+		l.baseRefused(j.b, j.stream, why)
+		j.ended(0, false, true)
 		return
 	}
 	if strings.Contains(why, "couldn't find remote ref") && l.baseGone(ctx, j.dir, j.b.Base) {
 		// the base branch is gone (merged and deleted): one judgment names every
 		// card on it and the rebase line that fixes them (rebase.go)
-		j.ended(l.missingBase(j.b, why))
+		l.missingBase(j.b, why)
+		j.ended(0, false, true)
 		return
 	}
 	j.refuse(why)
@@ -546,8 +582,7 @@ func (l *lander) merge(ctx context.Context, j *landJob) {
 	}
 	l.buildNotes(j)
 	if len(merged) == 0 {
-		l.conflict(stream, failed)
-		j.ended(false, true)
+		j.ended(1, l.ownRefusal(stream, failed), true)
 		return
 	}
 	b.Scope = l.scopeOf(merged)
@@ -567,7 +602,8 @@ func (l *lander) merge(ctx context.Context, j *landJob) {
 	since(&b.Times.Check, start)
 	if why != "" {
 		b.Cards, b.IDs = len(merged), j.ids[:len(merged)]
-		j.ended(l.fact(*b, sprint.MergeReq{Stream: stream, Batch: len(merged), Red: true, Note: why}, j.cards[:len(merged)], "red", why))
+		l.fact(*b, sprint.MergeReq{Stream: stream, Batch: len(merged), Red: true, Note: why}, j.cards[:len(merged)], "red", why)
+		j.ended(0, false, true)
 		return
 	}
 	files, err := l.git(ctx, dir, "diff", "--name-only", "-M", baseSha, tip)
@@ -624,15 +660,15 @@ func (l *lander) land(ctx context.Context, j *landJob, pushed []*landJob) {
 				}
 				if len(j.merged) == 0 {
 					// no head merges onto the new tip: the first met a conflict there, which
-					// ends the batch as it did before (the fact, the stream stopped); nothing is
-					// pushed, and nothing is reported as a batch of none (the merge step reads an
-					// empty batch as the whole queue)
+					// ends the batch as it did before (the card's own refusal, reworked at the tip
+					// and the stream going on; or the lander's own failure, the stream stopped);
+					// nothing is pushed, and nothing is reported as a batch of none (the merge step
+					// reads an empty batch as the whole queue)
 					if j.failed.id == "" {
 						j.refuse("no head of the batch merges onto the moved base " + b.Base + " and no card was blamed; run land again")
 						return
 					}
-					f.conflict(stream, j.failed)
-					j.ended(false, true)
+					j.ended(1, f.ownRefusal(stream, j.failed), true)
 					return
 				}
 			}
@@ -666,15 +702,14 @@ func (l *lander) land(ctx context.Context, j *landJob, pushed []*landJob) {
 				l.locks().gateMu.Unlock()
 			}
 			if !f.landed(*b, stream, j.cards[:len(j.merged)]) {
-				j.ended(false, false)
+				j.ended(0, false, false)
 				return
 			}
 			if j.failed.id != "" {
-				f.conflict(stream, j.failed)
-				j.ended(false, true)
+				j.ended(len(j.merged)+1, f.ownRefusal(stream, j.failed), true)
 				return
 			}
-			j.ended(true, true)
+			j.ended(len(j.cards), true, true)
 			return
 		}
 		if !rejected(err) {
@@ -683,7 +718,8 @@ func (l *lander) land(ctx context.Context, j *landJob, pushed []*landJob) {
 		}
 		if attempt == 2 {
 			b.Cards, b.IDs = len(j.merged), j.ids[:len(j.merged)]
-			j.ended(f.fact(*b, sprint.MergeReq{Stream: stream, Batch: len(j.merged), Rejected: true, Note: firstLine("", err)}, j.cards[:len(j.merged)], "rejected", "the push to "+b.Base+" was rejected again after a rebuild on the moved base: "+firstLine("", err)))
+			f.fact(*b, sprint.MergeReq{Stream: stream, Batch: len(j.merged), Rejected: true, Note: firstLine("", err)}, j.cards[:len(j.merged)], "rejected", "the push to "+b.Base+" was rejected again after a rebuild on the moved base: "+firstLine("", err))
+			j.ended(0, false, true)
 			return
 		}
 	}
