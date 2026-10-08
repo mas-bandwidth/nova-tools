@@ -42,9 +42,11 @@ to the forge.
   peek, wait, log and names; `nova-redis help`, `serve -h` and `acl -h`;
   `nova-config help`; `nova-friend help` and `run -h`. Read only after a
   stumble: internal/nsprint/redisauth/redisauth.go for the login variable names
-  (stumble 1), and internal/friend/adapter.go and adapter_opencode_lanes.go for
-  the opencode deliver command (stumble 5). The two earlier records in
-  docs/stranger/ name the same login and names walls this run hit.
+  (stumble 1), docs/stranger/friend-fake-harness.md after stumble 1 and
+  docs/stranger/three-card-sprint.md after stumble 2, and
+  internal/friend/adapter.go and adapter_opencode_lanes.go for the opencode
+  deliver command (stumble 5). The two earlier records name the same login and
+  names walls this run hit.
 - Time: the container started at 01:06 UTC; the two messages were sent, read
   and acked by 01:08:33 UTC; the redis and the container were removed after
   that, and the bench's scratch directory with them.
