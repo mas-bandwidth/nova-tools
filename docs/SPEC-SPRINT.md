@@ -6702,6 +6702,49 @@ server, member and friend (`TestSeatPlayAdoptsInOrderAndRefusesEachHalfMove`: th
 member stopped before the migration, a refusal after it restarting the old server on the old
 binaries and library).
 
+#### The adopt window
+
+The window waits only for the agents the adoption itself stopped, never for every process that
+runs the seat's binary. On 2026-10-07 at 7:42 PM a seat re-adopt was refused at step 3 and rolled
+back on one pid: the live dashboard's one-second `where --json` poll (`nova-sprint-int2` is a link
+to the installed nova-sprint). With the server stopped inside the window that poll waited on it,
+and at one poll a second one is always in flight, so a window that counts it can never close;
+earlier the same day the seat's own `inbox --wait` held it the same way. The owner, the same day:
+"when you update tools, make the dashboard work", and the page polls once a second by
+requirement.
+
+`sprint.AdoptWindow` (internal/sprint/adopt_window.go) is the decision, pure over a process table
+and a clock: given the agents stopped, each its launchd label and the pid launchd held for it
+when it was booted out (`sprint.WindowAgent`; pid 0, an interval agent between runs, is nothing
+to wait for), it reads the table (`sprint.WindowProc`: pid, the executable the first argument
+resolves to with links followed, the arguments) every `DefaultAdoptWindowPoll` (1 s) until no
+stopped pid is in it, or the bound passes with some still there.
+
+- Only a stopped agent's pid refuses. Any other process of the binary, a verb such as `where`,
+  `card`, `inbox` or `finish`, is listed in one line `OTHER <pid> <argv>` and ignored: the install
+  replaces the binary by rename, so a running process keeps its own inode and the next exec runs
+  the new one.
+- The bound is a setting, `--window` (`DefaultAdoptWindow`, 60 s). Past it the window says
+  `WINDOW REFUSED after <s>s: these stopped agents still run: <pid> <label>, ...`, naming each
+  stopped agent still running by its pid and label and nothing else, and nothing is migrated.
+- On success it says `WINDOW OK stopped=<n> waited=<s>s others=<n>`: the agents it was given, the
+  whole seconds it waited, and the other processes of the binary on its last read.
+- A table that does not read is an error, never a pass.
+
+`(*app).cmdAdoptWindow` (cmd/nova-sprint/adopt.go) is the verb's body over ps (`ps -A -o
+pid=,args=`, this process aside): `--stopped <label>=<pid>` (repeatable), `--binary` (the seat's
+nova-sprint, default `~/.local/bin/nova-sprint`, links followed), `--window`; exit 0 on WINDOW OK,
+1 on WINDOW REFUSED or a table that does not read, 2 on usage. It is not yet in the verb table,
+and the tools play's step 3 above still waits on `live`'s `holds`: registering it as `adopt
+window` (cmd/nova-sprint/verbs.go) and calling it from the seat play with the pids of
+`seat_stopped` read before the bootout (fleet/tools.yml) is a card of its own, those files being
+outside this one's paths. Tested on a fake table and a clock that moves only by the window's own
+sleeps (`TestAdoptWindowRefusesAStoppedAgentStillRunningPastTheBound`,
+`TestAdoptWindowListsAVerbProcessOfTheBinaryAsOtherAndDoesNotRefuse`,
+`TestAdoptWindowSaysOKWithTheCountsWhenEveryStoppedAgentIsGone`), and the verb's body on a fake
+table (`TestAdoptWindowVerbWaitsOnlyOnTheStoppedAgents`,
+`TestWindowProcsOfResolvesTheDashboardLinkToTheBinary`).
+
 #### store-latency-row-r.w2: where shows the store round trip the server measures
 
 The store latency was measured by hand with redis-cli (20 pings, then 500 on one connection) on
