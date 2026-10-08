@@ -550,6 +550,11 @@ type loop struct {
 	proven        bool     // the push proof this step (proof): a card goes into a lane only while it holds
 	checkHanded   string   // the push check whose pong line a message turn last carried, and when (lanes.go messageTurn)
 	checkHandedAt time.Time
+	owedMessage   *turn // a message turn the session could not take (Deferred, SessionRefused): kept whole, handed again after messageRetry, acked never until it succeeds (lanes.go messageDone)
+	messageRetry  time.Time
+	messageSaid   string // the deferral or refusal last said on the record, said once while it stands
+	messageTries  int
+	messageSaidAt time.Time
 	saidRefusal   string          // the card runner's refusal last recorded, "" when it runs
 	tag           string          // this daemon's tag in its lanes' names on a lane mark (laneTag, one_lane.go)
 	following     atomic.Bool     // a Mailbox.Follow runs

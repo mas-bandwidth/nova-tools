@@ -1694,7 +1694,20 @@ answer (`TestAOneShotFriendProvesHerPushFromALaneAndCardsWaitForIt`; the
 reversed witness `TestNoPongFromTheSessionLeavesThePushUnprovenAndNoCardRuns`:
 a session that never runs the line leaves the push unproven, no card runs, and
 nothing from the daemon is on the bus). The message turn runs in the friend's
-directory, not a job's. The rule is the lanes model's (tla/FriendLanes.tla):
+directory, not a job's. A message turn the session could not take (`Deferred`,
+the harness unable to take a turn now; `SessionRefused`, the session unable to
+take one at all) was never delivered, so it is neither a failure nor an ack:
+the turn stays whole in the daemon's hand, goes in again after `RecheckEvery`
+with the same messages, before anything newer, counted toward nothing and
+acked never until a turn succeeds, as a batch turn's deferral is; the record
+says it once per reason and once a minute after
+(`TestAMessageTurnTheSessionCannotTakeStaysOwedAndIsNeverAckedUnread`; Stella's
+cold read of #5474: no bus message is discarded unread). **The machine's STOP**
+(the sibling's stop-cancels-lanes: a STOPPED word cancels every card turn and
+read and starts no work) does not end message turns: they are the friend's
+comms and her proof, not work, so a stopped friend still answers a wake, takes
+her messages and proves her push; a card never goes in while STOPPED. The rule
+is the lanes model's (tla/FriendLanes.tla):
 `CheckTurn` hands the line while unproven, `Answer` is the session's and the
 only thing that sets `proven`; `CardsOnlyAfterProof` (a card in a lane's hand
 means the push is proven) and `ProvenOnlyBySession` (proven means the session

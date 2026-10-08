@@ -567,6 +567,20 @@ func (l *loop) messageTurn(ln *lane, lh LaneHarness, width int, now time.Time) b
 	if l.wake && (d.m.Challenge == Quiet || d.PongCommand == nil) {
 		l.wake = false // answered already, or no line to hand: nothing owed
 	}
+	if l.owedMessage != nil {
+		// a turn the session could not take stays whole in the daemon's hand and goes in again
+		// after RecheckEvery, the same entries and text, before anything newer (messageDone)
+		if now.Before(l.messageRetry) {
+			return false
+		}
+		t := l.owedMessage
+		ln.t = t
+		l.startTurn(t, now, func(ctx context.Context) laneResult {
+			lt, err := lh.DeliverTo(WithLaneDir(LaneContext(ctx), d.Dir), ln.session, t.text)
+			return laneResult{ln: ln, turn: lt, err: err, t: t}
+		})
+		return true
+	}
 	check, checkNonce := "", ""
 	if d.Proof != nil && d.PongCommand != nil {
 		if proven, nonce := d.Proof(); !proven && nonce != "" && (l.checkHanded != nonce || now.Sub(l.checkHandedAt) >= MessageTurnEvery) {
@@ -623,16 +637,39 @@ func MessageText(friend string, n, width int, pong, check, notice, seat string, 
 	return b.String()
 }
 
-// messageDone is a message turn's end (messageTurn): exit 0 acks its messages, any other
-// end leaves them pending for the claim to hand in again, as a batch turn's does (settle);
-// a provider's limit is the governor's (providerLimit). The pong lines it carried are
-// answered by the session or not: the daemon reads nothing into that.
+// messageDone is a message turn's end (messageTurn): exit 0 acks its messages; a turn the
+// session could not take (Deferred: the harness unable to take a turn now; SessionRefused:
+// the session cannot take one at all) was never delivered, so it is neither a failure nor
+// an ack: the turn stays whole in the daemon's hand (owedMessage), handed again after
+// RecheckEvery, counted toward nothing and acked never until it succeeds, as a batch turn's
+// deferral is (batchDone); a provider's limit is the governor's (providerLimit); any other
+// end leaves the messages pending for the claim to hand in again (settle). The pong lines it
+// carried are answered by the session or not: the daemon reads nothing into that.
 func (l *loop) messageDone(r laneResult, now time.Time) {
 	d, s, ln, t := l.d, l.lanes, r.ln, r.t
 	line := fmt.Sprintf("%s lane=%d session=%s subject=%s messages=%d took=%s exit=%d", now.UTC().Format(time.RFC3339), ln.n, ln.session, t.subjects, len(t.entries), now.Sub(t.started).Round(time.Millisecond), r.turn.Exit)
 	if r.err != nil {
 		line += fmt.Sprintf(" error=%q", r.err.Error())
 	}
+	var deferred Deferred
+	if errors.As(r.err, &deferred) && !t.stopped && !t.held {
+		l.owedMessage, l.messageRetry = t, now.Add(RecheckEvery)
+		l.messageTries++
+		var refused SessionRefused
+		said := ""
+		switch {
+		case errors.As(r.err, &refused):
+			said = fmt.Sprintf(" session=refused reason=%q: %s; the turn stays in hand, handed again every %s until one succeeds, acked never before", oneLine(refused.Reason, 200), oneLine(refused.Detail, 400), RecheckEvery)
+		default:
+			said = fmt.Sprintf(" deferred: %s; the turn stays in hand, handed again every %s, counted toward nothing", oneLine(deferred.Reason, 300), RecheckEvery)
+		}
+		if said != l.messageSaid || now.Sub(l.messageSaidAt) >= DeferredSaidEvery {
+			l.messageSaid, l.messageSaidAt = said, now
+			d.Record(line + fmt.Sprintf(" tries=%d", l.messageTries) + said + " (said once per " + DeferredSaidEvery.String() + ")")
+		}
+		return
+	}
+	l.owedMessage, l.messageSaid, l.messageTries = nil, "", 0
 	if t.stopped {
 		line += fmt.Sprintf(" stopped=%q", "no output for "+l.silentStop.String())
 	}

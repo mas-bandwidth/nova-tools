@@ -64,6 +64,7 @@ type lanesHarness struct {
 	maxBusy int
 	block   chan struct{}      // when set, a card turn waits for it
 	onPong  func(nonce string) // when set, the session "runs" each pong line a turn carries: called with its nonce
+	refuse  []error            // what the next message turns answer instead of running (a Deferred, a SessionRefused), in order
 }
 
 var cardOfText = regexp.MustCompile(`one card this turn, ([^ ]+)\. Do exactly`)
@@ -92,6 +93,12 @@ func (h *lanesHarness) DeliverTo(ctx context.Context, session, text string) (Lan
 	h.mu.Lock()
 	h.turns = append(h.turns, session+": "+id)
 	h.texts = append(h.texts, text)
+	if id == "-" && len(h.refuse) > 0 {
+		err := h.refuse[0]
+		h.refuse = h.refuse[1:]
+		h.mu.Unlock()
+		return LaneTurn{Exit: 1}, err
+	}
 	h.active[session]++
 	h.maxBusy = max(h.maxBusy, h.active[session])
 	block := h.block
@@ -250,6 +257,55 @@ func TestALaneFriendWithNoCardAnswersAWakeInAMessageTurn(t *testing.T) {
 		assert.Equal(t, Quiet, s.Challenge, "the session's pong ends the wake challenge")
 		assert.Equal(t, 1, s.Pongs)
 		assert.Contains(t, strings.Join(r.records, "\n"), `subject="wake w1" messages=0`)
+	})
+}
+
+// A message turn the session could not take was never delivered, so it is neither a failure
+// nor an ack: deferred (the harness cannot take a turn now) or refused (the session cannot
+// take one at all), the turn stays whole in the daemon's hand, goes in again after
+// RecheckEvery with the same messages, is counted toward nothing and never acked or given
+// up, and is acked once when a turn succeeds; a newer message waits behind it (Stella's
+// cold read of #5474, 2026-10-08: no bus message is discarded unread).
+func TestAMessageTurnTheSessionCannotTakeStaysOwedAndIsNeverAckedUnread(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		dir := cardDirFixture(t, nil, nil, nil)
+		h := &lanesHarness{dir: dir, finish: map[string]bool{}, active: map[string]int{}}
+		h.refuse = []error{
+			Deferred{Reason: "the app is busy"},
+			SessionRefused{Session: "ses_1", Reason: "no provider key", Detail: "dsh has no key for the provider", Remedy: "seal it"},
+			Deferred{Reason: "the app is busy"},
+		}
+		r, _ := laneRig(t, h, 1)
+		hello := r.send(t, "ada", "hello", "the first thing")
+		var mid Status
+		var midPending int
+		r.at[15] = func() {
+			mid = r.last()
+			pending, _ := r.pending(t)
+			midPending = len(pending)
+			r.send(t, "ada", "more", "the second thing, behind the owed turn")
+		}
+		r.run(t, 50)
+		turns, texts, _ := h.got()
+		require.GreaterOrEqual(t, len(turns), 4, "three turns the session could not take, then one it did: %v", turns)
+		for _, tn := range turns {
+			assert.Equal(t, "ses_1: -", tn)
+		}
+		for _, text := range texts[:4] {
+			assert.Contains(t, text, Text(hello), "the same turn, the same message, each time")
+		}
+		assert.Equal(t, 1, midPending, "the message is pending in the store while the session cannot take it, never acked")
+		assert.Equal(t, 0, mid.Delivered, "nothing counted delivered before a turn succeeds")
+		pending, fresh := r.pending(t)
+		assert.Empty(t, pending, "acked once the turn succeeded; the second message had its own turn")
+		assert.Empty(t, fresh)
+		assert.Equal(t, 2, r.last().Delivered)
+		records := strings.Join(r.records, "\n")
+		assert.Contains(t, records, `tries=1 deferred: the app is busy; the turn stays in hand, handed again every 10s`)
+		assert.Contains(t, records, `tries=2 session=refused reason="no provider key"`)
+		assert.NotContains(t, records, "given_up=true", "a message never delivered is never given up")
+		assert.Equal(t, 2, strings.Count(records, " acked=true"), "the turn that succeeded is acked once, and the second message's once: %s", records)
 	})
 }
 
