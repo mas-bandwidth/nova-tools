@@ -6,12 +6,108 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// The first inbox/outbox pass runs before lane recovery. Reports cannot bypass
+// unknown durable state, Started claims awaiting the machine word, or live
+// native runs awaiting a free adoption lane (FriendLaneCompletion).
+func TestRestartOutboxWaitsForDurableLaneSettlement(t *testing.T) {
+	t.Parallel()
+	for _, test := range []string{"unreadable state", "unknown machine", "live runs"} {
+		t.Run(test, func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				dir := cardDirFixture(t, [][2]string{{"c1", "working"}, {"c2", "working"}}, []string{"c1", "c2"}, nil)
+				h := &lanesHarness{dir: dir, active: map[string]int{}}
+				r, state := laneRig(t, h, 1)
+				state.Sessions = map[int]string{1: "ses_1"}
+				state.Started = map[string]Started{}
+				row := &twinRow{}
+				row.set(workCard("c1", "working"), workCard("c2", "working"))
+				r.d.Held = row.held
+				f := &finishes{}
+				loaded := false
+				r.d.LoadLanes = func() (LaneState, error) {
+					loaded = true
+					if test == "unreadable state" {
+						return LaneState{}, errors.New("state unavailable")
+					}
+					return *state, nil
+				}
+				if test == "unreadable state" {
+					r.d.SaveLanes = func(LaneState) error { return errors.New("state unavailable") }
+				}
+				r.d.Finish = func(ctx context.Context, argv []string) error {
+					assert.True(t, loaded, "outbox cannot finish before the durable state read")
+					return f.finish(ctx, argv)
+				}
+				for _, id := range []string{"c1", "c2"} {
+					job := id + "~15"
+					card := Card{ID: id, Brief: filepath.Join(dir, "inbox", job, "BRIEF.md"), Outbox: filepath.Join(dir, "outbox", job)}
+					state.Started[job] = Started{Lane: 1, Card: card, At: t0, RunID: job, Owner: "old"}
+					require.NoError(t, os.MkdirAll(filepath.Join(dir, "jobs", job), 0o755))
+					require.NoError(t, writeRunReceipt(dir, job, runReceipt{RunID: job, PID: 4242, Identity: "birth"}))
+					require.NoError(t, os.WriteFile(laneMarkPath(dir, job), []byte(LaneMarkRunningRun("old", t0, job)), 0o644))
+					outboxReport(t, dir, job, "Verdict: LAND\nHead: 0123456789abcdef0123456789abcdef01234567\n\nDone.\n")
+				}
+				var mu sync.Mutex
+				alive, known := true, test != "unknown machine"
+				r.d.MachineKnown = func() bool { mu.Lock(); defer mu.Unlock(); return known }
+				r.d.ProcessAlive = func(int) bool { mu.Lock(); defer mu.Unlock(); return alive }
+				r.d.ProcessIdentity = func(int) string {
+					mu.Lock()
+					defer mu.Unlock()
+					if alive {
+						return "birth"
+					}
+					return ""
+				}
+				ended := make(chan struct{})
+				r.d.WaitProcess = func(ctx context.Context, _ int) bool {
+					select {
+					case <-ended:
+						return true
+					case <-ctx.Done():
+						return false
+					}
+				}
+				r.at[4] = func() {
+					assert.Empty(t, f.got(), "reports retain canonical capacity while recovery is unsettled")
+					assert.Len(t, state.Started, 2, "both jobs remain durable, including the one waiting for a lane")
+				}
+				r.at[6] = func() {
+					mu.Lock()
+					known = true
+					alive = false
+					mu.Unlock()
+					close(ended)
+				}
+				r.run(t, 12)
+				if test == "unreadable state" {
+					assert.Empty(t, f.got(), "failed state reads never authorize report completion")
+					assert.Len(t, state.Started, 2)
+				} else {
+					var cards []string
+					for _, argv := range f.got() {
+						cards = append(cards, argv[3])
+					}
+					assert.ElementsMatch(t, []string{"c1@1", "c2@1"}, cards, "each report finishes once after safe settlement")
+					assert.Empty(t, state.Started)
+				}
+				for _, id := range []string{"c1", "c2"} {
+					assert.FileExists(t, filepath.Join(dir, "outbox", id+"~15", "REPORT.md"))
+				}
+			})
+		})
+	}
+}
 
 // The daemon reads every outbox job (the night of 2026-10-05: eight working cards whose
 // outbox REPORT.md said Verdict: LAND with a Head sat unread for two hours, because the

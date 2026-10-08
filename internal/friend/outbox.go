@@ -183,6 +183,11 @@ func (l *loop) outboxStep(now time.Time) {
 	if d.Finish == nil {
 		return
 	}
+	// FriendLaneCompletion: a restart's first inbox pass precedes laneStep.
+	// Durable claims must be known before an existing report can release work.
+	if l.mode == ModeOneShot && (!l.lanes.loaded || l.lanes.stateUnknown) {
+		return
+	}
 	o := &d.outbox
 	if o.finished == nil {
 		o.finished, o.tried, o.said = map[string]bool{}, map[string]outboxAttempt{}, map[string]bool{}
@@ -206,6 +211,14 @@ func (l *loop) outboxStep(now time.Time) {
 		return
 	}
 	running := map[string]bool{}
+	if l.mode == ModeOneShot {
+		for job := range l.lanes.state.Started {
+			running[job] = true // endCard clears the claim only after safe settlement
+		}
+		for _, st := range l.lanes.adopt {
+			running[filepath.Base(st.Card.Outbox)] = true
+		}
+	}
 	for _, ln := range l.lanes.lanes {
 		if ln.card != nil {
 			running[filepath.Base(ln.card.Outbox)] = true
