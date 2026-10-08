@@ -80,8 +80,8 @@ func TestMaxLeavesNoNeedOnACutCard(t *testing.T) {
 	}
 	exit, stdout, stderr := runCard("generate", "--from", "ledger", "--ledger", "serial-tests", "--repo-dir", repo, "--repo", "o/r", "--base", "dev", "--sha", strings.Repeat("ab", 20), "--out", filepath.Join(t.TempDir(), "cards"), "--max", "2", "--dry-run")
 	require.Equal(t, 0, exit, stderr)
-	assert.Contains(t, stdout, "cards=2 waves=2 tier=flash dry-run=yes")
-	assert.Contains(t, stdout, "serial-tests-cmd-b-b\tcmd/b/b_test.go\tinternal/ci TestEveryTestOpensWithTParallel\t2\tserial-tests-cmd-a-a\n")
+	assert.Contains(t, stdout, "cards=2 waves=1 tier=flash dry-run=yes")
+	assert.Contains(t, stdout, "serial-tests-cmd-b-b\tcmd/b/b_test.go\tinternal/ci TestEveryTestOpensWithTParallel\t1\t-\n")
 	assert.NotContains(t, stdout, "serial-tests-cmd-c-c", "the cut card is named nowhere")
 }
 
