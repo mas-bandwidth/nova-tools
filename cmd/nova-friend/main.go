@@ -96,6 +96,7 @@ type world struct {
 	argv           []string                            // this run's arguments after the program's name: what the plist drift is read against
 	wake           *wakeFS                             // watch: the wake file's reads; nil reads the disk
 	stepBeat       bool                                // deterministic fake clock in CLI tests; never set by realWorld
+	checkGo        func(func())                        // optional test scheduler for a fake-clock session check
 	reachPermitted func(context.Context) (bool, error) // reach window permission; nil checks the platform without prompting
 }
 
@@ -1329,6 +1330,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 	sc := &friend.SessionCheck{
 		Friend: name, Store: st, Now: w.now, Nonce: w.random, Record: record, Keep: keep,
 		Run:  fmt.Sprintf("r%d", w.now().Unix()), // this run, its generation: an answer proves only to the run that asked
+		Go:   w.checkGo,
 		Save: prover.Save(writePresence),
 		Text: func(nonce string) string {
 			return friend.SessionCheckText(nonce, w.pongCommand(name, nonce, state, c.Str("redis"), dir), answerTo())
