@@ -2387,8 +2387,94 @@ func (a *app) cmdFinish(args []string, stdout, stderr io.Writer) int {
 			return nil
 		}
 	}
+	if !*failed {
+		// A report's form is the machine's check at the finish, never a reader's
+		// (docs/SPEC-SPRINT.md, the report's form): a card whose brief carries a FORM:
+		// block holds its report to every rule, and a miss refuses the finish.
+		if code, done := a.formFinish(context.Background(), st, ids, failed, report, stderr); done {
+			return code
+		}
+	}
 	return a.runStep("finish", *c, st, store.FinishStep(sprint.FinishReq{Sel: sprint.Sel{IDs: ids}, As: *as, Gens: gens, Failed: *failed,
 		Head: *head, Report: *report, Branch: *branch, Base: *baseBranch, Usage: *usage, Decided: decided, Who: *as}), stdout, stderr)
+}
+
+// formFinish holds an ok finish to the FORM: block of each named card (docs/SPEC-SPRINT.md,
+// the report's form; form.go). It reads each work card and its primary's brief, reads the
+// named report file at the finish's head, and either lets the finish go on (no FORM: block,
+// or every rule held), refuses it with one FORM: line per miss (the work card's
+// form_refusals stamped, no attempt spent and no read asked), or, on the third miss of one
+// attempt, turns this finish into the FAIL with the misses. done is false when the finish
+// goes on.
+func (a *app) formFinish(ctx context.Context, st *store.Store, ids []string, failed *bool, report *string, stderr io.Writer) (int, bool) {
+	wcs, err := st.Records(ctx, sprint.Fleet, ids)
+	if err != nil {
+		return a.readFailed("finish", err, stderr), true
+	}
+	var primaries []string
+	for _, wc := range wcs {
+		if p := wc.F("primary"); p != "" {
+			primaries = append(primaries, p)
+		}
+	}
+	prs, err := st.Records(ctx, sprint.Work, primaries)
+	if err != nil {
+		return a.readFailed("finish", err, stderr), true
+	}
+	brief := map[string]string{}
+	for _, pr := range prs {
+		brief[pr.ID] = pr.F("brief")
+	}
+	var refuseIDs, lines, failLines []string
+	fail := false
+	for _, wc := range wcs {
+		f, err := swarm.ReadForm(brief[wc.F("primary")])
+		if err != nil {
+			continue // no FORM: block: the finish is as it was
+		}
+		var misses []swarm.FormMiss
+		if body, err := os.ReadFile(f.Path); err != nil {
+			misses = []swarm.FormMiss{{Line: 0, Rule: "the named file", Found: "cannot be read: " + err.Error()}}
+		} else {
+			misses = swarm.CheckForm(f, string(body))
+		}
+		if len(misses) == 0 {
+			continue
+		}
+		text := swarm.FormRefusalText(f.Path, misses)
+		if wc.Int(sprint.FormRefusalsField)+1 >= swarm.FormMissesToFail {
+			fail = true
+			failLines = append(failLines, text)
+			continue
+		}
+		refuseIDs = append(refuseIDs, wc.ID)
+		lines = append(lines, text)
+	}
+	if fail {
+		// the third miss on the attempt: this finish FAILS it, the misses the report
+		*failed = true
+		*report = strings.Join(failLines, "\n")
+		return 0, false
+	}
+	if len(refuseIDs) == 0 {
+		return 0, false
+	}
+	// the refusal spends no attempt and asks no read: the count is stamped and the finish
+	// is refused, so the lane fixes the report and finishes again in the same attempt
+	req := sprint.FormRefusalReq{IDs: refuseIDs}
+	step := store.Step{Verb: "finish", Named: true, Load: []string{sprint.Fleet},
+		Extras: sprint.NamedExtras(sprint.Fleet, refuseIDs),
+		Plan:   func(s *sprint.Snapshot) sprint.Plan { return sprint.FormRefusal(s, req) }}
+	if _, err := st.Run(ctx, step); err != nil {
+		return a.readFailed("finish", err, stderr), true
+	}
+	for _, text := range lines {
+		for _, line := range strings.Split(text, "\n") {
+			fmt.Fprintln(stderr, oneline.Escape(line))
+		}
+	}
+	fmt.Fprintf(stderr, "%s finish REFUSED: the report does not hold its FORM; no attempt was spent and no read was asked; fix the report and finish again; run: nova-sprint finish <card>@<gen>\n", prog)
+	return 1, true
 }
 
 // cmdProgress stamps progress on the work cards a worker holds: the late rule's sign that a

@@ -47,6 +47,9 @@ func FriendReadBrief(name, primary, brief, branch, start, head string, attempt i
 	if !deadline.IsZero() {
 		fmt.Fprintf(&b, "deadline: %s\n", deadline.UTC().Format(time.RFC3339))
 	}
+	if note := FormReadNote(brief); note != "" {
+		fmt.Fprintf(&b, "\n%s\n", note)
+	}
 	b.WriteString("\nAS A READ\n")
 	if body := asARead(brief); body != "" {
 		b.WriteString(body)
