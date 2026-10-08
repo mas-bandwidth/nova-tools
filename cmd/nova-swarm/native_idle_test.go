@@ -80,13 +80,13 @@ func newIdleSeam(t *testing.T, deliver func(w swarm.IdleWatch) (swarm.IdleEnd, b
 		}()
 		return out
 	}
-	nativeReap = func(pgid int, started string, grace time.Duration) bool {
+	nativeReap = func(pgid int, started, slot string, grace time.Duration) bool {
 		s.record("reap")
-		return realReap(pgid, started, grace)
+		return realReap(pgid, started, slot, grace)
 	}
-	nativeKillGroup = func(pgid int, started string) {
+	nativeKillGroup = func(pgid int, started, slot string) {
 		s.record("kill")
-		realKill(pgid, started)
+		realKill(pgid, started, slot)
 	}
 	return s
 }

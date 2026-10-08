@@ -33,6 +33,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/log"
 	"github.com/mas-bandwidth/nova-tools/internal/member"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/procgroup"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 	"github.com/mas-bandwidth/nova-tools/internal/secrets"
 	"github.com/mas-bandwidth/nova-tools/internal/sprintwire"
@@ -898,8 +899,8 @@ func (c *nativeChild) stopGroupAfterGrace() {
 	if pid == 0 {
 		return
 	}
-	if swarm.StartStamp(pid) == stamp {
-		if !reapVerifiedGroup(pid, stamp) {
+	if c.groupPinned(pid, stamp) {
+		if !reapVerifiedGroup(pid, stamp, c.groupDir) {
 			return
 		}
 	} else if groupRunnable(pid) {
@@ -919,33 +920,12 @@ func (c *nativeChild) stopGroupAfterGrace() {
 // reapVerifiedGroup checks the leader's birth again before escalation. A group
 // number can be reused after its old group exits; that number alone grants no
 // authority to signal a new occupant.
-func reapVerifiedGroup(pid int, stamp string) bool {
-	if swarm.StartStamp(pid) != stamp {
-		return false
-	}
-	swarm.TerminateGroup(pid, stamp)
-	deadline := time.Now().Add(swarm.TerminateGrace)
-	for time.Now().Before(deadline) {
-		if !groupRunnable(pid) {
-			return true
-		}
-		if swarm.StartStamp(pid) != stamp {
-			return false
-		}
-		time.Sleep(25 * time.Millisecond)
-	}
-	if swarm.StartStamp(pid) != stamp {
-		return false
-	}
-	swarm.KillGroup(pid, stamp)
-	deadline = time.Now().Add(swarm.TerminateGrace)
-	for time.Now().Before(deadline) {
-		if !groupRunnable(pid) {
-			return true
-		}
-		time.Sleep(25 * time.Millisecond)
-	}
-	return !groupRunnable(pid)
+func (c *nativeChild) groupPinned(pid int, stamp string) bool {
+	return procgroup.Pinned(pid, stamp, filepath.Join(c.groupDir, nativeAnchorReceiptName))
+}
+
+func reapVerifiedGroup(pid int, stamp, slot string) bool {
+	return procgroup.ReapVerified(context.Background(), pid, stamp, filepath.Join(slot, nativeAnchorReceiptName), swarm.TerminateGrace)
 }
 
 func (c *nativeChild) groupIdentity() (int, string) {

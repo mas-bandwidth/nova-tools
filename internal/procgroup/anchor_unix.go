@@ -78,7 +78,9 @@ func StartAnchor(pgid int, receiptPath string) error {
 	}
 	// The harness gate is held by the caller until the sidecar has installed
 	// its TERM handler. A hung or dead sidecar cannot authorize the harness.
-	timer := time.AfterFunc(2*time.Second, func() { _ = ackRd.Close() })
+	timer := time.AfterFunc(2*time.Second, func() {
+		_ = ackRd.Close() // ignored: closing this pipe refuses a hung sidecar's readiness
+	})
 	var ready [5]byte
 	_, err = io.ReadFull(ackRd, ready[:])
 	timer.Stop()
@@ -148,6 +150,16 @@ func ReapVerified(ctx context.Context, pgid int, leaderBirth, anchorReceiptPath 
 	}
 	_ = syscall.Kill(-pgid, syscall.SIGKILL) // ignored: exit proof below decides success
 	return waitGone(ctx, pgid, leaderBirth, anchorReceiptPath, grace, false)
+}
+
+// KillVerified immediately kills an identity-pinned group and waits for exit.
+// A vanished pin refuses the signal, leaving the caller's debt unresolved.
+func KillVerified(ctx context.Context, pgid int, leaderBirth, anchorReceiptPath string, timeout time.Duration) bool {
+	if timeout <= 0 || !Pinned(pgid, leaderBirth, anchorReceiptPath) {
+		return false
+	}
+	_ = syscall.Kill(-pgid, syscall.SIGKILL) // ignored: exit proof below decides success
+	return waitGone(ctx, pgid, leaderBirth, anchorReceiptPath, timeout, false)
 }
 
 func waitGone(ctx context.Context, pgid int, leaderBirth, anchorReceiptPath string, grace time.Duration, requirePin bool) bool {

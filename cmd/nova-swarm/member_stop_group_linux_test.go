@@ -72,3 +72,62 @@ func TestStopWillNotSignalReusedGroupNumber(t *testing.T) {
 	assert.True(t, swarm.GroupAlive(pid, ""), "a mismatched identity killed an unrelated group")
 	assert.False(t, c.StopConfirmed())
 }
+
+func TestRecoveredStopReapsLeaderlessResistantGroupWithoutTouchingAnother(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	ready := filepath.Join(dir, "ready")
+	cmd, release, abort, err := nativeGroupCommand(context.Background(), "/bin/sh", "-c", `(trap '' TERM; echo ready > "$1"; while :; do sleep 1; done) & exit 0`, "sh", ready)
+	require.NoError(t, err)
+	defer abort()
+	require.NoError(t, cmd.Start())
+	pid, stamp := cmd.Process.Pid, swarm.StartStamp(cmd.Process.Pid)
+	require.NoError(t, writeNativeGroupReceipt(dir, pid, stamp))
+	require.NoError(t, startNativeAnchor(dir, pid))
+	defer func() {
+		if anchorInGroup(dir, pid) {
+			swarm.KillGroup(pid, stamp)
+		}
+	}()
+	require.NoError(t, release())
+	require.NoError(t, cmd.Wait(), "the group leader should exit on its own")
+	require.Eventually(t, func() bool { _, err := os.Stat(ready); return err == nil }, time.Second, 10*time.Millisecond)
+	assert.NotEqual(t, stamp, swarm.StartStamp(pid), "the original group leader must be gone")
+	assert.True(t, anchorInGroup(dir, pid), "the durable anchor must pin the leaderless group")
+
+	other, otherRelease, otherAbort, err := nativeGroupCommand(context.Background(), "/bin/sh", "-c", "sleep 30")
+	require.NoError(t, err)
+	defer otherAbort()
+	require.NoError(t, other.Start())
+	defer func() { _ = other.Process.Kill(); _ = other.Wait() }()
+	require.NoError(t, otherRelease())
+
+	c := &nativeChild{groupDir: dir, done: make(chan struct{})}
+	close(c.done) // member/native parent are gone; only durable receipts remain
+	c.Stop()
+	require.Eventually(t, c.StopConfirmed, 10*time.Second, 25*time.Millisecond)
+	assert.False(t, groupRunnable(pid))
+	assert.True(t, processAlive(other.Process.Pid), "an unrelated group was signalled")
+}
+
+func TestRecoveredStopKeepsDebtIfLeaderAndAnchorAreGone(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	ready := filepath.Join(dir, "ready")
+	cmd, release, abort, err := nativeGroupCommand(context.Background(), "/bin/sh", "-c", `(trap '' TERM; echo ready > "$1"; while :; do sleep 1; done) & exit 0`, "sh", ready)
+	require.NoError(t, err)
+	defer abort()
+	require.NoError(t, cmd.Start())
+	pid, stamp := cmd.Process.Pid, swarm.StartStamp(cmd.Process.Pid)
+	require.NoError(t, writeNativeGroupReceipt(dir, pid, stamp))
+	require.NoError(t, release())
+	require.NoError(t, cmd.Wait())
+	defer func() { _ = syscall.Kill(-pid, syscall.SIGKILL) }()
+	require.Eventually(t, func() bool { _, err := os.Stat(ready); return err == nil }, time.Second, 10*time.Millisecond)
+	assert.NotEqual(t, stamp, swarm.StartStamp(pid))
+	c := &nativeChild{groupDir: dir, done: make(chan struct{})}
+	close(c.done)
+	c.stopGroupAfterGrace()
+	assert.False(t, c.StopConfirmed(), "lost identity must retain STOP debt")
+	assert.True(t, groupRunnable(pid), "unverified group must not be signalled")
+}

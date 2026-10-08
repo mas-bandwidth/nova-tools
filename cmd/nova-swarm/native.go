@@ -31,6 +31,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 	"github.com/mas-bandwidth/nova-tools/internal/harness"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/procgroup"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
@@ -263,8 +264,12 @@ type nativeRunResult struct {
 // ran, because the deadline branch is the only one that calls nativeKillGroup.
 var (
 	nativeWatchIdle = swarm.WatchIdle
-	nativeReap      = swarm.Reap
-	nativeKillGroup = swarm.KillGroup
+	nativeReap      = func(pgid int, started, slot string, grace time.Duration) bool {
+		return !procgroup.ReapVerified(context.Background(), pgid, started, filepath.Join(slot, nativeAnchorReceiptName), grace)
+	}
+	nativeKillGroup = func(pgid int, started, slot string) {
+		procgroup.KillVerified(context.Background(), pgid, started, filepath.Join(slot, nativeAnchorReceiptName), swarm.TerminateGrace)
+	}
 	// nativeDeadline is the fourth event the wait can be told about. The
 	// deadline test arranged it with real time -- `--deadline 3s` and a 5 s bound on the
 	// WHOLE run, setup and teardown included -- and on hosted macOS that run took 6.08 s
@@ -284,11 +289,11 @@ var (
 // (ownChildGroup), so the group is signalled whole: a terminate, swarm.TerminateGrace, then
 // a kill. It returns "" when the group was already empty, else the group and how it ended,
 // <pgid>:reaped or <pgid>:alive (something outlived the kill), for the NATIVE line.
-func nativeEndLeftovers(pgid int, started string) string {
-	if !swarm.GroupAlive(pgid, started) {
+func nativeEndLeftovers(pgid int, started, slot string) string {
+	if !procgroup.GroupRunnable(pgid) {
 		return ""
 	}
-	if nativeReap(pgid, started, swarm.TerminateGrace) {
+	if nativeReap(pgid, started, slot, swarm.TerminateGrace) {
 		return strconv.Itoa(pgid) + ":alive"
 	}
 	return strconv.Itoa(pgid) + ":reaped"
@@ -1220,7 +1225,19 @@ func start(s *nativeRunState, attempt int, errOut io.Writer) (*nativeStarted, na
 		refuseNative(errOut, fmt.Sprintf("the child group could not be recorded: %s", oneline.Escape(err.Error())))
 		return nil, nativeRunResult{}, 2
 	}
+	if err := startNativeAnchor(s.prep.cfg.slotDir, pgid); err != nil {
+		abortGate()
+		// ignored: the harness gate never released; kill is cleanup for refusal.
+		_ = cmd.Process.Kill()
+		// ignored: a gated harness has no result to report.
+		_ = cmd.Wait()
+		refuseNative(errOut, fmt.Sprintf("the child group anchor could not be recorded: %s", oneline.Escape(err.Error())))
+		return nil, nativeRunResult{}, 2
+	}
 	if err := releaseGate(); err != nil {
+		if !procgroup.ReapVerified(context.Background(), pgid, started, filepath.Join(s.prep.cfg.slotDir, nativeAnchorReceiptName), swarm.TerminateGrace) {
+			fmt.Fprintf(errOut, "NATIVE NOTE: a refused harness gate left a group whose exit is unproven; keep its slot until STOP recovery\n")
+		}
 		// ignored: no successful gate release; kill is cleanup for refusal.
 		_ = cmd.Process.Kill()
 		// ignored: a gate-refused child has no result to report.
@@ -1280,32 +1297,32 @@ func watch(s *nativeRunState, st *nativeStarted) *nativeWatched {
 				s.res.rc = 0
 			}
 		}
-		s.res.survivors = nativeEndLeftovers(st.pgid, st.started)
+		s.res.survivors = nativeEndLeftovers(st.pgid, st.started, s.prep.cfg.slotDir)
 	case <-st.deadlineC:
-		nativeKillGroup(st.pgid, st.started)
+		nativeKillGroup(st.pgid, st.started, s.prep.cfg.slotDir)
 		<-st.done
 		s.res.rc = -1
 	case end := <-st.idleC:
 		st.stopDeadline()
-		nativeReap(st.pgid, st.started, swarm.TerminateGrace)
+		nativeReap(st.pgid, st.started, s.prep.cfg.slotDir, swarm.TerminateGrace)
 		<-st.done
 		s.res.rc = -1
 		s.res.idled, s.res.idleEnd = true, end
 	case <-s.bodyStall:
 		st.stopDeadline()
-		nativeReap(st.pgid, st.started, swarm.TerminateGrace)
+		nativeReap(st.pgid, st.started, s.prep.cfg.slotDir, swarm.TerminateGrace)
 		<-st.done
 		s.res.rc = -1
 		s.res.lost = true
 	case <-s.termCh:
 		st.stopDeadline()
-		nativeReap(st.pgid, st.started, swarm.TerminateGrace)
+		nativeReap(st.pgid, st.started, s.prep.cfg.slotDir, swarm.TerminateGrace)
 		<-st.done
 		s.res.rc = -1
 		s.res.terminated = true
 	case word := <-s.sampler.Fired():
 		st.stopDeadline()
-		swarm.Reap(st.pgid, st.started, swarm.TerminateGrace)
+		nativeReap(st.pgid, st.started, s.prep.cfg.slotDir, swarm.TerminateGrace)
 		<-st.done
 		s.res.rc = -1
 		s.res.stopped = word
