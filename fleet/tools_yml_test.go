@@ -12,22 +12,23 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// TestToolsYmlBuildsNovaSprintFromItsOwnRepo pins the row of tools.yml that
-// builds nova-sprint (docs/FLEET.md, "tools.yml", steps 2 and 3): nova-sprint
-// is its own product (nova-tools PR 5309), so the play checks out
-// nova_sprint_repo at nova_sprint_ref on the machine running it and builds
-// ./cmd/nova-sprint there for every platform, stamped with the build's version,
-// instead of taking it from the nova-tools checkout's cmd/. The build is staged
-// under the candidate's name in the stage, before the candidate checks: the
-// window's replacement detection lists that same directory against the bin
-// directory's, so a repeat with the same bytes replaces nothing and opens no
-// window even after the release stops shipping a nova-sprint (the split). Every
-// machine then holds it in the bin directory by its name, after the release's
-// own install, and fleet/retired-tools.txt never names it. The coordinator
-// installs inside the seat play's window, not the install play, so the seat
-// play's release install must be followed by the same copy: install replaces a
-// tool whose bytes differ from the release artifact (internal/release/install.go,
-// security#72 finding 2), so a copy made before that install would be undone.
+// TestToolsYmlBuildsNovaSprintFromItsOwnRepo pins the rows of tools.yml that
+// build nova-sprint from its own repository (docs/FLEET.md, "tools.yml", steps
+// 2 and 3): nova-sprint is its own product (nova-tools PR 5309), so the play
+// checks nova_sprint_repo out at nova_sprint_ref on the machine running it and
+// builds ./cmd/nova-sprint there for every platform, stamped with the build's
+// version, instead of taking it from the nova-tools checkout's cmd/. The build
+// is staged in its OWN directory, never in the release stage whose bytes
+// `release install` verifies against the release's SHA256SUMS: the two
+// artifacts have different origins, and mixing them makes the install's
+// checksum check refuse the stage instead of installing. The stage carries the
+// sha256 the build play wrote beside the build, every machine verifies the
+// bytes it staged against it before installation, the seat's candidate checks
+// run the staged split build (the release stage's nova-sprint is never the
+// candidate), and every release install in the play -- the install play's, and
+// the seat window's on the coordinator, which installs instead of it -- is
+// followed by a copy of that verified stage's nova-sprint into the bin
+// directory by its name. fleet/retired-tools.txt never names it.
 func TestToolsYmlBuildsNovaSprintFromItsOwnRepo(t *testing.T) {
 	t.Parallel()
 	var vars map[string]any
@@ -37,13 +38,15 @@ func TestToolsYmlBuildsNovaSprintFromItsOwnRepo(t *testing.T) {
 	buildPlay := playNamed(t, plays, "the build, once per platform")
 	installPlay := playNamed(t, plays, "the build in ~/.local/bin on every machine")
 	seatPlay := playNamed(t, plays, "the seat adopts the build")
-	build := playTasks(t, buildPlay)
 	// The candidate checks, the replacement detection and the window are nested
 	// in blocks; flattening keeps them in document order with the top-level tasks.
+	build := playTasks(t, buildPlay)
 	install := flattenTasks(t, playTasks(t, installPlay))
 	seat := flattenTasks(t, playTasks(t, seatPlay))
 	installVars, _ := installPlay["vars"].(map[string]any)
+	seatVars, _ := seatPlay["vars"].(map[string]any)
 	sprintFile := str(installVars["tools_sprint_file"])
+	sprintStage := str(installVars["tools_sprint_stage"])
 
 	checkout := taskIndex(build, func(task map[string]any) bool {
 		git, _ := task["ansible.builtin.git"].(map[string]any)
@@ -54,16 +57,68 @@ func TestToolsYmlBuildsNovaSprintFromItsOwnRepo(t *testing.T) {
 		argv := strings.Join(stringList(cmd["argv"]), " ")
 		env, _ := task["environment"].(map[string]any)
 		return cmd["chdir"] == "{{ nova_sprint_src }}" && strings.Contains(argv, "nice -n 19 go build") &&
-			strings.Contains(argv, "go build -trimpath -ldflags -s -w -X main.version={{ nova_version }} -o ") && strings.HasSuffix(argv, "./cmd/nova-sprint") &&
+			strings.Contains(argv, "go build -trimpath -ldflags -s -w -X main.version={{ nova_version }} -o ") &&
+			strings.HasSuffix(argv, "./cmd/nova-sprint") &&
 			strings.Contains(argv, "-o {{ nova_sprint_out }}/{{ item }}/nova-sprint{{ '.exe' if item.startswith('windows-') else '' }} ./cmd/nova-sprint") && env["CGO_ENABLED"] == "0"
+	})
+	// The build play hashes each platform's build and writes the checksum
+	// beside it, so every machine can verify the bytes it stages.
+	hashed := taskIndex(build, func(task map[string]any) bool {
+		st, _ := task["ansible.builtin.stat"].(map[string]any)
+		return strings.Contains(str(st["path"]), "{{ nova_sprint_out }}/{{ item }}/nova-sprint") &&
+			st["get_checksum"] == true && st["checksum_algorithm"] == "sha256"
+	})
+	hashedFile := taskIndex(build, func(task map[string]any) bool {
+		cp, _ := task["ansible.builtin.copy"].(map[string]any)
+		return str(cp["dest"]) == "{{ nova_sprint_out }}/{{ item.item }}/SHA256SUMS" &&
+			strings.Contains(str(cp["content"]), "item.stat.checksum")
 	})
 	release := taskIndex(install, func(task map[string]any) bool {
 		cmd, _ := task["ansible.builtin.command"].(map[string]any)
 		return slices.Contains(stringList(cmd["argv"]), "install")
 	})
-	copied := taskIndex(install, func(task map[string]any) bool {
+	// The split build goes to its own stage, never into the release stage the
+	// release's SHA256SUMS describes; the stage is written on every machine.
+	stagedSplit := taskIndex(install, func(task map[string]any) bool {
 		cp, _ := task["ansible.builtin.copy"].(map[string]any)
 		return str(cp["src"]) == "{{ nova_sprint_out }}/{{ nova_platform }}/{{ tools_sprint_file }}" &&
+			str(cp["dest"]) == "{{ tools_sprint_stage }}/{{ tools_sprint_file }}" && cp["mode"] == "0755"
+	})
+	stagedSums := taskIndex(install, func(task map[string]any) bool {
+		cp, _ := task["ansible.builtin.copy"].(map[string]any)
+		return str(cp["src"]) == "{{ nova_sprint_out }}/{{ nova_platform }}/SHA256SUMS" &&
+			str(cp["dest"]) == "{{ tools_sprint_stage }}/SHA256SUMS"
+	})
+	// The staged bytes are checked against the build's checksum before anything
+	// installs them.
+	verified := taskIndex(install, func(task map[string]any) bool {
+		a, _ := task["ansible.builtin.assert"].(map[string]any)
+		that := str(a["that"])
+		return strings.Contains(that, "tools_sprint_bytes") && strings.Contains(that, "tools_sprint_recorded")
+	})
+	overlaid := taskIndex(install, func(task map[string]any) bool {
+		cp, _ := task["ansible.builtin.copy"].(map[string]any)
+		return str(cp["dest"]) == "{{ tools_stage }}/{{ tools_sprint_file }}"
+	})
+	// The candidate's nova-sprint is the split build, selected by its own
+	// variable; its other tools (nova-friend) stay the release stage's.
+	candidateSprint := taskIndex(install, func(task map[string]any) bool {
+		sf, _ := task["ansible.builtin.set_fact"].(map[string]any)
+		return strings.Contains(str(sf["seat_sprint"]), "tools_sprint_stage") &&
+			strings.Contains(str(sf["seat_sprint"]), "tools_sprint_file")
+	})
+	candidateRelease := taskIndex(install, func(task map[string]any) bool {
+		sf, _ := task["ansible.builtin.set_fact"].(map[string]any)
+		return strings.Contains(str(sf["seat_cand"]), "tools_stage") && !strings.Contains(str(sf["seat_cand"]), "tools_sprint_file")
+	})
+	candidateLive := taskIndex(install, func(task map[string]any) bool {
+		cmd, _ := task["ansible.builtin.command"].(map[string]any)
+		argv := strings.Join(stringList(cmd["argv"]), " ")
+		return strings.Contains(argv, "[seat_sprint, 'live'") && !strings.Contains(argv, "seat_cand ~ '/nova-sprint'")
+	})
+	copied := taskIndex(install, func(task map[string]any) bool {
+		cp, _ := task["ansible.builtin.copy"].(map[string]any)
+		return str(cp["src"]) == "{{ tools_sprint_stage }}/{{ tools_sprint_file }}" &&
 			str(cp["dest"]) == "{{ nova_bin_dir }}/{{ tools_sprint_file }}" && cp["mode"] == "0755"
 	})
 	seatRelease := taskIndex(seat, func(task map[string]any) bool {
@@ -72,25 +127,20 @@ func TestToolsYmlBuildsNovaSprintFromItsOwnRepo(t *testing.T) {
 	})
 	seatCopied := taskIndex(seat, func(task map[string]any) bool {
 		cp, _ := task["ansible.builtin.copy"].(map[string]any)
-		return str(cp["src"]) == "{{ nova_sprint_out }}/{{ nova_platform }}/{{ tools_sprint_file }}" &&
+		return str(cp["src"]) == "{{ tools_sprint_stage }}/{{ tools_sprint_file }}" &&
 			str(cp["dest"]) == "{{ nova_bin_dir }}/{{ tools_sprint_file }}" && cp["mode"] == "0755"
 	})
-
-	// The candidate's nova-sprint is the split repository's build, staged under
-	// the candidate's name before the selection: the checks run it, and the
-	// window's replacement detection lists this same candidate directory.
-	stagedSprint := taskIndex(install, func(task map[string]any) bool {
-		cp, _ := task["ansible.builtin.copy"].(map[string]any)
-		return str(cp["src"]) == "{{ nova_sprint_out }}/{{ nova_platform }}/{{ tools_sprint_file }}" &&
-			str(cp["dest"]) == "{{ tools_stage }}/{{ tools_sprint_file }}" && cp["mode"] == "0755"
-	})
-	candidateStaged := taskIndex(install, func(task map[string]any) bool {
-		st, _ := task["ansible.builtin.stat"].(map[string]any)
-		return str(st["path"]) == "{{ tools_stage }}/nova-sprint"
-	})
+	// The window's replacement detection lists the release stage WITHOUT its
+	// nova-sprint (that stale copy must not open the window on every run) and
+	// the split build's own stage, whose bytes are the desired ones.
 	stageFiles := taskIndex(install, func(task map[string]any) bool {
 		f, _ := task["ansible.builtin.find"].(map[string]any)
-		return str(f["paths"]) == "{{ seat_cand }}" && str(task["register"]) == "seat_stage_files"
+		return str(f["paths"]) == "{{ seat_cand }}" && str(task["register"]) == "seat_stage_files" &&
+			slices.Contains(stringList(f["excludes"]), "{{ tools_sprint_file }}")
+	})
+	sprintFiles := taskIndex(install, func(task map[string]any) bool {
+		f, _ := task["ansible.builtin.find"].(map[string]any)
+		return str(f["paths"]) == "{{ tools_sprint_stage }}" && str(task["register"]) == "seat_sprint_files"
 	})
 	binFiles := taskIndex(install, func(task map[string]any) bool {
 		f, _ := task["ansible.builtin.find"].(map[string]any)
@@ -98,7 +148,7 @@ func TestToolsYmlBuildsNovaSprintFromItsOwnRepo(t *testing.T) {
 	})
 	replaces := taskIndex(install, func(task map[string]any) bool {
 		sf, _ := task["ansible.builtin.set_fact"].(map[string]any)
-		return strings.Contains(str(sf["seat_replaces"]), "seat_stage_files") &&
+		return strings.Contains(str(sf["seat_replaces"]), "seat_cand_files") &&
 			strings.Contains(str(sf["seat_replaces"]), "seat_bin_files")
 	})
 	installReceipt := taskIndex(install, func(task map[string]any) bool {
@@ -117,23 +167,32 @@ func TestToolsYmlBuildsNovaSprintFromItsOwnRepo(t *testing.T) {
 		{"the installed file uses the platform executable name", sprintFile == "nova-sprint{{ '.exe' if nova_platform.startswith('windows-') else '' }}"},
 		{"the checkout and the builds live under nova_release_out", strings.HasPrefix(str(vars["nova_sprint_src"]), "{{ nova_release_out }}/") &&
 			strings.HasPrefix(str(vars["nova_sprint_out"]), "{{ nova_release_out }}/")},
+		{"the split stage is its own directory under nova_release_dir, apart from the release stage", sprintStage == "{{ nova_release_dir }}/{{ nova_version }}/{{ nova_platform }}-nova-sprint"},
+		{"the seat play names the same split stage", str(seatVars["tools_sprint_stage"]) == sprintStage},
 		{"the build play checks out the nova-sprint repository", checkout >= 0},
 		{"the build play builds ./cmd/nova-sprint in that checkout, after it", compile > checkout && checkout >= 0},
-		{"the split build is staged where the candidate reads it, before the selection, on the coordinator too",
-			stagedSprint >= 0 && candidateStaged > stagedSprint && !excludesCoordinators(install[stagedSprint]) &&
-				strings.Contains(strings.Join(whenLines(install[stagedSprint]), " "), "not ansible_check_mode")},
-		{"the candidate checks run the staged desired artifact, so a split release still has a candidate", candidateStaged >= 0},
-		{"the window measures the candidate (desired) directory against the bin directory", stageFiles >= 0 && binFiles >= 0 && replaces > stageFiles && replaces > binFiles},
-		{"the install play copies nova-sprint into the bin directory by name", copied >= 0},
-		{"after the release's own install", copied > release && release >= 0},
+		{"the build play hashes each platform's split build", hashed >= 0 && hashedFile >= 0},
+		{"the release stage never receives the split artifact", overlaid == -1},
+		{"the split build is staged in its own directory on every machine",
+			stagedSplit >= 0 && stagedSums > stagedSplit && !excludesCoordinators(install[stagedSplit]) &&
+				strings.Contains(strings.Join(whenLines(install[stagedSplit]), " "), "not ansible_check_mode")},
+		{"the staged split build is verified against the build's checksum before installation",
+			verified > stagedSums && stagedSums >= 0},
+		{"the install play's copy follows the verification and the release's own install",
+			verified >= 0 && copied > verified && copied > release && release >= 0},
+		{"the install play's copy uses the verified local stage, not the controller's build out", copied >= 0},
+		{"the desired nova-sprint is the split build's stage, never the release stage's", candidateSprint >= 0},
+		{"the candidate's directory for its other tools is the release stage", candidateRelease >= 0},
+		{"the candidate checks run the selected split build", candidateLive >= 0},
+		{"the window lists the release stage without nova-sprint and the split build's own stage",
+			stageFiles >= 0 && sprintFiles >= 0 && binFiles >= 0 && replaces > stageFiles && replaces > sprintFiles && replaces > binFiles},
 		{"the install play's release install sends coordinators to the seat window", release >= 0 && excludesCoordinators(install[release])},
 		{"the install play's copy sends coordinators to the seat window", copied >= 0 && excludesCoordinators(install[copied])},
 		{"the install play's copy still waits out check mode", copied >= 0 && strings.Contains(strings.Join(whenLines(install[copied]), " "), "not ansible_check_mode")},
-		{"an install-play repeat with the same bytes reports UP-TO-DATE", installReceipt >= 0 && strings.Contains(debugMsg(install[installReceipt]), "UP-TO-DATE")},
 		{"the seat play installs through the release's own install", seatRelease >= 0},
 		{"the seat play places nova-sprint after that install", seatCopied > seatRelease && seatRelease >= 0},
 		{"the seat window's copy is the one that installs on the coordinator", seatCopied >= 0 && !excludesCoordinators(seat[seatCopied])},
-		{"a seat-window repeat with the same bytes reports UP-TO-DATE", seatReceipt >= 0 && strings.Contains(debugMsg(seat[seatReceipt]), "UP-TO-DATE")},
+		{"both copies record a receipt", installReceipt >= 0 && seatReceipt >= 0},
 		{"fleet/retired-tools.txt never names nova-sprint", !slices.Contains(strings.Fields(string(readFleetFile(t, "retired-tools.txt"))), "nova-sprint")},
 	}
 	for _, tc := range cases {
@@ -240,12 +299,18 @@ func flattenTasks(t *testing.T, tasks []map[string]any) []map[string]any {
 }
 
 func stringList(v any) []string {
-	var out []string
-	l, _ := v.([]any)
-	for _, e := range l {
-		out = append(out, str(e))
+	switch t := v.(type) {
+	case string:
+		return []string{t}
+	case []any:
+		var out []string
+		for _, e := range t {
+			out = append(out, str(e))
+		}
+		return out
+	default:
+		return nil
 	}
-	return out
 }
 
 func str(v any) string {
