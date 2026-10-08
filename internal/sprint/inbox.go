@@ -687,13 +687,23 @@ func AnswerWaits(notes []Note, now time.Time, window time.Duration) AnswerWait {
 		waits = append(waits, w)
 	}
 	slices.Sort(waits)
+	n := len(waits)
+	// p50 is the median, the mean of the middle two of an even count, as
+	// statOf (cycletime.go) and measure (stats.go) report it.
+	p50 := time.Duration(0)
+	if n > 0 {
+		p50 = waits[n/2]
+		if n%2 == 0 {
+			p50 = (waits[n/2-1] + waits[n/2]) / 2
+		}
+	}
 	at := func(q float64) time.Duration { // nearest rank
-		if len(waits) == 0 {
+		if n == 0 {
 			return 0
 		}
-		return waits[max(int(math.Ceil(q*float64(len(waits))))-1, 0)]
+		return waits[max(int(math.Ceil(q*float64(n)))-1, 0)]
 	}
-	return AnswerWait{N: len(waits), P50: at(0.5), P90: at(0.9)}
+	return AnswerWait{N: n, P50: p50, P90: at(0.9)}
 }
 
 // Line is the wait as where prints it, "answered 24h: n=<n> wait p50=<d> p90=<d>"; "" when

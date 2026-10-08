@@ -5343,6 +5343,19 @@ history's. A backend with no tail read keeps the whole-stream read as before.
 day of old notes and the window's answers on the twin, counts the notes each read hands back,
 and holds that `AnswerWaits` reads no more than the window's notes.
 
+#### judgment-answer-latencyb-t-bcb.w1
+
+The median of the answer waits (the reader's finding on `judgment-answer-latencyb-t-bb.w1`):
+`AnswerWaits` (internal/sprint/inbox.go) took p50 with the nearest-rank selector at every
+sample count, so an even count returned the lower middle wait where the rest of the
+repository takes the median as the mean of the middle two (`statOf`, internal/sprint/cycletime.go;
+`measure`, internal/sprint/stats.go). Waits of 5m and 15m are now reported as p50=10m, not
+p50=5m; p90 stays nearest rank. The injected-clock case
+"an even count's p50 is the mean of the middle two"
+(`TestRuleableJudgmentsAreAnsweredAtRaiseAndTheRestRecordTheirWait`,
+internal/sprint/judgment_wait_test.go) drives two answers five and fifteen minutes after
+their raises and holds p50=10m, p90=15m.
+
 ### wait-many-notes-b.w2
 
 **wait takes several notes, and a group** (the coordinator waited judgments one at a time in a loop, `wait <id> --for 3h` per note). `wait <note>[,<note>]... (--for <duration> | --until <RFC3339>)` sets each named note, and `wait --group <id> [--expect <n>] (--for <duration> | --until <RFC3339>)` sets every note of that inbox group (a stalled stream's group, which has no note, is its own id), as `ack` takes `<note>[,<note>]...` and a verb given `--group` takes the group. Each note is set or refused on its own line (`WAIT OK note=<id> ...`, or `WAIT REFUSED note=<id>: <why>`). `--group` with a size other than `--expect` is refused and nothing changes. A group of one note keeps the one-id command the inbox already prints; a group of several names every note, comma separated (`TestWaitTakesSeveralNotes`).
