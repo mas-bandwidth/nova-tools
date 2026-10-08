@@ -1,5 +1,9 @@
 # nova-tools changelog
 
+## v1.2.0 — unreleased
+
+- docs: `nova-secrets gate`'s exit contract matches the binary — a verdict prints `GATE FAILED` at exit 1, and a gate that could not run prints `SECRETS GATE REFUSED` at exit 2 (docs/CLI.md, docs/SPEC-SECRETS.md)
+
 ## v1.1.0 — 2026-10-06
 
 Cut from the head of sprint/mechanical-2026-10-02, promoted to dev and main. The sprint's landings carry no pull request numbers: each lands as `land <card> (sprint stream <stream>)`, so the entries below name the card.

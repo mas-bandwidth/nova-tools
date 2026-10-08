@@ -45,7 +45,7 @@ func TestPageCarriesGlennsTweaksOf20261004(t *testing.T) {
 
 	// Always dark: no theme toggle, stays dark
 	assert.NotContains(t, html, `id="theme"`, "index.html must not carry a theme toggle button")
-	assert.NotContains(t, html, `data-theme="light"`, "index.html must not carry light tokens")
+	assert.NotContains(t, html, `getItem("sprint-theme")`, "the page never restores a light theme")
 	assert.Contains(t, html, `<html lang="en" data-theme="dark">`, "the html element must stay dark")
 	assert.NotContains(t, app, "syncThemeButton", "app.js must not carry syncThemeButton")
 
@@ -132,8 +132,8 @@ func TestPageCarriesGlennsTweaksOf20261004(t *testing.T) {
 		{machineLine: "machine: running (tick late 59s)", wantPill: "running"},
 		{machineLine: "machine: running (tick late 60s)", wantPill: "STALE"},
 		{machineLine: "machine: running (tick late 120s)", wantPill: "STALE"},
-		{machineLine: "machine: STOPPED", wantPill: "STOPPED", wantStopped: true},
-		{machineLine: "machine: STOPPED (out of credit)", wantPill: "STOPPED (out of credit)", wantStopped: true, wantAlert: true},
+		{machineLine: "machine: STOPPED", wantPill: "STOPPED", wantStopped: true, wantAlert: true},
+		{machineLine: "machine: STOPPED (out of credit)", wantPill: "STOPPED", wantStopped: true, wantAlert: true},
 	}
 	require.Len(t, jsRes.Machines, len(cases))
 	for i, cs := range cases {
@@ -232,6 +232,7 @@ function createDOMStub() {
         getPropertyValue(k) { return this[k] || ''; }
       },
       attributes: {},
+      addEventListener() {},
       setAttribute(k, v) { this.attributes[k] = String(v); },
       getAttribute(k) { return this.attributes[k] || null; },
       appendChild(c) {

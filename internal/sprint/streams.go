@@ -5,6 +5,8 @@ import (
 	"slices"
 	"sort"
 	"strings"
+
+	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 )
 
 // StreamRemove is the rule of stream remove: why each named stream may not
@@ -339,6 +341,123 @@ func ForTables(s *Snapshot, p Plan) Plan {
 		p.Units = units
 	}
 	return p
+}
+
+// briefOnBase is brief with its BASE line rewritten to base: the line replaced
+// where it stands, or a BASE line added at the end of the typed header block (the
+// unbroken run of `KEY: value` lines under line 1) when the brief carries none.
+// Every other byte is kept, as rebaseBrief keeps it.
+func briefOnBase(brief, base string) string {
+	lines := strings.Split(brief, "\n")
+	for i, l := range lines {
+		if k, _, ok := cardhdr.KeyValue(l); ok && k == "BASE" {
+			lines[i] = "BASE: " + base
+			return strings.Join(lines, "\n")
+		}
+	}
+	at := 1
+	for at < len(lines) {
+		if _, _, ok := cardhdr.KeyValue(lines[at]); !ok {
+			break
+		}
+		at++
+	}
+	out := append([]string(nil), lines[:at]...)
+	out = append(out, "BASE: "+base)
+	out = append(out, lines[at:]...)
+	return strings.Join(out, "\n")
+}
+
+// baseOfBrief is the branch a brief's BASE line names, "" when the brief names
+// none or names no branch (a value ParseBase refuses).
+func baseOfBrief(brief string) string {
+	v, ok := cardhdr.Value(brief, "BASE")
+	if !ok {
+		return ""
+	}
+	ref, _, ok := cardhdr.ParseBase(v)
+	if !ok {
+		return ""
+	}
+	return ref
+}
+
+// StreamSetBaseCheck is one card stream set --base re-points: the stream, its id,
+// the brief the card carried when the check read it (Was) and the brief the
+// rewrite would carry (Brief), which is what the check add runs held to the new
+// base. It is the candidate the write is bound to (baseChecksHeld): the plan
+// applies the rewrite only over the cards the check read, so a card added, dealt
+// or revised between the two reads refuses the step instead of being rewritten
+// with its PATHS unchecked.
+type StreamSetBaseCheck struct {
+	Stream string
+	ID     string
+	Was    string
+	Brief  string
+}
+
+// streamSetBaseCards is the cards of stream st that stream set --base re-points,
+// in work order: every primary not yet dealt (its attempt is 0) and every primary
+// whose merge card is queued to merge. A sentinel, a landed card and a dealt card
+// that is not queued keep their base; the second return is those kept cards, in
+// work order, for the verb's listing. A dealt and working card keeps its base
+// because its head is already cut on it (docs/SPEC-SPRINT.md section 11, stream
+// set --base).
+func streamSetBaseCards(s *Snapshot, st string) (repoint, keep []*Card) {
+	for _, c := range s.Work.Cards() {
+		if !c.Placed() || c.Row != st || IsSentinel(c) || c.Col == Landed {
+			continue
+		}
+		queued := false
+		if s.Merge != nil {
+			if m := s.Merge.Placed(c.ID); m != nil && m.Col == Queued {
+				queued = true
+			}
+		}
+		if c.Int("attempt") == 0 || queued {
+			repoint = append(repoint, c)
+			continue
+		}
+		keep = append(keep, c)
+	}
+	return repoint, keep
+}
+
+// StreamSetBaseChecks is the brief each card stream set --base re-points would
+// carry (streamSetBaseCards), in work order, for the check add runs: the cards not
+// yet dealt and those queued to merge. A dealt and working card is not in it: its
+// base is kept.
+func StreamSetBaseChecks(s *Snapshot, streams []string, base string) []StreamSetBaseCheck {
+	var out []StreamSetBaseCheck
+	for _, st := range streams {
+		repoint, _ := streamSetBaseCards(s, st)
+		for _, c := range repoint {
+			was := c.F("brief")
+			out = append(out, StreamSetBaseCheck{Stream: st, ID: c.ID, Was: was, Brief: briefOnBase(was, base)})
+		}
+	}
+	return out
+}
+
+// baseChecksHeld is why the cards stream set --base would re-point from snapshot s
+// are not the ones whose rewritten briefs the check read at the base, "" when they
+// are (docs/SPEC-SPRINT.md section 11, stream set --base). The check add runs
+// reads its briefs at the base over a snapshot of its own, and the step's plan
+// recomputes the cards to rewrite from the snapshot it reads: a card added to the
+// stream, dealt, or revised between the two would be rewritten without its PATHS
+// held to the base. The candidates are bound by id, stream and brief, so that
+// change refuses the step whole, nothing written, and the verb is run again.
+func baseChecksHeld(s *Snapshot, streams []string, base string, checked []StreamSetBaseCheck) string {
+	now := StreamSetBaseChecks(s, streams, base)
+	if len(now) != len(checked) {
+		return fmt.Sprintf("the stream moved while its briefs were held to %s: it now re-points %d card(s), the check held %d; nothing was written; run the verb again", base, len(now), len(checked))
+	}
+	for i := range now {
+		if now[i] != checked[i] {
+			return fmt.Sprintf("card %s of stream %s changed while its brief was held to %s; nothing was written; run the verb again", now[i].ID, now[i].Stream, base)
+		}
+	}
+	return ""
 }
 
 // PromotionBaseWhy is why add refuses card into stream, "" when it may: its BASE is a

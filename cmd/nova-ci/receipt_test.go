@@ -144,9 +144,12 @@ func TestTheCommandReferenceReceiptRefusalsAreWhatTheToolPrints(t *testing.T) {
 func TestReceiptReportsAStoreCloseFailureAndKeepsTheWriteResult(t *testing.T) {
 	t.Parallel()
 	open := func(ctx context.Context, addr string) (*store.Store, error) {
-		c := redis.NewClient(&redis.Options{Addr: addr})
-		c.AddHook(closeAfterAckHook{client: c})
-		return store.New(c), nil
+		st, err := store.Open(ctx, addr)
+		if err != nil {
+			return nil, err
+		}
+		st.Client().AddHook(closeAfterAckHook{client: st.Client()})
+		return st, nil
 	}
 	var out, errb bytes.Buffer
 	code := cmdReceipt(context.Background(), receiptArgs()[1:], &out, &errb, noEnv, open)

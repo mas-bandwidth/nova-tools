@@ -2,6 +2,7 @@ package friend
 
 import (
 	"context"
+	"fmt"
 	"regexp"
 	"slices"
 	"strings"
@@ -150,7 +151,7 @@ func newProofRig(t *testing.T, headless bool) *proofRig {
 	}
 	beat := r.sc.BeatOr(up, down)
 	r.d = &Daemon{
-		Friend: "bob", Harness: "fake", Dir: t.TempDir(), Width: 1, Store: r.sc.DaemonStore(), Deliver: r.sc.Deliver,
+		Friend: "bob", Harness: "fake", Dir: t.TempDir(), Width: 1, Store: r.sc.DaemonStore(), Deliver: r.sc.Deliver, StepBeatForTests: true,
 		Now: r.step, Record: r.record, Proof: r.sc.Proof,
 		Sent:  func() time.Time { r.mu.Lock(); defer r.mu.Unlock(); return r.sent },
 		Pause: func(context.Context, time.Duration) { synctest.Wait() },
@@ -354,6 +355,53 @@ func TestAnAnsweredCheckIsProvedToTheServerByTheDaemon(t *testing.T) {
 	})
 }
 
+// A slow finish may occupy the reconcile loop for more than the server's beat
+// freshness bound. The one cadence caller still carries the session's actual
+// nonce answer; without that answer, the same cadence says down.
+func TestAStalledFinishDoesNotHoldTheNativeBeat(t *testing.T) {
+	t.Parallel()
+	for _, answers := range []bool{true, false} {
+		t.Run(fmt.Sprintf("session-answers-%t", answers), func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				r := newProofRig(t, false)
+				r.d.StepBeatForTests = false
+				watch := WatchHarness(r.d, Stub{Harness: "fake"}) // production wrapper used by the CLI: advisory status must not race the loop
+				watch.Now = r.clock                               // observe the rig's clock without advancing a step
+				r.h.set(answers)
+				row := &twinRow{}
+				r.d.Held = row.held
+				for _, id := range []string{"first.w1", "second.w1"} {
+					card := workCard(id, "working")
+					inboxJob(t, r.d.Dir, card.Job, card.Brief)
+					outboxReport(t, r.d.Dir, card.Job, "Verdict: HOLD\n\nneeds repair\n")
+					row.set(append(row.cards, card)...)
+				}
+				var finishes int
+				r.d.Finish = func(ctx context.Context, _ []string) error {
+					finishes++
+					<-ctx.Done()
+					return ctx.Err()
+				}
+				var during, later [2]string
+				r.at(6*BeatEvery, func() { during[0], during[1] = r.server() })
+				r.at(17*BeatEvery, func() { later[0], later[1] = r.server() })
+				r.run(21 * BeatEvery)
+				assert.Equal(t, 2, finishes, "each blocked report is attempted once; no concurrent duplicate finish")
+				want := sprint.Down
+				if answers {
+					want = sprint.Up
+				}
+				assert.Equal(t, want, during[0], "the native beat stays fresh during the first blocked finish: %s", during[1])
+				assert.Equal(t, want, later[0], "the native beat stays fresh during the second blocked finish: %s", later[1])
+				if !answers {
+					assert.True(t, r.proof.IsZero(), "an unanswered check never manufactures session proof")
+				}
+			})
+		})
+	}
+}
+
 // TestADaemonWaitsForItsProofInsteadOfExiting: a session in a long turn answers no
 // check inside five minutes. The daemon starts all the same with its push unproven, in
 // status.json and in its beat, keeps the check the last run queued (its nonce, never a
@@ -407,8 +455,10 @@ func TestADaemonWaitsForItsProofInsteadOfExiting(t *testing.T) {
 		assert.Equal(t, sprint.Up, up, "the re-ask was said again, so the server takes its answer")
 		require.Len(t, r.lines("push proof: proved"), 1)
 		got := r.h.got()
-		require.Len(t, got, 3, "the waiting message went in once the push was proved")
-		assert.Contains(t, got[2], `subject="card dealt"`)
+		require.Len(t, got, 3, "the present went in once the push was proved")
+		assert.Contains(t, got[2], PresentTextRule)
+		assert.Contains(t, got[2], "Skipped: 1 deals")
+		assert.NotContains(t, got[2], `subject="card dealt"`, "the old deal never reaches the newly proved session")
 	})
 }
 
@@ -498,7 +548,7 @@ func TestAQuietDshSessionStillGetsTheNextDelivery(t *testing.T) {
 		mu.Lock()
 		defer mu.Unlock()
 		require.Len(t, texts, 2, "both messages went in as headless turns: %q", texts)
-		assert.Contains(t, texts[1], `subject="next"`)
+		assert.Contains(t, texts[1], "subject=next\n")
 		assert.LessOrEqual(t, ranAt[1]-sentAt, 2, "the next message goes in the step after it arrives, quiet or not")
 		all := strings.Join(r.records, "\n")
 		assert.NotContains(t, all, "deferred", "nothing was deferred")

@@ -49,3 +49,11 @@ func TestTheCardTemplateCarriesTheGoCacheLine(t *testing.T) {
 	assert.NotContains(t, body, "private GOCACHE")
 	assert.NotContains(t, body, "GOCACHE=")
 }
+
+// The card template's Deadline line says the judgment of a card that runs past it is the coordinator's.
+func TestTheCardTemplateCarriesDeadlineJudgmentLine(t *testing.T) {
+	t.Parallel()
+	body, err := Template("card")
+	require.NoError(t, err)
+	assert.Contains(t, body, "Deadline: finish within <n> minutes; the judgment of a card that runs past it is the coordinator's, so report what you have with the verdict not-done rather than push past it.")
+}

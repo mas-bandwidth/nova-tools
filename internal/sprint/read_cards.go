@@ -109,7 +109,7 @@ type ReadCardCounts struct {
 }
 
 // RowCardFields is the fields of a row's counts (RowCardCounts), highest level first.
-var RowCardFields = []string{"blocker_working", "critical_working", "high_working", "reads_working", "normal_working", "low_working", "reads_ready"}
+var RowCardFields = []string{"blocker_working", "critical_working", "fix_working", "high_working", "reads_working", "normal_working", "low_working", "reads_ready"}
 
 // RowCardCounts is each fleet row's cards as the dashboard's segmented bar draws them,
 // highest on the left: its working cards by level, a read card as reads whatever level it

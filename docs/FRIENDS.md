@@ -128,6 +128,8 @@ nova-config apply --kind friend
 
 ## A sprint card
 
+Each sync pass sends a batch-mode friend (the default) at most one status wake for the cards it delivers, naming their count and up to ten card ids with the remaining count, her inbox directory and the sentence that starts the work. A friend whose store row says mode `one-shot` keeps one wake per card so her runner starts its lane. A pass that delivers no file sends no wake. The per-card inbox file is the record: a failed batch wake leaves every delivered file in place and is said and recorded once for the pass as `NFriendNotWoken`.
+
 A card of the sprint whose brief says `WHO: friend`, `WHO: friend <name>`, or
 `WHO: only friend <name>`, and a card with no WHO line whose tier a friend covers,
 is offered to a friend before the fleet (docs/SPEC-SPRINT.md section 1, a friend's card; the owner,
@@ -349,3 +351,5 @@ nova-friend install --as ada --harness opencode --dir ~/ada-working --server 127
    --wake --to-friends --every <d>` (installed with `ping-install`), which
    pings every friend the friends table holds up and tells the coordinator
    which sessions were deaf (docs/SPEC-FRIEND.md, "The wake ping loop").
+
+For new friends, see [FRIEND-ONBOARDING.md](FRIEND-ONBOARDING.md) for step-by-step guidance from joining to a first finished card.

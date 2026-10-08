@@ -521,6 +521,16 @@ func cut(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 		}
 	}
 	previous := previousTag(tags)
+	// THE SPEND THE STORE RECORDED, against each provider's own over the window since the
+	// previous tag (spendcheck.go). Before --dry-run branches: what a cut would do is this
+	// refusal.
+	spend, err := spendCheck(ctx, o, deps, forge, previous, errs)
+	if err != nil {
+		if errors.Is(err, errSpend) {
+			return 2
+		}
+		return refusal(errs, "CUT", err)
+	}
 	var commits []Commit
 	if previous != "" {
 		progress(errs, "reading what merged since %s", previous)
@@ -554,10 +564,10 @@ func cut(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 			return refusal(errs, "CUT", fmt.Errorf("cannot read %s: %w (name the SHA256SUMS that `release build` wrote, or leave --sums out)", o.sums, err))
 		}
 	}
-	section := sectionWith(o.version, sha, previous, sumsDigest, dogfoodWaiver(gate, o.reason), journeys.section(), deps.Now(), prs)
+	section := sectionWith(o.version, sha, previous, sumsDigest, dogfoodWaiver(gate, o.reason), journeys.section()+spend.Section, deps.Now(), prs)
 	if o.dryRun {
-		fmt.Fprintf(out, "RELEASE CUT version=%s sha=%s prs=%d previous=%s changelog=%s sums=%s dogfood=%s journeys=%s dry-run=yes\n",
-			field(o.version), field(sha), len(prs), field(previous), field(o.changelog), field(sumsDigest), gate, journeys.State)
+		fmt.Fprintf(out, "RELEASE CUT version=%s sha=%s prs=%d previous=%s changelog=%s sums=%s dogfood=%s journeys=%s spend=%s dry-run=yes\n",
+			field(o.version), field(sha), len(prs), field(previous), field(o.changelog), field(sumsDigest), gate, journeys.State, spend.State)
 		fmt.Fprint(errs, section)
 		return 0
 	}
@@ -572,7 +582,7 @@ func cut(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 			field(o.version), field(sha), oneline.Err(err), field(o.changelog))
 		return 1
 	}
-	fmt.Fprintf(out, "RELEASE CUT version=%s sha=%s prs=%d previous=%s changelog=%s sums=%s dogfood=%s journeys=%s dry-run=no\n",
-		field(o.version), field(sha), len(prs), field(previous), field(o.changelog), field(sumsDigest), gate, journeys.State)
+	fmt.Fprintf(out, "RELEASE CUT version=%s sha=%s prs=%d previous=%s changelog=%s sums=%s dogfood=%s journeys=%s spend=%s dry-run=no\n",
+		field(o.version), field(sha), len(prs), field(previous), field(o.changelog), field(sumsDigest), gate, journeys.State, spend.State)
 	return 0
 }

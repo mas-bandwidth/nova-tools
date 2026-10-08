@@ -129,7 +129,7 @@ func (u *Upstream) read() ([]byte, *snapshot, error) {
 	at.RawQuery = q.Encode()
 	resp, err := c.Get(at.String())
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, &ReadError{Why: "the upstream dashboard did not answer", Detail: err.Error()}
 	}
 	defer func() { _ = resp.Body.Close() }() // ignored: the body is read to its end or abandoned
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 64<<20))
