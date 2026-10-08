@@ -52,6 +52,7 @@ func whereSeriesFlags(a *app, args []string) (*common, int64, flagSet, error) {
 	fs.Bool("cards", false, "with --json: also every dealt work card, judgment and lane")
 	fs.Bool("archived", false, "with --json: the archived streams' rows of the work and merge tables in tables, and their primaries in --rows, beside the live ones (stream archive); their counts are in the footers and the summary either way")
 	fs.Bool("rows", false, "with --json: also every primary's row of the work table")
+	fs.Bool("fresh", false, "with --json: read the store now, never the sprint's server's last tick's document")
 	fs.Duration("stale", defaultStale, "a stream with no progress for longer is shown stalled (--json)")
 	atEpoch := fs.Int64("at-epoch", -1, "the sprint as it was at an earlier epoch (before a clear); the series is that epoch's")
 	var rel releaseFlag
