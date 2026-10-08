@@ -4199,10 +4199,13 @@ itself is detached while they work), its batch branch cut from the base's tip, i
 merged, remapped, resolved and checked as above, and its tree gated ONCE as a whole, the
 tree tests included, instead of once a head; only when that one gate is red is each head
 gated alone again from the base, so the red head is blamed with the finding above. The
-base's own gate and its cure stay serial, in priority order, before the merges fan out,
-so the stream that meets a red base first is the first in that order, as before; every
+base's own gate and its cure stay serial for one base commit, in priority order for
+streams sharing its repository and base. Different bases can gate in parallel, so a
+blocked gate on one does not hold another; every
 fetch and every write of the clone's shared refs is one at a time. In the second phase the
-green batches land one at a time in priority order: a batch cut from the tip the base
+green batches land one at a time in priority order. If an earlier batch gate is still
+waiting after `LandDeadline`, that batch is refused for this pass without blaming a card
+or counting a red base, and a ready later stream can land. A batch cut from the tip the base
 still has is pushed with no new gate; one whose base moved (a batch before it in the pass
 landed, or a push from outside) is merged again onto the new tip in its worktree, the same
 merges and checks and no gate per head, and pushed with no new gate when the files it
@@ -6676,7 +6679,8 @@ on that cycle, or `LAND IDLE queued=<n> step=<stage> since=<age>` while one is
 still running (`step=-` and `since=0s` when nothing is in flight). A cycle with
 cards queued whose landing has not finished within 10 minutes (`LandDeadline`)
 raises one judgment, `an operation was stuck`, naming the stage and the process
-it waits on. The landing is not stopped.
+it waits on. The landing continues; a gate still holding an earlier batch at that bound
+is abandoned for this pass so ready later streams can land.
 
 With `server switch <binary> [--rollback]` the coordinator or an install switches the server's
 binary file on disk, keeping the previous binary (`<target>.prev`). With `--rollback`, if a
