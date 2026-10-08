@@ -422,18 +422,6 @@ func (r Redis) Range(ctx context.Context, stream, from, to string, count int) ([
 	return entries(stream, msgs), nil
 }
 
-func (r Redis) Newest(ctx context.Context, stream string, count int) ([]Entry, error) {
-	var msgs []redis.XMessage
-	err := r.call(ctx, true, 0, func(ctx context.Context) (err error) {
-		msgs, err = r.C.XRevRangeN(ctx, stream, "+", "-", int64(count)).Result()
-		return err
-	})
-	if err != nil {
-		return nil, err
-	}
-	return entries(stream, msgs), nil
-}
-
 func (r Redis) Get(ctx context.Context, stream string, ids []string) ([]Entry, error) {
 	var out []Entry
 	err := r.call(ctx, true, 0, func(ctx context.Context) error {

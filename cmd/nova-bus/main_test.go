@@ -226,7 +226,7 @@ func TestTheLoopSendPeekRecvAckLog(t *testing.T) {
 	cli.Do(t, "ack", "--as", "bob", "--id", mid).Exit(0).Out("ACK OK acked=0 asked=1", "acked=false")
 	cli.Do(t, "peek", "--as", "bob").Exit(0).Out("PEEK OK pending=0 new=0")
 
-	cli.Do(t, "log", "--bodies").Exit(0).Out("LOG OK total=1", "LOG MESSAGE id="+mid+" from=ada to=bob cc=ada re=- at=2026-10-03T12:00:01Z entry=", " subject=\"hello there\" body=\"line one\\nline two\\n\"")
+	cli.Do(t, "log", "--bodies").Exit(0).Out("LOG OK total=1", "LOG MESSAGE id="+mid+" from=ada to=bob cc=ada re=- at=2026-10-03T12:00:01Z subject=\"hello there\" body=\"line one\\nline two\\n\"")
 	cli.Do(t, "log", "--max", "1").Exit(0).Out("LOG OK total=1", "LOG MESSAGE").NotOut("MORE")
 	cli.Do(t, "names").Exit(0).Out("NAMES OK count=2", "NAMES NAME name=ada", "NAMES NAME name=bob")
 	cli.Do(t, "names", "--json").Exit(0).Out(`"status":"ok"`, `"name":"ada"`)

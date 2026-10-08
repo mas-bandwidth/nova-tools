@@ -430,20 +430,6 @@ func (f *Fake) Range(_ context.Context, stream, from, to string, count int) ([]b
 	return out, nil
 }
 
-// Newest is the last count entries of the stream, newest first, as
-// XREVRANGE answers it.
-func (f *Fake) Newest(ctx context.Context, stream string, count int) ([]bus.Entry, error) {
-	all, err := f.Range(ctx, stream, "-", "+", 0)
-	if err != nil {
-		return nil, err
-	}
-	var out []bus.Entry
-	for i := len(all) - 1; i >= 0 && (count <= 0 || len(out) < count); i-- {
-		out = append(out, all[i])
-	}
-	return out, nil
-}
-
 func (f *Fake) Get(_ context.Context, stream string, entries []string) ([]bus.Entry, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

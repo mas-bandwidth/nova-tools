@@ -3,7 +3,6 @@ package bus
 import (
 	"context"
 	"errors"
-	"fmt"
 	"testing"
 	"time"
 
@@ -133,31 +132,5 @@ func TestThePushProofAdvisesAndNeverRefuses(t *testing.T) {
 
 	f.Fail = errors.New("down")
 	_, err = b.Unheard(ctx, "ada")
-	assert.EqualError(t, err, "down")
-}
-
-// LogNewest is the log's end, newest first, where Log from the start is its
-// oldest window: a reader of a long log reaches the latest message by it.
-func TestLogNewestIsTheLogsEndNewestFirst(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	f := NewFake(time.Date(2026, 10, 5, 18, 0, 0, 0, time.UTC), "ada", "bob")
-	b := &Bus{Store: f}
-	var ids []string
-	for i := range 3 {
-		m, err := b.Send(ctx, Message{From: "ada", To: []string{"bob"}, Subject: fmt.Sprint("s", i), Body: "x"})
-		require.NoError(t, err)
-		ids = append(ids, m.ID)
-	}
-	got, err := b.LogNewest(ctx)
-	require.NoError(t, err)
-	require.Len(t, got, 3)
-	assert.Equal(t, []string{ids[2], ids[1], ids[0]}, []string{got[0].Message().ID, got[1].Message().ID, got[2].Message().ID})
-	after, err := b.Log(ctx, "("+got[1].Entry)
-	require.NoError(t, err)
-	require.Len(t, after, 1, "after the middle entry: the last")
-	assert.Equal(t, ids[2], after[0].Message().ID)
-	f.Fail = errors.New("down")
-	_, err = b.LogNewest(ctx)
 	assert.EqualError(t, err, "down")
 }
