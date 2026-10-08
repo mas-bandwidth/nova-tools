@@ -44,7 +44,6 @@ opencode	absent	the vendor harness binary belongs to the card image; the tier dr
 pg_ctl	apt	postgresql-16
 ps	apt	procps
 python3	apt	python3
-redis-server	source	redis-build
 sandbox-exec	absent	macOS only; the sandbox tests that need it skip on Linux by design
 sh	base	dash
 sleep	base	coreutils
@@ -60,6 +59,7 @@ taskkill	absent	Windows only; a Linux container has no Windows tasks
 top	absent	macOS only; the process tests that read it are darwin tests
 
 [unscanned]
+redis-server	source	redis-build
 initdb	apt	postgresql-16
 postgres	apt	postgresql-16
 xz	apt	xz-utils
