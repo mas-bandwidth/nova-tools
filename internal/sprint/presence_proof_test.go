@@ -10,11 +10,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// A friend's beat itself never makes her up, and the session proof her record keeps
-// does while it is under FriendProofLive old and her beat is fresh: the proof is the
-// server's time of her session's answer to a check her daemon asked (ProveBeat), so a
-// daemon that stopped beating proves nothing more (FriendEvidence; docs/SPEC-FRIEND.md,
-// "Presence is her session's evidence").
+// A friend's beat itself never makes her up. The session proof her record keeps
+// stays inside FriendProofLive on its own, with no beat-age gate: the proof is the
+// server's time of her session's answer to a check her daemon asked (ProveBeat).
+// FriendEvidence ANDs that with a beat no older than FriendBeatLive, and a stopped
+// daemon still shows the session half beside "daemon not beating"
+// (docs/SPEC-FRIEND.md, "Presence is her session's evidence").
 func TestAFriendIsUpOnTheSessionProofHerBeatCarries(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 10, 5, 22, 0, 0, 0, time.UTC)
@@ -42,11 +43,11 @@ func TestAFriendIsUpOnTheSessionProofHerBeatCarries(t *testing.T) {
 	}
 	word, why := FriendEvidence(FriendPresence{Beat: Beat{At: now.Add(-time.Second), Proof: now.Add(-3 * time.Minute)}}, now)
 	assert.Equal(t, Up, word)
-	assert.Equal(t, "session proof 3m0s ago", why)
+	assert.Equal(t, "daemon up, session proof 3m0s ago", why)
 	_, why = FriendEvidence(FriendPresence{Beat: Beat{At: now.Add(-time.Second), Proof: now.Add(-20 * time.Minute)}}, now)
-	assert.Contains(t, why, "no session proof on her beat within 15m0s (last 20m0s ago)")
+	assert.Contains(t, why, "daemon up, session deaf 20m0s")
 	_, why = FriendEvidence(FriendPresence{Beat: Beat{At: now.Add(-time.Minute), Proof: now.Add(-2 * time.Minute)}}, now)
-	assert.Contains(t, why, "(last 2m0s ago, her beat stopped 1m0s ago)")
+	assert.Contains(t, why, "daemon not beating (last beat 1m0s ago), session proof 2m0s ago")
 	// the friend beat record keeps the proof under "pong"; the beat read from it carries it
 	var b Beat
 	require.NoError(t, json.Unmarshal([]byte(`{"at":"2026-10-05T21:59:59Z","pong":"2026-10-05T21:55:00Z"}`), &b))
