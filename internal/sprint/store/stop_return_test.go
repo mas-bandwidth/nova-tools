@@ -1,6 +1,8 @@
 package store
 
 import (
+	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -8,6 +10,61 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+type pausedTakeAcquire struct {
+	*Mem
+	once    sync.Once
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (b *pausedTakeAcquire) Acquire(ctx context.Context, gen uint64, op OpRecord) (bool, error) {
+	if op.Verb == "take" {
+		b.once.Do(func() {
+			close(b.entered)
+			<-b.release
+		})
+	}
+	return b.Mem.Acquire(ctx, gen, op)
+}
+
+func TestStopFencesATakeThatReadRunningBeforeStop(t *testing.T) {
+	h := newHarness(t)
+	h.setup(1)
+	h.startMachine()
+	h.machine()
+	s := h.snap()
+	wc := s.Fleet.Card(s.Work.Card("s1-1").F("work"))
+	require.NotNil(t, wc)
+	b := &pausedTakeAcquire{Mem: h.m, entered: make(chan struct{}), release: make(chan struct{})}
+	h.st.B = b
+	type done struct {
+		res Result
+		err error
+	}
+	finished := make(chan done, 1)
+	go func() {
+		res, err := h.st.Run(h.ctx, TakeStep(sprint.TakeReq{As: wc.Row, Sel: sprint.Sel{IDs: []string{wc.ID}}, Gens: map[string]int{wc.ID: wc.Int("gen")}}))
+		finished <- done{res, err}
+	}()
+	select {
+	case <-b.entered: // the take planned on RUNNING but has not acquired its commit fence
+	case <-time.After(3 * time.Second):
+		t.Fatal("take did not reach the paused acquire")
+	}
+	_, _, _, err := h.st.StopUntil(h.ctx, "cancel owned children", h.now.Add(time.Hour))
+	require.NoError(t, err)
+	close(b.release)
+	select {
+	case got := <-finished:
+		require.NoError(t, got.err)
+		require.NotEmpty(t, got.res.Refused, "the stale take must re-read STOP and refuse")
+	case <-time.After(3 * time.Second):
+		t.Fatal("stale take did not finish")
+	}
+	assert.Equal(t, sprint.Ready, h.snap().Fleet.Card(wc.ID).Col)
+	h.clean("stop fenced stale take")
+}
 
 func TestStopReturnKeepsOwnedWorkReadyAndFencesOldFinish(t *testing.T) {
 	t.Parallel()

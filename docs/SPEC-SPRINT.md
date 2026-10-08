@@ -6349,7 +6349,9 @@ cancels each child process, then records the observed exit with `stop-return
 --as <owner-row> <card>@<gen> --reason <cancellation acknowledgement>`; the card
 returns to Ready on that same fleet row, or Asked on that same reader row, at a
 new generation. Its attempt, branch, and progress are retained. The generation
-refuses old finish and read reports. The store trusts the owner runner's
+refuses old finish and read reports. STOP and START acquire the same operation
+fence as takes and read begins; a worker plan made before STOP must re-read
+the changed generation before it can commit. The store trusts the owner runner's
 cancellation acknowledgement; it does not kill or inspect that process itself.
 `start` refuses until all Fleet Working and Readers Reading cards have been
 returned, and names the active owner and card IDs. `inbox` says `machine:

@@ -369,64 +369,17 @@ func (st *Store) setMachine(ctx context.Context, running bool, who, reason strin
 		verb, typ = "start", sprint.NMachineStarted
 	}
 	res = Result{Verb: verb}
-	if before, _, err = st.Machine(ctx); err != nil {
-		return before, before, res, err
-	}
-	if before.Running() == running && (before.Cause != "" || !running && (reason != "" || before.Reason != "")) {
-		// A stop of a machine STOPPED by itself (the sprint done) keeps it
-		// STOPPED and takes the cause off: it is a stop by hand now, and the
-		// view says STOPPED. A stop again sets the stop's reason and time, or
-		// takes them off (a clear's stop). No span opens and no note is
-		// written.
-		after = before
-		after.Cause, after.Reason, after.Until = "", reason, until
-		if reason != "" {
-			after.Who = who
-		}
-		if err := st.putMachine(ctx, after); err != nil {
-			return before, before, res, err
-		}
-		return before, after, res, nil
-	}
-	if before.Running() == running {
-		// The record is not written; the view's state is written again from
-		// it, so a view that lost its state (or was stored before it had
-		// one) shows the machine as it is (section 1).
-		if kv, ok := st.B.(KV); ok {
-			if err := kv.ShowState(ctx, st.Names.View(), ViewState(before)); err != nil {
-				return before, before, res, err
-			}
-		}
-		return before, before, res, nil
-	}
-	now := st.now()
-	after = before
-	after.Spans = append([]Span(nil), before.Spans...)
-	if running {
-		if n := len(after.Spans); n > 0 && after.Spans[n-1].To.IsZero() {
-			after.Spans[n-1].To = now
-			after.StoppedFor += now.Sub(after.Spans[n-1].From)
-		}
-		after.State = Running
-	} else {
-		after.Spans = append(after.Spans, Span{From: now})
-		if len(after.Spans) > MaxStopSpans {
-			after.Spans = after.Spans[len(after.Spans)-MaxStopSpans:]
-		}
-		after.State = Stopped
-	}
-	after.Since, after.Who, after.Cause, after.Reason, after.Until = now, who, "", reason, until
-	if running && before.Reason != "" {
-		err = st.startAfterQuiescence(ctx, after)
-	} else {
-		err = st.putMachine(ctx, after)
-	}
+	var changed bool
+	before, after, changed, err = st.machineTransition(ctx, running, who, reason, until)
 	if err != nil {
 		return before, before, res, err
 	}
+	if !changed {
+		return before, after, res, nil
+	}
 	what := fmt.Sprintf("%s -> %s by %s", before.StateWord(), after.StateWord(), who)
 	if reason != "" {
-		what = fmt.Sprintf("%s -> %s", before.StateWord(), sprint.StoppedText(who, reason, until, now))
+		what = fmt.Sprintf("%s -> %s", before.StateWord(), sprint.StoppedText(who, reason, until, after.Since))
 	}
 	res, err = st.Run(ctx, Step{Verb: verb, Plan: func(s *sprint.Snapshot) sprint.Plan {
 		n := sprint.Note{Kind: sprint.Happened, Type: typ, Who: who, At: s.Now, What: what}
