@@ -108,6 +108,16 @@
       ansible.builtin.git: { repo: "{{ nova_sprint_repo }}", dest: "{{ nova_sprint_src }}", version: "{{ nova_sprint_ref }}" }
       register: tools_sprint_src
 
+    # docs/FLEET.md, the fleet/tools.yml row: Go writes the binary into this
+    # per-platform directory and does not create missing parent directories.
+    - name: the output directory for each platform's nova-sprint build
+      ansible.builtin.file:
+        path: "{{ nova_sprint_out }}/{{ item }}"
+        state: directory
+        mode: "0755"
+      loop: "{{ tools_platforms }}"
+      when: not ansible_check_mode
+
     - name: build nova-sprint in that checkout for every platform, niced, with the build's Go cache
       ansible.builtin.command:
         argv: [nice, -n, "19", go, build, -trimpath, -ldflags, "-s -w -X main.version={{ nova_version }}",
