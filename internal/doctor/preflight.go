@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
 // The coordinator preflight is the coordinator job's own chain (docs/SPEC-DOCTOR.md,
@@ -132,11 +133,14 @@ func stepSeatService(ctx context.Context, r *jobRun) Result {
 	return Result{Status: OK, Evidence: strings.TrimSpace(c.out)}
 }
 
-func (r *jobRun) pendingPushFix(ctx context.Context) string {
-	c := r.exec(ctx, "nova-sprint", "seat", "push", "--actor", r.actor(), "--redis", r.redisAddr())
-	fix := remedy(c.out+" "+c.said, r.seatInstall())
-	fix, _, _ = strings.Cut(fix, "; then,")
-	return fix
+func (r *jobRun) pendingPushFix(status pushStatus) string {
+	if !status.Recorded {
+		return r.seatInstall()
+	}
+	if status.Record.Adapter == sprint.AdapterFolder && status.Record.Target != "" {
+		return sprint.FolderWatch(status.Record.Target)
+	}
+	return fmt.Sprintf("nova-sprint seat push --actor %s --redis %s", oneline.ShellWord(r.actor()), oneline.ShellWord(r.redisAddr()))
 }
 
 func (r *jobRun) viewCoordinator() string {
@@ -173,10 +177,11 @@ func seatGeneration(out string) int {
 }
 
 type pushStatus struct {
-	Recorded bool   `json:"recorded"`
-	Live     bool   `json:"live"`
-	Proof    string `json:"proof"`
-	Why      string `json:"why"`
+	Record   sprint.PushRecord `json:"record"`
+	Recorded bool              `json:"recorded"`
+	Live     bool              `json:"live"`
+	Proof    string            `json:"proof"`
+	Why      string            `json:"why"`
 }
 
 // stepPushRoundtrip is the coordinator's own bus name proven and seat push live.
@@ -200,7 +205,7 @@ func stepPushRoundtrip(ctx context.Context, r *jobRun) Result {
 	}
 	var status pushStatus
 	if err := json.Unmarshal([]byte(push.out), &status); err != nil {
-		return Result{Status: Fail, Evidence: "nova-sprint seat push --json printed no push status: " + err.Error(), Fix: r.pendingPushFix(ctx)}
+		return Result{Status: Fail, Evidence: "nova-sprint seat push --json printed no push status: " + err.Error(), Fix: fmt.Sprintf("nova-sprint seat push --json --actor %s --redis %s", oneline.ShellWord(actor), oneline.ShellWord(r.redisAddr()))}
 	}
 	if seatGeneration(seat.out) == 0 || !status.Recorded {
 		return Result{Status: Fail, Evidence: "the seat has no generation or push target", Fix: r.seatInstall()}
@@ -217,7 +222,10 @@ func stepPushRoundtrip(ctx context.Context, r *jobRun) Result {
 	if status.Why != "" {
 		ev += "; " + status.Why
 	}
-	return Result{Status: Fail, Evidence: ev, Fix: r.pendingPushFix(ctx)}
+	if status.Recorded && status.Record.Adapter == sprint.AdapterFolder {
+		ev += "; watch the recorded folder from inside the session and answer its PROOF file with seat pong"
+	}
+	return Result{Status: Fail, Evidence: ev, Fix: r.pendingPushFix(status)}
 }
 
 // coordView is the slice of `nova-sprint view coordinator --all --json` the preflight reads.

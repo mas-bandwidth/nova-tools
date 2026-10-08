@@ -194,6 +194,14 @@ var realVerbs = map[string]realVerb{
 			}
 			return ""
 		})},
+	// cmd/nova-sprint/seatwatch.go: one local directory; the watch reads and never resets a push record.
+	"nova-sprint seat watch": {values: []string{"redis", "actor", "op", "max", "epoch"}, bools: []string{"json"}, positionals: true,
+		rule: func(a argv) string {
+			if len(a.args) != 1 || a.args[0] == "" {
+				return "wants one directory"
+			}
+			return ""
+		}},
 	// cmdSeatPong: one positional, the nonce, after the flags.
 	"nova-sprint seat pong": {values: []string{"redis", "actor", "op", "max", "epoch"}, bools: []string{"json"}, positionals: true,
 		rule: all(needs("actor", "redis"), func(a argv) string {
