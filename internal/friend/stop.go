@@ -156,11 +156,11 @@ func (l *loop) stopPersistedStarted(now time.Time) {
 		if l.stopOwedFor(job, st) {
 			continue
 		}
-		if (exists(st.Card.Report()) || exists(st.Card.Result())) && l.stopRunQuiescent(job, st) {
+		if (st.Ending != nil || exists(st.Card.Report()) || exists(st.Card.Result())) && l.stopRunQuiescent(job, st) {
 			// A completed, quiescent run may have retained Started only
 			// because its finish note could not yet be journaled. Settle
 			// that result under STOP; do not turn it into a cancellation.
-			l.endCard(st.Lane, st.Card, LaneEnd{Restart: now, Started: st.At}, now)
+			l.endCard(st.Lane, st.Card, recoveredEnd(st, now), now)
 			continue
 		}
 		l.oweStopReturn(StopReturn{Lane: st.Lane, Job: job, Row: "friend." + l.d.Friend, Card: st.Card.ID, Gen: st.Card.Gen(), Epoch: st.Card.Epoch(), Pid: st.Pid, Exit: -1, At: now})
@@ -196,7 +196,7 @@ func (l *loop) stopRunQuiescent(job string, st Started) bool {
 	}
 	current := l.d.ProcessIdentity(receipt.PID)
 	if current != "" && current != receipt.Identity {
-		return false // a reused PID is never authority over another process group
+		return !procgroup.GroupRunnable(receipt.PID) // never signal or adopt a reused PID's live group
 	}
 	if !procgroup.GroupRunnable(receipt.PID) {
 		return true
@@ -281,6 +281,9 @@ func (l *loop) stopStep(now time.Time) bool {
 	}
 	if stopped {
 		for _, ln := range s.lanes {
+			if ln.pendingResult != nil || ln.pendingEnd != nil {
+				continue // a returned completed turn still owns its result or report debt
+			}
 			if ln.card != nil && ln.t == nil {
 				l.releaseHeld(ln, now) // taken, not launched: given up the same way
 				continue

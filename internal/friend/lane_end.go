@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -42,6 +43,9 @@ type Started struct {
 	RunID      string `json:"run_id,omitempty"`
 	Owner      string `json:"owner,omitempty"`
 	LaunchHeld bool   `json:"launch_held,omitempty"`
+	// Ending freezes a completed turn before a synthetic REPORT is written.
+	// Recovery replays this end instead of judging a completed run gone.
+	Ending *LaneEnd `json:"ending,omitempty"`
 }
 
 // LaneEnd is how a card's last run in a lane ended, as its finish says it.
@@ -55,6 +59,7 @@ type LaneEnd struct {
 	Restart  time.Time     // not zero: the run was found gone by a daemon starting up at this time
 	Started  time.Time     // when the lane began the card
 	NoReport bool          // the run wrote RESULT.md and no REPORT.md
+	GiveUp   bool          // this completed lane exhausts the card's turns
 	// Capped is the card's wall cap by its tier when the lane ended the card at it
 	// (lane_cap.go), Tier that tier, Overrun the card's wall past the cap at its end, and
 	// Tail the last CapTailLines lines of the lane's output.
@@ -251,6 +256,27 @@ func remoteRef(gd, ref string) string {
 	return ""
 }
 
+// freezeEnding records how a completed run ended before any synthetic REPORT.
+// A failed state write leaves the old durable claim and a retry opportunity.
+func (l *loop) freezeEnding(job string, end LaneEnd) error {
+	s := l.lanes
+	st, ok := s.state.Started[job]
+	if !ok || st.Ending != nil {
+		return nil
+	}
+	prior := st
+	st.Ending = &end
+	s.state.Started[job] = st
+	if l.d.SaveLanes != nil {
+		if err := l.d.SaveLanes(s.state); err != nil {
+			s.state.Started[job] = prior
+			s.recoveryPending = true
+			return err
+		}
+	}
+	return nil
+}
+
 // endCard is the lane done with card: the friend's REPORT.md, when there, is the finish
 // (friend sync reads it); else the lane writes one naming how the run ended and sends the
 // failed finish to the sprint server. The durable Started claim is cleared only
@@ -258,18 +284,22 @@ func remoteRef(gd, ref string) string {
 func (l *loop) endCard(lane int, card Card, end LaneEnd, now time.Time) string {
 	d, s := l.d, l.lanes
 	job := filepath.Base(card.Outbox)
-	mark := ""
-	if err := endOwnedLaneMark(d.Dir, job, l.laneWho(lane)); err != nil {
-		mark = fmt.Sprintf(" mark_error=%q", oneLine(err.Error(), 300)) // its other lanes end by her row alone
-	}
-	words := "finish=report" + mark
+	words := "finish=report"
 	if exists(card.Report()) {
 		// The report was already written by the worker. The outbox pass owns
 		// canonical finish; this path still owes the coordinator its note.
 	} else {
+		if st, ok := s.state.Started[job]; ok {
+			if st.Ending != nil {
+				end = *st.Ending
+			}
+		}
+		if err := l.freezeEnding(job, end); err != nil {
+			return words + fmt.Sprintf(" report_debt_error=%q", oneLine(err.Error(), 300))
+		}
 		head, branch := PushedHead(d.Dir, card)
 		report := EndReport(d.Friend, lane, card, end, head, branch)
-		words = "finish=failed" + mark
+		words = "finish=failed"
 		if head != "" {
 			words += " head=" + head
 		}
@@ -299,8 +329,19 @@ func (l *loop) endCard(lane int, card Card, end LaneEnd, now time.Time) string {
 		d.Record(now.UTC().Format(time.RFC3339) + " finish note remains owed for " + job + ": " + oneLine(err.Error(), 300))
 		return words + " notice=owed"
 	}
-	delete(s.state.Started, job)
-	l.saveLanes(now)
+	if st, ok := s.state.Started[job]; ok {
+		delete(s.state.Started, job)
+		if d.SaveLanes != nil {
+			if err := d.SaveLanes(s.state); err != nil {
+				s.state.Started[job] = st
+				s.recoveryPending = true
+				return words + fmt.Sprintf(" state_error=%q", oneLine(err.Error(), 300))
+			}
+		}
+	}
+	if err := endOwnedLaneMark(d.Dir, job, l.laneWho(lane)); err != nil {
+		words += fmt.Sprintf(" mark_error=%q", oneLine(err.Error(), 300)) // its other lanes end by her row alone
+	}
 	return words
 }
 
@@ -308,11 +349,32 @@ func (l *loop) endCard(lane int, card Card, end LaneEnd, now time.Time) string {
 // friend sync, which reads the REPORT.md the lane wrote.
 const FinishWait = 10 * time.Second
 
+// recoveredEnd preserves a completion frozen before a failed REPORT write.
+// A native RESULT without a frozen end is still completion evidence, though
+// its process exit detail cannot be recovered after a crash.
+func recoveredEnd(st Started, now time.Time) LaneEnd {
+	if st.Ending != nil {
+		return *st.Ending
+	}
+	if exists(st.Card.Report()) {
+		return LaneEnd{Started: st.At}
+	}
+	if exists(st.Card.Result()) {
+		return LaneEnd{Started: st.At, NoReport: true, Err: "the native result survived restart; the run exit is unavailable"}
+	}
+	return LaneEnd{Restart: now, Started: st.At, GiveUp: true}
+}
+
 // endStarted is a daemon starting up: every card its lanes marked started is ended, for the
 // run that held it is gone with the daemon that ran it.
 func (l *loop) endStarted(now time.Time) {
 	s, d := l.lanes, l.d
 	for job, st := range s.state.Started {
+		if slices.ContainsFunc(s.lanes, func(ln *lane) bool {
+			return ln.card != nil && filepath.Base(ln.card.Outbox) == job
+		}) {
+			continue // the live lane retries its own frozen completion
+		}
 		if l.stopOwedFor(job, st) {
 			continue // STOP debt, never a restart FAIL
 		}
@@ -414,8 +476,17 @@ func (l *loop) endStarted(now time.Time) {
 			s.recoveryPending = true
 			continue // binding/identity/exit is unproved; never replace the held claim with FAIL
 		}
-		words := l.endCard(st.Lane, st.Card, LaneEnd{Restart: now, Started: st.At}, now)
-		if !s.given[job] {
+		if st.RunID != "" && !l.stopRunQuiescent(job, st) {
+			s.recoveryPending = true
+			continue // a returned leader is not proof that its matching group exited
+		}
+		end := recoveredEnd(st, now)
+		words := l.endCard(st.Lane, st.Card, end, now)
+		if _, pending := s.state.Started[job]; pending {
+			s.recoveryPending = true
+			continue
+		}
+		if end.GiveUp && !s.given[job] {
 			s.given[job] = true
 			s.state.GivenUp = append(s.state.GivenUp, job)
 		}

@@ -218,23 +218,25 @@ func exists(path string) bool {
 // lane is one one-shot lane: its session, the card in its hand and how many
 // turns that card has had, and the turn under way.
 type lane struct {
-	n        int // from 1
-	session  string
-	opening  bool
-	openAt   time.Time // when an open that failed is tried again
-	openFrom time.Time // when the open under way started
-	card     *Card
-	attempts int
-	tier     string        // the card's tier as her row said it when the lane took it
-	cap      time.Duration // the card's wall cap by its tier (lane_cap.go)
-	t        *turn
-	marked   time.Time  // when the lane last wrote its running mark on its card's job (one_lane.go)
-	ended    string     // the lane that finished the card this lane still runs: its run is being stopped
-	base     LaneTokens // the session's tokens when the card began: the card's are the rest
-	baseOK   bool
-	polled   time.Time // when the card's tokens were last read for the cap
-	capped   bool      // stopped at the row's token cap
-	job      LaneJob   // the card as the harness is handed it: every path absolute, the brief inline, the job directory
+	n             int // from 1
+	session       string
+	opening       bool
+	openAt        time.Time // when an open that failed is tried again
+	openFrom      time.Time // when the open under way started
+	card          *Card
+	attempts      int
+	tier          string        // the card's tier as her row said it when the lane took it
+	cap           time.Duration // the card's wall cap by its tier (lane_cap.go)
+	t             *turn
+	marked        time.Time  // when the lane last wrote its running mark on its card's job (one_lane.go)
+	ended         string     // the lane that finished the card this lane still runs: its run is being stopped
+	base          LaneTokens // the session's tokens when the card began: the card's are the rest
+	baseOK        bool
+	polled        time.Time   // when the card's tokens were last read for the cap
+	capped        bool        // stopped at the row's token cap
+	job           LaneJob     // the card as the harness is handed it: every path absolute, the brief inline, the job directory
+	pendingResult *laneResult // returned harness whose matching process group is not yet quiescent
+	pendingEnd    *LaneEnd    // completed card whose durable REPORT or finish journal is still owed
 }
 
 // laneSet is the one-shot lanes of a run, and what they share.
@@ -245,6 +247,7 @@ type laneResult struct {
 	turn    LaneTurn
 	err     error
 	t       *turn
+	doneAt  time.Time // original harness return, retained through group-quiescence wait
 }
 
 // laneSet is the daemon's lanes in one-shot mode.
@@ -474,6 +477,7 @@ func (l *loop) laneStep(now time.Time, width int) {
 			l.endStarted(now)
 		}
 	}
+	l.retryPendingLanes(now)
 	l.stopStep(now) // STOP retains session control turns while holding card work.
 	for len(s.lanes) < width {
 		n := len(s.lanes) + 1
@@ -516,7 +520,7 @@ func (l *loop) laneStep(now time.Time, width int) {
 		if ln.t != nil && ln.t.running {
 			l.capStep(rules, ln, now)
 		}
-		if ln.t != nil || ln.opening {
+		if ln.t != nil || ln.opening || ln.pendingResult != nil || ln.pendingEnd != nil {
 			continue
 		}
 		if d.machinePaused() && ln.card != nil {
@@ -783,8 +787,17 @@ func (l *loop) adoptRuns(now time.Time) {
 			continue
 		}
 		if receiptErr != nil || receipt.RunID != st.RunID || d.ProcessIdentity == nil || d.ProcessIdentity(receipt.PID) != receipt.Identity {
-			l.endCard(st.Lane, st.Card, LaneEnd{Restart: now, Started: st.At}, now)
-			if !s.given[jobName] {
+			if st.RunID != "" && !l.stopRunQuiescent(jobName, st) {
+				waiting = append(waiting, st)
+				continue
+			}
+			end := recoveredEnd(st, now)
+			l.endCard(st.Lane, st.Card, end, now)
+			if _, owed := s.state.Started[jobName]; owed {
+				waiting = append(waiting, st)
+				continue
+			}
+			if end.GiveUp && !s.given[jobName] {
 				s.given[jobName] = true
 				s.state.GivenUp = append(s.state.GivenUp, jobName)
 			}
@@ -1042,11 +1055,53 @@ func (l *loop) messageDone(r laneResult, now time.Time) {
 	d.Record(line)
 }
 
+// retryPendingLanes keeps capacity occupied while a returned process group or
+// completed report still has durable work to settle. The original harness
+// result is processed once, after the matching group is proved quiescent.
+func (l *loop) retryPendingLanes(now time.Time) {
+	for _, ln := range l.lanes.lanes {
+		if ln.pendingResult != nil {
+			r := *ln.pendingResult
+			l.laneDone(r, now)
+			continue
+		}
+		if ln.pendingEnd != nil && ln.card != nil {
+			end := *ln.pendingEnd
+			l.finishLane(ln, end, "card=completion_retry ", now)
+		}
+	}
+}
+
+// finishLane releases a card only after endCard has published its canonical
+// report, saved its finish note, and durably cleared Started.
+func (l *loop) finishLane(ln *lane, end LaneEnd, line string, now time.Time) bool {
+	card := *ln.card
+	job := filepath.Base(card.Outbox)
+	words := l.endCard(ln.n, card, end, now)
+	if _, owed := l.lanes.state.Started[job]; owed {
+		ln.pendingEnd = &end
+		l.d.Record(line + words + " card=held")
+		return false
+	}
+	ln.pendingEnd = nil
+	if end.GiveUp && !l.lanes.given[job] {
+		l.lanes.given[job] = true
+		l.lanes.state.GivenUp = append(l.lanes.state.GivenUp, job)
+		l.saveLanes(now)
+	}
+	ln.card, ln.attempts = nil, 0
+	l.d.Record(line + words)
+	return true
+}
+
 // laneDone is a lane's open or turn ending: a session kept, or a card done,
 // handed again, or set aside and reported.
 func (l *loop) laneDone(r laneResult, now time.Time) {
 	d, s, ln := l.d, l.lanes, r.ln
 	at := now.UTC().Format(time.RFC3339)
+	if r.doneAt.IsZero() {
+		r.doneAt = now
+	}
 	if r.open {
 		ln.opening = false
 		if l.providerLimit(r.err, ln.openFrom, now) {
@@ -1068,7 +1123,7 @@ func (l *loop) laneDone(r laneResult, now time.Time) {
 	t := r.t
 	t.running = false
 	ln.t = nil
-	if ln.card != nil && d.machineStopped() && !t.byStop {
+	if ln.card != nil && d.machineStopped() && !t.byStop && ln.pendingResult == nil {
 		job := filepath.Base(ln.card.Outbox)
 		l.oweStopReturn(StopReturn{Lane: ln.n, Job: job, Row: "friend." + d.Friend, Card: ln.card.ID, Gen: ln.card.Gen(), Epoch: ln.card.Epoch(), Exit: -1, At: now})
 		t.byStop = true
@@ -1123,6 +1178,24 @@ func (l *loop) laneDone(r laneResult, now time.Time) {
 		l.setDown(ln, now)
 		return
 	}
+	job := filepath.Base(ln.card.Outbox)
+	if st, ok := s.state.Started[job]; ok && st.RunID != "" && !l.stopRunQuiescent(job, st) {
+		if exists(ln.card.Result()) && !exists(ln.card.Report()) && st.Ending == nil {
+			end := LaneEnd{Exit: r.turn.Exit, Wall: r.doneAt.Sub(t.started), Rejected: r.turn.Rejected, Turns: ln.attempts + 1, Started: st.At, NoReport: true}
+			if r.err != nil {
+				end.Err = oneLine(r.err.Error(), 300)
+			}
+			if err := l.freezeEnding(job, end); err != nil {
+				d.Record(fmt.Sprintf("%s lane %d: card %s completion details remain owed: %s", at, ln.n, ln.card.ID, oneLine(err.Error(), 300)))
+			}
+		}
+		if ln.pendingResult == nil {
+			d.Record(fmt.Sprintf("%s lane %d: card %s completed its harness call; matching process group remains unverified, holding capacity and result", at, ln.n, ln.card.ID))
+		}
+		ln.pendingResult = &r
+		return
+	}
+	ln.pendingResult = nil
 	if t.held && !exists(ln.card.Result()) && !exists(ln.card.Report()) {
 		l.heldTurn(r, now) // a provider failure stopped it: kept for after the resume
 		return
@@ -1158,7 +1231,7 @@ func (l *loop) laneDone(r laneResult, now time.Time) {
 	}
 	line += l.settle(t, ok, r.err, now)
 	card := *ln.card
-	end := LaneEnd{Exit: r.turn.Exit, Wall: now.Sub(t.started), Rejected: r.turn.Rejected, Turns: ln.attempts + 1, Started: s.state.Started[filepath.Base(card.Outbox)].At}
+	end := LaneEnd{Exit: r.turn.Exit, Wall: r.doneAt.Sub(t.started), Rejected: r.turn.Rejected, Turns: ln.attempts + 1, Started: s.state.Started[filepath.Base(card.Outbox)].At}
 	if r.err != nil {
 		end.Err = oneLine(r.err.Error(), 300)
 	}
@@ -1178,10 +1251,8 @@ func (l *loop) laneDone(r laneResult, now time.Time) {
 		}
 	}
 	if exists(card.Result()) || exists(card.Report()) {
-		end.NoReport = true
-		line += " card=done " + l.endCard(ln.n, card, end, now)
-		ln.card, ln.attempts = nil, 0
-		d.Record(line)
+		end.NoReport = !exists(card.Report())
+		l.finishLane(ln, end, line+" card=done ", now)
 		return
 	}
 	// the card's wall at or past its cap, the turn ended by the cap or by itself: the card
@@ -1189,27 +1260,17 @@ func (l *loop) laneDone(r laneResult, now time.Time) {
 	if wall := now.Sub(end.Started); ln.cap > 0 && !end.Started.IsZero() && (t.capped || wall >= ln.cap) {
 		end.Capped, end.Tier, end.Overrun, end.Tail = ln.cap, ln.tier, wall-ln.cap, LastLines(t.tail.String(), CapTailLines)
 		end.Cap = ""
+		end.GiveUp = true
 		ln.attempts++
-		job := filepath.Base(card.Outbox)
-		d.Record(line + fmt.Sprintf(" card=capped turn=%d/%d reason=%q ", ln.attempts, CardTurns, CappedWords(end.Capped, end.Tier, end.Overrun)) + l.endCard(ln.n, card, end, now))
-		s.given[job] = true
-		s.state.GivenUp = append(s.state.GivenUp, job)
-		l.saveLanes(now)
-		ln.card, ln.attempts = nil, 0
+		l.finishLane(ln, end, line+fmt.Sprintf(" card=capped turn=%d/%d reason=%q ", ln.attempts, CardTurns, CappedWords(end.Capped, end.Tier, end.Overrun)), now)
 		return
 	}
 	if t.adopted {
 		// an adopted run ended with no report: the card ends as a restart ends a gone run's,
 		// never handed again by this daemon (lane_end.go endStarted)
 		end.Err = "the run adopted after a daemon restart (pid " + fmt.Sprint(s.state.Started[filepath.Base(card.Outbox)].Pid) + ") ended with no report"
-		job := filepath.Base(card.Outbox)
-		d.Record(line + " card=ended reason=\"the adopted run ended with no report\" " + l.endCard(ln.n, card, end, now))
-		if !s.given[job] {
-			s.given[job] = true
-			s.state.GivenUp = append(s.state.GivenUp, job)
-		}
-		l.saveLanes(now)
-		ln.card, ln.attempts = nil, 0
+		end.GiveUp = true
+		l.finishLane(ln, end, line+" card=ended reason=\"the adopted run ended with no report\" ", now)
 		return
 	}
 	// exit 0 and no report: the harness's fault, never the worker's failed attempt; the card
@@ -1234,14 +1295,11 @@ func (l *loop) laneDone(r laneResult, now time.Time) {
 		d.Record(line + fmt.Sprintf(" card=again turn=%d/%d reason=%q", ln.attempts, CardTurns, why))
 		return
 	}
-	d.Record(line + fmt.Sprintf(" card=set_aside turn=%d/%d reason=%q ", ln.attempts, CardTurns, why) + l.endCard(ln.n, card, end, now))
-	job := filepath.Base(card.Outbox)
-	s.given[job] = true
-	s.state.GivenUp = append(s.state.GivenUp, job)
-	l.saveLanes(now)
-	ln.card, ln.attempts = nil, 0
-	l.tell(fmt.Sprintf("friend %s: card %s not finished after %d turns (lane %d): %s", d.Friend, card.ID, CardTurns, ln.n, oneLine(why, 200)),
-		fmt.Sprintf("Lane %d of %s handed card %s (%s) %d times and no RESULT.md appeared in %s. The last turn: %s. The lane has set the card aside, finished it failed in the sprint (its REPORT.md says how the run ended) and takes the next.\n", ln.n, d.Friend, card.ID, card.Brief, CardTurns, card.Outbox, why), now)
+	end.GiveUp = true
+	if l.finishLane(ln, end, line+fmt.Sprintf(" card=set_aside turn=%d/%d reason=%q ", ln.attempts, CardTurns, why), now) {
+		l.tell(fmt.Sprintf("friend %s: card %s not finished after %d turns (lane %d): %s", d.Friend, card.ID, CardTurns, ln.n, oneLine(why, 200)),
+			fmt.Sprintf("Lane %d of %s handed card %s (%s) %d times and no RESULT.md appeared in %s. The last turn: %s. The lane has set the card aside, finished it failed in the sprint (its REPORT.md says how the run ended) and takes the next.\n", ln.n, d.Friend, card.ID, card.Brief, CardTurns, card.Outbox, why), now)
+	}
 }
 
 // harnessFault says a lane turn that ended on its own is a harness fault: it exited 0 with no

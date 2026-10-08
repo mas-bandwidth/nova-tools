@@ -185,7 +185,7 @@ func TestALaneThatEndsWithNoReportFinishesItsCardFailed(t *testing.T) {
 			turns, _, _ := h.got()
 			assert.Empty(t, turns, "neither card is handed again")
 			assert.Empty(t, state.Started)
-			assert.ElementsMatch(t, []string{"c3~15", "c4~15"}, state.GivenUp)
+			assert.ElementsMatch(t, []string{"c3~15"}, state.GivenUp, "the worker's completed report is not a restart abandonment")
 			records := strings.Join(r.records, "\n")
 			assert.Contains(t, records, "lane 1: card c3 was begun at "+t0.Add(-time.Hour).Format(time.RFC3339)+" and its run is gone: finish=failed sent=server")
 			assert.Contains(t, records, "lane 2: card c4 was begun at "+t0.Add(-time.Hour).Format(time.RFC3339)+" and its run is gone: finish=report")

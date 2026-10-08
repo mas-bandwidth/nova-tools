@@ -2005,13 +2005,15 @@ writes it, and no network is asked. A card with a `REPORT.md` is not handed to
 a lane.
 
 A lane marks each card it begins as started in `lanes.json` (`started`, keyed
-by the job, `<id>~<epoch>[.g<gen>]`: its lane, card, run ID and time) and clears it at the card's end. A daemon starting up
+by the job, `<id>~<epoch>[.g<gen>]`: its lane, card, run ID and time). On completion it first freezes the original end in that record, waits for the matching native process group to become quiescent, publishes a canonical `REPORT.md` if needed, and journals the coordinator note. It clears `Started` and releases the lane only after those durable steps succeed. A failed state or report write holds the same card and retries without running the harness again. A daemon starting up
 checks the matching launch receipt and native process birth; when the run is
-gone it ends the card as above, the report's
+gone it replays any frozen completion before considering a gone-run failure. A native `RESULT.md` without a frozen end is still completion evidence, with its missing exit details named honestly; it never implies `LAND`. Only a run with no completion evidence gets the report's
 paragraph saying `the run is gone: the lane daemon started up at <t> and found
-the card begun at <t0> with no REPORT.md`, and sets the job aside (`given_up`, by
+the card begun at <t0> with no REPORT.md`, and is set aside (`given_up`, by
 job, as a set-aside card is) so it is not handed again. A daemon stopping leaves its running cards marked, for the next
 one to finish.
+
+The durable ownership and completion truth is the existing `lanes.json`; the `REPORT.md` is the canonical published result, and the small finish-note journal is delivery debt. At 32 lanes and a conservative 4 KiB per `Started` record, the active state is about 128 KiB; 100 times that width is about 12.5 MiB, still one-process data. `tla/FriendLaneCompletion.tla` checks the group/report/journal/slot barriers, crash replay, and write failures. Its three reversed witnesses reach an early report, a lost completion, and changed restart wording; its 12-state retry trace is conditional on eventual group exit and working storage.
 
 The model is `internal/friend/tla/LaneEnd.tla` (TLC on a Linux bench, two cards:
 288 distinct states, `NoOrphan`, `HersStands` and `Finished` hold); its
@@ -2307,7 +2309,7 @@ The bus replays a token for 24 hours and retains its record for seven days. Once
 the 24-hour replay window, the notice remains owed for reconciliation rather than being sent again after record
 cleanup. Thus automatic delivery is bounded by the replay window; no unbounded exactly-once or eventual-delivery
 claim is made. `tla/FriendFinishNotice.tla` models the durable order, write failures, crash/restart, token replay,
-receipt, and expiry. Its retry case proves progress only while the store answers inside the replay window.
+receipt, and expiry. Its retry case witnesses one successful replay inside the token window; it does not claim general liveness through an unavailable store.
 
 A rate limit still backs off by default (rate-limit-backs-off-not-down.w1, above): the runner held a friend down on
 a 429 as on a 402, and that finding stands unless the row says `pause_on=any`. The pause marker outlives the daemon:

@@ -1,0 +1,3 @@
+------------------- MODULE MCFriendLaneCompletion -------------------
+EXTENDS FriendLaneCompletion
+======================================================================
