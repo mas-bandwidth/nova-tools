@@ -9,7 +9,10 @@ package main
 // card's finding.
 //
 // The tree gate is what every tip of the batch branch passes before the next head is
-// merged: the module builds and vets (`go build ./...`, `go vet ./...`), and when a
+// merged: the module builds and vets (`go build ./...`, `go vet ./...`), its functional
+// tier's files are vetted too (`go vet -tags functional ./...`, the Makefile's
+// vet-functional: a plain vet compiles no `//go:build functional` file, so a redeclaration
+// behind that tag landed on a base whose lint was red, PR 5435), and when a
 // head changes a Go file, a document, or testdata (.go, .md, testdata/), the packages
 // that test the tree itself (treeTests, where the clone has them) pass. The base's tip
 // is gated once a batch before any head is merged, so a base that is red refuses the
@@ -154,10 +157,15 @@ func treeTested(p string) bool {
 	return strings.HasSuffix(p, ".go") || strings.HasSuffix(p, ".md") || strings.Contains(p, "testdata/")
 }
 
-// gateRuns is the tree gate's runs, in order: the build and the vet of the module, then
+// gateRuns is the tree gate's runs, in order: the build, the vet of the module and the vet
+// of its functional-tier files (`-tags functional`, the Makefile's vet-functional), then
 // the tree tests (have: the ones the clone holds) when tests is asked.
 func gateRuns(tests bool, have []string) [][]string {
-	runs := [][]string{{"go", "build", "./..."}, {"go", "vet", "./..."}}
+	runs := [][]string{
+		{"go", "build", "./..."},
+		{"go", "vet", "./..."},
+		{"go", "vet", "-tags", "functional", "./..."},
+	}
 	if tests && len(have) > 0 {
 		run := []string{"go", "test"}
 		for _, p := range have {

@@ -13,9 +13,9 @@ import (
 )
 
 // withEnv replaces a variable the environment holds and adds one it does not, the rest
-// in place; gateRuns is the build and the vet, then the tree tests the clone holds when
-// asked; treeTested is a document or a test file; gateWhy is one line of the run, how it
-// ended and its output.
+// in place; gateRuns is the build, the vet and the functional-tag vet, then the tree tests
+// the clone holds when asked; treeTested is a document or a test file; gateWhy is one line
+// of the run, how it ended and its output.
 func TestTreeGateWords(t *testing.T) {
 	t.Parallel()
 	assert.Equal(t, []string{"GOFLAGS=-mod=readonly", "PATH=/bin", "NOVA_CI_UPDATE=1"},
@@ -27,9 +27,9 @@ func TestTreeGateWords(t *testing.T) {
 	assert.Equal(t, "GOFLAGS=-tags=custom -mod=readonly", readonlyGoFlags([]string{"GOFLAGS=-tags=custom -mod=mod"}))
 	assert.Equal(t, "GOFLAGS=-tags=custom -count=1 -mod=readonly",
 		readonlyGoFlags([]string{"GOFLAGS=-tags=custom", "PATH=/bin", "GOFLAGS=-count=1 -mod=vendor"}))
-	assert.Equal(t, [][]string{{"go", "build", "./..."}, {"go", "vet", "./..."}}, gateRuns(false, []string{"internal/docs"}))
-	assert.Equal(t, [][]string{{"go", "build", "./..."}, {"go", "vet", "./..."}}, gateRuns(true, nil))
-	assert.Equal(t, [][]string{{"go", "build", "./..."}, {"go", "vet", "./..."}, {"go", "test", "./internal/docs/", "./internal/ci/"}},
+	assert.Equal(t, [][]string{{"go", "build", "./..."}, {"go", "vet", "./..."}, {"go", "vet", "-tags", "functional", "./..."}}, gateRuns(false, []string{"internal/docs"}))
+	assert.Equal(t, [][]string{{"go", "build", "./..."}, {"go", "vet", "./..."}, {"go", "vet", "-tags", "functional", "./..."}}, gateRuns(true, nil))
+	assert.Equal(t, [][]string{{"go", "build", "./..."}, {"go", "vet", "./..."}, {"go", "vet", "-tags", "functional", "./..."}, {"go", "test", "./internal/docs/", "./internal/ci/"}},
 		gateRuns(true, []string{"internal/docs", "internal/ci"}))
 	for p, want := range map[string]bool{
 		"docs/CLI.md":            true,
