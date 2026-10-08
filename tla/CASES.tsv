@@ -455,3 +455,5 @@ MCLandPassBrokenStopCollide.cfg	MCLandPass.tla	invariant	RefusedStaysMerging	ign
 MCLandPassBrokenRevert.cfg	MCLandPass.tla	action	RefusalTouchesNoOtherStream	ignore-terminal	landpass	required	-
 MCLandPassBrokenCacheDisjoint.cfg	MCLandPass.tla	invariant	CachedIsGreen	ignore-terminal	landpass	required	-
 MCLandPassBrokenPushEmpty.cfg	MCLandPass.tla	invariant	BaseKeepsLandings	ignore-terminal	landpass	required	-
+MCReach.cfg	MCReach.tla	pass	-	ignore-terminal	reach	required	-
+MCReachBrokenStepAfterProof.cfg	MCReach.tla	invariant	NoStepAfterProof	ignore-terminal	reach	required	-

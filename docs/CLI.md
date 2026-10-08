@@ -1449,6 +1449,7 @@ usage:
   nova-friend uninstall --as <me> [--dry-run]
   nova-friend check [--as <coordinator>] [<friend>...] [--since <duration>] [--shown <file|->] [--json]
   nova-friend host --as <me> --harness <h> --dir <d> [--prompt <regexp>] [--state-dir <d>] [--dry-run] [--json] -- <launch command...>
+  nova-friend reach --as <coordinator> --to <friend> [--step-timeout <duration>] [--from <bus|push|window>] [--harness <h>] [--dir <d>] [--session <id>] [--state-dir <d>] [--redis <addr>] [--dry-run]
   nova-friend ping --as <coordinator> (--to <friend> | --wake --to-friends [--every <d>] [--within <d>] [--never-wake <f,...>] [--server <addr>]) [--nonce <n>] [--since <RFC3339>] [--redis <addr>] [--dry-run]
   nova-friend ping-install --as <coordinator> --every <d> [--within <d>] [--never-wake <f,...>] [--server <addr>] [--redis <addr>] [--launchd-log <file>] [--dry-run]
   nova-friend ping-uninstall --as <coordinator> [--dry-run]
@@ -1622,6 +1623,29 @@ flags:
   --state-dir <string>  where the state files live (default: <dir>/.nova-friend where the daemon wrote there, else ~/.nova-friend/<me>)
 exit codes: 0 done, 1 the verb ran and said no (wait-pong: no pong in time; status: no daemon; check: the session did not answer), 2 could not run (a flag, an input, a store or a server that did not answer).
 effect: local write: writes files on this machine: starts the launch command in a new detached tmux session friend-<me> and saves the session and prompt in the state directory
+```
+
+`nova-friend reach -h`:
+
+```
+usage: nova-friend reach [flags]
+from `nova-friend help`:
+  nova-friend reach --as <coordinator> --to <friend> [--step-timeout <duration>] [--from <bus|push|window>] [--harness <h>] [--dir <d>] [--session <id>] [--state-dir <d>] [--redis <addr>] [--dry-run]
+example: nova-friend reach --as ada --to bob --dry-run
+flags:
+  --as <string>  your name, the coordinator (required)
+  --dir <string>  the friend's working directory
+  --dry-run  print what the verb would write and write nothing
+  --from <string>  the step to start at: bus, push or window (default bus)
+  --harness <string>  the harness the push and the window use (default: the one the daemon's status names)
+  --json  print the result as one JSON object instead of lines
+  --redis <string>  the bus store's Redis address, host:port (default: NOVA_BUS_REDIS)
+  --session <string>  the session to type into (default: the one host saved, else friend-<friend>; harness tmux)
+  --state-dir <string>  where the friend's state files live (default: <dir>/.nova-friend where the daemon wrote there, else ~/.nova-friend/<friend>)
+  --step-timeout <duration>  how long each step waits for a proof (default 60s)
+  --to <string>  the friend to reach (required)
+exit codes: 0 a proof, 1 no proof, 2 could not run.
+effect: delivery: sends beyond this machine: a bus message, then a push into the session, then the friend's window, stopping at the first proof
 ```
 
 `nova-friend ping -h`:
@@ -1925,6 +1949,36 @@ HOST DRY-RUN session= dir= command= (the tmux command); starts and saves nothing
 JSON fields: session, dir, attach (command on a dry run)
 Exit 0 started, 1 refused, 2 could not run (no launch command, no prompt pattern for the harness, tmux missing or failing)
 ```
+
+### Reach a silent friend
+
+`nova-friend reach` climbs a ladder until one proof: a bus message, then a push into the session, then the friend's window. It stops at the first proof. The friend is `--to`. A verb other than the default takes no bare word.
+
+```sh
+nova-friend reach --as ada --to bob --dry-run
+```
+
+`reach --as <coordinator> --to <friend> [--step-timeout <duration>] [--from <bus|push|window>] [--harness <h>] [--dir <d>] [--session <id>] [--state-dir <d>] [--redis <addr>] [--dry-run] [--json]`
+
+This verb is reach. see also: nova-friend ping --wake is the coordinator's periodic wake check; reach is this escalation ladder.
+
+Each step has one `--step-timeout` budget (default 60s), including delivery and waiting for a proof. A proof is a pong for the nonce the step carries, or any other message from the friend. A daemon-pong is not a proof. The bus step's line is `REACH STEP step=bus sent=<id> nonce=<n>`. The status file is read when the push begins, and the push is skipped when the daemon is down: `REACH NONE step=push waited=0s: daemon down: <reason>`. The window of a GUI harness needs the accessibility permission a person grants to this binary. When it is absent the step is refused and the tool does not ask: grant Accessibility to this binary in System Settings, Privacy and Security, Accessibility; nova-friend does not ask.
+
+The help of `nova-friend reach -h` says, and this is the same text:
+
+```
+REACH STEP step=bus sent=<id> nonce=<n>
+REACH NONE step=push waited=0s
+REACH PROOF step=<s> after=<duration> by=<pong|message>
+REACH OK friend=<f> step=<s>
+REACH FAILED friend=<f> tried=<steps>
+REACH DRY-RUN
+Exit 0 a proof. Exit 1 no proof. Exit 2 could not run (a flag, a store that did not answer, or the window step without the accessibility permission).
+--as --to --step-timeout --from --harness --dir --session --state-dir --redis --dry-run --json
+example: nova-friend reach --as ada --to bob --dry-run
+```
+
+The result line is first, then one line per step in the order it happened. `--json` carries facts `friend`, `step` (on OK), `tried` (on FAILED), `from` and `step_timeout` (on a dry run), `dry_run`, and items `STEP`, `PROOF` and `NONE`.
 
 ### The friend health check
 
