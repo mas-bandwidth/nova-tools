@@ -30,14 +30,9 @@
 package main
 
 import (
-	"fmt"
-	"io"
-	"runtime"
 	"runtime/debug"
 
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
 // version is empty in every ordinary build and is the one override: a release stamps it
@@ -59,21 +54,4 @@ func buildVersion() string {
 // this package's own tests drive, and they now drive the shared one through it.
 func resolveVersion(stamped string, info *debug.BuildInfo, ok bool) string {
 	return buildinfo.Resolve(stamped, info, ok)
-}
-
-// cmdVersion prints the one line. It takes no flags and no arguments: there is no --short,
-// no --json and no --long, because a second output shape is a second thing to agree about
-// and this verb exists to end an argument rather than to start one.
-func cmdVersion(args []string, stdout, stderr io.Writer) int {
-	verbflag.HelpIfAsked(args, "version")
-	if len(args) > 0 {
-		writeRefusal(stderr, "VERSION", fmt.Sprintf("takes no flags and no arguments, got %d", len(args)), "nova-tokens help")
-		return 2
-	}
-	fmt.Fprintf(stdout, "nova-tokens %s %s/%s %s\n",
-		oneline.Field(buildVersion()),
-		oneline.Field(runtime.GOOS),
-		oneline.Field(runtime.GOARCH),
-		oneline.Field(runtime.Version()))
-	return 0
 }

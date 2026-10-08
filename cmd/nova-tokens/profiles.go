@@ -1,15 +1,16 @@
 package main
 
 import (
-	"fmt"
-	"io"
 	"maps"
+	"os"
 	"path/filepath"
 	"slices"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/tool"
 )
 
 // SWARM PROFILES MEASUREMENT (the overshoot ledger from every job's usage.tsv).
@@ -59,22 +60,46 @@ func parseCardBudget(promptPath string) (int64, bool) {
 	return n, true
 }
 
-// profileSwarmRoot is the `profiles` verb: it walks the card usage files under a root and
-// prints one line per model, then the total. The budget is read from each card's own prompt,
+const wantsSwarmRoot = "the directory the swarm batches live under"
+
+func profilesVerb(now time.Time) tool.Verb {
+	return tool.Verb{
+		Name:   "profiles",
+		Token:  "PROFILES",
+		Usage:  "profiles --swarm-root <dir>\n                      one PROFILES MODEL line per model (cards, median output, overshoot), then a PROFILES OK line with totals",
+		Effect: tool.Inspection,
+		Flags: func(f *tool.Flags) {
+			f.Required("swarm-root", wantsSwarmRoot)
+			f.Check(func(c *tool.Call) {
+				root := c.Str("swarm-root")
+				if root != "" {
+					if fi, err := os.Stat(root); err != nil || !fi.IsDir() {
+						if err != nil && os.IsNotExist(err) {
+							c.Problem("--swarm-root does not exist: " + root + "; it wants the directory the swarm batches live under")
+						} else if err != nil {
+							c.Problem("--swarm-root " + root + ": " + err.Error() + "; it wants the directory the swarm batches live under")
+						} else {
+							c.Problem("--swarm-root is not a directory: " + root + "; it wants the directory the swarm batches live under")
+						}
+					}
+				}
+			})
+		},
+		Run: func(c *tool.Call) *tool.Out {
+			return runProfiles(c)
+		},
+	}
+}
+
+// runProfiles is the `profiles` verb: it walks the card usage files under a root and
+// returns one line per model, then the total. The budget is read from each card's own prompt,
 // so an overshoot is one card's own ceiling, not a guess from the fold.
-func profileSwarmRoot(root string, s *sink, stderr io.Writer, r *refusals) int {
-	if root == "" {
-		r.add("--swarm-root is required; it wants the directory the swarm batches live under; refusing to guess")
-		return r.print(stderr)
-	}
-	if why := notADir("swarm-root", root, "the directory the swarm batches live under"); why != "" {
-		r.add(why)
-		return r.print(stderr)
-	}
+func runProfiles(c *tool.Call) *tool.Out {
+	root := c.Str("swarm-root")
+
 	paths, err := filepath.Glob(filepath.Join(root, "*", "jobs", "*", "usage.tsv"))
 	if err != nil {
-		r.add("--swarm-root " + root + ": " + err.Error() + "; it wants the directory the swarm batches live under")
-		return r.print(stderr)
+		return tool.Refuse("--swarm-root " + root + ": " + err.Error() + "; it wants the directory the swarm batches live under")
 	}
 	sort.Strings(paths)
 
@@ -98,16 +123,19 @@ func profileSwarmRoot(root string, s *sink, stderr io.Writer, r *refusals) int {
 		}
 	}
 
+	o := tool.Done()
 	totalCards, totalOver := 0, 0
 	for _, name := range slices.Sorted(maps.Keys(models)) {
 		m := models[name]
 		totalCards += m.cards
 		totalOver += m.overshoot
-		fmt.Fprintln(s.out(), s.line("PROFILES", "MODEL", "", "model", name, "cards", m.cards, "median_out", medianOut(m.outs), "overshoot", m.overshoot))
+		o.Item("model", "model", name, "cards", m.cards, "median_out", medianOut(m.outs), "overshoot", m.overshoot)
 	}
-	counts := []any{"models", len(models), "cards", totalCards, "overshoot", totalOver}
-	fmt.Fprintf(s.out(), "PROFILES OK%s\n", s.factFields(counts...))
-	return s.done(0, 0)
+	o.Fact("models", len(models)).
+		Fact("cards", totalCards).
+		Fact("overshoot", totalOver)
+
+	return o
 }
 
 // medianOut is the median of the known output-token counts, or `-` when none reported one.
@@ -124,15 +152,4 @@ func medianOut(outs []int64) string {
 	}
 	lo, hi := outs[n/2-1], outs[n/2]
 	return strconv.FormatInt(lo+(hi-lo)/2, 10)
-}
-
-// cmdProfiles parses the `profiles` verb's one flag and folds the root.
-func cmdProfiles(args []string, stdout, stderr io.Writer, now time.Time) int {
-	fs := newFlagSet("profiles")
-	swarmRoot := fs.String("swarm-root", "", "root containing the swarm pool profiles")
-	s, code, ok := start(fs, args, "PROFILES", stdout, stderr)
-	if !ok {
-		return code
-	}
-	return profileSwarmRoot(*swarmRoot, s, stderr, &refusals{token: "PROFILES", s: s})
 }

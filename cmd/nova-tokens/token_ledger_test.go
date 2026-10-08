@@ -67,7 +67,7 @@ func foldedTuples(t *testing.T, out, month string) []string {
 	}
 	var lines []string
 	for k, a := range sums {
-		line := "REPORT day=" + k[0] + " model=" + k[1] + " repo=" + k[2] + " rows=" + strconv.Itoa(a.rows)
+		line := "REPORT GROUP day=" + k[0] + " model=" + k[1] + " repo=" + k[2] + " rows=" + strconv.Itoa(a.rows)
 		for ty := tokens.Type(0); ty < tokens.NTypes; ty++ {
 			line += " " + tokens.TypeNames[ty] + "=" + a.c.Cell(ty)
 		}
@@ -80,7 +80,7 @@ func foldedTuples(t *testing.T, out, month string) []string {
 func reportTuples(stdout string) []string {
 	var lines []string
 	for _, l := range strings.Split(stdout, "\n") {
-		if strings.HasPrefix(l, "REPORT day=") {
+		if strings.HasPrefix(l, "REPORT GROUP day=") {
 			lines = append(lines, l)
 		}
 	}
@@ -159,8 +159,8 @@ func TestTheMonthlyTokenReportFromTheRedisLedgerEqualsTheFoldedTsv(t *testing.T)
 	got := reportTuples(rep.stdout)
 	require.Equal(t, strings.Join(want, "\n"), strings.Join(got, "\n"), "the store report is not the folded TSV to the token\nstore:\n%s\nfolded:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 	require.Equal(t, 5, len(want), "want 5 (day, model, repo) tuples from the fixture, the folded side has %d:\n%s", len(want), strings.Join(want, "\n"))
-	wantContains(t, rep.stdout, "REPORT day=2026-09-13 model=gpt repo=schema rows=1 input=10 output=20 cache_write=- cache_read=- reasoning=3")
-	wantContains(t, rep.stdout, "REPORT day=2026-09-13 model=gpt repo=serialize rows=1 input=1 output=2 cache_write=4 cache_read=- reasoning=-")
+	wantContains(t, rep.stdout, "REPORT GROUP day=2026-09-13 model=gpt repo=schema rows=1 input=10 output=20 cache_write=- cache_read=- reasoning=3")
+	wantContains(t, rep.stdout, "REPORT GROUP day=2026-09-13 model=gpt repo=serialize rows=1 input=1 output=2 cache_write=4 cache_read=- reasoning=-")
 	wantContains(t, rep.stdout, "REPORT OK month=2026-09 source=redis groups=5 rows=5 indexed=3 missing=27")
 
 	// Re-indexing a day replaces it: the table is the day files' index, not an append log.
@@ -171,7 +171,7 @@ func TestTheMonthlyTokenReportFromTheRedisLedgerEqualsTheFoldedTsv(t *testing.T)
 	// The per-model group carries cache_write and reasoning too.
 	byModel := invoke(t, "report", "--redis", dsn, "--month", "2026-09")
 	wantExit(t, byModel, 0)
-	wantContains(t, byModel.stdout, "REPORT model=gpt rows=2 input=11 output=22 cache_write=4 cache_read=- reasoning=3")
+	wantContains(t, byModel.stdout, "REPORT GROUP model=gpt rows=2 input=11 output=22 cache_write=4 cache_read=- reasoning=3")
 
 	// The fold's day files are untouched by the index and the report.
 	after := snapshotDir(t, out)
@@ -207,8 +207,8 @@ func TestLedgerRefusesWithoutRedisAndNamesAMissingDay(t *testing.T) {
 	addr, mr := ledgerRedis(t)
 	r = invoke(t, "ledger", "--out", out, "--day", "2026-09-11", "--redis", addr)
 	wantExit(t, r, 1)
-	wantContains(t, r.stdout, "LEDGER FAILED day=2026-09-11 why=no day file; fold --day 2026-09-11 first")
-	wantContains(t, r.stdout, "LEDGER FAILED day=2026-09-11 days=0 rows=0 bad=1")
+	wantContains(t, r.stderr, "LEDGER FAILED day=2026-09-11: no day file; fold --day 2026-09-11 first")
+	wantContains(t, r.stderr, "LEDGER FAILED day=2026-09-11 days=0 rows=0 bad=1")
 	{
 		keys := mr.Keys()
 		require.Equal(t, 0, len(keys), "a missing day wrote %v", keys)
@@ -235,7 +235,7 @@ func TestLedgerReadsThePasswordFromTheVariableItIsToldToOnly(t *testing.T) {
 	require.NoError(t, os.Setenv("LEDGER_TEST_PW", "sesame"))
 	r = invoke(t, "report", "--redis", addr, "--month", "2026-09", "--password-env", "LEDGER_TEST_PW")
 	wantExit(t, r, 1)
-	wantContains(t, r.stdout, "REPORT FAILED month=2026-09 source=redis indexed=0")
+	wantContains(t, r.stderr, "REPORT FAILED month=2026-09 source=redis indexed=0")
 }
 
 // TestReportRedisNoIndexedDaysExitsOne and TestReportRedisPartialMonthNamesIndexedMissing
@@ -247,7 +247,7 @@ func TestReportRedisNoIndexedDaysExitsOne(t *testing.T) {
 	addr, _ := ledgerRedis(t)
 	r := invoke(t, "report", "--redis", addr, "--month", "2026-08")
 	wantExit(t, r, 1)
-	wantContains(t, r.stdout, "REPORT FAILED month=2026-08 source=redis indexed=0")
+	wantContains(t, r.stderr, "REPORT FAILED month=2026-08 source=redis indexed=0")
 }
 
 func TestReportRedisPartialMonthNamesIndexedMissing(t *testing.T) {
