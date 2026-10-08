@@ -243,6 +243,14 @@
     # verifies the bytes it staged against it before anything installs them.
     # The stage is written on every machine, the coordinator's included,
     # because the seat's candidate checks below run the desired artifact there.
+    # The split stage is its own directory beside the release stage, so the
+    # release directory task above does not make it; it is created here, before
+    # the first copy, or a fresh version's copy fails with "Destination
+    # directory ... does not exist".
+    - name: the split stage's directory (its own, beside the release stage)
+      ansible.builtin.file: { path: "{{ tools_sprint_stage }}", state: directory, mode: "0755" }
+      when: not ansible_check_mode
+
     - name: the split repository's nova-sprint, in its own stage (never the release stage)
       ansible.builtin.copy:
         src: "{{ nova_sprint_out }}/{{ nova_platform }}/{{ tools_sprint_file }}"
