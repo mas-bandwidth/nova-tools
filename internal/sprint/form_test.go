@@ -1,6 +1,7 @@
 package sprint_test
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -193,4 +194,18 @@ func TestAReadOfAFormCardIsToldTheFormPassedAndAFormOnlyFindingIsRefused(t *test
 	assert.Empty(t, sprint.FormFinding(formBrief, "internal/sprint/form.go:12 the check is wrong"))
 	assert.Contains(t, sprint.FormFinding(formBrief, "outbox/s1-1~0/REPORT.md:5 the heading is wrong"), "report's form")
 	assert.Empty(t, sprint.FormFinding(plain, "outbox/s1-1~0/REPORT.md:5 the heading is wrong"))
+}
+
+// The finish reads the report as the blob at --head. A missing file in the
+// process directory is not that report, so the miss names the commit.
+func TestHeadFileMissNamesTheCommitNotADirectoryFile(t *testing.T) {
+	t.Parallel()
+	const head = "0123456789abcdef0123456789abcdef01234567"
+	got := sprint.HeadFileMiss(head, errors.New("fatal: path 'outbox/s1-1~0/REPORT.md' does not exist in '"+head+"'"))
+	assert.Contains(t, got, "not in "+head)
+	assert.Contains(t, got, "process directory is not the report")
+	assert.NotContains(t, got, "os.ReadFile")
+	none := sprint.HeadFileMiss("", errors.New("the finish names no commit (--head)"))
+	assert.Contains(t, none, "no commit")
+	assert.Contains(t, none, "process directory is not the report")
 }
