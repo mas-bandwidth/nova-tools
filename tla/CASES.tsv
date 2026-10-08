@@ -481,6 +481,9 @@ MCStopGroupAnchor.cfg	MCStopGroupAnchor.tla	pass	-	ignore-terminal	stopgroupanch
 MCStopGroupAnchorBrokenSignal.cfg	MCStopGroupAnchor.tla	invariant	NoUnpinnedSignal	ignore-terminal	stopgroupanchor	required	-
 MCStopGroupAnchorBrokenRetry.cfg	MCStopGroupAnchor.tla	invariant	NoReceiptOverwriteWhileLive	ignore-terminal	stopgroupanchor	required	-
 MCStopGroupAnchorFair.cfg	MCStopGroupAnchor.tla	pass	-	ignore-terminal	stopgroupanchor	required	-
+MCStopVerifierAdmission.cfg	MCStopVerifierAdmission.tla	pass	-	ignore-terminal	stopverifieradmission	required	-
+MCStopVerifierAdmissionBrokenStale.cfg	MCStopVerifierAdmission.tla	invariant	NoStaleFallback	ignore-terminal	stopverifieradmission	required	-
+MCStopVerifierAdmissionBrokenLocked.cfg	MCStopVerifierAdmission.tla	invariant	StopCanInterruptVerifier	ignore-terminal	stopverifieradmission	required	-
 MCStopCancelsBrokenNoCancel.cfg	MCStopCancels.tla	invariant	NoLaneWhileStopped	ignore-terminal	stopcancels	required	-
 MCStopCancelsBrokenLaunchAfterStop.cfg	MCStopCancels.tla	invariant	NoLaunchAfterStop	ignore-terminal	stopcancels	required	-
 MCStopCancelsBrokenForgetOnRestart.cfg	MCStopCancels.tla	invariant	StopReturnsSurviveRestart	ignore-terminal	stopcancels	required	-

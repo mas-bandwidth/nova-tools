@@ -424,7 +424,7 @@ type Config struct {
 	// and deadline; ok is an ok read, whose finding is the one line why, counted as all the
 	// reads the card needs. Not ok is no verdict: the read goes on to a model child as any
 	// read does. nil asks none.
-	ScriptVerify func(p Packet, class cardhdr.Class) (ok bool, why string)
+	ScriptVerify func(ctx context.Context, p Packet, class cardhdr.Class) (ok bool, why string)
 }
 
 // launch is one child and the claim it was started for: the card at the
@@ -530,11 +530,14 @@ type Member struct {
 	postMu  sync.Mutex
 	posted  map[string]post
 	startMu sync.Mutex
-	// stopPending is written and read with startMu. A STOP pass waits for an
-	// in-flight start to register its child, then cancels it in the same pass.
-	stopPending bool
-	pushGate    chan struct{}
-	wake        chan struct{}
+	// stopPending and stopVersion are written and read with startMu. A STOP
+	// cancels script verification without waiting for it, then waits only for a
+	// final child start to register before cancelling that child in the pass.
+	stopPending   bool
+	stopVersion   uint64
+	verifyCancels map[string]context.CancelFunc
+	pushGate      chan struct{}
+	wake          chan struct{}
 }
 
 // post is what a launch's long work found: its start (the child, or why there is none),
@@ -1351,24 +1354,54 @@ func (m *Member) start(p Packet) bool {
 	m.running[p.Card] = launch{busy: true, busyAt: m.clock(), gen: p.Gen, attempt: p.Attempt, epoch: p.Epoch, branch: p.Branch, packet: p, retried: m.stageRetried[p.Card]}
 	m.long(func() {
 		m.startMu.Lock()
-		defer m.startMu.Unlock()
-		m.staggerStart()
+		version := m.stopVersion
+		ctx, cancel := context.WithCancel(context.Background())
+		if m.verifyCancels == nil {
+			m.verifyCancels = make(map[string]context.CancelFunc)
+		}
+		m.verifyCancels[p.Card] = cancel
+		m.startMu.Unlock()
+		defer func() {
+			m.startMu.Lock()
+			delete(m.verifyCancels, p.Card)
+			m.startMu.Unlock()
+			cancel()
+		}()
 		var ch Child
 		var note string
 		var err error
 		admissionErr := false
-		if m.stopPending {
-			err = fmt.Errorf("machine STOPPED before child start")
-			admissionErr = true
-		} else {
-			if m.cfg.Admit != nil {
-				err = m.cfg.Admit(p)
-				admissionErr = err != nil
-			}
+		class, why := cardhdr.ReadClass(p.Brief)
+		isScript := m.cfg.Reader && p.Kind == "read" && m.cfg.ScriptVerify != nil && why == "" && class.IsScript()
+		if isScript {
+			m.startMu.Lock()
+			err = m.admitStart(p, version)
+			m.startMu.Unlock()
 			if err == nil {
-				ch, note, err = m.scriptOrStart(p)
+				if ok, why := m.cfg.ScriptVerify(ctx, p, class); ok {
+					ch = scriptChild{Result{Ran: true, OK: true, Shaped: true, Verdict: "ok", Report: ScriptReadPrefix + oneLine(why)}}
+				} else {
+					note = "script read gave no verdict (" + oneLine(why) + "); asked of a model"
+				}
 			}
 		}
+		if err == nil {
+			m.startMu.Lock()
+			if !m.stopPending && m.stopVersion == version {
+				m.staggerStart()
+			}
+			err = m.admitStart(p, version)
+			admissionErr = err != nil
+			if err == nil && ch == nil {
+				ch, err = m.runner.Start(p)
+			}
+			// Publish while holding the final start gate. A STOP pass that
+			// acquires it next must see and cancel this child immediately.
+			m.post(p.Card, post{child: ch, note: note, startErr: err, admissionErr: admissionErr})
+			m.startMu.Unlock()
+			return
+		}
+		admissionErr = true
 		m.post(p.Card, post{child: ch, note: note, startErr: err, admissionErr: admissionErr})
 	})
 	m.longWork()
@@ -1378,6 +1411,19 @@ func (m *Member) start(p Packet) bool {
 	m.collect()
 	_, started := m.running[p.Card]
 	return started
+}
+
+// admitStart is called under startMu immediately before a verifier or child
+// starts. A STOP/START observed during a long verification invalidates its
+// captured version even if the machine is RUNNING again by the final check.
+func (m *Member) admitStart(p Packet, version uint64) error {
+	if m.stopPending || m.stopVersion != version {
+		return fmt.Errorf("machine STOPPED before child start")
+	}
+	if m.cfg.Admit != nil {
+		return m.cfg.Admit(p)
+	}
+	return nil
 }
 
 // long does a launch's long work: apart from the pass when the member is Background, where
@@ -1534,7 +1580,16 @@ func (m *Member) OwedStopReturns() int {
 func (m *Member) machineStop(q queueOut, byID map[string]queueCard, now time.Time) (acted int) {
 	if q.Machine != "" {
 		m.startMu.Lock()
-		m.stopPending = q.Machine == "STOPPED"
+		stopping := q.Machine == "STOPPED"
+		if stopping && !m.stopPending {
+			m.stopVersion++
+		}
+		m.stopPending = stopping
+		if stopping {
+			for _, cancel := range m.verifyCancels {
+				cancel()
+			}
+		}
 		m.startMu.Unlock()
 		// A start that held startMu before STOP has posted its child now. Collect
 		// it before cancellation so this pass cannot overlook the new process.
@@ -2345,24 +2400,6 @@ func (unstartedChild) StopConfirmed() bool { return true }
 func (c scriptChild) Done() bool     { return true }
 func (c scriptChild) Result() Result { return c.res }
 
-// scriptOrStart is a launch's start: a read of a script card is asked of this reader's
-// ScriptVerify first, and an ok answer is the read, ended with no child and no model
-// (docs/SPEC-SPRINT.md, the script read); any other answer is no verdict and the read is
-// started as a model child, the note saying why. Every other card is started as it is.
-func (m *Member) scriptOrStart(p Packet) (ch Child, note string, err error) {
-	if m.cfg.Reader && p.Kind == "read" && m.cfg.ScriptVerify != nil {
-		if c, why := cardhdr.ReadClass(p.Brief); why == "" && c.IsScript() {
-			ok, why := m.cfg.ScriptVerify(p, c)
-			if ok {
-				return scriptChild{Result{Ran: true, OK: true, Shaped: true, Verdict: "ok", Report: ScriptReadPrefix + oneLine(why)}}, "", nil
-			}
-			note = "script read gave no verdict (" + oneLine(why) + "); asked of a model"
-		}
-	}
-	ch, err = m.runner.Start(p)
-	return ch, note, err
-}
-
 // DefaultScriptDeadline bounds a script run whose card names no deadline.
 const DefaultScriptDeadline = 30 * time.Minute
 
@@ -2384,7 +2421,7 @@ type ScriptVerifier struct {
 // resulting diff with the head's diff byte for byte. Identical is ok, with the one line
 // that says what was compared; a difference, an empty diff, a missing commit or a failed
 // run is not ok, with the reason. The head is never taken on the worker's word.
-func (v ScriptVerifier) Verify(p Packet, class cardhdr.Class) (ok bool, why string) {
+func (v ScriptVerifier) Verify(parent context.Context, p Packet, class cardhdr.Class) (ok bool, why string) {
 	argv := strings.Fields(class.Script)
 	switch {
 	case len(argv) == 0:
@@ -2393,7 +2430,7 @@ func (v ScriptVerifier) Verify(p Packet, class cardhdr.Class) (ok bool, why stri
 		return false, "the read names no head"
 	}
 	deadline := cmp.Or(class.Deadline, DefaultScriptDeadline)
-	ctx, cancel := context.WithTimeout(context.Background(), deadline)
+	ctx, cancel := context.WithTimeout(parent, deadline)
 	defer cancel()
 	g := func(dir string, args ...string) (string, error) {
 		res, err := gitrun.Run(ctx, gitrun.Options{Bin: v.Git, C: dir, OwnRepo: true, Timeout: deadline}, args...)

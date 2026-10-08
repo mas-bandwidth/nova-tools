@@ -1,13 +1,16 @@
 package member
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -26,6 +29,75 @@ type stopChild struct {
 	mu      sync.Mutex
 	stopped int
 	pid     int
+}
+
+func TestStopCancelsBlockedScriptVerifierBeforeModelFallback(t *testing.T) {
+	t.Parallel()
+	entered, cancelled := make(chan struct{}), make(chan struct{})
+	m, s, r, _ := stopRig(Config{As: "r", Width: 1, Reader: true, Background: true,
+		ScriptVerify: func(ctx context.Context, _ Packet, _ cardhdr.Class) (bool, string) {
+			close(entered)
+			<-ctx.Done()
+			close(cancelled)
+			return false, "cancelled"
+		},
+	})
+	p := pk("r1")
+	p.Kind, p.Brief = "read", scriptBrief
+	require.True(t, m.start(p))
+	<-entered
+	done := make(chan struct{})
+	go func() {
+		m.machineStop(queueOut{Machine: "STOPPED", Epoch: p.Epoch}, map[string]queueCard{"r1": reading("r1", &p)}, time.Now())
+		close(done)
+	}()
+	<-done // a verifier waiting for cancellation must not hold the STOP mutex
+	<-cancelled
+	m.WaitLong()
+	m.machineStop(queueOut{Machine: "STOPPED", Epoch: p.Epoch}, map[string]queueCard{"r1": reading("r1", &p)}, time.Now())
+	assert.Empty(t, r.started(), "STOP cannot allow the verifier's model fallback")
+	assert.Empty(t, s.lines("report"), "a cancelled script read must not report a verdict")
+}
+
+func TestStopStartCannotRevivePreStopScriptFallback(t *testing.T) {
+	t.Parallel()
+	entered, release := make(chan struct{}), make(chan struct{})
+	m, _, r, _ := stopRig(Config{As: "r", Width: 1, Reader: true, Background: true,
+		ScriptVerify: func(context.Context, Packet, cardhdr.Class) (bool, string) {
+			close(entered)
+			<-release // a verifier that ignores cancellation must still lose admission
+			return false, "no verdict"
+		},
+	})
+	p := pk("r1")
+	p.Kind, p.Brief = "read", scriptBrief
+	require.True(t, m.start(p))
+	<-entered
+	m.machineStop(queueOut{Machine: "STOPPED", Epoch: p.Epoch}, map[string]queueCard{"r1": reading("r1", &p)}, time.Now())
+	m.machineStop(queueOut{Machine: "RUNNING", Epoch: p.Epoch}, map[string]queueCard{"r1": reading("r1", &p)}, time.Now())
+	close(release)
+	m.WaitLong()
+	m.collect()
+	assert.Empty(t, r.started(), "a pre-STOP script read cannot launch after START")
+}
+
+func TestScriptFallbackRereadsAdmissionImmediatelyBeforeModelStart(t *testing.T) {
+	t.Parallel()
+	var admits atomic.Int32
+	m, _, r, _ := stopRig(Config{As: "r", Width: 1, Reader: true,
+		Admit: func(Packet) error {
+			if admits.Add(1) == 2 {
+				return fmt.Errorf("claim moved during script verification")
+			}
+			return nil
+		},
+		ScriptVerify: func(context.Context, Packet, cardhdr.Class) (bool, string) { return false, "no verdict" },
+	})
+	p := pk("r1")
+	p.Kind, p.Brief = "read", scriptBrief
+	m.start(p)
+	assert.Equal(t, int32(2), admits.Load())
+	assert.Empty(t, r.started(), "a script fallback must use a fresh claim admission")
 }
 
 type proofStopChild struct {

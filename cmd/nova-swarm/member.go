@@ -1533,9 +1533,9 @@ func mirrorKeeping(urls, root, gocache string, stdout, stderr io.Writer) (keep f
 // the checkouts sit under root, the reader's own work dir. sandbox names the wall binary
 // ("" resolves nova-sandbox on PATH) and noWall runs the program unconfined, as the
 // member's own --no-wall does for its children.
-func scriptVerify(root, sandbox string, noWall bool) func(member.Packet, cardhdr.Class) (bool, string) {
+func scriptVerify(root, sandbox string, noWall bool) func(context.Context, member.Packet, cardhdr.Class) (bool, string) {
 	base := filepath.Join(root, "script-read")
-	return func(p member.Packet, class cardhdr.Class) (ok bool, why string) {
+	return func(ctx context.Context, p member.Packet, class cardhdr.Class) (ok bool, why string) {
 		repo := swarm.ReadCardBase([]byte(p.Brief)).Repo
 		home, _ := os.UserHomeDir()
 		mirror := swarm.FindBenchMirror(home, repo)
@@ -1546,7 +1546,7 @@ func scriptVerify(root, sandbox string, noWall bool) func(member.Packet, cardhdr
 			return false, "the script read's work dir " + base + ": " + err.Error()
 		}
 		v := member.ScriptVerifier{Mirror: mirror, Temp: base, Run: scriptRun(base, sandbox, noWall)}
-		return v.Verify(p, class)
+		return v.Verify(ctx, p, class)
 	}
 }
 

@@ -130,9 +130,30 @@ func TestAScriptCardWhoseDiffMatchesItsProgramNeedsNoModelRead(t *testing.T) {
 	t.Run("a program that fails is no verdict", func(t *testing.T) {
 		t.Parallel()
 		v := ScriptVerifier{Mirror: repo.dir, Temp: t.TempDir(), Run: func(context.Context, string, []string) error { return os.ErrPermission }}
-		ok, why := v.Verify(read(made), mustClass(t, scriptBrief))
+		ok, why := v.Verify(context.Background(), read(made), mustClass(t, scriptBrief))
 		assert.False(t, ok)
 		assert.Contains(t, why, "the program failed")
+	})
+
+	t.Run("a STOP cancellation reaches the running program", func(t *testing.T) {
+		t.Parallel()
+		entered := make(chan struct{})
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		v := ScriptVerifier{Mirror: repo.dir, Temp: t.TempDir(), Run: func(ctx context.Context, _ string, _ []string) error {
+			close(entered)
+			<-ctx.Done()
+			return ctx.Err()
+		}}
+		class := mustClass(t, scriptBrief)
+		result := make(chan string, 1)
+		go func() {
+			_, why := v.Verify(ctx, read(made), class)
+			result <- why
+		}()
+		<-entered
+		cancel()
+		assert.Contains(t, <-result, "context canceled")
 	})
 
 	t.Run("with no start commit named the merge base with the work's base branch is the start", func(t *testing.T) {
@@ -140,10 +161,10 @@ func TestAScriptCardWhoseDiffMatchesItsProgramNeedsNoModelRead(t *testing.T) {
 		p := read(made)
 		p.BaseHead, p.WorkBase = "", "master"
 		p.WorkBase = repo.start // any ref that names the start commit
-		ok, why := verifier.Verify(p, mustClass(t, scriptBrief))
+		ok, why := verifier.Verify(context.Background(), p, mustClass(t, scriptBrief))
 		assert.True(t, ok, why)
 		p.WorkBase = ""
-		ok, why = verifier.Verify(p, mustClass(t, scriptBrief))
+		ok, why = verifier.Verify(context.Background(), p, mustClass(t, scriptBrief))
 		assert.False(t, ok)
 		assert.Contains(t, why, "no start commit")
 	})

@@ -1,0 +1,3 @@
+-------------------- MODULE MCStopVerifierAdmission --------------------
+EXTENDS StopVerifierAdmission
+=======================================================================

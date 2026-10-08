@@ -19,6 +19,8 @@ The TLA+ modules here are the specifications of the state machines this repo imp
 
 `StopGroupAnchor.tla` models one native harness group, its durable birth receipts, a gated launch, owner crash with descendants still alive, identity loss and PID reuse. It separates the owner's birth check and FIFO write from the anchor's self-signal, allowing the old group to exit and an unrelated group to reuse its number between those actions. Its required `MCStopGroupAnchor*` cases check that no unrelated group is signalled, a live group's receipt is never overwritten on retry, and a STOP return waits for group exit. The broken-signal case demonstrates the stale-check/bare-PGID counterexample; the broken-retry case demonstrates lost receipt authority. The fair case proves eventual return only when the owner remains up and a recorded live anchor survives; the model abstracts TERM/grace/KILL into one anchor self-signal, so elapsed teardown time and real kernel behavior require the process tests.
 
+`StopVerifierAdmission.tla` isolates a script read whose verifier may remain in flight while STOP and a later START occur. STOP must remain enabled during verification, and final model fallback must compare the captured STOP version after a fresh admission. The broken-lock case refuses STOP while verification runs; the broken-stale case launches a fallback after STOP/START from the old version. The model abstracts the store's claim and generation check into final admission; process tests exercise context cancellation and the real admission callback.
+
 | Module | Instance | What it is |
 |---|---|---|
 | `CardMachine.tla` | `MCCardMachine` | the card's life over cells (the copy model of 02_card_move.lua), the corrected design after its three findings |
