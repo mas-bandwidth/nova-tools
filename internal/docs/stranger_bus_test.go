@@ -78,6 +78,27 @@ func strangerBusProblems(text string) []string {
 // quoteBusStumble quotes a stumble heading for a problem line.
 func quoteBusStumble(s string) string { return `"` + s + `"` }
 
+// strangerBusHostCommands are the bench-side commands every bus run transcript
+// must show. The transcript is the run's whole command record, so the host work
+// before the container -- starting it and fetching the modules into it -- is
+// part of the transcript, not only of Setup.
+var strangerBusHostCommands = []string{
+	"podman --cgroup-manager=cgroupfs run -d",
+	"go mod download",
+}
+
+// strangerBusHostProblems is every host-side command the transcript does not
+// show.
+func strangerBusHostProblems(transcript string) []string {
+	var problems []string
+	for _, cmd := range strangerBusHostCommands {
+		if !strings.Contains(transcript, cmd) {
+			problems = append(problems, "the transcript does not show the host-side command `"+cmd+"`")
+		}
+	}
+	return problems
+}
+
 // TestStrangerRunBusTwoNamesIsRecorded holds docs/stranger/bus-two-names.md,
 // the cold run of nova-bus between two names on a throwaway Redis, to its
 // shape: the four sections, a transcript of real commands, and a proposed card
@@ -85,18 +106,24 @@ func quoteBusStumble(s string) string { return `"` + s + `"` }
 func TestStrangerRunBusTwoNamesIsRecorded(t *testing.T) {
 	t.Parallel()
 
-	good := "# run\n\n## Setup\n\nbench\n\n## Transcript\n\n```text\n$ nova-bus version\nnova-bus devel\n```\n\n" +
+	good := "# run\n\n## Setup\n\nbench\n\n## Transcript\n\n```text\n" +
+		"$ podman --cgroup-manager=cgroupfs run -d --rm --name trial image sleep 1\ncontainer\n" +
+		"$ cd src && go mod download\n(no output)\n" +
+		"$ nova-bus version\nnova-bus devel\n```\n\n" +
 		"## Stumbles\n\n### 1. one\n\n- card: a-card\n\n### 2. two\n\ncard: b-card\n\n## Verdict\n\nyes\n"
 	require.Empty(t, strangerBusProblems(good), "the fake good record")
+	require.Empty(t, strangerBusHostProblems(strings.Join(strangerBusSectionBodies(good)["Transcript"], "\n")), "the fake good record's host commands")
 
 	for name, c := range map[string]struct{ text, want string }{
-		"no Verdict": {strings.Replace(good, "## Verdict", "## Ending", 1), "no ## Verdict section"},
-		"no Setup":   {strings.Replace(good, "## Setup", "Setup", 1), "no ## Setup section"},
-		"no command": {strings.Replace(good, "$ nova-bus version", "nova-bus version", 1), "the transcript has no command line"},
-		"uncarded":   {strings.Replace(good, "card: b-card", "a card is owed", 1), `stumble "2. two" has no proposed card line`},
-		"empty card": {strings.Replace(good, "- card: a-card", "- card: ", 1), `stumble "1. one" has no proposed card line`},
+		"no Verdict":      {strings.Replace(good, "## Verdict", "## Ending", 1), "no ## Verdict section"},
+		"no Setup":        {strings.Replace(good, "## Setup", "Setup", 1), "no ## Setup section"},
+		"no command":      {strings.ReplaceAll(good, "$ ", ""), "the transcript has no command line"},
+		"uncarded":        {strings.Replace(good, "card: b-card", "a card is owed", 1), `stumble "2. two" has no proposed card line`},
+		"empty card":      {strings.Replace(good, "- card: a-card", "- card: ", 1), `stumble "1. one" has no proposed card line`},
+		"no host command": {strings.Replace(good, "$ podman --cgroup-manager=cgroupfs run -d --rm --name trial image sleep 1\ncontainer\n", "", 1), "the transcript does not show the host-side command `podman --cgroup-manager=cgroupfs run -d`"},
 	} {
-		got := strings.Join(strangerBusProblems(c.text), "\n")
+		transcript := strings.Join(strangerBusSectionBodies(c.text)["Transcript"], "\n")
+		got := strings.Join(append(strangerBusProblems(c.text), strangerBusHostProblems(transcript)...), "\n")
 		require.Contains(t, got, c.want, "%s: the fake must be refused", name)
 	}
 
@@ -105,4 +132,14 @@ func TestStrangerRunBusTwoNamesIsRecorded(t *testing.T) {
 	text := string(raw)
 	require.Empty(t, strangerBusProblems(text), "%s", strangerBusPath)
 	require.Contains(t, strangerBusSectionBodies(text), "Stumbles")
+
+	// The correction this attempt carries: the transcript must cover every
+	// command, host side included. The bench commands that start the container
+	// and fetch the modules stand in the transcript, not only in Setup; and a
+	// stumble that names the refused pong line points at the transcript for it,
+	// so the refused invocation and its exact line must stand there too.
+	transcript := strings.Join(strangerBusSectionBodies(text)["Transcript"], "\n")
+	require.Contains(t, transcript, "PONG REFUSED: --to is required: no ping has named a seat yet",
+		"the refused pong invocation and its line must stand in the transcript of %s", strangerBusPath)
+	require.Empty(t, strangerBusHostProblems(transcript), "%s", strangerBusPath)
 }
