@@ -19,7 +19,7 @@ import (
 // nova-config migrates the config store before any binary of the build is
 // switched, as the role that owns schema config, and the switch is refused
 // while the schema the build carries is not applied. On 2026-10-08 at 01:05 ET
-// nova-sprint 67eabcfe (schema 36) was put on the Studio while the store
+// nova-sprint 67eabcfe (schema 36) was put on the seat machine while the store
 // stayed at 35; the friend sync loop refused every pass until 08:51 and no one
 // was told. The hand fix found that migrate as the seat's role (nova_admin) was
 // refused, and that the owner was nova_config: so the owner is read from the
