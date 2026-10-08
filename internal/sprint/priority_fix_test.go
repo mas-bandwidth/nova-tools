@@ -149,13 +149,17 @@ func TestFixMergeNeverPassesAnUnmetDependency(t *testing.T) {
 	t.Parallel()
 	t.Run("a newly added dependency outside the merge queue", func(t *testing.T) {
 		t.Parallel()
-		w := setup(t, 2)
-		accepted(w, "s1-1")
+		w := setup(t, 3)
+		accepted(w, "s1-1", "s1-3")
+		stuck := w.s.Merge.Card("s1-3")
+		stuck.Col = Stuck
+		w.s.Merge.Put(stuck)
 		pr := w.s.Work.Card("s1-1")
 		pr.Fields[FieldPriority], pr.Fields["needs"] = PriorityFix, "s1-2"
 		assert.Empty(t, MergePriorityOrder(w.s, w.s.Merge.Cell("s1", Queued)))
 		p := MergeStep(w.s, MergeReq{Stream: "s1", Batch: 1})
-		assert.NotEmpty(t, p.Refused)
+		require.NotEmpty(t, p.Refused)
+		assert.Contains(t, p.Refused[0].Why, "prerequisites")
 		assert.Empty(t, p.Units)
 	})
 	t.Run("a named batch omitting its queued predecessor", func(t *testing.T) {

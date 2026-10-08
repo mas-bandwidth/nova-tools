@@ -19,7 +19,8 @@ import (
 // more cards behind it, weight.go) unless a level is set by hand. Low is dealt only to a lane
 // nothing higher can fill. The deal and the ask order their cards by the ladder, then stream
 // turns within a level (ladderOrder, readOrder); land orders the streams by their merging
-// sets' levels (LandOrder), each batch as it was. Owed with the reference model: the weight
+// sets' levels (LandOrder), then eligible cards inside a batch (MergePriorityOrder). Owed with
+// the reference model: the weight
 // within a level and the computed critical in the deal's and the ask's order. Preemption by a
 // blocker is its own card.
 
