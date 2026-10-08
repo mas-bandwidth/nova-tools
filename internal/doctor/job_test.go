@@ -49,19 +49,21 @@ type world struct {
 	finishAge                                            time.Duration
 	back, outbox                                         int
 	calls                                                int // tool calls the doctor made
+	writingCalls                                         int // writing argv observed in doctor probes, excluding caller repairs
 	// Coordinator preflight. Zero values are a healthy seat except the bools set in
 	// healthyWorld: schema 35/36, an empty config, a folder or queue write, friend rows,
 	// a review/lander backup and a red release gate are what a case turns on.
-	configEmpty                            bool
-	schemaHave, schemaWant                 int
-	pushInstalled, busProven, sprintProven bool
-	folderWrite, queueWrite                bool
-	pushNonce                              string
-	installs, noncesIssued                 int
-	ponged                                 string
-	friends                                []friendFact
-	review, lander                         int
-	releaseRed                             bool
+	configEmpty                                     bool
+	schemaHave, schemaWant                          int
+	pushInstalled, busProven, sprintProven          bool
+	folderWrite, queueWrite                         bool
+	pushNonce                                       string
+	installs, noncesIssued                          int
+	ponged                                          string
+	friends                                         []friendFact
+	review, lander                                  int
+	releaseRed                                      bool
+	schemaOwner, seatDrift, serviceDown, machineRow bool
 }
 
 // friendFact is one configured friend as the preflight's fakes report it.
@@ -117,7 +119,7 @@ func (e exitErr) ExitCode() int { return e.code }
 func (w *world) vars() map[string]string {
 	env := map[string]string{"PATH": "bin", "HOME": testHome, "NOVA_REDIS_ADDR": testRedis, "NOVA_SPRINT_ACTOR": "ada"}
 	if w.configEmpty {
-		env["NOVA_CONFIG_SEAT"] = "ada"
+		env["NOVA_SPRINT_ACTOR"] = "ada"
 		env["NOVA_PG_DSN"] = "postgres://nova_config@127.0.0.1:5432/nova"
 		env["NOVA_PG_PASSWORD_ENV"] = "NOVA_PG_CONFIG_PASSWORD"
 	}
@@ -158,9 +160,13 @@ func (w *world) exec(name string, args ...string) (string, error) {
 	if refused != "" {
 		w.t.Fatalf("the doctor ran a command the real tool refuses: %q: %s", cmd, refused)
 	}
+	if (a.verb == "nova-config login" && !a.has("check")) || (a.verb == "nova-config migrate" && !a.has("dry-run")) || a.verb == "nova-sprint seat install" || a.verb == "nova-redis fn load" || (a.verb == "nova-config apply" && !a.has("check")) {
+		w.writingCalls++
+	}
+
 	switch a.verb {
 	case "nova-redis acl check", "nova-redis fn check":
-		if a.flags["addr"] != testRedis {
+		if a.flags["redis"] != testRedis && a.flags["addr"] != testRedis {
 			break
 		}
 		if a.verb == "nova-redis fn check" {
@@ -177,7 +183,7 @@ func (w *world) exec(name string, args ...string) (string, error) {
 		case !w.aclOK:
 			// As the real tool: the drift is on stdout at exit 1, its remedy a command and then prose.
 			return "NOTE ACL DEFAULT on=false nopass=false\nACL CHECK DRIFT users=4 differ=1 library=abc store=" + testRedis +
-				" remedy=\"nova-redis acl apply --addr " + testRedis + " sets the users that differ\"\n", exitErr{1, ""}
+				" remedy=\"nova-redis acl apply --redis " + testRedis + " sets the users that differ\"\n", exitErr{1, ""}
 		}
 		return "NOTE ACL DEFAULT on=false nopass=false\nACL CHECK OK users=4 library=abc store=" + testRedis + "\n", nil
 	case "nova-config login":
@@ -190,13 +196,18 @@ func (w *world) exec(name string, args ...string) (string, error) {
 		return "LOGIN file=/x dsn=postgres://h/db resolves=yes\n", nil
 	case "nova-config status":
 		if w.schemaHave > 0 && w.schemaWant > w.schemaHave {
-			return fmt.Sprintf("CONFIG STATUS pg=h schema=%d binary=%d\n", w.schemaHave, w.schemaWant),
+			return fmt.Sprintf("CONFIG STATUS pg=nova_admin@127.0.0.1:5432/nova schema=%d\n", w.schemaHave),
 				exitErr{1, fmt.Sprintf("nova-config status REFUSED: schema config is at version %d and this binary carries %d; run: nova-update apply --version v9 && nova-sprint server switch", w.schemaHave, w.schemaWant)}
 		}
 		if !w.schema {
 			return "CONFIG STATUS pg=h schema=0 redis=-\n", exitErr{1, "nova-config status REFUSED: schema config is not there yet; run: nova-config migrate"}
 		}
 		return "CONFIG STATUS pg=h schema=3\n", nil
+	case "nova-config migrate":
+		if w.schemaOwner {
+			return "MIGRATE NOT-OWNED table=machine owner=nova_config role=nova_admin\n", exitErr{1, ""}
+		}
+		return "CONFIG MIGRATE pg=nova_config@127.0.0.1:5432/nova applied=0 dry_run=true ready=yes\n", nil
 	case "nova-config apply":
 		if !a.has("check") || a.flags["redis"] != testRedis {
 			break
@@ -237,10 +248,21 @@ func (w *world) exec(name string, args ...string) (string, error) {
 		if a.flags["actor"] != "ada" || a.flags["redis"] != testRedis {
 			break
 		}
+		if w.seatDrift {
+			return "SEAT holder=ada generation=1\nDRIFT key=wrong\n", exitErr{1, ""}
+		}
 		return w.seatText()
+	case "nova-sprint seat check":
+		if w.serviceDown {
+			return "MACHINERY inbox DOWN remedy=\"nova-sprint seat install --harness claude --target /home/ada/session --actor ada --redis 127.0.0.1:6390\"\n", exitErr{1, ""}
+		}
+		return "MACHINERY server OK\nMACHINERY inbox OK\nMACHINERY versions OK\nMACHINERY fleet DOWN held=1\nMACHINERY queue DOWN review=2\nMACHINERY push DOWN pending=true\nMACHINERY DOWN n=3\n", nil
 	case "nova-sprint seat push":
-		if a.flags["actor"] != "ada" || a.flags["redis"] != testRedis || !a.has("json") || len(a.args) > 0 {
+		if a.flags["actor"] != "ada" || a.flags["redis"] != testRedis || len(a.args) > 0 {
 			break
+		}
+		if !a.has("json") {
+			return "PUSH DOWN remedy=\"nova-sprint seat install --harness claude --target /home/ada/session --actor ada --redis " + testRedis + "\"\n", exitErr{1, ""}
 		}
 		return w.pushText()
 	case "nova-sprint view coordinator":
@@ -335,6 +357,9 @@ func (w *world) coordJSON() (string, error) {
 	}{View: "coordinator"}
 	for _, f := range w.friendFacts() {
 		doc.Rows = append(doc.Rows, row{K: "f:" + f.name, St: f.state, W: f.asserted, Wd: f.width})
+	}
+	if w.machineRow {
+		doc.Rows = append(doc.Rows, row{K: "m:bench", St: "up", W: 32, Wd: 32})
 	}
 	doc.N.Review, doc.N.Merge = w.review, w.lander
 	b, err := json.Marshal(doc)
@@ -453,9 +478,9 @@ func (w *world) run(cmd string) {
 	switch {
 	case a.verb == "nova-redis serve" && f["bind"] == "127.0.0.1" && f["port"] == "6390" && f["dir"] == testHome+"/nova/stores/redis":
 		w.redisUp = true
-	case a.verb == "nova-redis fn load" && f["addr"] == testRedis:
+	case a.verb == "nova-redis fn load" && f["redis"] == testRedis:
 		w.fnLoaded = true
-	case a.verb == "nova-redis acl apply" && f["addr"] == testRedis:
+	case a.verb == "nova-redis acl apply" && f["redis"] == testRedis:
 		w.aclOK = true
 	case a.verb == "nova-config migrate":
 		w.schema = true
@@ -478,11 +503,17 @@ func (w *world) run(cmd string) {
 			w.t.Fatalf("the dry run is not the empty config's secret-backed command: %q", cmd)
 		}
 	case a.verb == "nova-sprint seat install":
-		if f["harness"] != "grok" || f["target"] != testHome+"/session" || f["actor"] != "ada" || f["redis"] != testRedis {
+		if f["harness"] != "claude" || f["target"] != testHome+"/session" || f["actor"] != "ada" || f["redis"] != testRedis {
 			w.t.Fatalf("seat install is not the seat's own: %q", cmd)
 		}
-		w.installs++
+		if !w.pushInstalled {
+			w.installs++
+		}
 		w.pushInstalled = true
+		if w.pushNonce == "" {
+			w.pushNonce = "check-1"
+			w.noncesIssued++
+		}
 	case a.verb == "nova-sprint seat pong":
 		if f["actor"] != "ada" || f["redis"] != testRedis || len(a.args) != 1 || a.args[0] == "" || a.args[0] != w.pushNonce {
 			w.t.Fatalf("the pong is not the outstanding nonce: %q nonce=%s", cmd, w.pushNonce)
@@ -544,7 +575,7 @@ var jobArgs = map[string][]string{
 	"messaging":   {"--job", "messaging"},
 	"friend":      {"--job", "friend", "--as", "bob", "--dir", "/home/bob", "--config-dir", "/home/bob/.claude"},
 	"worker":      {"--job", "worker", "--redis-secrets", "/secrets", "--redis-seat", "store-seat", "--redis-key", "/keys/store", "--redis-sops", "/bin/sops", "--redis-secret", "NOVA_REDIS_PASSWORD"},
-	"coordinator": {"--job", "coordinator", "--as", "ada", "--redis-secrets", "/secrets", "--redis-seat", "store-seat", "--redis-key", "/keys/store", "--redis-sops", "/bin/sops", "--redis-secret", "NOVA_REDIS_PASSWORD"},
+	"coordinator": {"--job", "coordinator", "--as", "ada", "--harness", "claude", "--dir", "/home/ada/session", "--redis-secrets", "/secrets", "--redis-seat", "store-seat", "--redis-key", "/keys/store", "--redis-sops", "/bin/sops", "--redis-secret", "NOVA_REDIS_PASSWORD"},
 }
 
 // The acceptance: one dependency is deliberately missing; nova-doctor --job names it as
@@ -649,7 +680,7 @@ func TestDoctorNamesTheFirstMissingDependencyAndItsFix(t *testing.T) {
 
 	// Coordinator preflight (Glenn, 2026-10-08). Each case is the same doctor: one next
 	// command, fake clock and servers, no live service. The cold reader is the world's run.
-	t.Run("empty config names a secret-backed dry run and leaves login unrecorded", func(t *testing.T) {
+	t.Run("empty config names a secret-backed login and the doctor writes nothing", func(t *testing.T) {
 		t.Parallel()
 		w := healthyWorld(t)
 		w.configEmpty = true
@@ -660,20 +691,55 @@ func TestDoctorNamesTheFirstMissingDependencyAndItsFix(t *testing.T) {
 		_, next, ok := strings.Cut(summary, " next: ")
 		require.True(t, ok, summary)
 		assert.Equal(t, 1, strings.Count(strings.Join(lines, "\n"), " next: "))
-		want := "nova-sprint seat install --harness grok --target /home/ada/session --actor ada --redis 127.0.0.1:6390 --dry-run --config-seat ada --config-dsn postgres://nova_config@127.0.0.1:5432/nova --config-password-env NOVA_PG_CONFIG_PASSWORD"
+		want := "nova-config login --store /secrets --as store-seat --key /keys/store --sops /bin/sops --secret NOVA_PG_CONFIG_PASSWORD --dsn postgres://nova_config@127.0.0.1:5432/nova --actor ada"
 		assert.Equal(t, want, next)
 		_, refused := parseArgv(next)
 		assert.Empty(t, refused, next)
 		assert.NotContains(t, next, "hunter2")
 		assert.Equal(t, 0, w.installs)
 		assert.True(t, w.configEmpty)
+		assert.Zero(t, w.writingCalls, "the doctor probes perform no write")
 		assert.True(t, w.schema)
 		w.run(next)
 		code, lines = w.doctor(jobArgs["coordinator"]...)
-		assert.Equal(t, 2, code, lines)
-		assert.True(t, w.configEmpty)
+		assert.Equal(t, 0, code, lines)
+		assert.False(t, w.configEmpty)
 		assert.Equal(t, 0, w.installs)
-		assert.Contains(t, lines[len(lines)-1], "first_missing=store-login ")
+	})
+
+	t.Run("owner migration precedes switch", func(t *testing.T) {
+		t.Parallel()
+		w := healthyWorld(t)
+		w.schemaHave, w.schemaWant, w.schemaOwner = 35, 36, true
+		code, lines := w.doctor(jobArgs["coordinator"]...)
+		assert.Equal(t, 2, code)
+		assert.Contains(t, lines[len(lines)-1], "nova-config migrate --pg postgres://nova_config@127.0.0.1:5432/nova")
+	})
+	t.Run("seat drift is not a generation receipt", func(t *testing.T) {
+		t.Parallel()
+		w := healthyWorld(t)
+		w.seatDrift = true
+		code, lines := w.doctor(jobArgs["coordinator"]...)
+		assert.Equal(t, 2, code)
+		assert.Contains(t, lines[len(lines)-1], "first_missing=seat-agreement")
+		assert.Contains(t, lines[len(lines)-1], "--repair")
+	})
+	t.Run("missing installed service precedes push", func(t *testing.T) {
+		t.Parallel()
+		w := healthyWorld(t)
+		w.serviceDown = true
+		code, lines := w.doctor(jobArgs["coordinator"]...)
+		assert.Equal(t, 2, code)
+		assert.Contains(t, lines[len(lines)-1], "first_missing=seat-service")
+		assert.Contains(t, lines[len(lines)-1], "seat install")
+	})
+	t.Run("fleet row width does not assert working jobs", func(t *testing.T) {
+		t.Parallel()
+		w := healthyWorld(t)
+		w.machineRow = true
+		code, lines := w.doctor(jobArgs["coordinator"]...)
+		assert.Equal(t, 0, code)
+		assert.Contains(t, strings.Join(lines, "\n"), "fleet m:bench state=up width=32 running=- working=0")
 	})
 
 	t.Run("schema 35 and binary 36 migrate before a binary switch", func(t *testing.T) {
@@ -704,7 +770,7 @@ func TestDoctorNamesTheFirstMissingDependencyAndItsFix(t *testing.T) {
 		assert.Contains(t, out, "DOCTOR push-roundtrip fail pending: no root bus and sprint answer")
 		_, next, ok := strings.Cut(lines[len(lines)-1], " next: ")
 		require.True(t, ok, lines[len(lines)-1])
-		assert.Contains(t, next, "nova-sprint inbox --wait --push seat ")
+		assert.Contains(t, next, "nova-sprint seat install --harness claude ")
 		w.run(next)
 		assert.False(t, w.busProven)
 		assert.False(t, w.sprintProven)
@@ -749,8 +815,8 @@ func TestDoctorNamesTheFirstMissingDependencyAndItsFix(t *testing.T) {
 		assert.NotContains(t, next, "check-1")
 		w.run(next)
 		assert.Equal(t, 1, w.installs)
-		assert.Equal(t, 0, w.noncesIssued)
-		assert.Empty(t, w.pushNonce)
+		assert.Equal(t, 1, w.noncesIssued)
+		assert.Equal(t, "check-1", w.pushNonce)
 
 		code, lines = w.doctor(jobArgs["coordinator"]...)
 		assert.Equal(t, 2, code, lines)
@@ -760,8 +826,7 @@ func TestDoctorNamesTheFirstMissingDependencyAndItsFix(t *testing.T) {
 		assert.Contains(t, lines[len(lines)-1], "first_missing=push-roundtrip ")
 		_, next, ok = strings.Cut(lines[len(lines)-1], " next: ")
 		require.True(t, ok)
-		assert.Equal(t, "nova-sprint inbox --wait --push seat --actor ada --redis "+testRedis, next)
-		assert.NotContains(t, next, "install")
+		assert.Equal(t, "nova-sprint seat install --harness claude --target /home/ada/session --actor ada --redis "+testRedis, next)
 		assert.NotContains(t, next, "--sent")
 		assert.NotContains(t, next, "check-1")
 		w.run(next)
@@ -916,7 +981,7 @@ func TestDoctorJobShapeAndRefusals(t *testing.T) {
 	w := healthyWorld(t)
 	w.redisUp = false
 	var out, errb bytes.Buffer
-	code := Main(NewRegistry(), w.env(), "", []string{"--job", "coordinator", "--as", "ada", "--json"}, strings.NewReader(""), &out, &errb)
+	code := Main(NewRegistry(), w.env(), "", []string{"--job", "coordinator", "--as", "ada", "--harness", "claude", "--dir", "/home/ada/session", "--json"}, strings.NewReader(""), &out, &errb)
 	assert.Equal(t, 2, code)
 	assert.Less(t, out.Len(), 4096, "the JSON is bounded")
 	var rep JobReport
@@ -941,7 +1006,7 @@ func TestDoctorJobShapeAndRefusals(t *testing.T) {
 func TestRemedyAndClip(t *testing.T) {
 	t.Parallel()
 	for said, want := range map[string]string{
-		`X FAILED remedy="nova-redis acl apply --addr a:1"`:                "nova-redis acl apply --addr a:1",
+		`X FAILED remedy="nova-redis acl apply --redis a:1"`:               "nova-redis acl apply --redis a:1",
 		"nova-config status REFUSED: no schema; run: nova-config migrate":  "nova-config migrate",
 		"nova-config status REFUSED: bad flag; run: nova-config status -h": "def",
 		"something else":  "def",
