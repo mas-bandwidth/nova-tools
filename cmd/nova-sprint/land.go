@@ -348,6 +348,10 @@ type lander struct {
 	// process, which a hand land starts empty every run and the server every start
 	baseCount bool
 	baseWhy   string
+	// baseAbsent says the last build's fetch of the base alone failed with origin's
+	// words for a ref it does not hold (notOnOrigin). The batch is the dead-base
+	// fact (deadBaseRefused), not a fetch to retry.
+	baseAbsent bool
 	// baseNotes is what the pass's re-check of the bases that stopped streams did (baseRecheck)
 	baseNotes []string
 	// held is each clone's land lock this land holds (hold), released as it ends
@@ -579,6 +583,8 @@ func (l *lander) report(failed bool, pruned []pruneResult, stdout, stderr io.Wri
 			fmt.Fprintf(w, "NOTE land would report this as merge --%s and stop stream %s; nothing was reported (dry run)\n", b.WouldRecord, oneline.Field(b.Stream))
 		case b.Fact == "conflict" && !b.stopped:
 			fmt.Fprintf(w, "NOTE the card is reworked at the tip and stream %s goes on; the seat is told\n", oneline.Field(b.Stream))
+		case b.Fact == "dead-base":
+			fmt.Fprintf(w, "NOTE stream %s is not stopped: these cards are held from landing until their judgment is answered or their base re-pointed, and the rest of the stream lands; run: nova-sprint inbox\n", oneline.Field(b.Stream))
 		case b.Fact != "":
 			fmt.Fprintf(w, "NOTE the stream is stopped (%s); run: nova-sprint inbox\n", b.Fact)
 		case b.Status == "refused" && !l.dry:
@@ -970,6 +976,32 @@ func (l *lander) missingBase(b landBatch, why string) (bool, bool) {
 	return false, true
 }
 
+// deadBaseRefused records a batch whose base is not on origin through the merge step
+// (sprint.MergeReq.DeadBase): each card marked and one judgment raised for it, the stream not
+// stopped, and the batch refused once with the sentence of each card. The land pass skips the
+// cards after it (sprint.DeadBaseHeld) and goes on to the rest of the stream; a step that did
+// not record it leaves the cards to be tried again by the next pass.
+func (l *lander) deadBaseRefused(b landBatch, stream string, cards []landCard) (int, bool, bool) {
+	var why []string
+	for _, c := range cards {
+		why = append(why, sprint.DeadBaseWhy(c.id, b.Base))
+	}
+	id := "<id>"
+	if len(cards) == 1 {
+		id = cards[0].id
+	}
+	b.Status, b.Reason = "refused", strings.Join(why, "; ")+"; run: nova-sprint card base "+id+" <a branch on origin>"
+	res, err := l.step(sprint.MergeReq{Stream: stream, DeadBase: b.Base, Who: l.c.actor}, cards)
+	if code := stepExit(res, err); code != 0 {
+		b.Reason += "; the merge step did not record it (" + stepWhy(res, err) + "); " + againRemedy(stream)
+		l.keep(b)
+		return 0, false, true
+	}
+	b.Fact = "dead-base"
+	l.keep(b)
+	return len(cards), true, true
+}
+
 // againRemedy is the one remedy land names when a report did not go through:
 // land again, which rereads the current queue and lets its own checks decide.
 // A bare merge step is never offered: after a rework the queue starts with the
@@ -1229,12 +1261,16 @@ func (l *lander) cut(ctx context.Context, dir, stream string, cards []landCard, 
 	}
 	l.stage("fetch", "git fetch")
 	start := time.Now()
+	l.baseAbsent = false
 	_, err := l.fetched(ctx, dir, fetch...)
 	if err != nil {
 		_, err = l.fetched(ctx, dir, "fetch", "--no-tags", "origin", baseRef)
 	}
 	since(&t.Fetch, start)
 	if err != nil {
+		// the base alone fetched and origin holds no such branch: a dead base, the batch's
+		// cards' fact, never retried as a fetch that failed (deadBaseRefused)
+		l.baseAbsent = containsAny(err.Error(), notOnOrigin)
 		return landCut{}, "the fetch of origin in " + dir + " failed: " + firstLine("", err)
 	}
 	l.stage("merge", "git merge")
