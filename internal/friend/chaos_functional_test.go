@@ -292,6 +292,9 @@ func newChaosRig(t *testing.T) *chaosRig {
 	go func() { defer close(r.done); _ = d.Run(ctx) }()
 	t.Cleanup(func() { cancel(); <-r.done; r.amyBeat.Stop() })
 
+	// The fake session must answer a challenge before the sprint counts bob up;
+	// a daemon beat alone is never presence evidence.
+	r.ping()
 	r.addCards(4)
 	r.step(2 * time.Second)
 	require.Equal(t, sprint.Up, r.friendStatus("bob"), "bob is up from the start")
@@ -311,6 +314,14 @@ func (r *chaosRig) sessionPong(ctx context.Context, nonce string) {
 	r.pong, r.pongSet, r.answer = Pong{Nonce: nonce, At: now, To: "coord", Width: 2}, true, now
 	r.pongMu.Unlock()
 	_, _ = r.session.Send(ctx, bus.Message{From: "bob", To: []string{"coord"}, Subject: PongSubject, Body: PongLine(nonce, 0, 0, 2) + "\n"})
+	// This is the nonce the fake harness actually received and answered. Carry
+	// its proof into the twin server, as the native friend's beat does.
+	r.mu.Lock()
+	_, proof, err := r.st.FriendBeatProof(ctx, "bob", sprint.FriendReport{Active: now}, nil,
+		sprint.BeatWords{Run: "chaos", Check: nonce, Pong: nonce})
+	r.mu.Unlock()
+	assert.NoError(r.t, err)
+	assert.True(r.t, proof.Proved, "the answered challenge proves the fake session")
 }
 
 // ping is the coordinator's ping to bob with a fresh nonce, and a card's word
