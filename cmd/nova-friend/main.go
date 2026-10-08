@@ -893,7 +893,6 @@ or WAIT-PONG NONE at exit 1.`,
 			{
 				Name:    "watch",
 				Usage:   "watch --as <coordinator> [--timeout <duration>] [--state-dir <d>] [--redis <addr>] [--json]",
-				Example: "watch --as ada --timeout 10m",
 				Effect:  tool.Inspection + ": the cursor file in the state directory is rewritten",
 				ExitTable: "0 a wake came: WATCH OK; 1 WATCH NONE, --timeout ran out; 2 could not run (a flag, a name the roster lacks, " +
 					"a store that did not answer, a cursor file that cannot be read or saved).",
