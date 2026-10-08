@@ -869,6 +869,7 @@ func (c *nativeChild) Stop() int {
 	pid := 0
 	if c.proc != nil && ((c.procStamp == "-" && !c.Done()) || (c.procStamp != "-" && swarm.StartStamp(c.proc.Pid) == c.procStamp)) {
 		pid = c.proc.Pid
+		// ignored: final exit is checked; a failed TERM reaches group escalation.
 		_ = c.proc.Signal(syscall.SIGTERM)
 	}
 	c.stopOnce.Do(func() { go c.stopGroupAfterGrace() })
@@ -904,8 +905,13 @@ func (c *nativeChild) stopGroupAfterGrace() {
 	} else if groupRunnable(pid) {
 		return // leader identity is gone; do not signal a possibly reused group
 	}
-	_ = atomicfile.Write(filepath.Join(c.groupDir, nativeGroupQuiescedName), []byte(strconv.Itoa(pid)+" "+stamp+"\n"), 0o600)
+	// ignored: a failed proof write keeps STOP debt owed; it cannot authorize return.
+	if err := atomicfile.Write(filepath.Join(c.groupDir, nativeGroupQuiescedName), []byte(strconv.Itoa(pid)+" "+stamp+"\n"), 0o600); err != nil {
+		// ignored: the missing durable marker keeps STOP debt owed.
+		return // without a durable marker, the member must keep stop debt
+	}
 	if c.proc != nil && !c.Done() && c.procStamp != "-" && swarm.StartStamp(c.proc.Pid) == c.procStamp {
+		// ignored: StopConfirmed still waits for native's actual exit.
 		_ = c.proc.Kill() // the group is now proven gone
 	}
 }

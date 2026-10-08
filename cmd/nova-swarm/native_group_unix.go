@@ -24,6 +24,7 @@ func nativeGroupCommand(ctx context.Context, path string, args ...string) (*exec
 	cmd.ExtraFiles = []*os.File{rd}
 	ownChildGroup(cmd)
 	release := func() error {
+		// ignored: release reports the write and writer close; reader is unused.
 		_ = rd.Close()
 		_, writeErr := fmt.Fprintln(wr, "go")
 		closeErr := wr.Close()
@@ -32,6 +33,11 @@ func nativeGroupCommand(ctx context.Context, path string, args ...string) (*exec
 		}
 		return closeErr
 	}
-	abort := func() { _ = rd.Close(); _ = wr.Close() }
+	abort := func() {
+		// ignored: abort sends no "go" word, so this cannot authorize exec.
+		_ = rd.Close()
+		// ignored: abort releases the writer without the "go" word.
+		_ = wr.Close()
+	}
 	return cmd, release, abort, nil
 }

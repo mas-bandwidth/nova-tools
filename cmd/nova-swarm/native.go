@@ -1213,13 +1213,17 @@ func start(s *nativeRunState, attempt int, errOut io.Writer) (*nativeStarted, na
 	started := swarm.StartStamp(pgid)
 	if err := writeNativeGroupReceipt(s.prep.cfg.slotDir, pgid, started); err != nil {
 		abortGate()
+		// ignored: the gate never released; kill is cleanup for a refused launch.
 		_ = cmd.Process.Kill()
+		// ignored: a gate-aborted child has no result to report.
 		_ = cmd.Wait()
 		refuseNative(errOut, fmt.Sprintf("the child group could not be recorded: %s", oneline.Escape(err.Error())))
 		return nil, nativeRunResult{}, 2
 	}
 	if err := releaseGate(); err != nil {
+		// ignored: no successful gate release; kill is cleanup for refusal.
 		_ = cmd.Process.Kill()
+		// ignored: a gate-refused child has no result to report.
 		_ = cmd.Wait()
 		refuseNative(errOut, fmt.Sprintf("the child gate could not be released: %s", oneline.Escape(err.Error())))
 		return nil, nativeRunResult{}, 2

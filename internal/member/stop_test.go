@@ -177,6 +177,7 @@ func TestStoppedParentExitKeepsReturnOwedUntilGroupProof(t *testing.T) {
 }
 
 func TestStopWaitsForInFlightStartAndCancelsItsChild(t *testing.T) {
+	t.Parallel()
 	entered := make(chan struct{})
 	release := make(chan struct{})
 	m, _, r, _ := stopRig(Config{As: "m", Width: 1, Background: true, Admit: func(Packet) error {
@@ -201,6 +202,7 @@ func TestStopWaitsForInFlightStartAndCancelsItsChild(t *testing.T) {
 }
 
 func TestAdmissionRefusalDuringStopReturnsWithoutStarting(t *testing.T) {
+	t.Parallel()
 	m, s, r, _ := stopRig(Config{As: "m", Width: 1, Admit: func(Packet) error { return fmt.Errorf("fresh queue says STOPPED") }})
 	p := pk("c1")
 	m.start(p)

@@ -15,6 +15,7 @@ import (
 )
 
 func TestDarwinBirthIdentityAndRecoveredResistantGroupStop(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	ready := filepath.Join(dir, "ready")
 	cmd, release, abort, err := nativeGroupCommand(context.Background(), "/bin/sh", "-c", "trap '' TERM; echo ready > \"$1\"; while :; do sleep 1; done", "sh", ready)

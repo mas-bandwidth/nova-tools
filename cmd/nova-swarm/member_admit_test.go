@@ -10,6 +10,7 @@ import (
 )
 
 func TestAdmitMemberLaunchRequiresFreshRunningClaim(t *testing.T) {
+	t.Parallel()
 	p := member.Packet{Card: "c1", Gen: 2, Epoch: 7}
 	run := func(_ ...string) (int, []byte) {
 		return 0, []byte(`{"epoch":7,"machine":"RUNNING","cards":[{"id":"c1","col":"working","gen":2}]}`)
