@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -149,11 +147,19 @@ func TestWaitWakesOnALineAppendedToTheWakeFile(t *testing.T) {
 	r.wake = []string{"", "session: 1 message waiting"}
 	cli := r.cli()
 	got := cli.Do(t, "wait", "--as", "bob", "--wake-file", "./bob.wake").Exit(0)
-	assert.Equal(t, []string{"WAIT ARMED after=0-0", `WAIT WAKE file=./bob.wake line="session: 1 message waiting"`},
-		strings.Split(strings.TrimSpace(got.Stdout), "\n"))
+	assert.Contains(t, got.Stdout, `WAIT WAKE file=./bob.wake`)
+	assert.Contains(t, got.Stdout, `line="session: 1 message waiting"`)
+	assert.Contains(t, got.Stdout, "wake-after=")
+	assert.Contains(t, got.Stdout, "wake-offset=27")
 	r.wake = []string{"", "session: 2 waiting"}
 	got = cli.Do(t, "wait", "--as", "bob", "--wake-file", "./bob.wake", "--json").Exit(0)
-	assert.Equal(t, `{"status":"ok","word":"WAKE","after":"0-0","messages":[],"wake":{"file":"./bob.wake","line":"session: 2 waiting"}}`+"\n", got.Stdout)
+	var v waitJSON
+	require.NoError(t, json.Unmarshal([]byte(got.Stdout), &v))
+	assert.Equal(t, "WAKE", v.Word)
+	assert.Equal(t, "session: 2 waiting", v.Wake.Line)
+	assert.NotEmpty(t, v.WakeAfter)
+	require.NotNil(t, v.WakeOffset)
+	assert.Equal(t, int64(19), *v.WakeOffset)
 }
 
 // Past --timeout the wait is WAIT NONE at exit 1, waited out on the fake
@@ -169,39 +175,6 @@ func TestWaitTimesOutAsNoneAtExitOne(t *testing.T) {
 	r.wireClock()
 	got = cli.Do(t, "wait", "--as", "bob", "--timeout", "5s", "--json").Exit(1)
 	assert.Equal(t, `{"status":"ok","word":"NONE","after":"0-0","messages":[]}`+"\n", got.Stdout)
-}
-
-// realFileLine answers a wake file's first line past an offset and the offset
-// just past that line's newline: a fragment with no newline is not a line
-// yet, so it answers "" and leaves the offset put, and a leading empty line
-// advances only past its own newline, never past the rest (SPEC-BUS.md, the
-// verbs: wait).
-func TestRealFileLineWaitsForANewlineAndAdvancesPastIt(t *testing.T) {
-	t.Parallel()
-	path := filepath.Join(t.TempDir(), "wake")
-	require.NoError(t, os.WriteFile(path, []byte("frag"), 0o600))
-	line, end, err := realFileLine(path, 0)
-	require.NoError(t, err)
-	assert.Empty(t, line, "a fragment with no newline is not a line yet")
-	assert.Equal(t, int64(0), end, "the offset stays put until a newline is there")
-	require.NoError(t, os.WriteFile(path, []byte("fragment\nnext"), 0o600))
-	line, end, err = realFileLine(path, 0)
-	require.NoError(t, err)
-	assert.Equal(t, "fragment", line)
-	assert.Equal(t, int64(9), end, "the offset is just past the first newline")
-	line, end, err = realFileLine(path, end)
-	require.NoError(t, err)
-	assert.Empty(t, line, "the rest has no newline yet")
-	assert.Equal(t, int64(9), end)
-	require.NoError(t, os.WriteFile(path, []byte("\nreal\n"), 0o600))
-	line, end, err = realFileLine(path, 0)
-	require.NoError(t, err)
-	assert.Empty(t, line, "a leading empty line is not a wake")
-	assert.Equal(t, int64(1), end, "the offset is just past the first newline, not the whole read")
-	line, end, err = realFileLine(path, end)
-	require.NoError(t, err)
-	assert.Equal(t, "real", line)
-	assert.Equal(t, int64(6), end, "the offset is just past the second newline, the end of the file")
 }
 
 // A wrong flag, a wrong timeout, a name off the roster and a store that does

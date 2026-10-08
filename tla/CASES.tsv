@@ -511,3 +511,5 @@ MCStopReturnAuthorityReachEpoch.cfg	MCStopReturnAuthority.tla	invariant	WitnessE
 MCStopReturnAuthorityReachReturnStart.cfg	MCStopReturnAuthority.tla	invariant	WitnessReturnStart	ignore-terminal	stopauthority	required	-
 MCStopReturnAuthorityCancelStarve.cfg	MCStopReturnAuthority.tla	temporal	AuthorityEventuallyReturned	ignore-terminal	stopauthority	required	-
 MCStopReturnAuthorityStoreStarve.cfg	MCStopReturnAuthority.tla	temporal	AuthorityEventuallyReturned	ignore-terminal	stopauthority	required	-
+MCWakeCursor.cfg	MCWakeCursor.tla	pass	-	ignore-terminal	wakecursor	required	-
+MCWakeCursorBrokenRearm.cfg	MCWakeCursor.tla	invariant	NoSkipped	ignore-terminal	wakecursor	required	-
