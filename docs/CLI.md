@@ -2680,7 +2680,7 @@ cut that is not ahead of `origin/dev`. It merges `origin/dev` into the cut witho
 If that merge conflicts, it raises one judgment naming the files, `JUDGMENT promote conflict ... files=<a,b>`, and stops; nothing is cut or pushed, and the tool resolves nothing. A clean
 cut is gated (`--check`), pushed, and its pull request opened. The verb waits on the pull
 request's checks, queues it once they pass, and watches the queue. When the queue merges it,
-the verb records `promoted --sha <merge> --branch <sprint branch> --tip <sha> --target <ref> --cards <ids> --evidence <text>` in the store, which verifies in dev only the cards that tip carried. A failed check or merge-group run prints `promoted --failed <why>` and
+the verb records `promoted --sha <merge> --branch <sprint branch> --tip <sha> --target <ref> --evidence <text>` in the store. The tip is the frozen one the cut was taken from (`promote.tip`), not a later sprint tip, and the call names no `--cards`, so the store verifies in dev only the cards that tip carried. A failed check or merge-group run records `promoted --failed <why> --branch <sprint branch> --tip <sha>` in the store, so the failure stays until a later promotion merges, and prints that line, and
 raises one judgment naming the check, `JUDGMENT merge-group failed ... check=<name>`, with
 the failing log's tail. A pull request closed without a merge clears the promotion in
 flight with one judgment naming it, `JUDGMENT closed-pr ... pr=<n>`, and the next pass cuts
