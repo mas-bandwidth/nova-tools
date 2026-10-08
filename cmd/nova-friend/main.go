@@ -702,10 +702,10 @@ example: nova-friend check --as ada bob`,
 				Run: w.check,
 			},
 			{
-				Name:    "host",
-				Usage:   "host --as <me> --harness <h> --dir <d> [--prompt <regexp>] [--state-dir <d>] [--dry-run] [--json] -- <launch command...>",
-				Effect:  tool.LocalWrite + ": starts the launch command in a new detached tmux session friend-<me> and saves the session and prompt in the state directory",
-				DryRun:  true,
+				Name:   "host",
+				Usage:  "host --as <me> --harness <h> --dir <d> [--prompt <regexp>] [--state-dir <d>] [--dry-run] [--json] -- <launch command...>",
+				Effect: tool.LocalWrite + ": starts the launch command in a new detached tmux session friend-<me> and saves the session and prompt in the state directory",
+				DryRun: true,
 				Detail: `Hosts a terminal harness (OpenCode, Grok, Aider, any TUI) in tmux, so the friend's session is the TUI in
 the pane: the daemon types into it as a person would, and a person can attach and watch. Runs
 tmux new-session -d -s friend-<me> -c <dir> -- <launch command...>; refuses when friend-<me> exists.
@@ -724,7 +724,8 @@ Output: HOST OK session=friend-<name> dir=<d> attach="tmux attach -t friend-<nam
 HOST REFUSED: friend-<name> runs already; run: tmux attach -t friend-<name>; --dry-run prints
 HOST DRY-RUN session= dir= command= (the tmux command) and starts and saves nothing. JSON fields:
 session, dir, attach (command on a dry run). Exit 0 started, 1 refused, 2 could not run (no launch
-command, no prompt pattern for the harness, tmux missing or failing).`,
+command, no prompt pattern for the harness, tmux missing or failing).
+example: nova-friend host --as bob --harness aider --dir ./bob --dry-run -- aider`,
 				Flags: func(f *tool.Flags) {
 					f.Required("as", "your name, a nova-config friend row")
 					f.Required("harness", "the harness the TUI is, for its idle prompt pattern: "+strings.Join(hostHarnesses(), ", ")+" (other: name --prompt)")
@@ -857,9 +858,9 @@ or WAIT-PONG NONE at exit 1.`,
 				Run: w.waitPong,
 			},
 			{
-				Name:    "watch",
-				Usage:   "watch --as <coordinator> [--timeout <duration>] [--state-dir <d>] [--redis <addr>] [--json]",
-				Effect:  tool.Inspection + ": the cursor file in the state directory is rewritten",
+				Name:   "watch",
+				Usage:  "watch --as <coordinator> [--timeout <duration>] [--state-dir <d>] [--redis <addr>] [--json]",
+				Effect: tool.Inspection + ": the cursor file in the state directory is rewritten",
 				ExitTable: "0 a wake came: WATCH OK; 1 WATCH NONE, --timeout ran out; 2 could not run (a flag, a name the roster lacks, " +
 					"a store that did not answer, a cursor file that cannot be read or saved).",
 				Detail: `The coordinator's wake, one run. A session that runs this in the background is re-invoked when it exits, so
@@ -1289,7 +1290,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 		Friend: name, Store: st, Now: w.now, Nonce: w.random, Record: record, Keep: keep,
 		Run:  fmt.Sprintf("r%d", w.now().Unix()), // this run, its generation: an answer proves only to the run that asked
 		Save: prover.Save(writePresence),
-		Go: w.checkGo,
+		Go:   w.checkGo,
 		Text: func(nonce string) string {
 			return friend.SessionCheckText(nonce, w.pongCommand(name, nonce, state, c.Str("redis"), dir), answerTo())
 		},
