@@ -1336,6 +1336,118 @@ The proof is the presence model's Ask then Answer within the bound
 (tla/FriendPresence.tla); `install` alone asks it before anything runs, and
 `run`'s proof is the daemon's own first check.
 
+## A gone session target (internal/friend/target.go; tla/DeliveryTarget.tla)
+
+The finding of 2026-10-06 (a friend, by her own diagnosis): the launchd service
+carried a fixed `--session` naming a Codex thread she had archived, so every
+delivery into her session was deferred and retried for hours; the daemon
+stayed up, the session proof and beat went stale, the sprint read her down,
+and nothing named the cause. She repaired it by hand, reinstalling against
+her current chat. Every harness that names a session has the same shape.
+
+- **Before a delivery is retried, the adapter reads the named session's
+  lifecycle** (`TargetChecker.CheckTarget` through `Gone`, which looks under
+  the session check's and the limit's gates): first in any batch turn after
+  one that was deferred or failed (not while the harness is at its limit:
+  that deferral is the harness's), before each session check, and at `run`'s
+  start in place of the push proof. A target in one of its harness's
+  terminal states is `TargetInvalid`: never a `Deferred`, so it is never
+  retried. A first try after a turn that ended at exit 0 reads nothing, so a
+  session gone since takes one try, deferred or failed, and the retry finds
+  it. An unnamed session (the newest of the directory, resolved at each
+  turn) has no target to read.
+- **A gone target at the start.** `run` finds it before the push proof: no
+  proof is asked and no check goes in; the daemon starts target-invalid
+  (`push proof: not asked: ...` on the record) and tells as below, so a
+  restart against a gone target is no crash loop and no silence.
+- **Target-invalid is told once, and nothing more is delivered.** The status
+  says `session=target-invalid` with `session_id=` (the target) and
+  `session_reason=` (the state and what was found); the record says it once;
+  the coordinator (the seat, else `--coordinator`) gets one `blocker`,
+  `friend <f>: session target-invalid: <harness> <target> is <state>`, and
+  the friend one NOTE on her own stream, `NOTE: your session <target> is
+  <state>`, each naming the target, the state found and the rebind line,
+  `nova-friend rebind --as <f> --session <id>`. A send that fails is tried
+  again the next step; the one already sent is not sent again. Every message
+  stays pending on her stream, never acked and never counted toward
+  `MaxDeliveries`, so the rebound session gets it.
+- **The daemon never unarchives a conversation and never guesses another
+  AI's newest session.** Only the friend names her session again.
+- **`nova-friend rebind --as <me> --session <id>`** (and `nova-friend install`
+  run again with a new `--session`) is the supported way to change the
+  target. Rebind reads the installed agent's plist, reads the new target's
+  lifecycle (a gone one is refused), records the new session on her
+  nova-config friend row (`nova-config friend set <me> --session <id> --as
+  <me>`; a row that cannot be written refuses the rebind, nothing changed),
+  writes the friend's push proof down on the bus (`rebound from <old> to
+  <new>`: nova-bus refuses her as deaf), records the new target in
+  `<state>/target.json` with every session it replaced `retired`, rewrites
+  `--session` in the plist and boots the agent out and in. The daemon then
+  starts on a fresh push proof, a SESSION CHECK round trip through the new
+  session, before any delivery is scheduled ("The push proof" above).
+  Install with a new `--session` records it the same way, on the row and in
+  `target.json` (a row it cannot write is a NOTE with the command).
+- **The row is the managed configuration; a reinstall cannot resurrect an
+  old id.** The friend row's `session` (docs/SPEC-CONFIG.md, `friend`) rides
+  friend sync onto her friends-table entry and her beat answers it
+  (`row_session=<id>`). A daemon whose `--session` is not the row's is
+  target-invalid with the state `superseded` (`TargetSuperseded`, every
+  harness that names a session) as soon as a beat answers, and tells as
+  above; the one exception is a row lagging a rebind made on this machine
+  (`target.json` names `--session` and retired the row's id), which friend
+  sync closes within a pass. On the same machine `run` and `install` refuse a
+  retired id at once; rebinding to an id takes it off the retired list. Before
+  the startup proof and before any turn, the daemon reads the managed row off
+  one beat that does not step the session check (`Daemon.Managed`). A beat that
+  fails, or names no row, holds delivery: no session check and no turn until a
+  later step's beat answers `row_mode=`. A row naming another session is
+  target-invalid before that check, so the old id receives nothing, including
+  the proof. A session already gone at the start gets no check either.
+- **The friend's row says it.** Her beat while the target is invalid says so
+  (`friend beat --target-invalid <id> --target-state <state: detail>`, with
+  no `--pong`, so the coordinator's pass raises no deaf judgment beside the
+  blocker), and the sprint's friends table reads `target-invalid` on her
+  row, its own status and never `down` (docs/SPEC-SPRINT.md section 1);
+  nothing is dealt to her. `nova-friend status` says
+  `session=target-invalid` and a NOTE with the rebind line; `nova-friend
+  check` gives the verdict `target-invalid`, its own word before `broken` and
+  never `down`, counted as `target_invalid=` in the summary.
+
+The terminal states each adapter reads (`TerminalStates`, `NoTerminalStates`;
+`TestEveryAdapterReadsItsTerminalSessionStates` covers each row):
+
+| Harness | State | How it is read |
+| --- | --- | --- |
+| codex | archived | the thread's rollout is under `CODEX_HOME/archived_sessions` and not under `sessions` |
+| codex | deleted | no rollout of the thread under `sessions` or `archived_sessions` |
+| codex | moved | the rollout header's `cwd` is another directory than `--dir` |
+| opencode | deleted | `opencode session list --format json` lists no session by that id |
+| opencode | moved | the listed session's directory is another directory |
+| dsh | deleted | no directory of that id under the sessions root, for any working directory |
+| dsh | moved | the session's directory is under another working directory's key |
+| grok | deleted | the named wake file (`--session`) does not exist |
+| tmux | deleted | a named pane (`%<n>`) tmux no longer lists; a session name is not terminal (host makes it again) and stays a deferral |
+| claude | none | the daemon is passive: `--session` names the wake file's friend, and the session's own wait reads the bus |
+| gemini | none | `--resume` takes an index or `latest`, resolved by the harness; nothing names a fixed session |
+| antigravity | none | the adapter delivers into the app's open conversation, found at each turn |
+| every harness that names a session | superseded | her nova-config friend row's `session`, as her beat answers it (`row_session=`), names another session than `--session` (`Target.Supersedes`) |
+
+The model is tla/DeliveryTarget.tla: a target that goes gone while messages wait,
+a retry that reads the lifecycle first, a rebind that records the target on
+her row, retires the old one and owes a fresh proof, friend sync carrying the
+row to her beat, the managed row fetched before the startup proof, and a
+service reinstalled elsewhere from an old command line. Its invariants: no
+retry is handed into a gone target; the daemon runs only on a proof through
+the target it names; the coordinator is told at most once per invalidation; a
+retired target is never bound again by a reinstall on the machine that retired
+it; nothing is handed into a session her row, as her beat answers it, does not
+name; a proof exists only after the row was fetched; and no message is acked
+undelivered. `MCDeliveryBrokenRetryUnchecked.cfg` (a retry that skips the
+read), `MCDeliveryBrokenRebindKeepsProof.cfg` (a rebind that keeps the old
+proof), `MCDeliveryBrokenRowIgnored.cfg` (a daemon that never reads her row's
+session) and `MCDeliveryBrokenProveFirst.cfg` (a startup proof before the
+fetch) each find their counterexample.
+
 ## The daemon writes every card she holds (internal/friend/inbox.go)
 
 On 2026-10-05 from about 18:59 the daemons of two friends held cards on
@@ -2422,8 +2534,9 @@ the log file, the bus store, the directory listing) so the verdict is a function
    among the newest twenty in the window. `delivered` and `failed` (JSON only) are the window's whole
    counts: the verdict reads them. And the session mark: `broken` and its `reason` when the status says
    the session is broken; `session_live`, the conversation a mailbox harness delivers into as the
-   status says it (`-` for every other harness); and `queued`, her harness's own queue not yet taken
-   as the status says it (codex; `-` for every other harness).
+   status says it (`-` for every other harness); `queued`, her harness's own queue not yet taken
+   as the status says it (codex; `-` for every other harness); and `target_invalid` (JSON only)
+   with the same `reason` when it says the session target is invalid ("A gone session target" below).
 3. Bus: `real_since`, the messages from the friend in the window that are real (not ping, pong,
    daemon-pong or keepalive), and `last_real`.
 4. Work: the entries in the friend's `inbox/` (not dotfiles or `QUEUE.json`) and `outbox/`, and the
@@ -2431,6 +2544,8 @@ the log file, the bus store, the directory listing) so the verdict is a function
 
 **The verdicts**, a pure function of the facts, the first rule that holds:
 
+0. `target-invalid` when the status says the session the daemon names is gone (archived, deleted,
+   moved): its own word, never `down`, and the why names the rebind line.
 1. `broken` when the session is marked broken, or `delivered > 0` and `failed == delivered`: every
    delivery in the window failed. One failure among successes is not broken.
 2. `deaf` when a delivery in the window succeeded (`delivered > failed`) and no session pong aged
@@ -2448,7 +2563,7 @@ friend's facts verdict is not `ok`, the verdict stays the facts' and the why lea
 session marked broken: `verdict=broken`, why `untrue: shown up/1, session broken: <reason>`). When the
 facts verdict is `ok` but the friend is asleep or its agent is not loaded, the verdict is `untrue`.
 
-The summary is `CHECK OK friends=<n> ok=<n> broken=<n> deaf=<n> silent=<n> down=<n> untrue=<n>`. Exit 0
+The summary is `CHECK OK friends=<n> ok=<n> broken=<n> deaf=<n> silent=<n> down=<n> untrue=<n> target_invalid=<n>`. Exit 0
 when every verdict is ok, 1 when any is not, 2 when the check could not run. With `--json` the same
 facts and verdicts are one object: `friends[]` of `daemon`, `harness`, `bus`, `work` and `verdict`, and
 `summary`. The model is the functions `DecideVerdict` and `factsVerdict`, `ParseLog` and `pongWithin` in

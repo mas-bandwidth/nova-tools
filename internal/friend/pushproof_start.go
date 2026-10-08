@@ -62,6 +62,9 @@ func PushProof(ctx context.Context, c Conformance) (res CheckResult, remedy stri
 	if why, remedy, ok := Undriven(c.Deliver, c.Harness); ok {
 		return CheckResult{Harness: c.Harness, Stage: StageDeliver, Why: why}, remedy, true
 	}
+	if err := Gone(ctx, c.Deliver); err != nil { // a named session that is gone gets no check: a rebind is the remedy
+		return CheckResult{Harness: c.Harness, Stage: StageDeliver, Why: err.Error()}, RebindLine(c.Friend), false
+	}
 	seen := &deliverSeen{Deliverer: c.Deliver}
 	c.Deliver = seen
 	res = c.Run(ctx)

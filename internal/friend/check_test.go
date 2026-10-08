@@ -159,5 +159,5 @@ func TestLineFormatting(t *testing.T) {
 	assert.Equal(t, "CHECK VERDICT friend=bob verdict=ok shown=up/0 why=live", vf.Line())
 
 	summary := CheckSummary{Friends: 1, OK: 1}
-	assert.Equal(t, "CHECK OK friends=1 ok=1 broken=0 deaf=0 silent=0 down=0 untrue=0", summary.Line())
+	assert.Equal(t, "CHECK OK friends=1 ok=1 broken=0 deaf=0 silent=0 down=0 untrue=0 target_invalid=0", summary.Line())
 }

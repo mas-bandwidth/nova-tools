@@ -467,3 +467,8 @@ MCFriendBrokenDeliverBroken.cfg	MCFriend.tla	action	NoDeliveryWhenBroken	ignore-
 MCFriendBrokenPingHanded.cfg	MCFriend.tla	invariant	PingNeverDelivered	ignore-terminal	friend	required	-
 MCFriendBrokenFixedKill.cfg	MCFriend.tla	invariant	StopOnlyWhenSilent	ignore-terminal	friend	required	-
 MCFriendBrokenAsideEarly.cfg	MCFriend.tla	invariant	SetAsideAfterCardTurns	ignore-terminal	friend	required	-
+MCDeliveryTarget.cfg	MCDeliveryTarget.tla	pass	-	ignore-terminal	deliverytarget	required	-
+MCDeliveryTargetBrokenRetryUnchecked.cfg	MCDeliveryTarget.tla	invariant	NeverIntoGone	ignore-terminal	deliverytarget	required	-
+MCDeliveryTargetBrokenRebindKeepsProof.cfg	MCDeliveryTarget.tla	invariant	RunsOnItsOwnProof	ignore-terminal	deliverytarget	required	-
+MCDeliveryTargetBrokenRowIgnored.cfg	MCDeliveryTarget.tla	invariant	NeverIntoSuperseded	ignore-terminal	deliverytarget	required	-
+MCDeliveryTargetBrokenProveFirst.cfg	MCDeliveryTarget.tla	invariant	ProofFollowsTheRow	ignore-terminal	deliverytarget	required	-
