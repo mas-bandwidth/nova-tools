@@ -8,7 +8,9 @@ import (
 	"io"
 	"maps"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -34,6 +36,66 @@ const CardTurns = 2
 // LaneOpenRetry is how long a lane whose session could not be opened waits
 // before it tries again.
 const LaneOpenRetry = time.Minute
+
+// StageFailLimit is how many stage failures of one card are stood before the card is
+// finished FAIL with the stage reason, never "wrote no report" (docs/SPEC-FRIEND.md,
+// the stage contract).
+const StageFailLimit = 3
+
+// StageFailure is a card whose stage did not write what a lane must find before it
+// starts: the brief the stage wrote, the job's JOB.md, or the checkout the job names.
+// What is the piece that is missing, Why the reason the lane is not started.
+type StageFailure struct {
+	Card string
+	What string
+	Why  string
+}
+
+// Reason is What and Why as one line, What alone when there is no Why.
+func (f StageFailure) Reason() string {
+	if f.Why == "" {
+		return f.What
+	}
+	return f.What + ": " + f.Why
+}
+
+// Error is the stage failure as one line: stage failed for <card>: <what is missing>:
+// <why>.
+func (f StageFailure) Error() string { return "stage failed for " + f.Card + ": " + f.Reason() }
+
+// GoOnPath is the host seam: whether the go command is on this host's PATH. It is a
+// value so a test stands a host with no go; StageGate takes it as a parameter.
+var GoOnPath = func() bool {
+	_, err := exec.LookPath("go")
+	return err == nil
+}
+
+// goGateRE matches a card whose DONE WHEN gate names a go command.
+var goGateRE = regexp.MustCompile(`(?m)^DONE WHEN:.*\bgo (?:build|vet|test|run)\b`)
+
+// NeedsGo says the card's brief names a go command in its gate.
+func NeedsGo(brief string) bool { return goGateRE.MatchString(brief) }
+
+// StageGate is the stage contract at the lane: what a card's stage must have written
+// before the lane starts. It answers false when the lane may start, else the StageFailure
+// naming the first piece that is missing. The brief is the path the stage wrote, the
+// card's own, never one the lane composes; a card whose gate names a go command on a host
+// with no go is refused before the checkout is read. goOnPath is the host's Go test.
+func StageGate(dir string, c Card, job, brief string, goOnPath func() bool) (StageFailure, bool) {
+	if goOnPath != nil && NeedsGo(brief) && !goOnPath() {
+		return StageFailure{Card: c.ID, What: "go is not on this host; the card's gates run on a bench"}, true
+	}
+	if c.Brief == "" || !exists(c.Brief) {
+		return StageFailure{Card: c.ID, What: "its brief " + dash(c.Brief), Why: "the stage wrote no BRIEF.md for the lane"}, true
+	}
+	if !Staged(dir, job) {
+		return StageFailure{Card: c.ID, What: JobFile + " is not in " + filepath.Join(JobsDir, job), Why: "the stage did not finish"}, true
+	}
+	if !exists(filepath.Join(JobDir(dir, job), "repo")) {
+		return StageFailure{Card: c.ID, What: "the checkout " + filepath.Join(JobsDir, job, "repo"), Why: "the stage wrote no checkout"}, true
+	}
+	return StageFailure{}, false
+}
 
 // LaneState is what the lanes keep across restarts, in the state directory
 // (lanes.json): each lane's session, so a lane is the same friend's session
@@ -241,20 +303,24 @@ type laneResult struct {
 
 // laneSet is the daemon's lanes in one-shot mode.
 type laneSet struct {
-	lanes   []*lane
-	given   map[string]bool
-	state   LaneState
-	loaded  bool
-	results chan laneResult
-	refused map[string]string // each job a lane was refused, and who held it, said once while it stands
-	gov     LaneGovernor      // the live cap under rate limits, the hold when out of funds (ratelimit.go)
-	pace    Pacer             // the effective width under the subscription windows (pacing.go)
-	paced   int               // the paced width at the last step
-	width   int               // the row's width at the last step
-	now     time.Time         // the last step's clock
-	marked  bool              // the hold in force is the pause marker's (a person lifts it)
-	loaded1 bool              // lanes are held to the load width
-	took    map[string]bool
+	lanes      []*lane
+	given      map[string]bool
+	state      LaneState
+	loaded     bool
+	results    chan laneResult
+	refused    map[string]string    // each job a lane was refused, and who held it, said once while it stands
+	stageFails map[string]int       // each held job's stage failures, ended at StageFailLimit
+	stageSaid  map[string]bool      // the stage failures said once while they stand
+	stageSeen  map[string]time.Time // the stage retry last counted for a job
+	stageAt    map[string]time.Time // when the gate last counted a failure the daemon did not stage
+	gov        LaneGovernor         // the live cap under rate limits, the hold when out of funds (ratelimit.go)
+	pace       Pacer                // the effective width under the subscription windows (pacing.go)
+	paced      int                  // the paced width at the last step
+	width      int                  // the row's width at the last step
+	now        time.Time            // the last step's clock
+	marked     bool                 // the hold in force is the pause marker's (a person lifts it)
+	loaded1    bool                 // lanes are held to the load width
+	took       map[string]bool
 }
 
 func (s *laneSet) running() bool {
@@ -348,6 +414,134 @@ func CardText(c Card, n, width int, sendLine, pong, notice string, seat string, 
 	return b.String()
 }
 
+// stageHandsOver says a card may be handed to a lane: the daemon stages nothing here, the
+// card is not one it stages, or its stage wrote the brief, the JOB.md and the checkout
+// (StageGate). It is the one gate every hand goes through (laneStep's held).
+func (l *loop) stageHandsOver(c Card) bool {
+	d := l.d
+	if d.Stage == nil {
+		return true // the daemon stages nothing here: a card is handed on its brief alone
+	}
+	h, ok := d.heldOf(filepath.Base(c.Outbox))
+	if !ok {
+		return true // not a card on her row: nothing is staged for it here
+	}
+	if _, ok := PacketOf(h); !ok {
+		return true // a read, or a card with no REPO: nothing is staged for it
+	}
+	brief, err := os.ReadFile(c.Brief)
+	if err != nil {
+		brief = nil
+	}
+	_, refused := StageGate(d.Dir, c, h.Job, string(brief), GoOnPath)
+	return !refused
+}
+
+// stageLaneStep is the stage contract at the lane, once a step: every held card whose
+// stage has not written the brief, the JOB.md and the checkout is counted and never
+// handed to a lane. Each failure is said once on the record and once as a judgment to
+// the coordinator, and waits StageRetryEvery before it is counted again; after
+// StageFailLimit stage failures the card is finished FAIL with the stage reason.
+func (l *loop) stageLaneStep(now time.Time) {
+	d, s := l.d, l.lanes
+	if d.Stage == nil {
+		return // the daemon stages nothing here: a card is handed on its brief alone
+	}
+	if s.stageFails == nil {
+		s.stageFails = map[string]int{}
+	}
+	if s.stageSaid == nil {
+		s.stageSaid = map[string]bool{}
+	}
+	if s.stageSeen == nil {
+		s.stageSeen = map[string]time.Time{}
+	}
+	if s.stageAt == nil {
+		s.stageAt = map[string]time.Time{}
+	}
+	if d.staging == nil {
+		d.staging = map[string]bool{}
+	}
+	if d.stageRetry == nil {
+		d.stageRetry = map[string]time.Time{}
+	}
+	for _, h := range d.heldCards {
+		if !validJob(h.Job) || s.given[h.Job] {
+			continue
+		}
+		if _, ok := PacketOf(h); !ok {
+			continue // a read, or a card with no REPO: nothing is staged for it
+		}
+		c := Card{ID: h.Card, Brief: filepath.Join(d.Dir, "inbox", h.Job, "BRIEF.md"), Outbox: filepath.Join(d.Dir, "outbox", h.Job)}
+		brief, err := os.ReadFile(c.Brief)
+		if err != nil {
+			brief = nil
+		}
+		f, refused := StageGate(d.Dir, c, h.Job, string(brief), GoOnPath)
+		if !refused {
+			delete(s.stageFails, h.Job)
+			delete(s.stageSaid, h.Job)
+			delete(s.stageSeen, h.Job)
+			delete(s.stageAt, h.Job)
+			continue
+		}
+		retry := d.stageRetry[h.Job]
+		fresh := retry.After(s.stageSeen[h.Job]) // the daemon recorded a stage failure since the last count
+		due := !d.staging[h.Job] && !now.Before(retry) && (s.stageAt[h.Job].IsZero() || now.Sub(s.stageAt[h.Job]) >= StageRetryEvery)
+		if !fresh && !due {
+			continue // a stage is under way, or this failure was already counted
+		}
+		if fresh {
+			s.stageSeen[h.Job] = retry
+		}
+		if due {
+			s.stageAt[h.Job] = now
+			if !retry.After(now) {
+				d.stageRetry[h.Job] = now.Add(StageRetryEvery)
+				s.stageSeen[h.Job] = d.stageRetry[h.Job]
+			}
+		}
+		s.stageFails[h.Job]++
+		if !s.stageSaid[h.Job] {
+			s.stageSaid[h.Job] = true
+			d.Record(fmt.Sprintf("%s stage: not staged %s/%s: %s; the lane is not started, and it is staged again in %s", now.UTC().Format(time.RFC3339), JobsDir, h.Job, oneLine(f.Error(), 400), StageRetryEvery))
+			l.tellKind(bus.KindBlocker, fmt.Sprintf("judgment: card %s stage failed on %s", h.Card, d.Friend), f.Error()+". No lane is started; the daemon stages the job again, and after "+strconv.Itoa(StageFailLimit)+" stage failures the card is finished FAIL with this reason. The remedy: write what is missing, or rework the card.\n", now)
+		}
+		if s.stageFails[h.Job] >= StageFailLimit {
+			l.finishStageFailed(c, h, f, now)
+		}
+	}
+}
+
+// finishStageFailed finishes a card FAIL at the stage limit: the lane's report says FAIL
+// and names the stage reason (never "wrote no report"), the failed finish goes to the
+// sprint server when it is wired, else friend sync reads the report, and the card is set
+// aside so no lane is handed it again.
+func (l *loop) finishStageFailed(c Card, h HeldCard, f StageFailure, now time.Time) {
+	d, s := l.d, l.lanes
+	report := "Verdict: FAIL\n\n" + f.Error() + " (after " + strconv.Itoa(StageFailLimit) + " stage failures).\n"
+	if err := os.MkdirAll(c.Outbox, 0o755); err != nil {
+		d.Record(now.UTC().Format(time.RFC3339) + " stage: " + c.ID + ": the outbox cannot be made: " + oneLine(err.Error(), 300))
+	} else if err := atomicfile.WriteFile(c.Report(), []byte(report), 0o644); err != nil {
+		d.Record(now.UTC().Format(time.RFC3339) + " stage: " + c.ID + ": the report cannot be written: " + oneLine(err.Error(), 300))
+	}
+	if d.Finish != nil {
+		head, branch := PushedHead(d.Dir, c)
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(l.ctx), FinishWait)
+		defer cancel()
+		if err := d.Finish(ctx, FinishArgv(d.Friend, c, report, head, branch)); err != nil {
+			d.Record(now.UTC().Format(time.RFC3339) + " stage: " + c.ID + ": the finish was not sent: " + oneLine(err.Error(), 300))
+		}
+	}
+	if s.given == nil {
+		s.given = map[string]bool{}
+	}
+	s.given[h.Job] = true
+	s.state.GivenUp = append(s.state.GivenUp, h.Job)
+	l.saveLanes(now)
+	d.Record(fmt.Sprintf("%s stage: finished card %s FAIL after %d stage failures: %s", now.UTC().Format(time.RFC3339), c.ID, StageFailLimit, oneLine(f.Error(), 400)))
+}
+
 // laneStep starts what the lanes owe: a session for a lane that has none,
 // and a card's turn for a lane that is free, the waiting messages riding
 // along. A lane beyond width, or beyond the live cap a rate limit lowered,
@@ -394,10 +588,14 @@ func (l *loop) laneStep(now time.Time, width int) {
 		s.lanes = append(s.lanes, &lane{n: n, session: s.state.Sessions[n]})
 	}
 	l.oneLaneStep(now)
+	l.stageLaneStep(now)
 	lh, _ := d.Deliver.(LaneHarness)
 	runner, perCard := d.Deliver.(CardRunner)
 	asking := 0 // the lane the hand is asked for
 	held := func(c Card) bool {
+		if !l.stageHandsOver(c) {
+			return true // the stage has not written the brief, the JOB.md or the checkout: no lane
+		}
 		id := filepath.Base(c.Outbox)
 		legacy := id == c.ID || id == c.ID+"~"+c.Epoch()
 		if s.given[id] || (legacy && s.given[c.ID]) {
