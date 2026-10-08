@@ -1296,7 +1296,7 @@ tick's presence and by `fleet up`/`fleet down`. A take by or for a friend
 (`take --as friend.<f>`, her own or her daemon's through the server) is
 admitted by `FriendStatus`, the friends table's word: up only on evidence from
 her own session (a wake ping her session answered within `FriendPongWindow`,
-her session's answer to a check her daemon asked within `FriendProofLive` while her beats go on, or
+her session's answer to a check her daemon asked within `FriendProofLive` on its own (no beat-age gate), or
 a card of hers finished within `FriendFinishWindow`; docs/SPEC-FRIEND.md,
 "Presence is her session's evidence"), never on her beat itself. `TakeStep` reads the friends' seats when it names a friend's row.
 Her take is held to her width (1 in one-shot mode), as a machine's is to its

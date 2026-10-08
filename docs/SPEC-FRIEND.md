@@ -1347,7 +1347,7 @@ log line:
   (`--check`, `--pong`, `--run`, Presence above); the server keeps the proof
   (the friend beat record's `pong`, the server's time of the last answer to a
   check asked, `Beat.Proof`), her session's evidence for `FriendProofLive`
-  while her beats go on ("Presence is her session's evidence" below). The
+  on its own, with no beat-age gate ("Presence is her session's evidence" below). The
   coordinator's pass raises one `friend deaf` judgment when the proof is older
   than that (internal/sprint/coordinator_pass.go).
 - The deploy order: the sprint server first, then every daemon within
