@@ -153,6 +153,8 @@ func TestRedisClear(t *testing.T) {
 	r, err := st.Run(h.ctx, step)
 	require.NoError(t, err, "a merge holding the old epoch: %+v %v", r, err)
 	require.Len(t, r.Refused, 1, "a merge holding the old epoch: %+v %v", r, err)
+	_, _, _, err = st.SetMachine(h.ctx, true)
+	require.NoError(t, err, "restart after clear before new work")
 	h.must(AddStep(sprint.AddReq{Stream: "s1", Count: 2}))
 	h.through("s1-1", "s1-2")
 	h.must(MergeStep(sprint.MergeReq{Stream: "s1"}))
