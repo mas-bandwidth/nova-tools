@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -15,7 +14,9 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/testkit"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // fakeEngine records every argv and answers from a table keyed by the argv's
@@ -118,70 +119,18 @@ func flagValues(args []string, flag string) []string {
 	return out
 }
 
-func TestTestArgsHoldTheRunInsideItsBounds(t *testing.T) {
-	t.Parallel()
-	c := testConfig()
-	start := time.Unix(1_800_000_000, 0)
-	args := testArgs(c, "sha256:abc", "run1", start)
-	joined := strings.Join(args, " ")
+// wantFlag owns the sentence every one-flag check here would otherwise repeat:
+// it fails the test when args does not give flag the value want.
+func wantFlag(t *testing.T, args []string, flag, want string) {
+	t.Helper()
+	assert.Equal(t, want, flagValue(t, args, flag), flag)
+}
 
-	if args[0] != "run" || !strings.Contains(joined, " --rm ") || !strings.Contains(joined, " --init ") {
-		t.Fatalf("not an attached run with --rm and --init: %q", joined)
-	}
-	if got := flagValue(t, args, "--name"); got != "nova-functional-run1" {
-		t.Errorf("--name %q", got)
-	}
-	if got := flagValue(t, args, "--timeout"); got != "600" {
-		t.Errorf("--timeout %q, want the deadline in seconds, 600", got)
-	}
-	for flag, want := range map[string]string{
-		"--security-opt": "no-new-privileges", "--cap-drop": "all",
-		"--network": "none", "--ipc": "private", "--pids-limit": "1024",
-		"--memory": "4g", "--memory-swap": "4g", "--cpus": "4", "-w": "/src",
-	} {
-		if got := flagValue(t, args, flag); got != want {
-			t.Errorf("%s %q, want %q", flag, got, want)
-		}
-	}
-	if !strings.Contains(joined, " --read-only ") {
-		t.Errorf("the image is not mounted read-only: %q", joined)
-	}
-	vols := flagValues(args, "-v")
-	wantVols := []string{"/work/src:/src:ro", "nova-functional-gomod-uid501:/gomodcache:ro", "nova-functional-gocache-uid501:/gocache"}
-	if strings.Join(vols, ",") != strings.Join(wantVols, ",") {
-		t.Errorf("mounts %q, want %q", vols, wantVols)
-	}
-	tmpfs := flagValues(args, "--tmpfs")
-	if len(tmpfs) != 2 || tmpfs[0] != "/tmp:rw,exec,size=2g" || !strings.HasPrefix(tmpfs[1], "/home/bench:") {
-		t.Errorf("scratch tmpfs %q", tmpfs)
-	}
-	labels := strings.Join(flagValues(args, "--label"), ",")
-	wantLabels := "nova.functional.run=run1,nova.functional.start=1800000000,nova.functional.deadline=1800000600,nova.functional.owner=501"
-	if labels != wantLabels {
-		t.Errorf("labels %q, want %q", labels, wantLabels)
-	}
-	// No host environment and no network proxy reach the test container.
-	if strings.Contains(joined, "--env-host") || len(flagValues(args, "-e")) != 0 {
-		t.Errorf("the test container gets environment from the host: %q", joined)
-	}
-	// The command: the inner timeout 10 s under the deadline, go test's 20 s
-	// under it, through the Makefile's own target.
-	i := indexOf(args, "sha256:abc")
-	if i < 0 {
-		t.Fatalf("no image in argv: %q", joined)
-	}
-	cmd := strings.Join(args[i+1:], "\x00")
-	want := strings.Join([]string{"timeout", "-k", "5", "590", "make", "test-functional",
-		"PKGS=./internal/ntable/... ./internal/config/", "GOTEST_P=4", "FUNCTIONAL_TIMEOUT=580s"}, "\x00")
-	if cmd != want {
-		t.Errorf("command %q, want %q", strings.Split(cmd, "\x00"), strings.Split(want, "\x00"))
-	}
-	// Every flag of the runtime comes before the image.
-	for _, f := range []string{"--timeout", "--network", "--label", "-v"} {
-		if j := indexOf(args, f); j > i {
-			t.Errorf("%s comes after the image", f)
-		}
-	}
+// wantRemoved owns the sentence every end-of-run removal check repeats: it
+// fails the test when the engine's last call is not the removal of name.
+func wantRemoved(t *testing.T, calls []string, name string) {
+	t.Helper()
+	assert.Equal(t, strings.Join(removeArgs(name), " "), calls[len(calls)-1], "%s is not removed last: %q", name, calls)
 }
 
 func indexOf(args []string, s string) int {
@@ -193,6 +142,47 @@ func indexOf(args []string, s string) int {
 	return -1
 }
 
+func TestTestArgsHoldTheRunInsideItsBounds(t *testing.T) {
+	t.Parallel()
+	start := time.Unix(1_800_000_000, 0)
+	args := testArgs(testConfig(), "sha256:abc", "run1", start)
+	joined := strings.Join(args, " ")
+
+	assert.True(t, args[0] == "run" && strings.Contains(joined, " --rm ") && strings.Contains(joined, " --init "),
+		"not an attached run with --rm and --init: %q", joined)
+	wantFlag(t, args, "--name", "nova-functional-run1")
+	wantFlag(t, args, "--timeout", "600")
+	for flag, want := range map[string]string{
+		"--security-opt": "no-new-privileges", "--cap-drop": "all",
+		"--network": "none", "--ipc": "private", "--pids-limit": "1024",
+		"--memory": "4g", "--memory-swap": "4g", "--cpus": "4", "-w": "/src",
+	} {
+		wantFlag(t, args, flag, want)
+	}
+	assert.Contains(t, joined, " --read-only ", "the image is not mounted read-only")
+	assert.Equal(t, []string{"/work/src:/src:ro", "nova-functional-gomod-uid501:/gomodcache:ro", "nova-functional-gocache-uid501:/gocache"},
+		flagValues(args, "-v"), "mounts")
+	tmpfs := flagValues(args, "--tmpfs")
+	assert.True(t, len(tmpfs) == 2 && tmpfs[0] == "/tmp:rw,exec,size=2g" && strings.HasPrefix(tmpfs[1], "/home/bench:"),
+		"scratch tmpfs %q", tmpfs)
+	assert.Equal(t, "nova.functional.run=run1,nova.functional.start=1800000000,nova.functional.deadline=1800000600,nova.functional.owner=501",
+		strings.Join(flagValues(args, "--label"), ","), "labels")
+	// No host environment and no network proxy reach the test container.
+	assert.False(t, strings.Contains(joined, "--env-host") || len(flagValues(args, "-e")) != 0,
+		"the test container gets environment from the host: %q", joined)
+	// The command: the inner timeout 10 s under the deadline, go test's 20 s
+	// under it, through the Makefile's own target.
+	i := indexOf(args, "sha256:abc")
+	require.NotEqual(t, -1, i, "no image in argv: %q", joined)
+	assert.Equal(t, strings.Join([]string{"timeout", "-k", "5", "590", "make", "test-functional",
+		"PKGS=./internal/ntable/... ./internal/config/", "GOTEST_P=4", "FUNCTIONAL_TIMEOUT=580s"}, "\x00"),
+		strings.Join(args[i+1:], "\x00"), "command")
+	// Every flag of the runtime comes before the image.
+	for _, f := range []string{"--timeout", "--network", "--label", "-v"} {
+		assert.LessOrEqual(t, indexOf(args, f), i, "%s comes after the image", f)
+	}
+}
+
 func TestTimeoutSecondsIsNeverZero(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -202,44 +192,28 @@ func TestTimeoutSecondsIsNeverZero(t *testing.T) {
 		{0, 1}, {-time.Second, 1}, {time.Millisecond, 1}, {time.Second, 1},
 		{1500 * time.Millisecond, 2}, {30 * time.Second, 30}, {10 * time.Minute, 600},
 	} {
-		if got := timeoutSeconds(tc.d); got != tc.want {
-			t.Errorf("timeoutSeconds(%s) = %d, want %d", tc.d, got, tc.want)
-		}
+		assert.Equal(t, tc.want, timeoutSeconds(tc.d), "timeoutSeconds(%s)", tc.d)
 	}
 }
 
 func TestPrefillHasTheNetworkAndWritesOnlyTheModuleCache(t *testing.T) {
 	t.Parallel()
-	c := testConfig()
 	start := time.Unix(1_800_000_000, 0)
-	args := prefillArgs(c, "sha256:abc", "run1", "stamp123", "https://proxy.example", start)
+	args := prefillArgs(testConfig(), "sha256:abc", "run1", "stamp123", "https://proxy.example", start)
 	joined := strings.Join(args, " ")
-	if strings.Contains(joined, "--network none") {
-		t.Errorf("the module step has no network: %q", joined)
-	}
-	vols := flagValues(args, "-v")
-	if len(vols) != 2 || vols[0] != "/work/src:/src:ro" || vols[1] != "nova-functional-gomod-uid501:/gomodcache" {
-		t.Errorf("mounts %q: want the source read-only and the module cache writable, and no build cache", vols)
-	}
-	if got := flagValue(t, args, "--name"); got != "nova-functional-run1-mod" {
-		t.Errorf("--name %q", got)
-	}
+	assert.NotContains(t, joined, "--network none", "the module step has no network")
+	assert.Equal(t, []string{"/work/src:/src:ro", "nova-functional-gomod-uid501:/gomodcache"},
+		flagValues(args, "-v"), "want the source read-only and the module cache writable, and no build cache")
+	wantFlag(t, args, "--name", "nova-functional-run1-mod")
 	labels := flagValues(args, "--label")
-	if labels[0] != "nova.functional.run=run1-mod" || labels[2] != "nova.functional.deadline="+strconv.FormatInt(start.Add(prefillDeadline).Unix(), 10) {
-		t.Errorf("the module step is not a labelled run with its own deadline: %q", labels)
-	}
-	if got := flagValue(t, args, "--timeout"); got != strconv.Itoa(int(prefillDeadline/time.Second)) {
-		t.Errorf("--timeout %q", got)
-	}
-	if flagValue(t, args, "--security-opt") != "no-new-privileges" || flagValue(t, args, "--cap-drop") != "all" {
-		t.Errorf("the module step keeps capabilities or new privileges: %q", joined)
-	}
-	if got := flagValue(t, args, "-e"); got != "GOPROXY=https://proxy.example" {
-		t.Errorf("-e %q", got)
-	}
-	if args[len(args)-1] != "stamp123" || args[len(args)-2] != "functionalrun" {
-		t.Errorf("the stamp is not the script's $1: %q", args[len(args)-3:])
-	}
+	assert.Equal(t, "nova.functional.run=run1-mod", labels[0], "the module step is not a labelled run: %q", labels)
+	assert.Equal(t, "nova.functional.deadline="+strconv.FormatInt(start.Add(prefillDeadline).Unix(), 10), labels[2],
+		"the module step does not carry its own deadline: %q", labels)
+	wantFlag(t, args, "--timeout", strconv.Itoa(int(prefillDeadline/time.Second)))
+	assert.Equal(t, "no-new-privileges", flagValue(t, args, "--security-opt"), "the module step keeps new privileges: %q", joined)
+	assert.Equal(t, "all", flagValue(t, args, "--cap-drop"), "the module step keeps capabilities: %q", joined)
+	wantFlag(t, args, "-e", "GOPROXY=https://proxy.example")
+	assert.Equal(t, []string{"functionalrun", "stamp123"}, args[len(args)-2:], "the stamp is not the script's $1: %q", args[len(args)-3:])
 }
 
 func TestModuleProxy(t *testing.T) {
@@ -250,116 +224,84 @@ func TestModuleProxy(t *testing.T) {
 		"off":                           "https://proxy.golang.org,direct",
 		"https://mirror.example,direct": "https://mirror.example,direct",
 	} {
-		if got := moduleProxy(env(in)); got != want {
-			t.Errorf("moduleProxy(%q) = %q, want %q", in, got, want)
-		}
+		assert.Equal(t, want, moduleProxy(env(in)), "moduleProxy(%q)", in)
 	}
 }
 
 func TestRuntimeEnvDropsTheRunnerTrackingID(t *testing.T) {
 	t.Parallel()
-	got := runtimeEnv([]string{"PATH=/bin", "RUNNER_TRACKING_ID=github_abc", "HOME=/h", "RUNNER_TRACKING_IDX=keep"})
-	want := []string{"PATH=/bin", "HOME=/h", "RUNNER_TRACKING_IDX=keep"}
-	if strings.Join(got, ",") != strings.Join(want, ",") {
-		t.Errorf("runtimeEnv = %q, want %q", got, want)
-	}
+	assert.Equal(t, []string{"PATH=/bin", "HOME=/h", "RUNNER_TRACKING_IDX=keep"},
+		runtimeEnv([]string{"PATH=/bin", "RUNNER_TRACKING_ID=github_abc", "HOME=/h", "RUNNER_TRACKING_IDX=keep"}))
 }
 
 func TestRemoveArgsForceWithVolumesAndNoWait(t *testing.T) {
 	t.Parallel()
-	got := strings.Join(removeArgs("abc"), " ")
-	if got != "rm --force --ignore --volumes --time 0 abc" {
-		t.Errorf("removeArgs = %q", got)
-	}
+	assert.Equal(t, "rm --force --ignore --volumes --time 0 abc", strings.Join(removeArgs("abc"), " "))
 }
 
 func TestSelectionIsByLabelNeverByName(t *testing.T) {
 	t.Parallel()
 	for _, args := range [][]string{reapListArgs(), leftoverArgs("run1")} {
 		joined := strings.Join(args, " ")
-		if strings.Contains(joined, "name=") {
-			t.Errorf("selects by name: %q", joined)
-		}
-		if f := flagValue(t, args, "--filter"); !strings.HasPrefix(f, "label="+labelRun) {
-			t.Errorf("--filter %q is not the run label", f)
-		}
-		if !strings.Contains(joined, "--all") {
-			t.Errorf("does not list containers in every state: %q", joined)
-		}
+		assert.NotContains(t, joined, "name=", "selects by name: %q", joined)
+		f := flagValue(t, args, "--filter")
+		assert.True(t, strings.HasPrefix(f, "label="+labelRun), "--filter %q is not the run label", f)
+		assert.Contains(t, joined, "--all", "does not list containers in every state: %q", joined)
 	}
-	if f := flagValue(t, leftoverArgs("run1"), "--filter"); f != "label=nova.functional.run=run1" {
-		t.Errorf("the leftover check does not select its own run: %q", f)
-	}
+	assert.Equal(t, "label=nova.functional.run=run1", flagValue(t, leftoverArgs("run1"), "--filter"),
+		"the leftover check does not select its own run")
 }
 
 func TestNewRunIDIsANameAndALabel(t *testing.T) {
 	t.Parallel()
 	start := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
 	a, b := newRunID(start), newRunID(start)
-	if a == b {
-		t.Errorf("two runs at one instant share an id: %q", a)
-	}
-	if !strings.HasPrefix(a, "20300102t030405-") || !volumeNameRE.MatchString(a) || strings.ToLower(a) != a {
-		t.Errorf("run id %q is not a lowercase container name", a)
-	}
+	assert.NotEqual(t, a, b, "two runs at one instant share an id")
+	assert.True(t, strings.HasPrefix(a, "20300102t030405-") && volumeNameRE.MatchString(a) && strings.ToLower(a) == a,
+		"run id %q is not a lowercase container name", a)
 }
 
 func TestCacheVolumesArePerUserAndCarryNoRunLabel(t *testing.T) {
 	t.Parallel()
-	if a, b := cacheVolumeName("gocache", "501"), cacheVolumeName("gocache", "502"); a == b {
-		t.Errorf("two users share the build cache %q", a)
-	}
+	a, b := cacheVolumeName("gocache", "501"), cacheVolumeName("gocache", "502")
+	assert.NotEqual(t, a, b, "two users share the build cache %q", a)
 	args := volumeCreateArgs("v", "gocache", "501")
 	labels := strings.Join(flagValues(args, "--label"), ",")
-	if labels != "nova.functional.cache=gocache,nova.functional.owner=501" {
-		t.Errorf("cache volume labels %q", labels)
-	}
-	if strings.Contains(labels, labelRun) {
-		t.Errorf("a cache carries the run label, so a reap or a leftover check would count it: %q", labels)
-	}
+	assert.Equal(t, "nova.functional.cache=gocache,nova.functional.owner=501", labels, "cache volume labels")
+	assert.NotContains(t, labels, labelRun, "a cache carries the run label, so a reap or a leftover check would count it")
 }
 
 func TestEnsureVolume(t *testing.T) {
 	t.Parallel()
 	inspect := strings.Join(volumeInspectArgs("v"), " ")
 	create := strings.Join(volumeCreateArgs("v", "gocache", "501"), " ")
-
-	mine := &fakeEngine{answers: map[string]fakeAnswer{inspect: {out: "501|gocache\n"}}}
-	if err := ensureVolume(context.Background(), mine, "v", "gocache", "501"); err != nil {
-		t.Errorf("this user's volume is refused: %v", err)
+	for _, tc := range []struct {
+		name    string
+		answer  fakeAnswer
+		wantErr string
+		calls   []string
+	}{
+		{"this user's volume is only inspected", fakeAnswer{out: "501|gocache\n"}, "", []string{inspect}},
+		{"another user's volume is refused with the flag to use", fakeAnswer{out: "502|gocache\n"}, "--gocache-volume", []string{inspect}},
+		{"the module cache is not taken as the build cache", fakeAnswer{out: "501|gomod\n"}, `a "gomod" cache, not a gocache cache`, []string{inspect}},
+		{"a volume with no kind label is not the build cache", fakeAnswer{out: "501|\n"}, "not a gocache cache", []string{inspect}},
+		{"a missing volume is created with its owner", fakeAnswer{err: fmt.Errorf("no such volume")}, "", []string{inspect, create}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			eng := &fakeEngine{answers: map[string]fakeAnswer{inspect: tc.answer}}
+			err := ensureVolume(context.Background(), eng, "v", "gocache", "501")
+			if tc.wantErr == "" {
+				require.NoError(t, err)
+			} else {
+				assert.ErrorContains(t, err, tc.wantErr)
+			}
+			assert.Equal(t, tc.calls, eng.argvs())
+		})
 	}
-	if n := len(mine.argvs()); n != 1 {
-		t.Errorf("an existing volume of this user is touched beyond the inspect: %q", mine.argvs())
-	}
-
-	theirs := &fakeEngine{answers: map[string]fakeAnswer{inspect: {out: "502|gocache\n"}}}
-	err := ensureVolume(context.Background(), theirs, "v", "gocache", "501")
-	if err == nil || !strings.Contains(err.Error(), "--gocache-volume") {
-		t.Errorf("another user's volume is not refused with the flag to use: %v", err)
-	}
-
-	swapped := &fakeEngine{answers: map[string]fakeAnswer{inspect: {out: "501|gomod\n"}}}
-	err = ensureVolume(context.Background(), swapped, "v", "gocache", "501")
-	if err == nil || !strings.Contains(err.Error(), `a "gomod" cache, not a gocache cache`) {
-		t.Errorf("the module cache is taken as the build cache: %v", err)
-	}
-	unlabelled := &fakeEngine{answers: map[string]fakeAnswer{inspect: {out: "501|\n"}}}
-	if err := ensureVolume(context.Background(), unlabelled, "v", "gocache", "501"); err == nil {
-		t.Errorf("a volume with no kind label is taken as the build cache")
-	}
-
-	missing := &fakeEngine{answers: map[string]fakeAnswer{inspect: {err: fmt.Errorf("no such volume")}}}
-	if err := ensureVolume(context.Background(), missing, "v", "gocache", "501"); err != nil {
-		t.Fatal(err)
-	}
-	calls := missing.argvs()
-	if len(calls) != 2 || calls[1] != create {
-		t.Errorf("a missing volume is not created with its owner: %q", calls)
-	}
-
 	// Two first runs at once: this one's create loses, and it looks again.
 	for _, tc := range []struct {
-		second string
+		winner string
 		ok     bool
 	}{{"501|gocache", true}, {"502|gocache", false}, {"501|gomod", false}} {
 		inspected := 0
@@ -370,19 +312,16 @@ func TestEnsureVolume(t *testing.T) {
 				if inspected == 1 {
 					return fakeAnswer{err: fmt.Errorf("no such volume")}, true
 				}
-				return fakeAnswer{out: tc.second}, true
+				return fakeAnswer{out: tc.winner}, true
 			case create:
 				return fakeAnswer{err: fmt.Errorf("volume already exists")}, true
 			}
 			return fakeAnswer{}, false
 		}}
 		err := ensureVolume(context.Background(), race, "v", "gocache", "501")
-		if (err == nil) != tc.ok {
-			t.Errorf("lost the create race to %q: err %v, want ok=%t", tc.second, err, tc.ok)
-		}
-		if calls := race.argvs(); len(calls) != 3 || calls[2] != inspect {
-			t.Errorf("a lost create does not look again: %q", calls)
-		}
+		assert.Equal(t, tc.ok, err == nil, "lost the create race to %q: err %v", tc.winner, err)
+		calls := race.argvs()
+		assert.True(t, len(calls) == 3 && calls[2] == inspect, "a lost create does not look again: %q", calls)
 	}
 }
 
@@ -390,98 +329,71 @@ func TestParseListed(t *testing.T) {
 	t.Parallel()
 	for _, empty := range []string{"", "  \n", "[]", "null"} {
 		cs, err := parseListed(empty)
-		if err != nil || len(cs) != 0 {
-			t.Errorf("parseListed(%q) = %v, %v", empty, cs, err)
-		}
+		assert.NoError(t, err, "parseListed(%q)", empty)
+		assert.Empty(t, cs, "parseListed(%q)", empty)
 	}
-	if _, err := parseListed("CONTAINER ID  IMAGE"); err == nil {
-		t.Errorf("a table listing is read as JSON")
-	}
+	_, err := parseListed("CONTAINER ID  IMAGE")
+	assert.Error(t, err, "a table listing is read as JSON")
 }
 
 func TestParseRun(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module x\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	testkit.WriteFile(t, filepath.Join(dir, "go.mod"), "module x\n")
 	ctxDir := filepath.Join(dir, "img")
-	if err := os.MkdirAll(ctxDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(ctxDir, "Containerfile"), []byte("FROM x\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	testkit.WriteFile(t, filepath.Join(ctxDir, "Containerfile"), "FROM x\n")
 	c, err := parseRun([]string{"--src", dir, "--context", ctxDir, "--deadline", "2m", "./internal/ntable/..."})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if c.deadline != 2*time.Minute || c.gocache != cacheVolumeName("gocache", c.ownerID) || c.gomod != cacheVolumeName("gomod", c.ownerID) {
-		t.Errorf("parsed %+v", c)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, 2*time.Minute, c.deadline)
+	assert.Equal(t, cacheVolumeName("gocache", c.ownerID), c.gocache)
+	assert.Equal(t, cacheVolumeName("gomod", c.ownerID), c.gomod)
+	with := func(args ...string) []string { return append([]string{"--src", dir, "--context", ctxDir}, args...) }
 	for _, tc := range []struct {
 		args []string
 		want string
 	}{
-		{[]string{"--src", dir, "--context", ctxDir}, "no package"},
-		{[]string{"--src", dir, "--context", ctxDir, "./a", "--deadline", "1m"}, "flags come first"},
-		{[]string{"--src", dir, "--context", ctxDir, "internal/ntable"}, "not a package directory"},
-		{[]string{"--src", dir, "--context", ctxDir, "./a b"}, "not a package directory"},
-		{[]string{"--src", dir, "--context", ctxDir, "--deadline", "29s", "./a"}, "under 30s"},
-		{[]string{"--src", dir, "--context", ctxDir, "--deadline", "0s", "./a"}, "under 30s"},
-		{[]string{"--src", dir, "--context", ctxDir, "--deadline", "-1m", "./a"}, "under 30s"},
-		{[]string{"--src", dir, "--context", ctxDir, "--deadline", "25h", "./a"}, "over 24h"},
-		{[]string{"--src", dir, "--context", ctxDir, "--cpus", "0", "./a"}, "--cpus"},
-		{[]string{"--src", dir, "--context", ctxDir, "--memory", "lots", "./a"}, "--memory"},
+		{with(), "no package"},
+		{with("./a", "--deadline", "1m"), "flags come first"},
+		{with("internal/ntable"), "not a package directory"},
+		{with("./a b"), "not a package directory"},
+		{with("--deadline", "29s", "./a"), "under 30s"},
+		{with("--deadline", "0s", "./a"), "under 30s"},
+		{with("--deadline", "-1m", "./a"), "under 30s"},
+		{with("--deadline", "25h", "./a"), "over 24h"},
+		{with("--cpus", "0", "./a"), "--cpus"},
+		{with("--memory", "lots", "./a"), "--memory"},
 		{[]string{"--src", dir, "--context", dir, "./a"}, "no Containerfile"},
 		{[]string{"--src", ctxDir, "./a"}, "no go.mod"},
-		{[]string{"--src", dir, "--context", ctxDir, "--gocache-volume", "same", "--gomod-volume", "same", "./a"}, "two volumes"},
-		{[]string{"--src", dir, "--context", ctxDir, "--gocache-volume", "../x", "./a"}, "not a podman volume name"},
-		{[]string{"--src", dir, "--context", ctxDir, "--fresh-gocache", "--gocache-volume", "mine", "./a"}, "two different build caches"},
+		{with("--gocache-volume", "same", "--gomod-volume", "same", "./a"), "two volumes"},
+		{with("--gocache-volume", "../x", "./a"), "not a podman volume name"},
+		{with("--fresh-gocache", "--gocache-volume", "mine", "./a"), "two different build caches"},
 	} {
 		_, err := parseRun(tc.args)
-		if err == nil || !strings.Contains(err.Error(), tc.want) {
-			t.Errorf("parseRun(%q) = %v, want an error naming %q", tc.args, err, tc.want)
-		}
+		assert.ErrorContains(t, err, tc.want, "parseRun(%q)", tc.args)
 	}
 	// --image needs no context.
-	if _, err := parseRun([]string{"--src", dir, "--image", "localhost/x:y", "./a"}); err != nil {
-		t.Errorf("--image without a context: %v", err)
-	}
+	_, err = parseRun([]string{"--src", dir, "--image", "localhost/x:y", "./a"})
+	assert.NoError(t, err, "--image without a context")
 }
 
 func TestContextHashFollowsEveryFile(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	write := func(name, body string) {
-		t.Helper()
-		if err := os.MkdirAll(filepath.Dir(filepath.Join(dir, name)), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
+	write := func(name, body string) { testkit.WriteFile(t, filepath.Join(dir, name), body) }
 	write("Containerfile", "FROM a\n")
 	h1, err := contextHash(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if h2, _ := contextHash(dir); h2 != h1 {
-		t.Errorf("the hash is not stable: %s %s", h1, h2)
-	}
+	require.NoError(t, err)
+	h2, _ := contextHash(dir)
+	assert.Equal(t, h1, h2, "the hash is not stable")
 	write("sub/extra.txt", "x")
 	h3, _ := contextHash(dir)
-	if h3 == h1 {
-		t.Errorf("a new file in the context does not change the hash")
-	}
+	assert.NotEqual(t, h1, h3, "a new file in the context does not change the hash")
 	write("Containerfile", "FROM b\n")
-	if h4, _ := contextHash(dir); h4 == h3 {
-		t.Errorf("an edit of the Containerfile does not change the hash")
-	}
-	if tag := imageTag(h1); !strings.HasPrefix(tag, "localhost/nova-functional:ctx-") || len(tag) != len("localhost/nova-functional:ctx-")+16 {
-		t.Errorf("imageTag = %q", tag)
-	}
+	h4, _ := contextHash(dir)
+	assert.NotEqual(t, h3, h4, "an edit of the Containerfile does not change the hash")
+	tag := imageTag(h1)
+	assert.True(t, strings.HasPrefix(tag, "localhost/nova-functional:ctx-") && len(tag) == len("localhost/nova-functional:ctx-")+16,
+		"imageTag = %q", tag)
 }
 
 func TestRunContainerPassesTheExitCodeThrough(t *testing.T) {
@@ -489,14 +401,10 @@ func TestRunContainerPassesTheExitCodeThrough(t *testing.T) {
 	for _, code := range []int{0, 1, 2, 124} {
 		eng := &fakeEngine{startCode: code}
 		got, ended := runContainer(context.Background(), eng, []string{"run", "x"}, "nova-functional-r", time.Now().Add(time.Minute), io.Discard, io.Discard)
-		if got != code || ended != "finished" {
-			t.Errorf("exit %d came back as %d (%s)", code, got, ended)
-		}
+		assert.Equal(t, code, got, "the exit code")
+		assert.Equal(t, "finished", ended, "exit %d", code)
 		// The container is removed after the client returns, whatever the code.
-		calls := eng.argvs()
-		if last := calls[len(calls)-1]; last != strings.Join(removeArgs("nova-functional-r"), " ") {
-			t.Errorf("no removal after the run: %q", calls)
-		}
+		wantRemoved(t, eng.argvs(), "nova-functional-r")
 	}
 }
 
@@ -542,12 +450,8 @@ func TestRunContainerRemovesAtTheClientDeadline(t *testing.T) {
 		eng = &hangingEngine{killed: make(chan struct{})}
 		_, ended = runContainer(context.Background(), eng, []string{"run", "x"}, "nova-functional-r", time.Now().Add(50*time.Millisecond), io.Discard, io.Discard)
 	})
-	if ended != "deadline" {
-		t.Errorf("ended %q, want deadline", ended)
-	}
-	if calls := eng.argvs(); calls[len(calls)-1] != strings.Join(removeArgs("nova-functional-r"), " ") {
-		t.Errorf("the container is not removed at the deadline: %q", calls)
-	}
+	assert.Equal(t, "deadline", ended)
+	wantRemoved(t, eng.argvs(), "nova-functional-r")
 }
 
 func TestRunContainerRemovesOnInterrupt(t *testing.T) {
@@ -556,52 +460,22 @@ func TestRunContainerRemovesOnInterrupt(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	_, ended := runContainer(ctx, eng, []string{"run", "x"}, "nova-functional-r", time.Now().Add(time.Hour), io.Discard, io.Discard)
-	if ended != "interrupted" {
-		t.Errorf("ended %q, want interrupted", ended)
-	}
-	if calls := eng.argvs(); calls[len(calls)-1] != strings.Join(removeArgs("nova-functional-r"), " ") {
-		t.Errorf("the container is not removed on an interrupt: %q", calls)
-	}
+	assert.Equal(t, "interrupted", ended)
+	wantRemoved(t, eng.argvs(), "nova-functional-r")
 }
 
 func TestDispatchRefusals(t *testing.T) {
 	t.Parallel()
 	var out, errb bytes.Buffer
-	if code := dispatch(context.Background(), nil, &out, &errb); code != exitUsage {
-		t.Errorf("no verb: exit %d", code)
-	}
-	if code := dispatch(context.Background(), []string{"frob"}, &out, &errb); code != exitUsage || !strings.Contains(errb.String(), `unknown verb "frob"`) {
-		t.Errorf("unknown verb: exit %d, %q", code, errb.String())
-	}
+	assert.Equal(t, exitUsage, dispatch(context.Background(), nil, &out, &errb), "no verb")
+	assert.Equal(t, exitUsage, dispatch(context.Background(), []string{"frob"}, &out, &errb), "unknown verb")
+	assert.Contains(t, errb.String(), `unknown verb "frob"`)
 	errb.Reset()
-	if code := dispatch(context.Background(), []string{"run"}, &out, &errb); code != exitCannotRun {
-		t.Errorf("run without packages: exit %d", code)
-	}
-	if code := dispatch(context.Background(), []string{"reap", "extra"}, &out, &errb); code != 2 {
-		t.Errorf("reap with an argument: exit %d", code)
-	}
+	assert.Equal(t, exitCannotRun, dispatch(context.Background(), []string{"run"}, &out, &errb), "run without packages")
+	assert.Equal(t, 2, dispatch(context.Background(), []string{"reap", "extra"}, &out, &errb), "reap with an argument")
 	out.Reset()
-	if code := dispatch(context.Background(), []string{"help"}, &out, &errb); code != 0 || !strings.Contains(out.String(), "functionalrun reap") {
-		t.Errorf("help: exit %d", code)
-	}
-}
-
-func tierFixture(t *testing.T, owner string, startCode int) (*fakeEngine, runConfig) {
-	t.Helper()
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module x\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	c := testConfig()
-	c.src = dir
-	c.image = "localhost/nova-functional:given"
-	eng := &fakeEngine{startCode: startCode, answers: map[string]fakeAnswer{
-		strings.Join(reapListArgs(), " "):                                {out: "[]"},
-		"image inspect --format {{.Id}} localhost/nova-functional:given": {out: "sha256:img\n"},
-		strings.Join(volumeInspectArgs(c.gocache), " "):                  {out: owner + "|gocache\n"},
-		strings.Join(volumeInspectArgs(c.gomod), " "):                    {out: owner + "|gomod\n"},
-	}}
-	return eng, c
+	assert.Equal(t, 0, dispatch(context.Background(), []string{"help"}, &out, &errb), "help")
+	assert.Contains(t, out.String(), "functionalrun reap")
 }
 
 func TestRunTierPassesTheContainersExitThroughAndChecksForLeftovers(t *testing.T) {
@@ -611,36 +485,29 @@ func TestRunTierPassesTheContainersExitThroughAndChecksForLeftovers(t *testing.T
 		// The prefill must finish 0 for the test container to run; the fake
 		// gives both the same code, so a red run is judged at the module step.
 		got := r.run()
-		calls := r.calls()
 		if code != 0 {
-			if got != exitCannotRun || !strings.Contains(r.stderr.String(), "module cache step ended finished with exit 2") {
-				t.Errorf("a failed module step: exit %d\n%s", got, r.stderr.String())
-			}
+			assert.Equal(t, exitCannotRun, got, "a failed module step\n%s", r.stderr.String())
+			assert.Contains(t, r.stderr.String(), "module cache step ended finished with exit 2")
 			continue
 		}
 		r.requireExit(0)
+		calls := r.calls()
 		var runs []string
 		for _, call := range calls {
 			if strings.HasPrefix(call, "run ") {
 				runs = append(runs, call)
 			}
 		}
-		if len(runs) != 2 || !strings.Contains(runs[0], "go mod download") || !strings.Contains(runs[1], "make test-functional") {
-			t.Fatalf("want the module step then the test container:\n%s", strings.Join(runs, "\n"))
-		}
-		if !strings.Contains(runs[1], " sha256:img ") {
-			t.Errorf("the test container does not run the inspected image id: %q", runs[1])
-		}
-		if calls[0] != strings.Join(reapListArgs(), " ") {
-			t.Errorf("the reaper does not run first: %q", calls[0])
-		}
+		require.Equal(t, 2, len(runs), "want the module step then the test container:\n%s", strings.Join(runs, "\n"))
+		assert.Contains(t, runs[0], "go mod download")
+		assert.Contains(t, runs[1], "make test-functional")
+		assert.Contains(t, runs[1], " sha256:img ", "the test container does not run the inspected image id")
+		assert.Equal(t, strings.Join(reapListArgs(), " "), calls[0], "the reaper does not run first: %q", calls[0])
 		last := calls[len(calls)-1]
-		if !strings.HasPrefix(last, "ps --all --filter label=nova.functional.run=") {
-			t.Errorf("the last call is not the leftover check by label: %q", last)
-		}
-		if !strings.Contains(r.stderr.String(), "ended=finished exit=0 ") || !strings.Contains(r.stderr.String(), "containers_left=0") {
-			t.Errorf("receipt line:\n%s", r.stderr.String())
-		}
+		assert.True(t, strings.HasPrefix(last, "ps --all --filter label=nova.functional.run="),
+			"the last call is not the leftover check by label: %q", last)
+		assert.Contains(t, r.stderr.String(), "ended=finished exit=0 ")
+		assert.Contains(t, r.stderr.String(), "containers_left=0", "receipt line:\n%s", r.stderr.String())
 	}
 }
 
@@ -650,22 +517,16 @@ func TestRunTierRefusesAnotherUsersCache(t *testing.T) {
 	r.run()
 	r.requireExit(exitCannotRun)
 	for _, call := range r.calls() {
-		if strings.HasPrefix(call, "run ") {
-			t.Errorf("a container ran over another user's cache: %q", call)
-		}
+		assert.False(t, strings.HasPrefix(call, "run "), "a container ran over another user's cache: %q", call)
 	}
 }
 
 func TestSetupExit(t *testing.T) {
 	t.Parallel()
-	if got := setupExit(context.Background()); got != exitCannotRun {
-		t.Errorf("setupExit = %d", got)
-	}
+	assert.Equal(t, exitCannotRun, setupExit(context.Background()))
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if got := setupExit(ctx); got != exitInterrupted {
-		t.Errorf("setupExit after an interrupt = %d", got)
-	}
+	assert.Equal(t, exitInterrupted, setupExit(ctx), "after an interrupt")
 }
 
 func TestClassify(t *testing.T) {
@@ -697,9 +558,9 @@ func TestClassify(t *testing.T) {
 		{-1, "interrupted", time.Second, "interrupted", 130},
 	} {
 		ended, exit := classify(tc.code, tc.ended, tc.elapsed, dl)
-		if ended != tc.wantEnded || exit != tc.wantExit {
-			t.Errorf("classify(%d, %s, %s) = %s %d, want %s %d", tc.code, tc.ended, tc.elapsed, ended, exit, tc.wantEnded, tc.wantExit)
-		}
+		at := fmt.Sprintf("classify(%d, %s, %s)", tc.code, tc.ended, tc.elapsed)
+		assert.Equal(t, tc.wantEnded, ended, at)
+		assert.Equal(t, tc.wantExit, exit, at)
 	}
 }
 
@@ -750,16 +611,15 @@ func TestRunTierClientDeadlines(t *testing.T) {
 		{"the module step", 0, func(runConfig) time.Duration { return prefillDeadline }, exitCannotRun},
 		{"the run", 1, func(c runConfig) time.Duration { return c.deadline }, exitDeadline},
 	} {
-		fake, c := tierFixture(t, "501", 0)
-		var stdout, stderr bytes.Buffer
+		r := newRig(t, "501", 0)
 		var got int
 		var eng *deadlineEngine
 		synctest.Test(t, func(*testing.T) {
-			eng = &deadlineEngine{fakeEngine: fake, hang: tc.hang, killed: make(chan struct{})}
-			got = runTier(context.Background(), eng, c, &stdout, &stderr)
+			eng = &deadlineEngine{fakeEngine: r.eng, hang: tc.hang, killed: make(chan struct{})}
+			got = runTier(context.Background(), eng, r.cfg, &r.stdout, &r.stderr)
 		})
-		assert.Equal(t, tc.wantExit, got, "%s: %s", tc.step, stderr.String())
-		assert.Equal(t, tc.bound(c)+clientGrace, eng.removed.Sub(eng.started), "%s: its container is removed at the bound plus the grace", tc.step)
+		assert.Equal(t, tc.wantExit, got, "%s: %s", tc.step, r.stderr.String())
+		assert.Equal(t, tc.bound(r.cfg)+clientGrace, eng.removed.Sub(eng.started), "%s: its container is removed at the bound plus the grace", tc.step)
 	}
 }
 
@@ -777,9 +637,8 @@ func TestRunTierExitCodes(t *testing.T) {
 	} {
 		r := newRig(t, "501", 0, tc.testCode)
 		got := r.run()
-		if got != tc.wantExit || !strings.Contains(r.stderr.String(), "ended="+tc.wantEnded+" exit="+strconv.Itoa(tc.wantExit)+" ") {
-			t.Errorf("test container exit %d: tool exit %d, want %d ended=%s\n%s", tc.testCode, got, tc.wantExit, tc.wantEnded, r.stderr.String())
-		}
+		assert.Equal(t, tc.wantExit, got, "test container exit %d\n%s", tc.testCode, r.stderr.String())
+		assert.Contains(t, r.stderr.String(), "ended="+tc.wantEnded+" exit="+strconv.Itoa(tc.wantExit)+" ")
 	}
 }
 
@@ -800,9 +659,8 @@ func TestRunTierFailsWhenAContainerIsLeft(t *testing.T) {
 			return fakeAnswer{}, false
 		}
 		got := r.run()
-		if got != exitCannotRun || !strings.Contains(r.stderr.String(), tc.want) {
-			t.Errorf("a green run with a leftover (%v): exit %d, want %d and %s\n%s", tc.answer, got, exitCannotRun, tc.want, r.stderr.String())
-		}
+		assert.Equal(t, exitCannotRun, got, "a green run with a leftover (%v)\n%s", tc.answer, r.stderr.String())
+		assert.Contains(t, r.stderr.String(), tc.want)
 	}
 }
 
@@ -850,33 +708,23 @@ func TestFreshGocacheIsAnAnonymousVolume(t *testing.T) {
 	c := testConfig()
 	c.freshGocache = true
 	vols := flagValues(testArgs(c, "sha256:abc", "run1", time.Unix(1_800_000_000, 0)), "-v")
-	want := []string{"/work/src:/src:ro", "nova-functional-gomod-uid501:/gomodcache:ro", "/gocache"}
-	if strings.Join(vols, ",") != strings.Join(want, ",") {
-		t.Errorf("mounts %q, want %q", vols, want)
-	}
-	eng, tc := tierFixture(t, "501", 0)
-	tc.freshGocache = true
-	var stdout, stderr bytes.Buffer
-	if got := runTierIn(t, eng, tc, &stdout, &stderr); got != 0 {
-		t.Fatalf("exit %d\n%s", got, stderr.String())
-	}
-	for _, call := range eng.argvs() {
-		if strings.Contains(call, tc.gocache) {
-			t.Errorf("a fresh-cache run touched the shared build cache: %q", call)
-		}
+	assert.Equal(t, []string{"/work/src:/src:ro", "nova-functional-gomod-uid501:/gomodcache:ro", "/gocache"}, vols, "mounts")
+	r := newRig(t, "501", 0)
+	r.cfg.freshGocache = true
+	r.run()
+	r.requireExit(0)
+	for _, call := range r.calls() {
+		assert.NotContains(t, call, r.cfg.gocache, "a fresh-cache run touched the shared build cache: %q", call)
 	}
 }
 
 func TestPackageArgumentsAreAllowlisted(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module x\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	testkit.WriteFile(t, filepath.Join(dir, "go.mod"), "module x\n")
 	for _, ok := range []string{".", "./...", "./internal/ntable", "./internal/ntable/", "./internal/ntable/...", "./cmd/nova-ci", "./a_b.c-d/e"} {
-		if _, err := parseRun([]string{"--src", dir, "--image", "x", ok}); err != nil {
-			t.Errorf("package %q refused: %v", ok, err)
-		}
+		_, err := parseRun([]string{"--src", dir, "--image", "x", ok})
+		assert.NoError(t, err, "package %q", ok)
 	}
 	for _, bad := range []string{
 		"./internal/ntable/;id>&2;cat</etc/hostname>&2;exit",
@@ -887,9 +735,9 @@ func TestPackageArgumentsAreAllowlisted(t *testing.T) {
 		// regressed could never reach a real one; the refusal is before it.
 		var stdout, stderr bytes.Buffer
 		code := dispatch(context.Background(), []string{"run", "--src", dir, "--image", "x", "--podman", filepath.Join(dir, "no-such-podman"), bad}, &stdout, &stderr)
-		if code != exitCannotRun || !strings.Contains(stderr.String(), "not a package directory") || strings.Contains(stderr.String(), "no-such-podman") {
-			t.Errorf("package %q: exit %d, %q", bad, code, stderr.String())
-		}
+		assert.Equal(t, exitCannotRun, code, "package %q: %q", bad, stderr.String())
+		assert.Contains(t, stderr.String(), "not a package directory")
+		assert.NotContains(t, stderr.String(), "no-such-podman")
 	}
 }
 
@@ -916,12 +764,8 @@ func TestLeftoversHaveOneBudget(t *testing.T) {
 		n = leftovers(eng, "run1", 100*time.Millisecond)
 		took = time.Since(start)
 	})
-	if took > time.Second {
-		t.Errorf("a hung runtime held the leftover check %s past a 100ms budget", took)
-	}
-	if n != -1 {
-		t.Errorf("an unreadable count is %d, want -1 (unknown)", n)
-	}
+	assert.LessOrEqual(t, took, time.Second, "a hung runtime held the leftover check %s past a 100ms budget", took)
+	assert.Equal(t, -1, n, "an unreadable count is not -1 (unknown)")
 }
 
 // ours are the labels this tool writes for a run of uid 501.
@@ -972,17 +816,13 @@ func TestJudgeOnlyOursByDeadlineLabelPlusGrace(t *testing.T) {
 		{ID: "r-upper", State: "exited", Labels: with(base, labelRun, "20300102T030405-0123ABCD")},
 	}
 	verdicts, foreign := judge(cs, now, grace, "501")
-	if foreign != 5 {
-		t.Errorf("foreign = %d, want 5 (the other tool, the empty run, the other owner, no owner, the wrong shape)", foreign)
-	}
+	assert.Equal(t, 5, foreign, "the other tool, the empty run, the other owner, no owner and the wrong shape are foreign")
 	got := map[string]verdict{}
 	for _, v := range verdicts {
 		got[v.id] = v
 	}
 	for _, id := range []string{"f-unlabelled", "n-other-tool", "o-empty-run", "p-other-owner", "q-no-owner", "r-upper"} {
-		if _, ok := got[id]; ok {
-			t.Errorf("%s is not this tool's container of this user, and was judged", id)
-		}
+		assert.NotContains(t, got, id, "%s is not this tool's container of this user, and was judged", id)
 	}
 	for id, want := range map[string]struct {
 		remove bool
@@ -1003,13 +843,9 @@ func TestJudgeOnlyOursByDeadlineLabelPlusGrace(t *testing.T) {
 		"g-created-never-started": {true, ""},
 	} {
 		v, ok := got[id]
-		if !ok {
-			t.Errorf("%s not judged", id)
-			continue
-		}
-		if v.remove != want.remove || v.reason != want.reason {
-			t.Errorf("%s: remove=%t reason=%q, want remove=%t reason=%q", id, v.remove, v.reason, want.remove, want.reason)
-		}
+		require.True(t, ok, "%s not judged", id)
+		assert.Equal(t, want.remove, v.remove, id)
+		assert.Equal(t, want.reason, v.reason, id)
 	}
 }
 
@@ -1026,27 +862,20 @@ func TestReapRemovesOnlyOverdueContainersOfOurs(t *testing.T) {
 	eng := &fakeEngine{answers: map[string]fakeAnswer{strings.Join(reapListArgs(), " "): {out: listing}}}
 	var stderr bytes.Buffer
 	n, unreadable, err := reap(context.Background(), eng, now, 30*time.Second, "501", false, &stderr)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if n != 1 || unreadable != 0 {
-		t.Errorf("reaped %d unreadable %d, want 1 and 0", n, unreadable)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, 1, n, "reaped")
+	assert.Zero(t, unreadable, "unreadable")
 	calls := eng.argvs()
 	want := []string{strings.Join(reapListArgs(), " "), strings.Join(removeArgs("aaaaaaaaaaaaaaaa1"), " ")}
-	if strings.Join(calls, "\n") != strings.Join(want, "\n") {
-		t.Errorf("calls:\n%s\nwant:\n%s", strings.Join(calls, "\n"), strings.Join(want, "\n"))
-	}
+	assert.Equal(t, strings.Join(want, "\n"), strings.Join(calls, "\n"), "calls")
 	for _, c := range calls {
 		verb := strings.Fields(c)[0]
-		if verb != "ps" && verb != "rm" || strings.Contains(c, "prune") {
-			t.Errorf("the reaper does more than list and remove containers: %q", c)
-		}
+		assert.True(t, (verb == "ps" || verb == "rm") && !strings.Contains(c, "prune"),
+			"the reaper does more than list and remove containers: %q", c)
 	}
 	out := stderr.String()
-	if !strings.Contains(out, "REAPED id=aaaaaaaaaaaa run=20300102t030405-0000000a state=running") || !strings.Contains(out, "REAP containers=4 reaped=1 left=1 unreadable=0 foreign=1") {
-		t.Errorf("reap lines:\n%s", out)
-	}
+	assert.Contains(t, out, "REAPED id=aaaaaaaaaaaa run=20300102t030405-0000000a state=running")
+	assert.Contains(t, out, "REAP containers=4 reaped=1 left=1 unreadable=0 foreign=1")
 }
 
 func TestReapReportsUnreadableAndDispatchExitsNonZero(t *testing.T) {
@@ -1056,15 +885,11 @@ func TestReapReportsUnreadableAndDispatchExitsNonZero(t *testing.T) {
 	eng := &fakeEngine{answers: map[string]fakeAnswer{strings.Join(reapListArgs(), " "): {out: listing}}}
 	var stderr bytes.Buffer
 	n, unreadable, err := reap(context.Background(), eng, now, 0, "501", false, &stderr)
-	if err != nil || n != 0 || unreadable != 1 {
-		t.Fatalf("n=%d unreadable=%d err=%v", n, unreadable, err)
-	}
-	if len(eng.argvs()) != 1 {
-		t.Errorf("an unreadable container was touched: %q", eng.argvs())
-	}
-	if !strings.Contains(stderr.String(), "REAP-UNREADABLE id=a1 run=20300102t030405-0000000a state=exited reason=unreadable-deadline") {
-		t.Errorf("reap lines:\n%s", stderr.String())
-	}
+	require.NoError(t, err)
+	assert.Zero(t, n)
+	assert.Equal(t, 1, unreadable)
+	assert.Len(t, eng.argvs(), 1, "an unreadable container was touched: %q", eng.argvs())
+	assert.Contains(t, stderr.String(), "REAP-UNREADABLE id=a1 run=20300102t030405-0000000a state=exited reason=unreadable-deadline")
 }
 
 func TestReapDryRunChangesNothing(t *testing.T) {
@@ -1074,23 +899,17 @@ func TestReapDryRunChangesNothing(t *testing.T) {
 	eng := &fakeEngine{answers: map[string]fakeAnswer{strings.Join(reapListArgs(), " "): {out: listing}}}
 	var stderr bytes.Buffer
 	n, _, err := reap(context.Background(), eng, now, 0, "501", true, &stderr)
-	if err != nil || n != 1 {
-		t.Fatalf("n=%d err=%v", n, err)
-	}
-	if calls := eng.argvs(); len(calls) != 1 {
-		t.Errorf("a dry run ran more than the listing: %q", calls)
-	}
-	if !strings.Contains(stderr.String(), "REAP-WOULD id=a1 run=20300102t030405-0000000a") {
-		t.Errorf("dry run lines:\n%s", stderr.String())
-	}
+	require.NoError(t, err)
+	assert.Equal(t, 1, n)
+	assert.Len(t, eng.argvs(), 1, "a dry run ran more than the listing: %q", eng.argvs())
+	assert.Contains(t, stderr.String(), "REAP-WOULD id=a1 run=20300102t030405-0000000a")
 }
 
 func TestEveryRunIDMatchesTheReapersPattern(t *testing.T) {
 	t.Parallel()
 	id := newRunID(time.Now())
-	if !runIDRE.MatchString(id) || !runIDRE.MatchString(id+"-mod") {
-		t.Errorf("the reaper would not take this tool's own run id %q", id)
-	}
+	assert.True(t, runIDRE.MatchString(id) && runIDRE.MatchString(id+"-mod"),
+		"the reaper would not take this tool's own run id %q", id)
 	labels := map[string]string{}
 	args := testArgs(testConfig(), "img", id, time.Unix(1_800_000_000, 0))
 	for _, kv := range flagValues(args, "--label") {
@@ -1098,12 +917,13 @@ func TestEveryRunIDMatchesTheReapersPattern(t *testing.T) {
 		labels[k] = v
 	}
 	vs, foreign := judge([]listed{{ID: "x", Labels: labels}}, time.Unix(1_800_000_000, 0).Add(testConfig().deadline+time.Minute), 30*time.Second, "501")
-	if foreign != 0 || len(vs) != 1 || !vs[0].remove {
-		t.Errorf("the reaper does not take an overdue container with the labels a run writes: %+v foreign=%d", vs, foreign)
-	}
+	assert.Zero(t, foreign, "the labels a run writes are not foreign: %+v", vs)
+	require.Len(t, vs, 1)
+	assert.True(t, vs[0].remove, "the reaper does not take an overdue container with the labels a run writes: %+v", vs)
 }
 
 func TestChooseRuntimePrefersPodmanThenDocker(t *testing.T) {
+	t.Parallel()
 	has := func(names ...string) func(string) (string, error) {
 		return func(n string) (string, error) {
 			for _, h := range names {

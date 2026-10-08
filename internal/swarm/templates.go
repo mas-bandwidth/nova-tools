@@ -128,7 +128,7 @@ var templateCard = "RESULT: <label> sha=<sha12>\n" +
 	"BASE: <branch>\n" +
 	"The REPO: and BASE: lines are the repository and the branch the work starts from and lands on: the member stages REPO: at BASE:, and nova-sprint land merges the card's head onto BASE: (land --base stands in for a card naming no BASE:, land --repo-dir for one naming no REPO:).\n" +
 	"You are a child of the coordinator: one task, one worktree, one branch, unattended. This card is the whole of the task and it stands alone in front of a stranger; nothing outside it is owed to you.\n" +
-	"Deadline: finish within <n> minutes.\n" +
+	"Deadline: finish within <n> minutes; the judgment of a card that runs past it is the coordinator's, so report what you have with the verdict not-done rather than push past it.\n" +
 	"\n" +
 	ChildRulesParagraph() +
 	"\n" +

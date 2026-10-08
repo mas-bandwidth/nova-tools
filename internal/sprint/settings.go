@@ -303,7 +303,17 @@ type SetReq struct {
 	// Reads is the reads every card in review needs (PropReadsNeeded): 0, 1, 2, or
 	// default (each card's own rule, ReadsNeeded).
 	Reads string `json:",omitempty"`
-	Who   string
+	// Base, with Streams, re-points the stream's cards that are not yet dealt and
+	// those queued to merge to another base branch (stream set --base).
+	Base string `json:",omitempty"`
+	// BaseChecked is the cards Base re-points, as the verb read and checked them
+	// at the base (StreamSetBaseChecks): Set re-points exactly these and refuses
+	// whole, nothing written, when the snapshot it reads holds other cards or
+	// briefs, so no brief is rewritten without its PATHS held to the base. It is
+	// no part of the verb's arguments (its value changes as the stream does): the
+	// store's operation id digests the caller's words alone.
+	BaseChecked []StreamSetBaseCheck `json:"-"`
+	Who         string
 }
 
 // Set writes the settings: refused whole, writing nothing, for an actor who is not
@@ -430,8 +440,11 @@ func Set(s *Snapshot, r SetReq) Plan {
 			why = append(why, "--reads is the sprint's, not a stream's: nova-sprint set --reads "+r.Reads)
 		}
 	}
-	if r.ReadTier == "" && r.DealtMax == "" && r.LandProtected == "" && r.Release == "" && r.Prose == "" && len(alarms) == 0 && r.GoLanes == "" && r.Attempts == "" && r.FriendIdle == "" && r.FriendStallAfter == "" && r.FriendStallStep == "" && r.DriftCommits == "" && r.DriftHours == "" && r.Fleet == "" && r.Friends == "" && len(sideTiers) == 0 && r.ReadCards == "" && r.Reads == "" {
-		why = append(why, "nothing to set: --read-tier, --read-cards, --reads, --prose, --dealt-max, --go-lanes, --attempts, --friend-idle, --friend-stall-after, --friend-stall-step, --drift-commits, --drift-hours, --fleet, --friends, --fleet-tiers, --friends-tiers or an --alarm-... threshold")
+	if r.Base != "" && len(r.Streams) == 0 {
+		why = append(why, "--base is a stream's, not the sprint's: nova-sprint stream set <s> --base <branch>")
+	}
+	if r.ReadTier == "" && r.DealtMax == "" && r.LandProtected == "" && r.Release == "" && r.Prose == "" && r.Base == "" && len(alarms) == 0 && r.GoLanes == "" && r.Attempts == "" && r.FriendIdle == "" && r.FriendStallAfter == "" && r.FriendStallStep == "" && r.DriftCommits == "" && r.DriftHours == "" && r.Fleet == "" && r.Friends == "" && len(sideTiers) == 0 && r.ReadCards == "" && r.Reads == "" {
+		why = append(why, "nothing to set: --read-tier, --read-cards, --reads, --prose, --base, --dealt-max, --go-lanes, --attempts, --friend-idle, --friend-stall-after, --friend-stall-step, --drift-commits, --drift-hours, --fleet, --friends, --fleet-tiers, --friends-tiers or an --alarm-... threshold")
 	}
 	if len(r.Streams) > 0 && r.GoLanes != "" {
 		why = append(why, "--go-lanes is the sprint's, not a stream's: nova-sprint set --go-lanes "+r.GoLanes)
@@ -464,6 +477,18 @@ func Set(s *Snapshot, r SetReq) Plan {
 	if len(why) > 0 {
 		p.refuse("set", strings.Join(why, "; "))
 		return p
+	}
+	// stream set --base holds each rewritten brief to the check add runs at the
+	// new base before its step (cmd/nova-sprint's holdBriefBase), and the step
+	// plans over a snapshot of its own: bind the write to the candidates the check
+	// read. A card added to the stream, dealt, or revised between the check and
+	// the step is refused whole, nothing written, never rewritten with its PATHS
+	// unchecked (docs/SPEC-SPRINT.md section 11, stream set --base).
+	if r.Base != "" && len(r.Streams) > 0 {
+		if why := baseChecksHeld(s, r.Streams, r.Base, r.BaseChecked); why != "" {
+			p.refuse("set", why)
+			return p
+		}
 	}
 	if len(r.Streams) > 0 {
 		for _, st := range r.Streams {
@@ -509,6 +534,25 @@ func Set(s *Snapshot, r SetReq) Plan {
 				} else {
 					set[FieldAttempts] = r.Attempts
 					moved = append(moved, "attempts "+r.Attempts)
+				}
+			}
+			// stream set --base rewrites the BASE line of every card of the stream not
+			// yet dealt and of every card queued to merge, each a change of the work
+			// table the store writes, with the brief revision the replacement is
+			// (brief_attempt, as brief records one); a card dealt and working keeps
+			// its base and is listed (docs/SPEC-SPRINT.md section 11, stream set
+			// --base).
+			if r.Base != "" {
+				repoint, keep := streamSetBaseCards(s, st)
+				moved = append(moved, "base "+r.Base)
+				for _, c := range keep {
+					moved = append(moved, fmt.Sprintf("%s keeps its base %s (%s)", c.ID, orDash(baseOfBrief(c.F("brief"))), c.Col))
+				}
+				for _, c := range repoint {
+					next := briefOnBase(c.F("brief"), r.Base)
+					p.Units = append(p.Units, Unit{Key: c.ID, Stream: st,
+						Changes: []Change{change(Work, setEntry(c, map[string]string{"brief": next, FieldBriefAttempt: c.F("attempt")}))},
+						Moved:   fmt.Sprintf("%s base %s -> %s (%s)", c.ID, orDash(baseOfBrief(c.F("brief"))), r.Base, c.Col)})
 				}
 			}
 			p.Units = append(p.Units, Unit{Key: ctl.ID, Stream: st, Changes: []Change{change(Merge, setEntry(ctl, set, unset...))}, Moved: "stream " + st + " " + strings.Join(moved, ", "), Closes: closes})

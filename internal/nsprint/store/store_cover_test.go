@@ -165,18 +165,6 @@ func TestStoreCoverIsNoAuth(t *testing.T) {
 	}
 }
 
-// TestStoreCoverNew pins that New is the plain seam over a client: the same
-// client comes back and Close on a bare Store is a no-op.
-func TestStoreCoverNew(t *testing.T) {
-	t.Parallel()
-
-	client := redis.NewClient(&redis.Options{Addr: "store.test:6379"})
-	defer func() { _ = client.Close() }() // ignored: a test fixture's cleanup; the test's own assertions are the report
-	s := New(client)
-	require.Same(t, client, s.Client())
-	require.NoError(t, New(nil).Close())
-}
-
 // TestStoreCoverPipelineHMGet covers the batch read: no reads is no work, a
 // read without a key or fields is refused before anything is sent, and a
 // batch returns every reply in order.
@@ -186,7 +174,7 @@ func TestStoreCoverPipelineHMGet(t *testing.T) {
 	t.Run("no reads is no work", func(t *testing.T) {
 		t.Parallel()
 
-		got, err := New(nil).PipelineHMGet(context.Background(), nil)
+		got, err := (&Store{}).PipelineHMGet(context.Background(), nil)
 		require.NoError(t, err)
 		require.Empty(t, got)
 	})
@@ -194,7 +182,7 @@ func TestStoreCoverPipelineHMGet(t *testing.T) {
 	t.Run("a read without a key or fields is refused", func(t *testing.T) {
 		t.Parallel()
 
-		s := New(redis.NewClient(&redis.Options{Addr: "store.test:6379"}))
+		s := &Store{client: redis.NewClient(&redis.Options{Addr: "store.test:6379"})}
 		defer func() { _ = s.Close() }() // ignored: a test fixture's cleanup; the test's own assertions are the report
 		_, err := s.PipelineHMGet(context.Background(), []HashRead{{Key: "", Fields: []string{"f"}}})
 		require.ErrorContains(t, err, "needs a key and fields")

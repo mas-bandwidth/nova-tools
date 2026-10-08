@@ -101,16 +101,16 @@ func (b *pushBench) originHas(t *testing.T, branch string) string {
 
 func (b *pushBench) pusher() *gitPusher { return newGitPusher(b.root, b.slots) }
 
-// recordGit is a git that records every argv and directory it is asked for
+// recordGitRun is a git that records every argv and directory it is asked for
 // and runs it, or refuses a push with the line given.
-type recordGit struct {
+type recordGitRun struct {
 	mu         sync.Mutex
 	calls      []gitrun.Options
 	argv       [][]string
 	refusePush string
 }
 
-func (r *recordGit) run(ctx context.Context, o gitrun.Options, args ...string) (gitrun.Result, error) {
+func (r *recordGitRun) run(ctx context.Context, o gitrun.Options, args ...string) (gitrun.Result, error) {
 	r.mu.Lock()
 	r.calls, r.argv = append(r.calls, o), append(r.argv, slices.Clone(args))
 	r.mu.Unlock()

@@ -225,13 +225,14 @@ type Plan struct {
 const MaxPaths = 8
 
 // PlanLedger groups a ledger's rows by file (one card per file, in ledger order),
-// computes each card's PATHS and TEST, and assigns waves: on an ordinary ledger
-// adjacent cards delete adjacent lines of one file and would conflict at land, so
-// odd cards are wave 1, even cards wave 2 depending on their wave-1 neighbours;
-// on a generated ledger (docs/SPEC-SPRINT.md section 7) every card is wave 1 with
-// no dependency, because land regenerates the ledger at the merged tree. prefix
-// opens every id; tier "" takes the ledger's own; max keeps the first max cards (0 is
-// all), cut before the waves are assigned so no kept card needs a cut one.
+// computes each card's PATHS and TEST, and plans one wave with no dependency for
+// every ledger: the lander resolves a ledger conflict as the union of removals, so
+// adjacent deletions of one file no longer conflict (docs/SPEC-CARD-CONTRACT.md
+// section 6, generated cards). Every card shares the ledger's path and none needs
+// another, so Shared tells the add it wants --allow-shared-paths; a generated
+// ledger (docs/SPEC-SPRINT.md section 7) plans the same. prefix opens every id;
+// tier "" takes the ledger's own; max keeps the first max cards (0 is all), cut
+// before the plan is rendered so no kept card needs a cut one.
 func PlanLedger(l Ledger, rows []Row, prefix, tier string, max int) Plan {
 	if tier == "" {
 		tier = l.Tier
@@ -259,27 +260,12 @@ func PlanLedger(l Ledger, rows []Row, prefix, tier string, max int) Plan {
 		c.Task = ledgerTask(l, *c)
 	}
 	p := Plan{Cards: cards, Tier: tier, Waves: 1}
-	if l.Generated || len(cards) < 2 {
-		for i := range p.Cards {
-			p.Cards[i].Wave = 1
-		}
-		p.Shared = len(cards) > 1
-		return p
-	}
-	p.Waves = 2
 	for i := range p.Cards {
-		if i%2 == 0 {
-			p.Cards[i].Wave = 1
-			continue
-		}
-		p.Cards[i].Wave = 2
-		p.Cards[i].Deps = append(p.Cards[i].Deps, p.Cards[i-1].ID)
-		if i+1 < len(p.Cards) {
-			p.Cards[i].Deps = append(p.Cards[i].Deps, p.Cards[i+1].ID)
-		}
+		p.Cards[i].Wave = 1
 	}
-	// two wave-1 cards share the ledger and neither needs the other: the add says so
-	p.Shared = len(cards) > 2
+	// every card is wave 1 and names the ledger in PATHS, and none needs another:
+	// two cards make the add want --allow-shared-paths
+	p.Shared = len(cards) > 1
 	return p
 }
 
@@ -732,7 +718,8 @@ func Render(h Header, c Card) string {
 	fmt.Fprintf(&b, "TEST: %s\n", c.Test)
 	fmt.Fprintf(&b, "START: %s, %s\n", c.File, pkg)
 	fmt.Fprintf(&b, "STOP: the test %s is red before the change and green after it, and the STEP 4 gate passes\n", testName(c.Test))
-	fmt.Fprintf(&b, "Deadline: finish within %d minutes.\n", minutes)
+	// docs/SPEC-CARD-CONTRACT.md: the deadline is a bound; past it is the coordinator's judgment.
+	fmt.Fprintf(&b, "Deadline: finish within %d minutes; the judgment of a card that runs past it is the coordinator's, so report what you have with the verdict not-done rather than push past it.\n", minutes)
 	fmt.Fprintf(&b, "You are a child of the coordinator: one task, one staged checkout, one branch, unattended. This card is the whole task. Read $JOB/JOB.md first. Start at the current BASE tip; admission inspected exact base %s. Verify the defect still exists before editing; if already fixed report not-done with exact evidence rather than duplicate work. One change, one test that is red before and green after.\n", h.Sha)
 	b.WriteString("Libraries considered: the Go standard library and testify, already in the tree; the package's own seams and helpers; no new dependency, and no helper over thirty lines without first searching the package for one.\n\n")
 	b.WriteString(swarm.ChildRulesParagraph())

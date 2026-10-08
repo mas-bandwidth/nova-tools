@@ -25,6 +25,10 @@ type ReleaseFacts interface {
 	Log() []Line
 	DealtMax() time.Duration
 	Acceptance() Acceptance
+	// MergeWindow and MergeP90 are the merge queue's own bars, bound by the
+	// verb's --window and --merge-p90 (releasecheck_p90.go).
+	MergeWindow() time.Duration
+	MergeP90() time.Duration
 }
 
 // ReleaseResult is one check's answer.
@@ -61,6 +65,7 @@ var ReleaseChecks = []ReleaseCheck{
 	{CheckProseTrue, "the stream's spec sections and help text are true to the code: nova-check links and nocode clean, present tense, no names of people or machines", ProseTrue},
 	{CheckLandingsPromoted, "the stream's landings are in dev, or a promotion carrying them is queued since its last landing", LandingsPromoted},
 	{CheckNoOpenJudgment, "no open judgment names the stream: no stale, no brief-defect, no conflict, no returned-to-review", NoOpenJudgment},
+	{CheckMergeQueueP90, "the p90 of the time each card spent merging over the last " + MergeQueueWindowDefault.String() + " is under " + MergeQueueP90Default.String(), MergeQueueP90},
 }
 
 // ReleaseReport is the verb's result value: the lines are rendered from it and
