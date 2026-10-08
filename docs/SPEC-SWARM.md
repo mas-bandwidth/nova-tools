@@ -768,6 +768,18 @@ scanned as before:
 `nova-sprint add` runs the same lint, so the exemption holds there. Pinned by
 `TestPatternsToRefuseBlockIsExemptForAClassTestCard` (`internal/swarm`).
 
+### Attribution check
+
+A brief that tells the worker to hide or misstate its model or harness draws
+`honest-attribution` at the line containing the hiding phrase. A brief that says to name the
+actual model and harness and never claim one you are not passes.
+
+| scan token | what it wants |
+| --- | --- |
+| `honest-attribution` | a brief names the actual model and harness it runs on, and never tells the worker to hide, deny, omit or misstate them (for example: never claim another model, do not mention the model, sign as another model, or use a Co-Authored-By trailer naming a fixed model) |
+
+Pinned by `TestLintRefusesABriefThatHidesTheModel` (`internal/swarm`).
+
 ## Test inventory
 
 List the current unit tests with `go test -list . ./cmd/nova-swarm/`.
