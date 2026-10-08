@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strconv"
@@ -371,8 +372,11 @@ func (st *Store) Inbox(ctx context.Context, deadline, stale time.Duration, max i
 		return v, err
 	}
 	req := sprint.InboxReq{Now: st.now(), Open: v.Open, Recent: notes, Streams: clocks, Deadline: deadline, Stale: stale, Prefix: st.Names.Prefix, Epoch: st.epoch}
-	if snap, err := st.Load(ctx, []string{sprint.Work}, nil); err == nil {
-		req.Weights = sprint.Weights(snap) // the heaviest judgments first (weight.go)
+	if snap, err := st.Load(ctx, []string{sprint.Work, sprint.Merge}, nil); err == nil {
+		// the judgments holding the most cards first: the cards blocked behind each, through
+		// needs and stream order (needs_rank.go; docs/SPEC-SPRINT.md, judgment-answer-latencyb-t-bb.w1)
+		snap.Open, snap.Now = v.Open, req.Now
+		req.Weights = sprint.NeedWeights(snap)
 	}
 	var machine []sprint.Group
 	if _, ok := st.B.(KV); ok {
@@ -388,6 +392,131 @@ func (st *Store) Inbox(ctx context.Context, deadline, stale time.Duration, max i
 	}
 	v.Groups = append(machine, sprint.Inbox(req)...)
 	return v, nil
+}
+
+// NotesBack is a backend whose inbox read can start at the tail: the notes
+// written at or after since, newest first, at most max, and the stream id to
+// read before next ("" when the stream's start is reached). It is what bounds
+// AnswerWaits to the window instead of the store's whole history
+// (docs/SPEC-SPRINT.md, judgment-answer-latencyb-t-bb.w3).
+type NotesBack interface {
+	NotesBack(ctx context.Context, before string, since time.Time, max int) ([]sprint.Note, []string, error)
+}
+
+// tailNotes is the backend's read from the tail of its inbox stream,
+// unwrapping a read-only wrapper (a read-only backend refuses writes and
+// passes reads through). A backend with no tail read falls back to the whole
+// stream.
+func tailNotes(b Backend) (NotesBack, bool) {
+	if nb, ok := b.(NotesBack); ok {
+		return nb, true
+	}
+	if r, ok := b.(readOnly); ok {
+		return tailNotes(r.b)
+	}
+	return nil, false
+}
+
+// NotesBack is the Mem's inbox read from the tail: the notes written at or
+// after since, newest first, at most max. A note before since ends the read;
+// the notes are appended in time order, so everything older is before it too.
+func (m *Mem) NotesBack(_ context.Context, before string, since time.Time, max int) ([]sprint.Note, []string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	l := m.log()
+	var notes []sprint.Note
+	var ids []string
+	past := before == ""
+	for i := len(l.inbox) - 1; i >= 0; i-- {
+		n := l.inbox[i]
+		if !past {
+			past = n.id == before
+			continue
+		}
+		if n.note.At.Before(since) {
+			break
+		}
+		if len(notes) == max {
+			break
+		}
+		notes = append(notes, n.note)
+		ids = append(ids, n.id)
+	}
+	return notes, ids, nil
+}
+
+// NotesBack is the Redis inbox read from the tail: the notes written at or
+// after since, newest first, at most max.
+func (r *Redis) NotesBack(ctx context.Context, before string, since time.Time, max int) ([]sprint.Note, []string, error) {
+	start := "+"
+	if before != "" {
+		start = "(" + before
+	}
+	msgs, err := r.C.XRevRangeN(ctx, r.key(keyInbox), start, "-", int64(max)).Result()
+	if err != nil {
+		return nil, nil, err
+	}
+	var notes []sprint.Note
+	var ids []string
+	for _, m := range msgs {
+		s, ok := m.Values["note"].(string)
+		if !ok {
+			continue
+		}
+		var n sprint.Note
+		if json.Unmarshal([]byte(s), &n) != nil {
+			continue
+		}
+		if n.At.Before(since) {
+			break
+		}
+		notes = append(notes, n)
+		ids = append(ids, m.ID)
+	}
+	return notes, ids, nil
+}
+
+// AnswerWaits is the waits of the judgments answered in the window before the clock's
+// reading: the median and p90 of raise to answer, a rule's answer at raise counting none
+// (sprint.AnswerWaits; where shows it). The read starts at the inbox's tail and stops at
+// the window's start, so its work is the window's notes, not the store's whole history
+// (the reader's finding, judgment-answer-latencyb-t-bb.w3).
+func (st *Store) AnswerWaits(ctx context.Context, window time.Duration) (sprint.AnswerWait, error) {
+	st, err := st.pin(ctx)
+	if err != nil {
+		return sprint.AnswerWait{}, err
+	}
+	now := st.now()
+	var all []sprint.Note
+	if back, ok := tailNotes(st.B); ok {
+		before := ""
+		for {
+			notes, ids, err := back.NotesBack(ctx, before, now.Add(-window), logPage)
+			if err != nil {
+				return sprint.AnswerWait{}, err
+			}
+			all = append(all, notes...)
+			if len(ids) < logPage {
+				break
+			}
+			before = ids[len(ids)-1]
+		}
+	} else {
+		// a backend with no tail read: the whole stream, as before
+		after := ""
+		for {
+			notes, ids, err := st.B.NotesSince(ctx, after, logPage)
+			if err != nil {
+				return sprint.AnswerWait{}, err
+			}
+			all = append(all, notes...)
+			if len(ids) < logPage {
+				break
+			}
+			after = ids[len(ids)-1]
+		}
+	}
+	return sprint.AnswerWaits(all, now, window), nil
 }
 
 // machineGroups is what the machine's record says the coordinator must act
