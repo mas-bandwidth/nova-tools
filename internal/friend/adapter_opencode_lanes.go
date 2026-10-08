@@ -43,6 +43,10 @@ type LaneTurn struct {
 	// (a Claude Code run's rate_limit_event lines, ReadRateLimitEvents); nil when
 	// it reported none. The lanes are paced by it (pacing.go).
 	Windows []WindowUse
+	// FirstError is the first line of the turn's output that says an error
+	// (HarnessFirstError), "" when none does: a run that exits 0 with no report
+	// is a harness fault said with it (lanes.go, faultTurn).
+	FirstError string
 }
 
 // permissionRejected is a line of a turn's output where a tool call was
@@ -210,21 +214,25 @@ func (o *OpenCode) sessions(ctx context.Context) ([]session, error) {
 // tail for a rate limit or out of funds (ProviderLimit, whatever the exit:
 // the lanes heed it only when the card has no RESULT.md) before a provider's
 // refusal of the session.
+//
+// A lane's turn runs in the card's job directory, the one its context carries
+// (WithLaneDir), so a path the model reads relative is read inside the job;
+// with none it runs in Dir.
 func (o *OpenCode) DeliverTo(ctx context.Context, id, text string) (LaneTurn, error) {
 	o.allow()
-	out, exit, err := o.Run(ctx, o.Dir, o.program(), []string{"run", "--session", id, text}, "")
+	out, exit, err := o.Run(ctx, LaneDirOf(ctx, o.Dir), o.program(), []string{"run", "--session", id, text}, "")
 	if o.Out != nil && out != "" {
 		fmt.Fprintln(o.Out, strings.TrimRight(Head(out, OutputKept), "\n"))
 	}
 	if err == nil {
 		if limit := laneLimit(id, out); limit != nil {
 			o.turns.saw(id, exit, limit)
-			return LaneTurn{Exit: exit, Rejected: PermissionRejection(out)}, limit
+			return LaneTurn{Exit: exit, Rejected: PermissionRejection(out), FirstError: HarnessFirstError(out)}, limit
 		}
 	}
 	exit, err = refused(id, out, exit, err)
 	o.turns.saw(id, exit, err)
-	return LaneTurn{Exit: exit, Rejected: PermissionRejection(out)}, err
+	return LaneTurn{Exit: exit, Rejected: PermissionRejection(out), FirstError: HarnessFirstError(out)}, err
 }
 
 // RunRead is one read as a one-shot of the friend's opencode: `opencode run

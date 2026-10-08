@@ -23,7 +23,7 @@ import (
 // the tool does not carry is a line that fails the first time it is run. The
 // verbs and flags are read from each tool's own source, never copied here:
 // nova-sprint's verb table (cmd/nova-sprint/verbs.go) and the flags its
-// common.register adds, the usage banner of nova-secrets and nova-swarm, and
+// common.register adds, the usage banner of nova-secrets, nova-swarm and nova-config, and
 // the tool.Verb table of nova-friend and nova-bus. A flag counts when the
 // verb's synopsis names it and the tool's source registers it.
 
@@ -159,8 +159,8 @@ func sprintTool(t *testing.T) novaTool {
 	return nt
 }
 
-// usageTool reads a tool whose usage constant carries one synopsis line per
-// verb form, `  <tool> <verb words> <flags>`: the verb is the words before the
+// usageTool reads a tool whose usage constant (usage, or nova-config's usageTop)
+// carries one synopsis line per verb form, `  <tool> <verb words> <flags>`: the verb is the words before the
 // first flag or placeholder.
 func usageTool(t *testing.T, tool string) novaTool {
 	t.Helper()
@@ -176,7 +176,7 @@ func usageTool(t *testing.T, tool string) novaTool {
 			for _, spec := range gen.Specs {
 				val := spec.(*ast.ValueSpec)
 				for i, name := range val.Names {
-					if name.Name == "usage" && i < len(val.Values) {
+					if (name.Name == "usage" || name.Name == "usageTop") && i < len(val.Values) {
 						usage, _ = stringLit(val.Values[i])
 					}
 				}
@@ -263,6 +263,7 @@ func readNovaTools(t *testing.T) map[string]novaTool {
 		"nova-sprint":  sprintTool(t),
 		"nova-secrets": usageTool(t, "nova-secrets"),
 		"nova-swarm":   usageTool(t, "nova-swarm"),
+		"nova-config":  usageTool(t, "nova-config"),
 		"nova-friend":  verbTableTool(t, "nova-friend"),
 		"nova-bus":     verbTableTool(t, "nova-bus"),
 	}
@@ -292,7 +293,7 @@ func checkCommand(tools map[string]novaTool, words []string) (checked bool, prob
 	}
 	tool, ok := tools[name]
 	if !ok {
-		return true, []string{name + " is a nova tool this test reads no verb table of: map to a verb of nova-sprint, nova-secrets, nova-swarm, nova-friend or nova-bus, or teach the test the tool"}
+		return true, []string{name + " is a nova tool this test reads no verb table of: map to a verb of nova-sprint, nova-secrets, nova-swarm, nova-config, nova-friend or nova-bus, or teach the test the tool"}
 	}
 	words = words[1:]
 	var verbName string

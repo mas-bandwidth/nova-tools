@@ -105,6 +105,8 @@ func TestTheLandCloneIsCleanAfterAFailedMerge(t *testing.T) {
 		assert.Error(t, gitFails(r, r.clone, "rev-parse", "--verify", "-q", "MERGE_HEAD"), "no merge is left in progress")
 		assert.Empty(t, r.git(r.clone, "status", "--porcelain", "--untracked-files=all"), "no change is left in the clone")
 
+		// s1-2 is reworked at the tip, ready: off the table, so the deal below takes s2-1
+		r.ok("drop s1-2 --reason 'not this test'")
 		r.ok("add --stream s2 --count 1 --one")
 		r.queued(map[string]string{"s2-1": r.head("s2-1", "main", "b.txt", "b\n")}, "s2-1")
 		out = r.ok("land --repo-dir " + r.clone + " --base main --stream s2")

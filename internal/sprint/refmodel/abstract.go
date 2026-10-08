@@ -47,10 +47,14 @@ func Abstract(o Observed) State {
 	a.StreamLast, _ = s.Work.Prop(sprint.PropStreamIndex)
 	a.AskStreamLast, _ = s.Readers.Prop(sprint.PropAskStreamIndex)
 	a.AcceptStreamLast, _ = s.Work.Prop(sprint.PropAcceptStreamIndex)
+	if v, ok := s.Work.Prop(sprint.PropAttempts); ok {
+		a.Cap, _ = sprint.ParseAttempts(v)
+	}
 	for _, st := range s.Work.Rows() {
 		x := Stream{State: SWaiting}
 		if ctl := s.StreamCtl(st); ctl != nil {
 			x.State = ctl.F("state")
+			x.Cap = ctl.Int(sprint.FieldAttempts)
 			if x.State == SStopped {
 				x.Cause = ctl.F("cause")
 			}
@@ -74,6 +78,10 @@ func Abstract(o Observed) State {
 		p.CI, p.CIHead = c.F("ci"), headAttempt(c.F("ci_head"))
 		p.ReturnedAt = c.Int(sprint.FieldReturnedAttempt)
 		p.Finder, p.FindingAttempt = c.F(sprint.FieldFindingReader), c.Int(sprint.FieldFindingAttempt)
+		p.BriefAt = c.Int(sprint.FieldBriefAttempt)
+		if f := c.F("finding"); strings.HasPrefix(f, sprint.LandRefusedFinding) {
+			p.Refused = strings.TrimPrefix(f, sprint.LandRefusedFinding)
+		}
 		a.Primaries[id] = p
 	}
 	// A primary ready or waiting whose card at its attempt field is done
@@ -197,6 +205,7 @@ var types = map[string]string{
 	sprint.NNoMember:        JNoMember,
 	sprint.NCannotAsk:       JCannotAsk,
 	sprint.NBound:           JBound,
+	sprint.NBriefWrong:      JBriefWrong,
 }
 
 // JudgmentType is the model's name of an engine judgment type; a type the

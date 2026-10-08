@@ -9,8 +9,8 @@ import (
 	"slices"
 	"testing"
 
-	nsstore "github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
+	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
 )
@@ -37,7 +37,7 @@ func TestLargeRowOrdersKeepRanksTripsAndReceipts(t *testing.T) {
 			t.Parallel()
 			c, rows := largeOrderFixture(t, n)
 			ctx := context.Background()
-			trips := nsstore.New(c).CountTrips()
+			trips := redisconn.CountTrips(c)
 			check := func(name string, want []string, write func(*ntable.Receipt) error) {
 				t.Helper()
 				events, err := c.XLen(ctx, ntable.ChangesKey("large")).Result()

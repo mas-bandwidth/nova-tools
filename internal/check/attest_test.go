@@ -286,10 +286,11 @@ func TestAttestRefusals(t *testing.T) {
 //
 // It reads three files in the repo rather than a t.TempDir() tree because the
 // property under test IS those files agreeing; nothing is written.
-// dispatchRE matches one verb of run()'s switch: a case whose body hands the
-// remaining args to a cmd* handler. The flag-name cases elsewhere in main.go do
-// not, so they do not match.
-var dispatchRE = regexp.MustCompile(`(?m)^\s*case "([a-z-]+)":\s*\n\s*return cmd`)
+// verbNameRE matches the Name of one tool.Verb the binary registers: the first
+// word of its quoted name ("dogfood " + sub registers the dogfood verbs, whose
+// one SPEC subsection is "dogfood"). The tool's own Name, "nova-check", is the
+// one other Name field in the package and is excluded below.
+var verbNameRE = regexp.MustCompile(`(?m)^\s*Name:\s*"([a-z-]+)`)
 
 func TestRecordLayerCheckCountMatchesSPEC(t *testing.T) {
 	t.Parallel()
@@ -314,18 +315,27 @@ func TestRecordLayerCheckCountMatchesSPEC(t *testing.T) {
 		}
 	}
 
-	// The code side: the verbs run() dispatches to a cmd* handler. quickstart
-	// is the door to the first run, not a record-layer check, so it is the one
-	// verb excluded here -- SPEC.md documents it outside the "### " sections.
-	const mainPath = "../../cmd/nova-check/main.go"
-	mainSrc, err := os.ReadFile(mainPath)
-	require.NoError(t, err, "cannot read %s: %v", mainPath, err)
+	// The code side: the verbs the binary registers (tool.Verb Names in its
+	// non-test sources). quickstart is the door to the first run, not a
+	// record-layer check, so it is the one verb excluded here -- SPEC.md
+	// documents it outside the "### " sections.
+	const mainPath = "../../cmd/nova-check"
+	sources, err := filepath.Glob(filepath.Join(mainPath, "*.go"))
+	require.NoError(t, err, "cannot list %s: %v", mainPath, err)
 	verbNames := map[string]bool{}
-	for _, m := range dispatchRE.FindAllStringSubmatch(string(mainSrc), -1) {
-		if m[1] != "quickstart" {
-			verbNames[m[1]] = true
+	for _, src := range sources {
+		if strings.HasSuffix(src, "_test.go") {
+			continue
+		}
+		body, err := os.ReadFile(src)
+		require.NoError(t, err, "cannot read %s: %v", src, err)
+		for _, m := range verbNameRE.FindAllStringSubmatch(string(body), -1) {
+			if m[1] != "quickstart" && m[1] != "nova-check" {
+				verbNames[m[1]] = true
+			}
 		}
 	}
+	require.NotEmpty(t, verbNames, "%s registers no verb this test can read", mainPath)
 
 	for name := range specNames {
 		if !verbNames[name] {

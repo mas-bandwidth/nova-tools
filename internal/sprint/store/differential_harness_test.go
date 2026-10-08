@@ -39,6 +39,7 @@ type dAction struct {
 	OK            bool
 	Batch         int
 	Fact          string // green, conflict, cross, red, rejected
+	Way           string // a conflict's way (refmodel.RefusedConflict, ...), "" for one the lander could not place
 	Other         string // the other card of a cross fact
 	Did           string
 	Op            string // a fleet verb: up, down, level
@@ -114,6 +115,9 @@ func (a dAction) verb() string {
 		switch a.Fact {
 		case "conflict":
 			s += " --conflict " + a.id()
+			if r := conflictReq(a); r.ConflictKind != "" || r.Note != "" {
+				s += fmt.Sprintf(" --conflict-kind %q --note %q", r.ConflictKind, r.Note)
+			}
 		case "cross":
 			s += " --cross " + a.id() + "=" + a.Other
 		case "red":
@@ -537,7 +541,8 @@ func (h *dHarness) engine(a dAction, pre refmodel.State) (refused string, cutOK 
 		r := sprint.MergeReq{Stream: a.Stream, Batch: a.Batch}
 		switch a.Fact {
 		case "conflict":
-			r.Conflict = a.id()
+			c := conflictReq(a)
+			r.Conflict, r.ConflictKind, r.Note = a.id(), c.ConflictKind, c.Note
 		case "cross":
 			r.Cross = a.id() + "=" + a.Other
 		case "red":
@@ -687,7 +692,7 @@ func (h *dHarness) modelStep(a dAction, pre, post refmodel.State) (refmodel.Stat
 		case "green":
 			next, err = refmodel.MergeGreen(s, a.Stream, a.Batch)
 		case "conflict":
-			next, err = refmodel.MergeStop(s, a.Stream, a.Batch, a.id(), refmodel.CConflict, "")
+			next, err = refmodel.MergeRefused(s, a.Stream, a.Batch, a.id(), a.Way)
 		case "cross":
 			next, err = refmodel.MergeStop(s, a.Stream, a.Batch, a.id(), refmodel.CCross, a.Other)
 		case "red", "rejected":
@@ -989,6 +994,8 @@ func (h *dHarness) pick1(rng *rand.Rand, n *int) dAction {
 			switch f := rng.IntN(20); {
 			case f < 2 && len(q) > 0:
 				a.Fact, a.IDs = "conflict", []string{q[rng.IntN(min(a.Batch, len(q)))]}
+				// each way of a refusal, chosen by no draw of its own (the runs stay as they were)
+				a.Way = []string{"", refmodel.RefusedConflict, refmodel.RefusedPaths, refmodel.RefusedGate}[(len(q)+a.Batch)%4]
 			case f < 4 && len(q) > 0:
 				a.Fact, a.IDs = "cross", []string{q[rng.IntN(min(a.Batch, len(q)))]}
 				var other []string
@@ -1161,4 +1168,18 @@ func dShrink(t testing.TB, f dFinding) dFinding {
 		i++
 	}
 	return best
+}
+
+// conflictReq is a conflict fact's kind and note in the lander's words, by its way: what
+// sprint.RefusalWay reads back as that way.
+func conflictReq(a dAction) sprint.MergeReq {
+	switch a.Way {
+	case refmodel.RefusedConflict:
+		return sprint.MergeReq{ConflictKind: "file", Note: "the head h of " + a.id() + " does not merge: CONFLICT (content): Merge conflict in x.go"}
+	case refmodel.RefusedPaths:
+		return sprint.MergeReq{Note: "the head h of " + a.id() + " fails the lander's checks: it changes files outside its PATHS (E12): y.go"}
+	case refmodel.RefusedGate:
+		return sprint.MergeReq{Note: "the head h of " + a.id() + " fails the tree gate: go vet ./...: exit status 1"}
+	}
+	return sprint.MergeReq{}
 }

@@ -26,31 +26,26 @@ func parseCardCount(v string) (int64, bool) {
 	return 0, false
 }
 
-// parseCardUsd reads the dollar cell and whether the cell held it. An absence here is
-// unknown too, never a free-route zero.
-func parseCardUsd(v string) (float64, bool) {
-	v = strings.TrimSpace(v)
-	if v == "" || v == tokens.Dash {
-		return 0, false
-	}
-	if f, err := strconv.ParseFloat(v, 64); err == nil {
-		return f, true
-	}
-	return 0, false
+// cardUsage is what this tool reads from one card's usage.tsv: the model the card ran and
+// the output tokens it reported, when it reported a number.
+type cardUsage struct {
+	model    string
+	out      int64
+	outKnown bool
+	ok       bool
 }
 
 // readCardFile reads one card's usage.tsv, mapping its columns by the header so the reader
-// never depends on a fixed index. It returns the started stamp, the model, the repo the
-// receipt names (unattributed when it names none), the tool, the rc, and the three numbers
-// the ledger keeps, and reports whether the file held a row at all.
-func readCardFile(path string) (started, model, repo, tool, rc string, in, out int64, usd float64, inKnown, outKnown, usdKnown, ok bool) {
+// never depends on a fixed index. It returns the card's model, the output tokens the card
+// reported and whether it reported any, and whether the file held a row at all.
+func readCardFile(path string) (u cardUsage) {
 	raw, err := boundedReadFile(path, 1<<20) // 1 MiB cap for usage.tsv
 	if err != nil {
-		return "", "", "", "", "", 0, 0, 0, false, false, false, false
+		return cardUsage{}
 	}
 	lines := strings.Split(strings.TrimRight(string(raw), "\n"), "\n")
 	if len(lines) < 2 {
-		return "", "", "", "", "", 0, 0, 0, false, false, false, false
+		return cardUsage{}
 	}
 	head := strings.Split(lines[0], "\t")
 	idx := map[string]int{}
@@ -75,16 +70,12 @@ func readCardFile(path string) (started, model, repo, tool, rc string, in, out i
 		if s == "" || m == "" {
 			continue
 		}
-		in, inKnown = parseCardCount(get(row, "tokens_in"))
-		out, outKnown = parseCardCount(get(row, "tokens_out"))
-		usd, usdKnown = parseCardUsd(get(row, "usd"))
-		repo = strings.TrimSpace(get(row, "repo"))
-		if repo == "" || repo == tokens.Dash {
-			repo = tokens.Unattributed
-		}
-		return s, m, repo, get(row, "tool"), get(row, "rc"), in, out, usd, inKnown, outKnown, usdKnown, true
+		u.model = m
+		u.out, u.outKnown = parseCardCount(get(row, "tokens_out"))
+		u.ok = true
+		return u
 	}
-	return "", "", "", "", "", 0, 0, 0, false, false, false, false
+	return cardUsage{}
 }
 
 // boundedReadFile reads a file with a size cap, returning an error if the file exceeds
