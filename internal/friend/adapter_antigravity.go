@@ -302,17 +302,23 @@ func (a *Antigravity) send(ctx context.Context, srv antigravityServer, session, 
 	}
 
 	hash := antigravityHash(text)
+	busIDs := extractDeliveryIDs(text)
 	at := a.now()
-	a.keep(AntigravityDelivery{
+	d := AntigravityDelivery{
 		Hash:         hash,
+		BusIDs:       busIDs,
 		Conversation: session,
 		DeliveredAt:  at,
 		Text:         text,
 		State:        DeliveryPending,
-	})
+	}
+	if err := a.keep(d); err != nil {
+		a.say("antigravity: cannot persist pending delivery to ledger: %s; external send held", oneLine(err.Error(), 300))
+		return a.refuse(session, fmt.Sprintf("cannot persist pending delivery to ledger: %s; external send held", oneLine(err.Error(), 300)))
+	}
 
 	if _, err = a.agentapi(ctx, port, srv.token, "send-message", "--title="+AntigravityTitle, session, text); err != nil {
-		a.markUncertain(session, hash)
+		_ = a.markUncertain(session, hash)
 		var no AgentAPIRefusal
 		if errors.As(err, &no) {
 			return a.refuse(session, fmt.Sprintf("conversation %s: %s", session, err))
@@ -333,11 +339,11 @@ func (a *Antigravity) send(ctx context.Context, srv antigravityServer, session, 
 		}
 	}
 	if id == "" {
-		a.markUncertain(session, hash)
+		_ = a.markUncertain(session, hash)
 		a.say("antigravity: agentapi took a message for conversation %s and it is not in the mailbox after %s; kept as uncertain delivery, its id read when it lands", session, AntigravityLandBudget)
 		return a.refuse(session, fmt.Sprintf("agentapi took message for conversation %s but it did not appear in the mailbox after %s", session, AntigravityLandBudget))
 	}
-	a.markLanded(session, hash, id)
+	_ = a.markLanded(session, hash, id)
 	a.say("antigravity: message %s in the mailbox of conversation %s", id, session)
 	return 0, nil
 }

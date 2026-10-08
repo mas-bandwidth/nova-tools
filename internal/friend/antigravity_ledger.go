@@ -8,7 +8,9 @@ import (
 	"io/fs"
 	"path"
 	"path/filepath"
+	"regexp"
 	"slices"
+	"strings"
 	"time"
 )
 
@@ -58,7 +60,43 @@ type AntigravityDelivery struct {
 	ResentTo     string    `json:"resent_to,omitempty"`
 	Text         string    `json:"text,omitempty"`
 	Hash         string    `json:"hash,omitempty"`
+	BusIDs       []string  `json:"bus_ids,omitempty"`
 	State        string    `json:"state,omitempty"`
+}
+
+var (
+	busRecvIDRegex = regexp.MustCompile(`(?:RECV OK id=|=== message \d+ of \d+: id=|\[\d+/\d+\]\s+)([0-9A-Za-z_-]+)`)
+	busResentRegex = regexp.MustCompile(`re-sent:\s+([0-9A-Za-z_-]+)\s+was delivered`)
+	busNonceRegex  = regexp.MustCompile(`(?:SESSION CHECK|PING)\s+([0-9A-Za-z_-]+)`)
+	busPongRegex   = regexp.MustCompile(`--nonce\s+([0-9A-Za-z_-]+)`)
+)
+
+// extractDeliveryIDs extracts stable incoming bus message IDs, nonces, or turns from text.
+func extractDeliveryIDs(text string) []string {
+	var ids []string
+	seen := map[string]bool{}
+	add := func(id string) {
+		if id != "" && !seen[id] {
+			seen[id] = true
+			ids = append(ids, id)
+		}
+	}
+	for _, m := range busRecvIDRegex.FindAllStringSubmatch(text, -1) {
+		add(m[1])
+	}
+	for _, m := range busResentRegex.FindAllStringSubmatch(text, -1) {
+		add(m[1])
+	}
+	for _, m := range busNonceRegex.FindAllStringSubmatch(text, -1) {
+		add(m[1])
+	}
+	for _, m := range busPongRegex.FindAllStringSubmatch(text, -1) {
+		add(m[1])
+	}
+	if len(ids) == 0 {
+		add(antigravityHash(text))
+	}
+	return ids
 }
 
 // antigravityHash computes a stable sha256 hex string for the delivery text.
@@ -67,8 +105,23 @@ func antigravityHash(text string) string {
 	return hex.EncodeToString(h[:])
 }
 
-// matches checks if delivery d matches text either by durable hash or text content.
-func (d *AntigravityDelivery) matches(text string) bool {
+// matchesIDs checks whether delivery d overlaps with any incoming bus entry ID.
+func (d *AntigravityDelivery) matchesIDs(incomingIDs []string) bool {
+	if len(d.BusIDs) > 0 && len(incomingIDs) > 0 {
+		for _, inID := range incomingIDs {
+			if slices.Contains(d.BusIDs, inID) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// matches checks if delivery d matches text either by stable bus IDs, durable hash, or text content.
+func (d *AntigravityDelivery) matches(text string, incomingIDs []string) bool {
+	if d.matchesIDs(incomingIDs) {
+		return true
+	}
 	if d.Hash != "" && d.Hash == antigravityHash(text) {
 		return true
 	}
@@ -104,9 +157,8 @@ func (a *Antigravity) load() *AntigravityLedger {
 }
 
 // save writes the ledger, the read and sent-again deliveries past AntigravityKeptRead
-// dropped (the newest kept); called with mu held. A ledger that cannot be written is said,
-// and kept in memory.
-func (a *Antigravity) save() {
+// dropped (the newest kept); called with mu held.
+func (a *Antigravity) save() error {
 	l := a.load()
 	done := 0
 	for _, d := range l.Deliveries {
@@ -122,21 +174,28 @@ func (a *Antigravity) save() {
 		return false
 	})
 	if a.State == "" {
-		return
+		return nil
 	}
 	if err := write(filepath.Join(a.State, AntigravityLedgerFile), l); err != nil {
 		a.say("antigravity: the ledger cannot be written, kept in memory: %s", oneLine(err.Error(), 300))
+		return err
 	}
+	return nil
 }
 
-// keep adds a delivery to the ledger.
-func (a *Antigravity) keep(d AntigravityDelivery) {
+// keep adds a delivery to the ledger and persists it. If saving fails, the delivery is
+// removed so memory does not diverge from disk, and the persistence error is returned.
+func (a *Antigravity) keep(d AntigravityDelivery) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	l := a.load()
 	l.Deliveries = append(l.Deliveries, d)
 	a.live = d.Conversation
-	a.save()
+	if err := a.save(); err != nil {
+		l.Deliveries = l.Deliveries[:len(l.Deliveries)-1]
+		return err
+	}
+	return nil
 }
 
 // known says whether the ledger holds message id.
@@ -393,9 +452,10 @@ func (a *Antigravity) reconcile(session, text string) (reconciled bool, exit int
 	l := a.load()
 	mailbox := antigravityMailbox(session)
 	inBox, _ := a.mailbox(mailbox)
+	incomingIDs := extractDeliveryIDs(text)
 	for i := len(l.Deliveries) - 1; i >= 0; i-- {
 		d := &l.Deliveries[i]
-		if d.Conversation != session || !d.matches(text) {
+		if d.Conversation != session || !d.matches(text, incomingIDs) {
 			continue
 		}
 		// Case 1: Already consumed by conversation
@@ -414,12 +474,16 @@ func (a *Antigravity) reconcile(session, text string) (reconciled bool, exit int
 			if len(ids) > 0 {
 				d.ID = ids[0]
 				d.State = DeliveryLanded
-				a.save()
+				_ = a.save()
 				a.say("antigravity: message %s in the mailbox of conversation %s (reconciled late landing)", d.ID, session)
 				return true, 0, nil
 			}
 			// File not yet in mailbox: hold ambiguous send visibly, do not send again
-			a.say("antigravity: delivery for conversation %s is pending/uncertain (hash %s); holding send visibly rather than duplicate send", session, d.Hash)
+			desc := d.Hash
+			if len(d.BusIDs) > 0 {
+				desc = strings.Join(d.BusIDs, ",")
+			}
+			a.say("antigravity: delivery for conversation %s is pending/uncertain (%s); holding send visibly rather than duplicate send", session, desc)
 			exit, err := a.refuse(session, fmt.Sprintf("message delivery for conversation %s is already pending/uncertain; waiting for mailbox receipt rather than duplicate send", session))
 			return true, exit, err
 		}
@@ -427,7 +491,7 @@ func (a *Antigravity) reconcile(session, text string) (reconciled bool, exit int
 	return false, 0, nil
 }
 
-func (a *Antigravity) markLanded(session, hash, id string) {
+func (a *Antigravity) markLanded(session, hash, id string) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	l := a.load()
@@ -436,13 +500,13 @@ func (a *Antigravity) markLanded(session, hash, id string) {
 		if d.Conversation == session && (d.Hash == hash || (hash == "" && d.ID == id)) {
 			d.ID = id
 			d.State = DeliveryLanded
-			a.save()
-			return
+			return a.save()
 		}
 	}
+	return nil
 }
 
-func (a *Antigravity) markUncertain(session, hash string) {
+func (a *Antigravity) markUncertain(session, hash string) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	l := a.load()
@@ -450,10 +514,10 @@ func (a *Antigravity) markUncertain(session, hash string) {
 		d := &l.Deliveries[i]
 		if d.Conversation == session && d.Hash == hash {
 			d.State = DeliveryUncertain
-			a.save()
-			return
+			return a.save()
 		}
 	}
+	return nil
 }
 
 func antigravityMailbox(c string) string {

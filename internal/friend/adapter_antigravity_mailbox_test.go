@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -525,6 +526,86 @@ func TestResponseLossAcceptanceReconcilesOnRetryWhenFileLands(t *testing.T) {
 	assert.Equal(t, 0, exit)
 	assert.Equal(t, []string{"A"}, h.sentTo, "agentapi was NOT called a second time on retry")
 	assert.Contains(t, out.String(), "already in the mailbox of conversation A from prior accepted send; reconciled without duplicate send")
+}
+
+// Same bus message IDs retried across a minute boundary (changed age=%dm) or regrouped
+// with other messages match the stable bus identity fence and do NOT cause duplicate agentapi sends.
+func TestSameBusIDsWithChangedAgeAndRegroupingHoldUncertainFenceWithoutDuplicate(t *testing.T) {
+	t.Parallel()
+	h := newAgHarness(t0, "A")
+	h.late = true
+	var out strings.Builder
+	state := t.TempDir()
+	a := h.adapter("A", state, &out, func() time.Time { return t0 })
+
+	// Initial delivery attempt with age=0m carrying two batched messages
+	batchAge0 := `nova-friend: 2 message(s) for you, oldest first, in one turn; take each in order.
+
+[1/2] 01M4MSG1 from=stella at=2026-10-08T18:40:00Z age=0m subject=first
+body 1
+
+[2/2] 01M4MSG2 from=stella at=2026-10-08T18:40:00Z age=0m subject=second
+body 2
+`
+	exit, err := a.Deliver(context.Background(), batchAge0)
+	assert.Equal(t, 1, exit, "initial attempt times out and returns refusal")
+	assert.Equal(t, []string{"A"}, h.sentTo, "agentapi called once")
+
+	// Retry across a minute boundary: age changed to 1m, so full display text / hash is different,
+	// but incoming bus IDs (01M4MSG1, 01M4MSG2) are identical.
+	batchAge1 := `nova-friend: 2 message(s) for you, oldest first, in one turn; take each in order.
+
+[1/2] 01M4MSG1 from=stella at=2026-10-08T18:40:00Z age=1m subject=first
+body 1
+
+[2/2] 01M4MSG2 from=stella at=2026-10-08T18:40:00Z age=1m subject=second
+body 2
+`
+	exit, err = a.Deliver(context.Background(), batchAge1)
+	assert.Equal(t, 1, exit, "retry held visibly by bus ID match")
+	var refused SessionRefused
+	require.ErrorAs(t, err, &refused)
+	assert.Contains(t, refused.Reason, "already pending/uncertain")
+	assert.Equal(t, []string{"A"}, h.sentTo, "agentapi was NOT called again despite changed age")
+
+	// Regrouping retry: single message envelope carrying 01M4MSG1 alone
+	singleRegrouped := `RECV OK id=01M4MSG1 from=stella to=emma cc=- re=- at=2026-10-08T18:40:00Z subject="first"
+
+body 1
+`
+	exit, err = a.Deliver(context.Background(), singleRegrouped)
+	assert.Equal(t, 1, exit, "regrouped retry held visibly by bus ID match")
+	require.ErrorAs(t, err, &refused)
+	assert.Contains(t, refused.Reason, "already pending/uncertain")
+	assert.Equal(t, []string{"A"}, h.sentTo, "agentapi was NOT called again for regrouped ID")
+
+	// File now lands in mailbox
+	h.land("A", "A-1")
+
+	// Next retry reconciles without duplicate send
+	exit, err = a.Deliver(context.Background(), batchAge1)
+	require.NoError(t, err)
+	assert.Equal(t, 0, exit)
+	assert.Equal(t, []string{"A"}, h.sentTo, "still exactly one agentapi send across full retry cycle")
+}
+
+// Simulated disk/write failure refuses delivery before external send, preserving the pre-send fence.
+func TestPersistenceFailureRefusesBeforeExternalSend(t *testing.T) {
+	t.Parallel()
+	h := newAgHarness(t0, "A")
+	var out strings.Builder
+	// State directory points to an unwritable location
+	baseDir := t.TempDir()
+	unwritableState := filepath.Join(baseDir, "readonly")
+	require.NoError(t, os.Mkdir(unwritableState, 0o555))
+	t.Cleanup(func() { _ = os.Chmod(unwritableState, 0o755) })
+	a := h.adapter("A", unwritableState, &out, func() time.Time { return t0 })
+	exit, err := a.Deliver(context.Background(), "m-persist-fail")
+	assert.Equal(t, 1, exit, "refused when durable pending write fails")
+	var refused SessionRefused
+	require.ErrorAs(t, err, &refused)
+	assert.Contains(t, refused.Reason, "cannot persist pending delivery to ledger")
+	assert.Empty(t, h.sentTo, "external agentapi send-message was NEVER called")
 }
 
 // Durable unread deliveries in the ledger are replayed on same-session restart when the receipt
