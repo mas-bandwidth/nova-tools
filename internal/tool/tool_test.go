@@ -890,6 +890,22 @@ func TestAStageLineIsWhereEveryReaderMeetsTheTool(t *testing.T) {
 	}
 }
 
+// TestHelpMovesBeforeTrailingArguments pins help before words after --, including grouped verbs.
+func TestHelpMovesBeforeTrailingArguments(t *testing.T) {
+	t.Parallel()
+	for _, args := range [][]string{
+		{"help", "put", "--", "x"},
+		{"help", "fn", "load", "--", "x"},
+	} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			t.Parallel()
+			r := NewRig(t, demo()).Run(0, args...)
+			assert.Contains(t, r.Stdout, "usage: nova-demo ")
+			assert.Empty(t, r.Stderr)
+		})
+	}
+}
+
 // topicsTool is a tool whose reference text lives in help topics instead of its banner.
 func topicsTool() *Tool {
 	return &Tool{

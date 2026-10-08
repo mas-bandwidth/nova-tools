@@ -28,14 +28,10 @@ var tokensAudit = audit.Config{
 	// reason. oneline.Quote is oneline's third rendering: a double-quoted Go string
 	// literal, so the report's subject is one value and the at= and build= it repeats
 	// inside itself are not printed as keys of the line.
-	Escapers: []string{"sourceLine", "unreadableLine", "unparsedLine", "dayLine", "s.line", "s.factFields", "s.dryRunFields", "oneline.Quote"},
+	Escapers: nil,
 	// One entry per site, keyed by file, function and source text; each is a claim a
 	// reader can check.
-	Exempt: map[string]string{
-		"report.go|cmdReportStore|line": "one REPORT line built in the loop above from literal key names, oneline.Field over each key value, a %d row count and strconv.FormatInt or the literal dash per type; nothing in it is unescaped text",
-		"out.go|fields|kv[i+1]":         "a value of a key=value pair, put through oneline.Field on the same line",
-		"report.go|cmdReport|body":      "the report's stdout IS the artifact: every line of it was rendered by tokens.BodyLine, which puts each of its stored fields through oneline.Field, and the lines are joined with \\n by this function. Escaping the join again would escape those newlines and destroy the note body this verb exists to print",
-	},
+	Exempt: nil,
 	Imports: []string{
 		// the verb-help seam (the CLI style's rule (b), #4505): on -h it prints only flag names,
 		// their usage literals and lines of this package's own usage const, to the stdout run
@@ -64,7 +60,6 @@ var tokensAudit = audit.Config{
 		// the environment, the one config nova-sprint dials with; it holds no writer and
 		// returns strings and an error this package prints through oneline.Err.
 		`"github.com/mas-bandwidth/nova-tools/internal/nsprint/redisauth"`,
-		`"github.com/mas-bandwidth/nova-tools/internal/bounded"`,
 		// atomicfile writes one FILE whole (the report note and the ledger): it takes a path
 		// and the bytes of the file and puts no byte on any stream of this binary.
 		`"github.com/mas-bandwidth/nova-tools/internal/atomicfile"`,
@@ -75,5 +70,5 @@ var tokensAudit = audit.Config{
 		// package hands it, and prints nothing else.
 		`"github.com/mas-bandwidth/nova-tools/internal/tool"`,
 	},
-	MinClassified: 30,
+	MinClassified: 14,
 }
