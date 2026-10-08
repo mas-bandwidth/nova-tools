@@ -4069,12 +4069,12 @@ server: the lander asks every such member's Go lane, takes the first granted
 (giving its place back on the others; a lane not yet granted is asked again
 on the next cycle of the land loop, on that loop's clock, not on a timer of
 its own, so the beat keeps printing), and runs the gate's go commands there
-as one bench run (a copy of the clone, its `.git` too when the tree tests run,
-since `internal/ci` reads the history; `nice -n 19`, `GOFLAGS=-mod=readonly`,
-`NOVA_TEST_NO_HOST=1`; each run named on its own line, the first red ending
-it and named in the finding), then gives the lane back. A bench that does not
-answer, or a copy that fails, is nobody's finding: that gate runs in the clone
-instead. The batch's `LAND` line carries `bench=<member>` (`here` for a gate
+as one bench run (the gated commit staged from the bench's own mirror, below,
+with its history, since `internal/ci` reads it; `nice -n 19`,
+`GOFLAGS=-mod=readonly`, `NOVA_TEST_NO_HOST=1`; each run named on its own line,
+the first red ending it and named in the finding), then gives the lane back. A
+bench that does not answer, or a gate no bench could stage, is nobody's
+finding: that gate runs in the clone instead. The batch's `LAND` line carries `bench=<member>` (`here` for a gate
 the loop ran in the clone; `+` between them when a batch's gates ran in more
 than one place) and `wall=<seconds>`, the gates' total. With no such bench,
 the loop's gate runs in the clone; a `land` command on its own (a hand land,
@@ -4110,6 +4110,46 @@ stage the land loop's beat names (and so the stuck judgment) reads `lane take go
 --machine <m> --as lander/<stream> (the gate of stream <stream>)` while a gate
 waits, and `bench <m> held by lander/<stream> (the gate of stream <stream>)` while
 it runs (`landlane_holder_test.go`).
+
+**How a gate reaches a bench.** Never as a copy of the lander's clone: until
+2026-10-07 the gate's tree went as a tar stream of the clone on ssh's stdin,
+about 180 MB a batch and 60 to 90 s over the tailnet when it completed, and when
+it did not the loop's line said only `step=gate` while run directories came and
+went on the bench. Now only the commit travels (`internal/bench/stage_mirror.go`,
+`benchGate` in `cmd/nova-sprint/landgo.go`):
+
+1. The lander pushes the gated commit (the batch worktree's `HEAD`, which must be
+   clean: a tree whose files differ from its commit is gated in the clone, said)
+   to a temporary ref on its origin, `refs/nova-gate/<stream>-<sha12>`
+   (`bench.GateRef`), once a gate, before the ring is asked.
+2. The bench stages it from its own bare mirror of the repository,
+   `~/nova-bench/mirror/<repo>.git` (the one `nova-swarm member` keeps for the
+   cards' clones): the commit is fetched by that ref from the mirror's origin
+   (the lander's origin URL when the mirror names none) unless the mirror holds
+   it already, writing no ref and no `FETCH_HEAD`; the run's tree is a clone of
+   the mirror borrowing its objects (`clone --shared`), checked out detached at
+   the sha. A shared clone and not `git worktree add`, so the run's one remove
+   leaves nothing in the mirror. A bench with no mirror refuses the stage (exit
+   3, `no mirror at <path>`).
+3. The ref is deleted after the gate, whatever the gate did, under a context the
+   landing's cancellation does not end (`bench.WithGateRef`).
+
+Every stage is said. The loop's idle line carries it as the step, `LAND IDLE
+... step=gate copy <host> <n>MB <t>s via mirror since=...` (the bytes are what
+left this machine; for a mirror stage, the line), or `step=gate copy refused:
+<why>`, and the batch's report carries it as a `NOTE tree gate: ...` line under
+its `LAND` line (in the `--json` items' `also`; the loop relays a batch's NOTE
+lines when the batch is refused, and only its `LAND` lines when it lands). A
+refusal names the host, the wall time, the step that refused, its exit and the
+tail of its stderr (for the tar copy `nova-ci bench run` still
+makes: WriteTree's own refusal of a socket or a device, else the bench tar's
+exit). A refused stage is never retried on the same bench within the gate: the
+ring's next slot is asked; a bench whose stage is refused twice in one land pass
+is passed over by the ring for the rest of the pass, said once a gate as `NOTE
+tree gate: skip <host>: its stage failed 2 times this pass, last: <refusal>`
+(`bench.StageSkips`). When every slot refused, the gate runs in the clone. A
+push of the temporary ref that is refused is said as `copy refused: push
+<ref>: ...` and the gate runs in the clone.
 `--check` is the caller's own command on top, once a batch, as before.
 
 **Always inside PATHS.** Files a change must touch to keep the tree green are always
