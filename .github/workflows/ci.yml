@@ -1022,13 +1022,13 @@ jobs:
     # A functional test is one behind `//go:build functional`: a real
     # redis-server, a real binary, a real process. It runs on merge_group (the
     # queue's run of a stream PR into dev), on the nightly schedule and by hand,
-    # and NEVER on pull_request: a card PR into a stream branch and a stream PR
-    # into dev both skip it. Same selected packages as the unit legs, four space
+    # and also on pull_request: a card PR into a stream branch and a stream PR
+    # into dev both run it. Same selected packages as the unit legs, four space
     # shards, two cores a leg, the two-minute cap. ci-ok requires it when it ran.
-    # internal/ci: TestFunctionalTierRunsOnlyAsStreamsMerge.
+    # internal/ci: TestFunctionalTierRunsOnPullRequestAndAsStreamsMerge.
     name: functional (${{ matrix.entry.name }})
     needs: test-packages
-    if: github.event_name == 'merge_group' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     strategy:
       fail-fast: false
       matrix:

@@ -202,26 +202,19 @@ func TestUnitLegTakesAtMostTwoCores(t *testing.T) {
 		t.Errorf("make test-functional does not pass -p 2 (GOTEST_P):\n%s", recipe)
 	}
 }
-
-// TestFunctionalTierRunsOnlyAsStreamsMerge: the functional job runs on
-// merge_group, schedule and workflow_dispatch and never on a pull request, on
-// the space pool under the two-minute cap, over test-packages' functional
-// list, through `make test-functional`; ci-ok requires it when it ran.
-func TestFunctionalTierRunsOnlyAsStreamsMerge(t *testing.T) {
+// TestFunctionalTierRunsOnPullRequestAndAsStreamsMerge: the functional job runs on
+// pull_request, merge_group, schedule and workflow_dispatch.
+func TestFunctionalTierRunsOnPullRequestAndAsStreamsMerge(t *testing.T) {
 	t.Parallel()
-
 	jobs := ciJobs(t)
 	job, ok := jobs["functional"]
 	if !ok {
 		t.Fatal("ci.yml has no functional job")
 	}
-	for _, ev := range []string{"merge_group", "schedule", "workflow_dispatch"} {
+	for _, ev := range []string{"pull_request", "merge_group", "schedule", "workflow_dispatch"} {
 		if !strings.Contains(job.If, "github.event_name == '"+ev+"'") {
 			t.Errorf("functional's if does not run on %s: %s", ev, job.If)
 		}
-	}
-	if strings.Contains(job.If, "pull_request") || strings.Contains(job.If, "!=") && strings.Contains(job.If, "event_name !=") {
-		t.Errorf("functional's if must name the events it runs on, never pull_request: %s", job.If)
 	}
 	if job.TimeoutMinutes != 2 {
 		t.Errorf("functional timeout-minutes = %d, want 2", job.TimeoutMinutes)
