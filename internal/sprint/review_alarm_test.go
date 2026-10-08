@@ -22,6 +22,7 @@ func reviewAlarmWhen() time.Time {
 func reviewAlarmBoard() *Snapshot {
 	work := NewTable(Work)
 	work.SetRows([]string{"s1"})
+	work.SetProp(PropReadCards, ReadCardsOnWord)
 	for i, id := range []string{"s1-1", "s1-2", "s1-3", "s1-4"} {
 		work.Put(&Card{
 			ID: id, Row: "s1", Col: Review, Score: float64(i + 1),
@@ -114,7 +115,7 @@ func TestReviewStarvedRaisesOnceWhenNoReadIsOutForTwoTicks(t *testing.T) {
 	require.Len(t, got, 1)
 	require.Empty(t, reviewAlarmJudgments(p, NReadsIdle))
 	n := got[0]
-	require.Equal(t, "review starved: 4 cards in review want a read and no read is out: s1-1 (no up reader of the tier); s1-2 (no up reader of the tier); s1-3 (no up reader of the tier)", n.What)
+	require.Equal(t, "review starved: 4 cards in review want a read and no read is out: s1-1 (no reader up may read it: no friend whose tiers reach its read tier, and no member whose reader row serves its tier, besides its own worker); s1-2 (no reader up may read it: no friend whose tiers reach its read tier, and no member whose reader row serves its tier, besides its own worker); s1-3 (no reader up may read it: no friend whose tiers reach its read tier, and no member whose reader row serves its tier, besides its own worker)", n.What)
 	require.NotContains(t, n.What, "s1-4")
 	require.Equal(t, []string{"s1-1", "s1-2", "s1-3"}, n.Primaries)
 	require.Equal(t, 4, n.Count)
@@ -245,24 +246,17 @@ func TestReviewStarvedWindowNeverBelowOneTick(t *testing.T) {
 	require.Len(t, reviewAlarmJudgments(p, NReviewStarved), 1)
 }
 
-func TestReviewStarvedPartRunsBeforeDone(t *testing.T) {
+func TestReviewStarvedRunsInDoneWithoutAddingAnOperation(t *testing.T) {
 	t.Parallel()
-	reviewStarvedInstall()
 	for _, parts := range [][]TickPartDef{TickEnd, TickEndWith(false, false), TickEndWith(true, true)} {
-		at, done := -1, -1
-		n := 0
-		for i, p := range parts {
-			if p.Name == PartReviewStarved {
-				at = i
-				n++
-			}
-			if p.Name == PartDone {
-				done = i
-			}
+		require.Equal(t, PartDone, parts[len(parts)-1].Name)
+		for _, p := range parts {
+			require.NotEqual(t, PartReviewStarved, p.Name)
 		}
-		require.Equal(t, 1, n)
-		require.GreaterOrEqual(t, done, 0)
-		require.Less(t, at, done)
+		alarm, due := parts[len(parts)-1].Fn(reviewAlarmBoard(), TickReq{})
+		require.Zero(t, due)
+		require.Len(t, alarm.Props, 1)
+		require.Equal(t, PropReviewStarvedEp, alarm.Props[0].Name)
 	}
 	for _, p := range TickParts {
 		require.NotEqual(t, PartReviewStarved, p.Name)
