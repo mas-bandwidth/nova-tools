@@ -217,10 +217,34 @@ func (s *Stager) repoLock(repo string) *sync.Mutex {
 // JobDir is where a job is staged, under her working directory.
 func JobDir(dir, job string) string { return filepath.Join(dir, JobsDir, job) }
 
-// Staged says a job's JOB.md is there.
+// Staged says the stage record, its brief and its checkout are complete. An
+// incomplete JOB.md is a retry, never evidence that staging succeeded.
 func Staged(dir, job string) bool {
-	_, err := os.Lstat(filepath.Join(JobDir(dir, job), JobFile))
-	return err == nil
+	rec, ok := stageRecordOf(dir, job)
+	return ok && readableRegular(filepath.Join(JobDir(dir, job), JobFile)) &&
+		readableRegular(rec.Brief) && validCheckout(rec.Checkout)
+}
+
+// repairBrief restores a missing recorded brief from the canonical inbox copy.
+// Existing files are preserved; the next gate judges whether they are readable.
+func (s *Stager) repairBrief(p Packet) error {
+	rec, ok := stageRecordOf(s.Dir, p.Job)
+	if !ok {
+		return nil // the first stage's inbox brief is written by reconciliation
+	}
+	source := filepath.Join(s.Dir, "inbox", p.Job, "BRIEF.md")
+	target := rec.Brief
+	if readableRegular(target) {
+		return nil
+	}
+	raw, err := os.ReadFile(source)
+	if err != nil {
+		return fmt.Errorf("restore staged brief: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		return err
+	}
+	return atomicfile.WriteFile(target, raw, 0o644, atomicfile.NoReplace())
 }
 
 // Stage stages p's job: the mirror of its repository fetched (cloned the first time), a git
@@ -236,6 +260,9 @@ func (s *Stager) Stage(ctx context.Context, p Packet) (string, error) {
 	}
 	job := JobDir(s.Dir, p.Job)
 	checkout := filepath.Join(job, "repo")
+	if err := s.repairBrief(p); err != nil {
+		return "", err
+	}
 	if Staged(s.Dir, p.Job) {
 		return "", nil
 	}
@@ -708,7 +735,7 @@ func (l *loop) pruneStep(held []HeldCard, keep map[string]bool, now time.Time) {
 }
 
 // stageOwed says a held card is not handed to a lane yet: the daemon stages jobs, the card is
-// one it stages, and its JOB.md is not there.
+// one it stages, and its record, brief or checkout is incomplete.
 func (d *Daemon) stageOwed(h HeldCard) bool {
 	if d.Stage == nil {
 		return false
