@@ -587,7 +587,7 @@ func readCardVerb(s *Snapshot, r ReadReq, row, name string) Plan {
 	}
 	SortCards(all)
 	chosen := pick(&p, sel, all, fieldStream, func(c *Card) string {
-		if c.F("stopped_from_gen") != "" {
+		if len(r.Gens) > 0 || c.F("stopped_from_gen") != "" {
 			if why := liveGen("read", c, r.Gens); why != "" {
 				return why
 			}

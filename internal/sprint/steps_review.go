@@ -391,7 +391,7 @@ func NamedExtras(table string, ids []string) func(*Snapshot) map[string][]string
 type ReadReq struct {
 	Sel
 	As      string
-	Gens    map[string]int // required for a read returned by STOP at a new lease
+	Gens    map[string]int // named begin and post-STOP verdicts guard the live read lease
 	Begin   bool           // asked -> reading
 	Verdict string         // ok or broken
 	Finding string
@@ -469,7 +469,16 @@ func Read(s *Snapshot, r ReadReq) Plan {
 	}
 	SortCards(all)
 	chosen := pick(&p, sel, all, fieldStream, func(c *Card) string {
-		if c.F("stopped_from_gen") != "" && !r.Begin {
+		// A cached queue packet names its read and generation. Once STOP
+		// returns it to Asked at a new generation, that old packet cannot
+		// begin the new lease. An unnamed selection reads the fresh table
+		// state here and may still begin the live card without a packet.
+		if r.Begin && (len(r.Gens) > 0 || len(sel.IDs) > 0 && c.F("stopped_from_gen") != "") {
+			if why := liveGen("read --begin", c, r.Gens); why != "" {
+				return why
+			}
+		}
+		if !r.Begin && (len(r.Gens) > 0 || c.F("stopped_from_gen") != "") {
 			if why := liveGen("read", c, r.Gens); why != "" {
 				return why
 			}

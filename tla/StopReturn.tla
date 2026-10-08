@@ -5,7 +5,7 @@
 \* ready until the owner confirms that its process group stopped.
 EXTENDS Naturals, FiniteSets
 
-CONSTANTS Work, Read, Owner, Branch, MaxGen, MaxRunSeq, BadPrematureReady, BadLateRead, BadUnfencedStop, BadStaleTickStop, BadStaleTickPart
+CONSTANTS Work, Read, Owner, Branch, MaxGen, MaxRunSeq, BadPrematureReady, BadLateRead, BadUnfencedStop, BadStaleTickStop, BadStaleTickPart, BadOrphanDebt
 Cards == {Work, Read}
 ReadyOf(c) == IF c = Work THEN "ready" ELSE "asked"
 ActiveOf(c) == IF c = Work THEN "working" ELSE "reading"
@@ -64,6 +64,15 @@ Return(c) ==
   /\ gen' = [gen EXCEPT ![c] = @ + 1]
   /\ returned' = [returned EXCEPT ![c] = TRUE]
   /\ UNCHANGED <<machine, row, branch, child, childGen, cancel, ack, staged, planned, staleCommitted, accepted, runSeq, tickObserved, causePending, staleCauseCommitted, tickPartPending, stalePartCommitted>>
+
+\* A moved or removed active card after STOP is abstracted as lost. It does
+\* not erase the captured cancellation debt; START remains blocked.
+LoseCard(c) ==
+  /\ BadOrphanDebt /\ machine = "stopped" /\ cancel[c] /\ ~returned[c]
+  /\ place' = [place EXCEPT ![c] = "removed"]
+  /\ UNCHANGED <<machine, row, branch, gen, child, childGen, cancel, ack, returned,
+                 staged, planned, staleCommitted, accepted, runSeq, tickObserved,
+                 causePending, staleCauseCommitted, tickPartPending, stalePartCommitted>>
 
 ExplicitStart ==
   /\ machine = "stopped"
@@ -131,7 +140,7 @@ Report(c) ==
   /\ UNCHANGED <<machine, row, branch, gen, child, childGen, cancel, ack, returned, staged, planned, staleCommitted, runSeq, tickObserved, causePending, staleCauseCommitted, tickPartPending, stalePartCommitted>>
 
 Next == Stop \/ StopAgain \/ ExplicitStart \/ TickCauseStop \/ TickPartCommit
-        \/ \E c \in Cards : CancelAck(c) \/ Return(c) \/ Stage(c) \/ PlanLaunch(c) \/ Launch(c) \/ Report(c)
+        \/ \E c \in Cards : CancelAck(c) \/ Return(c) \/ LoseCard(c) \/ Stage(c) \/ PlanLaunch(c) \/ Launch(c) \/ Report(c)
 Spec == Init /\ [][Next]_vars
 
 \* The implementation requires an owner runner to deliver a real process
@@ -152,8 +161,9 @@ NoLaunchCommittedOnStop == ~staleCommitted
 NoStaleTickStop == ~staleCauseCommitted
 NoStaleTickPart == ~stalePartCommitted
 NoRestartBeforeReturn == machine = "running" => \A c \in Cards : cancel[c] => returned[c]
+NoOrphanDebt == \A c \in Cards : cancel[c] /\ ~returned[c] => place[c] # "removed"
 TypeOK ==
   /\ machine \in {"running", "stopped"}
   /\ runSeq \in Nat /\ tickObserved \in Nat
-  /\ \A c \in Cards : gen[c] \in Nat /\ place[c] \in {ReadyOf(c), ActiveOf(c), DoneOf(c)}
+  /\ \A c \in Cards : gen[c] \in Nat /\ place[c] \in {ReadyOf(c), ActiveOf(c), DoneOf(c), "removed"}
 =============================================================================

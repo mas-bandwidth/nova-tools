@@ -569,16 +569,16 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 			res.Halted = true
 			return res, nil
 		}
-		if step.StartsWork && fence.StoppedByHand {
+		if step.StartsWork && fence.StopRevoked {
 			res.Refused = []sprint.Refusal{{Key: step.Verb, Why: "the machine is STOPPED: no new work or read may start"}}
 			return res, nil
 		}
-		if step.ReportsWork && fence.StoppedByHand {
+		if step.ReportsWork && fence.StopRevoked {
 			res.Refused = []sprint.Refusal{{Key: step.Verb, Why: "the machine is STOPPED: a late work or read report cannot finish"}}
 			return res, nil
 		}
-		if step.RequiresStopped && !fence.StoppedByHand {
-			res.Refused = []sprint.Refusal{{Key: step.Verb, Why: "the machine has no explicit STOP: stop-return follows cancellation during STOP"}}
+		if step.RequiresStopped && !fence.StopRevoked {
+			res.Refused = []sprint.Refusal{{Key: step.Verb, Why: "the machine has no halted run: stop-return follows cancellation during STOP"}}
 			return res, nil
 		}
 		if fence.Queued > 0 && !step.Pump && !fence.Running && drains < MaxDrains {
@@ -651,6 +651,18 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 		plan := sprint.Applied(snap, step.Plan(snap))
 		if len(held) > 0 {
 			plan = sprint.LeaveQueued(plan, held)
+		}
+		if step.Verb != "stop-return" {
+			debt := fence.StopDebt
+			if fence.StopRevoked && !fence.StopIssued {
+				// A pre-upgrade STOP has no durable debt list. Its live leases
+				// remain protected until their owners return them.
+				debt = append(append([]StopLease(nil), debt...), activeStopLeases(snap)...)
+			}
+			if owed := stopDebtMutation(plan, debt); owed != nil {
+				why := fmt.Sprintf("STOP owns %s:%s@%d: cancel its child and run nova-sprint stop-return --as %s %s@%d --reason '<observed child exit>' before %s", owed.Row, owed.ID, owed.Gen, owed.Row, owed.ID, owed.Gen, step.Verb)
+				return refuseWhole(res, plan, why)
+			}
 		}
 		if step.Named && len(plan.Refused) > 0 && len(plan.Units)+len(plan.Notes)+len(plan.Closes)+len(plan.Rows) > 0 {
 			return allOrNone(res, plan), nil
@@ -858,6 +870,38 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 		res.Refused = append(res.Refused, sprint.Refusal{Key: k, Why: fmt.Sprintf("the sprint kept changing under this step (%d attempts); run it again", res.Attempts)})
 	}
 	return res, nil
+}
+
+// stopDebtMutation holds every captured owner lease in place until its
+// stop-return receipt (tla/StopReturn.tla Return; SPEC-SPRINT section 14).
+// The fence carries the machine's debt from the same read as its generation,
+// so STOP and this check serialize with the final operation commit.
+func stopDebtMutation(plan sprint.Plan, debt []StopLease) *StopLease {
+	if len(debt) == 0 {
+		return nil
+	}
+	byCard := make(map[string]StopLease, len(debt))
+	for _, d := range debt {
+		byCard[d.Table+":"+d.ID] = d
+	}
+	for _, u := range plan.Units {
+		for _, c := range u.Changes {
+			if d, ok := byCard[c.Table+":"+c.Entry.ID]; ok {
+				return &d
+			}
+		}
+		for _, b := range u.Bumps {
+			if d, ok := byCard[b.Table+":"+b.ID]; ok {
+				return &d
+			}
+		}
+	}
+	for _, pl := range plan.Places {
+		if d, ok := byCard[pl.Table+":"+pl.ID]; ok {
+			return &d
+		}
+	}
+	return nil
 }
 
 // withQueuedPromotion is a pump part's snapshot with the promotion queued

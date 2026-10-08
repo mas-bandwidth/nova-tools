@@ -101,10 +101,6 @@ func (st *Store) putDropDebt(ctx context.Context, debt []string) error {
 // sync. A machine still beating after its row is gone is a stranger the tick
 // names. It is the members whose rows it deleted.
 func (st *Store) DropMembers(ctx context.Context, keep []string) ([]string, error) {
-	pinned, err := st.pin(ctx)
-	if err != nil {
-		return nil, err
-	}
 	off := func(s *sprint.Snapshot) []string {
 		var out []string
 		for _, m := range s.Members() {
@@ -118,35 +114,83 @@ func (st *Store) DropMembers(ctx context.Context, keep []string) ([]string, erro
 	extras := func(s *sprint.Snapshot) map[string][]string {
 		return map[string][]string{sprint.Fleet: ctlIDs(off(s))}
 	}
+	var deleted []string
+	drop := func(pinned *Store, s *sprint.Snapshot) error {
+		var guards []RowGuard
+		var names []string
+		for _, m := range off(s) {
+			rec := s.Fleet.Card(sprint.CtlID(m))
+			if rec == nil {
+				continue // a row with no control card record at all is no member the sync removed
+			}
+			id := pinned.sid(sprint.CtlID(m))
+			guards = append(guards, RowGuard{Row: m, ID: id, Key: pinned.Names.RecordKey(sprint.Fleet, id), Rev: rec.Rev})
+			names = append(names, m)
+		}
+		if len(guards) == 0 {
+			return nil
+		}
+		if kv, err := pinned.rootKV(); err == nil {
+			var machine Machine
+			raw, ok, err := kv.GetKey(ctx, keyMachine)
+			if err != nil {
+				return err
+			}
+			if ok && raw != "" {
+				if err := json.Unmarshal([]byte(raw), &machine); err != nil {
+					return fmt.Errorf("the machine's %s record is unreadable: %w", keyMachine, err)
+				}
+			}
+			debt := machine.StopDebt
+			if machine.stopRevoked() && !machine.StopIssued {
+				debt = append(append([]StopLease(nil), debt...), activeStopLeases(s)...)
+			}
+			for _, d := range debt {
+				if d.Table == sprint.Fleet && slices.Contains(names, d.Row) {
+					return fmt.Errorf("fleet row %s holds STOP-owned %s@%d: cancel its child and stop-return on %s before deleting the row", d.Row, d.ID, d.Gen, d.Row)
+				}
+			}
+		}
+		dropOwed, err := pinned.dropDebt(ctx)
+		if err != nil {
+			return err
+		}
+		if err := pinned.putDropDebt(ctx, append(dropOwed, names...)); err != nil {
+			return err
+		}
+		deleted, err = pinned.B.RowsDelIf(ctx, pinned.Names.Table(sprint.Fleet), guards)
+		return err
+	}
+	pinned, err := st.pin(ctx)
+	if err != nil {
+		return nil, err
+	}
 	s, err := pinned.Load(ctx, []string{sprint.Fleet, sprint.Work}, extras)
 	if err != nil {
 		return nil, err
 	}
-	var guards []RowGuard
-	var names []string
-	for _, m := range off(s) {
-		rec := s.Fleet.Card(sprint.CtlID(m))
-		if rec == nil {
-			continue // a row with no control card record at all is no member the sync removed
-		}
-		id := pinned.sid(sprint.CtlID(m))
-		guards = append(guards, RowGuard{Row: m, ID: id, Key: pinned.Names.RecordKey(sprint.Fleet, id), Rev: rec.Rev})
-		names = append(names, m)
-	}
-	var deleted []string
-	if len(guards) > 0 {
-		debt, err := pinned.dropDebt(ctx)
-		if err != nil {
-			return nil, err
-		}
-		if err := pinned.putDropDebt(ctx, append(debt, names...)); err != nil {
-			return nil, err
-		}
-		if deleted, err = pinned.B.RowsDelIf(ctx, pinned.Names.Table(sprint.Fleet), guards); err != nil {
-			return deleted, err
+	// Deleting a row unplaces any card already on it. A row with a card needs
+	// the shared STOP fence through its delete (tla/StopReturn.tla
+	// NoOrphanDebt; SPEC-SPRINT section 14). An empty candidate keeps the
+	// original conditional control-revision delete: a concurrent rejoin
+	// changes that revision, so RowsDelIf preserves its new cards and row.
+	candidates := off(s)
+	occupied := false
+	for _, c := range s.Fleet.Cards() {
+		if c.Placed() && c.ID != sprint.CtlID(c.Row) && slices.Contains(candidates, c.Row) {
+			occupied = true
+			break
 		}
 	}
-	return deleted, pinned.FinishDrops(ctx)
+	if occupied {
+		err = st.fenceLocked(ctx, "fleet rows drop", extras, drop)
+	} else {
+		err = drop(pinned, s)
+	}
+	if err != nil {
+		return deleted, err
+	}
+	return deleted, st.FinishDrops(ctx)
 }
 
 // FinishDrops deletes the beat record of every member the cleanup owes one

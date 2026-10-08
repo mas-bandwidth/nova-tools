@@ -6302,7 +6302,10 @@ an epoch by a stored id of that epoch, and a card id is used again in a later
 epoch.
 
 `nova-sprint clear` stops the sprint (the machine is set STOPPED first and left
-STOPPED) and clears all work in it: it finishes a
+STOPPED). If STOP captures an active owner work or read lease, `clear` refuses
+to advance the epoch until the child is cancelled, stop-returned to its owner,
+and the machine is explicitly started. With no captured leases, it clears all
+work: it finishes a
 pending operation, or abandons it at the epoch it started at, then advances the epoch
 once, atomically, recording when and the shape to restore. It deletes nothing.
 At the new epoch every table is empty with the same rows (streams, readers,
@@ -6343,7 +6346,8 @@ up, start) is ticked on at most TickFloor (100 ms) after the tick before
 began; a quiet log ticks it TickEvery (1 s) after the tick before began. It
 moves nothing while STOPPED; `tick` is one tick by hand. The state
 is read at the start of each tick and before each of its parts: after `stop`
-returns STOPPED no part begins. An explicit STOP also refuses new takes, read
+returns STOPPED no part begins. A STOP of a running machine, whether requested
+by the operator or caused by DONE or exhausted funds, also refuses new takes, read
 begins, friend start receipts, and late finish or read verdicts. An owner runner
 cancels each child process, then records the observed exit with `stop-return
 --as <owner-row> <card>@<gen> --reason <cancellation acknowledgement>`; the card
@@ -6353,6 +6357,28 @@ refuses old finish and read reports. STOP and START acquire the same operation
 fence as takes and read begins; a worker plan made before STOP must re-read
 the changed generation before it can commit. The store trusts the owner runner's
 cancellation acknowledgement; it does not kill or inspect that process itself.
+An explicit STOP before the first START also revokes work; the initial STOPPED
+setup state permits setup until that command is issued.
+The machine records each active owner/card/generation as a stop debt under the
+same fence. `start` checks the returned card's same-owner, next-generation
+receipt against that durable debt, so moving or removing a card cannot erase
+the need for cancellation acknowledgement. While debt remains, a coordinator
+step that would rewrite one of those owner cards, including fleet down or drop,
+and deletion of its fleet row, is refused until its owner returns it. A stopped
+record from before durable debt was introduced still protects its live leases
+until their owners return them. DONE normally has no active jobs;
+when it does, the same debt rule applies. Inbox, queue, and coordinator control
+verbs remain available while the machine is stopped.
+`clear` records STOP but refuses to advance the epoch while it holds captured
+owner leases. Their runners must cancel and return them; an explicit `start`
+then clears the settled debt, after which `clear` can reset the epoch.
+Native readers begin a named queued read with `<read-card>@<gen>` from its packet;
+an old Asked packet cannot begin a returned read at a newer generation. A bare
+named begin of a returned read is refused; `read --begin --max` can select a
+fresh card from the live table. Begin keeps that generation. A named verdict
+with `@<gen>` checks the same live generation, including before any STOP; after
+a return, the verdict must name it. A reader retains the packet's generation
+through its child and reports that exact lease with a stable `--op`.
 The tick's DONE and funds stops, and its post-add DONE cleanup, take that
 same fence. Each tick part carries the explicit START generation it read;
 after STOP and a later restart, an old part cannot commit with old timing

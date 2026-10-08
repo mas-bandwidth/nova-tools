@@ -23,11 +23,8 @@ func (st *Store) machineTransition(ctx context.Context, running bool, who, reaso
 	}
 	r := pinned.retry(ctx)
 	for r.next(pinned.attempts()) {
-		var tables []string
-		if running {
-			tables = []string{sprint.Fleet, sprint.Readers}
-		}
-		s, gen, ferr := pinned.Fenced(ctx, tables, nil, nil)
+		// STOP records the same live owner leases that START later checks.
+		s, gen, ferr := pinned.Fenced(ctx, []string{sprint.Fleet, sprint.Readers}, nil, nil)
 		if ferr != nil {
 			return before, after, false, ferr
 		}
@@ -59,6 +56,10 @@ func (st *Store) machineTransition(ctx context.Context, running bool, who, reaso
 func (st *Store) machineRecord(ctx context.Context, before Machine, s *sprint.Snapshot, running bool, who, reason string, until time.Time) (after Machine, changed bool, err error) {
 	if before.Running() == running && (before.Cause != "" || !running && (reason != "" || before.Reason != "")) {
 		after = before
+		after.StopIssued = !running
+		if !running && len(before.StopDebt) == 0 {
+			after.StopDebt = activeStopLeases(s)
+		}
 		after.Cause, after.Reason, after.Until = "", reason, until
 		if reason != "" {
 			after.Who = who
@@ -66,13 +67,21 @@ func (st *Store) machineRecord(ctx context.Context, before Machine, s *sprint.Sn
 		return after, false, st.putMachine(ctx, after)
 	}
 	if before.Running() == running {
+		if !running {
+			after = before
+			after.StopIssued = true
+			if len(before.StopDebt) == 0 {
+				after.StopDebt = activeStopLeases(s)
+			}
+			return after, !before.StopIssued || len(after.StopDebt) > 0 && len(before.StopDebt) == 0, st.putMachine(ctx, after)
+		}
 		if kv, ok := st.B.(KV); ok {
 			err = kv.ShowState(ctx, st.Names.View(), ViewState(before))
 		}
 		return before, false, err
 	}
-	if running && before.Reason != "" {
-		if err := stopActiveJobs(s); err != nil {
+	if running {
+		if err := unsettledStopDebt(before, s); err != nil {
 			return before, false, err
 		}
 	}
@@ -89,7 +98,11 @@ func (st *Store) machineRecord(ctx context.Context, before Machine, s *sprint.Sn
 			after.StoppedFor += now.Sub(after.Spans[n-1].From)
 		}
 		after.State = Running
+		after.StopIssued = false
+		after.StopDebt = nil
 	} else {
+		after.StopIssued = true
+		after.StopDebt = activeStopLeases(s)
 		after.Spans = append(after.Spans, Span{From: now})
 		if len(after.Spans) > MaxStopSpans {
 			after.Spans = after.Spans[len(after.Spans)-MaxStopSpans:]
@@ -100,29 +113,65 @@ func (st *Store) machineRecord(ctx context.Context, before Machine, s *sprint.Sn
 	return after, true, st.putMachine(ctx, after)
 }
 
-func stopActiveJobs(s *sprint.Snapshot) error {
-	var active []string
+// activeStopLeases captures StopReturn.tla's cancellation debt at the STOP
+// fence (docs/SPEC-SPRINT.md section 14).
+func activeStopLeases(s *sprint.Snapshot) []StopLease {
+	var active []StopLease
 	for _, table := range []struct {
-		t   *sprint.Table
-		col string
-	}{{s.Fleet, sprint.Working}, {s.Readers, sprint.Reading}} {
+		t    *sprint.Table
+		name string
+		col  string
+	}{{s.Fleet, sprint.Fleet, sprint.Working}, {s.Readers, sprint.Readers, sprint.Reading}} {
 		if table.t == nil {
 			continue
 		}
 		for _, row := range table.t.Rows() {
 			for _, c := range table.t.Cell(row, table.col) {
-				active = append(active, row+":"+c.ID+"@"+fmt.Sprint(max(c.Int("gen"), 1)))
+				active = append(active, StopLease{Table: table.name, Row: row, ID: c.ID, Gen: max(c.Int("gen"), 1)})
 			}
 		}
 	}
-	if len(active) == 0 {
+	return active
+}
+
+// unsettledStopDebt enforces StopReturn.tla ExplicitStart against each exact
+// same-owner return receipt (docs/SPEC-SPRINT.md section 14).
+func unsettledStopDebt(m Machine, s *sprint.Snapshot) error {
+	var open []string
+	for _, d := range m.StopDebt {
+		if d.Gen < 1 || d.Table != sprint.Fleet && d.Table != sprint.Readers {
+			open = append(open, d.Row+":"+d.ID+"@"+fmt.Sprint(d.Gen))
+			continue
+		}
+		t := s.Fleet
+		ready := sprint.Ready
+		if d.Table == sprint.Readers {
+			t, ready = s.Readers, sprint.Asked
+		}
+		var c *sprint.Card
+		if t != nil {
+			c = t.Card(d.ID)
+		}
+		if c == nil || !c.Placed() || c.Row != d.Row || c.Col != ready || c.Int("stopped_from_gen") != d.Gen || c.Int("gen") != d.Gen+1 {
+			open = append(open, d.Row+":"+d.ID+"@"+fmt.Sprint(d.Gen))
+		}
+	}
+	// Only pre-upgrade records lack a persisted STOP-issued flag and debt.
+	// New records use StopDebt as the sole lease authority; an old live lease
+	// without a receipt remains a safety refusal during migration.
+	if !m.StopIssued {
+		for _, a := range activeStopLeases(s) {
+			open = append(open, a.Row+":"+a.ID+"@"+fmt.Sprint(a.Gen))
+		}
+	}
+	if len(open) == 0 {
 		return nil
 	}
-	shown := active
+	shown := open
 	if len(shown) > 8 {
 		shown = shown[:8]
 	}
-	return fmt.Errorf("%d STOP-owned work/read jobs still active (%s): cancel their child processes, then stop-return each on its same owner row before start", len(active), strings.Join(shown, ", "))
+	return fmt.Errorf("%d STOP-owned work/read jobs lack same-owner cancellation receipts (%s): cancel their child processes, then stop-return each on its same owner row before start", len(open), strings.Join(shown, ", "))
 }
 
 // stopWithCause serializes the tick's DONE and funds stops with a manual STOP.
@@ -136,7 +185,7 @@ func (st *Store) stopWithCause(ctx context.Context, cause string, runSeq uint64)
 	}
 	r := pinned.retry(ctx)
 	for r.next(pinned.attempts()) {
-		_, gen, ferr := pinned.Fenced(ctx, nil, nil, nil)
+		s, gen, ferr := pinned.Fenced(ctx, []string{sprint.Fleet, sprint.Readers}, nil, nil)
 		if ferr != nil {
 			return before, after, false, ferr
 		}
@@ -159,6 +208,8 @@ func (st *Store) stopWithCause(ctx context.Context, cause string, runSeq uint64)
 			} else {
 				now := pinned.now()
 				after = before
+				after.StopIssued = true
+				after.StopDebt = activeStopLeases(s)
 				after.Spans = append(append([]Span(nil), before.Spans...), Span{From: now})
 				if len(after.Spans) > MaxStopSpans {
 					after.Spans = after.Spans[len(after.Spans)-MaxStopSpans:]

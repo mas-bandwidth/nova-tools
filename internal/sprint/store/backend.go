@@ -176,10 +176,17 @@ type Fence struct {
 	// RunSeq identifies the explicit START whose state was read with this
 	// fence. An older tick part must not cross a STOP and restart.
 	RunSeq uint64
-	// StoppedByHand distinguishes an explicit STOP from an epoch's initial
-	// stopped setup state. Only the former revokes worker starts.
-	StoppedByHand bool
-	Queued        int
+	// StopRevoked distinguishes a run's STOP (manual or automatic) from the
+	// epoch's initial stopped setup state. It revokes new starts and reports
+	// until an explicit START after owner cancellation receipts.
+	StopRevoked bool
+	// StopIssued distinguishes a current STOP record from an older stopped
+	// record whose active leases must be protected from the live snapshot.
+	StopIssued bool
+	// StopDebt is the same machine record's captured owner leases. A step may
+	// not move or rewrite one before its owner records stop-return.
+	StopDebt []StopLease
+	Queued   int
 	// Stuck is the stuck record (stuck.go) as it was read with the fence, ""
 	// for none: the step that writes next carries its judgment, and reads no
 	// record of its own for it.

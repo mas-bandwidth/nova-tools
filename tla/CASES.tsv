@@ -481,5 +481,6 @@ MCStopReturnFair.cfg	MCStopReturn.tla	pass	-	ignore-terminal	stopreturn	required
 MCStopReturnPremature.cfg	MCStopReturn.tla	invariant	NoReadyBeforeAck	ignore-terminal	stopreturn	required	-
 MCStopReturnLateRead.cfg	MCStopReturn.tla	invariant	NoStaleAcceptance	ignore-terminal	stopreturn	required	-
 MCStopReturnUnfenced.cfg	MCStopReturn.tla	invariant	NoLaunchCommittedOnStop	ignore-terminal	stopreturn	required	-
+MCStopReturnOrphan.cfg	MCStopReturn.tla	invariant	NoOrphanDebt	ignore-terminal	stopreturn	required	-
 MCStopReturnStaleTick.cfg	MCStopReturnStaleTick.tla	invariant	NoStaleTickStop	ignore-terminal	stopreturn	required	-
 MCStopReturnStalePart.cfg	MCStopReturnStalePart.tla	invariant	NoStaleTickPart	ignore-terminal	stopreturn	required	-

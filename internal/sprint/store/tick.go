@@ -89,7 +89,14 @@ type Machine struct {
 	Who   string    `json:"who,omitempty"`
 	// RunSeq identifies each explicit START, including two at the same clock
 	// reading. A delayed tick may stop only the run it observed.
-	RunSeq     uint64        `json:"run_seq,omitempty"`
+	RunSeq uint64 `json:"run_seq,omitempty"`
+	// StopIssued distinguishes a STOP (manual or automatic) from the initial
+	// STOPPED setup record, which has never had an active run.
+	StopIssued bool `json:"stop_issued,omitempty"`
+	// StopDebt is the active owner leases captured when this run stopped.
+	// Only a same-owner stop-return at the captured generation settles one;
+	// START checks the receipts against the live tables under its fence.
+	StopDebt   []StopLease   `json:"stop_debt,omitempty"`
 	StoppedFor time.Duration `json:"stopped_ns"`
 	Spans      []Span        `json:"spans,omitempty"`
 	// Cause is why a STOPPED machine stopped when it stopped itself:
@@ -103,6 +110,14 @@ type Machine struct {
 	// them empty.
 	Reason string    `json:"reason,omitempty"`
 	Until  time.Time `json:"until,omitzero"`
+}
+
+// StopLease is one child the owner must confirm stopped before a new run.
+type StopLease struct {
+	Table string `json:"table"`
+	Row   string `json:"row"`
+	ID    string `json:"id"`
+	Gen   int    `json:"gen"`
 }
 
 // Done says the machine is STOPPED because the sprint is done.
@@ -170,6 +185,13 @@ func (hb Heartbeat) Alive() time.Time {
 
 // Running says the state is RUNNING.
 func (m Machine) Running() bool { return m.State == Running }
+
+// stopRevoked includes older machine records written before StopIssued was
+// persisted, so a restarted binary still fences their stopped runs
+// (tla/StopReturn.tla Stop and Report).
+func (m Machine) stopRevoked() bool {
+	return !m.Running() && (m.StopIssued || m.RunSeq > 0 || m.Reason != "" || m.Cause != "" || len(m.StopDebt) > 0)
+}
 
 // StateWord is RUNNING or STOPPED.
 func (m Machine) StateWord() string {

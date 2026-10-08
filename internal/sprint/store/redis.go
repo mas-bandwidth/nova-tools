@@ -450,7 +450,9 @@ func fenceOf(mget *redis.SliceCmd, llen *redis.IntCmd) (Fence, error) {
 		if json.Unmarshal([]byte(s), &m) == nil {
 			f.Running = m.Running()
 			f.RunSeq = m.RunSeq
-			f.StoppedByHand = !m.Running() && m.Reason != ""
+			f.StopRevoked = m.stopRevoked()
+			f.StopIssued = m.StopIssued
+			f.StopDebt = m.StopDebt
 		}
 	}
 	if s, ok := vals[1].(string); ok {

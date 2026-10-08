@@ -943,7 +943,9 @@ func (m *Mem) ReadFence(context.Context) (Fence, error) {
 		if json.Unmarshal([]byte(raw), &mc) == nil {
 			f.Running = mc.Running()
 			f.RunSeq = mc.RunSeq
-			f.StoppedByHand = !mc.Running() && mc.Reason != ""
+			f.StopRevoked = mc.stopRevoked()
+			f.StopIssued = mc.StopIssued
+			f.StopDebt = mc.StopDebt
 		}
 	}
 	f.Stuck = m.kv[keyStuck]
