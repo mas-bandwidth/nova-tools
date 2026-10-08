@@ -11,6 +11,7 @@ import (
 	"sync"
 	"testing"
 	"testing/synctest"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -200,6 +201,47 @@ func TestReadResultForAnotherHeadCannotCloseTheRead(t *testing.T) {
 		}
 		assert.True(t, returnedA, "the wrong-head result is returned without a verdict")
 	})
+}
+
+func TestLostResponseConfirmsNativeReadAgainstItsPrimary(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	p := readSettlement{Read: AskedRead{ID: "s1-1.r1.reader-bob", Epoch: "15", Packet: ReadPacket{Head: "aaa"}}, Verdict: "ok", Finding: "fine", Usage: "model=m-pro wall=2s"}
+	require.NoError(t, saveReadSettlement(dir, p))
+	l := &loop{ctx: context.Background(), d: &Daemon{Friend: "bob", Record: func(string) {}, Sprint: func(_ context.Context, argv []string) (string, error) {
+		assert.Equal(t, []string{"card", "s1-1", "--json"}, argv, "the native .reader suffix is not part of the primary")
+		return `{"read_cards":[{"ID":"s1-1.r1.reader-bob","Fields":{"head":"aaa","verdict":"ok","finding":"fine","usage":"model=m-pro wall=2s"}}]}`, nil
+	}}}
+	assert.True(t, l.confirmReadSettlement(dir, p, time.Now()))
+	assert.NoFileExists(t, readSettlementPath(dir))
+}
+
+func TestRecoveredReadKeepsExitProofUntilSettlementIsDurable(t *testing.T) {
+	t.Parallel()
+	dir := cardDirFixture(t, nil, nil, nil)
+	readDir := filepath.Join(dir, "reads", "a.w1")
+	require.NoError(t, os.MkdirAll(readDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(readDir, "RESULT.md"), []byte(okResult), 0o644))
+	require.NoError(t, saveReadActive(readDir, readActive{Read: AskedRead{ID: "a.w1", Epoch: "15", Col: "reading", Packet: ReadPacket{Head: "aaa"}}, PID: 2147483647, Identity: "exited process"}))
+	sp := &readSprint{queue: askedQueue, state: map[string]string{"a.w1": "begun"}}
+	d := &Daemon{Friend: "bob", Harness: "fake", Dir: dir, Sprint: sp.ask, ReadSlots: func() int { return 0 }, Record: func(string) {}}
+	s := newReadSet()
+	s.persist = func(string, readSettlement) error { return errors.New("disk write failed") }
+	first := &loop{ctx: context.Background(), d: d, reads: s, lanes: &laneSet{}}
+	first.readStep(time.Now())
+	assert.FileExists(t, readActivePath(readDir), "exit proof survives a failed settlement write")
+	assert.NoFileExists(t, readSettlementPath(readDir))
+	assert.Empty(t, sp.verbs("--return"), "a failed verdict save must not fall through to return")
+	assert.Empty(t, sp.verbs("--ok"))
+
+	restarted := &loop{ctx: context.Background(), d: d, reads: newReadSet(), lanes: &laneSet{}}
+	restarted.readStep(time.Now())
+	assert.NoFileExists(t, readActivePath(readDir))
+	assert.NoFileExists(t, readSettlementPath(readDir))
+	oks := sp.verbs("--ok")
+	require.Len(t, oks, 1)
+	assert.Equal(t, "fine no findings", flagValue(oks[0], "--finding"))
+	assert.Empty(t, sp.verbs("--return"))
 }
 
 func (s *readSprint) verbs(flag string) [][]string {

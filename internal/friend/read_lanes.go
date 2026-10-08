@@ -225,6 +225,7 @@ type readSet struct {
 	begun   map[string]bool // asked reads this daemon began: the queue shows them asked until the verdict lands
 	asked   []AskedRead
 	askedAt time.Time
+	persist func(string, readSettlement) error
 }
 
 // A settlement is written before its RPC. A lost response or daemon exit must
@@ -309,7 +310,7 @@ func loadReadSettlement(dir string) (readSettlement, bool, error) {
 }
 
 func newReadSet() *readSet {
-	return &readSet{results: make(chan readResult, 64), running: map[string]bool{}, begun: map[string]bool{}}
+	return &readSet{results: make(chan readResult, 64), running: map[string]bool{}, begun: map[string]bool{}, persist: saveReadSettlement}
 }
 
 func (d *Daemon) readSlots() int {
@@ -380,10 +381,6 @@ func (l *loop) readStep(now time.Time) {
 				continue
 			}
 			quiescent = true
-			if err := os.Remove(readActivePath(dir)); err != nil && !os.IsNotExist(err) {
-				d.Record(fmt.Sprintf("%s read %s: active identity cleanup: %s", at, r.ID, err))
-				continue
-			}
 		}
 		p, found, err := loadReadSettlement(dir)
 		if err != nil {
@@ -400,21 +397,29 @@ func (l *loop) readStep(now time.Time) {
 			if raw, err := os.ReadFile(filepath.Join(dir, "RESULT.md")); err == nil {
 				if verdict, finding := ReadVerdict(string(raw)); verdict != "" && readResultHead(string(raw)) == r.Packet.Head {
 					p = readSettlement{Read: r, Verdict: verdict, Finding: finding, Usage: "model=unknown wall=0s harness=" + d.Harness + " account=" + d.Friend}
-					if err = saveReadSettlement(dir, p); err == nil {
-						found = true
+					if err = s.persist(dir, p); err != nil {
+						d.Record(fmt.Sprintf("%s read %s: settlement held: %s", at, r.ID, err))
+						continue
 					}
+					found = true
 				}
 			}
 		}
 		if found {
+			if activeFound && !l.clearReadActive(dir, r.ID, at) {
+				continue
+			}
 			l.sendReadSettlement(dir, p, now)
 			settled[r.ID] = true
 		} else if r.Col == "reading" && quiescent {
 			// The daemon owns no harness for this reading row. Return it so
 			// the coordinator can route the interrupted read again.
 			p = readSettlement{Read: r, Reason: "reader daemon stopped before a verdict was recorded", Usage: "model=unknown wall=0s harness=" + d.Harness + " account=" + d.Friend}
-			if err := saveReadSettlement(dir, p); err != nil {
+			if err := s.persist(dir, p); err != nil {
 				d.Record(fmt.Sprintf("%s read %s: settlement held: %s", at, r.ID, err))
+				continue
+			}
+			if activeFound && !l.clearReadActive(dir, r.ID, at) {
 				continue
 			}
 			l.sendReadSettlement(dir, p, now)
@@ -470,6 +475,14 @@ func (l *loop) readStep(now time.Time) {
 	}
 }
 
+func (l *loop) clearReadActive(dir, id, at string) bool {
+	if err := os.Remove(readActivePath(dir)); err != nil && !os.IsNotExist(err) {
+		l.d.Record(fmt.Sprintf("%s read %s: active identity cleanup: %s", at, id, err))
+		return false
+	}
+	return true
+}
+
 // A response can be lost after the server commits. The queue then omits the
 // read. Confirm its exact verdict and head from the canonical card before
 // retiring the local settlement; an absent row alone proves nothing.
@@ -504,14 +517,17 @@ func (l *loop) confirmReadSettlements(now time.Time) {
 }
 
 func (l *loop) confirmReadSettlement(dir string, p readSettlement, now time.Time) bool {
-	i := strings.LastIndex(p.Read.ID, ".r")
-	if i <= 0 {
-		i = strings.IndexByte(p.Read.ID, '.')
-		if i <= 0 {
-			return false
-		}
+	i := readCardAttempt.FindStringIndex(p.Read.ID)
+	primaryEnd := 0
+	if len(i) > 0 {
+		primaryEnd = i[0]
+	} else {
+		primaryEnd = strings.IndexByte(p.Read.ID, '.')
 	}
-	out, err := l.d.Sprint(l.ctx, []string{"card", p.Read.ID[:i], "--json"})
+	if primaryEnd <= 0 {
+		return false
+	}
+	out, err := l.d.Sprint(l.ctx, []string{"card", p.Read.ID[:primaryEnd], "--json"})
 	if err != nil {
 		return false
 	}
@@ -534,6 +550,8 @@ func (l *loop) confirmReadSettlement(dir string, p readSettlement, now time.Time
 	}
 	return false
 }
+
+var readCardAttempt = regexp.MustCompile(`\.r[0-9]+\.reader-`)
 
 var readHeadLine = regexp.MustCompile(`(?m)^head:\s*(\S+)`)
 
@@ -623,7 +641,7 @@ func (l *loop) readDone(r readResult, now time.Time) {
 	p := readSettlement{Read: r.read, Usage: usage}
 	if verdict != "" {
 		p.Verdict, p.Finding = verdict, finding
-		if err := saveReadSettlement(r.dir, p); err != nil {
+		if err := s.persist(r.dir, p); err != nil {
 			d.Record(fmt.Sprintf("%s read %s: settlement held: %s", at, r.read.ID, err))
 			return
 		}
@@ -648,7 +666,7 @@ func (l *loop) readDone(r readResult, now time.Time) {
 		l.providerLimit(r.err, r.start, now)
 	}
 	p.Reason = why
-	if err := saveReadSettlement(r.dir, p); err != nil {
+	if err := s.persist(r.dir, p); err != nil {
 		d.Record(fmt.Sprintf("%s read %s: settlement held: %s", at, r.read.ID, err))
 		return
 	}
