@@ -24,7 +24,9 @@ import (
 // and asked again by the next tick. The steps stop at the ask's budget.
 const (
 	// AskBatch is the most primaries one fenced step of the tick's ask writes.
-	AskBatch = 5
+	// Twenty avoids replanning the whole review table for every five cards;
+	// a batch that loses its tries is retried one primary at a time below.
+	AskBatch = 20
 	// AskTries is the plans one step of the tick's ask makes before it gives
 	// its primaries up for this tick.
 	AskTries = 3

@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"regexp"
 	"strings"
 	"testing"
@@ -96,11 +97,28 @@ func askOf(res TickResult) (asked []string, refused []sprint.Refusal) {
 	return asked, refused
 }
 
+// An uncontended review backlog fits in one fenced ask step: the tick still
+// asks every primary, but does not replan the review table after each five.
+func TestTheAskBatchesTwentyPrimariesInOneStep(t *testing.T) {
+	t.Parallel()
+	h := inReview(t, 20)
+	writes := 0
+	h.st.B = racingAsk{Mem: h.m, h: h, writes: &writes}
+	res, err := h.st.Tick(h.ctx)
+	require.NoError(t, err)
+	asked, refused := askOf(res)
+	require.Empty(t, refused)
+	require.Len(t, asked, 20)
+	require.Equal(t, 1, writes, "one fenced ask for twenty primaries")
+	h.st.B = h.m
+	h.clean("after the batched ask")
+}
+
 // The ask writes in small fenced steps: other writers commit every 60 ms and a
 // write's window is 10 ms a primary it names, so a write of six or more always
-// holds another writer's commit. Twenty primaries in one write lost every try
-// (the live failure of 2026-10-06); in steps of five, every one is asked in the
-// one tick and none is refused for the fence.
+// holds another writer's commit. A large batch loses its tries (the live
+// failure of 2026-10-06); the ask retries its primaries alone, so every one
+// is asked in the one tick and none is refused for the fence.
 func TestTheAskStepAsksInSmallFencedSteps(t *testing.T) {
 	t.Parallel()
 	h := inReview(t, 20)
@@ -200,8 +218,9 @@ func TestALostBatchIsCountedAsDue(t *testing.T) {
 	asked, refused := askOf(res)
 	require.Empty(t, asked)
 	require.Empty(t, refused, "a lost batch is no primary's refusal")
-	require.Regexp(t, regexp.MustCompile(` readers/ask=\d+ms/\d+t/0asked/0refused/5lost`), res.TimesLine())
-	require.GreaterOrEqual(t, res.Due, 10, "the lost batch's five and the five the ask did not reach are due")
+	lost := min(AskBatch, 10)
+	require.Regexp(t, regexp.MustCompile(fmt.Sprintf(` readers/ask=\d+ms/\d+t/0asked/0refused/%dlost`, lost)), res.TimesLine())
+	require.GreaterOrEqual(t, res.Due, 10, "the lost batch and the cards the ask did not reach are due")
 	h.st.B = h.m
 	h.tick(time.Second)
 	res = h.machine()
