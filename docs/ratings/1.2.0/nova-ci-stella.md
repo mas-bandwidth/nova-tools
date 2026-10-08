@@ -13,8 +13,8 @@ binary reported `v1.2.0-dev.0d56536c`, which is a different build and was not
 used for help or behavior findings. A Linux bench host and Go-slot grant were
 not supplied, so this Studio did not build, test, or run Go. The complete
 availability transcript, including commands, output, exits, build identity and
-the 404 refusal, is preserved at
-`jobs/rerate-stella-ci-b.w2~15/repo2/evidence/release-availability.txt`.
+the 404 refusal, is preserved with this job's evidence packet and is not source
+evidence from a different build.
 
 ## Reasons
 
