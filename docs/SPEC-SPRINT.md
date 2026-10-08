@@ -4371,7 +4371,10 @@ clusters the classes into the material for new finder rules.
 **The lander's gate.** A batch whose `--check` is red on go test failures has each
 failure classified by the gate decision (docs/SPEC-NOVA-DECIDE.md section 12; section 5,
 the gate verdict) at the sprint row's bars, read once a land run, over its lines, the
-batch's PATHS and its diff from the base; the base is not run. Each decision is recorded
+batch's PATHS and its diff from the base; the base is not run. The gate has two outcomes:
+a test failure is a red tree (`FAIL` lines naming tests), and a bench fault (`exit status 128`
+from git, "not a git repository", ENOSPC, "disk quota exceeded", "no space left", missing go
+toolchain, ssh exit 255, or incomplete copy) is reported as `GATE FAULT bench=<m> kind=<git|disk|tmp|ssh|copy> what=<first line>`. Each decision is recorded
 and shown in a red batch's reason, `(the gate decision, <op>: <Test>:<class>:<p>,...;
 recorded; the flaky bar is unset, so nothing is rerun)` while the bar is empty, its
 default. When the flaky bar is set, no failure is caused and one is flaky at or above it,

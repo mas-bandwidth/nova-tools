@@ -187,6 +187,32 @@ func gateWhy(run []string, err error, out string) string {
 	return strings.Join(run, " ") + ": " + oneline.Err(err) + ": " + oneline.Cap(strings.Join(lines, " | "), 1500)
 }
 
+// benchFaultKind classifies gate output as a bench fault kind (git, disk, ssh, copy) or
+// "" when the failure is a red tree (test failure).
+func benchFaultKind(out string) string {
+	out = strings.TrimSpace(out)
+	if out == "" {
+		return ""
+	}
+	// git errors are bench faults
+	if strings.Contains(out, "exit status 128") || strings.Contains(out, "not a git repository") {
+		return "git"
+	}
+	// disk/quota errors are bench faults
+	if strings.Contains(out, "ENOSPC") || strings.Contains(out, "disk quota exceeded") || strings.Contains(out, "no space left") {
+		return "disk"
+	}
+	// ssh errors are bench faults
+	if strings.Contains(out, "exit status 255") {
+		return "ssh"
+	}
+	// copy/incomplete are bench faults
+	if strings.Contains(out, "copy incomplete") || strings.Contains(out, "did not finish") {
+		return "copy"
+	}
+	return ""
+}
+
 // baseGateFail is a base commit's failures of its tree gate under the base-gate rule: how
 // many, the last finding, and when it is gated again.
 type baseGateFail struct {
@@ -228,6 +254,11 @@ func (l *lander) treeGateBase(ctx context.Context, dir, baseSha string) (why str
 		l.baseGateCache[baseSha] = why
 		delete(l.baseGateFails, baseSha)
 		return why, false
+	}
+	// bench faults (git, disk, ssh, copy) don't mark the base red; return empty to allow the
+	// base gate to continue without caching a red result
+	if benchFaultKind(why) != "" {
+		return "", false
 	}
 	if f == nil {
 		f = &baseGateFail{}
