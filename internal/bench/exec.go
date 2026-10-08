@@ -53,12 +53,12 @@ func (Exec) CopySized(ctx context.Context, host, src, dst string, withGit bool, 
 		_ = pw.CloseWithError(err)
 	}()
 	code, err := sshLine(ctx, host, CopyLine(dst), pr, io.Discard, stderr)
-	// ignored: closing the read end only unblocks a writer the child stopped reading; the
-	// writer's own error is read below
-	_ = pr.Close()
+	// Closing the read end unblocks a writer the child stopped reading; the writer's own
+	// error is read next.
+	_ = pr.Close() // ignored: closing a pipe's read end always returns nil
 	werr := <-wrote
 	if errors.Is(werr, io.ErrClosedPipe) {
-		werr = nil // the bench stopped reading: its exit is the cause
+		werr = nil // ignored: the bench stopped reading the stream, so its exit, below, is the cause
 	}
 	switch {
 	case werr != nil:
