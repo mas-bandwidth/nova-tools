@@ -458,3 +458,6 @@ MCFriendCardFindingPrFriendStallComplete.cfg	MCFriendCard.tla	invariant	NoCardOf
 MCFriendCardFindingWakePingEvery.cfg	MCFriendCard.tla	temporal	EveryAbleFriendUp	check	friendcard	required	-
 MCFriendCardFindingCoordinatorPassJudgments.cfg	MCFriendCard.tla	temporal	EveryFinishedReturns	check	friendcard	required	-
 MCFriendCardFindingFriendBackUpAutomatic.cfg	MCFriendCard.tla	temporal	EveryAbleFriendUp	check	friendcard	required	-
+MCFriendCardLanes.cfg	MCFriendCard.tla	pass	-	check	friendcard	required	-
+MCFriendCardAnyTier.cfg	MCFriendCard.tla	pass	-	check	friendcard	required	-
+MCFriendCardBeatUp.cfg	MCFriendCard.tla	pass	-	check	friendcard	required	-

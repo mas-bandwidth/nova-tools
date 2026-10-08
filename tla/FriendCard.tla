@@ -231,7 +231,7 @@ Level(c, g) ==
 
 Deliver(c) ==
   /\ cardState[c] = "dealt" /\ holder[c] \in Friends
-  /\ (Broken = "fileisdelivery" \/ Up(holder[c]))
+  /\ (Broken = "fileisdelivery" \/ Up(holder[c]) \/ ~archived[holder[c]])
   /\ cardState' = [cardState EXCEPT ![c] = "delivered"]
   /\ delivered' = [delivered EXCEPT ![c] = TRUE]
   /\ deliveryAge' = [deliveryAge EXCEPT ![c] = 0]
@@ -316,6 +316,7 @@ Return(c) ==
 (* Coordinator take-back moves even a started run off the friend's row. *)
 TakeBack(c) ==
   /\ Active(c) /\ holder[c] \in Friends
+  /\ ~runLive[c] => goneAge[c] >= DeadRunBound
   /\ cardState' = [cardState EXCEPT ![c] = "takenback"]
   /\ holder' = [holder EXCEPT ![c] = Pool]
   /\ takenFrom' = [takenFrom EXCEPT ![c] = holder[c]]
@@ -451,7 +452,7 @@ TickAlarms(f) ==
   ELSE {}
 
 Tick ==
-  /\ daemonAge' = [f \in Friends |-> 0]
+  /\ daemonAge' = [f \in Friends |-> IF daemonLive[f] THEN 0 ELSE daemonAge[f]]
   /\ heardAge' = [f \in Friends |-> NextHeardAge(f)]
   /\ dealAge' = [c \in Cards |-> Age(dealAge[c])]
   /\ deliveryAge' = [c \in Cards |-> Age(deliveryAge[c])]
