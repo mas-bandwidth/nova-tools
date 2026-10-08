@@ -295,6 +295,8 @@ func newChaosRig(t *testing.T) *chaosRig {
 	// The fake session must answer a challenge before the sprint counts bob up;
 	// a daemon beat alone is never presence evidence.
 	r.ping()
+	_, proved := r.within(time.Minute, func() bool { return r.friendStatus("bob") == sprint.Up })
+	require.True(t, proved, "bob's fake session answered its initial challenge")
 	r.addCards(4)
 	r.step(2 * time.Second)
 	require.Equal(t, sprint.Up, r.friendStatus("bob"), "bob is up from the start")

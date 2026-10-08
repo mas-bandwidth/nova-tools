@@ -123,7 +123,7 @@ func runExample(t *testing.T, h exampleHome, transcript []string, volatile []onb
 		var stdout, stderr bytes.Buffer
 		cmd := exec.Command(h.bin, args...)
 		cmd.Dir = h.home
-		cmd.Env = []string{"PATH=" + h.path, "HOME=" + h.home}
+		cmd.Env = []string{"PATH=" + h.path, "HOME=" + h.home, "TMPDIR=" + os.TempDir()}
 		cmd.Stdout, cmd.Stderr = &stdout, &stderr
 		code := 0
 		if err := cmd.Run(); err != nil {
