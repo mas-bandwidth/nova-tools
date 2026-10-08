@@ -181,6 +181,10 @@ func briefKept(s *Snapshot, id string) string {
 // rework's fix is the old brief's and is dropped; and the record, the next attempt's
 // why, says who edited it, at which attempt, and what changed (briefChange).
 func briefInPlace(s *Snapshot, c *Card, brief string, set map[string]string, unset []string, who string) (u Unit, orphan bool) {
+	if c.F(FieldBriefDefect) != "" {
+		reworkPriority(s, c, set)
+		unset = append(unset, FieldBriefDefect)
+	}
 	n := c.Int("attempt")
 	said := fmt.Sprintf("brief edited in place by %s at attempt %d: %s", orDash(who), n, briefChange(c.F("brief"), brief))
 	set["why"] = cutText(said, MaxCardTextBytes)
@@ -331,8 +335,14 @@ func briefStarted(c *Card) string {
 // in review), with the command that does what was wanted by its state: a card
 // still working is reworked once it finishes, or dropped now; one never dealt
 // has its brief replaced; one dealt and not finished is dropped and added again;
-// one landed is a new card. "" for a primary in review.
+// one landed is a new card; one in review that ended on a brief defect is re-cut, never
+// reworked: a rework deals the brief as cut again (docs/SPEC-SPRINT.md section 1, a brief
+// defect), so it is dropped, then its re-cut brief added. "" for any other primary in review.
 func reworkWhy(c *Card) string {
+	if c.Placed() && c.Col == Review && c.F(FieldBriefDefect) != "" {
+		return "it ended on a brief defect (" + c.F(FieldBriefDefect) + "): a rework deals the same brief again; re-cut the brief: nova-sprint drop " + c.ID +
+			" --reason 'a brief defect: re-cut', then nova-sprint add --stream " + c.Row + " '<new id>' --brief-file '<the re-cut brief>'"
+	}
 	why := inState(c, Review)
 	if why == "" || !c.Placed() {
 		return why

@@ -60,6 +60,11 @@ type friendEntry struct {
 	// Mode is her delivery mode, her nova-config row's (batch or one-shot),
 	// which her daemon reads back from her beat; empty is batch.
 	Mode string `json:"mode,omitempty"`
+	// Streams and Kinds are her row's optional work restriction (nova-config's
+	// streams and kinds, carried by friend sync): the comma lists the dealer
+	// reads, empty for no restriction.
+	Streams string `json:"streams,omitempty"`
+	Kinds   string `json:"kinds,omitempty"`
 	// ConfigDir is her row's config_dir, the directory a claude one-shot lane
 	// runs with as CLAUDE_CONFIG_DIR, which her beat answers (row_config_dir=).
 	ConfigDir string `json:"config_dir,omitempty"`
@@ -69,6 +74,14 @@ type friendEntry struct {
 	// 0, so the bool is the record that it was set.
 	TokenCap    int64 `json:"token_cap,omitempty"`
 	TokenCapSet bool  `json:"token_cap_set,omitempty"`
+	// Roles is her row's roles, comma joined (builder, may-hold, reader): a read card is
+	// dealt only to a friend whose roles name reader (sprint read_cards.go).
+	Roles string `json:"roles,omitempty"`
+	// Billing is her row's billing word, when it names one: a friend whose calls are
+	// billed per use shows dollars on the tokens column, a subscription friend tokens.
+	// The cost card adds the field; until it exists this is empty, which is a
+	// subscription.
+	Billing string `json:"billing,omitempty"`
 	// Reason and Until are the hold's (friend down --reason --until, hold <friend>
 	// --reason): why, and when the coordinator expects her back. Return is whether
 	// the hold took her cards back (hold.go).
@@ -94,6 +107,21 @@ type FriendSpec struct {
 	// explicit 0 (no cap) is TokenCapSet with TokenCap 0.
 	TokenCap    int64
 	TokenCapSet bool
+	// Roles is her row's roles, comma joined: reader is the read cards'.
+	Roles string
+	// Billing is her row's billing word ("" when the row names none): a friend billed
+	// per call shows dollars on the tokens column. The cost card adds the field.
+	Billing string
+	// Streams and Kinds are her row's optional work restriction, the comma
+	// lists the dealer reads (sprint.Split; empty for no restriction).
+	Streams string
+	Kinds   string
+}
+
+// RestrictionWhy explains why the configured stream and kind do not fit this friend: ""
+// when they do (sprint.FriendRestrictionWhy).
+func (s FriendSpec) RestrictionWhy(stream, kind string) string {
+	return sprint.FriendRestrictionWhy(sprint.Split(s.Streams), sprint.Split(s.Kinds), stream, kind)
 }
 
 // FriendRow is one row of the friends table as where draws it: the counts of
@@ -116,6 +144,13 @@ type FriendRow struct {
 	Tiers  []string `json:"tiers,omitempty"`
 	Models []string `json:"models,omitempty"`
 	Mode   string   `json:"mode,omitempty"`
+	// Roles is her row's roles, comma joined (reader: she is dealt read cards).
+	Roles string `json:"roles,omitempty"`
+	// Streams and Kinds are her work restriction as the deal reads it, never a
+	// column where draws: hidden from the row's JSON as the lock keeps the
+	// friends table's shape.
+	Streams string `json:"-"`
+	Kinds   string `json:"-"`
 	// Load and Report are what her last beat reported (friend beat --load, and
 	// sprint.FriendReport), absent when it reported none.
 	Load   float64              `json:"load,omitempty"`
@@ -124,6 +159,15 @@ type FriendRow struct {
 	// outbox (sprint.FriendReport.Active), zero when it reported none: the last
 	// session activity column.
 	Active time.Time `json:"active,omitzero"`
+	// Tokens is the sum of her cards' usage records' input, output, cache read and
+	// cache write, and Charged the dollars those records charged (actual where
+	// reported, else predicted), both filled by FriendRows from her fleet row; a
+	// subscription friend's cell shows Tokens compact, an api-billed friend's shows
+	// Charged to the cent, rounded up (the friends table's tokens column).
+	Tokens  int64  `json:"tokens"`
+	Charged string `json:"charged,omitempty"`
+	// Billing is her row's billing word, "" when it names none (a subscription).
+	Billing string `json:"billing,omitempty"`
 	// Beat is when her last beat came, zero when she has never beaten: how stale her
 	// report is (view coordinator).
 	Beat time.Time `json:"beat,omitzero"`
@@ -199,12 +243,12 @@ func (st *Store) SyncFriends(ctx context.Context, specs []FriendSpec) (added, re
 		case !had:
 			added = append(added, s.Name)
 			rosterChanged = true
-		case e.Width != s.Width || e.Class != s.Class || e.Mode != s.Mode || e.ConfigDir != s.ConfigDir || e.TokenCap != s.TokenCap || e.TokenCapSet != s.TokenCapSet ||
+		case e.Width != s.Width || e.Class != s.Class || e.Mode != s.Mode || e.ConfigDir != s.ConfigDir || e.TokenCap != s.TokenCap || e.TokenCapSet != s.TokenCapSet || e.Roles != s.Roles || e.Billing != s.Billing || e.Streams != s.Streams || e.Kinds != s.Kinds ||
 			!slices.Equal(e.Tiers, s.Tiers) || !slices.Equal(e.Models, s.Models):
 			updated = append(updated, s.Name)
 			rosterChanged = true
 		}
-		e.Width, e.Class, e.Mode, e.ConfigDir, e.TokenCap, e.TokenCapSet = s.Width, s.Class, s.Mode, s.ConfigDir, s.TokenCap, s.TokenCapSet
+		e.Width, e.Class, e.Mode, e.ConfigDir, e.TokenCap, e.TokenCapSet, e.Roles, e.Billing, e.Streams, e.Kinds = s.Width, s.Class, s.Mode, s.ConfigDir, s.TokenCap, s.TokenCapSet, s.Roles, s.Billing, s.Streams, s.Kinds
 		e.Tiers, e.Models = s.Tiers, s.Models
 		r[s.Name] = e
 	}
@@ -352,13 +396,45 @@ func (st *Store) SetFriendHeld(ctx context.Context, friend string, held bool, wh
 // width and her status (sprint.FriendStatus), in the fleet table's order
 // (FleetOrder: up, asleep, then held, then down, each by name). The counts
 // (ready, working, ok, failed) are her sprint cards', filled by where from her
-// fleet row (friend.<name>), never read or counted here: the store holds no
-// job record. Three reads: the roster, the seat's generation, then every
-// friend's beat, health and last finish in one exchange. A store that keeps no records has
-// no friends.
+// fleet row (friend.<name>); her tokens are those cards' usage records, summed
+// here from the fleet table (sprint.FriendTokensFromCards). Three reads: the
+// roster, the seat's generation, then every friend's beat, health and last finish
+// in one exchange, and, when the roster has a friend, the fleet table's cards for
+// the token sum. A store that keeps no records has no friends.
 func (st *Store) FriendRows(ctx context.Context, now time.Time) ([]FriendRow, error) {
 	rows, _, err := st.friendRows(ctx, now)
-	return rows, err
+	if err != nil || len(rows) == 0 {
+		return rows, err
+	}
+	fleet, err := st.friendFleet(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for i := range rows {
+		row := sprint.FriendRow(rows[i].Name)
+		cards := make([]*sprint.Card, 0, 4)
+		for _, col := range []string{sprint.Ready, sprint.Working, sprint.DoneOK, sprint.DoneFailed} {
+			cards = append(cards, fleet.Cell(row, col)...)
+		}
+		rows[i].Tokens = sprint.FriendTokensFromCards(cards)
+		rows[i].Charged = sprint.FriendChargedFromCards(cards)
+	}
+	return rows, nil
+}
+
+// friendFleet is the fleet table's cards, read once for the friends table's token
+// sum: a friend's cards are on her row (sprint.FriendRow) in ready, working and
+// the done cells. An empty table (a store whose fleet was never initialised) is
+// no cards, not an error.
+func (st *Store) friendFleet(ctx context.Context) (*sprint.Table, error) {
+	loaded, err := st.Load(ctx, []string{sprint.Fleet}, nil)
+	if err != nil {
+		return nil, err
+	}
+	if loaded.Fleet == nil {
+		return sprint.NewTable(sprint.Fleet), nil
+	}
+	return loaded.Fleet, nil
 }
 
 // friendRows is FriendRows and, by name, why each friend is not up
@@ -408,7 +484,7 @@ func (st *Store) friendRows(ctx context.Context, now time.Time) ([]FriendRow, ma
 		}
 		presence := sprint.FriendPresence{Held: r[n].Held, Beat: b, Health: h, Generation: generation, Finished: fin}
 		word, evidence := sprint.FriendEvidence(presence, now)
-		row := FriendRow{Name: n, Width: r[n].Width, Status: word, Evidence: evidence, Finished: fin, Class: r[n].Class, Tiers: r[n].Tiers, Models: r[n].Models, Mode: r[n].Mode, Load: b.Load, Report: b.Friend, Beat: b.At, Proof: b.Proof}
+		row := FriendRow{Name: n, Width: r[n].Width, Status: word, Evidence: evidence, Finished: fin, Class: r[n].Class, Tiers: r[n].Tiers, Models: r[n].Models, Mode: r[n].Mode, Roles: r[n].Roles, Billing: r[n].Billing, Streams: r[n].Streams, Kinds: r[n].Kinds, Load: b.Load, Report: b.Friend, Beat: b.At, Proof: b.Proof}
 		if why := sprint.FriendDownWhy(presence, now); why != "" {
 			whys[n] = why
 		}
@@ -455,7 +531,7 @@ func (st *Store) FriendSeats(ctx context.Context, now time.Time) ([]sprint.Frien
 	}
 	seats := make([]sprint.FriendSeat, len(rows))
 	for i, r := range rows {
-		seats[i] = sprint.FriendSeat{Name: r.Name, Width: r.Width, Status: r.Status, Class: r.Class, Tiers: r.Tiers, Mode: r.Mode, Why: whys[r.Name], Proof: r.Proof, Finished: r.Finished}
+		seats[i] = sprint.FriendSeat{Name: r.Name, Width: r.Width, Status: r.Status, Class: r.Class, Tiers: r.Tiers, Mode: r.Mode, Roles: sprint.Split(r.Roles), Streams: sprint.Split(r.Streams), Kinds: sprint.Split(r.Kinds), Why: whys[r.Name], Proof: r.Proof, Finished: r.Finished}
 		if r.Reason != "" && seats[i].Why != "" {
 			seats[i].Why += ": " + r.Reason
 		}
@@ -494,6 +570,24 @@ func (st *Store) FriendNames(ctx context.Context) ([]string, error) {
 		return nil, err
 	}
 	return slices.Sorted(maps.Keys(r)), nil
+}
+
+// FriendSpecs reads the synced roster once for admission checks: every friend with her
+// width, class, mode and work restriction, for add's and brief's hold of a named friend's
+// streams and kinds (FriendSpec.RestrictionWhy); none when the store keeps no records.
+func (st *Store) FriendSpecs(ctx context.Context) ([]FriendSpec, error) {
+	r, _, err := st.roster(ctx)
+	if err != nil {
+		return nil, err
+	}
+	names := slices.Sorted(maps.Keys(r))
+	out := make([]FriendSpec, 0, len(names))
+	for _, name := range names {
+		e := r[name]
+		out = append(out, FriendSpec{Name: name, Width: e.Width, Class: e.Class, Tiers: e.Tiers, Models: e.Models, Mode: e.Mode, ConfigDir: e.ConfigDir,
+			TokenCap: e.TokenCap, TokenCapSet: e.TokenCapSet, Streams: e.Streams, Kinds: e.Kinds})
+	}
+	return out, nil
 }
 
 // FriendBeatOf is the friend's last beat; the zero beat when she has never beaten.
@@ -660,7 +754,7 @@ func (st *Store) FriendSpecOf(ctx context.Context, friend string) (FriendSpec, e
 	if !ok {
 		return FriendSpec{}, noFriend(r, friend)
 	}
-	return FriendSpec{Name: friend, Width: e.Width, Class: e.Class, Tiers: e.Tiers, Models: e.Models, Mode: e.Mode, ConfigDir: e.ConfigDir, TokenCap: e.TokenCap, TokenCapSet: e.TokenCapSet}, nil
+	return FriendSpec{Name: friend, Width: e.Width, Class: e.Class, Tiers: e.Tiers, Models: e.Models, Mode: e.Mode, ConfigDir: e.ConfigDir, TokenCap: e.TokenCap, TokenCapSet: e.TokenCapSet, Roles: e.Roles, Billing: e.Billing, Streams: e.Streams, Kinds: e.Kinds}, nil
 }
 
 // FriendSessions is every friend of the roster with her session's last pong as her last

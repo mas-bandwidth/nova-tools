@@ -166,8 +166,8 @@ func TestSourcesUnattributedNamesThePathsThatFellToOther(t *testing.T) {
 	require.Equal(t, 2, len(stems), "%d SOURCES UNATTRIBUTED lines, want 2:\n%s", len(stems), r.stdout)
 	// One unnamed tree is ONE stem however many directories inside it were touched: the
 	// three `deepseek-working-3` paths sit in two directories and arrive as one line.
-	wantContains(t, stems[0], "stem=/Users/glenn/deepseek-working-3 tokens=3")
-	wantContains(t, stems[1], "stem=/Users/glenn/rowan-working tokens=2")
+	wantContains(t, stems[0], "stem=/Users/glenn/deepseek-working-3 mentions=3")
+	wantContains(t, stems[1], "stem=/Users/glenn/rowan-working mentions=2")
 	// The path the rules DO name never reaches the tally.
 	wantNotContains(t, r.all(), "schema")
 	wantContains(t, lineWith(r.stdout, "SOURCES OK"), "unattributed=5")
@@ -228,8 +228,8 @@ func TestSourcesUnattributedCountsEveryTokenOfAMessage(t *testing.T) {
 		"/home/nova/tree/a.go", "/home/nova/elsewhere/c.go")+"\n")
 	r := invoke(t, "sources", "--repos", repos, "--all", "--claude", "g="+tr, "--unattributed")
 	wantExit(t, r, 0)
-	wantContains(t, r.stdout, "SOURCES UNATTRIBUTED stem=/home/nova/tree tokens=1")
-	wantContains(t, r.stdout, "SOURCES UNATTRIBUTED stem=/home/nova/elsewhere tokens=1")
+	wantContains(t, r.stdout, "SOURCES UNATTRIBUTED stem=/home/nova/tree mentions=1")
+	wantContains(t, r.stdout, "SOURCES UNATTRIBUTED stem=/home/nova/elsewhere mentions=1")
 	wantContains(t, lineWith(r.stdout, "SOURCES OK"), "unattributed=2")
 }
 
@@ -262,7 +262,7 @@ func TestSourcesDayScopeAppliesToStatisticsAndTallies(t *testing.T) {
 	wantContains(t, lineWith(r1.stdout, "SOURCES SOURCE label=claude:bench"), "files=1")
 	wantContains(t, lineWith(r1.stdout, "SOURCES SOURCE label=claude:bench"), "messages=2")
 	wantContains(t, lineWith(r1.stdout, "SOURCES SOURCE label=claude:bench"), "rows=2")
-	wantContains(t, r1.stdout, "SOURCES UNATTRIBUTED stem=/x/unmatched1/b.go tokens=1")
+	wantContains(t, r1.stdout, "SOURCES UNATTRIBUTED stem=/x/unmatched1/b.go mentions=1")
 	wantNotContains(t, r1.stdout, "SOURCES UNATTRIBUTED stem=/x/unmatched2")
 	wantContains(t, lineWith(r1.stdout, "SOURCES OK"), "files=1")
 	wantContains(t, lineWith(r1.stdout, "SOURCES OK"), "messages=2")
@@ -276,7 +276,7 @@ func TestSourcesDayScopeAppliesToStatisticsAndTallies(t *testing.T) {
 	wantContains(t, lineWith(r2.stdout, "SOURCES SOURCE label=claude:bench"), "files=1")
 	wantContains(t, lineWith(r2.stdout, "SOURCES SOURCE label=claude:bench"), "messages=2")
 	wantContains(t, lineWith(r2.stdout, "SOURCES SOURCE label=claude:bench"), "rows=2")
-	wantContains(t, r2.stdout, "SOURCES UNATTRIBUTED stem=/x/unmatched2/d.go tokens=1")
+	wantContains(t, r2.stdout, "SOURCES UNATTRIBUTED stem=/x/unmatched2/d.go mentions=1")
 	wantNotContains(t, r2.stdout, "SOURCES UNATTRIBUTED stem=/x/unmatched1")
 	wantContains(t, lineWith(r2.stdout, "SOURCES OK"), "files=1")
 	wantContains(t, lineWith(r2.stdout, "SOURCES OK"), "messages=2")
@@ -303,8 +303,8 @@ func TestSourcesDayScopeAppliesToStatisticsAndTallies(t *testing.T) {
 	wantContains(t, lineWith(rAll.stdout, "SOURCES SOURCE label=claude:bench"), "files=1")
 	wantContains(t, lineWith(rAll.stdout, "SOURCES SOURCE label=claude:bench"), "messages=4")
 	wantContains(t, lineWith(rAll.stdout, "SOURCES SOURCE label=claude:bench"), "rows=4")
-	wantContains(t, rAll.stdout, "SOURCES UNATTRIBUTED stem=/x/unmatched1/b.go tokens=1")
-	wantContains(t, rAll.stdout, "SOURCES UNATTRIBUTED stem=/x/unmatched2/d.go tokens=1")
+	wantContains(t, rAll.stdout, "SOURCES UNATTRIBUTED stem=/x/unmatched1/b.go mentions=1")
+	wantContains(t, rAll.stdout, "SOURCES UNATTRIBUTED stem=/x/unmatched2/d.go mentions=1")
 	wantContains(t, lineWith(rAll.stdout, "SOURCES OK"), "files=1")
 	wantContains(t, lineWith(rAll.stdout, "SOURCES OK"), "messages=4")
 	wantContains(t, lineWith(rAll.stdout, "SOURCES OK"), "rows=4")

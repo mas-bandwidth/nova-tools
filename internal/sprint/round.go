@@ -150,7 +150,7 @@ func (r *round) scan(ok func(string) bool) string {
 // moves it past each (moved), in order. With every room unbounded (readers
 // named for no fleet row) the order is by load, the least loaded first.
 func (r *round) pickByRoom(k int, free []string, room map[string]readerRoom) []string {
-	// Workaround (Rowan, 2026-10-06 7:40 PM ET, Glenn: "fix it now, to work around it"): pick
+	// Workaround (the coordinator, 2026-10-06 7:40 PM ET; the owner: "fix it now, to work around it"): pick
 	// from the free readers themselves, never from the round's name index, which did not
 	// hold every reader up and left asks at one pick with six readers free. The index order
 	// still breaks ties, each scan starting past the name the one before took, as the

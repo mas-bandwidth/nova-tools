@@ -84,16 +84,11 @@ func LandlockPolicyText(p *Policy) (string, error) {
 	return b.String(), nil
 }
 
-// writeRuleMask is the mask one write-set directory gets: the whole handled set beneath
-// the job dir, its tmp and the cwd (Policy.DeletesIn), and the same set minus REMOVE_FILE
-// and REMOVE_DIR everywhere else. Landlock checks a remove right on the PARENT of the entry removed or renamed
-// away, so withholding both is what refuses unlink, rmdir and rename-away beneath a
-// shared cache or a config dir while writing there still works. Rules are a union, so
-// a job dir nested under such a write keeps its remove rights from its own rule
-// (docs/SPEC-SANDBOX.md, "deletes-only-in-the-job-dir-p.w1").
-func writeRuleMask(p *Policy, dir string, abi int) uint64 {
-	if p.DeletesIn(dir) {
-		return writeSubset(abi)
-	}
-	return writeSubset(abi) &^ (fsRemoveFile | fsRemoveDir)
+// writeRuleMask is the mask one write-set directory gets: the whole handled set, REMOVE_FILE
+// and REMOVE_DIR included, under every --write root (Policy.DeletesIn is true for each;
+// docs/SPEC-SANDBOX.md, "deletes-in-every-write-root"). Landlock checks a remove right on
+// the PARENT of the entry removed or renamed away, so a write root without them could be
+// created in and never removed from.
+func writeRuleMask(_ *Policy, _ string, abi int) uint64 {
+	return writeSubset(abi)
 }

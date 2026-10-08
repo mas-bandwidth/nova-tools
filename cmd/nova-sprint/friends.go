@@ -94,9 +94,13 @@ origin's tip of that branch when the tip is that Head (one git ls-remote), and
 is refused, the card left working, when the tip is another sha (both named),
 when origin has no branch of that name, when the tip cannot be read, or when
 the card names no REPO: line; Verdict: HOLD, FAIL, FAILED or BROKEN is work
-that came back failed, and a LAND without a full sha, an empty report and any
-other verdict finish the card failed too, each with the report's first
-paragraph. card prints who=; where counts it on her friends row.
+that came back failed, but one whose first paragraph names a brief defect (the
+base lacks a PATHS file, a duplicate of landed work, a decision delivered, or
+the label "brief defect") is the brief's: it counts on the stream and in
+neither done nor ok%, and its judgment asks to re-cut the brief, never
+rework; a LAND without a full sha, an empty report and any other verdict
+finish the card failed too, each with the report's first paragraph. card
+prints who=; where counts it on her friends row.
 
 friend reconcile <friend> settles her cards when her own account and the table
 disagree: it reads <friend>-working/inbox/QUEUE.json, {"tasks":[{"id":"<card>",
@@ -260,7 +264,7 @@ func (a *app) friendSyncPass(c common, pg, root string, stdout, stderr io.Writer
 			return 1, false
 		}
 		class, tiers, models := friendClass(r)
-		specs = append(specs, store.FriendSpec{Name: n, Width: width, Class: class, Tiers: tiers, Models: models, Mode: config.FriendMode(r), ConfigDir: r.Fields["config_dir"], TokenCap: config.FriendTokenCap(r), TokenCapSet: true})
+		specs = append(specs, store.FriendSpec{Name: n, Width: width, Class: class, Tiers: tiers, Models: models, Mode: config.FriendMode(r), ConfigDir: r.Fields["config_dir"], TokenCap: config.FriendTokenCap(r), TokenCapSet: true, Roles: friendRoles(r), Billing: r.Fields["billing"], Streams: r.Fields["streams"], Kinds: r.Fields["kinds"]})
 	}
 	added, removed, updated, err := st.SyncFriends(ctx, specs)
 	if err != nil {
@@ -765,4 +769,12 @@ func (a *app) cmdFriendHealth(args []string, stdout, stderr io.Writer) int {
 	sayOK(stdout, c.json, name, line, map[string]any{"friend": friend, "state": h.State, "seen": h.Seen, "generation": h.Generation,
 		"queue": h.Queue, "working": h.Working, "width": h.Width, "status": status, "replayed": replayed})
 	return 0
+}
+
+// friendRoles is the friend row's roles, sorted and comma joined: reader is the read
+// cards' role (sprint read_cards.go; nova-config friend set <f> --roles builder,reader).
+func friendRoles(r config.Row) string {
+	words := sprint.Split(r.Fields["roles"])
+	slices.Sort(words)
+	return strings.Join(slices.Compact(words), ",")
 }

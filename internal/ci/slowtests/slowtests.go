@@ -70,13 +70,15 @@ type OverTest struct {
 
 // Report is one run of the budget check: how many packages were seen, the ones
 // over budget (worst first), the tests over budget (worst first), the single
-// slowest package overall, and the package budget they were judged against
-// (kept only so a finding can print it).
+// slowest package overall, the package budget they were judged against
+// (kept only so a finding can print it), and the packages that started and
+// never ended.
 type Report struct {
 	Packages  int
 	Over      []Package
 	OverTests []OverTest
 	Sleepers  []Sleeper
+	Truncated []string
 	Slowest   Package
 	Budget    time.Duration
 }
@@ -151,11 +153,44 @@ func terminalAction(action string) bool {
 	return false
 }
 
+// truncatedPackages names each package with a start event and no package-level
+// terminal event (pass, fail or skip with Test empty), in the order the starts
+// were first seen. A test-level pass is not the package's own end, so a stream
+// cut after one is still truncated. It is what makes a stream cut by a pipe a
+// finding rather than a clean run; the line is
+// `truncated: <pkg> started and never ended`.
+func truncatedPackages(events []Event) []string {
+	seen := map[string]bool{}
+	ended := map[string]bool{}
+	var order []string
+	for _, ev := range events {
+		if ev.Package == "" {
+			continue
+		}
+		if ev.Action == "start" && ev.Test == "" && !seen[ev.Package] {
+			seen[ev.Package] = true
+			order = append(order, ev.Package)
+		}
+		if ev.Test == "" && terminalAction(ev.Action) {
+			ended[ev.Package] = true
+		}
+	}
+	var out []string
+	for _, pkg := range order {
+		if !ended[pkg] {
+			out = append(out, pkg)
+		}
+	}
+	return out
+}
+
 // Parse decodes newline-delimited TestEvent JSON. Blank lines are skipped; a
 // line that is not an object, or an object with no Action (every event go test
 // -json writes has one, the bookkeeping ones included), is an error naming its
-// 1-based line, never a silent skip, so a truncated pipe or a stream of other
-// JSON cannot read as a clean run.
+// 1-based line, never a silent skip. Parse itself makes no completeness claim:
+// it only reads the lines. A package that starts and never gets its own
+// package-level pass, fail or skip is truncatedPackages, which Judge applies to
+// the events Parse returned.
 func Parse(r io.Reader) ([]Event, error) {
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
@@ -486,7 +521,7 @@ func Judge(events []Event, b Budgets) Report {
 		}
 	}
 
-	report := Report{Packages: len(order), Budget: time.Duration(b.Package * float64(time.Second)), OverTests: overTests, Sleepers: sleepers}
+	report := Report{Packages: len(order), Budget: time.Duration(b.Package * float64(time.Second)), OverTests: overTests, Sleepers: sleepers, Truncated: truncatedPackages(events)}
 	sort.SliceStable(report.OverTests, func(i, j int) bool {
 		if report.OverTests[i].Seconds != report.OverTests[j].Seconds {
 			return report.OverTests[i].Seconds > report.OverTests[j].Seconds
@@ -549,6 +584,20 @@ func (r Report) OverLines() []string {
 	return lines
 }
 
+// TruncatedLines is one finding per package with a start event and no
+// package-level terminal event (pass, fail or skip): `truncated: <pkg> started
+// and never ended`.
+func (r Report) TruncatedLines() []string {
+	if len(r.Truncated) == 0 {
+		return nil
+	}
+	lines := make([]string, 0, len(r.Truncated))
+	for _, pkg := range r.Truncated {
+		lines = append(lines, "truncated: "+oneline.Field(pkg)+" started and never ended")
+	}
+	return lines
+}
+
 // SleepsLines is one line per unledgered SLEEPS skip. It is red on every leg: a
 // test skipped for a wall-clock wait is what the test does, not how busy the
 // runner was.
@@ -603,6 +652,10 @@ func (l Load) LoadLine() string {
 //
 //   - an unledgered SLEEPS skip (a CI-SLEEPS line) is 1 on every leg: it is
 //     what the test does, a static fact;
+//   - a package with a start event and no package-level terminal event (pass,
+//     fail or skip) is 1 on every leg: the finding is `truncated: <pkg> started
+//     and never ended`, because a stream cut by a pipe must not read as a
+//     clean run;
 //   - a CI-SLOW line is 1 only when enforce is set, which one caller does: the
 //     nightly whole-tree run on the idle reference leg (ci.yml's schedule
 //     branch of the test step, `make test SLOWTESTS_ENFORCE=1`). Everywhere
@@ -613,12 +666,14 @@ func Verdict(r Report, load Load, enforce bool, ledger string) ([]string, int) {
 	lines = append(lines, slow...)
 	sleeps := r.SleepsLines(ledger)
 	lines = append(lines, sleeps...)
-	if len(slow) == 0 && len(sleeps) == 0 {
+	trunc := r.TruncatedLines()
+	lines = append(lines, trunc...)
+	if len(slow) == 0 && len(sleeps) == 0 && len(trunc) == 0 {
 		lines = append(lines, r.OKLine())
 	}
 	lines = append(lines, load.LoadLine())
 	code := 0
-	if len(sleeps) > 0 || (enforce && len(slow) > 0) {
+	if len(sleeps) > 0 || len(trunc) > 0 || (enforce && len(slow) > 0) {
 		code = 1
 	}
 	return lines, code

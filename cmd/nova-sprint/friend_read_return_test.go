@@ -174,13 +174,13 @@ func TestFriendSyncClosesAFriendRowReadFromItsOutboxReport(t *testing.T) {
 	}
 }
 
-// A read's job is its card id at every epoch and generation (the ask's inbox path, the
-// outbox friend sync closes it from); a work card's is its stored id, .g<gen> from 2.
-func TestAFriendReadsJobIsItsCardIDAtEveryEpoch(t *testing.T) {
+// A read card is a card: its job is a card's, its stored id, .g<gen> from 2 (friendJobOf),
+// so a one-shot runner finds inbox/<job>/BRIEF.md where it finds a work card's.
+func TestAReadCardsJobIsACardsJob(t *testing.T) {
 	t.Parallel()
 	id := sprint.ReadCardID("s1-1", 1, "amy")
-	for _, p := range []sprint.Packet{{Card: id, Kind: "read", Epoch: 15}, {Card: id, Kind: "read", Epoch: 15, Gen: 2}, {Card: id, Kind: "read"}} {
-		require.Equal(t, id, friendJobOf(p))
-	}
+	require.Equal(t, sprint.StoredID(id, 15), friendJobOf(sprint.Packet{Card: id, Kind: "read", Epoch: 15}))
+	require.Equal(t, sprint.StoredID(id, 15)+".g2", friendJobOf(sprint.Packet{Card: id, Kind: "read", Epoch: 15, Gen: 2}))
+	require.Equal(t, id, friendJobOf(sprint.Packet{Card: id, Kind: "read"}))
 	require.Equal(t, sprint.StoredID("s1-1.w1", 15)+".g2", friendJobOf(sprint.Packet{Card: "s1-1.w1", Kind: "work", Epoch: 15, Gen: 2}))
 }

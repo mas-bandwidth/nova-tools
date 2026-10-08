@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestMigrationKeepsTheTiersFallback: migration 36 on a store whose friend rows carry
+// TestMigrationKeepsTheTiersFallback: migration 37 on a store whose friend rows carry
 // only tiers adds the model table and the models column and seeds no row: every friend
 // keeps her tiers, and her class is the highest of them. The migration run again changes
 // nothing, and a friend given models afterwards takes her class from the first.
@@ -24,24 +24,24 @@ func TestMigrationKeepsTheTiersFallback(t *testing.T) {
 	defer st.Close()
 	all, err := Migrations()
 	require.NoError(t, err)
-	var m36 Migration
+	var m37 Migration
 	for _, m := range all {
-		if m.Version < 36 {
+		if m.Version < 37 {
 			require.NoError(t, st.applyOne(ctx, m), "migration %d", m.Version)
 		}
-		if m.Version == 36 {
-			m36 = m
+		if m.Version == 37 {
+			m37 = m
 		}
 	}
-	require.Equal(t, "0036_friend_models.sql", m36.Name)
+	require.Equal(t, "0037_friend_models.sql", m37.Name)
 	for _, r := range [][2]string{{"f-heavy", "heavy,pro"}, {"f-pro", "flash,pro"}, {"f-flash", "flash"}, {"f-all", "flash,frontier,heavy,pro"}} {
 		_, err := st.db.ExecContext(ctx, `INSERT INTO config.friends (name, slots, tiers) VALUES ($1, 1, $2)`, r[0], r[1])
 		require.NoError(t, err, "friend %s", r[0])
 	}
 	_, _, applied, err := st.Migrate(ctx)
 	require.NoError(t, err)
-	require.Equal(t, 36, applied[0], "migration 36 applied")
-	_, err = st.db.ExecContext(ctx, m36.SQL)
+	require.Equal(t, 37, applied[0], "migration 37 applied")
+	_, err = st.db.ExecContext(ctx, m37.SQL)
 	require.NoError(t, err, "the migration run again")
 
 	models, err := st.List(ctx, KindModel)

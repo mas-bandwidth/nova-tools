@@ -29,8 +29,8 @@ cmd/nova-table/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: no
 cmd/nova-table/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-table show demo
 cmd/nova-table/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-table render demo
 cmd/nova-config/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-config migrate --file try.json
-cmd/nova-config/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-config machine add m1 --user nova --seat s1 --slots 8 --width 4 --as a1 --file try.json
-cmd/nova-config/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-config machine set m1 --width 6 --as a1 --file try.json
+cmd/nova-config/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-config machine add m1 --user nova --seat s1 --slots 8 --width 4 --actor a1 --file try.json
+cmd/nova-config/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-config machine set m1 --width 6 --actor a1 --file try.json
 cmd/nova-config/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-config machine list --file try.json
 cmd/nova-config/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-config machine history m1 --file try.json
 cmd/nova-secrets/seat_inject_functional_test.go:TestTheHelpExampleIsWhatSeatInjectPrints example: nova-secrets seat inject --store ./secrets --as bo --from ada --only NOVA_REDIS_BENCH_PASSWORD --key ~/.config/nova-secrets/ada.key --sops /opt/homebrew/bin/sops --no-pr
@@ -119,6 +119,7 @@ cmd/nova-friend/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: n
 cmd/nova-friend/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-friend wait-pong --from bob --nonce abc123 --timeout 2s
 cmd/nova-friend/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-friend status --as bob --dir ./bob
 cmd/nova-friend/main_test.go:TestHostHelpExampleIsWhatTheToolPrints example: nova-friend host --as bob --harness aider --dir ./bob --dry-run -- aider
+cmd/nova-friend/watch_test.go:TestWatchHelpExampleIsWhatTheToolPrints example: nova-friend watch --as ada --timeout 10m
 cmd/nova-check/cli_examples_test.go:TestCLIExamplesMatchWhatTheToolPrints $ nova-check dogfood record --tool nova-check --verb links --by Ada --ok \
 cmd/nova-check/cli_examples_test.go:TestCLIExamplesMatchWhatTheToolPrints $ nova-check hygiene --repo . --base main --head card --identity "Ada <ada@example.com>" --kind fix-with-red-test
 cmd/nova-check/cli_examples_test.go:TestCLIExamplesMatchWhatTheToolPrints $ nova-check hygiene --repo . --base main --head card --identity "Ada <ada@example.com>" --paths "sign/**"

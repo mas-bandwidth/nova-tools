@@ -83,15 +83,14 @@ func (r InboxReq) due(n Note) (time.Time, bool) {
 		return time.Time{}, false
 	}
 	if !n.Review.IsZero() {
-		if n.ReviewSet.IsZero() {
-			return n.Review, r.Now.After(n.Review)
-		}
-		// The review time counts running time from when wait set it.
+		// The review time counts running time from when wait set it, by the
+		// tree's one clock comparison, the same one a timer is due by
+		// (stopped.go DueNow; docs/SPEC-SPRINT.md, "Timers").
 		due := n.Review
-		if r.Stopped != nil {
+		if r.Stopped != nil && !n.ReviewSet.IsZero() {
 			due = due.Add(r.Stopped(n.ReviewSet, r.Now))
 		}
-		return due, r.running(n.ReviewSet) >= n.Review.Sub(n.ReviewSet)
+		return due, DueNow(r.Now, n.Review, n.ReviewSet, r.Stopped)
 	}
 	due := n.At.Add(r.Deadline)
 	if r.Stopped != nil {
@@ -140,8 +139,11 @@ type Group struct {
 	// name, in the order the notes name them, unbounded: what What
 	// previews, listed whole by inbox --open.
 	Needs []string `json:"-"`
-	// To is who the group's happened notes are addressed to (Note.To), and
-	// Hint what to do next: a group addressed to someone is shown first.
+	// To is who the group's notes are addressed to (Note.To): its happened
+	// notes, and a timer's judgment, which the tick raises addressed to the
+	// actor it wakes (docs/SPEC-SPRINT.md, "Timers"); Hint is what to do
+	// next. A group addressed to someone is shown first, and the seat push
+	// writes it to that actor's inbox.
 	To   string `json:"to,omitempty"`
 	Hint string `json:"hint,omitempty"`
 }
@@ -150,6 +152,16 @@ type Group struct {
 // as every judgment id carries it, so wait takes it at the epoch it is shown at.
 func StaleGroupID(stream string, epoch uint64) string {
 	return fmt.Sprintf("stale:%s~%d", stream, epoch)
+}
+
+// waitIDs is what a wait command names: every note of the group, comma
+// separated as ack names them, or the group's own id when it has no note
+// (a stalled stream). One note stays the one id the command already printed.
+func waitIDs(g Group, first Note) string {
+	if len(g.Notes) > 0 {
+		return strings.Join(g.Notes, ",")
+	}
+	return cmp.Or(first.ID, g.ID)
 }
 
 // StaleStream is the stream a stalled stream's group id names, and whether id is one.
@@ -192,12 +204,13 @@ func Inbox(r InboxReq) []Group {
 		due, overdue := r.due(n)
 		// Overdue marks a group; it does not split one, so the grouping (and
 		// every group's members) is the same whatever deadline is read with.
-		k := n.Type + "\x00" + n.Stream + "\x00" + boolWord(n.Marked)
+		k := n.Type + "\x00" + n.Stream + "\x00" + boolWord(n.Marked) + "\x00" + n.To
 		i, ok := at[k]
 		if !ok {
 			i = len(judg)
 			at[k] = i
-			judg = append(judg, Group{Kind: Judgment, Type: n.Type, Stream: n.Stream, Oldest: n.At, Due: due, Decisions: n.Decisions})
+			judg = append(judg, Group{Kind: Judgment, Type: n.Type, Stream: n.Stream, Oldest: n.At, Due: due,
+				Decisions: n.Decisions, To: n.To, Hint: n.Hint})
 		}
 		if f, ok := first[i]; !ok || n.At.Before(f.At) || n.At.Equal(f.At) && n.ID < f.ID {
 			first[i] = n
@@ -420,11 +433,11 @@ func commands(g Group, first Note, prefix string) []Command {
 		case d == RepeatDecision:
 			add(d, look()...)
 		case d == "act" && first.StreamLevel:
-			add(d, cmd+"wait "+first.ID+" --for 30m")
+			add(d, cmd+"wait "+waitIDs(g, first)+" --for 30m")
 		case d == "act" && contains(g.Decisions, "ack"):
-			add(d, cmd+"ack "+strings.Join(g.Notes, ",")+" --reason "+noneText, cmd+"wait "+g.ID+" --for 30m")
+			add(d, cmd+"ack "+strings.Join(g.Notes, ",")+" --reason "+noneText, cmd+"wait "+waitIDs(g, first)+" --for 30m")
 		case d == "act":
-			add(d, cmd+"wait "+g.ID+" --for 30m")
+			add(d, cmd+"wait "+waitIDs(g, first)+" --for 30m")
 		case g.Type == NSprintDone:
 			switch d {
 			case "clear":
@@ -473,7 +486,7 @@ func commands(g Group, first Note, prefix string) []Command {
 			case "rank that card first":
 				add(d, cmd+"rank "+other+" --first"+ans)
 			case "wait":
-				add(d, cmd+"wait "+first.ID+" --for 30m")
+				add(d, cmd+"wait "+waitIDs(g, first)+" --for 30m")
 			case "look at both":
 				add(d, cmd+"card "+card, cmd+"card "+other)
 			case "return":
@@ -486,7 +499,20 @@ func commands(g Group, first Note, prefix string) []Command {
 			case "resume":
 				add(d, resume("'<the base passes its tree gate again>'"))
 			case "wait":
+				add(d, cmd+"wait "+waitIDs(g, first)+" --for 30m")
+			}
+		case g.Type == NMissingBase:
+			from := first.Other
+			if from == "" {
+				from = "<the gone base>"
+			}
+			switch d {
+			case "rebase":
+				add(d, cmd+"rebase --from "+from+" --to '<the branch that replaces it>'")
+			case "wait":
 				add(d, cmd+"wait "+first.ID+" --for 30m")
+			case "drop":
+				add(d, cmd+"drop"+grp+" --reason "+whyText+ans)
 			}
 		case g.Type == NRejected:
 			switch d {
@@ -518,6 +544,11 @@ func commands(g Group, first Note, prefix string) []Command {
 			} else {
 				add(d, cmd+"brief"+subj+" --brief-file '<the corrected brief>'"+subjAns)
 			}
+		case d == DecisionRecut:
+			// a brief defect (brief_defect.go): the card as cut is dropped and its brief cut again,
+			// as a new card, from what the worker found; never a redeal of the same brief
+			add(d, append(look(), cmd+"drop"+subj+" --reason 'a brief defect: re-cut'"+subjAns,
+				cmd+"add --stream "+s+" '<new id>' --brief-file '<the re-cut brief>'")...)
 		case d == "drop":
 			add(d, cmd+"drop"+subj+" --reason "+whyText+subjAns)
 		case d == "return":
@@ -527,7 +558,7 @@ func commands(g Group, first Note, prefix string) []Command {
 		case d == "check":
 			add(d, cmd+"check")
 		case d == "wait":
-			add(d, cmd+"wait "+cmp.Or(first.ID, g.ID)+" --for 30m") // a stale stream's group has no note: its id
+			add(d, cmd+"wait "+waitIDs(g, first)+" --for 30m") // a stalled stream's group has no note: its id
 		case d == "look at the card":
 			add(d, look()...)
 		case d == "repair":
@@ -558,7 +589,7 @@ func commands(g Group, first Note, prefix string) []Command {
 		case d == "promoted":
 			add(d, cmd+"promoted --sha '<merge sha>'"+ans)
 		case d == "wait 15m" || d == "wait 10m" || d == "wait 30m":
-			add(d, cmd+"wait "+cmp.Or(first.ID, g.ID)+" --for "+strings.TrimPrefix(d, "wait "))
+			add(d, cmd+"wait "+waitIDs(g, first)+" --for "+strings.TrimPrefix(d, "wait "))
 		case strings.HasPrefix(d, "restart "):
 			// a reader reading under its width: its loop unit is nova-config's record of
 			// the reader's name; restarted, it reads its machine's width (readers_behind.go)

@@ -80,8 +80,8 @@ func TestMaxLeavesNoNeedOnACutCard(t *testing.T) {
 	}
 	exit, stdout, stderr := runCard("generate", "--from", "ledger", "--ledger", "serial-tests", "--repo-dir", repo, "--repo", "o/r", "--base", "dev", "--sha", strings.Repeat("ab", 20), "--out", filepath.Join(t.TempDir(), "cards"), "--max", "2", "--dry-run")
 	require.Equal(t, 0, exit, stderr)
-	assert.Contains(t, stdout, "cards=2 waves=2 tier=flash dry-run=yes")
-	assert.Contains(t, stdout, "serial-tests-cmd-b-b\tcmd/b/b_test.go\tinternal/ci TestEveryTestOpensWithTParallel\t2\tserial-tests-cmd-a-a\n")
+	assert.Contains(t, stdout, "cards=2 waves=1 tier=flash dry-run=yes")
+	assert.Contains(t, stdout, "serial-tests-cmd-b-b\tcmd/b/b_test.go\tinternal/ci TestEveryTestOpensWithTParallel\t1\t-\n")
 	assert.NotContains(t, stdout, "serial-tests-cmd-c-c", "the cut card is named nowhere")
 }
 
@@ -235,4 +235,24 @@ func TestAGeneratedCardThatWritesAModelIsTieredFrontier(t *testing.T) {
 	assert.Contains(t, stdout, "line 1 names tier pro")
 	assert.NotContains(t, stdout, "card=finding-tla-runs-tsv check=model-tier")
 	assert.NoDirExists(t, out2)
+}
+
+// TestTheUsageBannerPrintsEachExampleOnce verifies that each example line appears
+// exactly once in the help output for the generate command.
+func TestTheUsageBannerPrintsEachExampleOnce(t *testing.T) {
+	t.Parallel()
+	// Get the main help output
+	_, banner, _ := runCard("help")
+
+	// Check that concrete example paths appear exactly once in the example block
+	exampleLines := []string{
+		"./cmd/nova-card/testdata/findings.tsv",
+		"./cards/finding-internal-bus-send.md",
+		"./cards/finding-cmd-nova-bus-main.md",
+	}
+
+	for _, line := range exampleLines {
+		count := strings.Count(banner, line)
+		assert.Equal(t, 1, count, "example line should appear exactly once, found %d times: %s", count, line)
+	}
 }

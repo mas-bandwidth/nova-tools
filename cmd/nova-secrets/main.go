@@ -92,10 +92,10 @@ flags:
   --gh <path>          path to the gh executable (seal, seat inject; default: gh)
   --git <path>         path to the git executable (seal, seat inject; default: git)
 
-exit codes: 0 ran and passed, 1 check found the store red (one line per
-failure), 2 could not run or refused (one line naming the remedy); exec ends with
-the command's own status, and 125 when exec itself refused and the command never
-ran.
+exit codes: 0 ran and passed, 1 a verb ran and said no (check's failures, or a
+gate verdict, one line per failure), 2 could not run or refused (one line naming
+the remedy); exec ends with the command's own status, and 125 when exec itself
+refused and the command never ran.
 
 setup: needs age-keygen and sops on PATH; run these from an empty directory first
   mkdir -m 700 -p ~/.config/nova-secrets

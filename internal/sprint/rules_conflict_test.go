@@ -16,14 +16,11 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
 )
 
-// A head the lander refuses is the tick's to answer, by rule (docs/SPEC-SPRINT.md section 8,
-// the rules table's row conflict; the owner, 2026-10-04: "the machine keeps itself fed"; "a
-// hand step is a missing instruction"). That day every head that did not merge, changed
-// files outside its PATHS or failed the tree gate stopped its whole stream until the
-// coordinator answered, and 19 streams sat stopped behind a hand loop. Now such a head is
-// returned, its next attempt is dealt at flash with the refusal as its fix, to be redone on
-// the base's tip, and its stream lands the rest of its batch; the stream stops and a
-// judgment stays only when the same card is refused the same way twice (a brief defect).
+// A head the lander refuses for a cause of its own (it does not merge, changes files outside
+// its PATHS or fails the tree gate) is reworked at the tip by the merge step that records it,
+// and its stream lands on (sprint's landRefused; the owner, 2026-10-04: "the machine keeps
+// itself fed"; "a hand step is a missing instruction"). That day every such head stopped its
+// whole stream until the coordinator answered, and 19 streams sat stopped behind a hand loop.
 // On the twin store (store.Mem), with the lander's facts given in the lander's own words.
 
 // conflictRig is a sprint on the twin that answers by rule: flash and pro routes, members
@@ -108,7 +105,10 @@ func (r *conflictRig) snap() *sprint.Snapshot {
 
 // toMerging drives each primary's dealt (or ready) attempt through work, its reads and the
 // accept, to merging queued.
-func (r *conflictRig) toMerging(id string) {
+func (r *conflictRig) toMerging(id string) { r.t.Helper(); r.toMergingAt(id, "") }
+
+// toMergingAt is toMerging with the attempt finished at head ("": no head of its own).
+func (r *conflictRig) toMergingAt(id, head string) {
 	r.t.Helper()
 	if r.snap().Work.Card(id).Col == sprint.Ready {
 		r.must(dealStep(sprint.DealReq{Sel: sprint.Sel{IDs: []string{id}}}))
@@ -118,7 +118,7 @@ func (r *conflictRig) toMerging(id string) {
 	require.NotNil(r.t, wc, id)
 	r.must(store.TakeStep(sprint.TakeReq{As: wc.Row, Sel: sprint.Sel{IDs: []string{wc.ID}}, Gens: map[string]int{wc.ID: wc.Int("gen")}}))
 	wc = r.snap().Fleet.Card(wc.ID)
-	r.must(store.FinishStep(sprint.FinishReq{Sel: sprint.Sel{IDs: []string{wc.ID}}, Gens: map[string]int{wc.ID: wc.Int("gen")}}))
+	r.must(store.FinishStep(sprint.FinishReq{Sel: sprint.Sel{IDs: []string{wc.ID}}, Gens: map[string]int{wc.ID: wc.Int("gen")}, Head: head}))
 	for range 4 {
 		s = r.snap()
 		if pr := s.Work.Card(id); pr.Col != sprint.Review || sprint.ReadsWanted(s, pr) == 0 {
@@ -175,19 +175,12 @@ func TestAConflictingHeadIsRedoneOnTheTipAndItsStreamKeepsLanding(t *testing.T) 
 	// the lander's three refusals of a head, as it reports them (cmd/nova-sprint, land.go and
 	// landgo.go: mergeHead, checkCard, gateCard)
 	for _, tc := range []struct {
-		name  string
-		fact  sprint.MergeReq
-		again sprint.MergeReq // another refusal of the same way, at the next attempt's head
+		name string
+		fact sprint.MergeReq
 	}{
-		{"does not merge",
-			sprint.MergeReq{Note: "the head h1 of s1-2 does not merge: CONFLICT (content): Merge conflict in internal/x.go", ConflictKind: "file", ConflictPaths: []string{"internal/x.go"}},
-			sprint.MergeReq{Note: "the head h2 of s1-2 does not merge: CONFLICT (content): Merge conflict in internal/x.go", ConflictKind: "file", ConflictPaths: []string{"internal/x.go"}}},
-		{"outside its PATHS",
-			sprint.MergeReq{Note: "the head h1 of s1-2 fails the lander's checks: it changes files outside its PATHS (E12): internal/y.go"},
-			sprint.MergeReq{Note: "the head h2 of s1-2 fails the lander's checks: it changes files outside its PATHS (E12): internal/z.go"}},
-		{"fails the tree gate",
-			sprint.MergeReq{Note: "the head h1 of s1-2 fails the tree gate: go vet ./...: exit status 1: x.go:5:26: fmt.Printf format %d has arg s of wrong type string"},
-			sprint.MergeReq{Note: "the head h2 of s1-2 fails the tree gate: go test ./internal/x/: exit status 1: "}},
+		{"does not merge", sprint.MergeReq{Note: "the head h1 of s1-2 does not merge: CONFLICT (content): Merge conflict in internal/x.go", ConflictKind: "file", ConflictPaths: []string{"internal/x.go"}}},
+		{"outside its PATHS", sprint.MergeReq{Note: "the head h1 of s1-2 fails the lander's checks: it changes files outside its PATHS (E12): internal/y.go"}},
+		{"fails the tree gate", sprint.MergeReq{Note: "the head h1 of s1-2 fails the tree gate: go vet ./...: exit status 1: x.go:5:26: fmt.Printf format %d has arg s of wrong type string"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -197,51 +190,31 @@ func TestAConflictingHeadIsRedoneOnTheTipAndItsStreamKeepsLanding(t *testing.T) 
 			}
 			// the lander merged s1-1, pushed it, and the next head was refused
 			r.must(store.MergeStep(sprint.MergeReq{Stream: "s1", Cards: []string{"s1-1"}}))
-			refuse := func(f sprint.MergeReq) {
-				t.Helper()
-				f.Stream, f.Batch, f.Conflict = "s1", 1, "s1-2"
-				r.must(store.MergeStep(f))
-				require.Equal(t, sprint.StreamStopped, r.snap().StreamCtl("s1").F("state"), "the merge step records the refusal")
-			}
-			refuse(tc.fact)
-			r.tick()
+			f := tc.fact
+			f.Stream, f.Batch, f.Conflict = "s1", 1, "s1-2"
+			r.must(store.MergeStep(f))
 
 			s := r.snap()
-			assert.NotEqual(t, sprint.StreamStopped, s.StreamCtl("s1").F("state"), "the stream goes on in the same tick")
-			assert.Empty(t, r.open(sprint.NConflict), "the refusal is answered by rule, no judgment left")
-			assert.NotEmpty(t, r.answeredBy(sprint.RuleConflict))
+			assert.Equal(t, sprint.StreamMerging, s.StreamCtl("s1").F("state"), "the stream goes on")
+			assert.Empty(t, r.open(sprint.NConflict), "no judgment to answer")
 			pr := s.Work.Card("s1-2")
-			require.Equal(t, 2, pr.Int("attempt"), "returned and redealt as a new attempt")
-			assert.Contains(t, pr.F("fix"), sprint.RuleConflictFix, "redone on the base's tip")
-			if tc.fact.ConflictKind == "" {
-				assert.Contains(t, pr.F("fix"), tc.fact.Note, "the refusal is its fix")
+			if tc.name == "outside its PATHS" {
+				// returned for the widen rule, as the conflict rule returned it (widen.go)
+				require.Equal(t, sprint.Review, pr.Col)
+				assert.Equal(t, sprint.RefusedPaths, pr.F(sprint.FieldRuleRefused))
+				assert.Equal(t, "1", pr.F(sprint.FieldRuleRedo))
+				assert.Len(t, r.open(sprint.NReturned), 1)
 			} else {
-				assert.Equal(t, sprint.RuleConflictFix, pr.F("fix"), "a file conflict is the tip's to answer")
+				require.Equal(t, sprint.Ready, pr.Col, "reworked")
+				assert.Equal(t, sprint.LandRefusedFix(tc.fact.Note), pr.F("fix"), "the refusal is its fix")
 			}
-			assert.Equal(t, "flash", pr.F(sprint.FieldTierNow))
-			wc := s.Fleet.Card(pr.F("work"))
-			require.NotNil(t, wc)
-			assert.Equal(t, "flash-a", wc.F(sprint.FieldRoute), "the redo is dealt at flash")
 
 			// the stream lands the rest of its batch while the refused card is redone
 			r.must(store.MergeStep(sprint.MergeReq{Stream: "s1", Cards: []string{"s1-3"}}))
 			assert.Equal(t, sprint.Landed, r.snap().Work.Card("s1-3").Col)
+			r.tick()
+			assert.Equal(t, 2, r.snap().Work.Card("s1-2").Int("attempt"), "redone as a new attempt")
 			r.clean("redone on the tip")
-
-			// the same card refused the same way again: a brief defect, the stream stops
-			r.toMerging("s1-2")
-			refuse(tc.again)
-			r.tick()
-			r.tick()
-			s = r.snap()
-			assert.Equal(t, sprint.StreamStopped, s.StreamCtl("s1").F("state"), "a repeat stops the stream")
-			open := r.open(sprint.NConflict)
-			require.Len(t, open, 1, "one judgment, raised once")
-			assert.True(t, strings.HasPrefix(open[0].Note.What, "brief defect: "), open[0].Note.What)
-			pr = s.Work.Card("s1-2")
-			assert.NotEmpty(t, pr.F(sprint.FieldBriefDefect), "the card is marked a brief defect")
-			assert.Equal(t, 2, pr.Int("attempt"), "not redone a third time")
-			r.clean("refused twice")
 		})
 	}
 }
@@ -251,4 +224,159 @@ func TestAConflictingHeadIsRedoneOnTheTipAndItsStreamKeepsLanding(t *testing.T) 
 func dealStep(r sprint.DealReq) store.Step {
 	return store.Step{Args: store.ArgsOf(r), Verb: "deal", Load: []string{sprint.Work, sprint.Fleet, sprint.Merge}, Mirrors: true, Routes: true,
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Deal(s, r) }}
+}
+
+// A landing refusal that is the card's own never stops its stream (the owner, 2026-10-06:
+// "There should be no manual step you need to remember to do. Just a notification."). The
+// card is reworked at the tip in the merge step itself, its pushed head kept for staging to
+// carry, the stream's other cards land in the same pass, and the seat is told once.
+func TestAConflictingCardIsReworkedAndTheStreamLandsOn(t *testing.T) {
+	t.Parallel()
+	r := newConflictRig(t)
+	head := readHead
+	r.toMergingAt("s1-1", head)
+	r.toMerging("s1-2")
+	why := "the head " + head + " of s1-1 does not merge: CONFLICT (content): Merge conflict in internal/x.go"
+	r.must(store.MergeStep(sprint.MergeReq{Stream: "s1", Batch: 1, Conflict: "s1-1", Note: why, ConflictKind: "file", ConflictPaths: []string{"internal/x.go"}}))
+
+	s := r.snap()
+	assert.Equal(t, sprint.StreamMerging, s.StreamCtl("s1").F("state"), "the card's own refusal stops nothing")
+	assert.Empty(t, r.open(sprint.NConflict), "no stop, no judgment")
+	pr := s.Work.Card("s1-1")
+	require.Equal(t, sprint.Ready, pr.Col, "reworked: its next attempt waits ready")
+	assert.Equal(t, sprint.LandRefusedFix(why), pr.F("fix"))
+	assert.Contains(t, pr.F("fix"), "the landing refused this head: "+why+"; rebase on the base tip, resolve, make the tree gate pass")
+	assert.Equal(t, sprint.Returned, s.Merge.Card("s1-1").Col, "off the merge queue")
+
+	// the other card of the stream lands in the same pass
+	r.must(store.MergeStep(sprint.MergeReq{Stream: "s1", Cards: []string{"s1-2"}}))
+	assert.Equal(t, sprint.Landed, r.snap().Work.Card("s1-2").Col)
+
+	// one notice to the seat, naming the card and the reason, nothing to answer
+	all, _, err := r.m.NotesSince(r.ctx, "", 100000)
+	require.NoError(t, err)
+	var told []sprint.Note
+	for _, n := range all {
+		if n.Type == sprint.NLandRefused {
+			told = append(told, n)
+		}
+	}
+	require.Len(t, told, 1)
+	assert.Equal(t, sprint.Happened, told[0].Kind)
+	assert.Equal(t, "coordinator", told[0].To)
+	assert.Equal(t, "s1-1", told[0].Card)
+	assert.Equal(t, why, told[0].What)
+
+	// the next deal is attempt n+1, the refusal its fix
+	r.tick()
+	s = r.snap()
+	pr = s.Work.Card("s1-1")
+	require.Equal(t, 2, pr.Int("attempt"), "dealt again as attempt 2")
+	assert.Equal(t, sprint.LandRefusedFix(why), s.Fleet.Card(pr.F("work")).F("fix"))
+	// staging starts attempt 2 from the refused head, carried onto the tip (packet.go, BaseOf)
+	earlier := []*sprint.Card{s.Fleet.Card(sprint.WorkCardID("s1-1", 1))}
+	assert.Equal(t, sprint.Base{Attempt: 1, Head: head}, sprint.BaseOf(earlier))
+	r.clean("reworked at the tip")
+}
+
+// The same refusal twice is the same finding twice: the brief is wrong, not the worker
+// (brief_bound.go). The second refusal raises the bound's judgment, never a third attempt.
+func TestTheSameLandingRefusalTwiceIsABriefDefect(t *testing.T) {
+	t.Parallel()
+	r := newConflictRig(t)
+	why := func(n int) string {
+		return fmt.Sprintf("the head h%d of s1-1 does not merge: CONFLICT (content): Merge conflict in internal/x.go", n)
+	}
+	r.toMerging("s1-1")
+	r.must(store.MergeStep(sprint.MergeReq{Stream: "s1", Batch: 1, Conflict: "s1-1", Note: why(1), ConflictKind: "file"}))
+	require.Equal(t, sprint.Ready, r.snap().Work.Card("s1-1").Col, "the first refusal reworks it")
+	r.toMerging("s1-1")
+	r.must(store.MergeStep(sprint.MergeReq{Stream: "s1", Batch: 1, Conflict: "s1-1", Note: why(2), ConflictKind: "file"}))
+	s := r.snap()
+	pr := s.Work.Card("s1-1")
+	assert.Equal(t, sprint.Review, pr.Col, "not a third attempt")
+	assert.Equal(t, 2, pr.Int("attempt"))
+	open := r.open(sprint.NBriefWrong)
+	require.Len(t, open, 1, "the brief-defect judgment")
+	assert.Contains(t, open[0].Note.What, "has failed the same way twice (attempts 1 and 2")
+	assert.NotEqual(t, sprint.StreamStopped, s.StreamCtl("s1").F("state"))
+	r.clean("refused twice")
+}
+
+// A conflict the lander could not place on the card's own head (a generated ledger it could
+// not resolve, a head origin does not hold) is the lander's failure, not the card's: the
+// stream stops and a mind answers it, as the conflict rule leaves it (RefusalWay); a file
+// conflict in the card's own head is reworked.
+func TestALedgerTheLanderCouldNotResolveStopsTheStream(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		kind, why string
+		stops     bool
+	}{
+		{"ledger", "the head h1 of s1-1 does not merge: the generated ledgers did not resolve: internal/ci/testdata/x.txt", true},
+		{"", "the head " + strings.Repeat("ab", 20) + " of s1-1 is missing on origin", true},
+		{"file", "the head h1 of s1-1 does not merge: CONFLICT (content): Merge conflict in internal/x.go", false},
+	} {
+		t.Run("kind="+tc.kind, func(t *testing.T) {
+			t.Parallel()
+			r := newConflictRig(t)
+			r.toMerging("s1-1")
+			r.must(store.MergeStep(sprint.MergeReq{Stream: "s1", Batch: 1, Conflict: "s1-1", Note: tc.why, ConflictKind: tc.kind}))
+			s := r.snap()
+			if tc.stops {
+				assert.Equal(t, sprint.StreamStopped, s.StreamCtl("s1").F("state"))
+				assert.Equal(t, sprint.Stuck, s.Merge.Card("s1-1").Col)
+				assert.Len(t, r.open(sprint.NConflict), 1, "a mind's")
+			} else {
+				assert.NotEqual(t, sprint.StreamStopped, s.StreamCtl("s1").F("state"))
+				assert.Equal(t, sprint.Ready, s.Work.Card("s1-1").Col)
+				assert.Empty(t, r.open(sprint.NConflict))
+			}
+			r.clean(tc.kind)
+		})
+	}
+}
+
+// A refusal that is the base's (its tip fails the tree gate) still stops the stream with its
+// judgment: a mind fixes the base.
+func TestABaseFailureStillStopsTheStream(t *testing.T) {
+	t.Parallel()
+	r := newConflictRig(t)
+	for _, id := range []string{"s1-1", "s1-2"} {
+		r.toMerging(id)
+	}
+	r.must(store.MergeStep(sprint.MergeReq{Stream: "s1", BaseRed: "go vet ./...: exit status 1"}))
+	s := r.snap()
+	assert.Equal(t, sprint.StreamStopped, s.StreamCtl("s1").F("state"))
+	assert.Len(t, r.open(sprint.NBaseRed), 1, "the base's one judgment")
+	for _, id := range []string{"s1-1", "s1-2"} {
+		assert.Equal(t, sprint.Merging, s.Work.Card(id).Col, "no card is blamed for the base")
+	}
+	r.clean("the base fails")
+}
+
+// A card at its attempt bound is not reworked when the landing refuses its head: it goes back
+// to review with the bound's judgment, and its stream lands on.
+func TestACardAtItsBoundIsNotReworkedOnConflict(t *testing.T) {
+	t.Parallel()
+	r := newConflictRig(t)
+	r.must(store.SetStep(sprint.SetReq{Streams: []string{"s1"}, Attempts: "1", Who: "coordinator"}))
+	for _, id := range []string{"s1-1", "s1-2"} {
+		r.toMerging(id)
+	}
+	why := "the head h1 of s1-1 fails the tree gate: go test ./internal/x/: exit status 1"
+	r.must(store.MergeStep(sprint.MergeReq{Stream: "s1", Batch: 1, Conflict: "s1-1", Note: why}))
+	s := r.snap()
+	assert.Equal(t, sprint.StreamMerging, s.StreamCtl("s1").F("state"))
+	pr := s.Work.Card("s1-1")
+	assert.Equal(t, sprint.Review, pr.Col, "not reworked at its bound")
+	assert.Equal(t, 1, pr.Int("attempt"))
+	assert.Empty(t, pr.F("fix"))
+	open := r.open(sprint.NBriefWrong)
+	require.Len(t, open, 1, "the bound's judgment")
+	assert.Contains(t, open[0].Note.What, why)
+	assert.Empty(t, r.open(sprint.NConflict))
+	r.must(store.MergeStep(sprint.MergeReq{Stream: "s1", Cards: []string{"s1-2"}}))
+	assert.Equal(t, sprint.Landed, r.snap().Work.Card("s1-2").Col, "the stream lands on")
+	r.clean("at its bound")
 }

@@ -77,7 +77,8 @@ func TestAskInsteadLeavesTwoDifferentReadersHoldingTheAttemptsReads(t *testing.T
 	}
 	assert.ElementsMatch(t, []string{held[0], free}, readers)
 	readOK(w, "s1-1")
-	assert.Equal(t, NReadyToAccept, openTypes(w, "s1-1"))
+	assert.Empty(t, openTypes(w, "s1-1"), "the tick's to accept, no judgment")
+	assert.True(t, tickTakes(w, "s1-1"), "the tick accepts it on the two readers' oks")
 }
 
 func TestAskInsteadTakesBackARead(t *testing.T) {

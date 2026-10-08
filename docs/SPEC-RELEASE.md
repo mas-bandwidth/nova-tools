@@ -41,6 +41,8 @@ cmd/nova-secrets/
 infra/image/
 internal/sandbox/
 internal/secrets/
+profiles/
+tools/sandboxcheck/
 ```
 
 **The list lives in `internal/release/sensitive.go`, and this block is the same list in the same order.**
@@ -577,6 +579,51 @@ version read back, and a rollback from kept copies on missed ticks. The runbook 
 
 Each later card of stream sprint-v1-release adds its row here with its check.
 
+### release-check-acceptance-r-b.w3
+
+The release check runs the acceptance sentinel's six checks as well, source: the
+coordinator's answer over the bus, 2026-10-06 12:50 ET (message
+`01M48ZHQ5ZNWYV5FAKBRTTW038`). They are the checks the coordinator runs by hand
+before releasing a stream's acceptance sentinel; each is a pure function over
+`sprint.Acceptance` (the stream's rows and log and the git facts), so its unit
+tests build a twin of the facts and open no socket. The six are:
+
+| check | the bar |
+|---|---|
+| `cards-settled` | every card of the stream is landed or dropped with a reason: none is ready, waiting, working, review or merging; a fail names the first card and its state, or the dropped card with no reason |
+| `base-gate-green` | the tree gate is green on the base at the stream's last landing: the unit class and the functional class of the packages the cards name, plus `./internal/docs` and `./internal/ci`, each its own recorded result; a fail names the class and the base, or the class with no result recorded |
+| `two-ok-reads` | every landed card has the ok reads its tier needs at its final head, one for a flash card and two different readers for a heavier one, none accepted on the coordinator's word alone; a fail names the card, its head, the ok reads it has and what its tier needs |
+| `prose-true` | the stream's spec sections and help text are true to the code: `nova-check links` and `nova-check nocode` clean, present tense, no names of people or machines; a fail names the check and the path, or the check with no result recorded |
+| `landings-promoted` | the stream's landings are in dev, or a promotion carrying them is queued since its last landing; a fail names the landings with no promotion, or the promotion older than the last landing |
+| `no-open-judgment` | no open judgment names the stream: no stale, no brief-defect, no conflict, no returned-to-review; a fail names the judgment, its type and the stream |
+
+Each prints one `RELEASE CHECK <name> ok|fail <evidence>` line and the release
+refuses on any fail. With no stream named there is no acceptance to check, so
+each passes and says so. Test:
+`TestReleaseCheckRunsTheAcceptanceSentinelsSixChecks`.
+
+### release-check-merge-queue-p90-b.w7
+
+`merge-queue-p90` is the merge queue's age check, source: the owner,
+2026-10-04, "We cannot let merges get behind like this." Over the last window
+(`--window`, default 24 h) it takes the p90, by the nearest rank
+(`sprint.PercentileNearestRank`, tested on its own over known lists; an empty
+list has no percentile and the check is then ok saying n=0), of the time each
+card spent in merging. The merging time is read from the store's log, never
+from the merge table's stamps: a work-table move into the `merging` column
+opens a spell, and a move out of it, to landed or to any other column, or the
+card leaving the table, closes it. A card still merging counts with its age
+now, and a card counts when any of its merging overlapped the window, so a
+card left in the queue before the window and still there is not hidden by it.
+The bar is `--merge-p90`, default 30 minutes: the stream merges in batches and
+one card's merge is a push and a green gate, so a longer wait is the queue and
+not the card. The check fails when the p90 is over the bar and the evidence
+prints the p90, the number of cards and the oldest card still merging, naming
+`nova-sprint where --all` and `nova-sprint log --card <id>` to look at; under
+the bar it passes with the same numbers. Test:
+`TestReleaseCheckFailsWhenTheMergeQueueAgeP90IsOverTheBar`.
+
+
 ## 17. Adopting one machine
 
 `release.OneMachine` is adopt for one machine at a time, as a library: the sprint's
@@ -590,6 +637,73 @@ The flags are the coordinator's (everything but `--machines`, `--version` and
 file apply unchanged. A machine has at most one adoption in flight, and an episode is
 adopted once. Tests: `TestOneMachineAdoptsOneAtATime`,
 `TestOneMachineRefusesANameAdoptRefuses`.
+
+## 18. The spend the store recorded matches each provider's own, or the cut refuses
+
+The owner, 2026-10-05: "We should not make a release without verifying that we capture actual spend,
+not < 1/2 of it." and "We must be reliable, and accurate." On 2026-10-04 openrouter's own account
+showed about $2,250 spent while the sprint's cost panel showed $836: runs with no result, reads and
+retries were not priced. The cost records price every paid call whatever its outcome
+(`internal/sprint`, cost.go); this gate is how a release proves they do (`internal/release/spendcheck.go`).
+
+**The window.** From the previous tag's commit (the forge's `commits/<tag>` committer date), or
+`--spend-since <RFC3339>`, taken back to the start of its UTC day (the providers count by the UTC
+day), to now. With no previous tag and no `--spend-since` the cut refuses. The gate runs once the
+tags are read and before `--dry-run` branches.
+
+**Three readouts, each behind an interface, a fake in the tests.**
+
+- *The store's recorded spend* (`RecordedSpend`): one read of the work and fleet tables and the
+  routes of the sprint store at `--spend-store <addr>`, logged in as nova-sprint logs in
+  (`NOVA_SPRINT_REDIS_USER` and the variable `NOVA_SPRINT_REDIS_PASSWORD_ENV` names). The dollars of
+  a provider are every priced cost record of it (its route's provider, else the provider of the
+  model it reported) on every primary that ended in the window, whatever its end
+  (`sprint.RecordedSpendIn`); the paid providers are every route's and every priced record's
+  (`sprint.RecordedProvidersIn`); a subscription friend's tokens are its subscription records'
+  (`billing=subscription`, `sprint.RecordedTokensIn`).
+- *Each paid provider's own spend* (`ProviderSpend`): openrouter's is its account activity
+  (`GET /api/v1/activity`, the provisioning key in `OPENROUTER_PROVISIONING_KEY`) for the window's
+  completed UTC days, plus the key's own count of today (`GET /api/v1/key`, `data.usage_daily`,
+  `OPENROUTER_API_KEY`); a window past the activity's 30 days is unread. opencode Zen and Inception
+  publish no usage endpoint this build knows, so each is unread with why. Keys come from the
+  environment as `nova-secrets exec --only <KEY>` delivers them, and are never printed.
+- *The subscription friends' harness receipts* (`TokenReceipts`): `--spend-receipts <file>`,
+  `{"evidence":"spend-receipts","from":<RFC3339>,"to":<RFC3339>,"friends":{"<friend>":<tokens>}}`,
+  read only when `from` is the window's start and `to` within its last hour.
+
+**One line per comparison, on stderr:**
+
+```
+SPEND provider=<p> store=<$> provider_usd=<$> gap=<$> share=<%> verdict=<ok|refuse>
+SPEND friend=<f> store_tokens=<n> receipt_tokens=<n> gap=<n> share=<%> verdict=<ok|refuse>
+SPEND provider=<p> unread verdict=refuse: <why>
+```
+
+The share is the gap over the provider's own figure (1 when that is 0 and the store's is not). **A
+gap over 5% refuses**; so does every provider the store knows of with no readout or a readout that
+cannot be read, and every friend when the receipts cannot be read: a check that passes when it
+cannot look is no check. The refusal names them:
+
+```
+CUT REFUSED reason=spend-gate window=<from>..<to> refused=<n> providers=<p,...> friends=<f,...> (<SpendRemedy>)
+CUT REFUSED reason=spend-gate window=<from>..<to> unread: <why the store could not be read> (<SpendRemedy>)
+```
+
+A cut that passes carries `spend=ok` on its receipt. **The way past is `--no-spend-gate --reason <why>`**: `SPEND GATE WAIVED refused=<n> reason=<why>` is printed, the receipt carries `spend=waived`,
+and the CHANGELOG section carries `Spend gate waived: <why> (window <from>..<to>)` followed by one
+`- SPEND ...` line per row that did not pass.
+
+**Beside it, in the sprint.** `nova-sprint where --json` carries each provider's latest
+reconciliation (`streams[<s>].reconciles`, the sprint's, the same on every stream), and the
+per-tier split (`streams[<s>].cost_by_tier`) accounts for every dollar of `total_cost`: a run with
+no recorded tier takes its route's (the route row's tier, else the route name's prefix `pro-*`,
+`flash-*`, `heavy-*`, `frontier-*`), else the card attempt's; `no tier` only when none exists. The stream total is rounded up once; tiers keep their whole cents and receive
+remaining cents by largest fractional remainder, with alphabetical ties, so displayed
+tier amounts sum exactly to the displayed total.
+
+*Tests: `TestAReleaseIsRefusedWhenRecordedSpendMissesTheProvidersOwn`, `TestOpenRouterSpendIsTheActivityDaysAndToday`,
+`TestReceiptsAreReadOnlyForTheirWindow`, `TestCostByTierTakesTheRouteTierWhenTheRunRecordsNone`,
+`TestCostByTierAllocatesFractionalCentsWithoutChangingTheTotal`.*
 
 ## What this file does not cover
 
@@ -667,6 +781,9 @@ One numbered line per test; where one test holds several behaviours, they share 
 62. `TestToolsPlaySendsEveryStagedFileWhoseBytesDiffer` (functional) — a seeded file corrupt on the machine whose `SHA256SUMS` line matches the release's (the binary the play runs, or any other) is sent again in the same run and the install succeeds; an intact reused file is not sent (`tla/BenchStage.tla` `ReusedByteIdentical`).
 63. `TestTheGateRefusesAPromisedJourneyWithoutEvidence` — a cut whose checkout promises recovery journeys refuses without `--journeys`, on evidence for another revision or installed build, without a function or schema version, on a broken line, and on any owed, skipped, failed or not-run journey (a green parent proves nothing); an optional platform's `PLATFORM UNAVAILABLE` skip is named and passes; a proven cut binds the revision, versions and installed builds into the section; `--no-journey-gate --reason` enumerates every incomplete journey there.
 64. `TestThePromisedJourneysAreTheChaosSuitesSubtests` — every promised journey names a subtest the chaos suite runs.
+65. `TestAReleaseIsRefusedWhenRecordedSpendMissesTheProvidersOwn` — over the window since the previous tag's UTC day, a store figure of $836 against a provider's own $2,250 refuses naming the provider, both figures and the gap; a 3% gap passes (`spend=ok`); a provider whose readout errs, or has none, refuses; subscription friends' recorded tokens are set beside their receipts the same way, and no receipts refuses; no store refuses; `--no-spend-gate --reason` writes every unpassed row into the section.
+66. `TestOpenRouterSpendIsTheActivityDaysAndToday` — openrouter's own count is its activity's completed days in the window plus the key's count of today; no key, or a window past 30 days, is unread; opencode and Inception are unread.
+67. `TestReceiptsAreReadOnlyForTheirWindow` — a receipts file is read only for the window it covers.
 
 Demanded, and proven by no test yet (8):
 

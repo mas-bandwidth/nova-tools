@@ -48,7 +48,7 @@ Where each field of this cut sits:
 | machine (varies per machine) | `user`, `seat`, `slots`, `runners`, `width`, `tla`, `note` |
 | fleet (one value for the whole fleet) | `store`, `coordinator` (both machines), `redis_port`, `pg_dsn` |
 | model (decided per model a friend runs) | `tier`, `note` |
-| friend (decided for her) | `slots`, `tiers` (the fallback of a row with no models), `roles`, `width`, `mode`, `config_dir`, `token_cap`, `models` |
+| friend (decided for her) | `slots`, `tiers` (the fallback of a row with no models), `roles`, `width`, `mode`, `config_dir`, `token_cap`, `streams`, `kinds`, `models` |
 | sprint (one value for the whole sprint) | `coordinator` (a friend), `decide_bounce`, `decide_review`, `decide_score_bar`, `decide_attempt_no_result`, `decide_attempt_nothing_to_do`, `decide_grade`, `decide_gate_flaky`, `decide_gate_preexisting`, `decide_judgment_bar`, `decide_brief_bar`, `answer_rules_off` |
 | loop (decided per supervised process) | `machine`, `argv`, `seat`, `keys`, `every`, `keepalive`, `width`, `enabled` |
 | route (decided per way to run a tier) | `tier`, `provider`, `model`, `harness`, `tokens`, `deadline`, `enabled`, and the price sheet: `price_input`, `price_cache_read`, `price_cache_write`, `price_output`, `reasoning_as_output`, `long_context`, `price_input_long`, `price_output_long`, `price_request`, `billing`, `gateway_percent`, `price_source`, `price_as_of`, `note` |
@@ -227,7 +227,16 @@ configuration. Who coordinates is not her field either: it is the sprint's.
 | `mode` | enum: batch, one-shot; default batch | | nova-sprint friend sync, onto her friends row; her beat answers it (`row_mode=`), and nova-friend run delivers by it: batch, every waiting message as one turn, or one-shot, `width` lanes each its own session, one card a turn (docs/SPEC-FRIEND.md, one-shot lanes). Migration 0030 gives every row before it batch | `friend:<f>:desired` mode |
 | `config_dir` | text, an absolute path; unset (NULL) by default, and `--config_dir ''` clears it | | nova-friend run, for a claude friend in one-shot mode: the directory each lane runs `claude -p` with as `CLAUDE_CONFIG_DIR`, her account's login and settings (docs/SPEC-FRIEND.md, one-shot lanes); her beat answers it as `row_config_dir=`. A claude row in one-shot mode without one runs no lane: nova-friend refuses it on the record with the remedy (the row names no harness, so the refusal is the daemon's). Migration 0034 adds the column; every row before it has none | `friend:<f>:desired` config_dir |
 | `token_cap` | int, at least 0, default 6000000 | | nova-sprint friend sync, onto her friends row; her beat answers it as `row_token_cap=`, and a one-shot lane holds a card when the card's tokens (input, cached input, output and reasoning) reach it (docs/SPEC-FRIEND.md, friend-token-cap-bb.w2). 0 is no cap. Migration 0035 adds the column; every row before it is 6000000 | `friend:<f>:desired` token_cap |
-| `models` | seq of model rows, in the order given | | the models she can run, strongest to weakest (the owner, 2026-10-06: "an array of models this agent can do, strongest to weakest"). Her **class** is the tier of the first: what a card with no tier line is dealt to her as, what her reads count as, what the dashboard shows. Her **tiers**, what the dealer may hand her (the deal's tier filter, capacity.lua `filter_ok`, and nova-sprint friend sync's friends table), are the tiers of every model listed. Both are derived (`config.FriendClass`), never stored. Each name is a model row (a set naming none is refused with `nova-config model add <name> --tier <t>`), each once, listed strongest first: a model whose tier is above the one before it is refused. `friend show` and `friend list` print `tiers=` as derived and ` class=<tier>` after the row. Migration 0036 adds the column, empty on every row, which keeps its tiers fallback until its models are set | `friend:<f>:desired` models |
+| `streams` | text, comma-separated glob patterns; empty by default | | nova-sprint friend sync, onto her friends row: the deal hands her only a card whose stream matches one of these patterns, and `add` and `brief` refuse a card naming her whose stream matches none; an empty list is any stream. Migration 0036 adds the column; every row before it is empty | `friend:<f>:desired` streams |
+| `kinds` | list of card KIND values; empty by default | | nova-sprint friend sync, onto her friends row: the deal hands her only a card whose `KIND:` is one of these, and `add` and `brief` refuse a card naming her whose `KIND:` is none of them; an empty list is any kind. Migration 0036 adds the column; every row before it is empty | `friend:<f>:desired` kinds |
+
+A friend row may restrict the work the sprint deals her: `streams` is a
+comma-separated list of glob patterns over stream names, and `kinds` is a
+comma-separated list of card `KIND:` values. Each empty list is no restriction,
+today's behavior; `nova-sprint friend sync` carries both into her friends
+record, `add` and `brief` refuse a named friend card outside her restriction
+with the restriction named, and the tick's deal hands her none.
+| `models` | seq of model rows, in the order given | | the models she can run, strongest to weakest (the owner, 2026-10-06: "an array of models this agent can do, strongest to weakest"). Her **class** is the tier of the first: what a card with no tier line is dealt to her as, what her reads count as, what `view coordinator --json` and `where --json` carry. Her **tiers**, what the dealer may hand her (the deal's tier filter, capacity.lua `filter_ok`, and nova-sprint friend sync's friends table), are the tiers of every model listed. Both are derived (`config.FriendClass`), never stored. Each name is a model row (a set naming none is refused with `nova-config model add <name> --tier <t>`), each once, listed strongest first: a model whose tier is above the one before it is refused. `friend show` and `friend list` print `tiers=` as derived and ` class=<tier>` after the row. Migration 0037 adds the column, empty on every row, which keeps its tiers fallback until its models are set | `friend:<f>:desired` models |
 
 **`model`** (`config.models`): a model a friend runs inside her own harness,
 and its tier. A friend row lists her models and derives her class and tiers
@@ -296,6 +305,25 @@ A machine a loop names cannot be removed
 (`machine m1 is the --machine of loop member-m1`); `machine show <m>` names
 the machine's loops (`loops=<a,b>`, `-` for none).
 
+**`loop run`**: `nova-config loop run <name> [--run-dir <dir>] [--metrics <dir>] [-- <command> ...]`
+is a loop's single-instance wrapper, the Go verb in place of the bash `nova-loop` a coordinator's
+own `fleet/loops.yml` installed (docs/COORDINATOR-TOOLS.md). It takes `<run-dir>/<name>.lock`
+(default `~/nova-bench/run`) with internal/filelock, the kernel's lock (tla/FileLock.tla): a second
+copy is refused with exit 3 and runs nothing, and a lock whose holder died is free, since the kernel
+released it. Under the lock it counts the start in `<run-dir>/<name>.starts` and, with `--metrics`,
+writes `nova_loop_<name>.prom` there (`nova_loop_starts_total` and `nova_loop_last_start_seconds`,
+each labelled `loop="<name>"`) for node_exporter's textfile collector. Then it runs the command,
+passes SIGINT and SIGTERM on to it, holds the lock until it ends, and exits with the command's exit
+code, or `128+N` when a signal ended it. The lock lives in this process, so the command's life is
+tied to it: on linux a wrapper killed outright ends the command with it (the kernel's
+parent-death signal, `Pdeathsig`), and the restarted unit's second copy never runs beside a
+command the first still owns. The command is what follows `--` (the unit's own, with its
+`nova-secrets exec` prefix; no store is opened), else the row's `argv` read from the store: a
+disabled row, a row with `keys` (its secrets open through the prefix the plays add, which the row
+does not carry) and a row with no command are
+refused with exit 1, a name with no row too. The pieces are `config.LoopRunArgv`,
+`config.NextLoopStarts` and `config.LoopMetrics` (internal/config/looprun.go).
+
 **`route`** (`config.routes`): one way to run a model tier, the provider
 and model a card of that tier runs on, its token and dollar budgets and deadline. A
 tier has several routes so the deal spreads its cards across providers and
@@ -341,6 +369,57 @@ The kind's `Check`: `provider` is one word with no slash or blank, `model`
 is not empty and has no blank, and `deadline` is above 0; `long_context`
 above 0 comes with both long prices, and a long price with a threshold;
 `price_as_of` is a date; `usd`, when set, is above 0; a route that is disabled has a note. A route names no row of another kind.
+
+### route prices
+
+A price row is read from the provider's published list, never typed and left: a
+flash route priced by hand at a tenth of the list's input price kept the
+dashboard showing under half the real spend for days.
+`nova-config route prices --refresh [--provider <p>] [--from <path>] [--dry-run] --as <name>`
+reads the list and sets each enabled route's `price_input`, `price_cache_read`,
+`price_cache_write`, `price_output` and `price_request` from it, with
+`price_as_of` today (UTC) and `price_source` the list's URL
+(`internal/config/prices.go`, `PlanPriceRefresh`).
+
+- The lists: `openrouter` rows read OpenRouter's public models endpoint
+  (`GET https://openrouter.ai/api/v1/models`, no key; USD per token, written per
+  million exactly). OpenCode publishes no list, so `opencode` rows are priced from
+  OpenRouter's, the verb prints
+  `NOTE route=<r> provider=opencode: priced from openrouter's list, assumed until opencode publishes its own`
+  for each, and the row's note is left as it is. A provider with no list is
+  refused at usage.
+- A route's model is matched by its id on the list, else by the one id whose last
+  part is the model's (an OpenCode model named without its vendor); none, or two,
+  is `PRICES MISSING` and nothing is set. A field the list does not carry is left
+  as it is; a request fee of 0 is no fee.
+- A price that moved past 2x either way since the row's last read (`PriceJump`) is
+  never set silently: it is left as it is, the line is
+  `JUDGMENT route=<r> <field> moved past 2x: have <old>, the list says <new>; a price that moves that far is never set silently; decide: nova-config route set <r> --<field> <new> --price_source <url> --price_as_of <date>`,
+  and the verb exits 1 after writing the rest. A row with no price takes the list's.
+- A field whose stored price differs from the list by more than 10 percent of the
+  list's (`PriceStale`) is stale: the row is named
+  `STALE route=<r> <field>: have <old>, the list says <new>`, and the refresh is
+  what clears it.
+- Lines: `PRICES SET route=<r> list=<id> changed=<field>:<old>-><new>,... rev=<n>`,
+  `PRICES DRY-RUN` (with `--dry-run`, nothing written), `PRICES SAME` (nothing to
+  write; no revision), `PRICES MISSING`, then
+  `CONFIG PRICES source=<url> as_of=<date> routes=<n> set=<n> same=<n> missing=<n> judgments=<n> stale=<n>`.
+  `--from <path>` reads a copy of the list saved from its URL, which the rows still
+  name as their source. Exit 0, 1 on a judgment, 2 when the list or the store could
+  not be read.
+- The machine runs it daily as a loop row, then applies:
+  `nova-config loop add route-prices --machine <coordinator machine> --argv '["nova-config","route","prices","--refresh","--as","<coordinator>"]' --every 86400 --as <coordinator>`
+  followed by `nova-config apply --kind route` (the row is the fleet's, added by
+  its coordinator; the apply carries the prices to the sprint). The row passes no
+  `--provider`: the default refreshes every provider with a list, so the `opencode`
+  rows, priced from OpenRouter's until OpenCode publishes its own, are refreshed
+  with the rest (the first cut of this row named `--provider openrouter` and never
+  refreshed them; a reader found it 2026-10-06).
+- Follow-up cards, outside this verb: the run before `nova-sprint funded <provider>`
+  (`cmd/nova-sprint/verbs.go`, `cmdFunded`) should refresh the provider's list
+  first, and `nova-sprint routes` (`cmd/nova-sprint/reads.go`, `cmdRoutes`, and
+  `internal/sprint/route.go`, `RouteStats`) should mark a route whose price differs
+  from the list by more than 10 percent as stale.
 
 ### The note
 
@@ -687,10 +766,32 @@ anywhere connects with none (a throwaway database trusts).
 `--seat <name>` (env `NOVA_SEAT`) supplies the PostgreSQL DSN and the name
 of the password environment variable from the seat's profile row in
 `seats.tsv` (`$XDG_CONFIG_HOME/nova-config/seats.tsv`, else
-`~/.config/nova-config/seats.tsv`), exclusive with `--file`. Writes accept
+`~/.config/nova-config/seats.tsv`), exclusive with `--file`. Writes and reads
+(`<kind> list|show`, `machine width`, `machine self --check`, `status`) accept
 `--seat <name>` so that commands like `nova-config machine set m1 --width 8 --seat <name>`
-need no explicit DSN or secrets wrapper; an unknown seat is a one-line
-refusal naming the known seats.
+or `nova-config tier list --seat <name>` need no explicit DSN or secrets
+wrapper; `machine add` and `loop add` take `NOVA_SEAT` alone, their rows'
+own `--seat` being a field. An unknown seat is a one-line refusal naming the
+known seats. `nova-sprint seat install --config-seat <name> --config-dsn <dsn> --config-password-env <NAME>` writes the row (in place of the seat's row,
+every other line kept, mode 0600, read back as nova-config reads it before it
+replaces the file; docs/SPEC-SPRINT.md, "Handing over the seat").
+
+When `NOVA_PG_PASSWORD_ENV` is not given and the row's password variable is
+not set (a coordinator typing the verb bare, with no `nova-secrets exec`
+around it), the password is read in this process from the nova-secrets seat
+the machine's store login names (`nova-sprint seat login`:
+`$XDG_CONFIG_HOME/nova-sprint/login.json`, else
+`~/.config/nova-sprint/login.json`; its store, seat, key and sops), under the
+row's variable name as the key, through the same `secrets.ReadLogin` path, and
+is never printed or put in an environment. The row's variable set wins over
+that read; `NOVA_PG_PASSWORD_ENV` given wins over the row's variable and the
+store login is not read for it, so a coordinator that carries its own password
+needs no store login. No store login, or a seat that does not hold the key, is
+a refusal naming the seat, the file and the remedy (`nova-sprint seat login`,
+or `nova-secrets seal --as <seat> --name <NAME>`), and no store is opened
+(`cmd/nova-config/seat_secret.go`,
+`TestSeatOnAReadVerbReadsThePasswordThroughTheStoreLogin`,
+`TestSeatPasswordEnvStillWinsOverTheSeatRow`).
 
 `--redis <addr>` is the flag, else `NOVA_SPRINT_REDIS`, else
 `NOVA_REDIS_ADDR`, else the selected seat's address; the Redis login is the

@@ -1,6 +1,7 @@
 package sprint
 
 import (
+	"fmt"
 	"strconv"
 	"testing"
 	"time"
@@ -9,16 +10,38 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// fakeRelease is the release check's snapshot as a test builds it: a clock and a log.
+// fakeRelease is the release check's snapshot as a test builds it: a clock, a log
+// and the acceptance sentinel's facts.
 type fakeRelease struct {
-	now      time.Time
-	lines    []Line
-	dealtMax time.Duration
+	now         time.Time
+	lines       []Line
+	dealtMax    time.Duration
+	accept      Acceptance
+	mergeWindow time.Duration
+	mergeP90    time.Duration
 }
 
 func (f fakeRelease) Now() time.Time          { return f.now }
 func (f fakeRelease) Log() []Line             { return f.lines }
 func (f fakeRelease) DealtMax() time.Duration { return f.dealtMax }
+func (f fakeRelease) Acceptance() Acceptance  { return f.accept }
+
+// MergeWindow and MergeP90 fall back to the defaults so a twin built for
+// another check still answers the merge queue's check.
+func (f fakeRelease) MergeWindow() time.Duration {
+	if f.mergeWindow == 0 {
+		return MergeQueueWindowDefault
+	}
+	return f.mergeWindow
+}
+
+func (f fakeRelease) MergeP90() time.Duration {
+	if f.mergeP90 == 0 {
+		return MergeQueueP90Default
+	}
+	return f.mergeP90
+}
+
 func fleetMove(at time.Time, card, from, to string, set map[string]string) Line {
 	return Line{Kind: LineMove, At: at, Table: Fleet, Card: card, Stream: "s1", From: from, To: to, Set: set}
 }
@@ -210,9 +233,9 @@ func TestTheReleaseReportSaysOKOrNotReadyByTheChecksRun(t *testing.T) {
 	good := relFacts(hr(1))
 	rep, err := RunReleaseChecks(good, nil)
 	require.NoError(t, err)
-	assert.Equal(t, "RELEASE OK checks=1", rep.Summary)
+	assert.Equal(t, fmt.Sprintf("RELEASE OK checks=%d", len(ReleaseChecks)), rep.Summary)
 	assert.Equal(t, 0, rep.ExitCode())
-	assert.Equal(t, 1, len(rep.Results))
+	assert.Equal(t, len(ReleaseChecks), len(rep.Results))
 
 	bad := relFacts(hr(3), fleetMove(hr(0), "s1-1.w1", "", FriendRow("amy")+":working", nil))
 	rep, err = RunReleaseChecks(bad, []string{CheckNoStuckFriend})
@@ -253,4 +276,114 @@ func TestReleaseStreamsFilterKeepsTheStreamsTheGlobNames(t *testing.T) {
 	assert.Len(t, all, 2)
 	_, err = ReleaseStreamLines(nil, "[")
 	require.Error(t, err)
+}
+
+// TestReleaseCheckRunsTheAcceptanceSentinelsSixChecks is the card's test
+// (docs/SPEC-RELEASE.md, "the acceptance sentinel's six checks", source: the
+// coordinator's answer, Rowan 2026-10-06 12:50 ET): each of the six is green
+// on a twin of the facts that keeps it and red on a twin that breaks exactly
+// it, naming what to look at; no socket, no clock of its own.
+func TestReleaseCheckRunsTheAcceptanceSentinelsSixChecks(t *testing.T) {
+	t.Parallel()
+
+	green := func() Acceptance {
+		return Acceptance{
+			Streams: []string{"s1"},
+			Cards: []AcceptCard{
+				{ID: "s1-1.w1", Stream: "s1", Col: Landed, Tier: "pro", Head: "aaa1"},
+				{ID: "s1-2.w1", Stream: "s1", Col: Landed, Tier: "flash", Head: "bbb2"},
+			},
+			Reads: []AcceptRead{
+				{Primary: "s1-1.w1", Stream: "s1", Head: "aaa1", Reader: "r1", Verdict: "ok"},
+				{Primary: "s1-1.w1", Stream: "s1", Head: "aaa1", Reader: "r2", Verdict: "ok"},
+				{Primary: "s1-1.w1", Stream: "s1", Head: "aaa1", Reader: "r3", Verdict: "broken"},
+				{Primary: "s1-2.w1", Stream: "s1", Head: "bbb2", Reader: "r1", Verdict: "ok"},
+			},
+			Gates: []AcceptGate{
+				{Base: "base1", Class: "unit", OK: true},
+				{Base: "base1", Class: "functional", OK: true},
+				{Base: "base1", Class: "docs", OK: true},
+				{Base: "base1", Class: "ci", OK: true},
+			},
+			Prose: []AcceptProse{
+				{Path: "docs/SPEC-RELEASE.md", Check: "links", OK: true},
+				{Path: "cmd/nova-sprint", Check: "nocode", OK: true},
+			},
+			Promote: AcceptPromotion{Sha: "abc1234", Queued: true, AfterLastLanding: true},
+		}
+	}
+
+	six := []string{
+		CheckCardsSettled, CheckBaseGateGreen, CheckTwoOKReads,
+		CheckProseTrue, CheckLandingsPromoted, CheckNoOpenJudgment,
+	}
+
+	// every check is green on the facts that keep it.
+	t.Run("all six are green on a stream that keeps every bar", func(t *testing.T) {
+		t.Parallel()
+		f := fakeRelease{now: hr(1), dealtMax: DealtMaxDefault, accept: green()}
+		rep, err := RunReleaseChecks(f, six)
+		require.NoError(t, err)
+		require.Len(t, rep.Results, len(six))
+		assert.True(t, rep.Ready)
+		assert.Equal(t, fmt.Sprintf("RELEASE OK checks=%d", len(six)), rep.Summary)
+		for _, r := range rep.Results {
+			assert.True(t, r.OK, r.Line())
+			assert.NotEmpty(t, r.Evidence, r.Name)
+			assert.Equal(t, "RELEASE CHECK "+r.Name+" ok ", r.Line()[:len("RELEASE CHECK "+r.Name+" ok ")])
+		}
+	})
+
+	// each check's red twin breaks exactly that check, and its evidence names
+	// what to look at.
+	twins := []struct {
+		name    string
+		want    string
+		breakIt func(*Acceptance)
+	}{
+		{CheckCardsSettled, "s1-1.w1", func(a *Acceptance) { a.Cards[0].Col = Working }},
+		{CheckCardsSettled, "no reason", func(a *Acceptance) {
+			a.Cards = []AcceptCard{{ID: "s1-3.w1", Stream: "s1", Col: Landed, Tier: "flash", Head: "ccc3"}}
+			a.Dropped = []AcceptDrop{{ID: "s1-4.w1", Stream: "s1"}}
+		}},
+		{CheckBaseGateGreen, "functional", func(a *Acceptance) { a.Gates[1].OK = false }},
+		{CheckBaseGateGreen, "no ci gate result", func(a *Acceptance) { a.Gates = a.Gates[:3] }},
+		{CheckTwoOKReads, "s1-1.w1", func(a *Acceptance) { a.Reads = a.Reads[:1] }},
+		{CheckTwoOKReads, "s1-2.w1", func(a *Acceptance) { a.Reads = a.Reads[:2] }},
+		{CheckProseTrue, "nocode", func(a *Acceptance) { a.Prose[1].OK = false }},
+		{CheckProseTrue, "no nova-check links result", func(a *Acceptance) { a.Prose = a.Prose[1:] }},
+		{CheckLandingsPromoted, "not in dev", func(a *Acceptance) { a.Promote = AcceptPromotion{} }},
+		{CheckLandingsPromoted, "older than", func(a *Acceptance) { a.Promote.AfterLastLanding = false }},
+		{CheckNoOpenJudgment, "j1", func(a *Acceptance) {
+			a.Judgments = []AcceptJudgment{{ID: "j1", Stream: "s1", Kind: "stale"}}
+		}},
+	}
+	for _, tc := range twins {
+		t.Run(tc.name+" is red on a broken twin naming "+tc.want, func(t *testing.T) {
+			t.Parallel()
+			a := green()
+			tc.breakIt(&a)
+			f := fakeRelease{now: hr(1), dealtMax: DealtMaxDefault, accept: a}
+			rep, err := RunReleaseChecks(f, []string{tc.name})
+			require.NoError(t, err)
+			require.Len(t, rep.Results, 1)
+			r := rep.Results[0]
+			assert.False(t, r.OK, r.Line())
+			assert.Contains(t, r.Evidence, tc.want, r.Line())
+			assert.Equal(t, "RELEASE CHECK "+tc.name+" fail "+r.Evidence, r.Line())
+		})
+	}
+
+	// no stream named is no acceptance to check: every check passes and says so.
+	t.Run("no stream named leaves every acceptance check vacuous", func(t *testing.T) {
+		t.Parallel()
+		f := fakeRelease{now: hr(1), dealtMax: DealtMaxDefault}
+		rep, err := RunReleaseChecks(f, six)
+		require.NoError(t, err)
+		assert.True(t, rep.Ready)
+		for _, r := range rep.Results {
+			assert.True(t, r.OK, r.Line())
+			assert.Contains(t, r.Evidence, "no stream is being accepted", r.Line())
+		}
+	})
 }

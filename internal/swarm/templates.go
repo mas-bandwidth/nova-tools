@@ -94,6 +94,22 @@ const templateFixCard = `fix-card — take one card and land the fix
    pick it up with no other context.
 `
 
+// GoCacheLine is the one sentence every card carries about the build cache: the
+// machine's shared, warm GOCACHE is already set (JOB.md names it), so the child keeps
+// it and never exports or chooses one of its own (docs/SPEC-CARD-CONTRACT.md section 2,
+// the staged environment). templateCard and cardgen.Render share it, so the two
+// generators cannot drift.
+const GoCacheLine = "GOCACHE is already set to the machine's shared build cache (JOB.md names it): keep it."
+
+// FriendGoCacheLine is the cache line of a friend's card (WHO: friend): a friend works
+// in her own working directory, so her GOCACHE is her own build cache, named by path
+// and said so, warm across her cards, not the machine's cache the fleet's children
+// share (docs/FRIENDS.md, the working directory; docs/SPEC-CARD-CONTRACT.md section 2).
+// cmd/nova-sprint's friendBrief writes it into the working-directory line it delivers.
+func FriendGoCacheLine(name string) string {
+	return "GOCACHE=~/" + name + "-working/.cache/go-build is your own build cache, warm across your cards: keep it"
+}
+
 // GateNamesWhoseFile is the sentence the gate step of a card ends with (docs/SPEC-CARD-CONTRACT.md,
 // the card's steps): a red gate line names its file and says whether the file is the child's own
 // (yours) or is unchanged from BASE, so the child neither fixes a file it may not touch nor
@@ -112,14 +128,14 @@ var templateCard = "RESULT: <label> sha=<sha12>\n" +
 	"BASE: <branch>\n" +
 	"The REPO: and BASE: lines are the repository and the branch the work starts from and lands on: the member stages REPO: at BASE:, and nova-sprint land merges the card's head onto BASE: (land --base stands in for a card naming no BASE:, land --repo-dir for one naming no REPO:).\n" +
 	"You are a child of the coordinator: one task, one worktree, one branch, unattended. This card is the whole of the task and it stands alone in front of a stranger; nothing outside it is owed to you.\n" +
-	"Deadline: finish within <n> minutes.\n" +
+	"Deadline: finish within <n> minutes; the judgment of a card that runs past it is the coordinator's, so report what you have with the verdict not-done rather than push past it.\n" +
 	"\n" +
 	ChildRulesParagraph() +
 	"\n" +
 	"THE TASK. <What is wrong or wanted, in a paragraph a stranger can act on, and the file or package the work lives in: internal/<package>/<file>.go. Name the worktree path, the branch, the base branch, and every file you may touch.>\n" +
 	"Libraries considered: <what the standard library and the adopted modules offer for this work, and why each is used or not; the search comes before any helper of more than about thirty lines is written>\n" +
 	"\n" +
-	"STEP 1. Enter your worktree with cd <worktree path> && git log --oneline -1; it is a NEW worktree on the branch this card names. Export GOFLAGS=-mod=readonly NOVA_TEST_NO_HOST=1 before any go command; GOCACHE is already set to the machine's shared build cache (JOB.md names it): keep it.\n" +
+	"STEP 1. Enter your worktree with cd <worktree path> && git log --oneline -1; it is a NEW worktree on the branch this card names. Export GOFLAGS=-mod=readonly NOVA_TEST_NO_HOST=1 before any go command; " + GoCacheLine + "\n" +
 	"STEP 2. Write the red test first, named TestSomething, in <file>_test.go, opening with t.Parallel(). Run go test -count=1 -timeout 600s ./internal/<package>/ -run TestSomething and keep the failing line.\n" +
 	"STEP 3. Make it pass in the files this card names, and only those. Cite the model or the design section from each function that implements a rule.\n" +
 	"STEP 4. Run the gate: go test -count=1 -timeout 600s ./internal/<package>/ ./internal/ci/ and read the last line of each. " + GateNamesWhoseFile + "\n" +

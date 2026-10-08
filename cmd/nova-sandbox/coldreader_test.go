@@ -215,7 +215,7 @@ func TestEgressPlanNamesItsFlagProblemsBeforeResolving(t *testing.T) {
 func TestRunNamesItsRemedyOnce(t *testing.T) {
 	t.Parallel()
 	var out, errb strings.Builder
-	code := runVerb([]string{"--name", "x", "--size", "1g"}, nil, &out, &errb, []string{"PATH=/usr/bin:/bin"})
+	code := prodRunSeams().runVerb([]string{"--name", "x", "--size", "1g"}, nil, &out, &errb, []string{"PATH=/usr/bin:/bin"})
 	assert.Equal(t, 125, code)
 	assert.Contains(t, errb.String(), "reason=no_command: no --")
 	assert.Equal(t, 1, strings.Count(errb.String(), remedyFor(runtime.GOOS)), errb.String())

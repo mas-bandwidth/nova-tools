@@ -6,6 +6,7 @@ import (
 	"maps"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -132,7 +133,7 @@ func Ask(s *Snapshot, r AskReq) Plan {
 			return "not asked yet at attempt " + itoa(c.Int("attempt")) + ": the machine's tick asks it, or run: nova-sprint ask " + c.ID + "; --another adds a reader to one already asked"
 		}
 		if !another && ReadsWanted(s, c) == 0 {
-			if len(liveReadsAt(s, c, c.Int("attempt"))) < ReadsNeeded(c) {
+			if len(liveReadsAt(s, c, c.Int("attempt"))) < ReadsNeededIn(s, c) {
 				return "asked already: its reads are out, or one found it broken"
 			}
 			return "asked already"
@@ -205,13 +206,13 @@ func Ask(s *Snapshot, r AskReq) Plan {
 		// rest of those it needs, together, none once one found it broken; a read handed back, or taken
 		// back from a reader away, is not a read and is asked again whatever stands: it
 		// was wanted when it was placed (ReadsWanted)
-		want := max(readsWantedOf(c, kept), len(returned)+len(away))
+		want := max(readsWantedOf(s, c, kept), len(returned)+len(away))
 		if another {
 			want = 1
 		}
-		if !another && len(all)+len(free)+len(returned) < ReadsNeeded(c) {
+		if !another && len(all)+len(free)+len(returned) < ReadsNeededIn(s, c) {
 			// not even its first read is asked when no reader could ever read the rest
-			want = ReadsNeeded(c) - len(all)
+			want = ReadsNeededIn(s, c) - len(all)
 		}
 		// each read to a free reader with room, the finder's first (askPicks)
 		finder := finders[c.ID]
@@ -409,9 +410,9 @@ type ReadReq struct {
 // back: back in asked on its row, stamped returned, the reason in one happened
 // note, and the next tick's ask asks it of another reader up at the same
 // attempt, or of the same reader when none is free (tla/DirtyTick.tla,
-// ReadReturn, JudgedOnlyAfterTheBound). A broken read is a judgment; the second different reader's
-// ok at the primary's head is the judgment ready to accept, which accept,
-// rework and drop close. As may name several readers, comma separated: every
+// ReadReturn, JudgedOnlyAfterTheBound). A broken read is a judgment; the last ok read a primary
+// needs at its head leaves it to the tick, which accepts it (TickAccept): no
+// judgment, no hand step. As may name several readers, comma separated: every
 // card named is one of theirs, each read as its own reader's, in the one plan;
 // a read by selection names one reader.
 func Read(s *Snapshot, r ReadReq) Plan {
@@ -441,13 +442,19 @@ func Read(s *Snapshot, r ReadReq) Plan {
 	// a read asked of a friend is on her fleet row, not the readers table
 	// (FriendReadAsk): the verb her packet prints closes it there
 	for _, rd := range readers {
-		if name, ok := FriendOfRow(rd); ok {
-			if len(readers) > 1 {
-				p.refuse("read", "a friend's reads are reported on their own: read --as "+rd+" (--ok | --broken) <read>")
-				return p
-			}
-			return friendReadVerb(s, r, name)
+		name, friend := FriendOfRow(rd)
+		member := !friend && s.Fleet != nil && s.Fleet.HasRow(rd) && (s.Readers == nil || !s.Readers.HasRow(rd))
+		if !friend && !member {
+			continue
 		}
+		if len(readers) > 1 {
+			p.refuse("read", "a read card is reported on its own: read --as "+rd+" (--ok | --broken) <read>")
+			return p
+		}
+		if member {
+			name = rd
+		}
+		return readCardVerb(s, r, rd, name)
 	}
 	from := []string{Asked, Reading}
 	if r.Begin {
@@ -706,12 +713,16 @@ func inReview(pr *Card, set map[string]string) *Card {
 
 // reviewJudgment is the judgment a primary the step leaves in review (pr, as
 // the step leaves it) needs now, so that no primary in review is silent:
-//   - ready to accept, when ok reads from two different readers stand at its
-//     head, no judgment open on it after the step offers accept (ready to
-//     accept, or returned to review with its reads standing), and the
-//     machine is STOPPED or its pump holds it (AcceptHeld: its CI red at its
-//     head, or returned at its attempt): a RUNNING machine's pump accepts the
-//     rest (TickAccept);
+//   - nothing when the ok reads it needs stand at its head and the tick's
+//     pump takes it (AcceptHeld says nothing holds it): the tick accepts it,
+//     RUNNING at its next pump, STOPPED at the first pump after start, and
+//     the seat is told what was accepted ("ready to merge", a notice); a
+//     primary whose reads are all ok is never a judgment and never a hand
+//     step (TickAccept);
+//   - ready to accept, only when those reads stand and the pump holds it
+//     (AcceptHeld: its CI red at its head, or returned at its attempt) and no
+//     judgment open on it after the step offers accept (returned to review
+//     with its reads standing does): the hold is a mind's;
 //   - else, when nothing is open on it after the step and no read is
 //     outstanding: stranded in review when its work came back failed, or when
 //     it was never asked at its attempt and the step closes the last judgment
@@ -789,26 +800,31 @@ func reviewJudgment(s *Snapshot, pr *Card, st reviewStep) (Note, bool) {
 	}
 	var typ, why string
 	switch {
-	case len(oks) >= ReadsNeeded(pr):
-		if offers || s.Running && AcceptHeld(pr) == "" {
-			// a RUNNING machine's pump accepts it: "accept is mechanical"
+	case len(oks) >= ReadsNeededIn(s, pr):
+		if offers || AcceptHeld(pr) == "" {
+			// the tick's pump accepts it, RUNNING or STOPPED (at the first pump after
+			// start): "accept is mechanical", and a hand step is a missing instruction
 			return Note{}, false
 		}
 		typ = NReadyToAccept
 	case len(open) > 0 || outstanding:
 		return Note{}, false
+	case pr.F(FieldBriefDefect) != "":
+		// a brief defect asks again to re-cut the brief, never a stranded rework (docs/SPEC-SPRINT.md
+		// section 1, a brief defect)
+		typ, why = NBriefDefect, "a brief defect, "+pr.F(FieldBriefDefect)+": re-cut the brief; nothing is open on it"
 	case pr.F("result") == "failed":
 		typ, why = NStranded, "its work came back failed and nothing is open on it"
 	case reads == 0 && len(before) == 0:
 		return Note{}, false
 	case reads == 0:
 		typ, why = NStranded, "never asked at attempt "+itoa(attempt)+" and nothing is open on it"
-	case !broken && reads < ReadsNeeded(pr):
+	case !broken && reads < ReadsNeededIn(s, pr):
 		// the ones that stand came back ok and the rest are the ask's (ReadsWanted),
 		// nothing to judge
 		return Note{}, false
 	default:
-		typ, why = NReadsExhausted, fmt.Sprintf("no read is outstanding and %s not said ok at %s", readersWord(ReadsNeeded(pr)), orDash(pr.F("head")))
+		typ, why = NReadsExhausted, fmt.Sprintf("no read is outstanding and %s not said ok at %s", readersWord(ReadsNeededIn(s, pr)), orDash(pr.F("head")))
 	}
 	if contains(st.acked, typ) {
 		return Note{}, false
@@ -832,7 +848,15 @@ type AcceptReq struct {
 	Heavy                 bool
 	Evidence, EvidenceSHA string
 	Reason                string
+	// ReadOK is accept --read-ok: every primary in review with the ok reads it
+	// needs. The tick accepts those itself (TickAccept); the verb is for a stuck
+	// case, and says so when nothing waits.
+	ReadOK bool `json:",omitempty"`
 }
+
+// NothingWaits is what accept --read-ok says when no primary in review has the
+// ok reads it needs: the tick accepts them, so nothing waits on the verb.
+const NothingWaits = "nothing waits: the tick accepts every primary in review whose reads are all ok and tells the seat (ready to merge)"
 
 // okReaders is the primary's ok read cards from different readers at its
 // current attempt and head, in reader row order, as many as it needs
@@ -840,7 +864,7 @@ type AcceptReq struct {
 func okReaders(s *Snapshot, pr *Card) []*Card {
 	var out []*Card
 	seen := map[string]bool{}
-	need := ReadsNeeded(pr)
+	need := ReadsNeededIn(s, pr)
 	for _, c := range readsAt(s, pr, pr.Int("attempt")) {
 		r := c.F("reader")
 		if c.Col == OK && c.F("head") == pr.F("head") && ReadCardAgrees(c) && !seen[r] && len(out) < need {
@@ -868,9 +892,12 @@ func okReaders(s *Snapshot, pr *Card) []*Card {
 	return out
 }
 
-// readersWord names the readers a primary needs (ReadsNeeded, one or two):
+// readersWord names the readers a primary needs (ReadsNeededIn, none, one or two):
 // "one reader" for a flash card, "two different readers" for a pro card.
 func readersWord(n int) string {
+	if n == 0 {
+		return "no reader"
+	}
 	if n == 1 {
 		return "one reader"
 	}
@@ -887,8 +914,8 @@ func ReadCardAgrees(c *Card) bool {
 
 // Accept moves review -> merging and places the primary in merge queued with
 // its score. It is refused without ok reads from as many different readers at
-// the primary's head as it needs (ReadsNeeded: one for a flash card, two for a
-// pro card), whoever the readers; with Heavy, the coordinator's heavy read
+// the primary's head as it needs (ReadsNeededIn: one for a flash card, two for a
+// pro card, or the sprint's count, set --reads, recorded on it), whoever the readers; with Heavy, the coordinator's heavy read
 // counts as one of them, recorded on the primary and never as a reader's
 // (heavyRead; docs/SPEC-SPRINT.md section 6, accept-heavy-verdict-b.w1). The primary's read cards still asked
 // or reading are retired in the same step, marked retired by accept, so no
@@ -915,12 +942,12 @@ func Accept(s *Snapshot, r AcceptReq) Plan {
 				return why
 			}
 		}
-		if oks := okReaders(s, c); len(oks)+heavyReads < ReadsNeeded(c) {
+		if oks := okReaders(s, c); len(oks)+heavyReads < ReadsNeededIn(s, c) {
 			var names []string
 			for _, o := range oks {
 				names = append(names, o.F("reader"))
 			}
-			return fmt.Sprintf("needs ok from %s at head %s; has ok from %d (%s)", readersWord(ReadsNeeded(c)), orDash(c.F("head")), len(oks)+heavyReads, orDash(strings.Join(names, ",")))
+			return fmt.Sprintf("needs ok from %s at head %s; has ok from %d (%s)", readersWord(ReadsNeededIn(s, c)), orDash(c.F("head")), len(oks)+heavyReads, orDash(strings.Join(names, ",")))
 		}
 		if m := s.Merge.Card(c.ID); m != nil && (!m.Placed() || m.Col != Returned) {
 			return "its merge record is " + placeWord(m)
@@ -989,7 +1016,15 @@ func Accept(s *Snapshot, r AcceptReq) Plan {
 				heavyText += "; overrules " + strings.ReplaceAll(fields[FieldHeavyOverrules], ",", ", ")
 			}
 		}
-		u.Changes = append(u.Changes, change(Work, moveEntry(c, c.Row, Merging, set)))
+		// accepted on the sprint's count, not its tier's rule: the count it was accepted on
+		// stays with it past review (ReadsNeededIn)
+		var unset []string
+		if n := ReadsNeededIn(s, c); n != ReadsNeeded(c) {
+			set[FieldReadsNeeded] = strconv.Itoa(n)
+		} else if c.F(FieldReadsNeeded) != "" {
+			unset = append(unset, FieldReadsNeeded)
+		}
+		u.Changes = append(u.Changes, change(Work, moveEntry(c, c.Row, Merging, set, unset...)))
 		u.Moved = fmt.Sprintf("%s review -> merging queued (ok from %s%s)", c.ID, strings.ReplaceAll(orDash(readers), ",", ", "), heavyText)
 		if retired > 0 {
 			u.Moved += fmt.Sprintf("; %d outstanding read cards retired", retired)
@@ -1004,6 +1039,9 @@ func Accept(s *Snapshot, r AcceptReq) Plan {
 			n.Who = r.Who
 			setStream(&p, s, st, map[string]string{"state": StreamMerging, "since": stamp(s.Now)}, n)
 		}
+	}
+	if r.ReadOK && len(chosen) == 0 {
+		p.Said = append(p.Said, NothingWaits)
 	}
 	answered(&p, s, r.Answers, r.Who)
 	p = Lawful(p)
@@ -1205,8 +1243,13 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 			}
 			retire = append(retire, change(Readers, removeEntry(rc, map[string]string{"retired": stamp(s.Now), "retired_by": "rework"})))
 		}
-		// a friend's open read on her fleet row too: left, it keeps her room and closes
-		// against the attempt this rework replaced (FriendReadClose)
+		// its open read cards on the fleet table, a friend's or a member's (read_cards.go):
+		// left, one keeps its reader's room and closes against the attempt this rework
+		// replaced; its broken read cards counted
+		if s.Fleet != nil {
+			_, _, fbr := friendReadLive(s, c)
+			broken += len(fbr)
+		}
 		for _, rc := range openFriendReads(s, c.ID) {
 			retire = append(retire, change(Fleet, removeEntry(rc, map[string]string{"retired": stamp(s.Now), "retired_by": "rework"})))
 		}
@@ -1259,6 +1302,7 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 			set[FieldWho] = WhoFriend
 		}
 		maps.Copy(set, one.Set)
+		c = reworkPriority(s, c, set)
 		// the head a reader passed: a next attempt that finds nothing to do at it goes back to
 		// review there, not to the coordinator as failed work (FieldPassedHead, Finish)
 		if len(okReaders(s, c)) > 0 && c.F("result") != "failed" {
@@ -1402,6 +1446,15 @@ func brokenFindings(s *Snapshot, c *Card) string {
 	for _, rc := range s.Readers.Of(c.ID) {
 		if rc.Col == Broken && rc.Int("attempt") == c.Int("attempt") && rc.F("finding") != "" && !contains(found, rc.F("finding")) {
 			found = append(found, rc.F("finding"))
+		}
+	}
+	// a read card's broken verdict on the fleet table (read_cards.go)
+	if s.Fleet != nil {
+		_, _, fbr := friendReadLive(s, c)
+		for _, rc := range fbr {
+			if rc.F("finding") != "" && !contains(found, rc.F("finding")) {
+				found = append(found, rc.F("finding"))
+			}
 		}
 	}
 	return strings.Join(found, "; ")
@@ -1744,18 +1797,41 @@ func orEmpty(c *Card, id string) *Card {
 	return c
 }
 
+// waitingNeeding is the waiting primaries that name id and are not dropping:
+// the dependants a drop without cascade refuses, read from every waiting
+// card's needs field (docs/SPEC-SPRINT.md section 11).
+func waitingNeeding(s *Snapshot, id string, dropping map[string]bool) []string {
+	var out []string
+	for _, w := range s.Work.Column(Waiting) {
+		if dropping[w.ID] {
+			continue
+		}
+		if contains(Split(w.F("needs")), id) {
+			out = append(out, w.ID)
+		}
+	}
+	return out
+}
+
 // DropReq is the coordinator taking primaries off the table.
 type DropReq struct {
 	Sel
 	Reason  string
 	Answers []string
+	// Cascade drops, with the cards the selection names, every waiting
+	// primary that needs one of them, and their dependants too. Without it a
+	// card a waiting primary still needs is refused, naming the dependants
+	// (docs/SPEC-SPRINT.md section 11).
+	Cascade bool
 	Who     string
 }
 
 // Drop takes open primaries off the table with the reason: their record,
 // outcome and reason are kept; their live work card, unread read cards and
-// merge place go with them. Waiting primaries that need one are blocked, and
-// the coordinator is told.
+// merge place go with them. A waiting primary that needs one is a dependant:
+// without Cascade the drop is refused for that card, naming the dependants;
+// with it the dependants and their dependants go too (docs/SPEC-SPRINT.md
+// section 11).
 func Drop(s *Snapshot, r DropReq) Plan {
 	var p Plan
 	var all []*Card
@@ -1771,9 +1847,50 @@ func Drop(s *Snapshot, r DropReq) Plan {
 		}
 		return ""
 	}, s.primaryCard)
-	dropping, blocked := map[string]bool{}, map[string]bool{}
+	dropping := map[string]bool{}
 	for _, c := range chosen {
 		dropping[c.ID] = true
+	}
+	if r.Cascade {
+		// Grow the set of dropping cards: every waiting primary that needs
+		// one of them goes too, and their dependants in turn (a cascade), so
+		// no waiting primary is left blocked on a dropped card
+		// (docs/SPEC-SPRINT.md section 11).
+		for grew := true; grew; {
+			grew = false
+			for _, w := range s.Work.Column(Waiting) {
+				if dropping[w.ID] {
+					continue
+				}
+				for _, n := range Split(w.F("needs")) {
+					if dropping[n] {
+						dropping[w.ID] = true
+						grew = true
+						break
+					}
+				}
+			}
+		}
+		var kept []*Card
+		for _, c := range all {
+			if dropping[c.ID] {
+				kept = append(kept, c)
+			}
+		}
+		chosen = kept
+	} else {
+		// Without Cascade a card another waiting primary still needs is
+		// refused for that card, naming the dependants, and nothing moves.
+		var kept []*Card
+		for _, c := range chosen {
+			if deps := waitingNeeding(s, c.ID, dropping); len(deps) > 0 {
+				p.refuse(c.ID, fmt.Sprintf("%s is needed by %s; drop them too with --cascade", c.ID, strings.Join(deps, ", ")))
+				dropping[c.ID] = false
+				continue
+			}
+			kept = append(kept, c)
+		}
+		chosen = kept
 	}
 	for _, c := range chosen {
 		u := Unit{Key: c.ID, Stream: c.Row}
@@ -1792,23 +1909,6 @@ func Drop(s *Snapshot, r DropReq) Plan {
 		}
 		u.Changes = append(u.Changes, change(Work, removeEntry(c, map[string]string{
 			"outcome": "dropped", "reason": r.Reason, "dropped_from": c.Col, "dropped_at": stamp(s.Now)})))
-		for _, w := range s.Work.Column(Waiting) {
-			if dropping[w.ID] || blocked[w.ID] || !contains(Split(w.F("needs")), c.ID) {
-				continue
-			}
-			// One note per waiting primary, naming every need this step drops
-			// that no blocked judgment open on it names yet.
-			blocked[w.ID] = true
-			var gone []string
-			for _, need := range Split(w.F("needs")) {
-				if dropping[need] {
-					gone = append(gone, need)
-				}
-			}
-			if gone = unblocked(s.Open, w.ID, gone, NBlocked); len(gone) > 0 {
-				u.Notes = append(u.Notes, blockedNote(s, w.Row, w.ID, r.Who, gone))
-			}
-		}
 		u.Closes = closesFor(s.Open, nil, c.ID)
 		answerListed(&u, s.Open, r.Answers, "drop", c.Row, "dropped "+c.ID+"; "+r.Reason, r.Who, s.Now, c.ID)
 		u.Moved = fmt.Sprintf("%s %s -> off the table (%s)", c.ID, c.Col, r.Reason)
@@ -2039,4 +2139,67 @@ func RecordCI(s *Snapshot, r CIReq) Plan {
 		p.Units = append(p.Units, u)
 	}
 	return p
+}
+
+// LandedReq is the coordinator's record of work found on the branch but not recorded
+// landed (docs/SPEC-SPRINT.md section 7, land-record-unreported-push-bc.w2): a push that
+// happened and was never reported, or work landed outside the deal by a pull request. Pins
+// are the cards at the heads the caller read, InBase the caller's git facts (never a
+// model's): each head is an ancestor of Sha, and Sha is on origin/<base> at its tip.
+type LandedReq struct {
+	Pins   []LandedPin
+	Sha    string
+	Reason string
+	Who    string
+}
+
+// RecordLanded lands exactly the pinned cards as merge's record by name lands them (merge
+// --landed, section 8), all or none, each merge card's note naming the commit and the
+// reason. Only a merging card is recorded: the lifecycle has no move review -> landed and no
+// move from off the table, so a card in review is refused naming accept, and a dropped one
+// naming that it stays dropped. The cards are of one stream, the record's one batch.
+func RecordLanded(s *Snapshot, r LandedReq) Plan {
+	var p Plan
+	p.on(s)
+	if strings.TrimSpace(r.Reason) == "" {
+		p.refuse("landed", "a record of work found on the branch says how it got there: --reason <text>")
+		return p
+	}
+	stream := ""
+	for _, pin := range r.Pins {
+		c := s.Work.Card(pin.ID)
+		why := ""
+		switch {
+		case c == nil:
+			why = "no such card"
+		case !c.Placed() && c.F("outcome") == "dropped":
+			why = "dropped (" + orDash(c.F("reason")) + "); the lifecycle has no move off the table -> landed, so it stays dropped"
+		case !c.Placed():
+			why = "not on the table (" + orDash(c.F("outcome")) + ")"
+		case c.Col == Landed:
+			why = "landed already; landed is final"
+		case c.Col == Review:
+			why = "in review; the lifecycle has no move review -> landed: accept it, then record it landed"
+		case c.Col != Merging:
+			why = "it is " + c.Col + "; only a merging card is recorded landed"
+		case stream != "" && c.Row != stream:
+			why = "of stream " + c.Row + ", and the record's other cards are of stream " + stream + "; record each stream on its own"
+		}
+		if why != "" {
+			p.refuse(pin.ID, why)
+			continue
+		}
+		stream = c.Row
+	}
+	if len(p.Refused) > 0 || stream == "" {
+		if stream == "" && len(p.Refused) == 0 {
+			p.refuse("landed", "no card named")
+		}
+		return p
+	}
+	notes := map[string]string{}
+	for _, pin := range r.Pins {
+		notes[pin.ID] = "recorded landed at " + r.Sha + ": " + r.Reason
+	}
+	return MergeStep(s, MergeReq{Stream: stream, Landed: r.Pins, Resolved: notes, Note: r.Reason, Who: r.Who})
 }

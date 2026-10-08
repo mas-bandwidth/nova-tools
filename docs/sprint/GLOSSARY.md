@@ -48,7 +48,7 @@ The `Replaces:` clause is the one place a retired word may stand in a glossary.
   Defined: [SPEC-SPRINT.md, Merging](../SPEC-SPRINT.md#7-merging).
 - **stream** — an ordered line of primaries that land one after another.
   Defined: [SPEC-SPRINT.md, The tables](../SPEC-SPRINT.md#1-the-tables).
-- **tick** — one pass of the machine over every table: resolve, deal, accept, merge.
+- **tick** — one pass of the machine over every table: resolve, deal, rebalance, accept, merge.
   Defined: [SPEC-SPRINT.md, The machine](../SPEC-SPRINT.md#14-the-machine).
 - **tier** — the strength class a card runs at (flash, pro, frontier); a card with none is dealt at flash.
   Defined: [SPEC-SPRINT.md, The fleet](../SPEC-SPRINT.md#5-the-fleet).

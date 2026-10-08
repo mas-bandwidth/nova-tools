@@ -33,7 +33,14 @@ const ledgerCeilingPrefix = "# ceiling:"
 const (
 	slowTestsAllowlistPath   = "internal/ci/slow-tests_allowlist.txt"
 	sleepsSkipsAllowlistPath = "internal/ci/sleeps-skips_allowlist.txt"
+	unitSocketsSeedDir       = "internal/ci/testdata/unit-sockets/"
+	refusalGrammarSeedDir    = "internal/ci/testdata/refusal-grammar/"
 )
+
+// seedLedgerDirs are the counted ledgers allowed their one-time seed: each is
+// exempt only while the merge base holds no shard of it (docs/SPEC-CI.md,
+// `unit-sockets` and `refusal-grammar`).
+var seedLedgerDirs = []string{unitSocketsSeedDir, refusalGrammarSeedDir}
 
 // parseLedgerRows reads a counted shard's text into its row keys (the first
 // field of each row, the key every class rule's list is shrunk by) and its
@@ -190,17 +197,19 @@ var ledgerBasePaths = []string{"internal/ci/testdata", slowTestsAllowlistPath, s
 // readMergeBase reads every file the ratchet compares, as the merge base holds
 // it, with two git processes whatever the number of shards: one
 // `git ls-tree -r -z` names each blob under ledgerBasePaths, and one
-// `git cat-file --batch` prints the .txt ones. Two processes per shard (an
+// `git cat-file --batch` prints the .txt ones. It returns the lookup, and the
+// complete set of base paths the listing named, so the seed check can see a
+// shard this change deletes. Two processes per shard (an
 // ls-tree and a show, ListAtCommit's way) were some 1,200 git starts a run,
 // which on a self-hosted runner's reused workspace took the test past 1m30s
 // and its CI shard past the two-minute cap. The lookup answers what
 // ListAtCommit answers for each of those paths (TestTheSinglePassReadsWhatTheTwoCallPathRead);
 // a path the base carries but this read did not print is an error, never a
 // silent "absent".
-func readMergeBase(git ledgerGit, root, base string) (baseLookup, error) {
+func readMergeBase(git ledgerGit, root, base string) (baseLookup, []string, error) {
 	listing, err := git(root, "", append([]string{"ls-tree", "-r", "-z", "--full-tree", base, "--"}, ledgerBasePaths...)...)
 	if err != nil {
-		return nil, fmt.Errorf("listing the merge base %s: %w", base, err)
+		return nil, nil, fmt.Errorf("listing the merge base %s: %w", base, err)
 	}
 	inBase := map[string]bool{}     // every blob path the base carries under ledgerBasePaths
 	objectOf := map[string]string{} // the .txt ones the batch reads, by path
@@ -221,6 +230,11 @@ func readMergeBase(git ledgerGit, root, base string) (baseLookup, error) {
 		}
 	}
 	texts := make(map[string]string, len(order))
+	basePaths := make([]string, 0, len(inBase))
+	for rel := range inBase {
+		basePaths = append(basePaths, rel)
+	}
+	sort.Strings(basePaths)
 	if len(order) > 0 {
 		var names strings.Builder
 		for _, rel := range order {
@@ -228,17 +242,17 @@ func readMergeBase(git ledgerGit, root, base string) (baseLookup, error) {
 		}
 		batch, err := git(root, names.String(), "cat-file", "--batch")
 		if err != nil {
-			return nil, fmt.Errorf("reading the merge base %s: %w", base, err)
+			return nil, nil, fmt.Errorf("reading the merge base %s: %w", base, err)
 		}
 		for _, rel := range order {
 			header, rest, ok := strings.Cut(batch, "\n")
 			fields := strings.Fields(header) // <object> blob <size>
 			if !ok || len(fields) != 3 || fields[0] != objectOf[rel] || fields[1] != "blob" {
-				return nil, fmt.Errorf("reading %s at the merge base %s: git cat-file --batch printed %q, want %q's blob header", rel, base, header, objectOf[rel])
+				return nil, nil, fmt.Errorf("reading %s at the merge base %s: git cat-file --batch printed %q, want %q's blob header", rel, base, header, objectOf[rel])
 			}
 			size, err := strconv.Atoi(fields[2])
 			if err != nil || size < 0 || size+1 > len(rest) || rest[size] != '\n' {
-				return nil, fmt.Errorf("reading %s at the merge base %s: git cat-file --batch printed a %q body that does not fit what remains", rel, base, header)
+				return nil, nil, fmt.Errorf("reading %s at the merge base %s: git cat-file --batch printed a %q body that does not fit what remains", rel, base, header)
 			}
 			texts[rel], batch = rest[:size], rest[size+1:]
 		}
@@ -252,7 +266,7 @@ func readMergeBase(git ledgerGit, root, base string) (baseLookup, error) {
 			return "", false, fmt.Errorf("%s is at the merge base %s but the single pass reads only .txt files", rel, base)
 		}
 		return text, true, nil
-	}, nil
+	}, basePaths, nil
 }
 
 // ledgerRatchetShards walks every counted shard under internal/ci/testdata:
@@ -299,9 +313,25 @@ func ledgerRatchetShards(root string, atBase baseLookup) ([]string, error) {
 }
 
 // checkCountedShards checks every counted shard against its merge base version.
-func checkCountedShards(root, base string, shards []string, atBase baseLookup) ([]string, error) {
+// A ledger named in seedLedgerDirs is its one seed when no shard of it exists in
+// the base (docs/SPEC-CI.md, `unit-sockets` and `refusal-grammar`); after that,
+// every shard ratchets.
+func checkCountedShards(root, base string, shards, baseShards []string, atBase baseLookup) ([]string, error) {
+	seeds := map[string]bool{}
+	for _, dir := range seedLedgerDirs {
+		seeds[dir] = ledgerSeedIsNew(shards, baseShards, dir)
+	}
 	var problems []string
 	for _, rel := range shards {
+		seeded := false
+		for _, dir := range seedLedgerDirs {
+			if seeds[dir] && strings.HasPrefix(rel, dir) {
+				seeded = true
+			}
+		}
+		if seeded {
+			continue
+		}
 		headBytes, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", rel, err)
@@ -313,6 +343,25 @@ func checkCountedShards(root, base string, shards []string, atBase baseLookup) (
 		problems = append(problems, shardProblems(rel, base, baseText, ok, headBytes)...)
 	}
 	return problems, nil
+}
+
+// ledgerSeedIsNew reports whether this tree introduces the first shard of the
+// ledger under dir; the initial seed is exempt only while the merge base holds
+// no shard of it (docs/SPEC-CI.md, `unit-sockets` and `refusal-grammar`).
+// baseShards is the complete set the base carries, not only the head's names,
+// so a base shard this change deletes still counts as a seed that happened.
+func ledgerSeedIsNew(shards, baseShards []string, dir string) bool {
+	for _, rel := range baseShards {
+		if strings.HasSuffix(rel, ".txt") && strings.HasPrefix(rel, dir) {
+			return false
+		}
+	}
+	for _, rel := range shards {
+		if strings.HasPrefix(rel, dir) {
+			return true
+		}
+	}
+	return false
 }
 
 // checkSlowTestsLedger checks slow-tests_allowlist.txt against the merge base.
@@ -381,7 +430,7 @@ func ledgerRatchetProblems(t testing.TB, root string) ([]string, error) {
 // read once through git (readMergeBase), then every counted shard and the two
 // slowtests ledgers are compared with what that one read returned.
 func ledgerRatchetFindings(t testing.TB, git ledgerGit, root, base string) ([]string, error) {
-	atBase, err := readMergeBase(git, root, base)
+	atBase, baseShards, err := readMergeBase(git, root, base)
 	if err != nil {
 		return nil, err
 	}
@@ -392,7 +441,7 @@ func ledgerRatchetFindings(t testing.TB, git ledgerGit, root, base string) ([]st
 	if len(shards) == 0 {
 		return nil, fmt.Errorf("no counted shards under internal/ci/testdata: the walk is broken, not the tree")
 	}
-	shardProbs, err := checkCountedShards(root, base, shards, atBase)
+	shardProbs, err := checkCountedShards(root, base, shards, baseShards, atBase)
 	if err != nil {
 		return nil, err
 	}
@@ -418,6 +467,91 @@ func TestClassRuleLedgersOnlyShrinkAgainstMergeBase(t *testing.T) {
 	for _, problem := range problems {
 		t.Errorf("%s", problem)
 	}
+}
+
+// TestUnitSocketsLedgerSeedsOnlyWhenTheBaseHasNoShard pins the one-time seed
+// exception for the newly introduced rule (docs/SPEC-CI.md, `unit-sockets`).
+func TestUnitSocketsLedgerSeedsOnlyWhenTheBaseHasNoShard(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	newShard := unitSocketsSeedDir + "cmd/nova-friend.txt"
+	existingShard := unitSocketsSeedDir + "cmd/nova-sandbox.txt"
+	writeLedgerGuardFixture(t, root, newShard, "# ceiling: 1\ncmd/nova-friend/inbox_test.go:socket 1 reason\n")
+	writeLedgerGuardFixture(t, root, existingShard, "# ceiling: 1\ncmd/nova-sandbox/main_test.go:socket 1 reason\n")
+	shards := []string{existingShard, newShard}
+	missing := func(string) (string, bool, error) { return "", false, nil }
+
+	problems, err := checkCountedShards(root, "123456789abcdef", shards, nil, missing)
+	require.NoError(t, err)
+	require.Empty(t, problems, "the unit-sockets ledger is seeded at its introduction")
+
+	baseHasAnotherShard := func(rel string) (string, bool, error) {
+		if rel == existingShard {
+			return "# ceiling: 1\ncmd/nova-sandbox/main_test.go:socket 1 reason\n", true, nil
+		}
+		return "", false, nil
+	}
+	seededBase := []string{existingShard}
+	problems, err = checkCountedShards(root, "123456789abcdef", shards, seededBase, baseHasAnotherShard)
+	require.NoError(t, err)
+	require.Equal(t, []string{
+		newShard + " is not in the merge base 123456789: a new shard is all growth; justify it beside the rule it measures",
+	}, problems, "a later new package shard remains growth after the ledger has a base")
+
+	// Deleting the ledger's last base shard is a shrink, not a re-seed.
+	problems, err = checkCountedShards(root, "123456789abcdef", nil, seededBase, baseHasAnotherShard)
+	require.NoError(t, err)
+	require.Empty(t, problems, "deleting the ledger's last shard adds nothing to judge and does not reopen the seed")
+
+	// A base shard deleted and replaced by a differently named head shard is
+	// not a new ledger: the seed does not reopen, so the new shard is growth.
+	replaced := []string{newShard}
+	problems, err = checkCountedShards(root, "123456789abcdef", replaced, seededBase, baseHasAnotherShard)
+	require.NoError(t, err)
+	require.Equal(t, []string{
+		newShard + " is not in the merge base 123456789: a new shard is all growth; justify it beside the rule it measures",
+	}, problems, "replacing the base's last shard does not reopen the seed")
+}
+
+// TestRefusalGrammarLedgerSeedsOnlyWhenTheBaseHasNoShard pins the one-time seed
+// exception for the newly introduced rule (docs/SPEC-CI.md, `refusal-grammar`).
+func TestRefusalGrammarLedgerSeedsOnlyWhenTheBaseHasNoShard(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	newShard := refusalGrammarSeedDir + "cmd/nova-redis.txt"
+	existingShard := refusalGrammarSeedDir + "cmd/nova-sandbox.txt"
+	writeLedgerGuardFixture(t, root, newShard, "# ceiling: 1\ncmd/nova-redis:verb-no-flags 1 reason\n")
+	writeLedgerGuardFixture(t, root, existingShard, "# ceiling: 1\ncmd/nova-sandbox:verb-no-flags 1 reason\n")
+	shards := []string{existingShard, newShard}
+	missing := func(string) (string, bool, error) { return "", false, nil }
+
+	problems, err := checkCountedShards(root, "123456789abcdef", shards, nil, missing)
+	require.NoError(t, err)
+	require.Empty(t, problems, "the refusal-grammar ledger is seeded at its introduction")
+
+	baseHasAnotherShard := func(rel string) (string, bool, error) {
+		if rel == existingShard {
+			return "# ceiling: 1\ncmd/nova-sandbox:verb-no-flags 1 reason\n", true, nil
+		}
+		return "", false, nil
+	}
+	seededBase := []string{existingShard}
+	problems, err = checkCountedShards(root, "123456789abcdef", shards, seededBase, baseHasAnotherShard)
+	require.NoError(t, err)
+	require.Equal(t, []string{
+		newShard + " is not in the merge base 123456789: a new shard is all growth; justify it beside the rule it measures",
+	}, problems, "a later new package shard remains growth after the ledger has a base")
+
+	// A base shard deleted and replaced by a differently named head shard is
+	// not a new ledger: the seed does not reopen, so the new shard is growth.
+	replaced := []string{newShard}
+	problems, err = checkCountedShards(root, "123456789abcdef", replaced, seededBase, baseHasAnotherShard)
+	require.NoError(t, err)
+	require.Equal(t, []string{
+		newShard + " is not in the merge base 123456789: a new shard is all growth; justify it beside the rule it measures",
+	}, problems, "replacing the base's last shard does not reopen the seed")
 }
 
 func testCountedShardInMemory(t *testing.T) {
@@ -556,14 +690,14 @@ func TestCountedShardsRatchetInGitRepo(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, filepath.FromSlash(newFixtureRel)), []byte(newFixtureCode), 0o644))
 
 	// ledgerRatchetShards discovers only counted shards: new and modified shards with ceilings.
-	atBase, err := readMergeBase(gitOutIn, dir, baseCommit)
+	atBase, baseShards, err := readMergeBase(gitOutIn, dir, baseCommit)
 	require.NoError(t, err, "readMergeBase")
 	shards, err := ledgerRatchetShards(dir, atBase)
 	require.NoError(t, err, "ledgerRatchetShards")
 	require.Equal(t, []string{newShardRel, shardRel}, shards, "only counted shards with ceilings are selected")
 
 	// checkCountedShards reports the expected growth problems.
-	problems, err := checkCountedShards(dir, baseCommit, shards, atBase)
+	problems, err := checkCountedShards(dir, baseCommit, shards, baseShards, atBase)
 	require.NoError(t, err, "checkCountedShards")
 	require.ElementsMatch(t, []string{
 		fmt.Sprintf("%s is not in the merge base %s: a new shard is all growth; justify it beside the rule it measures", newShardRel, baseCommit[:9]),
@@ -572,7 +706,7 @@ func TestCountedShardsRatchetInGitRepo(t *testing.T) {
 	}, problems)
 
 	// Explicitly passing ceiling-less fixtures to checkCountedShards yields no problems.
-	fixtureProblems, err := checkCountedShards(dir, baseCommit, []string{fixtureRel, newFixtureRel}, atBase)
+	fixtureProblems, err := checkCountedShards(dir, baseCommit, []string{fixtureRel, newFixtureRel}, baseShards, atBase)
 	require.NoError(t, err, "checkCountedShards on fixtures")
 	require.Empty(t, fixtureProblems, "ceiling-less fixtures produce no ratchet problems")
 }
@@ -731,7 +865,12 @@ func TestTheSinglePassReadsWhatTheTwoCallPathRead(t *testing.T) {
 	require.NoError(t, os.Remove(filepath.Join(dir, filepath.FromSlash("internal/ci/testdata/gone/removed.txt"))))
 
 	twoCall := func(rel string) (string, bool, error) { return ListAtCommit(dir, base, rel) }
-	single, err := readMergeBase(gitOutIn, dir, base)
+	twoCallShards := make([]string, 0, len(baseFiles))
+	for rel := range baseFiles {
+		twoCallShards = append(twoCallShards, rel)
+	}
+	sort.Strings(twoCallShards)
+	single, singleShards, err := readMergeBase(gitOutIn, dir, base)
 	require.NoError(t, err)
 
 	paths := []string{slowTestsAllowlistPath, sleepsSkipsAllowlistPath, "internal/ci/testdata/newrule/shard.txt", "internal/ci/testdata/absent/nothing.txt"}
@@ -758,14 +897,16 @@ func TestTheSinglePassReadsWhatTheTwoCallPathRead(t *testing.T) {
 	require.Equal(t, wantShards, gotShards, "the shard list")
 	require.NotEmpty(t, gotShards)
 
-	for _, check := range []func(baseLookup) ([]string, error){
-		func(at baseLookup) ([]string, error) { return checkCountedShards(dir, base, gotShards, at) },
-		func(at baseLookup) ([]string, error) { return checkSlowTestsLedger(t, dir, base, at) },
-		func(at baseLookup) ([]string, error) { return checkSleepsLedger(t, dir, base, at) },
+	for _, check := range []func(baseLookup, []string) ([]string, error){
+		func(at baseLookup, bs []string) ([]string, error) {
+			return checkCountedShards(dir, base, gotShards, bs, at)
+		},
+		func(at baseLookup, bs []string) ([]string, error) { return checkSlowTestsLedger(t, dir, base, at) },
+		func(at baseLookup, bs []string) ([]string, error) { return checkSleepsLedger(t, dir, base, at) },
 	} {
-		want, err := check(twoCall)
+		want, err := check(twoCall, twoCallShards)
 		require.NoError(t, err)
-		got, err := check(single)
+		got, err := check(single, singleShards)
 		require.NoError(t, err)
 		require.Equal(t, want, got, "the findings")
 	}

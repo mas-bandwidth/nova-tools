@@ -155,6 +155,32 @@
 # within 10 minutes or a card of hers finished within 30 (sprint.FriendPongWindow,
 # sprint.FriendFinishWindow, sprint.FriendStatus), else down; a beat is never evidence,
 # and the 15 s beat rule above is gone. No column changed, so the lines below are unchanged.
+# Change, 2026-10-07, asked by the owner's card friends-tokens-column: each friend
+# card's RESULT.md carries `usage: in=<n> out=<n> cache=<n>`. The store sums it
+# per friend, and the friends table gets a "tokens" column in a compact form
+# (1.2M), after active. A friend whose nova-config row bills per call (the billing
+# field the cost card is adding) shows dollars to the cent, rounded up; until that
+# field is set, every friend is a subscription. Held by TestSprintTablesAreLocked
+# and TestFriendTokensSumPerFriendFromTheResultUsage.
+#
+# Change, 2026-10-05, a hidden fleet column, asked by Glenn in words: "trust but VERIFY"; "I
+# want to trust the ok%"; "Mechanical. You know the drill."; "Are they actually doing the
+# work that is shown in the friend table? Really?"; "i don't want dollar amounts for friends.
+# token counts are fine." fleet.defect (hidden, after failed) holds a member's or a friend's
+# work cards that ended on a brief defect (docs/SPEC-SPRINT.md section 1, a brief defect): a
+# HOLD naming the brief, which no worker could do, counted in neither done nor ok%, so ok% on
+# the fleet and friends tables counts only work the worker could do. No shown column changes.
+# The live store takes it before the build that writes it is installed: nova-table col add
+# fleet defect --after failed, then nova-table set fleet --hide defect. Held by
+# TestSprintTablesAreLocked and
+# TestAHoldNamingABriefDefectCountsAgainstTheStreamNotTheWorker.
+# Note, 2026-10-04, the friend row's work restriction, not a display column: her
+# nova-config row's `streams` and `kinds` (docs/SPEC-CONFIG.md, friend) are carried into
+# her friends record by friend sync and applied by the dealer, which hands her no card
+# outside them; nothing the where view draws changes, so no column, fold or row below is
+# added and the friends table's shape stands. Held by
+# TestDealerNeverDealsAFriendOutsideHerStreams and
+# TestAddAndBriefRefuseNamedFriendOutsideRestrictions.
 work.waiting count sum shown
 work.ready count sum shown
 work.working count sum shown
@@ -185,6 +211,7 @@ fleet.load text none shown
 fleet.withdrawn count sum hidden
 fleet.ok count sum hidden
 fleet.failed count sum hidden
+fleet.defect count sum hidden
 fleet.ctl first none hidden
 friends.ready count sum shown
 friends.working count sum shown
@@ -193,6 +220,7 @@ friends.done sum(ok+failed) sum shown
 friends.okpct pct(ok/ok+failed) pooled shown label=ok%
 friends.status text none shown
 friends.active text none shown
+friends.tokens text sum shown
 friends.ok count sum hidden
 friends.failed count sum hidden
 view work friends fleet

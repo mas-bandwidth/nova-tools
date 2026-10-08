@@ -273,8 +273,8 @@ func TestEveryDrainIsNamed(t *testing.T) {
 
 // "accept is mechanical": on a RUNNING machine the reads that make a primary
 // acceptable open no "ready to accept" judgment (no wake for nothing), and
-// the next pump accepts it; on a STOPPED machine the judgment opens as
-// before, the coordinator's to answer.
+// the next pump accepts it; on a STOPPED machine none opens either (since
+// 2026-10-06: no hand step), and the first pump after start accepts it.
 func TestAReadOnARunningMachineOpensNoReadyToAccept(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
@@ -302,7 +302,10 @@ func TestAReadOnARunningMachineOpensNoReadyToAccept(t *testing.T) {
 	g.must(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
 	g.readAll()
 	n = len(g.openOf(sprint.NReadyToAccept))
-	require.EqualValues(t, 1, n, "the reads on a stopped machine opened %d ready-to-accept judgments, want 1", n)
+	require.Zero(t, n, "the reads on a stopped machine opened %d ready-to-accept judgments", n)
+	g.startMachine()
+	g.machine()
+	require.Equal(t, sprint.Merging, g.table().StateOf("s1-1"), "the first pump after start accepts it")
 }
 
 // "changes queued after the pump's drain wait for the next tick": a world

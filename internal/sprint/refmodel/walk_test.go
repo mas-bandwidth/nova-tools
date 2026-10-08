@@ -250,13 +250,15 @@ func (k *walk) acceptOrRework() bool {
 	return k.try(sprint.Accept(k.s, sprint.AcceptReq{Sel: sprint.Sel{Stream: c.Row}, Who: coordinator}))
 }
 
-// drop has the coordinator drop a primary that has not landed.
+// drop has the coordinator drop a primary that has not landed, with its
+// dependants: a card a waiting card needs is refused without the cascade
+// (docs/SPEC-SPRINT.md section 11), so the walks drop the chains whole.
 func (k *walk) drop() bool {
 	c, ok := k.primaryIn(sprint.Waiting, sprint.Ready, sprint.Working, sprint.Review)
 	if !ok {
 		return false
 	}
-	return k.try(sprint.Drop(k.s, sprint.DropReq{Sel: sprint.Sel{IDs: []string{c.ID}}, Reason: "not wanted", Who: coordinator}))
+	return k.try(sprint.Drop(k.s, sprint.DropReq{Sel: sprint.Sel{IDs: []string{c.ID}}, Reason: "not wanted", Cascade: true, Who: coordinator}))
 }
 
 // merge is a merge step of a stream, with a fact that stops it now and then.
@@ -337,10 +339,11 @@ func (k *walk) tick() bool {
 	}
 	// the done part is drawn by the whole tick only: it writes a note and
 	// no card, and the draw of one part keeps the walks the parts before it
-	// gave
+	// gave; so is the rebalance, which moves only a friend's queue in a walk
+	// with none (its scenario gives one: aQueuedCardOnAFullFriend)
 	var parts []sprint.TickPartFn
 	for _, p := range sprint.TickParts {
-		if p.Name != sprint.PartDone {
+		if p.Name != sprint.PartDone && p.Name != sprint.PartRebalance {
 			parts = append(parts, p.Fn)
 		}
 	}

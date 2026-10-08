@@ -192,6 +192,36 @@ func TestApplyKindRouteWritesTheViewAndStatusShowsParity(t *testing.T) {
 	assert.Equal(t, "", view["price_cache_read"], "a price not set is empty, never 0")
 }
 
+// A route a tier still lists cannot be removed, and the refusal names the
+// tier set that takes it out with the remaining routes filled in, so the
+// remedy runs in one turn (docs/STANDARD.md, section 3, point 2).
+func TestRouteRemoveRemedyNamesTheTierSetThatClearsIt(t *testing.T) {
+	t.Parallel()
+
+	h := loopHarness(t)
+	for _, args := range [][]string{
+		{"route", "add", "a", "--tier", "flash", "--provider", "p", "--model", "m", "--deadline", "60"},
+		{"route", "add", "b", "--tier", "flash", "--provider", "p", "--model", "m", "--deadline", "60"},
+	} {
+		code, _, errs := h.run(t, args...)
+		require.Equal(t, 0, code, errs)
+	}
+	code, _, errs := h.run(t, "tier", "set", "flash", "--routes", "a,b")
+	require.Equal(t, 0, code, errs)
+
+	code, out, errs := h.run(t, "route", "remove", "a")
+	assert.Equal(t, 1, code)
+	assert.Empty(t, out)
+	assert.Equal(t, "nova-config route remove REFUSED: route a is in the --routes of tier flash; set it out of the list first (tier set flash --routes <the rest>); run: nova-config tier set flash --routes b\n", errs)
+
+	// the remedy is the command that unblocks the remove
+	code, _, errs = h.run(t, "tier", "set", "flash", "--routes", "b")
+	require.Equal(t, 0, code, errs)
+	code, out, errs = h.run(t, "route", "remove", "a")
+	require.Equal(t, 0, code, "stdout %q stderr %q", out, errs)
+	assert.True(t, strings.HasPrefix(out, "CONFIG REMOVE kind=route name=a rev="), out)
+}
+
 // The tier kind through the one grammar: migrate made the flash and pro rows, so
 // set writes a tier's route array on a new store, in order and with a name
 // repeated; a route that is no row or is disabled is refused; remove is refused

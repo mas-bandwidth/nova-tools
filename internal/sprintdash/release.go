@@ -105,7 +105,7 @@ func compareRelease(a, b string) int {
 }
 
 // flow is the work table's count columns: every primary is in one.
-var flow = []string{"waiting", "ready", "working", "review", "merging", "landed"}
+var flow = []string{"waiting", "ready", "working", "review", "fix", "merging", "landed"}
 
 // only is the copy with the named streams alone: the work and merge tables' rows, the
 // stream clocks, costs and stalls, the critical path, the cards dealt and merging; and

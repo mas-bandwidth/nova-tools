@@ -97,7 +97,9 @@ key, because a name that is not a legal environment variable would silently not 
 **Not everything in the file is sealed.** `.sops.yaml` carries an `unencrypted_regex` for
 fields that are facts rather than secrets — the two fact-key names a machine's file carries — and this
 tool treats an unencrypted field exactly as a sealed one. What may be in the clear is the
-store's decision, reviewed in a pull request; this tool neither extends nor audits it.
+store's decision, reviewed in a pull request; this tool neither extends nor audits it, with
+one exception it makes in that same pull request: the verb's mark (see the gate) is admitted
+to the rule of the seat file the verb writes.
 
 **What the model does not give you.** Read access to the *ciphertext* is not a boundary:
 anybody who can clone the store holds every AI's sealed file, and that is intended — it is what
@@ -358,18 +360,25 @@ proven by one line is a store proven for one line), or who has cloned the store.
 ```
 nova-secrets gate --store <dir> --base <git ref> --head <git ref> [--machines <registry>]
 GATE APPROVE files=<n> machines=<registry|->
-GATE REFUSE rule=<n> check=<k> file=<f>: <why>
+GATE FAILED rule=<n> check=<k> file=<f>: <why>
 ```
 
 **Gate checks (k = 1..5):**
 
-1. **Rule's recipients and path_regex**: Every changed `.sops.yaml` rule has exactly two age recipients (one the declared recovery key) and a `path_regex` naming exactly one seat file.
-2. **Seat file's encryption and its rule**: Every changed seat file `<seat>.yaml` is encrypted (with `sops:` metadata present and no plain values outside `unencrypted_regex`) and its rule exists in `.sops.yaml`.
+1. **Rule's recipients, path_regex and clear keys**: Every changed `.sops.yaml` rule has exactly two age recipients (one the declared recovery key), a `path_regex` naming exactly one seat file, and an `unencrypted_regex` identical to the base rule's (the mark key aside). A different regex fails, naming the rule.
+2. **Seat file's encryption and its rule**: Every changed seat file `<seat>.yaml` — a root-level `.yaml`, never one under a subdirectory — is encrypted (with `sops:` metadata present and no plain values, root-level or under an indented map key, outside `unencrypted_regex`) and its rule exists in `.sops.yaml`.
 3. **No other file changes**: No files other than `.sops.yaml`, `README.md`, and seat `.yaml` files change.
 4. **New recipient needs the registry's seat** (inside check 1): A recipient key this diff introduces is permitted only when a machine in `--machines` carries this rule's seat.
 5. **Seat gone at head**: A seat file in the store at `--base` must still be in the store at `--head`; removing a seat is never part of adding one.
 
 numbers identify checks; the gate runs them in the order 3, 1, 4, 5, 2. check=0 means the gate refused before any numbered check ran.
+
+**The four checks of the read of 2026-10-07.** Each one closes a shape the gate once approved:
+
+- **The rule's clear keys are fixed at the base.** A changed rule whose `unencrypted_regex` differs from the base rule's for the same seat file is refused, except the one sanctioned change: admitting the mark key (`^NOVA_SECRETS_WRITTEN_BY$`) on a rule that lacked it, which `seal` and `seat inject` commit beside the file they write. A widened (`.*`) or absent regex otherwise fails, naming the rule.
+- **A seat file is root-level.** `<seat>.yaml` at the root is a seat file; a `.yaml` under a subdirectory (`sub/evil.yaml`) is not, and a change to one is refused by check 3 as a change outside the three kinds.
+- **An indented map key is a key.** A cleartext value under an indented map key (`parent:` then `GH_TOKEN: sk-...`) is a plain value like a root-level one, refused by check 2; only the indented `sops:` metadata block is skipped whole, because its keys are the envelope's and not the seat's.
+- **The mark's version is bounded.** Each version component is at most four digits, so a long digit run (`seal 1.2.<80 digits>`) is no mark and the cleartext under the mark key is a plain value.
 
 **The store's own gate, as a verb.** What the store repo ran as a shell gate lives here in
 the tool instead, so the workflow calls this tool and the rule
@@ -382,7 +391,7 @@ is the shape of a git option and is refused at exit 2 as
 `SECRETS GATE REFUSED: --head <ref> begins with "-", the shape of an option, not a git ref`
 before git sees it. Every other ref is resolved with
 `git rev-parse --verify --end-of-options <ref>^{commit}`; a ref that names no commit (an
-unknown name, a tree, two words) is `GATE REFUSE rule=0 check=0 file=: --head <ref> does not name a
+unknown name, a tree, two words) is `SECRETS GATE REFUSED: --head <ref> does not name a
 commit in the store <dir>` at exit 2. The diff, the tree listings and every file read are
 then made from the two resolved SHAs, each behind `--end-of-options`, so no value the caller
 passes is ever read by git as an option. Two refs naming one commit are an empty diff, and an
@@ -393,7 +402,7 @@ is refused at exit 2 with one line on stderr naming the flag,
 `SECRETS GATE REFUSED: --head is given more than once; every gate flag takes one value`, before
 any ref is read.
 
-**It refuses, at exit 2, unless every changed `.sops.yaml` rule has exactly two age
+**It prints `GATE FAILED` at exit 1 unless every changed `.sops.yaml` rule has exactly two age
 recipients, one of which is the key `recovery.pub` declares at the head, and its
 `path_regex` names exactly one seat file; unless every changed seat file `<seat>.yaml` is
 encrypted — `sops:` metadata present, and no line matching `^[A-Z][A-Z0-9_]*: ` whose value
@@ -407,14 +416,14 @@ named by its key and **never quoted**, exactly as `check` invariant 3. On succes
 measures a **diff before review** and `check` measures the **working copy after**; each is the
 other's witness, and neither substitutes for the other.
 
-**It also refuses, at exit 2, when a seat file in the store at `--base` is gone at `--head`.**
+**It also prints `GATE FAILED` at exit 1 when a seat file in the store at `--base` is gone at `--head`.**
 Removing a seat is how a seat loses its credentials inside a pull request whose subject says
 it is adding one, and it is never part of adding a seat. Keep what exists.
 
-**It also refuses, at exit 2, a changed seat file no verb wrote.** `seal`, `seat add` and
+**It also prints `GATE FAILED` at exit 1 for a changed seat file no verb wrote.** `seal`, `seat add` and
 `seat inject` each put one root key into the file they write, in the clear:
 `NOVA_SECRETS_WRITTEN_BY: <seal|seat add|seat inject> <tool version>`, and the gate refuses a
-changed seat file that lacks it, `GATE REFUSE rule=<n> check=2 file=<f>: the seat file was not written
+changed seat file that lacks it, `GATE FAILED rule=<n> check=2 file=<f>: the seat file was not written
 by a nova-secrets verb; seal it with nova-secrets seal or seat add, never by hand`. **The
 decision, and why.** Without the mark the gate is a check on bytes, and a seat file sealed by
 hand (`sops <seat>.yaml`, `sops updatekeys <seat>.yaml`, any editor that leaves sops metadata
@@ -429,9 +438,21 @@ hand `sops` steps a first run might otherwise follow. **What it does not:** a ha
 mark is not a signature, and that hand is the registry's and the reviewer's business, with
 check 1 on the rule and check 4 on the registry standing as before. The mark is read in the
 clear, so a rule that governs a seat file lists it in `unencrypted_regex`
-(`^NOVA_SECRETS_WRITTEN_BY$`; `seat add` writes new rules so); real sops seals a key the rule
-does not permit, and the gate then cannot read the mark. The mark key is never a "plain value"
-to the gate, `check` or `seat inject`, and is a clear key to `names`. The recipient change of
+(`^NOVA_SECRETS_WRITTEN_BY$`); real sops seals a key the rule does not permit, and the gate
+then cannot read the mark. `seat add` writes new rules so. `seal` and `seat inject` give an
+existing rule that lacks it (every seat ruled before the mark existed) the regex as part of the
+write: `^NOVA_SECRETS_WRITTEN_BY$` when the rule has no `unencrypted_regex`, and `(?:R)|^NOVA_SECRETS_WRITTEN_BY$`
+when it has one, `R`, that does not admit the mark (the group keeps a leading flag such as `(?i)`
+inside `R`, so no other spelling of the key becomes clear), nothing else in `.sops.yaml` moved, and the changed `.sops.yaml` is
+committed with the seat file, so the pull request the gate reviews carries both (`files=2`) and
+the `--dry-run` plan names it (`SECRETS <VERB> PLAN rule .sops.yaml rule for <seat>.yaml gains
+unencrypted_regex ...`). The gate cannot decrypt, so it never accepts a sealed mark instead. **The mark's
+value is pinned:** `<seal|seat add|seat inject> <version>`, the version `dev` or a release tag,
+`v?\d{1,4}\.\d{1,4}\.\d{1,4}(-rc\d{1,3})?` (a shape alone, or an unbounded suffix, let 256 bits of hex pass as a version,
+and an unbounded numeric component let eighty digits ride in the clear); a verb whose build stamp is not of that form writes `dev`. A pinned mark is
+never a "plain value" to the gate, `check` or `seat inject`, and is a clear key to `names`; any
+other cleartext under the mark key is a plain value, refused like any other whatever the rule's
+`unencrypted_regex` admits, and is no mark to the gate. The recipient change of
 an existing file (`updatekeys`) is a hand step, so a file re-keyed by hand and not re-sealed
 by a verb keeps the mark it already had and the gate approves it: the recovery path, named as
 what the gate cannot tell apart.
@@ -449,7 +470,7 @@ the `<seat>` of the single `<seat>.yaml` the rule's `path_regex` names.** A row 
 because the seat is what a reader goes and checks:
 
 ```
-GATE REFUSE rule=1 check=4 file=air.yaml: rule adds a recipient no seat file rule named before, and no machine in queue/control/machines.tsv carries the seat air; add the machine's row (its seat column must read air) or drop the rule
+GATE FAILED rule=1 check=4 file=air.yaml: rule adds a recipient no seat file rule named before, and no machine in queue/control/machines.tsv carries the seat air; add the machine's row (its seat column must read air) or drop the rule
 ```
 
 The registry is read **first and whole**, before any judgement leans on it — an unreadable or
@@ -752,6 +773,17 @@ a refusal naming the seat, the store and the next command (`nova-secrets names`,
 seal`); none is ever an empty password. `nova-sprint seat login` records one (docs/SPEC-SPRINT.md,
 "The seat's store login"), so the sprint's verbs need no `exec` wrapper; nova-config can read its
 store login through the same helper.
+
+`secrets.ReadUnitKeys` reads every name a sprint unit needs, the decision key and each provider
+key, through the same open, in the process that uses them. `UnitKeyLogin` is that setting: the
+seat, and the list of names. It holds no secret. `RouteKey` is the one name of that list a route
+needs (`<PROVIDER>_API_KEY`, or the only listed name that is not the decision key).
+`ChildWithOneKey` appends that one name to a child's environment and leaves every other held
+secret out, including one the environment already carried. A name the seat does not hold, or holds
+empty, is a refusal naming the name and the next command (`nova-secrets names`, `nova-secrets seal`); the value is never an empty key and is never printed. `nova-sprint run --keys` and the
+`keys.json` beside the seat login name the server's list; `nova-swarm member --pass` names the
+member's, read in process when the environment does not already hold them. The unit's own
+environment carries no key value, and no `exec` wrapper is required for those names.
 
 ### Refused, by name, with where it lives
 

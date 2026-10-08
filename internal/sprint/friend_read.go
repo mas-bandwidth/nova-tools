@@ -156,10 +156,11 @@ func friendReadTier(s *Snapshot, pr *Card) string {
 // friendAtOrAbove says the friend may be asked a read of tier: one of her tiers
 // (friendTiers) is tier or above it on capLadder (docs/SPEC-SPRINT.md, a read
 // asked of any unit with room at or above the read tier). A frontier friend
-// takes a flash, pro, heavy or frontier read; a flash friend takes a flash read.
-func friendAtOrAbove(f FriendSeat, tier string) bool {
+// takes a flash, pro, heavy or frontier read; a flash friend takes a flash read. A tier the
+// friends' tiers leave out (FriendsTake, set --friends-tiers) no friend reads.
+func friendAtOrAbove(s *Snapshot, f FriendSeat, tier string) bool {
 	want := slices.Index(capLadder, tier)
-	if want < 0 {
+	if want < 0 || !s.FriendsTake(tier) {
 		return false
 	}
 	for _, t := range friendTiers(f) {
@@ -189,15 +190,16 @@ func readHeadMatches(s *Snapshot, pr, rc *Card) bool {
 	return work != "" && h == work
 }
 
-// friendReadAgrees says a friend's read card is hers: the reader its id names
-// and its reader field are her, and its row is her fleet row. A retired read
-// has been taken off that row (its row is empty) and the id still names her.
+// friendReadAgrees says a read card on the fleet table is its reader's: the reader
+// its id names and its reader field are one, and its row is that reader's fleet row,
+// a friend's (friend.<name>) or a member's (read cards, read_cards.go). A retired read
+// has been taken off that row (its row is empty) and the id still names the reader.
 func friendReadAgrees(c *Card) bool {
 	_, _, idReader, ok := ParseReadCard(c.ID)
 	if !ok || c.F("reader") != idReader {
 		return false
 	}
-	if c.Row == "" {
+	if c.Row == "" || c.Row == idReader {
 		return true
 	}
 	name, rowOK := FriendOfRow(c.Row)
@@ -212,21 +214,31 @@ func friendReadAgrees(c *Card) bool {
 // as it is. A read taken back with no verdict, retired or withdrawn on her row,
 // does not stand: the attempt is asked of another reader, and the withdrawn
 // record stays as history. The ok and broken copies are not placed on a table.
+//
+// A read card a member is dealt (read_cards.go) is on the fleet table as hers is,
+// on the member's row, and stands the same way (fleetReadLive is this, by its
+// other name).
 func friendReadLive(s *Snapshot, pr *Card) (placed, okCards, broken []*Card) {
 	if s == nil || s.Fleet == nil || pr == nil {
 		return nil, nil, nil
 	}
+	return fleetReadLiveOf(s, pr, s.Fleet.Cards())
+}
+
+// fleetReadLiveOf is friendReadLive over the fleet cards given (every card of the table,
+// or those of the primary a caller indexed once: fleetReadIndex).
+func fleetReadLiveOf(s *Snapshot, pr *Card, cards []*Card) (placed, okCards, broken []*Card) {
 	attempt := pr.Int("attempt")
 	if attempt == 0 {
 		attempt = 1
 	}
 	prefix := pr.ID + ".r" + itoa(attempt) + "."
-	for _, c := range s.Fleet.Cards() {
+	for _, c := range cards {
 		if c == nil || c.F("kind") != "read" || !strings.HasPrefix(c.ID, prefix) || c.Col == Withdrawn {
 			continue
 		}
 		if c.Placed() {
-			if _, isFriend := FriendOfRow(c.Row); !isFriend {
+			if !friendReadAgrees(c) {
 				continue
 			}
 			placed = append(placed, c)
@@ -250,6 +262,21 @@ func friendReadLive(s *Snapshot, pr *Card) (placed, okCards, broken []*Card) {
 		}
 	}
 	return placed, okCards, broken
+}
+
+// fleetReadIndex is the fleet table's read cards, placed or kept, by their primary field,
+// in id order: read once for a step that asks of many primaries.
+func fleetReadIndex(s *Snapshot) map[string][]*Card {
+	out := map[string][]*Card{}
+	if s == nil || s.Fleet == nil {
+		return out
+	}
+	for _, c := range s.Fleet.Cards() {
+		if c != nil && c.F("kind") == "read" {
+			out[c.F("primary")] = append(out[c.F("primary")], c)
+		}
+	}
+	return out
 }
 
 // machineReaderHasRoom says a paid reader of the primary's collapsed read tier
@@ -478,7 +505,7 @@ func FriendReadClose(s *Snapshot, name, primary, report string) Plan {
 }
 
 // friendReadCloseUnit is the one close of a friend's read card on her fleet row,
-// whether her outbox report (FriendReadClose) or the read verb (friendReadVerb)
+// whether her outbox report (FriendReadClose) or the read verb (readCardVerb)
 // carried the verdict: the card retired with its verdict, a broken verdict's
 // judgment, and the primary's review judgment after it. usage is what the read spent, as
 // the read verb's --usage carried it ("" from her outbox report): kept on the card, timed
@@ -521,23 +548,21 @@ func friendReadCloseUnit(s *Snapshot, name string, pr, rc *Card, verdict, findin
 
 // FriendReadOutboxLine is how a read on a friend's row is returned: her
 // outbox report, which friend sync reads (FriendReadClose), or the read verb
-// her packet prints, which writes the same close (friendReadVerb).
+// her packet prints, which writes the same close (readCardVerb).
 func FriendReadOutboxLine(row, id string, epoch uint64) string {
 	return fmt.Sprintf("write outbox/%s/REPORT.md in your working directory with 'Verdict: LAND', or 'Verdict: HOLD' and a line naming the file:line or rule and what to change (friend sync reads it); or run: nova-sprint read --as %s (--ok | --broken) %s --epoch %d --finding '<file:line, and what to change>'", id, row, id, epoch)
 }
 
-// friendReadVerb is the read verb on a friend's row (docs/SPEC-SPRINT.md
-// section 5): her read cards are on her fleet row, not the readers table, and
-// a verdict there is the close her outbox report makes (friendReadCloseUnit).
-// A read named at any generation, 0 included (the reads asked before the ask
-// wrote one), is hers to report. A read on her row has no begin and is handed
-// back by friend take, not by --return.
-func friendReadVerb(s *Snapshot, r ReadReq, name string) Plan {
+// readCardVerb is the read verb on a fleet row, a friend's or a member's (read_cards.go):
+// a verdict closes its read card as her outbox report does (friendReadCloseUnit); a return
+// (--return, with the reason) hands it back with no verdict, retired by returned, which
+// spends the reader's read of the attempt, and the read-card deal deals it to another
+// reader. A read card has no begin: the take moves it to working.
+func readCardVerb(s *Snapshot, r ReadReq, row, name string) Plan {
 	var p Plan
-	row := FriendRow(name)
-	if r.Begin || r.Return {
-		p.refuse("read", "a read on a friend's row has no begin and no return: report it with "+
-			"read --as "+row+" (--ok | --broken) <read> --finding <text>, or write outbox/<read>/REPORT.md")
+	if r.Begin {
+		p.refuse("read", "a read card has no begin: the take moves it to working; report it with "+
+			"read --as "+row+" (--ok | --broken) <read> --finding <text>, hand it back with read --as "+row+" --return <read> --reason <text>, or write outbox/<read>/REPORT.md")
 		return p
 	}
 	if s.Fleet == nil {
@@ -567,12 +592,25 @@ func friendReadVerb(s *Snapshot, r ReadReq, name string) Plan {
 			return "not " + r.As + "'s to read (it is " + placeWord(c) + ")"
 		case s.Work.Card(c.F("primary")) == nil:
 			return "its primary " + c.F("primary") + " is not on the table"
+		case readAttempt(s.Work.Card(c.F("primary"))) != readAttempt(c):
+			return "a read of attempt " + itoa(readAttempt(c)) + " of " + c.F("primary") + ", which is at attempt " + itoa(readAttempt(s.Work.Card(c.F("primary")))) + ": a verdict closes a read of the attempt under review only"
 		}
 		return ""
 	}, s.Fleet.Card)
 	namePrimarysReads(&p, all)
 	for _, c := range chosen {
 		pr := s.Work.Card(c.F("primary"))
+		if r.Return {
+			set := map[string]string{"retired": stamp(s.Now), "retired_by": RetiredByReturned, "reason": cutText(r.Reason, MaxCardTextBytes)}
+			if r.Usage != "" {
+				set["usage"] = r.Usage
+			}
+			n := happened(NReadReturned, pr.Row, s.Now, pr.ID)
+			n.Who, n.Attempt, n.What = name, c.Int("attempt"), name+" returned "+c.ID+": "+r.Reason
+			p.Units = append(p.Units, Unit{Key: pr.ID, Stream: pr.Row, Changes: []Change{change(Fleet, removeEntry(c, set))},
+				Moved: c.ID + " " + c.Col + " -> returned (retired: " + name + " gave no verdict)", Notes: []Note{n}})
+			continue
+		}
 		u := friendReadCloseUnit(s, name, pr, c, r.Verdict, r.Finding, r.Usage)
 		u.Moved = c.ID + " " + c.Col + " -> " + r.Verdict + " (retired: read by " + name + ")"
 		p.Units = append(p.Units, u)
@@ -622,6 +660,9 @@ func friendAskPart(machine TickPartFn) TickPartFn {
 		seats := r.Friends
 		if seats == nil {
 			seats = withoutDirs(s.Friends)
+		}
+		if s.ReadCardsOn() {
+			return readCardsAskPart(s, r, seats)
 		}
 		fp, waits, err := friendReadAsk(s, seats, "")
 		var hide []string
@@ -675,12 +716,7 @@ func withoutDirs(seats []FriendSeat) []FriendSeat {
 // no paid reader has room, are friends (friendReadAsk). The mark is a
 // work-table field the pump applies, as the ask's asked field is.
 func waitingForReader(p *Plan, s *Snapshot, friends []*Card) {
-	asked := map[string]int{} // the unit of each primary the plan asks
-	for i, u := range p.Units {
-		if s.Work.Placed(u.Key) != nil {
-			asked[u.Key] = i
-		}
-	}
+	asked := askedUnits(p, s)
 	judged := map[string]bool{} // the primaries the plan judges
 	for _, n := range p.Notes {
 		if n.Kind == Judgment {
@@ -703,6 +739,23 @@ func waitingForReader(p *Plan, s *Snapshot, friends []*Card) {
 		}
 		waits[c.ID] = "no reader of its tier up has room this tick"
 	}
+	markWaiting(p, s, asked, waits)
+}
+
+// askedUnits is the unit of each primary the plan asks, by primary.
+func askedUnits(p *Plan, s *Snapshot) map[string]int {
+	asked := map[string]int{}
+	for i, u := range p.Units {
+		if s.Work.Placed(u.Key) != nil {
+			asked[u.Key] = i
+		}
+	}
+	return asked
+}
+
+// markWaiting writes the waiting mark and its note on each primary in review that waits
+// (waits: why), once an attempt, and clears the mark on each primary the plan asks (asked).
+func markWaiting(p *Plan, s *Snapshot, asked map[string]int, waits map[string]string) {
 	var marks []Unit
 	for _, c := range s.Work.Column(Review) {
 		attempt := c.Int("attempt")
@@ -788,7 +841,8 @@ func hidePrimaries(s *Snapshot, ids []string) func() {
 	}
 }
 
-// openFriendReads is the read cards on friends' fleet rows still open on the primary (ready
+// openFriendReads is the read cards on the fleet table, a friend's or a member's (read
+// cards, read_cards.go), still open on the primary (ready
 // or working): a rework or a brief edited in place retires them with the readers table's, so
 // none keeps her room or is closed against the attempt that was replaced.
 func openFriendReads(s *Snapshot, primary string) []*Card {
@@ -798,7 +852,7 @@ func openFriendReads(s *Snapshot, primary string) []*Card {
 	var out []*Card
 	for _, col := range []string{Ready, Working} {
 		for _, c := range s.Fleet.Column(col) {
-			if _, friend := FriendOfRow(c.Row); friend && c.F("kind") == "read" && c.F("primary") == primary && c.Placed() {
+			if c.F("kind") == "read" && c.F("primary") == primary && c.Placed() {
 				out = append(out, c)
 			}
 		}

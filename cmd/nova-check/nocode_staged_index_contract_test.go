@@ -13,13 +13,14 @@ package main
 // classifiable is staged, 1 with `NOCODE FAILED <path>: <reason>` per path on
 // stderr, 2 for every refusal.
 //
-// Every case drives the command line end to end through run(), over real
-// temporary git repositories, so the file is red on a tree without the verb
-// and stays red if the wiring moves off the verb the spec names. The one
-// exception is the two records real git cannot emit through this command --
-// an unrecognised status letter and an unclassifiable destination mode --
-// where a fake git stands in front of the real one and crafts the record,
-// because the refusal branches exist precisely for a git that one day will.
+// Every case except the two below drives the command line end to end through
+// run(), over real temporary git repositories, so the file is red on a tree
+// without the verb and stays red if the wiring moves off the verb the spec
+// names. The two exceptions are the records real git cannot emit through this
+// command -- an unrecognised status letter and an unclassifiable destination
+// mode -- where the test drives runWith directly with a fake git injected
+// as the verb's own git program, because the refusal branches exist precisely
+// for a git that one day will.
 
 import (
 	"bytes"
@@ -180,11 +181,11 @@ func noCodeStagedClassifiesTheIndex(t *testing.T) {
 	exit, stdout, stderr := runCheck(t, "nocode", "--staged", "--dir", dir)
 	require.EqualValues(t, 1, exit, "exit = %d, want 1 (the staged blob is the shebang); stdout:\n%s\nstderr:\n%s", exit, stdout, stderr)
 	{
-		want := "NOCODE FAILED runner: executable script (shebang)"
+		want := `NOCODE FINDING subject=runner reason="executable script (shebang)"`
 		assert.Contains(t, stderr, want, "stderr = %q,\nwant the staged shebang named: %q", stderr, want)
 	}
 	{
-		got, want := stLine(t, stderr, "NOCODE FAILED staged="), "NOCODE FAILED staged=1 findings=1 shown=1 deny-list=floor-list"
+		got, want := stLine(t, stderr, "NOCODE FAILED dir="), "NOCODE FAILED dir="+dir+" staged=1 deny-list=floor-list findings=1"
 		assert.EqualValues(t, want, got, "FAILED summary = %q, want %q", got, want)
 	}
 	assert.NotContains(t, stdout, "NOCODE OK", "a failing run printed an OK line: %q", stdout)
@@ -206,7 +207,7 @@ func TestNoCodeStagedRequiresDir(t *testing.T) {
 func noCodeStagedRequiresDir(t *testing.T) {
 	exit, stdout, stderr := runCheck(t, "nocode", "--staged")
 	require.EqualValues(t, 2, exit, "exit = %d, want 2 (a missing --dir is a refusal, never a guess); stderr:\n%s", exit, stderr)
-	assert.Contains(t, stderr, "--dir is required; refusing to guess", "stderr = %q,\nwant the required-flag refusal", stderr)
+	assert.Contains(t, stderr, "--dir is required; it wants "+dirHint+"; refusing to guess", "stderr = %q,\nwant the required-flag refusal", stderr)
 	assert.EqualValues(t, "", stdout, "a refusal printed to stdout: %q", stdout)
 }
 
@@ -225,7 +226,7 @@ func noCodeStagedNothingToSay(t *testing.T) {
 		exit, stdout, stderr := runCheck(t, "nocode", "--staged", "--dir", dir)
 		require.EqualValues(t, 0, exit, "%s: exit = %d, want 0; stderr:\n%s", why, exit, stderr)
 		{
-			got, want := stLine(t, stdout, "NOCODE OK"), "NOCODE OK staged=0 clean deny-list=floor-list"
+			got, want := stLine(t, stdout, "NOCODE OK"), "NOCODE OK dir="+dir+" staged=0 deny-list=floor-list findings=0"
 			assert.EqualValues(t, want, got, "%s: OK line = %q, want %q", why, got, want)
 		}
 	}
@@ -270,14 +271,14 @@ func noCodeStagedSaysNo(t *testing.T) {
 	exit, stdout, stderr := runCheck(t, "nocode", "--staged", "--dir", dir)
 	require.EqualValues(t, 1, exit, "exit = %d, want 1; stdout:\n%s\nstderr:\n%s", exit, stdout, stderr)
 	for _, want := range []string{
-		"NOCODE FAILED run.sh: code extension .sh (floor-list)",
-		"NOCODE FAILED runner: executable script (shebang)",
-		"NOCODE FAILED notes.txt: executable (index mode 100755)",
+		`NOCODE FINDING subject=run.sh reason="code extension .sh (floor-list)"`,
+		`NOCODE FINDING subject=runner reason="executable script (shebang)"`,
+		`NOCODE FINDING subject=notes.txt reason="executable (index mode 100755)"`,
 	} {
 		assert.Contains(t, stderr, want, "stderr = %q,\nwant the per-path line: %q", stderr, want)
 	}
 	{
-		got, want := stLine(t, stderr, "NOCODE FAILED staged="), "NOCODE FAILED staged=3 findings=3 shown=3 deny-list=floor-list"
+		got, want := stLine(t, stderr, "NOCODE FAILED dir="), "NOCODE FAILED dir="+dir+" staged=3 deny-list=floor-list findings=3"
 		assert.EqualValues(t, want, got, "FAILED summary = %q, want %q", got, want)
 	}
 	assert.EqualValues(t, "", stdout, "a failing run printed to stdout: %q", stdout)
@@ -290,14 +291,13 @@ func noCodeStagedSaysNo(t *testing.T) {
 	cexit, cstdout, cstderr := runCheck(t, "nocode", "--staged", "--dir", clean)
 	require.EqualValues(t, 0, cexit, "a clean index exited %d, want 0; stderr:\n%s", cexit, cstderr)
 	{
-		got, want := stLine(t, cstdout, "NOCODE OK"), "NOCODE OK staged=1 clean deny-list=floor-list"
+		got, want := stLine(t, cstdout, "NOCODE OK"), "NOCODE OK dir="+clean+" staged=1 deny-list=floor-list findings=0"
 		assert.EqualValues(t, want, got, "OK line = %q, want %q", got, want)
 	}
 }
 
 func TestNoCodeStagedRefusals(t *testing.T) {
 	t.Parallel()
-
 	noCodeStagedRefusals(t)
 }
 
@@ -371,11 +371,10 @@ func noCodeStagedRefusals(t *testing.T) {
 	// Real git emits neither through this command -- the branches exist for a
 	// git that one day will, and a switch with no default must refuse rather
 	// than skip -- so a fake git stands in front of the real one and crafts
-	// the one record, reached through the invocation's own program lookup.
-	// Everything else the tool asks git reaches the real binary behind it,
-	// over a real repository with a real staged record, so a fake that failed
-	// to take would classify prose and the case would go green over the
-	// refusal it came to pin.
+	// the one record. Everything else the tool asks git reaches the real
+	// binary behind it, over a real repository with a real staged record, so
+	// a fake that failed to take would classify prose and the case would go
+	// green over the refusal it came to pin.
 	for _, tc := range []struct{ name, record, want string }{
 		{
 			"an unrecognised status letter",
@@ -401,9 +400,9 @@ func noCodeStagedRefusals(t *testing.T) {
 			// binary behind the fake. The subcommand is found by scanning
 			// argv, not by position: the tool's own git plumbing runs with
 			// -C and -c configuration overrides in front of the verb, so
-			// no fixed position is the verb.
-			bin := t.TempDir()
-			fakeBin(t, bin, "git", fmt.Sprintf(`sub=
+			// no fixed position is the verb. The fake is the verb's own git
+			// program, injected as a field, so no process PATH is touched.
+			fakeGit := fakeBin(t, t.TempDir(), "git", fmt.Sprintf(`sub=
 skip=0
 for a in "$@"; do
   if [ "$skip" -eq 1 ]; then skip=0; continue; fi
@@ -423,17 +422,9 @@ case "$sub" in
     ;;
 esac
 `, tc.record, real))
-			// The fake reaches the invocation through the lookup the invocation
-			// was handed, not through the process's PATH: every other test runs
-			// beside this one (docs/STANDARD.md section 8, no os.Setenv).
-			e := newEnv()
-			e.lookPath = func(name string) (string, error) {
-				if name == "git" {
-					return filepath.Join(bin, "git"), nil
-				}
-				return exec.LookPath(name)
-			}
-			exit, stdout, stderr := runCheckIn(t, e, "nocode", "--staged", "--dir", dir)
+			var out, errb bytes.Buffer
+			exit := runWith(seams{staged: stagedSeams{gitBin: fakeGit}}, []string{"nocode", "--staged", "--dir", dir}, &out, &errb)
+			stdout, stderr := out.String(), errb.String()
 			refused(t, tc.name, exit, stderr, tc.want)
 			assert.EqualValues(t, "", stdout, "%s printed to stdout: %q", tc.name, stdout)
 		})
@@ -461,7 +452,7 @@ func noCodeStagedRootAndBase(t *testing.T) {
 	exit, stdout, stderr := runCheck(t, "nocode", "--staged", "--dir", wt)
 	require.EqualValues(t, 0, exit, "a linked worktree was refused at the root test:\n%s", stderr)
 	{
-		got, want := stLine(t, stdout, "NOCODE OK"), "NOCODE OK staged=1 clean deny-list=floor-list"
+		got, want := stLine(t, stdout, "NOCODE OK"), "NOCODE OK dir="+wt+" staged=1 deny-list=floor-list findings=0"
 		assert.EqualValues(t, want, got, "worktree OK line = %q, want %q", got, want)
 	}
 
@@ -477,14 +468,14 @@ func noCodeStagedRootAndBase(t *testing.T) {
 	exit, stdout, stderr = runCheck(t, "nocode", "--staged", "--dir", filepath.Join(outer, "sub"))
 	require.EqualValues(t, 0, exit, "a submodule was refused at the root test:\n%s", stderr)
 	{
-		got, want := stLine(t, stdout, "NOCODE OK"), "NOCODE OK staged=0 clean deny-list=floor-list"
+		got, want := stLine(t, stdout, "NOCODE OK"), "NOCODE OK dir="+filepath.Join(outer, "sub")+" staged=0 deny-list=floor-list findings=0"
 		assert.EqualValues(t, want, got, "submodule OK line = %q, want %q", got, want)
 	}
 	// And the gitlink the add staged in the outer repository is machinery
 	// arriving by reference: classified from its mode alone, its OID never
 	// read -- the one matching rule this mode adds to the audit's.
 	oexit, _, ostderr := runCheck(t, "nocode", "--staged", "--dir", outer)
-	assert.True(t, oexit == 1 && strings.Contains(ostderr, "NOCODE FAILED sub: submodule gitlink (machinery arriving by reference)"), "the staged gitlink exited %d, want 1 with the gitlink finding:\n%s", oexit, ostderr)
+	assert.True(t, oexit == 1 && strings.Contains(ostderr, `NOCODE FINDING subject=sub reason="submodule gitlink (machinery arriving by reference)"`), "the staged gitlink exited %d, want 1 with the gitlink finding:\n%s", oexit, ostderr)
 
 	// An unborn HEAD is gated like every later commit: the base detector
 	// reaches for the empty tree, and the shebang staged for the FIRST commit
@@ -495,7 +486,7 @@ func noCodeStagedRootAndBase(t *testing.T) {
 	stGit(t, first, "add", "runner")
 	exit, _, stderr = runCheck(t, "nocode", "--staged", "--dir", first)
 	require.True(t, exit == 1, "the unborn repository exited %d, want 1 with the staged shebang named:\n%s", exit, stderr)
-	require.True(t, strings.Contains(stderr, "NOCODE FAILED runner: executable script (shebang)"), "the unborn repository exited %d, want 1 with the staged shebang named:\n%s", exit, stderr)
+	require.True(t, strings.Contains(stderr, `NOCODE FINDING subject=runner reason="executable script (shebang)"`), "the unborn repository exited %d, want 1 with the staged shebang named:\n%s", exit, stderr)
 
 	// The sha256 form: the empty tree is obtained inside the repository, never
 	// hard-coded. The sha1 constant 4b825dc6... names no object a sha256
@@ -510,7 +501,7 @@ func noCodeStagedRootAndBase(t *testing.T) {
 	exit, _, stderr = runCheck(t, "nocode", "--staged", "--dir", s256)
 	require.NotEqualValues(t, 2, exit, "the unborn sha256 repository was refused; the empty tree was not obtained from inside it (a hard-coded sha1 constant does not exist there):\n%s", stderr)
 	require.True(t, exit == 1, "the unborn sha256 repository exited %d, want 1 with the staged shebang named:\n%s", exit, stderr)
-	require.True(t, strings.Contains(stderr, "NOCODE FAILED runner: executable script (shebang)"), "the unborn sha256 repository exited %d, want 1 with the staged shebang named:\n%s", exit, stderr)
+	require.True(t, strings.Contains(stderr, `NOCODE FINDING subject=runner reason="executable script (shebang)"`), "the unborn sha256 repository exited %d, want 1 with the staged shebang named:\n%s", exit, stderr)
 	{
 		et := strings.TrimSpace(stGit(t, s256, "hash-object", "-t", "tree", os.DevNull))
 		require.NotEqualValues(t, "4b825dc642cb6eb9a060e54bf8d69288fbee4904", et, "this sha256 repository names the sha1 empty tree %q", et)
@@ -540,7 +531,7 @@ func TestFriendSequenceStagedAdvisoryCommit(t *testing.T) {
 	// and no OK line anywhere.
 	exit, stdout, stderr := runCheck(t, "nocode", "--staged", "--dir", dir)
 	require.EqualValues(t, 1, exit, "the advisory over the staged script exited %d, want 1; stdout:\n%s\nstderr:\n%s", exit, stdout, stderr)
-	require.Contains(t, stderr, "NOCODE FAILED runner: executable script (shebang)", "the advisory did not name the staged script:\n%s", stderr)
+	require.Contains(t, stderr, `NOCODE FINDING subject=runner reason="executable script (shebang)"`, "the advisory did not name the staged script:\n%s", stderr)
 	// The advisory leaves the index exactly as it found it: the script is
 	// still staged, which is the state the friend acts on next. An advisory
 	// that mutated the index would decide the commit, not the friend.
@@ -561,7 +552,7 @@ func TestFriendSequenceStagedAdvisoryCommit(t *testing.T) {
 	exit, stdout, stderr = runCheck(t, "nocode", "--staged", "--dir", dir)
 	require.EqualValues(t, 0, exit, "the advisory over the corrected index exited %d, want 0; stderr:\n%s", exit, stderr)
 	{
-		got, want := stLine(t, stdout, "NOCODE OK"), "NOCODE OK staged=1 clean deny-list=floor-list"
+		got, want := stLine(t, stdout, "NOCODE OK"), "NOCODE OK dir="+dir+" staged=1 deny-list=floor-list findings=0"
 		assert.EqualValues(t, want, got, "OK line = %q, want %q", got, want)
 	}
 

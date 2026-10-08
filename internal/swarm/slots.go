@@ -358,7 +358,7 @@ func TakeSlotLeasesWaiting(ctx context.Context, store, owner string, k int, kind
 // IT RETURNS THE IDS IT GRANTED, not a count, and that is deliberate: the
 // count was what let a holder release by owner and label instead of by
 // identity, and give away a seat that was never its own (nova-tools#1546,
-// Stella's hold on PR #1562). len(ids) is the count for anyone who only
+// a friend's hold on PR #1562). len(ids) is the count for anyone who only
 // wanted that; taking a lease without learning which one is now impossible.
 // Hand the ids back to ReleaseSlotLeasesByID.
 func takeSlotLeases(store, owner string, k, weight int, kind string, dur time.Duration, label string, now time.Time, pid int) (ids []string, held, share, free int, holders string, ok bool, err error) {
@@ -490,7 +490,7 @@ func ReleaseSlotLeases(store, owner, label string, all bool) (released, held int
 //
 // A LEASE IS NOT A TICKET SOMEBODY ELSE MAY TEAR UP (issue #1902). Deleting a lease
 // does not stop the process holding it: the holder keeps running, keeps spending, and
-// the seat it is sitting in is handed to the next taker. Johnny freed a live `native`'s
+// the seat it is sitting in is handed to the next taker. A friend freed a live `native`'s
 // only seat from outside and watched a second `native` take it -- two cards on a
 // capacity-1 bench, both printing NATIVE OK -- and a card given --no-wall did the same
 // to a bystander from inside its own shell. `--owner` is an unauthenticated string and
@@ -551,7 +551,7 @@ func ReleaseSlotLeasesForcing(store, owner, label string, all, force bool) (rele
 // the caller's. It exists because releasing by owner and label is not releasing by
 // identity: an owner is a bench and a label is a card's name, and two runs that share both
 // -- two slots, two benches, a retry -- would each give away the other's seat
-// (nova-tools#1546, Stella's hold on PR #1562). A holder that took leases learns their ids
+// (nova-tools#1546, a friend's hold on PR #1562). A holder that took leases learns their ids
 // from TakeSlotLeases and hands exactly those back here.
 //
 // The pid is a fence, not bookkeeping. An id whose lease has since been reaped and remade

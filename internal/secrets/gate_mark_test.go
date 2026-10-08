@@ -28,7 +28,7 @@ func TestGateTellsAVerbMadeSealFromAHandSeal(t *testing.T) {
 	mustWrite(t, filepath.Join(storeDir, ".sops.yaml"), gateSops(rule), 0644)
 	sopsPath := filepath.Join(t.TempDir(), "sops")
 	require.NoError(t, os.Symlink(sharedFakeSops, sopsPath))
-	sealed, err := sealEncrypt(realExecCommand, sopsPath, "", storeDir, "rowan.yaml", "seal",
+	sealed, _, err := sealEncrypt(realExecCommand, sopsPath, "", storeDir, "rowan.yaml", "seal",
 		[]byte("GH_TOKEN: ENC[AES256_GCM,data:xyz,iv:abc,tag:def,type:str]\n"))
 	require.NoError(t, err, "the seal path refused the fixture")
 	verbMade := string(sealed)
@@ -60,6 +60,6 @@ func TestGateTellsAVerbMadeSealFromAHandSeal(t *testing.T) {
 	assert.Equal(t, "GATE APPROVE files=2 machines=-", line)
 
 	line, code = gate(t, handMade)
-	assert.Equal(t, 2, code, "the hand-made file was approved: %s", line)
-	assert.Equal(t, "GATE REFUSE rule=1 check=2 file=rowan.yaml: the seat file was not written by a nova-secrets verb; seal it with nova-secrets seal or seat add, never by hand", line)
+	assert.Equal(t, 1, code, "the hand-made file was approved: %s", line)
+	assert.Equal(t, "GATE FAILED rule=1 check=2 file=rowan.yaml: the seat file was not written by a nova-secrets verb; seal it with nova-secrets seal or seat add, never by hand", line)
 }

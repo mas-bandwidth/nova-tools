@@ -146,6 +146,15 @@ type Heartbeat struct {
 	// Looked is when a tick last read the machine's state, RUNNING or
 	// STOPPED: a run loop is alive while it is recent, whatever the state.
 	Looked time.Time `json:"looked,omitempty"`
+	// Quiet is the judgments the last tick's lane check kept from rising
+	// (sprint.LaneChecked): a friend's lane live inside its cap, readers busy,
+	// a read tier question the rule answered. Its length is the count the
+	// coordinator reads beside the judgments that rose.
+	Quiet []sprint.LaneQuiet `json:"quiet,omitempty"`
+	// Suppressed is the count of the judgments the lane check kept from
+	// rising since the epoch began, by cause (sprint.Suppressed.Counted):
+	// what view coordinator prints as suppressed.
+	Suppressed sprint.Suppressed `json:"suppressed,omitzero"`
 }
 
 // Alive is the last clock reading a tick was seen at, ticking or looking.
@@ -476,6 +485,9 @@ type TickResult struct {
 	Stale    string         `json:"stale,omitempty"`
 	Halted   string         `json:"halted,omitempty"`
 	Due      int            `json:"due,omitempty"`
+	// Quiet is the judgments the tick's lane check kept from rising, each
+	// once (sprint.LaneChecked), kept on the heartbeat (Heartbeat.Quiet).
+	Quiet []sprint.LaneQuiet `json:"quiet,omitempty"`
 	// Tables is each of the four tables, in the store's order, with the rows
 	// the tick's parts changed in it: every tick reads and plans every table,
 	// each table updated at least once per tick, and a table with nothing to
@@ -606,23 +618,11 @@ func tickExtras(s *sprint.Snapshot) map[string][]string {
 			}
 		}
 	}
-	// and a friend's read of each primary in review at its attempt, on the fleet table
-	// (sprint.FriendReadAsk): retired with her verdict it still stands (friendReadLive),
-	// so her ok counts toward the read rule and the ask does not ask her the attempt again
-	var friendReads []string
-	if s.Fleet != nil {
-		for _, c := range s.Work.Column(sprint.Review) {
-			attempt := max(c.Int("attempt"), 1)
-			for _, row := range s.Fleet.Rows() {
-				if name, ok := sprint.FriendOfRow(row); ok {
-					if id := sprint.ReadCardID(c.ID, attempt, name); s.Fleet.Placed(id) == nil {
-						friendReads = append(friendReads, id)
-					}
-				}
-			}
-		}
-	}
-	return map[string][]string{sprint.Work: sprint.ResolveExtras(s), sprint.Readers: reads, sprint.Fleet: friendReads}
+	// and the read cards of each primary in review at its attempt, on the fleet table
+	// (sprint read_cards.go): retired with its verdict a read still stands (friendReadLive),
+	// so an ok counts toward the read rule and a reader that closed or returned one is not
+	// dealt the attempt again
+	return map[string][]string{sprint.Work: sprint.ResolveExtras(s), sprint.Readers: reads, sprint.Fleet: sprint.ReadCardExtras(s)}
 }
 
 // TickPartStep is one part of the tick as a step of the engine: fenced,
@@ -797,6 +797,19 @@ func (st *Store) Tick(ctx context.Context) (res TickResult, err error) {
 		}
 		res.Times = append(res.Times, mt.part("", "remind"))
 	}
+	if err == nil && res.Halted == "" && res.Done == "" {
+		// The timer duty is a part too: it begins only while RUNNING, and a
+		// timer counts running time (timers.go).
+		mt := st.meter()
+		if halted, herr := st.halted(ctx, &res, "timers"); herr != nil {
+			err = herr
+		} else if !halted {
+			if terr := st.timers(ctx, m, &res); terr != nil {
+				err = fmt.Errorf("timers: %w", terr)
+			}
+		}
+		res.Times = append(res.Times, mt.part("", "timers"))
+	}
 	if err == nil && res.Stale == "" && hb.Failures > 0 {
 		// the tick works again after failing: one note, with the count
 		if nerr := st.tellTick(ctx, "tick recovered", sprint.NTickRecovered, fmt.Sprintf("failed=%d; the last error: %s", hb.Failures, hb.Error), ""); nerr != nil {
@@ -829,7 +842,7 @@ func (st *Store) Tick(ctx context.Context) (res TickResult, err error) {
 	defer func(mt meter) { res.Times = append(res.Times, mt.part("", "heartbeat")) }(st.meter())
 	now := st.now()
 	if err == nil && res.Idle && res.Halted == "" && len(res.Parts) == 0 && hb.Error == "" && now.Sub(hb.At) < HeartbeatIdleEvery && !hb.At.Before(m.Since) &&
-		seen.Revisions == hb.Revisions && slices.Equal(seen.Fresh, hb.Fresh) {
+		seen.Revisions == hb.Revisions && slices.Equal(seen.Fresh, hb.Fresh) && slices.Equal(res.Quiet, hb.Quiet) {
 		return res, nil
 	}
 	failingSame := hb.Error != "" && !hb.At.Before(m.Since)
@@ -850,7 +863,8 @@ func (st *Store) Tick(ctx context.Context) (res TickResult, err error) {
 	} else {
 		hb.Error, hb.Failures = "", 0
 		hb.Revisions, hb.Landed, hb.All, hb.Full, hb.Fresh = seen.Revisions, seen.Landed, seen.All, seen.Full, seen.Fresh
-		hb.Due = res.Due
+		hb.Suppressed = hb.Suppressed.Counted(st.epoch, hb.Quiet, res.Quiet)
+		hb.Due, hb.Quiet = res.Due, res.Quiet
 	}
 	if werr := st.putJSON(ctx, keyHeartbeat, hb); werr != nil && err == nil {
 		err = werr
@@ -1171,9 +1185,10 @@ func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickR
 // routesPart says a tick part plans with the routes: the deal and the ask draw
 // from them, and the check asks what the next deal does.
 func routesPart(name string) bool {
+	// the rebalance draws a route for a card it moves off a friend onto a machine
 	// the readers' level too: a fleet reader whose row names no tier reads flash only while
 	// the store holds routes (sprint fleetReadsFlashOnly), so the level plans with them
-	return name == "deal" || name == "ask" || name == "check" || name == sprint.PartLevelReads || sprint.IsRulePart(name)
+	return name == "deal" || name == sprint.PartRebalance || name == "ask" || name == "check" || name == sprint.PartLevelReads || sprint.IsRulePart(name)
 }
 
 // MaxSettle bounds the updates a tick makes past its first pass while the
@@ -1276,7 +1291,9 @@ func (t *tickRun) parts(table string, parts []sprint.TickPartDef) tickOutcome {
 				// a plan made to see whether the part has work wakes no one
 				probe := t.req
 				probe.WakeFriend = nil
-				if p, due := part.Fn(view, probe); p.Empty() && due == 0 {
+				p, due := part.Fn(view, probe)
+				p = t.laneChecked(view, probe, part.Name, p)
+				if p.Empty() && due == 0 {
 					// a part that brings the display cells up to date after
 					// it leaves them to the tick's end (tickRun.display)
 					t.unshown = t.unshown || t.ran && mirrors(part.Name)
@@ -1310,6 +1327,8 @@ func (t *tickRun) parts(table string, parts []sprint.TickPartDef) tickOutcome {
 				}
 			}
 			p, d := part.Fn(s, r)
+			// a judgment checks the lane before it rises (sprint.LaneChecked)
+			p = t.laneChecked(s, r, part.Name, p)
 			planned = p
 			stop = p.Stop
 			if part.Name == sprint.PartDone {
@@ -1439,6 +1458,18 @@ func (t *tickRun) parts(table string, parts []sprint.TickPartDef) tickOutcome {
 		}
 	}
 	return tickOn
+}
+
+// laneChecked is the part's plan with what the lane check keeps from rising
+// taken out (sprint.LaneChecked), each quiet put on the tick's result once.
+func (t *tickRun) laneChecked(s *sprint.Snapshot, r sprint.TickReq, part string, p sprint.Plan) sprint.Plan {
+	p, quiet := sprint.LaneChecked(s, r, part, p)
+	for _, q := range quiet {
+		if !slices.ContainsFunc(t.res.Quiet, func(x sprint.LaneQuiet) bool { return x.Type == q.Type && x.Subject == q.Subject }) {
+			t.res.Quiet = append(t.res.Quiet, q)
+		}
+	}
+	return p
 }
 
 // stallWake is one wake of the friend stall ladder a part's plan made (rung 1 or 2).
@@ -1939,6 +1970,9 @@ type ShadowPlan struct {
 	Parts []ShadowPart  `json:"parts"`
 	Size  int           `json:"size"`
 	Took  time.Duration `json:"took_ns"`
+	// Reads is why each read waits, read cards on (sprint.ReadCardsWhy), planned with the
+	// readers' ask
+	Reads []string `json:"reads,omitempty"`
 }
 
 // planSize is how much a plan would write: its units, notes, rows, closes and
@@ -2026,6 +2060,9 @@ func (st *Store) ShadowTick(ctx context.Context) (ShadowPlan, error) {
 					view = &v
 				}
 				p, due = part.Fn(view, req)
+				if table == sprint.Readers && part.Name == "ask" {
+					out.Reads = sprint.ReadCardsWhy(view, req.Friends)
+				}
 			}
 			if p.Empty() && due == 0 {
 				continue

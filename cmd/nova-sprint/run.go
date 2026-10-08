@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"runtime/pprof"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -290,14 +291,17 @@ func (a *app) printTick(res store.TickResult, err error, max int, stdout, stderr
 }
 
 func (a *app) cmdRun(args []string, stdout, stderr io.Writer) int {
-	var profile, listen, decideDir string
+	var profile, listen, decideDir, keyNames string
 	var profileTicks int
 	var land bool
+	landParallel := landParallelDefault
 	var rules, idle bool
 	st, c, code := a.machineVerb("run", args, stderr, answerRulesFlag(&rules, true), idleAlarmFlag(&idle, true), func(fs flagSet) {
 		fs.StringVar(&listen, "listen", "", "also be the sprint's server: the workers' verbs on this `address:port` (this machine's address on the fleet's private network; a name, a public address, a link-local address, and an every-network address are refused), where nova-swarm member --server <address>:<port> sends them, and the coordinator's verbs on 127.0.0.1 at the same port, where NOVA_SPRINT_SERVER=127.0.0.1:<port> sends them")
-		fs.StringVar(&decideDir, "decide", "", "also keep the record of the sprint's attempt and grade decisions in this `dir` (nova-decide's layer 2: attempt.jsonl, grade.jsonl): the finishes' attempt decisions recorded, every card graded before its first deal with JEV_API_KEY from this environment, and each decision's outcome attached when its card lands or is dropped, every "+DecideEvery.String())
-		fs.BoolVar(&land, "land", false, "also land what the readers passed, every "+LandEvery.String()+", one landing at a time, as the coordinator (land's defaults: each card's REPO: and BASE: lines); land is then not run by hand")
+		fs.StringVar(&keyNames, "keys", "", "the `NAME,...` of secrets this process reads from the seat login's nova-secrets seat (also recorded as keys.json beside the login): the decision key and each provider key. A name that cannot be read refuses at start. The unit's environment carries no key value")
+		fs.StringVar(&decideDir, "decide", "", "also keep the record of the sprint's attempt and grade decisions in this `dir` (nova-decide's layer 2: attempt.jsonl, grade.jsonl): the finishes' attempt decisions recorded, every card graded before its first deal with JEV_API_KEY from this environment or read in this process when --keys or keys.json names it, and each decision's outcome attached when its card lands or is dropped, every "+DecideEvery.String())
+		fs.BoolVar(&land, "land", false, "also land what the readers passed, every "+LandEvery.String()+", one landing at a time, as the coordinator (land's defaults: each card's REPO: and BASE: lines); every cycle prints one line, and a landing still running after "+LandDeadline.String()+" raises one judgment naming the stage; land is then not run by hand")
+		fs.IntVar(&landParallel, "land-parallel", landParallelDefault, "with --land, how many streams each landing merges at once before it lands them one at a time (land --land-parallel)")
 		fs.StringVar(&profile, "cpuprofile", "", "write a CPU profile of the loop's first ticks to this file (see --profile-ticks)")
 		fs.IntVar(&profileTicks, "profile-ticks", 10, "the ticks --cpuprofile covers; the profile is written after the last of them")
 		fs.DurationVar(&a.tickDeadline, "tick-deadline", TickDeadline, "the least time a tick may take before it is given up (stretched to 3 x the median wall of the last 20 ticks, at most "+TickDeadlineCap.String()+"): past it the stacks are printed, the tick's plan is given up and the loop goes on; three wedged ticks in a row (given up and not stopped within a further deadline) exit 4 so the supervisor starts the loop again (0: wait for ever)")
@@ -309,6 +313,11 @@ func (a *app) cmdRun(args []string, stdout, stderr io.Writer) int {
 	st.WakeFriend = a.stallWaker(st, stderr)
 	if a.twinOpen(c.redis) {
 		return refuse(stderr, "run", twinMachine)
+	}
+	// named secrets are read here, before a port is bound, so a name that cannot
+	// be read refuses without listening (keys.go)
+	if err := a.holdNamedUnitKeys(keyNames); err != nil {
+		return refuse(stderr, "run", err.Error())
 	}
 	if profile != "" {
 		stop, err := startProfile(profile)
@@ -346,6 +355,12 @@ func (a *app) cmdRun(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	if land {
+		if landParallel != landParallelDefault {
+			b := a.landState()
+			b.mu.Lock()
+			b.landMore = append(b.landMore, "--land-parallel", strconv.Itoa(landParallel))
+			b.mu.Unlock()
+		}
 		go a.landLoop(context.Background(), c.redis, stdout)
 	}
 	// the providers' balances, read outside every tick (balance.go)
@@ -780,7 +795,8 @@ When nothing is left open (every card landed or dropped) the tick says "the
 sprint is done" to the coordinator and stops the machine itself: DONE, in
 where and the view; work added after leaves it STOPPED until nova-sprint
 start. run reads each provider's balance every 10 minutes through the seat's
-key (OPENROUTER_API_KEY; a BALANCE line): a provider out of credit by a
+key (OPENROUTER_API_KEY, read in this process when --keys or keys.json names
+it; a BALANCE line): a provider out of credit by a
 refused take is rested until a payment is seen (a balance read higher than
 the read before it, or than at the refusal) or nova-sprint funded <provider>
 says it was paid; one out of credit by a balance at zero until a balance

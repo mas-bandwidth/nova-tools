@@ -50,12 +50,31 @@ func checkImport(c *tool.Call) {
 // non-destructive, every issue of every repository in scope, checked
 // through the file before it is written. tla/WorkImport.tla's Fetch and
 // WriteTree actions. A dry run reads all the same and writes nothing.
+// --fixture reads recorded GraphQL pages (call-NN.json) through
+// workgh.Replay instead of gh (SPEC-WORK-V1 section 1.6).
 func (g github) importTree(c *tool.Call) *tool.Out {
 	org, out, dry := c.Str("org"), c.Str("out"), c.DryRun()
-	q, ghPath, refused := g.open(c, "import")
-	if refused != nil {
-		return refused
+	fixture := c.Str("fixture")
+	var (
+		q      workgh.Query
+		ghPath string
+	)
+	if fixture != "" {
+		var err error
+		q, err = workgh.Replay(fixture)
+		if err != nil {
+			o := tool.Refuse(err.Error())
+			o.Remedy = "nova-work import -h"
+			return o.Fact("org", org).Fact("fixture", fixture)
+		}
+	} else {
+		var refused *tool.Out
+		q, ghPath, refused = g.open(c, "import")
+		if refused != nil {
+			return refused
+		}
 	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), c.Dur("timeout"))
 	defer cancel()
 	start := g.now()
@@ -67,7 +86,11 @@ func (g github) importTree(c *tool.Call) *tool.Out {
 		o.Facts = append(tool.Fields{{K: "org", V: org}}, o.Facts...)
 		o.Fact("calls", f.Calls).Fact("points", f.Points)
 		o.Facts = append(o.Facts, more...)
-		o.Fact("gh", ghPath)
+		if fixture != "" {
+			o.Fact("fixture", fixture)
+		} else {
+			o.Fact("gh", ghPath)
+		}
 		for _, l := range strings.Split(strings.TrimSpace(retries.String()), "\n") {
 			if l != "" {
 				o.Note(l)
@@ -78,6 +101,9 @@ func (g github) importTree(c *tool.Call) *tool.Out {
 	refuse := func(err error) *tool.Out {
 		o := tool.Refuse(err.Error())
 		o.Remedy = ghRemedy(ghPath)
+		if fixture != "" {
+			o.Remedy = "nova-work import -h"
+		}
 		if errors.Is(err, workgh.ErrBudget) {
 			o.Remedy = importAgain(c, 2*c.Int("max-calls"))
 		}
@@ -150,8 +176,12 @@ func (g github) importTree(c *tool.Call) *tool.Out {
 	}
 	if dry {
 		// A dry run is not offline: it reads what the import reads. The run
-		// says so, not only the help.
-		o.Note(fmt.Sprintf("the dry run read GitHub as the import does (calls=%d, read-only) and wrote nothing", f.Calls))
+		// says so, not only the help. A --fixture run read the recording.
+		if fixture != "" {
+			o.Note(fmt.Sprintf("the dry run read the recorded pages in the fixture (calls=%d) and wrote nothing", f.Calls))
+		} else {
+			o.Note(fmt.Sprintf("the dry run read GitHub as the import does (calls=%d, read-only) and wrote nothing", f.Calls))
+		}
 	}
 	return o
 }
@@ -159,7 +189,7 @@ func (g github) importTree(c *tool.Call) *tool.Out {
 // importAgain is the import as it was asked, with --max-calls set to n: the
 // remedy of a run the budget stopped.
 func importAgain(c *tool.Call, n int) string {
-	return again(c, "import", []string{"org", "repo", "out", "replace", "dry-run", "page-size", "gh", "timeout", "max-calls"},
+	return again(c, "import", []string{"org", "repo", "out", "replace", "dry-run", "fixture", "page-size", "gh", "timeout", "max-calls"},
 		map[string]string{"max-calls": fmt.Sprint(n)})
 }
 

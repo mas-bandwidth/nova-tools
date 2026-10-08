@@ -18,6 +18,7 @@ import (
 	"maps"
 	"net"
 	"net/url"
+	"path"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -246,9 +247,10 @@ func FriendTokenCap(r Row) int64 {
 
 // checkFriend is the friend kind's Check: her width is at least 1, a friend
 // working no job at once being no friend of the sprint's (remove the row
-// instead), her config_dir, when set, is an absolute path, and she names her
-// models, each once, or, until they are set, her tiers, never both (her tiers
-// derive from her models: FriendClass). A field that failed its own
+// instead), her config_dir, when set, is an absolute path, each stream
+// restriction is a glob the matcher reads, and she names her models, each
+// once, or, until they are set, her tiers, never both (her tiers derive from
+// her models: FriendClass). A field that failed its own
 // validation is absent and skipped.
 func checkFriend(r Row) error {
 	models, hasM := r.Fields["models"]
@@ -271,6 +273,15 @@ func checkFriend(r Row) error {
 	}
 	if d := r.Fields["config_dir"]; d != "" && !filepath.IsAbs(d) {
 		return fmt.Errorf("friend %s has config_dir %q; CLAUDE_CONFIG_DIR is read as given, never expanded: want --config_dir <an absolute path>", r.Name, d)
+	}
+	for _, pattern := range strings.Split(r.Fields["streams"], ",") {
+		pattern = strings.TrimSpace(pattern)
+		if pattern == "" {
+			continue
+		}
+		if _, err := path.Match(pattern, ""); err != nil {
+			return fmt.Errorf("friend %s has invalid stream glob %q: %v", r.Name, pattern, err)
+		}
 	}
 	return nil
 }
@@ -522,7 +533,7 @@ var Kinds = []*Kind{
 		// rather than stored in configuration.
 		Name:  KindFriend,
 		Table: "friends",
-		Doc:   "an AI friend: her slots, her models strongest first (her class and the tiers she is dealt derive from them), her roles, and her width, the jobs she works at once, her delivery mode, the config directory her claude lanes run with, and the per-card token cap her one-shot lanes hold a card at",
+		Doc:   "an AI friend: her slots, her models strongest first (her class and the tiers she is dealt derive from them), her roles, and her width, the jobs she works at once, her delivery mode, the config directory her claude lanes run with, the per-card token cap her one-shot lanes hold a card at, and the optional streams and kinds restrictions on the work she may be dealt",
 		Fields: []Field{
 			{Name: "slots", Type: TypeInt, Required: true, Help: "her desired slots, under the ceiling of the machine her beat reports; no machine's width"},
 			{Name: "tiers", Type: TypeList, Enum: Tiers, Help: "the fallback of a row with no --models: which tiers she can do, comma list of " + strings.Join(Tiers, ", ") + ", the highest her class; empty (the default) once her models are set, from which her tiers derive"},
@@ -531,6 +542,8 @@ var Kinds = []*Kind{
 			{Name: "mode", Type: TypeEnum, Enum: FriendModes, Default: DefaultFriendMode, Help: "how her daemon hands her work: batch (the default: every waiting message in one turn) or one-shot (width lanes, each its own session, handed one card per turn)"},
 			{Name: "config_dir", Type: TypeText, Nullable: true, Help: "the absolute directory a claude one-shot lane runs with as CLAUDE_CONFIG_DIR, her account's login and settings; unset (the default, or --config_dir '') for any other harness; nova-friend run refuses a claude friend in one-shot mode without it"},
 			{Name: "token_cap", Type: TypeInt, Default: strconv.FormatInt(DefaultFriendTokenCap, 10), Help: "tokens one card may spend (input, cached input, output and reasoning summed) before a one-shot lane stops its own run and holds the card; " + strconv.FormatInt(DefaultFriendTokenCap, 10) + " by default, and 0 is no cap"},
+			{Name: "streams", Type: TypeText, Help: "optional comma-separated glob patterns over stream names this friend may be dealt work on; empty means any stream"},
+			{Name: "kinds", Type: TypeNames, Help: "optional comma-separated card KIND values this friend may be dealt; empty means any kind"},
 			{Name: "models", Type: TypeSeq, Ref: KindModel, Help: "the models she can run, strongest to weakest, each a model row (nova-config model add): her class is the tier of the first, and the dealer may hand her a card of the tier of any; a set clears --tiers, the fallback of a row with none"},
 		},
 		Check: checkFriend,

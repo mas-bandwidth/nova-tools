@@ -441,7 +441,7 @@ func cardsWaitingFor(s *Snapshot, f FriendSeat, seats map[string]FriendSeat) []i
 			if pr == nil || IsSentinel(pr) || StreamHeld(s, pr.Row) || len(Bench(pr)) > 0 {
 				continue
 			}
-			if !friendCouldTake(f, pr, nil) {
+			if !friendCouldTake(s, f, pr, nil) {
 				continue
 			}
 			out = append(out, idleWait{phrase: pr.ID + " ready in the pool"})
@@ -469,7 +469,7 @@ func cardsWaitingFor(s *Snapshot, f FriendSeat, seats map[string]FriendSeat) []i
 				if pr == nil || IsSentinel(pr) || StreamHeld(s, pr.Row) {
 					continue
 				}
-				if friendStarted(s, seats[holder], wc) || !friendCouldTake(f, pr, wc) {
+				if friendStarted(s, seats[holder], wc) || !friendCouldTake(s, f, pr, wc) {
 					continue
 				}
 				out = append(out, idleWait{holder: holder, phrase: fmt.Sprintf("%s on %s:%s unstarted", wc.ID, row, col)})
@@ -482,8 +482,8 @@ func cardsWaitingFor(s *Snapshot, f FriendSeat, seats map[string]FriendSeat) []i
 
 // friendCouldTake says f may be given the primary: her tiers hold its tier, it
 // is not a hard pin to someone else, and the work card has not left her.
-func friendCouldTake(f FriendSeat, pr, wc *Card) bool {
-	if pr == nil || !friendTakes(f, cardTierOf(pr)) {
+func friendCouldTake(s *Snapshot, f FriendSeat, pr, wc *Card) bool {
+	if pr == nil || !friendTakes(s, f, cardTierOf(pr)) {
 		return false
 	}
 	if name, ok := FriendCard(pr); ok && name != "" && name != f.Name && OnlyFriend(pr) {
@@ -569,7 +569,7 @@ func pinConds(s *Snapshot, r TickReq) []cond {
 				seen[prID] = true
 				what := openWhat[prID]
 				if what == "" {
-					what = pinIgnoredWhat(wc.ID, pinned, pinSkipWhy(r.Friends, pinned, friendsLeft(wc), cardTierOf(pr), free), row, col)
+					what = pinIgnoredWhat(wc.ID, pinned, pinSkipWhy(s, r.Friends, pinned, friendsLeft(wc), cardTierOf(pr), free), row, col)
 				}
 				holder, _ := FriendOfRow(row)
 				out = append(out, cond{typ: NPinIgnored, stream: pr.Row, card: wc.ID, primaries: []string{prID},
@@ -584,7 +584,7 @@ func pinConds(s *Snapshot, r TickReq) []cond {
 // pinSkipWhy is why a named pin was not placed on her row, checked in the
 // deal's order: not up (held is its own reason), the card has left her, her
 // tiers do not hold the tier, she has no room.
-func pinSkipWhy(seats []FriendSeat, pinned string, left []string, tier string, free map[string]int) string {
+func pinSkipWhy(s *Snapshot, seats []FriendSeat, pinned string, left []string, tier string, free map[string]int) string {
 	var seat FriendSeat
 	found := false
 	for _, f := range seats {
@@ -603,7 +603,9 @@ func pinSkipWhy(seats []FriendSeat, pinned string, left []string, tier string, f
 		return "she is not up"
 	case slices.Contains(left, pinned):
 		return "it has left her"
-	case !friendTakes(seat, tier):
+	case !s.FriendsTake(tier):
+		return "the friends' tiers leave out " + tier
+	case !friendTakes(s, seat, tier):
 		return "her tiers do not hold " + tier
 	case free[pinned] <= 0:
 		return "she has no room"

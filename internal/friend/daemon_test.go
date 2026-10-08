@@ -57,7 +57,7 @@ func newRig(t *testing.T) *rig {
 	r := &rig{store: bustest.NewFake(t0, "ada", "bob"), now: t0, stopAfter: 1 << 20, gate: make(chan struct{}, 1), at: map[int]func(){}}
 	r.bus = &bus.Bus{Store: r.store}
 	r.d = &Daemon{
-		Friend: "bob", Harness: "fake", Dir: t.TempDir(), Width: 4, Store: r.store,
+		Friend: "bob", Harness: "fake", Dir: t.TempDir(), Width: 4, Store: r.store, noPresent: true, StepBeatForTests: true, // the present has its own tests (present_test.go)
 		Deliver: r,
 		Seat:    func(context.Context) (string, error) { return "ada", nil }, // the sender these rigs expect delivered plain
 		Now: func() time.Time {
@@ -575,7 +575,7 @@ func TestWakeCheckIsAnsweredOnlyByTheSession(t *testing.T) {
 		require.Len(t, r.delivered, 2, "no wake turn of its own while the next turn carries the line: %v", r.delivered)
 		assert.NotContains(t, r.delivered[0], "nova-friend pong", "the running turn began before the ping")
 		assert.True(t, strings.HasPrefix(r.delivered[1], "Run this now, first, exactly as written: "+pongCommand("w1")+"\n"), r.delivered[1])
-		assert.Contains(t, r.delivered[1], Text(second))
+		assert.Contains(t, r.delivered[1], "[1/1] "+second.ID+" from=ada at="+second.At.Format(time.RFC3339)+" age=0m subject=more\nthe second thing\n")
 		assert.Equal(t, Challenged, r.last().Challenge)
 	})
 
@@ -708,4 +708,309 @@ func TestATurnStampsItsMessagesReadAndActed(t *testing.T) {
 	got, _, err := r.bus.Stages(context.Background(), "bob", m.ID)
 	require.NoError(t, err)
 	assert.Equal(t, bus.Acted, got[0].State)
+}
+
+// head is a message's line in an envelope (docs/SPEC-FRIEND.md, the loop).
+func head(i, n int, m bus.Message, age int) string {
+	return fmt.Sprintf("[%d/%d] %s from=%s at=%s age=%dm subject=%s\n", i, n, m.ID, m.From, m.At.Format(time.RFC3339), age, m.Subject)
+}
+
+// Three messages that land during a six-minute turn go in as the next one
+// turn, oldest first, each with its id, from, time, age and subject, then
+// its body; that turn's exit 0 acks all three.
+func TestATurnEndDeliversEveryPendingMessageAsOneTurnOldestFirst(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	r.hold, r.releaseAt = make(chan struct{}), 30
+	r.send(t, "ada", "long", "a long task")
+	var msgs []bus.Message
+	for i, step := range []int{3, 5, 7} {
+		r.at[step] = func() {
+			r.store.Advance(2 * time.Minute)
+			r.mu.Lock()
+			r.now = r.now.Add(2 * time.Minute) // the turn runs six minutes in all
+			r.mu.Unlock()
+			msgs = append(msgs, r.send(t, "ada", fmt.Sprintf("news %d", i+1), fmt.Sprintf("body %d", i+1)))
+		}
+	}
+	r.run(t, 40)
+	require.Len(t, r.delivered, 2, "the long task, then one turn for the three that waited: %v", r.delivered)
+	text := r.delivered[1]
+	assert.Contains(t, text, "nova-friend: 3 message(s) for you, oldest first, in one turn; take each in order.\n")
+	at := -1
+	for i, m := range msgs {
+		line := regexp.QuoteMeta(fmt.Sprintf("[%d/3] %s from=ada at=%s age=", i+1, m.ID, m.At.Format(time.RFC3339))) + `\d+m` + regexp.QuoteMeta(fmt.Sprintf(" subject=news %d\nbody %d\n", i+1, i+1))
+		loc := regexp.MustCompile(line).FindStringIndex(text)
+		require.NotNil(t, loc, "message %d whole, with its line: %q", i+1, text)
+		assert.Greater(t, loc[0], at, "oldest first")
+		at = loc[0]
+	}
+	assert.Contains(t, text, "age=4m subject=news 1\n", "the oldest waited four minutes when the turn ended")
+	pending, fresh, err := r.bus.Peek(context.Background(), "bob")
+	require.NoError(t, err)
+	assert.Empty(t, pending, "all three acked on exit 0")
+	assert.Empty(t, fresh)
+	assert.Equal(t, 4, r.last().Delivered)
+	assert.Equal(t, 3, r.last().Envelope, "the status names the envelope's size")
+	assert.Equal(t, len(text), r.last().EnvelopeBytes)
+}
+
+// A turn that fails acks none of the messages its envelope carried.
+func TestAFailedEnvelopeAcksNothing(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	r.exit = 1
+	for i := 0; i < 3; i++ {
+		r.send(t, "ada", "m", "x")
+	}
+	r.run(t, 4)
+	require.Len(t, r.delivered, 1)
+	pending, _, err := r.bus.Peek(context.Background(), "bob")
+	require.NoError(t, err)
+	assert.Len(t, pending, 3, "a failed turn acks nothing")
+	assert.Equal(t, 0, r.last().Delivered)
+	require.NotEmpty(t, r.records)
+	assert.Contains(t, r.records[0], "messages=3")
+	assert.Contains(t, r.records[0], "exit=1 deliveries=1/3")
+	assert.NotContains(t, r.records[0], "acked=true")
+}
+
+// Of the daemon's own notices about the coordinator not yet in a turn, only
+// the newest goes in: an older one is dropped, its successor named on the
+// record by id (docs/SPEC-FRIEND.md, the loop).
+func TestASupersededNoticeIsDroppedAndAckedWithItsSuccessor(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	window := int(Window / BeatEvery)
+	r.at[window+5] = func() { r.send(t, "ada", "PING n1", PingText("ada", t0, "n1")) } // back before the silent was said
+	r.at[2*window+20] = func() { r.send(t, "ada", "news", "during the second outage") }
+	r.run(t, 2*window+25)
+	require.Len(t, r.delivered, 1, "the notices are never a turn alone: %v", r.delivered)
+	text := r.delivered[0]
+	assert.Equal(t, 1, strings.Count(text, "coordinator silent since "), "only the newest notice: %q", text)
+	assert.NotContains(t, text, "coordinator back")
+	all := strings.Join(r.records, "\n")
+	drop := regexp.MustCompile(`notice=(notice-\d+-1) subject="coordinator silent" superseded=(notice-\d+-2) dropped=true`)
+	assert.Regexp(t, drop, all, "the first silent is dropped for the back that followed it")
+	assert.Equal(t, 1, strings.Count(all, "superseded="), "the back, never said, supersedes nothing more; the second silent goes in: %s", all)
+	assert.Contains(t, all, `notice="coordinator silent"`, "the turn's line names the notice it carried")
+}
+
+// SupersededNotices is a function of the daemon's own notices, oldest first:
+// every one but the newest maps to the newest.
+func TestSupersededNoticesKeepsTheNewestOfTheDaemonsOwn(t *testing.T) {
+	t.Parallel()
+	owed := []Notice{
+		{Push: Push{Subject: "coordinator silent"}, ID: "n1"},
+		{Push: Push{Subject: "coordinator back"}, ID: "n2"},
+		{Push: Push{Subject: "coordinator silent"}, ID: "n3"},
+	}
+	assert.Equal(t, map[string]string{"n1": "n3", "n2": "n3"}, SupersededNotices(owed))
+	assert.Empty(t, SupersededNotices(owed[2:]))
+	assert.Empty(t, SupersededNotices(nil))
+}
+
+// The supersede rule reads only the daemon's own notices: a message on the
+// stream with a notice's subject, even from the friend's own name, is a
+// message like any other, delivered and acked, never dropped.
+func TestTheSupersedeRuleNeverDropsAMessageOnTheStream(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	s1 := r.send(t, "bob", "coordinator silent", "the session's own note")
+	s2 := r.send(t, "bob", "coordinator silent", "and another")
+	work := r.send(t, "ada", "work", "do the thing")
+	r.run(t, 4)
+	require.Len(t, r.delivered, 1)
+	for i, m := range []bus.Message{s1, s2, work} {
+		assert.Contains(t, r.delivered[0], head(i+1, 3, m, 0))
+		prefix := "\n"
+		if m.From != "ada" {
+			prefix += "> "
+		}
+		assert.Contains(t, r.delivered[0], prefix+m.Body+"\n")
+	}
+	assert.NotContains(t, strings.Join(r.records, "\n"), "superseded=")
+	pending, fresh, err := r.bus.Peek(context.Background(), "bob")
+	require.NoError(t, err)
+	assert.Empty(t, pending)
+	assert.Empty(t, fresh)
+}
+
+// A ping the daemon answers is acked and is never a turn: the session's
+// turns are spent on work.
+func TestAnAnsweredPingIsNeverATurn(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	r.send(t, "ada", "PING n1", PingText("ada", t0, "n1"))
+	r.run(t, 4)
+	assert.Empty(t, r.delivered, "a ping is no turn")
+	assert.Equal(t, []string{"daemon-pong: daemon-pong n1"}, r.adaGot(t))
+	pending, fresh, err := r.bus.Peek(context.Background(), "bob")
+	require.NoError(t, err)
+	assert.Empty(t, pending, "acked once answered")
+	assert.Empty(t, fresh)
+}
+
+// Any bus line the session sends after a ping proves it alive: the challenge
+// ends, and the next turn carries the work without the pong line. The
+// daemon's own lines prove nothing.
+func TestAnyBusLineFromTheSessionIsItsProofOfLife(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	r.d.PongCommand = func(nonce string) string { return "nova-friend pong --as bob --nonce " + nonce }
+	r.send(t, "ada", "PING n1", PingText("ada", t0, "n1"))
+	var challenged Status
+	r.at[3] = func() {
+		challenged = r.last()
+		r.store.Advance(time.Second)
+		_, err := r.bus.Send(context.Background(), bus.Message{From: "bob", To: []string{"ada"}, Subject: "done", Body: "card done"})
+		require.NoError(t, err)
+	}
+	r.at[6] = func() { r.send(t, "ada", "work", "do the thing") }
+	r.run(t, 10)
+	assert.Equal(t, Challenged, challenged.Challenge, "the ping opened a challenge; the daemon's own pong ended nothing")
+	assert.Equal(t, Quiet, r.last().Challenge, "the session's line ended it")
+	require.Len(t, r.delivered, 1)
+	assert.NotContains(t, r.delivered[0], "nova-friend pong", "a session that spoke is not asked to pong")
+}
+
+// A Deliverer's text limit caps the envelope; what did not fit is named by
+// id with the command that prints it, stays pending, and goes in the next
+// turn.
+func TestTheEnvelopeNamesWhatDidNotFit(t *testing.T) {
+	t.Parallel()
+	now := t0.Add(10 * time.Minute)
+	msgs := []bus.Message{
+		{ID: "m1", From: "ada", At: t0, Subject: "one", Body: strings.Repeat("x", 200)},
+		{ID: "m2", From: "ada", At: t0.Add(time.Minute), Subject: "two", Body: "y"},
+		{ID: "m3", From: "ada", At: t0.Add(2 * time.Minute), Subject: "three", Body: "z"},
+	}
+	text, shown := Envelope("ada", msgs, now, "bob", 300, "", "")
+	assert.Equal(t, 1, shown)
+	assert.Contains(t, text, head(1, 3, msgs[0], 10)+strings.Repeat("x", 200)+"\n")
+	assert.True(t, strings.HasSuffix(text, "\nand 2 more: nova-bus recv --as bob --all\n"), "the first message alone passes the limit: only the count line follows it: %q", text)
+	assert.NotContains(t, text, "\ny\n")
+
+	text, shown = Envelope("ada", msgs, now, "bob", 460, "", "")
+	assert.Equal(t, 2, shown)
+	assert.LessOrEqual(t, len(text), 460)
+	assert.True(t, strings.HasSuffix(text, "\nand 1 more: nova-bus recv --as bob --all\n"), "the id line does not fit, the count line does: %q", text)
+
+	many := make([]bus.Message, 20)
+	for i := range many {
+		many[i] = bus.Message{ID: fmt.Sprintf("n%02d", i), From: "ada", At: t0.Add(time.Duration(i) * time.Second), Subject: "s", Body: "b"}
+	}
+	named := 0
+	for limit := 400; limit <= 1000; limit += 7 {
+		text, shown = Envelope("ada", many, now, "bob", limit, "", "")
+		assert.LessOrEqual(t, len(text), limit, "limit %d, shown %d", limit, shown)
+		assert.Less(t, shown, len(many))
+		assert.Contains(t, text, fmt.Sprintf("and %d more: nova-bus recv --as bob --all\n", len(many)-shown))
+		if strings.Contains(text, fmt.Sprintf("[%d/20] n%02d ", shown+1, shown)) {
+			named++
+		}
+	}
+	assert.Positive(t, named, "where the limit allows, the rest are named by id after the count")
+
+	text, shown = Envelope("ada", msgs, now, "bob", 0, "", "")
+	assert.Equal(t, 3, shown, "no limit: every message")
+	assert.NotContains(t, text, "more:")
+
+	r := newRig(t)
+	r.d.Deliver = limited{r, 800}
+	for _, m := range msgs {
+		r.send(t, m.From, m.Subject, m.Body+strings.Repeat("w", 100))
+	}
+	r.run(t, 8)
+	require.Len(t, r.delivered, 2, "what did not fit is the next turn: %v", r.delivered)
+	assert.Contains(t, r.delivered[0], "and 1 more: nova-bus recv --as bob --all\n")
+	pending, fresh, err := r.bus.Peek(context.Background(), "bob")
+	require.NoError(t, err)
+	assert.Empty(t, pending)
+	assert.Empty(t, fresh)
+	assert.Equal(t, 3, r.last().Delivered)
+}
+
+type limited struct {
+	*rig
+	n int
+}
+
+func (l limited) TextLimit() int { return l.n }
+
+// The pending set has no message-count cap: the adapter's text limit alone
+// decides what enters a turn (docs/SPEC-FRIEND.md, the loop).
+func TestTheEnvelopeIncludesMessagesBeyondTheOldReadCap(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name  string
+		limit int
+		body  string
+	}{
+		{name: "all fit", limit: 65536, body: "work"},
+		{name: "rest counted", limit: 1200, body: strings.Repeat("x", 200)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r := newRig(t)
+			r.d.Deliver = limited{r, tc.limit}
+			var msgs []bus.Message
+			for i := 0; i < 33; i++ {
+				msgs = append(msgs, r.send(t, "ada", fmt.Sprintf("work %d", i), tc.body))
+			}
+			r.run(t, 4)
+			require.NotEmpty(t, r.delivered)
+			text := r.delivered[0]
+			assert.Contains(t, text, "nova-friend: 33 message(s) for you")
+			assert.LessOrEqual(t, len(text), tc.limit)
+			if tc.name == "all fit" {
+				assert.Contains(t, text, "[33/33] "+msgs[32].ID)
+				assert.Equal(t, 33, r.last().Delivered)
+			} else {
+				shown := strings.Count(text, "\n"+tc.body+"\n")
+				require.Positive(t, shown)
+				assert.Contains(t, text, fmt.Sprintf("and %d more: nova-bus recv --as bob --all", 33-shown))
+			}
+		})
+	}
+}
+
+// Answering any number of keepalive pings keeps no proof ids: daemon-pongs
+// are already excluded by subject (docs/SPEC-FRIEND.md, the loop).
+func TestAnsweringManyPingsKeepsNoProofIDs(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	r.d.m = Start(t0)
+	r.d.m.Ping(t0, "ada", t0, "open-challenge")
+	for i := 0; i < 1000; i++ {
+		r.d.daemonPong(context.Background(), r.bus, bus.Message{From: "ada"}, fmt.Sprint(i), t0)
+	}
+	assert.Empty(t, r.d.own)
+}
+
+// Proof ids live only until their line is scanned or a newer ping makes
+// them too old to prove life (docs/SPEC-FRIEND.md, the loop).
+func TestProofIDsAreReleasedAfterReadingOrANewerPing(t *testing.T) {
+	t.Parallel()
+	for _, event := range []string{"scan", "new ping"} {
+		t.Run(event, func(t *testing.T) {
+			t.Parallel()
+			r := newRig(t)
+			r.d.m = Start(t0)
+			l := &loop{d: r.d, b: r.bus, ctx: context.Background(), answered: map[string]bool{}}
+			l.ping(bus.Entry{Entry: "ping"}, bus.Message{From: "ada", At: t0}, "n1", "ada", t0, t0)
+			r.store.Advance(time.Second)
+			sent, err := r.d.send(l.ctx, r.bus, bus.Message{From: "bob", To: []string{"ada"}, Subject: "status", Body: "daemon status"})
+			require.NoError(t, err)
+			require.Len(t, r.d.own, 1)
+			if event == "scan" {
+				l.sessionProof()
+			} else {
+				next := sent.At.Add(time.Second)
+				l.ping(bus.Entry{Entry: "ping2"}, bus.Message{From: "ada", At: next}, "n2", "ada", t0, next)
+			}
+			assert.Empty(t, r.d.own)
+			assert.NotEqual(t, Quiet, r.d.m.Challenge, "a daemon send proves nothing even when its id is released")
+		})
+	}
 }

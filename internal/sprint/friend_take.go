@@ -80,6 +80,10 @@ type FriendTakeReq struct {
 	Reason       string
 	Started      map[string]string
 	Who          string
+	// Spends is a take the seat or her runner asked for (friend take): a read card it takes
+	// spends its reader (retired_by returned, readSpent), as read --return does; the
+	// machine's take-backs (a hold, a stall) spend nothing.
+	Spends bool
 }
 
 // takenBackWhy is the words a taken card carries (FieldTakenBack).
@@ -160,6 +164,9 @@ func FriendTake(s *Snapshot, r FriendTakeReq) Plan {
 		// the take, not the hold, keeps her from it; a card never taken from her has its whole
 		// dealt bound again from now (untaken_since), its first take unset
 		set, unset := map[string]string{FieldTakenBack: why, "untaken_since": stamp(s.Now)}, []string{"first_taken"}
+		if r.Spends && isRead(c) {
+			set["retired_by"] = RetiredByReturned // handed back: it spends her (readSpent)
+		}
 		if r.Hold {
 			unset = append(unset, FieldTakenFrom)
 		} else {
@@ -212,4 +219,63 @@ func friendLaneIdle(s *Snapshot, seats []FriendSeat, c *Card) (friend string, id
 		}
 	}
 	return friend, false
+}
+
+// NGivenBack is the happened note of a card taken back from a friend given back to her.
+const NGivenBack = "a card taken back from a friend given back"
+
+// FriendGiveReq is friend give: the friend, the cards named (each a primary or its work
+// card), and why.
+type FriendGiveReq struct {
+	Friend string
+	IDs    []string
+	Reason string
+	Who    string
+}
+
+// FriendGive is the coordinator's undo of a take-back (friend take): on each card named,
+// ready or waiting, its current attempt's work card loses the mark of the friend it was
+// taken from (FieldTakenFrom), so the deal may deal it to her again; a pinned card taken
+// from its friend waits for no one else and is dealt to her. A card not ready or waiting,
+// or never taken back from her, is refused, one refusal each, and the rest are given.
+func FriendGive(s *Snapshot, r FriendGiveReq) Plan {
+	var p Plan
+	row := FriendRow(r.Friend)
+	reason := r.Reason
+	if reason == "" {
+		reason = "given back by the coordinator"
+	}
+	seen := map[string]bool{}
+	for _, id := range r.IDs {
+		pr := s.Work.Placed(id)
+		if c := s.Fleet.Placed(id); pr == nil && c != nil && c.F("kind") == "work" {
+			pr = s.Work.Placed(c.F("primary"))
+		}
+		if pr == nil {
+			p.refuse(id, "no card "+id)
+			continue
+		}
+		if seen[pr.ID] {
+			continue
+		}
+		seen[pr.ID] = true
+		card := WorkCardID(pr.ID, pr.Int("attempt"))
+		wc := s.Fleet.Placed(card)
+		from := "no friend"
+		if wc != nil && wc.F(FieldTakenFrom) != "" {
+			from = "friend " + strings.TrimPrefix(wc.F(FieldTakenFrom), friendRowPrefix)
+		}
+		switch {
+		case pr.Col != Ready && pr.Col != Waiting:
+			p.refuse(id, fmt.Sprintf("%s is %s, not ready or waiting", pr.ID, pr.Col))
+		case wc == nil || wc.F(FieldTakenFrom) != row:
+			p.refuse(id, fmt.Sprintf("%s was never taken back from friend %s (taken from %s)", card, r.Friend, from))
+		default:
+			n := happened(NGivenBack, pr.Row, s.Now, pr.ID)
+			n.Who, n.What = r.Who, fmt.Sprintf("%s may be dealt to %s again (%s)", pr.ID, r.Friend, reason)
+			p.Units = append(p.Units, Unit{Key: pr.ID, Stream: pr.Row,
+				Changes: []Change{change(Fleet, setEntry(wc, nil, FieldTakenFrom))}, Notes: []Note{n}, Moved: n.What})
+		}
+	}
+	return p
 }

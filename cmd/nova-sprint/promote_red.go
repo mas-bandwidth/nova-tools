@@ -29,7 +29,7 @@ func (p *promoter) devRed(ctx context.Context, stdout, stderr io.Writer) *promot
 	if err != nil || sha == "" {
 		return nil
 	}
-	runs, err := p.failedRuns(ctx, "--branch", p.base, "--commit", sha)
+	runs, err := p.forger().FailedRuns(ctx, p.base, sha)
 	if err != nil {
 		fmt.Fprintf(stderr, "NOTE promote: the runs of %s at %s cannot be read: %s; run: gh run list --branch %s --commit %s\n", oneline.Field(p.base), sha, oneline.Err(err), oneline.Field(p.base), sha)
 		return nil
@@ -37,10 +37,10 @@ func (p *promoter) devRed(ctx context.Context, stdout, stderr io.Writer) *promot
 	if p.redRuns == nil {
 		p.redRuns = map[int]bool{}
 	}
-	var fresh []ghRunRow
+	var fresh []promoteRun
 	for _, r := range runs {
-		if !p.redRuns[r.DatabaseID] {
-			p.redRuns[r.DatabaseID] = true
+		if !p.redRuns[r.ID] {
+			p.redRuns[r.ID] = true
 			fresh = append(fresh, r)
 		}
 	}
@@ -57,12 +57,15 @@ func (p *promoter) devRed(ctx context.Context, stdout, stderr io.Writer) *promot
 // failing test (p.red), and is the one judgment naming the cards: what, the
 // logs' tail, the decisions, the cards cut and the tests an open card already
 // names. A cut that fails is a NOTE on stderr and the judgment names no card.
-func (p *promoter) redJudgment(ctx context.Context, runs []ghRunRow, what, where string, decisions []string, stderr io.Writer) *promoteJudgment {
+func (p *promoter) redJudgment(ctx context.Context, runs []promoteRun, what, where string, decisions []string, stderr io.Writer) *promoteJudgment {
 	var logs []string
 	var reds []sprint.RedTest
 	for _, r := range runs {
-		run := strconv.Itoa(r.DatabaseID)
-		text, _ := p.gh(ctx, "run", "view", run, "--log-failed")
+		run := strconv.Itoa(r.ID)
+		text, err := p.forger().RunLog(ctx, r.ID)
+		if err != nil {
+			text = "the failing run's log could not be read: " + oneline.Err(err)
+		}
 		logs = append(logs, text)
 		for _, t := range sprint.RedTests(text) {
 			if !slices.ContainsFunc(reds, func(x sprint.RedTest) bool { return x.Test == t.Test }) {
@@ -87,12 +90,12 @@ func (p *promoter) redJudgment(ctx context.Context, runs []ghRunRow, what, where
 	return j
 }
 
-// redSpec is what the fix cards of a red run share: the repository gh names
+// redSpec is what the fix cards of a red run share: the repository the forge names
 // for the clone, the live sprint branch they start from, the module of its
 // go.mod, and the day's promote-red stream.
 func (p *promoter) redSpec(ctx context.Context, where string) sprint.FixSpec {
-	repo, _ := p.gh(ctx, "repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner")
-	repo = strings.TrimSpace(repo)
+	// ignored: a repository the forge cannot name leaves the fix cards' REPO empty, and the module is read from go.mod
+	repo, _ := p.forger().Repo(ctx)
 	module := ""
 	if mod, err := p.git(ctx, "show", "--end-of-options", p.live+":go.mod"); err == nil {
 		for line := range strings.SplitSeq(mod, "\n") {
@@ -135,7 +138,7 @@ func (a *app) redCutter(c common) func(context.Context, []sprint.RedTest, sprint
 				brief += "\n\n" + strings.TrimSuffix(swarm.RulesParagraph(cs.rules), "\n")
 			}
 			id := sprint.FixCardID(r.Test)
-			req.Cards = append(req.Cards, sprint.CardAdd{ID: id, File: id, Brief: brief, Rules: cardRules(brief, rs).held, Base: sp.Base})
+			req.Cards = append(req.Cards, sprint.CardAdd{ID: id, File: id, Brief: brief, Rules: cardRules(brief, rs).held, Base: sp.Base, Repo: swarm.ReadCardBase([]byte(brief)).Named})
 		}
 		var lint strings.Builder
 		if lintBriefFiles("promote", req.Cards, rs, 0, &lint) != 0 {

@@ -34,6 +34,15 @@ func localHost(getenv func(string) string, hostname func() (string, error)) (nam
 // for the store in all, the connection and the two reads.
 const inventoryTimeout = 10 * time.Second
 
+// inventoryExample is the minimal fixture --example prints and --fixture
+// reads back: one machine and the fleet row it needs. A reader with no store
+// and no source tree runs the verb on it (docs/STANDARD.md, section 2: a tool
+// runs on its own small input with no infrastructure).
+const inventoryExample = `machines:
+  m1: {user: nova, seat: m1, slots: 1}
+fleet: {store: m1, coordinator: m1, redis_port: 6380, pg_dsn: postgres://nova@localhost:5432/nova, loops_dir: "~/nova-bench/loops"}
+`
+
 // runInventory prints the Ansible inventory of the applied state: the
 // Redis view apply wrote (machines, the fleet row, loops, the machines'
 // beats), never Postgres, or a fixture file in its place (docs/FLEET.md).
@@ -41,12 +50,19 @@ func runInventory(ctx context.Context, args []string, stdout, stderr io.Writer, 
 	const verb = "inventory"
 	fs := verbflag.New(verb)
 	redisFlag := fs.String("redis", "", "the Redis `host:port` of the applied state (env NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the seat's address); exclusive with --fixture")
-	fixture := fs.String("fixture", "", "a YAML or JSON `file` of machines, the fleet row, loops and each machine's os and arch, read in place of the store (docs/FLEET.md, \"A fixture inventory\"); opens no store")
+	fixture := fs.String("fixture", "", "a YAML or JSON `file` of machines, the fleet row, loops and each machine's os and arch, read in place of the store; print a minimal one with --example; opens no store")
+	example := fs.Bool("example", false, "print a minimal fixture to stdout and open no store; save it and read it back with --fixture")
 	list := fs.Bool("list", false, "print the whole inventory (hosts, groups and every host's variables under _meta.hostvars, so ansible never calls --host); the default when neither --list nor --host is given; exclusive with --host")
 	host := fs.String("host", "", "print the variables of one machine, by `name`, as a JSON object; exits 1 when no machine row has that name")
 	timeout := fs.Duration("timeout", inventoryTimeout, "a Go `duration`, above 0: how long to wait for the store before refusing; ansible runs the verb unattended, so it never waits forever")
 	if code, ok := parse(fs, args, stderr, verb); !ok {
 		return code
+	}
+	// --example is the print-and-exit action -h is: it writes the fixture and
+	// reads nothing, whatever else the line carries.
+	if *example {
+		fmt.Fprint(stdout, inventoryExample)
+		return 0
 	}
 	given := map[string]bool{}
 	fs.Visit(func(f *stdflag.Flag) { given[f.Name] = true })
@@ -109,8 +125,7 @@ func runInventory(ctx context.Context, args []string, stdout, stderr io.Writer, 
 		// fail is a store failure: the deadline, or the store's own words.
 		fail := func(err error) int {
 			if ctx.Err() != nil {
-				fmt.Fprintf(stderr, "%s %s REFUSED: timed out after %s waiting for the store at %s while %s; check that Redis answers there; run: %s\n", toolName, verb, *timeout, addr, stage, again("--timeout", (*timeout*3).String()))
-				return 2
+				return refuseLine(stderr, verb, fmt.Sprintf("timed out after %s waiting for the store at %s while %s; check that Redis answers there; run: %s", *timeout, addr, stage, again("--timeout", (*timeout*3).String())), 2)
 			}
 			return refuse(stderr, verb, err.Error())
 		}

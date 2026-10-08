@@ -70,9 +70,6 @@ usage, in any Go module (no state, no store):
                       and one CI-SLOW MORE shown=<n> total=<n> line naming the
                       flag that prints the rest; --max 0 prints every finding.
                       --json prints the same verdict as one JSON object.
-                      --max prints at most that many finding lines, then one
-                      CI-SLOW MORE shown=<n> total=<n> line naming the flag
-                      that prints the rest; --max 0 prints every finding.
   nova-ci functional <package-dir>...
                       (inspection) print the packages among these that hold
                       functional tests (a _test.go built only under the
@@ -128,9 +125,9 @@ usage, in a nova-tools checkout (this repository's own CI steps):
 exit codes: 0 done, 1 the verb said no (slowtests, local, github receipt), 2 usage or could not run; by verb:
   slowtests: 0 inside budget, or CI-SLOW lines without --enforce (a
     measurement), or an empty stream with --allow-empty; 1 a CI-SLEEPS
-    line, a CI-SLOW line under --enforce, or an empty stream without
-    --allow-empty (the check said no); 2 the invocation could not run
-    (bad flag, unreadable stdin)
+    line, a truncated package (started and never ended), a CI-SLOW line
+    under --enforce, or an empty stream without --allow-empty (the check
+    said no); 2 the invocation could not run (bad flag, unreadable stdin)
   local: 0 green; 1 a red test, a package that did not build, or a
     CI-SLEEPS line; 2 a step that could not run, or usage
   functional: 0 the selection printed (packages=0 included); 2 a flag, or
@@ -150,11 +147,29 @@ example:
   nova-ci help
   nova-ci slowtests --example --budget 60 --load 4 --cpus 16
   nova-ci slowtests --example --budget 120 --load 4 --cpus 16
+
+slowtests judges timing, not test success; with set -o pipefail the pipeline's exit carries go test -timeout 600s's.
 `
 
 // verbs is every verb in the order the banner lists them: what a refusal for a
 // missing or unknown verb names.
 const verbs = "slowtests, functional, local, new-rule, new-verb, bench run, github receipt, version, help"
+
+// helpListsVerb reports whether tool's help already lists verb, so new-verb
+// refuses a name that would stand for two verbs. nova-ci's list is the verbs
+// constant; another tool's help is not this banner, so this reports false for
+// it (docs/STANDARD.md section 3).
+func helpListsVerb(tool, verb string) bool {
+	if tool != "nova-ci" {
+		return false
+	}
+	for _, listed := range strings.Split(verbs, ", ") {
+		if listed == verb {
+			return true
+		}
+	}
+	return false
+}
 
 // verbEffect is what running a verb does beyond printing, the last line of its -h, in
 // internal/tool's words (inspection, local write or delivery; docs/STANDARD.md section 2).

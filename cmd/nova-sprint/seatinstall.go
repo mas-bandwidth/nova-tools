@@ -60,9 +60,14 @@ func (a *app) cmdSeatInstall(args []string, stdout, stderr io.Writer) int {
 	harness := fs.String("harness", "", "the harness the seat's AI runs in (required): the push loop delivers each judgment, and the push proof, into the session through its adapter; a harness with no deliver command (claude) gets the folder adapter, each one a file written into --target")
 	target := fs.String("target", "", "the session's directory, where the harness's adapter delivers (required); for the folder adapter, the directory the session watches with a Monitor, which must be there")
 	session := fs.String("session", "", "the session's id, for a harness that names one (default: the adapter's newest in --target)")
+	server := fs.String("server", "", "the sprint's server, `host:port` (default NOVA_SPRINT_SERVER): the unit's, and recorded in the seat beside the store login, where seat check reads it when NOVA_SPRINT_SERVER is not set")
+	cs := addConfigSeatFlags(fs)
 	pos, err := parse(fs, args)
 	if err != nil || len(pos) > 0 {
 		return refuse(stderr, name, argErr("takes no words ", err, pos...))
+	}
+	if _, _, err := cs.profile(); err != nil {
+		return refuse(stderr, name, err.Error())
 	}
 	// the push target first: a loop that cannot reach the session is no push (pushproof.go)
 	// (a dry run with no --harness still prints the unit, and says the install wants one)
@@ -72,7 +77,9 @@ func (a *app) cmdSeatInstall(args []string, stdout, stderr io.Writer) int {
 	}
 	goos := a.seatOS()
 	u := sprint.SeatUnit{OS: goos, Log: *logf}
-	if srv := a.server(fs); srv != "" {
+	if srv := strings.TrimSpace(*server); srv != "" {
+		u.Server = srv
+	} else if srv := a.server(fs); srv != "" {
 		u.Server = srv
 	} else {
 		u.Redis = strings.TrimSpace(c.redis)
@@ -111,9 +118,12 @@ func (a *app) cmdSeatInstall(args []string, stdout, stderr io.Writer) int {
 		if push.Harness == "" {
 			fmt.Fprintf(stdout, "NOTE the install wants the seat's push target: %s\n", sprint.PushSetup(c.actor, push, false))
 		}
+		if err := a.installSeat(cs, u.Server, true, stdout); err != nil {
+			return refuse(stderr, name, err.Error())
+		}
 		return 0
 	}
-	if code := a.recordPushTarget(fs, *c, push, stdout, stderr); code != 0 {
+	if code := a.recordPushTarget(u.Server, *c, push, stdout, stderr); code != 0 {
 		return code
 	}
 	r, err := a.seatInstaller(goos, *dir).Install(u)
@@ -121,8 +131,13 @@ func (a *app) cmdSeatInstall(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s %s FAILED: %s\n", prog, name, oneline.Escape(err.Error()))
 		return 1
 	}
+	var seat strings.Builder
+	if err := a.installSeat(cs, u.Server, false, &seat); err != nil {
+		fmt.Fprintf(stderr, "%s %s FAILED: the unit is installed, and %s\n", prog, name, oneline.Escape(err.Error()))
+		return 1
+	}
 	if c.json {
-		b, _ := json.Marshal(map[string]any{"path": r.Path, "written": r.Changed, "loaded": true, "args": u.Args(), "adapter": push.AdapterName()}) // ignored: strings and bools always encode
+		b, _ := json.Marshal(map[string]any{"path": r.Path, "written": r.Changed, "loaded": true, "args": u.Args(), "adapter": push.AdapterName(), "seat": strings.Split(strings.TrimSpace(seat.String()), "\n")}) // ignored: strings and bools always encode
 		fmt.Fprintln(stdout, string(b))
 		return 0
 	}
@@ -135,19 +150,20 @@ func (a *app) cmdSeatInstall(args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 	fmt.Fprintf(stdout, "  push: %s into %s; the seat is live once the session answers the push check with nova-sprint seat pong (seat push shows it)\n", oneline.Field(push.Harness), oneline.Field(push.Target))
+	fmt.Fprint(stdout, seat.String())
 	return 0
 }
 
 // recordPushTarget writes the push record seat install was given, on the sprint's
-// server when there is one, else on the store: the push loop reads it to reach
-// the session.
-func (a *app) recordPushTarget(fs flagSet, c common, push sprint.PushRecord, stdout, stderr io.Writer) int {
+// server when there is one (--server, else NOVA_SPRINT_SERVER), else on the
+// store: the push loop reads it to reach the session.
+func (a *app) recordPushTarget(srv string, c common, push sprint.PushRecord, stdout, stderr io.Writer) int {
 	const name = "seat install"
 	words := []string{"push", "--actor", push.Name, "--harness", push.Harness, "--target", push.Target} // the server derives the adapter again
 	if push.Session != "" {
 		words = append(words, "--session", push.Session)
 	}
-	if srv := a.server(fs); srv != "" {
+	if srv != "" {
 		res, err := a.ask(context.Background(), srv, []string{"seat"}, words)
 		if err != nil {
 			return a.unanswered(name, srv, err, stderr)

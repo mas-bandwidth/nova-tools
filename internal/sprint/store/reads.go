@@ -246,6 +246,29 @@ func (st *Store) cardOf(ctx context.Context, id string, held bool) (CardInfo, er
 				return v, err
 			}
 		}
+		// the read cards on the fleet table (a friend's, and a member's while read cards are
+		// on: sprint read_cards.go), one per reader per attempt, on its row
+		fleet, err := st.B.Shapes(ctx, []string{st.Names.Table(sprint.Fleet)})
+		if err != nil {
+			return v, err
+		}
+		ids = nil
+		for k := 1; k <= attempts; k++ {
+			for _, r := range fleet[0].Rows {
+				name := r.Key
+				if f, ok := sprint.FriendOfRow(r.Key); ok {
+					name = f
+				}
+				ids = append(ids, sprint.ReadCardID(id, k, name))
+			}
+		}
+		if len(ids) > 0 {
+			reads, err := st.records(ctx, sprint.Fleet, ids)
+			if err != nil {
+				return v, err
+			}
+			v.Reads = append(v.Reads, reads...)
+		}
 	}
 	ms, err := st.records(ctx, sprint.Merge, []string{id})
 	if err != nil {

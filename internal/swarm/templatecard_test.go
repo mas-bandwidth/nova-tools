@@ -37,3 +37,23 @@ func TestTheCardTemplateCarriesGateNamesWhoseFile(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, body, GateNamesWhoseFile)
 }
+
+// The card template's STEP 1 carries the one GOCACHE sentence: the machine's shared,
+// warm build cache is already set, so the child keeps it rather than exporting a cache
+// of its own. cardgen.Render shares swarm.GoCacheLine with it.
+func TestTheCardTemplateCarriesTheGoCacheLine(t *testing.T) {
+	t.Parallel()
+	body, err := Template("card")
+	require.NoError(t, err)
+	assert.Contains(t, body, GoCacheLine)
+	assert.NotContains(t, body, "private GOCACHE")
+	assert.NotContains(t, body, "GOCACHE=")
+}
+
+// The card template's Deadline line says the judgment of a card that runs past it is the coordinator's.
+func TestTheCardTemplateCarriesDeadlineJudgmentLine(t *testing.T) {
+	t.Parallel()
+	body, err := Template("card")
+	require.NoError(t, err)
+	assert.Contains(t, body, "Deadline: finish within <n> minutes; the judgment of a card that runs past it is the coordinator's, so report what you have with the verdict not-done rather than push past it.")
+}

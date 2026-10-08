@@ -43,6 +43,8 @@ var memoryAudit = audit.Config{
 		"main.go|parse|name":                      "a required flag's name, a literal at every call site in this file",
 		"quickstart.go|stepFailed|verb":           "the name of the quickstart step, a literal at all three call sites in this file",
 		"main.go|scoreFields|chn":                 "the name of the channel that scored the hit, one of the two channel names package memindex defines",
+		"main.go|hitLine|h.NativeChan":            "the name of the channel that scored the hit, one of the two channel names package memindex defines",
+		"main.go|hitLine|native":                  "the native-score pair built by the Sprintf above it in this function; its channel name is exempted as h.NativeChan and its score is numeric",
 		"main.go|hitLine|token":                   "the event token, a literal at both call sites in this file",
 		"main.go|hitLine|prefix":                  "empty, or cand=<n> built by Sprintf from an integer, at the two call sites in this file",
 		"main.go|cmdStats|memindex.SchemaVersion": "a constant in package memindex",

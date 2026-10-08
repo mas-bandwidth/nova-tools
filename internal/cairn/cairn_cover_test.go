@@ -1,5 +1,5 @@
 // Unit coverage for the plan and refusal paths the per-function coverage
-// table showed at zero: ConflictError.Error, PlanOpen, cmpOr and PlanAppend.
+// table showed at zero: ConflictError.Error, PlanOpen and PlanAppend.
 // Everything runs in-process over plain files in t.TempDir() with clock
 // readings passed in: no sleeps, no real time, no network, no subprocess, no
 // Redis or Postgres.
@@ -47,24 +47,6 @@ func TestCairnCoverConflictErrorMessage(t *testing.T) {
 	}
 }
 
-func TestCairnCoverCmpOr(t *testing.T) {
-	t.Parallel()
-
-	rows := []struct {
-		name, s, empty, want string
-	}{
-		{name: "an empty value takes the fallback", s: "", empty: "-", want: "-"},
-		{name: "a value stands as written", s: "bench-a/session-7", empty: "-", want: "bench-a/session-7"},
-		{name: "an empty fallback renders empty", s: "", empty: "", want: ""},
-	}
-	for _, row := range rows {
-		t.Run(row.name, func(t *testing.T) {
-			t.Parallel()
-			assert.Equal(t, row.want, cmpOr(row.s, row.empty))
-		})
-	}
-}
-
 func TestCairnCoverPlanOpen(t *testing.T) {
 	t.Parallel()
 
@@ -87,7 +69,7 @@ func TestCairnCoverPlanOpen(t *testing.T) {
 		require.NoError(t, Open(store, "s", "src", now, PublishManual), "Open")
 		rec, err := PlanOpen(store, "s", "src", now, PublishManual)
 		require.NoError(t, err, "PlanOpen")
-		assert.Equal(t, OpenRecord{Source: "src", Publish: PublishManual, Found: true}, rec)
+		assert.Equal(t, OpenRecord{Source: "src", Publish: PublishManual, Opened: now, Found: true}, rec)
 		raw, err := os.ReadFile(filepath.Join(store, "log.jsonl"))
 		require.NoError(t, err, "ReadFile log.jsonl")
 		assert.Equal(t, 1, len(strings.Split(strings.TrimSpace(string(raw)), "\n")), "the plan must add no log line")
@@ -101,7 +83,7 @@ func TestCairnCoverPlanOpen(t *testing.T) {
 		require.Error(t, err, "PlanOpen must refuse another policy")
 		var ce *ConflictError
 		assert.ErrorAs(t, err, &ce, "the refusal must be the caller's conflict, not a crash")
-		assert.Equal(t, OpenRecord{Source: "src", Publish: PublishManual, Found: true}, rec)
+		assert.Equal(t, OpenRecord{Source: "src", Publish: PublishManual, Opened: now, Found: true}, rec)
 	})
 
 	t.Run("a flat record plans with no open record behind it", func(t *testing.T) {
@@ -149,7 +131,6 @@ func TestCairnCoverPlanAppend(t *testing.T) {
 		assert.Equal(t, PublishManual, res.Policy, "an empty publish carries the session's recorded policy")
 		assert.Equal(t, "bench-a/session-7", res.Source, "an empty source carries the session's pointer")
 		assert.False(t, res.Persisted, "words not yet stored are not persisted, got %+v", res)
-		assert.False(t, res.Published, "this package never publishes, got %+v", res)
 		assert.False(t, res.Duplicate, "a fresh plan is no duplicate, got %+v", res)
 		assert.NoFileExists(t, entryPath(store, "s", "e"), "the plan must write no entry file")
 		log, err := os.ReadFile(filepath.Join(store, "log.jsonl"))

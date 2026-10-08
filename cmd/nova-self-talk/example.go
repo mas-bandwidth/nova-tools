@@ -4,6 +4,7 @@ package main
 
 import (
 	"bytes"
+	"cmp"
 	"fmt"
 	"io"
 	"os"
@@ -88,7 +89,7 @@ func cmdExample(args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 	fmt.Fprintf(stdout, "EXAMPLE OK dir=%s %s=%s kept=%s; run: %s\n", oneline.Field(dir), oneline.Field(wrote),
-		oneline.Field(dash(strings.Join(write, ","))), oneline.Field(dash(strings.Join(kept, ","))), oneline.Escape(next))
+		oneline.Field(cmp.Or(strings.Join(write, ","), "-")), oneline.Field(cmp.Or(strings.Join(kept, ","), "-")), oneline.Escape(next))
 	return 0
 }
 
@@ -103,12 +104,4 @@ func exampleNext(verb, file string) string {
 		command += " --"
 	}
 	return command + " " + oneline.ShellWord(file)
-}
-
-// dash is a field's empty value as the typed line spells it.
-func dash(s string) string {
-	if s == "" {
-		return "-"
-	}
-	return s
 }

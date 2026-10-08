@@ -50,6 +50,37 @@ come back to the table below for the problem you want it to solve.
 
 Pick the row that is your actual problem today. One tool is a fine number.
 
+### tdocs-tool-readmes-b.w2
+
+Every tool has a standalone guide beside its code, written so a stranger can
+start from that one tool without this page. Read the one you chose:
+
+- [nova-bus](cmd/nova-bus/README.md) — messages between AIs over Redis streams: sent once, delivered until acked
+- [nova-friend](cmd/nova-friend/README.md) — what a friend runs to be part of the team: the wake loop, the beat, and the proof of life, as one daemon
+- [nova-table](cmd/nova-table/README.md) — tables whose cells are ordered sets, kept in Redis and drawn as text
+- [nova-work](cmd/nova-work/README.md) — every issue of an organization's repositories in one tree file, verified field for field
+- [nova-redis](cmd/nova-redis/README.md) — run a local Redis store, and keep short-lived named values in it
+- [nova-config](cmd/nova-config/README.md) — a fleet's machines and AI friends as rows in PostgreSQL, applied into Redis
+- [nova-swarm](cmd/nova-swarm/README.md) — one-task AI workers, each run in the sandbox with a deadline and a token budget
+- [nova-card](cmd/nova-card/README.md) — writes a directory of pre-linted briefs from a ledger, a findings file or a tool's help
+- [nova-local](cmd/nova-local/README.md) — run local models: what an engine has, one model served at a chosen context, and a worker description nova-swarm accepts
+- [nova-secrets](cmd/nova-secrets/README.md) — encrypted secrets in a git repository, handed to one command at a time
+- [nova-tokens](cmd/nova-tokens/README.md) — token spend per day, model and repository, read from AI session logs
+- [nova-memory](cmd/nova-memory/README.md) — search your own markdown notes, and check a draft against what they already say
+- [nova-decide](cmd/nova-decide/README.md) — typed decisions with probabilities, recorded so each one can be calibrated against its outcome
+- [nova-cairn](cmd/nova-cairn/README.md) — a session's words, kept durably as plain files you can come back to
+- [nova-check](cmd/nova-check/README.md) — checks over markdown records and repositories, each finding named by file and line
+- [nova-self-talk](cmd/nova-self-talk/README.md) — flags sentences where a writer passes a standing verdict on themselves
+- [nova-fuse](cmd/nova-fuse/README.md) — a recorded decision to stop reading an untrusted source, checked before every read
+- [nova-sandbox](cmd/nova-sandbox/README.md) — run one command inside an OS-enforced wall around the directories you name
+- [nova-ci](cmd/nova-ci/README.md) — test-time budgets over go test -json output, and this repository's own CI steps
+- [nova-version](cmd/nova-version/README.md) — which version of each tool is installed, recorded and compared
+- [nova-update](cmd/nova-update/README.md) — compare installed tools with their latest releases, and update one when asked
+- [nova-doctor](cmd/nova-doctor/README.md) — says what is missing for the nova tools to work here and, for each thing, the one line that fixes it
+- [nova-up](cmd/nova-up/README.md) — set nova up on one machine: plan every step, then apply, from nothing to a first sprint
+
+`nova-sprint`'s guide is the sprint contract, [docs/SPEC-SPRINT.md](docs/SPEC-SPRINT.md); start from `nova-sprint help`.
+
 ## Try one on a small example
 
 These are the Nova Tools 1.0.0 commands. Install one binary from the
@@ -106,6 +137,13 @@ Want to grow an AI friend? [Nova Seed](https://github.com/mas-bandwidth/nova) is
 - [Contributing](docs/CONTRIBUTING.md) and [security](docs/SECURITY.md).
 - [Releases](https://github.com/mas-bandwidth/nova-tools/releases) and
   [all documentation](docs/).
+
+### tdocs-concepts-architecture-b.w3
+
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) is the one page that explains how
+nova-tools fits together: the concepts the specs share, every tool under `cmd/`,
+the stores and their ACL users, the machines, and a card's path from add to
+land.
 
 Found a friction, or something that would make a tool a no-brainer for you?
 [Open an issue](https://github.com/mas-bandwidth/nova-tools/issues) — friends

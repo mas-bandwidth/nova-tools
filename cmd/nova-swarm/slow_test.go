@@ -35,25 +35,48 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// SLOW: 1.0 s on bench-tier at dev 64b9bec48, a deadline/wedge/wall bound proved by waiting it out.
 // TestNativeRunKillsAtDeadline: a child that sleeps past the wall is killed by it, and the
-// run records a non-zero exit rather than hanging.
+// run records the deadline's own exit. The deadline is an event, not a wall clock: it fires
+// through this run's own seam once the harness has written its argv, so the test proves the
+// kill and not the machine's load.
 func TestNativeRunKillsAtDeadline(t *testing.T) {
 	t.Parallel()
 
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
 
+	// The deadline fires when the harness has started, which its argv records, and this run
+	// alone receives it: the seam is a field on the configuration, so the test runs in
+	// parallel with the others instead of swapping the package seam under them.
+	fire := make(chan time.Time)
+	quit := make(chan struct{})
+	t.Cleanup(func() { close(quit) })
+	go func() {
+		tick := time.NewTicker(5 * time.Millisecond)
+		defer tick.Stop()
+		for {
+			if _, err := os.Stat(filepath.Join(slot, "jobs", "lbl", "argv")); err == nil {
+				close(fire)
+				return
+			}
+			select {
+			case <-quit:
+				return
+			case <-tick.C:
+			}
+		}
+	}()
+
 	var errOut bytes.Buffer
-	start := time.Now()
 	res, code := nativeRun(nativeRunConfig{
 		binary: bin, model: "fake/fake-model", label: "lbl",
-		card: []byte("FAKE-SLEEP 60\n"), slotDir: slot, root: root, deadline: time.Second, noWall: true,
+		card: []byte("FAKE-SLEEP 60\n"), slotDir: slot, root: root, deadline: 30 * time.Second, noWall: true,
+		deadlineFn: func(time.Duration) (<-chan time.Time, func() bool) {
+			return fire, func() bool { return true }
+		},
 	}, &errOut)
-	elapsed := time.Since(start)
 	require.Equal(t, 0, code, "a deadline kill is not a refusal, got exit %d:\n%s", code, errOut.String())
-	require.NotEqual(t, 0, res.rc, "the deadline killed the child, and the run records a non-zero exit")
-	require.True(t, elapsed <= 30*time.Second, "the deadline should cut the run short, but it took %v", elapsed)
+	require.Equal(t, -1, res.rc, "the deadline killed the child, and the run records rc=-1")
 }
 
 // SLOW: 25.2 s on bench-tier at dev 64b9bec48, over the five-second line.
@@ -918,7 +941,7 @@ func TestAPushTheRemoteRejectedIsSentAgain(t *testing.T) {
 	head3 := b3.commit(t, "the work\n")
 	waits = nil
 	g3 := b3.pusher()
-	rec := &recordGit{refusePush: "!\t0123:refs/heads/sprint/c1\t[rejected] (non-fast-forward)"}
+	rec := &recordGitRun{refusePush: "!\t0123:refs/heads/sprint/c1\t[rejected] (non-fast-forward)"}
 	g3.git, g3.sleep = rec.run, func(d time.Duration) { waits = append(waits, d) }
 	got = g3.Push(b3.p, member.Result{Head: head3})
 	assert.Contains(t, got.Refused, "[rejected]")
@@ -4213,7 +4236,7 @@ func TestReviewARefusedFallbackPushDoesNotClaimItWasPushed(t *testing.T) {
 	b := newPushBench(t)
 	head := b.commit(t, "the work\n")
 	g := b.pusher()
-	g.git = (&recordGit{refusePush: "fatal: injected credential failure"}).run
+	g.git = (&recordGitRun{refusePush: "fatal: injected credential failure"}).run
 	var notes strings.Builder
 	g.notes = &notes
 
@@ -4374,7 +4397,7 @@ func TestThePushArgvIsUnforcedAndBehindTheSeparator(t *testing.T) {
 	t.Parallel()
 	b := newPushBench(t)
 	head := b.commit(t, "the work\n")
-	rec := &recordGit{}
+	rec := &recordGitRun{}
 	g := b.pusher()
 	g.git = rec.run
 	require.Equal(t, member.Push{Sha: head}, g.Push(b.p, member.Result{Head: head}))
@@ -4403,7 +4426,7 @@ func TestAGitThatRefusesThePushIsRefused(t *testing.T) {
 	head := b.commit(t, "the work\n")
 	line := "fatal: could not read Username for the origin: terminal prompts disabled"
 	g := b.pusher()
-	g.git = (&recordGit{refusePush: line}).run
+	g.git = (&recordGitRun{refusePush: line}).run
 	assert.Equal(t, member.Push{Refused: line}, g.Push(b.p, member.Result{Head: head}))
 	assert.Empty(t, b.originHas(t, "sprint/c1"))
 }

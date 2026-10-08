@@ -133,8 +133,13 @@ func TestSeatInjectReSealsNamedValuesIntoAnExistingSeat(t *testing.T) {
 	assert.Contains(t, air, "recipient: "+pubAir, "air.yaml is not sealed to the seat and the recovery key:\n%s", air)
 	assert.Contains(t, air, "recipient: "+pubRecovery, "air.yaml is not sealed to the seat and the recovery key:\n%s", air)
 	assert.NotContains(t, air, "recipient: "+pubRowan, "air.yaml became readable by the source seat:\n%s", air)
+	// The grant is not this verb's to change: .sops.yaml is the same rules with the same
+	// recipients, and the only edit is the mark admitted to air.yaml's rule, which predates it.
 	got := f.read(t, ".sops.yaml")
-	assert.Equal(t, cfgBefore, got, "inject edited .sops.yaml; the grant is not this verb's to change:\n%s", got)
+	wantCfg, changed, err := seatMarkRule([]byte(cfgBefore), "air.yaml")
+	require.NoError(t, err)
+	require.True(t, changed, "the fixture's rule already admits the mark")
+	assert.Equal(t, string(wantCfg), got, "inject edited .sops.yaml beyond admitting the mark; the grant is not this verb's to change:\n%s", got)
 
 	git := readMaybe(t, f.gitArgs)
 	for _, want := range []string{"checkout\n-b\nseal/air-NOVA_REDIS_BENCH_PASSWORD-20260927-013000", "add\nair.yaml", "commit\n-m\ninject NOVA_REDIS_BENCH_PASSWORD into air.yaml from rowan", "checkout\n-f\nmain"} {

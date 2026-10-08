@@ -45,6 +45,8 @@ type rig struct {
 	env          map[string]string
 	launchctl    []string
 	launchctlOut string
+	beats        []string // "server friend" for each beat the fake answered, in order
+	beatErr      error    // what the fake beat answers instead, when set
 	copy         friend.CopyFile
 	onPath       map[string]string // what lookPath finds, by name
 	now          time.Time
@@ -76,7 +78,9 @@ func newRig(t *testing.T, names ...string) *rig {
 
 func (r *rig) world() world {
 	return world{
-		getenv: func(k string) string { return r.env[k] },
+		stepBeat: true,
+		checkGo: func(f func()) { f() }, // fake-clock checks complete before the clock advances again
+		getenv:   func(k string) string { return r.env[k] },
 		open: func(context.Context, string) (bus.Store, func(), error) {
 			if r.store.Fail != nil {
 				return nil, nil, r.store.Fail
@@ -285,7 +289,7 @@ func TestStatusReadsTheThreeFiles(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, "inbox"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "inbox", "QUEUE.json"), []byte(`{"tasks":[{"id":"a","state":"queued"},{"id":"b","state":"working"}]}`), 0o644))
 	cli.Do(t, "status", "--as", "bob", "--dir", dir).Exit(0).
-		Out("STATUS OK daemon=up harness=opencode status_age=1s connection=connected seat=ada last_ping=2026-10-04T02:59:00Z ping_age=1m1s challenge=challenged nonce=n1 last_pong=2026-10-04T02:58:00Z session_pong_age=2m1s daemon_pong_age=31s pongs=0 queue=1 working=1 width=8 beats=7 last_beat=- delivered=2 session=- mode=-",
+		Out("STATUS OK daemon=up harness=opencode status_age=1s connection=connected seat=ada last_ping=2026-10-04T02:59:00Z ping_age=1m1s challenge=challenged nonce=n1 last_pong=2026-10-04T02:58:00Z session_pong_age=2m1s daemon_pong_age=31s pongs=0 queue=1 working=1 width=8 beats=7 last_beat=- delivered=2 envelope=0 envelope_bytes=0 session=- mode=-",
 			"NOTE the last beat failed: the sprint server at 127.0.0.1:6390 did not answer")
 	r.now = start.Add(friend.DaemonStale)
 	cli.Do(t, "status", "--as", "bob", "--dir", dir).Exit(0).Out("STATUS OK daemon=down")
@@ -365,6 +369,43 @@ func TestInstallVerbRefusesOrCopiesABinaryOnARemovableVolume(t *testing.T) {
 		Err("INSTALL REFUSED", "removable volume", "disk full")
 	assert.Empty(t, refused.launchctl)
 	assert.NoFileExists(t, plist)
+}
+
+// The beat is a verb of the tool the daemon's agent runs, and the agent
+// install writes is the only plist a friend needs: the daemon beats while it
+// runs (docs/SPEC-FRIEND.md, the loop), so the beat needs no agent of its
+// own and the hand plists are retired. The finding of 2026-10-04: a
+// friend-beat agent copied in by hand, for a friend whose harness is the
+// ChatGPT app, fails to bootstrap (launchd answers Input/output error on a
+// plist that lints fine), where the daemon's own install already retries that
+// bootstrap; the verb is the daemon's own call, on its own, for the canary.
+func TestInstallWritesTheBeatVerbAndNoHandPlist(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, "ada", "bob")
+	w := r.world()
+	w.beat = func(_ context.Context, server, name string, _ time.Time, _ friend.BeatWords) (string, error) {
+		r.beats = append(r.beats, server+" "+name)
+		return "FRIEND-BEAT " + name, r.beatErr
+	}
+	cli := testkit.Main(func(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+		return run(args, stdin, stdout, stderr, w)
+	})
+	agents := filepath.Join(r.home, "Library", "LaunchAgents")
+	plist := filepath.Join(agents, "com.nova.friend-bob.plist")
+	cli.Do(t, "install", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--width", "4", "--server", "127.0.0.1:6390").Exit(0).
+		Out("INSTALL OK label=com.nova.friend-bob plist=" + plist)
+	raw, err := os.ReadFile(plist)
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), "<string>run</string>", "the agent runs the daemon, and the daemon beats while it runs (docs/SPEC-FRIEND.md, the loop)")
+	assert.Contains(t, string(raw), "<string>--server</string>", "the beat's server is the agent's own flag")
+	assert.NotContains(t, string(raw), "StartInterval", "the agent is the daemon's RunAtLoad shape, never a hand plist's timer")
+	written, err := os.ReadDir(agents)
+	require.NoError(t, err)
+	assert.Len(t, written, 1, "install writes the daemon's agent alone; the beat needs no plist of its own")
+	cli.Do(t, "beat", "--as", "bob", "--server", "127.0.0.1:6390").Exit(0).Out("BEAT OK as=bob server=127.0.0.1:6390")
+	assert.Equal(t, []string{"127.0.0.1:6390 bob"}, r.beats, "the verb makes the same call the daemon's loop makes")
+	r.beatErr = errors.New("the sprint server at 127.0.0.1:6390 did not answer")
+	cli.Do(t, "beat", "--as", "bob").Exit(2).Err("BEAT REFUSED", "did not answer")
 }
 
 // run over the fake store, the fake opencode session and a cancelled context: the
@@ -661,7 +702,7 @@ func TestStatusSaysABrokenSessionAndWhy(t *testing.T) {
 	require.NoError(t, friend.WriteStatus(state, friend.Status{Friend: "bob", Harness: "opencode", At: start, Connection: friend.Connected, Challenge: friend.Quiet,
 		Session: friend.SessionBroken, SessionID: "ses_x", SessionReason: "invalid_request_error: bad input", BrokenAt: start.Add(-time.Minute)}))
 	cli.Do(t, "status", "--as", "bob", "--dir", dir).Exit(0).
-		Out(`delivered=0 session=broken mode=- held=- inbox=- missing=- session_id=ses_x broken_at=2026-10-04T02:59:00Z status=down reason="invalid_request_error: bad input"`,
+		Out(`delivered=0 envelope=0 envelope_bytes=0 session=broken mode=- held=- inbox=- missing=- session_id=ses_x broken_at=2026-10-04T02:59:00Z status=down reason="invalid_request_error: bad input"`,
 			"NOTE the session is broken: the provider refused the same way turn after turn")
 }
 
@@ -886,6 +927,18 @@ func TestRunHoldsAHarnessAtItsLimitUntilItsResetThenWakesIt(t *testing.T) {
 	dir := t.TempDir()
 	state := friend.StateDirIn(dir)
 	w := r.world()
+	checksStarted := 0
+	w.checkGo = func(f func()) {
+		checksStarted++
+		if checksStarted == 1 { // establish initial proof before the fake clock jumps; later turns remain asynchronous
+			f()
+			return
+		}
+		go f()
+	}
+	w.friends = func(context.Context, string) ([]friend.WakeRow, string, error) {
+		return nil, "ada", nil // the carried startup note comes from the actual seat
+	}
 	var mu sync.Mutex
 	clock := start
 	w.now = func() time.Time { mu.Lock(); defer mu.Unlock(); clock = clock.Add(time.Second); return clock }
@@ -981,16 +1034,24 @@ func TestRunHoldsAHarnessAtItsLimitUntilItsResetThenWakesIt(t *testing.T) {
 		"no up beat while she is down (%s to %s): %v", downAt, turns[1].at, beats)
 	// her beat says down instead, with the until and the reason (limits-mean-down-w-r5.w1~15)
 	require.NotEmpty(t, downBeats, "she beats down while limited")
+	limitBeats := 0
 	for _, b := range downBeats {
 		if strings.HasPrefix(b.reason, "push unproven: ") {
 			// the daemon's start, before its first check is answered: its own word, down
 			assert.True(t, b.at.Before(turns[0].at), "a push-unproven down beat only at the start: %s", b.at)
 			continue
 		}
+		if strings.HasPrefix(b.reason, "no session answer to session check ") {
+			// The fake clock may outrun an asynchronous check turn. Its unanswered
+			// nonce must still beat down, never manufacture an up session.
+			continue
+		}
+		limitBeats++
 		assert.False(t, b.at.Before(turns[0].at) || b.at.After(turns[2].at), "a down beat only while limited, the wake turn's answer ending it: %s", b.at)
 		assert.False(t, b.until.Before(turns[0].at.Add(10*time.Minute)), "until the reset the text named: %s", b.until)
 		assert.Equal(t, "harness limit: Insufficient AI Credits. Your credits will refresh in 10 minutes.", b.reason)
 	}
+	assert.Positive(t, limitBeats, "the harness limit itself must be reported down")
 	got, err := r.store.Range(context.Background(), bus.StreamOf("ada"), "-", "+", 0)
 	require.NoError(t, err)
 	var told []string
@@ -1186,7 +1247,7 @@ func TestCheckSaysOKOrTheStageThatFailed(t *testing.T) {
 	// the plan, from the same pong line, with nothing delivered and no store opened
 	r.store.Fail = errors.New("store down")
 	cli.Do(t, "check", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--state-dir", state, "--to", "ada", "--dry-run").Exit(0).
-		Out("CHECK OK harness=opencode dir=/w/bob within=5m0s", "CHECK PLAN command=\"/opt/nova/bin/nova-friend pong --as bob --nonce r4nd0m --state-dir "+state+" --redis store.test:6379 --to ada\"", "NOTE nothing was delivered")
+		Out("CHECK OK harness=opencode dir=/w/bob within=5m0s", "CHECK PLAN command=\"/opt/nova/bin/nova-friend pong --as bob --nonce r4nd0m --state-dir "+state+" --redis store.test:6379 --dir /w/bob --to ada\"", "NOTE nothing was delivered")
 	cli.Do(t, "check", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--state-dir", state).Exit(2).Err("CHECK REFUSED: the store did not answer: store down")
 
 	// install: the check's fail is a NOTE, the agent stays loaded

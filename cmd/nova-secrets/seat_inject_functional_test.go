@@ -104,10 +104,17 @@ func TestSeatInjectReSealsAValueIntoAnExistingSeat(t *testing.T) {
 	_, err := cmd.Output()
 	assert.Error(t, err, "the coordinator's key opens the bench's file after inject")
 
-	// And the store's own gate approves the branch as it stands.
+	// bo's rule predates the mark, so the same commit gives it the unencrypted_regex the
+	// mark is read through, and touches no other rule.
+	rules := runCmd(t, s.storeDir, "git", "show", branch+":.sops.yaml")
+	assert.Equal(t, fmt.Sprintf("creation_rules:\n  - path_regex: ^ada\\.yaml$\n    age: %s,%s\n  - path_regex: ^bo\\.yaml$\n    unencrypted_regex: ^NOVA_SECRETS_WRITTEN_BY$\n    age: %s,%s\n",
+		s.ada.pubKey, s.recovery.pubKey, s.bo.pubKey, s.recovery.pubKey), rules, "the inject branch's .sops.yaml")
+	assert.Contains(t, sealed, "NOVA_SECRETS_WRITTEN_BY: seat inject ", "the mark is not in the clear")
+
+	// And the store's own gate approves the branch as it stands: the seat file and its rule.
 	out, errOut, code = runNovaSecrets(bin, "gate", "--store", s.storeDir, "--base", "main", "--head", branch)
 	assert.Equal(t, 0, code, "the gate does not approve the inject branch (exit %d):\n%s%s", code, out, errOut)
-	assert.True(t, strings.HasPrefix(strings.TrimSpace(out), "GATE APPROVE files=1 "), "the gate does not approve the inject branch (exit %d):\n%s%s", code, out, errOut)
+	assert.True(t, strings.HasPrefix(strings.TrimSpace(out), "GATE APPROVE files=2 "), "the gate does not approve the inject branch (exit %d):\n%s%s", code, out, errOut)
 }
 
 // TestSeatInjectRefusesASeatWithNoFile: the door for a seat that has no file is

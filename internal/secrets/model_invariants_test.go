@@ -617,18 +617,18 @@ func TestModelSecretsGateRefusesEveryRuleBreak(t *testing.T) {
 			"", 0, []string{"GATE APPROVE files=2"}},
 		{"refuse another file", nil,
 			map[string]string{".sops.yaml": gateGoodSops(gateSeatKey, gateRecoveryKey), "rowan.yaml": sealed, "notes.txt": "a change outside the gate\n"},
-			"", 2, []string{"GATE REFUSE rule=0", "notes.txt"}},
+			"", 1, []string{"GATE FAILED rule=0", "notes.txt"}},
 		{"refuse a third recipient", nil,
 			map[string]string{".sops.yaml": gateGoodSops(gateSeatKey, gateRecoveryKey, gateThirdKey), "rowan.yaml": sealed},
-			"", 2, []string{"GATE REFUSE rule=1"}},
+			"", 1, []string{"GATE FAILED rule=1"}},
 		{"refuse a removed seat", map[string]string{".sops.yaml": gateGoodSops(gateSeatKey, gateRecoveryKey), "rowan.yaml": sealed},
-			map[string]string{}, "rowan.yaml", 2, []string{"GATE REFUSE", "rowan.yaml"}},
+			map[string]string{}, "rowan.yaml", 1, []string{"GATE FAILED", "rowan.yaml"}},
 		{"refuse a plain value", nil,
 			map[string]string{".sops.yaml": gateGoodSops(gateSeatKey, gateRecoveryKey), "rowan.yaml": sealed + "GH_TOKEN: sk-live-notencrypted\n"},
-			"", 2, []string{"GATE REFUSE", "rowan.yaml"}},
+			"", 1, []string{"GATE FAILED", "rowan.yaml"}},
 		{"refuse a file with no rule", map[string]string{".sops.yaml": "creation_rules:\n  - path_regex: ^mini\\.yaml$\n    age: " + gateSeatKey + "," + gateRecoveryKey + "\n"},
 			map[string]string{"rowan.yaml": sealed},
-			"", 2, []string{"GATE REFUSE rule=0", "rowan.yaml"}},
+			"", 1, []string{"GATE FAILED rule=0", "rowan.yaml"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -674,8 +674,8 @@ func TestModelSecretsNoHandRoad(t *testing.T) {
 			"rowan.yaml": gateSealedFile() + "GH_TOKEN: sk-handwritten\n",
 		})
 		line, code := RunGate(GateInput{StoreDir: dir, Base: base, Head: head})
-		assert.Equal(t, 2, code, "the gate approved a hand-written plain entry (line=%q)", line)
-		assert.Contains(t, line, "GATE REFUSE", "RunGate line = %q, want REFUSE", line)
+		assert.Equal(t, 1, code, "the gate approved a hand-written plain entry (line=%q)", line)
+		assert.Contains(t, line, "GATE FAILED", "RunGate line = %q, want FAILED", line)
 	})
 
 	t.Run("a hand-sealed entry is one the gate cannot tell", func(t *testing.T) {
@@ -719,8 +719,8 @@ func TestModelSecretsEveryProposalJudged(t *testing.T) {
 	}{
 		{"empty proposal", base, base, "GATE APPROVE files=0", 0},
 		{"good proposal", base, good, "GATE APPROVE", 0},
-		{"rule-breaking proposal", base, bad, "GATE REFUSE", 2},
-		{"proposal naming nothing", base, "does-not-exist", "GATE REFUSE", 2},
+		{"rule-breaking proposal", base, bad, "GATE FAILED", 1},
+		{"proposal naming nothing", base, "does-not-exist", "SECRETS GATE REFUSED", 2},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()

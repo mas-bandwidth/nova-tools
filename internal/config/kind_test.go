@@ -86,8 +86,9 @@ func TestTheMachineRowIsTheDeclaredFactsSomethingReads(t *testing.T) {
 // TestTheFriendRowIsWhatSomeoneDecidesForHer: Glenn 2026-09-27, "anything
 // that a friend would just know, is runtime redis data". Her fields:
 // slots, tiers (the fallback of a row with no models), roles, width
-// (2026-10-02, the jobs she works at once), mode, config_dir and models
-// (2026-10-06, strongest first, from which her class and tiers derive); no
+// (2026-10-02, the jobs she works at once), mode, config_dir, token cap, the
+// optional work restriction (streams, kinds) and models (2026-10-06, strongest
+// first, from which her class and tiers derive); no
 // machine, harness, logins, wake or note; and no coordinator role, which is
 // the sprint row's.
 func TestTheFriendRowIsWhatSomeoneDecidesForHer(t *testing.T) {
@@ -95,7 +96,7 @@ func TestTheFriendRowIsWhatSomeoneDecidesForHer(t *testing.T) {
 
 	friend, _ := Lookup(KindFriend)
 	scopedGot97 := strings.Join(friend.FieldNames(), ",")
-	require.Equal(t, "slots,tiers,roles,width,mode,config_dir,token_cap,models", scopedGot97, "friend fields %s, want slots,tiers,roles,width,mode,config_dir,token_cap,models", scopedGot97)
+	require.Equal(t, "slots,tiers,roles,width,mode,config_dir,token_cap,streams,kinds,models", scopedGot97, "friend fields %s, want slots,tiers,roles,width,mode,config_dir,token_cap,streams,kinds,models", scopedGot97)
 	for _, f := range friend.Fields {
 		scopedWant102 := f.Name == "slots" // models, or the tiers fallback, is checkFriend's rule
 		assert.Equal(t, scopedWant102, f.Required, "--%s required=%v, want %v", f.Name, f.Required, scopedWant102)
@@ -746,4 +747,15 @@ func TestAFriendRowsConfigDirIsAbsoluteWhenSet(t *testing.T) {
 			}
 		})
 	}
+}
+
+// A friend row's streams restriction is a comma list of globs the matcher reads: a
+// pattern it cannot parse is refused with the field named.
+func TestFriendStreamRestrictionRejectsMalformedGlob(t *testing.T) {
+	t.Parallel()
+	friend, ok := Lookup(KindFriend)
+	require.True(t, ok)
+	err := friend.Check(Row{Name: "friend-a", Fields: map[string]string{"width": "1", "streams": "["}})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid stream glob")
 }

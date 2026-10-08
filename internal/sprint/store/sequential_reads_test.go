@@ -70,7 +70,7 @@ func TestAProCardsReadsAreAskedTogether(t *testing.T) {
 	assert.Empty(t, h.openOf(sprint.NReadsExhausted), "one ok of two is not reads exhausted: the other is outstanding")
 	ask("attempt 2 while the second read is outstanding", 0)
 	h.readOne(reads[1], "ok", "")
-	require.Len(t, h.openOf(sprint.NReadyToAccept), 1)
+	require.Empty(t, h.openOf(sprint.NReadyToAccept), "the tick's to accept, no judgment")
 	h.must(AcceptStep(sprint.AcceptReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
 	assert.Equal(t, sprint.Merging, h.snap().Work.Card("s1-1").Col)
 
@@ -94,7 +94,7 @@ func TestAFlashCardIsStillReadOnce(t *testing.T) {
 	r := h.run(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
 	require.Len(t, r.Refused, 1, "asked already: %+v", r)
 	assert.Equal(t, "asked already", r.Refused[0].Why)
-	require.Len(t, h.openOf(sprint.NReadyToAccept), 1)
+	require.Empty(t, h.openOf(sprint.NReadyToAccept), "the tick's to accept, no judgment")
 	h.clean("a flash card read once")
 }
 

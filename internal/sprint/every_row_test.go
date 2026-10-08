@@ -27,8 +27,9 @@ func TestATakeOfSeveralMembersTakesEachOnesQueue(t *testing.T) {
 	require.Empty(t, q.Units, "a take by id of several members: %+v", q)
 }
 
-// Two readers' oks of one primary in one read: the primary is ready to
-// accept, its judgment written once, after both.
+// Two readers' oks of one primary the pump holds (its CI red at its head) in
+// one read: the primary is ready to accept, its judgment written once, after
+// both. (One nothing holds is the tick's to accept, no judgment.)
 func TestTwoReadersOksInOneReadMakeOneJudgment(t *testing.T) {
 	t.Parallel()
 	w := fleetWorld(t, 1, 64, "m1")
@@ -37,6 +38,7 @@ func TestTwoReadersOksInOneReadMakeOneJudgment(t *testing.T) {
 	w.must(Deal(w.s, DealReq{Sel: Sel{Limit: 1}}))
 	w.must(Take(w.s, TakeReq{As: "m1", Sel: Sel{Limit: 1}}))
 	w.must(Finish(w.s, FinishReq{As: "m1,m2", Sel: Sel{IDs: []string{"s1-1.w1"}}, Gens: map[string]int{"s1-1.w1": 1}}))
+	w.must(RecordCI(w.s, CIReq{Sel: Sel{IDs: []string{"s1-1"}}, Red: true, Run: "1"}))
 	w.must(Ask(w.s, AskReq{Sel: Sel{IDs: []string{"s1-1"}}, Who: "coordinator"})) // a card's reads are asked together: both readers in one ask
 	ids := []string{ReadCardID("s1-1", 1, "reader-a"), ReadCardID("s1-1", 1, "reader-b")}
 	p := w.must(Read(w.s, ReadReq{Usage: "input=1000 output=100", As: "reader-a,reader-b", Verdict: "ok", Sel: Sel{IDs: ids}}))

@@ -15,15 +15,12 @@ import (
 // macOS's own log paths, and whether `/opt` is a directory is not a fact about the machine
 // running the test — without this, the suite was asserting that the READER has an /opt,
 // which is true on the Studio and false on the windows runner (run 35367602664).
-func posixDirs(t *testing.T, dirs ...string) {
-	t.Helper()
-	old := denialStat
-	t.Cleanup(func() { denialStat = old })
+func posixDirs(dirs ...string) statFunc {
 	set := map[string]bool{}
 	for _, d := range dirs {
 		set[d] = true
 	}
-	denialStat = func(p string) (fs.FileInfo, error) {
+	return func(p string) (fs.FileInfo, error) {
 		if set[p] {
 			return fakeDirInfo{}, nil
 		}
@@ -102,12 +99,14 @@ func TestDenialsInsideTheAllowedSetAreNotReported(t *testing.T) {
 
 // The line is the contract, and the remedy on it is a line to RUN, not a thing to work out.
 func TestTheDeniedLineNamesThePathTheOpAndTheRemedy(t *testing.T) {
-	posixDirs(t, "/opt")
+	t.Parallel()
+
+	stat := posixDirs("/opt")
 	var errb bytes.Buffer
 	printDenied(&errb, []deniedPath{
 		{Path: "/opt", Op: "read", PID: 10},
 		{Path: "/Users/me/notes/out.txt", Op: "write", PID: 11},
-	}, 10)
+	}, 10, stat)
 	out := errb.String()
 	assert.Contains(t, out, `SANDBOX DENIED path=/opt op=read remedy="--read /opt"`, "the denied line for a directory does not name the directory as the remedy:\n%s", out)
 	// A FILE's remedy names the directory to pass, because --read takes a directory.
@@ -119,8 +118,10 @@ func TestTheDeniedLineNamesThePathTheOpAndTheRemedy(t *testing.T) {
 // means `\`. Both halves are asserted here directly, with no fixture and no machine: the
 // windows leg went red on exactly these two (run 35367602664).
 func TestTheDenialReaderUsesPosixPathsOnEveryPlatform(t *testing.T) {
-	posixDirs(t) // nothing is a directory: every answer below is path arithmetic
-	got := remedyDir("/Users/me/notes/out.txt")
+	t.Parallel()
+
+	stat := posixDirs() // nothing is a directory: every answer below is path arithmetic
+	got := remedyDir(stat, "/Users/me/notes/out.txt")
 	assert.Equal(t, "/Users/me/notes", got, "remedyDir gave %q; a seatbelt log path is separated by / on every platform, so this is `path` and never `path/filepath`", got)
 	assert.True(t, insidePosix("/Volumes/nova-j1/work/inside.txt", "/Volumes/nova-j1"), "a path under the write set was called outside it; the containment test joins with / and not with os.PathSeparator")
 	assert.False(t, insidePosix("/Volumes/nova-j1x/work", "/Volumes/nova-j1"), "a sibling whose name merely starts the same was called inside the write set")
@@ -137,7 +138,7 @@ func TestTheDeniedLinesAreCapped(t *testing.T) {
 		many = append(many, deniedPath{Path: "/x/" + string(rune('a'+i)), Op: "read", PID: 1})
 	}
 	var errb bytes.Buffer
-	printDenied(&errb, many, 3)
+	printDenied(&errb, many, 3, posixDirs())
 	out := errb.String()
 	got := strings.Count(out, "SANDBOX DENIED")
 	assert.Equal(t, 3, got, "the cap printed %d denied lines, want 3:\n%s", got, out)
@@ -149,6 +150,6 @@ func TestNoDenialsPrintsNothing(t *testing.T) {
 	t.Parallel()
 
 	var errb bytes.Buffer
-	printDenied(&errb, nil, 10)
+	printDenied(&errb, nil, 10, posixDirs())
 	assert.Zero(t, errb.Len(), "a run with no denials printed %q", errb.String())
 }

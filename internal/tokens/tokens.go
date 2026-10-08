@@ -27,7 +27,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"time"
 )
 
@@ -382,8 +381,12 @@ func Applies(kind, field string) bool { return applies[kind][field] }
 
 // Unreadable is a declared source the tool could not read: counted, printed on its own
 // line, and the reason the run exits 1, because a declared source is a claim that the
-// report covers it.
-type Unreadable struct{ Label, Path, Why string }
+// report covers it. Line is the 1-based first line that could not be read (a badline);
+// 0 when the failure is not a line, so a permission problem is not given a line number.
+type Unreadable struct {
+	Label, Path, Why string
+	Line             int
+}
 
 // Unparsed is a bus line, a whole bus note, or an export the parser could not read.
 type Unparsed struct {
@@ -660,28 +663,15 @@ func UsdPerMtok(micro, tokens int64) string {
 	return fmt.Sprintf("%.4f", float64(micro)/float64(tokens))
 }
 
-// opens counts every source file this process has opened. The fold's cost is ONE PASS over
-// each declared file -- there is no index and no incremental mode, and a day file is
-// recomputed whole from the sources every time -- and a count is what a test can pin where
-// a time cannot: the prototype read 2,497 files in about ten seconds, and that number is a
-// fact about a disk rather than about this code.
-var opens atomic.Int64
-
-// Opens is how many source files have been opened since the process started.
-func Opens() int64 { return opens.Load() }
-
-// openSource is the ONE door every reader opens a source file through, so that the count
-// above cannot drift from the truth by somebody reaching for os.Open directly.
+// openSource is the ONE door every reader opens a source file through.
 func openSource(path string) (*os.File, error) {
-	opens.Add(1)
 	return os.Open(path)
 }
 
 // openSourceFS is openSource for a filesystem the caller hands in: main passes
 // os.DirFS(dir) and a test passes fstest.MapFS, so the folding logic reads a tree without
-// a temporary directory and the open count stays honest either way.
+// a temporary directory.
 func openSourceFS(fsys fs.FS, name string) (fs.File, error) {
-	opens.Add(1)
 	return fsys.Open(name)
 }
 
@@ -714,7 +704,6 @@ func cappedRead(f fs.File, name string) ([]byte, error) {
 
 // readSource is openSource for a whole file.
 func readSource(path string) ([]byte, error) {
-	opens.Add(1)
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err

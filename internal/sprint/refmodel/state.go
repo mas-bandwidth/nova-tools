@@ -146,6 +146,46 @@ const (
 	JBound     = "bound"            // a card reached its bound (the tick's)
 )
 
+// JBriefWrong is a card at its brief's bound: the brief is wrong, not the worker (sprint's
+// AtBriefBound). AttemptsDefault is the attempts one brief may run when neither its stream nor
+// the sprint sets a cap (sprint.AttemptsDefault).
+const (
+	JBriefWrong     = "briefwrong"
+	AttemptsDefault = 4
+)
+
+// The ways the lander refuses a card's own head (sprint.RefusalWay): "" is a refusal it could
+// not place, which stops the stream.
+const (
+	RefusedConflict = "conflict"
+	RefusedPaths    = "paths"
+	RefusedChecks   = "checks"
+	RefusedGate     = "gate"
+)
+
+// AttemptsCap is how many attempts one brief may run in the stream (sprint's AttemptsCap): the
+// stream's cap, else the sprint's, else AttemptsDefault.
+func (s State) AttemptsCap(stream string) int {
+	switch {
+	case s.Streams[stream].Cap > 0:
+		return s.Streams[stream].Cap
+	case s.Cap > 0:
+		return s.Cap
+	}
+	return AttemptsDefault
+}
+
+// AtBriefBound says the landing's refusal of the primary's head the way way is at its brief's
+// bound (sprint.AtBriefBound): the same refusal as the one its last rework answered, at an
+// attempt since its brief was replaced, or its stream's attempt cap counted from that brief.
+func (s State) AtBriefBound(p, way string) bool {
+	pr := s.Primaries[p]
+	if pr.Refused != "" && pr.Refused == way && pr.FindingAttempt > pr.BriefAt && pr.FindingAttempt < pr.Attempt {
+		return true
+	}
+	return pr.Attempt-pr.BriefAt >= s.AttemptsCap(pr.Stream)
+}
+
 // Subjects that are not a primary.
 const SprintSubject = "sprint:done"
 
@@ -176,6 +216,11 @@ type Primary struct {
 	// the next attempt's first read is asked of the finder, out of turn (Ask).
 	Finder         string
 	FindingAttempt int
+	// BriefAt is its attempt when its brief was last replaced, 0 for the brief add gave it
+	// (sprint.FieldBriefAttempt); Refused is the way the landing last refused its head when its
+	// finding is that refusal (sprint.LandRefusedFinding), "" otherwise.
+	BriefAt int
+	Refused string
 }
 
 // WorkCard is one work card: <primary>.w<attempt>.
@@ -219,6 +264,7 @@ type MergeCard struct {
 type Stream struct {
 	State string
 	Cause string
+	Cap   int // its attempt cap, 0 for none (sprint.FieldAttempts)
 }
 
 // Judgment is one open judgment on one subject: a primary, a stream
@@ -247,6 +293,8 @@ type State struct {
 	Pending   string // the verb of the pending operation (D1), "" when none
 	// Coordinator is the one actor who releases sentinels.
 	Coordinator string
+	// Cap is the sprint's attempt cap, 0 for none (sprint.PropAttempts).
+	Cap int
 	// DealLast and AskLast are the rolling indexes of the deal and the ask
 	// (tla/SprintEvents.tla dcur and acur): each a
 	// counter, as the table's property holds it (a decimal uint64 from 0 this
@@ -925,14 +973,16 @@ func (s State) AcceptHeld(p string) string {
 }
 
 // acceptNote is the ready to accept judgment a step that leaves an
-// acceptable primary in review writes (sprint's reviewJudgment): when no
-// judgment open on it offers accept (ready to accept, returned to review), and
-// the machine is STOPPED or holds it (AcceptHeld).
+// acceptable primary in review writes (sprint's reviewJudgment): only when the
+// pump holds it (AcceptHeld) and no judgment open on it offers accept (ready
+// to accept, returned to review). A primary nothing holds is the tick's to
+// accept, RUNNING or STOPPED (at the first pump after start): never a
+// judgment, never a hand step.
 func (n *State) acceptNote(p string) {
 	if !n.InWork(p, Review) || !n.Acceptable(p) || n.Open[Judgment{JAccept, p}] || n.Open[Judgment{JReturned, p}] {
 		return
 	}
-	if n.Machine != Running || n.AcceptHeld(p) != "" {
+	if n.AcceptHeld(p) != "" {
 		n.open(JAccept, p)
 	}
 }

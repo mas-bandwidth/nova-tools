@@ -529,8 +529,9 @@ func ReadStart(s State, r, c string) (State, error) {
 // broken judgment; the read that leaves the reads exhausted opens reads
 // exhausted (G3). A report on a card still asked is the begin and the report
 // in one step, and the read that completes two different readers' ok at the
-// head opens ready to accept while the machine is STOPPED (a RUNNING
-// machine's pump accepts it): both the spec's (section 6), not the model's.
+// head opens ready to accept only for a primary the pump holds (AcceptHeld);
+// the tick accepts the rest, RUNNING or STOPPED (at the first pump after
+// start): both the spec's (section 6), not the model's.
 func Read(s State, r, c string, ok bool) (State, error) {
 	if err := free(s); err != nil {
 		return s, err
@@ -551,8 +552,7 @@ func Read(s State, r, c string, ok bool) (State, error) {
 	if !ok {
 		n.open(JBroken, p)
 	} else if before < 2 {
-		// a RUNNING machine's pump accepts it unless it holds it: "accept is
-		// mechanical"
+		// the tick's pump accepts it unless it holds it: "accept is mechanical"
 		n.acceptNote(p)
 	}
 	n.exhaust(p)
@@ -664,6 +664,9 @@ func Rework(s State, p, m string) (State, error) {
 			break
 		}
 	}
+	if len(broken) > 0 {
+		pr.Refused = "" // its broken reads' finding replaces the landing's (sprint.Rework)
+	}
 	pr.Attempt++
 	if len(up) > 0 {
 		if m != choice {
@@ -690,16 +693,24 @@ func Rework(s State, p, m string) (State, error) {
 // Drop is SprintTables.tla Drop(p) (line 478): off the table. Its
 // unfinished work card is withdrawn, its outstanding read cards retire, its
 // merge place goes (the returned place too, spec section 7); work last. A
-// waiting primary that needs it is blocked. Every judgment on it closes. A
-// sprint it finishes, by dropping the last open card, is found done by the
-// tick's judgment tickDone: with nothing open and a card dropped, the sprint
-// is done.
+// waiting primary that needs it makes the drop refused, naming the
+// dependants: the real Drop without Cascade refuses for that card, and this
+// model matches it (docs/SPEC-SPRINT.md section 11). Every judgment on it
+// closes. A sprint it finishes, by dropping the last open card, is found done
+// by the tick's judgment tickDone: with nothing open and a card dropped, the
+// sprint is done.
 func Drop(s State, p string) (State, error) {
 	if err := free(s); err != nil {
 		return s, err
 	}
 	if !s.Placedp(p) || s.InWork(p, Landed) {
 		return s, refuse("%s is not an open primary on the table", p)
+	}
+	for _, q := range Keys(s.Primaries) {
+		qp := s.Primaries[q]
+		if qp.State == Waiting && slices.Contains(qp.Needs, p) {
+			return s, refuse("%s is needed by %s; drop them too with --cascade", p, q)
+		}
 	}
 	n := s.Clone()
 	st := n.Primaries[p].Stream
@@ -916,6 +927,65 @@ func MergeStop(s State, stream string, batch int, p, cause, q string) (State, er
 	n.Merge[p] = MergeCard{Place: Stuck, Need: q}
 	n.Streams[stream] = Stream{State: SStopped, Cause: cause}
 	n.open(note, StreamSubject(stream))
+	return n, nil
+}
+
+// MergeRefused is a conflict fact on card p of the batch (the first n queued), the landing's
+// refusal of its head the way way (sprint.RefusalWay, sprint's landRefused). A way the lander
+// could not place ("") is its own failure and stops the stream (MergeStop). Any other is the
+// card's own and never stops the stream: the card leaves merge, returned at its attempt, every
+// judgment on it closing, and the stream's state follows (G4). Files outside its PATHS
+// (RefusedPaths) go back to review under returned to review, for the widen rule; at its
+// brief's bound (AtBriefBound) the card goes back to review with the bound's judgment; else its
+// read cards retire and its next attempt waits ready, the way its finding.
+func MergeRefused(s State, stream string, batch int, p, way string) (State, error) {
+	if way == "" {
+		return MergeStop(s, stream, batch, p, CConflict, "")
+	}
+	if err := free(s); err != nil {
+		return s, err
+	}
+	if s.Streams[stream].State != SMerging {
+		return s, refuse("stream %s is not merging", stream)
+	}
+	queued := s.MergeCell(stream, Queued)
+	batch = min(batch, len(queued))
+	if !slices.Contains(queued[:batch], p) {
+		return s, refuse("%s is not in the batch %v", p, queued[:batch])
+	}
+	if !s.InWork(p, Merging) {
+		return s, refuse("%s is not merging", p)
+	}
+	n := s.Clone()
+	n.Merge[p] = MergeCard{Place: Returned}
+	x := n.Streams[stream]
+	x.State = n.streamAfter(stream, x.State, nil, nil)
+	n.Streams[stream] = x
+	n.closeOn(p)
+	pr := n.Primaries[p]
+	pr.ReturnedAt = pr.Attempt
+	switch {
+	case way == RefusedPaths:
+		pr.State = Review
+		n.Primaries[p] = pr
+		n.open(JReturned, p)
+		return n, nil
+	case s.AtBriefBound(p, way):
+		pr.State = Review
+		n.Primaries[p] = pr
+		n.open(JBriefWrong, p)
+		n.acceptNote(p)
+		return n, nil
+	}
+	for _, id := range n.LiveReadsOf(p) {
+		rc := n.Reads[id]
+		rc.Place = Retired
+		n.Reads[id] = rc
+	}
+	pr.Finder, pr.FindingAttempt, pr.Refused = "", pr.Attempt, way
+	pr.Attempt++
+	pr.State = Ready
+	n.Primaries[p] = pr
 	return n, nil
 }
 

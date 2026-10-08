@@ -3,6 +3,7 @@ package sprint
 import (
 	"cmp"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 )
@@ -84,7 +85,7 @@ func friendLevel(s *Snapshot, r FriendLevelReq, dealt, dealtWorking map[string]i
 		held[f.Name] = friendLoad(s, f.Name) + dealt[f.Name]
 		var unstarted []*Card
 		for _, c := range s.Fleet.Cell(row, Ready) {
-			if (dealtWorking[f.Name] > 0 && unitPromoted(r.Taken, c.ID)) || r.Moved[c.ID] {
+			if (dealtWorking[f.Name] > 0 && unitPromoted(r.Taken, c.ID)) || r.Moved[c.ID] || isRead(c) {
 				continue // started this tick (friendStartUnits), or moved already this tick
 			}
 			if r.Started[c.ID] == "" && !friendStarted(s, f, c) {
@@ -105,12 +106,13 @@ func friendLevel(s *Snapshot, r FriendLevelReq, dealt, dealtWorking map[string]i
 	// to is where the card goes, "" when nowhere: below her room, of its tier, not a
 	// friend it left, and an idle lane for a giver with none or an even smaller backlog
 	to := func(giver string, c *Card) string {
-		tier, left := s.dealTierOf(s.Work.Placed(c.F("primary"))), friendsLeft(c)
+		pr := s.Work.Placed(c.F("primary"))
+		tier, left := s.DealTier(pr), friendsLeft(c)
 		free, idle := map[string]int{}, map[string]int{}
 		var may []string
 		for _, f := range seats {
 			n := f.Name
-			if n == giver || held[n] >= room[n] || slices.Contains(left, n) || !friendTakes(f, tier) {
+			if n == giver || held[n] >= room[n] || slices.Contains(left, n) || !friendTakes(s, f, tier) || !friendRestrictionAllows(f, pr) {
 				continue
 			}
 			if (lanes(giver) <= 0 && lanes(n) > 0) || backlog(giver)-backlog(n) > 1 {
@@ -164,6 +166,18 @@ func friendLevel(s *Snapshot, r FriendLevelReq, dealt, dealtWorking map[string]i
 	if len(p.Units) > 0 {
 		p.Units[0].Moved += fmt.Sprintf("; moved=%d to %s from %s", moved, countsByMember(got), countsByMember(gives))
 	}
+	// then a card re-tiered to a tier its holder does not serve is taken back, to be dealt
+	// again to a friend that serves it (retierTakeBacks; docs/SPEC-SPRINT.md section 1, "One
+	// tier for every friend decision"); none the level or the tick moved or started
+	skip := maps.Clone(r.Moved)
+	if skip == nil {
+		skip = map[string]bool{}
+	}
+	for _, u := range append(slices.Clone(p.Units), r.Taken...) {
+		skip[u.Key] = true
+	}
+	tp := retierTakeBacks(s, seats, r.Who, r.Started, skip)
+	p.Units, p.Refused = append(p.Units, tp.Units...), append(p.Refused, tp.Refused...)
 	return p
 }
 

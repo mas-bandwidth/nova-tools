@@ -45,6 +45,10 @@ const (
 	NStagingRefused = "a member refused a card at staging"    // dealt to another member
 	NRestWithdrawn  = "a card withdrawn from a resting route" // dealt again on one that serves
 	NFriendReturned = "a friend's card returned to ready"     // by friend reconcile: no report, and her queue says done or does not hold it
+	// The landing refused a card's head (it does not merge on the base's tip, or fails the tree
+	// gate the base passes): the card was reworked at the tip and its stream landed on
+	// (landRefused, redo.go). Addressed to the coordinator; nothing to answer.
+	NLandRefused = "the landing refused a card's head: reworked at the tip"
 	// The coordinator held a fleet member, a reader, a friend or a stream, or released
 	// its hold (hold, unhold: hold.go), the reason in the note.
 	NHeld   = "held by the coordinator"
@@ -77,6 +81,7 @@ const (
 	NReadyToAccept   = "ready to accept"    // the readers it needs said ok at its head (ReadsNeeded)
 	NReturned        = "returned to review" // sent back from merging: the coordinator decides again
 	NWorkFailed      = "work came back failed"
+	NBriefDefect     = "a brief defect" // a HOLD naming the brief: re-cut it (brief_defect.go)
 	NReadBroken      = "a reader found it broken"
 	NBriefWrong      = "a card has reached its bound: the brief is wrong, not the worker" // brief_bound.go
 	NReadReturned    = "a reader returned a read"                                         // no verdict, not a read: asked again
@@ -85,6 +90,7 @@ const (
 	NCross           = "stream stopped: needs a card of another stream first"
 	NRejected        = "stream stopped: the merge queue rejected"
 	NBaseRed         = "stream stopped: the base fails its tree gate" // the base-gate rule's third failure (rules.go)
+	NMissingBase     = "the base branch is gone"                      // a land whose base branch is missing (rebase.go)
 	NBlocked         = "a primary is blocked on something dropped"
 	NMissingNeed     = "a primary is blocked on something missing"
 	NCIRed           = "ci red"
@@ -104,6 +110,7 @@ var Decisions = map[string][]string{
 	NReadyToAccept:   {"accept", "rework", "drop"},
 	NReturned:        {"rework", "accept", "drop"}, // accept only while its reads stand at its head
 	NWorkFailed:      {"rework with a fix", "drop"},
+	NBriefDefect:     {DecisionRecut, "drop"}, // never a redeal of the brief as cut
 	NReadBroken:      {"rework with the finding", "ask another reader", "drop"},
 	NBriefWrong:      {"brief", "drop"}, // never rework: a --fix changes the brief not at all (brief_bound.go)
 	NConflict:        {"resolve and resume", "rework", "drop"},
@@ -111,6 +118,7 @@ var Decisions = map[string][]string{
 	NCross:           {"rank that card first", "wait", "look at both", "return", "drop"},
 	NRejected:        {"resume", "return", "drop"},
 	NBaseRed:         {"resume", "wait"},
+	NMissingBase:     {"rebase", "wait", "drop"},
 	NBlocked:         {"drop", "ack"},
 	NMissingNeed:     {"drop", "ack"},
 	NCIRed:           {"rework with a fix", "return", "drop", "look", "ack"},
@@ -123,6 +131,7 @@ var Decisions = map[string][]string{
 	NSprintDone:      {"clear", "add"},
 	NSentinelReached: {"release", "do more before going on", "drop"},
 	NScoredLow:       {"add a repair card", "ack"}, // landed: a rework is a new card; ack accepts the landing
+	NTimer:           {"ack"},                      // a timer the actor set woke it: nothing to decide
 	NStalled:         {"look at the card", "wait"}, // each stall names its own
 }
 
@@ -328,3 +337,8 @@ func (n Note) Bound() Note {
 	}
 	return n
 }
+
+// DecisionRecut is the decision a brief defect asks for: the card is dropped and its brief cut
+// again from the stream's generator, with what the worker found, as a new card; a redeal of
+// the same brief would hold the same way (docs/SPEC-SPRINT.md section 1, a brief defect).
+const DecisionRecut = "re-cut the brief"

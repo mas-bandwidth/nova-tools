@@ -111,8 +111,10 @@ func ReadStep(r sprint.ReadReq) Step {
 	// verb reads the fleet table and closes it as her outbox report does, and brings
 	// her row's display cells up to date
 	for _, rd := range sprint.Split(r.As) {
-		if sprint.IsFriendRow(rd) {
-			return Step{Named: len(r.IDs) > 0, Args: ArgsOf(r), Verb: "read", Load: tables(sprint.Fleet, sprint.Work, sprint.Readers), Extras: sprint.NamedExtras(sprint.Fleet, r.IDs), Mirrors: true,
+		// a read card on a member's row (sprint read_cards.go) is read as hers is: a name
+		// that is no reader-<m> is a fleet row
+		if _, isReader := sprint.ReaderMachine(rd); sprint.IsFriendRow(rd) || !isReader {
+			return Step{Named: len(r.IDs) > 0, Args: ArgsOf(r), Verb: "read", Load: tables(sprint.Fleet, sprint.Work, sprint.Readers), Extras: sprint.NamedExtras(sprint.Fleet, r.IDs), Mirrors: true, Prices: r.Usage != "",
 				Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Read(s, r) }}
 		}
 	}
@@ -124,13 +126,19 @@ func ReadStep(r sprint.ReadReq) Step {
 
 // AcceptStep is the coordinator accepting.
 func AcceptStep(r sprint.AcceptReq) Step {
-	return Step{Answers: r.Answers, Named: len(r.IDs) > 0, Args: ArgsOf(r), Verb: "accept", Load: tables(sprint.Work, sprint.Readers, sprint.Merge),
+	return Step{Answers: r.Answers, Named: len(r.IDs) > 0, Args: ArgsOf(r), Verb: "accept", Load: tables(sprint.Work, sprint.Readers, sprint.Merge, sprint.Fleet),
+		Extras: func(s *sprint.Snapshot) map[string][]string {
+			return map[string][]string{sprint.Fleet: sprint.ReadCardExtras(s)}
+		},
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Accept(s, r) }}
 }
 
 // ReworkStep is the coordinator sending work back with a fix.
 func ReworkStep(r sprint.ReworkReq) Step {
 	return Step{Answers: r.Answers, Named: len(r.IDs) > 0, Args: ArgsOf(r), Verb: "rework", Load: tables(sprint.Work, sprint.Readers, sprint.Fleet, sprint.Merge), Mirrors: true, Routes: true, Friends: true,
+		Extras: func(s *sprint.Snapshot) map[string][]string {
+			return map[string][]string{sprint.Fleet: sprint.ReadCardExtras(s)}
+		},
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Rework(s, r) }}
 }
 
@@ -184,7 +192,12 @@ func RankStep(r sprint.RankReq) Step {
 // MergeStep is one mechanical merge step of a stream.
 func MergeStep(r sprint.MergeReq) Step {
 	// a landing takes each card's total from the card itself (sprint's cost.go)
-	return Step{Args: ArgsOf(r), Verb: "merge", Load: tables(sprint.Merge, sprint.Work), Mirrors: true,
+	load := tables(sprint.Merge, sprint.Work)
+	if r.Conflict != "" {
+		// a conflict reworks the card at the tip: its read cards retire (sprint's landRefused)
+		load = tables(sprint.Merge, sprint.Work, sprint.Readers)
+	}
+	return Step{Args: ArgsOf(r), Verb: "merge", Load: load, Mirrors: true,
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.MergeStep(s, r) }}
 }
 
@@ -199,6 +212,19 @@ func SetStep(r sprint.SetReq) Step {
 func PromotedStep(r sprint.PromotedReq) Step {
 	return Step{Args: ArgsOf(r), Verb: "promoted", Load: tables(sprint.Work),
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Promoted(s, r) }}
+}
+
+// LandedStep is the coordinator recording work found on the base landed, at a commit git
+// put there (sprint.RecordLanded); it reads the named cards' records, placed or not, so a
+// dropped one is refused by name.
+func LandedStep(r sprint.LandedReq) Step {
+	ids := make([]string, len(r.Pins))
+	for i, pin := range r.Pins {
+		ids[i] = pin.ID
+	}
+	return Step{Named: true, Args: ArgsOf(r), Verb: "landed", Load: tables(sprint.Merge, sprint.Work), Mirrors: true,
+		Extras: func(*sprint.Snapshot) map[string][]string { return map[string][]string{sprint.Work: ids} },
+		Plan:   func(s *sprint.Snapshot) sprint.Plan { return sprint.RecordLanded(s, r) }}
 }
 
 // MergeWindowStep opens the merge window: landing pauses for its duration, its reason
@@ -306,6 +332,12 @@ func FriendTakeStep(r sprint.FriendTakeReq) Step {
 	}
 	return Step{Named: len(r.IDs) > 0, Args: ArgsOf(r), Verb: verb, Load: tables(sprint.Fleet, sprint.Work), Mirrors: true,
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.FriendTake(s, r) }}
+}
+
+// FriendGiveStep clears the take-back mark of a friend on the cards named (friend give).
+func FriendGiveStep(r sprint.FriendGiveReq) Step {
+	return Step{Args: ArgsOf(r), Verb: "friend give", Load: tables(sprint.Fleet, sprint.Work), Mirrors: true,
+		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.FriendGive(s, r) }}
 }
 
 // FriendLevelStep evens the friends' ready queues within each class (friend level).

@@ -124,7 +124,7 @@ func (s *Snapshot) tierServed(tier string, rested []string) (up []string, why st
 	var off []string
 	for _, f := range s.Friends {
 		switch {
-		case !friendTakes(f, tier):
+		case !friendTakes(s, f, tier):
 		case friendDealable(s, f):
 			up = append(up, f.Name)
 		default:
@@ -137,6 +137,12 @@ func (s *Snapshot) tierServed(tier string, rested []string) (up []string, why st
 	why = "no enabled route and no up friend serves tier " + tier + ": enable a route (nova-config route add <name> --tier " + tier + " ..., name it in nova-config tier set " + tier + " --routes <name,...>, then nova-config apply) or bring up a friend whose row lists " + tier + "; or pin the card with a model: <provider>/<model> line"
 	if len(rested) > 0 {
 		why = "every enabled route of tier " + tier + " in its array rests (" + strings.Join(rested, "; ") + ") and no up friend serves it: the deal draws one when its rest ends; or run nova-config route add <name> --tier " + tier + " ..., bring up a friend whose row lists " + tier + ", or pin the card with a model: <provider>/<model> line"
+	}
+	for _, side := range [][3]string{{PropFleetTiers, "the fleet's", "--fleet-tiers"}, {PropFriendsTiers, "the friends'", "--friends-tiers"}} {
+		if !s.sideTakes(side[0], tier) {
+			v, _ := s.Work.Prop(side[0])
+			why += " (" + side[1] + " tiers are " + v + ": nova-sprint set " + side[2] + " all, or a list with " + tier + ")"
+		}
 	}
 	switch n := len(off); {
 	case n > 0 && s.FriendsOff():
@@ -241,14 +247,21 @@ func (s *Snapshot) routeOf(c, wc *Card, ri routeIndexes) (set map[string]string,
 		// names (an unknown word too), else flash's
 		return nil, tier, "its brief's model lines: " + bad, false
 	}
+	if tier == cardhdr.RouteFrontier && m.Pin == "" && len(s.Routes) > 0 {
+		return nil, tier, "a frontier card waits for the coordinator: run it, or pin it with a model: <provider>/<model> line", false
+	}
+	if !s.FleetTakes(tier) {
+		// the fleet's tiers leave it out (set --fleet-tiers): no machine draws it, whatever
+		// its routes or a model pin (the set is the owner's switch); the friends' deal deals
+		// it when a friend up serves it
+		up, why := s.tierServed(tier, nil)
+		return nil, tier, why, len(up) > 0
+	}
 	if m.Pin != "" {
 		return map[string]string{FieldRoute: RoutePin, FieldModel: m.Pin, FieldTokens: m.Tokens, FieldUSD: "", FieldDeadline: strconv.Itoa(m.Deadline)}, "", "", false
 	}
 	if len(s.Routes) == 0 {
 		return nil, "", "", false
-	}
-	if tier == cardhdr.RouteFrontier {
-		return nil, tier, "a frontier card waits for the coordinator: run it, or pin it with a model: <provider>/<model> line", false
 	}
 	// a resting route (rule 3, route_rest.go) serves no work card until its rest ends
 	served := map[string]Route{}
@@ -368,6 +381,19 @@ func cardTierOf(c *Card) string {
 	return now
 }
 
+// DealTier is the one tier resolution of a card every friend decision reads
+// (docs/SPEC-SPRINT.md section 1, "One tier for every friend decision",
+// friend-deal-one-tier-bb.w2): the friends' deal, the level, the take back of a re-tiered
+// card (retierTakeBacks) and the packet's tier (DealtTier, through the primary's tier
+// field) all call it, so no two of them can disagree about a card. It is the tier a deal
+// draws (dealTierOf), and the dealer's default, flash, when there is no primary.
+func (s *Snapshot) DealTier(c *Card) string {
+	if c == nil {
+		return cardhdr.RouteFlash
+	}
+	return s.dealTierOf(c)
+}
+
 // dealTierOf is the tier a deal of the primary c draws, as the machines' deal draws it
 // (routeOf): the tier it is on once a deal drew one (drawTier), its ceiling when its tier
 // is pinned, and before its first deal its start tier (startTier: flash first, pro for a
@@ -417,10 +443,10 @@ func (s *Snapshot) NextTier(c *Card) string {
 // read on pro would be weaker than the writer, which item 27 refuses; the one weaker read is
 // the interim rule's, a pro card read on flash while no enabled route serves pro and one
 // serves flash (the owner, 2026-10-06: "let flash read pro"). The value returned
-// is that collapse: a route drawn for the card is named from it. A friend is asked the
-// tier before this collapse (friendReadTier) when her class is at or above it and she
-// has room; the tick draws this route only when no such friend has room
-// (docs/SPEC-SPRINT.md, a read asked of any unit with room at or above the read tier).
+// is that collapse: a route drawn for the card is named from it. The deal measures every
+// reader, friend or member, against the tier before this collapse (friendReadTier,
+// readTierDistance), so a member whose read is drawn lower ranks by how far below it
+// really reads (docs/SPEC-SPRINT.md section 6, who reads).
 func (s *Snapshot) readTierOf(pr *Card) string {
 	m, _ := cardhdr.ReadModel(pr.F("brief"))
 	t := cardTier(pr, m)
@@ -430,14 +456,14 @@ func (s *Snapshot) readTierOf(pr *Card) string {
 	if set := s.readTierSetting(pr.Row); set != "" {
 		t = stronger(t, set)
 	}
-	// Workaround (Rowan, 2026-10-06 7:30 PM ET; Glenn 7:11 PM: "let flash read pro"): a pro
+	// Workaround (the coordinator, 2026-10-06 7:30 PM ET; the owner: 7:11 PM: "let flash read pro"): a pro
 	// read is drawn on flash while no enabled route serves pro and one serves flash, so the
 	// fleet's flash readers read pro cards while the pro routes are off. Read cards replace
 	// this.
 	if t == cardhdr.RoutePro && len(s.Routes) > 0 && !s.tierRouted(t) && s.tierRouted(cardhdr.RouteFlash) {
 		t = cardhdr.RouteFlash
 	}
-	// Workaround (Glenn, 2026-10-06 7:41 PM ET: "let pro do it"): a heavy card is read on pro,
+	// Workaround (the owner, 2026-10-06 7:41 PM ET: "let pro do it"): a heavy card is read on pro,
 	// so the fleet's pro readers are its second reader beside the heavy friend, who is asked
 	// before this collapse (friendReadTier). Read cards replace this.
 	if t == cardhdr.RouteHeavy {
@@ -489,11 +515,15 @@ func (s *Snapshot) readRouteOf(ri routeIndexes, pr *Card, avoid []string) map[st
 // no reader can read it: "" when the store holds no route at all (reads run on the
 // reader's own model), an enabled route of the tier is in its array, or a reader up
 // that brings its own model (a friend's or a bud's, read_route.go) reads the tier:
-// a read needs a reader, not a route. The deal's tick raises the tier's judgment for
-// the reads waiting (TickDeal, NNoRoute) only when neither serves it.
+// a read needs a reader, not a route; the member's side only while the fleet's tiers hold
+// the read tier, a friend only while the friends' tiers do (set --fleet-tiers,
+// --friends-tiers). The deal's tick raises the tier's judgment for the reads waiting
+// (TickDeal, NNoRoute) only when neither serves it.
 func (s *Snapshot) readRouteMissing(pr *Card) (tier, why string) {
 	tier = s.readTierOf(pr)
-	if s.tierRouted(tier) || s.ownModelReaderUp(tier) {
+	// a member reads only a read tier the fleet's tiers hold (set --fleet-tiers); a friend
+	// only one the friends' tiers hold (tierServed, friendTakes)
+	if s.FleetTakes(tier) && (s.tierRouted(tier) || s.ownModelReaderUp(tier)) {
 		return tier, ""
 	}
 	up, why := s.tierServed(tier, nil)
@@ -683,7 +713,7 @@ func RouteStats(routes []Route, fleet *Table) []RouteStat {
 		}
 		return &out[i]
 	}
-	for _, c := range fleet.Column(Ready, Working, DoneOK, DoneFailed, Withdrawn) {
+	for _, c := range fleet.Column(Ready, Working, DoneOK, DoneFailed, DoneDefect, Withdrawn) {
 		name := c.F(FieldRoute)
 		if name == "" {
 			continue
@@ -713,6 +743,9 @@ func RouteStats(routes []Route, fleet *Table) []RouteStat {
 		}
 		if c.Col == Withdrawn && c.F(FieldProviderError) != "" {
 			continue // dealt again at the next deal: no take of it is on this route now
+		}
+		if c.Col == DoneDefect {
+			continue // a brief defect (brief_defect.go): the brief's, never the route's
 		}
 		st := statOf(name, pinned, c.F(FieldModel))
 		st.Attempts++

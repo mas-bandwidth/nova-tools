@@ -208,6 +208,11 @@ func TestReadyToAcceptOncePerAttempt(t *testing.T) {
 	h.setup(3)
 	h.nWork("s1-1", "s1-2", "s1-3")
 	h.nDo(AskStep(sprint.AskReq{}))
+	// held by the pump (CI red at the head, acknowledged): ready to accept is for those
+	// alone; one nothing holds is the tick's to accept
+	for _, id := range []string{"s1-1", "s1-2", "s1-3"} {
+		h.heldByRedCI(id)
+	}
 	// s1-1: two oks, then a third reader broken
 	h.nReadAll("s1-1", "ok")
 	if n := len(h.nAllNotes(sprint.NReadyToAccept)); n != 1 || len(h.nOpenOf(sprint.NReadyToAccept, "s1-1")) != 1 {
@@ -244,6 +249,7 @@ func TestReadyToAcceptOncePerAttempt(t *testing.T) {
 	h.nDo(TakeStep(sprint.TakeReq{As: w.Row, Sel: sprint.Sel{IDs: []string{w.ID}}, Gens: map[string]int{w.ID: 1}}))
 	h.nDo(FinishStep(sprint.FinishReq{Sel: sprint.Sel{IDs: []string{w.ID}}, Gens: map[string]int{w.ID: 1}}))
 	h.nDo(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-2"}}})) // the machine's ask: the finish asks no reader
+	h.heldByRedCI("s1-2")                                                 // a new head: held again
 	h.nReadAll("s1-2", "ok")
 	var on2 int
 	for _, n := range h.nAllNotes(sprint.NReadyToAccept) {
@@ -265,9 +271,11 @@ func TestAddOnDroppedNeedAndWaive(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	h.setup(2)
-	h.nDo(DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Reason: "gone"}))
-	// a need dropped and one not landed
+	// a need dropped and one not landed: the add comes first, since admission
+	// now refuses a need that names a dropped card
 	h.nDo(AddStep(sprint.AddReq{Stream: "s2", IDs: []string{"b"}, Needs: []string{"s1-1", "s1-2"}}))
+	seedDroppedNeed(h, "s1-1")
+	h.nDoR(ResolveStep(sprint.ResolveReq{}))
 	require.Equal(t, sprint.Waiting, h.state("b"), "b %s, blocked %d", h.state("b"), len(h.nOpenOf(sprint.NBlocked, "b")))
 	require.Len(t, h.nOpenOf(sprint.NBlocked, "b"), 1, "b %s, blocked %d", h.state("b"), len(h.nOpenOf(sprint.NBlocked, "b")))
 	id := h.nOpenOf(sprint.NBlocked, "b")[0].Note.ID
@@ -278,11 +286,11 @@ func TestAddOnDroppedNeedAndWaive(t *testing.T) {
 	h.nToMerging("s1-2")
 	h.nLandStream("s1")
 	require.Equal(t, sprint.Ready, h.state("b"), "b after s1-2 landed (s1-1 waived): %s", h.state("b"))
-	// resolve on an add naming a dropped need: blocked only once
-	h.nDo(AddStep(sprint.AddReq{Stream: "s2", IDs: []string{"c"}, Needs: []string{"s1-1"}}))
-	h.nDoR(ResolveStep(sprint.ResolveReq{}))
-	n := len(h.nOpenOf(sprint.NBlocked, "c"))
-	require.Equal(t, 1, n, "c blocked %d times after resolve", n)
+	// add refuses a need that names a dropped card
+	res := h.nDoR(AddStep(sprint.AddReq{Stream: "s2", IDs: []string{"c"}, Needs: []string{"s1-1"}}))
+	require.Empty(t, res.Moved, "add on a dropped need: %+v", res)
+	require.Len(t, res.Refused, 1, "add on a dropped need: %+v", res)
+	require.Contains(t, res.Refused[0].Why, "dropped", "add on a dropped need: %+v", res)
 }
 
 // A plan whose landing unit the lifecycle refuses still lends its landing to

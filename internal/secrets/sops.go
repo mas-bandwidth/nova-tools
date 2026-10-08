@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 )
 
@@ -38,6 +39,35 @@ func exitCodeOf(err error, def int) int {
 		return ec.ExitCode()
 	}
 	return def
+}
+
+// childStderr is the stderr a child error carried, or "" when it carried none.
+func childStderr(err error) string {
+	var carried stderrCarrier
+	if errors.As(err, &carried) {
+		return carried.Stderr()
+	}
+	return ""
+}
+
+// sopsDecryptFailure names the class of a sops -d failure from the stderr the child wrote,
+// with the one-turn remedy for each (STEP 3, "wrong key"; SPEC-SECRETS). The classes are
+// the ones sops prints: a key that matches none of the recipients, an absent identity
+// file, a file that carries no sops metadata, and a file no creation rule names. An
+// unrecognised transcript returns "", which keeps the inspect remedy. The transcript is
+// never returned: it can hold a value.
+func sopsDecryptFailure(keyPath, filePath, stderr string) string {
+	switch {
+	case strings.Contains(stderr, "no identity matched"):
+		return fmt.Sprintf("the key %s matches none of the recipients of %s; check the key path, or for a seat without one run: nova-secrets keygen", oneline.Field(keyPath), oneline.Field(filePath))
+	case strings.Contains(stderr, "no identity file"):
+		return fmt.Sprintf("the key file %s is absent or unreadable; check the key path, or for a seat without one run: nova-secrets keygen", oneline.Field(keyPath))
+	case strings.Contains(stderr, "sops metadata not found"):
+		return fmt.Sprintf("%s is not a sops-encrypted file (sops metadata not found); re-seal it with: nova-secrets seal", oneline.Field(filePath))
+	case strings.Contains(stderr, "no matching creation rules"):
+		return fmt.Sprintf("no creation rule in .sops.yaml matches %s; add one, then run: sops updatekeys %s", oneline.Field(filePath), oneline.Field(filePath))
+	}
+	return ""
 }
 
 // CheckSopsVersion probes the sops binary with --disable-version-check to prevent network calls.
@@ -138,6 +168,11 @@ func DecryptFile(run execCommand, sopsPath, keyPath, filePath string) ([]byte, e
 	out, err := runOr(run)(nil, cleanEnv, "", sopsPath, "-d", filePath)
 	if err != nil {
 		exitCode := exitCodeOf(err, 1)
+		// The class sops's stderr names, when the seam carried it; the transcript is
+		// never echoed (STEP 3, "wrong key").
+		if cause := sopsDecryptFailure(keyPath, filePath, childStderr(err)); cause != "" {
+			return nil, fmt.Errorf("sops failed: %s", cause)
+		}
 		// Sanitize sops error: do NOT pass raw stderr through
 		return nil, fmt.Errorf("sops failed: exit %d (transcript withheld: run 'sops -d %s' to inspect)", exitCode, filePath)
 	}
