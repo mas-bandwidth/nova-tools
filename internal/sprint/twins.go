@@ -2,6 +2,7 @@ package sprint
 
 import (
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 )
@@ -437,4 +438,28 @@ func mergeCardChanges(units []Unit) (out []Unit, bad string) {
 		out = append(out, u)
 	}
 	return out, ""
+}
+
+// ruleOnBoth records the rule on the card the twin replaces and on the twin.
+func ruleOnBoth(p Plan, old, twin, rule string) Plan {
+	for i := range p.Units {
+		for j := range p.Units[i].Changes {
+			ch := &p.Units[i].Changes[j]
+			if ch.Table != Work {
+				continue
+			}
+			e := &ch.Entry
+			if e.ID != old && e.ID != twin {
+				continue
+			}
+			if e.Create == nil && !e.Remove {
+				continue
+			}
+			set := map[string]string{}
+			maps.Copy(set, e.Set)
+			set[FieldRuleAnswer] = rule
+			e.Set = set
+		}
+	}
+	return p
 }

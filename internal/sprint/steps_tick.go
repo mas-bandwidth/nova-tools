@@ -311,6 +311,9 @@ func TickEndWith(rules, idle bool) []TickPartDef {
 	out := append([]TickPartDef(nil), TickEnd[:2]...)
 	if rules {
 		for _, p := range TickRules {
+			if p.Name == PartRulePaths {
+				p.Fn = TickPathsHold
+			}
 			if p.Name == PartRuleRework {
 				out = append(out, TickPartDef{PartRuleWiden, TickRuleWiden})
 				p.Fn = TickRuleReworkUnwidened
