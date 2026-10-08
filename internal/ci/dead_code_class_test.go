@@ -37,7 +37,7 @@ const (
 	// functional-tier only, so the unit-tier update (make test PKGS=./internal/ci)
 	// never reaches it, and the functional container mounts the source read-only.
 	deadCodeUpdateCommand = "go test -tags functional -run '^TestDeadCode$' ./internal/ci/"
-	deadCodeRemedy        = "delete the unreachable function(s) or wire them into cmd/...; the dead code ledger only shrinks and refuses to raise counts or add rows"
+	deadCodeRemedy        = "delete the unreachable function(s) or wire them into a production main; the dead code ledger only shrinks and refuses to raise counts or add rows"
 )
 
 // deadcodePackage represents one package in deadcode -json output.
@@ -80,10 +80,30 @@ func deadcodeToolBinary(t *testing.T, ctx context.Context) string {
 	return bin
 }
 
-// runDeadcode runs deadcode on ./cmd/... roots for targetOS using the host tool binary.
+// deadcodeRoots includes every tool with a production main, as well as the cmd
+// binaries. Libraries and fixtures under tools/ are not roots.
+func deadcodeRoots(ctx context.Context, root, targetOS string) ([]string, error) {
+	list := exec.CommandContext(ctx, "go", "list", "-f", "{{if eq .Name \"main\"}}{{.ImportPath}}{{end}}", "./tools/...")
+	list.Dir = root
+	list.Env = append(goenv.Clean(os.Environ()), "GOOS="+targetOS)
+	list.WaitDelay = 5 * time.Second
+	out, err := list.Output()
+	if err != nil {
+		return nil, fmt.Errorf("listing tool mains for GOOS=%s: %w", targetOS, err)
+	}
+	roots := []string{"./cmd/..."}
+	roots = append(roots, strings.Fields(string(out))...)
+	return roots, nil
+}
+
+// runDeadcode runs deadcode on every production main for targetOS using the host tool binary.
 func runDeadcode(t *testing.T, ctx context.Context, bin, root, targetOS string) ([]deadcodePackage, error) {
 	t.Helper()
-	cmd := exec.CommandContext(ctx, bin, "-json", "./cmd/...")
+	roots, err := deadcodeRoots(ctx, root, targetOS)
+	if err != nil {
+		return nil, err
+	}
+	cmd := exec.CommandContext(ctx, bin, append([]string{"-json"}, roots...)...)
 	cmd.Dir = root
 	cmd.Env = append(goenv.Clean(os.Environ()), "GOOS="+targetOS)
 	cmd.WaitDelay = 5 * time.Second
@@ -91,7 +111,7 @@ func runDeadcode(t *testing.T, ctx context.Context, bin, root, targetOS string) 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
-	err := cmd.Run()
+	err = cmd.Run()
 	if err != nil {
 		return nil, fmt.Errorf("running deadcode for GOOS=%s: %w\nstderr: %s", targetOS, err, stderr.String())
 	}
@@ -171,7 +191,7 @@ func TestDeadCode(t *testing.T) {
 				sample = sample[:5]
 			}
 			problems = append(problems, fmt.Sprintf(
-				"%s: %d unreachable functions not listed in ledger (e.g. %s);\n  remedy: %s;\n  reproduce: GOOS=linux go tool deadcode ./cmd/... (or GOOS=darwin, windows)",
+				"%s: %d unreachable functions not listed in ledger (e.g. %s);\n  remedy: %s;\n  reproduce: go test -tags functional -run '^TestDeadCode$' ./internal/ci/",
 				pkg, measured[pkg], strings.Join(sample, ", "), deadCodeRemedy))
 		}
 		for _, row := range res.Over {
@@ -181,7 +201,7 @@ func TestDeadCode(t *testing.T) {
 				sample = sample[:5]
 			}
 			problems = append(problems, fmt.Sprintf(
-				"%s: %d unreachable functions, over ledger count of %d (e.g. %s);\n  remedy: %s;\n  reproduce: GOOS=linux go tool deadcode ./cmd/... (or GOOS=darwin, windows)",
+				"%s: %d unreachable functions, over ledger count of %d (e.g. %s);\n  remedy: %s;\n  reproduce: go test -tags functional -run '^TestDeadCode$' ./internal/ci/",
 				row.Key, row.Measured, row.Listed, strings.Join(sample, ", "), deadCodeRemedy))
 		}
 		for _, row := range res.Lowered {
@@ -199,6 +219,46 @@ func TestDeadCode(t *testing.T) {
 			assert.Failf(t, "dead code rule", "%s\n(ledger: %s)", strings.Join(problems, "\n"), deadCodeLedgerPath)
 		}
 	}
+}
+
+// TestDeadCodeIncludesToolMains holds the production roots to both cmd/ and
+// tools/: a function used only by a tool executable is live, while an unused
+// function in the same package remains dead. A tools/ library is not a root.
+func TestDeadCodeIncludesToolMains(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	files := map[string]string{
+		"go.mod":                "module example.com/deadfixture\n\ngo 1.25\n",
+		"cmd/app/main.go":       "package main\nimport \"example.com/deadfixture/internal/demo\"\nfunc main() { demo.Cmd() }\n",
+		"tools/check/main.go":   "package main\nimport \"example.com/deadfixture/internal/demo\"\nfunc main() { demo.Tool() }\n",
+		"tools/library/lib.go":  "package library\nfunc Library() {}\n",
+		"internal/demo/demo.go": "package demo\nfunc Cmd() {}\nfunc Tool() {}\nfunc Dead() {}\n",
+	}
+	for name, body := range files {
+		path := filepath.Join(root, name)
+		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+		require.NoError(t, os.WriteFile(path, []byte(body), 0o644))
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	roots, err := deadcodeRoots(ctx, root, "linux")
+	require.NoError(t, err)
+	assert.Contains(t, roots, "./cmd/...")
+	assert.Contains(t, roots, "example.com/deadfixture/tools/check")
+	assert.NotContains(t, roots, "example.com/deadfixture/tools/library")
+	pkgs, err := runDeadcode(t, ctx, deadcodeToolBinary(t, ctx), root, "linux")
+	require.NoError(t, err)
+	var dead []string
+	for _, pkg := range pkgs {
+		if pkg.Path == "example.com/deadfixture/internal/demo" {
+			for _, fn := range pkg.Funcs {
+				dead = append(dead, fn.Name)
+			}
+		}
+	}
+	assert.Contains(t, dead, "Dead")
+	assert.NotContains(t, dead, "Cmd", "cmd/app is a production root")
+	assert.NotContains(t, dead, "Tool", "tools/check is a production root")
 }
 
 // deadCodeWitnessReporter records CheckCountedMode error output without failing the test runner.
