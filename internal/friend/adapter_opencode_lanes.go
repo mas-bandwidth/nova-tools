@@ -200,6 +200,12 @@ func (o *OpenCode) sessions(ctx context.Context) ([]session, error) {
 		return nil, fmt.Errorf("opencode session list: %w", err)
 	}
 	if exit != 0 {
+		if match := wallRefusalReason.FindStringSubmatch(listing); match != nil {
+			if match[1] == "bad_profile" && strings.Contains(match[0], "denies nothing") {
+				return nil, fmt.Errorf("opencode session list: friend wall refused reason=bad_profile: the profile denies nothing; the daemon needs a coordinator-self deny path (nova-friend run --deny-self) before a lane can open (exit %d)", exit)
+			}
+			return nil, fmt.Errorf("opencode session list: friend wall refused reason=%s (exit %d)", match[1], exit)
+		}
 		return nil, fmt.Errorf("opencode session list exited %d", exit)
 	}
 	rows, err := decodeSessions(listing)
@@ -208,6 +214,8 @@ func (o *OpenCode) sessions(ctx context.Context) ([]session, error) {
 	}
 	return rows, err
 }
+
+var wallRefusalReason = regexp.MustCompile(`(?m)^WALL REFUSED reason=([a-z_]+)\b[^\n]*`)
 
 // DeliverTo is one card's turn in a lane's session: `opencode run --session
 // <id> <text>` in Dir, its output read for a refused permission, and its
