@@ -114,8 +114,12 @@ func TestJobsAreWorktreesOfOneMirror(t *testing.T) {
 	require.True(t, ok)
 	_, err = stager.Stage(context.Background(), d)
 	require.NoError(t, err)
-	old := time.Now().Add(-time.Hour)
+	// (each is the last worktree of its card, spared until it lands: these landed, their
+	// attempts ended past ReworkKeptFor ago, a's the older)
+	old := time.Now().Add(-ReworkKeptFor - time.Hour)
 	require.NoError(t, os.Chtimes(filepath.Join(JobDir(dir, a.Job), JobFile), old, old))
+	landed := time.Now().Add(-ReworkKeptFor - time.Minute)
+	require.NoError(t, os.Chtimes(filepath.Join(JobDir(dir, d.Job), JobFile), landed, landed))
 	require.NoError(t, os.RemoveAll(filepath.Dir(brief))) // a's card left her row: the inbox cleanup retired inbox/<job>
 	pruned, err := stager.Prune(context.Background(), map[string]bool{b.Job: true}, 1)
 	require.NoError(t, err)
