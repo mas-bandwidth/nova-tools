@@ -1460,16 +1460,16 @@ coordinator PING at once (daemon-pong); presence is the session's word on the bu
 state: <dir>/.nova-friend/ (--state-dir moves it), the queue: <dir>/inbox/QUEUE.json.
 
 usage:
-  nova-friend run --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--profile <p>] [--config-dir <d>] [--deny-self <d,...>] [--wall-jobs <d,...>] [--wall-reads <d,...>] [--model <provider/model>] [--db <opencode.db>] [--lane-tiers <t,...>] [--lane-streams <p,...>] [--token-cap <n>] [--load-max <n>] [--load-width <n>] [--pause-on funds|any] [--refuse-go] [--dry-run]
+  nova-friend run --as <me> --harness <h> --dir <d> [--session <id>] [--adapter folder --delivery-dir <watched-dir>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--profile <p>] [--config-dir <d>] [--deny-self <d,...>] [--wall-jobs <d,...>] [--wall-reads <d,...>] [--model <provider/model>] [--db <opencode.db>] [--lane-tiers <t,...>] [--lane-streams <p,...>] [--token-cap <n>] [--load-max <n>] [--load-width <n>] [--pause-on funds|any] [--refuse-go] [--dry-run]
   nova-friend beat --as <me> [--server <addr>]
-  nova-friend install --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--config-dir <d>] [--model <provider/model>] [--secrets NAME[,NAME] --seat <seat>] [--launchd-log <file>] [--dry-run]
+  nova-friend install --as <me> --harness <h> --dir <d> [--session <id>] [--adapter folder --delivery-dir <watched-dir>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--config-dir <d>] [--model <provider/model>] [--secrets NAME[,NAME] --seat <seat>] [--launchd-log <file>] [--dry-run]
   nova-friend uninstall --as <me> [--dry-run]
-  nova-friend check [--as <coordinator>] [<friend>...] [--since <duration>] [--shown <file|->] [--json]
+  nova-friend check [--as <coordinator>] [<friend>...] [--since <duration>] [--shown <file|->] [--harness codex --dir <d> --session <id> --adapter folder --delivery-dir <watched-dir>] [--json]
   nova-friend host --as <me> --harness <h> --dir <d> [--prompt <regexp>] [--state-dir <d>] [--dry-run] [--json] -- <launch command...>
   nova-friend ping --as <coordinator> (--to <friend> | --wake --to-friends [--every <d>] [--within <d>] [--never-wake <f,...>] [--server <addr>]) [--nonce <n>] [--since <RFC3339>] [--redis <addr>] [--dry-run]
   nova-friend ping-install --as <coordinator> --every <d> [--within <d>] [--never-wake <f,...>] [--server <addr>] [--redis <addr>] [--launchd-log <file>] [--dry-run]
   nova-friend ping-uninstall --as <coordinator> [--dry-run]
-  nova-friend pong --as <me> --nonce <n> [--to <coordinator>] [--queue <n>] [--working <n>] [--width <n>] [--state-dir <d>] [--redis <addr>] [--dry-run]
+  nova-friend pong --as <me> --nonce <n> [--to <coordinator>] [--dir <work-dir>] [--queue <n>] [--working <n>] [--width <n>] [--state-dir <d>] [--redis <addr>] [--dry-run]
   nova-friend wait-pong --from <friend> --nonce <n> [--timeout <d>] [--redis <addr>]
   nova-friend watch --as <coordinator> [--timeout <duration>] [--state-dir <d>] [--redis <addr>] [--json]
   nova-friend status --as <me> --dir <d> [--state-dir <d>]
@@ -1499,13 +1499,15 @@ example:
 ```
 usage: nova-friend run [flags]
 from `nova-friend help`:
-  nova-friend run --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--profile <p>] [--config-dir <d>] [--deny-self <d,...>] [--wall-jobs <d,...>] [--wall-reads <d,...>] [--model <provider/model>] [--db <opencode.db>] [--lane-tiers <t,...>] [--lane-streams <p,...>] [--token-cap <n>] [--load-max <n>] [--load-width <n>] [--pause-on funds|any] [--refuse-go] [--dry-run]
+  nova-friend run --as <me> --harness <h> --dir <d> [--session <id>] [--adapter folder --delivery-dir <watched-dir>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--profile <p>] [--config-dir <d>] [--deny-self <d,...>] [--wall-jobs <d,...>] [--wall-reads <d,...>] [--model <provider/model>] [--db <opencode.db>] [--lane-tiers <t,...>] [--lane-streams <p,...>] [--token-cap <n>] [--load-max <n>] [--load-width <n>] [--pause-on funds|any] [--refuse-go] [--dry-run]
 flags:
+  --adapter <string>  delivery route: folder for an existing watched Codex session (default: the harness adapter)
   --as <string>  your name, a nova-config friend row (required)
   --broken-after <int>  turns in a row the provider refuses the same way before the session is broken
   --config-dir <string>  the friend's config directory, writable inside the lane's wall and its HOME there, and a claude one-shot lane's CLAUDE_CONFIG_DIR, an absolute path (default: the row's config_dir, read from each beat as row_config_dir=, else CLAUDE_CONFIG_DIR)
   --coordinator <string>  who is told of a broken session when no ping has named the seat
   --db <string>  opencode's own database, where a card's tokens are read
+  --delivery-dir <string>  existing folder watched by that Codex session when --adapter folder
   --deny-self <string>  the coordinator's self, never written inside a lane's wall, comma-separated; ~/ is the wall's HOME; a lane wall with none is refused (default: NOVA_FRIEND_DENY_SELF)
   --dir <string>  the friend's working directory: the session's, and where the state files live (required)
   --dry-run  print what the verb would write and write nothing
@@ -1517,6 +1519,9 @@ flags:
   --load-width <int>  the lanes that run while the load is above --load-max
   --mode <string>  override the friend row's delivery mode, batch or one-shot, for a test (default: the row's, read from each beat)
   --model <string>  the friend's model as provider/model, to price a card by the store's route row (default: none, cards are unpriced)
+  --notifications-only  deliver filtered notifications through one receiver; no sprint beats, proof, claims, jobs, staging, pruning or finishes
+  --notify-kinds <string>  message kinds that wake the model, comma-separated; requests/blockers always retained; ack/status are audited by default
+  --notify-window <duration>  global card-delivery burst window and minimum wake interval; urgent messages bypass it
   --pause-on <string>  funds or any: any holds the lanes and the friend down on a rate limit too (default: funds, a rate limit backs off)
   --profile <string>  the wall profile every lane child runs inside when the friend row names none (row_profile=): friend
   --redis <string>  the bus store's Redis address, host:port (default: NOVA_BUS_REDIS)
@@ -1553,13 +1558,15 @@ effect: delivery: sends beyond this machine: one beat to the sprint server, the 
 ```
 usage: nova-friend install [flags]
 from `nova-friend help`:
-  nova-friend install --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--config-dir <d>] [--model <provider/model>] [--secrets NAME[,NAME] --seat <seat>] [--launchd-log <file>] [--dry-run]
+  nova-friend install --as <me> --harness <h> --dir <d> [--session <id>] [--adapter folder --delivery-dir <watched-dir>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--config-dir <d>] [--model <provider/model>] [--secrets NAME[,NAME] --seat <seat>] [--launchd-log <file>] [--dry-run]
   nova-friend install --as bob --harness opencode --dir ./bob --dry-run
 flags:
+  --adapter <string>  delivery route: folder for an existing watched Codex session (default: the harness adapter)
   --as <string>  your name, a nova-config friend row (required)
   --broken-after <int>  turns in a row the provider refuses the same way before the session is broken
   --config-dir <string>  harness claude: the friend's own config directory, made and named in the agent (default: CLAUDE_CONFIG_DIR)
   --coordinator <string>  who is told of a broken session when no ping has named the seat
+  --delivery-dir <string>  existing folder watched by that Codex session when --adapter folder
   --dir <string>  the friend's working directory: the session's, and where the state files live (required)
   --dry-run  print what the verb would write and write nothing
   --harness <string>  the harness the session runs in: opencode, codex, claude, antigravity, dsh, gemini, grok, tmux, copilot, cursor, amp, goose, kiro, cline, aider, roo, windsurf, zed, warp (required)
@@ -1567,6 +1574,9 @@ flags:
   --launchd-log <string>  launchd's stdout and stderr file (default: ~/Library/Logs/nova-friend-<me>.log)
   --limit-rest <duration>  how long the friend is down when its harness's usage limit or empty balance names no reset
   --model <string>  harness opencode: the model, provider/model, written into <dir>/opencode.json (default: left as it is)
+  --notifications-only  deliver filtered notifications through one receiver; no sprint beats, proof, claims, jobs, staging, pruning or finishes
+  --notify-kinds <string>  message kinds that wake the model, comma-separated; requests/blockers always retained; ack/status are audited by default
+  --notify-window <duration>  global card-delivery burst window and minimum wake interval; urgent messages bypass it
   --redis <string>  the bus store's Redis address, host:port (default: NOVA_BUS_REDIS)
   --seat <string>  the machine's nova-secrets seat the secrets are opened as (nova-config machine show <self>: seat); wanted with --secrets
   --secrets <string>  the names of the secrets the session needs, comma-separated (never values); wraps the daemon in nova-secrets exec
@@ -1600,11 +1610,13 @@ effect: local write: writes files on this machine: boots the agent out and remov
 ```
 usage: nova-friend check [flags]
 from `nova-friend help`:
-  nova-friend check [--as <coordinator>] [<friend>...] [--since <duration>] [--shown <file|->] [--json]
+  nova-friend check [--as <coordinator>] [<friend>...] [--since <duration>] [--shown <file|->] [--harness codex --dir <d> --session <id> --adapter folder --delivery-dir <watched-dir>] [--json]
 example: nova-friend check --as ada bob
 flags:
+  --adapter <string>  delivery route: folder for an existing watched Codex session
   --as <string>  your name, the coordinator (the health check); the friend itself with --harness
   --config-dir <string>  harness claude: the friend's own config directory, made and named in the agent (default: CLAUDE_CONFIG_DIR)
+  --delivery-dir <string>  existing folder watched by that Codex session when --adapter folder
   --dir <string>  the friend's working directory
   --dry-run  print what the verb would write and write nothing
   --harness <string>  the harness the session runs in (delivery check): opencode, codex, claude, antigravity, dsh, gemini, grok, tmux, copilot, cursor, amp, goose, kiro, cline, aider, roo, windsurf, zed, warp
@@ -1671,10 +1683,11 @@ effect: delivery: sends beyond this machine: one PING on the friend's stream, as
 ```
 usage: nova-friend pong [flags]
 from `nova-friend help`:
-  nova-friend pong --as <me> --nonce <n> [--to <coordinator>] [--queue <n>] [--working <n>] [--width <n>] [--state-dir <d>] [--redis <addr>] [--dry-run]
+  nova-friend pong --as <me> --nonce <n> [--to <coordinator>] [--dir <work-dir>] [--queue <n>] [--working <n>] [--width <n>] [--state-dir <d>] [--redis <addr>] [--dry-run]
   nova-friend pong --as bob --nonce abc123 --to ada --queue 2 --working 1 --width 4
 flags:
   --as <string>  your name, the friend the daemon in --dir runs as (required)
+  --dir <string>  the friend's working directory; when given, omitted queue and working counts are read from its inbox/QUEUE.json
   --dry-run  print what the verb would write and write nothing
   --json  print the result as one JSON object instead of lines
   --nonce <string>  the nonce the PING carried (required)
