@@ -255,10 +255,14 @@ func newChaosRig(t *testing.T) *chaosRig {
 		NewID: func() string { n++; return fmt.Sprint(n) }, Sleep: func(time.Duration) {}}
 	require.NoError(t, r.st.Init(ctx))
 	require.NoError(t, r.mem.SetCoordinator(ctx, "coord"))
-	_, _, _, err := r.st.SyncFriends(ctx, []store.FriendSpec{{Name: "amy", Width: 2}, {Name: "bob", Width: 2}})
+	_, _, _, err := r.st.SyncFriends(ctx, []store.FriendSpec{{Name: "amy", Width: 2, Class: "flash,pro"}, {Name: "bob", Width: 2, Class: "flash,pro"}})
 	require.NoError(t, err)
 	_, _, _, err = r.st.SetMachine(ctx, true)
 	require.NoError(t, err)
+	_, amyProof, err := r.st.FriendBeatProof(ctx, "amy", sprint.FriendReport{}, nil,
+		sprint.BeatWords{Run: "chaos-amy", Check: "amyproof1", Pong: "amyproof1"})
+	require.NoError(t, err)
+	require.True(t, amyProof.Proved, "amy's fake session supplies independent presence proof")
 
 	d := &Daemon{Friend: "bob", Harness: "fake", Dir: t.TempDir(), Width: 2, Store: r.bobBus, Deliver: r.harness, noPresent: true,
 		Coordinator: "coord", Now: time.Now,
