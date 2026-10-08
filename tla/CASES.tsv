@@ -467,3 +467,6 @@ MCFriendBrokenDeliverBroken.cfg	MCFriend.tla	action	NoDeliveryWhenBroken	ignore-
 MCFriendBrokenPingHanded.cfg	MCFriend.tla	invariant	PingNeverDelivered	ignore-terminal	friend	required	-
 MCFriendBrokenFixedKill.cfg	MCFriend.tla	invariant	StopOnlyWhenSilent	ignore-terminal	friend	required	-
 MCFriendBrokenAsideEarly.cfg	MCFriend.tla	invariant	SetAsideAfterCardTurns	ignore-terminal	friend	required	-
+MCDiskWatermark.cfg	MCDiskWatermark.tla	pass	-	ignore-terminal	diskwatermark	required	-
+MCDiskWatermarkBrokenLane.cfg	MCDiskWatermark.tla	invariant	NoLaneWhileQuiet	ignore-terminal	diskwatermark	required	-
+MCDiskWatermarkBrokenStale.cfg	MCDiskWatermark.tla	invariant	JudgmentIffOver	ignore-terminal	diskwatermark	required	-

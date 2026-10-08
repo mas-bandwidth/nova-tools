@@ -183,6 +183,9 @@ func readUnitsOf(s *Snapshot, seats []FriendSeat) []readUnit {
 		out = append(out, readUnit{name: f.Name, row: row, friend: true, seat: f, half: 2*(room-work) - reads, idle: 2*width - 2*ww - wr})
 	}
 	for _, m := range s.UpMembers() {
+		if _, held := diskQuietNow(s)[m]; held {
+			continue // its volume is over the stop line: no new lane, a read included (disk.go)
+		}
 		if !memberReads(s, m) {
 			continue
 		}

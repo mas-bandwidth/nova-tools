@@ -25,18 +25,18 @@ func TestFleetBeatMeasuresOpenFilesBesideTheLoad(t *testing.T) {
 	}
 
 	out := ta.ok("fleet beat m1")
-	require.Contains(t, out, "how=load1 cores=4 fds=1000 fds-max=491520 fds-level=ok\n", "under the default warn bound")
+	require.Contains(t, out, "how=load1 cores=4 fds=1000 fds-max=491520 fds-level=ok", "under the default warn bound")
 	require.NotContains(t, out, "pid=", "no holders under the warn bound")
 
 	open = 60000
 	out = ta.ok("fleet beat m1 --load 12.5")
-	require.Contains(t, out, "load=12.5% last=12.5% how=given cores=4 fds=60000 fds-max=491520 fds-level=warn\n", "a given load: the files measured still")
+	require.Contains(t, out, "load=12.5% last=12.5% how=given cores=4 fds=60000 fds-max=491520 fds-level=warn", "a given load: the files measured still")
 	require.Contains(t, out, "  node pid=300 user=build fds=60000\n  redis-server pid=200 user=build fds=9000\n", "the top holders, most first")
 
 	out = ta.ok("fleet beat m1 --fd-warn 100000 --fd-alarm 200000")
-	require.Contains(t, out, "fds=60000 fds-max=491520 fds-level=ok\n", "the bounds given")
+	require.Contains(t, out, "fds=60000 fds-max=491520 fds-level=ok", "the bounds given")
 	out = ta.ok("fleet beat m1 --fd-warn 10 --fd-alarm 50000")
-	require.Contains(t, out, "fds-level=alarm\n", "over the alarm bound given")
+	require.Contains(t, out, "fds-level=alarm", "over the alarm bound given")
 
 	env := ta.a.getenv
 	ta.a.getenv = func(k string) string {
@@ -49,7 +49,7 @@ func TestFleetBeatMeasuresOpenFilesBesideTheLoad(t *testing.T) {
 		return env(k)
 	}
 	out = ta.ok("fleet beat m1")
-	require.Contains(t, out, "fds-level=ok\n", "the bounds from the environment")
+	require.Contains(t, out, "fds-level=ok", "the bounds from the environment")
 
 	var b beatReport
 	ta.json("fleet beat m1 --fd-warn 50000", &b)
