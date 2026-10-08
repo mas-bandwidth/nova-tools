@@ -177,6 +177,10 @@ type landBatch struct {
 	// the gate ran in this process or did not run. Wall is that gate's seconds.
 	Bench string  `json:"bench,omitempty"`
 	Wall  float64 `json:"wall,omitempty"`
+	// Ring is how many benches the gate's hash ring held and Slot the one the batch's
+	// stream hashed to (landring.go), zero when no bench ran a gate.
+	Ring int `json:"ring,omitempty"`
+	Slot int `json:"slot,omitempty"`
 	// stopped says the fact recorded stopped the stream (the conflict fact of a card's own
 	// head does not).
 	stopped bool
@@ -216,6 +220,9 @@ func (b landBatch) line() string {
 	}
 	if b.Bench != "" {
 		l += fmt.Sprintf(" bench=%s wall=%.1fs", oneline.Field(b.Bench), b.Wall)
+		if b.Ring > 0 {
+			l += fmt.Sprintf(" ring=%d slot=%d", b.Ring, b.Slot)
+		}
 	}
 	if p := b.Prune; p != nil {
 		switch {
@@ -347,6 +354,15 @@ type lander struct {
 	// runs took on the lander's clock; keep stamps them onto the next batch line.
 	gateHost string
 	gateWall time.Duration
+	// gateKey is the batch's key on the gate bench's hash ring (landring.go): the stream
+	// being landed (fork), the base re-checked (baseRecheck); gateRing and gateSlot are the
+	// ring's size and the key's slot when a bench ran a gate, for the batch's line.
+	gateKey  string
+	gateRing int
+	gateSlot int
+	// laneAs is the holder this lander's gate records on a bench's Go lane: lander/<stream>
+	// in a stream's fork, landLaneBase in the base re-check (laneWho).
+	laneAs string
 	// parallel is how many streams merge at once in the pass's first phase (--land-parallel;
 	// landpass.go), and shared the locks and records the pass's streams share.
 	parallel int
@@ -356,10 +372,10 @@ type lander struct {
 // keep appends a batch, carrying the tree gate's bench and wall when one ran.
 func (l *lander) keep(b landBatch) {
 	if b.Bench == "" && l.gateHost != "" {
-		b.Bench = l.gateHost
-		b.Wall = l.gateWall.Seconds()
+		b.Bench, b.Wall = l.gateHost, l.gateWall.Seconds()
+		b.Ring, b.Slot = l.gateRing, l.gateSlot
 	}
-	l.gateHost, l.gateWall = "", 0
+	l.gateHost, l.gateWall, l.gateRing, l.gateSlot = "", 0, 0, 0
 	l.out = append(l.out, b)
 }
 
@@ -860,6 +876,7 @@ func (l *lander) baseRecheck(ctx context.Context, s *sprint.Snapshot) {
 		red, cached := l.baseGateCache[sha]
 		if !cached || red != "" {
 			dir, _ := l.clone(ctx, at.repo)
+			l.gatesBase(at.base)
 			red = l.treeGate(ctx, dir, true)
 		}
 		if red != "" {

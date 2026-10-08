@@ -19,7 +19,7 @@ const names = () => doc.getElementById('streams').children
   .filter(r => !r._classes.includes('head') && !r._classes.includes('total')).map(r => r.children[0].children[0].textContent);
 const box = doc.getElementById('streams'), line = doc.getElementById('streams-archived');
 const click = () => (line._listeners.click || []).forEach(f => f());
-const total = () => box._total._c[7].innerHTML + ' ' + box._total._c[8].textContent;
+const total = () => box._total._c[8].innerHTML + ' ' + box._total._c[9].textContent;
 context.render(input.data);
 const tags = () => doc.getElementById('streams').children
   .filter(r => !r._classes.includes('head') && !r._classes.includes('total')).map(r => r.children[0].children[1].textContent);
