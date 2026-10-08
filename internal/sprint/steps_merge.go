@@ -248,9 +248,10 @@ func mergeStep(s *Snapshot, r MergeReq) Plan {
 		}
 		queued = before
 	}
+	queued = MergePriorityOrder(s, queued)
 	now := stamp(s.Now)
 	if len(queued) == 0 {
-		why := "nothing queued in stream " + r.Stream + "; nothing was changed"
+		why := "nothing eligible queued in stream " + r.Stream + "; nothing was changed"
 		if len(s.Merge.Cell(r.Stream, Stuck)) > 0 {
 			why = "nothing queued before the stuck card of stream " + r.Stream + "; resume it first; nothing was changed"
 		}
@@ -286,8 +287,14 @@ func mergeStep(s *Snapshot, r MergeReq) Plan {
 		}
 	}
 	var ids []string
+	landing := map[string]bool{}
 	for _, c := range batch {
+		if needs := WaitsFor(s, s.Work.Card(c.ID), landing); len(needs) > 0 {
+			p.refuse(c.ID, "the batch omits prerequisites "+strings.Join(needs, ", ")+"; nothing was changed; run: nova-sprint merge --stream "+r.Stream)
+			return p
+		}
 		ids = append(ids, c.ID)
+		landing[c.ID] = true
 	}
 	ctlSet := map[string]string{}
 	var notes []Note
