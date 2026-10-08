@@ -573,6 +573,11 @@ type fixCard struct {
 // atFix is whether the card c, whose primary is listed at listed (where's priorities), is at fix.
 func (c fixCard) atFix(listed string) bool {
 	level := cmp.Or(c.Priority, listed)
+	// An explicit priority is authoritative once the server supports the ladder.
+	// In particular, keep/high rework policies must not become fix by attempt.
+	if c.Priority != "" {
+		return c.Priority == "fix"
+	}
 	if level == "fix" {
 		return true
 	}

@@ -1,8 +1,7 @@
-// Sprint dashboard: keeps /events open (each new copy of the server's cached
-// `where --json` pushed as it is read) and patches the DOM in place; while the
-// stream is not open it polls /api/sprint every second on a fixed timer, never
-// after an answer. Nothing is blanked on a failed poll; the page holds the last
-// data and says nothing.
+// Sprint dashboard: polls /api/sprint (the server's cached `where --json`)
+// once a second whatever the round trip, or follows /events when the server
+// offers it, and patches the DOM in place. Nothing is blanked on a failed
+// poll; the page holds the last data and says nothing.
 "use strict";
 
 // Left to right in the bars: done first, so the bar fills like progress. fix is the cards awaiting
@@ -17,27 +16,39 @@ var POLL_MS = 1000;
 var MIN_CELL = 4;  // px: a cell never gets narrower; cards per cell grows instead
 var GAP = 2;       // px between cells
 var TRACK_CELL = 1.6875, TRACK_GAP = 0.25; // rem: a fleet track cell and its gap (27 px and 4 px on a desktop), never scaled
+// Glenn 2026-10-04 ~4:08 PM: the widest track always spans what 16 cells used to, "so no matter the size, it works out"
+var TRACK_SPAN = 16 * (TRACK_CELL + TRACK_GAP) - TRACK_GAP;
+function trackCell(scale) { scale = Math.max(1, scale); return (TRACK_SPAN - (scale - 1) * TRACK_GAP) / scale; }
 var $ = function (id) { return document.getElementById(id); };
+["streams", "fleet", "friends", "lanes"].forEach(function (id) { var h = $(id).querySelector(".row.head"); if (h) h.remove(); });
 
 // ---------- parsing (every value in the JSON is a string) ----------
 function int(s) { var n = parseInt(s, 10); return isNaN(n) ? 0 : n; }
 function pct(s) { var n = parseFloat(String(s || "").replace("%", "")); return isNaN(n) ? null : n; }
 function cents(s) { // "$26.16" -> 2616, "-" -> null; rounded up to the cent
   var n = parseFloat(String(s || "").replace(/[$,]/g, ""));
-  return isNaN(n) ? null : Math.ceil(n * 100 - 1e-6);
+  if (isNaN(n)) return null;
+  var c = Math.ceil(n * 100 - 1e-6);
+  return c === 0 ? 0 : c;  // never -0: "$0.00" must not print as "$-0.00"
 }
 function money(c) { return "$" + (c / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
-// whole dollars rounded up, for the Cost breakdown panel only ("Round up to nearest $", "for this case"); money() keeps the cent everywhere else
+// whole dollars rounded up, for the Cost breakdown panel only (Glenn 2026-10-04 2:45 PM: "Round up to nearest $", "for this case"); money() keeps the cent everywhere else
 function dollars(c) { var d = Math.ceil(c / 100 - 1e-9); return "$" + (d === 0 ? 0 : d).toLocaleString("en-US"); }
 function zoneAbbr(d) {
   try { var p = new Intl.DateTimeFormat("en-US", { timeZoneName: "short" }).formatToParts(d).filter(function (x) { return x.type === "timeZoneName"; })[0]; return p ? p.value : ""; }
   catch (e) { return ""; }
 }
+function timeParts(d) {
+  var parts = new Intl.DateTimeFormat("en-US", { hour: "numeric", minute: "2-digit", second: "2-digit", hour12: true }).formatToParts(d);
+  var get = function (t) { var x = parts.filter(function (q) { return q.type === t; })[0]; return x ? x.value : ""; };
+  return { hms: get("hour") + ":" + get("minute") + ":" + get("second"), ampm: get("dayPeriod") };
+}
+// "around 11:36 PM EDT"; a day or more out it names the weekday, "around Sun 3:15 AM EDT" (SPEC.md)
 function etaAround(when, ms) {
   var day = ms >= 86400000 ? when.toLocaleDateString("en-US", { weekday: "short" }) + " " : "";
   return ("around " + day + clockShort(when) + " " + zoneAbbr(when)).trim();
 }
-// a tile's subline stays on one line: when it does not fit the tile,
+// a tile's subline stays on one line (Glenn 2026-10-04 3:20 PM): when it does not fit the tile,
 // the shorter forms in turn
 function fits(e) { return e.scrollWidth <= e.clientWidth + 1; }
 var etaAtLast = null;
@@ -48,12 +59,16 @@ function fitEtaAt() {
 }
 function clock(d) { return d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", second: "2-digit" }); }
 function clockShort(d) { return d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }); }
-function etaMs(s) { // "2h20m" -> ms
-  var m = String(s).match(/^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$/);
-  if (!m || !(m[1] || m[2] || m[3])) return null;
-  return ((int(m[1]) * 60 + int(m[2])) * 60 + int(m[3])) * 1000;
+function etaMs(s) { // "2h20m" or "2d17h" -> ms (the day form arrives with PR 5183; SPEC.md)
+  var m = String(s).match(/^(?:(\d+)d)?(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$/);
+  if (!m || !(m[1] || m[2] || m[3] || m[4])) return null;
+  return (((int(m[1]) * 24 + int(m[2])) * 60 + int(m[3])) * 60 + int(m[4])) * 1000;
 }
-function etaText(s) { return String(s).replace(/(\d+[hms])(?=\d)/g, "$1 "); }
+// One ordinary space between the parts of a figure (SPEC.md, Glenn 10:00 and 10:03 PM): the
+// space is set in the proportional face, because a monospace space is a full digit wide and
+// reads as a double space beside the digits.
+var SP = "<span class=\"sp\"> </span>";
+function etaText(s) { return String(s).replace(/(\d+[dhms])(?=\d)/g, "$1" + SP); }
 
 // ---------- DOM helpers ----------
 function el(tag, cls, text) {
@@ -68,7 +83,8 @@ function el(tag, cls, text) {
 // (.fv) inside the node, so the tint hugs the digits, not the cell. A track
 // cell flashes only when it goes lit <-> unlit. The clock never flashes
 // (setLiveHTML does not use these helpers).
-["all", "all2", "pct", "eta", "eta-at", "cost", "cost-per", "cost-unreconciled", "inflight", "inflight-sub", "tput", "coord", "epoch", "machine",
+var flashCount = 0;
+["all", "all2", "pct", "eta", "eta-at", "cost", "cost-per", "inflight", "inflight-sub", "tput", "coord", "epoch", "machine",
  "streams-sub", "fleet-head", "friends-sub", "readers-sub"].forEach(function (id) { var e = document.getElementById(id); if (e) quiet(e); });
 function valEl(e) {
   if (!e._fv) {
@@ -79,6 +95,7 @@ function valEl(e) {
   return e._fv;
 }
 function flash(t) {
+  flashCount++;
   t.classList.remove("flash"); void t.offsetWidth; t.classList.add("flash");
   if (!t._flashEnd) { t._flashEnd = function () { t.classList.remove("flash"); }; t.addEventListener("animationend", t._flashEnd); }
 }
@@ -112,18 +129,6 @@ function setClass(e, c) {
 }
 function setTitle(e, t) { if (e.title !== t) e.title = t; }
 function numCell(cls) { return el("div", cls === "frac" ? "frac" : "num " + (cls || "")); }
-// A list of children patched in place: grown or shrunk at the end, each child reused by position
-// and written only when its text or class changed (a redraw never replaces a node it can keep).
-function setCount(box, n, make) {
-  while (box.children.length < n) box.appendChild(make());
-  while (box.children.length > n) box.lastChild.remove();
-}
-function putKid(box, i, cls, text) {
-  var c = box.children[i];
-  if (!c._quiet) quiet(c);
-  setText(c, text); setClass(c, cls);
-  return c;
-}
 function setNum(e, v, extra) { setText(e, v); setClass(e, "num " + (extra || "") + (String(v) === "0" ? " zero" : "")); }
 
 // Keyed rows between a fixed header and an optional total row; nodes are
@@ -142,15 +147,6 @@ function syncRows(box, header, keys, build, update, total) {
   map.forEach(function (r, k) { if (!seen.has(k)) { r.node.remove(); map.delete(k); } });
   if (total && prev.nextSibling !== total) box.insertBefore(total, prev.nextSibling);
 }
-// The header rows of Work, Fleet, Friends and Lanes are the page's own markup (index.html), the
-// strings of docs/SPEC-SPRINT-DASHBOARD.md, which a test holds equal: each table's header is
-// a clone of the row the page carries.
-var HEADS = {};
-["streams", "fleet", "friends", "lanes"].forEach(function (id) {
-  var h = document.getElementById(id).querySelector(".row.head");
-  if (h) { h.remove(); HEADS[id] = h; }
-});
-function pageHead(id) { return HEADS[id].cloneNode(true); }
 function headRow(labels) {
   var h = el("div", "row head");
   labels.forEach(function (l) { h.appendChild(el("div", l[1] || "", l[0])); });
@@ -162,7 +158,7 @@ function headRow(labels) {
 // an empty slot); cells are reused, so a refresh only repaints what changed.
 function setCells(box, classes, columns, cellRem) {
   // cellRem: fixed cell width (the fleet track, so the figure can sit right after it); else cells share the box
-  var cols = "repeat(" + Math.max(1, columns) + ", " + (cellRem ? cellRem + "rem" : "minmax(0, 1fr)") + ")";
+  var cols = "repeat(" + Math.max(1, columns) + ", " + (cellRem ? "minmax(0, " + cellRem + "rem)" : "minmax(0, 1fr)") + ")";
   if (box.style.gridTemplateColumns !== cols) box.style.gridTemplateColumns = cols;
   while (box.children.length < classes.length) box.appendChild(el("div", "cell"));
   while (box.children.length > classes.length) box.lastChild.remove();
@@ -208,7 +204,7 @@ var TRACK_LEVELS = [["blocker_working", "p-blocker", "blocker"], ["critical_work
 function trackSegs(m) {
   var working = int(m.working), segs = [], words = [], cards = 0;
   TRACK_LEVELS.forEach(function (l) {
-    var n = int(m[l[0]]); cards += n;
+    var n = int(l[0] === "fix" && m.fix_working != null ? m.fix_working : m[l[0]]); cards += n;
     for (var j = 0; j < n; j++) segs.push(l[1]);
     if (n) words.push(n + " " + l[2]);
   });
@@ -222,21 +218,33 @@ function setTrack(box, value, slots, scale, m) {
   var t = m ? trackSegs(m) : { segs: [], words: [] }, classes = [];
   if (!m) for (var j = 0; j < value; j++) t.segs.push("working");
   for (var i = 0; i < slots; i++) classes.push(t.segs[i] || "");
-  setCells(box, classes, scale, TRACK_CELL);
+  setCells(box, classes, scale, trackCell(scale));
   setTitle(box, value + " working of " + slots + (t.words.length ? ": " + t.words.join(", ") : ""));
 }
 // "a / b" as a block of fixed width: a right-aligned in `digits` character widths, b
 // left-aligned in as many, so the slash of every row in a column sits on one vertical line
 // and the block can be right-aligned in its column like any number.
-function frac(a, b, digits) {
-  return "<span class=\"fa\" style=\"width:" + digits + "ch\">" + a + "</span><span class=\"fs\"> / </span><span class=\"fb\" style=\"width:" + digits + "ch\">" + b + "</span>";
+function frac(a, b, digits, bDigits) {
+  return "<span class=\"fa\" style=\"width:" + digits + "ch\">" + a + "</span><span class=\"fs\"> / </span><span class=\"fb\" style=\"width:" + (bDigits || digits) + "ch\">" + b + "</span>";
 }
-function escHTML(s) { return String(s).replace(/[&<>"']/g, function (c) { return "&#" + c.charCodeAt(0) + ";"; }); }
 function digitsOf(n) { return String(Math.max(0, n)).length; }
 function makePill() { var p = el("span", "pill neutral"); p.appendChild(el("span", "dot")); p._t = quiet(el("span")); p.appendChild(p._t); return p; }
 function setPill(p, text, tone, title) { setText(p._t, text); setClass(p, "pill " + tone); setTitle(p, title || text); }
 function setOk(o, p, done) { setText(o, p === null ? "-" : p.toFixed(1) + "%"); setClass(o, "num" + (done ? "" : " zero")); }
+// One vocabulary across the tables (SPEC.md, Glenn 8:04 AM: "change 'asleep' to 'down' so we have
+// consistency across all tables"): a store that still says "asleep" is shown as "down", in red.
 var STATUS_TONE = { up: "good", held: "warning", down: "critical" };
+// the status word alone (up, held, down): the server may carry a reason after it ("held (why)"), which is the coordinator's view, never the pill's (Glenn 2026-10-04 10:40 PM)
+function shownStatus(st) { var w = String(st || "").trim().split(/[\s(]/)[0]; return w === "asleep" ? "down" : w; }
+// A bud shows as its person: "rowan-next" is "rowan (next)" when "rowan" is a friend too
+// (Glenn 2026-10-04 ~4:24 PM: "this enforces it is one person, but multiple buds").
+function budLabel(name, table) {
+  var i = name.indexOf("-");
+  if (i > 0 && table && table[name.slice(0, i)]) return name.slice(0, i) + " (" + name.slice(i + 1) + ")";
+  return name;
+}
+function tableScale(table) { return Math.max(1, Object.keys(table || {}).reduce(function (a, n) { return Math.max(a, int(table[n].width)); }, 0)); }
+function sharedScale(d) { return Math.max(tableScale(d.tables.fleet), tableScale(d.tables.friends)); }
 
 // ---------- sections ----------
 function streamOrder(d) {
@@ -251,15 +259,12 @@ function streamStatus(state, c, total) {
   if (total > 0 && c.waiting === total) return ["held", "warning"];
   if (c.ready + c.working + c.review + (c.fix || 0) + c.merging > 0) return ["working", "active"];
   if (state === "landed") return ["landed", "done"];
+  // cards still waiting and nothing in flight (some landed already): held, like a stream
+  // whose cards all wait; the page names only the four states SPEC.md lists
+  if (c.waiting > 0) return ["held", "warning"];
   return [state || "idle", "neutral"];
 }
 
-// The archived streams (stream archive; the owner, 2026-10-05: "I would like you to remove all
-// the already landed work streams"): off the table by default, one line saying how many, the
-// cards landed in them and their cost, which shows them or hides them again when clicked. The
-// total row, the progress bar and the hero count only the streams on the table, shown or not
-// (the owner, 2026-10-06: "I really don't think we have 2.8k cards post-archive..."); the
-// archived line carries theirs.
 var showArchived = false, lastStreams = null;
 function archivedSet(d) { var a = {}; ((d.archived || {}).streams || []).forEach(function (s) { a[s] = 1; }); return a; }
 function renderArchived(d) {
@@ -278,7 +283,9 @@ function renderStreams(d) {
   var states = {}; (d.streams || []).forEach(function (s) { states[s.Stream] = s; });
   // children: 1 stream, 2 status, 3 waiting, 4 ready, 5 working, 6 review, 7 fix, 8 merging, 9 landed, 10 cost
   if (!box._head) {
-    box._head = pageHead("streams");
+    var cols = [["stream"], ["status"]];
+    FLOW.forEach(function (st) { cols.push([st, st === "landed" ? "frac" : "num"]); });
+    cols.push(["cost", "num"]); box._head = headRow(cols);
     box._total = el("div", "row total");
     box._total._c = [el("div", "", "Total"), el("div")];
     FLOW.forEach(function (st) { box._total._c.push(numCell(st === "landed" ? "frac" : "")); });
@@ -373,8 +380,6 @@ function renderOverall(sum, all) {
   var share = allocate(sum, all, n), classes = [];
   STATES.forEach(function (st) { for (var i = 0; i < share[st]; i++) classes.push(st); });
   setCells(box, classes, n);
-  setTitle(box, (per === 1 ? "one cell per card" : "one cell per " + per + " cards") + " · " +
-    STATES.map(function (st) { return st + " " + sum[st]; }).join(", "));
   var lg = $("legend");
   if (!lg._items) {
     lg._items = {};
@@ -387,90 +392,84 @@ function renderOverall(sum, all) {
 }
 window.addEventListener("resize", function () { if (overallLast) renderOverall(overallLast.sum, overallLast.all); });
 
-// Where wall time goes: one stacked bar of the stages' medians over the cards landed in the
-// last 24 h (where --json stage_times, docs/SPEC-SPRINT.md), shown once there is one.
-var WALL_STAGES = [["needs", "waiting on needs"], ["deal", "ready, not dealt"], ["take", "dealt, not taken"], ["work", "work"],
-  ["rework", "rework"], ["read_wait", "waiting for a read"], ["read", "read"], ["accept", "waiting to accept"], ["merge", "merge queue"]];
-var WALL_HUES = [210, 190, 170, 140, 0, 45, 30, 280, 320];
-function wallSpan(s) { return s < 90 ? Math.round(s) + " s" : s < 5400 ? Math.round(s / 60) + " min" : (s / 3600).toFixed(1) + " h"; }
-function renderWall(d) {
-  var panel = $("wall-panel"), st = d.stage_times && d.stage_times.all;
-  var names = st ? WALL_STAGES.filter(function (x) { return st[x[0]]; }) : [];
-  panel.hidden = names.length === 0;
-  if (!names.length) return;
-  var box = $("wall"), lg = $("wall-legend");
-  var total = names.reduce(function (a, x) { return a + st[x[0]].median_s; }, 0);
-  setCount(box, names.length, function () { return el("i"); });
-  setCount(lg, names.length, function () { var it = el("span"); it.appendChild(el("i", "sw")); it.appendChild(quiet(el("span"))); return it; });
-  names.forEach(function (x, i) {
-    var k = x[0], m = st[k], hue = WALL_HUES[WALL_STAGES.findIndex(function (y) { return y[0] === k; })];
-    var seg = box.children[i], grow = String(Math.max(m.median_s, total / 400)), bg = "hsl(" + hue + " 60% 55%)";
-    if (seg.style.flexGrow !== grow) seg.style.flexGrow = grow;
-    if (seg.style.background !== bg) seg.style.background = bg;
-    setTitle(seg, x[1] + ": median " + wallSpan(m.median_s) + ", p90 " + wallSpan(m.p90_s) + " over " + m.n + " cards");
-    var it = lg.children[i];
-    if (it.children[0].style.background !== bg) it.children[0].style.background = bg;
-    setText(it.children[1], x[1] + " " + wallSpan(m.median_s) + " (p90 " + wallSpan(m.p90_s) + ")");
-  });
-  setText(quiet($("wall-sub")), "median per stage, cards landed in the last 24 h · " + wallSpan(total) + " in all");
-}
-
-function fleetLike(box, table, withLoad) {
+// One renderer for Fleet and Friends (SPEC.md, Glenn 8:07 PM: "the friends table should LOOK
+// exactly like the fleet table"): same columns, cells, pills (the fleet's up / held / down),
+// sort, total row and load column (a friend's load is "-" until it is measured: Glenn 8:08 PM,
+// "for now, just put load as \"-\""). `scale` is the cell grid both
+// tables share, so their columns have the same widths.
+// `clamp` (Friends only, SPEC.md "Friends working, clamped to width, soft", Glenn 2026-10-03 12:14 PM):
+// a friend's working figure never exceeds its width; the raw count is the cell's title only.
+function fleetLike(box, table, nameLabel, scale, clamp) {
+  function shownWorking(m) { var w = int(m.working); return clamp ? Math.min(w, int(m.width)) : w; }
   var names = Object.keys(table || {});
+  // rows by status (up, held, down), then by name
   var rank = { up: 0, held: 1, down: 2 };
-  function rk(n) { var r = rank[table[n].status]; return r == null ? 3 : r; }
+  function rk(n) { var r = rank[shownStatus(table[n].status)]; return r == null ? 3 : r; }
   names.sort(function (a, b) { return rk(a) - rk(b) || a.localeCompare(b); });
   if (!box._head) {
-    box._head = pageHead(box.id);
+    var cols = [[nameLabel], ["status"], ["ready", "num"], ["working"], ["", "frac"], ["done", "num"], ["ok%", "num"], ["load", "num"]];
+    box._head = headRow(cols);
+    var wh = box._head.children[4]; wh.textContent = ""; wh.appendChild(el("span", "alt", "working"));
     box._total = el("div", "row total");
-    box._total._c = [el("div", "", "Total"), el("div"), quiet(numCell()), quiet(el("div")), el("div"), quiet(numCell()), quiet(numCell())];
-    // one more than the shared cells: the fleet's load, the friends' tokens
+    box._total._c = [el("div", "", "Total"), el("div"), quiet(numCell()), el("div"), quiet(numCell("frac")), quiet(numCell()), quiet(numCell())];
     box._total._c.push(el("div"));
     box._total._c.forEach(function (c) { box._total.appendChild(c); });
   }
-  var t = { ready: 0, done: 0, ok: 0, up: 0, held: 0, down: 0, fix: 0 };
-  var scale = Math.max(1, names.reduce(function (a, n) { return Math.max(a, int(table[n].width)); }, 0));
+  var t = { ready: 0, working: 0, width: 0, done: 0, ok: 0, up: 0, held: 0, down: 0, upWidth: 0, upWorking: 0, fix: 0 };
+  scale = scale || tableScale(table);
   // the track column is exactly the widest track, so the figure sits right after it
-  var tw = (scale * (TRACK_CELL + TRACK_GAP) - TRACK_GAP).toFixed(3) + "rem";
+  var tw = TRACK_SPAN.toFixed(3) + "rem";
   if (box.style.getPropertyValue("--track-w") !== tw) box.style.setProperty("--track-w", tw);
-  var digits = Math.max(digitsOf(names.reduce(function (a, n) { return a + int(table[n].working); }, 0)), digitsOf(scale));
+  box.style.removeProperty("--frac-w"); // a measured fraction column (9:31 PM) broke the layout; the column is fixed in CSS (Glenn 9:34 PM: "undo that last one")
+  // one digit width for every "n / width" figure in the table, the Total's sums included, so the slashes line up
+  // the rows' fraction is as wide as the widest row's figure, not the total's: the total sits
+  // below with no bar beside it, so reserving its digits per row left a gap to the right of the
+  // bars (Glenn 2026-10-06 9:25 PM); the total row uses its own digits
+  // the Total row's slash sits on the same line as the rows' (Glenn 9:28 PM: "the totals are
+  // slightly misaligned"): every row's numerator, the total's included, is as wide as the widest
+  // numerator; only the total's denominator may be wider
+  var digits = names.reduce(function (a, n) { return Math.max(a, digitsOf(shownWorking(table[n])), digitsOf(int(table[n].width))); }, 1);
+  digits = Math.max(digits, digitsOf(names.reduce(function (a, n) { return a + shownWorking(table[n]); }, 0)));
+  var totalDigits = digitsOf(names.reduce(function (a, n) { return a + int(table[n].width); }, 0));
   syncRows(box, box._head, names, function () {
     var r = { node: el("div", "row") };
     r.name = el("div", "name"); r.pill = makePill(); r.track = el("div", "cells"); r.wf = numCell("frac");
     // fleet and friends: no numeric column flashes, only the cells
     r.wf = quiet(r.wf); r.ready = quiet(numCell()); r.done = quiet(numCell()); r.ok = quiet(numCell());
     [r.name, r.pill, r.ready, r.track, r.wf, r.done, r.ok].forEach(function (c) { r.node.appendChild(c); });
-    if (withLoad) { r.load = quiet(numCell()); r.node.appendChild(r.load); }
-    else { r.tokens = quiet(numCell()); r.node.appendChild(r.tokens); }
+    r.load = quiet(numCell()); r.node.appendChild(r.load);
     return r;
   }, function (r, k) {
-    var m = table[k], working = int(m.working), width = int(m.width), done = int(m.done);
+    var m = table[k], raw = int(m.working), working = shownWorking(m), width = int(m.width), done = int(m.done);
     var okv = m.okpct != null ? m.okpct : m["ok%"];
-    t.ready += int(m.ready); t.done += done; t.ok += int(m.ok);
-    if (m.status in t) t[m.status]++;
-    setText(r.name, k);
-    setPill(r.pill, m.status || "-", STATUS_TONE[m.status] || "neutral");
+    t.ready += int(m.ready); t.working += working; t.width += width; t.done += done; t.ok += int(m.ok);
+    var st = shownStatus(m.status);
+    if (st in t) t[st]++;
+    if (shownStatus(m.status) === "up") { t.upWidth += width; t.upWorking += working; }
+    setText(r.name, budLabel(k, table));
+    setPill(r.pill, st || "-", STATUS_TONE[st] || "neutral");
     setTrack(r.track, working, width, scale, m);
-    t.fix += int(m.fix);
-    // a subscription friend's window use beside her width (docs/SPEC-SPRINT.md, the friends table)
-    setHTML(r.wf, frac(working, width, digits) + (m.window ? "<span class=\"win\"> · " + escHTML(m.window) + "</span>" : ""));
+    t.fix += int(m.fix_working != null ? m.fix_working : m.fix);
+    setHTML(r.wf, frac(working, width, digits) + (m.window ? "<span class=\"win\"> · " + escHTML(m.window) + "</span>" : "")); // no reads count beside the fraction: the orange cells say it, and the label widened the column and broke the alignment (Glenn 2026-10-06 9:08 PM)
     setNum(r.ready, int(m.ready)); setNum(r.done, done);
     setOk(r.ok, pct(okv), done);
     if (r.load) { var lp = pct(m.load); setText(r.load, lp === null ? "-" : lp.toFixed(1) + "%"); setClass(r.load, "num" + (lp === null ? " zero" : "")); }
-    if (r.tokens) setText(r.tokens, m.tokens || "0");
   }, box._total);
   var c = box._total._c;
   setNum(c[2], t.ready);
-  // the fix figure under the bars: the rows' fix cells summed, said only when there are any
   setText(c[3], t.fix ? t.fix + " fix" : ""); setClass(c[3], "num" + (t.fix ? "" : " zero"));
+  // working as "x / y": the sum of working over the sum of width (SPEC.md, Glenn 8:10 PM)
+  setHTML(c[4], frac(t.working, t.width, digits, Math.max(digits, totalDigits)));
   setNum(c[5], t.done);
   setOk(c[6], t.done ? t.ok / t.done * 100 : null, t.done);
   return { t: t, n: names.length };
 }
 
 function renderFleet(d) {
-  var r = fleetLike($("fleet"), d.tables.fleet || {}, true);
-  setText($("fleet-head"), r.t.up + " up · " + r.t.held + " held · " + r.t.down + " down");
+  var r = fleetLike($("fleet"), d.tables.fleet || {}, "machine", sharedScale(d));
+  setText($("fleet-head"), r.t.up + " up · " + r.t.held + " held · " + r.t.down + " down" + sideWord(d.fleet_work, d.fleet_tiers));
+  setSideOff($("fleet").closest("section"), d.fleet_work);
+  return r.t;
 }
 
 function renderFriends(d) {
@@ -486,42 +485,70 @@ function renderFriends(d) {
     return;
   }
   if (box._empty) { box.textContent = ""; box._empty = false; }
-  var r = fleetLike(box, table, false);
-  setText($("friends-sub"), r.n + " friends");
+  var r = fleetLike(box, table, "friend", sharedScale(d), true);
+  setText($("friends-sub"), r.t.up + " up · " + r.t.held + " held · " + r.t.down + " down" + sideWord(d.friends_work, d.friends_tiers));
+  setSideOff(box.closest("section"), d.friends_work);
+}
+// A side (fleet, friends) can be switched off or limited to some tiers (set --fleet on|off,
+// --fleet-tiers; the same for friends; Glenn 2026-10-06 8:02 PM: "When [disabled], the table greys
+// out a bit visually", "both chevron'd and open"): the head says "· off" or "· tiers flash, pro",
+// and an off side's whole panel is dimmed, open or collapsed.
+function sideWord(work, tiers) {
+  var w = "";
+  if (String(work || "on") === "off") w += " · off";
+  if (tiers && tiers !== "all") w += " · tiers " + (Array.isArray(tiers) ? tiers.join(", ") : String(tiers));
+  return w;
+}
+function setSideOff(sec, work) { if (sec) sec.classList.toggle("off", String(work || "on") === "off"); }
+
+// the machine pill: red when the machine line says every provider is out of credit (SPEC.md)
+function setMachine(line) {
+  var text = String(line || "-").replace(/^machine:\s*/, "");
+  // the human page shows RUNNING, STOPPED or STALE; tick lateness is the coordinator's view only (Glenn 2026-10-04 2:55 PM)
+  var late = /^running\b.*tick late (\d+)s/i.exec(text);
+  if (late) text = Number(late[1]) >= 60 ? "STALE" : "running";
+  else if (/^running\b/i.test(text)) text = "running";
+  var stopped = /STOPPED/.test(text);
+  // the human page says STOPPED and nothing more; the reason is the coordinator's view (Glenn 2026-10-04 10:15 PM: "STOPPED is plenty")
+  if (stopped) text = "STOPPED";
+  setText($("machine"), text);
+  setClass($("machine-chip"), "chip" + (stopped ? " alert" : ""));
+  // the bar pulses only while the machine runs (Glenn 2026-10-04 9:14 AM)
+  var running = /^(running|STALE)\b/.test(text);
+  var box = $("overall"); if (box) box.classList.toggle("stopped", !running);
 }
 
-// Lanes (docs/SPEC-SPRINT-DASHBOARD.md, "Lanes"): each machine's lane of a kind, the
-// friends or machines that hold it, and those that wait, from where --json --cards's
-// lanes array (verb-lane-take-give). One row a machine, by machine then kind.
-function nameList(v) { return (v && v.length) ? v.join(", ") : "-"; }
-function renderLanes(d) {
-  var box = $("lanes"), lanes = Array.isArray(d.lanes) ? d.lanes.slice() : [];
-  lanes.sort(function (a, b) { return String(a.machine).localeCompare(String(b.machine)) || String(a.kind).localeCompare(String(b.kind)); });
-  if (!lanes.length) {
-    if (!box._empty) {
-      box._map = null; box._head = null; box.textContent = "";
-      var e = el("div", "empty");
-      e.innerHTML = "No lanes in the sprint data. This panel fills itself when <code>where --json --cards</code> carries <code>lanes</code>.";
-      box.appendChild(e); box._empty = true;
-    }
-    setText($("lanes-sub"), "");
-    return;
-  }
-  if (box._empty) { box.textContent = ""; box._empty = false; }
-  if (!box._head) { box._head = pageHead("lanes"); }
-  var byKey = {};
-  lanes.forEach(function (l) { byKey[l.machine + "/" + l.kind] = l; });
-  syncRows(box, box._head, lanes.map(function (l) { return l.machine + "/" + l.kind; }), function () {
+// Providers (SPEC.md, Glenn 8:03 and 8:18 AM): shown only when the store carries tables.providers
+var PROVIDER_STATE = { up: ["up", "good"], resting: ["resting", "warning"], "out of credit": ["out of credit", "critical"],
+  out: ["out of credit", "critical"], out_of_credit: ["out of credit", "critical"], unknown: ["unknown", "dim"] };
+function providerState(st) { return PROVIDER_STATE[String(st || "unknown").toLowerCase()] || [String(st), "neutral"]; }
+function renderProviders(d) {
+  var panel = $("providers-panel"), box = $("providers"), table = d.tables && d.tables.providers;
+  if (!table || typeof table !== "object" || !Object.keys(table).length) { panel.hidden = true; return; }
+  panel.hidden = false;
+  if (!box._head) box._head = headRow([["provider"], ["status"], ["balance", "num"], ["spend/hour", "num"], ["note"]]);
+  var rank = { up: 0, resting: 1, "out of credit": 2, unknown: 3 };
+  var names = Object.keys(table).sort(function (a, b) {
+    var ra = rank[providerState(table[a].state)[0]], rb = rank[providerState(table[b].state)[0]];
+    return (ra == null ? 4 : ra) - (rb == null ? 4 : rb) || (a < b ? -1 : a > b ? 1 : 0);
+  });
+  var counts = {};
+  syncRows(box, box._head, names, function () {
     var r = { node: el("div", "row") };
-    r.machine = el("div", "name"); r.kind = el("div"); r.width = numCell(); r.held = el("div"); r.waiting = el("div");
-    [r.machine, r.kind, r.width, r.held, r.waiting].forEach(function (c) { r.node.appendChild(c); });
+    r.name = el("div", "name"); r.pill = makePill(); r.bal = quiet(numCell()); r.spend = quiet(numCell()); r.note = quiet(el("div", "note"));
+    [r.name, r.pill, r.bal, r.spend, r.note].forEach(function (c) { r.node.appendChild(c); });
     return r;
   }, function (r, k) {
-    var l = byKey[k];
-    setText(r.machine, l.machine); setText(r.kind, l.kind); setNum(r.width, int(l.width));
-    setText(r.held, nameList(l.held)); setText(r.waiting, nameList(l.waiting));
+    var p = table[k], st = providerState(p.state), bal = cents(p.balance), sp = cents(p.spend_hour);
+    counts[st[0]] = (counts[st[0]] || 0) + 1;
+    setText(r.name, k);
+    setPill(r.pill, st[0], st[1], st[0] + (p.balance_at ? " · balance at " + p.balance_at : ""));
+    setText(r.bal, bal === null ? "-" : money(bal)); setClass(r.bal, "num" + (bal === null ? " zero" : ""));
+    setText(r.spend, sp === null ? "-" : money(sp)); setClass(r.spend, "num" + (sp === null ? " zero" : ""));
+    setText(r.note, p.note || ""); setTitle(r.note, p.note || "");
   });
-  setText($("lanes-sub"), lanes.length + (lanes.length === 1 ? " lane" : " lanes"));
+  setText($("providers-sub"), ["up", "resting", "out of credit", "unknown"].filter(function (x) { return counts[x]; })
+    .map(function (x) { return counts[x] + " " + x; }).join(" · "));
 }
 
 function renderReaders(d) {
@@ -566,32 +593,18 @@ function renderReaders(d) {
   strip._v.ci.style.color = ci === "red" ? "var(--critical)" : ci === "green" ? "var(--good)" : "var(--text-3)";
 }
 
-// the machine pill: red when the machine line says every provider is out of credit (SPEC.md)
-function setMachine(line) {
-  var text = String(line || "-").replace(/^machine:\s*/, "");
-  // the human page shows RUNNING, STOPPED or STALE; tick lateness is the coordinator's view only
-  var late = /^running\b.*tick late (\d+)s/i.exec(text);
-  if (late) text = Number(late[1]) >= 60 ? "STALE" : "running";
-  else if (/^running\b/i.test(text)) text = "running";
-  setText($("machine"), text);
-  var stopped = /STOPPED/.test(text) && /out of credit/i.test(text);
-  setClass($("machine-chip"), "chip" + (stopped ? " alert" : ""));
-  // the bar pulses only while the machine runs
-  var running = /^(running|STALE)\b/.test(text);
-  var box = $("overall"); if (box) box.classList.toggle("stopped", !running);
-}
-
-function renderHero(d, s) {
+function renderHero(d, s, ft) {
   var landed = int(d.landed), all = int(d.all);
   setText($("landed"), landed.toLocaleString("en-US")); setText($("all"), all.toLocaleString("en-US")); setText($("all2"), all.toLocaleString("en-US"));
   setText($("pct"), all ? (landed / all * 100).toFixed(1) + "%" : "-");
   var m = String(d.summary || "").match(/ETA\s+(\S+)/), at = new Date(d.at);
   if (m) {
-    setText($("eta"), etaText(m[1]));
+    setHTML($("eta"), etaText(m[1]));
     var ms = etaMs(m[1]);
+    // the viewer's zone after the time, the same source as the Updated clock (SPEC.md, Glenn 10:00 PM)
     var etaAt = new Date(at.getTime() + ms);
     if (ms != null && !isNaN(at)) { etaAtLast = [etaAt, ms]; fitEtaAt(); } else { etaAtLast = null; setText($("eta-at"), "\u00a0"); }
-  } else if ((all && landed >= all) || / done$/.test(String(d.summary || ""))) { setText($("eta"), "done"); setText($("eta-at"), " "); }
+  } else if (all && landed >= all) { setText($("eta"), "done"); setText($("eta-at"), " "); }
   else { setText($("eta"), "-"); setText($("eta-at"), "not in the summary"); }
   // the cost tile and its tooltip cover one scope (docs/SPEC-SPRINT.md, the summary line): the
   // streams on the table, or, the sprint done, the epoch's every stream, as the hero's count
@@ -599,17 +612,8 @@ function renderHero(d, s) {
   // card is that over the cards that landed
   var c = d.done ? s.sum.epoch : s.sum, recorded = c.totalCost;
   setText($("cost"), money(recorded));
-  // the reads are their own number beside the work, with their share of the two:
-  // "$0.42 per card · $310 work · $96 reads (24%)"
-  var both = c.workCost + c.readCost;
-  var split = both ? money(c.workCost) + " work \u00b7 " + money(c.readCost) + " reads (" + Math.round(100 * c.readCost / both) + "%)" : "";
   var per = landed ? money(Math.ceil(recorded / landed)) + " per card" : "";
-  var unpriced = c.unpriced ? c.unpriced + " runs unpriced" : "";
-  setHTML($("cost-per"), [per, split, unpriced].filter(Boolean).join(" \u00b7 ") || " ");
-  setTitle($("cost-per"), readerSpendTitle(d, d.done ? null : archivedSet(d)));
-  // what the providers counted beyond the records is the epoch's (sprint.UnreconciledSpend,
-  // every day since the epoch began), never added into the tile: its own line, its scope named
-  setText($("cost-unreconciled"), money(s.sum.unreconciled) + " unreconciled since " + epochStart(d));
+  setText($("cost-per"), per || " ");
   setText($("inflight"), s.sum.working + (s.sum.fix || 0) + s.sum.review + s.sum.merging);
   inflightLast = s.sum; renderInflight(s.sum);
   // throughput: cards landed per hour over the last hour, from the server's samples
@@ -619,65 +623,14 @@ function renderHero(d, s) {
   setMachine(d.machine);
 }
 
-// readerSpendTitle is the cost tile's tooltip: each reader's spend, all time and the last hour,
-// summed over every stream's where record (stream_costs[s].readers, sprint.ReaderSpend: exact
-// dollars), most first; "" with no reader priced
-// epochStart is the day the epoch began, UTC as the providers' days are, from where --json's
-// cleared; "the epoch began" when it is not known.
-function epochStart(d) {
-  var t = new Date(d.cleared || "");
-  return isNaN(t) || t.getUTCFullYear() < 2000 ? "the epoch began" : t.toISOString().slice(0, 10);
-}
-
-// readerSpendTitle is each reader's spend over the streams but those in skip (null skips none).
-function readerSpendTitle(d, skip) {
-  var by = {}, sc = d.stream_costs || {};
-  Object.keys(sc).forEach(function (k) {
-    if (skip && skip[k]) return;
-    var rs = sc[k].readers || {};
-    Object.keys(rs).forEach(function (r) {
-      var b = by[r] || (by[r] = { usd: 0, hour: 0 });
-      b.usd += parseFloat(rs[r].usd) || 0; b.hour += parseFloat(rs[r].hour_usd) || 0;
-    });
-  });
-  var names = Object.keys(by).filter(function (r) { return by[r].usd > 0; });
-  names.sort(function (a, b) { return by[b].usd - by[a].usd || (a < b ? -1 : 1); });
-  return names.map(function (r) { return r + " " + money(cents(by[r].usd)) + " (" + money(cents(by[r].hour)) + " last hour)"; }).join("\n");
-}
-
-// the In flight tile's subline: one line, two parts,
-// "<working> working · <review+merging> review + merge", each number white and its words grey;
-// the separate review and merging counts are in the tooltip
-var inflightLast = null;
-function renderInflight(sum) {
-  var box = $("inflight-sub"); if (!box) return;
-  // the words shorten in turn when the line does not fit the tile (a phone)
-  var forms = [["working", "review + merge"], ["work", "review + merge"], ["work", "rev + merge"], ["work", "rev+mrg"], ["wk", "r+m"]];
-  // a card at fix is being worked again: it counts as working here, and the tooltip names it
-  var fx = sum.fix || 0;
-  var draw = function (w) {
-    var parts = [[sum.working + fx, w[0]], [sum.review + sum.merging, w[1]]].filter(function (p) { return p[0] > 0; });
-    var kids = [];
-    if (!parts.length) kids.push(["pw", "nothing in flight"]);
-    parts.forEach(function (p, i) {
-      if (i) kids.push(["pw", " \u00b7 "]);
-      kids.push(["pn", String(p[0])], ["pw", " " + p[1]]);
-    });
-    setCount(box, kids.length, function () { return el("span"); });
-    kids.forEach(function (k, i) { putKid(box, i, k[0], k[1]); });
-  };
-  for (var i = 0; i < forms.length; i++) { draw(forms[i]); if (fits(box)) break; }
-  setTitle(box, (sum.working + fx) + " working" + (fx ? " (" + fx + " fix)" : "") + ", " + sum.review + " review, " + sum.merging + " merging");
-}
-window.addEventListener("resize", function () { if (inflightLast) renderInflight(inflightLast); fitEtaAt(); });
-
 // ---------- poll loop ----------
-var lastSnap = null, lastGood = null, inFlight = false, build = null, throughput = null, throughputMinutes = 0;
+var shownAt = -Infinity, inFlight = 0, build = null, throughput = null, throughputMinutes = 0;
 // Readers and merge are hidden by default; ?all=1 shows them.
 var SHOW_ALL = /(?:^|[?&])all=1(?:&|$)/.test(location.search);
 if (SHOW_ALL) $("readers-panel").hidden = false;
-// The page shows one release's streams: ?release=<name> or all; none is the server's
-// current release. The switch in the header lists every release a stream carries, then all.
+// The clock shows the time of the data on screen. A failed read or a
+// restarting server changes nothing on the page: the last data, clock and
+// dot stay exactly as they were (failures are logged by the server only).
 var RELEASE = (/(?:^|[?&])release=([^&]*)/.exec(location.search) || [])[1];
 RELEASE = RELEASE ? decodeURIComponent(RELEASE) : "";
 var RELEASE_Q = RELEASE ? "?release=" + encodeURIComponent(RELEASE) : "";
@@ -695,18 +648,23 @@ function renderRelease(j) {
     box.appendChild(a);
   });
 }
-// The clock shows the time of the data on screen. A failed read or a
-// restarting server changes nothing on the page: the last data, clock and
-// dot stay exactly as they were (failures are logged by the server only).
 function setLive(since) {
   setClass($("live"), "live ok");
-  setLiveHTML($("live-text"), "Updated <span class=\"mono\">" + clock(since) + "</span>");
+  // the viewer's zone after the time, from the browser (SPEC.md, Glenn 9:59 PM): EDT now, EST after the change
+  // "10:00:02 PM EDT": the digits right-aligned in a fixed 8ch box (no jump from 9 to 10 o'clock),
+  // then one ordinary (proportional) space before PM and one before the zone. The browser's own time string
+  // may put a narrow no-break space before PM, which the monospace face draws wide; so the
+  // parts are joined here with plain spaces.
+  var p = timeParts(since);
+  setLiveHTML($("live-text"), "Updated <span class=\"mono clk\"><span class=\"hms\">" + p.hms + "</span>" + SP + p.ampm +
+    SP + "<span class=\"tz\">" + zoneAbbr(since) + "</span></span>");
 }
 function setLiveHTML(e, s) { if (e.innerHTML !== s) e.innerHTML = s; }
+var DEBUG_FLASH = /(?:^|[?&])debug=flash(?:&|$)/.test(location.search), prevSig = null;
 // The full form of a table, unless any of its rows or cells would overflow: then the compact form.
 // Measured with the class removed and set again in the same task, so nothing flickers.
 function fitTables() {
-  ["streams", "fleet", "friends"].forEach(function (id) {
+  ["streams", "fleet", "friends", "providers"].forEach(function (id) {
     var panel = document.querySelector(".panel." + id), head = panel && panel.querySelector(".row.head");
     if (!head) return;
     panel.classList.remove("compact");
@@ -716,6 +674,8 @@ function fitTables() {
       // a number's flash tint bleeds 6 px into the gutter by design (.fv), so numbers get 7 px of slack
       return [].some.call(r.children, function (c) {
         var slack = (c.classList.contains("num") || c.classList.contains("frac")) ? 7 : 1;
+        // a name that does not fit is ellipsized (full text on hover), never a reason for the compact layout (Glenn 11:50 AM)
+        if (c.classList.contains("name")) { if (c.scrollWidth > c.clientWidth + 1) c.title = c.textContent; return false; }
         return c.offsetParent !== null && !c.classList.contains("cells") && c.scrollWidth > c.clientWidth + slack;
       });
     });
@@ -723,7 +683,7 @@ function fitTables() {
   });
 }
 window.addEventListener("resize", fitTables);
-// Spend row: the pie of cards by tier and the ten most expensive streams.
+// Spend row (Glenn 2026-10-04 10:15 AM): the pie of cards by tier and the ten most expensive streams.
 var TIERS = ["flash", "pro", "heavy", "frontier"], topN = 10, lastSpendData = null;
 window.addEventListener("resize", function () { if (lastSpendData) renderTopStreams(lastSpendData); });
 function tierColor(t) { return "var(--tier-" + (TIERS.indexOf(t) >= 0 ? t : "other") + ")"; }
@@ -734,8 +694,7 @@ function tierCounts(obj) { // {flash: "12", pro: 3} -> [[tier, n], ...] sorted b
   out.sort(function (a, b) { var ia = TIERS.indexOf(a[0]), ib = TIERS.indexOf(b[0]); if (ia < 0) ia = 99; if (ib < 0) ib = 99; return ia - ib || b[1] - a[1]; });
   return out;
 }
-
-// The Cost breakdown: the pie is the spend by tier and the
+// The Cost breakdown (Glenn 2026-10-04 2:43 to 3:05 PM): the pie is the spend by tier and the
 // tier line in the panel's header is its legend, open or folded. The spend per tier is summed
 // over every stream (tables.work[s].cost_by_tier); a tier at $0 is left out of the pie, the
 // legend and the table alike. One format for the whole panel, decided once: cents (rounded up)
@@ -746,7 +705,7 @@ function tierSpend(d) {
   var work = (d.tables && d.tables.work) || {}, byTier = {};
   Object.keys(work).forEach(function (k) {
     var b = work[k].cost_by_tier; if (!b || typeof b !== "object") return;
-    // the four tiers alone: a record with no tier ("untiered") is no tier and is left out
+    // the four tiers alone: a record with no tier ("untiered") is no tier and is left out (Glenn 2026-10-04 3:10 PM)
     TIERS.forEach(function (t) { var c = cents(b[t]); if (c) byTier[t] = (byTier[t] || 0) + c; });
   });
   var order = Object.keys(byTier).sort(function (a, b) { return byTier[b] - byTier[a] || a.localeCompare(b); });
@@ -754,9 +713,8 @@ function tierSpend(d) {
   var fmt = inCents ? money : dollars;
   // a value as shown: the cents, or the whole dollars rounded up, in cents
   var shown = function (c) { return inCents ? c : Math.ceil(c / 100 - 1e-9) * 100; };
-  return { byTier: byTier, order: order, fmt: fmt, shown: shown };
+  return { byTier: byTier, order: order, fmt: fmt, shown: shown, unit: inCents ? 1 : 100 };
 }
-
 function renderPie(d) {
   var svg = $("pie"); if (!svg) return; // no legend below the chart: its legend is the panel's header line
   var sp = tierSpend(d), vals = sp.order.map(function (t) { return [t, sp.shown(sp.byTier[t])]; });
@@ -786,7 +744,28 @@ function renderPie(d) {
     a0 = a1;
   });
 }
-
+// the In flight tile's subline (Glenn 2026-10-04 3:20 and 3:25 PM): one line, two parts,
+// "<working> working · <review+merging> review + merge", each number white and its words grey;
+// the separate review and merging counts are in the tooltip
+var inflightLast = null;
+function renderInflight(sum) {
+  var box = $("inflight-sub"); if (!box) return;
+  var fx = sum.fix || 0;
+  setTitle(box, (sum.working + fx) + " working" + (fx ? " (" + fx + " fix)" : "") + ", " + sum.review + " review, " + sum.merging + " merging");
+  // the words shorten in turn when the line does not fit the tile (a phone)
+  var forms = [["working", "review + merge"], ["work", "review + merge"], ["work", "rev + merge"], ["work", "rev+mrg"], ["wk", "r+m"]];
+  var draw = function (w) {
+    var parts = [[sum.working + (sum.fix || 0), w[0]], [sum.review + sum.merging, w[1]]].filter(function (p) { return p[0] > 0; });
+    box.textContent = "";
+    if (!parts.length) box.textContent = "nothing in flight";
+    parts.forEach(function (p, i) {
+      if (i) box.appendChild(el("span", "pw", " \u00b7 "));
+      box.appendChild(el("span", "pn", String(p[0]))); box.appendChild(el("span", "pw", " " + p[1]));
+    });
+  };
+  for (var i = 0; i < forms.length; i++) { draw(forms[i]); if (fits(box)) break; }
+}
+window.addEventListener("resize", function () { if (inflightLast) renderInflight(inflightLast); fitEtaAt(); });
 function renderTopStreams(d) {
   var box = $("top-streams"); if (!box) return;
   lastSpendData = d;
@@ -848,23 +827,9 @@ function renderTopStreams(d) {
   }
 }
 
-// Merge (docs/SPEC-SPRINT-DASHBOARD.md, "Merge"): where --json's merge_row, one row under the
-// progress bar; a minute or a gate not known is "-". Nothing in it flashes.
-function renderMerge(d) {
-  var m = d.merge_row || {};
-  var mins = function (n, suffix) { return n == null ? "-" : n + "m" + (suffix || ""); };
-  var count = function (n) { return n == null ? "-" : String(n); };
-  [["mr-merging", count(m.merging)], ["mr-review", count(m.review)], ["mr-landed", count(m.landed_per_30m)],
-   ["mr-oldest", mins(m.oldest_merging_min)],
-   ["mr-drift", m.base_lacks == null ? "-" : "base lacks " + m.base_lacks + " · dev lacks " + m.dev_lacks],
-   ["mr-sync", mins(m.sync_minutes, " ago")], ["mr-promoted", mins(m.promotion_minutes, " ago")]].forEach(function (f) {
-    var e = $(f[0]); e._quiet = true; setText(e, f[1]);
-  });
-  var g = $("mr-gate");
-  if (!g._pill) { g._pill = makePill(); g.appendChild(g._pill); }
-  var gate = m.base_gate || "-", tone = gate === "red" ? "critical" : gate === "green" ? "good" : "neutral";
-  setPill(g._pill, gate + (m.failing_test ? " · " + m.failing_test : ""), tone,
-    gate === "-" ? "the base's gate is not known" : "the base's gate is " + gate + (m.failing_test ? ": " + m.failing_test : ""));
+function setCount(box, n, make) {
+  while (box.children.length < n) box.appendChild(make());
+  while (box.children.length > n) box.lastChild.remove();
 }
 
 // ---------- priority marks ----------
@@ -876,6 +841,7 @@ function renderMerge(d) {
 // says how many more.
 var MARK_LEVELS = ["blocker", "critical", "critical (by weight, not yet ordered)", "fix", "high", "reader", "low"];
 var MARKS_MAX = 40;
+var priorityScope = "all";
 function priorityClass(level) {
   if (level === "fix") return "p-fix"; // a card awaiting rework, purple
   if (level.indexOf("critical") === 0) return "p-critical"; // a computed critical too, its title says so
@@ -893,6 +859,22 @@ function renderPriorityMarks(d) {
     });
   });
   box.hidden = marks.length === 0;
+  // The priority list and reads_waiting are sprint-wide in where's cached copy.
+  // A selected release filters Work rows, but has no per-release read count or
+  // primary-to-stream map for undealt cards. Name this scope instead of making
+  // the marks look like counts for the selected release.
+  var scoped = priorityScope !== "all";
+  if (scoped && !box._scopeLabel) {
+    box._scopeLabel = quiet(el("span", "muted"));
+    box._scopeLabel.style.display = "block";
+    box._scopeLabel.style.marginTop = "1rem";
+    box.parentNode.insertBefore(box._scopeLabel, box);
+  }
+  if (box._scopeLabel) {
+    box._scopeLabel.hidden = !scoped || marks.length === 0;
+    if (scoped) setText(box._scopeLabel, "Priorities and waiting reads across all releases");
+    box.style.marginTop = scoped ? ".25rem" : "";
+  }
   setCount(box, marks.length, function () { return el("span", "mark"); });
   marks.forEach(function (m, i) {
     var k = box.children[i];
@@ -901,51 +883,238 @@ function renderPriorityMarks(d) {
   });
 }
 
-function render(d) {
-  var s = renderStreams(d);
-  renderOverall(s.sum, s.all);
-  renderPriorityMarks(d);
-  renderPie(d);
-  renderTopStreams(d);
-  renderMerge(d);
-  renderFleet(d);
-  renderFriends(d);
-  renderWall(d);
-  renderLanes(d);
-  if (SHOW_ALL) renderReaders(d);
-  renderHero(d, s);
-  fitTables();
-}
-var stream = null;
-function poll() {
-  if (inFlight || (stream && stream.readyState === 1)) return;
-  inFlight = true;
-  fetch("/api/sprint" + RELEASE_Q, { cache: "no-store" }).then(function (r) {
-    if (!r.ok) throw new Error("HTTP " + r.status);
-    return r.json();
-  }).then(apply).catch(function () {
-    // hold: nothing changes on the page
-  }).then(function () { inFlight = false; });
-}
-function apply(j) {
-  if (j.data) {
-    throughput = j.throughput == null ? null : j.throughput; throughputMinutes = j.throughputMinutes || 0;
-    // a snapshot byte-identical to the one on screen draws nothing
-    var snap = JSON.stringify(j.data);
-    if (snap !== lastSnap) { lastSnap = snap; try { render(j.data); } catch (e) { console.error(e); } }
-    lastGood = j.data;
-    renderRelease(j);
-    setLive(new Date(j.data.at));
-  }
-  if (j.build) { if (build == null) build = j.build; else if (build !== j.build) location.reload(); }
+function escHTML(s) { return String(s).replace(/[&<>"']/g, function (c) { return "&#" + c.charCodeAt(0) + ";"; }); }
+function digitsOf(n) { return String(Math.max(0, n)).length; }
+function makePill() { var p = el("span", "pill neutral"); p.appendChild(el("span", "dot")); p._t = quiet(el("span")); p.appendChild(p._t); return p; }
+function setPill(p, text, tone, title) { setText(p._t, text); setClass(p, "pill " + tone); setTitle(p, title || text); }
+function setOk(o, p, done) { setText(o, p === null ? "-" : p.toFixed(1) + "%"); setClass(o, "num" + (done ? "" : " zero")); }
+var STATUS_TONE = { up: "good", held: "warning", down: "critical" };
+
+// ---------- sections ----------
+function streamOrder(d) {
+  var work = d.tables.work || {}, keys = [], seen = {};
+  (d.streams || []).forEach(function (s) { if (work[s.Stream] && !seen[s.Stream]) { keys.push(s.Stream); seen[s.Stream] = 1; } });
+  Object.keys(work).sort().forEach(function (k) { if (!seen[k]) keys.push(k); });
+  return keys;
 }
 
-// The dashboard is always dark (docs/SPEC-SPRINT-DASHBOARD.md, Page): there is no theme
-// toggle and no light tokens.
-// the stream reconnects on its own; while it is not open, the timer's poll runs
-if (window.EventSource) {
-  stream = new EventSource("/events" + RELEASE_Q);
-  stream.addEventListener("sprint", function (e) { try { apply(JSON.parse(e.data)); } catch (x) { console.error(x); } });
+function putKid(box, i, cls, text) {
+  var c = box.children[i];
+  if (!c._quiet) quiet(c);
+  setText(c, text); setClass(c, cls);
+  return c;
 }
-poll();
-setInterval(poll, POLL_MS);
+
+function nameList(v) { return (v && v.length) ? v.join(", ") : "-"; }
+function renderLanes(d) {
+  var box = $("lanes"), lanes = Array.isArray(d.lanes) ? d.lanes.slice() : [];
+  lanes.sort(function (a, b) { return String(a.machine).localeCompare(String(b.machine)) || String(a.kind).localeCompare(String(b.kind)); });
+  if (!lanes.length) {
+    if (!box._empty) {
+      box._map = null; box._head = null; box.textContent = "";
+      var e = el("div", "empty");
+      e.innerHTML = "No lanes in the sprint data. This panel fills itself when <code>where --json --cards</code> carries <code>lanes</code>.";
+      box.appendChild(e); box._empty = true;
+    }
+    setText($("lanes-sub"), "");
+    return;
+  }
+  if (box._empty) { box.textContent = ""; box._empty = false; }
+  if (!box._head) { box._head = headRow([["machine"], ["kind"], ["width", "num"], ["held"], ["waiting"]]); }
+  var byKey = {};
+  lanes.forEach(function (l) { byKey[l.machine + "/" + l.kind] = l; });
+  syncRows(box, box._head, lanes.map(function (l) { return l.machine + "/" + l.kind; }), function () {
+    var r = { node: el("div", "row") };
+    r.machine = el("div", "name"); r.kind = el("div"); r.width = numCell(); r.held = el("div"); r.waiting = el("div");
+    [r.machine, r.kind, r.width, r.held, r.waiting].forEach(function (c) { r.node.appendChild(c); });
+    return r;
+  }, function (r, k) {
+    var l = byKey[k];
+    setText(r.machine, l.machine); setText(r.kind, l.kind); setNum(r.width, int(l.width));
+    setText(r.held, nameList(l.held)); setText(r.waiting, nameList(l.waiting));
+  });
+  setText($("lanes-sub"), lanes.length + (lanes.length === 1 ? " lane" : " lanes"));
+}
+
+function renderMerge(d) {
+  var m = d.merge_row || {};
+  var mins = function (n, suffix) { return n == null ? "-" : n + "m" + (suffix || ""); };
+  var count = function (n) { return n == null ? "-" : String(n); };
+  [["mr-merging", count(m.merging)], ["mr-review", count(m.review)], ["mr-landed", count(m.landed_per_30m)],
+   ["mr-oldest", mins(m.oldest_merging_min)],
+   ["mr-drift", m.base_lacks == null ? "-" : "base lacks " + m.base_lacks + " · dev lacks " + m.dev_lacks],
+   ["mr-sync", mins(m.sync_minutes, " ago")], ["mr-promoted", mins(m.promotion_minutes, " ago")]].forEach(function (f) {
+    var e = $(f[0]); e._quiet = true; setText(e, f[1]);
+  });
+  var g = $("mr-gate");
+  if (!g._pill) { g._pill = makePill(); g.appendChild(g._pill); }
+  var gate = m.base_gate || "-", tone = gate === "red" ? "critical" : gate === "green" ? "good" : "neutral";
+  setPill(g._pill, gate + (m.failing_test ? " · " + m.failing_test : ""), tone,
+    gate === "-" ? "the base's gate is not known" : "the base's gate is " + gate + (m.failing_test ? ": " + m.failing_test : ""));
+}
+
+function render(d) {
+  renderPriorityMarks(d);
+  flashCount = 0;
+  var s = renderStreams(d);
+  renderOverall(s.sum, s.all);
+  renderPie(d);
+  renderTopStreams(d);
+  var ft = renderFleet(d);
+  renderFriends(d);
+  renderProviders(d);
+  renderLanes(d);
+  renderMerge(d);
+  if (SHOW_ALL) renderReaders(d);
+  renderHero(d, s, ft);
+  fitTables();
+  if (DEBUG_FLASH) { // ?debug=flash: one line per refresh, same=1 when the rendered data did not change
+    var sig = JSON.stringify([d.landed, d.all, d.summary, d.coordinator, d.epoch, d.machine, d.tables.work, d.tables.fleet, d.tables.friends || null,
+      (d.streams || []).map(function (x) { return [x.Stream, x.State]; }), d.tables.merge]);
+    var line = "flashes=" + flashCount + " same=" + (sig === prevSig ? 1 : 0);
+    prevSig = sig; console.log(line);
+    var log = $("flashlog") || document.body.appendChild(el("pre", "", "")); log.id = "flashlog"; log.textContent += line + "\n";
+  }
+}
+// One snapshot, from the poll or the stream: shown only when its `at` is newer than the one on
+// screen, so a slow response that arrives after a faster later one never moves the page backwards
+// (SPEC.md, Glenn 11:30 AM). Accepts the /api/sprint envelope ({data, build, throughput}) or a bare
+// `where --json` snapshot (an /events message may carry either).
+function accept(j) {
+  if (!j) return;
+  var d = j.tables ? j : j.data;
+  if (j.build) { if (build == null) build = j.build; else if (build !== j.build) { location.reload(); return; } }
+  if (!d || !d.tables) return;
+  var at = Date.parse(d.at);
+  if (isNaN(at) || at <= shownAt) return;
+  shownAt = at;
+  priorityScope = j.release || "all";
+  if ("throughput" in j) { throughput = j.throughput == null ? null : j.throughput; throughputMinutes = j.throughputMinutes || 0; }
+  renderRelease(j);
+  try { render(d); } catch (e) { console.error(e); }
+  setLive(new Date(at));
+}
+// The poll: a fixed 1 s timer that never waits on the round trip. Up to two fetches in flight;
+// a third tick is skipped (console.debug). A fetch that hangs is aborted after 10 s so it cannot
+// hold a slot. A failure changes nothing on the page.
+var MAX_IN_FLIGHT = 2, FETCH_TIMEOUT_MS = 10000, pollTimer = null;
+function poll() {
+  if (inFlight >= MAX_IN_FLIGHT) { console.debug("poll: tick skipped, " + inFlight + " fetches in flight"); return; }
+  inFlight++;
+  var ctl = typeof AbortController === "function" ? new AbortController() : null;
+  var kill = ctl && setTimeout(function () { ctl.abort(); }, FETCH_TIMEOUT_MS);
+  fetch("/api/sprint" + RELEASE_Q, { cache: "no-store", signal: ctl ? ctl.signal : undefined }).then(function (r) {
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    return r.json();
+  }).then(accept).catch(function () {
+    // hold: nothing changes on the page
+  }).then(function () { inFlight--; if (kill) clearTimeout(kill); });
+}
+function startPoll() { if (pollTimer == null) { poll(); pollTimer = setInterval(poll, POLL_MS); } }
+function stopPoll() { if (pollTimer != null) { clearInterval(pollTimer); pollTimer = null; } }
+// The stream: when the server offers /events (server-sent events, the nova-sprint dashboard verb),
+// each `sprint` event is rendered as it arrives and the poll stops while the stream is live. On any
+// error (a 404 from a server without it, a dropped stream) or 5 s without an event (a stream a proxy
+// holds open but silent), the stream is closed, the poll resumes, and the stream is tried again 5 s later.
+var STREAM_RETRY_MS = 5000, STREAM_SILENT_MS = 5000, stream = null, streamHeard = 0;
+function dropStream() {
+  if (!stream) return;
+  console.debug("events: stream dropped, polling; retry in " + STREAM_RETRY_MS / 1000 + " s");
+  stream.close(); stream = null;
+  startPoll();
+  setTimeout(connectStream, STREAM_RETRY_MS);
+}
+function connectStream() {
+  if (typeof EventSource !== "function" || stream) return;
+  var es;
+  try { es = new EventSource("/events" + RELEASE_Q); } catch (e) { return; }
+  stream = es; streamHeard = Date.now();
+  es.addEventListener("open", function () { if (stream === es) { streamHeard = Date.now(); stopPoll(); } });
+  es.addEventListener("sprint", function (ev) {
+    if (stream !== es) return;
+    streamHeard = Date.now();
+    var j; try { j = JSON.parse(ev.data); } catch (e) { return; }
+    accept(j);
+  });
+  es.addEventListener("error", function () { if (stream === es) dropStream(); });
+}
+setInterval(function () { if (stream && Date.now() - streamHeard > STREAM_SILENT_MS) dropStream(); }, 1000);
+
+// The top bar's centre line is static CSS (index.html): nothing here moves the title, the
+// pills, the clock or the button after load.
+
+// theme: always dark (Glenn 2026-10-04 2:21 PM: no light theme, no toggle)
+startPoll();
+connectStream();
+
+// Landings (Glenn 2026-10-04 4:20 PM, live/SPEC.md): cards landed per 10 minutes over the last 24 hours,
+// fleet at the base and friends on top, drawn as plain SVG. The series comes from /landings.json, which
+// bin/landings.sh writes every 60 s (a STOPGAP until where --json carries it); the panel stays hidden
+// until that file is fetched, and redraws only when its "generated" changes or the window resizes.
+var LAND_POLL_MS = 15000, landLast = null;
+function svgEl(tag, attrs, text) {
+  var e = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  Object.keys(attrs).forEach(function (k) { e.setAttribute(k, attrs[k]); });
+  if (text != null) e.textContent = text;
+  return e;
+}
+function niceStep(max) {
+  var steps = [1, 2, 5, 10, 20, 25, 50, 100, 200, 250, 500, 1000];
+  for (var i = 0; i < steps.length; i++) if (max / steps[i] <= 4) return steps[i];
+  return steps[steps.length - 1];
+}
+function hourLabel(d) { var h = d.getHours(); return (h % 12 || 12) + " " + (h < 12 ? "AM" : "PM"); }
+function drawLandings(j) {
+  var svg = $("landchart"), W = svg.clientWidth, H = svg.clientHeight;
+  if (!W || !H) return;
+  var rem = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+  var padL = 3.5 * rem, padB = 2.75 * rem, padT = 1 * rem, plotW = W - padL, plotH = H - padT - padB;
+  var n = j.buckets, fr = j.friends, fl = j.fleet, max = 0;
+  for (var i = 0; i < n; i++) max = Math.max(max, fr[i] + fl[i]);
+  var step = niceStep(Math.max(max, 4)), top = Math.max(step, Math.ceil(max / step) * step);
+  var y = function (v) { return padT + plotH - v / top * plotH; };
+  svg.setAttribute("viewBox", "0 0 " + W + " " + H);
+  while (svg.firstChild) svg.removeChild(svg.firstChild);
+  for (var v = 0; v <= top; v += step) {
+    var yy = Math.round(y(v)) + 0.5;
+    svg.appendChild(svgEl("line", { "class": v === 0 ? "axis" : "grid", x1: padL, x2: W, y1: yy, y2: yy }));
+    svg.appendChild(svgEl("text", { x: padL - 0.75 * rem, y: yy, "text-anchor": "end", "dominant-baseline": "central" }, String(v)));
+  }
+  var slot = plotW / n, gap = slot >= 6 ? 2 : 1, bw = Math.max(1, slot - gap);
+  for (var b = 0; b < n; b++) {
+    var x = padL + b * slot + gap / 2, h1 = fl[b] / top * plotH, h2 = fr[b] / top * plotH;
+    var op = b === n - 1 ? { opacity: 0.6 } : {}; // the current bucket is still filling
+    if (h1 > 0) svg.appendChild(svgEl("rect", Object.assign({ "class": "fleet", x: x, y: padT + plotH - h1, width: bw, height: h1, rx: 1 }, op)));
+    if (h2 > 0) svg.appendChild(svgEl("rect", Object.assign({ "class": "friends", x: x, y: padT + plotH - h1 - h2, width: bw, height: h2, rx: 1 }, op)));
+    var t = new Date((j.start + b * j.bucketSeconds) * 1000);
+    if (t.getMinutes() === 0 && t.getHours() % 2 === 0) {
+      var xx = Math.round(padL + b * slot) + 0.5;
+      svg.appendChild(svgEl("line", { "class": "axis", x1: xx, x2: xx, y1: padT + plotH, y2: padT + plotH + 0.5 * rem }));
+      svg.appendChild(svgEl("text", { x: xx, y: padT + plotH + 1.75 * rem, "text-anchor": b === 0 ? "start" : "middle" }, hourLabel(t)));
+    }
+  }
+  var lg = $("landings-legend"), tot = j.totals || {}, lh = j.lastHour || {};
+  var html = '<span><i class="sw friends"></i><span>friends <b>' + (tot.friends || 0) + '</b></span></span>' +
+    '<span><i class="sw fleet"></i><span>fleet <b>' + (tot.fleet || 0) + '</b></span></span>' +
+    '<span>last hour <b>' + (lh.friends || 0) + '</b>&nbsp;friends&nbsp;· <b>' + (lh.fleet || 0) + '</b>&nbsp;fleet</span>' +
+    (tot.unknown ? '<span>worker unknown <b>' + tot.unknown + '</b></span>' : "");
+  if (lg.innerHTML !== html) lg.innerHTML = html;
+}
+function pollLandings() {
+  fetch("/landings.json", { cache: "no-store" }).then(function (r) {
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    return r.json();
+  }).then(function (j) {
+    if (!j || !j.buckets || !j.friends || !j.fleet) return;
+    var changed = !landLast || landLast.generated !== j.generated;
+    landLast = j;
+    $("landings-panel").hidden = false;
+    if (changed || !$("landchart").firstChild) drawLandings(j); // a panel folded at load draws on its first open
+  }).catch(function () {
+    // hold: the panel keeps its last drawing, or stays hidden until the file is served
+  });
+}
+window.addEventListener("resize", function () { if (landLast) drawLandings(landLast); });
+if ($("landings-panel")) $("landings-panel").addEventListener("click", function (e) { if (landLast && e.target.classList.contains("fold")) setTimeout(function () { drawLandings(landLast); }, 0); });
+pollLandings();
+setInterval(pollLandings, LAND_POLL_MS);

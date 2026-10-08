@@ -95,6 +95,8 @@ type world struct {
 	settings       friend.SettingsFS                   // where a harness's own settings are read and written (install, check --settings)
 	argv           []string                            // this run's arguments after the program's name: what the plist drift is read against
 	wake           *wakeFS                             // watch: the wake file's reads; nil reads the disk
+	stepBeat       bool                                // deterministic fake clock in CLI tests; never set by realWorld
+	checkGo        func(func())                        // optional test scheduler for a fake-clock session check
 	reachPermitted func(context.Context) (bool, error) // reach window permission; nil checks the platform without prompting
 }
 
@@ -378,12 +380,34 @@ func friendTool(w world) *tool.Tool {
 		f.Required("harness", "the harness the session runs in: "+strings.Join(friend.Harnesses, ", "))
 		f.Required("dir", "the friend's working directory: the session's, and where the state files live")
 		f.String("session", "", "the session to deliver into (default: the harness's newest session in --dir; harness tmux: the tmux session, default: the one host saved, else friend-<me>)")
+		f.String("adapter", "", "delivery route: folder for an existing watched Codex session (default: the harness adapter)")
+		f.String("delivery-dir", "", "existing folder watched by that Codex session when --adapter folder")
 		f.String("server", w.server(), "the sprint server, host:port (default: "+ServerEnv+", else "+DefaultServer+")")
 		f.Int("width", 0, "the friend's width, from the nova-config friend row; 0 is unknown")
 		f.Duration("silent-stop", friend.DefaultSilentStop, "stop a turn that has printed nothing for this long; a turn that prints runs on")
 		f.Int("broken-after", friend.DefaultBrokenAfter, "turns in a row the provider refuses the same way before the session is broken")
 		f.Duration("limit-rest", friend.DefaultLimitWait, "how long the friend is down when its harness's usage limit or empty balance names no reset")
+		f.Bool("notifications-only", false, "deliver filtered notifications through one receiver; no sprint beats, proof, claims, jobs, staging, pruning or finishes")
+		f.String("notify-kinds", "request,blocker,report", "message kinds that wake the model, comma-separated; requests/blockers always retained; ack/status are audited by default")
+		f.Duration("notify-window", friend.NotificationWindow, "global card-delivery burst window and minimum wake interval; urgent messages bypass it")
 		f.String("coordinator", "", "who is told of a broken session when no ping has named the seat")
+		f.Check(func(c *tool.Call) {
+			if err := friend.CheckFolderRoute(c.Str("harness"), c.Str("session"), c.Str("adapter"), c.Str("delivery-dir")); err != nil {
+				c.Problem(err.Error())
+			}
+			if c.Bool("notifications-only") && c.Str("adapter") != "" {
+				c.Problem("--notifications-only uses the Codex app queue; omit --adapter folder for this separate receiver")
+			}
+			if c.Bool("notifications-only") && c.Str("harness") != "codex" {
+				c.Problem("--notifications-only wants --harness codex: queued notifications into the existing app")
+			}
+			if why := bus.CheckKinds(commaList(c.Str("notify-kinds"))...); why != "" {
+				c.Problem(why)
+			}
+			if c.Dur("notify-window") <= 0 {
+				c.Problem("--notify-window wants a positive duration")
+			}
+		})
 		stateDir(f)
 		redis(f)
 		f.Check(func(c *tool.Call) {
@@ -407,7 +431,7 @@ state: <dir>/.nova-friend/ (--state-dir moves it), the queue: <dir>/inbox/QUEUE.
 		Verbs: []tool.Verb{
 			{
 				Name:    "run",
-				Usage:   "run --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--profile <p>] [--config-dir <d>] [--deny-self <d,...>] [--wall-jobs <d,...>] [--wall-reads <d,...>] [--model <provider/model>] [--db <opencode.db>] [--lane-tiers <t,...>] [--lane-streams <p,...>] [--token-cap <n>] [--load-max <n>] [--load-width <n>] [--pause-on funds|any] [--refuse-go] [--dry-run]",
+				Usage:   "run --as <me> --harness <h> --dir <d> [--session <id>] [--adapter folder --delivery-dir <watched-dir>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--profile <p>] [--config-dir <d>] [--deny-self <d,...>] [--wall-jobs <d,...>] [--wall-reads <d,...>] [--model <provider/model>] [--db <opencode.db>] [--lane-tiers <t,...>] [--lane-streams <p,...>] [--token-cap <n>] [--load-max <n>] [--load-width <n>] [--pause-on funds|any] [--refuse-go] [--dry-run]",
 				Example: "", // a daemon: the example block has no line that runs for ever
 				Effect:  tool.Delivery + ": the daemon; messages go into the session, beats and pongs go out, until a signal",
 				DryRun:  true,
@@ -548,7 +572,7 @@ example: nova-friend beat --as bob --server 127.0.0.1:6390`,
 			},
 			{
 				Name:    "install",
-				Usage:   "install --as <me> --harness <h> --dir <d> [--session <id>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--config-dir <d>] [--model <provider/model>] [--secrets NAME[,NAME] --seat <seat>] [--launchd-log <file>] [--dry-run]",
+				Usage:   "install --as <me> --harness <h> --dir <d> [--session <id>] [--adapter folder --delivery-dir <watched-dir>] [--server <addr>] [--width <n>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--config-dir <d>] [--model <provider/model>] [--secrets NAME[,NAME] --seat <seat>] [--launchd-log <file>] [--dry-run]",
 				Example: "install --as bob --harness opencode --dir ./bob --dry-run",
 				Effect:  tool.LocalWrite + ": writes the harness's settings and the launchd agent com.nova.friend-<me>, and loads it",
 				Detail: `First writes the settings the friend's harness needs in its own config (docs/SPEC-FRIEND.md, Harness
@@ -620,7 +644,7 @@ is refused at exit 2 with its remedy and the agent booted out again. A harness w
 			},
 			{
 				Name:    "check",
-				Usage:   "check [--as <coordinator>] [<friend>...] [--since <duration>] [--shown <file|->] [--json]",
+				Usage:   "check [--as <coordinator>] [<friend>...] [--since <duration>] [--shown <file|->] [--harness codex --dir <d> --session <id> --adapter folder --delivery-dir <watched-dir>] [--json]",
 				Example: "", // the banner's example block runs nothing that reads a fleet's state; -h carries the example
 				Effect:  tool.Delivery + ": without --harness it only reads (the health check); with --harness it delivers one session check into the live session (the delivery check)",
 				DryRun:  true,
@@ -668,6 +692,8 @@ example: nova-friend check --as ada bob`,
 					f.String("harness", "", "the harness the session runs in (delivery check): "+strings.Join(friend.Harnesses, ", "))
 					f.String("dir", "", "the friend's working directory")
 					f.String("session", "", "the session to deliver into (delivery check); for grok the wake file (--settings)")
+					f.String("adapter", "", "delivery route: folder for an existing watched Codex session")
+					f.String("delivery-dir", "", "existing folder watched by that Codex session when --adapter folder")
 					f.Bool("settings", false, "compare the harness's settings with what install would write; nothing is delivered or written")
 					settingFlags(f)
 					f.Duration("within", friend.DefaultCheckWithin, "how long to wait for the session's pong (delivery check)")
@@ -677,6 +703,9 @@ example: nova-friend check --as ada bob`,
 					stateDir(f)
 					redis(f)
 					f.Check(func(c *tool.Call) {
+						if err := friend.CheckFolderRoute(c.Str("harness"), c.Str("session"), c.Str("adapter"), c.Str("delivery-dir")); err != nil {
+							c.Problem(err.Error())
+						}
 						callArgs.Store(c, f.Args())
 						if c.Bool("settings") && c.Str("harness") == "" {
 							c.Problem("--settings wants --harness, --as and --dir: the friend whose harness settings to compare")
@@ -818,7 +847,7 @@ removes its plist.`,
 			},
 			{
 				Name:    "pong",
-				Usage:   "pong --as <me> --nonce <n> [--to <coordinator>] [--queue <n>] [--working <n>] [--width <n>] [--state-dir <d>] [--redis <addr>] [--dry-run]",
+				Usage:   "pong --as <me> --nonce <n> [--to <coordinator>] [--dir <work-dir>] [--queue <n>] [--working <n>] [--width <n>] [--state-dir <d>] [--redis <addr>] [--dry-run]",
 				Example: "pong --as bob --nonce abc123 --to ada --queue 2 --working 1 --width 4",
 				Effect:  tool.Delivery + ": the session's answer to a PING, one note on the bus to the coordinator, and the pong file",
 				DryRun:  true,
@@ -833,6 +862,7 @@ the line it would send; nothing is sent and no pong file is written.`,
 					f.Required("as", "your name, the friend the daemon in --dir runs as")
 					f.Required("nonce", "the nonce the PING carried")
 					f.String("to", "", "the coordinator (default: the seat the last ping named)")
+					f.String("dir", "", "the friend's working directory; when given, omitted queue and working counts are read from its inbox/QUEUE.json")
 					f.Int("queue", 0, "tasks queued, from your own task list")
 					f.Int("working", 0, "tasks working, from your own task list")
 					f.Int("width", 0, "your width, from the nova-config friend row")
@@ -1039,6 +1069,9 @@ func (w world) openUntil(ctx context.Context, addr string, record func(string)) 
 }
 
 func (w world) run(c *tool.Call) *tool.Out {
+	if c.Bool("notifications-only") {
+		return w.runNotifications(c)
+	}
 	addr := c.Want("redis", "the bus store's Redis address, host:port (or "+RedisEnv+")")
 	if o := c.Refused(); o != nil {
 		return o
@@ -1131,7 +1164,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 		}
 		return out, exit, err
 	}
-	deliver, err := friend.NewDeliverer(c.Str("harness"), dir, c.Str("session"), watched, c.Stdout)
+	deliver, err := friend.SelectDeliverer(name, c.Str("harness"), dir, c.Str("session"), c.Str("adapter"), c.Str("delivery-dir"), watched, c.Stdout)
 	if err == nil {
 		err = friend.TmuxFor(deliver, name, state) // harness tmux: the session and prompt host saved
 	}
@@ -1185,6 +1218,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 	}
 	// her row, as her beat last answered it (nova-sprint friend beat: row_mode, row_width, row_config_dir)
 	rowMode, rowWidth := "", 0
+	var rowMu sync.Mutex          // the cadence beat writes the row while the delivery loop reads it
 	var rowReadSlots atomic.Int64 // her row's read slots as her beat last answered; friend.DefaultReadSlots until it says
 	rowReadSlots.Store(friend.DefaultReadSlots)
 	// her row's lane caps by tier as her beat last answered; friend.DefaultLaneCaps until it says
@@ -1202,7 +1236,10 @@ func (w world) run(c *tool.Call) *tool.Out {
 			return ""
 		}
 	}
+	var recordMu sync.Mutex // the beat and delivery loop share one ordered native record
 	record := func(line string) {
+		recordMu.Lock()
+		defer recordMu.Unlock()
 		fmt.Fprintln(c.Stdout, "RUN "+line)
 		_ = friend.Record(state, line) // ignored: the line is on stdout (launchd's log) whatever the volume does
 	}
@@ -1293,13 +1330,10 @@ func (w world) run(c *tool.Call) *tool.Out {
 	sc := &friend.SessionCheck{
 		Friend: name, Store: st, Now: w.now, Nonce: w.random, Record: record, Keep: keep,
 		Run:  fmt.Sprintf("r%d", w.now().Unix()), // this run, its generation: an answer proves only to the run that asked
+		Go:   w.checkGo,
 		Save: prover.Save(writePresence),
 		Text: func(nonce string) string {
-			bin, err := w.binary()
-			if err != nil {
-				bin = "nova-friend" // ignored: the name on PATH stands in when this binary's path is unknown
-			}
-			return friend.SessionCheckText(nonce, fmt.Sprintf("%s pong --as %s --nonce %s --state-dir %s --redis %s", bin, name, nonce, state, c.Str("redis")), answerTo())
+			return friend.SessionCheckText(nonce, w.pongCommand(name, nonce, state, c.Str("redis"), dir), answerTo())
 		},
 	}
 	sc.Deliver = sc.Gate(fl.Gate(deliver))
@@ -1341,7 +1375,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 	stager := w.stager(dir)
 	d := &friend.Daemon{
 		Friend: name, Harness: c.Str("harness"), Dir: dir, Width: c.Int("width"),
-		Store: sc.DaemonStore(), Deliver: sc.Deliver, Now: w.now, Pause: w.sleep,
+		Store: sc.DaemonStore(), Deliver: sc.Deliver, Now: w.now, Pause: w.sleep, StepBeatForTests: w.stepBeat,
 		Sent: func() time.Time {
 			if at := sent.Load(); at != nil {
 				return *at
@@ -1393,7 +1427,9 @@ func (w world) run(c *tool.Call) *tool.Out {
 					}
 				}
 				if m, wd, ok := friend.ParseRow(answer); err == nil && ok {
+					rowMu.Lock()
 					rowMode, rowWidth = m, wd
+					rowMu.Unlock()
 					dir := friend.RowConfigDir(answer)
 					rowConfigDir.Store(&dir)
 				}
@@ -1460,6 +1496,8 @@ func (w world) run(c *tool.Call) *tool.Out {
 			return fl.BeatOrDown(held(fl.BeatOrDown(up, down)), down)(ctx)
 		},
 		Row: func() (string, int) {
+			rowMu.Lock()
+			defer rowMu.Unlock()
 			if m := c.Str("mode"); m != "" {
 				return m, rowWidth // the override, for a test
 			}
@@ -1532,11 +1570,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 			return friend.WriteStatus(state, s)
 		},
 		PongCommand: func(nonce string) string {
-			bin, err := w.binary()
-			if err != nil {
-				bin = "nova-friend" // ignored: the name on PATH stands in when this binary's path is unknown
-			}
-			return fmt.Sprintf("%s pong --as %s --nonce %s --state-dir %s --redis %s --width %d --queue <tasks queued> --working <tasks working>", bin, name, nonce, state, c.Str("redis"), c.Int("width"))
+			return w.pongCommand(name, nonce, state, c.Str("redis"), dir)
 		},
 	}
 	if w.holders != nil {
@@ -1701,13 +1735,18 @@ func (w world) agent(c *tool.Call) (friend.Agent, error) {
 	name := c.Str("as")
 	log := c.Str("launchd-log")
 	if log == "" {
-		log = filepath.Join(w.home, "Library", "Logs", "nova-friend-"+name+".log")
+		prefix := "nova-friend-"
+		if c.Bool("notifications-only") {
+			prefix = "nova-friend-notifications-"
+		}
+		log = filepath.Join(w.home, "Library", "Logs", prefix+name+".log")
 	}
 	a := friend.Agent{
-		Friend: name, Harness: c.Str("harness"), Dir: c.Str("dir"), Session: c.Str("session"), StateDir: c.Str("state-dir"), Width: c.Int("width"),
+		Friend: name, Harness: c.Str("harness"), Dir: c.Str("dir"), Session: c.Str("session"), Adapter: c.Str("adapter"), DeliveryDir: c.Str("delivery-dir"), StateDir: c.Str("state-dir"), Width: c.Int("width"),
 		Binary: bin, Copy: w.copy, Redis: c.Str("redis"), Server: c.Str("server"), Home: w.home, Path: w.getenv("PATH"), LaunchdLog: log,
 		Secrets: secretNames(c.Str("secrets")), Seat: c.Str("seat"),
 		Coordinator: c.Str("coordinator"), SilentStop: c.Dur("silent-stop"), BrokenAfter: c.Int("broken-after"),
+		NotificationsOnly: c.Bool("notifications-only"), NotifyKinds: c.Str("notify-kinds"), NotifyWindow: c.Dur("notify-window"),
 	}
 	if a.Harness == "claude" {
 		a.ConfigDir = c.Str("config-dir")
@@ -1743,6 +1782,9 @@ func (w world) install(c *tool.Call) *tool.Out {
 	a, err := w.agent(c)
 	if err != nil {
 		return tool.Refuse(err.Error())
+	}
+	if a.NotificationsOnly {
+		return w.installNotifications(c, a)
 	}
 	h := w.harnessSettings(c)
 	if a.Harness == "grok" {
@@ -1864,12 +1906,14 @@ func (w world) checkTo(to, name, state string) string {
 // pongCommand is the pong line a session check carries, as the daemon's
 // own check carries it: this binary's pong verb, the friend's state
 // directory and store.
-func (w world) pongCommand(name, nonce, state, redis string) string {
+func (w world) pongCommand(name, nonce, state, redis, dir string) string {
 	bin, err := w.binary()
 	if err != nil {
 		bin = "nova-friend" // ignored: the name on PATH stands in when this binary's path is unknown
 	}
-	return fmt.Sprintf("%s pong --as %s --nonce %s --state-dir %s --redis %s", bin, name, nonce, state, redis)
+	return fmt.Sprintf("%s pong --as %s --nonce %s --state-dir %s --redis %s --dir %s",
+		oneline.ShellWord(bin), oneline.ShellWord(name), oneline.ShellWord(nonce),
+		oneline.ShellWord(state), oneline.ShellWord(redis), oneline.ShellWord(dir))
 }
 
 // deliveryCheck runs the push proof once against the live session
@@ -1883,7 +1927,7 @@ func (w world) deliveryCheck(c *tool.Call, name, harness, dir, session, state, t
 			session = name
 		}
 	}
-	deliver, err := friend.NewDeliverer(harness, dir, session, w.exec, nil)
+	deliver, err := friend.SelectDeliverer(name, harness, dir, session, c.Str("adapter"), c.Str("delivery-dir"), w.exec, nil)
 	if err == nil {
 		err = friend.TmuxFor(deliver, name, state) // harness tmux: the session and prompt host saved
 	}
@@ -1909,7 +1953,7 @@ func (w world) conformance(c *tool.Call, name, harness, state, to string, within
 		Friend: name, Harness: harness, Deliver: deliver, Store: st, Within: within, Now: w.now, Nonce: w.random,
 		Wait: func(ctx context.Context) bool { w.sleep(ctx, friend.CheckPoll); return ctx.Err() == nil },
 		Text: func(nonce string) string {
-			return friend.SessionCheckText(nonce, w.pongCommand(name, nonce, state, c.Str("redis")), to)
+			return friend.SessionCheckText(nonce, w.pongCommand(name, nonce, state, c.Str("redis"), c.Str("dir")), to)
 		},
 		Pong: func() (friend.Pong, bool, error) { return friend.ReadPong(state) },
 	}
@@ -2167,12 +2211,36 @@ func (w world) pong(c *tool.Call) *tool.Out {
 	if to == "" {
 		return tool.Refuse("--to is required: no ping has named a seat yet (no status file in " + state + "); it wants the coordinator's name")
 	}
+	previous, _, err := friend.ReadPong(state)
+	if err != nil {
+		return tool.Refuse("the previous pong file cannot be read: " + err.Error())
+	}
+	queue, working, width := previous.Queue, previous.Working, previous.Width
+	if s.Width > 0 {
+		width = s.Width
+	}
+	if dir := c.Str("dir"); dir != "" && (!c.Given("queue") || !c.Given("working")) {
+		q, wk, err := friend.ReadQueue(dir)
+		if err != nil {
+			return tool.Refuse("the working directory's queue cannot be read: " + err.Error())
+		}
+		queue, working = q, wk
+	}
+	if c.Given("queue") {
+		queue = c.Int("queue")
+	}
+	if c.Given("working") {
+		working = c.Int("working")
+	}
+	if c.Given("width") {
+		width = c.Int("width")
+	}
 	b, closeStore, refused := w.bus(c)
 	if refused != nil {
 		return refused
 	}
 	defer closeStore()
-	line := friend.PongLine(nonce, c.Int("queue"), c.Int("working"), c.Int("width"))
+	line := friend.PongLine(nonce, queue, working, width)
 	pong := bus.Message{From: name, To: []string{to}, Subject: friend.PongSubject, Body: line + "\n"}
 	if c.DryRun() {
 		// the note checked as send checks it; nothing sent, no pong file
@@ -2185,7 +2253,7 @@ func (w world) pong(c *tool.Call) *tool.Out {
 	if err != nil {
 		return answer(err)
 	}
-	p := friend.Pong{Nonce: nonce, At: m.At, To: to, Queue: c.Int("queue"), Working: c.Int("working"), Width: c.Int("width")}
+	p := friend.Pong{Nonce: nonce, At: m.At, To: to, Queue: queue, Working: working, Width: width}
 	if err := friend.WritePong(state, p); err != nil {
 		return tool.Fail("sent, but the pong file was not written: "+err.Error()).Fact("id", m.ID)
 	}
