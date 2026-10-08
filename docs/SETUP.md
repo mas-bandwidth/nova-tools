@@ -216,3 +216,35 @@ runs that probe once per machine, each bounded by the check's own deadline. It n
 bench whose probe fails and the reason (unknown host key, no key or permission denied,
 timeout), with the one fix line above. It is fleet-only, so `nova-doctor --local` skips it
 and says which; run `nova-doctor` plain to include it.
+
+### sprint-dashboard-verb-r-b.w7: the sprint dashboard
+
+The sprint dashboard is `nova-sprint dashboard`, run as a loop record on the
+coordinator's machine, never a hand-written launchd or systemd unit. Add the record, apply
+it, and the fleet's loops play writes its unit:
+
+```
+nova-config loop add sprint-dashboard --machine <m> --argv '["env","NOVA_SPRINT_SERVER=127.0.0.1:6390","nova-sprint","dashboard","--logo","<home>/sprint-logo.svg"]' --keepalive true --as <name>
+```
+
+It serves the page on `127.0.0.1:7390` and reads the sprint once a second whether or not
+a page is open; `--logo` is optional. The contract is
+[SPEC-SPRINT-DASHBOARD.md](SPEC-SPRINT-DASHBOARD.md); the loop record and its play are in
+[FLEET.md](FLEET.md). `nova-doctor --check dashboard` says `ok` when the loop record's unit
+is installed and its loopback port answers, `warn` when no loop record runs the dashboard
+on this machine or a hand unit serves it, and `fail` when the unit is there and the port
+does not answer. It is a fleet check: `--local` skips it.
+
+### sprint-dashboard-verb-r-b.w8: the dashboard's loopback check and logo type
+
+`nova-doctor --check dashboard` fails, not passes, when the loop record runs
+`nova-sprint dashboard` but its `--listen` names no loopback address: the fix line names
+the loop record and a loopback address to add. The logo routes type the image by its magic
+bytes before its file name, so a WebP image named `logo.png` is served as `image/webp`.
+
+### sprint-dashboard-verb-r-b.w9: the dashboard fixes carried onto the current base
+
+The doctor check requires the loop record's dashboard to answer on loopback, and the
+logo routes detect raster content from its bytes before the file name. Tests:
+`TestDashboardCheck` (internal/doctor) and
+`TestDashboardServesWhatServerPyServedFromOnePoller` (internal/sprintdash).

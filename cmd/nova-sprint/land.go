@@ -623,7 +623,7 @@ func landQueue(s *sprint.Snapshot, stream string) []*sprint.Card {
 	queued := s.Merge.Cell(stream, sprint.Queued)
 	stuck := s.Merge.Cell(stream, sprint.Stuck)
 	if len(stuck) == 0 {
-		return queued
+		return sprint.MergePriorityOrder(s, queued)
 	}
 	var before []*sprint.Card
 	for _, c := range queued {
@@ -631,7 +631,7 @@ func landQueue(s *sprint.Snapshot, stream string) []*sprint.Card {
 			before = append(before, c)
 		}
 	}
-	return before
+	return sprint.MergePriorityOrder(s, before)
 }
 
 // shaRE is a commit id as a head names it: hex, abbreviated or whole.
@@ -1338,7 +1338,7 @@ func (l *lander) gateBase(ctx context.Context, dir, stream string, cards []landC
 	if f := l.baseGateFails[baseSha]; f != nil {
 		was = f.n
 	}
-	red, stop := l.treeGateBase(ctx, dir, baseSha)
+	red, stop := l.treeGateBase(ctx, dir, baseSha, base)
 	if red == "" {
 		return nil, 0, "", ""
 	}
