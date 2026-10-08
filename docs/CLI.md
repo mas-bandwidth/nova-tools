@@ -1926,6 +1926,24 @@ JSON fields: session, dir, attach (command on a dry run)
 Exit 0 started, 1 refused, 2 could not run (no launch command, no prompt pattern for the harness, tmux missing or failing)
 ```
 
+### The friend screen
+
+`nova-friend screen <friend> [--lines <n>] [--state-dir <d>] [--json]` prints the last n lines (default 40) of the friend's open session as text. A tmux-hosted friend uses `tmux capture-pane -p -t friend-<name>`. A GUI harness (Antigravity) reads the text of the harness app's window through the macOS accessibility API (the window found by the harness's bundle and the friend's directory or session title), refused with the remedy when the binary lacks the accessibility permission (a person grants it; the tool never asks). A harness with neither is refused naming why.
+
+The help of `nova-friend screen -h` says, and this is the same text:
+
+```
+The last n lines (default 40) of the friend's open session as text. A tmux-hosted friend (fg-tmux-host-and-adapter): tmux capture-pane -p -t friend-<name>. A GUI harness (Antigravity): the text of the harness app's window through the macOS accessibility API (the window found by the harness's bundle and the friend's directory or session title), refused with the remedy when the binary lacks the accessibility permission (a person grants it; the tool never asks). A harness with neither: refused naming why.
+Output: SCREEN friend=<f> source=<tmux|window> lines=<n> at=<RFC3339>, a blank line, the text; --json {"friend":..,"source":..,"at":..,"lines":[..]}. Exit 0 printed, 1 refused, 2 could not run.
+example: nova-friend screen bob --lines 40
+```
+
+Example, as written:
+
+```sh
+nova-friend screen bob --lines 40
+```
+
 ### The friend health check
 
 The help of `nova-friend check -h` says, and this is the same text:

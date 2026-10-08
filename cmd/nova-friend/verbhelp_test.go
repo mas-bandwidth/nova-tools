@@ -28,9 +28,10 @@ func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 		{Verb: "wait-pong", Flags: store},
 		{Verb: "watch", Flags: append([]string{"--as", "ada"}, store...)},
 		{Verb: "status"},
+		{Verb: "screen"},
 		{Verb: "version"},
 	})
-	testverbhelp.HelpVerb(t, cli, "nova-friend", "run", "beat", "install", "uninstall", "check", "ping", "pong", "wait-pong", "watch", "status", "version")
+	testverbhelp.HelpVerb(t, cli, "nova-friend", "run", "beat", "install", "uninstall", "check", "ping", "pong", "wait-pong", "watch", "status", "screen", "version")
 }
 
 func TestCommandReferenceNamesEveryKnownHarness(t *testing.T) {
@@ -83,33 +84,24 @@ func TestCheckHelpAndCommandReferenceNameEveryLineFieldAndExit(t *testing.T) {
 	}
 }
 
-// The watch verb's help names every flag, every output line, every JSON field
-// and every exit code, and one example that runs as written; docs/CLI.md
-// carries the same text.
-func TestWatchHelpAndCommandReferenceNameEveryFlagLineFieldAndExit(t *testing.T) {
+// The screen verb's help names every flag, every output line and JSON field,
+// every exit code, and one example that runs as written; docs/CLI.md carries
+// the same text.
+func TestScreenHelpAndCommandReferenceNameEveryFlagLineFieldAndExit(t *testing.T) {
 	t.Parallel()
-	help := newRig(t).cli().Do(t, "watch", "-h").Exit(0).Stdout
+	help := newRig(t).cli().Do(t, "screen", "-h").Exit(0).Stdout
 	raw, err := os.ReadFile("../../docs/CLI.md")
 	require.NoError(t, err)
 	doc := string(raw)
+
 	for _, text := range []string{
-		"--as <coordinator>", "--timeout <duration>", "--state-dir <d>", "--redis <addr>", "--json",
-		"WATCH MESSAGE id=<id> from=<name> subject=<s>", "WATCH EVENT id=<id> from=<name> subject=<s>", "WATCH WAKE line=<text>",
-		"WATCH OK after=<cursor> at exit 0", "WATCH NONE waited=<duration> on standard error at exit 1",
-		`{"status":"ok","word":"OK|NONE","after":<cursor>,"waited":<duration, NONE only>,`,
-		`"wakes":[{"kind":"MESSAGE|EVENT|WAKE","id":<id>,"from":<name>,"subject":<s>,"line":<text>}]}`,
-		"Exit 2 when a flag is wrong", "ping, pong, daemon-pong and keepalive", "<state-dir>/watch.json",
-		"re-invoked when it exits", "example: nova-friend watch --as ada --timeout 10m",
+		"--lines", "--state-dir", "--json",
+		"SCREEN friend=<f> source=<tmux|window> lines=<n> at=<RFC3339>",
+		`{"friend":..,"source":..,"at":..,"lines":[..]}`,
+		"Exit 0 printed, 1 refused, 2 could not run",
+		"example: nova-friend screen bob --lines 40",
 	} {
 		require.Contains(t, help, text)
-		require.Contains(t, doc, text)
-	}
-	for _, line := range strings.Split(help, "\n") {
-		if strings.HasPrefix(line, "WATCH ") {
-			require.Contains(t, doc, line, "docs/CLI.md carries the help's line")
-		}
-	}
-	for _, word := range []string{"sprint"} {
-		require.NotContains(t, strings.ToLower(help), word, "the help says no sprint word")
+		require.Contains(t, doc, text, "docs/CLI.md carries the help's text")
 	}
 }

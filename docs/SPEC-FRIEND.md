@@ -926,7 +926,7 @@ tmux keeps its own harness adapter.
   the free state, the typed line is the action that starts the turn, and the prompt gone is its
   acceptance; Deferred is the wait the model has while busy. The adapter is a function of captured
   screens and a clock; every tmux call goes through the Exec seam.
-- **The screen.** The last screen of a hosted friend is the pane's capture, the verb `nova-friend screen`; this section does not define it.
+- **The screen.** The last screen of a hosted friend is the pane's capture, the verb `nova-friend screen` (Screen, below).
 - **To watch.** `tmux attach -t friend-<me>`; detach with the tmux prefix and `d`.
 
 ### Antigravity
@@ -1121,6 +1121,18 @@ table's columns (cmd/nova-sprint/friends.go); the sprint server's
 where the coordinator reads it (a sprint note, like the idle alarm); and
 the model (tla/Bus2.tla gaining the owed set, with a reversed witness for
 a daemon ack that clears it).
+
+## Screen (internal/friend/screen.go)
+
+The coordinator or a peer inspects a friend's open session as text without a person: `nova-friend screen <friend> [--lines <n>] [--state-dir <d>] [--json]` captures the last n lines (default 40).
+
+- **Hosted in tmux:** For a friend hosted in tmux (`friend-<name>`), the verb captures the pane through `tmux capture-pane -p -t friend-<name>`. A missing or unstarted tmux session is refused with the command to host it again.
+- **GUI harness:** For a GUI harness (Antigravity), the verb reads the text of the harness app's window through the macOS accessibility API. The window is found by matching the harness's bundle (`/Applications/Antigravity.app`) and the friend's working directory or session title. When the calling binary lacks the accessibility permission, the verb refuses with the remedy naming the permission; a person grants it in macOS System Settings > Privacy & Security > Accessibility, and the tool never prompts.
+- **Harness with no screen:** A harness with neither a hosted tmux pane nor a GUI window (such as headless OpenCode, Codex, or Claude) is refused naming why.
+- **Output:** The default text output prints a header `SCREEN friend=<f> source=<tmux|window> lines=<n> at=<RFC3339>`, followed by a blank line, followed by the captured lines. With `--json`, it outputs `{"friend":..,"source":..,"at":..,"lines":[..]}`.
+- **Exit codes:** Exit 0 when printed, 1 when refused (the session is not running, lacks accessibility permission, or has no screen), 2 when it could not run (invalid flags or missing arguments).
+- **Seams:** tmux commands and macOS accessibility reads go through seams (`friend.Exec` and `friend.WindowReader`); unit tests replay captured text without real tmux or accessibility dependencies.
+- **TLA+:** None (no state machine; a read-only query of current session text).
 
 ## The beat comes from the daemon
 
