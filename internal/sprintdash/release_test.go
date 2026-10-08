@@ -1,12 +1,9 @@
 package sprintdash
 
 import (
-	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"os/exec"
 	"slices"
 	"strings"
 	"testing"
@@ -177,35 +174,6 @@ func TestReleaseTotalIncludesCachedFix(t *testing.T) {
 	assert.Equal(t, "12/20 60.0% -> ETA 1h41m", d["summary"])
 	work := d["tables"].(map[string]any)["work"].(map[string]any)
 	assert.Equal(t, "1", work["sprint-v1-release"].(map[string]any)["fix"])
-}
-
-func TestScopedReleaseLabelsSprintWidePriorityMarks(t *testing.T) {
-	t.Parallel()
-	nodePath, err := exec.LookPath("node")
-	if err != nil {
-		if os.Getenv("NOVA_CI") == "1" {
-			require.NoError(t, err, "node is required for dashboard JS tests")
-		}
-		t.Skip("node is not installed")
-	}
-	shim, _, ok := strings.Cut(scrollShim, "// the viewer:")
-	require.True(t, ok)
-	input, err := json.Marshal(map[string]any{"appJS": string(file("app.js"))})
-	require.NoError(t, err)
-	const probe = `
-const box = doc.getElementById('priority-marks');
-context.priorityScope = 'v1.0.0';
-context.renderPriorityMarks({priorities: {fix: ['other-release-card']}, reads_waiting: 1});
-const scoped = [box._scopeLabel.textContent, box._scopeLabel.hidden, box.children.length];
-context.priorityScope = 'all';
-context.renderPriorityMarks({priorities: {fix: ['other-release-card']}, reads_waiting: 1});
-process.stdout.write(JSON.stringify({scoped, allHidden: box._scopeLabel.hidden}));
-`
-	cmd := exec.Command(nodePath, "-e", shim+probe)
-	cmd.Stdin = bytes.NewReader(input)
-	out, err := cmd.Output()
-	require.NoError(t, err)
-	assert.JSONEq(t, `{"scoped":["Priorities and waiting reads across all releases",false,2],"allHidden":true}`, string(out))
 }
 
 // A sprint whose streams carry no release is shown whole, as where printed it.

@@ -105,7 +105,7 @@ builder checks each line below against a screenshot at 1440 and 375 and fixes an
 from the owner edits one line here and nothing else moves.
 
 ## Page
-- Dark only: no theme toggle (the owner, 2:21 PM 2026-10-04: "just remove the toggle light/dark. always dark."). Panels full width, stacked: header, progress bar, Merge, Work, Fleet,
+- Dark only: no theme toggle (the owner, 2:21 PM 2026-10-04: "just remove the toggle light/dark. always dark."). Panels full width, stacked: header, progress bar, Work, Fleet,
   Friends, Lanes, footer. No readers or merge panel (available at ?all=1 only). No two-column layout at any width.
 - Base type 28 px (doubled). Labels and headers: system proportional face. All numbers: monospace (ui-monospace,
   Menlo), right-aligned. Headers over numeric columns right-aligned too.
@@ -135,15 +135,7 @@ from the owner edits one line here and nothing else moves.
 ## Progress bar: "ALL CARDS BY STATE" with the legend (landed, merging, fix, review, working, ready, waiting) and counts;
   one cell per card (per N cards when they would be under 4 px; no "1 cell = N" label); working cells pulse steadily
   (2 s); other cells still.
-- Priority (the card reads-are-a-card-priority-b, 2026-10-06; the owner's line is quoted under LOCK 2): under
-  the bar, one row of marks, hidden while it holds none: a mark for each open card whose level is
-  not normal (`where --json`'s `priorities`) and one for each read waiting (`reads_waiting`), in the ladder's
-  order (blocker, critical, high, reader, low), at most 40 a level, the last saying how many more in its title.
-  A blocker's mark is bright red (`--p-blocker` #ff1a1a), a critical's same bright red (`--p-critical` #ff1a1a), a
-  read's the orange of the robot logo's shoes (`--p-reader` #fb8321, the modal shoe pixel of
-  logo-robot-384.png), and every work card's blue (`--p-work`, the working colour) whatever its level.
-  A card awaiting rework (`priorities.fix`, Fix below) is purple (`--p-fix`, the fix state's `--s-fix`), its
-  marks after the reds and before high. `TestPriorityMarksShowTheThreeColours` draws it.
+
 - Fix (the owner, 2026-10-07; his lines are quoted under LOCK 2): a card awaiting
   rework is one purple, `--s-fix` (#8b5cf6 on this dark page; #7c3aed on a light one), everywhere a state is
   drawn: the progress bar and its legend carry `fix <n>` between review and merging (in the bar's order,
@@ -161,24 +153,6 @@ from the owner edits one line here and nothing else moves.
   working. Owed from where: a primary in review awaiting the coordinator's rework, and one parked on a brief
   defect, carry no dealt card, so the view cannot see them until where prints the Work row's `fix`.
   `TestFixView*` and `TestFixPage*` (internal/sprintdash/view_fix_test.go) hold it.
-
-## Merge (title "Merge"; the card v11-merge-row-on-dashboard-b, 2026-10-06; the owner's line is quoted under LOCK 2)
-- One dark row under the progress bar, the house style: a label over each figure, side by side, wrapping at a narrow
-  width, never scrolled. It reads `where --json`'s `merge_row`, and the coordinator reads the same object there:
-  `merging` and `review` (the cards in each, the work table's counts); `landed_per_30m` (landed per 30 minutes, the
-  where record's landing stamps); `oldest_merging_min` (the oldest merging card's age by its accepted stamp, read
-  only with `--cards` or `--rows`, which read the merging cards; null without); `base_gate` and `failing_test` (red
-  on an open base-red judgment, the base-gate rule's stop or the drift alarm's whole-tree gate, naming the first
-  test its finding names, or the finding itself when it names none; green when none is open and the lander's tree
-  gate passed at a stream's last landing; empty, not known, otherwise: never green by default); `base_lacks` and
-  `dev_lacks` (the drift between the base and the development branch the last dev sync measured: commits dev has
-  that the base lacks, and the base has that dev lacks); `sync_minutes` and `promotion_minutes` (since the last dev
-  sync and the last promotion into dev; null when none is recorded).
-- Drawn: merging | review | landed / 30m | oldest merging | base gate | drift | since sync | since promotion. The
-  gate is a pill, red (critical), green (good) or "-" (neutral), with the failing test after it; the drift reads
-  "base lacks X · dev lacks Y"; a minute not known is "-". Nothing in the row flashes.
-- The base-red judgments are read only when a stream is stopped, so a plain where makes no exchange more on a
-  sprint that runs; a drift alarm that the base is red while no stream is stopped is in the inbox, not this row.
 
 ## Work (title exactly "Work"; subtitle "<n> streams · <l> landed · <h> held")
 - Columns: stream | status | waiting | ready | working | review | fix | merging | landed | cost (headers exactly so, all lowercase). The "landed" header is centred over its "n / total" cell (the owner, 7:34 PM: "Landed column in work stream table, please horizontal center align the column header"); every other numeric header stays right-aligned. The status column with its pills stays (the owner, after the lock, 7:32 PM: "we just lost the nice state tabs in the workstream table. undo pls."); the sort by status stays; a thin rule separates the groups (landed, working, stopped, held).
@@ -276,7 +250,7 @@ The owner uses one live dashboard. The packaged page is the source of that page,
 
 The plain `where --json` response carries cached fix counts without requiring `--cards`: ready and working primaries with explicit fix priority, and review primaries whose work result failed, are counted under fix. Blocker and critical retain their priority; a successful repair awaiting an independent read stays in review. JSON Work counts partition these cards into fix rather than counting them twice; the text table schema is unchanged. The cache is computed with the tick snapshot, not a separate dashboard scan.
 
-Priority marks report the configured priority, whereas the Work state counts report whether a card is awaiting repair. A failed attempt or brief defect can await repair before its next attempt receives rework priority; its purple Work count does not rewrite its configured priority mark. A successful repair awaiting a read remains in review even when its priority mark is purple. When a release is selected, priority marks and waiting-read counts are explicitly labelled as spanning all releases; release totals include only that release's cards, including fix.
+
 
 The following historical live-page decisions remain recorded; the deployment contract above and later dated decisions supersede earlier contradictory wording.
 
@@ -325,3 +299,11 @@ Glenn, 2026-10-04 ~6:03 PM ET: "once per-second updates are a hard requirement."
   (dark `#ff1a1a`, light `#ff1a1a`); both cells read the same red in every segmented bar and card
   list; the legend keeps both words. The order stays blocker, critical, fix (purple), reads
   (orange), working (blue).
+
+## Requested removals (2026-10-08)
+
+The live page has no priority-square strip under All cards by state, Merge panel,
+Lanes panel, archived-stream summary or show/hide control, or tiers suffix on Fleet.
+Work keeps its existing stream, landed and held counts. Archived streams stay excluded.
+These removals supersede the historical display descriptions above. No new dashboard
+content is added without an explicit request.

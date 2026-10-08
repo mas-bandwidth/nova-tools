@@ -20,7 +20,7 @@ var TRACK_CELL = 1.6875, TRACK_GAP = 0.25; // rem: a fleet track cell and its ga
 var TRACK_SPAN = 16 * (TRACK_CELL + TRACK_GAP) - TRACK_GAP;
 function trackCell(scale) { scale = Math.max(1, scale); return (TRACK_SPAN - (scale - 1) * TRACK_GAP) / scale; }
 var $ = function (id) { return document.getElementById(id); };
-["streams", "fleet", "friends", "lanes"].forEach(function (id) { var h = $(id).querySelector(".row.head"); if (h) h.remove(); });
+["streams", "fleet", "friends"].forEach(function (id) { var h = $(id).querySelector(".row.head"); if (h) h.remove(); });
 
 // ---------- parsing (every value in the JSON is a string) ----------
 function int(s) { var n = parseInt(s, 10); return isNaN(n) ? 0 : n; }
@@ -265,20 +265,8 @@ function streamStatus(state, c, total) {
   return [state || "idle", "neutral"];
 }
 
-var showArchived = false, lastStreams = null;
 function archivedSet(d) { var a = {}; ((d.archived || {}).streams || []).forEach(function (s) { a[s] = 1; }); return a; }
-function renderArchived(d) {
-  var b = $("streams-archived"), a = d.archived;
-  if (!b._on) { b._on = 1; b.addEventListener("click", function () { showArchived = !showArchived; if (lastStreams) render(lastStreams); }); }
-  b.hidden = !a;
-  if (!a) return;
-  var n = a.streams.length;
-  setText(b, n + " archived stream" + (n === 1 ? "" : "s") + ", " + a.landed + " card" + (a.landed === 1 ? "" : "s") + " landed, " + a.cost + " · " + (showArchived ? "hide" : "show"));
-}
-
 function renderStreams(d) {
-  lastStreams = d;
-  renderArchived(d);
   var box = $("streams"), work = d.tables.work || {}, merge = d.tables.merge || {}, arch = archivedSet(d);
   var states = {}; (d.streams || []).forEach(function (s) { states[s.Stream] = s; });
   // children: 1 stream, 2 status, 3 waiting, 4 ready, 5 working, 6 review, 7 fix, 8 merging, 9 landed, 10 cost
@@ -302,7 +290,7 @@ function renderStreams(d) {
     statusOf[k] = streamStatus((states[k] || {}).State, c, total)[0];
   });
   var rank = function (k) { return RANK[statusOf[k]] == null ? 3.5 : RANK[statusOf[k]]; };
-  var keys = streamOrder(d).filter(function (k) { return showArchived || !arch[k]; }).sort(function (a, b) { return rank(a) - rank(b) || (a < b ? -1 : a > b ? 1 : 0); });
+  var keys = streamOrder(d).filter(function (k) { return !arch[k]; }).sort(function (a, b) { return rank(a) - rank(b) || (a < b ? -1 : a > b ? 1 : 0); });
   var sum = { cost: 0, totalCost: 0, workCost: 0, readCost: 0, unreconciled: 0, unpriced: 0 }, held = 0, landedStreams = 0, prevRank = null;
   // the epoch's spend, every stream's, the archived ones' too: the cost tile's scope once the
   // sprint is done (where --json's done), when the table's streams are all archived
@@ -467,7 +455,7 @@ function fleetLike(box, table, nameLabel, scale, clamp) {
 
 function renderFleet(d) {
   var r = fleetLike($("fleet"), d.tables.fleet || {}, "machine", sharedScale(d));
-  setText($("fleet-head"), r.t.up + " up · " + r.t.held + " held · " + r.t.down + " down" + sideWord(d.fleet_work, d.fleet_tiers));
+  setText($("fleet-head"), r.t.up + " up · " + r.t.held + " held · " + r.t.down + " down" + sideWord(d.fleet_work, null));
   setSideOff($("fleet").closest("section"), d.fleet_work);
   return r.t;
 }
@@ -832,57 +820,6 @@ function setCount(box, n, make) {
   while (box.children.length > n) box.lastChild.remove();
 }
 
-// ---------- priority marks ----------
-// A card's priority by colour (docs/SPEC-SPRINT-DASHBOARD.md, "Priority"): one mark a card
-// whose level is not normal (where --json's priorities) and one a read waiting (reads_waiting),
-// in the ladder's order; a blocker bright red, a critical dark red, a card awaiting rework (fix,
-// the view's priorities.fix) purple right of the reds, a read the orange of the robot's shoes,
-// and every work card blue whatever its level (high, low). At most MARKS_MAX a level; the last
-// says how many more.
-var MARK_LEVELS = ["blocker", "critical", "critical (by weight, not yet ordered)", "fix", "high", "reader", "low"];
-var MARKS_MAX = 40;
-var priorityScope = "all";
-function priorityClass(level) {
-  if (level === "fix") return "p-fix"; // a card awaiting rework, purple
-  if (level.indexOf("critical") === 0) return "p-critical"; // a computed critical too, its title says so
-  return level === "blocker" || level === "reader" ? "p-" + level : "p-work";
-}
-function renderPriorityMarks(d) {
-  var box = $("priority-marks"); if (!box) return;
-  var marks = [];
-  MARK_LEVELS.forEach(function (l) {
-    var ids = l === "reader" ? [] : ((d.priorities || {})[l] || []).slice();
-    if (l === "reader") for (var i = 0; i < int(d.reads_waiting); i++) ids.push("a read waiting");
-    ids.slice(0, MARKS_MAX).forEach(function (id, i) {
-      var more = i === MARKS_MAX - 1 && ids.length > MARKS_MAX ? " (+" + (ids.length - MARKS_MAX) + " more)" : "";
-      marks.push([l, id + more]);
-    });
-  });
-  box.hidden = marks.length === 0;
-  // The priority list and reads_waiting are sprint-wide in where's cached copy.
-  // A selected release filters Work rows, but has no per-release read count or
-  // primary-to-stream map for undealt cards. Name this scope instead of making
-  // the marks look like counts for the selected release.
-  var scoped = priorityScope !== "all";
-  if (scoped && !box._scopeLabel) {
-    box._scopeLabel = quiet(el("span", "muted"));
-    box._scopeLabel.style.display = "block";
-    box._scopeLabel.style.marginTop = "1rem";
-    box.parentNode.insertBefore(box._scopeLabel, box);
-  }
-  if (box._scopeLabel) {
-    box._scopeLabel.hidden = !scoped || marks.length === 0;
-    if (scoped) setText(box._scopeLabel, "Priorities and waiting reads across all releases");
-    box.style.marginTop = scoped ? ".25rem" : "";
-  }
-  setCount(box, marks.length, function () { return el("span", "mark"); });
-  marks.forEach(function (m, i) {
-    var k = box.children[i];
-    setClass(k, "mark " + priorityClass(m[0]));
-    setTitle(k, m[0] + ": " + m[1]);
-  });
-}
-
 function escHTML(s) { return String(s).replace(/[&<>"']/g, function (c) { return "&#" + c.charCodeAt(0) + ";"; }); }
 function digitsOf(n) { return String(Math.max(0, n)).length; }
 function makePill() { var p = el("span", "pill neutral"); p.appendChild(el("span", "dot")); p._t = quiet(el("span")); p.appendChild(p._t); return p; }
@@ -905,56 +842,7 @@ function putKid(box, i, cls, text) {
   return c;
 }
 
-function nameList(v) { return (v && v.length) ? v.join(", ") : "-"; }
-function renderLanes(d) {
-  var box = $("lanes"), lanes = Array.isArray(d.lanes) ? d.lanes.slice() : [];
-  lanes.sort(function (a, b) { return String(a.machine).localeCompare(String(b.machine)) || String(a.kind).localeCompare(String(b.kind)); });
-  if (!lanes.length) {
-    if (!box._empty) {
-      box._map = null; box._head = null; box.textContent = "";
-      var e = el("div", "empty");
-      e.innerHTML = "No lanes in the sprint data. This panel fills itself when <code>where --json --cards</code> carries <code>lanes</code>.";
-      box.appendChild(e); box._empty = true;
-    }
-    setText($("lanes-sub"), "");
-    return;
-  }
-  if (box._empty) { box.textContent = ""; box._empty = false; }
-  if (!box._head) { box._head = headRow([["machine"], ["kind"], ["width", "num"], ["held"], ["waiting"]]); }
-  var byKey = {};
-  lanes.forEach(function (l) { byKey[l.machine + "/" + l.kind] = l; });
-  syncRows(box, box._head, lanes.map(function (l) { return l.machine + "/" + l.kind; }), function () {
-    var r = { node: el("div", "row") };
-    r.machine = el("div", "name"); r.kind = el("div"); r.width = numCell(); r.held = el("div"); r.waiting = el("div");
-    [r.machine, r.kind, r.width, r.held, r.waiting].forEach(function (c) { r.node.appendChild(c); });
-    return r;
-  }, function (r, k) {
-    var l = byKey[k];
-    setText(r.machine, l.machine); setText(r.kind, l.kind); setNum(r.width, int(l.width));
-    setText(r.held, nameList(l.held)); setText(r.waiting, nameList(l.waiting));
-  });
-  setText($("lanes-sub"), lanes.length + (lanes.length === 1 ? " lane" : " lanes"));
-}
-
-function renderMerge(d) {
-  var m = d.merge_row || {};
-  var mins = function (n, suffix) { return n == null ? "-" : n + "m" + (suffix || ""); };
-  var count = function (n) { return n == null ? "-" : String(n); };
-  [["mr-merging", count(m.merging)], ["mr-review", count(m.review)], ["mr-landed", count(m.landed_per_30m)],
-   ["mr-oldest", mins(m.oldest_merging_min)],
-   ["mr-drift", m.base_lacks == null ? "-" : "base lacks " + m.base_lacks + " · dev lacks " + m.dev_lacks],
-   ["mr-sync", mins(m.sync_minutes, " ago")], ["mr-promoted", mins(m.promotion_minutes, " ago")]].forEach(function (f) {
-    var e = $(f[0]); e._quiet = true; setText(e, f[1]);
-  });
-  var g = $("mr-gate");
-  if (!g._pill) { g._pill = makePill(); g.appendChild(g._pill); }
-  var gate = m.base_gate || "-", tone = gate === "red" ? "critical" : gate === "green" ? "good" : "neutral";
-  setPill(g._pill, gate + (m.failing_test ? " · " + m.failing_test : ""), tone,
-    gate === "-" ? "the base's gate is not known" : "the base's gate is " + gate + (m.failing_test ? ": " + m.failing_test : ""));
-}
-
 function render(d) {
-  renderPriorityMarks(d);
   flashCount = 0;
   var s = renderStreams(d);
   renderOverall(s.sum, s.all);
@@ -963,8 +851,6 @@ function render(d) {
   var ft = renderFleet(d);
   renderFriends(d);
   renderProviders(d);
-  renderLanes(d);
-  renderMerge(d);
   if (SHOW_ALL) renderReaders(d);
   renderHero(d, s, ft);
   fitTables();
@@ -988,7 +874,6 @@ function accept(j) {
   var at = Date.parse(d.at);
   if (isNaN(at) || at <= shownAt) return;
   shownAt = at;
-  priorityScope = j.release || "all";
   if ("throughput" in j) { throughput = j.throughput == null ? null : j.throughput; throughputMinutes = j.throughputMinutes || 0; }
   renderRelease(j);
   try { render(d); } catch (e) { console.error(e); }
