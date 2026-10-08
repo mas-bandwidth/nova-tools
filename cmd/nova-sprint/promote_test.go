@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
 // promoteScript is the fake git and gh the step talks to. It records every
@@ -16,6 +18,7 @@ import (
 // no strategy flag, and a merge-group run has failed.
 type promoteScript struct {
 	live, tip, baseSHA, logText, groupLog string
+	mergeOID                              string // when set, pr view is MERGED at this sha
 	gitCalls, ghCalls                     [][]string
 	gated                                 string
 	cfg                                   map[string]string
@@ -87,6 +90,9 @@ func (s *promoteScript) gh(_ context.Context, _ string, args ...string) (string,
 	case args[0] == "pr" && args[1] == "create":
 		return "https://example.invalid/nova-tools/pull/42", nil
 	case args[0] == "pr" && args[1] == "view":
+		if s.mergeOID != "" {
+			return `{"id":"PR_node_1","state":"MERGED","mergeCommit":{"oid":"` + s.mergeOID + `"}}`, nil
+		}
 		return `{"id":"PR_node_1","state":"OPEN"}`, nil
 	case args[0] == "pr" && args[1] == "checks":
 		return `[{"name":"ci","bucket":"pass"}]`, nil
@@ -204,4 +210,89 @@ func TestPromoteCutsAFrozenBranchAndNeverTheLiveTip(t *testing.T) {
 	again, code := p.step(context.Background(), io.Discard, io.Discard)
 	require.Equal(t, 1, code)
 	require.Nil(t, again.Judgment, "the judgment was already raised")
+}
+
+// TestPromoteRecordsTheFrozenTipAndAFailureStays is the call nova-sprint promote
+// makes. tipCarried excludes a card landed after the frozen tip only when
+// Promoted is called with --branch and --tip and not --cards. A later origin
+// tip is not that tip. A failed check stays on the record (Promoted --failed),
+// not only on stdout.
+func TestPromoteRecordsTheFrozenTipAndAFailureStays(t *testing.T) {
+	t.Parallel()
+	const (
+		live   = "sprint/live"
+		frozen = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+		later  = "cccccccccccccccccccccccccccccccccccccccc"
+		base   = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+		merge  = "dddddddddddddddddddddddddddddddddddddddd"
+	)
+	newPromoter := func(s *promoteScript, got *[]sprint.PromotedReq) *promoter {
+		return &promoter{
+			dir: t.TempDir(), live: live, base: "dev",
+			now:    time.Date(2026, 10, 4, 16, 0, 0, 0, time.UTC),
+			gitRun: s.git, ghRun: s.gh,
+			gate: func(context.Context, string, string) (string, error) {
+				return "", nil
+			},
+			recordFn: func(_ context.Context, req sprint.PromotedReq) error {
+				*got = append(*got, req)
+				return nil
+			},
+		}
+	}
+	script := func() *promoteScript {
+		return &promoteScript{
+			live: live, tip: frozen, baseSHA: base,
+			logText:  "land s1-2 (sprint stream s1)\nland s1-1 (sprint stream s1)\n",
+			groupLog: "FAIL: TestTree\n",
+		}
+	}
+
+	t.Run("merged", func(t *testing.T) {
+		t.Parallel()
+		s := script()
+		var got []sprint.PromotedReq
+		p := newPromoter(s, &got)
+		queued, code := p.step(context.Background(), io.Discard, io.Discard)
+		require.Zero(t, code)
+		require.True(t, queued.Pending)
+		require.Empty(t, got, "a promotion still in flight records nothing")
+		s.tip = later
+		s.mergeOID = merge
+		out, code := p.step(context.Background(), io.Discard, io.Discard)
+		require.Zero(t, code)
+		require.Equal(t, merge, out.Promoted)
+		require.Len(t, got, 1)
+		req := got[0]
+		require.Equal(t, merge, req.Sha)
+		require.Empty(t, req.Failed)
+		require.Equal(t, live, req.Branch, "the branch is the live sprint branch")
+		require.Equal(t, frozen, req.Tip, "the tip is the frozen cut, not a later origin tip")
+		require.NotEqual(t, later, req.Tip)
+		require.Empty(t, req.Cards, "--cards would skip the tip bound")
+		require.Equal(t, "dev", req.Target)
+		require.Contains(t, req.Evidence, "pr=42")
+		require.Contains(t, req.Evidence, "head=promo/2026-10-04-1")
+	})
+
+	t.Run("failed", func(t *testing.T) {
+		t.Parallel()
+		s := script()
+		var got []sprint.PromotedReq
+		p := newPromoter(s, &got)
+		_, code := p.step(context.Background(), io.Discard, io.Discard)
+		require.Zero(t, code)
+		s.tip = later
+		out, code := p.step(context.Background(), io.Discard, io.Discard)
+		require.Equal(t, 1, code)
+		require.Empty(t, out.Promoted, "a failed merge-group run does not record promoted --sha")
+		require.Len(t, got, 1)
+		req := got[0]
+		require.Empty(t, req.Sha)
+		require.Empty(t, req.Cards)
+		require.NotEmpty(t, req.Failed)
+		require.Equal(t, live, req.Branch)
+		require.Equal(t, frozen, req.Tip, "the failure names the frozen tip")
+		require.Contains(t, req.Evidence, "pr=42")
+	})
 }
