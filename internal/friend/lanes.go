@@ -938,7 +938,10 @@ func (l *loop) messageDone(r laneResult, now time.Time) {
 			delete(l.inHand, e) // pending: the claim hands them in again
 		}
 		if t.notice != nil {
-			l.owedAgain(t.notice, now)
+			if l.notice == nil { // a newer word already owed takes precedence
+				l.notice = t.notice
+				l.saidSilent = t.notice.Subject != "coordinator silent"
+			}
 		}
 		d.Record(line + " messages=pending")
 		l.providerLimit(r.err, t.started, now)
