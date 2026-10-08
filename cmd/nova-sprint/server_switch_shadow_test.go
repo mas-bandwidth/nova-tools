@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -57,7 +58,7 @@ func TestServerSwitchRunsAShadowTickAndRefusesABrokenBinary(t *testing.T) {
 			target := filepath.Join(sub, "nova-sprint")
 			candidate := filepath.Join(sub, "candidate")
 			require.NoError(t, os.WriteFile(target, []byte("the running server"), 0o755))
-			require.NoError(t, os.WriteFile(candidate, []byte(tc.script), 0o755))
+			require.NoError(t, testbin.WriteExecutable(candidate, []byte(tc.script), 0o755))
 			ta := newTestApp(t)
 			code, out, errs := ta.do("server switch " + candidate + " --target " + target + " --redis mem:" + twinFile + " --rollback" + tc.extra)
 			assert.Equal(t, 1, code, tc.name)

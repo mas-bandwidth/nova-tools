@@ -28,6 +28,7 @@ internal/sprint/store/tickend.go Store.WaitTickEnd coordinator inbox push, on th
 cmd/nova-sprint/watchwake.go runWake watch --wake
 cmd/nova-sprint/watchwake.go app.cmdWatch watch --wake
 cmd/nova-sprint/answer.go app.cmdAnswer answer pass
+cmd/nova-sprint/deliver.go app.cmdDeliver coordinator hand delivery
 cmd/nova-sprint/friend_loop.go app.friendSyncLoop friend sync
 cmd/nova-sprint/lane.go app.laneWait lane take wait
 

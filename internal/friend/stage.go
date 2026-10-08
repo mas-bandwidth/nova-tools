@@ -169,17 +169,22 @@ func StageJudgmentText(friend string, n *NotStageable) (subject, body string) {
 func GitHubURL(repo string) string { return "https://github.com/" + repo + ".git" }
 
 // Stager stages jobs under Dir, her working directory, with the git credentials of the
-// process that runs it (the daemon's: her account's). URL names a repository's remote (nil:
-// GitHubURL); Env is git's whole environment (nil: the daemon's own, with
+// process that runs it (the daemon's: her account's). Mirrors is where the bare mirrors are
+// kept, one per repository ("": Dir/mirrors; the daemon's default is under its state dir,
+// nova-friend run --mirrors); a mirror there must be a full one, never a blob-less partial
+// clone, whose local clones fail with "pack has unresolved deltas". URL names a repository's
+// remote (nil: GitHubURL); Env is git's whole environment (nil: the daemon's own, with
 // GIT_TERMINAL_PROMPT=0, so git never waits on a prompt no one answers).
 type Stager struct {
-	Dir string
-	URL func(repo string) string
-	Env []string
+	Dir     string
+	Mirrors string
+	URL     func(repo string) string
+	Env     []string
 
 	mu      sync.Mutex
 	repos   map[string]*sync.Mutex
 	fetched map[string]time.Time
+	full    map[string]bool // the mirrors read as full ones
 }
 
 func (s *Stager) url(repo string) string {
@@ -206,7 +211,7 @@ func (s *Stager) repoLock(repo string) *sync.Mutex {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.repos == nil {
-		s.repos, s.fetched = map[string]*sync.Mutex{}, map[string]time.Time{}
+		s.repos, s.fetched, s.full = map[string]*sync.Mutex{}, map[string]time.Time{}, map[string]bool{}
 	}
 	if s.repos[repo] == nil {
 		s.repos[repo] = &sync.Mutex{}
@@ -223,6 +228,24 @@ func Staged(dir, job string) bool {
 	return err == nil
 }
 
+// StageMark is the file a stage leaves in the job directory it made, until its JOB.md is
+// written: a job directory without it and without a JOB.md was made by another hand (a runner
+// that stages its own jobs, or a coordinator by hand), and is never staged over. StageLock is
+// the job's lock beside it, jobs/.<job>.lock, held while a stage runs.
+const StageMark = ".nova-friend-stage"
+
+func stageLock(dir, job string) string { return filepath.Join(dir, JobsDir, "."+job+".lock") }
+
+// StartedElsewhere is a job another hand has: its directory there with no JOB.md and no
+// StageMark (a runner that stages its own jobs made it), or its lock held by another stage
+// (a second daemon). Nothing is written; the job is the other hand's, and its brief is
+// written once its JOB.md is there.
+type StartedElsewhere struct{ Job, Why string }
+
+func (e *StartedElsewhere) Error() string {
+	return fmt.Sprintf("%s/%s was started elsewhere: %s; left to that hand", JobsDir, e.Job, e.Why)
+}
+
 // Stage stages p's job: the mirror of its repository fetched (cloned the first time), a git
 // worktree of it at the base on the card's branch at jobs/<job>/repo, whose origin is the
 // repository itself (the mirror's origin), and jobs/<job>/JOB.md. It answers the commit the
@@ -230,15 +253,33 @@ func Staged(dir, job string) bool {
 // worktree is added beside, under jobs/<job>/.staging, and moved in whole), and JOB.md is
 // written last, so a lane never meets a checkout not ready. A branch the mirror already holds
 // (a pruned job's, staged again) is checked out as it stands, never reset to the base.
+// The stage checks ownership before fetching and claims the directory before adding a worktree.
 func (s *Stager) Stage(ctx context.Context, p Packet) (string, error) {
 	if err := p.check(); err != nil {
 		return "", &NotStageable{Repo: p.Repo, Card: p.Card, Job: p.Job, Why: err.Error(), Remedy: "rework the card with a packet that names its repository (owner/name), its base and its branch"}
 	}
-	job := JobDir(s.Dir, p.Job)
-	checkout := filepath.Join(job, "repo")
 	if Staged(s.Dir, p.Job) {
 		return "", nil
 	}
+	job := JobDir(s.Dir, p.Job)
+	if err := os.MkdirAll(filepath.Dir(job), 0o755); err != nil {
+		return "", err
+	}
+	release, ok, err := tryLock(stageLock(s.Dir, p.Job))
+	if err != nil {
+		return "", err
+	}
+	if !ok {
+		return "", &StartedElsewhere{Job: p.Job, Why: "another stage holds its lock " + JobsDir + "/." + p.Job + ".lock"}
+	}
+	defer release()
+	if Staged(s.Dir, p.Job) { // staged by the stage that held the lock before
+		return "", nil
+	}
+	if err := s.owned(p.Job); err != nil {
+		return "", err
+	}
+	checkout := filepath.Join(job, "repo")
 	if _, err := os.Lstat(checkout); err == nil {
 		// moved in by a stage that ended before its JOB.md: it is the card's when it is on its branch
 		branch, err := s.git(ctx, 0, "-C", checkout, "rev-parse", "--abbrev-ref", "HEAD")
@@ -249,7 +290,7 @@ func (s *Stager) Stage(ctx context.Context, p Packet) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		return sha, s.writeJob(p, sha)
+		return sha, s.finish(p, sha)
 	}
 	lock := s.repoLock(p.Repo)
 	lock.Lock()
@@ -264,6 +305,9 @@ func (s *Stager) Stage(ctx context.Context, p Packet) (string, error) {
 	}
 	sha, err := s.base(ctx, mirror, p)
 	if err != nil {
+		return "", err
+	}
+	if err := s.claim(p.Job); err != nil {
 		return "", err
 	}
 	scratch := filepath.Join(job, stageScratch)
@@ -295,7 +339,63 @@ func (s *Stager) Stage(ctx context.Context, p Packet) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return head, s.writeJob(p, head)
+	return head, s.finish(p, head)
+}
+
+// owned is nil when the job's directory is not there or is a stage's (its StageMark there),
+// else StartedElsewhere. Its caller holds the job's lock.
+func (s *Stager) owned(job string) error {
+	fi, err := os.Lstat(JobDir(s.Dir, job))
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return nil
+	case err != nil:
+		return err
+	case !fi.IsDir():
+		return &StartedElsewhere{Job: job, Why: "it is a symlink or a file, not a directory"}
+	case !exists(filepath.Join(JobDir(s.Dir, job), StageMark)):
+		return &StartedElsewhere{Job: job, Why: fmt.Sprintf("its directory is there with no %s and no %s (a runner that stages its own jobs, or a hand)", JobFile, StageMark)}
+	}
+	return nil
+}
+
+// claim makes the job's directory with the StageMark in it, or finds it a stage's. Its caller
+// holds the job's lock.
+func (s *Stager) claim(job string) error {
+	dir := JobDir(s.Dir, job)
+	if err := os.Mkdir(dir, 0o755); err != nil && !errors.Is(err, fs.ErrExist) {
+		return err
+	} else if err != nil {
+		return s.owned(job) // made since the look: the mark says whose it is
+	}
+	return os.WriteFile(filepath.Join(dir, StageMark), []byte("staged by nova-friend; removed when JOB.md is written\n"), 0o644)
+}
+
+// finish writes the job's JOB.md and takes its StageMark and its lock file away (the lock
+// still held: a stage that meets the lock after finds the job staged).
+func (s *Stager) finish(p Packet, sha string) error {
+	if err := s.writeJob(p, sha); err != nil {
+		return err
+	}
+	for _, f := range []string{filepath.Join(JobDir(s.Dir, p.Job), StageMark), stageLock(s.Dir, p.Job)} {
+		if err := os.Remove(f); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+	}
+	return nil
+}
+
+// MirrorDir is the bare mirror of repo (owner/name) under mirrors, the Stager's Mirrors.
+func MirrorDir(mirrors, repo string) string {
+	owner, name, _ := strings.Cut(repo, "/")
+	return filepath.Join(mirrors, owner, name+".git")
+}
+
+func (s *Stager) mirrors() string {
+	if s.Mirrors != "" {
+		return s.Mirrors
+	}
+	return filepath.Join(s.Dir, MirrorsDir)
 }
 
 // stageScratch is where a job's worktree is added before it is moved in, under its job dir.
@@ -323,8 +423,7 @@ var mirrorFetch = []string{"+refs/heads/*:refs/remotes/origin/*", "+refs/tags/*:
 // the layout before worktrees (origin's branches as its own) is converted in place. A fetch
 // that fails is her account not reaching the repository.
 func (s *Stager) mirror(ctx context.Context, repo string) (string, error) {
-	owner, name, _ := strings.Cut(repo, "/")
-	mirror := filepath.Join(s.Dir, MirrorsDir, owner, name+".git")
+	mirror := MirrorDir(s.mirrors(), repo)
 	url := s.url(repo)
 	unreachable := func(err error) error {
 		return &NotStageable{Repo: repo, Why: fmt.Sprintf("git could not fetch %s: %s", url, oneLine(err.Error(), 300)),
@@ -364,6 +463,9 @@ func (s *Stager) mirror(ctx context.Context, repo string) (string, error) {
 		s.mu.Unlock()
 		return mirror, nil
 	} else if err != nil {
+		return "", err
+	}
+	if err := s.fullMirror(ctx, repo, mirror); err != nil {
 		return "", err
 	}
 	s.mu.Lock()
@@ -432,6 +534,27 @@ func (s *Stager) mirrorLayout(ctx context.Context, mirror, url string) error {
 			return err
 		}
 	}
+	return nil
+}
+
+// fullMirror refuses a mirror that is a partial clone (a blob-less one: its promisor remote or
+// its partialclone extension set), whose local clones fail with "pack has unresolved deltas";
+// a mirror read full once is not read again.
+func (s *Stager) fullMirror(ctx context.Context, repo, mirror string) error {
+	s.mu.Lock()
+	full := s.full[repo]
+	s.mu.Unlock()
+	if full {
+		return nil
+	}
+	for _, key := range []string{"extensions.partialclone", "remote.origin.promisor"} {
+		if v, err := s.git(ctx, 0, "-C", mirror, "config", "--get", key); err == nil && v != "" && v != "false" {
+			return fmt.Errorf("the mirror %s is a partial clone (%s=%s), and a clone from it fails with \"pack has unresolved deltas\"; remove it and the next stage clones a full one, or point --mirrors at a full mirror", mirror, key, v)
+		}
+	}
+	s.mu.Lock()
+	s.full[repo] = true
+	s.mu.Unlock()
 	return nil
 }
 
@@ -555,7 +678,7 @@ func (s *Stager) worktreeOf(checkout string) (repo, mirror string, ok bool) {
 	if !found || !filepath.IsAbs(gitdir) {
 		return "", "", false
 	}
-	mirrors, err := filepath.EvalSymlinks(filepath.Join(s.Dir, MirrorsDir))
+	mirrors, err := filepath.EvalSymlinks(s.mirrors())
 	if err != nil {
 		return "", "", false
 	}
@@ -599,18 +722,25 @@ func (s *Stager) writeJob(p Packet, sha string) error {
 	return err
 }
 
-// stageResult is one stage's end, handed from its goroutine to the loop.
+// stageResult is one delivery's end that staged (or tried to), handed from its goroutine to
+// the loop.
 type stageResult struct {
+	h       HeldCard
 	p       Packet
-	sha     string
-	err     error
-	stopped bool // the daemon stopped while it ran: nothing is said, and the next loop stages it again
+	o       Delivered
+	stopped bool // the daemon stopped while it ran: nothing is said, and the next loop delivers it again
 }
 
-// stageStep is the daemon's staging, once a reconcile: every stage that ended is said (a
-// judgment once while it stands, to the coordinator), and every held work card whose brief is
-// in her inbox and whose job is not staged is staged, each on a goroutine of its own, so the
-// loop beats on while a mirror is cloned. A job whose stage failed waits StageRetryEvery.
+// delivery is the daemon's Delivery: her working directory, and its Stage (nil: her runner
+// stages its own jobs, and the daemon writes briefs alone).
+func (d *Daemon) delivery() Delivery { return Delivery{Dir: d.Dir, Stage: d.Stage} }
+
+// stageStep is the daemon's delivery of the cards it stages, once a reconcile: every one that
+// ended is said (a staged job and its brief written; a judgment once while it stands, to the
+// coordinator; a job another hand started), and every held card owed a stage (Delivery.Owed)
+// is delivered in order, its job staged and then its brief written (Delivery.One), each on a
+// goroutine of its own, so the loop beats on while a mirror is cloned. A job whose stage
+// failed waits StageRetryEvery.
 func (l *loop) stageStep(cards []HeldCard, now time.Time) {
 	d := l.d
 	at := now.UTC().Format(time.RFC3339)
@@ -621,20 +751,24 @@ func (l *loop) stageStep(cards []HeldCard, now time.Time) {
 	for _, r := range done {
 		delete(d.staging, r.p.Job)
 		var ns *NotStageable
-		switch {
+		var away *StartedElsewhere
+		switch err := r.o.Err; {
 		case r.stopped:
-		case r.err == nil:
+		case err == nil:
 			delete(d.stageRetry, r.p.Job)
 			delete(d.stageSaid, "repo "+r.p.Repo)
 			delete(d.stageSaid, "card "+r.p.Card)
-			if r.sha != "" {
-				d.Record(fmt.Sprintf("%s stage: staged %s/%s/repo (%s at %s, %s, on %s) and its %s", at, JobsDir, r.p.Job, r.p.Repo, r.p.Base, r.sha, r.p.Branch, JobFile))
+			if r.o.Sha != "" {
+				d.Record(fmt.Sprintf("%s stage: staged %s/%s/repo (%s at %s, %s, on %s) and its %s", at, JobsDir, r.p.Job, r.p.Repo, r.p.Base, r.o.Sha, r.p.Branch, JobFile))
 			}
-			if line, ok := d.stageDealt[r.p.Job]; ok && l.mode == ModeBatch {
-				l.dealt = append(l.dealt, line)
+			if r.o.What == DeliverStaged && r.o.Why == "" {
+				line := wroteLine(at, r.h)
+				d.Record(line)
+				if _, rest, _ := strings.Cut(line, " inbox: wrote "); l.mode == ModeBatch {
+					l.dealt = append(l.dealt, rest)
+				}
 			}
-			delete(d.stageDealt, r.p.Job)
-		case errors.As(r.err, &ns):
+		case errors.As(err, &ns):
 			d.stageRetry[r.p.Job] = now.Add(StageRetryEvery)
 			if !d.stageSaid[ns.key()] {
 				d.stageSaid[ns.key()] = true
@@ -642,29 +776,34 @@ func (l *loop) stageStep(cards []HeldCard, now time.Time) {
 				subject, body := StageJudgmentText(d.Friend, ns)
 				l.tellKind(bus.KindBlocker, subject, body, now)
 			}
+		case errors.As(err, &away):
+			d.stageRetry[r.p.Job] = now.Add(StageRetryEvery)
+			if key := "away " + r.p.Job; !d.stageSaid[key] {
+				d.stageSaid[key] = true
+				d.Record(fmt.Sprintf("%s stage: skipped %s/%s: %s; its brief is written once its %s is there", at, JobsDir, r.p.Job, oneLine(away.Error(), 400), JobFile))
+			}
 		default:
 			d.stageRetry[r.p.Job] = now.Add(StageRetryEvery)
-			if key := "job " + r.p.Job + ": " + r.err.Error(); !d.stageSaid[key] {
+			if key := "job " + r.p.Job + ": " + err.Error(); !d.stageSaid[key] {
 				d.stageSaid[key] = true
-				d.Record(fmt.Sprintf("%s stage: not staged %s/%s: %s; tried again in %s", at, JobsDir, r.p.Job, oneLine(r.err.Error(), 400), StageRetryEvery))
+				d.Record(fmt.Sprintf("%s stage: not staged %s/%s: %s; tried again in %s", at, JobsDir, r.p.Job, oneLine(err.Error(), 400), StageRetryEvery))
 			}
 		}
 	}
+	dl := d.delivery()
 	for _, h := range cards {
 		p, ok := PacketOf(h)
-		if !ok || !validJob(p.Job) || d.staging[p.Job] || now.Before(d.stageRetry[p.Job]) {
-			continue
-		}
-		if !exists(filepath.Join(d.Dir, "inbox", p.Job, "BRIEF.md")) || Staged(d.Dir, p.Job) {
+		if !ok || !validJob(p.Job) || d.staging[p.Job] || now.Before(d.stageRetry[p.Job]) || !dl.Owed(h) {
 			continue
 		}
 		d.staging[p.Job] = true
 		d.stageWG.Add(1)
 		go func() {
 			defer d.stageWG.Done()
-			sha, err := d.Stage(l.ctx, p)
+			o := dl.One(l.ctx, h)
 			d.stageMu.Lock()
-			d.stageDone = append(d.stageDone, stageResult{p: p, sha: sha, err: err, stopped: err != nil && l.ctx.Err() != nil})
+			var away *StartedElsewhere // another hand's job is said whenever it is met
+			d.stageDone = append(d.stageDone, stageResult{h: h, p: p, o: o, stopped: o.Err != nil && l.ctx.Err() != nil && !errors.As(o.Err, &away)})
 			d.stageMu.Unlock()
 		}()
 	}
@@ -705,16 +844,6 @@ func (l *loop) pruneStep(held []HeldCard, keep map[string]bool, now time.Time) {
 		d.pruneSaid = err.Error()
 		d.Record(fmt.Sprintf("%s prune: not pruned: %s; tried again at the next cleanup", at, oneLine(err.Error(), 400)))
 	}
-}
-
-// stageOwed says a held card is not handed to a lane yet: the daemon stages jobs, the card is
-// one it stages, and its JOB.md is not there.
-func (d *Daemon) stageOwed(h HeldCard) bool {
-	if d.Stage == nil {
-		return false
-	}
-	_, ok := PacketOf(h)
-	return ok && !Staged(d.Dir, h.Job)
 }
 
 // TipBudget bounds the one ls-remote of Tip.
