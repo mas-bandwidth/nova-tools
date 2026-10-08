@@ -436,6 +436,9 @@ func Run(name string, args []string, stamp string, out, errs io.Writer, env Envi
 	if o.store != "" {
 		return emit(storeReport(name, o, f.Args(), env), asJSON, 0, out, errs)
 	}
+	if verb == "status" {
+		return statusVerb(name, o, asJSON, f.Args(), out, errs, env)
+	}
 	return emit(checked(name, verb, o, f.Args(), env), asJSON, o.max, out, errs)
 }
 
