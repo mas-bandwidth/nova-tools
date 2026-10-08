@@ -448,7 +448,7 @@ var Kinds = []*Kind{
 			{Name: "mode", Type: TypeEnum, Enum: FriendModes, Default: DefaultFriendMode, Help: "how her daemon hands her work: batch (the default: every waiting message in one turn) or one-shot (width lanes, each its own session, handed one card per turn)"},
 			{Name: "config_dir", Type: TypeText, Nullable: true, Help: "the absolute directory a claude one-shot lane runs with as CLAUDE_CONFIG_DIR, her account's login and settings; unset (the default, or --config_dir '') for any other harness; nova-friend run refuses a claude friend in one-shot mode without it"},
 			{Name: "token_cap", Type: TypeInt, Default: strconv.FormatInt(DefaultFriendTokenCap, 10), Help: "tokens one card may spend (input, cached input, output and reasoning summed) before a one-shot lane stops its own run and holds the card; " + strconv.FormatInt(DefaultFriendTokenCap, 10) + " by default, and 0 is no cap"},
-			{Name: "billing", Type: TypeEnum, Enum: FriendBillings, Default: DefaultFriendBilling, Help: "how her work is paid (docs/SPEC-CONFIG.md section 1, "friend", FriendBilling): subscription (the default) is tokens only, in the friends category; api is work at API rates, priced in dollars"},
+			{Name: "billing", Type: TypeEnum, Enum: FriendBillings, Default: DefaultFriendBilling, Help: "how her work is paid (docs/SPEC-CONFIG.md section 1, \"friend\", FriendBilling): subscription (the default) is tokens only, in the friends category; api is work at API rates, priced in dollars"},
 		},
 		Check: checkFriend,
 		ApplyOrder: func(r Row) int {
