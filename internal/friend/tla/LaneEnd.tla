@@ -15,13 +15,22 @@
    off the finish and re-deals the card once, one tier up, before the cap
    counts as a failure (internal/sprint lane_cap.go, Redeal). RedealOnce
    holds; CapOnce = FALSE is its reversed witness, a sprint that re-deals
-   every capped finish (MCLaneEndBrokenCapAlways.cfg). *)
+   every capped finish (MCLaneEndBrokenCapAlways.cfg).
+
+   A daemon that goes away leaves its runs behind: a run's process is its own
+   session leader, so a killed daemon leaves it alive ("alive") or it died with
+   the daemon ("gone"). A daemon starting up adopts an alive run (Adopts: the
+   lane waits on the process it recorded in lanes.json, lane_end.go endStarted,
+   and the card ends as the run ends), and ends a gone one as before.
+   Adopts = FALSE is the reversed witness, the daemon before this change, which
+   finished every started card failed at once, over a run still working
+   (MCLaneEndBrokenFailAlive.cfg breaks AdoptedNotFailed). *)
 EXTENDS FiniteSets, Naturals
 
-CONSTANTS Cards, LaneWrites, CapOnce
+CONSTANTS Cards, LaneWrites, CapOnce, Adopts
 
 VARIABLES store,    \* the sprint's word on the card: "working" or "finished"
-          run,      \* "none", "running", "ended" (the lane saw it end), "gone" (its daemon went away)
+          run,      \* "none", "running", "ended" (the lane saw it end), "alive" (its daemon went away, the process runs on), "gone" (its daemon went away and it died)
           started,  \* the mark in lanes.json
           report,   \* outbox REPORT.md: "none", "friend" (hers), "lane" (the lane's)
           up,       \* a daemon is running
@@ -44,8 +53,8 @@ Begin(c) == /\ up /\ run[c] = "none" /\ report[c] = "none"
             /\ started' = [started EXCEPT ![c] = TRUE]
             /\ UNCHANGED <<store, report, up, capped, redeals>>
 
-\* the friend writes her REPORT.md during the run
-FriendReports(c) == /\ run[c] = "running" /\ report[c] = "none"
+\* the friend writes her REPORT.md during the run (a run alive past its daemon too)
+FriendReports(c) == /\ run[c] \in {"running", "alive"} /\ report[c] = "none"
                     /\ report' = [report EXCEPT ![c] = "friend"]
                     /\ UNCHANGED <<store, run, started, up, capped, redeals>>
 
@@ -85,26 +94,38 @@ Redeal(c) == /\ store[c] = "finished" /\ CanRedeal(c)
              /\ redeals' = [redeals EXCEPT ![c] = @ + 1]
              /\ UNCHANGED <<started, up>>
 
-\* the daemon stops, is killed or crashes: its runs are gone, the marks stay
+\* the daemon stops, is killed or crashes: each run under way is left alive (its own
+\* process group runs on) or died with it; the marks stay
 Down == /\ up
         /\ up' = FALSE
-        /\ run' = [c \in Cards |-> IF run[c] = "running" THEN "gone" ELSE run[c]]
+        /\ \E fate \in [Cards -> {"alive", "gone"}] :
+             run' = [c \in Cards |-> IF run[c] = "running" THEN fate[c] ELSE run[c]]
         /\ UNCHANGED <<store, started, report, capped, redeals>>
 
-\* a daemon starts up and ends every card still marked
+\* a run alive past its daemon ends on its own, with no daemon to see it
+OrphanEnds(c) == /\ ~up /\ run[c] = "alive"
+                 /\ run' = [run EXCEPT ![c] = "gone"]
+                 /\ UNCHANGED <<store, started, report, up, capped, redeals>>
+
+\* the cards a restart adopts: marked, their run alive, when the daemon adopts
+Adopted == {c \in Cards : Adopts /\ started[c] /\ run[c] = "alive"}
+
+\* a daemon starts up: an adopted card's run is the lane's again (the lane waits on the
+\* process, its mark kept, its report untouched); every other card still marked is ended
 Restart(sent) ==
     /\ ~up /\ up' = TRUE
-    /\ started' = [c \in Cards |-> FALSE]
-    /\ report' = [c \in Cards |-> IF started[c] /\ report[c] = "none" /\ LaneWrites THEN "lane" ELSE report[c]]
-    /\ store' = [c \in Cards |-> IF sent /\ started[c] /\ report[c] = "none" /\ LaneWrites THEN "finished" ELSE store[c]]
-    /\ UNCHANGED <<run, capped, redeals>>
+    /\ run' = [c \in Cards |-> IF c \in Adopted THEN "running" ELSE run[c]]
+    /\ started' = [c \in Cards |-> c \in Adopted]
+    /\ report' = [c \in Cards |-> IF started[c] /\ c \notin Adopted /\ report[c] = "none" /\ LaneWrites THEN "lane" ELSE report[c]]
+    /\ store' = [c \in Cards |-> IF sent /\ started[c] /\ c \notin Adopted /\ report[c] = "none" /\ LaneWrites THEN "finished" ELSE store[c]]
+    /\ UNCHANGED <<capped, redeals>>
 
 \* friend sync finishes a working card from its REPORT.md
 Sync(c) == /\ store[c] = "working" /\ report[c] # "none"
            /\ store' = [store EXCEPT ![c] = "finished"]
            /\ UNCHANGED <<run, started, report, up, capped, redeals>>
 
-Next == \/ \E c \in Cards : Begin(c) \/ FriendReports(c) \/ Sync(c) \/ Redeal(c) \/ \E s \in BOOLEAN : RunEnds(c, s) \/ CapEnds(c, s)
+Next == \/ \E c \in Cards : Begin(c) \/ FriendReports(c) \/ Sync(c) \/ Redeal(c) \/ OrphanEnds(c) \/ \E s \in BOOLEAN : RunEnds(c, s) \/ CapEnds(c, s)
         \/ Down
         \/ \E s \in BOOLEAN : Restart(s)
 
@@ -112,7 +133,7 @@ Spec == Init /\ [][Next]_vars /\ WF_vars(Restart(FALSE))
         /\ \A c \in Cards : WF_vars(Sync(c)) /\ WF_vars(RunEnds(c, FALSE)) /\ WF_vars(Redeal(c)) /\ SF_vars(Begin(c))
 
 TypeOK == /\ store \in [Cards -> {"working", "finished"}]
-          /\ run \in [Cards -> {"none", "running", "ended", "gone"}]
+          /\ run \in [Cards -> {"none", "running", "ended", "alive", "gone"}]
           /\ started \in [Cards -> BOOLEAN]
           /\ report \in [Cards -> {"none", "friend", "lane"}]
           /\ up \in BOOLEAN
@@ -121,7 +142,11 @@ TypeOK == /\ store \in [Cards -> {"working", "finished"}]
 
 \* no card stays working after its run with no way to be finished: a report for
 \* sync to read, or a mark for the next daemon to end
-NoOrphan == \A c \in Cards : (store[c] = "working" /\ run[c] \in {"ended", "gone"}) => (report[c] # "none" \/ started[c])
+NoOrphan == \A c \in Cards : (store[c] = "working" /\ run[c] \in {"ended", "alive", "gone"}) => (report[c] # "none" \/ started[c])
+
+\* a run alive past its daemon is never finished failed by the daemon that starts up:
+\* its report is untouched on the restart step (the run ends it, as any run does)
+AdoptedNotFailed == [][\A c \in Cards : (run[c] = "alive" /\ ~up /\ up') => report'[c] = report[c]]_vars
 
 \* the lane never writes over the friend's own report
 HersStands == [][\A c \in Cards : report[c] = "friend" => report'[c] = "friend"]_vars

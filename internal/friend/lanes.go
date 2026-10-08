@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
@@ -231,6 +232,7 @@ type lane struct {
 	job      LaneJob   // the card as the harness is handed it: every path absolute, the brief inline, the job directory
 }
 
+// laneSet is the one-shot lanes of a run, and what they share.
 type laneResult struct {
 	ln      *lane
 	open    bool
@@ -242,7 +244,10 @@ type laneResult struct {
 
 // laneSet is the daemon's lanes in one-shot mode.
 type laneSet struct {
-	envHeld bool // the lanes hold for a missing environment name (envStep): said paused on the status
+	pidMu   sync.Mutex
+	pids    map[string]int // process ids the execs handed since the last step, by job (pidSink, pidStep)
+	adopt   []Started      // runs the daemon before left alive, to adopt once the lanes exist (endStarted, adoptRuns)
+	envHeld bool           // the lanes hold for a missing environment name (envStep): said paused on the status
 	lanes   []*lane
 	given   map[string]bool
 	state   LaneState
@@ -412,6 +417,8 @@ func (l *loop) laneStep(now time.Time, width int) {
 		n := len(s.lanes) + 1
 		s.lanes = append(s.lanes, &lane{n: n, session: s.state.Sessions[n]})
 	}
+	l.pidStep(now)
+	l.adoptRuns(now)
 	l.oneLaneStep(now)
 	lh, _ := d.Deliver.(LaneHarness)
 	runner, perCard := d.Deliver.(CardRunner)
@@ -523,11 +530,12 @@ func (l *loop) laneStep(now time.Time, width int) {
 			s.state.Started[filepath.Base(c.Outbox)] = Started{Lane: ln.n, Card: c, At: now}
 			l.saveLanes(now)
 		}
+		started := l.pidSink(filepath.Base(ln.card.Outbox))
 		if perCard { // the brief alone: no message, pong or notice rides with it
 			t, c, dir := &turn{subjects: fmt.Sprintf("%q", "card "+ln.card.ID)}, ln.job.Card, ln.job.Dir
 			ln.t = t
 			l.startTurn(t, now, func(ctx context.Context) laneResult {
-				lt, err := runner.RunCard(WithLaneDir(LaneContext(ctx), dir), c)
+				lt, err := runner.RunCard(WithProcessStarted(WithLaneDir(LaneContext(ctx), dir), started), c)
 				return laneResult{ln: ln, turn: lt, err: err, t: t}
 			})
 			continue
@@ -549,10 +557,100 @@ func (l *loop) laneStep(now time.Time, width int) {
 		ln.t = t
 		dir := ln.job.Dir
 		l.startTurn(t, now, func(ctx context.Context) laneResult {
-			lt, err := lh.DeliverTo(WithLaneDir(LaneContext(ctx), dir), ln.session, t.text)
+			lt, err := lh.DeliverTo(WithProcessStarted(WithLaneDir(LaneContext(ctx), dir), started), ln.session, t.text)
 			return laneResult{ln: ln, turn: lt, err: err, t: t}
 		})
 	}
+}
+
+// pidSink is what the exec calls with job's run's process id: kept until the step writes
+// it on the started mark (pidStep), off the loop's goroutine.
+func (l *loop) pidSink(job string) func(pid int) {
+	s := l.lanes
+	return func(pid int) {
+		s.pidMu.Lock()
+		defer s.pidMu.Unlock()
+		if s.pids == nil {
+			s.pids = map[string]int{}
+		}
+		s.pids[job] = pid
+	}
+}
+
+// pidStep writes every process id the execs handed since the last step on its card's
+// started mark and saves the lane state, so a daemon starting up finds the run to adopt.
+func (l *loop) pidStep(now time.Time) {
+	s := l.lanes
+	s.pidMu.Lock()
+	pids := s.pids
+	s.pids = nil
+	s.pidMu.Unlock()
+	if len(pids) == 0 {
+		return
+	}
+	changed := false
+	for job, pid := range pids {
+		if st, ok := s.state.Started[job]; ok && st.Pid != pid {
+			st.Pid = pid
+			s.state.Started[job] = st
+			changed = true
+		}
+	}
+	if changed {
+		l.saveLanes(now)
+	}
+}
+
+// adoptRuns gives each run the daemon before left alive (endStarted) to a free lane: its
+// own lane when free, else the first free one; a run with no free lane waits a step. The
+// lane holds the card and waits on the process (WaitProcess, else a poll on Pause every
+// AdoptPoll), and the card ends as any run's does when it exits (laneDone).
+func (l *loop) adoptRuns(now time.Time) {
+	s, d := l.lanes, l.d
+	if len(s.adopt) == 0 {
+		return
+	}
+	var waiting []Started
+	for _, st := range s.adopt {
+		var ln *lane
+		if st.Lane >= 1 && st.Lane <= len(s.lanes) && s.lanes[st.Lane-1].t == nil && s.lanes[st.Lane-1].card == nil && !s.lanes[st.Lane-1].opening {
+			ln = s.lanes[st.Lane-1]
+		} else {
+			for _, cand := range s.lanes {
+				if cand.t == nil && cand.card == nil && !cand.opening {
+					ln = cand
+					break
+				}
+			}
+		}
+		if ln == nil {
+			waiting = append(waiting, st)
+			continue
+		}
+		card := st.Card
+		ln.card, ln.attempts, ln.marked = &card, 0, now
+		if job, err := LaneJobOf(d.Dir, card, filepath.Abs); err == nil {
+			ln.job = job
+		} else {
+			ln.job = LaneJob{Card: card}
+		}
+		ln.tier = d.cardTier(card)
+		ln.cap = d.laneCap(ln.tier)
+		ln.capped = false
+		pid := st.Pid
+		t := &turn{subjects: fmt.Sprintf("%q", "card "+card.ID+" (adopted)"), adopted: true}
+		ln.t = t
+		l.startTurn(t, now, func(ctx context.Context) laneResult {
+			wait := d.WaitProcess
+			if wait == nil {
+				wait = func(ctx context.Context, pid int) bool { return waitAdopted(ctx, pid, d.ProcessAlive, d.Pause) }
+			}
+			wait(ctx, pid)
+			return laneResult{ln: ln, turn: LaneTurn{Exit: 0}, t: t}
+		})
+		d.Record(fmt.Sprintf("%s lane %d: card %s adopted (pid %d): the lane waits on the run", now.UTC().Format(time.RFC3339), ln.n, card.ID, pid))
+	}
+	s.adopt = waiting
 }
 
 // MessageTurnEvery is how often the push check's pong line is handed again in a message
@@ -819,6 +917,20 @@ func (l *loop) laneDone(r laneResult, now time.Time) {
 		d.Record(line + fmt.Sprintf(" card=capped turn=%d/%d reason=%q ", ln.attempts, CardTurns, CappedWords(end.Capped, end.Tier, end.Overrun)) + l.endCard(ln.n, card, end, now))
 		s.given[job] = true
 		s.state.GivenUp = append(s.state.GivenUp, job)
+		l.saveLanes(now)
+		ln.card, ln.attempts = nil, 0
+		return
+	}
+	if t.adopted {
+		// an adopted run ended with no report: the card ends as a restart ends a gone run's,
+		// never handed again by this daemon (lane_end.go endStarted)
+		end.Err = "the run adopted after a daemon restart (pid " + fmt.Sprint(s.state.Started[filepath.Base(card.Outbox)].Pid) + ") ended with no report"
+		job := filepath.Base(card.Outbox)
+		d.Record(line + " card=ended reason=\"the adopted run ended with no report\" " + l.endCard(ln.n, card, end, now))
+		if !s.given[job] {
+			s.given[job] = true
+			s.state.GivenUp = append(s.state.GivenUp, job)
+		}
 		l.saveLanes(now)
 		ln.card, ln.attempts = nil, 0
 		return

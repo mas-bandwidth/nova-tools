@@ -192,6 +192,12 @@ type Daemon struct {
 	// nothing, and FaultDown says her down with NeedsEnvReason until the key appears.
 	NeedsEnv []string
 	Getenv   func(string) string
+	// ProcessAlive says whether the process pid is alive (adopt.go; run: the kernel's
+	// word, ProcessAlive); nil: no run is ever adopted, every started card is ended.
+	// WaitProcess waits until pid is no longer alive or ctx ends, answering whether it
+	// ended; nil: a poll every AdoptPoll on Pause.
+	ProcessAlive func(pid int) bool
+	WaitProcess  func(ctx context.Context, pid int) bool
 	// Held is every card on her row as the sprint server says it (HeldVia: friend cards
 	// <friend>, else the worker view), asked once an InboxEvery; her inbox is reconciled with
 	// the answer (SyncInbox, inbox.go). Nil leaves her inbox to friend sync alone.
@@ -318,6 +324,7 @@ type turn struct {
 	stamped  time.Time // when the daemon last stamped progress on the turn's card (stampProgress)
 	subjects string
 	present  bool // the present turn (present.go)
+	adopted  bool // a run adopted from the daemon before: the lane waits on its process, nothing is pushed (adopt.go)
 }
 
 type result struct {
@@ -1380,6 +1387,9 @@ func (l *loop) startBatch(now time.Time) {
 // watch is the silence watch on a running turn: a turn that prints is
 // working; one silent past SilentStop is stopped, said on the record.
 func (l *loop) watch(t *turn, now time.Time) {
+	if t.adopted {
+		return // a run adopted from the daemon before prints nothing here: the process is its own word (adopt.go)
+	}
 	if n := t.seen.Load(); n != t.seenN {
 		if t.seenN == 0 {
 			l.stampTurn(t, bus.Read) // the session took the turn: it printed

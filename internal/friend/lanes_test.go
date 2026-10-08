@@ -65,6 +65,7 @@ type lanesHarness struct {
 	block   chan struct{}      // when set, a card turn waits for it
 	onPong  func(nonce string) // when set, the session "runs" each pong line a turn carries: called with its nonce
 	refuse  []error            // what the next message turns answer instead of running (a Deferred, a SessionRefused), in order
+	pid     int                // when set, the process id each card turn hands to the exec's sink (WithProcessStarted)
 }
 
 var cardOfText = regexp.MustCompile(`one card this turn, ([^ ]+)\. Do exactly`)
@@ -89,6 +90,9 @@ func (h *lanesHarness) DeliverTo(ctx context.Context, session, text string) (Lan
 		for _, m := range nonceOfLine.FindAllStringSubmatch(text, -1) {
 			h.onPong(m[1])
 		}
+	}
+	if started := processStarted(ctx); started != nil && h.pid != 0 && id != "-" {
+		started(h.pid)
 	}
 	h.mu.Lock()
 	h.turns = append(h.turns, session+": "+id)

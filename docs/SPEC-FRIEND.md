@@ -1736,6 +1736,34 @@ starts, and says why it runs nothing. The model: `Key` toggles `keyed`,
 Tests: `TestAMissingProviderKeyBeatsDownNamedAndStartsNoLane`,
 `TestNeedsEnvIsTheFlagsElseTheProvidersKey`.
 
+**A daemon starting up adopts a run still alive** (internal/friend/adopt.go). A
+lane's run is its own process group, so a daemon killed, crashed or restarted
+leaves its runs working on; until 2026-10-08 the daemon that started up
+finished every card still marked started FAILED at once ("its run is gone"),
+over a run that was still working, and the stopgap runners had an `adopt` for
+exactly this. Now each card turn's process id is recorded on its started mark
+(`Started.Pid`, handed by the exec through the context, `WithProcessStarted`,
+written by the step, `pidStep`), and a daemon starting up (`endStarted`)
+adopts a run whose process is alive (`Daemon.ProcessAlive`, the kernel's word
+in `run`): the lane holds the card (`adoptRuns`: its own lane when free, else
+the first free one) and waits on the process (`WaitProcess`, else a poll every
+`AdoptPoll`), pushing nothing into it, the silence watch leaving it alone; the
+card ends as any run's does when the process exits (her report the finish; an
+adopted run that ends with no report ends the card as a gone run's does, set
+aside). Only a run whose process is gone is ended as before. The model:
+`tla/LaneEnd.tla`, `Down` leaves a run alive or gone, `Restart` adopts the
+alive ones (`Adopts`), `AdoptedNotFailed` (a restart never writes a report over
+a run alive) holds with `NoOrphan`, `HersStands`, `RedealOnce` and `Finished`
+(TLC on vision, 1940 distinct states); the reversed witness
+`MCLaneEndBrokenFailAlive.cfg` (the daemon before: `Adopts = FALSE`) breaks it
+at the first restart over a live run. Tests:
+`TestARestartedDaemonAdoptsALiveLaneRunAndFinishesItsCard`,
+`TestAStartedCardWhoseRunIsGoneIsEndedAndARunsPidIsRecorded`. Not done: a
+daemon SIGKILLed loses no run to this, but a run it adopts and that outlives
+the card's cap is not capped by the adopting daemon (the cap is the turn's);
+and `ProcessAlive` is a pid, so a pid reused by another process after a long
+outage reads alive until it ends (the daemon's restart is launchd's, seconds).
+
 The lane waits for the turn to end and looks for the card's `RESULT.md`:
 there, the card is done and the lane takes the next; a turn that exited 0 and
 left neither `RESULT.md` nor `REPORT.md` is a harness fault, the card kept with
