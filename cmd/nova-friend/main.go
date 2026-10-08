@@ -389,23 +389,6 @@ func friendTool(w world) *tool.Tool {
 		f.Duration("limit-rest", friend.DefaultLimitWait, "how long the friend is down when its harness's usage limit or empty balance names no reset")
 		f.String("coordinator", "", "who is told of a broken session when no ping has named the seat")
 		f.String("needs-env", "", "environment names the harness needs, comma-separated (default: the provider's key for --model, e.g. INCEPTION_API_KEY); while one is empty the lanes hold and the beat says down \"no key sealed: NAME\"")
-		f.Check(func(c *tool.Call) {
-			if err := friend.CheckFolderRoute(c.Str("harness"), c.Str("session"), c.Str("adapter"), c.Str("delivery-dir")); err != nil {
-				c.Problem(err.Error())
-			}
-			if c.Bool("notifications-only") && c.Str("adapter") != "" {
-				c.Problem("--notifications-only uses the Codex app queue; omit --adapter folder for this separate receiver")
-			}
-			if c.Bool("notifications-only") && c.Str("harness") != "codex" {
-				c.Problem("--notifications-only wants --harness codex: queued notifications into the existing app")
-			}
-			if why := bus.CheckKinds(commaList(c.Str("notify-kinds"))...); why != "" {
-				c.Problem(why)
-			}
-			if c.Dur("notify-window") <= 0 {
-				c.Problem("--notify-window wants a positive duration")
-			}
-		})
 		stateDir(f)
 		redis(f)
 		f.Check(func(c *tool.Call) {
@@ -1378,7 +1361,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 			}
 			return w.finish(ctx, server, argv)
 		},
-		Store: sc.DaemonStore(), Deliver: laneDeliver, Now: w.now, Pause: w.sleep, StepBeatForTests: w.stepBeat,
+		Store: sc.DaemonStore(), Deliver: laneDeliver, Now: w.now, Pause: w.sleep,
 		Sent: func() time.Time {
 			if at := sent.Load(); at != nil {
 				return *at
@@ -1755,7 +1738,6 @@ func (w world) agent(c *tool.Call) (friend.Agent, error) {
 		Binary: bin, Copy: w.copy, Redis: c.Str("redis"), Server: c.Str("server"), Home: w.home, Path: w.getenv("PATH"), LaunchdLog: log,
 		Secrets: secretNames(c.Str("secrets")), Seat: c.Str("seat"),
 		Coordinator: c.Str("coordinator"), SilentStop: c.Dur("silent-stop"), BrokenAfter: c.Int("broken-after"), NeedsEnv: c.Str("needs-env"),
-		NotificationsOnly: c.Bool("notifications-only"), NotifyKinds: c.Str("notify-kinds"), NotifyWindow: c.Dur("notify-window"),
 	}
 	if a.Harness == "claude" {
 		a.ConfigDir = c.Str("config-dir")
