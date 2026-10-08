@@ -248,14 +248,14 @@ func mergeStep(s *Snapshot, r MergeReq) Plan {
 		}
 		queued = before
 	}
+	beforePriority := len(queued)
 	queued = MergePriorityOrder(s, queued)
 	now := stamp(s.Now)
 	if len(queued) == 0 {
 		why := "nothing queued in stream " + r.Stream + "; nothing was changed"
-		if s.Merge.Count(r.Stream, Queued) > 0 {
+		if beforePriority > 0 {
 			why = "no queued card has its prerequisites satisfied in stream " + r.Stream + "; nothing was changed; land its prerequisites first"
-		}
-		if len(s.Merge.Cell(r.Stream, Stuck)) > 0 {
+		} else if len(s.Merge.Cell(r.Stream, Stuck)) > 0 {
 			why = "nothing queued before the stuck card of stream " + r.Stream + "; resume it first; nothing was changed"
 		}
 		p.refuse(r.Stream, why)
