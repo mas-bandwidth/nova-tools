@@ -898,12 +898,18 @@ lanes), so the verb is the coordinator's hand and the daemon's duty. The model i
 "Are they actually doing the work that is shown in the friend table? Really?"). A worker's
 failed finish (a friend's `Verdict: HOLD` or `FAIL`, by its first paragraph, or a member's
 failed report) whose reason names a brief defect is the brief's, never the worker's: no
-worker could do the card as cut (`sprint.BriefDefectOf`). Each of the three reasons alone
+worker could do the card as cut (`sprint.BriefDefectOf`). Each of the four reasons alone
 names one, with no label needed, the earliest in the report being the one recorded: the
-base lacks a PATHS file (`the base lacks`, `not on the base`, `missing from the base`, `does not exist on the base`), a duplicate of landed work (`duplicate of landed work`), and a
-decision delivered (`decision delivered`, `decision already delivered`). The label `brief defect` (two words) with none of the three names one in the worker's own words. A
-negated reason or label ("not a duplicate of landed work", "no brief defect") names none,
-and a hyphenated token, such as a card id `hold-is-a-brief-defect`, is no label. The finish
+base lacks a PATHS file (`the base lacks`, `not on the base`, `missing from the base`, `does not exist on the base`), a duplicate of landed work (`duplicate of landed work`), a
+decision delivered (`decision delivered`, `decision already delivered`), and PATHS do not
+hold what the brief names (`PATHS do not hold`). That last reason is raised on the first
+such failed finish, not at the attempt cap and not at the second identical failure: the
+finish is the brief-defect judgment, and when the report carries `PATHS-PROPOSED:` (or a
+line that starts `PATHS:`) the reason recorded is `PATHS do not hold what the brief names; PATHS: <globs>`,
+the worker's proposed PATHS as the one-line fix. A report that only proposes PATHS, without
+those words, stays the worker's failed work, so the paths rule can widen it. The label `brief defect` (two words) with none of the four names one in the worker's own words. A
+negated reason or label ("not a duplicate of landed work", "no brief defect", "not PATHS do not hold") names none,
+and a hyphenated token, such as a card id `hold-is-a-brief-defect` or `paths-do-not-hold`, is no label. The finish
 moves the work card to the member's hidden `defect` cell, never `ok` or `failed`, so `done`
 and `ok%` on the fleet and friends tables count only work the worker could do; the card and
 its primary carry `brief_defect` (the reason); the primary goes to review with result
@@ -4074,6 +4080,36 @@ than one place) and `wall=<seconds>`, the gates' total. With no such bench,
 the loop's gate runs in the clone; a `land` command on its own (a hand land,
 the install walkthrough) runs it there as before and its line carries no
 bench. The ledgers' update runs stay in the clone.
+
+**The gate bench is a hash ring.** The up benches, in the fleet's order, are a
+ring of `n`, and a batch's gate starts at `ring[FNV64(stream) % n]`, FNV-1a
+64-bit of the stream's name (`benchRing`, `landring.go`): the lander asks that
+bench's Go lane first and, while a lane is held, steps to `(h+1) % n`, then
+`(h+2) % n`, round once; the first granted runs the gate, and the lander gives
+its place back on the others. When none grants, it waits in the queue of its
+own slot alone and asks the ring again from there on the next cycle of the land
+loop. The same ring and the same key serve the parallel pass: each stream's job
+hashes its own stream name, so the batches merging beside each other start on
+different benches instead of all on the first up member (the owner, 2026-10-07:
+"we do the uint64 and it is modulo % n", "even when we have parallel land"). A
+batch's `LAND` line adds `ring=<n> slot=<h % n>` after `bench=` when a bench ran
+a gate. The ring's model in TLA+ is its own card.
+
+**Each stream's gate holds its lane under its own name.** The lander records a
+bench's Go lane as `lander/<stream>` for a stream's gate (the stream's fork in the
+parallel pass) and as `lander/base` for the base re-check, never as one `lander`
+for all of them: a take renews a holder by its name, so under one shared name a
+sibling fork asking a bench another fork held was granted at once, and a give took
+back every holder and waiter of that name, so the first fork to finish freed the
+bench while its sibling's gate still ran. Under its own name a fork asking a bench
+a sibling holds is queued there, and the ring's step-while-held moves it to the next
+slot like any other held lane; its give (`Lanes.Give`) takes back its own hold or
+place alone, never another's. A lane name is one worker word, or two joined by one
+`/` (`sprint.ValidLaneWho`), so `lane list` shows `held=lander/<stream>` and the
+stage the land loop's beat names (and so the stuck judgment) reads `lane take go
+--machine <m> --as lander/<stream> (the gate of stream <stream>)` while a gate
+waits, and `bench <m> held by lander/<stream> (the gate of stream <stream>)` while
+it runs (`landlane_holder_test.go`).
 `--check` is the caller's own command on top, once a batch, as before.
 
 **Always inside PATHS.** Files a change must touch to keep the tree green are always
@@ -4090,6 +4126,38 @@ that names only them is a rework, never a twin (`TestE12NeverRefusesATestOrALedg
 A generated brief carries the sentence in its AS A READ section (`cardgen.AsARead`;
 `sprint.FriendReadBrief` copies that section onto a friend read). The owner, 2026-10-06:
 "Can we stop this whole 'test outside of paths' thing. It's wasteful."
+
+**The pass: the merges in parallel, the landing serial** (the owner, 2026-10-07: "We can
+do merges across work streams in parallel. The only thing that needs to be serial is the
+merge after"; cmd/nova-sprint/landpass.go; tla/LandPass.tla). A land pass has two phases
+per round. In the first, every stream with a batch merges beside the others, up to
+`--land-parallel` at once (default 4; `run --land-parallel` sets the loop's): each stream
+in its own worktree of the repository's clone (`<clone>@<stream>` under the land root,
+made on first use, kept across passes, removed when the stream has no batch; the clone
+itself is detached while they work), its batch branch cut from the base's tip, its heads
+merged, remapped, resolved and checked as above, and its tree gated ONCE as a whole, the
+tree tests included, instead of once a head; only when that one gate is red is each head
+gated alone again from the base, so the red head is blamed with the finding above. The
+base's own gate and its cure stay serial, in priority order, before the merges fan out,
+so the stream that meets a red base first is the first in that order, as before; every
+fetch and every write of the clone's shared refs is one at a time. In the second phase the
+green batches land one at a time in priority order: a batch cut from the tip the base
+still has is pushed with no new gate; one whose base moved (a batch before it in the pass
+landed, or a push from outside) is merged again onto the new tip in its worktree, the same
+merges and checks and no gate per head, and pushed with no new gate when the files it
+changes and the files landed since it was cut are disjoint and the same heads merged (a
+clean merge of disjoint files), else gated once on the combined tree and pushed when green.
+A red combined gate refuses the batch for this pass (`LAND REFUSED ... fails it merged onto
+<base> as this pass moved it (stream <s>, <ids>, on <files>)`), records no fact, stops no
+stream, and the next pass merges the batch onto the new tip, where the real finding is the
+head's own. A tip whose whole tree passed a gate is recorded as gated (`baseGateCache`); a clean merge of disjoint files is not, so the next pass gates the base. The next batch on a gated tip
+it gates no base. A pass of eight batches of two cards ran sixteen gates one after another
+(twenty minutes, 2026-10-07); it runs eight, up to four at once, and a base gate once. The
+report is the merge step as before, and its receipt is read for the batch's landings alone:
+the step also releases the waiting cards the landing unblocks and marks sentinels reached,
+lines that until 2026-10-07 made a committed landing `LAND FAILED ... NOT reported (moved
+N+k)`, stopped the stream's next batches, exited 2 and could roll the server back
+(`movedExactly`). The lines a pass prints keep their form and their stream order.
 
 **The scope amendment.** A file outside the brief's `PATHS` that is the test, the fixture or
 the doc of the same change is allowed by rule, never by a message to the coordinator
@@ -5423,7 +5491,7 @@ command that loads it.
 | brief | replaces the brief of a primary in place (the owner, 2026-10-01: "What other things should you be able to do to mutate a stopped sprint" / "Are there other verbs you need as you work with sprints?" / "I don't want you manually hopping in and working around it and doing manual stuff."; 2026-10-04: "what is manual? what needs new verbs in nova-sprint?"; 2026-10-06: "We gotta stop doing this twin shit. it's waste."): `brief <id> (--brief <text> \| --brief-file <path>) [--rules <file>] [--answers <notes>]`, `brief --dir <dir> [--rules <file>]`, `brief --group <id> [--expect <n>] (--brief-file <path> \| --dir <dir>) [--answers <notes>]`, or `brief <id> --widen [--repo-dir <clone>]` (section 2, recut-widen-r.w1); the new brief is held to the card lint and the size bound as `add --brief` holds one (the same function, refused exit 2, nothing written, with the lint's own lines); on a RUNNING machine as on a STOPPED one: on a RUNNING machine the change queues for the next tick's pump like every coordinator verb's, and the pump deals no card a queued change names before the change drains, so the card is dealt with its new brief. A primary waiting, ready or in review takes one, and keeps its id: a correction is never a twin. A card no attempt was dealt for (attempt 0) has its brief replaced. A card an attempt was dealt for opens its next attempt (`sprint.briefInPlace`): from review it goes to ready, its read cards retired (the readers table's, and a friend's open read on her fleet row, which would otherwise keep her room and close against the replaced attempt), the attempt's finding kept in its `findings`, and the judgments on it closed, as a rework's (a failed attempt waiting on a judgment, or at its bound); a ready or waiting card's withdrawn work card is retired, so the deal cuts the next attempt instead of dealing the last again; the next attempt is staged from the last pushed head where the work applies, as a rework's (`sprint.BaseOf` over the card's attempts, or the brief's `CARRY:` line when none pushed ok); its bound is reset, since the bound counts attempts under one brief (`brief_attempt` is the attempt at the edit); a rework's `fix` was for the old brief and is dropped; and the record (its MOVED line, which `card <id>` tells) and the next attempt's `why` say `<id> brief edited in place by <actor> at attempt <n>: <what changed>`, what changed the old brief's lines the new one lacks (`- <line>`) and the lines it adds (`+ <line>`), joined by ` \| `. A read of the primary is not asked again at the carried head because the brief changed. The same brief again on a card an attempt was dealt for, or one with no changed line (its lines only re-spaced, reordered or blank lines added, compared trimmed), is refused, nothing written: it would reset the bound with nothing changed. Refused (exit 1, nothing written) for a card that is no primary, and for a card working, merging or landed, which keeps its brief, its state named, whatever the machine's state, with what changes it instead: once it finishes (review), `brief` in place (from merging after a `return`); from any open state a `drop` and the new brief added as a new card; once landed, a new card (`TestBriefEditsACardInReviewInPlace`, `TestBriefRetiresItsReadsAndCarriesThePushedHead`, `TestAFriendsOpenReadIsRetiredByBriefAndByRework`, `TestBriefRefusesAWorkingOrMergingCard`). `--answers` names the judgments the edit answers, each one it closes, as every verb's. `--group <id>` (or its alias) acts on the members of the inbox group, refused when `--expect` is not its size now, as every `--group` verb's: a group of one takes `--brief` or `--brief-file`, a group of several takes `--dir` holding one `<id>.md` for each member and no other, and one brief for several is refused naming `--dir`. The inbox prints the brief decision in the form the verb takes: `brief <id> --brief-file '<the corrected brief>'` for one card, `brief --group <id> --expect <n> --dir '<a directory of the corrected briefs, <id>.md a card>' --answers <notes>` for several, each running as printed with its placeholder filled (`TestBriefGroupAnswersTheBoundJudgment`, `TestInboxPrintsTheBriefDecisionTheVerbRuns`). `--dir` replaces one brief per `*.md` file of the directory, in byte order of file name, read as `add --brief-dir` reads them, the card the file's base name without `.md` (refused naming the file when not one; not with an id, `--brief` or `--brief-file`); every brief is held to the bound and the lint before anything is written, one failing file refusing the whole call naming it with its findings, exit 2; one step replaces them all or none, a card refused or named twice refusing the call, exit 1, and its `BRIEF OK moved=<n>` is the count replaced, one MOVED line per card. The card keeps its id, stream, score and needs; before this verb the coordinator dropped the card and added it again, or re-cut it as a twin, which changed its id and place (`sprint.Brief`). A brief that differs from the card's in its `DEPENDS-ON:` line alone is taken in any state, on a RUNNING machine (applied by the next tick, as every work-table change is while it runs) and for a card dealt (it applies to the next attempt), and the card's needs become the line's, read as `add` reads it: re-pointing a card's needs after a drop is no change of its task (the comfort list of 2026-10-03, item 2); each need is a primary on the table and not the card itself, and a ready card takes no need that has not landed (the deal would run it first), each refused by name, nothing written; the brief decision and the grade stay (`sprint.Brief`, `briefDepends`); `brief <id> --tier <flash\|pro\|heavy\|frontier>` re-tiers the card instead (the owner, 2026-10-04: "If there are pro cards that are really heavy, then let's mark them as heavy"): the tier is pinned on the primary as `rework --tier` pins it (`tier`: every later deal and read draws from it, never escalated past it), taken in any state, on a RUNNING machine and for a card dealt, where it applies to the next attempt; refused for a card landed, a sentinel, a brief that pins a model, a word that is no class, and the tier it is pinned to already; not with --brief, --brief-file, --dir, --rules, --widen or --group (`sprint.Brief`, `briefTier`) |
 | move | moves primaries that have not started to another stream (the owner, 2026-10-01: "What other things should you be able to do to mutate a stopped sprint" / "Are there other verbs you need as you work with sprints?" / "I don't want you manually hopping in and working around it and doing manual stuff."): `move <id>... --stream <s> [--before <id> \| --after <id> \| --score <n>]`, one step, all or none for the ids named; refused (exit 1, nothing written) on a RUNNING machine (`nova-sprint stop` first), for a card that is no primary or has started (only a primary waiting or ready with no work card ever dealt moves; a card dealt, working, in review, merging or landed keeps its stream, its state named), and for a card of the destination already (`rank` changes a place in line). The destination is placed exactly as `add` places cards (the same plan, on the sprint without the moved cards): a stream new to the sprint is made as `add --stream` makes one, the cards go in line by `--before`/`--after`/`--score`, else at the end in the order named, waiting or ready by their needs and the stream's sentinels, a reached sentinel behind them no longer reached, a cycle of needs refused naming it, and a ready card the destination would put behind a sentinel refused by the lifecycle (ready -> waiting is only the effect of inserting a sentinel; `--before` the sentinel moves it). The card is the same card moved: its id, brief, needs and admission stay, and a need naming it still holds (a need is by id) (`sprint.MoveCards`) |
 | merge | one mechanical merge step for a stream, a store write: the record of a landing by name, `--landed <id>@<head>... --repo <dir> --base-ref <ref>` (each card merging in the stream at that head, the head an ancestor of the base tip, else all refused and nothing written); `--batch n` selects the batch a fact is about; `--red [--suspect <id>...]` |
-| land | the coordinator's landing step as one command, an external delivery (a git push) and a store write (the merge step): for each stream named (`--stream`, again for more; default every stream with cards queued and not stopped), in stream order, the merge queue up to its first stuck card, in work order, cut into batches of consecutive cards whose briefs name one repository and one base (`REPO:` and `BASE:`, read as staging reads them; `--base` for a card naming none); each batch's heads merged `--no-ff` with the message `land <id> (sprint stream <s>)` onto a branch cut from the base's tip on origin, in a clone (`--repo-dir`, else a clone kept under the directory each line names, its name the readable repository and a hash of it; every clone reused has its origin's fetch URL and its one push URL held to the repository the cards name before any git, the host compared without case and the path with it); a caller's `--epoch` the sprint has left refused before any git; `--check <command>` run once per batch in the clone before the push; the queue head, its heads and attempts, and the epoch read again just before each push; the push plain, never forced, and on a rejection the base fetched and the batch rebuilt on its new tip once; then the batch reported by the merge step `merge --stream s --batch n` runs, fenced to the epoch land read and guarded in the same store step to plan only while the queue still starts with the batch's cards at the heads and attempts land read and pushed (a rework keeps a card's id and epoch, not its head); the pins are the step's arguments, so an `--op` replay returns only that batch's receipt. A head that is not a commit on origin or whose merge stops on unmerged paths (unless every one is a generated ledger, which land regenerates, or a shrink-only ledger, which land resolves as the union of both sides' removals, section 7) ends its batch before it, the cards before it land, and it is reported with `--conflict` and git's words as the note, which reworks the card at the tip and stops nothing, so the stream's cards after it land in the same pass (section 7, a card's own refusal); git failing for any other reason (an identity, a hook, the disk, the network) blames no card: nothing is pushed or reported and the batch is refused; a head whose merged tree fails the tree gate (`go build ./...`, `go vet ./...`, and the tree's own test packages when it changes a document or a test file; section 7) ends its batch before it as a conflict, the run's output the note, and a base whose tip fails it refuses the batch before any merge; a check that fails, with `--red`, nothing pushed; a second rejected push, with `--rejected`. A push that landed and a report that did not (a clear, a card accepted ahead of the batch, a return, between the two) is `LAND FAILED`, exit 2, and the one remedy named is to run land again, which rereads the queue and lets its own checks decide: a card as it was is recorded with no new push (its merges and push are no-ops), a card reworked since is merged at its new head or meets a real conflict, and after a clear there is nothing to report (tla/Land.tla). A bare `merge --batch n` is never offered: after a rework the queue starts with the same ids at a head the base does not hold, and the merge step alone would record it. One line per batch, `LAND OK|REFUSED|FAILED stream= cards= base= tip= ids=<first>..<last>` (a batch whose git ran also says each step's seconds, `fetch= merge= check= queue= push= report=`, and its `--json` item `times`),
+| land | the coordinator's landing step as one command, an external delivery (a git push) and a store write (the merge step): for each stream named (`--stream`, again for more; default every stream with cards queued and not stopped), in stream order, the merge queue up to its first stuck card, in work order, cut into batches of consecutive cards whose briefs name one repository and one base (`REPO:` and `BASE:`, read as staging reads them; `--base` for a card naming none); each batch's heads merged `--no-ff` with the message `land <id> (sprint stream <s>)` onto a branch cut from the base's tip on origin, in a clone (`--repo-dir`, else a clone kept under the directory each line names, its name the readable repository and a hash of it; every clone reused has its origin's fetch URL and its one push URL held to the repository the cards name before any git, the host compared without case and the path with it); a caller's `--epoch` the sprint has left refused before any git; `--check <command>` run once per batch in the clone before the push; the queue head, its heads and attempts, and the epoch read again just before each push; the push plain, never forced, and on a rejection the base fetched and the batch rebuilt on its new tip once; the streams' batches merged beside each other, up to `--land-parallel` at once (default 4), each in its own worktree of the clone and gated once as a whole, then landed one at a time in priority order, a batch whose base a landing before it moved merged again onto the new tip and gated once more only where their files meet (section 7, the pass); then the batch reported by the merge step `merge --stream s --batch n` runs, fenced to the epoch land read and guarded in the same store step to plan only while the queue still starts with the batch's cards at the heads and attempts land read and pushed (a rework keeps a card's id and epoch, not its head); the pins are the step's arguments, so an `--op` replay returns only that batch's receipt. A head that is not a commit on origin or whose merge stops on unmerged paths (unless every one is a generated ledger, which land regenerates, or a shrink-only ledger, which land resolves as the union of both sides' removals, section 7) ends its batch before it, the cards before it land, and it is reported with `--conflict` and git's words as the note, which reworks the card at the tip and stops nothing, so the stream's cards after it land in the same pass (section 7, a card's own refusal); git failing for any other reason (an identity, a hook, the disk, the network) blames no card: nothing is pushed or reported and the batch is refused; a head whose merged tree fails the tree gate (`go build ./...`, `go vet ./...`, and the tree's own test packages when it changes a document or a test file; section 7) ends its batch before it as a conflict, the run's output the note, and a base whose tip fails it refuses the batch before any merge; a check that fails, with `--red`, nothing pushed; a second rejected push, with `--rejected`. A push that landed and a report that did not (a clear, a card accepted ahead of the batch, a return, between the two) is `LAND FAILED`, exit 2, and the one remedy named is to run land again, which rereads the queue and lets its own checks decide: a card as it was is recorded with no new push (its merges and push are no-ops), a card reworked since is merged at its new head or meets a real conflict, and after a clear there is nothing to report (tla/Land.tla). A bare `merge --batch n` is never offered: after a rework the queue starts with the same ids at a head the base does not hold, and the merge step alone would record it. One line per batch, `LAND OK|REFUSED|FAILED stream= cards= base= tip= ids=<first>..<last>` (a batch whose git ran also says each step's seconds, `fetch= merge= check= queue= push= report=`, and its `--json` item `times`),
  then `LAND DONE batches= cards= refused=`; `--dry-run` reads the store only and changes nothing, and refuses what land refuses before its git, in land's words: a batch whose card names no base (and no `--base`) or no repository (and no `--repo-dir`) is refused, land and dry run alike, naming every problem at once, each cause on its own line with its one next command (the
 first on the `LAND REFUSED` line, each other on a `NOTE` line and in the `--json` item's
 `also`: each head of the batch that is not a commit id, with its return), and on a twin,
@@ -5506,6 +5574,29 @@ no handed card: each acts on the cards it reads in the step's own read of the
 epoch, and with no `--epoch` runs at the epoch that read finds (a clear between
 the read and the write is read again), so they need none; the coordinator
 given `--epoch` is held to it like any other actor.
+
+#### stream-set-base-bc.w7: stream set --base re-points a stream to a live base
+
+`stream set <s>... --base <branch>` moves a stream off a base that is gone,
+merged or red: for each named stream it rewrites the `BASE:` line of every card
+not yet dealt (its attempt is 0) and of every card queued to merge (its merge
+card is in the queue), each a change of the work table the store writes, with the
+brief revision the replacement is (`brief_attempt`, as `brief` records one). A
+card dealt and working keeps its base and is listed. It is refused whole,
+writing nothing, when origin holds no branch of the name, or when a card's
+`PATHS:` name something absent at its tip: the check `add` runs, held over each
+brief the rewrite would carry at the new base. The cards are
+`StreamSetBaseChecks`, the rewrite `briefOnBase`, and the plan `Set`'s
+(`SetReq.Base`).
+
+The check reads its candidates over a snapshot of its own, and the step's plan
+recomputes them from the snapshot the step reads, so the write is bound to the
+candidates the check read: by stream, id and the brief it read each one with
+(`SetReq.BaseChecked`, `baseChecksHeld`). A card added to the stream, dealt, or
+revised between the two reads refuses the step whole, nothing written, and no
+brief is ever rewritten without its `PATHS:` held to the base; run the verb
+again. The binding is no part of the verb's arguments (`ArgsOf`), so a retry
+under `--op` is the same call.
 
 #### resume-many-streams-b
 
@@ -5860,6 +5951,25 @@ refuses the whole call. The code is `swarm.LintBrief` (internal/swarm/lintpaths.
 brief per token that fails it and one that passes, and the corrections applied passing) and
 `TestAddRunsTheBriefChecksAtTheBase` (cmd/nova-sprint, add against a twin repository).
 
+add (both forms), brief (one brief, `--dir`, and `--widen`) and recut `--brief-file` also hold
+the brief to `sprint.PathsAdmission` after those checks on add and after the card lint on brief
+and recut (`cmd/nova-sprint/add.go`, `holdPathsAdmit`; the tree is the same lander's clone and
+the same fetch into `refs/nova-add/<base>`, cached per tip for the call). A literal PATHS entry
+must be a file or a directory at the tip, a glob must match one file (`hygiene.MatchGlob`), and
+every func, type or verb STOP or START names in the same clause as a repository path, and a
+TEST name the tree already holds, must occur inside a file PATHS covers, by a plain grep.
+Markdown code-span delimiters are not part of the name or the path, and a qualified name is
+its last component (`sprint.AdmissionTree` is `AdmissionTree`; `file.go` is not a qualified
+name). A TEST name the tree does not hold is the new red test and is not a miss. A new
+`_test` file and an entry a `NEW:` line names may be absent. A brief whose header carries
+`CARRY:` with `head=` (a widen) skips the existence check, because a path it adds may exist
+only at that head, and still checks identifiers. Each miss is one `LINT DRIFT` line,
+`check=paths-hold-named`, naming the nearest file that holds the identifier, then one
+refusal, nothing written. No tree is one `MISSING` line, not a pass, and so is a named
+`REPO:` that no clone can be made of. A brief with no PATHS, or that omits REPO, or that
+omits BASE, is not read against a tree. The test is
+`TestAdmissionRefusesABriefWhosePathsDoNotHoldWhatItNames`.
+
 ### Statistics
 
 The counters the tables show grow for the whole epoch: a fleet row's or a friend's row's
@@ -5963,6 +6073,25 @@ check, so each passes and says so; the bars are in
 [docs/SPEC-RELEASE.md](SPEC-RELEASE.md) section 16, subsection
 release-check-acceptance-r-b.w3. Test:
 `TestReleaseCheckRunsTheAcceptanceSentinelsSixChecks`.
+
+### release-check-merge-queue-p90-b.w7
+
+`release check` also runs `merge-queue-p90`, the merge queue's age check (the
+owner, 2026-10-04: "We cannot let merges get behind like this"): its flags are
+`--window` (how far back a card's merging counts; default 24 h) and
+`--merge-p90` (the bar; default 30 m, because a card's merge is a push and a
+green gate and a longer wait is the queue, not the card). It is the pure
+function `sprint.MergeQueueP90` over `sprint.ReleaseFacts`: from the log's
+work-table moves it takes the time each card spent in the `merging` column,
+from entering it to landing or to leaving it, with a card still merging
+counting with its age now and a card counting when any of its merging
+overlapped the window; it takes the p90 of those ages by the nearest rank
+(`sprint.PercentileNearestRank`) and fails above the bar, its evidence naming
+the p90, the number of cards and the oldest card still merging, or passes
+saying n=0 when no card merged in the window. The verb binds the window and
+the bar with the rest of the facts, so a unit test fakes them and opens no
+socket. Tests: `TestReleaseCheckFailsWhenTheMergeQueueAgeP90IsOverTheBar`,
+`TestPercentileNearestRankIsTheValueAtItsRank`.
 
 ## 12. The driver
 

@@ -15,16 +15,21 @@ package sprintdash
 
 import (
 	"bytes"
+	"cmp"
 	"embed"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"hash/crc32"
 	"io"
+	"maps"
 	"mime"
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -335,6 +340,7 @@ func (s *Server) SnapshotOf(release string) []byte {
 	snap.Build, snap.Stale = build, s.fresh.alarmed
 	if len(snap.Data) > 0 {
 		v := viewOf(snap.Data, release)
+		v.Data = fixView(v.Data)
 		snap.Data, snap.Release, snap.Current, snap.Releases, snap.ReleaseStreams = v.Data, v.Release, v.Current, v.Releases, v.Streams
 	}
 	b, err := json.Marshal(snap)
@@ -393,4 +399,189 @@ func (s *Server) index() []byte {
 	html = strings.Replace(html, "<!--LOGO-->", slot, 1)
 	html = strings.Replace(html, "<!--FAVICON-->", icon, 1)
 	return []byte(html)
+}
+
+// The fix state (docs/SPEC-SPRINT-DASHBOARD.md, "Fix"; the owner, 2026-10-07 5:58-6:01 PM ET:
+// "I would like the cards that are awaiting rework to be purple", "between review and
+// merging"): the view marks the cards awaiting rework on the copy it serves, so the page draws
+// them purple. A dealt card is at fix when its level is fix (the fix level, card
+// a-rework-is-priority-fix-bb), or, until where prints that level, when it is an attempt after
+// the first (its attempt field, else its id's .w<n>) and not blocker or critical, which keep
+// their red. The marks: fix true on the card; a fleet or friends row's fix, its fix cards
+// working (where's fix_working when it prints one); a work row's fix, its primaries at fix,
+// taken off its working, where a primary sent out again sits (lifecycle: review -> working on
+// rework), unless where prints the row's fix itself; priorities' fix list, those primaries,
+// off high and low; and the copy's fix, the work rows' summed. Every mark is absent when it
+// is zero, so a copy with no card at fix is served exactly as where prints it.
+
+// workAttempt reads a work card's attempt off its id: "ci-03.w2" is 2.
+var workAttempt = regexp.MustCompile(`\.w(\d+)$`)
+
+// urgentLevel is a level whose red a card keeps on any attempt: blocker, or a critical,
+// set or by weight.
+func urgentLevel(level string) bool {
+	return level == "blocker" || strings.HasPrefix(level, "critical")
+}
+
+// fixCard is what the view reads of a dealt card.
+type fixCard struct {
+	ID       string `json:"id"`
+	Primary  string `json:"primary"`
+	Stream   string `json:"stream"`
+	Member   string `json:"member"`
+	State    string `json:"state"`
+	Priority string `json:"priority"`
+	Attempt  int    `json:"attempt"`
+}
+
+// atFix is whether the card c, whose primary is listed at listed (where's priorities), is at fix.
+func (c fixCard) atFix(listed string) bool {
+	level := cmp.Or(c.Priority, listed)
+	if level == "fix" {
+		return true
+	}
+	attempt := c.Attempt
+	if m := workAttempt.FindStringSubmatch(c.ID); attempt == 0 && m != nil {
+		attempt, _ = strconv.Atoi(m[1]) // ignored: \d+ parses
+	}
+	return attempt >= 2 && !urgentLevel(level)
+}
+
+// cellCount is a table cell's number: the string where prints, or a number.
+func cellCount(v any) int {
+	switch n := v.(type) {
+	case string:
+		i, _ := strconv.Atoi(strings.TrimSpace(n)) // ignored: not a number is none
+		return i
+	case float64:
+		return int(n)
+	}
+	return 0
+}
+
+// cellOf is n written as the cell was: a number stays a number, else the string where prints.
+func cellOf(was any, n int) any {
+	if _, num := was.(float64); num {
+		return n
+	}
+	return strconv.Itoa(n)
+}
+
+// fixView is the copy body with the cards awaiting rework marked (above); body itself when
+// nothing is at fix or it is no JSON object.
+func fixView(body json.RawMessage) json.RawMessage {
+	var top map[string]json.RawMessage
+	if json.Unmarshal(body, &top) != nil {
+		return body
+	}
+	var cards []map[string]json.RawMessage
+	var read []fixCard
+	// ignored: no cards, or cards of another shape, is none at fix; the two reads are the same list
+	if json.Unmarshal(top["cards"], &cards) != nil || json.Unmarshal(top["cards"], &read) != nil {
+		cards, read = nil, nil
+	}
+	var prio map[string][]string
+	_ = json.Unmarshal(top["priorities"], &prio) // ignored: no priorities is every card normal
+	listed := map[string]string{}
+	for _, level := range slices.Sorted(maps.Keys(prio)) {
+		for _, id := range prio[level] {
+			if urgentLevel(level) || listed[id] == "" {
+				listed[id] = level
+			}
+		}
+	}
+	var tables map[string]json.RawMessage
+	_ = json.Unmarshal(top["tables"], &tables) // ignored: sprintJSON has read the tables
+	rows := map[string]map[string]map[string]any{}
+	for _, t := range []string{"work", "fleet", "friends"} {
+		var r map[string]map[string]any
+		if json.Unmarshal(tables[t], &r) == nil && r != nil {
+			rows[t] = r
+		}
+	}
+
+	working := map[[2]string]int{}            // the fix cards working, by table and row
+	primaries := map[string]map[string]bool{} // the primaries at fix, by stream
+	fixIDs := slices.Clone(prio["fix"])
+	marked := false
+	for i, c := range read {
+		raw := cards[i]
+		if !c.atFix(listed[cmp.Or(c.Primary, c.ID)]) {
+			continue
+		}
+		marked = true
+		raw["fix"] = json.RawMessage("true")
+		if c.State == "working" {
+			if f, ok := strings.CutPrefix(c.Member, "friend."); ok {
+				working[[2]string{"friends", f}]++
+			} else {
+				working[[2]string{"fleet", c.Member}]++
+			}
+		}
+		p := cmp.Or(c.Primary, c.ID)
+		if primaries[c.Stream] == nil {
+			primaries[c.Stream] = map[string]bool{}
+		}
+		primaries[c.Stream][p] = true
+		if !slices.Contains(fixIDs, p) {
+			fixIDs = append(fixIDs, p)
+		}
+	}
+	for _, t := range []string{"fleet", "friends"} {
+		for name, row := range rows[t] {
+			if _, has := row["fix_working"]; has {
+				working[[2]string{t, name}] = cellCount(row["fix_working"])
+			}
+		}
+	}
+	for k, n := range working {
+		if n > 0 && rows[k[0]][k[1]] != nil {
+			rows[k[0]][k[1]]["fix"] = strconv.Itoa(n)
+			marked = true
+		}
+	}
+	total := 0
+	for stream, row := range rows["work"] {
+		if v, has := row["fix"]; has { // where's own count: its columns already leave these out
+			total += cellCount(v)
+			continue
+		}
+		n := min(len(primaries[stream]), cellCount(row["working"]))
+		if n > 0 {
+			row["working"] = cellOf(row["working"], cellCount(row["working"])-n)
+			row["fix"] = cellOf(row["working"], n)
+			total += n
+		}
+	}
+	if !marked && total == 0 {
+		return body
+	}
+	if cards != nil {
+		top["cards"] = mustJSON(cards)
+	}
+	for t, r := range rows {
+		tables[t] = mustJSON(r)
+	}
+	top["tables"] = mustJSON(tables)
+	if total > 0 {
+		top["fix"] = mustJSON(total)
+	}
+	if len(fixIDs) > 0 {
+		slices.Sort(fixIDs)
+		if prio == nil {
+			prio = map[string][]string{}
+		}
+		for level, ids := range prio {
+			if urgentLevel(level) || level == "fix" {
+				continue
+			}
+			prio[level] = slices.DeleteFunc(ids, func(id string) bool { return slices.Contains(fixIDs, id) })
+			if len(prio[level]) == 0 {
+				delete(prio, level)
+			}
+		}
+		prio["fix"] = fixIDs
+		top["priorities"] = mustJSON(prio)
+	}
+	return mustJSON(top)
 }

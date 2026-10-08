@@ -189,3 +189,30 @@ naming the verb or the step above: install `sops`, set the missing variable, `ch
 `chmod 700` the key, `nova-secrets keygen`, the `git clone` of the store, or `nova-secrets seal --store <store> --as <seat> --name <NAME>` for a name the loops require and the store
 does not hold. The check is fleet-scoped: `nova-doctor --local` skips it with the other fleet
 checks and says which; run `nova-doctor` plain to see it.
+
+### dep-ssh-b.w8: ssh between the coordinator and the benches
+
+The coordinator and the fleet's members reach the benches by ssh: the land, the sandbox
+worktrees and the bench rule all start `ssh <bench>` on a machine that must answer without a
+prompt. A host key that is not known, no key the bench accepts, or a bench that does not
+answer is a hidden dependency: the card or the land stops with ssh's own error, and a person
+who did not set the fleet up cannot tell what is missing.
+
+Who needs it: any machine that reaches a bench (a fleet member, the coordinator's runs). A
+single-machine `nova-up --local` setup needs no ssh to another machine, so its `ssh` step
+makes this machine's side alone: it makes `~/.ssh` at mode `0700` and an empty `known_hosts`
+at mode `0600` when they are absent, and it copies no key. A person fills the rest by hand:
+
+```sh
+ssh-keyscan <bench> >> ~/.ssh/known_hosts   # one line per bench: the host key is known
+ssh-copy-id <bench>                        # this machine's public key reaches the bench
+```
+
+With both, `ssh -o BatchMode=yes -o ConnectTimeout=5 <bench> true` answers with no prompt.
+
+The `ssh` doctor check (`internal/doctor/check_ssh.go`) reads the inventory
+(`nova-config machine list`, with the seat loaded: `set -a; . ~/nova/seat.env; set +a`) and
+runs that probe once per machine, each bounded by the check's own deadline. It names every
+bench whose probe fails and the reason (unknown host key, no key or permission denied,
+timeout), with the one fix line above. It is fleet-only, so `nova-doctor --local` skips it
+and says which; run `nova-doctor` plain to include it.
