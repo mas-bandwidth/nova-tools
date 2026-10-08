@@ -138,7 +138,7 @@ func avgRate(usdMicro, tokens int64, priced bool) float64 {
 // THIS IS THE ONE PLACE IN THE FAMILY WHERE THE OK LINE LEAVES STDOUT, because here stdout
 // is the artifact. The spec says so in as many words, which is the exception SPEC.md's
 // Conventions allow when a spec states one.
-func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
+func cmdReport(args []string, stdout, stderr io.Writer, now time.Time, w world) int {
 	fs := newFlagSet("report")
 	who := fs.String("who", "", "name to write in each note body row")
 	day := fs.String("day", "", "one UTC day to report as YYYY-MM-DD")
@@ -194,7 +194,7 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 	}
 	sorted := slices.Sorted(slices.Values(supersedes))
 
-	sources, copyNotes := sf.read(rules, now, *dryRun)
+	sources, copyNotes := sf.read(w, rules, now, *dryRun)
 	folder := tokens.NewFolder()
 	for _, src := range sources {
 		for _, m := range src.Stream {

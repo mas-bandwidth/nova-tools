@@ -60,24 +60,3 @@ func TestReadSwarmFoldsOverAnFS(t *testing.T) {
 	assert.Equalf(t, "10", job1.Counts.Cell(Input), "input=%s, want 10", job1.Counts.Cell(Input))
 	assert.Equalf(t, "schema", job1.Repo, "repo=%q, want schema: the rules file named the path", job1.Repo)
 }
-
-// TestReadBusFoldsOverAnFS: the roster and the lanes are read through the fs.FS the caller
-// hands in, and a lane's good note folds its line under the lane owner.
-func TestReadBusFoldsOverAnFS(t *testing.T) {
-	t.Parallel()
-
-	fsys := fstest.MapFS{
-		"participants.json":            &fstest.MapFile{Data: []byte(`{"participants":[{"name":"Ada","lane":"from-ada"}]}`)},
-		"from-ada/ada-000000000001.md": &fstest.MapFile{Data: []byte(busCoverNoteText(busCoverSubject(""), "ada-000000000001", busCoverStamp(), busCoverGoodLine(Input, 1234, busCoverDay)+"\n# repos: schema\n"))},
-	}
-
-	got := ReadBus("bus", fsys, busCoverRules(t), busCoverAt)
-
-	require.Lenf(t, got, 1, "sources=%d, want one per roster lane", len(got))
-	ada := got[0]
-	assert.Equalf(t, "bus/from-ada", ada.Path, "path=%q, want the caller's lane path", ada.Path)
-	require.Lenf(t, ada.Stream, 1, "stream=%d, want 1", len(ada.Stream))
-	v, ok := ada.Stream[0].Counts.Get(Input)
-	assert.Truef(t, ok, "ada's note folds its input line")
-	assert.EqualValuesf(t, 1234, v, "input=%d, want 1234", v)
-}

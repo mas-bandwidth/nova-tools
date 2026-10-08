@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/bus"
+	"github.com/mas-bandwidth/nova-tools/internal/bus/bustest"
 )
 
 // SPEC-TOKENS rule 6: --bus reads the Redis bus's log (internal/bus, bus2:log) and counts
@@ -57,7 +57,7 @@ func TestBusThatIsDownIsUnreadableNotEmpty(t *testing.T) {
 	out := mkdir(t, filepath.Join(dir, "out"))
 	addr := busDir(t, mkdir(t, filepath.Join(dir, "bus")), "emma")
 	f, _ := testBuses.Load(addr)
-	f.(*bus.Fake).Fail = errors.New("connection refused")
+	f.(*bustest.Fake).Fail = errors.New("connection refused")
 	r := invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", reposFile(t, dir), "--bus", addr)
 	wantExit(t, r, 1)
 	wantContains(t, r.all(), "UNREADABLE")

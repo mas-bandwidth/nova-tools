@@ -86,7 +86,10 @@ func TestNothingInThisToolRemovesAFile(t *testing.T) {
 		"internal/tokens/lock_poll_other.go": {".Truncate("},
 		// time.Time.Truncate: the Redis bus rounds a message's at to the second. It is not a
 		// file call; the bus package is in this binary's graph for the log it reads.
-		"internal/bus/bus.go":                   {".Truncate("},
+		"internal/bus/bus.go": {".Truncate("},
+		// PushProof.Age truncates a duration, never a file; this method is part of the bus
+		// package reached for the read-only log adapter.
+		"internal/bus/pushproof.go":             {".Truncate("},
 		"internal/filelock/filelock.go":         {".Truncate("},
 		"internal/filelock/filelock_unix.go":    {".Truncate("},
 		"internal/filelock/filelock_windows.go": {".Truncate("},

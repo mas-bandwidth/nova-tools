@@ -1,134 +1,51 @@
 package main
 
 import (
-	"fmt"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
+
+	"strconv"
 	"strings"
 	"testing"
-	"time"
-
-	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
-// Rules 16 and 18, the halves that are about what does NOT decide an answer: the checkout's
-// mtimes, its directory order, its INDEX and its git history. The order of two competing
-// notes is in the notes themselves and nowhere else, so a fold must be byte-identical
-// under every one of those rearranged.
-
-// fakeGit puts a git on PATH that records every invocation, so a test can assert that this
-// tool ran none. A fold that fetched would be a fold whose numbers depend on a network call.
-// fakeGit puts a git on PATH that records every invocation, so a test can assert that this
-// tool ran none. A fold that fetched would be a fold whose numbers depend on a network call.
-// It returns the log path and the environment (PATH) the run under test needs; the caller
-// hands the environment to runToolChild, so the fake is on the child's PATH rather than this
-// process's, which its parallel neighbours share.
-func fakeGit(t *testing.T) (logPath string, env []string) {
-	t.Helper()
-	if runtime.GOOS == "windows" {
-		t.Skip("the fake git is a shell script")
-	}
-	dir := t.TempDir()
-	logPath = filepath.Join(dir, "git-argv.log")
-	bin := mkdir(t, filepath.Join(dir, "bin"))
-	{
-		err := testbin.WriteExecutable(filepath.Join(bin, "git"), []byte("#!/bin/sh\necho \"$@\" >> "+logPath+"\nexit 0\n"), 0o755)
-		require.NoError(t, err, err)
-	}
-	return logPath, []string{"PATH=" + bin + string(os.PathListSeparator) + os.Getenv("PATH")}
-}
-
-// reversedHistory makes dir a git repository whose commits land in the order given, using
-// the real git found BEFORE the fake one went on PATH. It runs entirely inside t.TempDir()
-// with no network and no global config: -c flags carry the identity, and the fixture never
-// touches the caller's git.
-func reversedHistory(t *testing.T, git, dir string, files ...string) {
-	t.Helper()
-	if git == "" {
-		t.Skip("no git on PATH; the reversed-history fixture wants one")
-	}
-	run := func(args ...string) {
-		t.Helper()
-		cmd := exec.Command(git, append([]string{
-			"-c", "user.name=Fixture", "-c", "user.email=fixture@example.com",
-			"-c", "commit.gpgsign=false", "-c", "init.defaultBranch=main", "-C", dir,
-		}, args...)...)
-		cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
-			"GIT_AUTHOR_DATE=2026-09-11T20:00:00Z", "GIT_COMMITTER_DATE=2026-09-11T20:00:00Z")
-		{
-			out, err := cmd.CombinedOutput()
-			require.NoError(t, err, "git %v: %v: %s", args, err, out)
-		}
-	}
-	run("init", "-q")
-	for i, f := range files {
-		run("add", "--", f)
-		run("commit", "-q", "-m", fmt.Sprintf("commit %d: %s", i+1, f))
-	}
-}
-
-func TestNothingAboutTheCheckoutDecidesWhichNoteIsTheDay(t *testing.T) {
+// The log order does not choose which note wins; supersedes does.
+func TestRedisBusLogOrderDoesNotChooseTheWinner(t *testing.T) {
 	t.Parallel()
-
-	// The real git, resolved before the fake one goes on the child's PATH: the fixture's
-	// history is built with it, and the tool must still never run git.
-	realGit, _ := exec.LookPath("git")
-	gitLog, gitEnv := fakeGit(t)
 	dir := t.TempDir()
 	repos := reposFile(t, dir)
-	bus := busDir(t, mkdir(t, filepath.Join(dir, "bus")), "emma")
 	line := func(n string) string { return "2026-09-11\temma\tg\tschema\tinput\t" + n + "\n" }
-	// The successor's filename sorts BEFORE its predecessor's, and (below) its mtime is
-	// older and its position in a rebuilt INDEX is earlier. None of that may matter.
-	first := busNote(t, bus, "emma", "zzz-first.md", "emma-000000000001", "tokens 2026-09-11", busDate, line("100"))
-	second := busNote(t, bus, "emma", "aaa-second.md", "emma-000000000002",
-		"tokens 2026-09-11 at=2026-09-11T20:00:00Z build=b supersedes="+first, busDate, line("250"))
-	_ = second
-
-	fold := func(t *testing.T, out string) string {
+	const first = "01EMMA00000000000000000001"
+	// The successor is on the log BEFORE its predecessor, and its id sorts after: the
+	// order of two competing notes is in the notes (supersedes=) and nowhere else.
+	later := func(addr string) {
+		busNote(t, addr, "emma", "", "01EMMA00000000000000000002",
+			"tokens 2026-09-11 at=2026-09-11T20:00:00Z build=b supersedes="+first, busDate, line("250"))
+		busNote(t, addr, "emma", "", first, "tokens 2026-09-11", busDate, line("100"))
+	}
+	inOrder := func(addr string) {
+		busNote(t, addr, "emma", "", first, "tokens 2026-09-11", busDate, line("100"))
+		busNote(t, addr, "emma", "", "01EMMA00000000000000000002",
+			"tokens 2026-09-11 at=2026-09-11T20:00:00Z build=b supersedes="+first, busDate, line("250"))
+	}
+	fold := func(t *testing.T, name string, put func(string)) string {
 		t.Helper()
-		r := runToolChild(t, "", gitEnv, "fold", "--out", out, "--all", "--repos", repos, "--bus", bus)
+		addr := busDir(t, mkdir(t, filepath.Join(dir, name+"-bus")), "emma")
+		put(addr)
+		out := mkdir(t, filepath.Join(dir, name+"-out"))
+		r := invoke(t, "fold", "--out", out, "--all", "--repos", repos, "--bus", addr)
 		wantExit(t, r, 0)
 		wantContains(t, r.stdout, "TOKENS SUPERSEDED")
 		return read(t, filepath.Join(out, "2026-09-11.tsv"))
 	}
-	before := fold(t, mkdir(t, filepath.Join(dir, "out1")))
+	before := fold(t, "a", inOrder)
 	wantContains(t, before, "\t250\t")
-
-	// The mtimes swapped, so the successor looks older than what it replaces.
-	old := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
-	newer := time.Date(2026, 9, 30, 0, 0, 0, 0, time.UTC)
-	{
-		err := os.Chtimes(filepath.Join(bus, "from-emma", "aaa-second.md"), old, old)
-		require.NoError(t, err, err)
-	}
-	{
-		err := os.Chtimes(filepath.Join(bus, "from-emma", "zzz-first.md"), newer, newer)
-		require.NoError(t, err, err)
-	}
-	// An INDEX sorted by path, the way `nova-bus check --rebuild-index` writes it: a
-	// derived catalogue, and never a statement about which number the friend meant.
-	write(t, filepath.Join(bus, "INDEX.md"), "- from-emma/aaa-second.md\n- from-emma/zzz-first.md\n")
-	// And a REAL git history in the checkout, whose commit order is the opposite of the
-	// send order: the successor is committed first. Demanded test 6 asks for "the notes'
-	// commit order reversed in a fixture git history"; an empty .git directory was not
-	// one, and nothing about a checkout may decide which note is the day.
-	reversedHistory(t, realGit, bus, "from-emma/aaa-second.md", "from-emma/zzz-first.md")
-
-	after := fold(t, mkdir(t, filepath.Join(dir, "out2")))
+	after := fold(t, "b", later)
 	a := strings.SplitN(before, "\n", 2)[1]
 	b := strings.SplitN(after, "\n", 2)[1]
-	assert.Equal(t, b, a, "the rows moved when the checkout was rearranged:\n%s\n%s", a, b)
-	{
-		_, err := os.Stat(gitLog)
-		if err == nil {
-			assert.Failf(t, "git was invoked", "git was invoked: %s", read(t, gitLog))
-		}
-	}
+	assert.Equal(t, b, a, "the rows moved when the log's order was reversed:\n%s\n%s", a, b)
+
 }
 
 // Rule 20 and demanded test 20's last third: a provider's local-day total crosses the bus
@@ -154,12 +71,15 @@ func TestAZonedReportCrossesTheBusWithoutBeingCalledUTC(t *testing.T) {
 			assert.True(t, len(f) == 7 && f[6] == "day_basis=America/Los_Angeles", "a zoned report line is %q; it wants seven fields ending day_basis=<zone>", line)
 		}
 	}
-	subject := subjectOf(t, r)
+	subject := lineWith(r.stderr, "REPORT OK")
+	subject = subject[strings.Index(subject, "subject=")+len("subject="):]
+	subject, err := strconv.Unquote(subject)
+	require.NoError(t, err, "report subject was not a quoted string")
 
 	// The note folds to the same rows the export folds to directly.
 	viaBus := mkdir(t, filepath.Join(dir, "out-bus"))
 	bus := busDir(t, mkdir(t, filepath.Join(dir, "bus")), "johnny")
-	busNote(t, bus, "johnny", "n.md", "johnny-000000000001", subject, busDate, read(t, note))
+	busNote(t, bus, "johnny", "n.md", "01J0HN00000000000000000001", subject, busDate, read(t, note))
 	f := invoke(t, "fold", "--out", viaBus, "--day", "2026-09-11", "--repos", repos, "--bus", bus)
 	wantExit(t, f, 0)
 	wantContains(t, lineWith(f.stdout, "TOKENS SOURCE"), "day_basis=America/Los_Angeles")
@@ -187,7 +107,7 @@ func TestAZonedReportCrossesTheBusWithoutBeingCalledUTC(t *testing.T) {
 	} {
 		one := mkdir(t, filepath.Join(dir, "b"+string(rune('a'+len(bad)%26))))
 		lane := busDir(t, mkdir(t, filepath.Join(one, "bus")), "johnny")
-		busNote(t, lane, "johnny", "n.md", "johnny-000000000002", "tokens 2026-09-11", busDate, bad+"\n")
+		busNote(t, lane, "johnny", "n.md", "01J0HN00000000000000000002", "tokens 2026-09-11", busDate, bad+"\n")
 		o := mkdir(t, filepath.Join(one, "out"))
 		r := invoke(t, "fold", "--out", o, "--day", "2026-09-11", "--repos", repos, "--bus", lane)
 		wantExit(t, r, 1)

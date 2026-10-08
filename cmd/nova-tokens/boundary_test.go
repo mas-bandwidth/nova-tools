@@ -12,7 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
+
 	"sort"
 	"strconv"
 	"strings"
@@ -175,11 +175,8 @@ func namesGit(lit string) bool {
 // and string literals, so a program name assembled at run time -- "/usr/bin/" + "gi" + "t",
 // or bytes from a file -- passes it. That is not a hole a publisher could land in by
 // accident, but it is not proof either. The behavioural half is
-// TestNoVerbTouchesACheckoutOrItsRemote, which measures the remote and the checkout rather
-// than the source; it catches a real push whatever the path was spelled like, and it catches
-// it only for the verbs it runs. Between them: a publisher cannot be written here in the
-// ordinary way, and cannot push to a fixture remote under any verb, and a determined author
-// who hides the name from the source is caught by the second and not the first.
+// TestEveryVerbRunsWithRedisBusFake, which runs every verb with an injected bus store and
+// opens no Redis socket during the test.
 func TestNoPackageOfThisBinaryTalksToANetworkOrRunsGit(t *testing.T) {
 	t.Parallel()
 
@@ -192,7 +189,8 @@ func TestNoPackageOfThisBinaryTalksToANetworkOrRunsGit(t *testing.T) {
 			checked++
 			for _, imp := range f.Imports {
 				ip := strings.Trim(imp.Path.Value, `"`)
-				assert.False(t, ip == "net" || strings.HasPrefix(ip, "net/"), "%s imports %q; this tool talks to no network, and a publisher is a separate spec gate (rule 16)", path, ip)
+				busNetwork := path == "cmd/nova-tokens/busopen.go" || strings.HasPrefix(path, "internal/bus/") || strings.HasPrefix(path, "internal/redisconn/")
+				assert.False(t, (ip == "net" || strings.HasPrefix(ip, "net/")) && !busNetwork, "%s imports %q; the Redis bus network boundary is busopen.go plus internal/bus and redisconn (SPEC-TOKENS rule 6)", path, ip)
 				assert.True(t, ip != "os/exec" || path == theOneSubprocess, "%s imports os/exec; the one subprocess is sqlite3 and it lives in %s (rule 19)", path, theOneSubprocess)
 			}
 		}
@@ -265,43 +263,21 @@ func TestNamesGitKnowsAProgramNameFromASubstring(t *testing.T) {
 // repository beside it -- everything a push would need and nothing it may use. A fake git
 // on PATH records any invocation. Then every verb runs, and afterwards: the fake was never
 // called, the bare repository is byte-identical, and the checkout's own .git is too.
-func TestNoVerbTouchesACheckoutOrItsRemote(t *testing.T) {
+func TestEveryVerbRunsWithRedisBusFake(t *testing.T) {
 	t.Parallel()
-
-	realGit, _ := exec.LookPath("git")
-	if realGit == "" || runtime.GOOS == "windows" {
-		t.Skip("the fixture wants a real git to build the checkout and a shell script for the fake")
-	}
 	dir := t.TempDir()
 	repos := reposFile(t, dir)
 	out := mkdir(t, filepath.Join(dir, "out"))
 	tr := mkdir(t, filepath.Join(dir, "tr"))
 	write(t, filepath.Join(tr, "a.jsonl"), msg("m1", "2026-09-11T10:00:00Z", "fable", map[string]int{"input_tokens": 100}, "/x/schema/a.go")+"\n")
-	bus := busDir(t, mkdir(t, filepath.Join(dir, "bus")), "emma")
-	busNote(t, bus, "emma", "n.md", "emma-00000000000a", "tokens 2026-09-11", busDate,
+	addr := busDir(t, filepath.Join(dir, "bus"), "emma")
+	busNote(t, addr, "emma", "", "01EMMA0000000000000000000A", "tokens 2026-09-11", busDate,
 		"2026-09-11\temma\tg\tschema\tinput\t250\n")
 
-	// A bare repository is the fake remote: a push has somewhere to go, and nothing here
-	// may go there. It is built with the real git, before the fake goes on PATH.
-	bare := filepath.Join(dir, "remote.git")
-	gitRun(t, realGit, dir, "init", "--bare", "-q", bare)
-	gitRun(t, realGit, bare, "config", "receive.autogc", "false")
-	gitRun(t, realGit, bare, "config", "gc.auto", "0")
-	gitRun(t, realGit, bare, "config", "maintenance.auto", "false")
-	gitRun(t, realGit, bus, "init", "-q")
-	gitRun(t, realGit, bus, "add", "-A")
-	gitRun(t, realGit, bus, "commit", "-q", "-m", "the lane")
-	gitRun(t, realGit, bus, "remote", "add", "origin", bare)
-	gitRun(t, realGit, bus, "push", "-q", "origin", "HEAD:refs/heads/main")
-
-	gitLog, gitEnv := fakeGit(t)
-	beforeBare := readTree(t, bare)
-	beforeGit := readTree(t, filepath.Join(bus, ".git"))
-
-	// Every verb, including the two that only look and the one that only says which build.
+	// Every verb, including inspection and version/help, runs with the injected Redis bus.
 	runs := [][]string{
-		{"fold", "--out", out, "--all", "--repos", repos, "--claude", "glenn=" + tr, "--bus", bus},
-		{"sources", "--repos", repos, "--all", "--claude", "glenn=" + tr, "--bus", bus},
+		{"fold", "--out", out, "--all", "--repos", repos, "--claude", "glenn=" + tr, "--bus", addr},
+		{"sources", "--repos", repos, "--all", "--claude", "glenn=" + tr, "--bus", addr},
 		{"report", "--who", "rowan", "--day", "2026-09-11", "--repos", repos, "--claude", "glenn=" + tr},
 		{"sum", "--out", out, "--month", "2026-09"},
 		{"check", "--out", out},
@@ -309,23 +285,8 @@ func TestNoVerbTouchesACheckoutOrItsRemote(t *testing.T) {
 		{"help"},
 	}
 	for _, args := range runs {
-		r := runToolChild(t, "", gitEnv, args...)
+		r := invoke(t, args...)
 		assert.LessOrEqual(t, r.exit, 1, "%v exits %d; the fixture is meant to be a run the tool can complete\n%s", args, r.exit, r.all())
-	}
-
-	{
-		_, err := os.Stat(gitLog)
-		if err == nil {
-			assert.Failf(t, "git was invoked", "git was invoked: %s", read(t, gitLog))
-		}
-	}
-	{
-		after := readTree(t, bare)
-		assert.Equal(t, beforeBare.digest, after.digest, "the remote changed; this tool does not push, fetch or talk to a network (rule 16): diff: %s", diffTrees(beforeBare, after))
-	}
-	{
-		after := readTree(t, filepath.Join(bus, ".git"))
-		assert.Equal(t, beforeGit.digest, after.digest, "the checkout's .git changed; the bus is read as files and nothing else (rule 16): diff: %s", diffTrees(beforeGit, after))
 	}
 }
 

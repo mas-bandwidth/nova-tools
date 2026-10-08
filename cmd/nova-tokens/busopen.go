@@ -9,13 +9,12 @@ import (
 	"errors"
 	"net"
 	"net/netip"
-	"sync"
+	"os"
 	"time"
-
-	"github.com/redis/go-redis/v9"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/redisauth"
+	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
 	"github.com/mas-bandwidth/nova-tools/internal/tokens"
 )
 
@@ -31,28 +30,32 @@ type world struct {
 
 func realWorld() world { return world{openBus: openRedisBus} }
 
-type quietRedis struct{}
-
-func (quietRedis) Printf(context.Context, string, ...interface{}) {}
-
-var silenceOnce sync.Once
-
-// openRedisBus dials the bus store at addr with the fleet seat (redisauth.Auth: the
-// ACL user from NOVA_SPRINT_REDIS_USER, its password from the variable that names it),
-// after bus.CheckAddr: a store is reached over loopback or the tailnet only.
+// openRedisBus dials the bus store at addr with the fleet seat (the ACL user from
+// NOVA_SPRINT_REDIS_USER, its password from the variable that names it), after
+// bus.CheckAddr: a store is reached over loopback or the tailnet only (SPEC-TOKENS rule 6).
 func openRedisBus(ctx context.Context, addr string) (bus.Store, func(), error) {
-	if why := bus.CheckAddr(ctx, addr, func(ctx context.Context, host string) ([]netip.Addr, error) {
+	getenv := os.Getenv
+	o := redisconn.Options{Addr: addr, Env: redisconn.Env{User: redisauth.UserEnv}}
+	if getenv(redisauth.UserEnv) != "" {
+		o.Env.PasswordEnv = redisauth.PasswordEnvEnv
+		if getenv(redisauth.PasswordEnvEnv) == "" {
+			o.PasswordEnv = redisauth.DefaultPasswordEnv
+		}
+	}
+	resolved, err := redisconn.Resolve(o, getenv)
+	if err != nil {
+		return nil, nil, err
+	}
+	if why := bus.CheckAddr(ctx, resolved.Addr, func(ctx context.Context, host string) ([]netip.Addr, error) {
 		return net.DefaultResolver.LookupNetIP(ctx, "ip", host)
 	}); why != "" {
 		return nil, nil, errors.New(why)
 	}
-	user, password, err := redisauth.Auth("", "")
+	conn, err := redisconn.Open(ctx, resolved, getenv)
 	if err != nil {
 		return nil, nil, err
 	}
-	silenceOnce.Do(func() { redis.SetLogger(quietRedis{}) })
-	c := redis.NewClient(&redis.Options{Addr: addr, Username: user, Password: password, DisableIdentity: true})
-	return bus.Redis{C: c}, func() { _ = c.Close() }, nil // ignored: the read is done before the close, which has nothing to add
+	return bus.Redis{C: conn.Client()}, func() { _ = conn.Close() }, nil // ignored: close releases the read-only Redis connection and cannot change the fold
 }
 
 // readBus is --bus: the fold over the bus log at addr, read through w. A bus that cannot

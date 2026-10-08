@@ -52,7 +52,7 @@ above example:, then run the lines under example: in order.
 
 usage:
   nova-tokens fold    --out <dir> (--day <YYYY-MM-DD> | --all) --repos <file>
-                      [--claude <label>=<dir>]... [--opencode <label>=<file>]... [--swarm <label>=<pool>]... [--bus <dir>]
+                      [--claude <label>=<dir>]... [--opencode <label>=<file>]... [--swarm <label>=<pool>]... [--bus <host:port>]
                       [--provider <kind>:<label>=<file>]... [--scratch <dir>] [--timeout <seconds>] [--allow-shrink] [--max <n>] [--dry-run]
   nova-tokens report (local mode) --who <name> --day <YYYY-MM-DD> --repos <file>
                       mode: local note body, printed as the tokens note artifact
@@ -238,10 +238,15 @@ func effectOf(verb string) string {
 
 func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, time.Now().UTC())) }
 
-// run is the whole tool, with its streams and clock injected so the tests can drive it.
+// run is the whole tool over the real Redis bus; tests use runWith and a fake client.
+func run(args []string, stdout, stderr io.Writer, now time.Time) int {
+	return runWith(args, stdout, stderr, now, realWorld())
+}
+
+// runWith is the whole tool, with its streams, clock and bus injected so tests can drive it.
 // The clock is an argument and NOT a flag: the stamp on a day file is when the tool
 // computed it, and a stamp a caller could set would be a stamp nobody could trust.
-func run(args []string, stdout, stderr io.Writer, now time.Time) (code int) {
+func runWith(args []string, stdout, stderr io.Writer, now time.Time, w world) (code int) {
 	// `<verb> -h` and `help <verb>` print that verb's help, its effect included, on stdout
 	// at exit 0, before anything is read or written (the CLI style's rule (b)).
 	defer verbflag.RecoverWith(stdout, "nova-tokens", usage, &code, effectOf)
@@ -254,14 +259,14 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) (code int) {
 	case "help", "-h", "--help":
 		if verb == "help" && len(rest) > 0 && rest[0] != "help" && !verbflag.IsHelp(rest[0]) {
 			// --help goes right after the verb: after a word or a -- it would be one.
-			return run(append([]string{rest[0], "--help"}, rest[1:]...), stdout, stderr, now)
+			return runWith(append([]string{rest[0], "--help"}, rest[1:]...), stdout, stderr, now, w)
 		}
 		fmt.Fprintf(stdout, "%s", usage)
 		return 0
 	case "fold":
-		return cmdFold(rest, stdout, stderr, now)
+		return cmdFold(rest, stdout, stderr, now, w)
 	case "report":
-		return cmdReport(rest, stdout, stderr, now)
+		return cmdReport(rest, stdout, stderr, now, w)
 	case "ledger":
 		return cmdLedger(rest, stdout, stderr)
 	case "sum":
@@ -269,7 +274,7 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) (code int) {
 	case "check":
 		return cmdCheck(rest, stdout, stderr, now)
 	case "sources":
-		return cmdSources(rest, stdout, stderr, now)
+		return cmdSources(rest, stdout, stderr, now, w)
 	case "profiles":
 		return cmdProfiles(rest, stdout, stderr, now)
 	case "session":
@@ -336,7 +341,7 @@ const (
 	wantsDay     = "one UTC day as YYYY-MM-DD, or --all for every day the sources name"
 	wantsWho     = "the name this report is from, as the bus knows it"
 	wantsMonth   = "one month as YYYY-MM"
-	wantsSources = "--claude <label>=<dir>, --opencode <label>=<file>, --swarm <label>=<pool>, --bus <dir> or --provider <kind>:<label>=<file> (kind one of google, openai, xai)"
+	wantsSources = "--claude <label>=<dir>, --opencode <label>=<file>, --swarm <label>=<pool>, --bus <host:port> or --provider <kind>:<label>=<file> (kind one of google, openai, xai)"
 	wantsScratch = "a directory this run may copy the OpenCode database into"
 )
 
@@ -362,7 +367,7 @@ func (s *sourceFlags) declare(fs *flag.FlagSet, withSwarmAndBus bool) {
 	fs.Var(&s.provider, "provider", "kind:labeled provider export file; repeatable")
 	if withSwarmAndBus {
 		fs.Var(&s.swarm, "swarm", "labeled swarm pool directory; repeatable")
-		fs.StringVar(&s.bus, "bus", "", "nova-bus directory with token notes")
+		fs.StringVar(&s.bus, "bus", "", "Redis bus host:port; reads the bus log")
 	}
 	fs.StringVar(&s.scratch, "scratch", "", "directory the OpenCode database is copied into: opencode-<label>/ in it, replaced and left by a run that writes; a new directory removed before exit by a dry run or sources")
 	fs.StringVar(&s.repos, "repos", "", "tab-separated repo names and path regular expressions")
@@ -424,9 +429,6 @@ func (s *sourceFlags) check(r *refusals) {
 	}
 	if s.bus != "" {
 		any = true
-		if why := notADir("bus", s.bus, "the bus directory"); why != "" {
-			r.add(why)
-		}
 	}
 	if !any {
 		r.add("at least one source flag is required; it wants " + wantsSources + "; refusing to guess")
@@ -459,7 +461,7 @@ func (s *sourceFlags) check(r *refusals) {
 // (.nova-tokens-dry-run-*, new and private to the run, so no file there is ever truncated)
 // and removes it before returning, so --scratch is as it was. A copy it could not remove
 // is named in the returned notes.
-func (s *sourceFlags) read(rules *tokens.Rules, now time.Time, private bool) (out []*tokens.Source, notes []string) {
+func (s *sourceFlags) read(w world, rules *tokens.Rules, now time.Time, private bool) (out []*tokens.Source, notes []string) {
 	for _, it := range s.claude.items {
 		out = append(out, tokens.ReadClaude(it.label, it.value, os.DirFS(it.value), rules,
 			tokens.ClaudeBound{MaxFiles: s.maxFiles, Exclude: []string(s.exclude)}))
@@ -497,7 +499,7 @@ func (s *sourceFlags) read(rules *tokens.Rules, now time.Time, private bool) (ou
 		out = append(out, tokens.ReadProvider(kind, name, it.value, rules))
 	}
 	if s.bus != "" {
-		out = append(out, tokens.ReadBus(s.bus, os.DirFS(s.bus), rules, now)...)
+		out = append(out, readBus(w, s.bus, rules, now)...)
 	}
 	for _, src := range out {
 		keys := map[tokens.Key]bool{}
@@ -574,9 +576,9 @@ func checkDay(r *refusals, day string, all bool) {
 
 // notADir is the refusal for a flag whose value must be a directory that is there, or "".
 // A label source types its path into the flag itself (--claude <label>=<path>, and so
-// --swarm), so that path is already in flag and is not named twice; every other flag names
-// the directory after the flag name (--bus <path>). The three sentences are "does not
-// exist", the stat error, and "is not a directory".
+// --swarm), so that path is already in flag and is not named twice; every other directory
+// flag names the directory after the flag name. The three sentences are "does not exist",
+// the stat error, and "is not a directory".
 func notADir(flag, path, wants string) string {
 	fi, err := os.Stat(path)
 	// A label source is the one flag shaped <label>=<path>: its path is already typed.

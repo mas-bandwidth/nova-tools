@@ -7,7 +7,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -76,7 +75,7 @@ func TestTheExampleLinesRun(t *testing.T) {
 	require.NotEmpty(t, examples, "the example: block holds no line")
 	for _, line := range examples {
 		args := strings.Fields(line)[1:]
-		r := runToolChild(t, dir, nil, args...)
+		r := runToolChild(t, dir, []string{documentedBusTestEnv + "=1"}, args...)
 		// A line that RUNS answers 0 or 1. Exit 2 is "could not run", and an example
 		// exiting 2 is a broken example.
 		assert.NotEqual(t, 2, r.exit, "the example `%s` could not run (exit 2):\n%s", line, r.stderr)
@@ -156,8 +155,9 @@ func TestTheTranscriptIsWhatTheToolPrints(t *testing.T) {
 	for _, line := range lines {
 		if args, ok := strings.CutPrefix(line, "$ nova-tokens "); ok {
 			flush()
-			r := runToolChild(t, dir, nil, strings.Fields(args)...)
-			for _, printed := range strings.Split(r.stdout+r.stderr, "\n") {
+			r, runErr := runDocumentedInDir(t, dir)(onboarding.Step{Args: strings.Fields(args)})
+			require.NoError(t, runErr, runErr)
+			for _, printed := range strings.Split(r.Stdout+r.Stderr, "\n") {
 				if shape := onboarding.Shape(printed); shape != "" {
 					pending = append(pending, shape)
 				}
@@ -215,36 +215,22 @@ func TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine(t *testing.T) {
 	// and each command runs in a child whose working directory is it; the
 	// documented paths are relative to here.
 	dir := fixtureIn(t)
-	for _, p := range onboarding.Execute(steps, runDocumentedInDir(dir)) {
+	for _, p := range onboarding.Execute(steps, runDocumentedInDir(t, dir)) {
 		assert.Fail(t, "%v", p)
 	}
 }
 
-// runDocumentedInDir calls this binary's own entry point with the documented
-// arguments in a child whose working directory is dir, so the documented relative
-// paths resolve as written without a process-wide Chdir; the child's clock is
-// foldStamp, the instant the transcript was produced under. nova-tokens takes no
-// stdin, so a step that names a `< path` is reported rather than quietly run
-// without it.
-func runDocumentedInDir(dir string) onboarding.Runner {
-	return func(s onboarding.Step) (onboarding.Result, error) {
-		if s.Stdin != "" {
-			return onboarding.Result{}, fmt.Errorf("the documented command reads from %q, and nova-tokens takes no stdin", s.Stdin)
+// runDocumentedInDir calls this binary's entry point in a child whose working directory is
+// dir. The child seeds a fake Redis log from the copied fixture, so the documented `--bus`
+// path remains filesystem-relative without the product reading that directory.
+func runDocumentedInDir(t *testing.T, dir string) onboarding.Runner {
+	t.Helper()
+	return func(step onboarding.Step) (onboarding.Result, error) {
+		if step.Stdin != "" {
+			return onboarding.Result{}, fmt.Errorf("the documented command reads from %q, and nova-tokens takes no stdin", step.Stdin)
 		}
-		self, err := os.Executable()
-		if err != nil {
-			return onboarding.Result{}, err
-		}
-		cmd := exec.Command(self, s.Args...)
-		cmd.Dir = dir
-		cmd.Env = append(os.Environ(), asToolEnv+"=1")
-		var out, errb bytes.Buffer
-		cmd.Stdout, cmd.Stderr = &out, &errb
-		err = cmd.Run()
-		if err != nil && cmd.ProcessState == nil {
-			return onboarding.Result{}, err
-		}
-		return onboarding.Result{Code: cmd.ProcessState.ExitCode(), Stdout: out.String(), Stderr: errb.String()}, nil
+		r := runToolChild(t, dir, []string{documentedBusTestEnv + "=1"}, step.Args...)
+		return onboarding.Result{Code: r.exit, Stdout: r.stdout, Stderr: r.stderr}, nil
 	}
 }
 
