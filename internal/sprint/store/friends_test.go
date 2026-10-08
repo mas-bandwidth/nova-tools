@@ -204,35 +204,48 @@ func TestTwinStoreConfigSyncToOneShotGatesQueuedPromotionUntilOccupancyReachesZe
 	assert.Equal(t, sprint.Working, snap.Fleet.Card("s1-4.w1").Col)
 }
 
-// A liveness beat that knows no running ids preserves the last known jobs,
-// including when it explicitly reports an empty list (docs/SPEC-SPRINT.md,
-// Friend presence: the up rule).
+// A liveness beat that omits the running list does not know the jobs, so the
+// last known ids stay (docs/SPEC-SPRINT.md, Friend presence: the up rule).
 func TestABeatWithNoRunningIDsKeepsTheKnownJobs(t *testing.T) {
 	t.Parallel()
-	for _, running := range [][]string{nil, {}} {
-		t.Run(func() string {
-			if running == nil {
-				return "omitted"
-			}
-			return "empty"
-		}(), func(t *testing.T) {
-			t.Parallel()
-			h := newHarness(t)
-			_, _, _, err := h.st.SyncFriends(h.ctx, []FriendSpec{{Name: "amy", Width: 3}})
-			require.NoError(t, err)
-			_, err = h.st.FriendBeatReport(h.ctx, "amy", sprint.FriendReport{Running: []string{"job-1", "job-2"}, Width: func() *int { n := 3; return &n }(), Active: h.now}, nil)
-			require.NoError(t, err)
-			h.now = h.now.Add(time.Second)
-			_, _, err = h.st.FriendBeatProof(h.ctx, "amy", sprint.FriendReport{Running: running}, nil, sprint.BeatWords{})
-			require.NoError(t, err)
-			beat, err := h.st.FriendBeatOf(h.ctx, "amy")
-			require.NoError(t, err)
-			require.NotNil(t, beat.Friend)
-			assert.Equal(t, []string{"job-1", "job-2"}, beat.Friend.Running)
-			assert.Equal(t, 3, *beat.Friend.Width)
-			assert.Equal(t, h.now.Add(-time.Second), beat.Friend.Active)
-			assert.Equal(t, h.now.UTC().Truncate(time.Second), beat.At)
-			assert.True(t, beat.Proof.IsZero(), "liveness never invents session proof")
-		})
-	}
+	h := newHarness(t)
+	_, _, _, err := h.st.SyncFriends(h.ctx, []FriendSpec{{Name: "amy", Width: 3}})
+	require.NoError(t, err)
+	_, err = h.st.FriendBeatReport(h.ctx, "amy", sprint.FriendReport{Running: []string{"job-1", "job-2"}, Width: func() *int { n := 3; return &n }(), Active: h.now}, nil)
+	require.NoError(t, err)
+	h.now = h.now.Add(time.Second)
+	_, _, err = h.st.FriendBeatProof(h.ctx, "amy", sprint.FriendReport{}, nil, sprint.BeatWords{})
+	require.NoError(t, err)
+	beat, err := h.st.FriendBeatOf(h.ctx, "amy")
+	require.NoError(t, err)
+	require.NotNil(t, beat.Friend)
+	assert.Equal(t, []string{"job-1", "job-2"}, beat.Friend.Running)
+	assert.Equal(t, 3, *beat.Friend.Width)
+	assert.Equal(t, h.now.Add(-time.Second), beat.Friend.Active)
+	assert.Equal(t, h.now.UTC().Truncate(time.Second), beat.At)
+	assert.True(t, beat.Proof.IsZero(), "liveness never invents session proof")
+}
+
+// A daemon's transition to zero running is an explicit empty list with working
+// 0 (cmd/nova-friend SaveLanes). FriendBeatProof must clear the stored ids, not
+// restore the finished card the way an omitted list does.
+func TestADaemonsTransitionToZeroRunningClearsTheStoredList(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	_, _, _, err := h.st.SyncFriends(h.ctx, []FriendSpec{{Name: "amy", Width: 3}})
+	require.NoError(t, err)
+	_, err = h.st.FriendBeatReport(h.ctx, "amy", sprint.FriendReport{Running: []string{"job-1", "job-2"}, Width: func() *int { n := 3; return &n }(), Active: h.now}, nil)
+	require.NoError(t, err)
+	h.now = h.now.Add(time.Second)
+	zero := 0
+	_, _, err = h.st.FriendBeatProof(h.ctx, "amy", sprint.FriendReport{Running: []string{}, Working: &zero}, nil, sprint.BeatWords{})
+	require.NoError(t, err)
+	beat, err := h.st.FriendBeatOf(h.ctx, "amy")
+	require.NoError(t, err)
+	require.NotNil(t, beat.Friend)
+	assert.Empty(t, beat.Friend.Running, "the finished cards are not still running")
+	assert.Equal(t, 0, *beat.Friend.Working)
+	assert.Equal(t, 3, *beat.Friend.Width, "an omitted width still keeps the last one")
+	assert.Equal(t, h.now.Add(-time.Second), beat.Friend.Active)
+	assert.True(t, beat.Proof.IsZero(), "clearing the list invents no session proof")
 }

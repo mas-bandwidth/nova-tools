@@ -321,10 +321,12 @@ func (st *Store) FriendBeatProof(ctx context.Context, friend string, rep sprint.
 	} else if len(oks) == 1 && oks[0] {
 		_ = json.Unmarshal([]byte(vals[0]), &prev) // ignored: an unreadable record holds no check and no proof
 	}
-	// A liveness beat may know no jobs: preserve the last known running ids
+	// An omitted running list (nil) is a liveness beat that does not know the
+	// jobs, so the last known ids stay. An explicit empty list is the daemon's
+	// word that nothing is running (the last lane ended) and replaces them
 	// (docs/SPEC-SPRINT.md, Friend presence: the up rule).
 	if old := prev.Friend; old != nil {
-		if len(rep.Running) == 0 {
+		if rep.Running == nil {
 			rep.Running = append([]string(nil), old.Running...)
 		}
 		if rep.Working == nil {

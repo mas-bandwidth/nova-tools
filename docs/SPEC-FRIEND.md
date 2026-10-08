@@ -1284,8 +1284,12 @@ activity is advisory `--active`; it never stands in for nonce proof. No bus
 read or filesystem access runs on the sender's path. Status writes run on a
 separate worker with a single pending snapshot, so a stalled filesystem cannot
 stop beats. The status file carries the actual successful beat count, last
-success and current transport error. Unknown report fields, including an empty
-running list, preserve the server's last known facts. Job sizes and free disk space are not reported.
+success and current transport error. Unknown report fields preserve the server's
+last known facts. An omitted running list is unknown and keeps the last ids;
+an explicit empty list (the daemon sends `--running -` when the last lane
+ends, with `--working 0`) clears the stored list, so friend take, friend down
+and the stall rule do not keep a finished card. Job sizes and free disk space
+are not reported.
 
 The up rule is `FriendEvidence`, shared by every server view: held wins; an
 explicit harness limit or pause is down; otherwise up requires a daemon beat
