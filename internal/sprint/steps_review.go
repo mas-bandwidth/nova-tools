@@ -2258,11 +2258,9 @@ func RecordLanded(s *Snapshot, r LandedReq) Plan {
 // the condition ends.
 //
 // The episode is a fleet-table property, so the tick's end writes it in the step that
-// sees it (a work-table property waits for the next pump). The part is installed on
-// TickEnd, before the done part, which TickEndWith keeps in its tail. It is not
-// installed on TickParts: every name there is a duty of the reference model
-// (refmodel/decide_test.go TestEveryPartOfTheTickIsADutyAndEveryDutyIsNamedInOrder),
-// and that list is not this change.
+// sees it (a work-table property waits for the next pump). The alarm runs inside
+// the existing done step: a quiet tick must not gain an operation ID just for
+// checking the alarm. TickParts remains the reference model's duty list.
 const (
 	NReviewStarved      = "review starved"
 	NReadsIdle          = "reads idle"
@@ -2282,9 +2280,6 @@ const (
 	reviewStarvedDefault = 2 * reviewStarvedTick
 
 	reviewWhyHeld   = "stream held"
-	reviewWhySpent  = "readers spent"
-	reviewWhyMax    = "dealt max"
-	reviewWhyNoUp   = "no up reader of the tier"
 	reviewClearOut  = "a read is out"
 	reviewClearNone = "no card in review wants a read"
 	reviewClearBusy = "no reader is free"
@@ -2292,24 +2287,25 @@ const (
 
 func init() { reviewStarvedInstall() }
 
-// reviewStarvedInstall puts the part on the tick's end, before done, so a live
-// tick (TickEndWith) runs it. TickParts was copied from TickEnd before any init
-// and is left as that copy.
+// reviewStarvedInstall keeps the tick's existing part count. Each part gets an
+// operation ID even when its plan is empty, so adding a separate end part
+// changes the IDs of unrelated first-run and inbox commands.
 func reviewStarvedInstall() {
-	def := TickPartDef{Name: PartReviewStarved, Fn: TickReviewStarved}
-	for _, p := range TickEnd {
-		if p.Name == def.Name {
+	for i := range TickEnd {
+		if TickEnd[i].Name == PartDone {
+			TickEnd[i].Fn = tickReviewAlarmAndDone
 			return
 		}
 	}
-	out := make([]TickPartDef, 0, len(TickEnd)+1)
-	for _, p := range TickEnd {
-		if p.Name == PartDone {
-			out = append(out, def)
-		}
-		out = append(out, p)
-	}
-	TickEnd = out
+}
+
+// tickReviewAlarmAndDone composes the alarm's fleet-property and judgment
+// writes with the done note in the existing final tick step.
+func tickReviewAlarmAndDone(s *Snapshot, r TickReq) (Plan, int) {
+	p, due := TickReviewStarved(s, r)
+	done, more := TickDone(s, r)
+	p.Notes = append(p.Notes, done.Notes...)
+	return p, due + more
 }
 
 // reviewStarvedWindow is the setting: off, or a duration at least one tick.
@@ -2383,7 +2379,7 @@ func TickReviewStarved(s *Snapshot, r TickReq) (Plan, int) {
 		return p, 0
 	}
 	window, off := s.reviewStarvedWindow()
-	if off {
+	if off || !s.ReadCardsOn() {
 		return reviewAlarmFinish(reviewAlarmDisarm(s, p))
 	}
 	wants := reviewWantsRead(s)
@@ -2487,55 +2483,21 @@ func reviewAlarmSeats(s *Snapshot, r TickReq) []FriendSeat {
 	return s.Friends
 }
 
-// reviewWantWhy is why the deal left this card's read: the four clauses the
-// judgment names, the hold first, then a reader with room, then one spent,
-// else no reader up for the tier.
-func reviewWantWhy(s *Snapshot, pr *Card, seats []FriendSeat) string {
-	if StreamHeld(s, pr.Row) {
-		return reviewWhyHeld
-	}
-	if s.Fleet == nil {
-		return reviewWhyNoUp
-	}
-	units := readUnitsOf(s, seats)
-	if len(units) == 0 {
-		return reviewWhyNoUp
-	}
-	attempt := readAttempt(pr)
-	worker := attemptUnit(s, pr.ID, attempt)
-	cards := s.Fleet.Cards()
-	may, room, spent := 0, 0, 0
-	for _, u := range units {
-		why := readRefusal(s, u, pr, attempt, worker, cards)
-		if why == "" {
-			may++
-			if u.half > 0 {
-				room++
-			}
-			continue
-		}
-		if strings.HasPrefix(why, "spent(") {
-			spent++
-		}
-	}
-	switch {
-	case may > 0 && room == 0:
-		return reviewWhyMax
-	case may == 0 && spent > 0:
-		return reviewWhySpent
-	default:
-		return reviewWhyNoUp
-	}
-}
-
 func reviewStarvedWhat(s *Snapshot, r TickReq, wants []*Card) string {
 	seats := reviewAlarmSeats(s, r)
+	_, waits := readCardsAsk(s, seats, nil)
 	var bits []string
 	for i, c := range wants {
 		if i == 3 {
 			break
 		}
-		bits = append(bits, c.ID+" ("+reviewWantWhy(s, c, seats)+")")
+		why := cmp.Or(waits[c.ID], c.F(FieldWaitingReader))
+		if StreamHeld(s, c.Row) {
+			why = reviewWhyHeld
+		} else if why == "" {
+			why = "the read deal did not report a wait reason"
+		}
+		bits = append(bits, c.ID+" ("+why+")")
 	}
 	return fmt.Sprintf("review starved: %d cards in review want a read and no read is out: %s", len(wants), strings.Join(bits, "; "))
 }
