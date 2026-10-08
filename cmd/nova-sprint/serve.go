@@ -715,7 +715,7 @@ func (s *whereSnapshots) build(a *app) {
 		} else if why := oneline.Err(err); why != s.failed {
 			s.failed = why
 			if s.log != nil {
-				fmt.Fprintf(s.log, "%s SNAPSHOT the where --json document of tick %d was not read: %s; where --json through the server is refused once the last document is two ticks old; where --json --fresh reads the store\n", a.now().Format("15:04:05"), n, why)
+				fmt.Fprintf(s.log, "%s SNAPSHOT the where --json document of tick %d was not read: %s; where --json through the server is refused once the last document is two ticks old; run: nova-sprint where --json --fresh\n", a.now().Format("15:04:05"), n, why)
 			}
 		}
 		if !s.again {

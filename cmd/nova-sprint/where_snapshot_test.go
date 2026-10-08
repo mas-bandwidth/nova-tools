@@ -216,12 +216,12 @@ func TestTheSnapshotIsTheFreshReadOfTheSameRows(t *testing.T) {
 	}
 }
 
-// Timed: a where --json through the server (the client's forward path, the server's HTTP
-// handler, as on the wire) answers from the snapshot in under 100 ms (the fastest of five),
-// where the store's read took 4.6 to 8.5 s on the live sprint; the gate the change rests on
-// is the store trips (none, TestAForwardedWhereJSONIsTheSnapshotUntilTwoTicksOld), the wall
-// is the brief's.
-func TestAForwardedWhereJSONAnswersUnder100ms(t *testing.T) {
+// The forward path whole: a where --json typed on the coordinator's machine
+// (NOVA_SPRINT_SERVER set) goes through the client's forward, the server's HTTP handler as on
+// the wire, and is answered from the snapshot with no store trip, where the store's read took
+// 4.6 to 8.5 s on the live sprint. The wall is not a unit test's to bound (docs/STANDARD.md
+// section 8: assert the event, not the clock): no store trip is the event.
+func TestAForwardedWhereJSONAnswersFromTheSnapshotWhole(t *testing.T) {
 	t.Parallel()
 	ta, s := snapRig(t)
 	s.publish(ta.a, 1)
@@ -240,21 +240,17 @@ func TestAForwardedWhereJSONAnswersUnder100ms(t *testing.T) {
 		}
 		return res.Results, nil
 	}
-	// the fastest of five: a gate machine's scheduler under load is not the answer's time
-	var fastest time.Duration
-	var took []time.Duration
-	for range 5 {
-		var out, errb bytes.Buffer
-		began := time.Now()
-		code := client.run([]string{"where", "--json", "--cards", "--rows", "--archived"}, &out, &errb)
-		d := time.Since(began)
-		require.Equal(t, 0, code, errb.String())
-		assert.Equal(t, int64(0), snapshotAge(t, out.String()).AgeMS)
-		took = append(took, d)
-		if fastest == 0 || d < fastest {
-			fastest = d
-		}
-	}
-	t.Logf("where --json through the server from the snapshot: %v", took)
-	assert.Less(t, fastest, 100*time.Millisecond)
+	ta.m.Calls = map[string]int{}
+	var out, errb bytes.Buffer
+	code := client.run([]string{"where", "--json", "--cards", "--rows", "--archived"}, &out, &errb)
+	calls := ta.m.Calls
+	ta.m.Calls = map[string]int{}
+	require.Equal(t, 0, code, errb.String())
+	assert.Empty(t, calls, "answered from memory: no store trip")
+	assert.Equal(t, int64(0), snapshotAge(t, out.String()).AgeMS)
+	var v whereView
+	require.NoError(t, json.Unmarshal(out.Bytes(), &v))
+	assert.NotEmpty(t, v.Cards)
+	assert.NotEmpty(t, v.Rows)
+	assert.Contains(t, out.String(), `"landedSeries"`, "the document carries the landings series, as where --json does")
 }
