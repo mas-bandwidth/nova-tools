@@ -113,15 +113,17 @@ type landJob struct {
 }
 
 // fork is the lander one stream's batch runs in: the pass's settings, store, caches and
-// locks, with its own scratch (the merges' notes, the conflict's paths, the gates' bench)
-// and its own output, merged into the pass's in stream order (pass).
-func (l *lander) fork() *lander {
+// locks, with its own scratch (the merges' notes, the conflict's paths, the gates' bench,
+// the stream as its key on the gate bench's hash ring) and its own output, merged into
+// the pass's in stream order (pass).
+func (l *lander) fork(stream string) *lander {
 	f := *l
 	f.out, f.toScore = nil, nil
 	f.ledgerLog, f.recLog, f.recNote, f.baseFix = nil, nil, "", ""
 	f.conflictKind, f.conflictPaths = "", nil
 	f.baseStop, f.baseCount, f.baseWhy = false, false, ""
 	f.gateHost, f.gateWall = "", 0
+	f.gateKey, f.gateRing, f.gateSlot = stream, 0, 0
 	f.baseNotes = nil
 	f.diffs, f.scope = map[string]string{}, map[string][]string{}
 	return &f
@@ -234,7 +236,7 @@ func (l *lander) pass(ctx context.Context, s *sprint.Snapshot, order []string) (
 			for i, c := range cards[:n] {
 				ids[i] = c.id
 			}
-			jobs = append(jobs, &landJob{stream: name, cards: cards[:n], ids: ids, f: l.fork(),
+			jobs = append(jobs, &landJob{stream: name, cards: cards[:n], ids: ids, f: l.fork(name),
 				b: landBatch{Stream: name, Status: "refused", Cards: n, IDs: ids, Repo: cards[0].repo, Base: cards[0].base, DryRun: l.dry}})
 		}
 		if len(jobs) == 0 {

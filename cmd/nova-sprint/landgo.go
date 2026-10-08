@@ -289,9 +289,10 @@ func treePackages(dir string) []string {
 // treeGate runs the gate on the clone's tree, the tree tests too when tests: "" when it
 // is green or the clone has no module, else the finding (gateWhy). In the server's land
 // loop with a fleet member other than this machine up, the gate goes to the first such
-// member that grants its Go lane, as one bench run (benchGate); a bench that cannot be
-// reached runs it here instead, and never blames the card. Otherwise, and for a land
-// command on its own, it runs here (goRun). The ledgers' update runs stay here.
+// member that grants its Go lane, asked in the ring's order from the slot the batch's
+// stream hashes to (benchRing, landring.go), as one bench run (benchGate); a bench that
+// cannot be reached runs it here instead, and never blames the card. Otherwise, and for a
+// land command on its own, it runs here (goRun). The ledgers' update runs stay here.
 func (l *lander) treeGate(ctx context.Context, dir string, tests bool) string {
 	if _, err := os.Stat(filepath.Join(dir, "go.mod")); err != nil {
 		return ""
@@ -321,13 +322,16 @@ func (l *lander) treeGate(ctx context.Context, dir string, tests bool) string {
 	return ""
 }
 
-// benchGate runs the gate's runs on a bench: the first of hosts whose Go lane is granted,
-// in one copy of the clone (its .git too when the tree tests run: they read the history),
-// the runs in order, the first red ending it. ran is false when the gate did not run
-// there (no lane before ctx ended, the bench not answering, the copy failing): the
-// caller runs it here, and that bench's failure is nobody's finding.
+// benchGate runs the gate's runs on a bench: the first host of the ring whose Go lane is
+// granted, the ring being hosts (the up benches in the fleet's order) started at the slot
+// the lander's gate key (the batch's stream) hashes to (benchRing), in one copy of the
+// clone (its .git too when the tree tests run: they read the history), the runs in order,
+// the first red ending it. ran is false when the gate did not run there (no lane before
+// ctx ended, the bench not answering, the copy failing): the caller runs it here, and that
+// bench's failure is nobody's finding. A gate that ran records the ring's size and the
+// slot for the batch's LAND line (gateRing, gateSlot).
 func (l *lander) benchGate(ctx context.Context, hosts []string, dir string, runs [][]string, tests bool) (why string, ran bool) {
-	host, err := l.takeGateLane(ctx, hosts)
+	host, err := l.takeGateLane(ctx, benchRing(l.gateKey, hosts))
 	if err != nil {
 		return "", false
 	}
@@ -342,6 +346,7 @@ func (l *lander) benchGate(ctx context.Context, hosts []string, dir string, runs
 		return "", false
 	}
 	l.ranOnBench(host, wall)
+	l.gateRing, l.gateSlot = len(hosts), ringSlot(l.gateKey, len(hosts))
 	if code == 0 {
 		return "", true
 	}
@@ -417,13 +422,18 @@ func (l *lander) gateBenches(ctx context.Context) (hosts []string, inLoop bool) 
 	return hosts, inLoop
 }
 
-// takeGateLane asks every one of hosts for its Go lane until one grants it, and gives
-// back its place on the others; the granted host. A lane not yet granted is asked
-// again on the next land-loop cycle (waitLaneAsk): that loop is the clock, so this
-// ask adds no timer of its own, and the beat keeps printing. The stage names the
-// lanes it waits on.
+// takeGateLane asks hosts (a ring: benchRing's order) for a Go lane one host at a time
+// until one grants it: a host whose lane is held is skipped to the next, and the first
+// granted wins, its place on the others given back; the granted host. When none grants,
+// the lander keeps its place on the ring's first host alone (the slot the batch hashes
+// to) and gives back the rest, and the ring is asked again from that host on the next
+// land-loop cycle (waitLaneAsk): that loop is the clock, so this ask adds no timer of its
+// own, and the beat keeps printing. The stage names the lane it waits on.
 func (l *lander) takeGateLane(ctx context.Context, hosts []string) (string, error) {
-	proc := "lane take go --machine " + strings.Join(hosts, "|") + " --as " + landLaneWho
+	if len(hosts) == 0 {
+		return "", fmt.Errorf("no bench to take a Go lane on")
+	}
+	proc := "lane take go --machine " + hosts[0] + " --as " + landLaneWho
 	asked := map[string]bool{}
 	for {
 		if err := ctx.Err(); err != nil {
@@ -437,7 +447,7 @@ func (l *lander) takeGateLane(ctx context.Context, hosts []string) (string, erro
 			ans, err := l.st.LaneStep(ctx, sprint.LaneGo, h, landLaneWho, false)
 			l.a.serial.Unlock()
 			if err != nil {
-				continue // this lane cannot be read now; the others may grant
+				continue // this lane cannot be read now; the next may grant
 			}
 			asked[h] = true
 			if ans.Granted {
@@ -447,6 +457,12 @@ func (l *lander) takeGateLane(ctx context.Context, hosts []string) (string, erro
 					}
 				}
 				return h, nil
+			}
+		}
+		for h := range asked {
+			if h != hosts[0] {
+				l.giveGateLane(h) // the wait is on the batch's own slot alone
+				delete(asked, h)
 			}
 		}
 		l.stage("lane", proc)
