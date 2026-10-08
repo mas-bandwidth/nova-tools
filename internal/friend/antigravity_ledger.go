@@ -227,6 +227,71 @@ func (a *Antigravity) known(id string) bool {
 	return slices.ContainsFunc(a.load().Deliveries, func(d AntigravityDelivery) bool { return d.ID == id })
 }
 
+// isOwnReceipt reports whether id was assigned to the active delivery matching session and hash.
+func (a *Antigravity) isOwnReceipt(id, session, hash string) bool {
+	if session == "" || hash == "" {
+		return false
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return slices.ContainsFunc(a.load().Deliveries, func(d AntigravityDelivery) bool {
+		return d.ID == id && d.Conversation == session && d.Hash == hash
+	})
+}
+
+// isActive reports whether session and hash are currently being sent by an in-flight send();
+// called with a.mu held.
+func (a *Antigravity) isActive(session, hash string) bool {
+	return a.activeSession != "" && a.activeSession == session && (hash == "" || a.activeHash == hash)
+}
+
+// deliveryID returns the assigned ID of the delivery matching session and hash, or "" if unassigned.
+func (a *Antigravity) deliveryID(session, hash string) string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	l := a.load()
+	for i := len(l.Deliveries) - 1; i >= 0; i-- {
+		d := &l.Deliveries[i]
+		if d.Conversation == session && d.Hash == hash {
+			return d.ID
+		}
+	}
+	return ""
+}
+
+// observePrior attributes untracked mailbox files to prior unconfirmed deliveries for session,
+// ensuring an older delivery receives its late receipt rather than letting the current send claim it.
+func (a *Antigravity) observePrior(session, activeHash string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	l := a.load()
+	changed := false
+	var untracked []string
+	untrackedLoaded := false
+	for i := range l.Deliveries {
+		d := &l.Deliveries[i]
+		if d.Conversation != session || d.ResentTo != "" || !d.ReadAt.IsZero() {
+			continue
+		}
+		if d.ID == "" && d.Hash != activeHash {
+			if !untrackedLoaded {
+				untracked = a.untracked(session)
+				untrackedLoaded = true
+			}
+			if len(untracked) > 0 {
+				d.ID, untracked, changed = untracked[0], untracked[1:], true
+				d.State = DeliveryLanded
+				a.say("antigravity: message %s in the mailbox of conversation %s (landed late)", d.ID, d.Conversation)
+			}
+		}
+	}
+	if changed {
+		if err := a.save(); err != nil {
+			a.say("antigravity: cannot save late landings to ledger: %s", oneLine(err.Error(), 300))
+		}
+	}
+}
+
 // Delivered reports whether the ledger holds bus message id in an already landed or consumed delivery.
 // If reading the ledger encounters an error, it returns that error to fail closed.
 func (a *Antigravity) Delivered(id string) (bool, error) {
@@ -294,6 +359,9 @@ func (a *Antigravity) observe(now time.Time) {
 			continue
 		}
 		if d.ID == "" {
+			if a.isActive(d.Conversation, d.Hash) {
+				continue
+			}
 			ids, ok := landed[d.Conversation]
 			if !ok {
 				ids = a.untracked(d.Conversation)
@@ -583,6 +651,9 @@ func (a *Antigravity) markLanded(session, hash, id string) error {
 	for i := len(l.Deliveries) - 1; i >= 0; i-- {
 		d := &l.Deliveries[i]
 		if d.Conversation == session && (d.Hash == hash || (hash == "" && d.ID == id)) {
+			if d.ID == id && d.State == DeliveryLanded {
+				return nil
+			}
 			d.ID = id
 			d.State = DeliveryLanded
 			return a.save()

@@ -62,12 +62,15 @@ type Antigravity struct {
 	Wait         func(context.Context) bool // one poll interval; false once ctx has ended (real time when nil)
 	Now          func() time.Time           // the daemon's clock, every time in the ledger (time.Now when nil)
 	State        string                     // the daemon's state directory: the ledger's file (AntigravityLedgerFile); "" keeps it in memory
+	BeforeScan   func()                     // test hook: called after send-message succeeds and before mailbox scan
 
-	sendMu sync.Mutex // one send at a time: each knows its own message by what is new in the mailbox
-	mu     sync.Mutex // the ledger
-	ledger *AntigravityLedger
-	live   string    // the conversation the last delivery went to
-	looked time.Time // when Follow last looked
+	sendMu        sync.Mutex // one send at a time: each knows its own message by what is new in the mailbox
+	mu            sync.Mutex // the ledger
+	ledger        *AntigravityLedger
+	live          string    // the conversation the last delivery went to
+	looked        time.Time // when Follow last looked
+	activeSession string    // conversation of in-flight send; protected by mu
+	activeHash    string    // hash of in-flight send; protected by mu
 }
 
 // AntigravityData is the harness's app data directory, under the home.
@@ -324,6 +327,19 @@ func (a *Antigravity) send(ctx context.Context, srv antigravityServer, session, 
 		return a.refuse(session, fmt.Sprintf("cannot persist pending delivery to ledger: %s; external send held", oneLine(err.Error(), 300)))
 	}
 
+	a.mu.Lock()
+	a.activeSession = session
+	a.activeHash = hash
+	a.mu.Unlock()
+	defer func() {
+		a.mu.Lock()
+		if a.activeSession == session && a.activeHash == hash {
+			a.activeSession = ""
+			a.activeHash = ""
+		}
+		a.mu.Unlock()
+	}()
+
 	if _, err = a.agentapi(ctx, port, srv.token, "send-message", "--title="+AntigravityTitle, session, text); err != nil {
 		if uerr := a.markUncertain(session, hash); uerr != nil {
 			a.say("antigravity: cannot mark delivery uncertain in ledger: %s", oneLine(uerr.Error(), 300))
@@ -337,11 +353,21 @@ func (a *Antigravity) send(ctx context.Context, srv antigravityServer, session, 
 	// agentapi took it: it is delivered to session from here on, whenever its file lands
 	lctx, cancel := context.WithTimeout(ctx, AntigravityLandBudget)
 	defer cancel()
+	if a.BeforeScan != nil {
+		a.BeforeScan()
+	}
 	id := ""
 	for id == "" {
+		a.observePrior(session, hash)
+		if assignedID := a.deliveryID(session, hash); assignedID != "" && !slices.Contains(before, assignedID) {
+			if mine, _ := a.titled(mailbox, assignedID); mine {
+				id = assignedID
+				break
+			}
+		}
 		after, err := a.mailbox(mailbox)
 		if err == nil {
-			id, err = a.newMessage(mailbox, before, after)
+			id, err = a.newMessage(mailbox, before, after, session, hash)
 		}
 		if err != nil || (id == "" && !a.wait(lctx)) {
 			break
@@ -479,11 +505,11 @@ func workspaceIs(workspace string, dirs []string) bool {
 }
 
 // newMessage selects a new mailbox entry carrying our exact title, never one the ledger
-// already holds (a message that landed late). An unrelated message appearing during send
-// must not stand for ours.
-func (a *Antigravity) newMessage(mailbox string, before, after []string) (string, error) {
+// already holds for another delivery (a message that landed late). An unrelated message
+// appearing during send must not stand for ours.
+func (a *Antigravity) newMessage(mailbox string, before, after []string, activeSession, activeHash string) (string, error) {
 	for _, id := range after {
-		if slices.Contains(before, id) || a.known(id) {
+		if slices.Contains(before, id) || (a.known(id) && !a.isOwnReceipt(id, activeSession, activeHash)) {
 			continue
 		}
 		mine, err := a.titled(mailbox, id)
