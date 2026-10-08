@@ -3026,7 +3026,7 @@ usage:
   nova-sprint stream remove <stream>...
   nova-sprint stream archive <stream>...
   nova-sprint stream unarchive <stream>...
-  nova-sprint stream set <stream>... [--read-tier <flash|pro|heavy|default>] [--land-protected <owner/name,...|any|default>] [--promotion[=false]] [--release <name>] [--prose <glob,...|default>] [--attempts <n|default>] [--reason <text>] [--answers <notes>]
+  nova-sprint stream set <stream>... [--read-tier <flash|pro|heavy|default>] [--land-protected <owner/name,...|any|default>] [--promotion[=false]] [--release <name>] [--prose <glob,...|default>] [--attempts <n|default>] [--base <branch>] [--reason <text>] [--answers <notes>]
   nova-sprint set [--read-tier <flash|pro|default>] [--read-cards <on|off|default>] [--dealt-max <duration|default>] [--go-lanes <n|default>] [--alarm-review <n|off>] [--alarm-merging <n|off>] [--alarm-fleet <percent|off>] [--alarm-ready <on|off>] [--attempts <n|default>] [--friend-idle <duration|default>] [--friend-finish <duration|default>] [--fleet-tiers <tiers|all>] [--friends-tiers <tiers|all>] [--reads <0|1|2|default>]
   nova-sprint promoted --sha <merge sha> [--answers <note>]
   nova-sprint merge-window open --for <duration> --reason <text>
@@ -4784,13 +4784,14 @@ exit codes: 0 done, 1 failed or incomplete (including refused; the line names wh
 `nova-sprint stream set -h`:
 
 ```
-usage: nova-sprint stream set <stream>... [--read-tier <flash|pro|heavy|default>] [--land-protected <owner/name,...|any|default>] [--promotion[=false]] [--release <name>] [--prose <glob,...|default>] [--attempts <n|default>] [--reason <text>] [--answers <notes>]
+usage: nova-sprint stream set <stream>... [--read-tier <flash|pro|heavy|default>] [--land-protected <owner/name,...|any|default>] [--promotion[=false]] [--release <name>] [--prose <glob,...|default>] [--attempts <n|default>] [--base <branch>] [--reason <text>] [--answers <notes>]
 from `nova-sprint help`:
-  nova-sprint stream set <stream>... [--read-tier <flash|pro|heavy|default>] [--land-protected <owner/name,...|any|default>] [--promotion[=false]] [--release <name>] [--prose <glob,...|default>] [--attempts <n|default>] [--reason <text>] [--answers <notes>]
+  nova-sprint stream set <stream>... [--read-tier <flash|pro|heavy|default>] [--land-protected <owner/name,...|any|default>] [--promotion[=false]] [--release <name>] [--prose <glob,...|default>] [--attempts <n|default>] [--base <branch>] [--reason <text>] [--answers <notes>]
 flags:
   --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
   --answers <string>  the judgment notifications this answers, comma separated
   --attempts <string>  the stream's attempt cap, over the sprint's: how many attempts one brief may run before the card is the coordinator's as a brief defect; 1 to 100, or default (the sprint's)
+  --base <string>  the base branch to re-point the stream's cards to: every card not yet dealt and every card queued to merge has its BASE line rewritten; refused when origin holds no such branch or a card's PATHS are absent at its tip; dealt and working cards keep their base
   --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
   --json  print one JSON object for a program instead of the lines
   --land-protected <string>  the repositories (owner/name, comma separated; any for every one) on whose protected branches, dev and main, the lander lands the stream's cards; default takes the mark off, and a card based on a protected branch is then refused at land
@@ -11173,8 +11174,8 @@ nova-card is pre-alpha: not ready for production use.
 
 how it works: a source is read from a checkout of the target repository (a ratchet ledger of
 internal/ci, a findings TSV, a tool's rendered help); the planner cuts one card per file with
-its PATHS, TEST and tier computed from the row, puts cards that edit one ledger in alternating
-waves, and holds every brief to the lint nova-sprint add runs before the directory is written.
+its PATHS, TEST and tier computed from the row, plans every ledger in one wave with no
+dependency, and holds every brief to the lint nova-sprint add runs before the directory is written.
 State: none; the directory, its manifest.tsv and the one CARDS OK line are the whole result.
 
 the flow, three lines:
@@ -11201,10 +11202,10 @@ A ledger card is flash and a findings or help card is pro unless --tier says oth
 whose PATHS name TLA+ model work (a .tla module, an MC config under tla/) is frontier, as
 nova-sprint add tiers it, and --tier flash or pro on such a card is a red line
 (check=model-tier). The TLC run records tla/RUNS.tsv and tla/CASES.tsv alone are no model.
-Cards of one ordinary ledger alternate waves (odd rows wave 1, even rows wave 2 depending on
-their neighbours) because adjacent deletions conflict at land; a generated ledger
-(docs/SPEC-SPRINT.md section 7) gets one wave and no dependency. Wave 1 cards of one ledger
-share its path, so the add wants --allow-shared-paths; the CARDS line says so.
+A ledger plan is one wave with no dependency chain: the lander resolves a ledger conflict as
+the union of removals, so adjacent deletions of one file no longer conflict at land
+(docs/SPEC-SPRINT.md section 7). Every card is wave 1 and shares the ledger's path with no
+need between them, so the add wants --allow-shared-paths; the CARDS line says so.
 lint holds a brief to the lint nova-sprint add runs (the model lines, the child rules under the
 default rule set, a tree card's steps), and past the add to the typed header and the template's
 unfilled <...> lines, which the add does not read, one LINT DRIFT line each; and to the card
