@@ -429,7 +429,31 @@ func (a *app) friendCardsOf(ctx context.Context, st *store.Store, name, dir stri
 	}
 	defer func() {
 		if err == nil {
-			err = writeQueueFile(dir, states, left, packets)
+			if finished > 0 {
+				// A collect can remove Working and promote Ready in this pass. The
+				// pre-collect row cannot certify the queue's current assignments.
+				var current []*sprint.Card
+				current, err = st.ReadCells(ctx, sprint.Fleet, sprint.FriendRow(name), sprint.Working, sprint.Ready, sprint.Withdrawn)
+				if err == nil {
+					states = map[string]string{}
+					var active []*sprint.Card
+					for _, c := range current {
+						states[c.ID] = map[string]string{string(sprint.Working): "working", string(sprint.Ready): "queued", string(sprint.Withdrawn): queueTaken}[string(c.Col)]
+						if c.Col != sprint.Withdrawn {
+							active = append(active, c)
+						}
+					}
+					packets, err = st.Packets(ctx, active)
+				}
+				if err != nil {
+					// A stale certified snapshot must not outlive a successful
+					// finish when the final row could not be read.
+					err = errors.Join(err, uncertifyQueueFile(dir))
+				}
+			}
+			if err == nil {
+				err = writeQueueFile(dir, states, left, packets)
+			}
 		}
 		// Files already delivered stand even if a later collect or the queue
 		// write fails; their one courtesy wake still belongs to this pass.
@@ -493,6 +517,29 @@ func (a *app) friendCardsOf(ctx context.Context, st *store.Store, name, dir stri
 		}
 	}
 	return delivered, finished, nil
+}
+
+// uncertifyQueueFile preserves historical task records while withdrawing a
+// snapshot whose row cannot be verified after a successful collect.
+func uncertifyQueueFile(dir string) error {
+	path := filepath.Join(dir, filepath.FromSlash(queueFile))
+	before, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var q friendQueue
+	if err := json.Unmarshal(before, &q); err != nil {
+		return err
+	}
+	q.Version, q.Current = 0, nil
+	after, err := json.MarshalIndent(q, "", "  ")
+	if err != nil {
+		return err
+	}
+	return atomicfile.WriteFile(path, append(after, '\n'), 0o644)
 }
 
 // busRedisEnv names the friends' bus store (nova-bus's), where friend sync

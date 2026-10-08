@@ -464,6 +464,16 @@ func TestFriendSyncDeliversHerReadyCardsAndKeepsHerQueueFile(t *testing.T) {
 	outboxReport(t, root, "amy", "s1-1.w1", "Verdict: LAND\nHead: "+landHead+"\n")
 	out = ta.ok("friend sync --root " + root)
 	assert.Contains(t, out, "FRIEND-CARD FINISHED friend=amy card=s1-1.w1 result=ok")
+	text, err = os.ReadFile(queue)
+	require.NoError(t, err)
+	q = friendQueue{}
+	require.NoError(t, json.Unmarshal(text, &q))
+	assert.Equal(t, map[string]friend.Assignment{"s1-2.w1": {Gen: 1, Job: "s1-2.w1"}}, q.Current,
+		"this same sync must certify the post-finish row, not its earlier Working card")
+	queueCount, workingCount, known, err := friend.ReadQueue(filepath.Join(root, "amy-working"))
+	require.NoError(t, err)
+	assert.True(t, known)
+	assert.Equal(t, [2]int{0, 1}, [2]int{queueCount, workingCount})
 	var c cardView
 	ta.json("card s1-2", &c)
 	require.Len(t, c.Work, 1)
