@@ -4716,7 +4716,7 @@ The threshold is the work table's property `review_starved`. Absent, empty, or n
 
 The part is installed on the tick's end, before the done part, which `TickEndWith` keeps in its tail, so a live tick runs it. It is not installed on `TickParts`. Every name there is a duty of the reference model (`TestEveryPartOfTheTickIsADutyAndEveryDutyIsNamedInOrder`), and that list is outside this change, so a reference walk does not run the part.
 
-**Not yet live:** `cmd/nova-sprint` does not parse `set --review-starved` (verbs.go is outside this change). The property absent is the default of two ticks, so the running tick raises these judgments without the flag. Setting `review_starved` on the work table to a duration or to `off` is what the part reads.
+`nova-sprint set --review-starved <duration>` writes the work-table threshold for both judgments. A positive duration shorter than one tick is stored as one tick. `nova-sprint set --review-starved off` disables both; with no setting, the default is two ticks. The setting rejects an invalid or non-positive duration without changing the table.
 
 ### Drift alarms
 

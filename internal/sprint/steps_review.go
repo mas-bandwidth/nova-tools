@@ -2290,6 +2290,46 @@ func (s *Snapshot) reviewStarvedWindow() (time.Duration, bool) {
 	return d, false
 }
 
+// WithReviewStarved adds the review alarm window to a set plan. A setting on its
+// own may be the only thing to set, so it clears only Set's "nothing to set"
+// refusal; every other refusal leaves the whole step unwritten.
+func WithReviewStarved(p Plan, s *Snapshot, v string) Plan {
+	if v == "" {
+		return p
+	}
+	for _, x := range p.Refused {
+		if !strings.HasPrefix(x.Why, "nothing to set") {
+			return p
+		}
+	}
+	p.Refused = nil
+	word := v
+	if v != AlarmOff {
+		d, err := time.ParseDuration(v)
+		if err != nil || d <= 0 {
+			return Plan{Refused: []Refusal{{Key: "set", Why: "--review-starved wants a duration above zero (2s, 1m), or off; found " + v}}}
+		}
+		if d < reviewStarvedTick {
+			d = reviewStarvedTick
+		}
+		word = d.String()
+	}
+	was, had := s.Work.Prop(PropReviewStarved)
+	p.Props = append(p.Props, PropWrite{Table: Work, Name: PropReviewStarved, Value: word, Was: was, WasAbsent: !had})
+	for i := range p.Units {
+		if p.Units[i].Key == "set" {
+			if strings.TrimSpace(p.Units[i].Moved) == "sprint" {
+				p.Units[i].Moved = "sprint review-starved " + word
+			} else {
+				p.Units[i].Moved += ", review-starved " + word
+			}
+			return p
+		}
+	}
+	p.Units = append(p.Units, Unit{Key: "set", Moved: "sprint review-starved " + word})
+	return p
+}
+
 // TickReviewStarved is the tick's review-starved part.
 func TickReviewStarved(s *Snapshot, r TickReq) (Plan, int) {
 	var p Plan
