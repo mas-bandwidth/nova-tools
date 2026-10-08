@@ -1282,11 +1282,14 @@ The rule above has one exception, read off her beat
   `row_mode=`). A change of mode on the row takes effect on her next beat: no
   reinstall, no restart. A record from before the field reads as batch, the
   row's default.
-- A beat is her engine's (`sprint.Beat.FromEngine`) when it carries her lanes'
-  report: `--width`, `--working`, `--queue` or `--running` (a runner's beat, or
-  a daemon's lanes). A daemon's bare beat, its `--check`, its `--pong`,
-  `--active`, `--build`, `--started` and `--present` carry none, and are no
-  engine's.
+- A beat is her engine's (`sprint.Beat.FromEngine`) when it carries the
+  engine's own counts of her lanes: `--width`, `--working` or `--queue` (a
+  runner's beat, or a daemon's lanes). A daemon's bare beat, its `--check`,
+  its `--pong`, `--active`, `--build`, `--started` and `--present` carry none,
+  and are no engine's; the running list alone (`--running`) is not one
+  either: `friend take` and `friend down` leave it with her, and the stall
+  ladder reads it as her activity, never her presence
+  (`TestFriendStallLadderBeatNamingRunningCardsIsActivity`).
 - In batch mode a friend is one session her daemon pushes turns into, whose
   beat carries no lanes, or one engine with no session, whose beat carries
   them; the report tells the two apart. A batch friend whose beat is her

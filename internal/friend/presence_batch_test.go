@@ -49,18 +49,24 @@ func TestABatchFriendIsUpOnHerEnginesFreshBeat(t *testing.T) {
 	word, why := sprint.FriendEvidence(sprint.FriendPresence{Beat: engineBeat("", now.Add(-3*time.Second))}, now)
 	assert.Equal(t, sprint.Up, word)
 	assert.Equal(t, "engine beat 3s ago", why)
-	// the engine's report is what makes a beat an engine's: any one of the lanes' counts
+	// the engine's own counts are what make a beat an engine's: any one of them
 	width, queue := 4, 0
 	for name, rep := range map[string]*sprint.FriendReport{
 		"width":   {Width: &width},
 		"working": {Working: &queue},
 		"queue":   {Queue: &queue},
-		"running": {Running: []string{"card-a"}},
 	} {
 		b := sprint.Beat{At: now, RowMode: config.FriendModeBatch, Friend: rep}
 		assert.True(t, b.FromEngine(), name)
 		assert.True(t, b.EnginePresence(), name)
 	}
+	// the running list alone is not: take and down leave it with her, and the stall ladder
+	// reads it as her activity (TestFriendStallLadderBeatNamingRunningCardsIsActivity)
+	running := sprint.Beat{At: now, RowMode: config.FriendModeBatch, Friend: &sprint.FriendReport{Running: []string{"card-a"}}}
+	assert.False(t, running.FromEngine())
+	word, why = sprint.FriendEvidence(sprint.FriendPresence{Beat: running}, now)
+	assert.Equal(t, sprint.Down, word)
+	assert.Contains(t, why, "her beat 0s ago is not evidence")
 }
 
 func TestABatchFriendIsDownWhenHerEngineIsSilent(t *testing.T) {

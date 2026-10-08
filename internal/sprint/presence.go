@@ -147,14 +147,16 @@ type FriendReport struct {
 // however fresh, it never makes her up.
 func (b Beat) SaysDown() bool { return b.Friend != nil && !b.Friend.Until.IsZero() }
 
-// FromEngine says the beat is her engine's: it carries the engine's report of her
-// lanes (friend beat --width, --working, --queue or --running: a runner's beat, or a
-// daemon's lanes), which a daemon's bare beat, its check, its pong and its own facts
-// (--active, --build, --started, --present) never carry. A beat that says down carries
-// a count too (the verb writes working 0 with it) and is read as down first
-// (SaysDown), never as an engine's.
+// FromEngine says the beat is her engine's: it carries the engine's own counts of her
+// lanes (friend beat --width, --working or --queue: a runner's beat, or a daemon's
+// lanes), which a daemon's bare beat, its check, its pong and its own facts (--active,
+// --build, --started, --present) never carry. The running list alone is not an engine's
+// word: friend take and friend down leave it with her, and the stall ladder reads it as
+// her activity (FriendStallLadder), never her presence. A beat that says down carries a
+// count too (the verb writes working 0 with it) and is read as down first (SaysDown),
+// never as an engine's.
 func (b Beat) FromEngine() bool {
-	return b.Friend != nil && (b.Friend.Width != nil || b.Friend.Working != nil || b.Friend.Queue != nil || len(b.Friend.Running) > 0)
+	return b.Friend != nil && (b.Friend.Width != nil || b.Friend.Working != nil || b.Friend.Queue != nil)
 }
 
 // EnginePresence says her presence is her engine's beat, not a session's answer
