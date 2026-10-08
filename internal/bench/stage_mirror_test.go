@@ -63,7 +63,7 @@ func (f *fakeBench) opts(st *MirrorStage) Options {
 }
 
 func testStage() *MirrorStage {
-	return &MirrorStage{Mirror: MirrorDir("nova-tools"), Remote: "https://github.com/mas-bandwidth/nova-tools.git", Ref: GateRef("sprint/mechanical", testSha), Sha: testSha}
+	return &MirrorStage{Mirror: MirrorDir("nova-tools"), Remote: "/srv/git/nova-tools.git", Ref: GateRef("sprint/mechanical", testSha), Sha: testSha}
 }
 
 // fakeRefs is the lander's git: the pushes and deletes it was asked for.
@@ -107,7 +107,7 @@ func TestAMirrorStageFetchesOneShaAndChecksItOutFromTheMirror(t *testing.T) {
 	line := f.lines[1]
 	assert.True(t, strings.HasPrefix(line, "test -f 'nova-bench/mirror/nova-tools.git'/HEAD || "), line)
 	assert.Contains(t, line, `git -C 'nova-bench/mirror/nova-tools.git' cat-file -e '`+testSha+`^{commit}' 2>/dev/null || `, "a commit the mirror holds is not fetched again")
-	assert.Contains(t, line, `src=$(git -C 'nova-bench/mirror/nova-tools.git' config --get remote.origin.url) || src='https://github.com/mas-bandwidth/nova-tools.git'`)
+	assert.Contains(t, line, `src=$(git -C 'nova-bench/mirror/nova-tools.git' config --get remote.origin.url) || src='/srv/git/nova-tools.git'`)
 	assert.Contains(t, line, `git -C 'nova-bench/mirror/nova-tools.git' fetch --quiet --no-tags --no-write-fetch-head "$src" 'refs/nova-gate/sprint-mechanical-0123456789ab'`)
 	assert.Equal(t, 1, strings.Count(line, " fetch "), "one fetch, of the one ref")
 	assert.Contains(t, line, `git clone --quiet --shared --no-checkout 'nova-bench/mirror/nova-tools.git' '`+testRun+`/repo'`)
