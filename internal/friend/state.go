@@ -131,12 +131,26 @@ type Pong struct {
 	Queue   int       `json:"queue"`
 	Working int       `json:"working"`
 	Width   int       `json:"width"`
+	// CountsKnown distinguishes an authoritative queue snapshot from historical
+	// QUEUE.json records, which must not be reported as current work.
+	CountsKnown bool `json:"counts_known,omitempty"`
 }
 
 // Queue is the friend's queue file: one record per task; the coordinator
-// writes assignments into it, the session marks them working or done.
+// writes assignments into it, the session marks them working or done. Current
+// is the coordinator's last complete row snapshot; Tasks retain history.
 type Queue struct {
-	Tasks []Task `json:"tasks"`
+	Version int                   `json:"version,omitempty"`
+	Current map[string]Assignment `json:"current"`
+	Tasks   []Task                `json:"tasks"`
+}
+
+const QueueSnapshotVersion = 2
+
+// Assignment binds a current card to the exact generation and delivered job.
+type Assignment struct {
+	Gen int    `json:"gen"`
+	Job string `json:"job"`
 }
 
 // Task is one record of the queue file.
@@ -149,9 +163,29 @@ type Task struct {
 	Deliverable string `json:"deliverable,omitempty"`
 }
 
-// Counts is what the queue file says: tasks queued and tasks working.
-func (q Queue) Counts() (queue, working int) {
+// SnapshotKnown is false for legacy files, which have no ownership proof.
+func (q Queue) SnapshotKnown() bool { return q.Version == QueueSnapshotVersion && q.Current != nil }
+
+// IsCurrent requires the coordinator's snapshot to match the task's exact job.
+// A historical record cannot become work merely by retaining a working state.
+func (q Queue) IsCurrent(t Task) bool {
+	if !q.SnapshotKnown() {
+		return false
+	}
+	a, ok := q.Current[t.ID]
+	return ok && a.Job != "" && a.Gen == max(1, t.Gen) && a.Job == t.Job
+}
+
+// Counts reports only current queued and working tasks. A legacy file has no
+// current counts; the caller must show unknown rather than the returned zeros.
+func (q Queue) Counts() (queue, working int, known bool) {
+	if !q.SnapshotKnown() {
+		return 0, 0, false
+	}
 	for _, t := range q.Tasks {
+		if !q.IsCurrent(t) {
+			continue
+		}
 		switch t.State {
 		case "queued", "":
 			queue++
@@ -159,7 +193,7 @@ func (q Queue) Counts() (queue, working int) {
 			working++
 		}
 	}
-	return queue, working
+	return queue, working, true
 }
 
 // DefaultStateDir is the home directory's state directory for friend,
@@ -278,17 +312,17 @@ func ReadWatch(stateDir string) (w Watch, found bool, err error) {
 
 // ReadQueue is the queue file's counts; a file that is not there counts
 // zero, and a file that is no queue is an error the caller shows.
-func ReadQueue(dir string) (queue, working int, err error) {
+func ReadQueue(dir string) (queue, working int, known bool, err error) {
 	var q Queue
 	path := filepath.Join(dir, filepath.FromSlash(QueueFile))
 	if _, err := read(path, &q); err != nil {
 		// the file may be a bare list of tasks
 		if _, err2 := read(path, &q.Tasks); err2 != nil {
-			return 0, 0, err
+			return 0, 0, false, err
 		}
 	}
-	queue, working = q.Counts()
-	return queue, working, nil
+	queue, working, known = q.Counts()
+	return queue, working, known, nil
 }
 
 // Record appends one line to the daemon's log; a log that cannot be

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/internal/config"
+	"github.com/mas-bandwidth/nova-tools/internal/friend"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
@@ -515,6 +517,59 @@ func TestFriendQueueCarriesTheAssignmentGenerationAndJob(t *testing.T) {
 	require.NoError(t, json.Unmarshal(text, &q))
 	assert.Equal(t, "queued", q.Tasks[0].State, "a new epoch is a new job too")
 	assert.Equal(t, "c.w1~16.g2", q.Tasks[0].Job)
+}
+
+// docs/FRIENDS.md, generation-specific jobs: the file retains historical
+// records, but only the coordinator's current exact assignments are counted.
+func TestFriendQueueSnapshotDoesNotCountHistoricalWorkingRecords(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "inbox"), 0o755))
+	path := filepath.Join(dir, "inbox", "QUEUE.json")
+	q := friendQueue{}
+	for i := range 534 {
+		q.Tasks = append(q.Tasks, friendTask{ID: fmt.Sprintf("historical-%03d.w1", i), State: "working", Gen: 1, Job: fmt.Sprintf("historical-%03d.w1~14", i)})
+	}
+	states := map[string]string{}
+	var packets []sprint.Packet
+	for i := range 15 {
+		id := fmt.Sprintf("live-%02d.w1", i)
+		state := "queued"
+		if i < 8 {
+			state = "working"
+			q.Tasks = append(q.Tasks, friendTask{ID: id, State: state, Gen: 1, Job: id + "~15"})
+		}
+		states[id] = state
+		packets = append(packets, sprint.Packet{Card: id, Gen: 1, Epoch: 15})
+	}
+	before, err := json.Marshal(q)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(path, before, 0o600))
+	left := func([]string) (map[string]bool, error) { return nil, nil }
+	require.NoError(t, writeQueueFile(dir, states, left, packets))
+	queue, working, known, err := friend.ReadQueue(dir)
+	require.NoError(t, err)
+	assert.True(t, known)
+	assert.Equal(t, [2]int{7, 8}, [2]int{queue, working})
+	after, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(after, &q))
+	assert.Equal(t, friend.QueueSnapshotVersion, q.Version)
+	assert.Len(t, q.Current, 15)
+	assert.Equal(t, friendTask{ID: "historical-000.w1", State: "working", Gen: 1, Job: "historical-000.w1~14"}, q.Tasks[0], "historical record stays intact")
+	for i := range q.Tasks {
+		if q.Tasks[i].ID == "live-00.w1" {
+			q.Tasks[i].Job = "live-00.w1~14" // a stale local task cannot match the current job
+			break
+		}
+	}
+	after, err = json.Marshal(q)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(path, after, 0o600))
+	queue, working, known, err = friend.ReadQueue(dir)
+	require.NoError(t, err)
+	assert.True(t, known)
+	assert.Equal(t, [2]int{7, 7}, [2]int{queue, working})
 }
 
 // A named friend's configured work restriction is held at admission (docs/SPEC-SPRINT.md

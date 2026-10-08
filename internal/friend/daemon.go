@@ -829,7 +829,7 @@ func (d *Daemon) held() []string {
 	}
 	var ids []string
 	for _, t := range q.Tasks {
-		if t.State == "queued" || t.State == "" || t.State == "working" {
+		if q.IsCurrent(t) && (t.State == "queued" || t.State == "" || t.State == "working") {
 			ids = append(ids, t.ID)
 		}
 	}

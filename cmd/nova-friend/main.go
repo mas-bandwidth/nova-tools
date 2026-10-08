@@ -2053,7 +2053,11 @@ func (w world) status(c *tool.Call) *tool.Out {
 		daemon = "up"
 	}
 	p, _, perr := friend.ReadPong(state)
-	queue, working, qerr := friend.ReadQueue(dir)
+	queue, working, countsKnown, qerr := friend.ReadQueue(dir)
+	queueFact, workingFact := any(queue), any(working)
+	if !countsKnown {
+		queueFact, workingFact = "-", "-"
+	}
 	width := s.Width
 	if p.Width > 0 {
 		width = p.Width
@@ -2061,7 +2065,7 @@ func (w world) status(c *tool.Call) *tool.Out {
 	o := tool.Done().Fact("daemon", daemon).Fact("harness", s.Harness).Fact("status_age", age(now, s.At)).
 		Fact("connection", s.Connection).Fact("seat", dash(s.Seat)).Fact("last_ping", stamp(s.LastPing)).Fact("ping_age", age(now, s.LastPing)).
 		Fact("challenge", s.Challenge).Fact("nonce", dash(s.Nonce)).Fact("last_pong", stamp(p.At)).Fact("session_pong_age", age(now, p.At)).Fact("daemon_pong_age", age(now, s.LastDaemonPong)).Fact("pongs", s.Pongs).
-		Fact("queue", queue).Fact("working", working).Fact("width", width).Fact("beats", s.Beats).Fact("last_beat", stamp(s.LastBeat)).Fact("delivered", s.Delivered).Fact("envelope", s.Envelope).Fact("envelope_bytes", s.EnvelopeBytes).Fact("session", dash(s.Session)).Fact("mode", dash(s.Mode))
+		Fact("queue", queueFact).Fact("working", workingFact).Fact("width", width).Fact("beats", s.Beats).Fact("last_beat", stamp(s.LastBeat)).Fact("delivered", s.Delivered).Fact("envelope", s.Envelope).Fact("envelope_bytes", s.EnvelopeBytes).Fact("session", dash(s.Session)).Fact("mode", dash(s.Mode))
 	if s.Lanes != "" {
 		o.Fact("lanes", tool.Text(s.Lanes))
 	}
@@ -2115,6 +2119,8 @@ func (w world) status(c *tool.Call) *tool.Out {
 	}
 	if qerr != nil {
 		o.Note("the queue file: " + qerr.Error())
+	} else if !countsKnown {
+		o.Note("queue counts are unknown until the coordinator writes a current assignment snapshot")
 	}
 	if s.Harness == "grok" {
 		line, rerr := routeLine, routeErr
@@ -2216,15 +2222,16 @@ func (w world) pong(c *tool.Call) *tool.Out {
 		return tool.Refuse("the previous pong file cannot be read: " + err.Error())
 	}
 	queue, working, width := previous.Queue, previous.Working, previous.Width
+	countsKnown := previous.CountsKnown
 	if s.Width > 0 {
 		width = s.Width
 	}
 	if dir := c.Str("dir"); dir != "" && (!c.Given("queue") || !c.Given("working")) {
-		q, wk, err := friend.ReadQueue(dir)
+		q, wk, known, err := friend.ReadQueue(dir)
 		if err != nil {
 			return tool.Refuse("the working directory's queue cannot be read: " + err.Error())
 		}
-		queue, working = q, wk
+		queue, working, countsKnown = q, wk, known
 	}
 	if c.Given("queue") {
 		queue = c.Int("queue")
@@ -2235,12 +2242,24 @@ func (w world) pong(c *tool.Call) *tool.Out {
 	if c.Given("width") {
 		width = c.Int("width")
 	}
+	if c.Given("queue") && c.Given("working") {
+		countsKnown = true
+	}
+	if !countsKnown && (c.Given("queue") || c.Given("working")) {
+		return tool.Refuse("both --queue and --working are required when the current queue snapshot is unknown")
+	}
+	if !countsKnown {
+		queue, working = 0, 0 // clear unverified values inherited from an old pong file
+	}
 	b, closeStore, refused := w.bus(c)
 	if refused != nil {
 		return refused
 	}
 	defer closeStore()
-	line := friend.PongLine(nonce, queue, working, width)
+	line := "pong " + nonce // counts are optional proof metadata, never invented from historical tasks
+	if countsKnown {
+		line = friend.PongLine(nonce, queue, working, width)
+	}
 	pong := bus.Message{From: name, To: []string{to}, Subject: friend.PongSubject, Body: line + "\n"}
 	if c.DryRun() {
 		// the note checked as send checks it; nothing sent, no pong file
@@ -2253,7 +2272,7 @@ func (w world) pong(c *tool.Call) *tool.Out {
 	if err != nil {
 		return answer(err)
 	}
-	p := friend.Pong{Nonce: nonce, At: m.At, To: to, Queue: queue, Working: working, Width: width}
+	p := friend.Pong{Nonce: nonce, At: m.At, To: to, Queue: queue, Working: working, Width: width, CountsKnown: countsKnown}
 	if err := friend.WritePong(state, p); err != nil {
 		return tool.Fail("sent, but the pong file was not written: "+err.Error()).Fact("id", m.ID)
 	}

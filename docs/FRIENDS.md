@@ -72,10 +72,19 @@ no restart is needed (docs/SPEC-FRIEND.md, "A turn the session cannot take").
 The queue file, `inbox/QUEUE.json`, records each task's `id`, `state`, `gen`
 (assignment generation) and `job` (the delivered directory name). A job is
 `<id>~<epoch>` at generation 1 and `<id>~<epoch>.g<gen>` at later generations.
+Version 2 also records `current`, the coordinator's complete ready and working
+row snapshot keyed by card ID, with the exact generation and job. Old task
+records remain in `tasks` as history; only a task matching `current` counts as
+queued or working or can be selected from the file when the server has not
+answered. A legacy file without that snapshot proves no current assignment:
+`nova-friend status` shows unknown queue counts and a session pong omits them
+until the coordinator syncs. The daemon's answered server row remains the
+source of held cards.
+
 Epoch zero omits `~0`, matching the delivered job name. A legacy task with no
-`gen` means generation 1; with no `job`, the lane selects the highest epoch
-of that generation. It never falls back to another generation. With `job`
-present, the lane requires that exact directory and matching generation.
+`gen` means generation 1. A task without an exact `job` is not selected from
+the queue file's fallback; the answered server row supplies an exact job.
+The lane never falls back to another generation or job.
 
 A completed old job does not finish a new generation or epoch: queue sync
 resets its state and clears its old deliverable for the new assignment.

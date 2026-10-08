@@ -47,11 +47,12 @@ esac
 func laneEndFixture(t *testing.T, jobs ...string) string {
 	t.Helper()
 	dir := t.TempDir()
-	q := Queue{}
+	q := Queue{Version: QueueSnapshotVersion, Current: map[string]Assignment{}}
 	for _, job := range jobs {
 		id, _, gen, ok := ParseJob(job)
 		require.True(t, ok, job)
-		q.Tasks = append(q.Tasks, Task{ID: id, Gen: gen, State: "queued"})
+		q.Tasks = append(q.Tasks, Task{ID: id, Gen: gen, Job: job, State: "queued"})
+		q.Current[id] = Assignment{Gen: gen, Job: job}
 		in := filepath.Join(dir, "inbox", job)
 		require.NoError(t, os.MkdirAll(in, 0o755))
 		brief := "STATUS: nova-sprint card " + id + ", epoch 15, attempt 1; push your work to the branch sprint/" + id + ".g1.e15; when done, write outbox/" + job + "/REPORT.md with Verdict: LAND|HOLD|FAIL and Head: <sha>\n"

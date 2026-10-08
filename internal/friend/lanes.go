@@ -188,7 +188,7 @@ func NextCard(dir string, skip func(Card) bool) (c Card, found bool, err error) 
 		}
 	}
 	for _, t := range q.Tasks {
-		if t.State != "queued" && t.State != "" {
+		if !q.IsCurrent(t) || (t.State != "queued" && t.State != "") {
 			continue
 		}
 		base, ok := cardDir(filepath.Join(dir, "inbox"), t)

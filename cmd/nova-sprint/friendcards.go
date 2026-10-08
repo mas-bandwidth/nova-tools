@@ -819,7 +819,9 @@ const queueTaken = "taken"
 
 // friendQueue is the queue file's shape, as nova-friend reads it.
 type friendQueue struct {
-	Tasks []friendTask `json:"tasks"`
+	Version int                          `json:"version,omitempty"`
+	Current map[string]friend.Assignment `json:"current"`
+	Tasks   []friendTask                 `json:"tasks"`
 }
 
 type friendTask struct {
@@ -834,8 +836,9 @@ type friendTask struct {
 // writeQueueFile keeps the friend's queue file as the sprint sees her cards: each card
 // on her row is a record, queued while it is ready behind her working cards, working
 // while it is working, and taken once the coordinator has taken it back or a queued one
-// has been dealt to another (friend level, leftOf); a record the sprint does not name, or one her session marked
-// done, is kept as it is. The file is written whole (atomicfile), and not at all when
+// has been dealt to another (friend level, leftOf). Historical records remain intact,
+// while Current is a complete snapshot of her ready and working assignments, bound to
+// their generation and job. The file is written whole (atomicfile), and not at all when
 // nothing changes. docs/FRIENDS.md: a new generation or epoch resets a done record;
 // an unchanged job preserves the session's completion.
 func writeQueueFile(dir string, states map[string]string, leftOf func(ids []string) (map[string]bool, error), packets []sprint.Packet) error {
@@ -853,6 +856,18 @@ func writeQueueFile(dir string, states map[string]string, leftOf func(ids []stri
 		}
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return err
+	}
+	q.Version = friend.QueueSnapshotVersion
+	q.Current = map[string]friend.Assignment{}
+	for id, state := range states {
+		if state != "queued" && state != "working" {
+			continue
+		}
+		job, ok := jobs[id]
+		if !ok || job.Job == "" {
+			return fmt.Errorf("current card %s has no delivered job", id)
+		}
+		q.Current[id] = friend.Assignment{Gen: job.Gen, Job: job.Job}
 	}
 	var gone []string
 	for _, t := range q.Tasks {

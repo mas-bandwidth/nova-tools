@@ -27,9 +27,11 @@ import (
 func cardDirFixture(t *testing.T, tasks [][2]string, delivered, done []string) string {
 	t.Helper()
 	dir := t.TempDir()
-	q := Queue{}
+	q := Queue{Version: QueueSnapshotVersion, Current: map[string]Assignment{}}
 	for _, task := range tasks {
-		q.Tasks = append(q.Tasks, Task{ID: task[0], State: task[1]})
+		job := task[0] + "~15"
+		q.Tasks = append(q.Tasks, Task{ID: task[0], State: task[1], Gen: 1, Job: job})
+		q.Current[task[0]] = Assignment{Gen: 1, Job: job}
 	}
 	raw, err := json.Marshal(q)
 	require.NoError(t, err)
@@ -281,8 +283,8 @@ func TestLanesRunACardDealtAgainAtItsGeneration(t *testing.T) {
 		doneOld          bool
 	}{
 		{"redealt", `{"id":"c","state":"queued","gen":2,"job":"c~15.g2"}`, "c~15.g2", true},
-		{"generation without job", `{"id":"c","state":"queued","gen":2}`, "c~15.g2", true},
-		{"legacy", `{"id":"c","state":"queued"}`, "c~15", false},
+		{"generation without job", `{"id":"c","state":"queued","gen":2}`, "", true},
+		{"legacy without job", `{"id":"c","state":"queued"}`, "", false},
 		{"missing generation", `{"id":"c","state":"queued","gen":3}`, "", false},
 		{"mismatched job", `{"id":"c","state":"queued","gen":2,"job":"c~15"}`, "", false},
 		{"unsafe job", `{"id":"c","state":"queued","gen":2,"job":"../c~15.g2"}`, "", false},
@@ -290,7 +292,7 @@ func TestLanesRunACardDealtAgainAtItsGeneration(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			dir := cardDirFixture(t, nil, []string{"c"}, nil)
-			require.NoError(t, os.WriteFile(filepath.Join(dir, "inbox", "QUEUE.json"), []byte(`{"tasks":[`+tc.task+`]}`), 0o600))
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "inbox", "QUEUE.json"), []byte(`{"version":2,"current":{"c":{"gen":2,"job":"c~15.g2"}},"tasks":[`+tc.task+`]}`), 0o600))
 			job := filepath.Join(dir, "inbox", "c~15.g2")
 			require.NoError(t, os.MkdirAll(job, 0o755))
 			require.NoError(t, os.WriteFile(filepath.Join(job, "BRIEF.md"), []byte("new generation"), 0o600))
@@ -320,7 +322,7 @@ func TestLanesUseGenerationJobsBeforeTheFirstClear(t *testing.T) {
 	job := filepath.Join(dir, "inbox", "c.w1.g2")
 	require.NoError(t, os.MkdirAll(job, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(job, "BRIEF.md"), []byte("work"), 0o600))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "inbox", "QUEUE.json"), []byte(`{"tasks":[{"id":"c.w1","gen":2,"job":"c.w1.g2"}]}`), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "inbox", "QUEUE.json"), []byte(`{"version":2,"current":{"c.w1":{"gen":2,"job":"c.w1.g2"}},"tasks":[{"id":"c.w1","gen":2,"job":"c.w1.g2"}]}`), 0o600))
 	c, found, err := NextCard(dir, func(Card) bool { return false })
 	require.NoError(t, err)
 	require.True(t, found)
@@ -335,7 +337,7 @@ func TestNextCardReadsCardAtHerGeneration(t *testing.T) {
 	t.Parallel()
 	dir := cardDirFixture(t, nil, []string{"c"}, nil)
 	queue := filepath.Join(dir, "inbox", "QUEUE.json")
-	require.NoError(t, os.WriteFile(queue, []byte(`{"tasks":[{"id":"c","state":"queued","gen":2,"job":"c~15.g2"}]}`), 0o600))
+	require.NoError(t, os.WriteFile(queue, []byte(`{"version":2,"current":{"c":{"gen":2,"job":"c~15.g2"}},"tasks":[{"id":"c","state":"queued","gen":2,"job":"c~15.g2"}]}`), 0o600))
 	for _, job := range []string{"c~15.g2", "c~16.g2", "c~15.g3"} {
 		in := filepath.Join(dir, "inbox", job)
 		require.NoError(t, os.MkdirAll(in, 0o755))
@@ -352,13 +354,11 @@ func TestNextCardReadsCardAtHerGeneration(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, found, "the missing assignment cannot fall back to generation 1, generation 3 or epoch 16")
 
-	// Older producers also wrote a bare task list without generation or job.
+	// Older producers also wrote a bare task list without an ownership snapshot.
 	require.NoError(t, os.WriteFile(queue, []byte(`[{"id":"c","state":"queued"}]`), 0o600))
-	c, found, err = NextCard(dir, func(Card) bool { return false })
+	_, found, err = NextCard(dir, func(Card) bool { return false })
 	require.NoError(t, err)
-	require.True(t, found)
-	assert.Equal(t, filepath.Join(dir, "inbox", "c~15", "BRIEF.md"), c.Brief)
-	assert.Equal(t, filepath.Join(dir, "outbox", "c~15"), c.Outbox)
+	assert.False(t, found, "a historical list cannot authorize execution")
 }
 
 // docs/FRIENDS.md: giving up an older assignment never suppresses a new generation.
@@ -369,7 +369,7 @@ func TestLanesRetryANewGenerationAfterGivingUpTheOldJob(t *testing.T) {
 		job := filepath.Join(dir, "inbox", "c1~15.g2")
 		require.NoError(t, os.MkdirAll(job, 0o755))
 		require.NoError(t, os.WriteFile(filepath.Join(job, "BRIEF.md"), []byte("work"), 0o600))
-		require.NoError(t, os.WriteFile(filepath.Join(dir, "inbox", "QUEUE.json"), []byte(`{"tasks":[{"id":"c1","state":"queued","gen":2,"job":"c1~15.g2"}]}`), 0o600))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "inbox", "QUEUE.json"), []byte(`{"version":2,"current":{"c1":{"gen":2,"job":"c1~15.g2"}},"tasks":[{"id":"c1","state":"queued","gen":2,"job":"c1~15.g2"}]}`), 0o600))
 		// each turn ends in a refused permission, an attempt that counts (a run that exits 0 with no
 		// report is a harness fault and counts none: lane_path_test.go)
 		h := &lanesHarness{dir: dir, active: map[string]int{}, reject: map[string]string{"c1": "Permission to read /elsewhere was auto-rejected"}}

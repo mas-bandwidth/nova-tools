@@ -79,7 +79,7 @@ func newRig(t *testing.T, names ...string) *rig {
 func (r *rig) world() world {
 	return world{
 		stepBeat: true,
-		checkGo: func(f func()) { f() }, // fake-clock checks complete before the clock advances again
+		checkGo:  func(f func()) { f() }, // fake-clock checks complete before the clock advances again
 		getenv:   func(k string) string { return r.env[k] },
 		open: func(context.Context, string) (bus.Store, func(), error) {
 			if r.store.Fail != nil {
@@ -287,10 +287,12 @@ func TestStatusReadsTheThreeFiles(t *testing.T) {
 	require.NoError(t, friend.WriteStatus(state, friend.Status{Friend: "bob", Harness: "opencode", At: start, Seat: "ada", LastPing: start.Add(-time.Minute), Connection: friend.Connected, Challenge: friend.Challenged, Nonce: "n1", LastDaemonPong: start.Add(-30 * time.Second), Beats: 7, Width: 4, Delivered: 2, BeatError: "the sprint server at 127.0.0.1:6390 did not answer"}))
 	require.NoError(t, friend.WritePong(state, friend.Pong{Nonce: "n0", At: start.Add(-2 * time.Minute), Queue: 3, Working: 1, Width: 8}))
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, "inbox"), 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "inbox", "QUEUE.json"), []byte(`{"tasks":[{"id":"a","state":"queued"},{"id":"b","state":"working"}]}`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "inbox", "QUEUE.json"), []byte(`{"version":2,"current":{"a":{"gen":1,"job":"a~15"},"b":{"gen":1,"job":"b~15"}},"tasks":[{"id":"a","state":"queued","gen":1,"job":"a~15"},{"id":"b","state":"working","gen":1,"job":"b~15"}]}`), 0o644))
 	cli.Do(t, "status", "--as", "bob", "--dir", dir).Exit(0).
 		Out("STATUS OK daemon=up harness=opencode status_age=1s connection=connected seat=ada last_ping=2026-10-04T02:59:00Z ping_age=1m1s challenge=challenged nonce=n1 last_pong=2026-10-04T02:58:00Z session_pong_age=2m1s daemon_pong_age=31s pongs=0 queue=1 working=1 width=8 beats=7 last_beat=- delivered=2 envelope=0 envelope_bytes=0 session=- mode=-",
 			"NOTE the last beat failed: the sprint server at 127.0.0.1:6390 did not answer")
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "inbox", "QUEUE.json"), []byte(`{"tasks":[{"id":"old","state":"working"}]}`), 0o644))
+	cli.Do(t, "status", "--as", "bob", "--dir", dir).Exit(0).Out("queue=- working=-", "NOTE queue counts are unknown until the coordinator writes a current assignment snapshot")
 	r.now = start.Add(friend.DaemonStale)
 	cli.Do(t, "status", "--as", "bob", "--dir", dir).Exit(0).Out("STATUS OK daemon=down")
 }
@@ -538,7 +540,7 @@ func TestAClaudeOneShotLaneRunsWalledWithTheRowsConfigDir(t *testing.T) {
 				w.sleep = func(context.Context, time.Duration) { synctest.Wait() }
 				dir := t.TempDir()
 				require.NoError(t, os.MkdirAll(filepath.Join(dir, "inbox", "c1~15"), 0o755))
-				require.NoError(t, os.WriteFile(filepath.Join(dir, "inbox", "QUEUE.json"), []byte(`{"tasks":[{"id":"c1","state":"queued"}]}`), 0o644))
+				require.NoError(t, os.WriteFile(filepath.Join(dir, "inbox", "QUEUE.json"), []byte(`{"version":2,"current":{"c1":{"gen":1,"job":"c1~15"}},"tasks":[{"id":"c1","state":"queued","gen":1,"job":"c1~15"}]}`), 0o644))
 				require.NoError(t, os.WriteFile(filepath.Join(dir, "inbox", "c1~15", "BRIEF.md"), []byte("RESULT: c1\n"), 0o644))
 				var mu sync.Mutex
 				var walls []string // the config dir of each wall a lane's child ran in
@@ -765,7 +767,7 @@ func TestRunInOneShotModeOpensALaneAndHandsItTheCard(t *testing.T) {
 		w.sleep = func(context.Context, time.Duration) { synctest.Wait() }
 		dir := t.TempDir()
 		require.NoError(t, os.MkdirAll(filepath.Join(dir, "inbox", "c1~15"), 0o755))
-		require.NoError(t, os.WriteFile(filepath.Join(dir, "inbox", "QUEUE.json"), []byte(`{"tasks":[{"id":"c1","state":"queued"}]}`), 0o644))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "inbox", "QUEUE.json"), []byte(`{"version":2,"current":{"c1":{"gen":1,"job":"c1~15"}},"tasks":[{"id":"c1","state":"queued","gen":1,"job":"c1~15"}]}`), 0o644))
 		require.NoError(t, os.WriteFile(filepath.Join(dir, "inbox", "c1~15", "BRIEF.md"), []byte("RESULT: c1\n"), 0o644))
 		require.NoError(t, os.WriteFile(filepath.Join(dir, "AGENTS.md"), []byte("I am bob.\n"), 0o644))
 		require.NoError(t, os.Symlink(dir, filepath.Join(r.home, "bob-working")))
