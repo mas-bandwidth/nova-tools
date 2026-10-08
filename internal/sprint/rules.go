@@ -292,6 +292,8 @@ func ruleFailed(s *Snapshot, a *RuleAnswer) {
 	case mindCard(pr) != "":
 		left(a, mindCard(pr))
 		return
+	case parkOnOpenBound(s, a, pr):
+		return
 	case holdsFor(s, pr) != "":
 		ruleHoldNeed(s, a, pr, holdsFor(s, pr))
 		return
@@ -335,6 +337,11 @@ func ruleBound(s *Snapshot, a *RuleAnswer) {
 	}
 	if why := mindCard(pr); why != "" {
 		left(a, why)
+		return
+	}
+	if len(capJudgments(s, pr.ID)) > 0 {
+		// the finish step raised the bound's judgment: parked on it, whatever the bound reads
+		parkAnswer(a, pr, boundFinding(s, pr, BriefBound{}), parkOnBoundWhy)
 		return
 	}
 	if bb, ok := AtBriefBound(pr, "", s.ReworkBound(pr.Row)); ok {
@@ -535,7 +542,7 @@ func ruleBrief(s *Snapshot, a *RuleAnswer) {
 	case pr.F(FieldBriefDefect) != "":
 		left(a, "a brief defect since "+pr.F(FieldBriefDefect)+": brief or drop, a mind's")
 	default:
-		parkAnswer(a, pr, pr.F("finding"), "the brief is wrong, not the worker: parked in fix, held for a mind")
+		parkAnswer(a, pr, boundFinding(s, pr, BriefBound{}), "the brief is wrong, not the worker: parked in fix, held for a mind")
 	}
 }
 
@@ -728,31 +735,68 @@ func TickRuleLate(s *Snapshot, r TickReq) (Plan, int) {
 	return p, 0
 }
 
-// TickRuleBrief parks the cards a rule answers ActPark (the brief's bound: one judgment per
-// card, its fix the BRIEF line) and marks the brief defects (ActMark).
+// TickRuleBrief parks the cards a rule answers ActPark (the brief's bound: the card stays
+// where it is, in fix, its fix the BRIEF line) and marks the brief defects (ActMark), one
+// unit per card however many of its judgments answer so. A park keeps one judgment per card,
+// the bound's: a finish's judgment it answers (work came back failed, a reader found it
+// broken) is closed, the bound's judgment open on the card (NBriefWrong, or the tick's NBound
+// at the brief's bound) is kept and its text prefixed `brief defect: `, and when neither is
+// open the park raises the bound's judgment itself (parkJudgment), so a parked card never
+// waits with no judgment at all and never with two.
 func TickRuleBrief(s *Snapshot, r TickReq) (Plan, int) {
 	var p Plan
-	updated := map[string]bool{}
+	var order []string
+	answers := map[string][]RuleAnswer{}
 	for _, a := range acting(s, r, ActMark, ActPark) {
-		pr := s.Work.Placed(a.Card)
-		set := map[string]string{FieldBriefDefect: stamp(s.Now), FieldRuleAnswer: RuleBriefDefect + ": " + a.Act + " at " + stamp(s.Now)}
-		if a.fix != "" {
-			// the card is parked in fix: the seat and its next reader read the BRIEF line
-			set[FieldFix] = a.fix
+		if _, ok := answers[a.Card]; !ok {
+			order = append(order, a.Card)
 		}
-		u := Unit{Key: pr.ID, Stream: pr.Row,
-			Changes: []Change{change(Work, setEntry(pr, set))},
-			Moved:   pr.ID + " " + a.Act + " by rule " + RuleBriefDefect}
-		if a.Act == ActPark && a.open.Note.Type != NBriefWrong {
-			// the finish's judgment is closed by the park: one judgment per card, the bound's
-			u.Closes = append(u.Closes, a.open)
+		answers[a.Card] = append(answers[a.Card], a)
+	}
+	updated := map[string]bool{}
+	for _, id := range order {
+		pr := s.Work.Placed(id)
+		if pr == nil {
+			continue
 		}
+		set := map[string]string{FieldBriefDefect: stamp(s.Now)}
+		u := Unit{Key: pr.ID, Stream: pr.Row}
+		var park *RuleAnswer
+		for i := range answers[id] {
+			a := &answers[id][i]
+			if u.Moved == "" {
+				u.Moved = pr.ID + " " + a.Act + " by rule " + RuleBriefDefect
+				set[FieldRuleAnswer] = RuleBriefDefect + ": " + a.Act + " at " + stamp(s.Now)
+			}
+			n := a.open.Note
+			if a.Act == ActPark {
+				if park == nil {
+					park = a
+				}
+				if a.fix != "" && set[FieldFix] == "" {
+					// the card is parked in fix: the seat and its next reader read the BRIEF line
+					set[FieldFix] = a.fix
+				}
+				if n.Type != NBriefWrong && n.Type != NBound {
+					// the finish's judgment is closed by the park: one judgment per card, the bound's
+					u.Closes = append(u.Closes, a.open)
+					continue
+				}
+			}
+			if !updated[n.ID] && !strings.HasPrefix(n.What, "brief defect: ") {
+				updated[n.ID] = true
+				n.What = "brief defect: " + n.What
+				p.Updates = append(p.Updates, n)
+			}
+		}
+		if park != nil && !boundOpen(s, pr) {
+			// no bound's judgment is open (a rework bound under the attempt cap, or the second
+			// identical failure read off a failed finish): the park raises the one judgment the
+			// seat reads, brief or drop
+			u.Notes = append(u.Notes, parkJudgment(s, pr, set[FieldFix], park.Why))
+		}
+		u.Changes = []Change{change(Work, setEntry(pr, set))}
 		p.Units = append(p.Units, u)
-		if n := a.open.Note; !updated[n.ID] && !strings.HasPrefix(n.What, "brief defect: ") {
-			updated[n.ID] = true
-			n.What = "brief defect: " + n.What
-			p.Updates = append(p.Updates, n)
-		}
 	}
 	return p, 0
 }
