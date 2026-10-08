@@ -91,6 +91,19 @@ func fairStreams(t *testing.T, count, width int) {
 			require.Equal(t, before, after, "the indexes across a stop: %s, then %s", before, after)
 			require.True(t, strings.HasPrefix(before, sprint.PropStreamIndex+"="), "the indexes across a stop: %s, then %s", before, after)
 			require.False(t, strings.HasPrefix(before, sprint.PropStreamIndex+"= "), "the indexes across a stop: %s, then %s", before, after)
+			for _, row := range append(append([]string(nil), members...), "reader-a", "reader-b", "reader-c", "reader-d") {
+				var q struct{ Cards []queueCard }
+				ta.json("queue --as "+row, &q)
+				var active []string
+				for _, card := range q.Cards {
+					if card.Col == "working" || card.Col == "reading" {
+						active = append(active, card.ID+"@"+strconv.Itoa(max(card.Gen, 1)))
+					}
+				}
+				if len(active) > 0 {
+					ta.ok("stop-return --as " + row + " --epoch 0 --reason 'simulation children stopped' " + strings.Join(active, " "))
+				}
+			}
 			ta.ok("start")
 		}
 		if strings.Contains(play, "every stream has landed") {

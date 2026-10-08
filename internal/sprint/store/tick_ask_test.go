@@ -65,7 +65,7 @@ func opPrimaries(op OpRecord) []string {
 }
 
 // inReview is a harness whose n primaries are in review, none asked yet: the
-// next tick's ask asks them.
+// next tick's ask asks them. Worker takes and reports require RUNNING.
 func inReview(t *testing.T, n int) *harness {
 	t.Helper()
 	h := newHarness(t)
@@ -73,12 +73,9 @@ func inReview(t *testing.T, n int) *harness {
 	h.startMachine()
 	h.machine()
 	h.st.CheckTwin = nil // the racing writers commit from inside the ask's write
-	// the workers finish while the machine is stopped, so no tick asks before
-	// the one under test
-	h.stopMachine()
+	// No second tick runs between finish and the ask under test.
 	h.work("m1")
 	h.work("m2")
-	h.startMachine()
 	require.Len(t, h.snap().Work.Column(sprint.Review), n, "the primaries in review before the tick")
 	return h
 }

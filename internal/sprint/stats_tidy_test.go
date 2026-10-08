@@ -58,7 +58,12 @@ func (r *conflictRig) landOnM1(n int) {
 		r.now = r.now.Add(time.Minute)
 		r.mu.Unlock()
 		r.beat()
-		r.landWithCost("s1", fmt.Sprintf("s1-%d", i))
+		id := fmt.Sprintf("s1-%d", i)
+		r.landWithCost("s1", id)
+		// RUNNING landing queues its Work move; drain it before the next
+		// card so tidy sees every completed primary on its landed cell.
+		r.must(store.DrainStep())
+		require.Equal(r.t, sprint.Landed, r.snap().StateOf(id), "%s landed", id)
 	}
 }
 
@@ -76,7 +81,7 @@ func (r *conflictRig) archiveOf(key string) store.StatsArchive {
 func TestStatsTidyZeroesCountersAndKeepsTheWork(t *testing.T) {
 	t.Parallel()
 	r := newConflictRig(t)
-	_, _, _, err := r.st.SetMachine(r.ctx, false)
+	_, _, _, err := r.st.SetMachine(r.ctx, true)
 	require.NoError(t, err)
 	// thirteen s1 cards landed on m1, priced: their work cards are history
 	r.landOnM1(13)
@@ -90,6 +95,7 @@ func TestStatsTidyZeroesCountersAndKeepsTheWork(t *testing.T) {
 	}
 	wc := r.snap().Fleet.Card(r.snap().Work.Card("s2-2").F("work"))
 	r.must(store.FinishStep(sprint.FinishReq{Sel: sprint.Sel{IDs: []string{wc.ID}}, Gens: map[string]int{wc.ID: wc.Int("gen")}}))
+	r.must(store.DrainStep())
 	// an hour of RUNNING on, and half a second: no finish is within the keep window, which
 	// is running time (a stopped machine's hour would keep every finish)
 	_, _, _, err = r.st.SetMachine(r.ctx, true)
@@ -298,7 +304,7 @@ func (o onTidy) SetKey(ctx context.Context, name, value string) error {
 func TestATidyWhoseCardMovedKeepsItsArchive(t *testing.T) {
 	t.Parallel()
 	r := newConflictRig(t)
-	_, _, _, err := r.st.SetMachine(r.ctx, false)
+	_, _, _, err := r.st.SetMachine(r.ctx, true)
 	require.NoError(t, err)
 	r.landOnM1(12)
 	_, _, _, err = r.st.SetMachine(r.ctx, true)

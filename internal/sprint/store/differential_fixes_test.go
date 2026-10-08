@@ -418,7 +418,8 @@ func TestTheModelsBriefBoundIsTheEngines(t *testing.T) {
 			}
 			for _, id := range refmodel.Keys(h.model.Reads) {
 				if rc := h.model.Reads[id]; rc.Primary == "x" && rc.Place == refmodel.Asked {
-					do(dAction{Kind: "read", Reader: rc.Reader, Card: id, OK: true})
+					do(dAction{Kind: "read", Reader: rc.Reader, Card: id, Gen: max(h.readGen[id], 1), OK: true})
+					require.Equal(t, refmodel.OK, h.model.Reads[id].Place, "the exact-generation verdict must close %s", id)
 				}
 			}
 		}
