@@ -411,7 +411,8 @@ func (a *app) listen(addr, redis string, stdout io.Writer) error {
 
 // friendBeatFlags are the flags of a friend's beat the server runs, each with the shape of
 // its value: what her machinery reports of her work (friend beat), and her daemon's word
-// that she is down until a time and why (--until, --reason: her harness at its limit).
+// that she is down until a time and why (--until, --reason: her harness at its limit), or
+// that the session it delivers into is gone (--target-invalid, --target-state).
 var friendBeatFlags = map[string]func(string) bool{
 	"--running": runningIDs,
 	"--working": wholeAtLeast(0),
@@ -427,6 +428,9 @@ var friendBeatFlags = map[string]func(string) bool{
 	"--run":    sprint.ValidID,
 	"--until":  rfc3339,
 	"--reason": oneLineText,
+	// the gone session's id and the state found
+	"--target-invalid": oneLineText,
+	"--target-state":   oneLineText,
 }
 
 // oneLineText is the shape of a short text on one line: not empty, no control character.

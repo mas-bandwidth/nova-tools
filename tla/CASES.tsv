@@ -455,3 +455,8 @@ MCLandPassBrokenStopCollide.cfg	MCLandPass.tla	invariant	RefusedStaysMerging	ign
 MCLandPassBrokenRevert.cfg	MCLandPass.tla	action	RefusalTouchesNoOtherStream	ignore-terminal	landpass	required	-
 MCLandPassBrokenCacheDisjoint.cfg	MCLandPass.tla	invariant	CachedIsGreen	ignore-terminal	landpass	required	-
 MCLandPassBrokenPushEmpty.cfg	MCLandPass.tla	invariant	BaseKeepsLandings	ignore-terminal	landpass	required	-
+MCDeliveryTarget.cfg	MCDeliveryTarget.tla	pass	-	ignore-terminal	deliverytarget	required	-
+MCDeliveryTargetBrokenRetryUnchecked.cfg	MCDeliveryTarget.tla	invariant	NeverIntoGone	ignore-terminal	deliverytarget	required	-
+MCDeliveryTargetBrokenRebindKeepsProof.cfg	MCDeliveryTarget.tla	invariant	RunsOnItsOwnProof	ignore-terminal	deliverytarget	required	-
+MCDeliveryTargetBrokenRowIgnored.cfg	MCDeliveryTarget.tla	invariant	NeverIntoSuperseded	ignore-terminal	deliverytarget	required	-
+MCDeliveryTargetBrokenProveFirst.cfg	MCDeliveryTarget.tla	invariant	ProofFollowsTheRow	ignore-terminal	deliverytarget	required	-

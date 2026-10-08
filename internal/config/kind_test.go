@@ -93,7 +93,7 @@ func TestTheFriendRowIsWhatSomeoneDecidesForHer(t *testing.T) {
 
 	friend, _ := Lookup(KindFriend)
 	scopedGot97 := strings.Join(friend.FieldNames(), ",")
-	require.Equal(t, "slots,tiers,roles,width,mode,config_dir,token_cap", scopedGot97, "friend fields %s, want slots,tiers,roles,width,mode,config_dir,token_cap", scopedGot97)
+	require.Equal(t, "slots,tiers,roles,width,mode,config_dir,token_cap,session", scopedGot97, "friend fields %s, want slots,tiers,roles,width,mode,config_dir,token_cap,session", scopedGot97)
 	for _, f := range friend.Fields {
 		scopedWant102 := f.Name == "slots" || f.Name == "tiers"
 		assert.Equal(t, scopedWant102, f.Required, "--%s required=%v, want %v", f.Name, f.Required, scopedWant102)
@@ -737,6 +737,29 @@ func TestAFriendRowsConfigDirIsAbsoluteWhenSet(t *testing.T) {
 		t.Run(tc.dir, func(t *testing.T) {
 			t.Parallel()
 			err := checkFriend(Row{Name: "amy", Fields: map[string]string{"config_dir": tc.dir}})
+			if tc.want == "" {
+				assert.NoError(t, err)
+			} else {
+				assert.ErrorContains(t, err, tc.want)
+			}
+		})
+	}
+}
+
+// A friend row's session is optional, and one word when set: her beat answers it
+// as row_session=<id>, a word of a space-separated line.
+func TestAFriendRowsSessionIsOneWordWhenSet(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ session, want string }{
+		{"", ""},
+		{"01a10e84-0000-4000-8000-000000000001", ""},
+		{"%12", ""},
+		{"two words", "want --session <id>"},
+		{"tab\there", "want --session <id>"},
+	} {
+		t.Run(tc.session, func(t *testing.T) {
+			t.Parallel()
+			err := checkFriend(Row{Name: "amy", Fields: map[string]string{"session": tc.session}})
 			if tc.want == "" {
 				assert.NoError(t, err)
 			} else {
