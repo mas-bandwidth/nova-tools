@@ -165,6 +165,9 @@ type SeatCheckMeasures struct {
 	Push      PushM             `json:"push,omitzero"`
 	Host      string            `json:"host"`
 	Errs      map[string]string `json:"errs,omitempty"`
+	// Policy is the policy numbers nova-config applied: loop_silence and member_down_after
+	// (policy.go); nil is their defaults.
+	Policy PolicyValues `json:"policy,omitempty"`
 }
 
 // SeatCheckLine is one line of the check: the thing, up or DOWN, its facts in
@@ -240,8 +243,8 @@ const LoopSilence = 15 * time.Second
 // MemberDownAfter is how long a fleet member goes without a beat before DOWN.
 const MemberDownAfter = 3 * 15 * time.Second
 
-func memberIsDown(m MemberM) bool {
-	return m.Status == "down" || (m.Status != "held" && (!m.Beaten || m.Age > MemberDownAfter))
+func memberIsDown(m MemberM, after time.Duration) bool {
+	return m.Status == "down" || (m.Status != "held" && (!m.Beaten || m.Age > after))
 }
 
 // NotMeasured is what the dashboard, bus and friend agents say when the check
@@ -262,6 +265,8 @@ func MemberLoopRecord(member string) string { return "member-" + member }
 // JudgeSeatCheck turns the measures into a SeatCheckReport according to docs/SPEC-SPRINT.md.
 func JudgeSeatCheck(m SeatCheckMeasures, now time.Time) SeatCheckReport {
 	r := SeatCheckReport{At: now, Measures: m}
+	policy := &Snapshot{Policy: m.Policy}
+	silence, downAfter := policy.PolicyDuration(PolicyLoopSilence), policy.PolicyDuration(PolicyMemberDownAfter)
 	add := func(l SeatCheckLine) {
 		if !l.Up {
 			r.Down++
@@ -345,8 +350,8 @@ func JudgeSeatCheck(m SeatCheckMeasures, now time.Time) SeatCheckReport {
 			add(SeatCheckLine{Thing: SeatCheckLoop, Facts: []string{"why=" + quoteSeatCheck("the store did not answer: the heartbeat was not read")}, Remedy: kick})
 		case !t.Ticked:
 			add(SeatCheckLine{Thing: SeatCheckLoop, Facts: []string{"tick=never", "why=" + quoteSeatCheck("no heartbeat: run --listen has not ticked this store")}, Remedy: kick})
-		case t.Age > LoopSilence:
-			add(SeatCheckLine{Thing: SeatCheckLoop, Facts: []string{"tick_age=" + formatAge(t.Age), "ticks=" + fmt.Sprint(t.Ticks), "why=" + quoteSeatCheck("silent past "+formatAge(LoopSilence))}, Remedy: kick})
+		case t.Age > silence:
+			add(SeatCheckLine{Thing: SeatCheckLoop, Facts: []string{"tick_age=" + formatAge(t.Age), "ticks=" + fmt.Sprint(t.Ticks), "why=" + quoteSeatCheck("silent past "+formatAge(silence))}, Remedy: kick})
 		case t.Failures > 0:
 			add(SeatCheckLine{Thing: SeatCheckLoop, Facts: []string{"tick_age=" + formatAge(t.Age), "ticks=" + fmt.Sprint(t.Ticks), "failures=" + fmt.Sprint(t.Failures), "why=" + quoteSeatCheck(t.Error)}, Remedy: "nova-sprint log --max 20"})
 		default:
@@ -360,7 +365,7 @@ func JudgeSeatCheck(m SeatCheckMeasures, now time.Time) SeatCheckReport {
 		var down, remedies []string
 		for _, mm := range m.Fleet {
 			switch {
-			case memberIsDown(mm):
+			case memberIsDown(mm, downAfter):
 				down = append(down, mm.Name+":"+formatBeatAge(mm.Beaten, mm.Age))
 				remedies = append(remedies, "nova-config loop show "+MemberLoopRecord(mm.Name))
 			case mm.Status == "held":

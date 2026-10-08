@@ -340,6 +340,15 @@ var AnswerRules = []string{"base-gate", "bound", "brief-defect", "conflict", "fa
 // refuses a card under it, and empty asks and reports only.
 const FieldDecideBriefBar = "decide_brief_bar"
 
+// sprintFields is the sprint row's fields: who coordinates, the bars and the rules, then
+// every policy number (SprintPolicies), a text field each, empty for its default.
+func sprintFields(fields []Field) []Field {
+	for _, p := range SprintPolicies {
+		fields = append(fields, Field{Name: p.Name, Type: TypeText, Help: p.Help()})
+	}
+	return fields
+}
+
 // checkSprint holds the decide read's bars together: both set, as probabilities with the
 // review bar at most the bounce bar (decide.ParseBars), or both empty (no decide read);
 // the landed score's bar a probability, or empty (no judgment); the gate's each a
@@ -350,6 +359,15 @@ const FieldDecideBriefBar = "decide_brief_bar"
 func checkSprint(r Row) error {
 	if _, err := decide.ParseBriefBar(r.Fields[FieldDecideBriefBar]); err != nil {
 		return fmt.Errorf("sprint: %v", err)
+	}
+	var policy []string
+	for _, pol := range SprintPolicies {
+		if err := pol.Check(r.Fields[pol.Name]); err != nil {
+			policy = append(policy, err.Error())
+		}
+	}
+	if len(policy) > 0 {
+		return fmt.Errorf("sprint: %s", strings.Join(policy, "; "))
 	}
 	bounce, hasB := r.Fields[FieldDecideBounce]
 	review, hasR := r.Fields[FieldDecideReview]
@@ -465,8 +483,8 @@ var Kinds = []*Kind{
 		Name:      KindSprint,
 		Table:     "sprint",
 		Singleton: true,
-		Doc:       "the one row of sprint-global facts: which friend coordinates and the decide_* bars, each a probability in [0,1]; nova-config sprint set -h says what each bar decides",
-		Fields: []Field{
+		Doc:       "the one row of sprint-global facts: which friend coordinates, the decide_* bars, each a probability in [0,1], and the sprint's policy numbers, each empty for its default; nova-config sprint set -h says what each bar decides and each number's range",
+		Fields: sprintFields([]Field{
 			{Name: "coordinator", Type: TypeRef, Ref: KindFriend, Help: "the friend who holds the coordinator role (a friend row), or empty; set it to hand over"},
 			{Name: FieldDecideBounce, Type: TypeDecimal, Default: "0.5", Help: "the decide read's bounce bar: a flash card whose first read gives p(defect) at or above it is bounced with the read's finding; a probability, at least --decide_review; 0.5 (the default); empty, with --decide_review empty, turns the decide read off"},
 			{Name: FieldDecideReview, Type: TypeDecimal, Default: "0.3", Help: "the decide read's review bar: below it the card lands with no model read, and from it up to --decide_bounce it goes to a strings read; a probability; 0.3 (the default)"},
@@ -479,7 +497,7 @@ var Kinds = []*Kind{
 			{Name: FieldDecideJudgment, Type: TypeDecimal, Help: "the judgment bar: nova-sprint answer applies the verb the judgment decision chose when its probability is at or above it, and lists it for the coordinator below it; a probability; empty (the default) applies nothing: every decision is recorded and what a bar would apply is listed; 0.8 is a starting point measured on 100 of the coordinator's own judgments (docs/SPEC-NOVA-DECIDE.md section 13), not an independent calibration"},
 			{Name: FieldDecideBriefBar, Type: TypeDecimal, Help: "the brief bar: nova-sprint add asks the brief decision of each card and refuses a card whose p(converges) is under it, naming the questions it failed; a probability; empty (the default) asks and reports only. The decision is uncalibrated (AUC 0.600 on 234 review labels, docs/SPEC-NOVA-DECIDE.md section 14): leave it empty until calibrate on the brief record's own outcomes supports a bar"},
 			{Name: FieldAnswerRulesOff, Type: TypeList, Enum: AnswerRules, Help: "the rules the machine does not answer judgments by: comma list of " + strings.Join(AnswerRules, ", ") + "; empty (the default) answers by every rule: failed and no-result work redealt then raised a tier, a card at its bound raised a tier (heavy to a friend), a late card waited once or returned and redealt, a conflict in a file no ledger owns returned, redone on the tip and resumed, the same finding twice marked a brief defect, the base tree gate retried before a stream stops, a friend's card she has not started past its bound taken back and dealt again, failed work whose report HOLDs for a card not landed waiting for it, a reader's first finding reworked as the fix, and a late read asked of another reader once an attempt (docs/SPEC-SPRINT.md section 8, answered by rule)"},
-		},
+		}),
 		Check: checkSprint,
 	},
 	{

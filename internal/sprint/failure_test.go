@@ -77,7 +77,7 @@ func TestIdenticalEndsReadsTheLastTwoTakesOfTheCard(t *testing.T) {
 			}
 			wc := &Card{ID: "p.w1", Fields: f}
 			assert.Equal(t, tc.class, identicalEnds(wc))
-			assert.Equal(t, tc.class != "" || tc.redeals >= MaxRedeals, redealBound(wc))
+			assert.Equal(t, tc.class != "" || tc.redeals >= MaxRedeals, redealBound(&Snapshot{}, wc))
 		})
 	}
 }

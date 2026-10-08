@@ -80,7 +80,7 @@ func friendLevel(s *Snapshot, r FriendLevelReq, dealt, dealtWorking map[string]i
 	// placed one straight into working
 	lanes := func(f string) int { return width[f] - held[f] }
 	for _, f := range seats {
-		room[f.Name], width[f.Name] = friendRoom(f)
+		room[f.Name], width[f.Name] = friendRoom(s, f)
 		row := FriendRow(f.Name)
 		held[f.Name] = friendLoad(s, f.Name) + dealt[f.Name]
 		var unstarted []*Card

@@ -90,7 +90,10 @@ func PriorityOfBrief(brief string) (level, why string) {
 // CardPriority is the card's level and where it comes from: reader for a read card ("read";
 // its inherited level, the higher of reader and its primary's, is ReadPriority);
 // its own set level ("set"); critical by its weight ("computed"); else normal ("default").
-func CardPriority(c *Card) (level, source string) {
+func CardPriority(c *Card) (level, source string) { return CardPriorityIn(nil, c) }
+
+// CardPriorityIn uses the effective critical_behind value in a snapshot.
+func CardPriorityIn(s *Snapshot, c *Card) (level, source string) {
 	if c == nil {
 		return PriorityNormal, "default"
 	}
@@ -100,7 +103,7 @@ func CardPriority(c *Card) (level, source string) {
 	if v := c.F(FieldPriority); v != "" {
 		return v, "set"
 	}
-	if IsCritical(c) {
+	if s.IsCritical(c) {
 		return PriorityCritical, "computed"
 	}
 	return PriorityNormal, "default"
@@ -108,8 +111,8 @@ func CardPriority(c *Card) (level, source string) {
 
 // priorityOnWork writes the primary's level on the work card a deal creates for it, when it
 // is not normal, so a worker's queue shows it (queue) without reading the primary.
-func priorityOnWork(fields map[string]string, pr *Card) {
-	if l, _ := CardPriority(pr); l != PriorityNormal {
+func priorityOnWork(s *Snapshot, fields map[string]string, pr *Card) {
+	if l, _ := CardPriorityIn(s, pr); l != PriorityNormal {
 		fields[FieldPriority] = l
 	}
 }
@@ -301,7 +304,7 @@ func SetPriority(s *Snapshot, r PriorityReq) Plan {
 			p.refuse(id, "no such card on the table; run: nova-sprint card "+id)
 			continue
 		}
-		was, _ := CardPriority(c)
+		was, _ := CardPriorityIn(s, c)
 		if c.F(FieldPriority) == r.Level {
 			p.Said = append(p.Said, id+" priority "+r.Level+" already; no change")
 			continue
@@ -326,7 +329,7 @@ const CriticalByWeight = "critical (by weight, not yet ordered)"
 func PriorityCounts(s *Snapshot) map[string][]string {
 	out := map[string][]string{}
 	for _, c := range openPrimaries(s) {
-		l, src := CardPriority(c)
+		l, src := CardPriorityIn(s, c)
 		if src == "computed" {
 			l = CriticalByWeight // shown, not yet ordered (cardRank)
 		}

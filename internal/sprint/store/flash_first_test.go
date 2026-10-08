@@ -84,7 +84,7 @@ func TestABriefThatSaysProStartsOnPro(t *testing.T) {
 			assert.Equal(t, tc.tier, h.packetOf(wc.ID).Tier, "the packet hands the child its tier")
 			pr := h.snap().Work.Card("s1-1")
 			assert.Equal(t, tc.tier, pr.F(sprint.FieldTierNow), "the deal on a route writes the tier the card is on")
-			now, ceiling := sprint.CardTiers(pr)
+			now, ceiling := sprint.CardTiers(nil, pr)
 			assert.Equal(t, []string{tc.tier, tc.ceiling}, []string{now, ceiling})
 			assert.Contains(t, sprint.AttemptLine(wc), " tier="+tc.tier+" ")
 			h.clean("dealt on " + tc.tier)
@@ -124,7 +124,7 @@ func TestAProCardAfterItsFlashBoundIsRedealtOnPro(t *testing.T) {
 	assert.Zero(t, w2.Int("redeals"), "the new attempt starts its own bound")
 	assert.Empty(t, h.openOf(sprint.NBound), "no judgment below the ceiling")
 	assert.Zero(t, h.notesOf(sprint.NBound))
-	now, ceiling := sprint.CardTiers(pr)
+	now, ceiling := sprint.CardTiers(nil, pr)
 	assert.Equal(t, []string{"pro", "pro"}, []string{now, ceiling})
 	h.clean("escalated to pro")
 }

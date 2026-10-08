@@ -1,6 +1,7 @@
 package sprint
 
 import (
+	"cmp"
 	"fmt"
 	"math"
 	"sort"
@@ -52,6 +53,7 @@ func (l ReaderLoad) Lags() bool {
 type ReadersLag struct {
 	Review  int
 	Readers []ReaderLoad
+	Window  time.Duration // the window (readers_window); 0 is ReadersWindow
 }
 
 // ReadersBehind is whether the readers are behind, and the facts: a read has sat asked and
@@ -79,7 +81,7 @@ func ReadersFull(s *Snapshot) (string, bool) {
 			busy = append(busy, fmt.Sprintf("%s reads %d of width %d", l.Reader, l.Reading, l.Width))
 		}
 	}
-	return fmt.Sprintf("%d reads asked past %s wait on readers reading their whole width (%s): busy, not behind", full, ReadersWindow, strings.Join(busy, "; ")), true
+	return fmt.Sprintf("%d reads asked past %s wait on readers reading their whole width (%s): busy, not behind", full, cmp.Or(b.Window, ReadersWindow), strings.Join(busy, "; ")), true
 }
 
 // readersLoad is the readers' loads and the reads asked and not begun past the window on
@@ -112,7 +114,7 @@ func readersLoad(s *Snapshot) (b ReadersLag, late, full int) {
 			l.Reading++
 			continue
 		}
-		if t, err := time.Parse(time.RFC3339, c.F("asked")); err == nil && s.Now.Sub(t) >= ReadersWindow {
+		if t, err := time.Parse(time.RFC3339, c.F("asked")); err == nil && s.Now.Sub(t) >= s.PolicyDuration(PolicyReadersWindow) {
 			l.Late++
 		}
 	}
@@ -130,7 +132,7 @@ func readersLoad(s *Snapshot) (b ReadersLag, late, full int) {
 	if late+full == 0 {
 		return ReadersLag{}, 0, 0
 	}
-	b = ReadersLag{Review: len(s.Work.Column(Review))}
+	b = ReadersLag{Review: len(s.Work.Column(Review)), Window: s.PolicyDuration(PolicyReadersWindow)}
 	for _, l := range loads {
 		if l.Reading+l.Late > 0 {
 			b.Readers = append(b.Readers, *l)
@@ -160,7 +162,7 @@ func (b ReadersLag) What() string {
 	// the window, never a wait: the text changes with the facts, not the clock, so the tick
 	// rewrites it only when the facts change (notify, update)
 	return fmt.Sprintf("the readers are behind: review %d, reads asked and not begun past %s; the readers read %d of width %d (%s)",
-		b.Review, ReadersWindow, reading, width, strings.Join(parts, "; "))
+		b.Review, cmp.Or(b.Window, ReadersWindow), reading, width, strings.Join(parts, "; "))
 }
 
 // Decisions are the judgment's: reader up for each reader not up that holds reads, a

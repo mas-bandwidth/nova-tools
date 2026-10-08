@@ -1086,6 +1086,14 @@ func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickR
 	if err := pinned.readerStatesInto(ctx, &first); err != nil {
 		return last, err
 	}
+	// the policy numbers, read with the routes once a tick (the parts share the read):
+	// the friends' status and a part passed over on the first read plan with them too
+	var routes RouteCache
+	set, err := pinned.cached(ctx, &routes)
+	if err != nil {
+		return last, err
+	}
+	first.Policy = set.Bars.Policy
 	// the friends the deal may give a friend's card to and the level evens, read every
 	// tick while the roster has one (sprint.TickDeal, sprint.FriendLevel)
 	if req.Friends, err = pinned.friendSeats(ctx, &first, now); err != nil {
@@ -1097,7 +1105,7 @@ func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickR
 	if req.Sessions, err = pinned.FriendSessions(ctx); err != nil {
 		return last, err
 	}
-	t := &tickRun{st: st, ctx: ctx, res: res, req: req, at: at, snap: &first, queues: map[string]int{}, twin: twin, readers: first.ReaderStates}
+	t := &tickRun{st: st, ctx: ctx, res: res, req: req, at: at, snap: &first, queues: map[string]int{}, twin: twin, readers: first.ReaderStates, routes: routes}
 	defer func() { res.RouteTrips = t.routes.Trips }()
 	updates := st.Updates
 	if updates == nil {
@@ -2028,13 +2036,18 @@ func (st *Store) ShadowTick(ctx context.Context) (ShadowPlan, error) {
 	}
 	// a shadow tick wakes no friend: it writes nothing and sends nothing
 	req := sprint.TickReq{Who: sprint.MachineActor, Stopped: m.StoppedBetween, Beats: beats, Started: m.FirstStart(first.Cleared), AnswerRules: st.AnswerRules, IdleAlarm: st.IdleAlarm}
+	var routes RouteCache
+	set, err := ro.cached(ctx, &routes)
+	if err != nil {
+		return out, err
+	}
+	first.Policy = set.Bars.Policy
 	if req.Friends, err = ro.friendSeats(ctx, &first, now); err != nil {
 		return out, err
 	}
 	if req.Sessions, err = ro.FriendSessions(ctx); err != nil {
 		return out, err
 	}
-	var routes RouteCache
 	plan := func(table string, parts []sprint.TickPartDef) error {
 		for _, part := range parts {
 			view := &first

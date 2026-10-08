@@ -18,7 +18,7 @@ import (
 func (a *app) cmdServerSwitch(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("server switch")
 	rollback := fs.Bool("rollback", false, "roll back to previous binary, or enable automatic rollback on failed land in window")
-	windowStr := fs.String("window", "15m", "rollback window duration: if a land fails within this window, roll back")
+	windowStr := fs.String("window", "", "rollback window duration: if a land fails within this window, roll back (default: nova-config's rollback_window as the store holds it, else "+sprint.DefaultRollbackWindow.String()+")")
 	target := fs.String("target", "", "target binary to replace (default: this binary or NOVA_SPRINT_SERVER_BIN)")
 	dry := fs.Bool("dry-run", false, "run the candidate's shadow tick (read-only) and say what would be switched; switch, roll back and write nothing")
 	tickDeadline := fs.Duration("tick-deadline", TickDeadline, "the candidate's shadow tick (<binary> tick --shadow, read-only, against the store --redis names) must end in this long, or the switch is refused")
@@ -72,6 +72,12 @@ func (a *app) cmdServerSwitch(args []string, stdout, stderr io.Writer) int {
 	candidate := pos[0]
 
 	window, err := time.ParseDuration(*windowStr)
+	if *windowStr == "" {
+		// rollback_window, nova-config's as the store holds it (sprint policy.go)
+		if window, err = rollbackWindow(a, *c); err != nil {
+			return refuse(stderr, "server switch", "rollback_window was not read: "+oneline.Err(err)+"; give --window <duration>")
+		}
+	}
 	if err != nil || window <= 0 {
 		return refuse(stderr, "server switch", "invalid --window duration: "+*windowStr)
 	}
@@ -117,4 +123,18 @@ func (a *app) cmdServerSwitch(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "SERVER SWITCH OK target %s switched to %s\n", targetPath, candidate)
 	}
 	return 0
+}
+
+// rollbackWindow is the rollback_window setting as the store c names holds it: nova-config's
+// value applied, else its default.
+func rollbackWindow(a *app, c common) (time.Duration, error) {
+	st, err := a.store(c)
+	if err != nil {
+		return 0, err
+	}
+	policy, err := st.Policy(context.Background())
+	if err != nil {
+		return 0, err
+	}
+	return (&sprint.Snapshot{Policy: policy}).PolicyDuration(sprint.PolicyRollbackWindow), nil
 }

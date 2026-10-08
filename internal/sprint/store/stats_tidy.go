@@ -192,6 +192,11 @@ func (st *Store) TidyStats(ctx context.Context, req TidyReq) (TidyResult, error)
 	if err != nil {
 		return res, err
 	}
+	// The planned archive and dry-run retain the same configured horizons as
+	// the removal step (SPEC-SPRINT section 11, policy numbers).
+	if s.Policy, err = st.Policy(ctx); err != nil {
+		return res, err
+	}
 	if has(sprint.TidyRoutes) || has(sprint.TidyFleet) || has(sprint.TidyFriends) {
 		routes, _, err := st.Routes(ctx)
 		if err != nil {
