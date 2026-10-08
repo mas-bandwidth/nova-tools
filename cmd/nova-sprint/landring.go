@@ -4,7 +4,7 @@ package main
 // gate). The up benches, in the fleet's order, are a ring; a batch's gate starts at the
 // slot its stream hashes to, FNV-1a 64-bit of the stream name modulo the ring's size, and
 // steps to the next slot while a lane is held. Until 2026-10-07 every gate asked the
-// benches in the fleet's order and so every gate ran on the first up member (batman, the
+// benches in the fleet's order and so every gate ran on the first up member (the first in order, the
 // weakest); the owner: "you should be distributing according to our regular trick, where we
 // do the uint64 and it is modulo % n", "even when we have parallel land".
 
