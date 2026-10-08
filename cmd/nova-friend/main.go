@@ -843,7 +843,7 @@ removes its plist.`,
 			},
 			{
 				Name:    "pong",
-				Usage:   "pong --as <me> --nonce <n> [--to <coordinator>] [--queue <n>] [--working <n>] [--width <n>] [--state-dir <d>] [--redis <addr>] [--dry-run]",
+				Usage:   "pong --as <me> --nonce <n> [--to <coordinator>] [--dir <work-dir>] [--queue <n>] [--working <n>] [--width <n>] [--state-dir <d>] [--redis <addr>] [--dry-run]",
 				Example: "pong --as bob --nonce abc123 --to ada --queue 2 --working 1 --width 4",
 				Effect:  tool.Delivery + ": the session's answer to a PING, one note on the bus to the coordinator, and the pong file",
 				DryRun:  true,
@@ -858,6 +858,7 @@ the line it would send; nothing is sent and no pong file is written.`,
 					f.Required("as", "your name, the friend the daemon in --dir runs as")
 					f.Required("nonce", "the nonce the PING carried")
 					f.String("to", "", "the coordinator (default: the seat the last ping named)")
+					f.String("dir", "", "the friend's working directory; when given, omitted queue and working counts are read from its inbox/QUEUE.json")
 					f.Int("queue", 0, "tasks queued, from your own task list")
 					f.Int("working", 0, "tasks working, from your own task list")
 					f.Int("width", 0, "your width, from the nova-config friend row")
@@ -1327,7 +1328,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 			if err != nil {
 				bin = "nova-friend" // ignored: the name on PATH stands in when this binary's path is unknown
 			}
-			return friend.SessionCheckText(nonce, fmt.Sprintf("%s pong --as %s --nonce %s --state-dir %s --redis %s", bin, name, nonce, state, c.Str("redis")), answerTo())
+			return friend.SessionCheckText(nonce, fmt.Sprintf("%s pong --as %s --nonce %s --state-dir %s --redis %s --dir %s", bin, name, nonce, state, c.Str("redis"), dir), answerTo())
 		},
 	}
 	sc.Deliver = sc.Gate(fl.Gate(deliver))
@@ -1564,7 +1565,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 			if err != nil {
 				bin = "nova-friend" // ignored: the name on PATH stands in when this binary's path is unknown
 			}
-			return fmt.Sprintf("%s pong --as %s --nonce %s --state-dir %s --redis %s --width %d --queue <tasks queued> --working <tasks working>", bin, name, nonce, state, c.Str("redis"), c.Int("width"))
+			return fmt.Sprintf("%s pong --as %s --nonce %s --state-dir %s --redis %s --dir %s", bin, name, nonce, state, c.Str("redis"), dir)
 		},
 	}
 	if w.holders != nil {
@@ -1900,12 +1901,12 @@ func (w world) checkTo(to, name, state string) string {
 // pongCommand is the pong line a session check carries, as the daemon's
 // own check carries it: this binary's pong verb, the friend's state
 // directory and store.
-func (w world) pongCommand(name, nonce, state, redis string) string {
+func (w world) pongCommand(name, nonce, state, redis, dir string) string {
 	bin, err := w.binary()
 	if err != nil {
 		bin = "nova-friend" // ignored: the name on PATH stands in when this binary's path is unknown
 	}
-	return fmt.Sprintf("%s pong --as %s --nonce %s --state-dir %s --redis %s", bin, name, nonce, state, redis)
+	return fmt.Sprintf("%s pong --as %s --nonce %s --state-dir %s --redis %s --dir %s", bin, name, nonce, state, redis, dir)
 }
 
 // deliveryCheck runs the push proof once against the live session
@@ -1945,7 +1946,7 @@ func (w world) conformance(c *tool.Call, name, harness, state, to string, within
 		Friend: name, Harness: harness, Deliver: deliver, Store: st, Within: within, Now: w.now, Nonce: w.random,
 		Wait: func(ctx context.Context) bool { w.sleep(ctx, friend.CheckPoll); return ctx.Err() == nil },
 		Text: func(nonce string) string {
-			return friend.SessionCheckText(nonce, w.pongCommand(name, nonce, state, c.Str("redis")), to)
+			return friend.SessionCheckText(nonce, w.pongCommand(name, nonce, state, c.Str("redis"), c.Str("dir")), to)
 		},
 		Pong: func() (friend.Pong, bool, error) { return friend.ReadPong(state) },
 	}
@@ -2203,12 +2204,36 @@ func (w world) pong(c *tool.Call) *tool.Out {
 	if to == "" {
 		return tool.Refuse("--to is required: no ping has named a seat yet (no status file in " + state + "); it wants the coordinator's name")
 	}
+	previous, _, err := friend.ReadPong(state)
+	if err != nil {
+		return tool.Refuse("the previous pong file cannot be read: " + err.Error())
+	}
+	queue, working, width := previous.Queue, previous.Working, previous.Width
+	if s.Width > 0 {
+		width = s.Width
+	}
+	if dir := c.Str("dir"); dir != "" && (!c.Given("queue") || !c.Given("working")) {
+		q, wk, err := friend.ReadQueue(dir)
+		if err != nil {
+			return tool.Refuse("the working directory's queue cannot be read: " + err.Error())
+		}
+		queue, working = q, wk
+	}
+	if c.Given("queue") {
+		queue = c.Int("queue")
+	}
+	if c.Given("working") {
+		working = c.Int("working")
+	}
+	if c.Given("width") {
+		width = c.Int("width")
+	}
 	b, closeStore, refused := w.bus(c)
 	if refused != nil {
 		return refused
 	}
 	defer closeStore()
-	line := friend.PongLine(nonce, c.Int("queue"), c.Int("working"), c.Int("width"))
+	line := friend.PongLine(nonce, queue, working, width)
 	pong := bus.Message{From: name, To: []string{to}, Subject: friend.PongSubject, Body: line + "\n"}
 	if c.DryRun() {
 		// the note checked as send checks it; nothing sent, no pong file
@@ -2221,7 +2246,7 @@ func (w world) pong(c *tool.Call) *tool.Out {
 	if err != nil {
 		return answer(err)
 	}
-	p := friend.Pong{Nonce: nonce, At: m.At, To: to, Queue: c.Int("queue"), Working: c.Int("working"), Width: c.Int("width")}
+	p := friend.Pong{Nonce: nonce, At: m.At, To: to, Queue: queue, Working: working, Width: width}
 	if err := friend.WritePong(state, p); err != nil {
 		return tool.Fail("sent, but the pong file was not written: "+err.Error()).Fact("id", m.ID)
 	}

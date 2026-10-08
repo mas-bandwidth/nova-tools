@@ -1228,7 +1228,7 @@ func TestCheckSaysOKOrTheStageThatFailed(t *testing.T) {
 	// the plan, from the same pong line, with nothing delivered and no store opened
 	r.store.Fail = errors.New("store down")
 	cli.Do(t, "check", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--state-dir", state, "--to", "ada", "--dry-run").Exit(0).
-		Out("CHECK OK harness=opencode dir=/w/bob within=5m0s", "CHECK PLAN command=\"/opt/nova/bin/nova-friend pong --as bob --nonce r4nd0m --state-dir "+state+" --redis store.test:6379 --to ada\"", "NOTE nothing was delivered")
+		Out("CHECK OK harness=opencode dir=/w/bob within=5m0s", "CHECK PLAN command=\"/opt/nova/bin/nova-friend pong --as bob --nonce r4nd0m --state-dir "+state+" --redis store.test:6379 --dir /w/bob --to ada\"", "NOTE nothing was delivered")
 	cli.Do(t, "check", "--as", "bob", "--harness", "opencode", "--dir", "/w/bob", "--state-dir", state).Exit(2).Err("CHECK REFUSED: the store did not answer: store down")
 
 	// install: the check's fail is a NOTE, the agent stays loaded

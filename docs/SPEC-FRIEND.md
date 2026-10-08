@@ -51,6 +51,14 @@ Teams may use any receiver that meets this file contract. Its lifecycle and
 last receipt must be monitored alongside the daemon; a file creation or a
 watcher process alone is no proof of session presence.
 
+The generated session check includes `pong --dir <work-dir>`. When queue and
+working flags are omitted, `pong` reads that directory's `inbox/QUEUE.json`;
+when no directory is given, it preserves the previous pong's counts. An
+omitted width uses the daemon status width (then the previous pong's width),
+so answering a check without optional count flags cannot report an invented
+zero width. These counts accompany the proof note; the daemon's beat remains
+the sprint row's source of work and width.
+
 One daemon per friend, started by launchd and never by the model, parks on the
 friend's nova-bus stream. On a session start or a delivery after a thirty-minute gap,
 the present comes first and the backlog never does: one PRESENT turn carries her live
