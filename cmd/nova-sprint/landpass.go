@@ -110,6 +110,16 @@ type landJob struct {
 	failed       conflictCard
 	baseSha, tip string   // the base tip the batch was cut from, and its gated tip
 	files        []string // what the tip changes against that base
+	// deferPR says the batch's stream is marked land-protected for its repository and its
+	// base is a protected branch of a forge: land pushes land/<stream> and opens a pull
+	// request instead of pushing the base (docs/SPEC-SPRINT.md section 7).
+	deferPR bool
+	// pollPR says the cards already carry a pull request URL: phase 1 builds nothing, and
+	// land only polls the remote (protectedLand, land.go).
+	pollPR bool
+	// onBase says the batch put commits on the base branch (a push, or a merged pull
+	// request): the pass's later batches on that base merge again onto the new tip.
+	onBase bool
 }
 
 // fork is the lander one stream's batch runs in: the pass's settings, store, caches and
@@ -257,12 +267,13 @@ func (l *lander) pass(ctx context.Context, s *sprint.Snapshot, order []string) (
 		l.merges(ctx, jobs)
 		for _, j := range jobs {
 			if !j.done {
-				l.land(ctx, j, pushed)
+				l.land(ctx, s, j, pushed)
 			}
 			l.take(j.f)
-			if j.b.Tip != "" && !l.dry {
-				// what this pass put on the base, a whole batch or the heads before a conflict:
-				// the files a later batch may collide with
+			if j.onBase && !l.dry {
+				// what this pass put on the base, a whole batch, the heads before a conflict,
+				// or a protected batch whose pull request merged: the files a later batch may
+				// collide with
 				pushed = append(pushed, j)
 			}
 			switch {
@@ -329,6 +340,18 @@ func (l *lander) prepare(ctx context.Context, s *sprint.Snapshot, j *landJob) {
 	if l.dry {
 		j.ended(j.f.dryBatch(*b, j.cards))
 		return
+	}
+	// a forge origin of a marked stream opens a pull request into the protected branch
+	// instead of pushing it (docs/SPEC-SPRINT.md section 7). A pull request already
+	// recorded is polled: the batch is not built or pushed again.
+	if origin, err := l.git(ctx, clone, "remote", "get-url", "origin"); err == nil {
+		j.deferPR = sprint.LandProtectedDefers(s, j.stream, b.Repo, b.Base, origin)
+	}
+	if j.deferPR {
+		if _, anySet, mismatch := landPRState(j.cards); anySet || mismatch {
+			j.pollPR, j.dir = true, clone
+			return
+		}
 	}
 	if why := l.hold(ctx, clone); why != "" {
 		j.refuse(why)
@@ -575,6 +598,10 @@ func runBounded(width, n int, fn func(i int)) {
 // red (build with gateEach, to blame the head), then --check run. It ends the job on a
 // refusal or a fact; a built batch waits for phase 2 (land).
 func (l *lander) merge(ctx context.Context, j *landJob) {
+	if j.pollPR {
+		// a pull request already recorded is polled in phase 2; nothing is built here
+		return
+	}
 	b, stream, dir := &j.b, j.stream, j.dir
 	baseSha := j.cut.baseSha
 	merged, failed, why := l.mergeCards(ctx, dir, stream, j.cards, j.cut, b.Times, false)
@@ -659,9 +686,22 @@ func lines(out string) []string {
 // more (the base fetched and the batch merged again), then reported with the rejected
 // fact, as before. A batch whose base nothing moved is pushed with the one fetch its build
 // made.
-func (l *lander) land(ctx context.Context, j *landJob, pushed []*landJob) {
+func (l *lander) land(ctx context.Context, s *sprint.Snapshot, j *landJob, pushed []*landJob) {
 	f, b, stream := j.f, &j.b, j.stream
-	moved := slices.ContainsFunc(pushed, func(p *landJob) bool { return p.clone == j.clone && p.b.Base == b.Base })
+	if j.deferPR {
+		// a protected base: land/<stream> and a pull request, never the base (land.go).
+		// onBase is this batch's own: a merged pull request put commits on the base,
+		// an open one did not. protectedLand may return before it records that, and
+		// landed sets Status on a copy, so the job's line is what the pass reads.
+		f.protectedLand(ctx, s, j)
+		j.onBase = j.b.Status == "ok"
+		return
+	}
+	// the batch key is the clone and the base, and only a batch that put commits
+	// on that base (onBase): an open pull request is not a move a later batch merges onto
+	moved := slices.ContainsFunc(pushed, func(p *landJob) bool {
+		return p.onBase && p.clone == j.clone && p.b.Base == b.Base
+	})
 	for attempt := 1; ; attempt++ {
 		if moved || attempt > 1 {
 			start := time.Now()
@@ -707,7 +747,7 @@ func (l *lander) land(ctx context.Context, j *landJob, pushed []*landJob) {
 		_, err := f.git(ctx, j.dir, "push", "--porcelain", "origin", j.tip+":refs/heads/"+b.Base)
 		since(&b.Times.Push, start)
 		if err == nil {
-			b.Tip = j.tip
+			b.Tip, j.onBase = j.tip, true
 			// the tip pushed is the base's next tip: when its whole tree passed a gate with
 			// the tree tests (the batch's own, or the combined gate), it is recorded as gated
 			// and no batch gates it again; a clean merge of disjoint files was never gated as

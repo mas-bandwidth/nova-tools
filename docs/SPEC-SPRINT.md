@@ -3881,6 +3881,8 @@ on it, and promotion alone reaches dev: a card is re-cut with that `BASE:` line,
 landed with `--base` on it when it names none) or, for the promotion stream, the mark
 (`sprint.ProtectedLandWhy`).
 
+A marked stream whose origin is a forge (a URL or an scp-like host; a local path and a `file:` URL are the lander's own clone) and whose base is a protected branch does not push that branch. Land pushes `refs/heads/land/<stream>`, opens a pull request into the protected branch, and enables auto-merge when the repository allows it. The pull request's title and body name the batch's cards, each one's head, and the readers who said ok. The cards stay merging, the pull request's URL on each as `land_pr` and the pushed commit as `land_head`, until a later land finds that pull request merged; only then does the merge step record them landed. A failed push or a refused pull request is one judgment, `the protected land was refused by the remote`, whose text is the remote's words, and the cards stay merging. A later land that cannot read a pull request already open does not open that judgment: the cards stay merging and the remote's words stay on the open note. A waiting result with no pull request URL is not reported as an open pull request. A local path as origin still pushes the base directly. A dry run opens no pull request (`TestALandProtectedStreamIsLandedOnlyWhenItsPullRequestMerges`).
+
 **Weight** (the owner, 2026-10-04: "these critical blockers should have some elevated
 priority ... they should be at front of queue"; one night the root of about 140 schema
 cards was dealt, read and reworked like any other card). A card's weight is the number of
