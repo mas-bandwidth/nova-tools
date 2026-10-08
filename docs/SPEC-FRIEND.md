@@ -1403,7 +1403,12 @@ state (SPEC-BUS.md, bus-requires-inbox-push-proof).
   own, so the daemon's SESSION CHECK is written as one file,
   `<dir>/inbox/SESSION-CHECK-<nonce>`, holding the check's text (the pong
   command: `nova-friend pong --as <me> --nonce <nonce> --state-dir <state>`);
-  the next check replaces it, so one stands at a time. `run` and `install`
+  the next check replaces it, so one stands at a time. The write holds no
+  turn of the session, so the check goes in in place (`friend.InPlace`,
+  `SessionCheck.ask`), never on the check scheduler: the file is on disk
+  before `ask` returns, and so before any beat says the check (the reader of
+  2026-10-08: a check said on the beat and written milliseconds later was an
+  ordering race). `run` and `install`
   say so (`push proof: owed by the folder: ...`, and install's NOTE naming
   the path). A live session watches that folder (a Monitor, as the seat's own
   folder adapter has it: SPEC-SPRINT.md, "The push proof") and answers the

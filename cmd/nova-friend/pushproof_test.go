@@ -178,6 +178,10 @@ func TestAClaudeDaemonsCheckGoesInByTheFolderAndItsBeatCarriesThePong(t *testing
 		return ctx, cancel
 	}
 	dir := t.TempDir()
+	// the rig's scheduler runs a check's turn in place; the folder check is not a
+	// turn and owes nothing to the scheduler: the file is on disk before the beat
+	// says the check (SessionCheck.ask, FolderCheck.InPlace), under any scheduler
+	w.checkGo = func(f func()) { go f() }
 	var said []friend.BeatWords
 	answered := ""
 	w.beat = func(_ context.Context, _, _ string, _ time.Time, words friend.BeatWords) (string, error) {

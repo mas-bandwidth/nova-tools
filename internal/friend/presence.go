@@ -658,6 +658,13 @@ func (s *SessionCheck) ask(ctx context.Context, now time.Time) {
 	if run == nil {
 		run = func(f func()) { go f() }
 	}
+	if under(s.Deliver, func(a Deliverer) bool { _, ok := a.(InPlace); return ok }) {
+		// a check that is a file (FolderCheck) holds no turn of the session, so it
+		// goes in here, in place: on disk before ask returns, and so before any
+		// beat says the check (docs/SPEC-FRIEND.md, The push proof: the file,
+		// then the beat); Go schedules only a delivery that is a turn
+		run = func(f func()) { f() }
+	}
 	run(func() {
 		if locked {
 			defer s.turn.Unlock()

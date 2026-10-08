@@ -40,10 +40,22 @@ func SessionCheckFile(dir, nonce string) string {
 // with the same nonce on the daemon's cadence. A friend with no live session
 // (per-card lanes only, mode batch) answers nothing: her presence reads down
 // with the check's nonce, her cards' finishes stand for her at the server,
-// and nothing refuses her messages on it.
+// and nothing refuses her messages on it. The write holds no turn of the
+// session, so the check goes in in place (InPlace; SessionCheck.ask): the
+// file is on disk before the beat ever says the check.
 type FolderCheck struct {
 	Friend, Dir string
 }
+
+// InPlace marks a Deliverer whose delivery holds no turn of the session (a
+// file write): SessionCheck.ask runs it in place, never on its Go scheduler,
+// so the check is delivered before ask returns and before any beat names it.
+type InPlace interface {
+	InPlace()
+}
+
+// InPlace: a file write holds no turn; see InPlace.
+func (*FolderCheck) InPlace() {}
 
 // Deliver writes the check text as <Dir>/inbox/SESSION-CHECK-<nonce>, the
 // nonce read off the text's first line (SessionCheckPrefix), removing the

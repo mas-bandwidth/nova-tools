@@ -79,7 +79,7 @@ func newRig(t *testing.T, names ...string) *rig {
 func (r *rig) world() world {
 	return world{
 		stepBeat: true,
-		checkGo: func(f func()) { f() }, // fake-clock checks complete before the clock advances again
+		checkGo:  func(f func()) { f() }, // fake-clock checks complete before the clock advances again
 		getenv:   func(k string) string { return r.env[k] },
 		open: func(context.Context, string) (bus.Store, func(), error) {
 			if r.store.Fail != nil {
