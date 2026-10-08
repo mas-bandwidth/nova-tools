@@ -102,7 +102,7 @@ func runSitting(t *testing.T, h sittingHome, banner []string, sitting []onboardi
 		var stdout, stderr bytes.Buffer
 		cmd := exec.Command(h.bin, args...)
 		cmd.Dir = h.home
-		cmd.Env = []string{"PATH=" + h.path, "HOME=" + h.home}
+		cmd.Env = []string{"PATH=" + h.path, "HOME=" + h.home, "TMPDIR=" + os.TempDir()}
 		cmd.Stdout, cmd.Stderr = &stdout, &stderr
 		code := 0
 		if err := cmd.Run(); err != nil {
