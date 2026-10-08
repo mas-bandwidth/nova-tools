@@ -93,7 +93,7 @@ func TestTheNoteOfAMachineIsSetShownCutListedAndClearedAsTheRoutesIs(t *testing.
 	assert.Contains(t, out, `note=->held\x201:46\x20PM:\x20reads\x20kernel-bound,\x20see\x20nova-tools#5101`)
 	code, out, errs = h.run(t, "machine", "set", "superman", "--note", "")
 	require.Equal(t, 0, code, errs)
-	assert.Equal(t, "CONFIG SET kind=machine name=superman rev=4 changed=note\n", out)
+	assert.Equal(t, "CONFIG SET kind=machine name=superman rev=4 changed=note\n", withoutDisposition(t, out))
 	code, out, _ = h.run(t, "machine", "list")
 	require.Equal(t, 0, code)
 	assert.Contains(t, out, " width=8 tla=false note=- ")
