@@ -137,8 +137,8 @@ func windowWrite(t *Table, table string, vs []ReadVerdict) (PropWrite, bool) {
 			lines = append(lines, v.line())
 		}
 	}
-	if n := len(lines) - MaxReadsWindowLines; n > 0 {
-		lines = lines[n:]
+	if len(lines) > MaxReadsWindowLines {
+		lines = lines[len(lines)-MaxReadsWindowLines:]
 	}
 	return PropWrite{Table: table, Name: PropReadsWindow, Value: strings.Join(lines, "\n"), Was: was, WasAbsent: !had}, true
 }
