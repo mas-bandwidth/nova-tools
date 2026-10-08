@@ -22,6 +22,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -100,9 +101,14 @@ type Server struct {
 	Bin  string
 	Port string
 	// User is the superuser initdb made; trust authentication, no password.
-	User string
-	next atomic.Int64
-	log  string
+	User   string
+	next   atomic.Int64
+	log    string
+	cmd    *exec.Cmd
+	exited chan struct{}
+	ended  error
+	watch  *watchdog
+	stop   sync.Once
 }
 
 // DSN is the connection string of one database on the server, for pgx: a
@@ -111,14 +117,16 @@ func (s *Server) DSN(database string) string {
 	return fmt.Sprintf("postgres://%s@127.0.0.1:%s/%s?sslmode=disable", s.User, s.Port, database)
 }
 
-// pgToolBudget is how long one initdb or pg_ctl call may run: pg_ctl start waits up to
-// 60 s for the server itself, and the budget leaves room past that.
+// pgToolBudget is how long one initdb or pg_ctl call may run.
 const pgToolBudget = 120 * time.Second
 
-// StartServer runs initdb and pg_ctl start under dir on a free loopback
+// StartServer runs initdb and postgres under dir on a free loopback
 // port. The caller stops it with Stop. It is the TestMain form: one server
 // for a package, one database per test through Database.
 func StartServer(dir string) (*Server, error) {
+	if err := closeInheritedFDsOnExec(); err != nil {
+		return nil, err
+	}
 	bin, err := Binaries()
 	if err != nil {
 		return nil, err
@@ -132,6 +140,11 @@ func StartServer(dir string) (*Server, error) {
 	if out, err := initdb.CombinedOutput(); err != nil {
 		return nil, fmt.Errorf("initdb: %v\n%s", err, out)
 	}
+	watch, err := startWatchdog()
+	if err != nil {
+		return nil, fmt.Errorf("postgres watchdog: %w", err)
+	}
+	s.watch = watch
 	// The socket directory is a fixed short path under the data directory's
 	// parent: a macOS t.TempDir path is longer than a unix socket allows.
 	// Listening is on loopback only; the socket directory is emptied so no
@@ -140,29 +153,64 @@ func StartServer(dir string) (*Server, error) {
 	for attempt := 0; attempt < 5; attempt++ {
 		port, err := freePort()
 		if err != nil {
+			s.watch.close()
 			return nil, err
 		}
-		opts := fmt.Sprintf("-p %s -c listen_addresses=127.0.0.1 -c unix_socket_directories='' -c fsync=off -c synchronous_commit=off -c full_page_writes=off -c log_min_messages=warning", port)
-		start, stopStart := subproc.CommandFor(context.Background(), pgToolBudget, filepath.Join(bin, "pg_ctl"), "-D", data, "-l", logPath, "-o", opts, "-w", "-t", "60", "start")
-		start.Env = cleanEnv()
-		out, err := start.CombinedOutput()
-		stopStart()
-		if err == nil {
+		if err := s.launch(data, port); err == nil {
 			s.Port = port
-			if err := s.ready(); err != nil {
-				// ignored: a test fixture's cleanup on the failure path; the ready error is the one returned
-				_ = s.Stop()
-				return nil, err
-			}
 			return s, nil
-		}
-		body, _ := os.ReadFile(logPath)
-		last = fmt.Sprintf("pg_ctl start on port %s: %v\n%s\n%s", port, err, out, body)
-		if !strings.Contains(string(body), "Address already in use") && !strings.Contains(string(body), "could not bind") {
-			return nil, fmt.Errorf("%s", last)
+		} else {
+			body, _ := os.ReadFile(logPath)
+			last = fmt.Sprintf("postgres start on port %s: %v\n%s", port, err, body)
+			if !strings.Contains(string(body), "Address already in use") && !strings.Contains(string(body), "could not bind") {
+				s.watch.close()
+				return nil, fmt.Errorf("%s", last)
+			}
 		}
 	}
+	s.watch.close()
 	return nil, fmt.Errorf("throwaway postgres did not start in five attempts: %s", last)
+}
+
+func (s *Server) launch(data, port string) error {
+	if err := s.watch.alive(); err != nil {
+		return err
+	}
+	log, err := os.OpenFile(s.log, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
+	if err != nil {
+		return err
+	}
+	defer log.Close()
+	args := []string{"-D", data, "-p", port, "-c", "listen_addresses=127.0.0.1", "-c", "unix_socket_directories=", "-c", "fsync=off", "-c", "synchronous_commit=off", "-c", "full_page_writes=off"}
+	ctx, cancel := context.WithCancel(context.Background())
+	cmd := subproc.Long(ctx, filepath.Join(s.Bin, "postgres"), args...)
+	cmd.Env = cleanEnv()
+	cmd.Stdout, cmd.Stderr = log, log
+	joinWatchdog(cmd, s.watch.group)
+	if err := cmd.Start(); err != nil {
+		cancel()
+		return err
+	}
+	s.cmd = cmd
+	s.exited = make(chan struct{})
+	go func() { s.ended = cmd.Wait(); cancel(); close(s.exited) }()
+	s.Port = port
+	if err := s.ready(); err != nil {
+		select {
+		case <-s.exited:
+		default:
+			stop, release := subproc.CommandFor(context.Background(), pgToolBudget, filepath.Join(s.Bin, "pg_ctl"), "-D", data, "-m", "immediate", "-w", "stop")
+			stop.Env = cleanEnv()
+			if stop.Run() != nil {
+				// ignored: the process may have ended during pg_ctl; Wait below proves it is gone.
+				_ = cmd.Process.Kill()
+			}
+			release()
+			<-s.exited
+		}
+		return err
+	}
+	return nil
 }
 
 // ready pings the server once it reports itself started.
@@ -178,6 +226,20 @@ func (s *Server) ready() error {
 	defer cancel()
 	deadline := time.Now().Add(30 * time.Second)
 	for {
+		select {
+		case <-s.exited:
+			body, _ := os.ReadFile(s.log)
+			return fmt.Errorf("postgres exited before ready: %v\n%s", s.ended, body)
+		default:
+		}
+		body, _ := os.ReadFile(s.log)
+		if !strings.Contains(string(body), "database system is ready to accept connections") {
+			if time.Now().After(deadline) {
+				return fmt.Errorf("throwaway postgres on port %s did not report readiness:\n%s", s.Port, body)
+			}
+			time.Sleep(20 * time.Millisecond)
+			continue
+		}
 		if err := db.PingContext(ctx); err == nil {
 			return nil
 		} else if time.Now().After(deadline) {
@@ -190,11 +252,28 @@ func (s *Server) ready() error {
 
 // Stop stops the server (immediate mode: nothing here is kept).
 func (s *Server) Stop() error {
+	var result error
+	s.stop.Do(func() { result = s.stopRunning() })
+	return result
+}
+
+func (s *Server) stopRunning() error {
+	defer s.watch.close()
 	stop, stopStop := subproc.CommandFor(context.Background(), pgToolBudget, filepath.Join(s.Bin, "pg_ctl"), "-D", filepath.Join(s.Dir, "data"), "-m", "immediate", "-w", "stop")
 	defer stopStop()
 	stop.Env = cleanEnv()
 	if out, err := stop.CombinedOutput(); err != nil {
+		if s.cmd != nil {
+			// ignored: an already-ended process is the same cleanup state; Wait below proves it is gone.
+			_ = s.cmd.Process.Kill()
+		}
+		if s.exited != nil {
+			<-s.exited
+		}
 		return fmt.Errorf("pg_ctl stop: %v\n%s", err, out)
+	}
+	if s.exited != nil {
+		<-s.exited
 	}
 	return nil
 }
