@@ -11,7 +11,6 @@ package main
 
 import (
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -50,120 +49,123 @@ func mkdirAllRefuses(path string) (wouldMkdir bool, err error) {
 	}
 }
 
-func cmdSession(args []string, stdout, stderr io.Writer, now time.Time) int {
-	fs := newFlagSet("session")
-	session := fs.String("claude-session", "", "one Claude Code session transcript jsonl")
-	out := fs.String("out", "", "directory for the resulting daily token file")
-	day := fs.String("day", "", "one UTC day to write as YYYY-MM-DD; defaults to every stamped day")
-	role := fs.String("role", "", "the role the rows are booked under: given, the row is <model>/<role>; the default books the bare model")
-	weights := fs.String("weights", tokens.DefaultWeights.Flag(), "the WEIGHTED ratios as in,cw,cr,out -- a comparison, not a price: the defaults are the ratios of one vendor's published list prices; set your own")
-	dryRun := fs.Bool("dry-run", false, "with --out, print the days that would be written, and write nothing (no directory, no day file, no lock)")
-	s, code, ok := start(fs, args, "TOKENS", stdout, stderr)
-	if !ok {
-		return code
+func sessionVerb(now time.Time) tool.Verb {
+	return tool.Verb{
+		Name:    "session",
+		Token:   "SESSION",
+		Usage:   "session --claude-session <jsonl> [--out <dir>] [--day <YYYY-MM-DD>] [--dry-run]\n                      [--role <name>] [--weights <in,cw,cr,out>]",
+		Example: "session --claude-session ./session.jsonl --out ./out",
+		Effect:  tool.Effect("local write: with --out it writes the session's days into the day files there, holding --out/fold.lock; without --out, or with --dry-run, it writes nothing"),
+		DryRun:  true,
+		Flags: func(f *tool.Flags) {
+			f.Required("claude-session", "one Claude Code session jsonl, the window whose turns this folds")
+			f.String("out", "", "directory for the resulting daily token file")
+			f.String("day", "", "one UTC day to write as YYYY-MM-DD; defaults to every stamped day")
+			f.String("role", "", "the role the rows are booked under: given, the row is <model>/<role>; the default books the bare model")
+			f.String("weights", tokens.DefaultWeights.Flag(), "the WEIGHTED ratios as in,cw,cr,out -- a comparison, not a price: the defaults are the ratios of one vendor's published list prices; set your own")
+			f.Check(func(c *tool.Call) {
+				day := c.Str("day")
+				if day != "" && !tokens.ValidDay(day) {
+					c.Problem("--day wants one UTC day as YYYY-MM-DD, got " + oneline.Field(day))
+				}
+				_, werr := tokens.ParseWeights(c.Str("weights"))
+				if werr != nil {
+					c.Problem(werr.Error())
+				}
+			})
+		},
+		Run: func(c *tool.Call) *tool.Out {
+			return runSession(c, now)
+		},
 	}
-	r := &refusals{token: "TOKENS", s: s}
-	r.required("claude-session", *session, "one Claude Code session jsonl, the window whose turns this folds")
-	if *day != "" && !tokens.ValidDay(*day) {
-		r.add("--day wants one UTC day as YYYY-MM-DD, got " + oneline.Field(*day))
-	}
-	w, werr := tokens.ParseWeights(*weights)
-	if werr != nil {
-		r.add(werr.Error())
-	}
-	if len(r.list) > 0 {
-		return r.print(stderr)
-	}
+}
 
-	sum, err := tokens.ReadClaudeSession(*session)
+func runSession(c *tool.Call, now time.Time) *tool.Out {
+	sessionPath := c.Str("claude-session")
+	outDir := c.Str("out")
+	day := c.Str("day")
+	role := c.Str("role")
+	weights := c.Str("weights")
+	dryRun := c.DryRun()
+
+	w, _ := tokens.ParseWeights(weights)
+	sum, err := tokens.ReadClaudeSession(sessionPath)
 	if err != nil {
-		return refuseVerb(s, "TOKENS", fmt.Sprintf("cannot read %s: %s", oneline.Field(*session), oneline.Err(err)))
+		return tool.Refuse(fmt.Sprintf("cannot read %s: %s", oneline.Field(sessionPath), oneline.Err(err)))
 	}
-	// Every field of the SESSION line is a %d over an integer, so the escape is a no-op --
-	// and it is here anyway, because the tripwire that keeps this binary's output one line
-	// per event does not take a promise about a value, only the call that enforces it.
-	fmt.Fprintln(s.out(), oneline.Escape(sum.Line(w)))
-	s.fact("turns", sum.Turns)
-	s.fact("input", sum.Input)
-	s.fact("cache_write", sum.CacheWrite)
-	s.fact("cache_read", sum.CacheRead)
-	s.fact("output", sum.Output)
-	s.fact("weighted", sum.Weighted(w))
-	s.fact("avg_context", sum.AvgContext())
+
+	o := tool.Done()
+	o.Findings("refused", "partial")
+	o.Fact("turns", sum.Turns).
+		Fact("input", sum.Input).
+		Fact("cache_write", sum.CacheWrite).
+		Fact("cache_read", sum.CacheRead).
+		Fact("output", sum.Output).
+		Fact("weighted", sum.Weighted(w)).
+		Fact("avg_context", sum.AvgContext())
 	if sum.Unstamped > 0 {
-		note := fmt.Sprintf("unstamped=%d turns are in the totals and in no day; they are not dated by a guess", sum.Unstamped)
-		fmt.Fprintf(s.out(), "TOKENS NOTE %s\n", oneline.Escape(note))
-		s.note(note)
+		o.Note(fmt.Sprintf("unstamped=%d turns are in the totals and in no day; they are not dated by a guess", sum.Unstamped))
 	}
-	if *out == "" {
-		return s.done(0, 0)
+	if outDir == "" {
+		return o
 	}
 
-	// THE ROW IS BOOKED UNDER THE MODEL THE TRANSCRIPT NAMES. A transcript that names none has
-	// no honest row, and the refusal says so before anything is created or written.
 	if why := sum.UnbookableReason(); why != "" {
-		return refuseVerb(s, "TOKENS", why)
+		return tool.Refuse(why)
 	}
 
-	// The fold. One day file per day the session's turns fell on, merged by source the way
-	// every other fold merges: this run recomputes the rows its own source wrote and keeps
-	// every other row exactly as it is. A dry run reads the day files and writes nothing.
-	mkdir := func() error { return os.MkdirAll(*out, 0o755) }
+	mkdir := func() error { return os.MkdirAll(outDir, 0o755) }
 	wouldMkdir := false
-	if *dryRun {
+	if dryRun {
 		mkdir = func() error {
 			var err error
-			wouldMkdir, err = mkdirAllRefuses(*out)
+			wouldMkdir, err = mkdirAllRefuses(outDir)
 			return err
 		}
 	}
 	if err := mkdir(); err != nil {
-		return refuseVerb(s, "TOKENS", fmt.Sprintf("cannot open --out: %s", oneline.Err(err)))
+		return tool.Refuse(fmt.Sprintf("cannot open --out: %s", oneline.Err(err)))
 	}
-	if !*dryRun {
-		release, err := tokens.TakeFoldLock(*out, tokens.LockWait)
+	if dryRun {
+		o.Fact("dry_run", true).Fact("would_mkdir", wouldMkdir)
+	}
+	if !dryRun {
+		release, err := tokens.TakeFoldLock(outDir, tokens.LockWait)
 		if err != nil {
-			return refuseVerb(s, "TOKENS", oneline.Err(err))
+			return tool.Refuse(oneline.Err(err))
 		}
 		defer release()
 	}
 
 	days := sum.DayList()
-	if *day != "" {
-		days = []string{*day}
+	if day != "" {
+		days = []string{day}
 	}
 	if len(days) == 0 {
-		fmt.Fprintln(s.out(), "TOKENS DAY day=- written=false rows=0 (no turn in this session carries a day)")
-		s.o.Why = append(s.o.Why, "no turn in this session carries a day")
-		return s.done(1, 0)
+		o.Status = tool.Failed
+		o.Exit = 1
+		o.Why = append(o.Why, "no turn in this session carries a day")
+		return o
 	}
-	if *dryRun {
-		s.fact("dry_run", true)
-	}
+
 	exit := 0
 	for _, d := range days {
-		// A --day the session has no turn on is a row of zeros, not a nil: the claim "this
-		// window spent nothing that day" is a measurement, and the row carries it.
 		part := sum.Days[d]
 		if part == nil {
 			part = &tokens.SessionSum{}
 		}
-		fresh := sum.Rows(d, *role)
+		fresh := sum.Rows(d, role)
 		var old []tokens.DayRow
-		prior, findings, err := tokens.ReadDayFile(tokens.Path(*out, d))
+		prior, findings, err := tokens.ReadDayFile(tokens.Path(outDir, d))
 		if err != nil {
 			if !os.IsNotExist(err) {
-				fmt.Fprintf(s.err(), "TOKENS REFUSED: cannot read %s: %s\n",
-					oneline.Field(tokens.Path(*out, d)), oneline.WithRemedy(oneline.Err(err), "nova-tokens session -h"))
-				s.item("refused", "day", d, "why", tool.Text("cannot read "+tokens.Path(*out, d)+": "+err.Error()))
+				o.Item("refused", "day", d, "why", tool.Text("cannot read "+tokens.Path(outDir, d)+": "+err.Error()))
 				exit = 1
 				continue
 			}
 		} else {
 			if len(findings) > 0 {
-				fmt.Fprintf(s.err(), "TOKENS REFUSED: the day file %s has %d findings; the repair is nova-tokens check --out %s\n",
-					oneline.Field(tokens.Path(*out, d)), len(findings), oneline.Field(*out))
-				s.item("refused", "day", d, "findings", len(findings), "why", tool.Text("the day file has findings; the repair is nova-tokens check --out "+*out))
+				o.Item("refused", "day", d, "findings", len(findings), "why", tool.Text("the day file has findings; the repair is nova-tokens check --out "+outDir))
 				exit = 1
 				continue
 			}
@@ -171,8 +173,7 @@ func cmdSession(args []string, stdout, stderr io.Writer, now time.Time) int {
 		}
 		rows, retained, partials := tokens.MergeDay(old, fresh, []string{tokens.SessionLabel})
 		if len(partials) > 0 {
-			fmt.Fprintln(s.err(), s.line("TOKENS", "PARTIAL", "a row already summed over this source and another cannot be taken apart; nothing written; run: nova-tokens fold -h, and fold that day whole",
-				"day", d, "rows", len(partials)))
+			o.Item("partial", "day", d, "rows", len(partials), "why", tool.Text("a row already summed over this source and another cannot be taken apart; nothing written; run: nova-tokens fold -h, and fold that day whole"))
 			exit = 1
 			continue
 		}
@@ -182,10 +183,9 @@ func cmdSession(args []string, stdout, stderr io.Writer, now time.Time) int {
 			Sources: tokens.SourcesOf(rows), Rows: rows,
 		}
 		written := false
-		if !*dryRun {
-			if err := f.Save(*out); err != nil {
-				fmt.Fprintf(s.err(), "TOKENS REFUSED: cannot write %s: %s\n", oneline.Field(tokens.Path(*out, d)), oneline.WithRemedy(oneline.Err(err), "nova-tokens session -h"))
-				s.item("refused", "day", d, "why", tool.Text("cannot write "+tokens.Path(*out, d)+": "+err.Error()))
+		if !dryRun {
+			if err := f.Save(outDir); err != nil {
+				o.Item("refused", "day", d, "why", tool.Text("cannot write "+tokens.Path(outDir, d)+": "+err.Error()))
 				exit = 1
 				continue
 			}
@@ -195,11 +195,11 @@ func cmdSession(args []string, stdout, stderr io.Writer, now time.Time) int {
 		for _, r := range fresh {
 			booked = append(booked, r.Model)
 		}
-		kv := []any{"day", d, "written", written, "rows", len(rows), "retained", retained, "model", strings.Join(booked, ","), "weighted", part.Weighted(w)}
-		if *dryRun {
-			kv = append(kv, "dry_run", true, "would_mkdir", wouldMkdir)
-		}
-		fmt.Fprintln(s.out(), s.line("TOKENS", "DAY", "", kv...))
+		o.Item("day", "day", d, "written", written, "rows", len(rows), "retained", retained, "model", strings.Join(booked, ","), "weighted", part.Weighted(w))
 	}
-	return s.done(exit, 0)
+	o.Exit = exit
+	if exit != 0 {
+		o.Status = tool.Failed
+	}
+	return o
 }
