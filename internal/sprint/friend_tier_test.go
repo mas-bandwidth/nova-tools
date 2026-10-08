@@ -2,6 +2,7 @@ package sprint
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -32,6 +33,7 @@ func TestEveryFriendDecisionReadsTheOneTierOfTheCard(t *testing.T) {
 	t.Run("a WHO friend who does not serve the tier is skipped, never a pin past it", func(t *testing.T) {
 		t.Parallel()
 		w := friendWorld(t, proBrief("friend alex"))
+		w.tick(PinWaitDefault + time.Second)
 		dealWith(w,
 			FriendSeat{Name: "alex", Width: 2, Status: Up, Tiers: []string{"flash"}},
 			FriendSeat{Name: "jo", Width: 2, Status: Up, Tiers: []string{"flash", "pro"}})

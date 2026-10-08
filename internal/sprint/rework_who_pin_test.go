@@ -2,6 +2,7 @@ package sprint
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -80,8 +81,9 @@ func TestAReworkKeepsTheWhoPin(t *testing.T) {
 	})
 	t.Run("a first deal is a preference", func(t *testing.T) {
 		t.Parallel()
-		// unchanged: a WHO: friend <name> card never dealt goes to a friend up when she is down
+		// A soft pin can move to another friend once its clock expires.
 		w := friendWorld(t, friendBrief("friend amy"))
+		w.tick(PinWaitDefault + time.Second)
 		dealWith(w, amy(Down), bob)
 		require.NotNil(t, w.s.Fleet.Card("s1-1.w1"))
 		assert.Equal(t, FriendRow("bob"), w.s.Fleet.Card("s1-1.w1").Row)

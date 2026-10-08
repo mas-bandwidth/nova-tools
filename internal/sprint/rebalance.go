@@ -98,8 +98,8 @@ func Rebalance(s *Snapshot, seats []FriendSeat, who string) Plan {
 	from, work := map[string]*rebalanceUnit{}, map[string]*Card{}
 	var prims []*Card
 	for _, g := range units {
-		if g.width <= 0 || g.working < g.width {
-			continue // a lane free: its queue is its own to start
+		if g.width <= 0 {
+			continue
 		}
 		for _, wc := range s.Fleet.Cell(g.row, Ready) {
 			pr := s.Work.Placed(wc.F("primary"))
@@ -127,7 +127,7 @@ func Rebalance(s *Snapshot, seats []FriendSeat, who string) Plan {
 		g, wc := from[pr.ID], work[pr.ID]
 		tier := s.DealTier(pr)
 		to := rebalanceTo(s, units, g, pr, wc, tier)
-		if to == nil {
+		if to == nil || g.working < g.width && (!to.friend || to.name != pr.F(FieldPreferred)) {
 			continue
 		}
 		to.load++
@@ -178,6 +178,14 @@ func rebalanceTo(s *Snapshot, units []*rebalanceUnit, g *rebalanceUnit, pr, wc *
 		return nil
 	}
 	slices.SortStableFunc(may, func(a, b *rebalanceUnit) int {
+		if preferred := pr.F(FieldPreferred); preferred != "" {
+			if a.name == preferred && a.friend {
+				return -1
+			}
+			if b.name == preferred && b.friend {
+				return 1
+			}
+		}
 		return cmp.Or(cmp.Compare(dist[a], dist[b]), cmp.Compare(b.idle(), a.idle()), cmp.Compare(a.name, b.name))
 	})
 	return may[0]
@@ -188,6 +196,9 @@ func rebalanceTo(s *Snapshot, units []*rebalanceUnit, g *rebalanceUnit, pr, wc *
 func rebalanceMove(s *Snapshot, p *Plan, declared map[string]bool, ri routeIndexes, g, to *rebalanceUnit, pr, wc *Card, tier, who string) Unit {
 	set := nextGen(wc, to.row, s.Now)
 	unset := []string{FieldFriendDeadline}
+	if to.friend && to.name == pr.F(FieldPreferred) {
+		unset = append(unset, FieldPinWaivedAt)
+	}
 	set[FieldRebalancedFrom] = strings.Join(append(Split(wc.F(FieldRebalancedFrom)), g.row), ",")
 	if g.friend {
 		set[FieldFriendsLeft] = strings.Join(append(friendsLeft(wc), g.name), ",")
@@ -217,8 +228,12 @@ func rebalanceMove(s *Snapshot, p *Plan, declared map[string]bool, ri routeIndex
 		s.movedDeadline(to.name, wc, set) // machine to machine: its route kept, as the level's
 	}
 	changes := []Change{change(Fleet, moveEntry(wc, to.row, Ready, set, unset...))}
-	if len(prim) > 0 {
-		changes = append(changes, change(Work, setEntry(pr, prim)))
+	if len(prim) > 0 || to.friend && to.name == pr.F(FieldPreferred) {
+		if to.friend && to.name == pr.F(FieldPreferred) {
+			changes = append(changes, change(Work, setEntry(pr, prim, FieldPinWaivedAt)))
+		} else {
+			changes = append(changes, change(Work, setEntry(pr, prim)))
+		}
 	}
 	what := fmt.Sprintf("rebalanced %s from %s to %s", wc.ID, g.row, to.row)
 	n := happened(NRebalanced, pr.Row, s.Now, pr.ID)

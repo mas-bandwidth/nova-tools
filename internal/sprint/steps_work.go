@@ -948,6 +948,9 @@ func dealPlan(s *Snapshot, r DealReq, rr *round, ri routeIndexes) (Plan, roundMo
 		if OnlyFriend(c) {
 			return friendCardWhy
 		}
+		if PinWaits(s, c) {
+			return "a friend's card: its WHO friend preference is still within the pin wait"
+		}
 		return inState(c, Ready)
 	}
 	chosen := pick(&p, r.Sel, eligibleTurns(s.Work.Column(Ready), ready, streamRound(s, PropStreamIndex)), rowOf, ready, s.primaryCard)
@@ -1104,6 +1107,9 @@ func deal(s *Snapshot, c *Card, fix, m string, q map[string]int, ri routeIndexes
 	if set == nil {
 		set = map[string]string{}
 	}
+	if preferred, ok := FriendCard(c); ok && preferred != "" && !OnlyFriend(c) {
+		set[FieldPreferred], set[FieldPinWaivedAt] = preferred, stamp(s.Now)
+	}
 	work, primary := splitRoute(route)
 	s.dealDeadline(m, work) // the member's deadline, from the card's own (deadline.go)
 	for k, v := range work {
@@ -1114,10 +1120,14 @@ func deal(s *Snapshot, c *Card, fix, m string, q map[string]int, ri routeIndexes
 	maps.Copy(fields, s.gateFields())
 	maps.Copy(set, primary)
 	set["attempt"], set["work"] = itoa(attempt), card
-	return Unit{Key: c.ID, Stream: c.Row, Changes: []Change{
+	u := Unit{Key: c.ID, Stream: c.Row, Changes: []Change{
 		change(Fleet, createEntry(card, m, Ready, c.Score, fields)),
 		change(Work, moveEntry(c, c.Row, Working, set, append(unset, "result")...)),
-	}, Moved: fmt.Sprintf("%s work %s -> working card=%s member=%s (fleet ready)", c.ID, c.Col, card, m)}, ""
+	}, Moved: fmt.Sprintf("%s work %s -> working card=%s member=%s (fleet ready)", c.ID, c.Col, card, m)}
+	if preferred := set[FieldPreferred]; preferred != "" {
+		u.Moved += fmt.Sprintf("; pin to %s waived after %s: she is %s; dealt to %s", preferred, s.Now.Sub(pinSince(c)).Round(time.Second), pinUnavailable(s, s.Friends, preferred), m)
+	}
+	return u, ""
 }
 
 // escalate deals the primary c a new attempt on the next tier, tier (NextTier), into the

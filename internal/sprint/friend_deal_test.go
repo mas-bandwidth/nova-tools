@@ -390,6 +390,7 @@ func TestTheDealSkipsADownRowAndHonoursTheWhoPin(t *testing.T) {
 		{Name: "cat", Width: 4, Status: Up, Class: "flash,pro"},
 		{Name: "dan", Width: 4, Status: Up, Class: "flash,pro"},
 	}
+	w.tick(PinWaitDefault + time.Second)
 	p := dealWith(w, seats...)
 
 	assert.Zero(t, w.s.Fleet.Count(FriendRow("bob"), Ready)+w.s.Fleet.Count(FriendRow("bob"), Working), "a down row, beating, is dealt nothing")

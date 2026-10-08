@@ -1,10 +1,12 @@
 package store
 
 import (
+	"testing"
+	"time"
+
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"testing"
 )
 
 func TestWhoIsAPreferenceOnTheTwin(t *testing.T) {
@@ -52,6 +54,9 @@ func TestPreferenceOverflowOnTheTwin(t *testing.T) {
 			h := newHarness(t)
 			h.setup(0)
 			h.must(AddStep(sprint.AddReq{Stream: "s1", Cards: []sprint.CardAdd{{ID: "job", Brief: "job tier: pro\nWHO: " + tc.who + "\n\nWork."}}}))
+			if tc.name == "another friend" || tc.name == "fleet" {
+				h.tick(sprint.PinWaitDefault + time.Second)
+			}
 			var due int
 			h.must(TickPartStep("deal", sprint.TickDeal, sprint.TickReq{Friends: tc.seats}, nil, nil, &due))
 			wc := h.snap().Fleet.Card("job.w1")
@@ -83,6 +88,7 @@ func TestPreferenceConsumesActualRoomOnTheTwin(t *testing.T) {
 	}
 	cards = append(cards, sprint.CardAdd{ID: "f", Brief: "job tier: pro\nWHO: only friend amy\n\nWork."})
 	h.must(AddStep(sprint.AddReq{Stream: "s1", Cards: cards}))
+	h.tick(sprint.PinWaitDefault + time.Second)
 	seats := []sprint.FriendSeat{{Name: "amy", Width: 1, Status: sprint.Up, Class: "pro"}, {Name: "bob", Width: 1, Status: sprint.Up, Class: "pro"}}
 	var due int
 	h.must(TickPartStep("deal", sprint.TickDeal, sprint.TickReq{Friends: seats}, nil, nil, &due))
@@ -105,6 +111,7 @@ func TestUnpinRefusesOnlyTheStartedCardOnTheTwin(t *testing.T) {
 	h.setup(0)
 	brief := "job tier: pro\nWHO: friend amy\n\nWork."
 	h.must(AddStep(sprint.AddReq{Stream: "s1", Cards: []sprint.CardAdd{{ID: "a", Brief: brief}, {ID: "b", Brief: brief}}}))
+	h.tick(sprint.PinWaitDefault + time.Second)
 	h.must(DealStep(sprint.DealReq{Sel: sprint.Sel{IDs: []string{"b"}}}))
 	res, err := h.st.Run(h.ctx, UnpinStep(sprint.UnpinReq{IDs: []string{"a", "b"}, Reason: "share", Who: "tester"}))
 	require.NoError(t, err)

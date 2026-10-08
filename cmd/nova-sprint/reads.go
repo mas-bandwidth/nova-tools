@@ -2120,7 +2120,9 @@ type cardView struct {
 	Grade   string `json:"grade,omitempty"` // nova-decide's grade, as the card holds it (sprint.FieldGrade)
 	// Who is the worker its brief's WHO line names (sprint.FieldWho): friend for any
 	// friend, friend.<name> for one; absent on a machine's card.
-	Who string `json:"who,omitempty"`
+	Who       string `json:"who,omitempty"`
+	Preferred string `json:"preferred,omitempty"`
+	Waived    string `json:"waived,omitempty"`
 	// Priority is its level on the ladder (sprint.CardPriority: blocker, critical, normal,
 	// low; a read card's is reader) and PrioritySource where it comes from (set, computed,
 	// default).
@@ -2207,7 +2209,7 @@ func (a *app) cmdCard(args []string, stdout, stderr io.Writer) int {
 		}
 		tier, ceiling := sprint.CardTiers(v.Primary)
 		level, source := sprint.CardPriority(v.Primary)
-		b, _ := json.Marshal(cardView{Primary: v.Primary, Column: v.Primary.Col, Tier: tier, Ceiling: ceiling, Grade: v.Primary.F(sprint.FieldGrade), Who: v.Primary.F(sprint.FieldWho), Priority: level, PrioritySource: source, Work: v.Work, Reads: v.Reads, Merge: v.Merge, Open: v.Open, Needs: v.Needs, NeededBy: v.NeededBy, Held: held,
+		b, _ := json.Marshal(cardView{Primary: v.Primary, Column: v.Primary.Col, Tier: tier, Ceiling: ceiling, Grade: v.Primary.F(sprint.FieldGrade), Who: v.Primary.F(sprint.FieldWho), Preferred: v.Primary.F(sprint.FieldPreferred), Waived: v.Primary.F(sprint.FieldPinWaivedAt), Priority: level, PrioritySource: source, Work: v.Work, Reads: v.Reads, Merge: v.Merge, Open: v.Open, Needs: v.Needs, NeededBy: v.NeededBy, Held: held,
 			Cost: sprint.CardCostOf(v.Primary), Timeline: events, Texts: texts})
 		fmt.Fprintln(stdout, string(b))
 		return 0
@@ -2335,7 +2337,11 @@ func (a *app) cardsBulk(st *store.Store, stream string, stdout, stderr io.Writer
 // any friend, who=friend.<name> for one); nothing for a machine's card.
 func whoWord(pr *sprint.Card) string {
 	if w := pr.F(sprint.FieldWho); w != "" {
-		return " who=" + oneline.Field(w)
+		line := " who=" + oneline.Field(w)
+		if preferred := pr.F(sprint.FieldPreferred); preferred != "" {
+			line += " preferred=" + oneline.Field(preferred) + " waived=" + oneline.Field(pr.F(sprint.FieldPinWaivedAt))
+		}
+		return line
 	}
 	return ""
 }

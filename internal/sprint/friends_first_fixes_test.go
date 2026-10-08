@@ -2,6 +2,7 @@ package sprint
 
 import (
 	"testing"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 	"github.com/stretchr/testify/assert"
@@ -97,6 +98,7 @@ func TestAFrontierCardGoesOnlyToAFriendWithFrontier(t *testing.T) {
 	cat := FriendSeat{Name: "cat", Width: 1, Status: Up, Tiers: []string{cardhdr.RouteFrontier}}
 
 	w := friendWorld(t, brief("friend amy"), brief("friend"))
+	w.tick(PinWaitDefault + time.Second)
 	dealStarted(w, amy, dan, cat)
 	assert.Equal(t, FriendRow("cat"), w.s.Fleet.Card("s1-1.w1").Row, "named amy, but only cat has frontier")
 	assert.Equal(t, FriendRow("cat"), w.s.Fleet.Card("s1-2.w1").Row, "any friend: cat, not dan whose row names no tier")

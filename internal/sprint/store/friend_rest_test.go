@@ -2,6 +2,7 @@ package store
 
 import (
 	"testing"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/stretchr/testify/assert"
@@ -22,6 +23,7 @@ func TestAFriendsCardIsNeverWithdrawnForARestingRoute(t *testing.T) {
 	for _, id := range ids {
 		h.must(AddStep(sprint.AddReq{Stream: "s1", Cards: []sprint.CardAdd{{ID: id, Brief: id + " tier: flash\nWHO: friend amy\n\nWork."}}}))
 	}
+	h.tick(sprint.PinWaitDefault + time.Second)
 	h.startMachine()
 	h.machine() // no friend yet: the fleet, on or-a
 	for _, id := range ids {

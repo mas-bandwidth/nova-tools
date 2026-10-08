@@ -2,6 +2,7 @@ package sprint
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -25,6 +26,9 @@ func TestWhoIsAPreference(t *testing.T) {
 				brief += "WHO: " + tc.who + "\n"
 			}
 			w := friendWorld(t, brief+"\nThe task.")
+			if tc.name == "preferred full" || tc.name == "fleet fallback" {
+				w.tick(PinWaitDefault + time.Second)
+			}
 			dealWith(w, tc.seats...)
 			wc := w.s.Fleet.Card("s1-1.w1")
 			if tc.want == "" {

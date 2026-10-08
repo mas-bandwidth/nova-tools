@@ -7,7 +7,7 @@ import (
 
 // Who is a preference or a hard pin from the brief header (docs/SPEC-SPRINT.md,
 // WHO preference). `WHO: friend` is any friend, `WHO: friend <name>` prefers that
-// friend, and `WHO: only friend <name>` waits for her alone. A card with no WHO
+// friend, and `WHO: friend <name> only` waits for her alone. A card with no WHO
 // line, or `WHO: -`, is unpinned: friends whose class covers its tier, then the fleet.
 type Who struct {
 	Only   bool   // only friend is a hard pin
@@ -38,6 +38,8 @@ func ReadWho(brief string) (w Who, why string) {
 		switch {
 		case len(f) == 1 && f[0] == "-":
 			return Who{}, ""
+		case len(f) == 3 && strings.EqualFold(f[0], "friend") && strings.EqualFold(f[2], "only") && friendNameRE.MatchString(f[1]):
+			return Who{Friend: true, Only: true, Name: f[1]}, ""
 		case len(f) == 3 && strings.EqualFold(f[0], "only") && strings.EqualFold(f[1], "friend") && friendNameRE.MatchString(f[2]):
 			return Who{Friend: true, Only: true, Name: f[2]}, ""
 		case len(f) == 1 && strings.EqualFold(f[0], "friend"):
@@ -45,7 +47,7 @@ func ReadWho(brief string) (w Who, why string) {
 		case len(f) == 2 && strings.EqualFold(f[0], "friend") && friendNameRE.MatchString(f[1]):
 			return Who{Friend: true, Name: f[1]}, ""
 		}
-		return Who{}, "WHO: " + v + " is not `friend` or `friend <name>` or `only friend <name>` (a friend row's name: letters, digits, _ and -); a card with no WHO line, or WHO: -, is dealt to the fleet"
+		return Who{}, "WHO: " + v + " is not `friend` or `friend <name>` or `friend <name> only` (a friend row's name: letters, digits, _ and -); a card with no WHO line, or WHO: -, is dealt to the fleet"
 	}
 	return Who{}, ""
 }

@@ -29,6 +29,13 @@ import (
 // machine's card.
 const FieldWho = "who"
 
+// FieldPreferred and FieldPinWaivedAt keep the named WHO preference after its
+// wait expires and another unit takes the card (WHO preference).
+const (
+	FieldPreferred   = "preferred"
+	FieldPinWaivedAt = "pin_waived_at"
+)
+
 // WhoFriend is the who of a card dealt to any friend.
 const WhoFriend = "friend"
 
@@ -77,30 +84,54 @@ func FriendCard(c *Card) (name string, ok bool) {
 	return FriendOfRow(w)
 }
 
-// OnlyFriend is the hard pin (docs/SPEC-SPRINT.md, WHO preference): the explicit one,
-// WHO: only friend <name>, and a WHO: friend <name> card come back by a rework, a return
-// or a redo (ReworkPinned), whose next attempt is hers as its first was.
+// OnlyFriend is the explicit hard pin (docs/SPEC-SPRINT.md, WHO preference):
+// WHO: friend <name> only. A soft pin stays a preference after rework too.
 func OnlyFriend(c *Card) bool {
-	return strings.HasPrefix(c.F(FieldWho), "only.friend.") || ReworkPinned(c)
+	return strings.HasPrefix(c.F(FieldWho), "only.friend.")
 }
 
-// ReworkPinned says the card names a friend (WHO: friend <name>) and has come back by a
-// rework, a return or a redo (its reworks or returns counted): its next attempt waits for
-// her alone, never another friend or a machine (the owner, 2026-10-05: a rework of a
-// friend's own rating was dealt to another worker, who could not do it as her). A
-// take-back alone (friend take) counts neither, so a preference taken back from her is
-// offered on.
-func ReworkPinned(c *Card) bool {
-	if c.Int("reworks") == 0 && c.Int("returns") == 0 {
+// PinWaits says a soft named WHO pin has not yet reached the sprint's wait
+// bound. The ready timestamp is the source of its clock (WHO preference).
+func PinWaits(s *Snapshot, c *Card) bool {
+	name, ok := FriendCard(c)
+	if !ok || name == "" || OnlyFriend(c) {
 		return false
 	}
-	_, named := FriendOfRow(c.F(FieldWho))
-	return named
+	at := pinSince(c)
+	return at.IsZero() || s.Now.Before(at.Add(s.PinWait()))
+}
+
+// pinSince is the latest start of this card's ready preference, including a
+// prior attempt's finish when the next attempt is offered (WHO preference).
+func pinSince(c *Card) time.Time {
+	ready, finished := stampAt(c, FieldReadyAt), stampAt(c, FieldFinishedAt)
+	if finished.After(ready) {
+		return finished
+	}
+	return ready
+}
+
+// pinUnavailable says why the preferred friend does not take this card at the
+// waiver point (WHO preference).
+func pinUnavailable(s *Snapshot, seats []FriendSeat, preferred string) string {
+	for _, seat := range seats {
+		if seat.Name != preferred {
+			continue
+		}
+		if seat.Status == Held {
+			return "held"
+		}
+		if !friendDealable(s, seat) {
+			return "down"
+		}
+		return "full"
+	}
+	return "down"
 }
 
 // friendCardWhy is why the machines' deal leaves a hard-pinned card: the tick deals it
 // to that friend, never to a machine or to another friend.
-const friendCardWhy = "a friend's card (its brief says WHO: only friend, or a WHO: friend <name> card come back by a rework): the tick deals it to that friend up with room, never to a machine"
+const friendCardWhy = "a friend's card whose brief says WHO: friend <name> only: the tick deals it to that friend up with room, never to a machine"
 
 // FriendSeat is one friend as the tick deals to her: her name, her width (the jobs she
 // works at once, her friends row's), her status (FriendStatus: up, held or down), her
@@ -487,7 +518,7 @@ func friendDealPass(s *Snapshot, cards []*Card, seats []FriendSeat, reclaim bool
 		if name != "" && (free[name] <= 0 || slices.Contains(left, name) || !friendTakes(s, seat[name], tier)) {
 			name = "" // the friend it names is not up with room, it has left her, or not her tier
 		}
-		if name == "" && !OnlyFriend(c) {
+		if name == "" && !OnlyFriend(c) && !PinWaits(s, c) {
 			var may []string
 			for _, f := range up {
 				if free[f] > 0 && !slices.Contains(left, f) && friendTakes(s, seat[f], tier) {
@@ -527,15 +558,23 @@ func friendDealPass(s *Snapshot, cards []*Card, seats []FriendSeat, reclaim bool
 			declared[row] = true
 		}
 		var u Unit
+		set := tierNowSet(c, tier)
+		if pinnedCard && pinned != "" && !OnlyFriend(c) && name != pinned {
+			if set == nil {
+				set = map[string]string{}
+			}
+			set[FieldPreferred], set[FieldPinWaivedAt] = pinned, stamp(s.Now)
+		}
 		switch {
 		case escalated:
-			u = friendEscalateUnit(s, c, wc, card, row, tier)
+			u = friendEscalateUnit(s, c, wc, card, row, tier, set)
 		case wc != nil:
-			u = friendRedealUnit(s, c, wc, row, tierNowSet(c, tier))
+			u = friendRedealUnit(s, c, wc, row, set)
 		default:
-			u = friendDealUnit(s, c, card, row, Ready, tierNowSet(c, tier))
+			u = friendDealUnit(s, c, card, row, Ready, set)
 		}
 		if pinnedCard && pinned != "" && !OnlyFriend(c) && name != pinned {
+			u.Moved += fmt.Sprintf("; pin to %s waived after %s: she is %s; dealt to %s", pinned, s.Now.Sub(pinSince(c)).Round(time.Second), pinUnavailable(s, seats, pinned), name)
 			placedID := card
 			if wc != nil && !escalated {
 				placedID = wc.ID
@@ -709,9 +748,13 @@ func reclaimUnit(s *Snapshot, wc *Card, up []string, seat map[string]FriendSeat,
 // a friend, as the machines' deal escalates it (escalate): a new attempt's work card on her
 // row (friendDealUnit), its primary on the tier it escalates to (FieldTierNow), and the
 // bound attempt's work card retired, its record kept.
-func friendEscalateUnit(s *Snapshot, c, prev *Card, card, row, tier string) Unit {
+func friendEscalateUnit(s *Snapshot, c, prev *Card, card, row, tier string, set map[string]string) Unit {
 	from, _ := CardTiers(c)
-	u := friendDealUnit(s, c, card, row, Ready, map[string]string{FieldTierNow: tier})
+	if set == nil {
+		set = map[string]string{}
+	}
+	set[FieldTierNow] = tier
+	u := friendDealUnit(s, c, card, row, Ready, set)
 	u.Changes = append([]Change{change(Fleet, removeEntry(prev, map[string]string{"retired": stamp(s.Now), "retired_by": "escalation"}))}, u.Changes...)
 	u.Moved += fmt.Sprintf("; escalated %s -> %s: %s at its redeal bound", from, tier, prev.ID)
 	return u
@@ -756,6 +799,9 @@ func friendDealUnit(s *Snapshot, c *Card, card, row, _ string, set map[string]st
 	now := stamp(s.Now)
 	fields := map[string]string{"kind": "work", "primary": c.ID, "stream": c.Row, "attempt": itoa(attempt), "gen": "1", "member": row,
 		"dealt": now, "first_dealt": now, "untaken_since": now}
+	if preferred := set[FieldPreferred]; preferred != "" {
+		fields[FieldPreferred], fields[FieldPinWaivedAt] = preferred, set[FieldPinWaivedAt]
+	}
 	for _, k := range []string{"fix", "finding", "why"} {
 		if v := c.F(k); v != "" {
 			fields[k] = v
@@ -766,9 +812,13 @@ func friendDealUnit(s *Snapshot, c *Card, card, row, _ string, set map[string]st
 	for k, v := range set {
 		prim[k] = v
 	}
+	unset := []string{"result"}
+	if c.F(FieldPreferred) != "" && row == FriendRow(c.F(FieldPreferred)) {
+		unset = append(unset, FieldPinWaivedAt)
+	}
 	return Unit{Key: c.ID, Stream: c.Row, Changes: []Change{
 		change(Fleet, createEntry(card, row, Ready, c.Score, fields)),
-		change(Work, moveEntry(c, c.Row, Working, prim, "result")),
+		change(Work, moveEntry(c, c.Row, Working, prim, unset...)),
 	}, Moved: fmt.Sprintf("%s work %s -> working card=%s member=%s %s (a friend's card: friend sync delivers it to her inbox)", c.ID, c.Col, card, row, Ready)}
 }
 
@@ -785,6 +835,11 @@ func friendRedealUnit(s *Snapshot, c, wc *Card, row string, set map[string]strin
 	maps.Copy(prim, set)
 	set, unset := nextGen(wc, row, s.Now), []string{"withdrawn", FieldTakenBack, FieldTakenFrom,
 		FieldRoute, FieldModel, FieldTokens, FieldUSD, FieldHarness, FieldDeadline}
+	primaryUnset := []string{"result"}
+	if c.F(FieldPreferred) != "" && row == FriendRow(c.F(FieldPreferred)) {
+		unset = append(unset, FieldPinWaivedAt)
+		primaryUnset = append(primaryUnset, FieldPinWaivedAt)
+	}
 	if left := friendsLeft(wc); len(left) > 0 {
 		set[FieldFriendsLeft] = strings.Join(left, ",") // the friend it was taken from, kept past the take
 	}
@@ -797,6 +852,6 @@ func friendRedealUnit(s *Snapshot, c, wc *Card, row string, set map[string]strin
 	unset = append(unset, FieldFriendDeadline) // set when she starts it
 	return Unit{Key: c.ID, Stream: c.Row, Changes: []Change{
 		change(Fleet, moveEntry(wc, row, Ready, set, unset...)),
-		change(Work, moveEntry(c, c.Row, Working, prim, "result")),
+		change(Work, moveEntry(c, c.Row, Working, prim, primaryUnset...)),
 	}, Moved: fmt.Sprintf("%s work %s -> working card=%s member=%s gen=%d %s (taken back, dealt again: friend sync delivers it to her inbox)", c.ID, c.Col, wc.ID, row, wc.Int("gen")+1, Ready)}
 }

@@ -359,7 +359,13 @@ left for nova-tools-1.1.0 into cards, and doing it via the sprint, but doing
 parts on friends where we would normally do friend work."). WHO is a preference (docs/SPEC-CARD-CONTRACT.md, the WHO line; `cardhdr.ReadWho`
 is the one parser). A card with no WHO line, or `WHO: -`, is unpinned. `WHO: friend`
 is any friend. `WHO: friend <name>` prefers that friend while she is up with room.
-`WHO: only friend <name>` is the one hard pin and waits for her alone. `add` and
+When she is down, held, or full, the ready card waits for `set --pin-wait
+<duration>` (default 30m); then the deal may offer it to another unit of its
+tier. The primary keeps `who=friend.<name>`, and records `preferred=<name>` and
+`pin_waived_at=<time>` when it is dealt away. A waived card not yet started may
+rebalance back when the preferred friend has an idle lane. `WHO: friend <name>
+only` is the hard pin and waits for her alone. The legacy `WHO: only friend
+<name>` is read identically. `add` and
 `brief` refuse any other WHO value, a name that is no row of the friends table, and
 `WHO: friend` while the table has no row (exit 2, nothing written). The primary's
 field `who` is `friend`, `friend.<name>`, or `only.friend.<name>`, written with its
@@ -459,7 +465,8 @@ nothing ready for over an hour while the machines were dealt flash cards):
 A named pin (`WHO: friend <name>`, not `only`) placed on another row is a judgment
 in that step (`a pinned card was dealt away from its friend`): why she did not
 take it (held, not up, the card has left her, her tiers do not hold the tier, or
-she has no room), and whose row and column hold the card now. The pass keeps
+she has no room), and whose row and column hold the card now. The pin waits its
+configured bound before that placement. The pass keeps
 that one judgment, and raises it when the card is already sitting off her row,
 until it is back on her row or leaves ready and working. A hard pin is not
 rotated and is not this judgment. A
@@ -489,13 +496,10 @@ function (docs/SPEC-SPRINT.md section 5, the deadline), set on the card as
 her next on a finish, a level or a redeal), and absent while she has no ok
 attempt: `TestOneDeadlineRuleForMembersAndFriends`), The machines' `deal` verb refuses a hard pin (`WHO: only friend`), and
 `rework` of a friend's card sends its primary ready with the fix, for the tick to
-offer again. A rework keeps the WHO pin (the owner, 2026-10-05: a rework of a friend's own
-rating, `WHO: friend <name>`, was dealt to another worker): a `WHO: friend <name>` card
-come back by a rework, a return or a redo (its `reworks` or `returns` counted;
-`sprint.ReworkPinned`) is the hard pin `OnlyFriend`, dealt only to her as on its first
-deal, and while she is down, held or without room it waits ready, held as a hard pin is,
-dealt to no other friend and no machine (`TestAReworkKeepsTheWhoPin`); a take-back alone
-(`friend take`) counts neither, so a preference taken back from her is still offered on.
+offer again. A rework keeps the WHO preference: its named friend is offered the
+next attempt first while she is up and free. The clock starts again at the
+previous attempt's finish; after the bound another same-tier unit may take it.
+Only an explicit `WHO: friend <name> only` stays hard across attempts.
 
 **A friend's card is working once she starts it** (the owner, 2026-10-05: "They
 are not working unless work turns from working to done."; the friends table had

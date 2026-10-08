@@ -3,6 +3,7 @@ package sprint
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -29,6 +30,7 @@ func TestAFriendRowHoldsItsTiersUnlessTheCardIsPinnedToHer(t *testing.T) {
 		{Name: "gus", Width: 4, Status: Up, Class: cardhdr.RouteFrontier},
 		{Name: "pam", Width: 4, Status: Up, Class: cardhdr.RoutePro},
 	}
+	w.tick(PinWaitDefault + time.Second)
 	capDeal(w, seats...)
 
 	held := map[string]string{}
