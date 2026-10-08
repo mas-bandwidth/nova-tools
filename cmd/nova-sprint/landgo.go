@@ -349,7 +349,8 @@ func (l *lander) treeGate(ctx context.Context, dir string, tests bool) string {
 // when the gate did not run on a bench (the commit could not be pushed, no lane before ctx
 // ended, a bench not answering, every slot's stage refused): the caller runs it here, and
 // that is nobody's finding. A gate that ran records the ring's size and the slot for the
-// batch's LAND line (gateRing, gateSlot).
+// batch's LAND line (gateRing, gateSlot). A ref delete failure is a red gate even when
+// its runs were green: the remote still holds the temporary ref.
 func (l *lander) benchGate(ctx context.Context, hosts []string, dir string, runs [][]string, tests bool) (why string, ran bool) {
 	st, err := l.gateStage(ctx, dir)
 	if err != nil {
@@ -365,6 +366,13 @@ func (l *lander) benchGate(ctx context.Context, hosts []string, dir string, runs
 	})
 	if gerr != nil {
 		l.copySaid(gerr.Error())
+		var pushErr *bench.StageError
+		if !errors.As(gerr, &pushErr) {
+			if why != "" {
+				why += "; "
+			}
+			return why + gerr.Error(), true
+		}
 	}
 	return why, ran
 }

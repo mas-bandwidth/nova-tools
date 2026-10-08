@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"regexp"
 	"runtime"
 	"strings"
@@ -182,4 +184,25 @@ func TestATwiceRefusedBenchIsPassedOverForThePass(t *testing.T) {
 	assert.False(t, ran, "every slot refused: the gate runs here")
 	assert.Equal(t, []string{bad, good}, asked)
 	r.clean()
+}
+
+// A gate ref that origin refuses to delete keeps the gate red through benchGate,
+// even when no bench ran and the caller would otherwise try the tree locally.
+func TestAFailedGateRefDeleteCannotPassTheGate(t *testing.T) {
+	t.Parallel()
+	r := newLandRig(t)
+	hook := "#!/bin/sh\nwhile read old new ref; do\n" +
+		"  case \"$ref:$new\" in refs/nova-gate/*:0000000000000000000000000000000000000000) echo delete refused >&2; exit 1;; esac\n" +
+		"done\n"
+	require.NoError(t, os.WriteFile(filepath.Join(r.remote, "hooks", "pre-receive"), []byte(hook), 0o700))
+	head := r.git(r.clone, "rev-parse", "HEAD")
+	ref := bench.GateRef("s1", head)
+	l := &lander{a: r.a, gateKey: "s1"}
+
+	why, ran := l.benchGate(context.Background(), nil, r.clone, gateRuns(false, nil), false)
+	require.True(t, ran, "a failed cleanup must prevent the caller from running a green local fallback")
+	assert.Contains(t, why, "deleting the gate's ref "+ref)
+	assert.Contains(t, strings.Join(l.ledgerLog, "\n"), "deleting the gate's ref "+ref)
+	assert.Equal(t, head, r.git(r.remote, "rev-parse", ref), "the refusal left the temporary ref on origin")
+	r.git(r.remote, "update-ref", "-d", ref)
 }
