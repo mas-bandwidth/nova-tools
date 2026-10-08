@@ -243,7 +243,7 @@ The plain `where --json` response carries cached fix counts without requiring `-
 
 
 
-## Landings chart
+### Landings chart
 
 The existing Landings panel remains the last panel, below all tables, at full width.
 It shows stacked ten-minute buckets over the last twenty-four hours, fleet below
