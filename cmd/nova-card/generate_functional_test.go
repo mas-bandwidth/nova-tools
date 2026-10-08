@@ -44,11 +44,20 @@ func TestAGeneratedDirectoryIsAdmittedWholeAndItsWavesHold(t *testing.T) {
 	write("cmd/a/a_test.go", "package main\n")
 	write("cmd/b/b_test.go", "package main\n")
 	write("internal/c/c_test.go", "package c\n")
+	// the ledger's own test, whose package every card's START and PATHS name
+	// (internal/ci/*.go), is at the base as it is in the real tree
+	write("internal/ci/serial_test.go", "package ci\n\nimport \"testing\"\n\nfunc TestEveryTestOpensWithTParallel(t *testing.T) { t.Parallel() }\n")
 	write("internal/ci/testdata/serial-tests_allowlist.txt", "# ceiling: 3\ncmd/a/a_test.go:TestA serial: t.Setenv\ncmd/b/b_test.go:TestB serial: t.Chdir\ninternal/c/c_test.go:TestC serial: os.Setenv\n")
+	// origin is a bare twin of example/repo holding the sprint branch: add reads every
+	// brief at the tip of its BASE: in the lander's clone of its REPO:, and the clone
+	// of https://github.com/example/repo.git is pointed here (insteadOf), never the network
+	origin := filepath.Join(t.TempDir(), "example", "repo.git")
 	git("init", "-q", "-b", "sprint/s")
-	git("remote", "add", "origin", filepath.Join(t.TempDir(), "example", "repo.git"))
+	git("init", "-q", "--bare", "-b", "sprint/s", origin)
+	git("remote", "add", "origin", origin)
 	git("add", ".")
 	git("commit", "-q", "-m", "fixture")
+	git("push", "-q", "origin", "HEAD:refs/heads/sprint/s")
 
 	out := filepath.Join(t.TempDir(), "cards")
 	exit, stdout, stderr := runCard("generate", "--from", "ledger", "--ledger", "serial-tests", "--repo-dir", repo, "--out", out)
@@ -69,7 +78,14 @@ func TestAGeneratedDirectoryIsAdmittedWholeAndItsWavesHold(t *testing.T) {
 	build.Env = goenv.Clean(os.Environ())
 	o, err := build.CombinedOutput()
 	require.NoError(t, err, "building nova-sprint: %s", o)
-	env := append(goenv.Clean(os.Environ()), "NOVA_SPRINT_REDIS=mem:"+filepath.Join(t.TempDir(), "twin"), "NOVA_SPRINT_ACTOR=t")
+	// the seat's name is the role word, as in cmd/nova-swarm's member drive: add holds
+	// every brief to name no coordinator by name (personal-name), and a one-letter
+	// name is a word of any brief
+	env := append(goenv.Clean(os.Environ()), "NOVA_SPRINT_REDIS=mem:"+filepath.Join(t.TempDir(), "twin"), "NOVA_SPRINT_ACTOR=coordinator",
+		// the lander's clones go under the test's own directories, and git's clone of the
+		// card's REPO: reads the twin (GIT_CONFIG_COUNT is git's config from the environment)
+		"HOME="+t.TempDir(), "XDG_CACHE_HOME="+t.TempDir(),
+		"GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=url."+origin+".insteadOf", "GIT_CONFIG_VALUE_0=https://github.com/example/repo.git")
 	sprintRun := func(args ...string) (int, string) {
 		t.Helper()
 		cmd := exec.Command(sprint, args...)
@@ -86,6 +102,22 @@ func TestAGeneratedDirectoryIsAdmittedWholeAndItsWavesHold(t *testing.T) {
 	}
 	code, text := sprintRun("init", "--members", "m1", "--readers", "r1")
 	require.Equal(t, 0, code, text)
+	// the seat is proven before any coordinator verb runs, as the built binary
+	// wants of every name (docs/SPEC-SPRINT.md, "The push proof"): a folder push
+	// target recorded, a check reported delivered, and the session's pong
+	const nonce = "0123456789abcdef"
+	for _, step := range [][]string{
+		{"seat", "push", "--harness", "claude", "--target", t.TempDir()},
+		{"seat", "push", "--sent", nonce},
+	} {
+		code, text = sprintRun(step...)
+		require.Contains(t, []int{0, 1}, code, "nova-sprint %s: %s", strings.Join(step, " "), text) // 1 is PUSH DOWN, not proven yet
+	}
+	code, text = sprintRun("seat", "pong", nonce)
+	require.Equal(t, 0, code, text)
+	code, text = sprintRun("seat", "push")
+	require.Equal(t, 0, code, text)
+	require.Contains(t, text, "PUSH OK name=coordinator")
 	code, text = sprintRun("add", "--stream", "s", "--brief-dir", out)
 	assert.Equal(t, 2, code, "without --allow-shared-paths the cards' shared ledger is refused: %s", text)
 	code, text = sprintRun("add", "--stream", "s", "--brief-dir", out, "--allow-shared-paths")
