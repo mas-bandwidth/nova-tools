@@ -496,3 +496,28 @@ func TestReceiptsAndOverdueSayWhereEachMessageIs(t *testing.T) {
 	cli.Do(t, "receipts", "--as", "bob", "--id", mid).Exit(0).Out("state=acted")
 	cli.Do(t, "overdue", "--older", "-1s").Exit(2).Err("--older wants a duration of at least 0")
 }
+
+// Both the top-level help and 'nova-bus help send' state the same Redis address
+// precedence: --redis flag, else NOVA_BUS_REDIS, else NOVA_SPRINT_REDIS, else
+// fleet:bus from the sprint store.
+func TestTopLevelHelpNamesTheSameRedisAddressPrecedenceAsHelpSend(t *testing.T) {
+	t.Parallel()
+	r := newRig("ada", "bob")
+	cli := r.cli()
+
+	topHelp := cli.Do(t, "help").Exit(0).Stdout
+	sendHelp := cli.Do(t, "help", "send").Exit(0).Stdout
+
+	// The precedence should name all four sources in the order the code applies them
+	// Format: --redis (else NOVA_BUS_REDIS, else NOVA_SPRINT_REDIS, else fleet:bus)
+	const precedence = `--redis (else NOVA_BUS_REDIS, else NOVA_SPRINT_REDIS, else fleet:bus)`
+
+	// Check that top-level help contains the precedence
+	if !strings.Contains(topHelp, precedence) {
+		t.Errorf("top-level help missing precedence: %q", precedence)
+	}
+	// Check that 'help send' contains the same precedence in the flag description
+	if !strings.Contains(sendHelp, `default: NOVA_BUS_REDIS, else NOVA_SPRINT_REDIS, else fleet:bus`) {
+		t.Errorf("'help send' missing flag description precedence")
+	}
+}
