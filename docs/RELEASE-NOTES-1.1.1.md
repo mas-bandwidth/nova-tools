@@ -1,8 +1,8 @@
-# Nova Tools 1.1.1 — pending certification
+# Superseded 1.1.1 patch proposal — never released
 
-This patch candidate starts from tagged v1.1.0 (`2e73c44d`). It contains
-targeted sprint landing and friend-lane fixes. Review, certification, dev
-integration and installation remain to be verified before release.
+This older proposal starts from tagged v1.1.0 (`2e73c44d`). Its selected
+reliability changes are now assembled under the [v1.2.0 candidate](RELEASE-NOTES-1.2.0.md).
+The 1.1.1 proposal was not certified, installed or published.
 
 - `nova-sprint` gives rework attempts fix priority in ordered queues, keeps
   redo read inheritance and the empty-queue refusal, and names unmet
@@ -16,6 +16,6 @@ integration and installation remain to be verified before release.
   the attempt. Claude `-p` receives the friend's directory through `--add-dir`;
   stray-report rescue moves regular files only.
 
-The inherited [1.2.0 draft](RELEASE-NOTES-1.2.0.md) describes separate,
-unreleased scope. Its Redis function and fleet-wide reinstall steps are not
-instructions for this patch candidate.
+The [archived mechanical proposal](PROPOSAL-MECHANICAL-2026-10-02.md) was not
+selected wholesale. Its Redis function and fleet-wide reinstall steps are not
+instructions for the v1.2 reliability candidate.
