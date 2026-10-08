@@ -47,6 +47,9 @@ func TestDSHSettingsRequireInitializedHeadlessWithoutWriting(t *testing.T) {
 		{"empty headless directory", "", "headless", false},
 		{"base only", `{"dsh":{"profile":{"bundles":["@deepseek-ai/dsh-base"]}}}`, "headless", true},
 		{"headless only", `{"dsh":{"profile":{"bundles":["@deepseek-ai/dsh-headless"]}}}`, "headless", true},
+		{"case alias dsh", `{"DSH":{"profile":{"bundles":["@deepseek-ai/dsh-base","@deepseek-ai/dsh-headless"]}}}`, "headless", true},
+		{"case alias profile", `{"dsh":{"Profile":{"bundles":["@deepseek-ai/dsh-base","@deepseek-ai/dsh-headless"]}}}`, "headless", true},
+		{"case alias bundles", `{"dsh":{"profile":{"Bundles":["@deepseek-ai/dsh-base","@deepseek-ai/dsh-headless"]}}}`, "headless", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
