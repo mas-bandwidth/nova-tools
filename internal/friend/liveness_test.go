@@ -119,7 +119,10 @@ func TestAFriendWhoseSessionPongsIsUpWithNoHarnessProcess(t *testing.T) {
 	t.Run("headless dsh, no app, the session pongs: up for three hours", func(t *testing.T) {
 		t.Parallel()
 		r := newLivenessRig(t, headlessDSH)
-		require.Error(t, r.step(BeatEvery), "a daemon that started proves nothing: down until the session answers")
+		require.NoError(t, r.step(BeatEvery), "the daemon beats from its first step: its liveness, whatever the session says")
+		up, reason := r.sc.Present()
+		require.False(t, up, "a daemon that started proves nothing about the session: down until it answers")
+		require.Equal(t, NotYetAnswered, reason)
 		require.True(t, r.answerLatest(t), "the first beat put a session check into the session")
 		answered := 1
 		before := r.beats()
@@ -135,6 +138,7 @@ func TestAFriendWhoseSessionPongsIsUpWithNoHarnessProcess(t *testing.T) {
 			require.True(t, up, "at %s: %s", elapsed, reason)
 		}
 		assert.Equal(t, steps, r.beats()-before, "every beat reached the sprint server")
+		assert.False(t, r.sc.Evidence().IsZero(), "and each carries the session's last answer")
 		assert.GreaterOrEqual(t, answered, 15, "a check every quiet spell, each answered")
 		assert.Equal(t, HarnessNotSeen, watchSeen(r.w), "the advisory observation says the app was not seen, and nothing more")
 		r.mu.Lock()
@@ -145,13 +149,16 @@ func TestAFriendWhoseSessionPongsIsUpWithNoHarnessProcess(t *testing.T) {
 		assert.NotContains(t, records, "down: harness not running")
 	})
 
-	t.Run("the app open, the session silent: down", func(t *testing.T) {
+	t.Run("the app open, the session silent: down, and the daemon still beats", func(t *testing.T) {
 		t.Parallel()
 		r := newLivenessRig(t, dshAppOpen)
+		steps := 0
 		for elapsed := time.Duration(0); elapsed < SessionBound+2*time.Minute; elapsed += 10 * time.Second {
-			assert.Error(t, r.step(10*time.Second), "at %s nothing has answered: no beat", elapsed)
+			steps++
+			assert.NoError(t, r.step(10*time.Second), "at %s nothing has answered, and the daemon beats", elapsed)
 		}
-		assert.Zero(t, r.beats(), "a running app is no answer: no beat reached the sprint server")
+		assert.Equal(t, steps, r.beats(), "the daemon's beat is its own liveness: every one reached the sprint server")
+		assert.True(t, r.sc.Evidence().IsZero(), "a running app is no answer: the beats carry no session evidence, so the sprint reads the session deaf")
 		up, reason := r.sc.Present()
 		assert.False(t, up)
 		assert.Equal(t, NoSessionAnswer, reason)
@@ -159,22 +166,26 @@ func TestAFriendWhoseSessionPongsIsUpWithNoHarnessProcess(t *testing.T) {
 	})
 }
 
-// TestASessionsOwnBusMessageBringsItUp: a friend is up when her session
-// answered the last check or sent any bus message within the window; a
-// message the daemon itself sent is still no proof.
+// TestASessionsOwnBusMessageBringsItUp: a friend's session is up when it
+// answered the last check or sent any bus message within the window, and the
+// beat carries when; a message the daemon itself sent is still no proof.
 func TestASessionsOwnBusMessageBringsItUp(t *testing.T) {
 	t.Parallel()
 	r := newLivenessRig(t, headlessDSH)
-	require.Error(t, r.step(BeatEvery))
+	require.NoError(t, r.step(BeatEvery))
 	daemon := &bus.Bus{Store: r.sc.DaemonStore()}
 	_, err := daemon.Send(context.Background(), bus.Message{From: "zhi", To: []string{"ada"}, Subject: "card x done", Body: "the daemon's\n"})
 	require.NoError(t, err)
-	require.Error(t, r.step(BeatEvery), "the daemon's own message proves nothing")
+	require.NoError(t, r.step(BeatEvery))
+	up, _ := r.sc.Present()
+	require.False(t, up, "the daemon's own message proves nothing")
+	require.True(t, r.sc.Evidence().IsZero(), "and the beat carries no session evidence")
 	_, err = r.direct.Send(context.Background(), bus.Message{From: "zhi", To: []string{"ada"}, Subject: "card x done", Body: "Verdict: LAND\n"})
 	require.NoError(t, err)
-	require.NoError(t, r.step(BeatEvery), "the session wrote on the bus: up, and the beat goes out")
-	up, _ := r.sc.Present()
-	assert.True(t, up)
+	require.NoError(t, r.step(BeatEvery))
+	up, _ = r.sc.Present()
+	assert.True(t, up, "the session wrote on the bus: up")
+	assert.Equal(t, t0.Add(3*BeatEvery), r.sc.Evidence(), "and the beat carries when")
 	r.mu.Lock()
 	records := strings.Join(r.records, "\n")
 	r.mu.Unlock()

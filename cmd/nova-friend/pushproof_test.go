@@ -17,8 +17,7 @@ import (
 // install and run refuse at the start, each with its remedy, a harness whose
 // adapter has no deliver command; install also refuses a session the adapter cannot
 // drive (dsh, a session under an agent preset). run never exits for want of a proof:
-// the daemon starts with its push unproven, says why once, beats down with the check's
-// nonce, and delivers nothing until the session answers (docs/SPEC-FRIEND.md, The push
+// the daemon starts with its push unproven, says why once, keeps beating without session proof, and delivers nothing until the session answers (docs/SPEC-FRIEND.md, The push
 // proof).
 func TestRunRefusesAHarnessThatCannotDeliver(t *testing.T) {
 	t.Parallel()
@@ -54,7 +53,8 @@ func TestRunRefusesAHarnessThatCannotDeliver(t *testing.T) {
 		}
 		stopAfter(&w, &cancel, 10*time.Minute) // a daemon that started anyway ends here, exit 0
 		beats := 0
-		w.beat = func(context.Context, string, string, time.Time, friend.BeatWords) (string, error) {
+		w.beat = func(_ context.Context, _, _ string, _ time.Time, words friend.BeatWords) (string, error) {
+			assert.Empty(t, words.Pong, "a daemon never fabricates a session answer")
 			beats++
 			return "", nil
 		}
@@ -70,9 +70,8 @@ func TestRunRefusesAHarnessThatCannotDeliver(t *testing.T) {
 		assert.Equal(t, 1, strings.Count(out.String(), "presence: REFUSED: session check r4nd0m cannot go into the session"), "said once: %s", out.String())
 		assert.Contains(t, out.String(), "minimal")
 		assert.Contains(t, out.String(), remedy)
-		assert.Zero(t, beats, "never beaten up: the session was never proved")
-		require.NotEmpty(t, downs)
-		assert.Contains(t, downs[0], "push unproven: session check r4nd0m")
+		assert.Positive(t, beats, "the daemon beats while the session remains unproved")
+		assert.Empty(t, downs, "session deafness does not hold daemon liveness")
 		w = r.world()
 		w.exec = func(context.Context, string, string, []string, string) (string, int, error) {
 			return `dsh: session "session-z" runs under agent preset "minimal", which the one-shot runner does not compose` + "\n", 1, nil
@@ -95,7 +94,8 @@ func TestRunRefusesAHarnessThatCannotDeliver(t *testing.T) {
 		}
 		stopAfter(&w, &cancel, 10*time.Minute) // a daemon that started anyway ends here, exit 0
 		beats := 0
-		w.beat = func(context.Context, string, string, time.Time, friend.BeatWords) (string, error) {
+		w.beat = func(_ context.Context, _, _ string, _ time.Time, words friend.BeatWords) (string, error) {
+			assert.Empty(t, words.Pong, "a daemon never fabricates a session answer")
 			beats++
 			return "", nil
 		}
@@ -111,9 +111,8 @@ func TestRunRefusesAHarnessThatCannotDeliver(t *testing.T) {
 		assert.Empty(t, errb.String())
 		assert.Contains(t, out.String(), "push proof: pending: the first session check goes into the opencode session now")
 		assert.Equal(t, 1, strings.Count(out.String(), "push proof: unproven: session check r4nd0m"), "the refusal names the nonce once: %s", out.String())
-		assert.Zero(t, beats, "never beaten up")
-		require.NotEmpty(t, downs, "her beat says down")
-		assert.Contains(t, downs[len(downs)-1], "push unproven: session check r4nd0m")
+		assert.Positive(t, beats, "the daemon beats without a session answer")
+		assert.Empty(t, downs, "session deafness does not hold daemon liveness")
 	})
 	t.Run("a pong starts the daemon, and its beat carries the session's proof", func(t *testing.T) {
 		t.Parallel()
