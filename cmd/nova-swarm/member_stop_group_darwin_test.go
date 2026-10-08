@@ -34,6 +34,7 @@ func TestDarwinBirthIdentityAndRecoveredResistantGroupStop(t *testing.T) {
 		<-waited
 	}()
 	require.NoError(t, writeNativeGroupReceipt(dir, pid, stamp))
+	require.NoError(t, startNativeAnchor(dir, pid))
 	require.NoError(t, release())
 	require.Eventually(t, func() bool { _, err := os.Stat(ready); return err == nil }, time.Second, 10*time.Millisecond)
 	c := &nativeChild{groupDir: dir, done: make(chan struct{})}

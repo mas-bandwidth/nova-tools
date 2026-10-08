@@ -191,10 +191,12 @@ func ReapVerified(ctx context.Context, pgid int, leaderBirth, anchorReceiptPath 
 	if grace <= 0 || !AnchorPinned(pgid, anchorReceiptPath) {
 		return false
 	}
+	record := anchorIdentity(anchorReceiptPath)
 	if !sendAnchorCommand(ctx, pgid, anchorReceiptPath, "TERM", grace) {
 		return false
 	}
 	if waitGone(ctx, pgid, anchorReceiptPath, grace, true) {
+		cleanupQuiescedChannel(record)
 		return true
 	}
 	if !AnchorPinned(pgid, anchorReceiptPath) {
@@ -203,7 +205,11 @@ func ReapVerified(ctx context.Context, pgid int, leaderBirth, anchorReceiptPath 
 	if !sendAnchorCommand(ctx, pgid, anchorReceiptPath, "KILL", grace) {
 		return false
 	}
-	return waitGone(ctx, pgid, anchorReceiptPath, grace, false)
+	if !waitGone(ctx, pgid, anchorReceiptPath, grace, false) {
+		return false
+	}
+	cleanupQuiescedChannel(record)
+	return true
 }
 
 // KillVerified asks the anchor to kill its own group without a TERM grace.
@@ -211,10 +217,29 @@ func KillVerified(ctx context.Context, pgid int, leaderBirth, anchorReceiptPath 
 	if timeout <= 0 || !AnchorPinned(pgid, anchorReceiptPath) {
 		return false
 	}
+	record := anchorIdentity(anchorReceiptPath)
 	if !sendAnchorCommand(ctx, pgid, anchorReceiptPath, "KILL", timeout) {
 		return false
 	}
-	return waitGone(ctx, pgid, anchorReceiptPath, timeout, false)
+	if !waitGone(ctx, pgid, anchorReceiptPath, timeout, false) {
+		return false
+	}
+	cleanupQuiescedChannel(record)
+	return true
+}
+
+// The receipt remains as audit evidence; its FIFO is no longer useful after
+// group exit. Match the recorded inode before unlinking so slot reuse cannot
+// remove a later run's channel.
+func cleanupQuiescedChannel(record anchorRecord) {
+	if record.fifo == "" {
+		return
+	}
+	var got syscall.Stat_t
+	if err := syscall.Lstat(record.fifo, &got); err != nil || uint64(got.Dev) != record.dev || uint64(got.Ino) != record.ino || got.Mode&syscall.S_IFMT != syscall.S_IFIFO {
+		return
+	}
+	_ = os.Remove(record.fifo) // ignored: stale FIFO is inert; STOP proof already succeeded
 }
 
 // sendAnchorCommand cannot signal a group itself. A nonblocking FIFO open

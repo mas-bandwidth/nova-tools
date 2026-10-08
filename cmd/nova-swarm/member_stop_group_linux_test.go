@@ -6,6 +6,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -42,6 +43,7 @@ func TestRecoveredStopReapsResistantOwnedGroup(t *testing.T) {
 	pid := cmd.Process.Pid
 	defer func() { _ = syscall.Kill(-pid, syscall.SIGKILL); _ = cmd.Wait() }()
 	require.NoError(t, writeNativeGroupReceipt(dir, pid, swarm.StartStamp(pid)))
+	require.NoError(t, startNativeAnchor(dir, pid))
 	require.NoError(t, release())
 	require.Eventually(t, func() bool { _, err := os.Stat(ready); return err == nil }, time.Second, 10*time.Millisecond)
 	c := &nativeChild{groupDir: dir, done: make(chan struct{})}
@@ -94,6 +96,10 @@ func TestRecoveredStopReapsLeaderlessResistantGroupWithoutTouchingAnother(t *tes
 	require.Eventually(t, func() bool { _, err := os.Stat(ready); return err == nil }, time.Second, 10*time.Millisecond)
 	assert.NotEqual(t, stamp, swarm.StartStamp(pid), "the original group leader must be gone")
 	assert.True(t, anchorInGroup(dir, pid), "the durable anchor must pin the leaderless group")
+	anchorReceipt, err := os.ReadFile(filepath.Join(dir, nativeAnchorReceiptName))
+	require.NoError(t, err)
+	anchorFields := strings.Fields(string(anchorReceipt))
+	require.Len(t, anchorFields, 5)
 
 	other, otherRelease, otherAbort, err := nativeGroupCommand(context.Background(), "/bin/sh", "-c", "sleep 30")
 	require.NoError(t, err)
@@ -107,6 +113,8 @@ func TestRecoveredStopReapsLeaderlessResistantGroupWithoutTouchingAnother(t *tes
 	c.Stop()
 	require.Eventually(t, c.StopConfirmed, 10*time.Second, 25*time.Millisecond)
 	assert.False(t, groupRunnable(pid))
+	_, channelErr := os.Lstat(filepath.Join(dir, anchorFields[2]))
+	assert.True(t, os.IsNotExist(channelErr), "quiesced run retained its obsolete FIFO")
 	assert.True(t, processAlive(other.Process.Pid), "an unrelated group was signalled")
 }
 
