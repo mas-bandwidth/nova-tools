@@ -265,6 +265,13 @@ func TestRowSetAndViewSetRefuseOverlongTextBeforeSending(t *testing.T) {
 			assert.Equal(t, tc.limit, le.Name)
 			assert.Equal(t, tc.bound, le.Bound)
 			assert.Equal(t, tc.bound+1, le.Observed)
+			// A row verb's refusal names the row as its member, as the
+			// server's does; the others name none.
+			if strings.HasPrefix(tc.name, "row ") {
+				assert.Equal(t, "r", le.Member)
+			} else {
+				assert.Empty(t, le.Member)
+			}
 			require.Empty(t, c.calls, "the command was sent: the refusal came after the payload was built")
 			assert.NotContains(t, err.Error(), overlong, "a refusal echoes the value")
 			assert.NotContains(t, err.Error(), overlongID, "a refusal echoes the member id")
