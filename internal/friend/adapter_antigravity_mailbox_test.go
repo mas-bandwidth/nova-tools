@@ -20,8 +20,9 @@ import (
 // lockedFS is a MapFS the delivery (in the daemon's turn goroutine) writes and Follow (in the
 // loop) reads: every look under one lock.
 type lockedFS struct {
-	mu sync.Mutex
-	m  fstest.MapFS
+	mu         sync.Mutex
+	m          fstest.MapFS
+	readDirErr error
 }
 
 func (l *lockedFS) Open(name string) (fs.File, error) {
@@ -39,6 +40,9 @@ func (l *lockedFS) ReadFile(name string) ([]byte, error) {
 func (l *lockedFS) ReadDir(name string) ([]fs.DirEntry, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	if l.readDirErr != nil {
+		return nil, l.readDirErr
+	}
 	return l.m.ReadDir(name)
 }
 
@@ -386,9 +390,35 @@ func TestAMessageThatDoesNotLandInMailboxIsRefused(t *testing.T) {
 	var l AntigravityLedger
 	found, err := read(filepath.Join(state, AntigravityLedgerFile), &l)
 	require.NoError(t, err)
-	if found {
-		assert.Empty(t, l.Deliveries, "no unlanded delivery kept in ledger")
-	}
+	require.True(t, found)
+	require.Len(t, l.Deliveries, 1)
+	assert.Equal(t, "", l.Deliveries[0].ID, "uncertain delivery kept in ledger")
+	assert.Equal(t, "slow", l.Deliveries[0].Text)
+}
+
+// A message whose file arrives late (after the 30s timeout refusal) is reconciled on subsequent retry
+// without triggering a second duplicate agentapi send-message call.
+func TestAMessageThatLandsLateIsReconciledOnRetryWithoutDuplicate(t *testing.T) {
+	t.Parallel()
+	h := newAgHarness(t0, "A")
+	h.late = true
+	var out strings.Builder
+	state := t.TempDir()
+	a := h.adapter("A", state, &out, func() time.Time { return t0 })
+	exit, err := a.Deliver(context.Background(), "slow")
+	assert.Equal(t, 1, exit, "refused on timeout so bus keeps it pending")
+
+	// File lands late in mailbox
+	h.land("A", "A-1")
+	a.Follow(context.Background(), t0.Add(time.Minute))
+	assert.Contains(t, out.String(), "antigravity: message A-1 in the mailbox of conversation A (landed late)")
+
+	// Daemon retries delivering the same pending message
+	exit, err = a.Deliver(context.Background(), "slow")
+	require.NoError(t, err, "accepted delivery once reconciled")
+	assert.Equal(t, 0, exit)
+	assert.Equal(t, []string{"A"}, h.sentTo, "agentapi send-message was NOT called a second time (reconciled)")
+	assert.Contains(t, out.String(), "already in the mailbox of conversation A from prior accepted send; reconciled without duplicate send")
 }
 
 // Durable unread deliveries in the ledger are replayed on same-session restart when the receipt
@@ -447,6 +477,57 @@ func TestSameSessionRestartReplaysUnreadDelivery(t *testing.T) {
 		restarted.Follow(context.Background(), now)
 
 		assert.Equal(t, []string{"A"}, h.sentTo, "already in mailbox; not resent (no duplicate effects)")
+	})
+
+	t.Run("replays unread delivery on restart without explicit session", func(t *testing.T) {
+		t.Parallel()
+		h := newAgHarness(t0, "A")
+		var out strings.Builder
+		state := t.TempDir()
+		now := t0
+		clock := func() time.Time { return now }
+		a := h.adapter("", state, &out, clock) // Session is empty (automatic discovery mode)
+		agDeliver(t, a, "m-1")
+		assert.Equal(t, []string{"A"}, h.sentTo)
+
+		h.fs.mu.Lock()
+		delete(h.fs.m, agBox("A")+"/A-1.json")
+		h.fs.mu.Unlock()
+
+		// Restart with empty session; must recover recorded conversation from durable state
+		restarted := h.adapter("", state, &out, clock)
+		assert.Equal(t, "A", restarted.Live(), "recovered recorded conversation from durable ledger")
+		now = t0.Add(time.Minute)
+		restarted.Follow(context.Background(), now)
+
+		assert.Equal(t, []string{"A", "A"}, h.sentTo, "unread delivery replayed without explicit session")
+		got := h.got("A")
+		require.Len(t, got, 2)
+		assert.Contains(t, got[1], "re-sent: A-1 was delivered to A")
+	})
+
+	t.Run("does not replay when mailbox listing fails", func(t *testing.T) {
+		t.Parallel()
+		h := newAgHarness(t0, "A")
+		var out strings.Builder
+		state := t.TempDir()
+		now := t0
+		clock := func() time.Time { return now }
+		a := h.adapter("A", state, &out, clock)
+		agDeliver(t, a, "m-1")
+		assert.Equal(t, []string{"A"}, h.sentTo)
+
+		// Simulate mailbox listing error (fail closed)
+		h.fs.mu.Lock()
+		h.fs.readDirErr = errors.New("simulated I/O failure")
+		h.fs.mu.Unlock()
+
+		restarted := h.adapter("A", state, &out, clock)
+		now = t0.Add(time.Minute)
+		restarted.Follow(context.Background(), now)
+
+		assert.Equal(t, []string{"A"}, h.sentTo, "fails closed on listing error: no replay, no duplicate")
+		assert.Contains(t, out.String(), "cannot list mailbox of conversation A: simulated I/O failure; replay held until mailbox can be read")
 	})
 }
 

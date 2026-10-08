@@ -292,6 +292,10 @@ func (a *Antigravity) send(ctx context.Context, srv antigravityServer, session, 
 	if port == "" {
 		return a.refuse(session, fmt.Sprintf("no port of the antigravity language server (%s) answers for conversation %s: %v", strings.Join(srv.ports, ", "), session, err))
 	}
+	if matchedID := a.reconcilePending(session, text); matchedID != "" {
+		a.say("antigravity: message %s already in the mailbox of conversation %s from prior accepted send; reconciled without duplicate send", matchedID, session)
+		return 0, nil
+	}
 	mailbox := antigravityMailbox(session)
 	before, err := a.mailbox(mailbox)
 	if err != nil {
@@ -318,11 +322,11 @@ func (a *Antigravity) send(ctx context.Context, srv antigravityServer, session, 
 			break
 		}
 	}
+	a.keep(AntigravityDelivery{ID: id, Conversation: session, DeliveredAt: at, Text: text})
 	if id == "" {
-		a.say("antigravity: agentapi took a message for conversation %s and it is not in the mailbox after %s", session, AntigravityLandBudget)
+		a.say("antigravity: agentapi took a message for conversation %s and it is not in the mailbox after %s; kept as uncertain delivery, its id read when it lands", session, AntigravityLandBudget)
 		return a.refuse(session, fmt.Sprintf("agentapi took message for conversation %s but it did not appear in the mailbox after %s", session, AntigravityLandBudget))
 	}
-	a.keep(AntigravityDelivery{ID: id, Conversation: session, DeliveredAt: at, Text: text})
 	a.say("antigravity: message %s in the mailbox of conversation %s", id, session)
 	return 0, nil
 }

@@ -141,7 +141,14 @@ func (a *Antigravity) Live() string {
 	if a.live != "" {
 		return a.live
 	}
-	return a.Session
+	if a.Session != "" {
+		return a.Session
+	}
+	l := a.load()
+	if len(l.Deliveries) > 0 {
+		return l.Deliveries[len(l.Deliveries)-1].Conversation
+	}
+	return ""
 }
 
 // observe reads, for every delivery not yet read, its conversation's read.json, marks the
@@ -304,15 +311,19 @@ func (a *Antigravity) Follow(ctx context.Context, now time.Time) {
 		}
 	} else if live != "" {
 		mailbox := antigravityMailbox(live)
-		inBox, _ := a.mailbox(mailbox)
-		for _, d := range l.Deliveries {
-			if d.Conversation == live && d.ReadAt.IsZero() && d.ResentTo == "" && d.Text != "" {
-				if d.ID == "" || !slices.Contains(inBox, d.ID) {
-					owed = append(owed, d)
+		inBox, err := a.mailbox(mailbox)
+		if err != nil {
+			a.say("antigravity: cannot list mailbox of conversation %s: %s; replay held until mailbox can be read", live, oneLine(err.Error(), 300))
+		} else {
+			for _, d := range l.Deliveries {
+				if d.Conversation == live && d.ReadAt.IsZero() && d.ResentTo == "" && d.Text != "" {
+					if d.ID == "" || !slices.Contains(inBox, d.ID) {
+						owed = append(owed, d)
+					}
 				}
 			}
+			to = live
 		}
-		to = live
 	}
 	a.mu.Unlock()
 	if len(owed) == 0 {
@@ -343,6 +354,29 @@ func (a *Antigravity) Follow(ctx context.Context, now time.Time) {
 }
 
 // antigravityMailbox is conversation c's mailbox, under the home.
+// reconcilePending checks if an unread delivery for session with matching text has
+// already landed in the mailbox (e.g. from a prior accepted send that timed out waiting
+// for receipt, then landed late). If found, it returns the landed message ID.
+func (a *Antigravity) reconcilePending(session, text string) string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	l := a.load()
+	mailbox := antigravityMailbox(session)
+	inBox, err := a.mailbox(mailbox)
+	if err != nil {
+		return ""
+	}
+	for i := range l.Deliveries {
+		d := &l.Deliveries[i]
+		if d.Conversation == session && d.Text == text && d.ReadAt.IsZero() && d.ResentTo == "" {
+			if d.ID != "" && slices.Contains(inBox, d.ID) {
+				return d.ID
+			}
+		}
+	}
+	return ""
+}
+
 func antigravityMailbox(c string) string {
 	return path.Join(AntigravityData, "brain", c, ".system_generated", "messages")
 }
