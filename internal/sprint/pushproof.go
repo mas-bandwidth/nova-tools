@@ -3,6 +3,8 @@ package sprint
 import (
 	"strings"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
 // The seat's push proof (docs/SPEC-SPRINT.md, "The push proof"; the owner,
@@ -189,10 +191,25 @@ func PushPong(rec PushRecord, ok bool, nonce string, now time.Time) (PushRecord,
 	return rec, ""
 }
 
-// PushCheckText is the check the push loop delivers into name's session: the
-// prefix and nonce, then the one command that answers it from inside.
-func PushCheckText(name, nonce string) string {
-	return PushCheckPrefix + nonce + "\nThe sprint's push loop proves it reaches this session: the seat is held only by a session it can reach, and every coordinator verb is refused until this answer comes back. Answer now, before anything else, with one command, then end this turn: nova-sprint seat pong " + nonce + " --actor " + name + "\n"
+// PushPongCommand preserves the producer's route and the addressed actor. A
+// direct store is explicit so an inherited server cannot intercept the reply;
+// a forwarded source names its server without selecting a local store. Only
+// addresses go into the command, never credentials.
+func PushPongCommand(name, nonce, redis, server string) string {
+	command := "nova-sprint seat pong " + oneline.ShellWord(nonce) + " --actor " + oneline.ShellWord(name)
+	if redis != "" {
+		return command + " --redis " + oneline.ShellWord(redis)
+	}
+	if server != "" {
+		return "env NOVA_SPRINT_SERVER=" + oneline.ShellWord(server) + " " + command
+	}
+	return command
+}
+
+// PushCheckText is the check the push loop delivers: the nonce followed by
+// the producer's routed command, identical for native and folder adapters.
+func PushCheckText(nonce, reply string) string {
+	return PushCheckPrefix + nonce + "\nThe sprint's push loop proves it reaches this session: the seat is held only by a session it can reach, and every coordinator verb is refused until this answer comes back. Answer now, before anything else, with one command, then end this turn: " + reply + "\n"
 }
 
 // NotPushTarget is why a push record may not be written for name, "" is may:
