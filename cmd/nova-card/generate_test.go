@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mas-bandwidth/nova-tools/internal/testgit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -26,10 +27,9 @@ func fixtureCheckout(t *testing.T, files map[string]string) (dir string, git fun
 	}
 
 	for path, content := range files {
-		t.Cleanup(func() {
-			os.MkdirAll(filepath.Join(dir, filepath.Dir(path)), 0o755)
-			os.WriteFile(filepath.Join(dir, path), []byte(content), 0o644)
-		})
+		p := filepath.Join(dir, path)
+		os.MkdirAll(filepath.Dir(p), 0o755)
+		os.WriteFile(p, []byte(content), 0o644)
 	}
 
 	git("init", "-q", "-b", "dev")
