@@ -2722,7 +2722,11 @@ daemon over a scratch bus (bus's Fake behind a store that blocks on an empty
 read and can have the friend's credential revoked) into a fake harness that
 can be closed, silenced or limited, and beats to a twin sprint store
 (`store.Mem`) whose tick deals four cards for any friend, two to him and two
-to a second friend who never fails. Each case runs in a `testing/synctest`
+to a second friend who never fails. Both friends take flash, and both start
+up on their sessions' evidence (a wake ping answered, the coordinator's
+`friend health --state up`), never on a beat: his session's every later pong
+is recorded the same way, and the friend who never fails answers once a
+minute. Each case runs in a `testing/synctest`
 bubble, so the long bounds are fake time.
 
 | case | bound | cards | landed today | owed by |

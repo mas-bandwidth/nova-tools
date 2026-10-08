@@ -235,12 +235,16 @@ type chaosRig struct {
 	nonce   int
 	cards   int
 	amyBeat *time.Ticker // amy's machinery: one beat each FriendBeatEvery
+	amyPong time.Time    // when the coordinator last saw amy's session answer
 	done    chan struct{}
 }
 
-// newChaosRig starts the world: the twin with friends amy and bob (width 2)
-// and the coordinator's seat, four cards for any friend dealt two to each,
-// bob's daemon running and his session answering one ping.
+// newChaosRig starts the world: the twin with friends amy and bob (width 2,
+// tier flash) and the coordinator's seat, both sessions having answered the coordinator's
+// wake ping (a friend is up only on her session's evidence, never on a beat:
+// docs/SPEC-FRIEND.md, "Presence is her session's evidence"), four cards for
+// any friend dealt two to each, bob's daemon running and his session answering
+// one ping.
 func newChaosRig(t *testing.T) *chaosRig {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -255,7 +259,9 @@ func newChaosRig(t *testing.T) *chaosRig {
 		NewID: func() string { n++; return fmt.Sprint(n) }, Sleep: func(time.Duration) {}}
 	require.NoError(t, r.st.Init(ctx))
 	require.NoError(t, r.mem.SetCoordinator(ctx, "coord"))
-	_, _, _, err := r.st.SyncFriends(ctx, []store.FriendSpec{{Name: "amy", Width: 2}, {Name: "bob", Width: 2}})
+	// both take flash, the tier of a card whose brief names none: a friend whose
+	// row names no tier is dealt no card (friendTakes, internal/sprint/friend_deal.go)
+	_, _, _, err := r.st.SyncFriends(ctx, []store.FriendSpec{{Name: "amy", Width: 2, Class: "flash"}, {Name: "bob", Width: 2, Class: "flash"}})
 	require.NoError(t, err)
 	_, _, _, err = r.st.SetMachine(ctx, true)
 	require.NoError(t, err)
@@ -292,6 +298,11 @@ func newChaosRig(t *testing.T) *chaosRig {
 	go func() { defer close(r.done); _ = d.Run(ctx) }()
 	t.Cleanup(func() { cancel(); <-r.done; r.amyBeat.Stop() })
 
+	r.mu.Lock()
+	require.NoError(t, r.answered("amy"))
+	require.NoError(t, r.answered("bob"))
+	r.amyPong = time.Now()
+	r.mu.Unlock()
 	r.addCards(4)
 	r.step(2 * time.Second)
 	require.Equal(t, sprint.Up, r.friendStatus("bob"), "bob is up from the start")
@@ -304,13 +315,30 @@ func newChaosRig(t *testing.T) *chaosRig {
 }
 
 // sessionPong is the session running its pong line: the pong recorded where
-// the daemon reads it, and the pong line sent on the bus as bob.
+// the daemon reads it, the pong line sent on the bus as bob, and the
+// coordinator's reading of it on the twin (friend health --state up), his
+// session's evidence. It runs on the daemon's goroutine, so a failed write is
+// an error on the test, never a FailNow.
 func (r *chaosRig) sessionPong(ctx context.Context, nonce string) {
 	now := time.Now()
 	r.pongMu.Lock()
 	r.pong, r.pongSet, r.answer = Pong{Nonce: nonce, At: now, To: "coord", Width: 2}, true, now
 	r.pongMu.Unlock()
 	_, _ = r.session.Send(ctx, bus.Message{From: "bob", To: []string{"coord"}, Subject: PongSubject, Body: PongLine(nonce, 0, 0, 2) + "\n"})
+	r.mu.Lock()
+	err := r.answered("bob")
+	r.mu.Unlock()
+	if err != nil {
+		r.t.Errorf("the coordinator's friend health for bob's pong: %v", err)
+	}
+}
+
+// answered is the coordinator's observation that the friend's session
+// answered its wake ping now (friend health --state up under the first seat),
+// her session's evidence on the twin for FriendPongWindow. The caller holds mu.
+func (r *chaosRig) answered(name string) error {
+	_, _, _, err := r.st.FriendHealth(r.ctx, name, "coord", sprint.FriendHealth{State: sprint.Up, Seen: time.Now(), Generation: sprint.FirstSeatGeneration}, "")
+	return err
 }
 
 // ping is the coordinator's ping to bob with a fresh nonce, and a card's word
@@ -349,7 +377,9 @@ func (r *chaosRig) addCards(n int) []string {
 }
 
 // step runs the world for d of the bubble's fake time, one of amy's beats at a
-// time (FriendBeatEvery, a second): at each, amy beats and the tick runs. The
+// time (FriendBeatEvery, a second): at each, amy beats, her session answers
+// the coordinator's wake ping once a minute (she never fails, and a beat is no
+// evidence), and the tick runs. The
 // wait is amy's beat ticker, the fake clock of the synctest bubble, never the
 // wall clock (the waits check of internal/ci reads a time.Sleep here as a
 // wall-clock wait: it does not see the bubble).
@@ -360,6 +390,10 @@ func (r *chaosRig) step(d time.Duration) {
 		r.mu.Lock()
 		_, err := r.st.FriendBeat(r.ctx, "amy")
 		require.NoError(r.t, err)
+		if time.Since(r.amyPong) >= time.Minute {
+			require.NoError(r.t, r.answered("amy"))
+			r.amyPong = time.Now()
+		}
 		_, err = r.st.Tick(r.ctx)
 		r.mu.Unlock()
 		require.NoError(r.t, err)
