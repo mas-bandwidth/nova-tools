@@ -265,3 +265,43 @@ func TestAProvedBeatReadsUpFromTheRecordsPong(t *testing.T) {
 	assert.Equal(t, proof.Proof, rows[0].Proof)
 	assert.Contains(t, rows[0].Evidence, "session proof")
 }
+
+// A rebind that changes a session already on her roster drops that session
+// proof. Her row is not up on the old answer before a check through the new
+// session, and a pong of the old nonce does not restore it.
+func TestAReboundSessionDropsTheOldProofUntilANewCheck(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	_, _, _, err := h.st.SyncFriends(h.ctx, []FriendSpec{{Name: "amy", Width: 1, Session: "ses_old"}})
+	require.NoError(t, err)
+	_, proof, err := h.st.FriendBeatProof(h.ctx, "amy", sprint.FriendReport{}, nil, sprint.BeatWords{Run: "r1", Check: "n1", Pong: "n1"})
+	require.NoError(t, err)
+	require.True(t, proof.Proved)
+	rows, err := h.st.FriendRows(h.ctx, h.now)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	assert.Equal(t, sprint.Up, rows[0].Status)
+	assert.False(t, rows[0].Proof.IsZero())
+
+	_, _, updated, err := h.st.SyncFriends(h.ctx, []FriendSpec{{Name: "amy", Width: 1, Session: "ses_new"}})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"amy"}, updated)
+	rows, err = h.st.FriendRows(h.ctx, h.now)
+	require.NoError(t, err)
+	assert.Equal(t, sprint.Down, rows[0].Status, "the old session proof is not evidence after rebind")
+	assert.True(t, rows[0].Proof.IsZero())
+
+	_, proof, err = h.st.FriendBeatProof(h.ctx, "amy", sprint.FriendReport{}, nil, sprint.BeatWords{Run: "r1", Pong: "n1"})
+	require.NoError(t, err)
+	assert.False(t, proof.Proved, "the nonce the old session was asked is not evidence")
+	rows, err = h.st.FriendRows(h.ctx, h.now)
+	require.NoError(t, err)
+	assert.Equal(t, sprint.Down, rows[0].Status)
+
+	_, proof, err = h.st.FriendBeatProof(h.ctx, "amy", sprint.FriendReport{}, nil, sprint.BeatWords{Run: "r2", Check: "n2", Pong: "n2"})
+	require.NoError(t, err)
+	require.True(t, proof.Proved)
+	rows, err = h.st.FriendRows(h.ctx, h.now)
+	require.NoError(t, err)
+	assert.Equal(t, sprint.Up, rows[0].Status, "a check through the new session proves her")
+}

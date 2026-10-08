@@ -1368,7 +1368,11 @@ her current chat. Every harness that names a session has the same shape.
   the friend one NOTE on her own stream, `NOTE: your session <target> is
   <state>`, each naming the target, the state found and the rebind line,
   `nova-friend rebind --as <f> --session <id>`. A send that fails is tried
-  again the next step; the one already sent is not sent again. Every message
+  again the next step; the one already sent is not sent again. When no
+  coordinator is known (no ping has named a seat and `--coordinator` is
+  unset), that absence is said on the record and the blocker stays pending
+  until one is known and the send succeeds; the absence is not a send.
+  Every message
   stays pending on her stream, never acked and never counted toward
   `MaxDeliveries`, so the rebound session gets it.
 - **The daemon never unarchives a conversation and never guesses another
@@ -1380,7 +1384,9 @@ her current chat. Every harness that names a session has the same shape.
   nova-config friend row (`nova-config friend set <me> --session <id> --as
   <me>`; a row that cannot be written refuses the rebind, nothing changed),
   writes the friend's push proof down on the bus (`rebound from <old> to
-  <new>`: nova-bus refuses her as deaf), records the new target in
+  <new>`: nova-bus refuses her as deaf). Friend sync of that new session
+  drops the old session proof on her sprint beat, so her row is not up on
+  the old answer before a check through the new session. Rebind records the new target in
   `<state>/target.json` with every session it replaced `retired`, rewrites
   `--session` in the plist and boots the agent out and in. The daemon then
   starts on a fresh push proof, a SESSION CHECK round trip through the new
