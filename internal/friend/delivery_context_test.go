@@ -13,7 +13,8 @@ func TestDeliveryContext(t *testing.T) {
 	t.Parallel()
 
 	// Nil context or context without metadata returns false
-	ids, ok := DeliveryIDsFromContext(nil)
+	var nilCtx context.Context
+	ids, ok := DeliveryIDsFromContext(nilCtx)
 	assert.False(t, ok)
 	assert.Nil(t, ids)
 
