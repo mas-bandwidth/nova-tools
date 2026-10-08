@@ -1041,6 +1041,12 @@ func (l *loop) read(now time.Time) bool {
 				l.hand = append(l.hand, e)
 				l.inHand[e.Entry] = true
 			}
+			// The present takes a finite stream snapshot itself. Keep the old
+			// bounded hand while it is owed, so Recv cannot reclaim its own
+			// entries as a large backlog advances the store clock.
+			if l.presentDue && !d.noPresent && len(l.hand) >= MaxBatch {
+				break
+			}
 			e, ok, err = b.Recv(l.ctx, d.Friend, 0) // the rest of what is pending, at once
 		}
 		if err != nil && l.ctx.Err() == nil {
