@@ -23,7 +23,8 @@ var SSHOptions = []string{"-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-o"
 
 // Exec is the production transport: the system ssh, and nothing else. The
 // copy is a tar stream this process writes onto ssh's stdin, so no rsync or
-// local tar is needed here and the bench needs only tar.
+// local tar is needed here and the bench needs only tar. The lander's tree gate
+// does not copy: it stages from the bench's mirror (stage_mirror.go).
 type Exec struct{}
 
 // Shell runs line on host through ssh.
@@ -33,19 +34,41 @@ func (Exec) Shell(ctx context.Context, host, line string, stdout, stderr io.Writ
 
 // Copy copies src's contents into host:dst: dst is made, and the tree goes over
 // as a tar stream on ssh's stdin that the bench's tar unpacks there.
-func (Exec) Copy(ctx context.Context, host, src, dst string, withGit bool, stderr io.Writer) error {
+func (e Exec) Copy(ctx context.Context, host, src, dst string, withGit bool, stderr io.Writer) error {
+	_, err := e.CopySized(ctx, host, src, dst, withGit, stderr)
+	return err
+}
+
+// CopySized is Copy, and how many bytes of tar stream it wrote. A refusal names its
+// cause: WriteTree's own (a socket, a device), else the bench's tar exit, whose stderr
+// the caller's stderr receives.
+func (Exec) CopySized(ctx context.Context, host, src, dst string, withGit bool, stderr io.Writer) (int64, error) {
 	pr, pw := io.Pipe()
-	go func() { pw.CloseWithError(WriteTree(pw, src, withGit)) }()
-	// ignored: the read end of a pipe the child has drained; the command's status is the one returned
-	defer func() { _ = pr.Close() }()
+	cw := &countingWriter{w: pw}
+	wrote := make(chan error, 1)
+	go func() {
+		err := WriteTree(cw, src, withGit)
+		wrote <- err
+		// ignored: CloseWithError on a pipe writer always returns nil
+		_ = pw.CloseWithError(err)
+	}()
 	code, err := sshLine(ctx, host, CopyLine(dst), pr, io.Discard, stderr)
-	if err != nil {
-		return err
+	// ignored: closing the read end only unblocks a writer the child stopped reading; the
+	// writer's own error is read below
+	_ = pr.Close()
+	werr := <-wrote
+	if errors.Is(werr, io.ErrClosedPipe) {
+		werr = nil // the bench stopped reading: its exit is the cause
 	}
-	if code != 0 {
-		return fmt.Errorf("tar on the bench exit %d", code)
+	switch {
+	case werr != nil:
+		return cw.n, fmt.Errorf("tar stream: %w", werr)
+	case err != nil:
+		return cw.n, err
+	case code != 0:
+		return cw.n, fmt.Errorf("tar on the bench exit %d", code)
 	}
-	return nil
+	return cw.n, nil
 }
 
 // sshLine is this package's one ssh: line on host, stdin (nil for none) on
