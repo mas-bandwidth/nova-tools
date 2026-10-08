@@ -504,21 +504,30 @@ func workspaceIs(workspace string, dirs []string) bool {
 	return false
 }
 
-// newMessage selects a new mailbox entry carrying our exact title, never one the ledger
-// already holds for another delivery (a message that landed late). An unrelated message
-// appearing during send must not stand for ours.
+// newMessage selects a new mailbox entry carrying our exact title and matching the active
+// send's content hash, never one the ledger already holds for another delivery (a message that
+// landed late). An unrelated message or another delivery's message appearing during send
+// must not stand for ours.
 func (a *Antigravity) newMessage(mailbox string, before, after []string, activeSession, activeHash string) (string, error) {
 	for _, id := range after {
 		if slices.Contains(before, id) || (a.known(id) && !a.isOwnReceipt(id, activeSession, activeHash)) {
 			continue
 		}
-		mine, err := a.titled(mailbox, id)
+		raw, err := fs.ReadFile(a.fsys(), path.Join(mailbox, id+".json"))
 		if err != nil {
 			return "", err
 		}
-		if mine {
-			return id, nil
+		var msg antigravityMessage
+		if err := json.Unmarshal(raw, &msg); err != nil {
+			continue
 		}
+		if msg.RenderDetails.MessageTitle != AntigravityTitle {
+			continue
+		}
+		if activeHash != "" && antigravityHash(msg.Content) != activeHash {
+			continue
+		}
+		return id, nil
 	}
 	return "", nil
 }
