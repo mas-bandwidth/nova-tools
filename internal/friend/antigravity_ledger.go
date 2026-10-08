@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"path"
@@ -227,6 +228,132 @@ func (a *Antigravity) known(id string) bool {
 	return slices.ContainsFunc(a.load().Deliveries, func(d AntigravityDelivery) bool { return d.ID == id })
 }
 
+// isOwnReceipt reports whether id was assigned to the active delivery matching session and hash.
+func (a *Antigravity) isOwnReceipt(id, session, hash string) bool {
+	if session == "" || hash == "" {
+		return false
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return slices.ContainsFunc(a.load().Deliveries, func(d AntigravityDelivery) bool {
+		return d.ID == id && d.Conversation == session && d.Hash == hash
+	})
+}
+
+// isActive reports whether session and hash are currently being sent by an in-flight send();
+// called with a.mu held.
+func (a *Antigravity) isActive(session, hash string) bool {
+	return a.activeSession != "" && a.activeSession == session && (hash == "" || a.activeHash == hash)
+}
+
+// deliveryID returns the assigned ID of the delivery matching session and hash, or "" if unassigned.
+func (a *Antigravity) deliveryID(session, hash string) string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	l := a.load()
+	for i := len(l.Deliveries) - 1; i >= 0; i-- {
+		d := &l.Deliveries[i]
+		if d.Conversation == session && d.Hash == hash {
+			return d.ID
+		}
+	}
+	return ""
+}
+
+// antigravityMessage represents an unmarshaled message file in a conversation mailbox.
+type antigravityMessage struct {
+	ID            string `json:"id"`
+	Content       string `json:"content"`
+	RenderDetails struct {
+		MessageTitle string `json:"messageTitle"`
+	} `json:"renderDetails"`
+}
+
+// readMessage reads and parses message id in conversation session's mailbox.
+func (a *Antigravity) readMessage(session, id string) (antigravityMessage, error) {
+	mailbox := antigravityMailbox(session)
+	raw, err := fs.ReadFile(a.fsys(), path.Join(mailbox, id+".json"))
+	if err != nil {
+		return antigravityMessage{}, err
+	}
+	var msg antigravityMessage
+	if err := json.Unmarshal(raw, &msg); err != nil {
+		return antigravityMessage{}, err
+	}
+	if msg.ID == "" {
+		msg.ID = id
+	}
+	return msg, nil
+}
+
+// matchesDelivery reports whether the mailbox message id in conversation session belongs
+// to delivery d by verified payload identity (content hash or structured context).
+func (a *Antigravity) matchesDelivery(session, id string, d *AntigravityDelivery) bool {
+	if d == nil {
+		return false
+	}
+	msg, err := a.readMessage(session, id)
+	if err != nil || msg.RenderDetails.MessageTitle != AntigravityTitle {
+		return false
+	}
+	targetHash := d.Hash
+	if targetHash == "" && d.Text != "" {
+		targetHash = antigravityHash(d.Text)
+	}
+	fileHash := antigravityHash(msg.Content)
+	if targetHash != "" && fileHash == targetHash {
+		return true
+	}
+	if targetHash == "" && len(d.BusIDs) > 0 {
+		fileIDs := extractDeliveryIDs(msg.Content)
+		if len(fileIDs) > 0 && d.coversAll(fileIDs) {
+			return true
+		}
+	}
+	return false
+}
+
+// observePrior attributes untracked mailbox files to prior unconfirmed deliveries for session
+// whose content hash matches the landed file, ensuring an older delivery receives its exact
+// receipt rather than letting an active send steal it or guessing by chronological order.
+func (a *Antigravity) observePrior(session, activeHash string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	l := a.load()
+	changed := false
+	untracked := a.untracked(session)
+	if len(untracked) == 0 {
+		return
+	}
+	claimed := map[string]bool{}
+	for i := range l.Deliveries {
+		d := &l.Deliveries[i]
+		if d.Conversation != session || d.ResentTo != "" || !d.ReadAt.IsZero() {
+			continue
+		}
+		if d.ID == "" && d.Hash != activeHash {
+			for _, id := range untracked {
+				if claimed[id] {
+					continue
+				}
+				if a.matchesDelivery(session, id, d) {
+					d.ID = id
+					d.State = DeliveryLanded
+					claimed[id] = true
+					changed = true
+					a.say("antigravity: message %s in the mailbox of conversation %s (landed late)", d.ID, d.Conversation)
+					break
+				}
+			}
+		}
+	}
+	if changed {
+		if err := a.save(); err != nil {
+			a.say("antigravity: cannot save late landings to ledger: %s", oneLine(err.Error(), 300))
+		}
+	}
+}
+
 // Delivered reports whether the ledger holds bus message id in an already landed or consumed delivery.
 // If reading the ledger encounters an error, it returns that error to fail closed.
 func (a *Antigravity) Delivered(id string) (bool, error) {
@@ -287,6 +414,7 @@ func (a *Antigravity) observe(now time.Time) {
 	l := a.load()
 	reads := map[string][]byte{}
 	landed := map[string][]string{}
+	claimed := map[string]map[string]bool{}
 	changed := false
 	for i := range l.Deliveries {
 		d := &l.Deliveries[i]
@@ -294,16 +422,32 @@ func (a *Antigravity) observe(now time.Time) {
 			continue
 		}
 		if d.ID == "" {
+			if a.isActive(d.Conversation, d.Hash) {
+				continue
+			}
 			ids, ok := landed[d.Conversation]
 			if !ok {
 				ids = a.untracked(d.Conversation)
+				landed[d.Conversation] = ids
 			}
-			if len(ids) > 0 {
-				d.ID, ids, changed = ids[0], ids[1:], true
-				d.State = DeliveryLanded
-				a.say("antigravity: message %s in the mailbox of conversation %s (landed late)", d.ID, d.Conversation)
+			cClaimed, ok := claimed[d.Conversation]
+			if !ok {
+				cClaimed = map[string]bool{}
+				claimed[d.Conversation] = cClaimed
 			}
-			landed[d.Conversation] = ids
+			for _, id := range ids {
+				if cClaimed[id] {
+					continue
+				}
+				if a.matchesDelivery(d.Conversation, id, d) {
+					d.ID = id
+					d.State = DeliveryLanded
+					cClaimed[id] = true
+					changed = true
+					a.say("antigravity: message %s in the mailbox of conversation %s (landed late)", d.ID, d.Conversation)
+					break
+				}
+			}
 			if d.ID == "" {
 				continue
 			}
@@ -526,8 +670,15 @@ func (a *Antigravity) reconcile(session, text string, incomingIDs []string, hasS
 		// Case 1: Pending or uncertain send
 		if d.ID == "" || d.State == DeliveryPending || d.State == DeliveryUncertain {
 			ids := a.untracked(session)
-			if len(ids) > 0 {
-				d.ID = ids[0]
+			matchedID := ""
+			for _, id := range ids {
+				if a.matchesDelivery(session, id, d) {
+					matchedID = id
+					break
+				}
+			}
+			if matchedID != "" {
+				d.ID = matchedID
 				d.State = DeliveryLanded
 				if err := a.save(); err != nil {
 					a.say("antigravity: cannot save reconciled landing to ledger: %s", oneLine(err.Error(), 300))
@@ -583,6 +734,9 @@ func (a *Antigravity) markLanded(session, hash, id string) error {
 	for i := len(l.Deliveries) - 1; i >= 0; i-- {
 		d := &l.Deliveries[i]
 		if d.Conversation == session && (d.Hash == hash || (hash == "" && d.ID == id)) {
+			if d.ID == id && d.State == DeliveryLanded {
+				return nil
+			}
 			d.ID = id
 			d.State = DeliveryLanded
 			return a.save()

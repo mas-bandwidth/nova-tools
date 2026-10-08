@@ -2,6 +2,7 @@ package friend
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -124,9 +125,20 @@ func (h *agHarness) run(_ context.Context, _, name string, args []string, _ stri
 	return "", 1, nil
 }
 
-// land puts message id in c's mailbox.
-func (h *agHarness) land(c, id string) {
-	h.fs.put(agBox(c)+"/"+id+".json", &fstest.MapFile{Data: []byte(`{"renderDetails":{"messageTitle":"nova-friend"}}`)})
+// land puts message id in c's mailbox with its actual content payload.
+func (h *agHarness) land(c, id string, text ...string) {
+	content := h.texts[id]
+	if len(text) > 0 {
+		content = text[0]
+	}
+	data, _ := json.Marshal(map[string]any{
+		"id": id,
+		"renderDetails": map[string]string{
+			"messageTitle": "nova-friend",
+		},
+		"content": content,
+	})
+	h.fs.put(agBox(c)+"/"+id+".json", &fstest.MapFile{Data: data})
 }
 
 // reads marks the ids read in c's read.json.
@@ -1172,4 +1184,237 @@ func TestDaemonBatchIntegrationWithDistinctStreamAndMessageIDs(t *testing.T) {
 	assert.True(t, l.inHand["1004-0"], "entry remains tracked inHand")
 	assert.Nil(t, l.busy, "no turn is started while filter is in error")
 	assert.Empty(t, l.results, "no result queued")
+}
+
+// A deterministic barrier forcing Follow between agentapi send-message landing and
+// receipt scan does not cause the active send to treat its own receipt as already known
+// or report uncertain.
+func TestFollowDuringSendBetweenLandingAndScanDoesNotCauseUncertain(t *testing.T) {
+	t.Parallel()
+	h := newAgHarness(t0, "root-new")
+	var out strings.Builder
+	state := t.TempDir()
+	a := h.adapter("root-new", state, &out, func() time.Time { return t0 })
+
+	followed := false
+	a.BeforeScan = func() {
+		followed = true
+		a.Follow(context.Background(), t0.Add(time.Second))
+	}
+
+	exit, err := a.Deliver(context.Background(), "message delivered while follow checks")
+	require.NoError(t, err)
+	assert.Equal(t, 0, exit)
+	assert.True(t, followed)
+	assert.Contains(t, out.String(), "antigravity: message root-new-1 in the mailbox of conversation root-new")
+	assert.NotContains(t, out.String(), "uncertain")
+
+	l := a.load()
+	require.Len(t, l.Deliveries, 1)
+	assert.Equal(t, "root-new-1", l.Deliveries[0].ID)
+	assert.Equal(t, DeliveryLanded, l.Deliveries[0].State)
+}
+
+// When an earlier delivery is pending/uncertain and its late receipt appears during a second send,
+// the second send does not claim the late old receipt for itself.
+func TestLateOldReceiptDoesNotAttributeToActiveSend(t *testing.T) {
+	t.Parallel()
+	h := newAgHarness(t0, "A")
+	h.late = true
+	var out strings.Builder
+	state := t.TempDir()
+	a := h.adapter("A", state, &out, func() time.Time { return t0 })
+
+	// First send: times out, recorded as uncertain with ID empty
+	exit, err := a.Deliver(context.Background(), "first")
+	require.Error(t, err)
+	assert.Equal(t, 1, exit)
+
+	l := a.load()
+	require.Len(t, l.Deliveries, 1)
+	assert.Empty(t, l.Deliveries[0].ID)
+	assert.Equal(t, DeliveryUncertain, l.Deliveries[0].State)
+
+	// Second send: while active, ONLY the first message file lands late.
+	// Second send must NOT claim the first message file as its own receipt.
+	a.BeforeScan = func() {
+		h.land("A", "A-1")
+	}
+
+	exit, err = a.Deliver(context.Background(), "second")
+	require.Error(t, err, "second send times out because its own file A-2 did not land")
+	assert.Equal(t, 1, exit)
+
+	l = a.load()
+	require.Len(t, l.Deliveries, 2)
+	assert.Equal(t, "A-1", l.Deliveries[0].ID, "A-1 was attributed to the first delivery")
+	assert.Equal(t, DeliveryLanded, l.Deliveries[0].State)
+	assert.Empty(t, l.Deliveries[1].ID, "second delivery did NOT steal A-1")
+	assert.Equal(t, DeliveryUncertain, l.Deliveries[1].State)
+}
+
+// When both the late receipt for an earlier send and the receipt for the current send land,
+// each delivery is attributed its own receipt in chronological order.
+func TestLateOldReceiptBothLandedAttributesEachToItsOwnSend(t *testing.T) {
+	t.Parallel()
+	h := newAgHarness(t0, "A")
+	h.late = true
+	var out strings.Builder
+	state := t.TempDir()
+	a := h.adapter("A", state, &out, func() time.Time { return t0 })
+
+	// First send times out
+	exit, err := a.Deliver(context.Background(), "first")
+	require.Error(t, err)
+	assert.Equal(t, 1, exit)
+
+	// Second send: BeforeScan lands both A-1 (late old receipt) and A-2 (current send's receipt)
+	a.BeforeScan = func() {
+		h.land("A", "A-1")
+		h.land("A", "A-2")
+	}
+
+	exit, err = a.Deliver(context.Background(), "second")
+	require.NoError(t, err, "second send succeeds with its own receipt A-2")
+	assert.Equal(t, 0, exit)
+
+	l := a.load()
+	require.Len(t, l.Deliveries, 2)
+	assert.Equal(t, "A-1", l.Deliveries[0].ID, "first delivery attributed A-1")
+	assert.Equal(t, DeliveryLanded, l.Deliveries[0].State)
+	assert.Equal(t, "A-2", l.Deliveries[1].ID, "second delivery attributed A-2")
+	assert.Equal(t, DeliveryLanded, l.Deliveries[1].State)
+	assert.Contains(t, out.String(), "antigravity: message A-1 in the mailbox of conversation A (landed late)")
+	assert.Contains(t, out.String(), "antigravity: message A-2 in the mailbox of conversation A")
+}
+
+// When the daemon crashes/restarts while a delivery is pending (ID empty), on restart
+// Follow attributes the landed receipt and subsequent Deliver reconciles without duplicate send.
+func TestRestartWithPendingDeliveryRecoversLandedReceipt(t *testing.T) {
+	t.Parallel()
+	h := newAgHarness(t0, "A")
+	state := t.TempDir()
+
+	// Populate ledger with a DeliveryPending record with empty ID (simulating crash before scan)
+	hash := antigravityHash("crash before scan")
+	now := t0
+	clock := func() time.Time { return now }
+	pendingLedger := AntigravityLedger{
+		Deliveries: []AntigravityDelivery{
+			{
+				Hash:         hash,
+				BusIDs:       []string{"01M4_CRASH"},
+				Conversation: "A",
+				DeliveredAt:  now,
+				Text:         "crash before scan",
+				State:        DeliveryPending,
+			},
+		},
+	}
+	require.NoError(t, write(filepath.Join(state, AntigravityLedgerFile), pendingLedger))
+
+	// File landed on disk while process was dead
+	h.land("A", "A-1", "crash before scan")
+
+	// Restarted daemon starts up
+	var out strings.Builder
+	restarted := h.adapter("A", state, &out, clock)
+	now = t0.Add(time.Minute)
+
+	// Follow recovers the landed file
+	restarted.Follow(context.Background(), now)
+	assert.Contains(t, out.String(), "antigravity: message A-1 in the mailbox of conversation A (landed late)")
+
+	var l AntigravityLedger
+	_, err := read(filepath.Join(state, AntigravityLedgerFile), &l)
+	require.NoError(t, err)
+	require.Len(t, l.Deliveries, 1)
+	assert.Equal(t, "A-1", l.Deliveries[0].ID)
+	assert.Equal(t, DeliveryLanded, l.Deliveries[0].State)
+
+	// Bus retries the pending turn: reconciled without duplicate agentapi call
+	ctx := WithDeliveryIDs(context.Background(), []string{"01M4_CRASH"})
+	exit, err := restarted.Deliver(ctx, "crash before scan")
+	require.NoError(t, err)
+	assert.Equal(t, 0, exit)
+	assert.Empty(t, h.sentTo, "agentapi was NOT called on retry (reconciled from recovered ledger)")
+	assert.Contains(t, out.String(), "already in the mailbox of conversation A from prior accepted send; reconciled without duplicate send")
+}
+
+// Counterexample from cold review: Delivery A is accepted by agentapi but its mailbox
+// file never lands. Delivery B is sent next and B's mailbox file lands first.
+// Delivery B must receive receipt B and succeed (exit 0).
+// Delivery A must NOT be falsely attributed B's receipt or marked landed.
+func TestBFirstReceiptDoesNotAttributeToAbsentA(t *testing.T) {
+	t.Parallel()
+	h := newAgHarness(t0, "A")
+	h.late = true
+	var out strings.Builder
+	state := t.TempDir()
+	a := h.adapter("A", state, &out, func() time.Time { return t0 })
+
+	// First send: times out waiting for file A-1 to land, recorded as uncertain with ID empty
+	exit, err := a.Deliver(context.Background(), "first delivery that never lands")
+	require.Error(t, err)
+	assert.Equal(t, 1, exit)
+
+	l := a.load()
+	require.Len(t, l.Deliveries, 1)
+	assert.Empty(t, l.Deliveries[0].ID)
+	assert.Equal(t, DeliveryUncertain, l.Deliveries[0].State)
+	assert.Equal(t, antigravityHash("first delivery that never lands"), l.Deliveries[0].Hash)
+
+	// Second send: ONLY the second message file A-2 lands.
+	// Message file A-1 NEVER lands.
+	a.BeforeScan = func() {
+		h.land("A", "A-2")
+	}
+
+	exit, err = a.Deliver(context.Background(), "second delivery that lands first")
+	require.NoError(t, err, "second send must succeed with its own receipt A-2")
+	assert.Equal(t, 0, exit)
+
+	l = a.load()
+	require.Len(t, l.Deliveries, 2)
+
+	// Verify Delivery A was NOT falsely marked landed with B's receipt
+	assert.Empty(t, l.Deliveries[0].ID, "A was NOT attributed B's receipt (A-2)")
+	assert.Equal(t, DeliveryUncertain, l.Deliveries[0].State, "A remains uncertain")
+
+	// Verify Delivery B received its own receipt A-2
+	assert.Equal(t, "A-2", l.Deliveries[1].ID, "second delivery claimed its own receipt A-2")
+	assert.Equal(t, DeliveryLanded, l.Deliveries[1].State, "second delivery landed")
+
+	// Verify output logging: A-2 logged for second send, but A-1 was never logged
+	assert.Contains(t, out.String(), "antigravity: message A-2 in the mailbox of conversation A")
+	assert.NotContains(t, out.String(), "antigravity: message A-1 in the mailbox of conversation A")
+	assert.NotContains(t, out.String(), "antigravity: message A-2 in the mailbox of conversation A (landed late)")
+
+	// Concurrent / subsequent Follow check must preserve A as uncertain
+	a.Follow(context.Background(), t0.Add(time.Minute))
+	l = a.load()
+	require.Len(t, l.Deliveries, 2)
+	assert.Empty(t, l.Deliveries[0].ID, "Follow did not falsely attribute anything to A")
+	assert.Equal(t, DeliveryUncertain, l.Deliveries[0].State)
+
+	// Late arrival of A-1: now A-1 lands
+	h.land("A", "A-1")
+
+	// Follow recovers A-1 for A by verified payload hash
+	a.Follow(context.Background(), t0.Add(2*time.Minute))
+	assert.Contains(t, out.String(), "antigravity: message A-1 in the mailbox of conversation A (landed late)")
+
+	l = a.load()
+	require.Len(t, l.Deliveries, 2)
+	assert.Equal(t, "A-1", l.Deliveries[0].ID, "A attributed A-1 after it landed")
+	assert.Equal(t, DeliveryLanded, l.Deliveries[0].State)
+	assert.Equal(t, "A-2", l.Deliveries[1].ID, "B preserved A-2")
+	assert.Equal(t, DeliveryLanded, l.Deliveries[1].State)
+
+	// Retrying delivery A reconciles without duplicate external send
+	exit, err = a.Deliver(context.Background(), "first delivery that never lands")
+	require.NoError(t, err)
+	assert.Equal(t, 0, exit)
+	assert.Equal(t, []string{"A", "A"}, h.sentTo, "external agentapi was NOT called on retry")
+	assert.Contains(t, out.String(), "already in the mailbox of conversation A from prior accepted send; reconciled without duplicate send")
 }

@@ -65,7 +65,14 @@ func (e *agExec) run(_ context.Context, dir, name string, args []string, _ strin
 		if len(args) > 5 && args[5] != "" {
 			targetBox = antigravityMailbox(args[5])
 		}
-		e.fsys[targetBox+"/"+id+".json"] = &fstest.MapFile{Data: []byte(`{"id":"` + id + `","renderDetails":{"messageTitle":"nova-friend"},"content":"` + args[5] + `"}`)}
+		data, _ := json.Marshal(map[string]any{
+			"id": id,
+			"renderDetails": map[string]string{
+				"messageTitle": "nova-friend",
+			},
+			"content": args[len(args)-1],
+		})
+		e.fsys[targetBox+"/"+id+".json"] = &fstest.MapFile{Data: data}
 		return `{"response": {"sendMessage": {"recipientId": "root-new"}}}`, 0, nil
 	}
 	return "", 1, nil
