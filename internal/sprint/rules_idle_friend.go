@@ -134,14 +134,7 @@ func TickRuleIdle(s *Snapshot, r TickReq) (Plan, int) {
 		return Plan{}, 0
 	}
 	var notes []Note
-	bound := friendIdleBoundDefault
-	if s.Work != nil {
-		if v, ok := s.Work.Prop(PropFriendIdle); ok {
-			if d, err := time.ParseDuration(v); err == nil && d > 0 {
-				bound = d
-			}
-		}
-	}
+	bound := s.friendIdleBound()
 	for _, row := range s.Fleet.Rows() {
 		if !isFriendRow(row) {
 			continue
@@ -157,6 +150,7 @@ func TickRuleIdle(s *Snapshot, r TickReq) (Plan, int) {
 					idleMinutes = int64(s.Now.Sub(evidence).Minutes())
 				}
 			}
+			// Bus message to nova-bus2
 			notes = append(notes, Note{
 				Kind:      Happened,
 				Type:      "friend loaded but idle",
@@ -165,6 +159,15 @@ func TickRuleIdle(s *Snapshot, r TickReq) (Plan, int) {
 				Who:       "rule " + RuleFriendIdle,
 				At:        s.Now,
 				To:        "coordinator",
+			})
+			// Judgment-free line to seat's inbox feed
+			notes = append(notes, Note{
+				Kind:      Happened,
+				Type:      "inbox",
+				Stream:    row,
+				What:      fmt.Sprintf("friend %s idle-loaded %dm: width goal sent", friend, idleMinutes),
+				Who:       "rule " + RuleFriendIdle,
+				At:        s.Now,
 			})
 		}
 	}
@@ -177,14 +180,7 @@ func TickRuleIdleReturn(s *Snapshot, r TickReq) (Plan, int) {
 		return Plan{}, 0
 	}
 	var p Plan
-	bound := friendIdleBoundDefault
-	if s.Work != nil {
-		if v, ok := s.Work.Prop(PropFriendIdle); ok {
-			if d, err := time.ParseDuration(v); err == nil && d > 0 {
-				bound = d
-			}
-		}
-	}
+	bound := s.friendIdleBound()
 	for _, row := range s.Fleet.Rows() {
 		if !isFriendRow(row) {
 			continue
@@ -193,24 +189,39 @@ func TickRuleIdleReturn(s *Snapshot, r TickReq) (Plan, int) {
 		if !ruleFriendIdle(r.Friends, row, s.Fleet, s.Now, bound) {
 			continue
 		}
-		// Return all ready cards to pool
+		// Return all ready cards to review (reads to review, work to ready)
 		for _, c := range s.Fleet.Cell(row, Ready) {
 			p.Units = append(p.Units, Unit{
 				Key:    c.ID,
 				Stream: row,
-				Changes: []Change{change(Fleet, setEntry(c, map[string]string{FieldTakenBack: RuleFriendIdleReturn + " at " + stamp(s.Now)}))},
+				Changes: []Change{change(Fleet, setEntry(c, map[string]string{
+					FieldTakenBack: RuleFriendIdleReturn + " at " + stamp(s.Now),
+					"reason":       "returned to pool by friend-idle-return",
+				}))},
 				Moved:  c.ID + " returned to pool by rule " + RuleFriendIdleReturn,
 			})
 		}
-		// Return all working cards to pool
+		// Return all working cards to ready
 		for _, c := range s.Fleet.Cell(row, Working) {
 			p.Units = append(p.Units, Unit{
 				Key:    c.ID,
 				Stream: row,
-				Changes: []Change{change(Fleet, setEntry(c, map[string]string{FieldTakenBack: RuleFriendIdleReturn + " at " + stamp(s.Now)}))},
+				Changes: []Change{change(Fleet, setEntry(c, map[string]string{
+					FieldTakenBack: RuleFriendIdleReturn + " at " + stamp(s.Now),
+					"reason":       "returned to pool by friend-idle-return",
+				}))},
 				Moved:  c.ID + " returned to pool by rule " + RuleFriendIdleReturn,
 			})
 		}
+		// Mark the row idle
+		p.Units = append(p.Units, Unit{
+			Key:    row,
+			Stream: row,
+			Changes: []Change{change(Fleet, setEntry(s.Fleet.Card(row), map[string]string{
+				FieldFriendIdleSince:  stamp(s.Now),
+				FieldFriendIdleReason: "idle-loaded for two bounds",
+			}))},
+		})
 	}
 	return p, 0
 }
