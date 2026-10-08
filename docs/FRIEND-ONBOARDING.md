@@ -175,7 +175,7 @@ It handles:
 nova-friend status --as <name> --dir ~/<name>-working
 ```
 
-This reports whether you are up, down, or working, based on evidence (session response, recent card completion).
+This reports whether you are up, down, or working, based on evidence (session response, recent card completion). The sprint judges the same evidence with `friend_finish_window` (how long a finished card keeps you up, 30m by default) and calls a member that stops beating down after `member_down_after` (45s by default); both are nova-config settings under `sprint`, changed without a rebuild.
 
 ### Heartbeats
 
