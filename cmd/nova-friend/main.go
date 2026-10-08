@@ -149,6 +149,31 @@ func sprintAsk(ctx context.Context, server string, argv []string) (string, error
 	return res[0].Stdout, nil
 }
 
+// beatReportArgs is one friend beat's argv. A nil Running list is omitted: the
+// beat does not know the jobs, and the server keeps the last ids. A non-nil
+// empty list is the daemon's lanes at zero and is sent as friend.RunningNone,
+// which the server stores as an explicit empty list and clears the finished cards.
+func beatReportArgs(name string, active time.Time, proof friend.BeatWords, rep friend.BeatReport) []string {
+	args := []string{"friend", "beat", name, "--width", strconv.Itoa(rep.Width), "--started", rep.Started.UTC().Format(time.RFC3339)}
+	if rep.Running != nil {
+		running := strings.Join(rep.Running, ",")
+		if running == "" {
+			running = friend.RunningNone
+		}
+		args = append(args, "--running", running)
+	}
+	if rep.Working != nil {
+		args = append(args, "--working", strconv.Itoa(*rep.Working))
+	}
+	if rep.Queue != nil {
+		args = append(args, "--queue", strconv.Itoa(*rep.Queue))
+	}
+	if !active.IsZero() {
+		args = append(args, "--active", active.UTC().Format(time.RFC3339))
+	}
+	return append(args, proofArgs(proof)...)
+}
+
 // sprintBeat sends one friend beat to the sprint server and answers its FRIEND-BEAT line,
 // or its refusal as an error.
 func sprintBeat(ctx context.Context, server string, argv []string) (string, error) {
@@ -256,20 +281,7 @@ func realWorld() world {
 			return sprintBeat(ctx, server, append(args, proofArgs(proof)...))
 		},
 		beatReport: func(ctx context.Context, server, name string, active time.Time, proof friend.BeatWords, rep friend.BeatReport) (string, error) {
-			args := []string{"friend", "beat", name, "--width", strconv.Itoa(rep.Width), "--started", rep.Started.UTC().Format(time.RFC3339)}
-			if len(rep.Running) > 0 {
-				args = append(args, "--running", strings.Join(rep.Running, ","))
-			}
-			if rep.Working != nil {
-				args = append(args, "--working", strconv.Itoa(*rep.Working))
-			}
-			if rep.Queue != nil {
-				args = append(args, "--queue", strconv.Itoa(*rep.Queue))
-			}
-			if !active.IsZero() {
-				args = append(args, "--active", active.UTC().Format(time.RFC3339))
-			}
-			return sprintBeat(ctx, server, append(args, proofArgs(proof)...))
+			return sprintBeat(ctx, server, beatReportArgs(name, active, proof, rep))
 		},
 		beatDown: func(ctx context.Context, server, name string, active, until time.Time, reason string, proof friend.BeatWords) error {
 			args := []string{"friend", "beat", name, "--until", until.UTC().Format(time.RFC3339), "--reason", reason}
@@ -1679,6 +1691,9 @@ func (w world) run(c *tool.Call) *tool.Out {
 			return nil
 		},
 		SaveLanes: func(s friend.LaneState) error {
+			// Non-nil even when no lane is left: an explicit empty list, so the
+			// next beat clears the stored running ids instead of keeping the
+			// finished card.
 			running := make([]string, 0, len(s.Started))
 			for _, job := range s.Started {
 				running = append(running, job.Card.ID)

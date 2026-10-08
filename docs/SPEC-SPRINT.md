@@ -166,7 +166,7 @@ runs every second (`FriendBeatEvery`) beside her harness (it writes
 work: `--running <id>,...`, the cards she is running now, which `friend take`
 and `friend down` leave with her, and, as `fleet beat --load` gives a
 machine's load, `--working <n>`, `--queue <n>`, `--width <n>` and `--load
-<percent>`, her own counts and load as her daemon keeps them, unknown fields and an empty `--running` preserve the last known facts; nonempty
+<percent>`, her own counts and load as her daemon keeps them, unknown fields and an omitted `--running` preserve the last known facts; `--running -` is an explicit empty list and clears them; nonempty
 running ids replace the known list. These are carried on `where --json`'s `friends` beside the table's
 counts, which stay the sprint's (her row's cards) and her width the roster's; a
 value of the wrong shape is refused, exit 2; a friend not in the record is

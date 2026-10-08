@@ -153,6 +153,8 @@ func TestTheServerRunsAFriendsBeatWithTheCardsSheIsRunning(t *testing.T) {
 	assert.Equal(t, "", why)
 	assert.Equal(t, "amy", as)
 	assert.Equal(t, 2, words)
+	_, _, why = workerVerb([]string{"friend", "beat", "amy", "--working", "0", "--running", "-"})
+	assert.Empty(t, why, "an explicit empty running list is a value the server accepts")
 	for _, argv := range [][]string{
 		{"friend", "beat", "amy", "--running"},
 		{"friend", "beat", "amy", "--running", "a b"},
