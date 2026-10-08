@@ -328,6 +328,29 @@ func (l *Limits) see(out string, failed bool) {
 	}
 }
 
+// Refuse is a credit or quota refusal a caller read where this harness's own
+// wording parse (ParseLimit) and the limit tail found none: the daemon's
+// per-harness table in cmd/nova-friend/limit.go reads a lane's evidence and
+// hands the hit here (docs/SPEC-FRIEND.md, every harness's credit and quota
+// refusal). It takes the same state and hooks see takes for a limit a
+// harness's own wording names: the friend is down until the refusal's until,
+// her turns and beats are held, Down says it to the sprint once, and status
+// reads session=limited limit_kind=kind limit_until=until. A refusal equal to
+// the one that already holds her is not a second down.
+func (l *Limits) Refuse(kind, reason string, until time.Time) {
+	l.mu.Lock()
+	if l.limited && l.kind == kind && l.reason == reason {
+		l.mu.Unlock()
+		return
+	}
+	l.limited, l.until, l.reason, l.kind, l.waking, l.answered = true, until, reason, kind, "", false
+	l.episodes++
+	l.mu.Unlock()
+	if l.Down != nil {
+		l.Down(until, reason)
+	}
+}
+
 // WindowUse is the subscription windows' use as the harness last reported
 // it in any command's output ("5h 62% 7d 31%"), empty when none is live.
 func (l *Limits) WindowUse() string {
@@ -410,6 +433,18 @@ func LimitUnreadText(friend string, rest time.Duration, text string) (subject, b
 	subject = fmt.Sprintf("friend %s held: her harness is at its limit and its message names no reset I can read", friend)
 	body = fmt.Sprintf("%s: %q\nHer daemon holds her and tries a wake every %s until one is answered; this is said once until then. A judgment: read the reset from the text and set it (nova-sprint friend down %s --reason %s --until <RFC3339>), and add the text to internal/friend/testdata/limits.tsv so the next one is read.\n",
 		subject, text, rest, friend, shellQuote("harness limit: "+text))
+	return subject, body
+}
+
+// LimitAlikeText is the one judgment the coordinator is told when three lanes
+// in a row ended with the same first error line and none names a limit or a
+// credit or quota refusal the daemon's table knows (cmd/nova-friend/limit.go,
+// RefusalWatch): the line, so the wording is added or the cause is found,
+// never a silent fourth retry.
+func LimitAlikeText(friend, line string) (subject, body string) {
+	subject = fmt.Sprintf("friend %s: her lanes are failing alike", friend)
+	body = fmt.Sprintf("%s: %q\nThree lanes in a row ended with that first error line and none names a limit or a credit wording I know. Her daemon holds it to this one judgment, never a silent fourth retry. Read the line, fix the cause or add its wording to cmd/nova-friend/limit.go, then let her go on: nova-sprint friend up %s\n",
+		subject, line, friend)
 	return subject, body
 }
 

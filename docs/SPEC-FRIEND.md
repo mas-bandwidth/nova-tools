@@ -575,6 +575,14 @@ The table's status cell shows reason and until for a hold and an observation onl
 (`internal/sprint/store/friends.go`, `friendRows`); a down beat's pair is on her
 report and in why she is down.
 
+### Every harness's credit and quota refusal (cmd/nova-friend/limit.go)
+
+A harness that refuses for credits or quota marks the friend down whatever harness it is, not only the ones whose wording is already known. One table holds each harness's provider 402 and the wordings the harness prints itself, every harness the daemon runs: claude, codex, opencode, grok, antigravity, dsh and gemini, credits before quota so a line that says both is the balance. A lane's evidence is read from the four places it leaves it -- the lane's stdout, its stderr, the harness log it writes and the REPORT.md it leaves (`LaneText`, `ReadRefusal`) -- and the first line that matches a row is the reason. The antigravity and gemini rows are their real refusals ("Insufficient AI Credits. Your credits will refresh 6:52 PM." and "Your prepayment credits are depleted."). The lane step (`cmd/nova-friend/main.go`) reads each failed lane's output and the runner log beside her working directory and hands a hit the harness's own wording did not name to the daemon's own limit path (`friend.Limits.Refuse`), so it takes the same hold, status and seat line as a limit the harness names itself.
+
+On a match the daemon sends `nova-sprint friend down <friend> --reason 'no credits: <harness>: <first line>' --until <now + the row's credit_retry, default 24h>` through its existing sprint call (`DownArgv`), so every begun card is handed back, the status says `session=limited limit_kind=<kind> limit_until=<t>` and the seat is told once as a judgment. The daemon keeps beating; at the until it tries one lane, and a second refusal is a new down.
+
+A refusal the table does not know is never silently retried: three lanes in a row that end with the same first error line surface to the seat as one judgment, `lanes failing alike: <line>` (`RefusalWatch`, `AlikeLanes`, `friend.LimitAlikeText`), and a different line starts the count again. `TestEveryHarnessCreditRefusalMarksTheFriendDown`, `TestALaneErrorThatIsNotARefusalChangesNothing` and `TestThreeAlikeLanesSurfaceOneJudgmentAndNoDown` pin the table, a non-refusal and the judgment.
+
 ### The harness check (internal/friend/alive.go)
 
 Presence is the session's check (above); this one says whether the harness
@@ -1975,6 +1983,60 @@ alone (friend sync before collect), breaks `Collected` (a report written in anot
 friend's tree is never finished); `MCCollectBrokenNoTip.cfg`, a LAND finished at its
 Head unread, breaks `LandOnTip` in 6 states. The test is
 `TestTheDaemonFinishesADeadLaneAndALandOnlyAtOriginsTip`.
+
+### the-fix-is-the-first-line-of-the-next-brief.w1 — a reworked brief opens with the fix (internal/friend/rework.go)
+
+The night of 2026-10-05, lint-pkg-tlc-tbb came back five times, sec-rocketnet-server-dos-zhi
+four and presence-from-session-only five, each with the same finding. A rework puts its fix on
+the packet (`rework --fix`, or the broken reads' finding: internal/sprint/steps_review.go), and
+the server's brief says it as a `The coordinator asks:` line under the start, over a long card
+whose own STOP is the whole card's; the next lane read the card and never reached the fix.
+
+- The daemon writes a reworked card's BRIEF.md (`ReworkedBrief`, in `SyncInbox`) with the fix
+  first. The lines after STATUS are, in order: `THE ONE THING LEFT: <the fix>`; `The reader found: <finding>` (with no reader's finding, `no reader's finding; <why the attempt exists>`);
+  `The carried work: attempt <n>'s head <sha>, carried onto <branch> ...` (off the start line;
+  `nothing carried: ...` when no attempt pushed); `How it is checked: ...`, which names the key
+  words its report is grepped for. Then the rest of the server's prelude (the working
+  directory, the start, why), and the card with its STOP the fix alone, before RULES and the
+  task. The fix and the finding are said once. A brief with no fix, and one already reworked,
+  are written as the server sent them; the STATUS line, REPO and BASE are unchanged, so the
+  packet staging reads (`PacketOf`) is the same.
+- The key words of a fix (`FixKeyWords`) are its distinct words of four or more letters, digits
+  or underscores, lower case, the empty ones left out, the first eight. A report addresses the
+  fix (`FixAddressed`) when it names at least half of them, rounded up, anywhere, in any case; a
+  fix with none is addressed.
+- The outbox pass reads the fix of the job's BRIEF.md (the brief the lane read; else the
+  server's), in either form. A `LAND` whose report does not address it is finished as a HOLD:
+  `--failed`, a full sha head kept, the report `friend <name> HOLD: held by the daemon: the report says LAND and does not address THE ONE THING LEFT (<fix>); the key words it does not name: ...` and the report after it; the record line says `(Verdict LAND, held by the daemon: ...)`. Her REPORT.md stays as she wrote it. So a lane that never reached the first line is
+  sent back by the daemon, not round the readers to find the same thing again.
+- Friend sync (cmd/nova-sprint) is the other writer of her BRIEF.md and the other finisher of
+  her reports (docs/FRIENDS.md, the inbox/outbox standard), and it runs the same code
+  (the-fix-is-the-first-line-of-the-next-brief.w2): `friendBrief` is `ReworkedBrief` of the
+  server's form, so whichever of the two writes a reworked card's brief first (each writes
+  only when none is there), it opens with the fix; and `friendFinish`, the one finish of
+  friend sync, friend reconcile and collect, reads a LAND by the daemon's check
+  (`UnaddressedLand`, the fix of `friendBrief`, the same brief the inbox holds): one that does
+  not address the fix is finished as a HOLD, `--failed` with a head that is origin's tip of
+  her branch kept, the report `friend <name> HOLD: held by friend sync: the report says LAND and does not address THE ONE THING LEFT (<fix>); ...`. So the hold is a rule, not a race
+  the daemon has to win. `friendCollect` is that finish for friend sync and for the run loop's
+  reconcile.
+
+The model is `internal/friend/tla/OutboxFinish.tla`, extended: a reworked card's report
+addresses its fix or not, and `NoUnaddressedLand` (a reworked card lands only from a report
+that addresses its fix) holds with `Finished`. Friend sync is in it as a second writer of the
+brief (`Deliver`, whichever hand comes first, never over one there) and a second finisher
+(`SyncFinish`, the server taking the first finish), and `FixFirst` (a reworked card's brief
+opens with its fix, whoever wrote it) holds too (TLC on a Linux bench, two cards, one
+reworked: 1764 distinct states, no error). The reversed witnesses:
+`MCOutboxFinishBrokenUnaddressedLand.cfg`, the daemon before w1, breaks `NoUnaddressedLand` (she
+writes a LAND that does not address the fix, the daemon asks and lands it);
+`MCOutboxFinishBrokenSyncLands.cfg`, friend sync before w2, breaks it the other way (friend
+sync finishes the same LAND before the daemon's pass); `MCOutboxFinishBrokenSyncBrief.cfg`,
+friend sync before w2, breaks `FixFirst` (it writes the server's form before the daemon). The
+tests are `TestAReworkedBriefOpensWithTheFix`, `TestFixAddressedReadsTheKeyWords`,
+`TestFriendSyncWritesTheReworkedBriefAndHoldsAnUnaddressedLand` (friend sync against a reworked
+card: the brief's form and the HOLD) and
+`TestFriendFinishHoldsAnUnaddressedLandAndLandsAnAddressedOne`.
 
 ### one-lane-per-card.w1 — one live lane per card (internal/friend/one_lane.go)
 

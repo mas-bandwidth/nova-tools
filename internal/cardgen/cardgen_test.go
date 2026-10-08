@@ -80,19 +80,28 @@ func TestMergePathsFoldsPastTheCeiling(t *testing.T) {
 	assert.Equal(t, []string{"x.go", "y.go"}, MergePaths([]string{"x.go", "y.go", "x.go"}))
 }
 
-// Adjacent cards of one ledger delete adjacent lines: odd cards wave 1, even cards
-// wave 2 needing their neighbours; a generated ledger has one wave and no needs.
-func TestWavesAlternateOnAnOrdinaryLedgerAndNotOnAGeneratedOne(t *testing.T) {
+// The lander unions every generated ledger conflict, so adjacent deletions of one
+// file no longer conflict at land: every ledger plans one wave, every card carries
+// DEPENDS-ON: -, and the cards share the ledger's path with no need between them,
+// so the CARDS line says shared-paths=yes and the add wants --allow-shared-paths.
+func TestALedgerPlanIsOneWaveWithSharedPathsAndNoDependencyChain(t *testing.T) {
 	t.Parallel()
 	l := Ledgers["serial-tests"]
-	rows, _ := ParseLedger(l, serialFixture)
+	rows, _ := ParseLedger(l, "# ceiling: 5\n"+
+		"cmd/nova-bus/a_test.go:TestOne serial: t.Setenv\n"+
+		"cmd/nova-bus/b_test.go:TestTwo serial: t.Chdir\n"+
+		"internal/swarm/c_test.go:TestThree serial: os.Setenv\n"+
+		"internal/swarm/d_test.go:TestFour serial: t.Setenv\n"+
+		"internal/bus/e_test.go:TestFive serial: os.Setenv\n")
+	require.Len(t, rows, 5, "the plan under test covers a ledger of five rows")
 	p := PlanLedger(l, rows, "", "", 0)
-	assert.Equal(t, 2, p.Waves)
-	assert.Equal(t, []int{1, 2, 1, 2}, []int{p.Cards[0].Wave, p.Cards[1].Wave, p.Cards[2].Wave, p.Cards[3].Wave})
-	assert.Empty(t, p.Cards[0].Deps)
-	assert.Equal(t, []string{p.Cards[0].ID, p.Cards[2].ID}, p.Cards[1].Deps)
-	assert.Equal(t, []string{p.Cards[2].ID}, p.Cards[3].Deps, "the last even card has one neighbour")
-	assert.True(t, p.Shared, "wave-1 cards share the ledger with no need between them: the add wants --allow-shared-paths")
+	assert.Equal(t, 1, p.Waves, "a ledger plan is one wave")
+	assert.True(t, p.Shared, "the cards share the ledger's path with no need between them: the add wants --allow-shared-paths")
+	for _, c := range p.Cards {
+		assert.Equal(t, 1, c.Wave, c.ID)
+		assert.Empty(t, c.Deps, c.ID)
+		assert.Contains(t, Render(header, c), "\nDEPENDS-ON: -\n", c.ID)
+	}
 
 	g := Ledgers["generality-fixtures"]
 	grows, _ := ParseLedger(g, "a/one.md recorded\nb/two.md recorded\nc/three.md recorded\n")
@@ -213,18 +222,18 @@ func TestTheOKLineAndTheDeadline(t *testing.T) {
 	assert.Contains(t, Render(Header{Repo: "o/r", Base: "dev", Sha: "abc"}, c), "\nNEW: x/z_test.go\n")
 }
 
-// --max cuts before the waves are assigned: the kept cards' needs name kept
-// cards only, so the directory is admitted (the add refuses a need that is no card
-// of the add), and the waves and the shared flag are those of the cut plan.
-func TestMaxCutsBeforeTheWavesAreAssigned(t *testing.T) {
+// --max cuts before the plan is rendered: the kept cards are the whole plan, so no
+// card needs a cut one (the add refuses a need that is no card of the add), the
+// plan is one wave, and the kept cards share the ledger with no need between them.
+func TestMaxCutsBeforeThePlanIsRendered(t *testing.T) {
 	t.Parallel()
 	l := Ledgers["serial-tests"]
 	rows, _ := ParseLedger(l, serialFixture)
 	p := PlanLedger(l, rows, "", "", 2)
 	require.Len(t, p.Cards, 2)
-	assert.Equal(t, []string{p.Cards[0].ID}, p.Cards[1].Deps, "the cut neighbour is not a need")
-	assert.Equal(t, 2, p.Waves)
-	assert.False(t, p.Shared, "one wave-1 card shares the ledger with nobody")
+	assert.Empty(t, p.Cards[1].Deps, "no card needs another, cut or kept")
+	assert.Equal(t, 1, p.Waves)
+	assert.True(t, p.Shared, "the two kept cards share the ledger with no need between them")
 	assert.Len(t, PlanLedger(l, rows, "", "", 0).Cards, 4, "0 is all")
 	assert.Len(t, PlanLedger(l, rows, "", "", 9).Cards, 4, "a max past the plan keeps every card")
 	fs, _ := ParseFindings("a/x.go:1\twrong\tfix\ta TestA\nb/y.go:1\twrong\tfix\tb TestB\n")

@@ -72,6 +72,7 @@ type world struct {
 	beatDown  func(ctx context.Context, server, friend string, active, until time.Time, reason string, proof friend.BeatWords) error // her beat while she is down (friend beat --until --reason); nil holds the beat back
 	progress  func(ctx context.Context, server string, argv []string) error                                                          // one progress verb to the sprint server (friend.ProgressArgv)
 	finish    func(ctx context.Context, server string, argv []string) error                                                          // one finish verb to the sprint server (friend.FinishArgv: a lane's card whose run ended with no report)
+	down      func(ctx context.Context, server string, argv []string) error                                                          // one down verb to the sprint server (DownArgv: a credit refusal's friend down --reason --until); nil names none (a test's)
 	sqlite    friend.Exec                                                                                                            // reads opencode's database (the sqlite3 CLI); nil reads none: no card cost, no token cap
 	cards     func(ctx context.Context, server string, argv []string) (string, error)                                                // the cards on her row, asked of the sprint server (friend.FriendCardsArgv); nil asks none
 	friends   func(ctx context.Context, server string) (rows []friend.WakeRow, seat string, err error)                               // the friends table and the seat's holder, from the sprint server's coordinator view (GET /api/view/coordinator?all=1)
@@ -255,6 +256,7 @@ func realWorld() world {
 		},
 		progress: sprintVerb,
 		finish:   sprintVerb,
+		down:     sprintVerb,
 		cards:    sprintAsk,
 		view:     sprintView,
 		friends:  coordinatorFriends,
@@ -1101,7 +1103,23 @@ func (w world) run(c *tool.Call) *tool.Out {
 	// her harness's limit: every command's output read for it, her turns held while she is
 	// down and a wake after the reset (friend.Limits); its hooks are set once record is
 	fl := &friend.Limits{Now: w.now, Nonce: w.random, Harness: c.Str("harness"), Rest: c.Dur("limit-rest")}
-	deliver, err := friend.NewDeliverer(c.Str("harness"), dir, c.Str("session"), fl.Watch(walled), c.Stdout)
+	// every harness's credit and quota refusal, one table (limit.go): each lane's output and
+	// the runner log are read, and a hit the harness's own wording did not name is handed to
+	// the same limit path (fl.Refuse); three lanes failing alike with a wording no row knows
+	// is one judgment (RefusalWatch). The harness's own wording is read first, so a hit both
+	// readers know is one down.
+	rw := &RefusalWatch{Harness: c.Str("harness"), Now: w.now}
+	limitWatch := fl.Watch(walled)
+	watched := func(ctx context.Context, d, prog string, args []string, stdin string) (string, int, error) {
+		out, exit, err := limitWatch(ctx, d, prog, args, stdin)
+		if exit != 0 || err != nil {
+			if _, _, alreadyHeld := fl.Limited(); !alreadyHeld {
+				rw.Observe(LaneText{Stdout: out, Log: friend.RunnerLog(dir)})
+			}
+		}
+		return out, exit, err
+	}
+	deliver, err := friend.NewDeliverer(c.Str("harness"), dir, c.Str("session"), watched, c.Stdout)
 	if err == nil {
 		err = friend.TmuxFor(deliver, name, state) // harness tmux: the session and prompt host saved
 	}
@@ -1109,7 +1127,7 @@ func (w world) run(c *tool.Call) *tool.Out {
 		return tool.Refuse(err.Error()) // the skeleton renders a refusal with the verb's token, on stderr
 	}
 	if friend.RunsCards(c.Str("harness")) {
-		deliver = friend.NewClaude(name, dir, fl.Watch(walled), c.Stdout) // a card a process: the adapter with a lane
+		deliver = friend.NewClaude(name, dir, watched, c.Stdout) // a card a process: the adapter with a lane
 	}
 	// a harness whose session queues what is delivered (Antigravity's mailbox): every delivery
 	// goes in at once, and the daemon follows the conversation that reads it (friend.Mailbox)
@@ -1283,6 +1301,24 @@ func (w world) run(c *tool.Call) *tool.Out {
 		if _, err := (&bus.Bus{Store: sc.DaemonStore()}).Send(ctx, bus.Message{From: name, To: []string{to}, Subject: subject, Body: body}); err != nil {
 			record(w.now().UTC().Format(time.RFC3339) + " limit: telling " + to + " failed: " + err.Error() + ": " + subject)
 		}
+	}
+	// a refusal the row knows and the harness's own wording did not: the same limit path
+	// (status, the gate, the down beat, the seat), and the down verb so her begun cards come
+	// back; three lanes alike with a wording no row knows is one judgment to the seat
+	rw.Down = func(r Refusal) {
+		fl.Refuse(r.Kind, DownReason(r), r.Until)
+		if w.down == nil {
+			record(w.now().UTC().Format(time.RFC3339) + " credit refusal: no down verb to send: " + DownReason(r))
+			return
+		}
+		if err := w.down(ctx, server, DownArgv(name, r)); err != nil {
+			record(w.now().UTC().Format(time.RFC3339) + " credit refusal: friend down: " + err.Error())
+			tellSeat("friend "+name+": the down verb was refused", DownReason(r)+"\nnova-sprint friend down was refused: "+err.Error()+"\n")
+		}
+	}
+	rw.Judge = func(text string) {
+		record(w.now().UTC().Format(time.RFC3339) + " limit: " + text)
+		tellSeat(friend.LimitAlikeText(name, text))
 	}
 	stager := w.stager(dir)
 	d := &friend.Daemon{
