@@ -1749,8 +1749,9 @@ whatever its end (`Pacer.Observe`).
 
 The pacing is the row's setting: the fraction of each window the sprint may
 spend, `DefaultPacing` (80 percent) when the row names none or one outside
-(0, 100] percent. The daemon reads it every step (`Daemon.Pacing`; off the
-beat's answer, `row_pacing=<percent>`, `ParsePacing`). The lanes' effective
+(0, 100] percent. The daemon reads it every step (`Daemon.Pacing`); the beat's
+answer carries the row's pacing as `row_pacing=<percent>`, whose parse into
+that seam is owed with its caller. The lanes' effective
 width is the row's width scaled by the share of the paced budget left in the
 tightest live window, rounded up (`Pacer.Width`): at 80 percent and a row of
 4, a 5-hour window at 20 percent gives 3, at 40 percent 2, at 60 percent 1,

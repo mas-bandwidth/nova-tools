@@ -2,10 +2,12 @@ package sprint_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -84,10 +86,54 @@ func (r *driftRig) at() time.Time {
 // tick reads the drift facts from the twin repository and applies the drift part.
 func (r *driftRig) tick() {
 	r.t.Helper()
-	facts, err := sprint.ReadDrift(context.Background(), sprint.RunGit, r.repo.dir, "sprint/base", "dev", r.server)
-	require.NoError(r.t, err)
+	facts := readDrift(r.t, r.repo.dir, "sprint/base", "dev", r.server)
 	facts.Gate = r.gate
 	r.tickOn(&facts)
+}
+
+// readDrift is what the binding would read of a clone whose branches are as fetched: the
+// base against dev, and the live server's build commit against the base (none read when
+// server is ""). It stands in for the binding, which reads no git yet.
+func readDrift(t *testing.T, dir, base, dev, server string) sprint.DriftFacts {
+	t.Helper()
+	f := sprint.DriftFacts{Base: base, Dev: dev}
+	tip, err := sprint.RunGit(context.Background(), dir, "rev-parse", "--verify", "--end-of-options", base+"^{commit}")
+	require.NoError(t, err)
+	ahead := sprint.DriftAhead{Tip: tip}
+	stamps, err := sprint.RunGit(context.Background(), dir, "log", "--format=%ct", "--end-of-options", dev+".."+base)
+	require.NoError(t, err)
+	for _, l := range strings.Fields(stamps) {
+		sec, err := strconv.ParseInt(l, 10, 64)
+		require.NoError(t, err)
+		ahead.Commits++
+		if ts := time.Unix(sec, 0).UTC(); ahead.Oldest.IsZero() || ts.Before(ahead.Oldest) {
+			ahead.Oldest = ts
+		}
+	}
+	f.Ahead = &ahead
+	if server == "" {
+		return f
+	}
+	sv := sprint.DriftServer{Commit: server}
+	full, err := sprint.RunGit(context.Background(), dir, "rev-parse", "--verify", "--quiet", "--end-of-options", server+"^{commit}")
+	if err != nil {
+		sv.Why = "a commit in no branch fetched"
+		f.Server = &sv
+		return f
+	}
+	sv.Commit = full
+	_, err = sprint.RunGit(context.Background(), dir, "merge-base", "--is-ancestor", "--end-of-options", full, tip)
+	var ee *exec.ExitError
+	switch {
+	case err == nil:
+		sv.On = true
+	case errors.As(err, &ee) && ee.ExitCode() == 1:
+		sv.Why = "not an ancestor of " + base
+	default:
+		require.NoError(t, err)
+	}
+	f.Server = &sv
+	return f
 }
 
 // tickOn applies the drift part on the facts given (nil: none read this tick).

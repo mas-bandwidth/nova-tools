@@ -95,8 +95,6 @@ const (
 	LaneTake                    // outside her tiers: taken back for the dealer (friend take)
 )
 
-func (v LaneVerdict) String() string { return [...]string{"run", "skip", "take"}[v] }
-
 // Judge is the card filter: a card of a tier outside Tiers (an unknown tier is outside) is
 // taken back; a card whose stream and id match none of Streams is skipped; any other runs.
 // The reason is a sentence for the record and for friend take.
@@ -146,20 +144,6 @@ func TakeBackNote(friend, card, job, why string) (subject, body string) {
 	subject = fmt.Sprintf("friend %s: take card %s back for the dealer", friend, card)
 	body = fmt.Sprintf("%s's lanes will not run card %s (job %s): %s. No lane has begun it and no jobs/%s exists. The sprint server serves no friend's take-back, so take it back: %s\n", friend, card, job, why, job, verb)
 	return subject, body
-}
-
-// JobName is the job directory friend sync names for a card dealt at epoch: <card>~<epoch>,
-// with .g<gen> after it from the second generation (friendJobOf); a card with no epoch is
-// its id alone.
-func JobName(card string, epoch uint64, gen int) string {
-	job := card
-	if epoch > 0 {
-		job += "~" + strconv.FormatUint(epoch, 10)
-	}
-	if gen > 1 {
-		job += ".g" + strconv.Itoa(gen)
-	}
-	return job
 }
 
 // LaneWidthUnderLoad is how many lanes may start with the machine's one-minute load at load:
